@@ -16,7 +16,8 @@ repeated for 12 s). Few alerts, but trustworthy ones:
   jungler is the enemy assigned JUNGLE. Lane opponents never raise a gank alert (laning is not a
   gank). Without Riot positions, an enemy that spends >= 50 % of its visible time of the last
   90 s in my lane is also a lane opponent, and an anonymous icon that shows up where my
-  (identified) lane opponent was last seen is taken as that lane opponent.
+  (identified) lane opponent was last seen, or that comes from my lane while my lane
+  opponent(s) are not visible elsewhere, is taken as that lane opponent.
 * **Confirmation.** A threat must be seen on >= 3 consecutive fresh observations with a good
   detection score (>= 0.4) and, when identified, a good identity score (>= 0.6). Anonymous
   icons need 5 observations with a detection score >= 0.5 and only ever raise a DANGER.
@@ -43,6 +44,7 @@ an immutable snapshot for the overlay / UI threads. Never raises from its public
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import threading
@@ -101,6 +103,9 @@ ALLY_OVERLAP_DIST = 0.02         # an enemy icon stacked on an ally icon is ambi
 # anonymous icon = my lane opponent seen without identity
 LANER_GHOST_DIST = 0.06
 LANER_GHOST_MAX_HIDDEN_S = 8.0
+# simultaneous arrivals: an enemy coming in within this factor of the warn radius joins the
+# alert of another threat ("Gank bot : Lee Sin et Ahri !")
+COMPANION_RADIUS_FACTOR = 1.25
 # direction of arrival
 DIRECTION_LOOKBACK_S = 2.0
 # jungler spotted
@@ -371,6 +376,7 @@ class GankAnalyzer:
         lane_opps: set[str] = set()
         jungler_key: str | None = None
         threats: list[_Threat] = []
+        companions: list[_Threat] = []       # coming in too, approach not yet established
         laner_tracks: list[Track] = []
         pending_anon: list[tuple[Track, _TrackState]] = []
 
@@ -419,25 +425,25 @@ class GankAnalyzer:
                 if spotted is not None:
                     alerts.append(spotted)
                 self._jg_last_side = side_of(pos[0], pos[1])
-            if d >= warn or lane_opp:
+            if lane_opp or d >= warn * COMPANION_RADIUS_FACTOR:
                 continue
             if relation == "anon":
-                pending_anon.append((tr, st))       # decided once the lane opponents are known
+                if d < warn:
+                    pending_anon.append((tr, st))   # decided once the lane opponents are known
                 continue
             if not self._opt("alert_jungler_approach" if is_jungler else "alert_roam", True):
                 continue
             if st.confirm < CONFIRM_FRAMES:
                 continue
+            threat = _Threat(track_key=tr.key, member=tr.alias or tr.key,
+                             name=roster.name(tr.alias), alias=tr.alias, level=Level.WARNING,
+                             d=d, jungler=is_jungler, direction=self._direction(tr, my_team))
             if d < danger:
-                level = Level.DANGER
-            elif moving_in:
-                level = Level.WARNING
-            else:
-                continue
-            threats.append(_Threat(
-                track_key=tr.key, member=tr.alias or tr.key, name=roster.name(tr.alias),
-                alias=tr.alias, level=level, d=d, jungler=is_jungler,
-                direction=self._direction(tr, my_team)))
+                threats.append(dataclasses.replace(threat, level=Level.DANGER))
+            elif d < warn and moving_in:
+                threats.append(threat)
+            elif moving_in or st.on_count >= 1:
+                companions.append(threat)           # coming too, a little behind
 
         for tr, st in pending_anon:
             if self._is_laner_ghost(tr, laner_tracks, roster, my_lane, now):
@@ -452,6 +458,8 @@ class GankAnalyzer:
                                    level=Level.DANGER, d=dist(me_pos, pos), jungler=False,
                                    direction=None))
 
+        if threats:
+            threats += companions             # simultaneous arrivals: one sentence
         gank = self._gank_alerts(threats, now, my_zone, my_lane)
         alerts = gank + alerts
         self._forget(now, {tr.key for tr in enemies})
@@ -471,12 +479,12 @@ class GankAnalyzer:
         """One merged alert for all the threats of the tick."""
         if not threats:
             return []
-        threats = sorted(threats, key=lambda th: (-int(th.level), th.d))
+        threats = sorted(threats, key=lambda th: (-int(th.level), not th.jungler, th.d))
         if len(threats) == 1 or not self._opt("alert_collapse", True):
             return [self._single(threats[0], now)] if len(threats) == 1 else \
                 [self._single(th, now) for th in threats]
         level = max(th.level for th in threats)
-        names = [th.name for th in threats if th.name]
+        names = [th.name for th in sorted(threats, key=lambda th: (not th.jungler, th.d)) if th.name]
         lane = lane_of(my_zone) or my_lane
         members = tuple(sorted(th.member for th in threats))
         text = phrase(AlertKind.COLLAPSE, level, None, lane, count=len(threats), names=names)
@@ -544,6 +552,11 @@ class GankAnalyzer:
             return False
         first = tr.points()[0] if tr.points() else None
         start = (first[1], first[2]) if first is not None else pos
+        # came from my lane while my lane opponent(s) are nowhere to be seen: it is them
+        if my_lane is not None and roster.lane_opps \
+                and lane_of(classify_zone(start[0], start[1])) == my_lane \
+                and not any(lt.visible and lt.last_seen >= tr.last_seen - 1e-9 for lt in laners):
+            return True
         for lt in laners:
             if lt.visible and lt.last_seen >= tr.last_seen - 1e-9:
                 continue                          # the lane opponent is seen elsewhere right now

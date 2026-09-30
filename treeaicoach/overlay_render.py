@@ -1240,9 +1240,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         cv_.image(x, y, round_icon_patch(e.icon, d, _mix(DANGER, GREY, 0.3), max(1.2, lw * 0.9), grey=True,
                                          letter=e.name or e.alias or "?"), 0.62 * fade)
         cv_.ring(x, y, mr * 0.95, lw * 0.9, DANGER, 0.55 * fade, dash=(3.0 * k + 1, 2.5 * k + 1))
-        label = fmt_seconds(ago)
-        if e.is_jungler or e.key in fog_keys:
-            label = f"{role_tag(e, roles)} {label}"
+        tag = role_tag(e, roles)
+        label = f"{tag} {fmt_seconds(ago)}" if tag and tag != "?" else fmt_seconds(ago)
         _tag(cv_, x, y, mr * 1.05, label, f_time, GOLD_LIGHT, taken, alpha=max(0.7, fade))
 
     # ---- allies (thin blue rings)

@@ -249,8 +249,9 @@ def test_jungler_gank_warning_then_danger(jitter: float, drop: float) -> None:
     said = [a for _tk, a in said_of(ticks, GANK_KINDS)]
     assert [a.text for a in said] == ["Lee Sin arrive par la rivière !", "Gank ! Lee Sin, recule !"]
     assert all(a.key == "jungler_approach:LeeSin" and a.alias == "LeeSin" for a in said)
-    # the jungler was seen, but not on another side: nothing to announce
-    assert raw_of(ticks, AlertKind.JUNGLER_SPOTTED) == []
+    # first sighting after 1:30, far away: announced once (it will not be repeated on the same side)
+    spotted = raw_of(ticks, AlertKind.JUNGLER_SPOTTED)
+    assert [(tk.t, a.text) for tk, a in spotted] == [(0.0, "Jungler ennemi vu dans la jungle ennemie du haut.")]
 
 
 @pytest.mark.parametrize("name,frames", [("Ahri", 3), ("?1", 5)])
@@ -287,7 +288,7 @@ def test_mid_laner_roaming_top(positions: bool) -> None:
     assert roam and all(tk.t >= 40.0 for tk, _a in roam)
     levels = [a.level for _tk, a in roam]
     assert Level.WARNING in levels and Level.DANGER in levels
-    assert said_texts(ticks) == ["Ahri arrive par la rivière !", "Gank ! Ahri, recule !"]
+    assert said_texts(ticks) == ["Ahri arrive par la jungle ennemie !", "Gank ! Ahri, recule !"]
 
 
 def test_three_enemies_converging_merged_into_one_sentence() -> None:
@@ -533,17 +534,15 @@ def test_jungler_spotted_only_on_side_change_and_every_45s() -> None:
         if 35.0 <= t < 38.0:
             return {"LeeSin": (0.70, 0.70)}                  # bot side, but only 35 s later
         if 70.0 <= t < 73.0:
-            return {"LeeSin": (0.30, 0.35)}                  # top side again, 35 s later
-        if 110.0 <= t < 113.0:
-            return {"LeeSin": (0.30, 0.34)}                  # top side, same as last seen
-        if 150.0 <= t:
-            return {"LeeSin": (0.70, 0.70)}                  # bot side, > 45 s -> said
+            return {"LeeSin": (0.72, 0.70)}                  # bot side, same as last seen
+        if 110.0 <= t:
+            return {"LeeSin": (0.30, 0.35)}                  # top side, > 45 s -> said
         return {}
 
-    ticks = simulate(155.0, enemies)
+    ticks = simulate(115.0, enemies)
     spotted = [(round(tk.t), a.text) for tk, a in raw_of(ticks, AlertKind.JUNGLER_SPOTTED)]
     assert spotted == [(0, "Jungler ennemi vu dans la jungle ennemie du haut."),
-                       (150, "Jungler ennemi vu dans la rivière du bas.")]
+                       (110, "Jungler ennemi vu dans la rivière du haut.")]
     assert said_texts(ticks, {AlertKind.JUNGLER_SPOTTED}) == [s for _t, s in spotted]
     assert gank_raw(ticks) == []
 
