@@ -1139,6 +1139,9 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
     fallbacks.append((10, "kda", "info",
                       f"K/D/A {summary.get('kills', 0)}/{summary.get('deaths', 0)}/{summary.get('assists', 0)} "
                       f"(ratio {fmt_num(summary.get('kda_ratio'), 1)}) : chaque mort évitée compte plus qu'un kill."))
+    fallbacks.append((7, "river_ward", "info",
+                      "Pose une balise dans la rivière vers 2:45 : les premiers ganks arrivent souvent "
+                      "entre 3:00 et 4:00."))
     fallbacks.append((5, "minimap", "info",
                       "Regarde la minimap toutes les 5 secondes : les annonces vocales complètent, "
                       "mais ne remplacent pas, ta vigilance."))

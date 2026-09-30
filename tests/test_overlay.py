@@ -112,7 +112,7 @@ def test_radar_placement_wrapper_and_no_minimap():
 # ---------------------------------------------------------------------------- HUD placement
 def test_hud_width_and_flash_thickness():
     assert ov.hud_width(SCREEN) == 340
-    assert ov.hud_width((0, 0, 3840, 2160)) == 620 or ov.hud_width((0, 0, 3840, 2160)) == 680 * 0 + 620
+    assert ov.hud_width((0, 0, 3840, 2160)) == ov.HUD_MAX_WIDTH
     assert ov.hud_width((0, 0, 1280, 720)) == ov.HUD_MIN_WIDTH
     assert ov.flash_thickness(SCREEN) == 10 and ov.flash_thickness((0, 0, 2560, 1440)) == 13
     assert ov.flash_thickness(None) == 10
@@ -170,6 +170,36 @@ def test_move_mode_frame_makes_everything_grabbable():
 
 
 # ---------------------------------------------------------------------------- platform behaviour
+def test_win32_prototypes_build_with_fake_dlls(monkeypatch):
+    """The ctypes structures / prototypes are declared without error (runs everywhere)."""
+    import ctypes
+
+    class FakeFn:
+        def __call__(self, *a):
+            return 1
+
+    class FakeDll:
+        def __init__(self, *a, **k):
+            self._fns = {}
+
+        def __getattr__(self, name):
+            if name.startswith("_"):
+                raise AttributeError(name)
+            return self._fns.setdefault(name, FakeFn())
+
+    monkeypatch.setattr(ctypes, "WinDLL", FakeDll, raising=False)
+    if not hasattr(ctypes, "WINFUNCTYPE"):
+        monkeypatch.setattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, raising=False)
+    api = ov._Api()
+    assert api.user32.UpdateLayeredWindow.restype is not None
+    assert len(api.user32.CreateWindowExW.argtypes) == 12
+    assert ctypes.sizeof(api.BLENDFUNCTION) == 4
+    if sys.platform == "win32":      # wintypes.LONG / DWORD are 64-bit on Linux
+        assert ctypes.sizeof(api.BITMAPINFOHEADER) == 40
+    assert api.GetWindowLongPtr.restype is ctypes.c_ssize_t
+
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="non-Windows behaviour")
 def test_manager_is_a_clean_noop_off_windows():
     calls = []
