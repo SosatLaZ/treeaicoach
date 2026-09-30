@@ -47,7 +47,7 @@ from treeaicoach import geometry
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from treeaicoach.live_client import GameInfo
-    from treeaicoach.tracker import Track, Tracker
+    from treeaicoach.tracker import Tracker
 
 log = logging.getLogger(__name__)
 

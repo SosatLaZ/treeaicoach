@@ -208,7 +208,8 @@ def test_manager_is_a_clean_noop_off_windows():
     m.start()
     m.apply_config(Cfg(radar_scale=2.0))
     m.set_move_mode(True)
-    assert m.toggle_visible() is False
+    m.set_on_moved(lambda *a: None)
+    assert m.move_mode and m.toggle_visible() is False
     m.stop()
     assert not m.is_running() and calls == []
     with pytest.raises(OSError):

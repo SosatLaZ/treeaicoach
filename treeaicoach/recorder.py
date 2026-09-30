@@ -558,8 +558,8 @@ class GameRecorder:
                 if len(self._my_positions) > MAX_MY_POSITIONS:
                     _decimate(self._my_positions)
         for key, pos in enemies:
-            if key not in self._sightings and len(self._sightings) >= MAX_SIGHTING_KEYS:
-                key = OVERFLOW_KEY
+            if key not in self._sightings and len(self._sightings) >= MAX_SIGHTING_KEYS - 1:
+                key = OVERFLOW_KEY          # the overflow list is the 16th (last) key
             last = self._last_sight_gt.get(key, -math.inf)
             if gt < last - 5.0:
                 last = -math.inf

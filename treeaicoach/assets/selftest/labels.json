@@ -1,0 +1,379 @@
+[
+ {
+  "file": "selftest_01.png",
+  "size": 224,
+  "icons": [
+   {
+    "u": 0.24432,
+    "v": 0.75516,
+    "r": 0.04122,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.35735,
+    "v": 0.86312,
+    "r": 0.04073,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.43413,
+    "v": 0.55945,
+    "r": 0.04039,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.28082,
+    "v": 0.60102,
+    "r": 0.04044,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.23073,
+    "v": 0.37084,
+    "r": 0.04,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.21704,
+    "v": 0.28531,
+    "r": 0.03917,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.556,
+    "v": 0.93951,
+    "r": 0.03985,
+    "cls": "enemy",
+    "cls_valid": true
+   }
+  ]
+ },
+ {
+  "file": "selftest_02.png",
+  "size": 240,
+  "icons": [
+   {
+    "u": 0.62574,
+    "v": 0.05171,
+    "r": 0.03699,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.63548,
+    "v": 0.6532,
+    "r": 0.03724,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.46876,
+    "v": 0.443,
+    "r": 0.03713,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.39493,
+    "v": 0.40258,
+    "r": 0.03723,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.55203,
+    "v": 0.82792,
+    "r": 0.03888,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.31842,
+    "v": 0.50524,
+    "r": 0.03673,
+    "cls": "enemy",
+    "cls_valid": true
+   }
+  ]
+ },
+ {
+  "file": "selftest_03.png",
+  "size": 256,
+  "icons": [
+   {
+    "u": 0.92794,
+    "v": 0.64691,
+    "r": 0.04216,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.6977,
+    "v": 0.31229,
+    "r": 0.04387,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.18721,
+    "v": 0.18673,
+    "r": 0.04232,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.42845,
+    "v": 0.17938,
+    "r": 0.04327,
+    "cls": "enemy",
+    "cls_valid": true
+   }
+  ]
+ },
+ {
+  "file": "selftest_04.png",
+  "size": 272,
+  "icons": [
+   {
+    "u": 0.67056,
+    "v": 0.63825,
+    "r": 0.0501,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.49166,
+    "v": 0.48807,
+    "r": 0.04961,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.26059,
+    "v": 0.22992,
+    "r": 0.05108,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.90431,
+    "v": 0.70509,
+    "r": 0.05165,
+    "cls": "ally",
+    "cls_valid": true
+   }
+  ]
+ },
+ {
+  "file": "selftest_05.png",
+  "size": 288,
+  "icons": [
+   {
+    "u": 0.16358,
+    "v": 0.23424,
+    "r": 0.03991,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.93535,
+    "v": 0.18695,
+    "r": 0.0413,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.92382,
+    "v": 0.73222,
+    "r": 0.03985,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.42049,
+    "v": 0.46077,
+    "r": 0.04128,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.84415,
+    "v": 0.10418,
+    "r": 0.03949,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.09805,
+    "v": 0.61148,
+    "r": 0.03976,
+    "cls": "ally",
+    "cls_valid": true
+   }
+  ]
+ },
+ {
+  "file": "selftest_06.png",
+  "size": 312,
+  "icons": [
+   {
+    "u": 0.59956,
+    "v": 0.06385,
+    "r": 0.03677,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.53977,
+    "v": 0.43808,
+    "r": 0.03619,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.25065,
+    "v": 0.56964,
+    "r": 0.0371,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.08677,
+    "v": 0.26533,
+    "r": 0.03662,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.92677,
+    "v": 0.10286,
+    "r": 0.03641,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.63132,
+    "v": 0.23435,
+    "r": 0.03636,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.67134,
+    "v": 0.30861,
+    "r": 0.03536,
+    "cls": "ally",
+    "cls_valid": true
+   }
+  ]
+ },
+ {
+  "file": "selftest_07.png",
+  "size": 336,
+  "icons": [
+   {
+    "u": 0.62186,
+    "v": 0.74243,
+    "r": 0.052,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.74581,
+    "v": 0.24281,
+    "r": 0.05302,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.69159,
+    "v": 0.09828,
+    "r": 0.05236,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.92159,
+    "v": 0.52855,
+    "r": 0.05245,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.70784,
+    "v": 0.63278,
+    "r": 0.05331,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.90598,
+    "v": 0.721,
+    "r": 0.05445,
+    "cls": "ally",
+    "cls_valid": true
+   }
+  ]
+ },
+ {
+  "file": "selftest_08.png",
+  "size": 360,
+  "icons": [
+   {
+    "u": 0.92352,
+    "v": 0.27731,
+    "r": 0.04854,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.22078,
+    "v": 0.89225,
+    "r": 0.0488,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.78502,
+    "v": 0.52779,
+    "r": 0.04968,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.0867,
+    "v": 0.39714,
+    "r": 0.04897,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.37814,
+    "v": 0.24191,
+    "r": 0.05088,
+    "cls": "ally",
+    "cls_valid": true
+   },
+   {
+    "u": 0.24047,
+    "v": 0.52964,
+    "r": 0.0504,
+    "cls": "enemy",
+    "cls_valid": true
+   },
+   {
+    "u": 0.63049,
+    "v": 0.46885,
+    "r": 0.05096,
+    "cls": "ally",
+    "cls_valid": true
+   }
+  ]
+ }
+]

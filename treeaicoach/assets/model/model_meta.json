@@ -1,0 +1,46 @@
+{
+ "input_size": 256,
+ "stride": 4,
+ "classes": [
+  "enemy",
+  "ally",
+  "self"
+ ],
+ "threshold": 0.3,
+ "version": "minimapnet-quick-2min-2026-09-30",
+ "metrics": {
+  "threshold": 0.3,
+  "images": 150,
+  "gt": 848,
+  "det": 812,
+  "tp": 642,
+  "precision": 0.79064,
+  "recall": 0.75708,
+  "f1": 0.77349,
+  "cls_acc": 0.92177,
+  "pos_err_pct": 1.03851,
+  "r_err_pct": 0.5815,
+  "per_class": {
+   "enemy": {
+    "gt": 270,
+    "recall": 0.68889,
+    "precision": 0.71481,
+    "cls_acc": 0.85484
+   },
+   "ally": {
+    "gt": 499,
+    "recall": 0.80561,
+    "precision": 0.82841,
+    "cls_acc": 0.95274
+   }
+  }
+ },
+ "train_step": 103,
+ "params": 358207,
+ "weights": "ema",
+ "opset": 17,
+ "exported": "2026-09-30",
+ "onnx_max_abs_diff": 2.15e-06,
+ "size_bytes": 1445378,
+ "note": "class 'self' is not learned visually (self icons are trained as 'ally')"
+}

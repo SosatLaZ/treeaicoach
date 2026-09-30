@@ -811,6 +811,10 @@ class OverlayManager:
             self._cfg = copy.copy(cfg)
             self._custom.clear()
 
+    def set_on_moved(self, callback: Callable[[str, int, int], None] | None) -> None:
+        """Set / replace the ``on_moved(name, x, y)`` callback (called from the overlay thread)."""
+        self._on_moved_cb = callback
+
     def set_move_mode(self, on: bool) -> None:
         """Move mode: windows become draggable (and shown with sample content out of game)."""
         with self._lock:

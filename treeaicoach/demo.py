@@ -307,6 +307,11 @@ class DemoSource:
             pings=[], camera=camera, camps=True, my_team=MY_TEAM,
         )
 
+    def render_at(self, s: float) -> np.ndarray:
+        """Minimap (BGR) of scenario second ``s`` (no clock involved)."""
+        scene = self.scene(s)
+        return self._renderer.render(scene)  # type: ignore[union-attr]
+
     # ------------------------------------------------------------------ game info
     def _player(self, ch: DemoChampion, s: float, dead: bool = False) -> PlayerInfo:
         spells = ("Châtiment", "Saut éclair") if ch.smite else ("Saut éclair", "Téléportation")
