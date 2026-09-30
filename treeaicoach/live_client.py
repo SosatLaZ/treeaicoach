@@ -39,6 +39,9 @@ _POSITION_ALIASES = {
 #: Normalized (accent-less, case-folded, alphanumeric) display names of Smite and its upgrades.
 _SMITE_WORDS = ("smite", "chatiment")
 SUMMONERS_RIFT_MAP_NUMBER = 11
+#: Keys of ``PlayerInfo.scores`` (same names as the API's ``scores`` object).
+ZERO_SCORES: dict[str, float] = {"kills": 0, "deaths": 0, "assists": 0, "creepScore": 0, "wardScore": 0.0}
+_warned_unmatched = False
 
 
 @dataclass
@@ -58,6 +61,29 @@ class PlayerInfo:
     has_smite: bool = False
     is_bot: bool = False
     spells: tuple[str, ...] = ()   # summoner spells (localized display names)
+    items: list[int] = field(default_factory=list)            # itemIDs, by inventory slot
+    scores: dict[str, float] = field(default_factory=lambda: dict(ZERO_SCORES))
+    current_gold: float = 0.0      # only known for me (activePlayer.currentGold)
+
+    @property
+    def kills(self) -> int:
+        return int(self.scores.get("kills", 0))
+
+    @property
+    def deaths(self) -> int:
+        return int(self.scores.get("deaths", 0))
+
+    @property
+    def assists(self) -> int:
+        return int(self.scores.get("assists", 0))
+
+    @property
+    def creep_score(self) -> int:
+        return int(self.scores.get("creepScore", 0))
+
+    @property
+    def ward_score(self) -> float:
+        return float(self.scores.get("wardScore", 0.0))
 
 
 @dataclass
@@ -74,6 +100,26 @@ class GameInfo:
     enemies: list[PlayerInfo] = field(default_factory=list)   # (CHAOS when spectating)
     events: list[dict] = field(default_factory=list)
     fetched_at: float = field(default_factory=time.monotonic)
+    current_gold: float = 0.0                  # my gold (activePlayer.currentGold), 0 when spectating
+
+    @property
+    def items(self) -> list[int]:
+        """My itemIDs (empty when spectating)."""
+        return list(self.me.items) if self.me is not None else []
+
+    @property
+    def scores(self) -> dict[str, float]:
+        """My scores: kills, deaths, assists, creepScore, wardScore (zeros when spectating)."""
+        return dict(self.me.scores) if self.me is not None else dict(ZERO_SCORES)
+
+    @property
+    def game_result(self) -> str | None:
+        """``"Win"`` / ``"Lose"`` once the ``GameEnd`` event is present, else ``None``."""
+        for e in reversed(self.events):
+            if isinstance(e, dict) and e.get("EventName") == "GameEnd":
+                res = _str(e.get("Result"))
+                return res or None
+        return None
 
     def enemy_jungler(self) -> PlayerInfo | None:
         """Enemy with Smite (the JUNGLE one if several), else the enemy in position JUNGLE."""
@@ -172,7 +218,7 @@ def _norm_id(x: Any) -> str:
     s = _str(x)
     if not s:
         return ""
-    s = unicodedata.normalize("NFC", s).replace(" ", " ").replace("​", "")
+    s = unicodedata.normalize("NFC", s).replace("\u00a0", " ").replace("\u200b", "")
     return " ".join(s.split()).casefold()
 
 
@@ -258,7 +304,32 @@ def _parse_player(d: dict) -> PlayerInfo | None:
         has_smite=any(_spell_is_smite(s) for s in spell_list),
         is_bot=_bool(d.get("isBot"), False),
         spells=tuple(_str(s.get("displayName")) for s in spell_list),
+        items=_parse_items(d.get("items")),
+        scores=_parse_scores(d.get("scores")),
     )
+
+
+def _parse_items(items: Any) -> list[int]:
+    """itemIDs sorted by inventory slot (invalid entries skipped)."""
+    if not isinstance(items, list):
+        return []
+    found: list[tuple[int, int]] = []
+    for n, it in enumerate(items):
+        if not isinstance(it, dict):
+            continue
+        item_id = _int(it.get("itemID"), 0)
+        if item_id > 0:
+            found.append((_int(it.get("slot"), 100 + n), item_id))
+    return [item_id for _, item_id in sorted(found, key=lambda x: x[0])]
+
+
+def _parse_scores(scores: Any) -> dict[str, float]:
+    out = dict(ZERO_SCORES)
+    if isinstance(scores, dict):
+        for k in ("kills", "deaths", "assists", "creepScore"):
+            out[k] = max(0, _int(scores.get(k), 0))
+        out["wardScore"] = max(0.0, _float(scores.get("wardScore"), 0.0))
+    return out
 
 
 def _find_me(active: dict | None, raws: list[dict]) -> int | None:
@@ -319,8 +390,15 @@ def _parse(data: Any, now: float | None) -> GameInfo | None:
 
     me_idx = _find_me(active, [d for d, _ in parsed])
     me = parsed[me_idx][1] if me_idx is not None else None
+    current_gold = 0.0
+    if me is not None and active is not None:
+        current_gold = max(0.0, _float(active.get("currentGold"), 0.0))
+        me.current_gold = current_gold
     if active is not None and me is None:
-        log.debug("Local player not found in allPlayers; using ORDER as allies")
+        global _warned_unmatched
+        if not _warned_unmatched:
+            _warned_unmatched = True
+            log.warning("Local player (activePlayer) not found in allPlayers; using ORDER as allies")
     players = [p for _, p in parsed]
     if me is not None:
         allies = [p for p in players if p is not me and p.team == me.team]
@@ -348,6 +426,7 @@ def _parse(data: Any, now: float | None) -> GameInfo | None:
         enemies=enemies,
         events=events,
         fetched_at=t_now if math.isfinite(t_now) else time.monotonic(),
+        current_gold=current_gold,
     )
 
 

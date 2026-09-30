@@ -309,16 +309,17 @@ class ChampionDB:
         if alias_or_raw is None:
             return None
         try:
-            if isinstance(alias_or_raw, int) and not isinstance(alias_or_raw, bool):
-                return self._by_key.get(alias_or_raw)
-            s = alias_from_raw(str(alias_or_raw))
-            k = normalize_name(s)
-            if not k:
+            if isinstance(alias_or_raw, bool):
                 return None
-            entry = self._by_norm.get(k)
-            if entry is None and k.isdigit():
-                entry = self._by_key.get(int(k))
-            return entry
+            if isinstance(alias_or_raw, (int, np.integer)):
+                return self._by_key.get(int(alias_or_raw))
+            if not isinstance(alias_or_raw, str):
+                return None
+            s = alias_from_raw(alias_or_raw)
+            if s.isdigit():
+                return self._by_key.get(int(s))
+            k = normalize_name(s)
+            return self._by_norm.get(k) if k else None
         except Exception:
             log.debug("ChampionDB.get(%r) failed", alias_or_raw, exc_info=True)
             return None

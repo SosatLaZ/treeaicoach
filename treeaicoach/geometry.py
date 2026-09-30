@@ -251,6 +251,14 @@ def _get_lut() -> np.ndarray:
         return _lut
 
 
+def warm_up() -> None:
+    """Build the zone lookup table now (~0.3 s once) instead of on the first classify_zone call."""
+    try:
+        _get_lut()
+    except Exception:  # pragma: no cover - defensive
+        log.exception("Cannot build the zone lookup table")
+
+
 def reset_zone_cache() -> None:
     """Drop the lookup table (call after changing a shape constant at runtime)."""
     global _lut
@@ -408,6 +416,43 @@ def zone_label_fr(zone: Zone | None, my_team: str | None) -> str:
     if team is None:
         return f"dans la base {_COLOR_FR[owner]}"
     return "dans ta base" if team == owner else "dans la base ennemie"
+
+
+_FIXED_NAMES: dict[Zone, str] = {
+    Zone.TOP_LANE: "voie du haut",
+    Zone.MID_LANE: "voie du milieu",
+    Zone.BOT_LANE: "voie du bas",
+    Zone.TOP_RIVER: "rivière du haut",
+    Zone.BOT_RIVER: "rivière du bas",
+}
+
+
+def zone_name_fr(zone: Zone | None, my_team: str | None) -> str:
+    """Short French noun phrase for on-screen text, e.g. ``"rivière du haut"``, ``"ta jungle du bas"``.
+
+    Same rules as :func:`zone_label_fr` but without the preposition (for HUD lines such as
+    "vu il y a 23 s, rivière du haut"). Unknown zones give ``""``.
+    """
+    z = _as_zone(zone)
+    if z is None:
+        return ""
+    fixed = _FIXED_NAMES.get(z)
+    if fixed is not None:
+        return fixed
+    team = normalize_team(my_team)
+    if z in _JUNGLE_PART:
+        owner, part = _JUNGLE_PART[z]
+        noun = "jungle"
+    else:
+        owner, part = ("ORDER" if z == Zone.BLUE_BASE else "CHAOS"), ""
+        noun = "base"
+    if team is None:
+        text = f"{noun} {_COLOR_FR[owner]}"
+    elif team == owner:
+        text = f"ta {noun}"
+    else:
+        text = f"{noun} ennemie"
+    return f"{text} {part}" if part else text
 
 
 def dist(a: tuple[float, float], b: tuple[float, float]) -> float:

@@ -1,0 +1,1131 @@
+{
+  "activePlayer": {
+    "abilities": {
+      "E": {
+        "abilityLevel": 3,
+        "displayName": "Jugement",
+        "id": "GarenE",
+        "rawDescription": "GeneratedTip_Spell_GarenE_Description",
+        "rawDisplayName": "GeneratedTip_Spell_GarenE_DisplayName"
+      },
+      "Passive": {
+        "displayName": "Persévérance",
+        "id": "GarenPassive",
+        "rawDescription": "GeneratedTip_Passive_GarenPassive_Description",
+        "rawDisplayName": "GeneratedTip_Passive_GarenPassive_DisplayName"
+      },
+      "Q": {
+        "abilityLevel": 4,
+        "displayName": "Coup décisif",
+        "id": "GarenQ",
+        "rawDescription": "GeneratedTip_Spell_GarenQ_Description",
+        "rawDisplayName": "GeneratedTip_Spell_GarenQ_DisplayName"
+      },
+      "R": {
+        "abilityLevel": 1,
+        "displayName": "Justice de Demacia",
+        "id": "GarenR",
+        "rawDescription": "GeneratedTip_Spell_GarenR_Description",
+        "rawDisplayName": "GeneratedTip_Spell_GarenR_DisplayName"
+      },
+      "W": {
+        "abilityLevel": 1,
+        "displayName": "Courage",
+        "id": "GarenW",
+        "rawDescription": "GeneratedTip_Spell_GarenW_Description",
+        "rawDisplayName": "GeneratedTip_Spell_GarenW_DisplayName"
+      }
+    },
+    "championStats": {
+      "abilityHaste": 0.0,
+      "abilityPower": 0.0,
+      "armor": 78.4,
+      "armorPenetrationFlat": 0.0,
+      "armorPenetrationPercent": 1.0,
+      "attackDamage": 142.3,
+      "attackRange": 175.0,
+      "attackSpeed": 0.83,
+      "bonusArmorPenetrationPercent": 1.0,
+      "bonusMagicPenetrationPercent": 1.0,
+      "critChance": 0.0,
+      "critDamage": 175.0,
+      "currentHealth": 1143.2,
+      "healShieldPower": 0.0,
+      "healthRegenRate": 3.1,
+      "lifeSteal": 0.0,
+      "magicLethality": 0.0,
+      "magicPenetrationFlat": 0.0,
+      "magicPenetrationPercent": 1.0,
+      "magicResist": 49.6,
+      "maxHealth": 1512.0,
+      "moveSpeed": 385.0,
+      "omnivamp": 0.0,
+      "physicalLethality": 0.0,
+      "physicalVamp": 0.0,
+      "resourceMax": 0.0,
+      "resourceRegenRate": 0.0,
+      "resourceType": "NONE",
+      "resourceValue": 0.0,
+      "spellVamp": 0.0,
+      "tenacity": 0.0
+    },
+    "currentGold": 1234.56,
+    "fullRunes": {
+      "generalRunes": [
+        {
+          "displayName": "Conquérant",
+          "id": 8010,
+          "rawDescription": "perk_tooltip_Conqueror",
+          "rawDisplayName": "perk_displayname_Conqueror"
+        },
+        {
+          "displayName": "Triomphe",
+          "id": 9111,
+          "rawDescription": "perk_tooltip_Triumph",
+          "rawDisplayName": "perk_displayname_Triumph"
+        },
+        {
+          "displayName": "Légende : ténacité",
+          "id": 9105,
+          "rawDescription": "perk_tooltip_LegendTenacity",
+          "rawDisplayName": "perk_displayname_LegendTenacity"
+        },
+        {
+          "displayName": "Baroud d'honneur",
+          "id": 8299,
+          "rawDescription": "perk_tooltip_LastStand",
+          "rawDisplayName": "perk_displayname_LastStand"
+        },
+        {
+          "displayName": "Second souffle",
+          "id": 8444,
+          "rawDescription": "perk_tooltip_SecondWind",
+          "rawDisplayName": "perk_displayname_SecondWind"
+        },
+        {
+          "displayName": "Inébranlable",
+          "id": 8242,
+          "rawDescription": "perk_tooltip_Unflinching",
+          "rawDisplayName": "perk_displayname_Unflinching"
+        }
+      ],
+      "keystone": {
+        "displayName": "Conquérant",
+        "id": 8010,
+        "rawDescription": "perk_tooltip_Conqueror",
+        "rawDisplayName": "perk_displayname_Conqueror"
+      },
+      "primaryRuneTree": {
+        "displayName": "Précision",
+        "id": 8000,
+        "rawDescription": "perkstyle_tooltip_8000",
+        "rawDisplayName": "perkstyle_displayname_8000"
+      },
+      "secondaryRuneTree": {
+        "displayName": "Volonté",
+        "id": 8400,
+        "rawDescription": "perkstyle_tooltip_8400",
+        "rawDisplayName": "perkstyle_displayname_8400"
+      },
+      "statRunes": [
+        {
+          "id": 5005,
+          "rawDescription": "perk_tooltip_StatModAttackSpeed"
+        },
+        {
+          "id": 5008,
+          "rawDescription": "perk_tooltip_StatModAdaptive"
+        },
+        {
+          "id": 5001,
+          "rawDescription": "perk_tooltip_StatModHealthPlus"
+        }
+      ]
+    },
+    "level": 9,
+    "riotId": "Sylvain#EUW",
+    "riotIdGameName": "Sylvain",
+    "riotIdTagLine": "EUW",
+    "summonerName": "Sylvain#EUW",
+    "teamRelativeColors": true
+  },
+  "allPlayers": [
+    {
+      "championName": "Garen",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Lame de Doran",
+          "itemID": 1055,
+          "price": 450,
+          "rawDescription": "GeneratedTip_Item_1055_Description",
+          "rawDisplayName": "Item_1055_Name",
+          "slot": 0
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Couperet noir",
+          "itemID": 3071,
+          "price": 3000,
+          "rawDescription": "GeneratedTip_Item_3071_Description",
+          "rawDisplayName": "Item_3071_Name",
+          "slot": 1
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Coques en acier renforcé",
+          "itemID": 3047,
+          "price": 1200,
+          "rawDescription": "GeneratedTip_Item_3047_Description",
+          "rawDisplayName": "Item_3047_Name",
+          "slot": 2
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Totem de camouflage",
+          "itemID": 3340,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3340_Description",
+          "rawDisplayName": "Item_3340_Name",
+          "slot": 6
+        }
+      ],
+      "level": 9,
+      "position": "TOP",
+      "rawChampionName": "game_character_displayname_Garen",
+      "rawSkinName": "game_character_skin_displayname_Garen_22",
+      "respawnTimer": 0.0,
+      "riotId": "Sylvain#EUW",
+      "riotIdGameName": "Sylvain",
+      "riotIdTagLine": "EUW",
+      "runes": {
+        "keystone": {
+          "displayName": "Conquérant",
+          "id": 8010,
+          "rawDescription": "perk_tooltip_Conqueror",
+          "rawDisplayName": "perk_displayname_Conqueror"
+        },
+        "primaryRuneTree": {
+          "displayName": "Précision",
+          "id": 8000,
+          "rawDescription": "perkstyle_tooltip_8000",
+          "rawDisplayName": "perkstyle_displayname_8000"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Volonté",
+          "id": 8400,
+          "rawDescription": "perkstyle_tooltip_8400",
+          "rawDisplayName": "perkstyle_displayname_8400"
+        }
+      },
+      "scores": {
+        "assists": 1,
+        "creepScore": 96,
+        "deaths": 1,
+        "kills": 2,
+        "wardScore": 4.21
+      },
+      "skinID": 22,
+      "skinName": "Garen des Royaumes mécha",
+      "summonerName": "Sylvain#EUW",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Téléportation",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerTeleport_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerTeleport_DisplayName"
+        }
+      },
+      "team": "ORDER"
+    },
+    {
+      "championName": "Wukong",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Compagnon de Mosstomper",
+          "itemID": 1103,
+          "price": 450,
+          "rawDescription": "GeneratedTip_Item_1103_Description",
+          "rawDisplayName": "Item_1103_Name",
+          "slot": 0
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Briseur de maléfices",
+          "itemID": 6630,
+          "price": 3300,
+          "rawDescription": "GeneratedTip_Item_6630_Description",
+          "rawDisplayName": "Item_6630_Name",
+          "slot": 1
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Totem de camouflage",
+          "itemID": 3340,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3340_Description",
+          "rawDisplayName": "Item_3340_Name",
+          "slot": 6
+        }
+      ],
+      "level": 8,
+      "position": "JUNGLE",
+      "rawChampionName": "game_character_displayname_MonkeyKing",
+      "rawSkinName": "",
+      "respawnTimer": 0.0,
+      "riotId": "LeBûcheron#1234",
+      "riotIdGameName": "LeBûcheron",
+      "riotIdTagLine": "1234",
+      "runes": {
+        "keystone": {
+          "displayName": "Conquérant",
+          "id": 8010,
+          "rawDescription": "perk_tooltip_Conqueror",
+          "rawDisplayName": "perk_displayname_Conqueror"
+        },
+        "primaryRuneTree": {
+          "displayName": "Précision",
+          "id": 8000,
+          "rawDescription": "perkstyle_tooltip_8000",
+          "rawDisplayName": "perkstyle_displayname_8000"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Volonté",
+          "id": 8400,
+          "rawDescription": "perkstyle_tooltip_8400",
+          "rawDisplayName": "perkstyle_displayname_8400"
+        }
+      },
+      "scores": {
+        "assists": 4,
+        "creepScore": 71,
+        "deaths": 2,
+        "kills": 1,
+        "wardScore": 6.0
+      },
+      "skinID": 0,
+      "skinName": "",
+      "summonerName": "LeBûcheron#1234",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Châtiment déchaîné",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerSmiteAvatarOffensive_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerSmiteAvatarOffensive_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        }
+      },
+      "team": "ORDER"
+    },
+    {
+      "championName": "Ahri",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Anneau de Doran",
+          "itemID": 1056,
+          "price": 400,
+          "rawDescription": "GeneratedTip_Item_1056_Description",
+          "rawDisplayName": "Item_1056_Name",
+          "slot": 0
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Tourment de Luden",
+          "itemID": 6655,
+          "price": 2750,
+          "rawDescription": "GeneratedTip_Item_6655_Description",
+          "rawDisplayName": "Item_6655_Name",
+          "slot": 1
+        },
+        {
+          "canUse": true,
+          "consumable": true,
+          "count": 2,
+          "displayName": "Potion de soins",
+          "itemID": 2003,
+          "price": 50,
+          "rawDescription": "GeneratedTip_Item_2003_Description",
+          "rawDisplayName": "Item_2003_Name",
+          "slot": 2
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Totem de camouflage",
+          "itemID": 3340,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3340_Description",
+          "rawDisplayName": "Item_3340_Name",
+          "slot": 6
+        }
+      ],
+      "level": 10,
+      "position": "MIDDLE",
+      "rawChampionName": "game_character_displayname_Ahri",
+      "rawSkinName": "game_character_skin_displayname_Ahri_27",
+      "respawnTimer": 0.0,
+      "riotId": "Mid Ahri#FR1",
+      "riotIdGameName": "Mid Ahri",
+      "riotIdTagLine": "FR1",
+      "runes": {
+        "keystone": {
+          "displayName": "Électrocution",
+          "id": 8112,
+          "rawDescription": "perk_tooltip_Electrocute",
+          "rawDisplayName": "perk_displayname_Electrocute"
+        },
+        "primaryRuneTree": {
+          "displayName": "Domination",
+          "id": 8100,
+          "rawDescription": "perkstyle_tooltip_8100",
+          "rawDisplayName": "perkstyle_displayname_8100"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Inspiration",
+          "id": 8300,
+          "rawDescription": "perkstyle_tooltip_8300",
+          "rawDisplayName": "perkstyle_displayname_8300"
+        }
+      },
+      "scores": {
+        "assists": 2,
+        "creepScore": 108,
+        "deaths": 0,
+        "kills": 3,
+        "wardScore": 3.5
+      },
+      "skinID": 27,
+      "skinName": "Ahri Gardienne des étoiles",
+      "summonerName": "Mid Ahri#FR1",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Embrasement",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerDot_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerDot_DisplayName"
+        }
+      },
+      "team": "ORDER"
+    },
+    {
+      "championName": "Kai'Sa",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Lame de Doran",
+          "itemID": 1055,
+          "price": 450,
+          "rawDescription": "GeneratedTip_Item_1055_Description",
+          "rawDisplayName": "Item_1055_Name",
+          "slot": 0
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Lame enragée de Guinsoo",
+          "itemID": 3124,
+          "price": 3000,
+          "rawDescription": "GeneratedTip_Item_3124_Description",
+          "rawDisplayName": "Item_3124_Name",
+          "slot": 1
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Totem de camouflage",
+          "itemID": 3340,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3340_Description",
+          "rawDisplayName": "Item_3340_Name",
+          "slot": 6
+        }
+      ],
+      "level": 8,
+      "position": "BOTTOM",
+      "rawChampionName": "game_character_displayname_Kaisa",
+      "rawSkinName": "",
+      "respawnTimer": 0.0,
+      "riotId": "Kai Sa#EUW",
+      "riotIdGameName": "Kai Sa",
+      "riotIdTagLine": "EUW",
+      "runes": {
+        "keystone": {
+          "displayName": "Tempo mortel",
+          "id": 8008,
+          "rawDescription": "perk_tooltip_LethalTempo",
+          "rawDisplayName": "perk_displayname_LethalTempo"
+        },
+        "primaryRuneTree": {
+          "displayName": "Précision",
+          "id": 8000,
+          "rawDescription": "perkstyle_tooltip_8000",
+          "rawDisplayName": "perkstyle_displayname_8000"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Domination",
+          "id": 8100,
+          "rawDescription": "perkstyle_tooltip_8100",
+          "rawDisplayName": "perkstyle_displayname_8100"
+        }
+      },
+      "scores": {
+        "assists": 3,
+        "creepScore": 102,
+        "deaths": 1,
+        "kills": 1,
+        "wardScore": 5.0
+      },
+      "skinID": 0,
+      "skinName": "",
+      "summonerName": "Kai Sa#EUW",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Soins",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerHeal_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerHeal_DisplayName"
+        }
+      },
+      "team": "ORDER"
+    },
+    {
+      "championName": "Nunu et Willump",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Pioche solsticienne",
+          "itemID": 3876,
+          "price": 400,
+          "rawDescription": "GeneratedTip_Item_3876_Description",
+          "rawDisplayName": "Item_3876_Name",
+          "slot": 0
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Lentille de l'oracle",
+          "itemID": 3364,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3364_Description",
+          "rawDisplayName": "Item_3364_Name",
+          "slot": 6
+        }
+      ],
+      "level": 7,
+      "position": "UTILITY",
+      "rawChampionName": "game_character_displayname_Nunu",
+      "rawSkinName": "",
+      "respawnTimer": 0.0,
+      "riotId": "Soutien#EUW",
+      "riotIdGameName": "Soutien",
+      "riotIdTagLine": "EUW",
+      "runes": {
+        "keystone": {
+          "displayName": "Gardien",
+          "id": 8465,
+          "rawDescription": "perk_tooltip_Guardian",
+          "rawDisplayName": "perk_displayname_Guardian"
+        },
+        "primaryRuneTree": {
+          "displayName": "Volonté",
+          "id": 8400,
+          "rawDescription": "perkstyle_tooltip_8400",
+          "rawDisplayName": "perkstyle_displayname_8400"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Inspiration",
+          "id": 8300,
+          "rawDescription": "perkstyle_tooltip_8300",
+          "rawDisplayName": "perkstyle_displayname_8300"
+        }
+      },
+      "scores": {
+        "assists": 6,
+        "creepScore": 14,
+        "deaths": 2,
+        "kills": 0,
+        "wardScore": 22.75
+      },
+      "skinID": 0,
+      "skinName": "",
+      "summonerName": "Soutien#EUW",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Fatigue",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerExhaust_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerExhaust_DisplayName"
+        }
+      },
+      "team": "ORDER"
+    },
+    {
+      "championName": "Darius",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Bouclier de Doran",
+          "itemID": 1054,
+          "price": 450,
+          "rawDescription": "GeneratedTip_Item_1054_Description",
+          "rawDisplayName": "Item_1054_Name",
+          "slot": 0
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Poussée d'épines",
+          "itemID": 6631,
+          "price": 3300,
+          "rawDescription": "GeneratedTip_Item_6631_Description",
+          "rawDisplayName": "Item_6631_Name",
+          "slot": 1
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Totem de camouflage",
+          "itemID": 3340,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3340_Description",
+          "rawDisplayName": "Item_3340_Name",
+          "slot": 6
+        }
+      ],
+      "level": 10,
+      "position": "TOP",
+      "rawChampionName": "game_character_displayname_Darius",
+      "rawSkinName": "",
+      "respawnTimer": 0.0,
+      "riotId": "Darius Main#EUW",
+      "riotIdGameName": "Darius Main",
+      "riotIdTagLine": "EUW",
+      "runes": {
+        "keystone": {
+          "displayName": "Conquérant",
+          "id": 8010,
+          "rawDescription": "perk_tooltip_Conqueror",
+          "rawDisplayName": "perk_displayname_Conqueror"
+        },
+        "primaryRuneTree": {
+          "displayName": "Précision",
+          "id": 8000,
+          "rawDescription": "perkstyle_tooltip_8000",
+          "rawDisplayName": "perkstyle_displayname_8000"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Volonté",
+          "id": 8400,
+          "rawDescription": "perkstyle_tooltip_8400",
+          "rawDisplayName": "perkstyle_displayname_8400"
+        }
+      },
+      "scores": {
+        "assists": 1,
+        "creepScore": 110,
+        "deaths": 2,
+        "kills": 3,
+        "wardScore": 3.0
+      },
+      "skinID": 0,
+      "skinName": "",
+      "summonerName": "Darius Main#EUW",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Téléportation",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerTeleport_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerTeleport_DisplayName"
+        }
+      },
+      "team": "CHAOS"
+    },
+    {
+      "championName": "Lee Sin",
+      "isBot": false,
+      "isDead": true,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Compagnon de Scorchclaw",
+          "itemID": 1101,
+          "price": 450,
+          "rawDescription": "GeneratedTip_Item_1101_Description",
+          "rawDisplayName": "Item_1101_Name",
+          "slot": 0
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Eclipse",
+          "itemID": 6692,
+          "price": 2800,
+          "rawDescription": "GeneratedTip_Item_6692_Description",
+          "rawDisplayName": "Item_6692_Name",
+          "slot": 1
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Totem de camouflage",
+          "itemID": 3340,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3340_Description",
+          "rawDisplayName": "Item_3340_Name",
+          "slot": 6
+        }
+      ],
+      "level": 9,
+      "position": "JUNGLE",
+      "rawChampionName": "game_character_displayname_LeeSin",
+      "rawSkinName": "game_character_skin_displayname_LeeSin_11",
+      "respawnTimer": 17.5,
+      "riotId": "Jungle Diff#KR1",
+      "riotIdGameName": "Jungle Diff",
+      "riotIdTagLine": "KR1",
+      "runes": {
+        "keystone": {
+          "displayName": "Conquérant",
+          "id": 8010,
+          "rawDescription": "perk_tooltip_Conqueror",
+          "rawDisplayName": "perk_displayname_Conqueror"
+        },
+        "primaryRuneTree": {
+          "displayName": "Précision",
+          "id": 8000,
+          "rawDescription": "perkstyle_tooltip_8000",
+          "rawDisplayName": "perkstyle_displayname_8000"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Volonté",
+          "id": 8400,
+          "rawDescription": "perkstyle_tooltip_8400",
+          "rawDisplayName": "perkstyle_displayname_8400"
+        }
+      },
+      "scores": {
+        "assists": 2,
+        "creepScore": 84,
+        "deaths": 1,
+        "kills": 4,
+        "wardScore": 8.0
+      },
+      "skinID": 11,
+      "skinName": "Lee Sin Poing du dragon",
+      "summonerName": "Jungle Diff#KR1",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Châtiment déchaîné",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerSmiteAvatarOffensive_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerSmiteAvatarOffensive_DisplayName"
+        }
+      },
+      "team": "CHAOS"
+    },
+    {
+      "championName": "K'Santé",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Bouclier de Doran",
+          "itemID": 1054,
+          "price": 450,
+          "rawDescription": "GeneratedTip_Item_1054_Description",
+          "rawDisplayName": "Item_1054_Name",
+          "slot": 0
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Cape solaire",
+          "itemID": 3068,
+          "price": 2700,
+          "rawDescription": "GeneratedTip_Item_3068_Description",
+          "rawDisplayName": "Item_3068_Name",
+          "slot": 1
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Totem de camouflage",
+          "itemID": 3340,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3340_Description",
+          "rawDisplayName": "Item_3340_Name",
+          "slot": 6
+        }
+      ],
+      "level": 9,
+      "position": "MIDDLE",
+      "rawChampionName": "game_character_displayname_KSante",
+      "rawSkinName": "",
+      "respawnTimer": 0.0,
+      "riotId": "Tank Mid#EUW",
+      "riotIdGameName": "Tank Mid",
+      "riotIdTagLine": "EUW",
+      "runes": {
+        "keystone": {
+          "displayName": "Conquérant",
+          "id": 8010,
+          "rawDescription": "perk_tooltip_Conqueror",
+          "rawDisplayName": "perk_displayname_Conqueror"
+        },
+        "primaryRuneTree": {
+          "displayName": "Précision",
+          "id": 8000,
+          "rawDescription": "perkstyle_tooltip_8000",
+          "rawDisplayName": "perkstyle_displayname_8000"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Volonté",
+          "id": 8400,
+          "rawDescription": "perkstyle_tooltip_8400",
+          "rawDisplayName": "perkstyle_displayname_8400"
+        }
+      },
+      "scores": {
+        "assists": 3,
+        "creepScore": 99,
+        "deaths": 2,
+        "kills": 0,
+        "wardScore": 2.0
+      },
+      "skinID": 0,
+      "skinName": "",
+      "summonerName": "Tank Mid#EUW",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Téléportation",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerTeleport_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerTeleport_DisplayName"
+        }
+      },
+      "team": "CHAOS"
+    },
+    {
+      "championName": "Jinx",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Lame de Doran",
+          "itemID": 1055,
+          "price": 450,
+          "rawDescription": "GeneratedTip_Item_1055_Description",
+          "rawDisplayName": "Item_1055_Name",
+          "slot": 0
+        },
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Lame d'infini",
+          "itemID": 3031,
+          "price": 3450,
+          "rawDescription": "GeneratedTip_Item_3031_Description",
+          "rawDisplayName": "Item_3031_Name",
+          "slot": 1
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Totem de camouflage",
+          "itemID": 3340,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3340_Description",
+          "rawDisplayName": "Item_3340_Name",
+          "slot": 6
+        }
+      ],
+      "level": 8,
+      "position": "BOTTOM",
+      "rawChampionName": "game_character_displayname_Jinx",
+      "rawSkinName": "",
+      "respawnTimer": 0.0,
+      "riotId": "Jinx Bot#EUW",
+      "riotIdGameName": "Jinx Bot",
+      "riotIdTagLine": "EUW",
+      "runes": {
+        "keystone": {
+          "displayName": "Tempo mortel",
+          "id": 8008,
+          "rawDescription": "perk_tooltip_LethalTempo",
+          "rawDisplayName": "perk_displayname_LethalTempo"
+        },
+        "primaryRuneTree": {
+          "displayName": "Précision",
+          "id": 8000,
+          "rawDescription": "perkstyle_tooltip_8000",
+          "rawDisplayName": "perkstyle_displayname_8000"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Domination",
+          "id": 8100,
+          "rawDescription": "perkstyle_tooltip_8100",
+          "rawDisplayName": "perkstyle_displayname_8100"
+        }
+      },
+      "scores": {
+        "assists": 1,
+        "creepScore": 98,
+        "deaths": 3,
+        "kills": 1,
+        "wardScore": 4.0
+      },
+      "skinID": 0,
+      "skinName": "",
+      "summonerName": "Jinx Bot#EUW",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Soins",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerHeal_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerHeal_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        }
+      },
+      "team": "CHAOS"
+    },
+    {
+      "championName": "Thresh",
+      "isBot": false,
+      "isDead": false,
+      "items": [
+        {
+          "canUse": false,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Parbrise",
+          "itemID": 3877,
+          "price": 400,
+          "rawDescription": "GeneratedTip_Item_3877_Description",
+          "rawDisplayName": "Item_3877_Name",
+          "slot": 0
+        },
+        {
+          "canUse": true,
+          "consumable": false,
+          "count": 1,
+          "displayName": "Lentille de l'oracle",
+          "itemID": 3364,
+          "price": 0,
+          "rawDescription": "GeneratedTip_Item_3364_Description",
+          "rawDisplayName": "Item_3364_Name",
+          "slot": 6
+        }
+      ],
+      "level": 7,
+      "position": "UTILITY",
+      "rawChampionName": "game_character_displayname_Thresh",
+      "rawSkinName": "game_character_skin_displayname_Thresh_13",
+      "respawnTimer": 0.0,
+      "riotId": "Lanterne#EUW",
+      "riotIdGameName": "Lanterne",
+      "riotIdTagLine": "EUW",
+      "runes": {
+        "keystone": {
+          "displayName": "Gardien",
+          "id": 8465,
+          "rawDescription": "perk_tooltip_Guardian",
+          "rawDisplayName": "perk_displayname_Guardian"
+        },
+        "primaryRuneTree": {
+          "displayName": "Volonté",
+          "id": 8400,
+          "rawDescription": "perkstyle_tooltip_8400",
+          "rawDisplayName": "perkstyle_displayname_8400"
+        },
+        "secondaryRuneTree": {
+          "displayName": "Inspiration",
+          "id": 8300,
+          "rawDescription": "perkstyle_tooltip_8300",
+          "rawDisplayName": "perkstyle_displayname_8300"
+        }
+      },
+      "scores": {
+        "assists": 5,
+        "creepScore": 12,
+        "deaths": 1,
+        "kills": 0,
+        "wardScore": 25.5
+      },
+      "skinID": 13,
+      "skinName": "Thresh des Jours sombres",
+      "summonerName": "Lanterne#EUW",
+      "summonerSpells": {
+        "summonerSpellOne": {
+          "displayName": "Flash",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerFlash_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"
+        },
+        "summonerSpellTwo": {
+          "displayName": "Barrière",
+          "rawDescription": "GeneratedTip_SummonerSpell_SummonerBarrier_Description",
+          "rawDisplayName": "GeneratedTip_SummonerSpell_SummonerBarrier_DisplayName"
+        }
+      },
+      "team": "CHAOS"
+    }
+  ],
+  "events": {
+    "Events": [
+      {
+        "EventID": 0,
+        "EventName": "GameStart",
+        "EventTime": 0.0217
+      },
+      {
+        "EventID": 1,
+        "EventName": "MinionsSpawning",
+        "EventTime": 65.0151
+      },
+      {
+        "EventID": 2,
+        "EventName": "FirstBlood",
+        "EventTime": 312.47,
+        "Recipient": "Jungle Diff"
+      },
+      {
+        "EventID": 3,
+        "EventName": "ChampionKill",
+        "EventTime": 312.47,
+        "KillerName": "Jungle Diff",
+        "VictimName": "Sylvain",
+        "Assisters": [
+          "Darius Main"
+        ]
+      },
+      {
+        "EventID": 4,
+        "EventName": "DragonKill",
+        "EventTime": 421.73,
+        "DragonType": "Fire",
+        "Stolen": "False",
+        "KillerName": "LeBûcheron",
+        "Assisters": [
+          "Kai Sa",
+          "Soutien"
+        ]
+      },
+      {
+        "EventID": 5,
+        "EventName": "ChampionKill",
+        "EventTime": 736.05,
+        "KillerName": "Sylvain",
+        "VictimName": "Jungle Diff",
+        "Assisters": [
+          "LeBûcheron"
+        ]
+      },
+      {
+        "EventID": 6,
+        "EventName": "TurretKilled",
+        "EventTime": 702.31,
+        "TurretKilled": "Turret_T2_L_03_A",
+        "KillerName": "Kai Sa",
+        "Assisters": []
+      }
+    ]
+  },
+  "gameData": {
+    "gameMode": "CLASSIC",
+    "gameTime": 754.3125,
+    "mapName": "Map11",
+    "mapNumber": 11,
+    "mapTerrain": "Infernal"
+  }
+}
