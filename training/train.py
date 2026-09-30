@@ -5,6 +5,13 @@ Example (from the repository root, see training/README.md for the recommended co
     python -m training.train --steps 12000 --batch 32 --lr 2e-3 --workers 2 --threads 2 \
         --out training/runs/main --val-every 500
 
+    python training/train.py --minutes 2 --out training/runs/quick    # quick wall-clock-bounded run
+
+``--minutes M`` bounds the training loop to M minutes of wall-clock time (the validation-set
+build before the loop and the final validation after it are not counted). The learning-rate
+schedule then follows ``progress = max(step / steps, elapsed / budget)``, so warm-up and
+cosine decay complete within the budget whichever limit is hit first.
+
 Outputs in ``--out``: ``log.csv`` (training + validation rows), ``last.pt`` (resumable, written
 at every validation and at the end / on Ctrl+C), ``best.pt`` (best validation F1, EMA
 weights), ``args.json``. Validation (EMA weights) reports precision / recall / F1 at a
@@ -163,6 +170,16 @@ def lr_factor(step: int, total: int, warmup: int, final: float = 0.02) -> float:
     return final + (1.0 - final) * 0.5 * (1.0 + math.cos(math.pi * t))
 
 
+def lr_factor_progress(progress: float, warmup_frac: float, final: float = 0.02) -> float:
+    """Same shape as :func:`lr_factor` on a training progress fraction in [0, 1]."""
+    p = min(1.0, max(0.0, float(progress)))
+    w = min(0.5, max(0.0, float(warmup_frac)))
+    if w > 0 and p < w:
+        return max(1e-3, p / w)
+    t = (p - w) / max(1e-9, 1.0 - w)
+    return final + (1.0 - final) * 0.5 * (1.0 + math.cos(math.pi * min(1.0, t)))
+
+
 def param_groups(model: nn.Module, weight_decay: float) -> list[dict[str, Any]]:
     """AdamW groups: no weight decay on biases and normalization parameters."""
     decay, no_decay = [], []
@@ -266,6 +283,7 @@ def train(args: argparse.Namespace, generator: SampleFn | None = None,
     ema = ModelEMA(model, args.ema_decay, args.ema_tau)
     opt = torch.optim.AdamW(param_groups(model, args.wd), lr=args.lr, betas=(0.9, 0.99))
     start_step, best_f1, best_thr, best_metrics = 0, -1.0, 0.35, {}
+    start_progress = 0.0
 
     resume = args.resume
     if resume == "auto":
@@ -282,6 +300,7 @@ def train(args: argparse.Namespace, generator: SampleFn | None = None,
         best_f1 = float(ck.get("best_f1", -1.0))
         best_thr = float(ck.get("best_threshold", 0.35))
         best_metrics = ck.get("best_metrics", {})
+        start_progress = float(ck.get("progress", start_step / max(1, args.steps)))
         if "torch_rng" in ck:
             torch.set_rng_state(ck["torch_rng"])
         log.info("Resumed from %s at step %d (best F1 %.4f)", resume, start_step, best_f1)
@@ -299,13 +318,18 @@ def train(args: argparse.Namespace, generator: SampleFn | None = None,
     csv_log = _CsvLog(out / "log.csv")
     batches = make_loader(args, start_step, generator)
     warmup = int(args.warmup * args.steps) if args.warmup < 1 else int(args.warmup)
+    warmup_frac = warmup / max(1, args.steps)
+    budget_s = max(0.0, float(args.minutes)) * 60.0
+    if budget_s > 0:
+        log.info("Wall-clock budget: %.1f min (lr schedule follows time or steps, whichever is ahead)",
+                 args.minutes)
 
     def checkpoint(step: int) -> dict[str, Any]:
         return {"model": model.state_dict(), "ema": ema.state_dict(), "optimizer": opt.state_dict(),
                 "step": step, "best_f1": best_f1, "best_threshold": best_thr,
                 "best_metrics": best_metrics, "model_config": model.config,
                 "classes": list(CLASSES), "input_size": args.input_size, "stride": STRIDE,
-                "args": vars(args), "torch_rng": torch.get_rng_state()}
+                "args": vars(args), "torch_rng": torch.get_rng_state(), "progress": progress}
 
     stop = {"flag": False}
 
@@ -324,12 +348,25 @@ def train(args: argparse.Namespace, generator: SampleFn | None = None,
     run_loss: dict[str, float] = {}
     step = start_step
     samples_per_s = 0.0
+    progress = start_progress
+    out_of_time = False
+
+    def current_progress() -> float:
+        p = step / max(1, args.steps)
+        if budget_s > 0:
+            p = max(p, start_progress + (1.0 - start_progress) * (time.perf_counter() - t_start) / budget_s)
+        return min(1.0, p)
+
     try:
-        while step < args.steps and not stop["flag"]:
+        while step < args.steps and not stop["flag"] and not out_of_time:
             t0 = time.perf_counter()
             x, tg = next(batches)
+            progress = current_progress()
             for g in opt.param_groups:
-                g["lr"] = args.lr * lr_factor(step, args.steps, warmup, args.final_lr)
+                if budget_s > 0:
+                    g["lr"] = args.lr * lr_factor_progress(progress, warmup_frac, args.final_lr)
+                else:
+                    g["lr"] = args.lr * lr_factor(step, args.steps, warmup, args.final_lr)
             outp = model.forward_train(x)
             losses = compute_losses(outp, tg, weights, args.input_size, STRIDE)
             opt.zero_grad(set_to_none=True)
@@ -345,12 +382,18 @@ def train(args: argparse.Namespace, generator: SampleFn | None = None,
                 run_loss[k] = run_loss.get(k, fv) * 0.9 + fv * 0.1
             dt = time.perf_counter() - t0
             ema_step_time = dt if ema_step_time is None else 0.95 * ema_step_time + 0.05 * dt
+            progress = current_progress()
+            if budget_s > 0 and time.perf_counter() - t_start >= budget_s:
+                out_of_time = True
+            last = step == args.steps or out_of_time
 
-            if step % args.log_every == 0 or step == args.steps:
+            if step % args.log_every == 0 or last:
                 now = time.perf_counter()
                 samples_per_s = n_win / max(1e-9, now - t_win)
                 t_win, n_win = now, 0
                 eta = (args.steps - step) * (ema_step_time or 0.0)
+                if budget_s > 0:
+                    eta = min(eta, max(0.0, budget_s - (now - t_start)))
                 lr = opt.param_groups[0]["lr"]
                 print(f"step {step:6d}/{args.steps} | loss {run_loss['total']:.4f} (hm {run_loss['hm']:.3f}"
                       f" off {run_loss['off']:.3f} rad {run_loss['rad']:.3f} cls {run_loss['cls']:.3f})"
@@ -361,7 +404,7 @@ def train(args: argparse.Namespace, generator: SampleFn | None = None,
                                "rad": run_loss["rad"], "cls": run_loss["cls"],
                                "samples_per_s": samples_per_s})
 
-            if valset is not None and len(valset) and (step % args.val_every == 0 or step == args.steps):
+            if valset is not None and len(valset) and (step % args.val_every == 0 or last):
                 tv = time.perf_counter()
                 m = validate(ema.module, valset, args.val_batch)
                 improved = m["f1"] > best_f1
@@ -382,6 +425,8 @@ def train(args: argparse.Namespace, generator: SampleFn | None = None,
     except KeyboardInterrupt:
         print("Interrupted: saving last.pt", flush=True)
     finally:
+        if out_of_time:
+            print(f"Wall-clock budget of {args.minutes:g} min reached at step {step}.", flush=True)
         save_checkpoint(out / "last.pt", checkpoint(step))
         if not (out / "best.pt").is_file():
             save_checkpoint(out / "best.pt", checkpoint(step))
@@ -399,7 +444,7 @@ def train(args: argparse.Namespace, generator: SampleFn | None = None,
     total = time.perf_counter() - t_start
     return {"step": step, "best_f1": best_f1, "best_threshold": best_thr, "best_metrics": best_metrics,
             "last": str(out / "last.pt"), "best": str(out / "best.pt"), "seconds": total,
-            "samples_per_s": samples_per_s, "params": n_params}
+            "samples_per_s": samples_per_s, "params": n_params, "out_of_time": out_of_time}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -408,6 +453,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--steps", type=int, default=12000)
     p.add_argument("--batch", type=int, default=32)
     p.add_argument("--lr", type=float, default=2e-3)
+    p.add_argument("--minutes", type=float, default=0.0,
+                   help="wall-clock budget of the training loop in minutes (0 = none); the lr "
+                        "schedule then completes within the budget")
     p.add_argument("--wd", type=float, default=5e-4, help="AdamW weight decay (conv weights only)")
     p.add_argument("--warmup", type=float, default=0.03, help="warm-up steps (< 1: fraction of --steps)")
     p.add_argument("--final-lr", type=float, default=0.02, help="final lr as a fraction of --lr")

@@ -30,6 +30,7 @@ from training.train import (  # noqa: E402
     compute_losses,
     focal_loss,
     lr_factor,
+    lr_factor_progress,
     train,
 )
 
@@ -197,7 +198,7 @@ def test_focal_loss_and_losses_backward():
     t = {k: torch.from_numpy(v)[None] for k, v in D.encode_targets(lab).items()}
     out = m.forward_train(torch.rand(1, 3, INPUT_SIZE, INPUT_SIZE))
     losses = compute_losses(out, t, {"hm": 1.0, "off": 1.0, "rad": 1.0, "cls": 1.0})
-    assert all(math.isfinite(float(v)) for v in losses.values())
+    assert all(math.isfinite(float(v.detach())) for v in losses.values())
     losses["total"].backward()
     assert m.head_hm.out.weight.grad is not None
     # empty image: no division by zero
@@ -218,6 +219,36 @@ def test_ema_and_schedule():
     assert lr_factor(9, 100, 10) == pytest.approx(1.0)
     assert lr_factor(100, 100, 10, final=0.02) == pytest.approx(0.02)
     assert lr_factor(55, 100, 10) < lr_factor(20, 100, 10)
+    assert lr_factor_progress(0.05, 0.1) == pytest.approx(0.5)
+    assert lr_factor_progress(0.1, 0.1) == pytest.approx(1.0)
+    assert lr_factor_progress(1.0, 0.1, final=0.02) == pytest.approx(0.02)
+    assert lr_factor_progress(2.0, 0.1, final=0.02) == pytest.approx(0.02)   # clamped
+    assert lr_factor_progress(0.0, 0.1) > 0.0
+
+
+def test_wall_clock_budget_stops_training(tmp_path):
+    """--minutes stops the loop early, still validates and writes both checkpoints."""
+
+    def fake(rng, size):
+        img = np.full((size, size, 3), int(rng.integers(0, 255)), np.uint8)
+        return img, [{"u": float(rng.uniform(0.1, 0.9)), "v": 0.5, "r": 0.05, "cls": "ally",
+                      "cls_valid": True}]
+
+    torch.set_num_threads(2)
+    valset = D.generate_validation_set(4, seed=1, generator=fake)
+    out = tmp_path / "budget"
+    args = build_parser().parse_args([
+        "--steps", "100000", "--batch", "2", "--workers", "0", "--threads", "2",
+        "--out", str(out), "--minutes", "0.03", "--val-every", "100000", "--log-every", "1000"])
+    assert args.minutes == pytest.approx(0.03)
+    res = train(args, generator=fake, valset=valset)
+    assert res["out_of_time"] and 0 < res["step"] < 100000
+    assert res["seconds"] < 30
+    assert (out / "last.pt").is_file() and (out / "best.pt").is_file()
+    rows = (out / "log.csv").read_text(encoding="utf-8").splitlines()
+    assert any(r.startswith(f"val,{res['step']},") for r in rows)          # final validation ran
+    ck = torch.load(out / "last.pt", map_location="cpu", weights_only=False)
+    assert ck["progress"] == pytest.approx(1.0)
 
 
 # --------------------------------------------------------------------------------------
