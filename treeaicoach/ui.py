@@ -121,6 +121,7 @@ RADAR_POSITIONS: tuple[tuple[str, str], ...] = (
     ("custom", "Personnalisée"),
 )
 HUD_POSITIONS: tuple[tuple[str, str], ...] = (
+    ("above_minimap", "Au-dessus de la minimap"),
     ("top_left", "En haut à gauche"),
     ("top_right", "En haut à droite"),
     ("left_middle", "Au milieu à gauche"),

@@ -976,6 +976,14 @@ def _render_radar(state: OverlayState, size: int, texture_bgr: np.ndarray | None
         ev = enemies.get(fog.key)
         _draw_fog_label(cv_, fog, ev.icon if ev is not None else None, S)
 
+    # ---- visible allies (small portraits, blue ring)
+    for al in getattr(state, "allies", None) or []:
+        uv = _uv_ok(al.uv) if (al is not None and al.visible and al.uv is not None) else None
+        if uv is None:
+            continue
+        cv_.image(uv[0] * S, uv[1] * S, round_icon_patch(al.icon, icon_d * 0.78, ALLY_BLUE, ring_w,
+                                                         letter=al.name or al.alias or "?"), 0.85)
+
     # ---- me
     if me is not None:
         mx, my = me[0] * S, me[1] * S

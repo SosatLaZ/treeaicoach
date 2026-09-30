@@ -132,26 +132,27 @@ def test_hud_sizes_and_format(states):
         w, h = orr.hud_size(st, 340)
         assert img.shape == (h, w, 4) == (img.shape[0], 340, 4), name
         assert_premultiplied(img)
-        assert 180 < h < 420
+        assert 100 < h < 300
     big = orr.render_hud(states["danger"], 510, now=0.2)
     assert big.shape[1] == 510 and big.shape[0] > orr.render_hud(states["danger"], 340).shape[0]
 
 
-def test_hud_alert_fades_out(states):
+def test_hud_is_compact_and_shows_roles(states):
     st = states["danger"]
-    fresh = orr.OverlayState(**{**st.__dict__, "last_alert": ("Gank ! Lee Sin, recule !", 2, 0.1)})
-    faded = orr.OverlayState(**{**st.__dict__, "last_alert": ("Gank ! Lee Sin, recule !", 2, 3.5)})
-    gone = orr.OverlayState(**{**st.__dict__, "last_alert": ("Gank ! Lee Sin, recule !", 2, 9.0)})
-    a, b, c = (orr.render_hud(s, 340, now=0.0).astype(int) for s in (fresh, faded, gone))
-    assert a.shape == b.shape == c.shape
-    assert np.abs(a - b).sum() > 0 and np.abs(b - c).sum() > 0
+    w, h = orr.hud_size(st, 280)
+    assert w == 280 and h < 200                               # compact
+    no_roles = orr.OverlayState(**{**st.__dict__, "roles": {},
+                                   "enemies": [orr.EnemyView(**{**e.__dict__, "role": None}) for e in st.enemies]})
+    assert orr.hud_size(no_roles, 280) == (w, h)
+    a, b = orr.render_hud(st, 280, now=0.0).astype(int), orr.render_hud(no_roles, 280, now=0.0).astype(int)
+    assert np.abs(a - b).sum() > 0                            # role badges drawn
 
 
 def test_hud_threat_colours():
     imgs = {lvl: orr.render_hud(orr.OverlayState(threat_level=lvl, threat_text=""), 340, now=0.0)
             for lvl in (0, 1, 2)}
     # threat bar row: dominant channel follows green / orange / red
-    rows = {lvl: im[40:70, 40:300].reshape(-1, 4).astype(int).mean(axis=0) for lvl, im in imgs.items()}
+    rows = {lvl: im[14:38, 60:220].reshape(-1, 4).astype(int).mean(axis=0) for lvl, im in imgs.items()}
     assert rows[0][1] > rows[0][2]            # green > red (BGRA)
     assert rows[1][2] > rows[1][0]            # orange: red > blue
     assert rows[2][2] > rows[2][1] + 30       # red
@@ -186,7 +187,98 @@ def test_preview_png_and_demo(tmp_path, states):
     rgba = orr.render_preview(states["safe"], 480)
     assert rgba.shape == (270, 480, 4) and rgba[..., 3].min() == 255
     assert orr.radar_preview_rgba(states["safe"], 128).shape == (128, 128, 4)
-    assert orr.hud_preview_rgba(states["safe"]).shape[1] == 340
+    assert orr.hud_preview_rgba(states["safe"]).shape[1] == 280
+    assert orr.minimap_preview_rgba(states["safe"], 128).shape == (128, 128, 4)
+    radar = orr.render_preview(states["safe"], 480, mode="radar")
+    assert radar.shape == rgba.shape and np.abs(radar.astype(int) - rgba.astype(int)).sum() > 0
     assert orr.main(["--demo", str(tmp_path / "demo")]) == 0
     names = {p.name for p in (tmp_path / "demo").iterdir()}
-    assert {"radar_danger.png", "hud_late.png", "preview_warning.png", "radar_safe.png"} <= names
+    assert {"radar_danger.png", "hud_late.png", "preview_warning.png", "radar_safe.png",
+            "minimap_danger.png", "preview_radar_late.png"} <= names
+
+
+# ---------------------------------------------------------------------------- minimap overlay
+def _px(img, u, v):
+    h, w = img.shape[:2]
+    return img[int(v * h), int(u * w)].astype(int)
+
+
+def test_minimap_overlay_is_transparent_and_subtle(states):
+    for name, st in states.items():
+        img = orr.render_minimap(st, 256, 256, now=0.2)
+        assert img.shape == (256, 256, 4), name
+        assert_premultiplied(img)
+        alpha = img[..., 3] / 255.0
+        # thin / translucent marks: the real minimap stays readable under them
+        assert 0.005 < alpha.mean() < 0.25 and (alpha > 0.5).mean() < 0.15, name
+    safe = orr.render_minimap(states["safe"], 256, 256, now=0.2)
+    assert (safe[..., 3] > 8).mean() < 0.12
+    # rectangular minimap rects are supported
+    assert orr.render_minimap(states["safe"], 300, 280).shape == (280, 300, 4)
+
+
+def test_minimap_marks_enemies_red_allies_blue_me_teal():
+    E = orr.EnemyView
+    st = orr.OverlayState(me_uv=(0.2, 0.2),
+                          enemies=[E("Darius", "Darius", "Darius", True, (0.7, 0.7), 0.0, role="TOP")],
+                          allies=[E("Lux", "Lux", "Lux", True, (0.5, 0.2), 0.0, relation="ally", role="MIDDLE")])
+    img = orr.render_minimap(st, 256, 256, now=0.0)
+    r = orr.MM_MARKER_R * 256
+
+    def ring_px(u, v):
+        return img[int(v * 256), int(u * 256 + r)].astype(int)   # on the ring, right of the centre
+
+    b, g, rr, a = ring_px(0.7, 0.7)
+    assert a > 100 and rr > b + 60                            # enemy: red
+    b, g, rr, a = ring_px(0.5, 0.2)
+    assert a > 80 and b > rr                                  # ally: blue
+    b, g, rr, a = ring_px(0.2, 0.2)
+    assert a > 100 and g > rr and b > rr                      # me: teal
+    assert _px(img, 0.7, 0.7)[3] == 0                         # the champion icon itself is not covered
+    # no danger / warn rings while safe
+    assert img[int(0.2 * 256), int(0.2 * 256 + 0.22 * 256)][3] == 0
+
+
+def test_minimap_threat_rings_only_when_threatened():
+    st0 = orr.OverlayState(me_uv=(0.5, 0.5), threat_level=0)
+    st2 = orr.OverlayState(me_uv=(0.5, 0.5), threat_level=2, warn_radius=0.3, danger_radius=0.15)
+    a0 = orr.render_minimap(st0, 256, 256, now=0.0)
+    a2 = orr.render_minimap(st2, 256, 256, now=0.0)
+    assert a0[128, 128 + int(0.15 * 256), 3] == 0
+    assert a2[128, 128 + int(0.15 * 256), 3] > 100            # danger ring
+    assert a2[128, 128 + int(0.15 * 256), 2] > a2[128, 128 + int(0.15 * 256), 1] + 40
+    assert a2[1, 128, 3] > 0 and a0[1, 128, 3] == 0            # threat frame
+
+
+def test_minimap_hidden_enemy_ghost_and_fog_timer():
+    E = orr.EnemyView
+    fog = _open_fog().simulate("LeeSin", "LeeSin", "Lee Sin", (0.5, 0.5), 10.0, is_jungler=True, game_time=400)
+    st = orr.OverlayState(enemies=[E("LeeSin", "LeeSin", "Lee Sin", False, (0.5, 0.5), 10.0, True, role="JUNGLE"),
+                                   E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 12.0)],
+                          fogs=[fog])
+    img = orr.render_minimap(st, 256, 256, now=0.0)
+    assert_premultiplied(img)
+    assert img[204, 51, 3] > 0                                 # Ahri ghost at her last position
+    # fog region tinted red around the jungler's last position, but translucent
+    a = img[128 + 20, 128 - 20]
+    assert 0 < a[3] < 120 and a[2] > a[0]
+    none = orr.render_minimap(orr.OverlayState(enemies=[E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 90.0)]), 256)
+    assert not none.any()                                     # too old: nothing drawn
+
+
+def test_role_tags():
+    E = orr.EnemyView
+    assert orr.role_tag(E("x", role="UTILITY")) == "SUP"
+    assert orr.role_tag(E("x", role="bottom")) == "ADC"
+    assert orr.role_tag(E("Ahri", "Ahri", "Ahri"), {"Ahri": "MIDDLE"}) == "MID"
+    assert orr.role_tag(E("LeeSin", "LeeSin", "Lee Sin", is_jungler=True)) == "JGL"
+    assert orr.role_tag(E("Kaisa", "Kaisa", "Kai'Sa")) == "KAIS"
+    assert orr.role_tag(E("enemy?1", None, "enemy?1")) == "?"
+
+
+def test_minimap_never_raises_on_junk():
+    st = orr.OverlayState(me_uv=(float("nan"), 2.0), threat_level=None, enemies=[None, orr.EnemyView("a", uv=(9, 9),  # type: ignore
+                          visible=True, velocity=(float("inf"), 0), approaching=True)], allies=[None],  # type: ignore
+                          roles=None, fogs=[None])  # type: ignore
+    img = orr.render_minimap(st, 0, -5)
+    assert img.ndim == 3 and img.shape[2] == 4

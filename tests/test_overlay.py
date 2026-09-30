@@ -27,6 +27,7 @@ class Cfg:
     hud_position: str = "top_left"
     hud_xy: list | None = None
     danger_flash: bool = True
+    overlay_mode: str = "minimap"
 
 
 def inside(r, screen=SCREEN) -> bool:
@@ -61,11 +62,44 @@ def test_radar_scale_and_fallback_to_left():
     x, y, s = ov.radar_geometry(MINIMAP, SCREEN, scale=2.0)
     assert s == 510
     assert not ov.rects_overlap((x, y, s, s), MINIMAP) and inside((x, y, s, s))
-    # big minimap near the top: no room above -> placed to the left, bottom-aligned
+    # big minimap near the top: not enough room above -> shrunk, still above and right-aligned
     mm = (1500, 300, 400, 400)
+    x, y, s = ov.radar_geometry(mm, SCREEN, 1.0)
+    assert s == 300 - 2 * ov.RADAR_GAP
+    assert (x + s, y + s) == (mm[0] + mm[2], mm[1] - ov.RADAR_GAP)
+    assert not ov.rects_overlap((x, y, s, s), mm) and inside((x, y, s, s))
+    # no room at all above (< RADAR_MIN): only then to the left, bottom-aligned
+    mm = (1500, 60, 400, 400)
     x, y, s = ov.radar_geometry(mm, SCREEN, 1.0)
     assert (x + s, y + s) == (mm[0] - ov.RADAR_GAP, mm[1] + mm[3])
     assert not ov.rects_overlap((x, y, s, s), mm) and inside((x, y, s, s))
+
+
+def test_radar_user_screenshot_bug_dpi_virtualized_screen():
+    """Game window reported in logical pixels (125 %), minimap in physical ones: the radar must stay
+    above the minimap, right-aligned - not pushed to the left over the game."""
+    logical = (0, 0, 1536, 864)
+    mm = (1598, 760, 318, 318)
+    scr = ov.effective_screen(logical, mm, (0, 0, 1920, 1080))
+    assert scr == (0, 0, 1920, 1080)
+    x, y, s = ov.radar_geometry(mm, scr)
+    assert x + s == mm[0] + mm[2] and y + s == mm[1] - ov.RADAR_GAP
+    # no monitor information: union of both rectangles
+    scr = ov.effective_screen(logical, mm)
+    assert scr == (0, 0, 1916, 1078)
+    x, y, s = ov.radar_geometry(mm, scr)
+    assert x + s == mm[0] + mm[2] and not ov.rects_overlap((x, y, s, s), mm)
+    assert ov.effective_screen(SCREEN, MINIMAP, (5, 5, 10, 10)) == SCREEN
+    assert ov.effective_screen(None, None) == (0, 0, 1920, 1080)
+
+
+def test_resolve_overlay_mode():
+    assert ov.resolve_overlay_mode("minimap", True) == "minimap"
+    assert ov.resolve_overlay_mode("minimap", False) == "radar"
+    assert ov.resolve_overlay_mode("radar", True) == "radar"
+    assert ov.resolve_overlay_mode("off", False) == "off"
+    assert ov.resolve_overlay_mode(None, True) == "minimap"
+    assert ov.resolve_overlay_mode("junk", False) == "radar"
 
 
 def test_radar_other_positions_and_custom():
@@ -111,7 +145,7 @@ def test_radar_placement_wrapper_and_no_minimap():
 
 # ---------------------------------------------------------------------------- HUD placement
 def test_hud_width_and_flash_thickness():
-    assert ov.hud_width(SCREEN) == 340
+    assert ov.hud_width(SCREEN) == ov.HUD_BASE_WIDTH == 280
     assert ov.hud_width((0, 0, 3840, 2160)) == ov.HUD_MAX_WIDTH
     assert ov.hud_width((0, 0, 1280, 720)) == ov.HUD_MIN_WIDTH
     assert ov.flash_thickness(SCREEN) == 10 and ov.flash_thickness((0, 0, 2560, 1440)) == 13
@@ -120,7 +154,18 @@ def test_hud_width_and_flash_thickness():
 
 def test_hud_positions():
     w, h = 340, 280
-    assert ov.hud_placement(SCREEN, w, h) == (16, 16)
+    assert ov.hud_placement(SCREEN, w, h, "top_left") == (16, 16)
+    # default: just above the minimap, right edges aligned, never over it
+    x, y = ov.hud_placement(SCREEN, w, h, anchor=MINIMAP, avoid=[MINIMAP])
+    assert x + w == MINIMAP[0] + MINIMAP[2] and y + h == MINIMAP[1] - ov.RADAR_GAP
+    # above the radar when one is shown above the minimap
+    radar = (1640, 537, 255, 255)
+    x, y = ov.hud_placement(SCREEN, w, h, "above_minimap", anchor=radar, avoid=[MINIMAP, radar])
+    assert y + h == radar[1] - ov.RADAR_GAP and not ov.rects_overlap((x, y, w, h), radar)
+    # no room above / no anchor -> top right
+    assert ov.hud_placement(SCREEN, w, h, "above_minimap", anchor=(1600, 100, 300, 300)) == \
+        ov.hud_placement(SCREEN, w, h, "top_right")
+    assert ov.hud_placement(SCREEN, w, h) == ov.hud_placement(SCREEN, w, h, "top_right")
     x, y = ov.hud_placement(SCREEN, w, h, "top_right")
     assert x + w == 1920 - 16 and y > 50
     x, y = ov.hud_placement(SCREEN, w, h, "left_middle")
@@ -129,7 +174,7 @@ def test_hud_positions():
     assert ov.hud_placement(SCREEN, w, h, "custom", [5000, 5000]) == (1920 - w, 1080 - h)
     # second monitor on the left
     scr2 = (-1920, 0, 1920, 1080)
-    assert ov.hud_placement(scr2, w, h) == (-1904, 16)
+    assert ov.hud_placement(scr2, w, h, "top_left") == (-1904, 16)
 
 
 def test_hud_avoids_radar_and_minimap():
@@ -197,6 +242,53 @@ def test_win32_prototypes_build_with_fake_dlls(monkeypatch):
     if sys.platform == "win32":      # wintypes.LONG / DWORD are 64-bit on Linux
         assert ctypes.sizeof(api.BITMAPINFOHEADER) == 40
     assert api.GetWindowLongPtr.restype is ctypes.c_ssize_t
+    assert api.SetWindowDisplayAffinity is not None and api.GetWindowDisplayAffinity is not None
+
+
+def test_capture_exclusion_fallback_logic(monkeypatch):
+    """exclude_from_capture: verified with GetWindowDisplayAffinity, reset to WDA_NONE when refused."""
+    calls = []
+
+    class U:
+        pass
+
+    class Api:
+        ctypes = __import__("ctypes")
+
+        class wt:
+            DWORD = __import__("ctypes").c_ulong
+
+        def __init__(self, set_ok, reported):
+            self.reported = reported
+
+            def set_aff(hwnd, v):
+                calls.append(v)
+                return set_ok
+
+            def get_aff(hwnd, ref):
+                ref._obj.value = self.reported
+                return 1
+
+            self.SetWindowDisplayAffinity = set_aff
+            self.GetWindowDisplayAffinity = get_aff
+
+        def last_error(self):
+            return 87
+
+    win = ov.LayeredWindow.__new__(ov.LayeredWindow)
+    win.name, win.hwnd = "t", 1
+    monkeypatch.setattr(ov, "windows_build", lambda: 19045)
+    win._api = Api(1, ov.WDA_EXCLUDEFROMCAPTURE)
+    assert win.exclude_from_capture() is True and calls == [ov.WDA_EXCLUDEFROMCAPTURE]
+    calls.clear()
+    win._api = Api(1, 0x01)           # degraded to WDA_MONITOR (black box): refused + reset
+    assert win.exclude_from_capture() is False and calls == [ov.WDA_EXCLUDEFROMCAPTURE, ov.WDA_NONE]
+    calls.clear()
+    win._api = Api(0, 0)
+    assert win.exclude_from_capture() is False and calls[-1] == ov.WDA_NONE
+    calls.clear()
+    monkeypatch.setattr(ov, "windows_build", lambda: 18363)   # Windows 10 1909: not even tried
+    assert win.exclude_from_capture() is False and calls == []
 
 
 
@@ -259,11 +351,15 @@ def test_manager_runs_on_windows():
         assert ev.wait(5.0)
         time.sleep(0.4)
         assert m.ok and m.is_running()
+        assert m.effective_mode in ("minimap", "radar")
         m.set_move_mode(True)
         time.sleep(0.3)
         m.set_move_mode(False)
         m.apply_config(Cfg(hud_enabled=False))
         time.sleep(0.3)
+        m.apply_config(Cfg(overlay_mode="radar"))
+        time.sleep(0.3)
+        assert m.effective_mode == "radar"
         assert m.ok
     finally:
         m.stop()

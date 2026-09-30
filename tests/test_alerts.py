@@ -41,10 +41,16 @@ def _syllables(text: str) -> int:
 
 def test_spec_examples() -> None:
     J, R, C = AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE
-    assert phrase(J, Level.WARNING, "Lee Sin") == "Attention, Lee Sin approche."
+    assert phrase(J, Level.WARNING, "Lee Sin", "par la rivière") == "Lee Sin arrive par la rivière !"
+    assert phrase(J, Level.WARNING, "Lee Sin") == "Lee Sin arrive !"
     assert phrase(J, Level.DANGER, "Lee Sin") == "Gank ! Lee Sin, recule !"
-    assert phrase(R, Level.WARNING, "Ahri") == "Ahri arrive vers toi."
-    assert phrase(R, Level.DANGER, "Ahri") == "Gank ! Ahri arrive, recule !"
+    assert phrase(R, Level.WARNING, "Ahri", "par ta jungle") == "Ahri arrive par ta jungle !"
+    assert phrase(R, Level.DANGER, "Ahri") == "Gank ! Ahri, recule !"
+    assert phrase(C, Level.WARNING, None, "bot", count=2, names=["Lee Sin", "Ahri"]) == (
+        "Gank bot : Lee Sin et Ahri !")
+    assert phrase(C, Level.DANGER, None, "top", count=3, names=["Lee Sin", "Ahri"]) == (
+        "Gank top : Lee Sin, Ahri et un ennemi, recule !")
+    assert phrase(C, Level.DANGER, None, None, count=2, names=["Vi", "Zed"]) == "Gank : Vi et Zed, recule !"
     assert phrase(C, Level.DANGER, None, count=3) == "Danger, 3 ennemis arrivent, recule !"
     assert phrase(AlertKind.JUNGLER_SPOTTED, Level.INFO, "Lee Sin", "en haut") == "Jungler ennemi vu en haut."
     assert (phrase(AlertKind.JUNGLER_SPOTTED, Level.INFO, None, "dans la rivière du bas")
@@ -64,14 +70,14 @@ def test_every_kind_level_combination_is_clean() -> None:
 
 
 def test_unknown_champion_is_un_ennemi() -> None:
-    assert phrase(AlertKind.ROAM_APPROACH, Level.WARNING, None) == "Un ennemi arrive vers toi."
+    assert phrase(AlertKind.ROAM_APPROACH, Level.WARNING, None) == "Un ennemi arrive !"
     assert phrase(AlertKind.ROAM_APPROACH, Level.DANGER, None) == "Gank ! Un ennemi arrive, recule !"
     assert phrase(AlertKind.COLLAPSE, Level.DANGER, None, count=1) == "Danger, un ennemi arrive, recule !"
     assert phrase(AlertKind.JUNGLER_APPROACH, Level.DANGER, None) == "Gank du jungler, recule !"
     assert phrase(AlertKind.LANER_MIA, Level.INFO, "") == "Ton adversaire a disparu, prudence."
     # garbage champion values are treated as unknown
     for bad in ("   ", "None", float("nan"), True):
-        assert phrase(AlertKind.ROAM_APPROACH, Level.WARNING, bad) == "Un ennemi arrive vers toi."  # type: ignore[arg-type]
+        assert phrase(AlertKind.ROAM_APPROACH, Level.WARNING, bad) == "Un ennemi arrive !"  # type: ignore[arg-type]
 
 
 def test_plural_and_counts() -> None:
@@ -161,10 +167,10 @@ def test_phrase_never_raises() -> None:
     assert phrase("bogus", Level.DANGER, "X") == "Danger, recule !"  # type: ignore[arg-type]
     assert phrase("collapse", "danger", None, count=2) == "Danger, 2 ennemis arrivent, recule !"  # type: ignore[arg-type]
     assert phrase(AlertKind.ROAM_APPROACH, 99, Evil()) == "Gank ! Un ennemi arrive, recule !"  # type: ignore[arg-type]
-    assert phrase(AlertKind.ROAM_APPROACH, None, "Zed") == "Zed arrive vers toi."  # type: ignore[arg-type]
+    assert phrase(AlertKind.ROAM_APPROACH, None, "Zed") == "Zed arrive !"  # type: ignore[arg-type]
     assert phrase(AlertKind.COLLAPSE, Level.DANGER, None, count=float("inf")) == (
         "Danger, 5 ennemis arrivent, recule !")
-    assert phrase(AlertKind.ROAM_APPROACH, Level.WARNING, "X" * 500).endswith(" arrive vers toi.")
+    assert phrase(AlertKind.ROAM_APPROACH, Level.WARNING, "X" * 500).endswith(" arrive !")
     assert len(phrase(AlertKind.ROAM_APPROACH, Level.WARNING, "X" * 500)) < 60
 
 
@@ -211,13 +217,52 @@ def _run(th: AlertThrottler, raw: list[Alert], t: float) -> list[str]:
 @pytest.mark.parametrize("level,cooldown", [(Level.INFO, 30.0), (Level.WARNING, 8.0), (Level.DANGER, 6.0)])
 def test_cooldown_per_key_by_level(level: Level, cooldown: float) -> None:
     th = AlertThrottler()
-    a = lambda t: A(JA, level, t)  # noqa: E731
+    a = lambda t: A(AlertKind.LANER_MIA, level, t)  # noqa: E731
     assert th.filter([a(0.0)], 0.0)
     for t in (0.5, 2.0, cooldown - 0.2):
         assert th.filter([a(t)], t) == []
     assert th.filter([a(cooldown + 0.01)], cooldown + 0.01)
     # another key is independent
     assert th.filter([A(RA, level, cooldown + 5, who="Ahri")], cooldown + 5)
+
+
+@pytest.mark.parametrize("kind", [JA, RA, CO])
+@pytest.mark.parametrize("level", [Level.WARNING, Level.DANGER])
+def test_gank_kinds_not_repeated_for_12s(kind: AlertKind, level: Level) -> None:
+    th = AlertThrottler()
+    assert th.filter([A(kind, level, 0.0)], 0.0)
+    for t in (1.0, 6.5, 8.5, 11.9):
+        assert th.filter([A(kind, level, t)], t) == []
+    assert th.filter([A(kind, level, 12.0)], 12.0)
+
+
+def test_same_gank_under_another_key_is_not_repeated() -> None:
+    th = AlertThrottler()
+    merged = Alert(kind=CO, level=Level.WARNING, text="Gank bot : Lee Sin et Ahri !",
+                   key="collapse:Ahri+LeeSin", t=0.0, members=("Ahri", "LeeSin"))
+    assert th.filter([merged], 0.0) == [merged]
+    single = make_alert(JA, Level.WARNING, 3.0, "Lee Sin", alias="LeeSin", zone_label="par la rivière")
+    assert single.members == ("LeeSin",) and single.text == "Lee Sin arrive par la rivière !"
+    assert th.filter([single], 3.0) == []                        # already announced in the merged one
+    # escalation to DANGER passes
+    danger = make_alert(JA, Level.DANGER, 4.0, "Lee Sin", alias="LeeSin")
+    assert th.filter([danger], 4.0) == [danger]
+    # a new champion joining the gank passes
+    bigger = Alert(kind=CO, level=Level.DANGER, text="Gank bot : Lee Sin, Ahri et Vi, recule !",
+                   key="collapse:Ahri+LeeSin+Vi", t=6.0, members=("Ahri", "LeeSin", "Vi"))
+    assert th.filter([bigger], 6.0) == [bigger]
+    # the same DANGER gank is quiet for 12 s, then may be said again
+    again = Alert(kind=CO, level=Level.DANGER, text="x !", key="collapse:Ahri+LeeSin", t=10.0,
+                  members=("Ahri", "LeeSin"))
+    assert th.filter([again], 10.0) == []
+    assert th.filter([again], 18.1) == [again]
+
+
+def test_jungler_spotted_at_most_every_45s() -> None:
+    th = AlertThrottler()
+    assert th.filter([A(JS, Level.INFO, 0.0)], 0.0)
+    assert th.filter([A(JS, Level.INFO, 40.0)], 40.0) == []
+    assert th.filter([A(JS, Level.INFO, 45.5)], 45.5)
 
 
 def test_jungler_where_cooldown_and_gap_exemption() -> None:
@@ -362,19 +407,19 @@ def test_gank_sequence_at_8_fps() -> None:
     """Continuous re-emission by the analyser gives WARNING, then DANGER, then silence."""
     th = AlertThrottler()
     said: list[tuple[float, Level]] = []
-    for i in range(int(12 * 8)):
+    for i in range(int(16 * 8)):
         t = i / 8.0
         raw = []
         if 0.0 <= t < 2.0:
             raw.append(A(JA, Level.WARNING, t))
-        elif t < 12.0:
+        elif t < 16.0:
             raw.append(A(JA, Level.DANGER, t))
         for a in th.filter(raw, t):
             said.append((t, a.level))
     assert said[0] == (0.0, Level.WARNING)
     assert said[1] == (2.0, Level.DANGER)                          # escalation immediate
-    assert [s for s in said if s[0] < 8.0] == said[:2]             # no spam in between
-    assert said[2] == (8.0, Level.DANGER)                          # DANGER cooldown 6 s
+    assert [s for s in said if s[0] < 14.0] == said[:2]            # no spam in between
+    assert said[2] == (14.0, Level.DANGER)                         # same gank: 12 s
     assert len(said) == 3
 
 
@@ -383,7 +428,8 @@ def test_memory_stays_bounded() -> None:
     for i in range(4000):
         t = i * 0.125
         th.filter([A(JS, Level.INFO, t, who=f"c{i}"), A(RA, Level.WARNING, t, who=f"w{i}")], t)
-    assert len(th._by_key) <= 8 * 45 and len(th._by_alias) <= 8 * 45
+    keep = int(alerts._KEEP_S) + 10
+    assert len(th._by_key) <= 8 * keep and len(th._by_alias) <= 8 * keep
     assert th.pending_count() <= alerts.MAX_PENDING
 
 

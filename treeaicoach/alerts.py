@@ -9,7 +9,11 @@
   re-emit an alert for as long as its condition holds) into at most ONE message per tick:
 
   - cooldown per ``Alert.key`` depending on the level (INFO 30 s, WARNING 8 s, DANGER 6 s;
-    ``JUNGLER_WHERE`` 3 s);
+    ``JUNGLER_WHERE`` 3 s; gank kinds 12 s; ``JUNGLER_SPOTTED`` 45 s);
+  - the same gank is not repeated for 12 s: a gank alert (``JUNGLER_APPROACH``,
+    ``ROAM_APPROACH``, ``COLLAPSE``) whose ``members`` (the champions involved) were all already
+    announced in a gank alert of at least the same level during the last 12 s is dropped, even
+    under another key (e.g. "Gank bot : Lee Sin et Ahri !" then "Lee Sin arrive...");
   - escalation (a more severe alert than the last one said for the same key, or a DANGER
     about a champion whose last announcement was a WARNING) passes immediately;
   - highest level wins, then the most recent (``Alert.t``), then the kind priority;
@@ -108,6 +112,9 @@ class Alert:
     key: str
     t: float
     alias: str | None = None
+    #: champions (aliases / anonymous track keys) involved in a gank alert, for the
+    #: "same gank" repeat rule of the throttler
+    members: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # Lenient normalisation (never raises): analysers may pass plain str / int.
@@ -121,6 +128,10 @@ class Alert:
             self.text = "" if self.text is None else str(self.text)
         if not isinstance(self.key, str):
             self.key = "" if self.key is None else str(self.key)
+        try:
+            self.members = tuple(str(m) for m in (self.members or ()) if m)
+        except TypeError:
+            self.members = ()
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-friendly representation (used by the game recorder / UI log)."""
@@ -226,21 +237,45 @@ def _seconds_fr(n: int) -> str:
     return head if s == 0 else f"{m} {unit} {s}"
 
 
+def _arrives(who: str, zone: str | None) -> str:
+    """``"Lee Sin arrive par la rivière !"`` (``zone`` is a direction such as "par la rivière")."""
+    return f"{_cap(who)} arrive {zone} !" if zone else f"{_cap(who)} arrive !"
+
+
 def _jungler_approach(level: Level, champ: str | None, zone: str | None, n: int) -> str:
     if level >= Level.DANGER:
         return f"Gank ! {champ}, recule !" if champ else "Gank du jungler, recule !"
     if level == Level.WARNING:
-        return f"Attention, {champ} approche." if champ else "Attention, le jungler approche."
+        return _arrives(champ or "le jungler", zone)
     return f"{champ} rôde près de toi." if champ else "Le jungler rôde près de toi."
 
 
 def _roam_approach(level: Level, champ: str | None, zone: str | None, n: int) -> str:
     who = champ or "un ennemi"
     if level >= Level.DANGER:
-        return f"Gank ! {_cap(who)} arrive, recule !"
+        return f"Gank ! {champ}, recule !" if champ else "Gank ! Un ennemi arrive, recule !"
     if level == Level.WARNING:
-        return f"{_cap(who)} arrive vers toi."
+        return _arrives(who, zone)
     return f"{_cap(who)} rôde près de toi."
+
+
+def _join_fr(items: list[str]) -> str:
+    if len(items) <= 1:
+        return "".join(items)
+    return ", ".join(items[:-1]) + " et " + items[-1]
+
+
+def _gank_group(level: Level, names: list[str], lane: str | None, n: int) -> str:
+    """``"Gank bot : Lee Sin et Ahri !"`` (``n`` = total count, anonymous ones included)."""
+    items = list(names[:5])
+    extra = max(0, min(n, 5) - len(items))
+    if extra == 1:
+        items.append("un ennemi")
+    elif extra > 1:
+        items.append(f"{extra} ennemis")
+    head = f"Gank {lane}" if lane else "Gank"
+    tail = ", recule !" if level >= Level.DANGER else " !"
+    return f"{head} : {_join_fr(items)}{tail}"
 
 
 def _collapse(level: Level, champ: str | None, zone: str | None, n: int) -> str:
@@ -336,7 +371,7 @@ _GENERIC = {Level.INFO: "Attention.", Level.WARNING: "Attention !", Level.DANGER
 
 
 def phrase(kind: AlertKind, level: Level, champ: str | None, zone_label: str | None = None,
-           count: int = 0, text: str | None = None) -> str:
+           count: int = 0, text: str | None = None, names: Any = None) -> str:
     """Short French sentence for an alert. Never raises.
 
     ``champ`` is the (localised) champion name, or ``None`` when unknown ("un ennemi");
@@ -347,6 +382,11 @@ def phrase(kind: AlertKind, level: Level, champ: str | None, zone_label: str | N
     ``text`` is a ready-made sentence used verbatim (cleaned, bounded) for the v1.1 kinds
     (:data:`FREE_TEXT_KINDS`, e.g. the death recap of ``analysis.death_recap``); it is
     ignored for the gank kinds, whose sentences must stay short.
+    For ``JUNGLER_APPROACH`` / ``ROAM_APPROACH`` at WARNING, ``zone_label`` is a direction
+    ("par la rivière" -> "Lee Sin arrive par la rivière !").
+    ``names`` (``COLLAPSE`` only): champion names of a merged gank alert; ``zone_label`` is then
+    the lane word ("bot") and ``count`` the total number of enemies ->
+    "Gank bot : Lee Sin et Ahri !" (", recule !" at DANGER).
     """
     lvl = Level.coerce(level)
     try:
@@ -362,6 +402,11 @@ def phrase(kind: AlertKind, level: Level, champ: str | None, zone_label: str | N
         name = _clean(champ, NAME_MAX_LEN)
         zone = _clean(zone_label, ZONE_MAX_LEN)
         n = _as_count(count)
+        if k == AlertKind.COLLAPSE and names:
+            clean = [c for c in (_clean(x, NAME_MAX_LEN) for x in names) if c]
+            if clean or n:
+                out = _gank_group(lvl, clean, zone, max(n, len(clean)))
+                return _WS_RE.sub(" ", out).strip() or _GENERIC[lvl]
         out = _BUILDERS[k](lvl, name, zone, n)
         return _WS_RE.sub(" ", out).strip() or _GENERIC[lvl]
     except Exception:  # defensive: the voice must always get something
@@ -381,16 +426,18 @@ def alert_key(kind: AlertKind | str, who: str | None = None) -> str:
 
 def make_alert(kind: AlertKind, level: Level | int, t: float, champ: str | None = None,
                alias: str | None = None, zone_label: str | None = None, count: int = 0,
-               key: str | None = None, text: str | None = None) -> Alert:
+               key: str | None = None, text: str | None = None,
+               members: tuple[str, ...] = (), names: Any = None) -> Alert:
     """Build an :class:`Alert` with its phrase and the conventional key (see :func:`alert_key`)."""
     lvl = Level.coerce(level)
     return Alert(
         kind=kind,
         level=lvl,
-        text=phrase(kind, lvl, champ, zone_label, count, text=text),
+        text=phrase(kind, lvl, champ, zone_label, count, text=text, names=names),
         key=key if key else alert_key(kind, alias or champ),
         t=t,
         alias=alias,
+        members=tuple(members or ((alias,) if alias else ())),
     )
 
 
@@ -399,7 +446,17 @@ def make_alert(kind: AlertKind, level: Level | int, t: float, champ: str | None 
 # --------------------------------------------------------------------------------------
 
 COOLDOWN_S: dict[Level, float] = {Level.INFO: 30.0, Level.WARNING: 8.0, Level.DANGER: 6.0}
-KIND_COOLDOWN_S: dict[AlertKind, float] = {AlertKind.JUNGLER_WHERE: 3.0}
+GANK_REPEAT_S = 12.0        # the same gank is not announced again for this long
+JUNGLER_SPOTTED_COOLDOWN_S = 45.0
+GANK_ALERT_KINDS: frozenset[AlertKind] = frozenset(
+    {AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE})
+KIND_COOLDOWN_S: dict[AlertKind, float] = {
+    AlertKind.JUNGLER_WHERE: 3.0,
+    AlertKind.JUNGLER_APPROACH: GANK_REPEAT_S,
+    AlertKind.ROAM_APPROACH: GANK_REPEAT_S,
+    AlertKind.COLLAPSE: GANK_REPEAT_S,
+    AlertKind.JUNGLER_SPOTTED: JUNGLER_SPOTTED_COOLDOWN_S,
+}
 # Answers the player waits for: never delayed by the global gap (they keep their key cooldown).
 GAP_EXEMPT_KINDS: frozenset[AlertKind] = frozenset({AlertKind.JUNGLER_WHERE, AlertKind.DEATH_RECAP})
 # Tie-break between alerts of the same level and time (first = preferred).
@@ -459,6 +516,7 @@ class AlertThrottler:
         self._lock = threading.Lock()
         self._by_key: dict[str, tuple[float, Level]] = {}
         self._by_alias: dict[str, tuple[float, Level]] = {}
+        self._by_member: dict[str, tuple[float, Level]] = {}   # gank members announced
         # key -> (alert, time it was last raised) for alerts held back by the gap
         self._pending: dict[str, tuple[Alert, float]] = {}
         self._last_emit_t: float | None = None
@@ -493,6 +551,7 @@ class AlertThrottler:
     def _clear(self) -> None:
         self._by_key.clear()
         self._by_alias.clear()
+        self._by_member.clear()
         self._pending.clear()
         self._last_emit_t = None
         self._last_danger_t = None
@@ -518,12 +577,24 @@ class AlertThrottler:
         if now - self._last_prune < PRUNE_EVERY_S:
             return
         self._last_prune = now
-        for table in (self._by_key, self._by_alias):
+        for table in (self._by_key, self._by_alias, self._by_member):
             stale = [k for k, (ts, _lvl) in table.items() if now - ts > _KEEP_S]
             for k in stale:
                 del table[k]
 
+    def _same_gank(self, a: Alert, now: float) -> bool:
+        """All the members of this gank alert were announced recently at >= its level."""
+        if a.kind not in GANK_ALERT_KINDS or not a.members:
+            return False
+        for m in a.members:
+            seen = self._by_member.get(m)
+            if seen is None or now - seen[0] >= GANK_REPEAT_S or seen[1] < a.level:
+                return False
+        return True
+
     def _key_ok(self, a: Alert, now: float) -> bool:
+        if self._same_gank(a, now):
+            return False
         last = self._by_key.get(a.key)
         if last is None:
             return True
@@ -615,6 +686,9 @@ class AlertThrottler:
         self._by_key[chosen.key] = (now, chosen.level)
         if chosen.alias:
             self._by_alias[chosen.alias] = (now, chosen.level)
+        if chosen.kind in GANK_ALERT_KINDS:
+            for m in chosen.members:
+                self._by_member[m] = (now, chosen.level)
         self._last_emit_t = now
         if chosen.level >= Level.DANGER:
             self._last_danger_t = now

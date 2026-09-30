@@ -65,6 +65,8 @@ class Detection:
     score: float                           # confidence "this is a champion icon" (0..1)
     cls: str                               # most likely class (see CLASSES)
     cls_probs: tuple[float, float, float]  # probabilities in CLASSES order
+    #: Champion recognised by the detector itself (roster matcher), None otherwise.
+    alias: str | None = None
 
 
 class BaseDetector:

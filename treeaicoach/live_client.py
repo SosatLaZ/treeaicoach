@@ -61,6 +61,7 @@ class PlayerInfo:
     has_smite: bool = False
     is_bot: bool = False
     spells: tuple[str, ...] = ()   # summoner spells (localized display names)
+    spell_ids: tuple[str, ...] = ()  # language-independent ids ("SummonerHeal"), when known
     items: list[int] = field(default_factory=list)            # itemIDs, by inventory slot
     scores: dict[str, float] = field(default_factory=lambda: dict(ZERO_SCORES))
     current_gold: float = 0.0      # only known for me (activePlayer.currentGold)
@@ -258,6 +259,17 @@ def _spell_is_smite(spell: Any) -> bool:
     return any(w in disp for w in _SMITE_WORDS)
 
 
+def _spell_id(spell: Any) -> str:
+    """``"SummonerHeal"`` from ``rawDisplayName`` ("GeneratedTip_SummonerSpell_SummonerHeal_DisplayName")."""
+    if not isinstance(spell, dict):
+        return ""
+    raw = _str(spell.get("rawDisplayName"))
+    for part in raw.split("_"):
+        if part.startswith("Summoner") and part != "SummonerSpell":
+            return part
+    return ""
+
+
 def _resolve_alias(raw_champion: Any, champion_name: str) -> str:
     """Champion alias from rawChampionName, canonicalized with the bundled index if possible."""
     alias = alias_from_raw(_str(raw_champion))
@@ -305,6 +317,7 @@ def _parse_player(d: dict) -> PlayerInfo | None:
         has_smite=any(_spell_is_smite(s) for s in spell_list),
         is_bot=_bool(d.get("isBot"), False),
         spells=tuple(_str(s.get("displayName")) for s in spell_list),
+        spell_ids=tuple(i for i in (_spell_id(s) for s in spell_list) if i),
         items=_parse_items(d.get("items")),
         scores=_parse_scores(d.get("scores")),
     )

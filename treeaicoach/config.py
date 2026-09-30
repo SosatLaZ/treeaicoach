@@ -59,7 +59,8 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "minimap_mode": ("auto", "manual"),
     "minimap_side": ("auto", "right", "left"),
     "radar_position": ("above_minimap", "left_of_minimap", "top_left", "custom"),
-    "hud_position": ("top_left", "top_right", "left_middle", "custom"),
+    "hud_position": ("above_minimap", "top_left", "top_right", "left_middle", "custom"),
+    "overlay_mode": ("minimap", "radar", "off"),
     "fog_mode": ("jungler", "all", "off"),
 }
 BOOL_FIELDS: tuple[str, ...] = (
@@ -106,7 +107,7 @@ _UI_GEOMETRY_RE = re.compile(r"=?(\d{1,5})x(\d{1,5})(?:([+-]-?\d{1,6})([+-]-?\d{
 #: "custom" position -> fallback position when the matching ``*_xy`` field is missing.
 CUSTOM_POSITION_FALLBACK: dict[str, tuple[str, str]] = {
     "radar_position": ("radar_xy", "above_minimap"),
-    "hud_position": ("hud_xy", "top_left"),
+    "hud_position": ("hud_xy", "above_minimap"),
 }
 VOICE_NAME_MAX_LEN = 256
 #: Update settings: free text fields (URL / GitHub token), printable, stripped, bounded.
@@ -181,7 +182,8 @@ class Config:
     radar_scale: float = 1.0        # 0.5..2.0 (1.0 = minimap size)
     radar_xy: list[int] | None = None       # [x, y] screen pixels when radar_position == "custom"
     hud_enabled: bool = True
-    hud_position: str = "top_left"  # "top_left" | "top_right" | "left_middle" | "custom"
+    hud_position: str = "above_minimap"  # "above_minimap" | "top_left" | "top_right" | "left_middle" | "custom"
+    overlay_mode: str = "minimap"   # "minimap" (marks on the real minimap) | "radar" | "off"
     hud_xy: list[int] | None = None
     danger_flash: bool = True
     fog_mode: str = "jungler"       # "jungler" | "all" | "off"
@@ -546,6 +548,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         if not isinstance(data, dict):
             _backup_corrupt(p, f"top-level JSON is {type(data).__name__}, not an object")
             return Config()
+    if "overlay_mode" not in data and data.get("hud_position") == "top_left":
+        # pre-"overlay_mode" file: the old default HUD position (top-left, over LoL's ally
+        # portraits) moves to the new default, just above the minimap
+        data = {**data, "hud_position": "above_minimap"}
     cfg = Config.from_dict(data)
     log.info("Config loaded from %s", p)
     return cfg

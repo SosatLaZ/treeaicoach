@@ -212,7 +212,8 @@ def test_new_field_defaults_match_contract():
     # §7.4
     assert c.overlay_enabled is True and c.radar_enabled is True
     assert c.radar_position == "above_minimap" and c.radar_scale == 1.0 and c.radar_xy is None
-    assert c.hud_enabled is True and c.hud_position == "top_left" and c.hud_xy is None
+    assert c.hud_enabled is True and c.hud_position == "above_minimap" and c.hud_xy is None
+    assert c.overlay_mode == "minimap"
     assert c.danger_flash is True and c.fog_mode == "jungler" and c.fog_max_s == 60.0
     assert c.hotkey_mute == "F10" and c.hotkey_overlay == "F11" and c.break_reminder is True
     # §8.2
@@ -246,7 +247,9 @@ def test_new_field_defaults_match_contract():
         ("radar_position", " Left_Of_Minimap ", "left_of_minimap"),
         ("radar_position", "bottom", "above_minimap"),
         ("hud_position", "TOP_RIGHT", "top_right"),
-        ("hud_position", 1, "top_left"),
+        ("hud_position", 1, "above_minimap"),
+        ("overlay_mode", "RADAR", "radar"),
+        ("overlay_mode", "on_top", "minimap"),
         ("fog_mode", "ALL", "all"),
         ("fog_mode", "Off", "off"),
         ("fog_mode", "everyone", "jungler"),
@@ -293,7 +296,7 @@ def test_new_fields_numpy_values():
 
 def test_custom_positions_need_coordinates():
     v = Config(radar_position="custom", hud_position="custom").validated()
-    assert v.radar_position == "above_minimap" and v.hud_position == "top_left"
+    assert v.radar_position == "above_minimap" and v.hud_position == "above_minimap"
     v = Config(radar_position="custom", radar_xy=[10, 20], hud_position="custom", hud_xy=(-1900, 5)).validated()
     assert (v.radar_position, v.radar_xy, v.hud_position, v.hud_xy) == ("custom", [10, 20], "custom", [-1900, 5])
 
@@ -722,3 +725,17 @@ def test_setup_logging_never_raises(monkeypatch, clean_logging):
     monkeypatch.setattr(paths, "logs_dir", boom)
     p = logging_setup.setup_logging(console=False)
     assert isinstance(p, Path)
+
+
+def test_old_config_hud_position_migrates_to_above_minimap(tmp_path):
+    import json
+
+    from treeaicoach.config import load_config
+
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"hud_position": "top_left"}), encoding="utf-8")
+    c = load_config(p)
+    assert c.hud_position == "above_minimap" and c.overlay_mode == "minimap"
+    p.write_text(json.dumps({"hud_position": "top_left", "overlay_mode": "radar"}), encoding="utf-8")
+    c = load_config(p)
+    assert c.hud_position == "top_left" and c.overlay_mode == "radar"

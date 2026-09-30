@@ -137,10 +137,29 @@ def test_demo_no_gank_alert_before_window_and_danger_inside(demo_run):
     assert early == []
     danger = [t for t, a in alerts if a.kind in GANK_KINDS and a.level >= Level.DANGER and w0 <= t <= w1]
     assert danger, [(t, a.text) for t, a in alerts]
+    # the jungler comes back on the same side of the map: nothing new, no "jungler spotted"
     spotted = [t for t, a in alerts if a.kind == AlertKind.JUNGLER_SPOTTED and w0 - 1 <= t <= w1]
-    assert spotted and spotted[0] <= danger[0]
+    assert not spotted or spotted[0] <= danger[0]
     # every alert returned by step() was spoken
     assert [a.text for _t, a in alerts] == demo_run["voice"].texts()
+
+
+def test_safe_mode_no_gank_alerts_and_no_fog():
+    """Safe mode: objective timers / reminders only, no gank / jungler alerts, no fog circle."""
+    src = DemoSource(size=280)
+    eng, voice, clock = make_engine(src, detector=ClassicDetector(), cfg=Config(safe_mode=True))
+    fps = 8.0
+    said: list[Any] = []
+    for i in range(int(52 * fps)):
+        t = i / fps
+        clock.t = t
+        said += eng.step(t)
+        if abs(t - 20.0) < 1e-9:
+            assert list(eng.get_overlay_state().fogs) == []
+    kinds = {a.kind for a in said}
+    assert not kinds & (GANK_KINDS | {AlertKind.JUNGLER_SPOTTED, AlertKind.LANER_MIA})
+    assert AlertKind.OBJECTIVE_SOON in kinds
+    assert eng.fog_tracker is None or eng.fog_tracker.estimates() == []
 
 
 def test_demo_objective_and_fog(demo_run):

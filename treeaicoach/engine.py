@@ -1026,7 +1026,7 @@ class CoachEngine:
                 z = geometry.classify_zone(*me_pos)
                 in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
             raw_alerts += list(self._reminders.update(t, game, me_pos, in_base) or [])
-        if self._fog is not None:
+        if self._fog is not None and not getattr(self._cfg, "safe_mode", False):
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
         rec = self._recorder
         if rec is not None:
@@ -1466,7 +1466,7 @@ class CoachEngine:
     def _annotate(self, frame: np.ndarray, identified: list[Any]) -> np.ndarray:
         img = frame.copy()
         h, w = img.shape[:2]
-        fogs = self._fog.estimates() if self._fog is not None else []
+        fogs = self._fog.estimates() if self._fog is not None and not getattr(self._cfg, "safe_mode", False) else []
         for fe in fogs:
             region = getattr(fe, "region", None)
             if isinstance(region, np.ndarray) and region.ndim == 2 and region.any():
@@ -1589,6 +1589,9 @@ class CoachEngine:
                 if tr.key not in seen_keys and len(enemies) < 10:
                     enemies.append(self._enemy_view(EnemyView, tr.alias, tr.alias or "?", 0, tr, me_uv,
                                                     now, False))
+        allies, roles = self._overlay_allies_roles(EnemyView, game, tracker, now)
+        for v in enemies:
+            v.role = roles.get(v.key) or roles.get(v.alias or "")
         level = max((lvl for t_, lvl, _a in hist if now - t_ <= THREAT_HOLD_S), default=0)
         top = max((a for t_, lvl, a in hist if now - t_ <= THREAT_HOLD_S and lvl == level),
                   key=lambda a: a.t, default=None)
@@ -1607,7 +1610,7 @@ class CoachEngine:
             la = (last_alert.text, int(last_alert.level), max(0.0, now - last_alert_t))
         minimap_rect, screen_rect = self._screen_rects()
         gt = (_finite(game.game_time) or 0.0) + min(max(0.0, now - game_t), 3.0) if game else None
-        fogs = self._fog.estimates() if self._fog is not None else []
+        fogs = self._fog.estimates() if self._fog is not None and not getattr(self._cfg, "safe_mode", False) else []
         return OverlayState(
             minimap_rect=minimap_rect, screen_rect=screen_rect, me_uv=me_uv,
             my_team=game.my_team if game is not None else None,
@@ -1618,7 +1621,43 @@ class CoachEngine:
             jungler_line=self._jungler_line(game, jungler, now),
             hint=self._reminders.hint() if self._reminders is not None else None,
             me_icon=self._icon(game.me.champion_alias, game.me.skin_id) if game and game.me else None,
+            allies=allies, roles=roles,
         )
+
+    def _overlay_allies_roles(self, cls: Any, game: GameInfo | None, tracker: Any,
+                              now: float) -> tuple[list[Any], dict[str, str]]:
+        """Allied views (roster order, then anonymous visible allies) + alias -> role map. Never raises."""
+        allies: list[Any] = []
+        roles: dict[str, str] = {}
+        try:
+            for p in (game.all_players() if game is not None else []):
+                if p.champion_alias and getattr(p, "position", ""):
+                    roles[p.champion_alias] = str(p.position)
+            # inferred roles (roles.RoleResolver: alias -> RoleInfo), when the engine has one
+            resolver = getattr(self, "_role_resolver", None) or getattr(self, "_roles", None)
+            extra = resolver.roles() if callable(getattr(resolver, "roles", None)) else resolver
+            if isinstance(extra, dict):
+                for k, info in extra.items():
+                    role = getattr(info, "role", info)
+                    if k and isinstance(role, str) and role and not roles.get(str(k)):
+                        roles[str(k)] = role
+            seen: set[str] = set()
+            for p in (list(game.allies) if game is not None else [])[:4]:
+                tr = tracker.get(p.champion_alias) if (tracker is not None and p.champion_alias) else None
+                v = self._enemy_view(cls, p.champion_alias, p.champion_name, p.skin_id, tr, None, now, False)
+                v.relation, v.role = "ally", roles.get(p.champion_alias)
+                allies.append(v)
+                if tr is not None:
+                    seen.add(tr.key)
+            if tracker is not None and hasattr(tracker, "allies"):
+                for tr in tracker.allies(visible_only=True):
+                    if tr.key not in seen and len(allies) < 8:
+                        v = self._enemy_view(cls, tr.alias, tr.alias or "?", 0, tr, None, now, False)
+                        v.relation, v.role = "ally", roles.get(tr.alias or "")
+                        allies.append(v)
+        except Exception:
+            log.debug("overlay allies / roles failed", exc_info=True)
+        return allies, roles
 
     def _enemy_view(self, cls: Any, alias: str | None, name: str, skin: int, tr: Any,
                     me_uv: tuple[float, float] | None, now: float, is_jungler: bool) -> Any:
@@ -1712,6 +1751,11 @@ class CoachEngine:
     @property
     def fog_tracker(self) -> Any:
         return self._fog
+
+    @property
+    def _role_resolver(self) -> Any:
+        """Role of every player (roles.RoleResolver owned by the gank analyser), or None."""
+        return getattr(self._gank, "role_resolver", None)
 
     @property
     def detector(self) -> Any:
