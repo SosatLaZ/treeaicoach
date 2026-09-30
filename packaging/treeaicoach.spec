@@ -64,6 +64,7 @@ hiddenimports = [
     "PIL._tkinter_finder",
     "customtkinter",
     "onnxruntime",
+    "mss",
 ] + _package_modules()
 
 excludes = [
