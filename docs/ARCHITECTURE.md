@@ -525,3 +525,104 @@ L'alerte avait été donnée 5 secondes avant. » ou « Mort sans alerte : perso
 `objective_timers: bool = True`, `objective_lead_s: list[int] = [60, 20]`, `recall_reminder: bool = True`,
 `recall_gold_threshold: int = 1300`, `control_ward_reminder: bool = True`, `hotkey_jungler: str = "F9"` ("" = désactivé),
 `death_recap: bool = True`, `post_game_report: bool = True`, `open_report_automatically: bool = True`.
+
+## 7. Indicateurs visuels (overlay) — v1.2
+
+### 7.0 Principe et sécurité
+* Fenêtres Windows **séparées** (processus TreeAICoach), transparentes, toujours au premier plan, **traversées par la souris**
+  (`WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST`), affichées avec
+  `UpdateLayeredWindow` (alpha par pixel). Aucune injection, aucun hook DirectX : fonctionne en mode d'affichage **Sans bordure / Fenêtré**.
+* On ne dessine **jamais par-dessus la zone de la minimap capturée** (sinon on capturerait nos propres dessins et le détecteur
+  serait pollué) et on n'utilise **pas** `SetWindowDisplayAffinity`. Le « radar » est donc une copie agrandie de la minimap,
+  placée **à côté** (par défaut juste au-dessus) de la vraie minimap.
+* Tout le rendu est fait en numpy/PIL dans `overlay_render.py` (pur, testable sous Linux) ; `overlay.py` ne fait que
+  l'affichage Win32 (ctypes). Si quoi que ce soit échoue → overlay désactivé proprement, l'app continue (voix seule).
+
+### 7.1 `fog_tracker.py` — cercle de position possible (« zone où il peut être »)
+```python
+WALK_GRID = 128                      # grille de calcul (cellules)
+def walkable_mask(texture_rgba: np.ndarray, grid: int = WALK_GRID) -> np.ndarray   # bool [grid,grid] (alpha > 0 = zone praticable)
+class Reachability:
+    def __init__(self, walkable: np.ndarray)
+    def distance_field(self, start_uv: tuple[float, float]) -> np.ndarray   # distance géodésique normalisée (float32, inf = inatteignable)
+        # propagation par dilatations successives contraintes au masque (alternance noyau croix / carré ≈ octogonal), < 10 ms
+@dataclass
+class FogEstimate:
+    key: str; alias: str | None; name: str | None
+    last_uv: tuple[float, float]; last_seen: float (t) ; elapsed: float
+    speed: float                      # vitesse retenue (normalisée / s)
+    radius: float                     # speed * elapsed (+ marge), cercle « à vol d'oiseau »
+    region: np.ndarray | None         # masque bool [grid,grid] des cellules atteignables (géodésique + marge flash 0.027)
+    confidence: float                 # 1 → 0 quand la zone devient trop grande (elapsed → FOG_MAX_S)
+class FogTracker:
+    FOG_MAX_S = 60.0                  # au-delà : zone trop grande, affichage estompé puis retiré
+    def __init__(self, texture_rgba: np.ndarray | None = None)
+    def update(self, t: float, tracker: Tracker, game: GameInfo | None, mode: str = "jungler") -> list[FogEstimate]
+        # mode "jungler" | "all" | "off". Démarre une estimation quand un ennemi suivi devient invisible, la supprime dès qu'il
+        # réapparaît. Vitesse = vitesse observée juste avant la disparition, bornée à [0.85, 1.35] × vitesse nominale
+        # (nominale : 345 u/s avant 2:30, 390 u/s après ; convertie en normalisé / MAP_GAME_UNITS).
+```
+
+### 7.2 `overlay_render.py` (pur : numpy + PIL, polices Segoe UI → DejaVu → police PIL par défaut ; accents FR corrects)
+```python
+@dataclass
+class EnemyView: key: str; alias: str | None; name: str; visible: bool; uv: tuple[float,float] | None
+                 last_seen_ago: float | None; is_jungler: bool; approaching: bool; icon: np.ndarray | None  # RGBA
+@dataclass
+class OverlayState:
+    minimap_rect: Rect | None; screen_rect: Rect | None
+    me_uv: tuple[float, float] | None; my_team: str | None
+    enemies: list[EnemyView]; fogs: list[FogEstimate]
+    threat_level: int                 # 0 sûr, 1 attention, 2 danger
+    threat_text: str                  # ex. "SÛR", "ATTENTION — Lee Sin approche", "DANGER — GANK !"
+    last_alert: tuple[str, int, float] | None   # (texte, niveau, âge en s)
+    objectives: list[ObjectiveState]; game_time: float | None
+    warn_radius: float; danger_radius: float
+    flash: float                      # 0..1 intensité du flash de bord d'écran (DANGER)
+    jungler_line: str | None          # ex. "Jungler : Lee Sin — vu il y a 23 s, rivière du haut"
+    hint: str | None                  # ex. "1 450 PO — pense à rentrer"
+def render_radar(state: OverlayState, size: int, texture_bgr: np.ndarray) -> np.ndarray   # BGRA premultiplié size x size
+    # texture minimap assombrie ; cercles warn (jaune) / danger (rouge) autour de moi ; mon icône ;
+    # ennemis visibles (anneau rouge, jungler avec halo pulsé), flèche de vitesse si il se rapproche ;
+    # zones de brouillard : région atteignable remplie rouge translucide + contour + cercle + minuteur "23 s" au dernier point vu ;
+    # icônes grisées + "?" + secondes aux dernières positions des ennemis invisibles (< 60 s).
+def render_hud(state: OverlayState, width: int = 340) -> np.ndarray     # BGRA premultiplié
+    # jauge de menace (vert/orange/rouge), ligne jungler, rangée des 5 ennemis (icône + "vu" ou "MIA 23 s"),
+    # objectifs (Dragon 1:24, Baron 4:10...), dernière alerte (s'estompe en 4 s), astuce (or).
+def render_flash(w: int, h: int, intensity: float, exclude: Rect | None, thickness: int = 10) -> np.ndarray
+    # cadre rouge sur les bords de l'écran, sans jamais recouvrir `exclude` (rect de la minimap, relatif à l'écran)
+def to_premultiplied_bgra(rgba: np.ndarray) -> np.ndarray
+```
+
+### 7.3 `overlay.py` (Windows, ctypes)
+```python
+class LayeredWindow:     # une fenêtre popup layered ; méthodes appelées depuis le thread de l'overlay uniquement
+    def __init__(self, name: str, click_through: bool = True)
+    def update(self, bgra_premul: np.ndarray, x: int, y: int) -> None   # UpdateLayeredWindow (DIB 32 bits)
+    def hide(self) -> None; def show(self) -> None; def destroy(self) -> None
+    def set_click_through(self, on: bool) -> None
+class OverlayManager:
+    def __init__(self, cfg: Config, state_provider: Callable[[], OverlayState | None])
+    def start(self) -> None; def stop(self) -> None; def apply_config(self, cfg: Config) -> None
+    ok: bool                 # False si non supporté (hors Windows, erreur) → aucune exception
+```
+Thread dédié avec boucle de messages (`PeekMessageW`), rafraîchissement ~12 Hz, fenêtres cachées hors partie ou si l'état est None.
+Placement : radar `cfg.radar_position` ∈ {"above_minimap" (défaut), "left_of_minimap", "top_left", "custom"} avec
+`cfg.radar_scale` (défaut 1.0 = même taille que la minimap, max 2.0) ; HUD `cfg.hud_position` ∈ {"top_left" (défaut),
+"top_right", "left_middle", "custom"} ; positions « custom » en pixels écran (`cfg.radar_xy`, `cfg.hud_xy`).
+Mode « déplacer » (depuis l'UI) : fenêtres non traversées par la souris, déplaçables à la souris, position sauvegardée.
+
+### 7.4 Config — nouveaux champs
+`overlay_enabled: bool = True`, `radar_enabled: bool = True`, `radar_position: str = "above_minimap"`, `radar_scale: float = 1.0`,
+`radar_xy: list[int] | None = None`, `hud_enabled: bool = True`, `hud_position: str = "top_left"`, `hud_xy: list[int] | None = None`,
+`danger_flash: bool = True`, `fog_mode: str = "jungler"` ("jungler" | "all" | "off"), `fog_max_s: float = 60.0`,
+`hotkey_mute: str = "F10"`, `hotkey_overlay: str = "F11"`, `break_reminder: bool = True`.
+
+### 7.5 Engine — ajouts
+`CoachEngine.get_overlay_state() -> OverlayState | None` (instantané thread-safe, None hors partie) ;
+`CoachEngine.jungler_status_text() -> str` (réponse à F9, depuis FogTracker/Tracker) ; `mute(bool)`, `toggle_overlay()`.
+Menace courante = niveau max des alertes brutes du GankAnalyzer du dernier tick (même filtrées par le throttler), maintenu 2 s.
+
+### 7.6 Session (bien-être)
+`break_reminder` : à la fin d'une partie perdue (événement `GameEnd` `Result == "Lose"`), si 3 défaites d'affilée dans la session
+→ message vocal et bandeau UI « 3 défaites d'affilée : une pause de 10 minutes aide à rester concentré. »
