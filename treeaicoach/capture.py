@@ -121,6 +121,12 @@ def set_dpi_awareness() -> None:
         try:
             import ctypes
 
+            try:  # Windows 10 1703+: per-monitor v2 (most reliable with Tk + layered windows)
+                if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+                    log.debug("DPI awareness: per-monitor v2")
+                    return
+            except (AttributeError, OSError):
+                pass
             try:
                 hr = ctypes.windll.shcore.SetProcessDpiAwareness(2)
                 if hr in (0, _E_ACCESSDENIED):
@@ -192,7 +198,7 @@ def find_game_window() -> Rect | None:
         pt = wintypes.POINT(0, 0)
         if not user32.ClientToScreen(hwnd, ctypes.byref(pt)):
             return None
-        return Rect(int(pt.x), int(pt.y), w, h)
+        return _to_physical(hwnd, Rect(int(pt.x), int(pt.y), w, h))
     except Exception as exc:
         log.debug("find_game_window failed: %s", exc)
         return None
@@ -201,6 +207,32 @@ def find_game_window() -> Rect | None:
 # ======================================================================================
 # Monitors / capture
 # ======================================================================================
+
+
+def _to_physical(hwnd: Any, rect: Rect) -> Rect:
+    """Convert a window rect to physical pixels if this thread is not DPI aware.
+
+    When DPI awareness could not be set (or was reset by a library), Windows reports
+    scaled "logical" coordinates (e.g. 1600x900 on a 2000x1125 screen at 125 %), which
+    would misplace every capture and overlay. Never raises.
+    """
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        user32.GetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        user32.GetAwarenessFromDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        ctx = user32.GetThreadDpiAwarenessContext()
+        if user32.GetAwarenessFromDpiAwarenessContext(ctx) != 0:   # 0 = DPI unaware
+            return rect
+        dpi = int(user32.GetDpiForWindow(hwnd) or 96)
+        if dpi <= 96:
+            return rect
+        k = dpi / 96.0
+        return Rect(int(round(rect.x * k)), int(round(rect.y * k)),
+                    int(round(rect.w * k)), int(round(rect.h * k)))
+    except Exception:
+        return rect
 
 
 def _new_mss() -> Any:

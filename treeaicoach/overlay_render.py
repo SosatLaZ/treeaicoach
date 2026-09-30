@@ -1191,7 +1191,6 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
 
     # ---- fog regions (where hidden enemies can be), least confident first
     fogs = [f for f in (state.fogs or []) if f is not None]
-    fog_keys = {f.key for f in fogs}
     for fog in sorted(fogs, key=lambda f: (bool(getattr(f, "is_jungler", False)), f.confidence)):
         uv = _uv_ok(fog.last_uv)
         if uv is None:

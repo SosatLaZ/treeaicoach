@@ -83,14 +83,23 @@ VAR_EPS = (12.0, 6.0, 6.0)
 CONTRAST_RANGE = (0.45, 2.4)
 #: Peaks per champion considered for the assignment.
 PEAKS_PER_CHAMP = 3
-#: Bounds of the adaptive acceptance threshold (NCC).
-THR_MIN = 0.45
-THR_MAX = 0.66
-THR_INIT = 0.52
-#: A match this strong is accepted even when the ring colour disagrees.
-STRONG_SCORE = 0.80
+#: Evidence of a match = NCC + UNIQUE_WEIGHT * min(NCC - the champion's next best peak,
+#: UNIQUE_CAP): a champion is on the map at most once, so its true position stands out from
+#: its other peaks, while a portrait matching the terrain by chance matches it in many places.
+UNIQUE_WEIGHT = 0.8
+UNIQUE_CAP = 0.15
+#: Adaptive acceptance threshold (evidence units) = high percentile of the background
+#: peaks (the champions' secondary peaks, recent frames) + THR_MARGIN, within bounds.
+THR_MIN = 0.70
+THR_MAX = 0.90
+THR_MARGIN = 0.14
+THR_BG_PCT = 97
+#: Peaks below this NCC are ignored.
+PEAK_FLOOR = 0.35
+#: A match this strong (evidence) is accepted even when the ring colour disagrees.
+STRONG_SCORE = 0.95
 #: Matches at least this confident (and with a consistent ring) teach the ring colours.
-LEARN_SCORE = 0.65
+LEARN_SCORE = 0.88
 #: Two accepted icons closer than STACK_FRAC x diameter must both be confident (stacked
 #: icons); closer than MIN_SEP_FRAC x diameter they are the same spot.
 STACK_FRAC = 0.75
@@ -363,7 +372,7 @@ class MatchInfo:
     u: float
     v: float
     r: float
-    ncc: float
+    ncc: float                          # evidence (NCC + uniqueness bonus)
     ring_enemy: float
     ring_ally: float
     accepted: bool
@@ -378,7 +387,6 @@ class _State:
     calib: list = field(default_factory=list)       # (scale, quality) of the first frames
     conf_hist: list = field(default_factory=list)   # confident matches per frame
     ref_conf: float = 0.0
-    fg: list = field(default_factory=list)          # recent confident match scores
     bg: list = field(default_factory=list)          # recent background peak scores
 
 
@@ -403,7 +411,7 @@ class RosterMatcher:
         #: Diagnostics of the last detect() call.
         self.last_matches: list[MatchInfo] = []
         self.last_time_ms: float = 0.0
-        self.last_threshold: float = THR_INIT
+        self.last_threshold: float = THR_MIN
         self.last_calib_ms: float = 0.0
 
     # ------------------------------------------------------------------ roster
@@ -684,13 +692,12 @@ class RosterMatcher:
             return st.scale
         return self._stored_scale(bgr) or DEFAULT_SCALE
 
-    def _threshold(self) -> float:
-        st = self._state
-        if len(st.fg) < 6 or len(st.bg) < 30:
-            return THR_INIT
-        fg = float(np.percentile(st.fg, 20))
-        bg = float(np.percentile(st.bg, 97))
-        thr = bg + 0.35 * (fg - bg) if fg > bg else bg + 0.03
+    def _threshold(self, current_bg: list[float]) -> float:
+        """Adaptive threshold from the background peaks (recent frames + this one)."""
+        bg = self._state.bg[-400:] + current_bg
+        if len(bg) < 8:
+            return THR_MIN + 0.05
+        thr = float(np.percentile(bg, THR_BG_PCT)) + THR_MARGIN
         return float(min(THR_MAX, max(THR_MIN, thr)))
 
     @staticmethod
@@ -733,69 +740,68 @@ class RosterMatcher:
             return []
         half = (bank.size - 1) / 2.0                   # map index -> template centre
         rad = max(2, int(round(0.4 * bank.size)))
-        floor = THR_MIN - 0.12
-        thr = self._threshold()
-        self.last_threshold = thr
         R_px = 0.5 * scale * W                          # icon radius (original px)
         r_norm = R_px / W
         D_work = scale * W * fx                         # icon diameter (working px)
 
-        # candidates: (score, entry, x, y) in working px (continuous centre)
-        cands: list[tuple[float, int, float, float]] = []
+        # candidates: (evidence, ncc, entry, x, y) in working px (continuous centre)
+        cands: list[tuple[float, float, int, float, float]] = []
         bg_scores: list[float] = []
         for i in range(len(ents)):
             m = maps[i]
-            for j, (x, y, v) in enumerate(self._peaks(m, rad, PEAKS_PER_CHAMP, floor)):
-                ratio = float(std[y, x]) / float(bank.stds[i])
-                if not CONTRAST_RANGE[0] < ratio < CONTRAST_RANGE[1]:
-                    continue
+            pk = [(x, y, v) for x, y, v in self._peaks(m, rad, PEAKS_PER_CHAMP + 1, PEAK_FLOOR)
+                  if CONTRAST_RANGE[0] < float(std[y, x]) / float(bank.stds[i])
+                  < CONTRAST_RANGE[1]]
+            for j, (x, y, v) in enumerate(pk[:PEAKS_PER_CHAMP]):
+                other = max((q[2] for k, q in enumerate(pk) if k != j), default=PEAK_FLOOR)
+                ev = v + UNIQUE_WEIGHT * min(v - other, UNIQUE_CAP)
                 sx, sy = self._subpixel(m, x, y)
-                cands.append((v, i, sx + half + 0.5, sy + half + 0.5))
+                cands.append((ev, v, i, sx + half + 0.5, sy + half + 0.5))
                 if j > 0:
                     bg_scores.append(v)
+        thr = self._threshold(bg_scores)
+        self.last_threshold = thr
 
         cands.sort(key=lambda c: -c[0])
         used: set[int] = set()
         accepted: list[tuple[float, int, float, float, float, float]] = []
         infos: list[MatchInfo] = []
-        for v, i, x, y in cands:
+        for ev, v, i, x, y in cands:
             if i in used:
                 continue
             e = ents[i]
             cx, cy = x / fx, y / fy                     # original px (continuous)
             u, vv = cx / W, cy / H
-            if v < thr:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, v, 0.0, 0.0,
+            if ev < thr:
+                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, ev, 0.0, 0.0,
                                        False, "score"))
                 continue
             conflict = False
             for va, _ia, xa, ya, _fe, _fa in accepted:
                 dd = math.hypot(x - xa, y - ya) / max(D_work, 1e-6)
-                if dd < MIN_SEP_FRAC or (dd < STACK_FRAC and v < max(thr + 0.1, 0.85 * va)):
+                if dd < MIN_SEP_FRAC or (dd < STACK_FRAC and ev < max(thr + 0.1, 0.85 * va)):
                     conflict = True
                     break
             if conflict:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, v, 0.0, 0.0,
+                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, ev, 0.0, 0.0,
                                        False, "conflict"))
                 continue
             ring = self._ring_pixels(bgr, cx, cy, R_px)
             f_en, f_al = self.rings.classify(ring)
             own, opp = (f_en, f_al) if e.relation == "enemy" else (f_al, f_en)
-            if v < STRONG_SCORE and opp > 0.3 and opp > 2.0 * own + 0.05:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, v, f_en, f_al,
+            if ev < STRONG_SCORE and opp > 0.3 and opp > 2.0 * own + 0.05:
+                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, ev, f_en, f_al,
                                        False, "ring"))
                 continue
             used.add(i)
-            accepted.append((v, i, x, y, f_en, f_al))
-            infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, v, f_en, f_al, True))
-            if v >= LEARN_SCORE and opp < 0.15:
+            accepted.append((ev, i, x, y, f_en, f_al))
+            infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, ev, f_en, f_al, True))
+            if ev >= LEARN_SCORE and opp < 0.15:
                 self.rings.learn(e.relation, ring)
 
         # statistics for the adaptive threshold and the re-calibration trigger
         conf = [a[0] for a in accepted if a[0] >= thr + 0.08]
-        st.fg.extend(conf)
         st.bg.extend(bg_scores)
-        del st.fg[:-200]
         del st.bg[:-600]
         st.conf_hist.append(float(len(conf)))
         del st.conf_hist[:-4 * RECAL_WINDOW]
@@ -804,11 +810,11 @@ class RosterMatcher:
 
         self.last_matches = infos
         dets: list[Detection] = []
-        for v, i, x, y, f_en, f_al in accepted:
+        for ev, i, x, y, f_en, f_al in accepted:
             e = ents[i]
             enemy = e.relation == "enemy"
             agree = (f_en - f_al) if enemy else (f_al - f_en)
-            conf_v = float(min(1.0, max(0.05, 0.55 + (v - thr) * 1.5 + 0.1 * agree)))
+            conf_v = float(min(1.0, max(0.05, 0.55 + (ev - thr) * 1.5 + 0.1 * agree)))
             p_en = 0.97 if enemy else 0.03
             dets.append(Detection(u=x / fx / W, v=y / fy / H, r=r_norm, score=conf_v,
                                   cls="enemy" if enemy else "ally",

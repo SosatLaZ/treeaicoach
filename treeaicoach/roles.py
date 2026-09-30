@@ -451,6 +451,8 @@ class RoleResolver:
 
     def _compute(self, game: Any) -> None:
         players = self._players(game)
+        if not players:
+            return                                   # nothing usable: keep the last result
         out: dict[tuple[str, str], RoleInfo] = {}
         my_key = None
         for side in ("ally", "enemy"):
