@@ -199,6 +199,136 @@ def test_from_dict_and_to_dict():
     json.dumps(d)  # serializable
 
 
+# --------------------------------------------------------------------------- v1.1 / v1.2 fields
+
+
+def test_new_field_defaults_match_contract():
+    c = Config()
+    # §6.7
+    assert c.objective_timers is True and c.objective_lead_s == [60, 20]
+    assert c.recall_reminder is True and c.recall_gold_threshold == 1300
+    assert c.control_ward_reminder is True and c.hotkey_jungler == "F9"
+    assert c.death_recap is True and c.post_game_report is True and c.open_report_automatically is True
+    # §7.4
+    assert c.overlay_enabled is True and c.radar_enabled is True
+    assert c.radar_position == "above_minimap" and c.radar_scale == 1.0 and c.radar_xy is None
+    assert c.hud_enabled is True and c.hud_position == "top_left" and c.hud_xy is None
+    assert c.danger_flash is True and c.fog_mode == "jungler" and c.fog_max_s == 60.0
+    assert c.hotkey_mute == "F10" and c.hotkey_overlay == "F11" and c.break_reminder is True
+    # §8.2
+    assert c.ui_geometry == ""
+    # mutable defaults are not shared between instances
+    c.objective_lead_s.append(5)
+    assert Config().objective_lead_s == [60, 20]
+    assert config_mod._DEFAULTS["objective_lead_s"] == [60, 20]
+
+
+@pytest.mark.parametrize(
+    "field, value, expected",
+    [
+        ("objective_lead_s", [20, 60], [60, 20]),
+        ("objective_lead_s", (30,), [30]),
+        ("objective_lead_s", [], []),
+        ("objective_lead_s", [60, 60.4, 1, 1000, "x", None, True], [300, 60, 5]),
+        ("objective_lead_s", [90, 60, 45, 30, 20, 10], [90, 60, 45, 30]),
+        ("objective_lead_s", ["x"], [60, 20]),
+        ("objective_lead_s", "60", [60, 20]),
+        ("objective_lead_s", None, [60, 20]),
+        ("recall_gold_threshold", 50, 300),
+        ("recall_gold_threshold", 99999, 5000),
+        ("recall_gold_threshold", 1449.6, 1450),
+        ("recall_gold_threshold", "1300", 1300),
+        ("radar_scale", 3.0, 2.0),
+        ("radar_scale", 0.1, 0.5),
+        ("radar_scale", 1.4, 1.4),
+        ("fog_max_s", 1000, 180.0),
+        ("fog_max_s", 1, 10.0),
+        ("radar_position", " Left_Of_Minimap ", "left_of_minimap"),
+        ("radar_position", "bottom", "above_minimap"),
+        ("hud_position", "TOP_RIGHT", "top_right"),
+        ("hud_position", 1, "top_left"),
+        ("fog_mode", "ALL", "all"),
+        ("fog_mode", "Off", "off"),
+        ("fog_mode", "everyone", "jungler"),
+        ("hotkey_jungler", " ctrl + f9 ", "Ctrl+F9"),
+        ("hotkey_jungler", "", ""),
+        ("hotkey_jungler", "off", ""),
+        ("hotkey_jungler", "Q", "F9"),
+        ("hotkey_jungler", None, "F9"),
+        ("hotkey_mute", "maj+f10", "Shift+F10"),
+        ("hotkey_overlay", "F25", "F11"),
+        ("radar_xy", [100.4, -20], [100, -20]),
+        ("radar_xy", (5, 6), [5, 6]),
+        ("radar_xy", [1, 2, 3], None),
+        ("radar_xy", [1, "2"], None),
+        ("radar_xy", [1, 10**9], None),
+        ("hud_xy", "10,20", None),
+        ("ui_geometry", "1100x700+120+80", "1100x700+120+80"),
+        ("ui_geometry", " 1100x700+-8+-8 ", "1100x700+-8+-8"),
+        ("ui_geometry", "=1100x700-10+20", "1100x700-10+20"),
+        ("ui_geometry", "1100x700", "1100x700"),
+        ("ui_geometry", "10x10+0+0", ""),
+        ("ui_geometry", "zoomed", ""),
+        ("ui_geometry", 42, ""),
+        ("ui_geometry", "1100x700+1+2" + " " * 100, ""),
+        ("death_recap", "no", True),
+        ("break_reminder", 0, False),
+        ("open_report_automatically", False, False),
+    ],
+)
+def test_new_fields_validation(field, value, expected):
+    v = Config(**{field: value}).validated()
+    got = getattr(v, field)
+    assert got == expected
+    assert type(got) is type(expected)
+
+
+def test_new_fields_numpy_values():
+    np = pytest.importorskip("numpy")
+    v = Config(objective_lead_s=np.array([30, 90]).tolist(), radar_xy=[np.int32(4), np.float64(5.6)],
+               recall_gold_threshold=np.int64(1500)).validated()   # type: ignore[arg-type]
+    assert v.objective_lead_s == [90, 30] and v.radar_xy == [4, 6] and v.recall_gold_threshold == 1500
+    assert type(v.radar_xy[0]) is int
+
+
+def test_custom_positions_need_coordinates():
+    v = Config(radar_position="custom", hud_position="custom").validated()
+    assert v.radar_position == "above_minimap" and v.hud_position == "top_left"
+    v = Config(radar_position="custom", radar_xy=[10, 20], hud_position="custom", hud_xy=(-1900, 5)).validated()
+    assert (v.radar_position, v.radar_xy, v.hud_position, v.hud_xy) == ("custom", [10, 20], "custom", [-1900, 5])
+
+
+def test_duplicate_hotkeys_are_disabled(caplog):
+    with caplog.at_level(logging.WARNING, logger="treeaicoach.config"):
+        v = Config(hotkey_jungler="F10", hotkey_mute="f10", hotkey_overlay="F10").validated()
+    assert (v.hotkey_jungler, v.hotkey_mute, v.hotkey_overlay) == ("F10", "", "")
+    assert "already used" in caplog.text
+    v = Config(hotkey_jungler="", hotkey_mute="", hotkey_overlay="Ctrl+F11").validated()
+    assert (v.hotkey_jungler, v.hotkey_mute, v.hotkey_overlay) == ("", "", "Ctrl+F11")
+    v = Config(hotkey_jungler="Ctrl+F9", hotkey_mute="F9").validated()      # different combinations
+    assert (v.hotkey_jungler, v.hotkey_mute) == ("Ctrl+F9", "F9")
+
+
+def test_new_fields_roundtrip_and_old_files(tmp_path):
+    p = tmp_path / "config.json"
+    cfg = Config(objective_timers=False, objective_lead_s=[90, 30], recall_reminder=False,
+                 recall_gold_threshold=1800, control_ward_reminder=False, hotkey_jungler="Ctrl+F9",
+                 death_recap=False, post_game_report=False, open_report_automatically=False,
+                 overlay_enabled=False, radar_enabled=False, radar_position="custom", radar_scale=1.5,
+                 radar_xy=[1500, 600], hud_enabled=False, hud_position="left_middle", hud_xy=[10, 10],
+                 danger_flash=False, fog_mode="all", fog_max_s=45.0, hotkey_mute="", hotkey_overlay="F12",
+                 break_reminder=False, ui_geometry="1200x800+10+10")
+    assert cfg.validated() == cfg
+    assert save_config(cfg, p) is True
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["objective_lead_s"] == [90, 30] and data["radar_xy"] == [1500, 600]
+    assert load_config(p) == cfg
+    # a v1.0 file (no new keys) loads with the new defaults
+    p.write_text(json.dumps({"config_version": 1, "voice_rate": 4}), encoding="utf-8")
+    old = load_config(p)
+    assert old.voice_rate == 4 and old.objective_lead_s == [60, 20] and old.hotkey_mute == "F10"
+
+
 # --------------------------------------------------------------------------- load / save
 
 
