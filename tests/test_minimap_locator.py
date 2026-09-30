@@ -178,7 +178,8 @@ def random_scene(rng: np.random.Generator, size: int) -> Scene:
             t = t0 + 0.02 * k
             uv = [(0.07, 1 - t), (t, 0.07), (t, 1 - t)][lane]
             minions.append((float(uv[0]), float(uv[1]), "ally" if rng.random() < 0.5 else "enemy"))
-    pings = [(float(rng.uniform(0.1, 0.9)), float(rng.uniform(0.1, 0.9)), "ring_generic")
+    pings = [(float(rng.uniform(0.1, 0.9)), float(rng.uniform(0.1, 0.9)),
+              str(rng.choice(["ring_red.png", "ring2_yellow.png", "ping.png", "caution.png"])))
              for _ in range(int(rng.integers(0, 3)))]
     cu, cvv = rng.uniform(0.0, 0.72), rng.uniform(0.0, 0.84)
     return Scene(texture=str(rng.choice(textures)), size=size,

@@ -240,7 +240,7 @@ def _roam_approach(level: Level, champ: str | None, zone: str | None, n: int) ->
         return f"Gank ! {_cap(who)} arrive, recule !"
     if level == Level.WARNING:
         return f"{_cap(who)} arrive vers toi."
-    return f"{_cap(who)} rôde vers toi."
+    return f"{_cap(who)} rôde près de toi."
 
 
 def _collapse(level: Level, champ: str | None, zone: str | None, n: int) -> str:

@@ -205,13 +205,17 @@ def _normalize_probs(p: np.ndarray) -> tuple[float, float, float]:
     return float(q[0]), float(q[1]), float(q[2])
 
 
-def _dedupe(dets: list[Detection], frac: float, min_dist: float, max_det: int) -> list[Detection]:
-    """Greedy suppression (by descending score) of detections closer than ``frac`` * radius."""
+def _dedupe(dets: list[Detection], frac: float, min_dist: float, max_det: int,
+            use_max_radius: bool = False) -> list[Detection]:
+    """Greedy suppression (by descending score) of detections closer than ``frac`` * radius.
+
+    The radius is the kept detection's one, or the larger of the two if ``use_max_radius``.
+    """
     kept: list[Detection] = []
     for d in sorted(dets, key=lambda x: -x.score):
         dup = False
         for k in kept:
-            lim = max(frac * k.r, min_dist)
+            lim = max(frac * (max(k.r, d.r) if use_max_radius else k.r), min_dist)
             if (d.u - k.u) ** 2 + (d.v - k.v) ** 2 < lim * lim:
                 dup = True
                 break
@@ -506,6 +510,10 @@ class ClassicDetector(BaseDetector):
     MAX_OUTSIDE_COVERAGE = 0.6  # ring colour just outside the ring -> blob, not a ring
     MAX_INSIDE_COVERAGE = 0.85  # ring colour almost everywhere inside -> filled disc
     MIN_TEXTURE_STD = 8.0       # grey std of the interior (flat discs rejected)
+    NESTED_RATIO = 0.85         # a ring this much smaller inside another one is a detail
+    #: Detections closer than this x the larger radius are the same icon (Hough gives
+    #: several shifted circles per icon; truly stacked icons cannot be separated anyway).
+    DUPLICATE_FRAC = 0.95
     MAX_CANDIDATES = 160
     MAX_DET = DEFAULT_MAX_DET
     HOUGH_DP = 1.0
@@ -611,20 +619,20 @@ class ClassicDetector(BaseDetector):
         best_k = frac.argmax(axis=2)                                        # [3, n]
         best = np.take_along_axis(frac, best_k[:, :, None], axis=2)[:, :, 0]  # [3, n]
 
-        reasons: dict[str, int] = {}
+        passing = np.nonzero(best.max(axis=0) >= self.MIN_COVERAGE)[0]
+        reasons: dict[str, int] = {"coverage": int(n - passing.size)}
         dets: list[Detection] = []
-        for i in range(n):
+        for i in passing:
             cov = best[:, i]
             ok = np.nonzero(cov >= self.MIN_COVERAGE)[0]
-            if ok.size == 0:
-                reasons["coverage"] = reasons.get("coverage", 0) + 1
-                continue
             c = int(ok[0])
             if ok.size > 1:
                 # best coverage; near-ties (e.g. a recall halo around the ring): innermost wins
                 top = ok[cov[ok] >= float(cov[ok].max()) - 0.05]
                 c = int(top[np.argmin(best_k[top, i])])
-            coverage = float(cov[c])
+            # banded coverage tolerates centre errors; the raw (single radius) coverage
+            # rewards well-centred circles, so it dominates the score
+            coverage = 0.35 * float(cov[c]) + 0.65 * float(raw[c, i].max())
             others = np.delete(frac[:, i, best_k[c, i]], c)   # other colours on the same ring
             if float(others.max()) > self.MAX_OTHER_COVERAGE:
                 reasons["mixed"] = reasons.get("mixed", 0) + 1
@@ -645,7 +653,22 @@ class ClassicDetector(BaseDetector):
             if d is not None:
                 dets.append(d)
         self.last_rejections = reasons   # diagnostics only (replaced atomically)
-        return _dedupe(dets, DUPLICATE_FRAC, 1.5 / S, self.MAX_DET)
+        return self._suppress(dets, 1.5 / S)
+
+    def _suppress(self, dets: list[Detection], min_dist: float) -> list[Detection]:
+        """Remove circles nested in a larger ring (portrait details), then near duplicates."""
+        dets = sorted(dets, key=lambda d: -d.r)
+        keep: list[Detection] = []
+        for d in dets:
+            nested = False
+            for big in keep:
+                dist = math.hypot(d.u - big.u, d.v - big.v)
+                if d.r < self.NESTED_RATIO * big.r and dist + d.r <= 1.1 * big.r:
+                    nested = True
+                    break
+            if not nested:
+                keep.append(d)
+        return _dedupe(keep, self.DUPLICATE_FRAC, min_dist, self.MAX_DET, use_max_radius=True)
 
     def _finish(self, work: np.ndarray, x: float, y: float, r_in: float, r_outer: float,
                 c: int, coverage: float, cov: np.ndarray, reasons: dict[str, int]
@@ -666,7 +689,8 @@ class ClassicDetector(BaseDetector):
             reasons["flat"] = reasons.get("flat", 0) + 1
             return None
         hsv = cv2.cvtColor(samp[None].astype(np.uint8), cv2.COLOR_BGR2HSV)[0]
-        if float(ring_color_labels(hsv)[c].mean()) > self.MAX_INSIDE_COVERAGE:
+        if float(ring_color_labels(hsv)[c].mean()) > self.MAX_INSIDE_COVERAGE \
+                and std < 2.5 * self.MIN_TEXTURE_STD:
             reasons["inside"] = reasons.get("inside", 0) + 1
             return None
         R = r_outer * self.OUTER_TO_RADIUS
@@ -734,7 +758,3 @@ __all__ = [
     "default_model_path", "default_meta_path", "load_model_meta",
 ]
 
-
-def _sequence_probs(p: Sequence[float]) -> tuple[float, float, float]:  # pragma: no cover
-    """Helper kept for callers building Detections by hand (normalizes 3 probabilities)."""
-    return _normalize_probs(np.asarray(p, np.float64))

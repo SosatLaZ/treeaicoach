@@ -119,7 +119,8 @@ def walkable_mask(texture_rgba: np.ndarray, grid: int = WALK_GRID) -> np.ndarray
         return mask
     except Exception as exc:
         log.warning("walkable_mask: %s; treating the whole map as walkable", exc)
-        return np.ones((max(8, int(grid) if isinstance(grid, (int, float)) else WALK_GRID),) * 2, bool)
+        g = grid if isinstance(grid, int) and grid >= 8 else WALK_GRID
+        return np.ones((g, g), bool)
 
 
 def load_default_texture() -> np.ndarray | None:
@@ -323,6 +324,21 @@ class FogTracker:
                 if e.key == key_or_alias or (want and _norm_alias(e.alias) == want):
                     return e
         return None
+
+    def simulate(self, key: str, alias: str | None, name: str | None, last_uv: tuple[float, float],
+                 elapsed: float, speed: float | None = None, is_jungler: bool = False,
+                 game_time: float | None = None) -> FogEstimate:
+        """Stand-alone estimate (no tracking state change): demos, previews and tests."""
+        uv = geometry.clamp_uv(last_uv[0], last_uv[1])
+        elapsed = max(0.0, float(elapsed))
+        gt_loss = game_time - elapsed if game_time is not None else None
+        spd = clamp_speed(speed if speed is not None else 0.0, gt_loss)
+        loss = _Loss(key, alias, name or alias, uv, -elapsed, spd, is_jungler, self.reach.distance_field(uv))
+        reach = spd * elapsed + REACH_MARGIN
+        region = loss.region(reach, self.grid, self._walk_u8, self._flash_kernel)
+        return FogEstimate(key=key, alias=alias, name=name or alias, last_uv=uv, last_seen=-elapsed,
+                           elapsed=elapsed, speed=spd, radius=reach + FLASH_MARGIN, region=region,
+                           confidence=max(0.0, 1.0 - elapsed / self.max_s), is_jungler=is_jungler)
 
     # ------------------------------------------------------------------ update
     def update(self, t: float, tracker: "Tracker", game: "GameInfo | None",

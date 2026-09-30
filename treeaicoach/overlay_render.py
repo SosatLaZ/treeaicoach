@@ -1003,7 +1003,7 @@ def _render_radar(state: OverlayState, size: int, texture_bgr: np.ndarray | None
 
 
 def _draw_fog(cv_: Canvas, fog: FogEstimate, S: float, phase: float) -> None:
-    """Reachable region + dashed bound circle + greyed icon and timer at the last seen point."""
+    """Reachable region (translucent fill + contour) and the dashed straight-line bound circle."""
     uv = _uv_ok(fog.last_uv)
     if uv is None:
         return
@@ -1037,3 +1037,641 @@ def _draw_fog_label(cv_: Canvas, fog: FogEstimate, icon: np.ndarray | None, S: f
                                      letter=fog.name or fog.alias or "?"), alpha)
     _label_pill(cv_, x, y + icon_d * 0.46 + _cap_height(f_tiny) / 2 + 5, fmt_seconds(fog.elapsed), f_tiny,
                 WHITE, DANGER, alpha=max(alpha, 0.8))
+
+
+# ======================================================================================
+# HUD panel
+# ======================================================================================
+def _objective_rows(state: OverlayState) -> list[tuple[str, np.ndarray | None, str, tuple]]:
+    """(label, icon, text, colour) for the objectives worth showing, soonest first."""
+    gt = state.game_time if state.game_time is not None and _finite(state.game_time) else None
+    items: list[tuple[float, str, np.ndarray | None, str, tuple]] = []
+    for ob in state.objectives or []:
+        try:
+            name = str(getattr(ob, "name", "") or "")
+            alive = bool(getattr(ob, "alive", False))
+            nxt = getattr(ob, "next_spawn", None)
+        except Exception:
+            continue
+        if not name:
+            continue
+        icon = objective_icon(name)
+        label = OBJECTIVE_SHORT.get(name.lower(), name)
+        if alive:
+            items.append((-1.0, label, icon, "dispo", SAFE))
+            continue
+        if nxt is None or not _finite(nxt) or gt is None:
+            continue
+        remaining = float(nxt) - gt
+        if remaining < -1:
+            continue
+        colour = WARNING if remaining <= 60 else GOLD_LIGHT
+        items.append((remaining, label, icon, fmt_clock(max(0.0, remaining)), colour))
+    items.sort(key=lambda it: it[0])
+    return [(label, icon, text, colour) for _, label, icon, text, colour in items]
+
+
+def _threat_glyph(cv_: Canvas, cx: float, cy: float, r: float, level: int, base_rgb: Sequence[int]) -> None:
+    """Round badge with a check (safe), "!" (warning) or double "!" (danger)."""
+    cv_.disc(cx, cy, r, _mix(base_rgb, BLACK, 0.35), 0.9)
+    cv_.ring(cx, cy, r - 0.6, 1.2, WHITE, 0.55)
+    w = max(1.6, r * 0.2)
+    if level <= 0:
+        cv_.capsule(cx - r * 0.42, cy + r * 0.02, cx - r * 0.1, cy + r * 0.34, w, WHITE)
+        cv_.capsule(cx - r * 0.1, cy + r * 0.34, cx + r * 0.45, cy - r * 0.32, w, WHITE)
+    else:
+        xs = (cx,) if level == 1 else (cx - r * 0.24, cx + r * 0.24)
+        for x in xs:
+            cv_.capsule(x, cy - r * 0.45, x, cy + r * 0.12, w, WHITE)
+            cv_.disc(x, cy + r * 0.42, w * 0.62, WHITE)
+
+
+def _coin(cv_: Canvas, cx: float, cy: float, r: float) -> None:
+    cv_.disc(cx, cy, r, (164, 124, 48))
+    cv_.disc(cx, cy - r * 0.08, r * 0.8, (236, 200, 110))
+    cv_.ring(cx, cy - r * 0.08, r * 0.52, max(1.0, r * 0.16), (190, 145, 60), 0.9)
+
+
+def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
+    pad = 12 * k
+    inner = width - 2 * pad
+    fonts = {
+        "title": get_font(round(10.5 * k), "bold"),
+        "clock": get_font(round(12 * k), "semibold"),
+        "threat": get_font(round(15.5 * k), "bold"),
+        "body": get_font(round(12.5 * k), "regular"),
+        "small": get_font(round(10.5 * k), "semibold"),
+        "obj": get_font(round(11.5 * k), "semibold"),
+    }
+    rows: list[tuple[str, float]] = [("header", 20 * k), ("threat", 38 * k)]
+    jl = (state.jungler_line or "").strip()
+    jl_lines: list[str] = []
+    if jl:
+        jl_lines = wrap_text(jl, fonts["body"], inner - 36 * k, 2)
+        rows.append(("jungler", max(30 * k, len(jl_lines) * 16 * k + 4 * k)))
+    slot_w = inner / 5.0
+    icon_d = min(40 * k, slot_w - 14 * k)
+    rows.append(("enemies", icon_d + 22 * k))
+    objs = _objective_rows(state)
+    if objs:
+        rows.append(("objectives", 26 * k))
+    rows.append(("alert", 22 * k))
+    hint = (state.hint or "").strip()
+    if hint:
+        rows.append(("hint", 20 * k))
+    gap = 7 * k
+    height = pad + sum(h for _, h in rows) + gap * (len(rows) - 1) + pad
+    return {"pad": pad, "inner": inner, "fonts": fonts, "rows": rows, "gap": gap, "height": int(math.ceil(height)),
+            "jl_lines": jl_lines, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint}
+
+
+def hud_size(state: OverlayState, width: int = 340) -> tuple[int, int]:
+    """(width, height) that :func:`render_hud` will produce for ``state``."""
+    width = int(min(max(int(width) if _finite(width) else 340, 200), 1200))
+    return width, _hud_layout(state, width, width / 340.0)["height"]
+
+
+def render_hud(state: OverlayState, width: int = 340, now: float | None = None) -> np.ndarray:
+    """HUD panel (threat bar, jungler, 5 enemies, objectives, last alert, hint) - premultiplied BGRA.
+
+    Never raises (an empty 1-row image on internal error, logged).
+    """
+    width = int(min(max(int(width) if _finite(width) else 340, 200), 1200))
+    try:
+        return _render_hud(state, width, time.monotonic() if now is None else float(now))
+    except Exception:
+        log.exception("render_hud failed")
+        return np.zeros((1, width, 4), np.uint8)
+
+
+def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
+    k = width / 340.0
+    lay = _hud_layout(state, width, k)
+    W, H = width, lay["height"]
+    pad, inner, fonts, gap = lay["pad"], lay["inner"], lay["fonts"], lay["gap"]
+    cv_ = Canvas(W, H)
+    # panel: subtle vertical gradient + gold hairline border
+    grad = np.linspace(0, 1, 32, dtype=np.float32)[:, None, None]
+    top, bot = _rgb((16, 30, 54)), _rgb(PANEL)
+    cv_.rrect(0, 0, W, H, 10 * k, top * (1 - grad) + bot * grad, PANEL_ALPHA, border=GOLD,
+              border_alpha=BORDER_ALPHA, border_w=1.0)
+    phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
+    enemies = list(state.enemies or [])
+    y = pad
+    for name, h in lay["rows"]:
+        cy = y + h / 2
+        if name == "header":
+            cv_.polygon([(pad + 4 * k, cy - 5 * k), (pad + 9 * k, cy), (pad + 4 * k, cy + 5 * k),
+                         (pad - 1 * k, cy)], GOLD)
+            cv_.text(pad + 14 * k, cy, "TREEAI COACH", fonts["title"], GOLD, shadow=0.4)
+            cv_.text(W - pad, cy, fmt_clock(state.game_time), fonts["clock"], GOLD_LIGHT, anchor="r")
+            ly = y + h + gap / 2
+            cv_.capsule(pad, ly, W - pad, ly, 1.0, GOLD, 0.35)
+        elif name == "threat":
+            lvl = int(min(max(int(state.threat_level or 0), 0), 2)) if _finite(state.threat_level or 0) else 0
+            base = THREAT_COLORS[lvl]
+            if lvl == 2:
+                pulse = 0.5 + 0.5 * math.sin(phase * 2 * math.pi)
+                cv_.rrect(pad - 3 * k, y - 3 * k, inner + 6 * k, h + 6 * k, 10 * k, None, border=DANGER,
+                          border_alpha=0.25 + 0.45 * pulse, border_w=2.5 * k)
+            g = np.linspace(0, 1, 24, dtype=np.float32)[:, None, None]
+            light, dark = _rgb(_mix(base, WHITE, 0.12)), _rgb(_mix(base, BLACK, 0.28))
+            cv_.rrect(pad, y, inner, h, 7 * k, light * (1 - g) + dark * g, 0.95,
+                      border=_mix(base, WHITE, 0.35), border_alpha=0.6)
+            gr = h * 0.32
+            _threat_glyph(cv_, pad + 8 * k + gr, cy, gr, lvl, base)
+            text = (state.threat_text or "").strip() or THREAT_DEFAULT_TEXT[lvl]
+            tx = pad + 16 * k + 2 * gr
+            text = fit_text(text, fonts["threat"], inner - (tx - pad) - 8 * k)
+            cv_.text(tx, cy, text, fonts["threat"], WHITE, shadow=0.45)
+        elif name == "jungler":
+            jg = next((e for e in enemies if getattr(e, "is_jungler", False)), None)
+            d = 28 * k
+            icx = pad + d / 2
+            if jg is not None:
+                cv_.image(icx, cy, round_icon_patch(jg.icon, d, DANGER, max(1.6, 2 * k), grey=not jg.visible,
+                                                    letter=jg.name or jg.alias or "J"))
+                if jg.visible:
+                    cv_.disc(icx + d * 0.36, cy + d * 0.36, 4.2 * k, PANEL_DEEP)
+                    cv_.disc(icx + d * 0.36, cy + d * 0.36, 3.0 * k, SAFE)
+            else:
+                cv_.image(icx, cy, round_icon_patch(None, d, GOLD_DARK, max(1.6, 2 * k), letter="J"))
+            lines = lay["jl_lines"]
+            lh = 16 * k
+            ty = cy - (len(lines) - 1) * lh / 2
+            for i, line in enumerate(lines):
+                cv_.text(pad + d + 8 * k, ty + i * lh, line, fonts["body"], GOLD_LIGHT if i == 0 else MUTED)
+        elif name == "enemies":
+            _draw_enemy_slots(cv_, enemies, pad, y, lay["slot_w"], lay["icon_d"], k, fonts["small"], phase)
+        elif name == "objectives":
+            x = pad
+            isz = 20 * k
+            for label, icon, text, colour in lay["objs"]:
+                tw = text_width(text, fonts["obj"])
+                need = isz + 5 * k + tw
+                if x + need > W - pad + 0.5:
+                    break
+                if icon is not None:
+                    cv_.image(x + isz / 2, cy, sprite_patch(icon, isz))
+                else:
+                    cv_.text(x + isz / 2, cy, label[:1], fonts["obj"], GOLD, anchor="m")
+                cv_.text(x + isz + 5 * k, cy, text, fonts["obj"], colour)
+                x += need + 13 * k
+        elif name == "alert":
+            _draw_alert_line(cv_, state, pad, cy, inner, fonts["body"], k)
+        elif name == "hint":
+            _coin(cv_, pad + 6 * k, cy, 6 * k)
+            cv_.text(pad + 17 * k, cy, fit_text(lay["hint"], fonts["obj"], inner - 17 * k), fonts["obj"],
+                     GOLD_LIGHT)
+        y += h + gap
+    return cv_.to_bgra()
+
+
+def _draw_enemy_slots(cv_: Canvas, enemies: list[EnemyView], x0: float, y0: float, slot_w: float,
+                      icon_d: float, k: float, font: Any, phase: float) -> None:
+    """Five enemy slots: portrait (grey when not visible) + status line."""
+    ring_w = max(1.8, 2.2 * k)
+    for i in range(5):
+        cx = x0 + slot_w * (i + 0.5)
+        cy = y0 + icon_d / 2 + 1
+        ly = y0 + icon_d + 12 * k
+        if i >= len(enemies) or enemies[i] is None:
+            cv_.ring(cx, cy, icon_d / 2 - 1, 1.2, GREY, 0.8, dash=(4, 3))
+            cv_.text(cx, ly, "—", font, GREY, anchor="m", shadow=0)
+            continue
+        e = enemies[i]
+        ago = e.last_seen_ago if e.last_seen_ago is not None and _finite(e.last_seen_ago) else None
+        if e.visible and e.approaching:
+            cv_.glow(cx, cy, icon_d * 0.45, icon_d * 0.72, DANGER, 0.35 + 0.3 * math.sin(phase * 2 * math.pi))
+        cv_.image(cx, cy, round_icon_patch(e.icon, icon_d, DANGER, ring_w, grey=not e.visible,
+                                           letter=e.name or e.alias or "?"))
+        if e.is_jungler:
+            bx, by, br = cx - icon_d * 0.38, cy - icon_d * 0.38, 6.5 * k
+            cv_.disc(bx, by, br + 1.2, PANEL_DEEP)
+            cv_.disc(bx, by, br, GOLD)
+            cv_.text(bx, by, "J", get_font(round(9 * k), "bold"), PANEL_DEEP, anchor="m", shadow=0)
+        if e.visible:
+            bx, by = cx + icon_d * 0.36, cy + icon_d * 0.36
+            cv_.disc(bx, by, 5.0 * k, PANEL_DEEP)
+            cv_.disc(bx, by, 3.6 * k, SAFE)
+            text, colour = ("approche", DANGER) if e.approaching else ("visible", SAFE)
+        elif ago is None:
+            text, colour = "non vu", GREY
+        elif ago < LAST_SEEN_MAX_S:
+            text, colour = f"MIA {fmt_seconds(ago)}", WARNING
+        else:
+            text, colour = f"vu {fmt_clock(ago)}", MUTED
+        cv_.text(cx, ly, fit_text(text, font, slot_w - 2), font, colour, anchor="m", shadow=0.4)
+
+
+def _draw_alert_line(cv_: Canvas, state: OverlayState, x: float, cy: float, inner: float, font: Any,
+                     k: float) -> None:
+    la = state.last_alert
+    text, level, age = "", 0, None
+    if la:
+        try:
+            text, level, age = str(la[0] or ""), int(la[1]), float(la[2])
+        except (TypeError, ValueError, IndexError):
+            text = ""
+    if text and age is not None and _finite(age) and age < ALERT_FADE_S:
+        a = 1.0 - max(0.0, age) / ALERT_FADE_S
+        a = a ** 0.6
+        colour = THREAT_COLORS.get(min(max(level, 0), 2), GOLD)
+        cv_.disc(x + 5 * k, cy, 4.5 * k, colour, a)
+        cv_.glow(x + 5 * k, cy, 3 * k, 9 * k, colour, 0.35 * a)
+        fg = GOLD_LIGHT if level < 2 else _mix(DANGER, WHITE, 0.35)
+        cv_.text(x + 16 * k, cy, fit_text(text, font, inner - 16 * k), font, fg, a)
+    else:
+        cv_.disc(x + 5 * k, cy, 3.5 * k, GREY, 0.8)
+        cv_.text(x + 16 * k, cy, "Aucune alerte récente", font, GREY, 0.9, shadow=0)
+
+
+# ======================================================================================
+# Danger flash (screen edges)
+# ======================================================================================
+def _rect_tuple(r: Any) -> tuple[int, int, int, int] | None:
+    if r is None:
+        return None
+    try:
+        if hasattr(r, "x"):
+            vals = (r.x, r.y, r.w, r.h)
+        else:
+            vals = tuple(r)[:4]
+        x, y, w, h = (int(round(float(v))) for v in vals)
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return x, y, w, h
+
+
+def flash_profile(thickness: int) -> np.ndarray:
+    """Alpha (0..1) as a function of the distance to the screen edge, length ``3 * thickness``."""
+    th = max(1, int(thickness))
+    d = np.arange(3 * th, dtype=np.float32)
+    core = 0.92 - 0.22 * (d / th)
+    glow = 0.70 * np.clip(1.0 - (d - th) / (2.0 * th), 0.0, 1.0) ** 2
+    return np.where(d < th, core, glow).astype(np.float32)
+
+
+def render_flash(w: int, h: int, intensity: float, exclude: "Rect | None", thickness: int = 10) -> np.ndarray:
+    """Red frame on the screen edges (premultiplied BGRA ``h x w``), never covering ``exclude``.
+
+    ``exclude`` is the minimap rectangle relative to the flash image (x, y, w, h). Never raises.
+    """
+    try:
+        w = int(min(max(int(w), 1), _MAX_SIDE))
+        h = int(min(max(int(h), 1), _MAX_SIDE))
+    except (TypeError, ValueError):
+        return np.zeros((1, 1, 4), np.uint8)
+    out = np.zeros((h, w, 4), np.uint8)
+    try:
+        a = _clamp01(intensity)
+        if a <= 0:
+            return out
+        prof = flash_profile(thickness) * np.float32(a)
+        D = int(min(len(prof), max(1, w // 2), max(1, h // 2)))
+        prof = prof[:D]
+        dx = np.minimum(np.arange(w), np.arange(w)[::-1])
+        dy = np.minimum(np.arange(h), np.arange(h)[::-1])
+        col = np.array([DANGER[2], DANGER[1], DANGER[0]], np.float32)
+
+        def fill(ys: slice, xs: slice) -> None:
+            d = np.minimum(dy[ys][:, None], dx[xs][None, :])
+            alpha = np.where(d < D, prof[np.minimum(d, D - 1)], np.float32(0.0))
+            out[ys, xs, :3] = (alpha[..., None] * col + 0.5).astype(np.uint8)
+            out[ys, xs, 3] = (alpha * 255.0 + 0.5).astype(np.uint8)
+
+        fill(slice(0, D), slice(0, w))
+        fill(slice(max(D, h - D), h), slice(0, w))
+        if h - 2 * D > 0:
+            fill(slice(D, h - D), slice(0, D))
+            fill(slice(D, h - D), slice(max(D, w - D), w))
+        ex = _rect_tuple(exclude)
+        if ex is not None:
+            m = 2
+            x0, y0 = max(0, ex[0] - m), max(0, ex[1] - m)
+            x1, y1 = min(w, ex[0] + ex[2] + m), min(h, ex[1] + ex[3] + m)
+            if x0 < x1 and y0 < y1:
+                out[y0:y1, x0:x1] = 0
+        return out
+    except Exception:
+        log.exception("render_flash failed")
+        return np.zeros((h, w, 4), np.uint8)
+
+
+# ======================================================================================
+# Pixel format helpers
+# ======================================================================================
+def to_premultiplied_bgra(rgba: np.ndarray) -> np.ndarray:
+    """Straight RGBA uint8 -> premultiplied BGRA uint8 (``UpdateLayeredWindow`` format)."""
+    arr = np.asarray(rgba)
+    if arr.ndim != 3 or arr.shape[2] not in (3, 4):
+        raise ValueError(f"expected an RGBA image, got shape {arr.shape}")
+    if arr.shape[2] == 3:
+        arr = np.dstack([arr, np.full(arr.shape[:2], 255, np.uint8)])
+    a = arr[..., 3:4].astype(np.uint16)
+    rgb = (arr[..., :3].astype(np.uint16) * a + 127) // 255
+    out = np.empty(arr.shape[:2] + (4,), np.uint8)
+    out[..., 0] = rgb[..., 2]
+    out[..., 1] = rgb[..., 1]
+    out[..., 2] = rgb[..., 0]
+    out[..., 3] = arr[..., 3]
+    return out
+
+
+def premultiplied_to_rgba(bgra: np.ndarray) -> np.ndarray:
+    """Premultiplied BGRA uint8 -> straight RGBA uint8 (for PIL / Tk previews)."""
+    arr = np.asarray(bgra)
+    a = arr[..., 3:4].astype(np.float32)
+    safe = np.where(a > 0, a, 1.0)
+    rgb = np.clip(arr[..., :3].astype(np.float32) * 255.0 / safe + 0.5, 0, 255).astype(np.uint8)
+    out = np.empty(arr.shape[:2] + (4,), np.uint8)
+    out[..., 0] = rgb[..., 2]
+    out[..., 1] = rgb[..., 1]
+    out[..., 2] = rgb[..., 0]
+    out[..., 3] = arr[..., 3]
+    out[..., :3][arr[..., 3] == 0] = 0
+    return out
+
+
+def composite_over(dst_rgb: np.ndarray, bgra_premul: np.ndarray, x: int, y: int) -> np.ndarray:
+    """Blend a premultiplied BGRA image onto an RGB uint8 image at (x, y) (in place, clipped)."""
+    H, W = dst_rgb.shape[:2]
+    h, w = bgra_premul.shape[:2]
+    X0, Y0, X1, Y1 = max(0, x), max(0, y), min(W, x + w), min(H, y + h)
+    if X0 >= X1 or Y0 >= Y1:
+        return dst_rgb
+    src = bgra_premul[Y0 - y:Y1 - y, X0 - x:X1 - x].astype(np.float32)
+    inv = 1.0 - src[..., 3:4] / 255.0
+    dst = dst_rgb[Y0:Y1, X0:X1].astype(np.float32)
+    dst = dst * inv + src[..., 2::-1]
+    dst_rgb[Y0:Y1, X0:X1] = np.clip(dst + 0.5, 0, 255).astype(np.uint8)
+    return dst_rgb
+
+
+# ======================================================================================
+# Previews (UI / tests / demo)
+# ======================================================================================
+def default_minimap_rect(screen_w: int, screen_h: int) -> tuple[int, int, int, int]:
+    """Typical in-game minimap rectangle (bottom-right square, ~0.236 x screen height)."""
+    side = int(round(screen_h * 0.236))
+    margin = max(4, int(round(screen_h * 0.009)))
+    return screen_w - side - margin, screen_h - side - margin, side, side
+
+
+def game_background(w: int, h: int, minimap: tuple[int, int, int, int] | None = None,
+                    seed: int = 7) -> np.ndarray:
+    """A game-like RGB backdrop (terrain + bottom HUD + fogged minimap) for previews."""
+    rng = np.random.default_rng(seed)
+    small = rng.random((max(2, h // 40), max(2, w // 40), 3)).astype(np.float32)
+    noise = cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC)
+    base = np.array([46, 58, 38], np.float32) / 255.0
+    img = base * (0.75 + 0.5 * noise)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    lane = np.exp(-(((xx / w) - (yy / h) * 0.9 - 0.05) ** 2) / 0.004)
+    img = img * (1 - 0.35 * lane[..., None]) + np.array([0.42, 0.37, 0.26], np.float32) * 0.35 * lane[..., None]
+    vign = 1.0 - 0.45 * (((xx / w) - 0.5) ** 2 + ((yy / h) - 0.5) ** 2)
+    rgb = np.clip(img * vign[..., None] * 255, 0, 255).astype(np.uint8)
+    # bottom HUD (ability bar)
+    cv_ = Canvas(w, h)
+    bw, bh = int(w * 0.36), int(h * 0.13)
+    cv_.rrect((w - bw) / 2, h - bh - 4, bw, bh, 8, (8, 16, 26), 0.95, border=GOLD_DARK, border_alpha=0.9,
+              border_w=2)
+    for i in range(6):
+        sx = (w - bw) / 2 + bw * 0.12 + i * bw * 0.13
+        cv_.rrect(sx, h - bh + 8, bw * 0.105, bh * 0.5, 4, (22, 40, 58), 1.0, border=GOLD, border_alpha=0.6)
+    composite_over(rgb, cv_.to_bgra(), 0, 0)
+    if minimap is not None:
+        mx, my, mw, mh = minimap
+        tex = default_radar_texture()
+        mm = cv2.resize(tex, (mw, mh), interpolation=cv2.INTER_AREA)[..., ::-1].astype(np.float32)
+        fog = np.full((mh, mw), 0.36, np.float32)
+        for (u, v, r) in ((0.12, 0.88, 0.25), (0.1, 0.35, 0.12), (0.5, 0.5, 0.1)):
+            cv2.circle(fog, (int(u * mw), int(v * mh)), int(r * mw), 1.0, -1, cv2.LINE_AA)
+        fog = cv2.GaussianBlur(fog, (0, 0), 2)
+        mm = (mm * fog[..., None]).astype(np.uint8)
+        x0, y0 = max(0, mx), max(0, my)
+        x1, y1 = min(w, mx + mw), min(h, my + mh)
+        if x0 < x1 and y0 < y1:
+            rgb[y0:y1, x0:x1] = mm[y0 - my:y1 - my, x0 - mx:x1 - mx]
+            fr = Canvas(w, h)
+            fr.rrect(mx - 5, my - 5, mw + 10, mh + 10, 3, None, border=(30, 50, 55), border_alpha=1, border_w=4)
+            fr.rrect(mx - 6, my - 6, mw + 12, mh + 12, 3, None, border=(160, 130, 70), border_alpha=1)
+            composite_over(rgb, fr.to_bgra(), 0, 0)
+    return rgb
+
+
+def render_preview(state: OverlayState, width: int = 1280, texture_bgr: np.ndarray | None = None,
+                   now: float | None = None, cfg: Any = None) -> np.ndarray:
+    """Straight RGBA preview of the whole overlay (radar, HUD, flash) over a game-like screen.
+
+    The overlay is laid out at the state's screen resolution (1920 x 1080 by default) with the
+    same placement rules as ``overlay.py`` then scaled to ``width``. Never raises.
+    """
+    try:
+        return _render_preview(state, width, texture_bgr, now, cfg)
+    except Exception:
+        log.exception("render_preview failed")
+        return np.zeros((max(1, int(width) * 9 // 16), max(1, int(width)), 4), np.uint8)
+
+
+def _render_preview(state: OverlayState, width: int, texture_bgr: np.ndarray | None, now: float | None,
+                    cfg: Any) -> np.ndarray:
+    from treeaicoach import overlay as _ov   # lazy: overlay imports this module
+
+    scr = _rect_tuple(state.screen_rect) or (0, 0, 1920, 1080)
+    sx, sy, sw, sh = scr
+    mm = _rect_tuple(state.minimap_rect) or tuple(
+        a + b for a, b in zip(default_minimap_rect(sw, sh), (sx, sy, 0, 0)))
+    bg = game_background(sw, sh, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]))
+    scale = float(getattr(cfg, "radar_scale", 1.0) or 1.0) if cfg is not None else 1.0
+    rsize = _ov.radar_size(mm, scale)
+    radar = render_radar(state, rsize, texture_bgr, now)
+    rx, ry = _ov.radar_placement(mm, scr, rsize, getattr(cfg, "radar_position", "above_minimap"),
+                                 getattr(cfg, "radar_xy", None))
+    composite_over(bg, radar, rx - sx, ry - sy)
+    hud_w = _ov.hud_width(scr)
+    hud = render_hud(state, hud_w, now)
+    hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0], getattr(cfg, "hud_position", "top_left"),
+                               getattr(cfg, "hud_xy", None), avoid=[mm, (rx, ry, rsize, rsize)])
+    composite_over(bg, hud, hx - sx, hy - sy)
+    if _clamp01(state.flash) > 0:
+        fl = render_flash(sw, sh, state.flash, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]),
+                          thickness=_ov.flash_thickness(scr))
+        composite_over(bg, fl, 0, 0)
+    width = int(min(max(int(width), 64), 4096))
+    out = cv2.resize(bg, (width, max(1, int(round(sh * width / sw)))), interpolation=cv2.INTER_AREA)
+    return np.dstack([out, np.full(out.shape[:2], 255, np.uint8)])
+
+
+def _encode_png(rgba: np.ndarray) -> bytes:
+    ok, buf = cv2.imencode(".png", cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA))
+    if not ok:
+        raise ValueError("PNG encoding failed")
+    return buf.tobytes()
+
+
+def render_preview_png(state: OverlayState, path: str | os.PathLike[str] | None = None,
+                       width: int = 1280, texture_bgr: np.ndarray | None = None,
+                       now: float | None = None, cfg: Any = None) -> bytes:
+    """PNG bytes of :func:`render_preview` (also written to ``path`` when given)."""
+    data = _encode_png(render_preview(state, width, texture_bgr, now, cfg))
+    if path is not None:
+        Path(path).write_bytes(data)
+    return data
+
+
+def radar_preview_rgba(state: OverlayState, size: int = 256, texture_bgr: np.ndarray | None = None,
+                       now: float | None = None) -> np.ndarray:
+    """Straight RGBA radar image (for Tk / CustomTkinter previews)."""
+    return premultiplied_to_rgba(render_radar(state, size, texture_bgr, now))
+
+
+def hud_preview_rgba(state: OverlayState, width: int = 340, now: float | None = None) -> np.ndarray:
+    """Straight RGBA HUD image (for Tk / CustomTkinter previews)."""
+    return premultiplied_to_rgba(render_hud(state, width, now))
+
+
+# ======================================================================================
+# Sample states (demo, UI static preview, tests)
+# ======================================================================================
+@dataclass
+class _DemoObjective:
+    name: str
+    next_spawn: float | None
+    alive: bool = False
+    source: str = "schedule"
+
+
+def _demo_icon(db: Any, alias: str) -> np.ndarray | None:
+    try:
+        return db.load_icon(alias) if db is not None else None
+    except Exception:
+        return None
+
+
+def sample_states(db: Any = None) -> dict[str, OverlayState]:
+    """A few representative states: "safe", "warning", "danger" (jungler in fog), "late"."""
+    from treeaicoach.fog_tracker import FogTracker
+
+    if db is None:
+        try:
+            from treeaicoach.champions import ChampionDB
+
+            db = ChampionDB()
+        except Exception:
+            db = None
+    ic = {a: _demo_icon(db, a) for a in ("LeeSin", "Darius", "Ahri", "Jinx", "Thresh", "Garen")}
+    fog = FogTracker()
+    scr = (0, 0, 1920, 1080)
+    mm = default_minimap_rect(1920, 1080)
+
+    def enemies(spec: dict[str, tuple]) -> list[EnemyView]:
+        names = {"LeeSin": "Lee Sin", "Darius": "Darius", "Ahri": "Ahri", "Jinx": "Jinx", "Thresh": "Thresh"}
+        out = []
+        for alias in ("Darius", "LeeSin", "Ahri", "Jinx", "Thresh"):
+            vis, uv, ago, appr, vel = spec.get(alias, (False, None, None, False, None))
+            out.append(EnemyView(key=alias, alias=alias, name=names[alias], visible=vis, uv=uv,
+                                 last_seen_ago=ago, is_jungler=alias == "LeeSin", approaching=appr,
+                                 icon=ic[alias], velocity=vel))
+        return out
+
+    obj_early = [_DemoObjective("Dragon", 300.0), _DemoObjective("Larves", 360.0),
+                 _DemoObjective("Héraut", 900.0), _DemoObjective("Baron", 1500.0)]
+    states: dict[str, OverlayState] = {}
+    states["safe"] = OverlayState(
+        minimap_rect=mm, screen_rect=scr, me_uv=(0.085, 0.36), my_team="ORDER",
+        enemies=enemies({"Darius": (True, (0.09, 0.24), 0.0, False, None),
+                         "LeeSin": (False, (0.74, 0.66), 65.0, False, None),
+                         "Ahri": (True, (0.52, 0.47), 0.0, False, None),
+                         "Jinx": (True, (0.86, 0.9), 0.0, False, None),
+                         "Thresh": (False, (0.88, 0.84), 12.0, False, None)}),
+        threat_level=0, threat_text="SÛR", last_alert=None, objectives=obj_early, game_time=192.0,
+        jungler_line="Jungler : Lee Sin — vu il y a 1:05, jungle ennemie du bas",
+        hint=None, me_icon=ic["Garen"],
+    )
+    states["warning"] = OverlayState(
+        minimap_rect=mm, screen_rect=scr, me_uv=(0.085, 0.36), my_team="ORDER",
+        enemies=enemies({"Darius": (True, (0.09, 0.25), 0.0, False, None),
+                         "LeeSin": (True, (0.24, 0.3), 0.0, True, (-0.03, 0.012)),
+                         "Ahri": (True, (0.5, 0.5), 0.0, False, None),
+                         "Jinx": (True, (0.86, 0.9), 0.0, False, None),
+                         "Thresh": (True, (0.84, 0.92), 0.0, False, None)}),
+        threat_level=1, threat_text="ATTENTION — Lee Sin approche",
+        last_alert=("Attention, Lee Sin approche.", 1, 1.3), objectives=obj_early, game_time=251.0,
+        jungler_line="Jungler : Lee Sin — visible, rivière du haut", hint=None, me_icon=ic["Garen"],
+    )
+    lee_fog = fog.simulate("LeeSin", "LeeSin", "Lee Sin", (0.27, 0.23), 14.0, is_jungler=True, game_time=426)
+    states["danger"] = OverlayState(
+        minimap_rect=mm, screen_rect=scr, me_uv=(0.1, 0.3), my_team="ORDER",
+        enemies=enemies({"Darius": (True, (0.1, 0.19), 0.0, True, (0.0, 0.03)),
+                         "LeeSin": (False, (0.27, 0.23), 14.0, False, None),
+                         "Ahri": (True, (0.2, 0.33), 0.0, True, (-0.035, -0.01)),
+                         "Jinx": (False, (0.88, 0.86), 31.0, False, None),
+                         "Thresh": (True, (0.86, 0.9), 0.0, False, None)}),
+        fogs=[lee_fog], threat_level=2, threat_text="DANGER — 2 ennemis arrivent !",
+        last_alert=("Danger, 2 ennemis arrivent, recule !", 2, 0.4),
+        objectives=[_DemoObjective("Dragon", 540.0), _DemoObjective("Héraut", 900.0),
+                    _DemoObjective("Larves", None, alive=True)],
+        game_time=440.0, flash=0.85,
+        jungler_line="Jungler : Lee Sin — vu il y a 14 s, rivière du haut",
+        hint="1 450 PO — pense à rentrer", me_icon=ic["Garen"],
+    )
+    f1 = fog.simulate("LeeSin", "LeeSin", "Lee Sin", (0.62, 0.72), 21.0, is_jungler=True, game_time=1660)
+    f2 = fog.simulate("Thresh", "Thresh", "Thresh", (0.8, 0.8), 38.0, game_time=1660)
+    states["late"] = OverlayState(
+        minimap_rect=mm, screen_rect=scr, me_uv=(0.47, 0.53), my_team="ORDER",
+        enemies=enemies({"Darius": (True, (0.3, 0.2), 0.0, False, None),
+                         "LeeSin": (False, (0.62, 0.72), 21.0, False, None),
+                         "Ahri": (False, (0.6, 0.38), 6.0, False, None),
+                         "Jinx": (True, (0.7, 0.4), 0.0, True, (-0.02, 0.012)),
+                         "Thresh": (False, (0.8, 0.8), 38.0, False, None)}),
+        fogs=[f1, f2], threat_level=1, threat_text="ATTENTION — Jinx approche",
+        last_alert=("Le Baron est disponible.", 0, 2.6),
+        objectives=[_DemoObjective("Baron", None, alive=True), _DemoObjective("Dragon ancestral", 1790.0),
+                    _DemoObjective("Atakhan", None)],
+        game_time=1660.0, jungler_line="Jungler : Lee Sin — vu il y a 21 s, rivière du bas",
+        hint="Balise de contrôle : aucune dans l'inventaire", me_icon=ic["Garen"],
+    )
+    return states
+
+
+def write_demo(outdir: str | os.PathLike[str], now: float = 0.3) -> list[Path]:
+    """Write radar / HUD / full-screen previews of :func:`sample_states` into ``outdir``."""
+    out = Path(outdir)
+    out.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for name, st in sample_states().items():
+        radar = radar_preview_rgba(st, 300, now=now)
+        hud = hud_preview_rgba(st, 340, now=now)
+        for label, img in (("radar", radar), ("hud", hud)):
+            p = out / f"{label}_{name}.png"
+            p.write_bytes(_encode_png(img))
+            written.append(p)
+        p = out / f"preview_{name}.png"
+        render_preview_png(st, p, width=1600, now=now)
+        written.append(p)
+    return written
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """``python -m treeaicoach.overlay_render --demo OUTDIR``."""
+    parser = argparse.ArgumentParser(prog="python -m treeaicoach.overlay_render",
+                                     description="Rendus d'exemple de l'overlay TreeAI Coach.")
+    parser.add_argument("--demo", metavar="OUTDIR", required=True, help="dossier de sortie des PNG")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    try:
+        files = write_demo(args.demo)
+    except Exception:
+        log.exception("Demo rendering failed")
+        return 1
+    if sys.stdout is not None:
+        for f in files:
+            sys.stdout.write(f"{f}\n")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

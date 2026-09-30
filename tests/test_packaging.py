@@ -322,7 +322,8 @@ def test_icon_ico_has_all_sizes():
             assert px.getpixel((0, 0))[3] == 0 and px.getpixel((s // 2, s // 2))[3] == 255
 
 
-def test_make_icon_renders_and_writes(tmp_path):
+def test_make_icon_renders_and_writes(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)  # keep packaging/ free of __pycache__
     mi = _load_make_icon()
     try:
         for size in (16, 48):
