@@ -853,7 +853,8 @@ class CoachApp:
 
         _apply_theme(ctk)
         self.root = ctk.CTk()
-        self.root.withdraw()
+        # NB: never withdraw() the CTk root before mainloop: on Windows CTk re-applies the
+        # saved "withdrawn" state after colouring the title bar and the window never shows.
         self.root.title(APP_NAME)
         self.root.report_callback_exception = self._tk_exception
         self.fonts = _Fonts(ctk, _pick_family(self.root))
@@ -887,7 +888,8 @@ class CoachApp:
         self._layout_job: str | None = None
         self.root.bind("<Configure>", self._on_root_configure, add="+")
         self.show_page("dashboard")
-        self.root.deiconify()
+        self.root.after(350, self._ensure_visible)
+        self.root.after(1500, self._ensure_visible)
 
         self._radar_worker.start()
         self.root.after(DISPATCH_MS, self._dispatch_loop)
@@ -915,6 +917,26 @@ class CoachApp:
         log.error("Unhandled Tk callback exception", exc_info=(exc_type, exc, tb))
         try:
             self.show_error(f"Une erreur inattendue est survenue : {exc}")
+        except Exception:
+            pass
+
+    def _ensure_visible(self) -> None:
+        """Make sure the main window is shown and in front (CTk/Windows title-bar quirk)."""
+        try:
+            if self._closing or not self.root.winfo_exists():
+                return
+            if self.root.state() in ("withdrawn", "iconic"):
+                self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(200, lambda: self._safe_untop())
+            self.root.focus_force()
+        except Exception:
+            log.debug("ensure_visible failed", exc_info=True)
+
+    def _safe_untop(self) -> None:
+        try:
+            self.root.attributes("-topmost", False)
         except Exception:
             pass
 

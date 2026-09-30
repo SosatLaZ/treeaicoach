@@ -1,3 +1,4 @@
-TreeAICoach.exe  v1.3.0
-SHA-256: 9e2dae90cb1f9432cec51002ffb5124f6520d110e917f122f5b125e0ab5fd2d0
-Construit avec PyInstaller (Python 3.11 Windows). Autotest: RÉUSSI.
+TreeAICoach.exe  v1.3.1
+SHA-256: 491e20defe693b34fc063810ca6ab6ce97dfe7f37a13acf25f78fac9254927ab
+Correctif: la fenêtre principale ne s apparaissait pas (bug CustomTkinter withdraw sous Windows).
+Autotest: RÉUSSI.
