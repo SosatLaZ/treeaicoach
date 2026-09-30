@@ -267,6 +267,12 @@ def make_loader(args: argparse.Namespace, epoch: int, generator: SampleFn | None
                           "worker_init_fn": worker_init}
     if args.workers > 0:
         kw.update(persistent_workers=True, prefetch_factor=4)
+        if generator is None:
+            # "spawn", never "fork": the parent already runs OpenMP / OpenCV thread pools (the
+            # validation set is rendered before the loader starts) and a forked child can
+            # inherit one of their locks held -> the worker deadlocks before its first sample.
+            # (A custom in-process generator may be an unpicklable closure: default context.)
+            kw["multiprocessing_context"] = "spawn"
     return iter(DataLoader(ds, **kw))
 
 

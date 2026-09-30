@@ -34,13 +34,13 @@ import time
 import webbrowser
 from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 from PIL import Image, ImageDraw
 
 from treeaicoach import APP_NAME, __version__, paths
-from treeaicoach.config import FLOAT_RANGES, INT_RANGES, Config, save_config
+from treeaicoach.config import Config, save_config
 
 log = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
 THREAT_LABELS = {0: "SÛR", 1: "ATTENTION", 2: "DANGER"}
 LEVEL_COLORS = {0: TEXT, 1: WARNING, 2: DANGER}
 
-SIDEBAR_W = 218
+SIDEBAR_W = 226
 MIN_W, MIN_H = 980, 640
 DEFAULT_W, DEFAULT_H = 1100, 720
 RADAR_PX = 260
@@ -721,7 +721,7 @@ def _apply_theme(ctk: Any) -> None:
     def put(widget: str, **kw: Any) -> None:
         d = th.setdefault(widget, {})
         for k, v in kw.items():
-            d[k] = [v, v] if isinstance(v, str) and k.endswith(("color", "colors")) else v
+            d[k] = [v, v] if isinstance(v, str) and v != "transparent" and k.endswith("color") else v
 
     put("CTk", fg_color=BG)
     put("CTkToplevel", fg_color=BG)
@@ -774,7 +774,7 @@ class _Fonts:
     def __init__(self, ctk: Any, family: str) -> None:
         f = family
         self.family = f
-        self.brand = ctk.CTkFont(family=f, size=19, weight="bold")
+        self.brand = ctk.CTkFont(family=f, size=17, weight="bold")
         self.title = ctk.CTkFont(family=f, size=22, weight="bold")
         self.h2 = ctk.CTkFont(family=f, size=15, weight="bold")
         self.h3 = ctk.CTkFont(family=f, size=13, weight="bold")
@@ -845,6 +845,8 @@ class CoachApp:
         self._images: dict[str, Any] = {}     # keep CTkImage references alive
         self._widgets_by_field: dict[str, Callable[[], None]] = {}   # field -> refresh function
         self._dispatcher = _Dispatcher()
+        self._eng_lock = threading.Lock()
+        self._created_engines: list[Any] = []   # every engine built (stopped again at close)
         self._radar_worker = _RadarWorker(self._radar_source, RADAR_PX)
         self._radar_seq = -1
         self._radar_live = False
@@ -881,6 +883,9 @@ class CoachApp:
             self.pages[key].grid_remove()
         self._toast_frame: Any = None
         self._toast_job: str | None = None
+        self._compact: bool | None = None
+        self._layout_job: str | None = None
+        self.root.bind("<Configure>", self._on_root_configure, add="+")
         self.show_page("dashboard")
         self.root.deiconify()
 
@@ -972,6 +977,44 @@ class CoachApp:
             x, y = max(0, (sw - w) // 2), max(0, (sh - h) // 3)
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
+    def _on_root_configure(self, event: Any) -> None:
+        if event.widget is not self.root or self._closing:
+            return
+        if self._layout_job is not None:
+            try:
+                self.root.after_cancel(self._layout_job)
+            except Exception:
+                pass
+        self._layout_job = self.root.after(60, self._apply_layout)
+
+    def _apply_layout(self) -> None:
+        """Responsive tweaks: short toolbar labels and text wrapping at small window sizes."""
+        self._layout_job = None
+        try:
+            scale = max(0.5, self._scaled(100) / 100)
+            width = self.root.winfo_width() / scale
+            compact = width < 1080
+            if compact != self._compact:
+                self._compact = compact
+                self.btn_test_voice.configure(text="Voix" if compact else "Tester la voix")
+                self.btn_calib.configure(text="Calibrer" if compact else "Calibrer la minimap")
+                self._demo_button_text()
+            st_w = self.status_card.winfo_width() / scale
+            if st_w > 50:
+                self.state_msg.configure(wraplength=int(max(180, st_w - 480)))
+            en_w = self.enemies_card.winfo_width() / scale
+            if en_w > 50:
+                self.jungler_lbl.configure(wraplength=int(max(160, en_w - 44)))
+        except Exception:
+            log.debug("Layout update failed", exc_info=True)
+
+    def _demo_button_text(self) -> None:
+        if self.demo:
+            text = "Quitter" if self._compact else "Quitter la démo"
+        else:
+            text = "Démo" if self._compact else "Mode démo"
+        self._set_text(self.btn_demo, text)
+
     # ------------------------------------------------------------------ small widget factories
     def _card(self, parent: Any, **kw: Any) -> Any:
         opts = dict(fg_color=PANEL, corner_radius=14, border_width=1, border_color=BORDER)
@@ -979,6 +1022,7 @@ class CoachApp:
         return self.ctk.CTkFrame(parent, **opts)
 
     def _label(self, parent: Any, text: str = "", font: Any = None, color: str = TEXT, **kw: Any) -> Any:
+        kw.setdefault("height", 1)      # size to the text (CTkLabel's default minimum is 28 px)
         return self.ctk.CTkLabel(parent, text=text, font=font or self.fonts.body, text_color=color,
                                  fg_color="transparent", **kw)
 
@@ -1022,8 +1066,10 @@ class CoachApp:
         head.grid(row=0, column=0, sticky="ew", padx=28, pady=(22, 12))
         head.grid_columnconfigure(0, weight=1)
         self._label(head, title, self.fonts.title, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
-        self._label(head, subtitle, self.fonts.small, MUTED, anchor="w").grid(row=1, column=0, sticky="w")
-        right = ctk.CTkFrame(head, fg_color="transparent")
+        sub = self._label(head, subtitle, self.fonts.small, MUTED, anchor="w")
+        sub.grid(row=1, column=0, sticky="w", pady=(3, 0))
+        page.subtitle = sub  # type: ignore[attr-defined]
+        right = ctk.CTkFrame(head, fg_color="transparent", width=1, height=1)
         right.grid(row=0, column=1, rowspan=2, sticky="e")
         if scroll:
             body = ctk.CTkScrollableFrame(page, fg_color=BG, corner_radius=0,
@@ -1031,6 +1077,7 @@ class CoachApp:
                                           scrollbar_button_hover_color=GOLD_DARK)
             body.grid(row=1, column=0, sticky="nsew", padx=(16, 6), pady=(0, 12))
             body.grid_columnconfigure(0, weight=1)
+            page.scroll_frame = body  # type: ignore[attr-defined]
             inner = ctk.CTkFrame(body, fg_color="transparent")
             inner.grid(row=0, column=0, sticky="nsew", padx=(12, 14))
             inner.grid_columnconfigure(0, weight=1)
@@ -1045,10 +1092,10 @@ class CoachApp:
         card.grid(row=row, column=0, sticky="ew", pady=(0, 14))
         card.grid_columnconfigure(0, weight=1)
         self._label(card, title, self.fonts.h2, GOLD, anchor="w").grid(
-            row=0, column=0, sticky="w", padx=20, pady=(16, 0 if subtitle else 6))
+            row=0, column=0, sticky="w", padx=20, pady=(18, 0 if subtitle else 4))
         if subtitle:
-            self._label(card, subtitle, self.fonts.tiny, MUTED, anchor="w", justify="left").grid(
-                row=1, column=0, sticky="w", padx=20, pady=(2, 6))
+            self._label(card, subtitle, self.fonts.tiny, MUTED, anchor="w", justify="left", wraplength=640).grid(
+                row=1, column=0, sticky="w", padx=20, pady=(4, 4))
         body = self.ctk.CTkFrame(card, fg_color="transparent")
         body.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 12))
         body.grid_columnconfigure(0, weight=1)
@@ -1063,7 +1110,7 @@ class CoachApp:
             ctk.CTkFrame(body, height=1, fg_color=BORDER, corner_radius=0).grid(
                 row=2 * r - 1, column=0, sticky="ew", pady=0)
         row = ctk.CTkFrame(body, fg_color="transparent")
-        row.grid(row=2 * r, column=0, sticky="ew", pady=9)
+        row.grid(row=2 * r, column=0, sticky="ew", pady=12)
         row.grid_columnconfigure(0, weight=1)
         body._rows = r + 1
         left = ctk.CTkFrame(row, fg_color="transparent")
@@ -1073,7 +1120,7 @@ class CoachApp:
         if desc:
             desc_lbl = self._label(left, desc, self.fonts.tiny, MUTED, anchor="w", justify="left",
                                    wraplength=430)
-            desc_lbl.grid(row=1, column=0, sticky="w")
+            desc_lbl.grid(row=1, column=0, sticky="w", pady=(3, 0))
         slot = ctk.CTkFrame(row, fg_color="transparent")
         slot.grid(row=0, column=1, sticky="e", padx=(16, 0))
         slot.desc_label = desc_lbl  # type: ignore[attr-defined]
@@ -1177,14 +1224,14 @@ class CoachApp:
 
         brand = ctk.CTkFrame(sb, fg_color="transparent")
         brand.grid(row=0, column=0, sticky="ew", padx=18, pady=(22, 18))
-        logo = load_logo(44)
-        self._images["logo"] = ctk.CTkImage(light_image=logo, dark_image=logo, size=(44, 44))
+        logo = load_logo(84)
+        self._images["logo"] = ctk.CTkImage(light_image=logo, dark_image=logo, size=(42, 42))
         ctk.CTkLabel(brand, text="", image=self._images["logo"], fg_color="transparent").grid(
             row=0, column=0, rowspan=2, padx=(0, 10))
         self._label(brand, "TreeAI Coach", self.fonts.brand, GOLD, anchor="w").grid(
             row=0, column=1, sticky="sw")
         self._label(brand, "Coach anti-gank", self.fonts.tiny, MUTED, anchor="w").grid(
-            row=1, column=1, sticky="nw")
+            row=1, column=1, sticky="nw", pady=(2, 0))
 
         nav = ctk.CTkFrame(sb, fg_color="transparent")
         nav.grid(row=1, column=0, sticky="new", padx=10)
@@ -1246,20 +1293,33 @@ class CoachApp:
         ctk = self.ctk
         page, right, body = self._page("Tableau de bord", "Suivi en direct de la minimap et des alertes",
                                        scroll=False)
-        self.btn_test_voice = self._button(right, "Tester la voix", self.test_voice, "secondary", icon="voice")
+        self.btn_test_voice = self._button(right, "Tester la voix", self.test_voice, "secondary", icon="voice", width=0)
         self.btn_test_voice.grid(row=0, column=0, padx=(0, 8))
-        self.btn_demo = self._button(right, "Mode démo", self.toggle_demo, "secondary", icon="demo")
+        self.btn_demo = self._button(right, "Mode démo", self.toggle_demo, "secondary", icon="demo", width=0)
         self.btn_demo.grid(row=0, column=1, padx=(0, 8))
-        self.btn_calib = self._button(right, "Calibrer la minimap", self.calibrate, "secondary", icon="target")
+        self.btn_calib = self._button(right, "Calibrer la minimap", self.calibrate, "secondary", icon="target", width=0)
         self.btn_calib.grid(row=0, column=2)
 
         body.grid_columnconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=0)
-        body.grid_rowconfigure(1, weight=1)
+        body.grid_rowconfigure(2, weight=1)
+
+        # --- banner (break reminder...) -------------------------------------------------
+        self.banner = ctk.CTkFrame(body, fg_color="#2A1F0C", corner_radius=10, border_width=1,
+                                   border_color=WARNING)
+        self.banner.grid_columnconfigure(1, weight=1)
+        ctk.CTkFrame(self.banner, width=4, height=20, corner_radius=2, fg_color=WARNING).grid(
+            row=0, column=0, padx=(14, 10), pady=10)
+        self.banner_lbl = self._label(self.banner, "", self.fonts.small, TEXT, anchor="w", justify="left")
+        self.banner_lbl.grid(row=0, column=1, sticky="w", pady=10)
+        self._button(self.banner, "Compris", self._dismiss_banner, "ghost", width=90, height=28).grid(
+            row=0, column=2, padx=10)
+        self._banner_dismissed: str | None = None
 
         # --- status card -----------------------------------------------------------
         st = self._card(body)
-        st.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        self.status_card = st
+        st.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
         st.grid_columnconfigure(1, weight=1)
         self.dot_canvas = ctk.CTkCanvas(st, width=34, height=34, bg=PANEL, highlightthickness=0, bd=0)
         self.dot_canvas.grid(row=0, column=0, rowspan=2, padx=(20, 12), pady=18)
@@ -1275,7 +1335,7 @@ class CoachApp:
                                        fg_color=GOLD, corner_radius=6, height=20)
         self.state_msg = self._label(tl, "Initialisation du moteur d'analyse…", self.fonts.small, MUTED,
                                      anchor="w", justify="left", wraplength=360)
-        self.state_msg.grid(row=1, column=0, sticky="w")
+        self.state_msg.grid(row=1, column=0, sticky="w", pady=(4, 0))
         clock = ctk.CTkFrame(st, fg_color="transparent")
         clock.grid(row=0, column=2, rowspan=2, padx=(12, 22))
         self._label(clock, "TEMPS DE JEU", self.fonts.caps, DIM).grid(row=0, column=0)
@@ -1290,17 +1350,18 @@ class CoachApp:
 
         # --- left column -------------------------------------------------------------
         left = ctk.CTkFrame(body, fg_color="transparent")
-        left.grid(row=1, column=0, sticky="nsew", padx=(0, 14))
+        left.grid(row=2, column=0, sticky="nsew", padx=(0, 14))
         left.grid_columnconfigure(0, weight=1)
         left.grid_rowconfigure(2, weight=1)
 
         th = self._card(left)
         th.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         th.grid_columnconfigure(1, weight=1)
+        th.grid_columnconfigure(0, minsize=self._scaled(150))
         self._label(th, "MENACE", self.fonts.caps, DIM, anchor="w").grid(row=0, column=0, sticky="w",
                                                                            padx=(20, 0), pady=(14, 0))
         self.threat_lbl = self._label(th, "—", self.fonts.threat, DIM, anchor="w")
-        self.threat_lbl.grid(row=1, column=0, sticky="w", padx=(20, 14), pady=(0, 14))
+        self.threat_lbl.grid(row=1, column=0, sticky="w", padx=(20, 14), pady=(3, 16))
         gauge_box = ctk.CTkFrame(th, fg_color="transparent")
         gauge_box.grid(row=0, column=1, rowspan=2, sticky="ew", padx=(0, 20), pady=12)
         gauge_box.grid_columnconfigure(0, weight=1)
@@ -1314,6 +1375,7 @@ class CoachApp:
         self.gauge.bind("<Configure>", lambda _e: self._draw_gauge())
 
         en = self._card(left)
+        self.enemies_card = en
         en.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         en.grid_columnconfigure(0, weight=1)
         head = ctk.CTkFrame(en, fg_color="transparent")
@@ -1337,9 +1399,9 @@ class CoachApp:
             icon = ctk.CTkLabel(box, text="", image=img, fg_color="transparent")
             icon.grid(row=0, column=0, pady=(10, 2))
             name = self._label(box, "—", self.fonts.tiny_bold, MUTED)
-            name.grid(row=1, column=0, padx=4)
+            name.grid(row=1, column=0, padx=4, pady=(4, 0))
             status = self._label(box, " ", self.fonts.tiny, DIM)
-            status.grid(row=2, column=0, pady=(0, 8), padx=4)
+            status.grid(row=2, column=0, pady=(2, 10), padx=4)
             self.enemy_slots.append({"box": box, "icon": icon, "name": name, "status": status, "sig": None})
 
         jr = self._card(left)
@@ -1356,12 +1418,13 @@ class CoachApp:
         for lvl, col in LEVEL_COLORS.items():
             self.journal.tag_config(f"lvl{lvl}", foreground=col)
         self.journal.tag_config("time", foreground=DIM)
+        self.journal.tag_config("line", spacing1=3, spacing3=3)
         self.journal.tag_config("empty", foreground=DIM)
         self._render_journal()
 
         # --- right column (radar + tech) ----------------------------------------------
         rc = self._card(body, width=RADAR_PX + 40)
-        rc.grid(row=1, column=1, sticky="n")
+        rc.grid(row=2, column=1, sticky="n")
         rc.grid_columnconfigure(0, weight=1)
         rh = ctk.CTkFrame(rc, fg_color="transparent")
         rh.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 8))
@@ -1568,13 +1631,17 @@ class CoachApp:
         self._slider_row(s, "fog_max_s", "Durée maximale", "Au-delà, la zone est trop grande : elle s'efface.",
                          10, 180, 5, lambda v: f"{int(v)} s", float)
         s = self._section(body, 2, "Placement")
-        self._choice_row(s, "radar_position", "Position du radar", None, self._position_choices("radar"),
-                         width=230, on_change=lambda _v: self._schedule_overlay_preview())
+        self._position_menus: dict[str, Any] = {}
+        self._position_menus["radar"] = self._choice_row(
+            s, "radar_position", "Position du radar", None, RADAR_POSITIONS, width=230,
+            on_change=lambda _v: self._schedule_overlay_preview())
         self._slider_row(s, "radar_scale", "Taille du radar", "1,0 = même taille que la minimap.", 0.5, 2.0, 0.1,
                          lambda v: f"× {fmt_decimal_fr(v, 1)}", float,
                          on_change=lambda _v: self._schedule_overlay_preview())
-        self._choice_row(s, "hud_position", "Position du HUD", None, self._position_choices("hud"), width=230,
-                         on_change=lambda _v: self._schedule_overlay_preview())
+        self._position_menus["hud"] = self._choice_row(
+            s, "hud_position", "Position du HUD", None, HUD_POSITIONS, width=230,
+            on_change=lambda _v: self._schedule_overlay_preview())
+        self._refresh_position_menus()
         prev = self._card(body)
         prev.grid(row=3, column=0, sticky="ew", pady=(0, 14))
         prev.grid_columnconfigure(0, weight=1)
@@ -1706,7 +1773,7 @@ class CoachApp:
         ctk = self.ctk
         row = self._card(self.games_box, corner_radius=12)
         row.grid(row=i, column=0, sticky="ew", pady=(0, 8))
-        row.grid_columnconfigure(2, weight=1)
+        row.grid_columnconfigure(1, weight=1)
         alias = str(game_field(g, "champion", "alias", default="") or "")
         name = str(game_field(g, "champion_name", "name", default="") or alias or "Champion inconnu")
         icon = None
@@ -1723,7 +1790,7 @@ class CoachApp:
         self._images[f"game-{i}"] = img
         ctk.CTkLabel(row, text="", image=img, fg_color="transparent").grid(row=0, column=0, rowspan=2,
                                                                            padx=(16, 12), pady=12)
-        self._label(row, name, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=1, sticky="sw")
+        self._label(row, name, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=1, sticky="sw", pady=(0, 2))
         dur = game_field(g, "duration")
         when = fmt_game_date(game_datetime(g))
         sub = when + (f" · {fmt_clock(dur)}" if isinstance(dur, (int, float)) and dur > 0 else "")
@@ -1734,26 +1801,27 @@ class CoachApp:
         badge_txt, badge_bg, badge_fg = {"win": ("VICTOIRE", "#113A26", SAFE),
                                          "lose": ("DÉFAITE", DANGER_DARK, "#FF8A9B")}.get(
             res or "", ("INCOMPLÈTE" if game_field(g, "incomplete") else "—", PANEL_HI, MUTED))
-        stats = ctk.CTkFrame(row, fg_color="transparent")
-        stats.grid(row=0, column=2, rowspan=2, sticky="e", padx=8)
-        ctk.CTkLabel(stats, text=f" {badge_txt} ", font=self.fonts.caps, fg_color=badge_bg, text_color=badge_fg,
-                     corner_radius=6, height=22, width=86).grid(row=0, column=0, rowspan=2, padx=(0, 18))
+        row.grid_columnconfigure(3, minsize=76)
+        row.grid_columnconfigure(4, minsize=64)
+        ctk.CTkLabel(row, text=badge_txt, font=self.fonts.caps, fg_color=badge_bg, text_color=badge_fg,
+                     corner_radius=6, height=22, width=88).grid(row=0, column=2, rowspan=2, padx=(8, 12))
         k, d, a = (_int_or_none(game_field(g, x)) for x in ("kills", "deaths", "assists"))
         kda = f"{k if k is not None else '?'} / {d if d is not None else '?'} / {a if a is not None else '?'}"
-        self._label(stats, kda, self.fonts.h3, TEXT).grid(row=0, column=1, padx=(0, 18))
-        self._label(stats, "K / D / A", self.fonts.caps, DIM).grid(row=1, column=1, padx=(0, 18))
+        self._label(row, kda, self.fonts.h3, TEXT).grid(row=0, column=3, sticky="s", padx=4)
+        self._label(row, "K / D / A", self.fonts.caps, DIM).grid(row=1, column=3, sticky="n", padx=4)
         ganks = _int_or_none(game_field(g, "ganks"))
         surv = _int_or_none(game_field(g, "ganks_survived"))
-        gtxt = "—" if ganks is None else (f"{surv}/{ganks}" if surv is not None and ganks else str(ganks))
-        self._label(stats, gtxt, self.fonts.h3, TEXT).grid(row=0, column=2)
-        self._label(stats, "GANKS ÉVITÉS" if surv is not None and ganks else "GANKS", self.fonts.caps, DIM).grid(
-            row=1, column=2)
+        ratio = surv is not None and bool(ganks)
+        gtxt = "—" if ganks is None else (f"{surv}/{ganks}" if ratio else str(ganks))
+        self._label(row, gtxt, self.fonts.h3, TEXT).grid(row=0, column=4, sticky="s", padx=4)
+        self._label(row, "ÉVITÉS" if ratio else "GANKS", self.fonts.caps, DIM).grid(row=1, column=4, sticky="n",
+                                                                                 padx=4)
         btns = ctk.CTkFrame(row, fg_color="transparent")
-        btns.grid(row=0, column=3, rowspan=2, padx=(8, 16))
-        self._button(btns, "Rapport", lambda gg=g: self.open_report(gg), "ghost", icon="report", width=100,
+        btns.grid(row=0, column=5, rowspan=2, padx=(10, 14))
+        self._button(btns, "Rapport", lambda gg=g: self.open_report(gg), "ghost", icon="report", width=96,
                      height=32).grid(row=0, column=0, padx=(0, 6))
-        self._button(btns, "Dossier", lambda gg=g: self.open_game_folder(gg), "secondary", icon="folder",
-                     width=96, height=32).grid(row=0, column=1)
+        self._button(btns, "", lambda gg=g: self.open_game_folder(gg), "secondary", icon="folder",
+                     width=34, height=32).grid(row=0, column=1)
 
     @_guarded
     def open_report(self, game: dict) -> None:
@@ -1899,6 +1967,7 @@ class CoachApp:
             except Exception:
                 log.debug("Widget refresh failed", exc_info=True)
         self._refresh_radius_text()
+        self._refresh_position_menus()
         self.show_toast("Réglages réinitialisés.")
 
     # ------------------------------------------------------------------ help page
@@ -1927,9 +1996,8 @@ class CoachApp:
             r = ctk.CTkFrame(s, fg_color="transparent")
             r.grid(row=i, column=0, sticky="ew", pady=7)
             r.grid_columnconfigure(1, weight=1)
-            ctk.CTkLabel(r, text=str(i + 1), width=34, height=34, corner_radius=17, fg_color=GOLD_DARK,
-                         text_color=TEXT, font=self.fonts.h3).grid(row=0, column=0, rowspan=2, sticky="n",
-                                                                    padx=(0, 14))
+            badge = self._number_badge(r, i + 1)
+            badge.grid(row=0, column=0, rowspan=2, sticky="n", padx=(0, 14), pady=(2, 0))
             self._label(r, title, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
             self._label(r, text, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=560).grid(
                 row=1, column=1, sticky="w")
@@ -1969,6 +2037,23 @@ class CoachApp:
         self._label(body, f"{APP_NAME} {__version__} — projet indépendant, non affilié à Riot Games.",
                     self.fonts.tiny, DIM).grid(row=3, column=0, pady=(4, 10))
         return page
+
+    def _number_badge(self, parent: Any, n: int) -> Any:
+        """Round numbered badge (drawn with PIL so it stays a perfect circle with any font)."""
+        key = f"badge-{n}"
+        img = self._images.get(key)
+        if img is None:
+            ss, size = 4, 34
+            S = size * ss
+            im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            d.ellipse((0, 0, S - 1, S - 1), fill=_hex_rgb(GOLD_DARK) + (255,))
+            d.ellipse((ss, ss, S - 1 - ss, S - 1 - ss), outline=_hex_rgb(GOLD) + (255,), width=ss)
+            pil = im.resize((size * 2, size * 2), Image.LANCZOS)
+            img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(size, size))
+            self._images[key] = img
+        return self.ctk.CTkLabel(parent, text=str(n), image=img, compound="center", font=self.fonts.h3,
+                                 text_color=TEXT, fg_color="transparent", width=34, height=34)
 
     def _error_page(self, key: str) -> Any:
         page = self.ctk.CTkFrame(self.content, fg_color=BG, corner_radius=0)
@@ -2149,9 +2234,13 @@ class CoachApp:
                 out["engine"] = None
                 out["error"] = f"Le moteur d'analyse n'a pas pu démarrer : {exc}"
             try:
-                out["overlay"] = self._overlay_factory(cfg, self._overlay_state)
-                if out["overlay"] is not None:
-                    out["overlay"].start()
+                ov = self._overlay_factory(cfg, self._overlay_state)
+                out["overlay"] = ov
+                if ov is not None:
+                    set_cb = getattr(ov, "set_on_moved", None)
+                    if callable(set_cb):
+                        set_cb(self._on_overlay_moved)
+                    ov.start()
             except Exception:
                 log.exception("Overlay unavailable")
                 out["overlay"] = None
@@ -2162,6 +2251,9 @@ class CoachApp:
                 except Exception as exc:
                     log.exception("Engine start failed")
                     out["error"] = f"Impossible de démarrer l'analyse : {exc}"
+            self._track_engine(eng)
+            if self._closing:     # window closed during start-up: _backend_ready will never run
+                self._shutdown_components(None, out.get("overlay"), voice if self._own_voice else None)
             return out
 
         self._busy = True
@@ -2186,6 +2278,44 @@ class CoachApp:
         if self._want_hotkeys:
             self._rebind_hotkeys()
         self._refresh_status()
+
+    def _on_overlay_moved(self, name: str, x: int, y: int) -> None:
+        """Overlay thread callback (move mode): save the new window position (Tk thread)."""
+        def apply() -> None:
+            field = {"radar": "radar", "hud": "hud"}.get(str(name))
+            if field is None:
+                return
+            upd = {f"{field}_xy": [int(x), int(y)], f"{field}_position": "custom"}
+            new = dataclasses.replace(self.cfg, **upd).validated()
+            self._replace_config(new, changed=set(upd))
+            self._refresh_position_menus()
+        self._dispatcher.post(self.cb(apply))
+
+    def _refresh_position_menus(self) -> None:
+        for field, which in (("radar_position", "radar"), ("hud_position", "hud")):
+            menu = self._position_menus.get(which) if hasattr(self, "_position_menus") else None
+            if menu is None:
+                continue
+            choices = self._position_choices(which)
+            try:
+                menu.configure(values=[lbl for _v, lbl in choices])
+                menu.set(dict(choices).get(getattr(self.cfg, field), choices[0][1]))
+            except Exception:
+                log.debug("Position menu refresh failed", exc_info=True)
+
+    def _track_engine(self, eng: Any) -> None:
+        """Remember an engine built on a worker thread so that close() always stops it."""
+        if eng is None:
+            return
+        with self._eng_lock:
+            self._created_engines.append(eng)
+            del self._created_engines[:-4]
+            closing = self._closing
+        if closing:
+            try:
+                eng.stop()
+            except Exception:
+                log.exception("Cannot stop an engine created during shutdown")
 
     def _overlay_state(self) -> Any:
         """State provider of the overlay thread (thread-safe engine snapshot)."""
@@ -2294,8 +2424,11 @@ class CoachApp:
             try:
                 src = self._demo_source_factory() if demo else None
                 eng = self._engine_factory(cfg, voice, det, src)
-                if want_start:
-                    eng.start()
+                try:
+                    if want_start:
+                        eng.start()
+                finally:
+                    self._track_engine(eng)
                 return eng, det, None
             except Exception as exc:
                 log.exception("Cannot rebuild the engine")
@@ -2355,16 +2488,11 @@ class CoachApp:
 
     @_guarded
     def toggle_move_mode(self) -> None:
-        """Overlay "move" mode: windows become draggable, their position is saved when leaving."""
+        """Overlay "move" mode: the windows become draggable; each drop is saved (on_moved)."""
         ov = self.overlay
-        setter = None
-        for name in ("set_move_mode", "set_edit_mode", "move_mode"):
-            fn = getattr(ov, name, None) if ov is not None else None
-            if callable(fn):
-                setter = fn
-                break
-        if setter is None:
-            self.show_error("Le déplacement des fenêtres n'est disponible que sous Windows, en partie.")
+        setter = getattr(ov, "set_move_mode", None) if ov is not None else None
+        if not callable(setter) or not bool(getattr(ov, "ok", True)):
+            self.show_error("Le déplacement des fenêtres de l'overlay n'est disponible que sous Windows.")
             return
         self._move_mode = not self._move_mode
         setter(self._move_mode)
@@ -2372,25 +2500,10 @@ class CoachApp:
             self.btn_move.configure(text="Terminer le déplacement", fg_color=GOLD, text_color=ON_GOLD,
                                     hover_color=GOLD_HOVER, image=self._icon("move", 16, ON_GOLD))
             self.show_toast("Fais glisser le radar et le HUD à la souris, puis clique sur « Terminer ».")
-            return
-        self.btn_move.configure(text="Déplacer les fenêtres", fg_color=PANEL_HI, text_color=TEXT,
-                                hover_color="#16284A", image=self._icon("move", 16, MUTED))
-        pos = None
-        getter = getattr(ov, "get_positions", None) or getattr(ov, "positions", None)
-        if callable(getter):
-            pos = getter()
-        elif isinstance(getter, dict):
-            pos = getter
-        if isinstance(pos, dict):
-            upd: dict[str, Any] = {}
-            if pos.get("radar_xy"):
-                upd.update(radar_xy=list(pos["radar_xy"]), radar_position="custom")
-            if pos.get("hud_xy"):
-                upd.update(hud_xy=list(pos["hud_xy"]), hud_position="custom")
-            if upd:
-                new = dataclasses.replace(self.cfg, **upd).validated()
-                self._replace_config(new, changed=set(upd))
-        self.show_toast("Positions de l'overlay enregistrées.")
+        else:
+            self.btn_move.configure(text="Déplacer les fenêtres", fg_color=PANEL_HI, text_color=TEXT,
+                                    hover_color="#16284A", image=self._icon("move", 16, MUTED))
+            self.show_toast("Positions de l'overlay enregistrées.")
 
     # ------------------------------------------------------------------ hotkeys
     def _rebind_hotkeys(self) -> None:
@@ -2423,6 +2536,10 @@ class CoachApp:
     def _hk_jungler(self) -> None:          # hotkey thread
         eng, voice = self.engine, self.voice
         try:
+            speak = getattr(eng, "speak_jungler_status", None)
+            if callable(speak):
+                speak()
+                return
             text = eng.jungler_status_text() if eng is not None else ""
             if text and voice is not None:
                 voice.say(text, 1)
@@ -2430,10 +2547,11 @@ class CoachApp:
             log.exception("F9 hotkey failed")
 
     def _hk_mute(self) -> None:             # hotkey thread
-        self._muted = not self._muted
+        eng = self.engine
+        self._muted = not bool(getattr(eng, "muted", self._muted))
         try:
-            if self.engine is not None and hasattr(self.engine, "mute"):
-                self.engine.mute(self._muted)
+            if eng is not None and hasattr(eng, "mute"):
+                eng.mute(self._muted)
             elif self.voice is not None and hasattr(self.voice, "set_muted"):
                 self.voice.set_muted(self._muted)
         except Exception:
@@ -2504,7 +2622,7 @@ class CoachApp:
             self._style_start(False)
         else:
             self._style_start(True)
-        self.btn_demo.configure(text="Quitter la démo" if self.demo else "Mode démo")
+        self._demo_button_text()
 
         gt = getattr(st, "game_time", None) if st is not None else None
         self._set_text(self.clock_lbl, fmt_clock(gt))
@@ -2517,13 +2635,27 @@ class CoachApp:
         det = str(getattr(st, "detector", "") or getattr(self._detector, "name", "") or "—")
         self._set_text(self.tech["detector"], _DETECTOR_FR.get(det.lower(), det)[:14])
         vname = str(getattr(st, "voice", "") or getattr(self.voice, "backend", "") or "—")
-        self._set_text(self.tech["voice"], _VOICE_FR.get(vname.lower(), vname)[:14])
+        if st is not None and getattr(st, "muted", False):
+            self._set_text(self.tech["voice"], "Coupée")
+        else:
+            self._set_text(self.tech["voice"], _VOICE_FR.get(vname.lower(), vname)[:14])
+        banner = getattr(st, "banner", None) if st is not None else None
+        if banner and banner != self._banner_dismissed:
+            self._set_text(self.banner_lbl, str(banner))
+            if not self.banner.grid_info():
+                self.banner.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        elif self.banner.grid_info():
+            self.banner.grid_remove()
 
         self._update_threat(ov)
         self._update_enemies(ov, st)
         self._collect_alerts(st, ov)
         if self._current_page == "dashboard":
             self._draw_gauge_step()
+
+    def _dismiss_banner(self) -> None:
+        self._banner_dismissed = self.banner_lbl.cget("text")
+        self.banner.grid_remove()
 
     def _style_start(self, start: bool) -> None:
         want = "start" if start else "stop"
@@ -2602,7 +2734,7 @@ class CoachApp:
             mode = "approach" if visible and appr else "visible" if visible else "mia"
             name = str(getattr(e, "name", "") or getattr(e, "alias", "") or "?")
             if visible:
-                status, scol = ("Approche !", WARNING) if appr else ("Visible", SAFE)
+                status, scol = ("Approche", WARNING) if appr else ("Visible", SAFE)
             elif isinstance(ago, (int, float)) and math.isfinite(ago):
                 status, scol = f"MIA {_fmt_ago(ago)}", (WARNING if jungler and ago < 45 else MUTED)
             else:
@@ -2642,7 +2774,7 @@ class CoachApp:
             text, lvl, age = str(la[0]), int(la[1] or 0), float(la[2] or 0.0)
             born = now - age
             prev = self._last_alert_seen
-            if prev is None or prev[0] != text or abs(prev[1] - born) > 1.5:
+            if prev is None or prev[0] != text or abs(prev[1] - born) > 6.0:
                 self._last_alert_seen = (text, born)
                 self._journal.append(((gt - age) if isinstance(gt, (int, float)) else None, lvl, text))
                 self._render_journal()
@@ -2662,9 +2794,9 @@ class CoachApp:
                 tb.insert("end", "Aucune alerte pour l'instant. Les annonces vocales apparaîtront ici.", "empty")
             for gt, lvl, text in reversed(self._journal):
                 lvl = min(max(int(lvl), 0), 2)
-                tb.insert("end", f"{fmt_clock(gt) if gt is not None else '  —  '}   ", "time")
-                tb.insert("end", "● ", f"lvl{lvl}")
-                tb.insert("end", text + "\n", f"lvl{lvl}")
+                tb.insert("end", f"{fmt_clock(gt) if gt is not None else '  —  '}   ", ("time", "line"))
+                tb.insert("end", "● ", (f"lvl{lvl}", "line"))
+                tb.insert("end", text + "\n", (f"lvl{lvl}", "line"))
             tb.configure(state="disabled")
         except Exception:
             log.debug("Journal render failed", exc_info=True)
@@ -2674,7 +2806,10 @@ class CoachApp:
         if self._closing:
             return
         try:
-            if self._current_page == "dashboard":
+            visible = self._current_page == "dashboard" and self.root.state() != "iconic"
+            if visible != self._radar_worker.active.is_set():
+                (self._radar_worker.active.set if visible else self._radar_worker.active.clear)()
+            if visible:
                 seq, img = self._radar_worker.latest()
                 if seq != self._radar_seq:
                     self._radar_seq = seq
@@ -2753,10 +2888,19 @@ class CoachApp:
         save_config(self.cfg, self._save_path)
         self._radar_worker.stop()
         self._dispatcher.closed = True
-        eng, ov, hk = self.engine, self.overlay, self._hotkeys
+        with self._eng_lock:
+            engines = list(self._created_engines)
+        if self.engine is not None and self.engine not in engines:
+            engines.append(self.engine)
+        ov, hk = self.overlay, self._hotkeys
         voice = self.voice if self._own_voice else None
-        t = threading.Thread(target=self._shutdown_components, args=(eng, ov, voice, hk),
-                             name="TreeAI-ui-shutdown", daemon=True)
+
+        def shutdown() -> None:
+            for e in engines[:-1]:
+                self._shutdown_components(e, None, None)
+            self._shutdown_components(engines[-1] if engines else None, ov, voice, hk)
+
+        t = threading.Thread(target=shutdown, name="TreeAI-ui-shutdown", daemon=True)
         t.start()
         t.join(8.0)
         if t.is_alive():
@@ -2785,6 +2929,8 @@ class CoachApp:
 # ======================================================================================
 _DETECTOR_FR = {"onnx": "ONNX", "classic": "Classique", "none": "Aucun", "auto": "Auto"}
 _VOICE_FR = {"sapi": "Windows", "print": "Journal", "": "—"}
+_ALERT_KINDS = frozenset({"jungler_approach", "roam_approach", "collapse", "jungler_spotted", "laner_mia",
+                          "objective_soon", "recall_gold", "control_ward", "jungler_where", "death_recap"})
 _POSITION_FR = {"TOP": "Haut", "JUNGLE": "Jungle", "MIDDLE": "Milieu", "BOTTOM": "Bas", "UTILITY": "Support"}
 
 
@@ -2809,10 +2955,13 @@ def _alert_entry(a: Any) -> tuple[float | None, int, str] | None:
         if isinstance(a, dict):
             return (a.get("game_time"), int(a.get("level", 1) or 0), str(a.get("text", "")))
         if isinstance(a, (tuple, list)) and len(a) >= 3:
-            # recorder style [game_time, kind, level, text] or (game_time, level, text)
+            gt = a[0] if isinstance(a[0], (int, float)) and not isinstance(a[0], bool) else None
             if len(a) >= 4:
-                return (a[0], int(a[2] or 0), str(a[3]))
-            return (a[0], int(a[1] or 0), str(a[2]))
+                # engine: (game_time, text, level, kind) ; recorder: [game_time, kind, level, text]
+                text = a[3] if str(a[1]).lower() in _ALERT_KINDS and str(a[3]).lower() not in _ALERT_KINDS \
+                    else a[1]
+                return (gt, int(a[2] or 0), str(text))
+            return (gt, int(a[1] or 0), str(a[2]))
         text = getattr(a, "text", None)
         if text:
             return (getattr(a, "game_time", None), int(getattr(a, "level", 1) or 0), str(text))
@@ -2937,7 +3086,11 @@ def _overlay_preview_image(cfg: Config, width: int) -> Image.Image:
 def _default_engine_factory(cfg: Config, voice: Any, detector: Any, frame_source: Any) -> Any:
     from treeaicoach.engine import CoachEngine  # noqa: PLC0415 - written in parallel, imported lazily
 
-    return CoachEngine(cfg, voice, detector=detector, frame_source=frame_source)
+    try:   # the UI owns the overlay windows and the global hotkeys (they survive engine rebuilds)
+        return CoachEngine(cfg, voice, detector=detector, frame_source=frame_source,
+                           manage_overlay=False, enable_hotkeys=False)
+    except TypeError:
+        return CoachEngine(cfg, voice, detector=detector, frame_source=frame_source)
 
 
 def _default_overlay_factory(cfg: Config, provider: Callable[[], Any]) -> Any:

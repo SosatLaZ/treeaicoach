@@ -46,6 +46,7 @@ ON_GOLD = "#1A1408"
 MIN_SIDE_PX = 32            # smallest accepted minimap side (screen pixels), = config.RECT_SIZE_MIN
 HIDE_DELAY_S = 0.35         # time for the main window to disappear before the capture
 DIALOG_FRACTION = 0.9       # dialog size relative to the screen
+ZOOM_PX = 240               # side of the magnified view of the selection
 
 
 @dataclass
@@ -191,6 +192,7 @@ class CalibrationDialog:
         self._scale = 1.0
         self._off = (0, 0)
         self._photo: Any = None
+        self._zoom_photo: Any = None
         self._q: queue.SimpleQueue[Any] = queue.SimpleQueue()
         self._detecting = False
         self._closed = False
@@ -402,6 +404,7 @@ class CalibrationDialog:
         k = max(6.0, min(14.0, (x1 - x0) / 5))
         for cx, cy, sx, sy in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
             c.create_line(cx, cy + sy * k, cx, cy, cx + sx * k, cy, fill=GOLD_HOVER, width=4)
+        self._draw_zoom(ox, oy, dw, dh)
         r = selection_to_rect(self.sel, self.origin)
         label = f"{r['w']} × {r['h']}"
         ty = y0 - 14 if y0 - 26 > oy else y1 + 14
@@ -410,6 +413,37 @@ class CalibrationDialog:
         if bb:
             bg = c.create_rectangle(bb[0] - 6, bb[1] - 2, bb[2] + 6, bb[3] + 2, fill=GOLD, outline="")
             c.tag_lower(bg, tid)
+
+    def _draw_zoom(self, ox: int, oy: int, dw: int, dh: int) -> None:
+        """Magnified view of the selection (with a margin) in the top-left corner of the capture."""
+        if self.sel is None or self.image is None or self.sel.side < 8:
+            return
+        import cv2  # noqa: PLC0415
+        from PIL import Image, ImageTk  # noqa: PLC0415
+
+        zs = int(min(ZOOM_PX, dh * 0.45, dw * 0.3))
+        if zs < 80:
+            return
+        h, w = self.image.shape[:2]
+        m = self.sel.side * 0.12
+        x0, y0 = int(max(0, self.sel.x - m)), int(max(0, self.sel.y - m))
+        x1, y1 = int(min(w, self.sel.x + self.sel.side + m)), int(min(h, self.sel.y + self.sel.side + m))
+        if x1 - x0 < 4 or y1 - y0 < 4:
+            return
+        crop = self.image[y0:y1, x0:x1]
+        k = zs / max(x1 - x0, y1 - y0)
+        zw, zh = max(1, int((x1 - x0) * k)), max(1, int((y1 - y0) * k))
+        big = cv2.resize(crop, (zw, zh), interpolation=cv2.INTER_LINEAR if k > 1 else cv2.INTER_AREA)
+        self._zoom_photo = ImageTk.PhotoImage(Image.fromarray(np.ascontiguousarray(big[..., ::-1])),
+                                              master=self.canvas)
+        c = self.canvas
+        px, py = ox + 12, oy + 12
+        c.create_rectangle(px - 3, py - 3, px + zw + 3, py + zh + 25, fill=PANEL, outline=GOLD_DARK)
+        c.create_image(px, py, image=self._zoom_photo, anchor="nw")
+        sx0, sy0 = px + (self.sel.x - x0) * k, py + (self.sel.y - y0) * k
+        c.create_rectangle(sx0, sy0, sx0 + self.sel.side * k, sy0 + self.sel.side * k, outline=GOLD, width=2)
+        c.create_text(px + 8, py + zh + 12, text="Zoom sur la sélection", anchor="w", fill=MUTED,
+                      font=("TkDefaultFont", 9))
 
     # ---------------------------------------------------------------- mouse / keys
     def _on_press(self, e: Any) -> None:

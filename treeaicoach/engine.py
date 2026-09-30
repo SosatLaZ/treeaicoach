@@ -74,6 +74,11 @@ JUMP_CHECK_S = 1.0               # an identity seen this recently cannot jump fa
 JUMP_SPEED = 0.08                # ... JUMP_SPEED * dt + JUMP_SLACK (walk + Flash + detector noise)
 JUMP_SLACK = 0.06
 IDENTITY_SWAP_HIDDEN_S = 1.5     # an enemy hidden this long popping up on another enemy's spot
+DUP_DIST = 0.055                 # enemy detection this close to an established enemy icon...
+DUP_KEEP_ID_SCORE = 0.8          # ... and not confidently identified -> duplicate, dropped
+IDENTITY_SWAP_RECENT_S = 3.0     # ... of another enemy seen this recently ...
+RELABEL_RECENT_S = 1.5           # unidentified "ally" icon on the spot of an enemy seen this
+RELABEL_DIST = 0.03              # recently (this close) and far from every friend -> that enemy
 IDENTITY_SWAP_DIST = 0.05        # (this close) is that other enemy misidentified
 COLLECT_MAX_FILES = 2000
 RECENT_ALERTS_MAX = 50
@@ -357,6 +362,7 @@ class CoachEngine:
         self._frame_id = 0
         self._overlay_cache: tuple[float, Any] | None = None
         self._overlay_visible = True
+        self._demo_rects: tuple[Rect | None, Rect | None] | None = None
         self._muted = False
         self._mute_timer: threading.Timer | None = None
         self._last_where_t = -math.inf
@@ -1131,6 +1137,27 @@ class CoachEngine:
                                            team=getattr(out[best], "team", None) or me.team)
         present = {getattr(x, "alias", None) for x in out if getattr(x, "alias", None)}
         enemy_tracks = [tr for tr in tracker.enemies(visible_only=False) if tr.alias]
+        friends = [tr for tr in tracks.values() if tr.relation != "enemy" and t - tr.last_seen <= 1.0]
+        for i, x in enumerate(out):
+            # unidentified "ally" ring exactly where an enemy stood a moment ago: misread ring colour
+            if getattr(x, "alias", None) or getattr(x, "relation", None) != "ally":
+                continue
+            det = getattr(x, "det", x)
+            u, v = float(det.u), float(det.v)
+
+            def near(tr: Any) -> float:
+                p = tr.position()
+                return math.hypot(u - p[0], v - p[1]) if p is not None else math.inf
+
+            if any(near(tr) <= RELABEL_DIST for tr in friends):
+                continue
+            cands = [(near(tr), tr) for tr in enemy_tracks
+                     if tr.alias not in present and t - tr.last_seen <= RELABEL_RECENT_S]
+            cands = [c for c in cands if c[0] <= RELABEL_DIST]
+            if cands:
+                tr = min(cands, key=lambda c: c[0])[1]
+                out[i] = self._with(x, alias=tr.alias, relation="enemy", team=tr.team)
+                present.add(tr.alias)
         by_alias = {tr.alias: tr for tr in enemy_tracks}
         for i, x in enumerate(out):
             alias = getattr(x, "alias", None)
@@ -1139,9 +1166,11 @@ class CoachEngine:
             own = by_alias.get(alias)
             if own is not None and t - own.last_seen < IDENTITY_SWAP_HIDDEN_S:
                 continue
+            if float(getattr(x, "id_score", 0.0) or 0.0) >= DUP_KEEP_ID_SCORE:
+                continue                  # a confident portrait match is trusted
             det = getattr(x, "det", x)
             for tr in enemy_tracks:
-                if tr.alias in present or t - tr.last_seen > STICKY_SELF_S:
+                if tr.alias in present or t - tr.last_seen > IDENTITY_SWAP_RECENT_S:
                     continue
                 pos = tr.position()
                 if pos is not None and math.hypot(float(det.u) - pos[0], float(det.v) - pos[1]) \
@@ -1150,7 +1179,43 @@ class CoachEngine:
                     present.discard(alias)
                     present.add(tr.alias)
                     break
-        return out
+        return self._drop_duplicates(t, out, tracks)
+
+    def _drop_duplicates(self, t: float, out: list[Any], tracks: dict[str, Any]) -> list[Any]:
+        """Drop enemy detections that duplicate another enemy icon of the same frame.
+
+        A second, overlapping detection of one icon (camera-rectangle edge, partial occlusion,
+        imprecise detector) would otherwise become a phantom enemy right next to the real one
+        (unidentified, or identified as the next-best portrait: often the hidden jungler).
+        Non-maximum suppression among enemy detections within :data:`DUP_DIST`: identities seen
+        a moment ago and confident identifications are always kept and win over the others.
+        """
+        def rank(x: Any) -> tuple[int, float]:
+            alias = getattr(x, "alias", None)
+            tr = tracks.get(alias) if alias else None
+            if tr is not None and t - tr.last_seen <= STICKY_SELF_S:
+                return 0, 0.0
+            ids = float(getattr(x, "id_score", 0.0) or 0.0)
+            if alias and ids >= DUP_KEEP_ID_SCORE:
+                return 1, -ids
+            det = getattr(x, "det", x)
+            return (2 if alias else 3), -float(getattr(det, "score", 0.0) or 0.0)
+
+        enemies = [(rank(x), i, x) for i, x in enumerate(out) if getattr(x, "relation", None) == "enemy"]
+        if len(enemies) < 2:
+            return out
+        enemies.sort(key=lambda e: (e[0], e[1]))
+        kept: list[Any] = []
+        drop: set[int] = set()
+        for (level, _s), i, x in enemies:
+            det = getattr(x, "det", x)
+            if level >= 2 and any(math.hypot(float(det.u) - float(getattr(k, "det", k).u),
+                                             float(det.v) - float(getattr(k, "det", k).v)) <= DUP_DIST
+                                  for k in kept):
+                drop.add(i)
+                continue
+            kept.append(x)
+        return [x for i, x in enumerate(out) if i not in drop] if drop else out
 
     def _camera_self_fallback(self, frame: np.ndarray, identified: list[Any]) -> None:
         """No icon identified as me: the ally icon nearest to the camera centre is me."""
@@ -1416,6 +1481,7 @@ class CoachEngine:
             cv2.drawMarker(img, (int(lu * w), int(lv * h)), (60, 60, 235), cv2.MARKER_TILTED_CROSS,
                            max(6, w // 30), 2, cv2.LINE_AA)
         colors = {"enemy": (70, 70, 240), "ally": (235, 170, 60), "self": (60, 220, 250)}
+        labels: list[tuple[int, int, int, str, tuple[int, int, int]]] = []
         for x in identified:
             det = getattr(x, "det", x)
             rel = getattr(x, "relation", getattr(det, "cls", "enemy"))
@@ -1423,13 +1489,20 @@ class CoachEngine:
             cx, cy = int(det.u * w), int(det.v * h)
             rad = max(4, int(det.r * w) + 2)
             cv2.circle(img, (cx, cy), rad, col, 3 if rel == "self" else 2, cv2.LINE_AA)
-            label = getattr(x, "alias", None) or ("?" if rel != "self" else "moi")
+            label = getattr(x, "alias", None) or "?"
             if rel == "self":
-                label = f"{label} (moi)" if getattr(x, "alias", None) else "moi"
-            fs = max(0.3, w / 700.0)
-            org = (max(0, cx - rad), max(10, cy - rad - 3))
-            cv2.putText(img, label, org, cv2.FONT_HERSHEY_SIMPLEX, fs, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(img, label, org, cv2.FONT_HERSHEY_SIMPLEX, fs, col, 1, cv2.LINE_AA)
+                label = "moi"
+            labels.append((cx, cy, rad, label, col))
+        fs = max(0.3, w / 800.0)
+        for cx, cy, rad, label, col in labels:
+            (tw, th), _base = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fs, 1)
+            x0 = int(min(max(0, cx - tw // 2), w - tw - 2))
+            y0 = cy + rad + th + 3
+            if y0 > h - 2:
+                y0 = cy - rad - 4
+            sub = img[max(0, y0 - th - 2):min(h, y0 + 3), max(0, x0 - 2):min(w, x0 + tw + 2)]
+            sub[:] = (sub.astype(np.uint16) * 2 // 7).astype(np.uint8)
+            cv2.putText(img, label, (x0, y0), cv2.FONT_HERSHEY_SIMPLEX, fs, col, 1, cv2.LINE_AA)
         return img
 
     # ---------------------------------------------------------------- overlay state
@@ -1472,17 +1545,19 @@ class CoachEngine:
         if self._frame_source is None:
             return self._minimap_rect, self._window
         # demo / frame source: pretend the minimap sits at its usual place on the main screen
-        try:
-            from treeaicoach.capture import monitor_rects
-            from treeaicoach.minimap_locator import fallback_rect
+        if self._demo_rects is None:
+            rects: tuple[Rect | None, Rect | None] = (None, None)
+            try:
+                from treeaicoach.capture import monitor_rects
+                from treeaicoach.minimap_locator import fallback_rect
 
-            mons = monitor_rects()
-            if mons:
-                scr = mons[0]
-                return fallback_rect(scr, "right"), scr
-        except Exception:
-            log.debug("No monitor information", exc_info=True)
-        return None, None
+                mons = monitor_rects()
+                if mons:
+                    rects = (fallback_rect(mons[0], "right"), mons[0])
+            except Exception:
+                log.debug("No monitor information", exc_info=True)
+            self._demo_rects = rects          # computed once (monitor enumeration is not free)
+        return self._demo_rects
 
     def _build_overlay_state(self, now: float) -> Any:
         from treeaicoach.overlay_render import EnemyView, OverlayState
