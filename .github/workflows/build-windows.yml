@@ -1,0 +1,182 @@
+name: Build TreeAICoach.exe
+
+# Tests -> PyInstaller build -> self-test of the exe -> artifact -> GitHub release.
+#  * tag v*                                  -> release "TreeAI Coach v…" with TreeAICoach.exe
+#  * default branch or branch "claude…"      -> rolling pre-release "latest" (replaced at each push)
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Tests, construction et autotest (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    concurrency:
+      group: build-${{ github.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUTF8: "1"
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Installer les dépendances
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+          python -m pip list
+
+      - name: Vérifier la version (tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          $pkg = python -c "import treeaicoach; print(treeaicoach.__version__)"
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          if ($pkg -ne $tag) {
+            Write-Host "::error::Le tag ${{ github.ref_name }} ne correspond pas à treeaicoach.__version__ ($pkg)"
+            exit 1
+          }
+
+      - name: Tests (pytest)
+        run: python -m pytest -q
+
+      - name: Construire TreeAICoach.exe (PyInstaller)
+        run: pyinstaller packaging/treeaicoach.spec --noconfirm --clean
+
+      - name: Autotest de l'exe et test de l'interface
+        env:
+          TREEAICOACH_HOME: ${{ runner.temp }}\treeaicoach-home
+        run: |
+          # Runs the windowed exe (Start-Process -Wait also waits for the one-file child process),
+          # kills it after the timeout, returns its exit code.
+          function Invoke-Exe([string[]] $ExeArgs, [int] $TimeoutSec) {
+            $exe = (Resolve-Path 'dist\TreeAICoach.exe').Path
+            $job = Start-Job -ScriptBlock {
+              param($exe, $exeArgs, $wd)
+              $p = Start-Process -FilePath $exe -ArgumentList $exeArgs -WorkingDirectory $wd -Wait -PassThru
+              $p.ExitCode
+            } -ArgumentList $exe, $ExeArgs, $pwd.Path
+            if (-not (Wait-Job $job -Timeout $TimeoutSec)) {
+              Write-Host "::error::Délai dépassé ($TimeoutSec s) : arrêt forcé de TreeAICoach.exe"
+              Get-Process -Name TreeAICoach -ErrorAction SilentlyContinue | Stop-Process -Force
+              Stop-Job $job
+              Remove-Job $job -Force
+              return 124
+            }
+            $code = Receive-Job $job | Select-Object -Last 1
+            Remove-Job $job -Force
+            if ($null -eq $code) { return 125 }
+            return [int] $code
+          }
+
+          $out = Join-Path $pwd 'selftest.txt'
+          Write-Host "::group::Autotest (--selftest)"
+          $selftest = Invoke-Exe @('--selftest', '--selftest-out', "$out") 180
+          if (Test-Path $out) { Get-Content $out -Encoding utf8 } else { Write-Host "::warning::selftest.txt n'a pas été créé" }
+          Write-Host "::endgroup::"
+          Write-Host "Code de sortie de l'autotest : $selftest"
+
+          Write-Host "::group::Test de l'interface (--ui-smoke)"
+          $ui = Invoke-Exe @('--ui-smoke') 120
+          Write-Host "::endgroup::"
+          Write-Host "Code de sortie du test de l'interface : $ui"
+
+          if ($selftest -ne 0) { Write-Host "::error::L'autotest de l'exe a échoué (code $selftest)"; exit 1 }
+          if ($ui -ne 0) { Write-Host "::error::Le test de l'interface a échoué (code $ui)"; exit 1 }
+
+      - name: Envoyer l'artefact TreeAICoach-windows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TreeAICoach-windows
+          path: |
+            dist/TreeAICoach.exe
+            selftest.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Envoyer les journaux de l'exe (en cas d'échec)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TreeAICoach-logs
+          path: ${{ runner.temp }}/treeaicoach-home/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  publish:
+    name: Publier la release GitHub
+    needs: build
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.ref_type == 'branch' &&
+        (github.ref_name == github.event.repository.default_branch || startsWith(github.ref_name, 'claude')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: publish-${{ startsWith(github.ref, 'refs/tags/') && github.ref || 'latest' }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Récupérer l'exe construit
+        uses: actions/download-artifact@v4
+        with:
+          name: TreeAICoach-windows
+          path: release
+
+      - name: Préparer les notes de version
+        run: |
+          test -f release/TreeAICoach.exe
+          SHA256=$(sha256sum release/TreeAICoach.exe | cut -d' ' -f1)
+          cat > notes.md <<EOF
+          **Télécharger :** \`TreeAICoach.exe\` ci-dessous, puis double-cliquer (rien à installer).
+
+          Windows peut afficher « Windows a protégé votre ordinateur » (l'exe n'est pas signé) :
+          cliquer sur **Informations complémentaires** puis **Exécuter quand même**.
+
+          Avant de jouer : dans League of Legends, *Paramètres > Vidéo > Mode d'affichage* = **Sans bordure**.
+
+          - Commit : ${GITHUB_SHA}
+          - Branche / tag : ${GITHUB_REF_NAME}
+          - SHA-256 : \`${SHA256}\`
+          EOF
+          cat notes.md
+
+      - name: Release de version (tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/TreeAICoach.exe --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/TreeAICoach.exe \
+              --verify-tag --title "TreeAI Coach $GITHUB_REF_NAME" --notes-file notes.md
+          fi
+
+      - name: Pré-version « latest » (dernière version de la branche)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          gh release delete latest --cleanup-tag -y || true
+          gh release create latest release/TreeAICoach.exe \
+            --prerelease --target "$GITHUB_SHA" \
+            --title "TreeAI Coach (dernière version)" --notes-file notes.md

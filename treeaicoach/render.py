@@ -106,6 +106,11 @@ STRUCTURE_ICON: dict[str, str] = {
     "inhibitor": "icon_ui_inhibitor_minimap_v2.png",
     "nexus": "icon_ui_nexus_minimap_v2.png",
 }
+#: Outer turrets show a numbered badge (remaining plates, until 14:00): dark shield with a
+#: team-coloured border and digit. Official glyphs exist for 1, 3 and 5 plates; the other
+#: counts are derived from the 5-plate glyph. Size relative to the plain turret glyph.
+PLATE_ICON: str = "turret_{n}plate.png"
+PLATE_SCALE: float = 1.2
 #: Jungle camps: orange diamonds ~0.022 of the width; epic monsters: bigger glyphs.
 CAMP_SIZE: dict[str, float] = {"dragon": 0.05, "baron": 0.052}
 CAMP_SIZE_DEFAULT: float = 0.022
@@ -128,6 +133,8 @@ PING_BGR: dict[str, BGR] = {
 }
 #: Recall: bright cyan halo (~RGB(106-113, 180, 201-214)), 2-4 px, at 1.1-1.25 x the radius.
 RECALL_BGR: BGR = (208, 180, 110)
+#: Recall of a visible enemy (``recallhostileoutline``: red / pink), not verified on captures.
+RECALL_HOSTILE_BGR: BGR = (110, 60, 235)
 RECALL_RADIUS: float = 1.17         # ring centre radius / icon radius
 RECALL_WIDTH: float = 0.2           # ring width / icon radius
 #: Teleport highlight (not verified on real captures), relative to the icon diameter.
@@ -226,6 +233,8 @@ STRUCTURES: list[tuple[float, float, str, str]] = [
 ]
 #: Stable identifiers of :data:`STRUCTURES` (same order), e.g. ``"ORDER_top_outer"``.
 STRUCTURE_IDS: list[str] = [sid for sid, *_ in _STRUCTURES_GAME]
+#: Default plate badges (``Scene.turret_plates is None``): 5 plates on every outer turret.
+DEFAULT_TURRET_PLATES: dict[str, int] = {sid: 5 for sid in STRUCTURE_IDS if sid.endswith("_outer")}
 
 _CAMPS_GAME: tuple[tuple[float, float, str], ...] = (
     (3821, 8101, "blue"), (2288, 8448, "gromp"), (3783, 6495, "wolves"),
@@ -258,7 +267,9 @@ class ChampionSprite:
 
     Optional extensions: ``grey`` greyed "dead" icon; ``teleport`` teleport highlight;
     ``ring_frac`` / ``ring_shading`` / ``inner_line_bgr`` / ``inner_line_frac`` /
-    ``outline_frac`` override the icon style (see :func:`draw_champion_icon`).
+    ``outline_frac`` override the icon style (see :func:`draw_champion_icon`); ``halo``
+    (0..1) adds a soft glow of the ring colour just outside the ring; ``recall_bgr``
+    overrides the recall halo colour (None -> cyan, red for enemies).
     """
 
     u: float
@@ -276,6 +287,8 @@ class ChampionSprite:
     inner_line_bgr: tuple | None = None
     inner_line_frac: float | None = None
     outline_frac: float | None = None
+    halo: float = 0.0
+    recall_bgr: tuple | None = None
 
 
 @dataclass
@@ -319,6 +332,9 @@ class Scene:
     # ---- optional extensions --------------------------------------------------------
     my_team: str = "ORDER"                  # local player's team (structure colours, shop)
     destroyed: frozenset = frozenset()      # STRUCTURE_IDS (or indices) not drawn
+    #: Plate badges {structure id: remaining plates (0 = no badge)} on turrets;
+    #: None -> DEFAULT_TURRET_PLATES (5 on the outer turrets), {} -> no badge at all.
+    turret_plates: dict | None = None
     fog_texture: str | None = None          # None -> uniform darkening (real game)
     camp_icons: list[tuple] | None = None   # explicit (u, v, icon[, size]); None -> CAMPS
     sprites: list[Sprite] = field(default_factory=list)
@@ -784,6 +800,34 @@ class MinimapRenderer:
             self._raw_icons[name] = img
         return img
 
+    def plate_icon(self, n: int) -> str | None:
+        """Icon name of a turret badge with ``n`` plates (1..9), synthesized if needed.
+
+        The official files exist for 1, 3 and 5 plates; other digits are drawn on the
+        5-plate shield. Returns None if no base glyph is available.
+        """
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= n <= 9:
+            return None
+        name = PLATE_ICON.format(n=n)
+        with self._lock:
+            if name in self._raw_icons:
+                return name if self._raw_icons[name] is not None else None
+        try:
+            exists = (self.assets_dir / "icons" / "minimap" / name).is_file()
+        except OSError:
+            exists = False
+        if exists and self.icon(name) is not None:
+            return name
+        base = self.icon(PLATE_ICON.format(n=5))
+        img = _redigit_badge(base, n) if base is not None else None
+        with self._lock:
+            self._raw_icons[name] = img
+        return name if img is not None else None
+
     def _pyramid(self, kind: str, name: str, void: tuple) -> list[np.ndarray] | None:
         """Area-downsampled levels (sizes :data:`_PYRAMID`) of a texture.
 
@@ -942,15 +986,27 @@ class MinimapRenderer:
             else:
                 destroyed.add(str(item))
         scale = float(scene.structure_scale) if _finite(scene.structure_scale) else 1.0
+        plates = scene.turret_plates if isinstance(scene.turret_plates, dict) \
+            else DEFAULT_TURRET_PLATES
         # nexus / inhibitors first, turrets on top
         order = sorted(range(len(STRUCTURES)), key=lambda i: STRUCTURES[i][2] == "turret")
         for i in order:
             u, v, kind, team = STRUCTURES[i]
-            if STRUCTURE_IDS[i] in destroyed:
+            sid = STRUCTURE_IDS[i]
+            if sid in destroyed:
                 continue
             rel = "ally" if team == scene.my_team else "enemy"
-            self._draw_sprite(img, STRUCTURE_ICON.get(kind, STRUCTURE_ICON["turret"]), u, v,
-                              STRUCTURE_SIZE.get(kind, 0.04) * scale, tint=TEAM_BGR[rel])
+            size = STRUCTURE_SIZE.get(kind, 0.04) * scale
+            icon = STRUCTURE_ICON.get(kind, STRUCTURE_ICON["turret"])
+            if kind == "turret":
+                try:
+                    n = int(plates.get(sid, 0))
+                except (TypeError, ValueError):
+                    n = 0
+                badge = self.plate_icon(n) if n > 0 else None
+                if badge is not None:
+                    icon, size = badge, size * PLATE_SCALE
+            self._draw_sprite(img, icon, u, v, size, tint=TEAM_BGR[rel])
         if scene.shop:
             fu, fv = FOUNTAINS.get(scene.my_team, FOUNTAINS["ORDER"])
             self._draw_sprite(img, SHOP_ICON, fu, fv, SHOP_SIZE * scale)
@@ -1109,13 +1165,19 @@ class MinimapRenderer:
                 and _finite(c.inner_line_frac) else None
             ol_px = c.outline_frac * rp if c.outline_frac is not None \
                 and _finite(c.outline_frac) else None
+            halo = float(c.halo) if _finite(c.halo) else 0.0
+            if halo > 0 and not c.grey:
+                draw_ring(img, cx, cy, rp + 0.35, 0.8, ring, opacity=min(1.0, halo),
+                          glow=1.8)
             draw_champion_icon(img, cx, cy, rp, icon, ring, rf, grey=bool(c.grey),
                                ring_shading=shading, outline_px=ol_px,
                                inner_line_bgr=c.inner_line_bgr or INNER_LINE_BGR,
                                inner_line_px=il_px)
             if c.recall:
+                rcol = c.recall_bgr if c.recall_bgr is not None else \
+                    (RECALL_HOSTILE_BGR if rel == "enemy" else RECALL_BGR)
                 draw_ring(img, cx, cy, rp * RECALL_RADIUS, max(1.0, rp * RECALL_WIDTH),
-                          RECALL_BGR, opacity=1.0, glow=0.6)
+                          rcol, opacity=1.0, glow=0.6)
 
     # ---------------------------------------------------------------- public
     def render(self, scene: Scene) -> np.ndarray:
@@ -1194,6 +1256,42 @@ class MinimapRenderer:
         self._base_cache.clear()
         self._fog_cache.clear()
         self._sprite_cache.clear()
+
+
+def _redigit_badge(base_rgba: np.ndarray, n: int) -> np.ndarray | None:
+    """Replace the digit of a plate badge glyph (bright digit in a dark box) by ``n``."""
+    try:
+        img = np.array(base_rgba, dtype=np.uint8, copy=True)
+        h, w = img.shape[:2]
+        wy0, wy1, wx0, wx1 = int(0.36 * h), int(0.68 * h), int(0.3 * w), int(0.7 * w)
+        win = img[wy0:wy1, wx0:wx1]
+        lum = cv2.cvtColor(np.ascontiguousarray(win[:, :, :3]), cv2.COLOR_RGB2GRAY)
+        bright = (lum > 170) & (win[:, :, 3] > 128)
+        dark = (lum < 60) & (win[:, :, 3] > 128)
+        if not bright.any() or not dark.any():
+            return None
+        ys, xs = np.nonzero(bright)
+        fill = np.median(win[:, :, :3][dark], axis=0).astype(np.uint8)
+        by0, by1 = max(0, ys.min() - 1), ys.max() + 2
+        bx0, bx1 = max(0, xs.min() - 1), xs.max() + 2
+        box = win[by0:by1, bx0:bx1]
+        box[:, :, :3][lum[by0:by1, bx0:bx1] > 45] = fill
+        dh = int(ys.max() - ys.min() + 1)
+        cx = wx0 + 0.5 * (xs.min() + xs.max() + 1)
+        cy = wy0 + 0.5 * (ys.min() + ys.max() + 1)
+        text = str(int(n))
+        scale = dh / 22.0
+        thick = max(1, int(round(dh / 7.0)))
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+        org = (int(round(cx - tw / 2.0)), int(round(cy + th / 2.0)))
+        rgb = np.ascontiguousarray(img[:, :, :3])
+        cv2.putText(rgb, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (235, 235, 235), thick,
+                    cv2.LINE_AA)
+        img[:, :, :3] = rgb
+        return img
+    except Exception:
+        log.debug("Cannot derive a %s-plate badge", n, exc_info=True)
+        return None
 
 
 def _procedural_map(size: int, void: tuple) -> np.ndarray:

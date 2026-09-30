@@ -1,7 +1,9 @@
 """User configuration: dataclass with defaults, validation and atomic JSON persistence.
 
 * ``Config.validated()`` returns a sanitized copy: wrong types -> field default, numbers
-  clamped to their range, enum strings normalized, ``manual_minimap_rect`` checked.
+  clamped to their range, enum strings normalized, ``manual_minimap_rect`` checked,
+  hotkey names canonicalized (``"ctrl + f9"`` -> ``"Ctrl+F9"``, duplicates disabled),
+  objective lead times sorted/deduplicated, window positions / geometry checked.
 * ``load_config()`` never raises: a missing file gives the defaults, a corrupt file is
   renamed ``config.json.bak`` and the defaults are used, unknown keys are ignored.
 * ``save_config()`` writes atomically (temp file in the same folder + ``os.replace``), UTF-8.
@@ -17,15 +19,17 @@ import logging
 import math
 import numbers
 import os
+import re
 import tempfile
 import threading
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 from treeaicoach import paths
+from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +40,7 @@ BACKUP_SUFFIX = ".bak"
 INT_RANGES: dict[str, tuple[int, int]] = {
     "voice_rate": (-10, 10),       # SAPI rate
     "voice_volume": (0, 100),
+    "recall_gold_threshold": (300, 5000),
 }
 FLOAT_RANGES: dict[str, tuple[float, float]] = {
     "sensitivity": (0.6, 1.6),
@@ -44,6 +49,8 @@ FLOAT_RANGES: dict[str, tuple[float, float]] = {
     "target_fps": (2.0, 20.0),
     "detection_threshold": (0.0, 0.95),   # 0 = use model_meta.json
     "collect_interval_s": (0.5, 60.0),
+    "radar_scale": (0.5, 2.0),     # 1.0 = same size as the minimap
+    "fog_max_s": (10.0, 180.0),
 }
 # A non-zero detection threshold is raised to at least this value (0 keeps its special meaning).
 DETECTION_THRESHOLD_MIN = 0.05
@@ -51,6 +58,9 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "detector_backend": ("auto", "onnx", "classic"),
     "minimap_mode": ("auto", "manual"),
     "minimap_side": ("auto", "right", "left"),
+    "radar_position": ("above_minimap", "left_of_minimap", "top_left", "custom"),
+    "hud_position": ("top_left", "top_right", "left_middle", "custom"),
+    "fog_mode": ("jungler", "all", "off"),
 }
 BOOL_FIELDS: tuple[str, ...] = (
     "beep_on_danger",
@@ -63,7 +73,38 @@ BOOL_FIELDS: tuple[str, ...] = (
     "autostart",
     "collect_samples",
     "show_preview",
+    # v1.1 (§6.7)
+    "objective_timers",
+    "recall_reminder",
+    "control_ward_reminder",
+    "death_recap",
+    "post_game_report",
+    "open_report_automatically",
+    # v1.2 (§7.4)
+    "overlay_enabled",
+    "radar_enabled",
+    "hud_enabled",
+    "danger_flash",
+    "break_reminder",
 )
+#: Global hotkey fields (see hotkeys.py for the accepted names; "" = disabled), in priority order:
+#: when two fields hold the same key, the later one is disabled.
+HOTKEY_FIELDS: tuple[str, ...] = ("hotkey_jungler", "hotkey_mute", "hotkey_overlay")
+#: Custom overlay window positions: ``[x, y]`` screen pixels or None.
+XY_FIELDS: tuple[str, ...] = ("radar_xy", "hud_xy")
+#: objective_lead_s: seconds before a spawn at which it is announced.
+OBJECTIVE_LEAD_RANGE = (5, 300)
+OBJECTIVE_LEAD_MAX_COUNT = 4
+DEFAULT_OBJECTIVE_LEAD_S: tuple[int, ...] = (60, 20)
+#: ui_geometry: Tk geometry string "WxH" or "WxH+X+Y" ("" = let the UI decide).
+UI_GEOMETRY_SIZE_RANGE = (200, 20000)
+UI_GEOMETRY_MAX_LEN = 64
+_UI_GEOMETRY_RE = re.compile(r"=?(\d{1,5})x(\d{1,5})(?:([+-]-?\d{1,6})([+-]-?\d{1,6}))?")
+#: "custom" position -> fallback position when the matching ``*_xy`` field is missing.
+CUSTOM_POSITION_FALLBACK: dict[str, tuple[str, str]] = {
+    "radar_position": ("radar_xy", "above_minimap"),
+    "hud_position": ("hud_xy", "top_left"),
+}
 VOICE_NAME_MAX_LEN = 256
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
@@ -117,6 +158,33 @@ class Config:
     collect_samples: bool = False   # save minimaps for re-training
     collect_interval_s: float = 2.0
     show_preview: bool = False
+    # v1.1 helpers (§6.7)
+    objective_timers: bool = True
+    objective_lead_s: list[int] = field(default_factory=lambda: list(DEFAULT_OBJECTIVE_LEAD_S))
+    recall_reminder: bool = True
+    recall_gold_threshold: int = 1300
+    control_ward_reminder: bool = True
+    hotkey_jungler: str = "F9"      # "" = disabled; e.g. "Ctrl+F9"
+    death_recap: bool = True
+    post_game_report: bool = True
+    open_report_automatically: bool = True
+    # v1.2 overlay (§7.4)
+    overlay_enabled: bool = True
+    radar_enabled: bool = True
+    radar_position: str = "above_minimap"   # "above_minimap" | "left_of_minimap" | "top_left" | "custom"
+    radar_scale: float = 1.0        # 0.5..2.0 (1.0 = minimap size)
+    radar_xy: list[int] | None = None       # [x, y] screen pixels when radar_position == "custom"
+    hud_enabled: bool = True
+    hud_position: str = "top_left"  # "top_left" | "top_right" | "left_middle" | "custom"
+    hud_xy: list[int] | None = None
+    danger_flash: bool = True
+    fog_mode: str = "jungler"       # "jungler" | "all" | "off"
+    fog_max_s: float = 60.0         # 10..180
+    hotkey_mute: str = "F10"
+    hotkey_overlay: str = "F11"
+    break_reminder: bool = True
+    # UI (§8.2)
+    ui_geometry: str = ""           # main window geometry "WxH+X+Y" ("" = default)
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""
@@ -175,7 +243,7 @@ class Config:
 
 # --------------------------------------------------------------------------- validation
 
-_DEFAULTS: dict[str, Any] = {f.name: f.default for f in fields(Config)}
+_DEFAULTS: dict[str, Any] = Config().to_dict()   # (default_factory fields included)
 
 
 def _real(value: Any) -> Any:
@@ -245,6 +313,66 @@ def _as_rect(value: Any) -> dict[str, int] | None:
     return out
 
 
+def _as_hotkey(value: Any) -> Any:
+    """Canonical hotkey name ("" = disabled); invalid -> _INVALID."""
+    res = normalize_hotkey(value)
+    return _INVALID if res is None else res
+
+
+def _as_xy(value: Any) -> list[int] | None:
+    """``[x, y]`` integer screen coordinates, or None if unusable."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    out: list[int] = []
+    for c in value:
+        f = _real(c)
+        if f is _INVALID or abs(f) > RECT_COORD_LIMIT:
+            return None
+        out.append(int(round(f)))
+    return out
+
+
+def _as_lead_list(value: Any) -> Any:
+    """Distinct lead times (s), clamped, sorted in decreasing order; [] allowed (= no announcement)."""
+    if not isinstance(value, (list, tuple)):
+        return _INVALID
+    lo, hi = OBJECTIVE_LEAD_RANGE
+    leads: set[int] = set()
+    for item in list(value)[:64]:
+        f = _real(item)
+        if f is _INVALID:
+            continue
+        leads.add(int(min(max(round(f), lo), hi)))
+    if value and not leads:
+        return _INVALID
+    return sorted(leads, reverse=True)[:OBJECTIVE_LEAD_MAX_COUNT]
+
+
+def _as_geometry(value: Any) -> Any:
+    """Tk geometry string ("1100x700+120+80", negative offsets allowed) or ""; invalid -> _INVALID."""
+    if not isinstance(value, str) or len(value) > UI_GEOMETRY_MAX_LEN:
+        return _INVALID
+    s = value.strip()
+    if not s:
+        return ""
+    m = _UI_GEOMETRY_RE.fullmatch(s)
+    if m is None:
+        return _INVALID
+    lo, hi = UI_GEOMETRY_SIZE_RANGE
+    w, h = int(m.group(1)), int(m.group(2))
+    if not (lo <= w <= hi and lo <= h <= hi):
+        return _INVALID
+    if m.group(3) is None:
+        return f"{w}x{h}"
+    offsets = []
+    for g in (m.group(3), m.group(4)):
+        sign, num = g[0], int(g[1:])
+        if abs(num) > RECT_COORD_LIMIT:
+            return _INVALID
+        offsets.append(f"{sign}{num}")
+    return f"{w}x{h}{offsets[0]}{offsets[1]}"
+
+
 def _validate_field(name: str, value: Any, default: Any) -> Any:
     """Sanitized value for one field (default if the value is unusable)."""
     if name in BOOL_FIELDS:
@@ -263,6 +391,14 @@ def _validate_field(name: str, value: Any, default: Any) -> Any:
         res = _as_voice_name(value)
     elif name == "manual_minimap_rect":
         res = _as_rect(value)
+    elif name in HOTKEY_FIELDS:
+        res = _as_hotkey(value)
+    elif name in XY_FIELDS:
+        res = _as_xy(value)
+    elif name == "objective_lead_s":
+        res = _as_lead_list(value)
+    elif name == "ui_geometry":
+        res = _as_geometry(value)
     else:  # a field without a rule: keep it as is
         res = value
     return copy.deepcopy(default) if res is _INVALID else res
@@ -304,6 +440,18 @@ def _validate(cfg: Config) -> Config:
     if out["minimap_mode"] == "manual" and out["manual_minimap_rect"] is None:
         fixes.append("minimap_mode 'manual' without manual_minimap_rect -> 'auto'")
         out["minimap_mode"] = "auto"
+    for pos_field, (xy_field, fallback) in CUSTOM_POSITION_FALLBACK.items():
+        if out[pos_field] == "custom" and out[xy_field] is None:
+            fixes.append(f"{pos_field} 'custom' without {xy_field} -> {fallback!r}")
+            out[pos_field] = fallback
+    used_keys: set[str] = set()
+    for hk_field in HOTKEY_FIELDS:
+        key = out[hk_field]
+        if key and key in used_keys:
+            fixes.append(f"{hk_field} {key!r} already used by another hotkey -> ''")
+            out[hk_field] = ""
+        elif key:
+            used_keys.add(key)
 
     if fixes:
         log.warning("Config: corrected %d value(s): %s", len(fixes), "; ".join(fixes))

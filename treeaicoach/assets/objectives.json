@@ -1,0 +1,9 @@
+{
+  "_comment": "Temps d'apparition des objectifs en secondes de jeu (modifiable selon les patchs). first = 1re apparition (null = jamais), respawn = délai après un kill (null = ne réapparaît pas), despawn = disparaît à ce temps de jeu, count = larves par vague, soul = dragons élémentaires pour l'âme. Une copie dans %APPDATA%\\TreeAICoach\\objectives.json est prioritaire.",
+  "dragon": {"first": 300, "respawn": 300, "soul": 4},
+  "elder": {"respawn": 360},
+  "grubs": {"first": 360, "respawn": null, "despawn": 840, "count": 3},
+  "herald": {"first": 900, "despawn": 1185},
+  "atakhan": {"first": 1200},
+  "baron": {"first": 1500, "respawn": 360}
+}

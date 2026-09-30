@@ -4,6 +4,7 @@
   analysers (``gank.py``, ``objectives.py``, ``reminders.py``), the engine, the voice and the UI.
 * :func:`phrase` builds the sentence spoken by the voice. Sentences are deliberately SHORT
   (about 1.8 s at SAPI rate +2 for gank alerts): the player is in a fight and must react fast.
+  The v1.1 kinds (objectives, reminders, jungler position, death recap) may carry a free text.
 * :class:`AlertThrottler` turns the raw alerts produced at every analysis tick (the analysers
   re-emit an alert for as long as its condition holds) into at most ONE message per tick:
 
@@ -14,6 +15,12 @@
   - highest level wins, then the most recent (``Alert.t``), then the kind priority;
   - global minimum gap between two messages, except for DANGER (and for ``JUNGLER_WHERE`` /
     ``DEATH_RECAP``, answers the player explicitly waits for);
+  - a DANGER is not said within ``danger_gap_s`` (1.5 s) of the previous DANGER, so that two
+    gank alerts raised on consecutive ticks do not cut each other off (the voice purges the
+    current sentence for a DANGER);
+  - an alert that was only held back by the global gap / the one-per-tick rule is kept for a
+    few seconds (INFO 6 s, WARNING 1.5 s) and said as soon as possible, so that one-shot
+    alerts (objective timer, jungler spotted...) are not lost;
   - robust to time going backwards (state reset when the clock jumps back) and huge jumps.
 
 Pure module (stdlib only), importable everywhere.
@@ -134,26 +141,61 @@ class Alert:
 
 NAME_MAX_LEN = 32          # longest champion name is ~16 chars; guard against garbage
 ZONE_MAX_LEN = 48
+FREE_TEXT_MAX_LEN = 240    # free texts (death recap...) are longer but still bounded
+# Kinds whose sentence may be given verbatim through ``phrase(..., text=...)``.
+FREE_TEXT_KINDS: frozenset[AlertKind] = frozenset({
+    AlertKind.OBJECTIVE_SOON,
+    AlertKind.RECALL_GOLD,
+    AlertKind.CONTROL_WARD,
+    AlertKind.JUNGLER_WHERE,
+    AlertKind.DEATH_RECAP,
+})
 _WS_RE = re.compile(r"\s+")
-_EDGE_PUNCT = " \t\r\n.,;:!? "
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_EDGE_PUNCT = " \t\r\n.,;:!? "
+_END_PUNCT = ".!?…"
 
 
-def _clean(value: Any, max_len: int) -> str | None:
-    """Single-line trimmed text without edge punctuation, or None if empty / not text-like."""
+def _to_str(value: Any) -> str | None:
+    """``str(value)`` for text-like values (Enum -> its value), None for None/bool/NaN/errors."""
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, float) and not math.isfinite(value):
         return None
     try:
-        s = value.value if isinstance(value, Enum) and isinstance(value.value, str) else str(value)
+        return value.value if isinstance(value, Enum) and isinstance(value.value, str) else str(value)
     except Exception:  # pathological __str__
         return None
-    s = _WS_RE.sub(" ", s).strip(_EDGE_PUNCT)
+
+
+def _clean(value: Any, max_len: int) -> str | None:
+    """Single-line trimmed text without edge punctuation, or None if empty / not text-like."""
+    s = _to_str(value)
+    if s is None:
+        return None
+    s = _WS_RE.sub(" ", _CTRL_RE.sub(" ", s)).strip(_EDGE_PUNCT)
     if not s or s.lower() in ("none", "null", "nan"):
         return None
     if len(s) > max_len:
         s = s[:max_len].rstrip(_EDGE_PUNCT)
     return s or None
+
+
+def _free_text(value: Any, max_len: int = FREE_TEXT_MAX_LEN) -> str | None:
+    """Caller-provided sentence: one line, bounded, ending with a punctuation mark; None if empty."""
+    s = _to_str(value)
+    if s is None:
+        return None
+    s = _WS_RE.sub(" ", _CTRL_RE.sub(" ", s)).strip()
+    if not s.strip(_EDGE_PUNCT) or s.lower() in ("none", "null", "nan"):
+        return None
+    if len(s) > max_len:
+        cut = s[:max_len]
+        space = cut.rfind(" ")
+        s = (cut[:space] if space > max_len // 2 else cut).rstrip(_EDGE_PUNCT)
+    if s[-1] not in _END_PUNCT:
+        s = s.rstrip(",;: ") + "."
+    return s
 
 
 def _as_count(value: Any, upper: int = 100_000) -> int:
@@ -188,8 +230,8 @@ def _jungler_approach(level: Level, champ: str | None, zone: str | None, n: int)
     if level >= Level.DANGER:
         return f"Gank ! {champ}, recule !" if champ else "Gank du jungler, recule !"
     if level == Level.WARNING:
-        return f"Attention, {champ} approche." if champ else "Attention, le jungler ennemi approche."
-    return f"{champ} rôde près de toi." if champ else "Le jungler ennemi rôde près de toi."
+        return f"Attention, {champ} approche." if champ else "Attention, le jungler approche."
+    return f"{champ} rôde près de toi." if champ else "Le jungler rôde près de toi."
 
 
 def _roam_approach(level: Level, champ: str | None, zone: str | None, n: int) -> str:
@@ -203,6 +245,7 @@ def _roam_approach(level: Level, champ: str | None, zone: str | None, n: int) ->
 
 def _collapse(level: Level, champ: str | None, zone: str | None, n: int) -> str:
     if n >= 2:
+        n = min(n, 5)                    # at most 5 enemies on the Rift
         if level >= Level.DANGER:
             return f"Danger, {n} ennemis arrivent, recule !"
         if level == Level.WARNING:
@@ -271,7 +314,7 @@ def _jungler_where(level: Level, champ: str | None, zone: str | None, n: int) ->
 
 def _death_recap(level: Level, champ: str | None, zone: str | None, n: int) -> str:
     if n >= 2:
-        return f"Mort face à {n} ennemis."
+        return f"Mort face à {min(n, 5)} ennemis."
     if n == 1:
         return f"Mort face à {champ}." if champ else "Mort face à un ennemi."
     return "Tu es mort."
@@ -293,7 +336,7 @@ _GENERIC = {Level.INFO: "Attention.", Level.WARNING: "Attention !", Level.DANGER
 
 
 def phrase(kind: AlertKind, level: Level, champ: str | None, zone_label: str | None = None,
-           count: int = 0) -> str:
+           count: int = 0, text: str | None = None) -> str:
     """Short French sentence for an alert. Never raises.
 
     ``champ`` is the (localised) champion name, or ``None`` when unknown ("un ennemi");
@@ -301,19 +344,26 @@ def phrase(kind: AlertKind, level: Level, champ: str | None, zone_label: str | N
     ``geometry.zone_label_fr`` phrase ("en haut", "dans la rivière du bas").
     ``count`` is the number of enemies (COLLAPSE, DEATH_RECAP), seconds (OBJECTIVE_SOON,
     JUNGLER_WHERE) or gold (RECALL_GOLD).
+    ``text`` is a ready-made sentence used verbatim (cleaned, bounded) for the v1.1 kinds
+    (:data:`FREE_TEXT_KINDS`, e.g. the death recap of ``analysis.death_recap``); it is
+    ignored for the gank kinds, whose sentences must stay short.
     """
     lvl = Level.coerce(level)
     try:
         k = kind if isinstance(kind, AlertKind) else AlertKind(kind)
     except ValueError:
         log.warning("phrase(): unknown alert kind %r", kind)
-        return _GENERIC[lvl]
+        return _free_text(text) or _GENERIC[lvl]
     try:
+        if text is not None and k in FREE_TEXT_KINDS:
+            free = _free_text(text)
+            if free:
+                return free
         name = _clean(champ, NAME_MAX_LEN)
         zone = _clean(zone_label, ZONE_MAX_LEN)
         n = _as_count(count)
-        text = _BUILDERS[k](lvl, name, zone, n)
-        return _WS_RE.sub(" ", text).strip() or _GENERIC[lvl]
+        out = _BUILDERS[k](lvl, name, zone, n)
+        return _WS_RE.sub(" ", out).strip() or _GENERIC[lvl]
     except Exception:  # defensive: the voice must always get something
         log.exception("phrase(%r, %r) failed", kind, level)
         return _GENERIC[lvl]
@@ -331,13 +381,13 @@ def alert_key(kind: AlertKind | str, who: str | None = None) -> str:
 
 def make_alert(kind: AlertKind, level: Level | int, t: float, champ: str | None = None,
                alias: str | None = None, zone_label: str | None = None, count: int = 0,
-               key: str | None = None) -> Alert:
+               key: str | None = None, text: str | None = None) -> Alert:
     """Build an :class:`Alert` with its phrase and the conventional key (see :func:`alert_key`)."""
     lvl = Level.coerce(level)
     return Alert(
         kind=kind,
         level=lvl,
-        text=phrase(kind, lvl, champ, zone_label, count),
+        text=phrase(kind, lvl, champ, zone_label, count, text=text),
         key=key if key else alert_key(kind, alias or champ),
         t=t,
         alias=alias,
@@ -366,7 +416,12 @@ KIND_PRIORITY: tuple[AlertKind, ...] = (
     AlertKind.CONTROL_WARD,
 )
 DEFAULT_MIN_GAP_S = 1.2
+DEFAULT_DANGER_GAP_S = 1.5  # min time between two DANGER messages (≈ one spoken sentence)
 MAX_MIN_GAP_S = 30.0
+# How long an alert held back by the gap / one-per-tick rule stays eligible (DANGER: never kept,
+# the gank analyser re-emits it every tick while it is true).
+PENDING_TTL_S: dict[Level, float] = {Level.INFO: 6.0, Level.WARNING: 1.5}
+MAX_PENDING = 16
 BACKWARD_RESET_S = 1.0     # clock going back more than this -> new timeline, state reset
 PRUNE_EVERY_S = 10.0       # housekeeping period of the per-key memory
 
@@ -390,16 +445,24 @@ def _finite_or(value: Any, default: float) -> float:
     return f if math.isfinite(f) else default
 
 
+def _gap_value(value: Any, default: float) -> float:
+    return min(max(_finite_or(value, default), 0.0), MAX_MIN_GAP_S)
+
+
 class AlertThrottler:
     """Anti-spam filter: at most one alert per tick, per-key cooldowns, global gap. Thread-safe."""
 
-    def __init__(self, min_gap_s: float = DEFAULT_MIN_GAP_S) -> None:
-        gap = _finite_or(min_gap_s, DEFAULT_MIN_GAP_S)
-        self.min_gap_s: float = min(max(gap, 0.0), MAX_MIN_GAP_S)
+    def __init__(self, min_gap_s: float = DEFAULT_MIN_GAP_S, *,
+                 danger_gap_s: float = DEFAULT_DANGER_GAP_S) -> None:
+        self.min_gap_s: float = _gap_value(min_gap_s, DEFAULT_MIN_GAP_S)
+        self.danger_gap_s: float = _gap_value(danger_gap_s, DEFAULT_DANGER_GAP_S)
         self._lock = threading.Lock()
         self._by_key: dict[str, tuple[float, Level]] = {}
         self._by_alias: dict[str, tuple[float, Level]] = {}
+        # key -> (alert, time it was last raised) for alerts held back by the gap
+        self._pending: dict[str, tuple[Alert, float]] = {}
         self._last_emit_t: float | None = None
+        self._last_danger_t: float | None = None
         self._last_tick: float | None = None
         self._last_prune: float = -math.inf
 
@@ -420,12 +483,19 @@ class AlertThrottler:
             self._clear()
             self._last_tick = None
 
+    def pending_count(self) -> int:
+        """Number of alerts currently held back and still eligible (diagnostics / tests)."""
+        with self._lock:
+            return len(self._pending)
+
     # -- internals ----------------------------------------------------------------------
 
     def _clear(self) -> None:
         self._by_key.clear()
         self._by_alias.clear()
+        self._pending.clear()
         self._last_emit_t = None
+        self._last_danger_t = None
         self._last_prune = -math.inf
 
     def _now(self, t: Any) -> float:
@@ -470,9 +540,10 @@ class AlertThrottler:
         return False
 
     def _gap_ok(self, a: Alert, now: float) -> bool:
-        if a.level >= Level.DANGER or a.kind in GAP_EXEMPT_KINDS:
-            return True
-        if self._last_emit_t is None:
+        if a.level >= Level.DANGER:
+            last = self._last_danger_t
+            return last is None or now - last >= self.danger_gap_s
+        if a.kind in GAP_EXEMPT_KINDS or self._last_emit_t is None:
             return True
         return now - self._last_emit_t >= self.min_gap_s
 
@@ -480,18 +551,46 @@ class AlertThrottler:
     def _valid(a: Any) -> bool:
         return isinstance(a, Alert) and bool(a.text) and isinstance(a.key, str)
 
+    def _keep_pending(self, a: Alert, raised_at: float) -> None:
+        if a.level >= Level.DANGER:
+            return
+        self._pending[a.key] = (a, raised_at)
+        if len(self._pending) > MAX_PENDING:
+            # drop the least useful: lowest level, then oldest
+            worst = min(self._pending.items(), key=lambda kv: (int(kv[1][0].level), kv[1][1]))
+            del self._pending[worst[0]]
+
     def _filter_locked(self, alerts: Iterable[Alert] | None, t: float) -> list[Alert]:
         now = self._now(t)
         self._prune(now)
-        if not alerts:
-            return []
-        best: Alert | None = None
-        best_rank: tuple[int, float, int, int] | None = None
-        for index, a in enumerate(alerts):
-            if not self._valid(a):
+        fresh: list[Alert] = []
+        for a in alerts or ():
+            if self._valid(a):
+                fresh.append(a)
+            else:
                 log.debug("AlertThrottler: ignoring invalid alert %r", a)
+        fresh_keys = {a.key for a in fresh}
+        # candidates = still-eligible held-back alerts (older first) + this tick's alerts
+        candidates: list[tuple[Alert, float]] = []
+        for key, (a, raised_at) in list(self._pending.items()):
+            ttl = PENDING_TTL_S.get(a.level, 0.0)
+            if key in fresh_keys or now - raised_at > ttl:
+                del self._pending[key]           # superseded by a fresh one, or expired
+            else:
+                candidates.append((a, raised_at))
+        candidates.extend((a, now) for a in fresh)
+        if not candidates:
+            return []
+
+        best: tuple[Alert, float] | None = None
+        best_rank: tuple[int, float, int, int] | None = None
+        held: list[tuple[Alert, float]] = []
+        for index, (a, raised_at) in enumerate(candidates):
+            if not self._key_ok(a, now):
+                self._pending.pop(a.key, None)   # already said recently: nothing to keep
                 continue
-            if not (self._key_ok(a, now) and self._gap_ok(a, now)):
+            if not self._gap_ok(a, now):
+                held.append((a, raised_at))
                 continue
             rank = (
                 int(a.level),
@@ -500,11 +599,23 @@ class AlertThrottler:
                 index,                                              # later in the list = more recent
             )
             if best_rank is None or rank > best_rank:
-                best, best_rank = a, rank
+                if best is not None:
+                    held.append(best)
+                best, best_rank = (a, raised_at), rank
+            else:
+                held.append((a, raised_at))
+
+        for a, raised_at in held:
+            if best is None or a.key != best[0].key:
+                self._keep_pending(a, raised_at)
         if best is None:
             return []
-        self._by_key[best.key] = (now, best.level)
-        if best.alias:
-            self._by_alias[best.alias] = (now, best.level)
+        chosen = best[0]
+        self._pending.pop(chosen.key, None)
+        self._by_key[chosen.key] = (now, chosen.level)
+        if chosen.alias:
+            self._by_alias[chosen.alias] = (now, chosen.level)
         self._last_emit_t = now
-        return [best]
+        if chosen.level >= Level.DANGER:
+            self._last_danger_t = now
+        return [chosen]
