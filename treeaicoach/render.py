@@ -4,20 +4,21 @@ A :class:`Scene` describes what is on the minimap (texture variant, fog of war a
 champions, minions, structures, camps, wards, pings, camera rectangle...) in *normalized
 minimap coordinates* ``(u, v)`` (``u`` left -> right, ``v`` top -> bottom, radii normalized
 by the minimap width). :class:`MinimapRenderer` turns it into a BGR ``uint8`` image that
-mimics the in-game minimap:
+mimics the in-game minimap (see ``docs/MINIMAP_FACTS.md``, measured on real captures):
 
-* the square ``2dlevelminimap_*`` texture scaled to the whole minimap, its transparent
-  parts (walls / void) shown as a very dark blue-grey (:data:`VOID_BGR`);
-* fog of war (``fogofwaroverlay*`` textures) darkening everything outside the vision
-  circles, with feathered edges;
+* the whole 512 px ``2dlevelminimap_*`` texture (black margins included) scaled to the
+  square, its transparent parts (walls / void) shown almost black (:data:`VOID_BGR`);
+* fog of war = uniform multiplication (~0.36) of everything outside the vision circles,
+  with soft edges (optionally an official ``fogofwaroverlay*`` texture instead);
 * team-tinted structure icons at their official positions (:data:`STRUCTURES`), jungle
-  camps (:data:`CAMPS`), wards, minion dots, the white camera rectangle;
-* champion icons: round portrait + coloured ring (:data:`RING_BGR`) + thin dark outline,
-  the local player (``"self"``) drawn on top; recall / teleport outlines; pings on top.
+  camps (:data:`CAMPS`), the shop icon at the allied fountain, wards, minion dots, the white
+  camera rectangle, the white movement path;
+* champion icons: round portrait + thin dark line + coloured ring (:data:`RING_BGR`; the
+  local player's ring is the *same* light blue as the allies'); cyan recall halo;
+  teleport highlight; pings on top.
 
 Every visual constant is a plain module-level value so it can be re-tuned from real
-screenshots (``docs/MINIMAP_FACTS.md``) without touching the code. Images are BGR
-``uint8``; icons are RGBA ``uint8`` (module convention).
+screenshots without touching the code. Images are BGR ``uint8``; icons are RGBA ``uint8``.
 
 Pixel convention: a pixel ``i`` covers the continuous interval ``[i, i + 1)``, so the
 continuous centre of an icon at ``u`` in an image of width ``W`` is ``u * W``.
@@ -33,7 +34,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import cv2
 import numpy as np
@@ -43,80 +44,94 @@ log = logging.getLogger(__name__)
 BGR = tuple[int, int, int]
 
 # ======================================================================================
-# Tunable visual constants (normalized sizes are fractions of the minimap width)
+# Tunable visual constants (normalized sizes are fractions of the minimap width).
+# Values come from docs/MINIMAP_FACTS.md (real captures, 2022-2026 clients).
 # ======================================================================================
 
-#: Colour shown where the texture is transparent (walls, void around the map).
-VOID_BGR: BGR = (20, 16, 12)
+#: Colour shown where the texture is transparent (walls ~ RGB(1-3, 2-9, 2-10)).
+VOID_BGR: BGR = (6, 5, 2)
 
-#: Default champion ring colours per relation to the local player.
+#: Champion ring colours per relation. The local player has NO special ring: same light
+#: blue as the allies (measured ally ~ RGB(75-81, 140-162, 200-230), enemy ~ RGB(195-204, 51, 51)).
 RING_BGR: dict[str, BGR] = {
-    "enemy": (40, 40, 215),     # red
-    "ally": (215, 140, 30),     # blue
-    "self": (40, 200, 235),     # yellow / gold
+    "enemy": (51, 51, 200),
+    "ally": (218, 152, 78),
+    "self": (218, 152, 78),
 }
-#: Ring thickness divided by the icon radius.
-RING_FRAC: float = 0.14
-#: Thin dark outline drawn just outside the ring.
-OUTLINE_BGR: BGR = (14, 12, 12)
-OUTLINE_FRAC: float = 0.06          # outline width / icon radius
-OUTLINE_MIN_PX: float = 0.7         # minimum outline width in pixels
+#: Paler blue-lavender ally ring seen on 2024 clients (~ RGB(133-183, 143-187, 162-204)).
+RING_BGR_ALLY_PALE: BGR = (183, 165, 158)
+#: Ring thickness / icon radius (1.5-2 px for a 27 px icon).
+RING_FRAC: float = 0.13
+#: Thin dark line between the ring and the portrait (~ RGB(30-65, 37-75, 55-130)).
+INNER_LINE_BGR: BGR = (95, 56, 45)
+INNER_LINE_FRAC: float = 0.06       # width / icon radius
+INNER_LINE_MIN_PX: float = 0.5
+#: Optional dark outline outside the ring (not observed on real captures -> width 0).
+OUTLINE_BGR: BGR = (12, 10, 10)
+OUTLINE_FRAC: float = 0.0           # outline width / icon radius
+OUTLINE_MIN_PX: float = 0.0
 #: Part of the (square) portrait image covered by the visible disc: the portrait is zoomed
 #: slightly so that its own anti-aliased transparent border hides under the ring.
 PORTRAIT_FILL: float = 0.94
 #: "Dead" / greyed icon look.
 GREY_RING_BGR: BGR = (110, 110, 110)
 GREY_ICON_DIM: float = 0.55
-#: Default champion icon radius (demo / selftest); real HUD: diameter ~7-11 % of the width.
-ICON_RADIUS_DEFAULT: float = 0.045
+#: Default champion icon radius (demo / selftest). Real: diameter 0.088-0.10 of the width.
+ICON_RADIUS_DEFAULT: float = 0.047
 
-#: Fog of war: darkening strength (``Scene.fog_alpha``) is relative to the mean alpha of the
-#: ``fogofwaroverlay`` textures, so ``fog_alpha = 0.55`` darkens by ~55 % on average.
-FOG_ALPHA_DEFAULT: float = 0.55
+#: Fog of war darkening (``Scene.fog_alpha``): pixels outside vision are multiplied by
+#: ``1 - fog_alpha`` (measured ~0.36 -> 0.64).
+FOG_ALPHA_DEFAULT: float = 0.64
+FOG_MAX_DARKEN: float = 0.95
+#: When a fog overlay texture is used, its alpha is normalized by this value.
 FOG_TEX_REF_ALPHA: float = 88.0
-FOG_MAX_DARKEN: float = 0.93
 #: Gaussian feathering of the vision circle edges (sigma, normalized).
-FOG_FEATHER: float = 0.010
+FOG_FEATHER: float = 0.012
 #: Resolution of the vision mask (computed small, then upsampled).
 FOG_MASK_RES: int = 96
 #: Typical vision radii (normalized) - used by demo / synth to build ``Scene.vision``.
 VISION_R: dict[str, float] = {"champion": 0.08, "turret": 0.09, "ward": 0.06, "minion": 0.035}
 
-#: Team tints of structures / minions (team-relative colours: ally blue, enemy red).
-TEAM_BGR: dict[str, BGR] = {"ally": (235, 165, 60), "enemy": (70, 70, 230)}
-#: Minion dots.
-MINION_R: float = 0.0075
-MINION_BGR: dict[str, BGR] = {"ally": (225, 150, 45), "enemy": (50, 50, 215)}
-MINION_OUTLINE_BGR: BGR = (22, 18, 18)
+#: Team tints of structures (team-relative colours: ally blue, enemy red).
+TEAM_BGR: dict[str, BGR] = {"ally": (230, 170, 90), "enemy": (70, 70, 225)}
+#: Minion dots (diameter ~0.018 of the width), light blue / red with a dark contour.
+MINION_R: float = 0.009
+MINION_BGR: dict[str, BGR] = {"ally": (228, 165, 90), "enemy": (55, 55, 205)}
+MINION_OUTLINE_BGR: BGR = (20, 16, 14)
 
-#: Structure icons (diameter, normalized) and files.
-STRUCTURE_SIZE: dict[str, float] = {"turret": 0.042, "inhibitor": 0.036, "nexus": 0.052}
+#: Structure icons (diameter, normalized: turrets 0.04-0.045) and files.
+STRUCTURE_SIZE: dict[str, float] = {"turret": 0.043, "inhibitor": 0.036, "nexus": 0.05}
 STRUCTURE_ICON: dict[str, str] = {
     "turret": "icon_ui_tower_minimap.png",
     "inhibitor": "icon_ui_inhibitor_minimap_v2.png",
     "nexus": "icon_ui_nexus_minimap_v2.png",
 }
-#: Jungle camp / objective icons (diameter, normalized) and default files.
-CAMP_SIZE: dict[str, float] = {
-    "blue": 0.042, "red": 0.042, "gromp": 0.03, "wolves": 0.03, "raptors": 0.03,
-    "krugs": 0.03, "scuttle": 0.03, "dragon": 0.055, "baron": 0.058,
+#: Jungle camps: orange diamonds ~0.022 of the width; epic monsters: bigger glyphs.
+CAMP_SIZE: dict[str, float] = {"dragon": 0.05, "baron": 0.052}
+CAMP_SIZE_DEFAULT: float = 0.022
+CAMP_ICON: dict[str, str] = {"dragon": "dragon.png", "baron": "baron.png"}
+CAMP_ICON_DEFAULT: str = "smallcamp.png"
+#: Shop icon at the allied fountain corner.
+SHOP_ICON: str = "shop.png"
+SHOP_SIZE: float = 0.05
+#: Wards: allied glyphs ~0.036 of the width; enemy wards: small red dots ~0.02.
+WARD_SIZE: float = 0.036
+ENEMY_WARD_DOT: str = "enemy_dot"
+ENEMY_WARD_DOT_SIZE: float = 0.02
+ENEMY_WARD_DOT_BGR: BGR = (60, 45, 215)
+#: Pings: symbol glyphs and pulsing rings (~0.10 of the width).
+PING_SIZE: float = 0.045
+PING_RING_SIZE: float = 0.10
+PING_BGR: dict[str, BGR] = {
+    "generic": (253, 188, 33), "enemy_vision": (67, 34, 248),
+    "caution": (15, 190, 245), "assist": (128, 215, 9),
 }
-CAMP_SIZE_DEFAULT: float = 0.032
-CAMP_ICON: dict[str, str] = {
-    "blue": "blue.png", "red": "red.png", "gromp": "camp.png", "wolves": "camp.png",
-    "raptors": "camp.png", "krugs": "camp.png", "scuttle": "smallcamp.png",
-    "dragon": "dragon.png", "baron": "baron.png",
-}
-#: Ward icons (diameter, normalized).
-WARD_SIZE: float = 0.028
-#: Ping icons (diameter, normalized).
-PING_SIZE: float = 0.05
-#: Recall / teleport outlines, relative to the champion icon diameter.
-RECALL_SCALE: float = 1.38
-TELEPORT_SCALE: float = 1.55
-RECALL_ICON: dict[str, str] = {
-    "ally": "recalloutline.png", "self": "recalloutline.png", "enemy": "recallhostileoutline.png",
-}
+#: Recall: bright cyan halo (~RGB(106-113, 180, 201-214)), 2-4 px, at 1.1-1.25 x the radius.
+RECALL_BGR: BGR = (208, 180, 110)
+RECALL_RADIUS: float = 1.17         # ring centre radius / icon radius
+RECALL_WIDTH: float = 0.2           # ring width / icon radius
+#: Teleport highlight (not verified on real captures), relative to the icon diameter.
+TELEPORT_SCALE: float = 1.5
 TELEPORT_ICON: dict[str, str] = {
     "ally": "teleporthighlight_friendly.png", "self": "teleporthighlight_friendly.png",
     "enemy": "teleporthighlight_enemy.png",
@@ -125,15 +140,21 @@ DUMMY_ICON: dict[str, str] = {
     "ally": "dummy_friendly_circle.png", "self": "dummy_friendly_circle.png",
     "enemy": "dummy_enemy_circle.png",
 }
-#: Camera rectangle.
-CAMERA_BGR: BGR = (235, 235, 235)
-CAMERA_THICKNESS: float = 0.005     # normalized, at least 1 px
+#: Camera rectangle: white, ~0.007 of the width thick; 0.272-0.279 x 0.151-0.158 in size.
+CAMERA_BGR: BGR = (245, 245, 245)
+CAMERA_THICKNESS: float = 0.007     # normalized, at least 1 px
+CAMERA_SIZE: tuple[float, float] = (0.275, 0.155)
+#: Movement path (white line between my icon and the clicked point).
+PATH_BGR: BGR = (235, 235, 235)
+#: Small white texts (epic camp timers, "1:17").
+TEXT_BGR: BGR = (250, 250, 250)
+TEXT_HEIGHT: float = 0.03           # normalized glyph height
 
 #: Textures.
 TEXTURE_PREFIX: str = "2dlevelminimap_"
 DEFAULT_TEXTURE: str = "2dlevelminimap_base_baron1.png"
 DEFAULT_FOG: str = "fogofwaroverlay.png"
-#: Fog overlay used for each texture variant (``2dlevelminimap_<variant>_baron<n>.png``).
+#: Fog overlay matching each texture variant (``2dlevelminimap_<variant>_baron<n>.png``).
 FOG_TEXTURE_BY_VARIANT: dict[str, str] = {
     "base": "fogofwaroverlay.png",
     "cloud": "fogofwaroverlay_srx_cloud.png",
@@ -153,6 +174,7 @@ _MAX_SIZE = 4096
 #: Texture pyramid levels (px): consecutive ratios <= 1.33 so bilinear resampling is clean.
 _PYRAMID: tuple[int, ...] = (512, 384, 288, 216, 162, 122, 92, 69, 52, 39, 29, 22, 16, 12, 8)
 _SUBDIRS_ICONS = ("icons/minimap", "icons/pings")
+_UNIFORM_FOG = "__uniform__"
 
 
 def game_to_uv(x: float, y: float) -> tuple[float, float]:
@@ -216,7 +238,7 @@ _CAMPS_GAME: tuple[tuple[float, float, str], ...] = (
 #: Jungle camps and epic monster pits ``(u, v, name)``.
 CAMPS: list[tuple[float, float, str]] = [(*game_to_uv(x, y), name) for x, y, name in _CAMPS_GAME]
 
-#: Fountains (spawn platforms) per team, normalized.
+#: Fountains (spawn platforms, the coloured discs in the texture corners), normalized.
 FOUNTAINS: dict[str, tuple[float, float]] = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
 
 
@@ -229,11 +251,14 @@ FOUNTAINS: dict[str, tuple[float, float]] = {"ORDER": (0.045, 0.955), "CHAOS": (
 class ChampionSprite:
     """A champion icon on the minimap.
 
-    ``relation`` is ``"self" | "ally" | "enemy"``; ``icon`` is the round portrait (RGBA);
-    ``ring_bgr`` overrides the ring colour (None -> :data:`RING_BGR`); ``label_class`` is the
-    class used for training labels (None -> the class is not labelled, e.g. random-hue ring).
-    Extra (optional) fields: ``grey`` draws a greyed "dead" icon, ``teleport`` a teleport
-    highlight around it, ``ring_frac`` overrides :data:`RING_FRAC`.
+    ``relation`` is ``"self" | "ally" | "enemy"``; ``r`` is the normalized outer radius of
+    the ring; ``icon`` is the round portrait (RGBA, None -> neutral placeholder);
+    ``ring_bgr`` overrides the ring colour (None -> :data:`RING_BGR`); ``label_class`` is
+    the class used for training labels (None -> class not labelled, e.g. random-hue ring).
+
+    Optional extensions: ``grey`` greyed "dead" icon; ``teleport`` teleport highlight;
+    ``ring_frac`` / ``ring_shading`` / ``inner_line_bgr`` / ``inner_line_frac`` /
+    ``outline_frac`` override the icon style (see :func:`draw_champion_icon`).
     """
 
     u: float
@@ -247,15 +272,20 @@ class ChampionSprite:
     grey: bool = False
     teleport: bool = False
     ring_frac: float | None = None
+    ring_shading: float = 0.0
+    inner_line_bgr: tuple | None = None
+    inner_line_frac: float | None = None
+    outline_frac: float | None = None
 
 
 @dataclass
 class Sprite:
-    """Any other icon (hard negatives, objectives, ping rings...).
+    """Any other icon (hard negatives, objectives, ping rings, badges...).
 
     ``icon`` is a file name (searched in ``icons/minimap`` then ``icons/pings``) or an RGBA
-    array; ``size`` is the normalized diameter; ``tint`` multiplies the colours (BGR);
-    ``layer`` is ``"under"`` (below champions) or ``"over"`` (above everything, like pings).
+    array; ``size`` is the normalized diameter (largest side); ``tint`` multiplies the
+    colours (BGR); ``layer`` is ``"under"`` (below minions and champions) or ``"over"``
+    (above everything, like pings).
     """
 
     u: float
@@ -269,30 +299,41 @@ class Sprite:
 
 @dataclass
 class Scene:
-    """Everything drawn on one minimap. All coordinates normalized (see module doc)."""
+    """Everything drawn on one minimap. All coordinates normalized (see module doc).
+
+    The first fields are the documented contract; the others are optional extensions whose
+    defaults keep the documented behaviour.
+    """
 
     texture: str = DEFAULT_TEXTURE                          # file name in assets/minimap
     size: int = 256                                         # output size (px)
-    fog_alpha: float = FOG_ALPHA_DEFAULT                    # 0 = no fog of war
+    fog_alpha: float = FOG_ALPHA_DEFAULT                    # darkening outside vision, 0 = none
     vision: list[tuple[float, float, float]] = field(default_factory=list)  # (u, v, radius)
     champions: list[ChampionSprite] = field(default_factory=list)
-    minions: list[tuple[float, float, str]] = field(default_factory=list)   # (u, v, "ally"|"enemy")
-    structures: bool = True
-    wards: list[tuple[float, float, str]] = field(default_factory=list)     # (u, v, icon name)
-    pings: list[tuple[float, float, str]] = field(default_factory=list)     # (u, v, icon name)
-    camera: tuple[float, float, float, float] | None = None                 # (u0, v0, u1, v1)
+    minions: list[tuple] = field(default_factory=list)      # (u, v, "ally"|"enemy"[, size factor])
+    structures: bool = True                                 # turrets / inhibitors / nexus (+ shop)
+    wards: list[tuple] = field(default_factory=list)        # (u, v, icon name | "enemy_dot"[, size])
+    pings: list[tuple] = field(default_factory=list)        # (u, v, ping icon name[, size])
+    camera: tuple[float, float, float, float] | None = None  # (u0, v0, u1, v1), white
     camps: bool = True
-    # ---- optional extensions (defaults keep the documented behaviour) ----
-    my_team: str = "ORDER"                  # team of the local player (structure colours)
+    # ---- optional extensions --------------------------------------------------------
+    my_team: str = "ORDER"                  # local player's team (structure colours, shop)
     destroyed: frozenset = frozenset()      # STRUCTURE_IDS (or indices) not drawn
-    fog_texture: str | None = None          # None -> matches the texture variant
-    camp_icons: list[tuple[float, float, str]] | None = None  # explicit (u, v, icon); None -> CAMPS
+    fog_texture: str | None = None          # None -> uniform darkening (real game)
+    camp_icons: list[tuple] | None = None   # explicit (u, v, icon[, size]); None -> CAMPS
     sprites: list[Sprite] = field(default_factory=list)
+    texts: list[tuple] = field(default_factory=list)        # (u, v, text[, height]) white
+    path: list[tuple[float, float]] | None = None           # movement path polyline (white)
+    shop: bool = True                                       # shop icon at the allied fountain
     structure_scale: float = 1.0
     minion_r: float = MINION_R
     camera_bgr: tuple | None = None
-    camera_on_top: bool = False
+    camera_px: int | None = None            # camera line width in px (None -> CAMERA_THICKNESS)
+    camera_on_top: bool = False             # camera rectangle above the champion icons
     void_bgr: tuple | None = None
+    #: Optional ``f(terrain_bgr) -> terrain_bgr`` applied after the fog, before any icon
+    #: (training augmentation of the map background). Must keep shape and dtype.
+    terrain_fn: Callable[[np.ndarray], np.ndarray] | None = None
 
 
 # ======================================================================================
@@ -308,8 +349,10 @@ def _read_image(path: str | os.PathLike[str]) -> np.ndarray | None:
         return None
     if data.size == 0:
         return None
-    img = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
-    return img
+    try:
+        return cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    except cv2.error:
+        return None
 
 
 def _to_rgba_u8(img: np.ndarray, *, bgr_order: bool) -> np.ndarray:
@@ -324,7 +367,7 @@ def _to_rgba_u8(img: np.ndarray, *, bgr_order: bool) -> np.ndarray:
         raise ValueError(f"unsupported image shape {img.shape}")
     ch = img.shape[2]
     if ch == 1:
-        return cv2.cvtColor(img[:, :, 0], cv2.COLOR_GRAY2RGBA)
+        return cv2.cvtColor(np.ascontiguousarray(img[:, :, 0]), cv2.COLOR_GRAY2RGBA)
     if ch == 3:
         return cv2.cvtColor(img, cv2.COLOR_BGR2RGBA if bgr_order else cv2.COLOR_RGB2RGBA)
     if ch == 4:
@@ -353,6 +396,8 @@ def _as_rgba(src: Any) -> np.ndarray | None:
         return None
     if src.shape[0] < 1 or src.shape[1] < 1:
         return None
+    if src.ndim == 3 and src.shape[2] == 4 and src.dtype == np.uint8 and src.flags.c_contiguous:
+        return src
     try:
         return _to_rgba_u8(src, bgr_order=False)
     except (ValueError, cv2.error):
@@ -367,12 +412,16 @@ def _valid_dst(dst: Any) -> bool:
         and dst.dtype == np.uint8
         and dst.shape[0] > 0
         and dst.shape[1] > 0
+        and dst.flags.writeable
     )
 
 
-def _finite(*vals: float) -> bool:
+def _finite(*vals: Any) -> bool:
     try:
-        return all(math.isfinite(float(v)) for v in vals)
+        for v in vals:
+            if not math.isfinite(float(v)):
+                return False
+        return True
     except (TypeError, ValueError):
         return False
 
@@ -439,12 +488,12 @@ def alpha_blit(dst_bgr: np.ndarray, src_rgba: np.ndarray, cx: float, cy: float,
         h = max(1, int(round(h0 * scale)))
         if w > 4 * _MAX_SIZE or h > 4 * _MAX_SIZE:
             return
-        rgba = _resize_rgba(rgba, w, h)
         x0 = int(math.floor(cx - w / 2.0 + 0.5))
         y0 = int(math.floor(cy - h / 2.0 + 0.5))
         H, W = dst_bgr.shape[:2]
         if x0 >= W or y0 >= H or x0 + w <= 0 or y0 + h <= 0:
             return
+        rgba = _resize_rgba(rgba, w, h)
         bgr_p, inv_a = _premultiply(rgba, opacity=min(1.0, float(opacity)))
         _blit_premul(dst_bgr, bgr_p, inv_a, x0, y0)
     except Exception:  # never let a drawing helper crash a caller
@@ -461,8 +510,8 @@ def _disc_patch(dst: np.ndarray, cx: float, cy: float, extent: float
     y1 = min(H, int(math.ceil(cy + extent + 1)))
     if x0 >= x1 or y0 >= y1:
         return None
-    xs = np.arange(x0, x1, dtype=np.float32) + (0.5 - cx)
-    ys = np.arange(y0, y1, dtype=np.float32) + (0.5 - cy)
+    xs = np.arange(x0, x1, dtype=np.float32) + np.float32(0.5 - cx)
+    ys = np.arange(y0, y1, dtype=np.float32) + np.float32(0.5 - cy)
     d = np.sqrt(xs[None, :] ** 2 + ys[:, None] ** 2)
     return x0, y0, x1, y1, d
 
@@ -471,18 +520,15 @@ def _portrait_layer(icon_rgba: np.ndarray, r_in: float, cx: float, cy: float,
                     x0: int, y0: int, w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
     """Portrait resampled onto the patch grid: (BGR float32 [h,w,3], alpha float32 [h,w])."""
     sh, sw = icon_rgba.shape[:2]
-    half_src = 0.5 * min(sh, sw) * PORTRAIT_FILL
     target_r = max(0.5, r_in + 0.5)
-    # pre-shrink with area filtering so that the final warp is ~1:1 (no aliasing)
-    k = half_src / target_r
-    if k > 1.5:
+    k = 0.5 * min(sh, sw) * PORTRAIT_FILL / target_r
+    if k > 1.5:  # pre-shrink with area filtering so that the final warp is ~1:1
         nw = max(2, int(round(sw / k)))
         nh = max(2, int(round(sh / k)))
         icon_rgba = cv2.resize(icon_rgba, (nw, nh), interpolation=cv2.INTER_AREA)
         sh, sw = nh, nw
-        half_src = 0.5 * min(sh, sw) * PORTRAIT_FILL
-        k = half_src / target_r
-    # inverse map: dst pixel j (centre x0 + j + 0.5) -> source index
+        k = 0.5 * min(sh, sw) * PORTRAIT_FILL / target_r
+    # inverse map: dst pixel j (continuous centre x0 + j + 0.5) -> source pixel index
     m = np.array(
         [[k, 0.0, k * (x0 + 0.5 - cx) + sw / 2.0 - 0.5],
          [0.0, k, k * (y0 + 0.5 - cy) + sh / 2.0 - 0.5]],
@@ -497,17 +543,26 @@ def _portrait_layer(icon_rgba: np.ndarray, r_in: float, cx: float, cy: float,
     return bgr, a
 
 
+def _lerp_(patch: np.ndarray, color: np.ndarray, alpha: np.ndarray) -> None:
+    """In place: ``patch += (color - patch) * alpha`` (alpha [h,w])."""
+    patch += (color - patch) * alpha[:, :, None]
+
+
 def draw_champion_icon(dst_bgr: np.ndarray, cx: float, cy: float, radius_px: float,
                        icon_rgba: np.ndarray | None, ring_bgr: Sequence[int] | None,
                        ring_frac: float = RING_FRAC, grey: bool = False, *,
                        outline_bgr: Sequence[int] | None = OUTLINE_BGR,
-                       outline_px: float | None = None, ring_shading: float = 0.0) -> None:
-    """Draw a minimap champion icon in place: portrait disc + coloured ring + dark outline.
+                       outline_px: float | None = None, ring_shading: float = 0.0,
+                       inner_line_bgr: Sequence[int] | None = INNER_LINE_BGR,
+                       inner_line_px: float | None = None) -> None:
+    """Draw a minimap champion icon in place: coloured ring + thin dark line + portrait.
 
     ``(cx, cy)`` is the continuous centre in pixels and ``radius_px`` the outer radius of
-    the ring (the outline is drawn just outside). ``grey`` renders a greyed "dead" icon.
-    ``ring_shading`` (0..1) adds a subtle top-light / bottom-dark bevel on the ring.
-    Invalid inputs are ignored (never raises).
+    the ring. ``ring_frac`` is the ring width / radius. Optional: a dark outline outside
+    the ring (``outline_px``, default ``OUTLINE_FRAC * radius``), the dark line between ring
+    and portrait (``inner_line_px``, default ``INNER_LINE_FRAC * radius``; ``inner_line_bgr``
+    None disables it), ``ring_shading`` (0..1) for a subtle top-light / bottom-dark bevel.
+    ``grey`` renders a greyed "dead" icon. Invalid inputs are ignored (never raises).
     """
     try:
         if not _valid_dst(dst_bgr) or not _finite(cx, cy, radius_px, ring_frac):
@@ -516,32 +571,43 @@ def draw_champion_icon(dst_bgr: np.ndarray, cx: float, cy: float, radius_px: flo
         if R < 0.5 or R > 2 * _MAX_SIZE:
             return
         rf = min(0.9, max(0.0, float(ring_frac)))
-        ow = float(outline_px) if outline_px is not None else max(OUTLINE_MIN_PX, R * OUTLINE_FRAC)
+        ow = float(outline_px) if outline_px is not None and _finite(outline_px) else \
+            max(OUTLINE_MIN_PX, R * OUTLINE_FRAC)
         if outline_bgr is None:
             ow = 0.0
+        ow = max(0.0, ow)
         patch_info = _disc_patch(dst_bgr, cx, cy, R + ow)
         if patch_info is None:
             return
         x0, y0, x1, y1, d = patch_info
         patch = dst_bgr[y0:y1, x0:x1].astype(np.float32)
 
-        # 1) outline
-        if ow > 0:
-            a = np.clip(R + ow + 0.5 - d, 0.0, 1.0)[:, :, None]
-            patch += (np.asarray(outline_bgr, np.float32)[:3] - patch) * a
-        # 2) ring
+        # 1) optional outline
+        if ow > 0.05:
+            _lerp_(patch, np.asarray(outline_bgr, np.float32)[:3],
+                   np.clip(R + ow + 0.5 - d, 0.0, 1.0))
+        # 2) ring disc
         ring = np.asarray(GREY_RING_BGR if grey else (ring_bgr if ring_bgr is not None
                                                       else RING_BGR["enemy"]), np.float32)[:3]
-        a = np.clip(R + 0.5 - d, 0.0, 1.0)[:, :, None]
-        if ring_shading and not grey:
-            ys = (np.arange(y0, y1, dtype=np.float32) + (0.5 - cy)) / R
-            shade = 1.0 - float(ring_shading) * np.clip(ys, -1.0, 1.0)[:, None, None]
-            ring_img = np.clip(ring[None, None, :] * shade, 0, 255)
-            patch += (ring_img - patch) * a
+        a_ring = np.clip(R + 0.5 - d, 0.0, 1.0)
+        if ring_shading and _finite(ring_shading) and not grey:
+            ys = (np.arange(y0, y1, dtype=np.float32) + np.float32(0.5 - cy)) / np.float32(R)
+            shade = 1.0 - float(ring_shading) * np.clip(ys, -1.0, 1.0)
+            ring_img = np.clip(ring[None, None, :] * shade[:, None, None], 0, 255)
+            patch += (ring_img - patch) * a_ring[:, :, None]
         else:
-            patch += (ring - patch) * a
-        # 3) portrait
+            _lerp_(patch, ring, a_ring)
+        # 3) thin dark line between ring and portrait
         r_in = R * (1.0 - rf)
+        if inner_line_bgr is not None and r_in > 1.0:
+            il = float(inner_line_px) if inner_line_px is not None and _finite(inner_line_px) \
+                else max(INNER_LINE_MIN_PX, R * INNER_LINE_FRAC)
+            il = min(max(0.0, il), 0.5 * r_in)
+            if il > 0.05:
+                line = np.asarray((70, 70, 70) if grey else inner_line_bgr, np.float32)[:3]
+                _lerp_(patch, line, np.clip(r_in + 0.5 - d, 0.0, 1.0))
+                r_in -= il
+        # 4) portrait
         rgba = _as_rgba(icon_rgba) if icon_rgba is not None else None
         if r_in >= 0.5:
             cover = np.clip(r_in + 0.5 - d, 0.0, 1.0)
@@ -557,6 +623,35 @@ def draw_champion_icon(dst_bgr: np.ndarray, cx: float, cy: float, radius_px: flo
         dst_bgr[y0:y1, x0:x1] = np.clip(patch + 0.5, 0, 255).astype(np.uint8)
     except Exception:
         log.exception("draw_champion_icon failed")
+
+
+def draw_ring(dst_bgr: np.ndarray, cx: float, cy: float, radius_px: float, width_px: float,
+              bgr: Sequence[int], opacity: float = 1.0, glow: float = 0.0) -> None:
+    """Draw an anti-aliased ring (centre radius ``radius_px``) with an optional soft glow.
+
+    Used for recall halos and ping-like rings. Invalid inputs are ignored (never raises).
+    """
+    try:
+        if not _valid_dst(dst_bgr) or not _finite(cx, cy, radius_px, width_px, opacity, glow):
+            return
+        R, wd = float(radius_px), max(0.3, float(width_px))
+        if R <= 0 or R > 4 * _MAX_SIZE or opacity <= 0:
+            return
+        g = max(0.0, float(glow)) * wd
+        info = _disc_patch(dst_bgr, cx, cy, R + wd / 2 + 2 * g + 1)
+        if info is None:
+            return
+        x0, y0, x1, y1, d = info
+        dist = np.abs(d - np.float32(R))
+        a = np.clip(wd / 2 + 0.5 - dist, 0.0, 1.0)
+        if g > 0:
+            a = np.maximum(a, 0.45 * np.exp(-np.maximum(dist - wd / 2, 0.0) / g))
+        a *= min(1.0, float(opacity))
+        patch = dst_bgr[y0:y1, x0:x1].astype(np.float32)
+        _lerp_(patch, np.asarray(bgr, np.float32)[:3], a)
+        dst_bgr[y0:y1, x0:x1] = np.clip(patch + 0.5, 0, 255).astype(np.uint8)
+    except Exception:
+        log.exception("draw_ring failed")
 
 
 # ======================================================================================
@@ -600,7 +695,7 @@ def _default_assets_dir() -> Path:
         return Path(__file__).resolve().parent / "assets"
 
 
-def _normalize_png_name(name: str) -> str:
+def _normalize_png_name(name: Any) -> str:
     name = os.path.basename(str(name).strip())
     return name if name.lower().endswith(".png") else name + ".png"
 
@@ -624,9 +719,9 @@ class MinimapRenderer:
         self._lock = threading.Lock()
         self._raw_textures: dict[str, np.ndarray | None] = {}
         self._raw_icons: dict[str, np.ndarray | None] = {}
-        self._pyramid_cache = _LRU(40)  # (kind, name, void) -> list of levels
-        self._base_cache = _LRU(48)     # (texture, size, void) -> uint8 BGR
-        self._fog_cache = _LRU(48)      # (fog, size) -> (fog colour uint8, k0 float32)
+        self._pyramid_cache = _LRU(40)   # (kind, name, void) -> list of levels
+        self._base_cache = _LRU(48)      # (texture, size, void) -> uint8 BGR
+        self._fog_cache = _LRU(48)       # (fog, size) -> (fog colour uint8, k0 float32)
         self._sprite_cache = _LRU(1024)  # (name, px, tint) -> (bgr_p, 1 - alpha)
         self._warned: set[str] = set()
 
@@ -669,7 +764,7 @@ class MinimapRenderer:
         return img
 
     def icon(self, name: str) -> np.ndarray | None:
-        """A minimap / ping icon by file name (RGBA uint8); None if missing."""
+        """A minimap / ping icon by file name (RGBA uint8, do not modify); None if missing."""
         name = _normalize_png_name(name)
         with self._lock:
             if name in self._raw_icons:
@@ -743,16 +838,15 @@ class MinimapRenderer:
         self._base_cache.put(key, out)
         return out
 
-    def _fog(self, fog_name: str, size: int) -> tuple[np.ndarray, np.ndarray] | None:
+    def _fog(self, fog_name: str, size: int) -> tuple[np.ndarray, np.ndarray]:
         """(fog colour BGR uint8 [S,S,3], relative strength k0 float32 [S,S]) at ``size``."""
         key = (fog_name, size)
         cached = self._fog_cache.get(key)
         if cached is not None:
             return cached
-        levels = self._pyramid("fog", fog_name, (0, 0, 0))
-        if not levels:
-            col = np.empty((size, size, 3), np.uint8)
-            col[:] = (24, 8, 6)
+        levels = None if fog_name == _UNIFORM_FOG else self._pyramid("fog", fog_name, (0, 0, 0))
+        if not levels:  # uniform multiplication (the real game)
+            col = np.zeros((size, size, 3), np.uint8)
             k0 = np.ones((size, size), np.float32)
         else:
             small = self._from_pyramid(levels, size)
@@ -769,7 +863,7 @@ class MinimapRenderer:
         px = int(max(1, min(px, 2 * _MAX_SIZE)))
         tkey = tuple(int(c) for c in tint[:3]) if tint is not None else None
         if isinstance(icon, str):
-            key = (_normalize_png_name(icon), px, tkey)
+            key: tuple | None = (_normalize_png_name(icon), px, tkey)
             cached = self._sprite_cache.get(key)
             if cached is not None:
                 return cached
@@ -787,10 +881,13 @@ class MinimapRenderer:
             self._sprite_cache.put(key, val)
         return val
 
-    def _draw_sprite(self, img: np.ndarray, icon: str | np.ndarray, u: float, v: float,
-                     diameter: float, tint: tuple | None = None, opacity: float = 1.0) -> None:
-        """Draw an icon centred on (u, v) with a normalized diameter."""
-        if not _finite(u, v, diameter, opacity) or diameter <= 0 or opacity <= 0:
+    def _draw_sprite(self, img: np.ndarray, icon: str | np.ndarray, u: Any, v: Any,
+                     diameter: Any, tint: tuple | None = None, opacity: Any = 1.0) -> None:
+        """Draw an icon centred on (u, v) with a normalized diameter (bad input ignored)."""
+        if not _finite(u, v, diameter, opacity):
+            return
+        u, v, diameter, opacity = float(u), float(v), float(diameter), float(opacity)
+        if diameter <= 0 or opacity <= 0 or not -1.0 < u < 2.0 or not -1.0 < v < 2.0:
             return
         S = img.shape[1]
         px = int(round(diameter * S))
@@ -801,9 +898,8 @@ class MinimapRenderer:
             return
         bgr_p, inv_a = spr
         if opacity < 1.0:
-            op = float(opacity)
-            bgr_p = (bgr_p - 0.5) * op + 0.5
-            inv_a = 1.0 - (1.0 - inv_a) * op
+            bgr_p = (bgr_p - 0.5) * opacity + 0.5
+            inv_a = 1.0 - (1.0 - inv_a) * opacity
         h, w = inv_a.shape[:2]
         x0 = int(math.floor(u * S - w / 2.0 + 0.5))
         y0 = int(math.floor(v * img.shape[0] - h / 2.0 + 0.5))
@@ -814,12 +910,8 @@ class MinimapRenderer:
         fog_alpha = float(scene.fog_alpha) if _finite(scene.fog_alpha) else 0.0
         if fog_alpha <= 0.0:
             return img
-        fog_name = _normalize_png_name(scene.fog_texture) if scene.fog_texture else \
-            fog_for_texture(scene.texture)
-        fog = self._fog(fog_name, size)
-        if fog is None:
-            return img
-        col, k0 = fog
+        fog_name = _normalize_png_name(scene.fog_texture) if scene.fog_texture else _UNIFORM_FOG
+        col, k0 = self._fog(fog_name, size)
         g = int(min(size, FOG_MASK_RES))
         mask = np.ones((g, g), np.float32)
         for circ in scene.vision or ():
@@ -827,7 +919,9 @@ class MinimapRenderer:
                 cu, cv_, cr = (float(c) for c in circ[:3])
             except (TypeError, ValueError):
                 continue
-            if not _finite(cu, cv_, cr) or cr <= 0:
+            if not _finite(cu, cv_, cr) or cr <= 0 or cr > 4:
+                continue
+            if not -2.0 < cu < 3.0 or not -2.0 < cv_ < 3.0:
                 continue
             cv2.circle(mask, (int(round(cu * g * 16 - 8)), int(round(cv_ * g * 16 - 8))),
                        int(round(cr * g * 16)), 0.0, -1, cv2.LINE_AA, 4)
@@ -836,7 +930,7 @@ class MinimapRenderer:
             mask = cv2.GaussianBlur(mask, (0, 0), sigma)
         if g != size:
             mask = cv2.resize(mask, (size, size), interpolation=cv2.INTER_LINEAR)
-        w = cv2.multiply(k0, mask, scale=fog_alpha)
+        w = cv2.multiply(k0, mask, scale=min(fog_alpha, 1.0))
         np.minimum(w, FOG_MAX_DARKEN, out=w)
         return cv2.blendLinear(img, col, 1.0 - w, w)
 
@@ -857,38 +951,70 @@ class MinimapRenderer:
             rel = "ally" if team == scene.my_team else "enemy"
             self._draw_sprite(img, STRUCTURE_ICON.get(kind, STRUCTURE_ICON["turret"]), u, v,
                               STRUCTURE_SIZE.get(kind, 0.04) * scale, tint=TEAM_BGR[rel])
+        if scene.shop:
+            fu, fv = FOUNTAINS.get(scene.my_team, FOUNTAINS["ORDER"])
+            self._draw_sprite(img, SHOP_ICON, fu, fv, SHOP_SIZE * scale)
 
     def _draw_camps(self, img: np.ndarray, scene: Scene) -> None:
         if scene.camp_icons is not None:
             for item in scene.camp_icons:
                 try:
-                    u, v, name = item[0], item[1], str(item[2])
+                    u, v, name = item[0], item[1], item[2]
+                    size = item[3] if len(item) > 3 else CAMP_SIZE_DEFAULT
                 except (TypeError, IndexError):
                     continue
-                size = item[3] if len(item) > 3 else CAMP_SIZE_DEFAULT
-                self._draw_sprite(img, name, u, v, float(size))
+                self._draw_sprite(img, name, u, v, size)
             return
         for u, v, name in CAMPS:
-            self._draw_sprite(img, CAMP_ICON.get(name, "camp.png"), u, v,
+            self._draw_sprite(img, CAMP_ICON.get(name, CAMP_ICON_DEFAULT), u, v,
                               CAMP_SIZE.get(name, CAMP_SIZE_DEFAULT))
+
+    def _draw_wards(self, img: np.ndarray, scene: Scene) -> None:
+        S = img.shape[1]
+        for w in scene.wards or ():
+            try:
+                u, v, name = w[0], w[1], str(w[2])
+                size = w[3] if len(w) > 3 else None
+            except (TypeError, IndexError):
+                continue
+            if name == ENEMY_WARD_DOT:
+                if not _finite(u, v):
+                    continue
+                d = float(size) if size is not None and _finite(size) else ENEMY_WARD_DOT_SIZE
+                self._dot(img, float(u) * S, float(v) * S, max(0.8, d * S / 2),
+                          ENEMY_WARD_DOT_BGR, MINION_OUTLINE_BGR)
+            else:
+                self._draw_sprite(img, name, u, v, size if size is not None else WARD_SIZE)
+
+    @staticmethod
+    def _dot(img: np.ndarray, cx: float, cy: float, r: float, col: Sequence[int],
+             outline: Sequence[int] | None) -> None:
+        """Anti-aliased filled dot with a dark contour (sub-pixel centre)."""
+        sh = 4
+        mul = 1 << sh
+        lim = 1 << 20
+        c = (int(max(-lim, min(lim, round((cx - 0.5) * mul)))),
+             int(max(-lim, min(lim, round((cy - 0.5) * mul)))))
+        if outline is not None:
+            cv2.circle(img, c, int(round((r + 0.6) * mul)), tuple(int(x) for x in outline[:3]),
+                       -1, cv2.LINE_AA, sh)
+        cv2.circle(img, c, int(round(max(0.5, r - 0.2) * mul)), tuple(int(x) for x in col[:3]),
+                   -1, cv2.LINE_AA, sh)
 
     def _draw_minions(self, img: np.ndarray, scene: Scene) -> None:
         S = img.shape[1]
-        r_px = max(0.8, float(scene.minion_r) * S) if _finite(scene.minion_r) else MINION_R * S
-        sh = 4
-        mul = 1 << sh
+        base_r = float(scene.minion_r) if _finite(scene.minion_r) else MINION_R
+        r_px = max(0.8, base_r * S)
         for item in scene.minions or ():
             try:
                 u, v, team = float(item[0]), float(item[1]), str(item[2])
+                fac = float(item[3]) if len(item) > 3 else 1.0
             except (TypeError, ValueError, IndexError):
                 continue
-            if not _finite(u, v):
+            if not _finite(u, v, fac) or not -1.0 < u < 2.0 or not -1.0 < v < 2.0:
                 continue
-            rr = r_px * (float(item[3]) if len(item) > 3 else 1.0)
-            c = (int(round((u * S - 0.5) * mul)), int(round((v * S - 0.5) * mul)))
-            col = MINION_BGR.get(team, MINION_BGR["enemy"])
-            cv2.circle(img, c, int(round((rr + 0.6) * mul)), MINION_OUTLINE_BGR, -1, cv2.LINE_AA, sh)
-            cv2.circle(img, c, int(round(max(0.5, rr - 0.2) * mul)), col, -1, cv2.LINE_AA, sh)
+            self._dot(img, u * S, v * S, r_px * max(0.2, min(fac, 5.0)),
+                      MINION_BGR.get(team, MINION_BGR["enemy"]), MINION_OUTLINE_BGR)
 
     def _draw_camera(self, img: np.ndarray, scene: Scene) -> None:
         cam = scene.camera
@@ -901,22 +1027,73 @@ class MinimapRenderer:
         if not _finite(u0, v0, u1, v1):
             return
         S = img.shape[1]
-        th = max(1, int(round(CAMERA_THICKNESS * S)))
+        th = scene.camera_px if scene.camera_px else int(round(CAMERA_THICKNESS * S))
+        th = max(1, min(16, int(th)))
         col = tuple(int(c) for c in (scene.camera_bgr or CAMERA_BGR)[:3])
-        p0 = (int(round(min(u0, u1) * S)), int(round(min(v0, v1) * S)))
-        p1 = (int(round(max(u0, u1) * S)) - 1, int(round(max(v0, v1) * S)) - 1)
         lim = 4 * S
-        p0 = (max(-lim, min(lim, p0[0])), max(-lim, min(lim, p0[1])))
-        p1 = (max(-lim, min(lim, p1[0])), max(-lim, min(lim, p1[1])))
-        cv2.rectangle(img, p0, p1, col, th, cv2.LINE_8)
+        xa = max(-lim, min(lim, int(round(min(u0, u1) * S))))
+        ya = max(-lim, min(lim, int(round(min(v0, v1) * S))))
+        xb = max(-lim, min(lim, int(round(max(u0, u1) * S))))
+        yb = max(-lim, min(lim, int(round(max(v0, v1) * S))))
+        if xb - xa < 2 or yb - ya < 2:
+            return
+        # line of width th drawn inside [xa, xb) x [ya, yb)
+        for (px0, py0, px1, py1) in ((xa, ya, xb, ya + th), (xa, yb - th, xb, yb),
+                                     (xa, ya, xa + th, yb), (xb - th, ya, xb, yb)):
+            cx0, cy0 = max(0, px0), max(0, py0)
+            cx1, cy1 = min(img.shape[1], px1), min(img.shape[0], py1)
+            if cx0 < cx1 and cy0 < cy1:
+                img[cy0:cy1, cx0:cx1] = col
+
+    def _draw_path(self, img: np.ndarray, scene: Scene) -> None:
+        pts = scene.path
+        if not pts or len(pts) < 2:
+            return
+        S = img.shape[1]
+        sh = 4
+        mul = 1 << sh
+        lim = 1 << 20
+        poly = []
+        for p in pts:
+            try:
+                u, v = float(p[0]), float(p[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if _finite(u, v):
+                poly.append([max(-lim, min(lim, round((u * S - 0.5) * mul))),
+                             max(-lim, min(lim, round((v * S - 0.5) * mul)))])
+        if len(poly) >= 2:
+            th = max(1, int(round(0.004 * S)))
+            cv2.polylines(img, [np.asarray(poly, np.int32)], False, PATH_BGR, th, cv2.LINE_AA, sh)
+
+    def _draw_texts(self, img: np.ndarray, scene: Scene) -> None:
+        S = img.shape[1]
+        for t in scene.texts or ():
+            try:
+                u, v, text = float(t[0]), float(t[1]), str(t[2])[:16]
+                hgt = float(t[3]) if len(t) > 3 else TEXT_HEIGHT
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not _finite(u, v, hgt) or not text:
+                continue
+            scale = max(0.2, hgt * S / 22.0)
+            thick = 1
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+            org = (int(round(u * S - tw / 2)), int(round(v * S + th / 2)))
+            cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick + 1,
+                        cv2.LINE_AA)
+            cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, TEXT_BGR, thick,
+                        cv2.LINE_AA)
 
     def _draw_champions(self, img: np.ndarray, scene: Scene) -> None:
         S = img.shape[1]
         champs = [c for c in (scene.champions or ()) if isinstance(c, ChampionSprite)]
-        # greyed (dead) first, the local player last (on top); stable otherwise
-        champs.sort(key=lambda c: (0 if c.grey else 2 if c.relation == "self" else 1))
+        # greyed (dead) icons first; otherwise list order (no priority for the local player)
+        champs.sort(key=lambda c: 0 if c.grey else 1)
         for c in champs:
-            if not _finite(c.u, c.v, c.r) or c.r <= 0:
+            if not _finite(c.u, c.v, c.r) or c.r <= 0 or c.r > 1.0:
+                continue
+            if not -1.0 < c.u < 2.0 or not -1.0 < c.v < 2.0:
                 continue
             cx, cy, rp = c.u * S, c.v * img.shape[0], c.r * S
             rel = c.relation if c.relation in RING_BGR else "enemy"
@@ -927,22 +1104,37 @@ class MinimapRenderer:
                 icon = self.icon(DUMMY_ICON[rel])
             ring = c.ring_bgr if c.ring_bgr is not None else RING_BGR[rel]
             rf = c.ring_frac if c.ring_frac is not None and _finite(c.ring_frac) else RING_FRAC
-            draw_champion_icon(img, cx, cy, rp, icon, ring, rf, grey=bool(c.grey))
+            shading = float(c.ring_shading) if _finite(c.ring_shading) else 0.0
+            il_px = c.inner_line_frac * rp if c.inner_line_frac is not None \
+                and _finite(c.inner_line_frac) else None
+            ol_px = c.outline_frac * rp if c.outline_frac is not None \
+                and _finite(c.outline_frac) else None
+            draw_champion_icon(img, cx, cy, rp, icon, ring, rf, grey=bool(c.grey),
+                               ring_shading=shading, outline_px=ol_px,
+                               inner_line_bgr=c.inner_line_bgr or INNER_LINE_BGR,
+                               inner_line_px=il_px)
             if c.recall:
-                self._draw_sprite(img, RECALL_ICON[rel], c.u, c.v, 2 * c.r * RECALL_SCALE)
+                draw_ring(img, cx, cy, rp * RECALL_RADIUS, max(1.0, rp * RECALL_WIDTH),
+                          RECALL_BGR, opacity=1.0, glow=0.6)
 
     # ---------------------------------------------------------------- public
     def render(self, scene: Scene) -> np.ndarray:
         """Render ``scene`` to a BGR ``uint8`` image of ``scene.size`` x ``scene.size``.
 
-        Missing assets fall back to simpler drawings; a failing layer is skipped and logged.
+        Missing assets fall back to simpler drawings; a failing layer is skipped and logged,
+        so this always returns an image.
         """
         try:
             size = int(scene.size)
-        except (TypeError, ValueError, AttributeError):
+        except (TypeError, ValueError, AttributeError, OverflowError):
             size = 256
         size = max(_MIN_SIZE, min(_MAX_SIZE, size))
-        void = tuple(int(c) for c in (getattr(scene, "void_bgr", None) or VOID_BGR)[:3])
+        try:
+            void = tuple(int(c) for c in (getattr(scene, "void_bgr", None) or VOID_BGR)[:3])
+            if len(void) != 3:
+                raise ValueError
+        except (TypeError, ValueError):
+            void = VOID_BGR
         texture = _normalize_png_name(getattr(scene, "texture", None) or DEFAULT_TEXTURE)
         try:
             img = self._base(texture, size, void).copy()
@@ -950,34 +1142,51 @@ class MinimapRenderer:
             log.exception("Texture rendering failed")
             img = np.empty((size, size, 3), np.uint8)
             img[:] = void
-        steps: list[tuple[str, Any]] = [
-            ("fog", None),
-            ("camps", lambda: scene.camps and self._draw_camps(img, scene)),
-            ("structures", lambda: scene.structures and self._draw_structures(img, scene)),
-            ("wards", lambda: [self._draw_sprite(img, w[2], w[0], w[1], WARD_SIZE)
-                               for w in (scene.wards or ()) if len(w) >= 3]),
-            ("sprites_under", lambda: [self._draw_sprite(img, s.icon, s.u, s.v, s.size, s.tint,
-                                                         s.opacity)
-                                       for s in (scene.sprites or ()) if s.layer != "over"]),
-            ("minions", lambda: self._draw_minions(img, scene)),
-            ("camera", lambda: (not scene.camera_on_top) and self._draw_camera(img, scene)),
-            ("champions", lambda: self._draw_champions(img, scene)),
-            ("camera_top", lambda: scene.camera_on_top and self._draw_camera(img, scene)),
-            ("pings", lambda: [self._draw_sprite(img, p[2], p[0], p[1], PING_SIZE)
-                               for p in (scene.pings or ()) if len(p) >= 3]),
-            ("sprites_over", lambda: [self._draw_sprite(img, s.icon, s.u, s.v, s.size, s.tint,
-                                                        s.opacity)
-                                      for s in (scene.sprites or ()) if s.layer == "over"]),
+        holder = [img]
+
+        def fog() -> None:
+            out = self._apply_fog(holder[0], scene, size)
+            fn_t = getattr(scene, "terrain_fn", None)
+            if fn_t is not None:
+                t = fn_t(out)
+                if isinstance(t, np.ndarray) and t.shape == out.shape and t.dtype == np.uint8:
+                    out = np.ascontiguousarray(t)
+            holder[0] = out
+
+        def sprites(layer_over: bool) -> None:
+            for s in scene.sprites or ():
+                if isinstance(s, Sprite) and (s.layer == "over") == layer_over:
+                    self._draw_sprite(holder[0], s.icon, s.u, s.v, s.size, s.tint, s.opacity)
+
+        def pings() -> None:
+            for p in scene.pings or ():
+                if len(p) < 3:
+                    continue
+                name = _normalize_png_name(p[2])
+                default = PING_RING_SIZE if name.startswith("ring") else PING_SIZE
+                self._draw_sprite(holder[0], name, p[0], p[1], p[3] if len(p) > 3 else default)
+
+        steps: list[tuple[str, Callable[[], Any]]] = [
+            ("fog", fog),
+            ("camps", lambda: scene.camps and self._draw_camps(holder[0], scene)),
+            ("structures", lambda: scene.structures and self._draw_structures(holder[0], scene)),
+            ("wards", lambda: self._draw_wards(holder[0], scene)),
+            ("sprites_under", lambda: sprites(False)),
+            ("texts", lambda: self._draw_texts(holder[0], scene)),
+            ("minions", lambda: self._draw_minions(holder[0], scene)),
+            ("path", lambda: self._draw_path(holder[0], scene)),
+            ("camera", lambda: (not scene.camera_on_top) and self._draw_camera(holder[0], scene)),
+            ("champions", lambda: self._draw_champions(holder[0], scene)),
+            ("camera_top", lambda: scene.camera_on_top and self._draw_camera(holder[0], scene)),
+            ("pings", pings),
+            ("sprites_over", lambda: sprites(True)),
         ]
         for name, fn in steps:
             try:
-                if name == "fog":
-                    img = self._apply_fog(img, scene, size)
-                else:
-                    fn()
+                fn()
             except Exception:
                 log.exception("Minimap layer %r failed", name)
-        return img
+        return holder[0]
 
     def clear_caches(self) -> None:
         """Drop resized assets (textures and icons stay loaded)."""
@@ -995,11 +1204,9 @@ def _procedural_map(size: int, void: tuple) -> np.ndarray:
     khaki = (120, 170, 165)
     t = max(2, int(0.06 * s))
     o = int(0.082 * s)
-    cv2.line(img, (o, s - o), (o, o), khaki, t)
-    cv2.line(img, (o, o), (s - o, o), khaki, t)
-    cv2.line(img, (o, s - o), (s - o, s - o), khaki, t)
-    cv2.line(img, (s - o, s - o), (s - o, o), khaki, t)
-    cv2.line(img, (o, s - o), (s - o, o), khaki, t)
+    for p, q in (((o, s - o), (o, o)), ((o, o), (s - o, o)), ((o, s - o), (s - o, s - o)),
+                 ((s - o, s - o), (s - o, o)), ((o, s - o), (s - o, o))):
+        cv2.line(img, p, q, khaki, t)
     cv2.line(img, (int(0.15 * s), int(0.15 * s)), (int(0.85 * s), int(0.85 * s)),
              (160, 120, 20), max(2, int(0.05 * s)))
     cv2.circle(img, (0, s), int(0.38 * s), (140, 130, 110), -1)
