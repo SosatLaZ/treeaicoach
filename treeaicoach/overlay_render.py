@@ -1199,8 +1199,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
                 if (W, H) != (int(S), int(S)):
                     fill = cv2.resize(fill, (W, H), interpolation=cv2.INTER_LINEAR)
                     edge = cv2.resize(edge, (W, H), interpolation=cv2.INTER_LINEAR)
-                cv_.paint(0, 0, fill, DANGER, (0.16 if main else 0.07) * vis)
-                cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.2), (0.7 if main else 0.35) * vis)
+                cv_.paint(0, 0, fill, DANGER, (0.11 if main else 0.05) * vis)
+                cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.2), (0.5 if main else 0.25) * vis)
         if main and vis > 0 and _finite(fog.radius) and fog.radius > 0:
             x, y = px(uv)
             cv_.ring(x, y, float(fog.radius) * S, lw, _mix(DANGER, WHITE, 0.35), 0.55 * vis,
@@ -1355,60 +1355,63 @@ def _coin(cv_: Canvas, cx: float, cy: float, r: float) -> None:
     cv_.ring(cx, cy - r * 0.08, r * 0.52, max(1.0, r * 0.16), (190, 145, 60), 0.9)
 
 
+#: Reference HUD width (px at 1080p); every HUD dimension scales with ``width / HUD_REF_W``.
+HUD_REF_W = 280.0
+
+
+def _jungler_text(state: OverlayState) -> str:
+    """"Jungler : Lee Sin — vu il y a 14 s, rivière" -> "Lee Sin · vu il y a 14 s, rivière"."""
+    text = (state.jungler_line or "").strip()
+    for prefix in ("Jungler :", "Jungler:", "Jungler ennemi :"):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    return text.replace(" — ", " · ")
+
+
 def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
-    pad = 12 * k
+    pad = 9 * k
     inner = width - 2 * pad
     fonts = {
-        "title": get_font(round(10.5 * k), "bold"),
-        "clock": get_font(round(12 * k), "semibold"),
-        "threat": get_font(round(15.5 * k), "bold"),
-        "body": get_font(round(12.5 * k), "regular"),
-        "body_bold": get_font(round(12.5 * k), "bold"),
-        "small": get_font(round(10.5 * k), "semibold"),
-        "obj": get_font(round(11.5 * k), "semibold"),
+        "threat": get_font(round(12.5 * k), "bold"),
+        "clock": get_font(round(10.5 * k), "semibold"),
+        "body": get_font(round(11 * k), "regular"),
+        "body_bold": get_font(round(11 * k), "bold"),
+        "tag": get_font(max(7, round(8 * k)), "bold"),
+        "small": get_font(max(7, round(9 * k)), "semibold"),
+        "obj": get_font(round(10.5 * k), "semibold"),
     }
-    rows: list[tuple[str, float]] = [("header", 20 * k), ("threat", 38 * k)]
-    jl = (state.jungler_line or "").strip()
-    jl_lines: list[str] = []
+    rows: list[tuple[str, float]] = [("threat", 26 * k)]
+    jl = _jungler_text(state)
     if jl:
-        jl_lines = _jungler_lines(jl, fonts, inner - 36 * k)
-        rows.append(("jungler", max(30 * k, len(jl_lines) * 16 * k + 4 * k)))
+        rows.append(("jungler", 20 * k))
     slot_w = inner / 5.0
-    icon_d = min(40 * k, slot_w - 14 * k)
-    rows.append(("enemies", icon_d + 22 * k))
+    icon_d = min(32 * k, slot_w - 12 * k)
+    rows.append(("enemies", icon_d + 17 * k))
     objs = _objective_rows(state)
     if objs:
-        rows.append(("objectives", 26 * k))
-    rows.append(("alert", 22 * k))
+        rows.append(("objectives", 18 * k))
     hint = (state.hint or "").strip()
     if hint:
-        rows.append(("hint", 20 * k))
-    gap = 7 * k
+        rows.append(("hint", 16 * k))
+    gap = 6 * k
     height = pad + sum(h for _, h in rows) + gap * (len(rows) - 1) + pad
     return {"pad": pad, "inner": inner, "fonts": fonts, "rows": rows, "gap": gap, "height": int(math.ceil(height)),
-            "jl_lines": jl_lines, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint}
+            "jl": jl, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint}
 
 
-def _jungler_lines(text: str, fonts: dict[str, Any], max_w: float) -> list[str]:
-    """Split "Jungler : X — vu il y a 23 s, zone" into a title line and a detail line."""
-    head, sep, tail = text.partition(" — ")
-    if sep and head.strip() and tail.strip():
-        return [fit_text(head.strip(), fonts["body_bold"], max_w), fit_text(tail.strip(), fonts["body"], max_w)]
-    return wrap_text(text, fonts["body"], max_w, 2)
-
-
-def hud_size(state: OverlayState, width: int = 340) -> tuple[int, int]:
+def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
     """(width, height) that :func:`render_hud` will produce for ``state``."""
-    width = int(min(max(int(width) if _finite(width) else 340, 200), 1200))
-    return width, _hud_layout(state, width, width / 340.0)["height"]
+    width = int(min(max(int(width) if _finite(width) else 280, 200), 1200))
+    return width, _hud_layout(state, width, width / HUD_REF_W)["height"]
 
 
-def render_hud(state: OverlayState, width: int = 340, now: float | None = None) -> np.ndarray:
-    """HUD panel (threat bar, jungler, 5 enemies, objectives, last alert, hint) - premultiplied BGRA.
+def render_hud(state: OverlayState, width: int = 280, now: float | None = None) -> np.ndarray:
+    """Compact HUD panel (threat bar, jungler line, 5 enemies with roles, objectives) - premultiplied BGRA.
 
     Never raises (an empty 1-row image on internal error, logged).
     """
-    width = int(min(max(int(width) if _finite(width) else 340, 200), 1200))
+    width = int(min(max(int(width) if _finite(width) else 280, 200), 1200))
     try:
         return _render_hud(state, width, time.monotonic() if now is None else float(now))
     except Exception:
@@ -1417,123 +1420,110 @@ def render_hud(state: OverlayState, width: int = 340, now: float | None = None) 
 
 
 def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
-    k = width / 340.0
+    k = width / HUD_REF_W
     lay = _hud_layout(state, width, k)
     W, H = width, lay["height"]
     pad, inner, fonts, gap = lay["pad"], lay["inner"], lay["fonts"], lay["gap"]
     cv_ = Canvas(W, H)
-    # panel: subtle vertical gradient + gold hairline border
-    grad = np.linspace(0, 1, 32, dtype=np.float32)[:, None, None]
-    top, bot = _rgb((16, 30, 54)), _rgb(PANEL)
-    cv_.rrect(0, 0, W, H, 10 * k, top * (1 - grad) + bot * grad, PANEL_ALPHA, border=GOLD,
-              border_alpha=BORDER_ALPHA, border_w=1.0)
+    cv_.rrect(0, 0, W, H, 8 * k, PANEL, 0.80, border=GOLD, border_alpha=0.45, border_w=1.0)
     phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
-    enemies = list(state.enemies or [])
+    enemies = list(state.enemies or [])[:5]
+    roles = state.roles if isinstance(state.roles, dict) else {}
     y = pad
     for name, h in lay["rows"]:
         cy = y + h / 2
-        if name == "header":
-            cv_.polygon([(pad + 4 * k, cy - 5 * k), (pad + 9 * k, cy), (pad + 4 * k, cy + 5 * k),
-                         (pad - 1 * k, cy)], GOLD)
-            cv_.text(pad + 14 * k, cy, "TREEAI COACH", fonts["title"], GOLD, shadow=0.4)
-            cv_.text(W - pad, cy, fmt_clock(state.game_time), fonts["clock"], GOLD_LIGHT, anchor="r")
-            ly = y + h + gap / 2
-            cv_.capsule(pad, ly, W - pad, ly, 1.0, GOLD, 0.35)
-        elif name == "threat":
+        if name == "threat":
             lvl = int(min(max(int(state.threat_level or 0), 0), 2)) if _finite(state.threat_level or 0) else 0
             base = THREAT_COLORS[lvl]
+            a = 0.92
             if lvl == 2:
-                pulse = 0.5 + 0.5 * math.sin(phase * 2 * math.pi)
-                cv_.rrect(pad - 3 * k, y - 3 * k, inner + 6 * k, h + 6 * k, 10 * k, None, border=DANGER,
-                          border_alpha=0.25 + 0.45 * pulse, border_w=2.5 * k)
-            g = np.linspace(0, 1, 24, dtype=np.float32)[:, None, None]
-            light, dark = _rgb(_mix(base, WHITE, 0.12)), _rgb(_mix(base, BLACK, 0.28))
-            cv_.rrect(pad, y, inner, h, 7 * k, light * (1 - g) + dark * g, 0.95,
-                      border=_mix(base, WHITE, 0.35), border_alpha=0.6)
-            gr = h * 0.32
-            _threat_glyph(cv_, pad + 8 * k + gr, cy, gr, lvl, base)
+                a = 0.8 + 0.2 * math.sin(phase * 2 * math.pi)
+            cv_.rrect(pad, y, inner, h, 6 * k, _mix(base, BLACK, 0.18), a,
+                      border=_mix(base, WHITE, 0.3), border_alpha=0.5)
+            gr = h * 0.3
+            _threat_glyph(cv_, pad + 6 * k + gr, cy, gr, lvl, base)
+            clock = fmt_clock(state.game_time)
+            cw = text_width(clock, fonts["clock"])
+            cv_.text(pad + inner - 7 * k, cy, clock, fonts["clock"], WHITE, 0.85, anchor="r", shadow=0.3)
             text = (state.threat_text or "").strip() or THREAT_DEFAULT_TEXT[lvl]
-            tx = pad + 16 * k + 2 * gr
-            avail = inner - (tx - pad) - 8 * k
+            tx = pad + 12 * k + 2 * gr
+            avail = inner - (tx - pad) - cw - 14 * k
             tfont = fonts["threat"]
-            size = 15.5 * k
-            while text_width(text, tfont) > avail and size > 11.5 * k:
-                size -= 1.0 * k
+            size = 12.5 * k
+            while text_width(text, tfont) > avail and size > 9.5 * k:
+                size -= 0.5 * k
                 tfont = get_font(round(size), "bold")
             cv_.text(tx, cy, fit_text(text, tfont, avail), tfont, WHITE, shadow=0.45)
         elif name == "jungler":
-            jg = next((e for e in enemies if getattr(e, "is_jungler", False)), None)
-            d = 28 * k
+            jg = next((e for e in enemies if e is not None and getattr(e, "is_jungler", False)), None)
+            d = 18 * k
             icx = pad + d / 2
             if jg is not None:
-                cv_.image(icx, cy, round_icon_patch(jg.icon, d, DANGER, max(1.6, 2 * k), grey=not jg.visible,
+                cv_.image(icx, cy, round_icon_patch(jg.icon, d, DANGER, max(1.2, 1.5 * k), grey=not jg.visible,
                                                     letter=jg.name or jg.alias or "J"))
-                if jg.visible:
-                    cv_.disc(icx + d * 0.36, cy + d * 0.36, 4.2 * k, PANEL_DEEP)
-                    cv_.disc(icx + d * 0.36, cy + d * 0.36, 3.0 * k, SAFE)
             else:
-                cv_.image(icx, cy, round_icon_patch(None, d, GOLD_DARK, max(1.6, 2 * k), letter="J"))
-            lines = lay["jl_lines"]
-            lh = 16 * k
-            ty = cy - (len(lines) - 1) * lh / 2
-            two_part = len(lines) == 2 and " — " in (state.jungler_line or "")
-            for i, line in enumerate(lines):
-                font = fonts["body_bold"] if (two_part and i == 0) else fonts["body"]
-                colour = GOLD_LIGHT if i == 0 else (_mix(GOLD_LIGHT, MUTED, 0.45) if two_part else MUTED)
-                cv_.text(pad + d + 8 * k, ty + i * lh, line, font, colour)
+                cv_.image(icx, cy, round_icon_patch(None, d, GOLD_DARK, max(1.2, 1.5 * k), letter="J"))
+            tx = pad + d + 6 * k
+            tw = cv_.text(tx, cy, "JGL", fonts["tag"], GOLD, shadow=0)
+            tx += tw + 5 * k
+            colour = _mix(DANGER, WHITE, 0.35) if (jg is not None and jg.visible) else GOLD_LIGHT
+            cv_.text(tx, cy, fit_text(lay["jl"], fonts["body"], W - pad - tx), fonts["body"], colour)
         elif name == "enemies":
-            _draw_enemy_slots(cv_, enemies, pad, y, lay["slot_w"], lay["icon_d"], k, fonts["small"], phase)
+            _draw_enemy_slots(cv_, enemies, pad, y, lay["slot_w"], lay["icon_d"], k, fonts, phase, roles)
         elif name == "objectives":
             x = pad
-            isz = 20 * k
+            isz = 16 * k
             for label, icon, text, colour in lay["objs"]:
                 tw = text_width(text, fonts["obj"])
-                need = isz + 5 * k + tw
+                need = isz + 4 * k + tw
                 if x + need > W - pad + 0.5:
                     break
                 if icon is not None:
                     cv_.image(x + isz / 2, cy, sprite_patch(icon, isz))
                 else:
                     cv_.text(x + isz / 2, cy, label[:1], fonts["obj"], GOLD, anchor="m")
-                cv_.text(x + isz + 5 * k, cy, text, fonts["obj"], colour)
-                x += need + 13 * k
-        elif name == "alert":
-            _draw_alert_line(cv_, state, pad, cy, inner, fonts["body"], k)
+                cv_.text(x + isz + 4 * k, cy, text, fonts["obj"], colour)
+                x += need + 11 * k
         elif name == "hint":
-            _coin(cv_, pad + 6 * k, cy, 6 * k)
-            cv_.text(pad + 17 * k, cy, fit_text(lay["hint"], fonts["obj"], inner - 17 * k), fonts["obj"],
+            _coin(cv_, pad + 5 * k, cy, 5 * k)
+            cv_.text(pad + 14 * k, cy, fit_text(lay["hint"], fonts["small"], inner - 14 * k), fonts["small"],
                      GOLD_LIGHT)
         y += h + gap
     return cv_.to_bgra()
 
 
 def _draw_enemy_slots(cv_: Canvas, enemies: list[EnemyView], x0: float, y0: float, slot_w: float,
-                      icon_d: float, k: float, font: Any, phase: float) -> None:
-    """Five enemy slots: portrait (grey when not visible) + status line."""
-    ring_w = max(1.8, 2.2 * k)
+                      icon_d: float, k: float, fonts: dict[str, Any], phase: float,
+                      roles: dict[str, str] | None = None) -> None:
+    """Five enemy slots: portrait (grey when hidden) + role badge + status line."""
+    ring_w = max(1.4, 1.7 * k)
+    font, f_tag = fonts["small"], fonts["tag"]
     for i in range(5):
         cx = x0 + slot_w * (i + 0.5)
         cy = y0 + icon_d / 2 + 1
-        ly = y0 + icon_d + 12 * k
+        ly = y0 + icon_d + 10.5 * k
         if i >= len(enemies) or enemies[i] is None:
-            cv_.ring(cx, cy, icon_d / 2 - 1, 1.2, GREY, 0.8, dash=(4, 3))
+            cv_.ring(cx, cy, icon_d / 2 - 1, 1.0, GREY, 0.7, dash=(3, 3))
             cv_.text(cx, ly, "—", font, GREY, anchor="m", shadow=0)
             continue
         e = enemies[i]
         ago = e.last_seen_ago if e.last_seen_ago is not None and _finite(e.last_seen_ago) else None
         if e.visible and e.approaching:
-            cv_.glow(cx, cy, icon_d * 0.45, icon_d * 0.72, DANGER, 0.35 + 0.3 * math.sin(phase * 2 * math.pi))
-        cv_.image(cx, cy, round_icon_patch(e.icon, icon_d, DANGER, ring_w, grey=not e.visible,
-                                           letter=e.name or e.alias or "?"))
-        if e.is_jungler:
-            bx, by, br = cx - icon_d * 0.38, cy - icon_d * 0.38, 6.5 * k
-            cv_.disc(bx, by, br + 1.2, PANEL_DEEP)
-            cv_.disc(bx, by, br, GOLD)
-            cv_.text(bx, by, "J", get_font(round(9 * k), "bold"), PANEL_DEEP, anchor="m", shadow=0)
+            cv_.glow(cx, cy, icon_d * 0.45, icon_d * 0.7, DANGER, 0.3 + 0.25 * math.sin(phase * 2 * math.pi))
+        ring = DANGER if (e.visible or e.is_jungler) else _mix(DANGER, GREY, 0.4)
+        cv_.image(cx, cy, round_icon_patch(e.icon, icon_d, ring, ring_w * (1.3 if e.is_jungler else 1.0),
+                                           grey=not e.visible, letter=e.name or e.alias or "?"))
+        tag = role_tag(e, roles)
+        if tag and tag != "?":
+            tw = text_width(tag, f_tag) + 5 * k
+            th = _cap_height(f_tag) + 4 * k
+            bx, by = cx - tw / 2, cy + icon_d / 2 - th * 0.55
+            bg = GOLD if e.is_jungler else PANEL_DEEP
+            cv_.rrect(bx, by, tw, th, th / 2, bg, 0.95, border=GOLD if not e.is_jungler else None,
+                      border_alpha=0.6)
+            cv_.text(cx, by + th / 2, tag, f_tag, PANEL_DEEP if e.is_jungler else GOLD_LIGHT, anchor="m",
+                     shadow=0)
         if e.visible:
-            bx, by = cx + icon_d * 0.36, cy + icon_d * 0.36
-            cv_.disc(bx, by, 5.0 * k, PANEL_DEEP)
-            cv_.disc(bx, by, 3.6 * k, SAFE)
             text, colour = ("approche", DANGER) if e.approaching else ("visible", SAFE)
         elif ago is None:
             text, colour = "non vu", GREY
@@ -1541,29 +1531,7 @@ def _draw_enemy_slots(cv_: Canvas, enemies: list[EnemyView], x0: float, y0: floa
             text, colour = f"MIA {fmt_seconds(ago)}", WARNING
         else:
             text, colour = f"vu {fmt_clock(ago)}", MUTED
-        cv_.text(cx, ly, fit_text(text, font, slot_w - 2), font, colour, anchor="m", shadow=0.4)
-
-
-def _draw_alert_line(cv_: Canvas, state: OverlayState, x: float, cy: float, inner: float, font: Any,
-                     k: float) -> None:
-    la = state.last_alert
-    text, level, age = "", 0, None
-    if la:
-        try:
-            text, level, age = str(la[0] or ""), int(la[1]), float(la[2])
-        except (TypeError, ValueError, IndexError):
-            text = ""
-    if text and age is not None and _finite(age) and age < ALERT_FADE_S:
-        a = 1.0 - max(0.0, age) / ALERT_FADE_S
-        a = a ** 0.6
-        colour = THREAT_COLORS.get(min(max(level, 0), 2), GOLD)
-        cv_.disc(x + 5 * k, cy, 4.5 * k, colour, a)
-        cv_.glow(x + 5 * k, cy, 3 * k, 9 * k, colour, 0.35 * a)
-        fg = GOLD_LIGHT if level < 2 else _mix(DANGER, WHITE, 0.35)
-        cv_.text(x + 16 * k, cy, fit_text(text, font, inner - 16 * k), font, fg, a)
-    else:
-        cv_.disc(x + 5 * k, cy, 3.5 * k, GREY, 0.8)
-        cv_.text(x + 16 * k, cy, "Aucune alerte récente", font, GREY, 0.9, shadow=0)
+        cv_.text(cx, ly + 2 * k, fit_text(text, font, slot_w - 2), font, colour, anchor="m", shadow=0.4)
 
 
 # ======================================================================================
@@ -1743,37 +1711,50 @@ def game_background(w: int, h: int, minimap: tuple[int, int, int, int] | None = 
 
 
 def render_preview(state: OverlayState, width: int = 1280, texture_bgr: np.ndarray | None = None,
-                   now: float | None = None, cfg: Any = None) -> np.ndarray:
-    """Straight RGBA preview of the whole overlay (radar, HUD, flash) over a game-like screen.
+                   now: float | None = None, cfg: Any = None, mode: str | None = None,
+                   background: np.ndarray | None = None) -> np.ndarray:
+    """Straight RGBA preview of the whole overlay (minimap marks or radar, HUD, flash) over a game-like screen.
 
     The overlay is laid out at the state's screen resolution (1920 x 1080 by default) with the
-    same placement rules as ``overlay.py`` then scaled to ``width``. Never raises.
+    same placement rules as ``overlay.py`` then scaled to ``width``. ``mode`` overrides
+    ``cfg.overlay_mode`` ("minimap" by default, "radar", "off"); ``background`` (RGB, screen
+    size) replaces the synthetic game screen. Never raises.
     """
     try:
-        return _render_preview(state, width, texture_bgr, now, cfg)
+        return _render_preview(state, width, texture_bgr, now, cfg, mode, background)
     except Exception:
         log.exception("render_preview failed")
         return np.zeros((max(1, int(width) * 9 // 16), max(1, int(width)), 4), np.uint8)
 
 
 def _render_preview(state: OverlayState, width: int, texture_bgr: np.ndarray | None, now: float | None,
-                    cfg: Any) -> np.ndarray:
+                    cfg: Any, mode: str | None = None, background: np.ndarray | None = None) -> np.ndarray:
     from treeaicoach import overlay as _ov   # lazy: overlay imports this module
 
     scr = _rect_tuple(state.screen_rect) or (0, 0, 1920, 1080)
-    sx, sy, sw, sh = scr
     mm = _rect_tuple(state.minimap_rect) or tuple(
-        a + b for a, b in zip(default_minimap_rect(sw, sh), (sx, sy, 0, 0)))
-    bg = game_background(sw, sh, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]))
-    scale = float(getattr(cfg, "radar_scale", 1.0) or 1.0) if cfg is not None else 1.0
-    rx, ry, rsize = _ov.radar_geometry(mm, scr, scale, getattr(cfg, "radar_position", "above_minimap"),
-                                       getattr(cfg, "radar_xy", None))
-    if cfg is None or getattr(cfg, "radar_enabled", True):
+        a + b for a, b in zip(default_minimap_rect(scr[2], scr[3]), (scr[0], scr[1], 0, 0)))
+    scr = _ov.effective_screen(scr, mm)
+    sx, sy, sw, sh = scr
+    if isinstance(background, np.ndarray) and background.ndim == 3 and background.shape[2] >= 3:
+        bg = cv2.resize(np.ascontiguousarray(background[..., :3]), (sw, sh), interpolation=cv2.INTER_AREA)
+    else:
+        bg = game_background(sw, sh, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]))
+    mode = _ov.resolve_overlay_mode(mode if mode is not None else getattr(cfg, "overlay_mode", "minimap"), True)
+    radar_rect = None
+    if mode == "minimap":
+        composite_over(bg, render_minimap(state, mm[2], mm[3], now), mm[0] - sx, mm[1] - sy)
+    elif mode == "radar" and (cfg is None or getattr(cfg, "radar_enabled", True)):
+        scale = float(getattr(cfg, "radar_scale", 1.0) or 1.0) if cfg is not None else 1.0
+        rx, ry, rsize = _ov.radar_geometry(mm, scr, scale, getattr(cfg, "radar_position", "above_minimap"),
+                                           getattr(cfg, "radar_xy", None))
         composite_over(bg, render_radar(state, rsize, texture_bgr, now), rx - sx, ry - sy)
+        radar_rect = (rx, ry, rsize, rsize)
     if cfg is None or getattr(cfg, "hud_enabled", True):
         hud = render_hud(state, _ov.hud_width(scr), now)
-        hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0], getattr(cfg, "hud_position", "top_left"),
-                                   getattr(cfg, "hud_xy", None), avoid=[mm, (rx, ry, rsize, rsize)])
+        avoid = [r for r in (mm, radar_rect) if r is not None]
+        hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0], getattr(cfg, "hud_position", "above_minimap"),
+                                   getattr(cfg, "hud_xy", None), avoid=avoid, anchor=radar_rect or mm)
         composite_over(bg, hud, hx - sx, hy - sy)
     if _clamp01(state.flash) > 0 and (cfg is None or getattr(cfg, "danger_flash", True)):
         fl = render_flash(sw, sh, state.flash, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]),
@@ -1807,7 +1788,19 @@ def radar_preview_rgba(state: OverlayState, size: int = 256, texture_bgr: np.nda
     return premultiplied_to_rgba(render_radar(state, size, texture_bgr, now))
 
 
-def hud_preview_rgba(state: OverlayState, width: int = 340, now: float | None = None) -> np.ndarray:
+def minimap_preview_rgba(state: OverlayState, size: int = 256, now: float | None = None,
+                         background: np.ndarray | None = None) -> np.ndarray:
+    """Straight RGBA "minimap" overlay, over ``background`` (RGB) or the default minimap texture."""
+    size = int(min(max(int(size), 16), 2048))
+    if isinstance(background, np.ndarray) and background.ndim == 3:
+        bg = cv2.resize(np.ascontiguousarray(background[..., :3]), (size, size), interpolation=cv2.INTER_AREA)
+    else:
+        bg = cv2.resize(default_radar_texture(), (size, size), interpolation=cv2.INTER_AREA)[..., ::-1].copy()
+    composite_over(bg, render_minimap(state, size, size, now), 0, 0)
+    return np.dstack([bg, np.full(bg.shape[:2], 255, np.uint8)])
+
+
+def hud_preview_rgba(state: OverlayState, width: int = 280, now: float | None = None) -> np.ndarray:
     """Straight RGBA HUD image (for Tk / CustomTkinter previews)."""
     return premultiplied_to_rgba(render_hud(state, width, now))
 
@@ -1841,7 +1834,18 @@ def sample_states(db: Any = None) -> dict[str, OverlayState]:
             db = ChampionDB()
         except Exception:
             db = None
-    ic = {a: _demo_icon(db, a) for a in ("LeeSin", "Darius", "Ahri", "Jinx", "Thresh", "Garen")}
+    ic = {a: _demo_icon(db, a) for a in ("LeeSin", "Darius", "Ahri", "Jinx", "Thresh", "Garen",
+                                         "Vi", "Lux", "Caitlyn", "Nautilus")}
+    enemy_roles = {"Darius": "TOP", "LeeSin": "JUNGLE", "Ahri": "MIDDLE", "Jinx": "BOTTOM", "Thresh": "UTILITY"}
+    ally_roles = {"Vi": "JUNGLE", "Lux": "MIDDLE", "Caitlyn": "BOTTOM", "Nautilus": "UTILITY"}
+    roles = {**enemy_roles, **ally_roles, "Garen": "TOP"}
+
+    def allies(spec: dict[str, tuple[float, float] | None]) -> list[EnemyView]:
+        return [EnemyView(key=a, alias=a, name=a, visible=spec.get(a) is not None, uv=spec.get(a),
+                          last_seen_ago=0.0 if spec.get(a) is not None else None, icon=ic[a],
+                          relation="ally", role=ally_roles[a]) for a in ally_roles]
+
+    ally_bot = {"Vi": (0.3, 0.62), "Lux": (0.45, 0.55), "Caitlyn": (0.78, 0.9), "Nautilus": (0.74, 0.93)}
     fog = FogTracker()
     scr = (0, 0, 1920, 1080)
     mm = default_minimap_rect(1920, 1080)
@@ -1853,7 +1857,7 @@ def sample_states(db: Any = None) -> dict[str, OverlayState]:
             vis, uv, ago, appr, vel = spec.get(alias, (False, None, None, False, None))
             out.append(EnemyView(key=alias, alias=alias, name=names[alias], visible=vis, uv=uv,
                                  last_seen_ago=ago, is_jungler=alias == "LeeSin", approaching=appr,
-                                 icon=ic[alias], velocity=vel))
+                                 icon=ic[alias], velocity=vel, role=enemy_roles[alias]))
         return out
 
     obj_early = [_DemoObjective("Dragon", 300.0), _DemoObjective("Larves", 360.0),
@@ -1869,6 +1873,7 @@ def sample_states(db: Any = None) -> dict[str, OverlayState]:
         threat_level=0, threat_text="SÛR", last_alert=None, objectives=obj_early, game_time=192.0,
         jungler_line="Jungler : Lee Sin — vu il y a 1:05, jungle ennemie du bas",
         hint=None, me_icon=ic["Garen"],
+        allies=allies(ally_bot), roles=roles,
     )
     states["warning"] = OverlayState(
         minimap_rect=mm, screen_rect=scr, me_uv=(0.085, 0.36), my_team="ORDER",
@@ -1880,6 +1885,7 @@ def sample_states(db: Any = None) -> dict[str, OverlayState]:
         threat_level=1, threat_text="ATTENTION — Lee Sin approche",
         last_alert=("Attention, Lee Sin approche.", 1, 1.3), objectives=obj_early, game_time=251.0,
         jungler_line="Jungler : Lee Sin — visible, rivière du haut", hint=None, me_icon=ic["Garen"],
+        allies=allies(ally_bot), roles=roles,
     )
     lee_fog = fog.simulate("LeeSin", "LeeSin", "Lee Sin", (0.27, 0.23), 14.0, is_jungler=True, game_time=426)
     states["danger"] = OverlayState(
@@ -1896,6 +1902,7 @@ def sample_states(db: Any = None) -> dict[str, OverlayState]:
         game_time=440.0, flash=0.85,
         jungler_line="Jungler : Lee Sin — vu il y a 14 s, rivière du haut",
         hint="1 450 PO — pense à rentrer", me_icon=ic["Garen"],
+        allies=allies(ally_bot), roles=roles,
     )
     f1 = fog.simulate("LeeSin", "LeeSin", "Lee Sin", (0.62, 0.72), 21.0, is_jungler=True, game_time=1660)
     f2 = fog.simulate("Thresh", "Thresh", "Thresh", (0.8, 0.8), 38.0, game_time=1660)
@@ -1912,6 +1919,7 @@ def sample_states(db: Any = None) -> dict[str, OverlayState]:
                     _DemoObjective("Atakhan", None)],
         game_time=1660.0, jungler_line="Jungler : Lee Sin — vu il y a 21 s, rivière du bas",
         hint="Balise de contrôle : aucune dans l'inventaire", me_icon=ic["Garen"],
+        allies=allies(ally_bot), roles=roles,
     )
     return states
 
@@ -1923,13 +1931,17 @@ def write_demo(outdir: str | os.PathLike[str], now: float = 0.3) -> list[Path]:
     written: list[Path] = []
     for name, st in sample_states().items():
         radar = radar_preview_rgba(st, 300, now=now)
-        hud = hud_preview_rgba(st, 340, now=now)
-        for label, img in (("radar", radar), ("hud", hud)):
+        hud = hud_preview_rgba(st, 280, now=now)
+        mini = minimap_preview_rgba(st, 300, now=now)
+        for label, img in (("radar", radar), ("hud", hud), ("minimap", mini)):
             p = out / f"{label}_{name}.png"
             p.write_bytes(_encode_png(img))
             written.append(p)
         p = out / f"preview_{name}.png"
         render_preview_png(st, p, width=1600, now=now)
+        written.append(p)
+        p = out / f"preview_radar_{name}.png"
+        p.write_bytes(_encode_png(render_preview(st, 1600, now=now, mode="radar")))
         written.append(p)
     return written
 

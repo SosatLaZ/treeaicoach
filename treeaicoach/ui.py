@@ -81,6 +81,7 @@ PULSE_MS = 70
 DISPATCH_MS = 40
 SAVE_DEBOUNCE_MS = 500
 TOAST_MS = 4500
+UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -897,6 +898,8 @@ class CoachApp:
         self.root.after(PREVIEW_MS, self._preview_loop)
         self.root.after(PULSE_MS, self._pulse_loop)
         self._start_backend()
+        if paths.is_frozen() and self.cfg.check_updates_on_start:   # silent update check (updater.py)
+            self.root.after(UPDATE_CHECK_DELAY_MS, self._startup_update_check)
 
     # ------------------------------------------------------------------ infrastructure
     def cb(self, fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -1946,7 +1949,146 @@ class CoachApp:
                      icon="folder").grid(row=0, column=0)
         _row, slot = self._row(s, "Réinitialiser", "Remet tous les réglages par défaut.")
         self._button(slot, "Réinitialiser", self.ask_reset, "danger").grid(row=0, column=0)
+        try:
+            self._build_updates_section(body, 4)
+        except Exception:
+            log.exception("Cannot build the updates section")
         return page
+
+    # ------------------------------------------------------------------ updates (updater.py)
+    def _build_updates_section(self, body: Any, row: int) -> None:
+        s = self._section(body, row, "Mises à jour", "Les nouvelles versions sont publiées sur GitHub ; "
+                                                     "le fichier est vérifié (SHA-256) avant d'être installé.")
+        self._update_info: Any = None
+        self._update_busy = False
+        _row, slot = self._row(s, f"Version installée : {__version__}", None)
+        self._update_check_btn = self._button(slot, "Vérifier les mises à jour", self.check_updates,
+                                              "secondary", icon="refresh")
+        self._update_check_btn.grid(row=0, column=0)
+        box = self.ctk.CTkFrame(s, fg_color="transparent")
+        box.grid(row=2 * s._rows, column=0, sticky="ew", pady=(0, 6))
+        box.grid_columnconfigure(0, weight=1)
+        s._rows += 1
+        self._update_status = self._label(box, "", self.fonts.small, MUTED, anchor="w", justify="left",
+                                          wraplength=620)
+        self._update_status.grid(row=0, column=0, sticky="w")
+        self._update_bar = self.ctk.CTkProgressBar(box, height=8)
+        self._update_bar.set(0)
+        self._update_bar.grid(row=1, column=0, sticky="ew", pady=(6, 2))
+        self._update_bar.grid_remove()
+        _row, slot = self._row(s, "Installer", "Télécharge la nouvelle version, la vérifie puis redémarre "
+                                               "TreeAI Coach.")
+        self._update_btn = self._button(slot, "Mettre à jour", self.install_update, "primary",
+                                        state="disabled")
+        self._update_btn.grid(row=0, column=0)
+        _row, slot = self._row(s, "Jeton GitHub (dépôt privé)", "Facultatif : jeton d'accès personnel avec "
+                               "lecture du dépôt, nécessaire tant que le dépôt est privé.")
+        entry = self.ctk.CTkEntry(slot, width=240, show="•", placeholder_text="ghp_… ou github_pat_…")
+        if self.cfg.github_token:
+            entry.insert(0, self.cfg.github_token)
+        entry.grid(row=0, column=0)
+        save_token = self.cb(lambda _e=None: self.set_option("github_token", entry.get().strip()))
+        entry.bind("<FocusOut>", save_token, add="+")
+        entry.bind("<Return>", save_token, add="+")
+        self._update_token_entry = entry
+        self._switch_row(s, "check_updates_on_start", "Vérifier au démarrage",
+                         "Cherche une nouvelle version en arrière-plan à chaque lancement.")
+
+    def _set_update_status(self, text: str, color: str = MUTED) -> None:
+        lbl = getattr(self, "_update_status", None)
+        if lbl is not None:
+            try:
+                lbl.configure(text=text, text_color=color)
+            except Exception:
+                pass
+
+    def _startup_update_check(self) -> None:
+        """Silent background check at launch (frozen exe only): toast if a new version exists."""
+        if self._closing or not self.cfg.check_updates_on_start:
+            return
+        self.check_updates(quiet=True)
+
+    def check_updates(self, quiet: bool = False) -> None:
+        """Check GitHub for a new version (background thread); ``quiet`` = toast only if available."""
+        if getattr(self, "_update_busy", False):
+            return
+        self._update_busy = True
+        from treeaicoach import updater
+        entry = getattr(self, "_update_token_entry", None)
+        if entry is not None and entry.get().strip() != self.cfg.github_token:
+            self.set_option("github_token", entry.get().strip())
+        cfg = self.cfg
+        if not quiet:
+            self._set_update_status("Recherche d'une nouvelle version…")
+
+        def done(res: Any) -> None:
+            self._update_busy = False
+            self._update_info = res.info if res.available else None
+            color = GOLD if res.available else (DANGER if res.status == updater.ERROR else TEAL)
+            self._set_update_status(res.message, color)
+            btn = getattr(self, "_update_btn", None)
+            if btn is not None:
+                btn.configure(state="normal" if res.available and res.can_install else "disabled")
+            if res.available and quiet:
+                self.show_toast(f"Nouvelle version {res.info.version} disponible : Réglages → Mises à jour.")
+            elif not quiet:
+                self.show_toast(res.message, "error" if res.status == updater.ERROR else "info")
+
+        def failed(exc: BaseException) -> None:
+            self._update_busy = False
+            if not quiet:
+                self._set_update_status(f"Vérification impossible : {exc}", DANGER)
+
+        self._dispatcher.run(lambda: updater.check_for_update(cfg), done, failed, name="TreeAI-update-check")
+
+    def install_update(self) -> None:
+        """Download + verify + swap the exe, then close the app (the batch relaunches it)."""
+        info = getattr(self, "_update_info", None)
+        if info is None or self._update_busy:
+            return
+        from treeaicoach import updater
+        self._update_busy = True
+        self._update_btn.configure(state="disabled")
+        self._update_check_btn.configure(state="disabled")
+        self._update_bar.set(0)
+        self._update_bar.grid()
+        self._set_update_status(f"Téléchargement de la version {info.version}…")
+        cfg = self.cfg
+        last = [0.0]
+
+        def progress(done_b: int, total: int) -> None:     # worker thread: throttled post
+            now = time.monotonic()
+            if now - last[0] < 0.15 and done_b < total:
+                return
+            last[0] = now
+            frac = done_b / total if total else 0.0
+            text = (f"Téléchargement de la version {info.version}… "
+                    f"{fmt_decimal_fr(done_b / 1e6, 1)} / {fmt_decimal_fr(total / 1e6, 1)} Mo")
+            self._dispatcher.post(lambda: (self._update_bar.set(frac), self._set_update_status(text)))
+
+        def job() -> Any:
+            dl = updater.download_update(info, cfg, progress=progress)
+            if not dl.ok:
+                return dl
+            return updater.apply_update(dl.path, info)
+
+        def done(res: Any) -> None:
+            self._update_busy = False
+            self._update_check_btn.configure(state="normal")
+            if res.ok and isinstance(res, updater.ApplyResult):
+                self._set_update_status(res.message, TEAL)
+                self.show_toast(res.message)
+                self.root.after(800, self.close)
+                return
+            self._update_bar.grid_remove()
+            self._update_btn.configure(state="normal")
+            self._set_update_status(res.message, DANGER)
+            self.show_error(res.message)
+
+        def failed(exc: BaseException) -> None:
+            done(updater.ApplyResult(False, f"Mise à jour impossible : {exc}"))
+
+        self._dispatcher.run(job, done, failed, name="TreeAI-update-install")
 
     def _manual_rect_text(self) -> str:
         r = self.cfg.manual_minimap_rect

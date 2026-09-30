@@ -1,0 +1,6 @@
+{
+  "version": "1.3.0",
+  "sha256": "491e20defe693b34fc063810ca6ab6ce97dfe7f37a13acf25f78fac9254927ab",
+  "size": 78877719,
+  "notes": "Correctif : la fenêtre principale s'affiche correctement sous Windows."
+}

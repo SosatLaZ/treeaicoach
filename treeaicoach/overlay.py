@@ -1,4 +1,4 @@
-"""On-screen overlay windows (radar, HUD, danger flash) - Win32 layered windows via ctypes.
+"""On-screen overlay windows (minimap marks, radar, HUD, danger flash) - Win32 layered windows via ctypes.
 
 Everything is *drawn* by :mod:`treeaicoach.overlay_render` (pure numpy / PIL); this module only
 puts the premultiplied BGRA images on screen with ``UpdateLayeredWindow`` (per-pixel alpha), in
@@ -10,8 +10,13 @@ separate popup windows of the TreeAI Coach process:
   *Windowed* mode.
 * one dedicated thread owns every window and pumps its messages with ``PeekMessageW``; it
   refreshes at ~12 Hz from ``state_provider()`` and hides everything when the state is None.
-* the radar is placed *next to* the real minimap (never over ``state.minimap_rect``: the engine
-  captures that area and would see our drawings), every window is clamped inside the screen.
+* every window is excluded from screen capture (``SetWindowDisplayAffinity(hwnd,
+  WDA_EXCLUDEFROMCAPTURE)``, Windows 10 2004+). The default "minimap" mode then draws thin
+  marks *exactly over the real minimap* (``state.minimap_rect``): the engine keeps capturing the
+  minimap without seeing them. When the exclusion is unavailable the manager falls back to the
+  "radar" mode: an enlarged copy placed *above* the minimap (shrunk rather than moved towards
+  the centre), never over it. Every window is clamped inside the screen, and the screen used
+  for the layout always contains the minimap (see :func:`effective_screen`).
 * "move mode" (:meth:`OverlayManager.set_move_mode`): windows stop being click-through, can be
   dragged (``WM_NCHITTEST`` -> ``HTCAPTION``) and report their new position through
   ``on_moved(name, x, y)`` so the UI can save ``cfg.radar_xy`` / ``cfg.hud_xy``.
@@ -49,7 +54,7 @@ HUD_MARGIN = 16
 #: Radar side limits (px).
 RADAR_MIN, RADAR_MAX = 96, 1024
 #: HUD width at 1080p and its limits.
-HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 340, 280, 620
+HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 280, 240, 520
 #: Flash intensity quantization (the full-screen image is re-rendered only when it changes).
 FLASH_STEP = 0.1
 #: Refresh rate (Hz) of the radar / HUD while nothing is animated (saves CPU).
@@ -57,7 +62,15 @@ CALM_HZ = 4.0
 #: How often (s) visible windows are re-asserted as topmost.
 TOPMOST_EVERY_S = 2.0
 RADAR_POSITIONS = ("above_minimap", "left_of_minimap", "top_left", "custom")
-HUD_POSITIONS = ("top_left", "top_right", "left_middle", "custom")
+HUD_POSITIONS = ("above_minimap", "top_left", "top_right", "left_middle", "custom")
+#: ``cfg.overlay_mode``: "minimap" draws the marks *on* the real minimap (needs the windows to be
+#: excluded from screen capture, else falls back to "radar"), "radar" shows an enlarged copy
+#: above the minimap, "off" draws no map at all (HUD / flash keep their own switches).
+OVERLAY_MODES = ("minimap", "radar", "off")
+#: SetWindowDisplayAffinity values (WDA_EXCLUDEFROMCAPTURE: Windows 10 2004 / build 19041+).
+WDA_NONE = 0x00
+WDA_EXCLUDEFROMCAPTURE = 0x11
+EXCLUDE_MIN_BUILD = 19041
 
 
 # ======================================================================================
@@ -112,6 +125,36 @@ def _scale_of(screen: Sequence[int] | None) -> float:
     return max(0.5, min(3.0, (screen[3] / 1080.0) if screen else 1.0))
 
 
+def effective_screen(screen: Any, minimap: Any, monitor: Any = None) -> RectT:
+    """Screen rectangle to lay the overlay out in, consistent with the minimap rectangle.
+
+    The reported game window can be in another coordinate space than the (physical) minimap
+    rectangle, e.g. DPI-virtualized: 1536 x 864 for a 1920 x 1080 screen at 125 %. When the
+    minimap does not fit inside ``screen``, the monitor containing the minimap (``monitor``) or
+    at least the union of both rectangles is used, so nothing gets pushed towards the centre.
+    """
+    scr, mm, mon = as_rect(screen), as_rect(minimap), as_rect(monitor)
+    if mm is None:
+        return scr or mon or (0, 0, 1920, 1080)
+    if scr is not None and _fits(mm[0], mm[1], mm[2], mm[3], scr):
+        return scr
+    if mon is not None and _fits(mm[0], mm[1], mm[2], mm[3], mon):
+        return mon
+    base = scr or mon or (0, 0, max(1920, mm[0] + mm[2]), max(1080, mm[1] + mm[3]))
+    x0, y0 = min(base[0], mm[0]), min(base[1], mm[1])
+    x1, y1 = max(base[0] + base[2], mm[0] + mm[2]), max(base[1] + base[3], mm[1] + mm[3])
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def resolve_overlay_mode(mode: Any, capture_excluded: bool) -> str:
+    """Mode actually used: "minimap" needs capture exclusion (else "radar"); junk -> "minimap"."""
+    m = str(mode or "").strip().lower()
+    m = m if m in OVERLAY_MODES else "minimap"
+    if m == "minimap" and not capture_excluded:
+        return "radar"
+    return m
+
+
 def radar_size(minimap: Any, scale: float = 1.0) -> int:
     """Radar side (px): the minimap side times ``scale`` (0.5..2.0), clamped to 96..1024."""
     mm = as_rect(minimap)
@@ -144,7 +187,8 @@ def radar_geometry(minimap: Any, screen: Any, scale: float = 1.0, position: str 
     """``(x, y, size)`` of the radar window, never overlapping the minimap, inside the screen.
 
     ``position``: "above_minimap" (bottom edge ``RADAR_GAP`` px above the minimap top, same right
-    edge; to the left of the minimap when it does not fit), "left_of_minimap", "top_left" or
+    edge; *shrunk* when it does not fit, down to ``RADAR_MIN``; only a minimap with less room than
+    that above it sends the radar to its left), "left_of_minimap", "top_left" or
     "custom" (``custom_xy`` = ``[x, y]``). The size shrinks if the requested one fits nowhere.
     """
     mm = as_rect(minimap)
@@ -165,6 +209,16 @@ def radar_geometry(minimap: Any, screen: Any, scale: float = 1.0, position: str 
             if not rects_overlap((x, y, size, size), mm):
                 return x, y, size
         position = "above_minimap"
+    if position == "above_minimap":
+        # above the minimap, right edges aligned; shrink rather than moving it to the left
+        room_above = mm[1] - scr[1] - 2 * RADAR_GAP
+        room_x = mm[0] + mm[2] - scr[0]
+        s = int(min(size, room_above, room_x, scr[2]))
+        if s >= min(size, RADAR_MIN):
+            x, y = mm[0] + mm[2] - s, mm[1] - RADAR_GAP - s
+            x, y = clamp_to_screen(x, y, s, s, scr)
+            if not rects_overlap((x, y, s, s), mm):
+                return x, y, s
     # largest size that fits above or left of the minimap
     room = max(mm[1] - scr[1] - 2 * RADAR_GAP, mm[0] - scr[0] - 2 * RADAR_GAP)
     for s in (size, max(RADAR_MIN // 2, min(size, room))):
@@ -220,21 +274,33 @@ def flash_thickness(screen: Any) -> int:
     return int(max(6, round(10 * _scale_of(as_rect(screen)))))
 
 
-def hud_placement(screen: Any, w: int, h: int, position: str = "top_left", custom_xy: Any = None,
-                  avoid: Iterable[Any] = ()) -> tuple[int, int]:
+def hud_placement(screen: Any, w: int, h: int, position: str = "above_minimap", custom_xy: Any = None,
+                  avoid: Iterable[Any] = (), anchor: Any = None) -> tuple[int, int]:
     """Top-left corner of the HUD panel, inside the screen and not over the ``avoid`` rects.
 
-    ``position``: "top_left" (default), "top_right" (below the game's score bar), "left_middle"
-    or "custom" (``custom_xy``). When the panel would cover an ``avoid`` rectangle (minimap,
-    radar) it slides vertically below (or above) it.
+    ``position``: "above_minimap" (default: bottom edge ``RADAR_GAP`` px above ``anchor`` - the
+    minimap, or the radar when one is shown above it - right edges aligned; "top_right" when it
+    does not fit or without anchor), "top_left", "top_right" (below the game's score bar),
+    "left_middle" or "custom" (``custom_xy``). When the panel would cover an ``avoid``
+    rectangle (minimap, radar) it slides vertically below (or above) it.
     """
     scr = as_rect(screen) or (0, 0, 1920, 1080)
     w, h = max(1, int(w)), max(1, int(h))
     k = _scale_of(scr)
     m = int(round(HUD_MARGIN * k))
     sx, sy, sw, sh = scr
-    position = position if position in HUD_POSITIONS else "top_left"
+    position = position if position in HUD_POSITIONS else "above_minimap"
     xy = _xy(custom_xy) if position == "custom" else None
+    anc = as_rect(anchor)
+    if position == "above_minimap":
+        if anc is not None and anc[1] - RADAR_GAP - h >= sy + m and w <= sw:
+            x, y = anc[0] + anc[2] - w, anc[1] - RADAR_GAP - h
+            x = min(x, sx + sw - w)
+            x = max(x, sx)
+            blockers = [r for r in (as_rect(a) for a in avoid) if r is not None]
+            if not any(rects_overlap((x, y, w, h), b) for b in blockers):
+                return x, y
+        position = "top_right"
     if xy is not None:
         x, y = xy
     elif position == "top_right":
@@ -450,6 +516,13 @@ class _Api:
             self.GetWindowLongPtr, self.SetWindowLongPtr = u.GetWindowLongW, u.SetWindowLongW
         proto(self.GetWindowLongPtr, ctypes.c_ssize_t, wt.HWND, ctypes.c_int)
         proto(self.SetWindowLongPtr, ctypes.c_ssize_t, wt.HWND, ctypes.c_int, ctypes.c_ssize_t)
+        # display affinity (capture exclusion): may be missing on very old systems
+        self.SetWindowDisplayAffinity = getattr(u, "SetWindowDisplayAffinity", None)
+        if self.SetWindowDisplayAffinity is not None:
+            proto(self.SetWindowDisplayAffinity, wt.BOOL, wt.HWND, wt.DWORD)
+        self.GetWindowDisplayAffinity = getattr(u, "GetWindowDisplayAffinity", None)
+        if self.GetWindowDisplayAffinity is not None:
+            proto(self.GetWindowDisplayAffinity, wt.BOOL, wt.HWND, P(wt.DWORD))
         self.SetThreadDpiAwarenessContext = getattr(u, "SetThreadDpiAwarenessContext", None)
         if self.SetThreadDpiAwarenessContext is not None:
             proto(self.SetThreadDpiAwarenessContext, HANDLE, HANDLE)
@@ -558,6 +631,32 @@ class LayeredWindow:
             raise OSError(f"CreateWindowExW failed ({api.last_error()})")
         self.hwnd = hwnd
         _windows_by_hwnd[int(hwnd)] = self
+
+    # ------------------------------------------------------------------ capture exclusion
+    def exclude_from_capture(self) -> bool:
+        """Hide this window from screen captures (``WDA_EXCLUDEFROMCAPTURE``). True on success.
+
+        The window stays visible on the monitor but BitBlt / DXGI / Graphics Capture (hence our
+        own minimap capture) do not see it. Requires Windows 10 2004+; on older systems the flag
+        may be refused or degrade to ``WDA_MONITOR`` (window captured as a black box): the
+        affinity is then reset to ``WDA_NONE`` and False is returned. Never raises.
+        """
+        try:
+            api = self._api
+            if api.SetWindowDisplayAffinity is None or windows_build() < EXCLUDE_MIN_BUILD:
+                return False
+            ok = bool(api.SetWindowDisplayAffinity(self.hwnd, WDA_EXCLUDEFROMCAPTURE))
+            if ok and api.GetWindowDisplayAffinity is not None:
+                cur = api.wt.DWORD(0)
+                if api.GetWindowDisplayAffinity(self.hwnd, api.ctypes.byref(cur)):
+                    ok = int(cur.value) == WDA_EXCLUDEFROMCAPTURE
+            if not ok:
+                log.info("Overlay %s: capture exclusion unavailable (error %s)", self.name, api.last_error())
+                api.SetWindowDisplayAffinity(self.hwnd, WDA_NONE)
+            return ok
+        except Exception:
+            log.debug("SetWindowDisplayAffinity failed", exc_info=True)
+            return False
 
     # ------------------------------------------------------------------ drawing
     def _ensure_dib(self, w: int, h: int) -> bool:
@@ -723,6 +822,15 @@ class LayeredWindow:
         self.visible = False
 
 
+def windows_build() -> int:
+    """Windows build number (e.g. 19045), 0 off Windows / unknown."""
+    try:
+        gv = getattr(sys, "getwindowsversion", None)
+        return int(gv().build) if gv is not None else 0
+    except Exception:
+        return 0
+
+
 def pump_messages(max_messages: int = 200) -> int:
     """Dispatch pending messages of the calling thread (non-blocking). Returns the count."""
     api = _api
@@ -756,7 +864,12 @@ def _monitor_rect_at(api: _Api, x: int, y: int) -> RectT | None:
 # Manager
 # ======================================================================================
 class OverlayManager:
-    """Owns the overlay thread and its three windows (radar, HUD, flash).
+    """Owns the overlay thread and its windows (flash, radar, minimap marks, HUD).
+
+    Every window is excluded from screen capture when Windows allows it
+    (:meth:`LayeredWindow.exclude_from_capture`); only then can the "minimap" mode draw over
+    the real minimap (our own capture of it would otherwise see the drawings). Without it the
+    manager falls back to the "radar" mode: :attr:`effective_mode` tells which one is used.
 
     ``state_provider`` is called from the overlay thread (~12 Hz) and must be cheap and
     thread-safe (e.g. ``CoachEngine.get_overlay_state``). ``on_moved(name, x, y)`` ("radar" |
@@ -777,6 +890,7 @@ class OverlayManager:
         self._custom: dict[str, tuple[int, int]] = {}
         self._failed_logged = False
         self._demo_state: Any = None
+        self.capture_excluded = False
         self.ok = sys.platform == "win32"
         if not self.ok:
             log.info("Overlay disabled: Windows only")
@@ -839,6 +953,13 @@ class OverlayManager:
     def visible(self) -> bool:
         return self._visible
 
+    @property
+    def effective_mode(self) -> str:
+        """Map mode really used ("minimap" | "radar" | "off"), see :func:`resolve_overlay_mode`."""
+        with self._lock:
+            cfg = self._cfg
+        return resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
+
     # ------------------------------------------------------------------ thread
     def _fail(self, what: str) -> None:
         self.ok = False
@@ -855,9 +976,20 @@ class OverlayManager:
                     api.SetThreadDpiAwarenessContext(api.ctypes.c_void_p(-4))
                 except Exception:  # pragma: no cover
                     pass
-            # creation order = z-order among topmost windows: flash below radar / HUD
-            for name in ("flash", "radar", "hud"):
+            # creation order = z-order among topmost windows: flash below radar / minimap / HUD
+            for name in ("flash", "radar", "minimap", "hud"):
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved)
+            excluded = [w.exclude_from_capture() for w in windows.values()]
+            self.capture_excluded = all(excluded)
+            if not self.capture_excluded:
+                for w in windows.values():   # never leave a half-excluded set behind
+                    try:
+                        if w._api.SetWindowDisplayAffinity is not None:
+                            w._api.SetWindowDisplayAffinity(w.hwnd, WDA_NONE)
+                    except Exception:  # pragma: no cover
+                        pass
+            log.info("Overlay: capture exclusion %s -> mode %s",
+                     "OK" if self.capture_excluded else "indisponible", self.effective_mode)
         except Exception:
             self._fail("window creation")
             for w in windows.values():
@@ -947,22 +1079,28 @@ class OverlayManager:
     def _screen_for(self, api: _Api, state: Any) -> tuple[RectT, RectT | None]:
         mm = as_rect(getattr(state, "minimap_rect", None))
         scr = as_rect(getattr(state, "screen_rect", None))
-        if scr is None and mm is not None:
-            scr = _monitor_rect_at(api, mm[0] + mm[2] // 2, mm[1] + mm[3] // 2)
-        if scr is None:
+        mon = _monitor_rect_at(api, mm[0] + mm[2] // 2, mm[1] + mm[3] // 2) if mm is not None else None
+        if scr is None and mon is None:
             scr = (0, 0, max(1, int(api.user32.GetSystemMetrics(SM_CXSCREEN))),
                    max(1, int(api.user32.GetSystemMetrics(SM_CYSCREEN))))
-        return scr, mm
+        return effective_screen(scr, mm, mon), mm
 
     def _refresh(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any, move: bool,
                  custom: dict[str, tuple[int, int]], flash_key: Any) -> Any:
         from treeaicoach import overlay_render as orr
 
         scr, mm = self._screen_for(api, state)
+        mode = resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
+        # ---- marks drawn exactly over the real minimap (excluded from our own capture)
+        mm_win = windows["minimap"]
+        if mode == "minimap" and mm is not None and not (move and state is self._demo_state):
+            mm_win.update(orr.render_minimap(state, mm[2], mm[3]), mm[0], mm[1])
+        else:
+            mm_win.hide()
         # ---- radar (needs the minimap position)
         radar_rect: RectT | None = None
         radar_win = windows["radar"]
-        if getattr(cfg, "radar_enabled", True) and mm is not None:
+        if mode == "radar" and getattr(cfg, "radar_enabled", True) and mm is not None:
             pos = getattr(cfg, "radar_position", "above_minimap")
             xy = getattr(cfg, "radar_xy", None)
             if "radar" in custom:
@@ -981,12 +1119,13 @@ class OverlayManager:
             img = orr.render_hud(state, hud_width(scr))
             if move:
                 img = move_mode_frame(img, "HUD — glisser")
-            pos = getattr(cfg, "hud_position", "top_left")
+            pos = getattr(cfg, "hud_position", "above_minimap")
             xy = getattr(cfg, "hud_xy", None)
             if "hud" in custom:
                 pos, xy = "custom", custom["hud"]
             avoid = [r for r in (mm, radar_rect) if r is not None]
-            x, y = hud_placement(scr, img.shape[1], img.shape[0], pos, xy, avoid=avoid)
+            x, y = hud_placement(scr, img.shape[1], img.shape[0], pos, xy, avoid=avoid,
+                                 anchor=radar_rect or mm)
             hud_win.update(img, x, y)
         else:
             hud_win.hide()
