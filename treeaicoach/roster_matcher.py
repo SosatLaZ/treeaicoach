@@ -67,8 +67,10 @@ SCALE_MAX = 0.14
 SCALE_STEP = 1.06                  # multiplicative step of the coarse sweep
 #: Prior ratio before any calibration (real clients: 0.088-0.10).
 DEFAULT_SCALE = 0.094
-#: Fine calibration steps around the best coarse scale (+ parabolic interpolation).
-FINE_STEPS = (0.96, 0.98, 1.0, 1.02, 1.04)
+#: Fine calibration steps around the best coarse scale; the result is the centre of the
+#: quality plateau (values within PLATEAU of the best).
+FINE_STEPS = (0.92, 0.95, 0.98, 1.0, 1.02, 1.05, 1.08)
+PLATEAU = 0.012
 #: Working resolutions: diameter (px) of the matched disc (detection / calibration sweep).
 WORK_INNER_PX = 14.0
 CALIB_INNER_PX = 10.0
@@ -612,14 +614,11 @@ class RosterMatcher:
         # refine at the detection resolution around the best coarse scale
         fine = [min(SCALE_MAX, max(SCALE_MIN, scales[i] * f)) for f in FINE_STEPS]
         fq = [self._scale_quality(bgr, s, WORK_INNER_PX) for s in fine]
-        j = int(np.argmax(fq))
-        best, q = fine[j], fq[j]
-        if 0 < j < len(fine) - 1:          # parabolic interpolation in log-scale
-            a, b, c = fq[j - 1], fq[j], fq[j + 1]
-            den = a - 2 * b + c
-            if den < 0:
-                off = float(np.clip(0.5 * (a - c) / den, -0.5, 0.5))
-                best = fine[j] * (fine[j + 1] / fine[j]) ** off
+        # NCC tolerates a few % of scale error, so the quality curve has a plateau: take
+        # the (quality-weighted, log-scale) centre of the plateau rather than its argmax
+        q = max(fq)
+        w = np.clip(np.asarray(fq) - (q - PLATEAU), 0.0, None)
+        best = float(np.exp(np.sum(w * np.log(fine)) / max(float(w.sum()), 1e-9)))
         self.last_calib_ms = ms = 1000 * (time.perf_counter() - t0)
         st = self._state
         if q < MIN_CALIB_QUALITY:
