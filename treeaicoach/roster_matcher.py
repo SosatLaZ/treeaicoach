@@ -64,14 +64,14 @@ PORTRAIT_FILL = 0.94
 #: Searched icon DIAMETER / minimap width (calibration).
 SCALE_MIN = 0.06
 SCALE_MAX = 0.14
-SCALE_STEP = 1.045                 # multiplicative step of the coarse sweep
+SCALE_STEP = 1.06                  # multiplicative step of the coarse sweep
 #: Prior ratio before any calibration (real clients: 0.088-0.10).
 DEFAULT_SCALE = 0.094
-#: Fine calibration steps around the best coarse scale (+-6 % in total).
-FINE_STEPS = (0.94, 0.97, 1.0, 1.03, 1.06)
+#: Fine calibration steps around the best coarse scale (+ parabolic interpolation).
+FINE_STEPS = (0.97, 1.0, 1.03)
 #: Working resolutions: diameter (px) of the matched disc (detection / calibration sweep).
 WORK_INNER_PX = 14.0
-CALIB_INNER_PX = 12.0
+CALIB_INNER_PX = 10.0
 #: Weight of the lightness NCC in the score (the rest: chroma NCC, a and b jointly).
 LIGHTNESS_WEIGHT = 0.5
 #: Gaussian blur (working px) of image and templates (JPEG / photo robustness).
@@ -577,7 +577,9 @@ class RosterMatcher:
         valid = (ratio > CONTRAST_RANGE[0]) & (ratio < CONTRAST_RANGE[1])
         flat = np.where(valid, maps, -1.0).reshape(n, -1)
         best = flat.max(axis=1)
-        bgv = float(np.percentile(maps, 98))          # most positions are not an icon
+        # background level: most positions are not an icon (subsampled for speed)
+        sub = maps[:, ::3, ::3].ravel()
+        bgv = float(np.partition(sub, int(0.98 * (sub.size - 1)))[int(0.98 * (sub.size - 1))])
         k = max(2, min(n, int(math.ceil(0.5 * n))))
         top = np.sort(best)[::-1][:k]
         return float(np.median(top) - bgv) + 0.3 * float(np.median(top))
@@ -594,10 +596,14 @@ class RosterMatcher:
             self._errors.exception("Roster matcher calibration failed")
             return None
 
-    def _calibrate(self, bgr: np.ndarray, store: bool) -> float | None:
+    def _calibrate(self, bgr: np.ndarray, store: bool, around: float | None = None
+                   ) -> float | None:
+        """Full sweep, or a narrow one (+-12 %) ``around`` a previous scale."""
         t0 = time.perf_counter()
         n_steps = int(math.log(SCALE_MAX / SCALE_MIN) / math.log(SCALE_STEP)) + 1
         scales = [SCALE_MIN * SCALE_STEP ** i for i in range(n_steps)]
+        if around is not None:
+            scales = [s for s in scales if abs(math.log(s / around)) <= 0.12] or [around]
         quals = [self._scale_quality(bgr, s, CALIB_INNER_PX) for s in scales]
         i = int(np.argmax(quals))
         # refine at the detection resolution around the best coarse scale
@@ -698,7 +704,8 @@ class RosterMatcher:
                 st.calib.clear()
                 st.calib.extend([(st.scale, 0.2)])   # the old scale keeps a vote
         if need:
-            self._calibrate(bgr, store=True)
+            self._calibrate(bgr, store=True,
+                            around=st.scale if st.scale is not None and st.calib else None)
         if st.scale is not None:
             return st.scale
         return self._stored_scale(bgr) or DEFAULT_SCALE
