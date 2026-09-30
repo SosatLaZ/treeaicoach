@@ -439,3 +439,89 @@ remonte par la rivière du haut et gank vers ~40 s ; pas d'alerte de gank avant 
   (180–420 px puis remise à l'échelle), flou, JPEG, bruit, gamma/luminosité ; 10 % d'anneaux de teinte aléatoire (`cls_valid=False`).
 * `model.py` : `MinimapNet` (CenterNet léger, stride 4, ~0.3–1 M paramètres, opérateurs ONNX simples).
 * `train.py`, `export_onnx.py`, `evaluate.py` (métriques : précision/rappel à distance < 0.5 rayon, exactitude de classe).
+
+## 6. Fonctions d'aide supplémentaires (v1.1)
+
+Toutes restent dans le cadre « écran + API officielle » : **aucun** suivi des sorts/ultimes ennemis (interdit par Riot
+depuis mars 2025), aucune prédiction de position dans le brouillard (seulement « dernière position vue »).
+
+### 6.1 `alerts.py` — nouveaux types
+`AlertKind` gagne : `OBJECTIVE_SOON`, `RECALL_GOLD`, `CONTROL_WARD`, `JUNGLER_WHERE`, `DEATH_RECAP`.
+Tous de niveau `INFO` (sauf mention). Les messages `JUNGLER_WHERE` (réponse à la touche) et `DEATH_RECAP`
+ne sont jamais filtrés par l'écart global du throttler (mais gardent leur cooldown par clé, 3 s pour JUNGLER_WHERE).
+
+### 6.2 `objectives.py`
+```python
+@dataclass
+class ObjectiveState: name: str (FR: "Dragon", "Baron", "Héraut", "Larves", "Atakhan", "Dragon ancestral")
+                      next_spawn: float | None (game_time) ; alive: bool ; source: "schedule" | "event"
+class ObjectiveTimers:
+    def __init__(self, cfg: Config, schedule: dict | None = None)   # schedule par défaut = OBJECTIVE_SCHEDULE (modifiable)
+    def update(self, game: GameInfo | None, t: float) -> list[Alert]   # annonce à 60 s et 20 s avant l'apparition (configurable)
+    def states(self) -> list[ObjectiveState]
+    def reset(self) -> None
+OBJECTIVE_SCHEDULE = {  # valeurs par défaut, surchargeables dans assets/objectives.json
+  "dragon":  {"first": 300, "respawn": 300},  "elder": {"respawn": 360},
+  "grubs":   {"first": 360, "respawn": None, "despawn": 840}, "herald": {"first": 900, "despawn": 1185},
+  "atakhan": {"first": 1200}, "baron": {"first": 1500, "respawn": 360}
+}
+```
+Événements Live Client utilisés : `DragonKill` (`DragonType` = "Elder" → elder), `BaronKill`, `HeraldKill`, `HordeKill`
+(larves), `AtakhanKill`, `GameStart`. Aucune annonce si le mode n'est pas la Faille, ou si l'option est désactivée.
+Les réapparitions après un kill (dragon 5:00, baron 6:00, ancestral 6:00) sont fiables ; les apparitions initiales viennent
+du tableau (qui peut changer selon les patchs → fichier JSON modifiable).
+
+### 6.3 `reminders.py`
+```python
+class PersonalReminders:
+    def __init__(self, cfg: Config)
+    def update(self, t: float, game: GameInfo | None, me_pos: tuple[float, float] | None, in_base: bool) -> list[Alert]
+```
+Uniquement **mes propres** données (API officielle) :
+* `RECALL_GOLD` : or courant ≥ `cfg.recall_gold_threshold` (défaut 1300) alors que je ne suis pas en base,
+  rappel au plus toutes les 90 s, pas si un ennemi est proche (géré par l'engine : ne pas parler par-dessus un gank).
+* `CONTROL_WARD` : je suis en base, pas de balise de contrôle (itemID 2055) dans l'inventaire, or ≥ 75, après 3:00 ; 1 fois par passage en base.
+`GameInfo` doit exposer pour moi : `current_gold` (activePlayer.currentGold), `items` (liste d'itemID), `scores`
+(`kills`, `deaths`, `assists`, `creepScore`, `wardScore`) → ajouter ces champs à `PlayerInfo`/`GameInfo` (valeurs par défaut sûres).
+
+### 6.4 `hotkeys.py`
+```python
+class HotkeyListener:
+    def __init__(self, bindings: dict[str, Callable[[], None]])   # ex. {"F9": callback}
+    def start(self) -> None; def stop(self) -> None                # Windows : RegisterHotKey + boucle GetMessage dans un thread
+    ok: bool                                                       # False si enregistrement impossible (touche prise) ; ailleurs no-op
+```
+N'utilise **que** `RegisterHotKey` (API standard utilisée par Discord/OBS) : pas de hook clavier bas niveau, pas d'envoi de touches.
+
+### 6.5 `recorder.py` + `analysis.py` + `report.py` (analyse d'après-partie)
+```python
+class GameRecorder:
+    def __init__(self, out_dir: Path | None = None)     # défaut user_data_dir()/"games"
+    def on_game_info(self, game: GameInfo, t: float) -> None     # instantanés (scores/or/objets/niveau) toutes les 10 s, événements dédupliqués par EventID
+    def on_tracks(self, tracker: Tracker, t: float, game_time: float | None) -> None   # ma position 1 Hz ; apparitions ennemies (≤ 2 Hz / champion)
+    def on_alert(self, alert: Alert, game_time: float | None) -> None
+    def finish(self) -> Path | None     # écrit games/<AAAA-MM-JJ_HHMM>_<champion>.json ; appelé à la fin de partie ; idempotent
+    def autosave(self) -> None          # toutes les 60 s (fichier .partial.json) ; jamais d'exception
+    active: bool
+def analyze_game(record: dict) -> dict      # pur ; voir ci-dessous
+def render_report_html(record: dict, analysis: dict) -> str   # HTML autonome FR (CSS inline, images PNG base64)
+def write_report(record_path: Path) -> Path | None            # lit le JSON, écrit <même nom>.html, renvoie son chemin
+def list_games(limit: int = 50) -> list[dict]                 # résumé des parties enregistrées (pour l'onglet Historique)
+```
+`analyze_game` produit : résumé (champion, durée, K/D/A, CS/min, vision/min, niveau final), **morts** (heure de jeu, zone,
+ennemis vus à < 0.2 dans les 8 s avant, jungler impliqué ?, alerte donnée dans les 12 s avant ? → « alerte ignorée » /
+« mort sans alerte »), **ganks subis** (alertes DANGER + issue : mort / survie), **jungler ennemi** (1re apparition, répartition
+des apparitions par zone et par phase 0–10 / 10–20 / 20+ min, voies gankées d'après les kills où il participe),
+**temps par zone** pour moi, **objectifs** (kills par équipe), et une liste de **conseils** en français générés par règles
+(ex. « 3 morts dans les 10 s après une alerte : recule dès l'annonce », « CS/min 5,8 : objectif 7+ »,
+« le jungler ennemi a ganké 4 fois en bas : balise la rivière du bas vers 3:00 »). Le rapport contient une carte
+(texture minimap) avec ma heatmap de position, mes morts (croix rouges), les apparitions du jungler ennemi (points colorés par minute).
+
+### 6.6 Récap de mort (`analysis.death_recap(record_so_far, death_event) -> str | None`)
+Phrase courte prononcée ~2 s après ma mort (alerte `DEATH_RECAP`), ex. : « Mort face à 2 ennemis, dont le jungler.
+L'alerte avait été donnée 5 secondes avant. » ou « Mort sans alerte : personne n'était visible sur la minimap. »
+
+### 6.7 Config — nouveaux champs
+`objective_timers: bool = True`, `objective_lead_s: list[int] = [60, 20]`, `recall_reminder: bool = True`,
+`recall_gold_threshold: int = 1300`, `control_ward_reminder: bool = True`, `hotkey_jungler: str = "F9"` ("" = désactivé),
+`death_recap: bool = True`, `post_game_report: bool = True`, `open_report_automatically: bool = True`.
