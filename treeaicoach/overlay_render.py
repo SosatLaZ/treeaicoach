@@ -107,6 +107,8 @@ class EnemyView:
     approaching: bool = False
     icon: np.ndarray | None = None              # RGBA uint8 (ChampionDB.load_icon)
     velocity: tuple[float, float] | None = None  # normalized / s (optional, for the arrow)
+    relation: str = "enemy"                     # "enemy" | "ally"
+    role: str | None = None                     # "TOP" | "JUNGLE" | "MIDDLE" | "BOTTOM" | "UTILITY" | None
 
 
 @dataclass
@@ -130,6 +132,8 @@ class OverlayState:
     jungler_line: str | None = None
     hint: str | None = None
     me_icon: np.ndarray | None = None         # my champion icon (RGBA), optional
+    allies: list[EnemyView] = field(default_factory=list)   # allied champions (relation "ally"), without me
+    roles: dict[str, str] = field(default_factory=dict)     # champion key / alias -> role (API position)
 
 
 # ======================================================================================
@@ -1058,6 +1062,244 @@ def _draw_fog_label(cv_: Canvas, fog: FogEstimate, icon: np.ndarray | None, S: f
                                      letter=fog.name or fog.alias or "?"), alpha)
     _label_pill(cv_, x, y + icon_d * 0.46 + _cap_height(f_tiny) / 2 + 5, fmt_seconds(fog.elapsed), f_tiny,
                 WHITE, DANGER, alpha=max(alpha, 0.8))
+
+
+# ======================================================================================
+# Minimap overlay (drawn exactly over the real minimap, transparent background)
+# ======================================================================================
+#: API position / common spellings -> short role tag.
+ROLE_TAGS: dict[str, str] = {
+    "TOP": "TOP", "JUNGLE": "JGL", "JUNGLER": "JGL", "JGL": "JGL", "JG": "JGL",
+    "MIDDLE": "MID", "MID": "MID", "BOTTOM": "ADC", "BOT": "ADC", "ADC": "ADC", "CARRY": "ADC",
+    "UTILITY": "SUP", "SUPPORT": "SUP", "SUP": "SUP",
+}
+ENEMY_TAG_RGB = (255, 150, 160)
+ALLY_TAG_RGB = (150, 205, 255)
+#: Ring radius around a champion icon, as a fraction of the minimap side (icons are ~8.5 %).
+MM_MARKER_R = 0.052
+
+
+def role_tag(view: Any, roles: dict[str, str] | None = None) -> str:
+    """Short tag of a champion: its role (TOP/JGL/MID/ADC/SUP) or a short champion name."""
+    role = getattr(view, "role", None)
+    if not role and roles:
+        for k in (getattr(view, "key", None), getattr(view, "alias", None), getattr(view, "name", None)):
+            if k and k in roles:
+                role = roles[k]
+                break
+    tag = ROLE_TAGS.get(str(role or "").strip().upper())
+    if tag:
+        return tag
+    if getattr(view, "is_jungler", False):
+        return "JGL"
+    name = str(getattr(view, "name", "") or getattr(view, "alias", "") or "").strip()
+    if not name or name.startswith(("enemy?", "ally?")):
+        return "?"
+    word = name.replace("'", "").replace(".", " ").split()[0] if name.split() else name
+    return word[:4].upper()
+
+
+def _rects_hit(r: tuple[float, float, float, float], others: list[tuple[float, float, float, float]]) -> bool:
+    return any(r[0] < o[0] + o[2] and o[0] < r[0] + r[2] and r[1] < o[1] + o[3] and o[1] < r[1] + r[3]
+               for o in others)
+
+
+def _place_tag(cv_: Canvas, x: float, y: float, off: float, tw: float, th: float,
+               taken: list[tuple[float, float, float, float]]) -> tuple[float, float]:
+    """Top-left of a ``tw x th`` tag next to a marker at (x, y), avoiding ``taken`` rects."""
+    cands = [(x - tw / 2, y - off - th), (x + off * 0.8, y - off * 0.8 - th / 2), (x - tw / 2, y + off),
+             (x - off * 0.8 - tw, y - off * 0.8 - th / 2), (x + off * 0.8, y + off * 0.3),
+             (x - off * 0.8 - tw, y + off * 0.3)]
+    best = None
+    for cx, cy in cands:
+        cx = min(max(cx, 1.0), cv_.w - tw - 1.0)
+        cy = min(max(cy, 1.0), cv_.h - th - 1.0)
+        r = (cx, cy, tw, th)
+        if best is None:
+            best = r
+        if not _rects_hit(r, taken):
+            best = r
+            break
+    assert best is not None
+    taken.append(best)
+    return best[0], best[1]
+
+
+def _tag(cv_: Canvas, x: float, y: float, off: float, text: str, font: Any, fg: Any,
+         taken: list[tuple[float, float, float, float]], alpha: float = 1.0) -> None:
+    """Tiny dark pill with ``text`` next to a marker (collision-avoiding)."""
+    if not text:
+        return
+    tw = text_width(text, font) + 6
+    th = _cap_height(font) + 5
+    tx, ty = _place_tag(cv_, x, y, off, tw, th, taken)
+    cv_.rrect(tx, ty, tw, th, th / 2, PANEL_DEEP, 0.62 * alpha)
+    cv_.text(tx + tw / 2, ty + th / 2, text, font, fg, alpha, anchor="m", shadow=0)
+
+
+def render_minimap(state: OverlayState, width: int, height: int | None = None,
+                   now: float | None = None) -> np.ndarray:
+    """Transparent overlay drawn *over the real minimap* (premultiplied BGRA ``height x width``).
+
+    Only thin, semi-transparent marks (the real minimap stays readable): rings + role tags on
+    tracked enemies (red) / allies (blue), me (teal), the enemy jungler emphasized, fog regions
+    of hidden enemies with a dashed bound circle and a timer, ghost marks with "12 s" at the last
+    seen position of hidden enemies, warn / danger rings around me (only when threatened),
+    approach arrows and a threat-coloured frame. Never raises (transparent image on error).
+    """
+    try:
+        w = int(min(max(int(width), 16), 2048))
+        h = int(min(max(int(height if height is not None else width), 16), 2048))
+    except (TypeError, ValueError):
+        w = h = 256
+    try:
+        return _render_minimap(state, w, h, time.monotonic() if now is None else float(now))
+    except Exception:
+        log.exception("render_minimap failed")
+        return np.zeros((h, w, 4), np.uint8)
+
+
+def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarray:
+    cv_ = Canvas(W, H)
+    S = float(min(W, H))
+    k = S / 256.0
+    phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
+    pulse = 0.5 + 0.5 * math.sin(phase * 2 * math.pi)
+    mr = MM_MARKER_R * S
+    lw = max(1.2, 1.35 * k)
+    f_tag = get_font(max(8, int(round(8.5 * k))), "bold")
+    f_time = get_font(max(8, int(round(9 * k))), "bold")
+    roles = state.roles if isinstance(state.roles, dict) else {}
+    taken: list[tuple[float, float, float, float]] = []
+
+    def px(uv: tuple[float, float]) -> tuple[float, float]:
+        return uv[0] * W, uv[1] * H
+
+    lvl = int(state.threat_level or 0) if _finite(state.threat_level or 0) else 0
+    lvl = min(max(lvl, 0), 2)
+    me = _uv_ok(state.me_uv) if state.me_uv is not None else None
+    enemies = [e for e in (state.enemies or []) if e is not None and getattr(e, "key", None)]
+    allies = [a for a in (getattr(state, "allies", None) or []) if a is not None and getattr(a, "key", None)]
+
+    # ---- fog regions (where hidden enemies can be), least confident first
+    fogs = [f for f in (state.fogs or []) if f is not None]
+    fog_keys = {f.key for f in fogs}
+    for fog in sorted(fogs, key=lambda f: (bool(getattr(f, "is_jungler", False)), f.confidence)):
+        uv = _uv_ok(fog.last_uv)
+        if uv is None:
+            continue
+        conf = _clamp01(fog.confidence)
+        vis = 0.35 + 0.65 * math.sqrt(conf) if conf > 0 else 0.0
+        main = bool(getattr(fog, "is_jungler", False))
+        region = fog.region
+        if vis > 0 and isinstance(region, np.ndarray) and region.ndim == 2 and region.shape[0] >= 4:
+            layers = _region_layers(region, int(S))
+            if layers is not None:
+                fill, edge = layers
+                if (W, H) != (int(S), int(S)):
+                    fill = cv2.resize(fill, (W, H), interpolation=cv2.INTER_LINEAR)
+                    edge = cv2.resize(edge, (W, H), interpolation=cv2.INTER_LINEAR)
+                cv_.paint(0, 0, fill, DANGER, (0.16 if main else 0.07) * vis)
+                cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.2), (0.7 if main else 0.35) * vis)
+        if main and vis > 0 and _finite(fog.radius) and fog.radius > 0:
+            x, y = px(uv)
+            cv_.ring(x, y, float(fog.radius) * S, lw, _mix(DANGER, WHITE, 0.35), 0.55 * vis,
+                     dash=(max(4.0, 5 * k), max(3.0, 4 * k)))
+
+    # ---- warn / danger rings around me: only when threatened
+    if me is not None and lvl >= 1:
+        mx, my = px(me)
+        warn_r = max(0.0, float(state.warn_radius)) * S if _finite(state.warn_radius) else 0.0
+        dang_r = max(0.0, float(state.danger_radius)) * S if _finite(state.danger_radius) else 0.0
+        if warn_r > 2:
+            cv_.ring(mx, my, warn_r, lw, WARNING, 0.6, dash=(max(4.0, 6 * k), max(3.0, 4 * k)),
+                     phase=now * 0.15)
+        if lvl >= 2 and dang_r > 2:
+            cv_.disc(mx, my, dang_r, DANGER, 0.07 + 0.05 * pulse)
+            cv_.ring(mx, my, dang_r, lw * 1.2, DANGER, 0.8)
+
+    # ---- hidden enemies: ghost at the last seen point + elapsed time
+    for e in enemies:
+        if e.visible:
+            continue
+        uv = _uv_ok(e.uv) if e.uv is not None else None
+        ago = e.last_seen_ago
+        if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
+            continue
+        fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
+        x, y = px(uv)
+        d = mr * 1.35
+        cv_.image(x, y, round_icon_patch(e.icon, d, _mix(DANGER, GREY, 0.3), max(1.2, lw * 0.9), grey=True,
+                                         letter=e.name or e.alias or "?"), 0.62 * fade)
+        cv_.ring(x, y, mr * 0.95, lw * 0.9, DANGER, 0.55 * fade, dash=(3.0 * k + 1, 2.5 * k + 1))
+        label = fmt_seconds(ago)
+        if e.is_jungler or e.key in fog_keys:
+            label = f"{role_tag(e, roles)} {label}"
+        _tag(cv_, x, y, mr * 1.05, label, f_time, GOLD_LIGHT, taken, alpha=max(0.7, fade))
+
+    # ---- allies (thin blue rings)
+    for a in allies:
+        uv = _uv_ok(a.uv) if (a.visible and a.uv is not None) else None
+        if uv is None:
+            continue
+        x, y = px(uv)
+        cv_.ring(x, y, mr, lw, ALLY_BLUE, 0.75)
+        _tag(cv_, x, y, mr + 1, role_tag(a, roles), f_tag, ALLY_TAG_RGB, taken, 0.9)
+
+    # ---- me
+    if me is not None:
+        x, y = px(me)
+        cv_.ring(x, y, mr * 1.08, lw * 1.5, TEAL, 0.95)
+        cv_.ring(x, y, mr * 1.08 + lw * 2.2, lw * 0.8, TEAL, 0.35)
+
+    # ---- visible enemies: rings, approach arrows, jungler emphasis
+    visible = [e for e in enemies if e.visible and e.uv is not None and _uv_ok(e.uv) is not None]
+    visible.sort(key=lambda e: (e.is_jungler, e.approaching))
+    for e in visible:
+        uv = _uv_ok(e.uv)
+        assert uv is not None
+        x, y = px(uv)
+        if e.approaching:
+            vx, vy = (e.velocity if e.velocity is not None and _finite(*e.velocity) else (0.0, 0.0))
+            if math.hypot(vx, vy) < 1e-4 and me is not None:
+                vx, vy = me[0] - uv[0], me[1] - uv[1]
+            n = math.hypot(vx, vy)
+            if n > 1e-6:
+                ux, uy = vx / n, vy / n
+                L = max(mr * 1.1, min(mr * 2.2, n * S * 1.5))
+                sx, sy = x + ux * (mr + lw), y + uy * (mr + lw)
+                _arrow(cv_, sx, sy, sx + ux * L, sy + uy * L, max(1.5, 1.6 * k), DANGER, 0.9)
+        if e.is_jungler:
+            cv_.ring(x, y, mr * (1.15 + 0.35 * phase), lw, DANGER, 0.75 * (1 - phase) ** 1.5)
+            cv_.ring(x, y, mr * 1.02, lw * 1.9, DANGER, 0.95)
+        else:
+            cv_.ring(x, y, mr, lw * 1.2, DANGER, 0.85)
+        _tag(cv_, x, y, mr + 1, role_tag(e, roles), f_tag, ENEMY_TAG_RGB if not e.is_jungler else WHITE,
+             taken, 1.0)
+
+    # ---- fog timers (last seen point of the jungler's estimate when not drawn above)
+    ghost_keys = {e.key for e in enemies if not e.visible and e.uv is not None}
+    by_key = {e.key: e for e in enemies}
+    for fog in fogs:
+        if fog.key in ghost_keys and by_key.get(fog.key) is not None \
+                and by_key[fog.key].last_seen_ago is not None and _finite(by_key[fog.key].last_seen_ago) \
+                and by_key[fog.key].last_seen_ago <= LAST_SEEN_MAX_S:
+            continue
+        uv = _uv_ok(fog.last_uv)
+        if uv is None:
+            continue
+        x, y = px(uv)
+        ev = by_key.get(fog.key)
+        cv_.ring(x, y, mr * 0.95, lw * 0.9, DANGER, 0.55, dash=(3.0 * k + 1, 2.5 * k + 1))
+        tag = role_tag(ev, roles) if ev is not None else ("JGL" if getattr(fog, "is_jungler", False) else "")
+        _tag(cv_, x, y, mr * 1.05, f"{tag} {fmt_seconds(fog.elapsed)}".strip(), f_time, GOLD_LIGHT, taken)
+
+    # ---- frame: only when threatened (thin, threat-coloured)
+    if lvl >= 1:
+        col = DANGER if lvl >= 2 else WARNING
+        a = (0.55 + 0.4 * pulse) if lvl >= 2 else 0.55
+        cv_.rrect(0.5, 0.5, W - 1, H - 1, 2.0, None, border=col, border_alpha=a, border_w=max(1.5, 2 * k))
+    return cv_.to_bgra()
 
 
 # ======================================================================================

@@ -69,6 +69,7 @@ BOOL_FIELDS: tuple[str, ...] = (
     "alert_collapse",
     "alert_jungler_spotted",
     "alert_laner_mia",
+    "safe_mode",
     "download_skin_icons",
     "autostart",
     "collect_samples",
@@ -86,6 +87,8 @@ BOOL_FIELDS: tuple[str, ...] = (
     "hud_enabled",
     "danger_flash",
     "break_reminder",
+    # updates
+    "check_updates_on_start",
 )
 #: Global hotkey fields (see hotkeys.py for the accepted names; "" = disabled), in priority order:
 #: when two fields hold the same key, the later one is disabled.
@@ -106,6 +109,8 @@ CUSTOM_POSITION_FALLBACK: dict[str, tuple[str, str]] = {
     "hud_position": ("hud_xy", "top_left"),
 }
 VOICE_NAME_MAX_LEN = 256
+#: Update settings: free text fields (URL / GitHub token), printable, stripped, bounded.
+UPDATE_TEXT_FIELDS: dict[str, int] = {"update_channel_url": 2048, "github_token": 512}
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -142,6 +147,7 @@ class Config:
     alert_collapse: bool = True
     alert_jungler_spotted: bool = True
     alert_laner_mia: bool = False
+    safe_mode: bool = False         # "mode sûr": no gank / jungler-tracking alerts, no fog
     sensitivity: float = 1.0        # 0.6..1.6, multiplies the radii
     warn_radius: float = 0.22       # normalized minimap (~3300 game units)
     danger_radius: float = 0.12     # (~1800 units)
@@ -185,6 +191,10 @@ class Config:
     break_reminder: bool = True
     # UI (§8.2)
     ui_geometry: str = ""           # main window geometry "WxH+X+Y" ("" = default)
+    # updates (updater.py)
+    update_channel_url: str = ""    # "" = default GitHub URL of release/version.json
+    github_token: str = ""          # personal access token for the private repo ("" = none)
+    check_updates_on_start: bool = True
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""
@@ -399,6 +409,10 @@ def _validate_field(name: str, value: Any, default: Any) -> Any:
         res = _as_lead_list(value)
     elif name == "ui_geometry":
         res = _as_geometry(value)
+    elif name in UPDATE_TEXT_FIELDS:
+        res = _as_voice_name(value)
+        if res is not _INVALID:
+            res = res[: UPDATE_TEXT_FIELDS[name]]
     else:  # a field without a rule: keep it as is
         res = value
     return copy.deepcopy(default) if res is _INVALID else res

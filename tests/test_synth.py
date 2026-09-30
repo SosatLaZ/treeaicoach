@@ -92,7 +92,7 @@ def test_determinism() -> None:
 def test_native_size_range() -> None:
     rng = np.random.default_rng(0)
     sizes = [synth.sample_native_size(rng) for _ in range(300)]
-    assert min(sizes) >= 170 and max(sizes) <= 440
+    assert min(sizes) >= 160 and max(sizes) <= 520
     assert len(set(sizes)) > 50
 
 

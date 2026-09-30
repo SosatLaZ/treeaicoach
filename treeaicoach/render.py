@@ -154,6 +154,8 @@ CAMERA_THICKNESS: float = 0.007     # normalized, at least 1 px
 CAMERA_SIZE: tuple[float, float] = (0.275, 0.155)
 #: Movement path (white line between my icon and the clicked point).
 PATH_BGR: BGR = (235, 235, 235)
+#: Local-player glowing outline (teal / cyan, BGR).
+SELF_GLOW_BGR: BGR = (225, 235, 110)
 #: Small white texts (epic camp timers, "1:17").
 TEXT_BGR: BGR = (250, 250, 250)
 TEXT_HEIGHT: float = 0.03           # normalized glyph height
@@ -270,7 +272,8 @@ class ChampionSprite:
     ``ring_frac`` / ``ring_shading`` / ``inner_line_bgr`` / ``inner_line_frac`` /
     ``outline_frac`` override the icon style (see :func:`draw_champion_icon`); ``halo``
     (0..1) adds a soft glow of the ring colour just outside the ring; ``recall_bgr``
-    overrides the recall halo colour (None -> cyan, red for enemies).
+    overrides the recall halo colour (None -> cyan, red for enemies); ``self_glow`` (0..1)
+    draws the local player's thick teal glowing outline (``glow_bgr`` overrides it).
     """
 
     u: float
@@ -290,6 +293,10 @@ class ChampionSprite:
     outline_frac: float | None = None
     halo: float = 0.0
     recall_bgr: tuple | None = None
+    #: Local-player highlight (0..1): thick bright teal / cyan glowing outline drawn
+    #: around the icon (seen on real 2025+ clients); ``glow_bgr`` overrides its colour.
+    self_glow: float = 0.0
+    glow_bgr: tuple | None = None
 
 
 @dataclass
@@ -339,7 +346,7 @@ class Scene:
     fog_texture: str | None = None          # None -> uniform darkening (real game)
     camp_icons: list[tuple] | None = None   # explicit (u, v, icon[, size]); None -> CAMPS
     sprites: list[Sprite] = field(default_factory=list)
-    texts: list[tuple] = field(default_factory=list)        # (u, v, text[, height]) white
+    texts: list[tuple] = field(default_factory=list)        # (u, v, text[, height[, thick[, bgr]]])
     path: list[tuple[float, float]] | None = None           # movement path polyline (white)
     shop: bool = True                                       # shop icon at the allied fountain
     structure_scale: float = 1.0
@@ -1158,17 +1165,18 @@ class MinimapRenderer:
             try:
                 u, v, text = float(t[0]), float(t[1]), str(t[2])[:16]
                 hgt = float(t[3]) if len(t) > 3 else TEXT_HEIGHT
+                thick = max(1, min(4, int(t[4]))) if len(t) > 4 else 1
+                col = tuple(int(c) for c in t[5][:3]) if len(t) > 5 else TEXT_BGR
             except (TypeError, ValueError, IndexError):
                 continue
             if not _finite(u, v, hgt) or not text:
                 continue
             scale = max(0.2, hgt * S / 22.0)
-            thick = 1
             (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
             org = (int(round(u * S - tw / 2)), int(round(v * S + th / 2)))
             cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick + 1,
                         cv2.LINE_AA)
-            cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, TEXT_BGR, thick,
+            cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, col, thick,
                         cv2.LINE_AA)
 
     def _draw_champions(self, img: np.ndarray, scene: Scene) -> None:
@@ -1195,6 +1203,13 @@ class MinimapRenderer:
                 and _finite(c.inner_line_frac) else None
             ol_px = c.outline_frac * rp if c.outline_frac is not None \
                 and _finite(c.outline_frac) else None
+            glow = float(c.self_glow) if _finite(c.self_glow) else 0.0
+            if glow > 0 and not c.grey:
+                gcol = c.glow_bgr if c.glow_bgr is not None else SELF_GLOW_BGR
+                gw = max(1.0, rp * (0.18 + 0.22 * min(1.0, glow)))
+                draw_ring(img, cx, cy, rp + gw * 0.25, gw, gcol, opacity=min(1.0, 0.5 + glow),
+                          glow=0.9 + glow)
+                ring = gcol
             halo = float(c.halo) if _finite(c.halo) else 0.0
             if halo > 0 and not c.grey:
                 draw_ring(img, cx, cy, rp + 0.35, 0.8, ring, opacity=min(1.0, halo),

@@ -4,10 +4,10 @@
 variant, fog of war with vision circles, 0-10 champion icons with realistic team counts,
 minion waves, structures, camps, wards, pings, camera rectangle, recall / teleport rings,
 hard negatives...), renders it with :mod:`treeaicoach.render` at a random *native* minimap
-size (170-440 px, like real screens) and then degrades it the way a screen / video capture
+size (160-520 px, like real screens) and then degrades it the way a screen / video capture
 does (crop misalignment with the HUD frame, video downscale, JPEG, resize with a random
-filter, blur, colour jitter, noise). It returns the image and one label per champion icon
-whose centre lies inside the image.
+filter, blur, colour jitter, noise, chroma subsampling, moire of a photographed screen).
+It returns the image and one label per champion icon whose centre lies inside the image.
 
 All visual facts come from ``docs/MINIMAP_FACTS.md`` (measured on real captures): the
 local player's ring is the same light blue as the allies' (so "self" icons are labelled
@@ -90,6 +90,12 @@ INNER_LINE_RGB: tuple[tuple[int, int, int], tuple[int, int, int]] = ((30, 37, 55
 #: colour-blind magenta and blue.
 PING_RGB: tuple[tuple[int, int, int], ...] = ((33, 188, 253), (248, 34, 67), (245, 190, 15),
                                               (9, 215, 128), (255, 79, 203), (24, 117, 255))
+#: Local player's glowing outline (teal / cyan), measured on a 2025 phone photo.
+SELF_GLOW_RGB: tuple[tuple[int, int, int], tuple[int, int, int]] = ((95, 205, 190),
+                                                                    (170, 255, 245))
+#: Jungle-camp timer text colours (white, light grey, pale yellow), BGR.
+TIMER_TEXT_BGR: tuple[tuple[int, int, int], ...] = ((250, 250, 250), (235, 235, 235),
+                                                    (215, 220, 225), (190, 240, 250))
 #: HUD frame around the minimap (dark blue-green band, thin bronze line), BGR.
 FRAME_BAND_BGR: tuple[int, int, int] = (22, 26, 14)
 FRAME_LINE_BGR: tuple[int, int, int] = (70, 118, 150)
@@ -131,18 +137,23 @@ TEAMS: tuple[str, str] = ("ORDER", "CHAOS")
 class SynthConfig:
     """Probabilities and ranges of the generator (all tunable)."""
 
-    native_min: int = 170
-    native_max: int = 440
+    native_min: int = 160
+    native_max: int = 520
     #: Probability to use a common screen-derived size (720p / 900p / 1080p / 1440p...).
     p_common_native: float = 0.4
-    common_natives: tuple[int, ...] = (171, 204, 224, 255, 290, 339)
+    common_natives: tuple[int, ...] = (160, 171, 204, 224, 255, 290, 316, 339, 400, 460, 520)
     #: Champion icon diameter / minimap width (real 0.088-0.10; wider for robustness).
     icon_diam: tuple[float, float] = (0.07, 0.12)
     p_empty: float = 0.05            # fully fogged / empty map, no champion
     p_self: float = 0.85             # local player's icon present
     p_random_hue: float = 0.10       # random ring colour, cls_valid=False
     p_dummy: float = 0.03            # dummy_*_circle portrait (unknown champion)
-    p_teamfight: float = 0.35
+    p_teamfight: float = 0.45
+    p_stack: float = 0.35            # 2-3 icons stacked on top of each other
+    p_self_glow: float = 0.6         # local player drawn with the thick teal glowing outline
+    p_self_wash: float = 0.5         # ... and its portrait washed with cyan (given the glow)
+    p_timer_text: float = 0.7        # jungle-camp timer texts ("10:29", "1:24"), 0-5 per map
+    p_question_ping: float = 0.35    # yellow "?" circle pings (on the map / on champions)
     p_recall: float = 0.06
     p_teleport: float = 0.02
     p_edge: float = 0.04             # icon partly outside the map edge
@@ -157,9 +168,14 @@ class SynthConfig:
     p_no_fog: float = 0.04
     p_jitter: float = 0.35           # 1-3 px misalignment of the minimap crop
     p_video_downscale: float = 0.25
-    p_jpeg: float = 0.5
+    p_jpeg: float = 0.6
     jpeg_quality: tuple[int, int] = (55, 95)
-    p_blur: float = 0.3
+    p_strong_jpeg: float = 0.35      # given JPEG: photo / stream quality 30-60
+    strong_jpeg_quality: tuple[int, int] = (30, 60)
+    p_chroma: float = 0.35           # 4:2:0-like chroma subsampling (colour bleeding)
+    p_moire: float = 0.15            # photo of a screen: faint sinusoidal interference
+    p_aniso: float = 0.3             # 1-3 % non-uniform scaling of the crop
+    p_blur: float = 0.35
     p_noise: float = 0.5
     noise_sigma: tuple[float, float] = (1.0, 5.0)
     p_color: float = 0.85
@@ -366,6 +382,23 @@ def _pick_cell(rng: np.random.Generator, cells: np.ndarray) -> np.ndarray:
     return c + rng.uniform(-0.5, 0.5, 2) / CELL_GRID
 
 
+def _wash(icon: np.ndarray, bgr: tuple[int, int, int], k: float) -> np.ndarray:
+    """RGBA portrait blended towards a colour (``k`` 0..1), alpha kept."""
+    out = icon.copy()
+    col = np.asarray((bgr[2], bgr[1], bgr[0]), np.float32)     # RGBA portraits
+    rgb = out[:, :, :3].astype(np.float32)
+    lum = rgb.mean(axis=2, keepdims=True) / 255.0
+    tgt = col[None, None, :] * (0.35 + 0.8 * lum)
+    out[:, :, :3] = np.clip(rgb + (tgt - rgb) * k, 0, 255).astype(np.uint8)
+    return out
+
+
+def _timer_text(rng: np.random.Generator) -> str:
+    """Random respawn / game clock text: "1:24", "10:29", "3:20"."""
+    m = int(rng.integers(0, 16)) if rng.random() < 0.75 else int(rng.integers(0, 6))
+    return f"{m}:{int(rng.integers(0, 60)):02d}"
+
+
 def _clock_text(rng: np.random.Generator) -> str:
     t = int(rng.integers(3, 300))
     return f"{t // 60}:{t % 60:02d}"
@@ -470,8 +503,34 @@ class _SceneBuilder:
                 if all(math.hypot(u - o.u, v - o.v) >= min_d for o in out):
                     out.append(_Champ(u, v, r, rel))
                     break
+        if len(out) >= 2 and rng.random() < cfg.p_stack:
+            self._stack(out)
         order = rng.permutation(len(out))   # no drawing priority for the local player
         return [out[i] for i in order]
+
+    def _stack(self, out: list[_Champ]) -> None:
+        """Move 2-3 icons into a tight, overlapping cluster (like a real skirmish)."""
+        rng = self.rng
+        k = min(len(out), 2 + int(rng.random() < 0.55))
+        idx = rng.choice(len(out), k, replace=False)
+        c0 = out[int(idx[0])]
+        cu, cv_ = c0.u, c0.v
+        ang = rng.uniform(0, 2 * math.pi)
+        placed = [(cu, cv_)]
+        for j in idx[1:]:
+            ch = out[int(j)]
+            for _ in range(8):
+                ang += rng.uniform(0.9, 2.4)
+                d = ch.r * rng.uniform(0.55, 1.15)
+                bu, bv = _choice(rng, placed)
+                u, v = bu + d * math.cos(ang), bv + d * math.sin(ang)
+                if not (0.0 <= u < 1.0 and 0.0 <= v < 1.0):
+                    continue
+                if all(math.hypot(u - o.u, v - o.v) >= 0.5 * ch.r
+                       for o in out if o is not ch):
+                    ch.u, ch.v = u, v
+                    placed.append((u, v))
+                    break
 
     def champion_sprites(self, champs: list[_Champ]) -> tuple[list[R.ChampionSprite], list[bool]]:
         rng, cfg, A = self.rng, self.cfg, self.A
@@ -512,6 +571,12 @@ class _SceneBuilder:
                 f = bright * rng.uniform(0.93, 1.07)
                 if abs(f - 1.0) > 0.02:
                     icon = cv2.multiply(icon, (f, f, f, 1.0))   # saturating, alpha kept
+            self_glow, glow_bgr = 0.0, None
+            if rel == "self" and cls_valid and rng.random() < cfg.p_self_glow:
+                self_glow = rng.uniform(0.35, 1.0)
+                glow_bgr = _lerp_rgb(rng, SELF_GLOW_RGB, 8.0)
+                if icon is not None and rng.random() < cfg.p_self_wash:
+                    icon = _wash(icon, glow_bgr, rng.uniform(0.2, 0.65))
             recall = rng.random() < (cfg.p_recall if rel != "enemy" else cfg.p_recall / 3)
             sprites.append(R.ChampionSprite(
                 u=ch.u, v=ch.v, r=ch.r, relation=rel, icon=icon, ring_bgr=ring, recall=recall,
@@ -522,6 +587,7 @@ class _SceneBuilder:
                 inner_line_frac=inner_frac, outline_frac=outline,
                 halo=(rng.uniform(0.12, 0.45) if rng.random() < (0.35 if rel == "enemy" else 0.12)
                       else 0.0),
+                self_glow=self_glow, glow_bgr=glow_bgr,
             ))
             valid.append(cls_valid)
         return sprites, valid
@@ -627,6 +693,28 @@ class _SceneBuilder:
                     out.append((u, v, _choice(rng, ("jungle_camp_current", "jungle_camp_next",
                                                      "timergrey")), rng.uniform(0.022, 0.03)))
         return out
+
+    def timer_texts(self) -> None:
+        """0-5 white "mm:ss" camp timers near camps / river (hard negatives)."""
+        rng = self.rng
+        if rng.random() > self.cfg.p_timer_text:
+            return
+        hgt0 = rng.uniform(0.028, 0.048)
+        thick = 2 if self.native * hgt0 > 17 and rng.random() < 0.6 else 1
+        col = _choice(rng, TIMER_TEXT_BGR)
+        for _ in range(int(rng.integers(1, 6))):
+            x = rng.random()
+            if x < 0.6:
+                u, v, _ = _choice(rng, R.CAMPS)
+                u, v = u + rng.normal(0, 0.02), v + rng.normal(0, 0.02)
+            elif x < 0.85:
+                p, _t = _choice(rng, self.A.rivers).at(rng.random())
+                u, v = p[0] + rng.normal(0, 0.03), p[1] + rng.normal(0, 0.03)
+            else:
+                p = _pick_cell(rng, self.cells.all)
+                u, v = p[0], p[1]
+            self.texts.append((float(np.clip(u, 0.05, 0.95)), float(np.clip(v, 0.03, 0.97)),
+                               _timer_text(rng), hgt0 * rng.uniform(0.93, 1.07), thick, col))
 
     def plants(self) -> None:
         rng = self.rng
@@ -764,6 +852,7 @@ class _SceneBuilder:
                 self.add_vision(p[0], p[1], rng.uniform(0.04, 0.09))
         minions = [m for m in minions if m[2] == "ally" or self.in_vision(m[0], m[1], 0.0)]
         camp_icons = self.camps()
+        self.timer_texts()
         self.plants()
         pings = self.pings(champs)
         self.hard_negatives()
@@ -815,6 +904,36 @@ def _draw_bang_button(img: np.ndarray, rng: np.random.Generator) -> None:
              BANG_MARK_BGR, t, cv2.LINE_AA)
     cv2.circle(img, (x, int(round(cy + hd * 0.38))), max(1, t // 2 + 1), BANG_MARK_BGR, -1,
                cv2.LINE_AA)
+
+
+def _draw_question_pings(img: np.ndarray, rng: np.random.Generator,
+                         champs: Sequence[R.ChampionSprite]) -> None:
+    """Yellow "?" circle pings (MIA / caution), sometimes over a champion (hard negative)."""
+    n = img.shape[0]
+    for _ in range(int(rng.integers(1, 4))):
+        if champs and rng.random() < 0.4:
+            c = _choice(rng, champs)
+            cx = (c.u + rng.normal(0, 0.6) * c.r) * n
+            cy = (c.v + rng.normal(0, 0.6) * c.r) * n
+        else:
+            cx, cy = n * rng.uniform(0.05, 0.95), n * rng.uniform(0.05, 0.95)
+        rad = n * rng.uniform(0.018, 0.032)
+        yel = _lerp_rgb(rng, ((230, 170, 10), (255, 215, 40)), 6.0)
+        sh = 4
+        c = (int(round(cx * 16)), int(round(cy * 16)))
+        if rng.random() < 0.7:
+            cv2.circle(img, c, int(round(rad * 16)), (20, 25, 30), -1, cv2.LINE_AA, sh)
+            cv2.circle(img, c, int(round(rad * 16)), yel, max(1, int(rad * 0.28)), cv2.LINE_AA,
+                       sh)
+            qcol = yel
+        else:
+            cv2.circle(img, c, int(round(rad * 16)), yel, -1, cv2.LINE_AA, sh)
+            qcol = (25, 25, 25)
+        scale = rad * 1.2 / 22.0
+        th = max(1, int(round(rad * 0.25)))
+        (tw, tht), _ = cv2.getTextSize("?", cv2.FONT_HERSHEY_SIMPLEX, scale, th)
+        cv2.putText(img, "?", (int(round(cx - tw / 2)), int(round(cy + tht / 2))),
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, qcol, th, cv2.LINE_AA)
 
 
 def _draw_ping_wheel(img: np.ndarray, rng: np.random.Generator, assets: _Assets) -> None:
@@ -884,12 +1003,39 @@ def _color_lut(rng: np.random.Generator) -> np.ndarray:
     x = np.arange(256, dtype=np.float32) / 255.0
     gamma = math.exp(rng.normal(0.0, 0.12))
     contrast = rng.uniform(0.85, 1.2)
-    bright = rng.uniform(-0.06, 0.06)
+    bright = rng.uniform(-0.1, 0.1)
     y = np.power(x, gamma)
     y = (y - 0.5) * contrast + 0.5 + bright
     cast = rng.uniform(0.94, 1.06, 3)
     lut = np.clip(y[:, None] * cast[None, :] * 255.0 + 0.5, 0, 255).astype(np.uint8)
     return lut.reshape(256, 1, 3)
+
+
+def _chroma_subsample(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Halve (or quarter) the chroma resolution like 4:2:0 video / phone JPEG."""
+    ycc = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
+    h, w = ycc.shape[:2]
+    f = 2 if rng.random() < 0.75 else 3
+    ch = ycc[:, :, 1:]
+    small = cv2.resize(ch, (max(1, w // f), max(1, h // f)), interpolation=cv2.INTER_AREA)
+    ycc[:, :, 1:] = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+    return cv2.cvtColor(ycc, cv2.COLOR_YCrCb2BGR)
+
+
+def _moire(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Faint interference pattern of a photographed screen (two crossed sinusoids)."""
+    h, w = img.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    pat = np.zeros((h, w), np.float32)
+    for _ in range(2):
+        a = rng.uniform(0, math.pi)
+        per = rng.uniform(2.2, 9.0)
+        pat += np.sin((xx * math.cos(a) + yy * math.sin(a)) * (2 * math.pi / per)
+                      + rng.uniform(0, 6.3))
+    amp = rng.uniform(2.0, 7.0)
+    tint = rng.uniform(0.6, 1.0, 3).astype(np.float32)
+    out = img.astype(np.float32) + (pat * amp)[:, :, None] * tint[None, None, :]
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def _degrade(img: np.ndarray, rng: np.random.Generator, size: int, cfg: SynthConfig,
@@ -899,11 +1045,24 @@ def _degrade(img: np.ndarray, rng: np.random.Generator, size: int, cfg: SynthCon
     n = img.shape[0]
     x0 = y0 = 0.0
     cw = ch = float(n)
-    if rng.random() < cfg.p_jitter:
-        pad = 6
+    jitter = rng.random() < cfg.p_jitter
+    aniso = rng.random() < cfg.p_aniso
+    if jitter or aniso:
+        pad = 6 + int(math.ceil(0.03 * n))
         canvas = _frame_canvas(img, pad, rng)
-        dx, dy = (int(v) for v in rng.integers(-3, 4, 2))
-        dw, dh = (int(v) for v in rng.integers(-3, 4, 2))
+        if jitter:
+            dx, dy = (int(v) for v in rng.integers(-3, 4, 2))
+            dw, dh = (int(v) for v in rng.integers(-3, 4, 2))
+        else:
+            dx = dy = dw = dh = 0
+        if aniso:      # 1-3 % more / less on one axis (non-uniform capture scaling)
+            k = int(round(n * rng.uniform(0.01, 0.03))) * (1 if rng.random() < 0.5 else -1)
+            if rng.random() < 0.5:
+                dw += k
+                dx -= k // 2
+            else:
+                dh += k
+                dy -= k // 2
         cw_i, ch_i = n + dw, n + dh
         img = canvas[pad + dy:pad + dy + ch_i, pad + dx:pad + dx + cw_i]
         x0, y0, cw, ch = float(dx), float(dy), float(cw_i), float(ch_i)
@@ -912,8 +1071,11 @@ def _degrade(img: np.ndarray, rng: np.random.Generator, size: int, cfg: SynthCon
         w2 = max(8, int(round(img.shape[1] * f)))
         h2 = max(8, int(round(img.shape[0] * f)))
         img = _resize_random(img, w2, h2, rng, (cv2.INTER_LINEAR, -1))
+    if rng.random() < cfg.p_chroma:
+        img = _chroma_subsample(img, rng)
     if rng.random() < cfg.p_jpeg:
-        q = int(rng.integers(cfg.jpeg_quality[0], cfg.jpeg_quality[1] + 1))
+        qr = cfg.strong_jpeg_quality if rng.random() < cfg.p_strong_jpeg else cfg.jpeg_quality
+        q = int(rng.integers(qr[0], qr[1] + 1))
         ok, buf = cv2.imencode(".jpg", np.ascontiguousarray(img), [cv2.IMWRITE_JPEG_QUALITY, q])
         if ok:
             dec = cv2.imdecode(buf, cv2.IMREAD_COLOR)
@@ -924,10 +1086,12 @@ def _degrade(img: np.ndarray, rng: np.random.Generator, size: int, cfg: SynthCon
     else:
         img = np.ascontiguousarray(img).copy()
     if rng.random() < cfg.p_blur:
-        img = cv2.GaussianBlur(img, (0, 0), rng.uniform(0.3, 0.9))
+        img = cv2.GaussianBlur(img, (0, 0), rng.uniform(0.3, 1.1))
+    if rng.random() < cfg.p_moire:
+        img = _moire(img, rng)
     if rng.random() < cfg.p_color:
         img = cv2.LUT(img, _color_lut(rng))
-        sat = rng.uniform(0.7, 1.2)
+        sat = rng.uniform(0.6, 1.35)
         if abs(sat - 1.0) > 0.03:
             grey = cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
             img = cv2.addWeighted(img, sat, grey, 1.0 - sat, 0.0)
@@ -1009,6 +1173,8 @@ def render_native(rng: np.random.Generator, native: int, cfg: SynthConfig = DEFA
     builder = _SceneBuilder(rng, A, cfg, native)
     scene, valid = builder.build()
     img = A.renderer.render(scene)
+    if rng.random() < cfg.p_question_ping:
+        _draw_question_pings(img, rng, scene.champions)
     if rng.random() < cfg.p_ping_wheel:
         _draw_ping_wheel(img, rng, A)
     if rng.random() < cfg.p_bang_button:
