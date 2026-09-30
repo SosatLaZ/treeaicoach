@@ -70,8 +70,11 @@ BACKOFF_MAX_S = 10.0
 CAMERA_SELF_MAX_DIST = 0.12      # camera-centre fallback for "self": ally icon within this
 STICKY_SELF_S = 0.6              # my icon misread: my track seen this recently...
 STICKY_SELF_DIST = 0.025         # ... and an unidentified icon this close to it -> it is me
+JUMP_CHECK_S = 1.0               # an identity seen this recently cannot jump farther than
+JUMP_SPEED = 0.08                # ... JUMP_SPEED * dt + JUMP_SLACK (walk + Flash + detector noise)
+JUMP_SLACK = 0.06
 IDENTITY_SWAP_HIDDEN_S = 1.5     # an enemy hidden this long popping up on another enemy's spot
-IDENTITY_SWAP_DIST = 0.03        # (this close) is that other enemy misidentified
+IDENTITY_SWAP_DIST = 0.05        # (this close) is that other enemy misidentified
 COLLECT_MAX_FILES = 2000
 RECENT_ALERTS_MAX = 50
 BREAK_LOSS_STREAK = 3
@@ -1096,6 +1099,21 @@ class CoachEngine:
         if tracker is None or not identified:
             return identified
         out = list(identified)
+        tracks = {tr.alias: tr for tr in tracker.tracks() if tr.alias}
+        for i, x in enumerate(out):
+            alias = getattr(x, "alias", None)
+            own = tracks.get(alias) if alias else None
+            if own is None or getattr(x, "relation", None) == "self":
+                continue
+            dt = t - own.last_seen
+            pos = own.raw_position() if hasattr(own, "raw_position") else own.position()
+            if pos is None or not (0.0 <= dt <= JUMP_CHECK_S):
+                continue
+            det = getattr(x, "det", x)
+            d = math.hypot(float(det.u) - pos[0], float(det.v) - pos[1])
+            if d > JUMP_SPEED * dt + JUMP_SLACK:
+                # physically impossible move: the identity (not the icon) is wrong
+                out[i] = self._with(x, alias=None, id_score=0.0)
         rel = [getattr(x, "relation", None) for x in out]
         me = tracker.me() if "self" not in rel else None
         if me is not None and t - me.last_seen <= STICKY_SELF_S:
