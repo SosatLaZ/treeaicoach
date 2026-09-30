@@ -52,6 +52,8 @@ RADAR_MIN, RADAR_MAX = 96, 1024
 HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 340, 280, 620
 #: Flash intensity quantization (the full-screen image is re-rendered only when it changes).
 FLASH_STEP = 0.1
+#: Refresh rate (Hz) of the radar / HUD while nothing is animated (saves CPU).
+CALM_HZ = 4.0
 #: How often (s) visible windows are re-asserted as topmost.
 TOPMOST_EVERY_S = 2.0
 RADAR_POSITIONS = ("above_minimap", "left_of_minimap", "top_left", "custom")
@@ -269,6 +271,22 @@ def quantize_flash(intensity: Any) -> float:
     if not math.isfinite(f) or f <= 0:
         return 0.0
     return round(min(1.0, round(f / FLASH_STEP) * FLASH_STEP), 3)
+
+
+def needs_fast_refresh(state: Any) -> bool:
+    """True while something on the radar / HUD animates (threat, visible jungler, fading alert)."""
+    try:
+        if int(getattr(state, "threat_level", 0) or 0) >= 1:
+            return True
+        if float(getattr(state, "flash", 0.0) or 0.0) > 0:
+            return True
+        la = getattr(state, "last_alert", None)
+        if la and float(la[2]) < 4.5:
+            return True
+        return any(getattr(e, "visible", False) and (getattr(e, "is_jungler", False) or getattr(e, "approaching", False))
+                   for e in (getattr(state, "enemies", None) or []) if e is not None)
+    except Exception:
+        return True
 
 
 def move_mode_frame(bgra: np.ndarray, label: str = "") -> np.ndarray:
@@ -864,6 +882,7 @@ class OverlayManager:
     def _loop(self, api: _Api, windows: dict[str, LayeredWindow]) -> None:
         period = 1.0 / REFRESH_HZ
         last_top = 0.0
+        last_draw = 0.0
         flash_key: Any = None
         click_through = True
         errors = 0
@@ -885,7 +904,10 @@ class OverlayManager:
                         w.hide()
                     flash_key = None
                 else:
-                    flash_key = self._refresh(api, windows, state, cfg, move, custom, flash_key)
+                    fast = move or needs_fast_refresh(state) or not any(w.visible for w in windows.values())
+                    if fast or t0 - last_draw >= 1.0 / CALM_HZ - 1e-3:
+                        last_draw = t0
+                        flash_key = self._refresh(api, windows, state, cfg, move, custom, flash_key)
                     if t0 - last_top >= TOPMOST_EVERY_S:
                         last_top = t0
                         for w in windows.values():

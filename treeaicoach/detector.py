@@ -28,7 +28,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import cv2
 import numpy as np
@@ -285,8 +285,10 @@ def decode_outputs(heatmap: Any, cls: Any, offset: Any, radius: Any, threshold: 
             score=float(min(1.0, max(0.0, scores[i]))),
             cls=CLASSES[int(np.argmax(p))], cls_probs=p,
         ))
-    # one output cell is always a distinct location; closer peaks are plateau duplicates
-    return _dedupe(dets, DUPLICATE_FRAC, 0.99 * st / S, max_det)
+    # two local maxima in neighbouring cells (distance 1 or sqrt 2 cells) can only be an
+    # equal-valued plateau: merge them; peaks 2+ cells apart stay distinct unless closer
+    # than DUPLICATE_FRAC * radius
+    return _dedupe(dets, DUPLICATE_FRAC, 1.5 * st / S, max_det)
 
 
 # ======================================================================================

@@ -11,9 +11,12 @@ computes that region; it never predicts a single position.
 * :class:`Reachability` computes a geodesic distance field on that grid by *constrained
   iterative dilation*: starting from the last seen cell, the reached set is dilated one
   step at a time (alternating a 3x3 cross and a 3x3 square kernel, which gives an
-  octagonal metric within ~6 % of the Euclidean one and never over-estimates distances)
+  octagonal metric: 89-100 % of the Euclidean distance, so it never over-estimates distances)
   and intersected with the walkable mask. Step ``i`` reaches cells at distance
   ``i / grid`` (normalized minimap units). About 1-4 ms on a 128 x 128 grid.
+  Since the octagonal ball bulges up to ~12 % past the Euclidean circle, the region is also
+  clipped to the straight-line disc (true geodesic >= straight line, so the clipped region
+  still contains every reachable point and never exceeds the drawn circle).
 * :class:`FogTracker` keeps one :class:`FogEstimate` per hidden enemy: the distance field is
   computed once per disappearance, the region for the current elapsed time is a cheap
   threshold + Flash dilation of that cached field.
@@ -249,7 +252,10 @@ class _Loss:
         q = int(reach * grid * 4)
         if self._region is not None and q == self._region_q:
             return self._region
-        core = (self.field <= reach).astype(np.uint8)
+        c = (np.arange(grid, dtype=np.float32) + 0.5) / grid
+        # straight-line bound (+ half a cell diagonal for the discretization of the start)
+        disc = np.hypot(c[None, :] - self.last_uv[0], c[:, None] - self.last_uv[1]) <= reach + 0.75 / grid
+        core = ((self.field <= reach) & disc).astype(np.uint8)
         grown = cv2.dilate(core, flash_kernel)
         np.bitwise_and(grown, walkable_u8, out=grown)
         region = grown.astype(bool)

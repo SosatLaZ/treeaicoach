@@ -12,7 +12,7 @@ tick and returns the **raw** alerts whose condition holds right now (the engine 
   positions are known, else >= 50 % of its visible time of the last 90 s spent in my lane
   (with >= 5 s observed).
 * **COLLAPSE** - >= 2 visible enemies within the warn radius, at least one of them not my lane
-  opponent and coming towards me (or just out of the fog) -> DANGER. (The back-and-forth of my
+  opponent and coming towards me -> DANGER. (The back-and-forth of my
   lane opponent is laning, not a collapse: its own approach does not count.)
 * **JUNGLER_SPOTTED** - the enemy jungler shows up after >= 25 s hidden (or for the first time
   after 1:30 of game time) at least the warn radius away -> INFO with its zone ("dans la
@@ -25,8 +25,8 @@ unknown for more than 3 s, outside Summoner's Rift, or when the matching option 
 
 Noise handling: the tracker velocity alone is too noisy for the small -0.006 / s threshold
 (icon jitter of +-0.01 gives ~0.008 / s of noise), so "comes towards me" also requires the
-distance series to decrease *significantly* (least-squares slope below -2 standard errors)
-and uses a small hysteresis (2 ticks to switch on, 3 to switch off).
+raw distance series of the last 2.5 s to decrease *significantly* (least-squares slope below
+-3.5 standard errors) and uses a small hysteresis (3 ticks to switch on, 3 to switch off).
 
 Thread safety: :meth:`GankAnalyzer.update` runs on the analysis thread; :meth:`state` returns
 an immutable snapshot for the overlay / UI threads. Never raises from its public methods.
@@ -65,12 +65,12 @@ log = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 APPROACH_SPEED = -0.006          # radial velocity (/ s) below which an enemy "comes towards me"
 APPROACH_RELEASE_SPEED = -0.003  # hysteresis: above this the approach is over
-APPROACH_ON_TICKS = 2            # consecutive positive evaluations to switch "approaching" on
+APPROACH_ON_TICKS = 3            # consecutive positive evaluations to switch "approaching" on
 APPROACH_OFF_TICKS = 3           # consecutive negative evaluations to switch it off
-TREND_WINDOW_S = 1.5             # distance-series window of the significance test
+TREND_WINDOW_S = 2.5             # distance-series window of the significance test
 TREND_MIN_POINTS = 4
 TREND_MIN_SPAN_S = 0.35
-TREND_T_STAT = -2.0              # slope must be below this many standard errors
+TREND_T_STAT = -3.5              # slope must be below this many standard errors
 TREND_SE_FLOOR = 0.0015          # standard-error floor (perfectly clean data)
 DIST_HISTORY_MAXLEN = 48
 JUST_APPEARED_S = 1.0            # "vient d'apparaître"
@@ -238,6 +238,7 @@ class GankAnalyzer:
                 or in_fountain(me_pos[0], me_pos[1], my_team):
             return self._suppress("base", now)
         my_vel = me.velocity() if me.visible else (0.0, 0.0)
+        me_raw = me.raw_position() or me_pos
 
         warn, danger = self._radii()
         gt = self._game_time(game, now)
@@ -249,7 +250,7 @@ class GankAnalyzer:
         approaching: set[str] = set()
         lane_opps: set[str] = set()
         jungler_key: str | None = None
-        near: list[tuple[Track, float, bool, bool]] = []   # (track, d, lane opponent, moving in)
+        near: list[tuple[Track, float, bool, bool]] = []   # (track, d, lane opponent, approaching)
 
         for tr in enemies:
             st = self._states.get(tr.key)
@@ -275,7 +276,7 @@ class GankAnalyzer:
                 continue
 
             d = dist(me_pos, pos)
-            self._record_distance(tr, st, d)
+            self._record_distance(tr, st, dist(me_raw, tr.raw_position() or pos))
             moving_in = self._update_approach(tr, st, me_pos, my_vel, pos, now)
             if moving_in:
                 approaching.add(tr.key)
@@ -286,7 +287,7 @@ class GankAnalyzer:
                 if spotted is not None:
                     alerts.append(spotted)
             if d < warn:
-                near.append((tr, d, lane_opp, moving_in or just_appeared))
+                near.append((tr, d, lane_opp, moving_in))
                 if lane_opp:
                     continue
                 kind = AlertKind.JUNGLER_APPROACH if is_jungler else AlertKind.ROAM_APPROACH
@@ -380,7 +381,8 @@ class GankAnalyzer:
 
     @staticmethod
     def _record_distance(tr: Track, st: _TrackState, d: float) -> None:
-        """Distance series (one sample per new observation of the enemy)."""
+        """Distance series from RAW positions (independent noise -> honest standard error),
+        one sample per new observation of the enemy."""
         if st.appeared_at != tr.appeared_at:
             st.appeared_at = tr.appeared_at
             st.dists.clear()

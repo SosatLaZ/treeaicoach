@@ -385,6 +385,15 @@ class Canvas:
         X0, Y0, X1, Y1 = max(x0, 0), max(y0, 0), min(x0 + w, self.w), min(y0 + h, self.h)
         if X0 >= X1 or Y0 >= Y1:
             return
+        if (Y1 - Y0) * (X1 - X0) > 4096:
+            # skip fully transparent rows / columns (borders, sparse layers): big CPU saving
+            sub = cov[Y0 - y0:Y1 - y0, X0 - x0:X1 - x0] > 0
+            rows = np.flatnonzero(sub.any(axis=1))
+            if rows.size == 0:
+                return
+            cols = np.flatnonzero(sub[rows[0]:rows[-1] + 1].any(axis=0))
+            Y0, Y1 = Y0 + int(rows[0]), Y0 + int(rows[-1]) + 1
+            X0, X1 = X0 + int(cols[0]), X0 + int(cols[-1]) + 1
         sy, sx = slice(Y0 - y0, Y1 - y0), slice(X0 - x0, X1 - x0)
         a = cov[sy, sx] * np.float32(alpha)
         if isinstance(rgb, np.ndarray) and rgb.ndim == 3:
@@ -392,11 +401,13 @@ class Canvas:
         else:
             col = rgb if isinstance(rgb, np.ndarray) else _rgb(rgb)
         dst = self.px[Y0:Y1, X0:X1]
-        inv = 1.0 - a
-        dst[..., :3] *= inv[..., None]
-        dst[..., :3] += col * a[..., None]
-        dst[..., 3] *= inv
-        dst[..., 3] += a
+        a4 = a[..., None]
+        dst *= 1.0 - a4
+        if isinstance(col, np.ndarray) and col.ndim == 3:
+            dst[..., :3] += col * a4
+            dst[..., 3] += a
+        else:   # uniform colour: one fused 4-channel multiply-add
+            dst += a4 * np.append(np.asarray(col, np.float32).reshape(-1)[:3], np.float32(1.0))
 
     def paint_premul(self, x0: int, y0: int, patch: np.ndarray, opacity: float = 1.0) -> None:
         """Composite a premultiplied RGBA float32 patch with its top-left at (x0, y0)."""
@@ -497,8 +508,16 @@ class Canvas:
                 col = rgb[rows]
             self.paint(X0, Y0, fill, col, alpha)
         if border is not None and border_alpha > 0 and border_w > 0:
-            inner = np.clip(0.5 - (sdf + border_w), 0.0, 1.0)
-            self.paint(X0, Y0, fill - inner, border, border_alpha)
+            ring = fill - np.clip(0.5 - (sdf + border_w), 0.0, 1.0)
+            gh, gw = ring.shape
+            band = int(math.ceil(rad + border_w + 2))
+            if gh > 2 * band + 4 and gw > 2 * band + 4:
+                # only the four edge strips carry the border: paint them, not the whole interior
+                for (r0, r1, c0, c1) in ((0, band, 0, gw), (gh - band, gh, 0, gw),
+                                         (band, gh - band, 0, band), (band, gh - band, gw - band, gw)):
+                    self.paint(X0 + c0, Y0 + r0, ring[r0:r1, c0:c1], border, border_alpha)
+            else:
+                self.paint(X0, Y0, ring, border, border_alpha)
 
     def capsule(self, x0: float, y0: float, x1: float, y1: float, width: float, rgb: Any,
                 alpha: float = 1.0) -> None:

@@ -118,8 +118,8 @@ def test_distance_field_open_grid_is_close_to_euclidean():
     eu = np.hypot(xs - 64, ys - 64) / 128.0
     far = eu > 0.1
     ratio = d[far] / eu[far]
-    assert ratio.min() > 0.99 - 1e-6       # never shorter than straight line
-    assert ratio.max() < 1.10              # octagonal metric: within ~8 %
+    assert ratio.max() <= 1.0 + 1e-6       # never longer than the straight line (conservative)
+    assert ratio.min() > 0.89              # octagonal metric: at most ~11 % shorter
 
 
 def test_distance_field_goes_around_walls_and_inf_when_unreachable():
@@ -207,9 +207,14 @@ def test_region_matches_geodesic_budget():
     e = fog.simulate("X", "X", "X", (0.5, 0.5), 10.0, speed=0.02, game_time=600)
     ys, xs = np.nonzero(e.region)
     dist = np.hypot((xs + 0.5) / 128 - 0.5, (ys + 0.5) / 128 - 0.5)
-    budget = 0.02 * 10 + ft.REACH_MARGIN + ft.FLASH_MARGIN
-    assert dist.max() <= budget * 1.02 + 1.5 / 128
-    assert dist.max() >= budget * 0.9
+    assert e.speed == pytest.approx(ft.clamp_speed(0.02, 590))
+    budget = e.radius
+    assert dist.max() <= budget + 1.5 / 128          # clipped to the straight-line circle
+    assert dist.max() >= budget * 0.95
+    # in open field the region is (almost) the full disc: conservative, nothing missing
+    ys2, xs2 = np.mgrid[0:128, 0:128]
+    inner = np.hypot((xs2 + 0.5) / 128 - 0.5, (ys2 + 0.5) / 128 - 0.5) <= budget - 2 / 128
+    assert e.region[inner].all()
 
 
 def test_confidence_and_expiry():

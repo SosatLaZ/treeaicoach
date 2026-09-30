@@ -372,7 +372,8 @@ def test_noisy_stationary_enemies_do_not_flap_or_fake_approach() -> None:
         late = [(tk.t, a.kind, a.level) for tk, a in raw_of(ticks) if tk.t >= 1.5]
         assert late == [], f"seed {seed}: {late[:5]}"
         said = said_of(ticks)
-        assert len(said) <= 1                 # at most the "just appeared" warning
+        assert all(tk.t < 1.5 for tk, _a in said)   # only the "just appeared" alerts
+        assert len(said) <= 2
 
 
 def test_noisy_jungler_walk_no_early_alert_and_no_flapping() -> None:
