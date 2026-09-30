@@ -68,7 +68,7 @@ SCALE_STEP = 1.06                  # multiplicative step of the coarse sweep
 #: Prior ratio before any calibration (real clients: 0.088-0.10).
 DEFAULT_SCALE = 0.094
 #: Fine calibration steps around the best coarse scale (+ parabolic interpolation).
-FINE_STEPS = (0.97, 1.0, 1.03)
+FINE_STEPS = (0.96, 0.98, 1.0, 1.02, 1.04)
 #: Working resolutions: diameter (px) of the matched disc (detection / calibration sweep).
 WORK_INNER_PX = 14.0
 CALIB_INNER_PX = 10.0
@@ -96,6 +96,9 @@ THR_MARGIN = 0.14
 THR_BG_PCT = 97
 #: Weight of the ring colour agreement (own colour fraction - other team's fraction).
 RING_WEIGHT = 0.2
+#: Penalty when (almost) no ring pixel has the champion's team colour: a portrait-like
+#: patch of terrain or a structure glyph has no ring around it.
+NO_RING_PENALTY = 0.12
 #: Peaks below this NCC are ignored.
 PEAK_FLOOR = 0.35
 #: A match this strong (evidence) is accepted even when the ring colour disagrees.
@@ -783,13 +786,14 @@ class RosterMatcher:
         # ring colour second opinion for every candidate that could pass
         scored: list[tuple[float, float, int, float, float, float, float, np.ndarray | None]] = []
         for ev, v, i, x, y in cands:
-            if ev < thr - RING_WEIGHT:
+            if ev < thr - RING_WEIGHT - 0.05:
                 scored.append((ev, ev, i, x, y, 0.0, 0.0, None))
                 continue
             ring = self._ring_pixels(bgr, x / fx, y / fy, R_px)
             f_en, f_al = self.rings.classify(ring)
             own, opp = (f_en, f_al) if ents[i].relation == "enemy" else (f_al, f_en)
-            scored.append((ev + RING_WEIGHT * (own - opp), ev, i, x, y, f_en, f_al, ring))
+            tot = ev + RING_WEIGHT * (own - opp) - NO_RING_PENALTY * max(0.0, 1.0 - own / 0.3)
+            scored.append((tot, ev, i, x, y, f_en, f_al, ring))
         scored.sort(key=lambda c: -c[0])
 
         used: set[int] = set()
