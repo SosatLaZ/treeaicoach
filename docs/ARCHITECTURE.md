@@ -626,3 +626,34 @@ Menace courante = niveau max des alertes brutes du GankAnalyzer du dernier tick 
 ### 7.6 Session (bien-être)
 `break_reminder` : à la fin d'une partie perdue (événement `GameEnd` `Result == "Lose"`), si 3 défaites d'affilée dans la session
 → message vocal et bandeau UI « 3 défaites d'affilée : une pause de 10 minutes aide à rester concentré. »
+
+## 8. Interface & livraison — v1.3
+
+### 8.1 Un seul exécutable
+* **`TreeAICoach.exe`** unique (PyInstaller *one-file*, fenêtré, icône de l'app, métadonnées de version Windows :
+  ProductName « TreeAI Coach », FileDescription « TreeAI Coach — coach vocal anti-gank pour League of Legends »).
+* Tout est dedans (modèle ONNX, textures, icônes, polices éventuelles). Les données utilisateur vont dans `%APPDATA%\TreeAICoach`.
+* Double-clic → l'interface s'ouvre, l'analyse démarre (autostart) et attend une partie. Rien à installer.
+* CI GitHub Actions (windows-latest) : tests → build → autotest de l'exe → artefact + **release** GitHub avec l'exe.
+
+### 8.2 `ui.py` — interface CustomTkinter (thème sombre « hextech »)
+Palette : fond `#010A13` / panneaux `#0A1428` / bordures `#1E2328` / or `#C8AA6E` (accent) / or clair `#F0E6D2` (texte) /
+bleu-vert `#0AC8B9` (actif) / rouge danger `#E84057` / orange attention `#F0A030` / vert sûr `#2DC66B`.
+Police : « Segoe UI » (Windows), titres en gras. Coins arrondis, espacements généreux, pas de widgets Tk gris par défaut.
+Structure : **barre latérale** (logo + nom, navigation, pastille d'état, version) + pages :
+1. **Tableau de bord** : carte d'état (point coloré animé + texte FR, chrono de jeu), gros bouton Démarrer/Arrêter,
+   jauge de menace en direct, **aperçu radar** en direct (image `render_radar`, 5 Hz), ligne jungler, rangée des 5 ennemis
+   (icônes + « MIA 23 s »), journal des dernières alertes (heure de jeu, niveau coloré), infos techniques (FPS, détecteur, voix),
+   boutons « Tester la voix », « Mode démo », « Calibrer la minimap ».
+2. **Alertes & voix** : interrupteurs par type d'alerte (avec une phrase d'exemple), sensibilité (curseur + explication
+   « rayon d'alerte ≈ 3 300 unités »), voix (liste), vitesse, volume, bip, test, raccourcis F9/F10/F11.
+3. **Overlay** : radar / HUD / flash (interrupteurs), cercle du jungler (Jungler / Tous / Off), position & échelle du radar,
+   position du HUD, bouton « Déplacer les fenêtres » (mode déplacement), aperçu statique.
+4. **Analyses** : cartes de session (parties, victoires, morts/partie, ganks évités), liste des parties
+   (date, champion + icône, résultat, K/D/A, ganks) → « Ouvrir le rapport » (navigateur), « Ouvrir le dossier ».
+5. **Réglages** : minimap auto/manuelle + calibrer + côté, FPS, détecteur, collecte de captures, démarrage auto de l'analyse,
+   **lancer avec Windows** (clé `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), ouvrir les journaux, réinitialiser.
+6. **Aide** : mode d'emploi en 5 étapes (mode Sans bordure, lancer l'app, jouer…), sécurité / règles Riot, dépannage.
+Règles : toutes les mises à jour de widgets passent par `root.after` (jamais depuis un autre thread) ; toute action utilisateur
+est protégée par try/except + message d'erreur FR (jamais de crash) ; fermeture propre (arrêt engine/voix/overlay, sauvegarde config) ;
+fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; icône de fenêtre = icône de l'app.
