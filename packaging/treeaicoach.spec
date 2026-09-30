@@ -55,6 +55,12 @@ datas = [
 datas += collect_data_files("customtkinter")        # themes (.json) and fonts
 
 binaries = collect_dynamic_libs("onnxruntime")      # onnxruntime*.dll (the contrib hook does it too)
+# Bundle the Microsoft C++ runtime (msvcp140*.dll, concrt140.dll) when it sits next to python.exe
+# (pip install msvc-runtime) so the exe also runs on PCs without the VC++ redistributable.
+for _dll in ("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "concrt140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+    _p = os.path.join(sys.base_prefix, _dll)
+    if os.path.isfile(_p):
+        binaries.append((_p, "."))
 
 hiddenimports = [
     "win32com",

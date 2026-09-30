@@ -1,8 +1,9 @@
-# Runtime dependencies (bundled in TreeAICoach.exe)
-numpy>=1.26,<3
-opencv-python-headless>=4.9,<5
-onnxruntime>=1.18,<2
+# Runtime dependencies (bundled in TreeAICoach.exe) — versions validated with the Windows build
+numpy>=1.26,<2
+opencv-python-headless>=4.9,<4.11
+onnxruntime>=1.18,<1.20
 mss>=9.0,<11
 pillow>=10.0
 customtkinter>=5.2,<7
 pywin32>=306; sys_platform == "win32"
+msvc-runtime>=14.40; sys_platform == "win32"
