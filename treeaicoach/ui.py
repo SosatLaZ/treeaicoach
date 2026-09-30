@@ -381,24 +381,6 @@ def session_stats(games: Sequence[dict], today: _dt.date | None = None) -> dict[
     }
 
 
-def constrain_square(x0: float, y0: float, x1: float, y1: float, max_w: float, max_h: float,
-                     min_side: float = 0.0) -> tuple[float, float, float]:
-    """Square anchored at ``(x0, y0)`` towards ``(x1, y1)``, side = max(|dx|, |dy|), clamped
-    to ``[0, max_w] x [0, max_h]``. Returns ``(x, y, side)`` (top-left corner + side)."""
-    x0 = min(max(x0, 0.0), max_w)
-    y0 = min(max(y0, 0.0), max_h)
-    dx, dy = x1 - x0, y1 - y0
-    sx = 1.0 if dx >= 0 else -1.0
-    sy = 1.0 if dy >= 0 else -1.0
-    side = max(abs(dx), abs(dy), min_side)
-    room_x = (max_w - x0) if sx > 0 else x0
-    room_y = (max_h - y0) if sy > 0 else y0
-    side = max(0.0, min(side, room_x, room_y))
-    x = x0 if sx > 0 else x0 - side
-    y = y0 if sy > 0 else y0 - side
-    return x, y, side
-
-
 # ======================================================================================
 # Images
 # ======================================================================================
@@ -3008,5 +2990,5 @@ def run_app(cfg: Config, *, demo: bool = False, smoke_seconds: float | None = No
     return app.run(smoke_seconds)
 
 
-__all__ = ["run_app", "CoachApp", "fmt_clock", "fmt_int_fr", "state_key", "session_stats", "constrain_square",
+__all__ = ["run_app", "CoachApp", "fmt_clock", "fmt_int_fr", "state_key", "session_stats",
            "autostart_support", "get_windows_autostart", "set_windows_autostart", "app_icon_path"]
