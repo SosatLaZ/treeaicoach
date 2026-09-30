@@ -70,15 +70,15 @@ DEFAULT_SCALE = 0.094
 #: Fine calibration steps around the best coarse scale (+-6 % in total).
 FINE_STEPS = (0.94, 0.97, 1.0, 1.03, 1.06)
 #: Working resolutions: diameter (px) of the matched disc (detection / calibration sweep).
-WORK_INNER_PX = 18.0
+WORK_INNER_PX = 14.0
 CALIB_INNER_PX = 12.0
-#: Weights of the per-channel NCC (L, a, b) in the final score.
-CHANNEL_WEIGHTS = (0.5, 0.25, 0.25)
+#: Weight of the lightness NCC in the score (the rest: chroma NCC, a and b jointly).
+LIGHTNESS_WEIGHT = 0.5
 #: Gaussian blur (working px) of image and templates (JPEG / photo robustness).
 BLUR_SIGMA = 0.7
 #: Regularization of the local variance (per pixel, Lab units^2, per channel): flat areas
 #: (walls, fog, colourless terrain) cannot produce high scores.
-VAR_EPS = (12.0, 6.0, 6.0)
+VAR_EPS = (12.0, 12.0)            # lightness, chroma (a + b)
 #: Local contrast / template contrast accepted (portrait vs flat or busy area).
 CONTRAST_RANGE = (0.45, 2.4)
 #: Peaks per champion considered for the assignment.
@@ -90,10 +90,12 @@ UNIQUE_WEIGHT = 0.8
 UNIQUE_CAP = 0.15
 #: Adaptive acceptance threshold (evidence units) = high percentile of the background
 #: peaks (the champions' secondary peaks, recent frames) + THR_MARGIN, within bounds.
-THR_MIN = 0.70
+THR_MIN = 0.64
 THR_MAX = 0.90
 THR_MARGIN = 0.14
 THR_BG_PCT = 97
+#: Weight of the ring colour agreement (own colour fraction - other team's fraction).
+RING_WEIGHT = 0.2
 #: Peaks below this NCC are ignored.
 PEAK_FLOOR = 0.35
 #: A match this strong (evidence) is accepted even when the ring colour disagrees.
@@ -127,6 +129,9 @@ _RING_EXTRA_BGR: dict[str, list[tuple[int, int, int]]] = {
 }
 _LEARN_RATE = 0.15
 _MAX_LEARN_DRIFT = 60.0            # chroma distance from the seed needing confirmation
+
+
+_K3 = np.ones((3, 3), np.uint8)
 
 
 def _lab1(bgr: Sequence[int]) -> np.ndarray:
@@ -164,7 +169,7 @@ class _Bank:
     mask: np.ndarray                    # [s, s] float32 disc
     n: float                            # mask area
     tmpl: list[np.ndarray]              # zero-mean masked templates [s, s, 3] float32
-    norms: np.ndarray                   # [n, 3] L2 norm of each template channel
+    norms: np.ndarray                   # [n, 2] L2 norms (lightness, chroma) of each template
     stds: np.ndarray                    # per-pixel std of each template (contrast check)
     specs: dict = field(default_factory=dict)   # DFT shape -> (mask spec, template specs)
 
@@ -223,10 +228,10 @@ def _make_bank(entries: Sequence[RosterEntry], inner_px: float) -> _Bank:
         f = _features(t)
         mean = (f * mask[:, :, None]).sum(axis=(0, 1)) / n
         t0 = (f - mean) * mask[:, :, None]
-        nc = np.sqrt((t0 ** 2).sum(axis=(0, 1)))
+        sq = (t0 ** 2).sum(axis=(0, 1))
         tmpls.append(np.ascontiguousarray(t0, np.float32))
-        norms.append(nc + 1e-6)
-        stds.append(float(np.sqrt((nc ** 2).sum() / (3.0 * n))) + 1e-6)
+        norms.append(np.sqrt([sq[0], sq[1] + sq[2]]) + 1e-6)
+        stds.append(float(np.sqrt(sq.sum() / (3.0 * n))) + 1e-6)
     return _Bank(size=size, mask=mask, n=n, tmpl=tmpls, norms=np.asarray(norms, np.float32),
                  stds=np.asarray(stds, np.float32))
 
@@ -269,22 +274,28 @@ def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None
     def corr(spec: np.ndarray) -> np.ndarray:
         return cv2.idft(spec, flags=cv2.DFT_REAL_OUTPUT | cv2.DFT_SCALE)[:oh, :ow]
 
-    # per-channel local variance under the mask
-    varc = []
+    # local variance under the mask: lightness, and chroma (a + b jointly)
+    var = []
     for f, ch in zip(fs, chans):
         s1 = corr(cv2.mulSpectrums(f, mspec, 0, conjB=True))
         s2 = corr(cv2.mulSpectrums(_spec(ch * ch, shape), mspec, 0, conjB=True))
-        varc.append(np.maximum(s2 - s1 * s1 / bank.n, 0.0))
-    std = np.sqrt((varc[0] + varc[1] + varc[2]) / (3.0 * bank.n))
-    # per-channel NCC, weighted mean: the chroma counts even where its variance is small
-    # (terrain has lightness contrast but almost no colour: it cannot match a portrait)
-    dens = [np.sqrt(vc + eps * bank.n) for vc, eps in zip(varc, VAR_EPS)]
-    out = np.zeros((len(idx), oh, ow), np.float32)
+        var.append(np.maximum(s2 - s1 * s1 / bank.n, 0.0))
+    var_l, var_c = var[0], var[1] + var[2]
+    std = np.sqrt((var_l + var_c) / (3.0 * bank.n))
+    # NCC of the lightness and of the chroma, weighted mean: the chroma counts even where
+    # its variance is small (terrain has lightness contrast but almost no colour)
+    den_l = np.sqrt(var_l + VAR_EPS[0] * bank.n)
+    den_c = np.sqrt(var_c + VAR_EPS[1] * bank.n)
+    wl, wc = LIGHTNESS_WEIGHT, 1.0 - LIGHTNESS_WEIGHT
+    out = np.empty((len(idx), oh, ow), np.float32)
     for k, i in enumerate(idx):
         ts = tspecs[i]
-        for ch in range(3):
-            num = corr(cv2.mulSpectrums(fs[ch], ts[ch], 0, conjB=True))
-            out[k] += (CHANNEL_WEIGHTS[ch] / bank.norms[i, ch]) * num / dens[ch]
+        nl, nc = bank.norms[i]
+        num_l = corr(cv2.mulSpectrums(fs[0], ts[0], 0, conjB=True))
+        spc = cv2.mulSpectrums(fs[1], ts[1], 0, conjB=True)
+        spc += cv2.mulSpectrums(fs[2], ts[2], 0, conjB=True)
+        num_c = corr(spc)
+        out[k] = num_l * (wl / nl) / den_l + num_c * (wc / nc) / den_c
     return out, std
 
 
@@ -537,17 +548,17 @@ class RosterMatcher:
     @staticmethod
     def _peaks(score: np.ndarray, rad: int, k: int, floor: float
                ) -> list[tuple[int, int, float]]:
-        """Top-``k`` local maxima (NMS radius ``rad``) above ``floor``: (x, y, score)."""
-        ksz = 2 * rad + 1
-        dil = cv2.dilate(score, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksz, ksz)))
+        """Top-``k`` local maxima (greedy NMS radius ``rad``) above ``floor``: (x, y, score)."""
+        dil = cv2.dilate(score, _K3)
         ys, xs = np.nonzero((score >= dil) & (score > floor))
         if ys.size == 0:
             return []
         vals = score[ys, xs]
         out: list[tuple[int, int, float]] = []
-        for j in np.argsort(-vals)[: 8 * k]:
+        r2 = rad * rad
+        for j in np.argsort(-vals)[: 12 * k]:
             x, y, v = int(xs[j]), int(ys[j]), float(vals[j])
-            if any((x - a) ** 2 + (y - b) ** 2 < rad * rad for a, b, _ in out):
+            if any((x - a) ** 2 + (y - b) ** 2 < r2 for a, b, _ in out):
                 continue
             out.append((x, y, v))
             if len(out) >= k:
@@ -762,41 +773,49 @@ class RosterMatcher:
         thr = self._threshold(bg_scores)
         self.last_threshold = thr
 
-        cands.sort(key=lambda c: -c[0])
+        # ring colour second opinion for every candidate that could pass
+        scored: list[tuple[float, float, int, float, float, float, float, np.ndarray | None]] = []
+        for ev, v, i, x, y in cands:
+            if ev < thr - RING_WEIGHT:
+                scored.append((ev, ev, i, x, y, 0.0, 0.0, None))
+                continue
+            ring = self._ring_pixels(bgr, x / fx, y / fy, R_px)
+            f_en, f_al = self.rings.classify(ring)
+            own, opp = (f_en, f_al) if ents[i].relation == "enemy" else (f_al, f_en)
+            scored.append((ev + RING_WEIGHT * (own - opp), ev, i, x, y, f_en, f_al, ring))
+        scored.sort(key=lambda c: -c[0])
+
         used: set[int] = set()
         accepted: list[tuple[float, int, float, float, float, float]] = []
         infos: list[MatchInfo] = []
-        for ev, v, i, x, y in cands:
+        for tot, ev, i, x, y, f_en, f_al, ring in scored:
             if i in used:
                 continue
             e = ents[i]
-            cx, cy = x / fx, y / fy                     # original px (continuous)
-            u, vv = cx / W, cy / H
-            if ev < thr:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, ev, 0.0, 0.0,
+            u, vv = x / fx / W, y / fy / H
+            if tot < thr:
+                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, tot, f_en, f_al,
                                        False, "score"))
                 continue
             conflict = False
-            for va, _ia, xa, ya, _fe, _fa in accepted:
+            for ta, _ia, xa, ya, _fe, _fa in accepted:
                 dd = math.hypot(x - xa, y - ya) / max(D_work, 1e-6)
-                if dd < MIN_SEP_FRAC or (dd < STACK_FRAC and ev < max(thr + 0.1, 0.85 * va)):
+                if dd < MIN_SEP_FRAC or (dd < STACK_FRAC and tot < max(thr + 0.1, 0.85 * ta)):
                     conflict = True
                     break
             if conflict:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, ev, 0.0, 0.0,
+                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, tot, f_en, f_al,
                                        False, "conflict"))
                 continue
-            ring = self._ring_pixels(bgr, cx, cy, R_px)
-            f_en, f_al = self.rings.classify(ring)
             own, opp = (f_en, f_al) if e.relation == "enemy" else (f_al, f_en)
             if ev < STRONG_SCORE and opp > 0.3 and opp > 2.0 * own + 0.05:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, ev, f_en, f_al,
+                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, tot, f_en, f_al,
                                        False, "ring"))
                 continue
             used.add(i)
-            accepted.append((ev, i, x, y, f_en, f_al))
-            infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, ev, f_en, f_al, True))
-            if ev >= LEARN_SCORE and opp < 0.15:
+            accepted.append((tot, i, x, y, f_en, f_al))
+            infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, tot, f_en, f_al, True))
+            if ev >= LEARN_SCORE and opp < 0.15 and ring is not None:
                 self.rings.learn(e.relation, ring)
 
         # statistics for the adaptive threshold and the re-calibration trigger
