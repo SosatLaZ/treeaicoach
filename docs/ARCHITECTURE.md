@@ -299,6 +299,11 @@ sorties nommées `heatmap` `[1,1,S/4,S/4]` (sigmoïde appliquée), `cls` `[1,3,S
 `model_meta.json` : `{"input_size": 256, "stride": 4, "classes": ["enemy","ally","self"], "threshold": 0.35,
 "version": "...", "metrics": {...}}`.
 
+> **Mise à jour (faits réels, voir MINIMAP_FACTS.md)** : l'icône du joueur local a le **même anneau bleu que les alliés**.
+> Le détecteur garde 3 sorties de classe pour la compatibilité, mais la classe `self` n'est **pas** apprise visuellement
+> (les icônes « self » sont étiquetées `ally` à l'entraînement). `identifier.py` attribue la relation `self` par identité
+> (champion + skin du joueur actif) ; secours : icône alliée la plus proche du centre du rectangle caméra.
+
 ### 4.10 `identifier.py`
 ```python
 @dataclass
