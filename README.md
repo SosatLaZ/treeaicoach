@@ -9,6 +9,15 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v1.4-C8AA6E?style=for-the-badge&labelColor=0A1428" alt="Télécharger TreeAICoach.exe" height="56"></a>
+</p>
+
+<p align="center">
+  <b>👉 <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe">Clique ici pour télécharger TreeAICoach.exe</a></b> (Windows 10/11, ~75 Mo) — puis double-clique dessus.<br>
+  <sub>Dossier <a href="release/">release/</a> · empreinte SHA-256 dans <a href="release/SHA256.txt">SHA256.txt</a> · si Windows affiche « PC protégé » : <i>Informations complémentaires → Exécuter quand même</i>.</sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/SosatLaZ/treeaicoach/actions/workflows/build-windows.yml"><img src="https://github.com/SosatLaZ/treeaicoach/actions/workflows/build-windows.yml/badge.svg" alt="Construction de TreeAICoach.exe"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0A1428?logo=windows" alt="Windows 10 | 11">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-C8AA6E" alt="Licence MIT"></a>
