@@ -117,8 +117,9 @@ class GameInfo:
         """``"Win"`` / ``"Lose"`` once the ``GameEnd`` event is present, else ``None``."""
         for e in reversed(self.events):
             if isinstance(e, dict) and e.get("EventName") == "GameEnd":
-                res = _str(e.get("Result"))
-                return res or None
+                res = _str(e.get("Result")).strip().casefold()
+                return {"win": "Win", "lose": "Lose", "loss": "Lose", "defeat": "Lose",
+                        "victory": "Win"}.get(res)
         return None
 
     def enemy_jungler(self) -> PlayerInfo | None:

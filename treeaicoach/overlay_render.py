@@ -1009,15 +1009,17 @@ def _draw_fog(cv_: Canvas, fog: FogEstimate, S: float, phase: float) -> None:
         return
     conf = _clamp01(fog.confidence)
     vis = 0.35 + 0.65 * math.sqrt(conf) if conf > 0 else 0.0
+    # the jungler's zone is the headline; other hidden enemies get a discreet version
+    main = bool(getattr(fog, "is_jungler", False))
     x, y = uv[0] * S, uv[1] * S
     region = fog.region
     if vis > 0 and isinstance(region, np.ndarray) and region.ndim == 2 and region.shape[0] >= 4:
         layers = _region_layers(region, int(S))
         if layers is not None:
             fill, edge = layers
-            cv_.paint(0, 0, fill, DANGER, 0.24 * vis)
-            cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.15), 0.85 * vis)
-    if vis > 0 and _finite(fog.radius) and fog.radius > 0:
+            cv_.paint(0, 0, fill, DANGER, (0.24 if main else 0.10) * vis)
+            cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.15), (0.85 if main else 0.45) * vis)
+    if main and vis > 0 and _finite(fog.radius) and fog.radius > 0:
         rr = float(fog.radius) * S
         cv_.ring(x, y, rr, max(1.2, S * 0.0045), _mix(DANGER, WHITE, 0.35), 0.7 * vis,
                  dash=(max(5.0, S * 0.022), max(4.0, S * 0.018)))
@@ -1100,6 +1102,7 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
         "clock": get_font(round(12 * k), "semibold"),
         "threat": get_font(round(15.5 * k), "bold"),
         "body": get_font(round(12.5 * k), "regular"),
+        "body_bold": get_font(round(12.5 * k), "bold"),
         "small": get_font(round(10.5 * k), "semibold"),
         "obj": get_font(round(11.5 * k), "semibold"),
     }
@@ -1107,7 +1110,7 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
     jl = (state.jungler_line or "").strip()
     jl_lines: list[str] = []
     if jl:
-        jl_lines = wrap_text(jl, fonts["body"], inner - 36 * k, 2)
+        jl_lines = _jungler_lines(jl, fonts, inner - 36 * k)
         rows.append(("jungler", max(30 * k, len(jl_lines) * 16 * k + 4 * k)))
     slot_w = inner / 5.0
     icon_d = min(40 * k, slot_w - 14 * k)
@@ -1123,6 +1126,14 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
     height = pad + sum(h for _, h in rows) + gap * (len(rows) - 1) + pad
     return {"pad": pad, "inner": inner, "fonts": fonts, "rows": rows, "gap": gap, "height": int(math.ceil(height)),
             "jl_lines": jl_lines, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint}
+
+
+def _jungler_lines(text: str, fonts: dict[str, Any], max_w: float) -> list[str]:
+    """Split "Jungler : X — vu il y a 23 s, zone" into a title line and a detail line."""
+    head, sep, tail = text.partition(" — ")
+    if sep and head.strip() and tail.strip():
+        return [fit_text(head.strip(), fonts["body_bold"], max_w), fit_text(tail.strip(), fonts["body"], max_w)]
+    return wrap_text(text, fonts["body"], max_w, 2)
 
 
 def hud_size(state: OverlayState, width: int = 340) -> tuple[int, int]:
@@ -1182,8 +1193,13 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
             _threat_glyph(cv_, pad + 8 * k + gr, cy, gr, lvl, base)
             text = (state.threat_text or "").strip() or THREAT_DEFAULT_TEXT[lvl]
             tx = pad + 16 * k + 2 * gr
-            text = fit_text(text, fonts["threat"], inner - (tx - pad) - 8 * k)
-            cv_.text(tx, cy, text, fonts["threat"], WHITE, shadow=0.45)
+            avail = inner - (tx - pad) - 8 * k
+            tfont = fonts["threat"]
+            size = 15.5 * k
+            while text_width(text, tfont) > avail and size > 11.5 * k:
+                size -= 1.0 * k
+                tfont = get_font(round(size), "bold")
+            cv_.text(tx, cy, fit_text(text, tfont, avail), tfont, WHITE, shadow=0.45)
         elif name == "jungler":
             jg = next((e for e in enemies if getattr(e, "is_jungler", False)), None)
             d = 28 * k
@@ -1199,8 +1215,11 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
             lines = lay["jl_lines"]
             lh = 16 * k
             ty = cy - (len(lines) - 1) * lh / 2
+            two_part = len(lines) == 2 and " — " in (state.jungler_line or "")
             for i, line in enumerate(lines):
-                cv_.text(pad + d + 8 * k, ty + i * lh, line, fonts["body"], GOLD_LIGHT if i == 0 else MUTED)
+                font = fonts["body_bold"] if (two_part and i == 0) else fonts["body"]
+                colour = GOLD_LIGHT if i == 0 else (_mix(GOLD_LIGHT, MUTED, 0.45) if two_part else MUTED)
+                cv_.text(pad + d + 8 * k, ty + i * lh, line, font, colour)
         elif name == "enemies":
             _draw_enemy_slots(cv_, enemies, pad, y, lay["slot_w"], lay["icon_d"], k, fonts["small"], phase)
         elif name == "objectives":
