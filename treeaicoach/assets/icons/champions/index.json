@@ -1,0 +1,2038 @@
+{
+ "patch": "16.19.1",
+ "champions": [
+  {
+   "alias": "Aatrox",
+   "key": 266,
+   "name_en": "Aatrox",
+   "name_fr": "Aatrox",
+   "tags": [
+    "Fighter"
+   ],
+   "icon": "Aatrox.png",
+   "icon_source": "cdragon:aatrox_circle.png"
+  },
+  {
+   "alias": "Ahri",
+   "key": 103,
+   "name_en": "Ahri",
+   "name_fr": "Ahri",
+   "tags": [
+    "Mage",
+    "Assassin"
+   ],
+   "icon": "Ahri.png",
+   "icon_source": "cdragon:ahri_circle_0.png"
+  },
+  {
+   "alias": "Akali",
+   "key": 84,
+   "name_en": "Akali",
+   "name_fr": "Akali",
+   "tags": [
+    "Assassin"
+   ],
+   "icon": "Akali.png",
+   "icon_source": "cdragon:akali_circle.png"
+  },
+  {
+   "alias": "Akshan",
+   "key": 166,
+   "name_en": "Akshan",
+   "name_fr": "Akshan",
+   "tags": [
+    "Marksman",
+    "Assassin"
+   ],
+   "icon": "Akshan.png",
+   "icon_source": "cdragon:akshan_circle_0.png"
+  },
+  {
+   "alias": "Alistar",
+   "key": 12,
+   "name_en": "Alistar",
+   "name_fr": "Alistar",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "Alistar.png",
+   "icon_source": "cdragon:alistar_circle.png"
+  },
+  {
+   "alias": "Ambessa",
+   "key": 799,
+   "name_en": "Ambessa",
+   "name_fr": "Ambessa",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Ambessa.png",
+   "icon_source": "cdragon:ambessa_circle_0.png"
+  },
+  {
+   "alias": "Amumu",
+   "key": 32,
+   "name_en": "Amumu",
+   "name_fr": "Amumu",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "Amumu.png",
+   "icon_source": "cdragon:amumu_circle_0.png"
+  },
+  {
+   "alias": "Anivia",
+   "key": 34,
+   "name_en": "Anivia",
+   "name_fr": "Anivia",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Anivia.png",
+   "icon_source": "cdragon:cryophoenix_circle.png"
+  },
+  {
+   "alias": "Annie",
+   "key": 1,
+   "name_en": "Annie",
+   "name_fr": "Annie",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Annie.png",
+   "icon_source": "cdragon:annie_circle.png"
+  },
+  {
+   "alias": "Aphelios",
+   "key": 523,
+   "name_en": "Aphelios",
+   "name_fr": "Aphelios",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Aphelios.png",
+   "icon_source": "cdragon:aphelios_circle_0.png"
+  },
+  {
+   "alias": "Ashe",
+   "key": 22,
+   "name_en": "Ashe",
+   "name_fr": "Ashe",
+   "tags": [
+    "Marksman",
+    "Support"
+   ],
+   "icon": "Ashe.png",
+   "icon_source": "cdragon:ashe_circle.png"
+  },
+  {
+   "alias": "AurelionSol",
+   "key": 136,
+   "name_en": "Aurelion Sol",
+   "name_fr": "Aurelion Sol",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "AurelionSol.png",
+   "icon_source": "cdragon:aurelionsol_circle.png"
+  },
+  {
+   "alias": "Aurora",
+   "key": 893,
+   "name_en": "Aurora",
+   "name_fr": "Aurora",
+   "tags": [
+    "Mage",
+    "Assassin"
+   ],
+   "icon": "Aurora.png",
+   "icon_source": "cdragon:aurora_circle_0.png"
+  },
+  {
+   "alias": "Azir",
+   "key": 268,
+   "name_en": "Azir",
+   "name_fr": "Azir",
+   "tags": [
+    "Mage",
+    "Marksman"
+   ],
+   "icon": "Azir.png",
+   "icon_source": "cdragon:azir_circle.png"
+  },
+  {
+   "alias": "Bard",
+   "key": 432,
+   "name_en": "Bard",
+   "name_fr": "Bard",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Bard.png",
+   "icon_source": "cdragon:bard_circle.png"
+  },
+  {
+   "alias": "Belveth",
+   "key": 200,
+   "name_en": "Bel'Veth",
+   "name_fr": "Bel'Veth",
+   "tags": [
+    "Fighter"
+   ],
+   "icon": "Belveth.png",
+   "icon_source": "cdragon:belveth_circle_0.png"
+  },
+  {
+   "alias": "Blitzcrank",
+   "key": 53,
+   "name_en": "Blitzcrank",
+   "name_fr": "Blitzcrank",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "Blitzcrank.png",
+   "icon_source": "cdragon:steamgolem_circle.png"
+  },
+  {
+   "alias": "Brand",
+   "key": 63,
+   "name_en": "Brand",
+   "name_fr": "Brand",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Brand.png",
+   "icon_source": "cdragon:brand_circle_0.png"
+  },
+  {
+   "alias": "Braum",
+   "key": 201,
+   "name_en": "Braum",
+   "name_fr": "Braum",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "Braum.png",
+   "icon_source": "cdragon:braum_circle.png"
+  },
+  {
+   "alias": "Briar",
+   "key": 233,
+   "name_en": "Briar",
+   "name_fr": "Briar",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Briar.png",
+   "icon_source": "cdragon:briar_circle_0.png"
+  },
+  {
+   "alias": "Caitlyn",
+   "key": 51,
+   "name_en": "Caitlyn",
+   "name_fr": "Caitlyn",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Caitlyn.png",
+   "icon_source": "cdragon:caitlyn_circle_0.png"
+  },
+  {
+   "alias": "Camille",
+   "key": 164,
+   "name_en": "Camille",
+   "name_fr": "Camille",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Camille.png",
+   "icon_source": "cdragon:camille_circle.png"
+  },
+  {
+   "alias": "Cassiopeia",
+   "key": 69,
+   "name_en": "Cassiopeia",
+   "name_fr": "Cassiopeia",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Cassiopeia.png",
+   "icon_source": "cdragon:cassiopeia_circle_0.png"
+  },
+  {
+   "alias": "Chogath",
+   "key": 31,
+   "name_en": "Cho'Gath",
+   "name_fr": "Cho'Gath",
+   "tags": [
+    "Tank",
+    "Mage"
+   ],
+   "icon": "Chogath.png",
+   "icon_source": "cdragon:greenterror_circle.png"
+  },
+  {
+   "alias": "Corki",
+   "key": 42,
+   "name_en": "Corki",
+   "name_fr": "Corki",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "Corki.png",
+   "icon_source": "cdragon:corki_circle_0.png"
+  },
+  {
+   "alias": "Darius",
+   "key": 122,
+   "name_en": "Darius",
+   "name_fr": "Darius",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Darius.png",
+   "icon_source": "cdragon:darius_circle_0.png"
+  },
+  {
+   "alias": "Diana",
+   "key": 131,
+   "name_en": "Diana",
+   "name_fr": "Diana",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Diana.png",
+   "icon_source": "cdragon:diana_circle_0.png"
+  },
+  {
+   "alias": "DrMundo",
+   "key": 36,
+   "name_en": "Dr. Mundo",
+   "name_fr": "Dr. Mundo",
+   "tags": [
+    "Tank",
+    "Fighter"
+   ],
+   "icon": "DrMundo.png",
+   "icon_source": "cdragon:drmundo_circle_0.png"
+  },
+  {
+   "alias": "Draven",
+   "key": 119,
+   "name_en": "Draven",
+   "name_fr": "Draven",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Draven.png",
+   "icon_source": "cdragon:draven_circle.png"
+  },
+  {
+   "alias": "Ekko",
+   "key": 245,
+   "name_en": "Ekko",
+   "name_fr": "Ekko",
+   "tags": [
+    "Assassin",
+    "Mage"
+   ],
+   "icon": "Ekko.png",
+   "icon_source": "cdragon:ekko_circle.png"
+  },
+  {
+   "alias": "Elise",
+   "key": 60,
+   "name_en": "Elise",
+   "name_fr": "Elise",
+   "tags": [
+    "Assassin",
+    "Mage"
+   ],
+   "icon": "Elise.png",
+   "icon_source": "cdragon:elise_circle.png"
+  },
+  {
+   "alias": "Evelynn",
+   "key": 28,
+   "name_en": "Evelynn",
+   "name_fr": "Evelynn",
+   "tags": [
+    "Assassin",
+    "Mage"
+   ],
+   "icon": "Evelynn.png",
+   "icon_source": "cdragon:evelynn_circle.png"
+  },
+  {
+   "alias": "Ezreal",
+   "key": 81,
+   "name_en": "Ezreal",
+   "name_fr": "Ezreal",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "Ezreal.png",
+   "icon_source": "cdragon:ezreal_circle.png"
+  },
+  {
+   "alias": "Fiddlesticks",
+   "key": 9,
+   "name_en": "Fiddlesticks",
+   "name_fr": "Fiddlesticks",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Fiddlesticks.png",
+   "icon_source": "cdragon:fiddlesticks_circle_0.png"
+  },
+  {
+   "alias": "Fiora",
+   "key": 114,
+   "name_en": "Fiora",
+   "name_fr": "Fiora",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Fiora.png",
+   "icon_source": "cdragon:fiora_circle.png"
+  },
+  {
+   "alias": "Fizz",
+   "key": 105,
+   "name_en": "Fizz",
+   "name_fr": "Fizz",
+   "tags": [
+    "Assassin",
+    "Fighter"
+   ],
+   "icon": "Fizz.png",
+   "icon_source": "cdragon:fizz_circle_0.png"
+  },
+  {
+   "alias": "Galio",
+   "key": 3,
+   "name_en": "Galio",
+   "name_fr": "Galio",
+   "tags": [
+    "Tank",
+    "Mage"
+   ],
+   "icon": "Galio.png",
+   "icon_source": "cdragon:galio_circle.png"
+  },
+  {
+   "alias": "Gangplank",
+   "key": 41,
+   "name_en": "Gangplank",
+   "name_fr": "Gangplank",
+   "tags": [
+    "Fighter"
+   ],
+   "icon": "Gangplank.png",
+   "icon_source": "cdragon:gangplank_circle.png"
+  },
+  {
+   "alias": "Garen",
+   "key": 86,
+   "name_en": "Garen",
+   "name_fr": "Garen",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Garen.png",
+   "icon_source": "cdragon:garen_circle.png"
+  },
+  {
+   "alias": "Gnar",
+   "key": 150,
+   "name_en": "Gnar",
+   "name_fr": "Gnar",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Gnar.png",
+   "icon_source": "cdragon:gnar_circle.png"
+  },
+  {
+   "alias": "Gragas",
+   "key": 79,
+   "name_en": "Gragas",
+   "name_fr": "Gragas",
+   "tags": [
+    "Fighter",
+    "Mage"
+   ],
+   "icon": "Gragas.png",
+   "icon_source": "cdragon:gragas_circle.png"
+  },
+  {
+   "alias": "Graves",
+   "key": 104,
+   "name_en": "Graves",
+   "name_fr": "Graves",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Graves.png",
+   "icon_source": "cdragon:graves_circle.png"
+  },
+  {
+   "alias": "Gwen",
+   "key": 887,
+   "name_en": "Gwen",
+   "name_fr": "Gwen",
+   "tags": [
+    "Fighter"
+   ],
+   "icon": "Gwen.png",
+   "icon_source": "cdragon:gwen_circle_0.png"
+  },
+  {
+   "alias": "Hecarim",
+   "key": 120,
+   "name_en": "Hecarim",
+   "name_fr": "Hecarim",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Hecarim.png",
+   "icon_source": "cdragon:hecarim_circle_0.png"
+  },
+  {
+   "alias": "Heimerdinger",
+   "key": 74,
+   "name_en": "Heimerdinger",
+   "name_fr": "Heimerdinger",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Heimerdinger.png",
+   "icon_source": "cdragon:heimerdinger_circle.png"
+  },
+  {
+   "alias": "Hwei",
+   "key": 910,
+   "name_en": "Hwei",
+   "name_fr": "Hwei",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Hwei.png",
+   "icon_source": "cdragon:hwei_circle_0.png"
+  },
+  {
+   "alias": "Illaoi",
+   "key": 420,
+   "name_en": "Illaoi",
+   "name_fr": "Illaoi",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Illaoi.png",
+   "icon_source": "cdragon:illaoi_circle.png"
+  },
+  {
+   "alias": "Irelia",
+   "key": 39,
+   "name_en": "Irelia",
+   "name_fr": "Irelia",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Irelia.png",
+   "icon_source": "cdragon:irelia_circle_0.png"
+  },
+  {
+   "alias": "Ivern",
+   "key": 427,
+   "name_en": "Ivern",
+   "name_fr": "Ivern",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Ivern.png",
+   "icon_source": "cdragon:ivern_circle.png"
+  },
+  {
+   "alias": "Janna",
+   "key": 40,
+   "name_en": "Janna",
+   "name_fr": "Janna",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Janna.png",
+   "icon_source": "cdragon:janna_circle.png"
+  },
+  {
+   "alias": "JarvanIV",
+   "key": 59,
+   "name_en": "Jarvan IV",
+   "name_fr": "Jarvan IV",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "JarvanIV.png",
+   "icon_source": "cdragon:jarvaniv_circle_0.png"
+  },
+  {
+   "alias": "Jax",
+   "key": 24,
+   "name_en": "Jax",
+   "name_fr": "Jax",
+   "tags": [
+    "Fighter"
+   ],
+   "icon": "Jax.png",
+   "icon_source": "cdragon:jax_circle_0.png"
+  },
+  {
+   "alias": "Jayce",
+   "key": 126,
+   "name_en": "Jayce",
+   "name_fr": "Jayce",
+   "tags": [
+    "Fighter",
+    "Marksman"
+   ],
+   "icon": "Jayce.png",
+   "icon_source": "cdragon:jayce_circle.png"
+  },
+  {
+   "alias": "Jhin",
+   "key": 202,
+   "name_en": "Jhin",
+   "name_fr": "Jhin",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "Jhin.png",
+   "icon_source": "cdragon:jhin_circle_0.png"
+  },
+  {
+   "alias": "Jinx",
+   "key": 222,
+   "name_en": "Jinx",
+   "name_fr": "Jinx",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Jinx.png",
+   "icon_source": "cdragon:jinx_circle.png"
+  },
+  {
+   "alias": "KSante",
+   "key": 897,
+   "name_en": "K'Sante",
+   "name_fr": "K'Santé",
+   "tags": [
+    "Tank",
+    "Fighter"
+   ],
+   "icon": "KSante.png",
+   "icon_source": "cdragon:ksante_circle_0.png"
+  },
+  {
+   "alias": "Kaisa",
+   "key": 145,
+   "name_en": "Kai'Sa",
+   "name_fr": "Kai'Sa",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "Kaisa.png",
+   "icon_source": "cdragon:kaisa_circle.png"
+  },
+  {
+   "alias": "Kalista",
+   "key": 429,
+   "name_en": "Kalista",
+   "name_fr": "Kalista",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Kalista.png",
+   "icon_source": "cdragon:kalista_circle_0.png"
+  },
+  {
+   "alias": "Karma",
+   "key": 43,
+   "name_en": "Karma",
+   "name_fr": "Karma",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Karma.png",
+   "icon_source": "cdragon:karma_circle.png"
+  },
+  {
+   "alias": "Karthus",
+   "key": 30,
+   "name_en": "Karthus",
+   "name_fr": "Karthus",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Karthus.png",
+   "icon_source": "cdragon:karthus_circle.png"
+  },
+  {
+   "alias": "Kassadin",
+   "key": 38,
+   "name_en": "Kassadin",
+   "name_fr": "Kassadin",
+   "tags": [
+    "Assassin",
+    "Mage"
+   ],
+   "icon": "Kassadin.png",
+   "icon_source": "cdragon:kassadin_circle_0.png"
+  },
+  {
+   "alias": "Katarina",
+   "key": 55,
+   "name_en": "Katarina",
+   "name_fr": "Katarina",
+   "tags": [
+    "Assassin",
+    "Mage"
+   ],
+   "icon": "Katarina.png",
+   "icon_source": "cdragon:katarina_circle.png"
+  },
+  {
+   "alias": "Kayle",
+   "key": 10,
+   "name_en": "Kayle",
+   "name_fr": "Kayle",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "Kayle.png",
+   "icon_source": "cdragon:kayle_circle_0.png"
+  },
+  {
+   "alias": "Kayn",
+   "key": 141,
+   "name_en": "Kayn",
+   "name_fr": "Kayn",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Kayn.png",
+   "icon_source": "cdragon:kayn_circle.png"
+  },
+  {
+   "alias": "Kennen",
+   "key": 85,
+   "name_en": "Kennen",
+   "name_fr": "Kennen",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Kennen.png",
+   "icon_source": "cdragon:kennen_circle.png"
+  },
+  {
+   "alias": "Khazix",
+   "key": 121,
+   "name_en": "Kha'Zix",
+   "name_fr": "Kha'Zix",
+   "tags": [
+    "Assassin"
+   ],
+   "icon": "Khazix.png",
+   "icon_source": "cdragon:khazix_circle.png"
+  },
+  {
+   "alias": "Kindred",
+   "key": 203,
+   "name_en": "Kindred",
+   "name_fr": "Kindred",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Kindred.png",
+   "icon_source": "cdragon:kindred_circle.png"
+  },
+  {
+   "alias": "Kled",
+   "key": 240,
+   "name_en": "Kled",
+   "name_fr": "Kled",
+   "tags": [
+    "Fighter"
+   ],
+   "icon": "Kled.png",
+   "icon_source": "cdragon:kled_circle.png"
+  },
+  {
+   "alias": "KogMaw",
+   "key": 96,
+   "name_en": "Kog'Maw",
+   "name_fr": "Kog'Maw",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "KogMaw.png",
+   "icon_source": "cdragon:kogmaw_circle_0.png"
+  },
+  {
+   "alias": "Leblanc",
+   "key": 7,
+   "name_en": "LeBlanc",
+   "name_fr": "LeBlanc",
+   "tags": [
+    "Assassin",
+    "Mage"
+   ],
+   "icon": "Leblanc.png",
+   "icon_source": "cdragon:leblanc_circle_0.png"
+  },
+  {
+   "alias": "LeeSin",
+   "key": 64,
+   "name_en": "Lee Sin",
+   "name_fr": "Lee Sin",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "LeeSin.png",
+   "icon_source": "cdragon:leesin_circle_0.png"
+  },
+  {
+   "alias": "Leona",
+   "key": 89,
+   "name_en": "Leona",
+   "name_fr": "Leona",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "Leona.png",
+   "icon_source": "cdragon:leona_circle.png"
+  },
+  {
+   "alias": "Lillia",
+   "key": 876,
+   "name_en": "Lillia",
+   "name_fr": "Lillia",
+   "tags": [
+    "Fighter",
+    "Mage"
+   ],
+   "icon": "Lillia.png",
+   "icon_source": "cdragon:lillia_circle_0.png"
+  },
+  {
+   "alias": "Lissandra",
+   "key": 127,
+   "name_en": "Lissandra",
+   "name_fr": "Lissandra",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Lissandra.png",
+   "icon_source": "cdragon:lissandra_circle.png"
+  },
+  {
+   "alias": "Locke",
+   "key": 805,
+   "name_en": "Locke",
+   "name_fr": "Locke",
+   "tags": [
+    "Assassin",
+    "Mage"
+   ],
+   "icon": "Locke.png",
+   "icon_source": "cdragon:locke_circle_0.png"
+  },
+  {
+   "alias": "Lucian",
+   "key": 236,
+   "name_en": "Lucian",
+   "name_fr": "Lucian",
+   "tags": [
+    "Marksman",
+    "Assassin"
+   ],
+   "icon": "Lucian.png",
+   "icon_source": "cdragon:lucian_circle.png"
+  },
+  {
+   "alias": "Lulu",
+   "key": 117,
+   "name_en": "Lulu",
+   "name_fr": "Lulu",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Lulu.png",
+   "icon_source": "cdragon:lulu_circle_0.png"
+  },
+  {
+   "alias": "Lux",
+   "key": 99,
+   "name_en": "Lux",
+   "name_fr": "Lux",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Lux.png",
+   "icon_source": "cdragon:lux_circle_0.png"
+  },
+  {
+   "alias": "Malphite",
+   "key": 54,
+   "name_en": "Malphite",
+   "name_fr": "Malphite",
+   "tags": [
+    "Tank",
+    "Mage"
+   ],
+   "icon": "Malphite.png",
+   "icon_source": "cdragon:malphite_circle.png"
+  },
+  {
+   "alias": "Malzahar",
+   "key": 90,
+   "name_en": "Malzahar",
+   "name_fr": "Malzahar",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Malzahar.png",
+   "icon_source": "cdragon:malzahar_circle.png"
+  },
+  {
+   "alias": "Maokai",
+   "key": 57,
+   "name_en": "Maokai",
+   "name_fr": "Maokai",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "Maokai.png",
+   "icon_source": "cdragon:maokai_circle.png"
+  },
+  {
+   "alias": "MasterYi",
+   "key": 11,
+   "name_en": "Master Yi",
+   "name_fr": "Maître Yi",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "MasterYi.png",
+   "icon_source": "cdragon:masteryi_circle_0.png"
+  },
+  {
+   "alias": "Mel",
+   "key": 800,
+   "name_en": "Mel",
+   "name_fr": "Mel",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Mel.png",
+   "icon_source": "cdragon:mel_circle_0.png"
+  },
+  {
+   "alias": "Milio",
+   "key": 902,
+   "name_en": "Milio",
+   "name_fr": "Milio",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Milio.png",
+   "icon_source": "cdragon:milio_circle_0.png"
+  },
+  {
+   "alias": "MissFortune",
+   "key": 21,
+   "name_en": "Miss Fortune",
+   "name_fr": "Miss Fortune",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "MissFortune.png",
+   "icon_source": "cdragon:missfortune_circle_0.png"
+  },
+  {
+   "alias": "MonkeyKing",
+   "key": 62,
+   "name_en": "Wukong",
+   "name_fr": "Wukong",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "MonkeyKing.png",
+   "icon_source": "cdragon:monkeyking_circle.png"
+  },
+  {
+   "alias": "Mordekaiser",
+   "key": 82,
+   "name_en": "Mordekaiser",
+   "name_fr": "Mordekaiser",
+   "tags": [
+    "Fighter",
+    "Mage"
+   ],
+   "icon": "Mordekaiser.png",
+   "icon_source": "cdragon:mordekaiser_circle_0.png"
+  },
+  {
+   "alias": "Morgana",
+   "key": 25,
+   "name_en": "Morgana",
+   "name_fr": "Morgana",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Morgana.png",
+   "icon_source": "cdragon:morgana_circle_0.png"
+  },
+  {
+   "alias": "Naafiri",
+   "key": 950,
+   "name_en": "Naafiri",
+   "name_fr": "Naafiri",
+   "tags": [
+    "Assassin",
+    "Fighter"
+   ],
+   "icon": "Naafiri.png",
+   "icon_source": "cdragon:naafiri_circle.png"
+  },
+  {
+   "alias": "Nami",
+   "key": 267,
+   "name_en": "Nami",
+   "name_fr": "Nami",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Nami.png",
+   "icon_source": "cdragon:nami_circle.png"
+  },
+  {
+   "alias": "Nasus",
+   "key": 75,
+   "name_en": "Nasus",
+   "name_fr": "Nasus",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Nasus.png",
+   "icon_source": "cdragon:nasus_circle.png"
+  },
+  {
+   "alias": "Nautilus",
+   "key": 111,
+   "name_en": "Nautilus",
+   "name_fr": "Nautilus",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "Nautilus.png",
+   "icon_source": "cdragon:nautilus_circle_0.png"
+  },
+  {
+   "alias": "Neeko",
+   "key": 518,
+   "name_en": "Neeko",
+   "name_fr": "Neeko",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Neeko.png",
+   "icon_source": "cdragon:neeko_circle_0.png"
+  },
+  {
+   "alias": "Nidalee",
+   "key": 76,
+   "name_en": "Nidalee",
+   "name_fr": "Nidalee",
+   "tags": [
+    "Assassin",
+    "Mage"
+   ],
+   "icon": "Nidalee.png",
+   "icon_source": "cdragon:nidalee_circle.png"
+  },
+  {
+   "alias": "Nilah",
+   "key": 895,
+   "name_en": "Nilah",
+   "name_fr": "Nilah",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Nilah.png",
+   "icon_source": "cdragon:nilah_circle_0.png"
+  },
+  {
+   "alias": "Nocturne",
+   "key": 56,
+   "name_en": "Nocturne",
+   "name_fr": "Nocturne",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Nocturne.png",
+   "icon_source": "cdragon:nocturne_circle_0.png"
+  },
+  {
+   "alias": "Nunu",
+   "key": 20,
+   "name_en": "Nunu & Willump",
+   "name_fr": "Nunu et Willump",
+   "tags": [
+    "Tank",
+    "Mage"
+   ],
+   "icon": "Nunu.png",
+   "icon_source": "cdragon:nunu_circle_0.png"
+  },
+  {
+   "alias": "Olaf",
+   "key": 2,
+   "name_en": "Olaf",
+   "name_fr": "Olaf",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Olaf.png",
+   "icon_source": "cdragon:olaf_circle.png"
+  },
+  {
+   "alias": "Orianna",
+   "key": 61,
+   "name_en": "Orianna",
+   "name_fr": "Orianna",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Orianna.png",
+   "icon_source": "cdragon:oriana_circle.png"
+  },
+  {
+   "alias": "Ornn",
+   "key": 516,
+   "name_en": "Ornn",
+   "name_fr": "Ornn",
+   "tags": [
+    "Tank"
+   ],
+   "icon": "Ornn.png",
+   "icon_source": "cdragon:ornn_circle.png"
+  },
+  {
+   "alias": "Pantheon",
+   "key": 80,
+   "name_en": "Pantheon",
+   "name_fr": "Pantheon",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Pantheon.png",
+   "icon_source": "cdragon:pantheon_circle_0.png"
+  },
+  {
+   "alias": "Poppy",
+   "key": 78,
+   "name_en": "Poppy",
+   "name_fr": "Poppy",
+   "tags": [
+    "Tank",
+    "Fighter"
+   ],
+   "icon": "Poppy.png",
+   "icon_source": "cdragon:poppy_circle.png"
+  },
+  {
+   "alias": "Pyke",
+   "key": 555,
+   "name_en": "Pyke",
+   "name_fr": "Pyke",
+   "tags": [
+    "Support",
+    "Assassin"
+   ],
+   "icon": "Pyke.png",
+   "icon_source": "cdragon:pyke_circle_0.png"
+  },
+  {
+   "alias": "Qiyana",
+   "key": 246,
+   "name_en": "Qiyana",
+   "name_fr": "Qiyana",
+   "tags": [
+    "Assassin"
+   ],
+   "icon": "Qiyana.png",
+   "icon_source": "cdragon:qiyana_circle_0.png"
+  },
+  {
+   "alias": "Quinn",
+   "key": 133,
+   "name_en": "Quinn",
+   "name_fr": "Quinn",
+   "tags": [
+    "Marksman",
+    "Assassin"
+   ],
+   "icon": "Quinn.png",
+   "icon_source": "cdragon:quinn_circle.png"
+  },
+  {
+   "alias": "Rakan",
+   "key": 497,
+   "name_en": "Rakan",
+   "name_fr": "Rakan",
+   "tags": [
+    "Support"
+   ],
+   "icon": "Rakan.png",
+   "icon_source": "cdragon:rakan_circle.png"
+  },
+  {
+   "alias": "Rammus",
+   "key": 33,
+   "name_en": "Rammus",
+   "name_fr": "Rammus",
+   "tags": [
+    "Tank"
+   ],
+   "icon": "Rammus.png",
+   "icon_source": "cdragon:armordillo_circle.png"
+  },
+  {
+   "alias": "RekSai",
+   "key": 421,
+   "name_en": "Rek'Sai",
+   "name_fr": "Rek'Sai",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "RekSai.png",
+   "icon_source": "cdragon:reksai_circle.png"
+  },
+  {
+   "alias": "Rell",
+   "key": 526,
+   "name_en": "Rell",
+   "name_fr": "Rell",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "Rell.png",
+   "icon_source": "cdragon:rell_circle_0.png"
+  },
+  {
+   "alias": "Renata",
+   "key": 888,
+   "name_en": "Renata Glasc",
+   "name_fr": "Renata Glasc",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Renata.png",
+   "icon_source": "cdragon:renata_circle_0.png"
+  },
+  {
+   "alias": "Renekton",
+   "key": 58,
+   "name_en": "Renekton",
+   "name_fr": "Renekton",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Renekton.png",
+   "icon_source": "cdragon:renekton_circle_0.png"
+  },
+  {
+   "alias": "Rengar",
+   "key": 107,
+   "name_en": "Rengar",
+   "name_fr": "Rengar",
+   "tags": [
+    "Assassin",
+    "Fighter"
+   ],
+   "icon": "Rengar.png",
+   "icon_source": "cdragon:rengar_circle_0.png"
+  },
+  {
+   "alias": "Riven",
+   "key": 92,
+   "name_en": "Riven",
+   "name_fr": "Riven",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Riven.png",
+   "icon_source": "cdragon:riven_circle.png"
+  },
+  {
+   "alias": "Rumble",
+   "key": 68,
+   "name_en": "Rumble",
+   "name_fr": "Rumble",
+   "tags": [
+    "Fighter",
+    "Mage"
+   ],
+   "icon": "Rumble.png",
+   "icon_source": "cdragon:rumble_circle.png"
+  },
+  {
+   "alias": "Ryze",
+   "key": 13,
+   "name_en": "Ryze",
+   "name_fr": "Ryze",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Ryze.png",
+   "icon_source": "cdragon:ryze_circle_0.png"
+  },
+  {
+   "alias": "Samira",
+   "key": 360,
+   "name_en": "Samira",
+   "name_fr": "Samira",
+   "tags": [
+    "Marksman",
+    "Assassin"
+   ],
+   "icon": "Samira.png",
+   "icon_source": "cdragon:samira_circle_0.png"
+  },
+  {
+   "alias": "Sejuani",
+   "key": 113,
+   "name_en": "Sejuani",
+   "name_fr": "Sejuani",
+   "tags": [
+    "Tank"
+   ],
+   "icon": "Sejuani.png",
+   "icon_source": "cdragon:sejuani_circle_0.png"
+  },
+  {
+   "alias": "Senna",
+   "key": 235,
+   "name_en": "Senna",
+   "name_fr": "Senna",
+   "tags": [
+    "Support",
+    "Marksman"
+   ],
+   "icon": "Senna.png",
+   "icon_source": "cdragon:senna_circle_0.png"
+  },
+  {
+   "alias": "Seraphine",
+   "key": 147,
+   "name_en": "Seraphine",
+   "name_fr": "Séraphine",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Seraphine.png",
+   "icon_source": "cdragon:seraphine_circle_0.png"
+  },
+  {
+   "alias": "Sett",
+   "key": 875,
+   "name_en": "Sett",
+   "name_fr": "Sett",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Sett.png",
+   "icon_source": "cdragon:sett_circle_0.png"
+  },
+  {
+   "alias": "Shaco",
+   "key": 35,
+   "name_en": "Shaco",
+   "name_fr": "Shaco",
+   "tags": [
+    "Assassin"
+   ],
+   "icon": "Shaco.png",
+   "icon_source": "cdragon:jester_circle.png"
+  },
+  {
+   "alias": "Shen",
+   "key": 98,
+   "name_en": "Shen",
+   "name_fr": "Shen",
+   "tags": [
+    "Tank"
+   ],
+   "icon": "Shen.png",
+   "icon_source": "cdragon:shen_circle.png"
+  },
+  {
+   "alias": "Shyvana",
+   "key": 102,
+   "name_en": "Shyvana",
+   "name_fr": "Shyvana",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Shyvana.png",
+   "icon_source": "cdragon:shyvana_circle_0.png"
+  },
+  {
+   "alias": "Singed",
+   "key": 27,
+   "name_en": "Singed",
+   "name_fr": "Singed",
+   "tags": [
+    "Tank",
+    "Mage"
+   ],
+   "icon": "Singed.png",
+   "icon_source": "cdragon:singed_circle_0.png"
+  },
+  {
+   "alias": "Sion",
+   "key": 14,
+   "name_en": "Sion",
+   "name_fr": "Sion",
+   "tags": [
+    "Tank",
+    "Fighter"
+   ],
+   "icon": "Sion.png",
+   "icon_source": "cdragon:sion_circle.png"
+  },
+  {
+   "alias": "Sivir",
+   "key": 15,
+   "name_en": "Sivir",
+   "name_fr": "Sivir",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Sivir.png",
+   "icon_source": "cdragon:sivir_circle_0.png"
+  },
+  {
+   "alias": "Skarner",
+   "key": 72,
+   "name_en": "Skarner",
+   "name_fr": "Skarner",
+   "tags": [
+    "Tank",
+    "Fighter"
+   ],
+   "icon": "Skarner.png",
+   "icon_source": "cdragon:skarner_circle_0.png"
+  },
+  {
+   "alias": "Smolder",
+   "key": 901,
+   "name_en": "Smolder",
+   "name_fr": "Smolder",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "Smolder.png",
+   "icon_source": "cdragon:smolder_circle_0.png"
+  },
+  {
+   "alias": "Sona",
+   "key": 37,
+   "name_en": "Sona",
+   "name_fr": "Sona",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Sona.png",
+   "icon_source": "cdragon:sona_circle.png"
+  },
+  {
+   "alias": "Soraka",
+   "key": 16,
+   "name_en": "Soraka",
+   "name_fr": "Soraka",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Soraka.png",
+   "icon_source": "cdragon:soraka_circle.png"
+  },
+  {
+   "alias": "Swain",
+   "key": 50,
+   "name_en": "Swain",
+   "name_fr": "Swain",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Swain.png",
+   "icon_source": "cdragon:swain_circle_0.png"
+  },
+  {
+   "alias": "Sylas",
+   "key": 517,
+   "name_en": "Sylas",
+   "name_fr": "Sylas",
+   "tags": [
+    "Mage",
+    "Assassin"
+   ],
+   "icon": "Sylas.png",
+   "icon_source": "cdragon:sylas_circle_0.png"
+  },
+  {
+   "alias": "Syndra",
+   "key": 134,
+   "name_en": "Syndra",
+   "name_fr": "Syndra",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Syndra.png",
+   "icon_source": "cdragon:syndra_circle_0.png"
+  },
+  {
+   "alias": "TahmKench",
+   "key": 223,
+   "name_en": "Tahm Kench",
+   "name_fr": "Tahm Kench",
+   "tags": [
+    "Tank",
+    "Support"
+   ],
+   "icon": "TahmKench.png",
+   "icon_source": "cdragon:tahmkench_circle.png"
+  },
+  {
+   "alias": "Taliyah",
+   "key": 163,
+   "name_en": "Taliyah",
+   "name_fr": "Taliyah",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Taliyah.png",
+   "icon_source": "cdragon:taliyah_circle.png"
+  },
+  {
+   "alias": "Talon",
+   "key": 91,
+   "name_en": "Talon",
+   "name_fr": "Talon",
+   "tags": [
+    "Assassin"
+   ],
+   "icon": "Talon.png",
+   "icon_source": "cdragon:talon_circle_0.png"
+  },
+  {
+   "alias": "Taric",
+   "key": 44,
+   "name_en": "Taric",
+   "name_fr": "Taric",
+   "tags": [
+    "Support",
+    "Tank"
+   ],
+   "icon": "Taric.png",
+   "icon_source": "cdragon:taric_circle.png"
+  },
+  {
+   "alias": "Teemo",
+   "key": 17,
+   "name_en": "Teemo",
+   "name_fr": "Teemo",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "Teemo.png",
+   "icon_source": "cdragon:teemo_circle_0.png"
+  },
+  {
+   "alias": "Thresh",
+   "key": 412,
+   "name_en": "Thresh",
+   "name_fr": "Thresh",
+   "tags": [
+    "Support",
+    "Tank"
+   ],
+   "icon": "Thresh.png",
+   "icon_source": "cdragon:thresh_circle.png"
+  },
+  {
+   "alias": "Tristana",
+   "key": 18,
+   "name_en": "Tristana",
+   "name_fr": "Tristana",
+   "tags": [
+    "Marksman",
+    "Assassin"
+   ],
+   "icon": "Tristana.png",
+   "icon_source": "cdragon:tristana_circle.png"
+  },
+  {
+   "alias": "Trundle",
+   "key": 48,
+   "name_en": "Trundle",
+   "name_fr": "Trundle",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Trundle.png",
+   "icon_source": "cdragon:trundle_circle.png"
+  },
+  {
+   "alias": "Tryndamere",
+   "key": 23,
+   "name_en": "Tryndamere",
+   "name_fr": "Tryndamere",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Tryndamere.png",
+   "icon_source": "cdragon:tryndamere_circle.png"
+  },
+  {
+   "alias": "TwistedFate",
+   "key": 4,
+   "name_en": "Twisted Fate",
+   "name_fr": "Twisted Fate",
+   "tags": [
+    "Mage",
+    "Marksman"
+   ],
+   "icon": "TwistedFate.png",
+   "icon_source": "cdragon:twistedfate_circle_0.png"
+  },
+  {
+   "alias": "Twitch",
+   "key": 29,
+   "name_en": "Twitch",
+   "name_fr": "Twitch",
+   "tags": [
+    "Marksman",
+    "Assassin"
+   ],
+   "icon": "Twitch.png",
+   "icon_source": "cdragon:twitch_circle.png"
+  },
+  {
+   "alias": "Udyr",
+   "key": 77,
+   "name_en": "Udyr",
+   "name_fr": "Udyr",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Udyr.png",
+   "icon_source": "cdragon:udyr_circle_0.png"
+  },
+  {
+   "alias": "Urgot",
+   "key": 6,
+   "name_en": "Urgot",
+   "name_fr": "Urgot",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Urgot.png",
+   "icon_source": "cdragon:urgot_circle.png"
+  },
+  {
+   "alias": "Varus",
+   "key": 110,
+   "name_en": "Varus",
+   "name_fr": "Varus",
+   "tags": [
+    "Marksman",
+    "Mage"
+   ],
+   "icon": "Varus.png",
+   "icon_source": "cdragon:varus_circle_0.png"
+  },
+  {
+   "alias": "Vayne",
+   "key": 67,
+   "name_en": "Vayne",
+   "name_fr": "Vayne",
+   "tags": [
+    "Marksman",
+    "Assassin"
+   ],
+   "icon": "Vayne.png",
+   "icon_source": "cdragon:vayne_circle.png"
+  },
+  {
+   "alias": "Veigar",
+   "key": 45,
+   "name_en": "Veigar",
+   "name_fr": "Veigar",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Veigar.png",
+   "icon_source": "cdragon:veigar_circle.png"
+  },
+  {
+   "alias": "Velkoz",
+   "key": 161,
+   "name_en": "Vel'Koz",
+   "name_fr": "Vel'Koz",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Velkoz.png",
+   "icon_source": "cdragon:velkoz_circle.png"
+  },
+  {
+   "alias": "Vex",
+   "key": 711,
+   "name_en": "Vex",
+   "name_fr": "Vex",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Vex.png",
+   "icon_source": "cdragon:vex_circle_0.png"
+  },
+  {
+   "alias": "Vi",
+   "key": 254,
+   "name_en": "Vi",
+   "name_fr": "Vi",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Vi.png",
+   "icon_source": "cdragon:vi_circle.png"
+  },
+  {
+   "alias": "Viego",
+   "key": 234,
+   "name_en": "Viego",
+   "name_fr": "Viego",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Viego.png",
+   "icon_source": "cdragon:viego_circle.png"
+  },
+  {
+   "alias": "Viktor",
+   "key": 112,
+   "name_en": "Viktor",
+   "name_fr": "Viktor",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Viktor.png",
+   "icon_source": "cdragon:viktor_circle_0.png"
+  },
+  {
+   "alias": "Vladimir",
+   "key": 8,
+   "name_en": "Vladimir",
+   "name_fr": "Vladimir",
+   "tags": [
+    "Mage",
+    "Fighter"
+   ],
+   "icon": "Vladimir.png",
+   "icon_source": "cdragon:vladimir_circle_0.png"
+  },
+  {
+   "alias": "Volibear",
+   "key": 106,
+   "name_en": "Volibear",
+   "name_fr": "Volibear",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Volibear.png",
+   "icon_source": "cdragon:volibear_circle_0.png"
+  },
+  {
+   "alias": "Warwick",
+   "key": 19,
+   "name_en": "Warwick",
+   "name_fr": "Warwick",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Warwick.png",
+   "icon_source": "cdragon:warwick_circle_0.png"
+  },
+  {
+   "alias": "Xayah",
+   "key": 498,
+   "name_en": "Xayah",
+   "name_fr": "Xayah",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Xayah.png",
+   "icon_source": "cdragon:xayah_circle.png"
+  },
+  {
+   "alias": "Xerath",
+   "key": 101,
+   "name_en": "Xerath",
+   "name_fr": "Xerath",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Xerath.png",
+   "icon_source": "cdragon:xerath_circle.png"
+  },
+  {
+   "alias": "XinZhao",
+   "key": 5,
+   "name_en": "Xin Zhao",
+   "name_fr": "Xin Zhao",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "XinZhao.png",
+   "icon_source": "ddragon-square"
+  },
+  {
+   "alias": "Yasuo",
+   "key": 157,
+   "name_en": "Yasuo",
+   "name_fr": "Yasuo",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Yasuo.png",
+   "icon_source": "cdragon:yasuo_circle.png"
+  },
+  {
+   "alias": "Yone",
+   "key": 777,
+   "name_en": "Yone",
+   "name_fr": "Yone",
+   "tags": [
+    "Fighter",
+    "Assassin"
+   ],
+   "icon": "Yone.png",
+   "icon_source": "cdragon:yone_circle_0.png"
+  },
+  {
+   "alias": "Yorick",
+   "key": 83,
+   "name_en": "Yorick",
+   "name_fr": "Yorick",
+   "tags": [
+    "Fighter",
+    "Tank"
+   ],
+   "icon": "Yorick.png",
+   "icon_source": "cdragon:yorick_circle.png"
+  },
+  {
+   "alias": "Yunara",
+   "key": 804,
+   "name_en": "Yunara",
+   "name_fr": "Yunara",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Yunara.png",
+   "icon_source": "cdragon:yunara_circle_0.png"
+  },
+  {
+   "alias": "Yuumi",
+   "key": 350,
+   "name_en": "Yuumi",
+   "name_fr": "Yuumi",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Yuumi.png",
+   "icon_source": "cdragon:yuumi_circle_0.png"
+  },
+  {
+   "alias": "Zaahen",
+   "key": 904,
+   "name_en": "Zaahen",
+   "name_fr": "Zaahen",
+   "tags": [
+    "Fighter"
+   ],
+   "icon": "Zaahen.png",
+   "icon_source": "cdragon:zaahen_circle_0.png"
+  },
+  {
+   "alias": "Zac",
+   "key": 154,
+   "name_en": "Zac",
+   "name_fr": "Zac",
+   "tags": [
+    "Tank",
+    "Fighter"
+   ],
+   "icon": "Zac.png",
+   "icon_source": "cdragon:zac_circle.png"
+  },
+  {
+   "alias": "Zed",
+   "key": 238,
+   "name_en": "Zed",
+   "name_fr": "Zed",
+   "tags": [
+    "Assassin"
+   ],
+   "icon": "Zed.png",
+   "icon_source": "cdragon:zed_circle_0.png"
+  },
+  {
+   "alias": "Zeri",
+   "key": 221,
+   "name_en": "Zeri",
+   "name_fr": "Zeri",
+   "tags": [
+    "Marksman"
+   ],
+   "icon": "Zeri.png",
+   "icon_source": "cdragon:zeri_circle_0.png"
+  },
+  {
+   "alias": "Ziggs",
+   "key": 115,
+   "name_en": "Ziggs",
+   "name_fr": "Ziggs",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Ziggs.png",
+   "icon_source": "cdragon:ziggs_circle.png"
+  },
+  {
+   "alias": "Zilean",
+   "key": 26,
+   "name_en": "Zilean",
+   "name_fr": "Zilean",
+   "tags": [
+    "Support",
+    "Mage"
+   ],
+   "icon": "Zilean.png",
+   "icon_source": "cdragon:chronokeeper_circle.png"
+  },
+  {
+   "alias": "Zoe",
+   "key": 142,
+   "name_en": "Zoe",
+   "name_fr": "Zoé",
+   "tags": [
+    "Mage"
+   ],
+   "icon": "Zoe.png",
+   "icon_source": "cdragon:zoe_circle.png"
+  },
+  {
+   "alias": "Zyra",
+   "key": 143,
+   "name_en": "Zyra",
+   "name_fr": "Zyra",
+   "tags": [
+    "Mage",
+    "Support"
+   ],
+   "icon": "Zyra.png",
+   "icon_source": "cdragon:zyra_circle_0.png"
+  }
+ ]
+}
