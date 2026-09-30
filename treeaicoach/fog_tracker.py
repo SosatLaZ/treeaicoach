@@ -373,7 +373,10 @@ class FogTracker:
             if not key:
                 continue
             alias = getattr(tr, "alias", None)
-            is_jungler = bool(jungler_alias and alias and _norm_alias(alias) == jungler_alias)
+            if jungler_alias:
+                is_jungler = bool(alias and _norm_alias(alias) == jungler_alias)
+            else:   # no roster: a track that knows its champion has Smite
+                is_jungler = bool(getattr(tr, "has_smite", False))
             if mode == "jungler" and not is_jungler:
                 continue
             if mode == "all" and not alias:

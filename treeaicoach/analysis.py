@@ -129,6 +129,11 @@ def fmt_num(x: Any, decimals: int = 1) -> str:
     return s.replace(",", " ").replace(".", ",")
 
 
+def fmt_target(x: float) -> str:
+    """Target number without a useless decimal (``7`` / ``7,5``)."""
+    return fmt_num(x, 0) if float(x).is_integer() else fmt_num(x, 1)
+
+
 def _plural(n: int, word: str, plural: str | None = None) -> str:
     return f"{n} {word if abs(n) <= 1 else (plural or word + 's')}"
 
@@ -721,6 +726,20 @@ def _deaths(rec: _Rec) -> list[dict]:
     return out
 
 
+def _enemies_near_me(rec: _Rec, t0: float, t1: float) -> list[str]:
+    """Named enemies seen < NEAR_RADIUS from me between ``t0 - 3 s`` and ``t1 + 3 s``."""
+    out: list[str] = []
+    for key, ser in rec.sightings.items():
+        if "?" in key:
+            continue
+        for gt, u, v in ser.window(t0 - 3.0, t1 + 3.0):
+            mine = rec.my_pos.nearest(gt, MY_POS_MATCH_S)
+            if mine is not None and geometry.dist((u, v), (mine[1], mine[2])) < NEAR_RADIUS:
+                out.append(key)
+                break
+    return out
+
+
 def _ganks(rec: _Rec, deaths: list[dict]) -> list[dict]:
     """DANGER threat alerts grouped in episodes; outcome = my death within 15 s."""
     danger = [a for a in rec.alerts if a[2] >= LEVEL_DANGER and a[1] not in NON_THREAT_KINDS]
@@ -744,6 +763,8 @@ def _ganks(rec: _Rec, deaths: list[dict]) -> list[dict]:
                 name = _str(p.get("name"))
                 if name and name in " ".join(x[3] for x in ep) and _str(p.get("team")).upper() != rec.my_team:
                     aliases.append(_str(p.get("alias")) or name)
+        if not aliases:   # e.g. COLLAPSE alerts: enemies seen near me when the alert was given
+            aliases = _enemies_near_me(rec, t0, t_last)
         pre = [w for w in rec.alerts if t0 - 20.0 <= w[0] < t0 and w[2] == LEVEL_WARNING and w[1] in GANK_KINDS]
         out.append({
             "game_time": round(t0, 1),
@@ -1050,7 +1071,7 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
     if cspm is not None and target is not None and minutes >= 10 and cspm < target - 0.3:
         missed = int(round((target - cspm) * minutes))
         tips.append((70, "cs", "warn",
-                     f"CS/min {fmt_num(cspm)} : objectif {fmt_num(target)}+ "
+                     f"CS/min {fmt_num(cspm)} : objectif {fmt_target(target)}+ "
                      f"(≈ {missed} sbires de plus sur {int(minutes)} min)."))
     elif cspm is not None and target is not None and minutes >= 10 and cspm >= target:
         tips.append((30, "cs_good", "good", f"CS/min {fmt_num(cspm)} : très bon farm, garde ce rythme."))
@@ -1060,7 +1081,7 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
     vt = VISION_TARGET.get(position, VISION_TARGET_DEFAULT)
     if vpm is not None and minutes >= 10 and vpm < vt * 0.8:
         tips.append((65, "vision", "warn",
-                     f"Score de vision {fmt_num(vpm)}/min : vise {fmt_num(vt)}+ — pose tes balises et achète "
+                     f"Score de vision {fmt_num(vpm)}/min : vise {fmt_target(vt)}+ — pose tes balises et achète "
                      f"une balise de contrôle à chaque retour."))
 
     # R8 — >= 2 deaths in the river or the enemy jungle: over-extension without vision.
@@ -1123,6 +1144,10 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
                       "mais ne remplacent pas, ta vigilance."))
     tips.sort(key=lambda x: -x[0])
     chosen = tips[:MAX_TIPS]
+    # keep one encouraging tip when there is one (the list is full of warnings otherwise)
+    goods = [t for t in tips if t[2] == "good"]
+    if goods and not any(t[2] == "good" for t in chosen) and len(chosen) == MAX_TIPS:
+        chosen[-1] = goods[0]
     ids = {t[1] for t in chosen}
     for fb in fallbacks:
         if len(chosen) >= MIN_TIPS:

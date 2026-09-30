@@ -1505,17 +1505,16 @@ def _render_preview(state: OverlayState, width: int, texture_bgr: np.ndarray | N
         a + b for a, b in zip(default_minimap_rect(sw, sh), (sx, sy, 0, 0)))
     bg = game_background(sw, sh, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]))
     scale = float(getattr(cfg, "radar_scale", 1.0) or 1.0) if cfg is not None else 1.0
-    rsize = _ov.radar_size(mm, scale)
-    radar = render_radar(state, rsize, texture_bgr, now)
-    rx, ry = _ov.radar_placement(mm, scr, rsize, getattr(cfg, "radar_position", "above_minimap"),
-                                 getattr(cfg, "radar_xy", None))
-    composite_over(bg, radar, rx - sx, ry - sy)
-    hud_w = _ov.hud_width(scr)
-    hud = render_hud(state, hud_w, now)
-    hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0], getattr(cfg, "hud_position", "top_left"),
-                               getattr(cfg, "hud_xy", None), avoid=[mm, (rx, ry, rsize, rsize)])
-    composite_over(bg, hud, hx - sx, hy - sy)
-    if _clamp01(state.flash) > 0:
+    rx, ry, rsize = _ov.radar_geometry(mm, scr, scale, getattr(cfg, "radar_position", "above_minimap"),
+                                       getattr(cfg, "radar_xy", None))
+    if cfg is None or getattr(cfg, "radar_enabled", True):
+        composite_over(bg, render_radar(state, rsize, texture_bgr, now), rx - sx, ry - sy)
+    if cfg is None or getattr(cfg, "hud_enabled", True):
+        hud = render_hud(state, _ov.hud_width(scr), now)
+        hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0], getattr(cfg, "hud_position", "top_left"),
+                                   getattr(cfg, "hud_xy", None), avoid=[mm, (rx, ry, rsize, rsize)])
+        composite_over(bg, hud, hx - sx, hy - sy)
+    if _clamp01(state.flash) > 0 and (cfg is None or getattr(cfg, "danger_flash", True)):
         fl = render_flash(sw, sh, state.flash, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]),
                           thickness=_ov.flash_thickness(scr))
         composite_over(bg, fl, 0, 0)

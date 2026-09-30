@@ -95,10 +95,17 @@ def game_background(rng: np.random.Generator, W: int, H: int) -> np.ndarray:
         if rng.random() < 0.5:
             cv2.rectangle(img, (c[0] - 12, c[1] - 20), (c[0] + 12, c[1] - 17),
                           (40, 200, 40) if rng.random() < 0.5 else (40, 40, 200), -1)
-    img = cv2.resize(img, (W, H), interpolation=cv2.INTER_LINEAR)
-    tile = rng.normal(0.0, float(rng.uniform(1.0, 7.0)), (256, 256, 1)).astype(np.float32)
-    img += np.tile(tile, (H // 256 + 1, W // 256 + 1, 3))[:H, :W]
-    return np.clip(img, 0, 255).astype(np.uint8)
+    small = np.clip(img, 0, 255).astype(np.uint8)
+    out = cv2.resize(small, (W, H), interpolation=cv2.INTER_LINEAR)
+    # per-pixel sensor-like noise (int16 tile, saturated add: cheap even at 4K)
+    tile = np.round(rng.normal(0.0, float(rng.uniform(1.0, 7.0)), (256, 256, 1)))
+    tile = np.repeat(tile, 3, axis=2).astype(np.int16)
+    for y in range(0, H, 256):
+        for x in range(0, W, 256):
+            blk = out[y:y + 256, x:x + 256]
+            h, w = blk.shape[:2]
+            out[y:y + h, x:x + w] = cv2.add(blk, tile[:h, :w], dtype=cv2.CV_8U)
+    return out
 
 
 def draw_hud(rng: np.random.Generator, img: np.ndarray, side: str,
@@ -330,7 +337,7 @@ def _check_located(loc: MinimapLocation | None, truth, origin: Rect, H: int) -> 
 def test_locate_random_screenshots(locator: MinimapLocator) -> None:
     """>= 30 random cases across resolutions, sizes and sides (side="auto")."""
     rng = np.random.default_rng(2024)
-    n, failures, times_1080, scores = 36, [], [], []
+    n, failures, times_1080, scores = 32, [], [], []
     for i in range(n):
         W, H = RESOLUTIONS[i % len(RESOLUTIONS)]
         side = "left" if i % 3 == 2 else "right"

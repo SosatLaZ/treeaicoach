@@ -26,6 +26,7 @@ continuous centre of an icon at ``u`` in an image of width ``W`` is ``u * W``.
 
 from __future__ import annotations
 
+import functools
 import logging
 import math
 import os
@@ -559,6 +560,21 @@ def _portrait_layer(icon_rgba: np.ndarray, r_in: float, cx: float, cy: float,
     return bgr, a
 
 
+def _ramp(edge: float, d: np.ndarray) -> np.ndarray:
+    """Anti-aliased coverage ``clip(edge - d, 0, 1)`` (new array; faster than np.clip)."""
+    a = np.subtract(np.float32(edge), d)
+    np.maximum(a, 0.0, out=a)
+    return np.minimum(a, 1.0, out=a)
+
+
+def _to_u8(patch: np.ndarray) -> np.ndarray:
+    """Round a float patch to uint8 with saturation (in place on ``patch``)."""
+    patch += 0.5
+    np.maximum(patch, 0.0, out=patch)
+    np.minimum(patch, 255.0, out=patch)
+    return patch.astype(np.uint8)
+
+
 def _lerp_(patch: np.ndarray, color: np.ndarray, alpha: np.ndarray) -> None:
     """In place: ``patch += (color - patch) * alpha`` (alpha [h,w])."""
     patch += (color - patch) * alpha[:, :, None]
@@ -601,11 +617,11 @@ def draw_champion_icon(dst_bgr: np.ndarray, cx: float, cy: float, radius_px: flo
         # 1) optional outline
         if ow > 0.05:
             _lerp_(patch, np.asarray(outline_bgr, np.float32)[:3],
-                   np.clip(R + ow + 0.5 - d, 0.0, 1.0))
+                   _ramp(R + ow + 0.5, d))
         # 2) ring disc
         ring = np.asarray(GREY_RING_BGR if grey else (ring_bgr if ring_bgr is not None
                                                       else RING_BGR["enemy"]), np.float32)[:3]
-        a_ring = np.clip(R + 0.5 - d, 0.0, 1.0)
+        a_ring = _ramp(R + 0.5, d)
         if ring_shading and _finite(ring_shading) and not grey:
             ys = (np.arange(y0, y1, dtype=np.float32) + np.float32(0.5 - cy)) / np.float32(R)
             shade = 1.0 - float(ring_shading) * np.clip(ys, -1.0, 1.0)
@@ -621,12 +637,12 @@ def draw_champion_icon(dst_bgr: np.ndarray, cx: float, cy: float, radius_px: flo
             il = min(max(0.0, il), 0.5 * r_in)
             if il > 0.05:
                 line = np.asarray((70, 70, 70) if grey else inner_line_bgr, np.float32)[:3]
-                _lerp_(patch, line, np.clip(r_in + 0.5 - d, 0.0, 1.0))
+                _lerp_(patch, line, _ramp(r_in + 0.5, d))
                 r_in -= il
         # 4) portrait
         rgba = _as_rgba(icon_rgba) if icon_rgba is not None else None
         if r_in >= 0.5:
-            cover = np.clip(r_in + 0.5 - d, 0.0, 1.0)
+            cover = _ramp(r_in + 0.5, d)
             if rgba is not None:
                 p_bgr, p_a = _portrait_layer(rgba, r_in, cx, cy, x0, y0, x1 - x0, y1 - y0)
                 if grey:
@@ -636,7 +652,7 @@ def draw_champion_icon(dst_bgr: np.ndarray, cx: float, cy: float, radius_px: flo
             else:  # no portrait: dark neutral disc
                 p_bgr = np.full(patch.shape, 45.0, np.float32)
             patch += (p_bgr - patch) * cover[:, :, None]
-        dst_bgr[y0:y1, x0:x1] = np.clip(patch + 0.5, 0, 255).astype(np.uint8)
+        dst_bgr[y0:y1, x0:x1] = _to_u8(patch)
     except Exception:
         log.exception("draw_champion_icon failed")
 
@@ -665,7 +681,7 @@ def draw_ring(dst_bgr: np.ndarray, cx: float, cy: float, radius_px: float, width
         a *= min(1.0, float(opacity))
         patch = dst_bgr[y0:y1, x0:x1].astype(np.float32)
         _lerp_(patch, np.asarray(bgr, np.float32)[:3], a)
-        dst_bgr[y0:y1, x0:x1] = np.clip(patch + 0.5, 0, 255).astype(np.uint8)
+        dst_bgr[y0:y1, x0:x1] = _to_u8(patch)
     except Exception:
         log.exception("draw_ring failed")
 
@@ -711,11 +727,18 @@ def _default_assets_dir() -> Path:
         return Path(__file__).resolve().parent / "assets"
 
 
-def _normalize_png_name(name: Any) -> str:
-    name = os.path.basename(str(name).strip())
+@functools.lru_cache(maxsize=1024)
+def _normalize_png_name_str(name: str) -> str:
+    name = os.path.basename(name.strip())
     return name if name.lower().endswith(".png") else name + ".png"
 
 
+def _normalize_png_name(name: Any) -> str:
+    """``"foo"`` / ``"dir/foo.png"`` -> ``"foo.png"`` (cached)."""
+    return _normalize_png_name_str(str(name))
+
+
+@functools.lru_cache(maxsize=256)
 def texture_variant(texture: str) -> str:
     """Variant of a texture name: ``"2dlevelminimap_ocean_baron2.png"`` -> ``"ocean"``."""
     m = re.match(r"^2dlevelminimap_([a-z]+)", os.path.basename(str(texture)).lower())
@@ -972,6 +995,13 @@ class MinimapRenderer:
         sigma = FOG_FEATHER * g
         if sigma > 0.3:
             mask = cv2.GaussianBlur(mask, (0, 0), sigma)
+        if fog_name == _UNIFORM_FOG:
+            # fast path (the real game): img * (1 - w), computed in uint8 at full size
+            w = np.minimum(mask * min(fog_alpha, 1.0), FOG_MAX_DARKEN)
+            f8 = np.clip((1.0 - w) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+            if g != size:
+                f8 = cv2.resize(f8, (size, size), interpolation=cv2.INTER_LINEAR)
+            return cv2.multiply(img, cv2.cvtColor(f8, cv2.COLOR_GRAY2BGR), scale=1.0 / 255.0)
         if g != size:
             mask = cv2.resize(mask, (size, size), interpolation=cv2.INTER_LINEAR)
         w = cv2.multiply(k0, mask, scale=min(fog_alpha, 1.0))

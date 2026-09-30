@@ -16,11 +16,12 @@ Method (:meth:`MinimapLocator.locate`):
    and shop but no champion, clean and fogged (lit around each team's structures), each
    averaged over the dragon-soul texture variants.
 3. **Coarse search**: the capture is downscaled to :data:`WORK_HEIGHT` px; templates are
-   matched (``TM_CCOEFF_NORMED``, mean of the two channels) at ~2 % size steps covering
+   matched (``TM_CCOEFF_NORMED``, mean of the two channels) at ~3 % size steps covering
    ``[0.14, 0.50] x H``, only at positions whose gaps to the bottom and side edges are
    <= 4 % of the height (one or both bottom corners, depending on ``side``).
-4. **Refinement** of the best candidates at up to full resolution (the minimap resampled
-   to <= :data:`REFINE_SIZE` px): +/-2.5 % size, a few pixels of position.
+4. **Refinement** of the best candidates scoring >= :data:`COARSE_MIN_SCORE`, at up to full
+   resolution (the minimap resampled to <= :data:`REFINE_SIZE` px): +/-2.5 % size (coarse
+   2-px size steps, then +/-1 px around the best), a few pixels of position.
 5. **Score** = :meth:`MinimapLocator.verify` of the refined crop (canonical 128 px NCC with
    a small shift / scale tolerance). ``None`` below :data:`LOCATE_MIN_SCORE`.
 
@@ -64,13 +65,16 @@ FALLBACK_SIZE: float = 0.265
 
 #: Coarse search: working height (px) and relative size step.
 WORK_HEIGHT: int = 300
-SIZE_STEP: float = 1.02
+SIZE_STEP: float = 1.03
 #: Master templates used by the coarse search (0 clean, 1 / 2 fogged lit around the
 #: ORDER / CHAOS structures); all of them are used for the refinement and :meth:`verify`.
 COARSE_TEMPLATES: tuple[int, ...] = (0, 1, 2)
 #: Coarse candidates refined per side, and score gap below the best one to skip refining.
 REFINE_CANDIDATES: int = 2
 REFINE_SCORE_GAP: float = 0.15
+#: Coarse candidates scoring below this are not refined (-> ``None`` quickly). Measured on
+#: synthetic screenshots: true minimaps 0.86-0.93, best candidate without a minimap <= 0.39.
+COARSE_MIN_SCORE: float = 0.42
 #: Refinement: the minimap is resampled to at most this size (px); size tolerance.
 REFINE_SIZE: int = 256
 REFINE_SIZE_TOL: float = 0.025
@@ -341,7 +345,7 @@ class MinimapLocator:
             best: _Candidate | None = None
             top = max((c.score for c in cands), default=-1.0)
             for c in sorted(cands, key=lambda c: -c.score):
-                if c.score < top - REFINE_SCORE_GAP:
+                if c.score < top - REFINE_SCORE_GAP or c.score < COARSE_MIN_SCORE:
                     break
                 r = self._refine(tpl, img, c)
                 if r is None:
@@ -415,15 +419,25 @@ class MinimapLocator:
         pyr = tpl.pyramids[c.tidx]
         s_lo = max(8, int(math.floor(c.s * k * (1 - REFINE_SIZE_TOL))))
         s_hi = int(math.ceil(c.s * k * (1 + REFINE_SIZE_TOL)))
-        best: tuple[float, int, int, int] | None = None
-        for s2 in range(s_lo, s_hi + 1):
-            if s2 > feat[0].shape[0] or s2 > feat[0].shape[1]:
-                break
+        s_max = min(s_hi, feat[0].shape[0], feat[0].shape[1])
+        tried: dict[int, tuple[float, int, int, int]] = {}
+
+        def trial(s2: int) -> None:
+            if s2 in tried or s2 < s_lo or s2 > s_max:
+                return
             _mn, mv, _l, ml = cv2.minMaxLoc(_ncc(feat, _features(_resize_from(pyr, s2))))
-            if best is None or mv > best[0]:
-                best = (float(mv), ml[0], ml[1], s2)
-        if best is None:
+            tried[s2] = (float(mv), ml[0], ml[1], s2)
+
+        # coarse-to-fine over the size (NCC is smooth in the size at this blur level)
+        for s2 in range(s_lo, s_max + 1, 2):
+            trial(s2)
+        trial(s_max)
+        if not tried:
             return None
+        s_best = max(tried.values())[3]
+        trial(s_best - 1)
+        trial(s_best + 1)
+        best = max(tried.values())
         _sc, bx, by, s2 = best
         x = int(round(x0 + bx * fx))
         y = int(round(y0 + by * fy))

@@ -233,6 +233,7 @@ class _Assets:
     def __init__(self, champion_dir: Path | None = None) -> None:
         self.renderer = R.MinimapRenderer()
         self.textures = self.renderer.textures() or [R.DEFAULT_TEXTURE]
+        self.base_textures = [t for t in self.textures if R.texture_variant(t) == "base"]
         self.fogs = self.renderer.fogs()
         self.lanes = {"top": _Polyline(TOP_LANE_POLYLINE), "mid": _Polyline(MID_LANE_POLYLINE),
                       "bot": _Polyline(BOT_LANE_POLYLINE)}
@@ -397,7 +398,7 @@ class _SceneBuilder:
         self.phase = float(rng.random())                     # 0 early game .. 1 late game
         # base texture most of the time, dragon-soul variants otherwise
         tex = assets.textures
-        base = [t for t in tex if R.texture_variant(t) == "base"]
+        base = assets.base_textures
         self.texture = _choice(rng, base) if base and rng.random() < 0.4 else _choice(rng, tex)
         self.variant = R.texture_variant(self.texture)
         self.cells = assets.cells(self.texture)
@@ -510,14 +511,13 @@ class _SceneBuilder:
             if icon is not None:
                 f = bright * rng.uniform(0.93, 1.07)
                 if abs(f - 1.0) > 0.02:
-                    icon = icon.copy()
-                    icon[:, :, :3] = np.clip(icon[:, :, :3].astype(np.float32) * f, 0, 255)
+                    icon = cv2.multiply(icon, (f, f, f, 1.0))   # saturating, alpha kept
             recall = rng.random() < (cfg.p_recall if rel != "enemy" else cfg.p_recall / 3)
             sprites.append(R.ChampionSprite(
                 u=ch.u, v=ch.v, r=ch.r, relation=rel, icon=icon, ring_bgr=ring, recall=recall,
                 label_class=SELF_LABEL if rel == "self" else team_rel,
                 teleport=rng.random() < cfg.p_teleport,
-                ring_frac=float(np.clip(ring_frac + rng.normal(0, 0.008), 0.08, 0.2)),
+                ring_frac=min(0.2, max(0.08, ring_frac + rng.normal(0, 0.008))),
                 ring_shading=shading, inner_line_bgr=inner_bgr,
                 inner_line_frac=inner_frac, outline_frac=outline,
                 halo=(rng.uniform(0.12, 0.45) if rng.random() < (0.35 if rel == "enemy" else 0.12)
@@ -531,7 +531,8 @@ class _SceneBuilder:
         self.vision.append((float(u), float(v), float(r)))
 
     def in_vision(self, u: float, v: float, margin: float = 0.01) -> bool:
-        return any(math.hypot(u - a, v - b) < r - margin for a, b, r in self.vision)
+        return any((u - a) ** 2 + (v - b) ** 2 < (r - margin) ** 2 and r > margin
+                   for a, b, r in self.vision)
 
     # ---------------------------------------------------------------- structures
     def structures(self) -> tuple[frozenset, dict[str, int]]:
@@ -851,18 +852,31 @@ def _draw_ping_wheel(img: np.ndarray, rng: np.random.Generator, assets: _Assets)
 def _frame_canvas(img: np.ndarray, pad: int, rng: np.random.Generator) -> np.ndarray:
     """The minimap inside a strip of the HUD frame (dark band + bronze line)."""
     n = img.shape[0]
-    canvas = np.empty((n + 2 * pad, n + 2 * pad, 3), np.uint8)
-    band = np.clip(np.asarray(FRAME_BAND_BGR) + rng.normal(0, 4, 3), 0, 255).astype(np.uint8)
-    canvas[:] = band
+    band = [float(min(255.0, max(0.0, c + rng.normal(0, 4)))) for c in FRAME_BAND_BGR]
+    canvas = cv2.copyMakeBorder(img, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=band)
     line_off = int(rng.integers(2, max(3, pad)))
     cv2.rectangle(canvas, (pad - line_off, pad - line_off),
                   (pad + n - 1 + line_off, pad + n - 1 + line_off), FRAME_LINE_BGR, 1)
-    canvas[pad:pad + n, pad:pad + n] = img
     return canvas
 
 
-_INTERPS = (cv2.INTER_AREA, cv2.INTER_AREA, cv2.INTER_LINEAR, cv2.INTER_CUBIC,
-            cv2.INTER_AREA, cv2.INTER_LINEAR, cv2.INTER_NEAREST)
+#: Resampling filters of the final resize (a capture / video scaler): -1 = "soft" (small
+#: Gaussian pre-blur + bilinear, looks like INTER_AREA at a fraction of its cost for
+#: non-integer ratios). Weighted by repetition.
+_INTERPS = (cv2.INTER_AREA, cv2.INTER_LINEAR, cv2.INTER_LINEAR, cv2.INTER_CUBIC,
+            -1, -1, -1, cv2.INTER_NEAREST)
+
+
+def _resize_random(img: np.ndarray, w: int, h: int, rng: np.random.Generator,
+                   choices: Sequence[int] = _INTERPS) -> np.ndarray:
+    """Resize with a randomly chosen filter (see :data:`_INTERPS`)."""
+    interp = _choice(rng, choices)
+    if interp == -1:
+        ratio = img.shape[1] / float(max(1, w))
+        if ratio > 1.15:
+            img = cv2.GaussianBlur(img, (0, 0), 0.42 * ratio)
+        interp = cv2.INTER_LINEAR
+    return cv2.resize(img, (w, h), interpolation=interp)
 
 
 def _color_lut(rng: np.random.Generator) -> np.ndarray:
@@ -897,8 +911,7 @@ def _degrade(img: np.ndarray, rng: np.random.Generator, size: int, cfg: SynthCon
         f = rng.uniform(0.62, 0.95)
         w2 = max(8, int(round(img.shape[1] * f)))
         h2 = max(8, int(round(img.shape[0] * f)))
-        img = cv2.resize(img, (w2, h2), interpolation=_choice(rng, (cv2.INTER_AREA,
-                                                                      cv2.INTER_LINEAR)))
+        img = _resize_random(img, w2, h2, rng, (cv2.INTER_LINEAR, -1))
     if rng.random() < cfg.p_jpeg:
         q = int(rng.integers(cfg.jpeg_quality[0], cfg.jpeg_quality[1] + 1))
         ok, buf = cv2.imencode(".jpg", np.ascontiguousarray(img), [cv2.IMWRITE_JPEG_QUALITY, q])
@@ -907,7 +920,7 @@ def _degrade(img: np.ndarray, rng: np.random.Generator, size: int, cfg: SynthCon
             if dec is not None:
                 img = dec
     if img.shape[0] != size or img.shape[1] != size:
-        img = cv2.resize(img, (size, size), interpolation=_choice(rng, _INTERPS))
+        img = _resize_random(img, size, size, rng)
     else:
         img = np.ascontiguousarray(img).copy()
     if rng.random() < cfg.p_blur:
