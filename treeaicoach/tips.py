@@ -1,15 +1,18 @@
-"""Written coaching tips (never spoken): a data-driven library + an anti-repetition rotator.
+"""Written coaching advice (HUD, never spoken): a data-driven library + a utility ranker.
 
-:data:`TIPS` holds 100+ short, concrete League of Legends tips in French. Each :class:`Tip`
-has a condition on a :class:`TipContext` (role, game phase, lane matchup, items, vision score,
-CS/min, objective timers, wave state, enemy jungler, deaths...) and a priority: contextual tips
-("Dragon dans 45 s : rentre et achète une balise de contrôle") beat generic ones ("Regarde ta
-minimap toutes les 5 secondes").
+:data:`TIPS` holds concrete League of Legends advice in plain French, each written as
+"WHAT to do : WHY" in at most :data:`MAX_WORDS` words with live numbers and names
+("Joue safe sous ta tour : Darius a 2 niveaux d'avance", "Rentre acheter une balise rouge :
+dragon dans 70 s"). Each :class:`Tip` has a condition on a :class:`TipContext` (role, lane
+matchup, levels / gold / CS gaps, objective timers, wave, enemy jungler, enemies around me,
+deaths, gold, base...), a priority (urgency), a tone (HUD accent colour), the confidence of its
+data and a validity window. Vague always-true tips ("regarde ta minimap") are not in the
+library; "play safe" only appears with its concrete reason.
 
-:class:`TipRotator` shows ONE tip at a time in the HUD tip line and changes it every
-:data:`ROTATE_S` seconds (sooner when the current tip no longer applies): weighted random among
-the best applicable tips, never the same tip again within its cooldown, never two tips of the
-same category in a row. :func:`build_context` makes the context from the coach facts
+:class:`TipRotator` shows the ONE most useful applicable tip (utility = urgency x relevance x
+confidence, generic tips dropped whenever a specific one applies), holds it a few seconds,
+replaces it at once when it stops applying (never stale) or when something much more useful
+appears, and rotates after its validity window (each tip then on cooldown). :func:`build_context` makes the context from the coach facts
 (:meth:`treeaicoach.coach.MapCoach.facts`), the Live Client data and the Tab summary.
 
 Only the minimap facts the coach already uses + the official Live Client API (my own data and
@@ -27,8 +30,8 @@ from typing import Any, Callable
 
 log = logging.getLogger(__name__)
 
-ROTATE_S = 25.0                 # a new tip every 25 s
-MIN_SHOW_S = 8.0                # ... but a tip stays at least this long (even if it stops applying)
+ROTATE_S = 25.0                 # a tip is shown at most this long when others apply
+MIN_SHOW_S = 6.0                # (compat) minimum display time, see HOLD_S
 DEFAULT_COOLDOWN_S = 480.0      # the same tip is not shown again for 8 min (game time)
 
 ROLES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
@@ -282,7 +285,7 @@ TIPS: tuple[Tip, ...] = (
     T("drag_vision", "objectives", "Balise la rivière du bas : dragon dans {drag_s} s",
       lambda c: c.soon_within("dragon", 20, 80), roles=("UTILITY", "JUNGLE"), prio=3, ttl=15.0),
     T("drag_top", "objectives", "Prends une plaque top : tout le monde sera au dragon",
-      lambda c: c.soon_within("dragon", 0, 60) and c.early, roles=("TOP",), prio=3, tone="go", ttl=15.0),
+      lambda c: c.soon_within("dragon", 0, 90) and c.early, roles=("TOP",), prio=3, tone="go", ttl=15.0),
     T("drag_smite", "objectives", "Garde ton Châtiment pour la fin : dragon dans {drag_s} s",
       lambda c: c.soon_within("dragon", 0, 60), roles=("JUNGLE",), prio=3, ttl=15.0),
     T("drag_up_team", "objectives", "Forcez le dragon à 5 : {tgd} d'or d'avance",
@@ -322,7 +325,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.level_diff >= 1 and c.early, roles=LANERS, prio=3, tone="go", cooldown=180.0),
     T("lvl_behind", "matchup", "Joue safe sous ta tour : {opp} a {lvl_txt} d'avance",
       lambda c: c.level_diff <= -1 and c.early, roles=LANERS, prio=3, tone="warning", cooldown=180.0),
-    T("lvl6_me", "matchup", "Cherche le combat avec ton ultime : {opp} n'a pas le sien",
+    T("lvl6_me", "matchup", "Attaque avec ton ultime : {opp} n'a pas encore le sien",
       lambda c: c.level == 6 and c.level_diff >= 1, roles=LANERS, prio=4, tone="go", cooldown=300.0),
     T("lvl6_opp", "matchup", "Recule un peu : {opp} a son ultime, pas toi",
       lambda c: c.opp_level == 6 and c.level <= 5, roles=LANERS, prio=4, tone="warning", cooldown=300.0),
@@ -332,7 +335,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.gold_diff <= -800, roles=LANERS, prio=3, tone="warning"),
     T("cs_behind_opp", "matchup", "Concentre-toi sur les sbires : {cs_gap} de retard sur {opp}",
       lambda c: c.cs_diff <= -15, roles=CARRIES, prio=3, tone="warning"),
-    T("fed_enemy", "matchup", "Ne te bats jamais seul contre {fed} : il est trop fort",
+    T("fed_enemy", "matchup", "Évite {fed} en un contre un : il est trop fort",
       lambda c: bool(c.fed), prio=3, tone="warning"),
     T("level2", "matchup", "Tape vite la première vague : le niveau 2 gagne l'échange",
       lambda c: 60 <= c.gt <= 115, roles=LANERS, prio=3),
@@ -384,7 +387,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.in_base and c.item is not None and c.gold >= 300, prio=4, tone="go", ttl=12.0),
     T("gold_back", "items", "Rentre acheter : {gold} d'or, ça fait un objet",
       lambda c: c.gold >= 1300 and not c.in_base and not c.dead and c.missing < 3, prio=3, cooldown=150.0),
-    T("gold_spend", "items", "Dépense tes {gold} d'or avant de repartir",
+    T("gold_spend", "items", "Dépense tes {gold} d'or : l'or gardé ne sert à rien",
       lambda c: c.in_base and c.gold >= 500, prio=3, ttl=10.0),
     T("boots", "items", "Achète des bottes : plus rapide, tu évites les ganks",
       lambda c: c.gt >= 600 and not c.has_boots, roles=CARRIES, prio=3),
@@ -414,14 +417,11 @@ TIPS: tuple[Tip, ...] = (
       lambda c: not c.early, roles=("BOTTOM",), prio=2),
     T("teamfight_sup", "macro", "En combat, reste collé à ton tireur : protège-le",
       lambda c: not c.early, roles=("UTILITY",), prio=2),
-    T("split_top", "macro", "Pousse ta voie seul seulement si tu vois 3 ennemis",
+    T("split_top", "macro", "Pousse ta voie seul : 3 ennemis visibles ailleurs",
       lambda c: (c.mid or c.late) and c.side_lane and c.missing <= 1, roles=("TOP",), prio=2, conf=MAP),
-    T("sup_roam", "macro", "Quand ton tireur rentre, va baliser mid",
-      lambda c: 300 <= c.gt <= 1200 and c.in_base is False and c.wave == "pushed_in", roles=("UTILITY",),
-      prio=2, conf=MAP),
     T("jg_gank", "macro", "Va ganker une voie poussée : l'ennemi est loin de sa tour",
       lambda c: 180 <= c.gt <= 840, roles=("JUNGLE",), prio=2),
-    T("jg_scuttle", "macro", "Prends le Carapateur côté de ta voie la plus forte",
+    T("jg_scuttle", "macro", "Prends le Carapateur : ta voie forte peut t'aider",
       lambda c: 195 <= c.gt <= 260, roles=("JUNGLE",), prio=3),
     T("early_safe", "phase", "Ne meurs pas avant 3:00 : le premier sang rapporte gros",
       lambda c: 60 <= c.gt <= 180 and c.level_diff <= 0, roles=LANERS, prio=1),
@@ -623,18 +623,16 @@ class TipRotator:
                     return self._show(best, t, gt, ctx) if best is not None else None
             else:
                 self._stale_since = None
-            if cur is not None and self._current is cur:
-                preempt = (best is not None and best.utility() >= cur.utility() + PREEMPT_GAIN
-                           and age >= 1.0)
+            if self._current is cur:
+                preempt = best is not None and best.utility() >= cur.utility() + PREEMPT_GAIN and age >= 1.0
                 limit = min(self.rotate_s, max(cur.ttl, HOLD_S))
-                expired = age >= limit and best is not None
-                if not preempt and not expired:
+                # after its validity window the next most useful tip gets its turn (an urgent tip
+                # that still applies is only replaced by another urgent one)
+                rotate = (age >= limit and best is not None
+                          and not (still and cur.prio >= 4 and best.prio < 4))
+                if not preempt and not rotate:
                     if still:
                         self._text = cur.render(ctx)       # numbers in the text stay fresh
-                    return self._text
-                if expired and not preempt and best is not None and age < self.rotate_s \
-                        and best.utility() < cur.utility() - 1e-9 and still:
-                    self._text = cur.render(ctx)           # nothing as good: keep it until rotate_s
                     return self._text
         if best is None:
             if cur is not None and not cur.applies(ctx):

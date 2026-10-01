@@ -157,6 +157,7 @@ class OverlayState:
     # v3 visual guides (tactics.TacticalDirector): arrows / ward spots on the minimap layer
     guides: list = field(default_factory=list)  # tactics.MapGuide list, highest priority first
     phase: str | None = None                  # "laning" | "mid" | "late" | "end" (phase.py)
+    role_notice: str | None = None            # "Rôle détecté : MID (échange de voie)" (roles.RoleResolver)
 
 
 # ======================================================================================
@@ -1524,11 +1525,14 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
     hint = (state.hint or "").strip()
     if hint:
         rows.append(("hint", 16 * k))
+    notice = str(getattr(state, "role_notice", "") or "").strip()
+    if notice:
+        rows.append(("role", 16 * k))
     gap = 6 * k
     height = pad + sum(h for _, h in rows) + gap * (len(rows) - 1) + pad
     return {"pad": pad, "inner": inner, "fonts": fonts, "rows": rows, "gap": gap, "height": int(math.ceil(height)),
             "jl": jl, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint,
-            "insight": insight, "stance": stance,
+            "insight": insight, "stance": stance, "notice": notice,
             "stance_reason": str(getattr(state, "stance_reason", "") or "").strip()}
 
 
@@ -1634,6 +1638,12 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
             cv_.polygon([(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)], TEAL, 0.95)
             cv_.text(pad + 14 * k, cy, fit_text(lay["insight"], fonts["small"], inner - 14 * k), fonts["small"],
                      WHITE, 0.92)
+        elif name == "role":
+            r = 3.6 * k
+            cx = pad + 5 * k
+            cv_.disc(cx, cy, r, TEAL, 0.95)
+            cv_.text(pad + 14 * k, cy, fit_text(lay["notice"], fonts["small"], inner - 14 * k), fonts["small"],
+                     _mix(TEAL, WHITE, 0.45))
         elif name == "hint":
             _coin(cv_, pad + 5 * k, cy, 5 * k)
             cv_.text(pad + 14 * k, cy, fit_text(lay["hint"], fonts["small"], inner - 14 * k), fonts["small"],

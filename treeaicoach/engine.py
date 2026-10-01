@@ -89,6 +89,7 @@ BREAK_TEXT = "3 défaites d'affilée : une pause de 10 minutes aide à rester co
 GANK_KINDS = frozenset({AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE})
 #: Coaching chatter (macro tips, compliments, Tab insights): never spoken during a gank threat.
 COACH_KINDS = frozenset({AlertKind.MACRO_TIP, AlertKind.PRAISE, AlertKind.SCOREBOARD})
+ROLE_NOTICE_S = 20.0             # the "role detected (lane swap)" HUD notice stays this long
 TEXT_MSG_S = 10.0                # a written-only message stays on the HUD line this long
 
 MSG_STOPPED = "Analyse arrêtée."
@@ -1475,7 +1476,10 @@ class CoachEngine:
 
                 stance = self._stance.current() if self._stance is not None else None
                 prev = self._tip_text
-                self._tip_text = rot.update(t, build_context(facts, game, summary, stance))
+                adv = getattr(self, "_item_adv", None)
+                rec = adv.current() if adv is not None else None
+                item = getattr(rec, "item_name", None) if rec is not None else None
+                self._tip_text = rot.update(t, build_context(facts, game, summary, stance, item=item))
                 if self._tip_text and self._tip_text != prev and getattr(self._cfg, "tip_toasts", False):
                     self._toast("insight", "ASTUCE", self._tip_text, None, f"tip:{rot.current_id()}", t)
             else:
@@ -2150,7 +2154,21 @@ class CoachEngine:
             toasts=self._overlay_toasts(now),
             guides=tac.guides(now) if tac is not None else [],
             phase=tac.phase() if tac is not None else None,
+            role_notice=self._role_notice(now),
         )
+
+    def _role_notice(self, now: float) -> str | None:
+        """"Rôle détecté : MID (échange de voie)" for 20 s after a lane swap is detected. Never raises."""
+        try:
+            from treeaicoach.roles import ROLE_SHORT
+
+            res = self._role_resolver
+            sw = res.my_swap() if res is not None and hasattr(res, "my_swap") else None
+            if sw is None or not (0.0 <= now - float(sw[1]) <= ROLE_NOTICE_S):
+                return None
+            return f"Rôle détecté : {ROLE_SHORT.get(sw[0], sw[0])} (échange de voie)"
+        except Exception:
+            return None
 
     def _overlay_toasts(self, now: float) -> list:
         """Toasts of the overlay, the director's big banner (live fight decision) on top."""

@@ -56,21 +56,47 @@ def test_stance_speaks_only_on_change_every_2_min_never_during_threat():
 
 
 def test_tip_library_and_rotation():
-    assert tips.tip_count() >= 100
+    assert tips.tip_count() >= 70
     assert len({t.id for t in tips.TIPS}) == len(tips.TIPS)
     ctx = tips.build_context(_facts(objectives=[{"key": "dragon", "name": "Dragon", "alive": False,
                                                  "remaining": 70.0}]), _game(), None)
     assert ctx.soon["dragon"] == 70.0 and ctx.role == "TOP"
     rot = tips.TipRotator(seed=1)
     first = rot.update(0.0, ctx)
-    assert first and "Dragon" in first                         # urgent contextual tip first
+    assert first and "dragon" in first.lower()                 # contextual objective tip first
     assert rot.update(5.0, ctx) == first                       # stays
     seen = {rot.update(30.0 * k, ctx) for k in range(1, 12)}
-    assert len(seen) >= 8                                      # rotates without repeating
+    assert len(seen) >= 5                                      # rotates through the useful ones
     hist = rot.history()
     assert len(hist) == len(set(hist))
     for t in tips.TIPS:                                        # every tip renders on a neutral context
-        assert t.render(tips.TipContext())
+        text = t.render(tips.TipContext())
+        assert text and " : " in text and len(text.split()) <= tips.MAX_WORDS, text   # WHAT : WHY, <= 12 words
+        assert "{" not in text
+
+
+def test_no_vague_tips_and_safe_only_with_a_reason():
+    texts = [t.text.lower() for t in tips.TIPS]
+    assert not any("minimap" in x for x in texts)
+    assert not any(x.startswith("joue safe") and "{" not in x for x in texts)   # "joue safe" always with numbers
+    assert not any(w in x for x in texts for w in ("tempo", "freeze", "crash"))
+
+
+def test_specific_advice_beats_generic_and_never_goes_stale():
+    rot = tips.TipRotator(seed=0)
+    ctx = tips.build_context(_facts(gt=400.0), _game(gt=400.0), NS(my_matchup=NS(enemy="Darius", level_diff=-2,
+                             gold_diff=-300, cs_diff=0), team_gold_diff=0, players=()))
+    text = rot.update(0.0, ctx)
+    assert text == "Joue safe sous ta tour : Darius a 2 niveaux d'avance"
+    # the opponent dies: the opportunity replaces it at once (more useful)
+    ctx2 = tips.build_context(_facts(gt=402.0, opponents=[{"alias": "Darius", "name": "Darius", "dead": True,
+                                                           "level": 9}]), _game(gt=402.0), None)
+    assert rot.update(2.0, ctx2) == "Pousse ta vague et tape la tour : Darius est mort"
+    # he respawns: the advice disappears after the short grace (never stale)
+    ctx3 = tips.build_context(_facts(gt=430.0), _game(gt=430.0), None)
+    rot.update(30.0, ctx3)
+    out = rot.update(32.0, ctx3)
+    assert out is None or "mort" not in out
 
 
 def test_voice_policy_minimal_and_gate():
