@@ -129,6 +129,10 @@ class TipContext:
     plan2: str | None = None
     plan_jg: str | None = None
     has_tp: bool = True                  # my summoner spells include Teleport (True when unknown)
+    # cross-system consistency (engine): tone of the active macro call, recall already said
+    macro_tone: str | None = None        # "go" | "danger" | None
+    recall_said: bool = False            # a recall reminder / "rentre" call was shown recently
+    dead_respawn: float = 0.0            # shortest respawn timer of the dead enemies (s), 0 = none
 
     # ---- helpers used by the conditions
     @property
@@ -150,6 +154,25 @@ class TipContext:
     @property
     def laner(self) -> bool:
         return self.role in ("TOP", "MIDDLE", "BOTTOM", "UTILITY")
+
+    @property
+    def jg_on_me(self) -> bool:
+        """Their jungler was seen on my side of the map recently (not dead)."""
+        return (not self.jg_dead and self.jg_last_side is not None and self.jg_last_side == self.lane
+                and self.jg_hidden_s is not None and self.jg_hidden_s < 25)
+
+    def jg_objective(self) -> str | None:
+        """'le dragon' / 'le Héraut'... free because their jungler is dead: up (or <= 20 s), for my
+        role, never Baron / Elder with only the jungler down."""
+        from treeaicoach.game_plan import OBJ_ROLES
+        for key in ("dragon", "herald", "grubs", "atakhan", "baron", "elder"):
+            up = key in self.alive or (self.soon.get(key) is not None and self.soon[key] <= 20)
+            if not up or (self.role is not None and self.role not in OBJ_ROLES.get(key, ROLES)):
+                continue
+            if key in ("baron", "elder") and len(self.dead_names) < 2:
+                continue
+            return OBJ_LE.get(key, "l'objectif")
+        return None
 
     @property
     def has_control_ward(self) -> bool:
@@ -223,12 +246,14 @@ class TipContext:
             "plan1": self.plan1 or "Tue vite la première vague : le premier niveau 2 gagne",
             "plan2": self.plan2 or "Reste derrière tes sbires : ils prennent les coups à ta place",
             "plan_jg": self.plan_jg or "Balise ta rivière vers 2:45 : premier gank possible",
+            "jgobj": self.jg_objective() or "l'objectif",
+            "n_dead": len(self.dead_names), "resp": int(self.dead_respawn),
         }
 
 
 #: objective key -> "le dragon" (French article included)
 OBJ_LE = {"dragon": "le dragon", "baron": "le Baron", "herald": "le Héraut", "grubs": "les larves",
-          "atakhan": "l'Atakhan", "elder": "l'ancestral"}
+          "atakhan": "Atakhan", "elder": "l'ancestral"}
 
 #: Tone of a tip (HUD accent colour): "danger" (red), "warning" (amber), "go" (green), "info" (gold)
 TONES = ("danger", "warning", "go", "info")
@@ -284,14 +309,16 @@ TIPS: tuple[Tip, ...] = (
       lambda c: not c.in_base and not c.dead and c.enemies_near >= 2 and c.enemies_near - c.allies_near >= 2,
       prio=4, tone="danger", conf=MAP, cooldown=30.0, ttl=6.0),
     T("outnumber", "macro", "Lance le combat : vous êtes {al} contre {en}",
-      lambda c: not c.in_base and not c.dead and c.enemies_near >= 1 and c.allies_near - c.enemies_near >= 2,
+      lambda c: not c.in_base and not c.dead and c.enemies_near >= 1 and c.allies_near - c.enemies_near >= 2
+      and c.missing <= 1 and (c.hp is None or c.hp >= 0.5),
       prio=3, tone="go", conf=MAP, cooldown=45.0, ttl=6.0),
     T("missing_3", "map", "Recule vers ta tour : {missing} ennemis invisibles",
-      lambda c: c.missing >= 3 and not c.in_base and not c.dead and c.gt >= 240, prio=4, tone="danger",
-      conf=MAP, cooldown=90.0, ttl=10.0),
+      lambda c: c.missing >= 3 and not c.in_base and not c.dead and c.gt >= 240, roles=LANERS, prio=4,
+      tone="danger", conf=MAP, cooldown=90.0, ttl=10.0),
+    # a side laner farming his lane at 15:00 is doing his job: only from 20:00, 3+ unseen, nobody with me
     T("side_late", "map", "Reviens vers ton équipe : seul {my_lane}, {missing} ennemis invisibles",
-      lambda c: not c.early and c.side_lane and c.missing >= 2 and not c.in_base, prio=4, tone="danger",
-      conf=MAP, cooldown=60.0, ttl=10.0),
+      lambda c: c.gt >= 1200 and c.side_lane and c.missing >= 3 and c.allies_near <= 1 and not c.in_base
+      and not c.dead, prio=4, tone="danger", conf=MAP, cooldown=60.0, ttl=10.0),
     T("low_hp", "survival", "Rentre en base : {hp_pct} % de vie, tu es une cible",
       lambda c: c.hp is not None and c.hp < 0.3 and not c.in_base and not c.dead, prio=4, tone="danger",
       cooldown=45.0, ttl=8.0),
@@ -304,7 +331,8 @@ TIPS: tuple[Tip, ...] = (
       cooldown=90.0, ttl=12.0),
     T("jg_far", "jungle", "Mets la pression sur {opp} : {jg} est loin, {jg_last}",
       lambda c: c.jg_last_side in ("top", "bot") and c.lane in ("top", "bot", "mid")
-      and c.jg_last_side != c.lane and c.jg_hidden_s is not None and c.jg_hidden_s < 25,
+      and c.jg_last_side != c.lane and c.jg_hidden_s is not None and c.jg_hidden_s < 25
+      and not c.opp_dead and not c.jg_dead and (c.hp is None or c.hp >= 0.5),
       roles=LANERS, prio=3, tone="go", conf=MAP, cooldown=120.0, ttl=12.0),
     T("jg_unseen", "jungle", "Ne t'avance pas : {jg} invisible depuis {jg_h} s",
       lambda c: c.jg_hidden_s is not None and c.jg_hidden_s >= 60 and 180 <= c.gt and c.early and not c.jg_dead,
@@ -314,9 +342,8 @@ TIPS: tuple[Tip, ...] = (
     T("jg_counter", "jungle", "Prends ses camps {jg_opp_side} : {jg} est {jg_side}",
       lambda c: c.jg_visible and c.jg_side in ("top", "bot"), roles=("JUNGLE",), prio=3, tone="go", conf=MAP,
       cooldown=120.0, ttl=10.0),
-    T("jg_dead_window", "jungle", "Prenez un objectif maintenant : {jg} est mort",
-      lambda c: c.jg_dead and (bool(c.alive) or any(r <= 30 for r in c.soon.values())), prio=4, tone="go",
-      cooldown=60.0, ttl=10.0),
+    T("jg_dead_window", "jungle", "Prenez {jgobj} maintenant : {jg} est mort",
+      lambda c: c.jg_dead and c.jg_objective() is not None, prio=4, tone="go", cooldown=60.0, ttl=10.0),
     T("jg_dead_lane", "jungle", "Joue agressif : {jg} est mort, pas de gank",
       lambda c: c.jg_dead and c.early and not c.alive, roles=LANERS, prio=3, tone="go", cooldown=60.0, ttl=10.0),
     # ------------------------------------------------------------------ objectives
@@ -328,23 +355,26 @@ TIPS: tuple[Tip, ...] = (
       ttl=15.0),
     T("drag_vision", "objectives", "Balise la rivière du bas : dragon dans {drag_s} s",
       lambda c: c.soon_within("dragon", 20, 80), roles=("UTILITY", "JUNGLE"), prio=3, ttl=15.0),
-    T("drag_top", "objectives", "Prends une plaque top : tout le monde sera au dragon",
-      lambda c: c.soon_within("dragon", 0, 90) and c.early, roles=("TOP",), prio=3, tone="go", ttl=15.0),
+    T("drag_top", "objectives", "Pousse et frappe leur tour : leur équipe regarde le dragon",
+      lambda c: c.soon_within("dragon", 0, 90) and c.early and c.wave == "pushing" and not c.jg_on_me,
+      roles=("TOP",), prio=3, tone="go", ttl=15.0),
     T("drag_smite", "objectives", "Garde ton Châtiment pour la fin : dragon dans {drag_s} s",
       lambda c: c.soon_within("dragon", 0, 60), roles=("JUNGLE",), prio=3, ttl=15.0),
     T("drag_up_team", "objectives", "Forcez le dragon à 5 : {tgd} d'or d'avance",
       lambda c: "dragon" in c.alive and c.team_gold_diff >= 1500, prio=3, tone="go"),
     T("drag_up_behind", "objectives", "Dragon seulement avec des balises posées : {tgd} d'or de retard",
       lambda c: "dragon" in c.alive and c.team_gold_diff <= -1500, prio=3, tone="warning"),
-    T("elder", "objectives", "Ne meurs pas avant l'Ancestral : il décide la partie",
+    T("elder", "objectives", "Ne meurs pas avant l'ancestral : il décide la partie",
       lambda c: c.soon_within("elder", 0, 90) or "elder" in c.alive, prio=4, tone="warning"),
     T("baron_soon", "objectives", "Balise autour du Baron : il apparaît dans {baron_s} s",
       lambda c: c.soon_within("baron", 20, 90), prio=3, ttl=15.0),
     T("baron_unknown", "objectives", "Pas de Baron sans voir {jg} : il peut le voler",
       lambda c: "baron" in c.alive and not c.jg_visible and not c.jg_dead and not c.dead_names, prio=3,
       tone="warning", conf=MAP),
-    T("baron_window", "objectives", "Lancez le Baron maintenant : {dead} est mort",
-      lambda c: "baron" in c.alive and len(c.dead_names) >= 2, prio=4, tone="go", ttl=10.0),
+    # 2 dead is not a Baron window unless their timers cover the walk + the kill
+    T("baron_window", "objectives", "Lancez le Baron : {n_dead} ennemis morts pour {resp} s",
+      lambda c: "baron" in c.alive and len(c.dead_names) >= 2 and c.gt >= 1200
+      and c.dead_respawn >= (25 if len(c.dead_names) >= 3 else 40), prio=4, tone="go", ttl=10.0),
     T("herald_soon", "objectives", "Pousse ta vague puis aide au Héraut : {herald_s} s",
       lambda c: c.soon_within("herald", 20, 90), roles=TOPSIDE, prio=3, ttl=15.0),
     T("herald_up", "objectives", "Aide ton jungler au Héraut : il détruit une tour",
@@ -353,20 +383,25 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.soon_within("grubs", 10, 80), roles=TOPSIDE, prio=3, ttl=15.0),
     T("atakhan", "objectives", "Regroupez-vous près d'Atakhan : apparition dans {atakhan_s} s",
       lambda c: c.soon_within("atakhan", 0, 90), prio=3, ttl=15.0),
-    T("group_obj", "macro", "Rejoins ton équipe vers {next_le} : {next_s} s",
-      lambda c: not c.early and c.next_objective(60) is not None and not c.in_base, prio=3, ttl=15.0),
-    T("tp_obj", "macro", "Garde ta Téléportation pour {next_le} : {next_s} s",
-      lambda c: c.gt >= 600 and c.has_tp and c.next_objective(70) is not None, roles=("TOP",), prio=2, ttl=15.0),
+    T("group_obj", "macro", "Rejoins ton équipe vers {my_le} : {my_obj_s} s",
+      lambda c: not c.early and c.my_objective(10, 60) is not None and not c.in_base and not c.dead,
+      prio=3, ttl=15.0),
+    # TP for the fight on the OTHER side of the map (a top laner is already next to Baron / Herald)
+    T("tp_obj", "macro", "Garde ta Téléportation pour le dragon : {drag_s} s",
+      lambda c: c.gt >= 600 and c.has_tp and c.soon_within("dragon", 10, 70), roles=("TOP",), prio=2, ttl=15.0),
     T("sup_obj_vision", "vision", "Va baliser {next_le} : apparition dans {next_s} s",
       lambda c: c.next_objective(90) is not None and (c.next_objective(90) or ("", 0))[1] >= 30,
       roles=("UTILITY",), prio=3, ttl=15.0),
     # ------------------------------------------------------------------ lane matchup
     T("opp_dead", "matchup", "Pousse ta vague et tape la tour : {opp} est mort",
-      lambda c: c.opp_dead and c.early, roles=LANERS, prio=4, tone="go", cooldown=60.0, ttl=10.0),
+      lambda c: c.opp_dead and c.early and not c.jg_on_me, roles=CARRIES, prio=4, tone="go", cooldown=60.0,
+      ttl=10.0),
     T("opp_dead_late", "matchup", "Prends la tour puis rejoins ton équipe : {opp} est mort",
-      lambda c: c.opp_dead and not c.early, roles=LANERS, prio=4, tone="go", cooldown=60.0, ttl=10.0),
+      lambda c: c.opp_dead and not c.early and not c.jg_on_me, roles=CARRIES, prio=4, tone="go", cooldown=60.0,
+      ttl=10.0),
     T("lvl_ahead", "matchup", "Va taper {opp} : tu as {lvl_txt} d'avance",
-      lambda c: c.level_diff >= 1 and c.early, roles=LANERS, prio=3, tone="go", cooldown=180.0),
+      lambda c: c.level_diff >= 1 and c.early and not c.jg_on_me and (c.hp is None or c.hp >= 0.5),
+      roles=LANERS, prio=3, tone="go", cooldown=180.0),
     T("lvl_behind", "matchup", "Joue prudemment sous ta tour : {opp} a {lvl_txt} d'avance",
       lambda c: c.level_diff <= -1 and c.early, roles=LANERS, prio=3, tone="warning", cooldown=180.0),
     # power spikes (spikes.SpikeTracker): the first to reach 2 / 3 / 6 / 11 / 16 (the opponent's 11 / 16 and
@@ -405,7 +440,8 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.wave == "pushed_in" and c.early, roles=CARRIES, prio=2, conf=MAP),
     # ------------------------------------------------------------------ waves
     T("wave_push_back", "wave", "Pousse ta vague puis rentre : {gold} d'or à dépenser",
-      lambda c: c.wave == "pushing" and c.gold >= 1100 and not c.in_base, roles=LANERS, prio=3, conf=MAP),
+      lambda c: c.wave == "pushing" and c.gold >= 1100 and not c.in_base and not c.recall_said
+      and c.my_objective(0, 50) is None, roles=CARRIES, prio=3, conf=MAP),
     T("wave_push_ward", "wave", "Balise la rivière : ta vague pousse, tu es exposé",
       lambda c: c.wave == "pushing" and not c.jg_visible and c.early, roles=LANERS, prio=3, tone="warning",
       conf=MAP),
@@ -439,10 +475,11 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.in_base and c.item is not None and c.gold >= 300, prio=4, tone="go", ttl=12.0),
     T("comp_ready", "items", "Rentre acheter {buy} : tu as l'or",
       lambda c: bool(c.buy_names) and c.buy_value >= 700 and not c.in_base and not c.dead and c.missing < 3
-      and c.enemies_near == 0 and c.my_objective(0, 50) is None, prio=3, cooldown=150.0, ttl=15.0),
+      and c.enemies_near == 0 and c.my_objective(0, 50) is None and not c.recall_said, prio=3, cooldown=150.0,
+      ttl=15.0),
     T("gold_back", "items", "Rentre acheter : {gold} d'or, ça fait un objet",
       lambda c: c.gold >= 1300 and not c.buy_names and not c.in_base and not c.dead and c.missing < 3
-      and c.my_objective(0, 50) is None, prio=3, cooldown=150.0),
+      and c.my_objective(0, 50) is None and not c.recall_said, prio=3, cooldown=150.0),
     # objective timing: recall now to be back in time / don't recall right before it
     T("obj_recall_now", "objectives", "Rentre maintenant : tu reviendras à temps pour {my_le}",
       lambda c: c.my_objective(75, 120) is not None and not c.in_base and not c.dead and c.enemies_near == 0
@@ -508,8 +545,10 @@ TIPS: tuple[Tip, ...] = (
       lambda c: not c.early, roles=("BOTTOM",), prio=2),
     T("teamfight_sup", "macro", "En combat, reste collé à ton tireur : protège-le",
       lambda c: not c.early, roles=("UTILITY",), prio=2),
-    T("split_top", "macro", "Pousse ta voie seul : 3 ennemis visibles ailleurs",
-      lambda c: (c.mid or c.late) and c.side_lane and c.missing <= 1, roles=("TOP",), prio=2, conf=MAP),
+    T("split_top", "macro", "Pousse ta voie : presque tous les ennemis sont visibles",
+      lambda c: (c.mid or c.late) and c.side_lane and c.missing <= 1 and c.enemies_near == 0
+      and (c.jg_visible or c.jg_dead) and not any(r <= 60 for r in c.soon.values()), roles=("TOP",), prio=2,
+      conf=MAP),
     T("jg_gank", "macro", "Va ganker une voie poussée : l'ennemi est loin de sa tour",
       lambda c: 180 <= c.gt <= 840, roles=("JUNGLE",), prio=2),
     T("jg_scuttle", "macro", "Prends le Carapateur : ta voie forte peut t'aider",
@@ -587,6 +626,9 @@ def build_context(facts: dict[str, Any] | None, game: Any, scoreboard: Any = Non
         c.dead_names = tuple(str(getattr(p, "champion_name", "") or getattr(p, "champion_alias", "") or "")
                              for p in (getattr(game, "enemies", None) or [])
                              if bool(getattr(p, "is_dead", False)))
+        resp = [_f(getattr(p, "respawn_timer", None), 0.0) or 0.0 for p in (getattr(game, "enemies", None) or [])
+                if bool(getattr(p, "is_dead", False))]
+        c.dead_respawn = float(min(resp)) if resp else 0.0
         m = getattr(scoreboard, "my_matchup", None) if scoreboard is not None else None
         if m is not None:
             c.opp = m.enemy or c.opp
@@ -758,6 +800,10 @@ class TipRotator:
                 continue
             if tip.prio < self.min_prio and tip.tone not in ("red",):
                 continue
+            if ctx.macro_tone == "go" and tip.tone in ("warning", "danger") and tip.prio < 4:
+                continue                       # a "go" macro call is on screen: no cautious tip next to it
+            if ctx.macro_tone == "danger" and tip.tone == "go":
+                continue                       # a "recule" call: never "attaque" next to it
             if tip.applies(ctx):
                 cands.append(tip)
         if not cands:
