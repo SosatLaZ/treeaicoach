@@ -40,7 +40,17 @@ SIDE_FR = {"top": "en haut", "mid": "au milieu", "bot": "en bas"}
 LANE_FR = {"top": "top", "mid": "mid", "bot": "bot"}
 CONTROL_WARD = 2055
 SWEEPER = 3364
-BOOTS = frozenset({1001, 3006, 3009, 3020, 3047, 3111, 3117, 3158, 3010, 2422})
+BOOTS = frozenset({1001, 3006, 3009, 3020, 3047, 3111, 3117, 3158, 3010, 2422})   # fallback
+
+
+def boot_ids() -> frozenset:
+    """Every boots item of the live item data (kind "boots") + :data:`BOOTS`. Never raises."""
+    try:
+        from treeaicoach.itemization import load_items
+
+        return BOOTS | frozenset(i for i, it in load_items().items() if it.kind == "boots")
+    except Exception:
+        return BOOTS
 
 
 def _k(n: float) -> str:
@@ -178,7 +188,7 @@ class TipContext:
 
     @property
     def has_boots(self) -> bool:
-        return bool(BOOTS & self.items)
+        return bool(boot_ids() & self.items)
 
     @property
     def side_lane(self) -> bool:

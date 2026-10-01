@@ -1229,9 +1229,12 @@ class CoachingMixin:
             mem = getattr(self, "_stance_mem", None)
             if mem is None:
                 mem = self._stance_mem = []
+            # the stance of a line counts from when it APPEARED (a "recule" card held 30 s does not
+            # forbid "Plaque la tour : Darius est mort" for ever; the judge measures the same way)
             st = line_stance(line) if line else None
-            if st is not None:
+            if st is not None and line != getattr(self, "_stance_last_line", None):
                 mem.append((now, st))
+            self._stance_last_line = line
             if self._alarm_now(now):
                 mem.append((now, "retreat"))
             mem[:] = [(t_, s_) for t_, s_ in mem if 0.0 <= now - t_ <= CONTRADICTION_S][-40:]

@@ -210,7 +210,14 @@ class _ItemNames(Mapping):
         if cached is not None and cached[0] is data:
             return cached[1]
         items = data.get("items") or {}
-        table = {i: str(items[str(i)].get("n") or "") for i in MAJOR_ITEM_IDS
+        ids = set(MAJOR_ITEM_IDS)
+        try:                         # every legendary of the item data (new items included), not a fixed list
+            from treeaicoach.itemization import load_items
+
+            ids |= {i for i, it in load_items().items() if it.kind == "legendary"}
+        except Exception:
+            pass
+        table = {i: str(items[str(i)].get("n") or "") for i in ids
                  if isinstance(items.get(str(i)), dict) and items[str(i)].get("n")}
         self._cache = (data, table)
         return table

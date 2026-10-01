@@ -1218,7 +1218,7 @@ texte « verbe d'abord » pour la carte), 90 s au moins entre deux avis.
   mémorisées, icônes apprises, rectangles de minimap, calibrage / couleurs / pistes de la partie, backend,
   niveau de charge) et « Profil normal » (`engine.force_normal_profile()` + `perf_mode = "normal"` : plus
   aucun allègement automatique).
-* Coût mesuré : ~0,03 ms par tick d'analyse en moyenne (évaluation 1 Hz amortie comprise), actions
+* Coût mesuré : 0,05 ms par tick d'analyse en moyenne (le tick de l'évaluation 1 Hz : ~0,25 ms), actions
   ponctuelles exclues (recalibrage ~0,1 s une fois par partie au plus).
 
 ## 22. Placement : les zones du jeu + un seul solveur (`layout.py`)

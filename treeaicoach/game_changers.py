@@ -441,9 +441,28 @@ def rule_facecheck(ctx: M.MacroCtx) -> M.GeniusCall | None:
 # ----------------------------------------------------------------------------- enemy buys
 #: an enemy purchase stays "news" this long (the player meets the new item when the enemy comes back)
 BUY_NEWS_S = 90.0
-STASIS = frozenset({3157})              # Sablier de Zhonya (never say when it is used / ready)
-#: Item.tags the coach reads (Data Dragon / itemization tables, no hand-made item list)
-RESIST_TAG = {"physical": "Armor", "magic": "SpellBlock"}
+#: effect tags (game_data.item_effects: read from the live item data, no hand-made item list)
+WATCH_EFFECTS = frozenset({"antiheal", "stasis"})
+RESIST_EFFECT = {"physical": "armor", "magic": "mr"}
+PEN_EFFECT = {"physical": "armorpen", "magic": "magicpen"}
+
+
+def _effects(iid: int) -> frozenset[str]:
+    try:
+        from treeaicoach.itemization import item_effects
+
+        return item_effects(iid)
+    except Exception:
+        return frozenset()
+
+
+def _count_effect(items: Any, effect: str) -> int:
+    try:
+        from treeaicoach.itemization import inventory_effects
+
+        return int(inventory_effects(items or (), legendary_only=True).get(effect, 0))
+    except Exception:
+        return 0
 
 
 class EnemyBuys:
@@ -461,13 +480,12 @@ class EnemyBuys:
 
     def update(self, gt: float, game: Any) -> list[tuple[float, str, int]]:
         try:
-            from treeaicoach.itemization import SAME_NEED, load_items
+            from treeaicoach.itemization import load_items
 
             if self._last_gt is not None and gt < self._last_gt - 5.0:
                 self.reset()
             self._last_gt = gt
             table = load_items()
-            watch = SAME_NEED.get("antiheal", frozenset()) | STASIS
             new: list[tuple[float, str, int]] = []
             for p in getattr(game, "enemies", None) or []:
                 a = str(getattr(p, "champion_alias", "") or "").lower()
@@ -478,7 +496,7 @@ class EnemyBuys:
                     continue                          # first look (game joined late): not news
                 for i in ids - prev:
                     it = table.get(i)
-                    if it is not None and (it.kind == "legendary" or i in watch):
+                    if it is not None and (it.kind == "legendary" or _effects(i) & WATCH_EFFECTS):
                         new.append((float(gt), a, i))
             self.events = [e for e in self.events + new if 0.0 <= gt - e[0] <= BUY_NEWS_S][-20:]
             return new
@@ -517,7 +535,7 @@ def rule_enemy_buys(ctx: M.MacroCtx) -> M.GeniusCall | None:
     if not ctx.me_alive or buys is None:
         return None
     try:
-        from treeaicoach.itemization import HEALERS, NEED_ITEMS, SAME_NEED, champion_class, load_items
+        from treeaicoach.itemization import HEALERS, NEED_ITEMS, champion_class, load_items
 
         table = load_items()
         me = _my_player(ctx)
@@ -551,24 +569,25 @@ def rule_enemy_buys(ctx: M.MacroCtx) -> M.GeniusCall | None:
                                        factors=(f"{name} {it.name}",)),
                                voice="Il a son objet : recule." if fed else "")
             # 2) stasis on my lane opponent / a fed enemy: bait it out (no timing, ever)
-            if iid in STASIS and (a in lane or fed):
+            eff = _effects(iid)
+            if "stasis" in eff and (a in lane or fed):
                 return M._call("gc_enemy_buy", ident, "ZHONYA", f"Fais utiliser son {it.name} à {name} avant ton combo",
                                f"Pendant {it.name}, {name} ne prend aucun dégât : ne gaspille pas ton combo dessus.",
                                None, tier="mid", score=0.55, priority=70, color="gold", life=14.0,
                                factors=(f"{name} {it.name}",))
             # 3) anti-heal against MY healing
-            if iid in SAME_NEED.get("antiheal", frozenset()) and (
-                    my_alias in HEALERS or _legendaries(my_items, "LifeSteal") or _legendaries(my_items, "SpellVamp")):
+            if "antiheal" in eff and (my_alias in HEALERS or _count_effect(my_items, "lifesteal")):
                 return M._call("gc_enemy_buy", ident, "ANTI-SOIN", f"Évite les longs combats : {name} a {it.name}",
                                f"{it.name} réduit tes soins : tes échanges longs ne marchent plus contre {name}.",
                                None, tier="mid", score=0.5, priority=66, color="gold", life=14.0,
                                factors=(f"{name} {it.name}",))
         # 4) 2+ enemies stacking the resistance I deal: penetration, in the shop
         if ctx.in_base and ctx.me_uv is not None and geometry.in_fountain(ctx.me_uv[0], ctx.me_uv[1], ctx.my_team):
-            tag = RESIST_TAG[_my_damage(ctx)]
-            heavy = [p for p in (getattr(ctx.game, "enemies", None) or []) if len(_legendaries(getattr(p, "items", None), tag)) >= 2]
-            pen = "ArmorPenetration" if tag == "Armor" else "MagicPenetration"
-            if len(heavy) >= 2 and not _legendaries(my_items, pen):
+            dmg = _my_damage(ctx)
+            tag = "Armor" if dmg == "physical" else "SpellBlock"
+            heavy = [p for p in (getattr(ctx.game, "enemies", None) or [])
+                     if _count_effect(getattr(p, "items", None), RESIST_EFFECT[dmg]) >= 2]
+            if len(heavy) >= 2 and not _count_effect(my_items, PEN_EFFECT[dmg]):
                 pick = next((table[i] for i in NEED_ITEMS.get("armor", {}).get(cls, ()) if i in table
                              and i not in my_items), None)
                 if pick is not None:
@@ -583,8 +602,8 @@ def rule_enemy_buys(ctx: M.MacroCtx) -> M.GeniusCall | None:
             for p in getattr(ctx.game, "enemies", None) or []:
                 sc = getattr(p, "scores", None) or {}
                 k, d = int(_f(sc.get("kills"), 0) or 0), int(_f(sc.get("deaths"), 0) or 0)
-                tanky = len(_legendaries(getattr(p, "items", None), "Armor")) + \
-                    len(_legendaries(getattr(p, "items", None), "SpellBlock"))
+                tanky = _count_effect(getattr(p, "items", None), "armor") + \
+                    _count_effect(getattr(p, "items", None), "mr")
                 if k >= 4 and k - d >= 3 and tanky >= 2:
                     carry = next((x for x in (getattr(ctx.game, "enemies", None) or [])
                                   if str(getattr(x, "position", "")).upper() in ("BOTTOM", "MIDDLE")
