@@ -13,6 +13,7 @@ from typing import Any
 import cv2
 import numpy as np
 import pytest
+from dataclasses import replace
 
 from treeaicoach import camera_proj as cp
 from treeaicoach import overlay_render as orr
@@ -445,6 +446,8 @@ def test_minimap_layer_draws_done_ward_guide():
                           guides=[wg.GuideView("ward", (0.5, 0.5), "x", color="safe", done=True),
                                   wg.GuideView("ward", (0.3, 0.3), "y")])
     img = orr.render_minimap(st, 255, 255, show_frame=False)
+    assert img[118:138, 118:138, 3].max() > 0 and not img[71:83, 71:83, 3].any()   # compact: ONE guide
+    img = orr.render_minimap(replace(st, hud_detailed=True), 255, 255, show_frame=False)
     assert img[118:138, 118:138, 3].max() > 0 and img[71:83, 71:83, 3].max() > 0
     assert orr.OverlayState().world == []
 

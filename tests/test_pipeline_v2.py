@@ -267,7 +267,7 @@ def overlay_state(**kw):
 def test_minimap_layer_redrawn_only_when_it_changes(monkeypatch):
     m, wins, api = manager_and_windows(monkeypatch)
     cfg = Config()
-    st = overlay_state()
+    st = overlay_state(tip="Farme sous ta tour")          # compact HUD: a card only with something to say
     m._refresh(api, wins, st, cfg, False, {}, None, now=10.0)
     assert wins["minimap"].updates == 1 and wins["hud"].updates == 1
     m._refresh(api, wins, st, cfg, False, {}, None, now=10.04)
@@ -412,7 +412,8 @@ def test_stale_or_stacked_views_are_ghosts_without_labels(monkeypatch):
     allies[0].stacked = True
     for a in allies:
         a.relation = "ally"
-    orr.render_minimap(orr.OverlayState(allies=allies, show_allies=True, show_roles=True), 300, 300, now=1.0)
+    orr.render_minimap(orr.OverlayState(allies=allies, show_allies=True, show_roles=True, hud_detailed=True),
+                       300, 300, now=1.0)
     assert [t for t, *_ in texts] == ["SUP"]
     assert orr.is_ghost(allies[0]) and not orr.is_ghost(allies[1])
 
@@ -429,9 +430,12 @@ def test_hud_dead_header_and_short_chips(monkeypatch):
     monkeypatch.setattr(orr.Canvas, "text", spy)
     st = replace(orr.sample_states()["safe"], me_dead=True, respawn_s=7.2, threat_text="SÛR",
                  hint="Pense à la balise de contrôle")
-    orr.render_hud(st, 300)
-    assert "MORT · retour dans 8 s" in drawn
+    orr.render_hud(replace(st, hud_detailed=True), 300)
+    assert "MORT · retour dans 8 s" in drawn                       # detailed card
     assert not any("SÛR" in t for t in drawn)
+    drawn.clear()
+    orr.render_hud(st, 300)                                       # compact: the game shows the timer
+    assert not any("MORT" in t or "SÛR" in t for t in drawn)
     assert orr.short_chip_text("Pense à la balise de contrôle") == "Balise de contrôle"
     assert orr.short_chip_text("1 450 PO — pense à rentrer") == "Rentrer · 1 450 PO"
 
