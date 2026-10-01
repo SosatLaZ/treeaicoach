@@ -159,6 +159,7 @@ CONF_SMOOTH = 0.5
 #: momentarily not matched (stacked under an enemy, ping on it...), threshold relaxed by
 #: SELF_RELAX near its track or near the camera rectangle centre (camera locked).
 SELF_COAST_S = 1.2
+SELF_COAST_VEL_S = 0.25            # ... extrapolating the last velocity for this long at most
 SELF_RELAX = 0.1
 SELF_CAM_DIST = 0.06
 #: Occlusion: candidates down to OCC_RANGE below the threshold are re-scored on their
@@ -225,6 +226,12 @@ CAMLOCK_CONFIRM = 4
 CAMLOCK_HOLD_S = 6.0
 CAMLOCK_JUMP = 0.03
 CAMLOCK_SCORE = 0.5
+#: While I am not confirmed, the camera point may only move as fast as a champion (+ the
+#: rectangle detection jitter) since my last confirmed match: any faster (edge scroll,
+#: dragging, minimap click) and the camera is no longer on me -> unlocked at once.
+CAMLOCK_CAM_SPEED = 0.06
+CAMLOCK_CAM_SLACK = 0.008
+CAMLOCK_STEP_SLACK = 0.005          # ... per camera step (frame to frame)
 
 #: Greyscale minimap (death filter on some clients, desaturated capture): the ring colour
 #: cannot vote, the chroma half of the NCC is meaningless. Detected when the 95th
@@ -709,6 +716,13 @@ class CameraLock:
         self.locked_t: float | None = None
         self.prev: tuple[float, float, float] | None = None
         self.off = (0.0, 0.0)
+        #: camera point at my last confirmed match (u, v, t)
+        self.anchor: tuple[float, float, float] | None = None
+
+    def _unlock(self) -> None:
+        self.locked_t = None
+        self.streak = 0
+        self.anchor = None
 
     @property
     def locked(self) -> bool:
@@ -722,8 +736,15 @@ class CameraLock:
             dt = now - self.prev[2]
             if dt < 0 or math.hypot(p[0] - self.prev[0], p[1] - self.prev[1]) > \
                     MAX_SPEED * min(dt, 2.0) + CAMLOCK_JUMP:
-                self.locked_t = None
-                self.streak = 0
+                self._unlock()
+            elif self.locked_t is not None and 0 < dt <= 1.0 and math.hypot(
+                    p[0] - self.prev[0], p[1] - self.prev[1]) > \
+                    CAMLOCK_CAM_SPEED * dt + CAMLOCK_STEP_SLACK:
+                self._unlock()             # one camera step faster than a champion walks
+        a = self.anchor
+        if a is not None and self.locked_t is not None and (now < a[2] or math.hypot(
+                p[0] - a[0], p[1] - a[1]) > CAMLOCK_CAM_SPEED * (now - a[2]) + CAMLOCK_CAM_SLACK):
+            self._unlock()                 # the camera moves faster than I can: not on me
         self.prev = (float(p[0]), float(p[1]), float(now))
 
     def confirm(self, me: tuple[float, float], p: tuple[float, float] | None, now: float) -> None:
@@ -736,15 +757,19 @@ class CameraLock:
             self.streak += 1
             a = 0.3
             self.off = ((1 - a) * self.off[0] + a * du, (1 - a) * self.off[1] + a * dv)
+            self.anchor = (float(p[0]), float(p[1]), float(now))
             if self.streak >= CAMLOCK_CONFIRM:
                 self.locked_t = now
         else:
-            self.streak = 0
-            self.locked_t = None
+            self._unlock()
             self.off = (0.0, 0.0)
 
     def position(self, p: tuple[float, float] | None, now: float) -> tuple[float, float] | None:
         if p is None or self.locked_t is None or not 0 <= now - self.locked_t <= CAMLOCK_HOLD_S:
+            return None
+        a = self.anchor
+        if a is not None and math.hypot(p[0] - a[0], p[1] - a[1]) > \
+                CAMLOCK_CAM_SPEED * max(0.0, now - a[2]) + CAMLOCK_CAM_SLACK:
             return None
         return (min(1.0, max(0.0, p[0] + self.off[0])), min(1.0, max(0.0, p[1] + self.off[1])))
 
@@ -2278,7 +2303,9 @@ class RosterMatcher:
                     continue
             tr = self._tracks.get(i)
             if tr is not None and now - tr.t <= SELF_COAST_S and tr.hits >= 3:
-                pu, pv = tr.predict(now)
+                # short extrapolation only: a hidden icon's last velocity is often wrong
+                k = min(max(now - tr.t, 0.0), SELF_COAST_VEL_S)
+                pu, pv = tr.u + tr.vu * k, tr.v + tr.vv * k
                 score = float(max(0.05, tr.conf * (1.0 - 0.5 * (now - tr.t) / SELF_COAST_S)))
                 dets_extra.append(Detection(u=pu, v=pv, r=r_norm, score=score, cls="ally",
                                             cls_probs=(0.03, 0.97, 0.0), alias=e.alias))
@@ -2300,7 +2327,11 @@ class RosterMatcher:
             else:
                 dt = now - tr.t
                 if dt >= 0.03:
-                    if math.hypot(u - tr.u, v - tr.v) <= JUMP_SLACK + MAX_SPEED * dt:
+                    if c.note in ("stacked", "camera"):
+                        # a position inferred under another icon / from the camera: not
+                        # precise enough for a velocity (coasting would run away with it)
+                        tr.vu = tr.vv = 0.0
+                    elif math.hypot(u - tr.u, v - tr.v) <= JUMP_SLACK + MAX_SPEED * dt:
                         a = 0.5
                         vu = (1 - a) * tr.vu + a * (u - tr.u) / dt
                         vv = (1 - a) * tr.vv + a * (v - tr.v) / dt

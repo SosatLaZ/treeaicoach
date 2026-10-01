@@ -78,7 +78,6 @@ from treeaicoach.geometry import (
     classify_zone,
     dist,
     in_fountain,
-    is_base,
     is_jungle,
     is_river,
     lane_of,

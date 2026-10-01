@@ -139,6 +139,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--size", type=int, default=160)
     p.add_argument("--holdout", action="store_true")
     p.add_argument("--limit", type=int, default=0, help="use only the first N cached images")
+    p.add_argument("--max-fit", type=int, default=40000, help="samples used by the fit")
+    p.add_argument("--iters", type=int, default=200)
     p.add_argument("--out", default="")
     p.add_argument("--eval-onnx", default="")
     p.add_argument("--mode", default="mix", choices=("mix", "replace"))
@@ -155,7 +157,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     t0 = time.perf_counter()
     X, y = build_xy(imgs[order], [labels[i] for i in order])
     t1 = time.perf_counter()
-    clf = PC.fit(X, y, class_weight=[1.0, 1.5, 1.0])
+    if a.max_fit and len(y) > a.max_fit:     # the fit is memory-bound: a subsample is enough
+        keep = np.random.default_rng(2).choice(len(y), a.max_fit, replace=False)
+        Xf, yf = X[keep], y[keep]
+    else:
+        Xf, yf = X, y
+    clf = PC.fit(Xf, yf, class_weight=[1.0, 1.5, 1.0], iters=a.iters)
     t2 = time.perf_counter()
     acc = float((clf.predict_features(X).argmax(1) == y).mean())
     log.info("features: %d samples (%d pos) in %.1f s | fit %.1f s | train acc %.3f",

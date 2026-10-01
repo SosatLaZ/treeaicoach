@@ -82,25 +82,27 @@ def extract_patches(img_bgr: np.ndarray, cands: Sequence[Sequence[float]]) -> np
 
 def patch_features(patches: np.ndarray) -> np.ndarray:
     """``[N, F]`` float32 features of ``[N, PATCH, PATCH, 3]`` uint8 patches."""
-    hog = _hog()
-    feats = []
-    c = (PATCH / 2.0, PATCH / 2.0)
-    max_r = PATCH / 2.0
-    for p in patches:
-        g = cv2.cvtColor(p, cv2.COLOR_BGR2GRAY)
-        f_hog = hog.compute(g).reshape(-1)
-        pol = cv2.warpPolar(p, (_POLAR_R, _POLAR_A), c, max_r,
-                            cv2.WARP_POLAR_LINEAR | cv2.INTER_LINEAR).astype(np.float32) / 255.0
-        # pol: [angle, radius, 3]
-        mean = pol.mean(axis=0)                                  # [R, 3]
-        bright = pol.mean(axis=2)                                # [A, R]
-        spread = bright.std(axis=0)[:, None]                     # [R, 1]
-        chroma = (pol.max(axis=2) - pol.min(axis=2)).mean(axis=0)[:, None]
-        f_pol = np.concatenate([mean, spread, chroma], axis=1).reshape(-1)
-        feats.append(np.concatenate([f_hog, f_pol]))
-    if not feats:
+    n = len(patches)
+    if not n:
         return np.zeros((0, feature_dim()), np.float32)
-    return np.asarray(feats, np.float32)
+    hog = _hog()
+    c = (PATCH / 2.0, PATCH / 2.0)
+    f_hog = np.empty((n, 324), np.float32)
+    pol = np.empty((n, _POLAR_A, _POLAR_R, 3), np.uint8)
+    for i, p in enumerate(patches):
+        f_hog[i] = hog.compute(cv2.cvtColor(p, cv2.COLOR_BGR2GRAY)).reshape(-1)
+        pol[i] = cv2.warpPolar(p, (_POLAR_R, _POLAR_A), c, PATCH / 2.0,
+                               cv2.WARP_POLAR_LINEAR | cv2.INTER_LINEAR)
+    pf = pol.astype(np.float32) * np.float32(1.0 / 255.0)       # [N, A, R, 3]
+    b, g, r = pf[..., 0], pf[..., 1], pf[..., 2]                 # [N, A, R]
+    inv_a = np.float32(1.0 / _POLAR_A)
+    mean = np.stack([b.sum(axis=1), g.sum(axis=1), r.sum(axis=1)], axis=2) * inv_a  # [N, R, 3]
+    bright = (b + g + r) * np.float32(1.0 / 3.0)
+    bm = bright.sum(axis=1) * inv_a
+    spread = np.sqrt(np.maximum((bright * bright).sum(axis=1) * inv_a - bm * bm, 0.0))
+    chroma = (np.maximum(np.maximum(b, g), r) - np.minimum(np.minimum(b, g), r)).sum(axis=1) * inv_a
+    f_pol = np.concatenate([mean, spread[:, :, None], chroma[:, :, None]], axis=2).reshape(n, -1)
+    return np.concatenate([f_hog, f_pol], axis=1)
 
 
 def feature_dim() -> int:
