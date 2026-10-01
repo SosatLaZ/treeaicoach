@@ -1,6 +1,6 @@
 {
-  "version": "1.7.0",
-  "sha256": "24838035bd35955b02fbaa669b6424f292759f0c9ec137d09200178f76f306a8",
-  "size": 81894908,
-  "notes": "1.7 : gank ultra rapide, calculateur FIGHT/RECULE, voix minimale, phases et placement, balises, IA Groq/Gemini (F8), détection v3, mise à jour plus rapide."
+  "version": "1.7.1",
+  "sha256": "85d71bfd066e9e4ee702198566e79fba3e49d4c09f8391f32e6e05006ffa519f",
+  "size": 81945611,
+  "notes": "1.7.1 : détection des échanges de lane, conseils précis classés (quoi faire + pourquoi), mise à jour plus rapide."
 }
