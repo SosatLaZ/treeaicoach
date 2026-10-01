@@ -213,6 +213,10 @@ class OverlayState:
 #: identified - is drawn as a faint dashed ghost WITHOUT role label (never a confident ring on a
 #: position that may be wrong).
 GHOST_AGE_S = 0.7
+#: A champion drawn UNDER another icon (stacked hold) is not drawn at all: the game shows
+#: his icon there, and a dashed "unsure" ring on the icon drawn over him read as a ghost on a
+#: live champion (measured with tools/det_gym.py; detection owner's rule).
+STACKED_HIDDEN = True
 #: At most this many text labels on the minimap layer at once (priority: visible jungler, jungler
 #: last seen / fog timer, enemy roles, ally roles).
 MM_MAX_LABELS = 4
@@ -1509,7 +1513,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     if show_allies:
         for a in allies:
             uv = _uv_ok(a.uv) if (a.visible and a.uv is not None) else None
-            if uv is None:
+            if uv is None or (STACKED_HIDDEN and bool(getattr(a, "stacked", False))):
                 continue
             x, y = px(uv)
             if is_ghost(a):      # stale / stacked / unsure: faint dashed ring, no label
@@ -1531,6 +1535,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         x, y = px(uv)
         if not detailed and (not e.approaching or is_ghost(e)):
             continue             # compact: the game's own icon is enough
+        if STACKED_HIDDEN and bool(getattr(e, "stacked", False)):
+            continue             # under another icon: the game's own icon cluster shows him
         if is_ghost(e):          # stale / stacked / unsure: faint dashed ring, no label, no arrow
             cv_.ring(x, y, mr, lw, DANGER, 0.4, dash=(3.0 * k + 1, 2.5 * k + 1))
             continue

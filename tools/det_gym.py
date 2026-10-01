@@ -706,6 +706,9 @@ class Pipeline:
                 continue
             v = eng._enemy_view(EnemyView, tr.alias, tr.alias or "?", 0, tr, me_uv, t, False)
             views.append((tr, v, tr.relation))
+        from treeaicoach import overlay_render as OR
+
+        hidden = []
         for tr, v, rel in views:
             if v.dead or v.uv is None:
                 if v.dead and tr is not None and v.visible:
@@ -714,11 +717,30 @@ class Pipeline:
             if v.visible and not is_ghost(v):
                 uv = pred.get(tr.key, (v.uv, 0.0))[0]
                 live.append((tr.key, v.alias, rel, uv))
-            else:
-                ghost.append((tr.key, v.alias, rel, v.uv, "ghost"))
+            elif v.visible:
+                # dashed "unsure" ring (overlay: detailed mode / allies layer)
+                why = "stacked" if getattr(v, "stacked", False) else (
+                    "anon" if (getattr(v, "confidence", 1.0) or 1.0) < OR.GHOST_MIN_CONFIDENCE else "stale")
+                if not (why == "stacked" and getattr(OR, "STACKED_HIDDEN", False)):
+                    ghost.append((tr.key, v.alias, rel, v.uv, f"{rel}-{why}"))
+            elif rel == "enemy":
+                hidden.append((tr, v))
         if me is not None and me.visible:
             uv = pred.get(me.key, (me.position(), 0.0))[0]
             live.append((me.key, me.alias, "self", uv))
+        # last-seen marks of hidden enemies (overlay_render: show_last_seen, compact mode)
+        lsmax = OR.LAST_SEEN_MAX_S / 2
+        delay = float(getattr(OR, "LAST_SEEN_DELAY_S", 0.0))
+        near_r = 1.6 * 0.045
+        for tr, v in hidden:
+            ago = v.last_seen_ago
+            if ago is None or ago > lsmax or ago < delay:
+                continue
+            if OR._in_enemy_fountain(v.uv, game.my_team):
+                continue
+            if any(math.hypot(v.uv[0] - uv[0], v.uv[1] - uv[1]) < near_r for _k, _a, _r, uv in live):
+                continue
+            ghost.append((tr.key, v.alias, "enemy", v.uv, "enemy-lastseen"))
         return {"live": live, "ghost": ghost, "me": me.position() if me is not None else None}
 
 
@@ -746,6 +768,7 @@ class GameMetrics:
     cpu: list = field(default_factory=list)       # CPU ms of the process (all threads)
     fails: list = field(default_factory=list)     # (scenario, t, kind, detail)
     miss_cause: dict = field(default_factory=dict)
+    ghost_kind: dict = field(default_factory=dict)
 
     def merge(self, o: "GameMetrics") -> None:
         for k, v in vars(o).items():
@@ -773,6 +796,7 @@ class GameMetrics:
             "ms": float(np.mean(self.ms)) if self.ms else float("nan"), "ms95": pct(self.ms, 95),
             "cpu": float(np.mean(self.cpu)) if self.cpu else float("nan"),
             "frames": self.frames, "n_vis": self.n_vis, "miss_cause": dict(self.miss_cause),
+            "ghost_kind": dict(self.ghost_kind),
         }
 
 
@@ -857,7 +881,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False) -> GameMetrics:
                                 f"({uv[0]:.3f},{uv[1]:.3f})" + (f" truth {alias} at ({g[2]:.3f},{g[3]:.3f})"
                                                                   if g is not None else "")))
         # --- per truth champion: recall, switches, fragmentation, error, lag, ghosts
-        ghosts = {g[1] for g in out["ghost"] if g[1]}
+        ghosts = {g[1]: g[4] for g in out["ghost"] if g[1]}
         # one-to-one truth <-> live matching (identity first, then nearest) for the switches
         assign: dict[str, str] = {}
         used_k: set = set()
@@ -907,9 +931,11 @@ def run_game(sc: Scenario, db, art, verbose: bool = False) -> GameMetrics:
                     M.miss_cause[why.split(":")[0]] = M.miss_cause.get(why.split(":")[0], 0) + 1
                     if was_ok.get(a):
                         M.frag += 1
-                    if a in ghosts and vis_run.get(a, 0) >= 3 and rel != "self":
+                    gk = ghosts.get(a)
+                    if gk and vis_run.get(a, 0) >= 3 and rel == "enemy":
                         M.g_live += 1
-                        M.fails.append((sc.name, round(t, 2), "g_live", a))
+                        M.ghost_kind[gk] = M.ghost_kind.get(gk, 0) + 1
+                        M.fails.append((sc.name, round(t, 2), "g_live", f"{a} {gk}"))
             was_ok[a] = ok if visible else was_ok.get(a, False)
         for a in set(tmap) ^ set(vis_run):
             if a not in tmap:
@@ -1029,6 +1055,7 @@ def report(out: dict, verbose: bool = False) -> str:
         cnt = Counter((f[0], f[2]) for f in out["fails"])
         L.append("failure counts: " + ", ".join(f"{k[0]}/{k[1]}={v}" for k, v in sorted(cnt.items())))
         L.append("miss causes: " + ", ".join(f"{k}={v}" for k, v in sorted(out["total"]["miss_cause"].items())))
+        L.append("g_live kinds: " + ", ".join(f"{k}={v}" for k, v in sorted(out["total"]["ghost_kind"].items())))
         shown = Counter()
         for f in out["fails"]:
             k = (f[0], f[2])

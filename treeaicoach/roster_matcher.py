@@ -113,6 +113,12 @@ VERIFY_TEAM = 0.5
 #: det_gym: red pings / glyphs matching a fogged champion's portrait at 0.002-0.008, real
 #: icons, stacked ones included, >= 0.01 at such scores).
 VETO_FRESH_S = 1.0
+#: Ring second opinion (see RosterMatcher._ring_second_opinion): candidates whose ring has
+#: less than RING_VERIFY_OWN of their team's colour get the verifier's team probability
+#: instead when it is >= RING_VERIFY_TEAM (at most RING_VERIFY_MAX per frame).
+RING_VERIFY_MAX = 8
+RING_VERIFY_OWN = 0.3
+RING_VERIFY_TEAM = 0.8
 VETO_MARGIN = 0.12
 VETO_MAX = 0.03
 THR_BG_PCT = 97
@@ -1823,6 +1829,51 @@ class RosterMatcher:
                 self.verifier = None
         return self.verifier
 
+    def _ring_second_opinion(self, cands: list, bgr: np.ndarray, kx: float, ky: float,
+                             r_norm: float, thr: float, relax: dict) -> None:
+        """Team of a candidate whose ring colour did not vote for its champion's team, from
+        the patch verifier (whole icon patch, trained on the real 2026 art): a thin dark ring
+        blurred / JPEG'd to almost grey (a dark red read as the ally colour) no longer sinks a
+        good portrait match. Only candidates a correct ring would make acceptable are asked
+        (at most RING_VERIFY_MAX per frame, one batched call)."""
+        ver = self._get_verifier()
+        if ver is None:
+            return
+        ents = self._entries
+        todo = []
+        for c in cands:
+            # (not my own portrait: a custom skin makes it match other allies weakly; my
+            # icon has the camera lock / learner)
+            if c.ring is None or ents[c.i].relation == "self":
+                continue
+            own, opp = (c.f_en, c.f_al) if ents[c.i].relation == "enemy" else (c.f_al, c.f_en)
+            if own >= RING_VERIFY_OWN:
+                continue
+            ring_term = RING_WEIGHT * (own - opp) - NO_RING_PENALTY * max(0.0, 1.0 - own / 0.3)
+            base = c.tot - ring_term
+            if base + RING_WEIGHT < thr - relax.get(id(c), 0.0) - VERIFY_ZONE:
+                continue                    # even a perfect ring would not make it
+            todo.append((base, c))
+        if not todo:
+            return
+        todo = sorted(todo, key=lambda z: -z[0])[:RING_VERIFY_MAX]
+        try:
+            P = ver.verify_candidates(bgr, [(c.x / kx, c.y / ky, r_norm) for _b, c in todo])
+        except Exception:
+            return
+        for (base, c), p in zip(todo, P):
+            icon = 1.0 - float(p[0])
+            if icon < VERIFY_MIN:
+                continue
+            p_en, p_al = float(p[1]) / icon, float(p[2]) / icon
+            enemy = ents[c.i].relation == "enemy"
+            own, opp = (p_en, p_al) if enemy else (p_al, p_en)
+            if own < RING_VERIFY_TEAM:
+                continue
+            c.f_en, c.f_al = (own, opp) if enemy else (opp, own)
+            c.tot = base + RING_WEIGHT * (own - opp)
+            c.note = c.note or "ring-verified"
+
     @staticmethod
     def _icon_prob(ver: Any, bgr: np.ndarray, c: _Cand, kx: float, ky: float,
                    r_norm: float) -> float:
@@ -2369,6 +2420,8 @@ class RosterMatcher:
                 if own >= TRACK_RELAX_OWN and opp <= TRACK_RELAX_OPP and math.hypot(
                         c.x / kx - pu, c.y / ky - pv) <= TRACK_RELAX_DIST + 0.5 * MAX_SPEED * (now - tr.t):
                     relax[id(c)] = max(relax.get(id(c), 0.0), TRACK_RELAX)
+        if RING_VERIFY_MAX > 0 and not self.grey:
+            self._ring_second_opinion(cands, raw_bgr, kx, ky, R_px / W, thr, relax)
         cands.sort(key=lambda c: -c.tot)
 
         # 4. assignment: one position per champion, no two champions on one spot
