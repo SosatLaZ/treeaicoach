@@ -199,6 +199,10 @@ class OverlayState:
     me_key: str | None = None                 # track key of my champion (for ``predict``)
     me_dead: bool = False                     # I am dead: the HUD shows the respawn countdown, no threat
     respawn_s: float | None = None            # seconds before I respawn (Live Client), None = unknown
+    # declutter (compact HUD): the player's level decides how often the action line shows; the role
+    # decides which objective may appear in the header (only the ones he plays, last 60 s)
+    skill_level: str | None = None            # skill.SKILL_LEVELS key (None: "intermediaire")
+    my_role: str | None = None                # "TOP" | "JUNGLE" | "MIDDLE" | "BOTTOM" | "UTILITY" | None
 
 
 #: A visible champion whose data is older than this (s) - or stacked under another icon, or not

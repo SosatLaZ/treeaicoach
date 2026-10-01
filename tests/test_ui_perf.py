@@ -144,3 +144,23 @@ def test_default_detector_factory_passes_the_engine_options(monkeypatch) -> None
     assert got["learn_cache"] is False and "db" in got and isinstance(got["scale_store"], dict)
     ui._default_detector_factory(cfg)
     assert got["learn_cache"] is True
+
+
+@tu.needs_display
+def test_champ_select_card(home: Path, tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from treeaicoach import champ_select
+
+    card = SimpleNamespace(title="AHRI · MID", lines=("Face à Zed (probable)", "Joue loin : il a la priorité"))
+    monkeypatch.setattr(champ_select, "pregame_card", lambda: card)
+    monkeypatch.setattr(ui, "PREBUILD_DELAY_MS", 0)
+    app, _voice, _ = tu._build(tmp_path, cfg=Config(ui_onboarding_done=True, ui_seen_changelog="1.5",
+                                                     autostart=False))
+    try:
+        tu._pump(app, 4.0, lambda: app.cs_card.winfo_manager() == "grid")
+        assert app.cs_card.winfo_manager() == "grid" and app._cs_sig[0] == "AHRI · MID"
+        app._show_champ_select(None)
+        assert not app.cs_card.winfo_manager()
+    finally:
+        app.close()

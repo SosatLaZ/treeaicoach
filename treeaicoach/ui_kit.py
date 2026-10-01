@@ -654,7 +654,7 @@ def subsystem_rows(*, state: str = "", message: str = "", running: bool = False,
 
 
 OBJECTIVE_SHORT_FR: dict[str, str] = {"dragon": "Drake", "dragon ancestral": "Ancien", "baron": "Baron",
-                                       "héraut": "Héraut", "larves": "Larves", "atakhan": "Atakhan"}
+                                       "héraut": "Héraut", "larves": "Larves"}
 
 
 def objectives_text(ov: Any, max_items: int = 3) -> str:

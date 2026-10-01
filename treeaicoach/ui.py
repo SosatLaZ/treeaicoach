@@ -1784,7 +1784,7 @@ class _LazyPages(dict):
 _NOT_PAGE_ATTRS = frozenset({
     "_closing", "_open_dialog", "_cpu", "_state_color", "_start_style", "_quick_muted", "_quick", "_pregame_tick",
     "_overlay_test", "_gauge_drawn_color", "_ai_status_seq", "_ai_answer_seq", "_update_info", "_update_busy",
-    "_overlay_preview_busy", "pill_text", "skill_seg", "btn_diag", "_diag_desc", "health_lbl", "_backend_t0", "_onboarding_step", "_last_slot",
+    "_overlay_preview_busy", "pill_text", "skill_seg", "btn_diag", "_diag_desc", "health_lbl", "cs_card", "_backend_t0", "_onboarding_step", "_last_slot",
     "_last_row", "_building", "_built", "_page_builders", "pages", "_skill_btns", "_banner_dismissed",
     # page widgets read with getattr(self, name, None) where "not built yet" simply means "nothing to update"
     "_overlay_tiles", "_position_menus", "_radar_section", "_neural_row", "_neural_rate_row",
@@ -3058,7 +3058,7 @@ class CoachApp:
 
         body.grid_columnconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=0)
-        body.grid_rowconfigure(2, weight=1)
+        body.grid_rowconfigure(3, weight=1)
 
         # --- banner (break reminder...) -------------------------------------------------
         self.banner = ctk.CTkFrame(body, fg_color=WARNING_BG, corner_radius=RADIUS, border_width=0)
@@ -3092,9 +3092,17 @@ class CoachApp:
                                        compound="left", command=self.cb(self.toggle_engine))
         hero.attach_button(self.btn_start)
 
+        # --- champion select: pre-game card (champ_select.py, League Client, read-only) ----
+        self.cs_card = ctk.CTkFrame(body, fg_color=SURFACE, corner_radius=RADIUS_DIALOG, border_width=1,
+                                    border_color=ACCENT_DIM)
+        self.cs_card.grid_columnconfigure(0, weight=1)
+        self._cs_sig: Any = None
+        self._cs_busy = False
+        self._cs_polled = 0.0
+
         # --- left column: teams + journal --------------------------------------------
         left = self._frame(body)
-        left.grid(row=2, column=0, sticky="nsew", padx=(0, 16))
+        left.grid(row=3, column=0, sticky="nsew", padx=(0, 16))
         left.grid_columnconfigure(0, weight=1)
         left.grid_rowconfigure(2, weight=1)
 
@@ -3216,7 +3224,7 @@ class CoachApp:
 
         # --- right column: radar + tech -------------------------------------------------
         rc = self._frame(body, width=RADAR_PX + 8)
-        rc.grid(row=2, column=1, sticky="n")
+        rc.grid(row=3, column=1, sticky="n")
         rc.grid_columnconfigure(0, weight=1)
         rh = self._frame(rc)
         rh.grid(row=0, column=0, sticky="ew", pady=(0, 4))
@@ -6285,6 +6293,7 @@ class CoachApp:
             self._collect_alerts(st, ov)        # keep the journal up to date; no hidden widget work
             return
         self._update_health(getattr(st, "health", None) if st is not None and key == "RUNNING" else None)
+        self._poll_champ_select(key)
         msg = self._with_extras(msg, key)
         self._set_text(self.state_title, title)
         self._set_text(self.state_msg, msg or " ")
@@ -6354,6 +6363,63 @@ class CoachApp:
         self.hero.set_glow(THREAT_COLORS[lvl] if ov is not None and lvl > 0 else color)
         if self._current_page == "dashboard":
             self._draw_gauge_step()
+
+    def _poll_champ_select(self, key: str) -> None:
+        """Pre-game card while the player is in champion select (dashboard on screen, no game running):
+        champ_select.pregame_card() on a worker thread, at most every 2 s."""
+        if key == "RUNNING" or self._cs_busy:
+            if key == "RUNNING" and self._cs_sig is not None:
+                self._show_champ_select(None)
+            return
+        now = time.monotonic()
+        if now - self._cs_polled < 2.0:
+            return
+        self._cs_polled = now
+        self._cs_busy = True
+
+        def job() -> Any:
+            from treeaicoach import champ_select  # noqa: PLC0415
+
+            return champ_select.pregame_card()
+
+        def done(card: Any) -> None:
+            self._cs_busy = False
+            self._show_champ_select(card)
+
+        def failed(_e: BaseException) -> None:
+            self._cs_busy = False
+
+        self._dispatcher.run(job, done, failed, name="TreeAI-ui-champselect")
+
+    def _show_champ_select(self, card: Any) -> None:
+        box = getattr(self, "cs_card", None)
+        if box is None:
+            return
+        title = str(getattr(card, "title", "") or "") if card is not None else ""
+        lines = tuple(str(x) for x in (getattr(card, "lines", ()) or ()) if x) if card is not None else ()
+        sig = (title, lines) if card is not None else None
+        if sig == self._cs_sig:
+            return
+        self._cs_sig = sig
+        for w in box.winfo_children():
+            w.destroy()
+        if card is None:
+            box.grid_remove()
+            return
+        head = self._frame(box)
+        head.grid(row=0, column=0, sticky="ew", padx=CARD_PAD, pady=(14, 4))
+        head.grid_columnconfigure(1, weight=1)
+        self._caption(head, "Sélection des champions", ACCENT, anchor="w").grid(row=0, column=0, sticky="w")
+        self._label(head, ui_text(title), self.fonts.h2, TEXT, anchor="w").grid(row=1, column=0, columnspan=2,
+                                                                                 sticky="w", pady=(2, 0))
+        for i, line in enumerate(lines[:6]):
+            lbl = self._label(box, ui_text(line), self.fonts.small, TEXT if i == 0 else MUTED, anchor="w",
+                              justify="left", wraplength=760)
+            lbl.grid(row=1 + i, column=0, sticky="w", padx=CARD_PAD, pady=(2, 14 if i == min(len(lines), 6) - 1
+                                                                         else 0))
+            self._wrap_labels.append((lbl, 2 * CARD_PAD + 8))
+        box.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        self._wrap_rows(self._wrap_width, force=True)
 
     def _update_health(self, h: Any) -> None:
         """Dashboard health line from ``status.health`` (engine.health(), in game only)."""
