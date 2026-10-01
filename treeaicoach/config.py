@@ -165,6 +165,9 @@ BOOL_FIELDS = BOOL_FIELDS + ("ward_guide", "ward_world", "ward_sound")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ward",)
 # League Client (lcu.py): post-game match timeline (ground truth for the report and the alert scoring)
 BOOL_FIELDS = BOOL_FIELDS + ("lcu_enabled",)
+# play ratings (plays.py / fx_overlay.py): chess.com-style "coup de maître / gaffe" badges, visual only
+BOOL_FIELDS = BOOL_FIELDS + ("plays_enabled", "plays_sound", "plays_sound_negative")
+CHOICES["plays_position"] = ("top_center", "minimap")
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -318,6 +321,11 @@ class Config:
     hotkey_ward: str = "F7"          # "Où poser une balise ?" (show the best spots now), "" = disabled
     # League Client local API (lcu.py), read-only, after the game only: true positions / gold for the report
     lcu_enabled: bool = True
+    # play ratings (plays.py): animated badge "COUP DE MAÎTRE !!" / "GAFFE ??" + post-game précision
+    plays_enabled: bool = True
+    plays_position: str = "top_center"   # "top_center" | "minimap" (small badges always near the minimap)
+    plays_sound: bool = True             # short tone for positive ratings
+    plays_sound_negative: bool = False   # also for inaccuracy / mistake / blunder / missed chance
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""

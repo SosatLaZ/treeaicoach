@@ -30,17 +30,20 @@ from treeaicoach import APP_NAME, __version__
 
 log = logging.getLogger(__name__)
 
-# hextech palette (ARCHITECTURE.md §8.2)
-BG = "#010A13"
-PANEL = "#0A1428"
-BORDER = "#1E2328"
-GOLD = "#C8AA6E"
-TEXT = "#F0E6D2"
-TEAL = "#0AC8B9"
-RED = "#E84057"
-GREEN = "#2DC66B"
-ORANGE = "#F0A030"
-MUTED = "#A09B8C"
+# TreeAI palette (docs/DESIGN.md). Legacy names kept: GOLD = the accent, TEAL = my team's colour.
+BG = "#0C0E0D"
+PANEL = "#121513"
+BORDER = "#222725"
+LINE_STRONG = "#2F3532"
+ACCENT = "#9BD84A"
+GOLD = ACCENT
+TEXT = "#E4E8E5"
+TEAL = "#4A90D9"
+RED = "#E5484D"
+GREEN = ACCENT
+ORANGE = "#E8A23A"
+MUTED = "#8B948F"
+DIM = "#59615C"
 
 MAP_SIZE = 512                 # rendered map (px)
 MINI_MAP_SIZE = 220            # jungler phase maps (px)
@@ -76,7 +79,7 @@ def _f(x: Any, default: float | None = None) -> float | None:
 def _num(x: Any, decimals: int = 1) -> str:
     v = _f(x)
     if v is None:
-        return "—"
+        return "-"
     s = f"{v:,.{decimals}f}".replace(",", "\u202f").replace(".", ",")
     return s
 
@@ -84,7 +87,7 @@ def _num(x: Any, decimals: int = 1) -> str:
 def _fmt_time(gt: Any) -> str:
     v = _f(gt)
     if v is None or v < 0:
-        return "—"
+        return "-"
     s = int(round(v))
     return f"{s // 60}:{s % 60:02d}"
 
@@ -105,8 +108,8 @@ def _lerp_color(stops: list[tuple[float, str]], x: float) -> tuple[int, int, int
     return _hex_rgb(stops[-1][1])
 
 
-MINUTE_STOPS: list[tuple[float, str]] = [(0.0, TEAL), (0.5, GOLD), (1.0, RED)]
-HEAT_STOPS: list[tuple[float, str]] = [(0.0, "#0A3A5A"), (0.35, "#0AC8B9"), (0.7, "#C8AA6E"), (1.0, "#FFF4DC")]
+MINUTE_STOPS: list[tuple[float, str]] = [(0.0, "#C9D1CC"), (0.5, ORANGE), (1.0, RED)]
+HEAT_STOPS: list[tuple[float, str]] = [(0.0, "#1C3312"), (0.35, "#5E8F2C"), (0.7, "#9BD84A"), (1.0, "#F4FAE8")]
 
 
 def _date_fr(iso: Any) -> str:
@@ -297,7 +300,7 @@ def _heat_layer(points: list[tuple[float, float, float]], size: int) -> Any:
 
 def _draw_cross(draw: Any, x: float, y: float, r: float, w: int) -> None:
     for dx, dy in ((1, 1), (1, -1)):
-        draw.line([(x - dx * r, y - dy * r), (x + dx * r, y + dy * r)], fill=(10, 4, 8, 255), width=w + 4)
+        draw.line([(x - dx * r, y - dy * r), (x + dx * r, y + dy * r)], fill=(12, 14, 13, 255), width=w + 4)
     for dx, dy in ((1, 1), (1, -1)):
         draw.line([(x - dx * r, y - dy * r), (x + dx * r, y + dy * r)], fill=_hex_rgb(RED) + (255,), width=w)
 
@@ -328,7 +331,7 @@ def _label(draw: Any, x: float, y: float, text: str, font: Any, color: tuple[int
     bx, by = best
     placed.append((bx - s, by - s, bx + w + s, by + h + s))
     draw.rounded_rectangle([bx, by, bx + tw + 2 * pad, by + th + 2 * pad], radius=4 * s,
-                           fill=(1, 10, 19, 225), outline=color + (255,), width=max(1, s))
+                           fill=(12, 14, 13, 225), outline=color + (255,), width=max(1, s))
     draw.text((bx + pad - l, by + pad - t), text, font=font, fill=color + (255,))
 
 
@@ -349,7 +352,7 @@ def _draw_jungler(draw: Any, pts: list[tuple[float, float, float]], size: int, s
         c = _lerp_color(MINUTE_STOPS, t / span)
         first = t - last_t > 5.0
         r = dot * (1.6 if first else 1.0)
-        draw.ellipse([x - r - s, y - r - s, x + r + s, y + r + s], fill=(1, 10, 19, 230))
+        draw.ellipse([x - r - s, y - r - s, x + r + s, y + r + s], fill=(12, 14, 13, 230))
         draw.ellipse([x - r, y - r, x + r, y + r], fill=c + (255,))
         last_t = t
 
@@ -419,111 +422,117 @@ def render_phase_map_png(record: dict, analysis: dict, t0: float, t1: float,
 CSS = f"""
 *{{box-sizing:border-box}}
 html,body{{margin:0;padding:0;background:{BG};color:{TEXT}}}
-body{{font-family:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;font-size:15px;line-height:1.45;
-  background:radial-gradient(1200px 500px at 50% -120px,#0B2A3A 0%,{BG} 60%) no-repeat,{BG}}}
-.wrap{{max-width:1120px;margin:0 auto;padding:28px 20px 40px}}
-h2{{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:{GOLD};margin:0 0 14px;font-weight:700;
-  display:flex;align-items:center;gap:10px}}
-h2:after{{content:"";flex:1;height:1px;background:linear-gradient(90deg,{GOLD}66,transparent)}}
-.panel{{background:linear-gradient(180deg,#0C1830,{PANEL});border:1px solid {BORDER};border-top:1px solid #C8AA6E55;
-  border-radius:10px;padding:20px 22px;margin:0 0 18px;box-shadow:0 8px 24px #0008}}
-.hdr{{display:flex;gap:22px;align-items:center;flex-wrap:wrap}}
-.champ{{width:92px;height:92px;border-radius:50%;border:3px solid {GOLD};box-shadow:0 0 0 3px {BG},0 0 22px #C8AA6E55;
-  background:#111;object-fit:cover}}
-.champ.ph{{display:flex;align-items:center;justify-content:center;font-size:34px;color:{GOLD};font-weight:700}}
-.title{{flex:1;min-width:240px}}
-.title .name{{font-size:30px;font-weight:700;letter-spacing:.02em;margin:0;color:{TEXT}}}
-.title .sub{{color:{MUTED};font-size:14px;margin-top:2px}}
-.badge{{display:inline-block;padding:4px 14px;border-radius:999px;font-weight:700;font-size:13px;letter-spacing:.12em;
-  text-transform:uppercase;margin-bottom:8px;border:1px solid}}
-.win{{color:{GREEN};border-color:{GREEN};background:#2DC66B1A}}
-.lose{{color:{RED};border-color:{RED};background:#E840571A}}
-.unk{{color:{MUTED};border-color:{MUTED};background:#A09B8C14}}
-.hstats{{display:flex;gap:26px;flex-wrap:wrap}}
-.hstat .v{{font-size:26px;font-weight:700;color:{TEXT};white-space:nowrap}}
-.hstat .l{{font-size:12px;color:{MUTED};text-transform:uppercase;letter-spacing:.1em}}
+body{{font-family:Bahnschrift,"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;font-size:14px;
+  line-height:1.45;font-variant-numeric:tabular-nums}}
+.wrap{{max-width:1080px;margin:0 auto;padding:20px 20px 36px}}
+h2{{font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:{MUTED};margin:0 0 12px;font-weight:700;
+  padding-bottom:6px;border-bottom:1px solid {LINE_STRONG}}}
+.panel{{background:{PANEL};border:1px solid {BORDER};border-radius:4px;padding:16px 18px;margin:0 0 14px}}
+.hdr{{display:flex;gap:18px;align-items:center;flex-wrap:wrap}}
+.champ{{width:72px;height:72px;border-radius:4px;border:1px solid {LINE_STRONG};background:{BG};object-fit:cover}}
+.champ.ph{{display:flex;align-items:center;justify-content:center;font-size:28px;color:{MUTED};font-weight:700}}
+.title{{flex:1;min-width:220px}}
+.title .name{{font-size:26px;font-weight:700;margin:0;color:{TEXT}}}
+.title .sub{{color:{MUTED};font-size:13px;margin-top:2px}}
+.badge{{display:inline-block;padding:0;font-weight:700;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+  margin-bottom:4px}}
+.win{{color:{GREEN}}}
+.lose{{color:{RED}}}
+.unk{{color:{MUTED}}}
+.hstats{{display:flex;gap:0;flex-wrap:wrap}}
+.hstat{{padding:0 18px;border-left:1px solid {BORDER}}}
+.hstat .v{{font-size:24px;font-weight:700;color:{TEXT};white-space:nowrap}}
+.hstat .l{{font-size:11px;color:{MUTED};text-transform:uppercase;letter-spacing:.1em}}
 .kda b{{color:{TEXT}}} .kda .d{{color:{RED}}} .kda .sl{{color:{MUTED};font-weight:400;padding:0 3px}}
-.cards{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 18px}}
+.tldr{{margin:14px 0 0;padding:12px 0 0;border-top:1px solid {BORDER};display:flex;flex-direction:column;gap:4px}}
+.tldr p{{margin:0;font-size:14.5px}} .tldr p b{{color:{ACCENT}}}
+.cards{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin:0 0 14px;background:{PANEL};
+  border:1px solid {BORDER};border-radius:4px}}
 @media (max-width:760px){{.cards{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
-.card{{background:{PANEL};border:1px solid {BORDER};border-radius:10px;padding:14px 16px;position:relative;overflow:hidden}}
-.card:before{{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:{GOLD}}}
-.card.t:before{{background:{TEAL}}} .card.r:before{{background:{RED}}} .card.g:before{{background:{GREEN}}}
-.card .v{{font-size:24px;font-weight:700}} .card .l{{font-size:12px;color:{MUTED};text-transform:uppercase;letter-spacing:.08em}}
-.card .x{{font-size:12.5px;color:{MUTED};margin-top:2px}}
-.grid2{{display:grid;grid-template-columns:minmax(0,560px) minmax(0,1fr);gap:22px;align-items:start}}
+.card{{padding:12px 16px;border-right:1px solid {BORDER};border-bottom:1px solid {BORDER}}}
+.card:nth-child(4n){{border-right:none}} .card:nth-last-child(-n+4){{border-bottom:none}}
+.card.r .v{{color:{RED}}} .card.g .v{{color:{GREEN}}}
+.card .v{{font-size:22px;font-weight:700}} .card .l{{font-size:11px;color:{MUTED};text-transform:uppercase;letter-spacing:.08em}}
+.card .x{{font-size:12px;color:{MUTED};margin-top:2px}}
+.grid2{{display:grid;grid-template-columns:minmax(0,520px) minmax(0,1fr);gap:20px;align-items:start}}
 @media (max-width:900px){{.grid2{{grid-template-columns:1fr}}}}
-.map{{width:100%;max-width:512px;border-radius:8px;border:1px solid #C8AA6E66;display:block;box-shadow:0 0 0 4px {BG},0 0 0 5px #C8AA6E33}}
-.legend{{display:flex;flex-direction:column;gap:10px;font-size:13.5px;color:{TEXT};margin-top:14px}}
+.map{{width:100%;max-width:512px;border-radius:4px;border:1px solid {LINE_STRONG};display:block}}
+.legend{{display:flex;flex-direction:column;gap:8px;font-size:13px;color:{TEXT};margin-top:12px}}
 .lg{{display:flex;align-items:center;gap:10px}}
-.grad{{width:130px;height:10px;border-radius:5px}}
-.lgx{{color:{RED};font-weight:900;font-size:18px;width:18px;text-align:center}}
-.small{{font-size:12.5px;color:{MUTED}}}
-.bars{{display:flex;flex-direction:column;gap:8px}}
-.bar{{display:grid;grid-template-columns:140px 1fr 58px;gap:10px;align-items:center;font-size:13.5px}}
-.track{{height:10px;background:#1E2328;border-radius:5px;overflow:hidden}}
-.fill{{height:100%;background:linear-gradient(90deg,{TEAL},{GOLD});border-radius:5px}}
-.fill.red{{background:linear-gradient(90deg,#8A2335,{RED})}}
-.pct{{text-align:right;color:{MUTED};font-variant-numeric:tabular-nums}}
-table{{width:100%;border-collapse:collapse;font-size:14px}}
-th{{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.1em;color:{GOLD};font-weight:600;
-  border-bottom:1px solid #C8AA6E44;padding:8px 10px}}
-td{{padding:10px;border-bottom:1px solid {BORDER};vertical-align:middle}}
+.grad{{width:120px;height:8px;border-radius:2px}}
+.lgx{{color:{RED};font-weight:900;font-size:16px;width:18px;text-align:center}}
+.small{{font-size:12px;color:{MUTED}}}
+.bars{{display:flex;flex-direction:column;gap:6px}}
+.bar{{display:grid;grid-template-columns:140px 1fr 58px;gap:10px;align-items:center;font-size:13px}}
+.track{{height:8px;background:{BORDER};border-radius:2px;overflow:hidden}}
+.fill{{height:100%;background:{ACCENT};border-radius:2px}}
+.fill.red{{background:{RED}}}
+.pct{{text-align:right;color:{MUTED}}}
+table{{width:100%;border-collapse:collapse;font-size:13.5px}}
+th{{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:{MUTED};font-weight:600;
+  border-bottom:1px solid {LINE_STRONG};padding:6px 10px}}
+td{{padding:8px 10px;border-bottom:1px solid {BORDER};vertical-align:middle}}
 tr:last-child td{{border-bottom:none}}
-td.t{{font-weight:700;font-variant-numeric:tabular-nums;color:{TEXT};white-space:nowrap}}
+td.t{{font-weight:700;color:{TEXT};white-space:nowrap}}
 .who{{display:flex;flex-wrap:wrap;gap:6px}}
-.chip{{display:inline-flex;align-items:center;gap:6px;background:#1E2328;border:1px solid #2C3440;border-radius:999px;
-  padding:2px 10px 2px 2px;font-size:13px;white-space:nowrap}}
-.chip img{{width:22px;height:22px;border-radius:50%;border:1px solid {RED}}}
-.chip.nj{{padding-left:10px}}
+.chip{{display:inline-flex;align-items:center;gap:6px;background:{BG};border:1px solid {BORDER};border-radius:4px;
+  padding:2px 8px 2px 2px;font-size:12.5px;white-space:nowrap}}
+.chip img{{width:20px;height:20px;border-radius:3px;border:1px solid {RED}}}
+.chip.nj{{padding-left:8px}}
 .chip.jgl img{{border-color:{ORANGE}}}
-.tag{{display:inline-block;padding:3px 10px;border-radius:6px;font-size:12.5px;font-weight:700;white-space:nowrap}}
-.tag.ok{{color:{ORANGE};background:#F0A0301F;border:1px solid #F0A03066}}
-.tag.no{{color:{RED};background:#E840571A;border:1px solid #E8405766}}
-.tag.sv{{color:{GREEN};background:#2DC66B1A;border:1px solid #2DC66B66}}
-.recap{{color:{MUTED};font-size:13px;margin-top:4px}}
-.tl{{position:relative;height:64px;margin:6px 8px 4px}}
-.tl .axis{{position:absolute;left:0;right:0;top:30px;height:4px;border-radius:2px;
-  background:linear-gradient(90deg,#0AC8B955,#C8AA6E55,#E8405755)}}
-.tl .tick{{position:absolute;top:40px;font-size:11px;color:{MUTED};transform:translateX(-50%)}}
-.tl .m{{position:absolute;top:21px;width:22px;height:22px;border-radius:50%;transform:translateX(-50%);
-  border:3px solid {BG};box-shadow:0 0 0 2px currentColor}}
-.tl .m.s{{background:{GREEN};color:{GREEN}}} .tl .m.d{{background:{RED};color:{RED}}}
-.tl .m.x{{top:24px;width:14px;height:14px;background:{BG};color:{RED};border:2px solid {BG};box-shadow:0 0 0 2px {RED}}}
-.tl .lbl{{position:absolute;top:0;font-size:11.5px;transform:translateX(-50%);white-space:nowrap;color:{TEXT}}}
-.jg{{display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-bottom:16px}}
-.jg img.ic{{width:56px;height:56px;border-radius:50%;border:2px solid {RED};box-shadow:0 0 14px #E8405755}}
-.phases{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}}
+.tag{{display:inline-block;padding:1px 6px;border-radius:3px;font-size:12px;font-weight:700;white-space:nowrap}}
+.tag.ok{{color:{ORANGE};border:1px solid {ORANGE}}}
+.tag.no{{color:{RED};border:1px solid {RED}}}
+.tag.sv{{color:{GREEN};border:1px solid {GREEN}}}
+.recap{{color:{MUTED};font-size:12.5px;margin-top:4px}}
+.tl{{position:relative;height:58px;margin:6px 8px 4px}}
+.tl .axis{{position:absolute;left:0;right:0;top:28px;height:2px;background:{LINE_STRONG}}}
+.tl .tick{{position:absolute;top:38px;font-size:11px;color:{MUTED};transform:translateX(-50%)}}
+.tl .m{{position:absolute;top:22px;width:14px;height:14px;border-radius:2px;transform:translateX(-50%)}}
+.tl .m.s{{background:{GREEN}}} .tl .m.d{{background:{RED}}} .tl .m.w{{background:{ORANGE}}}
+.tl .m.k{{background:{ACCENT};width:10px;height:10px;top:24px}}
+.tl .m.o{{background:{MUTED};width:3px;height:14px;border-radius:0}}
+.tl .m.x{{top:22px;width:14px;height:14px;background:{BG};border:2px solid {RED}}}
+.tl .lbl{{position:absolute;top:0;font-size:11px;transform:translateX(-50%);white-space:nowrap;color:{TEXT}}}
+.moments{{display:grid;grid-template-columns:52px 74px 1fr;gap:0;font-size:13.5px}}
+.moments div{{padding:5px 0;border-bottom:1px solid {BORDER}}}
+.moments .t{{font-weight:700}} .moments .k{{font-size:11px;text-transform:uppercase;letter-spacing:.08em;padding-top:7px}}
+.k.death{{color:{RED}}} .k.gank{{color:{ORANGE}}} .k.kill{{color:{GREEN}}} .k.objective{{color:{MUTED}}}
+.jg{{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px}}
+.jg img.ic{{width:48px;height:48px;border-radius:4px;border:1px solid {RED}}}
+.phases{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}}
 @media (max-width:760px){{.phases{{grid-template-columns:1fr}}}}
-.phase{{background:#07101F;border:1px solid {BORDER};border-radius:10px;padding:12px}}
-.phase img{{width:100%;max-width:220px;border-radius:6px;display:block;margin:0 auto 10px;border:1px solid #C8AA6E44}}
-.phase h3{{margin:0 0 8px;font-size:14px;color:{TEXT};display:flex;justify-content:space-between}}
-.phase h3 span{{color:{MUTED};font-weight:400;font-size:12.5px}}
-.zl{{display:flex;justify-content:space-between;font-size:13px;padding:3px 0;border-bottom:1px dashed #1E2328}}
+.phase{{border-top:1px solid {BORDER};padding:10px 0 0}}
+.phase img{{width:100%;max-width:220px;border-radius:4px;display:block;margin:0 0 8px;border:1px solid {BORDER}}}
+.phase h3{{margin:0 0 6px;font-size:13.5px;color:{TEXT};display:flex;justify-content:space-between}}
+.phase h3 span{{color:{MUTED};font-weight:400;font-size:12px}}
+.zl{{display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;border-bottom:1px solid {BORDER}}}
 .zl:last-child{{border-bottom:none}}
-.lanes{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}}
-.lane{{background:#07101F;border:1px solid {BORDER};border-radius:10px;padding:10px 14px;text-align:center}}
-.lane .v{{font-size:26px;font-weight:700}} .lane .l{{font-size:12px;color:{MUTED};text-transform:uppercase;letter-spacing:.08em}}
-.lane.hot{{border-color:{RED}}} .lane.hot .v{{color:{RED}}}
-.tips{{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}}
-.tips li{{display:flex;gap:12px;align-items:flex-start;background:#07101F;border:1px solid {BORDER};border-radius:10px;
-  padding:12px 14px}}
-.tips .i{{flex:0 0 26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  font-weight:800;font-size:14px}}
-.tips .warn .i{{background:#F0A03022;color:{ORANGE};border:1px solid #F0A03088}}
-.tips .good .i{{background:#2DC66B22;color:{GREEN};border:1px solid #2DC66B88}}
-.tips .info .i{{background:#0AC8B922;color:{TEAL};border:1px solid #0AC8B988}}
-.obj{{display:grid;max-width:520px;grid-template-columns:1fr 110px 110px;gap:4px 18px;font-size:14px;align-items:center}}
-.obj .h{{font-size:11.5px;text-transform:uppercase;letter-spacing:.1em;color:{GOLD}}}
+.lanes{{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:14px;border:1px solid {BORDER};border-radius:4px}}
+.lane{{padding:8px 14px;text-align:center;border-right:1px solid {BORDER}}} .lane:last-child{{border-right:none}}
+.lane .v{{font-size:24px;font-weight:700}} .lane .l{{font-size:11px;color:{MUTED};text-transform:uppercase;letter-spacing:.08em}}
+.lane.hot .v{{color:{RED}}}
+.tips{{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0}}
+.tips li{{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px solid {BORDER}}}
+.tips li:last-child{{border-bottom:none}}
+.tips .i{{flex:0 0 22px;height:22px;border-radius:3px;display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:12px}}
+.tips .warn .i{{color:{BG};background:{ORANGE}}}
+.tips .good .i{{color:{BG};background:{GREEN}}}
+.tips .info .i{{color:{TEXT};background:{LINE_STRONG}}}
+.obj{{display:grid;max-width:520px;grid-template-columns:1fr 110px 110px;gap:4px 18px;font-size:13.5px;align-items:center}}
+.obj .h{{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:{MUTED}}}
 .obj .me{{color:{TEAL};font-weight:700;text-align:center}} .obj .en{{color:{RED};font-weight:700;text-align:center}}
-.otl{{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}}
-.otl span{{font-size:12.5px;padding:3px 9px;border-radius:6px;border:1px solid #2C3440;background:#07101F}}
-.otl .a{{border-color:#0AC8B966;color:{TEAL}}} .otl .b{{border-color:#E8405766;color:{RED}}}
+.otl{{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}}
+.otl span{{font-size:12px;padding:2px 8px;border-radius:3px;border:1px solid {BORDER}}}
+.otl .a{{border-color:{TEAL};color:{TEAL}}} .otl .b{{border-color:{RED};color:{RED}}}
 .empty{{color:{MUTED};font-style:italic}}
 .tw{{overflow-x:auto}}
-@media (max-width:600px){{.wrap{{padding:16px 16px 30px}} .panel{{padding:16px}} .bar{{grid-template-columns:100px 1fr 44px}}}}
-.footer{{text-align:center;color:{MUTED};font-size:12.5px;margin-top:26px;padding-top:16px;border-top:1px solid {BORDER}}}
-.footer b{{color:{GOLD};font-weight:600}}
-.warnbox{{border:1px solid #F0A03066;background:#F0A03014;color:{ORANGE};border-radius:8px;padding:10px 14px;margin-bottom:18px;font-size:14px}}
+@media (max-width:600px){{.wrap{{padding:14px 12px 28px}} .panel{{padding:14px}} .bar{{grid-template-columns:100px 1fr 44px}}}}
+.footer{{color:{DIM};font-size:12px;margin-top:22px;padding-top:12px;border-top:1px solid {BORDER}}}
+.footer b{{color:{MUTED};font-weight:600}}
+.warnbox{{border-left:3px solid {ORANGE};background:{PANEL};color:{TEXT};border-radius:0;padding:10px 14px;margin-bottom:14px;
+  font-size:13.5px}}
 """
 
 
@@ -575,7 +584,7 @@ def _header(record: dict, a: dict) -> str:
     hs = "".join(f'<div class="hstat"><div class="v">{v}</div><div class="l">{_e(l)}</div></div>' for v, l in stats)
     return (f'<div class="panel"><div class="hdr">{icon}<div class="title">{badge}'
             f'<h1 class="name">{_e(name)}</h1><div class="sub">{_e(" · ".join(str(x) for x in sub))}</div></div>'
-            f'<div class="hstats">{hs}</div></div></div>')
+            f'<div class="hstats">{hs}</div></div>{_tldr(a)}</div>')
 
 
 def _cards(a: dict) -> str:
@@ -588,18 +597,18 @@ def _cards(a: dict) -> str:
     cards = [
         ("", _num(s.get("kda_ratio"), 2), "Ratio KDA", f"{s.get('kills', 0)} + {s.get('assists', 0)} / "
                                                      f"{max(1, s.get('deaths') or 0)}"),
-        ("t", str(s.get("cs") if s.get("cs") is not None else "—"), "Sbires tués",
+        ("t", str(s.get("cs") if s.get("cs") is not None else "-"), "Sbires tués",
          f"{_num(s.get('cs_per_min'))} par minute"),
         ("t", _num(s.get("vision_score"), 0), "Score de vision", f"{_num(s.get('vision_per_min'), 2)} par minute"),
-        ("", f"{_num(kp * 100, 0)} %" if kp is not None else "—", "Participation",
+        ("", f"{_num(kp * 100, 0)} %" if kp is not None else "-", "Participation",
          f"{s.get('team_kills')} kills d'équipe" if s.get("team_kills") is not None else "kills d'équipe inconnus"),
         ("g" if ganks and surv / ganks >= 0.5 else "r" if ganks else "g", f"{surv} / {ganks}", "Ganks survécus",
          "alertes DANGER de l'app"),
         ("r", str(a.get("deaths_warned", 0)), "Morts après alerte",
          f"{a.get('deaths_unwarned', 0)} mort(s) sans alerte"),
-        ("", str(s.get("level") or "—"), "Niveau final", f"{_num(s.get('gold'), 0)} PO en poche" if s.get("gold")
+        ("", str(s.get("level") or "-"), "Niveau final", f"{_num(s.get('gold'), 0)} PO en poche" if s.get("gold")
          is not None else ""),
-        ("t", f"{mine.get('dragons', 0)} – {theirs.get('dragons', 0)}" if mine and theirs else "—", "Dragons",
+        ("t", f"{mine.get('dragons', 0)} – {theirs.get('dragons', 0)}" if mine and theirs else "-", "Dragons",
          f"Barons {mine.get('barons', 0)} – {theirs.get('barons', 0)}" if mine and theirs else ""),
     ]
     out = "".join(f'<div class="card {c}"><div class="v">{_e(v)}</div><div class="l">{_e(l)}</div>'
@@ -625,7 +634,7 @@ def _map_section(record: dict, a: dict) -> str:
         f'<div class="lg"><span class="grad" style="background:{_gradient_css(HEAT_STOPS)}"></span>'
         '<span>Ma présence (plus clair = plus de temps)</span></div>'
         f'<div class="lg"><span class="grad" style="background:{_gradient_css(MINUTE_STOPS)}"></span>'
-        f'<span>{_e(jname)} aperçu — de 0 à {dur_min} min</span></div>'
+        f'<span>{_e(jname)} aperçu · de 0 à {dur_min} min</span></div>'
         '<div class="lg"><span class="lgx">✕</span><span>Mes morts (heure de jeu)</span></div>'
         '</div>')
     zones = a.get("zones") or {}
@@ -713,7 +722,7 @@ def _ganks_section(record: dict, a: dict) -> str:
     for g in ganks:
         x = 100.0 * (_f(g.get("game_time"), 0.0) or 0.0) / dur
         cls = "d" if g.get("outcome") == "death" else "s"
-        title = f'{g.get("time")} — {g.get("text")} ({g.get("outcome_label")})'
+        title = f'{g.get("time")} · {g.get("text")} ({g.get("outcome_label")})'
         marks.append(f'<span class="m {cls}" style="left:{x:.2f}%" title="{_e(title)}"></span>'
                      f'<span class="lbl" style="left:{x:.2f}%">{_e(g.get("time"))}</span>')
     death_marks = "".join(
@@ -722,9 +731,9 @@ def _ganks_section(record: dict, a: dict) -> str:
         for d in a.get("deaths") or [] if not any(
             g.get("death_time") == d.get("game_time") for g in ganks))
     timeline = (f'<div class="tl"><div class="axis"></div>{ticks}{death_marks}{"".join(marks)}</div>'
-                f'<p class="small"><span style="color:{GREEN}">●</span> gank survécu · '
-                f'<span style="color:{RED}">●</span> mort dans les 15 s · '
-                f'<span style="color:{RED}">○</span> mort hors gank annoncé</p>')
+                f'<p class="small"><span style="color:{GREEN}">■</span> gank survécu · '
+                f'<span style="color:{RED}">■</span> mort dans les 15 s · '
+                f'<span style="color:{RED}">□</span> mort hors gank annoncé</p>')
     if not ganks:
         body = '<p class="empty">Aucune alerte DANGER de gank pendant cette partie.</p>'
     else:
@@ -865,7 +874,7 @@ def _scoreboard_section(a: dict) -> str:
             notes.append("Pics de puissance : " + _e(" · ".join(sb["spikes"][-5:])))
         body = head + grid + "".join(f'<p class="empty" style="font-style:normal">{n}</p>' for n in notes)
     if praise:
-        lis = "".join(f'<li class="good"><span class="i">✓</span><span>{_e(p.get("time"))} — {_e(p.get("text"))}'
+        lis = "".join(f'<li class="good"><span class="i">✓</span><span>{_e(p.get("time"))} · {_e(p.get("text"))}'
                       f'</span></li>' for p in praise[:12])
         body += f'<h2 style="margin-top:20px">Bien joué !</h2><ul class="tips">{lis}</ul>'
     return f'<div class="panel"><h2>Tableau des scores (Tab)</h2>{body}</div>'
@@ -881,6 +890,132 @@ def _tips_section(a: dict) -> str:
     return f'<div class="panel"><h2>Conseils pour la prochaine partie</h2><ul class="tips">{lis}</ul></div>'
 
 
+def summary_lines(a: dict) -> list[str]:
+    """The 3-line summary at the top of the report, in plain French (HTML-free text)."""
+    s = a.get("summary") or {}
+    lines: list[str] = []
+    res = {"Win": "Victoire", "Lose": "Défaite"}.get(str(s.get("result") or ""), "Partie")
+    champ = s.get("champion_name") or s.get("champion") or ""
+    dur = s.get("duration_text") or _fmt_time(s.get("duration"))
+    kda = f'{s.get("kills", 0)}/{s.get("deaths", 0)}/{s.get("assists", 0)}'
+    first = f"{res} en {dur}" + (f" avec {champ}" if champ else "") + f" : {kda}"
+    if s.get("cs_per_min") is not None:
+        first += f", {_num(s.get('cs_per_min'))} CS/min"
+    lines.append(first + ".")
+    deaths = int(s.get("deaths") or 0)
+    warned = int(a.get("deaths_warned") or 0)
+    ganks, surv = int(a.get("ganks_faced") or 0), int(a.get("ganks_survived") or 0)
+    second = (f"{deaths} mort{'s' if deaths > 1 else ''}" if deaths else "Aucune mort")
+    if warned:
+        second += f", dont {warned} juste après une alerte"
+    if ganks:
+        second += f". Ganks : {surv} évité{'s' if surv > 1 else ''} sur {ganks}"
+    lines.append(second + ".")
+    items = a.get("tip_items") or [{"text": t, "kind": "warn"} for t in a.get("tips") or []]
+    tip = next((t.get("text") for t in items if t.get("kind") == "warn" and t.get("text")), None) or \
+        next((t.get("text") for t in items if t.get("text")), None)
+    lines.append(f"À travailler : {tip}" if tip else "Rien de grave à corriger : continue comme ça.")
+    return [ln.replace(chr(0x2014), "-") for ln in lines]
+
+
+def _tldr(a: dict) -> str:
+    lines = summary_lines(a)
+    if not lines:
+        return ""
+    body = "".join(f"<p>{_e(ln)}</p>" for ln in lines[:2])
+    if len(lines) > 2:
+        head, _sep, rest = lines[2].partition(" : ")
+        body += (f"<p><b>{_e(head)} :</b> {_e(rest)}</p>" if rest else f"<p>{_e(lines[2])}</p>")
+    return f'<div class="tldr">{body}</div>'
+
+
+_MOMENT_FR = {"death": "Mort", "gank": "Gank", "kill": "Kill", "objective": "Objectif"}
+_OBJECTIVE_EVENTS = {"DragonKill": "Dragon", "BaronKill": "Baron", "HeraldKill": "Héraut", "HordeKill": "Larves",
+                     "AtakhanKill": "Atakhan"}
+
+
+def key_moments(record: dict, a: dict, limit: int = 24) -> list[dict[str, Any]]:
+    """Key moments of the game, chronological: my deaths, ganks (with outcome), my kills, objectives.
+
+    Each item: ``{"t", "time", "kind", "label"}``. Pure, never raises.
+    """
+    out: list[dict[str, Any]] = []
+    try:
+        for d in a.get("deaths") or []:
+            t = _f(d.get("game_time"))
+            if t is None:
+                continue
+            who = ", ".join(d.get("involved_names") or []) or "ennemi inconnu"
+            verdict = d.get("verdict")
+            out.append({"t": t, "kind": "death", "label": f"Mort face à {who}" + (f" ({verdict})" if verdict else "")})
+        for g in a.get("ganks") or []:
+            t = _f(g.get("game_time"))
+            if t is None:
+                continue
+            names = ", ".join(g.get("names") or []) or "plusieurs ennemis"
+            outcome = "évité" if g.get("outcome") != "death" else "mort"
+            out.append({"t": t, "kind": "gank", "label": f"Gank de {names} : {outcome}"})
+        roster = [p for p in record.get("roster") or [] if isinstance(p, dict)]
+        me = next((p for p in roster if p.get("is_me")), {})
+        my_names = {str(me.get(k) or "").lower() for k in ("summoner_name", "riot_id", "name", "alias")} - {""}
+        my_names |= {n.split("#")[0] for n in my_names}
+        names: dict[str, str] = {}
+        for p in roster:
+            for k in ("summoner_name", "riot_id"):
+                if p.get(k):
+                    names[str(p[k]).lower()] = str(p.get("name") or p.get("alias") or p[k])
+                    names[str(p[k]).split("#")[0].lower()] = str(p.get("name") or p.get("alias") or p[k])
+        my_team = str(me.get("team") or "")
+        for ev in record.get("events") or []:
+            if not isinstance(ev, dict):
+                continue
+            t = _f(ev.get("EventTime"))
+            if t is None:
+                continue
+            n = ev.get("EventName")
+            if n == "ChampionKill" and str(ev.get("KillerName") or "").lower() in my_names:
+                v = str(ev.get("VictimName") or "?")
+                out.append({"t": t, "kind": "kill", "label": f"Tu tues {names.get(v.lower(), v)}"})
+            elif n in _OBJECTIVE_EVENTS:
+                killer = str(ev.get("KillerName") or "").lower()
+                team = next((str(p.get("team") or "") for p in roster
+                             if killer and killer in (str(p.get("summoner_name") or "").lower(),
+                                                      str(p.get("riot_id") or "").lower())), "")
+                side = "" if not team or not my_team else (" pour ton équipe" if team == my_team else " pour l'ennemi")
+                out.append({"t": t, "kind": "objective", "label": f"{_OBJECTIVE_EVENTS[n]}{side}"})
+    except Exception:
+        log.exception("key_moments failed")
+    out.sort(key=lambda m: m["t"])
+    # keep every death and gank; trim kills / objectives first if too many
+    if len(out) > limit:
+        prio = {"death": 0, "gank": 1, "kill": 2, "objective": 3}
+        keep = sorted(out, key=lambda m: (prio.get(m["kind"], 9), m["t"]))[:limit]
+        out = sorted(keep, key=lambda m: m["t"])
+    for m in out:
+        m["time"] = _fmt_time(m["t"])
+    return out
+
+
+def _moments_section(record: dict, a: dict) -> str:
+    moments = key_moments(record, a)
+    if not moments:
+        return ""
+    s = a.get("summary") or {}
+    dur = max(60.0, _f(s.get("duration"), 0.0) or 0.0, max(m["t"] for m in moments))
+    cls = {"death": "x", "gank": "w", "kill": "k", "objective": "o"}
+    ticks = "".join(f'<span class="tick" style="left:{100.0 * m * 60 / dur:.2f}%">{m}</span>'
+                    for m in range(0, int(dur // 60) + 1, 5))
+    marks = "".join(f'<span class="m {cls.get(m["kind"], "o")}" style="left:{100.0 * m["t"] / dur:.2f}%" '
+                    f'title="{_e(m["time"])} · {_e(m["label"])}"></span>' for m in moments)
+    rows = "".join(f'<div class="t">{_e(m["time"])}</div><div class="k {m["kind"]}">'
+                   f'{_e(_MOMENT_FR.get(m["kind"], m["kind"]))}</div><div>{_e(m["label"])}</div>' for m in moments)
+    legend = (f'<p class="small"><span style="color:{RED}">□</span> mort · <span style="color:{ORANGE}">■</span> gank · '
+              f'<span style="color:{GREEN}">■</span> kill · <span style="color:{MUTED}">|</span> objectif · '
+              f'minutes sous l\'axe</p>')
+    return (f'<div class="panel"><h2>Moments clés</h2><div class="tl"><div class="axis"></div>{ticks}{marks}</div>'
+            f'{legend}<div class="moments">{rows}</div></div>')
+
+
 def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pending: bool = False) -> str:
     """Self-contained French HTML report. Never raises (degraded page on error).
 
@@ -893,9 +1028,10 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
             analysis = analyze_game(rec)
         a = analysis if isinstance(analysis, dict) else {}
         s = a.get("summary") or {}
-        title = f'{s.get("champion_name") or "Partie"} — {s.get("result_label") or ""}'.strip(" —")
+        title = f'{s.get("champion_name") or "Partie"} · {s.get("result_label") or ""}'.strip(" ·")
         parts = []
-        for fn in (lambda: _header(rec, a), lambda: _cards(a), lambda: _voice_box(a), lambda: _tips_section(a),
+        for fn in (lambda: _header(rec, a), lambda: _cards(a), lambda: _tips_section(a),
+                   lambda: _moments_section(rec, a), lambda: _voice_box(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _truth_section(rec, a),
                    lambda: _presence_section(rec, a),
                    lambda: _positioning_section(a),
@@ -918,10 +1054,13 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
         footer = (f'<div class="footer"><b>{_e(APP_NAME)}</b> v{_e(version)} · rapport généré localement le '
                   f'{_e(_date_fr(_dt.datetime.now().astimezone().isoformat()))} · aucune donnée envoyée · '
                   f'sources : capture de la minimap et API Live Client de Riot</div>')
-        return ("<!DOCTYPE html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
+        page = ("<!DOCTYPE html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" + refresh +
-                f"<title>{_e(APP_NAME)} — {_e(title)}</title><style>{CSS}{CSS_V2}{CSS_TRUTH}</style></head>"
+                f"<title>{_e(APP_NAME)} · {_e(title)}</title><style>{CSS}{CSS_V2}{CSS_TRUTH}</style></head>"
                 f"<body><div class=\"wrap\">{warn}{''.join(parts)}{footer}</div></body></html>")
+        # design rule (docs/DESIGN.md): no em dash, even in texts coming from other modules
+        em = chr(0x2014)
+        return page.replace(f" {em} ", " · ").replace(em, "-")
     except Exception:
         log.exception("render_report_html failed")
         return ("<!DOCTYPE html><html lang=\"fr\"><head><meta charset=\"utf-8\"><title>Rapport</title></head>"
@@ -1020,7 +1159,7 @@ def _arrow(draw: Any, a: tuple[float, float], b: tuple[float, float], color: tup
     ex, ey = bx - ux * head * 1.3, by - uy * head * 1.3
     if math.hypot(ex - sx, ey - sy) < head:
         return
-    draw.line([(sx, sy), (ex, ey)], fill=(1, 10, 19, 220), width=w + 4)
+    draw.line([(sx, sy), (ex, ey)], fill=(12, 14, 13, 220), width=w + 4)
     draw.line([(sx, sy), (ex, ey)], fill=color + (235,), width=w)
     px, py = -uy, ux
     tip = (ex + ux * head * 0.2, ey + uy * head * 0.2)
@@ -1060,11 +1199,11 @@ def render_pathing_png(record: dict, analysis: dict, size: int = PATH_MAP) -> by
         placed: list[tuple[float, float, float, float]] = []
         for i, (x, y, t, p) in enumerate(pts):
             c = _lerp_color(MINUTE_STOPS, t / span)
-            draw.ellipse([x - rad - s, y - rad - s, x + rad + s, y + rad + s], fill=(1, 10, 19, 240))
+            draw.ellipse([x - rad - s, y - rad - s, x + rad + s, y + rad + s], fill=(12, 14, 13, 240))
             draw.ellipse([x - rad, y - rad, x + rad, y + rad], fill=c + (255,))
             num = str(i + 1)
             l, tp, r, b = draw.textbbox((0, 0), num, font=font)
-            draw.text((x - (r - l) / 2 - l, y - (b - tp) / 2 - tp), num, font=font, fill=(1, 10, 19, 255))
+            draw.text((x - (r - l) / 2 - l, y - (b - tp) / 2 - tp), num, font=font, fill=(12, 14, 13, 255))
             placed.append((x - rad, y - rad, x + rad, y + rad))
         for i, (x, y, t, p) in enumerate(pts):
             _label(draw, x, y, str(p.get("time") or ""), small, _hex_rgb(TEXT), s, big, placed, gap=rad + 3 * s)
@@ -1112,45 +1251,46 @@ def _spark_svg(series: list[dict], key: str, color: str, fmt: Any, target: float
 
 
 CSS_V2 = f"""
-.voice{{display:flex;gap:12px;align-items:flex-start;background:#07101F;border:1px solid #0AC8B955;border-radius:10px;
+.voice{{display:flex;gap:12px;align-items:flex-start;background:{PANEL};border-left:3px solid {ACCENT};border-radius:0;
   padding:12px 16px;margin:0 0 18px;font-size:14.5px}}
-.voice .ic{{flex:0 0 28px;height:28px;border-radius:50%;background:#0AC8B922;border:1px solid {TEAL};color:{TEAL};
+.voice .ic{{flex:0 0 28px;height:28px;border-radius:3px;background:{BG};border:1px solid {LINE_STRONG};color:{ACCENT};
   display:flex;align-items:center;justify-content:center;font-size:14px}}
-.voice .q{{color:{TEXT}}} .voice .k{{font-size:11.5px;color:{TEAL};text-transform:uppercase;letter-spacing:.1em}}
+.voice .q{{color:{TEXT}}} .voice .k{{font-size:11px;color:{MUTED};text-transform:uppercase;letter-spacing:.1em}}
 .phgrid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}}
 @media (max-width:860px){{.phgrid{{grid-template-columns:1fr}}}}
-.ph{{background:#07101F;border:1px solid {BORDER};border-radius:10px;padding:14px 16px}}
+.ph{{border-top:1px solid {LINE_STRONG};padding:10px 0 0}}
 .ph h3{{margin:0 0 2px;font-size:15px;color:{TEXT}}} .ph .rg{{font-size:12px;color:{MUTED};margin-bottom:10px}}
 .kv{{display:grid;grid-template-columns:1fr auto;gap:4px 10px;font-size:13.5px}}
 .kv span{{color:{MUTED}}} .kv b{{text-align:right;font-variant-numeric:tabular-nums}}
 .kv b.bad{{color:{RED}}} .kv b.ok{{color:{GREEN}}} .kv b.mid{{color:{ORANGE}}}
 .trip{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}}
 @media (max-width:860px){{.trip{{grid-template-columns:1fr}}}}
-.trip figure{{margin:0;background:#07101F;border:1px solid {BORDER};border-radius:10px;padding:10px}}
-.trip img{{width:100%;max-width:240px;display:block;margin:0 auto;border-radius:6px;border:1px solid #C8AA6E44}}
+.trip figure{{margin:0;padding:0}}
+.trip img{{width:100%;max-width:240px;display:block;margin:0 auto;border-radius:4px;border:1px solid {BORDER}}}
 .trip figcaption{{font-size:13px;text-align:center;margin-top:8px;color:{TEXT}}}
 .trip figcaption span{{display:block;color:{MUTED};font-size:12px}}
 .cmp{{display:grid;grid-template-columns:118px 1fr 70px;gap:6px 10px;align-items:center;font-size:13px;margin-top:6px}}
 .cmp .tw2{{display:flex;flex-direction:column;gap:3px}}
-.cmp .b1,.cmp .b2{{height:7px;border-radius:4px}}
-.cmp .b1{{background:linear-gradient(90deg,{TEAL},#5FE3D8)}} .cmp .b2{{background:#C8AA6E88}}
+.cmp .b1,.cmp .b2{{height:6px;border-radius:1px}}
+.cmp .b1{{background:{ACCENT}}} .cmp .b2{{background:{LINE_STRONG}}}
 .cmp .n{{text-align:right;color:{MUTED};font-variant-numeric:tabular-nums;font-size:12.5px}}
 .gauge{{display:flex;align-items:center;gap:14px;margin:4px 0 12px}}
-.gauge .g{{flex:1;height:12px;border-radius:6px;background:linear-gradient(90deg,{GREEN},{ORANGE} 45%,{RED});position:relative}}
-.gauge .g i{{position:absolute;top:-5px;width:4px;height:22px;background:{TEXT};border-radius:2px;box-shadow:0 0 0 2px {BG}}}
+.gauge .g{{flex:1;height:8px;border-radius:2px;position:relative;
+  background:linear-gradient(90deg,{GREEN} 0 33%,{ORANGE} 33% 66%,{RED} 66% 100%)}}
+.gauge .g i{{position:absolute;top:-5px;width:3px;height:18px;background:{TEXT};border-radius:0}}
 .gauge .v{{font-size:24px;font-weight:700;min-width:70px;text-align:right}}
 .opres{{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}}
-.opres span{{font-size:12.5px;padding:3px 9px;border-radius:6px;border:1px solid #2C3440;background:#07101F}}
-.opres .y{{border-color:#2DC66B77;color:{GREEN}}} .opres .n{{border-color:#E8405766;color:{RED}}}
+.opres span{{font-size:12px;padding:2px 8px;border-radius:3px;border:1px solid {BORDER}}}
+.opres .y{{border-color:{GREEN};color:{GREEN}}} .opres .n{{border-color:{RED};color:{RED}}}
 .opres .e{{opacity:.6}}
 .sparks{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}}
 @media (max-width:860px){{.sparks{{grid-template-columns:1fr}}}}
-.sparks .sp{{background:#07101F;border:1px solid {BORDER};border-radius:10px;padding:10px 12px}}
+.sparks .sp{{border-top:1px solid {LINE_STRONG};padding:8px 0 0}}
 .sparks h3{{margin:0 0 4px;font-size:13px;color:{TEXT}}} .sparks h3 span{{color:{MUTED};font-weight:400}}
 svg.spark{{width:100%;height:96px;display:block}}
 .pathbox{{display:grid;grid-template-columns:minmax(0,400px) minmax(0,1fr);gap:22px;align-items:start;margin-top:18px}}
 @media (max-width:860px){{.pathbox{{grid-template-columns:1fr}}}}
-.pathbox img{{width:100%;max-width:400px;border-radius:8px;border:1px solid #C8AA6E66;display:block}}
+.pathbox img{{width:100%;max-width:400px;border-radius:4px;border:1px solid {LINE_STRONG};display:block}}
 ol.steps{{margin:0;padding-left:22px;font-size:13.5px}} ol.steps li{{padding:2px 0}}
 ol.steps b{{font-variant-numeric:tabular-nums}}
 """
@@ -1193,10 +1333,10 @@ def _phases_section(a: dict) -> str:
             ("Vision / min", f'<b class="{_cls(p.get("vision_per_min"), 0.8, 0.4)}">'
                              f'{_e(_num(p.get("vision_per_min"), 2))}</b>'),
             ("Temps en voie", f'<b>{_e(_num(p.get("lane_percent"), 0))} %</b>' if p.get("lane_percent") is not None
-             else "<b>—</b>"),
+             else "<b>-</b>"),
             ("Exposition aux ganks", f'<b class="{_cls(p.get("exposure"), 15, 25, False)}">'
                                      f'{_e(_num(p.get("exposure"), 0))} %</b>' if p.get("exposure") is not None
-             else "<b>—</b>"),
+             else "<b>-</b>"),
             ("Ganks survécus", f'<b>{_e(p.get("ganks_survived", 0))} / {_e(p.get("ganks", 0))}</b>'),
             ("Objectifs épiques", f'<b>{_e(p.get("objectives_ours", 0))} – {_e(p.get("objectives_theirs", 0))}</b>'),
         ]
@@ -1288,7 +1428,7 @@ def _positioning_section(a: dict) -> str:
         kv = "".join(f"<span>{_e(k)}</span>{v}" for k, v in rows)
         missed = "".join(f'<li>{_e(m.get("time"))} {_e(m.get("label"))}</li>' for m in (p.get("missed") or [])[:4])
         head = (f'<div class="rg">{_e(p.get("range", ""))} · score <b style="color:{col}">'
-                f'{_e(_num(score, 0)) if score is not None else "—"} / 100</b></div>')
+                f'{_e(_num(score, 0)) if score is not None else "-"} / 100</b></div>')
         cards.append(f'<div class="ph"><h3>{_e(p.get("label"))}</h3>{head}<div class="kv">{kv}</div>'
                      + (f'<ul class="small" style="margin:8px 0 0 16px">{missed}</ul>' if missed else "") + "</div>")
     tips = "".join(f"<li>{_e(t)}</li>" for t in (pos.get("tips") or [])[:5])
@@ -1365,7 +1505,7 @@ def _pathing_html(record: dict, a: dict) -> str:
         return ""
     uri = _data_uri_png(render_pathing_png(record, a))
     img = f'<img src="{uri}" alt="Parcours du jungler ennemi">' if uri else ""
-    steps = "".join(f'<li><b>{_e(p.get("time"))}</b> — {_e(p.get("zone_label"))}</li>' for p in path)
+    steps = "".join(f'<li><b>{_e(p.get("time"))}</b> · {_e(p.get("zone_label"))}</li>' for p in path)
     summary = pa.get("summary") or ""
     return (f'<div class="pathbox"><div>{img}</div><div><h3 style="margin:0 0 8px;font-size:15px">Parcours en début '
             f'de partie (apparitions sur la minimap, 0–15 min)</h3><p style="margin:0 0 10px">{_e(summary)}</p>'
@@ -1581,7 +1721,7 @@ def render_truth_path_png(record: dict, truth_a: dict, size: int = TRUTH_MAP) ->
 
 def _pct(x: Any) -> str:
     v = _f(x)
-    return "—" if v is None else f"{_num(v * 100, 0)} %"
+    return "-" if v is None else f"{_num(v * 100, 0)} %"
 
 
 def _reliability_html(t: dict, history: dict | None) -> str:
@@ -1589,7 +1729,7 @@ def _reliability_html(t: dict, history: dict | None) -> str:
     if not rel:
         return ""
     grade, label = rel.get("grade"), rel.get("grade_label") or ""
-    head = (f'<p style="margin:0 0 12px;font-size:16px"><b>{_e(grade)}/100</b> — fiabilité {_e(label)}</p>'
+    head = (f'<p style="margin:0 0 12px;font-size:16px"><b>{_e(grade)}/100</b> · fiabilité {_e(label)}</p>'
             if grade is not None else f'<p class="empty">{_e(label or "Pas assez de données.")}</p>')
     scored = (rel.get("confirmed") or 0) + (rel.get("false") or 0) + (rel.get("probable_false") or 0)
     jd = rel.get("jungler_deaths") or 0
@@ -1644,12 +1784,12 @@ def _lane_html(t: dict) -> str:
     def signed(v: Any) -> str:
         f = _f(v)
         if f is None:
-            return "—"
+            return "-"
         return f'<span class="{"pos" if f > 0 else "neg" if f < 0 else ""}">{"+" if f > 0 else ""}{_num(f, 0)}</span>'
 
     body = "".join(
         f'<tr><td class="t">{r["minute"]} min</td><td>{_num(r.get("gold"), 0)}</td><td>{signed(r.get("gold_diff"))}</td>'
-        f'<td>{signed(r.get("xp_diff"))}</td><td>{_e(r.get("cs"))}</td><td>{_e(r.get("opp_cs", "—"))}</td></tr>'
+        f'<td>{signed(r.get("xp_diff"))}</td><td>{_e(r.get("cs"))}</td><td>{_e(r.get("opp_cs", "-"))}</td></tr>'
         for r in rows)
     vs = f" face à {_e(opp)}" if opp else ""
     return (f'<h3 style="margin:18px 0 8px;font-size:15px">Ma voie{vs} (chiffres exacts du client)</h3>'

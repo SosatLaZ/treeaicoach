@@ -20,6 +20,17 @@ game) plus exactly :data:`URGENT_BUDGET` bonus "urgence" call for a big problem
 :meth:`AIAdvisor.poll` for a finished answer. Errors become one French status message
 (:data:`ERROR_FR`) and a back-off; nothing here ever raises into the caller.
 
+Plans (v2): the model must answer a strict JSON object (:data:`PLAN_SCHEMA_FR`, parsed and
+validated by :func:`parse_plan`: ``plan`` + up to 3 ``etapes``); the snapshot carries the play
+ratings of :mod:`treeaicoach.plays` (``coups``), the gold / level diffs (``diff``), the lane
+priorities from the minion waves (``prio``), the next objective timers (``objt``), the enemy
+jungler intel (``jgl``) and the recommended ward spots (``balises``), so plans are concrete
+("le dragon dans 1:20, ta voie a la prio : rentre maintenant, pose 2 balises à..."). Key
+moments also include a lost fight, the 80 s before a major objective, a gold swing
+(:data:`SWING_GOLD` in 1-2.5 min) and the start of a comeback window. When the provider is
+unreachable (offline, quota, back-off), :func:`rule_plan` builds the same kind of plan from the
+same snapshot without any network ("PLAN" toast, no budget used).
+
 Privacy: the snapshot sent holds champions, roles, levels, items, KDA, CS, gold and timers
 only - never a summoner name / Riot ID.
 """
@@ -49,6 +60,11 @@ MIN_INTERVAL_S = 90.0
 MIN_GAME_TIME_S = 90.0
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_OUTPUT_TOKENS = 200
+PLAN_MAX_TOKENS = 320            # strict JSON plan (plan + 3 steps)
+MAX_PLAN_CHARS = 170
+MAX_STEP_CHARS = 95
+MAX_STEPS = 3
+RULES_MIN_INTERVAL_S = 90.0      # offline rule-based plans: at most one every 90 s
 MAX_ADVICE_CHARS = 260
 MAX_REVIEW_CHARS = 2500
 REVIEW_TIMEOUT_S = 20.0
@@ -67,8 +83,10 @@ _NOT_CHAT = ("whisper", "guard", "tts", "playai", "distil", "embed", "moderation
 _auto_model: dict[str, str] = {}    # "Demander à l'IA" (hotkey / button)
 BASE_GOLD_MIN = 800             # "base visit with gold"
 FED_LEVELS = (6, 11, 16)
-OBJECTIVE_LEAD_S = 60.0
-OBJECTIVE_WINDOW_S = 8.0        # announced if the remaining time is within 60 s +/- this
+OBJECTIVE_LEAD_S = 80.0
+OBJECTIVE_WINDOW_S = 20.0       # announced once the remaining time is within 80 s +/- this (60..100 s)
+OBJECTIVE_KEYS = ("dragon", "baron", "elder", "atakhan")
+MAJOR_DRAGON_GT = 14 * 60.0     # a dragon is a "major" objective (budget slot) from 14:00
 #: back-off after an error (seconds before the next automatic request)
 BACKOFF_S: dict[str, float] = {"key": math.inf, "nokey": math.inf, "quota": 600.0, "offline": 300.0,
                                "model": math.inf, "server": 180.0, "empty": 90.0, "bad": 180.0}
@@ -126,15 +144,16 @@ OLLAMA_OFFLINE = "Conseil IA : Ollama ne répond pas (lance « ollama serve »).
 
 SYSTEM_PROMPT = (
     "Tu es un coach expert de League of Legends qui conseille un joueur pendant sa partie. "
-    "Réponds en français, en 2 phrases courtes max, conseils concrets d'achat et de macro, "
-    "pas de spéculation sur les temps de recharge ennemis. Pas de liste, pas de markdown, "
-    "pas d'introduction : seulement le conseil."
+    "Réponds en français, tutoiement, phrases très courtes, conseils concrets d'achat et de macro "
+    "fondés sur les données (temps, lieux, objets exacts), pas de spéculation sur les temps de recharge "
+    "ni les sorts d'invocateur ennemis. Pas de markdown, pas d'introduction. Quand un format JSON est "
+    "demandé, réponds uniquement avec cet objet JSON."
 )
 MOMENT_FR = {
     "base": "retour en base avec de l'or à dépenser",
     "death": "je viens de mourir",
     "level": "je viens de passer un niveau clé",
-    "objective": "objectif neutre dans 60 secondes",
+    "objective": "objectif majeur dans environ 80 secondes",
     "fed": "un ennemi devient très fort (fed)",
     "test": "test de connexion",
     "manual": "le joueur demande un conseil maintenant",
@@ -165,8 +184,12 @@ def error_text(code: str, provider: str | None = None) -> str:
 # HTTP: request building / response parsing (pure) + the urllib call
 # ======================================================================================
 def build_request(provider: str, model: str, api_key: str, system: str, prompt: str,
-                  url: str | None = None, max_tokens: int = MAX_OUTPUT_TOKENS) -> tuple[str, dict[str, str], bytes]:
-    """``(url, headers, json body)`` for one chat request. Raises :class:`AIError` ("nokey")."""
+                  url: str | None = None, max_tokens: int = MAX_OUTPUT_TOKENS,
+                  json_mode: bool = False) -> tuple[str, dict[str, str], bytes]:
+    """``(url, headers, json body)`` for one chat request. Raises :class:`AIError` ("nokey").
+
+    ``json_mode``: ask the provider for a JSON object (Gemini ``responseMimeType``, OpenAI-style
+    ``response_format``, Ollama ``format``; Anthropic follows the prompt)."""
     spec = provider_spec(provider)
     if spec is None:
         raise AIError("bad", f"unknown provider {provider!r}")
@@ -184,6 +207,8 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.4},
         }
+        if json_mode:
+            body["generationConfig"]["responseMimeType"] = "application/json"
     elif provider in ("groq", "openrouter"):
         target = url or spec.url
         headers["Authorization"] = f"Bearer {key}"
@@ -200,10 +225,14 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
                 body["include_reasoning"] = False
             elif "qwen3" in model:
                 body["reasoning_format"] = "hidden"
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
     elif provider == "ollama":
         target = url or spec.url
         body = {"model": model, "stream": False, "options": {"num_predict": max_tokens, "temperature": 0.4},
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}
+        if json_mode:
+            body["format"] = "json"
     else:  # anthropic
         target = url or spec.url
         headers["x-api-key"] = key
@@ -213,8 +242,9 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
     return target, headers, json.dumps(body, ensure_ascii=False).encode("utf-8")
 
 
-def parse_response(provider: str, data: Any, long: bool = False) -> str:
-    """Text of a provider's JSON answer. Raises :class:`AIError` ("empty" / "bad")."""
+def parse_response(provider: str, data: Any, long: bool = False, raw: bool = False) -> str:
+    """Text of a provider's JSON answer (``raw``: only the reasoning removed, for a JSON plan).
+    Raises :class:`AIError` ("empty" / "bad")."""
     try:
         if provider == "gemini":
             cands = data.get("candidates") or []
@@ -230,7 +260,10 @@ def parse_response(provider: str, data: Any, long: bool = False) -> str:
                            if isinstance(b, dict) and b.get("type", "text") == "text")
     except (AttributeError, TypeError, IndexError, KeyError) as exc:
         raise AIError("bad", str(exc)) from exc
-    text = clean_review(text) if long else clean_advice(text)
+    if raw:
+        text = re.sub(r"<think>.*?</think>", " ", text, flags=re.S | re.I).strip()[:4000]
+    else:
+        text = clean_review(text) if long else clean_advice(text)
     if not text:
         raise AIError("empty")
     return text
@@ -312,14 +345,14 @@ def pick_model(provider: str, ids: Iterable[str]) -> str | None:
 
 def call_llm(provider: str, api_key: str, model: str, system: str, prompt: str,
              timeout: float = TIMEOUT_S, url: str | None = None, max_tokens: int = MAX_OUTPUT_TOKENS,
-             long: bool = False) -> str:
+             long: bool = False, json_mode: bool = False) -> str:
     """One blocking request; returns the cleaned advice. Raises :class:`AIError` only.
 
     OpenAI-compatible providers: when the model does not exist for this key, the available
     models are listed once and the best chat model is picked (and remembered) automatically."""
     model = (model or "").strip() or _auto_model.get(provider, "")
     try:
-        return _call_once(provider, api_key, model, system, prompt, timeout, url, max_tokens, long)
+        return _call_once(provider, api_key, model, system, prompt, timeout, url, max_tokens, long, json_mode)
     except AIError as exc:
         if exc.code != "model" or provider not in ("groq", "openrouter"):
             raise
@@ -328,12 +361,12 @@ def call_llm(provider: str, api_key: str, model: str, system: str, prompt: str,
             raise
         log.info("AI model %r unavailable, using %r", model or "default", best)
         _auto_model[provider] = best
-        return _call_once(provider, api_key, best, system, prompt, timeout, url, max_tokens, long)
+        return _call_once(provider, api_key, best, system, prompt, timeout, url, max_tokens, long, json_mode)
 
 
 def _call_once(provider: str, api_key: str, model: str, system: str, prompt: str, timeout: float,
-               url: str | None, max_tokens: int, long: bool) -> str:
-    target, headers, body = build_request(provider, model, api_key, system, prompt, url, max_tokens)
+               url: str | None, max_tokens: int, long: bool, json_mode: bool = False) -> str:
+    target, headers, body = build_request(provider, model, api_key, system, prompt, url, max_tokens, json_mode)
     req = urllib.request.Request(target, data=body, headers=headers, method="POST")
     try:
         with _opener_for(target).open(req, timeout=timeout) as resp:
@@ -354,7 +387,76 @@ def _call_once(provider: str, api_key: str, model: str, system: str, prompt: str
         raise AIError("bad", "not JSON") from exc
     if not isinstance(data, dict):
         raise AIError("bad", "not an object")
-    return parse_response(provider, data, long)
+    return parse_response(provider, data, long, raw=json_mode)
+
+
+# ======================================================================================
+# Strict JSON plan
+# ======================================================================================
+PLAN_GOALS = ("dragon", "baron", "heraut", "larves", "atakhan", "tour", "farm", "vision", "defense", "regroupe",
+              "achat", "aucun")
+PLAN_URGENCY = ("haute", "moyenne", "basse")
+PLAN_SCHEMA_FR = ('{"plan": "1 phrase, 170 caractères max", "etapes": ["action concrète, 95 caractères max", '
+                  '"... (0 à 3)"], "objectif": "' + "|".join(PLAN_GOALS) + '", "urgence": "haute|moyenne|basse"}')
+
+
+def _json_block(text: str) -> str | None:
+    """The outermost ``{...}`` of ``text`` (code fences / reasoning removed), or None."""
+    s = re.sub(r"<think>.*?</think>", " ", str(text or ""), flags=re.S | re.I)
+    s = re.sub(r"```(?:json)?", " ", s, flags=re.I)
+    i, j = s.find("{"), s.rfind("}")
+    return s[i:j + 1] if 0 <= i < j else None
+
+
+def _short(text: Any, limit: int) -> str:
+    s = re.sub(r"[*_#`>]+", "", str(text or ""))
+    s = " ".join(s.replace("\u2014", ":").split()).strip(" \"'«»")
+    if len(s) > limit:
+        cut = s[:limit]
+        s = (cut.rsplit(" ", 1)[0] if " " in cut else cut).rstrip(",;: ") + "…"
+    return s
+
+
+def parse_plan(text: Any) -> dict[str, Any] | None:
+    """Strict parse of the model's JSON plan: ``{"plan", "etapes", "objectif", "urgence"}`` or None.
+
+    ``plan`` must be a non-empty string; ``etapes`` a list of strings (at most :data:`MAX_STEPS`
+    kept); unknown ``objectif`` / ``urgence`` values are dropped; extra keys ignored. Never raises."""
+    try:
+        block = _json_block(text)
+        if block is None:
+            return None
+        data = json.loads(block)
+        if not isinstance(data, dict):
+            return None
+        plan = data.get("plan")
+        if not isinstance(plan, str) or len(plan.strip()) < 4:
+            return None
+        steps_raw = data.get("etapes", [])
+        if steps_raw is None:
+            steps_raw = []
+        if not isinstance(steps_raw, list) or not all(isinstance(x, str) for x in steps_raw):
+            return None
+        steps = [_short(x, MAX_STEP_CHARS) for x in steps_raw if x.strip()][:MAX_STEPS]
+        goal = str(data.get("objectif") or "").strip().lower()
+        goal = unicodedata.normalize("NFKD", goal).encode("ascii", "ignore").decode()
+        urg = str(data.get("urgence") or "").strip().lower()
+        return {"plan": _short(plan, MAX_PLAN_CHARS), "etapes": steps,
+                "objectif": goal if goal in PLAN_GOALS else None,
+                "urgence": urg if urg in PLAN_URGENCY else None}
+    except (ValueError, TypeError):
+        return None
+
+
+def plan_text(plan: dict[str, Any]) -> str:
+    """One display line: the plan, then the steps (bounded like an advice)."""
+    parts = [str(plan.get("plan") or "").strip()] + [str(x).strip() for x in plan.get("etapes") or []]
+    parts = [p if p.endswith((".", "!", "?", "…")) else p + "." for p in parts if p]
+    s = " ".join(parts)
+    if len(s) > MAX_ADVICE_CHARS:
+        cut = s[:MAX_ADVICE_CHARS]
+        s = (cut.rsplit(" ", 1)[0] if " " in cut else cut).rstrip(",;: ") + "…"
+    return s
 
 
 # ======================================================================================
@@ -367,7 +469,11 @@ LEGEND = ("Clés JSON : t=temps de jeu, mo=moment, me=moi, al=alliés, en=ennemi
           "ev=derniers événements, obj=objectifs (s avant apparition ou dispo), sb=tableau des scores "
           "(gd=écart d'or équipe estimé, kd=kills, ln=duels de voie), map=carte (z=zone, vu=vu il y a s), "
           "jgl=jungler ennemi, co=analyse du coach, wp=probabilité de victoire %, morts=mes dernières morts, "
-          "achat=suggestion d'objet actuelle, ward=balise conseillée.")
+          "achat=suggestion d'objet actuelle, ward=balise conseillée, coups=mes derniers coups notés "
+          "(classe : brilliant, great, best, good, inaccuracy, mistake, blunder, miss + raison), prec=précision "
+          "0-100, diff=écarts (eq=or d'équipe, po/niv/cs=contre mon adversaire de voie), prio=état des vagues "
+          "par voie, objt=[objectif, s avant apparition, 0=dispo], balises=emplacements de balise conseillés, "
+          "jint=infos sur la jungle ennemie.")
 MAX_SNAPSHOT_BYTES = 6000
 STAT_KEYS = {"attackDamage": "ad", "abilityPower": "ap", "armor": "ar", "magicResist": "mr",
              "attackSpeed": "as", "moveSpeed": "ms", "abilityHaste": "ah", "critChance": "crit",
@@ -658,7 +764,111 @@ def engine_context(engine: Any, now: float | None = None) -> dict[str, Any]:
     p = safe(wp) if callable(wp) else None
     if isinstance(p, (int, float)):
         ctx["wp"] = int(round(100 * p))
+    for key, fn in (("coups", _ctx_plays), ("diff", _ctx_diff), ("prio", _ctx_prio), ("balises", _ctx_wards),
+                    ("jint", _ctx_jungle)):
+        val = safe(lambda fn=fn: fn(engine, game, now))
+        if val not in (None, "", [], {}):
+            ctx[key] = val
+    pl = getattr(engine, "plays_summary", None)
+    summ = safe(pl) if callable(pl) else None
+    if isinstance(summ, dict) and summ.get("total"):
+        ctx["prec"] = summ.get("precision")
     return compact(ctx) or {}
+
+
+WAVE_FR = {"pushing": "prio (vague chez eux)", "pushed_in": "vague chez nous", "even": "équilibrée"}
+LANE_OF_ROLE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
+
+
+def _ctx_plays(engine: Any, game: Any, now: float) -> list[dict[str, Any]]:
+    """My last rated moments (plays.py), most recent last: ``[{"c": "blunder", "r": "...", "t": "12:04"}]``."""
+    pc = getattr(engine, "_plays", None)
+    hist = pc.history() if pc is not None and hasattr(pc, "history") else []
+    gt = float(getattr(game, "game_time", 0.0) or 0.0)
+    out = [{"c": p.cls, "r": str(p.reason)[:90], "t": _clock(p.gt)} for p in hist if gt - float(p.gt) <= 600.0]
+    return out[-6:]
+
+
+def _ctx_diff(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
+    fn = getattr(engine, "scoreboard_summary", None)
+    sb = fn() if callable(fn) else None
+    if sb is None or not getattr(sb, "players", None):
+        return None
+    d: dict[str, Any] = {"eq": int(sb.team_gold_diff)}
+    m = getattr(sb, "my_matchup", None)
+    if m is not None:
+        d.update(po=int(m.gold_diff), niv=int(m.level_diff), cs=int(m.cs_diff), vs=str(m.enemy))
+    return d
+
+
+def _ctx_prio(engine: Any, game: Any, now: float) -> dict[str, str] | None:
+    coach = getattr(engine, "_coach", None)
+    waves = coach.waves() if coach is not None and hasattr(coach, "waves") else {}
+    out = {}
+    for lane, w in (waves or {}).items():
+        st = w.get("state") if isinstance(w, dict) else getattr(w, "state", None)
+        if st in WAVE_FR:
+            out[str(lane)] = WAVE_FR[st]
+    return out or None
+
+
+def _ctx_wards(engine: Any, game: Any, now: float) -> list[str] | None:
+    """2 ward spots (wards.recommend) for the next objective / the enemy jungler's side."""
+    from treeaicoach import geometry, wards
+
+    me = getattr(game, "me", None)
+    if me is None:
+        return None
+    tracker = getattr(engine, "_tracker", None)
+    me_tr = tracker.me() if tracker is not None else None
+    me_pos = me_tr.position() if me_tr is not None else None
+    obj = None
+    objs = getattr(engine, "_objectives", None)
+    for o in sorted((objs.states() if objs is not None else []),
+                    key=lambda o: 0.0 if getattr(o, "alive", False) else float(getattr(o, "remaining", None) or 1e9)):
+        if getattr(o, "key", "") in ("dragon", "baron", "elder", "herald", "atakhan", "grubs"):
+            rem = 0.0 if getattr(o, "alive", False) else float(getattr(o, "remaining", None) or 1e9)
+            if rem <= 120.0:
+                obj = (o.key, rem)
+                break
+    side = None
+    jg = game.enemy_jungler() if hasattr(game, "enemy_jungler") else None
+    if jg is not None and tracker is not None:
+        tr = tracker.get(jg.champion_alias)
+        pos = tr.position() if tr is not None else None
+        if pos is not None and now - float(tr.last_seen) <= 60.0:
+            side = geometry.side_of(*pos)
+    roles = getattr(engine, "_role_resolver", None)
+    role = roles.my_role() if roles is not None and hasattr(roles, "my_role") else None
+    tac = getattr(engine, "_tactics", None)
+    phase = (tac.phase() if tac is not None and hasattr(tac, "phase") else None) or "laning"
+    picks = wards.recommend(game.my_team, role or me.position, phase=phase, me_pos=me_pos, objective=obj,
+                            jungler_side=side, n=2)
+    return [p.label for p in picks][:2] or None
+
+
+def _ctx_jungle(engine: Any, game: Any, now: float) -> Any:
+    """Enemy jungle intel from the detection modules when available (``engine.jungle_intel()``,
+    ``engine._jungle_intel.summary()``...), compacted."""
+    for name in ("jungle_intel", "jungler_intel"):
+        fn = getattr(engine, name, None)
+        if callable(fn):
+            return compact(fn(), max_list=5, max_str=90)
+    ji = getattr(engine, "_jungle_intel", None)
+    st = ji.state() if ji is not None and hasattr(ji, "state") else None
+    if st is not None and getattr(st, "alias", None):            # jungle_intel.JungleIntel (Tab data)
+        d = {"c": getattr(st, "name", None) or st.alias, "txt": getattr(st, "text", None),
+             "farm": getattr(st, "farm_side", None) if getattr(st, "farming", False) else None,
+             "achat": bool(getattr(st, "recalled", False)) or None, "mort": bool(getattr(st, "dead", False)) or None,
+             "lv": getattr(st, "level", None)}
+        return {k: v for k, v in d.items() if v not in (None, "", 0)}
+    for name in ("_jungle", "_game_settings"):
+        obj = getattr(engine, name, None)
+        for meth in ("summary", "state", "current"):
+            fn = getattr(obj, meth, None) if obj is not None else None
+            if callable(fn):
+                return compact(fn(), max_list=5, max_str=90)
+    return None
 
 
 def _scoreboard(sb: Any) -> dict[str, Any] | None:
@@ -859,6 +1069,13 @@ def build_snapshot(game: Any, *, moment: str = "", roles: Any = None, scoreboard
                 objs.append(f"{name}: {int(o.remaining)} s")
         if objs:
             snap["obj"] = objs[:6]
+        objt = []
+        for o in objectives or ():
+            name, rem = getattr(o, "name", ""), getattr(o, "remaining", None)
+            if name and (getattr(o, "alive", False) or (rem is not None and rem < 900)):
+                objt.append([name, 0 if getattr(o, "alive", False) else int(rem)])
+        if objt:
+            snap["objt"] = sorted(objt, key=lambda x: x[1])[:5]
         ev = recent_events(game)
         if ev:
             snap["ev"] = ev
@@ -894,9 +1111,11 @@ def build_prompt(snapshot: dict[str, Any]) -> str:
         plan = ("Mode : fenêtre favorable. Dis exactement quel objectif prendre maintenant et comment, "
                 "fondé sur le JSON. ")
     return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle + analyse de la minimap) : {data}\n{plan}"
-            "Réponds en 2 phrases courtes max, conseils concrets d'achat et de macro, "
-            "pas de spéculation sur les temps de recharge ennemis. Pour un achat, choisis UNIQUEMENT parmi "
-            "objets_possibles (noms exacts) ou les composants de la suggestion « achat » ; ne conseille "
+            "Réponds UNIQUEMENT avec un objet JSON strict de cette forme : " + PLAN_SCHEMA_FR + ". "
+            "Plan concret en 2 phrases courtes max au total : cite les temps (objt), la prio des voies (prio), "
+            "les balises conseillées (balises), le jungler ennemi (jgl, jint) et mes coups récents (coups) quand "
+            "c'est utile. Pas de spéculation sur les temps de recharge ennemis. Pour un achat, choisis UNIQUEMENT "
+            "parmi objets_possibles (noms exacts) ou les composants de la suggestion « achat » ; ne conseille "
             "jamais un objet que j'ai déjà (me.it).")
 
 
@@ -941,12 +1160,12 @@ class MomentDetector:
         for o in objectives or ():
             key = getattr(o, "key", "") or ""
             rem = getattr(o, "remaining", None)
-            if key not in ("dragon", "baron", "elder") or getattr(o, "alive", False) or rem is None:
+            if key not in OBJECTIVE_KEYS or getattr(o, "alive", False) or rem is None:
                 continue
             sig = (key, round(float(getattr(o, "next_spawn", 0.0) or 0.0)))
             if abs(float(rem) - OBJECTIVE_LEAD_S) <= OBJECTIVE_WINDOW_S and sig not in self._obj_done:
                 self._obj_done.add(sig)
-                if "objective" not in found or key in ("baron", "elder"):
+                if "objective" not in found or key in ("baron", "elder", "atakhan"):
                     self.last_objective = key
                 found.append("objective")
         self._dead, self._level, self._in_base, self._fed = dead, level, base_now, fed
@@ -963,18 +1182,24 @@ class Advice:
     moment: str
     t: float
     error: bool = False       # True: ``text`` is a French error message (manual request only)
+    steps: tuple[str, ...] = ()   # the plan's steps (JSON plan), also folded into ``text``
+    source: str = "ai"        # "ai" | "rules" (offline fallback, :func:`rule_plan`)
+    goal: str | None = None   # PLAN_GOALS value of the plan, when given
 
     @property
     def title(self) -> str:
-        """Toast title, showing why the AI spoke."""
+        """Toast title, showing why the AI (or the offline planner) spoke."""
         if self.error:
             return "IA"
         if self.moment == "manual":
             return "RÉPONSE IA"
+        who = "PLAN" if self.source == "rules" else "IA"
         reason = self.moment.split(":", 1)[1] if self.moment.startswith("comeback:") else ""
         if reason:
-            return "IA — Fenêtre à saisir" if reason in WINDOW_REASONS else "IA — Plan pour revenir"
-        return "CONSEIL IA"
+            return f"{who} : Fenêtre à saisir" if reason in WINDOW_REASONS else f"{who} : Plan pour revenir"
+        if self.moment == "objective":
+            return f"{who} : Objectif"
+        return "CONSEIL IA" if who == "IA" else "PLAN"
 
 
 # ======================================================================================
@@ -990,8 +1215,14 @@ COMEBACK_FR = {
     "carries_dead": "les carrys ennemis sont morts pour longtemps",
     "numbers": "Baron / Elder bientôt et nous sommes en surnombre",
     "ace": "ace : toute l'équipe adverse est morte",
+    "swing": "l'écart d'or vient de basculer contre nous",
+    "lead": "l'écart d'or vient de basculer pour nous",
+    "blunders": "deux grosses erreurs coup sur coup (coups notés gaffe / erreur)",
 }
-WINDOW_REASONS = frozenset({"carries_dead", "numbers", "ace"})
+WINDOW_REASONS = frozenset({"carries_dead", "numbers", "ace", "lead"})
+SWING_GOLD = 1500               # team gold diff change ...
+SWING_MIN_S, SWING_MAX_S = 60.0, 150.0   # ... over this time span
+BLUNDER_WINDOW_S = 240.0
 COMEBACK_COOLDOWN_S = 180.0
 GOLD_STEP = 2000
 WP_DROP = 0.15
@@ -1014,6 +1245,7 @@ class ComebackDetector:
         self._fed_seen: set[str] = set()
         self._last: dict[str, float] = {}
         self._seen_aces: set[Any] = set()
+        self._gd: list[tuple[float, float]] = []
 
     def update(self, t: float, game: Any, scoreboard: Any = None, win_prob: float | None = None,
                objectives: Iterable[Any] = ()) -> str | None:
@@ -1042,6 +1274,13 @@ class ComebackDetector:
             if opp and opp in fed and opp not in self._fed_seen:
                 found.append("lane_fed")
             self._fed_seen |= fed
+            # gold swing: the team gold diff moved by SWING_GOLD within 1-2.5 minutes
+            gd = float(sb.team_gold_diff)
+            self._gd = [(ts, v) for ts, v in self._gd if t - ts <= SWING_MAX_S] + [(t, gd)]
+            base = [v for ts, v in self._gd if t - ts >= SWING_MIN_S]
+            if base and abs(gd - base[0]) >= SWING_GOLD:
+                found.append("swing" if gd < base[0] else "lead")
+                self._gd = [(t, gd)]
         # win probability drop
         if wp is not None:
             self._wp = [(ts, p) for ts, p in self._wp if t - ts <= WP_WINDOW_S] + [(t, float(wp))]
@@ -1057,7 +1296,7 @@ class ComebackDetector:
             v = str(getattr(me, attr, "") or "")
             if v:
                 me_names |= {v.casefold(), v.split("#", 1)[0].casefold()}
-        ally_deaths, my_deaths, ours, theirs = [], [], [], []
+        ally_deaths, my_deaths, ours, theirs, enemy_deaths = [], [], [], [], []
         for ev in getattr(game, "events", None) or []:
             if not isinstance(ev, dict):
                 continue
@@ -1067,6 +1306,8 @@ class ComebackDetector:
                 victim = str(ev.get("VictimName") or "").casefold()
                 if victim in my_names:
                     ally_deaths.append(et)
+                elif victim in lookup:
+                    enemy_deaths.append(et)
                 if victim in me_names:
                     my_deaths.append(et)
             elif name in _OBJ_EVENTS:
@@ -1086,7 +1327,8 @@ class ComebackDetector:
                     self._seen_aces.add(uid)
                     found.append("ace")
         recent = [x for x in ally_deaths if 0 <= gt - x <= 20.0]
-        if len(recent) >= 2:
+        traded = [x for x in enemy_deaths if 0 <= gt - x <= 20.0]
+        if len(recent) >= 2 and len(recent) > len(traded):          # a lost fight, not a trade
             found.append("teamfight")
         if len([x for x in my_deaths if 0 <= gt - x <= 240.0]) >= 2:
             found.append("death_streak")
@@ -1104,13 +1346,127 @@ class ComebackDetector:
             getattr(o, "remaining", None) is not None and o.remaining <= 60)) for o in objectives)
         if soon and sum(p.is_dead for p in enemies) - sum(p.is_dead for p in allies) >= 2:
             found.append("numbers")
-        order = ("ace", "numbers", "carries_dead", "teamfight", "wp_drop", "gold", "lane_fed",
+        order = ("ace", "numbers", "carries_dead", "teamfight", "wp_drop", "gold", "swing", "lead", "lane_fed",
                  "objectives", "death_streak")
         for r in order:
             if r in found and t - self._last.get(r, -math.inf) >= COMEBACK_COOLDOWN_S:
                 self._last[r] = t
                 return r
         return None
+
+
+# ======================================================================================
+# Offline planner (rule-based): same snapshot, no network
+# ======================================================================================
+PLAN_MOMENTS = frozenset({"death", "objective", "fed"})
+_OBJ_LE = {"Dragon": "le dragon", "Baron": "le Baron", "Héraut": "le Héraut", "Larves": "les larves",
+           "Atakhan": "Atakhan", "Dragon ancestral": "le dragon ancestral"}
+_ROLE_LANE = {"top": "top", "mid": "mid", "adc": "bot", "support": "bot"}
+
+
+def is_plan_moment(moment: str) -> bool:
+    return moment in PLAN_MOMENTS or moment.startswith("comeback:")
+
+
+def _mmss(sec: Any) -> str:
+    s = max(0, int(sec or 0))
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def _gold(n: Any) -> str:
+    return f"{abs(int(n)):,}".replace(",", "\u202f") + " PO"
+
+
+def rule_plan(moment: str, snap: dict[str, Any]) -> dict[str, Any] | None:
+    """A concrete French plan built from the snapshot alone (offline fallback), in the
+    :func:`parse_plan` format. None when there is nothing useful to say. Never raises."""
+    try:
+        return _rule_plan(str(moment or ""), snap if isinstance(snap, dict) else {})
+    except Exception:
+        log.debug("rule plan failed", exc_info=True)
+        return None
+
+
+def _rule_plan(moment: str, snap: dict[str, Any]) -> dict[str, Any] | None:
+    reason = moment.split(":", 1)[1] if moment.startswith("comeback:") else ""
+    me = snap.get("me") or {}
+    lane = _ROLE_LANE.get(str(me.get("r") or ""))
+    prio = (snap.get("prio") or {}).get(lane or "", "")
+    wards_ = [str(w) for w in (snap.get("balises") or [])][:2]
+    objt = [o for o in (snap.get("objt") or []) if isinstance(o, list) and len(o) == 2]
+    nxt = next((o for o in objt if int(o[1]) <= 120), None)
+    diff = snap.get("diff") or {}
+    gd = int(diff.get("eq", (snap.get("sb") or {}).get("gd", 0)) or 0)
+    dead = [e for e in snap.get("en") or [] if isinstance(e, dict) and "rs" in e]
+    jgl = str(snap.get("jgl") or "").strip()
+    steps: list[str] = []
+    # 1) a window: enemies dead for a while -> the biggest objective now
+    long_dead = [e for e in dead if int(e.get("rs") or 0) >= 20]
+    if reason in WINDOW_REASONS or len(long_dead) >= 2:
+        if len(long_dead) < 1 and reason != "lead":
+            return None
+        names = ", ".join(str(e.get("c")) for e in long_dead[:3])
+        rs = min((int(e.get("rs") or 0) for e in long_dead), default=0)
+        up = [o for o in objt if int(o[1]) == 0]
+        target = next((o[0] for o in up if o[0] in ("Baron", "Dragon ancestral")), None) or (
+            up[0][0] if up else None)
+        what = _OBJ_LE.get(target, "une tour") if target else "une tour"
+        if long_dead:
+            plan = f"{len(long_dead)} ennemis morts ({names}) pendant {rs} s : prends {what} maintenant."
+        else:
+            plan = f"Avance de {_gold(gd)} : force {what} tant que l'écart est là."
+        steps.append("Regroupe-toi avec ton équipe avant d'entrer.")
+        if rs:
+            steps.append(f"Repli dès qu'ils réapparaissent (dans {rs} s).")
+        return {"plan": plan, "etapes": steps, "objectif": _goal(target) or "tour", "urgence": "haute"}
+    # 2) a major objective soon: wave first, then vision
+    if nxt is not None and (moment == "objective" or (not reason and moment not in ("death", "fed")
+                                                      and int(nxt[1]) <= 100)):
+        name, sec = nxt[0], int(nxt[1])
+        when = "maintenant" if sec == 0 else f"dans {_mmss(sec)}"
+        tail = ("ta voie a la prio, rentre maintenant et va te placer." if prio.startswith("prio")
+                else "pousse ta vague d'abord, puis rentre te placer.")
+        plan = f"{name} {when} : {tail}"
+        if wards_:
+            steps.append(f"Pose {len(wards_)} balise{'s' if len(wards_) > 1 else ''} : {', '.join(wards_)}.")
+        if gd <= -2500:
+            steps.append("Retard d'équipe : ne force pas, échange contre un objectif de l'autre côté.")
+        elif sec > 0:
+            steps.append("Sois sur place 20 s avant l'apparition.")
+        return {"plan": plan, "etapes": steps[:MAX_STEPS], "objectif": _goal(name), "urgence": "moyenne"}
+    # 3) behind / lost fight / deaths: play safe, concrete next step
+    if reason or moment in ("death", "fed"):
+        if reason == "teamfight":
+            plan = "Combat perdu : défends tes tours sans te battre le temps que l'équipe réapparaisse."
+        elif reason == "blunders":
+            plan = "Deux grosses erreurs d'affilée : joue la sécurité et attends ton équipe."
+        elif reason == "lane_fed" or moment == "fed":
+            vs = str(diff.get("vs") or "ton adversaire")
+            plan = f"{vs} est trop fort en duel : joue sous ta tour et farme sans échanger."
+        elif gd <= -1000:
+            plan = f"Retard de {_gold(gd)} : joue en sécurité près de tes tours et rattrape-toi au farm."
+        else:
+            plan = "Rejoue proprement : farme ta vague et attends ton jungler avant de te battre."
+        if jgl:
+            steps.append(_short(jgl, MAX_STEP_CHARS - 2).rstrip(".") + ".")
+        if wards_:
+            steps.append(f"Balise : {wards_[0]}.")
+        if nxt is not None:
+            steps.append(f"Prochain objectif : {nxt[0]} {('dispo' if int(nxt[1]) == 0 else 'dans ' + _mmss(nxt[1]))}.")
+        return {"plan": plan, "etapes": steps[:MAX_STEPS], "objectif": "defense", "urgence": "moyenne"}
+    return None
+
+
+def _goal(name: Any) -> str | None:
+    n = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode().lower()
+    for g in ("baron", "atakhan", "larves"):
+        if g in n:
+            return g
+    if "heraut" in n:
+        return "heraut"
+    if "dragon" in n:
+        return "dragon"
+    return None
 
 
 class AIBudget:
@@ -1139,7 +1495,8 @@ class AIBudget:
         cands: list[str] = []
         if moment == "base":
             cands.append("base")
-        if moment == "objective" and objective in ("baron", "elder"):
+        if moment == "objective" and (objective in ("baron", "elder", "atakhan")
+                                      or (objective == "dragon" and game_time >= MAJOR_DRAGON_GT)):
             cands.append("objective")
         if moment == "death" or (reason and reason not in WINDOW_REASONS):
             cands.append("comeback")
@@ -1199,6 +1556,11 @@ class AIAdvisor:
         self.detector = MomentDetector()
         self.comeback = ComebackDetector()
         self._urgent_only = False
+        self._bad_plays: list[float] = []
+        self._last_rules = -math.inf
+        self.rule_plans = 0                   # offline plans published (rules), this session
+        self.json_errors = 0                  # answers that were broken JSON
+        self._caller_json = _accepts(caller, "json_mode") and _accepts(caller, "max_tokens")
         self.apply_config(cfg)
 
     # ------------------------------------------------------------------ config / state
@@ -1225,6 +1587,8 @@ class AIAdvisor:
         with self._lock:
             self._result = None
             self._last_call = -math.inf
+            self._last_rules = -math.inf
+            self._bad_plays = []
             self.budget.reset()
         self.detector.reset()
         self.comeback.reset()
@@ -1244,6 +1608,28 @@ class AIAdvisor:
         return th is not None and th.is_alive()
 
     # ------------------------------------------------------------------ live use
+    def note_play(self, play: Any) -> None:
+        """A rated moment (plays.py): two blunders / mistakes in :data:`BLUNDER_WINDOW_S` are a
+        comeback moment ("comeback:blunders"). Never raises."""
+        try:
+            cls = str(getattr(play, "cls", ""))
+            if cls in ("blunder", "mistake"):
+                with self._lock:
+                    self._bad_plays.append(float(getattr(play, "t", 0.0)))
+                    del self._bad_plays[:-10]
+        except Exception:
+            log.debug("note_play failed", exc_info=True)
+
+    def _blunder_moment(self, t: float) -> bool:
+        with self._lock:
+            recent = [x for x in self._bad_plays if 0.0 <= t - x <= BLUNDER_WINDOW_S]
+        if len(recent) < 2 or t - self.comeback._last.get("blunders", -math.inf) < COMEBACK_COOLDOWN_S:
+            return False
+        self.comeback._last["blunders"] = t
+        with self._lock:
+            self._bad_plays = []
+        return True
+
     def update(self, t: float, game: Any, *, in_base: bool = False, objectives: Iterable[Any] = (),
                roles: Any = None, scoreboard: Any = None, item_text: str | None = None,
                threat: int = 0, context: Any = None, win_prob: float | None = None,
@@ -1251,13 +1637,17 @@ class AIAdvisor:
         """Detect a key moment and maybe start a request. Returns True if one was started.
 
         ``context``: extra snapshot sections (dict), or a callable returning them (only called
-        when a request is really sent), e.g. ``lambda: engine_context(engine)``."""
+        when a request is really sent), e.g. ``lambda: engine_context(engine)``. When the provider
+        is unreachable (back-off after an error), a plan moment gets an offline :func:`rule_plan`
+        instead (``Advice.source == "rules"``, no budget used)."""
         try:
             objectives = list(objectives or ())
             moment = self.detector.update(game, in_base, objectives)
             reason = self.comeback.update(t, game, scoreboard, win_prob, objectives)
             if moment is None and reason is not None:
                 moment = f"comeback:{reason}"
+            if moment is None and self._blunder_moment(t):
+                moment = "comeback:blunders"
             if moment is None or not self.enabled or threat >= 1 or (in_fight and moment.startswith("comeback")):
                 return False
             gt = float(getattr(game, "game_time", 0.0) or 0.0)
@@ -1266,19 +1656,39 @@ class AIAdvisor:
                 if slot is None or (self._urgent_only and slot != "urgent"):
                     return False
                 interval = URGENT_MIN_INTERVAL_S if slot == "urgent" else MIN_INTERVAL_S
-                if gt < MIN_GAME_TIME_S or t - self._last_call < interval or t < self._blocked_until:
+                if gt < MIN_GAME_TIME_S or t - self._last_call < interval:
                     return False
-                if self._thread is not None and self._thread.is_alive():
+                offline = t < self._blocked_until
+                if not offline and self._thread is not None and self._thread.is_alive():
                     return False
-                self._last_call = t
-                self.budget.take(slot)
+                if not offline:
+                    self._last_call = t
+                    self.budget.take(slot)
             snap = build_snapshot(game, moment=moment, roles=roles, scoreboard=scoreboard,
                                   objectives=objectives, item_text=item_text, context=_resolve(context))
-            self._start(build_prompt(snap), moment, t, self._validator(game, snap, item_text), slot=slot)
+            fallback = rule_plan(moment, snap) if is_plan_moment(moment) else None
+            if offline:
+                self._offline_plan(fallback, moment, t)
+                return False
+            self._start(build_prompt(snap), moment, t, self._validator(game, snap, item_text), slot=slot,
+                        fallback=fallback)
             return True
         except Exception:
             log.exception("AIAdvisor.update failed")
             return False
+
+    def _offline_plan(self, plan: dict[str, Any] | None, moment: str, t: float) -> bool:
+        """Publish an offline rule-based plan (rate-limited). True if one was set."""
+        if not plan:
+            return False
+        with self._lock:
+            if t - self._last_rules < RULES_MIN_INTERVAL_S or self._result is not None:
+                return False
+            self._last_rules = t
+            self._result = Advice(plan_text(plan), moment, t, steps=tuple(plan.get("etapes") or ()),
+                                  source="rules", goal=plan.get("objectif"))
+            self.rule_plans += 1
+        return True
 
     def ask(self, t: float, game: Any, *, roles: Any = None, scoreboard: Any = None,
             objectives: Iterable[Any] = (), item_text: str | None = None, context: Any = None) -> str:
@@ -1326,34 +1736,56 @@ class AIAdvisor:
         return check
 
     def _start(self, prompt: str, moment: str, t: float,
-               validate: Callable[[str], str | None] | None = None, slot: str | None = None) -> None:
+               validate: Callable[[str], str | None] | None = None, slot: str | None = None,
+               fallback: dict[str, Any] | None = None) -> None:
         prov, key, model = self._provider, self._key, self._model
         url = self._urls.get(prov)
+        kw: dict[str, Any] = {"timeout": TIMEOUT_S, "url": url}
+        if _accepts(self._caller, "json_mode") and _accepts(self._caller, "max_tokens"):   # (may be swapped)
+            kw.update(json_mode=True, max_tokens=PLAN_MAX_TOKENS)
 
         def job() -> None:
             try:
-                text = self._caller(prov, key, model, system_prompt(), prompt, timeout=TIMEOUT_S, url=url)
-                if validate is not None:
-                    text = validate(text)
+                raw = self._caller(prov, key, model, system_prompt(), prompt, **kw)
+                plan = parse_plan(raw) if "{" in str(raw or "") else None
+                steps: tuple[str, ...] = ()
+                goal = None
+                if plan is not None:
+                    text: str | None = plan_text(plan)
+                    steps, goal = tuple(plan["etapes"]), plan.get("objectif")
+                elif "{" in str(raw or ""):
+                    text = None                      # broken JSON: not shown as is
+                    self.json_errors += 1
+                else:
+                    text = clean_advice(raw)         # a plain answer (model ignored the format)
+                if text and validate is not None:
+                    checked = validate(text)
+                    if checked != text:
+                        steps, goal = (), None
+                    text = checked
                 with self._lock:
                     self.calls += 1
                     if text:
-                        self._result = Advice(text, moment, t)
+                        self._result = Advice(text, moment, t, steps=steps, goal=goal)
                     elif moment == "manual":
                         self._result = Advice("L'IA n'a pas donné de conseil fiable cette fois.", moment, t,
                                               error=True)
+                    elif fallback:
+                        self._result = Advice(plan_text(fallback), moment, t, steps=tuple(fallback["etapes"]),
+                                              source="rules", goal=fallback.get("objectif"))
+                        self.rule_plans += 1
             except AIError as exc:
-                self._fail(exc.code, prov, moment, t, slot)
+                self._fail(exc.code, prov, moment, t, slot, fallback)
             except Exception:
                 log.exception("AI request failed")
-                self._fail("server", prov, moment, t, slot)
+                self._fail("server", prov, moment, t, slot, fallback)
 
         th = threading.Thread(target=job, name="TreeAICoach-ai", daemon=True)
         self._thread = th
         th.start()
 
     def _fail(self, code: str, provider: str, moment: str = "", t: float = 0.0,
-              slot: str | None = None) -> None:
+              slot: str | None = None, fallback: dict[str, Any] | None = None) -> None:
         log.info("AI advice unavailable (%s, %s)", provider, code)
         with self._lock:
             if slot:
@@ -1365,12 +1797,25 @@ class AIAdvisor:
                 self._status_seq += 1
             self._status = text
             self._blocked_until = self._clock() + BACKOFF_S.get(code, 180.0)
+        if moment != "manual":
+            self._offline_plan(fallback, moment, t)
 
     def wait(self, timeout: float = 10.0) -> bool:
         th = self._thread
         if th is not None:
             th.join(timeout)
         return not self.busy()
+
+
+def _accepts(fn: Any, name: str) -> bool:
+    """True when ``fn`` takes the keyword ``name`` (or ``**kwargs``)."""
+    try:
+        import inspect
+
+        params = inspect.signature(fn).parameters
+        return name in params or any(p.kind == p.VAR_KEYWORD for p in params.values())
+    except (TypeError, ValueError):
+        return False
 
 
 def _resolve(context: Any) -> dict[str, Any] | None:

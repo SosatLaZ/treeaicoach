@@ -47,37 +47,57 @@ log = logging.getLogger(__name__)
 # ======================================================================================
 # Palette & layout constants
 # ======================================================================================
-BG = "#010A13"              # window background
-PANEL = "#0A1428"           # cards / panels
-PANEL_HI = "#0F1D36"        # raised elements, hover
-PANEL_LO = "#06101F"        # sunken areas (sidebar, inputs)
-BORDER = "#1E2328"          # neutral borders
-BORDER_GOLD = "#3C3222"     # subtle gold borders
-GOLD = "#C8AA6E"            # accent
-GOLD_HOVER = "#DCC28E"
-GOLD_DARK = "#785A28"
-TEXT = "#F0E6D2"            # light gold text
-MUTED = "#A09B8C"
-DIM = "#5B5A56"
-TEAL = "#0AC8B9"            # active
-TEAL_DARK = "#0A5E63"
-DANGER = "#E84057"
-DANGER_DARK = "#4A1520"
-WARNING = "#F0A030"
-SAFE = "#2DC66B"
-ON_GOLD = "#1A1408"         # text on gold buttons
-ALLY_RING = ui_kit.ALLY     # allied team ring (LoL blue)
+# Design tokens: docs/DESIGN.md ("régie esport": green-black graphite, ONE accent = TreeAI sap
+# green, semantic red / amber only for meaning, 1 px separators, 4 px radius). The historical
+# names (GOLD, TEAL...) are kept as aliases so that the rest of the module and the tests do not move.
+BG = "#0C0E0D"              # window / page background
+SURFACE = "#121513"         # sidebar, status strip, dialogs
+RAISED = "#191D1B"          # hover, inputs, secondary buttons
+SUNKEN = "#090B0A"          # wells (journal, gauge tracks)
+LINE = "#222725"            # 1 px separators
+LINE_STRONG = "#2F3532"     # control borders
+ACCENT = "#9BD84A"          # the only accent (TreeAI sap green)
+ACCENT_HOVER = "#B0E46C"
+ACCENT_DIM = "#3E5A1E"      # selected background
+ON_ACCENT = "#0C0E0D"
+PANEL = SURFACE             # legacy names -> tokens
+PANEL_HI = RAISED
+PANEL_LO = SUNKEN
+BORDER = LINE
+BORDER_GOLD = LINE_STRONG
+GOLD = ACCENT
+GOLD_HOVER = ACCENT_HOVER
+GOLD_DARK = ACCENT_DIM
+TEXT = "#E4E8E5"
+MUTED = "#8B948F"
+DIM = "#59615C"
+TEAL = ACCENT               # "active" = the accent too (one accent only)
+TEAL_DARK = ACCENT_DIM
+DANGER = "#E5484D"
+DANGER_DARK = "#3A1618"
+DANGER_HOVER = "#4E1D20"
+ON_DANGER = "#FFD7D8"
+WARNING = "#E8A23A"
+WARNING_BG = "#2A2010"
+SAFE = ACCENT               # semantic "ok" = the TreeAI green
+ON_GOLD = ON_ACCENT
+HOVER = "#212624"           # hover of raised elements
+SWITCH_OFF = "#2A302D"      # switch / slider track
+ALLY_RING = ui_kit.ALLY     # allied team ring (team colour, not an accent)
 ENEMY_RING = ui_kit.ENEMY   # enemy team ring
-TRACK = "#16213A"           # empty gauge segment / slider track
+TRACK = "#1C211F"           # empty gauge segment / slider track
+RADIUS = 4                  # controls
+EM_DASH = chr(0x2014)       # never shown (docs/DESIGN.md); used to parse / clean texts of other modules
+RADIUS_DIALOG = 6
 
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
 #: "jouer plus fort ou non" gauge step -> colour; tip tone -> colour (dashboard coach strip)
-GAUGE_UI_COLORS = {2: SAFE, 1: "#7FD69A", 0: MUTED, -1: WARNING, -2: DANGER}
-TIP_UI_COLORS = {"danger": "#FF8A9A", "warning": "#FFC46B", "go": "#8FE3AE", "info": TEXT}
+GAUGE_UI_COLORS = {2: SAFE, 1: "#C3E79A", 0: MUTED, -1: WARNING, -2: DANGER}
+TIP_UI_COLORS = {"danger": "#F2888B", "warning": "#F0BE6E", "go": "#C3E79A", "info": TEXT}
 THREAT_LABELS = {0: "SÛR", 1: "ATTENTION", 2: "DANGER"}
 LEVEL_COLORS = {0: TEXT, 1: WARNING, 2: DANGER}
 
-SIDEBAR_W = 226
+SIDEBAR_W = 192
 MIN_W, MIN_H = 980, 640
 DEFAULT_W, DEFAULT_H = 1100, 720
 RADAR_PX = 260
@@ -94,8 +114,8 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "TreeAICoach"
 
 PAGES: tuple[tuple[str, str, str], ...] = (
-    ("dashboard", "Tableau de bord", "dashboard"),
-    ("alerts", "Alertes & voix", "voice"),
+    ("dashboard", "En jeu", "dashboard"),
+    ("alerts", "Alertes", "voice"),
     ("overlay", "Overlay", "overlay"),
     ("analysis", "Analyses", "analysis"),
     ("settings", "Réglages", "settings"),
@@ -456,6 +476,21 @@ def circle_icon(icon_rgba: np.ndarray | None, size: int, ring: str | None, grey:
     return out.resize((size, size), Image.LANCZOS).convert("RGB")
 
 
+def square_icon(icon_rgba: np.ndarray | None, size: int, bg: str = PANEL, radius: int = 3) -> Image.Image:
+    """Champion portrait as a square with slightly rounded corners (tables), RGB on ``bg``."""
+    pil = _rgba_array_to_pil(icon_rgba) if icon_rgba is not None else None
+    if pil is None:
+        img = Image.new("RGBA", (size, size), _hex_rgb(PANEL_HI) + (255,))
+    else:
+        p = pil.convert("RGBA")
+        w, h = p.size
+        m = min(w, h)
+        c = int(m * 0.08)
+        img = p.crop(((w - m) // 2 + c, (h - m) // 2 + c, (w + m) // 2 - c, (h + m) // 2 - c)).resize(
+            (size, size), Image.LANCZOS)
+    return rounded_on_bg(img, radius, bg)
+
+
 def nav_icon(kind: str, size: int = 18, color: str = MUTED) -> Image.Image:
     """Small line icons of the sidebar (drawn with PIL, 4x supersampled)."""
     ss = 4
@@ -733,7 +768,7 @@ def _guarded(method: Callable[..., Any]) -> Callable[..., Any]:
 # Theme & widgets
 # ======================================================================================
 def _apply_theme(ctk: Any) -> None:
-    """Point every CustomTkinter default colour at the hextech palette (dark mode)."""
+    """Point every CustomTkinter default at the TreeAI tokens (docs/DESIGN.md): flat, 4 px radius."""
     ctk.set_appearance_mode("dark")
     try:
         ctk.set_default_color_theme("dark-blue")
@@ -748,72 +783,102 @@ def _apply_theme(ctk: Any) -> None:
 
     put("CTk", fg_color=BG)
     put("CTkToplevel", fg_color=BG)
-    put("CTkFrame", fg_color=PANEL, top_fg_color=PANEL_HI, border_color=BORDER, corner_radius=12)
-    put("CTkButton", fg_color=PANEL_HI, hover_color="#16284A", border_color=BORDER_GOLD,
-        text_color=TEXT, text_color_disabled=DIM, corner_radius=8)
-    put("CTkLabel", text_color=TEXT)
+    put("CTkFrame", fg_color=PANEL, top_fg_color=PANEL_HI, border_color=BORDER, corner_radius=RADIUS)
+    put("CTkButton", fg_color=PANEL_HI, hover_color=HOVER, border_color=BORDER_GOLD,
+        text_color=TEXT, text_color_disabled=DIM, corner_radius=RADIUS)
+    put("CTkLabel", text_color=TEXT, corner_radius=0)
     put("CTkEntry", fg_color=PANEL_LO, border_color=BORDER_GOLD, text_color=TEXT,
-        placeholder_text_color=DIM)
-    put("CTkCheckBox", fg_color=GOLD, border_color=GOLD_DARK, hover_color=GOLD_HOVER, checkmark_color=ON_GOLD,
-        text_color=TEXT, text_color_disabled=DIM)
-    put("CTkSwitch", fg_color="#1B2638", progress_color=TEAL, button_color=TEXT, button_hover_color="#FFFFFF",
-        text_color=TEXT, text_color_disabled=DIM)
-    put("CTkRadioButton", fg_color=GOLD, border_color=GOLD_DARK, hover_color=GOLD_HOVER, text_color=TEXT)
-    put("CTkProgressBar", fg_color="#1B2638", progress_color=TEAL, border_color=BORDER)
-    put("CTkSlider", fg_color="#1B2638", progress_color=GOLD_DARK, button_color=GOLD,
-        button_hover_color=GOLD_HOVER)
-    put("CTkOptionMenu", fg_color=PANEL_HI, button_color="#16284A", button_hover_color="#1D3560",
-        text_color=TEXT, text_color_disabled=DIM)
-    put("CTkComboBox", fg_color=PANEL_HI, border_color=BORDER_GOLD, button_color="#16284A",
-        button_hover_color="#1D3560", text_color=TEXT)
-    put("CTkScrollbar", fg_color="transparent", button_color="#1B2638", button_hover_color=GOLD_DARK)
-    put("CTkSegmentedButton", fg_color=PANEL_LO, selected_color=GOLD_DARK, selected_hover_color="#8C6A32",
+        placeholder_text_color=DIM, corner_radius=RADIUS, border_width=1)
+    put("CTkCheckBox", fg_color=GOLD, border_color=LINE_STRONG, hover_color=GOLD_HOVER, checkmark_color=ON_GOLD,
+        text_color=TEXT, text_color_disabled=DIM, corner_radius=3, border_width=2)
+    put("CTkSwitch", fg_color=SWITCH_OFF, progress_color=ACCENT, button_color=TEXT, button_hover_color="#FFFFFF",
+        text_color=TEXT, text_color_disabled=DIM, corner_radius=3, border_width=2, button_length=0)
+    put("CTkRadioButton", fg_color=GOLD, border_color=LINE_STRONG, hover_color=GOLD_HOVER, text_color=TEXT)
+    put("CTkProgressBar", fg_color=SWITCH_OFF, progress_color=ACCENT, border_color=BORDER, corner_radius=2)
+    put("CTkSlider", fg_color=SWITCH_OFF, progress_color=ACCENT_DIM, button_color=ACCENT,
+        button_hover_color=ACCENT_HOVER, corner_radius=2, button_corner_radius=3, button_length=0)
+    put("CTkOptionMenu", fg_color=PANEL_HI, button_color=PANEL_HI, button_hover_color=HOVER,
+        text_color=TEXT, text_color_disabled=DIM, corner_radius=RADIUS)
+    put("CTkComboBox", fg_color=PANEL_HI, border_color=BORDER_GOLD, button_color=HOVER,
+        button_hover_color=HOVER, text_color=TEXT, corner_radius=RADIUS, border_width=1)
+    put("CTkScrollbar", fg_color="transparent", button_color=SWITCH_OFF, button_hover_color=LINE_STRONG,
+        corner_radius=2)
+    put("CTkSegmentedButton", fg_color=PANEL_LO, selected_color=ACCENT_DIM, selected_hover_color=ACCENT_DIM,
         unselected_color=PANEL_LO, unselected_hover_color=PANEL_HI, text_color=TEXT,
-        text_color_disabled=DIM)
-    put("CTkTextbox", fg_color=PANEL, border_color=BORDER, text_color=TEXT, scrollbar_button_color="#1B2638",
-        scrollbar_button_hover_color=GOLD_DARK)
+        text_color_disabled=DIM, corner_radius=RADIUS, border_width=2)
+    put("CTkTextbox", fg_color=PANEL, border_color=BORDER, text_color=TEXT, scrollbar_button_color=SWITCH_OFF,
+        scrollbar_button_hover_color=LINE_STRONG, corner_radius=RADIUS)
     put("CTkScrollableFrame", label_fg_color=PANEL)
-    put("DropdownMenu", fg_color=PANEL_HI, hover_color="#1D3560", text_color=TEXT)
+    put("DropdownMenu", fg_color=PANEL_HI, hover_color=HOVER, text_color=TEXT)
+
+
+#: Body font candidates (Segoe UI on Windows). Inter / Poppins / Space Grotesk / Geist are
+#: deliberately absent: they are the "generated template" look (docs/DESIGN.md).
+BODY_FONTS: tuple[str, ...] = ("Segoe UI", "Segoe UI Variable Text", "Noto Sans", "DejaVu Sans",
+                               "Liberation Sans", "Helvetica", "Arial")
+#: Display font (numbers, titles): condensed, "broadcast" feel; falls back to the body font.
+DISPLAY_FONTS: tuple[str, ...] = ("Bahnschrift SemiBold", "Bahnschrift", "Segoe UI Variable Display Semib",
+                                  "Segoe UI Semibold", "DejaVu Sans Condensed", "Liberation Sans Narrow")
+
+
+def _families(root: Any) -> set[str]:
+    try:
+        import tkinter.font as tkfont  # noqa: PLC0415
+
+        return set(tkfont.families(root))
+    except Exception:
+        return set()
 
 
 def _pick_family(root: Any) -> str:
     """Segoe UI on Windows, else the best available sans-serif font."""
-    try:
-        import tkinter.font as tkfont  # noqa: PLC0415
-
-        fams = set(tkfont.families(root))
-    except Exception:
-        fams = set()
-    for fam in ("Segoe UI", "Segoe UI Variable Text", "Inter", "Noto Sans", "DejaVu Sans",
-                "Liberation Sans", "Helvetica", "Arial"):
+    fams = _families(root)
+    for fam in BODY_FONTS:
         if fam in fams:
             return fam
     return "TkDefaultFont"
 
 
-class _Fonts:
-    """The app's CTkFont set (created once the root exists)."""
+def _pick_display(root: Any, body: str) -> str:
+    """Bahnschrift (Windows 10+) for numbers and titles, else the body family."""
+    fams = _families(root)
+    for fam in DISPLAY_FONTS:
+        if fam in fams:
+            return fam
+    return body
 
-    def __init__(self, ctk: Any, family: str) -> None:
+
+class _Fonts:
+    """The app's CTkFont set (created once the root exists).
+
+    Three sizes only (docs/DESIGN.md): display 17 (titles, Bahnschrift), body 11, caption 9;
+    the big numbers (clock, stats) use the display face at 22. ``ui_scale`` scales them all.
+    """
+
+    def __init__(self, ctk: Any, family: str, display: str | None = None) -> None:
         f = family
+        d = display or family
+        dw = "normal" if "Semi" in d or "Bold" in d else "bold"
         self.family = f
-        self.brand = ctk.CTkFont(family=f, size=16, weight="bold")
-        self.title = ctk.CTkFont(family=f, size=21, weight="bold")
-        self.h2 = ctk.CTkFont(family=f, size=14, weight="bold")
-        self.h3 = ctk.CTkFont(family=f, size=12, weight="bold")
-        self.body = ctk.CTkFont(family=f, size=12)
+        self.display = d
+        self.brand = ctk.CTkFont(family=d, size=15, weight=dw)
+        self.title = ctk.CTkFont(family=d, size=17, weight=dw)
+        self.h2 = ctk.CTkFont(family=f, size=11, weight="bold")
+        self.h3 = ctk.CTkFont(family=f, size=11, weight="bold")
+        self.body = ctk.CTkFont(family=f, size=11)
         self.small = ctk.CTkFont(family=f, size=11)
         self.tiny = ctk.CTkFont(family=f, size=10)
         self.tiny_bold = ctk.CTkFont(family=f, size=10, weight="bold")
         self.caps = ctk.CTkFont(family=f, size=9, weight="bold")
-        self.nav = ctk.CTkFont(family=f, size=13)
-        self.nav_active = ctk.CTkFont(family=f, size=13, weight="bold")
-        self.button = ctk.CTkFont(family=f, size=12, weight="bold")
-        self.big_button = ctk.CTkFont(family=f, size=14, weight="bold")
-        self.state = ctk.CTkFont(family=f, size=17, weight="bold")
-        self.clock = ctk.CTkFont(family=f, size=25, weight="bold")
-        self.stat = ctk.CTkFont(family=f, size=23, weight="bold")
-        self.threat = ctk.CTkFont(family=f, size=16, weight="bold")
+        self.nav = ctk.CTkFont(family=f, size=11)
+        self.nav_active = ctk.CTkFont(family=f, size=11, weight="bold")
+        self.button = ctk.CTkFont(family=f, size=11, weight="bold")
+        self.big_button = ctk.CTkFont(family=d, size=13, weight=dw)
+        self.state = ctk.CTkFont(family=d, size=17, weight=dw)
+        self.clock = ctk.CTkFont(family=d, size=22, weight=dw)
+        self.stat = ctk.CTkFont(family=d, size=22, weight=dw)
+        self.num = ctk.CTkFont(family=d, size=13, weight=dw)
+        self.threat = ctk.CTkFont(family=d, size=13, weight=dw)
 
 
 # ======================================================================================
@@ -862,14 +927,15 @@ class _CanvasBadge:
 
 
 class HeroBanner:
-    """Dashboard hero: state + pulse, game clock, segmented threat gauge and the start button.
+    """Dashboard status strip: live state, lane match-up, threat gauge, objective timers, clock, button.
 
-    Everything is drawn on one ``tk.Canvas`` over a PIL "hextech" background (gradient, coloured
-    glow on the left following the state / threat, gold rule). The background ``PhotoImage`` is
-    created with the canvas as master and kept on ``self`` (no "pyimage doesn't exist").
+    Everything is drawn on one ``tk.Canvas`` over a flat PIL background (graphite panel, 1 px
+    border, 3 px state bar on the left: docs/DESIGN.md). The match-up block is a small frame put on
+    the canvas with ``create_window``. The background ``PhotoImage`` is created with the canvas as
+    master and kept on ``self`` (no "pyimage doesn't exist").
     """
 
-    SEGMENTS = 18
+    SEGMENTS = 20
 
     def __init__(self, app: "CoachApp", parent: Any) -> None:
         import tkinter as tk  # noqa: PLC0415
@@ -877,43 +943,48 @@ class HeroBanner:
         self.app = app
         s = app._scaled
         self.s = s
-        self.h = s(132)
+        self.h = s(112)
         fam, px = app.fonts.family, app._font_px
+        disp = getattr(app.fonts, "display", fam)
+        dw = "normal" if ("Semi" in disp or "Bold" in disp) else "bold"
         c = tk.Canvas(parent, height=self.h, bg=BG, highlightthickness=0, bd=0)
         self.canvas = c
         self._photo: Any = None
         self._glow = DIM
         self._rendered: tuple = ()
         self._bg_job: str | None = None
-        self.dot_bg = "#0E1D38"
+        self.dot_bg = PANEL
         self.right_bg = PANEL
-        self._dot = (s(40), s(44))
+        self._dot = (s(30), s(34))
         self._gauge_box: tuple[float, float, float, float] | None = None
         self._bg_item = c.create_image(0, 0, anchor="nw")
         self.halo = c.create_oval(0, 0, 0, 0, fill="", outline="")
-        self.ring = c.create_oval(0, 0, 0, 0, fill="", outline=DIM, width=max(1, s(1)))
+        self.ring = c.create_oval(0, 0, 0, 0, fill="", outline="")
         self.core = c.create_oval(0, 0, 0, 0, fill=DIM, outline="")
         self.title_item = c.create_text(0, 0, anchor="w", text="Démarrage…", fill=TEXT,
-                                        font=(fam, px(20), "bold"))
-        self.msg_item = c.create_text(0, 0, anchor="nw", text="", fill=MUTED, font=(fam, px(12)))
-        self.badge_bg = c.create_rectangle(0, 0, 0, 0, fill=GOLD, outline="", state="hidden")
-        self.badge_txt = c.create_text(0, 0, text="DÉMO", fill=ON_GOLD, font=(fam, px(9), "bold"),
+                                        font=(disp, px(17), dw))
+        self.msg_item = c.create_text(0, 0, anchor="nw", text="", fill=MUTED, font=(fam, px(11)))
+        self.badge_bg = c.create_rectangle(0, 0, 0, 0, fill="", outline=WARNING, state="hidden")
+        self.badge_txt = c.create_text(0, 0, text="DÉMO", fill=WARNING, font=(fam, px(8), "bold"),
                                        state="hidden")
-        self.vsep = c.create_line(0, 0, 0, 0, fill=_blend(GOLD_DARK, PANEL, 0.45))
-        self.clock_cap = c.create_text(0, 0, text=ui_kit.caps("chrono"), fill=DIM, font=(fam, px(9), "bold"))
-        self.clock_item = c.create_text(0, 0, text="--:--", fill=DIM, font=(fam, px(30), "bold"))
-        self.rule = c.create_line(0, 0, 0, 0, fill=_blend(BORDER, PANEL, 0.1))
-        self.threat_cap = c.create_text(0, 0, anchor="w", text=ui_kit.caps("menace"), fill=DIM,
-                                        font=(fam, px(9), "bold"))
-        self.threat_item = c.create_text(0, 0, anchor="w", text="—", fill=DIM, font=(fam, px(14), "bold"))
-        self.detail_item = c.create_text(0, 0, anchor="w", text="Hors partie", fill=MUTED, font=(fam, px(12)))
-        self.segs = [c.create_polygon(0, 0, 0, 0, 0, 0, fill=TRACK, outline="") for _ in range(self.SEGMENTS)]
+        self.vsep = c.create_line(0, 0, 0, 0, fill=LINE)
+        self.clock_cap = c.create_text(0, 0, text="CHRONO", fill=DIM, font=(fam, px(9), "bold"))
+        self.clock_item = c.create_text(0, 0, text="--:--", fill=DIM, font=(disp, px(24), dw))
+        self.timers_item = c.create_text(0, 0, text="", fill=MUTED, font=(fam, px(10)), anchor="e")
+        self.rule = c.create_line(0, 0, 0, 0, fill=LINE)
+        self.threat_cap = c.create_text(0, 0, anchor="w", text="MENACE", fill=DIM, font=(fam, px(9), "bold"))
+        self.threat_item = c.create_text(0, 0, anchor="w", text="-", fill=DIM, font=(disp, px(13), dw))
+        self.detail_item = c.create_text(0, 0, anchor="w", text="Hors partie", fill=MUTED, font=(fam, px(11)))
+        self.segs = [c.create_rectangle(0, 0, 0, 0, fill=TRACK, outline="") for _ in range(self.SEGMENTS)]
         self._button_win: int | None = None
+        self._mu_win: int | None = None
+        self._mu_widget: Any = None
         self._badge = False
         self._detail_full = "Hors partie"
         self.title = _CanvasText(c, self.title_item, self.layout)
         self.msg = _CanvasText(c, self.msg_item)
         self.clock = _CanvasText(c, self.clock_item)
+        self.timers = _CanvasText(c, self.timers_item, self.layout)
         self.threat = _CanvasText(c, self.threat_item, self.layout)
         self.detail = _CanvasText(c, self.detail_item, self._fit_detail)
         self.badge = _CanvasBadge(self)
@@ -922,6 +993,12 @@ class HeroBanner:
     # ---------------------------------------------------------------- geometry
     def attach_button(self, btn: Any) -> None:
         self._button_win = self.canvas.create_window(0, 0, window=btn, anchor="e")
+        self.layout()
+
+    def attach_matchup(self, widget: Any) -> None:
+        """Lane match-up block (my portrait VS my lane opponent) placed in the strip."""
+        self._mu_widget = widget
+        self._mu_win = self.canvas.create_window(0, 0, window=widget, anchor="e")
         self.layout()
 
     def set_badge(self, on: bool) -> None:
@@ -937,39 +1014,53 @@ class HeroBanner:
         try:
             w = max(s(420), int(c.winfo_width()))
             h = self.h
-            pad = s(24)
-            top = s(50)
+            pad = s(16)
+            top = s(34)                 # centre line of the upper row
             btn_w = 0
             if self._button_win is not None:
                 btn_w = int(self.app.btn_start.winfo_reqwidth())
                 c.coords(self._button_win, w - pad, top)
-            clock_x = w - pad - btn_w - s(62)
-            c.coords(self.clock_cap, clock_x, top - s(19))
-            c.coords(self.clock_item, clock_x, top + s(7))
-            c.coords(self.vsep, clock_x - s(58), top - s(24), clock_x - s(58), top + s(24))
-            dx, dy = pad + s(14), top - s(6)
+            clock_x = w - pad - btn_w - s(16)          # right edge of the clock block
+            c.itemconfigure(self.clock_cap, anchor="e")
+            c.itemconfigure(self.clock_item, anchor="e")
+            c.coords(self.clock_cap, clock_x, top - s(17))
+            c.coords(self.clock_item, clock_x, top + s(4))
+            cb = c.bbox(self.clock_item)
+            clock_left = (cb[0] if cb else clock_x - s(80)) - s(16)
+            c.coords(self.vsep, clock_left, top - s(20), clock_left, top + s(20))
+            right_limit = clock_left - s(16)
+            if self._mu_win is not None:
+                c.coords(self._mu_win, right_limit, top)
+                mw = int(self._mu_widget.winfo_reqwidth()) if self._mu_widget is not None else 0
+                right_limit -= mw + s(16)
+            dx, dy = pad + s(10), top - s(7)
             self._dot = (dx, dy)
-            c.coords(self.core, dx - s(6), dy - s(6), dx + s(6), dy + s(6))
-            c.coords(self.ring, dx - s(10), dy - s(10), dx + s(10), dy + s(10))
-            tx = pad + s(38)
-            c.coords(self.title_item, tx, top - s(14))
+            c.coords(self.core, dx - s(4), dy - s(4), dx + s(4), dy + s(4))
+            tx = pad + s(24)
+            c.coords(self.title_item, tx, top - s(7))
             bb = c.bbox(self.title_item)
             if bb and self._badge:
                 bx = bb[2] + s(10)
-                c.coords(self.badge_bg, bx, top - s(23), bx + s(46), top - s(5))
-                c.coords(self.badge_txt, bx + s(23), top - s(14))
-            c.coords(self.msg_item, tx, top + s(3))
-            c.itemconfigure(self.msg_item, width=max(s(120), clock_x - s(70) - tx))
-            # threat row
-            ty = h - s(26)
-            c.coords(self.rule, pad, ty - s(22), w - pad, ty - s(22))
+                c.coords(self.badge_bg, bx, top - s(14), bx + s(38), top)
+                c.coords(self.badge_txt, bx + s(19), top - s(7))
+            c.coords(self.msg_item, tx, top + s(5))
+            c.itemconfigure(self.msg_item, width=max(s(120), right_limit - tx))
+            # lower row: threat + gauge (left), objective timers (right)
+            ty = h - s(20)
+            c.coords(self.rule, s(3), ty - s(18), w - 1, ty - s(18))
             c.coords(self.threat_cap, pad, ty)
-            c.coords(self.threat_item, pad + s(66), ty)
+            c.coords(self.threat_item, pad + s(56), ty)
             tb = c.bbox(self.threat_item)
-            dx0 = (tb[2] if tb else pad + s(150)) + s(12)
+            dx0 = (tb[2] if tb else pad + s(140)) + s(10)
             c.coords(self.detail_item, dx0, ty)
-            gx0 = max(int(w * 0.56), dx0 + s(110))
-            self._gauge_box = (gx0, ty - s(6), w - pad - s(26), ty + s(6))
+            c.coords(self.timers_item, w - pad, ty)
+            tib = c.bbox(self.timers_item)
+            t_left = (tib[0] if tib and c.itemcget(self.timers_item, "text") else w - pad)
+            gx1 = t_left - s(20)
+            gx0 = max(int(w * 0.40), dx0 + s(120))
+            if gx1 - gx0 < s(80):
+                gx0 = gx1 - s(80)
+            self._gauge_box = (gx0, ty - s(4), gx1, ty + s(4))
             self._fit_detail()
             self.draw_gauge(self.app._gauge_frac, self.app._gauge_color)
         except Exception:
@@ -1000,30 +1091,24 @@ class HeroBanner:
             return
         c, n = self.canvas, self.SEGMENTS
         x0, y0, x1, y1 = box
-        gap = self.s(3)
-        skew = self.s(4)
-        sw = max(2.0, (x1 - x0 - skew - (n - 1) * gap) / n)
+        gap = max(1, self.s(2))
+        sw = max(2.0, (x1 - x0 - (n - 1) * gap) / n)
         lit = max(0.0, min(1.0, frac)) * n
         for i, item in enumerate(self.segs):
             a = x0 + i * (sw + gap)
-            c.coords(item, a + skew, y0, a + sw + skew, y0, a + sw, y1, a, y1)
+            c.coords(item, a, y0, a + sw, y1)
             k = min(1.0, max(0.0, lit - i))
-            if k <= 0:
-                fill = TRACK
-            else:
-                ramp = 0.55 * (1 - i / max(1, n - 1))          # brighter towards the lit end
-                fill = _blend(_blend(color, TRACK, ramp), TRACK, 1 - k)
+            fill = TRACK if k <= 0 else _blend(color, TRACK, 1 - k)
             c.itemconfigure(item, fill=fill)
 
     def pulse(self, color: str, k: float, active: bool) -> None:
+        """Live dot: a square that breathes only while a game is analysed."""
         x, y = self._dot
         s = self.s
-        r = s(7) + s(12) * k
         c = self.canvas
-        c.coords(self.halo, x - r, y - r, x + r, y + r)
-        c.itemconfigure(self.halo, fill=_blend(color, self.dot_bg, 0.45 + 0.5 * k) if active else self.dot_bg)
-        c.itemconfigure(self.ring, outline=_blend(color, self.dot_bg, 0.35))
-        c.itemconfigure(self.core, fill=color)
+        r = s(4) + (s(2) * k if active else 0)
+        c.coords(self.core, x - r, y - r, x + r, y + r)
+        c.itemconfigure(self.core, fill=_blend(color, PANEL, 0.25 * k) if active else color)
 
     # ---------------------------------------------------------------- background
     def set_glow(self, color: str) -> None:
@@ -1054,8 +1139,8 @@ class HeroBanner:
             sig = (w, h, self._glow)
             if sig != self._rendered:
                 self._rendered = sig
-                img = ui_kit.hero_background(w, h, self._glow, bg=BG, panel=PANEL, border=BORDER_GOLD,
-                                             gold=GOLD, radius=self.s(14))
+                img = ui_kit.hero_background(w, h, self._glow, bg=BG, panel=PANEL, border=LINE,
+                                             gold=GOLD, radius=RADIUS)
                 photo = ImageTk.PhotoImage(img, master=c)
                 c.itemconfigure(self._bg_item, image=photo)
                 self._photo = photo           # keep the reference (Tk does not)
@@ -1144,7 +1229,8 @@ class CoachApp:
         # saved "withdrawn" state after colouring the title bar and the window never shows.
         self.root.title(APP_NAME)
         self.root.report_callback_exception = self._tk_exception
-        self.fonts = _Fonts(ctk, _pick_family(self.root))
+        _body = _pick_family(self.root)
+        self.fonts = _Fonts(ctk, _body, _pick_display(self.root, _body))
         self._set_window_icon(self.root)
         self._apply_geometry()
         self.root.minsize(MIN_W, MIN_H)
@@ -1192,6 +1278,7 @@ class CoachApp:
         self._start_backend()
         if paths.is_frozen() and self.cfg.check_updates_on_start:   # silent update check (updater.py)
             self.root.after(UPDATE_CHECK_DELAY_MS, self._startup_update_check)
+        self.root.after(2500, self.cb(self._check_last_update))      # did the last update apply?
 
     # ------------------------------------------------------------------ infrastructure
     def cb(self, fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -1349,9 +1436,17 @@ class CoachApp:
 
     # ------------------------------------------------------------------ small widget factories
     def _card(self, parent: Any, **kw: Any) -> Any:
-        opts = dict(fg_color=PANEL, corner_radius=14, border_width=1, border_color=BORDER)
+        opts = dict(fg_color=PANEL, corner_radius=RADIUS, border_width=1, border_color=BORDER)
         opts.update(kw)
         return self.ctk.CTkFrame(parent, **opts)
+
+    def _hline(self, parent: Any, color: str = LINE) -> Any:
+        """1 px separator (the design uses lines, not nested boxes)."""
+        return self.ctk.CTkFrame(parent, height=1, fg_color=color, corner_radius=0)
+
+    def _caption(self, parent: Any, text: str, color: str = DIM, **kw: Any) -> Any:
+        """Caption style: small spaced capitals (column headers, section titles)."""
+        return self._label(parent, str(text).upper(), self.fonts.caps, color, **kw)
 
     def _label(self, parent: Any, text: str = "", font: Any = None, color: str = TEXT, **kw: Any) -> Any:
         kw.setdefault("height", 1)      # size to the text (CTkLabel's default minimum is 28 px)
@@ -1426,20 +1521,19 @@ class CoachApp:
     def _button(self, parent: Any, text: str, command: Callable[[], Any], kind: str = "secondary",
                 icon: str | None = None, **kw: Any) -> Any:
         styles = {
-            "primary": dict(fg_color=GOLD, hover_color=GOLD_HOVER, text_color=ON_GOLD, border_width=0),
-            "secondary": dict(fg_color=PANEL_HI, hover_color="#16284A", text_color=TEXT, border_width=1,
-                              border_color=BORDER_GOLD),
-            "ghost": dict(fg_color="transparent", hover_color=PANEL_HI, text_color=GOLD, border_width=1,
-                          border_color=GOLD_DARK),
-            "danger": dict(fg_color=DANGER_DARK, hover_color="#6A1D2C", text_color="#FFD9DF", border_width=1,
+            "primary": dict(fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=ON_ACCENT, border_width=0),
+            "secondary": dict(fg_color=PANEL_HI, hover_color=HOVER, text_color=TEXT, border_width=1,
+                              border_color=LINE_STRONG),
+            "ghost": dict(fg_color="transparent", hover_color=PANEL_HI, text_color=TEXT, border_width=0),
+            "danger": dict(fg_color=DANGER_DARK, hover_color=DANGER_HOVER, text_color=ON_DANGER, border_width=1,
                            border_color=DANGER),
         }
-        opts: dict[str, Any] = dict(height=34, corner_radius=8, font=self.fonts.button,
+        opts: dict[str, Any] = dict(height=30, corner_radius=RADIUS, font=self.fonts.button,
                                     text_color_disabled=DIM)
         opts.update(styles.get(kind, styles["secondary"]))
         if icon:
-            col = ON_GOLD if kind == "primary" else (GOLD if kind == "ghost" else MUTED)
-            opts["image"] = self._icon(icon, 16, col)
+            col = ON_ACCENT if kind == "primary" else MUTED
+            opts["image"] = self._icon(icon, 14, col)
             opts["compound"] = "left"
         opts.update(kw)
         return self.ctk.CTkButton(parent, text=text, command=self.cb(command), **opts)
@@ -1467,59 +1561,121 @@ class CoachApp:
         page.grid_columnconfigure(0, weight=1)
         page.grid_rowconfigure(1, weight=1)
         head = ctk.CTkFrame(page, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=28, pady=(20, 12))
+        head.grid(row=0, column=0, sticky="ew", padx=24, pady=(16, 0))
         head.grid_columnconfigure(0, weight=1)
         tl = ctk.CTkFrame(head, fg_color="transparent")
         tl.grid(row=0, column=0, sticky="w")
-        if icon:
-            ctk.CTkLabel(tl, text="", image=self._icon(icon, 22, GOLD), fg_color="transparent", width=24).grid(
-                row=0, column=0, padx=(0, 10))
-        self._label(tl, title, self.fonts.title, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
-        ctk.CTkLabel(head, text="", image=self._rule_image(), fg_color="transparent", height=2).grid(
-            row=1, column=0, sticky="w", pady=(6, 0))
-        sub = self._label(head, subtitle, self.fonts.small, MUTED, anchor="w")
-        sub.grid(row=2, column=0, sticky="w", pady=(5, 0))
+        self._label(tl, title, self.fonts.title, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
+        sub = self._label(tl, subtitle, self.fonts.small, MUTED, anchor="w")
+        sub.grid(row=0, column=1, sticky="w", padx=(12, 0), pady=(4, 0))
         page.subtitle = sub  # type: ignore[attr-defined]
         right = ctk.CTkFrame(head, fg_color="transparent", width=1, height=1)
-        right.grid(row=0, column=1, rowspan=3, sticky="e")
+        right.grid(row=0, column=1, sticky="e")
+        page.head = head  # type: ignore[attr-defined]
+        self._hline(page).grid(row=0, column=0, sticky="sew", padx=24)
+        head.grid_configure(pady=(16, 12))
         if scroll:
             body = ctk.CTkScrollableFrame(page, fg_color=BG, corner_radius=0,
-                                          scrollbar_button_color="#1B2638",
-                                          scrollbar_button_hover_color=GOLD_DARK)
-            body.grid(row=1, column=0, sticky="nsew", padx=(16, 6), pady=(0, 12))
+                                          scrollbar_button_color=SWITCH_OFF,
+                                          scrollbar_button_hover_color=LINE_STRONG)
+            body.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=(12, 8))
             body.grid_columnconfigure(0, weight=1)
             page.scroll_frame = body  # type: ignore[attr-defined]
             inner = ctk.CTkFrame(body, fg_color="transparent")
-            inner.grid(row=0, column=0, sticky="nsew", padx=(12, 14))
+            inner.grid(row=0, column=0, sticky="nsew", padx=(12, 12))
             inner.grid_columnconfigure(0, weight=1)
             return page, right, inner
         body = ctk.CTkFrame(page, fg_color="transparent")
-        body.grid(row=1, column=0, sticky="nsew", padx=28, pady=(0, 22))
+        body.grid(row=1, column=0, sticky="nsew", padx=24, pady=(12, 16))
         return page, right, body
 
     def _section(self, parent: Any, row: int, title: str, subtitle: str | None = None,
                  icon: str | None = None) -> Any:
-        """A titled card; returns its content frame (1 column, rows added by the caller)."""
-        card = self._card(parent)
-        card.grid(row=row, column=0, sticky="ew", pady=(0, 14))
+        """A titled section (caption title + 1 px rule, no box); returns its content frame."""
+        card = self.ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+        card.grid(row=row, column=0, sticky="ew", pady=(0, 20))
+        card.title = title  # type: ignore[attr-defined]
+        try:
+            parent._sections.append(card)
+        except AttributeError:
+            parent._sections = [card]
         card.grid_columnconfigure(0, weight=1)
         th = self.ctk.CTkFrame(card, fg_color="transparent")
-        th.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 0 if subtitle else 4))
+        th.grid(row=0, column=0, sticky="ew", padx=0, pady=(0, 0))
         th.grid_columnconfigure(1, weight=1)
-        if icon:
-            self.ctk.CTkLabel(th, text="", image=self._icon(icon, 16, GOLD), fg_color="transparent",
-                              width=18).grid(row=0, column=0, padx=(0, 8))
-        self._label(th, title, self.fonts.h2, GOLD, anchor="w").grid(row=0, column=1, sticky="w")
+        self._caption(th, title, MUTED, anchor="w").grid(row=0, column=1, sticky="w")
         card.head = th  # type: ignore[attr-defined]
+        self._hline(card, LINE_STRONG).grid(row=1, column=0, sticky="ew", pady=(4, 0))
         if subtitle:
-            self._label(card, subtitle, self.fonts.tiny, MUTED, anchor="w", justify="left", wraplength=640).grid(
-                row=1, column=0, sticky="w", padx=20, pady=(4, 4))
+            self._label(card, subtitle, self.fonts.tiny, DIM, anchor="w", justify="left", wraplength=640).grid(
+                row=2, column=0, sticky="w", pady=(6, 0))
         body = self.ctk.CTkFrame(card, fg_color="transparent")
-        body.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 12))
+        body.grid(row=3, column=0, sticky="ew", padx=0, pady=(0, 0))
         body.grid_columnconfigure(0, weight=1)
         body._rows = 0  # type: ignore[attr-defined]
         body.card = card  # type: ignore[attr-defined]
         return body
+
+    def _tabs(self, page: Any, body: Any, groups: Sequence[tuple[str, Sequence[str]]],
+              default: str | None = None) -> dict[str, Any]:
+        """Underlined tabs in the page header showing one group of sections at a time.
+
+        ``groups`` = (tab label, section titles); sections not listed go to the last tab
+        (usually "Avancé", i.e. collapsed by default). Returns {label: button}.
+        """
+        ctk = self.ctk
+        sections = list(getattr(body, "_sections", []))
+        bar = ctk.CTkFrame(page.head, fg_color="transparent")
+        bar.grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        labels = [g for g, _t in groups]
+        owner: dict[int, str] = {}
+        for g, titles in groups:
+            for card in sections:
+                if getattr(card, "title", None) in titles:
+                    owner[id(card)] = g
+        for card in sections:
+            owner.setdefault(id(card), labels[-1])
+        btns: dict[str, Any] = {}
+        unders: dict[str, Any] = {}
+        state = {"cur": None}
+
+        def select(label: str) -> None:
+            if state["cur"] == label:
+                return
+            state["cur"] = label
+            for card in sections:
+                if owner[id(card)] == label:
+                    card.grid()
+                else:
+                    card.grid_remove()
+            for g, b in btns.items():
+                on = g == label
+                b.configure(text_color=TEXT if on else MUTED, font=self.fonts.nav_active if on else self.fonts.nav)
+                unders[g].configure(fg_color=ACCENT if on else "transparent")
+            try:
+                page.scroll_frame._parent_canvas.yview_moveto(0)
+            except Exception:
+                pass
+
+        for i, g in enumerate(labels):
+            if not any(owner[id(c)] == g for c in sections):
+                continue
+            try:
+                tw = int(self.fonts.nav_active.measure(g)) + 6
+            except Exception:
+                tw = 8 * len(g)
+            b = ctk.CTkButton(bar, text=g, width=tw, height=24, corner_radius=0, fg_color="transparent",
+                              hover_color=BG, text_color=MUTED, font=self.fonts.nav,
+                              command=self.cb(lambda gg=g: select(gg)))
+            b.grid(row=0, column=i, padx=(0, 14), sticky="w")
+            u = ctk.CTkFrame(bar, width=1, height=2, corner_radius=0, fg_color="transparent")
+            u.grid(row=1, column=i, padx=(0, 14), sticky="ew")
+            btns[g], unders[g] = b, u
+        page.select_tab = select  # type: ignore[attr-defined]
+        first = default if default in btns else next(iter(btns), None)
+        if first is not None:
+            select(first)
+        return btns
 
     def _row(self, body: Any, title: str, desc: str | None = None) -> tuple[Any, Any]:
         """A setting row (title + description on the left, control slot on the right)."""
@@ -1529,17 +1685,17 @@ class CoachApp:
             ctk.CTkFrame(body, height=1, fg_color=BORDER, corner_radius=0).grid(
                 row=2 * r - 1, column=0, sticky="ew", pady=0)
         row = ctk.CTkFrame(body, fg_color="transparent")
-        row.grid(row=2 * r, column=0, sticky="ew", pady=12)
+        row.grid(row=2 * r, column=0, sticky="ew", pady=8)
         row.grid_columnconfigure(0, weight=1)
         body._rows = r + 1
         left = ctk.CTkFrame(row, fg_color="transparent")
         left.grid(row=0, column=0, sticky="w")
-        self._label(left, title, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
+        self._label(left, title, self.fonts.body, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
         desc_lbl = None
         if desc:
-            desc_lbl = self._label(left, desc, self.fonts.tiny, MUTED, anchor="w", justify="left",
+            desc_lbl = self._label(left, desc, self.fonts.tiny, DIM, anchor="w", justify="left",
                                    wraplength=430)
-            desc_lbl.grid(row=1, column=0, sticky="w", pady=(3, 0))
+            desc_lbl.grid(row=1, column=0, sticky="w", pady=(1, 0))
         slot = ctk.CTkFrame(row, fg_color="transparent")
         slot.grid(row=0, column=1, sticky="e", padx=(16, 0))
         slot.desc_label = desc_lbl  # type: ignore[attr-defined]
@@ -1559,7 +1715,7 @@ class CoachApp:
                 on_change(bool(var.get()))
 
         sw = self.ctk.CTkSwitch(slot, text="", variable=var, command=self.cb(changed), width=46,
-                                switch_width=42, switch_height=22, fg_color="#1B2638", progress_color=TEAL,
+                                switch_width=34, switch_height=16, fg_color=SWITCH_OFF, progress_color=TEAL,
                                 button_color=TEXT, button_hover_color="#FFFFFF")
         sw.grid(row=0, column=0)
         self._widgets_by_field[field] = lambda: var.set(bool(getattr(self.cfg, field)))
@@ -1582,7 +1738,7 @@ class CoachApp:
                 on_change(val)
 
         sl = self.ctk.CTkSlider(slot, from_=lo, to=hi, number_of_steps=steps, width=210, height=18,
-                                command=self.cb(moved), fg_color="#1B2638", progress_color=GOLD_DARK,
+                                command=self.cb(moved), fg_color=SWITCH_OFF, progress_color=GOLD_DARK,
                                 button_color=GOLD, button_hover_color=GOLD_HOVER)
         sl.set(to_float(getattr(self.cfg, field)))
         sl.grid(row=0, column=0, padx=(0, 8))
@@ -1612,18 +1768,18 @@ class CoachApp:
             refresh()
 
         if segmented:
-            w = self.ctk.CTkSegmentedButton(slot, values=labels, command=self.cb(changed), height=32,
+            w = self.ctk.CTkSegmentedButton(slot, values=labels, command=self.cb(changed), height=28,
                                             font=self.fonts.small, fg_color=PANEL_LO,
-                                            selected_color=GOLD_DARK, selected_hover_color="#8C6A32",
+                                            selected_color=GOLD_DARK, selected_hover_color=ACCENT_DIM,
                                             unselected_color=PANEL_LO, unselected_hover_color=PANEL_HI,
-                                            text_color=TEXT, corner_radius=8)
+                                            text_color=TEXT, corner_radius=RADIUS)
         else:
-            w = self.ctk.CTkOptionMenu(slot, values=labels, command=self.cb(changed), width=width, height=32,
+            w = self.ctk.CTkOptionMenu(slot, values=labels, command=self.cb(changed), width=width, height=28,
                                        font=self.fonts.small, dropdown_font=self.fonts.small,
-                                       fg_color=PANEL_HI, button_color="#16284A", button_hover_color="#1D3560",
+                                       fg_color=PANEL_HI, button_color=HOVER, button_hover_color=HOVER,
                                        text_color=TEXT, dropdown_fg_color=PANEL_HI,
-                                       dropdown_hover_color="#1D3560", dropdown_text_color=TEXT,
-                                       corner_radius=8, dynamic_resizing=False)
+                                       dropdown_hover_color=HOVER, dropdown_text_color=TEXT,
+                                       corner_radius=RADIUS, dynamic_resizing=False)
         w.grid(row=0, column=0)
 
         def refresh() -> None:
@@ -1635,40 +1791,39 @@ class CoachApp:
     # ------------------------------------------------------------------ sidebar
     def _build_sidebar(self) -> None:
         ctk = self.ctk
-        sb = ctk.CTkFrame(self.root, width=SIDEBAR_W, fg_color=PANEL_LO, corner_radius=0)
+        sb = ctk.CTkFrame(self.root, width=SIDEBAR_W, fg_color=SURFACE, corner_radius=0)
         sb.grid(row=0, column=0, sticky="nsw")
         sb.grid_propagate(False)
         sb.grid_columnconfigure(0, weight=1)
         sb.grid_rowconfigure(3, weight=1)
         # right edge line (gold, subtle)
-        ctk.CTkFrame(self.root, width=1, fg_color=BORDER_GOLD, corner_radius=0).grid(
+        ctk.CTkFrame(self.root, width=1, fg_color=LINE, corner_radius=0).grid(
             row=0, column=0, sticky="nse")
 
         brand = ctk.CTkFrame(sb, fg_color="transparent")
-        brand.grid(row=0, column=0, sticky="ew", padx=18, pady=(20, 16))
-        logo = load_logo(84)
-        self._images["logo"] = ctk.CTkImage(light_image=logo, dark_image=logo, size=(42, 42))
+        brand.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 14))
+        logo = load_logo(64)
+        self._images["logo"] = ctk.CTkImage(light_image=logo, dark_image=logo, size=(28, 28))
         ctk.CTkLabel(brand, text="", image=self._images["logo"], fg_color="transparent").grid(
-            row=0, column=0, rowspan=2, padx=(0, 10))
-        self._label(brand, "TreeAI Coach", self.fonts.brand, GOLD, anchor="w").grid(
+            row=0, column=0, rowspan=2, padx=(0, 8))
+        self._label(brand, "TreeAI Coach", self.fonts.brand, TEXT, anchor="w").grid(
             row=0, column=1, sticky="sw")
-        self._label(brand, "Coach anti-gank", self.fonts.tiny, MUTED, anchor="w").grid(
-            row=1, column=1, sticky="nw", pady=(2, 0))
+        self._label(brand, f"v{__version__}", self.fonts.tiny, DIM, anchor="w").grid(
+            row=1, column=1, sticky="nw")
 
+        self._hline(sb).grid(row=1, column=0, sticky="new")
         nav = ctk.CTkFrame(sb, fg_color="transparent")
-        nav.grid(row=1, column=0, sticky="new", padx=10)
+        nav.grid(row=1, column=0, sticky="new", pady=(8, 0))
         nav.grid_columnconfigure(1, weight=1)
-        self._label(nav, "NAVIGATION", self.fonts.caps, DIM, anchor="w").grid(
-            row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 6))
         self._nav: dict[str, tuple[Any, Any, str]] = {}
         for i, (key, label, icon) in enumerate(PAGES, start=1):
-            ind = ctk.CTkFrame(nav, width=3, height=24, fg_color="transparent", corner_radius=2)
-            ind.grid(row=i, column=0, sticky="w", padx=(0, 4))
-            btn = ctk.CTkButton(nav, text="  " + label, anchor="w", height=38, corner_radius=8,
+            ind = ctk.CTkFrame(nav, width=3, height=30, fg_color="transparent", corner_radius=0)
+            ind.grid(row=i, column=0, sticky="nsw")
+            btn = ctk.CTkButton(nav, text=" " + label, anchor="w", height=30, corner_radius=0,
                                 fg_color="transparent", hover_color=PANEL_HI, text_color=MUTED,
-                                font=self.fonts.nav, image=self._icon(icon, 18, MUTED), compound="left",
+                                font=self.fonts.nav, image=self._icon(icon, 16, MUTED), compound="left",
                                 command=self.cb(lambda k=key: self.show_page(k)))
-            btn.grid(row=i, column=1, sticky="ew", pady=2)
+            btn.grid(row=i, column=1, sticky="ew", pady=0, padx=(10, 0))
             self._nav[key] = (btn, ind, icon)
             self._tip(btn, f"{label}   (Ctrl+{i})")
         try:
@@ -1677,21 +1832,22 @@ class CoachApp:
             log.exception("Cannot build the quick toggles")
 
         foot = ctk.CTkFrame(sb, fg_color="transparent")
-        foot.grid(row=4, column=0, sticky="sew", padx=14, pady=(8, 14))
+        foot.grid(row=4, column=0, sticky="sew", padx=12, pady=(8, 10))
         foot.grid_columnconfigure(0, weight=1)
-        pill = ctk.CTkFrame(foot, fg_color=PANEL, corner_radius=18, border_width=1, border_color=BORDER, height=36)
-        pill.grid(row=0, column=0, sticky="ew")
+        self._hline(foot).grid(row=0, column=0, sticky="new")
+        pill = ctk.CTkFrame(foot, fg_color="transparent", corner_radius=0, height=30)
+        pill.grid(row=0, column=0, sticky="ew", pady=(8, 0))
         pill.grid_columnconfigure(1, weight=1)
-        self.pill_dot = ctk.CTkCanvas(pill, width=18, height=18, bg=PANEL, highlightthickness=0, bd=0)
-        self.pill_dot.grid(row=0, column=0, padx=(12, 6), pady=9)
-        self._pill_halo = self.pill_dot.create_oval(0, 0, 18, 18, fill=PANEL, outline="")
-        self._pill_dot_item = self.pill_dot.create_oval(5, 5, 13, 13, fill=DIM, outline="")
+        self.pill_dot = ctk.CTkCanvas(pill, width=14, height=14, bg=SURFACE, highlightthickness=0, bd=0)
+        self.pill_dot.grid(row=0, column=0, padx=(2, 6), pady=4)
+        self._pill_halo = self.pill_dot.create_oval(0, 0, 14, 14, fill=SURFACE, outline="")
+        self._pill_dot_item = self.pill_dot.create_rectangle(3, 3, 11, 11, fill=DIM, outline="")
         self.pill_text = self._label(pill, "Démarrage…", self.fonts.small, TEXT, anchor="w")
-        self.pill_text.grid(row=0, column=1, sticky="w", padx=(0, 12))
+        self.pill_text.grid(row=0, column=1, sticky="w", padx=(0, 8))
         meta = ctk.CTkFrame(foot, fg_color="transparent")
         meta.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         meta.grid_columnconfigure(0, weight=1)
-        ver = ctk.CTkButton(meta, text=f"Version {__version__}", anchor="w", width=0, height=24, corner_radius=6,
+        ver = ctk.CTkButton(meta, text="Nouveautés", anchor="w", width=0, height=24, corner_radius=RADIUS,
                             font=self.fonts.tiny, fg_color="transparent", hover_color=PANEL_HI, text_color=DIM,
                             command=self.cb(self.show_changelog))
         ver.grid(row=0, column=0, sticky="w")
@@ -1699,7 +1855,7 @@ class CoachApp:
         for col, (icon, tip, fn) in enumerate((("info", "À propos et mentions légales", lambda: self.show_about()),
                                                ("minimize", "Réduire la fenêtre (l'analyse continue)",
                                                 lambda: self.minimize()))):
-            b = ctk.CTkButton(meta, text="", width=26, height=24, corner_radius=6, fg_color="transparent",
+            b = ctk.CTkButton(meta, text="", width=26, height=24, corner_radius=RADIUS, fg_color="transparent",
                               hover_color=PANEL_HI, image=self._icon(icon, 14, DIM), command=self.cb(fn))
             b.grid(row=0, column=col + 1, padx=(2, 0))
             self._tip(b, tip)
@@ -1708,25 +1864,24 @@ class CoachApp:
         """Sidebar "ACCÈS RAPIDE": safe mode, voice and overlay switches (always visible)."""
         ctk = self.ctk
         box = ctk.CTkFrame(sb, fg_color="transparent")
-        box.grid(row=2, column=0, sticky="new", padx=14, pady=(16, 0))
+        box.grid(row=2, column=0, sticky="new", padx=12, pady=(16, 0))
         box.grid_columnconfigure(1, weight=1)
-        ctk.CTkFrame(box, height=1, fg_color=BORDER, corner_radius=0).grid(
-            row=0, column=0, columnspan=3, sticky="ew", padx=6, pady=(0, 12))
+        self._hline(box).grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
         self._label(box, "ACCÈS RAPIDE", self.fonts.caps, DIM, anchor="w").grid(
-            row=1, column=0, columnspan=3, sticky="w", padx=8, pady=(0, 6))
+            row=1, column=0, columnspan=3, sticky="w", padx=2, pady=(0, 4))
         self._quick: dict[str, tuple[Any, Any]] = {}
         specs = (("safe", "shield", "Mode sûr", "Mode sûr : aucune alerte de gank ni suivi du jungler, aucune zone "
                                                   "dans le brouillard (Ctrl+Maj+S)."),
                  ("voice", "voice", "Voix", "Couper / rétablir les annonces vocales (Ctrl+M)."),
                  ("overlay", "overlay", "Overlay", "Afficher / masquer les indications sur la minimap."))
         for i, (key, icon, text, tip) in enumerate(specs, start=2):
-            ctk.CTkLabel(box, text="", image=self._icon(icon, 16, MUTED), fg_color="transparent", width=20).grid(
-                row=i, column=0, padx=(8, 8), pady=4)
+            ctk.CTkLabel(box, text="", image=self._icon(icon, 14, MUTED), fg_color="transparent", width=16).grid(
+                row=i, column=0, padx=(2, 8), pady=3)
             lbl = self._label(box, text, self.fonts.small, MUTED, anchor="w")
             lbl.grid(row=i, column=1, sticky="w")
             var = ctk.BooleanVar(value=False)
-            sw = ctk.CTkSwitch(box, text="", variable=var, width=40, switch_width=34, switch_height=18,
-                               fg_color="#1B2638", progress_color=WARNING if key == "safe" else TEAL,
+            sw = ctk.CTkSwitch(box, text="", variable=var, width=40, switch_width=30, switch_height=14,
+                               fg_color=SWITCH_OFF, progress_color=WARNING if key == "safe" else TEAL,
                                button_color=TEXT, button_hover_color="#FFFFFF",
                                command=self.cb(lambda k=key: self._quick_toggled(k)))
             sw.grid(row=i, column=2, sticky="e")
@@ -1738,15 +1893,15 @@ class CoachApp:
             from treeaicoach import skill as _skill
             row = 2 + len(specs)
             self._label(box, "TON NIVEAU", self.fonts.caps, DIM, anchor="w").grid(
-                row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(12, 4))
+                row=row, column=0, columnspan=3, sticky="w", padx=2, pady=(12, 4))
             short = {"debutant": "Déb.", "intermediaire": "Inter.", "avance": "Avancé", "expert": "Expert"}
             to_key = {short[k]: k for k, _l in _skill.SKILL_LEVELS}
             self.skill_seg = ctk.CTkSegmentedButton(
-                box, values=[short[k] for k, _l in _skill.SKILL_LEVELS], height=28, font=self.fonts.tiny_bold,
-                fg_color=PANEL_LO, selected_color=GOLD_DARK, selected_hover_color="#8C6A32",
-                unselected_color=PANEL_LO, unselected_hover_color=PANEL_HI, text_color=TEXT, corner_radius=8,
+                box, values=[short[k] for k, _l in _skill.SKILL_LEVELS], height=26, font=self.fonts.tiny_bold,
+                fg_color=PANEL_LO, selected_color=GOLD_DARK, selected_hover_color=ACCENT_DIM,
+                unselected_color=PANEL_LO, unselected_hover_color=PANEL_HI, text_color=TEXT, corner_radius=RADIUS,
                 command=self.cb(lambda lbl: self.apply_skill_level(to_key.get(lbl, "intermediaire"))))
-            self.skill_seg.grid(row=row + 1, column=0, columnspan=3, sticky="ew", padx=4)
+            self.skill_seg.grid(row=row + 1, column=0, columnspan=3, sticky="ew", padx=0)
             self.skill_seg.set(short[_skill.normalize(getattr(self.cfg, "skill_level", "intermediaire"))])
             self._tip(self.skill_seg, "\n".join(f"{l} : {_skill.SKILL_HELP[k]}" for k, l in _skill.SKILL_LEVELS))
         except Exception:
@@ -1848,8 +2003,8 @@ class CoachApp:
             btn.configure(fg_color=PANEL_HI if active else "transparent",
                           text_color=TEXT if active else MUTED,
                           font=self.fonts.nav_active if active else self.fonts.nav,
-                          image=self._icon(icon, 18, GOLD if active else MUTED))
-            ind.configure(fg_color=GOLD if active else "transparent")
+                          image=self._icon(icon, 16, ACCENT if active else MUTED))
+            ind.configure(fg_color=ACCENT if active else "transparent")
         if key == "dashboard":
             self._radar_worker.active.set()
         else:
@@ -1878,24 +2033,25 @@ class CoachApp:
     # ------------------------------------------------------------------ dashboard
     def _build_dashboard(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("Tableau de bord", "Suivi en direct de la minimap et des alertes",
-                                       scroll=False, icon="dashboard")
+        page, right, body = self._page("En jeu", "Minimap et alertes en direct", scroll=False)
         self.dash_safe_var = ctk.BooleanVar(value=bool(getattr(self.cfg, "safe_mode", False)))
         self.dash_safe = ctk.CTkSwitch(right, text="Mode sûr", variable=self.dash_safe_var, font=self.fonts.small,
-                                       text_color=MUTED, width=46, switch_width=38, switch_height=20,
-                                       fg_color="#1B2638", progress_color=WARNING, button_color=TEXT,
+                                       text_color=MUTED, width=40, switch_width=28, switch_height=14,
+                                       fg_color=SWITCH_OFF, progress_color=WARNING, button_color=TEXT,
                                        button_hover_color="#FFFFFF",
                                        command=self.cb(lambda: self.set_safe_mode(bool(self.dash_safe_var.get()))))
         self.dash_safe.grid(row=0, column=0, padx=(0, 16))
         self._tip(self.dash_safe, "Mode sûr : aucune alerte de gank ni suivi du jungler, aucune zone dans le "
                                   "brouillard. Minuteurs et rappels restent actifs. (Ctrl+Maj+S)")
-        self.btn_test_voice = self._button(right, "Tester la voix", self.test_voice, "secondary", icon="voice", width=0)
+        self.btn_test_voice = self._button(right, "Tester la voix", self.test_voice, "ghost", icon="voice", width=0,
+                                           height=26)
         self.btn_test_voice.grid(row=0, column=1, padx=(0, 8))
         self._tip(self.btn_test_voice, "Fait dire une alerte d'exemple au coach.")
-        self.btn_demo = self._button(right, "Mode démo", self.toggle_demo, "secondary", icon="demo", width=0)
+        self.btn_demo = self._button(right, "Mode démo", self.toggle_demo, "ghost", icon="demo", width=0, height=26)
         self.btn_demo.grid(row=0, column=2, padx=(0, 8))
         self._tip(self.btn_demo, "Partie simulée : le jungler ennemi vient te ganker vers 40 s.")
-        self.btn_calib = self._button(right, "Calibrer la minimap", self.calibrate, "secondary", icon="target", width=0)
+        self.btn_calib = self._button(right, "Calibrer la minimap", self.calibrate, "ghost", icon="target", width=0,
+                                      height=26)
         self.btn_calib.grid(row=0, column=3)
         self._tip(self.btn_calib, "Trace un carré autour de la minimap si elle n'est pas trouvée toute seule.")
 
@@ -1904,11 +2060,10 @@ class CoachApp:
         body.grid_rowconfigure(2, weight=1)
 
         # --- banner (break reminder...) -------------------------------------------------
-        self.banner = ctk.CTkFrame(body, fg_color="#2A1F0C", corner_radius=10, border_width=1,
-                                   border_color=WARNING)
+        self.banner = ctk.CTkFrame(body, fg_color=WARNING_BG, corner_radius=RADIUS, border_width=0)
         self.banner.grid_columnconfigure(1, weight=1)
-        ctk.CTkFrame(self.banner, width=4, height=20, corner_radius=2, fg_color=WARNING).grid(
-            row=0, column=0, padx=(14, 10), pady=8)
+        ctk.CTkFrame(self.banner, width=3, height=20, corner_radius=0, fg_color=WARNING).grid(
+            row=0, column=0, sticky="ns", padx=(0, 10))
         self.banner_lbl = self._label(self.banner, "", self.fonts.small, TEXT, anchor="w", justify="left")
         self.banner_lbl.grid(row=0, column=1, sticky="w", pady=8)
         self._button(self.banner, "Compris", self._dismiss_banner, "ghost", width=90, height=28).grid(
@@ -1921,7 +2076,7 @@ class CoachApp:
         self._gauge_color = DIM
         hero = HeroBanner(self, body)
         self.hero = hero
-        hero.canvas.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        hero.canvas.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         self.status_card = hero.canvas
         self.state_title = hero.title
         self.state_msg = hero.msg
@@ -1929,77 +2084,76 @@ class CoachApp:
         self.threat_lbl = hero.threat
         self.threat_detail = hero.detail
         self.demo_badge = hero.badge
-        self.btn_start = ctk.CTkButton(hero.canvas, text="Démarrer l'analyse", width=200, height=46,
-                                       corner_radius=10, font=self.fonts.big_button, fg_color=GOLD,
-                                       hover_color=GOLD_HOVER, text_color=ON_GOLD, text_color_disabled="#4A4232",
-                                       bg_color=hero.right_bg, image=self._icon("play", 16, ON_GOLD),
+        self.btn_start = ctk.CTkButton(hero.canvas, text="Démarrer l'analyse", width=150, height=34,
+                                       corner_radius=RADIUS, font=self.fonts.button, fg_color=ACCENT,
+                                       hover_color=ACCENT_HOVER, text_color=ON_ACCENT, text_color_disabled=DIM,
+                                       bg_color=hero.right_bg, image=self._icon("play", 12, ON_ACCENT),
                                        compound="left", command=self.cb(self.toggle_engine))
         hero.attach_button(self.btn_start)
 
         # --- left column: teams + journal --------------------------------------------
         left = ctk.CTkFrame(body, fg_color="transparent")
-        left.grid(row=2, column=0, sticky="nsew", padx=(0, 14))
+        left.grid(row=2, column=0, sticky="nsew", padx=(0, 16))
         left.grid_columnconfigure(0, weight=1)
         left.grid_rowconfigure(2, weight=1)
 
         # --- live coach strip: my role (+ lane swap), "jouer plus fort ou non", top tip, AI counter
-        co = self._card(left)
+        co = ctk.CTkFrame(left, fg_color="transparent", corner_radius=0)
         self.coach_card = co
-        co.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        co.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         co.grid_columnconfigure(1, weight=1)
-        self.coach_gauge_lbl = self._label(co, "—", self.fonts.h2, DIM, anchor="w")
-        self.coach_gauge_lbl.grid(row=0, column=0, sticky="w", padx=(16, 12), pady=(10, 0))
+        self.coach_gauge_lbl = self._label(co, "-", self.fonts.num, DIM, anchor="w")
+        self.coach_gauge_lbl.grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 0))
         self._tip(self.coach_gauge_lbl, "Jouer plus fort ou non : ATTAQUE ▲▲, PLUS FORT ▲, NORMAL, "
                                         "PRUDENT ▼, SAFE ▼▼ (selon ton avance, les combats et ton face-à-face).")
-        self.coach_role_lbl = self._label(co, "Rôle : —", self.fonts.small, MUTED, anchor="w")
-        self.coach_role_lbl.grid(row=0, column=1, sticky="w", pady=(10, 0))
+        self.coach_role_lbl = self._label(co, "Rôle : -", self.fonts.small, MUTED, anchor="w")
+        self.coach_role_lbl.grid(row=0, column=1, sticky="w")
         self._tip(self.coach_role_lbl, "Rôle détecté d'après la partie (et les échanges de voie).")
         self.coach_ai_lbl = self._label(co, "", self.fonts.tiny_bold, TEAL, anchor="e")
-        self.coach_ai_lbl.grid(row=0, column=2, sticky="e", padx=(8, 16), pady=(10, 0))
+        self.coach_ai_lbl.grid(row=0, column=2, sticky="e", padx=(8, 0))
         self._tip(self.coach_ai_lbl, "Conseils IA utilisés dans cette partie : 5 automatiques max "
                                      "+ 1 en urgence (F8 à part).")
         self.coach_tip_lbl = self._label(co, "Le conseil du moment s'affichera ici pendant la partie.",
                                          self.fonts.small, DIM, anchor="w", justify="left", wraplength=520)
-        self.coach_tip_lbl.grid(row=1, column=0, columnspan=3, sticky="ew", padx=16, pady=(4, 10))
+        self.coach_tip_lbl.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(2, 8))
+        self._hline(co).grid(row=2, column=0, columnspan=3, sticky="ew")
         self._coach_sig: tuple = ()
 
-        en = self._card(left)
+        en = ctk.CTkFrame(left, fg_color="transparent", corner_radius=0)
         self.enemies_card = en
-        en.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        en.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         en.grid_columnconfigure(0, weight=1)
         head = ctk.CTkFrame(en, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 0))
-        head.grid_columnconfigure(2, weight=1)
-        ctk.CTkLabel(head, text="", image=self._icon("swords", 16, ENEMY_RING), fg_color="transparent",
-                     width=18).grid(row=0, column=0, padx=(0, 8))
-        self._label(head, "Équipe ennemie", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=1, sticky="w")
+        head.grid(row=0, column=0, sticky="ew")
+        head.grid_columnconfigure(1, weight=1)
+        self._caption(head, "Ennemis", ENEMY_RING, anchor="w").grid(row=0, column=0, sticky="w")
         self.visible_lbl = self._label(head, "", self.fonts.tiny, MUTED, anchor="e")
         self.visible_lbl.grid(row=0, column=2, sticky="e")
         self.jungler_lbl = self._label(en, "Jungler : en attente d'une partie", self.fonts.small, MUTED,
                                        anchor="w", justify="left", wraplength=480)
-        self.jungler_lbl.grid(row=1, column=0, sticky="ew", padx=16, pady=(2, 0))
+        self.jungler_lbl.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         slots = ctk.CTkFrame(en, fg_color="transparent")
-        slots.grid(row=2, column=0, sticky="ew", padx=12, pady=(8, 10))
+        slots.grid(row=2, column=0, sticky="ew", pady=(6, 8))
         self.enemy_slots: list[dict[str, Any]] = []
         for i in range(5):
             slots.grid_columnconfigure(i, weight=1, uniform="enemy")
-            box = ctk.CTkFrame(slots, fg_color=PANEL_LO, corner_radius=10, border_width=1, border_color=BORDER)
-            box.grid(row=0, column=i, sticky="ew", padx=3)
+            box = ctk.CTkFrame(slots, fg_color=PANEL, corner_radius=RADIUS, border_width=1, border_color=PANEL)
+            box.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 2, 0))
             box.grid_columnconfigure(0, weight=1)
             icon = ctk.CTkLabel(box, text="", image=self._enemy_image(None, None, "empty"), fg_color="transparent")
             icon.grid(row=0, column=0, pady=(9, 0))
-            name = self._label(box, "—", self.fonts.tiny_bold, MUTED)
+            name = self._label(box, "-", self.fonts.tiny_bold, MUTED)
             name.grid(row=1, column=0, padx=4, pady=(3, 0))
             status = self._label(box, " ", self.fonts.tiny, DIM)
             status.grid(row=2, column=0, pady=(1, 8), padx=4)
             slot = {"box": box, "icon": icon, "name": name, "status": status, "sig": None, "tip": ""}
-            self._hoverable(box, BORDER, GOLD_DARK, slot)
+            self._hoverable(box, PANEL, LINE_STRONG, slot)
             self._tip(box, lambda sl=slot: sl.get("tip") or "")
             self.enemy_slots.append(slot)
         # allies + lane match-up
-        ctk.CTkFrame(en, height=1, fg_color=BORDER, corner_radius=0).grid(row=3, column=0, sticky="ew", padx=16)
+        self._hline(en).grid(row=3, column=0, sticky="ew")
         team = ctk.CTkFrame(en, fg_color="transparent")
-        team.grid(row=4, column=0, sticky="ew", padx=16, pady=(8, 12))
+        team.grid(row=4, column=0, sticky="ew", pady=(8, 8))
         team.grid_columnconfigure(1, weight=1)
         al = ctk.CTkFrame(team, fg_color="transparent")
         al.grid(row=0, column=0, sticky="w")
@@ -2010,45 +2164,43 @@ class CoachApp:
             cell.grid(row=1, column=i, padx=(0, 8), pady=(4, 0))
             ic = ctk.CTkLabel(cell, text="", image=self._ally_image(None, None, None), fg_color="transparent")
             ic.grid(row=0, column=0)
-            nm = self._label(cell, "—", self.fonts.tiny, DIM)
+            nm = self._label(cell, "-", self.fonts.tiny, DIM)
             nm.grid(row=1, column=0, pady=(2, 0))
             slot = {"icon": ic, "name": nm, "sig": None, "tip": ""}
             self._tip(ic, lambda sl=slot: sl.get("tip") or "")
             self.ally_slots.append(slot)
-        mu = ctk.CTkFrame(team, fg_color="transparent")
-        mu.grid(row=0, column=2, sticky="e")
-        self._label(mu, "FACE-À-FACE", self.fonts.caps, DIM, anchor="e").grid(row=0, column=0, columnspan=3,
-                                                                             sticky="e")
+        # lane match-up lives in the status strip (the "hero"): me VS my lane opponent
+        mu = ctk.CTkFrame(hero.canvas, fg_color=PANEL, corner_radius=0)
         self.mu_me = ctk.CTkLabel(mu, text="", image=self._ally_image(None, None, None), fg_color="transparent")
-        self.mu_me.grid(row=1, column=0, pady=(4, 0))
-        self._label(mu, "VS", self.fonts.tiny_bold, GOLD).grid(row=1, column=1, padx=6, pady=(4, 0))
+        self.mu_me.grid(row=0, column=0, rowspan=2)
+        self._label(mu, "VS", self.fonts.tiny_bold, DIM).grid(row=0, column=1, rowspan=2, padx=6)
         self.mu_opp = ctk.CTkLabel(mu, text="", image=self._ally_image(None, None, None, ring=ENEMY_RING),
                                    fg_color="transparent")
-        self.mu_opp.grid(row=1, column=2, pady=(4, 0))
-        self.matchup_lbl = self._label(mu, "En attente", self.fonts.tiny, DIM, anchor="e")
-        self.matchup_lbl.grid(row=2, column=0, columnspan=3, sticky="e", pady=(2, 0))
+        self.mu_opp.grid(row=0, column=2, rowspan=2)
+        self._caption(mu, "Face-à-face", DIM, anchor="w").grid(row=0, column=3, sticky="sw", padx=(10, 0))
+        self.matchup_lbl = self._label(mu, "En attente", self.fonts.tiny, DIM, anchor="w")
+        self.matchup_lbl.grid(row=1, column=3, sticky="nw", padx=(10, 0))
         self._matchup_sig: tuple = ()
+        hero.attach_matchup(mu)
 
-        jr = self._card(left)
+        jr = ctk.CTkFrame(left, fg_color="transparent", corner_radius=0)
         jr.grid(row=2, column=0, sticky="nsew")
         jr.grid_columnconfigure(0, weight=1)
         jr.grid_rowconfigure(1, weight=1)
         jh = ctk.CTkFrame(jr, fg_color="transparent")
-        jh.grid(row=0, column=0, sticky="ew", padx=(16, 12), pady=(12, 4))
+        jh.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         jh.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(jh, text="", image=self._icon("bell", 16, GOLD), fg_color="transparent", width=18).grid(
-            row=0, column=0, padx=(0, 8))
-        self._label(jh, "Journal des alertes", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=1, sticky="w")
-        clr = ctk.CTkButton(jh, text="", width=26, height=24, corner_radius=6, fg_color="transparent",
+        self._caption(jh, "Journal", MUTED, anchor="w").grid(row=0, column=0, sticky="w")
+        clr = ctk.CTkButton(jh, text="", width=26, height=24, corner_radius=RADIUS, fg_color="transparent",
                             hover_color=PANEL_HI, image=self._icon("close", 12, DIM),
                             command=self.cb(self.clear_journal))
         clr.grid(row=0, column=2)
         self._tip(clr, "Effacer le journal")
-        self.journal = ctk.CTkTextbox(jr, fg_color=PANEL, text_color=TEXT, font=self.fonts.small,
+        self.journal = ctk.CTkTextbox(jr, fg_color=SUNKEN, text_color=TEXT, font=self.fonts.small,
                                       wrap="word", activate_scrollbars=True, border_width=0,
-                                      scrollbar_button_color="#1B2638",
-                                      scrollbar_button_hover_color=GOLD_DARK, height=60)
-        self.journal.grid(row=1, column=0, sticky="nsew", padx=(10, 8), pady=(0, 10))
+                                      scrollbar_button_color=SWITCH_OFF,
+                                      scrollbar_button_hover_color=LINE_STRONG, height=60)
+        self.journal.grid(row=1, column=0, sticky="nsew")
         for lvl, col in LEVEL_COLORS.items():
             self.journal.tag_config(f"lvl{lvl}", foreground=col)
         self.journal.tag_config("time", foreground=DIM)
@@ -2057,21 +2209,19 @@ class CoachApp:
         self._render_journal()
 
         # --- right column: radar + tech -------------------------------------------------
-        rc = self._card(body, width=RADAR_PX + 40)
+        rc = ctk.CTkFrame(body, fg_color="transparent", corner_radius=0, width=RADAR_PX + 8)
         rc.grid(row=2, column=1, sticky="n")
         rc.grid_columnconfigure(0, weight=1)
         rh = ctk.CTkFrame(rc, fg_color="transparent")
-        rh.grid(row=0, column=0, sticky="ew", padx=(16, 12), pady=(12, 8))
+        rh.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         rh.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(rh, text="", image=self._icon("map", 16, GOLD), fg_color="transparent", width=18).grid(
-            row=0, column=0, padx=(0, 8))
-        self._label(rh, "Radar", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=1, sticky="w")
+        self._caption(rh, "Radar", MUTED, anchor="w").grid(row=0, column=0, sticky="w")
         for i, (icon, tip, fn) in enumerate((
                 ("refresh", "Rechercher la minimap maintenant", lambda: self.relocate()),
                 ("report", "Ouvrir le dernier rapport", lambda: self.open_last_report()),
                 ("folder", "Ouvrir le dossier des rapports", lambda: self.open_games_dir()),
                 ("copy", "Copier le diagnostic (Ctrl+D)", lambda: self.copy_diagnostic()))):
-            b = ctk.CTkButton(rh, text="", width=28, height=26, corner_radius=6, fg_color="transparent",
+            b = ctk.CTkButton(rh, text="", width=28, height=26, corner_radius=RADIUS, fg_color="transparent",
                               hover_color=PANEL_HI, image=self._icon(icon, 15, MUTED), command=self.cb(fn))
             b.grid(row=0, column=i + 2, padx=(2, 0))
             self._tip(b, tip)
@@ -2081,19 +2231,50 @@ class CoachApp:
         self._radar_size = self._scaled(RADAR_PX)
         self._radar_placeholder = radar_placeholder(self._radar_size)
         self._radar_photo = ImageTk.PhotoImage(self._radar_placeholder, master=self.root)
-        holder = tk.Frame(rc, bg=PANEL, width=self._radar_size, height=self._radar_size)
-        holder.grid(row=1, column=0, padx=16)
+        holder = tk.Frame(rc, bg=BG, width=self._radar_size, height=self._radar_size)
+        holder.grid(row=1, column=0)
         holder.grid_propagate(False)
-        self.radar_lbl = tk.Label(holder, image=self._radar_photo, bg=PANEL, bd=0, highlightthickness=0)
+        self.radar_lbl = tk.Label(holder, image=self._radar_photo, bg=BG, bd=0, highlightthickness=0)
         self.radar_lbl.place(x=0, y=0, relwidth=1, relheight=1)
         self.radar_msg = tk.Label(holder, text="En attente d'une partie…", bg=PANEL_LO, fg=MUTED,
                                   font=(self.fonts.family, self._font_px(12)), padx=12, pady=6)
         self.radar_msg.place(relx=0.5, rely=0.5, anchor="center")
         self.radar_badge = ctk.CTkLabel(holder, text=" HORS LIGNE ", font=self.fonts.caps, text_color=MUTED,
-                                        fg_color=PANEL_HI, corner_radius=6, height=18, bg_color=PANEL_LO)
+                                        fg_color=PANEL_HI, corner_radius=RADIUS, height=18, bg_color=PANEL_LO)
         self.radar_badge.place(x=self._scaled(8), y=self._scaled(8))
+        # --- launcher: status of each subsystem with a one-click fix ----------------------
+        sysf = ctk.CTkFrame(rc, fg_color="transparent")
+        sysf.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        sysf.grid_columnconfigure(2, weight=1)
+        self._caption(sysf, "Système", MUTED, anchor="w").grid(row=0, column=0, columnspan=4, sticky="w")
+        self._hline(sysf, LINE_STRONG).grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 2))
+        self.sys_rows: dict[str, dict[str, Any]] = {}
+        for i, (key, label) in enumerate((("game", "Jeu"), ("minimap", "Minimap"), ("lcu", "Client LoL"),
+                                          ("ia", "IA"), ("voice", "Voix"))):
+            r = 2 + i
+            dot = ctk.CTkFrame(sysf, width=6, height=6, corner_radius=0, fg_color=DIM)
+            dot.grid(row=r, column=0, padx=(0, 8))
+            self._label(sysf, label, self.fonts.small, TEXT, anchor="w").grid(row=r, column=1, sticky="w",
+                                                                              padx=(0, 8), pady=1)
+            val = self._label(sysf, "-", self.fonts.tiny, MUTED, anchor="w")
+            val.grid(row=r, column=2, sticky="w")
+            btn = ctk.CTkButton(sysf, text="", width=10, height=18, corner_radius=RADIUS, fg_color="transparent",
+                                hover_color=PANEL_HI, text_color=ACCENT, font=self.fonts.tiny_bold,
+                                command=self.cb(lambda k=key: self._system_fix(k)))
+            btn.grid(row=r, column=3, sticky="e")
+            btn.grid_remove()
+            self.sys_rows[key] = {"dot": dot, "val": val, "btn": btn, "sig": None, "action": ""}
+        self._lcu_text = ""
+        self._lcu_polled = 0.0
+        self.btn_test_overlay = self._button(rc, "Tester l'overlay", self.test_overlay, "secondary", icon="overlay",
+                                             height=26)
+        self.btn_test_overlay.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        self._tip(self.btn_test_overlay, "Affiche l'overlay sur une partie d'exemple pendant 10 s "
+                                         "(sûr, attention, danger), hors partie.")
+        self._overlay_test: tuple[float, list] | None = None
+
         tech = ctk.CTkFrame(rc, fg_color="transparent")
-        tech.grid(row=2, column=0, sticky="ew", padx=12, pady=(10, 14))
+        tech.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         self.tech: dict[str, Any] = {}
         for i, (key, label, tip) in enumerate((
                 ("fps", "FPS", "Images de minimap analysées par seconde"),
@@ -2101,12 +2282,12 @@ class CoachApp:
                 ("detector", "IA", "Détecteur de champions utilisé"),
                 ("voice", "VOIX", "Moteur de synthèse vocale utilisé"))):
             tech.grid_columnconfigure(i, weight=1, uniform="tech")
-            tile = ctk.CTkFrame(tech, fg_color=PANEL_LO, corner_radius=8)
-            tile.grid(row=0, column=i, sticky="ew", padx=3)
+            tile = ctk.CTkFrame(tech, fg_color="transparent", corner_radius=0)
+            tile.grid(row=0, column=i, sticky="ew")
             tile.grid_columnconfigure(0, weight=1)
-            self._label(tile, label, self.fonts.caps, DIM).grid(row=0, column=0, padx=4, pady=(6, 0))
-            val = self._label(tile, "—", self.fonts.tiny_bold, TEXT)
-            val.grid(row=1, column=0, padx=4, pady=(0, 6))
+            self._label(tile, label, self.fonts.caps, DIM, anchor="w").grid(row=0, column=0, sticky="w")
+            val = self._label(tile, "-", self.fonts.tiny_bold, TEXT, anchor="w")
+            val.grid(row=1, column=0, sticky="w")
             self.tech[key] = val
             self._tip(tile, tip)
         self._cpu = ui_kit.CpuMeter()
@@ -2129,10 +2310,10 @@ class CoachApp:
         img = self._enemy_cache.get(key)
         if img is None:
             ring = {"visible": ENEMY_RING, "approach": WARNING, "mia": DIM, "empty": BORDER}.get(mode, DIM)
-            pil = circle_icon(icon, 104, ring, grey=(mode == "mia"), bg=PANEL_LO)
+            pil = circle_icon(icon, 104, ring, grey=(mode == "mia"), bg=PANEL)
             if mode != "empty":
                 frac = None if bucket is None else min(1.0, bucket * 3 / 60.0)
-                pil = ui_kit.decorate_portrait(pil, role, frac, arc_color=WARNING, badge_bg=PANEL_LO, star=jungler)
+                pil = ui_kit.decorate_portrait(pil, role, frac, arc_color=WARNING, badge_bg=PANEL, star=jungler)
             img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(52, 52))
             if len(self._enemy_cache) > 160:
                 self._enemy_cache.clear()
@@ -2160,9 +2341,9 @@ class CoachApp:
     # ------------------------------------------------------------------ alerts & voice page
     def _build_alerts_page(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("Alertes & voix", "Choisis ce que le coach annonce et comment il parle",
-                                       icon="voice")
-        self._button(right, "Tester la voix", self.test_voice, "primary", icon="voice").grid(row=0, column=0)
+        page, right, body = self._page("Alertes", "Ce que le coach annonce et comment il parle")
+        self._button(right, "Tester la voix", self.test_voice, "secondary", icon="voice", height=26).grid(
+            row=0, column=0)
         ex = _example_phrases()
         self._examples = _example_speech()
 
@@ -2172,10 +2353,10 @@ class CoachApp:
         _row, slot = self._row(s, "Style du coach", None)
         labels = [lbl for _k, lbl in ui_kit.PRESET_LABELS]
         to_key = {lbl: k for k, lbl in ui_kit.PRESET_LABELS}
-        self.preset_seg = ctk.CTkSegmentedButton(slot, values=labels, height=34, font=self.fonts.small,
+        self.preset_seg = ctk.CTkSegmentedButton(slot, values=labels, height=28, font=self.fonts.small,
                                                  fg_color=PANEL_LO, selected_color=GOLD_DARK,
-                                                 selected_hover_color="#8C6A32", unselected_color=PANEL_LO,
-                                                 unselected_hover_color=PANEL_HI, text_color=TEXT, corner_radius=8,
+                                                 selected_hover_color=ACCENT_DIM, unselected_color=PANEL_LO,
+                                                 unselected_hover_color=PANEL_HI, text_color=TEXT, corner_radius=RADIUS,
                                                  command=self.cb(lambda lbl: self.apply_preset(to_key.get(lbl, ""))))
         self.preset_seg.grid(row=0, column=0)
         self.preset_lbl = self._row_desc(slot)
@@ -2231,10 +2412,10 @@ class CoachApp:
         _row, slot = self._row(s, "Voix Windows", "« Automatique » choisit la meilleure voix française installée.")
         self._windows_voice_row = _row
         self.voice_menu = ctk.CTkOptionMenu(
-            slot, values=[AUTO_VOICE], command=self.cb(self._on_voice_choice), width=300, height=32,
-            font=self.fonts.small, dropdown_font=self.fonts.small, fg_color=PANEL_HI, button_color="#16284A",
-            button_hover_color="#1D3560", text_color=TEXT, dropdown_fg_color=PANEL_HI,
-            dropdown_hover_color="#1D3560", dropdown_text_color=TEXT, corner_radius=8, dynamic_resizing=False)
+            slot, values=[AUTO_VOICE], command=self.cb(self._on_voice_choice), width=300, height=28,
+            font=self.fonts.small, dropdown_font=self.fonts.small, fg_color=PANEL_HI, button_color=HOVER,
+            button_hover_color=HOVER, text_color=TEXT, dropdown_fg_color=PANEL_HI,
+            dropdown_hover_color=HOVER, dropdown_text_color=TEXT, corner_radius=RADIUS, dynamic_resizing=False)
         self.voice_menu.grid(row=0, column=0)
         self.voice_menu.set(self.cfg.voice_name or AUTO_VOICE)
         self._widgets_by_field["voice_name"] = lambda: self.voice_menu.set(self.cfg.voice_name or AUTO_VOICE)
@@ -2263,6 +2444,10 @@ class CoachApp:
             self._build_coach_extras(body, 6)
         except Exception:
             log.exception("Cannot build the build-advice / caster sections")
+        self._tabs(page, body, (("Alertes", ("Préréglage", "Alertes de gank", "Sensibilité")),
+                                ("Voix", ("Voix", "Mode annonceur")),
+                                ("Aides", ("Aides de jeu", "Conseils d'achat")),
+                                ("Touches", ("Raccourcis clavier",))))
         return page
 
     def _build_coach_extras(self, body: Any, row: int) -> None:
@@ -2281,7 +2466,7 @@ class CoachApp:
             s = self._section(body, row + 1, "Mode annonceur",
                               "Probabilité de victoire en direct et, en style « Caster esport », des annonces "
                               "enflammées pour les grands moments (multikill, shutdown, ace, vol de Baron).",
-                              icon="sparkle")
+                              icon="star")
             self._choice_row(s, "caster_style", "Style", "Sobre : rien n'est lu · Coach : la probabilité de "
                              "victoire est lue sur les gros retournements (+/-15 points, 3 min max) · Caster : "
                              "en plus, des annonces de commentateur.", STYLE_LABELS, segmented=True)
@@ -2303,7 +2488,7 @@ class CoachApp:
     def _example_button(self, key: str) -> None:
         """A small "▶" button in the last row: speaks an example of this alert."""
         slot = self._last_slot
-        b = self.ctk.CTkButton(slot, text="", width=30, height=28, corner_radius=8, fg_color="transparent",
+        b = self.ctk.CTkButton(slot, text="", width=30, height=28, corner_radius=RADIUS, fg_color="transparent",
                                hover_color=PANEL_HI, border_width=1, border_color=BORDER_GOLD,
                                image=self._icon("play", 11, GOLD), command=self.cb(lambda: self.play_example(key)))
         for w in slot.grid_slaves(row=0):
@@ -2438,9 +2623,9 @@ class CoachApp:
 
     # ------------------------------------------------------------------ overlay page
     def _build_overlay_page(self) -> Any:
-        page, right, body = self._page("Overlay", "Les ennemis et les menaces dessinés directement sur ta minimap",
-                                       icon="overlay")
-        self.btn_move = self._button(right, "Déplacer les fenêtres", self.toggle_move_mode, "secondary", icon="move")
+        page, right, body = self._page("Overlay", "Ce qui est dessiné sur ta minimap")
+        self.btn_move = self._button(right, "Déplacer les fenêtres", self.toggle_move_mode, "secondary", icon="move",
+                                     height=26)
         self.btn_move.grid(row=0, column=0)
         self._tip(self.btn_move, "Fais glisser le radar et le HUD à la souris (Windows).")
         prev = lambda _v=None: self._schedule_overlay_preview()  # noqa: E731
@@ -2455,7 +2640,7 @@ class CoachApp:
                              OVERLAY_MODES, segmented=True, on_change=lambda _v: (prev(), self._refresh_radar_rows()))
         if hasattr(self.cfg, "overlay_show_frame"):
             self._switch_row(s, "overlay_show_frame", "Cadre discret « TreeAI »",
-                             "Fin liseré doré autour de la minimap pour voir que le coach est actif.",
+                             "Fin liseré autour de la minimap pour voir que le coach est actif.",
                              on_change=prev)
         if hasattr(self.cfg, "overlay_hide_from_capture"):
             self._switch_row(s, "overlay_hide_from_capture", "Masquer des captures et du stream",
@@ -2511,7 +2696,7 @@ class CoachApp:
         self._label(prev_card, "Exemple d'écran en jeu (gank en cours, 1920 × 1080).", self.fonts.tiny, MUTED,
                     anchor="w").grid(row=1, column=0, sticky="w", padx=20)
         self.overlay_preview = self.ctk.CTkLabel(prev_card, text="Génération de l'aperçu…", text_color=DIM,
-                                                 font=self.fonts.small, fg_color=PANEL_LO, corner_radius=10,
+                                                 font=self.fonts.small, fg_color=PANEL_LO, corner_radius=RADIUS,
                                                  width=560, height=315)
         self.overlay_preview.grid(row=2, column=0, padx=20, pady=(10, 18))
         return page
@@ -2578,70 +2763,100 @@ class CoachApp:
     # ------------------------------------------------------------------ analysis page
     def _build_analysis_page(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("Analyses", "Tes parties enregistrées et les conseils d'après-partie",
-                                       icon="analysis")
-        b = self._button(right, "Dernier rapport", self.open_last_report, "primary", icon="report")
-        b.grid(row=0, column=0, padx=(0, 8))
+        page, right, body = self._page("Analyses", "Parties, progrès et replay")
+        b = self._button(right, "Dernier rapport", self.open_last_report, "primary", icon="report", height=26)
+        b.grid(row=0, column=0, padx=(0, 6))
         self._tip(b, "Ouvre le rapport de ta dernière partie dans le navigateur.")
-        b = self._button(right, "", self.refresh_games, "secondary", icon="refresh", width=36)
-        b.grid(row=0, column=1, padx=(0, 8))
+        b = self._button(right, "", self.refresh_games, "ghost", icon="refresh", width=30, height=26)
+        b.grid(row=0, column=1, padx=(0, 2))
         self._tip(b, "Actualiser la liste")
-        b = self._button(right, "Dossier", self.open_games_dir, "secondary", icon="folder")
-        b.grid(row=0, column=2)
+        b = self._button(right, "", self.open_games_dir, "ghost", icon="folder", width=30, height=26)
+        b.grid(row=0, column=2, padx=(0, 2))
         self._tip(b, "Ouvrir le dossier des parties et des rapports")
-        b = self._button(right, "Copier le résumé", self.copy_share_summary, "secondary", icon="copy")
-        b.grid(row=0, column=3, padx=(8, 0))
-        self._tip(b, "Copie un résumé de ta dernière partie à partager (Discord, réseaux).")
-        self.session_scope = self._label(body, "SESSION", self.fonts.caps, DIM, anchor="w")
-        self.session_scope.grid(row=0, column=0, sticky="w", pady=(0, 6))
-        self.lcu_status = self._label(body, "Client LoL : …", self.fonts.tiny, DIM, anchor="e")
-        self.lcu_status.grid(row=0, column=0, sticky="e", pady=(0, 6))
+        b = self._button(right, "", self.copy_share_summary, "ghost", icon="copy", width=30, height=26)
+        b.grid(row=0, column=3)
+        self._tip(b, "Copier un résumé de ta dernière partie à partager (Discord, réseaux).")
+        body._sections = []  # type: ignore[attr-defined]
+
+        # ---------------------------------------------------------------- tab "Parties"
+        games = ctk.CTkFrame(body, fg_color="transparent", corner_radius=0)
+        games.grid(row=0, column=0, sticky="ew")
+        games.grid_columnconfigure(0, weight=1)
+        games.title = "Parties"  # type: ignore[attr-defined]
+        body._sections.append(games)
+        top = ctk.CTkFrame(games, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        top.grid_columnconfigure(0, weight=1)
+        self.session_scope = self._label(top, "SESSION", self.fonts.caps, DIM, anchor="w")
+        self.session_scope.grid(row=0, column=0, sticky="w")
+        self.lcu_status = self._label(top, "Client LoL : …", self.fonts.tiny, DIM, anchor="e")
+        self.lcu_status.grid(row=0, column=1, sticky="e")
         self._tip(self.lcu_status, "Après chaque partie, TreeAI lit l'historique du client League of Legends "
                                    "(API locale officielle, lecture seule) : positions exactes, écarts d'or et "
                                    "fiabilité de ses alertes dans le rapport.")
-        cards = ctk.CTkFrame(body, fg_color="transparent")
-        cards.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        strip = ctk.CTkFrame(games, fg_color=PANEL, corner_radius=RADIUS, border_width=1, border_color=LINE)
+        strip.grid(row=1, column=0, sticky="ew", pady=(0, 16))
         self.stat_labels: dict[str, tuple[Any, Any]] = {}
-        for i, (key, label, icon, col) in enumerate((("games", "Parties", "analysis", GOLD),
-                                                     ("wins", "Victoires", "star", SAFE),
-                                                     ("deaths", "Morts / partie", "swords", DANGER),
-                                                     ("avoided", "Ganks évités", "shield", TEAL))):
-            cards.grid_columnconfigure(i, weight=1, uniform="stat")
-            c = self._card(cards)
-            c.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 6, 0 if i == 3 else 6))
-            c.grid_columnconfigure(0, weight=1)
-            self._label(c, label.upper(), self.fonts.caps, DIM, anchor="w").grid(row=0, column=0, sticky="w",
-                                                                                   padx=18, pady=(14, 0))
-            self.ctk.CTkLabel(c, text="", image=self._icon(icon, 16, col), fg_color="transparent", width=18).grid(
-                row=0, column=1, sticky="e", padx=(0, 14), pady=(12, 0))
-            v = self._label(c, "—", self.fonts.stat, TEXT, anchor="w")
-            v.grid(row=1, column=0, columnspan=2, sticky="w", padx=18)
-            sub = self._label(c, " ", self.fonts.tiny, MUTED, anchor="w")
-            sub.grid(row=2, column=0, columnspan=2, sticky="w", padx=18, pady=(0, 14))
+        for i, (key, label, col) in enumerate((("games", "Parties", TEXT), ("wins", "Victoires", SAFE),
+                                               ("deaths", "Morts / partie", DANGER),
+                                               ("avoided", "Ganks évités", TEXT))):
+            strip.grid_columnconfigure(2 * i, weight=1, uniform="stat")
+            if i:
+                ctk.CTkFrame(strip, width=1, height=1, fg_color=LINE, corner_radius=0).grid(
+                    row=0, column=2 * i - 1, sticky="ns", pady=10)
+            cell = ctk.CTkFrame(strip, fg_color="transparent")
+            cell.grid(row=0, column=2 * i, sticky="ew", padx=16, pady=10)
+            self._caption(cell, label, DIM, anchor="w").grid(row=0, column=0, sticky="w")
+            v = self._label(cell, "-", self.fonts.stat, col, anchor="w")
+            v.grid(row=1, column=0, sticky="w")
+            sub = self._label(cell, " ", self.fonts.tiny, MUTED, anchor="w")
+            sub.grid(row=2, column=0, sticky="w")
             self.stat_labels[key] = (v, sub)
-        self._label(body, "Parties récentes", self.fonts.h2, GOLD, anchor="w").grid(row=2, column=0, sticky="w",
-                                                                                    pady=(0, 8))
-        self.games_box = ctk.CTkFrame(body, fg_color="transparent")
-        self.games_box.grid(row=3, column=0, sticky="ew")
-        self.games_box.grid_columnconfigure(0, weight=1)
+        self.games_box = ctk.CTkFrame(games, fg_color="transparent")
+        self.games_box.grid(row=2, column=0, sticky="ew")
+        self.games_box.grid_columnconfigure(1, weight=1)
         self._games_empty(text="Chargement…")
+
+        # ---------------------------------------------------------------- tab "Progrès"
+        prog = ctk.CTkFrame(body, fg_color="transparent", corner_radius=0)
+        prog.grid(row=1, column=0, sticky="ew")
+        prog.grid_columnconfigure(0, weight=1)
+        prog.title = "Progrès"  # type: ignore[attr-defined]
+        body._sections.append(prog)
+        self.progress_box = prog
+        self._progress_sig: Any = None
+        self._label(prog, "Chargement…", self.fonts.small, DIM, anchor="w").grid(row=0, column=0, sticky="w")
+
+        # ---------------------------------------------------------------- tab "Replay"
+        rp = ctk.CTkFrame(body, fg_color="transparent", corner_radius=0)
+        rp.grid(row=2, column=0, sticky="ew")
+        rp.grid_columnconfigure(1, weight=1)
+        rp.title = "Replay"  # type: ignore[attr-defined]
+        body._sections.append(rp)
+        self._build_replay(rp)
+
+        def on_tab(label: str) -> None:
+            if label == "Progrès":
+                self.refresh_progress()
+            elif label == "Replay":
+                self._replay_ensure_loaded()
+        self._analysis_tabs = self._tabs(page, body, (("Parties", ("Parties",)), ("Progrès", ("Progrès",)),
+                                                      ("Replay", ("Replay",))))
+        self._analysis_page = page
+        for lbl, btn in self._analysis_tabs.items():
+            btn.configure(command=self.cb(lambda ll=lbl: (page.select_tab(ll), on_tab(ll))))
         return page
 
     def _games_empty(self, text: str | None = None) -> None:
         for w in self.games_box.winfo_children():
             w.destroy()
-        c = self._card(self.games_box)
-        c.grid(row=0, column=0, sticky="ew")
-        c.grid_columnconfigure(0, weight=1)
+        msg = text or "Aucune partie enregistrée pour l'instant."
+        self._label(self.games_box, msg, self.fonts.body, TEXT, anchor="w").grid(
+            row=0, column=0, columnspan=8, sticky="w", pady=(8, 2))
         if text is None:
-            self.ctk.CTkLabel(c, text="", image=self._icon("analysis", 30, GOLD_DARK), fg_color="transparent").grid(
-                row=0, column=0, pady=(26, 0))
-        self._label(c, text or "Aucune partie enregistrée pour l'instant", self.fonts.h3, TEXT).grid(
-            row=1, column=0, pady=(10 if text is None else 26, 4))
-        if text is None:
-            self._label(c, "Joue une partie avec l'analyse active : un rapport détaillé (morts, ganks subis, "
-                           "jungler ennemi, conseils) apparaîtra ici.", self.fonts.small, MUTED,
-                        wraplength=520, justify="center").grid(row=2, column=0, padx=20, pady=(0, 26))
+            self._label(self.games_box, "Joue une partie avec l'analyse active : le rapport (morts, ganks, jungler "
+                                        "adverse, conseils) apparaît ici.", self.fonts.small, MUTED, anchor="w",
+                        wraplength=560, justify="left").grid(row=1, column=0, columnspan=8, sticky="w")
 
     @_guarded
     def refresh_games(self) -> None:
@@ -2656,6 +2871,7 @@ class CoachApp:
         self._dispatcher.run(job, self._show_games, self.cb(lambda e: self._games_empty(
             text="Impossible de lire l'historique des parties")), name="TreeAI-ui-games")
         self._refresh_lcu_status()
+        self._progress_sig = None
 
     @_guarded
     def _refresh_lcu_status(self) -> None:
@@ -2672,8 +2888,9 @@ class CoachApp:
             return get_default_client().status_text()
 
         def done(text: str) -> None:
+            self._lcu_text = str(text or "")
             try:
-                lbl.configure(text=text, text_color=SAFE if text.endswith("connecté") else DIM)
+                lbl.configure(text=ui_text(text), text_color=SAFE if text.endswith("connecté") else DIM)
             except Exception:
                 pass
 
@@ -2689,7 +2906,7 @@ class CoachApp:
         vals = {
             "games": (str(st["games"]), "parties analysées"),
             "wins": (str(st["wins"]), f"{round(100 * wr)} % de victoires" if wr is not None else " "),
-            "deaths": (fmt_decimal_fr(dpg, 1) if dpg is not None else "—", "en moyenne"),
+            "deaths": (fmt_decimal_fr(dpg, 1) if dpg is not None else "-", "en moyenne"),
             "avoided": (str(st["ganks_avoided"]), f"sur {st['ganks']} ganks subis" if st["ganks"] else "aucun gank"),
         }
         for key, (v, sub) in vals.items():
@@ -2697,18 +2914,26 @@ class CoachApp:
             self.stat_labels[key][1].configure(text=sub)
         for w in self.games_box.winfo_children():
             w.destroy()
+        self._replay_games_menu(games)
         if not games:
             self._games_empty()
             return
+        box = self.games_box
+        for c, (txt, anchor) in enumerate((("", "w"), ("Champion", "w"), ("Résultat", "w"), ("K / D / A", "e"),
+                                           ("Ganks", "e"), ("Durée", "e"), ("", "e"))):
+            if txt:
+                self._caption(box, txt, DIM, anchor=anchor).grid(row=0, column=c, sticky=anchor, padx=(0, 16),
+                                                                pady=(0, 4))
+        for c, w in ((0, 36), (2, 70), (3, 70), (4, 56), (5, 52)):
+            box.grid_columnconfigure(c, minsize=w)
+        self._hline(box, LINE_STRONG).grid(row=1, column=0, columnspan=7, sticky="ew")
         for i, g in enumerate(games[:50]):
             self._game_row(i, g)
 
     def _game_row(self, i: int, g: dict) -> None:
         ctk = self.ctk
-        row = self._card(self.games_box, corner_radius=12)
-        row.grid(row=i, column=0, sticky="ew", pady=(0, 8))
-        self._hoverable(row, BORDER, GOLD_DARK)
-        row.grid_columnconfigure(1, weight=1)
+        box = self.games_box
+        r = 2 + 2 * i
         alias = str(game_field(g, "champion", "alias", default="") or "")
         name = str(game_field(g, "champion_name", "name", default="") or alias or "Champion inconnu")
         icon = None
@@ -2719,44 +2944,401 @@ class CoachApp:
         except Exception:
             icon = None
         res = game_result(g)
-        ring = SAFE if res == "win" else DANGER if res == "lose" else DIM
-        pil = circle_icon(icon, 80, ring, bg=PANEL)
-        img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(40, 40))
+        pil = square_icon(icon, 56, bg=BG)
+        img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(28, 28))
         self._images[f"game-{i}"] = img
-        ctk.CTkLabel(row, text="", image=img, fg_color="transparent").grid(row=0, column=0, rowspan=2,
-                                                                           padx=(16, 12), pady=12)
-        self._label(row, name, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=1, sticky="sw", pady=(0, 2))
-        dur = game_field(g, "duration")
+        ctk.CTkLabel(box, text="", image=img, fg_color="transparent").grid(row=r, column=0, sticky="w", pady=6)
+        cell = ctk.CTkFrame(box, fg_color="transparent")
+        cell.grid(row=r, column=1, sticky="w", padx=(0, 16))
+        self._label(cell, name, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
         when = fmt_game_date(game_datetime(g))
-        sub = when + (f" · {fmt_clock(dur)}" if isinstance(dur, (int, float)) and dur > 0 else "")
         pos = game_field(g, "position")
-        if isinstance(pos, str) and pos:
-            sub += f" · {_POSITION_FR.get(pos.upper(), pos.title())}"
-        self._label(row, sub, self.fonts.tiny, MUTED, anchor="w").grid(row=1, column=1, sticky="nw")
-        badge_txt, badge_bg, badge_fg = {"win": ("VICTOIRE", "#113A26", SAFE),
-                                         "lose": ("DÉFAITE", DANGER_DARK, "#FF8A9B")}.get(
-            res or "", ("INCOMPLÈTE" if game_field(g, "incomplete") else "—", PANEL_HI, MUTED))
-        row.grid_columnconfigure(3, minsize=76)
-        row.grid_columnconfigure(4, minsize=64)
-        ctk.CTkLabel(row, text=badge_txt, font=self.fonts.caps, fg_color=badge_bg, text_color=badge_fg,
-                     corner_radius=6, height=22, width=88).grid(row=0, column=2, rowspan=2, padx=(8, 12))
+        sub = when + (f" · {_POSITION_FR.get(pos.upper(), pos.title())}" if isinstance(pos, str) and pos else "")
+        self._label(cell, sub, self.fonts.tiny, DIM, anchor="w").grid(row=1, column=0, sticky="w")
+        rtxt, rcol = {"win": ("Victoire", SAFE), "lose": ("Défaite", DANGER)}.get(
+            res or "", ("Inachevée" if game_field(g, "incomplete") else "-", MUTED))
+        self._label(box, rtxt, self.fonts.h3, rcol, anchor="w").grid(row=r, column=2, sticky="w", padx=(0, 16))
         k, d, a = (_int_or_none(game_field(g, x)) for x in ("kills", "deaths", "assists"))
         kda = f"{k if k is not None else '?'} / {d if d is not None else '?'} / {a if a is not None else '?'}"
-        self._label(row, kda, self.fonts.h3, TEXT).grid(row=0, column=3, sticky="s", padx=4)
-        self._label(row, "K / D / A", self.fonts.caps, DIM).grid(row=1, column=3, sticky="n", padx=4)
+        self._label(box, kda, self.fonts.num, TEXT, anchor="e").grid(row=r, column=3, sticky="e", padx=(0, 16))
         ganks = _int_or_none(game_field(g, "ganks"))
         surv = _int_or_none(game_field(g, "ganks_survived"))
-        ratio = surv is not None and bool(ganks)
-        gtxt = "—" if ganks is None else (f"{surv}/{ganks}" if ratio else str(ganks))
-        self._label(row, gtxt, self.fonts.h3, TEXT).grid(row=0, column=4, sticky="s", padx=4)
-        self._label(row, "ÉVITÉS" if ratio else "GANKS", self.fonts.caps, DIM).grid(row=1, column=4, sticky="n",
-                                                                                 padx=4)
-        btns = ctk.CTkFrame(row, fg_color="transparent")
-        btns.grid(row=0, column=5, rowspan=2, padx=(10, 14))
-        self._button(btns, "Rapport", lambda gg=g: self.open_report(gg), "ghost", icon="report", width=96,
-                     height=32).grid(row=0, column=0, padx=(0, 6))
-        self._button(btns, "", lambda gg=g: self.open_game_folder(gg), "secondary", icon="folder",
-                     width=34, height=32).grid(row=0, column=1)
+        gtxt = "-" if ganks is None else (f"{surv}/{ganks}" if surv is not None and ganks else str(ganks))
+        gl = self._label(box, gtxt, self.fonts.num, TEXT, anchor="e")
+        gl.grid(row=r, column=4, sticky="e", padx=(0, 16))
+        self._tip(gl, "Ganks évités / ganks subis")
+        dur = game_field(g, "duration")
+        self._label(box, fmt_clock(dur) if isinstance(dur, (int, float)) and dur > 0 else "-", self.fonts.small,
+                    MUTED, anchor="e").grid(row=r, column=5, sticky="e", padx=(0, 16))
+        btns = ctk.CTkFrame(box, fg_color="transparent")
+        btns.grid(row=r, column=6, sticky="e")
+        self._button(btns, "Rapport", lambda gg=g: self.open_report(gg), "secondary", width=70,
+                     height=24).grid(row=0, column=0, padx=(0, 4))
+        self._button(btns, "Replay", lambda gg=g: self.open_replay(gg), "secondary", width=62,
+                     height=24).grid(row=0, column=1, padx=(0, 4))
+        fb = self._button(btns, "", lambda gg=g: self.open_game_folder(gg), "ghost", icon="folder", width=26,
+                          height=24)
+        fb.grid(row=0, column=2)
+        self._tip(fb, "Afficher le fichier")
+        self._hline(box).grid(row=r + 1, column=0, columnspan=7, sticky="ew")
+
+    # ------------------------------------------------------------------ progress tab (progress.py)
+    @_guarded
+    def refresh_progress(self) -> None:
+        """Compute the trends of the last games on a worker thread, then draw the tab."""
+        if self._progress_sig == "loading":
+            return
+        if self._progress_sig is not None:
+            return
+        self._progress_sig = "loading"
+
+        def job() -> list[dict]:
+            from treeaicoach import progress  # noqa: PLC0415
+
+            return progress.collect(paths.user_data_dir() / "games", last=20)
+
+        def failed(exc: BaseException) -> None:
+            self._progress_sig = None
+            self.show_error(f"Progrès indisponibles : {exc}")
+
+        self._dispatcher.run(job, self._show_progress, self.cb(failed), name="TreeAI-ui-progress")
+
+    @_guarded
+    def _show_progress(self, rows: list[dict]) -> None:
+        from treeaicoach import progress  # noqa: PLC0415
+
+        self._progress_sig = len(rows)
+        box = self.progress_box
+        for w in box.winfo_children():
+            w.destroy()
+        ctk = self.ctk
+        if len(rows) < 2:
+            self._label(box, "Pas encore assez de parties.", self.fonts.body, TEXT, anchor="w").grid(
+                row=0, column=0, sticky="w")
+            self._label(box, "Les courbes apparaissent après 2 parties enregistrées (5 min minimum).",
+                        self.fonts.small, MUTED, anchor="w").grid(row=1, column=0, sticky="w")
+            return
+        tr = progress.trends(rows)
+        pts = progress.focus_points(rows, 3)
+        self._caption(box, f"Tes 3 points à travailler · {len(rows)} dernières parties", MUTED, anchor="w").grid(
+            row=0, column=0, sticky="w")
+        self._hline(box, LINE_STRONG).grid(row=1, column=0, sticky="ew", pady=(4, 6))
+        fp = ctk.CTkFrame(box, fg_color="transparent")
+        fp.grid(row=2, column=0, sticky="ew", pady=(0, 18))
+        fp.grid_columnconfigure(1, weight=1)
+        for i, (title, text) in enumerate(pts):
+            self._label(fp, str(i + 1), self.fonts.stat, ACCENT, anchor="n", width=28).grid(
+                row=i, column=0, sticky="n", pady=(0, 8))
+            cell = ctk.CTkFrame(fp, fg_color="transparent")
+            cell.grid(row=i, column=1, sticky="ew", pady=(2, 8))
+            self._label(cell, title, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
+            self._label(cell, ui_text(text), self.fonts.small, MUTED, anchor="w", justify="left",
+                        wraplength=600).grid(row=1, column=0, sticky="w")
+        self._caption(box, "Tendances", MUTED, anchor="w").grid(row=3, column=0, sticky="w")
+        self._hline(box, LINE_STRONG).grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        tab = ctk.CTkFrame(box, fg_color="transparent")
+        tab.grid(row=5, column=0, sticky="ew")
+        tab.grid_columnconfigure(1, weight=1)
+        for c, (txt, anchor) in enumerate((("Mesure", "w"), ("Parties", "w"), ("Dernière", "e"),
+                                           ("Moyenne", "e"), ("Tendance", "e"))):
+            self._caption(tab, txt, DIM, anchor=anchor).grid(row=0, column=c, sticky=anchor, padx=(0, 16),
+                                                            pady=(6, 2))
+        r = 1
+        for key, (label, unit, _higher, dec) in progress.METRICS.items():
+            t = tr.get(key) or {}
+            if t.get("avg") is None:
+                continue
+            self._label(tab, label, self.fonts.body, TEXT, anchor="w").grid(row=r, column=0, sticky="w",
+                                                                            padx=(0, 16), pady=4)
+            base = 0.0 if key.startswith("gold_diff") else None
+            pil = progress.sparkline(t["values"], 360, 30, progress.metric_color(t), baseline=base,
+                                     bg=_hex_rgb(BG))
+            img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(180, 30))
+            self._images[f"spark-{key}"] = img
+            ctk.CTkLabel(tab, text="", image=img, fg_color="transparent").grid(row=r, column=1, sticky="w",
+                                                                               padx=(0, 16))
+            signed = key.startswith("gold_diff")
+            suffix = f" {unit}" if unit else ""
+            self._label(tab, progress.fmt_num(t["last"], dec, signed) + suffix, self.fonts.num, TEXT,
+                        anchor="e").grid(row=r, column=2, sticky="e", padx=(0, 16))
+            self._label(tab, progress.fmt_num(t["avg"], dec, signed) + suffix, self.fonts.small, MUTED,
+                        anchor="e").grid(row=r, column=3, sticky="e", padx=(0, 16))
+            arrow = {"up": "▲ en hausse", "down": "▼ en baisse"}.get(t["direction"], "stable")
+            col = SAFE if t.get("better") is True else DANGER if t.get("better") is False else DIM
+            self._label(tab, arrow, self.fonts.small, col, anchor="e").grid(row=r, column=4, sticky="e")
+            self._hline(tab).grid(row=r + 1, column=0, columnspan=5, sticky="ew")
+            r += 2
+        if tr.get("gold_diff10", {}).get("avg") is None:
+            self._label(box, "Or à 10/15 min et fiabilité TreeAI : disponibles quand le client LoL est ouvert après "
+                             "la partie.", self.fonts.tiny, DIM, anchor="w").grid(row=6, column=0, sticky="w",
+                                                                                 pady=(8, 0))
+
+    # ------------------------------------------------------------------ replay tab (replay.py)
+    def _build_replay(self, rp: Any) -> None:
+        import tkinter as tk  # noqa: PLC0415
+
+        ctk = self.ctk
+        self._replay: dict[str, Any] = {"model": None, "t": 0.0, "playing": False, "speed": 30.0, "job": None,
+                                        "path": None, "loading": False, "icons": {}}
+        bar = ctk.CTkFrame(rp, fg_color="transparent")
+        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        bar.grid_columnconfigure(1, weight=1)
+        self._caption(bar, "Partie", DIM, anchor="w").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.replay_menu = ctk.CTkOptionMenu(bar, values=["Aucune partie"], width=300, height=26,
+                                             font=self.fonts.small, dropdown_font=self.fonts.small,
+                                             command=self.cb(self._replay_menu_pick), dynamic_resizing=False)
+        self.replay_menu.grid(row=0, column=1, sticky="w")
+        self._replay_choices: dict[str, dict] = {}
+        size = self._scaled(300)
+        self._replay_size = size
+        holder = tk.Frame(rp, bg=BG, width=size, height=size)
+        holder.grid(row=1, column=0, sticky="nw", padx=(0, 16))
+        holder.grid_propagate(False)
+        from PIL import ImageTk  # noqa: PLC0415
+
+        self._replay_photo = ImageTk.PhotoImage(radar_placeholder(size), master=self.root)
+        self.replay_img = tk.Label(holder, image=self._replay_photo, bg=BG, bd=0, highlightthickness=0)
+        self.replay_img.place(x=0, y=0, relwidth=1, relheight=1)
+        side = ctk.CTkFrame(rp, fg_color="transparent")
+        side.grid(row=1, column=1, sticky="nsew")
+        side.grid_columnconfigure(0, weight=1)
+        self.replay_clock = self._label(side, "--:--", self.fonts.clock, TEXT, anchor="w")
+        self.replay_clock.grid(row=0, column=0, sticky="w")
+        self.replay_caption = self._label(side, "Choisis une partie.", self.fonts.small, MUTED, anchor="w",
+                                          justify="left", wraplength=380)
+        self.replay_caption.grid(row=1, column=0, sticky="w", pady=(0, 8))
+        ctl = ctk.CTkFrame(side, fg_color="transparent")
+        ctl.grid(row=2, column=0, sticky="w", pady=(0, 8))
+        self.replay_play = self._button(ctl, "Lecture", self.replay_toggle, "primary", icon="play", width=86,
+                                        height=26)
+        self.replay_play.grid(row=0, column=0, padx=(0, 6))
+        b = self._button(ctl, "<", lambda: self.replay_jump(-1), "secondary", width=28, height=26)
+        b.grid(row=0, column=1, padx=(0, 2))
+        self._tip(b, "Moment clé précédent (mort, gank)")
+        b = self._button(ctl, ">", lambda: self.replay_jump(1), "secondary", width=28, height=26)
+        b.grid(row=0, column=2, padx=(0, 8))
+        self._tip(b, "Moment clé suivant (mort, gank)")
+        self.replay_speed = ctk.CTkSegmentedButton(ctl, values=["x10", "x30", "x60", "x120"], height=26,
+                                                   font=self.fonts.tiny_bold,
+                                                   command=self.cb(self._replay_speed))
+        self.replay_speed.grid(row=0, column=3)
+        self.replay_speed.set("x30")
+        self._tip(self.replay_speed, "Vitesse : secondes de jeu par seconde")
+        self._caption(side, "Moments clés", DIM, anchor="w").grid(row=3, column=0, sticky="w", pady=(4, 0))
+        self._hline(side, LINE_STRONG).grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        self.replay_moments = ctk.CTkScrollableFrame(side, fg_color="transparent", height=150, corner_radius=0)
+        self.replay_moments.grid(row=5, column=0, sticky="ew")
+        self.replay_moments.grid_columnconfigure(1, weight=1)
+        tl_w = self._scaled(640)
+        self._replay_tl_w = tl_w
+        self.replay_tl = tk.Label(rp, bg=BG, bd=0, highlightthickness=0, cursor="hand2")
+        self.replay_tl.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self.replay_tl.bind("<Button-1>", lambda e: self._replay_click(e.x), add="+")
+        self.replay_tl.bind("<B1-Motion>", lambda e: self._replay_click(e.x), add="+")
+        self._replay_tl_photo: Any = None
+        self._replay_legend = self._label(rp, "x mort · ▲ gank · ■ kill · | objectif", self.fonts.tiny, DIM,
+                                          anchor="w")
+        self._replay_legend.grid(row=3, column=0, columnspan=2, sticky="w")
+
+    def _replay_games_menu(self, games: list[dict]) -> None:
+        menu = getattr(self, "replay_menu", None)
+        if menu is None:
+            return
+        self._replay_choices = {}
+        for g in games[:50]:
+            p = _game_json_path(g)
+            if p is None:
+                continue
+            name = str(game_field(g, "champion_name", "champion", default="") or "?")
+            res = {"win": "V", "lose": "D"}.get(game_result(g) or "", "-")
+            label = f"{fmt_game_date(game_datetime(g))} · {name} · {res}"
+            while label in self._replay_choices:
+                label += " "
+            self._replay_choices[label] = g
+        values = list(self._replay_choices) or ["Aucune partie"]
+        try:
+            menu.configure(values=values)
+            if self._replay.get("path") is None:
+                menu.set(values[0])
+        except Exception:
+            pass
+
+    def _replay_ensure_loaded(self) -> None:
+        if self._replay.get("model") is None and not self._replay.get("loading") and self._replay_choices:
+            self._replay_menu_pick(next(iter(self._replay_choices)))
+
+    def _replay_menu_pick(self, label: str) -> None:
+        g = self._replay_choices.get(label)
+        if g is not None:
+            self._replay_load(g)
+
+    @_guarded
+    def open_replay(self, game: dict) -> None:
+        """Replay button of a game row: switch to the Replay tab and load that game."""
+        page = getattr(self, "_analysis_page", None)
+        if page is not None and hasattr(page, "select_tab"):
+            page.select_tab("Replay")
+        for label, g in self._replay_choices.items():
+            if g is game:
+                self.replay_menu.set(label)
+        self._replay_load(game)
+
+    def _replay_load(self, game: dict) -> None:
+        p = _game_json_path(game)
+        if p is None or self._replay.get("loading"):
+            return
+        self._replay_stop()
+        self._replay["loading"] = True
+        self.replay_caption.configure(text="Chargement de la partie…")
+
+        def job() -> Any:
+            import json  # noqa: PLC0415
+
+            from treeaicoach import replay  # noqa: PLC0415
+
+            rec = json.loads(Path(p).read_text(encoding="utf-8"))
+            return replay.ReplayModel(rec)
+
+        def done(model: Any) -> None:
+            self._replay["loading"] = False
+            self._replay["model"] = model
+            self._replay["path"] = p
+            self._replay["t"] = model.start
+            self._replay["icons"] = {}
+            self._replay_fill_moments(model)
+            m = model.next_marker(model.start - 1)
+            self._replay_seek(m.t - 8 if m is not None else model.start)
+
+        def failed(exc: BaseException) -> None:
+            self._replay["loading"] = False
+            self.replay_caption.configure(text=f"Impossible de lire cette partie : {exc}")
+
+        self._dispatcher.run(job, self.cb(done), self.cb(failed), name="TreeAI-ui-replay")
+
+    def _replay_fill_moments(self, model: Any) -> None:
+        box = self.replay_moments
+        for w in box.winfo_children():
+            w.destroy()
+        from treeaicoach import replay  # noqa: PLC0415
+
+        cols = {"death": DANGER, "gank": WARNING, "kill": SAFE, "objective": MUTED}
+        rows = [m for m in model.markers if m.kind in ("death", "gank", "kill")][:60]
+        if not rows:
+            self._label(box, "Aucun moment clé enregistré.", self.fonts.small, DIM, anchor="w").grid(
+                row=0, column=0, columnspan=2, sticky="w")
+        for i, m in enumerate(rows):
+            b = self.ctk.CTkButton(box, text=replay.fmt_clock(m.t), width=44, height=20, corner_radius=RADIUS,
+                                   font=self.fonts.tiny_bold, fg_color="transparent", hover_color=PANEL_HI,
+                                   text_color=cols.get(m.kind, MUTED), anchor="w",
+                                   command=self.cb(lambda tt=m.t: self._replay_seek(tt - 6)))
+            b.grid(row=i, column=0, sticky="w")
+            self._label(box, ui_text(m.label), self.fonts.small, TEXT, anchor="w").grid(row=i, column=1, sticky="w")
+
+    def _replay_icon(self, alias: str) -> Any:
+        cache = self._replay["icons"]
+        if alias not in cache:
+            try:
+                from treeaicoach.champions import get_default_db  # noqa: PLC0415
+
+                cache[alias] = get_default_db().load_icon(alias) if alias and "?" not in alias else None
+            except Exception:
+                cache[alias] = None
+        return cache[alias]
+
+    def _replay_seek(self, t: float) -> None:
+        model = self._replay.get("model")
+        if model is None:
+            return
+        t = min(max(float(t), model.start), model.end)
+        self._replay["t"] = t
+        self._replay_draw()
+
+    def _replay_draw(self) -> None:
+        model = self._replay.get("model")
+        if model is None:
+            return
+        from PIL import ImageTk  # noqa: PLC0415
+
+        from treeaicoach import replay  # noqa: PLC0415
+
+        t = self._replay["t"]
+        try:
+            im = replay.render_frame(model, t, self._replay_size, icon_loader=self._replay_icon)
+            self._replay_photo = ImageTk.PhotoImage(im, master=self.root)
+            self.replay_img.configure(image=self._replay_photo)
+            tl = replay.render_timeline(model, self._replay_tl_w, self._scaled(34), t)
+            self._replay_tl_photo = ImageTk.PhotoImage(tl, master=self.root)
+            self.replay_tl.configure(image=self._replay_tl_photo)
+        except Exception:
+            log.exception("Replay rendering failed")
+        self.replay_clock.configure(text=f"{replay.fmt_clock(t)} / {replay.fmt_clock(model.end)}")
+        self.replay_caption.configure(text=ui_text(replay.frame_caption(model, t)))
+
+    def _replay_click(self, x: int) -> None:
+        model = self._replay.get("model")
+        if model is None:
+            return
+        from treeaicoach import replay  # noqa: PLC0415
+
+        self._replay_seek(replay.time_at_x(model, x, self._replay_tl_w))
+
+    def _replay_speed(self, label: str) -> None:
+        try:
+            self._replay["speed"] = float(str(label).lstrip("x"))
+        except ValueError:
+            pass
+
+    @_guarded
+    def replay_toggle(self) -> None:
+        if self._replay.get("model") is None:
+            self._replay_ensure_loaded()
+            return
+        if self._replay["playing"]:
+            self._replay_stop()
+        else:
+            if self._replay["t"] >= self._replay["model"].end - 0.5:
+                self._replay["t"] = self._replay["model"].start
+            self._replay["playing"] = True
+            self.replay_play.configure(text="Pause", image=self._icon("stop", 12, ON_ACCENT))
+            self._replay_tick()
+
+    def _replay_stop(self) -> None:
+        self._replay["playing"] = False
+        job = self._replay.get("job")
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        self._replay["job"] = None
+        try:
+            self.replay_play.configure(text="Lecture", image=self._icon("play", 12, ON_ACCENT))
+        except Exception:
+            pass
+
+    def _replay_tick(self) -> None:
+        self._replay["job"] = None
+        if not self._replay["playing"] or self._closing:
+            return
+        model = self._replay["model"]
+        step_ms = 200
+        self._replay["t"] = min(model.end, self._replay["t"] + self._replay["speed"] * step_ms / 1000)
+        self._replay_draw()
+        if self._replay["t"] >= model.end or self._current_page != "analysis":
+            self._replay_stop()
+            return
+        self._replay["job"] = self.root.after(step_ms, self._replay_tick)
+
+    @_guarded
+    def replay_jump(self, direction: int) -> None:
+        model = self._replay.get("model")
+        if model is None:
+            return
+        t = self._replay["t"] + 6
+        m = model.next_marker(t) if direction > 0 else model.prev_marker(t - 1)
+        if m is not None:
+            self._replay_seek(m.t - 6)
+
 
     @_guarded
     def open_report(self, game: dict) -> None:
@@ -2806,9 +3388,8 @@ class CoachApp:
 
     # ------------------------------------------------------------------ settings page
     def _build_settings_page(self) -> Any:
-        page, right, body = self._page("Réglages", "Minimap, détection, démarrage, interface et maintenance",
-                                       icon="settings")
-        b = self._button(right, "Copier le diagnostic", self.copy_diagnostic, "secondary", icon="copy")
+        page, right, body = self._page("Réglages", "Démarrage, minimap, IA, maintenance")
+        b = self._button(right, "Diagnostic", self.copy_diagnostic, "ghost", icon="copy", height=26)
         b.grid(row=0, column=0)
         self._tip(b, "Copie un rapport technique (sans donnée personnelle) à coller dans ton message. (Ctrl+D)")
         s = self._section(body, 0, "Minimap", "Par défaut, la minimap est trouvée automatiquement. "
@@ -2843,9 +3424,9 @@ class CoachApp:
         _row, slot = self._row(s, "Lancer avec Windows",
                                "Ouvre TreeAI Coach à l'ouverture de ta session." if ok else reason)
         self.win_autostart_var = self.ctk.BooleanVar(value=get_windows_autostart() if ok else False)
-        sw = self.ctk.CTkSwitch(slot, text="", variable=self.win_autostart_var, width=46, switch_width=42,
-                                switch_height=22, command=self.cb(self._on_windows_autostart),
-                                fg_color="#1B2638", progress_color=TEAL, button_color=TEXT)
+        sw = self.ctk.CTkSwitch(slot, text="", variable=self.win_autostart_var, width=38, switch_width=34,
+                                switch_height=16, command=self.cb(self._on_windows_autostart),
+                                fg_color=SWITCH_OFF, progress_color=TEAL, button_color=TEXT)
         sw.grid(row=0, column=0)
         if not ok:
             sw.configure(state="disabled", button_color=DIM)
@@ -2866,8 +3447,7 @@ class CoachApp:
             self._switch_row(s, "ui_confirm_quit", "Confirmer avant de quitter en partie",
                              "Évite de fermer le coach par erreur pendant une partie.")
         _row, slot = self._row(s, "Assistant de démarrage", "Mode Sans bordure, test de la voix et préréglage.")
-        self._button(slot, "Relancer l'assistant", lambda: self.show_onboarding(0), "ghost",
-                     icon="sparkle").grid(row=0, column=0)
+        self._button(slot, "Relancer", lambda: self.show_onboarding(0), "secondary").grid(row=0, column=0)
 
         s = self._section(body, 4, "Maintenance et support", icon="info")
         _row, slot = self._row(s, "Diagnostic", "Version, moteur, détecteur, voix et dernières erreurs, à joindre "
@@ -2894,6 +3474,10 @@ class CoachApp:
             self._build_updates_section(body, 6)
         except Exception:
             log.exception("Cannot build the updates section")
+        self._tabs(page, body, (("Général", ("Démarrage & rapports", "Interface", "Mises à jour")),
+                                ("Minimap", ("Minimap", "Détection")),
+                                ("IA", ("IA (facultatif)",)),
+                                ("Avancé", ("Maintenance et support",))))
         return page
 
     # ------------------------------------------------------------------ optional AI advice (ai_advisor.py)
@@ -2905,7 +3489,7 @@ class CoachApp:
         s = self._section(body, row, "IA (facultatif)", "Un conseil d'achat et de macro écrit par une IA aux "
                           "moments clés (retour en base, mort, niveaux 6/11/16, 60 s avant dragon / Baron). "
                           "Désactivé par défaut ; ta clé reste sur ce PC et aucun pseudo n'est envoyé.",
-                          icon="sparkle")
+                          icon="star")
         self._choice_row(s, "ai_provider", "Fournisseur", "Gemini, Groq et OpenRouter ont une offre gratuite ; "
                          "Ollama tourne sur ton PC.", ai_advisor.PROVIDER_CHOICES, width=260)
         _row, slot = self._row(s, "Clé API", "Collée ici, enregistrée localement (jamais exportée).")
@@ -2933,7 +3517,7 @@ class CoachApp:
                                "IA est ajoutée au rapport d'après-partie.")
         self._ai_test_btn = self._button(slot, "Tester", self.test_ai, "secondary", icon="check")
         self._ai_test_btn.grid(row=0, column=0, padx=(0, 8))
-        self._button(slot, "Demander à l'IA", self.ask_ai, "ghost", icon="sparkle").grid(row=0, column=1)
+        self._button(slot, "Demander à l'IA", self.ask_ai, "ghost", icon="star").grid(row=0, column=1)
         box = self.ctk.CTkFrame(s, fg_color="transparent")
         box.grid(row=2 * s._rows, column=0, sticky="ew", pady=(0, 6))
         box.grid_columnconfigure(0, weight=1)
@@ -3012,6 +3596,11 @@ class CoachApp:
         self._update_btn = self._button(slot, "Mettre à jour", self.install_update, "primary",
                                         state="disabled")
         self._update_btn.grid(row=0, column=0)
+        self._update_manual_btn = self._button(slot, "Télécharger manuellement", self.open_manual_download,
+                                               "secondary", icon="download")
+        self._update_manual_btn.grid(row=0, column=1, padx=(6, 0))
+        self._tip(self._update_manual_btn, "Ouvre le lien direct du dernier TreeAICoach.exe dans ton navigateur. "
+                                           "Ferme TreeAI Coach, puis remplace l'ancien fichier par le nouveau.")
         _row, slot = self._row(s, "Jeton GitHub (dépôt privé)", "Facultatif : jeton d'accès personnel avec "
                                "lecture du dépôt, nécessaire tant que le dépôt est privé.")
         entry = self.ctk.CTkEntry(slot, width=240, show="•", placeholder_text="ghp_… ou github_pat_…")
@@ -3024,6 +3613,50 @@ class CoachApp:
         self._update_token_entry = entry
         self._switch_row(s, "check_updates_on_start", "Vérifier au démarrage",
                          "Cherche une nouvelle version en arrière-plan à chaque lancement.")
+
+    @_guarded
+    def open_manual_download(self) -> None:
+        """Fallback when the in-app update fails: the direct link to the published exe."""
+        from treeaicoach import updater  # noqa: PLC0415
+
+        try:
+            webbrowser.open(updater.MANUAL_DOWNLOAD_URL)
+            self.show_toast("Lien de téléchargement ouvert dans le navigateur.")
+        except Exception:
+            self._copy_text(updater.MANUAL_DOWNLOAD_URL)
+            self.show_toast("Lien copié : colle-le dans ton navigateur.")
+
+    def _copy_text(self, text: str) -> None:
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+        except Exception:
+            log.debug("clipboard failed", exc_info=True)
+
+    def _check_last_update(self) -> None:
+        """At launch: did the last in-app update really apply? (updater.startup_report)."""
+        from treeaicoach import updater  # noqa: PLC0415
+
+        def done(rep: Any) -> None:
+            if rep is None or self._closing:
+                return
+            if rep.ok:
+                self.show_toast(rep.message)
+                return
+            self._set_update_status(rep.message, DANGER)
+            top, body, bar, close = self._dialog("Mise à jour non appliquée", None, width=520)
+            self._label(body, ui_text(rep.message.split(" Tu peux aussi")[0]), self.fonts.small, TEXT, anchor="w",
+                        justify="left", wraplength=470).grid(row=0, column=0, sticky="w")
+            self._label(body, updater.MANUAL_DOWNLOAD_URL, self.fonts.tiny, MUTED, anchor="w", justify="left",
+                        wraplength=470).grid(row=1, column=0, sticky="w", pady=(8, 0))
+            self._button(bar, "Fermer", close, "ghost").grid(row=0, column=0, padx=(0, 6))
+            self._button(bar, "Réessayer", lambda: (close(), self.show_page("settings"), self.check_updates()),
+                         "secondary").grid(row=0, column=1, padx=(0, 6))
+            self._button(bar, "Télécharger manuellement", lambda: (close(), self.open_manual_download()),
+                         "primary", icon="download").grid(row=0, column=2)
+            self._place_dialog(top, grab=False)
+
+        self._dispatcher.run(updater.startup_report, done, None, name="TreeAI-update-report")
 
     def _set_update_status(self, text: str, color: str = MUTED) -> None:
         lbl = getattr(self, "_update_status", None)
@@ -3056,7 +3689,8 @@ class CoachApp:
             self._update_busy = False
             self._update_info = res.info if res.available else None
             color = GOLD if res.available else (DANGER if res.status == updater.ERROR else TEAL)
-            self._set_update_status(res.message, color)
+            self._set_update_status(updater.manual_hint(res.message) if res.status == updater.ERROR
+                                    else res.message, color)
             btn = getattr(self, "_update_btn", None)
             if btn is not None:
                 btn.configure(state="normal" if res.available and res.can_install else "disabled")
@@ -3113,8 +3747,9 @@ class CoachApp:
                 return
             self._update_bar.grid_remove()
             self._update_btn.configure(state="normal")
-            self._set_update_status(res.message, DANGER)
-            self.show_error(res.message)
+            msg = updater.manual_hint(res.message)
+            self._set_update_status(msg, DANGER)
+            self.show_error(res.message + " Lien direct : Réglages > Mises à jour > Télécharger manuellement.")
 
         def failed(exc: BaseException) -> None:
             done(updater.ApplyResult(False, f"Mise à jour impossible : {exc}"))
@@ -3167,7 +3802,7 @@ class CoachApp:
     def _build_help_page(self) -> Any:
         ctk = self.ctk
         page, right, body = self._page("Aide", "Bien démarrer, sécurité et dépannage", icon="help")
-        b = self._button(right, "Assistant", lambda: self.show_onboarding(0), "secondary", icon="sparkle")
+        b = self._button(right, "Assistant", lambda: self.show_onboarding(0), "secondary", icon="star")
         b.grid(row=0, column=0, padx=(0, 8))
         self._tip(b, "Relancer l'assistant de démarrage")
         self._button(right, f"Nouveautés v{ui_kit.CHANGELOG_VERSION}", self.show_changelog, "ghost",
@@ -3226,7 +3861,7 @@ class CoachApp:
             r.grid(row=i, column=0, sticky="ew", pady=3)
             r.grid_columnconfigure(1, weight=1)
             ctk.CTkLabel(r, text=keys, font=self.fonts.tiny_bold, text_color=GOLD, fg_color=PANEL_LO,
-                         corner_radius=6, width=130, height=24).grid(row=0, column=0, sticky="w", padx=(0, 14))
+                         corner_radius=RADIUS, width=130, height=24).grid(row=0, column=0, sticky="w", padx=(0, 14))
             self._label(r, what, self.fonts.small, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
         s = self._section(body, 3, "Dépannage", icon="target")
         for i, (q, a) in enumerate((
@@ -3258,21 +3893,8 @@ class CoachApp:
         return page
 
     def _number_badge(self, parent: Any, n: int) -> Any:
-        """Round numbered badge (drawn with PIL so it stays a perfect circle with any font)."""
-        key = f"badge-{n}"
-        img = self._images.get(key)
-        if img is None:
-            ss, size = 4, 34
-            S = size * ss
-            im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-            d = ImageDraw.Draw(im)
-            d.ellipse((0, 0, S - 1, S - 1), fill=_hex_rgb(GOLD_DARK) + (255,))
-            d.ellipse((ss, ss, S - 1 - ss, S - 1 - ss), outline=_hex_rgb(GOLD) + (255,), width=ss)
-            pil = im.resize((size * 2, size * 2), Image.LANCZOS)
-            img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(size, size))
-            self._images[key] = img
-        return self.ctk.CTkLabel(parent, text=str(n), image=img, compound="center", font=self.fonts.h3,
-                                 text_color=TEXT, fg_color="transparent", width=34, height=34)
+        """Step number: the display face in the accent colour (no badge, no circle)."""
+        return self._label(parent, str(n), self.fonts.stat, ACCENT, anchor="n", width=26)
 
     def _error_page(self, key: str) -> Any:
         page = self.ctk.CTkFrame(self.content, fg_color=BG, corner_radius=0)
@@ -3293,12 +3915,12 @@ class CoachApp:
         except Exception:
             pass
         col = {"error": DANGER, "info": TEAL, "warning": WARNING}.get(level, TEAL)
-        fr = self.ctk.CTkFrame(self.root, fg_color=PANEL_HI, corner_radius=10, border_width=1, border_color=col)
-        bar = self.ctk.CTkFrame(fr, width=4, height=22, corner_radius=2, fg_color=col)
-        bar.grid(row=0, column=0, padx=(12, 10), pady=12)
-        self._label(fr, text, self.fonts.small, TEXT, justify="left", wraplength=380).grid(
-            row=0, column=1, padx=(0, 16), pady=10)
-        fr.place(relx=1.0, rely=1.0, anchor="se", x=-22, y=-22)
+        fr = self.ctk.CTkFrame(self.root, fg_color=PANEL_HI, corner_radius=0, border_width=1, border_color=LINE_STRONG)
+        bar = self.ctk.CTkFrame(fr, width=3, height=22, corner_radius=0, fg_color=col)
+        bar.grid(row=0, column=0, sticky="ns", padx=(1, 10), pady=1)
+        self._label(fr, ui_text(text), self.fonts.small, TEXT, justify="left", wraplength=380).grid(
+            row=0, column=1, padx=(0, 14), pady=9)
+        fr.place(relx=1.0, rely=1.0, anchor="se", x=-16, y=-16)
         fr.lift()
         self._toast_frame = fr
         self._toast_job = self.root.after(TOAST_MS + (2000 if level == "error" else 0), self._hide_toast)
@@ -3327,29 +3949,25 @@ class CoachApp:
         top.title(title)
         top.resizable(False, False)
         top.transient(self.root)
-        top.configure(fg_color=BG)
+        top.configure(fg_color=SURFACE)
         self._set_window_icon(top)
         top.grid_columnconfigure(0, weight=1)
-        card = ctk.CTkFrame(top, fg_color=PANEL, corner_radius=14, border_width=1, border_color=BORDER_GOLD)
-        card.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        card = ctk.CTkFrame(top, fg_color="transparent", corner_radius=0, border_width=0)
+        card.grid(row=0, column=0, sticky="nsew")
         card.grid_columnconfigure(0, weight=1)
         head = ctk.CTkFrame(card, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=22, pady=(20, 4))
+        head.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 0))
         head.grid_columnconfigure(1, weight=1)
-        if icon:
-            ctk.CTkLabel(head, text="", image=self._icon(icon, 20, GOLD), fg_color="transparent", width=22).grid(
-                row=0, column=0, padx=(0, 10))
-        self._label(head, title, self.fonts.h2, GOLD, anchor="w").grid(row=0, column=1, sticky="w")
-        ctk.CTkLabel(card, text="", image=self._rule_image(180), fg_color="transparent", height=2).grid(
-            row=1, column=0, sticky="w", padx=22, pady=(4, 0))
+        self._label(head, ui_text(title), self.fonts.title, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
+        self._hline(card, LINE_STRONG).grid(row=1, column=0, sticky="ew", padx=20, pady=(8, 0))
         if subtitle:
-            self._label(card, subtitle, self.fonts.small, MUTED, anchor="w", justify="left",
-                        wraplength=width - 60).grid(row=2, column=0, sticky="w", padx=22, pady=(8, 0))
+            self._label(card, ui_text(subtitle), self.fonts.small, MUTED, anchor="w", justify="left",
+                        wraplength=width - 60).grid(row=2, column=0, sticky="w", padx=20, pady=(8, 0))
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.grid(row=3, column=0, sticky="nsew", padx=22, pady=(10, 0))
+        body.grid(row=3, column=0, sticky="nsew", padx=20, pady=(10, 0))
         body.grid_columnconfigure(0, weight=1)
         bar = ctk.CTkFrame(card, fg_color="transparent")
-        bar.grid(row=4, column=0, sticky="e", padx=22, pady=(14, 18))
+        bar.grid(row=4, column=0, sticky="e", padx=20, pady=(14, 16))
 
         def close() -> None:
             try:
@@ -3441,7 +4059,7 @@ class CoachApp:
             self._mark(ui_seen_changelog=ui_kit.CHANGELOG_VERSION)
 
         top.protocol("WM_DELETE_WINDOW", ok)
-        self._button(bar, "Super !", ok, "primary", width=120).grid(row=0, column=0)
+        self._button(bar, "OK", ok, "primary", width=80).grid(row=0, column=0)
         self._place_dialog(top, grab=False)
 
     @_guarded
@@ -3449,7 +4067,7 @@ class CoachApp:
         top, body, bar, close = self._dialog("À propos de TreeAI Coach", f"Version {__version__}", "info", 520)
         self._label(body, ui_kit.ABOUT_TEXT, self.fonts.small, TEXT, anchor="w", justify="left",
                     wraplength=440).grid(row=0, column=0, sticky="w")
-        self._button(bar, "Nouveautés", lambda: (close(), self.show_changelog()), "ghost", icon="sparkle",
+        self._button(bar, "Nouveautés", lambda: (close(), self.show_changelog()), "ghost", icon="star",
                      width=130).grid(row=0, column=0, padx=(0, 8))
         self._button(bar, "Fermer", close, "primary", width=110).grid(row=0, column=1)
         self._place_dialog(top, grab=False)
@@ -3460,7 +4078,7 @@ class CoachApp:
         steps = ui_kit.onboarding_steps()
         step = min(max(int(step), 0), len(steps) - 1)
         title, text = steps[step]
-        top, body, bar, close = self._dialog("Bienvenue dans TreeAI Coach", f"Étape {step + 1} sur {len(steps)}",
+        top, body, bar, close = self._dialog("Premiers réglages", f"Étape {step + 1} sur {len(steps)}",
                                              "sparkle", 520)
         self._onboarding_step = step
         dots = self.ctk.CTkFrame(body, fg_color="transparent")
@@ -3499,7 +4117,7 @@ class CoachApp:
         def finish() -> None:
             close()
             self._mark(ui_onboarding_done=True, ui_seen_changelog=ui_kit.CHANGELOG_VERSION)
-            self.show_toast("C'est prêt : lance une partie, le coach s'occupe du reste.")
+            self.show_toast("Réglages enregistrés. Lance une partie.")
 
         top.protocol("WM_DELETE_WINDOW", finish)
         self._button(bar, "Passer", finish, "secondary", width=100).grid(row=0, column=0, padx=(0, 8))
@@ -3768,7 +4386,7 @@ class CoachApp:
                 out["engine"] = None
                 out["error"] = f"Le moteur d'analyse n'a pas pu démarrer : {exc}"
             try:
-                ov = self._overlay_factory(cfg, self._overlay_state)
+                ov = self._overlay_factory(cfg, self._overlay_provider)
                 out["overlay"] = ov
                 if ov is not None:
                     set_cb = getattr(ov, "set_on_moved", None)
@@ -3790,8 +4408,16 @@ class CoachApp:
                 self._shutdown_components(None, out.get("overlay"), voice if self._own_voice else None)
             return out
 
+        def failed(exc: BaseException) -> None:
+            # never leave the launcher stuck on "Démarrage…" (start button disabled forever)
+            self._busy = False
+            self.engine_error = f"Le démarrage a échoué : {exc}. Clique sur « Démarrer l'analyse » pour réessayer."
+            self.show_error(self.engine_error)
+            self._refresh_status()
+
         self._busy = True
-        self._dispatcher.run(job, self._backend_ready, name="TreeAI-ui-init")
+        self._backend_t0 = time.monotonic()
+        self._dispatcher.run(job, self._backend_ready, self.cb(failed), name="TreeAI-ui-init")
 
     @_guarded
     def _backend_ready(self, out: dict[str, Any]) -> None:
@@ -3851,8 +4477,141 @@ class CoachApp:
             except Exception:
                 log.exception("Cannot stop an engine created during shutdown")
 
+    def _update_system(self, st: Any, key: str, running: bool) -> None:
+        """Dashboard "Système" rows (ui_kit.subsystem_rows) + a LoL client probe every 30 s."""
+        rows = getattr(self, "sys_rows", None)
+        if not rows:
+            return
+        now = time.monotonic()
+        if now - self._lcu_polled > 30.0 and self._current_page == "dashboard":
+            self._lcu_polled = now
+            self._refresh_lcu_status()
+        det = str(getattr(st, "detector", "") or getattr(self._detector, "name", "") or "")
+        vb = str(getattr(self.voice, "backend", "") or getattr(st, "voice", "") or "")
+        data = ui_kit.subsystem_rows(
+            state=key, message=str(getattr(st, "message", "") or ""), running=running, demo=self.demo,
+            minimap_found=getattr(st, "minimap_rect", None) is not None,
+            minimap_method=getattr(st, "locate_method", None), detector=det, voice_backend=vb,
+            muted=self._is_muted(), lcu_text=self._lcu_text, lcu_enabled=bool(getattr(self.cfg, "lcu_enabled", True)),
+            engine_ok=self.engine is not None or self._busy)
+        cols = {0: SAFE, 1: WARNING, 2: DANGER, -1: DIM}
+        for k, label, level, text, fix, action in data:
+            row = rows.get(k)
+            if row is None:
+                continue
+            sig = (level, text, fix)
+            if row["sig"] == sig:
+                continue
+            row["sig"] = sig
+            row["action"] = action
+            row["dot"].configure(fg_color=cols.get(level, DIM))
+            row["val"].configure(text=ui_text(text), text_color=TEXT if level in (1, 2) else MUTED)
+            if fix and action:
+                row["btn"].configure(text=fix, text_color=DANGER if level == 2 else ACCENT)
+                row["btn"].grid()
+            else:
+                row["btn"].grid_remove()
+
+    @_guarded
+    def _system_fix(self, key: str) -> None:
+        row = (getattr(self, "sys_rows", {}) or {}).get(key) or {}
+        action = row.get("action") or ""
+        if action == "start":
+            self.toggle_engine()
+        elif action == "calibrate":
+            self.calibrate()
+        elif action == "help_borderless":
+            self.show_page("help")
+            self.show_toast("Dans le jeu : Options > Vidéo > Mode d'affichage : Sans bordure.", "warning")
+        elif action == "diagnostic":
+            self.copy_diagnostic()
+        elif action == "settings_ia":
+            self.show_page("settings")
+            sel = getattr(self.pages.get("settings"), "select_tab", None)
+            if callable(sel):
+                sel("Minimap")
+        elif action == "voice":
+            self.test_voice()
+        elif action == "unmute":
+            self.toggle_mute()
+        elif action == "voice_settings":
+            self.show_page("alerts")
+            sel = getattr(self.pages.get("alerts"), "select_tab", None)
+            if callable(sel):
+                sel("Voix")
+            self.show_toast("Aucune voix Windows trouvée : choisis la voix neurale (Internet) ou installe une "
+                            "voix française (Paramètres Windows > Heure et langue > Voix).", "warning")
+        elif action == "lcu_help":
+            self.show_toast("Laisse le client League of Legends ouvert : après la partie, TreeAI y lit tes "
+                            "vraies stats (lecture seule). Rien à régler.")
+
+    @_guarded
+    def test_overlay(self) -> None:
+        """Show the overlay on sample states (sûr / attention / danger) for 10 s, out of game."""
+        ov = self.overlay
+        if self._in_game():
+            self.show_toast("Une partie est en cours : l'overlay affiche déjà la vraie partie.")
+            return
+        if ov is None or not getattr(ov, "ok", False):
+            self.show_page("overlay")
+            self.show_toast("L'overlay ne s'affiche que sous Windows, jeu en Sans bordure. Voici l'aperçu.",
+                            "warning")
+            return
+        if not self.cfg.overlay_enabled:
+            self.set_option("overlay_enabled", True)
+            self._sync_quick()
+
+        def job() -> list:
+            from treeaicoach import overlay_render as orr  # noqa: PLC0415
+
+            states = orr.sample_states()
+            sw, sh = 1920, 1080
+            try:
+                from treeaicoach.capture import monitor_rects  # noqa: PLC0415
+
+                mons = monitor_rects()
+                if mons:
+                    sw, sh = int(mons[0].w), int(mons[0].h)
+            except Exception:
+                log.debug("monitor size unknown", exc_info=True)
+            out = []
+            for name in ("safe", "warning", "danger"):
+                st = states.get(name)
+                if st is None:
+                    continue
+                mm = orr.default_minimap_rect(sw, sh)
+                try:
+                    rect_t = type(st.minimap_rect) if st.minimap_rect is not None else tuple
+                    st = dataclasses.replace(st, minimap_rect=rect_t(*mm), screen_rect=rect_t(0, 0, sw, sh))
+                except Exception:
+                    log.debug("sample state not resized", exc_info=True)
+                out.append(st)
+            return out
+
+        def done(states: list) -> None:
+            if not states:
+                self.show_error("Aperçu de l'overlay indisponible.")
+                return
+            self._overlay_test = (time.monotonic(), states)
+            self.show_toast("Overlay de test affiché 10 s : sûr, attention, puis danger.")
+
+        self._dispatcher.run(job, done, self.cb(lambda e: self.show_error(f"Test de l'overlay impossible : {e}")),
+                             name="TreeAI-ui-overlay-test")
+
+    def _overlay_provider(self) -> Any:
+        """State provider given to the overlay thread: the "Tester l'overlay" samples for 10 s,
+        else the engine snapshot."""
+        test = getattr(self, "_overlay_test", None)
+        if test is not None:
+            t0, states = test
+            el = time.monotonic() - t0
+            if el < 10.0 and states:
+                return states[min(len(states) - 1, int(el / (10.0 / len(states))))]
+            self._overlay_test = None
+        return self._overlay_state()
+
     def _overlay_state(self) -> Any:
-        """State provider of the overlay thread (thread-safe engine snapshot)."""
+        """Thread-safe engine snapshot of the overlay state (None out of game)."""
         eng = self.engine
         if eng is None:
             return None
@@ -3982,7 +4741,13 @@ class CoachApp:
                 self.show_error(err)
             self._refresh_status()
 
-        self._dispatcher.run(job, done, name="TreeAI-ui-rebuild")
+        def failed(exc: BaseException) -> None:
+            self._busy = False
+            self.engine_error = f"Le moteur d'analyse n'a pas pu redémarrer : {exc}"
+            self.show_error(self.engine_error)
+            self._refresh_status()
+
+        self._dispatcher.run(job, done, self.cb(failed), name="TreeAI-ui-rebuild")
 
     @_guarded
     def test_voice(self) -> None:
@@ -4036,7 +4801,7 @@ class CoachApp:
             self.show_toast("Fais glisser le radar et le HUD à la souris, puis clique sur « Terminer ».")
         else:
             self.btn_move.configure(text="Déplacer les fenêtres", fg_color=PANEL_HI, text_color=TEXT,
-                                    hover_color="#16284A", image=self._icon("move", 16, MUTED))
+                                    hover_color=HOVER, image=self._icon("move", 16, MUTED))
             self.show_toast("Positions de l'overlay enregistrées.")
 
     # ------------------------------------------------------------------ hotkeys
@@ -4148,7 +4913,9 @@ class CoachApp:
         running = self._engine_running()
         if self.engine is None:
             key = "STARTING" if self._busy else "NO_ENGINE"
-            msg = ("Chargement du détecteur et de la voix…" if self._busy else
+            slow = self._busy and time.monotonic() - getattr(self, "_backend_t0", time.monotonic()) > 30.0
+            msg = (("Chargement plus long que prévu (premier lancement ou analyse antivirus)…" if slow else
+                    "Chargement du détecteur et de la voix…") if self._busy else
                    (self.engine_error or "Le moteur d'analyse n'est pas disponible."))
         else:
             key = state_key(getattr(st, "state", None)) if st is not None else "STOPPED"
@@ -4189,10 +4956,10 @@ class CoachApp:
         # tech tiles
         fps = getattr(st, "fps", None) if st is not None else None
         self._set_text(self.tech["fps"], fmt_decimal_fr(fps, 1) if isinstance(fps, (int, float)) and running
-                       and key == "RUNNING" else "—")
-        det = str(getattr(st, "detector", "") or getattr(self._detector, "name", "") or "—")
-        self._set_text(self.tech["detector"], _DETECTOR_FR.get(det.lower(), det)[:10])
-        vname = str(getattr(st, "voice", "") or getattr(self.voice, "backend", "") or "—")
+                       and key == "RUNNING" else "-")
+        det = str(getattr(st, "detector", "") or getattr(self._detector, "name", "") or "-")
+        self._set_text(self.tech["detector"], _DETECTOR_FR.get(det.lower(), det)[:8])
+        vname = str(getattr(st, "voice", "") or getattr(self.voice, "backend", "") or "-")
         if st is not None and getattr(st, "muted", False):
             self._set_text(self.tech["voice"], "Coupée")
         else:
@@ -4206,8 +4973,16 @@ class CoachApp:
             self.banner.grid_remove()
 
         cpu = self._cpu.sample() if getattr(self, "_cpu", None) is not None else None
-        self._set_text(self.tech["cpu"], "—" if cpu is None else f"{cpu:.0f} %")
+        self._set_text(self.tech["cpu"], "-" if cpu is None else f"{cpu:.0f} %")
+        try:
+            self._update_system(st, key, running)
+        except Exception:
+            log.debug("system rows update failed", exc_info=True)
         self._update_threat(ov)
+        try:
+            self._set_text(self.hero.timers, ui_kit.objectives_text(ov) if ov is not None else "")
+        except Exception:
+            log.debug("objective timers failed", exc_info=True)
         self._update_enemies(ov, st)
         try:
             self._update_team(ov)
@@ -4250,11 +5025,11 @@ class CoachApp:
             return
         self._coach_sig = sig
         if step is None:
-            self.coach_gauge_lbl.configure(text="—", text_color=DIM)
+            self.coach_gauge_lbl.configure(text="-", text_color=DIM)
         else:
             col = GAUGE_UI_COLORS.get(int(step), MUTED)
-            self.coach_gauge_lbl.configure(text=str(getattr(gauge, "label", "") or "—"), text_color=col)
-        role_txt = f"Rôle : {role}" if role else "Rôle : —"
+            self.coach_gauge_lbl.configure(text=str(getattr(gauge, "label", "") or "-"), text_color=col)
+        role_txt = f"Rôle : {role}" if role else "Rôle : -"
         if notice:
             role_txt += " · échange de voie"
         reason = str(getattr(gauge, "reason", "") or "")
@@ -4309,15 +5084,16 @@ class CoachApp:
         self._start_style = want
         if start:
             self.btn_start.configure(state="normal" if self.engine is not None or not self._busy else "disabled",
-                                     text="Démarrer l'analyse", fg_color=GOLD, hover_color=GOLD_HOVER,
-                                     text_color=ON_GOLD, border_width=0, image=self._icon("play", 16, ON_GOLD))
+                                     text="Démarrer l'analyse", fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                     text_color=ON_ACCENT, border_width=0, image=self._icon("play", 12, ON_ACCENT))
         else:
-            self.btn_start.configure(state="normal", text="Arrêter l'analyse", fg_color=DANGER_DARK,
-                                     hover_color="#6A1D2C", text_color="#FFD9DF", border_width=1,
-                                     border_color=DANGER, image=self._icon("stop", 14, "#FFD9DF"))
+            self.btn_start.configure(state="normal", text="Arrêter l'analyse", fg_color=PANEL_HI,
+                                     hover_color=DANGER_DARK, text_color=TEXT, border_width=1,
+                                     border_color=LINE_STRONG, image=self._icon("stop", 10, DANGER))
 
     @staticmethod
     def _set_text(widget: Any, text: str) -> None:
+        text = ui_text(text)
         try:
             if widget.cget("text") != text:
                 widget.configure(text=text)
@@ -4326,7 +5102,7 @@ class CoachApp:
 
     def _update_threat(self, ov: Any) -> None:
         if ov is None:
-            self._set_text(self.threat_lbl, "—")
+            self._set_text(self.threat_lbl, "-")
             self.threat_lbl.configure(text_color=DIM)
             self._set_text(self.threat_detail, "Hors partie")
             self._gauge_target, self._gauge_color = 0.0, DIM
@@ -4335,7 +5111,7 @@ class CoachApp:
         lvl = min(max(lvl, 0), 2)
         text = str(getattr(ov, "threat_text", "") or THREAT_LABELS[lvl])
         head = THREAT_LABELS[lvl]
-        detail = text.split("—", 1)[1].strip() if "—" in text else (
+        detail = text.split(EM_DASH, 1)[1].strip() if EM_DASH in text else (
             "Aucun ennemi menaçant" if lvl == 0 else text)
         self._set_text(self.threat_lbl, head)
         self.threat_lbl.configure(text_color=THREAT_COLORS[lvl])
@@ -4377,7 +5153,7 @@ class CoachApp:
                 sig: tuple = ("empty",)
                 if slot["sig"] != sig:
                     slot["icon"].configure(image=self._enemy_image(None, None, "empty"))
-                    slot["name"].configure(text="—", text_color=DIM)
+                    slot["name"].configure(text="-", text_color=DIM)
                     slot["status"].configure(text=" ", text_color=DIM)
                     slot["box"].configure(border_color=BORDER)
                     slot["border"] = BORDER
@@ -4429,7 +5205,7 @@ class CoachApp:
                 if slot["sig"] != sig:
                     slot["sig"] = sig
                     slot["icon"].configure(image=self._ally_image(None, None, None))
-                    slot["name"].configure(text="—", text_color=DIM)
+                    slot["name"].configure(text="-", text_color=DIM)
                     slot["tip"] = ""
                 continue
             alias = getattr(a, "alias", None)
@@ -4520,7 +5296,7 @@ class CoachApp:
                 tb.insert("end", "Aucune alerte pour l'instant. Les annonces vocales apparaîtront ici.", "empty")
             for gt, lvl, text in reversed(self._journal):
                 lvl = min(max(int(lvl), 0), 2)
-                tb.insert("end", f"{fmt_clock(gt) if gt is not None else '  —  '}   ", ("time", "line"))
+                tb.insert("end", f"{fmt_clock(gt) if gt is not None else '  -  '}   ", ("time", "line"))
                 tb.insert("end", "● ", (f"lvl{lvl}", "line"))
                 tb.insert("end", text + "\n", (f"lvl{lvl}", "line"))
             tb.configure(state="disabled")
@@ -4565,14 +5341,12 @@ class CoachApp:
             if self.root.state() != "iconic":
                 self._pulse_phase = (self._pulse_phase + PULSE_MS / 1000 / 1.6) % 1.0
                 color = getattr(self, "_state_color", DIM)
-                active = self._last_state_key in ("RUNNING", "WAITING_GAME", "LOCATING", "STARTING")
+                active = self._last_state_key == "RUNNING"     # pulse = "live", nothing else moves
                 k = 0.5 - 0.5 * math.cos(2 * math.pi * self._pulse_phase) if active else 0.0
                 if self._current_page == "dashboard":
                     self.hero.pulse(color, k, active)
                     self._draw_gauge_step()
-                # sidebar status dot breathes too
-                self.pill_dot.itemconfigure(self._pill_halo, fill=_blend(color, PANEL, 0.5 + 0.45 * k)
-                                            if active else PANEL)
+                # sidebar status square: steady colour (motion only on the dashboard's live dot)
                 self.pill_dot.itemconfigure(self._pill_dot_item, fill=color)
         except Exception:
             log.debug("Pulse failed", exc_info=True)
@@ -4659,10 +5433,23 @@ class CoachApp:
 # Module-level helpers used by the app
 # ======================================================================================
 _DETECTOR_FR = {"onnx": "ONNX", "classic": "Classique", "none": "Aucun", "auto": "Auto"}
-_VOICE_FR = {"sapi": "SAPI", "onecore": "Windows", "neural": "Neurale", "print": "Journal", "": "—"}
+_VOICE_FR = {"sapi": "SAPI", "onecore": "Windows", "neural": "Neurale", "print": "Journal", "": "-"}
 _ALERT_KINDS = frozenset({"jungler_approach", "roam_approach", "collapse", "jungler_spotted", "laner_mia",
                           "objective_soon", "recall_gold", "control_ward", "jungler_where", "death_recap"})
 _POSITION_FR = {"TOP": "Haut", "JUNGLE": "Jungle", "MIDDLE": "Milieu", "BOTTOM": "Bas", "UTILITY": "Support"}
+
+
+def ui_text(text: Any) -> str:
+    """User-facing text cleaned for the design rules: no em dash (docs/DESIGN.md).
+
+    " — " becomes " · " and a lone "-" (missing value) becomes "-". Strings coming from other
+    modules (engine, coach...) go through this before being shown.
+    """
+    t = str(text if text is not None else "")
+    if EM_DASH in t:
+        t = (t.replace(f" {EM_DASH} ", " · ").replace(f"{EM_DASH} ", "· ").replace(f" {EM_DASH}", " ·")
+             .replace(EM_DASH, "-"))
+    return t
 
 
 def _fmt_ago(s: float) -> str:

@@ -92,6 +92,11 @@ TEMPLATE_VISION_R: float = 0.09
 MASTER_SIZE: int = 512
 _PYRAMID: tuple[int, ...] = (512, 384, 288, 216, 162, 122, 92, 69, 52, 39, 29, 22)
 
+#: A rectangle remembered for the same window size and game settings (game_settings.RectCache)
+#: is reused when its verify score reaches this fraction of the score it had when found
+#: (and LOCATE_MIN_SCORE): one ~8 ms check instead of a full search.
+HINT_KEEP: float = 0.9
+
 _MIN_CAPTURE = 120
 _LOG_LUT = np.log(np.arange(256, dtype=np.float32) + LOG_OFFSET).astype(np.float32)
 
@@ -314,19 +319,25 @@ class MinimapLocator:
             return 0.0
 
     def locate(self, screen_bgr: np.ndarray, origin: Rect | None = None,
-               side: str = "auto") -> MinimapLocation | None:
+               side: str = "auto", hint: Any = None) -> MinimapLocation | None:
         """Find the minimap in ``screen_bgr`` (a capture whose top-left pixel is at
         ``origin.x, origin.y`` on the screen).
 
         ``side``: ``"right"`` / ``"left"`` searches one bottom corner, ``"auto"`` both.
         Returns the square in screen coordinates with its score, or None if nothing
-        reaches :data:`LOCATE_MIN_SCORE`. Never raises.
+        reaches :data:`LOCATE_MIN_SCORE`. ``hint``: ``(x, y, w, h, score)`` relative to the
+        capture, a rectangle found before with the same settings: kept when it still
+        verifies (see :data:`HINT_KEEP`), else the full search runs. Never raises.
         """
         t_start = time.perf_counter()
         try:
             img = _to_bgr_u8(screen_bgr)
             if img is None or min(img.shape[:2]) < _MIN_CAPTURE:
                 return None
+            hit = self._try_hint(img, origin, side, hint)
+            if hit is not None:
+                self.last_timing = {"total": time.perf_counter() - t_start, "hint": 1.0}
+                return hit
             tpl = self._templates()
             if tpl is None:
                 return None
@@ -370,6 +381,32 @@ class MinimapLocator:
             return None
 
     # ---------------------------------------------------------------- internals
+    def _try_hint(self, img: np.ndarray, origin: Rect | None, side: str,
+                  hint: Any) -> MinimapLocation | None:
+        try:
+            if hint is None:
+                return None
+            x, y, w, h = (int(v) for v in hint[:4])
+            prev = float(hint[4]) if len(hint) > 4 else LOCATE_MIN_SCORE
+            H, W = img.shape[:2]
+            if w < 16 or h < 16 or x < 0 or y < 0 or x + w > W or y + h > H:
+                return None
+            hs = "left" if x + 0.5 * w < 0.5 * W else "right"
+            sd = str(side or "auto").lower()
+            if sd in ("left", "right") and sd != hs:
+                return None
+            sc = self.verify(img[y:y + h, x:x + w])
+            if sc < max(LOCATE_MIN_SCORE, HINT_KEEP * prev):
+                log.debug("Minimap hint rejected (%.2f < %.2f)", sc, HINT_KEEP * prev)
+                return None
+            ox = int(origin.x) if origin is not None else 0
+            oy = int(origin.y) if origin is not None else 0
+            return MinimapLocation(rect=Rect(ox + x, oy + y, w, h), score=round(sc, 4),
+                                   method="auto", side=hs)
+        except Exception:
+            log.debug("Minimap hint check failed", exc_info=True)
+            return None
+
     def _coarse(self, tpl: _Templates, feat: Feat, f: float, side: str) -> list[_Candidate]:
         """Best coarse candidates (capture coordinates) near one bottom corner."""
         Hs, Ws = feat[0].shape[:2]

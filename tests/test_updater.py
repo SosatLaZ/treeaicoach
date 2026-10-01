@@ -326,3 +326,37 @@ def test_ui_updates_section(tmp_path, monkeypatch):
         assert app._closing
     finally:
         app.close()
+
+
+def test_script_waits_for_bootloader_and_reports_status(tmp_path):
+    text = updater.UPDATE_SCRIPT
+    text.encode("ascii")
+    assert "%TAC_PPID%" in text and "%TAC_STATUS%" in text
+    assert '"%TAC_DST%.new"' in text and "move /y" in text      # never a half-written exe
+    env = updater.script_env(tmp_path / "a.exe", tmp_path / "b.exe", 7, base={}, ppid=5, status=tmp_path / "s")
+    assert env["TAC_PPID"] == "5" and env["TAC_STATUS"] == str(tmp_path / "s")
+    assert updater.script_env(tmp_path / "a.exe", tmp_path / "b.exe", 7, base={})["TAC_PPID"] == ""
+
+
+def test_startup_report(tmp_path):
+    assert updater.startup_report("1.0.0", tmp_path) is None
+    new = tmp_path / "TreeAICoach-2.0.0.exe"
+    new.write_bytes(EXE)
+    target = tmp_path / "app" / "TreeAICoach.exe"
+    target.parent.mkdir()
+    target.write_bytes(b"old")
+    info = updater.UpdateInfo("2.0.0", SHA, len(EXE))
+    assert updater.apply_update(new, info, target=target, pid=1, popen=lambda *a, **k: None).ok
+    assert (tmp_path / updater.PENDING_NAME).is_file()
+    (tmp_path / updater.STATUS_NAME).write_text("failed locked\r\n", encoding="ascii")
+    rep = updater.startup_report("1.0.0", tmp_path)          # still the old version: not applied
+    assert rep is not None and not rep.ok and "utilisé" in rep.message and updater.MANUAL_DOWNLOAD_URL in rep.message
+    assert not (tmp_path / updater.PENDING_NAME).exists()    # reported once
+    assert updater.apply_update(new, info, target=target, pid=1, popen=lambda *a, **k: None).ok
+    (tmp_path / updater.STATUS_NAME).write_text("failed write", encoding="ascii")
+    rep = updater.startup_report("1.0.0", tmp_path)
+    assert rep is not None and "protégé" in rep.message
+    assert updater.apply_update(new, info, target=target, pid=1, popen=lambda *a, **k: None).ok
+    rep = updater.startup_report("2.0.0", tmp_path)
+    assert rep is not None and rep.ok and "2.0.0" in rep.message
+    assert "Télécharger manuellement" in updater.manual_hint("Erreur.")

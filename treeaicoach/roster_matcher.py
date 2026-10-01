@@ -176,6 +176,12 @@ STRUCT_PENALTY = 0.0                # disabled: hurts real champions on turrets 
 #: Fountains (normalized) for the recall jump exception.
 _FOUNTAINS = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
 FOUNTAIN_DIST = 0.09
+#: Dead champions (Live Client ``isDead``) have no icon on the minimap: they are not
+#: searched until RESPAWN_LEAD_S before their respawn time (``respawnTimer``), then their
+#: track is re-seeded at their fountain. A dead flag without a usable timer expires after
+#: DEAD_UNKNOWN_S (the next API poll refreshes it).
+RESPAWN_LEAD_S = 0.3
+DEAD_UNKNOWN_S = 3.0
 
 # Initial ring colours (BGR), learned live afterwards.
 _RING_INIT_BGR: dict[str, tuple[int, int, int]] = {
@@ -631,6 +637,11 @@ class RosterMatcher:
         #: Learned / guessed icons (custom skins): alias -> (icon, source), see self_icon.py.
         self._overrides: dict[str, tuple[np.ndarray, str]] = {}
         self._camlock: tuple[int, tuple[float, float] | None] = (-10 ** 9, None)
+        #: alias -> respawn deadline (time.monotonic()) of the dead champions (Live API).
+        self._dead: dict[str, float] = {}
+        self._dead_idx: set[int] = set()
+        #: Diagnostics: champions skipped as dead by the last detect() call.
+        self.last_dead: list[str] = []
         self.learner: Any = None
         try:
             from treeaicoach.self_icon import IconLearner
@@ -827,6 +838,7 @@ class RosterMatcher:
                    game_time: float | None = None) -> None:
         """Dead players (Live API) and my HUD dead flag for the icon learner. Never raises."""
         try:
+            self.set_game_status(game)
             if self.learner is None:
                 return
             dead = []
@@ -840,6 +852,92 @@ class RosterMatcher:
             self.learner.set_status(dead, me_dead, game_time)
         except Exception:
             self._errors.exception("Roster matcher set_status failed")
+
+    def set_dead(self, aliases: Any, now: float | None = None) -> None:
+        """Dead champions: ``{alias: seconds to respawn}`` (or an iterable of aliases: dead
+        until the next call). Their portraits are not searched while dead (no icon on the
+        map: any match would be a false one). Deadlines use ``time.monotonic()``. Never
+        raises."""
+        try:
+            mono = time.monotonic() if now is None else float(now)
+            if isinstance(aliases, dict):
+                items = aliases.items()
+            else:
+                items = ((a, math.inf) for a in (aliases or ()))
+            dead: dict[str, float] = {}
+            for a, rem in items:
+                a = str(a or "")
+                if not a:
+                    continue
+                try:
+                    r = float(rem)
+                except (TypeError, ValueError):
+                    r = math.nan
+                if r == math.inf:
+                    r = 1e9                        # dead until the next call
+                elif not math.isfinite(r) or r <= 0.0:
+                    r = DEAD_UNKNOWN_S             # no usable respawn timer
+                dead[a] = mono + r
+            with self._lock:
+                self._dead = dead
+        except Exception:
+            self._errors.exception("Roster matcher set_dead failed")
+
+    def set_game_status(self, game: Any) -> None:
+        """Dead champions from a ``GameInfo`` (``is_dead`` + ``respawn_timer``, measured from
+        the poll time ``fetched_at``). Cheap: call it on every frame. Never raises."""
+        try:
+            if game is None:
+                return
+            mono = time.monotonic()
+            fetched = getattr(game, "fetched_at", None)
+            try:
+                age = mono - float(fetched)
+                if not math.isfinite(age) or not -1.0 <= age <= 10.0:
+                    age = 0.0
+            except (TypeError, ValueError):
+                age = 0.0
+            dead: dict[str, float] = {}
+            for p in [getattr(game, "me", None)] + list(getattr(game, "allies", None) or []) + \
+                    list(getattr(game, "enemies", None) or []):
+                if p is None or not bool(getattr(p, "is_dead", False)):
+                    continue
+                alias = str(getattr(p, "champion_alias", "") or "")
+                try:
+                    timer = float(getattr(p, "respawn_timer", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    timer = 0.0
+                if not alias:
+                    continue
+                if math.isfinite(timer) and timer > 0:
+                    if timer - age > 0:            # else: respawned since the poll
+                        dead[alias] = timer - age
+                else:
+                    dead[alias] = math.nan
+            self.set_dead(dead, mono)
+        except Exception:
+            self._errors.exception("Roster matcher set_game_status failed")
+
+    def _dead_now(self, now: float) -> set[int]:
+        """Indices of the roster entries dead right now; re-seeds the track of a champion
+        that just respawned at his fountain (detection time ``now``)."""
+        if not self._dead and not self._dead_idx:
+            return set()
+        mono = time.monotonic()
+        dead = {i for i, e in enumerate(self._entries)
+                if mono < self._dead.get(e.alias, -math.inf) - RESPAWN_LEAD_S}
+        for i in self._dead_idx - dead:
+            if i >= len(self._entries):
+                continue
+            team = self._team_of(self._entries[i])
+            if team in _FOUNTAINS:
+                fu, fv = _FOUNTAINS[team]
+                self._tracks[i] = _Track(fu, fv, now, conf=0.3, margin=0.0)
+        for i in dead:
+            self._tracks.pop(i, None)
+        self._dead_idx = dead
+        self.last_dead = [self._entries[i].alias for i in sorted(dead)]
+        return dead
 
     def _cam_point(self, bgr: np.ndarray) -> tuple[float, float] | None:
         """Where my icon is when the camera is locked on me (camera rectangle), cached."""
@@ -1464,6 +1562,7 @@ class RosterMatcher:
         for i in [i for i, tr in self._tracks.items()
                   if i >= n_e or now - tr.t > JUMP_MEMORY_S or now < tr.t - 1.0]:
             del self._tracks[i]
+        dead = self._dead_now(now)
         full = (st.frames - st.last_full >= FULL_EVERY or st.scale != old_scale
                 or st.frames <= 2 * CALIB_FRAMES)
         self.last_mode = "full" if full else "tracked"
@@ -1482,7 +1581,7 @@ class RosterMatcher:
                 if any(c.ev >= prev_thr for c in lc):
                     found_local.add(i)
         # 2. the others (lost, in the fog, local miss): whole map
-        glob = [i for i in range(n_e) if i not in found_local]
+        glob = [i for i in range(n_e) if i not in found_local and i not in dead]
         if glob and full:
             gc, bg_scores = self._global_search(feat, bank, glob)
             cands.extend(gc)
@@ -1595,7 +1694,7 @@ class RosterMatcher:
         # 6. the local player: camera rectangle prior, then coasting on its track
         dets_extra: list[Detection] = []
         for i, e in enumerate(ents):
-            if e.relation != "self" or i in used:
+            if e.relation != "self" or i in used or i in dead:
                 continue
             best = rejected.get(i)
             cam = self._camera_centre(bgr) if best is not None else None

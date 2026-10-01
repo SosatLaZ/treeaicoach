@@ -888,6 +888,15 @@ class HybridDetector(BaseDetector):
         except Exception:
             self._errors.exception("Hybrid detector set_roster failed")
 
+    def set_game_status(self, game: Any) -> None:
+        """Live game state (dead champions) for the roster matcher. Never raises."""
+        try:
+            fn = getattr(self.matcher, "set_game_status", None)
+            if callable(fn):
+                fn(game)
+        except Exception:
+            self._errors.exception("Hybrid detector set_game_status failed")
+
     def _structure_uv(self) -> list[tuple[float, float, str]]:
         if self._structures is None:
             try:
@@ -908,7 +917,9 @@ class HybridDetector(BaseDetector):
             self.fallback.set_ring_colors(getattr(m, "ring_colors", None))
             self.fallback.set_scale(getattr(m, "scale", None))
         n_roster = len(getattr(m, "entries", ()) or ())
-        if n_roster and len(dets) >= n_roster:
+        # dead champions (Live API) have no icon: they leave no free slot for an extra
+        dead = set(getattr(m, "last_dead", None) or ())
+        if n_roster and len(dets) + len(dead) >= n_roster:
             self._last_extra = []
             return []
         self._frame += 1
@@ -932,9 +943,12 @@ class HybridDetector(BaseDetector):
             self._last_extra = keep
         # at most as many extras per side as roster champions of that side not matched
         ents = getattr(m, "entries", ()) or ()
-        n_enemy = sum(1 for e in ents if getattr(e, "relation", "") == "enemy")
+        n_enemy = sum(1 for e in ents if getattr(e, "relation", "") == "enemy"
+                      and getattr(e, "alias", None) not in dead)
+        n_ally = sum(1 for e in ents if getattr(e, "relation", "") != "enemy"
+                     and getattr(e, "alias", None) not in dead)
         free = {"enemy": n_enemy - sum(1 for k in dets if k.cls == "enemy"),
-                "ally": len(ents) - n_enemy - sum(1 for k in dets if k.cls != "enemy")}
+                "ally": n_ally - sum(1 for k in dets if k.cls != "enemy")}
         out = []
         for d in sorted(self._last_extra, key=lambda x: -x.score):
             side = "enemy" if d.cls == "enemy" else "ally"

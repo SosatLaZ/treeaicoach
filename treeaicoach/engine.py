@@ -92,6 +92,8 @@ GANK_KINDS = frozenset({AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, Ale
 COACH_KINDS = frozenset({AlertKind.MACRO_TIP, AlertKind.PRAISE, AlertKind.SCOREBOARD})
 ON_SCREEN_MARGIN = 0.015        # a gank threat this far inside the camera view is on my screen
 ROLE_NOTICE_S = 20.0             # the "role detected (lane swap)" HUD notice stays this long
+TIP_TOAST_GAP_S = 60.0           # beginner tip toasts: at most one per minute (the HUD line shows them all)
+HUD_DWELL_S = 5.0                # a HUD advice line stays at least this long (unless a danger replaces it)
 TEXT_MSG_S = 10.0                # a written-only message stays on the HUD line this long
 
 MSG_STOPPED = "Analyse arrêtée."
@@ -297,6 +299,17 @@ class CoachEngine:
         self._db = champion_db
         self._window_finder = window_finder
         self._capture = screen_capture
+        # game_settings.py: League's own config files (FlipMiniMap, MinimapScale...) and the
+        # last located minimap per settings; only for the real screen (not tests / demo)
+        self._settings_watcher: Any = None
+        self._rect_cache: Any = None
+        if window_finder is None and screen_capture is None and frame_source is None:
+            try:
+                from treeaicoach.game_settings import RectCache, SettingsWatcher
+
+                self._settings_watcher, self._rect_cache = SettingsWatcher(), RectCache()
+            except Exception:
+                log.debug("Game settings unavailable", exc_info=True)
         self._recorder_factory = recorder_factory
         self._report_writer = report_writer
         self._report_opener = report_opener or _default_opener
@@ -319,6 +332,7 @@ class CoachEngine:
         self._reminders: Any = None
         self._coach: Any = None                # coach.MapCoach (live macro tips + HUD insight)
         self._fog: Any = None
+        self._jungle_intel: Any = None      # jungle_intel.JungleIntelTracker (Tab data)
         self._scoreboard: Any = None           # scoreboard.ScoreboardAnalyzer (Tab analysis)
         self._praise: Any = None               # praise.PraiseCoach (compliments)
         self._toasts: Any = None               # toasts.ToastQueue (top-centre banners)
@@ -526,6 +540,12 @@ class CoachEngine:
         except Exception:
             log.exception("Fog tracker unavailable")
         try:
+            from treeaicoach.jungle_intel import JungleIntelTracker
+
+            self._jungle_intel = JungleIntelTracker()
+        except Exception:
+            log.exception("Jungle intel unavailable")
+        try:
             from treeaicoach.praise import PraiseCoach
             from treeaicoach.scoreboard import ScoreboardAnalyzer
 
@@ -647,7 +667,7 @@ class CoachEngine:
                     th.join(max(0.05, deadline - time.monotonic()))
                     if th.is_alive():
                         log.warning("Thread %s did not stop in time", th.name)
-            for comp in (self._hotkeys, self._overlay_mgr):
+            for comp in (self._hotkeys, self._overlay_mgr, getattr(self, "_play_fx", None)):
                 if comp is not None:
                     try:
                         comp.stop()
@@ -935,9 +955,10 @@ class CoachEngine:
         log.info("New game detected (game time %.0f s, mode %s)", game.game_time, game.game_mode)
         self._sb_recorded = None
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
+                     self._jungle_intel,
                      self._throttler, self._coach, self._scoreboard, self._praise, self._toasts,
                      self._stance, self._tip_rotator, self._gate, self._tactics, self._gauge,
-                     getattr(self, "_ai", None), self._ward_guide):
+                     getattr(self, "_ai", None), self._ward_guide, getattr(self, "_plays", None)):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -1000,8 +1021,9 @@ class CoachEngine:
                 if s["loss_streak"] >= BREAK_LOSS_STREAK and self._cfg.break_reminder:
                     self._banner = BREAK_TEXT
                     self._say(BREAK_TEXT, 0)
+        plays_summary = self.plays_summary()
         if rec is not None:
-            th = threading.Thread(target=self._finish_job, args=(rec,), name="TreeAICoach-report",
+            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary), name="TreeAICoach-report",
                                   daemon=True)
             self._bg_threads = [b for b in self._bg_threads if b.is_alive()] + [th]
             th.start()
@@ -1023,11 +1045,15 @@ class CoachEngine:
         except Exception:
             log.debug("End-of-game summary unavailable", exc_info=True)
 
-    def _finish_job(self, rec: Any) -> None:
+    def _finish_job(self, rec: Any, plays_summary: dict | None = None) -> None:
         try:
             path = rec.finish()
             if path is None:
                 return
+            if plays_summary:                   # play ratings + "précision" (plays.py) in the record
+                from treeaicoach.plays import attach_to_record
+
+                attach_to_record(path, plays_summary)
             self.last_record_path = Path(path)
             cfg = self._cfg
             self._say_game_summary(Path(path))
@@ -1266,6 +1292,9 @@ class CoachEngine:
             raw_alerts += self._item_advice(t, game, me_pos, gt)
         if heavy:
             raw_alerts = self._hype_and_ai(t, game, gt, threat, me_pos, raw_alerts)
+        self._plays_tick(t, gt, game, threat, me_pos)    # play ratings (plays.py) -> badge animation
+        if self._jungle_intel is not None:   # Tab data: purchases / CS -> fog anchors
+            self._jungle_intel.update(t, game, tracker, self._fog)
         if self._fog is not None and not getattr(self._cfg, "safe_mode", False):
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
         rec = self._recorder
@@ -1607,8 +1636,12 @@ class CoachEngine:
             if hc.style == "caster":
                 alerts = [dataclasses.replace(a, text=restyle_praise(a.key, a.text, "caster"))
                           if a.kind == AlertKind.PRAISE else a for a in alerts]
-            for line in hc.update(t, game, summary, threat=threat):
-                self._say(line, int(Level.INFO))
+            # hype / win-probability lines go through the voice gate like every other message
+            # (visual first: written in "minimal" / "normal", spoken in "bavard")
+            for i, line in enumerate(hc.update(t, game, summary, threat=threat)):
+                swing = "pour cent" in line
+                alerts = list(alerts) + [make_alert(AlertKind.PRAISE, Level.INFO, t, text=line,
+                                                    key=f"hype:swing:{int(t)}" if swing else f"caster:{int(t)}:{i}")]
             in_base = False
             if me_pos is not None:
                 z = geometry.classify_zone(*me_pos)
@@ -1633,6 +1666,48 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Hype / AI advice failed")
         return alerts
+
+    def _plays_tick(self, t: float, gt: float, game: GameInfo, threat: int, me_pos: Any) -> None:
+        """Play ratings (plays.py, chess.com style): classify, feed the AI advisor, animate the badge
+        (fx_overlay.py, own click-through window, Windows only). Never raises."""
+        try:
+            from treeaicoach import plays
+
+            pc = getattr(self, "_plays", None)
+            if pc is None:
+                pc = self._plays = plays.PlayClassifier(self._cfg)
+                self.recent_plays: list[Any] = []
+            pc.apply_config(self._cfg)
+            n_before = len(pc.history())
+            shown = pc.update(plays.build_context(self, t, gt, game, threat, me_pos))
+            ai = getattr(self, "_ai", None)
+            note = getattr(ai, "note_play", None)
+            if callable(note):
+                for p in pc.history()[n_before:]:
+                    note(p)
+            for p in shown:
+                self.recent_plays = (self.recent_plays + [p])[-20:]
+                self.text_messages.append((t, "play", f"{p.title} : {p.reason}"))
+                fx = getattr(self, "_play_fx", None)
+                if fx is None and sys.platform == "win32" and self._running:
+                    from treeaicoach.fx_overlay import PlayFx
+
+                    fx = self._play_fx = PlayFx(self._cfg, self._screen_rects,
+                                                lambda: self._overlay_visible and self._in_game)
+                if fx is not None:
+                    fx.apply_config(self._cfg)
+                    fx.push(p)
+        except Exception:
+            self._errors += 1
+            self._err.exception("Play ratings failed")
+
+    def plays_summary(self) -> dict | None:
+        """Counts per rating class + "précision" 0-100 of the current / last game (plays.summarize)."""
+        pc = getattr(self, "_plays", None)
+        try:
+            return pc.summary() if pc is not None and pc.history() else None
+        except Exception:
+            return None
 
     def _ai_in_fight(self) -> bool:
         for attr in ("_fight", "_fight_tracker"):
@@ -1722,6 +1797,23 @@ class CoachEngine:
         g = self._gauge
         return g.current() if g is not None and self._in_game else None
 
+    def coach_extras(self) -> dict:
+        """Coaching extras of the current / last game for the UI and the report (coach_plus.py):
+        ``goal`` (label), ``goal_status`` ("en cours" / "réussi" / "raté"), ``plan`` (matchup card
+        lines), ``death_causes`` (cause keys of my deaths). {} before the first game. Never raises."""
+        try:
+            plus = getattr(self, "_coach_plus", None)
+            if plus is None:
+                return {}
+            g = plus.goals.goal
+            card = plus.card
+            return {"goal": g.label if g is not None else None, "goal_status": plus.goals.status,
+                    "plan": list(card.lines) + ([card.jungle] if card is not None and card.jungle else [])
+                    if card is not None else [],
+                    "death_causes": plus.death_causes()}
+        except Exception:
+            return {}
+
     def top_tip(self) -> tuple[str, str] | None:
         """``(text, tone)`` of the ONE written advice shown on the HUD right now, else None."""
         try:
@@ -1771,8 +1863,10 @@ class CoachEngine:
         try:
             facts = self._coach.facts() if self._coach is not None else {}
             summary = self.scoreboard_summary()
+            plus = self._coach_plus_tick(t, game, facts, threat)
             if self._stance is not None:
-                out += list(self._stance.update(t, facts, game, summary, threat=threat) or [])
+                out += list(self._stance.update(t, facts, game, summary, threat=threat,
+                                                extra=plus.factors() if plus is not None else None) or [])
             if self._gauge is not None:
                 st = self._stance.current() if self._stance is not None else None
                 tac = self._tactics
@@ -1786,12 +1880,23 @@ class CoachEngine:
                 from treeaicoach.tips import build_context
 
                 stance = self._stance.current() if self._stance is not None else None
-                prev = self._tip_text
+                prev_id = rot.current_id()
                 adv = getattr(self, "_item_adv", None)
                 rec = adv.current() if adv is not None else None
                 item = getattr(rec, "item_name", None) if rec is not None else None
-                self._tip_text = rot.update(t, build_context(facts, game, summary, stance, item=item))
-                if self._tip_text and self._tip_text != prev and getattr(self._cfg, "tip_toasts", False):
+                extra: dict = {}
+                if plus is not None:
+                    from treeaicoach.coach_plus import buy_fields
+                    extra = {**plus.tip_fields(), **buy_fields(rec, bool(facts.get("in_base")))}
+                self._tip_text = rot.update(t, build_context(facts, game, summary, stance, item=item, extra=extra))
+                # a toast only for a NEW tip (its live numbers refreshing is not news)
+                # (and at most one tip toast every TIP_TOAST_GAP_S, contextual tips only: the HUD line
+                # already shows every tip, the toast is a beginner's extra nudge)
+                tip_now = rot.current_tip()
+                if self._tip_text and rot.current_id() != prev_id and getattr(self._cfg, "tip_toasts", False) \
+                        and int(getattr(tip_now, "prio", 1) or 1) >= 3 \
+                        and t - getattr(self, "_tip_toast_t", -math.inf) >= TIP_TOAST_GAP_S:
+                    self._tip_toast_t = t
                     self._toast("insight", "ASTUCE", self._tip_text, None, f"tip:{rot.current_id()}", t)
             else:
                 self._tip_text = None
@@ -1799,6 +1904,35 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Stance / tips failed")
         return out
+
+    def _coach_plus_tick(self, t: float, game: GameInfo, facts: dict, threat: int) -> Any:
+        """coach_plus.CoachPlus (power spikes, matchup card, session goal, death cause): its toasts
+        (filtered by the player's level, held during a gank / fight) + the object for the gauge /
+        tips. Visual only. Never raises."""
+        try:
+            plus = getattr(self, "_coach_plus", None)
+            if plus is None:
+                from treeaicoach.coach_plus import CoachPlus
+                plus = self._coach_plus = CoachPlus()
+            from treeaicoach import skill
+            tac = self._tactics
+            busy = threat >= Level.WARNING or (tac is not None and tac.in_fight())
+            gt = _finite(facts.get("gt")) or _finite(getattr(game, "game_time", None)) or 0.0
+            notes = plus.update(t, gt, game, facts, tac.map_state() if tac is not None else None,
+                                busy=busy, min_prio=skill.tip_min_prio(self._cfg))
+            for n in notes:
+                if n.kind == "praise" and not getattr(self._cfg, "praise_enabled", True):
+                    continue
+                self._toast(n.kind, n.title, n.text, None, n.key, t)
+                if n.hud:
+                    self._text_msg = (t, n.text)
+                    self.text_messages.append((t, "coach_plus", n.text))
+                    del self.text_messages[:-100]
+            return plus
+        except Exception:
+            self._errors += 1
+            self._err.exception("Coach extras failed")
+            return None
 
     def _route_messages(self, alerts: list[Alert], t: float, gt: float) -> list[Alert]:
         """Voice policy: returns the alerts to SPEAK (through the throttler); the others are
@@ -1846,19 +1980,33 @@ class CoachEngine:
 
     def _hud_line(self, now: float) -> str | None:
         """The ONE written HUD line: a fresh written-only message (10 s), else an urgent live
-        insight of the coach, else the rotating tip, else the coach / Tab line."""
+        insight of the coach, else the rotating tip, else the coach / Tab line. A line stays at
+        least :data:`HUD_DWELL_S` (readable) while it is still valid, unless the new one is a danger."""
+        valid: list[str] = []
+        cand: str | None = None
         msg = self._text_msg
         if msg is not None and 0.0 <= now - msg[0] < TEXT_MSG_S:
-            return msg[1]
+            valid.append(msg[1])
         coach = self._coach
         if coach is not None:
             try:
                 urgent = [it for it in coach.insight_items() if it[0] >= 65 and it[2] != "objective"]
-                if urgent:
-                    return urgent[0][1]
+                valid += [it[1] for it in urgent[:1]]
             except Exception:
                 pass
-        return self._tip_text
+        if self._tip_text:
+            valid.append(self._tip_text)
+        cand = valid[0] if valid else None
+        shown = getattr(self, "_hud_shown", None)
+        try:
+            if cand is not None and shown is not None and shown[0] != cand and 0.0 <= now - shown[1] < HUD_DWELL_S \
+                    and shown[0] in valid and self._tip_tone(cand) != "danger":
+                return shown[0]
+        except Exception:
+            pass
+        if shown is None or shown[0] != cand:
+            self._hud_shown = (cand, now)
+        return cand
 
     def _toast(self, kind: str, title: str, subtitle: str, alias: str | None, key: str, t: float) -> None:
         q = self._toasts
@@ -1894,6 +2042,9 @@ class CoachEngine:
         """Detector + identifier (+ camera fallback for "self")."""
         try:
             self._ensure_detector()
+            status = getattr(self._detector, "set_game_status", None)
+            if callable(status):        # dead champions: never searched on the map
+                status(self._game)
             dets = list(self._detector.detect(frame) or [])
         except Exception:
             self._errors += 1
@@ -2040,7 +2191,9 @@ class CoachEngine:
                     out[best] = self._with(out[best], relation="self", alias=me.alias,
                                            team=getattr(out[best], "team", None) or me.team)
         present = {getattr(x, "alias", None) for x in out if getattr(x, "alias", None)}
-        enemy_tracks = [tr for tr in tracker.enemies(visible_only=False) if tr.alias]
+        dead = self._dead_aliases()     # a dead champion has no icon: never relabel to him
+        enemy_tracks = [tr for tr in tracker.enemies(visible_only=False)
+                        if tr.alias and tr.alias not in dead]
         friends = [tr for tr in tracks.values() if tr.relation != "enemy" and t - tr.last_seen <= 1.0]
         for i, x in enumerate(out):
             # unidentified "ally" ring exactly where an enemy stood a moment ago: misread ring colour
@@ -2084,6 +2237,18 @@ class CoachEngine:
                     present.add(tr.alias)
                     break
         return self._drop_duplicates(t, out, tracks)
+
+    def _dead_aliases(self) -> set[str]:
+        """Champions dead right now (roster matcher's respawn-timed view, else the Live API)."""
+        try:
+            m = getattr(self._detector, "matcher", None)
+            if m is not None and getattr(m, "has_roster", False):
+                return set(getattr(m, "last_dead", None) or ())
+            game = self._game
+            return {p.champion_alias for p in game.all_players() if p.is_dead} \
+                if game is not None else set()
+        except Exception:
+            return set()
 
     def _drop_duplicates(self, t: float, out: list[Any], tracks: dict[str, Any]) -> list[Any]:
         """Drop enemy detections that duplicate another enemy icon of the same frame.
@@ -2248,12 +2413,26 @@ class CoachEngine:
             self._rect_window = win
             return
         side = self._cfg.minimap_side
+        gs, hint, hint_key = None, None, None
+        try:
+            gs = self._settings_watcher.get() if self._settings_watcher is not None else None
+            if side == "auto" and gs is not None and gs.minimap_side():
+                side = gs.minimap_side()          # FlipMiniMap from the game's own settings
+            if self._rect_cache is not None:
+                hint_key = self._rect_cache.key(win.w, win.h, gs)
+                hint = self._rect_cache.get(hint_key)
+        except Exception:
+            log.debug("Game settings prior failed", exc_info=True)
         self._set_state(EngineState.LOCATING, MSG_LOCATING)
         loc = None
         try:
             screen = self._grabber().grab(win)
             if screen is not None and not is_black_frame(screen):
-                loc = self._ensure_locator().locate(screen, win, side=side)
+                locator = self._ensure_locator()
+                try:
+                    loc = locator.locate(screen, win, side=side, hint=hint)
+                except TypeError:                 # a locator without the hint parameter
+                    loc = locator.locate(screen, win, side=side)
             elif screen is not None:
                 self._set_state(EngineState.CAPTURE_BLACK, MSG_BLACK)
         except Exception:
@@ -2262,6 +2441,9 @@ class CoachEngine:
         if loc is not None:
             self._minimap_rect, self._locate_method = loc.rect, "auto"
             log.info("Minimap located at %s (score %.2f)", loc.rect, loc.score)
+            if hint_key is not None:
+                self._rect_cache.put(hint_key, loc.rect.x - win.x, loc.rect.y - win.y,
+                                     loc.rect.w, loc.rect.h, loc.score)
             return
         from treeaicoach.minimap_locator import fallback_rect
 
@@ -2691,6 +2873,15 @@ class CoachEngine:
             return f"Jungler : {name} — visible, {zone}" if zone else f"Jungler : {name} — visible"
         ago = int(max(0.0, now - tr.last_seen))
         return f"Jungler : {name} — vu il y a {ago} s, {zone}" if zone else f"Jungler : {name} — vu il y a {ago} s"
+
+    def jungle_intel(self) -> Any:
+        """Enemy jungler Tab intel (``jungle_intel.JungleIntel``: farming side, recall, text
+        line), or None. Never raises."""
+        try:
+            ji = self._jungle_intel
+            return ji.state() if ji is not None and self._in_game else None
+        except Exception:
+            return None
 
     # ---------------------------------------------------------------- F9
     def jungler_status_text(self) -> str:

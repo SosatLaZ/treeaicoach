@@ -404,3 +404,52 @@ def test_config_icon_scale_by_res():
     assert c.icon_scale_by_res == {"316x316": 0.094}
     assert Config.from_dict({"icon_scale_by_res": "nope"}).icon_scale_by_res == {}
     assert Config().icon_scale_by_res == {}
+
+
+# ======================================================================================
+# Dead champions (Live Client isDead / respawnTimer)
+# ======================================================================================
+
+
+def test_dead_champion_never_matched_and_respawn_reseeds_track(db):
+    img = cv2.imread(str(FIXTURE))
+    pairs = [(a, r) for a, (r, _, _) in REAL_GT.items()] + DISTRACTORS
+    m = RosterMatcher(db=db)
+    m.set_entries(_entries(db, pairs))
+    for _ in range(3):
+        m.detect(img)
+    assert "Kassadin" in {d.alias for d in m.detect(img)}
+    m.set_dead({"Kassadin": 60.0})
+    for _ in range(3):
+        dets = m.detect(img)
+        assert "Kassadin" not in {d.alias for d in dets}
+    assert m.last_dead == ["Kassadin"]
+    hy = HybridDetector(ClassicDetector(), m)
+    hy._extras(img, dets)                       # dead champion: no free "enemy" slot left
+    m.set_dead({})
+    m._my_team = "ORDER"                        # (set by set_roster from the Live API)
+    i = m.aliases.index("Kassadin")
+    m._dead_now(123.0)
+    tr = m._tracks[i]
+    assert (tr.u, tr.v) == RMod._FOUNTAINS["CHAOS"] and tr.t == 123.0 and tr.margin == 0.0
+    assert m.last_dead == []
+
+
+def test_set_game_status_respawn_timer(db):
+    from treeaicoach.live_client import GameInfo, PlayerInfo
+
+    m = RosterMatcher(db=db)
+    m.set_entries(_entries(db, [("Ahri", "self"), ("Garen", "enemy"), ("Darius", "enemy")]))
+    now = time.monotonic()
+    g = GameInfo(me=PlayerInfo(champion_alias="Ahri", team="ORDER"),
+                 enemies=[PlayerInfo(champion_alias="Garen", team="CHAOS", is_dead=True,
+                                     respawn_timer=20.0),
+                          PlayerInfo(champion_alias="Darius", team="CHAOS", is_dead=True,
+                                     respawn_timer=1.0)],
+                 fetched_at=now - 2.0)          # Darius respawned since that poll
+    m.set_game_status(g)
+    assert m._dead_now(now) == {m.aliases.index("Garen")}
+    m.set_game_status(None)                     # ignored
+    m.set_dead(["Ahri"])                        # iterable: dead until the next call
+    assert m._dead_now(now) == {0}
+    m.set_dead(object())                        # never raises

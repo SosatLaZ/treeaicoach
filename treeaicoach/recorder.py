@@ -29,6 +29,7 @@ Record format (JSON, ``"schema": 1``)::
      "alerts": [[game_time, kind, level, text, alias], ...],     # alias = 5th, optional element
      "events": [{Live Client event}, ...],
      "fog": [[game_time, alias, u, v, radius], ...],             # enemy-jungler fog circle, <= 1 Hz
+     "allies": {"Vi": [[game_time, u, v], ...], ...},            # visible allies, <= 0.5 Hz (replay viewer)
      "settings": {"sensitivity", "fog_max_s", "fog_mode", "safe_mode"}}   # coaching settings (calibration)
 
 Memory is bounded (hard caps + decimation of the oldest data): a 60-minute game stays far
@@ -73,6 +74,8 @@ OVERFLOW_KEY = "enemy?"
 MAX_ALERTS = 3000
 MAX_EVENTS = 3000
 FOG_PERIOD_S = 1.0              # fog circle samples: <= 1 Hz (game time)
+ALLY_PERIOD_S = 2.0             # allied positions (replay viewer): <= 0.5 Hz per champion
+MAX_ALLY_POINTS = 4000          # per ally, then decimated
 MAX_FOG = 4 * 3600              # then decimated
 SETTINGS_KEYS = ("sensitivity", "warn_radius", "danger_radius", "fog_max_s", "fog_mode", "safe_mode")
 MAX_TEXT_LEN = 160
@@ -304,6 +307,8 @@ class GameRecorder:
         self._last_sb_gt: float = -math.inf
         self._fog: list[list[Any]] = []
         self._last_fog_gt: float = -math.inf
+        self._allies: dict[str, list[list[float]]] = {}
+        self._last_ally_gt: dict[str, float] = {}
 
     def _warn_once(self, key: str, msg: str, *args: Any) -> None:
         if key not in self._warned:
@@ -550,10 +555,23 @@ class GameRecorder:
                     enemies.append((key, pos))
             except Exception:
                 log.debug("on_tracks: tracker.enemies() failed", exc_info=True)
+            allies: list[tuple[str, tuple[float, float]]] = []
+            try:
+                tracks_fn = getattr(tracker, "tracks", None)
+                for tr in (tracks_fn() if callable(tracks_fn) else []) or []:
+                    if getattr(tr, "relation", None) != "ally" or not getattr(tr, "visible", True):
+                        continue
+                    alias = _text(getattr(tr, "alias", None) or "", 40)
+                    pos = _uv(tr.position())
+                    if alias and pos is not None:
+                        allies.append((alias, pos))
+            except Exception:
+                log.debug("on_tracks: allied tracks failed", exc_info=True)
             with self._lock:
                 if not self.active:
                     return
                 self._record_positions(gt, me_pos, enemies)
+                self._record_allies(gt, allies)
         except Exception:
             log.exception("GameRecorder.on_tracks failed")
 
@@ -582,6 +600,22 @@ class GameRecorder:
             self._last_sight_gt[key] = gt
             self._dirty = True
             if len(lst) > MAX_SIGHTINGS_PER_KEY:
+                _decimate(lst)
+
+    def _record_allies(self, gt: float, allies: list[tuple[str, tuple[float, float]]]) -> None:
+        for key, pos in allies[:4]:
+            if key not in self._allies and len(self._allies) >= 4:
+                continue
+            last = self._last_ally_gt.get(key, -math.inf)
+            if gt < last - 5.0:
+                last = -math.inf
+            if gt - last < ALLY_PERIOD_S * 0.95:
+                continue
+            lst = self._allies.setdefault(key, [])
+            lst.append([round(gt, 1), round(pos[0], 3), round(pos[1], 3)])
+            self._last_ally_gt[key] = gt
+            self._dirty = True
+            if len(lst) > MAX_ALLY_POINTS:
                 _decimate(lst)
 
     def on_fog(self, estimates: Any, game_time: float | None) -> None:
@@ -733,6 +767,7 @@ class GameRecorder:
             "events": list(self._events),
             "scoreboard": {"final": self._scoreboard, "timeline": list(self._scoreboard_timeline)},
             "fog": list(self._fog),
+            "allies": {k: list(v) for k, v in self._allies.items()},
             "settings": dict(self._settings),
         }
 

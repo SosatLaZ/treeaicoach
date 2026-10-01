@@ -48,8 +48,10 @@ def test_html_content(html_page: str) -> None:
                  "Conseils pour la prochaine partie", "Alerte donnée ?", "alerte ignorée", "mort sans alerte",
                  "rapport généré localement", "Lee Sin", "K'Santé", "Mon temps par zone", "Objectifs"):
         assert report.html.escape(text, quote=True) in html_page or text in html_page, text
-    for color in ("#010A13", "#0A1428", "#C8AA6E", "#F0E6D2", "#0AC8B9", "#E84057", "#2DC66B"):
+    for color in ("#0C0E0D", "#121513", "#9BD84A", "#E4E8E5", "#E5484D", "#E8A23A"):     # docs/DESIGN.md
         assert color in html_page
+    for old in ("#010A13", "#0A1428", "#C8AA6E", "#F0E6D2"):      # no more Riot gold / navy look
+        assert old not in html_page
     # the 4 deaths are listed with their game time
     for t in ("4:10", "9:20", "14:30", "21:05"):
         assert f">{t}</td>" in html_page

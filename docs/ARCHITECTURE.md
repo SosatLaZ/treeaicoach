@@ -657,23 +657,22 @@ Menace courante = niveau max des alertes brutes du GankAnalyzer du dernier tick 
 * Double-clic → l'interface s'ouvre, l'analyse démarre (autostart) et attend une partie. Rien à installer.
 * CI GitHub Actions (windows-latest) : tests → build → autotest de l'exe → artefact + **release** GitHub avec l'exe.
 
-### 8.2 `ui.py` — interface CustomTkinter (thème sombre « hextech »)
-Palette : fond `#010A13` / panneaux `#0A1428` / bordures `#1E2328` / or `#C8AA6E` (accent) / or clair `#F0E6D2` (texte) /
-bleu-vert `#0AC8B9` (actif) / rouge danger `#E84057` / orange attention `#F0A030` / vert sûr `#2DC66B`.
-Police : « Segoe UI » (Windows), titres en gras. Coins arrondis, espacements généreux, pas de widgets Tk gris par défaut.
-Structure : **barre latérale** (logo + nom, navigation, pastille d'état, version) + pages :
-1. **Tableau de bord** : carte d'état (point coloré animé + texte FR, chrono de jeu), gros bouton Démarrer/Arrêter,
-   jauge de menace en direct, **aperçu radar** en direct (image `render_radar`, 5 Hz), ligne jungler, rangée des 5 ennemis
-   (icônes + « MIA 23 s »), journal des dernières alertes (heure de jeu, niveau coloré), infos techniques (FPS, détecteur, voix),
-   boutons « Tester la voix », « Mode démo », « Calibrer la minimap ».
-2. **Alertes & voix** : interrupteurs par type d'alerte (avec une phrase d'exemple), sensibilité (curseur + explication
-   « rayon d'alerte ≈ 3 300 unités »), voix (liste), vitesse, volume, bip, test, raccourcis F9/F10/F11.
-3. **Overlay** : radar / HUD / flash (interrupteurs), cercle du jungler (Jungler / Tous / Off), position & échelle du radar,
-   position du HUD, bouton « Déplacer les fenêtres » (mode déplacement), aperçu statique.
-4. **Analyses** : cartes de session (parties, victoires, morts/partie, ganks évités), liste des parties
-   (date, champion + icône, résultat, K/D/A, ganks) → « Ouvrir le rapport » (navigateur), « Ouvrir le dossier ».
-5. **Réglages** : minimap auto/manuelle + calibrer + côté, FPS, détecteur, collecte de captures, démarrage auto de l'analyse,
-   **lancer avec Windows** (clé `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`), ouvrir les journaux, réinitialiser.
+### 8.2 `ui.py` — interface CustomTkinter (direction visuelle : `docs/DESIGN.md`)
+> Mise à jour v1.9 : l'ancien thème « hextech » (or / marine du client du jeu) est remplacé par la direction
+> « régie esport » de **`docs/DESIGN.md`** (graphite vert-noir, un seul accent vert sève `#9BD84A`, rouge / ambre
+> pour le sens, séparateurs 1 px, rayon 4 px, Bahnschrift pour titres et chiffres, Segoe UI pour le texte).
+> `tests/test_design_rules.py` vérifie les interdits (tiret cadratin, couleurs / polices bannies, emoji).
+Structure : **barre latérale** (logo, navigation courte, accès rapide, niveau, statut) + pages :
+1. **En jeu** : bandeau d'état (point « en direct », état + message, face-à-face moi VS adversaire de voie, jauge de
+   menace, minuteurs d'objectifs, chrono, bouton Démarrer/Arrêter), ligne coach, ennemis + alliés, journal, radar,
+   **Système** (Jeu / Minimap / Client LoL / IA / Voix avec correction en un clic, `ui_kit.subsystem_rows`),
+   « Tester l'overlay » (états d'exemple 10 s), FPS / CPU.
+2. **Alertes** (onglets Alertes / Voix / Aides / Touches) ; 3. **Overlay**.
+4. **Analyses** (onglets) : **Parties** (bandeau de session + tableau), **Progrès** (`progress.py` : courbes des
+   20 dernières parties, CS/min, morts, or à 10/15 min contre l'adversaire et fiabilité TreeAI quand le client LoL
+   est disponible, « tes 3 points à travailler »), **Replay** (`replay.py` : minimap minute par minute, dernières
+   positions connues, cercle du jungler, frise des morts / ganks / kills, lecture x10 à x120).
+5. **Réglages** (onglets Général / Minimap / IA / Avancé ; mises à jour avec « Télécharger manuellement »).
 6. **Aide** : mode d'emploi en 5 étapes (mode Sans bordure, lancer l'app, jouer…), sécurité / règles Riot, dépannage.
 Règles : toutes les mises à jour de widgets passent par `root.after` (jamais depuis un autre thread) ; toute action utilisateur
 est protégée par try/except + message d'erreur FR (jamais de crash) ; fermeture propre (arrêt engine/voix/overlay, sauvegarde config) ;
@@ -718,8 +717,93 @@ fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; ic�
   vrai parcours du jungler ennemi + côté de départ, écarts d'or/XP/CS à 10 et 15 min contre l'adversaire de voie,
   **fiabilité de TreeAI** : précision des alertes de gank, ganks manqués, cercle du brouillard contenant le vrai jungler,
   identifications minimap correctes, suggestion de sensibilité), `aggregate_scores` (calibration sur les dernières parties).
-* `recorder.py` ajoute `fog` (cercle du jungler, 1 Hz) et `settings` (sensibilité…) au record ; `analysis.analyze_game(record,
+* `recorder.py` ajoute `fog` (cercle du jungler, 1 Hz), `allies` (alliés visibles, 0,5 Hz, pour le replay) et `settings` (sensibilité…) au record ; `analysis.analyze_game(record,
   truth=None)` ; `report.write_report(path, lcu_pending=False)` lit la vérité si elle existe (section « Vérité terrain »).
 * `engine._finish_job` : rapport écrit tout de suite (bannière « récupération en cours » + rechargement automatique quand le
   client est trouvé), puis récupération LCU, sauvegarde de la vérité et réécriture du rapport. UI : « Client LoL : connecté /
   non trouvé » sur la page Analyses.
+
+## 11. Détection v4 — a priori gratuits (API officielle + fichiers de config du jeu)
+
+* **Champions morts** (`isDead` + `respawnTimer` de la Live Client API) : `RosterMatcher.set_game_status(game)` (appelé à
+  chaque image par `engine._vision` via `HybridDetector.set_game_status`) / `set_dead({alias: s avant réapparition})`.
+  Un mort n'a pas d'icône : son portrait n'est **pas cherché** (zéro faux positif, recherche plus rapide) jusqu'à
+  0,3 s avant la réapparition, puis sa piste est ré-amorcée à sa fontaine. `RosterMatcher.last_dead` ; les morts ne
+  laissent pas de place aux détections anonymes du détecteur générique (`HybridDetector._extras`) ; `engine._stabilize`
+  ne ré-étiquette jamais une icône vers un mort ; `gank.py` : un ennemi mort n'est ni une menace ni « disparu ».
+* **`game_settings.py`** (lecture seule de `<install>/Config/PersistedSettings.json` puis `game.cfg`, dossiers trouvés comme
+  `lcu.py` ou `TREEAI_LOL_DIR`) : `GameSettings` (résolution, `WindowMode`, `MinimapScale`, `GlobalScale`, `FlipMiniMap`,
+  daltonien — clé non vérifiée, plusieurs orthographes —, `RelativeTeamColors`). `SettingsWatcher` (relu si les fichiers
+  changent). Usage : `FlipMiniMap` → côté de la minimap pour le localisateur ; `RectCache` (`minimap_cache.json` dans les
+  données utilisateur) mémorise le dernier rectangle trouvé par (taille de fenêtre + empreinte des réglages) et
+  `MinimapLocator.locate(..., hint=)` le revérifie d'abord (~8 ms au lieu de 150–500 ms ; rejeté si le score baisse).
+  Actif seulement sur le vrai écran (pas en démo / tests).
+* **`jungle_intel.py`** (`JungleIntelTracker`, données publiques du Tab, ~1 Hz) : un **achat** (objet nouveau, hors
+  améliorations automatiques / objets de runes, joueur vivant) = il est à sa fontaine → `FogTracker.anchor(..., "recall")`.
+  Le **CS du jungler ennemi monte** = il farme : les camps / puits / points de voie qu'il pouvait atteindre depuis la
+  dernière observation (même vitesse que le brouillard) deviennent une **ancre multi-points** ; la région du brouillard
+  devient l'**intersection** de l'ancienne région et de la nouvelle (jamais plus grande ; le cercle affiché reste celui de
+  la dernière observation). `JungleIntel` (`engine.jungle_intel()`) : `farming`, `farm_side` (« top »/« bot » si tous les
+  candidats sont du même côté), `recalled`, `text` (« Lee Sin farme côté haut (il y a 4 s) », « … a rappelé (achat il y a
+  12 s) »), `earliest_eta(uv, now)`. On n'utilise jamais la taille du saut de CS (souvent arrondi par dizaines).
+* `FogTracker.anchor(alias, uv, t, reason, points=None)` accepte plusieurs points ; `Reachability.distance_field_multi` ;
+  `FogEstimate.seeds`.
+
+## 11. Coups notés (style chess.com) + plans IA v2
+
+* `plays.py` (pur) : `PlayClassifier.update(PlayContext) -> list[Play]` note les moments clés à partir des
+  événements Live Client, de mes stats (or, PV, score de vision), de la menace de gank, du cercle du jungler
+  (fog_tracker), de l'appel RECULE (fight.py), des vagues (waves.py), du tableau Tab et des timers d'objectifs.
+  Classes `CLASSES` : `brilliant` « COUP DE MAÎTRE !! », `great` « EXCELLENT ! », `best`, `good`,
+  `inaccuracy` « IMPRÉCISION ?! », `mistake` « ERREUR ? », `blunder` « GAFFE ?? », `miss` « OCCASION RATÉE »,
+  chacune avec une raison FR d'une ligne. Tout est compté ; l'affichage : 1 badge / 45 s max (sauf `brilliant`),
+  rien pendant un combat / une menace de gank (sauf un petit badge `brilliant`), classes visibles selon
+  `skill_level` (`SHOW_BY_SKILL`). `build_context(engine, t, gt, game, threat, me_uv)` construit le contexte.
+* `fx_render.py` (pur) : badge à bords nets (DESIGN.md), icône colorée par classe, entrée avec dépassement,
+  reflet, sortie en glissant ; `render_frame(cls, title, reason, age, size=, scale=)` (BGRA prémultiplié, ~1 ms).
+  `fx_overlay.PlayFx` : fenêtre layered traversée par la souris **dédiée**, créée seulement pendant une
+  animation (≤ 30 i/s, coût nul au repos), position `cfg.plays_position` ("top_center" | "minimap") ; sons courts
+  générés (`plays_sound`, `plays_sound_negative` désactivé par défaut).
+* Engine : `_plays_tick` (chaque tick), `plays_summary()`, `recent_plays` ; en fin de partie
+  `plays.attach_to_record(path, summary)` écrit `record["plays"]` = `{"counts": {classe: n}, "total",
+  "precision": 0-100, "best": [...3], "worst": [...3], "plays": [{"cls","rule","reason","gt","key","alias","title"}],
+  "labels": {classe: libellé FR}}`. **Pour le rapport / l'UI** : `plays.summary_from_record(record)` (None pour
+  une ancienne partie), `plays.summary_line(summary)` (« Précision 68 · 4 coups de maître · 4 gaffes »),
+  couleurs `fx_render.CLASS_RGB`, image d'un badge `fx_render.render_frame(cls, title, reason, 1.2)`.
+* `ai_advisor.py` v2 : réponse **JSON stricte** (`PLAN_SCHEMA_FR`, `parse_plan` : `plan` + ≤ 3 `etapes`,
+  `objectif`, `urgence`) ; le snapshot contient `coups` (coups notés), `prec`, `diff` (or / niveau / CS),
+  `prio` (vagues), `objt` (timers), `balises` (wards.recommend), `jint` (infos jungle si disponibles) ;
+  moments : combat perdu (morts alliées > ennemies), 80 s avant un objectif majeur (dragon dès 14:00, Baron,
+  ancestral, Atakhan), bascule d'or ±1 500 en 1-2,5 min, fenêtre de retour, 2 gaffes en 4 min ; budget
+  inchangé (5 auto + 1 urgence) ; hors ligne / quota / JSON cassé → `rule_plan(moment, snapshot)`
+  (`Advice.source == "rules"`, titre « PLAN », sans réseau, sans budget). `AIAdvisor.note_play(play)`.
+
+## 13. Coaching extras (v1.9) — pics de puissance, plan de voie, objectif de partie, cause de mort
+
+Tout est **visuel** (ligne du HUD via `TipRotator`, toasts), jamais dit à voix haute ; seules sources : Live Client
+(niveaux / objets / scores publics, mes PV / sorts d'invocateur, événements) + faits minimap du coach.
+
+* `spikes.py` : `level_spike(mon_niveau, son_niveau)`, `item_spike(mes_objets, ses_objets)` (purs, réutilisables) ;
+  `SpikeTracker` : qui atteint le premier 2/3/6/11/16 ou finit un objet légendaire (≥ 2200 PO) dans ma voie ->
+  fenêtre (35 s niveaux 2/3, 75 s niveau 6, 90 s objet) -> raisons de jauge (`(+1.5, "tu es 6 avant Darius")`).
+* `game_plan.py` : `matchup_card(game, rôle, adversaire)` (profils `meta.py` : courbe, portée, mobilité, style) ->
+  toast « PLAN DE VOIE : DARIUS » au début + 2 lignes de plan + ligne jungler (côté **probable** du 1er gank,
+  heuristique) ; jungle : « Premier gank top : … » ; `map_fields(MapState)` (point d'âme, buff Baron / Ancestral).
+* `goals.py` : `pick_goal(historique, rôle)` (dernières parties `report.list_games` : CS/min sous la cible du rôle ->
+  objectif CS, sinon morts -> « N morts maximum ») ; `GoalTracker` : toast au début, conseil quand l'objectif est en
+  danger (dernière mort permise, CS en retard à 10/15/20 min), toast de félicitation quand il est atteint.
+* `death_cause.py` : `classify_death(DeathSnapshot) -> (cause, ligne)` (tour, en infériorité, jungler surprise,
+  sous-niveau, PV bas, trop avancé ; None si rien de clair) + `DeathCoach` (état ~4 s avant la mort) -> toast
+  « POURQUOI CETTE MORT ? » + ligne HUD, une fois par mort.
+* `coach_plus.CoachPlus` : orchestre le tout pour `engine._coach_plus_tick` ; `factors()` -> `coach.stance_factors(...,
+  extra=)` (jauge), `tip_fields()` + `buy_fields(rec)` -> `tips.build_context(..., extra=)` ; toasts filtrés par le
+  niveau du joueur (`skill.tip_min_prio`), 1 toast / 20 s max, retenus pendant gank / combat.
+  `CoachEngine.coach_extras()` : objectif + statut, plan, causes des morts (UI / rapport).
+* Nouveaux conseils (`tips.py`) : pics de niveau (`spike_*`), « Rentre acheter Phage : tu as l'or » (`comp_ready`),
+  « Rentre maintenant : tu reviendras à temps pour le Héraut » / « Ne rentre pas : Dragon dans 30 s » (selon le rôle),
+  âme / Baron / Ancestral (les deux camps), objectif de partie, plan de voie. Le conseil TP exige la Téléportation.
+* Anti-spam : toast « ASTUCE » seulement pour un NOUVEAU conseil de prio ≥ 3, 1 / min ; ligne HUD gardée ≥ 5 s
+  (`HUD_DWELL_S`) sauf danger ; lignes hype / probabilité de victoire via la porte vocale (écrites en minimal /
+  normal) ; conseil d'achat : 1 par passage en base ; « N ennemis disparus » ne prend plus la ligne HUD.
+* Mesure : `python -m treeaicoach.coach_sim --level intermediaire` (partie scriptée de 30 min, moteur réel) ->
+  voix / toasts / changements de ligne HUD par minute ; `tests/test_coach_plus.py` borne ces taux.

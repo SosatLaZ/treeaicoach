@@ -1,0 +1,12 @@
+{
+  "description": "TreeAI test fixture (shape of the game's PersistedSettings.json)",
+  "files": [
+    {"name": "Input.ini", "sections": [{"name": "GameEvents", "settings": [{"name": "evtCastSpell1", "value": "[q]"}]}]},
+    {"name": "Game.cfg", "sections": [
+      {"name": "General", "settings": [{"name": "Width", "value": "2560"}, {"name": "Height", "value": "1440"},
+                                         {"name": "WindowMode", "value": "2"}]},
+      {"name": "HUD", "settings": [{"name": "MinimapScale", "value": "1.4000"}, {"name": "FlipMiniMap", "value": "1"},
+                                     {"name": "ColorBlindMode", "value": "1"}]}
+    ]}
+  ]
+}

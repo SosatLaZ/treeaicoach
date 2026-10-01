@@ -35,11 +35,12 @@ log = logging.getLogger(__name__)
 # ======================================================================================
 # Colours shared with ui.py (kept in sync with its palette)
 # ======================================================================================
-GOLD = "#C8AA6E"
-GOLD_DARK = "#785A28"
-ALLY = "#3A8DDE"            # allied team ring (LoL blue)
-ENEMY = "#E84057"           # enemy team ring
-BADGE_BG = "#010A13"
+# TreeAI tokens (docs/DESIGN.md); legacy names kept for callers.
+GOLD = "#9BD84A"            # the accent (TreeAI sap green)
+GOLD_DARK = "#3E5A1E"
+ALLY = "#4A90D9"            # allied team ring (team colour)
+ENEMY = "#E5484D"           # enemy team ring
+BADGE_BG = "#0C0E0D"
 
 ROLE_ORDER: tuple[str, ...] = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
 ROLE_FR: dict[str, str] = {"TOP": "Haut", "JUNGLE": "Jungle", "MIDDLE": "Milieu", "BOTTOM": "Tireur",
@@ -87,7 +88,7 @@ EXTRA_ICONS: frozenset[str] = frozenset({
 })
 
 
-def extra_icon(kind: str, size: int = 18, color: str = "#A09B8C") -> Image.Image:
+def extra_icon(kind: str, size: int = 18, color: str = "#8B948F") -> Image.Image:
     """Additional line icons (same style as ``ui.nav_icon``), RGBA, 4x supersampled."""
     ss = 4
     S = size * ss
@@ -239,7 +240,7 @@ def role_glyph(role: str | None, size: int, color: str = GOLD) -> Image.Image:
 
 
 def decorate_portrait(img: Image.Image, role: str | None = None, mia_frac: float | None = None,
-                      arc_color: str = "#F0A030", badge_bg: str = BADGE_BG, badge_ring: str = GOLD_DARK,
+                      arc_color: str = "#E8A23A", badge_bg: str = BADGE_BG, badge_ring: str = "#2F3532",
                       star: bool = False) -> Image.Image:
     """Add a role badge (bottom-right), an MIA progress arc and a jungler star to a portrait (RGB)."""
     try:
@@ -259,10 +260,10 @@ def decorate_portrait(img: Image.Image, role: str | None = None, mia_frac: float
             x0, y0 = S - b, S - b
             d.ellipse((x0, y0, S - 1, S - 1), fill=hex_rgb(badge_bg) + (255,),
                       outline=hex_rgb(badge_ring) + (255,), width=max(ss, int(b * .08)))
-            g = role_glyph(role, int(b * .62), GOLD)
+            g = role_glyph(role, int(b * .62), "#D5DBD7")
             layer.alpha_composite(g, (x0 + (b - g.size[0]) // 2, y0 + (b - g.size[1]) // 2))
         if star:
-            st = extra_icon("star", int(S * .34), GOLD)
+            st = extra_icon("star", int(S * .34), "#E8A23A")
             b = int(S * .38)
             d.ellipse((0, S - b, b, S - 1), fill=hex_rgb(badge_bg) + (255,),
                       outline=hex_rgb(badge_ring) + (255,), width=max(ss, int(b * .08)))
@@ -275,62 +276,20 @@ def decorate_portrait(img: Image.Image, role: str | None = None, mia_frac: float
         return img
 
 
-def hero_background(w: int, h: int, glow: str, bg: str = "#010A13", panel: str = "#0A1428",
-                    border: str = "#1E2328", gold: str = GOLD, radius: int = 14) -> Image.Image:
-    """Hextech banner: dark gradient card, coloured glow on the left, gold top rule and corner marks."""
-    w, h = max(8, int(w)), max(8, int(h))
-    try:
-        import numpy as np  # noqa: PLC0415
+def hero_background(w: int, h: int, glow: str, bg: str = "#0C0E0D", panel: str = "#121513",
+                    border: str = "#222725", gold: str = GOLD, radius: int = 4) -> Image.Image:
+    """Status strip background: flat graphite panel, 1 px border, 3 px state bar on the left.
 
-        x = np.linspace(0.0, 1.0, w, dtype=np.float32)[None, :, None]
-        y = np.linspace(0.0, 1.0, h, dtype=np.float32)[:, None, None]
-        p0 = np.array(hex_rgb("#0E1D38"), np.float32)
-        p1 = np.array(hex_rgb(panel), np.float32)
-        img = p0 * (1 - np.clip(x * 1.6, 0, 1)) + p1 * np.clip(x * 1.6, 0, 1)
-        img = img * (1.0 - 0.18 * y)                       # darker towards the bottom
-        g = np.array(hex_rgb(glow), np.float32)
-        cx, cy = 0.06, 0.38
-        dx = (x - cx) * (w / max(h, 1)) * 0.55
-        dy = (y - cy)
-        k = np.exp(-(dx * dx + dy * dy) / 0.22)[..., :1] * 0.30
-        img = img * (1 - k) + g * k
-        arr = np.clip(img, 0, 255).astype(np.uint8)
-        card = Image.fromarray(np.broadcast_to(arr, (h, w, 3)).copy(), "RGB").convert("RGBA")
-    except Exception:
-        card = Image.new("RGBA", (w, h), hex_rgb(panel) + (255,))
-    d = ImageDraw.Draw(card)
-    gc = hex_rgb(gold)
-    # gold top rule fading out to the right
-    for i in range(radius, w - radius):
-        a = int(200 * max(0.0, 1.0 - (i - radius) / max(1, (w - 2 * radius) * 0.85)))
-        if a <= 0:
-            break
-        d.point((i, 0), fill=gc + (a,))
-    # corner ornaments (bottom-right)
-    o = hex_rgb(gold) + (110,)
-    d.line((w - 34, h - 7, w - 7, h - 7, w - 7, h - 34), fill=o, width=1)
-    d.line((w - 22, h - 11, w - 11, h - 11, w - 11, h - 22), fill=o, width=1)
-    # rounded corners + border on the window background
-    ss = 3
-    mask = Image.new("L", (w * ss, h * ss), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w * ss - 1, h * ss - 1), radius=radius * ss, fill=255)
-    mask = mask.resize((w, h), Image.LANCZOS)
-    out = Image.new("RGBA", (w, h), hex_rgb(bg) + (255,))
-    out.paste(card, (0, 0), mask)
-    edge = Image.new("L", (w * ss, h * ss), 0)
-    ImageDraw.Draw(edge).rounded_rectangle((0, 0, w * ss - 1, h * ss - 1), radius=radius * ss, outline=255,
-                                           width=ss)
-    edge = edge.resize((w, h), Image.LANCZOS)
-    out.paste(Image.new("RGBA", (w, h), hex_rgb(border) + (255,)), (0, 0), edge)
-    # re-draw the gold rule over the border
+    No gradient, no glow (docs/DESIGN.md): the state colour ``glow`` only tints the left bar.
+    ``gold`` is accepted for compatibility and unused.
+    """
+    w, h = max(8, int(w)), max(8, int(h))
+    out = Image.new("RGB", (w, h), hex_rgb(bg))
     d = ImageDraw.Draw(out)
-    for i in range(radius, w - radius):
-        a = max(0.0, 1.0 - (i - radius) / max(1, (w - 2 * radius) * 0.85))
-        if a <= 0:
-            break
-        base = out.getpixel((i, 0))[:3]
-        d.point((i, 0), fill=tuple(int(b * (1 - a * .8) + c * a * .8) for b, c in zip(base, gc)) + (255,))
-    return out.convert("RGB")
+    r = max(0, min(int(radius), 6))
+    d.rounded_rectangle((0, 0, w - 1, h - 1), radius=r, fill=hex_rgb(panel), outline=hex_rgb(border), width=1)
+    d.rectangle((0, r, 2, h - 1 - r), fill=hex_rgb(glow))
+    return out
 
 
 def glow_dot(size: int, color: str, bg: str) -> Image.Image:
@@ -537,6 +496,123 @@ class VoiceGate:
 # ======================================================================================
 # Dashboard helpers
 # ======================================================================================
+# ======================================================================================
+# Launcher: status of each subsystem with a one-click fix
+# ======================================================================================
+#: level: 0 = ok, 1 = to check, 2 = broken, -1 = idle / not applicable
+SubsystemRow = tuple[str, str, int, str, str, str]      # (key, label, level, text, fix label, fix action)
+
+
+def subsystem_rows(*, state: str = "", message: str = "", running: bool = False, demo: bool = False,
+                   minimap_found: bool = False, minimap_method: str | None = None, detector: str = "",
+                   voice_backend: str = "", muted: bool = False, lcu_text: str = "",
+                   lcu_enabled: bool = True, engine_ok: bool = True) -> list[SubsystemRow]:
+    """Plain-French status of "Jeu / Minimap / Client LoL / IA / Voix" for the dashboard.
+
+    Each row carries a short fix hint and an action key the UI maps to a button:
+    "start", "calibrate", "help_borderless", "settings_ia", "voice", "unmute", "lcu_help", "".
+    Pure: no I/O, never raises.
+    """
+    rows: list[SubsystemRow] = []
+    st = str(state or "").upper()
+    # game
+    if not engine_ok:
+        rows.append(("game", "Jeu", 2, "moteur indisponible", "Réessayer", "start"))
+    elif not running:
+        rows.append(("game", "Jeu", -1, "analyse arrêtée", "Démarrer", "start"))
+    elif demo:
+        rows.append(("game", "Jeu", 0, "partie simulée", "", ""))
+    elif st == "WAITING_GAME":
+        rows.append(("game", "Jeu", -1, "pas de partie en cours", "", ""))
+    elif st == "UNSUPPORTED_MODE":
+        rows.append(("game", "Jeu", 1, "mode non géré (Faille seulement)", "", ""))
+    elif st == "CAPTURE_BLACK":
+        rows.append(("game", "Jeu", 2, "capture noire", "Passer en Sans bordure", "help_borderless"))
+    elif st == "ERROR":
+        rows.append(("game", "Jeu", 2, (message or "erreur")[:48], "Diagnostic", "diagnostic"))
+    else:
+        rows.append(("game", "Jeu", 0, "partie détectée", "", ""))
+    # minimap
+    if running and st in ("RUNNING",) and (minimap_found or demo):
+        how = {"manual": "calibrée", "auto": "trouvée", "fallback": "position par défaut"}.get(
+            str(minimap_method or ""), "trouvée")
+        rows.append(("minimap", "Minimap", 1 if minimap_method == "fallback" else 0, how,
+                     "Calibrer" if minimap_method == "fallback" else "", "calibrate" if minimap_method == "fallback"
+                     else ""))
+    elif running and st == "LOCATING":
+        rows.append(("minimap", "Minimap", 1, "recherche en cours", "Calibrer", "calibrate"))
+    elif running and st == "CAPTURE_BLACK":
+        rows.append(("minimap", "Minimap", 2, "invisible (plein écran)", "Passer en Sans bordure", "help_borderless"))
+    else:
+        rows.append(("minimap", "Minimap", -1, "en attente de partie", "", ""))
+    # League client (post-game truth)
+    if not lcu_enabled:
+        rows.append(("lcu", "Client LoL", -1, "désactivé", "", ""))
+    elif lcu_text.endswith("connecté"):
+        rows.append(("lcu", "Client LoL", 0, "connecté", "", ""))
+    elif lcu_text:
+        rows.append(("lcu", "Client LoL", 1, "non trouvé", "Aide", "lcu_help"))
+    else:
+        rows.append(("lcu", "Client LoL", -1, "vérification…", "", ""))
+    # detector ("IA")
+    d = str(detector or "").lower()
+    if "onnx" in d or "roster" in d:
+        rows.append(("ia", "IA", 0, "réseau de neurones", "", ""))
+    elif "classic" in d:
+        rows.append(("ia", "IA", 1, "mode secours (classique)", "Réglages", "settings_ia"))
+    elif d in ("", "-", "none", "aucun"):
+        rows.append(("ia", "IA", 2 if engine_ok else -1, "non chargée", "Réglages", "settings_ia"))
+    else:
+        rows.append(("ia", "IA", 0, detector[:24], "", ""))
+    # voice
+    vb = str(voice_backend or "").lower()
+    if muted:
+        rows.append(("voice", "Voix", 1, "coupée", "Rétablir", "unmute"))
+    elif vb in ("sapi", "onecore", "neural"):
+        rows.append(("voice", "Voix", 0, {"sapi": "Windows (SAPI)", "onecore": "Windows",
+                                         "neural": "neurale"}[vb], "Tester", "voice"))
+    elif vb in ("print", ""):
+        rows.append(("voice", "Voix", 2 if vb == "print" else -1,
+                     "aucune voix Windows" if vb == "print" else "chargement…", "Réglages", "voice_settings"))
+    else:
+        rows.append(("voice", "Voix", 0, vb, "Tester", "voice"))
+    return rows
+
+
+OBJECTIVE_SHORT_FR: dict[str, str] = {"dragon": "Drake", "dragon ancestral": "Ancien", "baron": "Baron",
+                                       "héraut": "Héraut", "larves": "Larves", "atakhan": "Atakhan"}
+
+
+def objectives_text(ov: Any, max_items: int = 3) -> str:
+    """Compact objective timers for the status strip: "Drake 1:24 · Baron 4:10" (soonest first).
+
+    Spawned objectives read "Drake là". Pure, never raises; "" when nothing is known.
+    """
+    try:
+        gt = getattr(ov, "game_time", None)
+        items: list[tuple[float, str]] = []
+        for ob in list(getattr(ov, "objectives", None) or []):
+            name = str(getattr(ob, "name", "") or "")
+            if not name:
+                continue
+            short = OBJECTIVE_SHORT_FR.get(name.lower(), name)
+            if getattr(ob, "alive", False):
+                items.append((-1.0, f"{short} là"))
+                continue
+            nxt = getattr(ob, "next_spawn", None)
+            if not isinstance(nxt, (int, float)) or not isinstance(gt, (int, float)):
+                continue
+            rem = float(nxt) - float(gt)
+            if not math.isfinite(rem) or rem < -1:
+                continue
+            rem = max(0.0, rem)
+            items.append((rem, f"{short} {int(rem) // 60}:{int(rem) % 60:02d}"))
+        items.sort(key=lambda it: it[0])
+        return " · ".join(t for _r, t in items[:max(0, int(max_items))])
+    except Exception:
+        return ""
+
+
 def lane_opponent(ov: Any) -> tuple[str | None, str | None, Any]:
     """(my alias, my role, enemy view of the same role) from an OverlayState. Never raises."""
     try:
@@ -603,36 +679,36 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
                     detector: Any = None, voice: Any = None, log_file: Path | None = None,
                     data_dir: Path | None = None, cpu: float | None = None, demo: bool = False) -> str:
     """Plain-text report for bug reports ("Copier le diagnostic"). No secret (token) inside."""
-    def g(obj: Any, name: str, default: Any = "—") -> Any:
+    def g(obj: Any, name: str, default: Any = "-") -> Any:
         try:
             v = getattr(obj, name, default)
             return v() if callable(v) else v
         except Exception:
             return default
 
-    lines = [f"TreeAI Coach {version} — diagnostic du {_dt.datetime.now():%d/%m/%Y %H:%M:%S}"]
+    lines = [f"TreeAI Coach {version} : diagnostic du {_dt.datetime.now():%d/%m/%Y %H:%M:%S}"]
     lines.append(f"Système : {platform.system()} {platform.release()} ({platform.machine()}), "
                  f"Python {platform.python_version()}, exe={'oui' if getattr(sys, 'frozen', False) else 'non'}")
     st = status
     if st is not None:
         state = g(st, "state")
-        lines.append(f"Moteur : {getattr(state, 'name', state)} — {g(st, 'message', '')}")
+        lines.append(f"Moteur : {getattr(state, 'name', state)} : {g(st, 'message', '')}")
         lines.append(f"FPS : {g(st, 'fps')} · tick {g(st, 'tick_ms')} ms · erreurs {g(st, 'errors')} · "
                      f"minimap {g(st, 'minimap_rect')} ({g(st, 'locate_method')})")
     else:
         lines.append("Moteur : indisponible" if engine is None else "Moteur : aucun statut")
     lines.append(f"Mode démo : {'oui' if demo else 'non'} · CPU appli : "
-                 f"{'—' if cpu is None else f'{cpu:.0f} %'}")
+                 f"{'-' if cpu is None else f'{cpu:.0f} %'}")
     lines.append(f"Détecteur : {g(detector, 'name', None) or getattr(cfg, 'detector_backend', '?')} "
                  f"(réglage {getattr(cfg, 'detector_backend', '?')}, seuil {getattr(cfg, 'detection_threshold', '?')})")
-    lines.append(f"Voix : {g(voice, 'backend', None) or '—'} (moteur {getattr(cfg, 'voice_engine', '—')}, "
+    lines.append(f"Voix : {g(voice, 'backend', None) or '-'} (moteur {getattr(cfg, 'voice_engine', '-')}, "
                  f"volume {getattr(cfg, 'voice_volume', '?')})")
     ov_mode = g(overlay, "effective_mode", None) if overlay is not None else None
     lines.append(f"Overlay : réglage {getattr(cfg, 'overlay_mode', '?')}, effectif {ov_mode or 'indisponible'}, "
                  f"activé={getattr(cfg, 'overlay_enabled', '?')}")
     lines.append(f"Mode sûr : {'oui' if getattr(cfg, 'safe_mode', False) else 'non'} · minimap "
                  f"{getattr(cfg, 'minimap_mode', '?')}/{getattr(cfg, 'minimap_side', '?')}")
-    lines.append(f"Journal : {log_file or '—'}")
+    lines.append(f"Journal : {log_file or '-'}")
     if data_dir is not None:
         lines.append(f"Données : {data_dir}")
     errs = last_log_errors(log_file)
@@ -648,7 +724,7 @@ CHANGELOG_VERSION = "1.8"
 CHANGELOG: tuple[tuple[str, str], ...] = (
     ("Ton niveau en un clic", "Débutant, Intermédiaire, Avancé ou Expert dans la barre de gauche : "
                               "plus tu montes, moins on te rappelle les bases."),
-    ("Carte nouvelle génération", "Moins de fausses alertes de gank (murs pris en compte), champions "
+    ("Carte plus fiable", "Moins de fausses alertes de gank (murs pris en compte), champions "
                                   "cachés sous une autre icône suivis, dernière position avant le brouillard."),
     ("Ton skin moddé reconnu", "Ton icône est apprise en direct sur la minimap et gardée pour la partie "
                                "suivante. Ta vraie voie est détectée, même après un échange."),
@@ -659,7 +735,7 @@ CHANGELOG: tuple[tuple[str, str], ...] = (
                                 "et la fiabilité de TreeAI sur la partie."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
-    ("Ctrl + 1 … 6", "Aller à une page (Tableau de bord … Aide)"),
+    ("Ctrl + 1 … 6", "Aller à une page (En jeu … Aide)"),
     ("Ctrl + M", "Couper / rétablir la voix"),
     ("Ctrl + Maj + S", "Activer / désactiver le mode sûr"),
     ("Ctrl + D", "Copier le diagnostic"),
@@ -696,7 +772,7 @@ class Tooltip:
 
     DELAY_MS = 450
 
-    def __init__(self, widget: Any, text: str | Callable[[], str], bg: str = "#0F1D36", fg: str = "#F0E6D2",
+    def __init__(self, widget: Any, text: str | Callable[[], str], bg: str = "#191D1B", fg: str = "#E4E8E5",
                  border: str = GOLD_DARK, font: Any = None, wrap: int = 320) -> None:
         self.widget = widget
         self.text = text
@@ -767,5 +843,5 @@ def caps(text: str) -> str:
 __all__ = [
     "extra_icon", "role_glyph", "decorate_portrait", "hero_background", "glow_dot", "PRESETS", "preset_of",
     "preset_changes", "export_settings", "import_settings", "in_quiet_hours", "speech_allowed", "VoiceGate",
-    "lane_opponent", "CpuMeter", "diagnostic_text", "CHANGELOG", "SHORTCUTS", "ABOUT_TEXT", "norm_role",
+    "lane_opponent", "objectives_text", "subsystem_rows", "CpuMeter", "diagnostic_text", "CHANGELOG", "SHORTCUTS", "ABOUT_TEXT", "norm_role",
 ]

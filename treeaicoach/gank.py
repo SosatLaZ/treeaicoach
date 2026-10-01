@@ -472,6 +472,9 @@ class GankAnalyzer:
         ally_pts.append(me_raw)
 
         enemies = tracker.enemies(visible_only=False)
+        # dead enemies (Live API): no icon on the map, never a threat nor "missing"
+        dead = {_key(getattr(p, "champion_alias", "")) for p in (getattr(game, "enemies", None) or [])
+                if bool(getattr(p, "is_dead", False))} - {""} if game is not None else set()
         alerts: list[Alert] = []
         approaching: set[str] = set()
         lane_opps: set[str] = set()
@@ -491,8 +494,9 @@ class GankAnalyzer:
                 st.confirm = self._seed_confirm(tr)
             st.seen_t = now
             relation = roster.relation(tr)
-            if relation == "ally":                 # identified as one of my allies: never
-                st.confirm = 0
+            if relation == "ally" or (dead and tr.alias and _key(tr.alias) in dead):
+                st.confirm = 0                     # an ally, or a dead enemy: never a threat
+                st.approaching, st.on_count, st.off_count = False, 0, 0
                 continue
             if relation == "enemy" and (_finite(tr.id_score) or 0.0) < MIN_ID_SCORE:
                 relation = "anon"                  # doubtful identity: treated as anonymous

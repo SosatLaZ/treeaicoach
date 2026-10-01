@@ -587,6 +587,35 @@ def test_laner_mia_once_per_disappearance() -> None:
     assert raw_of(early, AlertKind.LANER_MIA) == []
 
 
+def test_dead_enemy_is_never_missing_nor_a_threat() -> None:
+    cfg = Config(alert_laner_mia=True)
+
+    def enemies(t: float) -> dict:
+        return {"Darius": darius_wobble(t)} if t < 10.0 else {}
+
+    def game(t: float) -> GameInfo:
+        g = make_game(t)
+        for p in g.enemies:
+            if p.champion_alias == "Darius" and t >= 10.0:
+                p.is_dead, p.respawn_timer = True, 30.0
+        return g
+
+    assert raw_of(simulate(25.0, enemies, cfg=cfg, game=game), AlertKind.LANER_MIA) == []
+    # an enemy the API says is dead never makes a gank alert (stale / false icon)
+    path = [(0.35, 0.25), (0.11, 0.21)]
+
+    def dead_lee(t: float) -> GameInfo:
+        g = make_game(t)
+        for p in g.enemies:
+            if p.champion_alias == "LeeSin":
+                p.is_dead, p.respawn_timer = True, 20.0
+        return g
+
+    ticks = simulate(12.0, lambda t: {"LeeSin": lerp_path(path, 0.025, t)}, game=dead_lee)
+    assert gank_raw(ticks) == []
+    assert gank_raw(simulate(12.0, lambda t: {"LeeSin": lerp_path(path, 0.025, t)}))
+
+
 def test_no_game_info_still_works_with_roamers() -> None:
     path = [(0.35, 0.25), (0.11, 0.21)]
     ticks = simulate(12.0, lambda t: {"LeeSin": lerp_path(path, 0.025, t)}, game=lambda t: None)

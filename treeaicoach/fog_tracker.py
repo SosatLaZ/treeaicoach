@@ -212,7 +212,17 @@ class Reachability:
         i = int(np.argmin(d2))
         return int(self._walk_xy[i, 0]), int(self._walk_xy[i, 1])
 
-    def distance_field(self, start_uv: tuple[float, float], max_dist: float | None = None) -> np.ndarray:
+    def distance_field_multi(self, starts: Iterable[tuple[float, float]],
+                             max_dist: float | None = None) -> np.ndarray:
+        """Geodesic distance to the nearest of several start points (same method as
+        :meth:`distance_field`). Never raises."""
+        pts = [tuple(p) for p in starts]
+        if len(pts) <= 1:
+            return self.distance_field(pts[0] if pts else (0.5, 0.5), max_dist)
+        return self.distance_field(pts[0], max_dist, _extra=pts[1:])
+
+    def distance_field(self, start_uv: tuple[float, float], max_dist: float | None = None,
+                       _extra: Iterable[tuple[float, float]] = ()) -> np.ndarray:
         """Normalized geodesic distance from ``start_uv`` (float32 ``[grid, grid]``, inf = unreachable).
 
         The start is snapped to the nearest walkable cell. With ``max_dist`` the dilation stops
@@ -221,11 +231,12 @@ class Reachability:
         """
         g = self.grid
         try:
-            sx, sy = self.snap(start_uv)
             dist = np.full((g, g), np.inf, np.float32)
             reached = np.zeros((g, g), np.uint8)
-            reached[sy, sx] = 1
-            dist[sy, sx] = 0.0
+            for p in [start_uv, *_extra]:
+                sx, sy = self.snap(p)
+                reached[sy, sx] = 1
+                dist[sy, sx] = 0.0
             step = 0
             limit = 4 * g  # longest possible walk on the grid; safety bound
             if max_dist is not None and math.isfinite(max_dist) and max_dist >= 0:
@@ -263,13 +274,15 @@ class FogEstimate:
     region: np.ndarray | None          # bool [grid, grid] reachable cells (read-only)
     confidence: float                  # 1 -> 0 when elapsed -> max duration
     is_jungler: bool = False
+    #: Start points of the region (one: ``last_uv``; several after a multi-point anchor).
+    seeds: tuple = ()
 
 
 class _Loss:
     """Internal state of one disappearance (distance field computed once)."""
 
     __slots__ = ("key", "alias", "name", "last_uv", "last_seen", "speed", "is_jungler",
-                 "field", "_region_q", "_region")
+                 "field", "_region_q", "_region", "seeds", "spread", "parent", "_edist")
 
     def __init__(self, key: str, alias: str | None, name: str | None, last_uv: tuple[float, float],
                  last_seen: float, speed: float, is_jungler: bool, field: np.ndarray) -> None:
@@ -283,6 +296,14 @@ class _Loss:
         self.field = field
         self._region_q: int | None = None
         self._region: np.ndarray | None = None
+        #: Several possible start points (multi-point anchor, e.g. the camps where a CS
+        #: tick could have happened); ``last_uv`` is then their centroid.
+        self.seeds: tuple[tuple[float, float], ...] = (last_uv,)
+        self.spread = 0.0
+        #: The previous disappearance this one refines (multi-point anchor): the region is
+        #: the intersection of both (each is a true bound of where he can be).
+        self.parent: _Loss | None = None
+        self._edist: np.ndarray | None = None      # straight-line distance to the seeds
 
     def region(self, reach: float, grid: int, walkable_u8: np.ndarray, flash_kernel: np.ndarray
                ) -> np.ndarray:
@@ -290,9 +311,14 @@ class _Loss:
         q = int(reach * grid * 4)
         if self._region is not None and q == self._region_q:
             return self._region
-        c = (np.arange(grid, dtype=np.float32) + 0.5) / grid
+        if self._edist is None or self._edist.shape != (grid, grid):
+            c = (np.arange(grid, dtype=np.float32) + 0.5) / grid
+            ed = np.full((grid, grid), np.inf, np.float32)
+            for su, sv in self.seeds:
+                np.minimum(ed, np.hypot(c[None, :] - su, c[:, None] - sv), out=ed)
+            self._edist = ed
         # straight-line bound (+ half a cell diagonal for the discretization of the start)
-        disc = np.hypot(c[None, :] - self.last_uv[0], c[:, None] - self.last_uv[1]) <= reach + 0.75 / grid
+        disc = self._edist <= reach + 0.75 / grid
         core = ((self.field <= reach) & disc).astype(np.uint8)
         grown = cv2.dilate(core, flash_kernel)
         np.bitwise_and(grown, walkable_u8, out=grown)
@@ -329,6 +355,8 @@ class FogTracker:
         self._estimates: list[FogEstimate] = []
         # re-anchoring (normalized alias -> (t, uv, reason)), death watch, events consumed
         self._anchors: dict[str, tuple[float, tuple[float, float], str]] = {}
+        #: Multi-point anchors: normalized alias -> the possible points (centroid in _anchors).
+        self._anchor_pts: dict[str, tuple[tuple[float, float], ...]] = {}
         self._dead: dict[str, float | None] = {}
         self._events_seen = 0
 
@@ -355,22 +383,37 @@ class FogTracker:
             self._vel.clear()
             self._estimates = []
             self._anchors.clear()
+            self._anchor_pts.clear()
             self._dead.clear()
             self._events_seen = 0
 
-    def anchor(self, alias: str, uv: tuple[float, float], t: float, reason: str = "") -> None:
+    def anchor(self, alias: str, uv: tuple[float, float] | None, t: float, reason: str = "",
+               points: Iterable[tuple[float, float]] | None = None) -> None:
         """New "last known place / time" of the enemy ``alias`` (a visible fact: kill feed,
-        objective, respawn). Ignored when older than his last sighting. Never raises."""
+        objective, respawn, purchase). ``points``: several possible places instead of one
+        (he was at ONE of them at ``t``; ``uv`` may then be None). Ignored when older than
+        his last sighting. Never raises."""
         try:
             key = _norm_alias(alias)
             tt = float(t)
             if not key or not math.isfinite(tt):
+                return
+            pts = tuple(geometry.clamp_uv(p[0], p[1]) for p in (points or ()))
+            if len(pts) == 1:
+                uv, pts = pts[0], ()
+            elif pts:
+                uv = (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
+            if uv is None:
                 return
             u, v = geometry.clamp_uv(uv[0], uv[1])
             with self._lock:
                 cur = self._anchors.get(key)
                 if cur is None or tt >= cur[0]:
                     self._anchors[key] = (tt, (u, v), str(reason))
+                    if pts:
+                        self._anchor_pts[key] = pts
+                    else:
+                        self._anchor_pts.pop(key, None)
                     log.debug("Fog anchor %s at (%.3f, %.3f) t=%.1f (%s)", alias, u, v, tt, reason)
         except Exception:
             log.debug("FogTracker.anchor failed", exc_info=True)
@@ -471,6 +514,7 @@ class FogTracker:
                 anc = self._anchors.get(_norm_alias(alias))
                 if anc is not None and anc[0] <= t:
                     self._anchors.pop(_norm_alias(alias), None)   # seen since: obsolete
+                    self._anchor_pts.pop(_norm_alias(alias), None)
                 continue
             est = self._estimate_hidden(t, key, tr, alias, is_jungler, game)
             if est is not None:
@@ -487,6 +531,7 @@ class FogTracker:
                 del self._dismissed[key]
         for akey in [k for k, a in self._anchors.items() if t - a[0] > self.max_s + FOG_GRACE_S]:
             del self._anchors[akey]
+            self._anchor_pts.pop(akey, None)
         out.sort(key=lambda e: (not e.is_jungler, e.elapsed))
         return out
 
@@ -556,6 +601,7 @@ class FogTracker:
         cur = self._anchors.get(key)
         if cur is None or t >= cur[0]:
             self._anchors[key] = (float(t), geometry.clamp_uv(uv[0], uv[1]), reason)
+            self._anchor_pts.pop(key, None)
             log.debug("Fog anchor %s at %s t=%.1f (%s)", key, uv, t, reason)
 
     @staticmethod
@@ -585,10 +631,15 @@ class FogTracker:
             return None
         anc = self._anchors.get(_norm_alias(alias)) if alias else None
         anchor_uv: tuple[float, float] | None = None
+        seeds: tuple[tuple[float, float], ...] = ()
         if anc is not None and last_seen + 1e-6 < anc[0] <= t + 1.0:
             last_seen, anchor_uv = anc[0], anc[1]     # a newer visible fact than the last sighting
+            seeds = self._anchor_pts.get(_norm_alias(alias), ())
         loss = self._losses.get(key)
+        parent: _Loss | None = None
         if loss is not None and abs(loss.last_seen - last_seen) > 1e-6:
+            if len(seeds) > 1 and loss.last_seen < last_seen:
+                parent = loss    # a multi-point fact refines the current region, not replaces it
             loss = None          # a new disappearance of the same champion
             self._losses.pop(key, None)
         elapsed = max(0.0, t - last_seen)
@@ -609,18 +660,38 @@ class FogTracker:
             gt_loss = gt - elapsed if gt is not None else None
             speed = clamp_speed(self._observed_speed(key, tr, last_seen), gt_loss)
             name = (getattr(player, "champion_name", None) or None) if player is not None else None
-            loss = _Loss(key, alias, name or alias, pos, last_seen, speed, is_jungler,
-                         self.reach.distance_field(pos))
+            field = self.reach.distance_field_multi(seeds) if len(seeds) > 1 \
+                else self.reach.distance_field(pos)
+            loss = _Loss(key, alias, name or alias, pos, last_seen, speed, is_jungler, field)
+            if len(seeds) > 1:
+                loss.seeds = tuple(seeds)
+                loss.spread = max(math.hypot(a - pos[0], b - pos[1]) for a, b in seeds)
+                if parent is not None and parent.parent is not None and \
+                        parent.parent.parent is not None:
+                    parent.parent.parent = None        # bounded chain
+                loss.parent = parent
             self._losses[key] = loss
             log.debug("Fog estimate started for %s at %s (speed %.4f/s)", key, pos, speed)
         loss.is_jungler = is_jungler
         reach = loss.speed * elapsed + REACH_MARGIN
         region = loss.region(reach, self.grid, self._walk_u8, self._flash_kernel)
         confidence = max(0.0, 1.0 - elapsed / self.max_s)
+        shown = loss            # display circle: the latest single-point fact of the chain
+        node = loss.parent
+        while node is not None and t - node.last_seen <= self.max_s + FOG_GRACE_S:
+            p_reach = node.speed * max(0.0, t - node.last_seen) + REACH_MARGIN
+            region = region & node.region(p_reach, self.grid, self._walk_u8, self._flash_kernel)
+            if shown.spread > 0.0 and node.spread == 0.0:
+                shown = node
+            node = node.parent
+        s_reach = shown.speed * max(0.0, t - shown.last_seen) + REACH_MARGIN
+        last_uv, shown_seen, radius = shown.last_uv, shown.last_seen, s_reach + FLASH_MARGIN + shown.spread
+        if region is not loss._region:
+            region.setflags(write=False)
         return FogEstimate(
-            key=key, alias=loss.alias, name=loss.name, last_uv=loss.last_uv, last_seen=loss.last_seen,
-            elapsed=elapsed, speed=loss.speed, radius=reach + FLASH_MARGIN, region=region,
-            confidence=confidence, is_jungler=loss.is_jungler,
+            key=key, alias=loss.alias, name=loss.name, last_uv=last_uv, last_seen=shown_seen,
+            elapsed=max(0.0, t - shown_seen), speed=loss.speed, radius=radius,
+            region=region, confidence=confidence, is_jungler=loss.is_jungler, seeds=loss.seeds,
         )
 
 

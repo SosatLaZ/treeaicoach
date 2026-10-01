@@ -58,6 +58,10 @@ EXE_NAME = "TreeAICoach.exe"
 GITHUB_API = "https://api.github.com"
 DEFAULT_CHANNEL_URL = (f"https://raw.githubusercontent.com/{GITHUB_OWNER}/{GITHUB_REPO}/"
                        f"{GITHUB_BRANCH}/{MANIFEST_PATH}")
+#: Manual fallback shown with every update error (direct link to the published exe).
+MANUAL_DOWNLOAD_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/raw/{GITHUB_BRANCH}/{EXE_PATH}"
+PENDING_NAME = "pending_update.json"      # written by apply_update(), read at the next launch
+STATUS_NAME = "apply_status.txt"          # written by the swap batch: "ok" or "failed <reason>"
 #: Hosts that may receive the GitHub token (tests add their local server).
 TOKEN_HOSTS: set[str] = {"api.github.com", "raw.githubusercontent.com", "github.com"}
 
@@ -501,21 +505,36 @@ setlocal
 set /a n=0
 :wait
 tasklist /FI "PID eq %TAC_PID%" /NH 2>nul | find " %TAC_PID% " >nul
+if not errorlevel 1 goto again
+if "%TAC_PPID%"=="" goto copy
+if "%TAC_PPID%"=="0" goto copy
+tasklist /FI "PID eq %TAC_PPID%" /NH 2>nul | find /i "TreeAICoach" >nul
 if errorlevel 1 goto copy
+:again
 set /a n+=1
 if %n% GEQ 120 goto copy
 ping -n 2 127.0.0.1 >nul
 goto wait
 :copy
 set /a m=0
+copy /b /y "%TAC_SRC%" "%TAC_DST%.new" >nul 2>&1
+if errorlevel 1 goto fail_write
 :retry
-copy /b /y "%TAC_SRC%" "%TAC_DST%" >nul 2>&1
+move /y "%TAC_DST%.new" "%TAC_DST%" >nul 2>&1
 if not errorlevel 1 goto launch
 set /a m+=1
-if %m% GEQ 60 goto launch_old
+if %m% GEQ 60 goto fail_locked
 ping -n 2 127.0.0.1 >nul
 goto retry
+:fail_write
+if not "%TAC_STATUS%"=="" echo failed write> "%TAC_STATUS%"
+goto launch_old
+:fail_locked
+del /f /q "%TAC_DST%.new" >nul 2>&1
+if not "%TAC_STATUS%"=="" echo failed locked> "%TAC_STATUS%"
+goto launch_old
 :launch
+if not "%TAC_STATUS%"=="" echo ok> "%TAC_STATUS%"
 del /f /q "%TAC_SRC%" >nul 2>&1
 :launch_old
 start "" "%TAC_DST%"
@@ -541,15 +560,22 @@ def write_update_script(folder: Path) -> Path:
     return target
 
 
-def script_env(new_exe: Path, target: Path, pid: int, base: Mapping[str, str] | None = None) -> dict[str, str]:
+def script_env(new_exe: Path, target: Path, pid: int, base: Mapping[str, str] | None = None,
+               ppid: int | None = None, status: Path | None = None) -> dict[str, str]:
     """Environment for the batch: paths + PID, PyInstaller variables removed so that the
-    relaunched exe starts a fresh bootloader (not a "child" of the dying one)."""
+    relaunched exe starts a fresh bootloader (not a "child" of the dying one).
+
+    ``ppid``: the PyInstaller one-file bootloader (parent process) also holds the exe open
+    until it has cleaned its temp folder: the batch waits for it too. ``status``: file where
+    the batch writes "ok" / "failed ..." (read at the next launch, :func:`startup_report`)."""
     env = {k: v for k, v in (base if base is not None else os.environ).items()
            if not (k.upper().startswith("_PYI") or k.upper().startswith("_MEI"))}
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     env["TAC_SRC"] = str(new_exe)
     env["TAC_DST"] = str(target)
     env["TAC_PID"] = str(int(pid))
+    env["TAC_PPID"] = str(int(ppid)) if ppid else ""
+    env["TAC_STATUS"] = str(status) if status is not None else ""
     return env
 
 
@@ -585,7 +611,20 @@ def apply_update(new_exe: Path, info: UpdateInfo | None = None, *, target: Path 
                                       "est protégé. Déplace TreeAI Coach dans un dossier personnel "
                                       "ou remplace le fichier à la main.")
         script = write_update_script(new_exe.parent)
-        env = script_env(new_exe, target, pid if pid is not None else os.getpid())
+        status = new_exe.parent / STATUS_NAME
+        try:
+            status.unlink()
+        except OSError:
+            pass
+        ppid = None
+        if pid is None and paths.is_frozen():
+            try:
+                ppid = os.getppid()         # PyInstaller one-file bootloader (holds the exe open)
+            except Exception:
+                ppid = None
+        env = script_env(new_exe, target, pid if pid is not None else os.getpid(), ppid=ppid, status=status)
+        if info is not None:
+            _write_pending(new_exe.parent, info.version, target)
         cmd = ["cmd.exe", "/d", "/c", str(script)]
         kwargs: dict[str, Any] = dict(env=env, cwd=str(new_exe.parent), close_fds=True,
                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -614,6 +653,79 @@ def apply_update(new_exe: Path, info: UpdateInfo | None = None, *, target: Path 
     except Exception as exc:  # noqa: BLE001
         log.exception("apply_update failed")
         return ApplyResult(False, f"Impossible de lancer la mise à jour : {exc}")
+
+
+# --------------------------------------------------------------------------- after the restart
+
+
+def _write_pending(folder: Path, version: str, target: Path) -> None:
+    try:
+        (Path(folder) / PENDING_NAME).write_text(json.dumps({"version": version, "target": str(target),
+                                                             "time": time.time()}), encoding="utf-8")
+    except OSError:
+        log.debug("Cannot write the pending update marker", exc_info=True)
+
+
+@dataclass(frozen=True)
+class StartupReport:
+    ok: bool
+    message: str
+
+
+def startup_report(current: str | None = None, folder: Path | None = None) -> StartupReport | None:
+    """Did the last in-app update really apply? Read (and clear) the markers left by
+    :func:`apply_update` and its batch. None when no update was pending. Never raises.
+
+    Failure causes, in plain French, with the manual download link: the exe is in a protected
+    folder (Program Files, OneDrive / Documents with "Accès contrôlé aux dossiers"), the file
+    stayed locked (old TreeAI Coach still open, antivirus scan, OneDrive sync).
+    """
+    try:
+        current = current or __version__
+        d = Path(folder) if folder is not None else paths.user_data_dir() / UPDATES_DIR_NAME
+        pending = d / PENDING_NAME
+        if not pending.is_file():
+            return None
+        try:
+            data = json.loads(pending.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        status_p = d / STATUS_NAME
+        try:
+            status = status_p.read_text(encoding="ascii", errors="replace").strip().lower()
+        except OSError:
+            status = ""
+        for p in (pending, status_p):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        want = str(data.get("version") or "")
+        if want and not is_newer(want, current):
+            return StartupReport(True, f"Mise à jour installée : TreeAI Coach {current}.")
+        target = str(data.get("target") or "TreeAICoach.exe")
+        if "write" in status:
+            why = (f"Windows a bloqué l'écriture dans le dossier de {Path(target).name} (dossier protégé, "
+                   "OneDrive ou « Accès contrôlé aux dossiers »). Mets TreeAI Coach dans un dossier à toi, "
+                   "par exemple C:\\Jeux\\TreeAI.")
+        elif "locked" in status:
+            why = ("le fichier était encore utilisé (ancienne fenêtre de TreeAI Coach ouverte, antivirus ou "
+                   "synchronisation OneDrive). Ferme TreeAI Coach complètement puis réessaie.")
+        else:
+            why = "le remplacement du fichier n'a pas eu lieu (redémarrage interrompu ou bloqué par l'antivirus)."
+        return StartupReport(False, f"La mise à jour vers la version {want or '?'} n'a pas été appliquée : {why} "
+                                    f"Tu peux aussi la télécharger à la main : {MANUAL_DOWNLOAD_URL}")
+    except Exception:
+        log.exception("startup_report failed")
+        return None
+
+
+def manual_hint(message: str) -> str:
+    """Append the manual download fallback to an update error message (French)."""
+    msg = str(message or "").rstrip()
+    if MANUAL_DOWNLOAD_URL in msg:
+        return msg
+    return f"{msg} Sinon, télécharge la nouvelle version à la main (bouton « Télécharger manuellement »)."
 
 
 # --------------------------------------------------------------------------- publishing

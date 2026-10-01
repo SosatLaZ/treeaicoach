@@ -476,9 +476,9 @@ def test_comeback_call_prompt_title_and_guards():
     adv3.update(0.0, G(600.0))
     assert adv3.update(1.0, G(600.0, events=ev)) and adv3.wait()
     res = adv3.poll()
-    assert res.moment == "comeback:teamfight" and res.title == "IA — Plan pour revenir"
+    assert res.moment == "comeback:teamfight" and res.title == "IA : Plan pour revenir"
     assert "Mode : redresser" in prompts[-1] and '"mode":"redresser"' in prompts[-1]
-    assert ai.Advice("x", "comeback:ace", 0.0).title == "IA — Fenêtre à saisir"
+    assert ai.Advice("x", "comeback:ace", 0.0).title == "IA : Fenêtre à saisir"
     assert ai.Advice("x", "base", 0.0).title == "CONSEIL IA"
 
 
