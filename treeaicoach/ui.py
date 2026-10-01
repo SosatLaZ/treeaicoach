@@ -69,8 +69,8 @@ GOLD = ACCENT
 GOLD_HOVER = ACCENT_HOVER
 GOLD_DARK = ACCENT_DIM
 TEXT = "#E4E8E5"
-MUTED = "#8B948F"
-DIM = "#59615C"
+MUTED = "#A4ADA8"          # secondary text: 8.4:1 on BG (WCAG AA)
+DIM = "#7E8782"            # captions / absent values: 5.2:1 on BG, 4.6:1 on RAISED
 TEAL = ACCENT               # "active" = the accent too (one accent only)
 TEAL_DARK = ACCENT_DIM
 DANGER = "#E5484D"
@@ -82,13 +82,19 @@ WARNING_BG = "#2A2010"
 SAFE = ACCENT               # semantic "ok" = the TreeAI green
 ON_GOLD = ON_ACCENT
 HOVER = "#212624"           # hover of raised elements
-SWITCH_OFF = "#2A302D"      # switch / slider track
+SWITCH_OFF = "#2F3532"      # switch / slider track (off)
 ALLY_RING = ui_kit.ALLY     # allied team ring (team colour, not an accent)
 ENEMY_RING = ui_kit.ENEMY   # enemy team ring
 TRACK = "#1C211F"           # empty gauge segment / slider track
 RADIUS = 4                  # controls
 EM_DASH = chr(0x2014)       # never shown (docs/DESIGN.md); used to parse / clean texts of other modules
 RADIUS_DIALOG = 6
+BTN_H, BTN_H_SMALL = 34, 30       # the two button heights
+CTL_H = 34                        # inputs, menus, segmented controls
+CONTENT_MAX = 860                 # max width of the centred content column (settings-like pages)
+WIDE_MAX = 1480                   # dashboard / analyses
+PAGE_PAD = 32                     # minimum side gutter of a page
+CARD_PAD = 20                     # inner padding of a section card
 
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
 #: "jouer plus fort ou non" gauge step -> colour; tip tone -> colour (dashboard coach strip)
@@ -878,10 +884,11 @@ def display_weight(family: str) -> str:
 
 
 class _Fonts:
-    """The app's CTkFont set (created once the root exists).
+    """The app's CTkFont set (created once the root exists). Sizes in px at 100 % (docs/DESIGN.md).
 
-    Three sizes only (docs/DESIGN.md): display 17 (titles, Bahnschrift), body 11, caption 9;
-    the big numbers (clock, stats) use the display face at 22. ``ui_scale`` scales them all.
+    Readability first: body 14, secondary 13, captions 12 (never smaller), section titles 16 and
+    page titles 26 in the display face (Bahnschrift), big numbers 28. ``ui_scale`` and the Windows
+    display scaling (CustomTkinter's per-monitor DPI factor) multiply them all.
     """
 
     def __init__(self, ctk: Any, family: str, display: str | None = None) -> None:
@@ -890,24 +897,24 @@ class _Fonts:
         dw = display_weight(d)
         self.family = f
         self.display = d
-        self.brand = ctk.CTkFont(family=d, size=15, weight=dw)
-        self.title = ctk.CTkFont(family=d, size=17, weight=dw)
-        self.h2 = ctk.CTkFont(family=f, size=11, weight="bold")
-        self.h3 = ctk.CTkFont(family=f, size=11, weight="bold")
-        self.body = ctk.CTkFont(family=f, size=11)
-        self.small = ctk.CTkFont(family=f, size=11)
-        self.tiny = ctk.CTkFont(family=f, size=10)
-        self.tiny_bold = ctk.CTkFont(family=f, size=10, weight="bold")
-        self.caps = ctk.CTkFont(family=f, size=9, weight="bold")
-        self.nav = ctk.CTkFont(family=f, size=11)
-        self.nav_active = ctk.CTkFont(family=f, size=11, weight="bold")
-        self.button = ctk.CTkFont(family=f, size=11, weight="bold")
-        self.big_button = ctk.CTkFont(family=d, size=13, weight=dw)
-        self.state = ctk.CTkFont(family=d, size=17, weight=dw)
-        self.clock = ctk.CTkFont(family=d, size=22, weight=dw)
-        self.stat = ctk.CTkFont(family=d, size=22, weight=dw)
-        self.num = ctk.CTkFont(family=d, size=13, weight=dw)
-        self.threat = ctk.CTkFont(family=d, size=13, weight=dw)
+        self.brand = ctk.CTkFont(family=d, size=18, weight=dw)
+        self.title = ctk.CTkFont(family=d, size=26, weight=dw)
+        self.h2 = ctk.CTkFont(family=d, size=17, weight=dw)
+        self.h3 = ctk.CTkFont(family=f, size=14, weight="bold")
+        self.body = ctk.CTkFont(family=f, size=14)
+        self.small = ctk.CTkFont(family=f, size=13)
+        self.tiny = ctk.CTkFont(family=f, size=12)
+        self.tiny_bold = ctk.CTkFont(family=f, size=12, weight="bold")
+        self.caps = ctk.CTkFont(family=f, size=12, weight="bold")
+        self.nav = ctk.CTkFont(family=f, size=14)
+        self.nav_active = ctk.CTkFont(family=f, size=14, weight="bold")
+        self.button = ctk.CTkFont(family=f, size=13, weight="bold")
+        self.big_button = ctk.CTkFont(family=d, size=15, weight=dw)
+        self.state = ctk.CTkFont(family=d, size=21, weight=dw)
+        self.clock = ctk.CTkFont(family=d, size=28, weight=dw)
+        self.stat = ctk.CTkFont(family=d, size=28, weight=dw)
+        self.num = ctk.CTkFont(family=d, size=16, weight=dw)
+        self.threat = ctk.CTkFont(family=d, size=15, weight=dw)
 
 
 # ======================================================================================
@@ -972,7 +979,7 @@ class HeroBanner:
         self.app = app
         s = app._scaled
         self.s = s
-        self.h = s(112)
+        self.h = s(128)
         fam, px = app.fonts.family, app._font_px
         disp = getattr(app.fonts, "display", fam)
         dw = "normal" if ("Semi" in disp or "Bold" in disp) else "bold"
@@ -991,19 +998,19 @@ class HeroBanner:
         self.ring = c.create_oval(0, 0, 0, 0, fill="", outline="")
         self.core = c.create_oval(0, 0, 0, 0, fill=DIM, outline="")
         self.title_item = c.create_text(0, 0, anchor="w", text="Démarrage…", fill=TEXT,
-                                        font=(disp, px(17), dw))
-        self.msg_item = c.create_text(0, 0, anchor="nw", text="", fill=MUTED, font=(fam, px(11)))
+                                        font=(disp, px(21), dw))
+        self.msg_item = c.create_text(0, 0, anchor="nw", text="", fill=MUTED, font=(fam, px(13)))
         self.badge_bg = c.create_rectangle(0, 0, 0, 0, fill="", outline=WARNING, state="hidden")
-        self.badge_txt = c.create_text(0, 0, text="DÉMO", fill=WARNING, font=(fam, px(8), "bold"),
+        self.badge_txt = c.create_text(0, 0, text="DÉMO", fill=WARNING, font=(fam, px(11), "bold"),
                                        state="hidden")
         self.vsep = c.create_line(0, 0, 0, 0, fill=LINE)
-        self.clock_cap = c.create_text(0, 0, text="CHRONO", fill=DIM, font=(fam, px(9), "bold"))
-        self.clock_item = c.create_text(0, 0, text="--:--", fill=DIM, font=(disp, px(24), dw))
-        self.timers_item = c.create_text(0, 0, text="", fill=MUTED, font=(fam, px(10)), anchor="e")
+        self.clock_cap = c.create_text(0, 0, text="CHRONO", fill=DIM, font=(fam, px(12), "bold"))
+        self.clock_item = c.create_text(0, 0, text="--:--", fill=DIM, font=(disp, px(30), dw))
+        self.timers_item = c.create_text(0, 0, text="", fill=MUTED, font=(fam, px(13)), anchor="e")
         self.rule = c.create_line(0, 0, 0, 0, fill=LINE)
-        self.threat_cap = c.create_text(0, 0, anchor="w", text="MENACE", fill=DIM, font=(fam, px(9), "bold"))
-        self.threat_item = c.create_text(0, 0, anchor="w", text="-", fill=DIM, font=(disp, px(13), dw))
-        self.detail_item = c.create_text(0, 0, anchor="w", text="Hors partie", fill=MUTED, font=(fam, px(11)))
+        self.threat_cap = c.create_text(0, 0, anchor="w", text="MENACE", fill=DIM, font=(fam, px(12), "bold"))
+        self.threat_item = c.create_text(0, 0, anchor="w", text="-", fill=DIM, font=(disp, px(16), dw))
+        self.detail_item = c.create_text(0, 0, anchor="w", text="Hors partie", fill=MUTED, font=(fam, px(13)))
         self.segs = [c.create_rectangle(0, 0, 0, 0, fill=TRACK, outline="") for _ in range(self.SEGMENTS)]
         self._button_win: int | None = None
         self._mu_win: int | None = None
@@ -1044,7 +1051,7 @@ class HeroBanner:
             w = max(s(420), int(c.winfo_width()))
             h = self.h
             pad = s(16)
-            top = s(34)                 # centre line of the upper row
+            top = s(42)                 # centre line of the upper row
             btn_w = 0
             if self._button_win is not None:
                 btn_w = int(self.app.btn_start.winfo_reqwidth())
@@ -1052,33 +1059,33 @@ class HeroBanner:
             clock_x = w - pad - btn_w - s(16)          # right edge of the clock block
             c.itemconfigure(self.clock_cap, anchor="e")
             c.itemconfigure(self.clock_item, anchor="e")
-            c.coords(self.clock_cap, clock_x, top - s(17))
-            c.coords(self.clock_item, clock_x, top + s(4))
+            c.coords(self.clock_cap, clock_x, top - s(20))
+            c.coords(self.clock_item, clock_x, top + s(6))
             cb = c.bbox(self.clock_item)
             clock_left = (cb[0] if cb else clock_x - s(80)) - s(16)
-            c.coords(self.vsep, clock_left, top - s(20), clock_left, top + s(20))
+            c.coords(self.vsep, clock_left, top - s(24), clock_left, top + s(24))
             right_limit = clock_left - s(16)
             if self._mu_win is not None:
                 c.coords(self._mu_win, right_limit, top)
                 mw = int(self._mu_widget.winfo_reqwidth()) if self._mu_widget is not None else 0
                 right_limit -= mw + s(16)
-            dx, dy = pad + s(10), top - s(7)
+            dx, dy = pad + s(10), top - s(10)
             self._dot = (dx, dy)
             c.coords(self.core, dx - s(4), dy - s(4), dx + s(4), dy + s(4))
             tx = pad + s(24)
-            c.coords(self.title_item, tx, top - s(7))
+            c.coords(self.title_item, tx, top - s(10))
             bb = c.bbox(self.title_item)
             if bb and self._badge:
                 bx = bb[2] + s(10)
-                c.coords(self.badge_bg, bx, top - s(14), bx + s(38), top)
-                c.coords(self.badge_txt, bx + s(19), top - s(7))
-            c.coords(self.msg_item, tx, top + s(5))
+                c.coords(self.badge_bg, bx, top - s(20), bx + s(50), top)
+                c.coords(self.badge_txt, bx + s(25), top - s(10))
+            c.coords(self.msg_item, tx, top + s(6))
             c.itemconfigure(self.msg_item, width=max(s(120), right_limit - tx))
             # lower row: threat + gauge (left), objective timers (right)
-            ty = h - s(20)
-            c.coords(self.rule, s(3), ty - s(18), w - 1, ty - s(18))
+            ty = h - s(22)
+            c.coords(self.rule, s(3), ty - s(21), w - 1, ty - s(21))
             c.coords(self.threat_cap, pad, ty)
-            c.coords(self.threat_item, pad + s(56), ty)
+            c.coords(self.threat_item, pad + s(74), ty)
             tb = c.bbox(self.threat_item)
             dx0 = (tb[2] if tb else pad + s(140)) + s(10)
             c.coords(self.detail_item, dx0, ty)
@@ -1185,6 +1192,192 @@ class HeroBanner:
             self.layout()
         except Exception:
             log.debug("hero background failed", exc_info=True)
+
+
+# ======================================================================================
+# Toggle switch (anti-aliased pill, reads as on / off at a glance)
+# ======================================================================================
+TOGGLE_W, TOGGLE_H = 46, 26          # logical px (x ui_scale x Windows DPI)
+TOGGLE_SMALL = (38, 22)
+TOGGLE_RADIUS = TOGGLE_H // 2        # the one pill shape of the UI (docs/DESIGN.md: toggles only)
+_toggle_cache: dict[tuple, Image.Image] = {}
+
+
+def toggle_image(w: int, h: int, on: bool, color: str = ACCENT, bg: str = SURFACE, hover: bool = False,
+                 disabled: bool = False) -> Image.Image:
+    """Pill switch drawn 4x then reduced (crisp edges at any scaling). Off: outlined dark track and a
+    grey knob on the left; on: filled ``color`` track and a dark knob on the right. Pure, cached."""
+    key = (w, h, on, color, bg, hover, disabled)
+    img = _toggle_cache.get(key)
+    if img is not None:
+        return img
+    k = 4
+    W, H = max(8, w) * k, max(6, h) * k
+    big = Image.new("RGB", (W, H), _hex_rgb(bg))
+    d = ImageDraw.Draw(big)
+    r = H // 2
+    if on:
+        track = _blend(color, bg, 0.45) if disabled else (_blend(color, "#FFFFFF", 0.12) if hover else color)
+        d.rounded_rectangle((0, 0, W - 1, H - 1), radius=r, fill=_hex_rgb(track))
+        knob = _blend(ON_ACCENT, track, 0.25) if disabled else ON_ACCENT
+        kr = r - 4 * k
+        cx = W - r
+    else:
+        fill = RAISED if not hover else HOVER
+        edge = _blend(MUTED, bg, 0.55) if disabled else (MUTED if hover else "#5E6762")
+        d.rounded_rectangle((0, 0, W - 1, H - 1), radius=r, fill=_hex_rgb(fill), outline=_hex_rgb(edge),
+                            width=max(2, int(1.6 * k)))
+        knob = _blend(MUTED, bg, 0.5) if disabled else ("#C9CFCB" if hover else MUTED)
+        kr = r - 6 * k
+        cx = r
+    d.ellipse((cx - kr, r - kr, cx + kr, r + kr), fill=_hex_rgb(knob))
+    img = big.resize((max(8, w), max(6, h)), Image.LANCZOS)
+    if len(_toggle_cache) > 256:
+        _toggle_cache.clear()
+    _toggle_cache[key] = img
+    return img
+
+
+def _widget_bg(w: Any, default: str = BG) -> str:
+    """Effective background colour behind a widget (resolves CustomTkinter "transparent")."""
+    for _ in range(30):
+        if w is None:
+            break
+        try:
+            fg = w.cget("fg_color")
+            if isinstance(fg, (tuple, list)):
+                fg = fg[-1]
+            if fg and fg != "transparent":
+                return str(fg)
+        except Exception:
+            try:
+                return str(w.cget("bg"))
+            except Exception:
+                pass
+        w = getattr(w, "master", None)
+    return default
+
+
+class Toggle:
+    """On / off switch bound to a ``BooleanVar`` (CTkSwitch-like API: ``grid`` / ``configure(state=)``).
+
+    Two cached anti-aliased images on a plain ``tk.Label`` (no per-frame redraw, no canvas items),
+    hover highlight, keyboard (Space / Return when focused), optional text label on the right.
+    """
+
+    def __init__(self, app: "CoachApp", parent: Any, variable: Any, command: Callable[[], Any] | None = None,
+                 color: str = ACCENT, small: bool = False, text: str = "", text_color: str = MUTED) -> None:
+        import tkinter as tk  # noqa: PLC0415
+
+        self.app, self.var, self.command, self.color = app, variable, command, color
+        self.size = TOGGLE_SMALL if small else (TOGGLE_W, TOGGLE_H)
+        self.state = "normal"
+        self._hover = False
+        self._sig: tuple = ()
+        self._photo: Any = None
+        self.bg = _widget_bg(parent)
+        self.frame = tk.Frame(parent, bg=self.bg, bd=0, highlightthickness=0)
+        self.lbl = tk.Label(self.frame, bd=0, highlightthickness=0, bg=self.bg, cursor="hand2", takefocus=1)
+        self.lbl.grid(row=0, column=0)
+        self.text_lbl = None
+        widgets = [self.lbl]
+        if text:
+            self.text_lbl = tk.Label(self.frame, text=text, bd=0, bg=self.bg, fg=text_color, cursor="hand2",
+                                     font=(app.fonts.family, app._font_px(13)))
+            self.text_lbl.grid(row=0, column=1, padx=(app._scaled(8), 0))
+            widgets.append(self.text_lbl)
+        for wdg in widgets:
+            wdg.bind("<Button-1>", self._click, add="+")
+            wdg.bind("<Enter>", lambda _e: self._set_hover(True), add="+")
+            wdg.bind("<Leave>", lambda _e: self._set_hover(False), add="+")
+        self.lbl.bind("<space>", self._click, add="+")
+        self.lbl.bind("<Return>", self._click, add="+")
+        try:
+            self._trace = variable.trace_add("write", lambda *_a: self.draw())
+        except Exception:
+            self._trace = None
+        self.draw()
+
+    # CTk-like geometry API (padding in logical px, scaled like CustomTkinter does)
+    def _scale_kw(self, kw: dict) -> dict:
+        s = self.app._scaled
+        for k in ("padx", "pady"):
+            v = kw.get(k)
+            if isinstance(v, (tuple, list)):
+                kw[k] = tuple(s(int(x)) for x in v)
+            elif isinstance(v, (int, float)):
+                kw[k] = s(int(v))
+        return kw
+
+    def grid(self, **kw: Any) -> None:
+        self.frame.grid(**self._scale_kw(kw))
+
+    def grid_remove(self) -> None:
+        self.frame.grid_remove()
+
+    def pack(self, **kw: Any) -> None:
+        self.frame.pack(**self._scale_kw(kw))
+
+    def winfo_reqwidth(self) -> int:
+        return int(self.frame.winfo_reqwidth())
+
+    def winfo_children(self) -> list:
+        return []
+
+    def bind(self, *a: Any, **kw: Any) -> None:
+        self.lbl.bind(*a, **kw)
+
+    def get(self) -> bool:
+        return bool(self.var.get())
+
+    def configure(self, **kw: Any) -> None:
+        if "state" in kw:
+            self.state = str(kw["state"])
+            cur = "arrow" if self.state == "disabled" else "hand2"
+            self.lbl.configure(cursor=cur)
+            if self.text_lbl is not None:
+                self.text_lbl.configure(cursor=cur, fg=DIM if self.state == "disabled" else MUTED)
+            self.draw()
+
+    def cget(self, name: str) -> Any:
+        return self.state if name == "state" else None
+
+    def _set_hover(self, on: bool) -> None:
+        if on != self._hover:
+            self._hover = on
+            self.draw()
+
+    def _click(self, _e: Any = None) -> str:
+        if self.state == "disabled":
+            return "break"
+        try:
+            self.lbl.focus_set()
+        except Exception:
+            pass
+        self.var.set(not bool(self.var.get()))
+        if self.command is not None:
+            self.command()
+        return "break"
+
+    def draw(self) -> None:
+        try:
+            on = bool(self.var.get())
+        except Exception:
+            on = False
+        w, h = self.app._scaled(self.size[0]), self.app._scaled(self.size[1])
+        sig = (w, h, on, self._hover, self.state, self.color)
+        if sig == self._sig:
+            return
+        self._sig = sig
+        try:
+            from PIL import ImageTk  # noqa: PLC0415
+
+            img = toggle_image(w, h, on, self.color, self.bg, self._hover and self.state != "disabled",
+                               self.state == "disabled")
+            self._photo = ImageTk.PhotoImage(img, master=self.lbl)
+            self.lbl.configure(image=self._photo)
+        except Exception:
+            log.debug("toggle draw failed", exc_info=True)
 
 
 # ======================================================================================
@@ -1553,6 +1746,8 @@ class CoachApp:
 
     def _button(self, parent: Any, text: str, command: Callable[[], Any], kind: str = "secondary",
                 icon: str | None = None, **kw: Any) -> Any:
+        """Button in one of 4 styles. Two heights only: 34 (default) and 30 (``height`` < 32: toolbars,
+        table rows), so that buttons line up everywhere."""
         styles = {
             "primary": dict(fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color=ON_ACCENT, border_width=0),
             "secondary": dict(fg_color=PANEL_HI, hover_color=HOVER, text_color=TEXT, border_width=1,
@@ -1561,19 +1756,27 @@ class CoachApp:
             "danger": dict(fg_color=DANGER_DARK, hover_color=DANGER_HOVER, text_color=ON_DANGER, border_width=1,
                            border_color=DANGER),
         }
-        opts: dict[str, Any] = dict(height=30, corner_radius=RADIUS, font=self.fonts.button,
+        h = kw.pop("height", None)
+        h = BTN_H if h is None or h >= 32 else BTN_H_SMALL
+        opts: dict[str, Any] = dict(height=h, corner_radius=RADIUS, font=self.fonts.button,
                                     text_color_disabled=DIM)
+        if text:
+            opts["width"] = 0          # size to the text (+ the padding below)
         opts.update(styles.get(kind, styles["secondary"]))
+        isz = 16 if h >= BTN_H else 15
         if icon:
             col = ON_ACCENT if kind == "primary" else MUTED
-            opts["image"] = self._icon(icon, 14, col)
+            opts["image"] = self._icon(icon, isz, col)
             opts["compound"] = "left"
         opts.update(kw)
         if kind == "primary" and opts.get("state") == "disabled":     # a disabled primary must not look active
-            opts.update(fg_color=PANEL_HI, image=self._icon(icon, 14, DIM) if icon else None)
+            opts.update(fg_color=PANEL_HI, image=self._icon(icon, isz, DIM) if icon else None)
+        if text:
+            opts.setdefault("border_spacing", 8 if h >= BTN_H else 6)    # inner padding around the label
         btn = self.ctk.CTkButton(parent, text=text, command=self.cb(command), **opts)
         btn._tree_kind = kind  # type: ignore[attr-defined]
         btn._tree_icon = icon  # type: ignore[attr-defined]
+        btn._tree_isz = isz  # type: ignore[attr-defined]
         return btn
 
     def _btn_state(self, btn: Any, enabled: bool) -> None:
@@ -1584,7 +1787,7 @@ class CoachApp:
                 icon = getattr(btn, "_tree_icon", None)
                 btn.configure(fg_color=ACCENT if enabled else PANEL_HI)
                 if icon:
-                    btn.configure(image=self._icon(icon, 14, ON_ACCENT if enabled else DIM))
+                    btn.configure(image=self._icon(icon, getattr(btn, "_tree_isz", 16), ON_ACCENT if enabled else DIM))
         except Exception:
             log.debug("button state failed", exc_info=True)
 
