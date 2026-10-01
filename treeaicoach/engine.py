@@ -63,6 +63,8 @@ UNFOCUSED_HIDE_S = 1.5           # game not in the foreground this long -> overl
 STATS_EVERY_S = 1.0              # health monitor refresh (CPU %, rates)
 STALE_MIN_GAME_S = 90.0          # frozen-capture check only once minions walk (game time, s)
 EARLY_ADVICE_GT_S = 65.0         # no lane-phase tip / insight on the HUD line before the minions spawn
+#: words of a "go" HUD line (hidden under a PRUDENT / SAFE gauge: no contradiction on the card)
+GO_WORDS = ("à toi de jouer", "joue agressif", "vas-y", "va-y", "attaque", "engage", "force ", "punis")
 VERIFY_BAD_S = 3.0               # verify() below threshold this long -> relocate
 LOCATE_RETRY_S = 10.0            # retry the auto location this often while on the fallback rect
 HEAVY_HZ = 2.0                   # rate of the coaching stages (coach, Tab, tips, items, hype / AI)
@@ -2105,7 +2107,9 @@ class CoachEngine:
         low = text.casefold()
         if any(w in low for w in ("recule", "danger", "gank", "rentre", "fuis")):
             return "danger"
-        return "warning" if any(w in low for w in ("attention", "prudent", "évite", "safe")) else "info"
+        if any(w in low for w in ("attention", "prudent", "évite", "safe")):
+            return "warning"
+        return "go" if any(w in low for w in GO_WORDS) else "info"
 
     def detected_role(self) -> tuple[str | None, str | None]:
         """``(my role short name, swap notice)`` for the dashboard, e.g. ``("MID", None)``."""
@@ -2344,6 +2348,13 @@ class CoachEngine:
                 pass
         if self._tip_text and not early:
             valid.append(self._tip_text)
+        # never contradict the gauge: no "à toi de jouer" line under a PRUDENT / SAFE gauge
+        try:
+            g = self._gauge.current() if self._gauge is not None else None
+            if g is not None and int(g.step) <= -1 and len(valid) > 0:
+                valid = [v for v in valid if self._tip_tone(v) != "go"]
+        except Exception:
+            pass
         cand = valid[0] if valid else None
         shown = getattr(self, "_hud_shown", None)
         try:
@@ -3570,6 +3581,10 @@ class CoachEngine:
         if game is None or jungler is None:
             return None
         name = jungler.champion_name or jungler.champion_alias
+        if bool(getattr(jungler, "is_dead", False)):     # Live Client: never "vu il y a 55 s" while dead
+            rt = _finite(getattr(jungler, "respawn_timer", None))
+            left = None if rt is None else max(0.0, rt - max(0.0, now - self._game_t))
+            return f"Jungler : {name} — mort ({int(math.ceil(left))} s)" if left else f"Jungler : {name} — mort"
         tr = self._tracker.get(jungler.champion_alias) if self._tracker is not None else None
         if tr is None or tr.position() is None:
             return f"Jungler : {name} — pas encore vu"

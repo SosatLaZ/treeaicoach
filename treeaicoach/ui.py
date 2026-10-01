@@ -6891,6 +6891,14 @@ class CoachApp:
         t.join(8.0)
         if t.is_alive():
             log.warning("Shutdown did not finish in 8 s; closing the window anyway")
+        try:   # cancel every pending after() (ours and CustomTkinter's): no "invalid command name" noise
+            for job in self.root.tk.splitlist(self.root.tk.call("after", "info")):
+                try:
+                    self.root.after_cancel(job)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         try:
             self.root.quit()
             self.root.destroy()
