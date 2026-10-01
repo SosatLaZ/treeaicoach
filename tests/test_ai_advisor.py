@@ -411,3 +411,71 @@ def test_real_groq_end_to_end():
     text = ai.call_llm("groq", _real_key(), "", ai.system_prompt(), ai.build_prompt(snap), timeout=15.0)
     assert text and len(text) <= ai.MAX_ADVICE_CHARS + 1
     print("GROQ:", text, "| valid:", ai.validate_item_advice(text, g, snap["objets_possibles"]))
+
+
+# ------------------------------------------------------------------------------ comeback triggers
+def _kill(i, t, victim, killer="Zed"):
+    return {"EventID": i, "EventName": "ChampionKill", "EventTime": t, "VictimName": victim, "KillerName": killer}
+
+
+def test_comeback_scenarios():
+    sb = SimpleNamespace(players=(1,), team_gold_diff=-500, fed=(), my_matchup=None)
+    d = ai.ComebackDetector()
+    assert d.update(0.0, G(600.0), sb) is None
+    sb.team_gold_diff = -2300
+    assert d.update(1.0, G(610.0), sb) == "gold"
+    assert d.update(2.0, G(611.0), sb) is None                       # once per 2k tier
+    # win probability drop > 15 pts within 3 min
+    d2 = ai.ComebackDetector()
+    d2.update(0.0, G(), win_prob=0.55)
+    assert d2.update(100.0, G(), win_prob=0.38) == "wp_drop"
+    # lost teamfight: 2 allied deaths in 20 s
+    ev = [_kill(1, 590.0, "Garen"), _kill(2, 598.0, "Moi")]
+    assert ai.ComebackDetector().update(0.0, G(600.0, events=ev)) == "teamfight"
+    # my death streak (2 deaths in 4 min, far apart)
+    ev = [_kill(1, 400.0, "Moi"), _kill(2, 590.0, "Moi")]
+    assert ai.ComebackDetector().update(0.0, G(600.0, events=ev)) == "death_streak"
+    # enemy laner fed vs me
+    sbf = SimpleNamespace(players=(1,), team_gold_diff=0, fed=("Zed",),
+                          my_matchup=SimpleNamespace(enemy_alias="Zed"))
+    assert ai.ComebackDetector().update(0.0, G(), sbf) == "lane_fed"
+    # objectives drought: enemies take 2 objectives in 4 min, we take none
+    ev = [{"EventID": 1, "EventName": "DragonKill", "EventTime": 450.0, "KillerName": "Zed"},
+          {"EventID": 2, "EventName": "TurretKilled", "EventTime": 560.0, "TurretKilled": "Turret_T1_L_03_A"}]
+    assert ai.ComebackDetector().update(0.0, G(600.0, events=ev)) == "objectives"
+    # windows: enemy carries dead with long timers / ace / Baron with numbers
+    dead = [P("Jinx", "CHAOS", pos="BOTTOM", dead=True), P("Zed", "CHAOS", pos="MIDDLE", dead=True)]
+    for p in dead:
+        p.respawn_timer = 40.0
+    assert ai.ComebackDetector().update(0.0, G(enemies=dead)) == "carries_dead"
+    baron = SimpleNamespace(key="baron", alive=True, remaining=0.0)
+    d3 = ai.ComebackDetector()
+    d3._last["carries_dead"] = 0.0
+    assert d3.update(1.0, G(enemies=dead), objectives=[baron]) == "numbers"
+    ace = [{"EventID": 9, "EventName": "Ace", "EventTime": 595.0, "AcingTeam": "ORDER"}]
+    assert ai.ComebackDetector().update(0.0, G(600.0, events=ace)) == "ace"
+
+
+def test_comeback_call_prompt_title_and_guards():
+    prompts = []
+
+    def caller(prov, key, model, system, prompt, timeout, url):
+        prompts.append(prompt)
+        return "Joue côté bot avec ton jungler et échange le dragon contre la tour du haut."
+
+    cfg = SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="")
+    adv = ai.AIAdvisor(cfg, caller=caller)
+    ev = [_kill(1, 590.0, "Garen"), _kill(2, 598.0, "Moi#EUW")]
+    adv.update(0.0, G(600.0))
+    assert not adv.update(1.0, G(600.0, events=ev), in_fight=True)        # never during a fight
+    adv2 = ai.AIAdvisor(cfg, caller=caller)
+    adv2.update(0.0, G(600.0))
+    assert not adv2.update(1.0, G(600.0, events=ev), threat=1)             # never during a gank
+    adv3 = ai.AIAdvisor(cfg, caller=caller)
+    adv3.update(0.0, G(600.0))
+    assert adv3.update(1.0, G(600.0, events=ev)) and adv3.wait()
+    res = adv3.poll()
+    assert res.moment == "comeback:teamfight" and res.title == "IA — Plan pour revenir"
+    assert "Mode : redresser" in prompts[-1] and '"mode":"redresser"' in prompts[-1]
+    assert ai.Advice("x", "comeback:ace", 0.0).title == "IA — Fenêtre à saisir"
+    assert ai.Advice("x", "base", 0.0).title == "CONSEIL IA"
