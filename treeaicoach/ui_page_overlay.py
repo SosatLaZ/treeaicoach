@@ -45,6 +45,7 @@ class OverlayPageMixin:
         self._build_overlay_preview(body, row)
         hk = lambda f, d="": str(getattr(self.cfg, f, "") or d)  # noqa: E731
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 1, "Overlay", "Fenêtres transparentes posées sur le jeu (Sans bordure ou "
                                                     "Fenêtré) : rien n'est injecté dans le jeu.")
         self._switch_row(s, "overlay_enabled", "Afficher l'overlay",
@@ -56,6 +57,7 @@ class OverlayPageMixin:
         self._switch_row(s, "overlay_hide_from_capture", "Cacher des captures et du stream",
                          "Tes captures d'écran et OBS ne voient pas les marques (Windows 10 2004 ou plus récent).")
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 2, "Sur la minimap")
         self._switch_row(s, "overlay_timers", "Minuteurs", "Buff Baron / Ancien restant, ennemis morts, "
                          "réapparition des objectifs qui te concernent.", on_change=prev)
@@ -74,6 +76,7 @@ class OverlayPageMixin:
                          "« Ward ici » au sol sur le buisson conseillé, ou une flèche au bord de l'écran.")
         self._switch_row(s, "ward_sound", "Son du guide de balise", "Un son court quand un guide apparaît.")
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 3, "Panneau en jeu", "Une consigne à la fois, en rouge en cas de danger.")
         self._switch_row(s, "hud_enabled", "Afficher le panneau", "Jauge de menace, consigne du moment, prochain "
                          "objectif.", on_change=prev)
@@ -90,6 +93,7 @@ class OverlayPageMixin:
         self._switch_row(s, "win_prob_hud", "Probabilité de victoire", "Dans le panneau et sur « En jeu » (or, "
                          "kills, tours, dragons, Baron et Ancien).")
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 4, "À l'écran")
         self._switch_row(s, "danger_flash", "Flash de danger", "Cadre rouge sur les bords de l'écran en cas de gank.",
                          on_change=prev)
@@ -104,6 +108,7 @@ class OverlayPageMixin:
         self._switch_row(s, "plays_sound", "Son des bons coups", "Un son court.")
         self._switch_row(s, "plays_sound_negative", "Son aussi pour les erreurs", "Désactivé par défaut.")
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 5, "Radar", "Copie agrandie de la minimap, à côté d'elle (mode « Radar »).")
         self._radar_section = s
         self._position_menus["radar"] = self._choice_row(

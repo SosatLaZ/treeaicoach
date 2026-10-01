@@ -283,7 +283,6 @@ class AnalysisPageMixin:
         self._show_games_table()
 
     def _game_row(self, i: int, g: dict) -> None:
-        ctk = self.ctk
         box = self.games_box
         r = 2 + 2 * i
         alias = str(game_field(g, "champion", "alias", default="") or "")
@@ -292,9 +291,7 @@ class AnalysisPageMixin:
         pil = self._game_icons.get(alias)
         if pil is None:
             pil = square_icon(None, 56, bg=BG)
-        img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(36, 36))
-        self._images[f"game-{i}"] = img
-        ctk.CTkLabel(box, text="", image=img, fg_color="transparent").grid(row=r, column=0, sticky="w", pady=8)
+        self._image_label(box, pil, (36, 36), f"game-{i}").grid(row=r, column=0, sticky="w", pady=8)
         cell = self._frame(box)
         cell.grid(row=r, column=1, sticky="w", padx=(0, 12))
         self._label(cell, name, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
@@ -362,7 +359,6 @@ class AnalysisPageMixin:
         box = self.progress_box
         for w in box.winfo_children():
             w.destroy()
-        ctk = self.ctk
         if len(rows) < 2:
             self._label(box, "Pas encore assez de parties.", self.fonts.body, TEXT, anchor="w").grid(
                 row=0, column=0, sticky="w")
@@ -404,10 +400,7 @@ class AnalysisPageMixin:
             base = 0.0 if key.startswith("gold_diff") else None
             pil = progress.sparkline(t["values"], 360, 30, progress.metric_color(t), baseline=base,
                                      bg=_hex_rgb(BG))
-            img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(180, 30))
-            self._images[f"spark-{key}"] = img
-            ctk.CTkLabel(tab, text="", image=img, fg_color="transparent").grid(row=r, column=1, sticky="w",
-                                                                               padx=(0, 16))
+            self._image_label(tab, pil, (180, 30), f"spark-{key}").grid(row=r, column=1, sticky="w", padx=(0, 16))
             signed = key.startswith("gold_diff")
             suffix = f" {unit}" if unit else ""
             self._label(tab, progress.fmt_num(t["last"], dec, signed) + suffix, self.fonts.num, TEXT,

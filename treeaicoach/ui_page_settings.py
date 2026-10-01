@@ -12,6 +12,7 @@ its own.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import logging
 import time
 import webbrowser
@@ -66,8 +67,11 @@ class SettingsPageMixin:
         self._tabs(page, body, tuple((t, ()) for t in SETTINGS_TABS), on_select=self._on_settings_tab, lazy=lazy)
         return page
 
-    def _build_settings_tab(self, build: Any, body: Any, row: int) -> None:
-        build(body, row)
+    def _build_settings_tab(self, build: Any, body: Any, row: int) -> Any:
+        """Generator: the tab's sections one by one (see ``_tabs(lazy=...)``), then the row wrapping."""
+        res = build(body, row)
+        if inspect.isgenerator(res):
+            yield from res
         try:     # the new rows wrap to the current width at once
             scale = max(0.5, self._scaled(100) / 100)
             self.root.after_idle(lambda: self._wrap_rows(int(self.content.winfo_width() / scale), force=True))
@@ -96,6 +100,7 @@ class SettingsPageMixin:
                                                 "et de la voix.")
         self._button(slot, "Relancer", lambda: self.show_onboarding(0), "secondary").grid(row=0, column=0)
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 1, "Après la partie")
         self._switch_row(s, "post_game_report", "Rapport d'après-partie",
                          "Morts, ganks subis, jungler ennemi et coups notés, dans un rapport à ouvrir dans ton "
@@ -108,6 +113,7 @@ class SettingsPageMixin:
         self._switch_row(s, "break_reminder", "Conseil de pause",
                          "Après 3 défaites d'affilée : « une pause de 10 minutes aide à rester concentré ».")
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 2, "Fenêtre")
         self._choice_row(s, "ui_scaling", "Taille de l'interface",
                          "En plus de l'échelle d'affichage de Windows. Appliquée au prochain lancement.",
@@ -132,6 +138,7 @@ class SettingsPageMixin:
                                                         "l'interface du jeu.")
         self._button(slot, "Chercher", self.relocate, "secondary", icon="refresh").grid(row=0, column=0)
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 1, "Analyse")
         self._slider_row(s, "target_fps", "Images par seconde", "Plus c'est haut, plus les alertes sont réactives "
                          "(et plus le processeur travaille). Défaut : 12.", 2, 20, 1, lambda v: f"{int(v)} i/s",
@@ -161,6 +168,7 @@ class SettingsPageMixin:
             values = list(HOTKEY_CHOICES) + ([cur] if cur not in HOTKEY_CHOICES else [])
             self._choice_row(s, field, title, desc, [("" if v == "Désactivé" else v, v) for v in values], width=150)
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 1, "Performance", "Les valeurs par défaut conviennent à presque tous les PC.")
         self._choice_row(s, "perf_mode", "Mode", "« Auto » mesure ton PC ; « PC modeste » analyse moins souvent "
                          "quand rien ne se passe.", PERF_MODES, segmented=True)
@@ -178,6 +186,7 @@ class SettingsPageMixin:
         self._choice_row(s, "capture_backend", "Capture d'écran", "« Compatible » si la capture reste noire "
                          "ou figée avec « Auto ».", CAPTURE_BACKENDS, segmented=True)
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 2, "Maintenance et support")
         _row, slot = self._row(s, "Diagnostic", "Version, moteur, détecteur, voix et dernières erreurs, à coller "
                                                 "dans ton message (Ctrl+D).")

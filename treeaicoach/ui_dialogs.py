@@ -31,7 +31,6 @@ from treeaicoach.ui_common import (
     MUTED,
     PANEL_HI,
     PANEL_LO,
-    RADIUS,
     RAISED,
     SAFE,
     SURFACE,
@@ -56,7 +55,6 @@ class DialogsMixin:
 
     # ------------------------------------------------------------------ help page
     def _build_help_page(self) -> Any:
-        ctk = self.ctk
         page, right, body = self._page("Aide", "Bien démarrer, touches, sécurité et dépannage", icon="help")
         b = self._button(right, "Mode guidé", lambda: self.show_onboarding(0), "secondary", icon="star",
                          height=BTN_H_SMALL)
@@ -107,8 +105,7 @@ class DialogsMixin:
             r = self._frame(s)
             r.grid(row=i, column=0, sticky="ew", pady=6)
             r.grid_columnconfigure(1, weight=1)
-            ctk.CTkLabel(r, text="", image=self._icon("check", 14, TEAL), fg_color="transparent", width=16).grid(
-                row=0, column=0, sticky="n", padx=(2, 12), pady=(3, 0))
+            self._icon_label(r, "check", 14, TEAL).grid(row=0, column=0, sticky="n", padx=(2, 12), pady=(3, 0))
             lbl = self._label(r, text, self.fonts.small, TEXT, anchor="w", justify="left", wraplength=580)
             lbl.grid(row=0, column=1, sticky="w")
             self._wrap_labels.append((lbl, 2 * CARD_PAD + 36))
@@ -162,21 +159,22 @@ class DialogsMixin:
         for w in s.winfo_children():
             w.destroy()
         rows = [(k, w, True) for k, w in ui_kit.game_keys(self.cfg)] + [(k, w, False) for k, w in ui_kit.SHORTCUTS]
+        # one grid for the whole list (no frame per row): key chips share column 0, so they all take
+        # the width of the longest one; plain labels (a CTk chip per key was 3 windows each)
+        grid = self._frame(s)
+        grid.grid(row=0, column=0, sticky="ew")
+        grid.grid_columnconfigure(1, weight=1)
         for i, (keys, what, in_game) in enumerate(rows):
-            r = self._frame(s)
-            r.grid(row=i, column=0, sticky="ew", pady=3)
-            r.grid_columnconfigure(1, weight=1)
-            self.ctk.CTkLabel(r, text=keys, font=self.fonts.tiny_bold, text_color=GOLD if in_game else MUTED,
-                              fg_color=PANEL_LO, corner_radius=RADIUS, width=130, height=24).grid(
-                row=0, column=0, sticky="w", padx=(0, 14))
-            self._label(r, what + ("" if in_game else " (fenêtre)"), self.fonts.small, TEXT, anchor="w").grid(
-                row=0, column=1, sticky="w")
+            self._label(grid, keys, self.fonts.tiny_bold, GOLD if in_game else MUTED, anchor="center",
+                        fg_color=PANEL_LO).grid(row=i, column=0, sticky="ew", padx=(0, 14), pady=3, ipady=4, ipadx=10)
+            self._label(grid, what + ("" if in_game else " (fenêtre)"), self.fonts.small, TEXT, anchor="w").grid(
+                row=i, column=1, sticky="w", pady=3)
         tail = self._frame(s)
-        tail.grid(row=len(rows), column=0, sticky="ew", pady=(6, 10))
+        tail.grid(row=1, column=0, sticky="ew", pady=(6, 10))
 
     def _number_badge(self, parent: Any, n: int) -> Any:
         """Step number: the display face in the accent colour (no badge, no circle)."""
-        return self._label(parent, str(n), self.fonts.stat, ACCENT, anchor="n", width=26)
+        return self._PLabel(parent, text=str(n), font=self.fonts.stat, text_color=ACCENT, anchor="n", width=2)
 
     def _error_page(self, key: str) -> Any:
         page = self.ctk.CTkFrame(self.content, fg_color=BG, corner_radius=0)
@@ -331,8 +329,8 @@ class DialogsMixin:
             r = self._frame(body)
             r.grid(row=i, column=0, sticky="ew", pady=5)
             r.grid_columnconfigure(1, weight=1)
-            self.ctk.CTkLabel(r, text="", image=self._icon("check", 14, TEAL), fg_color="transparent",
-                              width=16).grid(row=0, column=0, rowspan=2, sticky="n", padx=(0, 10), pady=(3, 0))
+            self._icon_label(r, "check", 14, TEAL).grid(row=0, column=0, rowspan=2, sticky="n", padx=(0, 10),
+                                                        pady=(3, 0))
             self._label(r, title, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
             self._label(r, text, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=400).grid(
                 row=1, column=1, sticky="w", pady=(2, 0))

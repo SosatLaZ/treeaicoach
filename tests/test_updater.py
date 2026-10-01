@@ -293,7 +293,7 @@ def test_ui_updates_section(tmp_path, monkeypatch):
         updater.AVAILABLE, "Nouvelle version 9.0.0 disponible (tu as la 1.0.0).", "1.0.0", info, True))
     app, _voice, _ = tu._build(tmp_path)
     try:
-        app.show_page("settings")
+        app.show_page("settings", "Mises à jour")         # tabs are built on their first visit
         assert app._update_btn.cget("state") == "disabled"
         app._update_token_entry.insert(0, "tok123")
         app.check_updates()

@@ -21,6 +21,7 @@ live (``engine.apply_config`` / ``overlay.apply_config`` / ``voice.set_params``,
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import logging
 import math
 import sys
@@ -217,89 +218,7 @@ from treeaicoach.ui_page_settings import SettingsPageMixin
 log = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ lazy pages (patched by tests: stays here)
-PREBUILD_DELAY_MS = 3000          # other pages are built in idle slots after this delay (0 = on first visit only)
-
-#: Attributes looked up with getattr(self, name, default) that are NOT page widgets (no lazy build).
-_NOT_PAGE_ATTRS = frozenset({
-    "_closing", "_open_dialog", "_cpu", "_state_color", "_start_style", "_quick_muted", "_quick", "_pregame_tick",
-    "_overlay_test", "_gauge_drawn_color", "_ai_status_seq", "_ai_answer_seq", "_update_info", "_update_busy",
-    "_overlay_preview_busy", "pill_text", "skill_seg", "btn_diag", "_diag_desc", "health_lbl", "cs_card",
-    "_backend_t0", "_onboarding_step", "_last_slot", "_last_row", "_building", "_built", "_page_builders", "pages",
-    "_skill_btns", "_banner_dismissed", "_settings_tab", "_update_side", "_post_game_watch", "_cs_toasted",
-    # page widgets read with getattr(self, name, None) where "not built yet" simply means "nothing to update"
-    "_overlay_tiles", "_position_menus", "_radar_section", "_neural_row", "_neural_rate_row",
-    "_windows_voice_row", "_analysis_page", "_rect_desc", "_ai_status", "_ai_status_box",
-    "_update_status", "_update_status_box", "_update_btn", "_update_manual", "sys_rows", "sys_panel", "pregame",
-    "hero", "coach_gauge_lbl", "journal_cap", "lcu_status", "overlay_preview_tag", "replay_menu",
-    "radius_lbl", "voice_menu", "journal", "btn_fix", "_danger_seg", "_settings_page", "btn_move", "_diag_hint",
-    "_help_keys", "_update_token_entry",
-})
-
-#: Builder methods of each page (their ``self.x = ...`` attributes belong to the page).
-PAGE_METHODS: dict[str, tuple[str, ...]] = {
-    "dashboard": ("_build_dashboard",),
-    "analysis": ("_build_analysis_page", "_build_replay"),
-    "settings": ("_build_settings_page", "_build_general_tab", "_build_display_tab", "_build_overlay_preview",
-                 "_build_voice_tab", "_build_detection_tab", "_build_ai_section", "_build_updates_section",
-                 "_build_advanced_tab"),
-    "help": ("_build_help_page",),
-}
-
-#: Tabs built on their first visit (``_tabs(lazy=...)``): page -> {tab label: builder methods}.
-TAB_METHODS: dict[str, dict[str, tuple[str, ...]]] = {
-    "settings": {"Général": ("_build_general_tab",), "Affichage": ("_build_display_tab", "_build_overlay_preview"),
-                 "Voix": ("_build_voice_tab",), "Détection": ("_build_detection_tab",), "IA": ("_build_ai_section",),
-                 "Mises à jour": ("_build_updates_section",), "Avancé": ("_build_advanced_tab",)},
-}
-
-_attr_index: dict[str, str] | None = None
-_tab_index: dict[str, str] | None = None
-
-
-def _page_attr_index() -> dict[str, str]:
-    """{attribute: page} from the bytecode of the page builders (works in a frozen build: no source)."""
-    global _attr_index
-    if _attr_index is None:
-        idx: dict[str, str] = {}
-        for page, names in PAGE_METHODS.items():
-            for meth in names:
-                for attr in _stored_attrs(meth):
-                    idx.setdefault(attr, page)
-        _attr_index = idx
-    return _attr_index
-
-
-def _stored_attrs(meth: str) -> list[str]:
-    """``self.x = ...`` attribute names stored by a CoachApp method (bytecode: works in a frozen build)."""
-    import dis  # noqa: PLC0415
-
-    fn = getattr(CoachApp, meth, None)
-    code = getattr(getattr(fn, "__wrapped__", fn), "__code__", None)
-    out: list[str] = []
-    if code is None:
-        return out
-    prev = None
-    for ins in dis.get_instructions(code):
-        if ins.opname == "STORE_ATTR" and prev is not None and prev.opname in ("LOAD_FAST", "LOAD_DEREF") \
-                and prev.argval == "self":
-            out.append(str(ins.argval))
-        prev = ins
-    return out
-
-
-def _tab_attr_index() -> dict[str, str]:
-    """{attribute: tab label} of the lazily built tabs (:data:`TAB_METHODS`)."""
-    global _tab_index
-    if _tab_index is None:
-        idx: dict[str, str] = {}
-        for tabs in TAB_METHODS.values():
-            for tab, names in tabs.items():
-                for meth in names:
-                    for attr in _stored_attrs(meth):
-                        idx.setdefault(attr, tab)
-        _tab_index = idx
-    return _tab_index
-
+PREBUILD_DELAY_MS = 1500          # other pages are built in idle slots after this delay (0 = on first visit only)
 
 # ======================================================================================
 # The application
@@ -362,6 +281,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         self._eng_lock = threading.Lock()
         self._created_engines: list[Any] = []   # every engine built (stopped again at close)
         self._built: set[str] = set()            # pages built so far (lazy)
+        self._failed_pages: set[str] = set()     # pages whose builder failed (an error page is shown)
         self._pregame_data: dict[str, Any] | None = None
         self._pregame_sig: Any = None
         self._pregame_busy = False
@@ -460,6 +380,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 page = self._page_builders[key]()
             except Exception:
                 log.exception("Cannot build page %s", key)
+                self._failed_pages.add(key)
                 page = self._error_page(key)
             page.grid(row=0, column=0, sticky="nsew")
             page.grid_remove()
@@ -486,57 +407,28 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                     for t in getattr(dict.get(self.pages, k), "pending_tabs", lambda: [])()]
             if not pending and not tabs:
                 return
-            if self._iconic() or self._in_game() or self._busy:
+            if self._iconic() or self._in_game() or self._busy or self.__dict__.get("_building"):
                 self.root.after(PREBUILD_GAP_MS * 10, self._prebuild_next)
                 return
             if pending:
                 self.pages[pending[0]]
-            else:                            # one tab per idle slot: never a long freeze
+            else:                            # one SECTION per idle slot: never a long freeze
                 key, tab = tabs[0]
-                dict.get(self.pages, key).ensure_tab(tab)
-                if tab == "Affichage":       # its preview (sample game screen) rendered off the Tk thread
+                done = dict.get(self.pages, key).step_tab(tab)
+                if done and tab == "Affichage":     # its preview (sample game screen), off the Tk thread
                     self._dispatcher.run(_prewarm_preview, None, None, name="TreeAI-ui-prewarm")
-            if len(pending) + len(tabs) > 1:
-                self.root.after(PREBUILD_GAP_MS, lambda: self.root.after_idle(self._prebuild_next))
+            self.root.after(PREBUILD_GAP_MS, lambda: self.root.after_idle(self._prebuild_next))
         except Exception:
-            log.debug("page prebuild failed", exc_info=True)
+            log.exception("page prebuild failed")
 
     def build_all_pages(self) -> None:
         """Build every page (and every tab of a page) not built yet (tests, diagnostics)."""
         for key in self._page_builders:
-            if key not in self._built and key not in self.__dict__.get("_building", ()):
+            if key not in self._built and not self.__dict__.get("_building"):
                 self.pages[key]
             page = dict.get(self.pages, key)
             for tab in list(getattr(page, "pending_tabs", lambda: [])()):
                 page.ensure_tab(tab)
-
-    def __getattr__(self, name: str) -> Any:
-        """A widget attribute of a page not built yet: build that page, then retry.
-
-        Only called when normal lookup fails. The attributes each page creates are read from the
-        bytecode of its builders (:func:`_page_attr_index`), so state attributes looked up with
-        ``getattr(self, name, default)`` never build anything; hotkeys, update checks, tests...
-        keep working with lazily built pages."""
-        d = self.__dict__
-        if name.startswith("__") or name in _NOT_PAGE_ATTRS or "pages" not in d or d.get("_closing"):
-            raise AttributeError(name)
-        key = _page_attr_index().get(name)
-        if key is None or key in d.get("_building", ()):
-            raise AttributeError(name)
-        if key not in d.get("_built", ()):
-            log.debug("Attribute %s read before its page was built: building %s", name, key)
-            self.pages[key]
-            if name in d:
-                return d[name]
-        tab = _tab_attr_index().get(name)          # a widget of a tab built on its first visit
-        page = dict.get(self.pages, key)
-        pending = getattr(page, "pending_tabs", None)
-        if tab is not None and callable(pending) and tab in pending():
-            log.debug("Attribute %s read before its tab was built: building %s > %s", name, key, tab)
-            page.ensure_tab(tab)
-            if name in d:
-                return d[name]
-        raise AttributeError(name)
 
     # ------------------------------------------------------------------ infrastructure
     def cb(self, fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -711,9 +603,9 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 if below != getattr(slot, "_below", False):
                     slot._below = below
                     if below:
-                        slot.grid_configure(row=1, column=0, sticky="w", padx=0, pady=(CTL_GAP, 0))
+                        slot.grid_configure(row=2, column=0, rowspan=1, sticky="w", padx=0, pady=(CTL_GAP, 0))
                     else:
-                        slot.grid_configure(row=0, column=1, sticky="e", padx=(ROW_CTL_GAP, 0), pady=0)
+                        slot.grid_configure(row=0, column=1, rowspan=2, sticky="e", padx=(ROW_CTL_GAP, 0), pady=0)
                 lbl.configure(wraplength=int(max(200, min(640, row_w if below else row_w - sw - ROW_CTL_GAP))))
             except Exception:
                 pass
@@ -775,6 +667,45 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(size, size))
             self._images[key] = img
         return img
+
+    def _image_label(self, parent: Any, pil: Any, size: tuple[int, int], key: str, **kw: Any) -> Any:
+        """A static image as one plain Tk label, scaled like the CTk widgets (a CTkLabel with an image
+        costs three windows: about 5x slower to build and to map, which adds up in lists)."""
+        k = _PLAIN_SCALE[0]
+        w, h = max(1, int(round(size[0] * k))), max(1, int(round(size[1] * k)))
+        ck = f"p-{key}-{w}x{h}"
+        photo = self._images.get(ck)
+        if photo is None or getattr(photo, "_src", None) is not pil:
+            from PIL import Image, ImageTk  # noqa: PLC0415
+
+            img = pil if pil.size == (w, h) else pil.resize((w, h), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img, master=self.root)
+            photo._src = pil  # type: ignore[attr-defined]
+            self._images[ck] = photo
+        return self._PLabel(parent, image=photo, **kw)
+
+    def _icon_label(self, parent: Any, kind: str, size: int = 14, color: str = MUTED, **kw: Any) -> Any:
+        """A static icon (see :meth:`_image_label`)."""
+        src = f"src-{kind}-{size}-{color}"
+        pil = self._images.get(src)
+        if pil is None:
+            pil = (ui_kit.extra_icon(kind, size * 3, color) if kind in ui_kit.EXTRA_ICONS
+                   else nav_icon(kind, size * 3, color))
+            self._images[src] = pil
+        return self._image_label(parent, pil, (size, size), f"icon-{kind}-{color}", **kw)
+
+    def _light_icon_button(self, parent: Any, kind: str, size: int, color: str, command: Callable[[], Any],
+                           tip: str | None = None) -> Any:
+        """A small clickable icon (plain label + hover background): for buttons repeated in lists."""
+        lbl = self._icon_label(parent, kind, size, color, cursor="hand2", anchor="center")
+        lbl.configure(padx=6, pady=4)
+        base = lbl.cget("bg")
+        lbl.bind("<Enter>", lambda _e: lbl.configure(bg=PANEL_HI), add="+")
+        lbl.bind("<Leave>", lambda _e: lbl.configure(bg=base), add="+")
+        lbl.bind("<Button-1>", lambda _e: self.cb(command)(), add="+")
+        if tip:
+            self._tip(lbl, tip)
+        return lbl
 
     def _tip(self, widget: Any, text: str | Callable[[], str]) -> None:
         """Hover tooltip (delayed, never raises)."""
@@ -1035,22 +966,82 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         unders: dict[str, Any] = {}
         state = {"cur": None}
 
-        def ensure(label: str) -> None:
-            """Build a lazy tab now (its sections stay hidden unless it is the current tab)."""
-            build = pending.pop(label, None)
-            if build is None:
-                return
-            first = len(getattr(body, "_sections", []))
-            try:
-                build()
-            except Exception:
-                log.exception("Cannot build the %s tab", label)
+        running: dict[str, Any] = {}      # tab label -> its builder generator, part-way through
+
+        cold: list[tuple[str, Any]] = []     # (tab, section) built by the idle prebuild, never laid out
+
+        def adopt(label: str, first: int, warm: bool = False) -> None:
             for card in list(getattr(body, "_sections", []))[first:]:
                 owner[id(card)] = label
                 sections.append(card)
                 card.tab_shown = state["cur"] == label
                 if not card.tab_shown or getattr(card, "hidden", False):
                     card.grid_remove()
+                    if warm:
+                        cold.append((label, card))
+
+        def prewarm_one() -> bool:
+            """Idle prebuild of a hidden page: lay ONE built section out (gridded in the unmapped page,
+            nothing is drawn). Tk computes a widget's geometry (text measuring) on its first show,
+            about half the cost of a first tab switch: done here, in its own idle slot."""
+            while cold:
+                label, card = cold.pop(0)
+                if page.winfo_ismapped():         # on screen: no hidden layout pass (it would flash)
+                    cold.clear()
+                    return True
+                try:
+                    if not card.winfo_exists() or state["cur"] == label:
+                        continue
+                    card.grid()
+                    body.update_idletasks()
+                    if state["cur"] != label:
+                        card.grid_remove()
+                except Exception:
+                    log.debug("section prewarm failed", exc_info=True)
+                return False
+            return True
+
+        def advance(label: str, one: bool) -> bool:
+            """Run the lazy builder of a tab: one section (``one``, idle prebuild) or to the end.
+            True once the tab is complete. A builder may be a generator yielding after each section."""
+            if one and cold:
+                prewarm_one()
+                return False
+            if label not in pending:
+                return True
+            first = len(getattr(body, "_sections", []))
+            building = self.__dict__.setdefault("_building", set())
+            building.add(f"tab:{label}")
+            try:
+                gen = running.get(label)
+                if gen is None:
+                    res = pending[label]()
+                    if not inspect.isgenerator(res):
+                        pending.pop(label, None)
+                        return True
+                    running[label] = gen = res
+                while True:
+                    try:
+                        next(gen)
+                    except StopIteration:
+                        running.pop(label, None)
+                        pending.pop(label, None)
+                        return True
+                    if one:
+                        return False
+            except Exception:
+                log.exception("Cannot build the %s tab", label)
+                running.pop(label, None)
+                pending.pop(label, None)
+                return True
+            finally:
+                building.discard(f"tab:{label}")
+                adopt(label, first, warm=one)
+
+        def ensure(label: str) -> None:
+            """Build a lazy tab completely now (its sections stay hidden unless it is the current tab)."""
+            advance(label, one=False)
+            cold[:] = [(t, c) for t, c in cold if t != label]
 
         def select(label: str) -> None:
             if state["cur"] == label:
@@ -1095,7 +1086,8 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             btns[g], unders[g] = b, u
         page.select_tab = select  # type: ignore[attr-defined]
         page.ensure_tab = ensure  # type: ignore[attr-defined]
-        page.pending_tabs = lambda: list(pending)  # type: ignore[attr-defined]
+        page.step_tab = lambda label: advance(label, one=True)  # type: ignore[attr-defined]
+        page.pending_tabs = lambda: list(dict.fromkeys([*pending, *(t for t, _c in cold)]))  # type: ignore[attr-defined]
         first = default if default in btns else next(iter(btns), None)
         if first is not None:
             select(first)
@@ -1113,19 +1105,22 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         row = self._frame(body, height=ROW_MIN_H)
         row.grid(row=2 * r, column=0, sticky="ew", pady=ROW_PAD_Y)
         row.grid_columnconfigure(0, weight=1)
-        row.grid_rowconfigure(0, minsize=CTL_H)
         body._rows = r + 1
-        left = self._frame(row)
-        left.grid(row=0, column=0, sticky="w")
-        self._label(left, title, self.fonts.body, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
+        # flat: title / description / control directly in the row (no nested frame: fewer windows
+        # to build and to map on every tab switch); the control spans both text lines
+        row.title_label = self._label(row, title, self.fonts.body, TEXT, anchor="w")  # type: ignore[attr-defined]
+        row.title_label.grid(row=0, column=0, sticky="w")
         desc_lbl = None
         if desc:
-            desc_lbl = self._label(left, desc, self.fonts.small, MUTED, anchor="w", justify="left",
+            desc_lbl = self._label(row, desc, self.fonts.small, MUTED, anchor="w", justify="left",
                                    wraplength=440)
             desc_lbl.grid(row=1, column=0, sticky="w", pady=(3, 0))
+        else:
+            row.grid_rowconfigure(0, minsize=CTL_H)
         slot = self._frame(row)
-        slot.grid(row=0, column=1, sticky="e", padx=(ROW_CTL_GAP, 0))
+        slot.grid(row=0, column=1, rowspan=2 if desc else 1, sticky="e", padx=(ROW_CTL_GAP, 0))
         slot.desc_label = desc_lbl  # type: ignore[attr-defined]
+        row.slot = slot  # type: ignore[attr-defined]
         self._last_slot = slot
         self._last_row = row
         self._row_slots.append(slot)
@@ -1318,8 +1313,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                                                 "dans le brouillard. Minuteurs et rappels restent actifs "
                                                 "(Ctrl+Maj+S)."))
         for i, (key, icon, text, tip) in enumerate(specs, start=2):
-            ctk.CTkLabel(box, text="", image=self._icon(icon, 17, MUTED), fg_color="transparent", width=20).grid(
-                row=i, column=0, padx=(0, 10), pady=4)
+            self._icon_label(box, icon, 17, MUTED).grid(row=i, column=0, padx=(0, 10), pady=4)
             lbl = self._label(box, text, self.fonts.body, TEXT, anchor="w")
             lbl.grid(row=i, column=1, sticky="w")
             var = ctk.BooleanVar(value=False)
@@ -2169,7 +2163,8 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
 
     def _dash_live(self) -> bool:
         """The dashboard is built, shown and the window is not minimised (live widgets worth updating)."""
-        return "dashboard" in self._built and self._current_page == "dashboard" and not self._iconic()
+        return ("dashboard" in self._built and "dashboard" not in self._failed_pages
+                and self._current_page == "dashboard" and not self._iconic())
 
     def _status_loop(self) -> None:
         """Status refresh: 4 Hz only while the dashboard is on screen during a game (or a start-up),
@@ -2835,7 +2830,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         self._pregame_sig = sig
         for w in pg.winfo_children():
             w.destroy()
-        ctk = self.ctk
         if not games:
             self._pregame_checklist(pg, window)
             return
@@ -2846,10 +2840,8 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         row.grid_columnconfigure(1, weight=1)
         alias = str(game_field(g, "champion", "alias", default="") or "")
         pil = self._game_icons.get(alias) or square_icon(None, 56, bg=BG)     # loaded by refresh_games
-        img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(36, 36))
-        self._images["pregame-last"] = img
-        ctk.CTkLabel(row, text="", image=img, fg_color="transparent").grid(row=0, column=0, rowspan=3,
-                                                                         padx=(0, 12), sticky="n")
+        self._image_label(row, pil, (36, 36), "pregame-last").grid(row=0, column=0, rowspan=3, padx=(0, 12),
+                                                                   sticky="n")
         name = str(game_field(g, "champion_name", "name", default="") or alias or "Champion inconnu")
         res = game_result(g)
         rtxt, rcol = {"win": ("Victoire", SAFE), "lose": ("Défaite", DANGER)}.get(res or "", ("Inachevée", MUTED))

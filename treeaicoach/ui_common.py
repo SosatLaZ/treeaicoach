@@ -117,7 +117,7 @@ SAVE_DEBOUNCE_MS = 500
 TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
-PREBUILD_GAP_MS = 400
+PREBUILD_GAP_MS = 150             # idle gap between two prebuild slots (each slot: one page or one section, < 100 ms)
 PREBUILD_ORDER = ("settings", "analysis", "help", "dashboard")
 GAMES_PAGE = 15                  # rows of the Analyses table drawn at once ("Afficher plus")
 

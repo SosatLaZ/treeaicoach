@@ -8,7 +8,6 @@ not the one asked for, and on a page switch slower than SWITCH_MAX_S. Run longer
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import random
@@ -232,3 +231,36 @@ def test_launcher_stress(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert not tk_errors, tk_errors[:5]
     assert not errors.records, errors.records[:5]
     assert not problems, problems[:10]
+
+
+@tu.needs_display
+def test_idle_prebuild_in_short_slices(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every page and every Réglages tab gets built while idle, one page or ONE SECTION per slot:
+    no slot freezes the window long, and a first visit afterwards builds nothing."""
+    monkeypatch.setattr(ui, "PREBUILD_DELAY_MS", 200)
+    monkeypatch.setattr(ui, "PREBUILD_GAP_MS", 20)
+    app, _voice, _ = tu._build(tmp_path, cfg=Config(ui_onboarding_done=True, ui_seen_changelog="1.5",
+                                                     autostart=False))
+    slots: list[float] = []
+    orig = app._prebuild_next
+
+    def timed() -> None:
+        t0 = time.perf_counter()
+        orig()
+        slots.append(time.perf_counter() - t0)
+
+    app._prebuild_next = timed
+    try:
+        def done() -> bool:
+            pages = all(k in app._built for k in app._page_builders)
+            return pages and not app.pages["settings"].pending_tabs()
+        tu._pump(app, 30.0, done)
+        assert done(), (app._built, app.pages["settings"].pending_tabs())
+        assert max(slots) < SWITCH_MAX_S, [round(1000 * s) for s in slots]
+        for key in app._page_builders:
+            t0 = time.perf_counter()
+            app.show_page(key)
+            app.root.update_idletasks()
+            assert time.perf_counter() - t0 < SWITCH_MAX_S, key
+    finally:
+        app.close()

@@ -37,16 +37,6 @@ def test_toggle_image_reads_on_off() -> None:
     assert dis.getpixel((10, 13))[1] < on.getpixel((10, 13))[1]
 
 
-def test_page_attribute_index() -> None:
-    idx = ui._page_attr_index()
-    assert idx["hero"] == "dashboard" and idx["journal"] == "dashboard"
-    assert idx["_examples"] == "settings" and idx["voice_menu"] == "settings"      # Réglages > Voix
-    assert idx["_update_btn"] == "settings" and idx["_ai_key_entry"] == "settings"
-    assert idx["_replay"] == "analysis" and idx["overlay_preview"] == "settings"  # Réglages > Affichage
-    assert idx["sys_rows"] == "dashboard" and idx["btn_fix"] == "dashboard"
-    assert "_closing" not in idx and "cfg" not in idx
-
-
 @tu.needs_display
 def test_lazy_pages_and_quiet_timers(home: Path, tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(ui, "PREBUILD_DELAY_MS", 0)
@@ -55,9 +45,12 @@ def test_lazy_pages_and_quiet_timers(home: Path, tmp_path: Path, monkeypatch) ->
         assert app._built == {"dashboard"}                     # only the visible page at start-up
         assert "settings" in app.pages and dict.get(app.pages, "settings") is None
         tu._pump(app, 1.0)
-        # a page widget read before its page exists builds that page only
-        assert app._update_check_btn is not None
-        assert app._built == {"dashboard", "settings"}
+        # no implicit build: a widget of a page not built yet simply does not exist (code uses getattr),
+        # a page is built when it is shown (or in an idle slot), its tabs on their first visit
+        assert getattr(app, "_update_check_btn", None) is None and app._built == {"dashboard"}
+        app.show_page("settings", "Mises à jour")
+        assert app._update_check_btn is not None and app._built == {"dashboard", "settings"}
+        assert "Voix" in app.pages["settings"].pending_tabs()
         t0 = time.perf_counter()
         app.show_page("help")
         assert "help" in app._built and app._current_page == "help"

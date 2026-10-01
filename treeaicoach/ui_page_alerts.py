@@ -13,14 +13,10 @@ from typing import Any
 
 from treeaicoach.ui_common import (
     AUTO_VOICE,
-    BORDER_GOLD,
-    BTN_H_SMALL,
     DANGER_MODES,
     DIM,
     ENGINE_LABELS,
     GOLD,
-    PANEL_HI,
-    RADIUS,
     TEXT,
     VOICE_LEVELS,
     Dropdown,
@@ -74,6 +70,7 @@ class AlertsPageMixin:
                              "de victoire sur les gros retournements. Caster : en plus, des annonces de "
                              "commentateur.", STYLE_LABELS, segmented=True)
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 1, "Alertes de gank", "Quand un ennemi menace ta position. ▶ fait entendre "
                                                             "un exemple.")
         for field, title, key in (("alert_jungler_approach", "Jungler ennemi qui approche", "jungler_approach"),
@@ -91,6 +88,7 @@ class AlertsPageMixin:
                          lambda v: f"× {fmt_decimal_fr(v, 2)}", float, on_change=lambda _v: self._refresh_radius_text())
         self.radius_lbl = self._last_slot.desc_label
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 2, "Rappels", "Écrits dans le panneau ; lus à voix haute en quantité "
                                                     "« Bavard » (l'objectif à 60 s est toujours lu).")
         self._switch_row(s, "objective_timers", "Annonce des objectifs", ex["objective_soon"])
@@ -106,6 +104,7 @@ class AlertsPageMixin:
         self._switch_row(s, "item_advice_speak", "Lire les conseils d'achat",
                          "Désactivé par défaut : le conseil reste écrit.")
 
+        yield                                   # one section per idle slot (prebuild)
         s = self._section(body, row + 3, "Voix", "La voix neurale (en ligne) est la plus naturelle ; les voix "
                                                  "Windows servent de secours hors ligne.")
         self._choice_row(s, "voice_engine", "Moteur de voix", "« Automatique » utilise la voix neurale si "
@@ -160,13 +159,10 @@ class AlertsPageMixin:
     def _example_button(self, key: str) -> None:
         """A small "▶" button in the last row: speaks an example of this alert."""
         slot = self._last_slot
-        b = self.ctk.CTkButton(slot, text="", width=BTN_H_SMALL, height=BTN_H_SMALL - 2, corner_radius=RADIUS,
-                               fg_color="transparent", hover_color=PANEL_HI, border_width=1, border_color=BORDER_GOLD,
-                               image=self._icon("play", 11, GOLD), command=self.cb(lambda: self.play_example(key)))
+        b = self._light_icon_button(slot, "play", 13, GOLD, lambda: self.play_example(key), "Entendre un exemple")
         for w in slot.grid_slaves(row=0):
             w.grid_configure(column=int(w.grid_info().get("column", 0)) + 1)
         b.grid(row=0, column=0, padx=(0, 14))
-        self._tip(b, "Entendre un exemple")
 
     @_guarded
     def play_example(self, key: str) -> None:
@@ -174,7 +170,8 @@ class AlertsPageMixin:
         if self.voice is None:
             self.show_error("La synthèse vocale n'est pas disponible.")
             return
-        text, level = self._examples.get(key, ("Attention, Lee Sin approche !", 1))
+        examples = getattr(self, "_examples", None) or _example_speech()   # the Voix tab may not exist yet
+        text, level = examples.get(key, ("Attention, Lee Sin approche !", 1))
         self.voice.say(text, level)
         if getattr(self.voice, "backend", "") == "print":
             self.show_toast("Voix indisponible sur ce système : le message est écrit dans le journal.", "warning")
@@ -243,9 +240,8 @@ class AlertsPageMixin:
             if row is None:
                 continue
             try:
-                lbl = row.grid_slaves(row=0, column=0)[0].grid_slaves(row=0, column=0)[0]
-                lbl.configure(text_color=TEXT if show else DIM)
-                for w in row.grid_slaves(row=0, column=1)[0].winfo_children():
+                row.title_label.configure(text_color=TEXT if show else DIM)      # see ``_row``
+                for w in row.slot.winfo_children():
                     w = getattr(w, "_dropdown", None) or getattr(w, "_toggle", None) or w
                     try:
                         w.configure(state="normal" if show else "disabled")

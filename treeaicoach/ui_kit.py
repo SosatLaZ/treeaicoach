@@ -647,14 +647,16 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 # ======================================================================================
 # Texts
 # ======================================================================================
-CHANGELOG_VERSION = "2.2"
+CHANGELOG_VERSION = "2.3"
 CHANGELOG: tuple[tuple[str, str], ...] = (
-    ("Timers", "Petite colonne sur la minimap : buff Baron / Ancien restant, ennemis morts "
-               "(« 3 morts · 18 s »), réapparition des objectifs qui te concernent."),
-    ("Minimap", "Les ennemis visibles ont de nouveau un cercle fin, « JGL » sur le jungler."),
-    ("Fluidité", "Le mode économie d'énergie de Windows est désactivé : l'analyse ne saccade plus."),
-    ("Détection", "Meilleure sur les champions empilés et à moitié cachés, moins de fantômes."),
-    ("Panneau en jeu", "Une seule consigne claire, rouge en cas de danger, F6 pour le détail."),
+    ("Conseils qui changent la partie", "Fenêtres de niveau, jungler vu ailleurs, plaques, Baron après un "
+                                        "combat gagné : les gros appels sont dits à voix haute."),
+    ("Achats ennemis", "Couperet noir, Zhonya, anti-soin, résistances : quoi faire et quoi acheter."),
+    ("Placement", "Plus rien sur l'interface du jeu : panneau, timers et notifications ont chacun leur place."),
+    ("Santé TreeAI", "L'appli repère ses propres problèmes (capture, minimap, lenteur, voix) et les corrige."),
+    ("Comparer deux PC", "Copier l'empreinte de config, Réinitialiser la détection, Profil normal."),
+    ("Launcher", "Pages qui se chargent sans bug ni gel, réglages simplifiés."),
+    ("Données du jeu", "173 champions, objets et builds à jour, 228 conseils de duel, balises exactes."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl + 1 … 4", "Aller à une page (En jeu, Analyses, Réglages, Aide)"),

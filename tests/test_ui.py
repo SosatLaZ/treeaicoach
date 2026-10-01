@@ -390,6 +390,7 @@ def test_app_pages_and_settings(home: Path, tmp_path: Path) -> None:
 
         # settings callbacks -> cfg validated + applied live + saved (debounced)
         n_apply = engines[0].calls.get("apply_config", 0)
+        app.show_page("settings", "Voix")                  # the tab is built on its first visit
         app.set_option("sensitivity", 1.4)
         app.set_option("voice_rate", 5)
         app.set_option("radar_scale", 7.0)                  # clamped by validation
@@ -420,6 +421,7 @@ def test_app_pages_and_settings(home: Path, tmp_path: Path) -> None:
         assert overlays[0].move == [True, False]
         assert app.cfg.radar_position == "custom" and app.cfg.radar_xy == [1500, 500]
         assert app.cfg.hud_position == "custom" and app.cfg.hud_xy == [20, 40]
+        app.show_page("dashboard")                         # the banner lives on the dashboard
         engines[0].banner = "3 défaites d'affilée : une pause de 10 minutes aide à rester concentré."
         _pump(app, 2.0, lambda: app.banner.grid_info())
         assert app.banner.grid_info() and "pause" in app.banner_lbl.cget("text")

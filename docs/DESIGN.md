@@ -125,8 +125,23 @@ Pensé pour le joueur qui ouvre l'application 30 s avant une partie.
 
 Seulement quand il a un sens : point « en direct » qui pulse pendant l'analyse, jauge de
 menace, flash de danger. Pas d'animation décorative. Rien ne bouge quand la page « En jeu »
-n'est pas affichée ou que la fenêtre est réduite (rafraîchissement 1 s, 2 s réduite) ; les
-pages sont construites à la première visite ou pendant un temps mort.
+n'est pas affichée ou que la fenêtre est réduite (rafraîchissement 1 s, 2 s réduite).
+
+Chargement des pages (règles, vérifiées par `tests/test_ui_stress.py`) :
+
+- une page ou un onglet se construit **seulement** à sa première visite (`show_page`,
+  `select_tab`) ou pendant un temps mort ; jamais en lisant un attribut (le code lit
+  `getattr(self, "x", None)` ou teste `"page" in self._built`) ;
+- la construction en temps mort avance par tranches : une page, ou **une section** d'onglet
+  (générateur qui fait `yield` après chaque section), ou la mise en page cachée d'une section
+  déjà construite ; une tranche reste sous 100 ms, jamais pendant une partie ni fenêtre réduite ;
+- les listes répétées utilisent des widgets Tk simples (`_label`, `_icon_label`,
+  `_image_label`, `_light_icon_button`) : un `CTkLabel` avec image ou un `CTkButton` coûte
+  trois fenêtres, cinq fois plus à construire et à afficher ;
+- une ligne de réglage est plate (titre, description, contrôle dans le même cadre) ;
+- un changement de page ou d'onglet reste sous 300 ms (test de stress : clics au hasard dès
+  le lancement, partie qui démarre / s'arrête, fenêtre réduite, résultats des tâches de fond
+  injectés n'importe quand).
 
 `tests/test_design_rules.py` vérifie automatiquement les interdits (tiret cadratin dans les
 textes de l'interface, couleurs et polices bannies, emoji).
