@@ -143,7 +143,7 @@ def test_stacked_hold_expires_and_never_starts_a_fog_circle_meanwhile() -> None:
 def test_occluder_vanishing_ends_the_stack_at_its_last_sighting() -> None:
     tr = Tracker()
     feed(tr, 0.0, 3.0, lambda t: stack_frames(t, until=99.0))
-    t = feed(tr, 3.0, 4.5, lambda t: [])                  # both go into the fog at ~3 s
+    feed(tr, 3.0, 4.5, lambda t: [])                  # both go into the fog at ~3 s
     lee = tr.get("LeeSin")
     assert not lee.visible and lee.stacked_with is None
     assert lee.last_seen == pytest.approx(3.0 - DT)      # = Darius's last sighting
