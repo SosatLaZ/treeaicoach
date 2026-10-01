@@ -122,6 +122,11 @@ LOCK_WINDOW = 12            # ...in >= LOCK_MIN_DENSITY of the last LOCK_WINDOW 
 LOCK_MIN_DENSITY = 0.30
 LOCK_MIN_CONF = 0.40        # ...with this mean detection score
 TENTATIVE_FORGET_S = 2.0    # tentative (unconfirmed) tracks unseen for this long are dropped
+# identity by elimination (Live Client roster, see Tracker.set_roster / _eliminate)
+ELIM_ENABLED = True
+ELIM_MIN_OBS = 3            # the unidentified icon was seen this often recently...
+ELIM_MIN_SCORE = 0.45       # ...with this mean detection score
+ELIM_ALLY_REACH = 0.12      # an ally is identified by elimination this close to his last place
 
 RELATIONS = ("self", "ally", "enemy")
 _CLASSES = ("enemy", "ally", "self")   # detector class order (ARCHITECTURE.md §3)
@@ -263,6 +268,9 @@ class Track:
     _stack_t: float | None = field(default=None, repr=False)
     _lock_obs: deque = field(default_factory=lambda: deque(maxlen=LOCK_WINDOW), repr=False)
     _first_frame: int = field(default=0, repr=False)
+    #: time of the last observation that carried the identity (an identified icon): an
+    #: identity track continued by unidentified icons coasts IDENTITY_COAST_S from it
+    last_id_t: float | None = None
 
     # -- derived quantities -----------------------------------------------------------
 
@@ -679,8 +687,34 @@ class Tracker:
         #: Current hide timeout (s): HIDE_AFTER, longer when the detection rate is low
         #: (HIDE_FRAMES frames at the measured rate, at most HIDE_MAX_S).
         self.hide_after = HIDE_AFTER
+        #: Champions dead right now (Live Client): no icon on the map, so their tracks are
+        #: hidden at once (no stacked hold, no coasting) and an icon identified as one of
+        #: them is a misidentification (kept as an unidentified icon). See :meth:`set_dead`.
+        self._dead: frozenset[str] = frozenset()
+        #: Live Client roster ``{alias: "self" | "ally" | "enemy"}`` (see :meth:`set_roster`):
+        #: identity by elimination of an unidentified icon (ELIM_*).
+        self._roster: dict[str, str] = {}
 
     # -- public API ---------------------------------------------------------------------
+
+    def set_roster(self, roster: dict[str, str] | None) -> None:
+        """The match's champions ``{alias: relation}`` (Live Client). Never raises."""
+        try:
+            ro = {str(a): str(r) for a, r in (roster or {}).items()
+                  if a and r in RELATIONS}
+        except Exception:
+            ro = {}
+        with self._lock:
+            self._roster = ro
+
+    def set_dead(self, aliases: Iterable[str] | None) -> None:
+        """Champions dead right now (Live Client ``isDead`` / respawn timers). Never raises."""
+        try:
+            dead = frozenset(str(a) for a in (aliases or ()) if a)
+        except Exception:
+            dead = frozenset()
+        with self._lock:
+            self._dead = dead
 
     def update(self, t: float, identified: Iterable[Identified] | None) -> None:
         """Integrate the icons identified in the frame captured at time ``t``. Never raises."""
@@ -775,6 +809,11 @@ class Tracker:
             self._dt_ema = float(sorted(self._dts)[len(self._dts) // 2])
             self.hide_after = min(HIDE_MAX_S, max(HIDE_AFTER, HIDE_FRAMES * self._dt_ema))
         entries = [e for e in (_entry_from(x) for x in (identified or ())) if e is not None]
+        dead = self._dead
+        if dead:
+            for e in entries:
+                if e.alias and e.alias in dead:
+                    e.alias = None        # a dead champion has no icon: wrong identity
         entries = self._dedupe(entries)
         # An identity-based "self" seen recently outranks the identifier's camera fallback.
         cur_self = self._tracks.get(self._self_key) if self._self_key else None
@@ -828,9 +867,14 @@ class Tracker:
             tr.confirmed = True                    # an identity (roster) is its own confirmation
             if not tr.observe(now, e.u, e.v, e.r, e.score, e.id_score):
                 continue
+            tr.last_id_t = now
             updated.add(key)
             if e.relation == "self":
                 self_key = key
+
+        # 2c. identity by elimination: the only alive champion of a team not accounted for
+        if self._roster and ELIM_ENABLED:
+            self._eliminate(now, updated, frame)
 
         # 2b. icons drawn under another icon: stacked hold (not a disappearance)
         self._update_stacks(now, updated)
@@ -842,6 +886,13 @@ class Tracker:
             if tr.relation == "self" and key != self._self_key:
                 tr.relation = "ally"
             tr.refresh(now, self.hide_after)
+            if dead and tr.alias in dead:
+                # dead: hidden at once (a stacked hold or the hide timeout would keep
+                # drawing him where he died)
+                tr.stacked_with = tr.stacked_since = None
+                tr._stack_pos = tr._stack_vel = tr._stack_t = None
+                tr.visible = False
+                tr.hidden_since = tr.last_seen
 
         self._forget(now)
         self._last_t = now
@@ -967,9 +1018,11 @@ class Tracker:
         for key, tr in self._tracks.items():
             if key in named_keys:
                 continue
-            if tr.alias is not None and now - tr.last_seen > max(IDENTITY_COAST_S,
-                                                                 self.hide_after + 0.4):
-                continue
+            if tr.alias is not None and now - (tr.last_id_t if tr.last_id_t is not None
+                                               else tr.last_seen) > max(IDENTITY_COAST_S,
+                                                                        self.hide_after + 0.4):
+                continue      # (from the last IDENTIFIED sighting: an unidentified icon
+                #             parked on a glyph must not carry the identity for ever)
             pred = self._predicted(tr, now)
             if pred is not None:
                 candidates.append((key, side_of_relation(tr.relation), pred,
@@ -991,6 +1044,63 @@ class Tracker:
             taken_e[i] = key
             taken_k.add(key)
         return [(e, taken_e.get(i)) for i, e in enumerate(anonymous)]
+
+    def _eliminate(self, now: float, updated: set[str], frame: int) -> None:
+        """An unidentified, confirmed icon of one team while exactly one alive champion of that
+        team is not accounted for (identified this frame, visible a moment ago or stacked) is
+        that champion, if he can have walked there since he was last seen (LESSONS rule 13:
+        identity only among that team's alive champions, one-to-one)."""
+        for side in ("enemy", "ally"):
+            anon = [k for k in updated if k in self._tracks and self._tracks[k].alias is None
+                    and self._tracks[k].confirmed
+                    and side_of_relation(self._tracks[k].relation) == side]
+            if len(anon) != 1:
+                continue
+            a = self._tracks[anon[0]]
+            recent = [s_ for f_, s_ in a._lock_obs if frame - f_ < LOCK_WINDOW]
+            if len(recent) < ELIM_MIN_OBS or sum(recent) / len(recent) < ELIM_MIN_SCORE:
+                continue
+            cands = []
+            for alias, rel in self._roster.items():
+                if side_of_relation(rel) != side or alias in self._dead:
+                    continue
+                tr = self._tracks.get(alias)
+                if tr is not None and (alias in updated or tr.stacked_with is not None
+                                       or now - tr.last_seen < self.hide_after):
+                    continue                     # accounted for (seen / stacked right now)
+                cands.append(alias)
+            if len(cands) != 1:
+                continue
+            alias = cands[0]
+            tr = self._tracks.get(alias)
+            pos = a.raw_position()
+            if tr is not None and pos is not None and tr.raw_position() is not None:
+                last = tr.raw_position()
+                reach = MAX_WALK_SPEED * max(0.0, now - tr.last_seen) + JUMP_SLACK
+                if side == "ally":
+                    # an ally is never in the fog: unaccounted for, he is under an icon near
+                    # where he was last seen (or back home)
+                    reach = min(reach, ELIM_ALLY_REACH)
+                if math.hypot(pos[0] - last[0], pos[1] - last[1]) > reach and \
+                        (side == "ally" or not in_fountain(pos[0], pos[1], tr.team)):
+                    continue
+            rel = self._roster[alias]
+            if tr is None:
+                tr = Track(key=alias, alias=alias, relation=rel, team=a.team,
+                           first_seen=a.first_seen, last_seen=a.last_seen)
+                self._tracks[alias] = tr
+            elif side_of_relation(tr.relation) != side:
+                continue                         # (cross-team mirror key)
+            tr.absorb(a)
+            self._tracks.pop(a.key, None)
+            if self._self_key == a.key:
+                self._self_key = alias
+            tr.relation = self._merged_relation(tr.relation, rel)
+            tr.confirmed = True
+            tr.last_id_t = now
+            updated.discard(a.key)
+            updated.add(alias)
+            log.debug("Tracker: %s identified as %s by elimination", a.key, alias)
 
     def _merge_candidate(self, e: _Entry, tr: Track | None, updated: set[str]) -> Track | None:
         """Nearest anonymous track (same side, not updated this frame) that was this champion."""

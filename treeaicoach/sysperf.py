@@ -210,9 +210,9 @@ class PerfProfile:
 
 PROFILES: dict[str, PerfProfile] = {
     "normal": PerfProfile("normal", calm_fps=6.0, burst_fps=12.0, overlay_fps=30.0, heavy_hz=2.0,
-                          verify_s=1.0, onnx_every=4, cv_threads=2, onnx_threads=2, lost_every=4),
+                          verify_s=1.0, onnx_every=1, cv_threads=2, onnx_threads=2, lost_every=4),
     "low_end": PerfProfile("low_end", calm_fps=4.0, burst_fps=8.0, overlay_fps=15.0, heavy_hz=1.0,
-                           verify_s=1.5, onnx_every=16, cv_threads=1, onnx_threads=1, lost_every=8),
+                           verify_s=1.5, onnx_every=4, cv_threads=1, onnx_threads=1, lost_every=8),
 }
 
 

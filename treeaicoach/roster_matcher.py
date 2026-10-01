@@ -98,6 +98,23 @@ UNIQUE_CAP = 0.15
 THR_MIN = 0.64
 THR_MAX = 0.90
 THR_MARGIN = 0.14
+#: Verified zone: with the patch verifier (patch_classifier.py, icon vs distractor), a
+#: candidate may be accepted down to VERIFY_ZONE below the threshold when the verifier says
+#: it is a champion icon (p_icon >= VERIFY_MIN) of the candidate's team (the team
+#: probability >= VERIFY_TEAM of the icon probability). Measured (det_gym + real crops): the
+#: matches a lower threshold adds on structure glyphs / terrain get p_icon 0.00-0.01, real
+#: visible icons 0.6-1.0.
+VERIFY_ZONE = 0.14
+VERIFY_MIN = 0.7
+VERIFY_TEAM = 0.5
+#: Appearance veto: a champion that was not tracked a moment ago (no match for
+#: VETO_FRESH_S), or a far jump, accepted with less than VETO_MARGIN above the threshold
+#: is dropped when the verifier gives it an icon probability below VETO_MAX (measured,
+#: det_gym: red pings / glyphs matching a fogged champion's portrait at 0.002-0.008, real
+#: icons, stacked ones included, >= 0.01 at such scores).
+VETO_FRESH_S = 1.0
+VETO_MARGIN = 0.12
+VETO_MAX = 0.03
 THR_BG_PCT = 97
 #: Weight of the ring colour agreement (own colour fraction - other team's fraction).
 RING_WEIGHT = 0.2
@@ -153,6 +170,12 @@ LOCAL_SLACK = 0.015
 JUMP_PENALTY = 0.15
 #: Tracks older than this are forgotten for the jump test (long fog: anywhere is possible).
 JUMP_MEMORY_S = 6.0
+#: An impossible jump (teleport) is believed once the far candidate was seen at the same
+#: spot over JUMP_CONFIRM_S in at least JUMP_CONFIRM_N frames (measured, det_gym: a single
+#: confirming frame let a structure glyph matching an occluded champion's portrait steal
+#: his identity for seconds; a glyph confirms itself on every frame).
+JUMP_CONFIRM_S = 1.5
+JUMP_CONFIRM_N = 4
 #: Smoothing of the reported confidence (weight of the new frame).
 CONF_SMOOTH = 0.5
 #: The local player: kept at its predicted position for up to SELF_COAST_S when its icon is
@@ -161,7 +184,20 @@ CONF_SMOOTH = 0.5
 SELF_COAST_S = 1.2
 SELF_COAST_VEL_S = 0.25            # ... extrapolating the last velocity for this long at most
 SELF_RELAX = 0.1
+SELF_COAST_UNDER = True             # no coasting while an accepted icon covers my track
 SELF_CAM_DIST = 0.06
+#: Track hysteresis (every champion): a champion matched in the previous frames
+#: (TRACK_RELAX_HITS hits, last match <= TRACK_RELAX_S ago) is accepted TRACK_RELAX below
+#: the threshold at its predicted position (within TRACK_RELAX_DIST + walking) when the
+#: ring around the match has its team's colour (own >= TRACK_RELAX_OWN, other team's
+#: colour <= TRACK_RELAX_OPP): a walking champion keeps its identity through weaker frames
+#: (blur, JPEG, a label or a ping on it) while a fogged one (no ring) is not followed.
+TRACK_RELAX = 0.12
+TRACK_RELAX_S = 0.6
+TRACK_RELAX_HITS = 2
+TRACK_RELAX_DIST = 0.012
+TRACK_RELAX_OWN = 0.3
+TRACK_RELAX_OPP = 0.12
 #: Occlusion: candidates down to OCC_RANGE below the threshold are re-scored on their
 #: visible part only (partial disc masks, without the pixels of overlapping accepted icons
 #: and of white lines / texts), minus OCC_PENALTY (fewer pixels: chance matches are easier).
@@ -185,6 +221,10 @@ RING_PROP_SIGMA = 18.0
 RING_PROP_MIN = 0.12
 RING_PROP_EXPLAINED = 0.4
 RING_PROP_MAX = 6
+#: proposals the patch verifier gives less than this icon probability are not re-scored
+#: (measured on the real crops: glyphs 0.00-0.01, stacked icons >= 0.1)
+RING_PROP_VERIFY = 0.05
+RING_PROP_SEARCH = 1                # re-scoring window (+- working px): the ring peak is precise
 RING_PROP_ID_MIN = 0.55
 RING_PROP_ID_GAP = 0.1
 RING_PROP_ID_W = 0.5                # accepted when ring + w x (identity - ID_MIN) >= ACCEPT
@@ -724,7 +764,7 @@ class _Track:
     margin: float = UNIQUE_CAP          # uniqueness margin of the last whole-map search
     hits: int = 0
     misses: int = 0                     # consecutive frames without a match
-    pend: tuple | None = None           # (u, v, t) far candidate awaiting confirmation
+    pend: tuple | None = None           # (u, v, t_first, n, t_last) far candidate awaiting confirmation
 
     def predict(self, t: float) -> tuple[float, float]:
         dt = min(max(t - self.t, 0.0), 0.5)
@@ -895,6 +935,11 @@ class RosterMatcher:
         self._wl: float = LIGHTNESS_WEIGHT
         self.last_stack: tuple | None = None
         self.learner: Any = None
+        #: Icon / distractor verifier (lazy, None when unavailable): see VERIFY_ZONE.
+        self.verifier: Any = None
+        self._verifier_tried = False
+        self._ring_img: np.ndarray | None = None
+        self._ring_specs: dict = {}
         try:
             from treeaicoach.self_icon import IconLearner
 
@@ -1643,11 +1688,11 @@ class RosterMatcher:
         pu, pv = tr.predict(now)
         dt = min(max(now - tr.t, 0.0), TRACK_FRESH_S)
         wins = [(pu, pv, LOCAL_SLACK + MAX_SPEED * dt)]
-        if tr.pend is not None and now - tr.pend[2] < 1.0:
+        if tr.pend is not None and now - tr.pend[4] < 1.0:
             wins.append((tr.pend[0], tr.pend[1], LOCAL_SLACK))
         out: list[_Cand] = []
         bonus = UNIQUE_WEIGHT * min(max(tr.margin, 0.0), UNIQUE_CAP)
-        for wu, wv, rn in wins:
+        for k_win, (wu, wv, rn) in enumerate(wins):
             cx, cy = wu * kx - half - 0.5, wv * ky - half - 0.5     # map index of the centre
             rw = rn * kx
             xm0, xm1 = max(0, int(math.floor(cx - rw))), min(Wf - s, int(math.ceil(cx + rw)))
@@ -1665,8 +1710,10 @@ class RosterMatcher:
             if v < PEAK_FLOOR:
                 continue
             sx, sy = self._subpixel(mm, x, y)
+            # (the window around an unconfirmed far candidate is not the track's own: the
+            # jump penalty still applies there until the jump is confirmed)
             out.append(_Cand(i, sx + xm0 + half + 0.5, sy + ym0 + half + 0.5, v, v + bonus,
-                             local=True))
+                             local=k_win == 0))
         return out
 
     def _structures(self) -> list[tuple[float, float, str]]:
@@ -1712,8 +1759,9 @@ class RosterMatcher:
             if (team is None or t_ == team) and math.hypot(u - fu, v - fv) < FOUNTAIN_DIST:
                 return 0.0
         p = tr.pend
-        if p is not None and now - p[2] < 1.0 and math.hypot(u - p[0], v - p[1]) < 0.03:
-            return 0.0                                     # confirmed by a second frame
+        if p is not None and now - p[4] < 1.0 and math.hypot(u - p[0], v - p[1]) < 0.03 and \
+                now - p[2] >= JUMP_CONFIRM_S and p[3] >= JUMP_CONFIRM_N:
+            return 0.0             # confirmed: seen there over JUMP_CONFIRM_S (teleport)
         return JUMP_PENALTY
 
     def _camera_centre(self, bgr: np.ndarray) -> tuple[float, float] | None:
@@ -1763,6 +1811,41 @@ class RosterMatcher:
         c.tot = base + RING_WEIGHT * (own - opp) - NO_RING_PENALTY * max(0.0, 1.0 - own / 0.3)
         c.f_en, c.f_al, c.ring = f_en, f_al, ring
 
+    def _get_verifier(self) -> Any:
+        if not self._verifier_tried:
+            self._verifier_tried = True
+            try:
+                from treeaicoach.patch_classifier import PatchVerifier
+
+                self.verifier = PatchVerifier.load()
+            except Exception:
+                self.verifier = None
+        return self.verifier
+
+    @staticmethod
+    def _icon_prob(ver: Any, bgr: np.ndarray, c: _Cand, kx: float, ky: float,
+                   r_norm: float) -> float:
+        try:
+            return float(ver.icon_prob(bgr, [(c.x / kx, c.y / ky, r_norm)])[0])
+        except Exception:
+            return 1.0
+
+    def _verified(self, ver: Any, bgr: np.ndarray, c: _Cand, kx: float, ky: float,
+                  r_norm: float) -> bool:
+        """The verifier says candidate ``c`` is a champion icon of its champion's team."""
+        if self.grey:
+            return False
+        try:
+            p = ver.verify_candidates(bgr, [(c.x / kx, c.y / ky, r_norm)])[0]
+        except Exception:
+            return False
+        icon = 1.0 - float(p[0])
+        team = float(p[1] if self._entries[c.i].relation == "enemy" else p[2])
+        if icon >= VERIFY_MIN and team >= VERIFY_TEAM * icon:
+            c.note = c.note or "verified"
+            return True
+        return False
+
     @staticmethod
     def _has_white(feat: np.ndarray, x: float, y: float, r: float) -> bool:
         """White unsaturated pixels (camera lines, timer texts) on the disc at (x, y)."""
@@ -1775,7 +1858,8 @@ class RosterMatcher:
         return float(w.mean()) > 0.04
 
     def _rescue(self, c: _Cand, feat: np.ndarray, bank: _Bank, work_centres: list,
-                D_work: float, caps: bool = False, trim: bool = False) -> float | None:
+                D_work: float, caps: bool = False, trim: bool = False,
+                search: int | None = None) -> float | None:
         """Occlusion-tolerant evidence of candidate ``c``: best NCC on the visible part of
         the icon (partial discs, without overlapping accepted icons and white lines /
         texts), over +-1 working px. None when too little of the icon is visible."""
@@ -1785,6 +1869,8 @@ class RosterMatcher:
         x0 = int(round(c.x - half - 0.5))
         y0 = int(round(c.y - half - 0.5))
         rr = OCC_SEARCH if work_centres else 1     # a covered icon's NCC peak drifts away
+        if search is not None:
+            rr = min(rr, int(search))
         offs = [(dx, dy) for dy in range(-rr, rr + 1) for dx in range(-rr, rr + 1)
                 if 0 <= x0 + dx <= Wf - s and 0 <= y0 + dy <= Hf - s]
         if not offs:
@@ -1829,18 +1915,32 @@ class RosterMatcher:
         mean closeness to the side's (learned) ring colour on the ring annulus minus the
         larger of the same inside / outside it (a thin ring, not an area of that colour)."""
         H, W = feat.shape[:2]
-        kr, ki, ko = (_annulus(R_w, a, b) for a, b in RING_PROP_ANNULI)
+        # the three annulus filters share one forward DFT per side (kernel spectra cached):
+        # 8 DFTs per frame instead of 18 with cv2.filter2D (same values, zero borders)
+        n = 2 * int(math.ceil(R_w * 1.35)) + 1
+        h0 = n // 2
+        shape = (cv2.getOptimalDFTSize(H + n - 1), cv2.getOptimalDFTSize(W + n - 1))
+        key = (round(float(R_w), 4), shape)
+        specs = self._ring_specs.get(key)
+        if specs is None:
+            specs = [_spec(_annulus(R_w, a, b), shape) for a, b in RING_PROP_ANNULI]
+            self._ring_specs = {key: specs}
         out: dict[str, np.ndarray] = {}
         cent = self.rings.centroid
+        buf = np.zeros(shape, np.float32)
         for side, rels in (("ally", ("ally", "self")), ("enemy", ("enemy",))):
-            close = np.zeros((H, W), np.float32)
+            close = buf[:H, :W]
+            close[:] = 0.0
             for rel in rels:
                 c = cent[rel] - np.float32([0.0, 128.0, 128.0])
                 d2 = RING_PROP_LW * (feat[:, :, 0] - c[0]) ** 2 + (feat[:, :, 1] - c[1]) ** 2 + \
                     (feat[:, :, 2] - c[2]) ** 2
                 np.maximum(close, np.exp(-d2 / RING_PROP_SIGMA ** 2), out=close)
-            r = cv2.filter2D(close, -1, kr)
-            out[side] = r - np.maximum(cv2.filter2D(close, -1, ki), cv2.filter2D(close, -1, ko))
+            F = cv2.dft(buf)
+            r, i_, o_ = (cv2.idft(cv2.mulSpectrums(F, sp, 0),
+                                  flags=cv2.DFT_SCALE | cv2.DFT_REAL_OUTPUT)[h0:h0 + H, h0:h0 + W]
+                         for sp in specs)
+            out[side] = r - np.maximum(i_, o_)
         return out
 
     def _ring_proposals(self, feat: np.ndarray, bank: _Bank, accepted: list, used: set,
@@ -1868,7 +1968,17 @@ class RosterMatcher:
                 props.append((float(S[y, x]), side, cx, cy))
         out: list[_Cand] = []
         taken = set(used)
-        for score, side, cx, cy in sorted(props, reverse=True)[:RING_PROP_MAX]:
+        props = sorted(props, reverse=True)[:RING_PROP_MAX]
+        ver = self._get_verifier() if RING_PROP_VERIFY > 0 else None
+        if ver is not None and props and self._ring_img is not None:
+            # (cost) rings of glyphs / terrain are dropped before the per-champion re-scoring
+            try:
+                p_icon = ver.icon_prob(self._ring_img, [(cx / kx, cy / ky, R_w / kx)
+                                                        for _s, _d, cx, cy in props])
+                props = [pr for pr, pi in zip(props, p_icon) if pi >= RING_PROP_VERIFY]
+            except Exception:
+                pass
+        for score, side, cx, cy in props:
             pool = [j for j, e in enumerate(ents) if j not in taken and j not in dead
                     and (e.relation == "enemy") == (side == "enemy")]
             if not pool:
@@ -1879,7 +1989,8 @@ class RosterMatcher:
                 continue
             scored = []
             for j in pool:
-                sj = self._rescue(_Cand(j, cx, cy, 0.0, 0.0), feat, bank, near, D_work, caps=True)
+                sj = self._rescue(_Cand(j, cx, cy, 0.0, 0.0), feat, bank, near, D_work, caps=True,
+                                  search=RING_PROP_SEARCH)
                 if sj is not None:
                     scored.append((sj, j, self.last_rescue_pos))
             if not scored:
@@ -2242,14 +2353,21 @@ class RosterMatcher:
         for c in cands:
             is_self = ents[c.i].relation == "self"
             self._score_cand(c, bgr, kx, ky, R_px, W, H, now,
-                             floor - (SELF_RELAX if is_self else 0.0))
+                             floor - max(SELF_RELAX if is_self else 0.0, TRACK_RELAX))
+            tr = self._tracks.get(c.i)
             if is_self:
-                tr = self._tracks.get(c.i)
                 if tr is not None and now - tr.t <= SELF_COAST_S:
                     pu, pv = tr.predict(now)
                     if math.hypot(c.x / kx - pu, c.y / ky - pv) <= JUMP_SLACK + \
                             MAX_SPEED * (now - tr.t):
                         relax[id(c)] = SELF_RELAX
+            if TRACK_RELAX > 0 and tr is not None and tr.hits >= TRACK_RELAX_HITS and \
+                    0.0 <= now - tr.t <= TRACK_RELAX_S and c.ring is not None:
+                pu, pv = tr.predict(now)
+                own, opp = (c.f_en, c.f_al) if ents[c.i].relation == "enemy" else (c.f_al, c.f_en)
+                if own >= TRACK_RELAX_OWN and opp <= TRACK_RELAX_OPP and math.hypot(
+                        c.x / kx - pu, c.y / ky - pv) <= TRACK_RELAX_DIST + 0.5 * MAX_SPEED * (now - tr.t):
+                    relax[id(c)] = max(relax.get(id(c), 0.0), TRACK_RELAX)
         cands.sort(key=lambda c: -c.tot)
 
         # 4. assignment: one position per champion, no two champions on one spot
@@ -2279,11 +2397,13 @@ class RosterMatcher:
                     return True
             return False
 
+        ver = self._get_verifier() if VERIFY_ZONE > 0 else None
         for c in cands:
             if c.i in used:
                 continue
             t_i = thr - relax.get(id(c), 0.0)
-            if c.tot < t_i:
+            if c.tot < t_i and not (ver is not None and c.tot >= t_i - VERIFY_ZONE
+                                    and self._verified(ver, raw_bgr, c, kx, ky, r_norm)):
                 rejected.setdefault(c.i, c)
                 info(c, False, "score")
                 continue
@@ -2291,6 +2411,18 @@ class RosterMatcher:
                 rejected.setdefault(c.i, c)
                 info(c, False, "conflict")
                 continue
+            if ver is not None and c.tot < thr + VETO_MARGIN and not self.grey:
+                tr_c = self._tracks.get(c.i)
+                if tr_c is None or now - tr_c.t > VETO_FRESH_S or c.note == "jump":
+                    appear = True
+                else:                        # (a recall to the fountain is no "jump")
+                    pu, pv = tr_c.predict(now)
+                    appear = math.hypot(c.x / kx - pu, c.y / ky - pv) > \
+                        JUMP_SLACK + MAX_SPEED * max(0.0, now - tr_c.t)
+                if appear and self._icon_prob(ver, raw_bgr, c, kx, ky, r_norm) < VETO_MAX:
+                    rejected.setdefault(c.i, c)
+                    info(c, False, "veto")
+                    continue
             e = ents[c.i]
             own, opp = (c.f_en, c.f_al) if e.relation == "enemy" else (c.f_al, c.f_en)
             if c.ev < STRONG_SCORE and opp > 0.3 and opp > 2.0 * own + 0.05:
@@ -2367,6 +2499,7 @@ class RosterMatcher:
         #     the best of THAT team's missing alive champions (occlusion-tolerant score)
         if self.ring_proposals and not self.grey and len(used) + len(dead) < n_e:
             try:
+                self._ring_img = raw_bgr
                 for c in self._ring_proposals(feat, bank, accepted, used, dead, kx, ky,
                                               R_px * fx, D_work, thr):
                     self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0,
@@ -2422,6 +2555,12 @@ class RosterMatcher:
                 # short extrapolation only: a hidden icon's last velocity is often wrong
                 k = min(max(now - tr.t, 0.0), SELF_COAST_VEL_S)
                 pu, pv = tr.u + tr.vu * k, tr.v + tr.vv * k
+                if SELF_COAST_UNDER and any(
+                        math.hypot(a.x / kx - pu, a.y / ky - pv) < STACK_NEAR * 2.0 * r_norm
+                        for a in accepted):
+                    # under another icon (my support...): no frozen position, the tracker's
+                    # stacked hold follows the icon drawn over mine (measured, det_gym slow3)
+                    continue
                 score = float(max(0.05, tr.conf * (1.0 - 0.5 * (now - tr.t) / SELF_COAST_S)))
                 dets_extra.append(Detection(u=pu, v=pv, r=r_norm, score=score, cls="ally",
                                             cls_probs=(0.03, 0.97, 0.0), alias=e.alias))
@@ -2470,7 +2609,12 @@ class RosterMatcher:
             tr.conf *= 0.8
             far = rejected.get(i)
             if far is not None and far.note == "jump" and far.tot + JUMP_PENALTY >= thr:
-                tr.pend = (far.x / kx, far.y / ky, now)
+                fu, fv = far.x / kx, far.y / ky
+                p = tr.pend
+                if p is not None and now - p[4] < 1.0 and math.hypot(fu - p[0], fv - p[1]) < 0.03:
+                    tr.pend = (fu, fv, p[2], p[3] + 1, now)
+                else:
+                    tr.pend = (fu, fv, now, 1, now)
 
         self.last_matches = infos
         # 8. learned icons (custom skins): bootstrap / capture / refresh (self_icon.py)

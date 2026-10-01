@@ -296,8 +296,11 @@ def _label_lut(rings: Any) -> np.ndarray:
     if lut is not None:
         return lut
     last = _LUT_CACHE.get("last")
-    if last is not None and time.monotonic() - last[0] < LUT_REBUILD_S:
-        return last[1]                      # the colours drift slowly: rebuild at most every few s
+    if last is not None and time.monotonic() - last[0] < LUT_REBUILD_S and len(last) > 2 \
+            and len(last[2]) == len(key) and max(abs(a - b) for a, b in zip(last[2], key)) <= 2:
+        # the colours drift slowly: rebuild at most every few s (only for a slight drift: a
+        # different colour set, e.g. a new game / another matcher, gets its own table)
+        return last[1]
     n = 1 << _LUT_BITS
     half = 1 << (7 - _LUT_BITS)
     g = (np.arange(n, dtype=np.int32) << (8 - _LUT_BITS)) + half
@@ -321,7 +324,7 @@ def _label_lut(rings: Any) -> np.ndarray:
     if len(_LUT_CACHE) > 16:
         _LUT_CACHE.clear()
     _LUT_CACHE[key] = lut
-    _LUT_CACHE["last"] = (time.monotonic(), lut)
+    _LUT_CACHE["last"] = (time.monotonic(), lut, key)
     return lut
 
 

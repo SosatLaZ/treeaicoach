@@ -387,6 +387,12 @@ class OnnxDetector(BaseDetector):
         so.inter_op_num_threads = 1
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        try:
+            # idle intra-op threads sleep instead of spinning between the ~2 ms runs: the
+            # spin burned more CPU than the inference itself (measured, tools/det_gym.py)
+            so.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        except Exception:
+            pass
         so.log_severity_level = 3
         providers = ["CPUExecutionProvider"]
         try:
@@ -843,7 +849,11 @@ class HybridDetector(BaseDetector):
     roster it is exactly the generic detector. Never raises.
     """
 
-    FALLBACK_EVERY = 4
+    FALLBACK_EVERY = 1
+    #: Re-emit the last generic detections on the frames the generic detector skips.
+    REUSE_STALE = False
+    #: Extras the roster matcher's patch verifier gives less icon probability are dropped.
+    EXTRA_VERIFY = 0.1
     EXTRA_MIN_SCORE = 0.6
     #: ... with the ONNX model: at least its own threshold (2026 model: real recall 0.82 at
     #: 0.40 vs 0.38 at 0.6)
@@ -940,6 +950,7 @@ class HybridDetector(BaseDetector):
         if self._frame - self._extra_run >= self.FALLBACK_EVERY or changed or \
                 self.FALLBACK_EVERY <= 1:
             self._extra_run = self._frame
+            fresh = True
             raw = [d for d in (self.fallback.detect(img) or []) if d.score >= self._extra_min()]
             structs = self._structure_uv()
             game = getattr(m, "_game", None)
@@ -956,7 +967,23 @@ class HybridDetector(BaseDetector):
                        for u, v in self._fountains):
                     continue
                 keep.append(d)
+            ver = getattr(m, "_get_verifier", None)
+            ver = ver() if callable(ver) and self.EXTRA_VERIFY > 0 else None
+            if ver is not None and keep:
+                # glyphs / pings / labels the generic detector took for an icon (measured,
+                # det_gym: static anonymous phantoms with p_icon < 0.01)
+                try:
+                    p = ver.icon_prob(img, [(d.u, d.v, d.r) for d in keep])
+                    keep = [d for d, pi in zip(keep, p) if pi >= self.EXTRA_VERIFY]
+                except Exception:
+                    pass
             self._last_extra = keep
+        else:
+            fresh = False
+        if not fresh and not self.REUSE_STALE:
+            # (measured, det_gym) a cached extra re-emitted on the next frames outlives the
+            # icon: a champion walking into the fog kept being drawn (live) at that spot
+            return []
         # at most as many extras per side as roster champions of that side not matched
         ents = getattr(m, "entries", ()) or ()
         n_enemy = sum(1 for e in ents if getattr(e, "relation", "") == "enemy"
