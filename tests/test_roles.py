@@ -209,3 +209,104 @@ def test_lane_opponent_roles() -> None:
     assert R.lane_opponent_roles("JUNGLE") == frozenset() == R.lane_opponent_roles(None)
     assert R.normalize_role("support") == "UTILITY" and R.normalize_role("MID") == "MIDDLE"
     assert R.normalize_role("") is None and R.normalize_role(3) is None
+
+
+# ---------------------------------------------------------------- lane swaps (observed lanes)
+def _swap_game(gt: float) -> GameInfo:
+    me = P("Jinx", "ORDER", "BOTTOM", spells=("Flash", "Heal"))
+    allies = [P("Garen", "ORDER", "TOP"), P("Vi", "ORDER", "JUNGLE", smite=True),
+              P("Ahri", "ORDER", "MIDDLE"), P("Nautilus", "ORDER", "UTILITY")]
+    enemies = [P("Darius", "CHAOS", "TOP"), P("LeeSin", "CHAOS", "JUNGLE", smite=True),
+               P("Syndra", "CHAOS", "MIDDLE"), P("Caitlyn", "CHAOS", "BOTTOM"), P("Thresh", "CHAOS", "UTILITY")]
+    return GameInfo(game_time=gt, game_mode="CLASSIC", map_number=11, me=me, allies=allies, enemies=enemies,
+                    fetched_at=0.0)
+
+
+MID = (0.50, 0.50)
+BOT_LANE = (0.92, 0.70)
+TOP_LANE = (0.08, 0.30)
+
+
+def _run(res: RoleResolver, tracker: Tracker, t0: float, secs: float, where, fps: float = 4.0,
+         gt0: float = 90.0) -> float:
+    t = t0
+    for _ in range(int(secs * fps)):
+        t += 1.0 / fps
+        u, v = where(t) if callable(where) else where
+        tracker.update(t, [_ident(u, v, "Jinx", "self")])
+        res.update(t, tracker, _swap_game(gt0 + t))
+    return t
+
+
+def test_assigned_bottom_playing_mid_switches_within_45_s() -> None:
+    res, tracker = RoleResolver(), Tracker()
+    res.update(0.0, tracker, _swap_game(90.0))
+    assert res.my_role() == "BOTTOM" and res.lane_opponents() == frozenset({"Caitlyn", "Thresh"})
+    t = 0.0
+    switched_at = None
+    while t < 60.0:
+        t = _run(res, tracker, t, 1.0, MID)
+        if res.my_role() == "MIDDLE" and switched_at is None:
+            switched_at = t
+    assert switched_at is not None and switched_at <= 45.0
+    me = res.me()
+    assert me.source == "observed" and me.assigned == "BOTTOM" and me.swapped and me.lane_seen == "mid"
+    # my lane opponent is the enemy mid; the ally mid (unobserved) took the bot role
+    assert res.lane_opponents() == frozenset({"Syndra"})
+    assert res.role_of("Ahri", "ally") == "BOTTOM"
+    assert len({i.role for i in res.roles().values() if i.side == "ally"}) == 5
+    sw = res.my_swap()
+    assert sw is not None and sw[0] == "MIDDLE"
+
+
+def test_no_flapping_on_roams() -> None:
+    res, tracker = RoleResolver(), Tracker()
+    t = _run(res, tracker, 0.0, 150.0, MID)                    # 2.5 min mid
+    assert res.my_role() == "MIDDLE"
+    history = []
+    for _ in range(3):                                         # three 30 s roams bot, back mid
+        t = _run(res, tracker, t, 30.0, BOT_LANE)
+        history.append(res.my_role())
+        t = _run(res, tracker, t, 40.0, MID)
+        history.append(res.my_role())
+    assert set(history) == {"MIDDLE"}
+
+
+def test_riot_position_kept_when_playing_assigned_lane() -> None:
+    res, tracker = RoleResolver(), Tracker()
+    _run(res, tracker, 0.0, 80.0, BOT_LANE)
+    me = res.me()
+    assert me.role == "BOTTOM" and me.source == "riot" and not me.swapped and res.my_swap() is None
+
+
+def test_prior_swap_from_spells_and_champions_without_map_data() -> None:
+    # Riot says Jinx (Heal) is MIDDLE and Ahri (Teleport) is BOTTOM: they obviously swapped.
+    me = P("Garen", "ORDER", "TOP")
+    allies = [P("Vi", "ORDER", "JUNGLE", smite=True), P("Jinx", "ORDER", "MIDDLE", spells=("Flash", "Heal")),
+              P("Ahri", "ORDER", "BOTTOM", spells=("Flash", "Teleport")), P("Lulu", "ORDER", "UTILITY")]
+    res = RoleResolver()
+    res.update(0.0, None, game(me, allies, []))
+    assert res.role_of("Jinx", "ally") == "BOTTOM" and res.role_of("Ahri", "ally") == "MIDDLE"
+    assert res.role_of("Lulu", "ally") == "UTILITY"
+    # an off-meta but plausible pick is NOT swapped (Lucian mid, Yasuo bot)
+    allies2 = [P("Vi", "ORDER", "JUNGLE", smite=True), P("Lucian", "ORDER", "MIDDLE"),
+               P("Yasuo", "ORDER", "BOTTOM"), P("Lulu", "ORDER", "UTILITY")]
+    res.update(1.0, None, game(me, allies2, []))
+    assert res.role_of("Lucian", "ally") == "MIDDLE" and res.role_of("Yasuo", "ally") == "BOTTOM"
+
+
+def test_enemy_swap_from_sightings_changes_my_lane_opponent() -> None:
+    # I am mid (Ahri); the enemy "BOTTOM" Caitlyn actually lanes mid against me.
+    me = P("Ahri", "ORDER", "MIDDLE")
+    enemies = [P("Darius", "CHAOS", "TOP"), P("LeeSin", "CHAOS", "JUNGLE", smite=True),
+               P("Syndra", "CHAOS", "MIDDLE"), P("Caitlyn", "CHAOS", "BOTTOM"), P("Thresh", "CHAOS", "UTILITY")]
+    res, tracker = RoleResolver(), Tracker()
+    t = 0.0
+    for _ in range(4 * 50):
+        t += 0.25
+        tracker.update(t, [_ident(0.5, 0.5, "Ahri", "self"), _ident(0.52, 0.48, "Caitlyn", "enemy"),
+                           _ident(0.93, 0.72, "Syndra", "enemy")])
+        res.update(t, tracker, game(me, [], enemies, gt=90.0 + t))
+    assert res.lane_opponents() == frozenset({"Caitlyn"})
+    assert res.role_of("Syndra", "enemy") in ("BOTTOM", "UTILITY")
+    assert res.info("Caitlyn", "enemy").source == "observed"
