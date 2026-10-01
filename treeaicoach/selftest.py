@@ -371,8 +371,8 @@ def check_demo(res: CheckResult, ctx: dict[str, Any]) -> None:
         _expect(first(AlertKind.MACRO_TIP, win[0], win[1], "mort") is not None,
                 f"pas de conseil « adversaire mort » / no lane-opponent-dead macro tip in {win}")
         win = expected.get("praise", (0.0, end_s))
-        _expect(any(a.kind == AlertKind.PRAISE and win[0] <= t <= win[1] for t, a in alerts),
-                f"pas de félicitation vocale (solo kill) / no spoken praise in {win}")
+        _expect(first(AlertKind.PRAISE, *win) is not None,       # visual first: written by default
+                f"pas de félicitation (solo kill) / no praise in {win}")
         win = expected.get("toast", (0.0, end_s))
         praise_toasts = [(t, tv) for t, tv in toasts_seen if tv.toast.kind == "praise" and win[0] <= t <= win[1]]
         _expect(bool(praise_toasts), f"pas de toast de félicitation / no praise toast in {win}")

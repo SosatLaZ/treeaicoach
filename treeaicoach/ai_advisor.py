@@ -30,6 +30,7 @@ import re
 import socket
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -49,7 +50,17 @@ MAX_REVIEW_CHARS = 2500
 REVIEW_TIMEOUT_S = 20.0
 REVIEW_MAX_TOKENS = 700
 MAX_ANALYSIS_BYTES = 12000
-MANUAL_MIN_INTERVAL_S = 20.0    # "Demander à l'IA" (hotkey / button)
+MANUAL_MIN_INTERVAL_S = 20.0
+GROQ_MIN_TOKENS = 500
+#: auto-pick order when the configured / default model does not exist for the key
+MODEL_PREFERENCE: dict[str, tuple[str, ...]] = {
+    "groq": ("openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "qwen/qwen3-32b",
+             "meta-llama/llama-4-maverick-17b-128e-instruct", "llama-3.1-8b-instant"),
+    "openrouter": ("meta-llama/llama-3.3-70b-instruct:free", "openai/gpt-oss-120b:free",
+                   "deepseek/deepseek-chat-v3-0324:free", "google/gemini-2.0-flash-exp:free"),
+}
+_NOT_CHAT = ("whisper", "guard", "tts", "playai", "distil", "embed", "moderation", "allam", "compound")
+_auto_model: dict[str, str] = {}    # "Demander à l'IA" (hotkey / button)
 BASE_GOLD_MIN = 800             # "base visit with gold"
 FED_LEVELS = (6, 11, 16)
 OBJECTIVE_LEAD_S = 60.0
@@ -75,7 +86,7 @@ PROVIDERS: dict[str, Provider] = {
                        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                        "gemini-2.0-flash", True, "https://aistudio.google.com/apikey"),
     "groq": Provider("groq", "Groq (gratuit)", "https://api.groq.com/openai/v1/chat/completions",
-                     "llama-3.3-70b-versatile", True, "https://console.groq.com/keys"),
+                     "openai/gpt-oss-120b", True, "https://console.groq.com/keys"),
     "openrouter": Provider("openrouter", "OpenRouter (modèles :free)",
                            "https://openrouter.ai/api/v1/chat/completions",
                            "meta-llama/llama-3.3-70b-instruct:free", True, "https://openrouter.ai/keys"),
@@ -167,6 +178,14 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
             headers["X-Title"] = "TreeAI Coach"
         body = {"model": model, "max_tokens": max_tokens, "temperature": 0.4,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}
+        if provider == "groq":
+            # reasoning models (gpt-oss, qwen3): without this the reasoning eats the tokens -> empty content
+            body["max_tokens"] = max(max_tokens, GROQ_MIN_TOKENS)
+            if "gpt-oss" in model:
+                body["reasoning_effort"] = "low"
+                body["include_reasoning"] = False
+            elif "qwen3" in model:
+                body["reasoning_format"] = "hidden"
     elif provider == "ollama":
         target = url or spec.url
         body = {"model": model, "stream": False, "options": {"num_predict": max_tokens, "temperature": 0.4},
@@ -233,6 +252,8 @@ def _classify_http(code: int, body: str) -> str:
     low = body.lower()
     if code in (401, 403) or (code == 400 and ("api key" in low or "api_key" in low or "apikey" in low)):
         return "key"
+    if "model_not_found" in low or "does not exist" in low or "decommissioned" in low:
+        return "model"
     if code == 429 or "quota" in low or "rate limit" in low:
         return "quota"
     if code == 404:
@@ -247,10 +268,57 @@ def _opener_for(url: str) -> urllib.request.OpenerDirector:
     return urllib.request.build_opener()
 
 
+def list_models(provider: str, api_key: str, url: str | None = None, timeout: float = TIMEOUT_S) -> list[str]:
+    """Model ids of an OpenAI-compatible provider (GET .../models). [] on any error."""
+    spec = provider_spec(provider)
+    if spec is None or provider not in ("groq", "openrouter"):
+        return []
+    target = (url or spec.url).rsplit("/chat/completions", 1)[0] + "/models"
+    req = urllib.request.Request(target, headers={"Authorization": f"Bearer {api_key.strip()}",
+                                                  "Accept": "application/json", "User-Agent": "TreeAICoach"})
+    try:
+        with _opener_for(target).open(req, timeout=timeout) as resp:
+            data = json.loads(resp.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace"))
+        return [str(m.get("id")) for m in data.get("data") or [] if isinstance(m, dict) and m.get("id")]
+    except Exception:
+        log.debug("Model list unavailable", exc_info=True)
+        return []
+
+
+def pick_model(provider: str, ids: Iterable[str]) -> str | None:
+    """Best chat model among ``ids`` (preference list, then any non-audio / non-guard model)."""
+    ids = [i for i in ids if not any(w in i.lower() for w in _NOT_CHAT)]
+    for pref in MODEL_PREFERENCE.get(provider, ()):
+        if pref in ids:
+            return pref
+    if provider == "openrouter":
+        ids = [i for i in ids if i.endswith(":free")]
+    return ids[0] if ids else None
+
+
 def call_llm(provider: str, api_key: str, model: str, system: str, prompt: str,
              timeout: float = TIMEOUT_S, url: str | None = None, max_tokens: int = MAX_OUTPUT_TOKENS,
              long: bool = False) -> str:
-    """One blocking request; returns the cleaned advice. Raises :class:`AIError` only."""
+    """One blocking request; returns the cleaned advice. Raises :class:`AIError` only.
+
+    OpenAI-compatible providers: when the model does not exist for this key, the available
+    models are listed once and the best chat model is picked (and remembered) automatically."""
+    model = (model or "").strip() or _auto_model.get(provider, "")
+    try:
+        return _call_once(provider, api_key, model, system, prompt, timeout, url, max_tokens, long)
+    except AIError as exc:
+        if exc.code != "model" or provider not in ("groq", "openrouter"):
+            raise
+        best = pick_model(provider, list_models(provider, api_key, url, timeout))
+        if not best or best == model:
+            raise
+        log.info("AI model %r unavailable, using %r", model or "default", best)
+        _auto_model[provider] = best
+        return _call_once(provider, api_key, best, system, prompt, timeout, url, max_tokens, long)
+
+
+def _call_once(provider: str, api_key: str, model: str, system: str, prompt: str, timeout: float,
+               url: str | None, max_tokens: int, long: bool) -> str:
     target, headers, body = build_request(provider, model, api_key, system, prompt, url, max_tokens)
     req = urllib.request.Request(target, data=body, headers=headers, method="POST")
     try:
@@ -594,6 +662,106 @@ def _scoreboard(sb: Any) -> dict[str, Any] | None:
     return d
 
 
+def candidate_items(game: Any, role: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
+    """Items the AI may recommend (itemization.py): counters to the enemy profile + core items of
+    my class, not owned, with French name, cost and why. [] when unknown. Never raises."""
+    try:
+        from treeaicoach import itemization as iz
+
+        items = iz.load_items()
+        me = getattr(game, "me", None)
+        if me is None or not items:
+            return []
+        role = role or (getattr(me, "position", "") or None)
+        cls = iz.champion_class(me.champion_alias, role)
+        owned = {int(i) for i in me.items or ()}
+        prof = iz.enemy_profile(getattr(game, "enemies", None) or (), items)
+
+        def usable(iid: int) -> bool:
+            it = items.get(iid)
+            return it is not None and it.rift and iid not in owned and not any(
+                iid in items[o].parts for o in owned if o in items)
+
+        out: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for need, sev in sorted(prof.needs.items(), key=lambda kv: -kv[1]):
+            if sev < iz.NEED_MIN or iz._owned_need(need, owned):
+                continue
+            names = prof.names.get(need) or []
+            why = iz.REASONS[need].format(names=iz._join(names) if names else "Les ennemis")
+            for iid in iz.NEED_ITEMS.get(need, {}).get(cls, ()):
+                if usable(iid) and iid not in seen:
+                    seen.add(iid)
+                    out.append({"n": items[iid].name, "po": items[iid].gold, "pourquoi": why[:90]})
+        for iid in iz.CORE.get(cls, ()):
+            if usable(iid) and iid not in seen:
+                seen.add(iid)
+                out.append({"n": items[iid].name, "po": items[iid].gold, "pourquoi": "objet de base de ta classe"})
+        return out[:limit]
+    except Exception:
+        log.debug("candidate items unavailable", exc_info=True)
+        return []
+
+
+def _norm_item(s: str) -> str:
+    s = unicodedata.normalize("NFC", str(s)).replace("’", "'").casefold()
+    return " ".join(s.split())
+
+
+_BUY_RE = re.compile(
+    r"(?i:ach[eè]te[rz]?|finis|finir|termine[rz]?|compl[eè]te[rz]?|prends|construis|rush|vise|ach[eè]vement|"
+    r"objet|achat)\s*:?\s*(?i:(?:une?|la|le|les|des|ton|ta|tes|ensuite|d'abord|directement|tout de suite)\s+|l['’])*"
+    r"([A-ZÉÈÀÂÎÔÛ][\w'’\-]*(?:\s+(?:[a-zéèêàâîôûç'’\-]+|[A-ZÉÈÀÂÎÔÛ][\w'’\-]*)){0,4})")
+
+
+_NOT_ITEM_WORDS = frozenset({
+    "baron", "nashor", "dragon", "drake", "drakes", "dragons", "héraut", "heraut", "larves", "atakhan", "elder",
+    "ancestral", "tour", "tours", "inhibiteur", "nexus", "mid", "top", "bot", "jungle", "rivière", "flash",
+    "téléportation", "embrasement", "ignite", "soin", "barrière", "fatigue", "purge", "fantôme", "châtiment",
+    "vision", "contrôle", "balise", "ward", "wards", "objectifs", "objectif", "le", "la", "les", "un", "une",
+    "ton", "ta", "tes", "ce", "cet", "cette", "ça", "puis", "et", "ou", "si", "en", "avant", "après",
+})
+
+
+def validate_item_advice(text: str, game: Any, candidates: Iterable[dict[str, Any]] = ()) -> bool:
+    """False when the advice names an item that does not exist (hallucination) or tells me to buy
+    an item I already finished. Heuristic on "achète / finis / rush X" phrases. Never raises."""
+    try:
+        from treeaicoach.scoreboard import item_table
+
+        table = item_table()
+        known = sorted({_norm_item(v[0]) for v in table.values() if v and v[0]}, key=len, reverse=True)
+        if not known:
+            return True
+        owned_done = set()
+        me = getattr(game, "me", None)
+        for iid in (getattr(me, "items", None) or []) if me is not None else []:
+            info = table.get(int(iid))
+            if info is not None and info[2] in ("legendary", "boots"):
+                owned_done.add(_norm_item(info[0]))
+        allowed = {_norm_item(c.get("n", "")) for c in candidates or ()}
+        for m in _BUY_RE.finditer(text):
+            phrase = _norm_item(m.group(1))
+            hit = next((k for k in known if phrase.startswith(k) or (len(phrase) >= 6 and k.startswith(phrase))),
+                       None)
+            if hit is None:
+                first = phrase.split(" ", 1)[0]
+                if first in _NOT_ITEM_WORDS:
+                    continue
+                if any(_norm_item(c.champion_name or c.champion_alias) == first
+                       for c in (game.all_players() if hasattr(game, "all_players") else [])):
+                    continue                        # "prends Zed" (a champion), not an item
+                log.info("AI advice rejected: unknown item %r", m.group(1))
+                return False
+            if hit in owned_done and hit not in allowed:
+                log.info("AI advice rejected: %r already owned", hit)
+                return False
+        return True
+    except Exception:
+        log.debug("AI advice validation failed", exc_info=True)
+        return True
+
+
 def _fit(snap: dict[str, Any], limit: int) -> dict[str, Any]:
     """Drop the least useful details until the JSON fits in ``limit`` bytes."""
     def size() -> int:
@@ -678,6 +846,13 @@ def build_snapshot(game: Any, *, moment: str = "", roles: Any = None, scoreboard
             snap["morts"] = deaths
         if item_text:
             snap["achat"] = str(item_text)[:160]
+        try:
+            api_role = roles.my_role() if roles is not None and hasattr(roles, "my_role") else None
+        except Exception:
+            api_role = None
+        cands = candidate_items(game, api_role)
+        if cands:
+            snap["objets_possibles"] = cands
         for k, v in (context or {}).items():
             if v not in (None, "", [], {}):
                 snap[k] = v
@@ -692,7 +867,9 @@ def build_prompt(snapshot: dict[str, Any]) -> str:
     data = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
     return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle + analyse de la minimap) : {data}\n"
             "Réponds en 2 phrases courtes max, conseils concrets d'achat et de macro, "
-            "pas de spéculation sur les temps de recharge ennemis.")
+            "pas de spéculation sur les temps de recharge ennemis. Pour un achat, choisis UNIQUEMENT parmi "
+            "objets_possibles (noms exacts) ou les composants de la suggestion « achat » ; ne conseille "
+            "jamais un objet que j'ai déjà (me.it).")
 
 
 # ======================================================================================
@@ -834,7 +1011,7 @@ class AIAdvisor:
                 self._last_call = t
             snap = build_snapshot(game, moment=moment, roles=roles, scoreboard=scoreboard,
                                   objectives=objectives, item_text=item_text, context=_resolve(context))
-            self._start(build_prompt(snap), moment, t)
+            self._start(build_prompt(snap), moment, t, self._validator(game, snap, item_text))
             return True
         except Exception:
             log.exception("AIAdvisor.update failed")
@@ -862,7 +1039,7 @@ class AIAdvisor:
             snap = build_snapshot(game, moment="manual", roles=roles, scoreboard=scoreboard,
                                   objectives=list(objectives or ()), item_text=item_text,
                                   context=_resolve(context))
-            self._start(build_prompt(snap), "manual", t)
+            self._start(build_prompt(snap), "manual", t, self._validator(game, snap, item_text))
             return "Question envoyée à l'IA…"
         except Exception:
             log.exception("AIAdvisor.ask failed")
@@ -874,16 +1051,33 @@ class AIAdvisor:
             res, self._result = self._result, None
             return res
 
-    def _start(self, prompt: str, moment: str, t: float) -> None:
+    @staticmethod
+    def _validator(game: Any, snap: dict[str, Any], item_text: str | None) -> Callable[[str], str | None]:
+        cands = list(snap.get("objets_possibles") or [])
+
+        def check(text: str) -> str | None:
+            if validate_item_advice(text, game, cands):
+                return text
+            return str(item_text) if item_text else None      # hallucinated item: itemization fallback
+        return check
+
+    def _start(self, prompt: str, moment: str, t: float,
+               validate: Callable[[str], str | None] | None = None) -> None:
         prov, key, model = self._provider, self._key, self._model
         url = self._urls.get(prov)
 
         def job() -> None:
             try:
                 text = self._caller(prov, key, model, system_prompt(), prompt, timeout=TIMEOUT_S, url=url)
+                if validate is not None:
+                    text = validate(text)
                 with self._lock:
-                    self._result = Advice(text, moment, t)
                     self.calls += 1
+                    if text:
+                        self._result = Advice(text, moment, t)
+                    elif moment == "manual":
+                        self._result = Advice("L'IA n'a pas donné de conseil fiable cette fois.", moment, t,
+                                              error=True)
             except AIError as exc:
                 self._fail(exc.code, prov, moment, t)
             except Exception:

@@ -161,6 +161,11 @@ SELF_CAM_DIST = 0.06
 OCC_RANGE = 0.3
 OCC_PENALTY = 0.05
 OCC_MIN_NCC = 0.4
+#: Tracked mode, champions not tracked: whole-map search at a lower resolution (matched
+#: disc COARSE_INNER_PX wide); its peaks above COARSE_VERIFY_MIN are verified at full res.
+COARSE_INNER_PX = 9.0
+COARSE_VERIFY_MIN = 0.45
+COARSE_VERIFY_GAP = 0.03
 #: Structure glyphs (turrets, inhibitors, nexus) have team-coloured rings: a candidate
 #: this close (normalized) to a structure of the same colour needs STRUCT_PENALTY more.
 STRUCT_DIST = 0.03
@@ -186,6 +191,11 @@ _MAX_LEARN_DRIFT = 60.0            # chroma distance from the seed needing confi
 
 
 _K3 = np.ones((3, 3), np.uint8)
+_RING_ANG = np.linspace(0, 2 * np.pi, 40, endpoint=False, dtype=np.float32)
+_RING_DX = (np.asarray([0.86, 0.93, 1.0], np.float32)[:, None] * np.cos(_RING_ANG)[None]
+            ).astype(np.float32)
+_RING_DY = (np.asarray([0.86, 0.93, 1.0], np.float32)[:, None] * np.sin(_RING_ANG)[None]
+            ).astype(np.float32)
 
 
 def _lab1(bgr: Sequence[int]) -> np.ndarray:
@@ -474,13 +484,13 @@ class RingColorModel:
         if lab_px.size == 0:
             return 0.0, 0.0
         w = np.asarray([0.35, 1.0, 1.0], np.float32)   # lightness matters less than hue
-
-        def dist(protos: list[np.ndarray]) -> np.ndarray:
-            return np.min(np.stack([np.sqrt((((lab_px - p) * w) ** 2).sum(axis=1))
-                                    for p in protos]), axis=0)
-
-        de = dist(self._protos("enemy"))
-        da = np.minimum(dist(self._protos("ally")), dist(self._protos("self")))
+        pe, pa = self._protos("enemy"), self._protos("ally") + self._protos("self")
+        P = np.asarray(pe + pa, np.float32) * w                          # [k, 3]
+        X = lab_px.astype(np.float32, copy=False) * w                   # [n, 3]
+        d2 = (X * X).sum(axis=1)[:, None] - 2.0 * (X @ P.T) + (P * P).sum(axis=1)[None]
+        D = np.sqrt(np.maximum(d2, 0.0))
+        de = D[:, :len(pe)].min(axis=1)
+        da = D[:, len(pe):].min(axis=1)
         f_en = float(np.mean((de < self.NEAR) & (de < 0.8 * da)))
         f_al = float(np.mean((da < self.NEAR) & (da < 0.8 * de)))
         return f_en, f_al
@@ -567,6 +577,7 @@ class _Cand:
     ring: Any = None
     note: str = ""
     margin: float | None = None         # uniqueness margin (whole-map search only)
+    coarse: float = 0.0                 # NCC of the low-resolution proposal (diagnostics)
 
 
 @dataclass
@@ -953,10 +964,8 @@ class RosterMatcher:
                      exclude: Sequence[tuple[float, float]] = ()) -> np.ndarray:
         """Lab pixels of the ring annulus (0.86-1.0 R) inside the image, ``[n, 3]``;
         without the arc covered by the icons centred at ``exclude`` (original px)."""
-        ang = np.linspace(0, 2 * np.pi, 40, endpoint=False, dtype=np.float32)
-        rr = np.asarray([0.86, 0.93, 1.0], np.float32) * np.float32(R)
-        xs = (cx - 0.5 + rr[:, None] * np.cos(ang)[None]).astype(np.float32)
-        ys = (cy - 0.5 + rr[:, None] * np.sin(ang)[None]).astype(np.float32)
+        xs = (np.float32(cx - 0.5) + np.float32(R) * _RING_DX).astype(np.float32)
+        ys = (np.float32(cy - 0.5) + np.float32(R) * _RING_DY).astype(np.float32)
         H, W = bgr.shape[:2]
         ok = (xs >= 0) & (xs <= W - 1) & (ys >= 0) & (ys <= H - 1)
         for ex, ey in exclude:
@@ -1005,6 +1014,69 @@ class RosterMatcher:
                 if j > 0:
                     bg.append(v)
         return cands, bg
+
+    def _coarse_search(self, feat: np.ndarray, bank: _Bank, idx: list[int]
+                       ) -> list[_Cand]:
+        """Fast whole-map search of the champions ``idx`` (tracked mode): Fourier NCC at a
+        lower resolution (matched disc COARSE_INNER_PX wide) proposes a few peaks per
+        champion, each verified by the exact NCC at the working resolution."""
+        s = bank.size
+        k = COARSE_INNER_PX / max(INNER_RATIO * self._bank_inner(bank), 1e-6)
+        if k >= 0.9:
+            return self._global_search(feat, bank, idx)[0]
+        Hf, Wf = feat.shape[:2]
+        Wc, Hc = max(8, int(round(Wf * k))), max(8, int(round(Hf * k)))
+        featc = cv2.resize(feat, (Wc, Hc), interpolation=cv2.INTER_AREA)
+        kc = Wc / float(Wf)
+        bank_c = self._bank(INNER_RATIO * self._bank_inner(bank) * kc)
+        maps, std = ncc_maps(featc, bank_c, idx)
+        if maps.shape[1] < 2 or maps.shape[2] < 2:
+            return []
+        half_c = (bank_c.size - 1) / 2.0
+        half = (s - 1) / 2.0
+        rad = max(2, int(round(0.4 * bank_c.size)))
+        r_ver = int(math.ceil(0.5 / kc)) + 1
+        out: list[_Cand] = []
+        for j, i in enumerate(idx):
+            m = maps[j]
+            pk = [(x, y, v) for x, y, v in self._peaks(m, rad, PEAKS_PER_CHAMP + 1, PEAK_FLOOR)
+                  if CONTRAST_RANGE[0] < float(std[y, x]) / float(bank_c.stds[i])
+                  < CONTRAST_RANGE[1]]
+            for q, (x, y, v) in enumerate(pk[:PEAKS_PER_CHAMP]):
+                # the true icon is the champion's best low-res peak (measured): verify it
+                # and only the peaks almost as good
+                if v < COARSE_VERIFY_MIN or v < pk[0][2] - COARSE_VERIFY_GAP:
+                    break
+                other = max((p[2] for kk, p in enumerate(pk) if kk != q), default=PEAK_FLOOR)
+                margin = v - other
+                cx = (x + half_c + 0.5) / kc - half - 0.5        # full-res map index
+                cy = (y + half_c + 0.5) / kc - half - 0.5
+                xm0 = max(0, int(math.floor(cx)) - r_ver)
+                xm1 = min(Wf - s, int(math.ceil(cx)) + r_ver)
+                ym0 = max(0, int(math.floor(cy)) - r_ver)
+                ym1 = min(Hf - s, int(math.ceil(cy)) + r_ver)
+                if xm1 < xm0 or ym1 < ym0:
+                    continue
+                res = local_ncc(feat[ym0:ym1 + s, xm0:xm1 + s], bank, i)
+                if res is None:
+                    continue
+                lm, lstd = res
+                ratio = lstd / float(bank.stds[i])
+                mm = np.where((ratio > CONTRAST_RANGE[0]) & (ratio < CONTRAST_RANGE[1]), lm, -1.0)
+                yy, xx = divmod(int(np.argmax(mm)), mm.shape[1])
+                vf = float(mm[yy, xx])
+                if vf < PEAK_FLOOR:
+                    continue
+                sx, sy = self._subpixel(mm, xx, yy)
+                out.append(_Cand(i, sx + xm0 + half + 0.5, sy + ym0 + half + 0.5, vf,
+                                 vf + UNIQUE_WEIGHT * min(margin, UNIQUE_CAP), margin=margin,
+                                 coarse=v))
+        return out
+
+    @staticmethod
+    def _bank_inner(bank: _Bank) -> float:
+        """Matched disc diameter (working px) of a bank."""
+        return 2.0 * math.sqrt(bank.n / math.pi) / INNER_RATIO
 
     def _local_search(self, feat: np.ndarray, bank: _Bank, i: int, tr: _Track, now: float,
                       kx: float, ky: float) -> list[_Cand]:
@@ -1125,6 +1197,17 @@ class RosterMatcher:
         c.tot = base + RING_WEIGHT * (own - opp) - NO_RING_PENALTY * max(0.0, 1.0 - own / 0.3)
         c.f_en, c.f_al, c.ring = f_en, f_al, ring
 
+    @staticmethod
+    def _has_white(feat: np.ndarray, x: float, y: float, r: float) -> bool:
+        """White unsaturated pixels (camera lines, timer texts) on the disc at (x, y)."""
+        x0, x1 = max(0, int(x - r)), min(feat.shape[1], int(x + r) + 1)
+        y0, y1 = max(0, int(y - r)), min(feat.shape[0], int(y + r) + 1)
+        p = feat[y0:y1, x0:x1]
+        if p.size == 0:
+            return False
+        w = (p[:, :, 0] > 215.0) & (np.abs(p[:, :, 1]) < 14.0) & (np.abs(p[:, :, 2]) < 14.0)
+        return float(w.mean()) > 0.04
+
     def _rescue(self, c: _Cand, feat: np.ndarray, bank: _Bank, work_centres: list,
                 D_work: float) -> float | None:
         """Occlusion-tolerant evidence of candidate ``c``: best NCC on the visible part of
@@ -1207,9 +1290,11 @@ class RosterMatcher:
                     found_local.add(i)
         # 2. the others (lost, in the fog, local miss): whole map
         glob = [i for i in range(n_e) if i not in found_local]
-        if glob:
+        if glob and full:
             gc, bg_scores = self._global_search(feat, bank, glob)
             cands.extend(gc)
+        elif glob:
+            cands.extend(self._coarse_search(feat, bank, glob))
         if full:
             st.last_full = st.frames
         thr = self._threshold(bg_scores)
@@ -1217,9 +1302,12 @@ class RosterMatcher:
 
         # 3. final scores (penalties, ring colour); self threshold relaxed near its track
         relax: dict[int, float] = {}
+        floor = thr - RING_WEIGHT - 0.05
         for c in cands:
-            self._score_cand(c, bgr, kx, ky, R_px, W, H, now, thr - RING_WEIGHT - 0.05 - SELF_RELAX)
-            if ents[c.i].relation == "self":
+            is_self = ents[c.i].relation == "self"
+            self._score_cand(c, bgr, kx, ky, R_px, W, H, now,
+                             floor - (SELF_RELAX if is_self else 0.0))
+            if is_self:
                 tr = self._tracks.get(c.i)
                 if tr is not None and now - tr.t <= SELF_COAST_S:
                     pu, pv = tr.predict(now)
@@ -1283,6 +1371,18 @@ class RosterMatcher:
                 continue
             near = [(a.x, a.y) for a in accepted
                     if math.hypot(c.x - a.x, c.y - a.y) < 1.05 * D_work]
+            # only where an occluder is likely: an accepted icon over it, white lines /
+            # texts on it, or the champion was right there a moment ago (ping on it...)
+            tr = self._tracks.get(i)
+            if not near and not (tr is not None and now - tr.t <= TRACK_FRESH_S and math.hypot(
+                    c.x / kx - tr.u, c.y / ky - tr.v) <= LOCAL_SLACK + MAX_SPEED * (now - tr.t)) \
+                    and not self._has_white(feat, c.x, c.y, 0.5 * INNER_RATIO * D_work):
+                continue
+            if c.ring is None:
+                self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0)
+            own0, opp0 = (c.f_en, c.f_al) if ents[i].relation == "enemy" else (c.f_al, c.f_en)
+            if own0 < 0.12 or opp0 > own0 + 0.1:
+                continue                   # no ring of the champion's colour around it
             occ = self._rescue(c, feat, bank, near, D_work)
             if occ is None or occ + (c.ev - c.ncc) <= c.ev:
                 continue

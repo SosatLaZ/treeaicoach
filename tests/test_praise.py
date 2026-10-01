@@ -305,11 +305,15 @@ def test_engine_praise_voice_toast_and_recorder(monkeypatch, tmp_path):
             clock[0] = i * 0.5
             said += eng.step(clock[0])
         kinds = [a.kind for a in said]
-        assert AlertKind.PRAISE in kinds
-        praise = next(a for a in said if a.kind == AlertKind.PRAISE)
-        assert "Darius" in praise.text and any(praise.text == t for t, _l in voice.said)
+        # speech budget (one message every 20 s): the praise is spoken, or waits in the budget queue
+        queued = eng._tactics.gate.budget.queued()
+        praise = next((a for a in list(said) + queued if a.kind == AlertKind.PRAISE), None)
+        assert praise is not None and "Darius" in praise.text
+        assert praise not in said or any(praise.text == t for t, _l in voice.said)
         # Lee Sin is 4/1 in the fixture: a Tab insight was spoken too (INFO)
-        assert AlertKind.SCOREBOARD in kinds
+        # (spoken, or written when the speech budget is used: one message every 20 s)
+        assert (AlertKind.SCOREBOARD in kinds or any(k == "scoreboard" for _t, k, _x in eng.text_messages)
+                or any(a.kind == AlertKind.SCOREBOARD for a in queued))
         st = eng._build_overlay_state(clock[0])
         assert st.toasts and {v.toast.kind for v in st.toasts} <= {"praise", "warning", "insight", "danger"}
         assert st.insight                                      # HUD line (coach or Tab summary)

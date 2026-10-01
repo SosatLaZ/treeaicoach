@@ -592,7 +592,8 @@ class MapCoach:
         if last is not None and 0.0 <= ctx.t - last < RULE_COOLDOWN_S.get(rule, 60.0):
             return False
         if self._last_tip_t is not None:
-            gap = (SAFETY_GAP_S if rule == "numbers_bad" else WINDOW_GAP_S if rule in ("lane_dead", "jungler_dead")
+            gap = (SAFETY_GAP_S if rule == "numbers_bad" else WINDOW_GAP_S if rule in (
+                "lane_dead", "jungler_dead", "objective_setup", "objective_wave", "baron_pick")
                    else GLOBAL_GAP_S)
             if 0.0 <= ctx.t - self._last_tip_t < gap:
                 return False

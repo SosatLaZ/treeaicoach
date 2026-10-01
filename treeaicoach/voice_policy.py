@@ -56,6 +56,8 @@ BIG_PRAISE_PREFIXES: tuple[str, ...] = ("multi:", "shutdown:", "solo:", "steal:"
 STANCE_PREFIX = "stance:"
 #: Keys always spoken (subject to the budget): fight calls and urgent macro / positioning calls.
 URGENT_PREFIXES: tuple[str, ...] = ("call:", "urgent:")
+#: Director calls (tactics.py: phase / end-game / positioning / fight summary): own anti-spam kind.
+MACRO_CALL_PREFIXES: tuple[str, ...] = ("urgent:", "macro:")
 #: Stances spoken in "normal" (safety only; never in "minimal").
 MINIMAL_STANCES = ("stance:prudent",)
 #: Objective warnings at least this many seconds before the spawn are spoken in "minimal".
@@ -69,11 +71,13 @@ NORMAL_VOICE = frozenset({AlertKind.OBJECTIVE_SOON, AlertKind.MACRO_TIP, AlertKi
 KIND_GAP_S: dict[str, float] = {
     "macro_tip": 20.0, "praise": 12.0, "scoreboard": 30.0, "recall_gold": 150.0, "control_ward": 300.0,
     "objective_soon": 6.0, "jungler_spotted": 30.0, "laner_mia": 30.0, "death_recap": 0.0, "stance": 120.0,
+    "macro_call": 8.0,
 }
 #: The same key or the same text is not repeated within this window (per game), seconds.
 DEDUPE_S: dict[str, float] = {
     "macro_tip": 240.0, "praise": 600.0, "scoreboard": 600.0, "recall_gold": 180.0, "control_ward": 600.0,
     "objective_soon": 200.0, "jungler_spotted": 60.0, "laner_mia": 90.0, "death_recap": 30.0, "stance": 120.0,
+    "macro_call": 60.0,
 }
 DEFAULT_GAP_S = 15.0
 DEFAULT_DEDUPE_S = 180.0
@@ -83,7 +87,7 @@ TEXT_TOAST: dict[str, tuple[str, str]] = {
     "macro_tip": ("insight", "CONSEIL"), "recall_gold": ("insight", "RETOUR EN BASE"),
     "control_ward": ("insight", "BALISE"), "objective_soon": ("warning", "OBJECTIF"),
     "death_recap": ("danger", "TA MORT"), "jungler_spotted": ("warning", "JUNGLER"),
-    "laner_mia": ("warning", "MIA"),
+    "laner_mia": ("warning", "MIA"), "macro_call": ("insight", "CONSEIL"),
 }
 
 
@@ -97,6 +101,8 @@ def kind_name(alert: Any) -> str:
     key = str(getattr(alert, "key", "") or "")
     if key.startswith(STANCE_PREFIX):
         return "stance"
+    if key.startswith(MACRO_CALL_PREFIXES):
+        return "macro_call"
     k = getattr(alert, "kind", "")
     return str(getattr(k, "value", k) or "")
 
@@ -464,6 +470,8 @@ class SpeechContext:
 
     @property
     def concentrating(self) -> bool:
+        if self.dead:
+            return False
         return (self.in_fight or (self.hp is not None and self.hp < LOW_HP_QUIET) or self.enemies_near >= 2
                 or self.enemy_in_danger)
 
@@ -530,8 +538,8 @@ class VoiceGate:
             return "voice"                                   # the player asked (F9)
         if route(alert, level) != "voice":
             return "text"
-        if ctx.concentrating or ctx.dead or conf < CONFIDENCE_MIN:
-            return "text"
+        if (ctx.concentrating and not ctx.dead) or conf < CONFIDENCE_MIN:
+            return "text"                                    # (dead: the best moment to listen)
         return "voice"
 
     def note_spoken(self, alert: Any, t: float) -> None:

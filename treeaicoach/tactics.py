@@ -243,7 +243,7 @@ class TacticalDirector:
                 out.toasts.append(("praise", "COMBAT GAGNÉ", up.ended_summary, f"fight:{int(gt)}"))
             else:
                 out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=up.ended_summary,
-                                        key=f"macro_tip:fight_end:{int(gt)}", t=t))
+                                        key=f"macro:fight_end:{int(gt)}", t=t))
         if not fs.active and self._held:                     # praise held during the fight
             fresh = [a for t0, a in self._held if t - t0 <= HOLD_PRAISE_S]
             self._held = []
@@ -253,7 +253,7 @@ class TacticalDirector:
         # ---- end-game calls
         calls = self.calls.update(t, st, objectives)
         for c in calls:
-            prefix = "urgent:" if c.speak else "macro_tip:"
+            prefix = "urgent:" if c.speak else "macro:"
             out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=c.text, key=prefix + c.key, t=t))
             self._banner = Banner({"engage": "engage", "retreat": "retreat"}.get(c.color, "call"), c.title,
                                   c.text, t, t + CALL_BANNER_S + (1.0 if c.speak else 0.0))
@@ -265,7 +265,7 @@ class TacticalDirector:
         adv = self.position.update(t, game, st, role=role, me_pos=me_uv, allies=allies, enemies=enemies,
                                    objectives=objectives, in_base=in_base, quiet=fs.active)
         if adv is not None:
-            prefix = "urgent:" if adv.speak else "macro_tip:"
+            prefix = "urgent:" if adv.speak else "macro:"
             out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=adv.text, key=prefix + adv.key, t=t))
             if adv.kind in ("alone", "objective"):
                 self._banner = Banner("retreat" if adv.kind == "alone" else "call", adv.title, adv.text, t,
@@ -351,7 +351,7 @@ class TacticalDirector:
                         written.append(a)
             elif dec == "opportunity":
                 written.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=text or a.text,
-                                     key=f"macro_tip:opportunity:{a.alias}", t=a.t, alias=a.alias))
+                                     key=f"macro:opportunity:{a.alias}", t=a.t, alias=a.alias))
         return keep, written
 
 

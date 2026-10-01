@@ -26,6 +26,7 @@ class _Server:
         self.requests: list[dict] = []
         self.status = status
         self.payload = payload
+        self.get_payload: object = None
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -36,6 +37,16 @@ class _Server:
                                        "body": body})
                 data = json.dumps(outer.payload).encode("utf-8")
                 self.send_response(outer.status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self) -> None:  # noqa: N802
+                outer.requests.append({"path": self.path, "method": "GET",
+                                       "headers": {k.lower(): v for k, v in self.headers.items()}})
+                data = json.dumps(outer.get_payload).encode("utf-8")
+                self.send_response(200 if outer.get_payload is not None else 404)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -83,6 +94,8 @@ def test_each_provider_request_and_response(server, provider):
         assert b["systemInstruction"]["parts"][0]["text"] == "SYS"
     elif provider in ("groq", "openrouter"):
         assert h["authorization"] == "Bearer KEY123"
+        if provider == "groq":
+            assert b["reasoning_effort"] == "low" and b["include_reasoning"] is False and b["max_tokens"] >= 500
         assert b["model"] == spec.default_model
         assert b["messages"] == [{"role": "system", "content": "SYS"}, {"role": "user", "content": "PROMPT"}]
     elif provider == "ollama":
@@ -94,7 +107,7 @@ def test_each_provider_request_and_response(server, provider):
 
 def test_default_models():
     assert ai.PROVIDERS["gemini"].default_model == "gemini-2.0-flash"
-    assert ai.PROVIDERS["groq"].default_model == "llama-3.3-70b-versatile"
+    assert ai.PROVIDERS["groq"].default_model == "openai/gpt-oss-120b"
     assert ai.PROVIDERS["openrouter"].default_model.endswith(":free")
 
 
@@ -330,3 +343,74 @@ def test_check_connection(server):
     assert not ok
     ok, msg = ai.check_connection(SimpleNamespace(ai_provider="groq", ai_api_key="", ai_model=""))
     assert not ok and "clé" in msg
+
+
+def test_model_not_found_autopick():
+    class S(_Server):
+        pass
+
+    s = _Server(404, {"error": {"message": "The model `x` does not exist", "code": "model_not_found"}})
+    s.get_payload = {"data": [{"id": "whisper-large-v3"}, {"id": "allam-2-7b"}, {"id": "qwen/qwen3-32b"},
+                              {"id": "openai/gpt-oss-20b"}]}
+    try:
+        ai._auto_model.clear()
+        with pytest.raises(ai.AIError):        # still 404 for every model in this fake
+            ai.call_llm("groq", "k", "x", "s", "p", url=s.url("/openai/v1/chat/completions"))
+        gets = [r for r in s.requests if r.get("method") == "GET"]
+        assert gets and gets[0]["path"] == "/openai/v1/models"
+        posts = [r["body"]["model"] for r in s.requests if r.get("method") != "GET"]
+        assert posts == ["x", "openai/gpt-oss-20b"]
+    finally:
+        ai._auto_model.clear()
+        s.close()
+    assert ai.pick_model("groq", ["allam-2-7b", "openai/gpt-oss-120b", "qwen/qwen3-32b"]) == "openai/gpt-oss-120b"
+    assert ai.pick_model("groq", ["whisper-large-v3", "llama-guard-4"]) is None
+
+
+def test_grounding_candidates_and_validation():
+    from treeaicoach.live_client import parse_allgamedata
+
+    g = parse_allgamedata(json.loads((Path(__file__).parent / "fixtures" / "allgamedata_sample.json")
+                                     .read_text(encoding="utf-8")))
+    cands = ai.candidate_items(g)
+    assert cands and all({"n", "po", "pourquoi"} <= set(c) for c in cands)
+    snap = ai.build_snapshot(g, moment="base")
+    assert snap["objets_possibles"] == cands
+    assert "UNIQUEMENT parmi" in ai.build_prompt(snap)
+    ok = f"Achète {cands[0]['n']} puis prends le Baron."
+    assert ai.validate_item_advice(ok, g, cands)
+    assert not ai.validate_item_advice("Achète Cris du crépuscule pour survivre.", g, cands)
+    assert not ai.validate_item_advice("Finis ton Couperet noir avant le dragon.", g, cands)   # already owned
+    assert ai.validate_item_advice("Groupe mid et prends le Héraut.", g, cands)
+
+    def caller(*a, **k):
+        return "Achète Cris du crépuscule. Va mid."
+
+    adv = ai.AIAdvisor(SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model=""), caller=caller)
+    adv.ask(0.0, g, item_text="Prochain objet : Gage de Sterak.")
+    adv.wait()
+    assert adv.poll().text == "Prochain objet : Gage de Sterak."            # itemization fallback
+
+
+KEY_FILE = Path("/tmp/claude-0/-home-user-treeaicoach/7921ebab-74f2-5948-aa26-5594b199fca8/scratchpad/.groq_key")
+
+
+def _real_key():
+    import os
+
+    k = os.environ.get("TREEAICOACH_TEST_GROQ_KEY", "")
+    if not k and KEY_FILE.is_file():
+        k = KEY_FILE.read_text(encoding="utf-8").strip()
+    return k
+
+
+@pytest.mark.skipif(not _real_key(), reason="no real Groq key available (file / env)")
+def test_real_groq_end_to_end():
+    from treeaicoach.live_client import parse_allgamedata
+
+    g = parse_allgamedata(json.loads((Path(__file__).parent / "fixtures" / "allgamedata_sample.json")
+                                     .read_text(encoding="utf-8")))
+    snap = ai.build_snapshot(g, moment="base", item_text="Prochain objet : Gage de Sterak.")
+    text = ai.call_llm("groq", _real_key(), "", ai.system_prompt(), ai.build_prompt(snap), timeout=15.0)
+    assert text and len(text) <= ai.MAX_ADVICE_CHARS + 1
+    print("GROQ:", text, "| valid:", ai.validate_item_advice(text, g, snap["objets_possibles"]))
