@@ -47,11 +47,11 @@ def test_compact_card_size_and_content():
 def test_danger_replaces_the_card():
     st = _state(threat_level=2, threat_text="DANGER — GANK !")
     c = orr.compact_content(st, now=0.0)
-    assert c["mode"] == "danger" and c["word"] == "GANK !" and c["line"] == ""
+    assert c["mode"] == "danger" and c["word"] == "GANK !" and c["line"] == "Recule vers ta tour"
     st = _state(threat_level=2, threat_text="DANGER — TA BASE EST ATTAQUÉE", tip="Recule vers ta tour",
                 tip_tone="danger")
     c = orr.compact_content(st, now=0.0)
-    assert c["word"] == "BASE ATTAQUÉE" and c["line"] == "Recule vers ta tour"
+    assert c["word"] == "BASE ATTAQUÉE" and c["line"] == "Défends ta base avec ton équipe"
     assert orr.hud_size(st, 300)[1] <= 80
 
 

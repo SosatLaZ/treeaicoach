@@ -44,8 +44,8 @@ def test_spec_examples() -> None:
     assert phrase(J, Level.WARNING, "Lee Sin", "par la rivière") == "Lee Sin arrive par la rivière !"
     assert phrase(J, Level.WARNING, "Lee Sin") == "Lee Sin arrive !"
     assert phrase(J, Level.DANGER, "Lee Sin") == "Gank ! Lee Sin, recule !"
-    assert phrase(R, Level.WARNING, "Ahri", "par ta jungle") == "Roam : Ahri arrive par ta jungle !"
-    assert phrase(R, Level.DANGER, "Ahri") == "Roam ! Ahri, recule !"
+    assert phrase(R, Level.WARNING, "Ahri", "par ta jungle") == "Ahri vient vers toi par ta jungle !"
+    assert phrase(R, Level.DANGER, "Ahri") == "Ahri arrive, recule !"
     assert phrase(C, Level.WARNING, None, "bot", count=2, names=["Lee Sin", "Ahri"]) == (
         "Gank bot : Lee Sin et Ahri !")
     assert phrase(C, Level.DANGER, None, "top", count=3, names=["Lee Sin", "Ahri"]) == (
@@ -167,7 +167,7 @@ def test_phrase_never_raises() -> None:
     assert phrase("bogus", Level.DANGER, "X") == "Danger, recule !"  # type: ignore[arg-type]
     assert phrase("collapse", "danger", None, count=2) == "Danger, 2 ennemis arrivent, recule !"  # type: ignore[arg-type]
     assert phrase(AlertKind.ROAM_APPROACH, 99, Evil()) == "Gank ! Un ennemi arrive, recule !"  # type: ignore[arg-type]
-    assert phrase(AlertKind.ROAM_APPROACH, None, "Zed") == "Roam : Zed arrive !"  # type: ignore[arg-type]
+    assert phrase(AlertKind.ROAM_APPROACH, None, "Zed") == "Zed arrive !"  # type: ignore[arg-type]
     assert phrase(AlertKind.COLLAPSE, Level.DANGER, None, count=float("inf")) == (
         "Danger, 5 ennemis arrivent, recule !")
     assert phrase(AlertKind.ROAM_APPROACH, Level.WARNING, "X" * 500).endswith(" arrive !")

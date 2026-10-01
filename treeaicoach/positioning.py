@@ -285,8 +285,8 @@ class PositionCoach:
                 secs = int(round(obj[1] / 5.0) * 5)
                 name = OBJ_NAME.get(obj[0], obj[0])
                 urgent = obj[1] <= 65 and geometry.dist(me_pos, pit) > 0.5 and phase != "laning"
-                cands.append(PositionAdvice(f"pos:obj:{obj[0]}", "objective", f"Va {SIDE_FR[side]} : {name} dans {secs} s.",
-                                            f"{name.upper()} DANS {secs} S", pit, urgent, 80, t))
+                cands.append(PositionAdvice(f"pos:obj:{obj[0]}", "objective", f"Va {SIDE_FR[side]} : {name} dans {secs} s",
+                                            f"{name.upper()}", pit, urgent, 80, t))
         # ---- laning: out of my lane
         my_lane = ROLE_LANE.get(role or "")
         if phase == "laning" and role in ("TOP", "MIDDLE", "BOTTOM") and gt >= 120.0 and obj is None:

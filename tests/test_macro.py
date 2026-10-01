@@ -93,7 +93,7 @@ def test_fight_won_baron_with_respawn_window():
     calls = macro.evaluate(c)
     assert calls[0].kind == "fight_won"
     call = calls[0]
-    assert "3 morts (28 s)" in call.text and "Baron" in call.text and call.genius
+    assert "3 ennemis morts (28 s)" in call.text and "Baron" in call.text and call.genius
     assert call.target == (geometry.BARON_PIT[0], geometry.BARON_PIT[1])
     assert "5 contre 2" in call.why
     # only one dead: no follow-up
@@ -116,7 +116,7 @@ def test_fight_lost_go_defend():
 def test_jungler_dead_invade_or_objective():
     g = game(700.0, me="Vi", dead={"LeeSin": 30.0})
     call = [c for c in macro.evaluate(ctx_for(g, me_uv=(0.3, 0.6))) if c.kind == "jungler_dead"][0]
-    assert "envahis" in call.text and call.genius and call.target in macro.JUNGLE_UV.values()
+    assert "Prends ses camps" in call.text and call.genius and call.target in macro.JUNGLE_UV.values()
     g = game(700.0, me="Jinx", dead={"LeeSin": 30.0})
     call = [c for c in macro.evaluate(ctx_for(g, me_uv=(0.7, 0.9), objectives=[obj("dragon", True)]))
             if c.kind == "jungler_dead"][0]
@@ -155,7 +155,7 @@ def test_cross_map_trade_and_free_dragon():
     c = ctx_for(g, me_uv=(0.7, 0.9), enemies=[Seen("LeeSin", (0.25, 0.25), True, 0.0)],
                 objectives=[obj("dragon", True)])
     call = [x for x in macro.evaluate(c) if x.kind == "free_dragon"][0]
-    assert call.text.startswith("Le dragon est libre") and call.target == macro.DRAGON_UV
+    assert call.text.startswith("Pousse ta vague puis va au dragon") and call.target == macro.DRAGON_UV
     # nothing known about the jungler: no trade
     c = ctx_for(g, me_uv=(0.7, 0.9), objectives=[obj("dragon", True)])
     assert "free_dragon" not in kinds(c)
@@ -177,7 +177,7 @@ def test_side_wave_safe_split_rule():
     jg_top = [Seen("LeeSin", (0.3, 0.25), True, 0.0)]
     c = ctx_for(g, me_uv=(0.45, 0.55), enemies=jg_top, waves=waves)
     call = [x for x in macro.evaluate(c) if x.kind == "side_wave"][0]
-    assert call.text == "Change de voie : va bot, la vague arrive et personne n'y est."
+    assert call.text == "Va bot : la vague arrive et personne n'y est"
     assert "leur jungler est en haut" in call.why
     # jungler unknown and no enemies seen elsewhere: not safe, no call
     assert "side_wave" not in kinds(ctx_for(g, me_uv=(0.45, 0.55), waves=waves))
@@ -210,7 +210,7 @@ def test_wave_calls_recall_freeze_backoff():
     g = game(400.0, gold=1400.0)
     c = ctx_for(g, me_uv=TOP_LANE_ME, waves=pushing, enemies=[Seen("Darius", DARIUS_LANE, True, 0.0)])
     call = [x for x in macro.evaluate(c) if x.kind == "wave_recall"][0]
-    assert call.text == "Ta vague s'écrase sur leur tour : rentre maintenant."
+    assert call.text == "Rentre en base maintenant : ta vague est sous leur tour"
     assert "1400 PO" in call.why
     even = {"top": LaneWave("top", ally=4, enemy=4, meet=0.5, state="even")}
     c = ctx_for(g, me_uv=TOP_LANE_ME, waves=even, enemies=[Seen("Darius", DARIUS_LANE, True, 0.0)])

@@ -166,8 +166,8 @@ def test_hud_is_light_by_default_with_gauge_and_one_advice_line(states):
     assert orr.hud_size(st, 280) == orr.hud_size(orr.OverlayState(**{**st.__dict__, "tip": "Farm"}), 280)
     # one advice line: the tip wins over the insight, same height
     st = orr.OverlayState(**{**st.__dict__, "threat_level": 0, "gauge": 0})
-    t1 = orr.OverlayState(**{**st.__dict__, "insight": "Héraut 0:40", "tip": None})
-    t2 = orr.OverlayState(**{**st.__dict__, "insight": "Héraut 0:40", "tip": "Pose une balise dans la rivière"})
+    t1 = orr.OverlayState(**{**st.__dict__, "insight": "Va top : Héraut dans 0:40", "tip": None})
+    t2 = orr.OverlayState(**{**st.__dict__, "insight": "Va top : Héraut dans 0:40", "tip": "Pose une balise dans la rivière"})
     assert orr.hud_size(t1, 280) == orr.hud_size(t2, 280)
     assert np.abs(orr.render_hud(t1, 280, now=0.0).astype(int) - orr.render_hud(t2, 280, now=0.0).astype(int)).sum() > 0
     # long advice: one line (cut to the action)

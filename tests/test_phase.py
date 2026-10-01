@@ -83,7 +83,7 @@ def test_end_game_calls_ace_baron_finish_and_elder():
     inhib = [{"EventName": "InhibKilled", "EventTime": 1490.0, "InhibKilled": "Barracks_T2_C1"}]
     st = ph.map_state(game(1500.0, inhib, dead=("Darius", "LeeSin", "Ahri", "Caitlyn"), respawn=40.0))
     calls = ph.EndGameCaller().update(10.0, st, [])
-    assert calls[0].key == "ace:end" and "finissez" in calls[0].text
+    assert calls[0].key == "ace:end" and "nexus" in calls[0].text
     st = ph.map_state(game(2000.0))
     calls = ph.EndGameCaller().update(1.0, st, [Obj("elder", remaining=30.0)])
     assert calls and calls[0].key == "elder_soon" and "catch" not in calls[0].text and "Ancestral" in calls[0].text

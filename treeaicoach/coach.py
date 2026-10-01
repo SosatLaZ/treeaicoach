@@ -22,7 +22,7 @@ Rules (each with its own cooldown; see the ``RULE_*`` constants):
   peux pousser en haut."
 * ``cs_check``      - CS/min checkpoints at 10:00 and 20:00: "7,2 CS par minute, objectif 8."
 * ``vision``        - my ward score has not moved for 3 min: "Pense à placer une balise."
-* ``level6``        - "Niveau 6 : cherche une action avec ton ultime." (once)
+* ``level6``        - "Utilise ton ultime sur ton adversaire : tu es niveau 6" (once)
 * ``deep``          - I am in the enemy jungle while their jungler is unseen for 30 s:
   "Tu es dans la jungle ennemie et leur jungler est invisible : attention."
 
@@ -185,6 +185,20 @@ MAJOR_ITEM_IDS: frozenset[int] = frozenset({
     2510, 2517, 2520, 2522, 2523, 2512,
 })
 
+
+
+
+def _involved(obj: Any, ctx: Any) -> bool:
+    """Does the objective concern me (voice_policy.objective_involved: my role plays it or I
+    stand near the pit)? Unknown: True. Never raises."""
+    try:
+        from treeaicoach.voice_policy import objective_involved
+
+        key = str(getattr(obj, "key", "") or getattr(obj, "name", "") or "").lower()
+        return objective_involved(f"objective_soon:{key}:60", getattr(ctx, "my_role", None),
+                                  getattr(ctx, "me_pos", None), getattr(ctx, "gt", None))
+    except Exception:
+        return True
 
 class _ItemNames(Mapping):
     """``itemID -> French name`` for :data:`MAJOR_ITEM_IDS`, names read from the item data
@@ -748,7 +762,7 @@ class MapCoach:
         if ctx.t - since < NUMBERS_CONFIRM_S:
             return []
         if state == "numbers_bad":
-            return [(state, f"{en} contre {al} autour de toi, recule.")]
+            return [(state, f"Recule vers ta tour : {en} contre {al} autour de toi")]
         # "3 contre 1 VISIBLE" is a trap when the others are unseen or I am low (V2 audit)
         hp = self._my_hp(ctx)
         unseen = sum(1 for tr in ctx.enemies_all
@@ -757,7 +771,7 @@ class MapCoach:
                      and 0.0 <= ctx.t - float(getattr(tr, "last_seen", ctx.t)) <= MISSING_RECENT_S)
         if unseen >= 2 or (hp is not None and hp < 0.5):
             return []
-        return [(state, f"{al} contre {en} autour de toi : bon moment pour attaquer.")]
+        return [(state, f"Attaque maintenant : {al} contre {en} autour de toi")]
 
     @staticmethod
     def _my_hp(ctx: _Ctx) -> float | None:
@@ -815,6 +829,8 @@ class MapCoach:
             rem = self._remaining(s, ctx.gt)
             if rem is None or not SETUP_WINDOW[0] <= rem <= SETUP_WINDOW[1]:
                 continue
+            if not _involved(s, ctx):
+                continue                     # a top laner is not told to ward the dragon at 4:15
             if best is None or rem < best[1]:
                 best = (s, rem)
         return best
@@ -844,24 +860,21 @@ class MapCoach:
                 secs = int(round(rem / 5.0) * 5)
                 pit = PITS.get(kind)
                 if pit is None:
-                    out.append(("objective_setup", f"{name} dans {secs} s : regroupez-vous et posez des balises."))
+                    out.append(("objective_setup", f"Regroupe-toi avec ton équipe : {name} dans {secs} s"))
                 else:
                     (pu, pv), side = pit
                     where = SIDE_FR[side]
                     if ctx.safe:
-                        out.append(("objective_setup", f"{name} dans {secs} s : posez des balises {where}."))
+                        out.append(("objective_setup", f"Balise la rivière {where} : {name} dans {secs} s"))
                     else:
                         n_en = self._count_side(ctx, (pu, pv), side, ctx.enemies_vis)
                         n_al = self._count_side(ctx, (pu, pv), side, ctx.allies_vis)
                         if ctx.me_pos is not None and self._count_side(ctx, (pu, pv), side, [(None, ctx.me_pos)]):
                             n_al += 1
                         if n_en >= 1:
-                            txt = (f"{name} dans {secs} s : posez des balises, "
-                                   f"{_plural(n_en, 'ennemi')} {'visibles' if n_en > 1 else 'visible'} {where}.")
-                        elif n_al >= 3:
-                            txt = f"{name} dans {secs} s : vous êtes {n_al} {where}, posez des balises."
+                            txt = f"Balise la rivière {where} : {name} dans {secs} s, {_plural(n_en, 'ennemi')} là"
                         else:
-                            txt = f"{name} dans {secs} s : posez des balises {where}."
+                            txt = f"Balise la rivière {where} : {name} dans {secs} s"
                         out.append(("objective_setup", txt))
         if not ctx.safe:
             for s in ctx.objectives:
@@ -878,8 +891,8 @@ class MapCoach:
                     sides = [map_side(*p) for p in far]
                     where = SIDE_FR.get(max(set(sides), key=sides.count), "loin")
                     name = str(getattr(s, "name", "") or "Objectif")
-                    out.append(("objective_window", f"{name} dispo et {len(far)} ennemis visibles {where} : "
-                                                    f"bonne fenêtre pour {_WINDOW_NAMES[kind]}."))
+                    out.append(("objective_window", f"Prends {_WINDOW_NAMES[kind]} : {len(far)} ennemis visibles "
+                                                    f"{where}"))
                     break
         return out
 
@@ -909,7 +922,7 @@ class MapCoach:
         n = self._missing(ctx)
         if n < MISSING_MIN or len(ctx.enemies_vis) > 5 - n or not self._far_from_towers(ctx):
             return []
-        return [("missing", f"{min(n, 5)} ennemis disparus : reste prudent.")]
+        return [("missing", f"Reste près de ta tour : {min(n, 5)} ennemis disparus")]
 
     def _rule_jungler(self, ctx: _Ctx) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
@@ -930,23 +943,23 @@ class MapCoach:
                     self._jg_side_info = (ctx.t, jside, my_side)
                     if fresh and far:
                         if is_jungler:
-                            text = (f"Leur jungler est {SIDE_FR[jside]} : envahis sa jungle "
-                                    f"{'du haut' if jside == 'bot' else 'du bas'} ou prends tes camps.")
+                            text = (f"Envahis sa jungle {'du haut' if jside == 'bot' else 'du bas'} : "
+                                    f"leur jungler est {SIDE_FR[jside]}")
                         else:
-                            text = (f"Leur jungler est {SIDE_FR[jside]} : tu peux jouer plus agressif "
-                                    f"{SIDE_FR[my_side]}.")
+                            text = (f"Joue plus agressif {SIDE_FR[my_side]} : leur jungler est "
+                                    f"{SIDE_FR[jside]}")
                         out.append(("jungler_side", text))
                 elif is_jungler and jside in ("top", "bot") and my_side == jside and fresh:
-                    out.append(("jungler_side", f"Leur jungler est {SIDE_FR[jside]}, de ton côté : "
-                                                f"prépare le contre-gank."))
+                    out.append(("jungler_side", f"Prépare le contre-gank {SIDE_FR[jside]} : leur jungler "
+                                                f"est là"))
         hidden = ctx.jungler_hidden_s
         jg_dead = str(ctx.jungler_alias).lower() in ctx.dead_enemies
         if hidden is not None and hidden >= JUNGLER_UNSEEN_S and ctx.my_lane is not None and not jg_dead:
             marker = getattr(tr, "last_seen", None) if tr is not None else -1.0
             if marker != self._jg_unseen_done:
                 secs = int(hidden // 5 * 5)
-                out.append(("jungler_unseen", f"Jungler ennemi pas vu depuis {secs} s : prudence." if tr is not None
-                            else "Jungler ennemi pas encore vu : prudence."))
+                out.append(("jungler_unseen", f"Reste près de ta tour : leur jungler caché depuis {secs} s" if tr is not None
+                            else "Reste près de ta tour : leur jungler pas encore vu"))
         return out
 
     def _pressure_info(self, ctx: _Ctx) -> dict[str, Any] | None:
@@ -969,12 +982,12 @@ class MapCoach:
         my_side = map_side(*ctx.me_pos)
         far = geometry.dist(ctx.me_pos, info["centroid"]) > 0.4
         if far and side in ("top", "bot") and _opposite(side) == my_side:
-            advice = f"tu peux pousser {SIDE_FR[my_side]}"
+            advice = f"pousse ta voie {SIDE_FR[my_side]}"
         elif far:
-            advice = "ne reste pas seul trop loin"
+            advice = "rapproche-toi de ton équipe"
         else:
             advice = "reste avec ton équipe"
-        return [("pressure", f"L'équipe ennemie est groupée {where} : {advice}.")]
+        return [("pressure", f"{advice[:1].upper()}{advice[1:]} : ennemis groupés {where}")]
 
     def _cs_checkpoint(self, ctx: _Ctx) -> float | None:
         for cp in CS_CHECKPOINTS:
@@ -992,10 +1005,9 @@ class MapCoach:
             return []
         cs = _finite((getattr(ctx.me_player, "scores", None) or {}).get("creepScore")) or 0.0
         cspm = cs / (ctx.gt / 60.0)
-        mins = int(cp // 60)
         if cspm < target - 0.2:
-            return [("cs_check", f"{mins} min : {fmt_dec(round(cspm, 1))} sbires par minute, vise {fmt_dec(target)}.")]
-        return [("cs_check", f"{mins} min : {fmt_dec(round(cspm, 1))} sbires par minute, bien, continue.")]
+            return [("cs_check", f"Farme plus de sbires : {fmt_dec(round(cspm, 1))} par minute, vise {fmt_dec(target)}")]
+        return [("cs_check", f"Continue à farmer tes sbires : {fmt_dec(round(cspm, 1))} par minute")]
 
     def _rule_level6(self, ctx: _Ctx) -> list[tuple[str, str]]:
         lvl = _finite(getattr(ctx.me_player, "level", None)) or 0
@@ -1004,7 +1016,7 @@ class MapCoach:
         if lvl > 7:                       # joined late / restarted: not news any more
             self._level6_done = True
             return []
-        return [("level6", "Niveau 6 : cherche une action avec ton ultime.")]
+        return [("level6", "Utilise ton ultime sur ton adversaire : tu es niveau 6")]
 
     def _rule_vision(self, ctx: _Ctx) -> list[tuple[str, str]]:
         if ctx.gt < VISION_MIN_GT or self._ward_change_gt is None:
@@ -1190,9 +1202,9 @@ class MapCoach:
         if self._kill_mark(ctx) is not None:
             ours, theirs = self._team_kills(ctx)
             if ours - theirs >= KILL_LEAD_MIN:
-                out.append(("kill_lead", f"Vous menez {ours} à {theirs} aux kills : jouez les objectifs."))
+                out.append(("kill_lead", f"Prends un objectif avec ton équipe : {ours} kills à {theirs}"))
             elif theirs - ours >= KILL_LEAD_MIN:
-                out.append(("kill_lead", f"Vous êtes derrière, {ours} à {theirs} : restez groupés et prenez les sbires."))
+                out.append(("kill_lead", f"Reste avec ton équipe et farme : {ours} kills à {theirs}"))
         return out
 
     # ---------------------------------------------------------------- objective trading
@@ -1225,7 +1237,7 @@ class MapCoach:
                 alt = "le dragon" if (up("dragon") or up("elder")) else None
             where = SIDE_FR[other_side]
             what = f"{alt} ou des tours {where}" if alt else f"des tours {where}"
-            return [("objective_trade", f"{n} ennemis {label} : prenez {what}.")]
+            return [("objective_trade", f"Prends {what} : {n} ennemis {label}")]
         return []
 
     # ---------------------------------------------------------------- dead enemies (Tab)
@@ -1284,11 +1296,11 @@ class MapCoach:
                     target = _WINDOW_NAMES.get(key) or str(getattr(s, "name", "") or "")
                     break
             if target:
-                out.append(("jungler_dead", f"Leur jungler est mort : bonne fenêtre pour {target}."))
+                out.append(("jungler_dead", f"Prends {target} : leur jungler est mort"))
             elif ctx.my_role == "JUNGLE":
-                out.append(("jungler_dead", "Leur jungler est mort : envahis sa jungle et prends ses camps."))
+                out.append(("jungler_dead", "Prends ses camps : leur jungler est mort"))
             else:
-                out.append(("jungler_dead", "Leur jungler est mort : tu peux jouer agressif dans ta voie."))
+                out.append(("jungler_dead", "Joue agressif dans ta voie : leur jungler est mort"))
         return out
 
     # ---------------------------------------------------------------- v3 macro fundamentals
@@ -1438,9 +1450,9 @@ class MapCoach:
         if not ctx.safe and not ctx.dead and ctx.me_pos is not None and not self._in_my_base(ctx):
             en, al = self._numbers(ctx)
             if en >= 2 and en - al >= 2:
-                add((100, f"{en} contre {al} autour de toi"))
+                add((100, f"Recule vers ta tour : {en} contre {al}"))
             elif en >= 1 and al - en >= 2:
-                add((60, f"{al} contre {en} autour de toi : attaque"))
+                add((60, f"Attaque l'ennemi le plus proche : {al} contre {en}"))
         # objective coming / up
         for s in ctx.objectives:
             kind = str(getattr(s, "key", "") or "")
@@ -1478,7 +1490,7 @@ class MapCoach:
                 add((50, f"Jungler ennemi {SIDE_FR[js[1]]} → joue agressif {SIDE_FR[js[2]]}"))
             if (self._in_enemy_jungle(ctx) and ctx.jungler_hidden_s is not None
                     and ctx.jungler_hidden_s >= DEEP_UNSEEN_S):
-                add((90, "Jungle ennemie, leur jungler invisible"))
+                add((90, "Sors de leur jungle : leur jungler est invisible"))
         if not ctx.safe:
             lw = self._my_wave(ctx)
             if lw is not None and lw.state == "pushing":
@@ -1488,14 +1500,14 @@ class MapCoach:
             for _a, name, _p, tr in ctx.opponents or []:
                 why = self._gone(ctx, tr, ctx.role_lane)
                 if why == "recall":
-                    add((68, f"{name} est rentré : pousse"))
+                    add((68, f"Pousse ta vague : {name} est rentré"))
                 elif why == "left" and ctx.my_lane == ctx.role_lane:
-                    add((66, f"{name} a quitté la voie"))
+                    add((66, f"Recule vers ta tour : {name} a quitté ta voie"))
         for a, name, _p, _tr in ctx.opponents or []:
             if str(a).lower() in ctx.dead_enemies:
-                add((69, f"{name} mort : pousse ta vague"))
-        if ctx.jungler_alias and str(ctx.jungler_alias).lower() in ctx.dead_enemies:
-            add((67, "Jungler ennemi mort : à toi de jouer"))
+                add((69, f"Pousse ta vague : {name} est mort"))
+        if ctx.jungler_alias and str(ctx.jungler_alias).lower() in ctx.dead_enemies and ctx.gt < 840:
+            add((67, "Joue agressif dans ta voie : leur jungler est mort"))   # (laning phase only)
         for _t, _alias, name, item in self._item_news[:1]:
             add((64, f"{name} : {ITEM_NAMES_FR[item]} fini"))
         diff, name = self._level_diff(ctx)

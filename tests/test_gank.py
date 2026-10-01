@@ -270,7 +270,7 @@ def test_enemy_appearing_from_fog_close_is_danger_after_confirmation(name: str, 
     assert first.raw[0].kind == AlertKind.ROAM_APPROACH
     assert first.said and first.said[0].level == Level.DANGER
     if name == "Ahri":
-        assert first.said[0].text == "Roam ! Ahri, recule !"
+        assert first.said[0].text == "Ahri arrive, recule !"
     else:
         assert first.said[0].text == "Gank ! Un ennemi arrive, recule !"
         assert first.said[0].key == "roam_approach:enemy?1" and first.said[0].alias is None
@@ -293,7 +293,7 @@ def test_mid_laner_roaming_top(positions: bool) -> None:
     assert roam and all(tk.t >= 40.0 for tk, _a in roam)
     levels = [a.level for _tk, a in roam]
     assert Level.WARNING in levels and Level.DANGER in levels
-    assert said_texts(ticks) == ["Roam : Ahri arrive par la jungle ennemie !", "Roam ! Ahri, recule !"]
+    assert said_texts(ticks) == ["Ahri vient vers toi par la jungle ennemie !", "Ahri arrive, recule !"]
 
 
 def test_three_enemies_converging_merged_into_one_sentence() -> None:
@@ -680,5 +680,5 @@ def test_roam_is_labelled_and_announced_once_per_roam() -> None:
     path = [(0.30, 0.24), (0.12, 0.22)]
     ticks = simulate(24.0, lambda t: {"Ahri": lerp_path(path, 0.025, t)})   # then stays on me
     said = said_texts(ticks)
-    assert said and all(x.startswith("Roam") for x in said)
-    assert said.count("Roam ! Ahri, recule !") == 1
+    assert said and all(x.startswith("Ahri") for x in said)
+    assert said.count("Ahri arrive, recule !") == 1

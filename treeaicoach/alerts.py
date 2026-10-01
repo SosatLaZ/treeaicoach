@@ -269,9 +269,9 @@ def _roam_approach(level: Level, champ: str | None, zone: str | None, n: int) ->
     voice say who it is and that it is not the jungler)."""
     who = champ or "un ennemi"
     if level >= Level.DANGER:
-        return f"Roam ! {champ}, recule !" if champ else "Gank ! Un ennemi arrive, recule !"
+        return f"{champ} arrive, recule !" if champ else "Gank ! Un ennemi arrive, recule !"
     if level == Level.WARNING:
-        return f"Roam : {_arrives(champ, zone)}" if champ else _arrives(who, zone)
+        return f"{champ} vient vers toi {zone} !" if champ and zone else _arrives(who, zone)
     return f"{_cap(who)} rôde près de toi."
 
 

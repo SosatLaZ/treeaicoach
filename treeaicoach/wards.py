@@ -302,7 +302,8 @@ class WardAdvisor:
                 continue
             rem = _f(getattr(o, "remaining", None))
             key = str(getattr(o, "key", "") or "")
-            if rem is not None and OBJECTIVE_LEAD[0] <= rem <= OBJECTIVE_LEAD[1] and key in OBJ_PIT:
+            if rem is not None and OBJECTIVE_LEAD[0] <= rem <= OBJECTIVE_LEAD[1] and key in OBJ_PIT \
+                    and _involved(key, role, me_pos, gt):
                 if obj is None or rem < obj[1]:
                     obj = (key, rem)
         reason = None
@@ -332,18 +333,28 @@ class WardAdvisor:
             if reason == "objective" and obj is not None:
                 name = {"dragon": "le dragon", "elder": "l'ancestral", "baron": "le Baron", "herald": "le Héraut",
                         "grubs": "les larves"}.get(obj[0], "l'objectif")
-                text = f"Avant {name} : balise {best.label}"
+                text = f"Balise {best.label} : avant {name}"
                 if has_control and best.spot.control:
                     text += " (ta balise de contrôle)"
                 text += "."
             else:
-                text = f"Balise conseillée : {best.label}."
+                text = f"Balise {best.label}"
             self._last_text_t = t
         if not has_control and t - self._last_control_t >= CONTROL_REMIND_GAP_S and gt >= 240.0 and reason == "base":
             self._last_control_t = t
             text = (text + " " if text else "") + "Pense à une balise de contrôle au prochain retour."
         self._show = WardAdvice(tuple(picks), reason, text, f"ward:{reason}:{picks[0].spot.id}", t + dur)
         return self._show if text else None
+
+
+def _involved(key: str, role: Any, me_pos: Any, gt: float) -> bool:
+    """My role plays this objective (or I stand near its pit): voice_policy.objective_involved."""
+    try:
+        from treeaicoach.voice_policy import objective_involved
+
+        return objective_involved(f"objective_soon:{key}:60", role, me_pos, gt)
+    except Exception:
+        return True
 
 
 def rift_transformed(game: Any) -> bool:

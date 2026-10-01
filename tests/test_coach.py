@@ -119,7 +119,7 @@ def test_jungler_seen_on_other_side_gives_aggressive_tip():
         return out
     sim = Sim().run(200, 320, icons, game=lambda t: make_game(t, ward=t // 60))
     texts = sim.texts()
-    assert texts and texts[0] == "Leur jungler est en bas : tu peux jouer plus agressif en haut."
+    assert texts and texts[0] == "Joue plus agressif en haut : leur jungler est en bas"
     a = sim.said[0][2]
     assert a.kind == AlertKind.MACRO_TIP and a.level == Level.INFO
     assert any("Jungler ennemi en bas" in s for s in sim.coach.insights())
@@ -141,11 +141,11 @@ def test_jungler_unseen_45s_once_per_disappearance():
             out.append(icon("LeeSin", "enemy", (0.30, 0.55)))
         return out
     sim = Sim().run(180, 400, icons)
-    unseen = [s for s in sim.said if "pas vu depuis" in s[1]]
+    unseen = [s for s in sim.said if "caché depuis" in s[1]]
     assert len(unseen) == 1
     t, text, _ = unseen[0]
     assert 244 <= t <= 247
-    assert text == "Jungler ennemi pas vu depuis 45 s : prudence."
+    assert text == "Reste près de ta tour : leur jungler caché depuis 45 s"
 
 
 # ------------------------------------------------------------------------------ missing
@@ -160,7 +160,7 @@ def test_three_missing_enemies_far_from_towers():
             out.append(icon("LeeSin", "enemy", (0.3, 0.5)))      # jungler stays visible
         return out
     sim = Sim().run(390, 420, icons)
-    assert "3 ennemis disparus : reste prudent." in sim.texts()
+    assert "Reste près de ta tour : 3 ennemis disparus" in sim.texts()
 
 
 def test_missing_enemies_silent_under_my_tower():
@@ -183,8 +183,8 @@ def test_objective_setup_counts_enemies_bot():
         return me_at(MID) + [icon("Jinx", "enemy", (0.78, 0.88)), icon("Thresh", "enemy", (0.70, 0.75)),
                              icon("LeeSin", "enemy", (0.5, 0.45))]
     sim = Sim().run(240, 270, icons, objectives=_dragon(300.0))
-    setup = [x for x in sim.texts() if x.startswith("Dragon dans")]
-    assert setup == ["Dragon dans 55 s : posez des balises, 2 ennemis visibles en bas."]
+    setup = [x for x in sim.texts() if x.startswith("Balise la rivière")]
+    assert setup == ["Balise la rivière en bas : Dragon dans 55 s, 2 ennemis là"]
     assert any(s.startswith("Dragon 0:") and "2 ennemis en bas" in s for s in sim.coach.insights())
 
 
@@ -194,7 +194,7 @@ def test_objective_setup_safe_mode_uses_no_enemy_positions():
     def icons(t):
         return me_at(MID) + [icon("Jinx", "enemy", (0.78, 0.88)), icon("Thresh", "enemy", (0.70, 0.75))]
     sim = Sim(cfg).run(240, 270, icons, objectives=_dragon(300.0))
-    assert sim.texts() == ["Dragon dans 55 s : posez des balises en bas."]
+    assert sim.texts() == ["Balise la rivière en bas : Dragon dans 55 s"]
     assert all("ennemi" not in s for s in sim.coach.insights())
     assert sim.coach.pressure() is None
 
@@ -206,7 +206,7 @@ def test_baron_window_when_enemies_bot():
         return me_at((0.40, 0.45)) + [icon(a, "enemy", p) for a, p in (
             ("Jinx", (0.80, 0.90)), ("Thresh", (0.78, 0.86)), ("Ahri", (0.85, 0.80)), ("LeeSin", (0.70, 0.80)))]
     sim = Sim().run(1600, 1610, icons, objectives=objs)
-    assert "Baron dispo et 4 ennemis visibles en bas : bonne fenêtre pour le Baron." in sim.texts()
+    assert "Prends le Baron : 4 ennemis visibles en bas" in sim.texts()
 
 
 # ------------------------------------------------------------------------------ numbers
@@ -217,7 +217,7 @@ def test_outnumbered_warning_and_not_during_threat():
     def icons(t):
         return me_at(TOP_LANE) + (enemies if t >= 500 else [icon("LeeSin", "enemy", (0.3, 0.5))])
     sim = Sim().run(490, 510, icons)
-    assert "3 contre 1 autour de toi, recule." in sim.texts()
+    assert "Recule vers ta tour : 3 contre 1 autour de toi" in sim.texts()
     t_said = [s[0] for s in sim.said if "contre" in s[1]][0]
     assert t_said >= 501.5                       # confirmation delay
 
@@ -231,7 +231,7 @@ def test_numbers_advantage():
         return (me_at(TOP_LANE) + [icon("Vi", "ally", (0.13, 0.13)), icon("Lux", "ally", (0.07, 0.17)),
                                    icon("Darius", "enemy", (0.11, 0.10)), icon("LeeSin", "enemy", (0.3, 0.55))])
     sim = Sim().run(500, 510, icons)
-    assert "3 contre 1 autour de toi : bon moment pour attaquer." in sim.texts()
+    assert "Attaque maintenant : 3 contre 1 autour de toi" in sim.texts()
 
 
 # ------------------------------------------------------------------------------ pressure
@@ -240,7 +240,7 @@ def test_enemy_team_grouped_bot_push_top():
         return me_at(TOP_LANE) + [icon(a, "enemy", p) for a, p in (
             ("Jinx", (0.80, 0.90)), ("Thresh", (0.78, 0.86)), ("Ahri", (0.85, 0.82)), ("LeeSin", (0.75, 0.80)))]
     sim = Sim().run(900, 960, icons)
-    assert "L'équipe ennemie est groupée en bas : tu peux pousser en haut." in sim.texts()
+    assert "Pousse ta voie en haut : ennemis groupés en bas" in sim.texts()
     p = sim.coach.pressure()
     assert p["grouped"] and p["side"] == "bot" and p["visible"] == 4
 
@@ -252,9 +252,9 @@ def test_cs_checkpoint_at_10_min_and_safe_mode_ok():
     def game(t):
         return make_game(t, cs=72)
     sim = Sim(cfg).run(598, 610, lambda t: me_at(TOP_TOWER_SAFE), game=game)
-    assert sim.texts() == ["10 min : 7,2 sbires par minute, bien, continue."]
+    assert sim.texts() == ["Continue à farmer tes sbires : 7,2 par minute"]
     sim2 = Sim(cfg).run(598, 610, lambda t: me_at(TOP_TOWER_SAFE), game=lambda t: make_game(t, cs=55))
-    assert sim2.texts() == ["10 min : 5,5 sbires par minute, vise 7."]
+    assert sim2.texts() == ["Farme plus de sbires : 5,5 par minute, vise 7"]
 
 
 def test_vision_reminder_after_3_minutes_without_ward():
@@ -275,7 +275,7 @@ def test_vision_reminder_after_3_minutes_without_ward():
 def test_level6_once():
     sim = Sim().run(300, 400, lambda t: me_at(TOP_TOWER_SAFE) + [icon("LeeSin", "enemy", (0.3, 0.15))],
                     game=lambda t: make_game(t, level=5 if t < 320 else 6))
-    assert sim.texts().count("Niveau 6 : cherche une action avec ton ultime.") == 1
+    assert sim.texts().count("Utilise ton ultime sur ton adversaire : tu es niveau 6") == 1
 
 
 # ------------------------------------------------------------------------------ deep in enemy jungle
@@ -359,7 +359,7 @@ def test_hud_insight_line_adds_one_row():
     from treeaicoach.overlay_render import OverlayState, hud_size, render_hud
 
     base = OverlayState(game_time=600.0)
-    with_line = OverlayState(game_time=600.0, insight="Dragon 0:45 · 2 ennemis en bas")
+    with_line = OverlayState(game_time=600.0, insight="Pousse ta vague : Darius est mort")
     w0, h0 = hud_size(base, 300)
     w1, h1 = hud_size(with_line, 300)
     assert w0 == w1 and h1 > h0
@@ -547,9 +547,9 @@ def test_enemy_jungler_level6_first():
 
 def test_kill_lead_summary():
     sim = Sim().run(898, 905, lambda t: me_at(TOP_TOWER_SAFE), game=lambda t: make_game(t, akills=12, ekills=5))
-    assert sim.texts() == ["Vous menez 12 à 5 aux kills : jouez les objectifs."]
+    assert sim.texts() == ["Prends un objectif avec ton équipe : 12 kills à 5"]
     sim = Sim().run(898, 905, lambda t: me_at(TOP_TOWER_SAFE), game=lambda t: make_game(t, akills=2, ekills=9))
-    assert sim.texts() == ["Vous êtes derrière, 2 à 9 : restez groupés et prenez les sbires."]
+    assert sim.texts() == ["Reste avec ton équipe et farme : 2 kills à 9"]
 
 
 # ------------------------------------------------------------------------------ trading / jungler role
@@ -562,7 +562,7 @@ def test_objective_trade_cross_map():
         return me_at((0.40, 0.45)) + [icon(a, "enemy", (dx + ox, dy + oy)) for a, ox, oy in (
             ("Jinx", 0.03, 0.02), ("Thresh", -0.03, 0.03), ("Ahri", 0.0, -0.04), ("LeeSin", 0.05, -0.02))]
     sim = Sim().run(1100, 1105, icons, objectives=objs)
-    assert sim.texts() == ["4 ennemis au dragon : prenez les larves ou des tours en haut."]
+    assert sim.texts() == ["Prends les larves ou des tours en haut : 4 ennemis au dragon"]
 
 
 def test_jungler_role_gets_invade_tip():
@@ -574,7 +574,7 @@ def test_jungler_role_gets_invade_tip():
             out.append(icon("LeeSin", "enemy", (0.72, 0.80)))
         return out
     sim = Sim(role="JUNGLE").run(240, 310, icons, game=lambda t: make_game(t, role="JUNGLE", ward=t // 60))
-    assert "Leur jungler est en bas : envahis sa jungle du haut ou prends tes camps." in sim.texts()
+    assert "Envahis sa jungle du haut : leur jungler est en bas" in sim.texts()
 
 
 def test_scoreboard_tips_can_be_disabled():
@@ -643,11 +643,11 @@ def _jg_dead_game(t, respawn=30.0, also_dead=()):
 def test_v2_jungler_dead_is_not_a_baron_window():
     baron = SimpleNamespace(key="baron", name="Baron", alive=True, remaining=None, next_spawn=None)
     sim = Sim().run(1300, 1302, lambda t: me_at(TOP_LANE), objectives=[baron], game=_jg_dead_game)
-    jd = [s for s in sim.texts() if s.startswith("Leur jungler est mort")]
+    jd = [s for s in sim.texts() if s.endswith("leur jungler est mort")]
     assert jd and "Baron" not in jd[0]                      # 4 against 5 on a 50-50: no
     sim = Sim().run(1300, 1302, lambda t: me_at(TOP_LANE), objectives=[baron],
                     game=lambda t: _jg_dead_game(t, also_dead=("Ahri",)))
-    jd = [s for s in sim.texts() if s.startswith("Leur jungler est mort")]
+    jd = [s for s in sim.texts() if s.endswith("leur jungler est mort")]
     assert jd and "le Baron" in jd[0]
 
 
@@ -668,7 +668,7 @@ def test_v2_numbers_good_not_with_enemies_unseen_or_low_hp():
     base = [icon("Vi", "ally", (0.13, 0.13)), icon("Lux", "ally", (0.07, 0.17)), icon("Darius", "enemy", (0.11, 0.10)),
             icon("LeeSin", "enemy", (0.3, 0.55))]
     sim = Sim().run(500, 510, lambda t: me_at(TOP_LANE) + base)               # positive control
-    assert "3 contre 1 autour de toi : bon moment pour attaquer." in sim.texts()
+    assert "Attaque maintenant : 3 contre 1 autour de toi" in sim.texts()
 
     def icons(t):                                     # Ahri and Jinx seen, then unseen: 2 missing
         if t < 495:

@@ -246,7 +246,9 @@ class TacticalDirector:
                                   me_uv=me_uv, gt=gt)
         # ---- fight call / end
         if up.new_call is not None:
-            out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.WARNING, text=CALL_WORD[up.new_call],
+            # "Recule !" is a danger call (beep-first, red); "Attaque !" a warning (green banner)
+            lvl = Level.DANGER if up.new_call == "retreat" else Level.WARNING
+            out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=lvl, text=CALL_WORD[up.new_call],
                                     key=f"call:{up.new_call}", t=t))
         if up.ended_summary:
             if up.won:
@@ -418,6 +420,8 @@ class TacticalDirector:
                 dec, text = "speak", None
             if dec == "speak":
                 keep.append(a)
+            elif dec == "text" and text == "combat d'équipe":
+                continue                      # team fight: the fight call / banner speaks, no "Gank, recule"
             elif dec == "text":
                 k = f"{a.kind}:{a.alias}"
                 with self._lock:

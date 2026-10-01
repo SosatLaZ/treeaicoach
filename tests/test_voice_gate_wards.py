@@ -69,8 +69,12 @@ def test_gank_triage_grouped_screened_and_opportunity():
     screen = [Seen("Vi", (0.37, 0.65))]
     assert vp.triage_gank(gank, me_pos=me_uv, allies=screen, enemies=en, game=None)[0] == "text"
     assert vp.triage_gank(gank, me_pos=me_uv, allies=[], enemies=en, game=None, in_fight=True)[0] == "drop"
-    danger = A(AlertKind.JUNGLER_APPROACH, "g", Level.DANGER, alias="LeeSin")      # never downgraded
-    assert vp.triage_gank(danger, me_pos=me_uv, allies=grouped, enemies=en, game=g)[0] == "speak"
+    danger = A(AlertKind.JUNGLER_APPROACH, "g", Level.DANGER, alias="LeeSin")      # never downgraded...
+    assert vp.triage_gank(danger, me_pos=me_uv, allies=[], enemies=en, game=g)[0] == "speak"
+    # ... except inside a team fight (my team around me, at least as many as them): written only
+    assert vp.triage_gank(danger, me_pos=me_uv, allies=grouped, enemies=en, game=g) == ("text", "combat d'équipe")
+    many = en + [Seen(a, (0.31 + 0.01 * i, 0.70)) for i, a in enumerate(("Ahri", "Darius", "Jinx"))]
+    assert vp.triage_gank(danger, me_pos=me_uv, allies=grouped, enemies=many, game=g)[0] == "speak"
 
 
 def test_ward_spots_are_walkable_and_recommendations():

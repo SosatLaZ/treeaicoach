@@ -82,7 +82,7 @@ def test_spike_level_window_expires():
 def test_matchup_card_lane_and_jungle():
     card = matchup_card(game(20), "TOP", "Darius")
     assert card is not None and "DARIUS" in card.title
-    assert any("plus fort tôt" in x for x in card.lines)                # Darius: early curve
+    assert any("fort tôt" in x for x in card.lines)                # Darius: early curve
     assert card.jungle and "Lee Sin" in card.jungle
     for line in card.lines + (card.jungle,):
         assert " : " in line and len(line.split()) <= 12
@@ -121,22 +121,22 @@ def test_pick_goal_from_history():
 
 def test_goal_tracker_show_risk_praise():
     gt_ = GoalTracker(lambda: [{"deaths": 6, "cs": 250, "duration": 1800}] * 3)
-    notes = gt_.update(10, game(10), "TOP")
+    notes = gt_.update(30, game(30), "TOP")
     assert notes and notes[0].title == "OBJECTIF DE LA PARTIE" and "morts maximum" in notes[0].text
     assert gt_.goal.kind == "deaths" and gt_.goal.target == 5
-    assert gt_.update(20, game(20), "TOP") == []                         # shown once
+    assert gt_.update(40, game(40), "TOP") == []                         # shown once
     gt_.update(600, game(600, deaths=5), "TOP")
     assert gt_.tip_fields()["goal_risk"] == "last_death"
     ok = gt_.update(1500, game(1500, deaths=5), "TOP")
     assert ok and ok[0].kind == "praise" and gt_.status == "réussi"
     failed = GoalTracker(lambda: [{"deaths": 6, "cs": 250, "duration": 1800}] * 3)
-    failed.update(10, game(10), "TOP")
+    failed.update(30, game(30), "TOP")
     assert failed.update(1500, game(1500, deaths=7), "TOP") == [] and failed.status == "raté"
 
 
 def test_goal_cs_check():
     gt_ = GoalTracker(lambda: [])
-    gt_.update(10, game(10), "TOP")
+    gt_.update(30, game(30), "TOP")
     assert gt_.goal.kind == "cs"
     gt_.update(610, game(610, cs=40), "TOP")                            # ~3.9 cs/min at 10:10
     assert gt_.tip_fields()["goal_risk"] == "cs_behind"
@@ -167,8 +167,7 @@ def test_death_coach_once_per_death():
         assert dc.update(gt, dict(facts, gt=gt), game(gt)) is None
     kill = {"EventID": 5, "EventName": "ChampionKill", "EventTime": 412.0, "KillerName": "Darius#T",
             "VictimName": "Moi#EUW", "Assisters": ["LeeSin#T"]}
-    assert dc.update(412, facts, game(412, events=[kill], dead=True)) is None    # delayed
-    res = dc.update(417, facts, game(417, events=[kill], dead=True))
+    res = dc.update(412, facts, game(412, events=[kill], dead=True))            # at once (no blank card)
     # V2 audit: the unseen jungler in the kill is the precise cause (not just "2 contre 1")
     assert res is not None and res[0] == "jungler"
     assert dc.update(420, facts, game(420, events=[kill], dead=True)) is None    # once
@@ -178,11 +177,11 @@ def test_death_coach_once_per_death():
 # ------------------------------------------------------------------ CoachPlus
 def test_coach_plus_notes_gap_skill_and_busy():
     cp = CoachPlus(history_loader=lambda: [])
-    out = cp.update(0.0, 10.0, game(10), FACTS, min_prio=1)
+    out = cp.update(0.0, 30.0, game(30), FACTS, min_prio=1)
     assert [n.key for n in out] == ["goal:show"]
-    assert cp.update(5.0, 20.0, game(20), FACTS, min_prio=1) == []            # card queued: 20 s gap
-    assert cp.update(25.0, 40.0, game(40), FACTS, busy=True, min_prio=1) == []   # held during a fight
-    out = cp.update(26.0, 41.0, game(41), FACTS, min_prio=1)
+    assert cp.update(5.0, 40.0, game(40), FACTS, min_prio=1) == []            # card queued: 20 s gap
+    assert cp.update(25.0, 60.0, game(60), FACTS, busy=True, min_prio=1) == []   # held during a fight
+    out = cp.update(26.0, 61.0, game(61), FACTS, min_prio=1)
     assert out and out[0].key == "plan:card"
     tf = cp.tip_fields()
     assert tf.get("plan1") and tf.get("goal_kind") == "cs"

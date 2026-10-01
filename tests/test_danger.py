@@ -80,7 +80,7 @@ def test_lane_duel_written_warning_then_recule_before_the_death() -> None:
     out = run(26.0, darius, hp, game_kw=kw)
     written = texts(out, Level.WARNING)
     spoken = texts(out, Level.DANGER)
-    assert written and written[0][1] == "Darius te domine : ne trade pas, farme sous la tour."
+    assert written and written[0][1] == "Farme sous ta tour : Darius est plus fort"
     assert written[0][0] < 9.0                         # while HP is still > 60 %
     assert [x for _t, x in spoken] == ["Recule !"]      # once (20 s cooldown)
     death_t = 24.0 * (1 - 0.05)
@@ -114,8 +114,8 @@ def test_three_enemies_near_in_my_base_siege_says_recule() -> None:
 def test_outnumbered_written_when_healthy() -> None:
     foes = lambda t: {"Ahri": (ME_TOP[0] + 0.08, ME_TOP[1]), "LeeSin": (ME_TOP[0] + 0.05, ME_TOP[1] + 0.06)}  # noqa: E731
     out = run(4.0, foes, lambda t: 0.75)
-    assert texts(out) == [(0.0, "2 ennemis près de toi : recule vers ta tour.")] or \
-        [x for _t, x in texts(out)] == ["2 ennemis près de toi : recule vers ta tour."]
+    assert texts(out) == [(0.0, "Recule vers ta tour : 2 ennemis près de toi")] or \
+        [x for _t, x in texts(out)] == ["Recule vers ta tour : 2 ennemis près de toi"]
 
 
 # ------------------------------------------------------------------ suppression / anti-spam
@@ -174,7 +174,7 @@ def test_unseen_jungler_probably_close_while_pushed_is_written_early() -> None:
     assert past_mid(pushed, "ORDER") and not past_mid(ME_TOP, "ORDER")
     fog = lambda t: [_fog((0.25, 0.16), 15.0)]      # noqa: E731 - his probable area: ~5 s from me
     out = run(3.0, lambda t: {}, lambda t: 1.0, me=lambda t: pushed, fog=fog)
-    assert [x for _t, x in texts(out)] == ["Lee Sin peut arriver : recule vers ta tour."]
+    assert [x for _t, x in texts(out)] == ["Recule vers ta tour : Lee Sin peut arriver"]
     # far (bot side) or me on my side of the map: nothing
     assert run(3.0, lambda t: {}, lambda t: 1.0, me=lambda t: pushed, fog=lambda t: [_fog((0.75, 0.8), 15.0)]) == []
     assert run(3.0, lambda t: {}, lambda t: 1.0, me=lambda t: ME_TOP, fog=fog) == []
@@ -288,7 +288,7 @@ def test_two_v_one_at_53_percent_on_screen_recule_written_and_spoken() -> None:
         if out and not first:
             first = out
         assert pd.state().level == 2 and pd.state().reason == "2 contre 1"
-    assert [(a.level, a.text) for a in first] == [(Level.DANGER, "Recule !"), (Level.WARNING, "Recule : 2 contre 1.")]
+    assert [(a.level, a.text) for a in first] == [(Level.DANGER, "Recule !"), (Level.WARNING, "Recule vers ta tour : 2 contre 1")]
     # and never repeated within 20 s
     assert pd.update(2.5, 206.5, game_at(206.5, hp(0)), tracker, lane_opponents=("Darius",)) == []
 
@@ -346,7 +346,7 @@ def test_two_v_one_engine_says_recule_writes_reason_and_gauge_safe(tmp_path, mon
             eng.step(clock[0])
         # "Recule !" spoken (or the gank DANGER of the second enemy "Roam ! Ahri, recule !" said it first)
         assert any("recule" in x.lower() for x in voice.said)
-        assert any(text == "Recule : 2 contre 1." for _t, _k, text in eng.text_messages)
+        assert any(text == "Recule vers ta tour : 2 contre 1" for _t, _k, text in eng.text_messages)
         assert eng._danger.state().level == 2
         assert gauge_target(None, threat=2)[0] == -2            # the threat the engine passes -> SAFE
         g = eng.play_gauge()

@@ -87,7 +87,7 @@ def test_jungler_dead_laner_call_is_push_not_plates_into_his_laner():
     g = game(400.0, dead={"LeeSin": 30.0})
     c = ctx_for(g, me_uv=TOP_LANE_ME, enemies=[Seen("Darius", (0.09, 0.22), True, 0.0)])
     call = [x for x in macro.evaluate(c) if x.kind == "jungler_dead"][0]
-    assert "pousse ta vague" in call.text and "plaque" not in call.text.lower()
+    assert "pousse ta vague" in call.text.lower() and "plaque" not in call.text.lower()
 
 
 def test_plates_blocked_when_jungler_unseen_and_no_wave_at_their_tower():
@@ -166,7 +166,7 @@ def test_tip_baron_window_needs_timers_and_jungler_dead_tip_never_baron():
     assert c.jg_objective() is None and not _applies("jg_dead_window", c)
     c = _tc(role="BOTTOM", lane="bot", alive=frozenset({"dragon"}), jg_dead=True, dead_names=("Lee Sin",), jg="Lee Sin")
     assert _applies("jg_dead_window", c)
-    assert next(t for t in tips.TIPS if t.id == "jg_dead_window").render(c) == "Prenez le dragon maintenant : Lee Sin est mort"
+    assert next(t for t in tips.TIPS if t.id == "jg_dead_window").render(c) == "Prends le dragon maintenant : Lee Sin est mort"
 
 
 def test_tip_side_lane_and_split_honest():
@@ -245,7 +245,7 @@ def test_toast_topics_dedupe_across_systems():
 def test_death_cause_does_not_blame_a_dive_and_prefers_the_jungler():
     s = death_cause.DeathSnapshot(enemies_near=4, involved=4, allies_near=1, enemy_half=False)
     cause = death_cause.classify_death(s)
-    assert cause is not None and cause[0] == "dive" and "rien à faire" in cause[1]
+    assert cause is not None and cause[0] == "dive" and "plongée" in cause[1]
     s = death_cause.DeathSnapshot(involved=2, allies_near=1, jungler_involved=True, jungler_hidden_s=40.0)
     assert death_cause.classify_death(s)[0] == "jungler"
     # 30 % HP at the end of a fight, full HP 10 s earlier: not "rentre plus tôt"

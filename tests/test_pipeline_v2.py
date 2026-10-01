@@ -200,13 +200,13 @@ def test_go_line_hidden_under_a_prudent_gauge():
     eng._game_t = clock.t
     eng._tactics = eng._coach = None
     eng._text_msg = None
-    eng._tip_text = "Jungler ennemi mort : à toi de jouer"
+    eng._tip_text = "Joue agressif : leur jungler est mort"
     eng._gauge = NS(current=lambda: NS(step=-1, reason="", since=0.0))
     eng._hud_shown = None
     assert eng._hud_line(clock.t) is None
     eng._gauge = NS(current=lambda: NS(step=1, reason="", since=0.0))
     eng._hud_shown = None
-    assert eng._hud_line(clock.t) == "Jungler ennemi mort : à toi de jouer"
+    assert eng._hud_line(clock.t) == "Joue agressif : leur jungler est mort"
 
 
 def test_trivial_component_chip_after_20_min():

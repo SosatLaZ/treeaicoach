@@ -83,6 +83,7 @@ MOVE_SPEED = 360.0             # game units / s (boots, mid game): travel time t
 #: seconds a group needs to kill / take each target (respawn window = travel + this)
 TAKE_S = {"baron": 28.0, "elder": 15.0, "dragon": 14.0, "herald": 16.0, "inhib": 8.0,
           "tower": 12.0}
+STANCE_PRUDENT = -2.0          # gauge PRUDENT or worse (stance score <= this): no "push first" recall
 STANCE_SAFE_BLOCK = -4.0       # gauge SAFE (stance score <= this): no "go" call except post-fight ones
 
 ROLE_LANE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
@@ -602,6 +603,17 @@ WINDOW_FLOOR_S = {"baron": 25.0, "elder": 18.0, "dragon": 15.0, "herald": 15.0, 
                   "inhib": 10.0}
 
 
+def _role_plays(ctx: MacroCtx, what: str) -> bool:
+    """My role plays this objective (or I stand near its pit): voice_policy.objective_involved.
+    A top laner is not sent to the dragon after a won fight; the tower next to him is the call."""
+    try:
+        from treeaicoach.voice_policy import objective_involved
+
+        return objective_involved(f"objective_soon:{what}:60", ctx.role, ctx.me_uv, ctx.gt)
+    except Exception:
+        return True
+
+
 def _window_ok(ctx: MacroCtx, window: float, target: Any, what: str) -> bool:
     """Is a respawn ``window`` long enough for this target? The dead enemies come back from their
     fountain: they can contest at ``window + their walk``; we need ``our walk + the take time``.
@@ -650,9 +662,9 @@ def _rule_fight_won(ctx: MacroCtx) -> GeniusCall | None:
         opts.append((1.0, "le Baron", "BARON !", BARON_UV, "le Baron"))
     if _obj_up(ctx, "elder") and n_al <= 1 and _window_ok(ctx, window, DRAGON_UV, "elder"):
         opts.append((1.0, "l'ancestral", "ANCESTRAL !", DRAGON_UV, "l'ancestral"))
-    if _obj_up(ctx, "dragon") and _window_ok(ctx, window, DRAGON_UV, "dragon"):
+    if _obj_up(ctx, "dragon") and _role_plays(ctx, "dragon") and _window_ok(ctx, window, DRAGON_UV, "dragon"):
         opts.append((0.8 + (0.1 if jg_dead else 0.0), "le dragon", "DRAGON !", DRAGON_UV, "le dragon"))
-    if _obj_up(ctx, "herald") and _window_ok(ctx, window, BARON_UV, "herald"):
+    if _obj_up(ctx, "herald") and _role_plays(ctx, "herald") and _window_ok(ctx, window, BARON_UV, "herald"):
         opts.append((0.65, OBJ_LE["herald"], OBJ_TITLE["herald"], BARON_UV, OBJ_LE["herald"]))
     theirs = ctx.enemy_team
     st = ctx.st
@@ -686,7 +698,7 @@ def _rule_fight_won(ctx: MacroCtx) -> GeniusCall | None:
     value, what, title, target, short = max(opts, key=lambda o: o[0])
     score = value * _clamp(0.55 + window / 60.0) * _clamp(0.75 + 0.25 * edge + 0.1 * (n - 2))
     return _call("fight_won", f"fight_won:{int(ctx.gt // 30)}:{what}", title,
-                 f"Ils sont {n} morts ({_secs(window)} s) : {what} maintenant !".replace(": le Baron", ": Baron"),
+                 f"Prends {what} maintenant : {n} ennemis morts ({_secs(window)} s)",
                  f"À {alive_vs}, ils ne peuvent pas défendre : {_secs(window)} s suffisent pour {short}.",
                  target, tier="high", score=score, priority=94, color="safe", genius=True,
                  life=max(8.0, min(window, 30.0)), label=title.rstrip(" !")[:16],
@@ -706,8 +718,8 @@ def _rule_fight_lost(ctx: MacroCtx) -> GeniusCall | None:
         return None
     score = _clamp(0.5 + 0.15 * (len(al) - len(en)) + (0.15 if _forward(ctx) else 0.0))
     return _call("fight_lost", f"fight_lost:{int(ctx.gt // 30)}", "RECULE",
-                 "Recule : défends sous ta tour, ne contre-attaque pas.",
-                 f"Vous êtes {5 - len(al)} contre {5 - len(en)} pendant {_secs(window)} s : attends que tes "
+                 "Recule sous ta tour : ne contre-attaque pas",
+                 f"Tu es à {5 - len(al)} contre {5 - len(en)} pendant {_secs(window)} s : attends que tes "
                  "alliés reviennent.",
                  safe, tier="mid", score=score, priority=96, color="danger", life=max(8.0, min(window, 25.0)),
                  label="REPLI", factors=(f"{len(al)} alliés morts", f"{len(en)} ennemis morts"))
@@ -739,7 +751,7 @@ def _rule_jungler_dead(ctx: MacroCtx) -> GeniusCall | None:
         if not _window_ok(ctx, jl.respawn, PIT_UV.get(key), key):
             continue
         what = OBJ_LE[key]
-        return _call("jungler_dead", ident, OBJ_TITLE[key], f"{name} est mort ({w} s) : prenez {what} !",
+        return _call("jungler_dead", ident, OBJ_TITLE[key], f"Prends {what} maintenant : {name} est mort ({w} s)",
                      f"Sans jungler, ils ne peuvent pas voler {what} au châtiment : {w} s de fenêtre.",
                      PIT_UV.get(key), tier="high", score=_clamp(0.7 + jl.respawn / 100.0), priority=90,
                      color="safe", genius=True, life=max(10.0, min(jl.respawn, 30.0)),
@@ -747,7 +759,7 @@ def _rule_jungler_dead(ctx: MacroCtx) -> GeniusCall | None:
     if role == "JUNGLE" and theirs is not None:
         ref = ctx.me_uv or (0.5, 0.5)
         half = min(("top", "bot"), key=lambda h: geometry.dist(ref, JUNGLE_UV[(theirs, h)]))
-        return _call("jungler_dead", ident, "ENVAHIS !", f"{name} est mort ({w} s) : envahis et prends ses camps.",
+        return _call("jungler_dead", ident, "ENVAHIS !", f"Prends ses camps maintenant : {name} est mort ({w} s)",
                      f"Personne ne défend sa jungle pendant {w} s : chaque camp volé le met en retard.",
                      JUNGLE_UV[(theirs, half)], tier="high", score=_clamp(0.6 + jl.respawn / 100.0), priority=88,
                      color="safe", genius=True, life=max(10.0, min(jl.respawn, 30.0)), label="ENVAHIS",
@@ -757,7 +769,7 @@ def _rule_jungler_dead(ctx: MacroCtx) -> GeniusCall | None:
             and (ctx.hp is None or ctx.hp >= 0.5):
         target = lane_uv(lane, 0.6, ctx.my_team)
         return _call("jungler_dead", ident, "JOUE AVANCÉ",
-                     f"{name} est mort ({w} s) : pousse ta vague, aucun gank possible.",
+                     f"Pousse ta vague : {name} est mort ({w} s)",
                      "Leur jungler ne peut pas venir : prends l'avantage dans ta voie.",
                      target, tier="basic", score=0.45, priority=80, color="safe",
                      life=max(10.0, min(jl.respawn, 25.0)), label="POUSSE", factors=(f"jungler mort {w} s",))
@@ -880,7 +892,7 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
             return None
         key = "elder" if _obj_up(ctx, "elder") else "dragon"
         return _call("free_dragon", f"free:{key}:{int(ctx.gt // 60)}", OBJ_TITLE[key],
-                     f"Le {('dragon ancestral' if key == 'elder' else 'dragon')} est libre : pousse ta vague et va-y.",
+                     f"Pousse ta vague puis va au {('dragon ancestral' if key == 'elder' else 'dragon')} : il est libre",
                      f"{who[0].upper() + who[1:]} {where} : ils ne peuvent pas le contester à temps.",
                      DRAGON_UV, tier="high", score=_clamp(0.55 + 0.35 * conf + 0.1 * edge), priority=86,
                      color="safe", genius=True, life=18.0, label="DRAGON",
@@ -889,7 +901,7 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
     if role in ("BOTTOM", "UTILITY") and stand and _zone_lane(ctx.me_uv) == "bot" and _tower_free(ctx, "bot"):
         return _call("free_dragon", f"cross:bot_tower:{int(ctx.gt // 60)}", "TOUR !",
                      f"Frappe leur tour du bas maintenant : {who} {where}.",
-                     "Leur jungler ne peut pas venir vous punir : c'est le moment de pousser.",
+                     "Leur jungler ne peut pas venir te punir : c'est le moment de pousser.",
                      stand[0][1], tier="high", score=_clamp(0.45 + 0.35 * conf), priority=84, color="safe",
                      genius=True, life=18.0, label="TOUR", factors=(f"jungler {jl.source} {jl.side}",))
     return None
@@ -939,7 +951,7 @@ def _rule_rotate_mid(ctx: MacroCtx) -> GeniusCall | None:
                      "Seul en bas tu es une proie ; au milieu tu es protégé et près des deux côtés.")
     else:
         text, why = ("Va mid avec ton duo : leur tour du bas est prise.",
-                     "Ta voie est finie : au milieu vous mettez la pression sur une nouvelle tour.")
+                     "Ta voie est finie : au milieu, tu mets la pression sur une nouvelle tour.")
     return _call("rotate_mid", f"rotate_mid:{'mine' if mine else 'theirs'}", "VA MID", text, why, target,
                  tier="mid", score=0.6, priority=70, color="teal", life=25.0,
                  factors=("tour du bas tombée", "fin de la phase de voie"))
@@ -996,7 +1008,7 @@ def _rule_side_wave(ctx: MacroCtx) -> GeniusCall | None:
         return None
     value, lane, point, bits = best
     return _call("side_wave", f"side_wave:{lane}:{int(ctx.gt // 45)}", f"VA {LANE_FR[lane].upper()}",
-                 f"Change de voie : va {LANE_FR[lane]}, la vague arrive et personne n'y est.",
+                 f"Va {LANE_FR[lane]} : la vague arrive et personne n'y est",
                  f"Une vague = plus de 100 PO et de l'XP, sans risque : {' et '.join(bits)}.",
                  point, tier="basic", score=_clamp(value), priority=62, color="teal", life=22.0,
                  label="VAGUE", factors=tuple(bits))
@@ -1078,7 +1090,7 @@ def _rule_lane_swap(ctx: MacroCtx) -> GeniusCall | None:
     if ctx.role in ("BOTTOM", "UTILITY") and _zone_lane(ctx.me_uv) == "bot" and solo_bot:
         stand = _standing(ctx, ctx.enemy_team, "bot")
         return _call("lane_swap", "lane_swap:bot", "2 CONTRE 1",
-                     f"2 contre 1 en bas : pousse et frappe leur tour.",
+                     "Pousse et frappe leur tour du bas : 2 contre 1",
                      f"Leur duo est parti en haut, {ctx.enemy_names.get(solo[0], 'leur top')} est seul face à vous.",
                      stand[0][1] if stand else None, tier="mid", score=0.6, priority=72, color="safe", life=25.0,
                      label="TOUR", factors=("duo ennemi en haut", "top ennemi en bas"))
@@ -1141,10 +1153,18 @@ def _rule_waves(ctx: MacroCtx) -> GeniusCall | None:
         why_gold = f"{int(ctx.gold)} PO à dépenser" if gold_ok else "tu as peu de vie"
         if state == "pushing" and meet >= 0.62 and n_al >= 3:
             return _call("wave_recall", f"recall:{int(ctx.gt // 60)}", "RENTRE",
-                         "Ta vague s'écrase sur leur tour : rentre maintenant.",
+                         "Rentre en base maintenant : ta vague est sous leur tour",
                          f"{why_gold} ; leurs sbires restent sous leur tour pendant ton retour.",
                          FOUNTAIN.get(ctx.my_team or ""), tier="basic", score=0.55 + (0.1 if gold_ok and low else 0.0),
                          priority=58, color="gold", life=15.0, label="BASE", factors=(why_gold, "vague poussée"))
+        prudent = ctx.stance_score is not None and ctx.stance_score <= STANCE_PRUDENT
+        if state in ("even", "pushed_in") and meet < 0.55 and not low and prudent:
+            # behind / threatened: "push first" would contradict the gauge ("Joue prudent")
+            return _call("wave_recall", f"recall_safe:{int(ctx.gt // 60)}", "RENTRE",
+                         "Recule sous ta tour puis rentre en base",
+                         f"{why_gold} ; ton adversaire est plus fort, ne pousse pas d'abord.",
+                         _safe_uv(ctx), tier="basic", score=0.45, priority=56, color="gold",
+                         life=15.0, label="BASE", factors=(why_gold, "jauge prudente"))
         if state in ("even", "pushed_in") and meet < 0.55 and not low:   # low HP: never "push first"
             extra = " Prends d'abord le canon." if cannon <= 20.0 else ""
             return _call("wave_recall", f"recall_push:{int(ctx.gt // 60)}", "POUSSE PUIS RENTRE",

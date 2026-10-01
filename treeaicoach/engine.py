@@ -67,7 +67,7 @@ TRIVIAL_BUY_AFTER_S = 1200.0     # after 20:00 ...
 TRIVIAL_BUY_GOLD = 500           # ... no HUD chip for a lone component cheaper than this (not completing)
 EARLY_ADVICE_GT_S = 30.0         # no lane-phase tip / insight on the HUD line before the minions spawn (0:30 since 26.1)
 #: words of a "go" HUD line (hidden under a PRUDENT / SAFE gauge: no contradiction on the card)
-GO_WORDS = ("à toi de jouer", "joue agressif", "vas-y", "va-y", "attaque", "engage", "force ", "punis")
+GO_WORDS = ("à toi de jouer", "joue agressif", "utilise ton ultime", "vas-y", "va-y", "attaque", "engage", "force ", "punis")
 VERIFY_BAD_S = 3.0               # verify() below threshold this long -> relocate
 LOCATE_RETRY_S = 10.0            # retry the auto location this often while on the fallback rect
 HEAVY_HZ = 2.0                   # rate of the coaching stages (coach, Tab, tips, items, hype / AI)
@@ -105,7 +105,12 @@ COACH_KINDS = frozenset({AlertKind.MACRO_TIP, AlertKind.PRAISE, AlertKind.SCOREB
 ON_SCREEN_MARGIN = 0.015        # a gank threat this far inside the camera view is on my screen
 ROLE_NOTICE_S = 20.0             # the "role detected (lane swap)" HUD notice stays this long
 TIP_TOAST_GAP_S = 60.0           # beginner tip toasts: at most one per minute (the HUD line shows them all)
-HUD_DWELL_S = 5.0                # a HUD advice line stays at least this long (unless a danger replaces it)
+DEAD_TEXT_KINDS = frozenset({"death_cause", "death_recap", "death", "objective", "objective_soon", "genie",
+                             "macro", "siege"})
+HUD_LINGER_S = 4.0               # a HUD line no longer valid stays this long (unless replaced)
+HUD_GAP_S = 6.0                  # the card emptied: no new non-urgent line before this
+HUD_RETIRE_S = 40.0              # a HUD line replaced by another is not shown again this long
+HUD_DWELL_S = 6.0                # a HUD advice line stays at least this long (unless a danger replaces it)
 TEXT_MSG_S = 10.0                # a written-only message stays on the HUD line this long
 
 MSG_STOPPED = "Analyse arrêtée."
@@ -224,6 +229,21 @@ def _as_bgr(img: Any) -> np.ndarray | None:
     return None
 
 
+_UNSEEN_RE = re.compile(r"(?i)(pas encore vu|caché depuis|invisible depuis)")
+_BEHIND_RE = re.compile(r"(?i)(plus fort|d'avance|te domine|est \d+, pas toi|prudem|sans combattre|fort tôt)")
+
+
+def _line_shape(text: str) -> str:
+    """A HUD line without its live numbers ("Dragon dans 45 s" == "Dragon dans 44 s"); the lines
+    that all say "your lane opponent is stronger, play safe" are ONE subject."""
+    t = str(text or "")
+    if _BEHIND_RE.search(t) and not re.search(r"(?i)^(pousse|prends|attaque|va taper|joue agressif)", t):
+        return "#matchup-behind"
+    if _UNSEEN_RE.search(t):
+        return "#jungler-unseen"
+    return re.sub(r"\d+([,.]\d+)?", "#", t)
+
+
 def seconds_fr(n: int) -> str:
     """``"une seconde"`` / ``"23 secondes"`` / ``"une minute"`` / ``"1 minute 30"``."""
     n = max(0, int(n))
@@ -309,9 +329,9 @@ def _default_opener(path: Path) -> None:
 _BASE_TURRET_RE = re.compile(r"_(?:[LR]_01|C_0[123])_")
 SIEGE_EVENT_S = 45.0             # a base structure of ours fell this recently -> siege
 ACE_EVENT_S = 35.0               # enemy ace this recently -> ace state
-SIEGE_TEXT = "Ils sont dans ta base : défends le nexus en réapparaissant, attends le groupe."
-ACE_TEXT = "Ace : ils prennent ta base, attendez la réapparition ensemble."
-ACE_TEXT_FAR = "Ace : attendez la réapparition ensemble, ne sortez pas seuls."
+SIEGE_TEXT = "Défends ta base avec ton équipe : ils attaquent"
+ACE_TEXT = "Défends ta base à ta réapparition, avec ton équipe"
+ACE_TEXT_FAR = "Attends ton équipe en base : ne sors pas seul"
 
 
 def structure_owner(name: Any) -> str | None:
@@ -1046,7 +1066,9 @@ class CoachEngine:
             if callable(sdv) and getattr(self._voice, "danger_voice", None) != getattr(self._cfg, "danger_voice", None):
                 sdv(getattr(self._cfg, "danger_voice", "bip_voix"))
             tone = "gank"
-            if a.kind == AlertKind.PERSONAL_DANGER:
+            if str(a.key).endswith(":siege"):
+                tone = "siege"
+            elif a.kind == AlertKind.PERSONAL_DANGER or str(a.key).startswith("call:retreat"):
                 tone = "recule"
             elif a.kind in GANK_KINDS and self._tracker is not None:
                 me = self._tracker.me()
@@ -1531,7 +1553,7 @@ class CoachEngine:
                 self._last_frame_t = t
             self._self_icon_tick(t, gt, game)
         tracker = self._tracker
-        tracker.update(t, identified)
+        self._track_update(t, identified)
         raw_alerts: list[Alert] = []
         gank_alerts: list[Alert] = []
         if self._gank is not None:
@@ -1549,7 +1571,7 @@ class CoachEngine:
         tac_alerts, gank_now = self._tactics_tick(t, gt, game, tracker, gank_alerts, threat=threat)
         self._ward_guide_tick(t, game, tracker, frame, identified)
         # latency first: a gank alert (or the fight call) is spoken NOW, before the heavier stages
-        said_now = self._say_gank_now(gank_now + danger_now, t, gt, frame)
+        said_now = self._say_gank_now(gank_now + danger_now + self._siege_alert(t), t, gt, frame)
         raw_alerts += [a for a in gank_alerts if a.kind not in GANK_KINDS] + tac_alerts
         # coaching stages (coach, Tab, tips, items, hype / AI) at the budget's heavy rate, the gank
         # check every tick; threaded: one slot per tick (staggered, no spike), see scheduler.py
@@ -1692,7 +1714,7 @@ class CoachEngine:
         c = getattr(out, "macro_new", None)
         if c is None:
             return
-        self._text_msg = (t, c.text)
+        self._text_msg, self._text_kind = (t, c.text), "genie"
         self._topic_seen(f"genie:{c.kind}", t)          # the call owns its topic: no toast repeats it
         self.text_messages.append((t, "genie", f"{c.text} ({c.why})"))
         del self.text_messages[:-100]
@@ -2043,7 +2065,7 @@ class CoachEngine:
             if adv is not None:
                 self.last_ai_advice = adv.text
                 self.ai_answer_seq = getattr(self, "ai_answer_seq", 0) + 1
-                self._text_msg = (t, adv.text)
+                self._text_msg, self._text_kind = (t, adv.text), "ai"
                 self.text_messages.append((t, "ai", adv.text))
                 title = adv.title
                 self._toast("warning" if adv.error else "insight", title, adv.text, None, f"ai:{adv.t:.0f}", t)
@@ -2228,12 +2250,20 @@ class CoachEngine:
         """Tone of the HUD line ("danger" / "warning" / "go" / "info")."""
         if not text:
             return "info"
+        text = (getattr(self, "_card_src", None) or {}).get(text, text)
         rot = self._tip_rotator
         tip = rot.current_tip() if rot is not None else None
+        memo = getattr(self, "_tone_memo", None)
+        if memo is None or len(memo) > 300:
+            memo = self._tone_memo = {}
         if tip is not None and text == self._tip_text:
-            return str(getattr(tip, "tone", "info") or "info")
+            tone = str(getattr(tip, "tone", "info") or "info")
+            memo[text] = tone             # a tip keeps its tone after the rotator moved on (no colour flip)
+            return tone
+        if text in memo:
+            return memo[text]
         low = text.casefold()
-        if any(w in low for w in ("recule", "danger", "gank", "rentre", "fuis", "ta base", "ace :")):
+        if any(w in low for w in ("recule", "danger", "gank !", "fuis", "ta base", "ace :")):
             return "danger"
         if any(w in low for w in ("attention", "prudent", "évite", "safe")):
             return "warning"
@@ -2265,6 +2295,9 @@ class CoachEngine:
         """Stance (HUD pill, spoken on change) + rotating written tip. Never raises."""
         out: list[Alert] = []
         try:
+            me_tr = self._tracker.me() if self._tracker is not None else None
+            if threat and me_tr is not None and self._grouped(t, me_tr.position()):
+                threat = 0               # a "gank" inside a team fight: the fight decides, not SAFE
             facts = self._coach.facts() if self._coach is not None else {}
             summary = self.scoreboard_summary()
             plus = self._coach_plus_tick(t, game, facts, threat)
@@ -2393,6 +2426,7 @@ class CoachEngine:
                 self._toast(n.kind, n.title, n.text, None, n.key, t)
                 if n.hud:
                     self._text_msg = (t, n.text)
+                    self._text_kind = "death_cause" if str(n.key).startswith("death") else "coach_plus"
                     self.text_messages.append((t, "coach_plus", n.text))
                     del self.text_messages[:-100]
             return plus
@@ -2434,10 +2468,12 @@ class CoachEngine:
         from treeaicoach import voice_policy as vp
 
         kind = vp.kind_name(a)
-        self._text_msg = (t, a.text)
+        self._text_msg, self._text_kind = (t, a.text), kind
         self.text_messages.append((t, kind, a.text))
         del self.text_messages[:-100]
         toast = vp.TEXT_TOAST.get(kind)
+        if kind == "personal_danger" and int(a.level) < int(Level.DANGER):
+            toast = None                 # a written warning ("Farme sous ta tour") is the card, not a red banner
         banner = self._tactics.banner(t) if self._tactics is not None else None
         if toast is not None and not (banner is not None and banner.subtitle == a.text):
             self._toast(toast[0], toast[1], a.text, a.alias, f"text:{a.key}", t)
@@ -2452,10 +2488,17 @@ class CoachEngine:
         valid: list[str] = []
         cand: str | None = None
         msg = self._text_msg
-        if msg is not None and 0.0 <= now - msg[0] < TEXT_MSG_S:
-            valid.append(msg[1])
+        game = self._game
+        me_dead = bool(getattr(getattr(game, "me", None), "is_dead", False)) if game is not None else False
+        if me_dead and msg is not None and getattr(self, "_text_kind", None) not in DEAD_TEXT_KINDS:
+            msg = self._text_msg = None  # dead: only the death lesson / an objective / a call (a lane
+            #                              advice written now would also be stale at the respawn)
+        if msg is not None and (0.0 <= now - msg[0] < TEXT_MSG_S
+                                or (me_dead and getattr(self, "_text_kind", None) == "death_cause")):
+            valid.append(msg[1])         # (the death lesson stays the whole death)
         mc = self._tactics.macro_active() if self._tactics is not None else None
-        if mc is not None and mc.text not in valid and (msg is None or msg[0] <= mc.t or now - msg[0] >= TEXT_MSG_S):
+        if mc is not None and mc.text not in valid and (msg is None or msg[0] <= mc.t or now - msg[0] >= TEXT_MSG_S
+                                                        or self._tip_tone(msg[1]) not in ("danger", "warning")):
             valid.insert(0, mc.text)                  # an active macro call keeps the line while it is valid
         coach = self._coach
         # before the minions (1:05) the lane-phase advice makes no sense (seen in a real game:
@@ -2481,31 +2524,233 @@ class CoachEngine:
                 valid += [it[1] for it in urgent[:1]]
             except Exception:
                 pass
-        if self._tip_text and not early:
+        rot = self._tip_rotator
+        tip_id = str(rot.current_id() or "") if rot is not None else ""
+        if self._tip_text and not early and not tip_id.startswith("dead_"):   # (a "while dead" tip is stale alive)
             valid.append(self._tip_text)
-        # never contradict the gauge: no "à toi de jouer" line under a PRUDENT / SAFE gauge
+        # the card holds ONE instruction, verb first (presenter.card_line): "why : what" lines are
+        # turned around, statements / praise / statistics never take the line
         try:
+            from treeaicoach.presenter import card_line
+
+            src = getattr(self, "_card_src", None)
+            if src is None or len(src) > 200:
+                src = self._card_src = {}
+            lines: list[str] = []
+            for v in valid:
+                c = card_line(v)
+                if c and c not in lines:
+                    src[c] = v
+                    lines.append(c)
+            valid = lines
+        except Exception:
+            log.debug("card line failed", exc_info=True)
+        # never contradict the gauge: no "à toi de jouer" line under a PRUDENT / SAFE gauge (no
+        # "pousse" either under SAFE: the card says "Joue prudent : reste sous ta tour")
+        g = None
+        try:
+            from treeaicoach.presenter import line_stance
+
             g = self._gauge.current() if self._gauge is not None else None
             if g is not None and int(g.step) <= -1 and len(valid) > 0:
-                valid = [v for v in valid if not self._is_go_line(v)]
+                valid = [v for v in valid if not self._is_go_line(v)
+                         and not (int(g.step) <= -2 and line_stance(v) == "push"
+                                  and (mc is None or v != mc.text))]
         except Exception:
             pass
+        if not early and siege is None:
+            valid = self._with_objective_line(valid, now)
+        valid = self._no_contradiction(valid, now, siege is not None or me_dead)
+        # the gauge's two extremes ARE the instruction when nothing else is said (beginner levels)
+        try:
+            from treeaicoach import overlay_render as orr
+
+            step = int(g.step) if g is not None else None
+            lvl = str(getattr(self._cfg, "skill_level", "") or "intermediaire")
+            if not valid and step in orr.GAUGE_LINE and lvl in orr.GAUGE_LEVELS and not early:
+                valid = self._no_contradiction([orr.GAUGE_LINE[step]], now, False)
+        except Exception:
+            log.debug("gauge line failed", exc_info=True)
+        # a line replaced by another one is not shown again for HUD_RETIRE_S (no A -> B -> A flicker;
+        # a danger interruption does not retire it)
+        retired = getattr(self, "_hud_retired", None)
+        if retired is None:
+            retired = self._hud_retired = {}
+        valid = [v for v in valid
+                 if not (0.0 <= now - retired.get(_line_shape(v), -1e9) < HUD_RETIRE_S)
+                 or self._tip_tone(v) == "danger"]
         cand = valid[0] if valid else None
         shown = getattr(self, "_hud_shown", None)
-        try:
-            if cand is not None and shown is not None and shown[0] != cand and 0.0 <= now - shown[1] < HUD_DWELL_S \
-                    and shown[0] in valid and self._tip_tone(cand) != "danger":
-                return shown[0]
-        except Exception:
-            pass
         pr = getattr(self, "_presenter", None)
         if pr is not None and cand is not None:     # fight / gank: no low-value line at all
             ctx = self._presenter_ctx(now)
             if siege is None:
                 cand = pr.filter_panel_line(cand, self._tip_tone(cand), ctx)
+        cand = self._steady_line(cand, shown, valid, now, me_dead, siege is not None, mc)
+        self._note_stance(cand, now)
         if shown is None or shown[0] != cand:
+            if shown is not None and shown[0] and _line_shape(shown[0]) != _line_shape(cand or ""):
+                retired[_line_shape(shown[0])] = now
+                if len(retired) > 100:
+                    for k in sorted(retired, key=retired.get)[:50]:
+                        del retired[k]
             self._hud_shown = (cand, now)
         return cand
+
+    def _objective_line(self, now: float) -> str | None:
+        """"Va bot : Dragon dans 0:45" in the last 60 s before a spawn my role plays (beginner to
+        advanced; overlay_render._objective_instruction). Never raises."""
+        try:
+            from treeaicoach import overlay_render as orr
+
+            game = self._game
+            if game is None or self._objectives is None:
+                return None
+            gt = (_finite(game.game_time) or 0.0) + min(max(0.0, now - self._game_t), 3.0)
+            me = self._tracker.me() if self._tracker is not None else None
+            res = self._role_resolver
+            role = res.my_role() if res is not None and hasattr(res, "my_role") else None
+            if role is None and game.me is not None:
+                role = getattr(game.me, "position", None) or None
+            st = SimpleNamespace(objectives=self._objectives.states(), game_time=gt, me_uv=me.position()
+                                 if me is not None else None, my_role=str(role).upper() if role else None,
+                                 skill_level=getattr(self._cfg, "skill_level", None))
+            obj = orr._objective_instruction(st)
+            return obj[0] if obj is not None else None
+        except Exception:
+            log.debug("objective line failed", exc_info=True)
+            return None
+
+    def _with_objective_line(self, valid: list[str], now: float) -> list[str]:
+        """The objective instruction goes before every line but a danger / warning one, and the
+        lines about the same objective are dropped (one message per subject)."""
+        line = self._objective_line(now)
+        if line is None:
+            return valid
+        name = line.split(" : ", 1)[-1].split(" dans ", 1)[0].strip().lower()
+        urgent = [v for v in valid if self._tip_tone(v) in ("danger", "warning") and name not in v.lower()]
+        rest = [v for v in valid if v not in urgent and name not in v.lower()]
+        return urgent + [line] + rest
+
+    def _steady_line(self, cand: str | None, shown: tuple | None, valid: list[str], now: float, dead: bool,
+                     siege: bool, mc: Any) -> str | None:
+        """No flicker on the card: a line stays at least :data:`HUD_DWELL_S`, lingers
+        :data:`HUD_LINGER_S` after it stopped being valid, and after the card emptied a new
+        non-urgent line waits :data:`HUD_GAP_S`. A danger / warning line, an active macro call,
+        a siege, my death or my respawn switch at once. Never raises."""
+        try:
+            prev_dead = getattr(self, "_hud_dead_prev", None)
+            self._hud_dead_prev = dead
+            if shown is None or siege or prev_dead is None or prev_dead != dead:
+                return cand
+            line, since = shown
+            if self._alarm_now(now):
+                # the red / orange alarm card covers the line: its dwell starts when it is seen again
+                self._hud_alarm_t = now
+                since = now
+                self._hud_shown = (line, now)
+            if line is not None and any(_line_shape(v) == _line_shape(line) for v in valid):
+                self._hud_valid_t = now
+            # the card shows a calm line only ADVICE_SHOW_S[level] (overlay_render): past that, the
+            # line is over here too (retired), so the next one waits HUD_GAP_S like after any blank
+            from treeaicoach import overlay_render as orr
+
+            lvl = str(getattr(self._cfg, "skill_level", "") or "intermediaire")
+            win = orr.ADVICE_SHOW_S.get(lvl, orr.ADVICE_SHOW_S["intermediaire"])
+            if line is not None and win is not None and now - since >= win and (cand is None or cand == line):
+                tone = self._tip_tone(line)
+                if not (tone == "danger" or (tone == "warning" and lvl != "expert")):
+                    return None
+            if cand == line:
+                return cand
+            if cand is not None and line is not None and cand.split(" : ", 1)[0] == line.split(" : ", 1)[0]:
+                return line                  # same instruction (a call repeating a tip): keep the card still
+            rank = {"danger": 3, "warning": 2}
+            r_new = rank.get(self._tip_tone(cand), 1) if cand is not None else 0
+            r_old = rank.get(self._tip_tone(line), 1) if line is not None else 0
+            call = mc is not None and cand is not None and cand == getattr(mc, "text", None) \
+                and (bool(getattr(mc, "genius", False)) or getattr(mc, "color", "") == "danger")
+            if cand is not None and (call or (r_new > r_old if line is not None else r_new == 3)):
+                return cand                                     # more urgent than what is shown: at once
+            keep_ok = line is not None and bool(self._no_contradiction([line], now, False))
+            if line is not None and 0.0 <= now - since < HUD_DWELL_S and keep_ok:
+                return line                                     # dwell
+            if cand is None and line is not None and keep_ok \
+                    and 0.0 <= now - getattr(self, "_hud_valid_t", -1e9) < HUD_LINGER_S \
+                    and getattr(self, "_hud_alarm_t", -1e9) <= getattr(self, "_hud_valid_t", -1e9):
+                return line                                     # linger
+            if line is None and cand is not None and r_new < 3 and 0.0 <= now - since < HUD_GAP_S:
+                return None                                     # quiet gap after the card left
+            return cand
+        except Exception:
+            return cand
+
+    def _siege_alert(self, t: float) -> list[Alert]:
+        """"Ta base est attaquée, défends !" (DANGER: beep + voice, even while dead) when a siege of
+        my base starts (not for an ace: nobody to defend with). Never raises."""
+        try:
+            state = self._siege(t)[0]
+            prev = getattr(self, "_siege_prev", None)
+            self._siege_prev = state
+            if state == "siege" and prev is None:
+                from treeaicoach.voice_policy import SIEGE_KEY
+
+                return [make_alert(AlertKind.PERSONAL_DANGER, Level.DANGER, t, key=SIEGE_KEY,
+                                   text="Ta base est attaquée, défends !")]
+        except Exception:
+            log.debug("siege alert failed", exc_info=True)
+        return []
+
+    def _alarm_now(self, now: float) -> bool:
+        """A gank warning / danger or a personal danger (2 v 1, low HP with an enemy on me) right now."""
+        try:
+            if any(lvl >= int(Level.WARNING) and now - t_ <= THREAT_HOLD_S for t_, lvl, _a in list(self._threat_hist)):
+                return True
+            return self._personal_word(now, self._game) is not None
+        except Exception:
+            return False
+
+    def _note_stance(self, line: str | None, now: float) -> None:
+        """Remember the push / retreat stance of what the player was just told (the shown line and
+        any alarm, which means "recule")."""
+        try:
+            from treeaicoach.presenter import CONTRADICTION_S, line_stance
+
+            mem = getattr(self, "_stance_mem", None)
+            if mem is None:
+                mem = self._stance_mem = []
+            st = line_stance(line) if line else None
+            if st is not None:
+                mem.append((now, st))
+            if self._alarm_now(now):
+                mem.append((now, "retreat"))
+            mem[:] = [(t_, s_) for t_, s_ in mem if 0.0 <= now - t_ <= CONTRADICTION_S][-40:]
+        except Exception:
+            log.debug("stance memory failed", exc_info=True)
+
+    def _no_contradiction(self, valid: list[str], now: float, urgent: bool) -> list[str]:
+        """Drop the candidate lines whose stance (push / retreat) contradicts what was shown in the
+        last :data:`presenter.CONTRADICTION_S` seconds (LESSONS 6). A danger line always passes."""
+        try:
+            from treeaicoach.presenter import CONTRADICTION_S, line_stance
+
+            if urgent:
+                return valid
+            mem = [(t_, s_) for t_, s_ in getattr(self, "_stance_mem", None) or [] if 0.0 <= now - t_ <= CONTRADICTION_S]
+            if self._alarm_now(now):
+                mem.append((now, "retreat"))
+            if not mem:
+                return valid
+            alarm = self._alarm_now(now)          # a gank / 2 v 1 right now: "recule" always passes
+            out = []
+            for v in valid:
+                st = line_stance(v)
+                if st is not None and not (alarm and st == "retreat") and any(s_ != st for _t, s_ in mem):
+                    continue
+                out.append(v)
+            return out
+        except Exception:
+            return valid
 
     def _topic_seen(self, key: str, t: float) -> bool:
         """One toast per subject (voice_policy.topic_of): True when this topic was already shown in
@@ -2548,6 +2793,7 @@ class CoachEngine:
                 return
             if d.channel == prs.PANEL:
                 self._text_msg = (t, subtitle or title)   # the ONE HUD line, no toast
+                self._text_kind = mk
                 return
         icon = None
         if alias:
@@ -2790,6 +3036,23 @@ class CoachEngine:
                     present.add(tr.alias)
                     break
         return self._drop_duplicates(t, out, tracks)
+
+    def _track_update(self, t: float, identified: list[Any]) -> None:
+        """Tracker update with the Live Client dead set (a dead champion is hidden at once)."""
+        tracker = self._tracker
+        set_dead = getattr(tracker, "set_dead", None)
+        if callable(set_dead):
+            try:
+                set_dead(self._dead_aliases())
+                game = self._game
+                if game is not None and hasattr(tracker, "set_roster"):
+                    me = game.me.champion_alias if game.me is not None else None
+                    tracker.set_roster({p.champion_alias: ("self" if p.champion_alias == me else
+                                                           "enemy" if p in game.enemies else "ally")
+                                        for p in game.all_players() if p.champion_alias})
+            except Exception:
+                self._err.exception("Tracker dead set / roster failed")
+        tracker.update(t, identified)
 
     def _dead_aliases(self) -> set[str]:
         """Champions dead right now (roster matcher's respawn-timed view, else the Live API)."""
@@ -3590,15 +3853,23 @@ class CoachEngine:
         siege, _siege_line = self._siege(now)
         if siege is not None:           # base siege / ace dominate: never "SÛR" while the base falls
             level = max(level, int(Level.DANGER))
+        personal = self._personal_word(now, game)     # 2 v 1 / low HP with an enemy on me (danger.py)
         if siege == "ace":
             text = "DANGER — ACE"
         elif siege == "siege":
             text = "DANGER — TA BASE EST ATTAQUÉE"
+        elif level >= Level.WARNING and self._grouped(now, me_uv):
+            # a gank alarm with my team around me is a team fight: "COMBAT", not "GANK, recule"
+            level, text = int(Level.WARNING), "ATTENTION — COMBAT"
         elif level >= Level.DANGER:
             text = "DANGER — GANK !"
+        elif personal is not None and personal[0] >= Level.DANGER:
+            level, text = int(Level.DANGER), f"DANGER — {personal[1]}"
         elif level == Level.WARNING:
             who = self._display_name(game, top.alias) if top is not None else None
-            text = f"ATTENTION — {who} approche" if who else "ATTENTION — ennemi proche"
+            text = f"ATTENTION — {who.upper()} ARRIVE" if who else "ATTENTION — ENNEMI PROCHE"
+        elif personal is not None:
+            level, text = int(Level.WARNING), f"ATTENTION — {personal[1]}"
         else:
             text = "SÛR"
         flash = 0.0
@@ -3638,9 +3909,54 @@ class CoachEngine:
             guides=guides, world=world,
             phase=tac.phase() if tac is not None else None,
             role_notice=self._role_notice(now),
+            tip_curated=True,               # _hud_line: the final card line (gauge line, no contradiction)
             **self._hud_card_fields(game, me_uv, tip, now),
             **self._prediction_fields(me, game, game_t, now),
         )
+
+    def _grouped(self, now: float, me_uv: Any) -> bool:
+        """>= 2 visible allies next to me and at least as many of us as of them (a team fight)."""
+        try:
+            from treeaicoach.voice_policy import GROUPED_MIN, GROUPED_R
+
+            tr = self._tracker
+            if tr is None or me_uv is None:
+                return False
+            me = tr.me()
+            al = [a for a in tr.allies(visible_only=True) if a is not me and a.position() is not None
+                  and geometry.dist(a.position(), me_uv) < GROUPED_R]
+            en = [e for e in tr.enemies(visible_only=True) if e.position() is not None
+                  and geometry.dist(e.position(), me_uv) < GROUPED_R]
+            return len(al) >= GROUPED_MIN and len(al) + 1 >= len(en)
+        except Exception:
+            return False
+
+    def _personal_word(self, now: float, game: Any) -> tuple[int, str] | None:
+        """``(level, short word)`` of the personal danger (danger.py) right now: ``(2, "2 CONTRE
+        1")`` / ``(2, "PEU DE VIE")`` while the "Recule" condition holds, ``(1, ...)`` for a low HP
+        or outnumbered warning; None when calm, dead or stale. Never raises."""
+        try:
+            pd = getattr(self, "_danger", None)
+            st = pd.state() if pd is not None else None
+            if st is None or game is None or bool(getattr(getattr(game, "me", None), "is_dead", False)):
+                return None
+            lvl = int(getattr(st, "level", 0) or 0)
+            if lvl <= 0 or now - float(getattr(st, "t", now)) > 1.5:
+                return None
+            reason = str(getattr(st, "reason", "") or "")
+            if "contre" in reason:
+                return lvl, reason.upper()
+            foes = list(getattr(st, "foes", ()) or ())
+            n = sum(1 for f in foes if float(getattr(f, "d", 1.0)) < 0.12)
+            allies = int(getattr(st, "allies_near", 0) or 0)
+            if n >= 2 and n > allies + 1:
+                return lvl, f"{n} CONTRE {allies + 1}"
+            hp = getattr(st, "hp", None)
+            if lvl >= 2 or (n >= 1 and hp is not None and float(hp) < 0.4):
+                return lvl, "PEU DE VIE"
+            return None                 # a one-tick written warning (lane spike...) is no state
+        except Exception:
+            return None
 
     def _prediction_fields(self, me: Any, game: Any = None, game_t: float = 0.0,
                            now: float = 0.0) -> dict[str, Any]:
@@ -3676,8 +3992,10 @@ class CoachEngine:
                 out.update(gauge=int(g.step), gauge_reason=g.reason or None, gauge_since=float(g.since) + to_mono)
             if tip != self._hud_tip_prev:
                 self._hud_tip_prev, self._hud_tip_since = tip, now
+                self._hud_tip_careful = g is not None and int(g.step) <= -1
             if tip:
-                out.update(tip_tone=self._tip_tone(tip), tip_since=self._hud_tip_since + to_mono)
+                out.update(tip_tone=self._tip_tone(tip), tip_since=self._hud_tip_since + to_mono,
+                           card_careful=bool(getattr(self, "_hud_tip_careful", False)))
             in_base = False
             if me_uv is not None and game is not None:
                 z = geometry.classify_zone(*me_uv)

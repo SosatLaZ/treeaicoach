@@ -63,6 +63,8 @@ VOICE_LEVELS: tuple[str, ...] = ("minimal", "normal", "bavard")
 DEFAULT_VOICE_LEVEL = "minimal"
 GANK_KINDS = frozenset({AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE})
 PERSONAL = AlertKind.PERSONAL_DANGER
+#: Key of the "Ta base est attaquée" danger (engine: start of a siege of my base), spoken even while dead.
+SIEGE_KEY = "personal_danger:siege"
 #: Always spoken (answers to a hotkey the player pressed).
 ALWAYS_VOICE = frozenset({AlertKind.JUNGLER_WHERE})
 #: Praise keys (praise.PraiseCoach) of the big moments, spoken even in "minimal".
@@ -498,8 +500,20 @@ def triage_gank(alert: Any, *, me_pos: Any, allies: list[Any], enemies: list[Any
             return "drop", None
         if me is not None and bool(getattr(me, "is_dead", False)):
             return "drop", None
-        if me_pos is None or int(getattr(alert, "level", 0) or 0) >= 2:
-            return "speak", None                     # a DANGER gank on me is never delayed / downgraded
+        if me_pos is None:
+            return "speak", None
+        if int(getattr(alert, "level", 0) or 0) >= 2:
+            # a DANGER gank on me is never delayed / downgraded, unless my team is around me (team
+            # fight: the fight call speaks, "Gank, recule" would pull a beginner out of a won fight)
+            from treeaicoach import geometry
+
+            mates = [a for a in allies if getattr(a, "uv", None) is not None and getattr(a, "alias", None)
+                     and geometry.dist(a.uv, me_pos) < GROUPED_R]
+            foes = [e for e in enemies if getattr(e, "visible", False) and getattr(e, "uv", None) is not None
+                    and geometry.dist(e.uv, me_pos) < GROUPED_R]
+            if len(mates) >= GROUPED_MIN and len(mates) + 1 >= len(foes):
+                return "text", "combat d'équipe"
+            return "speak", None
         from treeaicoach import geometry
 
         # identified allies only (an anonymous "ally" icon is often a misread enemy)
@@ -634,6 +648,8 @@ class VoiceGate:
                 return "drop"                                # "Attaque !": the banner says it (no double)
             return "voice"                                   # RECULE: the one line spoken in a fight
         if kind == PERSONAL:
+            if key == SIEGE_KEY:
+                return "voice"                               # my base attacked: said even while dead
             if ctx.dead:
                 return "drop"
             return "voice" if int(getattr(alert, "level", 0) or 0) >= 2 else "text"

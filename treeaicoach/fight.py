@@ -495,7 +495,7 @@ class FightTracker:
             return f"Combat gagné {ours} à {theirs} !", True
         if ours == theirs:
             return f"Combat équilibré : {ours} à {theirs}.", None
-        return f"Combat perdu ({ours} à {theirs}) : regroupe-toi avant le prochain.", False
+        return f"Recule vers ta tour : combat perdu {ours} à {theirs}", False
 
 
 def _count_style(aliases: list[str], style: str) -> int:
@@ -530,20 +530,21 @@ def _safe_point(me_uv: Any, enemies: list[Seen], st_map: Any) -> tuple[float, fl
 
 def _reason(n_al: int, n_en: int, coming: float, players: dict[str, Any], me: Any, eng_en: list[str],
             hp: float | None) -> str:
-    parts = [f"{n_al}v{n_en}"]
+    parts = [f"{n_al} contre {n_en}"]
     if coming >= 0.4:
         n = max(1, int(round(coming)))
-        parts.append(f"+{n} ennemi{'s' if n > 1 else ''} en route")
+        parts.append(f"{n} ennemi{'s' if n > 1 else ''} de plus arrive{'nt' if n > 1 else ''}")
     try:
         en_lv = [players[a.lower()].level for a in eng_en if a and a.lower() in players]
         if en_lv and me is not None:
             d = int(round(float(me.level) - sum(en_lv) / len(en_lv)))
             if d:
-                parts.append(f"{'+' if d > 0 else '−'}{abs(d)} niv")
+                side = "d'avance" if d > 0 else "de retard"
+                parts.append(f"{abs(d)} niveau{'x' if abs(d) > 1 else ''} {side}")
     except Exception:
         pass
     if hp is not None and hp < 0.5:
-        parts.append(f"{int(round(hp * 100))} % PV")
+        parts.append(f"{int(round(hp * 100))} % de vie")
     return " · ".join(parts)
 
 

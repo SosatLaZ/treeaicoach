@@ -56,6 +56,7 @@ PANEL_MIN_S = 5.0          # the panel line changes at most this often (unless t
 BANNER_GAP_S = 20.0        # at most one non-danger banner per 20 s
 TOPIC_DEDUPE_S = 40.0      # one message per topic per 40 s (danger excepted)
 DANGER = 3                 # urgency scale: 0 info, 1 notice, 2 warning, 3 danger
+BIG_PRAISE = ("multi:", "shutdown:", "solo:", "steal:")   # (= voice_policy.BIG_PRAISE_PREFIXES)
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,83 @@ class _Panel:
     until: float
 
 
+#: French imperatives (tutoiement) a card instruction may start with ("Recule vers ta tour").
+CARD_VERBS = frozenset("""
+va recule pousse rentre achète pose frappe joue reste attends défends farme prends aide regroupe
+change évite tue retourne suis garde bloque contrôle place utilise vise arrête laisse tiens protège sors
+cours fuis prépare lance engage attaque rejoins tourne ramasse récupère monte descends gèle fais ne
+regarde surveille mets reviens profite plaque tape nettoie cache harcèle sécurise vole balise
+continue termine finis avance repousse punis dépense économise sauve groupe concentre-toi regroupe-toi
+enchaîne passe passe-toi téléporte-toi envahis force conteste rapproche-toi
+""".split())
+_STRIP = " .!"
+_COMMON_STARTS = frozenset("le la les leur leurs ton ta tes peu ils il elle tu un une des jungler sbires phase "
+                           "ennemis vous votre nous on ta plus encore tour vague".split())
+
+
+def _first_word(text: str) -> str:
+    import re
+
+    return re.split(r"[\s:,!.']", text.strip(), maxsplit=1)[0].lower()
+
+
+def card_line(text: str | None) -> str | None:
+    """THE card wording of an advice line: an instruction, verb first ("Recule vers ta tour : 2
+    contre 1"). A "why : what" line is turned around ("Darius est mort : pousse ta vague" ->
+    "Pousse ta vague : Darius est mort"); a line that is no instruction at all (a statement, a
+    praise, a statistic) gives None: it is not card material. Never raises."""
+    try:
+        t = " ".join(str(text or "").replace(" — ", " : ").split()).rstrip(_STRIP)
+        if not t:
+            return None
+        if _first_word(t) in CARD_VERBS:
+            return t
+        head, sep, tail = t.partition(" : ")
+        if sep and _first_word(tail) in CARD_VERBS:
+            tail = tail.rstrip(_STRIP)
+            w0 = _first_word(head)
+            why = head[:1].lower() + head[1:] if (w0 in _COMMON_STARTS or head.lower().startswith("l'")) else head
+            return f"{tail[:1].upper()}{tail[1:]} : {why}"
+        return None
+    except Exception:
+        return None
+
+
+_CLAUSE = r"(?:^|[:;,.!·] *|\bpuis )"
+_PUSH_RE = None
+_RETREAT_RE = None
+
+
+def line_stance(text: str | None) -> str | None:
+    """``"push"`` (pousse / plaque / frappe la tour / attaque / joue agressif...), ``"retreat"``
+    (recule / reste près de ta tour / joue prudent / ne t'avance pas...) or None: two lines of
+    opposite stances must never follow each other within :data:`CONTRADICTION_S`. Never raises."""
+    global _PUSH_RE, _RETREAT_RE
+    try:
+        import re
+
+        if _PUSH_RE is None:
+            _PUSH_RE = re.compile(r"(?i)" + _CLAUSE + r"(pousse|plaque|frappe (la|leur|une|les) tours?|attaque|"
+                                  r"engage|vas-y|joue agressif|punis|mets la pression|va taper)\b")
+            _RETREAT_RE = re.compile(r"(?i)" + _CLAUSE + r"(recule|reste sous ta tour|reste près de ta tour|"
+                                     r"arrête de pousser|ne pousse|fuis|joue prudent|ne (te )?bats pas|"
+                                     r"ne t'avance pas)\b")
+        t = str(text or "")
+        r = bool(_RETREAT_RE.search(t))
+        p = bool(_PUSH_RE.search(t))
+        if r and not p:
+            return "retreat"
+        if p and not r:
+            return "push"
+        return None
+    except Exception:
+        return None
+
+
+#: two lines of opposite stances (push / retreat) never within this many seconds
+CONTRADICTION_S = 10.0
+
+
 def message_kind(toast_kind: str, key: str = "") -> str:
     """Router kind of an engine toast ``(kind, key)`` (``key`` prefixes say who sent it)."""
     k = str(key or "")
@@ -158,7 +236,7 @@ class Presenter:
             d = self._decide(msg, ctx)
             if d.channel != DROP:
                 self._topics[msg.topic or msg.text] = ctx.t
-                if d.channel == BANNER and msg.urgency < DANGER:
+                if (d.channel == BANNER and msg.urgency < DANGER) or (d.channel == BADGE and msg.kind == "praise"):
                     self._last_banner_t = ctx.t
                 if d.channel == PANEL:
                     self._panel = _Panel(msg.text, int(msg.urgency), ctx.t, ctx.t + max(1.0, float(msg.ttl)))
@@ -187,6 +265,10 @@ class Presenter:
             ch = route.normal
         if ch == DROP:
             return Decision(DROP, False, "context")
+        if ch == BADGE and msg.kind == "praise" and not danger and ctx.t - self._last_banner_t < BANNER_GAP_S \
+                and not str(msg.topic or "").startswith(BIG_PRAISE):
+            return Decision(DROP, False, "banner-gap")         # a praise toast is a banner too (a solo
+            #                                                    kill / multi kill / steal still shows)
         topic = msg.topic or msg.text
         last = self._topics.get(topic)
         if not danger and last is not None and 0.0 <= ctx.t - last < TOPIC_DEDUPE_S:
@@ -252,4 +334,4 @@ class Presenter:
 
 
 __all__ = ["BANNER", "PANEL", "BADGE", "DROP", "ROUTES", "Route", "Message", "Context", "Decision", "Presenter",
-           "message_kind", "PANEL_MIN_S", "BANNER_GAP_S", "TOPIC_DEDUPE_S", "PANEL_MIN_VALUE", "BANNER_MIN_VALUE"]
+           "message_kind", "card_line", "CARD_VERBS", "line_stance", "CONTRADICTION_S", "PANEL_MIN_S", "BANNER_GAP_S", "TOPIC_DEDUPE_S", "PANEL_MIN_VALUE", "BANNER_MIN_VALUE"]

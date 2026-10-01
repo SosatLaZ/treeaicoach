@@ -4,7 +4,7 @@
 before the death + the Live Client ``ChampionKill`` event) and returns ``(cause, line)``:
 
 =================  ==========================================================================
-``tower``          killed by a turret: "Tué par la tour : n'y va pas sans tes sbires"
+``tower``          killed by a turret: "Ne frappe pas leur tour seul : tué par la tour"
 ``outnumbered``    more enemies than allies around me: "Mort à 3 contre 1 : recule dès qu'ils sont plus nombreux"
 ``jungler``        the enemy jungler took part and was unseen for a while: "Leur jungler t'a surpris : ..."
 ``outlevelled``    the killer had 2+ levels more: "Darius avait 2 niveaux de plus : évite ses échanges"
@@ -33,7 +33,7 @@ EARLY_HP_S = 10.0           # "you stayed low" needs low health this long before
 DIVE_MIN = 4                # this many enemies on me on my side of the map: a dive, not my mistake
 LOW_HP = 0.35
 JUNGLER_SURPRISE_S = 15.0   # jungler unseen at least this long before he killed me
-CAUSE_DELAY_S = 4.0         # the line is shown this long after the death (after the recap)
+CAUSE_DELAY_S = 0.0         # the lesson is shown at once (the card would otherwise blink empty, then fill)
 
 
 @dataclass(frozen=True)
@@ -59,25 +59,25 @@ def classify_death(s: DeathSnapshot) -> tuple[str, str] | None:
     """``(cause, French line)`` or None (see the module docstring). Pure, never raises."""
     try:
         if s.killer_kind == "turret" and s.involved <= 1:
-            return "tower", "Tué par la tour : n'y va pas sans tes sbires"
+            return "tower", "Ne frappe pas leur tour seul : tué par la tour"
         n = max(int(s.enemies_near), int(s.involved))
         al = max(1, int(s.allies_near))
         # V2 audit: a 4-5 man dive on my side is not a positioning mistake: no blame, one hint
         if n >= DIVE_MIN and not s.enemy_half and n > al:
-            return "dive", f"Plongée à {n} contre {al} : rien à faire, sauf reculer plus tôt quand ils disparaissent"
+            return "dive", f"Recule dès qu'ils disparaissent : plongée à {n} contre {al}"
         # the jungler gank is the precise cause (before "2 contre 1", which is the same death)
         if s.jungler_involved and (s.jungler_hidden_s is None or s.jungler_hidden_s >= JUNGLER_SURPRISE_S):
             if s.enemy_half:
-                return "jungler", "Trop avancé sans voir leur jungler : reste près de ta tour"
-            return "jungler", "Leur jungler t'a surpris : balise ta rivière quand ta vague pousse"
+                return "jungler", "Reste près de ta tour : leur jungler t'a surpris"
+            return "jungler", "Balise ta rivière quand tu avances : leur jungler t'a eu"
         if n >= 2 and n > al:
-            return "outnumbered", f"Mort à {n} contre {al} : recule dès qu'ils sont plus nombreux"
+            return "outnumbered", f"Recule vers ta tour plus tôt : mort à {n} contre {al}"
         if s.killer_level_diff <= -2 and s.killer_name:
-            return "outlevelled", f"{s.killer_name} avait {-s.killer_level_diff} niveaux de plus : évite ses échanges"
+            return "outlevelled", f"Évite les échanges avec {s.killer_name} : {-s.killer_level_diff} niveaux de plus"
         if s.hp is not None and s.hp < LOW_HP and (s.hp_early is None or s.hp_early < LOW_HP):
-            return "low_hp", f"Tu es resté à {int(round(100 * s.hp / 5.0) * 5)} % de vie : rentre plus tôt"
+            return "low_hp", f"Rentre plus tôt en base : mort à {int(round(100 * s.hp / 5.0) * 5)} % de vie"
         if s.enemy_half and s.missing >= 2:
-            return "overextended", f"Trop avancé avec {s.missing} ennemis invisibles : recule quand ils disparaissent"
+            return "overextended", f"Recule quand ils disparaissent : {s.missing} ennemis invisibles"
         return None
     except Exception:
         log.debug("classify_death failed", exc_info=True)

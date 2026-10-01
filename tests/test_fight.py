@@ -77,7 +77,7 @@ def test_enemy_jungler_missing_close_lowers_the_chance():
     close = fg.evaluate(g, ME, allies, base + [fg.Seen("LeeSin", (0.62, 0.70), False, 4.0)])
     assert close.win < away.win - 0.05
     assert close.enemies_coming > 0 and away.enemies_coming == 0
-    assert "en route" in close.reason
+    assert "de plus arrive" in close.reason
 
 
 def test_fight_detection_engage_call_and_summary():

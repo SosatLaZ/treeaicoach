@@ -105,7 +105,7 @@ def lane_lines(me_alias: str, opp_alias: str, opp_name: str) -> list[str]:
         if d > 0:
             out.append("Joue agressif avant le niveau 6 : tu es plus fort tôt")
         elif d < 0 and op.curve == "early":
-            out.append(f"Farme prudemment jusqu'au niveau 6 : {opp_name} est plus fort tôt")
+            out.append(f"Farme prudemment jusqu'au niveau 6 : {opp_name} est fort tôt")
         elif d < 0:
             out.append(f"Prends l'avantage tôt : {opp_name} devient fort plus tard")
         if op.ranged and not me.ranged:

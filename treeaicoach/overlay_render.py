@@ -29,6 +29,7 @@ import copy
 import logging
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -202,6 +203,9 @@ class OverlayState:
     # declutter (compact HUD): the player's level decides how often the action line shows; the role
     # decides which objective may appear in the header (only the ones he plays, last 60 s)
     skill_level: str | None = None            # skill.SKILL_LEVELS key (None: "intermediaire")
+    card_careful: bool | None = None          # the card line's colour, fixed when it appeared (None: gauge)
+    tip_curated: bool = False                 # True: ``tip`` is the engine's final card line (no insight /
+                                              # gauge-line fallback here: contradiction / repeat checked)
     my_role: str | None = None                # "TOP" | "JUNGLE" | "MIDDLE" | "BOTTOM" | "UTILITY" | None
 
 
@@ -1900,7 +1904,7 @@ OBJECTIVE_LEVELS = frozenset({"debutant", "intermediaire", "avance"})
 OBJECTIVE_GO: dict[str, str] = {"dragon": "Va bot", "elder": "Va bot", "baron": "Va vers le Baron",
                                 "herald": "Va top", "grubs": "Va top", "atakhan": "Va au centre"}
 #: the gauge's two extremes ARE instructions when nothing else is said
-GAUGE_LINE: dict[int, str] = {2: "Joue agressif : tu es plus fort", -2: "Joue prudent : reste sous ta tour"}
+GAUGE_LINE: dict[int, str] = {2: "Joue agressif dans ta voie : tu es plus fort", -2: "Joue prudent : reste sous ta tour"}
 GAUGE_LEVELS = frozenset({"debutant", "intermediaire"})
 COMPACT_FADE_S = 0.15           # entry animation only; the instruction is never left faded
 STATE_RGB = {"ok": TAI_GO, "careful": TAI_WARN, "danger": TAI_DANGER}
@@ -1952,10 +1956,54 @@ def _danger_word(state: Any) -> str:
     return DANGER_SHORT.get(text.upper(), text)
 
 
+#: the instruction of a danger card when no danger advice is given
+DANGER_LINE = "Recule vers ta tour"
+FIGHT_LINE = "Reste avec ton équipe"
+BASE_LINE = "Défends ta base avec ton équipe"
+
+
+def _base_danger(state: Any) -> bool:
+    """Base siege / ace (threat text set by the engine): shown in red even while I am dead."""
+    text = str(getattr(state, "threat_text", "") or "").upper()
+    return "ACE" in text.split() or "BASE" in text
+
+
 def _advice_raw(state: Any) -> str:
+    """The engine's card line (already verb first), else the coach insight when it is an
+    instruction (presenter.card_line: a statistic / statement is no card material)."""
     tip = getattr(state, "tip", None)
-    advice = tip if isinstance(tip, str) and tip.strip() else getattr(state, "insight", None)
-    return advice if isinstance(advice, str) else ""
+    if isinstance(tip, str) and tip.strip():
+        return tip
+    if getattr(state, "tip_curated", False):
+        return ""
+    ins = getattr(state, "insight", None)
+    if not isinstance(ins, str) or not ins.strip():
+        return ""
+    try:
+        from treeaicoach.presenter import card_line
+
+        return card_line(ins) or ""
+    except Exception:
+        return ""
+
+
+#: a danger card has room for one short line under the danger word
+DANGER_LINE_MAX = 32
+
+
+def danger_line(advice: str, fallback: str | None = None) -> str:
+    """The one short instruction of a danger card: the advice when it fits, else its head
+    ("Recule vers ta tour : 2 contre 1" -> "Recule vers ta tour"), else :data:`DANGER_LINE`."""
+    fallback = fallback or DANGER_LINE
+    a = " ".join(str(advice or "").split()).rstrip(" .!")
+    if not a:
+        return fallback
+    if len(a) <= DANGER_LINE_MAX:
+        return a
+    head = a.split(" : ", 1)[0].split(", ", 1)[0].rstrip(" .!")
+    if len(head) <= DANGER_LINE_MAX and len(head.split()) >= 3:
+        return head
+    return fallback
 
 
 def _advice_shown(state: Any, now: float) -> str:
@@ -1999,7 +2047,7 @@ def _objective_instruction(state: Any) -> tuple[str, Any] | None:
             if getattr(ob, "alive", False) or nxt is None or not _finite(nxt):
                 continue
             rem = float(nxt) - float(gt)
-            if not (0.0 <= rem <= OBJECTIVE_CONTEXT_S):
+            if not (1.0 <= rem <= OBJECTIVE_CONTEXT_S):
                 continue
             name = str(getattr(ob, "name", "") or "")
             key = str(getattr(ob, "key", "") or name).lower()
@@ -2050,10 +2098,17 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
     dead = bool(getattr(state, "me_dead", False))
     advice = _advice_shown(state, now)
     tone = str(getattr(state, "tip_tone", "") or "").lower()
-    if lvl >= 1 and not dead:
-        line = advice if tone == "danger" else ""
+    base_danger = lvl >= 2 and _base_danger(state)
+    if (lvl >= 1 and not dead) or base_danger:
+        # danger: the short danger word + ONE instruction (the danger advice, else "Recule vers ta tour")
+        word = _danger_word(state).upper()
+        raw = _advice_raw(state) if tone == "danger" else ""
+        if base_danger and "base" not in raw.lower():
+            raw = ""                                     # my base falls: defend it, not "recule vers ta tour"
+        line = danger_line(raw, BASE_LINE if base_danger else None) if raw else (BASE_LINE if base_danger else FIGHT_LINE if word == "COMBAT"
+                                             else DANGER_LINE)
         mode = "danger" if lvl >= 2 else "careful"
-        return {"mode": mode, "colour": STATE_RGB[mode], "word": _danger_word(state), "line": line, "icon": None}
+        return {"mode": mode, "colour": STATE_RGB[mode], "word": word, "line": line, "icon": None}
     near_e, near_a = _near_counts(state)
     if near_e >= 2 and near_e > near_a + 1 and not dead:
         # outnumbered next to me (docs/LESSONS.md 6-7), even with the enemies visible on screen
@@ -2065,13 +2120,19 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
             return None
         return {"mode": "ok", "colour": TAI_MUTED, "word": "", "line": advice, "icon": None}
     step = _gauge_step(state)
-    careful = (step is not None and step <= -1) or tone in ("danger", "warning")
+    fixed = getattr(state, "card_careful", None)
+    gauge_careful = bool(fixed) if fixed is not None else (step is not None and step <= -1)
+    careful = gauge_careful or tone in ("danger", "warning")
     icon = None
     line = advice
     obj = _objective_instruction(state)
-    if obj is not None and tone not in ("danger", "warning"):
+    if getattr(state, "tip_curated", False):
+        # the engine already put the objective instruction in its line: only its icon is added here
+        if obj is not None and line and re.sub(r"\d", "", line) == re.sub(r"\d", "", obj[0]):
+            icon = obj[1]
+    elif obj is not None and tone not in ("danger", "warning"):
         line, icon = obj
-    if not line and step in GAUGE_LINE and _skill(state) in GAUGE_LEVELS:
+    if not line and step in GAUGE_LINE and _skill(state) in GAUGE_LEVELS and not getattr(state, "tip_curated", False):
         line = GAUGE_LINE[step]
     if not line:
         return None                                   # silence is a feature

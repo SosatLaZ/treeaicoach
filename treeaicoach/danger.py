@@ -286,10 +286,10 @@ class PersonalDanger:
         if (low_on_me or two_v_one) and not stronger:
             level = 2
             reason = (f"{len(near)} contre {1 + allies_near}" if two_v_one
-                      else f"peu de vie, {(on_me or near)[0].name} sur toi")
+                      else f"{(on_me or near)[0].name} sur toi")
         if level == 2 and not in_fight and t - self._m.recule_t >= RECULE_REPEAT_S:
             who = (on_me or near)[0]
-            why = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.WARNING, text=f"Recule : {reason}.",
+            why = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.WARNING, text=f"Recule vers ta tour : {reason}",
                         key=alert_key(AlertKind.PERSONAL_DANGER, "recule:why"), t=t, alias=who.alias)
             if not recent_gank and threat < Level.DANGER:
                 out = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.DANGER, text="Recule !",
@@ -308,15 +308,15 @@ class PersonalDanger:
             just_said = t - self._m.recule_t < AFTER_RECULE_S     # "Recule !" said: no written echo
             if hp is not None and hp < LOW_HP and near and threat < Level.WARNING and not just_said:
                 f0 = min(near, key=lambda f: f.d)
-                cands.append(("low", f"Peu de vie et {f0.name} près de toi : recule.", f0.alias))
+                cands.append(("low", f"Recule vers ta tour : peu de vie, {f0.name} près", f0.alias))
             if outnumbered and threat < Level.WARNING and (hp is None or hp < OUTNUMBERED_HP) and not just_said:
-                cands.append(("outnumbered", f"{len(near)} ennemis près de toi : recule vers ta tour.", None))
+                cands.append(("outnumbered", f"Recule vers ta tour : {len(near)} ennemis près de toi", None))
             if threat < Level.WARNING and not near:
                 if t - self._fog_t >= FOG_EVAL_S or self._fog_cache is None:
                     self._fog_t, self._fog_cache = t, self._jungler_fog(me_pos, team, jungler, fog)
                 fog_mass, jg = self._fog_cache
                 if jg is not None:
-                    cands.append(("jungler_fog", f"{jg} peut arriver : recule vers ta tour.", None))
+                    cands.append(("jungler_fog", f"Recule vers ta tour : {jg} peut arriver", None))
             for r, text, alias in cands:
                 if self._written_ok(r, text, t):
                     out = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.WARNING, text=text,
@@ -403,7 +403,7 @@ class PersonalDanger:
             spike = spike or ratio >= LANE_POWER_RATIO
             hurt = hp is not None and hp < LANE_HURT_HP
             if spike and (hurt or ratio >= LANE_FAR_BEHIND_RATIO):
-                return ("lane", f"{f.name} te domine : ne trade pas, farme sous la tour.", f.alias)
+                return ("lane", f"Farme sous ta tour : {f.name} est plus fort", f.alias)
         return None
 
     # ------------------------------------------------------------------ jungler in the fog

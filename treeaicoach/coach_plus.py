@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 
 NOTE_GAP_S = 20.0               # at most one toast of this module every 20 s (engine time)
 NOTE_TTL_S = 30.0               # a note held back (fight / gank) is dropped after this
-CARD_GT = (12.0, 150.0)         # the matchup card is shown in this game-time window
+CARD_GT = (30.0, 150.0)         # the matchup card is shown in this game-time window
 
 
 @dataclass(frozen=True)
@@ -117,6 +117,12 @@ class CoachPlus:
                             hud=True, t=t))
         self._queue += [n for n in new if n.prio >= min_prio]
         self._queue = [n for n in self._queue if t - n.t <= NOTE_TTL_S]
+        dead = bool(getattr(getattr(game, "me", None), "is_dead", False))
+        lesson = [n for n in self._queue if n.hud and dead]
+        if lesson:                       # dead: the death lesson at once (the fight / gank is over for me)
+            self._queue.remove(lesson[0])
+            self._last_note = t
+            return [lesson[0]]
         if busy or not self._queue or t - self._last_note < NOTE_GAP_S:
             return []
         self._queue.sort(key=lambda n: (-n.prio, n.t))
