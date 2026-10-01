@@ -895,6 +895,7 @@ def render_report_html(record: dict, analysis: dict | None = None) -> str:
         parts = []
         for fn in (lambda: _header(rec, a), lambda: _cards(a), lambda: _voice_box(a), lambda: _tips_section(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _presence_section(rec, a),
+                   lambda: _positioning_section(a),
                    lambda: _deaths_section(rec, a), lambda: _ganks_section(rec, a),
                    lambda: _jungler_section(rec, a), lambda: _objectives_section(a),
                    lambda: _scoreboard_section(a), lambda: _trends_section(a)):
@@ -1254,6 +1255,44 @@ def _presence_section(record: dict, a: dict) -> str:
               f'pour ton rôle (part du temps où ton icône est visible).</p>')
     return (f'<div class="panel"><h2>Présence sur la carte : toi vs idéal</h2><div class="trip">{"".join(figs)}</div>'
             f'{gauge}<div class="phgrid" style="margin-top:16px">{"".join(blocks)}</div>{legend}</div>')
+
+
+def _positioning_section(a: dict) -> str:
+    """"Positionnement": was I at the right place at the right time, phase by phase."""
+    pos = a.get("positioning") or {}
+    phases = pos.get("phases") or []
+    if not phases:
+        return ""
+    cards = []
+    for p in phases:
+        score = p.get("score")
+        col = GREEN if (score or 0) >= 75 else ORANGE if (score or 0) >= 50 else RED
+        pct = p.get("percent")
+        rows = [
+            ("Moments clés", f'<b>{_e(p.get("present", 0))} / {_e(p.get("moments", 0))}</b>'
+                             + (f' <span class="small">({_num(pct, 0)} %)</span>' if pct is not None else "")),
+            ("Objectifs manqués (absent)", f'<b class="{"bad" if p.get("missed") else "ok"}">'
+                                           f'{len(p.get("missed") or [])}</b>'),
+        ]
+        if p.get("phase") != "laning":
+            risk = p.get("side_risk_s", 0) or 0
+            rows.append(("Seul en side lane (3+ disparus)",
+                         f'<b class="{_cls(risk, 20, 60, False)}">{_e(_num(risk, 0))} s</b>'))
+        kv = "".join(f"<span>{_e(k)}</span>{v}" for k, v in rows)
+        missed = "".join(f'<li>{_e(m.get("time"))} {_e(m.get("label"))}</li>' for m in (p.get("missed") or [])[:4])
+        head = (f'<div class="rg">{_e(p.get("range", ""))} · score <b style="color:{col}">'
+                f'{_e(_num(score, 0)) if score is not None else "—"} / 100</b></div>')
+        cards.append(f'<div class="ph"><h3>{_e(p.get("label"))}</h3>{head}<div class="kv">{kv}</div>'
+                     + (f'<ul class="small" style="margin:8px 0 0 16px">{missed}</ul>' if missed else "") + "</div>")
+    tips = "".join(f"<li>{_e(t)}</li>" for t in (pos.get("tips") or [])[:5])
+    total = pos.get("score")
+    title = "Positionnement : au bon endroit au bon moment"
+    if total is not None:
+        title += f" ({_num(total, 0)} / 100)"
+    return (f'<div class="panel"><h2>{_e(title)}</h2><div class="phgrid">{"".join(cards)}</div>'
+            + (f'<ul class="tips" style="margin-top:14px">{tips}</ul>' if tips else "")
+            + '<p class="small">Moment clé : un objectif épique pris (par une équipe) alors que ton rôle devait y '
+              'être et que tu étais en vie ; présent = à moins de ~3 700 unités de la fosse ou participant.</p></div>')
 
 
 def _role_fr(role: str) -> str:
