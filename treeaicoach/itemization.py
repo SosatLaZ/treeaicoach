@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 REPEAT_S = 300.0          # same recommendation not repeated within 5 min (unless situation changed)
 MIN_GAP_S = 45.0          # between two advices (death / base visits only need DEATH_GAP_S)
 DEATH_GAP_S = 20.0
+BASE_GAP_S = 90.0         # one shopping advice per base visit (buying changes the inventory: not a new moment)
 SPIKE_LEVELS = (6, 11, 16)
 MIN_GT = 90.0             # no advice before 1:30
 NEED_MIN = 1.0            # severity needed for a counter item
@@ -525,7 +526,7 @@ class ItemAdvisor:
         self._current = rec or self._current
         if moment is None or rec is None or gt < MIN_GT:
             return []
-        gap = DEATH_GAP_S if moment in ("death", "base") else MIN_GAP_S
+        gap = DEATH_GAP_S if moment == "death" else BASE_GAP_S if moment == "base" else MIN_GAP_S
         if t - self._last_emit < gap:
             return []
         shopping = moment in ("death", "base")

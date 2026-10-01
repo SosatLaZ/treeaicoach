@@ -1385,7 +1385,9 @@ class MapCoach:
         if not ctx.safe:
             n = self._missing(ctx)
             if n >= MISSING_MIN:
-                add((70, f"{min(n, 5)} ennemis disparus"))
+                # (below the HUD's urgent bar 65: the tip "Recule vers ta tour : N ennemis invisibles"
+                # says it with the action, and the count flickering in / out was noise on the HUD line)
+                add((62, f"{min(n, 5)} ennemis disparus"))
             info = self._pressure or {}
             if info.get("grouped"):
                 add((55, f"Ennemis groupés {SIDE_FR.get(info.get('side'), '')} ({info.get('visible')})"))
@@ -1443,6 +1445,8 @@ STANCE_VOICE_GAP_S = 120.0      # spoken at most every 2 min, only when it chang
 STANCE_MIN_GT = 90.0            # nothing before 1:30 (everyone is still walking to lane)
 STANCE_RECENT_DEATHS_S = 180.0
 STANCE_RECENT_KILLS_S = 120.0
+NEUTRAL_REASON = "pas d'avantage net : farme et balise"
+REASON_MAX_CHARS = 52            # the gauge's "pourquoi" line: longer -> only the main reason
 OPPOSITE_SIDE = {"top": "bot", "bot": "top"}
 
 
@@ -1502,10 +1506,17 @@ def _my_events(game: Any, gt: float) -> tuple[int, int]:
     return deaths, kills
 
 
-def stance_factors(facts: dict[str, Any], game: Any, scoreboard: Any = None, threat: int = 0) -> list[tuple[float, str]]:
-    """Weighted reasons (+ = play aggressive, - = play safe), strongest first. Pure, never raises."""
+def stance_factors(facts: dict[str, Any], game: Any, scoreboard: Any = None, threat: int = 0,
+                   extra: Any = None) -> list[tuple[float, str]]:
+    """Weighted reasons (+ = play aggressive, - = play safe), strongest first. ``extra``: more
+    ``(weight, reason)`` pairs (power spikes, :meth:`treeaicoach.coach_plus.CoachPlus.factors`).
+    Pure, never raises."""
     out: list[tuple[float, str]] = []
     try:
+        for w, txt in extra or ():
+            wf = _finite(w)
+            if wf and txt:
+                out.append((max(-3.0, min(3.0, wf)), str(txt)))
         f = facts or {}
         gt = _finite(f.get("gt")) or _finite(getattr(game, "game_time", None)) or 0.0
         if int(_finite(threat) or 0) >= Level.WARNING:
@@ -1633,7 +1644,10 @@ def stance_from_factors(factors: list[tuple[float, str]], t: float = 0.0) -> Sta
     elif pos or neg:
         reason = (pos or neg)[0]
     else:
-        reason = "pas d'avantage net, prends les sbires et pose des balises"
+        reason = NEUTRAL_REASON
+    if len(reason) > REASON_MAX_CHARS:          # "Pourquoi ?" stays one short line: the main reason
+        first = (pos if level == "agressif" else neg if level == "prudent" else (pos or neg))[:1]
+        reason = first[0] if first else reason
     return Stance(level, reason, score, tuple(factors), t)
 
 
@@ -1669,16 +1683,19 @@ class StanceAdvisor:
             return self._current
 
     def update(self, t: float, facts: dict[str, Any], game: Any, scoreboard: Any = None,
-               threat: int = 0) -> list[Alert]:
-        """One tick; returns ``[]`` or ``[the stance sentence]`` (MACRO_TIP, key ``stance:<level>``)."""
+               threat: int = 0, extra: Any = None) -> list[Alert]:
+        """One tick; returns ``[]`` or ``[the stance sentence]`` (MACRO_TIP, key ``stance:<level>``).
+        ``extra``: more gauge reasons (see :func:`stance_factors`)."""
         try:
             with self._lock:
-                return self._update_locked(float(t), facts or {}, game, scoreboard, int(_finite(threat) or 0))
+                return self._update_locked(float(t), facts or {}, game, scoreboard, int(_finite(threat) or 0),
+                                           extra)
         except Exception:
             log.exception("StanceAdvisor.update failed")
             return []
 
-    def _update_locked(self, t: float, facts: dict[str, Any], game: Any, scoreboard: Any, threat: int) -> list[Alert]:
+    def _update_locked(self, t: float, facts: dict[str, Any], game: Any, scoreboard: Any, threat: int,
+                       extra: Any = None) -> list[Alert]:
         if self._last_t is not None and t < self._last_t - 1.0:
             self.reset()
         self._last_t = t
@@ -1690,7 +1707,7 @@ class StanceAdvisor:
         if bool(getattr(me, "is_dead", False)) or facts.get("dead"):
             self._current, self._cand = None, None
             return []
-        new = stance_from_factors(stance_factors(facts, game, scoreboard, threat), t)
+        new = stance_from_factors(stance_factors(facts, game, scoreboard, threat, extra), t)
         cur = self._current
         if cur is None:
             self._current = new                         # first value: shown at once

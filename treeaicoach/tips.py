@@ -108,6 +108,27 @@ class TipContext:
     recent_deaths: int = 0               # my deaths in the last 5 min
     safe: bool = False
     item: str | None = None              # next recommended item (itemization)
+    buy_names: str | None = None         # components affordable now ("Phage + Épée longue")
+    buy_value: int = 0                   # their price
+    # power spikes vs my lane opponent (spikes.SpikeTracker): who reached a key level / item first
+    spike_who: str | None = None         # "me" | "opp"
+    spike_what: str | None = None        # "level" | "item"
+    spike_level: int = 0
+    spike_item: str = ""
+    # power plays (phase.MapState via game_plan.map_fields)
+    soul: str | None = None              # "us" | "them": team on soul point
+    baron_buff_s: float = 0.0
+    enemy_baron_s: float = 0.0
+    elder_buff_s: float = 0.0
+    enemy_elder_s: float = 0.0
+    # session goal (goals.GoalTracker) + game-start plan (game_plan.matchup_card)
+    goal_kind: str | None = None
+    goal_target: float = 0.0
+    goal_risk: str | None = None         # "last_death" | "cs_behind"
+    plan1: str | None = None
+    plan2: str | None = None
+    plan_jg: str | None = None
+    has_tp: bool = True                  # my summoner spells include Teleport (True when unknown)
 
     # ---- helpers used by the conditions
     @property
@@ -152,6 +173,13 @@ class TipContext:
         best = min(((r, k) for k, r in self.soon.items() if 0 <= r <= hi), default=None)
         return (best[1], best[0]) if best is not None else None
 
+    def my_objective(self, lo: float, hi: float) -> tuple[str, float] | None:
+        """(key, seconds) of the soonest objective spawning in [lo, hi] s that concerns my role."""
+        from treeaicoach.game_plan import OBJ_ROLES
+        best = min(((r, k) for k, r in self.soon.items() if lo <= r <= hi
+                    and (self.role is None or self.role in OBJ_ROLES.get(k, ROLES))), default=None)
+        return (best[1], best[0]) if best is not None else None
+
     def obj(self, key: str, default: str) -> str:
         return str(self.obj_names.get(key) or default)
 
@@ -183,8 +211,24 @@ class TipContext:
             "jg_h": int(self.jg_hidden_s or 0), "my_lane": SIDE_FR.get(self.my_lane or "", "de côté"),
             "dead": self.dead_names[0] if self.dead_names else (self.opp or "un ennemi"),
             "item": self.item or "ton prochain objet",
+            "buy": self.buy_names or "ton composant",
+            "sp_lvl": self.spike_level, "sp_item": self.spike_item or "un gros objet",
+            "baron_left": int(self.baron_buff_s // 5 * 5), "ebaron": int(self.enemy_baron_s // 5 * 5),
+            "elder_left": int(self.elder_buff_s // 5 * 5), "eelder": int(self.enemy_elder_s // 5 * 5),
+            "goal_t": f"{self.goal_target:g}".replace(".", ","),
+            "my_obj": self.obj(mo[0], mo[0]) if (mo := self.my_objective(0, 130)) else "prochain objectif",
+            "my_le": OBJ_LE.get(mo[0], "l'objectif") if mo else "l'objectif",
+            "next_le": OBJ_LE.get(nxt[0], "l'objectif") if nxt else "l'objectif",
+            "my_obj_s": int(round(mo[1] / 5.0) * 5) if mo else 60,
+            "plan1": self.plan1 or "Tue vite la première vague : le premier niveau 2 gagne",
+            "plan2": self.plan2 or "Reste derrière tes sbires : ils prennent les coups à ta place",
+            "plan_jg": self.plan_jg or "Balise ta rivière vers 2:45 : premier gank possible",
         }
 
+
+#: objective key -> "le dragon" (French article included)
+OBJ_LE = {"dragon": "le dragon", "baron": "le Baron", "herald": "le Héraut", "grubs": "les larves",
+          "atakhan": "l'Atakhan", "elder": "l'ancestral"}
 
 #: Tone of a tip (HUD accent colour): "danger" (red), "warning" (amber), "go" (green), "info" (gold)
 TONES = ("danger", "warning", "go", "info")
@@ -266,7 +310,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.jg_hidden_s is not None and c.jg_hidden_s >= 60 and 180 <= c.gt and c.early and not c.jg_dead,
       roles=LANERS, prio=3, tone="warning", conf=MAP, cooldown=150.0),
     T("jg_level3", "jungle", "Balise ta rivière avant 3:15 : {jg} peut ganker",
-      lambda c: 150 <= c.gt <= 200, roles=LANERS, prio=3, tone="warning"),
+      lambda c: 150 <= c.gt <= 200 and not c.plan_jg, roles=LANERS, prio=3, tone="warning"),
     T("jg_counter", "jungle", "Prends ses camps {jg_opp_side} : {jg} est {jg_side}",
       lambda c: c.jg_visible and c.jg_side in ("top", "bot"), roles=("JUNGLE",), prio=3, tone="go", conf=MAP,
       cooldown=120.0, ttl=10.0),
@@ -309,11 +353,11 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.soon_within("grubs", 10, 80), roles=TOPSIDE, prio=3, ttl=15.0),
     T("atakhan", "objectives", "Regroupez-vous près d'Atakhan : apparition dans {atakhan_s} s",
       lambda c: c.soon_within("atakhan", 0, 90), prio=3, ttl=15.0),
-    T("group_obj", "macro", "Rejoins ton équipe vers le {next_obj} : {next_s} s",
+    T("group_obj", "macro", "Rejoins ton équipe vers {next_le} : {next_s} s",
       lambda c: not c.early and c.next_objective(60) is not None and not c.in_base, prio=3, ttl=15.0),
-    T("tp_obj", "macro", "Garde ta Téléportation pour le {next_obj} : {next_s} s",
-      lambda c: c.gt >= 600 and c.next_objective(70) is not None, roles=("TOP",), prio=2, ttl=15.0),
-    T("sup_obj_vision", "vision", "Va baliser le {next_obj} : apparition dans {next_s} s",
+    T("tp_obj", "macro", "Garde ta Téléportation pour {next_le} : {next_s} s",
+      lambda c: c.gt >= 600 and c.has_tp and c.next_objective(70) is not None, roles=("TOP",), prio=2, ttl=15.0),
+    T("sup_obj_vision", "vision", "Va baliser {next_le} : apparition dans {next_s} s",
       lambda c: c.next_objective(90) is not None and (c.next_objective(90) or ("", 0))[1] >= 30,
       roles=("UTILITY",), prio=3, ttl=15.0),
     # ------------------------------------------------------------------ lane matchup
@@ -325,10 +369,18 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.level_diff >= 1 and c.early, roles=LANERS, prio=3, tone="go", cooldown=180.0),
     T("lvl_behind", "matchup", "Joue prudemment sous ta tour : {opp} a {lvl_txt} d'avance",
       lambda c: c.level_diff <= -1 and c.early, roles=LANERS, prio=3, tone="warning", cooldown=180.0),
-    T("lvl6_me", "matchup", "Attaque avec ton ultime : {opp} n'a pas encore le sien",
-      lambda c: c.level == 6 and c.level_diff >= 1, roles=LANERS, prio=4, tone="go", cooldown=300.0),
-    T("lvl6_opp", "matchup", "Recule un peu : {opp} a son ultime, pas toi",
-      lambda c: c.opp_level == 6 and c.level <= 5, roles=LANERS, prio=4, tone="warning", cooldown=300.0),
+    # power spikes (spikes.SpikeTracker): the first to reach 2 / 3 / 6 / 11 / 16 (the opponent's 11 / 16 and
+    # the big items are announced by the Tab insights / praise; all of them move the play gauge)
+    T("spike_me_big", "matchup", "Attaque {opp} : tu es {sp_lvl} avant lui",
+      lambda c: c.spike_who == "me" and c.spike_what == "level" and c.spike_level in (2, 6) and not c.in_base
+      and not c.dead and not c.opp_dead, roles=LANERS, prio=4, tone="go", cooldown=60.0, ttl=12.0),
+    T("spike_me", "matchup", "Joue plus fort : tu es {sp_lvl} avant {opp}",
+      lambda c: c.spike_who == "me" and c.spike_what == "level" and c.spike_level in (3, 11, 16)
+      and not c.in_base and not c.dead and not c.opp_dead, roles=LANERS, prio=3, tone="go", cooldown=60.0,
+      ttl=12.0),
+    T("spike_opp_big", "matchup", "Recule : {opp} est {sp_lvl}, pas toi",
+      lambda c: c.spike_who == "opp" and c.spike_what == "level" and c.spike_level in (2, 3, 6) and not c.in_base
+      and not c.dead and not c.opp_dead, roles=LANERS, prio=4, tone="warning", cooldown=60.0, ttl=12.0),
     T("gold_ahead", "matchup", "Prends les plaques de {opp} : {gd} d'or d'avance",
       lambda c: c.gold_diff >= 800 and c.early, roles=LANERS, prio=3, tone="go"),
     T("gold_behind", "matchup", "Prends les sbires sans combattre : {opp} a {gd} d'or d'avance",
@@ -385,8 +437,47 @@ TIPS: tuple[Tip, ...] = (
     # ------------------------------------------------------------------ items / gold
     T("buy_item", "items", "Achète {item} : c'est ton meilleur achat maintenant",
       lambda c: c.in_base and c.item is not None and c.gold >= 300, prio=4, tone="go", ttl=12.0),
+    T("comp_ready", "items", "Rentre acheter {buy} : tu as l'or",
+      lambda c: bool(c.buy_names) and c.buy_value >= 700 and not c.in_base and not c.dead and c.missing < 3
+      and c.enemies_near == 0 and c.my_objective(0, 50) is None, prio=3, cooldown=150.0, ttl=15.0),
     T("gold_back", "items", "Rentre acheter : {gold} d'or, ça fait un objet",
-      lambda c: c.gold >= 1300 and not c.in_base and not c.dead and c.missing < 3, prio=3, cooldown=150.0),
+      lambda c: c.gold >= 1300 and not c.buy_names and not c.in_base and not c.dead and c.missing < 3
+      and c.my_objective(0, 50) is None, prio=3, cooldown=150.0),
+    # objective timing: recall now to be back in time / don't recall right before it
+    T("obj_recall_now", "objectives", "Rentre maintenant : tu reviendras à temps pour {my_le}",
+      lambda c: c.my_objective(75, 120) is not None and not c.in_base and not c.dead and c.enemies_near == 0
+      and (c.gold >= 900 or (c.hp is not None and c.hp < 0.6)), prio=3, cooldown=240.0, ttl=15.0),
+    T("obj_stay", "objectives", "Ne rentre pas : {my_obj} dans {my_obj_s} s, reste prêt",
+      lambda c: c.my_objective(10, 50) is not None and not c.in_base and not c.dead and c.gold >= 1100
+      and (c.hp is None or c.hp >= 0.5), prio=3, tone="warning", cooldown=240.0, ttl=12.0),
+    # power plays (phase.MapState)
+    T("soul_us", "objectives", "Prenez ce dragon : il vous donne l'âme",
+      lambda c: c.soul == "us" and (c.soon_within("dragon", 0, 90) or "dragon" in c.alive), prio=4, tone="go",
+      cooldown=240.0, ttl=15.0),
+    T("soul_them", "objectives", "Contestez ce dragon : sinon ils prennent l'âme",
+      lambda c: c.soul == "them" and (c.soon_within("dragon", 0, 90) or "dragon" in c.alive), prio=4,
+      tone="warning", cooldown=240.0, ttl=15.0),
+    T("baron_us", "macro", "Poussez deux voies avec le Baron : encore {baron_left} s",
+      lambda c: c.baron_buff_s >= 20 and not c.dead, prio=3, tone="go", cooldown=90.0, ttl=15.0),
+    T("baron_them", "macro", "Défends sous tes tours : Baron ennemi encore {ebaron} s",
+      lambda c: c.enemy_baron_s >= 20 and not c.dead, prio=3, tone="warning", cooldown=90.0, ttl=15.0),
+    T("elder_us", "macro", "Forcez le combat : bonus ancestral encore {elder_left} s",
+      lambda c: c.elder_buff_s >= 15 and not c.dead, prio=4, tone="go", cooldown=90.0, ttl=12.0),
+    T("elder_them", "macro", "Évite le combat : ils ont l'ancestral {eelder} s",
+      lambda c: c.enemy_elder_s >= 15 and not c.dead, prio=4, tone="danger", cooldown=90.0, ttl=12.0),
+    # session goal (goals.GoalTracker)
+    T("goal_deaths", "survival", "Joue prudent : encore une mort et ton objectif est raté",
+      lambda c: c.goal_risk == "last_death" and not c.dead and not c.in_base, prio=3, tone="warning",
+      cooldown=600.0, ttl=12.0),
+    T("goal_cs", "farm", "Reste sur ta vague : objectif {goal_t} sbires/min, tu es à {cspm}",
+      lambda c: c.goal_risk == "cs_behind" and not c.dead, roles=CARRIES, prio=3, cooldown=240.0, ttl=12.0),
+    # game-start plan (game_plan.matchup_card)
+    T("plan_lane", "matchup", "{plan1}", lambda c: bool(c.plan1) and 20 <= c.gt <= 150, prio=2,
+      cooldown=9999.0, ttl=15.0),
+    T("plan_lane2", "matchup", "{plan2}", lambda c: bool(c.plan2) and 40 <= c.gt <= 160, prio=2,
+      cooldown=9999.0, ttl=15.0),
+    T("plan_jg", "jungle", "{plan_jg}", lambda c: bool(c.plan_jg) and 110 <= c.gt <= 190, roles=LANERS,
+      prio=3, tone="warning", cooldown=9999.0, ttl=15.0),
     T("gold_spend", "items", "Dépense tes {gold} d'or : l'or gardé ne sert à rien",
       lambda c: c.in_base and c.gold >= 500, prio=3, ttl=10.0),
     T("boots", "items", "Achète des bottes : plus rapide, tu évites les ganks",
@@ -400,7 +491,7 @@ TIPS: tuple[Tip, ...] = (
     T("first_back", "items", "Attends environ 1100 d'or pour rentrer : un vrai composant",
       lambda c: 240 <= c.gt <= 420 and 600 <= c.gold < 1100 and not c.in_base, roles=LANERS, prio=2),
     # ------------------------------------------------------------------ death / respawn
-    T("dead_obj", "survival", "En réapparaissant, va au {next_obj} : {next_s} s",
+    T("dead_obj", "survival", "En réapparaissant, va vers {next_le} : {next_s} s",
       lambda c: c.dead and c.next_objective(90) is not None, prio=4, cooldown=120.0, ttl=15.0),
     T("dead_watch", "survival", "Regarde la carte pendant ta mort : choisis où aller",
       lambda c: c.dead, prio=3, cooldown=240.0, ttl=15.0),
@@ -443,9 +534,16 @@ def _player_names(p: Any) -> set[str]:
 
 
 def build_context(facts: dict[str, Any] | None, game: Any, scoreboard: Any = None, stance: Any = None,
-                  item: str | None = None) -> TipContext:
-    """:class:`TipContext` from the coach facts + Live Client data + Tab summary. Never raises."""
+                  item: str | None = None, extra: dict[str, Any] | None = None) -> TipContext:
+    """:class:`TipContext` from the coach facts + Live Client data + Tab summary (+ ``extra`` fields
+    from :meth:`treeaicoach.coach_plus.CoachPlus.tip_fields`). Never raises."""
     c = TipContext()
+    for k, v in (extra or {}).items():
+        if hasattr(c, k) and not k.startswith("_") and v is not None:
+            try:
+                setattr(c, k, v)
+            except Exception:
+                pass
     try:
         f = facts or {}
         me = getattr(game, "me", None)
@@ -460,6 +558,9 @@ def build_context(facts: dict[str, Any] | None, game: Any, scoreboard: Any = Non
             c.enemies_near = int(_f(nums[0], 0) or 0)
             c.allies_near = max(1, int(_f(nums[1], 1) or 1))
         c.dead = bool(getattr(me, "is_dead", False))
+        spells = [str(x).casefold() for x in tuple(getattr(me, "spell_ids", ()) or ()) + tuple(getattr(me, "spells", ()) or ())]
+        if spells:
+            c.has_tp = any("teleport" in x or "téléport" in x for x in spells)
         c.in_base = bool(f.get("in_base"))
         c.safe = bool(f.get("safe"))
         c.level = int(_f(getattr(me, "level", None), 1) or 1)
