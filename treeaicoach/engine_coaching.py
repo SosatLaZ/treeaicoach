@@ -106,8 +106,13 @@ class CoachingMixin:
         try:
             from treeaicoach.presenter import CONTRADICTION_S
 
-            mem = getattr(self, "_stance_mem", None) or []
-            return frozenset(s_ for t_, s_ in mem if 0.0 <= t - t_ <= CONTRADICTION_S)
+            # lines that APPEARED in the last 10 s (a retreat line still shown 30 s later is no reason
+            # to hold "Plaque la tour : Darius est mort"), + "retreat" after an alarm
+            starts = getattr(self, "_stance_starts", None) or []
+            out = {s_ for t_, s_ in starts if 0.0 <= t - t_ <= CONTRADICTION_S}
+            if 0.0 <= t - getattr(self, "_hud_alarm_t", -1e9) <= CONTRADICTION_S:
+                out.add("retreat")
+            return frozenset(out)
         except Exception:
             return frozenset()
 
@@ -1058,6 +1063,19 @@ class CoachingMixin:
                         del retired[k]
             same = shown is not None and shown[0] is not None and cand is not None \
                 and _ticking(shown[0], cand)
+            if cand is not None and not same:
+                try:
+                    from treeaicoach.presenter import line_stance
+
+                    st_ = line_stance(cand)
+                    if st_ is not None:
+                        starts = getattr(self, "_stance_starts", None)
+                        if starts is None:
+                            starts = self._stance_starts = []
+                        starts.append((now, st_))
+                        del starts[:-20]
+                except Exception:
+                    pass
             # a countdown ticking ("Dragon dans 0:45" -> "0:44") is the same line: it keeps its age
             self._hud_shown = (cand, shown[1] if same else now)
         return cand
