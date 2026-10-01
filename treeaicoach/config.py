@@ -156,6 +156,7 @@ CHOICES.update({
 BOOL_FIELDS = BOOL_FIELDS + ("ai_speak", "win_prob_hud")
 UPDATE_TEXT_FIELDS["ai_api_key"] = 512
 UPDATE_TEXT_FIELDS["ai_model"] = 128
+HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ai",)     # "Demander à l'IA" (lowest priority on a clash)
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -295,6 +296,7 @@ class Config:
     ai_api_key: str = ""
     ai_model: str = ""               # "" = default model of the provider
     ai_speak: bool = False           # written only (toast + HUD) unless enabled
+    hotkey_ai: str = "F8"            # "Demander à l'IA" (manual request), "" = disabled
     # "mode annonceur" (hype.py): sobre = nothing spoken, coach = win-probability swings, caster = + hype lines
     caster_style: str = "coach"
     win_prob_hud: bool = True        # show the live win probability (HUD line / dashboard)

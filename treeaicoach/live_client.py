@@ -104,6 +104,8 @@ class GameInfo:
     current_gold: float = 0.0                  # my gold (activePlayer.currentGold), 0 when spectating
     #: my numeric ``activePlayer.championStats`` (currentHealth, maxHealth...), {} when spectating
     champion_stats: dict[str, float] = field(default_factory=dict)
+    #: my runes + ability levels from ``activePlayer`` ({"runes": {...}, "abilities": {"Q": 3...}}), {} if unknown
+    active_info: dict[str, Any] = field(default_factory=dict)
 
     @property
     def items(self) -> list[int]:
@@ -360,6 +362,38 @@ def _champion_stats(active: dict | None) -> dict[str, float]:
     return out
 
 
+def _active_info(active: dict | None) -> dict[str, Any]:
+    """Compact runes (keystone / trees / shards) + ability levels of ``activePlayer``. Never raises."""
+    out: dict[str, Any] = {}
+    try:
+        if not isinstance(active, dict):
+            return out
+        fr = active.get("fullRunes")
+        if isinstance(fr, dict):
+            runes: dict[str, Any] = {}
+            for key, name in (("keystone", "keystone"), ("primaryRuneTree", "primary"),
+                              ("secondaryRuneTree", "secondary")):
+                d = fr.get(key)
+                if isinstance(d, dict) and _str(d.get("displayName")):
+                    runes[name] = _str(d.get("displayName"))[:40]
+            gen = fr.get("generalRunes")
+            if isinstance(gen, list):
+                names = [_str(r.get("displayName"))[:40] for r in gen[:9] if isinstance(r, dict)]
+                if any(names):
+                    runes["all"] = [n for n in names if n]
+            if runes:
+                out["runes"] = runes
+        ab = active.get("abilities")
+        if isinstance(ab, dict):
+            lv = {k: _int(v.get("abilityLevel"), 0) for k, v in ab.items()
+                  if k in ("Q", "W", "E", "R") and isinstance(v, dict)}
+            if lv:
+                out["abilities"] = lv
+    except Exception:
+        log.debug("activePlayer extras unreadable", exc_info=True)
+    return out
+
+
 def _find_me(active: dict | None, raws: list[dict]) -> int | None:
     """Index in ``raws`` of the local player: riotId, then summonerName, then game name."""
     if not active or not raws:
@@ -456,6 +490,7 @@ def _parse(data: Any, now: float | None) -> GameInfo | None:
         fetched_at=t_now if math.isfinite(t_now) else time.monotonic(),
         current_gold=current_gold,
         champion_stats=_champion_stats(active) if me is not None else {},
+        active_info=_active_info(active) if me is not None else {},
     )
 
 
