@@ -318,9 +318,15 @@ def test_one_alert_per_tick_highest_level_then_most_recent() -> None:
 
 def test_global_min_gap_except_danger() -> None:
     th = AlertThrottler(min_gap_s=1.2)
+    mia = AlertKind.LANER_MIA
     assert th.filter([A(RA, Level.WARNING, 0.0, who="Ahri")], 0.0)
-    assert th.filter([A(RA, Level.WARNING, 0.5, who="Zed")], 0.5) == []
-    assert _run(th, [A(RA, Level.WARNING, 1.3, who="Zed")], 1.3) == ["roam_approach:Zed"]
+    assert th.filter([A(mia, Level.WARNING, 0.5, who="Zed")], 0.5) == []
+    assert _run(th, [A(mia, Level.WARNING, 1.3, who="Zed")], 1.3) == ["laner_mia:Zed"]
+    # a gank WARNING is never delayed by the global gap (latency first)
+    assert _run(th, [A(RA, Level.WARNING, 1.35, who="Kayn")], 1.35) == ["roam_approach:Kayn"]
+    # ... and wins over another kind of the same level
+    assert _run(AlertThrottler(), [A(mia, Level.WARNING, 2.0, who="Zed"), A(RA, Level.WARNING, 1.9, who="Ahri")],
+                2.0) == ["roam_approach:Ahri"]
     # DANGER is never delayed by the global gap
     assert _run(th, [A(JA, Level.DANGER, 1.4)], 1.4) == ["jungler_approach:LeeSin"]
     th0 = AlertThrottler(min_gap_s=0.0)
@@ -358,7 +364,7 @@ def test_one_shot_alerts_held_by_the_gap_are_not_lost() -> None:
 def test_pending_expiry() -> None:
     th = AlertThrottler(min_gap_s=10.0)
     assert th.filter([A(RA, Level.WARNING, 0.0, who="Ahri")], 0.0)
-    th.filter([A(JS, Level.INFO, 1.0), A(RA, Level.WARNING, 1.0, who="Zed")], 1.0)
+    th.filter([A(JS, Level.INFO, 1.0), A(AlertKind.LANER_MIA, Level.WARNING, 1.0, who="Zed")], 1.0)
     assert th.pending_count() == 2
     th.filter([], 3.0)                                               # WARNING kept 1.5 s only
     assert th.pending_count() == 1

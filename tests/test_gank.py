@@ -254,7 +254,7 @@ def test_jungler_gank_warning_then_danger(jitter: float, drop: float) -> None:
     assert [(tk.t, a.text) for tk, a in spotted] == [(0.0, "Jungler ennemi vu dans la jungle ennemie du haut.")]
 
 
-@pytest.mark.parametrize("name,frames", [("Ahri", 3), ("?1", 5)])
+@pytest.mark.parametrize("name,frames", [("Ahri", 1), ("?1", 3)])
 def test_enemy_appearing_from_fog_close_is_danger_after_confirmation(name: str, frames: int) -> None:
     appear = 2.0
     p = (ME_TOP[0] + 0.08, ME_TOP[1] + 0.03)

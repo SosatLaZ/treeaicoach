@@ -90,7 +90,8 @@ APPROACH_OFF_TICKS = 3           # hysteresis only on switching it off
 TREND_WINDOW_S = 1.0             # distance-series window of the significance test
 TREND_MIN_POINTS = 3
 TREND_MIN_SPAN_S = 0.25
-TREND_T_STAT = -2.0              # slope must be below this many standard errors
+TREND_T_STAT = -2.0              # slope must be below this many standard errors...
+TREND_MIN_SLOPE = -0.010         # ...and below this (/ s): a walking champion is ~-0.025
 TREND_SE_FLOOR = 0.0015          # standard-error floor (perfectly clean data)
 DIST_HISTORY_MAXLEN = 48
 MY_POS_MAX_AGE_S = 3.0           # my position unknown for longer -> no alert
@@ -268,6 +269,7 @@ class GankAnalyzer:
         self._states: dict[str, _TrackState] = {}
         self._state = GankState()
         self._last_t: float | None = None
+        self._first_t: float | None = None       # first analysed tick of this timeline
         self._roles = RoleResolver()
         self._jg_last_side: str | None = None
         self._spotted_t: float | None = None
@@ -286,6 +288,7 @@ class GankAnalyzer:
             self._states.clear()
             self._state = GankState()
             self._last_t = None
+            self._first_t = None
             self._roles.reset()
             self._jg_last_side = None
             self._spotted_t = None
@@ -357,6 +360,8 @@ class GankAnalyzer:
         if self._last_t is not None and now < self._last_t - 1.0:
             self.reset()                       # new timeline
         self._last_t = now
+        if self._first_t is None:
+            self._first_t = now
         self._roles.update(now, tracker, game)
 
         if self._opt("safe_mode", False):
@@ -538,13 +543,14 @@ class GankAnalyzer:
                      key=alert_key(AlertKind.JUNGLER_APPROACH, f"pre-{tr.alias or tr.key}"), t=now,
                      alias=tr.alias, members=())
 
-    @staticmethod
-    def _popped_close(tr: Track, st: _TrackState, d: float, warn: float, now: float) -> bool:
+    def _popped_close(self, tr: Track, st: _TrackState, d: float, warn: float, now: float) -> bool:
         """The icon popped out of the fog (or appeared for the first time) less than
         ``FOG_POP_WINDOW_S`` ago, inside the warn radius (distance at its first sighting)."""
         appeared = tr.appeared_at
         if appeared is None or now - appeared > FOG_POP_WINDOW_S:
             return False
+        if tr.prev_hidden_s is None and (self._first_t is None or appeared - self._first_t < FOG_POP_WINDOW_S):
+            return False                          # already there when the analysis started
         if st.pop_for != appeared:
             st.pop_for, st.pop_d = appeared, d
         return st.pop_d is not None and st.pop_d < warn
@@ -699,7 +705,7 @@ class GankAnalyzer:
         vx, vy = ev[0] - my_vel[0], ev[1] - my_vel[1]
         radial = (rx * vx + ry * vy) / norm if norm > 1e-6 else 0.0
         trend = self._trend(st)
-        significant = trend is not None and trend[0] < 0 and trend[0] / trend[1] < TREND_T_STAT
+        significant = trend is not None and trend[0] < TREND_MIN_SLOPE and trend[0] / trend[1] < TREND_T_STAT
         if st.approaching:
             still = radial < APPROACH_RELEASE_SPEED and trend is not None and trend[0] < 0
             if still:
