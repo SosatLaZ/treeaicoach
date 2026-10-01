@@ -224,6 +224,7 @@ RING_PROP_MAX = 6
 #: proposals the patch verifier gives less than this icon probability are not re-scored
 #: (measured on the real crops: glyphs 0.00-0.01, stacked icons >= 0.1)
 RING_PROP_VERIFY = 0.05
+RING_PROP_EVERY = 2                 # (cost) every N frames; the tracker holds them between
 RING_PROP_SEARCH = 1                # re-scoring window (+- working px): the ring peak is precise
 RING_PROP_ID_MIN = 0.55
 RING_PROP_ID_GAP = 0.1
@@ -2497,7 +2498,8 @@ class RosterMatcher:
         # 5c. ring proposals: an icon-like ring of one team's colour that no accepted match
         #     explains (an icon partly covered by another one, a ping, a label) is given to
         #     the best of THAT team's missing alive champions (occlusion-tolerant score)
-        if self.ring_proposals and not self.grey and len(used) + len(dead) < n_e:
+        if self.ring_proposals and not self.grey and len(used) + len(dead) < n_e and \
+                st.frames % max(1, RING_PROP_EVERY) == 0:
             try:
                 self._ring_img = raw_bgr
                 for c in self._ring_proposals(feat, bank, accepted, used, dead, kx, ky,
