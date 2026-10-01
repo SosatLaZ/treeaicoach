@@ -168,6 +168,13 @@ BOOL_FIELDS = BOOL_FIELDS + ("lcu_enabled",)
 # play ratings (plays.py / fx_overlay.py): chess.com-style "coup de maître / gaffe" badges, visual only
 BOOL_FIELDS = BOOL_FIELDS + ("plays_enabled", "plays_sound", "plays_sound_negative")
 CHOICES["plays_position"] = ("top_center", "minimap")
+# pipeline v2 (capture.py / sysperf.py / scheduler.py / diag.py): capture backend, performance budget,
+# adaptive detection rate, overlay frame rate, process priority, diagnostic bundle
+CHOICES.update({"capture_backend": ("auto", "dxgi", "mss"), "perf_mode": ("auto", "normal", "low_end")})
+FLOAT_RANGES.update({"overlay_fps": (10.0, 60.0), "diag_duration_s": (10.0, 300.0),
+                     "diag_interval_s": (0.5, 10.0)})
+BOOL_FIELDS = BOOL_FIELDS + ("adaptive_rate", "low_priority", "eco_qos", "pause_when_unfocused")
+HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_diag",)
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -250,7 +257,7 @@ class Config:
     hud_xy: list[int] | None = None
     danger_flash: bool = True
     # minimap overlay: hide it from screen capture (False = visible in screenshots / streams)
-    overlay_hide_from_capture: bool = False
+    overlay_hide_from_capture: bool = True   # keeps our own marks out of the detector's captures
     overlay_show_frame: bool = True  # discreet frame + "TreeAI" label on the minimap layer
     # v2 decluttered minimap layer: only enemies / jungler fog / approach arrows / danger ring by default
     overlay_show_allies: bool = False    # thin blue rings on allies + teal ring on me
@@ -326,6 +333,17 @@ class Config:
     plays_position: str = "top_center"   # "top_center" | "minimap" (small badges always near the minimap)
     plays_sound: bool = True             # short tone for positive ratings
     plays_sound_negative: bool = False   # also for inaccuracy / mistake / blunder / missed chance
+    # pipeline v2 (systems)
+    capture_backend: str = "auto"        # "auto" (DXGI Desktop Duplication, mss fallback) | "dxgi" | "mss"
+    perf_mode: str = "auto"              # "auto" (low-end on weak PCs, measured) | "normal" | "low_end"
+    adaptive_rate: bool = True           # detection 4-6 img/s when calm, target_fps on threat
+    overlay_fps: float = 30.0            # minimap layer frame rate (predicted positions), 10..60
+    low_priority: bool = True            # process below normal priority: the game always wins
+    eco_qos: bool = True                 # + Windows 11 EcoQoS (power throttling) hint
+    pause_when_unfocused: bool = True    # overlay hidden + detection slowed when the game is not in front
+    hotkey_diag: str = "Ctrl+F8"         # record a diagnostic bundle (60 s), "" = disabled
+    diag_duration_s: float = 60.0
+    diag_interval_s: float = 2.0
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""
@@ -744,6 +762,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
     if "gank_pre_alert" not in data and data.get("target_fps") in (8, 8.0):
         # pre-latency-work file still on the old default analysis rate: gank alerts need 12 fps
         data = {**data, "target_fps": 12.0}
+    if "capture_backend" not in data and data.get("overlay_hide_from_capture") is False:
+        # pre-"pipeline v2" file: the minimap layer was visible to our own screen capture, so the
+        # detector saw our rings / labels (feedback loop on stale positions) -> excluded now
+        data = {**data, "overlay_hide_from_capture": True}
     cfg = Config.from_dict(data)
     log.info("Config loaded from %s", p)
     return cfg

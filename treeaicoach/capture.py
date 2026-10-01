@@ -21,8 +21,9 @@ import logging
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -278,6 +279,7 @@ class ScreenCapture:
     (re-created if another thread calls, or after any capture error).
     """
 
+    name = "mss"
     #: Minimum delay between two logged capture errors (s).
     ERROR_LOG_INTERVAL = 30.0
     #: Min age (s) of the cached monitor layout before a clipped request re-reads it.
@@ -398,3 +400,365 @@ def is_black_frame(img: Any) -> bool:
         return bool(float(sub.mean()) < BLACK_MEAN_MAX and float(sub.std()) < BLACK_STD_MAX)
     except Exception:
         return False
+
+
+# ======================================================================================
+# Game window details (foreground / minimized / DPI) - pause & overlay hiding
+# ======================================================================================
+
+
+@dataclass(frozen=True)
+class GameWindowInfo:
+    """State of the game window. ``rect`` is None when minimized / hidden / too small."""
+
+    hwnd: int
+    rect: Rect | None
+    minimized: bool
+    foreground: bool           # the game (or one of its popups) has the keyboard focus
+    own_foreground: bool       # one of OUR windows is in the foreground (settings, preview...)
+    dpi: int                   # 96 = 100 %, 120 = 125 %, 144 = 150 %
+
+
+def game_window_info() -> GameWindowInfo | None:
+    """:class:`GameWindowInfo` of the League client window; None when absent / off Windows.
+
+    Never raises. Cheap (a handful of user32 calls): fine once or twice per second.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        import os
+        from ctypes import wintypes
+
+        set_dpi_awareness()
+        user32 = _user32()
+        hwnd = user32.FindWindowW(GAME_WINDOW_CLASS, None) or user32.FindWindowW(None, GAME_WINDOW_TITLE)
+        if not hwnd:
+            return None
+        minimized = bool(user32.IsIconic(hwnd)) or not bool(user32.IsWindowVisible(hwnd))
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        fg = user32.GetForegroundWindow()
+        foreground = own = False
+        if fg:
+            if int(fg) == int(hwnd):
+                foreground = True
+            else:
+                try:
+                    user32.GetAncestor.restype = wintypes.HWND
+                    user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+                    foreground = int(user32.GetAncestor(fg, 3) or 0) == int(hwnd)   # GA_ROOTOWNER
+                except Exception:
+                    pass
+                pid = wintypes.DWORD(0)
+                user32.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+                own = int(pid.value) == os.getpid()
+        dpi = 96
+        try:
+            dpi = int(user32.GetDpiForWindow(hwnd) or 96)
+        except Exception:
+            pass
+        rect = None if minimized else find_game_window()
+        return GameWindowInfo(int(hwnd), rect, minimized, foreground, own, dpi)
+    except Exception as exc:
+        log.debug("game_window_info failed: %s", exc)
+        return None
+
+
+# ======================================================================================
+# Frame health (black / frozen captures) + backend selection with automatic fallback
+# ======================================================================================
+
+#: Consecutive black frames before the backend is questioned.
+BLACK_FRAMES = 3
+#: A minimap frozen this long (s) AND this many frames is suspicious (only checked by the
+#: engine once the game clock is past :data:`STALE_MIN_GAME_S`: before minions spawn the
+#: minimap can legitimately stay still).
+STALE_S = 4.0
+STALE_FRAMES = 12
+STALE_MIN_GAME_S = 90.0
+#: Two captures of the same rect differing less than this (mean abs, 8-bit) are "the same".
+SAME_FRAME_DIFF = 1.5
+#: First DXGI image cross-checked against mss: more different than this -> DXGI disabled.
+CROSSCHECK_MAX_DIFF = 40.0
+#: Consecutive failed grabs before the backend is abandoned for the next one.
+FAIL_SWITCH = 5
+
+
+def frame_fingerprint(img: Any) -> int:
+    """Cheap content hash of an image (subsampled CRC32); -1 for invalid input."""
+    try:
+        import zlib
+
+        a = np.asarray(img)
+        if a.ndim < 2 or a.size == 0:
+            return -1
+        step = max(1, int(min(a.shape[0], a.shape[1]) // 64))
+        return zlib.crc32(np.ascontiguousarray(a[::step, ::step]).tobytes())
+    except Exception:
+        return -1
+
+
+def mean_abs_diff(a: Any, b: Any) -> float:
+    """Mean absolute difference of two same-sized images on a <= 64 px grid (inf if unusable)."""
+    try:
+        x, y = np.asarray(a), np.asarray(b)
+        if x.shape != y.shape or x.size == 0:
+            return float("inf")
+        step = max(1, int(min(x.shape[0], x.shape[1]) // 64))
+        xs = x[::step, ::step].astype(np.int16)
+        ys = y[::step, ::step].astype(np.int16)
+        return float(np.abs(xs - ys).mean())
+    except Exception:
+        return float("inf")
+
+
+class FrameHealth:
+    """Black / frozen frame detector for one capture stream (pure, testable)."""
+
+    def __init__(self, black_frames: int = BLACK_FRAMES, stale_s: float = STALE_S,
+                 stale_frames: int = STALE_FRAMES) -> None:
+        self.black_frames = int(black_frames)
+        self.stale_s = float(stale_s)
+        self.stale_frames = int(stale_frames)
+        self.reset()
+
+    def reset(self) -> None:
+        self.black_run = 0
+        self.same_run = 0
+        self.same_since: float | None = None
+        self._fp: int | None = None
+
+    def observe(self, img: Any, t: float) -> str:
+        """``"ok"`` | ``"black"`` (``black_frames`` black frames in a row) | ``"stale"``
+        (identical content for ``stale_frames`` frames and ``stale_s`` seconds)."""
+        if is_black_frame(img):
+            self.black_run += 1
+            self.same_run, self.same_since, self._fp = 0, None, None
+            return "black" if self.black_run >= self.black_frames else "ok"
+        self.black_run = 0
+        fp = frame_fingerprint(img)
+        if fp != -1 and fp == self._fp:
+            self.same_run += 1
+            if self.same_since is None:
+                self.same_since = float(t)
+            if self.same_run >= self.stale_frames and float(t) - self.same_since >= self.stale_s:
+                return "stale"
+        else:
+            self.same_run, self.same_since = 0, None
+        self._fp = fp
+        return "ok"
+
+
+def _default_backend_factories() -> dict[str, Callable[[], Any]]:
+    def dxgi() -> Any:
+        from treeaicoach.dxgi_capture import DxgiCapture, available
+
+        if not available():
+            raise OSError("Desktop Duplication unavailable")
+        return DxgiCapture()
+
+    return {"mss": ScreenCapture, "dxgi": dxgi}
+
+
+class SmartCapture:
+    """Drop-in replacement of :class:`ScreenCapture` choosing the capture backend.
+
+    ``backend``: ``"auto"`` (DXGI Desktop Duplication first on Windows 8+, ``mss`` otherwise
+    and as the fallback), ``"dxgi"`` or ``"mss"`` (preferred, the other one still used if it
+    fails). The first DXGI image is cross-checked against ``mss`` (DXGI disabled for the session
+    when they disagree). A grab the current backend cannot do (rectangle across two monitors...)
+    is served by the next one. :meth:`check` (called by the engine on every minimap frame)
+    switches backend on black / frozen frames when the other backend sees a live image.
+
+    One instance per thread, like :class:`ScreenCapture`. Never raises.
+    """
+
+    def __init__(self, backend: str = "auto", factories: dict[str, Callable[[], Any]] | None = None,
+                 clock: Callable[[], float] = time.monotonic, platform: str | None = None) -> None:
+        self._factories = factories if factories is not None else _default_backend_factories()
+        self._clock = clock
+        plat = platform or sys.platform
+        pref = str(backend or "auto").lower()
+        if pref == "mss":
+            order = ["mss", "dxgi"]
+        else:   # "auto" / "dxgi": duplication first where it exists
+            order = ["dxgi", "mss"] if plat == "win32" else ["mss"]
+        self.order = [n for n in order if n in self._factories]
+        self._impl: dict[str, Any] = {}
+        self._disabled: dict[str, str] = {}
+        self._fails = 0
+        self._crosschecked: set[str] = set()
+        self.health = FrameHealth()
+        self.errors = 0
+        self._ms: deque[float] = deque(maxlen=120)
+        self._grab_times: deque[float] = deque(maxlen=120)
+        self.stats: dict[str, Any] = {"backend": None, "switches": 0, "last_switch": None,
+                                      "black_events": 0, "stale_events": 0, "fallback_grabs": 0,
+                                      "disabled": {}}
+        self.current = self.order[0] if self.order else "mss"
+
+    # ------------------------------------------------------------------ backends
+    @property
+    def name(self) -> str:
+        return self.current
+
+    def _get(self, name: str) -> Any:
+        if name in self._disabled:
+            return None
+        impl = self._impl.get(name)
+        if impl is None:
+            try:
+                impl = self._impl[name] = self._factories[name]()
+            except Exception as exc:
+                self.disable(name, f"init: {exc}")
+                return None
+        return impl
+
+    def disable(self, name: str, reason: str) -> None:
+        """Stop using backend ``name`` for this session (logged once)."""
+        if name in self._disabled:
+            return
+        self._disabled[name] = str(reason)[:200]
+        self.stats["disabled"] = dict(self._disabled)
+        log.info("Capture backend %s disabled: %s", name, reason)
+        impl = self._impl.pop(name, None)
+        if impl is not None:
+            try:
+                impl.close()
+            except Exception:
+                pass
+        if name == self.current:
+            self._switch(f"{name} disabled")
+
+    def _switch(self, reason: str, to: str | None = None) -> bool:
+        cands = [n for n in self.order if n not in self._disabled and n != self.current]
+        if to is not None:
+            cands = [to] if to in cands else []
+        if not cands:
+            return False
+        old, self.current = self.current, cands[0]
+        self._fails = 0
+        self.health.reset()
+        self.stats["switches"] += 1
+        self.stats["last_switch"] = f"{old} -> {self.current}: {reason}"
+        log.warning("Capture: %s -> %s (%s)", old, self.current, reason)
+        return True
+
+    def other(self) -> str | None:
+        """Name of the fallback backend (None if there is none)."""
+        for n in self.order:
+            if n != self.current and n not in self._disabled:
+                return n
+        return None
+
+    # ------------------------------------------------------------------ grab
+    def _grab_with(self, name: str, rect: Rect, pad: bool) -> np.ndarray | None:
+        impl = self._get(name)
+        if impl is None:
+            return None
+        try:
+            if name == "mss":
+                return impl.grab(rect, pad=pad)
+            return impl.grab(rect)
+        except Exception as exc:   # backends never raise, but be safe
+            log.debug("%s grab raised: %s", name, exc)
+            return None
+
+    def grab(self, rect: Rect, pad: bool = True) -> np.ndarray | None:
+        """BGR capture of ``rect`` (screen px) with the current backend, then the fallback."""
+        t0 = time.perf_counter()
+        name = self.current
+        img = self._grab_with(name, rect, pad)
+        if img is not None and name == "dxgi" and "dxgi" not in self._crosschecked:
+            self._crosscheck(rect, img)
+            if "dxgi" in self._disabled:
+                img = None
+        if img is None:
+            self._fails += 1
+            alt = self.other()
+            if alt is not None:
+                img = self._grab_with(alt, rect, pad)
+                if img is not None:
+                    self.stats["fallback_grabs"] += 1
+                    if self._fails >= FAIL_SWITCH:
+                        self._switch(f"{FAIL_SWITCH} failed grabs", to=alt)
+        else:
+            self._fails = 0
+        self.errors = 0 if img is not None else self.errors + 1
+        dt = (time.perf_counter() - t0) * 1000.0
+        self._ms.append(dt)
+        self._grab_times.append(self._clock())
+        self.stats["backend"] = self.current
+        return img
+
+    def _crosscheck(self, rect: Rect, img: np.ndarray) -> None:
+        self._crosschecked.add("dxgi")
+        ref = self._grab_with("mss", rect, True)
+        if ref is None or is_black_frame(ref) or ref.shape != img.shape:
+            self.stats["crosscheck"] = "skipped"
+            return
+        d = mean_abs_diff(ref, img)
+        self.stats["crosscheck"] = round(d, 2)
+        if d > CROSSCHECK_MAX_DIFF:
+            self.disable("dxgi", f"image differs from mss (diff {d:.1f})")
+
+    def check(self, img: Any, t: float, rect: Rect | None = None, allow_stale: bool = True) -> str:
+        """Frame health of a minimap image just grabbed: ``"ok"`` | ``"black"`` | ``"stale"``.
+
+        On black / frozen frames the other backend grabs the same ``rect``: if it sees a live
+        image (not black, different), the capture switches to it and ``"switched"`` is
+        returned; if both agree, the status stands (truly black screen / static minimap).
+        ``allow_stale=False`` ignores frozen frames (before minions spawn, game paused).
+        """
+        st = self.health.observe(img, t)
+        if st == "stale" and not allow_stale:
+            return "ok"
+        if st == "ok":
+            return "ok"
+        self.stats["black_events" if st == "black" else "stale_events"] += 1
+        alt = self.other()
+        if alt is not None and rect is not None:
+            other = self._grab_with(alt, rect, True)
+            if other is not None and not is_black_frame(other) and \
+                    (st == "black" or mean_abs_diff(other, img) > SAME_FRAME_DIFF):
+                self._switch(f"{st} frames", to=alt)
+                return "switched"
+        self.health.reset()
+        if st == "black":
+            self.health.black_run = self.health.black_frames   # stays black until a live frame
+        return st
+
+    def timings(self) -> dict[str, Any]:
+        """``{"backend", "grab_ms_p50", "grab_ms_p95", "fps"}`` + :attr:`stats` (diagnostics)."""
+        ms = sorted(self._ms)
+        out = dict(self.stats)
+        out["backend"] = self.current
+        if ms:
+            out["grab_ms_p50"] = round(ms[len(ms) // 2], 2)
+            out["grab_ms_p95"] = round(ms[min(len(ms) - 1, int(len(ms) * 0.95))], 2)
+        ts = list(self._grab_times)
+        if len(ts) >= 2 and ts[-1] > ts[0]:
+            out["fps"] = round((len(ts) - 1) / (ts[-1] - ts[0]), 2)
+        for name, impl in self._impl.items():
+            st = getattr(impl, "stats", None)
+            if isinstance(st, dict):
+                out[f"{name}_stats"] = dict(st)
+            err = getattr(impl, "last_error", None)
+            if err:
+                out[f"{name}_error"] = err
+        return out
+
+    def close(self) -> None:
+        for impl in list(self._impl.values()):
+            try:
+                impl.close()
+            except Exception:
+                pass
+        self._impl.clear()
+
+    def __enter__(self) -> "SmartCapture":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()

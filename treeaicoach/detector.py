@@ -1000,7 +1000,7 @@ def _generic_detector(b: str, threshold: float) -> BaseDetector:
             if not model.is_file():
                 log.info("No ONNX model at %s: using the classic detector", model)
             else:
-                det = OnnxDetector(model, threshold=threshold)
+                det = OnnxDetector(model, threshold=threshold, threads=ONNX_THREADS)
                 log.info("Detector: ONNX (%s)", model.name)
                 return det
         except Exception as exc:
@@ -1017,6 +1017,9 @@ def _generic_detector(b: str, threshold: float) -> BaseDetector:
 
 #: OpenCV worker threads used by the detection (cv2.setNumThreads), see create_detector.
 DETECT_CV_THREADS = 2
+#: onnxruntime intra-op threads of the generic ONNX detector (the engine's low-end budget
+#: lowers it to 1 before creating the detector, see sysperf.PerfProfile).
+ONNX_THREADS = 2
 
 
 def create_detector(backend: str = "auto", threshold: float = 0.0, *, db: Any = None,

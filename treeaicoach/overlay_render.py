@@ -25,6 +25,7 @@ danger with the jungler's fog region, late game).
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 import math
 import os
@@ -135,6 +136,10 @@ class EnemyView:
     velocity: tuple[float, float] | None = None  # normalized / s (optional, for the arrow)
     relation: str = "enemy"                     # "enemy" | "ally"
     role: str | None = None                     # "TOP" | "JUNGLE" | "MIDDLE" | "BOTTOM" | "UTILITY" | None
+    # pipeline v2: freshness of ``uv`` (render-time prediction, stale ghosts)
+    age: float | None = None                    # s since the observation behind ``uv`` (None = unknown)
+    stacked: bool = False                       # hidden under another icon: ``uv`` is the occluder's
+    confidence: float = 1.0                     # identity confidence (anonymous track: < 1)
 
 
 @dataclass
@@ -187,6 +192,70 @@ class OverlayState:
     item_hint: str | None = None              # "Achète Zhonya (3 250 or)": chip, in base only
     in_base: bool = False
     ai_counter: str | None = None             # "IA 3/5": chip when nothing more useful
+    # pipeline v2: render-time prediction (engine.predict_positions): callable() ->
+    # {track key: ((u, v) now, age s)}; the overlay thread re-positions the views at each frame
+    predict: Any = None
+    me_key: str | None = None                 # track key of my champion (for ``predict``)
+
+
+#: A visible champion whose data is older than this (s) - or stacked under another icon, or not
+#: identified - is drawn as a faint dashed ghost WITHOUT role label (never a confident ring on a
+#: position that may be wrong).
+GHOST_AGE_S = 0.7
+GHOST_MIN_CONFIDENCE = 0.5
+
+
+def is_ghost(view: Any) -> bool:
+    """True when ``view`` must be drawn as an uncertain ghost (see :data:`GHOST_AGE_S`)."""
+    try:
+        if bool(getattr(view, "stacked", False)):
+            return True
+        age = getattr(view, "age", None)
+        if age is not None and _finite(age) and float(age) > GHOST_AGE_S:
+            return True
+        conf = getattr(view, "confidence", 1.0)
+        return conf is not None and _finite(conf) and float(conf) < GHOST_MIN_CONFIDENCE
+    except Exception:
+        return False
+
+
+def with_predicted(state: Any, positions: dict | None = None) -> Any:
+    """Copy of ``state`` whose visible champions (and ``me_uv``) are moved to the positions
+    predicted for *now* (``state.predict()`` unless ``positions`` is given) - the minimap layer
+    then follows the real icons between two detections instead of trailing them. Views without a
+    prediction are unchanged. Never raises (returns ``state`` on error)."""
+    try:
+        if positions is None:
+            fn = getattr(state, "predict", None)
+            if not callable(fn):
+                return state
+            positions = fn()
+        if not positions:
+            return state
+
+        def move(views: Any) -> list:
+            out = []
+            for v in list(views or []):
+                p = positions.get(getattr(v, "key", None)) if v is not None and getattr(v, "visible", False) else None
+                if p is None:
+                    out.append(v)
+                    continue
+                (u, vv), age = p
+                nv = copy.copy(v)
+                nv.uv, nv.age = (float(u), float(vv)), float(age)
+                out.append(nv)
+            return out
+
+        new = copy.copy(state)
+        new.enemies = move(getattr(state, "enemies", None))
+        new.allies = move(getattr(state, "allies", None))
+        mk = getattr(state, "me_key", None)
+        if mk and mk in positions and getattr(state, "me_uv", None) is not None:
+            new.me_uv = positions[mk][0]
+        return new
+    except Exception:
+        log.debug("with_predicted failed", exc_info=True)
+        return state
 
 
 # ======================================================================================
@@ -1359,6 +1428,9 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             if uv is None:
                 continue
             x, y = px(uv)
+            if is_ghost(a):      # stale / stacked / unsure: faint dashed ring, no label
+                cv_.ring(x, y, mr, lw * 0.9, ALLY_BLUE, 0.3, dash=(3.0 * k + 1, 2.5 * k + 1))
+                continue
             cv_.ring(x, y, mr, lw, ALLY_BLUE, 0.7)
             if show_roles:
                 _tag(cv_, x, y, mr + 1, role_tag(a, roles), f_tag, ALLY_TAG_RGB, taken, 0.9)
@@ -1373,6 +1445,9 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         uv = _uv_ok(e.uv)
         assert uv is not None
         x, y = px(uv)
+        if is_ghost(e):          # stale / stacked / unsure: faint dashed ring, no label, no arrow
+            cv_.ring(x, y, mr, lw, DANGER, 0.4, dash=(3.0 * k + 1, 2.5 * k + 1))
+            continue
         if e.approaching:
             vx, vy = (e.velocity if e.velocity is not None and _finite(*e.velocity) else (0.0, 0.0))
             if math.hypot(vx, vy) < 1e-4 and me is not None:

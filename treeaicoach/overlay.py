@@ -56,8 +56,20 @@ RectT = tuple[int, int, int, int]
 #: Game-view ward guide windows ("world0", "world1"): refreshed at most this often, only while shown.
 WORLD_HZ = 10.0
 WORLD_WINDOWS = ("world0", "world1")
-#: Refresh rate of the overlay thread (Hz).
-REFRESH_HZ = 12.0
+#: Default frame rate of the overlay thread (Hz): the minimap layer is re-drawn at the render
+#: time with predicted positions, but only when something visibly changed (signature).
+REFRESH_HZ = 30.0
+#: Hard bounds of ``cfg.overlay_fps`` / the engine budget cap.
+FPS_MIN, FPS_MAX = 5.0, 60.0
+#: Every layer is re-rendered at least this often even when its signature did not change (s).
+FORCE_REDRAW_S = 0.5
+#: HUD card re-render rate while animated / calm (Hz) - and never re-sent when identical.
+HUD_FAST_HZ, HUD_CALM_HZ = 10.0, 4.0
+#: Toast banners animation rate (Hz).
+TOAST_HZ = 20.0
+#: Gap (fraction of the minimap height) kept between the HUD card and the minimap when the card
+#: sits above it: League draws its own frame, ping button and portraits there.
+MINIMAP_FRAME_CLEAR = 0.30
 #: Gap (px) between the radar and the minimap / screen edges.
 RADAR_GAP = 8
 #: Margin (px, at 1080p) between the HUD and the screen edges.
@@ -286,8 +298,16 @@ def flash_thickness(screen: Any) -> int:
     return int(max(6, round(10 * _scale_of(as_rect(screen)))))
 
 
+def minimap_clearance(minimap: Any) -> int:
+    """Vertical gap (px) to keep above the real minimap (League's frame / ping button / portraits)."""
+    mm = as_rect(minimap)
+    if mm is None:
+        return RADAR_GAP
+    return max(RADAR_GAP, int(round(MINIMAP_FRAME_CLEAR * mm[3])))
+
+
 def hud_placement(screen: Any, w: int, h: int, position: str = "above_minimap", custom_xy: Any = None,
-                  avoid: Iterable[Any] = (), anchor: Any = None) -> tuple[int, int]:
+                  avoid: Iterable[Any] = (), anchor: Any = None, anchor_gap: int | None = None) -> tuple[int, int]:
     """Top-left corner of the HUD panel, inside the screen and not over the ``avoid`` rects.
 
     ``position``: "above_minimap" (default: bottom edge ``RADAR_GAP`` px above ``anchor`` - the
@@ -304,9 +324,10 @@ def hud_placement(screen: Any, w: int, h: int, position: str = "above_minimap", 
     position = position if position in HUD_POSITIONS else "above_minimap"
     xy = _xy(custom_xy) if position == "custom" else None
     anc = as_rect(anchor)
+    gap = RADAR_GAP if anchor_gap is None else max(0, int(anchor_gap))
     if position == "above_minimap":
-        if anc is not None and anc[1] - RADAR_GAP - h >= sy + m and w <= sw:
-            x, y = anc[0] + anc[2] - w, anc[1] - RADAR_GAP - h
+        if anc is not None and anc[1] - gap - h >= sy + m and w <= sw:
+            x, y = anc[0] + anc[2] - w, anc[1] - gap - h
             x = min(x, sx + sw - w)
             x = max(x, sx)
             blockers = [r for r in (as_rect(a) for a in avoid) if r is not None]
@@ -730,8 +751,28 @@ class LayeredWindow:
         self._memdc = self._hbmp = self._old_obj = self._bits = None
         self._dib_size = (0, 0)
 
-    def update(self, bgra_premul: np.ndarray, x: int, y: int) -> None:
-        """Show ``bgra_premul`` (premultiplied BGRA uint8 ``h x w x 4``) at screen ``(x, y)``."""
+    def set_alpha(self, alpha: int) -> None:
+        """Change the whole window's opacity (0..255) WITHOUT re-sending its pixels (fades: a
+        call to ``UpdateLayeredWindow`` with a NULL source DC). Never raises."""
+        if self.failed or not self.visible or not self._memdc:
+            return
+        try:
+            api = self._api
+            ctypes = api.ctypes
+            a = int(min(255, max(0, alpha)))
+            if a == getattr(self, "alpha", 255):
+                return
+            blend = api.BLENDFUNCTION(AC_SRC_OVER, 0, a, AC_SRC_ALPHA)
+            ok = api.user32.UpdateLayeredWindow(self.hwnd, None, None, None, None, None, 0,
+                                                ctypes.byref(blend), ULW_ALPHA)
+            if ok:
+                self.alpha = a
+        except Exception:
+            log.debug("set_alpha failed", exc_info=True)
+
+    def update(self, bgra_premul: np.ndarray, x: int, y: int, alpha: int = 255) -> None:
+        """Show ``bgra_premul`` (premultiplied BGRA uint8 ``h x w x 4``) at screen ``(x, y)``;
+        ``alpha`` = global opacity (0..255) on top of the per-pixel alpha."""
         if self.failed:
             return
         try:
@@ -749,7 +790,8 @@ class LayeredWindow:
                 pt_dst = wt.POINT(int(x), int(y))
                 size = wt.SIZE(w, h)
                 pt_src = wt.POINT(0, 0)
-                blend = api.BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
+                a = int(min(255, max(0, alpha)))
+                blend = api.BLENDFUNCTION(AC_SRC_OVER, 0, a, AC_SRC_ALPHA)
                 ok = api.user32.UpdateLayeredWindow(self.hwnd, screen_dc, ctypes.byref(pt_dst),
                                                     ctypes.byref(size), self._memdc, ctypes.byref(pt_src),
                                                     0, ctypes.byref(blend), ULW_ALPHA)
@@ -757,6 +799,7 @@ class LayeredWindow:
                 api.user32.ReleaseDC(None, screen_dc)
             if not ok:
                 raise OSError(f"UpdateLayeredWindow failed ({api.last_error()})")
+            self.alpha = a
             self.x, self.y, self.w, self.h = int(x), int(y), w, h
             if not self.visible:
                 self.show()
@@ -886,6 +929,148 @@ def _monitor_rect_at(api: _Api, x: int, y: int) -> RectT | None:
 # ======================================================================================
 # Manager
 # ======================================================================================
+# ======================================================================================
+# Dirty tracking + performance accounting (pure, unit-tested)
+# ======================================================================================
+_budget_fps: float | None = None
+_current_perf: "_OverlayPerf | None" = None
+
+
+def set_budget_fps(fps: float | None) -> None:
+    """Cap of the overlay frame rate decided by the engine's performance budget (None = none)."""
+    global _budget_fps
+    try:
+        _budget_fps = None if fps is None else float(min(max(float(fps), FPS_MIN), FPS_MAX))
+    except (TypeError, ValueError):
+        _budget_fps = None
+
+
+def current_stats() -> dict[str, Any] | None:
+    """Performance of the running overlay thread (None when no overlay runs)."""
+    perf = _current_perf
+    return perf.snapshot() if perf is not None else None
+
+
+def _img_hash(img: np.ndarray) -> int:
+    import zlib
+
+    try:
+        return zlib.crc32(np.ascontiguousarray(img).data)
+    except Exception:
+        return id(img)
+
+
+def _q(x: Any, step: float) -> Any:
+    try:
+        f = float(x)
+        return None if not math.isfinite(f) else int(round(f / step))
+    except (TypeError, ValueError):
+        return None
+
+
+def minimap_signature(state: Any, mm: Sequence[int], now: float) -> tuple:
+    """What the minimap layer shows, quantized to whole pixels / seconds: equal signatures give
+    the same image (the layer is then not re-rendered nor re-sent)."""
+    try:
+        from treeaicoach.overlay_render import is_ghost
+
+        W, H = max(1, int(mm[2])), max(1, int(mm[3]))
+
+        def view(v: Any) -> tuple:
+            uv = getattr(v, "uv", None)
+            p = (_q(uv[0] * W, 1.0), _q(uv[1] * H, 1.0)) if uv is not None else None
+            ago = getattr(v, "last_seen_ago", None)
+            return (getattr(v, "key", None), bool(getattr(v, "visible", False)), p, is_ghost(v),
+                    bool(getattr(v, "approaching", False)), bool(getattr(v, "is_jungler", False)),
+                    getattr(v, "role", None), None if getattr(v, "visible", False) else _q(ago, 1.0))
+
+        me = getattr(state, "me_uv", None)
+        lvl = int(getattr(state, "threat_level", 0) or 0)
+        fogs = tuple((getattr(f, "key", None), id(getattr(f, "region", None)), _q(getattr(f, "elapsed", 0), 1.0),
+                      _q(getattr(f, "confidence", 0), 0.05)) for f in (getattr(state, "fogs", None) or []))
+        guides = tuple(repr(g)[:160] for g in (getattr(state, "guides", None) or []))
+        animated = lvl >= 2 or bool(guides)
+        return (tuple(view(v) for v in (getattr(state, "enemies", None) or []) if v is not None),
+                tuple(view(v) for v in (getattr(state, "allies", None) or []) if v is not None),
+                None if me is None else (_q(me[0] * W, 1.0), _q(me[1] * H, 1.0)), lvl, fogs, guides,
+                _q(getattr(state, "danger_radius", 0), 0.002), bool(getattr(state, "show_allies", False)),
+                bool(getattr(state, "show_roles", False)), bool(getattr(state, "show_ghosts", False)),
+                bool(getattr(state, "show_last_seen", True)),
+                int(now * 15) if animated else None, (W, H))
+    except Exception:
+        return (now,)      # unknown: always redraw
+
+
+def hud_signature(state: Any, now: float) -> tuple:
+    """What the HUD card shows (texts, gauge, chips, portraits, fades quantized)."""
+    try:
+        from treeaicoach import overlay_render as orr
+
+        fade = getattr(orr, "_fade", None)
+
+        def f(since: Any) -> Any:
+            if since is None or fade is None:
+                return None
+            try:
+                return _q(fade(since, now), 0.1)
+            except Exception:
+                return None
+
+        la = getattr(state, "last_alert", None)
+        objs = tuple((getattr(o, "name", None), _q(getattr(o, "remaining", getattr(o, "seconds", None)), 1.0))
+                     for o in (getattr(state, "objectives", None) or []))
+        ens = tuple((getattr(e, "key", None), bool(getattr(e, "visible", False)),
+                     _q(getattr(e, "last_seen_ago", None), 1.0)) for e in (getattr(state, "enemies", None) or []))
+        fields_ = tuple(getattr(state, k, None) for k in (
+            "threat_level", "threat_text", "tip", "tip_tone", "gauge", "gauge_reason", "stance",
+            "stance_reason", "insight", "hint", "item_hint", "ai_counter", "jungler_line", "role_notice",
+            "phase", "hud_detailed", "in_base"))
+        return (fields_, objs, ens, None if not la else (la[0], la[1], _q(la[2], 0.25) if la[2] < 4.5 else None),
+                f(getattr(state, "tip_since", None)), f(getattr(state, "gauge_since", None)),
+                _q(getattr(state, "game_time", None), 1.0))
+    except Exception:
+        return (now,)
+
+
+class _OverlayPerf:
+    """Rolling timings of the overlay thread (published for the engine's health monitor)."""
+
+    def __init__(self) -> None:
+        from treeaicoach.sysperf import RateMeter, RollingStats
+
+        self._RollingStats = RollingStats
+        self._stats: dict[str, Any] = {}
+        self._skips: dict[str, int] = {}
+        self._draws = RateMeter(maxlen=240)
+        self._loop = RateMeter(maxlen=240)
+        self.frames = 0
+
+    def add(self, name: str, ms: float) -> None:
+        st = self._stats.get(name)
+        if st is None:
+            st = self._stats[name] = self._RollingStats(maxlen=240)
+        st.add(ms)
+        if name.startswith("ulw_") and not name.startswith("ulw_flash_alpha"):
+            self._draws.tick(time.monotonic())
+
+    def skip(self, layer: str) -> None:
+        self._skips[layer] = self._skips.get(layer, 0) + 1
+
+    def frame(self, t: float, loop_ms: float) -> None:
+        self.frames += 1
+        self._loop.tick(t)
+        self.add("loop", loop_ms)
+
+    def snapshot(self) -> dict[str, Any]:
+        now = time.monotonic()
+        out: dict[str, Any] = {"fps": round(self._loop.rate(now), 1), "updates_per_s": round(self._draws.rate(now), 1),
+                               "frames": self.frames, "skipped": dict(self._skips)}
+        for k, st in list(self._stats.items()):
+            out[k] = st.summary(2)
+        out["fps_cap"] = _budget_fps
+        return out
+
+
 class OverlayManager:
     """Owns the overlay thread and its windows (flash, radar, minimap marks, HUD).
 
@@ -915,6 +1100,11 @@ class OverlayManager:
         self.capture_excluded = False
         #: minimap-layer diagnostics (overlay thread): updates / frames drawn, rect, session logs
         self.mm_stats: dict[str, Any] = {"updates": 0, "rect": None, "no_rect": 0}
+        #: dirty tracking (layer -> last signature / redraw time / last image key) and timings
+        self._sig: dict[str, Any] = {}
+        self._sig_t: dict[str, float] = {}
+        self._last_img: dict[str, Any] = {}
+        self._perf = _OverlayPerf()
         self._mm_session = False
         self._mm_no_rect_logged = False
         self.ok = sys.platform == "win32"
@@ -994,6 +1184,8 @@ class OverlayManager:
             log.exception("Overlay disabled (%s)", what)
 
     def _run(self) -> None:
+        global _current_perf
+        _current_perf = self._perf
         windows: dict[str, LayeredWindow] = {}
         try:
             api = _get_api()
@@ -1054,39 +1246,52 @@ class OverlayManager:
             except Exception:
                 log.exception("on_moved callback failed")
 
+    def _target_fps(self, cfg: Any) -> float:
+        try:
+            want = float(getattr(cfg, "overlay_fps", REFRESH_HZ) or REFRESH_HZ)
+        except (TypeError, ValueError):
+            want = REFRESH_HZ
+        cap = _budget_fps if _budget_fps is not None else FPS_MAX
+        return float(min(max(min(want, cap), FPS_MIN), FPS_MAX))
+
     def _loop(self, api: _Api, windows: dict[str, LayeredWindow]) -> None:
-        period = 1.0 / REFRESH_HZ
+        from treeaicoach.sysperf import precise_sleep
+
         last_top = 0.0
-        last_draw = 0.0
         last_world = 0.0
         flash_key: Any = None
         click_through = True
         errors = 0
+        next_frame = time.perf_counter()
         while not self._stop.is_set():
             t0 = time.monotonic()
+            loop_t0 = time.perf_counter()
+            fps = 1.0
             try:
                 pump_messages()
                 with self._lock:
                     cfg, move, visible = self._cfg, self._move_mode, self._visible
                     custom = dict(self._custom)
+                fps = self._target_fps(cfg)
                 self._sync_capture_exclusion(windows["minimap"], cfg)
                 if click_through == move:     # move mode changed
                     for name in ("radar", "hud"):
                         windows[name].set_click_through(not move)
                     click_through = not move
+                t_state = time.perf_counter()
                 state = self._state(move)
+                self._perf.add("state", (time.perf_counter() - t_state) * 1000.0)
                 enabled = bool(getattr(cfg, "overlay_enabled", True)) and (visible or move)
                 if state is None or not enabled:
                     for w in windows.values():
                         w.hide()
                     flash_key = None
+                    self._sig.clear()
                     if state is None:
                         self._end_mm_session()
+                    fps = min(fps, 5.0)          # nothing shown: poll the state slowly
                 else:
-                    fast = move or needs_fast_refresh(state) or not any(w.visible for w in windows.values())
-                    if fast or t0 - last_draw >= 1.0 / CALM_HZ - 1e-3:
-                        last_draw = t0
-                        flash_key = self._refresh(api, windows, state, cfg, move, custom, flash_key)
+                    flash_key = self._refresh(api, windows, state, cfg, move, custom, flash_key, now=t0)
                     if t0 - last_world >= 1.0 / WORLD_HZ - 1e-3:
                         last_world = t0
                         self._refresh_world(api, windows, state, cfg, move)
@@ -1104,7 +1309,20 @@ class OverlayManager:
                     self._fail("refresh loop")
                     return
                 log.debug("overlay refresh error", exc_info=True)
-            self._stop.wait(max(0.005, period - (time.monotonic() - t0)))
+            self._perf.frame(t0, (time.perf_counter() - loop_t0) * 1000.0)
+            period = 1.0 / max(1.0, fps)
+            next_frame += period
+            now = time.perf_counter()
+            if next_frame < now - period:      # late (busy machine): no burst of frames
+                next_frame = now
+            # time.sleep: high-resolution timer on Windows / Python 3.11 (Event.wait rounds to 15.6 ms)
+            if precise_sleep(max(0.0, next_frame - now), self._stop):
+                break
+
+    @property
+    def stats(self) -> dict[str, Any]:
+        """Overlay performance: loop fps, layer redraws, render ms per layer, ULW ms (copy)."""
+        return self._perf.snapshot()
 
     def _state(self, move: bool) -> Any:
         try:
@@ -1196,22 +1414,62 @@ class OverlayManager:
             else:
                 w.hide()
 
+    def _due(self, layer: str, sig: Any, now: float, min_period: float = 0.0) -> bool:
+        """True when ``layer`` must be re-rendered: signature changed (at most every
+        ``min_period`` s) or not redrawn for :data:`FORCE_REDRAW_S`."""
+        old = self._sig.get(layer)
+        last = self._sig_t.get(layer, -1e9)
+        if now - last < min_period:
+            return False
+        if old is None or old != sig or now - last >= FORCE_REDRAW_S:
+            self._sig[layer] = sig
+            self._sig_t[layer] = now
+            return True
+        self._perf.skip(layer)
+        return False
+
+    def _show(self, win: "LayeredWindow", layer: str, img: np.ndarray, x: int, y: int, alpha: int = 255,
+              dedupe: bool = False) -> None:
+        """``win.update`` timed (UpdateLayeredWindow cost), skipped when ``dedupe`` and the pixels
+        and position did not change."""
+        if dedupe:
+            key = (x, y, img.shape, _img_hash(img))
+            if win.visible and self._last_img.get(layer) == key:
+                self._perf.skip(layer)
+                return
+            self._last_img[layer] = key
+        t = time.perf_counter()
+        win.update(img, x, y, alpha)
+        self._perf.add("ulw", (time.perf_counter() - t) * 1000.0)
+        self._perf.add(f"ulw_{layer}", (time.perf_counter() - t) * 1000.0)
+
+    def _render(self, layer: str, fn: Callable[..., np.ndarray], *args: Any, **kw: Any) -> np.ndarray:
+        t = time.perf_counter()
+        img = fn(*args, **kw)
+        self._perf.add(f"render_{layer}", (time.perf_counter() - t) * 1000.0)
+        return img
+
     def _refresh(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any, move: bool,
-                 custom: dict[str, tuple[int, int]], flash_key: Any) -> Any:
+                 custom: dict[str, tuple[int, int]], flash_key: Any, now: float | None = None) -> Any:
         from treeaicoach import overlay_render as orr
 
+        now = time.monotonic() if now is None else float(now)
         scr, mm = self._screen_for(api, state)
         mode = resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
-        # ---- marks drawn exactly over the real minimap (transparent window, same physical rect)
+        # ---- marks drawn exactly over the real minimap (transparent window, same physical rect),
+        #      at the positions predicted for NOW (they follow the icons between two detections)
         mm_win = windows["minimap"]
         demo = move and state is self._demo_state
         if mode == "minimap" and mm is not None and not demo:
-            img = orr.render_minimap(state, mm[2], mm[3],
-                                     show_frame=bool(getattr(cfg, "overlay_show_frame", True)))
-            mm_win.update(img, mm[0], mm[1])
-            self._note_mm_update(state, mm, img)
+            st = orr.with_predicted(state)
+            if self._due("minimap", minimap_signature(st, mm, now), now) or not mm_win.visible:
+                # no "TreeAI" mark: at the minimap corner it covered my own portrait (red side)
+                img = self._render("minimap", orr.render_minimap, st, mm[2], mm[3], now=now, show_frame=False)
+                self._show(mm_win, "minimap", img, mm[0], mm[1])
+                self._note_mm_update(state, mm, img)
         else:
             mm_win.hide()
+            self._sig.pop("minimap", None)
             if mode == "minimap" and mm is None and not demo:
                 self.mm_stats["no_rect"] += 1
                 if not self._mm_no_rect_logged:
@@ -1227,40 +1485,55 @@ class OverlayManager:
             if "radar" in custom:
                 pos, xy = "custom", custom["radar"]
             x, y, size = radar_geometry(mm, scr, getattr(cfg, "radar_scale", 1.0), pos, xy)
-            img = orr.render_radar(state, size, None)
-            if move:
-                img = move_mode_frame(img, "Radar — glisser")
-            radar_win.update(img, x, y)
             radar_rect = (x, y, size, size)
+            fast = needs_fast_refresh(state) or move
+            if self._due("radar", None, now, 1.0 / (HUD_FAST_HZ if fast else HUD_CALM_HZ)) or not radar_win.visible:
+                img = self._render("radar", orr.render_radar, orr.with_predicted(state), size, None)
+                if move:
+                    img = move_mode_frame(img, "Radar — glisser")
+                self._show(radar_win, "radar", img, x, y)
         else:
             radar_win.hide()
-        # ---- HUD
+        # ---- HUD (re-rendered only when its content changed; never re-sent when identical)
         hud_win = windows["hud"]
         if getattr(cfg, "hud_enabled", True):
-            img = orr.render_hud(state, hud_width(scr))
-            if move:
-                img = move_mode_frame(img, "HUD — glisser")
-            pos = getattr(cfg, "hud_position", "above_minimap")
-            xy = getattr(cfg, "hud_xy", None)
-            if "hud" in custom:
-                pos, xy = "custom", custom["hud"]
-            avoid = [r for r in (mm, radar_rect) if r is not None]
-            x, y = hud_placement(scr, img.shape[1], img.shape[0], pos, xy, avoid=avoid,
-                                 anchor=radar_rect or mm)
-            hud_win.update(img, x, y)
+            fast = needs_fast_refresh(state) or move
+            sig = hud_signature(state, now)
+            if self._due("hud", sig, now, 1.0 / (HUD_FAST_HZ if fast else HUD_CALM_HZ)) or not hud_win.visible:
+                img = self._render("hud", orr.render_hud, state, hud_width(scr))
+                if move:
+                    img = move_mode_frame(img, "HUD — glisser")
+                pos = getattr(cfg, "hud_position", "above_minimap")
+                xy = getattr(cfg, "hud_xy", None)
+                if "hud" in custom:
+                    pos, xy = "custom", custom["hud"]
+                avoid = [r for r in (mm, radar_rect) if r is not None]
+                gap = None if radar_rect is not None else minimap_clearance(mm)
+                x, y = hud_placement(scr, img.shape[1], img.shape[0], pos, xy, avoid=avoid,
+                                     anchor=radar_rect or mm, anchor_gap=gap)
+                self._show(hud_win, "hud", img, x, y, dedupe=True)
         else:
             hud_win.hide()
         # ---- toasts (top-centre banners; never over the minimap / Tab block / champion)
-        self._refresh_toasts(windows.get("toasts"), state, cfg, scr, mm, move)
-        # ---- danger flash (re-rendered only when intensity / geometry change)
+        if self._due("toasts", None, now, 1.0 / TOAST_HZ) or not getattr(cfg, "toasts_enabled", True):
+            t = time.perf_counter()
+            self._refresh_toasts(windows.get("toasts"), state, cfg, scr, mm, move)
+            self._perf.add("render_toasts", (time.perf_counter() - t) * 1000.0)
+        # ---- danger flash: rendered ONCE per geometry at full intensity, the fade only changes the
+        #      window's global alpha (no full-screen pixel upload per step)
         flash_win = windows["flash"]
         intensity = quantize_flash(getattr(state, "flash", 0.0)) if getattr(cfg, "danger_flash", True) else 0.0
         if intensity <= 0 or move:
             flash_win.hide()
             return None
         rel = (mm[0] - scr[0], mm[1] - scr[1], mm[2], mm[3]) if mm is not None else None
-        key = (intensity, scr, rel)
+        key = (scr, rel)
+        alpha = int(round(255 * intensity))
         if key != flash_key or not flash_win.visible:
-            img = orr.render_flash(scr[2], scr[3], intensity, rel, thickness=flash_thickness(scr))
-            flash_win.update(img, scr[0], scr[1])
+            img = self._render("flash", orr.render_flash, scr[2], scr[3], 1.0, rel, thickness=flash_thickness(scr))
+            self._show(flash_win, "flash", img, scr[0], scr[1], alpha=alpha)
+        else:
+            t = time.perf_counter()
+            flash_win.set_alpha(alpha)
+            self._perf.add("ulw_flash_alpha", (time.perf_counter() - t) * 1000.0)
         return key

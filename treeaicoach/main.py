@@ -103,6 +103,29 @@ def release_single_instance() -> None:
             pass
 
 
+# ------------------------------------------------------------------------------ resources
+def apply_process_policy(cfg: Any) -> dict[str, Any]:
+    """The game always wins: below-normal process priority (+ EcoQoS hint) when
+    ``cfg.low_priority`` (default), and at most 2 OpenCV worker threads. Never raises."""
+    out: dict[str, Any] = {}
+    try:
+        import cv2
+
+        if cv2.getNumThreads() > 2:
+            cv2.setNumThreads(2)
+        out["cv_threads"] = cv2.getNumThreads()
+    except Exception:
+        pass
+    try:
+        if bool(getattr(cfg, "low_priority", True)):
+            from treeaicoach.sysperf import lower_process_priority
+
+            out.update(lower_process_priority(eco_qos=bool(getattr(cfg, "eco_qos", True))))
+    except Exception:
+        log.debug("Process policy failed", exc_info=True)
+    return out
+
+
 # ------------------------------------------------------------------------------ arguments
 class _Parser(argparse.ArgumentParser):
     """argparse without printing to a missing console and without sys.exit()."""
@@ -235,6 +258,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             log.info("Another instance is already running")
             message_box(ALREADY_RUNNING_TEXT)
             return 0
+        apply_process_policy(cfg)
         if args.nogui:
             return run_console(cfg, demo=args.demo, duration=args.duration)
         return run_gui(cfg, demo=args.demo, smoke_seconds=UI_SMOKE_SECONDS if args.ui_smoke else None)
