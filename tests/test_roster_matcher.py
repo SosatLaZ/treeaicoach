@@ -505,3 +505,26 @@ def test_stacked_icon_found_under_another_one(db, renderer):
 def test_stacked_icon_not_invented_after_it_vanished(db, renderer):
     hits, _ = _stack_run(db, renderer, vanish=True)
     assert sum(hits) <= 1, hits
+
+
+def test_greyscale_minimap_lightness_only(db, renderer):
+    """A colourless minimap (death filter / desaturated capture): the ring colour cannot vote,
+    the match uses the lightness only and the ring drawing (ring lighter than the dark line)."""
+    rng = np.random.default_rng(11)
+    roster, visible = _game(db, rng, n_visible=8)
+    m = RosterMatcher(db=db, learn_cache=False)
+    m.set_entries(_entries(db, roster))
+    TP = FP = N = 0
+    for f in range(10):
+        img, truth = _scene(renderer, db, roster, visible, np.random.default_rng(100 + f % 2),
+                            280, 0.046)
+        if f >= 4:
+            img = cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+        dets = m.detect(img, t=f / 8.0)
+        if f >= 5:
+            assert m.grey
+            tp, fp = _score(dets, truth, 0.046)
+            TP, FP, N = TP + tp, FP + fp, N + len(truth)
+        elif f < 4:
+            assert not m.grey
+    assert TP >= 0.7 * N and FP <= 0.1 * max(1, TP + FP), (TP, FP, N)

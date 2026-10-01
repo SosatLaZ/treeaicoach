@@ -146,7 +146,11 @@ def test_cross_map_trade_and_free_dragon():
     c = ctx_for(g, me_uv=TOP_LANE_ME, enemies=[Seen("LeeSin", (0.67, 0.71), True, 0.0)],
                 objectives=[obj("grubs", True), obj("dragon", True)])
     call = [x for x in macro.evaluate(c) if x.kind == "cross_trade"][0]
-    assert call.text.startswith("Prends les larves MAINTENANT") and "au dragon" in call.text and call.genius
+    # a top laner HELPS his jungler (a solo laner does not take grubs / Herald alone)
+    assert call.text.startswith("Aide ton jungler à prendre les larves") and "au dragon" in call.text and call.genius
+    cj = ctx_for(game(500.0, me="Vi"), me_uv=(0.3, 0.45), enemies=[Seen("LeeSin", (0.67, 0.71), True, 0.0)],
+                 objectives=[obj("grubs", True)])
+    assert [x for x in macro.evaluate(cj) if x.kind == "cross_trade"][0].text.startswith("Prends les larves")
     g = game(500.0, me="Jinx")
     c = ctx_for(g, me_uv=(0.7, 0.9), enemies=[Seen("LeeSin", (0.25, 0.25), True, 0.0)],
                 objectives=[obj("dragon", True)])
@@ -184,11 +188,13 @@ def test_side_wave_safe_split_rule():
 
 def test_split_safe_needs_three_enemies_far():
     g = game(1400.0, events=[turret_event("Turret_T1_R_03_A", 900)])
-    far = [Seen(a, (0.8, 0.75), True, 0.0) for a in ("Ahri", "Caitlyn", "Nautilus")]
+    far = [Seen(a, (0.8, 0.75), True, 0.0) for a in ("LeeSin", "Ahri", "Caitlyn", "Nautilus")]
     c = ctx_for(g, me_uv=(0.085, 0.30), enemies=far)
     call = [x for x in macro.evaluate(c) if x.kind == "split_safe"][0]
-    assert "3 ennemis sont en bas" in call.text and "disparaissent" in call.why
+    assert "4 ennemis sont en bas" in call.text and "disparaissent" in call.why
     assert "split_safe" not in kinds(ctx_for(g, me_uv=(0.085, 0.30), enemies=far[:2]))
+    # V2 audit: 3 seen far but THEIR JUNGLER unseen (+ Darius): no split call (no vision info)
+    assert "split_safe" not in kinds(ctx_for(g, me_uv=(0.085, 0.30), enemies=far[1:]))
 
 
 def test_lane_swap_top_leaves_two_versus_one():
@@ -204,7 +210,7 @@ def test_wave_calls_recall_freeze_backoff():
     g = game(400.0, gold=1400.0)
     c = ctx_for(g, me_uv=TOP_LANE_ME, waves=pushing, enemies=[Seen("Darius", DARIUS_LANE, True, 0.0)])
     call = [x for x in macro.evaluate(c) if x.kind == "wave_recall"][0]
-    assert call.text == "Ta vague va s'écraser sur leur tour : rentre maintenant, tu ne perds rien."
+    assert call.text == "Ta vague s'écrase sur leur tour : rentre maintenant."
     assert "1400 PO" in call.why
     even = {"top": LaneWave("top", ally=4, enemy=4, meet=0.5, state="even")}
     c = ctx_for(g, me_uv=TOP_LANE_ME, waves=even, enemies=[Seen("Darius", DARIUS_LANE, True, 0.0)])
@@ -213,7 +219,7 @@ def test_wave_calls_recall_freeze_backoff():
     c = ctx_for(game(400.0), me_uv=TOP_LANE_ME, waves=pushing,
                 enemies=[Seen("Darius", DARIUS_LANE, True, 0.0), Seen("LeeSin", (0.25, 0.33), False, 2.0)])
     call = [x for x in macro.evaluate(c) if x.kind == "wave_freeze"][0]
-    assert call.text.startswith("Ne pousse pas") and call.color == "danger"
+    assert call.text.startswith("Arrête de pousser") and call.color == "danger"
     # lane opponent missing, jungler unknown, I am pushed forward: back off
     c = ctx_for(game(400.0), me_uv=(0.2, 0.085), waves=pushing, enemies=[Seen("Darius", (0.3, 0.08), False, 12.0)])
     call = [x for x in macro.evaluate(c) if x.kind == "back_off"][0]

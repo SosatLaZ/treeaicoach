@@ -73,6 +73,11 @@ MINION_WALK_S = 28.0           # spawn -> middle of a lane
 OBJ_SOON_S = 45.0              # an objective this close: the group call of positioning.py wins
 JG_NEAR_R = 0.35
 SIDE_WAVE_EMPTY_R = 0.18
+MOVE_SPEED = 360.0             # game units / s (boots, mid game): travel time to a target
+#: seconds a group needs to kill / take each target (respawn window = travel + this)
+TAKE_S = {"baron": 28.0, "elder": 15.0, "dragon": 14.0, "herald": 16.0, "atakhan": 20.0, "inhib": 8.0,
+          "tower": 12.0}
+STANCE_SAFE_BLOCK = -4.0       # gauge SAFE (stance score <= this): no "go" call except post-fight ones
 
 ROLE_LANE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 LANE_FR = {"top": "top", "mid": "mid", "bot": "bot"}
@@ -108,6 +113,8 @@ KIND_COOLDOWN_S: dict[str, float] = {
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
 URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates"})
+#: "go" calls that stay valid whatever my own gauge says (the numbers decide, not my lane)
+POST_FIGHT_KINDS = frozenset({"fight_won"})
 #: coach.MapCoach rules saying the same thing in words (suppressed around a call of the kind)
 OVERLAPS: dict[str, frozenset[str]] = {
     "plates": frozenset({"lane_dead", "lane_recall", "lane_left"}),
@@ -292,6 +299,7 @@ class MacroCtx:
     in_fight: bool = False
     threat: int = 0
     recent_director_call: bool = False               # phase.EndGameCaller spoke in the last seconds
+    stance_score: float | None = None                # play gauge score (coach.Stance.score), None = unknown
     keep: bool = False                               # re-validating an active call: relaxed thresholds
 
     @property
@@ -303,7 +311,8 @@ class MacroCtx:
 def build_ctx(t: float, gt: float, game: Any, st: Any, *, role: str | None, me_uv: Any, allies: Iterable[Any] = (),
               enemies: Iterable[Any] = (), objectives: Iterable[Any] = (), waves: Any = None, jint: Any = None,
               roles: Any = None, scoreboard: Any = None, in_fight: bool = False, threat: int = 0,
-              in_base: bool = False, recent_director_call: bool = False) -> MacroCtx:
+              in_base: bool = False, recent_director_call: bool = False,
+              stance_score: float | None = None) -> MacroCtx:
     """A :class:`MacroCtx` from the engine's objects (any of them may be None). Never raises."""
     ctx = MacroCtx(t=float(t), gt=float(gt))
     try:
@@ -368,6 +377,7 @@ def build_ctx(t: float, gt: float, game: Any, st: Any, *, role: str | None, me_u
         ctx.in_fight = bool(in_fight)
         ctx.threat = int(_f(threat, 0) or 0)
         ctx.recent_director_call = bool(recent_director_call)
+        ctx.stance_score = _f(stance_score)
     except Exception:
         log.debug("macro.build_ctx failed", exc_info=True)
     return ctx
@@ -547,6 +557,37 @@ def _safe_uv(ctx: MacroCtx) -> tuple[float, float] | None:
         return None
 
 
+def travel_s(ctx: MacroCtx, target: Any) -> float:
+    """Seconds to walk from me to ``target`` (0 when either is unknown)."""
+    tgt = _uv(target)
+    if tgt is None or ctx.me_uv is None:
+        return 0.0
+    return geometry.dist(ctx.me_uv, tgt) * geometry.MAP_GAME_UNITS / MOVE_SPEED
+
+
+#: minimum respawn window per target, whatever the distances (a Baron started with 20 s is a throw)
+WINDOW_FLOOR_S = {"baron": 25.0, "elder": 18.0, "dragon": 15.0, "herald": 15.0, "atakhan": 18.0, "tower": 12.0,
+                  "inhib": 10.0}
+
+
+def _window_ok(ctx: MacroCtx, window: float, target: Any, what: str) -> bool:
+    """Is a respawn ``window`` long enough for this target? The dead enemies come back from their
+    fountain: they can contest at ``window + their walk``; we need ``our walk + the take time``.
+    Also a floor per target (:data:`WINDOW_FLOOR_S`). Re-validating an active call: always."""
+    if ctx.keep:
+        return True
+    if window < WINDOW_FLOOR_S.get(what, 12.0):
+        return False
+    take = TAKE_S.get(what, 12.0)
+    if what == "baron" and ctx.gt >= 1500.0:
+        take = 20.0
+    tgt = _uv(target)
+    back = 0.0
+    if tgt is not None and ctx.enemy_team in FOUNTAIN:
+        back = geometry.dist(FOUNTAIN[ctx.enemy_team], tgt) * geometry.MAP_GAME_UNITS / (MOVE_SPEED * 1.15)
+    return window + back >= travel_s(ctx, target) + take
+
+
 def _call(kind: str, ident: str, title: str, text: str, why: str, target: Any, *, tier: str, score: float,
           priority: int, color: str = "gold", genius: bool = False, life: float = DEFAULT_LIFE_S,
           label: str = "VA ICI", factors: Iterable[str] = ()) -> GeniusCall:
@@ -570,23 +611,26 @@ def _rule_fight_won(ctx: MacroCtx) -> GeniusCall | None:
     edge, why_edge = team_edge(ctx)
     alive_vs = f"{5 - n_al} contre {5 - n}"
     opts: list[tuple[float, str, str, Any, str]] = []      # (value, what, title, target, short)
-    if _obj_up(ctx, "baron") and ctx.gt >= 1200 and window >= 22 and (n >= 3 or jg_dead):
-        opts.append((1.0, "Baron", "BARON !", BARON_UV, "le Baron"))
-    if (_obj_up(ctx, "elder")) and window >= 18:
+    # Baron: 3 dead, or 2 dead with their jungler (no smite to steal it), 4+ of us alive, and the
+    # respawn window covers the walk + the kill (a Baron started with 20 s of window is a throw)
+    if _obj_up(ctx, "baron") and ctx.gt >= 1200 and n_al <= 1 and (n >= 3 or jg_dead) \
+            and _window_ok(ctx, window, BARON_UV, "baron"):
+        opts.append((1.0, "le Baron", "BARON !", BARON_UV, "le Baron"))
+    if _obj_up(ctx, "elder") and n_al <= 1 and _window_ok(ctx, window, DRAGON_UV, "elder"):
         opts.append((1.0, "l'ancestral", "ANCESTRAL !", DRAGON_UV, "l'ancestral"))
-    if _obj_up(ctx, "dragon") and window >= 18:
+    if _obj_up(ctx, "dragon") and _window_ok(ctx, window, DRAGON_UV, "dragon"):
         opts.append((0.8 + (0.1 if jg_dead else 0.0), "le dragon", "DRAGON !", DRAGON_UV, "le dragon"))
-    if (_obj_up(ctx, "herald") or _obj_up(ctx, "atakhan")) and window >= 18:
-        key = "atakhan" if _obj_up(ctx, "atakhan") else "herald"
-        opts.append((0.65, OBJ_LE[key], OBJ_TITLE[key], BARON_UV if key == "herald" else None, OBJ_LE[key]))
+    if _obj_up(ctx, "herald") and _window_ok(ctx, window, BARON_UV, "herald"):
+        opts.append((0.65, OBJ_LE["herald"], OBJ_TITLE["herald"], BARON_UV, OBJ_LE["herald"]))
     theirs = ctx.enemy_team
     st = ctx.st
     if theirs is not None and st is not None:
         for lane in ("mid", "bot", "top"):
             stand = _standing(ctx, theirs, lane)
             inhib_down = (theirs, lane) in (getattr(st, "inhibs_down", ()) or ())
-            if stand and stand[0][0] == 3 and window >= 15:
-                opts.append((0.85, "l'inhibiteur", "INHIBITEUR !", stand[0][1], f"l'inhibiteur {LANE_FR[lane]}"))
+            if stand and stand[0][0] == 3 and _window_ok(ctx, window, stand[0][1], "tower"):
+                opts.append((0.85, "la tour de l'inhibiteur", "INHIBITEUR !", stand[0][1],
+                             f"la tour de l'inhibiteur {LANE_FR[lane]}"))
             elif not stand and not inhib_down and window >= 12:
                 try:
                     from treeaicoach.phase import TURRET_UV
@@ -602,7 +646,7 @@ def _rule_fight_won(ctx: MacroCtx) -> GeniusCall | None:
                 d = geometry.dist(ref, stand[0][1])
                 if best_t is None or d < best_t[0]:
                     best_t = (d, lane, stand[0][1])
-        if best_t is not None and window >= 15:
+        if best_t is not None and _window_ok(ctx, window, best_t[2], "tower"):
             opts.append((0.6 - 0.2 * min(1.0, best_t[0]), "la tour", "TOUR !", best_t[2], f"la tour {LANE_FR[best_t[1]]}"))
     opts = [o for o in opts if o[3] is not None]
     if not opts:
@@ -610,7 +654,7 @@ def _rule_fight_won(ctx: MacroCtx) -> GeniusCall | None:
     value, what, title, target, short = max(opts, key=lambda o: o[0])
     score = value * _clamp(0.55 + window / 60.0) * _clamp(0.75 + 0.25 * edge + 0.1 * (n - 2))
     return _call("fight_won", f"fight_won:{int(ctx.gt // 30)}:{what}", title,
-                 f"Ils sont {n} morts ({_secs(window)} s) : {what} maintenant !",
+                 f"Ils sont {n} morts ({_secs(window)} s) : {what} maintenant !".replace(": le Baron", ": Baron"),
                  f"À {alive_vs}, ils ne peuvent pas défendre : {_secs(window)} s suffisent pour {short}.",
                  target, tier="high", score=score, priority=94, color="safe", genius=True,
                  life=max(8.0, min(window, 30.0)), label=title.rstrip(" !")[:16],
@@ -651,11 +695,16 @@ def _rule_jungler_dead(ctx: MacroCtx) -> GeniusCall | None:
     # a free epic objective first (dragon side for bot / mid / jungle, top side for top / mid / jungle)
     for key, roles_ok in (("elder", None), ("baron", None), ("dragon", ("JUNGLE", "BOTTOM", "UTILITY", "MIDDLE")),
                           ("herald", ("JUNGLE", "TOP", "MIDDLE")), ("grubs", ("JUNGLE", "TOP", "MIDDLE"))):
-        if key == "baron" and (ctx.gt < 1200 or len(_dead_list(ctx, "enemies", 15.0)) < 2):
+        # Baron / Elder: their jungler alone dead is not enough (4 against 5 on a 50-50 objective)
+        if key in ("baron", "elder") and (len(_dead_list(ctx, "enemies", 15.0)) < 2
+                                          or (key == "baron" and ctx.gt < 1200)):
             continue
         if not _obj_up(ctx, key, within=5.0) or (roles_ok is not None and role not in roles_ok):
             continue
-        if jl.respawn < (30.0 if key in ("baron", "elder") else 20.0) and not ctx.keep:
+        # a laner without his jungler takes a dragon far too slowly (and no smite on our side)
+        if role != "JUNGLE" and not _ally_jungler_alive(ctx):
+            continue
+        if not _window_ok(ctx, jl.respawn, PIT_UV.get(key), key):
             continue
         what = OBJ_LE[key]
         return _call("jungler_dead", ident, OBJ_TITLE[key], f"{name} est mort ({w} s) : prenez {what} !",
@@ -672,15 +721,14 @@ def _rule_jungler_dead(ctx: MacroCtx) -> GeniusCall | None:
                      color="safe", genius=True, life=max(10.0, min(jl.respawn, 30.0)), label="ENVAHIS",
                      factors=(f"jungler mort {w} s",))
     lane = _my_lane(ctx)
-    if lane and ctx.phase == "laning" and _zone_lane(ctx.me_uv) == lane and role != "UTILITY":
-        stand = _standing(ctx, theirs, lane)
-        target = stand[0][1] if stand else None
-        plates = ctx.gt < LANING_END_GT
-        return _call("jungler_dead", ident, "JOUE AGRESSIF",
-                     f"{name} est mort ({w} s) : pousse et {'plaque' if plates else 'frappe'} la tour.",
-                     "Aucun gank possible pendant ce temps : tu peux jouer avancé.",
+    if lane and ctx.phase == "laning" and _zone_lane(ctx.me_uv) == lane and role != "UTILITY" \
+            and (ctx.hp is None or ctx.hp >= 0.5):
+        target = lane_uv(lane, 0.6, ctx.my_team)
+        return _call("jungler_dead", ident, "JOUE AVANCÉ",
+                     f"{name} est mort ({w} s) : pousse ta vague, aucun gank possible.",
+                     "Leur jungler ne peut pas venir : prends l'avantage dans ta voie.",
                      target, tier="basic", score=0.45, priority=80, color="safe",
-                     life=max(10.0, min(jl.respawn, 25.0)), label="TOUR", factors=(f"jungler mort {w} s",))
+                     life=max(10.0, min(jl.respawn, 25.0)), label="POUSSE", factors=(f"jungler mort {w} s",))
     return None
 
 
@@ -718,6 +766,11 @@ def _rule_plates(ctx: MacroCtx) -> GeniusCall | None:
     tower = stand[0][1]
     if jl.uv is not None and not jl.dead and jl.conf >= 0.5 and geometry.dist(jl.uv, tower) < JG_NEAR_R:
         return None                                       # their jungler is right there
+    jg_unknown = jl.known and not jl.dead and jl.conf < 0.3
+    lw = _lane_wave(ctx, lane)
+    meet = _f(_get(lw, "meet")) if lw is not None else None
+    if jg_unknown and not ctx.keep and meet is not None and meet < 0.55:
+        return None                                       # alone at their tower, jungler unseen, no wave: bait
     window = min(w for _n, w, _y in absent)
     who = " et ".join(n for n, _w, _y in absent[:2])
     dead = all(y == "mort" for _n, _w, y in absent)
@@ -729,6 +782,8 @@ def _rule_plates(ctx: MacroCtx) -> GeniusCall | None:
     else:
         text = f"Frappe la tour ({_secs(window)} s) : {who} {verb}." if dead else f"Pousse et frappe la tour : {who} {verb}."
         why = "Une tour = de l'or pour toute l'équipe et la carte s'ouvre pour vous."
+    if jg_unknown:
+        why = why + f" Leur jungler n'est pas visible : reste sur ta vague."
     risk = 0.0 if jl.dead else (0.2 if jl.conf < 0.3 else 0.0)
     score = _clamp(0.45 + window / 80.0 + (0.1 if plates else 0.0) - risk)
     return _call("plates", f"plates:{'-'.join(sorted(a for a in ctx.lane_opps))}:{int(ctx.gt // 20)}",
@@ -768,8 +823,9 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
             if _obj_up(ctx, key) and role in ("JUNGLE", "TOP", "MIDDLE"):
                 if role != "JUNGLE" and not _ally_jungler_alive(ctx):
                     break
+                verb = "Prends" if role == "JUNGLE" else "Aide ton jungler à prendre"
                 return _call("cross_trade", f"cross:{key}:{int(ctx.gt // 60)}", OBJ_TITLE[key],
-                             f"Prends {OBJ_LE[key]} MAINTENANT : {who} {where}.",
+                             f"{verb} {OBJ_LE[key]} maintenant : {who} {where}.",
                              f"Ils sont de l'autre côté : échange l'objectif au lieu de perdre un combat.",
                              BARON_UV, tier="high", score=_clamp(0.55 + 0.35 * conf + 0.1 * edge), priority=86,
                              color="safe", genius=True, life=18.0, label=OBJ_TITLE[key].rstrip(" !"),
@@ -777,7 +833,7 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
         stand = _standing(ctx, theirs, "top")
         if role == "TOP" and stand and _zone_lane(ctx.me_uv) == "top" and _tower_free(ctx, "top"):
             return _call("cross_trade", f"cross:tower:{int(ctx.gt // 60)}", "TOUR !",
-                         f"Frappe leur tour du haut MAINTENANT : {who} {where}.",
+                         f"Frappe leur tour du haut maintenant : {who} {where}.",
                          "Personne ne peut venir la défendre : c'est de l'or gratuit.",
                          stand[0][1], tier="high", score=_clamp(0.5 + 0.35 * conf + 0.1 * edge), priority=85,
                          color="safe", genius=True, life=18.0, label="TOUR",
@@ -786,7 +842,7 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
     # top commit -> the dragon side is free
     if role not in ("BOTTOM", "UTILITY", "JUNGLE", "MIDDLE"):
         return None
-    if _obj_up(ctx, "dragon") or _obj_up(ctx, "elder"):
+    if (_obj_up(ctx, "dragon") or _obj_up(ctx, "elder")) and crowd_bot < 2:
         if role != "JUNGLE" and not _ally_jungler_alive(ctx):
             return None
         key = "elder" if _obj_up(ctx, "elder") else "dragon"
@@ -799,7 +855,7 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
     stand = _standing(ctx, theirs, "bot")
     if role in ("BOTTOM", "UTILITY") and stand and _zone_lane(ctx.me_uv) == "bot" and _tower_free(ctx, "bot"):
         return _call("free_dragon", f"cross:bot_tower:{int(ctx.gt // 60)}", "TOUR !",
-                     f"Frappe leur tour du bas MAINTENANT : {who} {where}.",
+                     f"Frappe leur tour du bas maintenant : {who} {where}.",
                      "Leur jungler ne peut pas venir vous punir : c'est le moment de pousser.",
                      stand[0][1], tier="high", score=_clamp(0.45 + 0.35 * conf), priority=84, color="safe",
                      genius=True, life=18.0, label="TOUR", factors=(f"jungler {jl.source} {jl.side}",))
@@ -885,7 +941,8 @@ def _rule_side_wave(ctx: MacroCtx) -> GeniusCall | None:
         if any(geometry.dist(_uv(a.uv), point) < my_d - 0.05 for a in mates):  # type: ignore[arg-type]
             continue                                       # a mate is closer: his job
         # safe-split rule: their jungler located elsewhere / dead, or 3+ enemies seen on the other side
-        other = [e for e in fresh if side_of(_uv(e.uv)) not in (lane,)]  # type: ignore[arg-type]
+        opposite = {"top": "bot", "bot": "top"}.get(lane)
+        other = [e for e in fresh if side_of(_uv(e.uv)) == opposite]  # type: ignore[arg-type]
         near = [e for e in fresh if geometry.dist(_uv(e.uv), point) < 0.3]  # type: ignore[arg-type]
         if near:
             continue
@@ -907,7 +964,7 @@ def _rule_side_wave(ctx: MacroCtx) -> GeniusCall | None:
     value, lane, point, bits = best
     return _call("side_wave", f"side_wave:{lane}:{int(ctx.gt // 45)}", f"VA {LANE_FR[lane].upper()}",
                  f"Change de voie : va {LANE_FR[lane]}, la vague arrive et personne n'y est.",
-                 f"Une vague = environ 125 PO et de l'XP, sans risque : {' et '.join(bits)}.",
+                 f"Une vague = plus de 100 PO et de l'XP, sans risque : {' et '.join(bits)}.",
                  point, tier="basic", score=_clamp(value), priority=62, color="teal", life=22.0,
                  label="VAGUE", factors=tuple(bits))
 
@@ -938,6 +995,16 @@ def _rule_split_safe(ctx: MacroCtx) -> GeniusCall | None:
         return None
     jl = jungler_location(ctx)
     if not jl.dead and jl.side == lane and jl.conf >= 0.3:
+        return None
+    # every living enemy but one must be accounted for, their jungler included (seen far / dead):
+    # a split with their jungler unseen is how a side laner gets caught
+    other_aliases = {str(getattr(e, "alias", "") or "").lower() for e in other}
+    alive = [str(getattr(p, "champion_alias", "") or "").lower() for p in (getattr(ctx.game, "enemies", None) or [])
+             if not bool(getattr(p, "is_dead", False))]
+    unaccounted = [a for a in alive if a not in other_aliases]
+    jg_ok = jl.dead or (ctx.jungler_alias is not None and ctx.jungler_alias in other_aliases) \
+        or (not jl.known and len(unaccounted) == 0)
+    if (len(unaccounted) > (2 if ctx.keep else 1) or not jg_ok) and not ctx.keep:
         return None
     where = SIDE_FR[side_of((sum(_uv(e.uv)[0] for e in other) / len(other),  # type: ignore[index]
                              sum(_uv(e.uv)[1] for e in other) / len(other)))]  # type: ignore[index]
@@ -992,6 +1059,7 @@ def _rule_waves(ctx: MacroCtx) -> GeniusCall | None:
         return None
     if _zone_lane(ctx.me_uv) != lane:
         return None
+    support = ctx.role == "UTILITY"                   # a support does not manage the wave / recall timing
     lw = _lane_wave(ctx, lane)
     meet = _f(_get(lw, "meet")) if lw is not None else None
     state = _get(lw, "state") if lw is not None else None
@@ -1004,8 +1072,8 @@ def _rule_waves(ctx: MacroCtx) -> GeniusCall | None:
             and (jl.age >= 1.0 or ctx.keep) \
             and (lane == "mid" or side_of(jl.uv) in (my_half, "mid")):
         safe = _safe_uv(ctx)
-        return _call("wave_freeze", f"freeze:{int(ctx.gt // 30)}", "NE POUSSE PAS",
-                     f"Ne pousse pas : laisse la vague revenir vers ta tour, {jl.name or 'leur jungler'} arrive.",
+        return _call("wave_freeze", f"freeze:{int(ctx.gt // 30)}", "NE POUSSE PLUS",
+                     f"Arrête de pousser, reste près de ta tour : {jl.name or 'leur jungler'} vient vers toi.",
                      "Près de ta tour un gank échoue ; loin de ta tour tu meurs.",
                      safe, tier="basic", score=_clamp(0.4 + 0.4 * jl.conf), priority=74, color="danger",
                      life=15.0, label="TA TOUR", factors=(f"jungler {jl.source} à {geometry.dist(jl.uv, ctx.me_uv):.2f}",))
@@ -1035,16 +1103,16 @@ def _rule_waves(ctx: MacroCtx) -> GeniusCall | None:
     # -- recall timing: wave pushed into their tower + gold to spend (or low HP)
     gold_ok = ctx.gold >= RECALL_GOLD
     low = ctx.hp is not None and ctx.hp < LOW_HP
-    if (gold_ok or low) and meet is not None and ctx.gt >= 150.0:
+    if (gold_ok or low) and meet is not None and ctx.gt >= 150.0 and not support:
         cannon = next_cannon_arrival(ctx.gt)
         why_gold = f"{int(ctx.gold)} PO à dépenser" if gold_ok else "tu as peu de vie"
         if state == "pushing" and meet >= 0.62 and n_al >= 3:
             return _call("wave_recall", f"recall:{int(ctx.gt // 60)}", "RENTRE",
-                         "Ta vague va s'écraser sur leur tour : rentre maintenant, tu ne perds rien.",
+                         "Ta vague s'écrase sur leur tour : rentre maintenant.",
                          f"{why_gold} ; leurs sbires restent sous leur tour pendant ton retour.",
                          FOUNTAIN.get(ctx.my_team or ""), tier="basic", score=0.55 + (0.1 if gold_ok and low else 0.0),
                          priority=58, color="gold", life=15.0, label="BASE", factors=(why_gold, "vague poussée"))
-        if state in ("even", "pushed_in") and meet < 0.55:
+        if state in ("even", "pushed_in") and meet < 0.55 and not low:   # low HP: never "push first"
             extra = " (la vague du canon arrive : prends-la d'abord)" if cannon <= 20.0 else ""
             return _call("wave_recall", f"recall_push:{int(ctx.gt // 60)}", "POUSSE PUIS RENTRE",
                          "Pousse ta vague puis rentre.",
@@ -1167,6 +1235,10 @@ class MacroPlanner:
         for c in cands:
             if c.tier not in cfg["tiers"] or c.score < cfg["min_score"] or c.ident in self._done:
                 continue
+            if c.color == "safe" and c.kind not in POST_FIGHT_KINDS and (
+                    (ctx.stance_score is not None and ctx.stance_score <= STANCE_SAFE_BLOCK)
+                    or (ctx.hp is not None and ctx.hp < LOW_HP)):
+                continue                                   # the gauge says SAFE / I am low: no "go" call
             if c.kind == "wave_recall" and not self._recall_armed:
                 continue                                   # once per trip: wait for a base visit
             if self._active is not None:

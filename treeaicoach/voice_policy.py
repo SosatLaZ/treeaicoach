@@ -5,14 +5,24 @@ engine may say goes through :class:`VoiceGate` (:meth:`VoiceGate.decide` + its
 :class:`SpeechBudget`); when in doubt, the message is VISUAL only (HUD line, toast, banner,
 minimap marks).
 
-:func:`route` - what is a candidate for speech at each ``cfg.voice_level``:
+THE VOICE WHITELIST (V2, "visual x1000": the voice is only for what cannot wait AND needs the
+player's eyes elsewhere; everything else is written: HUD line, toast, banner, minimap marks).
+Same list at every skill level; ``cfg.voice_level`` only adds to it:
 
-* ``"minimal"`` (default): a REAL gank ("Gank ! Lee Sin, recule !"), the fight decision
-  ("Engage !" / "Recule !", ``call:`` keys, only when it flips), the F9 answer, and ONE objective
-  warning (>= 45 s before the spawn). Nothing else.
-* ``"normal"``: + urgent macro / positioning calls (``urgent:``), the "prudent" stance, big
-  praise, macro tips, death recap, sightings, Tab insights.
-* ``"bavard"``: everything.
+* ``"minimal"`` (default, intermédiaire / avancé / expert):
+
+  1. gank alerts after triage (:func:`triage_gank`): "Gank ! Lee Sin, recule !", "Lee Sin
+     arrive !" (an enemy jungler / roamer coming AT ME), dropped during a fight;
+  2. the fight call RECULE (``call:retreat``) - the only voice line during a fight. "Attaque !"
+     (``call:engage``) is never spoken: the big green banner says it;
+  3. the F9 answer (the player asked);
+  4. an epic objective spawning in <= :data:`OBJECTIVE_VOICE_MAX_LEAD_S` s (the last
+     announcement) WHEN I AM INVOLVED (alive, my role plays it or I stand near the pit, see
+     :func:`objective_involved`).
+
+* ``"normal"`` (débutant preset): + the big numbers call right after a won fight / an ace
+  ("Ils sont 3 morts : Baron !", keys ``urgent:ace:`` / ``urgent:genie:``).
+* ``"bavard"`` (opt-in): + everything else, still budgeted and never during a fight.
 
 :meth:`VoiceGate.decide` then applies the "would a Challenger coach say this RIGHT NOW?" rules:
 
@@ -60,12 +70,29 @@ URGENT_PREFIXES: tuple[str, ...] = ("call:", "urgent:")
 MACRO_CALL_PREFIXES: tuple[str, ...] = ("urgent:", "macro:")
 #: Stances spoken in "normal" (safety only; never in "minimal").
 MINIMAL_STANCES = ("stance:prudent",)
-#: Objective warnings at least this many seconds before the spawn are spoken in "minimal".
-OBJECTIVE_VOICE_MIN_LEAD_S = 45
-#: Spoken in "normal" (besides the "minimal" set).
-NORMAL_VOICE = frozenset({AlertKind.OBJECTIVE_SOON, AlertKind.MACRO_TIP, AlertKind.DEATH_RECAP,
-                          AlertKind.JUNGLER_SPOTTED, AlertKind.LANER_MIA, AlertKind.SCOREBOARD,
-                          AlertKind.PRAISE})
+#: Objective warnings this close to the spawn (the last announcement, default leads 60 / 20 s) are
+#: spoken when I am involved; earlier ones are written.
+OBJECTIVE_VOICE_MAX_LEAD_S = 20
+#: (compat) old name: objective warnings are no longer spoken this early.
+OBJECTIVE_VOICE_MIN_LEAD_S = OBJECTIVE_VOICE_MAX_LEAD_S
+#: "normal" adds only these keys (the post-fight numbers call: an ace / a won fight -> Baron...).
+BIG_CALL_PREFIXES: tuple[str, ...] = ("urgent:ace:", "urgent:genie:")
+#: (compat) "normal" no longer speaks whole kinds: everything outside the whitelist is written.
+NORMAL_VOICE: frozenset = frozenset()
+#: Keys that are only a voice duplicate of something already on screen (banner / HUD line): when
+#: they are not spoken they are dropped, never written a second time.
+VOICE_ONLY_PREFIXES: tuple[str, ...] = ("urgent:genie:", "call:engage",
+                                       "stance:",          # the gauge pill shows it
+                                       "hype:swing:")      # the HUD win-probability shows it
+#: role -> epic objectives that concern it (an objective warning is spoken only for these)
+OBJ_ROLES_VOICE: dict[str, frozenset[str]] = {
+    "JUNGLE": frozenset({"dragon", "elder", "baron", "herald", "grubs", "atakhan"}),
+    "MIDDLE": frozenset({"dragon", "elder", "baron", "herald", "grubs", "atakhan"}),
+    "BOTTOM": frozenset({"dragon", "elder", "baron", "atakhan"}),
+    "UTILITY": frozenset({"dragon", "elder", "baron", "atakhan"}),
+    "TOP": frozenset({"baron", "herald", "grubs", "elder", "atakhan"}),
+}
+OBJ_NEAR_R = 0.30              # standing this close to the pit = involved whatever the role
 
 #: Minimum interval between two messages of one kind (spoken or written), seconds.
 KIND_GAP_S: dict[str, float] = {
@@ -118,34 +145,61 @@ def is_big_praise(alert: Any) -> bool:
     return str(getattr(alert, "key", "") or "").startswith(BIG_PRAISE_PREFIXES)
 
 
+def _objective_key(key: str) -> str:
+    """``"objective_soon:dragon:20"`` -> ``"dragon"``."""
+    parts = key.split(":")
+    return parts[1] if len(parts) >= 3 else ""
+
+
+def objective_involved(key: str, role: Any = None, me_uv: Any = None, gt: float | None = None) -> bool:
+    """Is the player concerned by this objective warning (``objective_soon:<obj>:<lead>``)? His
+    role plays it (bot side: dragon; top side: Herald / grubs; everybody: Baron / Elder after
+    20:00, Atakhan) or he stands near the pit. Unknown role and position: True. Never raises."""
+    try:
+        obj = _objective_key(str(key or ""))
+        from treeaicoach import geometry
+
+        pit = {"dragon": geometry.DRAGON_PIT, "elder": geometry.DRAGON_PIT, "baron": geometry.BARON_PIT,
+               "herald": geometry.BARON_PIT, "grubs": geometry.BARON_PIT}.get(obj)
+        if me_uv is not None and pit is not None:
+            if geometry.dist((float(me_uv[0]), float(me_uv[1])), (pit[0], pit[1])) <= OBJ_NEAR_R:
+                return True
+        r = str(role or "").upper()
+        if not r:
+            return True
+        if obj in ("baron", "elder") and (gt is None or gt >= 1200.0):
+            return True
+        return obj in OBJ_ROLES_VOICE.get(r, frozenset())
+    except Exception:
+        return True
+
+
+def is_voice_only(alert: Any) -> bool:
+    """A voice duplicate of something already on screen (dropped when not spoken)."""
+    return str(getattr(alert, "key", "") or "").startswith(VOICE_ONLY_PREFIXES)
+
+
 def route(alert: Any, voice_level: Any = DEFAULT_VOICE_LEVEL) -> str:
     """``"voice"`` (candidate for speech, see :class:`VoiceGate`) or ``"text"`` (visual only:
-    HUD line + toast). VISUAL FIRST: in ``"minimal"`` (default) only gank alerts, the fight call
-    (``call:``), the F9 answer and ONE objective warning (>= 45 s before the spawn) may be
-    spoken. Never raises."""
+    HUD line + toast), from THE VOICE WHITELIST of the module docstring. Involvement in an
+    objective and the fight / concentration rules are checked by :meth:`VoiceGate.decide`.
+    Never raises."""
     try:
         kind = getattr(alert, "kind", None)
         key = str(getattr(alert, "key", "") or "")
-        if kind in GANK_KINDS or kind in ALWAYS_VOICE or key.startswith("call:"):
+        if kind in GANK_KINDS or kind in ALWAYS_VOICE or key.startswith("call:retreat"):
             return "voice"
+        if key.startswith("call:"):
+            return "text"                      # "Attaque !": the big banner says it
         level = normalize_level(voice_level)
-        if level == "bavard":
-            return "voice"
         if kind == AlertKind.OBJECTIVE_SOON:
             lead = _objective_lead(key)
-            if lead is not None and lead >= OBJECTIVE_VOICE_MIN_LEAD_S:
+            if lead is not None and lead <= OBJECTIVE_VOICE_MAX_LEAD_S:
                 return "voice"
-            return "voice" if level == "normal" else "text"
-        if level == "minimal":
-            return "text"
-        # "normal": urgent macro calls, the prudent stance, big praise and the NORMAL_VOICE kinds
-        if key.startswith("urgent:"):
+            return "voice" if level == "bavard" else "text"
+        if level == "bavard":
             return "voice"
-        if key.startswith(STANCE_PREFIX):
-            return "voice" if key.startswith(MINIMAL_STANCES) else "text"
-        if kind == AlertKind.PRAISE:
-            return "voice" if is_big_praise(alert) else "text"
-        if kind in NORMAL_VOICE:
+        if level == "normal" and key.startswith(BIG_CALL_PREFIXES):
             return "voice"
         return "text"
     except Exception:
@@ -468,6 +522,9 @@ class SpeechContext:
     enemy_in_danger: bool = False            # a visible enemy inside the danger radius
     dead: bool = False
     in_base: bool = False
+    role: str | None = None                  # my role (objective involvement)
+    me_uv: tuple[float, float] | None = None
+    gt: float | None = None
 
     @property
     def concentrating(self) -> bool:
@@ -519,7 +576,9 @@ class VoiceGate:
         kind = getattr(alert, "kind", None)
         key = str(getattr(alert, "key", "") or "")
         if key.startswith("call:"):
-            return "drop" if ctx.dead else "voice"           # fight decision flip: the point of it
+            if ctx.dead or not key.startswith("call:retreat"):
+                return "drop"                                # "Attaque !": the banner says it (no double)
+            return "voice"                                   # RECULE: the one line spoken in a fight
         if kind in GANK_KINDS:
             if ctx.in_fight or ctx.dead or ctx.in_base:
                 return "drop"
@@ -537,10 +596,14 @@ class VoiceGate:
             return "text"
         if kind in ALWAYS_VOICE:
             return "voice"                                   # the player asked (F9)
+        quiet = "drop" if is_voice_only(alert) else "text"   # a voice duplicate of the banner / HUD
         if route(alert, level) != "voice":
-            return "text"
-        if (ctx.concentrating and not ctx.dead) or conf < CONFIDENCE_MIN:
-            return "text"                                    # (dead: the best moment to listen)
+            return quiet
+        if kind == AlertKind.OBJECTIVE_SOON and normalize_level(level) != "bavard":
+            if ctx.dead or not objective_involved(key, ctx.role, ctx.me_uv, ctx.gt):
+                return "text"                                # not my objective: written
+        if ctx.in_fight or (ctx.concentrating and not ctx.dead) or conf < CONFIDENCE_MIN:
+            return quiet                                     # never during a fight (dead: best moment)
         return "voice"
 
     def note_spoken(self, alert: Any, t: float) -> None:
@@ -569,6 +632,7 @@ class VoiceGate:
         return self.budget.pop_ready(t)
 
 
-__all__ = ["VOICE_LEVELS", "DEFAULT_VOICE_LEVEL", "route", "MessageGate", "TEXT_TOAST", "is_big_praise",
+__all__ = ["VOICE_LEVELS", "DEFAULT_VOICE_LEVEL", "route", "objective_involved", "is_voice_only",
+           "OBJECTIVE_VOICE_MAX_LEAD_S", "BIG_CALL_PREFIXES", "MessageGate", "TEXT_TOAST", "is_big_praise",
            "kind_name", "normalize_level", "SpeechBudget", "triage_gank", "is_critical", "speech_priority",
            "VoiceGate", "SpeechContext", "alert_confidence"]

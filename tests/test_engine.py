@@ -296,7 +296,7 @@ def test_unsupported_mode_and_spectator():
     eng, _v, clock = make_engine(ListSource([np.zeros((200, 200, 3), np.uint8)], game_info(100, map_number=12)))
     eng.step(0.0)
     assert eng.get_status().state == EngineState.UNSUPPORTED_MODE
-    assert "Faille" in eng.get_status().message
+    assert "Faille" in eng.get_status().message and "ARAM" in eng.get_status().message
     assert eng.get_overlay_state() is None
     eng2, _v2, _c2 = make_engine(ListSource([None], game_info(100, me=False)))
     eng2.step(0.0)
@@ -721,3 +721,34 @@ def test_live_threads_follow_game():
     eng.stop()
     assert cap.grabs and loc.locates >= 1
     assert st.state == EngineState.RUNNING
+
+
+def test_covered_minimap_frames_are_not_analysed():
+    """A crop that stops looking like the minimap (shop / scoreboard over it) is not fed to
+    the detector (phantom icons); the analysis resumes at the first good verification."""
+    from treeaicoach.engine import MSG_MINIMAP_COVERED
+
+    cap = FakeCapture()
+    loc = FakeLocator(cap)
+    eng, clock, _client = live_engine(cap, loc)
+    calls = []
+    for i in range(12):
+        clock.t = i * 0.125
+        eng.step(clock.t)
+    det = eng._detector
+    orig = det.detect
+    det.detect = lambda frame: calls.append(1) or orig(frame)
+    loc.score = 0.1
+    for _ in range(12):                   # (verify once per second, then every tick while bad)
+        clock.t += 0.125
+        eng.step(clock.t)
+    n_bad = len(calls)
+    assert eng.get_status().message == MSG_MINIMAP_COVERED
+    for _ in range(4):
+        clock.t += 0.125
+        eng.step(clock.t)
+    assert len(calls) == n_bad            # nothing analysed while covered
+    loc.score = 0.9
+    clock.t += 0.125
+    eng.step(clock.t)
+    assert len(calls) == n_bad + 1 and eng.get_status().message != MSG_MINIMAP_COVERED

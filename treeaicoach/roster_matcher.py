@@ -200,6 +200,28 @@ FOUNTAIN_DIST = 0.09
 RESPAWN_LEAD_S = 0.3
 DEAD_UNKNOWN_S = 3.0
 
+#: Camera lock (camera centred on me, "Y"): when my strong matches sit on the camera point
+#: (``self_icon.CAM_V_FRAC`` of the rectangle height) CAMLOCK_CONFIRM frames in a row, the
+#: camera is locked: while my icon is not matched (stacked, ping, custom icon not learned
+#: yet...) my position is the camera point + the learned offset, for CAMLOCK_HOLD_S after
+#: the last confirmation, unless the camera point jumps (panning) faster than me.
+CAMLOCK_MARGIN = 0.05
+CAMLOCK_TOL = 0.025
+CAMLOCK_CONFIRM = 4
+CAMLOCK_HOLD_S = 6.0
+CAMLOCK_JUMP = 0.03
+CAMLOCK_SCORE = 0.5
+
+#: Greyscale minimap (death filter on some clients, desaturated capture): the ring colour
+#: cannot vote, the chroma half of the NCC is meaningless. Detected when the 95th
+#: percentile of the chroma is below GREY_CHROMA; the match then uses the lightness only
+#: and every candidate gets the neutral ring bonus GREY_RING_BONUS (= a 30 % own ring).
+GREY_CHROMA = 9.0
+GREY_RING_BONUS = 0.06
+GREY_THR_ADD = 0.1
+GREY_RING_DL = 25.0
+GREY_NO_RING = 0.3
+
 # Initial ring colours (BGR), learned live afterwards.
 _RING_INIT_BGR: dict[str, tuple[int, int, int]] = {
     "enemy": (51, 51, 200),
@@ -374,8 +396,8 @@ def _bank_specs(bank: _Bank, shape: tuple[int, int]) -> tuple[np.ndarray, list[l
     return got
 
 
-def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None
-             ) -> tuple[np.ndarray, np.ndarray]:
+def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None,
+             wl: float | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Masked zero-mean NCC maps ``[k, H-s+1, W-s+1]`` + local contrast ratio base (std map).
 
     Map pixel ``(y, x)`` = template centred at feature pixel ``(y + s//2, x + s//2)``.
@@ -406,7 +428,8 @@ def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None
     # its variance is small (terrain has lightness contrast but almost no colour)
     den_l = np.sqrt(var_l + VAR_EPS[0] * bank.n)
     den_c = np.sqrt(var_c + VAR_EPS[1] * bank.n)
-    wl, wc = LIGHTNESS_WEIGHT, 1.0 - LIGHTNESS_WEIGHT
+    wl = LIGHTNESS_WEIGHT if wl is None else float(wl)
+    wc = 1.0 - wl
     out = np.empty((len(idx), oh, ow), np.float32)
     for k, i in enumerate(idx):
         ts = tspecs[i]
@@ -419,7 +442,8 @@ def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None
     return out, std
 
 
-def local_ncc(roi: np.ndarray, bank: _Bank, i: int) -> tuple[np.ndarray, np.ndarray] | None:
+def local_ncc(roi: np.ndarray, bank: _Bank, i: int, wl: float | None = None
+              ) -> tuple[np.ndarray, np.ndarray] | None:
     """Same NCC as :func:`ncc_maps` for one template over a small feature window ``roi``.
 
     Direct (spatial) correlation with ``cv2.matchTemplate``: much faster than the Fourier
@@ -447,13 +471,15 @@ def local_ncc(roi: np.ndarray, bank: _Bank, i: int) -> tuple[np.ndarray, np.ndar
     nl, nc = bank.norms[i]
     num_l = cv2.matchTemplate(L, tl, mt)
     num_c = cv2.matchTemplate(C, tc, mt)
-    wl, wc = LIGHTNESS_WEIGHT, 1.0 - LIGHTNESS_WEIGHT
+    wl = LIGHTNESS_WEIGHT if wl is None else float(wl)
+    wc = 1.0 - wl
     out = num_l * (wl / nl) / np.sqrt(var_l + VAR_EPS[0] * n) + \
         num_c * (wc / nc) / np.sqrt(var_c + VAR_EPS[1] * n)
     return out.astype(np.float32, copy=False), std
 
 
-def masked_ncc(patches: np.ndarray, raw: np.ndarray, masks: np.ndarray) -> np.ndarray:
+def masked_ncc(patches: np.ndarray, raw: np.ndarray, masks: np.ndarray,
+               wl: float | None = None) -> np.ndarray:
     """NCC (same definition as :func:`ncc_maps`) of ``patches`` ``[p, s, s, 3]`` against the
     raw template features ``raw`` ``[s, s, 3]`` under arbitrary masks ``[p, k, s, s]``
     (or ``[k, s, s]`` shared by all patches) -> scores ``[p, k]``.
@@ -473,7 +499,8 @@ def masked_ncc(patches: np.ndarray, raw: np.ndarray, masks: np.ndarray) -> np.nd
     num = sPT - sP * sT / nn
     vp = np.maximum(sPP - sP * sP / nn, 0.0)
     vt = np.maximum(sTT - sT * sT / nn, 0.0)
-    wl, wc = LIGHTNESS_WEIGHT, 1.0 - LIGHTNESS_WEIGHT
+    wl = LIGHTNESS_WEIGHT if wl is None else float(wl)
+    wc = 1.0 - wl
     sl = num[:, :, 0] / (np.sqrt(vp[:, :, 0] + VAR_EPS[0] * n) * np.sqrt(vt[:, :, 0]) + 1e-6)
     sc = (num[:, :, 1] + num[:, :, 2]) / (
         np.sqrt(vp[:, :, 1] + vp[:, :, 2] + VAR_EPS[1] * n)
@@ -592,6 +619,57 @@ class _Track:
         return self.u + self.vu * dt, self.v + self.vv * dt
 
 
+class CameraLock:
+    """Is the camera locked on me? (see CAMLOCK_*). Normalized minimap coordinates."""
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.streak = 0
+        self.locked_t: float | None = None
+        self.prev: tuple[float, float, float] | None = None
+        self.off = (0.0, 0.0)
+
+    @property
+    def locked(self) -> bool:
+        return self.locked_t is not None
+
+    def feed_cam(self, p: tuple[float, float] | None, now: float) -> None:
+        """Camera point of this frame: a jump faster than a champion = the camera moved."""
+        if p is None:
+            return
+        if self.prev is not None:
+            dt = now - self.prev[2]
+            if dt < 0 or math.hypot(p[0] - self.prev[0], p[1] - self.prev[1]) > \
+                    MAX_SPEED * min(dt, 2.0) + CAMLOCK_JUMP:
+                self.locked_t = None
+                self.streak = 0
+        self.prev = (float(p[0]), float(p[1]), float(now))
+
+    def confirm(self, me: tuple[float, float], p: tuple[float, float] | None, now: float) -> None:
+        """A strong match of my icon at ``me`` while the camera point is ``p``."""
+        if p is None:
+            return
+        du, dv = me[0] - p[0], me[1] - p[1]
+        if math.hypot(du - self.off[0], dv - self.off[1]) < CAMLOCK_TOL or \
+                (self.streak == 0 and math.hypot(du, dv) < CAMLOCK_TOL):
+            self.streak += 1
+            a = 0.3
+            self.off = ((1 - a) * self.off[0] + a * du, (1 - a) * self.off[1] + a * dv)
+            if self.streak >= CAMLOCK_CONFIRM:
+                self.locked_t = now
+        else:
+            self.streak = 0
+            self.locked_t = None
+            self.off = (0.0, 0.0)
+
+    def position(self, p: tuple[float, float] | None, now: float) -> tuple[float, float] | None:
+        if p is None or self.locked_t is None or not 0 <= now - self.locked_t <= CAMLOCK_HOLD_S:
+            return None
+        return (min(1.0, max(0.0, p[0] + self.off[0])), min(1.0, max(0.0, p[1] + self.off[1])))
+
+
 @dataclass
 class _Cand:
     """A candidate position of one champion (working px, continuous centre)."""
@@ -621,6 +699,7 @@ class _State:
     conf_hist: list = field(default_factory=list)   # confident matches per frame
     ref_conf: float = 0.0
     bg: list = field(default_factory=list)          # recent background peak scores
+    bg_grey: list = field(default_factory=list)     # ... of the greyscale frames
 
 
 class RosterMatcher:
@@ -664,6 +743,12 @@ class RosterMatcher:
         self.last_dead: list[str] = []
         #: Search champions hidden under other icons (stacks), see _stack_search.
         self.stack_search: bool = True
+        #: Camera locked on me (my matches follow the camera point): my position.
+        self.camlock = CameraLock()
+        #: Last frame was colourless (lightness-only matching).
+        self.grey = False
+        self._grey_L: np.ndarray | None = None
+        self._wl: float = LIGHTNESS_WEIGHT
         self.last_stack: tuple | None = None
         self.learner: Any = None
         try:
@@ -717,6 +802,7 @@ class RosterMatcher:
                 self._tracks = {}
                 self._cam = (-10 ** 9, None)
                 self._camlock = (-10 ** 9, None)
+                self.camlock.reset()
                 if self.learner is not None:
                     self.learner.on_roster(ents)
 
@@ -1053,7 +1139,7 @@ class RosterMatcher:
         work = self._work(bgr, factor)
         fx, fy = work.shape[1] / float(W), work.shape[0] / float(H)
         bank = self._bank(inner_full * fx)
-        maps, std = ncc_maps(_features(work), bank)
+        maps, std = ncc_maps(_features(work), bank, wl=self._wl)
         return maps, std, bank, fx, fy
 
     @staticmethod
@@ -1257,10 +1343,12 @@ class RosterMatcher:
 
     def _threshold(self, current_bg: list[float]) -> float:
         """Adaptive threshold from the background peaks (recent frames + this one)."""
-        bg = self._state.bg[-400:] + current_bg
+        bg = (self._state.bg_grey if self.grey else self._state.bg)[-400:] + current_bg
         if len(bg) < 8:
             return THR_MIN + 0.05
         thr = float(np.percentile(bg, THR_BG_PCT)) + THR_MARGIN
+        if self.grey:
+            return float(min(THR_MAX + GREY_THR_ADD, max(THR_MIN, thr) + GREY_THR_ADD))
         return float(min(THR_MAX, max(THR_MIN, thr)))
 
     @staticmethod
@@ -1297,7 +1385,7 @@ class RosterMatcher:
     def _global_search(self, feat: np.ndarray, bank: _Bank, idx: list[int]
                        ) -> tuple[list[_Cand], list[float]]:
         """Whole-map search (Fourier NCC) of the champions ``idx``: candidates + background."""
-        maps, std = ncc_maps(feat, bank, idx)
+        maps, std = ncc_maps(feat, bank, idx, wl=self._wl)
         if maps.shape[1] < 2 or maps.shape[2] < 2:
             return [], []
         half = (bank.size - 1) / 2.0
@@ -1333,7 +1421,7 @@ class RosterMatcher:
         featc = cv2.resize(feat, (Wc, Hc), interpolation=cv2.INTER_AREA)
         kc = Wc / float(Wf)
         bank_c = self._bank(INNER_RATIO * self._bank_inner(bank) * kc)
-        maps, std = ncc_maps(featc, bank_c, idx)
+        maps, std = ncc_maps(featc, bank_c, idx, wl=self._wl)
         if maps.shape[1] < 2 or maps.shape[2] < 2:
             return []
         half_c = (bank_c.size - 1) / 2.0
@@ -1361,7 +1449,7 @@ class RosterMatcher:
                 ym1 = min(Hf - s, int(math.ceil(cy)) + r_ver)
                 if xm1 < xm0 or ym1 < ym0:
                     continue
-                res = local_ncc(feat[ym0:ym1 + s, xm0:xm1 + s], bank, i)
+                res = local_ncc(feat[ym0:ym1 + s, xm0:xm1 + s], bank, i, wl=self._wl)
                 if res is None:
                     continue
                 lm, lstd = res
@@ -1403,7 +1491,7 @@ class RosterMatcher:
             ym0, ym1 = max(0, int(math.floor(cy - rw))), min(Hf - s, int(math.ceil(cy + rw)))
             if xm1 < xm0 or ym1 < ym0:
                 continue
-            res = local_ncc(feat[ym0:ym1 + s, xm0:xm1 + s], bank, i)
+            res = local_ncc(feat[ym0:ym1 + s, xm0:xm1 + s], bank, i, wl=self._wl)
             if res is None:
                 continue
             m, std = res
@@ -1495,6 +1583,12 @@ class RosterMatcher:
         if base < floor:
             c.tot = base
             return
+        if self.grey:
+            # no colour: the ring cannot vote; its drawing still can (a ring lighter than
+            # the dark line inside it, which terrain / glyphs do not have)
+            c.tot = base + (GREY_RING_BONUS if self._grey_ring(bgr, u * W, v * H, R_px)
+                            >= GREY_RING_DL else -GREY_NO_RING)
+            return
         ring = self._ring_pixels(bgr, u * W, v * H, R_px, exclude)
         f_en, f_al = self.rings.classify(ring)
         own, opp = (f_en, f_al) if e.relation == "enemy" else (f_al, f_en)
@@ -1549,7 +1643,7 @@ class RosterMatcher:
                 keep[d2 < (0.53 * D_work) ** 2] = 0.0
             masks[j] = base * keep[None]
         area = masks.sum(axis=(2, 3)) / max(bank.n, 1e-6)                 # [p, k]
-        sc = masked_ncc(P, raw, masks)
+        sc = masked_ncc(P, raw, masks, wl=self._wl)
         # fewer pixels -> chance matches are easier: penalty growing with the hidden part
         sc = np.where(area >= OCC_MIN_AREA,
                       sc - (OCC_PENALTY + OCC_AREA_PENALTY * (1.0 - area)) * (area < 0.97), -1.0)
@@ -1698,7 +1792,7 @@ class RosterMatcher:
                     mk[white] = 0.0
                     area = float(mk.sum()) / max(bank.n, 1e-6)
                     if area >= 0.12:
-                        nv = float(masked_ncc(P[None], bank.raw[i], mk[None])[0, 0])
+                        nv = float(masked_ncc(P[None], bank.raw[i], mk[None], wl=self._wl)[0, 0])
                 arc_ok = vis_f >= STACK_ARC_VIS and own_f >= STACK_ARC_OWN and \
                     opp_f <= STACK_ARC_OPP
                 a_, b_, c_ = STACK_NCC_MIN
@@ -1719,9 +1813,39 @@ class RosterMatcher:
                 break
         return out
 
+    def _grey_ring(self, bgr: np.ndarray, cx: float, cy: float, R_px: float) -> float:
+        """Ring lightness - dark line lightness (best over +-1 px) at an icon centre."""
+        if self._grey_L is None:
+            self._grey_L = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
+        best = -1e9
+        ang = _LEAK_COS, _LEAK_SIN
+        for dx in (-1.0, 0.0, 1.0):
+            for dy in (-1.0, 0.0, 1.0):
+                vals = []
+                for r in (0.93, 1.0, 0.75, 0.82):
+                    xs = (cx - 0.5 + dx + r * R_px * ang[0]).astype(np.float32).reshape(1, -1)
+                    ys = (cy - 0.5 + dy + r * R_px * ang[1]).astype(np.float32).reshape(1, -1)
+                    vals.append(float(np.median(cv2.remap(self._grey_L, xs, ys, cv2.INTER_LINEAR,
+                                                           borderMode=cv2.BORDER_REPLICATE))))
+                best = max(best, max(vals[0], vals[1]) - min(vals[2], vals[3]))
+        return best
+
+    @staticmethod
+    def is_grey(bgr: np.ndarray) -> bool:
+        """A colourless minimap (death greyscale filter, desaturated capture): the 95th
+        percentile of the Lab chroma of a small copy is below GREY_CHROMA."""
+        small = cv2.resize(bgr, (64, 64), interpolation=cv2.INTER_AREA)
+        lab = cv2.cvtColor(small, cv2.COLOR_BGR2LAB).astype(np.float32)
+        chroma = np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0)
+        return float(np.percentile(chroma, 95)) < GREY_CHROMA
+
     def _detect(self, bgr: np.ndarray, now: float) -> list[Detection]:
         st = self._state
         H, W = bgr.shape[:2]
+        # greyscale frames: lightness-only NCC, no ring colour vote (see GREY_*)
+        self.grey = self.is_grey(bgr)
+        self._grey_L = None
+        self._wl = 1.0 if self.grey else LIGHTNESS_WEIGHT
         old_scale = st.scale
         scale = self._current_scale(bgr)
         st.frames += 1
@@ -1874,7 +1998,7 @@ class RosterMatcher:
             info(c2, True, "occluded")
 
         # 5b. stacks: tracked champions drawn under an accepted icon (ring arc + portrait)
-        if accepted and self.stack_search:
+        if accepted and self.stack_search and not self.grey:
             try:
                 for c in self._stack_search(bgr, feat, bank, accepted, used, dead, now, kx, ky,
                                             R_px, D_work, thr):
@@ -1884,10 +2008,32 @@ class RosterMatcher:
             except Exception:
                 self._errors.exception("Roster matcher stack search failed")
 
-        # 6. the local player: camera rectangle prior, then coasting on its track
+        # 6. the local player: camera lock (confirmed by my own matches), camera rectangle
+        #    prior, then coasting on its track
         dets_extra: list[Detection] = []
+        cam_pt = self._cam_point(bgr)
+        self.camlock.feed_cam(cam_pt, now)
+        for c in accepted:
+            if ents[c.i].relation == "self" and not c.note and c.tot >= thr + CAMLOCK_MARGIN:
+                self.camlock.confirm((c.x / kx, c.y / ky), cam_pt, now)
         for i, e in enumerate(ents):
             if e.relation != "self" or i in used or i in dead:
+                continue
+            lp = self.camlock.position(cam_pt, now)
+            if lp is not None:
+                # camera locked on me: my icon is where the camera says, even hidden
+                dets_extra.append(Detection(u=lp[0], v=lp[1], r=r_norm, score=CAMLOCK_SCORE,
+                                            cls="ally", cls_probs=(0.03, 0.97, 0.0),
+                                            alias=e.alias))
+                infos.append(MatchInfo(e.alias, e.relation, lp[0], lp[1], r_norm,
+                                       CAMLOCK_SCORE, 0.0, 0.0, True, "camlock"))
+                tr = self._tracks.get(i)
+                if tr is None:
+                    self._tracks[i] = _Track(lp[0], lp[1], now, conf=CAMLOCK_SCORE, margin=0.0)
+                else:
+                    tr.u, tr.v, tr.t, tr.vu, tr.vv = lp[0], lp[1], now, 0.0, 0.0
+                    tr.conf = max(tr.conf, CAMLOCK_SCORE)
+                used.add(i)
                 continue
             best = rejected.get(i)
             cam = self._camera_centre(bgr) if best is not None else None
@@ -1897,6 +2043,7 @@ class RosterMatcher:
                 own = best.f_al
                 if own >= 0.15 and best.f_en <= own:
                     used.add(i)
+                    best.note = "camera"
                     accepted.append(best)
                     info(best, True, "camera")
                     continue
@@ -1959,8 +2106,9 @@ class RosterMatcher:
 
         # statistics for the adaptive threshold and the re-calibration trigger
         conf = [a for a in accepted if a.tot >= thr + 0.08]
-        st.bg.extend(bg_scores)
-        del st.bg[:-600]
+        bgl = st.bg_grey if self.grey else st.bg
+        bgl.extend(bg_scores)
+        del bgl[:-600]
         st.conf_hist.append(float(len(conf)))
         del st.conf_hist[:-4 * RECAL_WINDOW]
         if st.since_calib >= RECAL_WINDOW:

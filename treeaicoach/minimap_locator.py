@@ -310,8 +310,13 @@ class MinimapLocator:
                 return 0.0
             small = cv2.resize(img, (VERIFY_SIZE, VERIFY_SIZE), interpolation=cv2.INTER_AREA)
             feat = _features(small)
-            if float(feat[0].std()) < 1e-3 or float(feat[1].std()) < 1e-3:
+            if float(feat[0].std()) < 1e-3:
                 return 0.0
+            if float(feat[1].std()) < 1e-3:
+                # colourless minimap (death greyscale filter...): lightness channel only
+                best = max(float(np.nan_to_num(cv2.matchTemplate(
+                    feat[0], t[0], cv2.TM_CCOEFF_NORMED), nan=-1.0).max()) for t in tpl.verify)
+                return float(min(1.0, max(0.0, best)))
             best = max(float(_ncc(feat, t).max()) for t in tpl.verify)
             return float(min(1.0, max(0.0, best)))
         except Exception:

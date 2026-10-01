@@ -401,3 +401,45 @@ def test_engine_hooks(db):
     eng._self_icon_tick(2.0, 120.0, SimpleNamespace(me=SimpleNamespace(is_dead=True),
                                                    allies=[], enemies=[]))
     assert m.learner._me_dead is True and m.learner._gt == 120.0
+
+
+
+def test_cyan_custom_icon_in_teal_outline_is_always_a_candidate(db, renderer):
+    """Outline-shape cue: a cyan portrait inside my teal outline (filled interior) is verified
+    even far from the camera (unlocked camera) and whatever the other filled candidates."""
+    found = n = 0
+    for seed in range(5, 15):
+        g = _Game(db, renderer, seed=seed, modded=(), locked=False, my_icon=_stick_figure())
+        for f in range(3):
+            img = g.frame(f * 0.2)
+            if not g.isolated(0):
+                continue
+            n += 1
+            cands = SI.ring_candidates(img, g.rad * g.size, RingColorModel(), SI._structure_points())
+            found += any(c.side == "ally" and c.frac_self >= 0.5 and
+                         math.hypot(c.u - g.pos[0, 0], c.v - g.pos[0, 1]) < 0.4 * g.rad
+                         for c in cands)
+    assert n >= 6 and found >= n - 1, (found, n)
+
+
+def test_camera_lock_gives_my_position_when_my_icon_is_hidden():
+    from treeaicoach.roster_matcher import CAMLOCK_HOLD_S, CameraLock
+
+    lk = CameraLock()
+    t = 0.0
+    for k in range(6):                       # my strong matches follow the camera point
+        p = (0.3 + 0.004 * k, 0.6)
+        lk.feed_cam(p, t)
+        lk.confirm((p[0] + 0.003, p[1] + 0.002), p, t)
+        t += 0.125
+    assert lk.locked
+    pos = lk.position((0.33, 0.6), t)        # icon hidden: the camera says where I am
+    assert pos is not None and abs(pos[0] - 0.333) < 0.004
+    assert lk.position((0.33, 0.6), t + CAMLOCK_HOLD_S + 1) is None
+    lk.feed_cam((0.7, 0.2), t + 0.125)       # the camera jumped (panning): not locked
+    assert not lk.locked and lk.position((0.7, 0.2), t + 0.2) is None
+    lk2 = CameraLock()
+    for k in range(6):                       # my icon far from the camera: never locked
+        lk2.feed_cam((0.5, 0.5), k * 0.1)
+        lk2.confirm((0.2, 0.8), (0.5, 0.5), k * 0.1)
+    assert not lk2.locked

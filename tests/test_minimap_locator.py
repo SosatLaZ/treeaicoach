@@ -417,3 +417,19 @@ def test_debug_render_and_threads(locator: MinimapLocator) -> None:
     assert len(results) == 3 and all(r is not None for r in results)
     assert len({r.rect for r in results if r is not None}) == 1
     assert _check_located(results[0], truth, origin, 1080) is None
+
+
+def test_verify_greyscale_minimap():
+    """A colourless minimap (death greyscale filter) still verifies (lightness only): no
+    relocation storm while dead."""
+    import cv2
+    from pathlib import Path
+
+    from treeaicoach.minimap_locator import VERIFY_MIN_SCORE, MinimapLocator
+
+    img = cv2.imread(str(Path(__file__).parent / "fixtures" / "real_minimap_306.png"))
+    grey = cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    loc = MinimapLocator()
+    assert loc.verify(grey) > VERIFY_MIN_SCORE + 0.2
+    noise = np.random.default_rng(0).integers(0, 255, (300, 300), np.uint8)
+    assert loc.verify(cv2.cvtColor(noise, cv2.COLOR_GRAY2BGR)) < VERIFY_MIN_SCORE

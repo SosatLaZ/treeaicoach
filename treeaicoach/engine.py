@@ -108,6 +108,7 @@ MSG_FALLBACK = ("Minimap non trouvée automatiquement : position par défaut uti
 MSG_BLACK = ("Capture noire : passe LoL en mode Sans bordure "
              "(Paramètres > Vidéo > Mode fenêtre : Sans bordure).")
 MSG_UNSUPPORTED = "Mode de jeu non pris en charge : uniquement la Faille de l'invocateur."
+MSG_MINIMAP_COVERED = "Minimap masquée (boutique ou tableau des scores) : analyse en pause."
 MSG_SPECTATOR = "Mode spectateur : aucune analyse."
 MSG_ERROR = "Erreur d'analyse répétée (voir les journaux) : l'analyse continue."
 MSG_NO_FRAME = "Image de la minimap indisponible."
@@ -156,6 +157,19 @@ class FrameSource(Protocol):
 
 
 # ------------------------------------------------------------------------------ helpers
+_MAP_NAMES = {12: "ARAM", 30: "Arène", 21: "Nexus Blitz", 22: "TFT"}
+
+
+def unsupported_message(game: Any) -> str:
+    """MSG_UNSUPPORTED + the detected map / mode (ARAM, Arène...) when known."""
+    try:
+        name = _MAP_NAMES.get(int(getattr(game, "map_number", 0) or 0)) or \
+            (str(getattr(game, "game_mode", "") or "").strip() or None)
+    except (TypeError, ValueError):
+        name = None
+    return f"{MSG_UNSUPPORTED} (partie détectée : {name})" if name else MSG_UNSUPPORTED
+
+
 def _finite(x: Any) -> float | None:
     try:
         f = float(x)
@@ -939,7 +953,7 @@ class CoachEngine:
             self._in_game = False
             self._game_evt.clear()
             self._state = EngineState.UNSUPPORTED_MODE
-            self._message = MSG_SPECTATOR if game.me is None else MSG_UNSUPPORTED
+            self._message = MSG_SPECTATOR if game.me is None else unsupported_message(game)
             return
         if not self._in_game:
             self._in_game = True
@@ -959,7 +973,9 @@ class CoachEngine:
                      self._jungle_intel,
                      self._throttler, self._coach, self._scoreboard, self._praise, self._toasts,
                      self._stance, self._tip_rotator, self._gate, self._tactics, self._gauge,
-                     getattr(self, "_ai", None), self._ward_guide, getattr(self, "_plays", None)):
+                     getattr(self, "_ai", None), self._ward_guide, getattr(self, "_plays", None),
+                     getattr(self, "_coach_plus", None), getattr(self, "_item_adv", None),
+                     getattr(self, "_hype", None)):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -971,6 +987,13 @@ class CoachEngine:
         self._tip_text = None
         self._text_msg = None
         self.text_messages = []
+        # per-game advice state that lives on the engine (V2 audit: stale across games otherwise)
+        self.macro_calls = []
+        self.recent_plays = []
+        self._hud_shown = None
+        self._recall_topic_t = None
+        self._tip_toast_t = -math.inf
+        self.last_ai_advice = None
         self._roster_sig = None
         self._prefetched = False
         self._was_dead = bool(game.me.is_dead) if game.me is not None else False
@@ -1280,7 +1303,7 @@ class CoachEngine:
             if me_pos is not None:
                 z = geometry.classify_zone(*me_pos)
                 in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
-            raw_alerts += list(self._reminders.update(t, game, me_pos, in_base) or [])
+            raw_alerts += self._recall_consistency(list(self._reminders.update(t, game, me_pos, in_base) or []), t)
         if self._coach is not None and heavy:
             raw_alerts += list(self._coach.update(
                 t, tracker, game, self._role_resolver,
@@ -1928,8 +1951,8 @@ class CoachEngine:
             summary = self.scoreboard_summary()
             plus = self._coach_plus_tick(t, game, facts, threat)
             if self._stance is not None:
-                out += list(self._stance.update(t, facts, game, summary, threat=threat,
-                                                extra=plus.factors() if plus is not None else None) or [])
+                extra_f = list(plus.factors() if plus is not None else []) + self._macro_factors()
+                out += list(self._stance.update(t, facts, game, summary, threat=threat, extra=extra_f) or [])
             if self._gauge is not None:
                 st = self._stance.current() if self._stance is not None else None
                 tac = self._tactics
@@ -1951,6 +1974,7 @@ class CoachEngine:
                 if plus is not None:
                     from treeaicoach.coach_plus import buy_fields
                     extra = {**plus.tip_fields(), **buy_fields(rec, bool(facts.get("in_base")))}
+                extra.update(self._tip_consistency_fields(t))
                 self._tip_text = rot.update(t, build_context(facts, game, summary, stance, item=item, extra=extra))
                 # a toast only for a NEW tip (its live numbers refreshing is not news)
                 # (and at most one tip toast every TIP_TOAST_GAP_S, contextual tips only: the HUD line
@@ -1967,6 +1991,65 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Stance / tips failed")
         return out
+
+    # ------------------------------------------------------------------ cross-system consistency (V2 audit)
+    RECALL_KEYS = ("recall_gold",)
+    RECALL_TIP_IDS = frozenset({"gold_back", "comp_ready", "wave_push_back", "obj_recall_now"})
+    RECALL_TOPIC_S = 120.0
+
+    def _macro_factors(self) -> list[tuple[float, str]]:
+        """The active COUP DE GÉNIE call as a gauge reason, so the gauge and the call never
+        disagree ("Plaque la tour" while the gauge says SAFE): +2 for a "go" call, -2 for a
+        "recule" call. Never raises."""
+        try:
+            tac = self._tactics
+            c = tac.macro_active() if tac is not None else None
+            if c is None:
+                return []
+            w = {"safe": 2.0, "danger": -2.0}.get(getattr(c, "color", ""), 0.0)
+            return [(w, f"appel : {str(c.title).rstrip(' !').lower()}")] if w else []
+        except Exception:
+            return []
+
+    def _tip_consistency_fields(self, t: float) -> dict:
+        """TipContext fields that keep the written tip in line with the other systems: the tone of
+        the active macro call (a "go" call hides the cautious tips and vice versa) and whether a
+        recall reminder was shown recently (one recall message per trip, not four)."""
+        out: dict = {}
+        try:
+            tac = self._tactics
+            c = tac.macro_active() if tac is not None else None
+            if c is not None:
+                out["macro_tone"] = {"safe": "go", "danger": "danger"}.get(getattr(c, "color", ""))
+                if getattr(c, "kind", "") == "wave_recall":
+                    self._recall_topic_t = t
+            last = getattr(self, "_recall_topic_t", None)
+            out["recall_said"] = last is not None and 0.0 <= t - last < self.RECALL_TOPIC_S
+        except Exception:
+            pass
+        return out
+
+    def _recall_consistency(self, alerts: list[Alert], t: float) -> list[Alert]:
+        """Recall reminders ("Tu as 1300 pièces d'or, pense à rentrer") are dropped when another
+        system already said it (macro "rentre" call, a recall tip on screen) or while a macro call
+        asks for something else; any shown one marks the recall topic. Never raises."""
+        try:
+            keep = []
+            rot = self._tip_rotator
+            tip_id = rot.current_id() if rot is not None else None
+            tac = self._tactics
+            active = tac.macro_active() if tac is not None else None
+            for a in alerts:
+                if str(a.key).startswith(self.RECALL_KEYS):
+                    last = getattr(self, "_recall_topic_t", None)
+                    if (last is not None and 0.0 <= t - last < self.RECALL_TOPIC_S) or tip_id in self.RECALL_TIP_IDS \
+                            or active is not None:
+                        continue
+                    self._recall_topic_t = t
+                keep.append(a)
+            return keep
+        except Exception:
+            return alerts
 
     def _coach_plus_tick(self, t: float, game: GameInfo, facts: dict, threat: int) -> Any:
         """coach_plus.CoachPlus (power spikes, matchup card, session goal, death cause): its toasts
@@ -2550,6 +2633,12 @@ class CoachEngine:
                     self._relocate = True
             else:
                 self._bad_since = None
+            if self._bad_since is not None:
+                # the crop does not look like the minimap (shop / scoreboard over it, scale
+                # being changed...): no detection on it (phantoms), checked again next tick
+                self._next_verify = t
+                self._set_state(EngineState.RUNNING, MSG_MINIMAP_COVERED)
+                return None
         self._set_state(EngineState.RUNNING,
                         MSG_FALLBACK if self._locate_method == "fallback" else MSG_RUNNING)
         return frame

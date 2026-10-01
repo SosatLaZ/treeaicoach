@@ -241,7 +241,8 @@ class TacticalDirector:
                 and not (laning and str(e.alias or "").lower() in lane_opps)]
         danger = any(geometry.dist(e.uv, me_uv) < min(danger_r, CONCENTRATION_R) for e in near)
         self._ctx = self._ctx_cls(in_fight=fs.active, hp=hp, enemies_near=len(near), enemy_in_danger=danger,
-                                  dead=bool(getattr(me, "is_dead", False)), in_base=in_base)
+                                  dead=bool(getattr(me, "is_dead", False)), in_base=in_base, role=role,
+                                  me_uv=me_uv, gt=gt)
         # ---- fight call / end
         if up.new_call is not None:
             out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.WARNING, text=CALL_WORD[up.new_call],
@@ -306,6 +307,7 @@ class TacticalDirector:
         except Exception:
             jside = None
         ahead = _f(getattr(stance, "score", None), 0.0) or 0.0
+        self._stance_score = _f(getattr(stance, "score", None)) if stance is not None else None
         wa = self.wards.update(t, game, me_pos=me_uv, in_base=in_base, role=role, phase=getattr(st, "phase", "laning"),
                                objectives=objectives, jungler_side=jside, ahead=ahead,
                                quiet=fs.active or self._ctx.concentrating)
@@ -324,7 +326,8 @@ class TacticalDirector:
         recent = self._director_call_t is not None and 0.0 <= t - self._director_call_t < DIRECTOR_CALL_RECENT_S
         ctx = build_ctx(t, gt, game, st, role=role, me_uv=me_uv, allies=allies, enemies=enemies,
                         objectives=objectives, waves=waves, jint=jint, roles=roles, scoreboard=scoreboard,
-                        in_fight=fighting, threat=threat, in_base=in_base, recent_director_call=recent)
+                        in_fight=fighting, threat=threat, in_base=in_base, recent_director_call=recent,
+                        stance_score=getattr(self, "_stance_score", None))
         up = self.macro.update(ctx, getattr(self.cfg, "skill_level", "intermediaire"))
         if up.cancelled is not None:
             out.macro_cancelled = up.cancelled
@@ -337,6 +340,14 @@ class TacticalDirector:
         out.macro_new = c
         if c.kind in ("fight_won", "fight_lost"):        # the planner's follow-up replaces the fight summary
             out.alerts = [a for a in out.alerts if not str(a.key).startswith("macro:fight_end")]
+        if c.kind == "fight_won":
+            # voice whitelist ("normal" / débutant): the big numbers call may be spoken; when it is
+            # not, the gate drops it (the HUD line + banner already show it: no double text)
+            import re as _re
+
+            spoken = _re.sub(r"\s*\(\d+ s\)", "", c.text).replace(" maintenant", "")
+            out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=spoken,
+                                    key=f"urgent:genie:{c.ident}", t=t))
         from treeaicoach.macro import level_key
 
         dur = GENIE_BANNER_S.get(level_key(getattr(self.cfg, "skill_level", "")), 3.5)
