@@ -1,6 +1,6 @@
 {
-  "version": "1.8.0",
-  "sha256": "914d2a47dc3b2bb9b22dba7c1f8465be6f133c7e41594f142b75019e98cd34a8",
-  "size": 82118734,
-  "notes": "1.8.0 : niveau en un clic (Débutant → Expert), suivi de la carte v2 (moins de fausses alertes, murs pris en compte), ton skin moddé reconnu, guide de balise « Ward ici », panneau de jeu TreeAI, analyse d'après-partie avec le client LoL."
+  "version": "1.9.0",
+  "sha256": "8f49bba0727ec8a75b44e6c6a8841711ddf9caddce5c2107dec999690e8ab27b",
+  "size": 82364630,
+  "notes": "1.9.0 : nouvelle interface, coups notés façon chess.com (COUP DE MAÎTRE !! / GAFFE ??) avec précision sur 100, replay et courbes de progrès, coach plus malin et moins bavard, champions morts ignorés, jungler suivi via le Tab, IA avec plans concrets, mises à jour plus fiables."
 }

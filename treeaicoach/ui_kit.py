@@ -720,19 +720,20 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 # ======================================================================================
 # Texts
 # ======================================================================================
-CHANGELOG_VERSION = "1.8"
+CHANGELOG_VERSION = "1.9"
 CHANGELOG: tuple[tuple[str, str], ...] = (
-    ("Ton niveau en un clic", "Débutant, Intermédiaire, Avancé ou Expert dans la barre de gauche : "
-                              "plus tu montes, moins on te rappelle les bases."),
-    ("Carte plus fiable", "Moins de fausses alertes de gank (murs pris en compte), champions "
-                                  "cachés sous une autre icône suivis, dernière position avant le brouillard."),
-    ("Ton skin moddé reconnu", "Ton icône est apprise en direct sur la minimap et gardée pour la partie "
-                               "suivante. Ta vraie voie est détectée, même après un échange."),
-    ("Guide de balise", "« Ward ici » au sol dans le jeu ou flèche au bord de l'écran, anneau sur la "
-                        "minimap. F7 pour l'afficher."),
-    ("Panneau de jeu TreeAI", "Jauge ATTAQUE → SAFE, 3 conseils classés, IA 5 fois par partie + 1 urgence."),
-    ("Analyse après la partie", "Avec le client LoL : tes morts exactes, le vrai trajet du jungler adverse "
-                                "et la fiabilité de TreeAI sur la partie."),
+    ("Nouvelle interface", "Plus dense et plus nette : bandeau de partie, onglets, panneau Système avec "
+                           "réparation en un clic."),
+    ("Coups notés", "COUP DE MAÎTRE !!, EXCELLENT !, GAFFE ?? : un badge animé sur tes actions et une "
+                    "précision sur 100 en fin de partie."),
+    ("Replay et progrès", "Revois ta partie minute par minute sur la minimap. Courbes sur tes 20 dernières "
+                          "parties et tes 3 points à travailler."),
+    ("Coach plus malin", "Avance de niveau ou d'objet, plan de voie, préparation des objectifs, objectif "
+                         "perso par partie, cause de chaque mort. Beaucoup moins de spam."),
+    ("Détection", "Champions morts ignorés, jungler adverse suivi via le Tab (achat = retour base), "
+                  "minimap retrouvée plus vite."),
+    ("IA", "Plans concrets aux moments clés, plan de secours sans internet. Toujours 5 + 1 par partie."),
+    ("Mises à jour", "Remplacement plus fiable et message clair si ça échoue, avec un lien direct."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl + 1 … 6", "Aller à une page (En jeu … Aide)"),
