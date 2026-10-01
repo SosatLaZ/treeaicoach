@@ -66,6 +66,7 @@ RING_MIN = 0.42             # annulus fraction of the side colour for a candidat
 RING_RATIO = 2.0            # ... and this many times the other side's fraction
 INTERIOR_MAX = 0.4          # interior of the same colour: inside a coloured area, not an icon
 RELAX_DIST = 0.06           # ... except this close to where my icon is expected
+MAX_LOOSE = 4               # filled-interior candidates verified per search (cost bound)
 RING_LINE_DL = 15.0         # ... or with a ring this much lighter than the dark line inside it
 OUTSIDE_MAX = 0.4           # same outside the ring (a thin ring, not the edge of a blue area)
 _NEAR = 26.0
@@ -84,7 +85,7 @@ TRACK_LOST_S = 2.0
 SELF_WEAK_MARGIN = 0.05     # an accepted self match this close to the threshold does not count
 SELF_HINT_HITS = 3          # frames before a self track is reported as my position
 BIND_HITS_SELF = 10
-BIND_HITS_OTHER = 12
+BIND_HITS_OTHER = 10
 BIND_MIN_S_SELF = 1.5
 BIND_MIN_S_OTHER = 4.0
 MIN_CROPS = 8
@@ -107,8 +108,8 @@ REVERT_S = 25.0             # me alive, my learned icon unmatched this long: bac
 REVERT_OTHER_S = 120.0
 ELIGIBLE_AFTER_S = 20.0     # another champion matched this recently is not re-learned
 OK_MARGIN_OTHER = 0.2       # ... matched this well (a weak match may be a false one)
-OTHERS_EVERY = 6            # frames between two searches for the other unmatched champions
-OTHERS_PENDING_EVERY = 2    # ... while an unexplained icon is being followed
+OTHERS_EVERY = 8            # frames between two searches for the other unmatched champions
+OTHERS_PENDING_EVERY = 3    # ... while an unexplained icon is about to be bound
 WANT_SELF_S = 2.0           # self unmatched this long -> the bootstrap runs every frame
 SKIN_GUESS_AFTER_S = 6.0
 CENTRED_SKIP_MARGIN = 0.15  # a learned icon matched this well is not re-checked
@@ -350,14 +351,17 @@ def _ring_mean(m: np.ndarray, Rw: float, pts: np.ndarray) -> np.ndarray:  # noqa
 _ANG48 = np.linspace(0, 2 * np.pi, 48, endpoint=False)
 
 
-_SHIFTS = np.asarray([(dx, dy) for dy in range(-2, 3) for dx in range(-2, 3)], np.float32)
+_SHIFTS = {k: np.asarray([(0, 0)] + [(dx, dy) for dy in range(-k, k + 1)
+                                      for dx in range(-k, k + 1) if dx or dy], np.float32)
+           for k in (2, 4)}
 _RADII = np.asarray([0.93, 1.0, 0.75, 0.84], np.float32)
 
 
-def _best_contrast(L: np.ndarray, x: float, y: float, Rw: float) -> tuple[float, int, int]:
-    """Best (ring lightness - dark line inside it) over +-2 px around ``(x, y)``:
-    ``(contrast, dx, dy)``. One vectorized remap (25 centres x 4 circles x 48 angles)."""
-    sh = _SHIFTS[12:13]                                   # the centre first (cheap reject)
+def _best_contrast(L: np.ndarray, x: float, y: float, Rw: float, span: int = 2,
+                   reject: bool = True) -> tuple[float, int, int]:
+    """Best (ring lightness - dark line inside it) over +-``span`` px around ``(x, y)``:
+    ``(contrast, dx, dy)``; one vectorized remap. ``reject``: a flat centre stops early."""
+    sh = _SHIFTS[span][:1]                                # the centre first (cheap reject)
     for _ in range(2):
         cx = x + sh[:, 0][:, None, None]
         cy = y + sh[:, 1][:, None, None]
@@ -367,11 +371,11 @@ def _best_contrast(L: np.ndarray, x: float, y: float, Rw: float) -> tuple[float,
         vals = cv2.remap(L, xs, ys, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         med = np.median(vals.reshape(len(sh), 4, -1), axis=2)
         c = np.maximum(med[:, 0], med[:, 1]) - np.minimum(med[:, 2], med[:, 3])
-        if len(sh) == 1 and float(c[0]) < 0.4 * RING_LINE_DL:
+        if reject and len(sh) == 1 and float(c[0]) < 0.4 * RING_LINE_DL:
             return float(c[0]), 0, 0                       # a flat area: no icon drawing
         if len(sh) > 1:
             break
-        sh = _SHIFTS
+        sh = _SHIFTS[span]
     k = int(np.argmax(c))
     return float(c[k]), int(sh[k, 0]), int(sh[k, 1])
 
@@ -418,6 +422,7 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
     rad = max(2, int(round(0.9 * Rw)))
     K = np.ones((2 * rad + 1, 2 * rad + 1), np.uint8)
     Lw: np.ndarray | None = None
+    n_loose = 0
     for side, fm, fo, pin, pout in (("ally", fa, fe, m3[:, :, 0], plain),
                                     ("enemy", fe, fa, m3[:, :, 1], m3[:, :, 1])):
         ok = (fm >= RING_MIN) & (fm >= RING_RATIO * fo + 0.05)
@@ -440,14 +445,18 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
             # drawing), which a coloured area does not have
             loose = around(pin, x, y, core) > INTERIOR_MAX
             if loose:
+                uu, vv = (x + 0.5) / w, (y + 0.5) / h
+                relaxed = any(math.hypot(uu - a, vv - b) < RELAX_DIST for a, b in relax)
+                if not relaxed:
+                    n_loose += 1
+                    if n_loose > MAX_LOOSE:
+                        continue
                 # the colour does not centre such an icon (ring, glow and portrait alike):
                 # the dark line inside the ring does (best contrast over +-2 px)
                 if Lw is None:
                     Lw = cv2.cvtColor(work, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
-                best = _best_contrast(Lw, x, y, Rw)
-                uu, vv = (x + 0.5) / w, (y + 0.5) / h
-                if best[0] < RING_LINE_DL and not any(
-                        math.hypot(uu - a, vv - b) < RELAX_DIST for a, b in relax):
+                best = _best_contrast(Lw, x, y, Rw, 4 if relaxed else 2, not relaxed)
+                if best[0] < RING_LINE_DL and not relaxed:
                     continue
                 if any((x + best[1] - a) ** 2 + (y + best[2] - b) ** 2 < rr * rr
                        for a, b, rr in taken):
@@ -745,7 +754,9 @@ class IconLearner:
         if fix is not None:
             out.self_pos = (fix.u, fix.v, 0.6)
             self._self_seen = (fix.u, fix.v, now)
-        pending = any(not tr.dead and tr.inter and me not in tr.inter for tr in self._tracks)
+        # a track close to an elimination binding is followed more often
+        pending = any(not tr.dead and tr.inter and len(tr.inter) == 1 and me not in tr.inter
+                      and tr.hits >= 3 for tr in self._tracks)
         period = OTHERS_PENDING_EVERY if pending else OTHERS_EVERY
         if not want_self and not (others and self._frames % period == 0):
             self._expire(now)

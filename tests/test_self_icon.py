@@ -195,7 +195,7 @@ def _stick_figure() -> np.ndarray:
     return im
 
 
-@pytest.mark.parametrize("seed,locked", [(5, False), (0, True)])
+@pytest.mark.parametrize("seed,locked", [(3, False), (1, True)])
 def test_custom_cyan_portrait_self_is_tracked(db, renderer, seed, locked):
     """A cyan custom portrait inside my teal outline (no colour contrast with the ring)."""
     g = _Game(db, renderer, seed=seed, locked=locked, my_icon=_stick_figure())
