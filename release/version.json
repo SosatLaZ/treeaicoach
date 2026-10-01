@@ -1,6 +1,6 @@
 {
-  "version": "1.4.1",
-  "sha256": "24427b6660b1d59e6d637c638cc207e53ad85e5fc931a9c09bf420157c72fcac",
-  "size": 78989378,
-  "notes": "Correctif : le bandeau d'infos redevient visible dans les captures d'écran ; seul le calque de la minimap est exclu."
+  "version": "1.5.0",
+  "sha256": "9c5368332d17631c427c2142e321be76910dafc6b8d8987ceda664bd4907a727",
+  "size": 81527393,
+  "notes": "Nouvelle détection calibrée sur les portraits des 10 champions (toi compris), cercles visibles sur la minimap, conseils de jeu, félicitations, analyse du Tab."
 }
