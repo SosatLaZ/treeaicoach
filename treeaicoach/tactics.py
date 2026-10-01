@@ -175,12 +175,13 @@ class TacticalDirector:
     def tick(self, t: float, gt: float, game: Any, tracker: Any, *, heavy: bool = True, scoreboard: Any = None,
              roles: Any = None, objectives: Any = None, danger_radius: float = 0.12,
              stance: Any = None, waves: Any = None, jungle_intel: Any = None, threat: int = 0,
-             card_age: float | None = None) -> TickOut:
+             card_age: float | None = None, recent_stances: Any = ()) -> TickOut:
         out = TickOut()
         try:
             with self._lock:
                 self._macro_in = (waves, jungle_intel, int(threat or 0))
                 self._card_age = card_age
+                self._recent_stances = frozenset(recent_stances or ())
                 self._tick(out, float(t), float(gt), game, tracker, heavy, scoreboard, roles,
                            list(objectives or []), float(danger_radius), stance)
         except Exception:
@@ -330,7 +331,8 @@ class TacticalDirector:
                         objectives=objectives, waves=waves, jint=jint, roles=roles, scoreboard=scoreboard,
                         in_fight=fighting, threat=threat, in_base=in_base, recent_director_call=recent,
                         stance_score=getattr(self, "_stance_score", None),
-                        card_age=getattr(self, "_card_age", None))
+                        card_age=getattr(self, "_card_age", None),
+                        recent_stances=getattr(self, "_recent_stances", frozenset()))
         up = self.macro.update(ctx, getattr(self.cfg, "skill_level", "intermediaire"))
         if up.cancelled is not None:
             out.macro_cancelled = up.cancelled

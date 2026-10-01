@@ -340,6 +340,7 @@ class MacroCtx:
     stance_score: float | None = None                # play gauge score (coach.Stance.score), None = unknown
     keep: bool = False                               # re-validating an active call: relaxed thresholds
     card_age: float | None = None                    # seconds since the HUD card line last changed (engine)
+    recent_stances: frozenset = frozenset()          # "push" / "retreat" lines shown in the last ~10 s
 
     @property
     def enemy_team(self) -> str | None:
@@ -351,7 +352,8 @@ def build_ctx(t: float, gt: float, game: Any, st: Any, *, role: str | None, me_u
               enemies: Iterable[Any] = (), objectives: Iterable[Any] = (), waves: Any = None, jint: Any = None,
               roles: Any = None, scoreboard: Any = None, in_fight: bool = False, threat: int = 0,
               in_base: bool = False, recent_director_call: bool = False,
-              stance_score: float | None = None, card_age: float | None = None) -> MacroCtx:
+              stance_score: float | None = None, card_age: float | None = None,
+              recent_stances: Any = ()) -> MacroCtx:
     """A :class:`MacroCtx` from the engine's objects (any of them may be None). Never raises."""
     ctx = MacroCtx(t=float(t), gt=float(gt))
     try:
@@ -418,6 +420,7 @@ def build_ctx(t: float, gt: float, game: Any, st: Any, *, role: str | None, me_u
         ctx.recent_director_call = bool(recent_director_call)
         ctx.stance_score = _f(stance_score)
         ctx.card_age = _f(card_age)
+        ctx.recent_stances = frozenset(recent_stances or ())
     except Exception:
         log.debug("macro.build_ctx failed", exc_info=True)
     return ctx
@@ -1224,6 +1227,17 @@ def level_key(level: Any) -> str:
         return "intermediaire"
 
 
+def _opposite_stance(text: str, recent: frozenset) -> bool:
+    """The call's stance (presenter.line_stance: push / retreat) is the opposite of a recent one."""
+    try:
+        from treeaicoach.presenter import line_stance
+
+        st = line_stance(text)
+        return st is not None and any(r != st for r in recent)
+    except Exception:
+        return False
+
+
 # ----------------------------------------------------------------------------- planner
 class MacroPlanner:
     """One active :class:`GeniusCall` at a time (see the module docstring). Thread-safe."""
@@ -1332,6 +1346,9 @@ class MacroPlanner:
             if ctx.card_age is not None and ctx.card_age < CARD_SETTLE_S and not c.genius \
                     and c.kind not in SETTLE_EXEMPT and c.kind not in ("fight_won", "fight_lost", "jungler_dead"):
                 continue                                   # the card just changed: let it be read first
+            if ctx.recent_stances and c.kind not in POST_FIGHT_KINDS and c.kind != "fight_lost" \
+                    and _opposite_stance(c.text, ctx.recent_stances):
+                continue                                   # "pousse" 5 s after "recule" (LESSONS 6): wait
             if self._active is not None:
                 self._cancel(up, ctx, "remplacé")
             if c.genius:

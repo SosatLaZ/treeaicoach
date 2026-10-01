@@ -38,6 +38,17 @@ from treeaicoach.live_client import GameInfo
 
 log = logging.getLogger("treeaicoach.engine")   # same logger as before the split
 
+def _same_call(line: str | None, call: Any) -> bool:
+    """The card line IS this planner call (its card wording: presenter.card_line)."""
+    try:
+        from treeaicoach.presenter import card_line
+
+        text = str(getattr(call, "text", "") or "")
+        return bool(line) and (line == text or line == card_line(text))
+    except Exception:
+        return False
+
+
 def _digits(a: Any) -> str:
     """A line without its live numbers."""
     return __import__("re").sub(r"\d+([,.]\d+)?", "#", str(a))
@@ -76,7 +87,7 @@ class CoachingMixin:
                            danger_radius=self._cfg.effective_danger_radius(),
                            stance=self._stance.current() if self._stance is not None else None,
                            waves=self._macro_waves(), jungle_intel=self.jungle_intel(), threat=threat,
-                           card_age=self._card_age(t))
+                           card_age=self._card_age(t), recent_stances=self._recent_stances(t))
             for kind, title, sub, key in out.toasts:
                 self._toast(kind, title, sub, None, key, t)
             self._macro_show(out, t, gt)
@@ -89,6 +100,16 @@ class CoachingMixin:
             self._errors += 1
             self._err.exception("Tactical director failed")
             return [], gank
+
+    def _recent_stances(self, t: float) -> frozenset:
+        """Push / retreat stances shown on the card in the last presenter.CONTRADICTION_S seconds."""
+        try:
+            from treeaicoach.presenter import CONTRADICTION_S
+
+            mem = getattr(self, "_stance_mem", None) or []
+            return frozenset(s_ for t_, s_ in mem if 0.0 <= t - t_ <= CONTRADICTION_S)
+        except Exception:
+            return frozenset()
 
     def _card_age(self, t: float) -> float | None:
         """Seconds since the HUD card line last changed (a new call waits for it to be read)."""
@@ -1121,8 +1142,12 @@ class CoachingMixin:
             rank = {"danger": 3, "warning": 2}
             r_new = rank.get(self._tip_tone(cand), 1) if cand is not None else 0
             r_old = rank.get(self._tip_tone(line), 1) if line is not None else 0
-            call = mc is not None and cand is not None and cand == getattr(mc, "text", None) \
-                and (bool(getattr(mc, "genius", False)) or getattr(mc, "color", "") == "danger")
+            # the active planner call takes the card at once when it is a coup de génie / a danger call,
+            # or when it just started (its banner and voice say it now: the card must agree; the
+            # planner only starts a non-urgent call once the card has been still CARD_SETTLE_S)
+            call = mc is not None and cand is not None and _same_call(cand, mc) \
+                and (bool(getattr(mc, "genius", False)) or getattr(mc, "color", "") == "danger"
+                     or 0.0 <= now - float(getattr(mc, "t", -1e9) or -1e9) < 2.0)
             if cand is not None and (call or (r_new > r_old if line is not None else r_new == 3)):
                 return cand                                     # more urgent than what is shown: at once
             # a countdown no longer valid ("Baron dans 0:20" once the Baron is up) is never kept
