@@ -474,8 +474,9 @@ TIPS: tuple[Tip, ...] = (
     T("vis_deep", "vision", "Balise leur jungle : tu sauras où va {jg}",
       lambda c: c.gt >= 600 and not c.alive, roles=("UTILITY", "JUNGLE"), prio=2),
     # ------------------------------------------------------------------ items / gold
-    T("buy_item", "items", "Achète {item} maintenant : ton meilleur achat",
-      lambda c: c.in_base and c.item is not None and c.gold >= 300, prio=4, tone="go", ttl=12.0),
+    # in the shop: name what the gold buys NOW (components), never a 3000-gold legendary with 900 gold
+    T("buy_item", "items", "Achète {buy} maintenant : tu as l'or",
+      lambda c: c.in_base and bool(c.buy_names) and c.gold >= 300, prio=4, tone="go", ttl=12.0),
     T("comp_ready", "items", "Rentre acheter {buy} : tu as l'or",
       lambda c: bool(c.buy_names) and c.buy_value >= 700 and not c.in_base and not c.dead and c.missing < 3
       and c.enemies_near == 0 and c.my_objective(0, 50) is None and not c.recall_said, prio=3, cooldown=150.0,
