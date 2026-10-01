@@ -318,12 +318,15 @@ class PraiseCoach:
                     dtype = str(e.get("DragonType") or "")
                     if dtype.lower() == "elder":
                         obj, obj_le, obj_du = "Dragon ancestral", "le dragon ancestral", "du dragon ancestral"
+                plural_f = _g == "f"                       # "Larves" : feminine plural agreement
                 if _truthy(e.get("Stolen")):
                     self._add("steal", f"steal:{e.get('EventID')}", self._phrase("steal", obj_le=obj_le, obj_du=obj_du),
-                              f"{obj} volé !", t, me.champion_alias)
+                              f"{obj} {'volées' if plural_f else 'volé'} !", t, me.champion_alias)
                 else:
-                    self._add("objective", f"obj:{e.get('EventID')}",
-                              self._phrase("objective", obj=obj, obj_le=obj_le),
+                    text = self._phrase("objective", obj=obj, obj_le=obj_le)
+                    if plural_f:
+                        text = text.replace(" pris,", " prises,").replace(" sécurisé,", " sécurisées,")
+                    self._add("objective", f"obj:{e.get('EventID')}", text,
                               f"{obj} pour ton équipe", t, me.champion_alias)
             elif name in STRUCTURES and (is_me(e.get("KillerName")) or any(is_me(a) for a in assisters)):
                 obj, obj_la = STRUCTURES[name]

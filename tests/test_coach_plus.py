@@ -169,9 +169,10 @@ def test_death_coach_once_per_death():
             "VictimName": "Moi#EUW", "Assisters": ["LeeSin#T"]}
     assert dc.update(412, facts, game(412, events=[kill], dead=True)) is None    # delayed
     res = dc.update(417, facts, game(417, events=[kill], dead=True))
-    assert res is not None and res[0] == "outnumbered"
+    # V2 audit: the unseen jungler in the kill is the precise cause (not just "2 contre 1")
+    assert res is not None and res[0] == "jungler"
     assert dc.update(420, facts, game(420, events=[kill], dead=True)) is None    # once
-    assert dc.causes == ["outnumbered"]
+    assert dc.causes == ["jungler"]
 
 
 # ------------------------------------------------------------------ CoachPlus

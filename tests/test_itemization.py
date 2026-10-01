@@ -31,10 +31,15 @@ def test_item_table_loaded_and_compatible():
 def test_antiheal_vs_healers():
     me = P("Jinx", team="ORDER", items=[1055, 1036], pos="BOTTOM")
     r = iz.recommend(G(me, [P("Soraka"), P("Aatrox"), P("Zed"), P("Jinx"), P("Leona")], gold=1200))
-    assert r.need == "antiheal" and r.item_id == 3033
+    # V2 audit: no full Rappel mortel as a FIRST item (breaks the build): the cheap component first
+    assert r.need == "antiheal" and r.item_id == 3123
     assert "Soraka" in r.text and "Aatrox" in r.text
-    assert r.buy_now == (3035,)          # Last Whisper: 750 + owned Long Sword + 350 <= 1200
     assert r.buy_text.startswith("Achat immédiat")
+    # once the first legendary is done, the full anti-heal item
+    me = P("Jinx", team="ORDER", items=[6672, 1036, 1001], pos="BOTTOM")
+    r = iz.recommend(G(me, [P("Soraka"), P("Aatrox"), P("Zed"), P("Jinx"), P("Leona")], gold=1200))
+    assert r.need == "antiheal" and r.item_id == 3033
+    assert r.buy_now == (3035,)          # Last Whisper: 750 + owned Long Sword + 350 <= 1200
 
 
 def test_no_second_antiheal():
@@ -77,7 +82,7 @@ def test_advisor_moments_and_antispam():
     assert adv.update(0.0, G(me, enemies, 500)) == []           # baseline
     me.is_dead = True
     out = adv.update(10.0, G(me, enemies, 500))
-    assert len(out) == 1 and out[0].moment == "death" and "Rappel mortel" in out[0].text
+    assert len(out) == 1 and out[0].moment == "death" and "Marque du bourreau" in out[0].text
     me.is_dead = False
     adv.update(20.0, G(me, enemies, 500))
     me.is_dead = True                                           # same situation, 40 s later

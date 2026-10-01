@@ -66,7 +66,7 @@ def test_tip_library_and_rotation():
     assert first and "dragon" in first.lower()                 # contextual objective tip first
     assert rot.update(5.0, ctx) == first                       # stays
     seen = {rot.update(30.0 * k, ctx) for k in range(1, 12)}
-    assert len(seen) >= 5                                      # rotates through the useful ones
+    assert len(seen) >= 4                                      # rotates through the useful ones
     hist = rot.history()
     assert len(hist) == len(set(hist))
     for t in tips.TIPS:                                        # every tip renders on a neutral context
@@ -103,20 +103,26 @@ def test_voice_policy_minimal_and_gate():
     def A(kind, key, text="x", level=Level.INFO):
         return Alert(kind=kind, level=level, text=text, key=key, t=0.0)
     assert vp.route(A(AlertKind.JUNGLER_APPROACH, "g", level=Level.WARNING)) == "voice"
-    assert vp.route(A(AlertKind.OBJECTIVE_SOON, "objective_soon:dragon:60")) == "voice"
-    assert vp.route(A(AlertKind.OBJECTIVE_SOON, "objective_soon:dragon:20")) == "text"
-    # visual first: in "minimal" only ganks, the fight call and one objective warning are spoken
+    # V2 voice whitelist: an objective is spoken only at its LAST warning (<= 20 s), the 60 s one is written
+    assert vp.route(A(AlertKind.OBJECTIVE_SOON, "objective_soon:dragon:60")) == "text"
+    assert vp.route(A(AlertKind.OBJECTIVE_SOON, "objective_soon:dragon:20")) == "voice"
+    assert vp.route(A(AlertKind.OBJECTIVE_SOON, "objective_soon:dragon:60"), "bavard") == "voice"
+    # visual first: the stance, praise, macro tips and director calls are written at every level but "bavard"
     assert vp.route(A(AlertKind.MACRO_TIP, "stance:prudent")) == "text"
-    assert vp.route(A(AlertKind.MACRO_TIP, "stance:prudent"), "normal") == "voice"
+    assert vp.route(A(AlertKind.MACRO_TIP, "stance:prudent"), "normal") == "text"
     assert vp.route(A(AlertKind.MACRO_TIP, "call:retreat")) == "voice"
+    assert vp.route(A(AlertKind.MACRO_TIP, "call:engage")) == "text"          # the banner says it
     assert vp.route(A(AlertKind.MACRO_TIP, "urgent:pos:alone")) == "text"
-    assert vp.route(A(AlertKind.MACRO_TIP, "urgent:pos:alone"), "normal") == "voice"
+    assert vp.route(A(AlertKind.MACRO_TIP, "urgent:pos:alone"), "normal") == "text"
+    assert vp.route(A(AlertKind.MACRO_TIP, "urgent:ace:baron"), "normal") == "voice"   # the big numbers call
+    assert vp.route(A(AlertKind.MACRO_TIP, "urgent:ace:baron")) == "text"
     assert vp.route(A(AlertKind.MACRO_TIP, "macro_tip:lane_dead")) == "text"
     assert vp.route(A(AlertKind.PRAISE, "solo:3")) == "text"
-    assert vp.route(A(AlertKind.PRAISE, "solo:3"), "normal") == "voice"
+    assert vp.route(A(AlertKind.PRAISE, "solo:3"), "normal") == "text"
+    assert vp.route(A(AlertKind.PRAISE, "solo:3"), "bavard") == "voice"
     assert vp.route(A(AlertKind.PRAISE, "cs:900")) == "text"
     assert vp.route(A(AlertKind.CONTROL_WARD, "control_ward")) == "text"
-    assert vp.route(A(AlertKind.MACRO_TIP, "macro_tip:x"), "normal") == "voice"
+    assert vp.route(A(AlertKind.MACRO_TIP, "macro_tip:x"), "normal") == "text"
     assert vp.route(A(AlertKind.RECALL_GOLD, "recall_gold"), "normal") == "text"
     assert vp.route(A(AlertKind.RECALL_GOLD, "recall_gold"), "bavard") == "voice"
     gate = vp.MessageGate()

@@ -206,7 +206,7 @@ def test_baron_window_when_enemies_bot():
         return me_at((0.40, 0.45)) + [icon(a, "enemy", p) for a, p in (
             ("Jinx", (0.80, 0.90)), ("Thresh", (0.78, 0.86)), ("Ahri", (0.85, 0.80)), ("LeeSin", (0.70, 0.80)))]
     sim = Sim().run(1600, 1610, icons, objectives=objs)
-    assert "Baron dispo et 4 ennemis visibles en bas : bonne fenêtre pour Baron." in sim.texts()
+    assert "Baron dispo et 4 ennemis visibles en bas : bonne fenêtre pour le Baron." in sim.texts()
 
 
 # ------------------------------------------------------------------------------ numbers
@@ -449,9 +449,17 @@ def test_minion_detection_and_wave_state(wave_images):
 
 
 def test_wave_push_tip(wave_images):
+    from dataclasses import replace as _rp
+
+    def rich(t):
+        return _rp(make_game(t), current_gold=1200.0)
+    sim = Sim().run(300, 306, lambda t: me_at(TOP_LANE) + [icon("LeeSin", "enemy", (0.3, 0.55))],
+                    frame=lambda t: wave_images["push"], game=rich)
+    assert sim.texts() == ["Ta vague pousse vers leur tour : finis-la puis rentre."]
+    # V2 audit: nothing to buy and full health: pushing is not "a good moment to recall"
     sim = Sim().run(300, 306, lambda t: me_at(TOP_LANE) + [icon("LeeSin", "enemy", (0.3, 0.55))],
                     frame=lambda t: wave_images["push"])
-    assert sim.texts() == ["Ta vague pousse vers leur tour : bon moment pour rentrer après l'avoir poussée."]
+    assert "rentrer" not in " ".join(sim.texts())
     assert sim.coach.waves()["top"]["state"] == "pushing"
 
 
@@ -482,8 +490,18 @@ def test_lane_opponent_left_lane():
         return out
     sim = Sim().run(290, 330, icons)
     left = [s for s in sim.said if "quitté la voie" in s[1]]
-    assert [s[1] for s in left] == ["Darius a quitté la voie : pousse et prends des plaques, préviens ton équipe."]
+    # V2 audit: their jungler is right there (my top jungle): never "push" while the laner is unseen
+    assert [s[1] for s in left] == ["Darius a quitté la voie : préviens ton équipe et ne t'avance pas sans le voir."]
     assert 307.5 <= left[0][0] <= 309.5
+
+    def icons_far(t):
+        out = me_at(TOP_LANE) + [icon("LeeSin", "enemy", (0.75, 0.8))]
+        if t < 300:
+            out.append(icon("Darius", "enemy", (0.16, 0.085)))
+        return out
+    sim = Sim().run(290, 330, icons_far)
+    left = [s for s in sim.said if "quitté la voie" in s[1]]
+    assert [s[1] for s in left] == ["Darius a quitté la voie : pousse et prends des plaques, préviens ton équipe."]
 
 
 def test_lane_opponent_recalled():
@@ -611,3 +629,55 @@ def test_play_gauge_steps_and_hysteresis():
     assert g.update(GAUGE_HOLD_S + 2.0, st(5.0)).word == "SAFE"
     assert g.update(2 * GAUGE_HOLD_S + 2.0, st(5.0)).word == "ATTAQUE"
     assert g.current().tone == "go" and g.update(30.0, st(0), active=False) is None
+
+
+# ------------------------------------------------------------------------------ V2 audit regressions
+def _jg_dead_game(t, respawn=30.0, also_dead=()):
+    g = make_game(t)
+    for p in g.enemies:
+        if p.champion_alias == "LeeSin" or p.champion_alias in also_dead:
+            p.is_dead, p.respawn_timer = True, respawn
+    return g
+
+
+def test_v2_jungler_dead_is_not_a_baron_window():
+    baron = SimpleNamespace(key="baron", name="Baron", alive=True, remaining=None, next_spawn=None)
+    sim = Sim().run(1300, 1302, lambda t: me_at(TOP_LANE), objectives=[baron], game=_jg_dead_game)
+    jd = [s for s in sim.texts() if s.startswith("Leur jungler est mort")]
+    assert jd and "Baron" not in jd[0]                      # 4 against 5 on a 50-50: no
+    sim = Sim().run(1300, 1302, lambda t: me_at(TOP_LANE), objectives=[baron],
+                    game=lambda t: _jg_dead_game(t, also_dead=("Ahri",)))
+    jd = [s for s in sim.texts() if s.startswith("Leur jungler est mort")]
+    assert jd and "le Baron" in jd[0]
+
+
+def test_v2_baron_pick_needs_a_real_window():
+    baron = SimpleNamespace(key="baron", name="Baron", alive=True, remaining=None, next_spawn=None)
+    short = Sim().run(1300, 1302, lambda t: me_at(TOP_LANE), objectives=[baron],
+                      game=lambda t: _jg_dead_game(t, respawn=22.0, also_dead=("Ahri",)))
+    assert not any("Baron possible" in s for s in short.texts())     # 22 s: walk + kill do not fit
+    long_ = Sim().run(1300, 1302, lambda t: me_at(TOP_LANE), objectives=[baron],
+                      game=lambda t: _jg_dead_game(t, respawn=40.0, also_dead=("Ahri",)))
+    assert any(s.startswith("2 ennemis morts pour 40 s : Baron possible") for s in long_.texts()) or \
+        any("le Baron" in s for s in long_.texts())
+
+
+def test_v2_numbers_good_not_with_enemies_unseen_or_low_hp():
+    from dataclasses import replace as _rp
+
+    base = [icon("Vi", "ally", (0.13, 0.13)), icon("Lux", "ally", (0.07, 0.17)), icon("Darius", "enemy", (0.11, 0.10)),
+            icon("LeeSin", "enemy", (0.3, 0.55))]
+    sim = Sim().run(500, 510, lambda t: me_at(TOP_LANE) + base)               # positive control
+    assert "3 contre 1 autour de toi : bon moment pour attaquer." in sim.texts()
+
+    def icons(t):                                     # Ahri and Jinx seen, then unseen: 2 missing
+        if t < 495:
+            return me_at(TOP_LANE) + [icon("Ahri", "enemy", (0.5, 0.5)), icon("Jinx", "enemy", (0.8, 0.9))]
+        return me_at(TOP_LANE) + base
+    sim = Sim().run(480, 510, icons)
+    assert not any("bon moment pour attaquer" in s for s in sim.texts())
+
+    def low(t):
+        return _rp(make_game(t), champion_stats={"currentHealth": 300.0, "maxHealth": 1000.0})
+    sim = Sim().run(500, 510, lambda t: me_at(TOP_LANE) + base, game=low)
+    assert not any("bon moment pour attaquer" in s for s in sim.texts())

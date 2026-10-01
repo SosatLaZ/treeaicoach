@@ -183,7 +183,7 @@ def matchup_card(game: Any, my_role: str | None, opp_alias: str | None) -> Match
         my_side = {"TOP": "top", "BOTTOM": "bot", "UTILITY": "bot"}.get(role)
         jl = jungle_line(jg, side, role)
         if jl and my_side and side == my_side:
-            jl = jl.replace(" ganke tôt", " viendra sûrement ici").replace(f" (probable {SIDE_FR[side]})", "")
+            jl = jl.replace(" ganke tôt", " viendra probablement ici").replace(f" (probable {SIDE_FR[side]})", "")
         return MatchupCard(f"PLAN DE VOIE : {name.upper()}"[:40], tuple(fit(x) for x in lines), fit(jl), side)
     except Exception:
         log.debug("matchup_card failed", exc_info=True)

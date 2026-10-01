@@ -113,7 +113,7 @@ DEFAULT_DEDUPE_S = 180.0
 TEXT_TOAST: dict[str, tuple[str, str]] = {
     "macro_tip": ("insight", "CONSEIL"), "recall_gold": ("insight", "RETOUR EN BASE"),
     "control_ward": ("insight", "BALISE"), "objective_soon": ("warning", "OBJECTIF"),
-    "death_recap": ("danger", "TA MORT"), "jungler_spotted": ("warning", "JUNGLER"),
+    "death_recap": ("danger", "TA MORT"),
     "laner_mia": ("warning", "DISPARU"), "macro_call": ("insight", "CONSEIL"),
 }
 
@@ -275,6 +275,48 @@ class MessageGate:
             if seen is not None and 0.0 <= now - seen < window:
                 return False
         return True
+
+
+# ======================================================================================
+# Topics: one toast per subject, whatever system says it (V2 audit: the coach, the tips, the macro
+# planner, the reminders and the objective timers used to toast the same thing 2-4 times)
+# ======================================================================================
+TOPIC_TOAST_S = 40.0           # a second toast on the same topic within this window is dropped
+_TOPICS: dict[str, tuple[str, ...]] = {
+    "recall": ("recall_gold", "macro_tip:wave_push", "macro_tip:recall_item", "gold_back", "comp_ready",
+               "wave_push_back", "obj_recall_now", "genie:wave_recall"),
+    "opp_dead": ("macro_tip:lane_dead", "opp_dead", "opp_dead_late", "genie:plates"),
+    "jg_dead": ("macro_tip:jungler_dead", "jg_dead_window", "jg_dead_lane", "genie:jungler_dead"),
+    "objective": ("objective_soon", "macro_tip:objective_setup", "macro_tip:objective_wave", "macro:pos:obj",
+                  "urgent:pos:obj", "drag_buy", "drag_prio", "drag_vision", "drag_top", "drag_smite",
+                  "baron_soon", "herald_soon", "grubs", "atakhan", "group_obj", "tp_obj", "sup_obj_vision",
+                  "obj_stay", "urgent:elder_soon", "macro:elder_soon"),
+    "jungler_pos": ("jungler_spotted", "macro_tip:jungler_side", "jg_far", "jg_coming", "jg_counter"),
+    "cs": ("macro_tip:cs_check", "cs_low", "goal_cs", "goal:ok", "goal:cs"),
+    "level": ("macro_tip:level_diff", "lvl_ahead", "lvl_behind", "spike_me_big", "spike_me", "spike_opp_big",
+              "macro_tip:level2", "level2"),
+    "lane_left": ("macro_tip:lane_left", "macro_tip:lane_recall", "genie:back_off", "laner_mia"),
+    "numbers": ("macro_tip:numbers_bad", "macro_tip:numbers_good", "outnumbered", "outnumber"),
+    "alone": ("urgent:pos:alone", "macro:pos:alone", "side_late", "missing_3", "macro_tip:missing"),
+}
+_TOPIC_INDEX: list[tuple[str, str]] = sorted(((p, t) for t, ps in _TOPICS.items() for p in ps),
+                                             key=lambda x: -len(x[0]))
+
+
+def topic_of(key: Any) -> str | None:
+    """Subject of a toast / message key (``"text:macro_tip:lane_dead"``, ``"tip:opp_dead"``,
+    ``"genie:plates"``...), None when it has none. Pure, never raises."""
+    try:
+        k = str(key or "")
+        for pre in ("text:", "tip:"):
+            if k.startswith(pre):
+                k = k[len(pre):]
+        for prefix, topic in _TOPIC_INDEX:
+            if k == prefix or k.startswith(prefix + ":"):
+                return topic
+        return None
+    except Exception:
+        return None
 
 
 def _norm(text: Any) -> str:
@@ -632,7 +674,7 @@ class VoiceGate:
         return self.budget.pop_ready(t)
 
 
-__all__ = ["VOICE_LEVELS", "DEFAULT_VOICE_LEVEL", "route", "objective_involved", "is_voice_only",
+__all__ = ["VOICE_LEVELS", "DEFAULT_VOICE_LEVEL", "route", "objective_involved", "is_voice_only", "topic_of",
            "OBJECTIVE_VOICE_MAX_LEAD_S", "BIG_CALL_PREFIXES", "MessageGate", "TEXT_TOAST", "is_big_praise",
            "kind_name", "normalize_level", "SpeechBudget", "triage_gank", "is_critical", "speech_priority",
            "VoiceGate", "SpeechContext", "alert_confidence"]

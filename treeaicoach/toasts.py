@@ -174,7 +174,8 @@ def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int 
     col = (top * (1 - grad) + bot * grad).reshape(32, 1, 3)
     cv_.rrect(x0, y0, W, H, rad, col, 0.94, border=accent, border_alpha=1.0, border_w=2.6 * k)
     cv_.glow(x0 + W / 2, y0 + H / 2, 10 * k, W * 0.45, glow, 0.14)
-    cy = y0 + H * (0.42 if subtitle else 0.5)
+    two = bool(subtitle) and orr.text_width(subtitle, orr.get_font(max(8, int(round(14 * k))), "semibold")) > W - 40 * k
+    cy = y0 + H * (0.36 if two else 0.42 if subtitle else 0.5)
     if kind in ("engage", "retreat"):
         d = 1 if kind == "engage" else -1
         ch = H * 0.46
@@ -191,8 +192,13 @@ def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int 
              shadow=0.8)
     if subtitle:
         fs = orr.get_font(max(8, int(round(14 * k))), "semibold")
-        cv_.text(x0 + W / 2, y0 + H * 0.80, orr.fit_text(subtitle, fs, W - 40 * k), fs, orr.TAI_TEXT, 0.95,
-                 anchor="m", shadow=0.6)
+        if orr.text_width(subtitle, fs) <= W - 40 * k:
+            cv_.text(x0 + W / 2, y0 + H * 0.80, orr.fit_text(subtitle, fs, W - 40 * k), fs, orr.TAI_TEXT, 0.95,
+                     anchor="m", shadow=0.6)
+        else:                                       # V2: the WHY on two lines rather than cut
+            f2 = orr.get_font(max(8, int(round(12 * k))), "semibold")
+            for i, ln in enumerate(orr.wrap_text(subtitle, f2, W - 40 * k, 2)):
+                cv_.text(x0 + W / 2, y0 + H * (0.72 + 0.16 * i), ln, f2, orr.TAI_TEXT, 0.95, anchor="m", shadow=0.6)
     if pct is not None and kind in ("engage", "retreat"):
         f = max(0.0, min(1.0, pct / 100.0))
         yb = y0 + H - 4.0 * k
@@ -288,7 +294,14 @@ def _render_base(kind: str, title: str, subtitle: str, icon: np.ndarray | None, 
     ft = orr.get_font(max(8, int(round(13 * k))), "bold")
     fs = orr.get_font(max(8, int(round(17 * k))), "semibold")
     t_txt = orr.fit_text((title or "").upper(), ft, max_w)
-    if subtitle:
+    if subtitle and orr.text_width(subtitle, fs) > max_w:
+        # V2: a long advice is wrapped on two smaller lines instead of being cut ("…")
+        f2 = orr.get_font(max(8, int(round(14 * k))), "semibold")
+        lines = orr.wrap_text(subtitle, f2, max_w, 2)
+        cv_.text(tx, y0 + H * 0.25, t_txt, ft, title_rgb, 1.0, shadow=0.6)
+        for i, ln in enumerate(lines):
+            cv_.text(tx, y0 + H * (0.55 + 0.27 * i), ln, f2, orr.TAI_TEXT, 1.0, shadow=0.7)
+    elif subtitle:
         cv_.text(tx, y0 + H * 0.33, t_txt, ft, title_rgb, 1.0, shadow=0.6)
         cv_.text(tx, y0 + H * 0.66, orr.fit_text(subtitle, fs, max_w), fs, orr.TAI_TEXT, 1.0, shadow=0.7)
     else:

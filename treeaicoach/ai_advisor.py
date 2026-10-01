@@ -1426,8 +1426,10 @@ def _rule_plan(moment: str, snap: dict[str, Any]) -> dict[str, Any] | None:
         names = ", ".join(str(e.get("c")) for e in long_dead[:3])
         rs = min((int(e.get("rs") or 0) for e in long_dead), default=0)
         up = [o for o in objt if int(o[1]) == 0]
-        target = next((o[0] for o in up if o[0] in ("Baron", "Dragon ancestral")), None) or (
-            up[0][0] if up else None)
+        # V2 audit: Baron / Elder only with 3 dead, or 2 dead for 35 s+ (walk + kill); else the rest
+        big_ok = len(long_dead) >= 3 or (len(long_dead) >= 2 and rs >= 35)
+        target = (next((o[0] for o in up if o[0] in ("Baron", "Dragon ancestral")), None) if big_ok else None) or (
+            next((o[0] for o in up if o[0] not in ("Baron", "Dragon ancestral")), None))
         what = _OBJ_LE.get(target, "une tour") if target else "une tour"
         if long_dead:
             plan = f"{len(long_dead)} ennemis morts ({names}) pendant {rs} s : prends {what} maintenant."

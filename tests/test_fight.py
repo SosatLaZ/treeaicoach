@@ -98,7 +98,7 @@ def test_fight_detection_engage_call_and_summary():
     g2 = game(allies=al, enemies=en, gt=905.0, events=kills)
     ends = [tr.update(2.0 + i * 0.5, g2, ME, allies, []) for i in range(12)]
     summ = [u.ended_summary for u in ends if u.ended_summary]
-    assert summ == ["Combat gagné 2 pour 0 !"]
+    assert summ == ["Combat gagné 2 à 0 !"]
     assert not tr.in_fight()
 
 

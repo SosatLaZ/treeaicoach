@@ -131,6 +131,7 @@ class TacticalDirector:
             self._seen: tuple = ((), (), None)
             self._written_t: dict[str, float] = {}
             self._director_call_t: float | None = None
+            self._stance_score: float | None = None
 
     # ------------------------------------------------------------------ public state
     def speech_context(self) -> Any:
@@ -162,7 +163,7 @@ class TacticalDirector:
                 for p in adv.picks:
                     out.append(MapGuide("ward", p.uv, p.label, PRIORITY["ward"], False, "gold", adv.until))
         except Exception:
-            pass
+            log.debug("ward guides failed", exc_info=True)
         return out[:MAX_GUIDES]
 
     def banner(self, now: float) -> Banner | None:

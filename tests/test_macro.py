@@ -147,7 +147,7 @@ def test_cross_map_trade_and_free_dragon():
                 objectives=[obj("grubs", True), obj("dragon", True)])
     call = [x for x in macro.evaluate(c) if x.kind == "cross_trade"][0]
     # a top laner HELPS his jungler (a solo laner does not take grubs / Herald alone)
-    assert call.text.startswith("Aide ton jungler à prendre les larves") and "au dragon" in call.text and call.genius
+    assert call.text.startswith("Aide ton jungler aux larves") and "au dragon" in call.text and call.genius
     cj = ctx_for(game(500.0, me="Vi"), me_uv=(0.3, 0.45), enemies=[Seen("LeeSin", (0.67, 0.71), True, 0.0)],
                  objectives=[obj("grubs", True)])
     assert [x for x in macro.evaluate(cj) if x.kind == "cross_trade"][0].text.startswith("Prends les larves")

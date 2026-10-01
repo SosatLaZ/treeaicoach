@@ -119,6 +119,7 @@ MIN_SEP_FRAC = 0.33
 RECAL_DROP = 0.5
 RECAL_WINDOW = 24
 RECAL_MIN_FRAMES = 48             # frames between two automatic re-calibrations
+RECAL_WEAK_FRAMES = 240           # ... triggered by weak matches (narrow, ~30 s at 8 fps)
 CALIB_FRAMES = 3                  # first frames combined for the initial calibration
 REFRESH_FRAMES = 80               # (kept for compatibility)
 SKIN_CHECK_FRAMES = 24            # period of the check for newly downloaded skin portraits
@@ -131,7 +132,7 @@ CALIB_PRIOR_WEIGHT = 1.5
 # --- temporal tracking (per champion) -------------------------------------------------
 #: Frames between two full searches (every champion over the whole map: refreshes the
 #: uniqueness margins and the background statistics, catches a track stuck on a wrong spot).
-FULL_EVERY = 12
+FULL_EVERY = 24
 #: A tracked champion is searched only in a small window around its predicted position;
 #: after this many consecutive local misses (or TRACK_FRESH_S without a match) it is
 #: searched over the whole map again (in the same frame when the local search fails).
@@ -141,7 +142,7 @@ TRACK_FRESH_S = 1.5
 MAX_SPEED = 0.09
 JUMP_SLACK = 0.035
 #: Local search window radius = LOCAL_SLACK + MAX_SPEED x dt (normalized).
-LOCAL_SLACK = 0.022
+LOCAL_SLACK = 0.015
 #: Evidence penalty of an impossible jump (far from the track, not confirmed by a second
 #: frame, not to the champion's fountain): a strong match still passes.
 JUMP_PENALTY = 0.15
@@ -221,6 +222,14 @@ GREY_RING_BONUS = 0.06
 GREY_THR_ADD = 0.1
 GREY_RING_DL = 25.0
 GREY_NO_RING = 0.3
+
+#: Change gate (cost): champions not tracked are searched over the whole map only when an
+#: icon-sized change appeared (pixel difference > CHANGE_DIFF surviving an opening of
+#: CHANGE_OPEN x the icon diameter, away from the tracked champions), or every LOST_EVERY
+#: frames anyway.
+CHANGE_DIFF = 14
+CHANGE_OPEN = 0.3
+LOST_EVERY = 4
 
 # Initial ring colours (BGR), learned live afterwards.
 _RING_INIT_BGR: dict[str, tuple[int, int, int]] = {
@@ -700,6 +709,7 @@ class _State:
     ref_conf: float = 0.0
     bg: list = field(default_factory=list)          # recent background peak scores
     bg_grey: list = field(default_factory=list)     # ... of the greyscale frames
+    full_parity: int = 0                            # half of the roster of the next full search
 
 
 class RosterMatcher:
@@ -748,6 +758,11 @@ class RosterMatcher:
         #: Last frame was colourless (lightness-only matching).
         self.grey = False
         self._grey_L: np.ndarray | None = None
+        self._prev_gray: np.ndarray | None = None
+        self._open_k: np.ndarray | None = None
+        #: Diagnostics: change gate result / number of whole-map searched champions.
+        self.last_changed = True
+        self.last_searched = 0
         self._wl: float = LIGHTNESS_WEIGHT
         self.last_stack: tuple | None = None
         self.learner: Any = None
@@ -1060,6 +1075,7 @@ class RosterMatcher:
                 r = find_camera_rect(bgr)
                 if r is not None:
                     p = (0.5 * (r.u0 + r.u1), r.v0 + CAM_V_FRAC * (r.v1 - r.v0))
+                    self._cam = (f, (0.5 * (r.u0 + r.u1), 0.5 * (r.v0 + r.v1)))
             except Exception:
                 c = self._camera_centre(bgr)
                 p = (c[0], c[1] + 0.022) if c is not None else None
@@ -1322,15 +1338,19 @@ class RosterMatcher:
         around: float | None = None              # None: full sweep
         need = False
         if st.scale is None:
-            # not calibrated yet: first frames, then a retry from time to time
+            # not calibrated yet: first frames, then a retry from time to time; a stored
+            # ratio for this minimap size (previous game) is only confirmed narrowly first
             need = st.frames < CALIB_FRAMES or st.frames % RECAL_MIN_FRAMES == 0
+            if need and st.frames == 0:
+                around = self._stored_scale(bgr)
         elif len(st.calib) < CALIB_FRAMES and st.frames < 2 * CALIB_FRAMES:
             need, around = True, st.scale         # initial phase: confirm narrowly
-        elif st.since_calib >= RECAL_MIN_FRAMES and len(st.conf_hist) >= RECAL_WINDOW:
+        elif st.since_calib >= RECAL_WEAK_FRAMES and len(st.conf_hist) >= RECAL_WINDOW:
             recent = float(np.mean(st.conf_hist[-RECAL_WINDOW:]))
             if recent < max(RECAL_DROP * st.ref_conf, 0.5):
-                # matches became weak (or never were): the scale may be wrong
-                need = True
+                # matches became weak (or never were): the scale may be a bit off. Narrow
+                # sweep around it only (cost): a new minimap size is a new key (full sweep)
+                need, around = True, st.scale
                 log.info("Roster matcher: weak matches (%.1f, reference %.1f): re-calibrating",
                          recent, st.ref_conf)
                 st.calib.clear()
@@ -1830,11 +1850,37 @@ class RosterMatcher:
                 best = max(best, max(vals[0], vals[1]) - min(vals[2], vals[3]))
         return best
 
+    def _changed(self, work: np.ndarray, D_work: float, kx: float, ky: float,
+                 now: float) -> bool:
+        """Did an icon-sized change appear since the previous frame, away from the tracked
+        champions? (absolute difference of the working image, opened with a disc of
+        CHANGE_OPEN x the icon diameter: camera lines, minion dots, pings' thin parts and
+        fog edges vanish; a champion appearing from the fog does not). ~0.3 ms."""
+        g = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
+        prev, self._prev_gray = self._prev_gray, g
+        if prev is None or prev.shape != g.shape:
+            return True
+        m = (cv2.absdiff(g, prev) > CHANGE_DIFF).astype(np.uint8)
+        k = max(3, int(round(CHANGE_OPEN * D_work)) | 1)
+        if self._open_k is None or self._open_k.shape[0] != k:
+            self._open_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        if not m.any():
+            return False
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, self._open_k)
+        if not m.any():
+            return False
+        r = int(math.ceil(0.8 * D_work))
+        for tr in self._tracks.values():          # tracked champions moving: explained
+            if now - tr.t <= TRACK_FRESH_S:
+                pu, pv = tr.predict(now)
+                cv2.circle(m, (int(round(pu * kx)), int(round(pv * ky))), r, 0, -1)
+        return bool(m.any())
+
     @staticmethod
     def is_grey(bgr: np.ndarray) -> bool:
         """A colourless minimap (death greyscale filter, desaturated capture): the 95th
         percentile of the Lab chroma of a small copy is below GREY_CHROMA."""
-        small = cv2.resize(bgr, (64, 64), interpolation=cv2.INTER_AREA)
+        small = cv2.resize(bgr, (48, 48), interpolation=cv2.INTER_NEAREST)
         lab = cv2.cvtColor(small, cv2.COLOR_BGR2LAB).astype(np.float32)
         chroma = np.hypot(lab[:, :, 1] - 128.0, lab[:, :, 2] - 128.0)
         return float(np.percentile(chroma, 95)) < GREY_CHROMA
@@ -1869,32 +1915,50 @@ class RosterMatcher:
                   if i >= n_e or now - tr.t > JUMP_MEMORY_S or now < tr.t - 1.0]:
             del self._tracks[i]
         dead = self._dead_now(now)
-        full = (st.frames - st.last_full >= FULL_EVERY or st.scale != old_scale
-                or st.frames <= 2 * CALIB_FRAMES)
+        # whole-map (Fourier) search: every champion at the start / after a scale change;
+        # then half of the roster every FULL_EVERY / 2 frames (each champion every
+        # FULL_EVERY frames, half the cost spike)
+        if st.scale != old_scale or st.frames <= 2 * CALIB_FRAMES or st.last_full < 0:
+            full_set = set(range(n_e))
+            st.last_full = st.frames
+        elif st.frames - st.last_full >= max(1, FULL_EVERY // 2):
+            full_set = {i for i in range(n_e) if i % 2 == st.full_parity}
+            st.full_parity ^= 1
+            st.last_full = st.frames
+        else:
+            full_set = set()
+        full_set -= dead
+        full = bool(full_set)
         self.last_mode = "full" if full else "tracked"
 
         # 1. tracked champions: small windows around the predicted positions
         cands: list[_Cand] = []
         bg_scores: list[float] = []
         found_local: set[int] = set()
-        if not full:
-            prev_thr = self.last_threshold
-            for i, tr in self._tracks.items():
-                if now - tr.t > TRACK_FRESH_S or tr.misses >= 2:
-                    continue
-                lc = self._local_search(feat, bank, i, tr, now, kx, ky)
-                cands.extend(lc)
-                if any(c.ev >= prev_thr for c in lc):
-                    found_local.add(i)
-        # 2. the others (lost, in the fog, local miss): whole map
-        glob = [i for i in range(n_e) if i not in found_local and i not in dead]
-        if glob and full:
-            gc, bg_scores = self._global_search(feat, bank, glob)
+        prev_thr = self.last_threshold
+        for i, tr in self._tracks.items():
+            if i in full_set or now - tr.t > TRACK_FRESH_S or tr.misses >= 2:
+                continue
+            lc = self._local_search(feat, bank, i, tr, now, kx, ky)
+            cands.extend(lc)
+            if any(c.ev >= prev_thr for c in lc):
+                found_local.add(i)
+        # 2. the others (lost, in the fog, local miss): whole map. Champions hidden for a
+        #    while are only searched when something appeared on the map (change gate) or
+        #    every LOST_EVERY frames: a champion coming out of the fog changes the pixels
+        changed = self._changed(work, D_work, kx, ky, now)
+        self.last_changed = changed
+        glob = [i for i in range(n_e) if i not in found_local and i not in dead
+                and i not in full_set]
+        if not changed and st.frames % LOST_EVERY != 0:
+            glob = [i for i in glob if i in self._tracks
+                    and now - self._tracks[i].t <= TRACK_FRESH_S]
+        self.last_searched = len(glob) + len(full_set)
+        if full_set:
+            gc, bg_scores = self._global_search(feat, bank, sorted(full_set))
             cands.extend(gc)
-        elif glob:
+        if glob:
             cands.extend(self._coarse_search(feat, bank, glob))
-        if full:
-            st.last_full = st.frames
         thr = self._threshold(bg_scores)
         self.last_threshold = thr
 
@@ -2012,7 +2076,8 @@ class RosterMatcher:
         #    prior, then coasting on its track
         dets_extra: list[Detection] = []
         cam_pt = self._cam_point(bgr)
-        self.camlock.feed_cam(cam_pt, now)
+        if self._camlock[0] == st.frames:       # (a fresh camera rectangle)
+            self.camlock.feed_cam(cam_pt, now)
         for c in accepted:
             if ents[c.i].relation == "self" and not c.note and c.tot >= thr + CAMLOCK_MARGIN:
                 self.camlock.confirm((c.x / kx, c.y / ky), cam_pt, now)

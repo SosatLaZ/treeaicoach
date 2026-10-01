@@ -843,7 +843,7 @@ class HybridDetector(BaseDetector):
     roster it is exactly the generic detector. Never raises.
     """
 
-    FALLBACK_EVERY = 2
+    FALLBACK_EVERY = 4
     EXTRA_MIN_SCORE = 0.6
     #: Extra detections this close (x the sum of radii) to a roster match are the same icon.
     EXTRA_OVERLAP = 0.8
@@ -857,6 +857,7 @@ class HybridDetector(BaseDetector):
         self.fallback = fallback
         self.matcher = matcher
         self._frame = 0
+        self._extra_run = -10 ** 9
         self._last_extra: list[Detection] = []
         self._errors = _RateLimitedLog()
         self._structures: list[tuple[float, float, str]] | None = None
@@ -923,7 +924,12 @@ class HybridDetector(BaseDetector):
             self._last_extra = []
             return []
         self._frame += 1
-        if self._frame % self.FALLBACK_EVERY == 1 or self.FALLBACK_EVERY <= 1:
+        # (cost) every FALLBACK_EVERY frames, sooner when something new appeared on the map
+        # (the matcher's change gate) and the last run is 2 frames old
+        changed = bool(getattr(m, "last_changed", False)) and self._frame - self._extra_run >= 2
+        if self._frame - self._extra_run >= self.FALLBACK_EVERY or changed or \
+                self.FALLBACK_EVERY <= 1:
+            self._extra_run = self._frame
             raw = [d for d in (self.fallback.detect(img) or []) if d.score >= self.EXTRA_MIN_SCORE]
             structs = self._structure_uv()
             game = getattr(m, "_game", None)
@@ -1009,6 +1015,10 @@ def _generic_detector(b: str, threshold: float) -> BaseDetector:
         return _NullDetector()
 
 
+#: OpenCV worker threads used by the detection (cv2.setNumThreads), see create_detector.
+DETECT_CV_THREADS = 2
+
+
 def create_detector(backend: str = "auto", threshold: float = 0.0, *, db: Any = None,
                     scale_store: dict | None = None,
                     on_scale: Any = None, roster: bool = True,
@@ -1024,6 +1034,13 @@ def create_detector(backend: str = "auto", threshold: float = 0.0, *, db: Any = 
     learned icon of a custom skin is kept, see self_icon.py), and behaves exactly like
     the generic detector otherwise.
     """
+    try:
+        # (game FPS first) OpenCV's own thread pool would use every core for a few ms:
+        # at most DETECT_CV_THREADS worker threads for the per-frame image work
+        if cv2.getNumThreads() > DETECT_CV_THREADS:
+            cv2.setNumThreads(DETECT_CV_THREADS)
+    except Exception:
+        pass
     try:
         b = str(backend or "auto").strip().lower()
     except Exception:

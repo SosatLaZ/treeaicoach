@@ -52,6 +52,7 @@ while the tracker keeps updating. Pure Python + geometry (numpy LUT), importable
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import logging
 import math
@@ -588,13 +589,14 @@ class Track:
 
     def copy(self) -> Track:
         """Independent snapshot (safe to read from another thread)."""
-        return dataclasses.replace(
-            self,
-            _obs=deque(self._obs, maxlen=OBS_MAXLEN),
-            _segs=deque(self._segs, maxlen=ZONE_SEG_MAXLEN),
-            _kf=list(self._kf) if self._kf is not None else None,
-            _lock_obs=deque(self._lock_obs, maxlen=LOCK_WINDOW),
-        )
+        # (shallow copy + fresh containers: ~5x cheaper than dataclasses.replace, which
+        # re-runs __init__; called for every track by every reader on every tick)
+        c = copy.copy(self)
+        c._obs = deque(self._obs, maxlen=OBS_MAXLEN)
+        c._segs = deque(self._segs, maxlen=ZONE_SEG_MAXLEN)
+        c._kf = list(self._kf) if self._kf is not None else None
+        c._lock_obs = deque(self._lock_obs, maxlen=LOCK_WINDOW)
+        return c
 
 
 # --------------------------------------------------------------------------------------

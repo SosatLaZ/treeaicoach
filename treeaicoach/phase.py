@@ -39,6 +39,9 @@ ELDER_BUFF_S = 150.0
 INHIB_RESPAWN_S = 300.0
 ACE_RECENT_S = 12.0
 LONG_DEATH_S = 15.0            # an enemy dead at least this long more counts for "push now"
+FINISH_MIN_S = 25.0            # "finissez" only when the death timers cover the walk to the nexus
+BARON_MIN_S = 25.0             # "Baron maintenant" only with this much respawn window
+DRAGON_MIN_S = 15.0
 
 #: (team, lane, tier) -> turret position in game units. Tiers: 1 outer, 2 inner, 3 inhibitor.
 _TURRETS_GAME: dict[tuple[str, str, int], tuple[int, int]] = {
@@ -359,11 +362,11 @@ class EndGameCaller:
         # ---- phase change (written once per phase)
         if self._phase is not None and st.phase != self._phase:
             if st.phase == "mid":
-                out.append(MacroCall("phase:mid", "Fin de la phase de voie : jouez groupés autour des "
-                                     "objectifs, ne va plus seul loin de tes tours.", "MILIEU DE PARTIE", 40))
+                out.append(MacroCall("phase:mid", "Phase de voie finie : jouez groupés autour des objectifs.",
+                                     "MILIEU DE PARTIE", 40))
             elif st.phase == "late":
-                out.append(MacroCall("phase:late", "Fin de partie : une erreur = Baron ou un inhibiteur perdu. "
-                                     "Reste avec ton équipe et ne te fais pas attraper seul.", "FIN DE PARTIE", 45))
+                out.append(MacroCall("phase:late", "Fin de partie : reste avec ton équipe, une mort seul coûte "
+                                     "le Baron.", "FIN DE PARTIE", 45))
         self._phase = st.phase
         en_dead = list(st.enemies_dead)
         long_dead = st.enemies_dead_long()
@@ -373,13 +376,16 @@ class EndGameCaller:
         n = len(long_dead)
         if (st.ace_team == mine or n >= 4) and my_alive and len(st.allies_dead) <= 1:
             secs = int(min(d.respawn for d in long_dead)) if long_dead else int(min((d.respawn for d in en_dead), default=0))
-            if st.inhibs_down & {(theirs, ln) for ln in ("top", "mid", "bot")} or st.phase == "end":
+            inhib_open = bool(st.inhibs_down & {(theirs, ln) for ln in ("top", "mid", "bot")})
+            # V2 audit: the call must fit the respawn window (walk + take): finishing needs ~25 s
+            # from an open inhibitor, a Baron ~25 s, a dragon ~15 s; otherwise one tower
+            if (inhib_open or st.phase == "end") and secs >= FINISH_MIN_S:
                 txt = f"{_plural(max(n, len(en_dead)), 'ennemi')} morts pour {secs} s : poussez et finissez !"
                 out.append(MacroCall("ace:end", txt, "FINISSEZ !", 95, True, enemy_nexus, "engage", t))
-            elif up("baron") and st.gt >= 1200:
+            elif up("baron") and st.gt >= 1200 and secs >= BARON_MIN_S:
                 out.append(MacroCall("ace:baron", f"{_plural(max(n, len(en_dead)), 'ennemi')} morts : Baron maintenant !",
                                      "BARON !", 93, True, (geometry.BARON_PIT[0], geometry.BARON_PIT[1]), "engage", t))
-            elif up("elder") or up("dragon"):
+            elif (up("elder") or up("dragon")) and secs >= DRAGON_MIN_S:
                 out.append(MacroCall("ace:dragon", f"{_plural(max(n, len(en_dead)), 'ennemi')} morts : prenez le dragon !",
                                      "DRAGON !", 90, True, (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1]), "engage", t))
             else:
@@ -390,7 +396,7 @@ class EndGameCaller:
             if len(carries) >= 2 and my_alive and st.phase in ("mid", "late", "end"):
                 secs = int(min(d.respawn for d in carries))
                 who = " et ".join(d.name for d in carries[:2])
-                out.append(MacroCall("carries_dead", f"Leurs plus forts sont morts {secs} s ({who}) : poussez !",
+                out.append(MacroCall("carries_dead", f"{who} sont morts pour {secs} s : poussez une tour !",
                                      "POUSSEZ !", 85, True, None, "engage", t))
         # ---- Elder
         rem_el = remaining("elder")

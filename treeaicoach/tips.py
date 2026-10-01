@@ -2,7 +2,7 @@
 
 :data:`TIPS` holds concrete League of Legends advice in plain French, each written as
 "WHAT to do : WHY" in at most :data:`MAX_WORDS` words with live numbers and names
-("Joue prudemment sous ta tour : Darius a 2 niveaux d'avance", "Rentre acheter une balise rouge :
+("Joue prudemment sous ta tour : Darius a 2 niveaux d'avance", "Rentre acheter une balise de contrôle :
 dragon dans 70 s"). Each :class:`Tip` has a condition on a :class:`TipContext` (role, lane
 matchup, levels / gold / CS gaps, objective timers, wave, enemy jungler, enemies around me,
 deaths, gold, base...), a priority (urgency), a tone (HUD accent colour), the confidence of its
@@ -327,11 +327,11 @@ TIPS: tuple[Tip, ...] = (
     # ------------------------------------------------------------------ enemy jungler
     T("jg_coming", "jungle", "Reste près de ta tour : {jg} rôde {jg_last}",
       lambda c: c.jg_last_side == c.lane and c.lane in ("top", "bot") and c.jg_hidden_s is not None
-      and c.jg_hidden_s < 40 and not c.jg_dead, roles=LANERS, prio=4, tone="warning", conf=MAP,
+      and c.jg_hidden_s < 40 and not c.jg_dead and c.gt >= 150, roles=LANERS, prio=4, tone="warning", conf=MAP,
       cooldown=90.0, ttl=12.0),
     T("jg_far", "jungle", "Mets la pression sur {opp} : {jg} est loin, {jg_last}",
       lambda c: c.jg_last_side in ("top", "bot") and c.lane in ("top", "bot", "mid")
-      and c.jg_last_side != c.lane and c.jg_hidden_s is not None and c.jg_hidden_s < 25
+      and c.jg_last_side != c.lane and c.jg_hidden_s is not None and c.jg_hidden_s < 25 and c.gt >= 150
       and not c.opp_dead and not c.jg_dead and (c.hp is None or c.hp >= 0.5),
       roles=LANERS, prio=3, tone="go", conf=MAP, cooldown=120.0, ttl=12.0),
     T("jg_unseen", "jungle", "Ne t'avance pas : {jg} invisible depuis {jg_h} s",
@@ -347,7 +347,7 @@ TIPS: tuple[Tip, ...] = (
     T("jg_dead_lane", "jungle", "Joue agressif : {jg} est mort, pas de gank",
       lambda c: c.jg_dead and c.early and not c.alive, roles=LANERS, prio=3, tone="go", cooldown=60.0, ttl=10.0),
     # ------------------------------------------------------------------ objectives
-    T("drag_buy", "objectives", "Rentre acheter une balise rouge : dragon dans {drag_s} s",
+    T("drag_buy", "objectives", "Rentre acheter une balise de contrôle : dragon dans {drag_s} s",
       lambda c: c.soon_within("dragon", 50, 100) and not c.has_control_ward and not c.in_base,
       roles=BOTSIDE, prio=4, tone="warning", ttl=15.0),
     T("drag_prio", "objectives", "Pousse ta vague puis va au dragon : apparition dans {drag_s} s",
@@ -388,7 +388,7 @@ TIPS: tuple[Tip, ...] = (
       prio=3, ttl=15.0),
     # TP for the fight on the OTHER side of the map (a top laner is already next to Baron / Herald)
     T("tp_obj", "macro", "Garde ta Téléportation pour le dragon : {drag_s} s",
-      lambda c: c.gt >= 600 and c.has_tp and c.soon_within("dragon", 10, 70), roles=("TOP",), prio=2, ttl=15.0),
+      lambda c: c.gt >= 600 and c.has_tp and c.soon_within("dragon", 10, 70), roles=("TOP",), prio=3, ttl=15.0),
     T("sup_obj_vision", "vision", "Va baliser {next_le} : apparition dans {next_s} s",
       lambda c: c.next_objective(90) is not None and (c.next_objective(90) or ("", 0))[1] >= 30,
       roles=("UTILITY",), prio=3, ttl=15.0),
@@ -443,7 +443,8 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.wave == "pushing" and c.gold >= 1100 and not c.in_base and not c.recall_said
       and c.my_objective(0, 50) is None, roles=CARRIES, prio=3, conf=MAP),
     T("wave_push_ward", "wave", "Balise la rivière : ta vague pousse, tu es exposé",
-      lambda c: c.wave == "pushing" and not c.jg_visible and c.early, roles=LANERS, prio=3, tone="warning",
+      lambda c: c.wave == "pushing" and not c.jg_visible and c.early and c.gt >= 150, roles=LANERS, prio=3,
+      tone="warning",
       conf=MAP),
     T("wave_pushed_in", "wave", "Prends les sbires sous ta tour : la vague revient",
       lambda c: c.wave == "pushed_in" and c.early, roles=LANERS, prio=2, conf=MAP),
@@ -455,7 +456,7 @@ TIPS: tuple[Tip, ...] = (
     # ------------------------------------------------------------------ vision
     T("vis_river", "vision", "Pose ta balise dans la rivière : premier gank vers 3:00",
       lambda c: 60 <= c.gt <= 150, roles=LANERS, prio=2),
-    T("vis_control_base", "vision", "Achète une balise rouge (75 or) : elle révèle leurs balises",
+    T("vis_control_base", "vision", "Achète une balise de contrôle (75 or) : elle révèle leurs balises",
       lambda c: c.in_base and not c.has_control_ward and c.gt >= 240, prio=3),
     T("vis_sweeper", "vision", "Passe au Balayeur : il enlève leurs balises avant les objectifs",
       lambda c: c.gt >= 600 and SWEEPER not in c.items and c.in_base, roles=("UTILITY", "JUNGLE"), prio=3),

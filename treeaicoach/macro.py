@@ -84,6 +84,7 @@ LANE_FR = {"top": "top", "mid": "mid", "bot": "bot"}
 SIDE_FR = {"top": "en haut", "mid": "au milieu", "bot": "en bas"}
 OBJ_LE = {"baron": "le Baron", "dragon": "le dragon", "elder": "l'ancestral", "herald": "le Héraut",
           "grubs": "les larves", "atakhan": "Atakhan"}
+OBJ_AUX = {"herald": "au Héraut", "grubs": "aux larves", "dragon": "au dragon", "baron": "au Baron"}
 OBJ_TITLE = {"baron": "BARON !", "dragon": "DRAGON !", "elder": "ANCESTRAL !", "herald": "HÉRAUT !",
              "grubs": "LARVES !", "atakhan": "ATAKHAN !"}
 DRAGON_UV = (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1])
@@ -783,7 +784,8 @@ def _rule_plates(ctx: MacroCtx) -> GeniusCall | None:
         text = f"Frappe la tour ({_secs(window)} s) : {who} {verb}." if dead else f"Pousse et frappe la tour : {who} {verb}."
         why = "Une tour = de l'or pour toute l'équipe et la carte s'ouvre pour vous."
     if jg_unknown:
-        why = why + f" Leur jungler n'est pas visible : reste sur ta vague."
+        why = (f"{PLATE_GOLD} PO par plaque, mais leur jungler est invisible : recule s'il apparaît." if plates
+               else "Leur jungler est invisible : frappe avec ta vague, recule s'il apparaît.")
     risk = 0.0 if jl.dead else (0.2 if jl.conf < 0.3 else 0.0)
     score = _clamp(0.45 + window / 80.0 + (0.1 if plates else 0.0) - risk)
     return _call("plates", f"plates:{'-'.join(sorted(a for a in ctx.lane_opps))}:{int(ctx.gt // 20)}",
@@ -823,9 +825,9 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
             if _obj_up(ctx, key) and role in ("JUNGLE", "TOP", "MIDDLE"):
                 if role != "JUNGLE" and not _ally_jungler_alive(ctx):
                     break
-                verb = "Prends" if role == "JUNGLE" else "Aide ton jungler à prendre"
+                head = f"Prends {OBJ_LE[key]}" if role == "JUNGLE" else f"Aide ton jungler {OBJ_AUX[key]}"
                 return _call("cross_trade", f"cross:{key}:{int(ctx.gt // 60)}", OBJ_TITLE[key],
-                             f"{verb} {OBJ_LE[key]} maintenant : {who} {where}.",
+                             f"{head} maintenant : {who} {where}.",
                              f"Ils sont de l'autre côté : échange l'objectif au lieu de perdre un combat.",
                              BARON_UV, tier="high", score=_clamp(0.55 + 0.35 * conf + 0.1 * edge), priority=86,
                              color="safe", genius=True, life=18.0, label=OBJ_TITLE[key].rstrip(" !"),
@@ -1113,10 +1115,10 @@ def _rule_waves(ctx: MacroCtx) -> GeniusCall | None:
                          FOUNTAIN.get(ctx.my_team or ""), tier="basic", score=0.55 + (0.1 if gold_ok and low else 0.0),
                          priority=58, color="gold", life=15.0, label="BASE", factors=(why_gold, "vague poussée"))
         if state in ("even", "pushed_in") and meet < 0.55 and not low:   # low HP: never "push first"
-            extra = " (la vague du canon arrive : prends-la d'abord)" if cannon <= 20.0 else ""
+            extra = " Prends d'abord le canon." if cannon <= 20.0 else ""
             return _call("wave_recall", f"recall_push:{int(ctx.gt // 60)}", "POUSSE PUIS RENTRE",
                          "Pousse ta vague puis rentre.",
-                         f"{why_gold} ; rentrer avec la vague chez toi = des sbires perdus sous ta tour{extra}.",
+                         f"{why_gold} ; rentrer tout de suite = sbires perdus sous ta tour.{extra}",
                          lane_uv(lane, 0.65, ctx.my_team), tier="basic", score=0.45, priority=56, color="gold",
                          life=15.0, label="POUSSE", factors=(why_gold, f"canon dans {_secs(cannon)} s"))
     return None

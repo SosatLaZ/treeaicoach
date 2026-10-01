@@ -158,13 +158,15 @@ def test_safe_mode_no_gank_alerts_and_no_fog():
             assert list(eng.get_overlay_state().fogs) == []
     kinds = {a.kind for a in said}
     assert not kinds & (GANK_KINDS | {AlertKind.JUNGLER_SPOTTED, AlertKind.LANER_MIA})
-    assert AlertKind.OBJECTIVE_SOON in kinds
+    # V2 voice whitelist: the 60 s objective warning is WRITTEN (only the last one, if involved, is spoken)
+    assert AlertKind.OBJECTIVE_SOON in kinds or any(k == "objective_soon" for _t, k, _x in eng.text_messages)
     assert eng.fog_tracker is None or eng.fog_tracker.estimates() == []
 
 
 def test_demo_objective_and_fog(demo_run):
     kinds = {a.kind for _t, a in demo_run["alerts"]}
-    assert AlertKind.OBJECTIVE_SOON in kinds          # Herald at 15:00, announced at 14:00
+    written = {k for _t, k, _x in demo_run["engine"].text_messages}
+    assert AlertKind.OBJECTIVE_SOON in kinds or "objective_soon" in written   # Herald at 15:00, announced at 14:00
     hide = demo_run["src"].JUNGLER_HIDE_AT
     assert demo_run["fog_at"] is not None and hide < demo_run["fog_at"] < hide + 3.0
     st = demo_run["overlay_fog"]
@@ -423,7 +425,7 @@ def test_death_recap_spoken_two_seconds_later():
     rec = FakeRecorder()
     game_ref: dict[str, Any] = {"g": game_info(500.0)}
     eng, voice, clock = make_engine(ListSource([None], lambda t: game_ref["g"]), recorder_factory=lambda: rec,
-                                    cfg=Config(voice_level="normal"))   # "minimal": the recap is written
+                                    cfg=Config(voice_level="bavard"))   # V2: written below "bavard"
     kill = {"EventID": 5, "EventName": "ChampionKill", "EventTime": 501.0, "VictimName": "Moi#EUW",
             "KillerName": "LeeSin#T", "Assisters": []}
     spoken_at = None

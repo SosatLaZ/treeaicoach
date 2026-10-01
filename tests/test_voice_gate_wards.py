@@ -16,7 +16,7 @@ def A(kind, key, level=Level.INFO, text="x", alias=None):
 
 def test_concentration_rules_only_gank_and_fight_call_speak():
     g = vp.VoiceGate()
-    obj = A(AlertKind.OBJECTIVE_SOON, "objective_soon:dragon:60")
+    obj = A(AlertKind.OBJECTIVE_SOON, "objective_soon:dragon:20")   # V2: the last warning (<= 20 s) is the spoken one
     assert g.decide(obj, 0.0, vp.SpeechContext()) == "voice"
     for ctx in (vp.SpeechContext(in_fight=True), vp.SpeechContext(hp=0.2), vp.SpeechContext(enemies_near=2),
                 vp.SpeechContext(enemy_in_danger=True)):

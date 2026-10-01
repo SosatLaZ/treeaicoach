@@ -29,6 +29,8 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 SNAP_BEFORE_S = 4.0         # the map state this long before the death is used (positions at death are gone)
+EARLY_HP_S = 10.0           # "you stayed low" needs low health this long before too (not just the fight)
+DIVE_MIN = 4                # this many enemies on me on my side of the map: a dive, not my mistake
 LOW_HP = 0.35
 JUNGLER_SURPRISE_S = 15.0   # jungler unseen at least this long before he killed me
 CAUSE_DELAY_S = 4.0         # the line is shown this long after the death (after the recap)
@@ -48,6 +50,7 @@ class DeathSnapshot:
     jungler_involved: bool = False
     jungler_hidden_s: float | None = None
     hp: float | None = None            # my health 0..1 a few seconds before
+    hp_early: float | None = None      # my health ~10 s before (was I ALREADY low before the fight?)
     enemy_half: bool = False           # I was in the enemy half of the map
     missing: int = 0                   # enemies hidden after being seen recently
 
@@ -59,15 +62,19 @@ def classify_death(s: DeathSnapshot) -> tuple[str, str] | None:
             return "tower", "Tué par la tour : n'y va pas sans tes sbires"
         n = max(int(s.enemies_near), int(s.involved))
         al = max(1, int(s.allies_near))
-        if n >= 2 and n > al:
-            return "outnumbered", f"Mort à {n} contre {al} : recule dès qu'ils sont plus nombreux"
+        # V2 audit: a 4-5 man dive on my side is not a positioning mistake: no blame, one hint
+        if n >= DIVE_MIN and not s.enemy_half and n > al:
+            return "dive", f"Plongée à {n} contre {al} : rien à faire, sauf reculer plus tôt quand ils disparaissent"
+        # the jungler gank is the precise cause (before "2 contre 1", which is the same death)
         if s.jungler_involved and (s.jungler_hidden_s is None or s.jungler_hidden_s >= JUNGLER_SURPRISE_S):
             if s.enemy_half:
                 return "jungler", "Trop avancé sans voir leur jungler : reste près de ta tour"
             return "jungler", "Leur jungler t'a surpris : balise ta rivière quand ta vague pousse"
+        if n >= 2 and n > al:
+            return "outnumbered", f"Mort à {n} contre {al} : recule dès qu'ils sont plus nombreux"
         if s.killer_level_diff <= -2 and s.killer_name:
             return "outlevelled", f"{s.killer_name} avait {-s.killer_level_diff} niveaux de plus : évite ses échanges"
-        if s.hp is not None and s.hp < LOW_HP:
+        if s.hp is not None and s.hp < LOW_HP and (s.hp_early is None or s.hp_early < LOW_HP):
             return "low_hp", f"Tu es resté à {int(round(100 * s.hp / 5.0) * 5)} % de vie : rentre plus tôt"
         if s.enemy_half and s.missing >= 2:
             return "overextended", f"Trop avancé avec {s.missing} ennemis invisibles : recule quand ils disparaissent"
@@ -167,6 +174,11 @@ class DeathCoach:
                 snap = s
                 if s["gt"] <= gt - SNAP_BEFORE_S:
                     break
+        early = None
+        for s in reversed(self._hist):
+            if s["gt"] <= gt - EARLY_HP_S:
+                early = s
+                break
         me = game.me
         names = _names(me)
         ev = None
@@ -204,7 +216,8 @@ class DeathCoach:
             gt=gt, enemies_near=int(snap.get("enemies_near", 0)), allies_near=int(snap.get("allies_near", 1)),
             involved=involved, killer_kind=kind, killer_name=kname, killer_level_diff=kdiff,
             jungler_involved=jg_in, jungler_hidden_s=snap.get("jungler_hidden_s"),
-            hp=snap.get("hp"), enemy_half=bool(snap.get("enemy_half")), missing=int(snap.get("missing", 0)))
+            hp=snap.get("hp"), hp_early=early.get("hp") if early is not None else None,
+            enemy_half=bool(snap.get("enemy_half")), missing=int(snap.get("missing", 0)))
 
 
 __all__ = ["DeathSnapshot", "DeathCoach", "classify_death", "snapshot_from"]

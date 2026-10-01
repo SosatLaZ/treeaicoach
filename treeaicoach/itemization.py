@@ -407,6 +407,7 @@ def _owned_need(need: str, owned: set[int]) -> bool:
 
 
 CONTROL_WARD = 2055
+LEGENDARY_GOLD = 2200      # a completed legendary item (first-item rule)
 BOOTS = 1001
 #: tier-2 boots per need / class (enemy damage profile first, then the class default)
 BOOTS_VS = {"physical": 3047, "magic": 3111, "cc": 3111}
@@ -488,10 +489,18 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
             iid in items[o].parts for o in owned if o in items)
 
     choice: tuple[int, str, str] | None = None
+    # V2 audit: a full counter item (Rappel mortel, Force de la nature...) as the FIRST item breaks the
+    # build (no damage / no spike); before the first legendary only cheap counter components
+    # (Appel du bourreau, Orbe de l'oubli...) may come before the core item
+    first_done = any(o in items and items[o].gold >= LEGENDARY_GOLD and items[o].kind != "boots" for o in owned)
     for need, sev in sorted(prof.needs.items(), key=lambda kv: -kv[1]):
         if sev < NEED_MIN or _owned_need(need, owned):
             continue
+        fed_need = any(n in prof.fed for n in (prof.names.get(need) or []))   # a fed assassin: rushing is right
         for iid in NEED_ITEMS.get(need, {}).get(cls, ()):
+            if not first_done and not fed_need and iid in items and items[iid].gold >= LEGENDARY_GOLD \
+                    and not any(o in items[iid].parts for o in owned):
+                continue
             if usable(iid):
                 names = prof.names.get(need) or []
                 reason = REASONS[need].format(names=_join(names)) if names or need not in ("magic", "physical") else \
@@ -514,7 +523,17 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
             return None
         choice = (pick, "core", "")
     iid, need, reason = choice
+    # boots are bought before a component once the game is a few minutes old (V2 audit: 700 gold at
+    # 8:00 without boots went into a Cloak and the boots never fitted)
+    reserve = 0.0
+    gt = _f(getattr(game, "game_time", 0.0))
+    has_boots = any(o == BOOTS or (o in items and items[o].kind == "boots") for o in owned_list)
+    if not has_boots and BOOTS in items and gt >= BOOTS_GT and me.champion_alias not in NO_BOOTS \
+            and gold >= items[BOOTS].gold:
+        reserve = float(items[BOOTS].gold)
     buys, completes = plan_purchase(iid, owned_list, gold, items)
+    if reserve and not completes:                  # completing a legendary beats the boots
+        buys, completes = plan_purchase(iid, owned_list, gold - reserve, items)
     pool, spent = list(owned_list), 0
     for b in buys:
         p = list(pool)

@@ -990,6 +990,7 @@ class CoachEngine:
         # per-game advice state that lives on the engine (V2 audit: stale across games otherwise)
         self.macro_calls = []
         self.recent_plays = []
+        self._topic_t = {}
         self._hud_shown = None
         self._recall_topic_t = None
         self._tip_toast_t = -math.inf
@@ -1398,6 +1399,7 @@ class CoachEngine:
         if c is None:
             return
         self._text_msg = (t, c.text)
+        self._topic_seen(f"genie:{c.kind}", t)          # the call owns its topic: no toast repeats it
         self.text_messages.append((t, "genie", f"{c.text} ({c.why})"))
         del self.text_messages[:-100]
         self.macro_calls = (getattr(self, "macro_calls", []) + [(gt, c)])[-50:]
@@ -2009,6 +2011,7 @@ class CoachEngine:
             w = {"safe": 2.0, "danger": -2.0}.get(getattr(c, "color", ""), 0.0)
             return [(w, f"appel : {str(c.title).rstrip(' !').lower()}")] if w else []
         except Exception:
+            log.debug("macro gauge factor failed", exc_info=True)
             return []
 
     def _tip_consistency_fields(self, t: float) -> dict:
@@ -2026,6 +2029,7 @@ class CoachEngine:
             last = getattr(self, "_recall_topic_t", None)
             out["recall_said"] = last is not None and 0.0 <= t - last < self.RECALL_TOPIC_S
         except Exception:
+            log.debug("tip consistency failed", exc_info=True)
             pass
         return out
 
@@ -2049,6 +2053,7 @@ class CoachEngine:
                 keep.append(a)
             return keep
         except Exception:
+            log.debug("recall consistency failed", exc_info=True)
             return alerts
 
     def _coach_plus_tick(self, t: float, game: GameInfo, facts: dict, threat: int) -> Any:
@@ -2157,9 +2162,33 @@ class CoachEngine:
             self._hud_shown = (cand, now)
         return cand
 
+    def _topic_seen(self, key: str, t: float) -> bool:
+        """One toast per subject (voice_policy.topic_of): True when this topic was already shown in
+        the last TOPIC_TOAST_S seconds (the toast is then dropped; the HUD line still updates).
+        Danger / praise toasts are never deduplicated here. Records the topic otherwise."""
+        try:
+            from treeaicoach import voice_policy as vp
+
+            topic = vp.topic_of(key)
+            if topic is None:
+                return False
+            seen = getattr(self, "_topic_t", None)
+            if seen is None:
+                seen = self._topic_t = {}
+            last = seen.get(topic)
+            if last is not None and 0.0 <= t - last < vp.TOPIC_TOAST_S:
+                return True
+            seen[topic] = t
+            return False
+        except Exception:
+            log.debug("toast topic failed", exc_info=True)
+            return False
+
     def _toast(self, kind: str, title: str, subtitle: str, alias: str | None, key: str, t: float) -> None:
         q = self._toasts
         if q is None or not getattr(self._cfg, "toasts_enabled", True):
+            return
+        if kind not in ("danger", "praise") and self._topic_seen(key, t):
             return
         icon = None
         if alias:

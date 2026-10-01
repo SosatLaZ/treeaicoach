@@ -123,7 +123,11 @@ def test_rule_plan_cases():
     win = dict(snap, en=[{"c": "Zed", "rs": 35}, {"c": "Jinx", "rs": 28}, {"c": "Lux"}],
                objt=[["Baron", 0], ["Dragon", 0]])
     w = ai.rule_plan("comeback:carries_dead", win)
-    assert w["plan"].startswith("2 ennemis morts (Zed, Jinx) pendant 28 s : prends le Baron")
+    # V2 audit: 2 dead for 28 s is a dragon, not a Baron (walk + kill > 28 s)
+    assert w["plan"].startswith("2 ennemis morts (Zed, Jinx) pendant 28 s : prends le dragon")
+    win3 = dict(win, en=[{"c": "Zed", "rs": 35}, {"c": "Jinx", "rs": 38}, {"c": "Lux"}])
+    assert ai.rule_plan("comeback:carries_dead", win3)["plan"].startswith(
+        "2 ennemis morts (Zed, Jinx) pendant 35 s : prends le Baron")
     behind = {"me": {"r": "top"}, "diff": {"eq": -4200, "vs": "Darius"}, "jgl": "Vi vue en haut il y a 12 s",
               "objt": [["Héraut", 60]]}
     b = ai.rule_plan("comeback:gold", behind)

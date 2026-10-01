@@ -242,8 +242,17 @@ def test_missed_tower_window():
     sim.player("Darius").respawn_timer = 30.0
     for i in range(40):
         sim.gt = 1000.0 + i
-        step(pc, sim, my_lane="top", me_uv=(0.08, 0.35), jungler_uv=(0.85, 0.75), jungler_seen_ago=2.0)
+        step(pc, sim, my_lane="top", me_uv=(0.08, 0.35), jungler_uv=(0.85, 0.75), jungler_seen_ago=2.0,
+             waves={"top": {"state": "pushing"}})
     assert rules(pc) == [("miss", "missed_tower")]
+    # V2 audit: no wave of mine at their tower = not a free tower, no "occasion ratée"
+    pc, sim = start(PlayClassifier(Cfg()), gt=900.0)
+    sim.player("Darius").is_dead = True
+    sim.player("Darius").respawn_timer = 30.0
+    for i in range(40):
+        sim.gt = 1000.0 + i
+        step(pc, sim, my_lane="top", me_uv=(0.08, 0.35), jungler_uv=(0.85, 0.75), jungler_seen_ago=2.0)
+    assert rules(pc) == []
 
 
 def test_rate_limit_fight_hold_and_small_brilliant():
@@ -334,7 +343,7 @@ def test_missed_tower_with_jungle_intel():
     sim.player("Darius").respawn_timer = 30.0
     for i in range(40):
         sim.gt = 1000.0 + i
-        step(pc, sim, my_lane="top", me_uv=(0.08, 0.35), jungler_far=True)
+        step(pc, sim, my_lane="top", me_uv=(0.08, 0.35), jungler_far=True, waves={"top": {"state": "pushing"}})
     assert rules(pc) == [("miss", "missed_tower")]
 
 

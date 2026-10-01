@@ -295,9 +295,9 @@ class WardAdvisor:
         if t - self._last_text_t >= REMIND_GAP_S or reason == "objective":
             best = picks[0]
             if reason == "objective" and obj is not None:
-                name = {"dragon": "dragon", "elder": "dragon ancestral", "baron": "Baron", "herald": "Héraut",
-                        "grubs": "larves"}.get(obj[0], obj[0])
-                text = f"Avant le {name} : balise {best.label}"
+                name = {"dragon": "le dragon", "elder": "l'ancestral", "baron": "le Baron", "herald": "le Héraut",
+                        "grubs": "les larves", "atakhan": "Atakhan"}.get(obj[0], "l'objectif")
+                text = f"Avant {name} : balise {best.label}"
                 if has_control and best.spot.control:
                     text += " (ta balise de contrôle)"
                 text += "."

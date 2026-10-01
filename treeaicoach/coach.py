@@ -158,7 +158,7 @@ PITS: dict[str, tuple[tuple[float, float], str] | None] = {
     "baron": (_BARON_PIT, "top"), "herald": (_BARON_PIT, "top"), "grubs": (_BARON_PIT, "top"),
     "atakhan": None,
 }
-_WINDOW_NAMES = {"dragon": "le dragon", "elder": "l'ancestral", "baron": "Baron", "herald": "le Héraut",
+_WINDOW_NAMES = {"dragon": "le dragon", "elder": "l'ancestral", "baron": "le Baron", "herald": "le Héraut",
                  "grubs": "les larves"}
 #: Turret positions (game units) per team (outer / inner / inhibitor turrets).
 _TURRETS_GAME: dict[str, tuple[tuple[int, int], ...]] = {
@@ -457,7 +457,7 @@ class MapCoach:
                     if p is not None:
                         allies_vis.append((tr, p))
             except Exception:
-                pass
+                log.debug("MapCoach: allies unavailable", exc_info=True)
         jalias = None
         try:
             if roles is not None and hasattr(roles, "enemy_jungler"):
@@ -721,7 +721,31 @@ class MapCoach:
             return []
         if state == "numbers_bad":
             return [(state, f"{en} contre {al} autour de toi, recule.")]
+        # "3 contre 1 VISIBLE" is a trap when the others are unseen or I am low (V2 audit)
+        hp = self._my_hp(ctx)
+        unseen = sum(1 for tr in ctx.enemies_all
+                     if not getattr(tr, "visible", False) and getattr(tr, "alias", None)
+                     and str(tr.alias).lower() not in ctx.dead_enemies
+                     and 0.0 <= ctx.t - float(getattr(tr, "last_seen", ctx.t)) <= MISSING_RECENT_S)
+        if unseen >= 2 or (hp is not None and hp < 0.5):
+            return []
         return [(state, f"{al} contre {en} autour de toi : bon moment pour attaquer.")]
+
+    @staticmethod
+    def _my_hp(ctx: _Ctx) -> float | None:
+        stats = getattr(ctx.game, "champion_stats", None) or {}
+        cur, mx = _finite(stats.get("currentHealth")), _finite(stats.get("maxHealth"))
+        return max(0.0, min(1.0, cur / mx)) if cur is not None and mx else None
+
+    def _jungler_far_or_dead(self, ctx: _Ctx) -> bool:
+        """Their jungler is dead, or seen in the last 15 s far from me: the lane is safe to push."""
+        if ctx.jungler_alias and str(ctx.jungler_alias).lower() in ctx.dead_enemies:
+            return True
+        tr = ctx.jungler
+        pos = _track_pos(tr) if tr is not None else None
+        hidden = ctx.jungler_hidden_s
+        return (pos is not None and ctx.me_pos is not None and hidden is not None and hidden <= 15.0
+                and geometry.dist(pos, ctx.me_pos) > 0.45)
 
     def _in_my_base(self, ctx: _Ctx) -> bool:
         z = ctx.my_zone
@@ -818,8 +842,11 @@ class MapCoach:
                 if not getattr(s, "alive", False) or pit is None or kind not in _WINDOW_NAMES:
                     continue
                 (pu, pv), side = pit
-                far = [p for _tr, p in ctx.enemies_vis if geometry.dist(p, (pu, pv)) > WINDOW_FAR]
-                if len(far) >= 4:
+                far_tr = [(tr, p) for tr, p in ctx.enemies_vis if geometry.dist(p, (pu, pv)) > WINDOW_FAR]
+                far = [p for _tr, p in far_tr]
+                jg_far = not ctx.jungler_alias or str(ctx.jungler_alias).lower() in ctx.dead_enemies or any(
+                    str(getattr(tr, "alias", "") or "").lower() == str(ctx.jungler_alias).lower() for tr, _p in far_tr)
+                if len(far) >= 4 and jg_far:          # their jungler must be among them (smite steal)
                     sides = [map_side(*p) for p in far]
                     where = SIDE_FR.get(max(set(sides), key=sides.count), "loin")
                     name = str(getattr(s, "name", "") or "Objectif")
@@ -976,8 +1003,12 @@ class MapCoach:
         in_my_lane = ctx.my_lane is not None and ctx.my_lane == (ctx.role_lane or ctx.my_lane)
         if lw is None or not in_my_lane or lw.meet is None:
             return out
-        if lw.state == "pushing" and lw.meet >= WAVE_PUSH_S and lw.ally >= 3:
-            out.append(("wave_push", "Ta vague pousse vers leur tour : bon moment pour rentrer après l'avoir poussée."))
+        gold = _finite(getattr(ctx.game, "current_gold", None)) or 0.0
+        hp = self._my_hp(ctx)
+        if lw.state == "pushing" and lw.meet >= WAVE_PUSH_S and lw.ally >= 3 and ctx.gt >= 180 \
+                and ctx.my_role != "UTILITY" and (gold >= 900 or (hp is not None and hp < 0.5)):
+            # a recall with nothing to buy (1:40, 300 gold) is not "a good moment"
+            out.append(("wave_push", "Ta vague pousse vers leur tour : finis-la puis rentre."))
         elif lw.state == "pushed_in" and lw.meet <= WAVE_BACK_S and lw.enemy >= 3 and lw.enemy >= lw.ally + 2:
             out.append(("wave_back", "La vague revient vers toi : attends-la sous ta tour."))
         return out
@@ -1025,8 +1056,11 @@ class MapCoach:
             who = "Tes deux adversaires ont"
         else:
             who = f"{gone[0][0]} a"
-        tail = ("pousse et prends des plaques, préviens ton équipe" if plates
-                else "pousse ta vague, préviens ton équipe")
+        if self._jungler_far_or_dead(ctx):
+            tail = ("pousse et prends des plaques, préviens ton équipe" if plates
+                    else "pousse ta vague, préviens ton équipe")
+        else:                       # he may wait in a bush with his jungler: never "push" blind
+            tail = "préviens ton équipe et ne t'avance pas sans le voir"
         return [("lane_left", f"{who} quitté la voie : {tail}.")]
 
     def _bot_pair(self, ctx: _Ctx) -> list[Any]:
@@ -1054,6 +1088,9 @@ class MapCoach:
 
     def _rule_bot_missing(self, ctx: _Ctx) -> list[tuple[str, str]]:
         if ctx.dead or ctx.gt < LANE_RULES_MIN_GT or ctx.role_lane == "bot" or ctx.me_pos is None:
+            return []
+        # laning phase: a missing bot duo threatens the mid lane and the jungle, not the top laner
+        if ctx.gt < PLATES_END_GT and ctx.my_role not in ("MIDDLE", "JUNGLE", None):
             return []
         pair = self._bot_pair(ctx)
         if len(pair) != 2 or any(self._gone(ctx, tr, "bot") is None for tr in pair):
@@ -1195,15 +1232,24 @@ class MapCoach:
             if not any(0.0 < self._respawn(ctx, a) < 6.0 for a in dead_opps):   # not respawning now
                 who = " et ".join(names)
                 verb = "sont morts" if len(names) > 1 else "est mort"
-                tail = "pousse ta vague et prends des plaques" if plates else "pousse ta vague et prends la tour"
+                if ctx.my_role == "UTILITY":
+                    tail = "aide ton tireur à pousser et à frapper la tour"
+                else:
+                    tail = "pousse ta vague et prends des plaques" if plates else "pousse ta vague et prends la tour"
                 out.append(("lane_dead", f"{who} {verb} : {tail}."))
         if self._dead_targets(ctx, "jungler_dead"):
             states = {str(getattr(s, "key", "") or ""): s for s in ctx.objectives}
             target = None
+            n_dead = len(ctx.dead_enemies)
+            jg_resp = self._respawn(ctx, str(ctx.jungler_alias).lower()) if ctx.jungler_alias else 0.0
             for key in ("baron", "elder", "dragon", "herald", "grubs", "atakhan"):
                 s = states.get(key)
                 if s is None:
                     continue
+                if key in ("baron", "elder") and n_dead < 2:
+                    continue                                # their jungler alone dead: no Baron / Elder call
+                if 0.0 < jg_resp < 20.0:
+                    break                                   # he is back before anything is taken
                 rem = None if getattr(s, "alive", False) else self._remaining(s, ctx.gt)
                 if getattr(s, "alive", False) or (rem is not None and rem <= 20):
                     target = _WINDOW_NAMES.get(key) or str(getattr(s, "name", "") or "")
@@ -1251,9 +1297,11 @@ class MapCoach:
             n_leg = len(major_items(getattr(me, "items", None) or []))
         except Exception:
             n_leg = 0
-        if self._legendaries is not None and n_leg >= 1 and self._legendaries == 0 and not self._first_item_done:
-            out.append(("first_item", "Premier objet complet : tu es plus fort, cherche un combat "
-                                      "maintenant."))
+        diff1, _opp1 = self._level_diff(ctx)
+        if self._legendaries is not None and n_leg >= 1 and self._legendaries == 0 and not self._first_item_done \
+                and diff1 >= 0:
+            # a first item is a spike, not a licence to fight a laner who has levels on you
+            out.append(("first_item", "Premier objet complet : tu es plus fort, cherche un échange."))
         self._legendaries = n_leg
         # -- recall timing: enough gold to complete the next item
         gold = _finite(getattr(ctx.game, "current_gold", None)) or 0.0
@@ -1273,10 +1321,11 @@ class MapCoach:
                                                "ta vague est poussée."))
         # -- freeze when ahead (laning)
         diff, opp = self._level_diff(ctx)
-        if (laner and in_lane and ctx.gt < PLATES_END_GT and lw is not None and lw.state == "pushed_in"
-                and diff >= 1 and opp):
-            out.append(("freeze", f"Tu es en avance sur {opp} : garde la vague devant ta tour, il devra "
-                                  "s'avancer pour la prendre."))
+        if (ctx.my_role in ("TOP", "BOTTOM") and in_lane and ctx.gt < PLATES_END_GT and lw is not None
+                and lw.state == "pushed_in" and diff >= 1 and opp):
+            # a support does not hold the wave, and a mid lane is too short to freeze
+            out.append(("freeze", f"Tu es en avance sur {opp} : garde la vague devant ta tour (dernier coup "
+                                  "seulement), il devra s'avancer."))
         # -- crash the wave, then roam (mid / support)
         jg = ctx.jungler
         jside = map_side(*_track_pos(jg)) if jg is not None and getattr(jg, "visible", False) and _track_pos(jg) else None
@@ -1294,16 +1343,20 @@ class MapCoach:
             if ident not in self._obj_wave_done and near_side is not None and (
                     ctx.role_lane == near_side[1] or ctx.my_role == "MIDDLE"):
                 name = str(getattr(s_obj, "name", "") or "Objectif")
-                out.append(("objective_wave", f"{name} dans {int(round(rem / 5) * 5)} s : pousse ta vague maintenant "
-                                              "pour arriver le premier à la rivière."))
+                out.append(("objective_wave", f"{name} dans {int(round(rem / 5) * 5)} s : pousse ta vague pour "
+                                              "arriver le premier."))
         # -- picks -> Baron (2-3 enemies dead for long; an ace is handled by phase.EndGameCaller)
         states = {str(getattr(o, "key", "") or ""): o for o in ctx.objectives}
         baron = states.get("baron")
         if baron is not None and getattr(baron, "alive", False) and ctx.gt >= 1200:
+            # V2 audit: 20 s was a throw (walk + kill); 35 s, and never while we are as many down
             long_dead = [p for p in getattr(ctx.game, "enemies", None) or []
-                         if bool(getattr(p, "is_dead", False)) and (_finite(getattr(p, "respawn_timer", 0)) or 0) >= 20]
-            if 2 <= len(long_dead) <= 3:
-                out.append(("baron_pick", f"{len(long_dead)} ennemis morts pour 20 s et plus : Baron possible "
+                         if bool(getattr(p, "is_dead", False)) and (_finite(getattr(p, "respawn_timer", 0)) or 0) >= 35]
+            allies_dead = sum(1 for p in [ctx.me_player] + list(getattr(ctx.game, "allies", None) or [])
+                              if p is not None and bool(getattr(p, "is_dead", False)))
+            if 2 <= len(long_dead) <= 3 and len(long_dead) - allies_dead >= 2:
+                secs = int(min(_finite(getattr(p, "respawn_timer", 0)) or 0 for p in long_dead))
+                out.append(("baron_pick", f"{len(long_dead)} ennemis morts pour {secs} s : Baron possible "
                                           "si vous êtes au moins 4 autour."))
         return out
 

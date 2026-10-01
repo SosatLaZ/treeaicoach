@@ -273,9 +273,12 @@ def swing_phrase(p: float, prev: float, style: str) -> str:
         if up:
             return f"Retournement de situation ! Probabilité de victoire : {pct} pour cent !"
         return f"La partie bascule : {pct} pour cent de chances de victoire. Rien n'est joué, on reste groupés !"
-    if up:
+    # the advice follows the LEVEL, not the direction of the swing ("50 % : l'avantage est pour nous" was wrong)
+    if pct >= 55:
         return f"Probabilité de victoire : {pct} pour cent. L'avantage est pour nous, on joue les objectifs."
-    return f"Probabilité de victoire : {pct} pour cent. On joue prudent et on attend une erreur adverse."
+    if pct <= 45:
+        return f"Probabilité de victoire : {pct} pour cent. On joue prudent et on attend une erreur adverse."
+    return f"Probabilité de victoire : {pct} pour cent. Partie serrée : on reste groupés autour des objectifs."
 
 
 # ======================================================================================

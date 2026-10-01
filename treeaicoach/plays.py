@@ -87,6 +87,10 @@ TTL_S: dict[str, float] = {"brilliant": 40.0, "blunder": 45.0, "mistake": 45.0, 
 DEFAULT_TTL_S = 30.0
 QUIET_AFTER_FIGHT_S = 2.0      # big badges wait this long after a fight / gank threat
 WARNING_DEATH_S = 12.0         # death this soon after a gank warning = ignored warning
+REACTION_S = 3.0               # ...but only if the warning came at least this long before the death
+DIVE_INVOLVED = 4              # this many enemies in my kill (a dive / a lost 5v5): never my blunder
+TRADE_WINDOW_S = 10.0          # my team killed 2+ enemies this recently: a trade, not a thrown shutdown
+FULL_BUILD_ITEMS = 6           # a full build keeps gold: dying with it is no mistake
 RETREAT_DEATH_S = 8.0
 FOG_DEATH_S = 6.0              # fog circle of the jungler on me this recently before the death
 GOLD_MISTAKE = 1300
@@ -267,6 +271,7 @@ class PlayClassifier:
             self._gold_alive = 0.0
             self._hp_alive = 1.0
             self._warn_t = -math.inf
+            self._warn_start = -math.inf        # start of the current gank warning episode
             self._retreat_t = -math.inf
             self._fog_near_t = -math.inf
             self._danger: dict[str, Any] | None = None   # current DANGER gank episode
@@ -278,6 +283,7 @@ class PlayClassifier:
             self._miss: dict[str, dict[str, Any]] = {}   # objective key -> open window
             self._tower: dict[str, Any] | None = None    # open "tower to take" window
             self._tower_done: set[Any] = set()
+            self._struct_t = -math.inf                   # last enemy tower / inhibitor my team took
             self._deaths_near: list[tuple[float, int]] = []   # (t, enemies near me)
 
     def history(self) -> list[Play]:
@@ -316,6 +322,8 @@ class PlayClassifier:
         t = float(ctx.t)
         dead = bool(getattr(me, "is_dead", False))
         if ctx.threat >= 1:
+            if self._warn_t < t - 2.0 and not ctx.in_fight:     # a new warning episode (not a fight)
+                self._warn_start = t
             self._warn_t = t
         if ctx.in_fight or ctx.threat >= 1:
             self._last_quiet_t = t
@@ -453,6 +461,11 @@ class PlayClassifier:
                 owner = "ORDER" if "_T1_" in struct else "CHAOS" if "_T2_" in struct else None
                 if owner is not None and owner != my_team:
                     self._tower["taken"] = True
+            if name in ("TurretKilled", "InhibKilled"):
+                struct = str(e.get("TurretKilled") or e.get("InhibKilled") or "")
+                owner = "ORDER" if "_T1_" in struct else "CHAOS" if "_T2_" in struct else None
+                if owner is not None and owner != my_team:
+                    self._struct_t = float(ctx.t)
 
     @staticmethod
     def _streak(events: list[dict], kill: dict, names: set[str]) -> int:
@@ -524,26 +537,54 @@ class PlayClassifier:
         jungler = ctx.game.enemy_jungler() if hasattr(ctx.game, "enemy_jungler") else None
         involved = [p for p in [killer] + helpers if p is not None]
         jungler_in = jungler is not None and any(p.champion_alias == jungler.champion_alias for p in involved)
-        if streak >= 3:
+        # V2 audit: never blame the player for what was out of his hands
+        if len(involved) >= DIVE_INVOLVED:
+            return                                   # 4-5 enemies on me: a dive / a lost teamfight
+        T_death = _f(e.get("EventTime"))
+        traded = self._team_kills_since(events, ctx.game, T_death - TRADE_WINDOW_S, T_death + 2.0)
+        items = [i for i in (getattr(me, "items", None) or []) if isinstance(i, int) and i not in (3340, 3363, 3364)]
+        full_build = len(items) >= FULL_BUILD_ITEMS
+        warned = (self._warn_start > -math.inf and self._warn_start >= t - WARNING_DEATH_S
+                  and t - self._warn_start >= REACTION_S)
+        if streak >= 3 and traded >= 2:
+            self._play(ctx, "inaccuracy", "shutdown_traded", f"Shutdown donné à {kname}, mais ton équipe a "
+                       f"pris {traded} kills.", key, kalias)
+        elif streak >= 3:
             self._play(ctx, "blunder", "shutdown_given", f"Shutdown donné à {kname} : ta prime de {streak} "
                        "kills est partie.", key, kalias)
-        elif t - self._warn_t <= WARNING_DEATH_S and self._warn_t > -math.inf:
-            ago = max(1, int(round(t - self._warn_t)))
+        elif warned:
+            ago = max(1, int(round(t - self._warn_start)))
             self._play(ctx, "blunder", "death_after_warning", f"Mort {ago} s après l'alerte de gank : "
                        "recule dès l'annonce.", key, kalias)
         elif jungler_in and t - self._fog_near_t <= FOG_DEATH_S:
             self._play(ctx, "blunder", "facecheck", f"Mort dans le brouillard : le cercle de "
                        f"{jungler.champion_name} était sur toi.", key, jungler.champion_alias)
-        elif gold >= GOLD_BLUNDER:
+        elif gold >= GOLD_BLUNDER and not full_build:
             self._play(ctx, "blunder", "death_gold", f"Mort avec {fmt_gold(gold)} non dépensés.", key, kalias)
         elif t - self._retreat_t <= RETREAT_DEATH_S:
             self._play(ctx, "mistake", "death_after_retreat", "Mort après l'appel RECULE.", key, kalias)
-        elif gold >= GOLD_MISTAKE:
+        elif gold >= GOLD_MISTAKE and not full_build:
             self._play(ctx, "mistake", "death_gold", f"Mort avec {fmt_gold(gold)} non dépensés.", key, kalias)
         else:
             n = len(involved)
             why = f"Mort face à {kname}" + (f" et {n - 1} autre{'s' if n > 2 else ''}" if n > 1 else "") + "."
             self._play(ctx, "inaccuracy", "death", why, key, kalias)
+
+    @staticmethod
+    def _team_kills_since(events: list[dict], game: Any, t0: float, t1: float) -> int:
+        """Enemy champions killed (by my team) with an event time in [t0, t1]."""
+        foes: set[str] = set()
+        for p in getattr(game, "enemies", None) or []:
+            foes |= _names(p)
+        n = 0
+        for ev in events:
+            if ev.get("EventName") != "ChampionKill":
+                continue
+            T = _f(ev.get("EventTime"), -1.0)
+            v = str(ev.get("VictimName") or "").strip().casefold()
+            if t0 <= T <= t1 and (v in foes or v.split("#", 1)[0] in foes):
+                n += 1
+        return n
 
     def _objective(self, ctx: PlayContext, me: Any, e: dict, name: str, ours: bool | None,
                    participated: bool, eid: Any) -> None:
@@ -642,7 +683,8 @@ class PlayClassifier:
                 win["best"] = max(win["best"], a - e)
                 continue
             self._miss.pop(okey)
-            if not win.get("taken") and win["last"] - win["start"] >= MISS_MIN_WINDOW_S:
+            traded = win["start"] <= self._struct_t <= win["last"] + 10.0     # we took a tower instead
+            if not win.get("taken") and not traded and win["last"] - win["start"] >= MISS_MIN_WINDOW_S:
                 oname = OBJ_NAME.get(okey, "Objectif")
                 self._play(ctx, "miss", "missed_objective", f"{oname} disponible avec {win['best']} joueurs "
                            "de plus : personne n'y est allé.", f"miss:{okey}:{int(win['start'])}")
@@ -683,6 +725,8 @@ class PlayClassifier:
             lane_now = None
         if lane_now != ctx.my_lane:
             return
+        if t - self._wave_push_t.get(ctx.my_lane, -math.inf) > WAVE_MEMORY_S:
+            return                                    # no wave of mine at their tower: not a free tower
         self._tower_done.add(sig)
         self._tower = {"start": t, "opp": opp.champion_name or opp.champion_alias, "alias": opp.champion_alias,
                        "taken": False}

@@ -703,8 +703,9 @@ fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; ic�
   regroupement) + score par phase ; `analysis._positioning` / section « Positionnement » du rapport.
 * `wards.py` : table des emplacements de balises (coordonnées minimap, côté bleu, miroir pour le rouge, vérifiées sur la
   texture) ; `recommend()` (1-3 spots) ; `WardAdvisor` (après un retour, toutes les ~2,5 min, avant un objectif).
-* `voice_policy.VoiceGate` : LA porte unique de la voix (visuel d'abord) : en « minimal » seuls le gank réel, la décision de
-  combat (`call:`) et un avertissement d'objectif sont dits ; règles de concentration (combat, PV bas, ennemis sur moi) ;
+* `voice_policy.VoiceGate` : LA porte unique de la voix (visuel d'abord) : **liste blanche V2** (§16) : gank réel,
+  RECULE (`call:retreat`, seule voix pendant un combat), F9, objectif ≤ 20 s si je suis concerné ; « normal » + l'appel
+  chiffré d'après-combat ; tout le reste est écrit ; règles de concentration (combat, PV bas, ennemis sur moi) ;
   `SpeechBudget` (1 message / 20 s, 3 / min, file à expiration) ; `triage_gank` (groupé, derrière mes alliés, opportunité ;
   un gank DANGER sur moi hors combat n'est jamais retardé).
 * `tactics.TacticalDirector` : relie le tout pour `engine.py` (`_tactics_tick`, `_speech_budget`) ; guides minimap
@@ -842,7 +843,7 @@ Tout est **visuel** (ligne du HUD via `TipRotator`, toasts), jamais dit à voix 
 * Visuel : flèche minimap `MapGuide("genie", label « VA ICI » / « TOUR » …)`, grande bannière (`title` + `why`), ligne
   HUD tenue tant que l'appel est actif (`engine._hud_line`), badge « COUP DE GÉNIE » (classe `brilliant` de
   `fx_overlay.PlayFx`, hors précision des coups notés) pour les appels `genius` de score ≥ 0,6, 1 / 4 min par type.
-  Jamais de voix. Les conseils écrits redondants de `coach.MapCoach` sont retirés autour d'un appel
+  Pas de voix (sauf `fight_won` en « normal », §16). Les conseils écrits redondants de `coach.MapCoach` sont retirés autour d'un appel
   (`OVERLAPS`, `TacticalDirector.drop_overlaps`). `engine.macro_calls` : historique ; `ai_advisor` reçoit l'appel actif
   (`snap["genie"]`) et `rule_plan` (plan hors ligne) le reprend en priorité.
 * Achats (`itemization.situational_buys`) : avec l'or restant après le chemin d'objet, bottes (≥ 7:00), bottes de
@@ -850,3 +851,57 @@ Tout est **visuel** (ligne du HUD via `TipRotator`, toasts), jamais dit à voix 
   jungle ou après 15:00) → `Recommendation.extras` + `buy_text` ; toujours 1 conseil par passage en base.
 * Mesure : `python -m treeaicoach.coach_sim --level debutant` affiche « COUPS DE GÉNIE : n appels (x / min) » et chaque
   appel avec son POURQUOI ; `tests/test_macro.py` (états scriptés + partie simulée débutant / expert).
+
+## 15. Détection v5 — piles d'icônes, mon icône, trajet du jungler, robustesse, coût
+
+* **Piles** (`roster_matcher._stack_search`, étape 5b) : un champion suivi il y a < 3 s dont la position prédite
+  touche une icône acceptée est cherché DESSOUS : l'arc visible de son anneau (couleur de son camp, hors des disques
+  des icônes du dessus + leur halo mesuré côté opposé) est ajusté au rayon connu ; la partie visible du portrait
+  (NCC masquée) ne doit pas le contredire (seuil croissant avec la surface visible). `MatchInfo.reason == "stacked"`.
+  `RosterMatcher.stack_search` (défaut True). Une pile jamais vue séparée (départ de la fontaine) reste une limite.
+* **Moi** : `CameraLock` (caméra verrouillée = mes correspondances fortes tombent sur le point caméra 4 images de
+  suite) → ma position = point caméra + décalage appris quand mon icône n'est pas trouvée (≤ 6 s sans
+  confirmation, annulé si le rectangle saute plus vite qu'un champion) ; `reason == "camlock"`.
+  `self_icon.ring_candidates` : un anneau turquoise (contour « moi », `SELF_OUTLINE_MIN`) est toujours vérifié, même
+  hors du budget des disques pleins (icône cyan perso, caméra libre).
+* **`jungle_path.py`** (`JunglePathModel`, possédé par `JungleIntelTracker.path`) : routes standard du début de
+  partie (4 full clears, 6 chemins niveau 3 + gank, crabe à 3:30) × allure × décalage ; vraisemblance des
+  apparitions, des hausses de CS (Tab), achat / mort = modèle coupé ; `heat(gt, region)` = carte de probabilité
+  (somme 1 sur la région du brouillard, 15 % uniforme). `FogEstimate.heat` (None = uniforme) via
+  `FogTracker.heat_source` (`fog_active` garde l'estimation du jungler au-delà de `fog_max_s` tant que le modèle est
+  informatif, confiance 0,2) ; ancre « start » à sa fontaine en début de partie. `overlay_render` peint la chaleur
+  (radar + couche minimap) au lieu du remplissage uniforme.
+* **Robustesse** : minimap grisée (filtre de mort, capture désaturée) → NCC luminance seule + test du dessin de
+  l'anneau (`GREY_*`), `MinimapLocator.verify` en luminance seule (pas de relocalisation en boucle) ; minimap
+  masquée (boutique, tableau des scores : `verify` < seuil) → aucune détection sur ces images
+  (`MSG_MINIMAP_COVERED`), reprise à la première vérification bonne (vérifiée à chaque image tant qu'elle est
+  mauvaise) ; mode non Faille → message avec la carte détectée (ARAM, Arène…). Daltonien : couleurs exactes non
+  confirmées publiquement → pas de valeurs codées en dur, les couleurs d'anneau restent apprises en direct.
+* **Coût** : porte de changement (`_changed` : différence d'image ouverte à 0,3 × diamètre, hors champions suivis)
+  → les champions perdus ne sont cherchés sur toute la carte que si une icône est apparue ou toutes les
+  `LOST_EVERY` images ; recherche complète par moitié de roster toutes les 12 images ; recalibrage sur
+  correspondances faibles étroit (±12 %) et au plus toutes les 30 s ; échelle mémorisée → confirmation étroite ;
+  détecteur ONNX d'appoint toutes les 4 images (ou sur changement) ; `cv2.setNumThreads(2)` ; `Track.copy` sans
+  `dataclasses.replace`.
+
+## 16. V2 — audit pro des conseils, liste blanche de la voix, cohérence entre systèmes
+
+* **Liste blanche de la voix** (`voice_policy.route` / `VoiceGate.decide`, même liste à tous les niveaux) :
+  1. alertes de gank après tri (`triage_gank`) ; 2. RECULE (`call:retreat`) — « Attaque ! » n'est jamais dit (bannière) ;
+  3. réponse F9 ; 4. objectif à ≤ `OBJECTIVE_VOICE_MAX_LEAD_S` (20 s) **si je suis concerné** (`objective_involved` :
+  rôle, ou près de la fosse ; Baron / ancestral pour tous après 20:00). `voice_level="normal"` (préréglage débutant)
+  ajoute l'appel chiffré d'après-combat (`urgent:ace:` de `EndGameCaller`, `urgent:genie:` = `macro` `fight_won`) ;
+  `"bavard"` ajoute tout le reste. Jamais pendant un combat sauf RECULE. `SpeechContext` porte `role`, `me_uv`, `gt`.
+* **Pas de doublon voix / texte** : `VOICE_ONLY_PREFIXES` (`urgent:genie:`, `call:engage`, `stance:`, `hype:swing:`) =
+  doublons d'un visuel déjà à l'écran (bannière, jauge, % de victoire) : abandonnés quand ils ne sont pas dits.
+* **Un toast par sujet** (`voice_policy.topic_of`, `TOPIC_TOAST_S` = 40 s ; `engine._topic_seen`) : retour en base,
+  adversaire mort, jungler mort, objectif, position du jungler, sbires, niveaux, adversaire disparu, nombre ; un appel
+  macro réserve son sujet. La ligne HUD continue d'être mise à jour.
+* **Cohérence** : l'appel macro actif entre dans la jauge (`engine._macro_factors`, ±2) ; une jauge SAFE (score ≤ −4)
+  ou < 35 % de vie bloque les appels « vas-y » sauf `fight_won` (`MacroCtx.stance_score`) ; `TipContext.macro_tone`
+  cache les conseils de ton opposé ; `TipContext.recall_said` + `engine._recall_consistency` : un seul « rentre » par
+  aller-retour.
+* **Fenêtres de réapparition** (`macro._window_ok`) : fenêtre + retour ennemi depuis sa fontaine ≥ notre trajet +
+  temps de prise (`TAKE_S`) et plancher (`WINDOW_FLOOR_S`) ; `EndGameCaller` : Baron / finir ≥ 25 s, dragon ≥ 15 s.
+* Toasts et bannières : un sous-titre trop long passe sur deux lignes plus petites au lieu d'être coupé.
+* Audit complet + tests : `tests/test_v2_audit.py`.

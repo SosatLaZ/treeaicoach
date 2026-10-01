@@ -492,10 +492,10 @@ class FightTracker:
         if ours == 0 and theirs == 0:
             return None, None
         if ours > theirs:
-            return f"Combat gagné {ours} pour {theirs} !", True
+            return f"Combat gagné {ours} à {theirs} !", True
         if ours == theirs:
-            return f"Combat équilibré : {ours} pour {theirs}.", None
-        return f"Combat perdu ({ours} pour {theirs}) : regroupe-toi avant le prochain.", False
+            return f"Combat équilibré : {ours} à {theirs}.", None
+        return f"Combat perdu ({ours} à {theirs}) : regroupe-toi avant le prochain.", False
 
 
 def _count_style(aliases: list[str], style: str) -> int:
