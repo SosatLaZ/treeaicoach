@@ -830,6 +830,47 @@ def _objectives_section(a: dict) -> str:
             f'{"<div class=otl>" + tl + "</div>" if tl else ""}{pres}</div>')
 
 
+def _signed_cls(v: Any) -> str:
+    x = _f(v, 0.0) or 0.0
+    return "me" if x > 0 else "en" if x < 0 else ""
+
+
+def _scoreboard_section(a: dict) -> str:
+    """Tab scoreboard at the end of the game (lane matchups by item gold) + praise received."""
+    sb = a.get("scoreboard") or {}
+    if not isinstance(sb, dict):
+        return ""
+    praise = [p for p in sb.get("praise") or [] if isinstance(p, dict)]
+    if not sb.get("available") and not praise:
+        return ""
+    body = ""
+    if sb.get("available"):
+        rows = "".join(
+            f'<span>{_e(m.get("role_short"))}{" ★" if m.get("involves_me") else ""}</span>'
+            f'<span>{_e(m.get("ally"))} vs {_e(m.get("enemy"))}</span>'
+            f'<span class="{_signed_cls(m.get("gold_diff"))}">{_e(m.get("gold_label"))}</span>'
+            f'<span class="{_signed_cls(m.get("cs_diff"))}">{int(_f(m.get("cs_diff"), 0) or 0):+d} CS</span>'
+            for m in sb.get("matchups") or [] if isinstance(m, dict))
+        head = (f'<p>Équipe : <b>{_e(sb.get("team_gold_label"))}</b> (valeur des objets, écran Tab) · kills '
+                f'{int(_f(sb.get("ally_kills"), 0) or 0)}–{int(_f(sb.get("enemy_kills"), 0) or 0)}</p>')
+        grid = ('<div class="obj" style="grid-template-columns:auto 1fr auto auto">'
+                '<span class="h">Rôle</span><span class="h">Duel</span><span class="h">Or</span>'
+                f'<span class="h">CS</span>{rows}</div>') if rows else ""
+        notes = []
+        if sb.get("fed"):
+            notes.append("Ennemis très avancés : " + _e(", ".join(sb["fed"])))
+        if sb.get("struggling"):
+            notes.append("Alliés en difficulté : " + _e(", ".join(sb["struggling"])))
+        if sb.get("spikes"):
+            notes.append("Pics de puissance : " + _e(" · ".join(sb["spikes"][-5:])))
+        body = head + grid + "".join(f'<p class="empty" style="font-style:normal">{n}</p>' for n in notes)
+    if praise:
+        lis = "".join(f'<li class="good"><span class="i">✓</span><span>{_e(p.get("time"))} — {_e(p.get("text"))}'
+                      f'</span></li>' for p in praise[:12])
+        body += f'<h2 style="margin-top:20px">Bien joué !</h2><ul class="tips">{lis}</ul>'
+    return f'<div class="panel"><h2>Tableau des scores (Tab)</h2>{body}</div>'
+
+
 def _tips_section(a: dict) -> str:
     items = a.get("tip_items") or [{"text": t, "kind": "info"} for t in a.get("tips") or []]
     if not items:
@@ -855,7 +896,8 @@ def render_report_html(record: dict, analysis: dict | None = None) -> str:
         for fn in (lambda: _header(rec, a), lambda: _cards(a), lambda: _voice_box(a), lambda: _tips_section(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _presence_section(rec, a),
                    lambda: _deaths_section(rec, a), lambda: _ganks_section(rec, a),
-                   lambda: _jungler_section(rec, a), lambda: _objectives_section(a), lambda: _trends_section(a)):
+                   lambda: _jungler_section(rec, a), lambda: _objectives_section(a),
+                   lambda: _scoreboard_section(a), lambda: _trends_section(a)):
             try:
                 parts.append(fn())
             except Exception:

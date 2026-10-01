@@ -168,6 +168,7 @@ class Config:
     voice_volume: int = 100         # 0..100
     voice_engine: str = "auto"      # auto (= neural) | neural | onecore | sapi (see voice.py)
     neural_voice: str = "fr-FR-DeniseNeural"   # Microsoft Edge neural voice id (online)
+    neural_rate: str = "+15%"       # neural voice speed, "-50%".."+100%" (independent of voice_rate)
     beep_on_danger: bool = True
     # alerts
     alert_jungler_approach: bool = True
@@ -374,6 +375,28 @@ def _as_neural_voice(value: Any) -> Any:
     return s if _NEURAL_VOICE_RE.fullmatch(s) else _INVALID
 
 
+_NEURAL_RATE_RE = re.compile(r"([+-]?)(\d{1,3})\s*%?")
+
+
+def _as_neural_rate(value: Any) -> Any:
+    """``"+15%"`` / ``"-10%"`` / ``15`` -> canonical ``"+15%"`` (clamped to -50..+100)."""
+    if isinstance(value, bool):
+        return _INVALID
+    if isinstance(value, (int, float)):
+        if value != value:  # NaN
+            return _INVALID
+        n = int(round(value))
+    elif isinstance(value, str):
+        m = _NEURAL_RATE_RE.fullmatch(value.strip())
+        if m is None:
+            return _INVALID
+        n = int(m.group(2)) * (-1 if m.group(1) == "-" else 1)
+    else:
+        return _INVALID
+    n = max(-50, min(100, n))
+    return f"{n:+d}%"
+
+
 def _as_rect(value: Any) -> dict[str, int] | None:
     """Validate manual_minimap_rect; anything unusable -> None."""
     if value is None or not isinstance(value, Mapping):
@@ -494,6 +517,8 @@ def _validate_field(name: str, value: Any, default: Any) -> Any:
         res = _as_voice_name(value)
     elif name == "neural_voice":
         res = _as_neural_voice(value)
+    elif name == "neural_rate":
+        res = _as_neural_rate(value)
     elif name == "manual_minimap_rect":
         res = _as_rect(value)
     elif name == "icon_scale_by_res":

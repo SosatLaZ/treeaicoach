@@ -552,7 +552,7 @@ def test_engine_prefetch_and_engine_switch(monkeypatch) -> None:
     made: list[tuple[str, str]] = []
     backends: list[FakeBackend] = []
 
-    def fake_make(engine="auto", neural_voice=""):
+    def fake_make(engine="auto", neural_voice="", neural_rate=""):
         made.append((engine, neural_voice))
         fb = FakeBackend()
         fb.rosters = []
@@ -681,3 +681,58 @@ def test_config_voice_engine_fields() -> None:
     assert _validate_field("voice_engine", "x", "auto") == "auto"
     assert _validate_field("neural_voice", "fr-FR-HenriNeural", "d") == "fr-FR-HenriNeural"
     assert _validate_field("neural_voice", "rm -rf", "d") == "d"
+
+
+def test_neural_rate_prewarm_and_lists(monkeypatch) -> None:
+    rates: list[str] = []
+    warmed: list[tuple[str, ...]] = []
+
+    def fake_make(engine="auto", neural_voice="", neural_rate=""):
+        fb = FakeBackend()
+        fb.set_neural_rate = rates.append
+        fb.prewarm = lambda phrases: warmed.append(tuple(phrases))
+        return fb
+
+    monkeypatch.setattr(voice, "make_backend", fake_make)
+    eng = VoiceEngine(engine="neural", neural_rate="+20 %")
+    try:
+        eng.start()
+        assert eng.wait_ready(3.0)
+        assert _wait_for(lambda: rates[-1:] == ["+20%"])
+        eng.set_params(neural_rate="+500%")             # clamped
+        assert _wait_for(lambda: rates[-1:] == ["+100%"])
+        eng.set_params(neural_rate="vite")              # garbage -> unchanged
+        eng.prewarm(["Gank ! Ahri, recule !", "", "Gank ! Ahri, recule !", None, "Baron dans 20 secondes."])
+        assert _wait_for(lambda: warmed[-1:] == [("Gank ! Ahri, recule !", "Baron dans 20 secondes.")])
+        assert eng._params.neural_rate == "+100%"
+    finally:
+        eng.stop()
+    engines = VoiceEngine.list_engines()
+    assert [k for k, _ in engines] == ["auto", "neural", "onecore", "sapi"] and all(lbl for _, lbl in engines)
+    voices = VoiceEngine.list_neural_voices()
+    assert voices[0][0] == "fr-FR-DeniseNeural" and len(voices) >= 4
+
+
+def test_neural_backend_rate_and_prewarm(tmp_path: Path) -> None:
+    tts, player, local = FakeTTS({}), FakePlayer(), FakeBackend()
+    b = voice.NeuralBackend(neural_rate="+25%", _tts=tts, _player=player, _local_factory=lambda: local)
+    b.configure("", -3, 100)                     # SAPI rate does not change the neural rate
+    assert tts.rate_pct == 25
+    n = len(tts.prefetched)
+    b.set_neural_rate("+10%")
+    assert tts.rate_pct == 10 and len(tts.prefetched) == n + 1
+    b.prewarm(["Phrase A.", "Phrase B."])
+    assert tts.prefetched[-1][:2] == ["Phrase A.", "Phrase B."]
+    assert "Dragon dans une minute." in tts.prefetched[-1]
+
+
+def test_config_neural_rate_field() -> None:
+    from treeaicoach.config import Config, _validate_field
+
+    assert Config().neural_rate == "+15%"
+    assert _validate_field("neural_rate", "+20%", "+15%") == "+20%"
+    assert _validate_field("neural_rate", "-10", "+15%") == "-10%"
+    assert _validate_field("neural_rate", 30, "+15%") == "+30%"
+    assert _validate_field("neural_rate", "+900%", "+15%") == "+100%"
+    assert _validate_field("neural_rate", "rapide", "+15%") == "+15%"
+    assert _validate_field("neural_rate", True, "+15%") == "+15%"

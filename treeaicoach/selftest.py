@@ -11,7 +11,10 @@
 * the Live Client parser on an embedded sample payload;
 * the demo scenario, accelerated with a fake clock, through the REAL engine (``step()``):
   a DANGER gank alert inside ``GANK_WINDOW``, no gank alert before it, a fog estimate once the
-  jungler walks into the fog, overlay renderers producing images;
+  jungler walks into the fog, the objective timer, the macro coach (objective setup + "Darius
+  est mort" tip), the praise of my solo kill with its toast (rendered top-centre, never over
+  the minimap), no coaching chatter during the gank, a HUD insight, overlay renderers producing
+  images;
 * the post-game analysis + HTML report on a small record written by the real recorder;
 * the voice engine initialisation (nothing is spoken unless ``voice=True``).
 
@@ -286,7 +289,10 @@ def check_demo(res: CheckResult, ctx: dict[str, Any]) -> None:
     from treeaicoach.engine import CoachEngine, EngineState
     from treeaicoach.overlay_render import render_flash, render_hud, render_radar
 
+    from treeaicoach import toasts as tst
+
     gank_kinds = {AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE}
+    coach_kinds = {AlertKind.MACRO_TIP, AlertKind.PRAISE, AlertKind.SCOREBOARD}
     now = [0.0]
     src = DemoSource(size=280)
     voice = _SilentVoice()
@@ -297,9 +303,14 @@ def check_demo(res: CheckResult, ctx: dict[str, Any]) -> None:
     alerts: list[tuple[float, Any]] = []
     fog_seen_at: float | None = None
     overlay_state = None
+    toast_state = None
+    toasts_seen: list[tuple[float, Any]] = []
+    insights: set[str] = set()
     worst = 0.0
     total = 0.0
-    n = int(round(w1 * DEMO_FPS)) + 1
+    expected = dict(getattr(src, "EXPECTED", {}) or {})
+    end_s = max([w1] + [b for _a, b in expected.values()])
+    n = int(round(end_s * DEMO_FPS)) + 1
     for i in range(n):
         t = i / DEMO_FPS
         now[0] = t
@@ -314,6 +325,15 @@ def check_demo(res: CheckResult, ctx: dict[str, Any]) -> None:
             fog_seen_at = t
         if overlay_state is None and w0 + 4.0 <= t:
             overlay_state = engine.get_overlay_state()
+        if i % 3 == 0:
+            ost = engine.get_overlay_state()
+            if ost.insight:
+                insights.add(ost.insight)
+            for tv in ost.toasts or []:
+                if all(tv.toast.key != k.toast.key for _t, k in toasts_seen):
+                    toasts_seen.append((t, tv))
+                    if toast_state is None:
+                        toast_state = ost
     st = engine.get_status()
     res.details.append(f"Détecteur / detector : {st.detector} ; {n} images, {1000 * total / n:.1f} ms/image en "
                        f"moyenne / on average (max {1000 * worst:.0f} ms)")
@@ -327,6 +347,45 @@ def check_demo(res: CheckResult, ctx: dict[str, Any]) -> None:
     _expect(fog_seen_at is not None, "pas d'estimation de brouillard / no fog estimate")
     res.details.append(f"Alerte DANGER à / DANGER alert at {danger[0][0]:.1f} s ; brouillard / fog estimate at "
                        f"{fog_seen_at:.1f} s")
+    # ---- coaching layer: objective timer, macro tips, praise + toast, nothing during the gank
+    for t, tv in toasts_seen:
+        res.details.append(f"  {t:5.1f} s  [TOAST {tv.toast.kind}] {tv.toast.title} — {tv.toast.subtitle}")
+
+    def first(kind: Any, lo: float, hi: float, needle: str = "") -> float | None:
+        return next((t for t, a in alerts if a.kind == kind and lo <= t <= hi and needle in a.text), None)
+    if expected:
+        win = expected.get("objective_soon", (0.0, end_s))
+        _expect(first(AlertKind.OBJECTIVE_SOON, *win) is not None,
+                f"pas de minuteur d'objectif / no objective timer alert in {win}")
+        win = expected.get("macro_setup", (0.0, end_s))
+        _expect(first(AlertKind.MACRO_TIP, *win) is not None,
+                f"pas de conseil macro (objectif) / no macro objective tip in {win}")
+        win = expected.get("macro_lane_dead", (0.0, end_s))
+        _expect(first(AlertKind.MACRO_TIP, win[0], win[1], "mort") is not None,
+                f"pas de conseil « adversaire mort » / no lane-opponent-dead macro tip in {win}")
+        win = expected.get("praise", (0.0, end_s))
+        _expect(first(AlertKind.PRAISE, *win) is not None, f"pas de félicitation / no praise in {win}")
+        win = expected.get("toast", (0.0, end_s))
+        praise_toasts = [(t, tv) for t, tv in toasts_seen if tv.toast.kind == "praise" and win[0] <= t <= win[1]]
+        _expect(bool(praise_toasts), f"pas de toast de félicitation / no praise toast in {win}")
+        d0 = danger[0][0]
+        chatter = [(t, a) for t, a in alerts if a.kind in coach_kinds and d0 - 3.0 <= t <= d0 + 6.0]
+        _expect(not chatter, f"conseil pendant le gank / coaching during the gank ({chatter[0][0]:.1f} s)"
+                if chatter else "")
+        _expect(bool(insights), "pas d'info macro sur le HUD / no HUD insight")
+        res.details.append("Info HUD / HUD insight : « " + sorted(insights)[0] + " »")
+        # the toast layer renders at the top-centre, never over the minimap
+        scr, mm = (0, 0, 1920, 1080), (1640, 800, 270, 270)
+        x, y, w, h = tst.toast_layer_rect(scr, mm)
+        _expect(not (x < mm[0] + mm[2] and mm[0] < x + w and y < mm[1] + mm[3] and mm[1] < y + h)
+                and y < 1080 * 0.25 and abs((x + w / 2) - 960) < 40, "toasts mal placés / toasts misplaced")
+        views = [tv for _t, tv in praise_toasts[:1]]
+        views = [tst.ToastView(v.toast, 1.0) for v in views]
+        layer = tst.render_toast_layer(views, tst.scale_for_screen(scr))
+        _expect(layer.ndim == 3 and layer.shape[2] == 4 and int(layer[..., 3].max()) > 0,
+                "rendu de toast vide / empty toast render")
+        res.details.append(f"Toast : {layer.shape[1]}x{layer.shape[0]} à / at ({x}, {y}) "
+                           f"(minimap {mm[0]},{mm[1]})")
     _expect(overlay_state is not None, "pas d'état d'overlay / no overlay state")
     radar = render_radar(overlay_state, 256)
     hud = render_hud(overlay_state, 340)
@@ -347,10 +406,14 @@ def check_report(res: CheckResult, ctx: dict[str, Any]) -> None:
     from treeaicoach.report import render_report_html, write_report
     from treeaicoach.tracker import Tracker
 
+    from treeaicoach.alerts import AlertKind, Level, make_alert
+    from treeaicoach.scoreboard import ScoreboardAnalyzer
+
     src = DemoSource(size=128)
     with tempfile.TemporaryDirectory(prefix="treeaicoach_selftest_") as tmp:
         rec = GameRecorder(out_dir=Path(tmp))
         tracker = Tracker()
+        board = ScoreboardAnalyzer()
         for k in range(0, 61, 2):
             s = float(k)
             game = src.game_info(s, s)
@@ -358,6 +421,11 @@ def check_report(res: CheckResult, ctx: dict[str, Any]) -> None:
             ident = [_Ident(u, v, alias) for alias, (u, v, vis) in src.positions(s).items() if vis]
             tracker.update(s, ident)
             rec.on_tracks(tracker, s, game.game_time)
+            board.update(game, s, tracker=tracker)
+            rec.on_scoreboard(board.summary().to_dict(), game.game_time)
+            if k == 50:
+                rec.on_alert(make_alert(AlertKind.PRAISE, Level.INFO, s, alias="Darius",
+                                        text="Solo kill sur Darius, tu domines !", key="solo:2"), game.game_time)
         path = rec.finish()
         _expect(path is not None and path.is_file(), "enregistrement non écrit / record not written")
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -365,10 +433,19 @@ def check_report(res: CheckResult, ctx: dict[str, Any]) -> None:
         _expect(bool(analysis.get("ok", True)), f"analyse en erreur / analysis errors {analysis.get('errors')}")
         html = render_report_html(record, analysis)
         _expect("<html" in html.lower() and len(html) > 1000, "HTML invalide / invalid HTML")
+        sb = analysis.get("scoreboard") or {}
+        _expect(bool(sb.get("available")) and sb.get("my_matchup") is not None and sb.get("praise_count") == 1,
+                "tableau des scores absent de l'analyse / scoreboard missing from the analysis")
+        _expect("Tableau des scores" in html and "Solo kill sur Darius" in html,
+                "tableau des scores absent du rapport / scoreboard missing from the report")
+        _expect(bool(analysis.get("spoken_summary")), "pas de résumé vocal / no spoken summary")
         out = write_report(path)
         _expect(out is not None and Path(out).is_file(), "rapport non écrit / report not written")
         res.details.append(f"Enregistrement / record {path.stat().st_size} o, rapport / report "
                            f"{Path(out).stat().st_size} o, {len(analysis.get('tips') or [])} conseil(s) / tip(s)")
+        res.details.append(f"Tab : {sb['my_matchup'].get('role_short')} {sb['my_matchup'].get('ally')} vs "
+                           f"{sb['my_matchup'].get('enemy')} {sb['my_matchup'].get('gold_label')} ; résumé vocal / "
+                           f"spoken summary : « {analysis.get('spoken_summary')} »")
 
 
 @dataclass

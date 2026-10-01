@@ -1373,6 +1373,14 @@ def spoken_summary(analysis: Any) -> str:
             parts.append(f"{warned} morts juste après une alerte.")
         elif (a.get("ganks_faced") or 0) >= 2:
             parts.append(f"{a.get('ganks_survived', 0)} ganks survécus sur {a.get('ganks_faced')}.")
+        sbd = a.get("scoreboard") if isinstance(a.get("scoreboard"), dict) else {}
+        my_m = sbd.get("my_matchup") if isinstance(sbd.get("my_matchup"), dict) else None
+        if my_m and my_m.get("enemy") and abs(_int(my_m.get("gold_diff"))) >= 500:
+            gd = _int(my_m.get("gold_diff"))
+            parts.append(f"Ta lane : {'avance' if gd > 0 else 'retard'} de "
+                         f"{int(round(abs(gd), -2))} pièces d'or sur {my_m['enemy']}.")
+        elif _int(sbd.get("praise_count")) >= 2:
+            parts.append(f"{_int(sbd.get('praise_count'))} belles actions saluées.")
         tips = a.get("tip_items") or []
         first = next((t for t in tips if t.get("kind") == "warn"), tips[0] if tips else None)
         if first is not None:
@@ -1390,6 +1398,74 @@ def spoken_summary(analysis: Any) -> str:
     except Exception:
         log.exception("spoken_summary failed")
         return "Partie terminée. Le rapport est prêt."
+
+
+# ======================================================================================
+# Tab scoreboard (recorded scoreboard.ScoreboardSummary) + praise
+# ======================================================================================
+ROLE_FR_SHORT = {"TOP": "TOP", "JUNGLE": "JGL", "MIDDLE": "MID", "BOTTOM": "ADC", "UTILITY": "SUP"}
+
+
+def _fmt_gold(n: Any) -> str:
+    v = _int(n)
+    a = abs(v)
+    body = f"{a / 1000:.1f}".replace(".", ",") + " k" if a >= 1000 else str(a)
+    return ("+" if v > 0 else "−" if v < 0 else "") + body + " PO"
+
+
+def _scoreboard(rec: _Rec) -> dict[str, Any]:
+    """Final Tab scoreboard (item gold, CS, levels per lane) + timeline + praise received."""
+    sb = _dict(rec.raw.get("scoreboard"))
+    final = _dict(sb.get("final"))
+    timeline = []
+    for row in _list(sb.get("timeline")):
+        try:
+            gt, diff = _finite(row[0]), _int(row[1])
+            lanes = _dict(row[2]) if len(row) > 2 else {}
+        except (TypeError, IndexError):
+            continue
+        if gt is not None:
+            timeline.append({"game_time": round(gt, 1), "minute": int(gt // 60), "team_gold_diff": diff,
+                             "lanes": {_str(k): [_int(x) for x in _list(v)[:3]] for k, v in lanes.items()}})
+    matchups = []
+    my = None
+    for m in _list(final.get("matchups")):
+        if not isinstance(m, dict):
+            continue
+        item = {"role": _str(m.get("role")), "role_short": ROLE_FR_SHORT.get(_str(m.get("role")), _str(m.get("role"))),
+                "ally": _str(m.get("ally")), "enemy": _str(m.get("enemy")),
+                "ally_alias": _str(m.get("ally_alias")), "enemy_alias": _str(m.get("enemy_alias")),
+                "gold_diff": _int(m.get("gold_diff")), "cs_diff": _int(m.get("cs_diff")),
+                "level_diff": _int(m.get("level_diff")), "kills_diff": _int(m.get("kills_diff")),
+                "involves_me": bool(m.get("involves_me"))}
+        item["gold_label"] = _fmt_gold(item["gold_diff"])
+        matchups.append(item)
+        if item["involves_me"]:
+            my = item
+    by_alias = {_str(p.get("alias")): p for p in _list(final.get("players")) if isinstance(p, dict)}
+
+    def names(aliases: Any) -> list[str]:
+        return [_str(by_alias.get(_str(a), {}).get("name")) or _str(a) for a in _list(aliases)]
+    praise = [{"game_time": round(a[0], 1), "time": fmt_time(a[0]), "text": a[3], "alias": a[4]}
+              for a in rec.alerts if a[1] == "praise"]
+    # lead history of my lane (from the timeline)
+    my_role = my["role"] if my else None
+    lane_curve = [(r["minute"], r["lanes"][my_role][0]) for r in timeline
+                  if my_role and my_role in r["lanes"] and r["lanes"][my_role]]
+    best_lead = max((g for _m, g in lane_curve), default=None)
+    worst_lead = min((g for _m, g in lane_curve), default=None)
+    return {
+        "available": bool(final.get("players")),
+        "team_gold_diff": _int(final.get("team_gold_diff")),
+        "team_gold_label": _fmt_gold(final.get("team_gold_diff")),
+        "ally_kills": _int(final.get("ally_kills")), "enemy_kills": _int(final.get("enemy_kills")),
+        "matchups": matchups, "my_matchup": my,
+        "fed": names(final.get("fed")), "struggling": names(final.get("struggling")),
+        "spikes": [_str(x) for x in _list(final.get("spikes"))],
+        "timeline": timeline, "lane_curve": lane_curve,
+        "best_lead": best_lead, "worst_lead": worst_lead,
+        "praise": praise, "praise_count": len(praise),
+    }
 
 
 # ======================================================================================
@@ -1596,6 +1672,18 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
     fallbacks.append((5, "minimap", "info",
                       "Regarde la minimap toutes les 5 secondes : les annonces vocales complètent, "
                       "mais ne remplacent pas, ta vigilance."))
+    sbd = extra.get("scoreboard") or {}
+    my_m = sbd.get("my_matchup") if isinstance(sbd, dict) else None
+    if isinstance(my_m, dict) and my_m.get("enemy"):
+        gd, csd = _int(my_m.get("gold_diff")), _int(my_m.get("cs_diff"))
+        if gd <= -1500 or csd <= -30:
+            tips.append((62, "lane_lost", "warn",
+                         f"Lane perdue contre {my_m['enemy']} ({_fmt_gold(gd)}, {csd:+d} CS) : joue plus "
+                         f"sous ta tour quand il a l'avantage et rattrape-toi au farm."))
+        elif gd >= 1500 and csd >= 0:
+            tips.append((34, "lane_won", "good",
+                         f"Lane gagnée contre {my_m['enemy']} ({_fmt_gold(gd)}, {csd:+d} CS) : "
+                         f"transforme cette avance en tours et en objectifs."))
     tips.sort(key=lambda x: -x[0])
     chosen = tips[:MAX_TIPS]
     # keep one encouraging tip when there is one (the list is full of warnings otherwise)
@@ -1647,8 +1735,9 @@ def analyze_game(record: Any) -> dict[str, Any]:
     obj_presence = section("objective_presence", lambda: _objective_presence(rec), {"items": []})
     trends = section("trends", lambda: _trends(rec), {"series": []})
     pathing = section("pathing", lambda: _pathing(rec, jungler), {"known": False})
+    scoreboard = section("scoreboard", lambda: _scoreboard(rec), {"available": False, "praise": []})
     extra = {"phases": phases, "presence": presence, "exposure": exposure, "objective_presence": obj_presence,
-             "trends": trends, "pathing": pathing}
+             "trends": trends, "pathing": pathing, "scoreboard": scoreboard}
     tip_items = section("tips", lambda: _tips(rec, summary, deaths, ganks, jungler, zones, objectives, extra), [])
     survived = sum(1 for g in ganks if g.get("outcome") == "survived")
     out.update({

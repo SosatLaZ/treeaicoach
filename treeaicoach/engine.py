@@ -86,6 +86,8 @@ BREAK_LOSS_STREAK = 3
 BREAK_TEXT = "3 défaites d'affilée : une pause de 10 minutes aide à rester concentré."
 
 GANK_KINDS = frozenset({AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE})
+#: Coaching chatter (macro tips, compliments, Tab insights): never spoken during a gank threat.
+COACH_KINDS = frozenset({AlertKind.MACRO_TIP, AlertKind.PRAISE, AlertKind.SCOREBOARD})
 
 MSG_STOPPED = "Analyse arrêtée."
 MSG_WAITING = "En attente d'une partie de League of Legends…"
@@ -411,7 +413,10 @@ class CoachEngine:
             if callable(set_params):
                 try:
                     set_params(voice_name=new.voice_name, rate=new.voice_rate,
-                               volume=new.voice_volume, beep_on_danger=new.beep_on_danger)
+                               volume=new.voice_volume, beep_on_danger=new.beep_on_danger,
+                               engine=getattr(new, "voice_engine", None),
+                               neural_voice=getattr(new, "neural_voice", None),
+                               neural_rate=getattr(new, "neural_rate", None))
                 except Exception:
                     log.exception("voice.set_params failed")
             hk = (old.hotkey_jungler, old.hotkey_mute, old.hotkey_overlay)
@@ -469,6 +474,9 @@ class CoachEngine:
 
             self._scoreboard = ScoreboardAnalyzer()
             self._praise = PraiseCoach()
+            set_items = getattr(self._coach, "set_item_tips", None)
+            if callable(set_items):     # item completions are announced by the Tab analyser
+                set_items(False)
         except Exception:
             log.exception("Scoreboard / praise unavailable")
         try:
@@ -987,12 +995,13 @@ class CoachEngine:
                 self._detector.set_roster(game)
         except Exception:
             self._err.exception("detector.set_roster failed")
-        try:  # natural voice: pre-generate the gank sentences of this game (voice.VoiceEngine.prefetch)
-            prefetch = getattr(self._voice, "prefetch", None)
-            if callable(prefetch):
-                prefetch([p.champion_name for p in game.enemies], [p.champion_name for p in game.allies])
+        try:  # natural voice: pre-generate the sentences of this game (voice.VoiceEngine.prewarm)
+            prewarm = getattr(self._voice, "prewarm", None)
+            if callable(prewarm):
+                from treeaicoach.tts_neural import build_phrase_list
+                prewarm(build_phrase_list(game))
         except Exception:
-            log.debug("voice.prefetch failed", exc_info=True)
+            log.debug("voice.prewarm failed", exc_info=True)
         if not self._prefetched and self._cfg.download_skin_icons and not self._demo:
             self._prefetched = True
             db = self._champion_db()
@@ -1109,7 +1118,11 @@ class CoachEngine:
         if rec is not None:
             rec.on_tracks(tracker, t, gt)
         raw_alerts += self._death_recap_alerts(t)
+        if threat >= Level.WARNING:     # gank first: no macro tip / praise / Tab insight now
+            raw_alerts = [a for a in raw_alerts if a.kind not in COACH_KINDS]
         said = self._throttler.filter(raw_alerts, t)
+        if threat >= Level.WARNING:     # (a held-back coaching alert released by the throttler)
+            said = [a for a in said if a.kind not in COACH_KINDS]
         for a in said:
             self._say(a.text, int(a.level))
             with self._lock:

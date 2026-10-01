@@ -420,7 +420,7 @@ def test_app_pages_and_settings(home: Path, tmp_path: Path) -> None:
         app.toggle_demo()
         _pump(app, 3.0, lambda: not app._busy and app.engine is engines[-1] and len(engines) == 2)
         assert len(engines) == 2 and engines[1].demo and engines[1].is_running() and not engines[0].is_running()
-        assert app.btn_demo.cget("text") in ("Quitter la démo", "Quitter")
+        assert app.btn_demo.cget("text") in ("Quitter la démo", "Fin démo")
         app.toggle_demo()
         _pump(app, 3.0, lambda: not app._busy and app.engine is engines[-1] and len(engines) == 3)
         assert len(engines) == 3 and not engines[2].demo

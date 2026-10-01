@@ -15,8 +15,16 @@ Scenario (loops every :data:`DemoSource.SCENARIO_LENGTH` seconds, game clock 13:
   ganks: WARNING, DANGER ~37 s, collapse with Darius ~39 s; I retreat under my tower, he backs
   off into the fog again at 47 s;
 * allies (Vi, Lux, Jinx, Thresh) and enemies (Ahri, Caitlyn, Nautilus) play elsewhere;
+* under my tower Darius dives too far: I kill him alone at 45 s (``ChampionKill`` event, solo
+  kill on my lane opponent -> praise + toast); he is dead (Tab ``isDead``) until 66 s, so the
+  macro coach says to push the wave (``lane_dead``); he walks back to lane from his tower;
 * events: ``GameStart`` and an allied ``DragonKill`` at 13:55; the Rift Herald spawns at 15:00
-  (objective timers speak at 14:00 and 14:40); my gold grows past the recall threshold.
+  (objective timers speak at 14:00 and 14:40, macro coach "prépare la vision" at 14:05); my gold
+  grows past the recall threshold.
+
+Expected timeline (scenario seconds, see :data:`DemoSource.EXPECTED`): objective timer 20 s,
+macro objective setup 25 s, jungler warning ~34 s, DANGER gank ~37 s, kill 45 s, praise +
+toast once the threat is over (~50 s), ``lane_dead`` macro tip ~51-58 s.
 
 :data:`DemoSource.GANK_WINDOW` is the interval (scenario seconds) that must contain the DANGER
 gank alert; no gank alert (approach / roam / collapse) may be produced before it.
@@ -79,7 +87,8 @@ CHAMPIONS: tuple[DemoChampion, ...] = (
         "Darius", "Darius", ENEMY_TEAM, "TOP", "enemy", summoner="Hache Rouge", level=11,
         path=_k((0, 0.095, 0.120), (10, 0.100, 0.108), (20, 0.093, 0.118), (30, 0.098, 0.110),
                 (36.5, 0.096, 0.116), (39, 0.090, 0.165), (42.5, 0.082, 0.232),
-                (45, 0.086, 0.212), (50, 0.095, 0.140), (56, 0.100, 0.112), (75, 0.095, 0.120)),
+                (45, 0.086, 0.212), (66, 0.215, 0.058), (70, 0.120, 0.075), (75, 0.095, 0.120)),
+        visible=((0.0, 45.0), (66.0, 75.0)),       # dead from 45 s (killed by me) to 66 s
     ),
     DemoChampion(
         "LeeSin", "Lee Sin", ENEMY_TEAM, "JUNGLE", "enemy", smite=True, summoner="Moine Aveugle",
@@ -139,6 +148,8 @@ WARDS: tuple[tuple[float, float, float], ...] = (
 WARD_ICON = "minimap_ward_green_full.png"
 
 EVENT_DRAGON_S = 15.0           # allied DragonKill (scenario second)
+EVENT_KILL_S = 45.0             # I kill Darius alone under my tower (scenario second)
+DARIUS_RESPAWN_S = 66.0         # ... he is dead until then
 
 
 def _interp(path: tuple[Key, ...], s: float) -> tuple[float, float]:
@@ -166,6 +177,14 @@ class DemoSource:
     GANK_WINDOW: tuple[float, float] = (33.0, 50.0)
     #: Scenario second at which the jungler walks into the fog (fog estimate expected).
     JUNGLER_HIDE_AT: float = 6.5
+    #: Scenario second of my solo kill on Darius (praise + toast expected after it).
+    KILL_AT: float = EVENT_KILL_S
+    #: What a run of the scenario must produce (``selftest`` checks it): kind -> [start, end]
+    #: window in scenario seconds (praise / toast after the gank threat is over).
+    EXPECTED: dict = {
+        "objective_soon": (19.0, 21.0), "macro_setup": (24.0, 33.0), "gank_danger": (33.0, 50.0),
+        "praise": (45.0, 62.0), "toast": (45.0, 62.0), "macro_lane_dead": (45.0, 64.0),
+    }
     #: Tells the engine not to record this fake game in the user's history.
     is_demo: bool = True
 
@@ -316,15 +335,21 @@ class DemoSource:
     def _player(self, ch: DemoChampion, s: float, dead: bool = False) -> PlayerInfo:
         spells = ("Châtiment", "Saut éclair") if ch.smite else ("Saut éclair", "Téléportation")
         summoner = ch.summoner or ch.alias
+        killed = s >= EVENT_KILL_S
         scores = {"kills": 2, "deaths": 1, "assists": 3, "creepScore": 95 + int(s // 12),
                   "wardScore": 9.0}
+        respawn = 0.0
         if ch.relation == "self":
-            scores = {"kills": 3, "deaths": 1, "assists": 2, "creepScore": 104 + int(s // 10),
+            scores = {"kills": 4 if killed else 3, "deaths": 1, "assists": 2, "creepScore": 104 + int(s // 10),
                       "wardScore": 11.0}
+        elif ch.alias == "Darius" and killed:
+            scores["deaths"] = 2
+            if s < DARIUS_RESPAWN_S:
+                dead, respawn = True, DARIUS_RESPAWN_S - s
         return PlayerInfo(
             riot_id=f"{summoner}#DEMO", summoner_name=summoner, champion_alias=ch.alias,
             champion_name=self._name(ch), team=ch.team, position=ch.position,
-            is_dead=dead, respawn_timer=0.0, level=ch.level, skin_id=ch.skin_id,
+            is_dead=dead, respawn_timer=respawn, level=ch.level, skin_id=ch.skin_id,
             has_smite=ch.smite, is_bot=False, spells=spells,
             items=[1054, 3047, 1028, 2055] if ch.relation == "self" else [1055, 3006],
             scores=scores,
@@ -349,6 +374,12 @@ class DemoSource:
             events.append({
                 "EventID": 1, "EventName": "DragonKill", "EventTime": GAME_TIME_START + EVENT_DRAGON_S,
                 "DragonType": "Fire", "Stolen": "False", "KillerName": vi.summoner_name,
+                "Assisters": [],
+            })
+        if s >= EVENT_KILL_S:
+            events.append({
+                "EventID": 2, "EventName": "ChampionKill", "EventTime": GAME_TIME_START + EVENT_KILL_S,
+                "KillerName": me.summoner_name, "VictimName": players["Darius"].summoner_name,
                 "Assisters": [],
             })
         return GameInfo(

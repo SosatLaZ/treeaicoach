@@ -40,12 +40,16 @@ Extra rules (v2.1):
   ``level_diff`` ("Tu as 2 niveaux d'avance sur Darius : joue agressif."), ``item_spike``
   ("Darius vient de finir Couperet noir : attention à son pic de puissance."), ``jg_level6``
   ("Leur jungler est niveau 6 avant le vôtre : prudence."), ``kill_lead`` (every 5 min).
+* ``lane_dead`` / ``jungler_dead`` - my lane opponent / their jungler is dead (public Tab data):
+  "Darius est mort : pousse ta vague et prends des plaques." / "Leur jungler est mort : bonne
+  fenêtre pour le dragon." (dead enemies never count as "disparus" / "a quitté la voie")
 * ``objective_trade`` - >= 3 enemies on one pit: "4 ennemis au dragon : prenez les larves ou
   des tours en haut."
 * ``jungler_side`` is role aware: a jungler gets invade / counter-gank suggestions.
 
 Policy: at most one tip every :data:`GLOBAL_GAP_S` (35 s; the "numbers" disadvantage warning
-only needs :data:`SAFETY_GAP_S` since the previous tip), nothing while a gank threat is
+only needs :data:`SAFETY_GAP_S` and the short "enemy dead" windows :data:`WINDOW_GAP_S` since
+the previous tip), nothing while a gank threat is
 active nor during :data:`QUIET_AFTER_THREAT_S` after it, nothing about positions while I am
 dead. **Safe mode** (``cfg.safe_mode``): only the objective timing and my personal data are
 used - no tip or insight derived from enemy positions.
@@ -74,6 +78,7 @@ _MACRO: Any = getattr(AlertKind, "MACRO_TIP", AlertKind.OBJECTIVE_SOON)
 # -------------------------------------------------------------------------- tunables
 GLOBAL_GAP_S = 35.0            # min time between two spoken tips
 SAFETY_GAP_S = 10.0            # the "outnumbered" warning only needs this since the last tip
+WINDOW_GAP_S = 15.0            # short-lived windows (an enemy just died) only need this
 QUIET_AFTER_THREAT_S = 8.0     # no tip during / just after a gank threat
 NEAR_RADIUS = 0.16             # "around me" (normalized minimap, ~2400 units)
 NUMBERS_CONFIRM_S = 1.5        # the numbers situation must hold this long
@@ -117,7 +122,7 @@ RULE_COOLDOWN_S: dict[str, float] = {
     "cs_check": 60.0, "vision": 180.0, "level6": 1e9, "deep": 60.0,
     "wave_push": 120.0, "wave_back": 120.0, "wave_big": 90.0, "lane_left": 45.0, "lane_recall": 45.0,
     "bot_missing": 90.0, "level_diff": 180.0, "item_spike": 20.0, "jg_level6": 1e9, "kill_lead": 120.0,
-    "objective_trade": 120.0,
+    "objective_trade": 120.0, "lane_dead": 45.0, "jungler_dead": 90.0,
 }
 #: Rules that use enemy positions (disabled in safe mode).
 ENEMY_RULES: frozenset[str] = frozenset({
@@ -128,10 +133,10 @@ ENEMY_RULES: frozenset[str] = frozenset({
 ALIVE_RULES: frozenset[str] = frozenset({
     "jungler_side", "jungler_unseen", "missing", "numbers_bad", "numbers_good", "pressure", "deep",
     "vision", "objective_window", "wave_push", "wave_back", "wave_big", "lane_left", "lane_recall",
-    "bot_missing", "objective_trade", "level_diff"})
+    "bot_missing", "objective_trade", "level_diff", "lane_dead", "jungler_dead"})
 PRIORITY: dict[str, int] = {
     "numbers_bad": 100, "deep": 90, "wave_big": 87, "objective_trade": 86, "objective_window": 85,
-    "objective_setup": 80, "lane_recall": 78, "lane_left": 77, "missing": 75, "bot_missing": 72,
+    "objective_setup": 80, "jungler_dead": 79, "lane_dead": 79, "lane_recall": 78, "lane_left": 77, "missing": 75, "bot_missing": 72,
     "jungler_unseen": 70, "jungler_side": 65, "item_spike": 64, "level_diff": 62, "wave_back": 61,
     "wave_push": 60, "numbers_good": 59, "jg_level6": 58, "pressure": 55, "kill_lead": 45, "cs_check": 40,
     "level6": 35, "vision": 30,
@@ -262,6 +267,7 @@ class _Ctx:
     game: Any = None
     waves: dict = None              # lane -> waves.LaneWave (None / {} when unknown)
     opponents: list = None          # [(alias, display name, PlayerInfo | None, Track | None)]
+    dead_enemies: frozenset = frozenset()   # lower-case aliases of dead enemies (Live Client)
 
 
 class MapCoach:
@@ -272,6 +278,7 @@ class MapCoach:
         self._enabled = True
         self._safe = False
         self._scoreboard_on = True
+        self._item_tips = True
         self.apply_config(cfg)
         self._clear()
 
@@ -289,6 +296,11 @@ class MapCoach:
                 self._safe = bool(safe) if isinstance(safe, bool) else False
         except Exception:
             log.exception("MapCoach.apply_config failed")
+
+    def set_item_tips(self, on: bool) -> None:
+        """Enable / disable the ``item_spike`` tip (off when scoreboard.ScoreboardAnalyzer speaks them)."""
+        with self._lock:
+            self._item_tips = bool(on)
 
     def reset(self) -> None:
         """Forget everything (new game)."""
@@ -375,6 +387,7 @@ class MapCoach:
         self._item_news: list[tuple[float, str, str, int]] = []   # (t, alias, name, item id)
         self._jg6_done = False
         self._kill_marks_done: set[float] = set()
+        self._dead_done: dict[str, float] = {}      # alias -> game time of the death already used
 
     def _game_time(self, game: Any, t: float) -> float:
         gt = _finite(getattr(game, "game_time", None)) or 0.0
@@ -460,7 +473,10 @@ class MapCoach:
                      enemies_vis=enemies_vis, allies_vis=allies_vis, enemies_all=enemies_all,
                      jungler_alias=jalias, jungler=jtrack, jungler_hidden_s=jhidden,
                      objectives=list(objectives or []), me_player=me_player, game=game, waves=waves,
-                     opponents=self._opponents(game, roles, my_role, tracker, enemies_all))
+                     opponents=self._opponents(game, roles, my_role, tracker, enemies_all),
+                     dead_enemies=frozenset(str(getattr(p, "champion_alias", "") or "").lower()
+                                            for p in (getattr(game, "enemies", None) or [])
+                                            if bool(getattr(p, "is_dead", False))))
 
     @staticmethod
     def _opponents(game: Any, roles: Any, my_role: str | None, tracker: Any,
@@ -546,7 +562,8 @@ class MapCoach:
         if last is not None and 0.0 <= ctx.t - last < RULE_COOLDOWN_S.get(rule, 60.0):
             return False
         if self._last_tip_t is not None:
-            gap = SAFETY_GAP_S if rule == "numbers_bad" else GLOBAL_GAP_S
+            gap = (SAFETY_GAP_S if rule == "numbers_bad" else WINDOW_GAP_S if rule in ("lane_dead", "jungler_dead")
+                   else GLOBAL_GAP_S)
             if 0.0 <= ctx.t - self._last_tip_t < gap:
                 return False
         return True
@@ -582,6 +599,9 @@ class MapCoach:
                 self._item_news.pop(0)
         elif rule == "jg_level6":
             self._jg6_done = True
+        elif rule in ("lane_dead", "jungler_dead"):
+            for alias in self._dead_targets(ctx, rule):
+                self._dead_done[alias] = ctx.gt
         elif rule == "kill_lead":
             mark = self._kill_mark(ctx)
             if mark is not None:
@@ -628,7 +648,7 @@ class MapCoach:
         for fn in (self._rule_numbers, self._rule_deep, self._rule_objectives, self._rule_missing,
                    self._rule_jungler, self._rule_pressure, self._rule_cs, self._rule_level6,
                    self._rule_vision, self._rule_waves, self._rule_lane, self._rule_bot_missing,
-                   self._rule_scoreboard, self._rule_trade):
+                   self._rule_scoreboard, self._rule_trade, self._rule_dead):
             try:
                 out.extend(fn(ctx))
             except Exception:
@@ -680,6 +700,8 @@ class MapCoach:
         if self._deep_since is None:
             self._deep_since = ctx.t
         hidden = ctx.jungler_hidden_s
+        if ctx.jungler_alias and str(ctx.jungler_alias).lower() in ctx.dead_enemies:
+            return []
         if ctx.t - self._deep_since < DEEP_CONFIRM_S or hidden is None or hidden < DEEP_UNSEEN_S:
             return []
         if ctx.my_role == "JUNGLE":
@@ -716,7 +738,7 @@ class MapCoach:
     def _count_side(self, ctx: _Ctx, pit: tuple[float, float], side: str,
                     pts: list[tuple[Any, tuple[float, float]]]) -> int:
         return sum(1 for _tr, p in pts
-                   if geometry.dist(p, pit) < PIT_RADIUS or (geometry.side_of(*p) == side
+                   if geometry.dist(p, pit) < PIT_RADIUS or (map_side(*p) == side
                                                              and not geometry.is_base(geometry.classify_zone(*p))))
 
     def _rule_objectives(self, ctx: _Ctx) -> list[tuple[str, str]]:
@@ -780,6 +802,8 @@ class MapCoach:
         for tr in ctx.enemies_all:
             if getattr(tr, "visible", False) or not getattr(tr, "alias", None):
                 continue
+            if str(tr.alias).lower() in ctx.dead_enemies:
+                continue                                    # dead (Tab), not "missing"
             hidden = ctx.t - float(getattr(tr, "last_seen", ctx.t))
             if MISSING_HIDDEN_S <= hidden <= MISSING_RECENT_S:
                 n += 1
@@ -822,7 +846,8 @@ class MapCoach:
                     out.append(("jungler_side", f"Leur jungler est {SIDE_FR[jside]}, de ton côté : "
                                                 f"prépare le contre-gank."))
         hidden = ctx.jungler_hidden_s
-        if hidden is not None and hidden >= JUNGLER_UNSEEN_S and ctx.my_lane is not None:
+        jg_dead = str(ctx.jungler_alias).lower() in ctx.dead_enemies
+        if hidden is not None and hidden >= JUNGLER_UNSEEN_S and ctx.my_lane is not None and not jg_dead:
             marker = getattr(tr, "last_seen", None) if tr is not None else -1.0
             if marker != self._jg_unseen_done:
                 secs = int(hidden // 5 * 5)
@@ -923,6 +948,8 @@ class MapCoach:
         """``"recall"`` / ``"left"`` when this opponent left ``lane`` (else None)."""
         if tr is None or getattr(tr, "visible", False):
             return None
+        if str(getattr(tr, "alias", "") or "").lower() in ctx.dead_enemies:
+            return None                                     # dead: see _rule_dead
         hidden = ctx.t - float(getattr(tr, "last_seen", ctx.t))
         if not LANE_LEFT_S <= hidden <= LANE_LEFT_MAX_S:
             return None
@@ -1030,7 +1057,7 @@ class MapCoach:
         out: list[tuple[str, str]] = []
         if not self._scoreboard_on:      # cfg.coach_scoreboard_tips = False (another analyser speaks them)
             return out
-        for _t, _alias, name, item in self._item_news[:1]:
+        for _t, _alias, name, item in (self._item_news[:1] if self._item_tips else []):
             out.append(("item_spike", f"{name} vient de finir {ITEM_NAMES_FR[item]} : attention à son pic de puissance."))
         diff, name = self._level_diff(ctx)
         if name and abs(diff) >= LEVEL_DIFF_MIN and diff != self._level_diff_said and ctx.gt >= 180:
@@ -1097,6 +1124,60 @@ class MapCoach:
             return [("objective_trade", f"{n} ennemis {label} : prenez {what}.")]
         return []
 
+    # ---------------------------------------------------------------- dead enemies (Tab)
+    def _dead_targets(self, ctx: _Ctx, rule: str) -> list[str]:
+        """Aliases (lower case) of the dead enemies ``rule`` talks about, not announced yet."""
+        if rule == "lane_dead":
+            cands = [str(a).lower() for a, _n, _p, _tr in ctx.opponents or []]
+        else:
+            cands = [str(ctx.jungler_alias).lower()] if ctx.jungler_alias else []
+        out = []
+        for a in cands:
+            if a not in ctx.dead_enemies:
+                self._dead_done.pop(a, None)                # alive again: next death is news
+                continue
+            if a not in self._dead_done:
+                out.append(a)
+        return out
+
+    def _respawn(self, ctx: _Ctx, alias: str) -> float:
+        for p in getattr(ctx.game, "enemies", None) or []:
+            if str(getattr(p, "champion_alias", "") or "").lower() == alias:
+                return _finite(getattr(p, "respawn_timer", None)) or 0.0
+        return 0.0
+
+    def _rule_dead(self, ctx: _Ctx) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        if ctx.dead:
+            return out
+        plates = ctx.gt < PLATES_END_GT
+        dead_opps = self._dead_targets(ctx, "lane_dead")
+        if dead_opps and ctx.role_lane is not None and ctx.my_role != "JUNGLE":
+            names = [n for a, n, _p, _tr in ctx.opponents or [] if str(a).lower() in dead_opps]
+            if not any(0.0 < self._respawn(ctx, a) < 6.0 for a in dead_opps):   # not respawning now
+                who = " et ".join(names)
+                verb = "sont morts" if len(names) > 1 else "est mort"
+                tail = "pousse ta vague et prends des plaques" if plates else "pousse ta vague et prends la tour"
+                out.append(("lane_dead", f"{who} {verb} : {tail}."))
+        if self._dead_targets(ctx, "jungler_dead"):
+            states = {str(getattr(s, "key", "") or ""): s for s in ctx.objectives}
+            target = None
+            for key in ("baron", "elder", "dragon", "herald", "grubs", "atakhan"):
+                s = states.get(key)
+                if s is None:
+                    continue
+                rem = None if getattr(s, "alive", False) else self._remaining(s, ctx.gt)
+                if getattr(s, "alive", False) or (rem is not None and rem <= 20):
+                    target = _WINDOW_NAMES.get(key) or str(getattr(s, "name", "") or "")
+                    break
+            if target:
+                out.append(("jungler_dead", f"Leur jungler est mort : bonne fenêtre pour {target}."))
+            elif ctx.my_role == "JUNGLE":
+                out.append(("jungler_dead", "Leur jungler est mort : envahis sa jungle et prends ses camps."))
+            else:
+                out.append(("jungler_dead", "Leur jungler est mort : tu peux jouer agressif dans ta voie."))
+        return out
+
     # ---------------------------------------------------------------- insights
     def _build_insights(self, ctx: _Ctx) -> list[str]:
         items: list[tuple[int, str]] = []
@@ -1154,6 +1235,11 @@ class MapCoach:
                     items.append((68, f"{name} est rentré : pousse"))
                 elif why == "left" and ctx.my_lane == ctx.role_lane:
                     items.append((66, f"{name} a quitté la voie"))
+        for a, name, _p, _tr in ctx.opponents or []:
+            if str(a).lower() in ctx.dead_enemies:
+                items.append((69, f"{name} mort : pousse ta vague"))
+        if ctx.jungler_alias and str(ctx.jungler_alias).lower() in ctx.dead_enemies:
+            items.append((67, "Jungler ennemi mort : fenêtre"))
         for _t, _alias, name, item in self._item_news[:1]:
             items.append((64, f"{name} : {ITEM_NAMES_FR[item]} fini"))
         diff, name = self._level_diff(ctx)

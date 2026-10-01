@@ -1,7 +1,8 @@
 """Natural French voices: Microsoft Edge "read aloud" neural voices (online) + Windows OneCore.
 
 * :class:`NeuralTTS` synthesises a sentence with the ``edge-tts`` service (MP3, the only format
-  the read-aloud endpoint serves), decodes it once with ``miniaudio`` (no ffmpeg) and keeps a
+  the read-aloud endpoint serves: checked 2026-10, ``riff-24khz-16bit-mono-pcm`` /
+  ``raw-*-pcm`` / ``ogg-*`` make the service close the socket without audio), decodes it once with ``miniaudio`` (no ffmpeg) and keeps a
   16-bit mono WAV in ``paths.cache_dir()/tts/<voice>/<sha1>.wav``. A cached sentence plays
   instantly; :meth:`NeuralTTS.prefetch` fills the cache in the background (every sentence the
   coach may say for the 10 champions of the game: see :func:`roster_phrases`).
@@ -46,6 +47,7 @@ NEURAL_VOICES: tuple[tuple[str, str], ...] = (
     ("fr-BE-CharlineNeural", "Charline (femme, Belgique)"),
     ("fr-CH-ArianeNeural", "Ariane (femme, Suisse)"),
 )
+DEFAULT_NEURAL_RATE = "+15%"
 LIVE_TIMEOUT_S = 1.5          # a non-cached sentence waits at most this long for the service
 BACKGROUND_TIMEOUT_S = 12.0   # a synthesis left running in the background (it fills the cache)
 OFFLINE_RETRY_S = 45.0        # after a failure, live synthesis is skipped for this long
@@ -56,7 +58,14 @@ CACHE_VERSION = "1"
 
 
 def rate_percent(rate: Any) -> int:
-    """Config rate (-10..10, default 2) -> service rate in % (2 -> +15 %)."""
+    """Service rate in %: ``"+15%"`` / ``"-10%"`` (config ``neural_rate``) is used as is
+    (clamped to -50..+100); a number is a legacy SAPI rate (-10..10, 2 -> +15 %)."""
+    if isinstance(rate, str):
+        s = rate.strip().rstrip("%").strip()
+        try:
+            return max(-50, min(100, int(round(float(s)))))
+        except (TypeError, ValueError, OverflowError):
+            return 15
     try:
         r = max(-10, min(10, int(round(float(rate)))))
     except (TypeError, ValueError, OverflowError):
@@ -72,6 +81,16 @@ def clean_voice_id(value: Any) -> str:
                 and all(c.isalnum() or c == "-" for c in v):
             return v
     return DEFAULT_NEURAL_VOICE
+
+
+def rate_string(rate: Any) -> str:
+    """Canonical service rate string (``"+15%"``)."""
+    return f"{rate_percent(rate):+d}%"
+
+
+def list_neural_voices() -> list[tuple[str, str]]:
+    """``[(voice id, French label), ...]`` offered in the settings (Denise first)."""
+    return list(NEURAL_VOICES)
 
 
 def neural_available() -> bool:
@@ -619,3 +638,36 @@ def roster_phrases(enemies: Sequence[str], allies: Sequence[str] = ()) -> list[s
     except Exception as exc:
         log.debug("roster_phrases failed: %s", exc)
     return danger + warn + other
+
+
+def build_phrase_list(game: Any) -> list[str]:
+    """Every sentence worth pre-generating for this game (``live_client.GameState``-like:
+    ``enemies`` / ``allies`` lists of players with ``champion_name``), most urgent first:
+    gank / collapse / MIA alerts for the 5 enemies, then objectives and generic alerts.
+    Never raises (``[]`` on garbage)."""
+    def names(players: Any) -> list[str]:
+        out: list[str] = []
+        try:
+            for p in list(players or ())[:5]:
+                n = getattr(p, "champion_name", None)
+                if n is None and isinstance(p, dict):
+                    n = p.get("champion_name") or p.get("championName")
+                n = str(n or "").strip()
+                if n and n not in out:
+                    out.append(n)
+        except Exception:
+            pass
+        return out
+
+    try:
+        out: list[str] = []
+        seen: set[str] = set()
+        for text in roster_phrases(names(getattr(game, "enemies", ())),
+                                   names(getattr(game, "allies", ()))) + static_phrases():
+            if isinstance(text, str) and text and text not in seen:
+                seen.add(text)
+                out.append(text)
+        return out[:MAX_PREFETCH]
+    except Exception as exc:
+        log.debug("build_phrase_list failed: %s", exc)
+        return []
