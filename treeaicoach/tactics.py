@@ -34,6 +34,7 @@ MAX_GUIDES = 6
 CALL_BANNER_S = 2.2            # short call banner ("BARON !") duration
 GUIDE_S = {"objective": 14.0, "retreat": 6.0, "group": 12.0, "lane": 10.0, "alone": 10.0, "push": 10.0,
            "call": 12.0}
+CONCENTRATION_R = 0.10         # enemies this close to me = I am busy (no chatter)
 WRITTEN_GANK_GAP_S = 12.0      # a gank alert turned into text is written at most this often
 HOLD_PRAISE_S = 45.0           # praise held during a fight is released after it (if fresh)
 PRIORITY = {"retreat": 100, "alone": 95, "call": 90, "objective": 80, "push": 75, "group": 60, "lane": 50,
@@ -220,10 +221,16 @@ class TacticalDirector:
         if me_uv is not None:
             z = geometry.classify_zone(*me_uv)
             in_base = geometry.is_base(z) and geometry.zone_owner(z) == geometry.normalize_team(getattr(me, "team", None))
+        # concentration: enemies really on me (my lane opponents next to me are just laning,
+        # unless I am low)
+        hp = my_hp(game)
+        lane_opps = {str(a).lower() for a in self._lane_opponents(roles)}
+        laning = hp is None or hp >= 0.5
         near = [e for e in enemies if e.visible and e.uv is not None and me_uv is not None
-                and geometry.dist(e.uv, me_uv) < 0.15]
-        danger = any(geometry.dist(e.uv, me_uv) < danger_r for e in near)
-        self._ctx = self._ctx_cls(in_fight=fs.active, hp=my_hp(game), enemies_near=len(near), enemy_in_danger=danger,
+                and geometry.dist(e.uv, me_uv) < CONCENTRATION_R
+                and not (laning and str(e.alias or "").lower() in lane_opps)]
+        danger = any(geometry.dist(e.uv, me_uv) < min(danger_r, CONCENTRATION_R) for e in near)
+        self._ctx = self._ctx_cls(in_fight=fs.active, hp=hp, enemies_near=len(near), enemy_in_danger=danger,
                                   dead=bool(getattr(me, "is_dead", False)), in_base=in_base)
         # ---- fight call / end
         if up.new_call is not None:

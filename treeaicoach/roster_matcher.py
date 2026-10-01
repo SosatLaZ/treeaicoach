@@ -120,7 +120,8 @@ RECAL_DROP = 0.5
 RECAL_WINDOW = 24
 RECAL_MIN_FRAMES = 48             # frames between two automatic re-calibrations
 CALIB_FRAMES = 3                  # first frames combined for the initial calibration
-REFRESH_FRAMES = 80               # period of the check for newly downloaded skin portraits
+REFRESH_FRAMES = 80               # (kept for compatibility)
+SKIN_CHECK_FRAMES = 24            # period of the check for newly downloaded skin portraits
 #: Calibration quality (evidence units) below which the result is ignored.
 MIN_CALIB_QUALITY = 0.62
 #: Champions averaged by the calibration quality, and weight of the log-normal scale prior.
@@ -565,6 +566,7 @@ class _Cand:
     f_al: float = 0.0
     ring: Any = None
     note: str = ""
+    margin: float | None = None         # uniqueness margin (whole-map search only)
 
 
 @dataclass
@@ -869,17 +871,21 @@ class RosterMatcher:
             log.debug("Could not store the icon scale", exc_info=True)
 
     # ------------------------------------------------------------------ detection
-    def detect(self, minimap_bgr: np.ndarray) -> list[Detection]:
-        """Roster champions found on a BGR minimap; [] without roster or on error."""
+    def detect(self, minimap_bgr: np.ndarray, t: float | None = None) -> list[Detection]:
+        """Roster champions found on a BGR minimap; [] without roster or on error.
+
+        ``t``: capture time (s, monotonic clock by default) used by the tracking.
+        """
         t0 = time.perf_counter()
         try:
             bgr = _as_bgr(minimap_bgr)
             if bgr is None or not self._entries:
                 return []
+            now = time.monotonic() if t is None else float(t)
             with self._lock:
-                if self._state.frames % REFRESH_FRAMES == REFRESH_FRAMES - 1:
+                if self._state.frames % SKIN_CHECK_FRAMES == SKIN_CHECK_FRAMES - 1:
                     self._refresh_skins()
-                return self._detect(bgr)
+                return self._detect(bgr, now)
         except Exception:
             self._errors.exception("Roster matcher detection failed")
             return []
@@ -887,7 +893,7 @@ class RosterMatcher:
             self.last_time_ms = 1000 * (time.perf_counter() - t0)
 
     def _refresh_skins(self) -> None:
-        """Skin portraits downloaded since set_roster: rebuild (keeps the calibration)."""
+        """Skin portraits downloaded since set_roster: rebuild (keeps calibration, tracks)."""
         if self._game is None or all(e.exact for e in self._entries) or self.db is None:
             return
         for e in self._entries:
@@ -895,6 +901,10 @@ class RosterMatcher:
                 try:
                     path = self.db.cached_icon_path(e.alias, e.skin_id)
                     if path is not None and path.is_file():
+                        try:
+                            self.db.clear_icon_cache()      # the base portrait was cached
+                        except Exception:
+                            pass
                         self.set_roster(self._game)
                         return
                 except Exception:
@@ -939,14 +949,18 @@ class RosterMatcher:
         return float(min(THR_MAX, max(THR_MIN, thr)))
 
     @staticmethod
-    def _ring_pixels(bgr: np.ndarray, cx: float, cy: float, R: float) -> np.ndarray:
-        """Lab pixels of the ring annulus (0.86-1.0 R) inside the image, ``[n, 3]``."""
+    def _ring_pixels(bgr: np.ndarray, cx: float, cy: float, R: float,
+                     exclude: Sequence[tuple[float, float]] = ()) -> np.ndarray:
+        """Lab pixels of the ring annulus (0.86-1.0 R) inside the image, ``[n, 3]``;
+        without the arc covered by the icons centred at ``exclude`` (original px)."""
         ang = np.linspace(0, 2 * np.pi, 40, endpoint=False, dtype=np.float32)
         rr = np.asarray([0.86, 0.93, 1.0], np.float32) * np.float32(R)
         xs = (cx - 0.5 + rr[:, None] * np.cos(ang)[None]).astype(np.float32)
         ys = (cy - 0.5 + rr[:, None] * np.sin(ang)[None]).astype(np.float32)
         H, W = bgr.shape[:2]
         ok = (xs >= 0) & (xs <= W - 1) & (ys >= 0) & (ys <= H - 1)
+        for ex, ey in exclude:
+            ok &= (xs + 0.5 - ex) ** 2 + (ys + 0.5 - ey) ** 2 > (1.05 * R) ** 2
         samp = cv2.remap(bgr, xs, ys, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         lab = cv2.cvtColor(samp, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float32)
         return lab[ok.reshape(-1)]
@@ -966,88 +980,391 @@ class RosterMatcher:
                 sy += float(np.clip(0.5 * (a - c) / den, -0.5, 0.5))
         return sx, sy
 
-    def _detect(self, bgr: np.ndarray) -> list[Detection]:
-        st = self._state
-        H, W = bgr.shape[:2]
-        scale = self._current_scale(bgr)
-        st.frames += 1
-        st.since_calib += 1
-        maps, std, bank, fx, fy = self._maps(bgr, scale, WORK_INNER_PX)
-        ents = self._entries
-        if maps.shape[0] != len(ents) or maps.shape[1] < 2 or maps.shape[2] < 2:
-            return []
-        half = (bank.size - 1) / 2.0                   # map index -> template centre
+    # ------------------------------------------------------------------ search stages
+    def _global_search(self, feat: np.ndarray, bank: _Bank, idx: list[int]
+                       ) -> tuple[list[_Cand], list[float]]:
+        """Whole-map search (Fourier NCC) of the champions ``idx``: candidates + background."""
+        maps, std = ncc_maps(feat, bank, idx)
+        if maps.shape[1] < 2 or maps.shape[2] < 2:
+            return [], []
+        half = (bank.size - 1) / 2.0
         rad = max(2, int(round(0.4 * bank.size)))
-        R_px = 0.5 * scale * W                          # icon radius (original px)
-        r_norm = R_px / W
-        D_work = scale * W * fx                         # icon diameter (working px)
-
-        # candidates: (evidence, ncc, entry, x, y) in working px (continuous centre)
-        cands: list[tuple[float, float, int, float, float]] = []
-        bg_scores: list[float] = []
-        for i in range(len(ents)):
-            m = maps[i]
+        cands: list[_Cand] = []
+        bg: list[float] = []
+        for k, i in enumerate(idx):
+            m = maps[k]
             pk = [(x, y, v) for x, y, v in self._peaks(m, rad, PEAKS_PER_CHAMP + 1, PEAK_FLOOR)
                   if CONTRAST_RANGE[0] < float(std[y, x]) / float(bank.stds[i])
                   < CONTRAST_RANGE[1]]
             for j, (x, y, v) in enumerate(pk[:PEAKS_PER_CHAMP]):
-                other = max((q[2] for k, q in enumerate(pk) if k != j), default=PEAK_FLOOR)
+                other = max((q[2] for kk, q in enumerate(pk) if kk != j), default=PEAK_FLOOR)
                 ev = v + UNIQUE_WEIGHT * min(v - other, UNIQUE_CAP)
                 sx, sy = self._subpixel(m, x, y)
-                cands.append((ev, v, i, sx + half + 0.5, sy + half + 0.5))
+                cands.append(_Cand(i, sx + half + 0.5, sy + half + 0.5, v, ev,
+                                   margin=v - other))
                 if j > 0:
-                    bg_scores.append(v)
+                    bg.append(v)
+        return cands, bg
+
+    def _local_search(self, feat: np.ndarray, bank: _Bank, i: int, tr: _Track, now: float,
+                      kx: float, ky: float) -> list[_Cand]:
+        """Search champion ``i`` in small windows around its predicted position (and around
+        an unconfirmed far candidate). ``kx``, ``ky``: normalized -> working px."""
+        s = bank.size
+        half = (s - 1) / 2.0
+        Hf, Wf = feat.shape[:2]
+        pu, pv = tr.predict(now)
+        dt = min(max(now - tr.t, 0.0), TRACK_FRESH_S)
+        wins = [(pu, pv, LOCAL_SLACK + MAX_SPEED * dt)]
+        if tr.pend is not None and now - tr.pend[2] < 1.0:
+            wins.append((tr.pend[0], tr.pend[1], LOCAL_SLACK))
+        out: list[_Cand] = []
+        bonus = UNIQUE_WEIGHT * min(max(tr.margin, 0.0), UNIQUE_CAP)
+        for wu, wv, rn in wins:
+            cx, cy = wu * kx - half - 0.5, wv * ky - half - 0.5     # map index of the centre
+            rw = rn * kx
+            xm0, xm1 = max(0, int(math.floor(cx - rw))), min(Wf - s, int(math.ceil(cx + rw)))
+            ym0, ym1 = max(0, int(math.floor(cy - rw))), min(Hf - s, int(math.ceil(cy + rw)))
+            if xm1 < xm0 or ym1 < ym0:
+                continue
+            res = local_ncc(feat[ym0:ym1 + s, xm0:xm1 + s], bank, i)
+            if res is None:
+                continue
+            m, std = res
+            ratio = std / float(bank.stds[i])
+            mm = np.where((ratio > CONTRAST_RANGE[0]) & (ratio < CONTRAST_RANGE[1]), m, -1.0)
+            y, x = divmod(int(np.argmax(mm)), mm.shape[1])
+            v = float(mm[y, x])
+            if v < PEAK_FLOOR:
+                continue
+            sx, sy = self._subpixel(mm, x, y)
+            out.append(_Cand(i, sx + xm0 + half + 0.5, sy + ym0 + half + 0.5, v, v + bonus,
+                             local=True))
+        return out
+
+    def _structures(self) -> list[tuple[float, float, str]]:
+        if self._structs is None:
+            try:
+                from treeaicoach.render import iter_structures
+
+                self._structs = [(float(u), float(v), str(t))
+                                 for _, u, v, _, t in iter_structures()]
+            except Exception:
+                self._structs = []
+        return self._structs
+
+    def _team_of(self, e: RosterEntry) -> str | None:
+        if e.team in ("ORDER", "CHAOS"):
+            return e.team
+        mt = self._my_team
+        if mt not in ("ORDER", "CHAOS"):
+            return None
+        return mt if e.relation != "enemy" else ("CHAOS" if mt == "ORDER" else "ORDER")
+
+    def _struct_penalty(self, e: RosterEntry, u: float, v: float) -> float:
+        """A structure glyph of the champion's ring colour right there: needs more evidence."""
+        mt = self._my_team
+        for su, sv, st in self._structures():
+            if abs(u - su) < STRUCT_DIST and abs(v - sv) < STRUCT_DIST \
+                    and math.hypot(u - su, v - sv) < STRUCT_DIST:
+                if mt not in ("ORDER", "CHAOS") or (st == mt) == (e.relation != "enemy"):
+                    return STRUCT_PENALTY
+        return 0.0
+
+    def _jump_penalty(self, e: RosterEntry, tr: _Track, u: float, v: float,
+                      now: float) -> float:
+        """Penalty of a position the champion cannot have reached since its last match."""
+        age = now - tr.t
+        if age > JUMP_MEMORY_S:
+            return 0.0
+        pu, pv = tr.predict(now)
+        if math.hypot(u - pu, v - pv) <= JUMP_SLACK + MAX_SPEED * max(age, 0.0):
+            return 0.0
+        team = self._team_of(e)
+        for t_, (fu, fv) in _FOUNTAINS.items():          # recall: back to the fountain
+            if (team is None or t_ == team) and math.hypot(u - fu, v - fv) < FOUNTAIN_DIST:
+                return 0.0
+        p = tr.pend
+        if p is not None and now - p[2] < 1.0 and math.hypot(u - p[0], v - p[1]) < 0.03:
+            return 0.0                                     # confirmed by a second frame
+        return JUMP_PENALTY
+
+    def _camera_centre(self, bgr: np.ndarray) -> tuple[float, float] | None:
+        """Camera rectangle centre (cached a few frames)."""
+        f = self._state.frames
+        if f - self._cam[0] >= 4:
+            try:
+                from treeaicoach.identifier import find_camera_center
+
+                c = find_camera_center(bgr)
+            except Exception:
+                c = None
+            self._cam = (f, c)
+        return self._cam[1]
+
+    def _score_cand(self, c: _Cand, bgr: np.ndarray, kx: float, ky: float, R_px: float,
+                    W: int, H: int, now: float, floor: float,
+                    exclude: Sequence[tuple[float, float]] = ()) -> None:
+        """Final score: evidence - penalties + ring colour agreement (in place)."""
+        e = self._entries[c.i]
+        u, v = c.x / kx, c.y / ky
+        pen = self._struct_penalty(e, u, v)
+        tr = self._tracks.get(c.i)
+        if tr is not None and not c.local:
+            jp = self._jump_penalty(e, tr, u, v, now)
+            if jp:
+                c.note = "jump"
+            pen += jp
+        base = c.ev - pen
+        if base < floor:
+            c.tot = base
+            return
+        ring = self._ring_pixels(bgr, u * W, v * H, R_px, exclude)
+        f_en, f_al = self.rings.classify(ring)
+        own, opp = (f_en, f_al) if e.relation == "enemy" else (f_al, f_en)
+        c.tot = base + RING_WEIGHT * (own - opp) - NO_RING_PENALTY * max(0.0, 1.0 - own / 0.3)
+        c.f_en, c.f_al, c.ring = f_en, f_al, ring
+
+    def _rescue(self, c: _Cand, feat: np.ndarray, bank: _Bank, work_centres: list,
+                D_work: float) -> float | None:
+        """Occlusion-tolerant evidence of candidate ``c``: best NCC on the visible part of
+        the icon (partial discs, without overlapping accepted icons and white lines /
+        texts), over +-1 working px. None when too little of the icon is visible."""
+        s = bank.size
+        half = (s - 1) / 2.0
+        Hf, Wf = feat.shape[:2]
+        x0 = int(round(c.x - half - 0.5))
+        y0 = int(round(c.y - half - 0.5))
+        offs = [(dx, dy) for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+                if 0 <= x0 + dx <= Wf - s and 0 <= y0 + dy <= Hf - s]
+        if not offs:
+            return None
+        P = np.stack([feat[y0 + dy:y0 + dy + s, x0 + dx:x0 + dx + s] for dx, dy in offs])
+        raw = bank.raw[c.i]
+        yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
+        base = np.concatenate([bank.mask[None], bank.caps], axis=0)       # [k, s, s]
+        masks = np.empty((len(offs), base.shape[0], s, s), np.float32)
+        # white lines / texts on the patch where the portrait is not white
+        tl = raw[:, :, 0]
+        for j, (dx, dy) in enumerate(offs):
+            keep = np.ones((s, s), np.float32)
+            p = P[j]
+            white = (p[:, :, 0] > 215.0) & (np.abs(p[:, :, 1]) < 14.0) & \
+                (np.abs(p[:, :, 2]) < 14.0) & (tl < 190.0)
+            keep[white] = 0.0
+            ox, oy = x0 + dx, y0 + dy
+            for (ax, ay) in work_centres:          # accepted icons drawn over this one
+                d2 = (xx + ox + 0.5 - ax) ** 2 + (yy + oy + 0.5 - ay) ** 2
+                keep[d2 < (0.53 * D_work) ** 2] = 0.0
+            masks[j] = base * keep[None]
+        area = masks.sum(axis=(2, 3)) / max(bank.n, 1e-6)                 # [p, k]
+        sc = masked_ncc(P, raw, masks)
+        sc = np.where(area >= 0.45, sc - OCC_PENALTY * (area < 0.97), -1.0)
+        best = float(sc.max())
+        return best if best > -1.0 else None
+
+    def _detect(self, bgr: np.ndarray, now: float) -> list[Detection]:
+        st = self._state
+        H, W = bgr.shape[:2]
+        old_scale = st.scale
+        scale = self._current_scale(bgr)
+        st.frames += 1
+        st.since_calib += 1
+        ents = self._entries
+        n_e = len(ents)
+        inner_full = INNER_RATIO * scale * W
+        factor = min(1.0, WORK_INNER_PX / max(inner_full, 1e-6))
+        work = self._work(bgr, factor)
+        fx, fy = work.shape[1] / float(W), work.shape[0] / float(H)
+        bank = self._bank(inner_full * fx)
+        feat = _features(work)
+        s = bank.size
+        if len(bank.tmpl) != n_e or feat.shape[0] < s + 1 or feat.shape[1] < s + 1:
+            return []
+        kx, ky = W * fx, H * fy                         # normalized -> working px
+        R_px = 0.5 * scale * W                          # icon radius (original px)
+        r_norm = R_px / W
+        D_work = scale * W * fx                         # icon diameter (working px)
+        for i in [i for i, tr in self._tracks.items()
+                  if i >= n_e or now - tr.t > JUMP_MEMORY_S or now < tr.t - 1.0]:
+            del self._tracks[i]
+        full = (st.frames - st.last_full >= FULL_EVERY or st.scale != old_scale
+                or st.frames <= 2 * CALIB_FRAMES)
+        self.last_mode = "full" if full else "tracked"
+
+        # 1. tracked champions: small windows around the predicted positions
+        cands: list[_Cand] = []
+        bg_scores: list[float] = []
+        found_local: set[int] = set()
+        if not full:
+            prev_thr = self.last_threshold
+            for i, tr in self._tracks.items():
+                if now - tr.t > TRACK_FRESH_S or tr.misses >= 2:
+                    continue
+                lc = self._local_search(feat, bank, i, tr, now, kx, ky)
+                cands.extend(lc)
+                if any(c.ev >= prev_thr for c in lc):
+                    found_local.add(i)
+        # 2. the others (lost, in the fog, local miss): whole map
+        glob = [i for i in range(n_e) if i not in found_local]
+        if glob:
+            gc, bg_scores = self._global_search(feat, bank, glob)
+            cands.extend(gc)
+        if full:
+            st.last_full = st.frames
         thr = self._threshold(bg_scores)
         self.last_threshold = thr
 
-        # ring colour second opinion for every candidate that could pass
-        scored: list[tuple[float, float, int, float, float, float, float, np.ndarray | None]] = []
-        for ev, v, i, x, y in cands:
-            if ev < thr - RING_WEIGHT - 0.05:
-                scored.append((ev, ev, i, x, y, 0.0, 0.0, None))
-                continue
-            ring = self._ring_pixels(bgr, x / fx, y / fy, R_px)
-            f_en, f_al = self.rings.classify(ring)
-            own, opp = (f_en, f_al) if ents[i].relation == "enemy" else (f_al, f_en)
-            tot = ev + RING_WEIGHT * (own - opp) - NO_RING_PENALTY * max(0.0, 1.0 - own / 0.3)
-            scored.append((tot, ev, i, x, y, f_en, f_al, ring))
-        scored.sort(key=lambda c: -c[0])
+        # 3. final scores (penalties, ring colour); self threshold relaxed near its track
+        relax: dict[int, float] = {}
+        for c in cands:
+            self._score_cand(c, bgr, kx, ky, R_px, W, H, now, thr - RING_WEIGHT - 0.05 - SELF_RELAX)
+            if ents[c.i].relation == "self":
+                tr = self._tracks.get(c.i)
+                if tr is not None and now - tr.t <= SELF_COAST_S:
+                    pu, pv = tr.predict(now)
+                    if math.hypot(c.x / kx - pu, c.y / ky - pv) <= JUMP_SLACK + \
+                            MAX_SPEED * (now - tr.t):
+                        relax[id(c)] = SELF_RELAX
+        cands.sort(key=lambda c: -c.tot)
 
+        # 4. assignment: one position per champion, no two champions on one spot
         used: set[int] = set()
-        accepted: list[tuple[float, int, float, float, float, float]] = []
+        accepted: list[_Cand] = []
         infos: list[MatchInfo] = []
-        for tot, ev, i, x, y, f_en, f_al, ring in scored:
-            if i in used:
+        rejected: dict[int, _Cand] = {}
+
+        def info(c: _Cand, ok: bool, reason: str = "") -> None:
+            e = ents[c.i]
+            infos.append(MatchInfo(e.alias, e.relation, c.x / kx, c.y / ky, r_norm, c.tot,
+                                   c.f_en, c.f_al, ok, reason))
+
+        def conflict(c: _Cand, tot: float, stacked_ok: bool) -> bool:
+            for a in accepted:
+                dd = math.hypot(c.x - a.x, c.y - a.y) / max(D_work, 1e-6)
+                if dd < MIN_SEP_FRAC:
+                    return True
+                if dd < STACK_FRAC and not stacked_ok and tot < max(thr + 0.1, 0.85 * a.tot):
+                    return True
+            return False
+
+        for c in cands:
+            if c.i in used:
                 continue
+            t_i = thr - relax.get(id(c), 0.0)
+            if c.tot < t_i:
+                rejected.setdefault(c.i, c)
+                info(c, False, "score")
+                continue
+            if conflict(c, c.tot, False):
+                rejected.setdefault(c.i, c)
+                info(c, False, "conflict")
+                continue
+            e = ents[c.i]
+            own, opp = (c.f_en, c.f_al) if e.relation == "enemy" else (c.f_al, c.f_en)
+            if c.ev < STRONG_SCORE and opp > 0.3 and opp > 2.0 * own + 0.05:
+                info(c, False, "ring")
+                continue
+            used.add(c.i)
+            accepted.append(c)
+            info(c, True)
+            if c.ncc >= LEARN_SCORE - 0.1 and c.ev >= LEARN_SCORE and opp < 0.15 \
+                    and c.ring is not None and (st.frames % 4 == 0 or
+                                                self.rings.samples.get(e.relation, 0) < 12):
+                self.rings.learn(e.relation, c.ring)
+
+        # 5. occlusion: re-score the best rejected candidate of each missing champion on
+        #    the visible part of its icon (stacks: the accepted icons are drawn over it)
+        for i, c in sorted(rejected.items(), key=lambda kv: -kv[1].tot):
+            if i in used or c.ncc < OCC_MIN_NCC:
+                continue
+            t_i = thr - relax.get(id(c), 0.0)
+            if c.tot < t_i - OCC_RANGE:
+                continue
+            near = [(a.x, a.y) for a in accepted
+                    if math.hypot(c.x - a.x, c.y - a.y) < 1.05 * D_work]
+            occ = self._rescue(c, feat, bank, near, D_work)
+            if occ is None or occ + (c.ev - c.ncc) <= c.ev:
+                continue
+            c2 = _Cand(c.i, c.x, c.y, occ, occ + (c.ev - c.ncc), c.local, margin=c.margin)
+            excl = [(a.x / kx * W, a.y / ky * H) for a in accepted
+                    if math.hypot(c.x - a.x, c.y - a.y) < 1.05 * D_work]
+            self._score_cand(c2, bgr, kx, ky, R_px, W, H, now, -10.0, exclude=excl)
             e = ents[i]
-            u, vv = x / fx / W, y / fy / H
-            if tot < thr:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, tot, f_en, f_al,
-                                       False, "score"))
-                continue
-            conflict = False
-            for ta, _ia, xa, ya, _fe, _fa in accepted:
-                dd = math.hypot(x - xa, y - ya) / max(D_work, 1e-6)
-                if dd < MIN_SEP_FRAC or (dd < STACK_FRAC and tot < max(thr + 0.1, 0.85 * ta)):
-                    conflict = True
-                    break
-            if conflict:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, tot, f_en, f_al,
-                                       False, "conflict"))
-                continue
-            own, opp = (f_en, f_al) if e.relation == "enemy" else (f_al, f_en)
-            if ev < STRONG_SCORE and opp > 0.3 and opp > 2.0 * own + 0.05:
-                infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, tot, f_en, f_al,
-                                       False, "ring"))
+            own, opp = (c2.f_en, c2.f_al) if e.relation == "enemy" else (c2.f_al, c2.f_en)
+            if c2.tot < t_i or own < 0.15 or opp > own or conflict(c2, c2.tot, True):
                 continue
             used.add(i)
-            accepted.append((tot, i, x, y, f_en, f_al))
-            infos.append(MatchInfo(e.alias, e.relation, u, vv, r_norm, tot, f_en, f_al, True))
-            if ev >= LEARN_SCORE and opp < 0.15 and ring is not None:
-                self.rings.learn(e.relation, ring)
+            accepted.append(c2)
+            info(c2, True, "occluded")
+
+        # 6. the local player: camera rectangle prior, then coasting on its track
+        dets_extra: list[Detection] = []
+        for i, e in enumerate(ents):
+            if e.relation != "self" or i in used:
+                continue
+            best = rejected.get(i)
+            cam = self._camera_centre(bgr) if best is not None else None
+            if best is not None and cam is not None and best.ncc >= OCC_MIN_NCC and \
+                    math.hypot(best.x / kx - cam[0], best.y / ky - cam[1]) < SELF_CAM_DIST \
+                    and best.tot >= thr - SELF_RELAX and not conflict(best, best.tot, True):
+                own = best.f_al
+                if own >= 0.15 and best.f_en <= own:
+                    used.add(i)
+                    accepted.append(best)
+                    info(best, True, "camera")
+                    continue
+            tr = self._tracks.get(i)
+            if tr is not None and now - tr.t <= SELF_COAST_S and tr.hits >= 3:
+                pu, pv = tr.predict(now)
+                score = float(max(0.05, tr.conf * (1.0 - 0.5 * (now - tr.t) / SELF_COAST_S)))
+                dets_extra.append(Detection(u=pu, v=pv, r=r_norm, score=score, cls="ally",
+                                            cls_probs=(0.03, 0.97, 0.0), alias=e.alias))
+                infos.append(MatchInfo(e.alias, e.relation, pu, pv, r_norm, score, 0.0, 0.0,
+                                       True, "coast"))
+
+        # 7. tracks
+        for c in accepted:
+            e = ents[c.i]
+            u, v = c.x / kx, c.y / ky
+            enemy = e.relation == "enemy"
+            agree = (c.f_en - c.f_al) if enemy else (c.f_al - c.f_en)
+            conf_v = float(min(1.0, max(0.05, 0.55 + (c.tot - thr) * 1.5 + 0.1 * agree)))
+            tr = self._tracks.get(c.i)
+            if tr is None:
+                tr = self._tracks[c.i] = _Track(u, v, now, conf=conf_v,
+                                                margin=c.margin if c.margin is not None
+                                                else 0.5 * UNIQUE_CAP)
+            else:
+                dt = now - tr.t
+                if dt >= 0.03:
+                    if math.hypot(u - tr.u, v - tr.v) <= JUMP_SLACK + MAX_SPEED * dt:
+                        a = 0.5
+                        vu = (1 - a) * tr.vu + a * (u - tr.u) / dt
+                        vv = (1 - a) * tr.vv + a * (v - tr.v) / dt
+                        sp = math.hypot(vu, vv)
+                        k = min(1.0, MAX_SPEED / sp) if sp > 0 else 1.0
+                        tr.vu, tr.vv = vu * k, vv * k
+                    else:
+                        tr.vu = tr.vv = 0.0
+                tr.u, tr.v, tr.t = u, v, now
+                tr.conf = (1 - CONF_SMOOTH) * tr.conf + CONF_SMOOTH * conf_v
+                if c.margin is not None:
+                    tr.margin = c.margin
+            tr.hits += 1
+            tr.misses = 0
+            tr.pend = None
+        for i, tr in self._tracks.items():
+            if i in used:
+                continue
+            tr.misses += 1
+            tr.conf *= 0.8
+            far = rejected.get(i)
+            if far is not None and far.note == "jump" and far.tot + JUMP_PENALTY >= thr:
+                tr.pend = (far.x / kx, far.y / ky, now)
 
         # statistics for the adaptive threshold and the re-calibration trigger
-        conf = [a[0] for a in accepted if a[0] >= thr + 0.08]
+        conf = [a for a in accepted if a.tot >= thr + 0.08]
         st.bg.extend(bg_scores)
         del st.bg[:-600]
         st.conf_hist.append(float(len(conf)))
@@ -1057,16 +1374,15 @@ class RosterMatcher:
 
         self.last_matches = infos
         dets: list[Detection] = []
-        for ev, i, x, y, f_en, f_al in accepted:
-            e = ents[i]
+        for c in accepted:
+            e = ents[c.i]
             enemy = e.relation == "enemy"
-            agree = (f_en - f_al) if enemy else (f_al - f_en)
-            conf_v = float(min(1.0, max(0.05, 0.55 + (ev - thr) * 1.5 + 0.1 * agree)))
             p_en = 0.97 if enemy else 0.03
-            dets.append(Detection(u=x / fx / W, v=y / fy / H, r=r_norm, score=conf_v,
+            dets.append(Detection(u=c.x / kx, v=c.y / ky, r=r_norm,
+                                  score=float(self._tracks[c.i].conf),
                                   cls="enemy" if enemy else "ally",
                                   cls_probs=(p_en, 1.0 - p_en, 0.0), alias=e.alias))
-        return dets
+        return dets + dets_extra
 
 
 __all__ = ["RosterMatcher", "RosterEntry", "RingColorModel", "MatchInfo", "ncc_maps",
