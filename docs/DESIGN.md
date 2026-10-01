@@ -17,8 +17,8 @@ au lieu de cartes empilées.
 | `LINE`       | `#222725` | séparateurs 1 px                                             |
 | `LINE_STRONG`| `#2F3532` | bord des contrôles, séparateur actif                         |
 | `TEXT`       | `#E4E8E5` | texte principal                                              |
-| `MUTED`      | `#8B948F` | texte secondaire                                             |
-| `DIM`        | `#59615C` | légendes, valeurs absentes                                   |
+| `MUTED`      | `#A4ADA8` | texte secondaire, descriptions (8,4:1 sur `BG`)              |
+| `DIM`        | `#7E8782` | légendes, valeurs absentes (5,2:1 sur `BG`, ≥ 4,5:1 partout) |
 | `ACCENT`     | `#9BD84A` | **seul accent** : action principale, onglet actif, valeurs   |
 | `ACCENT_DIM` | `#3E5A1E` | fond d'élément sélectionné                                   |
 | `ON_ACCENT`  | `#0C0E0D` | texte sur l'accent                                           |
@@ -34,24 +34,43 @@ or / marine du client du jeu (`#C8AA6E`, `#0A1428`, `#010A13`).
 
 ## Typographie
 
-Trois tailles seulement (avant le facteur `ui_scale`, 0,88 par défaut) :
+La lisibilité passe avant la compacité (retour joueur : « trop petit »). Tailles en pixels à
+100 % ; le facteur `ui_scale` (1,0 par défaut, réglable dans Réglages > Interface) et l'échelle
+d'affichage de Windows (facteur DPI par écran appliqué par CustomTkinter) s'y ajoutent.
 
-| Rôle       | Police                                   | Taille | Graisse  |
-|------------|------------------------------------------|--------|----------|
-| Affichage  | Bahnschrift SemiBold (chiffres, titres)  | 17     | semi-gras|
-| Corps      | Segoe UI                                 | 11     | normal / gras |
-| Légende    | Segoe UI, MAJUSCULES espacées            | 9      | gras     |
+| Rôle                     | Police                                   | Taille | Graisse        |
+|--------------------------|------------------------------------------|--------|----------------|
+| Titre de page            | Bahnschrift SemiBold                     | 26     | semi-gras      |
+| Titre de section         | Bahnschrift SemiBold                     | 17     | semi-gras      |
+| Corps (libellés, menus)  | Segoe UI                                 | 14     | normal / gras  |
+| Secondaire (descriptions)| Segoe UI, couleur `MUTED`                | 13     | normal         |
+| Légende                  | Segoe UI, MAJUSCULES                     | 12     | gras           |
 
-Les chiffres importants (chrono, K/D/A, CS/min) utilisent la police d'affichage en taille 22.
+Jamais en dessous de 12 px. Les chiffres importants (chrono, statistiques) utilisent la police
+d'affichage en 28, les valeurs de réglage en 16. Contraste minimal 4,5:1 pour tout texte.
 Repli hors Windows : DejaVu Sans / Liberation Sans. Interdites comme identité :
 Inter, Poppins, Space Grotesk, Geist.
+
+## Mise en page
+
+* Une colonne de contenu centrée, 860 px au plus (1300 px pour « En jeu »), marges de 32 px :
+  jamais un libellé collé à gauche et son contrôle collé au bord droit d'un grand écran.
+* Une section = titre + phrase d'explication + **une** carte (`SURFACE`, bord 1 px, rayon 6)
+  dont les lignes sont séparées par un trait de 1 px. Pas de carte dans une carte.
+* Ligne de réglage : libellé (14) + description (13) à gauche, contrôle juste à droite ;
+  hauteur minimale identique pour toutes les lignes ; si la fenêtre est étroite, un contrôle
+  large passe sous le texte.
+* Contrôles : boutons 34 px (30 dans les barres d'outils et les tableaux), menus, champs et
+  sélecteurs 34 px.
+* Interrupteurs : pilule 46 × 26 (38 × 22 dans la barre latérale). Éteint : piste sombre
+  cerclée, bouton gris à gauche ; allumé : piste verte pleine, bouton sombre à droite.
 
 ## Espacement, formes
 
 * Grille de 4 px : 4 / 8 / 12 / 16 / 24.
-* Rayon : **4 px** (contrôles, portraits carrés), 6 px maximum (dialogues). Pas de pilule ronde.
-* Pas d'ombre portée douce. Pas de carte dans une carte : une section = titre en légende +
-  séparateur 1 px + lignes.
+* Rayon : **4 px** (contrôles, portraits carrés), 6 px maximum (cartes, dialogues). Pas de pilule
+  ronde, sauf les interrupteurs et le bouton des curseurs (leur forme est celle qu'on reconnaît).
+* Pas d'ombre portée douce. Pas de carte dans une carte.
 * Tableaux alignés (colonnes fixes, chiffres alignés à droite) plutôt que des grilles de
   cartes identiques.
 
@@ -62,10 +81,12 @@ Inter, Poppins, Space Grotesk, Geist.
 * Pas d'emoji, pas d'icône « étincelle », pas de « magie », pas de « Bienvenue dans… ».
 * Français simple, tutoiement, phrases courtes.
 
-## Mouvement
+## Mouvement et performance
 
 Seulement quand il a un sens : point « en direct » qui pulse pendant l'analyse, jauge de
-menace, flash de danger. Pas d'animation décorative.
+menace, flash de danger. Pas d'animation décorative. Rien ne bouge quand la page « En jeu »
+n'est pas affichée ou que la fenêtre est réduite (rafraîchissement 1 s, 2 s réduite) ; les
+pages sont construites à la première visite ou pendant un temps mort.
 
 `tests/test_design_rules.py` vérifie automatiquement les interdits (tiret cadratin dans les
 textes de l'interface, couleurs et polices bannies, emoji).

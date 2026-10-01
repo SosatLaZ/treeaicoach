@@ -60,7 +60,7 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "minimap_mode": ("auto", "manual"),
     "minimap_side": ("auto", "right", "left"),
     "radar_position": ("above_minimap", "left_of_minimap", "top_left", "custom"),
-    "hud_position": ("above_minimap", "top_left", "top_right", "left_middle", "custom"),
+    "hud_position": ("left_of_minimap", "above_minimap", "top_left", "top_right", "left_middle", "custom"),
     "overlay_mode": ("minimap", "radar", "off"),
     "fog_mode": ("jungler", "all", "off"),
     "voice_engine": ("auto", "neural", "onecore", "sapi"),
@@ -123,7 +123,7 @@ _UI_GEOMETRY_RE = re.compile(r"=?(\d{1,5})x(\d{1,5})(?:([+-]-?\d{1,6})([+-]-?\d{
 #: "custom" position -> fallback position when the matching ``*_xy`` field is missing.
 CUSTOM_POSITION_FALLBACK: dict[str, tuple[str, str]] = {
     "radar_position": ("radar_xy", "above_minimap"),
-    "hud_position": ("hud_xy", "above_minimap"),
+    "hud_position": ("hud_xy", "left_of_minimap"),
 }
 VOICE_NAME_MAX_LEN = 256
 #: Update settings: free text fields (URL / GitHub token), printable, stripped, bounded.
@@ -252,7 +252,7 @@ class Config:
     radar_scale: float = 1.0        # 0.5..2.0 (1.0 = minimap size)
     radar_xy: list[int] | None = None       # [x, y] screen pixels when radar_position == "custom"
     hud_enabled: bool = True
-    hud_position: str = "above_minimap"  # "above_minimap" | "top_left" | "top_right" | "left_middle" | "custom"
+    hud_position: str = "left_of_minimap"  # "left_of_minimap" | "above_minimap" | "top_left" | "top_right" | "left_middle" | "custom"
     overlay_mode: str = "minimap"   # "minimap" (marks on the real minimap) | "radar" | "off"
     hud_xy: list[int] | None = None
     danger_flash: bool = True
@@ -762,6 +762,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
     if "gank_pre_alert" not in data and data.get("target_fps") in (8, 8.0):
         # pre-latency-work file still on the old default analysis rate: gank alerts need 12 fps
         data = {**data, "target_fps": 12.0}
+    if "capture_backend" not in data and data.get("hud_position") == "above_minimap":
+        # pre-"pipeline v2" default: above the minimap the card covered League's ally portraits,
+        # the surrender vote and the minimap frame (real screenshots) -> left of the minimap
+        data = {**data, "hud_position": "left_of_minimap"}
     if "capture_backend" not in data and data.get("overlay_hide_from_capture") is False:
         # pre-"pipeline v2" file: the minimap layer was visible to our own screen capture, so the
         # detector saw our rings / labels (feedback loop on stale positions) -> excluded now

@@ -62,6 +62,7 @@ VERIFY_PERIOD_S = 1.0            # first minimap verify() after a location (then
 UNFOCUSED_HIDE_S = 1.5           # game not in the foreground this long -> overlay hidden
 STATS_EVERY_S = 1.0              # health monitor refresh (CPU %, rates)
 STALE_MIN_GAME_S = 90.0          # frozen-capture check only once minions walk (game time, s)
+EARLY_ADVICE_GT_S = 65.0         # no lane-phase tip / insight on the HUD line before the minions spawn
 VERIFY_BAD_S = 3.0               # verify() below threshold this long -> relocate
 LOCATE_RETRY_S = 10.0            # retry the auto location this often while on the fallback rect
 HEAVY_HZ = 2.0                   # rate of the coaching stages (coach, Tab, tips, items, hype / AI)
@@ -2325,13 +2326,23 @@ class CoachEngine:
         if mc is not None and mc.text not in valid and (msg is None or msg[0] <= mc.t or now - msg[0] >= TEXT_MSG_S):
             valid.insert(0, mc.text)                  # an active macro call keeps the line while it is valid
         coach = self._coach
-        if coach is not None:
+        # before the minions (1:05) the lane-phase advice makes no sense (seen in a real game:
+        # "Joue agressif avant le niveau 6" in the fountain at 0:26): written messages / calls only
+        game = self._game
+        early = False
+        try:
+            if game is not None:
+                gt_now = (_finite(game.game_time) or 0.0) + min(max(0.0, now - self._game_t), 3.0)
+                early = gt_now < EARLY_ADVICE_GT_S
+        except Exception:
+            early = False
+        if coach is not None and not early:
             try:
                 urgent = [it for it in coach.insight_items() if it[0] >= 65 and it[2] != "objective"]
                 valid += [it[1] for it in urgent[:1]]
             except Exception:
                 pass
-        if self._tip_text:
+        if self._tip_text and not early:
             valid.append(self._tip_text)
         cand = valid[0] if valid else None
         shown = getattr(self, "_hud_shown", None)
@@ -3388,12 +3399,13 @@ class CoachEngine:
             phase=tac.phase() if tac is not None else None,
             role_notice=self._role_notice(now),
             **self._hud_card_fields(game, me_uv, tip, now),
-            **self._prediction_fields(me),
+            **self._prediction_fields(me, game, game_t, now),
         )
 
-    def _prediction_fields(self, me: Any) -> dict[str, Any]:
-        """``predict`` / ``me_key`` of the overlay state (render-time positions), when the
-        renderer supports them."""
+    def _prediction_fields(self, me: Any, game: Any = None, game_t: float = 0.0,
+                           now: float = 0.0) -> dict[str, Any]:
+        """``predict`` / ``me_key`` (render-time positions) and ``me_dead`` / ``respawn_s`` (HUD
+        dead state) of the overlay state, when the renderer supports them."""
         try:
             from treeaicoach.overlay_render import OverlayState
 
@@ -3403,6 +3415,12 @@ class CoachEngine:
                 out["predict"] = self.predict_positions
             if "me_key" in names:
                 out["me_key"] = me.key if me is not None else None
+            p = getattr(game, "me", None)
+            if "me_dead" in names and p is not None and bool(getattr(p, "is_dead", False)):
+                out["me_dead"] = True
+                rt = _finite(getattr(p, "respawn_timer", None))
+                if rt is not None and "respawn_s" in names:
+                    out["respawn_s"] = max(0.0, rt - max(0.0, now - game_t))
             return out
         except Exception:
             return {}

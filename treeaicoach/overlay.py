@@ -69,7 +69,7 @@ HUD_FAST_HZ, HUD_CALM_HZ = 10.0, 4.0
 TOAST_HZ = 20.0
 #: Gap (fraction of the minimap height) kept between the HUD card and the minimap when the card
 #: sits above it: League draws its own frame, ping button and portraits there.
-MINIMAP_FRAME_CLEAR = 0.30
+MINIMAP_FRAME_CLEAR = 0.34
 #: Gap (px) between the radar and the minimap / screen edges.
 RADAR_GAP = 8
 #: Margin (px, at 1080p) between the HUD and the screen edges.
@@ -85,7 +85,12 @@ CALM_HZ = 4.0
 #: How often (s) visible windows are re-asserted as topmost.
 TOPMOST_EVERY_S = 2.0
 RADAR_POSITIONS = ("above_minimap", "left_of_minimap", "top_left", "custom")
-HUD_POSITIONS = ("above_minimap", "top_left", "top_right", "left_middle", "custom")
+HUD_POSITIONS = ("left_of_minimap", "above_minimap", "top_left", "top_right", "left_middle", "custom")
+#: "left_of_minimap": the card's bottom edge stays this fraction of the minimap height above the
+#: minimap's bottom (League's camera-lock / settings buttons sit just left of the minimap there)
+#: and its right edge this fraction of the minimap width left of the minimap.
+LEFT_OF_MM_BOTTOM_CLEAR = 0.10
+LEFT_OF_MM_GAP = 0.04
 #: ``cfg.overlay_mode``: "minimap" draws the marks *on* the real minimap (with or without capture
 #: exclusion), "radar" shows an enlarged copy
 #: above the minimap, "off" draws no map at all (HUD / flash keep their own switches).
@@ -307,7 +312,8 @@ def minimap_clearance(minimap: Any) -> int:
 
 
 def hud_placement(screen: Any, w: int, h: int, position: str = "above_minimap", custom_xy: Any = None,
-                  avoid: Iterable[Any] = (), anchor: Any = None, anchor_gap: int | None = None) -> tuple[int, int]:
+                  avoid: Iterable[Any] = (), anchor: Any = None, anchor_gap: int | None = None,
+                  minimap: Any = None) -> tuple[int, int]:
     """Top-left corner of the HUD panel, inside the screen and not over the ``avoid`` rects.
 
     ``position``: "above_minimap" (default: bottom edge ``RADAR_GAP`` px above ``anchor`` - the
@@ -325,6 +331,20 @@ def hud_placement(screen: Any, w: int, h: int, position: str = "above_minimap", 
     xy = _xy(custom_xy) if position == "custom" else None
     anc = as_rect(anchor)
     gap = RADAR_GAP if anchor_gap is None else max(0, int(anchor_gap))
+    blockers0 = [r for r in (as_rect(a) for a in avoid) if r is not None]
+    if position == "left_of_minimap":
+        # default: bottom-right corner of the game view, left of the minimap - nothing of
+        # League's HUD there (ally portraits / surrender vote are ABOVE the minimap, the item
+        # bar ends further left), clear of the camera buttons next to the minimap's bottom
+        mmr = as_rect(minimap) or anc
+        if mmr is not None:
+            x = mmr[0] - max(RADAR_GAP, int(round(LEFT_OF_MM_GAP * mmr[2]))) - w
+            y = mmr[1] + mmr[3] - int(round(LEFT_OF_MM_BOTTOM_CLEAR * mmr[3])) - h
+            if x >= sx + m and y >= sy + m and not any(rects_overlap((x, y, w, h), b) for b in blockers0):
+                return x, y
+        position = "above_minimap"
+        if anchor_gap is None and mmr is not None and (anc is None or anc == mmr):
+            gap = max(RADAR_GAP, int(round(MINIMAP_FRAME_CLEAR * mmr[3])))
     if position == "above_minimap":
         if anc is not None and anc[1] - gap - h >= sy + m and w <= sw:
             x, y = anc[0] + anc[2] - w, anc[1] - gap - h
@@ -1503,14 +1523,14 @@ class OverlayManager:
                 img = self._render("hud", orr.render_hud, state, hud_width(scr))
                 if move:
                     img = move_mode_frame(img, "HUD — glisser")
-                pos = getattr(cfg, "hud_position", "above_minimap")
+                pos = getattr(cfg, "hud_position", "left_of_minimap")
                 xy = getattr(cfg, "hud_xy", None)
                 if "hud" in custom:
                     pos, xy = "custom", custom["hud"]
                 avoid = [r for r in (mm, radar_rect) if r is not None]
                 gap = None if radar_rect is not None else minimap_clearance(mm)
                 x, y = hud_placement(scr, img.shape[1], img.shape[0], pos, xy, avoid=avoid,
-                                     anchor=radar_rect or mm, anchor_gap=gap)
+                                     anchor=radar_rect or mm, anchor_gap=gap, minimap=mm)
                 self._show(hud_win, "hud", img, x, y, dedupe=True)
         else:
             hud_win.hide()

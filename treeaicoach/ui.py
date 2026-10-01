@@ -56,7 +56,7 @@ RAISED = "#191D1B"          # hover, inputs, secondary buttons
 SUNKEN = "#090B0A"          # wells (journal, gauge tracks)
 LINE = "#222725"            # 1 px separators
 LINE_STRONG = "#2F3532"     # control borders
-ROW_LINE = "#1F2422"        # separators between the rows of a card (on SURFACE)
+ROW_LINE = "#252B28"        # separators between the rows of a card (on SURFACE)
 ACCENT = "#9BD84A"          # the only accent (TreeAI sap green)
 ACCENT_HOVER = "#B0E46C"
 ACCENT_DIM = "#3E5A1E"      # selected background
@@ -93,7 +93,7 @@ RADIUS_DIALOG = 6
 BTN_H, BTN_H_SMALL = 34, 30       # the two button heights
 CTL_H = 34                        # inputs, menus, segmented controls
 CONTENT_MAX = 860                 # max width of the centred content column (settings-like pages)
-WIDE_MAX = 1480                   # dashboard / analyses
+WIDE_MAX = 1300                   # dashboard / analyses
 PAGE_PAD = 32                     # minimum side gutter of a page
 CARD_PAD = 20                     # inner padding of a section card
 
@@ -951,7 +951,13 @@ class _CanvasText:
         if not opts:
             return
         try:
-            changed = "text" in opts and self.canvas.itemcget(self.item, "text") != opts["text"]
+            changed = "text" in opts and getattr(self, "_req", None) != opts["text"]
+            if "text" in opts:
+                if not changed:
+                    opts.pop("text")
+                self._req = kw["text"]
+            if not opts:
+                return
             self.canvas.itemconfigure(self.item, **opts)
             if changed and self._on_change is not None:
                 self._on_change()
@@ -959,6 +965,8 @@ class _CanvasText:
             pass
 
     def cget(self, name: str) -> Any:
+        if name == "text" and getattr(self, "_req", None) is not None:
+            return self._req          # the full text (the item may show it ellipsized)
         try:
             return self.canvas.itemcget(self.item, "text" if name == "text" else "fill")
         except Exception:
@@ -1034,7 +1042,7 @@ class HeroBanner:
         self._badge = False
         self._detail_full = "Hors partie"
         self.title = _CanvasText(c, self.title_item, self.layout)
-        self.msg = _CanvasText(c, self.msg_item)
+        self.msg = _CanvasText(c, self.msg_item, self._fit_msg)
         self.clock = _CanvasText(c, self.clock_item)
         self.timers = _CanvasText(c, self.timers_item, self.layout)
         self.threat = _CanvasText(c, self.threat_item, self.layout)
@@ -1082,9 +1090,12 @@ class HeroBanner:
             c.coords(self.vsep, clock_left, top - s(24), clock_left, top + s(24))
             right_limit = clock_left - s(16)
             if self._mu_win is not None:
-                c.coords(self._mu_win, right_limit, top)
                 mw = int(self._mu_widget.winfo_reqwidth()) if self._mu_widget is not None else 0
-                right_limit -= mw + s(16)
+                fits = right_limit - mw - s(16) - (pad + s(24)) >= s(300)    # else: room for the state text
+                c.itemconfigure(self._mu_win, state="normal" if fits else "hidden")
+                if fits:
+                    c.coords(self._mu_win, right_limit, top)
+                    right_limit -= mw + s(16)
             dx, dy = pad + s(10), top - s(10)
             self._dot = (dx, dy)
             c.coords(self.core, dx - s(4), dy - s(4), dx + s(4), dy + s(4))
@@ -1097,6 +1108,8 @@ class HeroBanner:
                 c.coords(self.badge_txt, bx + s(25), top - s(10))
             c.coords(self.msg_item, tx, top + s(6))
             c.itemconfigure(self.msg_item, width=max(s(120), right_limit - tx))
+            self._msg_bottom = h - s(22) - s(21) - s(4)
+            self._fit_msg()
             # lower row: threat + gauge (left), objective timers (right)
             ty = h - s(22)
             c.coords(self.rule, s(3), ty - s(21), w - 1, ty - s(21))
@@ -1118,13 +1131,35 @@ class HeroBanner:
         except Exception:
             log.debug("hero layout failed", exc_info=True)
 
+    def _fit_msg(self) -> None:
+        """Ellipsize the state message so that it never runs into the threat row (narrow windows)."""
+        c = self.canvas
+        try:
+            msg = getattr(self, "msg", None)
+            text = getattr(msg, "_req", None)
+            if text is None:
+                text = c.itemcget(self.msg_item, "text")
+            c.itemconfigure(self.msg_item, text=text)
+            limit = getattr(self, "_msg_bottom", 10 ** 6)
+            n = 0
+            while len(text) > 1 and (c.bbox(self.msg_item) or (0, 0, 0, 0))[3] > limit and n < 400:
+                text = text[:-3]
+                n += 1
+                c.itemconfigure(self.msg_item, text=text.rstrip(" ·,") + "…")
+        except Exception:
+            pass
+
     def _fit_detail(self) -> None:
         """Ellipsize the threat detail so that it never runs into the gauge."""
         c = self.canvas
         try:
-            full = c.itemcget(self.detail_item, "text")
-            if not full.endswith("…"):
-                self._detail_full = full
+            req = getattr(getattr(self, "detail", None), "_req", None)
+            if req is not None:
+                self._detail_full = req
+            else:
+                full = c.itemcget(self.detail_item, "text")
+                if not full.endswith("…"):
+                    self._detail_full = full
             box = self._gauge_box
             if box is None:
                 return
@@ -1881,6 +1916,8 @@ class CoachApp:
         self._lcu_text = ""
         self._lcu_polled = 0.0
         self._status_job: str | None = None
+        self._update_info: Any = None             # updater result (settings page, may be built later)
+        self._update_busy = False
         self._wrap_labels: list[tuple[Any, int]] = []   # (label, inset) wrapped to the content column
         self._radar_worker = _RadarWorker(self._radar_source, RADAR_PX)
         self._radar_seq = -1
@@ -2156,8 +2193,15 @@ class CoachApp:
                 en_w = self.enemies_card.winfo_width() / scale
                 if en_w > 50:
                     self.jungler_lbl.configure(wraplength=int(max(200, en_w - 40)))
+                    self.coach_role_lbl.configure(wraplength=int(max(160, en_w - 150)))
                     self.coach_tip_lbl.configure(wraplength=int(max(240, en_w - 40)))
             self._wrap_rows(int(self.content.winfo_width() / scale))
+            tall = self.root.winfo_height() / scale >= 760      # short window: the level selector moves out
+            for w in getattr(self, "_level_widgets", ()):
+                if tall and not w.winfo_manager():
+                    w.grid()
+                elif not tall and w.winfo_manager():
+                    w.grid_remove()
         except Exception:
             log.debug("Layout update failed", exc_info=True)
 
@@ -2177,7 +2221,14 @@ class CoachApp:
                 if not lbl.winfo_exists():
                     continue
                 sw = slot.winfo_reqwidth() / scale
-                lbl.configure(wraplength=int(max(200, min(640, row_w - sw - 32))))
+                below = row_w - sw - 32 < 260            # wide control, narrow window: control under the text
+                if below != getattr(slot, "_below", False):
+                    slot._below = below
+                    if below:
+                        slot.grid_configure(row=1, column=0, sticky="w", padx=0, pady=(10, 0))
+                    else:
+                        slot.grid_configure(row=0, column=1, sticky="e", padx=(28, 0), pady=0)
+                lbl.configure(wraplength=int(max(200, min(640, row_w if below else row_w - sw - 32))))
             except Exception:
                 pass
         for lbl, inset in list(self._wrap_labels):
@@ -2747,9 +2798,10 @@ class CoachApp:
         try:
             from treeaicoach import skill as _skill
             row = 2 + len(specs)
-            self._label(box, "TON NIVEAU", self.fonts.caps, DIM, anchor="w").grid(
-                row=row, column=0, columnspan=3, sticky="w", pady=(20, 8))
+            lvl_cap = self._label(box, "TON NIVEAU", self.fonts.caps, DIM, anchor="w")
+            lvl_cap.grid(row=row, column=0, columnspan=3, sticky="w", pady=(20, 8))
             grid = self._frame(box)
+            self._level_widgets = (lvl_cap, grid)
             grid.grid(row=row + 1, column=0, columnspan=3, sticky="ew")
             grid.grid_columnconfigure((0, 1), weight=1, uniform="lvl")
             self._skill_btns: dict[str, Any] = {}
@@ -2912,7 +2964,7 @@ class CoachApp:
     # ------------------------------------------------------------------ dashboard
     def _build_dashboard(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("En jeu", "Minimap et alertes en direct", scroll=False, max_width=WIDE_MAX)
+        page, right, body = self._page("En jeu", "Minimap et alertes en direct", max_width=WIDE_MAX)
         self.dash_safe_var = ctk.BooleanVar(value=bool(getattr(self.cfg, "safe_mode", False)))
         self.dash_safe = self._toggle(right, self.dash_safe_var,
                                       lambda: self.set_safe_mode(bool(self.dash_safe_var.get())), color=WARNING,
@@ -3081,7 +3133,7 @@ class CoachApp:
         self.journal = ctk.CTkTextbox(jr, fg_color=SUNKEN, text_color=TEXT, font=self.fonts.small,
                                       wrap="word", activate_scrollbars=True, border_width=0,
                                       scrollbar_button_color=SWITCH_OFF,
-                                      scrollbar_button_hover_color=LINE_STRONG, height=60)
+                                      scrollbar_button_hover_color=LINE_STRONG, height=190)
         self.journal.grid(row=1, column=0, sticky="nsew")
         for lvl, col in LEVEL_COLORS.items():
             self.journal.tag_config(f"lvl{lvl}", foreground=col)
@@ -3699,6 +3751,9 @@ class CoachApp:
         self._overlay_preview_job = None
         if self._current_page != "overlay" or self._closing or getattr(self, "_overlay_preview_busy", False):
             return
+        if self._iconic():          # minimised: no preview rendering, look again in 2 s
+            self._overlay_preview_job = self.root.after(2000, self._render_overlay_preview)
+            return
         cfg = self.cfg
         scale = max(0.5, self._scaled(100) / 100)
         live_state = self._overlay_state() if self._in_game() else None
@@ -4157,7 +4212,7 @@ class CoachApp:
         self._tip(self.replay_speed, "Vitesse : secondes de jeu par seconde")
         self._caption(side, "Moments clés", DIM, anchor="w").grid(row=3, column=0, sticky="w", pady=(4, 0))
         self._hline(side, LINE_STRONG).grid(row=4, column=0, sticky="ew", pady=(4, 0))
-        self.replay_moments = ctk.CTkScrollableFrame(side, fg_color="transparent", height=150, corner_radius=0)
+        self.replay_moments = ctk.CTkScrollableFrame(side, fg_color="transparent", height=200, corner_radius=0)
         self.replay_moments.grid(row=5, column=0, sticky="ew")
         self.replay_moments.grid_columnconfigure(1, weight=1)
         tl_w = self._scaled(640)
@@ -4662,8 +4717,6 @@ class CoachApp:
         s = self._section(body, row, "Mises à jour", "Les nouvelles versions sont publiées sur GitHub ; "
                                                      "le fichier est vérifié (SHA-256) avant d'être installé.",
                           icon="download")
-        self._update_info: Any = None
-        self._update_busy = False
         _row, slot = self._row(s, f"Version installée : {__version__}", None)
         self._update_check_btn = self._button(slot, "Vérifier les mises à jour", self.check_updates,
                                               "secondary", icon="refresh")
@@ -4704,6 +4757,10 @@ class CoachApp:
         self._update_token_entry = entry
         self._switch_row(s, "check_updates_on_start", "Vérifier au démarrage",
                          "Cherche une nouvelle version en arrière-plan à chaque lancement.")
+        info = self._update_info              # found by the silent check before this page was built
+        if info is not None:
+            self._btn_state(self._update_btn, True)
+            self._set_update_status(f"Nouvelle version {getattr(info, 'version', '')} disponible.", GOLD)
 
     @_guarded
     def open_manual_download(self) -> None:
@@ -5052,7 +5109,7 @@ class CoachApp:
         head = self._frame(card)
         head.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 0))
         head.grid_columnconfigure(1, weight=1)
-        self._label(head, ui_text(title), self.fonts.title, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
+        self._label(head, ui_text(title), self.fonts.state, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
         self._hline(card, LINE_STRONG).grid(row=1, column=0, sticky="ew", padx=20, pady=(8, 0))
         if subtitle:
             self._label(card, ui_text(subtitle), self.fonts.small, MUTED, anchor="w", justify="left",

@@ -196,12 +196,17 @@ class OverlayState:
     # {track key: ((u, v) now, age s)}; the overlay thread re-positions the views at each frame
     predict: Any = None
     me_key: str | None = None                 # track key of my champion (for ``predict``)
+    me_dead: bool = False                     # I am dead: the HUD shows the respawn countdown, no threat
+    respawn_s: float | None = None            # seconds before I respawn (Live Client), None = unknown
 
 
 #: A visible champion whose data is older than this (s) - or stacked under another icon, or not
 #: identified - is drawn as a faint dashed ghost WITHOUT role label (never a confident ring on a
 #: position that may be wrong).
 GHOST_AGE_S = 0.7
+#: At most this many text labels on the minimap layer at once (priority: visible jungler, jungler
+#: last seen / fog timer, enemy roles, ally roles).
+MM_MAX_LABELS = 4
 GHOST_MIN_CONFIDENCE = 0.5
 
 
@@ -1258,8 +1263,9 @@ def _rects_hit(r: tuple[float, float, float, float], others: list[tuple[float, f
 
 
 def _place_tag(cv_: Canvas, x: float, y: float, off: float, tw: float, th: float,
-               taken: list[tuple[float, float, float, float]]) -> tuple[float, float]:
-    """Top-left of a ``tw x th`` tag next to a marker at (x, y), avoiding ``taken`` rects."""
+               taken: list[tuple[float, float, float, float]], drop: bool = False) -> tuple[float, float] | None:
+    """Top-left of a ``tw x th`` tag next to a marker at (x, y), avoiding ``taken`` rects
+    (``drop``: None when every candidate collides, instead of overlapping)."""
     cands = [(x - tw / 2, y - off - th), (x + off * 0.8, y - off * 0.8 - th / 2), (x - tw / 2, y + off),
              (x - off * 0.8 - tw, y - off * 0.8 - th / 2), (x + off * 0.8, y + off * 0.3),
              (x - off * 0.8 - tw, y + off * 0.3)]
@@ -1271,23 +1277,30 @@ def _place_tag(cv_: Canvas, x: float, y: float, off: float, tw: float, th: float
         if best is None:
             best = r
         if not _rects_hit(r, taken):
-            best = r
-            break
+            taken.append(r)
+            return r[0], r[1]
+    if drop:
+        return None
     assert best is not None
     taken.append(best)
     return best[0], best[1]
 
 
 def _tag(cv_: Canvas, x: float, y: float, off: float, text: str, font: Any, fg: Any,
-         taken: list[tuple[float, float, float, float]], alpha: float = 1.0) -> None:
-    """Tiny dark pill with ``text`` next to a marker (collision-avoiding)."""
+         taken: list[tuple[float, float, float, float]], alpha: float = 1.0, drop: bool = False) -> bool:
+    """Tiny dark pill with ``text`` next to a marker (collision-avoiding; ``drop``: not drawn
+    when no free spot). True when drawn."""
     if not text:
-        return
+        return False
     tw = text_width(text, font) + 6
     th = _cap_height(font) + 5
-    tx, ty = _place_tag(cv_, x, y, off, tw, th, taken)
+    pos = _place_tag(cv_, x, y, off, tw, th, taken, drop=drop)
+    if pos is None:
+        return False
+    tx, ty = pos
     cv_.rrect(tx, ty, tw, th, th / 2, PANEL_DEEP, 0.62 * alpha)
     cv_.text(tx + tw / 2, ty + th / 2, text, font, fg, alpha, anchor="m", shadow=0)
+    return True
 
 
 def render_minimap(state: OverlayState, width: int, height: int | None = None,
@@ -1372,7 +1385,23 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     allies = [a for a in (getattr(state, "allies", None) or []) if a is not None and getattr(a, "key", None)]
     by_key = {e.key: e for e in enemies}
 
-    # ---- fog zones: the enemy jungler's only (soft outline, very light fill), every one with show_ghosts
+    # live icons (after render-time prediction): labels and ghosts never cover them
+    live: list[tuple[float, float]] = []
+    for v in enemies + allies:
+        if getattr(v, "visible", False) and v.uv is not None and _uv_ok(v.uv) is not None and not is_ghost(v):
+            live.append(px(_uv_ok(v.uv)))
+    if me is not None:
+        live.append(px(me))
+    icon_r = mr * 0.95
+    for lx, ly in live:
+        taken.append((lx - icon_r, ly - icon_r, 2 * icon_r, 2 * icon_r))
+    labels: list[tuple[int, float, float, float, str, Any, Any, float]] = []   # placed last, by priority
+
+    def near_live(x: float, y: float, d: float = 1.6) -> bool:
+        return any(math.hypot(x - lx, y - ly) < d * mr for lx, ly in live)
+
+    # ---- fog zones: the enemy jungler's only, every one with show_ghosts. One clean style: the
+    #      probability heat when the jungle model is informative, else a soft fill + outline
     fogs = [f for f in (state.fogs or []) if f is not None
             and (show_ghosts or bool(getattr(f, "is_jungler", False)))]
     for fog in sorted(fogs, key=lambda f: (bool(getattr(f, "is_jungler", False)), f.confidence)):
@@ -1384,6 +1413,10 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         main = bool(getattr(fog, "is_jungler", False))
         region = fog.region
         if vis > 0 and isinstance(region, np.ndarray) and region.ndim == 2 and region.shape[0] >= 4:
+            heat = _heat_layer(getattr(fog, "heat", None), W, H)
+            if heat is not None:          # where he probably is (early clear model): heat only
+                cv_.paint(0, 0, heat, DANGER, 0.5 * vis)
+                continue
             layers = _region_layers(region, int(S))
             if layers is not None:
                 fill, edge = layers
@@ -1391,9 +1424,6 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
                     fill = cv2.resize(fill, (W, H), interpolation=cv2.INTER_LINEAR)
                     edge = cv2.resize(edge, (W, H), interpolation=cv2.INTER_LINEAR)
                 cv_.paint(0, 0, fill, DANGER, (0.04 if main else 0.025) * vis)
-                heat = _heat_layer(getattr(fog, "heat", None), W, H)
-                if heat is not None:      # soft heat: where he probably is (early clear model)
-                    cv_.paint(0, 0, heat, DANGER, 0.5 * vis)
                 cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.25), (0.42 if main else 0.2) * vis)
 
     # ---- danger ring around me: only at DANGER
@@ -1404,7 +1434,10 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             cv_.disc(mx, my, dang_r, DANGER, 0.05 + 0.04 * pulse)
             cv_.ring(mx, my, dang_r, lw * 1.3, DANGER, 0.6 + 0.3 * pulse)
 
-    # ---- hidden enemies: dashed mark at the last seen point (before the fog) + elapsed time
+    # ---- hidden enemies: faded dashed mark at the last seen point (before the fog); text ("JGL
+    #      12 s") for the enemy jungler only; never on / next to a live icon (that icon is most
+    #      likely the same champion, not identified yet)
+    ghost_drawn: set[str] = set()
     if show_ghosts or bool(getattr(state, "show_last_seen", True)):
         for e in enemies:
             if e.visible:
@@ -1413,13 +1446,18 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             ago = e.last_seen_ago
             if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
                 continue
-            fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
+            if not show_ghosts and not e.is_jungler and ago > LAST_SEEN_MAX_S / 2:
+                continue
             x, y = px(uv)
-            cv_.ring(x, y, mr, lw * 0.9, DANGER, 0.6 * fade, dash=(3.0 * k + 1, 2.5 * k + 1))
+            if near_live(x, y):
+                continue
+            ghost_drawn.add(e.key)
+            fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
+            cv_.ring(x, y, mr, lw * 0.9, DANGER, (0.6 if e.is_jungler else 0.35) * fade,
+                     dash=(3.0 * k + 1, 2.5 * k + 1))
             cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.6 * fade)
-            tag = tag_of(e)
-            label = f"{tag} {fmt_seconds(ago)}" if tag else fmt_seconds(ago)
-            _tag(cv_, x, y, mr * 1.05, label, f_time, GOLD_LIGHT, taken, alpha=max(0.7, fade))
+            if e.is_jungler:
+                labels.append((1, x, y, mr * 1.05, f"JGL {fmt_seconds(ago)}", f_time, GOLD_LIGHT, max(0.7, fade)))
 
     # ---- (option) allies + me
     if show_allies:
@@ -1433,7 +1471,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
                 continue
             cv_.ring(x, y, mr, lw, ALLY_BLUE, 0.7)
             if show_roles:
-                _tag(cv_, x, y, mr + 1, role_tag(a, roles), f_tag, ALLY_TAG_RGB, taken, 0.9)
+                labels.append((3, x, y, mr + 1, role_tag(a, roles), f_tag, ALLY_TAG_RGB, 0.9))
         if me is not None:
             x, y = px(me)
             cv_.ring(x, y, mr * 1.03, lw * 1.3, TEAL, 0.9)
@@ -1464,25 +1502,32 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             cv_.ring(x, y, mr, lw, DANGER, 0.8)
         tag = tag_of(e)
         if tag:
-            _tag(cv_, x, y, mr + 1, tag, f_tag, WHITE if e.is_jungler else ENEMY_TAG_RGB, taken, 1.0)
+            labels.append((0 if e.is_jungler else 2, x, y, mr + 1, tag, f_tag,
+                           WHITE if e.is_jungler else ENEMY_TAG_RGB, 1.0))
 
-    # ---- fog timers: small "JGL 12 s" at the last seen point of the (jungler) fog zone
-    ghost_drawn = {e.key for e in enemies if (show_ghosts or bool(getattr(state, "show_last_seen", True)))
-                   and not e.visible and e.uv is not None
-                   and e.last_seen_ago is not None and _finite(e.last_seen_ago)
-                   and e.last_seen_ago <= LAST_SEEN_MAX_S}
+    # ---- fog timer: small "JGL 12 s" at the last seen point of the jungler's fog zone
     for fog in fogs:
-        if fog.key in ghost_drawn:
+        if fog.key in ghost_drawn or not bool(getattr(fog, "is_jungler", False)):
             continue
         uv = _uv_ok(fog.last_uv)
         if uv is None:
             continue
         x, y = px(uv)
+        if near_live(x, y):
+            continue
         ev = by_key.get(fog.key)
-        tag = tag_of(ev) if ev is not None else ("JGL" if getattr(fog, "is_jungler", False) else "")
+        if ev is not None and ev.visible:
+            continue
         cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.7)
-        _tag(cv_, x, y, max(3.0, 3 * k), f"{tag} {fmt_seconds(fog.elapsed)}".strip(), f_time, GOLD_LIGHT, taken,
-             alpha=0.9)
+        labels.append((1, x, y, max(3.0, 3 * k), f"JGL {fmt_seconds(fog.elapsed)}", f_time, GOLD_LIGHT, 0.9))
+
+    # ---- labels: by priority, never over a live icon or another label, at most MM_MAX_LABELS
+    placed = 0
+    for _prio, x, y, off, text, font, fg, alpha in sorted(labels, key=lambda l: l[0]):
+        if placed >= MM_MAX_LABELS:
+            break
+        if _tag(cv_, x, y, off, text, font, fg, taken, alpha, drop=True):
+            placed += 1
 
     # ---- v3 guides: retreat / objective / regroup arrows and ward spots (priority ranked, capped)
     n_arrows = sum(1 for e in visible if e.approaching)
@@ -1667,6 +1712,35 @@ def _short_role_notice(text: str) -> str:
     return text.replace("Rôle détecté :", "Rôle :").strip()
 
 
+_CHIP_PREFIXES = ("pense à acheter ", "pense à la ", "pense au ", "pense aux ", "pense à l'", "pense à ",
+                  "n'oublie pas la ", "n'oublie pas le ", "n'oublie pas les ", "n'oublie pas ", "achète une ",
+                  "achète un ")
+_CHIP_WORDS = {"balise de contrôle": "Balise de contrôle", "balises de contrôle": "Balises de contrôle"}
+CHIP_MAX_CHARS = 24
+
+
+def short_chip_text(text: str, max_chars: int = CHIP_MAX_CHARS) -> str:
+    """Chip-sized wording of a reminder: "Pense à la balise de contrôle (75 or)" -> "Balise de
+    contrôle (75 or)"; cut at a word boundary (no mid-word "…") beyond ``max_chars``."""
+    t = " ".join(str(text or "").split())
+    if " — " in t:            # "1 450 PO — pense à rentrer" -> "Rentrer · 1 450 PO"
+        head, tail = t.split(" — ", 1)
+        tail = short_chip_text(tail, max_chars)
+        t = f"{tail} · {head}" if tail and head and len(tail) + len(head) + 3 <= max_chars else (tail or head)
+    low = t.lower()
+    for p in _CHIP_PREFIXES:
+        if low.startswith(p) and len(t) > len(p):
+            t = t[len(p)].upper() + t[len(p) + 1:]
+            break
+    for k_, v in _CHIP_WORDS.items():
+        if t.lower().startswith(k_):
+            t = v + t[len(k_):]
+    if len(t) > max_chars:
+        cut = t[:max_chars].rsplit(" ", 1)[0].rstrip(",;:·-")
+        t = cut if len(cut) >= 6 else t[:max_chars]
+    return t
+
+
 def _hud_chips(state: OverlayState) -> list[tuple[str, str, tuple[int, int, int], Any]]:
     """At most 2 small chips ``(kind, text, colour, icon)``: next objective, then the most useful
     of item to buy (in base) / role notice / reminder / AI counter."""
@@ -1682,7 +1756,7 @@ def _hud_chips(state: OverlayState) -> list[tuple[str, str, tuple[int, int, int]
     notice = str(getattr(state, "role_notice", "") or "").strip()
     if notice:
         extra.append(("role", _short_role_notice(notice), _mix(TAI_INFO, WHITE, 0.4), None))
-    hint = str(getattr(state, "hint", "") or "").strip()
+    hint = short_chip_text(str(getattr(state, "hint", "") or ""))
     if hint:
         extra.append(("hint", hint, TAI_TEXT, None))
     ai = str(getattr(state, "ai_counter", "") or "").strip()
@@ -1862,7 +1936,16 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
         cy = y + h / 2
         if name == "header":
             avail_r = right - _brand(cv_, right, cy, k) - 8 * k
-            if lvl >= 1 or step is None:
+            if bool(getattr(state, "me_dead", False)):      # dead: no "SÛR" / gauge, the respawn timer
+                gr = 6.5 * k
+                cv_.disc(left + gr, cy, gr, TAI_MUTED, 0.9)
+                rs = getattr(state, "respawn_s", None)
+                text = "MORT" + (f" · réapparition dans {int(math.ceil(float(rs)))} s"
+                                 if rs is not None and _finite(rs) and float(rs) > 0 else "")
+                tx = left + 2 * gr + 6 * k
+                cv_.text(tx, cy, fit_text(text, fonts["head"], avail_r - tx), fonts["head"],
+                         _mix(TAI_MUTED, WHITE, 0.35), shadow=0.6)
+            elif lvl >= 1 or step is None:
                 col = TAI_THREAT[lvl]
                 gr = 6.5 * k
                 _threat_glyph(cv_, left + gr, cy, gr, lvl, col)
@@ -2441,8 +2524,8 @@ def _render_preview(state: OverlayState, width: int, texture_bgr: np.ndarray | N
     if cfg is None or getattr(cfg, "hud_enabled", True):
         hud = render_hud(state, _ov.hud_width(scr), now)
         avoid = [r for r in (mm, radar_rect) if r is not None]
-        hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0], getattr(cfg, "hud_position", "above_minimap"),
-                                   getattr(cfg, "hud_xy", None), avoid=avoid, anchor=radar_rect or mm)
+        hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0], getattr(cfg, "hud_position", "left_of_minimap"),
+                                   getattr(cfg, "hud_xy", None), avoid=avoid, anchor=radar_rect or mm, minimap=mm)
         composite_over(bg, hud, hx - sx, hy - sy)
     if _clamp01(state.flash) > 0 and (cfg is None or getattr(cfg, "danger_flash", True)):
         fl = render_flash(sw, sh, state.flash, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]),

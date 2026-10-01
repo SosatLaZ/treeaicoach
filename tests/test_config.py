@@ -212,7 +212,7 @@ def test_new_field_defaults_match_contract():
     # §7.4
     assert c.overlay_enabled is True and c.radar_enabled is True
     assert c.radar_position == "above_minimap" and c.radar_scale == 1.0 and c.radar_xy is None
-    assert c.hud_enabled is True and c.hud_position == "above_minimap" and c.hud_xy is None
+    assert c.hud_enabled is True and c.hud_position == "left_of_minimap" and c.hud_xy is None
     assert c.overlay_mode == "minimap"
     assert c.danger_flash is True and c.fog_mode == "jungler" and c.fog_max_s == 60.0
     assert c.hotkey_mute == "F10" and c.hotkey_overlay == "F11" and c.break_reminder is True
@@ -247,7 +247,7 @@ def test_new_field_defaults_match_contract():
         ("radar_position", " Left_Of_Minimap ", "left_of_minimap"),
         ("radar_position", "bottom", "above_minimap"),
         ("hud_position", "TOP_RIGHT", "top_right"),
-        ("hud_position", 1, "above_minimap"),
+        ("hud_position", 1, "left_of_minimap"),
         ("overlay_mode", "RADAR", "radar"),
         ("overlay_mode", "on_top", "minimap"),
         ("fog_mode", "ALL", "all"),
@@ -296,7 +296,7 @@ def test_new_fields_numpy_values():
 
 def test_custom_positions_need_coordinates():
     v = Config(radar_position="custom", hud_position="custom").validated()
-    assert v.radar_position == "above_minimap" and v.hud_position == "above_minimap"
+    assert v.radar_position == "above_minimap" and v.hud_position == "left_of_minimap"
     v = Config(radar_position="custom", radar_xy=[10, 20], hud_position="custom", hud_xy=(-1900, 5)).validated()
     assert (v.radar_position, v.radar_xy, v.hud_position, v.hud_xy) == ("custom", [10, 20], "custom", [-1900, 5])
 
@@ -735,7 +735,31 @@ def test_old_config_hud_position_migrates_to_above_minimap(tmp_path):
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"hud_position": "top_left"}), encoding="utf-8")
     c = load_config(p)
-    assert c.hud_position == "above_minimap" and c.overlay_mode == "minimap"
+    # (top_left -> above_minimap, then the pipeline v2 default: left of the minimap)
+    assert c.hud_position == "left_of_minimap" and c.overlay_mode == "minimap"
     p.write_text(json.dumps({"hud_position": "top_left", "overlay_mode": "radar"}), encoding="utf-8")
     c = load_config(p)
     assert c.hud_position == "top_left" and c.overlay_mode == "radar"
+
+
+def test_pipeline_v2_migration_and_defaults(tmp_path):
+    """Pre-v2 files: our minimap layer is hidden from our own capture and the HUD card moves
+    left of the minimap; files saved by v2 keep the user's explicit choices."""
+    import json
+
+    from treeaicoach.config import load_config
+
+    c = Config()
+    assert (c.capture_backend, c.perf_mode, c.adaptive_rate, c.overlay_fps) == ("auto", "auto", True, 30.0)
+    assert c.overlay_hide_from_capture is True and c.hotkey_diag == "Ctrl+F8"
+    assert (c.low_priority, c.eco_qos, c.pause_when_unfocused) == (True, True, True)
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"overlay_hide_from_capture": False, "hud_position": "above_minimap"}), encoding="utf-8")
+    c = load_config(p)
+    assert c.overlay_hide_from_capture is True and c.hud_position == "left_of_minimap"
+    p.write_text(json.dumps({"overlay_hide_from_capture": False, "hud_position": "above_minimap",
+                             "capture_backend": "mss"}), encoding="utf-8")
+    c = load_config(p)
+    assert c.overlay_hide_from_capture is False and c.hud_position == "above_minimap" and c.capture_backend == "mss"
+    v = Config(capture_backend="nope", perf_mode="x", overlay_fps=500, diag_interval_s=0).validated()
+    assert (v.capture_backend, v.perf_mode, v.overlay_fps, v.diag_interval_s) == ("auto", "auto", 60.0, 0.5)

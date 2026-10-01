@@ -71,6 +71,32 @@ def test_ui_radius_is_small() -> None:
     from treeaicoach import ui
 
     assert ui.RADIUS <= 6 and ui.RADIUS_DIALOG <= 6
+    # the one pill shape allowed: toggles (docs/DESIGN.md), and only them
+    assert ui.TOGGLE_RADIUS == ui.TOGGLE_H // 2
+    assert "corner_radius=TOGGLE_RADIUS" not in src          # drawn by ui.toggle_image, not a CTk shape
+
+
+def _contrast(a: str, b: str) -> float:
+    def lum(h: str) -> float:
+        c = [int(h.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_text_is_legible() -> None:
+    """Readable sizes (nothing under 12 px) and WCAG AA contrast for every text colour."""
+    from treeaicoach import ui
+
+    for bg in (ui.BG, ui.SURFACE, ui.RAISED):
+        for fg in (ui.TEXT, ui.MUTED, ui.DIM, ui.ACCENT):
+            assert _contrast(fg, bg) >= 4.5, (fg, bg, round(_contrast(fg, bg), 2))
+    src = (PKG / "ui.py").read_text(encoding="utf-8")
+    m = re.search(r"class _Fonts:.*?(?=\n\n\n)", src, re.S)
+    assert m
+    sizes = [int(x) for x in re.findall(r"size=(\d+)", m.group(0))]
+    assert sizes and min(sizes) >= 12, sizes
 
 
 def test_report_html_follows_the_rules() -> None:
