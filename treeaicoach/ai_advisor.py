@@ -11,7 +11,11 @@ run locally):
 
 Policy (:class:`AIAdvisor`): only at key moments (:class:`MomentDetector`: base visit with
 gold, death, level 6 / 11 / 16, 60 s before the dragon / Baron, an enemy becoming fed), at most
-one request every :data:`MIN_INTERVAL_S`, one request at a time in a daemon thread with a
+one request every :data:`MIN_INTERVAL_S`, and a per-game budget (:class:`AIBudget`): at most
+:data:`AUTO_BUDGET` automatic calls spread over priority slots (:data:`SLOTS`: first base with
+gold, a lost fight / comeback moment, the mid-game turning point, pre-Baron / Elder, the late
+game) plus exactly :data:`URGENT_BUDGET` bonus "urgence" call for a big problem
+(:data:`URGENT_REASONS`). Manual requests (F8) are rate-limited and counted separately; one request at a time in a daemon thread with a
 :data:`TIMEOUT_S` timeout (``urllib`` only). The game tick never waits: the engine polls
 :meth:`AIAdvisor.poll` for a finished answer. Errors become one French status message
 (:data:`ERROR_FR`) and a back-off; nothing here ever raises into the caller.
@@ -69,6 +73,16 @@ OBJECTIVE_WINDOW_S = 8.0        # announced if the remaining time is within 60 s
 BACKOFF_S: dict[str, float] = {"key": math.inf, "nokey": math.inf, "quota": 600.0, "offline": 300.0,
                                "model": math.inf, "server": 180.0, "empty": 90.0, "bad": 180.0}
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+#: per-game budget of automatic calls: one per priority slot (in priority order)
+SLOTS = ("base", "objective", "comeback", "mid", "late")
+SLOT_FR = {"base": "1er retour en base", "objective": "avant Baron / Elder", "comeback": "combat perdu",
+           "mid": "milieu de partie", "late": "fin de partie", "urgent": "urgence"}
+AUTO_BUDGET = len(SLOTS)
+URGENT_BUDGET = 1
+URGENT_REASONS = frozenset({"gold", "death_streak", "teamfight"})
+URGENT_MIN_INTERVAL_S = 30.0
+MID_GAME_S = 14 * 60.0
+LATE_GAME_S = 25 * 60.0
 
 
 @dataclass(frozen=True)
@@ -901,6 +915,7 @@ class MomentDetector:
         self._in_base = False
         self._fed: set[str] | None = None
         self._obj_done: set[tuple] = set()
+        self.last_objective = ""        # key of the objective behind the last "objective" moment
 
     def update(self, game: Any, in_base: bool = False, objectives: Iterable[Any] = ()) -> str | None:
         me = getattr(game, "me", None)
@@ -931,6 +946,8 @@ class MomentDetector:
             sig = (key, round(float(getattr(o, "next_spawn", 0.0) or 0.0)))
             if abs(float(rem) - OBJECTIVE_LEAD_S) <= OBJECTIVE_WINDOW_S and sig not in self._obj_done:
                 self._obj_done.add(sig)
+                if "objective" not in found or key in ("baron", "elder"):
+                    self.last_objective = key
                 found.append("objective")
         self._dead, self._level, self._in_base, self._fed = dead, level, base_now, fed
         order = ("death", "base", "objective", "fed", "level")
@@ -1096,6 +1113,69 @@ class ComebackDetector:
         return None
 
 
+class AIBudget:
+    """Per-game budget of AI calls: :data:`AUTO_BUDGET` automatic calls (one per slot of
+    :data:`SLOTS`), :data:`URGENT_BUDGET` bonus "urgence" call, manual calls counted apart."""
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.used: list[str] = []         # automatic slots consumed, in order
+        self.urgent_used = 0
+        self.manual = 0
+
+    @property
+    def auto_used(self) -> int:
+        return len(self.used)
+
+    def pick(self, moment: str, game_time: float, objective: str = "") -> str | None:
+        """The slot this moment would consume (``"urgent"`` for the bonus), or None (skip it)."""
+        reason = moment.split(":", 1)[1] if moment.startswith("comeback:") else ""
+        if reason in URGENT_REASONS and self.urgent_used < URGENT_BUDGET:
+            return "urgent"
+        if self.auto_used >= AUTO_BUDGET:
+            return None
+        cands: list[str] = []
+        if moment == "base":
+            cands.append("base")
+        if moment == "objective" and objective in ("baron", "elder"):
+            cands.append("objective")
+        if moment == "death" or (reason and reason not in WINDOW_REASONS):
+            cands.append("comeback")
+        if MID_GAME_S <= game_time < LATE_GAME_S:
+            cands.append("mid")
+        elif game_time >= LATE_GAME_S:
+            cands.append("late")
+        return next((c for c in cands if c not in self.used), None)
+
+    def take(self, slot: str) -> None:
+        if slot == "urgent":
+            self.urgent_used += 1
+        elif slot not in self.used:
+            self.used.append(slot)
+
+    def refund(self, slot: str) -> None:
+        if slot == "urgent":
+            self.urgent_used = max(0, self.urgent_used - 1)
+        elif slot in self.used:
+            self.used.remove(slot)
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"auto_used": self.auto_used, "auto_max": AUTO_BUDGET, "urgent_used": self.urgent_used,
+                "urgent_max": URGENT_BUDGET, "manual": self.manual, "slots": list(self.used)}
+
+
+def budget_text(b: dict[str, Any] | None) -> str:
+    """Short French counter for the HUD / dashboard, e.g. ``"IA : 3/5"`` (``+1`` once the bonus is used)."""
+    if not b:
+        return ""
+    text = f"IA : {int(b.get('auto_used', 0))}/{int(b.get('auto_max', AUTO_BUDGET))}"
+    if b.get("urgent_used"):
+        text += " +1"
+    return text
+
+
 class AIAdvisor:
     """Rate-limited background LLM advice. Thread-safe; public methods never raise."""
 
@@ -1115,6 +1195,7 @@ class AIAdvisor:
         self._last_call = -math.inf
         self._blocked_until = -math.inf
         self.calls = 0
+        self.budget = AIBudget()
         self.detector = MomentDetector()
         self.comeback = ComebackDetector()
         self.apply_config(cfg)
@@ -1141,6 +1222,7 @@ class AIAdvisor:
         with self._lock:
             self._result = None
             self._last_call = -math.inf
+            self.budget.reset()
         self.detector.reset()
         self.comeback.reset()
 
@@ -1148,6 +1230,11 @@ class AIAdvisor:
         """``(sequence, French status)``: the sequence changes each time a new error is set."""
         with self._lock:
             return self._status_seq, self._status
+
+    def budget_info(self) -> dict[str, Any]:
+        """Counters of this game: ``auto_used / auto_max``, ``urgent_used / urgent_max``, ``manual``."""
+        with self._lock:
+            return self.budget.snapshot()
 
     def busy(self) -> bool:
         th = self._thread
@@ -1172,14 +1259,19 @@ class AIAdvisor:
                 return False
             gt = float(getattr(game, "game_time", 0.0) or 0.0)
             with self._lock:
-                if gt < MIN_GAME_TIME_S or t - self._last_call < MIN_INTERVAL_S or t < self._blocked_until:
+                slot = self.budget.pick(moment, gt, self.detector.last_objective)
+                if slot is None:
+                    return False
+                interval = URGENT_MIN_INTERVAL_S if slot == "urgent" else MIN_INTERVAL_S
+                if gt < MIN_GAME_TIME_S or t - self._last_call < interval or t < self._blocked_until:
                     return False
                 if self._thread is not None and self._thread.is_alive():
                     return False
                 self._last_call = t
+                self.budget.take(slot)
             snap = build_snapshot(game, moment=moment, roles=roles, scoreboard=scoreboard,
                                   objectives=objectives, item_text=item_text, context=_resolve(context))
-            self._start(build_prompt(snap), moment, t, self._validator(game, snap, item_text))
+            self._start(build_prompt(snap), moment, t, self._validator(game, snap, item_text), slot=slot)
             return True
         except Exception:
             log.exception("AIAdvisor.update failed")
@@ -1204,6 +1296,7 @@ class AIAdvisor:
                 if self._blocked_until == math.inf and self._status:
                     return self._status
                 self._last_call = t
+                self.budget.manual += 1
             snap = build_snapshot(game, moment="manual", roles=roles, scoreboard=scoreboard,
                                   objectives=list(objectives or ()), item_text=item_text,
                                   context=_resolve(context))
@@ -1230,7 +1323,7 @@ class AIAdvisor:
         return check
 
     def _start(self, prompt: str, moment: str, t: float,
-               validate: Callable[[str], str | None] | None = None) -> None:
+               validate: Callable[[str], str | None] | None = None, slot: str | None = None) -> None:
         prov, key, model = self._provider, self._key, self._model
         url = self._urls.get(prov)
 
@@ -1247,18 +1340,21 @@ class AIAdvisor:
                         self._result = Advice("L'IA n'a pas donné de conseil fiable cette fois.", moment, t,
                                               error=True)
             except AIError as exc:
-                self._fail(exc.code, prov, moment, t)
+                self._fail(exc.code, prov, moment, t, slot)
             except Exception:
                 log.exception("AI request failed")
-                self._fail("server", prov, moment, t)
+                self._fail("server", prov, moment, t, slot)
 
         th = threading.Thread(target=job, name="TreeAICoach-ai", daemon=True)
         self._thread = th
         th.start()
 
-    def _fail(self, code: str, provider: str, moment: str = "", t: float = 0.0) -> None:
+    def _fail(self, code: str, provider: str, moment: str = "", t: float = 0.0,
+              slot: str | None = None) -> None:
         log.info("AI advice unavailable (%s, %s)", provider, code)
         with self._lock:
+            if slot:
+                self.budget.refund(slot)          # no answer: the slot stays available
             text = error_text(code, provider)
             if moment == "manual":
                 self._result = Advice(text, moment, t, error=True)
