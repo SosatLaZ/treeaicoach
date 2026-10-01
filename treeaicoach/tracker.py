@@ -16,11 +16,34 @@ per-frame observations into :class:`Track` objects that live across frames:
 
 Per track: smoothed position (component-wise median of the last 3 observations), velocity
 (least squares over the last ~1.2 s, ``(0, 0)`` without >= 3 points spanning >= 0.25 s),
-jump detection (recall / teleport: > 0.15 in < 0.3 s, or any displacement faster than a
-champion can walk, resets the history), visibility (seen < :data:`HIDE_AFTER` s ago),
-appearance time (first sighting, or back in sight after >= :data:`REAPPEAR_AFTER` s hidden)
-and a run-length zone history for :meth:`Track.zone_fraction`. Memory is bounded (deques with
-``maxlen``, anonymous tracks forgotten after 20 s unseen, :data:`MAX_TRACKS` tracks at most).
+visibility (seen < :data:`HIDE_AFTER` s ago), appearance time (first sighting, or back in
+sight after >= :data:`REAPPEAR_AFTER` s hidden) and a run-length zone history for
+:meth:`Track.zone_fraction`. Memory is bounded (deques with ``maxlen``, anonymous tracks
+forgotten after 20 s unseen, :data:`MAX_TRACKS` tracks at most).
+
+Robustness additions (v2, ideas and parameters adapted from DeepestLeague, MIT licence, see
+THIRD_PARTY_NOTICES.md):
+
+* **Kalman filter** - every track also runs a constant-velocity Kalman filter (per axis,
+  normalized minimap units, time-based ``dt``): :meth:`Track.kf_position`,
+  :meth:`Track.kf_velocity` and :meth:`Track.predict` (short-miss prediction with a damped
+  velocity, used by the association gate). Innovations beyond ~5 sigma are down-weighted.
+* **Impossible-jump gating** - a displacement faster than a champion can walk (> 0.15 in
+  < 0.3 s, or > ``MAX_WALK_SPEED * gap + JUMP_SLACK``) is accepted at once only when it lands on
+  a fountain (recall, respawn); anywhere else the observation is held back until a second
+  observation within :data:`TP_CONFIRM_S` confirms it (teleport), otherwise it is dropped as a
+  misdetection / wrong identity.
+* **Stacked icons** - a track that stops being detected while its last position is within
+  ~1.2 icon radii of another visible icon is ``stacked_with`` that track for up to
+  :data:`STACK_HOLD_S` s: it stays *visible*, its position / velocity follow the occluding icon,
+  so no fog circle, "a disparu" message or fog pop is produced for an icon that is simply
+  drawn under another one.
+* **Champion locker** - an *anonymous* track (no identity, not "self") is *tentative* until it
+  was observed in >= 30 % of the recent frames (at least :data:`LOCK_MIN_OBS` observations)
+  with a mean detection score >= 0.40. Tentative tracks are hidden from :meth:`Tracker.tracks`,
+  :meth:`Tracker.enemies` and :meth:`Tracker.allies` (still reachable with :meth:`Tracker.get`)
+  and forgotten after :data:`TENTATIVE_FORGET_S` s unseen: sporadic false detections (camp
+  timers, pings) never become enemies.
 
 Thread safety: :meth:`Tracker.update` runs on the analysis thread; every accessor returns
 **snapshot copies** of the tracks, so other threads (overlay, recorder, UI) can read them
@@ -29,6 +52,7 @@ while the tracker keeps updating. Pure Python + geometry (numpy LUT), importable
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import threading
@@ -37,7 +61,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from treeaicoach.geometry import Zone, classify_zone, lane_of
+from treeaicoach.geometry import Zone, classify_zone, in_fountain, lane_of
 
 if TYPE_CHECKING:  # pragma: no cover - typing only (avoids importing the detector at runtime)
     from treeaicoach.identifier import Identified
@@ -71,6 +95,26 @@ ZONE_SEG_MAXLEN = 512       # zone segments kept per track
 MAX_TRACKS = 40             # hard cap on the number of tracks
 SELF_STICKY_S = 3.0         # an identified "self" seen this recently ignores fallback "self" claims
 BACKWARD_RESET_S = 1.0      # clock going back more than this -> new timeline (reset)
+# Kalman filter (constant velocity, per axis; adapted from DeepestLeague ``_KalmanTrack``, MIT)
+KF_MEAS_STD = 0.006         # detection noise of an icon centre (normalized)
+KF_ACCEL_Q = 0.004          # white-acceleration spectral density (units^2 / s^3)
+KF_INIT_VEL_STD = 0.05      # velocity uncertainty of a fresh track (/ s)
+KF_GATE_D2 = 25.0           # innovations beyond 5 sigma are down-weighted (soft gate)
+KF_COAST_TAU_S = 0.6        # velocity decay time constant while extrapolating a missing track
+# impossible jumps
+TP_CONFIRM_S = 1.0          # a held-back far observation must be confirmed this fast...
+TP_CONFIRM_DIST = 0.04      # ...by an observation this close to it (+ walking)
+# stacked icons (DeepestLeague "occlusion-aware hold", MIT)
+STACK_RADII = 1.2           # disappeared within this many icon radii of a visible icon
+STACK_DEFAULT_R = 0.045     # icon radius when unknown (normalized)
+STACK_HOLD_S = 5.0          # longest stacked hold
+STACK_ASSOC_PENALTY = 0.01  # the occluder's own track wins an association tie
+# champion locker (DeepestLeague ``ChampionLocker``, MIT) for anonymous tracks
+LOCK_MIN_OBS = 3            # observations before an anonymous track is confirmed...
+LOCK_WINDOW = 12            # ...in >= LOCK_MIN_DENSITY of the last LOCK_WINDOW frames...
+LOCK_MIN_DENSITY = 0.30
+LOCK_MIN_CONF = 0.40        # ...with this mean detection score
+TENTATIVE_FORGET_S = 2.0    # tentative (unconfirmed) tracks unseen for this long are dropped
 
 RELATIONS = ("self", "ally", "enemy")
 _CLASSES = ("enemy", "ally", "self")   # detector class order (ARCHITECTURE.md §3)
@@ -131,6 +175,46 @@ def _median3(values: list[float]) -> float:
 
 
 # --------------------------------------------------------------------------------------
+# Constant-velocity Kalman filter, one independent 2-state filter per axis.
+# State per axis: position p, velocity w; covariance [[a, b], [b, c]].
+# Layout of the list: [t, pu, wu, au, bu, cu, pv, wv, av, bv, cv].
+# (Model and soft gating adapted from DeepestLeague, MIT licence - THIRD_PARTY_NOTICES.md.)
+# --------------------------------------------------------------------------------------
+
+def _kf_init(t: float, u: float, v: float) -> list[float]:
+    r2 = KF_MEAS_STD ** 2
+    w2 = KF_INIT_VEL_STD ** 2
+    return [t, u, 0.0, r2, 0.0, w2, v, 0.0, r2, 0.0, w2]
+
+
+def _kf_axis_predict(p: float, w: float, a: float, b: float, c: float, dt: float
+                     ) -> tuple[float, float, float, float, float]:
+    q = KF_ACCEL_Q
+    return (p + w * dt, w,
+            a + 2.0 * dt * b + dt * dt * c + q * dt ** 3 / 3.0,
+            b + dt * c + q * dt * dt / 2.0,
+            c + q * dt)
+
+
+def _kf_step(kf: list[float], t: float, u: float, v: float) -> None:
+    """Predict ``kf`` to ``t`` and correct it with the measurement ``(u, v)`` (in place)."""
+    dt = max(0.0, t - kf[0])
+    pu, wu, au, bu, cu = _kf_axis_predict(kf[1], kf[2], kf[3], kf[4], kf[5], dt)
+    pv, wv, av, bv, cv = _kf_axis_predict(kf[6], kf[7], kf[8], kf[9], kf[10], dt)
+    r2 = KF_MEAS_STD ** 2
+    yu, yv = u - pu, v - pv
+    d2 = yu * yu / (au + r2) + yv * yv / (av + r2)
+    if d2 > KF_GATE_D2:                    # outlier / sharp turn: trust it less, never ignore it
+        r2 *= d2 / KF_GATE_D2
+    su, sv = au + r2, av + r2
+    ku0, ku1 = au / su, bu / su
+    kv0, kv1 = av / sv, bv / sv
+    kf[:] = [t,
+             pu + ku0 * yu, wu + ku1 * yu, (1.0 - ku0) * au, (1.0 - ku0) * bu, cu - ku1 * bu,
+             pv + kv0 * yv, wv + kv1 * yv, (1.0 - kv0) * av, (1.0 - kv0) * bv, cv - kv1 * bv]
+
+
+# --------------------------------------------------------------------------------------
 # Track
 # --------------------------------------------------------------------------------------
 
@@ -158,14 +242,29 @@ class Track:
     id_score: float = 0.0                 # identification score of the last identified observation
     radius: float = 0.0                   # icon radius (normalized) of the last observation
     n_obs: int = 0                        # total number of observations (merges included)
+    confirmed: bool = True                # False: tentative anonymous track (champion locker)
+    stacked_with: str | None = None       # key of the icon drawn over this one (stacked hold)
+    stacked_since: float | None = None    # last real sighting when the stacked hold started
     _obs: deque = field(default_factory=lambda: deque(maxlen=OBS_MAXLEN), repr=False)
     _segs: deque = field(default_factory=lambda: deque(maxlen=ZONE_SEG_MAXLEN), repr=False)
     _last_obs_t: float | None = field(default=None, repr=False)
+    _kf: list | None = field(default=None, repr=False)               # Kalman state (see _kf_init)
+    _pending: tuple | None = field(default=None, repr=False)         # held-back far observation
+    _stack_pos: tuple | None = field(default=None, repr=False)       # occluder position (stacked)
+    _stack_vel: tuple | None = field(default=None, repr=False)
+    _stack_t: float | None = field(default=None, repr=False)
+    _lock_obs: deque = field(default_factory=lambda: deque(maxlen=LOCK_WINDOW), repr=False)
+    _first_frame: int = field(default=0, repr=False)
 
     # -- derived quantities -----------------------------------------------------------
 
     def position(self) -> tuple[float, float] | None:
-        """Smoothed position: component-wise median of the last 3 recent observations."""
+        """Smoothed position: component-wise median of the last 3 recent observations.
+
+        While stacked (and after a stacked hold ended, until the next sighting) this is the
+        position of the occluding icon."""
+        if self._stack_pos is not None:
+            return self._stack_pos
         obs = self._obs
         if not obs:
             return None
@@ -185,8 +284,11 @@ class Track:
         """Least-squares velocity (normalized units / s) over the last ~1.2 s of observations.
 
         ``(0, 0)`` without at least 3 points spanning 0.25 s (e.g. just after a jump). For a
-        hidden track this is the velocity observed just before it disappeared.
+        hidden track this is the velocity observed just before it disappeared; while stacked,
+        the velocity of the occluding icon.
         """
+        if self.stacked_with is not None and self._stack_vel is not None:
+            return self._stack_vel
         obs = self._obs
         if len(obs) < VEL_MIN_POINTS:
             return (0.0, 0.0)
@@ -217,6 +319,57 @@ class Track:
         """Magnitude of :meth:`velocity`."""
         vx, vy = self.velocity()
         return math.hypot(vx, vy)
+
+    def kf_position(self) -> tuple[float, float] | None:
+        """Kalman-filtered position at the last observation (stacked: the occluder's)."""
+        if self._stack_pos is not None:
+            return self._stack_pos
+        kf = self._kf
+        return (kf[1], kf[6]) if kf is not None else None
+
+    def kf_velocity(self) -> tuple[float, float]:
+        """Kalman velocity (/ s), clamped to ``VEL_MAX``; ``(0, 0)`` before 2 observations."""
+        if self.stacked_with is not None and self._stack_vel is not None:
+            return self._stack_vel
+        kf = self._kf
+        if kf is None or len(self._obs) < 2:
+            return (0.0, 0.0)
+        vx, vy = kf[2], kf[7]
+        sp = math.hypot(vx, vy)
+        if sp > VEL_MAX:
+            vx, vy = vx * VEL_MAX / sp, vy * VEL_MAX / sp
+        return (vx, vy)
+
+    def kf_speed_std(self) -> float:
+        """Standard deviation of the Kalman speed estimate (large = not trusted yet)."""
+        kf = self._kf
+        if kf is None:
+            return KF_INIT_VEL_STD
+        return math.sqrt(max(0.0, 0.5 * (kf[5] + kf[10])))
+
+    def predict(self, t: float, horizon: float = PREDICT_MAX_S) -> tuple[float, float] | None:
+        """Expected position at ``t``: Kalman position + damped velocity over at most
+        ``horizon`` s (short detection misses). Stacked: the occluder's position."""
+        if self._stack_pos is not None:
+            return self._stack_pos
+        kf = self._kf
+        if kf is None:
+            return self.position()
+        dt = min(max(0.0, float(t) - kf[0]), max(0.0, horizon))
+        k = KF_COAST_TAU_S * (1.0 - math.exp(-dt / KF_COAST_TAU_S))
+        vx, vy = self.kf_velocity()
+        return (_clamp01(kf[1] + vx * k), _clamp01(kf[6] + vy * k))
+
+    def recent_scores(self) -> list[float]:
+        """Detection scores of the last few observations of an anonymous track (oldest first),
+        recorded while the champion locker was deciding (for consumers that confirm threats)."""
+        return [s for _f, s in self._lock_obs]
+
+    def last_known(self) -> tuple[float, tuple[float, float]] | None:
+        """``(time, position)`` of the last reliable knowledge of where the champion was
+        (a real sighting, or the end of a stacked hold)."""
+        pos = self.position()
+        return (self.last_seen, pos) if pos is not None else None
 
     def zone(self) -> Zone | None:
         """Map zone of the smoothed position (``None`` if never seen)."""
@@ -275,10 +428,47 @@ class Track:
 
     # -- mutation (tracker thread only) -------------------------------------------------
 
+    def _impossible(self, t: float, u: float, v: float) -> bool:
+        """The observation is farther than the champion can have walked since last known."""
+        ref_t = self._last_obs_t
+        if ref_t is None or not self._obs:
+            return False
+        ref = self._obs[-1][1:]
+        if self._stack_pos is not None and self._stack_t is not None and self._stack_t >= ref_t:
+            ref_t, ref = self._stack_t, self._stack_pos
+        gap = max(0.0, t - ref_t)
+        jump = math.hypot(u - ref[0], v - ref[1])
+        limit = TELEPORT_DIST if gap < TELEPORT_DT else max(TELEPORT_DIST, MAX_WALK_SPEED * gap + JUMP_SLACK)
+        return jump > limit
+
     def observe(self, t: float, u: float, v: float, r: float = 0.0, score: float = 0.0,
-                id_score: float | None = None) -> None:
-        """Add one observation at time ``t`` (non-decreasing). Used by :class:`Tracker`."""
+                id_score: float | None = None) -> bool:
+        """Add one observation at time ``t`` (non-decreasing). Used by :class:`Tracker`.
+
+        Returns False when the observation was held back / dropped by the impossible-jump gate
+        (see the module docstring): the track is then unchanged."""
+        reset = False
+        if self._impossible(t, u, v):
+            pend = self._pending
+            if in_fountain(u, v, self.team):
+                log.debug("Track %s: recall / respawn to the fountain, history reset", self.key)
+            elif pend is not None and 0.0 <= t - pend[0] <= TP_CONFIRM_S and math.hypot(
+                    u - pend[1], v - pend[2]) <= TP_CONFIRM_DIST + MAX_WALK_SPEED * (t - pend[0]):
+                log.debug("Track %s: teleport confirmed, history reset", self.key)
+            else:
+                self._pending = (t, u, v)
+                return False
+            reset = True
+        self._pending = None
         prev_t = self._last_obs_t
+        if self._stack_t is not None and prev_t is not None and self._stack_t > prev_t:
+            # back from a stacked hold: continuous presence, not a fog reappearance
+            if t - prev_t >= REAPPEAR_AFTER:
+                self._obs.clear()
+                self._kf = None
+            prev_t = self._stack_t
+        self._stack_pos = self._stack_vel = self._stack_t = None
+        self.stacked_with = self.stacked_since = None
         if prev_t is None:
             self.appeared_at = t
             self.prev_hidden_s = None
@@ -288,15 +478,14 @@ class Track:
             if gap >= REAPPEAR_AFTER:
                 self.appeared_at = t
                 self.prev_hidden_s = gap
-                self._obs.clear()          # old points say nothing about the new sighting
-            elif self._obs:
-                _t0, u0, v0 = self._obs[-1]
-                jump = math.hypot(u - u0, v - v0)
-                limit = TELEPORT_DIST if gap < TELEPORT_DT else max(
-                    TELEPORT_DIST, MAX_WALK_SPEED * gap + JUMP_SLACK)
-                if jump > limit:
-                    log.debug("Track %s: jump of %.3f in %.2f s, history reset", self.key, jump, gap)
-                    self._obs.clear()
+                reset = True               # old points say nothing about the new sighting
+        if reset:
+            self._obs.clear()
+            self._kf = None
+        if self._kf is None or not self._obs:
+            self._kf = _kf_init(t, u, v)
+        else:
+            _kf_step(self._kf, t, u, v)
         self._obs.append((t, u, v))
         self._last_obs_t = t
         self.last_seen = t
@@ -308,6 +497,25 @@ class Track:
         if id_score is not None:
             self.id_score = id_score
         self._record_zone(prev_t, t)
+        return True
+
+    def follow(self, occluder: Track, now: float) -> None:
+        """Stacked hold: take the occluding icon's position / velocity (tracker thread only)."""
+        pos = occluder.position()
+        if pos is None:
+            return
+        self._stack_pos = pos
+        self._stack_vel = occluder.velocity()
+        self._stack_t = now
+
+    def _kf_rebuild(self) -> None:
+        """Rebuild the Kalman state from the stored observations (after a merge)."""
+        self._kf = None
+        for t, u, v in self._obs:
+            if self._kf is None:
+                self._kf = _kf_init(t, u, v)
+            else:
+                _kf_step(self._kf, t, u, v)
 
     def _record_zone(self, prev_t: float | None, t: float) -> None:
         pos = self.position()
@@ -324,8 +532,8 @@ class Track:
             segs.popleft()
 
     def refresh(self, now: float) -> None:
-        """Update ``visible`` / ``hidden_since`` for the current time."""
-        self.visible = (now - self.last_seen) < HIDE_AFTER
+        """Update ``visible`` / ``hidden_since`` for the current time (stacked = visible)."""
+        self.visible = self.stacked_with is not None or (now - self.last_seen) < HIDE_AFTER
         self.hidden_since = None if self.visible else self.last_seen
 
     def absorb(self, other: Track) -> None:
@@ -341,6 +549,8 @@ class Track:
             self.n_obs = other.n_obs
             self.score, self.radius = other.score, other.radius
             self.visible, self.hidden_since = other.visible, other.hidden_since
+            self._kf = list(other._kf) if other._kf is not None else None
+            self._pending = None
             return
         early, late = (self, other) if self.last_seen <= other.last_seen else (other, self)
         gap = late.first_seen - early.last_seen
@@ -370,18 +580,19 @@ class Track:
         self.n_obs = self.n_obs + other.n_obs
         self.score, self.radius = late.score, late.radius
         self.visible, self.hidden_since = late.visible, late.hidden_since
+        self._stack_pos = self._stack_vel = self._stack_t = None
+        self.stacked_with = self.stacked_since = None
+        self._pending = None
+        self._kf_rebuild()
 
     def copy(self) -> Track:
         """Independent snapshot (safe to read from another thread)."""
-        return Track(
-            key=self.key, alias=self.alias, relation=self.relation, team=self.team,
-            first_seen=self.first_seen, last_seen=self.last_seen, visible=self.visible,
-            appeared_at=self.appeared_at, hidden_since=self.hidden_since,
-            prev_hidden_s=self.prev_hidden_s, score=self.score, id_score=self.id_score,
-            radius=self.radius, n_obs=self.n_obs,
+        return dataclasses.replace(
+            self,
             _obs=deque(self._obs, maxlen=OBS_MAXLEN),
             _segs=deque(self._segs, maxlen=ZONE_SEG_MAXLEN),
-            _last_obs_t=self._last_obs_t,
+            _kf=list(self._kf) if self._kf is not None else None,
+            _lock_obs=deque(self._lock_obs, maxlen=LOCK_WINDOW),
         )
 
 
@@ -442,6 +653,7 @@ class Tracker:
         self._anon_counter: dict[str, int] = {"enemy": 0, "ally": 0}
         self._self_key: str | None = None
         self._last_t: float | None = None
+        self._frame = 0
 
     # -- public API ---------------------------------------------------------------------
 
@@ -457,7 +669,8 @@ class Tracker:
         """Snapshots of all tracks (self, allies, enemies; then by key)."""
         with self._lock:
             order = {"self": 0, "ally": 1, "enemy": 2}
-            items = sorted(self._tracks.values(), key=lambda tr: (order.get(tr.relation, 3), tr.key))
+            items = sorted((tr for tr in self._tracks.values() if tr.confirmed),
+                           key=lambda tr: (order.get(tr.relation, 3), tr.key))
             return [tr.copy() for tr in items]
 
     def me(self) -> Track | None:
@@ -470,16 +683,16 @@ class Tracker:
         """Snapshots of the enemy tracks (only the visible ones by default)."""
         with self._lock:
             return [tr.copy() for tr in sorted(self._tracks.values(), key=lambda x: x.key)
-                    if tr.relation == "enemy" and (tr.visible or not visible_only)]
+                    if tr.relation == "enemy" and tr.confirmed and (tr.visible or not visible_only)]
 
     def allies(self, visible_only: bool = True) -> list[Track]:
         """Snapshots of the allied tracks (without me)."""
         with self._lock:
             return [tr.copy() for tr in sorted(self._tracks.values(), key=lambda x: x.key)
-                    if tr.relation == "ally" and (tr.visible or not visible_only)]
+                    if tr.relation == "ally" and tr.confirmed and (tr.visible or not visible_only)]
 
     def get(self, key: str) -> Track | None:
-        """Snapshot of the track ``key`` (alias or anonymous key), or None."""
+        """Snapshot of the track ``key`` (alias or anonymous key, tentative ones included), or None."""
         with self._lock:
             tr = self._tracks.get(key) if isinstance(key, str) else None
             return tr.copy() if tr is not None else None
@@ -491,6 +704,7 @@ class Tracker:
             self._anon_counter = {"enemy": 0, "ally": 0}
             self._self_key = None
             self._last_t = None
+            self._frame = 0
 
     @property
     def last_update(self) -> float | None:
@@ -521,6 +735,8 @@ class Tracker:
         now = self._now(t)
         if now is None:
             return
+        self._frame += 1
+        frame = self._frame
         entries = [e for e in (_entry_from(x) for x in (identified or ())) if e is not None]
         entries = self._dedupe(entries)
         # An identity-based "self" seen recently outranks the identifier's camera fallback.
@@ -541,13 +757,16 @@ class Tracker:
             if key is None:
                 key = self._new_anon_key(e.side)
                 self._tracks[key] = Track(key=key, alias=None, relation=e.relation, team=e.team,
-                                          first_seen=now, last_seen=now)
+                                          first_seen=now, last_seen=now,
+                                          confirmed=e.relation == "self", _first_frame=frame)
             tr = self._tracks[key]
             if tr.alias is None:
                 tr.relation = self._merged_relation(tr.relation, e.relation)
             if e.team and tr.team is None:
                 tr.team = e.team
-            tr.observe(now, e.u, e.v, e.r, e.score)
+            if not tr.observe(now, e.u, e.v, e.r, e.score):
+                continue
+            self._lock_check(tr, frame, e.score)
             updated.add(key)
             if e.relation == "self" and tr.relation == "self":
                 self_key = key
@@ -569,10 +788,15 @@ class Tracker:
             tr.relation = self._merged_relation(tr.relation, e.relation)
             if e.team:
                 tr.team = e.team
-            tr.observe(now, e.u, e.v, e.r, e.score, e.id_score)
+            tr.confirmed = True                    # an identity (roster) is its own confirmation
+            if not tr.observe(now, e.u, e.v, e.r, e.score, e.id_score):
+                continue
             updated.add(key)
             if e.relation == "self":
                 self_key = key
+
+        # 2b. icons drawn under another icon: stacked hold (not a disappearance)
+        self._update_stacks(now, updated)
 
         # 3. at most one "self" track: the one declared self in this frame wins
         if self_key is not None:
@@ -632,12 +856,69 @@ class Tracker:
 
     @staticmethod
     def _predicted(tr: Track, now: float) -> tuple[float, float] | None:
-        pos = tr.position()
-        if pos is None:
-            return None
-        vx, vy = tr.velocity()
-        dt = min(max(0.0, now - tr.last_seen), PREDICT_MAX_S)
-        return (pos[0] + vx * dt, pos[1] + vy * dt)
+        return tr.predict(now)
+
+    @staticmethod
+    def _lock_check(tr: Track, frame: int, score: float) -> None:
+        """Champion locker: confirm a tentative anonymous track once it was seen often enough
+        (density over the recent frames) with a good enough mean detection score."""
+        tr._lock_obs.append((frame, score))
+        if tr.confirmed:
+            return
+        recent = [s for f, s in tr._lock_obs if frame - f < LOCK_WINDOW]
+        span = min(LOCK_WINDOW, frame - tr._first_frame + 1)
+        if len(recent) < LOCK_MIN_OBS or span <= 0:
+            return
+        if len(recent) / span >= LOCK_MIN_DENSITY and sum(recent) / len(recent) >= LOCK_MIN_CONF:
+            tr.confirmed = True
+            log.debug("Tracker: %s confirmed (%d obs / %d frames)", tr.key, len(recent), span)
+
+    def _update_stacks(self, now: float, updated: set[str]) -> None:
+        """Start / follow / end the stacked holds of the tracks not observed in this frame."""
+        occluders = [(k, self._tracks[k]) for k in updated
+                     if k in self._tracks and self._tracks[k].confirmed]
+        for key, tr in self._tracks.items():
+            if key in updated or not tr.confirmed or tr._last_obs_t is None:
+                continue
+            if tr.stacked_with is not None:
+                occ = self._tracks.get(tr.stacked_with)
+                occ_visible = occ is not None and occ.stacked_with is None \
+                    and now - occ.last_seen < HIDE_AFTER
+                if occ_visible and now - (tr.stacked_since or now) <= STACK_HOLD_S:
+                    if tr.stacked_with in updated:
+                        tr.follow(occ, now)        # type: ignore[arg-type]
+                    continue
+                if occ is not None and not occ_visible and tr._stack_t is not None:
+                    # the occluder went into the fog: both were there together until then
+                    tr.last_seen = max(tr.last_seen, min(occ.last_seen, tr._stack_t))
+                tr.stacked_with = None
+                tr.stacked_since = None
+                continue
+            if now - tr.last_seen >= HIDE_AFTER or tr._stack_pos is not None:
+                continue                           # not a fresh disappearance
+            last = tr.raw_position()
+            pred = tr.predict(now)
+            if last is None:
+                continue
+            best: tuple[float, str, Track] | None = None
+            for k, occ in occluders:
+                if k == key:
+                    continue
+                op = occ.raw_position()
+                if op is None:
+                    continue
+                reach = STACK_RADII * max(tr.radius, occ.radius, STACK_DEFAULT_R * 0.5) \
+                    if (tr.radius or occ.radius) else STACK_RADII * STACK_DEFAULT_R
+                d = math.hypot(op[0] - last[0], op[1] - last[1])
+                if pred is not None:
+                    d = min(d, math.hypot(op[0] - pred[0], op[1] - pred[1]))
+                if d <= reach and (best is None or d < best[0]):
+                    best = (d, k, occ)
+            if best is not None:
+                tr.stacked_with = best[1]
+                tr.stacked_since = tr.last_seen
+                tr.follow(best[2], now)
+                log.debug("Tracker: %s stacked under %s", key, best[1])
 
     def _associate(self, anonymous: list[_Entry], now: float,
                    named_keys: set[str]) -> list[tuple[_Entry, str | None]]:
@@ -652,15 +933,16 @@ class Tracker:
                 continue
             pred = self._predicted(tr, now)
             if pred is not None:
-                candidates.append((key, side_of_relation(tr.relation), pred))
+                candidates.append((key, side_of_relation(tr.relation), pred,
+                                   STACK_ASSOC_PENALTY if tr.stacked_with is not None else 0.0))
         pairs: list[tuple[float, int, str]] = []
         for i, e in enumerate(anonymous):
-            for key, side, (pu, pv) in candidates:
+            for key, side, (pu, pv), penalty in candidates:
                 if side != e.side:
                     continue
                 d = math.hypot(e.u - pu, e.v - pv)
                 if d < ASSOC_DIST:
-                    pairs.append((d, i, key))
+                    pairs.append((d + penalty, i, key))
         pairs.sort(key=lambda p: (p[0], p[1], p[2]))
         taken_e: dict[int, str] = {}
         taken_k: set[str] = set()
@@ -691,7 +973,8 @@ class Tracker:
 
     def _forget(self, now: float) -> None:
         stale = [k for k, tr in self._tracks.items()
-                 if tr.alias is None and now - tr.last_seen > ANON_FORGET_S]
+                 if tr.alias is None and (now - tr.last_seen > ANON_FORGET_S
+                                          or (not tr.confirmed and now - tr.last_seen > TENTATIVE_FORGET_S))]
         for k in stale:
             del self._tracks[k]
             if k == self._self_key:

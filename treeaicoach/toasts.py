@@ -38,13 +38,14 @@ KINDS = ("praise", "insight", "warning", "danger")
 BANNER_KINDS = ("engage", "retreat", "call")
 #: (accent, glow, title colour) per kind (RGB).
 STYLE: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]] = {
-    "praise": (orr.GOLD, orr.TEAL, (240, 210, 140)),
-    "insight": ((90, 170, 255), (40, 120, 230), (150, 200, 255)),
-    "warning": (orr.WARNING, (230, 120, 20), (255, 190, 100)),
-    "danger": (orr.DANGER, (220, 30, 50), (255, 130, 140)),
-    "engage": (orr.SAFE, (20, 200, 90), (150, 255, 180)),
-    "retreat": (orr.DANGER, (230, 40, 60), (255, 150, 160)),
-    "call": (orr.GOLD, (230, 170, 60), (255, 225, 150)),
+    # TreeAI identity palette (overlay_render.TAI_*): not the game's gold / navy UI
+    "praise": (orr.TAI_BRAND, (70, 190, 90), (196, 245, 170)),
+    "insight": (orr.TAI_INFO, (30, 140, 220), (170, 222, 255)),
+    "warning": (orr.TAI_WARN, (220, 150, 20), (255, 216, 120)),
+    "danger": (orr.TAI_DANGER, (220, 40, 40), (255, 150, 145)),
+    "engage": (orr.TAI_GO, (20, 190, 120), (160, 245, 205)),
+    "retreat": (orr.TAI_DANGER, (225, 45, 45), (255, 155, 150)),
+    "call": (orr.TAI_INFO, (30, 140, 220), (175, 225, 255)),
 }
 BANNER_H = 84                   # big banner height at 1080p (same width as a toast)
 PULSE_S = 1.2                   # subtle pulse period of the banner glow
@@ -116,17 +117,17 @@ def _sparkle(cv_: orr.Canvas, cx: float, cy: float, r: float, rgb: Any, alpha: f
 def _glyph(cv_: orr.Canvas, kind: str, cx: float, cy: float, r: float, accent: Any, glow: Any) -> None:
     """Badge drawn when there is no champion icon."""
     cv_.glow(cx, cy, r * 0.6, r * 1.25, glow, 0.35)
-    cv_.disc(cx, cy, r, orr.PANEL_DEEP, 1.0)
+    cv_.disc(cx, cy, r, orr.TAI_PANEL, 1.0)
     cv_.ring(cx, cy, r - 1.2, 2.2, accent, 1.0)
     if kind == "praise":
         _sparkle(cv_, cx, cy, r * 0.62, accent, 1.0)
-        _sparkle(cv_, cx + r * 0.42, cy - r * 0.42, r * 0.2, orr.GOLD_LIGHT, 0.9)
+        _sparkle(cv_, cx + r * 0.42, cy - r * 0.42, r * 0.2, orr.WHITE, 0.9)
     elif kind == "warning":
         h = r * 1.05
         cv_.polygon([(cx, cy - h * 0.62), (cx + h * 0.6, cy + h * 0.42), (cx - h * 0.6, cy + h * 0.42)],
                     accent, 1.0)
         f = orr.get_font(max(7, int(r * 0.85)), "bold")
-        cv_.text(cx, cy + r * 0.08, "!", f, orr.PANEL_DEEP, 1.0, anchor="m", shadow=0)
+        cv_.text(cx, cy + r * 0.08, "!", f, orr.TAI_PANEL, 1.0, anchor="m", shadow=0)
     elif kind == "danger":
         cv_.disc(cx, cy, r * 0.62, accent, 1.0)
         f = orr.get_font(max(7, int(r * 0.95)), "bold")
@@ -135,7 +136,7 @@ def _glyph(cv_: orr.Canvas, kind: str, cx: float, cy: float, r: float, accent: A
         d = r * 0.62
         cv_.polygon([(cx, cy - d), (cx + d, cy), (cx, cy + d), (cx - d, cy)], accent, 1.0)
         f = orr.get_font(max(7, int(r * 0.8)), "bold")
-        cv_.text(cx, cy, "i", f, orr.PANEL_DEEP, 1.0, anchor="m", shadow=0)
+        cv_.text(cx, cy, "i", f, orr.TAI_PANEL, 1.0, anchor="m", shadow=0)
 
 
 def banner_size(scale: float = 1.0) -> tuple[int, int]:
@@ -169,7 +170,7 @@ def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int 
         g = i * 2.0 * k
         cv_.rrect(x0 - g, y0 - g, W + 2 * g, H + 2 * g, rad + g, glow, 0.05)
     grad = np.linspace(0, 1, 32, dtype=np.float32)[:, None, None]
-    top, bot = orr._rgb(orr.PANEL), orr._rgb(orr.PANEL_DEEP)
+    top, bot = orr._rgb(orr.TAI_PANEL_TOP), orr._rgb(orr.TAI_PANEL)
     col = (top * (1 - grad) + bot * grad).reshape(32, 1, 3)
     cv_.rrect(x0, y0, W, H, rad, col, 0.94, border=accent, border_alpha=1.0, border_w=2.6 * k)
     cv_.glow(x0 + W / 2, y0 + H / 2, 10 * k, W * 0.45, glow, 0.14)
@@ -190,7 +191,7 @@ def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int 
              shadow=0.8)
     if subtitle:
         fs = orr.get_font(max(8, int(round(14 * k))), "semibold")
-        cv_.text(x0 + W / 2, y0 + H * 0.80, orr.fit_text(subtitle, fs, W - 40 * k), fs, orr.GOLD_LIGHT, 0.95,
+        cv_.text(x0 + W / 2, y0 + H * 0.80, orr.fit_text(subtitle, fs, W - 40 * k), fs, orr.TAI_TEXT, 0.95,
                  anchor="m", shadow=0.6)
     if pct is not None and kind in ("engage", "retreat"):
         f = max(0.0, min(1.0, pct / 100.0))
@@ -262,20 +263,16 @@ def _render_base(kind: str, title: str, subtitle: str, icon: np.ndarray | None, 
         cv_.rrect(x0 - g, y0 - g, W + 2 * g, H + 2 * g, rad + g, glow, 0.045)
     # panel: vertical gradient
     grad = np.linspace(0, 1, 32, dtype=np.float32)[:, None, None]
-    top, bot = orr._rgb(orr.PANEL), orr._rgb(orr.PANEL_DEEP)
+    top, bot = orr._rgb(orr.TAI_PANEL_TOP), orr._rgb(orr.TAI_PANEL)
     col = (top * (1 - grad) + bot * grad).reshape(32, 1, 3)
     cv_.rrect(x0, y0, W, H, rad, col, 0.92, border=accent, border_alpha=0.9, border_w=1.4 * k)
     # inner accent wash on the left
     cv_.glow(x0 + 40 * k, y0 + H / 2, 4 * k, 70 * k, glow, 0.16)
     # left accent bar
     cv_.capsule(x0 + 5 * k, y0 + 12 * k, x0 + 5 * k, y0 + H - 12 * k, 3.0 * k, accent, 0.95)
-    # top ornament: small diamond in the middle of the top border + thin lines
-    cx = x0 + W / 2
-    d = 5 * k
-    cv_.capsule(cx - 70 * k, y0, cx - 10 * k, y0, 1.6 * k, accent, 0.9)
-    cv_.capsule(cx + 10 * k, y0, cx + 70 * k, y0, 1.6 * k, accent, 0.9)
-    cv_.polygon([(cx, y0 - d), (cx + d, y0), (cx, y0 + d), (cx - d, y0)], orr.PANEL_DEEP, 1.0, grow=1.2 * k)
-    cv_.polygon([(cx, y0 - d * 0.7), (cx + d * 0.7, y0), (cx, y0 + d * 0.7), (cx - d * 0.7, y0)], accent, 1.0)
+    # TreeAI mark (top right): our own brand, no game-client ornament
+    fb_ = orr.get_font(max(7, int(round(9 * k))), "bold")
+    cv_.text(x0 + W - 10 * k, y0 + 10 * k, "TreeAI", fb_, orr.TAI_MUTED, 0.8, anchor="r", shadow=0.3)
     # icon / badge
     ir = 23 * k
     icx, icy = x0 + 16 * k + ir, y0 + H / 2
@@ -293,7 +290,7 @@ def _render_base(kind: str, title: str, subtitle: str, icon: np.ndarray | None, 
     t_txt = orr.fit_text((title or "").upper(), ft, max_w)
     if subtitle:
         cv_.text(tx, y0 + H * 0.33, t_txt, ft, title_rgb, 1.0, shadow=0.6)
-        cv_.text(tx, y0 + H * 0.66, orr.fit_text(subtitle, fs, max_w), fs, orr.GOLD_LIGHT, 1.0, shadow=0.7)
+        cv_.text(tx, y0 + H * 0.66, orr.fit_text(subtitle, fs, max_w), fs, orr.TAI_TEXT, 1.0, shadow=0.7)
     else:
         fb = orr.get_font(max(8, int(round(19 * k))), "bold")
         cv_.text(tx, y0 + H / 2, orr.fit_text((title or "").upper(), fb, max_w), fb, title_rgb, 1.0)
@@ -342,7 +339,7 @@ def render_toast(kind: str, title: str, subtitle: str = "", icon: np.ndarray | N
                 ys = np.arange(px.shape[0], dtype=np.float32)[:, None]
                 band = np.clip(1.0 - np.abs(xs - pos + (ys - px.shape[0] / 2) * 0.45) / (26 * k), 0.0, 1.0)
                 mask = _rrect_mask(px.shape[1], px.shape[0], pad, pad, W, H, 7 * k)
-                cv_.paint(0, 0, band * band * mask, orr.GOLD_LIGHT, 0.22)
+                cv_.paint(0, 0, band * band * mask, orr.WHITE, 0.18)
             remain = _clamp01(1.0 - age / max(0.1, duration))
             if remain > 0:
                 y = pad + H - 3.0 * k

@@ -360,9 +360,9 @@ class EndGameCaller:
         if self._phase is not None and st.phase != self._phase:
             if st.phase == "mid":
                 out.append(MacroCall("phase:mid", "Fin de la phase de voie : jouez groupés autour des "
-                                     "objectifs, plus de farm seul loin de tes tours.", "MILIEU DE PARTIE", 40))
+                                     "objectifs, ne va plus seul loin de tes tours.", "MILIEU DE PARTIE", 40))
             elif st.phase == "late":
-                out.append(MacroCall("phase:late", "Fin de partie : une erreur = Baron ou une inhib. "
+                out.append(MacroCall("phase:late", "Fin de partie : une erreur = Baron ou un inhibiteur perdu. "
                                      "Reste avec ton équipe et ne te fais pas attraper seul.", "FIN DE PARTIE", 45))
         self._phase = st.phase
         en_dead = list(st.enemies_dead)
@@ -390,7 +390,7 @@ class EndGameCaller:
             if len(carries) >= 2 and my_alive and st.phase in ("mid", "late", "end"):
                 secs = int(min(d.respawn for d in carries))
                 who = " et ".join(d.name for d in carries[:2])
-                out.append(MacroCall("carries_dead", f"Leurs carrys sont morts {secs} s ({who}) : poussez !",
+                out.append(MacroCall("carries_dead", f"Leurs plus forts sont morts {secs} s ({who}) : poussez !",
                                      "POUSSEZ !", 85, True, None, "engage", t))
         # ---- Elder
         rem_el = remaining("elder")
@@ -401,17 +401,17 @@ class EndGameCaller:
         if st.elder_team is not None and st.elder_team != self._seen_elder:
             self._seen_elder = st.elder_team
             if st.elder_team == mine:
-                out.append(MacroCall("elder_ours", "Ancestral pris : engagez, ils sont exécutés sous le seuil !",
-                                     "ANCESTRAL : ENGAGEZ", 92, True, None, "engage", t))
+                out.append(MacroCall("elder_ours", "Ancestral pris : attaquez, il achève les ennemis presque morts !",
+                                     "ANCESTRAL : ATTAQUEZ", 92, True, None, "engage", t))
             else:
                 out.append(MacroCall("elder_ours:theirs", "Ils ont l'ancestral : évitez le combat, défendez "
-                                     "sous tour jusqu'à la fin du buff.", "ÉVITEZ LE COMBAT", 92, True,
+                                     "sous tour jusqu'à la fin de son bonus.", "ÉVITEZ LE COMBAT", 92, True,
                                      st.nearest_safe_uv(None), "retreat", t))
         # ---- Baron buff
         if st.barons_taken > self._seen_baron:
             self._seen_baron = st.barons_taken
             if st.baron_team == mine:
-                out.append(MacroCall("baron_ours", "Baron pris : poussez groupés avec le buff, deux voies "
+                out.append(MacroCall("baron_ours", "Baron pris : poussez groupés avec le bonus, deux voies "
                                      "maximum, pas de combat inutile.", "BARON PRIS", 75, False, None, "engage", t))
             elif st.baron_team == theirs:
                 out.append(MacroCall("baron_theirs", "Ils ont le Baron : restez sous vos tours, nettoyez "
@@ -426,14 +426,14 @@ class EndGameCaller:
                                      "préparez-le tôt.", "POINT D'ÂME", 70, False,
                                      (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1]), "gold", t))
             else:
-                out.append(MacroCall("soul_point", "Point d'âme pour eux : contestez ce dragon groupés, "
+                out.append(MacroCall("soul_point", "Point d'âme pour eux : disputez ce dragon groupés, "
                                      "ou échangez Baron / tours.", "ÂME EN JEU", 78, True,
                                      (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1]), "gold", t))
         # ---- inhibitors
         theirs_down = sorted(ln for tm, ln in st.inhibs_down if tm == theirs)
         mine_down = sorted(ln for tm, ln in st.inhibs_down if tm == mine)
         if len(theirs_down) >= 2:
-            out.append(MacroCall("inhibs", f"{len(theirs_down)} inhibiteurs ennemis tombés : Baron ou un ace "
+            out.append(MacroCall("inhibs", f"{len(theirs_down)} inhibiteurs ennemis tombés : Baron ou toute leur équipe morte "
                                  "et vous finissez. Pas de mort inutile.", "FINISSEZ", 70, False, None, "engage", t))
         if mine_down:
             out.append(MacroCall("our_inhib", "Votre inhibiteur est tombé : nettoyez les super sbires, "

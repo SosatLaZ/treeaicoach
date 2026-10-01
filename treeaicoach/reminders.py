@@ -133,7 +133,7 @@ class PersonalReminders:
             return []
 
     def hint(self) -> str | None:
-        """Short HUD hint from the last tick, e.g. ``"1 450 PO — pense à rentrer"`` (or None)."""
+        """Short HUD hint from the last tick, e.g. ``"Rentre : 1 450 or"`` (or None)."""
         return self._hint
 
     def reset(self) -> None:
@@ -241,7 +241,7 @@ class PersonalReminders:
                                 key="recall_gold", t=now))
 
         if self._recall_on and recall_now:
-            self._hint = f"{format_gold(gold)} PO — pense à rentrer"
+            self._hint = f"Rentre : {format_gold(gold)} or"
         elif self._ward_on and ward_needed and can_shop:
             self._hint = "Pense à la balise de contrôle"
         else:

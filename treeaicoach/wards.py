@@ -297,7 +297,7 @@ class WardAdvisor:
             if reason == "objective" and obj is not None:
                 name = {"dragon": "dragon", "elder": "dragon ancestral", "baron": "Baron", "herald": "Héraut",
                         "grubs": "larves"}.get(obj[0], obj[0])
-                text = f"Vision {name} : balise {best.label}"
+                text = f"Avant le {name} : balise {best.label}"
                 if has_control and best.spot.control:
                     text += " (ta balise de contrôle)"
                 text += "."

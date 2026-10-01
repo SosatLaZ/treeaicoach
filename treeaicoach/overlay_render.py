@@ -66,6 +66,21 @@ WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 ALLY_BLUE = (78, 152, 218)
 
+# TreeAI in-game identity (HUD card, toasts): graphite panels, sky/cyan accents, our own
+# warning / danger colours -- deliberately NOT Riot's gold / navy client look (third-party policy:
+# an overlay must not mimic the game UI) and branded "TreeAI".
+TAI_PANEL = (15, 18, 24)        # #0F1218 graphite
+TAI_PANEL_TOP = (30, 35, 45)    # #1E232D
+TAI_EDGE = (71, 85, 105)        # #475569 slate hairline
+TAI_TEXT = (241, 245, 249)      # #F1F5F9
+TAI_MUTED = (148, 163, 184)     # #94A3B8
+TAI_INFO = (56, 189, 248)       # #38BDF8 sky (calm accent)
+TAI_GO = (52, 211, 153)         # #34D399 emerald
+TAI_GO_SOFT = (134, 239, 172)   # #86EFAC
+TAI_WARN = (251, 191, 36)       # #FBBF24 amber
+TAI_DANGER = (248, 81, 73)      # #F85149
+TAI_BRAND = (132, 225, 100)     # #84E164 TreeAI leaf
+TAI_THREAT = {0: TAI_GO, 1: TAI_WARN, 2: TAI_DANGER}
 PANEL_ALPHA = 0.86
 BORDER_ALPHA = 0.85
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
@@ -1506,16 +1521,19 @@ def _jungler_text(state: OverlayState) -> str:
 
 #: "Jouer plus fort ou non" gauge (coach.PlayGauge): step -> (word, colour). 5 bars: more bars = play harder.
 GAUGE_STYLE: dict[int, tuple[str, tuple[int, int, int]]] = {
-    2: ("ATTAQUE", SAFE), 1: ("PLUS FORT", (120, 214, 150)), 0: ("NORMAL", (196, 190, 172)),
-    -1: ("PRUDENT", WARNING), -2: ("SAFE", DANGER),
+    2: ("ATTAQUE", TAI_GO), 1: ("PLUS FORT", TAI_GO_SOFT), 0: ("NORMAL", (203, 213, 225)),
+    -1: ("PRUDENT", TAI_WARN), -2: ("SAFE", TAI_DANGER),
 }
 STANCE_TO_GAUGE: dict[str, int] = {"agressif": 1, "equilibre": 0, "prudent": -1}
-#: accent bar / advice tone colours (calm = gold)
-TONE_RGB: dict[str, tuple[int, int, int]] = {"danger": DANGER, "warning": WARNING, "go": SAFE, "info": GOLD}
+#: accent bar / advice tone colours (calm = sky blue)
+TONE_RGB: dict[str, tuple[int, int, int]] = {"danger": TAI_DANGER, "warning": TAI_WARN, "go": TAI_GO,
+                                             "info": TAI_INFO}
 HUD_FADE_S = 0.25               # fade-in of a new advice line / gauge step
-CARD_BG = (8, 15, 27)
-CARD_BG_TOP = (18, 28, 46)
-ADVICE_RGB = (246, 244, 236)
+CARD_BG = TAI_PANEL
+CARD_BG_TOP = TAI_PANEL_TOP
+ADVICE_RGB = TAI_TEXT
+#: objective chip colours (overlay_render's map colours -> TreeAI palette)
+_CHIP_RGB = {WARNING: TAI_WARN, SAFE: TAI_GO}
 
 
 def _gauge_step(state: OverlayState) -> int | None:
@@ -1555,20 +1573,20 @@ def _hud_chips(state: OverlayState) -> list[tuple[str, str, tuple[int, int, int]
     objs = _objective_rows(state)
     if objs:
         label, icon, text, colour = objs[0]
-        chips.append(("objective", f"{label} {text}", colour, icon))
+        chips.append(("objective", f"{label} {text}", _CHIP_RGB.get(tuple(colour), TAI_TEXT), icon))
     extra: list[tuple[str, str, tuple[int, int, int], Any]] = []
     item = str(getattr(state, "item_hint", "") or "").strip()
     if item and getattr(state, "in_base", False):
-        extra.append(("item", item, GOLD_LIGHT, None))
+        extra.append(("item", item, TAI_TEXT, None))
     notice = str(getattr(state, "role_notice", "") or "").strip()
     if notice:
-        extra.append(("role", _short_role_notice(notice), _mix(TEAL, WHITE, 0.45), None))
+        extra.append(("role", _short_role_notice(notice), _mix(TAI_INFO, WHITE, 0.4), None))
     hint = str(getattr(state, "hint", "") or "").strip()
     if hint:
-        extra.append(("hint", hint, GOLD_LIGHT, None))
+        extra.append(("hint", hint, TAI_TEXT, None))
     ai = str(getattr(state, "ai_counter", "") or "").strip()
     if ai:
-        extra.append(("ai", ai, _mix(TEAL, WHITE, 0.35), None))
+        extra.append(("ai", ai, _mix(TAI_INFO, WHITE, 0.3), None))
     return (chips + extra)[:2]
 
 
@@ -1683,13 +1701,24 @@ def _chip_icon(cv_: Canvas, kind: str, icon: Any, cx: float, cy: float, k: float
     elif kind in ("item", "hint"):
         _coin(cv_, cx, cy, 4.6 * k)
     elif kind == "role":
-        cv_.disc(cx, cy, 3.4 * k, TEAL, 0.95)
+        cv_.disc(cx, cy, 3.4 * k, TAI_INFO, 0.95)
     elif kind == "ai":
         r = 4.2 * k                                             # four-point spark
-        cv_.polygon([(cx, cy - r), (cx + r * 0.3, cy), (cx, cy + r), (cx - r * 0.3, cy)], TEAL, 0.95)
-        cv_.polygon([(cx - r, cy), (cx, cy - r * 0.3), (cx + r, cy), (cx, cy + r * 0.3)], TEAL, 0.95)
+        cv_.polygon([(cx, cy - r), (cx + r * 0.3, cy), (cx, cy + r), (cx - r * 0.3, cy)], TAI_INFO, 0.95)
+        cv_.polygon([(cx - r, cy), (cx, cy - r * 0.3), (cx + r, cy), (cx, cy + r * 0.3)], TAI_INFO, 0.95)
     else:
         cv_.disc(cx, cy, 3.0 * k, colour, 0.9)
+
+
+def _brand(cv_: Canvas, right: float, cy: float, k: float) -> float:
+    """Tiny "TreeAI" mark (leaf + name) right-aligned on ``right``; returns its width."""
+    f = get_font(max(7, round(8.5 * k)), "bold")
+    tw = text_width("TreeAI", f)
+    cv_.text(right, cy, "TreeAI", f, TAI_MUTED, 0.85, anchor="r", shadow=0.3)
+    r = 3.6 * k
+    lx = right - tw - 4 * k - r
+    cv_.polygon([(lx, cy - r * 1.25), (lx + r * 0.8, cy), (lx, cy + r * 1.25), (lx - r * 0.8, cy)], TAI_BRAND, 0.9)
+    return tw + 4 * k + 2 * r
 
 
 def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
@@ -1701,27 +1730,27 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
     left, right = lay["left"], lay["right"]
     cv_ = Canvas(W, H)
     phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
-    # ---- urgency colour: gank threat, else the advice tone, else calm gold
+    # ---- urgency colour: gank threat, else the advice tone, else calm sky blue
     tone = str(getattr(state, "tip_tone", "") or "").lower()
     if lvl >= 2:
-        accent = DANGER
+        accent = TAI_DANGER
     elif lvl == 1:
-        accent = WARNING
+        accent = TAI_WARN
     elif lay["lines"] and tone in TONE_RGB:
         accent = TONE_RGB[tone]
     elif step is not None and step != 0:
         accent = GAUGE_STYLE[step][1]
     else:
-        accent = GOLD
-    # ---- soft shadow, card, hextech gold hairline
+        accent = TAI_INFO
+    # ---- soft shadow, graphite card, slate hairline (TreeAI identity, not the game's UI)
     rad = 8 * k
     for i, a in enumerate((0.16, 0.11, 0.07, 0.04)):
         g = (i + 1) * 1.3 * k
         cv_.rrect(x0 - g, y0 - g * 0.6 + 2 * k, cw + 2 * g, ch + 2 * g, rad + g, BLACK, a)
     grad = np.linspace(np.asarray(CARD_BG_TOP, np.float32), np.asarray(CARD_BG, np.float32), 24)
     cv_.rrect(x0, y0, cw, ch, rad, (grad / 255.0)[:, None, :], 0.93,
-              border=GOLD, border_alpha=0.55, border_w=max(1.0, 0.9 * k))
-    cv_.capsule(x0 + rad, y0 + 1.2 * k, x0 + cw - rad, y0 + 1.2 * k, max(0.8, 0.7 * k), GOLD_LIGHT, 0.18)
+              border=TAI_EDGE, border_alpha=0.85, border_w=max(1.0, 0.9 * k))
+    cv_.capsule(x0 + rad, y0 + 1.2 * k, x0 + cw - rad, y0 + 1.2 * k, max(0.8, 0.7 * k), WHITE, 0.07)
     # accent bar (pulses on a gank)
     a_acc = 0.95 if lvl < 2 else 0.75 + 0.25 * math.sin(phase * 2 * math.pi)
     cv_.capsule(x0 + 6 * k, y0 + 8 * k, x0 + 6 * k, y0 + ch - 8 * k, 3.2 * k, accent, a_acc)
@@ -1731,16 +1760,15 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
     for idx, (name, h) in enumerate(lay["rows"]):
         cy = y + h / 2
         if name == "header":
-            clock = fmt_clock(state.game_time)
-            cwid = cv_.text(right, cy, clock, fonts["clock"], MUTED, 0.9, anchor="r", shadow=0.3)
-            avail_r = right - cwid - 8 * k
+            avail_r = right - _brand(cv_, right, cy, k) - 8 * k
             if lvl >= 1 or step is None:
-                col = THREAT_COLORS[lvl]
+                col = TAI_THREAT[lvl]
                 gr = 6.5 * k
                 _threat_glyph(cv_, left + gr, cy, gr, lvl, col)
                 text = (state.threat_text or "").strip() or THREAT_DEFAULT_TEXT[lvl]
-                if lvl == 1 and text.upper().startswith("ATTENTION — "):
-                    text = text[len("ATTENTION — "):]
+                for prefix in ("ATTENTION — ", "DANGER — "):          # the glyph + colour already say it
+                    if text.upper().startswith(prefix) and len(text) > len(prefix):
+                        text = text[len(prefix):]
                 tx = left + 2 * gr + 6 * k
                 hcol = _mix(col, WHITE, 0.25) if lvl >= 1 else _mix(col, WHITE, 0.2)
                 cv_.text(tx, cy, fit_text(text, fonts["head"], avail_r - tx), fonts["head"], hcol, shadow=0.6)
@@ -1756,7 +1784,7 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
                 reason = " ".join(str(getattr(state, "gauge_reason", "") or getattr(state, "stance_reason", "")
                                       or "").split())
                 if reason and text_width("· " + reason, fonts["reason"]) <= avail_r - tx - 3 * k:
-                    cv_.text(tx + 3 * k, cy, "· " + reason, fonts["reason"], (176, 172, 160), 0.95 * fa, shadow=0.3)
+                    cv_.text(tx + 3 * k, cy, "· " + reason, fonts["reason"], TAI_MUTED, 0.95 * fa, shadow=0.3)
         elif name == "advice":
             fa = _fade(getattr(state, "tip_since", None), now)
             lh = 16 * k
@@ -1776,7 +1804,7 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
                     text = text.split("(", 1)[0].strip()
                     need = 7 * k + isz + 5 * k + text_width(text, f) + 8 * k
                 cwid = min(need, avail)
-                cv_.rrect(x, y, cwid, h, h / 2, (255, 255, 255), 0.06, border=GOLD, border_alpha=0.30,
+                cv_.rrect(x, y, cwid, h, h / 2, (255, 255, 255), 0.05, border=TAI_EDGE, border_alpha=0.8,
                           border_w=max(0.8, 0.8 * k))
                 _chip_icon(cv_, kind, icon, x + 7 * k + isz / 2, cy, k, colour)
                 tx = x + 7 * k + isz + 5 * k
@@ -1788,14 +1816,14 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
             d = 16 * k
             icx = left + d / 2
             if jg is not None:
-                cv_.image(icx, cy, round_icon_patch(jg.icon, d, DANGER, max(1.2, 1.4 * k), grey=not jg.visible,
+                cv_.image(icx, cy, round_icon_patch(jg.icon, d, TAI_DANGER, max(1.2, 1.4 * k), grey=not jg.visible,
                                                     letter=jg.name or jg.alias or "J"))
             else:
-                cv_.image(icx, cy, round_icon_patch(None, d, GOLD_DARK, max(1.2, 1.4 * k), letter="J"))
+                cv_.image(icx, cy, round_icon_patch(None, d, TAI_EDGE, max(1.2, 1.4 * k), letter="J"))
             tx = left + d + 6 * k
-            tw = cv_.text(tx, cy, "JGL", fonts["tag"], GOLD, shadow=0)
+            tw = cv_.text(tx, cy, "JGL", fonts["tag"], TAI_INFO, shadow=0)
             tx += tw + 5 * k
-            colour = _mix(DANGER, WHITE, 0.35) if (jg is not None and jg.visible) else GOLD_LIGHT
+            colour = _mix(TAI_DANGER, WHITE, 0.35) if (jg is not None and jg.visible) else TAI_TEXT
             cv_.text(tx, cy, fit_text(lay["jl"], fonts["small"], right - tx), fonts["small"], colour)
         elif name == "enemies":
             roles = state.roles if isinstance(state.roles, dict) else {}
@@ -1822,8 +1850,8 @@ def _draw_enemy_slots(cv_: Canvas, enemies: list[EnemyView], x0: float, y0: floa
         e = enemies[i]
         ago = e.last_seen_ago if e.last_seen_ago is not None and _finite(e.last_seen_ago) else None
         if e.visible and e.approaching:
-            cv_.glow(cx, cy, icon_d * 0.45, icon_d * 0.7, DANGER, 0.3 + 0.25 * math.sin(phase * 2 * math.pi))
-        ring = DANGER if (e.visible or e.is_jungler) else _mix(DANGER, GREY, 0.4)
+            cv_.glow(cx, cy, icon_d * 0.45, icon_d * 0.7, TAI_DANGER, 0.3 + 0.25 * math.sin(phase * 2 * math.pi))
+        ring = TAI_DANGER if (e.visible or e.is_jungler) else _mix(TAI_DANGER, GREY, 0.4)
         cv_.image(cx, cy, round_icon_patch(e.icon, icon_d, ring, ring_w * (1.3 if e.is_jungler else 1.0),
                                            grey=not e.visible, letter=e.name or e.alias or "?"))
         tag = role_tag(e, roles)
@@ -1831,19 +1859,19 @@ def _draw_enemy_slots(cv_: Canvas, enemies: list[EnemyView], x0: float, y0: floa
             tw = text_width(tag, f_tag) + 5 * k
             th = _cap_height(f_tag) + 4 * k
             bx, by = cx - tw / 2, cy + icon_d / 2 - th * 0.55
-            bg = GOLD if e.is_jungler else PANEL_DEEP
-            cv_.rrect(bx, by, tw, th, th / 2, bg, 0.95, border=GOLD if not e.is_jungler else None,
+            bg = TAI_INFO if e.is_jungler else TAI_PANEL
+            cv_.rrect(bx, by, tw, th, th / 2, bg, 0.95, border=TAI_INFO if not e.is_jungler else None,
                       border_alpha=0.6)
-            cv_.text(cx, by + th / 2, tag, f_tag, PANEL_DEEP if e.is_jungler else GOLD_LIGHT, anchor="m",
+            cv_.text(cx, by + th / 2, tag, f_tag, TAI_PANEL if e.is_jungler else TAI_TEXT, anchor="m",
                      shadow=0)
         if e.visible:
-            text, colour = ("approche", DANGER) if e.approaching else ("visible", SAFE)
+            text, colour = ("approche", TAI_DANGER) if e.approaching else ("visible", TAI_GO)
         elif ago is None:
             text, colour = "non vu", GREY
         elif ago < LAST_SEEN_MAX_S:
-            text, colour = f"MIA {fmt_seconds(ago)}", WARNING
+            text, colour = fmt_seconds(ago), TAI_WARN
         else:
-            text, colour = f"vu {fmt_clock(ago)}", MUTED
+            text, colour = f"vu {fmt_clock(ago)}", TAI_MUTED
         cv_.text(cx, ly + 2 * k, fit_text(text, font, slot_w - 2), font, colour, anchor="m", shadow=0.4)
 
 
@@ -2055,7 +2083,8 @@ def render_world_marker(m: Any, k: float = 1.0, now: float | None = None) -> tup
         bx0, by0, bx1, by1 = L["box"]
         cv_ = Canvas(bx1 - bx0, by1 - by0)
         ax, ay = -bx0, -by0
-        alpha = _world_alpha(m)
+        alpha = 1.0                       # drawn opaque, faded as a whole at the end (no layer build-up)
+        fade = _world_alpha(m)
         kind = L["kind"]
         done = kind == "done"
         rgb = WORLD_DONE_RGB if done else WORLD_RGB
@@ -2109,6 +2138,8 @@ def render_world_marker(m: Any, k: float = 1.0, now: float | None = None) -> tup
             if L["hint"] and not done:
                 hcx, hcy = ax + L["hc"][0], ay + L["hc"][1]
                 cv_.text(hcx, hcy, L["hint"], L["f_sub"], GOLD_LIGHT, alpha, anchor="m", outline=max(1, int(round(2 * k))))
+        if fade < 1.0:
+            cv_.px *= np.float32(fade)
         return cv_.to_bgra(), int(round(ax)), int(round(ay))
     except Exception:
         log.exception("render_world_marker failed")
@@ -2457,7 +2488,7 @@ def sample_states(db: Any = None) -> dict[str, OverlayState]:
                     _DemoObjective("Larves", None, alive=True)],
         game_time=440.0, flash=0.85,
         jungler_line="Jungler : Lee Sin — vu il y a 14 s, rivière du haut",
-        hint="1 450 PO — pense à rentrer", me_icon=ic["Garen"],
+        hint="Rentre : 1 450 or", me_icon=ic["Garen"],
         allies=allies(ally_bot), roles=roles,
     )
     f1 = fog.simulate("LeeSin", "LeeSin", "Lee Sin", (0.62, 0.72), 21.0, is_jungler=True, game_time=1660)

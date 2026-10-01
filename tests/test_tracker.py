@@ -157,8 +157,9 @@ def test_unidentified_frame_continues_identity_track() -> None:
 
 def test_anonymous_forgotten_after_20s() -> None:
     tr = Tracker()
-    tr.update(0.0, [ident(0.5, 0.5)])
-    assert tr.get("enemy?1") is not None
+    for i in range(3):                     # confirmed by the champion locker (3 frames)
+        tr.update(i * DT, [ident(0.5, 0.5)])
+    assert tr.get("enemy?1") is not None and tr.get("enemy?1").confirmed
     tr.update(ANON_FORGET_S - 1, [])
     assert tr.get("enemy?1") is not None
     tr.update(ANON_FORGET_S + 0.5, [])

@@ -27,7 +27,9 @@ Record format (JSON, ``"schema": 1``)::
      "my_positions": [[game_time, u, v], ...],                   # 1 Hz, only when visible
      "sightings": {"LeeSin": [[game_time, u, v], ...], ...},     # <= 2 Hz per enemy, visible only
      "alerts": [[game_time, kind, level, text, alias], ...],     # alias = 5th, optional element
-     "events": [{Live Client event}, ...]}
+     "events": [{Live Client event}, ...],
+     "fog": [[game_time, alias, u, v, radius], ...],             # enemy-jungler fog circle, <= 1 Hz
+     "settings": {"sensitivity", "fog_max_s", "fog_mode", "safe_mode"}}   # coaching settings (calibration)
 
 Memory is bounded (hard caps + decimation of the oldest data): a 60-minute game stays far
 below 5 MB of JSON. Every public method is thread-safe and never raises.
@@ -70,6 +72,9 @@ MAX_SIGHTING_KEYS = 16          # 5 enemies + anonymous tracks; overflow goes to
 OVERFLOW_KEY = "enemy?"
 MAX_ALERTS = 3000
 MAX_EVENTS = 3000
+FOG_PERIOD_S = 1.0              # fog circle samples: <= 1 Hz (game time)
+MAX_FOG = 4 * 3600              # then decimated
+SETTINGS_KEYS = ("sensitivity", "warn_radius", "danger_radius", "fog_max_s", "fog_mode", "safe_mode")
 MAX_TEXT_LEN = 160
 MAX_ITEMS = 8
 
@@ -267,6 +272,7 @@ class GameRecorder:
         self._finished_sig: tuple | None = None
         self._finished_gt: float = 0.0
         self._warned: set[str] = set()
+        self._settings: dict[str, Any] = {}
         self._reset_game_state()
 
     # ------------------------------------------------------------------ state
@@ -296,6 +302,8 @@ class GameRecorder:
         self._scoreboard: dict[str, Any] | None = None          # latest scoreboard.ScoreboardSummary.to_dict()
         self._scoreboard_timeline: list[list[Any]] = []         # [gt, team gold diff, {role: [gold, cs, lvl]}]
         self._last_sb_gt: float = -math.inf
+        self._fog: list[list[Any]] = []
+        self._last_fog_gt: float = -math.inf
 
     def _warn_once(self, key: str, msg: str, *args: Any) -> None:
         if key not in self._warned:
@@ -576,6 +584,53 @@ class GameRecorder:
             if len(lst) > MAX_SIGHTINGS_PER_KEY:
                 _decimate(lst)
 
+    def on_fog(self, estimates: Any, game_time: float | None) -> None:
+        """Enemy-jungler fog circle (``fog_tracker.FogEstimate`` list) at <= 1 Hz, for the post-game
+        check against the client timeline (``ground_truth.py``). Never raises."""
+        try:
+            gt = _finite(game_time)
+            if gt is None or not estimates:
+                return
+            rows = []
+            for e in list(estimates)[:8]:
+                if not getattr(e, "is_jungler", False):
+                    continue
+                uv = _uv(getattr(e, "last_uv", None))
+                r = _finite(getattr(e, "radius", None))
+                if uv is None or r is None:
+                    continue
+                alias = _text(getattr(e, "alias", None) or getattr(e, "key", None), 40)
+                rows.append([round(gt, 1), alias, round(uv[0], 3), round(uv[1], 3), round(max(0.0, r), 3)])
+            if not rows:
+                return
+            with self._lock:
+                if not self.active:
+                    return
+                if gt < self._last_fog_gt - 5.0:
+                    self._last_fog_gt = -math.inf
+                if gt - self._last_fog_gt < FOG_PERIOD_S * 0.95:
+                    return
+                self._last_fog_gt = gt
+                self._fog.extend(rows)
+                self._dirty = True
+                if len(self._fog) > MAX_FOG:
+                    _decimate(self._fog)
+        except Exception:
+            log.exception("GameRecorder.on_fog failed")
+
+    def note_settings(self, cfg: Any) -> None:
+        """Remember the coaching settings of this game (sensitivity...) for the calibration."""
+        try:
+            out: dict[str, Any] = {}
+            for k in SETTINGS_KEYS:
+                v = getattr(cfg, k, None)
+                if isinstance(v, (bool, int, float, str)):
+                    out[k] = _json_scalar(v)
+            with self._lock:
+                self._settings = out
+        except Exception:
+            log.exception("GameRecorder.note_settings failed")
+
     # ------------------------------------------------------------------ alerts
     def on_scoreboard(self, summary: Any, game_time: float | None) -> None:
         """Tab scoreboard summary (``ScoreboardSummary.to_dict()``): kept as the latest value +
@@ -677,6 +732,8 @@ class GameRecorder:
             "alerts": list(self._alerts),
             "events": list(self._events),
             "scoreboard": {"final": self._scoreboard, "timeline": list(self._scoreboard_timeline)},
+            "fog": list(self._fog),
+            "settings": dict(self._settings),
         }
 
     def snapshot(self, recent_s: float | None = None) -> dict[str, Any] | None:

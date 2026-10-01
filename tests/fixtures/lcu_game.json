@@ -1,0 +1,637 @@
+{
+ "gameId": 7212345678,
+ "gameCreation": 1789237765000,
+ "gameCreationDate": "2026-09-12T18:29:25Z",
+ "gameDuration": 1690,
+ "gameMode": "CLASSIC",
+ "gameType": "MATCHED_GAME",
+ "gameVersion": "16.19.712.4321",
+ "mapId": 11,
+ "platformId": "EUW1",
+ "queueId": 420,
+ "seasonId": 16,
+ "endOfGameResult": "GameComplete",
+ "gameModeMutators": [],
+ "participants": [
+  {
+   "participantId": 1,
+   "championId": 86,
+   "teamId": 100,
+   "spell1Id": 4,
+   "spell2Id": 12,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 1,
+    "win": true,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 1,
+    "lane": "TOP",
+    "role": "SOLO",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 2,
+   "championId": 62,
+   "teamId": 100,
+   "spell1Id": 4,
+   "spell2Id": 11,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 2,
+    "win": true,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 2,
+    "lane": "JUNGLE",
+    "role": "NONE",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 3,
+   "championId": 103,
+   "teamId": 100,
+   "spell1Id": 4,
+   "spell2Id": 14,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 3,
+    "win": true,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 3,
+    "lane": "MIDDLE",
+    "role": "SOLO",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 4,
+   "championId": 145,
+   "teamId": 100,
+   "spell1Id": 4,
+   "spell2Id": 7,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 4,
+    "win": true,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 4,
+    "lane": "BOTTOM",
+    "role": "DUO_CARRY",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 5,
+   "championId": 20,
+   "teamId": 100,
+   "spell1Id": 4,
+   "spell2Id": 3,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 5,
+    "win": true,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 5,
+    "lane": "BOTTOM",
+    "role": "DUO_SUPPORT",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 6,
+   "championId": 122,
+   "teamId": 200,
+   "spell1Id": 4,
+   "spell2Id": 12,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 6,
+    "win": false,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 6,
+    "lane": "TOP",
+    "role": "SOLO",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 7,
+   "championId": 64,
+   "teamId": 200,
+   "spell1Id": 11,
+   "spell2Id": 4,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 7,
+    "win": false,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 7,
+    "lane": "JUNGLE",
+    "role": "NONE",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 8,
+   "championId": 897,
+   "teamId": 200,
+   "spell1Id": 4,
+   "spell2Id": 12,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 8,
+    "win": false,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 8,
+    "lane": "MIDDLE",
+    "role": "SOLO",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 9,
+   "championId": 222,
+   "teamId": 200,
+   "spell1Id": 4,
+   "spell2Id": 7,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 9,
+    "win": false,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 9,
+    "lane": "BOTTOM",
+    "role": "DUO_CARRY",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  },
+  {
+   "participantId": 10,
+   "championId": 412,
+   "teamId": 200,
+   "spell1Id": 4,
+   "spell2Id": 14,
+   "highestAchievedSeasonTier": "GOLD",
+   "stats": {
+    "participantId": 10,
+    "win": false,
+    "kills": 0,
+    "deaths": 0,
+    "assists": 0,
+    "champLevel": 16,
+    "goldEarned": 11000,
+    "totalMinionsKilled": 180,
+    "neutralMinionsKilled": 12,
+    "visionScore": 20,
+    "item0": 3078,
+    "item1": 3047,
+    "item2": 0,
+    "item3": 0,
+    "item4": 0,
+    "item5": 0,
+    "item6": 3340
+   },
+   "timeline": {
+    "participantId": 10,
+    "lane": "BOTTOM",
+    "role": "DUO_SUPPORT",
+    "creepsPerMinDeltas": {
+     "0-10": 6.1
+    },
+    "goldPerMinDeltas": {
+     "0-10": 380.0
+    },
+    "xpPerMinDeltas": {
+     "0-10": 420.0
+    },
+    "csDiffPerMinDeltas": {},
+    "xpDiffPerMinDeltas": {},
+    "damageTakenDiffPerMinDeltas": {},
+    "damageTakenPerMinDeltas": {}
+   }
+  }
+ ],
+ "participantIdentities": [
+  {
+   "participantId": 1,
+   "player": {
+    "accountId": 1001,
+    "currentAccountId": 1001,
+    "platformId": "EUW1",
+    "summonerId": 5001,
+    "puuid": "puuid-01-0000",
+    "gameName": "Sylvain",
+    "tagLine": "EUW",
+    "summonerName": "Sylvain",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 2,
+   "player": {
+    "accountId": 1002,
+    "currentAccountId": 1002,
+    "platformId": "EUW1",
+    "summonerId": 5002,
+    "puuid": "puuid-02-0000",
+    "gameName": "LeBûcheron",
+    "tagLine": "1234",
+    "summonerName": "LeBûcheron",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 3,
+   "player": {
+    "accountId": 1003,
+    "currentAccountId": 1003,
+    "platformId": "EUW1",
+    "summonerId": 5003,
+    "puuid": "puuid-03-0000",
+    "gameName": "Mid Ahri",
+    "tagLine": "FR1",
+    "summonerName": "Mid Ahri",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 4,
+   "player": {
+    "accountId": 1004,
+    "currentAccountId": 1004,
+    "platformId": "EUW1",
+    "summonerId": 5004,
+    "puuid": "puuid-04-0000",
+    "gameName": "Kai Sa",
+    "tagLine": "EUW",
+    "summonerName": "Kai Sa",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 5,
+   "player": {
+    "accountId": 1005,
+    "currentAccountId": 1005,
+    "platformId": "EUW1",
+    "summonerId": 5005,
+    "puuid": "puuid-05-0000",
+    "gameName": "Soutien",
+    "tagLine": "EUW",
+    "summonerName": "Soutien",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 6,
+   "player": {
+    "accountId": 1006,
+    "currentAccountId": 1006,
+    "platformId": "EUW1",
+    "summonerId": 5006,
+    "puuid": "puuid-06-0000",
+    "gameName": "Darius Main",
+    "tagLine": "EUW",
+    "summonerName": "Darius Main",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 7,
+   "player": {
+    "accountId": 1007,
+    "currentAccountId": 1007,
+    "platformId": "EUW1",
+    "summonerId": 5007,
+    "puuid": "puuid-07-0000",
+    "gameName": "Jungle Diff",
+    "tagLine": "KR1",
+    "summonerName": "Jungle Diff",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 8,
+   "player": {
+    "accountId": 1008,
+    "currentAccountId": 1008,
+    "platformId": "EUW1",
+    "summonerId": 5008,
+    "puuid": "puuid-08-0000",
+    "gameName": "Tank Mid",
+    "tagLine": "EUW",
+    "summonerName": "Tank Mid",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 9,
+   "player": {
+    "accountId": 1009,
+    "currentAccountId": 1009,
+    "platformId": "EUW1",
+    "summonerId": 5009,
+    "puuid": "puuid-09-0000",
+    "gameName": "Jinx Bot",
+    "tagLine": "EUW",
+    "summonerName": "Jinx Bot",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  },
+  {
+   "participantId": 10,
+   "player": {
+    "accountId": 1010,
+    "currentAccountId": 1010,
+    "platformId": "EUW1",
+    "summonerId": 5010,
+    "puuid": "puuid-10-0000",
+    "gameName": "Lanterne",
+    "tagLine": "EUW",
+    "summonerName": "Lanterne",
+    "profileIcon": 29,
+    "matchHistoryUri": ""
+   }
+  }
+ ],
+ "teams": [
+  {
+   "teamId": 100,
+   "win": "Win",
+   "towerKills": 7,
+   "dragonKills": 3,
+   "baronKills": 1,
+   "bans": []
+  },
+  {
+   "teamId": 200,
+   "win": "Fail",
+   "towerKills": 3,
+   "dragonKills": 1,
+   "baronKills": 0,
+   "bans": []
+  }
+ ]
+}

@@ -237,7 +237,7 @@ class ScoreboardSummary:
         team = f"équipe {fmt_gold(self.team_gold_diff)}"
         m = self.my_matchup
         if m is not None:
-            return f"Ta lane : {fmt_signed(m.cs_diff)} CS, {fmt_gold(m.gold_diff)} · {team}"
+            return f"Ta voie : {fmt_signed(m.cs_diff)} sbires, {fmt_gold(m.gold_diff)} · {team}"
         return f"Tab : {team}, kills {self.ally_kills}-{self.enemy_kills}"
 
     def to_dict(self) -> dict[str, Any]:
@@ -462,7 +462,7 @@ class ScoreboardAnalyzer:
             why = "meurt souvent"
         text = f"{ln.name} {why} : ne joue pas autour de lui, protège-toi."
         self._push(ScoreInsight("struggle", f"struggle:{ln.alias}", text, "ALLIÉ EN DIFFICULTÉ",
-                                 f"{ln.name} {ln.kda} — joue safe", "insight", ln.alias, t))
+                                 f"{ln.name} {ln.kda} — en difficulté", "insight", ln.alias, t))
 
     def _spike_check(self, ln: PlayerLine, st: _PState, p: Any, my_m: MatchupDiff | None, roles: Any,
                      game: Any, first: bool, t: float) -> None:
@@ -483,7 +483,7 @@ class ScoreboardAnalyzer:
                 nth = "premier" if n == 1 else f"{n}e"
                 self._push(ScoreInsight(
                     "spike", f"spike:{ln.alias}:{new[-1]}",
-                    f"{ln.name} a terminé {iname} : pic de puissance.", "PIC DE PUISSANCE",
+                    f"{ln.name} a terminé {iname} : il devient plus fort.", "ENNEMI PLUS FORT",
                     f"{ln.name} — {iname} ({nth} objet)", "warning", ln.alias, t))
         if is_opp and not first and ln.level > st.level:
             me = game.me

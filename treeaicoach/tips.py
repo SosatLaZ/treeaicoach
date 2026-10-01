@@ -2,7 +2,7 @@
 
 :data:`TIPS` holds concrete League of Legends advice in plain French, each written as
 "WHAT to do : WHY" in at most :data:`MAX_WORDS` words with live numbers and names
-("Joue safe sous ta tour : Darius a 2 niveaux d'avance", "Rentre acheter une balise rouge :
+("Joue prudemment sous ta tour : Darius a 2 niveaux d'avance", "Rentre acheter une balise rouge :
 dragon dans 70 s"). Each :class:`Tip` has a condition on a :class:`TipContext` (role, lane
 matchup, levels / gold / CS gaps, objective timers, wave, enemy jungler, enemies around me,
 deaths, gold, base...), a priority (urgency), a tone (HUD accent colour), the confidence of its
@@ -239,7 +239,7 @@ TIPS: tuple[Tip, ...] = (
     T("outnumbered", "survival", "Recule tout de suite : {en} ennemis contre {al} autour de toi",
       lambda c: not c.in_base and not c.dead and c.enemies_near >= 2 and c.enemies_near - c.allies_near >= 2,
       prio=4, tone="danger", conf=MAP, cooldown=30.0, ttl=6.0),
-    T("outnumber", "macro", "Engage le combat : vous êtes {al} contre {en}",
+    T("outnumber", "macro", "Lance le combat : vous êtes {al} contre {en}",
       lambda c: not c.in_base and not c.dead and c.enemies_near >= 1 and c.allies_near - c.enemies_near >= 2,
       prio=3, tone="go", conf=MAP, cooldown=45.0, ttl=6.0),
     T("missing_3", "map", "Recule vers ta tour : {missing} ennemis invisibles",
@@ -290,7 +290,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.soon_within("dragon", 0, 60), roles=("JUNGLE",), prio=3, ttl=15.0),
     T("drag_up_team", "objectives", "Forcez le dragon à 5 : {tgd} d'or d'avance",
       lambda c: "dragon" in c.alive and c.team_gold_diff >= 1500, prio=3, tone="go"),
-    T("drag_up_behind", "objectives", "Ne contestez le dragon qu'avec vision : {tgd} d'or de retard",
+    T("drag_up_behind", "objectives", "Dragon seulement avec des balises posées : {tgd} d'or de retard",
       lambda c: "dragon" in c.alive and c.team_gold_diff <= -1500, prio=3, tone="warning"),
     T("elder", "objectives", "Ne meurs pas avant l'Ancestral : il décide la partie",
       lambda c: c.soon_within("elder", 0, 90) or "elder" in c.alive, prio=4, tone="warning"),
@@ -321,9 +321,9 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.opp_dead and c.early, roles=LANERS, prio=4, tone="go", cooldown=60.0, ttl=10.0),
     T("opp_dead_late", "matchup", "Prends la tour puis rejoins ton équipe : {opp} est mort",
       lambda c: c.opp_dead and not c.early, roles=LANERS, prio=4, tone="go", cooldown=60.0, ttl=10.0),
-    T("lvl_ahead", "matchup", "Va échanger avec {opp} : tu as {lvl_txt} d'avance",
+    T("lvl_ahead", "matchup", "Va taper {opp} : tu as {lvl_txt} d'avance",
       lambda c: c.level_diff >= 1 and c.early, roles=LANERS, prio=3, tone="go", cooldown=180.0),
-    T("lvl_behind", "matchup", "Joue safe sous ta tour : {opp} a {lvl_txt} d'avance",
+    T("lvl_behind", "matchup", "Joue prudemment sous ta tour : {opp} a {lvl_txt} d'avance",
       lambda c: c.level_diff <= -1 and c.early, roles=LANERS, prio=3, tone="warning", cooldown=180.0),
     T("lvl6_me", "matchup", "Attaque avec ton ultime : {opp} n'a pas encore le sien",
       lambda c: c.level == 6 and c.level_diff >= 1, roles=LANERS, prio=4, tone="go", cooldown=300.0),
@@ -331,13 +331,13 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.opp_level == 6 and c.level <= 5, roles=LANERS, prio=4, tone="warning", cooldown=300.0),
     T("gold_ahead", "matchup", "Prends les plaques de {opp} : {gd} d'or d'avance",
       lambda c: c.gold_diff >= 800 and c.early, roles=LANERS, prio=3, tone="go"),
-    T("gold_behind", "matchup", "Farme sans te battre : {opp} a {gd} d'or d'avance",
+    T("gold_behind", "matchup", "Prends les sbires sans combattre : {opp} a {gd} d'or d'avance",
       lambda c: c.gold_diff <= -800, roles=LANERS, prio=3, tone="warning"),
     T("cs_behind_opp", "matchup", "Concentre-toi sur les sbires : {cs_gap} de retard sur {opp}",
       lambda c: c.cs_diff <= -15, roles=CARRIES, prio=3, tone="warning"),
     T("fed_enemy", "matchup", "Évite {fed} en un contre un : il est trop fort",
       lambda c: bool(c.fed), prio=3, tone="warning"),
-    T("level2", "matchup", "Tape vite la première vague : le niveau 2 gagne l'échange",
+    T("level2", "matchup", "Tue vite la première vague : le premier niveau 2 gagne",
       lambda c: 60 <= c.gt <= 115, roles=LANERS, prio=3),
     T("plates_end", "matchup", "Pousse et tape la tour : plaques finies à 14:00",
       lambda c: 720 <= c.gt < 840 and c.wave in ("pushing", None), roles=LANERS, prio=3, tone="go"),
@@ -346,7 +346,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.gt >= 300 and c.cs_target > 0 and c.cspm < c.cs_target - 1.0, roles=CARRIES, prio=3),
     T("jg_cs", "farm", "Enchaîne tes camps entre deux ganks : {cspm}/min, vise {target}",
       lambda c: c.gt >= 300 and c.cspm < c.cs_target - 0.8, roles=("JUNGLE",), prio=3),
-    T("cs_side", "farm", "Va farmer une voie de côté : aucun objectif avant 1 min",
+    T("cs_side", "farm", "Prends les sbires sur un côté : aucun objectif avant 1 min",
       lambda c: (c.mid or c.late) and not any(r <= 60 for r in c.soon.values()) and not c.alive
       and c.missing < 2, roles=CARRIES, prio=2),
     T("cs_under_tower", "farm", "Sous ta tour : laisse-la taper avant ton dernier coup",
@@ -357,7 +357,7 @@ TIPS: tuple[Tip, ...] = (
     T("wave_push_ward", "wave", "Balise la rivière : ta vague pousse, tu es exposé",
       lambda c: c.wave == "pushing" and not c.jg_visible and c.early, roles=LANERS, prio=3, tone="warning",
       conf=MAP),
-    T("wave_pushed_in", "wave", "Reste sous ta tour et farme : la vague revient vers toi",
+    T("wave_pushed_in", "wave", "Prends les sbires sous ta tour : la vague revient",
       lambda c: c.wave == "pushed_in" and c.early, roles=LANERS, prio=2, conf=MAP),
     T("wave_hold", "wave", "Garde la vague près de ta tour : {opp} devra s'avancer",
       lambda c: c.gold_diff >= 500 and c.early and c.wave == "pushed_in", roles=("TOP", "BOTTOM"), prio=2,
@@ -369,7 +369,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: 60 <= c.gt <= 150, roles=LANERS, prio=2),
     T("vis_control_base", "vision", "Achète une balise rouge (75 or) : elle révèle leurs balises",
       lambda c: c.in_base and not c.has_control_ward and c.gt >= 240, prio=3),
-    T("vis_sweeper", "vision", "Passe au Balayeur : enlève leur vision avant les objectifs",
+    T("vis_sweeper", "vision", "Passe au Balayeur : il enlève leurs balises avant les objectifs",
       lambda c: c.gt >= 600 and SWEEPER not in c.items and c.in_base, roles=("UTILITY", "JUNGLE"), prio=3),
     T("vis_score_low", "vision", "Pose ta balise dès qu'elle est prête : score de vision {ward}",
       lambda c: c.gt >= 600 and c.ward_score < c.minute * 0.6 and not c.in_base, prio=2),
@@ -423,7 +423,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: 180 <= c.gt <= 840, roles=("JUNGLE",), prio=2),
     T("jg_scuttle", "macro", "Prends le Carapateur : ta voie forte peut t'aider",
       lambda c: 195 <= c.gt <= 260, roles=("JUNGLE",), prio=3),
-    T("early_safe", "phase", "Ne meurs pas avant 3:00 : le premier sang rapporte gros",
+    T("early_safe", "phase", "Ne meurs pas avant 3:00 : le premier mort rapporte beaucoup d'or",
       lambda c: 60 <= c.gt <= 180 and c.level_diff <= 0, roles=LANERS, prio=1),
 )
 

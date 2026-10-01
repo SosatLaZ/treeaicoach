@@ -326,6 +326,7 @@ class CoachEngine:
         self._gauge: Any = None                # coach.PlayGauge ("jouer plus fort ou non", HUD + dashboard)
         self._gate: Any = None                 # voice_policy.MessageGate (anti-spam, per game)
         self._tactics: Any = None              # tactics.TacticalDirector (fight / phase / positioning / wards / voice gate)
+        self._ward_guide: Any = None           # ward_guide.WardGuideManager (minimap + game-view ward spot guide)
         self._tip_text: str | None = None
         self._hud_tip_prev: str | None = None   # HUD advice line shown last + since when (fade-in)
         self._hud_tip_since = 0.0
@@ -422,7 +423,7 @@ class CoachEngine:
                         (new.minimap_mode, new.minimap_side, new.manual_minimap_rect):
                     self._relocate = True
             for comp in (self._gank, self._objectives, self._reminders, self._fog, self._overlay_mgr,
-                         self._coach, self._stance, self._tactics):
+                         self._coach, self._stance, self._tactics, self._ward_guide):
                 fn = getattr(comp, "apply_config", None)
                 if callable(fn):
                     try:
@@ -445,8 +446,9 @@ class CoachEngine:
                                neural_rate=getattr(new, "neural_rate", None))
                 except Exception:
                     log.exception("voice.set_params failed")
-            hk = (old.hotkey_jungler, old.hotkey_mute, old.hotkey_overlay)
-            if hk != (new.hotkey_jungler, new.hotkey_mute, new.hotkey_overlay) and self._hotkeys is not None:
+            hk = (old.hotkey_jungler, old.hotkey_mute, old.hotkey_overlay, getattr(old, "hotkey_ward", ""))
+            if hk != (new.hotkey_jungler, new.hotkey_mute, new.hotkey_overlay, getattr(new, "hotkey_ward", "")) \
+                    and self._hotkeys is not None:
                 try:
                     self._hotkeys.set_bindings(self._hotkey_bindings())
                 except Exception:
@@ -510,6 +512,12 @@ class CoachEngine:
             self._tactics = TacticalDirector(cfg)
         except Exception:
             log.exception("Tactical director unavailable (fight calls / positioning / wards)")
+        try:
+            from treeaicoach.ward_guide import WardGuideManager
+
+            self._ward_guide = WardGuideManager(cfg)
+        except Exception:
+            log.exception("Ward guide unavailable")
         try:
             from treeaicoach.fog_tracker import FogTracker
 
@@ -750,7 +758,8 @@ class CoachEngine:
         for name, cb in ((cfg.hotkey_jungler, self.speak_jungler_status),
                          (cfg.hotkey_mute, self.toggle_mute),
                          (cfg.hotkey_overlay, self.toggle_overlay),
-                         (getattr(cfg, "hotkey_ai", ""), self.ask_ai)):
+                         (getattr(cfg, "hotkey_ai", ""), self.ask_ai),
+                         (getattr(cfg, "hotkey_ward", ""), self.request_ward_guide)):
             if isinstance(name, str) and name.strip():
                 out[name.strip()] = cb
         return out
@@ -926,7 +935,7 @@ class CoachEngine:
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
                      self._throttler, self._coach, self._scoreboard, self._praise, self._toasts,
                      self._stance, self._tip_rotator, self._gate, self._tactics, self._gauge,
-                     getattr(self, "_ai", None)):
+                     getattr(self, "_ai", None), self._ward_guide):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -964,6 +973,9 @@ class CoachEngine:
             except Exception:
                 log.exception("Game recorder unavailable")
                 self._recorder = None
+            note = getattr(self._recorder, "note_settings", None)
+            if callable(note):
+                note(self._cfg)
 
     def _end_game(self, result: str | None, t: float) -> None:
         """Game over: finish the record + report in the background, session statistics."""
@@ -1017,21 +1029,89 @@ class CoachEngine:
             self.last_record_path = Path(path)
             cfg = self._cfg
             self._say_game_summary(Path(path))
+            lcu = self._postgame_lcu()          # League Client found: its timeline comes after the report
             if not cfg.post_game_report:
+                if lcu is not None:
+                    self._lcu_truth_job(lcu, Path(path), None)
                 return
             writer = self._report_writer
             if writer is None:
-                from treeaicoach.report import write_report as writer
+                from treeaicoach.report import write_report
+
+                def writer(p: Path, _pending: bool = lcu is not None) -> Path | None:
+                    return write_report(p, lcu_pending=_pending)
             html = writer(Path(path))
             if html is None:
                 return
             self.last_report_path = Path(html)
             log.info("Post-game report: %s", html)
+            prev_review = getattr(self, "last_ai_review", None)
             self._ai_postgame_review(Path(path), Path(html))
             if cfg.open_report_automatically:
                 self._report_opener(Path(html))
+            if lcu is not None:
+                review = getattr(self, "last_ai_review", None)
+                self._lcu_truth_job(lcu, Path(path), Path(html), review if review is not prev_review else None)
         except Exception:
             log.exception("Post-game record / report failed")
+
+    # ------------------------------------------------------------------ League Client (lcu.py)
+    def _postgame_lcu(self) -> Any:
+        """The League Client API client when enabled and the client is running, else None. Never raises."""
+        try:
+            if self._demo or not getattr(self._cfg, "lcu_enabled", True):
+                return None
+            client = getattr(self, "_lcu", None)
+            if client is None:
+                from treeaicoach.lcu import get_default_client
+
+                client = self._lcu = get_default_client()
+            return client if client.available() else None
+        except Exception:
+            log.debug("League Client unavailable", exc_info=True)
+            return None
+
+    def _lcu_truth_job(self, client: Any, record_path: Path, html: Path | None, review: str | None = None) -> None:
+        """Wait for the client's match timeline (~2 min max), save the ground truth next to the
+        record, then rewrite the report with it (the pending page reloads itself). Never raises."""
+        truth = None
+        try:
+            import json
+
+            from treeaicoach import ground_truth
+            from treeaicoach.lcu import fetch_postgame_truth
+
+            record = json.loads(Path(record_path).read_text(encoding="utf-8"))
+            truth = fetch_postgame_truth(record, client, cancel=self._stop_evt,
+                                         timeout_s=getattr(self, "_lcu_timeout_s", 120.0),
+                                         poll_s=getattr(self, "_lcu_poll_s", 8.0))
+            if truth is not None:
+                truth["record"] = Path(record_path).name
+                try:
+                    from treeaicoach.analysis import analyze_game
+
+                    t = analyze_game(record, truth=truth).get("truth") or {}
+                    truth["score"] = ground_truth.compact_score(t.get("reliability"), record)
+                except Exception:
+                    log.exception("Cannot score the alerts against the client timeline")
+                self.last_truth_path = ground_truth.save_truth(record_path, truth)
+        except Exception:
+            log.exception("League Client post-game data failed")
+        if html is None:
+            return
+        try:   # final page (with the truth, or without the "pending" banner)
+            writer = self._report_writer
+            if writer is None:
+                from treeaicoach.report import write_report as writer
+            out = writer(Path(record_path))
+            if out is not None and review:
+                from treeaicoach.ai_advisor import append_review_html
+
+                append_review_html(out, review, str(self._cfg.ai_provider))
+            if out is not None and truth is not None:
+                log.info("Post-game report updated with the League Client data: %s", out)
+        except Exception:
+            log.exception("Report update with the League Client data failed")
 
     def _update_roster(self, game: GameInfo) -> None:
         try:
@@ -1154,6 +1234,7 @@ class CoachEngine:
         threat = self._update_threat(t, gank_alerts)
         # v3 director: fight decision + speech context every tick, macro / positioning / wards at HEAVY_HZ
         tac_alerts, gank_now = self._tactics_tick(t, gt, game, tracker, gank_alerts)
+        self._ward_guide_tick(t, game, tracker, frame, identified)
         # latency first: a gank alert (or the fight call) is spoken NOW, before the heavier stages
         said_now = self._say_gank_now(gank_now, t, gt)
         raw_alerts += [a for a in gank_alerts if a.kind not in GANK_KINDS] + tac_alerts
@@ -1188,6 +1269,9 @@ class CoachEngine:
         rec = self._recorder
         if rec is not None:
             rec.on_tracks(tracker, t, gt)
+            on_fog = getattr(rec, "on_fog", None)
+            if callable(on_fog) and self._fog is not None and not getattr(self._cfg, "safe_mode", False):
+                on_fog(self._fog.estimates(), gt)
         raw_alerts += self._death_recap_alerts(t)
         if threat >= Level.WARNING:     # gank first: no macro tip / praise / Tab insight now
             raw_alerts = [a for a in raw_alerts if a.kind not in COACH_KINDS]
@@ -1235,6 +1319,85 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Tactical director failed")
             return [], gank
+
+    # ================================================================== ward guide
+    def request_ward_guide(self) -> bool:
+        """Hotkey (``cfg.hotkey_ward``, F7): show the best ward spots now (minimap + game view).
+        Visual only. Never raises."""
+        try:
+            wg = self._ward_guide
+            return bool(wg is not None and self._in_game and wg.request(self._clock()))
+        except Exception:
+            log.exception("request_ward_guide failed")
+            return False
+
+    def _ward_recommend(self, game: Any, tracker: Any) -> list[Any]:
+        """Best 1-2 ward spots right now (hotkey), from wards.recommend. Never raises."""
+        try:
+            from treeaicoach import wards
+
+            me = tracker.me() if tracker is not None else None
+            me_pos = me.position() if me is not None else None
+            role = None
+            res = self._role_resolver
+            if res is not None and hasattr(res, "my_role"):
+                role = res.my_role()
+            role = role or (str(getattr(game.me, "position", "") or "").upper() if game.me is not None else None)
+            obj = None
+            for o in (self._objectives.states() if self._objectives is not None else []):
+                rem = _finite(getattr(o, "remaining", None))
+                key = str(getattr(o, "key", "") or "")
+                if key in wards.OBJ_PIT and (getattr(o, "alive", False) or (rem is not None and rem <= 90.0)):
+                    r = 0.0 if getattr(o, "alive", False) or rem is None else float(rem)
+                    if obj is None or r < obj[1]:
+                        obj = (key, r)
+            tac = self._tactics
+            phase = (tac.phase() if tac is not None else None) or "laning"
+            st = self._stance.current() if self._stance is not None else None
+            ahead = _finite(getattr(st, "score", None)) or 0.0
+            return list(wards.recommend(game.my_team, role, phase=phase, me_pos=me_pos, objective=obj,
+                                        ahead=ahead, n=2))
+        except Exception:
+            self._err.exception("ward recommend failed")
+            return []
+
+    def _ward_guide_tick(self, t: float, game: Any, tracker: Any, frame: Any, identified: list[Any]) -> None:
+        """Feed the ward guide: the director's ward advice / the hotkey -> guides; camera rectangle and
+        ward-placed detection on the minimap frame while a guide is active. Never raises."""
+        wg = self._ward_guide
+        if wg is None:
+            return
+        try:
+            tac = self._tactics
+            fighting = tac is not None and tac.in_fight()
+            advice = tac.wards.current(t) if tac is not None and not fighting else None
+            avoid = []
+            for d in identified or ():
+                det = getattr(d, "det", d)
+                u, v = _finite(getattr(det, "u", None)), _finite(getattr(det, "v", None))
+                if u is not None and v is not None:
+                    avoid.append((u, v))
+            wg.update(t, advice, frame, lambda: self._ward_recommend(game, tracker), avoid)
+        except Exception:
+            self._err.exception("Ward guide failed")
+
+    def _ward_overlay(self, now: float, tac: Any, minimap_rect: Any, screen_rect: Any,
+                      me_uv: Any) -> tuple[list, list]:
+        """``(minimap guides, game-view markers)``: the director's guides with its plain ward rings
+        replaced by the ward guide's (when enabled). Nothing from the guide during a fight."""
+        guides = list(tac.guides(now)) if tac is not None else []
+        wg = self._ward_guide
+        if wg is None or not wg.enabled:
+            return guides, []
+        try:
+            guides = [g for g in guides if getattr(g, "kind", "") != "ward"]
+            if tac is not None and tac.in_fight():
+                return guides, []
+            guides += wg.minimap_guides(now)
+            return guides, wg.world_markers(now, screen_rect, minimap_rect, me_uv)
+        except Exception:
+            self._err.exception("Ward guide overlay failed")
+            return guides, []
 
     def _speech_budget(self, said: list[Alert], t: float, busy: bool = False) -> list[Alert]:
         """THE voice gate's budget (voice_policy.VoiceGate): critical alerts pass, the rest within
@@ -2291,6 +2454,7 @@ class CoachEngine:
         if last_alert is not None and last_alert_t is not None:
             la = (last_alert.text, int(last_alert.level), max(0.0, now - last_alert_t))
         minimap_rect, screen_rect = self._screen_rects()
+        guides, world = self._ward_overlay(now, tac, minimap_rect, screen_rect, me_uv)
         tip = self._hud_line(now)
         gt = (_finite(game.game_time) or 0.0) + min(max(0.0, now - game_t), 3.0) if game else None
         fogs = self._fog.estimates() if self._fog is not None and not getattr(self._cfg, "safe_mode", False) else []
@@ -2315,7 +2479,7 @@ class CoachEngine:
             me_icon=self._icon(game.me.champion_alias, game.me.skin_id) if game and game.me else None,
             allies=allies, roles=roles,
             toasts=self._overlay_toasts(now),
-            guides=tac.guides(now) if tac is not None else [],
+            guides=guides, world=world,
             phase=tac.phase() if tac is not None else None,
             role_notice=self._role_notice(now),
             **self._hud_card_fields(game, me_uv, tip, now),

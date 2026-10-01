@@ -35,7 +35,7 @@ def test_stance_aggressive_and_safe_with_reasons():
     st = stance_from_factors(stance_factors(_facts(jungler=jg), _game(), sb))
     assert st.level == "agressif" and "Darius" in st.reason and "jungler ennemi vu en bas" in st.reason
     st = stance_from_factors(stance_factors(_facts(missing=3), _game(hp=0.4), None))
-    assert st.level == "prudent" and "3 ennemis disparus" in st.reason and "40 % PV" in st.reason
+    assert st.level == "prudent" and "3 ennemis disparus" in st.reason and "40 % de vie" in st.reason
     assert stance_from_factors([]).level == "equilibre"
 
 
@@ -87,7 +87,7 @@ def test_specific_advice_beats_generic_and_never_goes_stale():
     ctx = tips.build_context(_facts(gt=400.0), _game(gt=400.0), NS(my_matchup=NS(enemy="Darius", level_diff=-2,
                              gold_diff=-300, cs_diff=0), team_gold_diff=0, players=()))
     text = rot.update(0.0, ctx)
-    assert text == "Joue safe sous ta tour : Darius a 2 niveaux d'avance"
+    assert text == "Joue prudemment sous ta tour : Darius a 2 niveaux d'avance"
     # the opponent dies: the opportunity replaces it at once (more useful)
     ctx2 = tips.build_context(_facts(gt=402.0, opponents=[{"alias": "Darius", "name": "Darius", "dead": True,
                                                            "level": 9}]), _game(gt=402.0), None)

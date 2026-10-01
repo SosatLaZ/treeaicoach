@@ -784,6 +784,9 @@ class RosterMatcher:
                 ents[i] = ne
                 self._overrides[e.alias] = (icon, source)
                 self.set_entries(ents)
+                # the old track may sit next to the icon (lookalike): search it everywhere
+                self._tracks.pop(i, None)
+                self._state.last_full = -10 ** 9
                 return True
         except Exception:
             self._errors.exception("Roster matcher register_icon failed")
@@ -868,7 +871,16 @@ class RosterMatcher:
         acc = {c.i: (c.x / kx, c.y / ky, c.tot - thr) for c in accepted}
         out = lr.step(bgr, now, R_px, ents, acc, self.rings, self._cam_point(bgr), self.db)
         me = next((i for i, e in enumerate(ents) if e.relation == "self"), None)
-        if out.self_pos is not None and me is not None and me not in used:
+        if out.self_pos is not None and me is not None and me in used:
+            # my official portrait matched off my icon (lookalike custom skin): move it
+            u, v, _sc = out.self_pos
+            for c in accepted:
+                if c.i == me:
+                    c.x, c.y = u * kx, v * ky
+            tr = self._tracks.get(me)
+            if tr is not None:
+                tr.u, tr.v = u, v
+        elif out.self_pos is not None and me is not None:
             u, v, sc = out.self_pos
             e = ents[me]
             dets_extra = [d for d in dets_extra if d.alias != e.alias]
@@ -1668,7 +1680,7 @@ class RosterMatcher:
             enemy = e.relation == "enemy"
             p_en = 0.97 if enemy else 0.03
             dets.append(Detection(u=c.x / kx, v=c.y / ky, r=r_norm,
-                                  score=float(self._tracks[c.i].conf),
+                                  score=float(getattr(self._tracks.get(c.i), "conf", 0.6)),
                                   cls="enemy" if enemy else "ally",
                                   cls_probs=(p_en, 1.0 - p_en, 0.0), alias=e.alias))
         return dets + dets_extra

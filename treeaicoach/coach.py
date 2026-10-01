@@ -721,7 +721,7 @@ class MapCoach:
             return []
         if state == "numbers_bad":
             return [(state, f"{en} contre {al} autour de toi, recule.")]
-        return [(state, f"{al} contre {en} autour de toi : bonne fenêtre pour engager.")]
+        return [(state, f"{al} contre {en} autour de toi : bon moment pour attaquer.")]
 
     def _in_my_base(self, ctx: _Ctx) -> bool:
         z = ctx.my_zone
@@ -792,24 +792,24 @@ class MapCoach:
                 secs = int(round(rem / 5.0) * 5)
                 pit = PITS.get(kind)
                 if pit is None:
-                    out.append(("objective_setup", f"{name} dans {secs} s : regroupez-vous et préparez la vision."))
+                    out.append(("objective_setup", f"{name} dans {secs} s : regroupez-vous et posez des balises."))
                 else:
                     (pu, pv), side = pit
                     where = SIDE_FR[side]
                     if ctx.safe:
-                        out.append(("objective_setup", f"{name} dans {secs} s : préparez la vision {where}."))
+                        out.append(("objective_setup", f"{name} dans {secs} s : posez des balises {where}."))
                     else:
                         n_en = self._count_side(ctx, (pu, pv), side, ctx.enemies_vis)
                         n_al = self._count_side(ctx, (pu, pv), side, ctx.allies_vis)
                         if ctx.me_pos is not None and self._count_side(ctx, (pu, pv), side, [(None, ctx.me_pos)]):
                             n_al += 1
                         if n_en >= 1:
-                            txt = (f"{name} dans {secs} s : préparez la vision, "
+                            txt = (f"{name} dans {secs} s : posez des balises, "
                                    f"{_plural(n_en, 'ennemi')} {'visibles' if n_en > 1 else 'visible'} {where}.")
                         elif n_al >= 3:
-                            txt = f"{name} dans {secs} s : vous êtes {n_al} {where}, placez la vision."
+                            txt = f"{name} dans {secs} s : vous êtes {n_al} {where}, posez des balises."
                         else:
-                            txt = f"{name} dans {secs} s : préparez la vision {where}."
+                            txt = f"{name} dans {secs} s : posez des balises {where}."
                         out.append(("objective_setup", txt))
         if not ctx.safe:
             for s in ctx.objectives:
@@ -938,8 +938,8 @@ class MapCoach:
         cspm = cs / (ctx.gt / 60.0)
         mins = int(cp // 60)
         if cspm < target - 0.2:
-            return [("cs_check", f"{mins} min : {fmt_dec(round(cspm, 1))} CS par minute, objectif {fmt_dec(target)}.")]
-        return [("cs_check", f"{mins} min : {fmt_dec(round(cspm, 1))} CS par minute, bon farm, continue.")]
+            return [("cs_check", f"{mins} min : {fmt_dec(round(cspm, 1))} sbires par minute, vise {fmt_dec(target)}.")]
+        return [("cs_check", f"{mins} min : {fmt_dec(round(cspm, 1))} sbires par minute, bien, continue.")]
 
     def _rule_level6(self, ctx: _Ctx) -> list[tuple[str, str]]:
         lvl = _finite(getattr(ctx.me_player, "level", None)) or 0
@@ -1025,9 +1025,8 @@ class MapCoach:
             who = "Tes deux adversaires ont"
         else:
             who = f"{gone[0][0]} a"
-        tail = "pousse et prends des plaques, ping s'il roam" if plates else "pousse ta vague, ping s'il roam"
-        if len(gone) >= 2:
-            tail = tail.replace("s'il roam", "s'ils roam")
+        tail = ("pousse et prends des plaques, préviens ton équipe" if plates
+                else "pousse ta vague, préviens ton équipe")
         return [("lane_left", f"{who} quitté la voie : {tail}.")]
 
     def _bot_pair(self, ctx: _Ctx) -> list[Any]:
@@ -1061,7 +1060,7 @@ class MapCoach:
             return []
         if self._bot_missing_done == self._bot_marker(ctx):
             return []
-        return [("bot_missing", "Les deux bot ennemis ont disparu : prudence, ils peuvent roam.")]
+        return [("bot_missing", "Les deux ennemis du bas ont disparu : prudence, ils peuvent venir.")]
 
     # ---------------------------------------------------------------- scoreboard
     def _level_diff(self, ctx: _Ctx) -> tuple[int, str | None]:
@@ -1097,7 +1096,7 @@ class MapCoach:
         if not self._scoreboard_on:      # cfg.coach_scoreboard_tips = False (another analyser speaks them)
             return out
         for _t, _alias, name, item in (self._item_news[:1] if self._item_tips else []):
-            out.append(("item_spike", f"{name} vient de finir {ITEM_NAMES_FR[item]} : attention à son pic de puissance."))
+            out.append(("item_spike", f"{name} vient de finir {ITEM_NAMES_FR[item]} : il devient plus fort, attention."))
         diff, name = self._level_diff(ctx)
         if name and abs(diff) >= LEVEL_DIFF_MIN and diff != self._level_diff_said and ctx.gt >= 180:
             n = abs(diff)
@@ -1127,7 +1126,7 @@ class MapCoach:
             if ours - theirs >= KILL_LEAD_MIN:
                 out.append(("kill_lead", f"Vous menez {ours} à {theirs} aux kills : jouez les objectifs."))
             elif theirs - ours >= KILL_LEAD_MIN:
-                out.append(("kill_lead", f"Vous êtes derrière, {ours} à {theirs} : jouez groupés et farmez."))
+                out.append(("kill_lead", f"Vous êtes derrière, {ours} à {theirs} : restez groupés et prenez les sbires."))
         return out
 
     # ---------------------------------------------------------------- objective trading
@@ -1244,7 +1243,7 @@ class MapCoach:
             if lvl >= 3 or ctx.gt >= 200:
                 self._level2_done = True
             elif opp_lv and lvl == 2 and max(opp_lv) <= 1:
-                out.append(("level2", "Niveau 2 avant ton adversaire : c'est le moment d'échanger fort."))
+                out.append(("level2", "Niveau 2 avant ton adversaire : c'est le moment de le taper."))
         # -- first legendary item: power spike
         try:
             from treeaicoach.scoreboard import major_items
@@ -1253,8 +1252,8 @@ class MapCoach:
         except Exception:
             n_leg = 0
         if self._legendaries is not None and n_leg >= 1 and self._legendaries == 0 and not self._first_item_done:
-            out.append(("first_item", "Premier objet complet : c'est ton pic de puissance, cherche un échange "
-                                      "ou une escarmouche maintenant."))
+            out.append(("first_item", "Premier objet complet : tu es plus fort, cherche un combat "
+                                      "maintenant."))
         self._legendaries = n_leg
         # -- recall timing: enough gold to complete the next item
         gold = _finite(getattr(ctx.game, "current_gold", None)) or 0.0
@@ -1276,15 +1275,15 @@ class MapCoach:
         diff, opp = self._level_diff(ctx)
         if (laner and in_lane and ctx.gt < PLATES_END_GT and lw is not None and lw.state == "pushed_in"
                 and diff >= 1 and opp):
-            out.append(("freeze", f"Tu es en avance sur {opp} : gèle la vague devant ta tour, il devra "
-                                  "s'exposer pour farmer."))
+            out.append(("freeze", f"Tu es en avance sur {opp} : garde la vague devant ta tour, il devra "
+                                  "s'avancer pour la prendre."))
         # -- crash the wave, then roam (mid / support)
         jg = ctx.jungler
         jside = map_side(*_track_pos(jg)) if jg is not None and getattr(jg, "visible", False) and _track_pos(jg) else None
         if (ctx.my_role in ("MIDDLE", "UTILITY") and in_lane and lw is not None and lw.state == "pushing"
                 and lw.meet is not None and lw.meet >= WAVE_PUSH_S and jside in ("top", "bot") and ctx.gt >= 240):
             out.append(("crash_roam", f"Ta vague s'écrase et leur jungler est {SIDE_FR[jside]} : bon moment "
-                                      f"pour roam de l'autre côté ou prendre la vision."))
+                                      f"pour aider l'autre côté ou poser des balises."))
         # -- slow push / crash before an objective
         tgt = self._setup_target_window(ctx, 50.0, 80.0)
         if tgt is not None and laner and in_lane:
@@ -1359,7 +1358,7 @@ class MapCoach:
             if en >= 2 and en - al >= 2:
                 add((100, f"{en} contre {al} autour de toi"))
             elif en >= 1 and al - en >= 2:
-                add((60, f"{al} contre {en} autour de toi : engage"))
+                add((60, f"{al} contre {en} autour de toi : attaque"))
         # objective coming / up
         for s in ctx.objectives:
             kind = str(getattr(s, "key", "") or "")
@@ -1375,9 +1374,9 @@ class MapCoach:
                 if pit is not None and not ctx.safe:
                     (pu, pv), side = pit
                     n = self._count_side(ctx, (pu, pv), side, ctx.enemies_vis)
-                    extra = f" · {n} ennemi{'s' if n > 1 else ''} {SIDE_FR[side]}" if n else " · prépare la vision"
+                    extra = f" · {n} ennemi{'s' if n > 1 else ''} {SIDE_FR[side]}" if n else " · pose des balises"
                 else:
-                    extra = " · prépare la vision"
+                    extra = " · pose des balises"
                 add((80, f"{name} {clock}{extra}", "objective"))
             elif pit is not None and not ctx.safe and kind in _WINDOW_NAMES:
                 far = [p for _tr, p in ctx.enemies_vis if geometry.dist(p, pit[0]) > WINDOW_FAR]
@@ -1392,10 +1391,10 @@ class MapCoach:
                 add((55, f"Ennemis groupés {SIDE_FR.get(info.get('side'), '')} ({info.get('visible')})"))
             js = self._jg_side_info
             if js is not None and 0.0 <= ctx.t - js[0] <= INSIGHT_JUNGLER_S:
-                add((50, f"JGL {SIDE_FR[js[1]]} → joue agressif {SIDE_FR[js[2]]}"))
+                add((50, f"Jungler ennemi {SIDE_FR[js[1]]} → joue agressif {SIDE_FR[js[2]]}"))
             if (self._in_enemy_jungle(ctx) and ctx.jungler_hidden_s is not None
                     and ctx.jungler_hidden_s >= DEEP_UNSEEN_S):
-                add((90, "Jungle ennemie, leur JGL invisible"))
+                add((90, "Jungle ennemie, leur jungler invisible"))
         if not ctx.safe:
             lw = self._my_wave(ctx)
             if lw is not None and lw.state == "pushing":
@@ -1412,7 +1411,7 @@ class MapCoach:
             if str(a).lower() in ctx.dead_enemies:
                 add((69, f"{name} mort : pousse ta vague"))
         if ctx.jungler_alias and str(ctx.jungler_alias).lower() in ctx.dead_enemies:
-            add((67, "Jungler ennemi mort : fenêtre"))
+            add((67, "Jungler ennemi mort : à toi de jouer"))
         for _t, _alias, name, item in self._item_news[:1]:
             add((64, f"{name} : {ITEM_NAMES_FR[item]} fini"))
         diff, name = self._level_diff(ctx)
@@ -1423,7 +1422,7 @@ class MapCoach:
             cs = _finite((getattr(ctx.me_player, "scores", None) or {}).get("creepScore")) or 0.0
             cspm = cs / (ctx.gt / 60.0)
             if cspm < target - 0.5:
-                add((20, f"CS/min {fmt_dec(round(cspm, 1))} · objectif {fmt_dec(target)}"))
+                add((20, f"Sbires/min {fmt_dec(round(cspm, 1))} · vise {fmt_dec(target)}"))
         if (self._ward_change_gt is not None and ctx.gt >= VISION_MIN_GT
                 and ctx.gt - self._ward_change_gt >= VISION_STALE_S):
             add((15, "Pas de balise depuis 3 min"))
@@ -1517,9 +1516,9 @@ def stance_factors(facts: dict[str, Any], game: Any, scoreboard: Any = None, thr
         if cur is not None and mx and mx > 0 and not f.get("in_base"):
             frac = max(0.0, min(1.0, cur / mx))
             if frac < 0.35:
-                out.append((-3.0, f"tu es à {_pct(frac)} % PV"))
+                out.append((-3.0, f"tu es à {_pct(frac)} % de vie"))
             elif frac < 0.55:
-                out.append((-1.5, f"tu es à {_pct(frac)} % PV"))
+                out.append((-1.5, f"tu es à {_pct(frac)} % de vie"))
         # -- lane matchup (Tab: levels / item gold), else Live Client levels
         m = getattr(scoreboard, "my_matchup", None) if scoreboard is not None else None
         opp_name = None
@@ -1634,7 +1633,7 @@ def stance_from_factors(factors: list[tuple[float, str]], t: float = 0.0) -> Sta
     elif pos or neg:
         reason = (pos or neg)[0]
     else:
-        reason = "pas d'avantage net, farme et garde ta vision"
+        reason = "pas d'avantage net, prends les sbires et pose des balises"
     return Stance(level, reason, score, tuple(factors), t)
 
 

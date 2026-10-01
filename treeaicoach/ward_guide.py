@@ -433,17 +433,31 @@ def edge_point(screen: Sequence[float], dx: float, dy: float, margin: float,
     if not math.isfinite(s):
         s = hy
     x, y = cx + dx * s, cy + dy * s
-    for r in exclude or ():
-        try:
-            rx, ry, rw, rh = (float(c) for c in r[:4])
-        except (TypeError, ValueError, IndexError):
-            continue
-        if rx - margin <= x <= rx + rw + margin and ry - margin <= y <= ry + rh + margin:
-            # leave the rectangle by the shortest way that stays on screen
-            cands = [(x, ry - margin), (rx - margin, y)]
-            cands = [c for c in cands if sx + margin * 0.5 <= c[0] <= sx + sw and sy + margin * 0.5 <= c[1] <= sy + sh]
+    lo_x, hi_x, lo_y, hi_y = cx - hx, cx + hx, cy - hy, cy + hy
+
+    def inside(c: tuple[float, float]) -> bool:
+        return lo_x - 1 <= c[0] <= hi_x + 1 and lo_y - 1 <= c[1] <= hi_y + 1
+
+    for _ in range(3):
+        moved = False
+        for r in exclude or ():
+            try:
+                rx, ry, rw, rh = (float(c) for c in r[:4])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if not (rx - margin <= x <= rx + rw + margin and ry - margin <= y <= ry + rh + margin):
+                continue
+            # slide ALONG the border it sits on (stays an edge marker), else leave by the shortest way
+            if abs(y - lo_y) < 1.0 or abs(y - hi_y) < 1.0:
+                cands = [(rx - margin, y), (rx + rw + margin, y)]
+            else:
+                cands = [(x, ry - margin), (x, ry + rh + margin)]
+            cands = [c for c in cands if inside(c)] or [c for c in ((x, ry - margin), (rx - margin, y)) if inside(c)]
             if cands:
                 x, y = min(cands, key=lambda c: math.hypot(c[0] - x, c[1] - y))
+                moved = True
+        if not moved:
+            break
     return x, y
 
 

@@ -20,7 +20,7 @@ SKILL_HELP: dict[str, str] = {
     "debutant": "Tout est expliqué : rappels (retour, balises, achats), rôles sur la carte, conseils simples.",
     "intermediaire": "L'essentiel : ganks, combats, objectifs et conseils précis. Les bases ne sont plus rappelées.",
     "avance": "Seulement les infos qui changent une décision : ganks, combats, objectifs, dangers, pics de puissance.",
-    "expert": "Le strict minimum, comme un coach en tournoi : gank, FIGHT / RECULE et vrais dangers.",
+    "expert": "Le strict minimum, comme un coach en tournoi : gank, ATTAQUE / RECULE et vrais dangers. IA seulement en urgence.",
 }
 
 #: Minimum tip priority shown in the HUD per level (tips.Tip.prio: 1 generic … 4 urgent).

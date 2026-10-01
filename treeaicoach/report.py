@@ -881,8 +881,10 @@ def _tips_section(a: dict) -> str:
     return f'<div class="panel"><h2>Conseils pour la prochaine partie</h2><ul class="tips">{lis}</ul></div>'
 
 
-def render_report_html(record: dict, analysis: dict | None = None) -> str:
-    """Self-contained French HTML report. Never raises (degraded page on error)."""
+def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pending: bool = False) -> str:
+    """Self-contained French HTML report. Never raises (degraded page on error).
+
+    ``lcu_pending``: the League Client data is still being fetched (banner + bounded auto-reload)."""
     try:
         rec = record if isinstance(record, dict) else {}
         if analysis is None:
@@ -894,7 +896,8 @@ def render_report_html(record: dict, analysis: dict | None = None) -> str:
         title = f'{s.get("champion_name") or "Partie"} — {s.get("result_label") or ""}'.strip(" —")
         parts = []
         for fn in (lambda: _header(rec, a), lambda: _cards(a), lambda: _voice_box(a), lambda: _tips_section(a),
-                   lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _presence_section(rec, a),
+                   lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _truth_section(rec, a),
+                   lambda: _presence_section(rec, a),
                    lambda: _positioning_section(a),
                    lambda: _deaths_section(rec, a), lambda: _ganks_section(rec, a),
                    lambda: _jungler_section(rec, a), lambda: _objectives_section(a),
@@ -907,13 +910,17 @@ def render_report_html(record: dict, analysis: dict | None = None) -> str:
         if rec.get("incomplete") or s.get("result") is None:
             warn = ('<div class="warnbox">Enregistrement incomplet (partie interrompue ou application fermée '
                     'avant la fin) : les chiffres couvrent uniquement la partie enregistrée.</div>')
+        refresh = ""
+        if lcu_pending:
+            warn += _pending_html()
+            refresh = f'<meta http-equiv="refresh" content="{PENDING_RELOAD_S}">'
         version = (rec.get("meta") or {}).get("app_version") or __version__
         footer = (f'<div class="footer"><b>{_e(APP_NAME)}</b> v{_e(version)} · rapport généré localement le '
                   f'{_e(_date_fr(_dt.datetime.now().astimezone().isoformat()))} · aucune donnée envoyée · '
                   f'sources : capture de la minimap et API Live Client de Riot</div>')
         return ("<!DOCTYPE html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
-                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-                f"<title>{_e(APP_NAME)} — {_e(title)}</title><style>{CSS}{CSS_V2}</style></head>"
+                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" + refresh +
+                f"<title>{_e(APP_NAME)} — {_e(title)}</title><style>{CSS}{CSS_V2}{CSS_TRUTH}</style></head>"
                 f"<body><div class=\"wrap\">{warn}{''.join(parts)}{footer}</div></body></html>")
     except Exception:
         log.exception("render_report_html failed")
@@ -1386,8 +1393,10 @@ def report_path_for(record_path: Path) -> Path:
     return p.with_suffix(".html")
 
 
-def write_report(record_path: Path) -> Path | None:
-    """Read a record JSON, write its HTML report next to it and return its path (None on error)."""
+def write_report(record_path: Path, lcu_pending: bool = False) -> Path | None:
+    """Read a record JSON, write its HTML report next to it and return its path (None on error).
+
+    The League Client ground truth of the game (``ground_truth.load_truth``) is used when present."""
     try:
         from treeaicoach.analysis import analyze_game
         from treeaicoach.recorder import atomic_write_text
@@ -1399,7 +1408,21 @@ def write_report(record_path: Path) -> Path | None:
             return None
         if p.name.endswith(".partial.json"):
             record.setdefault("incomplete", True)
-        text = render_report_html(record, analyze_game(record))
+        truth = None
+        try:
+            from treeaicoach import ground_truth
+
+            truth = ground_truth.load_truth(p)
+        except Exception:
+            log.exception("Cannot load the client ground truth of %s", p)
+        analysis = analyze_game(record, truth=truth) if truth is not None else analyze_game(record)
+        if truth is not None and isinstance(analysis.get("truth"), dict) and analysis["truth"].get("available"):
+            try:
+                analysis["truth"]["history"] = ground_truth.aggregate_scores(
+                    ground_truth.truth_path_for(p).parent)
+            except Exception:
+                log.exception("Cannot aggregate the alert scores")
+        text = render_report_html(record, analysis, lcu_pending=bool(lcu_pending) and truth is None)
         out = report_path_for(p)
         return out if atomic_write_text(out, text) else None
     except Exception:
@@ -1509,3 +1532,178 @@ def list_games(limit: int = 50, games_dir: Path | None = None) -> list[dict]:
     except Exception:
         log.exception("list_games failed")
         return []
+
+
+# ======================================================================================
+# League Client ground truth (lcu.py + ground_truth.py): verified maps, lane, reliability
+# ======================================================================================
+TRUTH_MAP = 360
+CSS_TRUTH = f".pos{{color:{GREEN};font-weight:700}} .neg{{color:{RED};font-weight:700}}"
+_VERDICT_FR = {"confirmed": ("juste", "sv"), "false": ("fausse", "no"), "probable_false": ("probablement fausse", "ok"),
+               "unknown": ("invérifiable", "")}
+PENDING_RELOAD_S = 20          # the pending page reloads itself (meta refresh) until the final page replaces it
+
+
+def render_truth_deaths_png(record: dict, truth_a: dict, size: int = TRUTH_MAP) -> bytes | None:
+    """My exact death positions (client timeline): red crosses, orange label when the enemy jungler took part."""
+    try:
+        from PIL import Image, ImageDraw
+
+        s = SUPERSAMPLE
+        big = size * s
+        img = _base_image(record, big, darken=0.5)
+        layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(layer)
+        deaths = [d for d in truth_a.get("deaths") or [] if isinstance(d, dict) and d.get("uv")]
+        cr = 7 * s * size / 400
+        pts = [(float(d["uv"][0]) * big, float(d["uv"][1]) * big, d) for d in deaths]
+        for x, y, _ in pts:
+            _draw_cross(draw, x, y, cr, int(3 * s))
+        placed = [(x - cr, y - cr, x + cr, y + cr) for x, y, _ in pts]
+        font = _font(int(11 * s * max(0.8, size / 400)), bold=True)
+        for x, y, d in pts:
+            col = _hex_rgb(ORANGE) if d.get("jungler_involved") else _hex_rgb(TEXT)
+            _label(draw, x, y, str(d.get("time") or ""), font, col, s, big, placed, gap=cr + 4 * s)
+        img.alpha_composite(layer)
+        return _png(img.resize((size, size), Image.LANCZOS).convert("RGB"))
+    except Exception:
+        log.exception("render_truth_deaths_png failed")
+        return None
+
+
+def render_truth_path_png(record: dict, truth_a: dict, size: int = TRUTH_MAP) -> bytes | None:
+    """True enemy-jungler path (one numbered disc per game minute, arrows between them)."""
+    path = (truth_a.get("jungler") or {}).get("path") or []
+    if not path:
+        return None
+    return render_pathing_png(record, {"pathing": {"path": path}}, size=size)
+
+
+def _pct(x: Any) -> str:
+    v = _f(x)
+    return "—" if v is None else f"{_num(v * 100, 0)} %"
+
+
+def _reliability_html(t: dict, history: dict | None) -> str:
+    rel = t.get("reliability") or {}
+    if not rel:
+        return ""
+    grade, label = rel.get("grade"), rel.get("grade_label") or ""
+    head = (f'<p style="margin:0 0 12px;font-size:16px"><b>{_e(grade)}/100</b> — fiabilité {_e(label)}</p>'
+            if grade is not None else f'<p class="empty">{_e(label or "Pas assez de données.")}</p>')
+    scored = (rel.get("confirmed") or 0) + (rel.get("false") or 0) + (rel.get("probable_false") or 0)
+    jd = rel.get("jungler_deaths") or 0
+    cards = [
+        ("g" if (rel.get("precision") or 0) >= 0.6 else "r" if scored else "", _pct(rel.get("precision")),
+         "Alertes de gank justes",
+         f"{rel.get('confirmed', 0)} justes sur {scored} vérifiables ({rel.get('alerts', 0)} au total)"),
+        ("r" if rel.get("missed") else "g", f"{rel.get('missed', 0)} / {jd}", "Ganks manqués",
+         ("sans alerte : " + ", ".join(rel.get("missed_times") or [])) if rel.get("missed") else
+         "morts avec le jungler ennemi impliqué"),
+        ("t", _pct(rel.get("fog_coverage")), "Cercle du brouillard",
+         f"contenait le vrai jungler ({rel.get('fog_inside', 0)}/{rel.get('fog_checks', 0)} vérifs)"),
+        ("t", f"{rel.get('sightings_ok', 0)} / {rel.get('sightings_checked', 0)}", "Identifications minimap",
+         "positions vues = vraies positions" if rel.get("sightings_checked") else "aucune vérification possible"),
+    ]
+    cards_html = "".join(f'<div class="card {c}"><div class="v">{_e(v)}</div><div class="l">{_e(l)}</div>'
+                         f'<div class="x">{_e(x)}</div></div>' for c, v, l, x in cards)
+    sug = rel.get("suggestion") or {}
+    sug_txt = str(sug.get("text") or "")
+    if sug.get("suggested") is not None:
+        cur = sug.get("current")
+        sug_txt += (f" Sensibilité suggérée : {_num(sug['suggested'], 1)}"
+                    + (f" (actuelle {_num(cur, 1)})." if cur is not None else "."))
+    hist = ""
+    if isinstance(history, dict) and (history.get("games") or 0) >= 2:
+        hs = history.get("suggestion") or {}
+        hist = (f'<p class="small">Sur tes {history["games"]} dernières parties vérifiées : alertes justes '
+                f'{_e(_pct(history.get("precision")))}, ganks manqués {history.get("missed", 0)} / '
+                f'{history.get("jungler_deaths", 0)}, cercle {_e(_pct(history.get("fog_coverage")))}. '
+                f'{_e(hs.get("text") or "")}'
+                + (f' Réglage conseillé : {_num(hs["suggested"], 1)}.' if hs.get("suggested") is not None else "")
+                + '</p>')
+    eps = rel.get("episodes") or []
+    rows = "".join(
+        f'<tr><td class="t">{_e(e.get("time"))}</td><td>{_e(e.get("target_name") or e.get("target"))}</td>'
+        f'<td><span class="tag {_VERDICT_FR.get(e.get("verdict"), ("", ""))[1]}">'
+        f'{_e(_VERDICT_FR.get(e.get("verdict"), (e.get("verdict"), ""))[0])}</span></td></tr>' for e in eps)
+    table = (f'<details style="margin-top:10px"><summary class="small" style="cursor:pointer">Détail des '
+             f'{len(eps)} alertes</summary><div class="tw"><table><thead><tr><th>Heure</th><th>Ennemi annoncé</th>'
+             f'<th>Verdict</th></tr></thead><tbody>{rows}</tbody></table></div></details>') if eps else ""
+    return (f'<h2 style="margin-top:6px">Fiabilité de TreeAI cette partie</h2>{head}<div class="cards">{cards_html}</div>'
+            f'<p style="margin:0 0 6px">{_e(sug_txt)}</p>{hist}{table}')
+
+
+def _lane_html(t: dict) -> str:
+    lane = t.get("lane") or {}
+    rows = lane.get("rows") or []
+    if not rows:
+        return ""
+    opp = lane.get("opponent_name") or lane.get("opponent")
+
+    def signed(v: Any) -> str:
+        f = _f(v)
+        if f is None:
+            return "—"
+        return f'<span class="{"pos" if f > 0 else "neg" if f < 0 else ""}">{"+" if f > 0 else ""}{_num(f, 0)}</span>'
+
+    body = "".join(
+        f'<tr><td class="t">{r["minute"]} min</td><td>{_num(r.get("gold"), 0)}</td><td>{signed(r.get("gold_diff"))}</td>'
+        f'<td>{signed(r.get("xp_diff"))}</td><td>{_e(r.get("cs"))}</td><td>{_e(r.get("opp_cs", "—"))}</td></tr>'
+        for r in rows)
+    vs = f" face à {_e(opp)}" if opp else ""
+    return (f'<h3 style="margin:18px 0 8px;font-size:15px">Ma voie{vs} (chiffres exacts du client)</h3>'
+            '<div class="tw"><table><thead><tr><th>Minute</th><th>Or total</th><th>Écart d\'or</th><th>Écart d\'XP</th>'
+            f'<th>Sbires</th><th>Sbires adverses</th></tr></thead><tbody>{body}</tbody></table></div>')
+
+
+def _truth_deaths_html(t: dict) -> str:
+    deaths = t.get("deaths") or []
+    if not deaths:
+        return '<p class="small">Aucune mort d\'après le client.</p>'
+    yes_j, no_j = f'<b style="color:{ORANGE}">Oui</b>', "Non"
+    yes_a, no_a = '<span class="tag ok">Oui</span>', '<span class="tag no">Non</span>'
+    rows = "".join(
+        f'<tr><td class="t">{_e(d.get("time"))}</td><td>{_e(d.get("zone_label"))}</td><td>{_e(d.get("killer"))}'
+        + (f'<div class="recap">+ {_e(", ".join(d.get("assisters") or []))}</div>' if d.get("assisters") else "")
+        + f'</td><td>{yes_j if d.get("jungler_involved") else no_j}</td>'
+        f'<td>{yes_a if d.get("warned") else no_a}</td></tr>'
+        for d in deaths)
+    return ('<div class="tw"><table><thead><tr><th>Heure</th><th>Position exacte</th><th>Tué par</th><th>Jungler ?</th>'
+            f'<th>Alerte ?</th></tr></thead><tbody>{rows}</tbody></table></div>')
+
+
+def _truth_section(record: dict, a: dict) -> str:
+    t = a.get("truth")
+    if not isinstance(t, dict) or not t.get("available"):
+        return ""
+    j = t.get("jungler") or {}
+    deaths_uri = _data_uri_png(render_truth_deaths_png(record, t))
+    path_uri = _data_uri_png(render_truth_path_png(record, t))
+    jname = j.get("name") or "Jungler ennemi"
+    first = (f"{_e(jname)} a commencé {_e(j.get('first_side_label'))} (vu à {_e(j.get('first_time'))} en "
+             f"{_e(next((p.get('zone_label') for p in j.get('path') or [] if not p.get('in_base')), ''))}). "
+             if j.get("first_side_label") else "")
+    ganks = j.get("early_ganks") or []
+    gank_txt = (f"Kills avec lui avant 15 min : " + ", ".join(f"{g['time']} ({g['victim']})" for g in ganks) + "."
+                if ganks else "Aucun kill avec lui avant 15 min.")
+    maps = (
+        '<div class="phases" style="grid-template-columns:repeat(2,minmax(0,1fr))">'
+        f'<div class="phase"><h3>Mes morts (positions exactes)</h3>'
+        + (f'<img src="{deaths_uri}" alt="Morts exactes" style="max-width:360px">' if deaths_uri else "")
+        + '<p class="small">Libellé orange : le jungler ennemi a participé.</p></div>'
+        f'<div class="phase"><h3>Vrai parcours de {_e(jname)} <span>1 point = 1 minute</span></h3>'
+        + (f'<img src="{path_uri}" alt="Parcours réel du jungler" style="max-width:360px">' if path_uri else
+           '<p class="empty">Parcours indisponible.</p>')
+        + f'<p class="small">{first}{_e(gank_txt)}</p></div></div>')
+    return (f'<div class="panel"><h2>Vérité terrain (client LoL)</h2>'
+            f'<p class="small" style="margin-top:-6px">Positions réelles minute par minute et kills exacts lus après la '
+            f'partie dans l\'historique du client League of Legends (API locale officielle, lecture seule).</p>'
+            f'{maps}{_lane_html(t)}<h3 style="margin:18px 0 8px;font-size:15px">Mes morts d\'après le client</h3>'
+            f'{_truth_deaths_html(t)}{_reliability_html(t, t.get("history"))}</div>')
+
+
+def _pending_html() -> str:
+    """Banner shown while the client data is being fetched (the page reloads itself, see render_report_html)."""
+    return ('<div class="warnbox">Récupération des données du client LoL en cours (positions exactes, écarts d\'or, '
+            'fiabilité des alertes)… cette page se met à jour toute seule d\'ici 1 à 2 minutes.</div>')

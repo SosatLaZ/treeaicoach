@@ -56,8 +56,8 @@ LOW_HP = 0.25
 FIGHT_MIN_HP = 0.35
 WORN_HP = 0.85                 # unknown HP of a champion fighting for WORN_AFTER_S
 WORN_AFTER_S = 4.0
-CALL_WORD = {"engage": "Engage !", "retreat": "Recule !"}
-CALL_TITLE = {"engage": "FIGHT", "retreat": "RECULE"}
+CALL_WORD = {"engage": "Attaque !", "retreat": "Recule !"}
+CALL_TITLE = {"engage": "ATTAQUE", "retreat": "RECULE"}
 
 
 def _f(x: Any, default: float | None = None) -> float | None:

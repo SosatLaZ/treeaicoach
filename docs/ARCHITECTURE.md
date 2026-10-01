@@ -684,3 +684,26 @@ fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; ic�
 * `tactics.TacticalDirector` : relie le tout pour `engine.py` (`_tactics_tick`, `_speech_budget`) ; guides minimap
   (`MapGuide` : flèches repli / objectif / regroupement, spots de balise, max 6 éléments) dans `OverlayState.guides` et
   grande bannière (`Banner` -> `toasts.render_banner` : « FIGHT 72 % » vert / « RECULE 28 % » rouge, en direct pendant le combat).
+
+## 10. Client LoL (LCU) — vérité terrain d'après-partie (optionnel)
+
+* **Source** : API locale officielle du client League of Legends (`LeagueClientUx.exe`, `https://127.0.0.1:<port>`,
+  auth basique `riot:<mot de passe>`), autorisée par Riot pour les applications tierces. **Lecture seule** (GET),
+  **uniquement après la partie**, jamais utilisée pour une décision en jeu. Désactivable (`Config.lcu_enabled`, défaut True).
+* `lcu.py` : `discover()` (lockfile du dossier d'installation : `TREEAI_LCU_DIR`, `RiotClientInstalls.json`, registre,
+  chemins par défaut ; sinon ligne de commande du processus via `wmic` puis PowerShell `Get-CimInstance`,
+  `CREATE_NO_WINDOW`), `LcuClient` (urllib, sans proxy, certificat non vérifié **seulement** pour 127.0.0.1, jamais
+  d'exception ; désactivé hors Windows), `fetch_postgame_truth(record)` : dernière partie
+  (`/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=1`), contrôle qu'il s'agit bien de la
+  partie enregistrée (début, durée, champion), puis `/lol-match-history/v1/games/{id}` et
+  `/lol-match-history/v1/game-timelines/{id}`, avec nouvelles tentatives pendant ~2 min.
+* `ground_truth.py` (pur) : `build_truth` (fichier compact `games/truth/<stem>.truth.json` : participants, positions
+  minute par minute `u,v` + or/XP/CS/niveau, kills, monstres épiques, bâtiments, `score`), `analyze_truth` (morts exactes,
+  vrai parcours du jungler ennemi + côté de départ, écarts d'or/XP/CS à 10 et 15 min contre l'adversaire de voie,
+  **fiabilité de TreeAI** : précision des alertes de gank, ganks manqués, cercle du brouillard contenant le vrai jungler,
+  identifications minimap correctes, suggestion de sensibilité), `aggregate_scores` (calibration sur les dernières parties).
+* `recorder.py` ajoute `fog` (cercle du jungler, 1 Hz) et `settings` (sensibilité…) au record ; `analysis.analyze_game(record,
+  truth=None)` ; `report.write_report(path, lcu_pending=False)` lit la vérité si elle existe (section « Vérité terrain »).
+* `engine._finish_job` : rapport écrit tout de suite (bannière « récupération en cours » + rechargement automatique quand le
+  client est trouvé), puis récupération LCU, sauvegarde de la vérité et réécriture du rapport. UI : « Client LoL : connecté /
+  non trouvé » sur la page Analyses.

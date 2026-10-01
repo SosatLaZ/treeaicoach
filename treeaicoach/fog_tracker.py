@@ -143,6 +143,22 @@ def load_default_texture() -> np.ndarray | None:
         return None
 
 
+_SHARED_LOCK = threading.Lock()
+_SHARED: dict[str, Any] = {}
+
+
+def shared_reachability() -> "Reachability":
+    """One :class:`Reachability` on the default minimap texture, built on first use and
+    shared by every analyser (fog tracker, gank travel times). Never raises."""
+    with _SHARED_LOCK:
+        reach = _SHARED.get("reach")
+        if reach is None:
+            tex = load_default_texture()
+            mask = walkable_mask(tex, WALK_GRID) if tex is not None else np.ones((WALK_GRID, WALK_GRID), bool)
+            reach = _SHARED["reach"] = Reachability(mask)
+        return reach
+
+
 class Reachability:
     """Geodesic distances on a walkable grid (constrained iterative dilation)."""
 
@@ -177,11 +193,12 @@ class Reachability:
         i = int(np.argmin(d2))
         return int(self._walk_xy[i, 0]), int(self._walk_xy[i, 1])
 
-    def distance_field(self, start_uv: tuple[float, float]) -> np.ndarray:
+    def distance_field(self, start_uv: tuple[float, float], max_dist: float | None = None) -> np.ndarray:
         """Normalized geodesic distance from ``start_uv`` (float32 ``[grid, grid]``, inf = unreachable).
 
-        The start is snapped to the nearest walkable cell. Never raises (open-field Euclidean
-        distances on failure).
+        The start is snapped to the nearest walkable cell. With ``max_dist`` the dilation stops
+        there (cells farther away are inf): much cheaper for short-range questions such as
+        the gank travel times. Never raises (open-field Euclidean distances on failure).
         """
         g = self.grid
         try:
@@ -192,6 +209,8 @@ class Reachability:
             dist[sy, sx] = 0.0
             step = 0
             limit = 4 * g  # longest possible walk on the grid; safety bound
+            if max_dist is not None and math.isfinite(max_dist) and max_dist >= 0:
+                limit = min(limit, int(math.ceil(max_dist * g)) + 1)
             while step < limit:
                 step += 1
                 kernel = self._CROSS if step % 2 else self._SQUARE
@@ -274,13 +293,10 @@ class FogTracker:
     FOG_MAX_S = FOG_MAX_S
 
     def __init__(self, texture_rgba: np.ndarray | None = None, max_s: float | None = None):
-        tex = texture_rgba if texture_rgba is not None else load_default_texture()
-        if tex is None:
-            log.warning("FogTracker: no minimap texture; the whole map is treated as walkable")
-            mask = np.ones((WALK_GRID, WALK_GRID), bool)
+        if texture_rgba is None:
+            self.reach = shared_reachability()
         else:
-            mask = walkable_mask(tex, WALK_GRID)
-        self.reach = Reachability(mask)
+            self.reach = Reachability(walkable_mask(texture_rgba, WALK_GRID))
         self.grid = self.reach.grid
         self._walk_u8 = self.reach.walkable.astype(np.uint8)
         k = int(round(FLASH_MARGIN * self.grid))

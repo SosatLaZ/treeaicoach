@@ -71,6 +71,9 @@ ENEMY_RING = ui_kit.ENEMY   # enemy team ring
 TRACK = "#16213A"           # empty gauge segment / slider track
 
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
+#: "jouer plus fort ou non" gauge step -> colour; tip tone -> colour (dashboard coach strip)
+GAUGE_UI_COLORS = {2: SAFE, 1: "#7FD69A", 0: MUTED, -1: WARNING, -2: DANGER}
+TIP_UI_COLORS = {"danger": "#FF8A9A", "warning": "#FFC46B", "go": "#8FE3AE", "info": TEXT}
 THREAT_LABELS = {0: "SÛR", 1: "ATTENTION", 2: "DANGER"}
 LEVEL_COLORS = {0: TEXT, 1: WARNING, 2: DANGER}
 
@@ -154,7 +157,7 @@ ENGINE_LABELS: tuple[tuple[str, str], ...] = (
     ("onecore", "Windows moderne (OneCore)"),
     ("sapi", "Windows classique (SAPI)"),
 )
-HOTKEY_FIELDS = frozenset({"hotkey_jungler", "hotkey_mute", "hotkey_overlay", "hotkey_ai"})
+HOTKEY_FIELDS = frozenset({"hotkey_jungler", "hotkey_mute", "hotkey_overlay", "hotkey_ai", "hotkey_ward"})
 
 _ctk: Any = None      # customtkinter module (imported lazily by _import_ctk)
 
@@ -1932,11 +1935,32 @@ class CoachApp:
         left = ctk.CTkFrame(body, fg_color="transparent")
         left.grid(row=2, column=0, sticky="nsew", padx=(0, 14))
         left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(1, weight=1)
+        left.grid_rowconfigure(2, weight=1)
+
+        # --- live coach strip: my role (+ lane swap), "jouer plus fort ou non", top tip, AI counter
+        co = self._card(left)
+        self.coach_card = co
+        co.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        co.grid_columnconfigure(1, weight=1)
+        self.coach_gauge_lbl = self._label(co, "—", self.fonts.h2, DIM, anchor="w")
+        self.coach_gauge_lbl.grid(row=0, column=0, sticky="w", padx=(16, 12), pady=(10, 0))
+        self._tip(self.coach_gauge_lbl, "Jouer plus fort ou non : ATTAQUE ▲▲, PLUS FORT ▲, NORMAL, "
+                                        "PRUDENT ▼, SAFE ▼▼ (selon ton avance, les combats et ton face-à-face).")
+        self.coach_role_lbl = self._label(co, "Rôle : —", self.fonts.small, MUTED, anchor="w")
+        self.coach_role_lbl.grid(row=0, column=1, sticky="w", pady=(10, 0))
+        self._tip(self.coach_role_lbl, "Rôle détecté d'après la partie (et les échanges de voie).")
+        self.coach_ai_lbl = self._label(co, "", self.fonts.tiny_bold, TEAL, anchor="e")
+        self.coach_ai_lbl.grid(row=0, column=2, sticky="e", padx=(8, 16), pady=(10, 0))
+        self._tip(self.coach_ai_lbl, "Conseils IA utilisés dans cette partie : 5 automatiques max "
+                                     "+ 1 en urgence (F8 à part).")
+        self.coach_tip_lbl = self._label(co, "Le conseil du moment s'affichera ici pendant la partie.",
+                                         self.fonts.small, DIM, anchor="w", justify="left", wraplength=520)
+        self.coach_tip_lbl.grid(row=1, column=0, columnspan=3, sticky="ew", padx=16, pady=(4, 10))
+        self._coach_sig: tuple = ()
 
         en = self._card(left)
         self.enemies_card = en
-        en.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        en.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         en.grid_columnconfigure(0, weight=1)
         head = ctk.CTkFrame(en, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 0))
@@ -2001,7 +2025,7 @@ class CoachApp:
         self._matchup_sig: tuple = ()
 
         jr = self._card(left)
-        jr.grid(row=1, column=0, sticky="nsew")
+        jr.grid(row=2, column=0, sticky="nsew")
         jr.grid_columnconfigure(0, weight=1)
         jr.grid_rowconfigure(1, weight=1)
         jh = ctk.CTkFrame(jr, fg_color="transparent")
@@ -2158,7 +2182,7 @@ class CoachApp:
                                   ("alert_roam", "Roam d'un autre ennemi", "roam_approach"),
                                   ("alert_collapse", "Plusieurs ennemis convergent", "collapse"),
                                   ("alert_jungler_spotted", "Jungler ennemi aperçu", "jungler_spotted"),
-                                  ("alert_laner_mia", "Adversaire de voie disparu (MIA)", "laner_mia")):
+                                  ("alert_laner_mia", "Adversaire de voie disparu", "laner_mia")):
             self._switch_row(s, field, title, ex[key])
             self._example_button(key)
 
@@ -2240,7 +2264,7 @@ class CoachApp:
         """Alertes page: build advice switches + "mode annonceur" (hype.py)."""
         if hasattr(self.cfg, "item_advice"):
             s = self._section(body, row, "Conseils d'achat", "Le prochain objet adapté à la partie (soins "
-                              "adverses, ennemi fed, dégâts magiques…), d'après l'API officielle.", icon="star")
+                              "adverses, ennemi très fort, dégâts magiques…), d'après l'API officielle.", icon="star")
             self._switch_row(s, "item_advice", "Conseils d'achat", "Ligne « Prochain objet » dans le HUD.")
             self._switch_row(s, "item_advice_toasts", "Bandeau à l'écran",
                              "Affiche le conseil en bandeau au retour en base, à la mort, aux niveaux 6/11/16.")
@@ -2448,6 +2472,14 @@ class CoachApp:
             s, "hud_position", "Position du HUD", None, HUD_POSITIONS, width=230, on_change=prev)
         self._switch_row(s, "danger_flash", "Flash de danger", "Cadre rouge sur les bords de l'écran en cas de gank.",
                          on_change=prev)
+        if hasattr(self.cfg, "ward_guide"):
+            hk_ward = getattr(self.cfg, "hotkey_ward", "") or "sans raccourci"
+            self._switch_row(s, "ward_guide", "Guide de balise",
+                             f"Où poser ta balise : repère sur la minimap (après un retour, avant un objectif, "
+                             f"ou {hk_ward}). Disparaît dès que la balise est posée.")
+        if hasattr(self.cfg, "ward_world"):
+            self._switch_row(s, "ward_world", "Repère dans le jeu",
+                             "« Ward ici » au sol sur le buisson conseillé, ou flèche au bord de l'écran.")
 
         s = self._section(body, 2, "Position possible dans le brouillard",
                           "Zone qui grandit là où un ennemi caché peut se trouver (dernière position vue "
@@ -2557,6 +2589,11 @@ class CoachApp:
         self._tip(b, "Copie un résumé de ta dernière partie à partager (Discord, réseaux).")
         self.session_scope = self._label(body, "SESSION", self.fonts.caps, DIM, anchor="w")
         self.session_scope.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.lcu_status = self._label(body, "Client LoL : …", self.fonts.tiny, DIM, anchor="e")
+        self.lcu_status.grid(row=0, column=0, sticky="e", pady=(0, 6))
+        self._tip(self.lcu_status, "Après chaque partie, TreeAI lit l'historique du client League of Legends "
+                                   "(API locale officielle, lecture seule) : positions exactes, écarts d'or et "
+                                   "fiabilité de ses alertes dans le rapport.")
         cards = ctk.CTkFrame(body, fg_color="transparent")
         cards.grid(row=1, column=0, sticky="ew", pady=(0, 16))
         self.stat_labels: dict[str, tuple[Any, Any]] = {}
@@ -2613,6 +2650,29 @@ class CoachApp:
 
         self._dispatcher.run(job, self._show_games, self.cb(lambda e: self._games_empty(
             text="Impossible de lire l'historique des parties")), name="TreeAI-ui-games")
+        self._refresh_lcu_status()
+
+    @_guarded
+    def _refresh_lcu_status(self) -> None:
+        """"Client LoL : connecté / non trouvé" on the Analyses page (probed on a worker thread)."""
+        lbl = getattr(self, "lcu_status", None)
+        if lbl is None:
+            return
+
+        def job() -> str:
+            if not getattr(self.cfg, "lcu_enabled", True):
+                return "Client LoL : désactivé"
+            from treeaicoach.lcu import get_default_client  # noqa: PLC0415
+
+            return get_default_client().status_text()
+
+        def done(text: str) -> None:
+            try:
+                lbl.configure(text=text, text_color=SAFE if text.endswith("connecté") else DIM)
+            except Exception:
+                pass
+
+        self._dispatcher.run(job, done, None, name="TreeAI-ui-lcu")
 
     @_guarded
     def _show_games(self, games: list[dict]) -> None:
@@ -3979,7 +4039,8 @@ class CoachApp:
         cfg = self.cfg
         bindings: dict[str, Callable[[], None]] = {}
         for key, fn in ((cfg.hotkey_jungler, self._hk_jungler), (cfg.hotkey_mute, self._hk_mute),
-                        (cfg.hotkey_overlay, self._hk_overlay), (getattr(cfg, "hotkey_ai", ""), self._hk_ai)):
+                        (cfg.hotkey_overlay, self._hk_overlay), (getattr(cfg, "hotkey_ai", ""), self._hk_ai),
+                        (getattr(cfg, "hotkey_ward", ""), self._hk_ward)):
             if key:
                 bindings[key] = fn
         try:
@@ -4017,6 +4078,14 @@ class CoachApp:
 
     def _hk_ai(self) -> None:               # hotkey thread
         self._dispatcher.post(self.ask_ai)
+
+    def _hk_ward(self) -> None:             # hotkey thread: "where to ward?" (visual only, cheap)
+        fn = getattr(self.engine, "request_ward_guide", None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception:
+                log.debug("ward guide hotkey failed", exc_info=True)
 
     @_guarded
     def ask_ai(self) -> None:
@@ -4140,6 +4209,10 @@ class CoachApp:
         except Exception:
             log.debug("team update failed", exc_info=True)
         self._collect_alerts(st, ov)
+        try:
+            self._update_coach_strip(ov, running and key == "RUNNING")
+        except Exception:
+            log.debug("coach strip update failed", exc_info=True)
         lvl = min(max(int(getattr(ov, "threat_level", 0) or 0), 0), 2) if ov is not None else 0
         self.hero.set_glow(THREAT_COLORS[lvl] if ov is not None and lvl > 0 else color)
         muted = self._is_muted()
@@ -4148,6 +4221,49 @@ class CoachApp:
             self._sync_quick(muted)
         if self._current_page == "dashboard":
             self._draw_gauge_step()
+
+    def _update_coach_strip(self, ov: Any, live: bool) -> None:
+        """Dashboard coach strip: gauge, detected role (+ swap notice), top tip, AI counter."""
+        if getattr(self, "coach_gauge_lbl", None) is None:
+            return
+        eng = self.engine
+        gauge = tip = None
+        role = notice = None
+        ai = ""
+        if eng is not None and live:
+            fn = getattr(eng, "play_gauge", None)
+            gauge = fn() if callable(fn) else None
+            fn = getattr(eng, "top_tip", None)
+            tip = fn() if callable(fn) else None
+            fn = getattr(eng, "detected_role", None)
+            role, notice = fn() if callable(fn) else (None, None)
+            fn = getattr(eng, "ai_budget_text", None)
+            ai = (fn() if callable(fn) else "") or ""
+        step = getattr(gauge, "step", None)
+        sig = (step, getattr(gauge, "reason", None), tip, role, notice, ai)
+        if sig == self._coach_sig:
+            return
+        self._coach_sig = sig
+        if step is None:
+            self.coach_gauge_lbl.configure(text="—", text_color=DIM)
+        else:
+            col = GAUGE_UI_COLORS.get(int(step), MUTED)
+            self.coach_gauge_lbl.configure(text=str(getattr(gauge, "label", "") or "—"), text_color=col)
+        role_txt = f"Rôle : {role}" if role else "Rôle : —"
+        if notice:
+            role_txt += " · échange de voie"
+        reason = str(getattr(gauge, "reason", "") or "")
+        if reason:
+            role_txt += f" · {reason}"
+        self.coach_role_lbl.configure(text=role_txt, text_color=WARNING if notice else MUTED)
+        self.coach_ai_lbl.configure(text=ai)
+        if tip:
+            text, tone = tip
+            self.coach_tip_lbl.configure(text=str(text), text_color=TIP_UI_COLORS.get(str(tone), TEXT))
+        else:
+            self.coach_tip_lbl.configure(
+                text="Le conseil du moment s'affichera ici pendant la partie." if not live else "Rien à signaler.",
+                text_color=DIM)
 
     def _with_extras(self, msg: str, key: str) -> str:
         """Win probability (hype.py) appended to the dashboard message; new AI error shown once."""
@@ -4276,7 +4392,7 @@ class CoachApp:
             if visible:
                 status, scol = ("Approche !", WARNING) if appr else ("Visible", SAFE)
             elif isinstance(ago, (int, float)) and math.isfinite(ago):
-                status, scol = f"MIA {_fmt_ago(ago)}", (WARNING if jungler and ago < 45 else MUTED)
+                status, scol = f"caché {_fmt_ago(ago)}", (WARNING if jungler and ago < 45 else MUTED)
                 mia = float(ago)
             else:
                 status, scol = "Jamais vu", DIM
@@ -4336,7 +4452,7 @@ class CoachApp:
             if getattr(opp, "visible", False):
                 text, col = f"{oname} · visible", SAFE
             elif isinstance(ago, (int, float)) and math.isfinite(ago):
-                text, col = f"{oname} · MIA {_fmt_ago(ago)}", WARNING if ago > 20 else MUTED
+                text, col = f"{oname} · caché {_fmt_ago(ago)}", WARNING if ago > 20 else MUTED
             else:
                 text, col = f"{oname} · jamais vu", MUTED
         self._set_text(self.matchup_lbl, text)

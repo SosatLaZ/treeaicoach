@@ -64,13 +64,16 @@ _RIN = INNER_RATIO / CROP_HALF * LEARN_PX / 2.0          # matched disc radius i
 RING_WORK_D = 18.0          # icon diameter at the working resolution (px)
 RING_MIN = 0.42             # annulus fraction of the side colour for a candidate
 RING_RATIO = 2.0            # ... and this many times the other side's fraction
-INTERIOR_MAX = 0.55         # interior disc of the same colour: a blob (river, glyph), not an icon
-_NEAR = 32.0
+INTERIOR_MAX = 0.4          # interior disc of the same colour: a blob (river, glyph), not an icon
+OUTSIDE_MAX = 0.4           # same outside the ring (a thin ring, not the edge of a blue area)
+_NEAR = 26.0
+MIN_CHROMA = 16.0           # ring pixels are saturated (terrain, fog, texts are not)
 _W = np.asarray([0.35, 1.0, 1.0], np.float32)
 STRUCT_DIST = 0.035
 FOUNTAIN_DIST = 0.09
 _FOUNTAINS = ((0.045, 0.955), (0.955, 0.045))
 EXPLAINED_FRAC = 0.7        # candidate this close (x icon diameter) to an accepted match: explained
+ISOLATED_FRAC = 1.0         # crops only of icons this far (x diameter) from any other icon
 
 # --- tracks / binding ----------------------------------------------------------------------
 MAX_SPEED = 0.09            # normalized units / s (roster_matcher.MAX_SPEED)
@@ -101,8 +104,10 @@ SAVE_MIN_S = 60.0
 REVERT_S = 25.0             # me alive, my learned icon unmatched this long: back to the official one
 REVERT_OTHER_S = 120.0
 ELIGIBLE_AFTER_S = 20.0     # another champion matched this recently is not re-learned
+OTHERS_EVERY = 6            # frames between two searches for the other unmatched champions
 WANT_SELF_S = 2.0           # self unmatched this long -> the bootstrap runs every frame
 SKIN_GUESS_AFTER_S = 6.0
+CENTRED_SKIP_MARGIN = 0.15  # a learned icon matched this well is not re-checked
 
 LANE_START_GT, LANE_END_GT = 90.0, 600.0
 
@@ -252,30 +257,88 @@ def median_icon(crops: Sequence[np.ndarray]) -> tuple[np.ndarray, float]:
 
 
 def _protos(rings: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Lab prototypes (enemy, ally, self) of a RingColorModel (seeds when unavailable)."""
+    """Lab prototypes (enemy, ally, self) for the whole-image search: the live centroids and
+    the seeds only (the pale extra colours of the ring check would match the terrain)."""
     try:
-        pe = [rings.centroid["enemy"]] + list(rings.extra["enemy"])
-        pa = [rings.centroid["ally"]] + list(rings.extra["ally"])
-        ps = [rings.centroid["self"]] + list(rings.extra["self"])
+        cen, seed = rings.centroid, rings.seed
+        return tuple(np.asarray([cen[k], seed[k]], np.float32)  # type: ignore[return-value]
+                     for k in ("enemy", "ally", "self"))
     except Exception:
         from treeaicoach.roster_matcher import RingColorModel
 
         return _protos(RingColorModel())
-    return (np.asarray(pe, np.float32), np.asarray(pa, np.float32), np.asarray(ps, np.float32))
 
 
-def _annulus(Rw: float) -> tuple[np.ndarray, np.ndarray]:
-    size = int(math.ceil(2 * 1.08 * Rw)) | 1
-    outer = _disc(size, 1.04 * Rw)
-    inner = _disc(size, 0.80 * Rw)
-    ann = np.clip(outer - inner, 0, 1)
-    core = _disc(size, 0.60 * Rw)
-    return (ann / max(float(ann.sum()), 1e-6)).astype(np.float32), \
-        (core / max(float(core.sum()), 1e-6)).astype(np.float32)
+_LUT_BITS = 5
+_LUT_CACHE: dict = {}
+
+
+def _lut_index(bgr: np.ndarray) -> np.ndarray:
+    q = (bgr >> (8 - _LUT_BITS)).astype(np.int32)
+    return (q[:, :, 0] << (2 * _LUT_BITS)) | (q[:, :, 1] << _LUT_BITS) | q[:, :, 2]
+
+
+def _label_lut(rings: Any) -> np.ndarray:
+    """Colour class of every quantized BGR colour (bit 1 enemy, 2 ally side, 4 self teal) for
+    the current ring colours (cached; the centroids drift slowly)."""
+    pe, pa, ps = _protos(rings)
+    key = tuple(np.round(np.concatenate([pe, pa, ps]).ravel() / 6.0).astype(int).tolist())
+    lut = _LUT_CACHE.get(key)
+    if lut is not None:
+        return lut
+    n = 1 << _LUT_BITS
+    half = 1 << (7 - _LUT_BITS)
+    g = (np.arange(n, dtype=np.int32) << (8 - _LUT_BITS)) + half
+    b_, g_, r_ = np.meshgrid(g, g, g, indexing="ij")
+    cols = np.stack([b_, g_, r_], axis=-1).reshape(-1, 1, 3).astype(np.uint8)
+    lab = cv2.cvtColor(cols, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float32)
+    chroma_ok = np.hypot(lab[:, 1] - 128.0, lab[:, 2] - 128.0) >= MIN_CHROMA
+    lab *= _W
+
+    def dist(P: np.ndarray) -> np.ndarray:
+        P = P * _W
+        d2 = (lab * lab).sum(axis=1)[:, None] - 2.0 * (lab @ P.T) + (P * P).sum(axis=1)[None]
+        return np.sqrt(np.maximum(d2, 0.0)).min(axis=1)
+
+    de, da, ds = dist(pe), dist(pa), dist(ps)
+    dal = np.minimum(da, ds)
+    E = chroma_ok & (de < _NEAR) & (de < 0.8 * dal)
+    A = chroma_ok & (dal < _NEAR) & (dal < 0.8 * de)
+    S = chroma_ok & (ds < _NEAR) & (ds < 0.8 * da) & (ds < 0.8 * de)
+    lut = (E * 1 + A * 2 + S * 4).astype(np.uint8)
+    if len(_LUT_CACHE) > 16:
+        _LUT_CACHE.clear()
+    _LUT_CACHE[key] = lut
+    return lut
+
+
+def _circle_pts(radii: Sequence[float], n: int) -> np.ndarray:
+    """Sample points (units of the icon radius) on circles of ``radii``, ``n`` angles each."""
+    ang = np.linspace(0, 2 * np.pi, n, endpoint=False) + 0.1
+    return np.concatenate([np.stack([r * np.cos(ang), r * np.sin(ang)], 1) for r in radii])
+
+
+_RING_PTS = _circle_pts((0.91,), 24)
+_CORE_PTS = np.concatenate([[[0.0, 0.0]], _circle_pts((0.3,), 6), _circle_pts((0.55,), 10)])
+_OUT_PTS = _circle_pts((1.22, 1.34), 16)
+
+
+def _ring_mean(m: np.ndarray, Rw: float, pts: np.ndarray) -> np.ndarray:  # noqa: D401
+    """Mean of ``m`` (H x W x C) over the points ``pts * Rw`` around every pixel (zero
+    outside the image): a cheap sampled annulus / disc filter."""
+    h, w = m.shape[:2]
+    off = sorted({(int(round(x * Rw)), int(round(y * Rw))) for x, y in pts})
+    p = max(max(abs(a), abs(b)) for a, b in off)
+    pad = cv2.copyMakeBorder(m, p, p, p, p, cv2.BORDER_CONSTANT, value=0)
+    acc = np.zeros_like(m)
+    for dx, dy in off:
+        acc += pad[p + dy:p + dy + h, p + dx:p + dx + w]
+    return acc / float(len(off))
 
 
 def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
-                    exclude: Sequence[tuple[float, float]] = ()) -> list[RingCand]:
+                    exclude: Sequence[tuple[float, float]] = (),
+                    fountains: bool = True) -> list[RingCand]:
     """Icon-like rings of the ally-side / enemy colours at radius ``R_px`` (original px).
 
     ``exclude``: normalized points (structures, fountains) around which nothing is reported.
@@ -289,29 +352,31 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
                                              interpolation=cv2.INTER_AREA)
     h, w = work.shape[:2]
     Rw = R_px * w / float(W)
-    lab = cv2.cvtColor(work, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float32) * _W
-    pe, pa, ps = _protos(rings)
-
-    def dist(P: np.ndarray) -> np.ndarray:
-        P = P * _W
-        d2 = (lab * lab).sum(axis=1)[:, None] - 2.0 * (lab @ P.T) + (P * P).sum(axis=1)[None]
-        return np.sqrt(np.maximum(d2, 0.0)).min(axis=1)
-
-    de, da, ds = dist(pe), dist(pa), dist(ps)
-    dal = np.minimum(da, ds)
-    E = ((de < _NEAR) & (de < 0.8 * dal)).astype(np.float32).reshape(h, w)
-    A = ((dal < _NEAR) & (dal < 0.8 * de)).astype(np.float32).reshape(h, w)
-    S = ((ds < _NEAR) & (ds < 0.8 * da) & (ds < 0.8 * de)).astype(np.float32).reshape(h, w)
-    ann, core = _annulus(Rw)
+    lbl = _label_lut(rings)[_lut_index(work)]                      # bit 1 E, 2 A, 4 S
+    m3 = np.empty((h, w, 3), np.float32)
+    m3[:, :, 0] = (lbl & 2) > 0                                       # ally side (A)
+    m3[:, :, 1] = (lbl & 1) > 0                                       # enemy (E)
+    m3[:, :, 2] = (lbl & 4) > 0                                       # self teal (S)
     out: list[RingCand] = []
-    bt = cv2.BORDER_CONSTANT
-    fa, fe = cv2.filter2D(A, -1, ann, borderType=bt), cv2.filter2D(E, -1, ann, borderType=bt)
-    fs = cv2.filter2D(S, -1, ann, borderType=bt)
-    ia, ie = cv2.filter2D(A, -1, core, borderType=bt), cv2.filter2D(E, -1, core, borderType=bt)
+    fr = _ring_mean(m3, Rw, _RING_PTS)
+    fa, fe, fs = fr[:, :, 0], fr[:, :, 1], fr[:, :, 2]
+    # interior / outside only at the peaks; outside, my teal glow is expected around my
+    # icon (only the plain ally colour counts there)
+    plain = m3[:, :, 0] - m3[:, :, 2]
+    core = sorted({(int(round(x * Rw)), int(round(y * Rw))) for x, y in _CORE_PTS})
+    outer = sorted({(int(round(x * Rw)), int(round(y * Rw))) for x, y in _OUT_PTS})
+
+    def around(plane: np.ndarray, x: int, y: int, offs: list) -> float:
+        xs_ = np.asarray([x + a for a, _ in offs])
+        ys_ = np.asarray([y + b for _, b in offs])
+        ins = (xs_ >= 0) & (xs_ < w) & (ys_ >= 0) & (ys_ < h)
+        return float(plane[ys_[ins], xs_[ins]].sum()) / len(offs)
+
     rad = max(2, int(round(0.9 * Rw)))
-    K = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * rad + 1, 2 * rad + 1))
-    for side, fm, fo, im in (("ally", fa, fe, ia), ("enemy", fe, fa, ie)):
-        ok = (fm >= RING_MIN) & (fm >= RING_RATIO * fo + 0.05) & (im <= INTERIOR_MAX)
+    K = np.ones((2 * rad + 1, 2 * rad + 1), np.uint8)
+    for side, fm, fo, pin, pout in (("ally", fa, fe, m3[:, :, 0], plain),
+                                    ("enemy", fe, fa, m3[:, :, 1], m3[:, :, 1])):
+        ok = (fm >= RING_MIN) & (fm >= RING_RATIO * fo + 0.05)
         if not ok.any():
             continue
         peaks = ok & (fm >= cv2.dilate(fm, K))
@@ -321,6 +386,8 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
         for j in order[:24]:
             x, y = int(xs[j]), int(ys[j])
             if any((x - a) ** 2 + (y - b) ** 2 < rad * rad for a, b in taken):
+                continue
+            if around(pin, x, y, core) > INTERIOR_MAX or around(pout, x, y, outer) > OUTSIDE_MAX:
                 continue
             taken.append((x, y))
             sx, sy = float(x), float(y)
@@ -335,12 +402,15 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
                 if den < 0:
                     sy += float(np.clip(0.5 * (a_ - c_) / den, -0.5, 0.5))
             u, v = (sx + 0.5) / w, (sy + 0.5) / h
-            if any(math.hypot(u - eu, v - ev) < STRUCT_DIST for eu, ev in exclude):
+            f_self = float(fs[y, x]) if side == "ally" else 0.0
+            # structure glyphs have team-coloured parts, never my teal outline
+            if f_self < 0.3 and any(math.hypot(u - eu, v - ev) < STRUCT_DIST
+                                    for eu, ev in exclude):
                 continue
-            if any(math.hypot(u - eu, v - ev) < FOUNTAIN_DIST for eu, ev in _FOUNTAINS):
+            if fountains and any(math.hypot(u - eu, v - ev) < FOUNTAIN_DIST
+                                 for eu, ev in _FOUNTAINS):
                 continue
-            out.append(RingCand(u, v, side, float(fm[y, x]),
-                                float(fs[y, x]) if side == "ally" else 0.0))
+            out.append(RingCand(u, v, side, float(fm[y, x]), f_self))
     return out
 
 
@@ -559,14 +629,28 @@ class IconLearner:
         H, W = bgr.shape[:2]
         D = 2.0 * R_px / W                                   # icon diameter (normalized)
         me = next((i for i, e in enumerate(entries) if getattr(e, "relation", "") == "self"), None)
+        # --- my position (strong match) -----------------------------------------------
+        me_ok = me is not None and me in accepted and accepted[me][2] >= SELF_WEAK_MARGIN
+        fix: RingCand | None = None
+        if me is not None and me in accepted and (me not in self.learned
+                                                  or accepted[me][2] < CENTRED_SKIP_MARGIN):
+            ok, near = self._centred(bgr, accepted[me], R_px, rings)
+            if not ok:
+                # my portrait matched NEXT to a ring (lookalike custom skin, occlusion): my
+                # icon is not explained (learn it); a teal ring right there is me
+                me_ok = False
+                accepted = {i: a for i, a in accepted.items() if i != me}
+                if near is not None and near.frac_self >= 0.3:
+                    fix = near
         for i, (u, v, m) in accepted.items():
             if i < len(entries) and (i != me or m >= SELF_WEAK_MARGIN):
                 self._last_ok[i] = now
                 lr = self.learned.get(i)
                 if lr is not None:
                     lr.last_ok = now
-        # --- my position (strong match) -----------------------------------------------
-        me_ok = me is not None and me in accepted and accepted[me][2] >= SELF_WEAK_MARGIN
+        if me is not None and me in accepted and not me_ok:
+            # a weak match of my official portrait explains nothing (and is not learned from)
+            accepted = {i: a for i, a in accepted.items() if i != me}
         if me_ok:
             u, v, _m = accepted[me]
             self._self_seen = (u, v, now)
@@ -580,28 +664,39 @@ class IconLearner:
         others = [i for i, e in enumerate(entries) if i != me and i not in accepted
                   and getattr(e, "alias", None) not in self._dead
                   and now - self._last_ok.get(i, -1e9) >= ELIGIBLE_AFTER_S]
-        if not want_self and not (others and self._frames % 4 == 0):
+        if not want_self and not (others and self._frames % OTHERS_EVERY == 0):
             self._expire(now)
             return
         if self._structs is None:
             self._structs = _structure_points()
         cands = ring_candidates(bgr, R_px, rings, self._structs)
         acc_pts = [(u, v) for (u, v, _m) in accepted.values()]
-        cands = [c for c in cands if all(math.hypot(c.u - a, c.v - b) >= EXPLAINED_FRAC * D
-                                         for a, b in acc_pts)]
-        unmatched = {"ally": set(), "enemy": set()}
+        # an icon is explained by an accepted match of its side (an ally stacked under an
+        # enemy is not explained by the enemy)
+        side_pts = {"ally": [], "enemy": []}
+        for i, (u, v, _m) in accepted.items():
+            if i < len(entries):
+                rel = getattr(entries[i], "relation", "")
+                side_pts["enemy" if rel == "enemy" else "ally"].append((u, v))
+
+        def explained(u: float, v: float, side: str) -> bool:
+            return any(math.hypot(u - a, v - b) < EXPLAINED_FRAC * D for a, b in side_pts[side])
+
+        cands = [c for c in cands if not explained(c.u, c.v, c.side)]
+        # every alive champion not matched (strongly, for me) in this frame may be an
+        # unexplained icon; who may be LEARNED is decided at the binding (eligibility)
+        unmatched: dict[str, set] = {"ally": set(), "enemy": set()}
         for i, e in enumerate(entries):
             rel = getattr(e, "relation", "")
             if getattr(e, "alias", None) in self._dead:
                 continue
             if i == me:
-                if want_self or not me_ok:
-                    if me_alive:
-                        unmatched["ally"].add(i)
-                continue
-            if i in accepted or now - self._last_ok.get(i, -1e9) < ELIGIBLE_AFTER_S:
-                continue
-            unmatched["enemy" if rel == "enemy" else "ally"].add(i)
+                if me_alive and not me_ok:
+                    unmatched["ally"].add(i)
+            elif i not in accepted:
+                unmatched["enemy" if rel == "enemy" else "ally"].add(i)
+        # a track now explained by an accepted match was that champion: forget it
+        self._tracks = [tr for tr in self._tracks if not explained(tr.u, tr.v, tr.side)]
         self._associate(cands, now, D, unmatched, cam, bgr, R_px, acc_pts)
         self._expire(now)
         # --- decisions ---------------------------------------------------------------
@@ -610,14 +705,19 @@ class IconLearner:
             if tr.dead or tr.t != now or not tr.inter:
                 continue
             if me is not None and me in tr.inter and tr.side == "ally":
-                cue = (len(tr.inter) == 1) + 1.5 * (tr.cam_frac() >= CAM_FRAC) + \
+                single = len(tr.inter) == 1 and tr.hits >= 2 * SELF_HINT_HITS and \
+                    tr.moved >= MOVED_MIN
+                cue = 0.5 * single + 1.5 * (tr.cam_frac() >= CAM_FRAC) + \
                     (tr.self_frac() >= SELF_RING_FRAC)
                 if cue > 0 and tr.hits >= SELF_HINT_HITS:
                     sc = cue + 0.02 * min(tr.hits, 50)
                     if best_self is None or sc > best_self[0]:
                         best_self = (sc, tr)
             self._maybe_bind(tr, now, me, entries, out)
-        if best_self is not None and me is not None and me not in out.register and want_self:
+        if fix is not None and me is not None:
+            out.self_pos = (fix.u, fix.v, 0.6)
+            self._self_seen = (fix.u, fix.v, now)
+        elif best_self is not None and me is not None and want_self:
             tr = best_self[1]
             out.self_pos = (tr.u, tr.v, float(min(0.9, 0.45 + 0.1 * best_self[0])))
             self._self_seen = (tr.u, tr.v, now)
@@ -634,6 +734,31 @@ class IconLearner:
                 if icon is not None:
                     out.register[me] = ("skin", n, icon)
                     self._event(f"official skin {n} guessed from the HUD portrait")
+
+    @staticmethod
+    def _centred(bgr: np.ndarray, acc: tuple[float, float, float], R_px: float,
+                 rings: Any = None) -> tuple[bool, RingCand | None]:
+        """``(False, nearest ring)`` when an ally-side ring is right next to the match but
+        not centred on it (normalized map coordinates), else ``(True, None)``."""
+        H, W = bgr.shape[:2]
+        cx, cy = acc[0] * W, acc[1] * H
+        h = 2.2 * R_px
+        x0, y0 = max(0, int(cx - h)), max(0, int(cy - h))
+        x1, y1 = min(W, int(math.ceil(cx + h))), min(H, int(math.ceil(cy + h)))
+        if x1 - x0 < 2 * R_px or y1 - y0 < 2 * R_px:
+            return True, None
+        win = bgr[y0:y1, x0:x1]
+        best: tuple[float, RingCand] | None = None
+        for c in ring_candidates(win, R_px, rings, fountains=False):
+            if c.side != "ally":
+                continue
+            px, py = c.u * (x1 - x0) + x0, c.v * (y1 - y0) + y0
+            d = math.hypot(px - cx, py - cy)
+            if best is None or d < best[0]:
+                best = (d, RingCand(px / W, py / H, c.side, c.frac, c.frac_self))
+        if best is None or best[0] <= 0.3 * R_px:
+            return True, None
+        return False, best[1] if best[0] <= 2.0 * R_px else None
 
     def _associate(self, cands: list[RingCand], now: float, D: float, unmatched: dict,
                    cam: tuple[float, float] | None, bgr: np.ndarray, R_px: float,
@@ -676,6 +801,8 @@ class IconLearner:
                 tr.cam_hits += 1
             if c.frac_self >= 0.5 * c.frac and c.frac_self > 0.2:
                 tr.self_ring += 1
+            if tr.dead:
+                continue
             um = unmatched.get(c.side, set())
             tr.inter = set(um) if tr.inter is None else (tr.inter & um)
             if not tr.inter:
@@ -683,7 +810,7 @@ class IconLearner:
                 tr.crops.clear()
                 continue
             # crop only an isolated icon (nothing drawn over it)
-            if all(math.hypot(c.u - a, c.v - b) >= 1.15 * D or (a, b) == (c.u, c.v)
+            if all(math.hypot(c.u - a, c.v - b) >= ISOLATED_FRAC * D or (a, b) == (c.u, c.v)
                    for a, b in others_pts):
                 cr = crop_icon(bgr, c.u * W, c.v * H, R_px)
                 if cr is not None:
@@ -697,10 +824,13 @@ class IconLearner:
 
     def _maybe_bind(self, tr: _UTrack, now: float, me: int | None, entries: Sequence[Any],
                     out: StepOut) -> None:
-        if not tr.inter or len(tr.inter) != 1 and not (me in tr.inter and tr.cam_frac() >= CAM_FRAC):
+        if not tr.inter or len(tr.inter) != 1 and not (
+                me in tr.inter and (tr.cam_frac() >= CAM_FRAC or tr.self_frac() >= SELF_RING_FRAC)):
             return
         i = next(iter(tr.inter)) if len(tr.inter) == 1 else me
         is_me = i == me
+        if not is_me and now - self._last_ok.get(i, -1e9) < ELIGIBLE_AFTER_S:
+            return                          # matched by its portrait recently: not a custom skin
         hits = BIND_HITS_SELF if is_me else BIND_HITS_OTHER
         dur = BIND_MIN_S_SELF if is_me else BIND_MIN_S_OTHER
         if tr.hits < hits or now - tr.t0 < dur or len(tr.crops) < MIN_CROPS:
@@ -747,7 +877,7 @@ class IconLearner:
             u, v, margin = acc
             if margin < EMA_MARGIN or lr.source == "skin":
                 continue
-            if any(j != i and math.hypot(u - a, v - b) < 1.15 * D
+            if any(j != i and math.hypot(u - a, v - b) < ISOLATED_FRAC * D
                    for j, (a, b, _m) in accepted.items()):
                 continue
             cr = crop_icon(bgr, u * W, v * H, R_px)

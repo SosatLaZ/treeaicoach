@@ -169,7 +169,7 @@ def test_cs_checkpoint_and_vision_milestone():
     s.tick()
     s.me()["scores"]["creepScore"] = 135               # 135 CS at 15:00 -> 9 CS/min
     out = s.tick(25)
-    assert [p.kind for p in out] == ["cs"] and "9,0 CS par minute" in out[0].text
+    assert [p.kind for p in out] == ["cs"] and "9,0 sbires par minute" in out[0].text
     s.me()["scores"]["wardScore"] = 16.0               # crosses 15
     out = s.tick(60)
     assert [p.kind for p in out] == ["vision"] and "15" in out[0].text

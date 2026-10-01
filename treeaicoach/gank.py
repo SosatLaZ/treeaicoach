@@ -28,6 +28,15 @@ repeated for 12 s). Few alerts, but trustworthy ones:
   towards me (radial velocity + significant distance trend over ~1 s, hysteresis only on
   switching off), or that popped out of the fog inside the warn radius (immediate). DANGER:
   inside the danger radius.
+* **Travel time through the walls.** "Inside the radius" is decided on the estimated time
+  the enemy needs to reach me, not on the straight line: geodesic distance on the walkable
+  mask (:func:`treeaicoach.fog_tracker.shared_reachability`, one distance field from my cell,
+  cached while I stay within 2 cells, computed only when an enemy is within a coarse radius)
+  minus a Flash, divided by the enemy's speed (boots speed, or a faster speed measured by the
+  Kalman filter). WARNING when that ETA <= ``(warn_radius - Flash) / boots speed`` (~7.4 s by
+  default) and the enemy comes towards me, DANGER when <= ``(danger_radius - Flash) / boots
+  speed`` (~3.5 s): identical to the radii in the open, but an enemy behind a wall (his
+  raptors while I am mid) is far. Without the walkable mask, the straight-line radii are used.
 * **Pre-alert** (``cfg.gank_pre_alert``): when the enemy jungler pops out of the fog inside the
   warn radius, "Lee Sin !" right away; the full sentence follows if it keeps coming.
 * **Phrases.** One gank alert per tick, merged: "Lee Sin arrive par la rivière !" (WARNING,
@@ -132,6 +141,13 @@ MIA_MAX_HIDDEN_S = 30.0          # stale disappearances are not announced
 MIA_AFTER_GT = 180.0
 GAME_TIME_EXTRAPOLATION_MAX_S = 3.0
 STATE_MAXLEN = 64                # per-track analyser states kept at most
+# travel time (ETA) through the walls
+ETA_FLASH = 0.027                # a Flash (~400 units) is free distance for the ganker
+ETA_REF_SPEED = 390.0 / 14870.0  # boots speed (normalized / s): the ETA reference speed
+ETA_FAST_FACTOR = 1.15           # a Kalman speed above this x reference is used instead...
+ETA_FAST_MAX_STD = 0.004         # ...when its standard error is below this (/ s)
+ETA_MAX_FACTOR = 1.35            # fastest speed considered (x reference)
+ETA_REFIELD_CELLS = 2            # the distance field from me is recomputed when I moved more
 
 _LANES = ("top", "mid", "bot")
 _LANE_DIRECTION = {"top": "par le haut", "mid": "par le milieu", "bot": "par le bas"}
@@ -202,6 +218,66 @@ class GankState:
     my_role: str | None = None
     threats: frozenset[str] = frozenset()     # enemy track keys behind this tick's gank alert
     roles: tuple[tuple[str, str, str], ...] = ()   # (alias, side, role) of every player
+    etas: tuple[tuple[str, float], ...] = ()  # (enemy track key, seconds to reach me) of close enemies
+
+
+class _PathDistance:
+    """Geodesic distance from me to an enemy on the walkable mask (cached distance field).
+
+    The field is computed from my grid cell up to ``max_d`` and reused while I stay within
+    :data:`ETA_REFIELD_CELLS` cells; my displacement since then is subtracted (never
+    overestimates). ``None`` when the walkable mask is unavailable (straight-line fallback)."""
+
+    def __init__(self) -> None:
+        self._reach: Any = None
+        self._failed = False
+        self._field: Any = None
+        self._cell: tuple[int, int] | None = None
+        self._uv: tuple[float, float] | None = None
+        self._max_d = 0.0
+
+    def reset(self) -> None:
+        self._field, self._cell, self._uv, self._max_d = None, None, None, 0.0
+
+    def _get_reach(self) -> Any:
+        if self._reach is None and not self._failed:
+            try:
+                from treeaicoach.fog_tracker import shared_reachability
+
+                self._reach = shared_reachability()
+            except Exception:
+                log.exception("Walkable mask unavailable: straight-line gank radii")
+                self._failed = True
+        return self._reach
+
+    def distance(self, me: tuple[float, float], enemy: tuple[float, float], max_d: float) -> float | None:
+        reach = self._get_reach()
+        if reach is None:
+            return None
+        try:
+            cell = reach.cell_of(me)
+            if self._field is None or self._cell is None or max_d > self._max_d + 1e-9 \
+                    or max(abs(cell[0] - self._cell[0]), abs(cell[1] - self._cell[1])) > ETA_REFIELD_CELLS:
+                self._field = reach.distance_field(me, max_dist=max_d)
+                self._cell, self._uv, self._max_d = cell, (float(me[0]), float(me[1])), max_d
+            fld = self._field
+            g = fld.shape[0]
+            ex, ey = reach.cell_of(enemy)
+            best = math.inf
+            for rad in (0, 1, 2):            # an icon on a wall edge: nearest reached cell
+                win = fld[max(0, ey - rad):ey + rad + 1, max(0, ex - rad):ex + rad + 1]
+                m = float(win.min()) if win.size else math.inf
+                if math.isfinite(m):
+                    best = m + rad / g
+                    break
+            if not math.isfinite(best):
+                return math.inf
+            moved = dist(me, self._uv) if self._uv is not None else 0.0
+            return max(dist(me, enemy), best - moved)
+        except Exception:
+            log.exception("Gank travel distance failed: straight-line fallback")
+            self._failed = True
+            return None
 
 
 class _Roster:
@@ -278,6 +354,7 @@ class GankAnalyzer:
         self._roles = RoleResolver()
         self._jg_last_side: str | None = None
         self._spotted_t: float | None = None
+        self._paths = _PathDistance()
 
     # -- public API ---------------------------------------------------------------------
 
@@ -297,6 +374,7 @@ class GankAnalyzer:
             self._roles.reset()
             self._jg_last_side = None
             self._spotted_t = None
+            self._paths.reset()
 
     def state(self) -> GankState:
         """Snapshot of the last analysis (thread-safe, immutable)."""
@@ -404,13 +482,16 @@ class GankAnalyzer:
         threats: list[_Threat] = []
         companions: list[_Threat] = []       # coming in too, approach not yet established
         laner_tracks: list[Track] = []
-        pending_anon: list[tuple[Track, _TrackState]] = []
+        pending_anon: list[tuple[Track, _TrackState, float]] = []
         pre_alerts: list[Alert] = []
 
+        coarse = warn * COMPANION_RADIUS_FACTOR * ETA_MAX_FACTOR + ETA_FLASH
+        etas: list[tuple[str, float]] = []
         for tr in enemies:
             st = self._states.get(tr.key)
             if st is None:
                 st = self._states[tr.key] = _TrackState()
+                st.confirm = self._seed_confirm(tr)
             st.seen_t = now
             relation = roster.relation(tr)
             if relation == "ally":                 # identified as one of my allies: never
@@ -440,7 +521,10 @@ class GankAnalyzer:
                         alerts.append(mia)
                 continue
 
-            d = dist(me_pos, pos)
+            d_line = dist(me_pos, pos)
+            d = self._effective_distance(tr, me_pos, pos, d_line, coarse)
+            if d < coarse:
+                etas.append((tr.key, round(max(0.0, d - ETA_FLASH) / ETA_REF_SPEED, 2)))
             self._record_distance(tr, st, dist(me_raw, tr.raw_position() or pos))
             self._confirm(tr, st, relation, ally_pts)
             moving_in = self._update_approach(tr, st, me_pos, my_vel, pos, now)
@@ -449,7 +533,7 @@ class GankAnalyzer:
             popped = self._popped_close(tr, st, d, warn, now)
 
             if is_jungler:
-                spotted = self._jungler_spotted(tr, st, roster, gt, d, warn, my_team, now)
+                spotted = self._jungler_spotted(tr, st, roster, gt, d_line, warn, my_team, now)
                 if spotted is not None:
                     alerts.append(spotted)
                 self._jg_last_side = side_of(pos[0], pos[1])
@@ -457,7 +541,7 @@ class GankAnalyzer:
                 continue
             if relation == "anon":
                 if d < warn:
-                    pending_anon.append((tr, st))   # decided once the lane opponents are known
+                    pending_anon.append((tr, st, d))   # decided once the lane opponents are known
                 continue
             if not self._opt("alert_jungler_approach" if is_jungler else "alert_roam", True):
                 continue
@@ -481,17 +565,16 @@ class GankAnalyzer:
             elif moving_in or st.on_count >= 1:
                 companions.append(threat)           # coming too, a little behind
 
-        for tr, st in pending_anon:
+        for tr, st, d_eff in pending_anon:
             if self._is_laner_ghost(tr, laner_tracks, roster, my_lane, now):
                 lane_opps.add(tr.key)
                 continue
             if not self._opt("alert_roam", True):
                 continue
-            pos = tr.position()
-            if pos is None or dist(me_pos, pos) >= danger or st.confirm < ANON_CONFIRM_FRAMES:
+            if d_eff >= danger or st.confirm < ANON_CONFIRM_FRAMES:
                 continue
             threats.append(_Threat(track_key=tr.key, member=tr.key, name=None, alias=None,
-                                   level=Level.DANGER, d=dist(me_pos, pos), jungler=False,
+                                   level=Level.DANGER, d=d_eff, jungler=False,
                                    direction=None))
 
         if threats:
@@ -507,8 +590,56 @@ class GankAnalyzer:
             approaching=frozenset(approaching), lane_opponents=frozenset(lane_opps),
             jungler_key=jungler_key, my_lane=my_lane,
             my_role=roster.my_role_info.role if roster.my_role_info is not None else None,
-            threats=frozenset(th.track_key for th in threats), roles=self._roles_tuple())
+            threats=frozenset(th.track_key for th in threats), roles=self._roles_tuple(),
+            etas=tuple(sorted(etas, key=lambda x: x[1])))
         return alerts
+
+    # -- travel time ------------------------------------------------------------------------
+
+    def _effective_distance(self, tr: Track, me_pos: tuple[float, float], pos: tuple[float, float],
+                            d_line: float, coarse: float) -> float:
+        """Distance equivalent of the enemy's travel time to me: ``Flash + ETA x boots speed``
+        (= the path length through the walls for an enemy at boots speed). Straight line when
+        the walkable mask is unavailable or the enemy is beyond the coarse radius."""
+        if d_line >= coarse:
+            return d_line
+        geo = self._paths.distance(me_pos, pos, coarse + 0.05)
+        if geo is None:
+            return d_line
+        if not math.isfinite(geo):
+            return max(d_line, coarse)
+        speed = ETA_REF_SPEED
+        try:
+            kv = tr.kf_velocity()
+            ks = math.hypot(kv[0], kv[1])
+            if ks > ETA_FAST_FACTOR * ETA_REF_SPEED and tr.kf_speed_std() < ETA_FAST_MAX_STD:
+                speed = min(ks, ETA_MAX_FACTOR * ETA_REF_SPEED)
+        except Exception:
+            pass
+        eta = max(0.0, geo - ETA_FLASH) / speed
+        return ETA_FLASH + eta * ETA_REF_SPEED if geo > ETA_FLASH else geo
+
+    def eta_thresholds(self) -> tuple[float, float]:
+        """(WARNING, DANGER) travel-time thresholds in seconds for the current settings."""
+        warn, danger = self._radii()
+        return (max(0.0, warn - ETA_FLASH) / ETA_REF_SPEED, max(0.0, danger - ETA_FLASH) / ETA_REF_SPEED)
+
+    @staticmethod
+    def _seed_confirm(tr: Track) -> int:
+        """A track just exposed by the tracker's champion locker already has good observations:
+        count them (as :meth:`_confirm` would have), so the locker adds no latency."""
+        if tr.alias:
+            return 0
+        try:
+            scores = list(tr.recent_scores())[:-1]   # the last one is counted by _confirm
+        except Exception:
+            return 0
+        n = 0
+        for sc in reversed(scores):
+            if (_finite(sc) or 0.0) < ANON_MIN_DET_SCORE:
+                break
+            n += 1
+        return min(n, ANON_CONFIRM_FRAMES - 1)
 
     # -- alert building -------------------------------------------------------------------
 

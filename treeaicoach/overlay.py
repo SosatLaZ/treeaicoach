@@ -21,6 +21,10 @@ separate popup windows of the TreeAI Coach process:
   minimap (shrunk rather than moved towards the centre), never over it. Every window is
   clamped inside the screen, and the screen used for the layout always contains the minimap
   (see :func:`effective_screen`).
+* ward guide in the game view (``state.world``, :mod:`treeaicoach.ward_guide`): at most two
+  small click-through windows ("world0", "world1") around the markers, refreshed at
+  :data:`WORLD_HZ` only while a guide is active, hidden otherwise; never over the minimap or
+  the bottom HUD bar (``overlay_render.place_world_patch``).
 * "move mode" (:meth:`OverlayManager.set_move_mode`): windows stop being click-through, can be
   dragged (``WM_NCHITTEST`` -> ``HTCAPTION``) and report their new position through
   ``on_moved(name, x, y)`` so the UI can save ``cfg.radar_xy`` / ``cfg.hud_xy``.
@@ -49,6 +53,9 @@ log = logging.getLogger(__name__)
 
 RectT = tuple[int, int, int, int]
 
+#: Game-view ward guide windows ("world0", "world1"): refreshed at most this often, only while shown.
+WORLD_HZ = 10.0
+WORLD_WINDOWS = ("world0", "world1")
 #: Refresh rate of the overlay thread (Hz).
 REFRESH_HZ = 12.0
 #: Gap (px) between the radar and the minimap / screen edges.
@@ -997,7 +1004,8 @@ class OverlayManager:
                     pass
             # creation order = z-order among topmost windows: flash below radar / minimap / HUD
             # "toasts": banners at the top-centre (praise / Tab insights), captured like the HUD
-            for name in ("flash", "radar", "minimap", "hud", "toasts"):
+            # "world0" / "world1": small click-through windows of the ward guide in the game view
+            for name in ("flash", "radar", "minimap", "hud", "toasts") + WORLD_WINDOWS:
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved)
             # The minimap layer is captured by default (visible in the user's screenshots):
             # it never draws portraits, so the detector does not re-detect it. Optional
@@ -1050,6 +1058,7 @@ class OverlayManager:
         period = 1.0 / REFRESH_HZ
         last_top = 0.0
         last_draw = 0.0
+        last_world = 0.0
         flash_key: Any = None
         click_through = True
         errors = 0
@@ -1078,6 +1087,9 @@ class OverlayManager:
                     if fast or t0 - last_draw >= 1.0 / CALM_HZ - 1e-3:
                         last_draw = t0
                         flash_key = self._refresh(api, windows, state, cfg, move, custom, flash_key)
+                    if t0 - last_world >= 1.0 / WORLD_HZ - 1e-3:
+                        last_world = t0
+                        self._refresh_world(api, windows, state, cfg, move)
                     if t0 - last_top >= TOPMOST_EVERY_S:
                         last_top = t0
                         for w in windows.values():
@@ -1159,6 +1171,30 @@ class OverlayManager:
 
         x, y, _w, _h = tst.toast_layer_rect(scr, mm)
         win.update(tst.render_toast_layer(views, tst.scale_for_screen(scr)), x, y)
+
+    def _refresh_world(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any,
+                       move: bool) -> None:
+        """Ward guide markers in the game view (``state.world``): one small window per marker, hidden
+        when there is none (nothing drawn / no CPU while no guide is active)."""
+        wins = [windows[n] for n in WORLD_WINDOWS if n in windows]
+        markers = list(getattr(state, "world", None) or [])
+        if not markers or move or not getattr(cfg, "ward_world", True):
+            for w in wins:
+                w.hide()
+            return
+        from treeaicoach import camera_proj as cp
+        from treeaicoach import overlay_render as orr
+
+        scr, mm = self._screen_for(api, state)
+        game = as_rect(getattr(state, "screen_rect", None)) or scr
+        avoid = [cp.hud_bar_rect(game)] + ([mm] if mm is not None else [])
+        patches = orr.render_world_guides(markers, game, avoid=avoid)
+        for i, w in enumerate(wins):
+            if i < len(patches):
+                img, x, y = patches[i]
+                w.update(img, x, y)
+            else:
+                w.hide()
 
     def _refresh(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any, move: bool,
                  custom: dict[str, tuple[int, int]], flash_key: Any) -> Any:

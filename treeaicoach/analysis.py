@@ -1831,8 +1831,12 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
 # ======================================================================================
 # public entry point
 # ======================================================================================
-def analyze_game(record: Any) -> dict[str, Any]:
-    """Analyse a game record (see module docstring). Pure, never raises."""
+def analyze_game(record: Any, truth: Any = None) -> dict[str, Any]:
+    """Analyse a game record (see module docstring). Pure, never raises.
+
+    ``truth``: optional League Client ground truth of the same game (``ground_truth.build_truth``);
+    when given, ``result["truth"]`` holds ``ground_truth.analyze_truth(record, truth)`` (exact
+    deaths, true enemy-jungler path, lane gold diffs, reliability of TreeAI's alerts)."""
     errors: list[str] = []
     out: dict[str, Any] = {"schema": 1, "ok": False, "errors": errors}
     try:
@@ -1887,6 +1891,12 @@ def analyze_game(record: Any) -> dict[str, Any]:
         "tip_items": tip_items,
         **extra,
     })
+    if truth is not None:
+        def _truth() -> dict[str, Any]:
+            from treeaicoach.ground_truth import analyze_truth
+
+            return analyze_truth(record, truth)
+        out["truth"] = section("truth", _truth, {"available": False})
     out["spoken_summary"] = spoken_summary(out)
     return out
 

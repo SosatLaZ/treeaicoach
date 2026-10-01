@@ -1,0 +1,110 @@
+{
+ "accountId": 1001,
+ "platformId": "EUW1",
+ "games": {
+  "gameBeginDate": "",
+  "gameCount": 1,
+  "gameEndDate": "",
+  "gameIndexBegin": 0,
+  "gameIndexEnd": 1,
+  "games": [
+   {
+    "gameId": 7212345678,
+    "gameCreation": 1789237765000,
+    "gameCreationDate": "2026-09-12T18:29:25Z",
+    "gameDuration": 1690,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "gameVersion": "16.19.712.4321",
+    "mapId": 11,
+    "platformId": "EUW1",
+    "queueId": 420,
+    "seasonId": 16,
+    "endOfGameResult": "GameComplete",
+    "gameModeMutators": [],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 86,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "highestAchievedSeasonTier": "GOLD",
+      "stats": {
+       "participantId": 1,
+       "win": true,
+       "kills": 0,
+       "deaths": 0,
+       "assists": 0,
+       "champLevel": 16,
+       "goldEarned": 11000,
+       "totalMinionsKilled": 180,
+       "neutralMinionsKilled": 12,
+       "visionScore": 20,
+       "item0": 3078,
+       "item1": 3047,
+       "item2": 0,
+       "item3": 0,
+       "item4": 0,
+       "item5": 0,
+       "item6": 3340
+      },
+      "timeline": {
+       "participantId": 1,
+       "lane": "TOP",
+       "role": "SOLO",
+       "creepsPerMinDeltas": {
+        "0-10": 6.1
+       },
+       "goldPerMinDeltas": {
+        "0-10": 380.0
+       },
+       "xpPerMinDeltas": {
+        "0-10": 420.0
+       },
+       "csDiffPerMinDeltas": {},
+       "xpDiffPerMinDeltas": {},
+       "damageTakenDiffPerMinDeltas": {},
+       "damageTakenPerMinDeltas": {}
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "accountId": 1001,
+       "currentAccountId": 1001,
+       "platformId": "EUW1",
+       "summonerId": 5001,
+       "puuid": "puuid-01-0000",
+       "gameName": "Sylvain",
+       "tagLine": "EUW",
+       "summonerName": "Sylvain",
+       "profileIcon": 29,
+       "matchHistoryUri": ""
+      }
+     }
+    ],
+    "teams": [
+     {
+      "teamId": 100,
+      "win": "Win",
+      "towerKills": 7,
+      "dragonKills": 3,
+      "baronKills": 1,
+      "bans": []
+     },
+     {
+      "teamId": 200,
+      "win": "Fail",
+      "towerKills": 3,
+      "dragonKills": 1,
+      "baronKills": 0,
+      "bans": []
+     }
+    ]
+   }
+  ]
+ }
+}

@@ -91,11 +91,11 @@ PHRASES: dict[str, tuple[str, ...]] = {
     "structure": ("{obj} détruite, bien joué !", "Bien joué pour {obj_la} !"),
     "gank_dodge": ("Bien esquivé ce gank !", "Gank évité, bien vu !", "Bien réagi, tu as évité le gank."),
     "escape": ("Belle fuite à bas PV !", "Bien survécu, c'était chaud !", "Sorti de là à bas PV, bien joué !"),
-    "cs": ("{cspm} CS par minute, propre !", "Super farm : {cspm} CS par minute.",
-           "{cspm} CS par minute, continue comme ça !"),
+    "cs": ("{cspm} sbires par minute, propre !", "Super : {cspm} sbires par minute.",
+           "{cspm} sbires par minute, continue comme ça !"),
     "vision": ("Score de vision à {n}, excellent !", "Vision au top : {n} de score.",
                "{n} de score de vision, bien joué !"),
-    "lead": ("Tu domines ta lane : {gold} sur {name}.", "{gold} d'avance sur {name}, continue !",
+    "lead": ("Tu domines ta voie : {gold} sur {name}.", "{gold} d'avance sur {name}, continue !",
              "Belle avance sur {name} : {gold}."),
     "back": ("Retour propre, tout ton or est dépensé.", "Bon retour en base, rien de gaspillé.",
              "Achat efficace, bien joué."),
@@ -390,7 +390,7 @@ class PraiseCoach:
             if cspm >= target:
                 txt = fmt_dec(round(cspm, 1))
                 self._add("cs", f"cs:{int(cp)}", self._phrase("cs", cspm=txt),
-                          f"{txt} CS/min à {int(cp // 60)} min", t)
+                          f"{txt} sbires/min à {int(cp // 60)} min", t)
 
     def _vision(self, t: float, me: Any, role: str | None) -> None:
         steps = VISION_STEPS_SUPPORT if role == "UTILITY" else VISION_STEPS
@@ -424,7 +424,7 @@ class PraiseCoach:
             self._lead_tier = tier
             gold = fmt_gold(lead)
             self._add("lead", f"lead:{tier}", self._phrase("lead", gold=gold, name=m.enemy),
-                      f"{gold} et {m.cs_diff:+d} CS sur {m.enemy}", t, m.enemy_alias)
+                      f"{gold} et {m.cs_diff:+d} sbires sur {m.enemy}", t, m.enemy_alias)
 
     def _shopping(self, t: float, game: Any, me: Any) -> None:
         ig = items_gold(me.items)

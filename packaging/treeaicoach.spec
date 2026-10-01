@@ -53,6 +53,9 @@ datas = [
     (ICON_PNG, "packaging"),                        #   paths.package_dir().parent / "packaging" / "icon.*"
 ]
 datas += collect_data_files("customtkinter")        # themes (.json) and fonts
+_NOTICES = os.path.join(ROOT, "THIRD_PARTY_NOTICES.md")   # MIT notices of adapted code (lcu.py)
+if os.path.isfile(_NOTICES):
+    datas.append((_NOTICES, "."))
 
 binaries = collect_dynamic_libs("onnxruntime")      # onnxruntime*.dll (the contrib hook does it too)
 # Bundle the Microsoft C++ runtime (msvcp140*.dll, concrt140.dll) when it sits next to python.exe

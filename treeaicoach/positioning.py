@@ -297,7 +297,7 @@ class PositionCoach:
                 if t - self._out_since >= OUT_OF_LANE_S:
                     target = _lane_point(my_lane, team)
                     cands.append(PositionAdvice("pos:lane", "lane", f"Phase de voie : retourne {SIDE_FR[my_lane]}, "
-                                                "tu perds de l'or et de l'XP.", f"RETOURNE {my_lane.upper()}",
+                                                "tu perds de l'or et de l'expérience.", f"RETOURNE {my_lane.upper()}",
                                                 target, False, 40, t))
             else:
                 self._out_since = None

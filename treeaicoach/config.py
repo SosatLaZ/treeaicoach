@@ -160,6 +160,11 @@ BOOL_FIELDS = BOOL_FIELDS + ("ai_speak", "win_prob_hud")
 UPDATE_TEXT_FIELDS["ai_api_key"] = 512
 UPDATE_TEXT_FIELDS["ai_model"] = 128
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ai",)     # "Demander à l'IA" (lowest priority on a clash)
+# ward guide (ward_guide.py): minimap ring + game-view marker of the next ward spot, hotkey F7
+BOOL_FIELDS = BOOL_FIELDS + ("ward_guide", "ward_world", "ward_sound")
+HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ward",)
+# League Client (lcu.py): post-game match timeline (ground truth for the report and the alert scoring)
+BOOL_FIELDS = BOOL_FIELDS + ("lcu_enabled",)
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -306,6 +311,13 @@ class Config:
     # "mode annonceur" (hype.py): sobre = nothing spoken, coach = win-probability swings, caster = + hype lines
     caster_style: str = "coach"
     win_prob_hud: bool = True        # show the live win probability (HUD line / dashboard)
+    # ward guide (ward_guide.py): where to ward, on the minimap AND in the game view (visual only)
+    ward_guide: bool = True          # the whole feature (off: the plain minimap ward rings of tactics.py)
+    ward_world: bool = True          # ground marker / edge arrow in the game view
+    ward_sound: bool = False         # one short system sound when a guide starts
+    hotkey_ward: str = "F7"          # "Où poser une balise ?" (show the best spots now), "" = disabled
+    # League Client local API (lcu.py), read-only, after the game only: true positions / gold for the report
+    lcu_enabled: bool = True
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""

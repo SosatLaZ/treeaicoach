@@ -87,7 +87,7 @@ TEXT_TOAST: dict[str, tuple[str, str]] = {
     "macro_tip": ("insight", "CONSEIL"), "recall_gold": ("insight", "RETOUR EN BASE"),
     "control_ward": ("insight", "BALISE"), "objective_soon": ("warning", "OBJECTIF"),
     "death_recap": ("danger", "TA MORT"), "jungler_spotted": ("warning", "JUNGLER"),
-    "laner_mia": ("warning", "MIA"), "macro_call": ("insight", "CONSEIL"),
+    "laner_mia": ("warning", "DISPARU"), "macro_call": ("insight", "CONSEIL"),
 }
 
 

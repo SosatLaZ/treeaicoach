@@ -44,7 +44,7 @@ def test_recall_reminder_threshold_and_repeat():
     assert kinds(a) == [AlertKind.RECALL_GOLD]
     assert a[0].level == Level.INFO and a[0].key == "recall_gold" and a[0].t == 301.0
     assert a[0].text == "Tu as 1300 pièces d'or, pense à rentrer."
-    assert r.hint() == "1 340 PO — pense à rentrer"
+    assert r.hint() == "Rentre : 1 340 or"
     for t in np.arange(302.0, 391.0, 0.5):                       # at most every 90 s
         assert step(r, float(t), gold=1500) == []
     assert kinds(step(r, 391.0, gold=1500)) == [AlertKind.RECALL_GOLD]

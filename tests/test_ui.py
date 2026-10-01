@@ -142,6 +142,21 @@ class FakeEngine:
     def toggle_overlay(self) -> None:
         self._count("toggle_overlay")
 
+    # dashboard coach strip (engine.play_gauge / top_tip / detected_role / ai_budget_text)
+    def play_gauge(self) -> Any:
+        from treeaicoach.coach import Gauge
+
+        return Gauge(1, "+2 niveaux sur Darius", 0.0) if self.in_game else None
+
+    def top_tip(self) -> tuple[str, str] | None:
+        return ("Va taper Darius : tu as 2 niveaux d'avance", "go") if self.in_game else None
+
+    def detected_role(self) -> tuple[str | None, str | None]:
+        return "MID", "Rôle détecté : MID (échange de voie)"
+
+    def ai_budget_text(self) -> str:
+        return "IA 2/5"
+
 
 class FakeVoice:
     backend = "sapi"
@@ -363,6 +378,11 @@ def test_app_pages_and_settings(home: Path, tmp_path: Path) -> None:
         assert app.threat_lbl.cget("text") in ("SÛR", "ATTENTION", "DANGER")
         assert any(s["sig"] and s["sig"][0] for s in app.enemy_slots)
         assert len(app._journal) >= 1                        # alerts collected from the overlay state
+        # coach strip: gauge, detected role + swap, top tip, AI counter
+        assert app.coach_gauge_lbl.cget("text") == "PLUS FORT ▲"
+        assert app.coach_role_lbl.cget("text").startswith("Rôle : MID · échange de voie")
+        assert app.coach_tip_lbl.cget("text").startswith("Va taper Darius")
+        assert app.coach_ai_lbl.cget("text") == "IA 2/5"
         for key, _label, _icon in ui.PAGES:
             app.show_page(key)
             _pump(app, 0.1)

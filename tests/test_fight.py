@@ -91,7 +91,7 @@ def test_fight_detection_engage_call_and_summary():
     assert any(u.started for u in ups)
     calls = [u.new_call for u in ups if u.new_call]
     assert calls == ["engage"]                        # ONE call, not one per tick
-    assert tr.state().banner.startswith("FIGHT")
+    assert tr.state().banner.startswith("ATTAQUE")
     # fight over (enemies gone) with 2 kills for us -> one summary line
     kills = [{"EventName": "ChampionKill", "EventTime": 901.0, "KillerName": "Jinx#1", "VictimName": "Ezreal#1"},
              {"EventName": "ChampionKill", "EventTime": 902.0, "KillerName": "Vi#1", "VictimName": "Leona#1"}]

@@ -354,7 +354,7 @@ PRESET_LABELS: tuple[tuple[str, str], ...] = (("discret", "Discret"), ("equilibr
 PRESET_HELP: dict[str, str] = {
     "discret": "Seulement les vrais dangers, overlay minimal, aucune annonce d'information.",
     "equilibre": "Réglages recommandés : alertes de gank, minuteurs et rappels utiles.",
-    "complet": "Tout est annoncé et affiché (MIA, zones, flèches, fantômes, conseils).",
+    "complet": "Tout est annoncé et affiché (ennemis disparus, zones, flèches, fantômes, conseils).",
 }
 PRESETS: dict[str, dict[str, Any]] = {
     "discret": {
@@ -647,7 +647,7 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 CHANGELOG_VERSION = "1.5"
 CHANGELOG: tuple[tuple[str, str], ...] = (
     ("Nouvelle interface", "Bandeau de partie avec chrono et jauge de menace, cartes des champions avec rôle "
-                           "et minuteur MIA, alliés et face-à-face de ta voie."),
+                           "et minuteur des ennemis disparus, alliés et face-à-face de ta voie."),
     ("Préréglages", "Discret, Équilibré ou Complet en un clic (alertes et overlay)."),
     ("Calme quand tu veux", "Silence pendant les premières secondes de la partie, heures calmes et "
                             "annonces d'information désactivables (les dangers sont toujours annoncés)."),

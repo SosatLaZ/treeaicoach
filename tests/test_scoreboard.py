@@ -60,7 +60,7 @@ def test_fixture_matchups_and_summary(raw):
     assert s.team_gold_diff == s.ally_gold - s.enemy_gold
     lines = s.lines()
     assert lines[0].startswith("TOP Garen vs Darius") and "CS" in lines[0] and len(lines) == 6
-    assert s.hud_line().startswith("Ta lane : -14 CS")
+    assert s.hud_line().startswith("Ta voie : -14 sbires")
     d = s.to_dict()
     json.dumps(d)                                          # JSON-ready
     assert d["matchups"][0]["role"] == "TOP" and d["lines"] == lines
