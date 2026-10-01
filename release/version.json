@@ -1,6 +1,6 @@
 {
-  "version": "1.6.0",
-  "sha256": "c40f2cd28338b1662329275481c64af7a5f2f450e3fa05bd27ca0682a4ec0ce6",
-  "size": 81642399,
-  "notes": "Voix naturelle, nouveau design, carte allégée, posture prudent/agressif, conseils écrits, conseils d'achat, IA branchable, anti-spam."
+  "version": "1.6.1",
+  "sha256": "e786916151f39ad91a7e7d9c68dcfea3d1508851648ba83f25e63598131d6b56",
+  "size": 81720050,
+  "notes": "Correctif détection (version propre), conseils écrits branchés, posture prudent/agressif, carte allégée, anti-spam."
 }

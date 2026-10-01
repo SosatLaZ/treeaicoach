@@ -5,8 +5,8 @@
 # (tests/test_packaging.py checks it).
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 6, 0, 0),
-    prodvers=(1, 6, 0, 0),
+    filevers=(1, 6, 1, 0),
+    prodvers=(1, 6, 1, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -22,12 +22,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'TreeAI Coach'),
             StringStruct('FileDescription', 'TreeAI Coach — coach vocal anti-gank pour League of Legends'),
-            StringStruct('FileVersion', '1.6.0.0'),
+            StringStruct('FileVersion', '1.6.1.0'),
             StringStruct('InternalName', 'TreeAICoach'),
             StringStruct('LegalCopyright', '© 2026 TreeAI Coach contributors — licence MIT'),
             StringStruct('OriginalFilename', 'TreeAICoach.exe'),
             StringStruct('ProductName', 'TreeAI Coach'),
-            StringStruct('ProductVersion', '1.6.0.0'),
+            StringStruct('ProductVersion', '1.6.1.0'),
           ]
         )
       ]
