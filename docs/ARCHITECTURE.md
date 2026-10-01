@@ -1275,3 +1275,34 @@ chevauchements avec l'UI du jeu sur les captures réelles, 50 → 0 entre nos é
 * Radar (mode « radar », hérité) : sa position ne change pas (au-dessus de la minimap, donc sur les
   portraits / votes) ; il est un obstacle pour les autres éléments.
 
+
+## 23. Coups décisifs (`game_changers.py`) : bibliothèque classée, voix, achats ennemis, juge de VALEUR
+
+Retour réel (« les conseils sont nuls ») : la carte affichait des généralités (balise ×4 en 3 min,
+« 4,5 sbires/min », « Achète Couperet noir » avec 900 PO). Désormais :
+
+* **Bibliothèque** (`game_changers.RULES`, branchée dans `macro.evaluate` : même planificateur, donc
+  carte = bannière = flèche) : `gc_level` (niveau 2/3/6 atteint avant / après l'adversaire de voie,
+  fenêtre jusqu'à ce qu'il rattrape ; ligne d'ultime par champion `ULT`), `gc_jungler_far` (jungler vu
+  ≤ 10 s de l'autre côté → « Joue agressif : Lee Sin est en bas »), `gc_jungler_unseen` (invisible ≥ 30 s
+  + vague poussée, pas si l'or appelle un retour), `gc_baron_setup` (≥ 20:00, +2,5k d'or), `gc_fed_defense`
+  (dans la boutique, ennemi 4+/… : composant d'armure / RM), `gc_facecheck`, `gc_enemy_buys`
+  (`EnemyBuys` : achats publics des ennemis ; effets via `itemization.item_effects` : 1er gros objet de
+  mon adversaire → recule, stase → « Fais utiliser son Sablier… avant ton combo » (jamais de minuteur),
+  anti-soin contre mes soins, 2+ ennemis résistants → pénétration, ennemi nourri défensif → frapper le
+  plus fragile).
+* **Voix** (`voice_for`, clés `gc:big:` / `gc:lane:`) : phrases statiques ≤ 38 caractères pré-générées
+  (`voice_phrases` → `tts_neural.static_phrases`) ; `big` (objectif maintenant, Baron) débutant +
+  intermédiaire, `lane` débutant ; abandonnées en combat / concentration / mort (voix seule), budget
+  2/min (écart 20 s pour `gc:`), un sujet ≤ 1 fois / 60 s (`VOICE_TOPIC_S`).
+* **Cohérence** : un appel ne démarre que si la carte est stable depuis 5 s (`CARD_SETTLE_S`, sauf
+  urgences / coups de génie) et ne contredit pas une ligne apparue < 10 s ; il prend la carte dès son
+  début ; la ligne d'objectif ne passe plus devant l'appel actif ; un compte à rebours n'est jamais figé ;
+  `phase:mid` muet si un objectif arrive ; « COMBAT » / « COMBAT PERDU » (jamais « GANK ») en 5v5 ;
+  rappel en cours (`engine.note_recall`) : « Annule ton rappel : Lux peut l'interrompre » ou rien ;
+  sous ma tour : « Reste sous ta tour », jamais « Recule vers ta tour ».
+* **Juge** (`tools/ux_replay.py`, 17 scénarios × 4 niveaux) : règles de VALEUR `valeur:moment-manqué`,
+  `voix:moment-manqué`, `valeur:générique`, `valeur:statistique`, `voix:budget`, `voix:sujet-répété`,
+  `voix:longue`, `incohérence:carte-bandeau`, `état:objectif-périmé`, `valeur:leçon-mort`,
+  `état:recule-pendant-rappel` ; scénarios `jungler_bot`, `laner_recall`, `baron_3v0`, `fed_enemy`,
+  `recall_tower`, `enemy_buys`. Tests : `tests/test_game_changers.py`.

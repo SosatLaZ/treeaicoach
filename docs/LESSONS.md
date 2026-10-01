@@ -48,3 +48,9 @@ Hard rules distilled from real user feedback. Each one cost a bad release.
     bar, minimap buttons, kill feed, chat, death recap...): one consistent slot per element, sized
     for its largest content so nothing jumps, never two of our elements on top of each other. Check
     any placement change with `tools/layout_audit.py` on the real screenshots (before / after).
+19. **Advice must change the next 10 seconds.** Generic lines ("pose une balise", "farme", stats like
+    "4,5 sbires/min") are dropped for beginners; the card belongs to the situational GAME CHANGER
+    (`game_changers.py`: level race, jungler seen / unseen, opponent gone -> plates, 3 dead -> Baron,
+    enemy buys, recall in danger) with its time window. Card, banner and voice say the SAME call; the
+    voice never speaks a call the card does not show. `tools/ux_replay.py` judges VALUE (missed
+    moments, generic lines in a key moment, voice budget, stale countdowns) - keep it at 0.
