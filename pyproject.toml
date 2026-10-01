@@ -1,6 +1,6 @@
 [project]
 name = "treeaicoach"
-version = "2.2.0"
+version = "2.2.1"
 description = "Assistant vocal anti-gank pour League of Legends (lecture d'écran de la minimap + Live Client Data API)"
 requires-python = ">=3.10"
 readme = "README.md"

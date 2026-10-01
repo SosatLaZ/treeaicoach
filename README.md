@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.2.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="56"></a>
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.2.1-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="56"></a>
 </p>
 
 <p align="center">
@@ -124,19 +124,25 @@ Ses fenêtres d'overlay sont de simples fenêtres Windows transparentes, posées
   applications qui suivent les ultimes et les temps de recharge des ennemis sont **interdites**. Riot peut juger à tout
   moment qu'un outil donne un avantage injuste.
 * La **zone du jungler** est la fonction **la plus sensible** : même si elle n'utilise que ce que tu as vu à l'écran,
-  elle estime la zone où se trouve un ennemi invisible. Tu peux la **désactiver** : onglet **Overlay** →
-  **Cercle du jungler** → **Off**. Si tu veux être le plus prudent possible, désactive-la.
+  elle estime la zone où se trouve un ennemi invisible. Tu peux la **désactiver** : **Réglages** → **Affichage** →
+  **Zone des ennemis cachés** → **Aucun** (ou le **Mode sûr** de la barre de gauche). Si tu veux être le plus prudent
+  possible, désactive-la.
 * **Tu utilises TreeAI Coach à tes propres risques**, sans aucune garantie (voir la [licence](LICENSE)).
 
 ## ⚙️ Réglages
 
-| Onglet | Ce que tu peux régler |
+Toujours à un clic, dans la barre de gauche : **Voix**, **Overlay**, **Mode sûr** et **ton niveau**
+(Débutant … Expert : plus tu es expérimenté, moins le coach en dit).
+
+| Page / onglet | Ce que tu y trouves |
 | --- | --- |
-| **Tableau de bord** | Démarrer / arrêter l'analyse, tester la voix, mode démo, calibrer la minimap |
-| **Alertes & voix** | Chaque type d'alerte, **sensibilité** (taille de la zone d'alerte), voix, vitesse, volume, bip de danger, raccourcis |
-| **Overlay** | Carte compacte (mode détaillé : maintenir F6), marques sur la minimap ou radar, flash de danger, **cercle du jungler** (Jungler / Tous / Off), badges des coups, position et taille des fenêtres (« Déplacer les fenêtres ») |
+| **En jeu** | L'état en une ligne (avec le bouton qui corrige un problème), Démarrer / Arrêter, tester la voix et l'overlay, mode démo ; avant la partie : ta dernière partie (rapport, replay), ton objectif, le panneau « Système » ; en partie : ennemis, radar, journal |
 | **Analyses** | Onglets **Parties** (historique, rapports), **Progrès** et **Replay** |
-| **Réglages** | Minimap automatique ou manuelle, images par seconde, détecteur, **lancer avec Windows**, conseils IA, mises à jour, journaux, réinitialisation |
+| **Réglages › Général** | Démarrage (avec Windows), rapport d'après-partie, client LoL, taille de l'interface |
+| **Réglages › Affichage** | Ce que tu vois en jeu, avec un aperçu : overlay, minuteurs, **zone des ennemis cachés** (Jungler / Tous / Aucun), trajets du jungler (essai), panneau (mode détaillé : maintenir F6), flash de danger, coups notés, « Déplacer » |
+| **Réglages › Voix** | Ce que tu entends : quantité de voix, **bip et/ou voix** pour un danger, chaque alerte de gank, **sensibilité**, rappels, moteur de voix, vitesse, volume |
+| **Réglages › Détection** | Minimap automatique ou manuelle (calibrer), images par seconde, détecteur |
+| **Réglages › IA, Mises à jour, Avancé** | Conseils IA facultatifs ; mises à jour (lien direct en cas d'échec) ; touches en jeu, performance, diagnostic, journaux, réinitialisation |
 
 Tes réglages, journaux et rapports sont rangés dans **`%APPDATA%\TreeAICoach`**
 (copie ce chemin dans la barre d'adresse de l'Explorateur de fichiers).
@@ -146,14 +152,14 @@ Tes réglages, journaux et rapports sont rangés dans **`%APPDATA%\TreeAICoach`*
 | Problème | Solution |
 | --- | --- |
 | **Capture noire** / « passe en mode Sans bordure » | Dans LoL : `Échap` → **Vidéo** → **Mode d'affichage : Sans bordure**. |
-| **Pas de voix** | Installe la voix française de Windows : **Paramètres > Heure et langue > Voix** → *Ajouter des voix* → **Français (France)**. Choisis-la ensuite dans **Alertes & voix** puis clique sur **Tester la voix**. Vérifie aussi que la voix n'est pas coupée (**F10**). |
-| **Minimap non trouvée** | Tableau de bord → **Calibrer la minimap** : trace un carré autour de ta minimap. Si ta minimap est à gauche, change le côté dans **Réglages**. |
+| **Pas de voix** | Installe la voix française de Windows : **Paramètres > Heure et langue > Voix** → *Ajouter des voix* → **Français (France)**. Choisis-la ensuite dans **Réglages › Voix** puis clique sur **Tester la voix**. Vérifie aussi que la voix n'est pas coupée (**F10**). |
+| **Minimap non trouvée** | Le bouton **Calibrer** apparaît sur **En jeu** : trace un carré autour de ta minimap. Si ta minimap est à gauche, change le côté dans **Réglages › Détection**. |
 | **L'app ne voit pas la partie** | L'API de Riot ne répond qu'une fois la partie commencée (pas pendant l'écran de chargement). Seule la Faille de l'invocateur est prise en charge. |
-| **Overlay invisible** | Vérifie le mode **Sans bordure**, l'onglet **Overlay**, et appuie sur **F11**. |
+| **Overlay invisible** | Vérifie le mode **Sans bordure** et l'interrupteur **Overlay** de la barre de gauche (ou **F11** en jeu), puis **Tester l'overlay**. |
 | **Antivirus : faux positif** | Les exécutables non signés créés avec PyInstaller sont parfois signalés à tort. Télécharge l'exe **uniquement** depuis la page officielle des Releases, compare son SHA-256, puis ajoute une exception dans ton antivirus. |
 | **Démarrage un peu lent** | Normal : l'exe se décompresse en quelques secondes au lancement. |
 | **Alertes fausses / détection bizarre** | Pendant la partie, appuie sur **Ctrl+F8** : un diagnostic de 60 s est enregistré (dossier ouvert à la fin). Joins le `.zip` à ton signalement. |
-| **Autre problème** | Réglages → **Ouvrir les journaux**, et joins le dernier fichier à ton signalement dans les [Issues](https://github.com/SosatLaZ/treeaicoach/issues). |
+| **Autre problème** | **Réglages › Avancé** → **Journaux**, et joins le dernier fichier à ton signalement dans les [Issues](https://github.com/SosatLaZ/treeaicoach/issues). |
 
 ## 👩‍💻 Pour les développeurs
 
@@ -200,7 +206,7 @@ py -3.11 -m venv .venv
 
 * **Publier** : chaque push sur la branche principale (ou sur une branche `claude…`) met à jour la pré-version
   « latest » ; un tag `vX.Y.Z` identique à `treeaicoach.__version__` crée une release stable :
-  `git tag v2.2.0` puis `git push origin v2.0.0`. Le dossier `release/` ne contient que l'exe courant,
+  `git tag v2.2.1` puis `git push origin v2.0.0`. Le dossier `release/` ne contient que l'exe courant,
   `version.json` (lu par la mise à jour intégrée) et `SHA256.txt`.
 
 ## ⚖️ Mentions légales

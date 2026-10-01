@@ -1,6 +1,6 @@
 {
-  "version": "2.2.0",
-  "sha256": "adb582bb21b650a6e4f154902d8609c2a12adb18c4639d20ac7e6713b6254116",
-  "size": 81958515,
-  "notes": "2.2 : timers sur la minimap (buff Baron / Ancien restant, ennemis morts « 3 morts · 18 s », réapparition des objectifs qui te concernent), cercles fins de retour sur les ennemis visibles, mode économie d'énergie Windows désactivé (fini les saccades), détection plus précise sur les champions empilés, panneau en jeu épuré."
+  "version": "2.2.1",
+  "sha256": "d102db288a0bf1eac02f8abff107c0e62be2be36d71e071f840ed638c6de5521",
+  "size": 81963421,
+  "notes": "2.2.1 : conseils corrigés (une seule consigne de balise au bon moment, achats que tu peux vraiment payer, plus de lignes de statistiques inutiles, plus de « pousse » quand tu perds ta voie)."
 }
