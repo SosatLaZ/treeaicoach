@@ -63,6 +63,8 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "overlay_mode": ("minimap", "radar", "off"),
     "fog_mode": ("jungler", "all", "off"),
     "voice_engine": ("auto", "neural", "onecore", "sapi"),
+    # v2 voice policy (voice_policy.py): minimal = ganks, objectives at 60 s, stance, big plays only
+    "voice_level": ("minimal", "normal", "bavard"),
 }
 BOOL_FIELDS: tuple[str, ...] = (
     "beep_on_danger",
@@ -235,6 +237,7 @@ class Config:
     text_tips: bool = True               # rotating written tips in the HUD (never spoken)
     tip_toasts: bool = False             # ... also as a small toast
     stance_voice: bool = True            # speak the stance (PRUDENT / AGRESSIF) when it changes
+    voice_level: str = "minimal"         # "minimal" | "normal" | "bavard" (the rest is written: HUD + toasts)
     fog_mode: str = "jungler"       # "jungler" | "all" | "off"
     fog_max_s: float = 60.0         # 10..180
     hotkey_mute: str = "F10"

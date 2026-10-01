@@ -319,7 +319,7 @@ class PraiseCoach:
                     if dtype.lower() == "elder":
                         obj, obj_le, obj_du = "Dragon ancestral", "le dragon ancestral", "du dragon ancestral"
                 if _truthy(e.get("Stolen")):
-                    self._add("steal", f"obj:{e.get('EventID')}", self._phrase("steal", obj_le=obj_le, obj_du=obj_du),
+                    self._add("steal", f"steal:{e.get('EventID')}", self._phrase("steal", obj_le=obj_le, obj_du=obj_du),
                               f"{obj} volé !", t, me.champion_alias)
                 else:
                     self._add("objective", f"obj:{e.get('EventID')}",

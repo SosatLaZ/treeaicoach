@@ -335,6 +335,19 @@ class MapCoach:
         with self._lock:
             return self._insights[0] if self._insights else None
 
+    def insight_items(self) -> list[tuple[int, str, str]]:
+        """``(priority, text, category)`` of the live insights, most relevant first; category
+        ``"objective"`` (timer lines, already on the HUD objectives row) or ``"live"``."""
+        with self._lock:
+            return list(self._insight_items)
+
+    def facts(self) -> dict[str, Any]:
+        """What the coach knows right now (for :class:`StanceAdvisor` / :mod:`treeaicoach.tips`):
+        ``gt, dead, safe, my_role, role_lane, my_lane, in_base, jungler{...}, missing, numbers,
+        wave, opponents[...], objectives[...]``. ``{}`` outside a game."""
+        with self._lock:
+            return dict(self._facts)
+
     def pressure(self) -> dict[str, Any] | None:
         """Visible enemy team pressure: ``{"visible", "centroid", "side", "grouped"}`` (None in safe mode)."""
         with self._lock:
@@ -369,6 +382,8 @@ class MapCoach:
         self._ward_change_gt: float | None = None
         self._level6_done = False
         self._insights: list[str] = []
+        self._insight_items: list[tuple[int, str, str]] = []
+        self._facts: dict[str, Any] = {}
         self._pressure: dict[str, Any] | None = None
         self._said: list[tuple[float, str, str]] = []
         self._roles: Any = None
@@ -516,7 +531,7 @@ class MapCoach:
             self._clear()                                   # clock went back: new timeline
         self._last_t = now
         if game is None or getattr(game, "me", None) is None or not bool(getattr(game, "is_summoners_rift", False)):
-            self._insights, self._pressure = [], None
+            self._insights, self._pressure, self._insight_items, self._facts = [], None, [], {}
             return []
         gt_now = self._game_time(game, now)
         if self._last_gt is not None and gt_now < self._last_gt - 5.0:
@@ -529,6 +544,11 @@ class MapCoach:
         self._track_personal(ctx)
         candidates = self._candidates(ctx)
         self._insights = self._build_insights(ctx)
+        try:
+            self._facts = self._make_facts(ctx)
+        except Exception:
+            log.debug("MapCoach facts failed", exc_info=True)
+            self._facts = {}
         lvl = int(_finite(threat) or 0)
         if lvl >= Level.WARNING:
             self._threat_t = now
@@ -1177,6 +1197,48 @@ class MapCoach:
             else:
                 out.append(("jungler_dead", "Leur jungler est mort : tu peux jouer agressif dans ta voie."))
         return out
+
+    # ---------------------------------------------------------------- facts (stance / tips)
+    def _make_facts(self, ctx: _Ctx) -> dict[str, Any]:
+        names = {str(getattr(p, "champion_alias", "") or "").lower(): p for p in getattr(ctx.game, "enemies", None) or []}
+        jg: dict[str, Any] = {"known": ctx.jungler_alias is not None, "alias": ctx.jungler_alias, "name": None,
+                              "visible": False, "side": None, "dist": None, "hidden_s": ctx.jungler_hidden_s,
+                              "dead": False, "last_side": None}
+        if ctx.jungler_alias:
+            p = names.get(str(ctx.jungler_alias).lower())
+            jg["name"] = str(getattr(p, "champion_name", "") or ctx.jungler_alias) if p is not None else ctx.jungler_alias
+            jg["dead"] = str(ctx.jungler_alias).lower() in ctx.dead_enemies
+            tr = ctx.jungler
+            pos = _track_pos(tr) if tr is not None else None
+            if pos is not None and not ctx.safe:
+                jg["last_side"] = map_side(*pos)
+                if getattr(tr, "visible", False):
+                    jg["visible"] = True
+                    jg["side"] = jg["last_side"]
+                    if ctx.me_pos is not None:
+                        jg["dist"] = round(geometry.dist(pos, ctx.me_pos), 3)
+        if ctx.safe:
+            jg.update(visible=False, side=None, dist=None, hidden_s=None, last_side=None)
+        lw = self._my_wave(ctx)
+        opps = []
+        for a, name, p, _tr in ctx.opponents or []:
+            opps.append({"alias": a, "name": name, "dead": str(a).lower() in ctx.dead_enemies,
+                         "level": int(_finite(getattr(p, "level", None)) or 0) if p is not None else None,
+                         "respawn": _finite(getattr(p, "respawn_timer", None)) if p is not None else None})
+        objs = []
+        for s in ctx.objectives:
+            objs.append({"key": str(getattr(s, "key", "") or ""), "name": str(getattr(s, "name", "") or ""),
+                         "alive": bool(getattr(s, "alive", False)), "remaining": self._remaining(s, ctx.gt)})
+        en, al = self._numbers(ctx) if not ctx.safe else (0, 1)
+        return {
+            "t": ctx.t, "gt": ctx.gt, "dead": ctx.dead, "safe": ctx.safe, "team": ctx.team,
+            "my_role": ctx.my_role, "role_lane": ctx.role_lane, "my_lane": ctx.my_lane, "me_pos": ctx.me_pos,
+            "in_base": self._in_my_base(ctx), "jungler": jg,
+            "missing": 0 if ctx.safe else self._missing(ctx), "numbers": (en, al),
+            "visible_enemies": 0 if ctx.safe else len(ctx.enemies_vis),
+            "wave": (lw.state if lw is not None and not ctx.safe else None),
+            "opponents": opps, "objectives": objs,
+        }
 
     # ---------------------------------------------------------------- insights
     def _build_insights(self, ctx: _Ctx) -> list[str]:

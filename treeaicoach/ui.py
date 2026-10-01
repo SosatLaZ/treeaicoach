@@ -1117,6 +1117,8 @@ class CoachApp:
         self._enemy_cache: dict[tuple, Any] = {}
         self._images: dict[str, Any] = {}     # keep CTkImage references alive
         self._widgets_by_field: dict[str, Callable[[], None]] = {}   # field -> refresh function
+        self._row_slots: list[Any] = []       # setting rows (their description wraps with the window)
+        self._wrap_width = 0
         self._dispatcher = _Dispatcher()
         self._eng_lock = threading.Lock()
         self._created_engines: list[Any] = []   # every engine built (stopped again at close)
@@ -1305,8 +1307,26 @@ class CoachApp:
             en_w = self.enemies_card.winfo_width() / scale
             if en_w > 50:
                 self.jungler_lbl.configure(wraplength=int(max(160, en_w - 40)))
+            self._wrap_rows(int(self.content.winfo_width() / scale))
         except Exception:
             log.debug("Layout update failed", exc_info=True)
+
+    def _wrap_rows(self, content_w: int) -> None:
+        """Setting descriptions wrap before the control on the right (any window width)."""
+        if content_w < 200 or content_w == self._wrap_width:
+            return
+        self._wrap_width = content_w
+        scale = max(0.5, self._scaled(100) / 100)
+        row_w = content_w - 96               # page / card paddings + scrollbar
+        for slot in list(self._row_slots):
+            lbl = getattr(slot, "desc_label", None)
+            if lbl is None:
+                continue
+            try:
+                sw = slot.winfo_reqwidth() / scale
+                lbl.configure(wraplength=int(max(180, min(560, row_w - sw - 36))))
+            except Exception:
+                pass
 
     def _demo_button_text(self) -> None:
         if self.demo:
@@ -1513,6 +1533,7 @@ class CoachApp:
         slot.desc_label = desc_lbl  # type: ignore[attr-defined]
         self._last_slot = slot
         self._last_row = row
+        self._row_slots.append(slot)
         return row, slot
 
     def _switch_row(self, body: Any, field: str, title: str, desc: str | None = None,
@@ -2455,27 +2476,38 @@ class CoachApp:
     # ------------------------------------------------------------------ analysis page
     def _build_analysis_page(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("Analyses", "Tes parties enregistrées et les conseils d'après-partie")
-        self._button(right, "Actualiser", self.refresh_games, "secondary", icon="refresh").grid(row=0, column=0,
-                                                                                               padx=(0, 8))
-        self._button(right, "Dossier des parties", self.open_games_dir, "secondary", icon="folder").grid(
-            row=0, column=1)
+        page, right, body = self._page("Analyses", "Tes parties enregistrées et les conseils d'après-partie",
+                                       icon="analysis")
+        b = self._button(right, "Dernier rapport", self.open_last_report, "primary", icon="report")
+        b.grid(row=0, column=0, padx=(0, 8))
+        self._tip(b, "Ouvre le rapport de ta dernière partie dans le navigateur.")
+        b = self._button(right, "", self.refresh_games, "secondary", icon="refresh", width=36)
+        b.grid(row=0, column=1, padx=(0, 8))
+        self._tip(b, "Actualiser la liste")
+        b = self._button(right, "Dossier", self.open_games_dir, "secondary", icon="folder")
+        b.grid(row=0, column=2)
+        self._tip(b, "Ouvrir le dossier des parties et des rapports")
         self.session_scope = self._label(body, "SESSION", self.fonts.caps, DIM, anchor="w")
         self.session_scope.grid(row=0, column=0, sticky="w", pady=(0, 6))
         cards = ctk.CTkFrame(body, fg_color="transparent")
         cards.grid(row=1, column=0, sticky="ew", pady=(0, 16))
         self.stat_labels: dict[str, tuple[Any, Any]] = {}
-        for i, (key, label) in enumerate((("games", "Parties"), ("wins", "Victoires"),
-                                          ("deaths", "Morts / partie"), ("avoided", "Ganks évités"))):
+        for i, (key, label, icon, col) in enumerate((("games", "Parties", "analysis", GOLD),
+                                                     ("wins", "Victoires", "star", SAFE),
+                                                     ("deaths", "Morts / partie", "swords", DANGER),
+                                                     ("avoided", "Ganks évités", "shield", TEAL))):
             cards.grid_columnconfigure(i, weight=1, uniform="stat")
             c = self._card(cards)
             c.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 6, 0 if i == 3 else 6))
+            c.grid_columnconfigure(0, weight=1)
             self._label(c, label.upper(), self.fonts.caps, DIM, anchor="w").grid(row=0, column=0, sticky="w",
                                                                                    padx=18, pady=(14, 0))
+            self.ctk.CTkLabel(c, text="", image=self._icon(icon, 16, col), fg_color="transparent", width=18).grid(
+                row=0, column=1, sticky="e", padx=(0, 14), pady=(12, 0))
             v = self._label(c, "—", self.fonts.stat, TEXT, anchor="w")
-            v.grid(row=1, column=0, sticky="w", padx=18)
+            v.grid(row=1, column=0, columnspan=2, sticky="w", padx=18)
             sub = self._label(c, " ", self.fonts.tiny, MUTED, anchor="w")
-            sub.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 14))
+            sub.grid(row=2, column=0, columnspan=2, sticky="w", padx=18, pady=(0, 14))
             self.stat_labels[key] = (v, sub)
         self._label(body, "Parties récentes", self.fonts.h2, GOLD, anchor="w").grid(row=2, column=0, sticky="w",
                                                                                     pady=(0, 8))
@@ -2491,12 +2523,15 @@ class CoachApp:
         c = self._card(self.games_box)
         c.grid(row=0, column=0, sticky="ew")
         c.grid_columnconfigure(0, weight=1)
+        if text is None:
+            self.ctk.CTkLabel(c, text="", image=self._icon("analysis", 30, GOLD_DARK), fg_color="transparent").grid(
+                row=0, column=0, pady=(26, 0))
         self._label(c, text or "Aucune partie enregistrée pour l'instant", self.fonts.h3, TEXT).grid(
-            row=0, column=0, pady=(26, 4))
+            row=1, column=0, pady=(10 if text is None else 26, 4))
         if text is None:
             self._label(c, "Joue une partie avec l'analyse active : un rapport détaillé (morts, ganks subis, "
                            "jungler ennemi, conseils) apparaîtra ici.", self.fonts.small, MUTED,
-                        wraplength=520, justify="center").grid(row=1, column=0, padx=20, pady=(0, 26))
+                        wraplength=520, justify="center").grid(row=2, column=0, padx=20, pady=(0, 26))
 
     @_guarded
     def refresh_games(self) -> None:
@@ -2539,6 +2574,7 @@ class CoachApp:
         ctk = self.ctk
         row = self._card(self.games_box, corner_radius=12)
         row.grid(row=i, column=0, sticky="ew", pady=(0, 8))
+        self._hoverable(row, BORDER, GOLD_DARK)
         row.grid_columnconfigure(1, weight=1)
         alias = str(game_field(g, "champion", "alias", default="") or "")
         name = str(game_field(g, "champion_name", "name", default="") or alias or "Champion inconnu")
@@ -2637,9 +2673,13 @@ class CoachApp:
 
     # ------------------------------------------------------------------ settings page
     def _build_settings_page(self) -> Any:
-        page, _right, body = self._page("Réglages", "Minimap, détection, démarrage et maintenance")
+        page, right, body = self._page("Réglages", "Minimap, détection, démarrage, interface et maintenance",
+                                       icon="settings")
+        b = self._button(right, "Copier le diagnostic", self.copy_diagnostic, "secondary", icon="copy")
+        b.grid(row=0, column=0)
+        self._tip(b, "Copie un rapport technique (sans donnée personnelle) à coller dans ton message. (Ctrl+D)")
         s = self._section(body, 0, "Minimap", "Par défaut, la minimap est trouvée automatiquement. "
-                                              "Calibre-la à la main si la détection échoue.")
+                                              "Calibre-la à la main si la détection échoue.", icon="map")
         self._choice_row(s, "minimap_mode", "Localisation", self._manual_rect_text(), MINIMAP_MODES, segmented=True,
                          on_change=self._on_minimap_mode)
         self._rect_desc = self._last_slot.desc_label
@@ -2651,7 +2691,7 @@ class CoachApp:
                                                  "résolution ou d'échelle de l'interface).")
         self._button(slot, "Relocaliser maintenant", self.relocate, "secondary", icon="refresh").grid(row=0, column=0)
 
-        s = self._section(body, 1, "Détection")
+        s = self._section(body, 1, "Détection", icon="cpu")
         self._slider_row(s, "target_fps", "Images par seconde", "Plus c'est haut, plus c'est réactif (et plus "
                          "le processeur travaille). Défaut : 8.", 2, 20, 1, lambda v: f"{int(v)} i/s", float)
         self._choice_row(s, "detector_backend", "Détecteur", "Le réseau de neurones est plus précis ; le "
@@ -2663,7 +2703,7 @@ class CoachApp:
         self._slider_row(s, "collect_interval_s", "Intervalle de collecte", None, 0.5, 30, 0.5,
                          lambda v: f"{fmt_decimal_fr(v, 1)} s", float)
 
-        s = self._section(body, 2, "Démarrage & rapports")
+        s = self._section(body, 2, "Démarrage & rapports", icon="play")
         self._switch_row(s, "autostart", "Démarrer l'analyse au lancement",
                          "L'analyse attend une partie en arrière-plan (processeur ≈ 0 hors partie).")
         ok, reason = autostart_support()
@@ -2681,17 +2721,40 @@ class CoachApp:
         self._switch_row(s, "open_report_automatically", "Ouvrir le rapport automatiquement",
                          "À la fin de la partie, dans ton navigateur.")
 
-        s = self._section(body, 3, "Maintenance")
+        s = self._section(body, 3, "Interface", icon="sliders")
+        if hasattr(self.cfg, "safe_mode"):
+            self._switch_row(s, "safe_mode", "Mode sûr", "Aucune alerte de gank ni suivi du jungler, aucune zone dans "
+                             "le brouillard. Minuteurs et rappels restent actifs.",
+                             on_change=lambda _v: self._sync_quick())
+        if hasattr(self.cfg, "ui_remember_page"):
+            self._switch_row(s, "ui_remember_page", "Rouvrir la dernière page",
+                             "Au lancement, revient sur la page que tu regardais.")
+        if hasattr(self.cfg, "ui_confirm_quit"):
+            self._switch_row(s, "ui_confirm_quit", "Confirmer avant de quitter en partie",
+                             "Évite de fermer le coach par erreur pendant une partie.")
+        _row, slot = self._row(s, "Assistant de démarrage", "Mode Sans bordure, test de la voix et préréglage.")
+        self._button(slot, "Relancer l'assistant", lambda: self.show_onboarding(0), "ghost",
+                     icon="sparkle").grid(row=0, column=0)
+
+        s = self._section(body, 4, "Maintenance et support", icon="info")
+        _row, slot = self._row(s, "Diagnostic", "Version, moteur, détecteur, voix et dernières erreurs, à joindre "
+                                                "à un signalement.")
+        self._button(slot, "Copier le diagnostic", self.copy_diagnostic, "secondary", icon="copy").grid(
+            row=0, column=0)
         _row, slot = self._row(s, "Journaux", "Utile pour signaler un problème.")
-        self._button(slot, "Ouvrir les journaux", lambda: open_path(paths.logs_dir()), "secondary",
+        self._button(slot, "Ouvrir les journaux", self.open_logs, "secondary",
                      icon="folder").grid(row=0, column=0)
+        _row, slot = self._row(s, "Rapports de parties", "Rapports HTML d'après-partie.")
+        self._button(slot, "Dernier rapport", self.open_last_report, "secondary", icon="report").grid(
+            row=0, column=0, padx=(0, 8))
+        self._button(slot, "Dossier", self.open_games_dir, "secondary", icon="folder").grid(row=0, column=1)
         _row, slot = self._row(s, "Données", str(paths.user_data_dir()))
         self._button(slot, "Ouvrir le dossier", lambda: open_path(paths.user_data_dir()), "secondary",
                      icon="folder").grid(row=0, column=0)
         _row, slot = self._row(s, "Réinitialiser", "Remet tous les réglages par défaut.")
         self._button(slot, "Réinitialiser", self.ask_reset, "danger").grid(row=0, column=0)
         try:
-            self._build_updates_section(body, 4)
+            self._build_updates_section(body, 5)
         except Exception:
             log.exception("Cannot build the updates section")
         return page
@@ -2699,7 +2762,8 @@ class CoachApp:
     # ------------------------------------------------------------------ updates (updater.py)
     def _build_updates_section(self, body: Any, row: int) -> None:
         s = self._section(body, row, "Mises à jour", "Les nouvelles versions sont publiées sur GitHub ; "
-                                                     "le fichier est vérifié (SHA-256) avant d'être installé.")
+                                                     "le fichier est vérifié (SHA-256) avant d'être installé.",
+                          icon="download")
         self._update_info: Any = None
         self._update_busy = False
         _row, slot = self._row(s, f"Version installée : {__version__}", None)
@@ -2875,7 +2939,12 @@ class CoachApp:
     # ------------------------------------------------------------------ help page
     def _build_help_page(self) -> Any:
         ctk = self.ctk
-        page, _right, body = self._page("Aide", "Bien démarrer, sécurité et dépannage")
+        page, right, body = self._page("Aide", "Bien démarrer, sécurité et dépannage", icon="help")
+        b = self._button(right, "Assistant", lambda: self.show_onboarding(0), "secondary", icon="sparkle")
+        b.grid(row=0, column=0, padx=(0, 8))
+        self._tip(b, "Relancer l'assistant de démarrage")
+        self._button(right, f"Nouveautés v{ui_kit.CHANGELOG_VERSION}", self.show_changelog, "ghost",
+                     icon="star").grid(row=0, column=1)
         steps = (
             ("Passe le jeu en mode « Sans bordure »",
              "Options du jeu → Vidéo → Mode d'affichage : Sans bordure (ou Fenêtré). En plein écran exclusif, "
@@ -2885,7 +2954,7 @@ class CoachApp:
              "installer, rien à configurer."),
             ("Joue ta partie",
              "Dès le chargement terminé, le coach trouve la minimap et suit les ennemis. Écoute les annonces et "
-             "garde un œil sur le radar et le HUD."),
+             "regarde les marques posées sur ta minimap."),
             ("Réagis aux alertes",
              "« Attention » : un ennemi se rapproche, reste prudent. « Gank ! … recule ! » : recule tout de suite "
              "vers ta tour. F9 : où est le jungler ?"),
@@ -2893,7 +2962,7 @@ class CoachApp:
              "À la fin de la partie, un rapport s'ouvre : morts, ganks subis, habitudes du jungler ennemi et "
              "conseils. Retrouve-les dans l'onglet Analyses."),
         )
-        s = self._section(body, 0, "Mode d'emploi en 5 étapes")
+        s = self._section(body, 0, "Mode d'emploi en 5 étapes", icon="play")
         for i, (title, text) in enumerate(steps):
             r = ctk.CTkFrame(s, fg_color="transparent")
             r.grid(row=i, column=0, sticky="ew", pady=7)
@@ -2904,40 +2973,61 @@ class CoachApp:
             self._label(r, text, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=560).grid(
                 row=1, column=1, sticky="w")
         s = self._section(body, 1, "Sécurité et règles de Riot",
-                          "TreeAI Coach fonctionne comme un logiciel de streaming (OBS, Discord) :")
+                          "TreeAI Coach fonctionne comme un logiciel de streaming (OBS, Discord) :", icon="shield")
         for i, text in enumerate((
                 "Il lit uniquement l'écran (la minimap déjà visible) et l'API officielle « Live Client Data » "
                 "fournie par le jeu.",
                 "Aucune lecture ni écriture de la mémoire du jeu, aucune injection, aucune touche ni clic simulé.",
                 "Aucun suivi des sorts ni des ultimes ennemis, aucune prédiction cachée : seulement ce que tu "
                 "pourrais voir toi-même.",
-                "L'overlay est une fenêtre séparée, transparente, jamais dessinée dans le jeu.")):
+                "L'overlay est une fenêtre séparée et transparente posée au-dessus du jeu, jamais dessinée dans "
+                "le jeu.",
+                "Besoin d'encore plus de prudence ? Active le « Mode sûr » (tableau de bord ou Ctrl+Maj+S).")):
             r = ctk.CTkFrame(s, fg_color="transparent")
             r.grid(row=i, column=0, sticky="ew", pady=3)
             r.grid_columnconfigure(1, weight=1)
-            dot = ctk.CTkFrame(r, width=8, height=8, corner_radius=4, fg_color=TEAL)
-            dot.grid(row=0, column=0, sticky="n", padx=(4, 12), pady=(7, 0))
+            ctk.CTkLabel(r, text="", image=self._icon("check", 14, TEAL), fg_color="transparent", width=16).grid(
+                row=0, column=0, sticky="n", padx=(2, 12), pady=(3, 0))
             self._label(r, text, self.fonts.small, TEXT, anchor="w", justify="left", wraplength=580).grid(
                 row=0, column=1, sticky="w")
-        s = self._section(body, 2, "Dépannage")
+        s = self._section(body, 2, "Raccourcis clavier", "Dans la fenêtre de TreeAI Coach (les touches F9 à F11 "
+                                                         "marchent aussi en jeu).", icon="keyboard")
+        for i, (keys, what) in enumerate(ui_kit.SHORTCUTS):
+            if keys.startswith("Échap"):
+                what = "Fermer une fenêtre de dialogue"
+            r = ctk.CTkFrame(s, fg_color="transparent")
+            r.grid(row=i, column=0, sticky="ew", pady=3)
+            r.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(r, text=keys, font=self.fonts.tiny_bold, text_color=GOLD, fg_color=PANEL_LO,
+                         corner_radius=6, width=130, height=24).grid(row=0, column=0, sticky="w", padx=(0, 14))
+            self._label(r, what, self.fonts.small, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
+        s = self._section(body, 3, "Dépannage", icon="target")
         for i, (q, a) in enumerate((
                 ("« Capture noire »", "Le jeu est en plein écran exclusif : passe en « Sans bordure »."),
                 ("La minimap n'est pas trouvée", "Vérifie l'échelle de la minimap dans le jeu, puis utilise "
                  "« Calibrer la minimap » (Réglages ou tableau de bord)."),
-                ("Aucune voix", "Clique sur « Tester la voix ». Vérifie le volume de Windows et installe une voix "
-                 "française (Paramètres → Heure et langue → Voix)."),
+                ("Aucune voix", "Clique sur « Tester la voix ». Vérifie le volume de Windows ; sans Internet, "
+                 "choisis une voix Windows dans « Alertes & voix »."),
                 ("L'overlay n'apparaît pas", "Mode Sans bordure obligatoire ; vérifie l'interrupteur de l'onglet "
                  "Overlay (ou appuie sur F11)."),
-                ("Alertes trop fréquentes ou trop tardives", "Ajuste la sensibilité dans « Alertes & voix »."),
-                ("Un autre problème", "Réglages → Ouvrir les journaux, et joins le dernier fichier à ton message."))):
+                ("Alertes trop fréquentes ou trop tardives", "Choisis le préréglage « Discret » ou ajuste la "
+                 "sensibilité dans « Alertes & voix »."),
+                ("Un autre problème", "Réglages → « Copier le diagnostic » et colle-le dans ton message, avec le "
+                 "dernier fichier du dossier des journaux."))):
             r = ctk.CTkFrame(s, fg_color="transparent")
             r.grid(row=i, column=0, sticky="ew", pady=5)
             r.grid_columnconfigure(0, weight=1)
             self._label(r, q, self.fonts.h3, GOLD_HOVER, anchor="w").grid(row=0, column=0, sticky="w")
             self._label(r, a, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=600).grid(
                 row=1, column=0, sticky="w")
-        self._label(body, f"{APP_NAME} {__version__} — projet indépendant, non affilié à Riot Games.",
-                    self.fonts.tiny, DIM).grid(row=3, column=0, pady=(4, 10))
+        bar = ctk.CTkFrame(s, fg_color="transparent")
+        bar.grid(row=10, column=0, sticky="w", pady=(10, 4))
+        self._button(bar, "Copier le diagnostic", self.copy_diagnostic, "secondary", icon="copy").grid(
+            row=0, column=0, padx=(0, 8))
+        self._button(bar, "Ouvrir les journaux", self.open_logs, "secondary", icon="folder").grid(row=0, column=1)
+        s = self._section(body, 4, "À propos et mentions légales", f"{APP_NAME} {__version__}", icon="info")
+        self._label(s, ui_kit.ABOUT_TEXT, self.fonts.small, MUTED, anchor="w", justify="left",
+                    wraplength=620).grid(row=0, column=0, sticky="w", pady=(4, 8))
         return page
 
     def _number_badge(self, parent: Any, n: int) -> Any:
