@@ -289,7 +289,7 @@ class Config:
     break_reminder: bool = True
     # UI (§8.2)
     ui_geometry: str = ""
-    ui_scale: float = 0.88               # interface size (0.7-1.4)
+    ui_scale: float = 1.0               # interface size (0.7-1.4)
     # updates (updater.py)
     update_channel_url: str = ""    # "" = default GitHub URL of release/version.json
     github_token: str = ""          # personal access token for the private repo ("" = none)
