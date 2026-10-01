@@ -161,6 +161,9 @@ SELF_CAM_DIST = 0.06
 OCC_RANGE = 0.3
 OCC_PENALTY = 0.05
 OCC_MIN_NCC = 0.4
+OCC_MIN_AREA = 0.45
+OCC_SEARCH = 3                     # re-scoring window (+- working px) around a stacked icon
+OCC_AREA_PENALTY = 0.0
 #: Tracked mode, champions not tracked: whole-map search at a lower resolution (matched
 #: disc COARSE_INNER_PX wide); its peaks above COARSE_VERIFY_MIN are verified at full res.
 COARSE_INNER_PX = 9.0
@@ -1209,7 +1212,7 @@ class RosterMatcher:
         return float(w.mean()) > 0.04
 
     def _rescue(self, c: _Cand, feat: np.ndarray, bank: _Bank, work_centres: list,
-                D_work: float) -> float | None:
+                D_work: float, caps: bool = False) -> float | None:
         """Occlusion-tolerant evidence of candidate ``c``: best NCC on the visible part of
         the icon (partial discs, without overlapping accepted icons and white lines /
         texts), over +-1 working px. None when too little of the icon is visible."""
@@ -1218,14 +1221,18 @@ class RosterMatcher:
         Hf, Wf = feat.shape[:2]
         x0 = int(round(c.x - half - 0.5))
         y0 = int(round(c.y - half - 0.5))
-        offs = [(dx, dy) for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+        rr = OCC_SEARCH if work_centres else 1     # a covered icon's NCC peak drifts away
+        offs = [(dx, dy) for dy in range(-rr, rr + 1) for dx in range(-rr, rr + 1)
                 if 0 <= x0 + dx <= Wf - s and 0 <= y0 + dy <= Hf - s]
         if not offs:
             return None
         P = np.stack([feat[y0 + dy:y0 + dy + s, x0 + dx:x0 + dx + s] for dx, dy in offs])
         raw = bank.raw[c.i]
         yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
-        base = np.concatenate([bank.mask[None], bank.caps], axis=0)       # [k, s, s]
+        # known occluders (accepted icons on top, white lines / texts) are masked out; the
+        # partial discs (unknown occluder on one side: ping...) only for a tracked champion
+        base = np.concatenate([bank.mask[None], bank.caps], axis=0) if caps and \
+            bank.caps is not None else bank.mask[None]                    # [k, s, s]
         masks = np.empty((len(offs), base.shape[0], s, s), np.float32)
         # white lines / texts on the patch where the portrait is not white
         tl = raw[:, :, 0]
@@ -1242,8 +1249,14 @@ class RosterMatcher:
             masks[j] = base * keep[None]
         area = masks.sum(axis=(2, 3)) / max(bank.n, 1e-6)                 # [p, k]
         sc = masked_ncc(P, raw, masks)
-        sc = np.where(area >= 0.45, sc - OCC_PENALTY * (area < 0.97), -1.0)
-        best = float(sc.max())
+        # fewer pixels -> chance matches are easier: penalty growing with the hidden part
+        sc = np.where(area >= OCC_MIN_AREA,
+                      sc - (OCC_PENALTY + OCC_AREA_PENALTY * (1.0 - area)) * (area < 0.97), -1.0)
+        j = int(np.argmax(sc))
+        best = float(sc.flat[j])
+        self.last_rescue = (best, float(area.flat[j]))
+        dx, dy = offs[j // sc.shape[1]]
+        self.last_rescue_pos = (x0 + dx + half + 0.5, y0 + dy + half + 0.5)
         return best if best > -1.0 else None
 
     def _detect(self, bgr: np.ndarray, now: float) -> list[Detection]:
@@ -1374,21 +1387,23 @@ class RosterMatcher:
             # only where an occluder is likely: an accepted icon over it, white lines /
             # texts on it, or the champion was right there a moment ago (ping on it...)
             tr = self._tracks.get(i)
-            if not near and not (tr is not None and now - tr.t <= TRACK_FRESH_S and math.hypot(
-                    c.x / kx - tr.u, c.y / ky - tr.v) <= LOCAL_SLACK + MAX_SPEED * (now - tr.t)) \
-                    and not self._has_white(feat, c.x, c.y, 0.5 * INNER_RATIO * D_work):
+            tracked = tr is not None and now - tr.t <= TRACK_FRESH_S and math.hypot(
+                c.x / kx - tr.u, c.y / ky - tr.v) <= LOCAL_SLACK + MAX_SPEED * (now - tr.t)
+            if not near and not tracked and \
+                    not self._has_white(feat, c.x, c.y, 0.5 * INNER_RATIO * D_work):
                 continue
             if c.ring is None:
                 self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0)
             own0, opp0 = (c.f_en, c.f_al) if ents[i].relation == "enemy" else (c.f_al, c.f_en)
             if own0 < 0.12 or opp0 > own0 + 0.1:
                 continue                   # no ring of the champion's colour around it
-            occ = self._rescue(c, feat, bank, near, D_work)
+            occ = self._rescue(c, feat, bank, near, D_work, caps=tracked)
             if occ is None or occ + (c.ev - c.ncc) <= c.ev:
                 continue
-            c2 = _Cand(c.i, c.x, c.y, occ, occ + (c.ev - c.ncc), c.local, margin=c.margin)
+            px, py = self.last_rescue_pos
+            c2 = _Cand(c.i, px, py, occ, occ + (c.ev - c.ncc), c.local, margin=c.margin)
             excl = [(a.x / kx * W, a.y / ky * H) for a in accepted
-                    if math.hypot(c.x - a.x, c.y - a.y) < 1.05 * D_work]
+                    if math.hypot(px - a.x, py - a.y) < 1.05 * D_work]
             self._score_cand(c2, bgr, kx, ky, R_px, W, H, now, -10.0, exclude=excl)
             e = ents[i]
             own, opp = (c2.f_en, c2.f_al) if e.relation == "enemy" else (c2.f_al, c2.f_en)

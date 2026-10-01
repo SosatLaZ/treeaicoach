@@ -748,6 +748,9 @@ def validate_item_advice(text: str, game: Any, candidates: Iterable[dict[str, An
                 first = phrase.split(" ", 1)[0]
                 if first in _NOT_ITEM_WORDS:
                     continue
+                words = {w for k in known for w in re.split(r"[\s'\-]+", k) if len(w) >= 4}
+                if len(first) >= 4 and first.strip("'") in words:
+                    continue                        # short form ("une Zhonya", "ta Rabadon")
                 if any(_norm_item(c.champion_name or c.champion_alias) == first
                        for c in (game.all_players() if hasattr(game, "all_players") else [])):
                     continue                        # "prends Zed" (a champion), not an item

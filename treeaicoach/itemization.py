@@ -87,11 +87,22 @@ def champion_tags(alias: str) -> tuple[str, ...]:
     return _TAGS.get(str(alias or ""), ())
 
 
+def _meta(alias: str) -> Any:
+    try:
+        from treeaicoach.meta import profile
+
+        return profile(alias)
+    except Exception:
+        return None
+
+
 def damage_split(alias: str) -> tuple[float, float, float]:
-    """(physical, magic, true) share of a champion's damage (sums to 1)."""
-    if alias in AP:
+    """(physical, magic, true) share of a champion's damage (sums to 1). Curated lists first,
+    then the bundled champion meta (Meraki / Data Dragon) for champions they do not list."""
+    m = None if (alias in AP or alias in MIXED) else _meta(alias)
+    if alias in AP or (m is not None and m.known and m.damage == "M"):
         ad, ap = 0.1, 0.9
-    elif alias in MIXED:
+    elif alias in MIXED or (m is not None and m.known and m.damage == "X"):
         ad, ap = 0.5, 0.5
     else:
         ad, ap = 0.9, 0.1
@@ -324,7 +335,9 @@ def enemy_profile(enemies: Iterable[Any], items: dict[int, Item] | None = None) 
             add("antiheal", w * (1.0 if alias in STRONG_HEALERS else 0.6))
         if any(it is not None and "LifeSteal" in it.tags and it.kind == "legendary" for it in inv):
             add("antiheal", 0.4 * w)
-        if alias in HEAVY_CC:
+        meta = _meta(alias)
+        if alias in HEAVY_CC or (meta is not None and meta.known and meta.ratings[2] >= 3
+                                 and ("engage" in meta.style or "pick" in meta.style)):
             add("cc", 0.45)
         if alias in SHIELDS:
             add("shields", 0.45)
@@ -334,9 +347,10 @@ def enemy_profile(enemies: Iterable[Any], items: dict[int, Item] | None = None) 
             add("crit", w * 0.8)
         resist = sum(1 for it in inv if it is not None and ("Armor" in it.tags or "SpellBlock" in it.tags)
                      and it.kind == "legendary")
-        if (tags[:1] == ("Tank",) and getattr(p, "level", 1) >= 9) or resist >= 2:
+        tanky = tags[:1] == ("Tank",) or (meta is not None and meta.known and meta.ratings[1] >= 3)
+        if (tanky and getattr(p, "level", 1) >= 9) or resist >= 2:
             add("armor", 0.6 + 0.3 * resist)
-        if alias in BURST or tags[:1] == ("Assassin",):
+        if alias in BURST or tags[:1] == ("Assassin",) or (meta is not None and "burst" in meta.style):
             add("magic" if ap > ad else "physical", 0.5 * w if w >= 1.3 else 0.0)
     if total > 0:
         prof.physical, prof.magic, prof.true = (prof.physical / total, prof.magic / total, prof.true / total)

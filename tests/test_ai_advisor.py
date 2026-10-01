@@ -346,9 +346,6 @@ def test_check_connection(server):
 
 
 def test_model_not_found_autopick():
-    class S(_Server):
-        pass
-
     s = _Server(404, {"error": {"message": "The model `x` does not exist", "code": "model_not_found"}})
     s.get_payload = {"data": [{"id": "whisper-large-v3"}, {"id": "allam-2-7b"}, {"id": "qwen/qwen3-32b"},
                               {"id": "openai/gpt-oss-20b"}]}
