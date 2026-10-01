@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -30,8 +31,10 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# (comparisons: BENCH_PKG_ROOT=<dir containing another treeaicoach package> runs that one)
+_PKG = os.environ.get("BENCH_PKG_ROOT") or str(ROOT)
+if _PKG not in sys.path:
+    sys.path.insert(0, _PKG)
 
 FPS = 8.0
 CAM_W, CAM_H = 0.275, 0.155
@@ -241,13 +244,16 @@ def run_scenario(kind: str, seed: int, db, n_frames: int = 80) -> Metrics:
 
 
 def main() -> None:
+    global FPS
     from treeaicoach.champions import get_default_db
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--frames", type=int, default=80)
+    ap.add_argument("--fps", type=float, default=FPS, help="detection rate (frames / s)")
     ap.add_argument("kinds", nargs="*", default=["pan", "jump", "locked", "lockhide", "cross"])
     a = ap.parse_args()
+    FPS = float(a.fps)
     db = get_default_db()
     tot = Metrics()
     for kind in a.kinds:

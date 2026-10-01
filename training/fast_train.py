@@ -234,7 +234,11 @@ def make_batch(imgs: np.ndarray, labels: list[list[dict]], idx: np.ndarray,
         img, labs = augment(imgs[i], labels[i], rng)
         img, labs = random_crop(img, labs, size, rng)
         xs[k] = img
-        for name, v in encode_targets(labs, size, stride).items():
+        t = encode_targets(labs, size, stride)
+        # the radius output is normalized by the FULL input size (ONNX contract): a crop
+        # label r is r_px / crop, the target must be r_px / full
+        t["radius"] = t["radius"] * np.float32(size / full)
+        for name, v in t.items():
             tg.setdefault(name, []).append(v)
     x = torch.from_numpy(xs[..., ::-1].copy()).permute(0, 3, 1, 2).float().div_(255.0)
     return x, {k: torch.from_numpy(np.stack(v)) for k, v in tg.items()}
@@ -292,7 +296,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         x, t = make_batch(imgs, labels, idx, rng, args.size, crop=args.crop)
         x = x.contiguous(memory_format=torch.channels_last)
         o = model.forward_train(x)
-        losses = compute_losses(o, t, weights, x.shape[-1], STRIDE)
+        losses = compute_losses(o, t, weights, args.size, STRIDE)   # radius loss in cells
         opt.zero_grad(set_to_none=True)
         losses["total"].backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
@@ -396,6 +400,13 @@ def evaluate_model(model_path: Path, holdout: bool = True, val_size: int = 200,
     ri, rg, _ = real_eval_set(holdout)
     sets["real"] = (ri, rg)
     sets["real_art"] = real_art_eval_set()
+    try:   # the app's selftest set (run_selftest needs P and R >= 0.8 at the meta threshold)
+        from training.evaluate import SELFTEST_DIR, load_selftest  # noqa: PLC0415
+
+        if (SELFTEST_DIR / "labels.json").is_file():
+            sets["selftest"] = load_selftest(SELFTEST_DIR)
+    except Exception as exc:
+        log.warning("selftest set unavailable: %s", exc)
     accs = {}
     for name, (imgs, gts) in sets.items():
         acc, ms = evaluate_images(det, imgs, gts)
@@ -412,11 +423,11 @@ def evaluate_model(model_path: Path, holdout: bool = True, val_size: int = 200,
     for name, acc in accs.items():
         m = acc.metrics(thr)
         out[name]["at"] = {k: m[k] for k in ("threshold", "gt", "det", "tp", "precision",
-                                             "recall", "f1", "cls_acc", "pos_err_pct")}
+                                             "recall", "f1", "cls_acc", "pos_err_pct", "r_err_pct")}
         b = out[name]["best"]
         out[name]["best"] = {k: b[k] for k in ("threshold", "precision", "recall", "f1")}
-        log.info("%-9s @%.2f  P %.3f R %.3f F1 %.3f cls %.3f | best F1 %.3f @%.2f | %.1f ms/img",
-                 name, thr, m["precision"], m["recall"], m["f1"], m["cls_acc"], b["f1"],
+        log.info("%-9s @%.2f  P %.3f R %.3f F1 %.3f cls %.3f r_err %.2f%% | best F1 %.3f @%.2f | %.1f ms/img",
+                 name, thr, m["precision"], m["recall"], m["f1"], m["cls_acc"], m["r_err_pct"], b["f1"],
                  b["threshold"], out[name]["ms"])
     return out
 

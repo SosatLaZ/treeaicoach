@@ -164,6 +164,7 @@ RADAR_POSITIONS: tuple[tuple[str, str], ...] = (
     ("custom", "Personnalisée"),
 )
 HUD_POSITIONS: tuple[tuple[str, str], ...] = (
+    ("left_of_minimap", "À gauche de la minimap"),
     ("above_minimap", "Au-dessus de la minimap"),
     ("top_left", "En haut à gauche"),
     ("top_right", "En haut à droite"),
@@ -1783,7 +1784,7 @@ class _LazyPages(dict):
 _NOT_PAGE_ATTRS = frozenset({
     "_closing", "_open_dialog", "_cpu", "_state_color", "_start_style", "_quick_muted", "_quick", "_pregame_tick",
     "_overlay_test", "_gauge_drawn_color", "_ai_status_seq", "_ai_answer_seq", "_update_info", "_update_busy",
-    "_overlay_preview_busy", "pill_text", "skill_seg", "_backend_t0", "_onboarding_step", "_last_slot",
+    "_overlay_preview_busy", "pill_text", "skill_seg", "btn_diag", "_diag_desc", "health_lbl", "_backend_t0", "_onboarding_step", "_last_slot",
     "_last_row", "_building", "_built", "_page_builders", "pages", "_skill_btns", "_banner_dismissed",
     # page widgets read with getattr(self, name, None) where "not built yet" simply means "nothing to update"
     "_overlay_tiles", "_position_menus", "_radar_section", "_neural_row", "_neural_rate_row",
@@ -1827,6 +1828,54 @@ def _page_attr_index() -> dict[str, str]:
                     prev = ins
         _attr_index = idx
     return _attr_index
+
+
+def _p(d: Any, key: str) -> Any:
+    v = d.get(key) if isinstance(d, dict) else None
+    return v if isinstance(v, (int, float)) else None
+
+
+def health_text(h: Any) -> tuple[str, int]:
+    """One line for the dashboard from ``engine.health()``: (text, level 0 ok / 1 warning / 2 problem).
+    Pure, never raises; "" outside a game."""
+    if not isinstance(h, dict) or not h:
+        return "", 0
+    try:
+        bits: list[str] = []
+        level = 0
+        fps = _p(h, "capture_fps")
+        backend = str(h.get("capture_backend") or "")
+        if backend or fps is not None:
+            bits.append(f"Capture {backend} {fmt_decimal_fr(fps, 0) + ' i/s' if fps is not None else ''}".strip())
+        det = h.get("detect_ms") if isinstance(h.get("detect_ms"), dict) else {}
+        p50, p95 = _p(det, "p50"), _p(det, "p95")
+        if p50 is not None:
+            bits.append(f"détection {p50:.0f}/{p95:.0f} ms" if p95 is not None else f"détection {p50:.0f} ms")
+            if p95 is not None and p95 > 120:
+                level = max(level, 1)
+        ov = h.get("overlay") if isinstance(h.get("overlay"), dict) else {}
+        ofps = _p(ov, "fps")
+        if ofps is not None:
+            bits.append(f"overlay {ofps:.0f} i/s")
+        seen, exp = h.get("champions_seen"), h.get("champions_expected")
+        if isinstance(seen, int) and isinstance(exp, int) and exp:
+            bits.append(f"champions {seen}/{exp}")
+        cpu = _p(h, "cpu_percent")
+        if cpu is not None:
+            bits.append(f"CPU {cpu:.0f} %")
+            if cpu > 60:
+                level = max(level, 1)
+        warn = h.get("warnings") or h.get("capture_note")
+        if isinstance(warn, (list, tuple)):
+            warn = " · ".join(str(w) for w in warn if w)
+        if warn:
+            bits.append(str(warn))
+            level = max(level, 1)
+        if h.get("capture_status") in ("black", "error", "failed"):
+            level = 2
+        return ui_text(" · ".join(b for b in bits if b)), level
+    except Exception:
+        return "", 0
 
 
 def ui_scale_of(cfg: Any) -> float:
@@ -1921,6 +1970,7 @@ class CoachApp:
         self._status_job: str | None = None
         self._update_info: Any = None             # updater result (settings page, may be built later)
         self._update_busy = False
+        self._diag_watch = False                  # a diagnostic bundle is recording (engine.start_diagnostic)
         self._wrap_labels: list[tuple[Any, int]] = []   # (label, inset) wrapped to the content column
         self._radar_worker = _RadarWorker(self._radar_source, RADAR_PX)
         self._radar_seq = -1
@@ -3257,6 +3307,18 @@ class CoachApp:
             val.grid(row=1, column=0, sticky="w")
             self.tech[key] = val
             self._tip(tile, tip)
+        # live health (engine status.health, in game): capture, detection timings, overlay, champions
+        self.health_lbl = self._label(rc, "", self.fonts.tiny, MUTED, anchor="w", justify="left",
+                                      wraplength=RADAR_PX + 20)
+        self.health_lbl.grid(row=5, column=0, sticky="w", pady=(8, 0))
+        self._tip(self.health_lbl, "Santé de l'analyse : capture, temps de détection (médiane / pire 5 %), "
+                                   "overlay, champions vus sur la minimap, processeur.")
+        self._health_sig: Any = None
+        self.btn_diag = self._button(rc, "Diagnostic complet", self.start_diagnostic, "ghost", icon="report",
+                                     height=30)
+        self.btn_diag.grid(row=6, column=0, sticky="w", pady=(6, 0))
+        self._tip(self.btn_diag, "Enregistre 60 s d'analyse (minimap, détections, temps de calcul, réglages) "
+                                 "dans un zip à joindre à un signalement. Joue normalement pendant ce temps.")
         self._cpu = ui_kit.CpuMeter()
         return page
 
@@ -3606,10 +3668,6 @@ class CoachApp:
             self._choice_row(s, "overlay_mode", "Où dessiner", "Sur la minimap : marques posées sur la vraie "
                              "minimap. Radar : copie agrandie à côté. Aucun : seulement le HUD et le flash.",
                              OVERLAY_MODES, segmented=True, on_change=lambda _v: (prev(), self._refresh_radar_rows()))
-        if hasattr(self.cfg, "overlay_show_frame"):
-            self._switch_row(s, "overlay_show_frame", "Cadre discret « TreeAI »",
-                             "Fin liseré autour de la minimap pour voir que le coach est actif.",
-                             on_change=prev)
         if hasattr(self.cfg, "overlay_hide_from_capture"):
             self._switch_row(s, "overlay_hide_from_capture", "Masquer des captures et du stream",
                              "Les marques sur la minimap n'apparaissent pas sur tes captures d'écran ni sur OBS "
@@ -4589,6 +4647,11 @@ class CoachApp:
                                                 "à un signalement.")
         self._button(slot, "Copier le diagnostic", self.copy_diagnostic, "secondary", icon="copy").grid(
             row=0, column=0)
+        _row, slot = self._row(s, "Diagnostic complet", "Enregistre 60 s d'analyse en partie (minimap, détections, "
+                                                        "temps de calcul, réglages) dans un zip à joindre à un "
+                                                        "signalement.")
+        self._button(slot, "Enregistrer", self.start_diagnostic, "secondary", icon="report").grid(row=0, column=0)
+        self._diag_desc = slot.desc_label
         _row, slot = self._row(s, "Journaux", "Utile pour signaler un problème.")
         self._button(slot, "Ouvrir les journaux", self.open_logs, "secondary",
                      icon="folder").grid(row=0, column=0)
@@ -5612,7 +5675,7 @@ class CoachApp:
                     voice = None
             out["voice"] = voice
             try:
-                out["detector"] = self._detector_factory(cfg)
+                out["detector"] = self._make_detector(cfg, demo)
             except Exception:
                 log.exception("Detector unavailable")
                 out["detector"] = None
@@ -5657,6 +5720,13 @@ class CoachApp:
         self._busy = True
         self._backend_t0 = time.monotonic()
         self._dispatcher.run(job, self._backend_ready, self.cb(failed), name="TreeAI-ui-init")
+
+    def _make_detector(self, cfg: Config, demo: bool) -> Any:
+        """Detector for a new engine. The default factory gets what the engine gives the detectors it
+        builds itself (champion DB, learned custom-skin icon cache outside the demo)."""
+        if self._detector_factory is _default_detector_factory:
+            return _default_detector_factory(cfg, learn=not demo)
+        return self._detector_factory(cfg)
 
     @_guarded
     def _backend_ready(self, out: dict[str, Any]) -> None:
@@ -5965,7 +6035,7 @@ class CoachApp:
             det = self._detector
             if new_detector or det is None:
                 try:
-                    det = self._detector_factory(cfg)
+                    det = self._make_detector(cfg, demo)
                 except Exception:
                     log.exception("Detector unavailable")
             try:
@@ -6209,9 +6279,12 @@ class CoachApp:
         if muted != getattr(self, "_quick_muted", None):
             self._quick_muted = muted
             self._sync_quick(muted)
+        if self._diag_watch:
+            self._poll_diagnostic()
         if not self._dash_live():
             self._collect_alerts(st, ov)        # keep the journal up to date; no hidden widget work
             return
+        self._update_health(getattr(st, "health", None) if st is not None and key == "RUNNING" else None)
         msg = self._with_extras(msg, key)
         self._set_text(self.state_title, title)
         self._set_text(self.state_msg, msg or " ")
@@ -6281,6 +6354,71 @@ class CoachApp:
         self.hero.set_glow(THREAT_COLORS[lvl] if ov is not None and lvl > 0 else color)
         if self._current_page == "dashboard":
             self._draw_gauge_step()
+
+    def _update_health(self, h: Any) -> None:
+        """Dashboard health line from ``status.health`` (engine.health(), in game only)."""
+        lbl = getattr(self, "health_lbl", None)
+        if lbl is None:
+            return
+        text, level = health_text(h)
+        col = {0: MUTED, 1: WARNING, 2: DANGER}.get(level, MUTED)
+        sig = (text, col)
+        if sig != self._health_sig:
+            self._health_sig = sig
+            lbl.configure(text=text, text_color=col)
+
+    @_guarded
+    def start_diagnostic(self) -> None:
+        """"Diagnostic complet": the engine records a bundle for 60 s (engine.start_diagnostic)."""
+        eng = self.engine
+        fn = getattr(eng, "start_diagnostic", None) if eng is not None else None
+        if not callable(fn):
+            self.show_error("Le diagnostic complet demande le moteur d'analyse (il démarre encore ?).")
+            return
+
+        def done(path: Any) -> None:
+            if path is None:
+                self.show_toast("Un diagnostic est déjà en cours (ou impossible pour l'instant).", "warning")
+                return
+            self._diag_watch = True
+            self.show_toast("Diagnostic en cours : joue normalement pendant une minute.")
+            self._poll_diagnostic()
+
+        self._dispatcher.run(fn, done, self.cb(lambda e: self.show_error(f"Diagnostic impossible : {e}")),
+                             name="TreeAI-ui-diagnostic")
+
+    def _poll_diagnostic(self) -> None:
+        """Progress of the running diagnostic (status loop, >= 1 s): labels, then the result toast."""
+        eng = self.engine
+        fn = getattr(eng, "diagnostic_status", None) if eng is not None else None
+        ds = None
+        try:
+            ds = fn() if callable(fn) else None
+        except Exception:
+            log.debug("diagnostic_status failed", exc_info=True)
+        if not isinstance(ds, dict):
+            self._diag_watch = False
+            return
+        running = bool(ds.get("running"))
+        pct = int(round(100 * float(ds.get("progress") or 0)))
+        if running:
+            msg = f"Diagnostic en cours : {pct} %"
+        elif ds.get("error"):
+            msg = f"Diagnostic interrompu : {ds['error']}"
+        else:
+            msg = "Diagnostic prêt : " + str(ds.get("zip") or ds.get("folder") or "")
+        btn = getattr(self, "btn_diag", None)
+        if btn is not None:
+            self._set_text(btn, f"Diagnostic {pct} %" if running else "Diagnostic complet")
+        desc = getattr(self, "_diag_desc", None)
+        if desc is not None:
+            self._set_text(desc, msg)
+        if not running:
+            self._diag_watch = False
+            if ds.get("error"):
+                self.show_error(msg)
+            else:
+                self.show_toast(msg)
 
     def _update_coach_strip(self, ov: Any, live: bool) -> None:
         """Dashboard coach strip: gauge, detected role (+ swap notice), top tip, AI counter."""
@@ -7138,10 +7276,25 @@ def _default_overlay_factory(cfg: Config, provider: Callable[[], Any]) -> Any:
     return OverlayManager(cfg, provider)
 
 
-def _default_detector_factory(cfg: Config) -> Any:
+def _default_detector_factory(cfg: Config, learn: bool = True) -> Any:
+    """Same detector as the engine builds itself (engine._ensure_detector): champion DB for the
+    roster matcher, icon-scale prior, and the learned icon of a custom skin (``learn_cache``,
+    real games only). The engine adopts it and plugs its own ``on_scale`` callback."""
     from treeaicoach.detector import create_detector  # noqa: PLC0415
 
-    return create_detector(cfg.detector_backend, cfg.detection_threshold)
+    db = None
+    try:
+        from treeaicoach.champions import get_default_db  # noqa: PLC0415
+
+        db = get_default_db()
+    except Exception:
+        log.debug("Champion database unavailable for the detector", exc_info=True)
+    try:
+        return create_detector(cfg.detector_backend, cfg.detection_threshold, db=db,
+                               scale_store=dict(getattr(cfg, "icon_scale_by_res", None) or {}),
+                               learn_cache=bool(learn))
+    except TypeError:          # older detector module
+        return create_detector(cfg.detector_backend, cfg.detection_threshold)
 
 
 def _default_demo_source() -> Any:

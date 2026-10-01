@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -26,8 +27,10 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+# (comparisons: BENCH_PKG_ROOT=<dir containing another treeaicoach package> runs that one)
+_PKG = os.environ.get("BENCH_PKG_ROOT") or str(ROOT)
+if _PKG not in sys.path:
+    sys.path.insert(0, _PKG)
 
 FIX = ROOT / "tests" / "fixtures" / "real"
 MATCH_DIST = 0.03
