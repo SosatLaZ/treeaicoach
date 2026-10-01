@@ -148,6 +148,8 @@ def _components(mask: np.ndarray, team: str, size: int, exclude: list[tuple[floa
         cu, cv_ = float(cents[i][0]) / size, float(cents[i][1]) / size
         if any(math.hypot(cu - eu, cv_ - ev) < er for eu, ev, er in exclude):
             continue
+        if geometry.is_base(geometry.classify_zone(cu, cv_)):
+            continue                                         # inhibitors / nexus / fountain glyphs
         lane, s = lane_position(cu, cv_)
         if lane is None:
             continue
