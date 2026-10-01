@@ -33,6 +33,7 @@ THRESHOLDS = {
     "shot8": (0.5, 1.0, 1.0, 1.0),
     "shot9": (0.5, 1.0, 1.0, 1.0),
     "shot10": (0.75, 1.0, 1.0, 1.0),
+    "shot14": (0.8, 1.0, 1.0, 1.0),   # 384 px minimap (larger HUD scale), two enemies stacked
 }
 TOTAL_MIN_RECALL = 0.82
 TOTAL_MIN_PRECISION = 0.97

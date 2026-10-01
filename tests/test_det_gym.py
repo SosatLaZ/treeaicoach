@@ -44,7 +44,7 @@ def test_quick_games_scoreboard(board):
 
 def test_real_crops(board):
     r = board["real"]
-    assert r["gt"] == 45
+    assert r["gt"] == 50
     assert r["rec"] >= 0.88, r
     assert r["prec"] >= 0.99, r
     assert r["team"] >= 0.99, r
