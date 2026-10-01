@@ -1,6 +1,6 @@
 {
-  "version": "1.6.6",
-  "sha256": "538d4664318b8a9255d26ac61196c5b91ab1a76417d6688183345f4696652cf2",
-  "size": 81879501,
-  "notes": "Correctif IA : modèle Groq gpt-oss-120b + bascule automatique si le modèle n'existe pas."
+  "version": "1.7.0",
+  "sha256": "24838035bd35955b02fbaa669b6424f292759f0c9ec137d09200178f76f306a8",
+  "size": 81894908,
+  "notes": "1.7 : gank ultra rapide, calculateur FIGHT/RECULE, voix minimale, phases et placement, balises, IA Groq/Gemini (F8), détection v3, mise à jour plus rapide."
 }
