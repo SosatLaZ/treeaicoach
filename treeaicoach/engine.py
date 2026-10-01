@@ -310,6 +310,7 @@ class CoachEngine:
         self._tracker: Any = None
         self._objectives: Any = None
         self._reminders: Any = None
+        self._coach: Any = None                # coach.MapCoach (live macro tips + HUD insight)
         self._fog: Any = None
         self._throttler = AlertThrottler()
         self._recorder: Any = None
@@ -394,7 +395,8 @@ class CoachEngine:
                 if (old.minimap_mode, old.minimap_side, old.manual_minimap_rect) != \
                         (new.minimap_mode, new.minimap_side, new.manual_minimap_rect):
                     self._relocate = True
-            for comp in (self._gank, self._objectives, self._reminders, self._fog, self._overlay_mgr):
+            for comp in (self._gank, self._objectives, self._reminders, self._fog, self._overlay_mgr,
+                         self._coach):
                 fn = getattr(comp, "apply_config", None)
                 if callable(fn):
                     try:
@@ -445,6 +447,12 @@ class CoachEngine:
             self._reminders = PersonalReminders(cfg)
         except Exception:
             log.exception("Personal reminders unavailable")
+        try:
+            from treeaicoach.coach import MapCoach
+
+            self._coach = MapCoach(cfg)
+        except Exception:
+            log.exception("Map coach unavailable")
         try:
             from treeaicoach.fog_tracker import FogTracker
 
@@ -840,7 +848,7 @@ class CoachEngine:
     def _start_game(self, game: GameInfo, t: float) -> None:
         log.info("New game detected (game time %.0f s, mode %s)", game.game_time, game.game_mode)
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
-                     self._throttler):
+                     self._throttler, self._coach):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -1046,6 +1054,11 @@ class CoachEngine:
                 z = geometry.classify_zone(*me_pos)
                 in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
             raw_alerts += list(self._reminders.update(t, game, me_pos, in_base) or [])
+        if self._coach is not None:
+            raw_alerts += list(self._coach.update(
+                t, tracker, game, self._role_resolver,
+                self._objectives.states() if self._objectives is not None else [],
+                me_pos, threat=threat) or [])
         if self._fog is not None and not getattr(self._cfg, "safe_mode", False):
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
         rec = self._recorder
@@ -1640,6 +1653,7 @@ class CoachEngine:
             danger_radius=cfg.effective_danger_radius(), flash=flash,
             jungler_line=self._jungler_line(game, jungler, now),
             hint=self._reminders.hint() if self._reminders is not None else None,
+            insight=self._coach.insight() if self._coach is not None else None,
             me_icon=self._icon(game.me.champion_alias, game.me.skin_id) if game and game.me else None,
             allies=allies, roles=roles,
         )

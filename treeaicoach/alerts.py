@@ -58,6 +58,8 @@ class AlertKind(str, Enum):
     CONTROL_WARD = "control_ward"
     JUNGLER_WHERE = "jungler_where"
     DEATH_RECAP = "death_recap"
+    # v2: live macro coaching (coach.py), INFO only, free text
+    MACRO_TIP = "macro_tip"
 
     @classmethod
     def _missing_(cls, value: object) -> AlertKind | None:
@@ -160,6 +162,7 @@ FREE_TEXT_KINDS: frozenset[AlertKind] = frozenset({
     AlertKind.CONTROL_WARD,
     AlertKind.JUNGLER_WHERE,
     AlertKind.DEATH_RECAP,
+    AlertKind.MACRO_TIP,
 })
 _WS_RE = re.compile(r"\s+")
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -347,6 +350,10 @@ def _jungler_where(level: Level, champ: str | None, zone: str | None, n: int) ->
     return f"{_cap(who)} vu {zone} il y a {_seconds_fr(n)}."
 
 
+def _macro_tip(level: Level, champ: str | None, zone: str | None, n: int) -> str:
+    return "Conseil : regarde la minimap."
+
+
 def _death_recap(level: Level, champ: str | None, zone: str | None, n: int) -> str:
     if n >= 2:
         return f"Mort face à {min(n, 5)} ennemis."
@@ -366,6 +373,7 @@ _BUILDERS = {
     AlertKind.CONTROL_WARD: _control_ward,
     AlertKind.JUNGLER_WHERE: _jungler_where,
     AlertKind.DEATH_RECAP: _death_recap,
+    AlertKind.MACRO_TIP: _macro_tip,
 }
 _GENERIC = {Level.INFO: "Attention.", Level.WARNING: "Attention !", Level.DANGER: "Danger, recule !"}
 
@@ -471,6 +479,7 @@ KIND_PRIORITY: tuple[AlertKind, ...] = (
     AlertKind.OBJECTIVE_SOON,
     AlertKind.RECALL_GOLD,
     AlertKind.CONTROL_WARD,
+    AlertKind.MACRO_TIP,
 )
 DEFAULT_MIN_GAP_S = 1.2
 DEFAULT_DANGER_GAP_S = 1.5  # min time between two DANGER messages (≈ one spoken sentence)

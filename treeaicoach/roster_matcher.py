@@ -118,8 +118,11 @@ RECAL_WINDOW = 24
 RECAL_MIN_FRAMES = 48             # frames between two automatic re-calibrations
 CALIB_FRAMES = 3                  # first frames combined for the initial calibration
 REFRESH_FRAMES = 80               # period of the check for newly downloaded skin portraits
-#: Calibration quality below which the result is ignored.
-MIN_CALIB_QUALITY = 0.10
+#: Calibration quality (evidence units) below which the result is ignored.
+MIN_CALIB_QUALITY = 0.62
+#: Champions averaged by the calibration quality, and weight of the log-normal scale prior.
+CALIB_TOP_K = 3
+CALIB_PRIOR_WEIGHT = 1.5
 
 # Initial ring colours (BGR), learned live afterwards.
 _RING_INIT_BGR: dict[str, tuple[int, int, int]] = {
@@ -581,8 +584,14 @@ class RosterMatcher:
         return out
 
     # ------------------------------------------------------------------ calibration
-    def _scale_quality(self, bgr: np.ndarray, scale: float, inner_cap: float) -> float:
-        """How well the roster portraits stand out at ``scale`` (robust over champions)."""
+    def _scale_quality(self, bgr: np.ndarray, scale: float, inner_cap: float,
+                       prior: float = DEFAULT_SCALE) -> float:
+        """How well the best roster portraits stand out at ``scale``.
+
+        Mean evidence (best NCC + uniqueness margin, like the detection) of the
+        ``CALIB_TOP_K`` best champions (often only a few are visible), minus a gentle
+        log-normal prior around ``prior`` (stored ratio, else ``DEFAULT_SCALE``).
+        """
         maps, std, bank, _, _ = self._maps(bgr, scale, inner_cap)
         n = maps.shape[0]
         if n == 0 or maps.shape[1] < 3 or maps.shape[2] < 3:
@@ -590,14 +599,17 @@ class RosterMatcher:
         # contrast consistency: flat / very busy areas do not count
         ratio = std[None] / bank.stds[:, None, None]
         valid = (ratio > CONTRAST_RANGE[0]) & (ratio < CONTRAST_RANGE[1])
-        flat = np.where(valid, maps, -1.0).reshape(n, -1)
-        best = flat.max(axis=1)
-        # background level: most positions are not an icon (subsampled for speed)
-        sub = maps[:, ::3, ::3].ravel()
-        bgv = float(np.partition(sub, int(0.98 * (sub.size - 1)))[int(0.98 * (sub.size - 1))])
-        k = max(2, min(n, int(math.ceil(0.5 * n))))
-        top = np.sort(best)[::-1][:k]
-        return float(np.median(top) - bgv) + 0.3 * float(np.median(top))
+        mm = np.where(valid, maps, -1.0)
+        rad = max(2, int(round(0.5 * bank.size)))
+        evs = []
+        for i in range(n):
+            m = mm[i]
+            y, x = divmod(int(np.argmax(m)), m.shape[1])
+            best = float(m[y, x])
+            m[max(0, y - rad):y + rad + 1, max(0, x - rad):x + rad + 1] = -1.0
+            evs.append(best + UNIQUE_WEIGHT * min(best - float(m.max()), UNIQUE_CAP))
+        top = np.sort(evs)[::-1][:CALIB_TOP_K]
+        return float(np.mean(top)) - CALIB_PRIOR_WEIGHT * math.log(scale / prior) ** 2
 
     def calibrate(self, minimap_bgr: np.ndarray, store: bool = True) -> float | None:
         """Search the icon scale over ``SCALE_MIN``..``SCALE_MAX``; the ratio or None."""
@@ -619,11 +631,12 @@ class RosterMatcher:
         scales = [SCALE_MIN * SCALE_STEP ** i for i in range(n_steps)]
         if around is not None:
             scales = [s for s in scales if abs(math.log(s / around)) <= 0.12] or [around]
-        quals = [self._scale_quality(bgr, s, CALIB_INNER_PX) for s in scales]
+        prior = self._stored_scale(bgr) or DEFAULT_SCALE
+        quals = [self._scale_quality(bgr, s, CALIB_INNER_PX, prior) for s in scales]
         i = int(np.argmax(quals))
         # refine at the detection resolution around the best coarse scale
         fine = [min(SCALE_MAX, max(SCALE_MIN, scales[i] * f)) for f in FINE_STEPS]
-        fq = [self._scale_quality(bgr, s, WORK_INNER_PX) for s in fine]
+        fq = [self._scale_quality(bgr, s, WORK_INNER_PX, prior) for s in fine]
         # NCC tolerates a few % of scale error, so the quality curve has a plateau: take
         # the (quality-weighted, log-scale) centre of the plateau rather than its argmax
         q = max(fq)
@@ -719,21 +732,24 @@ class RosterMatcher:
                 st.scale = None
                 st.calib.clear()
             self._size_key = key
-        need = len(st.calib) < CALIB_FRAMES and (st.scale is None or st.frames < 2 * CALIB_FRAMES)
-        if not need and st.scale is None and st.frames % RECAL_MIN_FRAMES == 0:
-            need = True                       # calibration failed so far: retry sometimes
-        if not need and st.scale is not None and st.since_calib >= RECAL_MIN_FRAMES \
-                and len(st.conf_hist) >= RECAL_WINDOW and st.ref_conf > 0:
+        around: float | None = None              # None: full sweep
+        need = False
+        if st.scale is None:
+            # not calibrated yet: first frames, then a retry from time to time
+            need = st.frames < CALIB_FRAMES or st.frames % RECAL_MIN_FRAMES == 0
+        elif len(st.calib) < CALIB_FRAMES and st.frames < 2 * CALIB_FRAMES:
+            need, around = True, st.scale         # initial phase: confirm narrowly
+        elif st.since_calib >= RECAL_MIN_FRAMES and len(st.conf_hist) >= RECAL_WINDOW:
             recent = float(np.mean(st.conf_hist[-RECAL_WINDOW:]))
-            if recent < RECAL_DROP * st.ref_conf:
+            if recent < max(RECAL_DROP * st.ref_conf, 0.5):
+                # matches became weak (or never were): the scale may be wrong
                 need = True
-                log.info("Roster matcher: confidence dropped (%.1f < %.1f): re-calibrating",
+                log.info("Roster matcher: weak matches (%.1f, reference %.1f): re-calibrating",
                          recent, st.ref_conf)
                 st.calib.clear()
-                st.calib.extend([(st.scale, 0.2)])   # the old scale keeps a vote
+                st.calib.append((st.scale, 0.2))     # the old scale keeps a vote
         if need:
-            self._calibrate(bgr, store=True,
-                            around=st.scale if st.scale is not None and st.calib else None)
+            self._calibrate(bgr, store=True, around=around)
         if st.scale is not None:
             return st.scale
         return self._stored_scale(bgr) or DEFAULT_SCALE
@@ -860,8 +876,8 @@ class RosterMatcher:
         del st.bg[:-600]
         st.conf_hist.append(float(len(conf)))
         del st.conf_hist[:-4 * RECAL_WINDOW]
-        if st.since_calib == RECAL_WINDOW:
-            st.ref_conf = float(np.mean(st.conf_hist[-RECAL_WINDOW:]))
+        if st.since_calib >= RECAL_WINDOW:
+            st.ref_conf = max(st.ref_conf, float(np.mean(st.conf_hist[-RECAL_WINDOW:])))
 
         self.last_matches = infos
         dets: list[Detection] = []
