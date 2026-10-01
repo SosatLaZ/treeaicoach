@@ -190,3 +190,181 @@ def test_bench_demo_detection_latency() -> None:
     assert res["danger"] and res["danger"][0] < 0.6 - 0.05, res     # + ~0.001 s beep start
     assert res["warn"] and res["warn"][0] < 1.0, res
     assert res["tick_ms_mean"] < 1000.0 / Config().target_fps
+
+
+# ------------------------------------------------------------------ beep-first danger alerts
+class _Rec:
+    """Fake in-memory audio output of the BeepPlayer (records the start time)."""
+
+    def __init__(self) -> None:
+        self.t: list[float] = []
+
+    def __call__(self, data: bytes) -> None:
+        assert data[:4] == b"RIFF"
+        self.t.append(time.perf_counter())
+
+
+class _FakeTTS:
+    name = "fake"
+
+    def __init__(self, cached: bool) -> None:
+        self.cached = cached
+        self.spoken: list[tuple[float, str]] = []
+        self.prewarmed: list[str] = []
+        self.beeps = 0
+
+    def configure(self, *a) -> None:
+        pass
+
+    def ready(self, text: str) -> bool:
+        return self.cached
+
+    def prewarm(self, phrases) -> None:
+        self.prewarmed += list(phrases)
+
+    def speak(self, text: str, purge: bool) -> None:
+        self.spoken.append((time.perf_counter(), text))
+
+    def is_speaking(self) -> bool:
+        return False
+
+    def purge(self) -> None:
+        pass
+
+    def beep(self, volume: int) -> float:
+        self.beeps += 1
+        return 0.0
+
+    def voices(self) -> list:
+        return []
+
+    def pump(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _beep_voice(cached: bool, mode: str = "bip_voix"):
+    from treeaicoach.voice import BeepPlayer
+
+    out = _Rec()
+    tts = _FakeTTS(cached)
+    v = VoiceEngine(_backend_factory=lambda: tts, _beep_player=BeepPlayer(_play=out), danger_voice=mode)
+    v.start()
+    assert v.wait_ready(3.0)
+    return v, tts, out
+
+
+@pytest.mark.parametrize("cached", [True, False])
+def test_danger_is_beep_first_and_voice_only_if_cached(cached: bool) -> None:
+    v, tts, out = _beep_voice(cached)
+    try:
+        t0 = time.perf_counter()
+        v.say("Gank ! Lee Sin, recule !", 2)
+        assert v.beeper.played and v.beeper.played[-1][1] - t0 < 0.01      # play() called synchronously
+        deadline = time.monotonic() + 2.0
+        while not out.t and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert out.t and out.t[0] - t0 < 0.05, out.t                        # detection -> beep < 50 ms
+        assert v.wait_idle(3.0)
+        time.sleep(0.4)
+        assert tts.beeps == 0                                               # no second (backend) beep
+        if cached:
+            assert [x for _t, x in tts.spoken] == ["Gank ! Lee Sin, recule !"]
+            assert tts.spoken[0][0] - t0 >= 0.2                             # after the beep, never before
+            assert tts.spoken[0][0] - t0 < 0.6                              # detection -> voice
+        else:
+            assert tts.spoken == [] and v.beep_only_count == 1              # beep alone, no TTS wait
+            assert tts.prewarmed == ["Gank ! Lee Sin, recule !"]            # ready next time
+    finally:
+        v.stop()
+
+
+def test_danger_voice_setting_beep_only() -> None:
+    v, tts, out = _beep_voice(True, mode="bip")
+    try:
+        v.say("Recule !", 2)
+        assert v.wait_idle(3.0)
+        time.sleep(0.3)
+        assert out.t and tts.spoken == [] and v.beep_only_count == 1
+        v.set_danger_voice("bip_voix")
+        assert v.alert_beep("recule")                                      # engine path: tone first
+        v.say("Recule !", 2)
+        assert v.wait_idle(3.0)
+        time.sleep(0.5)
+        assert [x for _t, x in tts.spoken] == ["Recule !"]
+        assert [tone for tone, _t in v.beeper.played][-1] == "recule"
+        assert len(v.beeper.played) == 2                                    # say() did not beep twice
+    finally:
+        v.stop()
+
+
+def test_tones_are_distinct_wavs() -> None:
+    from treeaicoach.voice import TONES, tone_wav_bytes
+
+    wavs = {t: tone_wav_bytes(t, 100) for t in TONES}
+    assert set(wavs) == {"gank", "recule", "siege"}
+    assert all(w[:4] == b"RIFF" and len(w) > 1000 for w in wavs.values())
+    assert len(set(wavs.values())) == 3
+
+
+def test_engine_detection_to_beep_under_50ms(tmp_path, monkeypatch) -> None:
+    """Full engine tick: the 2 v 1 at 53 % HP (real case 3:24) is detected and the "recule" tone
+    starts < 50 ms after the tick that sees it, before / without any TTS."""
+    import numpy as np
+
+    import test_danger as D
+    from treeaicoach import paths
+    from treeaicoach.detector import Detection
+    from treeaicoach.engine import CoachEngine
+    from treeaicoach.identifier import Identified
+
+    monkeypatch.setenv(paths.ENV_HOME, str(tmp_path / "home"))
+    paths._reset_cache()
+    v, tts, out = _beep_voice(False)
+    frame = (40 + np.random.default_rng(0).integers(0, 30, size=(200, 200, 3))).astype(np.uint8)
+
+    class _Src:
+        is_demo = False
+
+        def next(self, t: float):
+            g = D.game_at(204.0 + t, 567.0 / 1062.0, my_level=4, levels={"Darius": 4, "Ahri": 4})
+            g.fetched_at = t
+            return frame, g
+
+    def ident_all(_frame):
+        res = []
+        for alias, rel, uv in (("Garen", "self", (0.13, 0.12)), ("Darius", "enemy", (0.145, 0.105)),
+                               ("Ahri", "enemy", (0.15, 0.125))):
+            if rel == "enemy" and clock[0] < 3.0:
+                continue                          # warm-up ticks (lazy components) without enemies
+            probs = (0.9, 0.05, 0.05) if rel == "enemy" else (0.05, 0.05, 0.9)
+            det = Detection(u=uv[0], v=uv[1], r=0.03, score=0.95, cls=rel, cls_probs=probs, alias=alias)
+            res.append(Identified(det=det, alias=alias, relation=rel, team="CHAOS" if rel == "enemy" else "ORDER",
+                                  id_score=0.95))
+        return res
+
+    clock = [0.0]
+    try:
+        eng = CoachEngine(Config(), v, frame_source=_Src(), clock=lambda: clock[0], enable_hotkeys=False,
+                          manage_overlay=False, recorder_factory=lambda: None)
+        eng._vision = ident_all
+        lat = None
+        for i in range(40):
+            clock[0] = i * 0.25
+            n = len(v.beeper.played)
+            t0 = time.perf_counter()
+            eng.step(clock[0])
+            if len(v.beeper.played) > n:
+                lat = v.beeper.played[-1][1] - t0
+                break
+        assert lat is not None, "no danger beep"
+        assert lat < 0.05, lat
+        deadline = time.monotonic() + 1.0
+        while not out.t and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert out.t and out.t[0] - t0 < 0.05 + 0.05
+    finally:
+        v.stop()
+        paths._reset_cache()

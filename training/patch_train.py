@@ -94,7 +94,7 @@ def build_xy(imgs: np.ndarray, labels: list[list[dict]], seed: int = 0, limit: i
     return np.concatenate(X), np.asarray(y, np.int64)
 
 
-def verifier_eval(model_path: Path, clf: PC.PatchClassifier, holdout: bool = True,
+def verifier_eval(model_path: Path, clf: PC.PatchVerifier, holdout: bool = True,
                   mode: str = "mix") -> dict[str, Any]:
     """ONNX detections (thr 0.05) re-scored by the classifier; P/R/F1 sweeps per set."""
     from training.dataset import build_validation_set
@@ -113,7 +113,7 @@ def verifier_eval(model_path: Path, clf: PC.PatchClassifier, holdout: bool = Tru
             dets = det.detect(img)
             a_cnn.add(dets, g)
             t0 = time.perf_counter()
-            p = clf.predict(img, [(d.u, d.v, d.r) for d in dets])
+            p = clf.verify_candidates(img, [(d.u, d.v, d.r) for d in dets])
             ms.append((time.perf_counter() - t0) * 1000)
             new = []
             for d, pr in zip(dets, p):
@@ -139,8 +139,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--size", type=int, default=160)
     p.add_argument("--holdout", action="store_true")
     p.add_argument("--limit", type=int, default=0, help="use only the first N cached images")
-    p.add_argument("--max-fit", type=int, default=40000, help="samples used by the fit")
-    p.add_argument("--iters", type=int, default=200)
+    p.add_argument("--max-fit", type=int, default=0, help="subsample for the fit (0 = all)")
+    p.add_argument("--epochs", type=int, default=8)
     p.add_argument("--out", default="")
     p.add_argument("--eval-onnx", default="")
     p.add_argument("--mode", default="mix", choices=("mix", "replace"))
@@ -162,7 +162,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         Xf, yf = X[keep], y[keep]
     else:
         Xf, yf = X, y
-    clf = PC.fit(Xf, yf, class_weight=[1.0, 1.5, 1.0], iters=a.iters)
+    clf = PC.fit(Xf, yf, class_weight=[1.0, 1.5, 1.0], epochs=a.epochs)
     t2 = time.perf_counter()
     acc = float((clf.predict_features(X).argmax(1) == y).mean())
     log.info("features: %d samples (%d pos) in %.1f s | fit %.1f s | train acc %.3f",

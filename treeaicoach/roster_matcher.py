@@ -183,10 +183,12 @@ RING_PROP_ANNULI = ((0.86, 1.02), (0.62, 0.78), (1.12, 1.3))
 RING_PROP_LW = 0.3
 RING_PROP_SIGMA = 18.0
 RING_PROP_MIN = 0.12
-RING_PROP_EXPLAINED = 0.6
+RING_PROP_EXPLAINED = 0.4
 RING_PROP_MAX = 6
 RING_PROP_ID_MIN = 0.55
 RING_PROP_ID_GAP = 0.1
+RING_PROP_ID_W = 0.5                # accepted when ring + w x (identity - ID_MIN) >= ACCEPT
+RING_PROP_ACCEPT = 0.16             # (measured: no proposal on an empty spot accepted)
 RING_DEBUG: list | None = None
 TRIM_RING_OWN = 0.65
 TRIM_RING_OPP = 0.12
@@ -1887,7 +1889,8 @@ class RosterMatcher:
             second = scored[1][0] if len(scored) > 1 else RING_PROP_ID_MIN - RING_PROP_ID_GAP
             if RING_DEBUG is not None:
                 RING_DEBUG.append((ents[j].alias, side, cx / kx, cy / ky, score, best, second))
-            if best < RING_PROP_ID_MIN or best - second < RING_PROP_ID_GAP:
+            if best < RING_PROP_ID_MIN or best - second < RING_PROP_ID_GAP or \
+                    score + RING_PROP_ID_W * (best - RING_PROP_ID_MIN) < RING_PROP_ACCEPT:
                 continue
             c = _Cand(j, pos[0], pos[1], best, best, note="ring")
             taken.add(j)
@@ -2440,7 +2443,7 @@ class RosterMatcher:
             else:
                 dt = now - tr.t
                 if dt >= 0.03:
-                    if c.note in ("stacked", "camera"):
+                    if c.note in ("stacked", "camera", "ring"):
                         # a position inferred under another icon / from the camera: not
                         # precise enough for a velocity (coasting would run away with it)
                         tr.vu = tr.vv = 0.0

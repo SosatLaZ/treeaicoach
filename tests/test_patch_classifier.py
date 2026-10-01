@@ -59,41 +59,41 @@ def test_features_shape_and_speed():
 
 def test_fit_predict_save_load(tmp_path):
     X, y = _dataset()
-    clf = PC.fit(X, y, iters=150)
+    clf = PC.fit(X, y, epochs=30)
     assert (clf.predict_features(X).argmax(1) == y).mean() > 0.95
     img, icons = _scene(np.random.default_rng(7))
-    p = clf.predict(img, [(u, v, r) for u, v, r, _ in icons] + [(0.5, 0.05, 0.045)])
+    p = clf.verify_candidates(img, [(u, v, r) for u, v, r, _ in icons] + [(0.5, 0.05, 0.045)])
     assert p.shape == (5, 3) and np.allclose(p.sum(1), 1, atol=1e-4)
     assert (p[:4, 0] < 0.5).all() and p[4, 0] > 0.5
     path = tmp_path / "pc.npz"
     clf.save(path)
-    clf2 = PC.PatchClassifier.load(path)
+    clf2 = PC.PatchVerifier.load(path)
     assert clf2 is not None
-    assert np.allclose(clf2.predict(img, [(0.15, 0.3, 0.045)]), clf.predict(img, [(0.15, 0.3, 0.045)]))
+    assert np.allclose(clf2.verify_candidates(img, [(0.15, 0.3, 0.045)]), clf.verify_candidates(img, [(0.15, 0.3, 0.045)]))
 
 
 def test_load_missing_and_bad_input(tmp_path):
-    assert PC.PatchClassifier.load(tmp_path / "nope.npz") is None
+    assert PC.PatchVerifier.load(tmp_path / "nope.npz") is None
     (tmp_path / "bad.npz").write_bytes(b"garbage")
-    assert PC.PatchClassifier.load(tmp_path / "bad.npz") is None
+    assert PC.PatchVerifier.load(tmp_path / "bad.npz") is None
     X, y = _dataset(frames=4)
-    clf = PC.fit(X, y, iters=20)
-    assert clf.predict(np.zeros((50, 50, 3), np.uint8), []).shape == (0, 3)
-    out = clf.predict(None, [(0.5, 0.5, 0.05)])         # never raises
+    clf = PC.fit(X, y, epochs=2)
+    assert clf.verify_candidates(np.zeros((50, 50, 3), np.uint8), []).shape == (0, 3)
+    out = clf.verify_candidates(None, [(0.5, 0.5, 0.05)])         # never raises
     assert out.shape == (1, 3)
 
 
 def test_bundled_model_loads_if_present():
-    clf = PC.PatchClassifier.load()
+    clf = PC.PatchVerifier.load()
     if clf is None:
         pytest.skip("no bundled patch classifier")
     img, icons = _scene(np.random.default_rng(3))
-    assert clf.predict(img, [(u, v, r) for u, v, r, _ in icons]).shape == (4, 3)
+    assert clf.verify_candidates(img, [(u, v, r) for u, v, r, _ in icons]).shape == (4, 3)
 
 
 def test_partial_fit_and_online_learner(tmp_path):
     X, y = _dataset(frames=6)
-    clf = PC.fit(X, y, iters=10)
+    clf = PC.fit(X, y, epochs=1)
     before = (clf.predict_features(X).argmax(1) == y).mean()
     clf.partial_fit(X, y, epochs=5)
     after = (clf.predict_features(X).argmax(1) == y).mean()
@@ -107,7 +107,7 @@ def test_partial_fit_and_online_learner(tmp_path):
         if (tmp_path / "user.npz").is_file() and not learner._busy.is_set():
             break
         time.sleep(0.02)
-    assert learner.updates >= 1 and PC.PatchClassifier.load(tmp_path / "user.npz") is not None
+    assert learner.updates >= 1 and PC.PatchVerifier.load(tmp_path / "user.npz") is not None
     learner.add_frame(None, [(0.5, 0.5, 0.04, "ally")])   # never raises
 
 

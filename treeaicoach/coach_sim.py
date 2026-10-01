@@ -328,7 +328,7 @@ class SimResult:
 
 
 def run(level: str = "intermediaire", minutes: float = 30.0, hz: float = 4.0, seed: int = 0,
-        cfg_changes: dict | None = None) -> SimResult:
+        cfg_changes: dict | None = None, presenter: bool = True) -> SimResult:
     """Run the engine on a scripted game; returns everything the player saw / heard."""
     import os
 
@@ -350,6 +350,9 @@ def run(level: str = "intermediaire", minutes: float = 30.0, hz: float = 4.0, se
     eng = CoachEngine(cfg, voice, frame_source=src, clock=lambda: clock[0], enable_hotkeys=False,
                       manage_overlay=False, recorder_factory=lambda: None)
     eng._vision = lambda frame: _identified(sim, src.gt)          # type: ignore[method-assign]
+    if not presenter:                                              # "before": no presentation router
+        eng.presenter_enabled = False
+        eng._presenter = None
     toasts: list[tuple[float, str, str]] = []
     tips: list[tuple[float, str]] = []
     prev_tip = None
@@ -397,10 +400,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--minutes", type=float, default=30.0)
     ap.add_argument("--hz", type=float, default=4.0)
     ap.add_argument("--quiet", action="store_true", help="rates only")
+    ap.add_argument("--no-presenter", action="store_true", help="without the presentation router (before)")
     a = ap.parse_args(argv)
     import logging
     logging.disable(logging.WARNING)
-    res = run(a.level, a.minutes, a.hz)
+    res = run(a.level, a.minutes, a.hz, presenter=not a.no_presenter)
     out = sys.stdout
     if out is None:
         return 0

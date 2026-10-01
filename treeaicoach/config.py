@@ -64,6 +64,8 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "overlay_mode": ("minimap", "radar", "off"),
     "fog_mode": ("jungler", "all", "off"),
     "voice_engine": ("auto", "neural", "onecore", "sapi"),
+    # danger alerts are beep-first: "bip_voix" = beep, then the sentence only if already cached; "bip" = beep only
+    "danger_voice": ("bip_voix", "bip"),
     # v2 voice policy (voice_policy.py): minimal = ganks, objectives at 60 s, stance, big plays only
     "voice_level": ("minimal", "normal", "bavard"),
     "skill_level": ("debutant", "intermediaire", "avance", "expert"),
@@ -217,6 +219,7 @@ class Config:
     neural_voice: str = "fr-FR-DeniseNeural"   # Microsoft Edge neural voice id (online)
     neural_rate: str = "+15%"       # neural voice speed, "-50%".."+100%" (independent of voice_rate)
     beep_on_danger: bool = True
+    danger_voice: str = "bip_voix"  # Voix pour les dangers : "bip_voix" (bip + voix si prête) | "bip" (bip seul)
     # alerts
     alert_jungler_approach: bool = True
     alert_roam: bool = True

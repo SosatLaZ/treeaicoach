@@ -78,6 +78,7 @@ def test_ui_launch_and_smoke(monkeypatch: pytest.MonkeyPatch):
 
 def test_ui_missing_returns_1(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setitem(sys.modules, "treeaicoach.ui", None)    # import fails
+    monkeypatch.delattr(treeaicoach, "ui", raising=False)       # (else "from treeaicoach import ui" finds it)
     assert main_mod.run_gui(object()) == 1
 
 

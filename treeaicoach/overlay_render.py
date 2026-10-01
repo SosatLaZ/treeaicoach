@@ -1879,32 +1879,37 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
 
 
 # ======================================================================================
-# Compact HUD (default): ONE thing at a time
+# Compact HUD (default): ONE question, "what do I do now?"
 # ======================================================================================
-#: Strict hierarchy of the compact card (docs/ARCHITECTURE.md §19):
-#:   1. danger (gank / recule / siege / personal danger): red card, big short word, nothing else;
-#:   2. one "next action" line (<= ACTION_MAX_CHARS, verb first) under a tiny gauge word;
-#:   3. everything else hidden; at most one small context note (objective in the last 60 s that
-#:      my role plays, enemy jungler hidden 30-120 s) right of the gauge word, beginners only.
-#: The full card (jungler line, 5 portraits, chips) is the "mode détaillé" (setting or hold key).
+#: The compact card (docs/ARCHITECTURE.md §19) holds ONE instruction, verb first, at most two
+#: short lines, white, full opacity, 15 px semibold at 1080p, on a solid dark plate; the left
+#: colour bar is the state (green ok / amber careful / red danger). Nothing else: no chips, no
+#: AI counter, no jungler line, no roster row - they only appear when they ARE the instruction
+#: ("Va bot : Dragon dans 0:45", with the dragon icon) or in the detailed mode (setting / hold
+#: key). Nothing useful to say: no card at all. Danger replaces the card with a red plate.
 COMPACT_REF_W = 300.0
-ACTION_MAX_CHARS = 45
+ACTION_MAX_CHARS = 64           # two short lines
 #: seconds an action line stays on the compact card after it appeared, per level (None = while
 #: valid); a "danger" toned line always shows, a "warning" one except for experts.
 ADVICE_SHOW_S: dict[str, float | None] = {"debutant": None, "intermediaire": 30.0, "avance": 12.0,
                                           "expert": 0.0}
-#: gauge steps shown on the compact card per level (beginners always see where they stand)
-GAUGE_SHOW: dict[str, frozenset[int]] = {
-    "debutant": frozenset({-2, -1, 0, 1, 2}), "intermediaire": frozenset({-2, -1, 0, 1, 2}),
-    "avance": frozenset({-2, 2}), "expert": frozenset({-2, 2}),
-}
-CONTEXT_LEVELS = frozenset({"debutant", "intermediaire"})
+#: objective instruction: last 60 s before the spawn, only when my role plays it (beginner -> advanced)
 OBJECTIVE_CONTEXT_S = 60.0
-JUNGLER_CONTEXT_S = (30.0, 120.0)
+OBJECTIVE_LEVELS = frozenset({"debutant", "intermediaire", "avance"})
+#: where to go for each objective (beginner wording: a concrete place)
+OBJECTIVE_GO: dict[str, str] = {"dragon": "Va bot", "elder": "Va bot", "baron": "Va vers le Baron",
+                                "herald": "Va top", "grubs": "Va top", "atakhan": "Va au centre"}
+#: the gauge's two extremes ARE instructions when nothing else is said
+GAUGE_LINE: dict[int, str] = {2: "Joue agressif : tu es plus fort", -2: "Joue prudent : reste sous ta tour"}
+GAUGE_LEVELS = frozenset({"debutant", "intermediaire"})
+COMPACT_FADE_S = 0.15           # entry animation only; the instruction is never left faded
+STATE_RGB = {"ok": TAI_GO, "careful": TAI_WARN, "danger": TAI_DANGER}
 #: short danger words (threat_text "DANGER — TA BASE EST ATTAQUÉE" -> "BASE ATTAQUÉE")
 DANGER_SHORT: dict[str, str] = {"TA BASE EST ATTAQUÉE": "BASE ATTAQUÉE", "ACE": "ACE : DÉFENDS",
                                 "GANK !": "GANK !"}
 _STATS_WORDS = ("victoire", "kda")
+#: "next to me" for the outnumbered check (normalized minimap units, ~ 1 screen)
+NEAR_ME_UV = 0.09
 
 
 def _skill(state: Any) -> str:
@@ -1913,10 +1918,9 @@ def _skill(state: Any) -> str:
 
 
 def action_text(text: Any, max_chars: int = ACTION_MAX_CHARS) -> str:
-    """The "next action" wording of an advice line: verb-first head before " : " / " (" / " · "
-    when the whole line is too long ("Pose ta balise dans la rivière : premier gank vers 2:30" ->
-    "Pose ta balise dans la rivière"), cut at a word boundary beyond ``max_chars``. A pure
-    statistics line ("+1 200 PO · victoire 55 %") is not an action: "". Never raises."""
+    """The instruction wording of an advice line: verb-first head before " : " / " (" / " · "
+    when the whole line is too long, cut at a word boundary beyond ``max_chars``. A pure
+    statistics line ("+1 200 PO · victoire 55 %") is not an instruction: "". Never raises."""
     try:
         t = " ".join(str(text or "").replace(" — ", " : ").split())
         if not t:
@@ -1955,7 +1959,7 @@ def _advice_raw(state: Any) -> str:
 
 
 def _advice_shown(state: Any, now: float) -> str:
-    """The compact action line for the player's level ("" = none)."""
+    """The advice line for the player's level ("" = none)."""
     line = action_text(_advice_raw(state))
     if not line:
         return ""
@@ -1978,50 +1982,39 @@ def _advice_shown(state: Any, now: float) -> str:
     return line if -0.5 <= age < win else ""
 
 
-def _context_note(state: Any, advice: str) -> tuple[str, tuple[int, int, int]] | None:
-    """At most one small note right of the gauge word (beginner / intermediate levels):
-    the next objective in its last :data:`OBJECTIVE_CONTEXT_S` s when my role plays it, else the
-    enemy jungler hidden for 30-120 s (unless the action line already names him)."""
-    if _skill(state) not in CONTEXT_LEVELS:
+def _objective_instruction(state: Any) -> tuple[str, Any] | None:
+    """("Va bot : Dragon dans 0:45", dragon icon) in the last :data:`OBJECTIVE_CONTEXT_S` s
+    before a spawn my role plays (voice_policy.objective_involved), else None."""
+    if _skill(state) not in OBJECTIVE_LEVELS:
         return None
     try:
         gt = state.game_time if state.game_time is not None and _finite(state.game_time) else None
-        if gt is not None:
-            from treeaicoach.voice_policy import objective_involved
+        if gt is None:
+            return None
+        from treeaicoach.voice_policy import objective_involved
 
-            best = None
-            for ob in state.objectives or []:
-                nxt = getattr(ob, "next_spawn", None)
-                if getattr(ob, "alive", False) or nxt is None or not _finite(nxt):
-                    continue
-                rem = float(nxt) - float(gt)
-                if not (0.0 <= rem <= OBJECTIVE_CONTEXT_S):
-                    continue
-                key = str(getattr(ob, "key", "") or getattr(ob, "name", "")).lower()
-                key = {"dragon ancestral": "elder", "héraut": "herald", "larves": "grubs"}.get(key, key)
-                if not objective_involved(f"objective_soon:{key}:60", getattr(state, "my_role", None),
-                                          getattr(state, "me_uv", None), float(gt)):
-                    continue
-                if best is None or rem < best[0]:
-                    name = str(getattr(ob, "name", "") or key)
-                    best = (rem, f"{OBJECTIVE_SHORT.get(name.lower(), name)} {fmt_clock(rem)}")
-            if best is not None:
-                return best[1], TAI_WARN
-        jg = next((e for e in (state.enemies or []) if e is not None and getattr(e, "is_jungler", False)), None)
-        if jg is not None and not jg.visible and not getattr(jg, "dead", False):
-            ago = jg.last_seen_ago
-            name = str(jg.name or jg.alias or "").strip()
-            lo, hi = JUNGLER_CONTEXT_S
-            if (ago is not None and _finite(ago) and lo <= float(ago) <= hi and name
-                    and name.lower() not in advice.lower()):
-                return f"{name} caché {int(ago)} s", TAI_MUTED
+        best = None
+        for ob in state.objectives or []:
+            nxt = getattr(ob, "next_spawn", None)
+            if getattr(ob, "alive", False) or nxt is None or not _finite(nxt):
+                continue
+            rem = float(nxt) - float(gt)
+            if not (0.0 <= rem <= OBJECTIVE_CONTEXT_S):
+                continue
+            name = str(getattr(ob, "name", "") or "")
+            key = str(getattr(ob, "key", "") or name).lower()
+            key = {"dragon ancestral": "elder", "héraut": "herald", "larves": "grubs"}.get(key, key)
+            if not objective_involved(f"objective_soon:{key}:60", getattr(state, "my_role", None),
+                                      getattr(state, "me_uv", None), float(gt)):
+                continue
+            if best is None or rem < best[0]:
+                label = OBJECTIVE_SHORT.get(name.lower(), name or key)
+                go = OBJECTIVE_GO.get(key, "Va vers l'objectif")
+                best = (rem, f"{go} : {label} dans {fmt_clock(rem)}", objective_icon(name) if name else None)
+        return (best[1], best[2]) if best is not None else None
     except Exception:
-        log.debug("context note failed", exc_info=True)
-    return None
-
-
-#: "next to me" for the outnumbered check (normalized minimap units, ~ 1 screen)
-NEAR_ME_UV = 0.09
+        log.debug("objective instruction failed", exc_info=True)
+        return None
 
 
 def _near_counts(state: Any) -> tuple[int, int]:
@@ -2045,8 +2038,8 @@ def _near_counts(state: Any) -> tuple[int, int]:
 
 def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | None:
     """What the compact card shows, or None when there is nothing worth a card (the overlay then
-    hides the HUD window). Keys: ``mode`` ("danger" | "normal"), ``word``, ``colour``, ``step``
-    (gauge or None), ``line`` (action line or ""), ``note`` ((text, colour) or None)."""
+    hides the HUD window). Keys: ``mode`` ("danger" | "careful" | "ok"), ``colour`` (left bar),
+    ``word`` (danger word, or ""), ``line`` (the instruction, or ""), ``icon`` (RGBA or None)."""
     now = time.monotonic() if now is None else float(now)
     lvl = 0
     try:
@@ -2054,33 +2047,36 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
             lvl = int(min(max(int(state.threat_level or 0), 0), 2))
     except (TypeError, ValueError):
         lvl = 0
+    dead = bool(getattr(state, "me_dead", False))
     advice = _advice_shown(state, now)
-    if lvl >= 1 and not bool(getattr(state, "me_dead", False)):
-        tone = str(getattr(state, "tip_tone", "") or "").lower()
+    tone = str(getattr(state, "tip_tone", "") or "").lower()
+    if lvl >= 1 and not dead:
         line = advice if tone == "danger" else ""
-        return {"mode": "danger" if lvl >= 2 else "warning", "word": _danger_word(state),
-                "colour": TAI_DANGER if lvl >= 2 else TAI_WARN, "step": None, "line": line, "note": None}
+        mode = "danger" if lvl >= 2 else "careful"
+        return {"mode": mode, "colour": STATE_RGB[mode], "word": _danger_word(state), "line": line, "icon": None}
     near_e, near_a = _near_counts(state)
-    if near_e >= 2 and near_e > near_a + 1 and not bool(getattr(state, "me_dead", False)):
-        # outnumbered next to me (docs/LESSONS.md 6-7): never a calm gauge word, even with the
-        # enemies visible on screen
-        return {"mode": "warning", "word": f"{near_e} CONTRE {near_a + 1} : RECULE", "colour": TAI_WARN,
-                "step": None, "line": "", "note": None}
-    if bool(getattr(state, "me_dead", False)):
+    if near_e >= 2 and near_e > near_a + 1 and not dead:
+        # outnumbered next to me (docs/LESSONS.md 6-7), even with the enemies visible on screen
+        return {"mode": "careful", "colour": STATE_RGB["careful"], "word": f"{near_e} CONTRE {near_a + 1}",
+                "line": "Recule vers ta tour", "icon": None}
+    if dead:
         # dead: the game shows the respawn timer; only the lesson / next action, if any
         if not advice:
             return None
-        return {"mode": "normal", "word": "", "colour": TAI_MUTED, "step": None, "line": advice, "note": None}
+        return {"mode": "ok", "colour": TAI_MUTED, "word": "", "line": advice, "icon": None}
     step = _gauge_step(state)
-    if step is not None and step not in GAUGE_SHOW[_skill(state)]:
-        step = None
-    if step == 0 and near_e:
-        step = None                        # an enemy on me: "NORMAL" would not match the moment
-    note = _context_note(state, advice)
-    if step is None and not advice and note is None:
-        return None
-    word, colour = GAUGE_STYLE[step] if step is not None else ("", TAI_INFO)
-    return {"mode": "normal", "word": word, "colour": colour, "step": step, "line": advice, "note": note}
+    careful = (step is not None and step <= -1) or tone in ("danger", "warning")
+    icon = None
+    line = advice
+    obj = _objective_instruction(state)
+    if obj is not None and tone not in ("danger", "warning"):
+        line, icon = obj
+    if not line and step in GAUGE_LINE and _skill(state) in GAUGE_LEVELS:
+        line = GAUGE_LINE[step]
+    if not line:
+        return None                                   # silence is a feature
+    mode = "careful" if careful else "ok"
+    return {"mode": mode, "colour": STATE_RGB[mode], "word": "", "line": line, "icon": icon}
 
 
 def hud_visible(state: Any, now: float | None = None) -> bool:
@@ -2095,35 +2091,45 @@ def hud_visible(state: Any, now: float | None = None) -> bool:
 
 def _compact_layout(state: Any, width: int, now: float) -> dict[str, Any]:
     k = width / COMPACT_REF_W
-    c = compact_content(state, now) or {"mode": "normal", "word": "", "colour": TAI_INFO, "step": None,
-                                          "line": "", "note": None}
-    ms, mt, mb = round(4 * k), round(3 * k), round(6 * k)
+    c = compact_content(state, now) or {"mode": "ok", "colour": TAI_GO, "word": "", "line": "", "icon": None}
+    ms, mt, mb = round(3 * k), round(2 * k), round(4 * k)
     cx0, cw = float(ms), float(width - 2 * ms)
-    left, right = cx0 + 15 * k, cx0 + cw - 10 * k
-    danger = c["mode"] in ("danger", "warning")
-    f_word = get_font(round((19 if c["mode"] == "danger" else 16) * k), "display") if danger \
-        else get_font(max(7, round(11 * k)), "bold")
-    f_line = get_font(round(14 * k), "semibold")
-    line = c["line"]
-    if line and text_width(line, f_line) > right - left:
-        f_line = get_font(round(13 * k), "semibold")
-        if text_width(line, f_line) > right - left:     # still too wide: the action head, not "…"
-            head = action_text(line, max(8, len(line) - 1))
-            if head and text_width(head, f_line) <= right - left:
-                line = head
-    c = {**c, "line": line}
+    left, right = cx0 + 16 * k, cx0 + cw - 11 * k
+    icon_w = 20 * k if c["icon"] is not None else 0.0
+    f_line = get_font(round(15.5 * k), "semibold")
+    avail = right - left - icon_w
+    lines = wrap_text(c["line"], f_line, avail, 2) if c["line"] else []
+    if lines and lines[-1].endswith("…"):              # too long: the action head, not a cut word
+        head = action_text(c["line"], max(8, len(c["line"]) - 1))
+        alt = wrap_text(head, f_line, avail, 2) if head else []
+        if alt and not alt[-1].endswith("…"):
+            lines = alt
+    danger = c["mode"] in ("danger", "careful") and bool(c["word"])
+    f_word = get_font(round((20 if c["mode"] == "danger" else 17) * k), "display")
     rows: list[tuple[str, float]] = []
-    has_head = bool(c["word"]) or c["step"] is not None or c["note"] is not None
-    if has_head:
-        rows.append(("head", (24 if danger else 14) * k))
-    if line:
-        rows.append(("line", 18 * k))
-    gap = 4 * k if len(rows) == 2 else 0.0
-    pad_t, pad_b = 7 * k, 8 * k
+    if danger:
+        rows.append(("word", 24 * k))
+    if lines:
+        rows.append(("line", 19 * k * len(lines)))
+    gap = 2 * k if len(rows) == 2 else 0.0
+    pad_t, pad_b = 9 * k, 9 * k
     ch = pad_t + sum(h for _, h in rows) + gap + pad_b
     return {"k": k, "c": c, "ms": ms, "mt": mt, "cx0": cx0, "cw": cw, "ch": ch, "left": left, "right": right,
-            "f_word": f_word, "f_line": f_line, "f_note": get_font(max(7, round(11 * k)), "semibold"),
-            "rows": rows, "gap": gap, "pad_t": pad_t, "height": int(math.ceil(mt + ch + mb)), "danger": danger}
+            "f_word": f_word, "f_line": f_line, "lines": lines, "icon_w": icon_w, "rows": rows, "gap": gap,
+            "pad_t": pad_t, "height": int(math.ceil(mt + ch + mb)), "danger": danger}
+
+
+def _compact_fade(since: Any, now: float) -> float:
+    """Entry animation only (<= :data:`COMPACT_FADE_S`); 1.0 otherwise (never left faded)."""
+    try:
+        if since is None or not _finite(since, now):
+            return 1.0
+        d = float(now) - float(since)
+        if d < 0 or d >= COMPACT_FADE_S:
+            return 1.0
+        return max(0.35, d / COMPACT_FADE_S)
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
@@ -2131,52 +2137,35 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
     k, c = lay["k"], lay["c"]
     W, H = width, lay["height"]
     x0, y0, cw, ch = lay["cx0"], float(lay["mt"]), lay["cw"], lay["ch"]
-    left, right = lay["left"], lay["right"]
+    left = lay["left"]
     cv_ = Canvas(W, H)
     accent = c["colour"]
-    if not lay["danger"]:
-        tone = str(getattr(state, "tip_tone", "") or "").lower()
-        if c["line"] and tone in TONE_RGB:
-            accent = TONE_RGB[tone]
-        elif c["step"] is None:
-            accent = TAI_INFO
-    rad = 6 * k
-    for i, a in enumerate((0.14, 0.09, 0.05)):
-        g = (i + 1) * 1.2 * k
-        cv_.rrect(x0 - g, y0 - g * 0.6 + 2 * k, cw + 2 * g, ch + 2 * g, rad + g, BLACK, a)
-    if lay["danger"]:
-        bg = _mix(TAI_PANEL, accent, 0.30 if c["mode"] == "danger" else 0.16)
-        cv_.rrect(x0, y0, cw, ch, rad, bg, 0.95, border=accent, border_alpha=0.95, border_w=max(1.2, 1.4 * k))
-    else:
-        cv_.rrect(x0, y0, cw, ch, rad, TAI_PANEL, 0.90, border=TAI_EDGE, border_alpha=0.8,
+    rad = 5 * k
+    for i, a in enumerate((0.12, 0.06)):
+        g = (i + 1) * 1.1 * k
+        cv_.rrect(x0 - g, y0 - g * 0.5 + 1.5 * k, cw + 2 * g, ch + 2 * g, rad + g, BLACK, a)
+    if c["mode"] == "danger":
+        bg = _mix(TAI_PANEL, accent, 0.32)
+        cv_.rrect(x0, y0, cw, ch, rad, bg, 0.97, border=accent, border_alpha=1.0, border_w=max(1.2, 1.4 * k))
+    else:                                              # solid dark plate (contrast first)
+        cv_.rrect(x0, y0, cw, ch, rad, (11, 13, 17), 0.96, border=TAI_EDGE, border_alpha=0.9,
                   border_w=max(1.0, 0.9 * k))
     phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
-    a_acc = 0.95 if c["mode"] != "danger" else 0.75 + 0.25 * math.sin(phase * 2 * math.pi)
-    cv_.capsule(x0 + 7 * k, y0 + 6 * k, x0 + 7 * k, y0 + ch - 6 * k, 3.0 * k, accent, a_acc)
+    a_acc = 1.0 if c["mode"] != "danger" else 0.8 + 0.2 * math.sin(phase * 2 * math.pi)
+    cv_.rrect(x0 + 5 * k, y0 + 6 * k, 4 * k, ch - 12 * k, 2 * k, accent, a_acc)
+    fa = _compact_fade(getattr(state, "tip_since", None), now)
     y = y0 + lay["pad_t"]
     for idx, (name, h) in enumerate(lay["rows"]):
-        cy = y + h / 2
-        if name == "head":
-            if lay["danger"]:
-                cv_.text(left, cy, fit_text(c["word"].upper(), lay["f_word"], right - left), lay["f_word"],
-                         _mix(accent, WHITE, 0.35), shadow=0.6)
-            else:
-                x = left
-                fa = _fade(getattr(state, "gauge_since", None), now)
-                if c["step"] is not None:
-                    x += _bars(cv_, x, cy, k * 0.85, c["step"], c["colour"], max(0.35, fa)) + 6 * k
-                if c["word"]:
-                    x += cv_.text(x, cy, c["word"], lay["f_word"], c["colour"], max(0.25, fa), shadow=0.5) + 8 * k
-                note = c["note"]
-                if note is not None:
-                    avail = right - x
-                    if avail > 40 * k:
-                        cv_.text(right, cy, fit_text(note[0], lay["f_note"], avail), lay["f_note"], note[1], 0.95,
-                                 anchor="r", shadow=0.4)
+        if name == "word":
+            cv_.text(left, y + h / 2, fit_text(c["word"].upper(), lay["f_word"], lay["right"] - left), lay["f_word"],
+                     _mix(accent, WHITE, 0.4), shadow=0.6)
         elif name == "line":
-            fa = _fade(getattr(state, "tip_since", None), now)
-            cv_.text(left, cy - 0.5 * k, fit_text(c["line"], lay["f_line"], right - left), lay["f_line"],
-                     ADVICE_RGB, fa, shadow=0.0, outline=1, outline_alpha=0.55)
+            tx = left
+            if c["icon"] is not None:
+                cv_.image(left + 8 * k, y + 9.5 * k, sprite_patch(c["icon"], 17 * k))
+                tx = left + lay["icon_w"]
+            for i, ln in enumerate(lay["lines"]):
+                cv_.text(tx, y + 19 * k * i + 9.5 * k, ln, lay["f_line"], WHITE, fa, shadow=0.0)
         y += h + (lay["gap"] if idx == 0 else 0.0)
     return cv_.to_bgra()
 

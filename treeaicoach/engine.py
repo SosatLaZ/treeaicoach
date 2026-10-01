@@ -583,6 +583,12 @@ class CoachEngine:
                     self._tip_rotator.min_prio = tip_min_prio(new)
                 except Exception:
                     log.debug("skill level unavailable", exc_info=True)
+            sdv = getattr(self._voice, "set_danger_voice", None)
+            if callable(sdv):
+                try:
+                    sdv(getattr(new, "danger_voice", "bip_voix"))
+                except Exception:
+                    log.debug("voice.set_danger_voice failed", exc_info=True)
             set_params = getattr(self._voice, "set_params", None)
             if callable(set_params):
                 try:
@@ -694,6 +700,10 @@ class CoachEngine:
             self._toasts = ToastQueue(clock=self._clock)
         except Exception:
             log.exception("Toasts unavailable")
+        if getattr(self, "_presenter", None) is None and getattr(self, "presenter_enabled", True):
+            from treeaicoach.presenter import Presenter     # ONE router: banner / panel / badge / drop
+
+            self._presenter = Presenter()
         if self._identifier is None:
             try:
                 from treeaicoach.identifier import ChampionIdentifier
@@ -1025,6 +1035,31 @@ class CoachEngine:
     def hotkeys(self) -> Any:
         return self._hotkeys
 
+    def _danger_beep(self, a: Alert) -> None:
+        """The distinct danger tone, at once (voice.VoiceEngine.alert_beep): "recule" for the
+        personal danger, "siege" for a gank in my base, "gank" otherwise. Never raises."""
+        beep = getattr(self._voice, "alert_beep", None)
+        if not callable(beep):
+            return
+        try:
+            sdv = getattr(self._voice, "set_danger_voice", None)
+            if callable(sdv) and getattr(self._voice, "danger_voice", None) != getattr(self._cfg, "danger_voice", None):
+                sdv(getattr(self._cfg, "danger_voice", "bip_voix"))
+            tone = "gank"
+            if a.kind == AlertKind.PERSONAL_DANGER:
+                tone = "recule"
+            elif a.kind in GANK_KINDS and self._tracker is not None:
+                me = self._tracker.me()
+                pos = me.position() if me is not None else None
+                game = self._game
+                if pos is not None and game is not None:
+                    z = geometry.classify_zone(*pos)
+                    if geometry.is_base(z) and geometry.zone_owner(z) == game.my_team:
+                        tone = "siege"
+            beep(tone)
+        except Exception:
+            self._err.exception("Danger beep failed")
+
     def _say(self, text: str, level: int, force: bool = False) -> None:
         if not text or (self._muted and not force):
             return
@@ -1184,6 +1219,8 @@ class CoachEngine:
         self._tip_text = None
         self._text_msg = None
         self.text_messages = []
+        if getattr(self, "_presenter", None) is not None:
+            self._presenter.reset()
         # per-game advice state that lives on the engine (V2 audit: stale across games otherwise)
         self.macro_calls = []
         self.recent_plays = []
@@ -1793,6 +1830,8 @@ class CoachEngine:
             for a in said:
                 self._tactics.gate.note_spoken(a, t)
         for a in said:
+            if int(a.level) >= Level.DANGER and not self._muted:
+                self._danger_beep(a)       # beep-first: the tone before any TTS work
             self._say(a.text, int(a.level))
             with self._lock:
                 self._last_alert, self._last_alert_t = a, t
@@ -2042,6 +2081,13 @@ class CoachEngine:
 
                     fx = self._play_fx = PlayFx(self._cfg, self._screen_rects,
                                                 lambda: self._overlay_visible and self._in_game)
+                pr = getattr(self, "_presenter", None)
+                if pr is not None:
+                    from treeaicoach import presenter as prs
+
+                    if pr.offer(prs.Message("play", f"{p.title} : {p.reason}", topic=f"play:{t:.0f}"),
+                                self._presenter_ctx(t)).channel == prs.DROP:
+                        continue                       # no badge over a gank
                 if fx is not None:
                     fx.apply_config(self._cfg)
                     fx.push(p)
@@ -2452,6 +2498,11 @@ class CoachEngine:
                 return shown[0]
         except Exception:
             pass
+        pr = getattr(self, "_presenter", None)
+        if pr is not None and cand is not None:     # fight / gank: no low-value line at all
+            ctx = self._presenter_ctx(now)
+            if siege is None:
+                cand = pr.filter_panel_line(cand, self._tip_tone(cand), ctx)
         if shown is None or shown[0] != cand:
             self._hud_shown = (cand, now)
         return cand
@@ -2484,6 +2535,20 @@ class CoachEngine:
             return
         if kind not in ("danger", "praise") and self._topic_seen(key, t):
             return
+        pr = getattr(self, "_presenter", None)
+        if pr is not None:
+            from treeaicoach import presenter as prs
+
+            mk = prs.message_kind(kind, key)
+            d = pr.offer(prs.Message(mk, subtitle or title, title,
+                                     urgency={"danger": 3, "warning": 2}.get(kind, 1), topic=key,
+                                     siege=str(key).startswith(("text:siege", "siege", "ace", "urgent:ace"))),
+                         self._presenter_ctx(t))
+            if d.channel == prs.DROP:
+                return
+            if d.channel == prs.PANEL:
+                self._text_msg = (t, subtitle or title)   # the ONE HUD line, no toast
+                return
         icon = None
         if alias:
             skin = 0
@@ -2493,6 +2558,22 @@ class CoachEngine:
                 skin = p.skin_id
             icon = self._icon(alias, skin)
         q.push(kind, title, subtitle, icon=icon, key=key, t=t)
+
+    def _presenter_ctx(self, t: float) -> Any:
+        """Context of the presentation router (fight, gank threat, dead, siege, level). Never raises."""
+        from treeaicoach.presenter import Context
+
+        try:
+            tac = self._tactics
+            fight = bool(tac is not None and tac.in_fight())
+            gank = any(lvl >= int(Level.WARNING) and t - t_ <= THREAT_HOLD_S for t_, lvl, _a in list(self._threat_hist))
+            game = self._game
+            dead = bool(getattr(getattr(game, "me", None), "is_dead", False)) if game is not None else False
+            siege = self._siege(t)[0] is not None
+            return Context(t=float(t), fight=fight, gank=gank, dead=dead, siege=siege,
+                           skill=str(getattr(self._cfg, "skill_level", "intermediaire") or "intermediaire"))
+        except Exception:
+            return Context(t=float(t))
 
     def scoreboard_summary(self) -> Any:
         """Latest :class:`scoreboard.ScoreboardSummary` (None before the first game poll)."""
@@ -3679,6 +3760,11 @@ class CoachEngine:
             return views
         try:
             b = tac.banner(now)
+            pr = getattr(self, "_presenter", None)
+            if b is not None and pr is not None:
+                ident = (str(getattr(b, "style", "")), str(getattr(b, "title", "")), getattr(b, "since", None))
+                if not pr.banner_ok(ident[0], ident, self._presenter_ctx(now)):
+                    b = None
             if b is not None:
                 from treeaicoach.toasts import banner_view
 

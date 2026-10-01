@@ -301,6 +301,144 @@ def make_beep_wav(path: Path, volume: int = DEFAULT_VOLUME) -> bool:
         return False
 
 
+# Distinct danger tones (beep-first: the beep IS the alert, the sentence is optional)
+#: tone -> (frequency Hz, tone ms, gap ms, count)
+TONES: dict[str, tuple[int, int, int, int]] = {
+    "gank": (BEEP_FREQ_HZ, BEEP_TONE_MS, BEEP_GAP_MS, BEEP_COUNT),     # the historic double beep
+    "recule": (880, 70, 45, 3),                                        # personal danger: 3 short, lower
+    "siege": (660, 160, 80, 2),                                        # my base attacked: 2 long, low
+}
+DANGER_VOICE_CHOICES: tuple[str, ...] = ("bip_voix", "bip")
+#: after the beep, the sentence is said only if the situation is this fresh (s since the alert)
+DANGER_SPEAK_MAX_AGE_S = 1.2
+BEEP_RECENT_S = 0.6            # a DANGER sentence queued this soon after alert_beep(): no 2nd beep
+
+
+def tone_wav_bytes(tone: str = "gank", volume: int = DEFAULT_VOLUME) -> bytes:
+    """In-memory 16-bit mono WAV of a danger tone (:data:`TONES`). Never raises (b"" on error)."""
+    try:
+        freq, tone_ms, gap_ms, count = TONES.get(tone, TONES["gank"])
+        vol = _clamp_int(volume, *VOLUME_RANGE, DEFAULT_VOLUME)
+        amp = BEEP_PEAK * 32767.0 * vol / 100.0
+        rate = BEEP_SAMPLE_RATE
+        n = int(rate * tone_ms / 1000)
+        fade = max(1, int(rate * BEEP_FADE_MS / 1000))
+        one = array.array("h")
+        for i in range(n):
+            env = 1.0
+            if i < fade:
+                env = 0.5 - 0.5 * math.cos(math.pi * i / fade)
+            elif i >= n - fade:
+                env = 0.5 - 0.5 * math.cos(math.pi * (n - 1 - i) / fade)
+            one.append(int(round(amp * env * math.sin(2.0 * math.pi * freq * i / rate))))
+        edge = array.array("h", [0]) * int(rate * BEEP_EDGE_MS / 1000)
+        gap = array.array("h", [0]) * int(rate * gap_ms / 1000)
+        samples = array.array("h")
+        samples.extend(edge)
+        for k in range(count):
+            if k:
+                samples.extend(gap)
+            samples.extend(one)
+        samples.extend(edge)
+        if sys.byteorder == "big":
+            samples.byteswap()
+        import io
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes(samples.tobytes())
+        return buf.getvalue()
+    except Exception as exc:
+        log.debug("tone_wav_bytes failed: %s", exc)
+        return b""
+
+
+def tone_duration_s(tone: str = "gank") -> float:
+    freq, tone_ms, gap_ms, count = TONES.get(tone, TONES["gank"])
+    return (2 * BEEP_EDGE_MS + count * tone_ms + (count - 1) * gap_ms) / 1000.0
+
+
+def _winsound_memory_player() -> Callable[[bytes], None] | None:
+    try:
+        import winsound  # noqa: PLC0415 - Windows only
+    except ImportError:
+        return None
+
+    def play(data: bytes) -> None:
+        winsound.PlaySound(data, winsound.SND_MEMORY | winsound.SND_NODEFAULT)   # blocking: beep thread
+    return play
+
+
+class BeepPlayer:
+    """Plays the danger tones at once from pre-loaded in-memory WAVs, on its own daemon thread
+    (``play()`` returns in microseconds: never behind the TTS). ``available`` is False without an
+    audio output (non-Windows) unless a player is injected (tests). Never raises."""
+
+    def __init__(self, _play: Callable[[bytes], None] | None = None) -> None:
+        self._play = _play if _play is not None else _winsound_memory_player()
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        self._pending: bytes | None = None
+        self._cache: dict[tuple[str, int], bytes] = {}
+        self._thread: threading.Thread | None = None
+        self.played: list[tuple[str, float]] = []      # (tone, perf_counter at play() call) - diagnostics
+        self.started: list[tuple[str, float]] = []     # (tone, perf_counter when the audio call started)
+        self._tone_pending = ""
+
+    @property
+    def available(self) -> bool:
+        return self._play is not None
+
+    def preload(self, volume: int = DEFAULT_VOLUME) -> None:
+        bucket = int(round(_clamp_int(volume, *VOLUME_RANGE, DEFAULT_VOLUME) / 10.0)) * 10
+        for tone in TONES:
+            if (tone, bucket) not in self._cache:
+                self._cache[(tone, bucket)] = tone_wav_bytes(tone, bucket)
+
+    def play(self, tone: str = "gank", volume: int = DEFAULT_VOLUME) -> bool:
+        """Start ``tone`` now (non-blocking). False when unavailable / silent."""
+        try:
+            if self._play is None:
+                return False
+            bucket = int(round(_clamp_int(volume, *VOLUME_RANGE, DEFAULT_VOLUME) / 10.0)) * 10
+            if bucket <= 0:
+                return False
+            tone = tone if tone in TONES else "gank"
+            data = self._cache.get((tone, bucket))
+            if data is None:
+                data = self._cache[(tone, bucket)] = tone_wav_bytes(tone, bucket)
+            with self._lock:
+                self._pending, self._tone_pending = data, tone
+                self.played.append((tone, time.perf_counter()))
+                del self.played[:-50]
+                if self._thread is None or not self._thread.is_alive():
+                    self._thread = threading.Thread(target=self._run, name="treeai-beep", daemon=True)
+                    self._thread.start()
+            self._event.set()
+            return True
+        except Exception as exc:
+            log.debug("BeepPlayer.play failed: %s", exc)
+            return False
+
+    def _run(self) -> None:
+        while True:
+            self._event.wait()
+            self._event.clear()
+            with self._lock:
+                data, tone, self._pending = self._pending, self._tone_pending, None
+            if not data:
+                continue
+            try:
+                self.started.append((tone, time.perf_counter()))
+                del self.started[:-50]
+                self._play(data)          # type: ignore[misc]
+            except Exception as exc:
+                log.debug("Beep playback failed: %s", exc)
+
+
 def _sounds_dir() -> Path:
     """``paths.cache_dir()/sounds`` (paths imported lazily), temp dir as a fallback."""
     try:
@@ -797,6 +935,13 @@ class NeuralBackend(_WavBackend):
             return
         self._get_local().speak(text, purge)
 
+    def ready(self, text: str) -> bool:
+        """The sentence plays without any synthesis wait (cached neural WAV)."""
+        try:
+            return self._tts.cached(text) is not None
+        except Exception:
+            return False
+
     def speak_urgent(self, text: str, purge: bool) -> None:
         """Gank alerts: the cached neural WAV, else the local voice RIGHT NOW (no network wait;
         the synthesis runs in the background so the next one is cached)."""
@@ -910,6 +1055,7 @@ class _Item:
     level: int
     t: float          # enqueue time (engine clock)
     seq: int
+    beep_end: float | None = None   # perf_counter end of the beep already played for it (beep-first)
 
 
 class VoiceEngine:
@@ -920,7 +1066,8 @@ class VoiceEngine:
                  neural_rate: str = "+15%", *,
                  _backend_factory: Callable[[], SpeechBackend] | None = None,
                  _clock: Callable[[], float] = time.monotonic,
-                 _max_age_s: float = MAX_AGE_S) -> None:
+                 _max_age_s: float = MAX_AGE_S, danger_voice: str = "bip_voix",
+                 _beep_player: BeepPlayer | None = None) -> None:
         self._factory: Callable[[], SpeechBackend] = _backend_factory or _default_backend_factory
         self._custom_factory = _backend_factory is not None
         self._clock = _clock
@@ -952,6 +1099,14 @@ class VoiceEngine:
         self._voices_cache: list[str] | None = None
         self.spoken_count = 0          # statistics (read-only for callers)
         self.dropped_count = 0
+        self.danger_voice = danger_voice if danger_voice in DANGER_VOICE_CHOICES else "bip_voix"
+        self.beeper = _beep_player if _beep_player is not None else BeepPlayer()
+        self._beep_end: float = -math.inf          # perf_counter end of the last instant beep
+        self.beep_only_count = 0                   # DANGER alerts signalled by the beep alone
+        try:
+            self.beeper.preload(self._params.volume)
+        except Exception:
+            pass
 
     # -- public API -----------------------------------------------------------------------
 
@@ -1061,13 +1216,38 @@ class VoiceEngine:
         th = self._thread
         return th is not None and th.is_alive() and not self._closed
 
+    def set_danger_voice(self, mode: str) -> None:
+        """``"bip_voix"`` (beep, then the sentence only if it is already cached) or ``"bip"``."""
+        self.danger_voice = mode if mode in DANGER_VOICE_CHOICES else "bip_voix"
+
+    def alert_beep(self, tone: str = "gank") -> bool:
+        """BEEP-FIRST: play the danger tone NOW from the caller thread (non-blocking, pre-loaded
+        in-memory WAV), before any TTS work. True when a beep was started. Never raises."""
+        try:
+            p = self._params
+            if self._muted or self._closed or not p.beep_on_danger or not self.beeper.available:
+                return False
+            if not self.beeper.play(tone, p.volume):
+                return False
+            self._beep_end = time.perf_counter() + tone_duration_s(tone) + 0.02
+            return True
+        except Exception:
+            log.debug("alert_beep failed", exc_info=True)
+            return False
+
     def say(self, text: str, level: int = LEVEL_WARNING) -> None:
-        """Queue ``text`` (never blocks, never raises). Level 2 (DANGER) cuts the current sentence."""
+        """Queue ``text`` (never blocks, never raises). Level 2 (DANGER) cuts the current sentence;
+        it is beep-first: the tone starts here at once (unless :meth:`alert_beep` just played it)."""
         try:
             s = _clean_text(text)
             if not s:
                 return
             lvl = _coerce_level(level)
+            beep_end = None
+            if lvl >= LEVEL_DANGER and not self._muted and not self._closed:
+                now = time.perf_counter()
+                if self._beep_end - now > -BEEP_RECENT_S or self.alert_beep("gank"):
+                    beep_end = self._beep_end
             with self._cond:
                 if self._closed:
                     log.debug("Voice stopped, message ignored: %s", s)
@@ -1075,7 +1255,7 @@ class VoiceEngine:
                 if self._muted:
                     return
                 self._seq += 1
-                item = _Item(s, lvl, float(self._clock()), self._seq)
+                item = _Item(s, lvl, float(self._clock()), self._seq, beep_end)
                 if lvl >= LEVEL_DANGER:
                     self.dropped_count += len(self._queue)
                     self._queue.clear()
@@ -1210,6 +1390,10 @@ class VoiceEngine:
     def _count_drop(self) -> None:
         with self._cond:
             self.dropped_count += 1
+
+    def _count_beep_only(self) -> None:
+        with self._cond:
+            self.beep_only_count += 1
 
     def _count_spoken(self) -> None:
         with self._cond:
@@ -1440,6 +1624,34 @@ class _Worker:
         self._speak(item, purge=False)
 
     def _say_danger(self, item: _Item, params: _Params) -> None:
+        if item.beep_end is not None:
+            # beep-first: the tone is already playing (BeepPlayer); the sentence is optional
+            e = self.e
+            if e.danger_voice == "bip":
+                e._count_beep_only()
+                return
+            ready = getattr(self.backend, "ready", None)
+            try:
+                cached = bool(ready(item.text)) if callable(ready) else True
+            except Exception:
+                cached = False
+            if not cached:
+                prewarm = getattr(self.backend, "prewarm", None)
+                if callable(prewarm):
+                    try:
+                        prewarm([item.text])        # next time it will be said
+                    except Exception:
+                        pass
+                e._count_beep_only()
+                return
+            self._wait(item.beep_end - time.perf_counter())      # let the beep finish
+            if self.token.is_set():
+                return
+            if e._danger_queued() or float(e._clock()) - item.t > DANGER_SPEAK_MAX_AGE_S:
+                e._count_beep_only()                # a newer danger, or no longer valid
+                return
+            self._speak(item, purge=True)
+            return
         if params.beep_on_danger:
             self._purge()
             try:
