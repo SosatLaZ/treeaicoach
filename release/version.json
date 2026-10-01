@@ -1,6 +1,6 @@
 {
-  "version": "1.7.1",
-  "sha256": "85d71bfd066e9e4ee702198566e79fba3e49d4c09f8391f32e6e05006ffa519f",
-  "size": 81945611,
-  "notes": "1.7.1 : détection des échanges de lane, conseils précis classés (quoi faire + pourquoi), mise à jour plus rapide."
+  "version": "1.7.2",
+  "sha256": "6652c40abdc3e5fd2d2ba008a75c93daccc5106e8583eb2a352b9ed45d878842",
+  "size": 81943333,
+  "notes": "1.7.2 : moins de spam, interface plus compacte, dernière position des ennemis avant le brouillard."
 }
