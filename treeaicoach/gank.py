@@ -85,12 +85,17 @@ log = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 APPROACH_SPEED = -0.006          # radial velocity (/ s) below which an enemy "comes towards me"
 APPROACH_RELEASE_SPEED = -0.003  # hysteresis: above this the approach is over
-APPROACH_ON_TICKS = 1            # latency first: one positive evaluation switches "approaching" on
-APPROACH_OFF_TICKS = 3           # hysteresis only on switching it off
-TREND_WINDOW_S = 1.0             # distance-series window of the significance test
+APPROACH_ON_TICKS = 3            # SLOW tier: consecutive positive evaluations to switch it on
+APPROACH_OFF_TICKS = 3           # consecutive negative evaluations to switch it off
+# distance-trend significance, two tiers: FAST (~1 s window, very significant: switches
+# "approaching" on at once, ~0.3-0.5 s after a clean approach starts) or SLOW (long window,
+# 3 consecutive ticks: survives noisy detections).
+FAST_TREND_WINDOW_S = 1.0
+FAST_TREND_T_STAT = -6.0
+TREND_WINDOW_S = 2.5
+TREND_T_STAT = -3.5              # slope must be below this many standard errors...
 TREND_MIN_POINTS = 3
 TREND_MIN_SPAN_S = 0.25
-TREND_T_STAT = -2.0              # slope must be below this many standard errors...
 TREND_MIN_SLOPE = -0.010         # ...and below this (/ s): a walking champion is ~-0.025
 TREND_SE_FLOOR = 0.0015          # standard-error floor (perfectly clean data)
 DIST_HISTORY_MAXLEN = 48
@@ -676,13 +681,13 @@ class GankAnalyzer:
         st.dists.append((tr.last_seen, d))
 
     @staticmethod
-    def _trend(st: _TrackState) -> tuple[float, float] | None:
+    def _trend(st: _TrackState, window: float = TREND_WINDOW_S) -> tuple[float, float] | None:
         """Least-squares slope of the distance over the last window and its standard error."""
         pts = list(st.dists)
         if not pts:
             return None
         t_last = pts[-1][0]
-        pts = [p for p in pts if t_last - p[0] <= TREND_WINDOW_S]
+        pts = [p for p in pts if t_last - p[0] <= window]
         n = len(pts)
         if n < TREND_MIN_POINTS or pts[-1][0] - pts[0][0] < TREND_MIN_SPAN_S:
             return None
@@ -705,7 +710,12 @@ class GankAnalyzer:
         vx, vy = ev[0] - my_vel[0], ev[1] - my_vel[1]
         radial = (rx * vx + ry * vy) / norm if norm > 1e-6 else 0.0
         trend = self._trend(st)
-        significant = trend is not None and trend[0] < TREND_MIN_SLOPE and trend[0] / trend[1] < TREND_T_STAT
+        fast = self._trend(st, FAST_TREND_WINDOW_S)
+        def sig(tr_: tuple[float, float] | None, t_stat: float) -> bool:
+            return tr_ is not None and tr_[0] < TREND_MIN_SLOPE and tr_[0] / tr_[1] < t_stat
+
+        significant = sig(trend, TREND_T_STAT)
+        immediate = radial < APPROACH_SPEED and sig(fast, FAST_TREND_T_STAT)
         if st.approaching:
             still = radial < APPROACH_RELEASE_SPEED and trend is not None and trend[0] < 0
             if still:
@@ -715,9 +725,9 @@ class GankAnalyzer:
                 if st.off_count >= APPROACH_OFF_TICKS:
                     st.approaching, st.on_count, st.off_count = False, 0, 0
         else:
-            if radial < APPROACH_SPEED and significant:
+            if radial < APPROACH_SPEED and (significant or immediate):
                 st.on_count += 1
-                if st.on_count >= APPROACH_ON_TICKS:
+                if st.on_count >= APPROACH_ON_TICKS or immediate:
                     st.approaching, st.off_count = True, 0
             else:
                 st.on_count = 0
