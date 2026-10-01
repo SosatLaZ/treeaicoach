@@ -786,16 +786,14 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 # ======================================================================================
 # Texts
 # ======================================================================================
-CHANGELOG_VERSION = "2.1"
+CHANGELOG_VERSION = "2.2"
 CHANGELOG: tuple[tuple[str, str], ...] = (
-    ("Panneau en jeu épuré", "Une seule consigne claire, rouge en cas de danger, rien quand il n'y a rien "
-                             "à dire. Maintiens F6 pour le mode détaillé."),
-    ("Dangers", "Bip immédiat, alertes 2 contre 1 et peu de vie, ganks annoncés plus tôt."),
-    ("Détection", "Nouveau modèle entraîné sur la vraie carte 2026, champions empilés et caméra mieux "
-                  "suivis, plus de fantômes sur les champions visibles."),
-    ("Interface", "Texte lisible, vrais interrupteurs, ouverture 4 fois plus rapide."),
-    ("Saison 2026", "Plus d'Atakhan, Baron à 20:00, lampes féeriques, objets et champions à jour."),
-    ("Diagnostic", "Ctrl+F8 en jeu enregistre 60 s de ce que voit TreeAI pour corriger les bugs."),
+    ("Timers", "Petite colonne sur la minimap : buff Baron / Ancien restant, ennemis morts "
+               "(« 3 morts · 18 s »), réapparition des objectifs qui te concernent."),
+    ("Minimap", "Les ennemis visibles ont de nouveau un cercle fin, « JGL » sur le jungler."),
+    ("Fluidité", "Le mode économie d'énergie de Windows est désactivé : l'analyse ne saccade plus."),
+    ("Détection", "Meilleure sur les champions empilés et à moitié cachés, moins de fantômes."),
+    ("Panneau en jeu", "Une seule consigne claire, rouge en cas de danger, F6 pour le détail."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl + 1 … 6", "Aller à une page (En jeu … Aide)"),
