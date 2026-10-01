@@ -1,6 +1,6 @@
 {
-  "version": "1.9.5",
-  "sha256": "88fa8db302fea83f6975d25a5716058630857ac74ec31c2484045c775f12a3a8",
-  "size": 82703804,
-  "notes": "1.9.5 (pré-V2) : capture plus rapide, overlay fluide à 30 i/s qui suit les champions, overlay caché hors du jeu, mode PC faible, Ctrl+F8 diagnostic, conseils revus par un pro, coups de génie, Atakhan… (données en cours de mise à jour), états MORT / SIÈGE / ACE."
+  "version": "2.0.0",
+  "sha256": "6f52b3a126c644753fbc5176e266b657ee7100bc0707192e4c256646fa8ad17c",
+  "size": 81863728,
+  "notes": "2.0 : panneau en jeu épuré (une seule consigne, danger en rouge, rien quand il n'y a rien à dire), bip immédiat pour les dangers, alerte 2 contre 1 / peu de vie, ganks annoncés plus tôt, détection retravaillée sur tes vraies parties (nouveau modèle, caméra, suivi sans retard), nouvelle interface lisible et rapide, données 2026 (plus d'Atakhan, Baron 20:00, lampes féeriques), carte de sélection des champions."
 }
