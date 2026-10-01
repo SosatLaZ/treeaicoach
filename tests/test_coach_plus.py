@@ -285,6 +285,6 @@ def test_simulated_game_is_not_spammy():
     titles = [t for _gt, t, _s in res.toasts]
     assert "OBJECTIF DE LA PARTIE" in titles and any(t.startswith("PLAN DE VOIE") for t in titles)
     assert not any("ASTUCE" == t for t in titles)                          # intermediate: no tip toasts
-    assert not any("Probabilité" in x for _gt, x in res.voice)             # minimal voice: hype is written
+    assert not any("Victoire" in x for _gt, x in res.voice)             # minimal voice: hype is written
     ex = res.extras
     assert ex.get("goal") and ex.get("plan") and ex.get("death_causes")   # 2 deaths in the first 12 min

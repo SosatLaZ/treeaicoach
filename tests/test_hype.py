@@ -90,7 +90,7 @@ def test_win_prob_swing_policy():
     assert c.update(0.0, G(900.0), sb) == []
     sb.team_gold_diff = 6000
     out = c.update(10.0, G(910.0), sb)
-    assert len(out) == 1 and "Probabilité de victoire" in out[0]
+    assert len(out) == 1 and "Victoire" in out[0] and "%" in out[0]
     sb.team_gold_diff = -6000
     assert c.update(60.0, G(960.0), sb) == []                        # < 3 min since the last one
     assert c.update(400.0, G(1300.0), sb)

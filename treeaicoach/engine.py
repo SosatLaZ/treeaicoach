@@ -47,6 +47,8 @@ from treeaicoach.alerts import Alert, AlertKind, AlertThrottler, Level, make_ale
 from treeaicoach.capture import Rect, is_black_frame
 from treeaicoach.config import Config
 from treeaicoach.live_client import GameInfo, PlayerInfo
+from treeaicoach.scheduler import HeavyScheduler, MotionSnapshot, RateGovernor, burst_reason
+from treeaicoach.sysperf import CpuMeter, PerfBudget, RateMeter, RollingStats
 
 log = logging.getLogger(__name__)
 
@@ -55,8 +57,11 @@ POLL_IN_GAME_S = 1.0             # Live Client poll period in game
 POLL_IDLE_S = 2.0                # ... and outside a game (0.5 Hz)
 GAME_GONE_S = 8.0                # API silent this long after a game -> game over
 GAME_TIME_BACK_S = 3.0           # game_time going back more than this -> new game
-WINDOW_REFRESH_S = 2.0           # game window rectangle cache
-VERIFY_PERIOD_S = 1.0            # minimap verify() period
+WINDOW_REFRESH_S = 1.0           # game window rectangle / focus cache
+VERIFY_PERIOD_S = 1.0            # first minimap verify() after a location (then the budget's verify_s)
+UNFOCUSED_HIDE_S = 1.5           # game not in the foreground this long -> overlay hidden
+STATS_EVERY_S = 1.0              # health monitor refresh (CPU %, rates)
+STALE_MIN_GAME_S = 90.0          # frozen-capture check only once minions walk (game time, s)
 VERIFY_BAD_S = 3.0               # verify() below threshold this long -> relocate
 LOCATE_RETRY_S = 10.0            # retry the auto location this often while on the fallback rect
 HEAVY_HZ = 2.0                   # rate of the coaching stages (coach, Tab, tips, items, hype / AI)
@@ -105,8 +110,13 @@ MSG_RUNNING = "Analyse de la minimap en cours."
 MSG_RUNNING_DEMO = "Mode démo : partie simulée."
 MSG_FALLBACK = ("Minimap non trouvée automatiquement : position par défaut utilisée "
                 "(calibre-la dans Réglages si les alertes sont fausses).")
-MSG_BLACK = ("Capture noire : passe LoL en mode Sans bordure "
+MSG_BLACK = ("Capture noire : passe le jeu en Sans bordure "
              "(Paramètres > Vidéo > Mode fenêtre : Sans bordure).")
+MSG_FROZEN = ("Capture figée : l'image de la minimap ne change plus. Passe le jeu en Sans bordure "
+              "(Paramètres > Vidéo > Mode fenêtre).")
+MSG_FULLSCREEN = ("Le jeu est en Plein écran : l'overlay ne peut pas s'afficher et la capture peut "
+                  "être noire. Passe en Sans bordure (Paramètres > Vidéo > Mode fenêtre).")
+MSG_MINIMIZED = "Jeu réduit : analyse en pause."
 MSG_UNSUPPORTED = "Mode de jeu non pris en charge : uniquement la Faille de l'invocateur."
 MSG_MINIMAP_COVERED = "Minimap masquée (boutique ou tableau des scores) : analyse en pause."
 MSG_SPECTATOR = "Mode spectateur : aucune analyse."
@@ -148,6 +158,9 @@ class EngineStatus:
     banner: str | None = None
     locate_method: str | None = None
     session: tuple[int, int, int] = (0, 0, 0)     # (games, wins, losses)
+    #: health monitor (CoachEngine.health()): capture fps / backend, detect ms p50 / p95, overlay fps,
+    #: champions seen / expected, minimap score, CPU %, budget... - for the UI's "Système" panel
+    health: dict | None = None
 
 
 class FrameSource(Protocol):
@@ -428,6 +441,38 @@ class CoachEngine:
         self._session = {"games": 0, "wins": 0, "losses": 0, "loss_streak": 0}
         self.last_record_path: Path | None = None
         self.last_report_path: Path | None = None
+        self._init_runtime()
+
+    def _init_runtime(self) -> None:
+        """Scheduling / health / diagnostics state (pipeline v2: adaptive rate, staggered
+        coaching stages, render-time prediction, capture health, low-end budget)."""
+        cfg = self._cfg
+        self._budget = PerfBudget(str(getattr(cfg, "perf_mode", "auto")), target_fps=float(cfg.target_fps))
+        prof = self._budget.profile
+        self._governor = RateGovernor(prof.calm_fps, prof.burst_fps)
+        self._adaptive = bool(getattr(cfg, "adaptive_rate", True))
+        self._heavy = HeavyScheduler(prof.heavy_hz)
+        self._heavy_now: set[str] = set()
+        #: None = auto (stagger the coaching stages when the analysis thread runs)
+        self.stagger: bool | None = None
+        self._applied_profile: str | None = None
+        self._motion: MotionSnapshot | None = None
+        self._stats = {k: RollingStats() for k in ("tick", "vision", "grab", "coach", "latency")}
+        self._cap_rate = RateMeter()
+        self._cpu = CpuMeter()
+        self._stats_next = -math.inf
+        self._win_info: Any = None
+        self._unfocused_since: float | None = None
+        self._paused: str | None = None
+        self._minimap_score: float | None = None
+        self._verify_due_deferred = False
+        self._capture_status = "ok"
+        self._capture_note: str | None = None      # exclusive fullscreen / frozen capture warning
+        self._last_frame_t: float | None = None
+        self._overlay_stats: Any = None             # OverlayManager.stats (set by whoever owns it)
+        self._diag: Any = None                      # diag.DiagRecorder while a bundle is recorded
+        self._diag_req: dict[str, Any] = {}         # requests served by the analysis thread
+        self._diag_hotkeys: Any = None
 
     # ================================================================== configuration
     @staticmethod
@@ -449,6 +494,15 @@ class CoachEngine:
             with self._lock:
                 old = self._cfg
                 self._cfg = new
+                if (getattr(old, "perf_mode", "auto"), old.target_fps) != \
+                        (getattr(new, "perf_mode", "auto"), new.target_fps):
+                    self._budget = PerfBudget(str(getattr(new, "perf_mode", "auto")),
+                                              target_fps=float(new.target_fps))
+                    self._applied_profile = None
+                self._adaptive = bool(getattr(new, "adaptive_rate", True))
+                if getattr(old, "capture_backend", "auto") != getattr(new, "capture_backend", "auto") \
+                        and self._window_finder is None and self._frame_source is None:
+                    self._diag_req["recreate_capture"] = True
                 if (old.minimap_mode, old.minimap_side, old.manual_minimap_rect) != \
                         (new.minimap_mode, new.minimap_side, new.manual_minimap_rect):
                     self._relocate = True
@@ -601,9 +655,13 @@ class CoachEngine:
         cfg = self._cfg
         key = (cfg.detector_backend, float(cfg.detection_threshold))
         if self._detector is not None and (not self._own_detector or key == self._detector_key):
+            if not self._own_detector and self._detector_key is None:
+                self._adopt_detector()
             return
+        from treeaicoach import detector as _det
         from treeaicoach.detector import create_detector
 
+        _det.ONNX_THREADS = self._budget.profile.onnx_threads
         old = self._detector
         self._detector = create_detector(cfg.detector_backend, cfg.detection_threshold,
                                          db=self._champion_db(),
@@ -619,6 +677,59 @@ class CoachEngine:
                 old.close()
             except Exception:
                 pass
+
+    def _adopt_detector(self) -> None:
+        """A detector built by the caller (the UI's factory calls ``create_detector(backend,
+        threshold)`` only): give its roster matcher the persisted icon scale prior and the
+        callback storing new calibrations, as for a detector the engine builds itself (the
+        harnesses always had them, the real app did not)."""
+        self._detector_key = ("adopted",)
+        try:
+            m = getattr(self._detector, "matcher", None)
+            if m is None:
+                return
+            if getattr(m, "scale_store", None) is None:
+                m.scale_store = dict(getattr(self._cfg, "icon_scale_by_res", None) or {})
+            if getattr(m, "on_scale", None) is None:
+                m.on_scale = self._store_icon_scale
+        except Exception:
+            log.debug("Cannot adopt the detector", exc_info=True)
+
+    def _apply_perf_profile(self) -> None:
+        """Push the budget's knobs (detection rates, coaching rate, generic detector cadence,
+        thread counts) to the components; cheap no-op when unchanged."""
+        prof = self._budget.profile
+        sig = (prof.name, prof.calm_fps, prof.burst_fps, prof.heavy_hz)
+        if sig == self._applied_profile:
+            return
+        self._applied_profile = sig
+        self._governor.configure(prof.calm_fps, prof.burst_fps)
+        self._heavy.hz = prof.heavy_hz
+        try:
+            if cv2.getNumThreads() > prof.cv_threads:
+                cv2.setNumThreads(prof.cv_threads)
+        except Exception:
+            pass
+        det = self._detector
+        if det is not None and hasattr(det, "FALLBACK_EVERY"):
+            try:
+                det.FALLBACK_EVERY = int(prof.onnx_every)     # instance override of the class constant
+            except Exception:
+                pass
+        try:   # overlay frame-rate cap (the overlay thread may belong to the UI)
+            from treeaicoach import overlay as _overlay
+
+            _overlay.set_budget_fps(prof.overlay_fps)
+        except Exception:
+            pass
+        try:   # whole-map search of lost champions (module constant read at each frame)
+            from treeaicoach import roster_matcher
+
+            roster_matcher.LOST_EVERY = int(prof.lost_every)
+        except Exception:
+            pass
+        log.info("Performance budget %s (%s): detection %.0f-%.0f img/s, overlay %.0f img/s",
+                 prof.name, self._budget.reason or "auto", prof.calm_fps, prof.burst_fps, prof.overlay_fps)
 
     def _store_icon_scale(self, key: str, ratio: float) -> None:
         """Calibrated icon scale (roster matcher) -> config, prior of the next games."""
@@ -661,6 +772,7 @@ class CoachEngine:
             for th in threads:
                 th.start()
             self._start_hotkeys()
+            self._start_diag_hotkey()
             self._start_overlay()
             log.info("Engine started (%s)", "demo" if self._demo else
                      ("frame source" if self._frame_source is not None else "live"))
@@ -682,7 +794,8 @@ class CoachEngine:
                     th.join(max(0.05, deadline - time.monotonic()))
                     if th.is_alive():
                         log.warning("Thread %s did not stop in time", th.name)
-            for comp in (self._hotkeys, self._overlay_mgr, getattr(self, "_play_fx", None)):
+            for comp in (self._hotkeys, self._overlay_mgr, getattr(self, "_play_fx", None),
+                         self._diag_hotkeys):
                 if comp is not None:
                     try:
                         comp.stop()
@@ -690,6 +803,7 @@ class CoachEngine:
                         log.exception("stop failed for %r", type(comp).__name__)
             self._hotkeys = None
             self._overlay_mgr = None
+            self._diag_hotkeys = None
             timer = self._mute_timer
             if timer is not None:
                 timer.cancel()
@@ -781,7 +895,7 @@ class CoachEngine:
                 next_t = self._clock()
                 continue
             self.step(self._clock())
-            period = 1.0 / max(1.0, min(30.0, float(self._cfg.target_fps)))
+            period = self.detect_period(self._clock())
             next_t += period
             now = self._clock()
             if next_t < now - period:        # late (slow machine / suspended): skip, no burst
@@ -812,6 +926,21 @@ class CoachEngine:
         except Exception:
             log.exception("Hotkeys unavailable")
             self._hotkeys = None
+
+    def _start_diag_hotkey(self) -> None:
+        """``cfg.hotkey_diag`` (default Ctrl+F8) -> :meth:`start_diagnostic`. Registered by the
+        engine itself (also when the UI owns the other hotkeys), live capture only."""
+        key = str(getattr(self._cfg, "hotkey_diag", "") or "").strip()
+        if not key or self._frame_source is not None or sys.platform != "win32":
+            return
+        try:
+            from treeaicoach.hotkeys import HotkeyListener
+
+            self._diag_hotkeys = HotkeyListener({key: self.start_diagnostic})
+            self._diag_hotkeys.start()
+        except Exception:
+            log.exception("Diagnostic hotkey unavailable")
+            self._diag_hotkeys = None
 
     def _start_overlay(self) -> None:
         if not self._manage_overlay or sys.platform != "win32":
@@ -984,6 +1113,11 @@ class CoachEngine:
                     log.exception("reset failed for %r", type(comp).__name__)
         self._ended = False
         self._next_heavy_t = -math.inf
+        self._heavy.reset()
+        self._motion = None
+        self._capture_status, self._capture_note = "ok", None
+        self._minimap_score = None
+        self._fullscreen_check(game)
         self._tip_text = None
         self._text_msg = None
         self.text_messages = []
@@ -1234,6 +1368,10 @@ class CoachEngine:
                         self._state, self._message = EngineState.ERROR, MSG_ERROR
             dt = time.perf_counter() - t0
             self._tick_ms = 0.8 * self._tick_ms + 0.2 * dt * 1000.0 if self._tick_ms else dt * 1000.0
+            try:
+                self._observe_tick_cost(float(t), dt * 1000.0)
+            except Exception:
+                pass
             return out
 
     def _step(self, t: float) -> list[Alert]:
@@ -1259,20 +1397,31 @@ class CoachEngine:
             self._last_tick_t = None
             return []
         self._update_fps(t)
+        self._apply_perf_profile()
+        self._serve_diag_requests(t)
         gt = (_finite(game.game_time) or 0.0) + min(max(0.0, t - game_t), 3.0)
+        stagger = self.stagger if self.stagger is not None else bool(self._running and self._threads)
+        self._heavy_now = self._heavy.plan(t, stagger)
         if self._frame_source is None:
-            frame = self._grab_minimap(t)
+            t_grab = time.perf_counter()
+            frame = self._grab_minimap(t, gt)
+            if frame is not None:
+                self._stats["grab"].add((time.perf_counter() - t_grab) * 1000.0)
         elif frame is None:
             self._set_state(EngineState.RUNNING, MSG_NO_FRAME)
         else:
             self._set_state(EngineState.RUNNING, MSG_RUNNING_DEMO if self._demo else MSG_RUNNING)
         identified: list[Any] = []
         if frame is not None:
+            self._cap_rate.tick(t)
             if is_black_frame(frame):
                 self._set_state(EngineState.CAPTURE_BLACK, MSG_BLACK)
                 frame = None
             else:
+                t_vis = time.perf_counter()
                 identified = self._stabilize(t, self._vision(frame))
+                self._stats["vision"].add((time.perf_counter() - t_vis) * 1000.0)
+                self._last_frame_t = t
             self._self_icon_tick(t, gt, game)
         tracker = self._tracker
         tracker.update(t, identified)
@@ -1291,10 +1440,10 @@ class CoachEngine:
         # latency first: a gank alert (or the fight call) is spoken NOW, before the heavier stages
         said_now = self._say_gank_now(gank_now, t, gt, frame)
         raw_alerts += [a for a in gank_alerts if a.kind not in GANK_KINDS] + tac_alerts
-        # coaching stages (coach, Tab, tips, items, hype / AI) at HEAVY_HZ, the gank check every tick
-        heavy = t >= self._next_heavy_t or t < self._next_heavy_t - 2.0 / HEAVY_HZ
-        if heavy:
-            self._next_heavy_t = t + 1.0 / HEAVY_HZ
+        # coaching stages (coach, Tab, tips, items, hype / AI) at the budget's heavy rate, the gank
+        # check every tick; threaded: one slot per tick (staggered, no spike), see scheduler.py
+        slots = self._heavy_now
+        t_coach = time.perf_counter()
         if self._objectives is not None:
             raw_alerts += list(self._objectives.update(game, t) or [])
         me = tracker.me()
@@ -1305,17 +1454,18 @@ class CoachEngine:
                 z = geometry.classify_zone(*me_pos)
                 in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
             raw_alerts += self._recall_consistency(list(self._reminders.update(t, game, me_pos, in_base) or []), t)
-        if self._coach is not None and heavy:
+        if self._coach is not None and "coach" in slots:
             raw_alerts += list(self._coach.update(
                 t, tracker, game, self._role_resolver,
                 self._objectives.states() if self._objectives is not None else [],
                 me_pos, threat=threat, minimap_bgr=frame) or [])
-        if heavy:
+        if "board" in slots:
             raw_alerts += self._scoreboard_and_praise(t, tracker, game, threat, gank_alerts, gt)
+        if "tips" in slots:
             raw_alerts += self._stance_and_tips(t, game, threat)
-        if threat < Level.WARNING and heavy:
+        if threat < Level.WARNING and "tips" in slots:
             raw_alerts += self._item_advice(t, game, me_pos, gt)
-        if heavy:
+        if "board" in slots:      # (restyles the praise of the board slot: same tick)
             raw_alerts = self._hype_and_ai(t, game, gt, threat, me_pos, raw_alerts)
         self._plays_tick(t, gt, game, threat, me_pos)    # play ratings (plays.py) -> badge animation
         if self._jungle_intel is not None:   # Tab data: purchases / CS -> fog anchors
@@ -1329,6 +1479,7 @@ class CoachEngine:
             if callable(on_fog) and self._fog is not None and not getattr(self._cfg, "safe_mode", False):
                 on_fog(self._fog.estimates(), gt)
         raw_alerts += self._death_recap_alerts(t)
+        self._stats["coach"].add((time.perf_counter() - t_coach) * 1000.0)
         if threat >= Level.WARNING:     # gank first: no macro tip / praise / Tab insight now
             raw_alerts = [a for a in raw_alerts if a.kind not in COACH_KINDS]
         if self._tactics is not None:   # fight: nothing but the call (praise held for after)
@@ -1346,9 +1497,41 @@ class CoachEngine:
             self._frame = frame
             self._identified = identified
             self._frame_id += 1
+        self._after_tick(t, tracker, me_pos, threat)
         if frame is not None and self._cfg.collect_samples:
             self._collect(frame, t)
         return said
+
+    # ================================================================== scheduling / health (v2)
+    def _after_tick(self, t: float, tracker: Any, me_pos: Any, threat: int) -> None:
+        """Motion snapshot for the overlay (render-time prediction), burst decision. Never raises."""
+        try:
+            tracks = tracker.tracks() if tracker is not None else []
+            self._motion = MotionSnapshot.from_tracks(t, tracks)
+            if self._adaptive:
+                tac = self._tactics
+                why = burst_reason(t, tracks, me_pos, self._cfg.effective_warn_radius(), threat=int(threat),
+                                   fighting=bool(tac is not None and tac.in_fight()))
+                if why is not None:
+                    self._governor.trigger(t, why)
+        except Exception:
+            self._err.exception("Post-tick bookkeeping failed")
+
+    def detect_period(self, t: float) -> float:
+        """Seconds until the next analysis tick: adaptive (calm / burst / unfocused / paused)
+        or the fixed ``cfg.target_fps`` when ``cfg.adaptive_rate`` is off."""
+        if self._paused:
+            return 1.0
+        if not self._adaptive:
+            return 1.0 / max(1.0, min(30.0, float(self._cfg.target_fps)))
+        unfocused = self._unfocused_since is not None and t - self._unfocused_since >= 3.0
+        return self._governor.period(t, None, unfocused)
+
+    def _observe_tick_cost(self, t: float, ms: float) -> None:
+        self._stats["tick"].add(ms)
+        if self._in_game and self._last_frame_t is not None and not self._paused:
+            if self._budget.observe_tick(t, ms):
+                self._applied_profile = None      # switched to low-end: push the knobs next tick
 
     def _tactics_tick(self, t: float, gt: float, game: GameInfo, tracker: Any,
                       gank_alerts: list[Alert], threat: int = 0) -> tuple[list[Alert], list[Alert]]:
@@ -1359,7 +1542,7 @@ class CoachEngine:
         if tac is None:
             return [], gank
         try:
-            heavy = t >= self._next_heavy_t or t < self._next_heavy_t - 2.0 / HEAVY_HZ
+            heavy = "tactics" in self._heavy_now
             out = tac.tick(t, gt, game, tracker, heavy=heavy, scoreboard=self.scoreboard_summary(),
                            roles=self._role_resolver,
                            objectives=self._objectives.states() if self._objectives is not None else [],
@@ -1727,7 +1910,7 @@ class CoachEngine:
             # hype / win-probability lines go through the voice gate like every other message
             # (visual first: written in "minimal" / "normal", spoken in "bavard")
             for i, line in enumerate(hc.update(t, game, summary, threat=threat)):
-                swing = "pour cent" in line
+                swing = "Victoire" in line or "victoire" in line
                 alerts = list(alerts) + [make_alert(AlertKind.PRAISE, Level.INFO, t, text=line,
                                                     key=f"hype:swing:{int(t)}" if swing else f"caster:{int(t)}:{i}")]
             in_base = False
@@ -2539,28 +2722,51 @@ class CoachEngine:
         if t - self._window_t < WINDOW_REFRESH_S and self._window_t > -math.inf:
             return self._window
         self._window_t = t
+        info = None
         try:
             if self._window_finder is not None:
                 win = self._window_finder()
             else:
-                from treeaicoach.capture import find_game_window
+                from treeaicoach.capture import game_window_info
 
-                win = find_game_window()
+                info = game_window_info()
+                win = info.rect if info is not None else None
         except Exception:
             self._err.exception("find_game_window failed")
             win = None
+        self._win_info = info
+        # focus: the overlay hides and the detection slows down while the game is not in the
+        # foreground (alt-tab); our own windows (settings, preview) do not count as "away"
+        focused = info is None or info.foreground or info.own_foreground
+        if focused or not getattr(self._cfg, "pause_when_unfocused", True):
+            self._unfocused_since = None
+        elif self._unfocused_since is None:
+            self._unfocused_since = t
+        self._paused = "minimized" if (info is not None and info.minimized) else None
         if win != self._window:
-            if win is not None and self._window is not None and \
-                    (win.w, win.h) != (self._window.w, self._window.h):
+            old = self._window
+            if win is not None and old is not None and (win.w, win.h) != (old.w, old.h):
                 self._relocate = True
+            elif win is not None and old is not None and self._minimap_rect is not None \
+                    and self._rect_window == old and (win.x, win.y) != (old.x, old.y):
+                # window moved (same size): the minimap moved with it, no new search
+                self._minimap_rect = self._minimap_rect.offset(win.x - old.x, win.y - old.y)
+                self._rect_window = win
+                log.info("Game window moved: minimap rect now %s", self._minimap_rect)
             self._window = win
         return win
 
     def _grabber(self) -> Any:
+        if self._diag_req.pop("recreate_capture", False) and self._capture is not None:
+            try:
+                self._capture.close()
+            except Exception:
+                pass
+            self._capture = None
         if self._capture is None:
-            from treeaicoach.capture import ScreenCapture
+            from treeaicoach.capture import SmartCapture
 
-            self._capture = ScreenCapture()
+            self._capture = SmartCapture(str(getattr(self._cfg, "capture_backend", "auto") or "auto"))
         return self._capture
 
     def _manual_rect(self, win: Rect) -> Rect | None:
@@ -2630,23 +2836,47 @@ class CoachEngine:
         self._next_locate = t + LOCATE_RETRY_S
         log.info("Minimap not found: fallback rectangle %s", self._minimap_rect)
 
-    def _grab_minimap(self, t: float) -> np.ndarray | None:
+    def _grab_minimap(self, t: float, gt: float | None = None) -> np.ndarray | None:
         win = self._find_window(t)
         if win is None:
-            self._set_state(EngineState.LOCATING, MSG_NO_WINDOW)
+            self._set_state(EngineState.LOCATING, MSG_MINIMIZED if self._paused else MSG_NO_WINDOW)
             return None
+        self._settings_changed_check()
         if self._relocate or self._minimap_rect is None or self._rect_window != win or (
                 self._locate_method == "fallback" and t >= self._next_locate):
             self._locate(t, win)
         rect = self._minimap_rect
         if rect is None:
             return None
-        frame = _as_bgr(self._grabber().grab(rect))
+        cap = self._grabber()
+        frame = _as_bgr(cap.grab(rect))
         if frame is None:
             self._set_state(EngineState.RUNNING, MSG_NO_FRAME)
             return None
-        if self._locate_method == "auto" and t >= self._next_verify:
-            self._next_verify = t + VERIFY_PERIOD_S
+        check = getattr(cap, "check", None)
+        if callable(check):      # black / frozen frames -> other capture backend (capture.SmartCapture)
+            try:
+                st = check(frame, t, rect, allow_stale=gt is not None and gt >= STALE_MIN_GAME_S)
+            except Exception:
+                st = "ok"
+            self._capture_status = st
+            if st == "switched":
+                frame = _as_bgr(cap.grab(rect))
+                if frame is None:
+                    return None
+            elif st == "black":
+                self._set_state(EngineState.CAPTURE_BLACK, MSG_BLACK)
+                return None
+            elif st == "stale":
+                self._capture_note = MSG_FROZEN
+        verify_due = t >= self._next_verify
+        if verify_due and self._bad_since is None and self._heavy_now and not self._verify_due_deferred:
+            # keep the verification off the tick running a coaching slot (no spike); next tick
+            self._verify_due_deferred = True
+            verify_due = False
+        if self._locate_method == "auto" and verify_due:
+            self._verify_due_deferred = False
+            self._next_verify = t + self._budget.profile.verify_s
             try:
                 from treeaicoach.minimap_locator import VERIFY_MIN_SCORE
 
@@ -2654,6 +2884,7 @@ class CoachEngine:
             except Exception:
                 self._err.exception("Minimap verify failed")
                 score = 1.0
+            self._minimap_score = score
             if score < VERIFY_MIN_SCORE:
                 if self._bad_since is None:
                     self._bad_since = t
@@ -2672,6 +2903,248 @@ class CoachEngine:
                         MSG_FALLBACK if self._locate_method == "fallback" else MSG_RUNNING)
         return frame
 
+    def _settings_changed_check(self) -> None:
+        """The game's own settings changed (minimap scale, flip, resolution, HUD scale): the
+        minimap moved / was resized -> locate it again (cheap: SettingsWatcher re-reads the
+        files only when their mtime changed, at most every 10 s)."""
+        w = self._settings_watcher
+        if w is None:
+            return
+        try:
+            gs = w.get()
+            fp = gs.fingerprint() if gs is not None else None
+        except Exception:
+            return
+        old = getattr(self, "_settings_fp", None)
+        self._settings_fp = fp
+        if old is not None and fp is not None and fp != old:
+            log.info("Game display settings changed (%s -> %s): relocating the minimap", old, fp)
+            self._relocate = True
+
+    def _fullscreen_check(self, game: Any = None) -> None:
+        """Exclusive fullscreen (WindowMode 0 in game.cfg): layered overlay windows cannot show
+        over it and screen capture may be black -> clear French warning (status + log)."""
+        w = self._settings_watcher
+        if w is None:
+            return
+        try:
+            gs = w.get()
+            if gs is not None and gs.exclusive_fullscreen:
+                self._capture_note = MSG_FULLSCREEN
+                log.warning("Game in exclusive fullscreen (WindowMode=0): overlay invisible, capture may be black")
+        except Exception:
+            log.debug("fullscreen check failed", exc_info=True)
+
+    # ================================================================== health / diagnostics (v2)
+    def overlay_paused(self, now: float | None = None) -> bool:
+        """True while the overlay must hide: game minimized, or not in the foreground for
+        :data:`UNFOCUSED_HIDE_S` (our own windows excepted). Never raises."""
+        try:
+            if self._paused:
+                return True
+            since = self._unfocused_since
+            now = self._clock() if now is None else float(now)
+            return since is not None and now - since >= UNFOCUSED_HIDE_S
+        except Exception:
+            return False
+
+    def motion(self) -> MotionSnapshot | None:
+        """Latest per-tick track snapshot (render-time prediction, see scheduler.py)."""
+        return self._motion
+
+    def predict_positions(self, now: float | None = None) -> dict[str, tuple[tuple[float, float], float]]:
+        """``{track key: ((u, v) extrapolated to now, age of the data in s)}`` for the overlay."""
+        m = self._motion
+        if m is None:
+            return {}
+        return m.predict(self._clock() if now is None else float(now))
+
+    def health(self) -> dict[str, Any]:
+        """Lightweight live health monitor (the UI's "Système" panel, diagnostic bundles).
+
+        Keys: ``capture_backend``, ``capture_fps``, ``grab_ms`` / ``detect_ms`` / ``tick_ms`` /
+        ``coach_ms`` ({p50, p95, ...}), ``overlay`` (fps, per-layer render ms, UpdateLayeredWindow
+        ms), ``champions_seen`` / ``champions_expected``, ``minimap_score``, ``locate_method``,
+        ``detect_rate`` (current target img/s + why), ``budget``, ``cpu_percent`` (of one core),
+        ``capture_status``, ``capture_note``, ``paused``, ``latency_ms``. Never raises."""
+        out: dict[str, Any] = {}
+        try:
+            now = self._clock()
+            if now >= self._stats_next:
+                self._stats_next = now + STATS_EVERY_S
+                self._cpu.sample()
+            cap = self._capture
+            timings = cap.timings() if cap is not None and hasattr(cap, "timings") else {}
+            out["capture_backend"] = timings.get("backend") or (type(cap).__name__ if cap is not None else None)
+            out["capture"] = timings
+            out["capture_fps"] = round(self._cap_rate.rate(now), 2)
+            for k in ("grab", "vision", "tick", "coach"):
+                out[{"vision": "detect_ms"}.get(k, f"{k}_ms")] = self._stats[k].summary()
+            seen = expected = 0
+            tr = self._tracker
+            game = self._game
+            if tr is not None and self._in_game:
+                seen = sum(1 for x in tr.tracks() if x.visible)
+            if game is not None:
+                try:
+                    expected = sum(1 for p in game.all_players() if not p.is_dead)
+                except Exception:
+                    expected = 0
+            out["champions_seen"], out["champions_expected"] = seen, expected
+            out["minimap_score"] = None if self._minimap_score is None else round(self._minimap_score, 3)
+            out["locate_method"] = self._locate_method
+            out["minimap_rect"] = self._minimap_rect.to_dict() if self._minimap_rect is not None else None
+            fps = self._governor.fps(now, self._paused, self._unfocused_since is not None)
+            out["detect_rate"] = {"target_fps": round(fps, 1), "measured_fps": round(self._fps, 1),
+                                  "burst": self._governor.bursting(now), "why": self._governor.reason,
+                                  "adaptive": self._adaptive}
+            out["budget"] = self._budget.describe()
+            out["heavy_runs"] = dict(self._heavy.runs)
+            out["cpu_percent"] = self._cpu.percent
+            out["capture_status"] = self._capture_status
+            out["capture_note"] = self._capture_note
+            out["paused"] = self._paused or ("unfocused" if self.overlay_paused(now) else None)
+            info = self._win_info
+            if info is not None:
+                out["window"] = {"rect": info.rect.to_dict() if info.rect else None, "dpi": info.dpi,
+                                 "scale_pct": round(info.dpi / 96.0 * 100), "foreground": info.foreground}
+            if self._last_frame_t is not None:
+                out["frame_age_ms"] = round(max(0.0, now - self._last_frame_t) * 1000.0, 1)
+            try:
+                from treeaicoach import overlay as _ov   # stats published by the overlay thread
+
+                out["overlay"] = _ov.current_stats()
+            except Exception:
+                out["overlay"] = None
+            d = self._diag
+            out["diagnostic"] = d.status() if d is not None else None
+        except Exception:
+            log.debug("health() failed", exc_info=True)
+        return out
+
+    # ---------------------------------------------------------------- diagnostic bundle
+    def start_diagnostic(self, duration_s: float | None = None, interval_s: float | None = None) -> Any:
+        """Record a diagnostic bundle (minimap crops, detections / tracks, capture + timings,
+        settings...) every ``interval_s`` for ``duration_s`` (config ``diag_*``), then zip it
+        into ``<user data>/diagnostics`` and open the folder. Returns the bundle folder (Path)
+        or None when one is already recording / not possible. Safe from any thread (UI button,
+        hotkey). Never raises."""
+        try:
+            from treeaicoach.diag import DiagRecorder
+
+            with self._lock:
+                if self._diag is not None and self._diag.running:
+                    log.info("Diagnostic already recording")
+                    return None
+                dur = float(duration_s if duration_s is not None else getattr(self._cfg, "diag_duration_s", 60.0))
+                itv = float(interval_s if interval_s is not None else getattr(self._cfg, "diag_interval_s", 2.0))
+                self._diag = DiagRecorder(self, duration_s=dur, interval_s=itv)
+            path = self._diag.start()
+            try:
+                self._say("Diagnostic en cours : joue normalement pendant une minute.", int(Level.INFO),
+                          force=True)
+            except Exception:
+                pass
+            return path
+        except Exception:
+            log.exception("Cannot start the diagnostic recorder")
+            return None
+
+    def diagnostic_status(self) -> dict[str, Any] | None:
+        """``{"running", "progress", "zip", "folder", "error"}`` of the last bundle, or None."""
+        d = self._diag
+        return d.status() if d is not None else None
+
+    def request_diag_snapshot(self, full_screen: bool = False) -> None:
+        """Ask the analysis thread to keep a copy of the next frame (+ the full game window
+        once when ``full_screen``) for the diagnostic recorder (served in :meth:`_step`)."""
+        with self._lock:
+            self._diag_req["snapshot"] = True
+            if full_screen:
+                self._diag_req["screen"] = True
+
+    def _serve_diag_requests(self, t: float) -> None:
+        """Analysis thread: full-window thumbnail for the diagnostic (the capture objects are
+        owned by this thread)."""
+        if not self._diag_req.get("screen"):
+            return
+        self._diag_req.pop("screen", None)
+        try:
+            win = self._window
+            img = None
+            if win is not None and self._frame_source is None:
+                img = _as_bgr(self._grabber().grab(win))
+            elif self._frame is not None:
+                img = self._frame.copy()
+            d = self._diag
+            if d is not None and img is not None:
+                d.put_screen(img)
+        except Exception:
+            self._err.exception("Diagnostic screen grab failed")
+
+    def diag_snapshot(self) -> dict[str, Any]:
+        """Everything the diagnostic recorder saves for one sample (thread-safe copies). The
+        Live Client data is reduced to champion names / teams / positions / summoner spells:
+        no summoner name, no Riot ID."""
+        now = self._clock()
+        with self._lock:
+            frame = None if self._frame is None else self._frame.copy()
+            identified = list(self._identified)
+            game = self._game
+            st_state, st_msg = self._state, self._message
+        snap: dict[str, Any] = {"t": now, "state": getattr(st_state, "value", str(st_state)), "message": st_msg,
+                                "frame": frame}
+        try:
+            snap["preview"] = self.get_preview()
+        except Exception:
+            snap["preview"] = None
+        dets = []
+        for x in identified:
+            det = getattr(x, "det", x)
+            dets.append({k: (round(float(v), 4) if isinstance(v, float) else v) for k, v in (
+                ("u", getattr(det, "u", None)), ("v", getattr(det, "v", None)), ("r", getattr(det, "r", None)),
+                ("score", getattr(det, "score", None)), ("cls", getattr(det, "cls", None)),
+                ("det_alias", getattr(det, "alias", None)), ("alias", getattr(x, "alias", None)),
+                ("relation", getattr(x, "relation", None)), ("id_score", getattr(x, "id_score", None)))})
+        snap["detections"] = dets
+        tracks = []
+        tr = self._tracker
+        for k in (tr.tracks() if tr is not None else []):
+            pos = k.position()
+            kf = k.kf_position() if hasattr(k, "kf_position") else None
+            tracks.append({"key": k.key, "alias": k.alias, "relation": k.relation, "visible": k.visible,
+                           "pos": None if pos is None else [round(pos[0], 4), round(pos[1], 4)],
+                           "kf": None if kf is None else [round(kf[0], 4), round(kf[1], 4)],
+                           "age_s": round(now - k.last_seen, 3), "score": round(k.score, 3),
+                           "id_score": round(k.id_score, 3), "stacked_with": k.stacked_with})
+        snap["tracks"] = tracks
+        try:
+            m = getattr(self._detector, "matcher", None)
+            snap["detector"] = {
+                "name": str(getattr(self._detector, "name", "")),
+                "matcher_mode": getattr(m, "last_mode", None), "matcher_ms": getattr(m, "last_time_ms", None),
+                "matcher_changed": getattr(m, "last_changed", None),
+                "matcher_scale": getattr(m, "scale", None), "grey": getattr(m, "grey", None),
+                "matches": [{k2: (round(v2, 4) if isinstance(v2, float) else v2)
+                             for k2, v2 in vars(mi).items() if not k2.startswith("_")
+                             and isinstance(v2, (int, float, str, bool, type(None)))}
+                            for mi in list(getattr(m, "last_matches", None) or [])[:12]],
+                "dead": list(getattr(m, "last_dead", None) or []),
+            }
+        except Exception:
+            snap["detector"] = {"name": str(getattr(self._detector, "name", ""))}
+        if game is not None:
+            def player(p: Any) -> dict[str, Any]:
+                return {"champion": p.champion_alias, "name": p.champion_name, "team": p.team,
+                        "position": p.position, "level": p.level, "dead": p.is_dead, "skin": p.skin_id,
+                        "smite": p.has_smite,
+                        "spells": [str(s) for s in (getattr(p, "summoner_spells", None) or [])][:2]}
+            snap["game"] = {"game_time": game.game_time, "mode": game.game_mode, "map": game.map_number,
+                            "my_team": game.my_team, "me": player(game.me) if game.me else None,
+                            "players": [player(p) for p in game.all_players()]}
+        snap["health"] = self.health()
+        return snap
+
     def request_relocate(self) -> None:
         """Locate the minimap again at the next tick."""
         with self._lock:
@@ -2681,6 +3154,7 @@ class CoachEngine:
     def get_status(self) -> EngineStatus:
         """Immutable status snapshot. Never raises."""
         try:
+            health = self.health() if self._in_game else None
             with self._lock:
                 game = self._game
                 gt = None
@@ -2699,9 +3173,11 @@ class CoachEngine:
                     detector=str(getattr(self._detector, "name", "") or self._cfg.detector_backend),
                     voice=str(getattr(self._voice, "backend", "") or type(self._voice).__name__),
                     muted=self._muted, overlay_visible=self._overlay_visible, errors=self._errors,
-                    tick_ms=round(self._tick_ms, 1), demo=self._demo, banner=self._banner,
+                    tick_ms=round(self._tick_ms, 1), demo=self._demo,
+                    banner=self._banner or (self._capture_note if self._in_game else None),
                     locate_method=self._locate_method,
-                    session=(s["games"], s["wins"], s["losses"]))
+                    session=(s["games"], s["wins"], s["losses"]),
+                    health=health)
         except Exception:
             log.exception("get_status failed")
             return EngineStatus(EngineState.ERROR, MSG_ERROR, 0.0, None, None, 0, None, "", "")
@@ -2797,6 +3273,8 @@ class CoachEngine:
         """Immutable :class:`OverlayState` snapshot (None outside a game / overlay hidden)."""
         try:
             now = self._clock()
+            if self.overlay_paused(now):     # minimized / alt-tabbed: never draw over other apps
+                return None
             with self._lock:
                 if not self._overlay_visible or not self._in_game or self._game is None:
                     return None
@@ -2910,7 +3388,24 @@ class CoachEngine:
             phase=tac.phase() if tac is not None else None,
             role_notice=self._role_notice(now),
             **self._hud_card_fields(game, me_uv, tip, now),
+            **self._prediction_fields(me),
         )
+
+    def _prediction_fields(self, me: Any) -> dict[str, Any]:
+        """``predict`` / ``me_key`` of the overlay state (render-time positions), when the
+        renderer supports them."""
+        try:
+            from treeaicoach.overlay_render import OverlayState
+
+            names = {f.name for f in dataclasses.fields(OverlayState)}
+            out: dict[str, Any] = {}
+            if "predict" in names and self._motion is not None:
+                out["predict"] = self.predict_positions
+            if "me_key" in names:
+                out["me_key"] = me.key if me is not None else None
+            return out
+        except Exception:
+            return {}
 
     def _hud_card_fields(self, game: Any, me_uv: Any, tip: str | None, now: float) -> dict[str, Any]:
         """HUD v3 card extras: gauge (+ reason, since), advice tone + fade start, item chip (in
@@ -3031,9 +3526,17 @@ class CoachEngine:
             d = math.hypot(dx, dy)
             if d > 1e-6:
                 approaching = (vel[0] * dx + vel[1] * dy) / d > 0.006 and d < 0.3
-        return cls(key=tr.key if tr is not None else (alias or "?"), alias=alias, name=name or (alias or "?"),
+        view = cls(key=tr.key if tr is not None else (alias or "?"), alias=alias, name=name or (alias or "?"),
                    visible=visible, uv=uv, last_seen_ago=ago, is_jungler=is_jungler,
                    approaching=approaching, icon=self._icon(alias, skin), velocity=vel)
+        if tr is not None:     # freshness (pipeline v2): stale / stacked / anonymous -> drawn as a ghost
+            try:
+                view.age = ago
+                view.stacked = getattr(tr, "stacked_with", None) is not None
+                view.confidence = 1.0 if tr.alias else 0.4
+            except Exception:
+                pass
+        return view
 
     @staticmethod
     def _display_name(game: GameInfo | None, alias: str | None) -> str | None:
