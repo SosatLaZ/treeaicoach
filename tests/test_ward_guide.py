@@ -13,7 +13,6 @@ from typing import Any
 import cv2
 import numpy as np
 import pytest
-from dataclasses import replace
 
 from treeaicoach import camera_proj as cp
 from treeaicoach import overlay_render as orr

@@ -20,20 +20,21 @@ sys.path.insert(0, str(ROOT / "tools"))
 import real_minimap_bench as bench  # noqa: E402
 
 #: image -> (min recall, min precision, min team accuracy, min identity accuracy)
-#: measured: shot2 1.0, shot3 0.8, shot4 0.71, shot5 1.0, shot6/7/8/9/10 0.75; precision,
-#: team and identity accuracy 1.0 everywhere.
+#: measured (roster matcher + 2026 ONNX extras): recall shot2 1.0, shot3 0.8, shot4 0.86,
+#: shot5 1.0, shot6 0.88, shot7/8/9 0.75, shot10 1.0 (total 0.87); precision and team
+#: accuracy 1.0 everywhere; identity 1.0 except shot4 0.83 (one anonymous extra).
 THRESHOLDS = {
     "shot2": (1.0, 1.0, 1.0, 1.0),
     "shot3": (0.8, 1.0, 1.0, 1.0),
-    "shot4": (0.57, 1.0, 1.0, 1.0),
+    "shot4": (0.71, 1.0, 1.0, 0.8),
     "shot5": (0.75, 1.0, 1.0, 1.0),
-    "shot6": (0.62, 0.85, 1.0, 1.0),
+    "shot6": (0.75, 0.85, 1.0, 1.0),
     "shot7": (0.5, 1.0, 1.0, 1.0),
     "shot8": (0.5, 1.0, 1.0, 1.0),
     "shot9": (0.5, 1.0, 1.0, 1.0),
-    "shot10": (0.5, 1.0, 1.0, 1.0),
+    "shot10": (0.75, 1.0, 1.0, 1.0),
 }
-TOTAL_MIN_RECALL = 0.76
+TOTAL_MIN_RECALL = 0.82
 TOTAL_MIN_PRECISION = 0.97
 
 

@@ -845,6 +845,9 @@ class HybridDetector(BaseDetector):
 
     FALLBACK_EVERY = 4
     EXTRA_MIN_SCORE = 0.6
+    #: ... with the ONNX model: at least its own threshold (2026 model: real recall 0.82 at
+    #: 0.40 vs 0.38 at 0.6)
+    EXTRA_MIN_ONNX = 0.4
     #: Extra detections this close (x the sum of radii) to a roster match are the same icon.
     EXTRA_OVERLAP = 0.8
     #: Extra detections this close (normalized) to a structure glyph or to a fountain are
@@ -912,6 +915,13 @@ class HybridDetector(BaseDetector):
                 self._structures, self._fountains = [], []
         return self._structures
 
+    def _extra_min(self) -> float:
+        """Minimum score of a generic detection used as an extra: the ONNX model's own
+        threshold (model_meta.json, >= EXTRA_MIN_ONNX), EXTRA_MIN_SCORE for the classic one."""
+        if isinstance(self.fallback, OnnxDetector):
+            return max(self.EXTRA_MIN_ONNX, float(getattr(self.fallback, "threshold", 0.0) or 0.0))
+        return self.EXTRA_MIN_SCORE
+
     def _extras(self, img: np.ndarray, dets: list[Detection]) -> list[Detection]:
         m = self.matcher
         if isinstance(self.fallback, ClassicDetector):
@@ -930,7 +940,7 @@ class HybridDetector(BaseDetector):
         if self._frame - self._extra_run >= self.FALLBACK_EVERY or changed or \
                 self.FALLBACK_EVERY <= 1:
             self._extra_run = self._frame
-            raw = [d for d in (self.fallback.detect(img) or []) if d.score >= self.EXTRA_MIN_SCORE]
+            raw = [d for d in (self.fallback.detect(img) or []) if d.score >= self._extra_min()]
             structs = self._structure_uv()
             game = getattr(m, "_game", None)
             my_team = str(getattr(getattr(game, "me", None), "team", "") or "")
