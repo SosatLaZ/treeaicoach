@@ -88,6 +88,7 @@ BREAK_TEXT = "3 défaites d'affilée : une pause de 10 minutes aide à rester co
 GANK_KINDS = frozenset({AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE})
 #: Coaching chatter (macro tips, compliments, Tab insights): never spoken during a gank threat.
 COACH_KINDS = frozenset({AlertKind.MACRO_TIP, AlertKind.PRAISE, AlertKind.SCOREBOARD})
+TEXT_MSG_S = 10.0                # a written-only message stays on the HUD line this long
 
 MSG_STOPPED = "Analyse arrêtée."
 MSG_WAITING = "En attente d'une partie de League of Legends…"
@@ -317,6 +318,12 @@ class CoachEngine:
         self._scoreboard: Any = None           # scoreboard.ScoreboardAnalyzer (Tab analysis)
         self._praise: Any = None               # praise.PraiseCoach (compliments)
         self._toasts: Any = None               # toasts.ToastQueue (top-centre banners)
+        self._stance: Any = None               # coach.StanceAdvisor (PRUDENT / ÉQUILIBRÉ / AGRESSIF)
+        self._tip_rotator: Any = None          # tips.TipRotator (written tips, HUD)
+        self._gate: Any = None                 # voice_policy.MessageGate (anti-spam, per game)
+        self._tip_text: str | None = None
+        self._text_msg: tuple[float, str] | None = None   # latest written-only message (HUD line)
+        self.text_messages: list[tuple[float, str, str]] = []   # (t, kind, text) written-only, this game
         self._sb_recorded: Any = None
         self._throttler = AlertThrottler()
         self._recorder: Any = None
@@ -402,7 +409,7 @@ class CoachEngine:
                         (new.minimap_mode, new.minimap_side, new.manual_minimap_rect):
                     self._relocate = True
             for comp in (self._gank, self._objectives, self._reminders, self._fog, self._overlay_mgr,
-                         self._coach):
+                         self._coach, self._stance):
                 fn = getattr(comp, "apply_config", None)
                 if callable(fn):
                     try:
@@ -462,6 +469,16 @@ class CoachEngine:
             self._coach = MapCoach(cfg)
         except Exception:
             log.exception("Map coach unavailable")
+        try:
+            from treeaicoach.coach import StanceAdvisor
+            from treeaicoach.tips import TipRotator
+            from treeaicoach.voice_policy import MessageGate
+
+            self._stance = StanceAdvisor(cfg)
+            self._tip_rotator = TipRotator()
+            self._gate = MessageGate()
+        except Exception:
+            log.exception("Stance / tips / voice policy unavailable")
         try:
             from treeaicoach.fog_tracker import FogTracker
 
@@ -875,7 +892,8 @@ class CoachEngine:
         log.info("New game detected (game time %.0f s, mode %s)", game.game_time, game.game_mode)
         self._sb_recorded = None
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
-                     self._throttler, self._coach, self._scoreboard, self._praise, self._toasts):
+                     self._throttler, self._coach, self._scoreboard, self._praise, self._toasts,
+                     self._stance, self._tip_rotator, self._gate):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -883,6 +901,9 @@ class CoachEngine:
                 except Exception:
                     log.exception("reset failed for %r", type(comp).__name__)
         self._ended = False
+        self._tip_text = None
+        self._text_msg = None
+        self.text_messages = []
         self._roster_sig = None
         self._prefetched = False
         self._was_dead = bool(game.me.is_dead) if game.me is not None else False
@@ -1112,6 +1133,9 @@ class CoachEngine:
                 self._objectives.states() if self._objectives is not None else [],
                 me_pos, threat=threat, minimap_bgr=frame) or [])
         raw_alerts += self._scoreboard_and_praise(t, tracker, game, threat, gank_alerts, gt)
+        raw_alerts += self._stance_and_tips(t, game, threat)
+        if threat < Level.WARNING:
+            raw_alerts += self._item_advice(t, game, me_pos, gt)
         if self._fog is not None and not getattr(self._cfg, "safe_mode", False):
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
         rec = self._recorder
@@ -1120,9 +1144,13 @@ class CoachEngine:
         raw_alerts += self._death_recap_alerts(t)
         if threat >= Level.WARNING:     # gank first: no macro tip / praise / Tab insight now
             raw_alerts = [a for a in raw_alerts if a.kind not in COACH_KINDS]
+        raw_alerts = self._route_messages(raw_alerts, t, gt)
         said = self._throttler.filter(raw_alerts, t)
         if threat >= Level.WARNING:     # (a held-back coaching alert released by the throttler)
             said = [a for a in said if a.kind not in COACH_KINDS]
+        if self._gate is not None:
+            for a in said:
+                self._gate.record(a, t)
         for a in said:
             self._say(a.text, int(a.level))
             with self._lock:
@@ -1184,6 +1212,113 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Praise failed")
         return out
+
+    def _item_advice(self, t: float, game: GameInfo, me_pos: Any, gt: float) -> list[Alert]:
+        """Build advice (itemization.ItemAdvisor): toast + HUD line, spoken only if enabled. Never raises."""
+        cfg = self._cfg
+        if not getattr(cfg, "item_advice", True):
+            return []
+        try:
+            adv = getattr(self, "_item_adv", None)
+            if adv is None or gt + 5.0 < getattr(self, "_item_adv_gt", 0.0):
+                from treeaicoach.itemization import ItemAdvisor
+                adv = self._item_adv = ItemAdvisor()
+            self._item_adv_gt = gt
+            in_base = False
+            if me_pos is not None:
+                z = geometry.classify_zone(*me_pos)
+                in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
+            roles = self._role_resolver
+            role = roles.my_role() if roles is not None and hasattr(roles, "my_role") else None
+            out: list[Alert] = []
+            for a in adv.update(t, game, role=role, in_base=in_base):
+                if getattr(cfg, "item_advice_toasts", True):
+                    self._toast("insight", a.title, a.subtitle, None, a.key, t)
+                if getattr(cfg, "item_advice_speak", False):
+                    out.append(make_alert(AlertKind.MACRO_TIP, Level.INFO, t, text=a.text, key=a.key))
+            return out
+        except Exception:
+            self._errors += 1
+            self._err.exception("Item advice failed")
+            return []
+
+    def item_advice_text(self) -> str | None:
+        """Current build advice line for the UI / HUD ("Prochain objet : ..."), None if none."""
+        adv = getattr(self, "_item_adv", None)
+        rec = adv.current() if adv is not None and getattr(self._cfg, "item_advice", True) else None
+        return rec.text if rec is not None else None
+
+    def _stance_and_tips(self, t: float, game: GameInfo, threat: int) -> list[Alert]:
+        """Stance (HUD pill, spoken on change) + rotating written tip. Never raises."""
+        out: list[Alert] = []
+        try:
+            facts = self._coach.facts() if self._coach is not None else {}
+            summary = self.scoreboard_summary()
+            if self._stance is not None:
+                out += list(self._stance.update(t, facts, game, summary, threat=threat) or [])
+            rot = self._tip_rotator
+            if rot is not None and getattr(self._cfg, "text_tips", True):
+                from treeaicoach.tips import build_context
+
+                stance = self._stance.current() if self._stance is not None else None
+                prev = self._tip_text
+                self._tip_text = rot.update(t, build_context(facts, game, summary, stance))
+                if self._tip_text and self._tip_text != prev and getattr(self._cfg, "tip_toasts", False):
+                    self._toast("insight", "ASTUCE", self._tip_text, None, f"tip:{rot.current_id()}", t)
+            else:
+                self._tip_text = None
+        except Exception:
+            self._errors += 1
+            self._err.exception("Stance / tips failed")
+        return out
+
+    def _route_messages(self, alerts: list[Alert], t: float, gt: float) -> list[Alert]:
+        """Voice policy: returns the alerts to SPEAK (through the throttler); the others are
+        written (HUD line + toast), all of them anti-spam gated. Never raises."""
+        try:
+            from treeaicoach import voice_policy as vp
+        except Exception:
+            return alerts
+        level = getattr(self._cfg, "voice_level", vp.DEFAULT_VOICE_LEVEL)
+        gate = self._gate
+        voice: list[Alert] = []
+        for a in alerts:
+            try:
+                if vp.route(a, level) == "voice":
+                    if gate is None or gate.check(a, t):
+                        voice.append(a)
+                    continue
+                if gate is not None and not gate.allow(a, t):
+                    continue
+                kind = vp.kind_name(a)
+                self._text_msg = (t, a.text)
+                self.text_messages.append((t, kind, a.text))
+                del self.text_messages[:-100]
+                toast = vp.TEXT_TOAST.get(kind)
+                if toast is not None:
+                    self._toast(toast[0], toast[1], a.text, a.alias, f"text:{a.key}", t)
+                rec = self._recorder
+                if rec is not None:
+                    rec.on_alert(a, gt)
+            except Exception:
+                self._err.exception("Message routing failed")
+        return voice
+
+    def _hud_line(self, now: float) -> str | None:
+        """The ONE written HUD line: a fresh written-only message (10 s), else an urgent live
+        insight of the coach, else the rotating tip, else the coach / Tab line."""
+        msg = self._text_msg
+        if msg is not None and 0.0 <= now - msg[0] < TEXT_MSG_S:
+            return msg[1]
+        coach = self._coach
+        if coach is not None:
+            try:
+                urgent = [it for it in coach.insight_items() if it[0] >= 65 and it[2] != "objective"]
+                if urgent:
+                    return urgent[0][1]
+            except Exception:
+                pass
+        return self._tip_text
 
     def _toast(self, kind: str, title: str, subtitle: str, alias: str | None, key: str, t: float) -> None:
         q = self._toasts
@@ -1776,6 +1911,13 @@ class CoachEngine:
             jungler_line=self._jungler_line(game, jungler, now),
             hint=self._reminders.hint() if self._reminders is not None else None,
             insight=(self._coach.insight() if self._coach is not None else None) or self._scoreboard_hud_line(),
+            tip=self._hud_line(now),
+            stance=getattr(self._stance.current(), "level", None) if self._stance is not None else None,
+            stance_reason=getattr(self._stance.current(), "reason", None) if self._stance is not None else None,
+            show_allies=bool(getattr(cfg, "overlay_show_allies", False)),
+            show_roles=bool(getattr(cfg, "overlay_show_roles", False)) and bool(getattr(cfg, "layer_roles", True)),
+            show_ghosts=bool(getattr(cfg, "overlay_show_ghosts", False)) and bool(getattr(cfg, "layer_ghosts", True)),
+            hud_detailed=bool(getattr(cfg, "hud_detailed", False)),
             me_icon=self._icon(game.me.champion_alias, game.me.skin_id) if game and game.me else None,
             allies=allies, roles=roles,
             toasts=self._toasts.active(now) if self._toasts is not None else [],

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v1.5-C8AA6E?style=for-the-badge&labelColor=0A1428" alt="Télécharger TreeAICoach.exe" height="56"></a>
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v1.6-C8AA6E?style=for-the-badge&labelColor=0A1428" alt="Télécharger TreeAICoach.exe" height="56"></a>
 </p>
 
 <p align="center">

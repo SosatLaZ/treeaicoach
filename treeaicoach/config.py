@@ -146,6 +146,7 @@ BOOL_FIELDS = BOOL_FIELDS + (
     "ui_confirm_quit", "ui_notify_report", "ui_notify_game",
 )
 UPDATE_TEXT_FIELDS["ui_seen_changelog"] = 32
+BOOL_FIELDS = BOOL_FIELDS + ("item_advice", "item_advice_toasts", "item_advice_speak")
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -275,6 +276,10 @@ class Config:
     ui_notify_report: bool = True
     ui_notify_game: bool = True
     ui_scaling: str = "auto"         # "auto" | "90" | "100" | "110" | "125" | "150" (% of the system scale)
+    # build advice (itemization.py): written by default (HUD line + toast), spoken only if item_advice_speak
+    item_advice: bool = True
+    item_advice_toasts: bool = True
+    item_advice_speak: bool = False
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""

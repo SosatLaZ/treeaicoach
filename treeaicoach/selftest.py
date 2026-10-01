@@ -351,8 +351,15 @@ def check_demo(res: CheckResult, ctx: dict[str, Any]) -> None:
     for t, tv in toasts_seen:
         res.details.append(f"  {t:5.1f} s  [TOAST {tv.toast.kind}] {tv.toast.title} — {tv.toast.subtitle}")
 
+    # spoken (voice policy) + written-only (HUD line / toast) messages
+    written = list(getattr(engine, "text_messages", []) or [])
+    for t, kind, text in written:
+        res.details.append(f"  {t:5.1f} s  [ÉCRIT / TEXT {kind}] {text}")
+    msgs = [(t, a.kind.value, a.text) for t, a in alerts] + [(t, k, x) for t, k, x in written]
+
     def first(kind: Any, lo: float, hi: float, needle: str = "") -> float | None:
-        return next((t for t, a in alerts if a.kind == kind and lo <= t <= hi and needle in a.text), None)
+        kv = getattr(kind, "value", kind)
+        return next((t for t, k, x in msgs if k == kv and lo <= t <= hi and needle in x), None)
     if expected:
         win = expected.get("objective_soon", (0.0, end_s))
         _expect(first(AlertKind.OBJECTIVE_SOON, *win) is not None,
@@ -364,7 +371,8 @@ def check_demo(res: CheckResult, ctx: dict[str, Any]) -> None:
         _expect(first(AlertKind.MACRO_TIP, win[0], win[1], "mort") is not None,
                 f"pas de conseil « adversaire mort » / no lane-opponent-dead macro tip in {win}")
         win = expected.get("praise", (0.0, end_s))
-        _expect(first(AlertKind.PRAISE, *win) is not None, f"pas de félicitation / no praise in {win}")
+        _expect(any(a.kind == AlertKind.PRAISE and win[0] <= t <= win[1] for t, a in alerts),
+                f"pas de félicitation vocale (solo kill) / no spoken praise in {win}")
         win = expected.get("toast", (0.0, end_s))
         praise_toasts = [(t, tv) for t, tv in toasts_seen if tv.toast.kind == "praise" and win[0] <= t <= win[1]]
         _expect(bool(praise_toasts), f"pas de toast de félicitation / no praise toast in {win}")

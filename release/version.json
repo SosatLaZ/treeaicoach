@@ -1,6 +1,6 @@
 {
-  "version": "1.5.0",
-  "sha256": "9c5368332d17631c427c2142e321be76910dafc6b8d8987ceda664bd4907a727",
-  "size": 81527393,
-  "notes": "Nouvelle détection calibrée sur les portraits des 10 champions (toi compris), cercles visibles sur la minimap, conseils de jeu, félicitations, analyse du Tab."
+  "version": "1.6.0",
+  "sha256": "c40f2cd28338b1662329275481c64af7a5f2f450e3fa05bd27ca0682a4ec0ce6",
+  "size": 81642399,
+  "notes": "Voix naturelle, nouveau design, carte allégée, posture prudent/agressif, conseils écrits, conseils d'achat, IA branchable, anti-spam."
 }

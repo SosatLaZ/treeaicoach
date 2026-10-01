@@ -144,6 +144,7 @@ def load_items(data: dict | None = None) -> dict[int, Item]:
     if data is None and _ITEMS is not None:
         return _ITEMS
     table: dict[int, Item] = {}
+    cache = data is None
     try:
         if data is None:
             from treeaicoach.paths import asset_path
@@ -159,14 +160,7 @@ def load_items(data: dict | None = None) -> dict[int, Item]:
                 continue
     except Exception:
         log.warning("Item table unavailable (assets/items.json)", exc_info=True)
-    if data is not None and _ITEMS is None and table:
-        pass
-    return table if data is not None and _ITEMS is not None else _set_items(table)
-
-
-def _set_items(table: dict[int, Item]) -> dict[int, Item]:
-    global _ITEMS
-    if _ITEMS is None:
+    if cache:
         _ITEMS = table
     return table
 
