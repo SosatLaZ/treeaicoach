@@ -1369,14 +1369,15 @@ class CoachEngine:
 
             ai.update(t, game, in_base=in_base, roles=self._role_resolver, scoreboard=summary,
                       objectives=self._objectives.states() if self._objectives is not None else [],
-                      item_text=self.item_advice_text(), threat=threat, context=lambda: engine_context(self, t))
+                      item_text=self.item_advice_text(), threat=threat, context=lambda: engine_context(self, t),
+                      win_prob=hc.win_probability(), in_fight=self._ai_in_fight())
             adv = ai.poll()
             if adv is not None:
                 self.last_ai_advice = adv.text
                 self.ai_answer_seq = getattr(self, "ai_answer_seq", 0) + 1
                 self._text_msg = (t, adv.text)
                 self.text_messages.append((t, "ai", adv.text))
-                title = "IA" if adv.error else ("RÉPONSE IA" if adv.moment == "manual" else "CONSEIL IA")
+                title = adv.title
                 self._toast("warning" if adv.error else "insight", title, adv.text, None, f"ai:{adv.t:.0f}", t)
                 if getattr(cfg, "ai_speak", False) and threat < Level.WARNING and not adv.error:
                     self._say(adv.text, int(Level.INFO))
@@ -1384,6 +1385,17 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Hype / AI advice failed")
         return alerts
+
+    def _ai_in_fight(self) -> bool:
+        for attr in ("_fight", "_fight_tracker"):
+            ft = getattr(self, attr, None)
+            fn = getattr(ft, "in_fight", None)
+            if fn is not None:
+                try:
+                    return bool(fn() if callable(fn) else fn)
+                except Exception:
+                    return False
+        return False
 
     def ask_ai(self) -> str:
         """"Demander à l'IA" (hotkey / button): manual AI request, answer later as toast + HUD line.

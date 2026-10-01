@@ -799,7 +799,11 @@ def build_snapshot(game: Any, *, moment: str = "", roles: Any = None, scoreboard
     try:
         gt = float(getattr(game, "game_time", 0.0) or 0.0)
         snap["t"] = _clock(gt)
-        if moment:
+        if moment.startswith("comeback:"):
+            reason = moment.split(":", 1)[1]
+            snap["mo"] = COMEBACK_FR.get(reason, reason)
+            snap["mode"] = "saisir" if reason in WINDOW_REASONS else "redresser"
+        elif moment:
             snap["mo"] = MOMENT_FR.get(moment, moment)
         me = getattr(game, "me", None)
         if me is not None:
@@ -868,7 +872,14 @@ def build_snapshot(game: Any, *, moment: str = "", roles: Any = None, scoreboard
 def build_prompt(snapshot: dict[str, Any]) -> str:
     moment = snapshot.get("mo") or "point de situation"
     data = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-    return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle + analyse de la minimap) : {data}\n"
+    plan = ""
+    if snapshot.get("mode") == "redresser":
+        plan = ("Mode : redresser. Donne UN plan concret pour revenir dans la partie, fondé sur le JSON : où "
+                "jouer, quoi éviter, quoi acheter et quel objectif échanger. ")
+    elif snapshot.get("mode") == "saisir":
+        plan = ("Mode : fenêtre favorable. Dis exactement quel objectif prendre maintenant et comment, "
+                "fondé sur le JSON. ")
+    return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle + analyse de la minimap) : {data}\n{plan}"
             "Réponds en 2 phrases courtes max, conseils concrets d'achat et de macro, "
             "pas de spéculation sur les temps de recharge ennemis. Pour un achat, choisis UNIQUEMENT parmi "
             "objets_possibles (noms exacts) ou les composants de la suggestion « achat » ; ne conseille "
@@ -936,6 +947,154 @@ class Advice:
     t: float
     error: bool = False       # True: ``text`` is a French error message (manual request only)
 
+    @property
+    def title(self) -> str:
+        """Toast title, showing why the AI spoke."""
+        if self.error:
+            return "IA"
+        if self.moment == "manual":
+            return "RÉPONSE IA"
+        reason = self.moment.split(":", 1)[1] if self.moment.startswith("comeback:") else ""
+        if reason:
+            return "IA — Fenêtre à saisir" if reason in WINDOW_REASONS else "IA — Plan pour revenir"
+        return "CONSEIL IA"
+
+
+# ======================================================================================
+# "Comeback" triggers: moments that can turn the game around
+# ======================================================================================
+COMEBACK_FR = {
+    "gold": "l'écart d'or se creuse contre nous",
+    "wp_drop": "la probabilité de victoire vient de chuter",
+    "teamfight": "combat d'équipe perdu (plusieurs alliés morts)",
+    "death_streak": "je meurs en série",
+    "lane_fed": "mon adversaire de voie devient très fort",
+    "objectives": "l'adversaire enchaîne les objectifs sans réponse",
+    "carries_dead": "les carrys ennemis sont morts pour longtemps",
+    "numbers": "Baron / Elder bientôt et nous sommes en surnombre",
+    "ace": "ace : toute l'équipe adverse est morte",
+}
+WINDOW_REASONS = frozenset({"carries_dead", "numbers", "ace"})
+COMEBACK_COOLDOWN_S = 180.0
+GOLD_STEP = 2000
+WP_DROP = 0.15
+WP_WINDOW_S = 180.0
+_OBJ_EVENTS = ("DragonKill", "BaronKill", "HeraldKill", "HordeKill", "AtakhanKill", "TurretKilled", "InhibKilled")
+
+
+class ComebackDetector:
+    """Detects the situations where a concrete plan can turn the game around (or a window to seize).
+
+    ``update`` returns a reason key of :data:`COMEBACK_FR` (each reason at most every
+    :data:`COMEBACK_COOLDOWN_S`), or None. Pure, never raises."""
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._gold_tier = 0
+        self._wp: list[tuple[float, float]] = []
+        self._fed_seen: set[str] = set()
+        self._last: dict[str, float] = {}
+        self._seen_aces: set[Any] = set()
+
+    def update(self, t: float, game: Any, scoreboard: Any = None, win_prob: float | None = None,
+               objectives: Iterable[Any] = ()) -> str | None:
+        try:
+            return self._update(float(t), game, scoreboard, win_prob, list(objectives or ()))
+        except Exception:
+            log.debug("ComebackDetector failed", exc_info=True)
+            return None
+
+    def _update(self, t: float, game: Any, sb: Any, wp: float | None, objectives: list[Any]) -> str | None:
+        me = getattr(game, "me", None)
+        if me is None:
+            return None
+        gt = float(getattr(game, "game_time", 0.0) or 0.0)
+        mine = me.team
+        found: list[str] = []
+        # gold deficit crossing -2k, -4k...
+        if sb is not None and getattr(sb, "players", None):
+            tier = int(max(0, -int(sb.team_gold_diff)) // GOLD_STEP)
+            if tier > self._gold_tier:
+                found.append("gold")
+            self._gold_tier = tier if tier > self._gold_tier else min(self._gold_tier, tier + 1)
+            m = getattr(sb, "my_matchup", None)
+            fed = set(getattr(sb, "fed", ()) or ())
+            opp = getattr(m, "enemy_alias", None) if m is not None else None
+            if opp and opp in fed and opp not in self._fed_seen:
+                found.append("lane_fed")
+            self._fed_seen |= fed
+        # win probability drop
+        if wp is not None:
+            self._wp = [(ts, p) for ts, p in self._wp if t - ts <= WP_WINDOW_S] + [(t, float(wp))]
+            if max(p for _ts, p in self._wp) - float(wp) > WP_DROP:
+                found.append("wp_drop")
+        # events: allied deaths, my deaths, objectives, ace
+        from treeaicoach.hype import team_lookup
+
+        lookup = team_lookup(game)
+        my_names = {n for n, team in lookup.items() if team == mine}
+        me_names = set()
+        for attr in ("riot_id", "summoner_name"):
+            v = str(getattr(me, attr, "") or "")
+            if v:
+                me_names |= {v.casefold(), v.split("#", 1)[0].casefold()}
+        ally_deaths, my_deaths, ours, theirs = [], [], [], []
+        for ev in getattr(game, "events", None) or []:
+            if not isinstance(ev, dict):
+                continue
+            name = ev.get("EventName")
+            et = float(ev.get("EventTime") or 0.0)
+            if name == "ChampionKill":
+                victim = str(ev.get("VictimName") or "").casefold()
+                if victim in my_names:
+                    ally_deaths.append(et)
+                if victim in me_names:
+                    my_deaths.append(et)
+            elif name in _OBJ_EVENTS:
+                if name in ("TurretKilled", "InhibKilled"):
+                    struct = str(ev.get("TurretKilled") or ev.get("InhibKilled") or "")
+                    owner = "ORDER" if "_T1_" in struct else "CHAOS" if "_T2_" in struct else None
+                    if owner is not None:
+                        (theirs if owner == mine else ours).append(et)
+                else:
+                    killer = str(ev.get("KillerName") or "").casefold()
+                    team = lookup.get(killer)
+                    if team is not None:
+                        (ours if team == mine else theirs).append(et)
+            elif name == "Ace" and ev.get("AcingTeam") == mine and gt - et <= 15.0:
+                uid = (ev.get("EventID"), et)
+                if uid not in self._seen_aces:
+                    self._seen_aces.add(uid)
+                    found.append("ace")
+        recent = [x for x in ally_deaths if 0 <= gt - x <= 20.0]
+        if len(recent) >= 2:
+            found.append("teamfight")
+        if len([x for x in my_deaths if 0 <= gt - x <= 240.0]) >= 2:
+            found.append("death_streak")
+        if (len([x for x in theirs if 0 <= gt - x <= 240.0]) >= 2
+                and not [x for x in ours if 0 <= gt - x <= 240.0]):
+            found.append("objectives")
+        # windows to seize
+        enemies = list(getattr(game, "enemies", []))
+        allies = [me] + list(getattr(game, "allies", []))
+        dead_long = [p for p in enemies if p.is_dead and float(p.respawn_timer or 0) >= 25.0]
+        carries = [p for p in dead_long if p.position in ("BOTTOM", "MIDDLE") or p.kills >= 5]
+        if len(dead_long) >= 2 and carries:
+            found.append("carries_dead")
+        soon = any(getattr(o, "key", "") in ("baron", "elder") and (getattr(o, "alive", False) or (
+            getattr(o, "remaining", None) is not None and o.remaining <= 60)) for o in objectives)
+        if soon and sum(p.is_dead for p in enemies) - sum(p.is_dead for p in allies) >= 2:
+            found.append("numbers")
+        order = ("ace", "numbers", "carries_dead", "teamfight", "wp_drop", "gold", "lane_fed",
+                 "objectives", "death_streak")
+        for r in order:
+            if r in found and t - self._last.get(r, -math.inf) >= COMEBACK_COOLDOWN_S:
+                self._last[r] = t
+                return r
+        return None
+
 
 class AIAdvisor:
     """Rate-limited background LLM advice. Thread-safe; public methods never raise."""
@@ -957,6 +1116,7 @@ class AIAdvisor:
         self._blocked_until = -math.inf
         self.calls = 0
         self.detector = MomentDetector()
+        self.comeback = ComebackDetector()
         self.apply_config(cfg)
 
     # ------------------------------------------------------------------ config / state
@@ -982,6 +1142,7 @@ class AIAdvisor:
             self._result = None
             self._last_call = -math.inf
         self.detector.reset()
+        self.comeback.reset()
 
     def status(self) -> tuple[int, str | None]:
         """``(sequence, French status)``: the sequence changes each time a new error is set."""
@@ -995,7 +1156,8 @@ class AIAdvisor:
     # ------------------------------------------------------------------ live use
     def update(self, t: float, game: Any, *, in_base: bool = False, objectives: Iterable[Any] = (),
                roles: Any = None, scoreboard: Any = None, item_text: str | None = None,
-               threat: int = 0, context: Any = None) -> bool:
+               threat: int = 0, context: Any = None, win_prob: float | None = None,
+               in_fight: bool = False) -> bool:
         """Detect a key moment and maybe start a request. Returns True if one was started.
 
         ``context``: extra snapshot sections (dict), or a callable returning them (only called
@@ -1003,7 +1165,10 @@ class AIAdvisor:
         try:
             objectives = list(objectives or ())
             moment = self.detector.update(game, in_base, objectives)
-            if moment is None or not self.enabled or threat >= 1:
+            reason = self.comeback.update(t, game, scoreboard, win_prob, objectives)
+            if moment is None and reason is not None:
+                moment = f"comeback:{reason}"
+            if moment is None or not self.enabled or threat >= 1 or (in_fight and moment.startswith("comeback")):
                 return False
             gt = float(getattr(game, "game_time", 0.0) or 0.0)
             with self._lock:
