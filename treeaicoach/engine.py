@@ -62,6 +62,11 @@ VERIFY_PERIOD_S = 1.0            # first minimap verify() after a location (then
 UNFOCUSED_HIDE_S = 1.5           # game not in the foreground this long -> overlay hidden
 STATS_EVERY_S = 1.0              # health monitor refresh (CPU %, rates)
 STALE_MIN_GAME_S = 90.0          # frozen-capture check only once minions walk (game time, s)
+#: my fountain (normalized; the minimap is never flipped by team) - no enemy icon there
+MY_FOUNTAIN_UV = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
+FOUNTAIN_REJECT_R = 0.10         # enemy detections this close to my fountain: dropped
+BASE_STRICT_R = 0.22             # ... in the rest of my base: an enemy identity needs ...
+BASE_ENEMY_MIN_ID = 0.85         # ... at least this identification score (else anonymous)
 TRIVIAL_BUY_AFTER_S = 1200.0     # after 20:00 ...
 TRIVIAL_BUY_GOLD = 500           # ... no HUD chip for a lone component cheaper than this (not completing)
 EARLY_ADVICE_GT_S = 65.0         # no lane-phase tip / insight on the HUD line before the minions spawn
@@ -2351,6 +2356,9 @@ class CoachEngine:
                 early = gt_now < EARLY_ADVICE_GT_S
         except Exception:
             early = False
+        me_dead = bool(getattr(getattr(game, "me", None), "is_dead", False)) if game is not None else False
+        if me_dead:      # dead: the respawn countdown + the death cause / active call only
+            early = True
         if coach is not None and not early:
             try:
                 urgent = [it for it in coach.insight_items() if it[0] >= 65 and it[2] != "objective"]
@@ -2540,6 +2548,31 @@ class CoachEngine:
             log.debug("Cannot update %r", item, exc_info=True)
         return item
 
+    def _reject_enemy_in_my_fountain(self, identified: list[Any]) -> list[Any]:
+        """An "enemy" icon in MY fountain is impossible (the fountain laser): it is my icon, an
+        ally or a structure misread (real game: "Kindred vu il y a 73 s, ta base"). Inside the
+        rest of my base an enemy identity needs a strong portrait match. Never raises."""
+        game = self._game
+        team = getattr(game, "my_team", None) if game is not None else None
+        if team not in MY_FOUNTAIN_UV:
+            return identified
+        fu, fv = MY_FOUNTAIN_UV[team]
+        out = []
+        for x in identified:
+            det = getattr(x, "det", x)
+            if getattr(x, "relation", None) == "enemy":
+                try:
+                    d = math.hypot(float(det.u) - fu, float(det.v) - fv)
+                    if d < FOUNTAIN_REJECT_R:
+                        continue
+                    if d < BASE_STRICT_R and getattr(x, "alias", None) and \
+                            float(getattr(x, "id_score", 0.0) or 0.0) < BASE_ENEMY_MIN_ID:
+                        x = self._with(x, alias=None, id_score=0.0)
+                except Exception:
+                    pass
+            out.append(x)
+        return out
+
     def _stabilize(self, t: float, identified: list[Any]) -> list[Any]:
         """Temporal sanity checks between the identifier and the tracker.
 
@@ -2553,7 +2586,7 @@ class CoachEngine:
         tracker = self._tracker
         if tracker is None or not identified:
             return identified
-        out = list(identified)
+        out = self._reject_enemy_in_my_fountain(list(identified))
         tracks = {tr.alias: tr for tr in tracker.tracks() if tr.alias}
         for i, x in enumerate(out):
             alias = getattr(x, "alias", None)

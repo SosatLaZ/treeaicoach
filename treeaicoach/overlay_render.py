@@ -213,6 +213,23 @@ GHOST_TEXT_MAX_S = 45.0
 GHOST_MIN_CONFIDENCE = 0.5
 
 
+#: Fountains (normalized, the minimap is never flipped) and the radius in which an enemy's last
+#: seen mark carries no information (he is home: respawn / recall).
+FOUNTAIN_UV = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
+FOUNTAIN_GHOST_R = 0.16
+
+
+def _in_enemy_fountain(uv: Any, my_team: Any) -> bool:
+    if my_team not in FOUNTAIN_UV or uv is None:
+        return False
+    other = "CHAOS" if my_team == "ORDER" else "ORDER"
+    fu, fv = FOUNTAIN_UV[other]
+    try:
+        return math.hypot(float(uv[0]) - fu, float(uv[1]) - fv) < FOUNTAIN_GHOST_R
+    except (TypeError, ValueError):
+        return False
+
+
 def is_ghost(view: Any) -> bool:
     """True when ``view`` must be drawn as an uncertain ghost (see :data:`GHOST_AGE_S`)."""
     try:
@@ -1459,6 +1476,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
                 continue
             if bool(getattr(e, "dead", False)):      # dead: in his fountain, the HUD row has the timer
                 continue
+            if _in_enemy_fountain(uv, getattr(state, "my_team", None)):   # home: no information
+                continue
             if not show_ghosts and not e.is_jungler and ago > LAST_SEEN_MAX_S / 2:
                 continue
             x, y = px(uv)
@@ -1531,6 +1550,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             continue
         ev = by_key.get(fog.key)
         if ev is not None and (ev.visible or bool(getattr(ev, "dead", False))):
+            continue
+        if _in_enemy_fountain(uv, getattr(state, "my_team", None)):
             continue
         cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.7)
         if _finite(fog.elapsed) and float(fog.elapsed) <= GHOST_TEXT_MAX_S:
