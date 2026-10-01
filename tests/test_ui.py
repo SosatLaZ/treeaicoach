@@ -591,3 +591,45 @@ def test_calibration_dialog(tmp_path: Path) -> None:
         dlg2.cancel()
     finally:
         root.destroy()
+
+
+@needs_display
+def test_v15_features(home: Path, tmp_path: Path) -> None:
+    """Safe mode, presets, examples, diagnostic, dialogs, shortcuts, remembered page, quit confirmation."""
+    app, voice, (engines, _ov) = _build(tmp_path)
+    try:
+        _pump(app, 3.0, lambda: engines and app._in_game())
+        app.set_safe_mode(True)
+        assert app.cfg.safe_mode and app.dash_safe_var.get() and app._quick["safe"][0].get()
+        app.set_safe_mode(False)
+        assert not app.cfg.safe_mode
+        app.apply_preset("discret")
+        assert ui.ui_kit.preset_of(app.cfg) == "discret" and not app.cfg.alert_roam
+        app.apply_preset("equilibre")
+        assert ui.ui_kit.preset_of(app.cfg) == "equilibre"
+        app.play_example("collapse")
+        assert voice.said and voice.said[-1][1] == 2
+        app.set_option("voice_engine", "sapi")
+        assert voice.params[-1].get("engine") == "sapi"
+        text = app.diagnostic()
+        assert "TreeAI Coach" in text and "github_token" not in text
+        app.copy_diagnostic()
+        assert "TreeAI Coach" in app.root.clipboard_get()
+        for fn in (app.show_changelog, app.show_about, lambda: app.show_onboarding(1),
+                   lambda: app.show_onboarding(2)):
+            fn()
+            _pump(app, 0.2)
+            assert app._open_dialog is not None
+            app._open_dialog._close()
+        app.show_page("overlay")
+        assert app.cfg.ui_last_page == "overlay"
+        app.root.event_generate("<Control-Key-1>")
+        _pump(app, 0.3)
+        app.request_close()                 # in game -> confirmation dialog, the window stays open
+        _pump(app, 0.2)
+        assert not app._closing and app._open_dialog is not None
+        app._open_dialog._close()
+        app.clear_journal()
+        assert not app._journal
+    finally:
+        app.close()
