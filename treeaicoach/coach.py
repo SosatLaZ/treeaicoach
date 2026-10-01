@@ -945,7 +945,8 @@ class MapCoach:
             marker = getattr(tr, "last_seen", None) if tr is not None else -1.0
             if marker != self._jg_unseen_done:
                 secs = int(hidden // 5 * 5)
-                out.append(("jungler_unseen", f"Jungler ennemi pas vu depuis {secs} s : prudence."))
+                out.append(("jungler_unseen", f"Jungler ennemi pas vu depuis {secs} s : prudence." if tr is not None
+                            else "Jungler ennemi pas encore vu : prudence."))
         return out
 
     def _pressure_info(self, ctx: _Ctx) -> dict[str, Any] | None:
@@ -1665,7 +1666,8 @@ def stance_factors(facts: dict[str, Any], game: Any, scoreboard: Any = None, thr
                 elif hidden < 25 and last in ("top", "bot") and OPPOSITE_SIDE.get(last) == my_side:
                     out.append((1.5, f"jungler ennemi vu {SIDE_FR[last]} il y a {int(hidden)} s"))
                 elif hidden >= JUNGLER_UNSEEN_S:
-                    out.append((-1.0, f"jungler ennemi invisible depuis {int(hidden // 5 * 5)} s"))
+                    out.append((-1.0, f"jungler ennemi invisible depuis {int(hidden // 5 * 5)} s" if last is not None
+                                else "jungler ennemi pas encore vu"))
         # -- missing / numbers / wave
         miss = int(_finite(f.get("missing")) or 0)
         if miss >= 3:

@@ -151,7 +151,7 @@ def test_never_spammy_over_two_minutes() -> None:
     for t, x in texts(out):
         assert t - last.get(x, -99.0) >= 20.0, (t, x)
         last[x] = t
-    assert len(out) <= 2 * 6 + 2                         # <= ~7 / min
+    assert len({t for t, _a in out}) <= 2 * 6 + 2          # <= ~7 moments / min ("Recule !" + its reason = 1)
     # and the throttler agrees (the engine's second safety net)
     th = AlertThrottler()
     said = [a for t, a in out if th.filter([a], t)]
@@ -263,5 +263,93 @@ def test_beginner_hears_gank_warnings_about_enemies_on_his_screen(tmp_path, monk
             eng._tracker = tr
             eng._camera = NS(current=lambda t: NS(u0=0.05, v0=0.15, u1=0.32, v1=0.30))
             assert eng._written_if_on_screen([warn_on], 1.0, 400.0, None) == spoken, level
+    finally:
+        paths._reset_cache()
+
+
+# ------------------------------------------------------------------ real case 3:24 (screenshot 13)
+def test_two_v_one_at_53_percent_on_screen_recule_written_and_spoken() -> None:
+    """3:24, Garen top at 567 / 1062 HP (53 %) fighting the enemy top laner + a second enemy, both
+    level 4, on screen at the jungle edge, alone. Our card said "NORMAL" and "Ne t'avance pas :
+    Maître Yi invisible depuis 113 s". Now: "Recule !" spoken + "Recule : 2 contre 1." written,
+    danger level 2 (the engine turns the gauge SAFE)."""
+    me = lambda t: (0.13, 0.12)                                                 # noqa: E731
+    foes = lambda t: {"Darius": (0.145, 0.105), "Ahri": (0.15, 0.125)}         # noqa: E731
+    hp = lambda t: 567.0 / 1062.0                                               # noqa: E731
+    kw = lambda t: {"my_level": 4, "levels": {"Darius": 4, "Ahri": 4}}         # noqa: E731
+    tracker = Tracker()
+    pd = PersonalDanger()
+    first: list = []
+    for i in range(16):
+        t = i * DT
+        tracker.update(t, [G.ident(*me(t), "self", "Garen", "ORDER")]
+                       + [G.ident(p[0], p[1], "enemy", n, "CHAOS") for n, p in foes(t).items()])
+        out = pd.update(t, 204.0 + t, game_at(204.0 + t, hp(t), **kw(t)), tracker, lane_opponents=("Darius",))
+        if out and not first:
+            first = out
+        assert pd.state().level == 2 and pd.state().reason == "2 contre 1"
+    assert [(a.level, a.text) for a in first] == [(Level.DANGER, "Recule !"), (Level.WARNING, "Recule : 2 contre 1.")]
+    # and never repeated within 20 s
+    assert pd.update(2.5, 206.5, game_at(206.5, hp(0)), tracker, lane_opponents=("Darius",)) == []
+
+
+def test_two_v_one_engine_says_recule_writes_reason_and_gauge_safe(tmp_path, monkeypatch) -> None:
+    from treeaicoach import paths
+    from treeaicoach.config import Config
+    from treeaicoach.engine import CoachEngine
+    from treeaicoach.coach import gauge_target
+
+    class _Voice:
+        backend = "test"
+
+        def __init__(self) -> None:
+            self.said: list[str] = []
+
+        def say(self, text: str, level: int = 1) -> None:
+            self.said.append(text)
+
+        def set_muted(self, on: bool) -> None:
+            pass
+
+    class _Src:
+        is_demo = False
+
+        def next(self, t: float):
+            frame = (40 + np.random.default_rng(0).integers(0, 30, size=(200, 200, 3))).astype(np.uint8)
+            g = game_at(204.0 + t, 567.0 / 1062.0, my_level=4, levels={"Darius": 4, "Ahri": 4})
+            g.fetched_at = t
+            return frame, g
+
+    def ident_all(_frame):
+        from treeaicoach.detector import Detection
+        from treeaicoach.identifier import Identified
+
+        out = []
+        for alias, rel, uv in (("Garen", "self", (0.13, 0.12)), ("Darius", "enemy", (0.145, 0.105)),
+                               ("Ahri", "enemy", (0.15, 0.125))):
+            probs = (0.9, 0.05, 0.05) if rel == "enemy" else (0.05, 0.05, 0.9)
+            det = Detection(u=uv[0], v=uv[1], r=0.03, score=0.95, cls=rel, cls_probs=probs, alias=alias)
+            out.append(Identified(det=det, alias=alias, relation=rel, team="CHAOS" if rel == "enemy" else "ORDER",
+                                  id_score=0.95))
+        return out
+
+    monkeypatch.setenv(paths.ENV_HOME, str(tmp_path / "home"))
+    paths._reset_cache()
+    try:
+        voice = _Voice()
+        clock = [0.0]
+        eng = CoachEngine(Config(skill_level="debutant"), voice, frame_source=_Src(), clock=lambda: clock[0],
+                          enable_hotkeys=False, manage_overlay=False, recorder_factory=lambda: None)
+        eng._vision = ident_all
+        for i in range(24):
+            clock[0] = i * 0.25
+            eng.step(clock[0])
+        # "Recule !" spoken (or the gank DANGER of the second enemy "Roam ! Ahri, recule !" said it first)
+        assert any("recule" in x.lower() for x in voice.said)
+        assert any(text == "Recule : 2 contre 1." for _t, _k, text in eng.text_messages)
+        assert eng._danger.state().level == 2
+        assert gauge_target(None, threat=2)[0] == -2            # the threat the engine passes -> SAFE
+        g = eng.play_gauge()
+        assert g is None or g.step <= -1
     finally:
         paths._reset_cache()

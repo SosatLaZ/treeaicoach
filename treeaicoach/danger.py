@@ -14,7 +14,7 @@ rule                    level     condition (``hp`` = my health share)
 =====================  ========  ==============================================================
 ``recule``              DANGER    spoken "Recule !": ``hp <= 0.35`` and an enemy on me (within
                                   :data:`CLOSE_R`, or within :data:`NEAR_R` and coming closer),
-                                  or ``hp <= 0.55`` and outnumbered (2+ enemies near, more than
+                                  or ``hp <= 0.6`` and outnumbered (2+ enemies near, more than
                                   my allies + 1); not when I am clearly the stronger one
 ``lane``                WARNING   written: my lane opponent near me with a level / item spike
                                   (2+ levels, 6 vs 5, 900+ gold of items, power x1.3) while I am
@@ -32,7 +32,11 @@ rule                    level     condition (``hp`` = my health share)
                                   "Kindred peut arriver : recule vers ta tour."
 =====================  ========  ==============================================================
 
-Not spammy: one message per tick, "Recule !" never twice within :data:`RECULE_REPEAT_S` (20 s),
+With "Recule !" comes its written reason ("Recule : 2 contre 1.", HUD line + DANGER toast), and
+:meth:`PersonalDanger.state` exposes ``level`` (2 while the "Recule" condition holds, whatever the
+cooldowns): the engine raises its threat with it (gauge SAFE, no "go" advice while 2 v 1).
+
+Not spammy: one spoken message per tick, "Recule !" never twice within :data:`RECULE_REPEAT_S` (20 s),
 the same written line never within :data:`SAME_TEXT_S`, per-rule cooldowns, nothing in my
 fountain / while dead / during a fight (the fight call speaks) / right after a gank DANGER
 ("Gank ! ..., recule !" already said it). Pure Python (numpy for the fog part), thread-confined
@@ -63,7 +67,7 @@ POS_MAX_AGE_S = 3.0         # my position unknown for longer -> nothing
 ENEMY_MAX_AGE_S = 1.0       # an enemy icon not seen for this long is not "visible near me"
 # HP thresholds (share of max health)
 RECULE_HP = 0.35
-RECULE_OUTNUMBERED_HP = 0.55
+RECULE_OUTNUMBERED_HP = 0.6     # 2 v 1 at <= 60 % HP (real case 3:24: Garen 53 % vs 2 on screen)
 LOW_HP = 0.4
 LANE_HURT_HP = 0.7
 OUTNUMBERED_HP = 0.8
@@ -171,6 +175,10 @@ class DangerState:
     rule: str | None = None             # rule of the last message produced
     jungler_fog_mass: float | None = None
     suppressed: str | None = None
+    #: current danger level whatever the cooldowns (0 none, 1 written warning, 2 "Recule !" condition):
+    #: the engine raises its threat with it (gauge SAFE, no "vas-y" advice while 2 v 1)
+    level: int = 0
+    reason: str | None = None           # "2 contre 1", "peu de vie, Darius sur toi"
 
 
 @dataclass
@@ -268,16 +276,28 @@ class PersonalDanger:
 
         out: Alert | None = None
         rule: str | None = None
-        # ---- 1) spoken "Recule !"
+        # ---- 1) spoken "Recule !" (+ the written reason: "Recule : 2 contre 1.")
         outnumbered = len(near) >= 2 and len(near) > 1 + allies_near
-        if hp is not None and not in_fight and not recent_gank and threat < Level.DANGER:
-            stronger = theirs > 0 and mine / theirs >= STRONGER_SKIP
-            if ((hp <= RECULE_HP and on_me) or (hp <= RECULE_OUTNUMBERED_HP and outnumbered)) and not stronger:
-                if t - self._m.recule_t >= RECULE_REPEAT_S:
-                    who = (on_me or near)[0]
-                    out = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.DANGER, text="Recule !",
-                                key=alert_key(AlertKind.PERSONAL_DANGER, "recule"), t=t, alias=who.alias)
-                    rule = "recule"
+        level, reason = 0, None
+        companion: Alert | None = None
+        stronger = theirs > 0 and hp is not None and mine / theirs >= STRONGER_SKIP
+        low_on_me = hp is not None and hp <= RECULE_HP and bool(on_me)
+        two_v_one = hp is not None and hp <= RECULE_OUTNUMBERED_HP and outnumbered
+        if (low_on_me or two_v_one) and not stronger:
+            level = 2
+            reason = (f"{len(near)} contre {1 + allies_near}" if two_v_one
+                      else f"peu de vie, {(on_me or near)[0].name} sur toi")
+        if level == 2 and not in_fight and t - self._m.recule_t >= RECULE_REPEAT_S:
+            who = (on_me or near)[0]
+            why = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.WARNING, text=f"Recule : {reason}.",
+                        key=alert_key(AlertKind.PERSONAL_DANGER, "recule:why"), t=t, alias=who.alias)
+            if not recent_gank and threat < Level.DANGER:
+                out = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.DANGER, text="Recule !",
+                            key=alert_key(AlertKind.PERSONAL_DANGER, "recule"), t=t, alias=who.alias)
+                companion = why
+            else:
+                out = why        # "Gank ! ..., recule !" was just said: only the written reason
+            rule = "recule"
         # ---- 2) written warnings (one per tick, cooldowns)
         if out is None and not in_fight:
             cands: list[tuple[str, str, str | None]] = []
@@ -311,9 +331,13 @@ class PersonalDanger:
                 self._m.written_t = t
                 self._m.rule_t[rule or ""] = t
             self._m.text_t[out.text] = t
+        if level == 0 and (out is not None or (hp is not None and near and (hp < LOW_HP or outnumbered))):
+            level = 1
         self._state = DangerState(t=t, hp=hp, foes=tuple(foes), allies_near=allies_near, rule=rule,
-                                  jungler_fog_mass=fog_mass)
-        return [out] if out is not None else []
+                                  jungler_fog_mass=fog_mass, level=level, reason=reason)
+        if out is None:
+            return []
+        return [out, companion] if companion is not None else [out]
 
     def _written_ok(self, rule: str, text: str, t: float) -> bool:
         if t - self._m.written_t < WRITTEN_GAP_S:

@@ -131,3 +131,12 @@ def test_config_declutter_migration(tmp_path):
     assert cfg.skill_level == "debutant"
     assert C.save_config(C.Config(**{**cfg.to_dict(), "hud_detailed": True}), old)
     assert C.load_config(old).hud_detailed                     # once: a later choice is kept
+
+
+def test_outnumbered_is_never_normal():
+    a = E("Darius", "Darius", "Darius", True, (0.14, 0.31), 0.0)
+    b = E("MasterYi", "MasterYi", "Maître Yi", True, (0.10, 0.28), 0.0, True)
+    c = orr.compact_content(_state(enemies=[a, b]), now=0.0)
+    assert c["mode"] == "warning" and c["word"].startswith("2 CONTRE 1")
+    one = orr.compact_content(_state(enemies=[a]), now=0.0)
+    assert one["word"] != "NORMAL"

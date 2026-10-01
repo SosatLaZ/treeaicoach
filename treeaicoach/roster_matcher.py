@@ -578,13 +578,14 @@ def clean_camera_lines(bgr: np.ndarray, rect: Any, band: int = 2) -> np.ndarray:
             if out is None:
                 out = bgr.copy()
             pa, pb = max(0, pc - d), min(n_c - 1, pc + d)
+            # (from the image cleaned so far: at a corner the other side's line is gone)
             if kind == "h":
-                fill = (bgr[pa, lo:hi].astype(np.uint16) + bgr[pb, lo:hi]) // 2
+                fill = (out[pa, lo:hi].astype(np.uint16) + out[pb, lo:hi]) // 2
                 for k, row in enumerate(range(c0, c1)):
                     sel = m[k] > 0
                     out[row, lo:hi][sel] = fill[sel].astype(np.uint8)
             else:
-                fill = (bgr[lo:hi, pa].astype(np.uint16) + bgr[lo:hi, pb]) // 2
+                fill = (out[lo:hi, pa].astype(np.uint16) + out[lo:hi, pb]) // 2
                 for k, col in enumerate(range(c0, c1)):
                     sel = m[k] > 0
                     out[lo:hi, col][sel] = fill[sel].astype(np.uint8)

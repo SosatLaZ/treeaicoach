@@ -2020,6 +2020,29 @@ def _context_note(state: Any, advice: str) -> tuple[str, tuple[int, int, int]] |
     return None
 
 
+#: "next to me" for the outnumbered check (normalized minimap units, ~ 1 screen)
+NEAR_ME_UV = 0.09
+
+
+def _near_counts(state: Any) -> tuple[int, int]:
+    """(fresh visible enemies, visible allies) within :data:`NEAR_ME_UV` of me."""
+    me = _uv_ok(getattr(state, "me_uv", None)) if getattr(state, "me_uv", None) is not None else None
+    if me is None:
+        return 0, 0
+    out = [0, 0]
+    for i, views in enumerate((getattr(state, "enemies", None), getattr(state, "allies", None))):
+        for v in views or []:
+            try:
+                if v is None or not v.visible or v.uv is None or is_ghost(v) or getattr(v, "dead", False):
+                    continue
+                uv = _uv_ok(v.uv)
+                if uv is not None and math.hypot(uv[0] - me[0], uv[1] - me[1]) <= NEAR_ME_UV:
+                    out[i] += 1
+            except Exception:
+                continue
+    return out[0], out[1]
+
+
 def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | None:
     """What the compact card shows, or None when there is nothing worth a card (the overlay then
     hides the HUD window). Keys: ``mode`` ("danger" | "normal"), ``word``, ``colour``, ``step``
@@ -2037,6 +2060,12 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
         line = advice if tone == "danger" else ""
         return {"mode": "danger" if lvl >= 2 else "warning", "word": _danger_word(state),
                 "colour": TAI_DANGER if lvl >= 2 else TAI_WARN, "step": None, "line": line, "note": None}
+    near_e, near_a = _near_counts(state)
+    if near_e >= 2 and near_e > near_a + 1 and not bool(getattr(state, "me_dead", False)):
+        # outnumbered next to me (docs/LESSONS.md 6-7): never a calm gauge word, even with the
+        # enemies visible on screen
+        return {"mode": "warning", "word": f"{near_e} CONTRE {near_a + 1} : RECULE", "colour": TAI_WARN,
+                "step": None, "line": "", "note": None}
     if bool(getattr(state, "me_dead", False)):
         # dead: the game shows the respawn timer; only the lesson / next action, if any
         if not advice:
@@ -2045,6 +2074,8 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
     step = _gauge_step(state)
     if step is not None and step not in GAUGE_SHOW[_skill(state)]:
         step = None
+    if step == 0 and near_e:
+        step = None                        # an enemy on me: "NORMAL" would not match the moment
     note = _context_note(state, advice)
     if step is None and not advice and note is None:
         return None
@@ -2076,6 +2107,11 @@ def _compact_layout(state: Any, width: int, now: float) -> dict[str, Any]:
     line = c["line"]
     if line and text_width(line, f_line) > right - left:
         f_line = get_font(round(13 * k), "semibold")
+        if text_width(line, f_line) > right - left:     # still too wide: the action head, not "…"
+            head = action_text(line, max(8, len(line) - 1))
+            if head and text_width(head, f_line) <= right - left:
+                line = head
+    c = {**c, "line": line}
     rows: list[tuple[str, float]] = []
     has_head = bool(c["word"]) or c["step"] is not None or c["note"] is not None
     if has_head:

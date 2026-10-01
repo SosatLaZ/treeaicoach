@@ -1505,6 +1505,9 @@ class CoachEngine:
                 self._err.exception("GankAnalyzer.update failed")
         threat = self._update_threat(t, gank_alerts)
         danger_now = self._personal_danger(t, gt, game, tracker, threat)
+        pd = getattr(self, "_danger", None)
+        if pd is not None:          # 2 v 1 at low HP: gauge SAFE, no "go" advice (not a gank: no flash)
+            threat = max(threat, int(getattr(pd.state(), "level", 0) or 0))
         # v3 director: fight decision + speech context every tick, macro / positioning / wards at HEAVY_HZ
         tac_alerts, gank_now = self._tactics_tick(t, gt, game, tracker, gank_alerts, threat=threat)
         self._ward_guide_tick(t, game, tracker, frame, identified)
