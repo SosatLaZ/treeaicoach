@@ -31,14 +31,11 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-import numpy as np
 from PIL import Image
 
 from treeaicoach import APP_NAME, __version__, paths, ui_kit
 from treeaicoach.config import Config, save_config
 from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
-    _PLAIN_SCALE,
-    _VOICE_FR,
     ACCENT,
     ACCENT_DIM,
     ACCENT_HOVER,
@@ -50,12 +47,15 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     BORDER_GOLD,
     BTN_H,
     BTN_H_SMALL,
+    CAPTURE_BACKENDS,
     CARD_PAD,
     CONTENT_MAX,
+    CTL_GAP,
     CTL_H,
     DANGER,
     DANGER_DARK,
     DANGER_HOVER,
+    DANGER_MODES,
     DEFAULT_H,
     DEFAULT_W,
     DETECTOR_FIELDS,
@@ -67,21 +67,25 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     EM_DASH,
     ENEMY_RING,
     ENGINE_LABELS,
+    ENGINE_RESTART_FIELDS,
     FOG_MODES,
     GAMES_PAGE,
     GAUGE_UI_COLORS,
     GOLD,
     GOLD_DARK,
     GOLD_HOVER,
+    HIDDEN_SETTINGS,
     HOTKEY_CHOICES,
     HOTKEY_FIELDS,
     HOVER,
     HUD_POSITIONS,
+    ICON_BTN,
     IDLE_LOOP_MS,
     JOURNAL_MAX,
     LEVEL_COLORS,
     LINE,
     LINE_STRONG,
+    LINK_H,
     MIN_H,
     MIN_W,
     MINIMAP_MODES,
@@ -91,12 +95,16 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     ON_DANGER,
     ON_GOLD,
     OVERLAY_MODES,
+    PAGE_ALIASES,
     PAGE_PAD,
     PAGES,
     PANEL,
     PANEL_HI,
     PANEL_LO,
+    PERF_MODES,
     PILL_TEXT,
+    _PLAIN_SCALE,
+    PLAYS_POSITIONS,
     PREBUILD_GAP_MS,
     PREBUILD_ORDER,
     PREVIEW_MS,
@@ -106,12 +114,17 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     RADIUS,
     RADIUS_DIALOG,
     RAISED,
+    ROLE_GAMER,
+    ROW_CTL_GAP,
     ROW_LINE,
     ROW_MIN_H,
+    ROW_PAD_Y,
     RUN_KEY,
     RUN_VALUE,
     SAFE,
     SAVE_DEBOUNCE_MS,
+    SECTION_GAP,
+    SETTINGS_TABS,
     SIDEBAR_W,
     SLIDER_KNOB_R,
     STATE_INFO,
@@ -121,6 +134,7 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     SUNKEN,
     SURFACE,
     SWITCH_OFF,
+    TAB_GAP,
     TEAL,
     TEXT,
     THREAT_COLORS,
@@ -132,37 +146,35 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     TOGGLE_SMALL,
     TOGGLE_W,
     TRACK,
+    UI_SCALINGS,
     UPDATE_CHECK_DELAY_MS,
     VOICE_FIELDS,
+    _VOICE_FR,
+    VOICE_LEVELS,
     WARNING,
     WARNING_BG,
     WIDE_MAX,
+    _Dispatcher,
     Dropdown,
+    _Fonts,
     HeroBanner,
+    _LazyPages,
+    _RadarWorker,
     Segmented,
     Toggle,
     _alert_entry,
-    _apply_theme,
-    _Dispatcher,
-    _ellipsize,
-    _fmt_ago,
-    _Fonts,
-    _guarded,
-    _hex_rgb,
-    _import_ctk,
-    _int_or_none,
-    _LazyPages,
-    _pick_display,
-    _pick_family,
-    _plain_classes,
-    _RadarWorker,
     app_icon_path,
+    _apply_theme,
     autostart_command,
     autostart_support,
+    champion_name,
     circle_icon,
     detector_short,
     display_weight,
+    _ellipsize,
     flat_placeholder,
+    _fmt_ago,
+    _game_json_path,
     fmt_clock,
     fmt_decimal_fr,
     fmt_game_date,
@@ -171,11 +183,18 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     game_field,
     game_result,
     get_windows_autostart,
+    _guarded,
     health_text,
+    _hex_rgb,
+    _import_ctk,
+    _int_or_none,
     load_logo,
     nav_icon,
     open_path,
+    _pick_display,
+    _pick_family,
     pick_font,
+    _plain_classes,
     precision_color,
     radar_placeholder,
     rounded_on_bg,
@@ -204,50 +223,82 @@ PREBUILD_DELAY_MS = 3000          # other pages are built in idle slots after th
 _NOT_PAGE_ATTRS = frozenset({
     "_closing", "_open_dialog", "_cpu", "_state_color", "_start_style", "_quick_muted", "_quick", "_pregame_tick",
     "_overlay_test", "_gauge_drawn_color", "_ai_status_seq", "_ai_answer_seq", "_update_info", "_update_busy",
-    "_overlay_preview_busy", "pill_text", "skill_seg", "btn_diag", "_diag_desc", "health_lbl", "cs_card", "_backend_t0", "_onboarding_step", "_last_slot",
-    "_last_row", "_building", "_built", "_page_builders", "pages", "_skill_btns", "_banner_dismissed",
+    "_overlay_preview_busy", "pill_text", "skill_seg", "btn_diag", "_diag_desc", "health_lbl", "cs_card",
+    "_backend_t0", "_onboarding_step", "_last_slot", "_last_row", "_building", "_built", "_page_builders", "pages",
+    "_skill_btns", "_banner_dismissed", "_settings_tab", "_update_side", "_post_game_watch", "_cs_toasted",
     # page widgets read with getattr(self, name, None) where "not built yet" simply means "nothing to update"
     "_overlay_tiles", "_position_menus", "_radar_section", "_neural_row", "_neural_rate_row",
     "_windows_voice_row", "_analysis_page", "_rect_desc", "_ai_status", "_ai_status_box",
-    "_update_status", "_update_status_box", "_update_btn", "sys_rows", "pregame", "hero", "dash_safe_var",
-    "coach_gauge_lbl", "journal_cap", "lcu_status", "overlay_preview_tag", "replay_menu", "preset_seg",
-    "radius_lbl", "voice_menu", "journal",
+    "_update_status", "_update_status_box", "_update_btn", "_update_manual", "sys_rows", "sys_panel", "pregame",
+    "hero", "coach_gauge_lbl", "journal_cap", "lcu_status", "overlay_preview_tag", "replay_menu",
+    "radius_lbl", "voice_menu", "journal", "btn_fix", "_danger_seg", "_settings_page", "btn_move", "_diag_hint",
+    "_help_keys", "_update_token_entry",
 })
 
 #: Builder methods of each page (their ``self.x = ...`` attributes belong to the page).
 PAGE_METHODS: dict[str, tuple[str, ...]] = {
     "dashboard": ("_build_dashboard",),
-    "alerts": ("_build_alerts_page", "_build_coach_extras"),
-    "overlay": ("_build_overlay_page", "_build_overlay_preview", "_build_plays_section"),
     "analysis": ("_build_analysis_page", "_build_replay"),
-    "settings": ("_build_settings_page", "_build_ai_section", "_build_updates_section"),
+    "settings": ("_build_settings_page", "_build_general_tab", "_build_display_tab", "_build_overlay_preview",
+                 "_build_voice_tab", "_build_detection_tab", "_build_ai_section", "_build_updates_section",
+                 "_build_advanced_tab"),
     "help": ("_build_help_page",),
 }
 
+#: Tabs built on their first visit (``_tabs(lazy=...)``): page -> {tab label: builder methods}.
+TAB_METHODS: dict[str, dict[str, tuple[str, ...]]] = {
+    "settings": {"Général": ("_build_general_tab",), "Affichage": ("_build_display_tab", "_build_overlay_preview"),
+                 "Voix": ("_build_voice_tab",), "Détection": ("_build_detection_tab",), "IA": ("_build_ai_section",),
+                 "Mises à jour": ("_build_updates_section",), "Avancé": ("_build_advanced_tab",)},
+}
+
 _attr_index: dict[str, str] | None = None
+_tab_index: dict[str, str] | None = None
 
 
 def _page_attr_index() -> dict[str, str]:
     """{attribute: page} from the bytecode of the page builders (works in a frozen build: no source)."""
     global _attr_index
     if _attr_index is None:
-        import dis  # noqa: PLC0415
-
         idx: dict[str, str] = {}
         for page, names in PAGE_METHODS.items():
             for meth in names:
-                fn = getattr(CoachApp, meth, None)
-                code = getattr(getattr(fn, "__wrapped__", fn), "__code__", None)
-                if code is None:
-                    continue
-                prev = None
-                for ins in dis.get_instructions(code):
-                    if ins.opname == "STORE_ATTR" and prev is not None and prev.opname in ("LOAD_FAST", "LOAD_DEREF") \
-                            and prev.argval == "self":
-                        idx.setdefault(str(ins.argval), page)
-                    prev = ins
+                for attr in _stored_attrs(meth):
+                    idx.setdefault(attr, page)
         _attr_index = idx
     return _attr_index
+
+
+def _stored_attrs(meth: str) -> list[str]:
+    """``self.x = ...`` attribute names stored by a CoachApp method (bytecode: works in a frozen build)."""
+    import dis  # noqa: PLC0415
+
+    fn = getattr(CoachApp, meth, None)
+    code = getattr(getattr(fn, "__wrapped__", fn), "__code__", None)
+    out: list[str] = []
+    if code is None:
+        return out
+    prev = None
+    for ins in dis.get_instructions(code):
+        if ins.opname == "STORE_ATTR" and prev is not None and prev.opname in ("LOAD_FAST", "LOAD_DEREF") \
+                and prev.argval == "self":
+            out.append(str(ins.argval))
+        prev = ins
+    return out
+
+
+def _tab_attr_index() -> dict[str, str]:
+    """{attribute: tab label} of the lazily built tabs (:data:`TAB_METHODS`)."""
+    global _tab_index
+    if _tab_index is None:
+        idx: dict[str, str] = {}
+        for tabs in TAB_METHODS.values():
+            for tab, names in tabs.items():
+                for meth in names:
+                    for attr in _stored_attrs(meth):
+                        idx.setdefault(attr, tab)
+        _tab_index = idx
+    return _tab_index
 
 
 # ======================================================================================
@@ -366,20 +417,18 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         # Pages are built lazily: the first one now, each other one on its first visit (or when
         # an attribute of a page not built yet is read: see __getattr__).
         self._page_builders: dict[str, Callable[[], Any]] = {
-            "dashboard": self._build_dashboard, "alerts": self._build_alerts_page,
-            "overlay": self._build_overlay_page, "analysis": self._build_analysis_page,
+            "dashboard": self._build_dashboard, "analysis": self._build_analysis_page,
             "settings": self._build_settings_page, "help": self._build_help_page}
         self.pages: _LazyPages = _LazyPages(self._build_page, self._page_builders)
         self._toast_frame: Any = None
         self._toast_job: str | None = None
         self._compact: bool | None = None
         self._layout_job: str | None = None
+        self._settings_tab = ""                  # tab shown on the Réglages page
+        self._post_game_watch: str | None = None  # path of the newest game when a game ended (post-game toast)
         self.root.bind("<Configure>", self._on_root_configure, add="+")
         self._bind_shortcuts()
-        first = "dashboard"
-        if getattr(self.cfg, "ui_remember_page", False) and getattr(self.cfg, "ui_last_page", "") in self.pages:
-            first = self.cfg.ui_last_page
-        self.show_page(first)
+        self.show_page("dashboard")              # status first: the app always opens on "En jeu"
         self.root.protocol("WM_DELETE_WINDOW", self.request_close)
         self.root.after(1200, self._first_run_dialogs)
         self.root.after(350, self._ensure_visible)
@@ -433,24 +482,33 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             return
         try:
             pending = [k for k in PREBUILD_ORDER if k not in self._built]
-            if not pending:
+            tabs = [(k, t) for k in PREBUILD_ORDER if k in self._built
+                    for t in getattr(dict.get(self.pages, k), "pending_tabs", lambda: [])()]
+            if not pending and not tabs:
                 return
             if self._iconic() or self._in_game() or self._busy:
                 self.root.after(PREBUILD_GAP_MS * 10, self._prebuild_next)
                 return
-            self.pages[pending[0]]
-            if pending[0] == "overlay":      # its preview (sample game screen) rendered off the Tk thread
-                self._dispatcher.run(_prewarm_preview, None, None, name="TreeAI-ui-prewarm")
-            if len(pending) > 1:
+            if pending:
+                self.pages[pending[0]]
+            else:                            # one tab per idle slot: never a long freeze
+                key, tab = tabs[0]
+                dict.get(self.pages, key).ensure_tab(tab)
+                if tab == "Affichage":       # its preview (sample game screen) rendered off the Tk thread
+                    self._dispatcher.run(_prewarm_preview, None, None, name="TreeAI-ui-prewarm")
+            if len(pending) + len(tabs) > 1:
                 self.root.after(PREBUILD_GAP_MS, lambda: self.root.after_idle(self._prebuild_next))
         except Exception:
             log.debug("page prebuild failed", exc_info=True)
 
     def build_all_pages(self) -> None:
-        """Build every page not built yet (tests, diagnostics)."""
+        """Build every page (and every tab of a page) not built yet (tests, diagnostics)."""
         for key in self._page_builders:
             if key not in self._built and key not in self.__dict__.get("_building", ()):
                 self.pages[key]
+            page = dict.get(self.pages, key)
+            for tab in list(getattr(page, "pending_tabs", lambda: [])()):
+                page.ensure_tab(tab)
 
     def __getattr__(self, name: str) -> Any:
         """A widget attribute of a page not built yet: build that page, then retry.
@@ -463,12 +521,21 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         if name.startswith("__") or name in _NOT_PAGE_ATTRS or "pages" not in d or d.get("_closing"):
             raise AttributeError(name)
         key = _page_attr_index().get(name)
-        if key is None or key in d.get("_built", ()) or key in d.get("_building", ()):
+        if key is None or key in d.get("_building", ()):
             raise AttributeError(name)
-        log.debug("Attribute %s read before its page was built: building %s", name, key)
-        self.pages[key]
-        if name in d:
-            return d[name]
+        if key not in d.get("_built", ()):
+            log.debug("Attribute %s read before its page was built: building %s", name, key)
+            self.pages[key]
+            if name in d:
+                return d[name]
+        tab = _tab_attr_index().get(name)          # a widget of a tab built on its first visit
+        page = dict.get(self.pages, key)
+        pending = getattr(page, "pending_tabs", None)
+        if tab is not None and callable(pending) and tab in pending():
+            log.debug("Attribute %s read before its tab was built: building %s > %s", name, key, tab)
+            page.ensure_tab(tab)
+            if name in d:
+                return d[name]
         raise AttributeError(name)
 
     # ------------------------------------------------------------------ infrastructure
@@ -605,7 +672,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             if "dashboard" in self._built and compact != self._compact:
                 self._compact = compact
                 self.btn_test_voice.configure(text="Voix" if compact else "Tester la voix")
-                self.btn_calib.configure(text="Calibrer" if compact else "Calibrer la minimap")
+                self.btn_test_overlay.configure(text="Overlay" if compact else "Tester l'overlay")
                 self._demo_button_text()
             if "dashboard" in self._built:
                 sub = getattr(dict.get(self.pages, "dashboard"), "subtitle", None)
@@ -616,17 +683,11 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                     elif not narrow and not sub.winfo_manager():
                         sub.grid()
                 en_w = self.enemies_card.winfo_width() / scale
-                if en_w > 50:
+                if en_w > 50 and self.enemies_card.winfo_ismapped():
                     self.jungler_lbl.configure(wraplength=int(max(200, en_w - 40)))
                     self.coach_role_lbl.configure(wraplength=int(max(160, en_w - 150)))
                     self.coach_tip_lbl.configure(wraplength=int(max(240, en_w - 40)))
             self._wrap_rows(int(self.content.winfo_width() / scale))
-            tall = self.root.winfo_height() / scale >= 760      # short window: the level selector moves out
-            for w in getattr(self, "_level_widgets", ()):
-                if tall and not w.winfo_manager():
-                    w.grid()
-                elif not tall and w.winfo_manager():
-                    w.grid_remove()
         except Exception:
             log.debug("Layout update failed", exc_info=True)
 
@@ -646,14 +707,14 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 if not lbl.winfo_exists():
                     continue
                 sw = slot.winfo_reqwidth() / scale
-                below = row_w - sw - 32 < 260            # wide control, narrow window: control under the text
+                below = row_w - sw - ROW_CTL_GAP < 260   # wide control, narrow window: control under the text
                 if below != getattr(slot, "_below", False):
                     slot._below = below
                     if below:
-                        slot.grid_configure(row=1, column=0, sticky="w", padx=0, pady=(10, 0))
+                        slot.grid_configure(row=1, column=0, sticky="w", padx=0, pady=(CTL_GAP, 0))
                     else:
-                        slot.grid_configure(row=0, column=1, sticky="e", padx=(28, 0), pady=0)
-                lbl.configure(wraplength=int(max(200, min(640, row_w if below else row_w - sw - 32))))
+                        slot.grid_configure(row=0, column=1, sticky="e", padx=(ROW_CTL_GAP, 0), pady=0)
+                lbl.configure(wraplength=int(max(200, min(640, row_w if below else row_w - sw - ROW_CTL_GAP))))
             except Exception:
                 pass
         for lbl, inset in list(self._wrap_labels):
@@ -671,11 +732,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         self._set_text(self.btn_demo, text)
 
     # ------------------------------------------------------------------ small widget factories
-    def _card(self, parent: Any, **kw: Any) -> Any:
-        opts = dict(fg_color=PANEL, corner_radius=RADIUS, border_width=1, border_color=BORDER)
-        opts.update(kw)
-        return self.ctk.CTkFrame(parent, **opts)
-
     def _on_scaling(self, widget_scaling: float, _window_scaling: float) -> None:
         """CustomTkinter detected a new DPI factor: rescale fonts / paddings of the plain widgets."""
         try:
@@ -820,21 +876,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         except Exception:
             log.debug("button state failed", exc_info=True)
 
-    def _rule_image(self, width: int = 220) -> Any:
-        """Gold rule fading out to the right (page titles)."""
-        key = f"rule-{width}"
-        img = self._images.get(key)
-        if img is None:
-            w, h = width * 2, 4
-            arr = np.zeros((h, w, 4), np.uint8)
-            arr[..., :3] = _hex_rgb(GOLD)
-            fade = (np.clip(1.0 - np.linspace(0.0, 1.0, w), 0, 1) ** 1.6 * 230).astype(np.uint8)
-            arr[1:3, :, 3] = fade
-            pil = Image.fromarray(arr, "RGBA")
-            img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(width, 2))
-            self._images[key] = img
-        return img
-
     def _page(self, title: str, subtitle: str, scroll: bool = True,
               icon: str | None = None, max_width: int = CONTENT_MAX) -> tuple[Any, Any, Any]:
         """(page frame, header right slot, body frame).
@@ -916,7 +957,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         card (SURFACE, 1 px border, rows separated by 1 px lines). Returns the card's content frame."""
         ctk = self.ctk
         wrap = self._frame(parent)
-        wrap.grid(row=row, column=0, sticky="ew", pady=(0, 30))
+        wrap.grid(row=row, column=0, sticky="ew", pady=(0, SECTION_GAP))
         wrap.title = title  # type: ignore[attr-defined]
         try:
             parent._sections.append(wrap)
@@ -940,17 +981,46 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         body.grid_columnconfigure(0, weight=1)
         body._rows = 0  # type: ignore[attr-defined]
         body.card = card  # type: ignore[attr-defined]
+        body.wrap = wrap  # type: ignore[attr-defined]
         return body
 
+    def _section_button(self, body: Any, text: str, command: Callable[[], Any], icon: str | None = None,
+                        tip: str | None = None) -> Any:
+        """A small action on the right of a section title ("Tester la voix", "Déplacer"...)."""
+        b = self._button(body.wrap.head, text, command, "ghost", icon=icon, height=BTN_H_SMALL)
+        col = len(body.wrap.head.grid_slaves(row=0)) + 1
+        b.grid(row=0, column=col, sticky="e", padx=(CTL_GAP, 0))
+        if tip:
+            self._tip(b, tip)
+        return b
+
+    def _set_section_visible(self, body: Any, visible: bool) -> None:
+        """Show / hide a whole section (kept hidden by the tabs too, e.g. "Radar" outside the radar mode)."""
+        wrap = getattr(body, "wrap", None)
+        if wrap is None:
+            return
+        wrap.hidden = not visible  # type: ignore[attr-defined]
+        page_tab = getattr(wrap, "tab_shown", True)
+        if visible and page_tab:
+            wrap.grid()
+        elif not visible:
+            wrap.grid_remove()
+
     def _tabs(self, page: Any, body: Any, groups: Sequence[tuple[str, Sequence[str]]],
-              default: str | None = None) -> dict[str, Any]:
+              default: str | None = None, on_select: Callable[[str], Any] | None = None,
+              lazy: dict[str, Callable[[], Any]] | None = None) -> dict[str, Any]:
         """Underlined tabs in the page header showing one group of sections at a time.
 
         ``groups`` = (tab label, section titles); sections not listed go to the last tab
-        (usually "Avancé", i.e. collapsed by default). Returns {label: button}.
+        (usually "Avancé", i.e. collapsed by default). ``lazy`` = {tab label: builder}: that tab's
+        sections are built on its first selection (or by ``page.ensure_tab(label)``: idle prebuild,
+        a widget read before), so a page with many tabs opens fast. ``on_select(label)`` runs after
+        every change of tab, clicked or programmatic (``page.select_tab``): lazy loads (progress,
+        replay, preview). Returns {label: button}.
         """
         ctk = self.ctk
         sections = list(getattr(body, "_sections", []))
+        pending = dict(lazy or {})
         bar = self._frame(page.head)
         bar.grid(row=1, column=0, columnspan=2, sticky="w", pady=(16, 0))
         labels = [g for g, _t in groups]
@@ -965,12 +1035,31 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         unders: dict[str, Any] = {}
         state = {"cur": None}
 
+        def ensure(label: str) -> None:
+            """Build a lazy tab now (its sections stay hidden unless it is the current tab)."""
+            build = pending.pop(label, None)
+            if build is None:
+                return
+            first = len(getattr(body, "_sections", []))
+            try:
+                build()
+            except Exception:
+                log.exception("Cannot build the %s tab", label)
+            for card in list(getattr(body, "_sections", []))[first:]:
+                owner[id(card)] = label
+                sections.append(card)
+                card.tab_shown = state["cur"] == label
+                if not card.tab_shown or getattr(card, "hidden", False):
+                    card.grid_remove()
+
         def select(label: str) -> None:
             if state["cur"] == label:
                 return
+            ensure(label)
             state["cur"] = label
             for card in sections:
-                if owner[id(card)] == label:
+                card.tab_shown = owner[id(card)] == label
+                if card.tab_shown and not getattr(card, "hidden", False):
                     card.grid()
                 else:
                     card.grid_remove()
@@ -982,23 +1071,31 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 page.scroll_frame._parent_canvas.yview_moveto(0)
             except Exception:
                 pass
+            page.current_tab = label  # type: ignore[attr-defined]
+            if on_select is not None:
+                try:
+                    on_select(label)
+                except Exception:
+                    log.debug("tab hook failed", exc_info=True)
 
         for i, g in enumerate(labels):
-            if not any(owner[id(c)] == g for c in sections):
+            if g not in pending and not any(owner[id(c)] == g for c in sections):
                 continue
             try:
                 scale = max(0.5, self._scaled(100) / 100)
                 tw = int(self.fonts.nav_active.measure(g) / scale) + 8
             except Exception:
                 tw = 9 * len(g)
-            b = ctk.CTkButton(bar, text=g, width=tw, height=30, corner_radius=0, fg_color="transparent",
+            b = ctk.CTkButton(bar, text=g, width=tw, height=BTN_H_SMALL, corner_radius=0, fg_color="transparent",
                               hover_color=BG, text_color=MUTED, font=self.fonts.nav, border_spacing=0,
                               command=self.cb(lambda gg=g: select(gg)))
-            b.grid(row=0, column=i, padx=(0, 26), sticky="w")
+            b.grid(row=0, column=i, padx=(0, TAB_GAP), sticky="w")
             u = self._frame(bar, width=1, height=3)
-            u.grid(row=1, column=i, padx=(0, 26), sticky="ew")
+            u.grid(row=1, column=i, padx=(0, TAB_GAP), sticky="ew")
             btns[g], unders[g] = b, u
         page.select_tab = select  # type: ignore[attr-defined]
+        page.ensure_tab = ensure  # type: ignore[attr-defined]
+        page.pending_tabs = lambda: list(pending)  # type: ignore[attr-defined]
         first = default if default in btns else next(iter(btns), None)
         if first is not None:
             select(first)
@@ -1010,13 +1107,11 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         Every row has the same paddings and a minimum height, rows are separated by 1 px lines;
         the description wraps before the control (see :meth:`_wrap_rows`).
         """
-        ctk = self.ctk
         r = body._rows
         if r:
-            ctk.CTkFrame(body, height=1, fg_color=ROW_LINE, corner_radius=0).grid(
-                row=2 * r - 1, column=0, sticky="ew", pady=0)
+            self._hline(body, ROW_LINE).grid(row=2 * r - 1, column=0, sticky="ew")
         row = self._frame(body, height=ROW_MIN_H)
-        row.grid(row=2 * r, column=0, sticky="ew", pady=14)
+        row.grid(row=2 * r, column=0, sticky="ew", pady=ROW_PAD_Y)
         row.grid_columnconfigure(0, weight=1)
         row.grid_rowconfigure(0, minsize=CTL_H)
         body._rows = r + 1
@@ -1029,7 +1124,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                                    wraplength=440)
             desc_lbl.grid(row=1, column=0, sticky="w", pady=(3, 0))
         slot = self._frame(row)
-        slot.grid(row=0, column=1, sticky="e", padx=(28, 0))
+        slot.grid(row=0, column=1, sticky="e", padx=(ROW_CTL_GAP, 0))
         slot.desc_label = desc_lbl  # type: ignore[attr-defined]
         self._last_slot = slot
         self._last_row = row
@@ -1163,21 +1258,28 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         foot = self._frame(sb)
         foot.grid(row=4, column=0, sticky="sew", padx=14, pady=(8, 14))
         foot.grid_columnconfigure(0, weight=1)
+        # a new version found by the update check: one click to the "Mises à jour" tab (hidden until then)
+        self._update_side = self._button(foot, "Nouvelle version", lambda: self.open_settings("Mises à jour"),
+                                         "primary", icon="download")
+        self._update_side.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self._update_side.grid_remove()
         pill = ctk.CTkFrame(foot, fg_color=RAISED, corner_radius=RADIUS, height=40)
-        pill.grid(row=0, column=0, sticky="ew")
+        pill.grid(row=1, column=0, sticky="ew")
         pill.grid_columnconfigure(1, weight=1)
         dot = self._scaled(12)
         self.pill_dot = ctk.CTkCanvas(pill, width=dot, height=dot, bg=RAISED, highlightthickness=0, bd=0)
         self.pill_dot.grid(row=0, column=0, padx=(12, 8), pady=11)
-        self._pill_halo = self.pill_dot.create_oval(0, 0, dot, dot, fill=RAISED, outline="")
         self._pill_dot_item = self.pill_dot.create_rectangle(dot // 6, dot // 6, dot - dot // 6, dot - dot // 6,
                                                              fill=DIM, outline="")
         self.pill_text = self._label(pill, "Démarrage…", self.fonts.small, TEXT, anchor="w")
         self.pill_text.grid(row=0, column=1, sticky="w", padx=(0, 10))
+        for w in (pill, self.pill_text, self.pill_dot):      # the status is one click from "En jeu"
+            w.bind("<Button-1>", lambda _e: self.show_page("dashboard"), add="+")
+        self._tip(pill, "État de l'analyse : clique pour revenir sur « En jeu ».")
         meta = self._frame(foot)
-        meta.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        meta.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         meta.grid_columnconfigure(0, weight=1)
-        ver = ctk.CTkButton(meta, text="Nouveautés", anchor="w", width=0, height=30, corner_radius=RADIUS,
+        ver = ctk.CTkButton(meta, text="Nouveautés", anchor="w", width=0, height=BTN_H_SMALL, corner_radius=RADIUS,
                             font=self.fonts.small, fg_color="transparent", hover_color=PANEL_HI, text_color=MUTED,
                             image=self._icon("star", 15, MUTED), compound="left", border_spacing=6,
                             command=self.cb(self.show_changelog))
@@ -1186,28 +1288,38 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         for col, (icon, tip, fn) in enumerate((("info", "À propos et mentions légales", lambda: self.show_about()),
                                                ("minimize", "Réduire la fenêtre (l'analyse continue)",
                                                 lambda: self.minimize()))):
-            b = ctk.CTkButton(meta, text="", width=32, height=30, corner_radius=RADIUS, fg_color="transparent",
-                              hover_color=PANEL_HI, image=self._icon(icon, 16, MUTED), command=self.cb(fn))
+            b = ctk.CTkButton(meta, text="", width=ICON_BTN, height=BTN_H_SMALL, corner_radius=RADIUS,
+                              fg_color="transparent", hover_color=PANEL_HI, image=self._icon(icon, 16, MUTED),
+                              command=self.cb(fn))
             b.grid(row=0, column=col + 1, padx=(2, 0))
             self._tip(b, tip)
 
     def _build_quick_toggles(self, sb: Any) -> None:
-        """Sidebar "ACCÈS RAPIDE" (safe mode, voice, overlay) and the one-click player level."""
+        """Sidebar "ACCÈS RAPIDE" (safe mode, voice, overlay) and the one-click player level: what a player
+        changes 30 s before a game is always one click away, on every page."""
         ctk = self.ctk
         box = self._frame(sb)
-        box.grid(row=2, column=0, sticky="new", padx=18, pady=(22, 0))
+        box.grid(row=2, column=0, sticky="new", padx=18, pady=(16, 0))
         box.grid_columnconfigure(1, weight=1)
-        self._hline(box).grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 16))
+        self._hline(box).grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 12))
         self._label(box, "ACCÈS RAPIDE", self.fonts.caps, DIM, anchor="w").grid(
-            row=1, column=0, columnspan=3, sticky="w", pady=(0, 6))
+            row=1, column=0, columnspan=3, sticky="w", pady=(0, 4))
         self._quick: dict[str, tuple[Any, Any]] = {}
-        specs = (("safe", "shield", "Mode sûr", "Mode sûr : aucune alerte de gank ni suivi du jungler, aucune zone "
-                                                  "dans le brouillard (Ctrl+Maj+S)."),
-                 ("voice", "voice", "Voix", "Couper / rétablir les annonces vocales (Ctrl+M)."),
-                 ("overlay", "overlay", "Overlay", "Afficher / masquer les indications sur la minimap."))
+        def in_game(field: str) -> str:
+            key = str(getattr(self.cfg, field, "") or "")
+            return f", {key} en jeu" if key else ""
+
+        specs = (("voice", "voice", "Voix",
+                  lambda: f"Couper / rétablir les annonces vocales (Ctrl+M{in_game('hotkey_mute')})."),
+                 ("overlay", "overlay", "Overlay",
+                  lambda: "Afficher / masquer les indications sur ton écran"
+                          f"{' (' + in_game('hotkey_overlay')[2:] + ')' if in_game('hotkey_overlay') else ''}."),
+                 ("safe", "shield", "Mode sûr", "Mode sûr : aucune alerte de gank ni suivi du jungler, aucune zone "
+                                                "dans le brouillard. Minuteurs et rappels restent actifs "
+                                                "(Ctrl+Maj+S)."))
         for i, (key, icon, text, tip) in enumerate(specs, start=2):
             ctk.CTkLabel(box, text="", image=self._icon(icon, 17, MUTED), fg_color="transparent", width=20).grid(
-                row=i, column=0, padx=(0, 10), pady=6)
+                row=i, column=0, padx=(0, 10), pady=4)
             lbl = self._label(box, text, self.fonts.body, TEXT, anchor="w")
             lbl.grid(row=i, column=1, sticky="w")
             var = ctk.BooleanVar(value=False)
@@ -1221,17 +1333,16 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         try:
             from treeaicoach import skill as _skill
             row = 2 + len(specs)
-            lvl_cap = self._label(box, "TON NIVEAU", self.fonts.caps, DIM, anchor="w")
-            lvl_cap.grid(row=row, column=0, columnspan=3, sticky="w", pady=(20, 8))
+            self._label(box, "TON NIVEAU", self.fonts.caps, DIM, anchor="w").grid(
+                row=row, column=0, columnspan=3, sticky="w", pady=(16, 6))
             grid = self._frame(box)
-            self._level_widgets = (lvl_cap, grid)
             grid.grid(row=row + 1, column=0, columnspan=3, sticky="ew")
             grid.grid_columnconfigure((0, 1), weight=1, uniform="lvl")
             self._skill_btns: dict[str, Any] = {}
             for j, (k, label) in enumerate(_skill.SKILL_LEVELS):
-                b = ctk.CTkButton(grid, text=label, height=32, width=10, corner_radius=RADIUS, font=self.fonts.small,
-                                  fg_color=RAISED, hover_color=HOVER, text_color=MUTED, border_width=1,
-                                  border_color=LINE, border_spacing=2,
+                b = ctk.CTkButton(grid, text=label, height=BTN_H_SMALL, width=10, corner_radius=RADIUS,
+                                  font=self.fonts.small, fg_color=RAISED, hover_color=HOVER, text_color=MUTED,
+                                  border_width=1, border_color=LINE, border_spacing=2,
                                   command=self.cb(lambda kk=k: (self.apply_skill_level(kk), self._sync_skill_seg())))
                 b.grid(row=j // 2, column=j % 2, sticky="ew", padx=(0 if j % 2 == 0 else 3, 0 if j % 2 else 3),
                        pady=(0, 6))
@@ -1266,9 +1377,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             for key, (var, _sw) in q.items():
                 if bool(var.get()) != want[key]:
                     var.set(want[key])
-            dash = getattr(self, "dash_safe_var", None)
-            if dash is not None and bool(dash.get()) != want["safe"]:
-                dash.set(want["safe"])
             pill = getattr(self, "pill_text", None)
             if pill is not None:
                 pill.configure(text_color=WARNING if want["safe"] else TEXT)
@@ -1298,7 +1406,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
 
     @_guarded
     def set_safe_mode(self, on: bool) -> None:
-        """One-click "mode sûr" (dashboard, sidebar, Ctrl+Maj+S)."""
+        """One-click "mode sûr" (sidebar, Ctrl+Maj+S)."""
         if not hasattr(self.cfg, "safe_mode"):
             return
         self.set_option("safe_mode", bool(on))
@@ -1318,8 +1426,16 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         """Reduce the window to the taskbar (the analysis keeps running)."""
         self.root.iconify()
 
-    def show_page(self, key: str) -> None:
-        """Switch the visible page (built on its first visit)."""
+    def show_page(self, key: str, tab: str | None = None) -> None:
+        """Switch the visible page (built on its first visit); ``tab`` selects a tab of that page.
+        Keys of older versions ("alerts", "overlay") open the Réglages tab that replaced them."""
+        if key in PAGE_ALIASES:
+            key, alias_tab = PAGE_ALIASES[key]
+            tab = tab or alias_tab
+        if tab and key in self.pages:
+            sel = getattr(self.pages[key], "select_tab", None)
+            if callable(sel):
+                sel(tab)
         if key not in self.pages or key == self._current_page:
             return
         t0 = time.perf_counter()
@@ -1333,12 +1449,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             old.grid_remove()
         page.grid()
         self._current_page = key
-        if getattr(self.cfg, "ui_remember_page", False) and getattr(self.cfg, "ui_last_page", key) != key:
-            try:
-                self.cfg = dataclasses.replace(self.cfg, ui_last_page=key).validated()
-                self._schedule_save()
-            except Exception:
-                log.debug("Cannot remember the page", exc_info=True)
         for k in (prev, key):
             if k not in self._nav:
                 continue
@@ -1364,12 +1474,20 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             if self._games_shown_sig != self._games_sig:
                 self._show_games_table()
             self.refresh_games()
-        if key == "overlay":
+        if key == "settings" and self._settings_tab == "Affichage":
             self._schedule_overlay_preview()
         log.debug("page %s shown in %.0f ms", key, 1000 * (time.perf_counter() - t0))
 
+    def open_settings(self, tab: str) -> None:
+        """Réglages page on ``tab`` (one of :data:`SETTINGS_TABS`)."""
+        self.show_page("settings", tab)
+
+    def _display_tab_live(self) -> bool:
+        """The Réglages > Affichage tab (overlay preview) is on screen."""
+        return self._current_page == "settings" and self._settings_tab == "Affichage" and not self._iconic()
+
     def _bind_shortcuts(self) -> None:
-        """Window shortcuts: Ctrl+1..6 pages, Ctrl+M mute, Ctrl+Shift+S safe mode, Ctrl+D diagnostic, F1."""
+        """Window shortcuts: Ctrl+1..4 pages, Ctrl+M mute, Ctrl+Shift+S safe mode, Ctrl+D diagnostic, F1."""
         r = self.root
 
         def page(k: str) -> str:
@@ -1429,10 +1547,21 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                     self.voice.set_params(**base)
             except Exception:
                 log.exception("voice.set_params failed")
+        if "danger_voice" in diff and self.voice is not None:
+            setter = getattr(self.voice, "set_danger_voice", None)
+            if callable(setter):
+                try:
+                    setter(cfg.danger_voice)
+                except Exception:
+                    log.debug("set_danger_voice failed", exc_info=True)
         if diff & HOTKEY_FIELDS:
             self._rebind_hotkeys()
+        if any(f.startswith("hotkey_") for f in diff):      # texts that name the keys follow the bindings
+            self._refresh_key_texts()
         if diff & DETECTOR_FIELDS and self.engine is not None:
             self._rebuild_engine(self.demo, start=None, new_detector=True)
+        elif diff & ENGINE_RESTART_FIELDS and self.engine is not None:
+            self._rebuild_engine(self.demo, start=None)
         if diff & {"ai_provider", "ai_api_key", "ai_model"}:
             self._ai_test = None           # the last key test no longer applies
         if diff & {"sensitivity", "warn_radius", "danger_radius"}:
@@ -1443,6 +1572,18 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                     self._rect_desc.configure(text=self._manual_rect_text())
             except Exception:
                 pass
+
+    def _refresh_key_texts(self) -> None:
+        """Help "Touches" table and the dashboard's diagnostic hint, after a hotkey change."""
+        try:
+            if "help" in self._built:
+                self._fill_help_keys()
+            hint = getattr(self, "_diag_hint", None)
+            if hint is not None:
+                hk = str(getattr(self.cfg, "hotkey_diag", "") or "").replace("+", " + ")
+                self._set_text(hint, hk + " en jeu" if hk else "")
+        except Exception:
+            log.debug("key texts refresh failed", exc_info=True)
 
     def _schedule_save(self) -> None:
         if self._save_job is not None:
@@ -1618,8 +1759,10 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         cols = {0: SAFE, 1: WARNING, 2: DANGER, -1: DIM}
         for k, label, level, text, fix, action in data:
             row = rows.get(k)
-            if row is None:
-                continue
+            if row is None:            # a row added to ui_kit.subsystem_rows later: shown as it comes
+                row = self._add_sys_row(k, label)
+                if row is None:
+                    continue
             sig = (level, text, fix)
             if row["sig"] == sig:
                 continue
@@ -1648,18 +1791,14 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         elif action == "help_borderless":
             self.show_page("help")
             self.show_toast("Dans le jeu : Options > Vidéo > Mode d'affichage : Sans bordure.", "warning")
+        elif action == "relocate":
+            self.relocate()
         elif action == "diagnostic":
             self.copy_diagnostic()
         elif action == "settings_ia":
-            self.show_page("settings")
-            sel = getattr(self.pages.get("settings"), "select_tab", None)
-            if callable(sel):
-                sel("Minimap")
+            self.open_settings("Détection")
         elif action == "settings_ai":
-            self.show_page("settings")
-            sel = getattr(self.pages.get("settings"), "select_tab", None)
-            if callable(sel):
-                sel("IA")
+            self.open_settings("IA")
         elif action == "test_ai":
             self.test_ai_key()
         elif action == "voice":
@@ -1667,10 +1806,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         elif action == "unmute":
             self.toggle_mute()
         elif action == "voice_settings":
-            self.show_page("alerts")
-            sel = getattr(self.pages.get("alerts"), "select_tab", None)
-            if callable(sel):
-                sel("Voix")
+            self.open_settings("Voix")
             self.show_toast("Aucune voix Windows trouvée : choisis la voix neurale (Internet) ou installe une "
                             "voix française (Paramètres Windows > Heure et langue > Voix).", "warning")
         elif action == "lcu_help":
@@ -1685,7 +1821,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             self.show_toast("Une partie est en cours : l'overlay affiche déjà la vraie partie.")
             return
         if ov is None or not getattr(ov, "ok", False):
-            self.show_page("overlay")
+            self.open_settings("Affichage")
             self.show_toast("L'overlay ne s'affiche que sous Windows, jeu en Sans bordure. Voici l'aperçu.",
                             "warning")
             return
@@ -1927,13 +2063,16 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             return
         self._move_mode = not self._move_mode
         setter(self._move_mode)
+        btn = getattr(self, "btn_move", None)
         if self._move_mode:
-            self.btn_move.configure(text="Terminer le déplacement", fg_color=GOLD, text_color=ON_GOLD,
-                                    hover_color=GOLD_HOVER, image=self._icon("move", 16, ON_GOLD))
-            self.show_toast("Fais glisser le radar et le HUD à la souris, puis clique sur « Terminer ».")
+            if btn is not None:
+                btn.configure(text="Terminer", fg_color=GOLD, text_color=ON_GOLD, hover_color=GOLD_HOVER,
+                              image=self._icon("move", 16, ON_GOLD))
+            self.show_toast("Fais glisser le radar et le panneau à la souris, puis clique sur « Terminer ».")
         else:
-            self.btn_move.configure(text="Déplacer les fenêtres", fg_color=PANEL_HI, text_color=TEXT,
-                                    hover_color=HOVER, image=self._icon("move", 16, MUTED))
+            if btn is not None:
+                btn.configure(text="Déplacer", fg_color=PANEL_HI, text_color=TEXT, hover_color=HOVER,
+                              image=self._icon("move", 16, MUTED))
             self.show_toast("Positions de l'overlay enregistrées.")
 
     # ------------------------------------------------------------------ hotkeys
@@ -1963,7 +2102,8 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         hk = self._hotkeys
         failed = list(getattr(hk, "failed", []) or [])
         if failed:
-            self.show_toast(f"Raccourci déjà utilisé par une autre application : {', '.join(failed)}", "warning")
+            self.show_toast(f"Raccourci déjà utilisé par une autre application : {', '.join(failed)}. "
+                            "Change-le dans Réglages > Avancé > Touches en jeu.", "warning")
 
     def _hk_jungler(self) -> None:          # hotkey thread
         eng, voice = self.engine, self.voice
@@ -2072,14 +2212,20 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             key = state_key(getattr(st, "state", None)) if st is not None else "STOPPED"
             if not running and key not in ("ERROR",):
                 key = "STOPPED"
-            msg = str(getattr(st, "message", "") or "") if st is not None else ""
-            if key == "STOPPED" and not msg:
-                msg = "Clique sur « Démarrer l'analyse » pour suivre ta prochaine partie."
-        title, color = STATE_INFO.get(key, (key.title(), GOLD))
+            msg = str(getattr(st, "message", "") or "") if st is not None and running else ""
+        champ, role = "", None
+        if key == "RUNNING" and ov is not None:
+            me, role, _opp = ui_kit.lane_opponent(ov)
+            champ = champion_name(me) if me and me != "me" else ""
+            role = role or getattr(ov, "my_role", None)
+        title, msg, fix, action = ui_kit.status_line(key, msg, champion=champ, role=role)
+        color = STATE_INFO.get(key, (title, GOLD))[1]
         self._state_color = color
         if key != self._last_state_key:
-            if self._last_state_key == "RUNNING" and key != "RUNNING":
-                self.root.after(4000, self.cb(self.refresh_games))     # a game just ended: new record
+            if self._last_state_key == "RUNNING" and key != "RUNNING":       # a game just ended: new record
+                self._post_game_watch = str(_game_json_path(self._games[0]) or "") if self._games else ""
+                for delay in (4000, 15000, 45000):      # the report may take a while (client LoL, AI review)
+                    self.root.after(delay, self.cb(self._post_game_refresh))
             self._last_state_key = key
             self.pill_dot.itemconfigure(self._pill_dot_item, fill=color)
         self._set_text(self.pill_text, PILL_TEXT.get(key, title) + (" · démo" if self.demo else ""))
@@ -2091,12 +2237,18 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             self._poll_diagnostic()
         if not self._dash_live():
             self._collect_alerts(st, ov)        # keep the journal up to date; no hidden widget work
+            if not self._iconic():
+                self._poll_champ_select(key, every=6.0)     # champion select: a toast on the other pages
             return
-        self._update_health(getattr(st, "health", None) if st is not None and key == "RUNNING" else None)
+        cpu = self._cpu.sample() if getattr(self, "_cpu", None) is not None else None
+        self._update_health(getattr(st, "health", None) if st is not None and key == "RUNNING" else None, cpu)
         self._poll_champ_select(key)
         msg = self._with_extras(msg, key)
         self._set_text(self.state_title, title)
         self._set_text(self.state_msg, msg or " ")
+        self._set_fix(fix, action)
+        self._set_live_layout(ov is not None or (running and key in ("RUNNING", "LOCATING")))
+        self.hero.set_matchup(ov is not None)
         if self.demo:
             self.demo_badge.grid(row=0, column=1, padx=(10, 0))
         else:
@@ -2115,17 +2267,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         self._set_text(self.clock_lbl, fmt_clock(gt))
         self.clock_lbl.configure(text_color=TEXT if gt is not None else DIM)
 
-        # tech tiles
-        fps = getattr(st, "fps", None) if st is not None else None
-        self._set_text(self.tech["fps"], fmt_decimal_fr(fps, 1) if isinstance(fps, (int, float)) and running
-                       and key == "RUNNING" else "-")
-        det = str(getattr(st, "detector", "") or getattr(self._detector, "name", "") or "-")
-        self._set_text(self.tech["detector"], detector_short(det))
-        vname = str(getattr(st, "voice", "") or getattr(self.voice, "backend", "") or "-")
-        if st is not None and getattr(st, "muted", False):
-            self._set_text(self.tech["voice"], "Coupée")
-        else:
-            self._set_text(self.tech["voice"], _VOICE_FR.get(vname.lower(), vname)[:10])
         banner = getattr(st, "banner", None) if st is not None else None
         if banner and banner != self._banner_dismissed:
             self._set_text(self.banner_lbl, str(banner))
@@ -2134,8 +2275,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         elif self.banner.grid_info():
             self.banner.grid_remove()
 
-        cpu = self._cpu.sample() if getattr(self, "_cpu", None) is not None else None
-        self._set_text(self.tech["cpu"], "-" if cpu is None else f"{cpu:.0f} %")
         try:
             self._update_system(st, key, running)
         except Exception:
@@ -2164,15 +2303,33 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         if self._current_page == "dashboard":
             self._draw_gauge_step()
 
-    def _poll_champ_select(self, key: str) -> None:
-        """Pre-game card while the player is in champion select (dashboard on screen, no game running):
-        champ_select.pregame_card() on a worker thread, at most every 2 s."""
+    def _post_game_refresh(self) -> None:
+        """Reload the history after a game until its record appears (then ``_show_games`` says so once)."""
+        if self._post_game_watch is not None and not self._closing:
+            self.refresh_games()
+
+    def _set_fix(self, label: str, action: str) -> None:
+        """The status strip's fix button ("Calibrer", "Aide", "Diagnostic"...), hidden when all is fine."""
+        btn = getattr(self, "btn_fix", None)
+        if btn is None:
+            return
+        self._fix_action = action
+        on = bool(label and action)
+        if on:
+            self._set_text(btn, label)
+        self.hero.set_fix(on)
+
+    def _poll_champ_select(self, key: str, every: float = 2.0) -> None:
+        """Pre-game card while the player is in champion select (no game running):
+        champ_select.pregame_card() on a worker thread, at most every ``every`` s."""
+        if "dashboard" not in self._built:
+            return
         if key == "RUNNING" or self._cs_busy:
             if key == "RUNNING" and self._cs_sig is not None:
                 self._show_champ_select(None)
             return
         now = time.monotonic()
-        if now - self._cs_polled < 2.0:
+        if now - self._cs_polled < every:
             return
         self._cs_polled = now
         self._cs_busy = True
@@ -2200,12 +2357,15 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         sig = (title, lines) if card is not None else None
         if sig == self._cs_sig:
             return
+        was_shown = self._cs_sig is not None
         self._cs_sig = sig
         for w in box.winfo_children():
             w.destroy()
         if card is None:
             box.grid_remove()
             return
+        if not was_shown and self._current_page != "dashboard":
+            self.show_toast("Sélection des champions : ta carte d'avant-partie est sur « En jeu ».")
         head = self._frame(box)
         head.grid(row=0, column=0, sticky="ew", padx=CARD_PAD, pady=(14, 4))
         head.grid_columnconfigure(1, weight=1)
@@ -2221,12 +2381,15 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         box.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 14))
         self._wrap_rows(self._wrap_width, force=True)
 
-    def _update_health(self, h: Any) -> None:
-        """Dashboard health line from ``status.health`` (engine.health(), in game only)."""
+    def _update_health(self, h: Any, cpu: float | None = None) -> None:
+        """Dashboard health line: ``status.health`` in game (capture, detection timings, overlay,
+        champions, CPU), else this app's CPU use."""
         lbl = getattr(self, "health_lbl", None)
         if lbl is None:
             return
         text, level = health_text(h)
+        if not text:
+            text = f"Processeur utilisé par TreeAI : {cpu:.0f} %" if isinstance(cpu, (int, float)) else ""
         col = {0: MUTED, 1: WARNING, 2: DANGER}.get(level, MUTED)
         sig = (text, col)
         if sig != self._health_sig:
@@ -2351,8 +2514,8 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             wp = getattr(eng, "win_probability", None)
             p = wp() if callable(wp) and key == "RUNNING" and getattr(self.cfg, "win_prob_hud", True) else None
             if isinstance(p, (int, float)):
-                return f"{msg} · Probabilité de victoire : {int(round(100 * p))} %" if msg else \
-                    f"Probabilité de victoire : {int(round(100 * p))} %"
+                prob = f"Probabilité de victoire : {int(round(100 * p))} %"
+                return f"{msg} · {prob}" if msg and not msg.startswith("Alertes et overlay actifs") else prob
         except Exception:
             log.debug("win probability / AI status unavailable", exc_info=True)
         return msg
@@ -2711,20 +2874,26 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 gt = pl.get("gt")
                 self._label(mf, str(pl.get("title") or "").upper(), self.fonts.tiny_bold, col, anchor="w").grid(
                     row=i, column=0, sticky="w", padx=(0, 6))
-                txt = _ellipsize(ui_text(str(pl.get("reason") or "")), 48)
+                txt = _ellipsize(ui_text(str(pl.get("reason") or "")), 40)
                 if isinstance(gt, (int, float)):
                     txt += f" ({fmt_clock(gt)})"
                 self._label(mf, txt, self.fonts.tiny, MUTED, anchor="w").grid(row=i, column=1, sticky="w")
         prec = _int_or_none(game_field(g, "precision"))
         pc = self._frame(row)
-        pc.grid(row=0, column=2, rowspan=3, sticky="e", padx=(12, 12))
+        pc.grid(row=0, column=2, rowspan=2, sticky="ne", padx=(12, 0))
         self._caption(pc, "Précision", DIM, anchor="e").grid(row=0, column=0, sticky="e")
         self._label(pc, "-" if prec is None else str(prec), self.fonts.stat, precision_color(prec),
                     anchor="e").grid(row=1, column=0, sticky="e")
         self._tip(pc, "Précision des coups notés de ta dernière partie (sur 100)." if prec is not None
                   else "Cette partie n'a pas de coups notés.")
-        self._button(row, "Rapport", lambda gg=g: self.open_report(gg), "secondary", width=72, height=26).grid(
-            row=0, column=3, rowspan=3, sticky="e")
+        acts = self._frame(row)            # under the text: never squeezed by a narrow window
+        acts.grid(row=3, column=1, columnspan=2, sticky="w", pady=(8, 0))
+        self._button(acts, "Rapport", lambda gg=g: self.open_report(gg), "secondary", icon="report",
+                     height=BTN_H_SMALL).grid(row=0, column=0, padx=(0, CTL_GAP))
+        self._button(acts, "Replay", lambda gg=g: self.open_replay(gg), "secondary", icon="play",
+                     height=BTN_H_SMALL).grid(row=0, column=1, padx=(0, CTL_GAP))
+        self._button(acts, "Progrès", lambda: self.show_page("analysis", "Progrès"), "ghost",
+                     height=BTN_H_SMALL).grid(row=0, column=2)
         self._hline(pg).grid(row=1, column=0, sticky="ew")
         # goal of the next game | point to work on
         cols = self._frame(pg)
@@ -2802,14 +2971,14 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 self._hline(pg).grid(row=r - 1, column=0, sticky="ew")
             row = self._frame(pg)
             row.grid(row=r, column=0, sticky="ew", pady=6)
-            row.grid_columnconfigure(2, weight=1)
-            self._label(row, str(i + 1), self.fonts.num, ACCENT, width=18, anchor="w").grid(row=0, column=0,
-                                                                                            padx=(0, 8))
-            self._label(row, title, self.fonts.body, TEXT, anchor="w").grid(row=0, column=1, sticky="w",
-                                                                            padx=(0, 12))
+            row.grid_columnconfigure(1, weight=1)
+            self._label(row, str(i + 1), self.fonts.num, ACCENT, width=18, anchor="w").grid(
+                row=0, column=0, rowspan=2, sticky="n", padx=(0, 8))
+            self._label(row, title, self.fonts.body, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
             self._label(row, ui_text(text), self.fonts.small, cols.get(level, MUTED) if level == 2 else MUTED,
-                        anchor="w").grid(row=0, column=2, sticky="w")
-            self._button(row, btn, fn, "secondary", width=80, height=26).grid(row=0, column=3, sticky="e")
+                        anchor="w").grid(row=1, column=1, sticky="w")
+            self._button(row, btn, fn, "secondary", width=96, height=BTN_H_SMALL).grid(
+                row=0, column=2, rowspan=2, sticky="e", padx=(12, 0))
 
     # ------------------------------------------------------------------ radar preview & pulse
     def _preview_loop(self) -> None:

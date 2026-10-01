@@ -95,7 +95,6 @@ BOOL_FIELDS: tuple[str, ...] = (
     "hud_enabled",
     "danger_flash",
     "overlay_hide_from_capture",
-    "overlay_show_frame",
     "overlay_show_allies",
     "overlay_show_roles",
     "overlay_show_ghosts",
@@ -132,24 +131,11 @@ VOICE_NAME_MAX_LEN = 256
 #: Update settings: free text fields (URL / GitHub token), printable, stripped, bounded.
 UPDATE_TEXT_FIELDS: dict[str, int] = {"update_channel_url": 2048, "github_token": 512}
 
-# v1.5 interface settings (ui.py / ui_kit.py; overlay_* and layer_* are read by the overlay with getattr)
-INT_RANGES.update({
-    "voice_quiet_start_s": (0, 300),   # no non-danger speech during the first N seconds of a game
-    "quiet_start_h": (0, 23),
-    "quiet_end_h": (0, 23),
-})
-FLOAT_RANGES.update({
-    "overlay_opacity": (0.3, 1.0),
-    "overlay_scale": (0.6, 1.6),
-})
+# v1.5 interface settings (ui.py / ui_kit.py; overlay_* are read by the overlay with getattr)
 CHOICES.update({
-    "ui_last_page": ("dashboard", "alerts", "overlay", "analysis", "settings", "help"),
     "ui_scaling": ("auto", "90", "100", "110", "125", "150"),
 })
-BOOL_FIELDS = BOOL_FIELDS + (
-    "voice_info_alerts", "quiet_hours", "colorblind", "layer_roles", "layer_arrows", "layer_zones",
-    "layer_ghosts", "ui_remember_page", "ui_onboarding_done", "ui_confirm_quit",
-)
+BOOL_FIELDS = BOOL_FIELDS + ("ui_onboarding_done", "ui_confirm_quit")
 UPDATE_TEXT_FIELDS["ui_seen_changelog"] = 32
 BOOL_FIELDS = BOOL_FIELDS + ("item_advice", "item_advice_toasts", "item_advice_speak")
 # optional LLM advice (ai_advisor.py) + "mode annonceur" / win probability (hype.py)
@@ -174,17 +160,28 @@ CHOICES["plays_position"] = ("top_center", "minimap")
 CHOICES.update({"capture_backend": ("auto", "dxgi", "mss"), "perf_mode": ("auto", "normal", "low_end")})
 FLOAT_RANGES.update({"overlay_fps": (10.0, 60.0), "diag_duration_s": (10.0, 300.0),
                      "diag_interval_s": (0.5, 10.0)})
-BOOL_FIELDS = BOOL_FIELDS + ("adaptive_rate", "low_priority", "eco_qos", "eco_qos_v2", "pause_when_unfocused")
+BOOL_FIELDS = BOOL_FIELDS + ("adaptive_rate", "low_priority", "eco_qos_v2", "pause_when_unfocused")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_diag",)
 # declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
+# self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
+BOOL_FIELDS = BOOL_FIELDS + ("selfcheck_enabled", "selfcheck_auto_diag")
 #: Compact overlay defaults, applied ONCE to config files written before the declutter
 #: (no "hotkey_details" key): the detailed HUD / map extras become opt-in again.
 DECLUTTER_RESET: dict[str, Any] = {
     "hud_detailed": False, "overlay_show_allies": False, "overlay_show_roles": False,
-    "overlay_show_ghosts": False, "overlay_show_last_seen": False, "layer_roles": False,
-    "layer_ghosts": False, "tip_toasts": False,
+    "overlay_show_ghosts": False, "overlay_show_last_seen": False, "tip_toasts": False,
 }
+#: Settings merged into another one (2.3 settings cleanup): old key -> the key that now holds it
+#: (a True old value turns the new one on once; see load_config).
+MERGED_KEYS: dict[str, str] = {"layer_roles": "overlay_show_roles", "layer_ghosts": "overlay_show_ghosts"}
+#: Settings removed in the 2.3 cleanup because nothing read them any more (or the app now always
+#: opens on "En jeu"); old files keep them and they are ignored silently.
+REMOVED_KEYS = frozenset({
+    "overlay_show_frame", "overlay_opacity", "overlay_scale", "layer_arrows", "layer_zones",
+    "voice_info_alerts", "voice_quiet_start_s", "quiet_hours", "quiet_start_h", "quiet_end_h",
+    "colorblind", "eco_qos", "ui_last_page", "ui_remember_page",
+}) | frozenset(MERGED_KEYS)
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -194,7 +191,7 @@ RECT_COORD_LIMIT = 65536           # |x|, |y| (multi-monitor virtual coords may 
 
 #: Keys silently ignored on load: metadata, and settings removed in a later version (old files keep them).
 _META_KEYS = frozenset({"config_version", "show_preview", "voice_language", "ui_start_minimized",
-                        "ui_minimize_on_game", "ui_notify_report", "ui_notify_game"})
+                        "ui_minimize_on_game", "ui_notify_report", "ui_notify_game"}) | REMOVED_KEYS
 _io_lock = threading.RLock()
 
 
@@ -270,7 +267,6 @@ class Config:
     danger_flash: bool = True
     # minimap overlay: hide it from screen capture (False = visible in screenshots / streams)
     overlay_hide_from_capture: bool = True   # keeps our own marks out of the detector's captures
-    overlay_show_frame: bool = True  # discreet frame + "TreeAI" label on the minimap layer
     # v2 decluttered minimap layer: only enemies / jungler fog / approach arrows / danger ring by default
     overlay_show_allies: bool = False    # thin blue rings on allies + teal ring on me
     overlay_show_roles: bool = False     # role tags (TOP/MID/ADC/SUP) on enemies (the jungler always has "JGL")
@@ -296,23 +292,7 @@ class Config:
     update_channel_url: str = ""    # "" = default GitHub URL of release/version.json
     github_token: str = ""          # personal access token for the private repo ("" = none)
     check_updates_on_start: bool = True
-    # v1.5 voice comfort (ui_kit.VoiceGate: DANGER announcements always pass)
-    voice_info_alerts: bool = True   # INFO announcements (objectives, tips, praise...)
-    voice_quiet_start_s: int = 0     # 0..300: silence (except danger) at the start of a game
-    quiet_hours: bool = False
-    quiet_start_h: int = 23
-    quiet_end_h: int = 8
-    # v1.5 overlay look (read by the overlay with getattr)
-    overlay_opacity: float = 1.0     # 0.3..1.0
-    overlay_scale: float = 1.0       # 0.6..1.6 (markers / HUD size)
-    layer_roles: bool = False        # role badges on the minimap layer
-    layer_arrows: bool = True        # movement arrows
-    layer_zones: bool = True         # danger / warning circles
-    layer_ghosts: bool = False       # last-seen "ghost" portraits in the fog
-    colorblind: bool = False         # colour-blind friendly palette (UI + overlay)
-    # v1.5 interface
-    ui_last_page: str = "dashboard"
-    ui_remember_page: bool = True
+    # v1.5 interface (the app always opens on "En jeu": ui_last_page / ui_remember_page removed in 2.3)
     ui_onboarding_done: bool = False
     ui_seen_changelog: str = ""
     ui_confirm_quit: bool = True
@@ -348,13 +328,16 @@ class Config:
     adaptive_rate: bool = True           # detection 4-6 img/s when calm, target_fps on threat
     overlay_fps: float = 30.0            # minimap layer frame rate (predicted positions), 10..60
     low_priority: bool = True            # process below normal priority: the game always wins
-    eco_qos: bool = True                 # legacy (ignored since 2.1.1: EcoQoS throttled detection)
     eco_qos_v2: bool = False             # Windows 11 EcoQoS hint, opt-in (can make tracking stutter)
     pause_when_unfocused: bool = True    # overlay hidden + detection slowed when the game is not in front
     hotkey_diag: str = "Ctrl+F8"         # record a diagnostic bundle (60 s), "" = disabled
     diag_duration_s: float = 60.0
     diag_interval_s: float = 2.0
     hotkey_details: str = "F6"           # hold in game: detailed overlay while held ("" = disabled)
+    # self-check (selfcheck.py): the app detects its own problems (capture, minimap, detection, voice,
+    # API...) and fixes or explains them; weak detection -> one automatic 60 s diagnostic per game
+    selfcheck_enabled: bool = True
+    selfcheck_auto_diag: bool = True     # opt-out of the automatic diagnostic bundle
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""
@@ -785,6 +768,11 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         # pre-declutter file: the overlay goes back to the compact defaults once (the user's
         # detailed extras were mostly preset side effects); "mode détaillé" stays one click away
         data = {**data, **DECLUTTER_RESET}
+    else:
+        for old, new in MERGED_KEYS.items():
+            if data.get(old) is True:
+                # 2.3 cleanup: "layer_roles" / "layer_ghosts" were OR-ed with the overlay_show_* toggles
+                data = {**data, new: True}
     cfg = Config.from_dict(data)
     log.info("Config loaded from %s", p)
     return cfg

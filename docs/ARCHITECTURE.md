@@ -26,6 +26,8 @@
 * [18. Pipeline v2 — capture, cadence, overlay fluide, diagnostic (systèmes)](#18-pipeline-v2--capture-cadence-overlay-fluide-diagnostic-systèmes)
 * [19. Données de jeu vivantes (Data Dragon) + carte d'avant-partie (sélection des champions)](#19-données-de-jeu-vivantes-data-dragon--carte-davant-partie-sélection-des-champions)
 * [20. Overlay épuré : une seule chose à la fois + routeur de présentation](#20-overlay-épuré--une-seule-chose-à-la-fois--routeur-de-présentation)
+* [21. Auto-diagnostic : TreeAI détecte ses propres problèmes et agit](#21-auto-diagnostic--treeai-détecte-ses-propres-problèmes-et-agit)
+* [22. Placement : les zones du jeu + un seul solveur (`layout.py`)](#22-placement--les-zones-du-jeu--un-seul-solveur-layoutpy)
 
 ## 1. Objectif
 
@@ -66,6 +68,8 @@ treeaicoach/                    package Python (runtime, embarqué dans le .exe)
   engine_coaching.py            mixin : directeur, macro, balises, voix, Tab, objets, IA, coups, ligne HUD
   engine_overlay_state.py       mixin : get_overlay_state() / aperçu / F9 (côté lecture pour l'UI et l'overlay)
   engine_postgame.py            mixin : fin de partie, rapport en arrière-plan, vérité LCU
+  engine_selfcheck.py           mixin : auto-diagnostic branché sur le pipeline (mesures, actions, avis)
+  selfcheck.py                  auto-diagnostic : règles symptôme -> action -> état, « Santé TreeAI »
   scheduler.py  sysperf.py      cadence adaptative, budget de performance, santé
 
   # --- perception (écran + API officielle) -----------------------------------------------
@@ -88,6 +92,7 @@ treeaicoach/                    package Python (runtime, embarqué dans le .exe)
   # --- sortie : voix, overlay, interface ---------------------------------------------------
   voice.py  tts_neural.py  hotkeys.py
   overlay.py  overlay_render.py  toasts.py  fx_overlay.py  fx_render.py  ward_guide.py
+  layout.py                     zones de l'UI de LoL + solveur de placement de tout ce qu'on dessine (§22)
   ui.py                         CoachApp : fenêtre, cycle du moteur, rafraîchissement, journal, run_app()
   ui_common.py                  jetons de design, polices, widgets (Toggle, Dropdown, Segmented, bandeau)
   ui_page_dashboard.py  ui_page_alerts.py  ui_page_overlay.py  ui_page_analysis.py  ui_page_settings.py
@@ -725,34 +730,50 @@ Menace courante = niveau max des alertes brutes du GankAnalyzer du dernier tick 
 > « régie esport » de **`docs/DESIGN.md`** (graphite vert-noir, un seul accent vert sève `#9BD84A`, rouge / ambre
 > pour le sens, séparateurs 1 px, rayon 4 px, Bahnschrift pour titres et chiffres, Segoe UI pour le texte).
 > `tests/test_design_rules.py` vérifie les interdits (tiret cadratin, couleurs / polices bannies, emoji).
-Structure : **barre latérale** (logo, navigation courte, accès rapide, niveau, statut) + pages :
-1. **En jeu** : bandeau d'état (point « en direct », état + message, face-à-face moi VS adversaire de voie, jauge de
-   menace, minuteurs d'objectifs, chrono, bouton Démarrer/Arrêter), ligne coach, ennemis + alliés, journal, radar,
-   **Système** (Jeu / Minimap / Client LoL / Détection (modèle) / IA conseil (fournisseur, clé saisie ou non, « IA 3/5 »,
-   « Tester la clé » : petite requête dans un thread, résultat en français) / Voix, correction en un clic,
-   `ui_kit.subsystem_rows`), « Tester l'overlay » (états d'exemple 10 s), FPS / CPU. Journal vide → **« Avant la partie »** :
-   dernière partie (résultat, K/D/A, précision, meilleur coup / pire erreur), objectif de la partie (`goals.pick_goal`, ou
-   celui de la partie en cours), point à travailler (`progress.focus_points`), session ; sans aucune partie : 3 vérifications
-   (Sans bordure lu dans les réglages du jeu, overlay, voix).
-2. **Alertes** (onglets Alertes / Voix / Aides / Touches) ; 3. **Overlay** (aperçu en tête de page, `ui_preview.py` : les
-   vrais rendus de l'overlay (minimap, HUD, badge de coup noté, flash) placés comme en jeu pour les réglages courants, sur
-   la partie en cours si l'analyse tourne, sinon sur un exemple de gank).
-4. **Analyses** (onglets) : **Parties** (bandeau de session + tableau avec colonne **Précision** des coups notés,
+Structure (v2.3, « tri pratique ») : **barre latérale** (logo ; 4 pages ; accès rapide Voix / Overlay / Mode sûr ;
+**Ton niveau** toujours visible ; état de l'analyse, cliquable ; bouton « Nouvelle version » quand une mise à jour
+existe) + 4 pages (`ui_common.PAGES`, Ctrl+1 … 4 ; l'application s'ouvre toujours sur « En jeu ») :
+1. **En jeu** : bandeau d'état = **une** ligne d'état (`ui_kit.status_line` : « En attente d'une partie », « En jeu :
+   Garen top », « Capture noire »… + un message utile + **un bouton de correction** : Calibrer / Aide / Diagnostic),
+   face-à-face (en partie seulement), jauge de menace, minuteurs d'objectifs, chrono, Démarrer/Arrêter ; en-tête :
+   Tester la voix, Tester l'overlay (états d'exemple 10 s), Mode démo. **Avant la partie** : carte de la sélection
+   des champions (`champ_select.pregame_card`, sondée aussi depuis les autres pages, toast une fois), dernière
+   partie (résultat, K/D/A, précision, meilleur coup / pire erreur, boutons Rapport / Replay / Progrès), objectif
+   de la partie (`goals.pick_goal`), point à travailler (`progress.focus_points`), session ; sans aucune partie :
+   3 vérifications (Sans bordure lu dans les réglages du jeu, overlay, voix). **En partie** seulement : ligne coach,
+   ennemis + alliés, journal, radar. Colonne de droite : panneau **Système** (Jeu / Minimap / Client LoL /
+   Détection / IA conseil / Voix, correction en un clic, `ui_kit.subsystem_rows` ; une ligne ajoutée à
+   `subsystem_rows` apparaît toute seule, `_add_sys_row`), ligne de santé (`health_text`, sinon le CPU de
+   l'application), « Diagnostic complet » avec sa touche en jeu (`hotkey_diag`). Après une partie : toast « Partie
+   enregistrée » quand le nouveau fichier apparaît.
+2. **Analyses** (onglets) : **Parties** (bandeau de session + tableau avec colonne **Précision** des coups notés,
    lue à la fin du fichier de la partie par `report.read_plays_brief`, en cache), **Progrès** (`progress.py` : courbes des
    20 dernières parties, CS/min, morts, or à 10/15 min contre l'adversaire et fiabilité TreeAI quand le client LoL
    est disponible, « tes 3 points à travailler »), **Replay** (`replay.py` : minimap minute par minute, dernières
-   positions connues, cercle du jungler, frise des morts / ganks / kills, lecture x10 à x120).
-5. **Réglages** (onglets Général / Minimap / IA / Avancé ; mises à jour avec « Télécharger manuellement »).
-6. **Aide** : mode d'emploi en 5 étapes (mode Sans bordure, lancer l'app, jouer…), sécurité / règles Riot, dépannage.
-**Mode guidé** (premier lancement, relançable dans Réglages / Aide) : 3 étapes courtes (ton niveau, jeu en Sans bordure
-vérifié dans les fichiers de réglages du jeu, test de l'overlay et de la voix).
+   positions connues, cercle du jungler, frise des morts / ganks / kills, lecture x10 à x120). Les onglets chargent
+   leur contenu à la sélection, cliquée ou programmée (`_tabs(on_select=...)`).
+3. **Réglages** : **une** page, onglets par intention (`ui_common.SETTINGS_TABS`) : Général (démarrage, après la
+   partie, fenêtre) · **Affichage** (ce que tu vois en jeu : aperçu `ui_preview.py` en tête avec Tester / Déplacer,
+   overlay, minimap, panneau, écran, radar en mode radar seulement ; `ui_page_overlay.py`) · **Voix** (ce que tu
+   entends : quantité `voice_level`, « Annonce d'un danger » = `beep_on_danger` + `danger_voice`, alertes de gank,
+   rappels, moteur de voix ; `ui_page_alerts.py`) · Détection · IA · Mises à jour (progression, erreur + lien
+   direct) · Avancé (touches en jeu, performance, maintenance). Anciennes clés de page : `PAGE_ALIASES`
+   (« alerts » → Réglages > Voix, « overlay » → Réglages > Affichage). Chaque champ de `Config` a un contrôle ou
+   figure dans `ui_common.HIDDEN_SETTINGS` avec sa raison (vérifié par `tests/test_ui_settings.py`). Réglages
+   supprimés en 2.3 (rien ne les lisait) : `config.REMOVED_KEYS`, ignorés en silence au chargement ;
+   `layer_roles` / `layer_ghosts` fusionnés dans `overlay_show_roles` / `overlay_show_ghosts` (`MERGED_KEYS`).
+4. **Aide** : mode d'emploi en 5 étapes (mode Sans bordure, lancer l'app, jouer…), sécurité / règles Riot, touches en
+   jeu avec leur réglage **actuel** (`ui_kit.game_keys`) et raccourcis de la fenêtre, dépannage.
+**Mode guidé** (premier lancement, relançable dans Réglages > Général et dans l'Aide) : 3 étapes courtes (ton niveau,
+jeu en Sans bordure vérifié dans les fichiers de réglages du jeu, test de l'overlay et de la voix).
 Polices : `ui.pick_font` (insensible à la casse) ; titres / chiffres « Bahnschrift SemiBold » (instance nommée listée par
 Tk sous Windows 10+), sinon Segoe UI Semibold, sinon une sans-serif condensée, sinon la police du corps.
 Règles : toutes les mises à jour de widgets passent par `root.after` (jamais depuis un autre thread) ; toute action utilisateur
 est protégée par try/except + message d'erreur FR (jamais de crash) ; fermeture propre (arrêt engine/voix/overlay, sauvegarde config) ;
 fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; icône de fenêtre = icône de l'app.
-Découpage (aucun changement de comportement) : `CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin,
-AnalysisPageMixin, SettingsPageMixin, DialogsMixin)`, une page par module `ui_page_*.py` + `ui_dialogs.py` ;
+Découpage : `CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPageMixin, SettingsPageMixin,
+DialogsMixin)`, un module `ui_page_*.py` par page ou onglet de Réglages (alerts = onglet Voix, overlay = onglet
+Affichage) + `ui_dialogs.py` ;
 jetons, polices et widgets dans `ui_common.py` (ré-exportés par `ui.py`). Restent dans `ui.py` : les pages
 paresseuses (`PAGE_METHODS`, `_page_attr_index` lit le bytecode des constructeurs de page, hérités compris),
 `PREBUILD_DELAY_MS` et `_report_function` (les tests les remplacent sur `ui` : les pages appellent
@@ -1027,7 +1048,7 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
   `PerfBudget` : « low_end » (≤ 4 CPU logiques, ou ticks mesurés > 30 ms en moyenne / 60 ms p95 sur
   les 30 premières secondes) → 4-8 img/s, coaching 1 Hz, ONNX d'appoint toutes les 16 images,
   1 thread OpenCV / onnxruntime, overlay 15 img/s. Processus en priorité « inférieure à la
-  normale » + EcoQoS (`cfg.low_priority`, `cfg.eco_qos`), OpenCV ≤ 2 threads (`main.apply_process_policy`).
+  normale » + EcoQoS (`cfg.low_priority`, `cfg.eco_qos_v2` opt-in depuis 2.1.1), OpenCV ≤ 2 threads (`main.apply_process_policy`).
 * **Overlay** (`overlay.py`) : boucle régulière `cfg.overlay_fps` (30, budget 15), `time.sleep`
   haute résolution ; positions **prédites à l'instant du rendu** (`engine.predict_positions` →
   `scheduler.MotionSnapshot` : position + vitesse de Kalman, amortissement 1,5 s, horizon 0,9 s) ;
@@ -1129,3 +1150,93 @@ Règle (docs/LESSONS.md n° 5) : **danger > une action > rien**.
   `engine._toast`, `engine._hud_line` (combat / gank : seulement une ligne danger / prudence),
   `engine._overlay_toasts` (bannières du directeur) et les badges de coups. `coach_sim` (30 min,
   `--no-presenter` = avant) : bannières / toasts 2,13 → 0,47 / min (débutant et intermédiaire).
+
+## 21. Auto-diagnostic : TreeAI détecte ses propres problèmes et agit
+
+Retour réel : lag, minimap vide, alertes manquées, mauvaises détections, sans que nous puissions voir la
+partie. `selfcheck.SelfCheck` est un chien de garde à règles, évalué ~1 Hz par le fil d'analyse en partie
+(`engine_selfcheck.SelfCheckMixin._selfcheck_tick`, à la fin de `step()`), la règle 9 aussi depuis le
+fil du Live Client hors partie. Chaque règle = **symptôme mesuré → action automatique → état court en
+français** ; au plus **un** avis en jeu par problème et par partie, seulement quand le joueur doit agir,
+par le chemin des toasts / du routeur (`engine._toast` → `presenter`, jamais en combat / gank / siège / mort,
+texte « verbe d'abord » pour la carte), 90 s au moins entre deux avis.
+
+| # | règle | symptôme | action automatique | état / avis |
+|---|-------|----------|--------------------|-------------|
+| 1 | `capture` | capture noire / figée ≥ 3 s (fenêtre là, non masquée) | autre backend (`SmartCapture.disable`), +6 s : nouvel objet de capture | +6 s : « Capture noire : passe le jeu en Sans bordure » (avis) |
+| 2 | `minimap` | rectangle de secours, vérification basse ≥ 3 s, échecs | relocalisation : indice bon marché (dernier rectangle trouvé dans cette fenêtre) puis recherche complète, recul 3 / 6 / 12… s ; échec = on garde le dernier rectangle vérifié (pas un carré par défaut) ; score qui dérive (< 0,6 et < 0,75 × score trouvé, 15 s) : relocalisation (1 / min, 3 / partie) | 3 échecs : « Minimap introuvable : ouvre Réglages > Calibrer » (avis) |
+| 3 | `perf` | < min(4, 0,75 × cible) img/s analysées ou p95 du tick > 60 ms pendant 20 s | niveau de charge normal → allégé → minimal (`sysperf.degraded` : ONNX d'appoint 1/4 → 1/16, propositions d'anneau / de pile 1/4 → 1/8, recherche des perdus 1/8 → 1/12, vérification minimap moins souvent, overlay 20 → 15 img/s, coaching 1 → 0,5 Hz) ; retour après 60 s sain (doublé à chaque rechute < 5 min) | « Analyse allégée : PC chargé » |
+| 4 | `champions` | moi + alliés (toujours visibles pour mon équipe) vivants depuis 60 s : ≤ 40 % vus (dès 1:30, ≥ 3 attendus, ≥ 1 img/s, pas pendant ma mort) | recalibrage de la taille des icônes (balayage complet), +40 s : icônes rechargées (gabarits, échelle, icône apprise relue du cache), +40 s : diagnostic auto de 60 s (1 / partie, `cfg.selfcheck_auto_diag`, sans voix ni dossier ouvert) | « Détection faible : envoie un diagnostic (Ctrl+F8) » (avis) |
+| 5 | `identity` | un champion à deux endroits éloignés en < 1 s (aller-retour), plus d'ennemis visibles que de vivants (2 s) | `Tracker.forget` de cette piste / des pistes anonymes en trop (recul après 3 essais en 2 min) | note ; « Identités instables » si répété |
+| 6 | `overlay` | jeu pas au premier plan 8 s, minimap couverte par une fenêtre 5 s, fil de l'overlay arrêté 5 s | expliqué une fois par partie | « Overlay masqué … » (note), « Une fenêtre couvre la minimap … », « Overlay arrêté … » |
+| 7 | `voice` | moteur de voix en échec (`print` sous Windows, 2 échecs / min) ou synthèse des alertes p95 > 1,2 s | dangers en bip seul (`engine._voice_override`, respecté par `_danger_beep` / `apply_config`) ; rétabli après 120 s sain | « Voix lente / indisponible : bips seulement pour les dangers » |
+| 8 | `ai` | clé refusée / aucune clé / modèle (l'IA s'arrête d'elle-même), quota nouveau dans la partie, 2 nouveaux échecs | plus aucun appel IA pour la partie (`_blocked_until` = ∞, rétabli à la partie suivante) ; les plans par règles continuent | « IA indisponible (…) : plans par règles pour cette partie » |
+| 9 | `api` | Live Client muet alors que la fenêtre du jeu existe (60 s hors partie, 5 s en partie) | sondage ralenti (3 puis 5 s), client HTTP recréé (1 / min) ; en partie, la partie est **gardée** jusqu'à 90 s (`API_OUTAGE_MAX_S`) au lieu de 8 s : une panne de l'API n'est pas une fin de partie | « API du jeu indisponible : coaching limité » |
+
+* Hystérésis partout (`*_ON_S` pour déclencher, `*_OFF_S` pour effacer) : ni clignotement ni actions en
+  boucle. Règles 1-9 testées sur des états de moteur simulés (`tests/test_selfcheck.py`).
+* Démo / sources d'images (tests, `coach_sim`, `ux_replay`) : désactivé. Moteur avec capture injectée
+  (tests) : tout sauf `perf` (mesuré en temps réel). `cfg.selfcheck_enabled` (interrupteur général).
+* Lecture : `engine.selfcheck_summary()` = `health()["selfcheck"]` (`state` ok / degraded, `title`
+  « Santé TreeAI : OK / dégradé », `reasons`, `notes`, `fixed`, `profile`, `overhead_ms`) ;
+  `selfcheck.summary_text()` = la ligne du panneau Système (`ui_page_dashboard._add_health_summary`,
+  autonome) ; fin de partie : `SelfCheck.game_report()` → `record["selfcheck"]` → section « Santé de
+  TreeAI pendant la partie » du rapport (ce qui a mal tourné, ce qui a été corrigé seul) ; diagnostic :
+  `selfcheck.json` + `selfcheck_log.txt` dans le zip.
+* Coût mesuré : ~0,03 ms par tick d'analyse en moyenne (évaluation 1 Hz amortie comprise), actions
+  ponctuelles exclues (recalibrage ~0,1 s une fois par partie au plus).
+
+## 22. Placement : les zones du jeu + un seul solveur (`layout.py`)
+
+Retour réel (« plein de choses sont mal placées ») et audit sur les vraies captures
+(`tools/layout_audit.py`, boîtes de l'UI de LoL mesurées à la main dans
+`tests/fixtures/layout_real_ui.json` : 14 captures, 2560×1440 des joueurs, flux 1080p / 720p, recadrages
+minimap 384 px) : les toasts couvraient l'annonceur des kills (y 4,5 % au lieu de sous 14 %), la colonne
+des minuteurs était dessinée DANS le coin de la minimap (bases, tourelles) en ~10 px, les badges de coups
+étaient dessinés dans la minimap (`fx_overlay` lisait `engine._screen_rects()` = (minimap, fenêtre) comme
+(écran, minimap)), le petit badge prenait la place de la carte HUD, les étiquettes de la minimap se
+posaient sur le bouton « ! » / zoom, le flash couvrait la barre de vie. Avant → après : 171 → 0
+chevauchements avec l'UI du jeu sur les captures réelles, 50 → 0 entre nos éléments (38 écrans).
+
+* **Zones de l'UI de LoL** (`layout.game_zones(screen, minimap, side, hud_scale)`) en *unités d'UI*
+  `U = min(h, w·9/16)` (LoL met son HUD à l'échelle de la hauteur, ancré aux bords / au centre) :
+  minimap + cadre + encoche « ! », boutons micro / caméra / réglages, portraits alliés (rangée au-dessus
+  de la minimap ou colonne à gauche : les deux), votes (reddition, Baron), fil des kills, score / KDA /
+  chrono, annonceur, sorts + objets, statistiques (C), chat, récap de mort, « RETOUR DANS », boutique
+  (zone *souple* : modale). Les zones collées à la minimap suivent son rectangle mesuré et son côté
+  (`FlipMiniMap` lu dans les réglages du jeu, sinon le côté de l'écran ; zones miroir *supposées*, pas de
+  capture réelle avec minimap à gauche). `hud_scale` (1,0 = les captures mesurées) agrandit / réduit les
+  zones du HUD ; la correspondance avec `GlobalScale` du jeu n'est pas vérifiée : non branchée.
+  `tests/test_layout.py` vérifie que les zones couvrent toutes les boîtes mesurées.
+* **Solveur** (`layout.solve` / `layout.layout_for(screen, minimap, cfg, detailed, radar, custom_card)`) :
+  éléments par priorité (carte HUD, toast / bannière, minuteurs, badge de coup grand puis petit) ; chacun
+  a des *rails* (segments où sa fenêtre peut glisser), groupés en paliers ; le premier palier qui a une
+  position libre gagne (coût = distance parcourue + biais du rail, + 65 px·U/1080 si elle touche la
+  boutique). Une zone qui n'existe que dans certains états (votes, récap de mort, « RETOUR DANS »,
+  statistiques) n'est tolérée que pour la position nommée choisie par le joueur et la carte F6, en
+  dernier recours. 4 px (à 1080p) d'air autour des zones et entre nos éléments ; jamais deux de nos
+  éléments l'un sur l'autre. Chaque élément a un *emplacement* taillé pour son contenu le plus grand du
+  mode (carte compacte 1-2 lignes / danger, carte F6, 3 ou 5 minuteurs ; enveloppes des animations :
+  glissement des toasts / badges) et l'image s'y aligne (carte : bord bas fixe) : un texte qui change ne
+  déplace rien. Mémoïsé (`LayoutCache`) : la disposition ne change qu'avec l'écran, le rectangle de la
+  minimap, les réglages, le mode détaillé (F6 = sa propre variante) ou une fenêtre déplacée (mode
+  « déplacer »). `layout.publish` / `layout.published` : la disposition courante du fil de l'overlay,
+  relue par le fil des badges (`fx_overlay`).
+* **Emplacements par défaut** (minimap à droite) : carte à gauche de la minimap, bas aligné au-dessus des
+  boutons micro / caméra (monte si la barre d'objets est dessous, petits écrans) ; minuteurs **hors du
+  cadre**, côté intérieur, en haut (fenêtre « timers », 13 px à 1080p, plaque opaque) ; toast / bannière
+  centré **sous** l'annonceur ; grand badge sous le toast ; petit badge à côté de la minimap (entre les
+  minuteurs et la carte, sinon à côté des minuteurs). Positions nommées (`hud_position`) : leur rail
+  d'abord, puis la chaîne par défaut ; « custom » (`hud_xy`, fenêtre glissée) respectée telle quelle,
+  hors de la minimap.
+* **Autres consommateurs** : `toasts.toast_layer_rect` et `fx_render.fx_layer_rect` rendent l'emplacement
+  du solveur (`fx_overlay.screen_and_minimap` remet les rectangles dans l'ordre) ; flash de danger :
+  jamais sur la minimap, ses boutons ni la barre de sorts / objets (`Layout.flash_exclusions`, plusieurs
+  rectangles) ; repères au sol / flèches de bord (balise) : `place_world_patch` déplace du plus petit
+  décalage hors du HUD permanent et de nos éléments (la flèche de bord aussi hors du fil des kills, du
+  chat, des votes) — un repère au sol reste sur son vrai point et peut croiser une zone passagère ;
+  étiquettes de la minimap : jamais sur les boutons de coin (`MM_CORNER_BUTTONS`) ;
+  `overlay_render.render_preview` et `ui_preview.compose` utilisent la même disposition.
+* Radar (mode « radar », hérité) : sa position ne change pas (au-dessus de la minimap, donc sur les
+  portraits / votes) ; il est un obstacle pour les autres éléments.
+

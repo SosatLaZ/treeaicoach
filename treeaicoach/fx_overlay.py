@@ -139,12 +139,31 @@ def play_sound(cls: str) -> bool:
         return False
 
 
+# ------------------------------------------------------------------------------ geometry
+def screen_and_minimap(a: Any, b: Any) -> tuple[tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]:
+    """``(screen, minimap)`` from a pair of rectangles given in EITHER order (the engine's
+    ``_screen_rects`` returns ``(minimap, window)`` while this module used to read it as
+    ``(screen, minimap)``: every badge was then laid out inside the minimap, at 60 %). The larger
+    rectangle is the screen. Never raises."""
+    from treeaicoach.layout import as_rect
+
+    ra, rb = as_rect(a), as_rect(b)
+    if ra is not None and rb is not None and ra[2] * ra[3] < rb[2] * rb[3]:
+        return rb, ra
+    if ra is not None and rb is None and ra[2] < 640 and ra[3] < 640:
+        return None, ra                          # only a minimap-sized rect: it is the minimap
+    return ra, rb
+
+
 # ------------------------------------------------------------------------------ manager
 class PlayFx:
     """Animation player (see module docstring).
 
-    ``rects_provider()`` -> ``(screen_rect, minimap_rect)`` (any ``(x, y, w, h)``-like, or None);
-    ``visible()`` -> False hides the animations (overlay off / F11). Both are called from the fx thread.
+    ``rects_provider()`` -> the screen and minimap rectangles in either order (any ``(x, y, w, h)``-like,
+    or None; see :func:`screen_and_minimap`); ``visible()`` -> False hides the animations (overlay
+    off / F11). Both are called from the fx thread. The badge goes to the layout's badge slot
+    (:mod:`treeaicoach.layout`, the overlay's own layout when it runs): never over the minimap,
+    the HUD card, the timers or the toasts.
     """
 
     def __init__(self, cfg: Any, rects_provider: Callable[[], tuple[Any, Any]] | None = None,
@@ -259,14 +278,14 @@ class PlayFx:
         with self._lock:
             cfg = self._cfg
         try:
-            scr, mm = self._rects() if self._rects is not None else (None, None)
+            pair = self._rects() if self._rects is not None else (None, None)
         except Exception:
-            scr, mm = None, None
-        scr_t = tuple(int(v) for v in (scr.x, scr.y, scr.w, scr.h)) if hasattr(scr, "w") else scr
-        mm_t = tuple(int(v) for v in (mm.x, mm.y, mm.w, mm.h)) if hasattr(mm, "w") else mm
+            pair = (None, None)
+        scr_t, mm_t = screen_and_minimap(*pair)
         size = str(getattr(play, "size", "big"))
         scale = fx.scale_for_screen(scr_t) if scr_t else 1.0
-        x, y, _w, _h = fx.fx_layer_rect(scr_t, mm_t, str(getattr(cfg, "plays_position", "top_center")), size, scale)
+        x, y, _w, _h = fx.fx_layer_rect(scr_t, mm_t, str(getattr(cfg, "plays_position", "top_center")), size, scale,
+                                        cfg=cfg)
         cls = str(getattr(play, "cls", "good"))
         if sound_wanted(cfg, cls):
             play_sound(cls)
@@ -286,4 +305,4 @@ class PlayFx:
         win.hide()
 
 
-__all__ = ["PlayFx", "TONES", "make_tone_wav", "play_wav_path", "play_sound", "sound_wanted"]
+__all__ = ["PlayFx", "TONES", "make_tone_wav", "play_wav_path", "play_sound", "sound_wanted", "screen_and_minimap"]

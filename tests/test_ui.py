@@ -372,7 +372,7 @@ def test_app_pages_and_settings(home: Path, tmp_path: Path) -> None:
         assert engines and engines[0].is_running()          # autostart
         assert overlays and overlays[0].started
         assert overlays[0].provider() is not None            # overlay state provider -> engine snapshot
-        assert app.state_title.cget("text") == "Analyse en cours"
+        assert app.state_title.cget("text").startswith("En jeu")      # "En jeu : Garen top"
         assert app.clock_lbl.cget("text") != "--:--"
         assert app._radar_live                               # radar preview rendered by the worker
         assert app.threat_lbl.cget("text") in ("SÛR", "ATTENTION", "DANGER")
@@ -564,7 +564,7 @@ def test_run_app_with_real_engine_demo(home: Path, tmp_path: Path) -> None:
         ui.CoachApp.close = orig_close     # type: ignore[method-assign]
     assert rc == 0
     assert seen["engine"] == "CoachEngine"
-    assert seen["state"] in ("Analyse en cours", "Recherche de la minimap")
+    assert seen["state"].startswith("En jeu") or seen["state"] == "Recherche de la minimap"
     assert seen["clock"] != "--:--" and seen["radar"]
 
 
@@ -615,18 +615,19 @@ def test_calibration_dialog(tmp_path: Path) -> None:
 
 @needs_display
 def test_v15_features(home: Path, tmp_path: Path) -> None:
-    """Safe mode, presets, examples, diagnostic, dialogs, shortcuts, remembered page, quit confirmation."""
+    """Safe mode, player level, examples, diagnostic, dialogs, shortcuts, old page keys, quit confirmation."""
     app, voice, (engines, _ov) = _build(tmp_path)
     try:
-        _pump(app, 3.0, lambda: engines and app._in_game())
+        _pump(app, 12.0, lambda: engines and app._in_game())      # slow machines: wait for the game
+        assert app._in_game()
         app.set_safe_mode(True)
-        assert app.cfg.safe_mode and app.dash_safe_var.get() and app._quick["safe"][0].get()
+        assert app.cfg.safe_mode and app._quick["safe"][0].get()
         app.set_safe_mode(False)
         assert not app.cfg.safe_mode
-        app.apply_preset("discret")
-        assert ui.ui_kit.preset_of(app.cfg) == "discret" and not app.cfg.alert_roam
-        app.apply_preset("equilibre")
-        assert ui.ui_kit.preset_of(app.cfg) == "equilibre"
+        app.apply_skill_level("expert")
+        assert app.cfg.skill_level == "expert" and not app.cfg.alert_jungler_spotted
+        app.apply_skill_level("intermediaire")
+        assert app.cfg.skill_level == "intermediaire" and app.cfg.alert_jungler_spotted
         app.play_example("collapse")
         assert voice.said and voice.said[-1][1] == 2
         app.set_option("voice_engine", "sapi")
@@ -641,8 +642,8 @@ def test_v15_features(home: Path, tmp_path: Path) -> None:
             _pump(app, 0.2)
             assert app._open_dialog is not None
             app._open_dialog._close()
-        app.show_page("overlay")
-        assert app.cfg.ui_last_page == "overlay"
+        app.show_page("overlay")                 # a page key of older versions: its Réglages tab
+        assert app._current_page == "settings" and app._settings_tab == "Affichage"
         app.root.event_generate("<Control-Key-1>")
         _pump(app, 0.3)
         app.request_close()                 # in game -> confirmation dialog, the window stays open

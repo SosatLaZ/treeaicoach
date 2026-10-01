@@ -14,9 +14,10 @@ pipeline really sees and does on the user's machine so that failures can be repr
   (capture fps, timings, champions seen / expected, minimap score, CPU %), Live Client roster
   reduced to champion names / teams / roles / levels / summoner spells (no summoner name, no
   Riot ID);
-* at the end: ``summary.json`` + the tail of the application log (user folder paths masked),
-  everything zipped as ``<user data>/diagnostics/diag_YYYYmmdd_HHMMSS.zip``; the folder is
-  opened in the file explorer.
+* at the end: ``summary.json``, the self-check of the app (``selfcheck.json``: "Santé TreeAI",
+  problems of the game, event log; ``selfcheck_log.txt``) + the tail of the application log (user
+  folder paths masked), everything zipped as ``<user data>/diagnostics/diag_YYYYmmdd_HHMMSS.zip``;
+  the folder is opened in the file explorer (not for the self-check's automatic bundle).
 
 Screen pixels and official API data only (the same as what the app already uses). The
 recorder runs in its own daemon thread, at a low rate (one sample / 2 s: a PNG encode of
@@ -49,7 +50,7 @@ CONFIG_WHITELIST = (
     "hud_position", "radar_position", "radar_scale", "overlay_fps", "overlay_scale", "overlay_opacity",
     "capture_backend", "perf_mode", "adaptive_rate", "low_priority", "eco_qos", "pause_when_unfocused",
     "fog_mode", "safe_mode", "sensitivity", "warn_radius", "danger_radius", "voice_level", "skill_level",
-    "icon_scale_by_res", "colorblind", "ui_scaling",
+    "icon_scale_by_res", "colorblind", "ui_scaling", "selfcheck_enabled", "selfcheck_auto_diag",
 )
 LOG_TAIL_LINES = 600
 THUMB_MAX_W = 1280
@@ -125,6 +126,14 @@ def system_info() -> dict[str, Any]:
             out["windows_build"] = int(v.build)
     except Exception:
         log.debug("system_info failed", exc_info=True)
+    try:   # game data versions (items, champions, profiles, builds, matchups, wards, objectives)
+        from treeaicoach import game_data
+
+        out["game_data"] = game_data.data_versions()
+        out["game_data_text"] = game_data.data_versions_text()
+        out["game_data_refresh"] = game_data.last_status or "not run"
+    except Exception:
+        log.debug("game data versions unavailable", exc_info=True)
     return out
 
 
@@ -307,6 +316,16 @@ class DiagRecorder:
             _write_json(folder / "summary.json", summary)
         except Exception:
             log.debug("Diagnostic summary failed", exc_info=True)
+        try:   # self-check (selfcheck.py): what the app noticed about itself and what it did
+            report = getattr(self.engine, "selfcheck_report", None)
+            if callable(report):
+                _write_json(folder / "selfcheck.json", report())
+            lines = getattr(self.engine, "selfcheck_log", None)
+            if callable(lines):
+                (folder / "selfcheck_log.txt").write_text(_mask_paths("\n".join(lines())) + "\n",
+                                                          encoding="utf-8")
+        except Exception:
+            log.debug("Diagnostic self-check log failed", exc_info=True)
         try:
             from treeaicoach.logging_setup import LOG_FILE_NAME
             from treeaicoach.paths import logs_dir

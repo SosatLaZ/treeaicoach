@@ -125,9 +125,8 @@ def compose(cfg: Any, state: Any = None, now: float = 0.3,
         mode = ov.resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap")) if ov is not None else "minimap"
         radar = None
         if mode == "minimap":
-            orr.composite_over(img, orr.render_minimap(st, mm[2], mm[3], now,
-                                                       show_frame=bool(getattr(cfg, "overlay_show_frame", True))),
-                               loc[0], loc[1])
+            # no frame label: the in-game minimap layer never draws it (overlay.py, show_frame=False)
+            orr.composite_over(img, orr.render_minimap(st, mm[2], mm[3], now, show_frame=False), loc[0], loc[1])
         elif mode == "radar" and ov is not None and getattr(cfg, "radar_enabled", True):
             rx, ry, rs = ov.radar_geometry(mm, scr, float(getattr(cfg, "radar_scale", 1.0) or 1.0),
                                            getattr(cfg, "radar_position", "above_minimap"),
@@ -138,7 +137,16 @@ def compose(cfg: Any, state: Any = None, now: float = 0.3,
         if getattr(cfg, "hud_enabled", True):
             hw = ov.hud_width(scr) if ov is not None else 340
             hud = orr.render_hud(st, hw, now)
-            if ov is not None:
+            try:            # the in-game layout (treeaicoach.layout, same solver as overlay.py)
+                from treeaicoach import layout as layout_mod  # noqa: PLC0415
+
+                slot = layout_mod.layout_for(scr, mm, cfg, detailed=bool(getattr(st, "hud_detailed", False)),
+                                             radar=radar).slot("card")
+            except Exception:
+                slot = None
+            if slot is not None:
+                hx, hy = slot.place(hud.shape[1], hud.shape[0])
+            elif ov is not None:
                 hx, hy = ov.hud_placement(scr, hud.shape[1], hud.shape[0],
                                           getattr(cfg, "hud_position", "above_minimap"), getattr(cfg, "hud_xy", None),
                                           avoid=[r for r in (mm, radar) if r is not None], anchor=radar or mm)
@@ -155,7 +163,8 @@ def compose(cfg: Any, state: Any = None, now: float = 0.3,
                 from treeaicoach import fx_render as fx  # noqa: PLC0415
 
                 k = fx.scale_for_screen(scr)
-                x, y, _w, _h = fx.fx_layer_rect(scr, mm, str(getattr(cfg, "plays_position", "top_center")), "big", k)
+                x, y, _w, _h = fx.fx_layer_rect(scr, mm, str(getattr(cfg, "plays_position", "top_center")), "big", k,
+                                                cfg=cfg)
                 frame = fx.render_frame(play[0], play[1], play[2], 1.2, size="big", scale=k)
                 if frame is not None:
                     orr.composite_over(img, frame, x - sx, y - sy)

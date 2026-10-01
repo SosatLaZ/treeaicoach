@@ -1,0 +1,89 @@
+{
+  "_about": "TreeAI curated champion knowledge (no public data source gives these): power curve, level-6 spike, waveclear, splitpush, sustain, mixed damage, play-style sets and the lane class used by the matchup tips. Read by tools/fetch_meta.py. Values are 1 (low) .. 3 (high); champions not listed get the rule default of their class (see fetch_meta.py). Reviewed for patch 26.19 (2026-10-01). Locke (26.13) and Zaahen (25.23) facts: League of Legends Wiki champion pages (CC BY-SA 3.0) + Riot client data.",
+  "curve": {
+    "early": ["Ambessa", "Blitzcrank", "Briar", "Caitlyn", "Darius", "Draven", "Elise", "Gragas", "Graves", "Irelia",
+              "JarvanIV", "Jayce", "Kalista", "Karma", "Kled", "Leblanc", "LeeSin", "Leona", "Lucian", "Naafiri",
+              "Nautilus", "Nidalee", "Olaf", "Pantheon", "Pyke", "Qiyana", "RekSai", "Rell", "Renekton", "Rengar",
+              "Riven", "Rumble", "Samira", "Sett", "Shaco", "Taliyah", "Talon", "Tristana", "Trundle", "Udyr",
+              "Urgot", "Volibear", "Warwick", "XinZhao"],
+    "late": ["Anivia", "Aphelios", "AurelionSol", "Azir", "Belveth", "Cassiopeia", "Chogath", "Corki", "DrMundo",
+             "Fiora", "Gangplank", "Gwen", "Hwei", "Jax", "Jinx", "Kaisa", "Karthus", "Kassadin", "Kayle", "Kayn",
+             "Kindred", "KogMaw", "Lillia", "MasterYi", "Mel", "Mordekaiser", "Nasus", "Orianna", "Ornn", "Ryze",
+             "Senna", "Seraphine", "Sion", "Smolder", "Sona", "Twitch", "Vayne", "Veigar", "Viego", "Viktor",
+             "Vladimir", "Xayah", "Yuumi", "Zeri"]
+  },
+  "spike6": {
+    "3": ["Aatrox", "Ahri", "Akali", "Amumu", "Annie", "Ashe", "Aurora", "Brand", "Camille", "Cassiopeia", "Chogath",
+          "Darius", "Diana", "Ekko", "Evelynn", "Fiddlesticks", "Fiora", "Fizz", "Garen", "Gnar", "Hecarim", "Illaoi",
+          "Irelia", "JarvanIV", "Jhin", "KSante", "Katarina", "Kennen", "Leblanc", "LeeSin", "Leona", "Lillia",
+          "Lissandra", "Locke", "Lux", "Malphite", "Malzahar", "MissFortune", "MonkeyKing", "Mordekaiser", "Nautilus",
+          "Neeko", "Nocturne", "Nunu", "Orianna", "Pyke", "Qiyana", "Rakan", "Rell", "Renata", "Riven", "Rumble",
+          "Samira", "Sejuani", "Seraphine", "Shen", "Skarner", "Sona", "Swain", "Sylas", "Syndra", "Trundle",
+          "Tryndamere", "TwistedFate", "Urgot", "Veigar", "Vex", "Vi", "Vladimir", "Warwick", "Yone", "Zaahen",
+          "Zed", "Zyra"],
+    "1": ["Bard", "Elise", "Ezreal", "Janna", "Jayce", "Kalista", "Karma", "Kayle", "KogMaw", "Nidalee", "Quinn",
+          "Ryze", "Sivir", "Soraka", "Udyr", "Xayah", "Yuumi", "Zoe"]
+  },
+  "waveclear": {
+    "3": ["Ahri", "Anivia", "Aphelios", "AurelionSol", "Aurora", "Azir", "Brand", "Cassiopeia", "Corki", "Diana",
+          "Fiddlesticks", "Galio", "Gangplank", "Heimerdinger", "Hwei", "Jinx", "Kalista", "Karthus", "Lillia",
+          "Lissandra", "Lux", "Malzahar", "Mel", "MissFortune", "Morgana", "Neeko", "Orianna", "Ryze", "Seraphine",
+          "Sion", "Sivir", "Smolder", "Syndra", "Taliyah", "TwistedFate", "Velkoz", "Vex", "Viktor", "Vladimir",
+          "Xerath", "Yasuo", "Zeri", "Ziggs", "Zyra"],
+    "1": ["Alistar", "Bard", "Blitzcrank", "Braum", "Ivern", "Janna", "Leona", "Lulu", "Milio", "Nami", "Nautilus",
+          "Pyke", "Rakan", "Rell", "Renata", "Senna", "Soraka", "Taric", "Thresh", "Vayne", "Yuumi"]
+  },
+  "splitpush": {
+    "3": ["Ambessa", "Camille", "Fiora", "Gwen", "Illaoi", "Irelia", "Jax", "Kayle", "Nasus", "Quinn", "Riven",
+          "Shen", "Singed", "Teemo", "Trundle", "Tryndamere", "Udyr", "Yorick"],
+    "2": ["Aatrox", "Akali", "Aurora", "Belveth", "Caitlyn", "Darius", "DrMundo", "Gangplank", "Garen", "Gnar",
+          "Heimerdinger", "Jayce", "KSante", "Kled", "MasterYi", "MonkeyKing", "Mordekaiser", "Nocturne", "Olaf",
+          "Renekton", "Rengar", "Ryze", "Sett", "Shaco", "Sion", "Sylas", "Talon", "Urgot", "Vayne", "Volibear",
+          "Warwick", "Yasuo", "Yone", "Zaahen", "Zed", "Kennen"]
+  },
+  "sustain": {
+    "3": ["Aatrox", "Briar", "DrMundo", "Fiddlesticks", "Fiora", "Garen", "Illaoi", "Olaf", "Soraka", "Swain",
+          "Sylas", "Vladimir", "Volibear", "Warwick", "Yuumi", "Zaahen"],
+    "2": ["Ahri", "Alistar", "Aphelios", "Bard", "Belveth", "Cassiopeia", "Chogath", "Darius", "Gangplank", "Gragas",
+          "Gwen", "Hecarim", "Irelia", "Janna", "Karma", "Kayn", "Khazix", "LeeSin", "Lillia", "Locke", "Maokai",
+          "MasterYi", "Milio", "Mordekaiser", "Nami", "Nasus", "Nidalee", "Nilah", "Nocturne", "Nunu", "Pyke",
+          "Rakan", "RekSai", "Renekton", "Rengar", "Samira", "Senna", "Seraphine", "Sett", "Sona", "TahmKench",
+          "Taric", "Trundle", "Tryndamere", "Udyr", "Viego", "XinZhao", "Yorick", "Zac"]
+  },
+  "female": ["Ahri", "Akali", "Ambessa", "Anivia", "Annie", "Ashe", "Aurora", "Belveth", "Briar", "Caitlyn", "Camille",
+             "Cassiopeia", "Diana", "Elise", "Evelynn", "Fiora", "Gwen", "Illaoi", "Irelia", "Janna", "Jinx", "Kaisa",
+             "Kalista", "Karma", "Katarina", "Kayle", "Leblanc", "Leona", "Lillia", "Lissandra", "Lulu", "Lux", "Mel",
+             "MissFortune", "Morgana", "Naafiri", "Nami", "Neeko", "Nidalee", "Nilah", "Orianna", "Poppy", "Qiyana",
+             "Quinn", "Rell", "Renata", "Riven", "Samira", "Sejuani", "Senna", "Seraphine", "Shyvana", "Sivir", "Sona",
+             "Soraka", "Syndra", "Taliyah", "Tristana", "Vayne", "Vex", "Vi", "Xayah", "Yunara", "Yuumi", "Zeri", "Zoe",
+             "Zyra"],
+  "mixed_damage": ["Corki", "DrMundo", "Jax", "Kaisa", "KogMaw", "Shaco", "Shen", "Shyvana", "Udyr", "Volibear",
+                   "Warwick"],
+  "styles": {
+    "poke": ["Caitlyn", "Corki", "Ezreal", "Heimerdinger", "Hwei", "Jayce", "Jhin", "Karma", "KogMaw", "Lux", "Mel",
+             "Nidalee", "Senna", "Seraphine", "Sivir", "Syndra", "Taliyah", "Varus", "Velkoz", "Viktor", "Xerath",
+             "Zeri", "Ziggs", "Zoe", "Brand", "Teemo", "Kennen", "Gangplank"],
+    "engage_extra": ["Ornn", "Sion", "Gnar", "Kennen", "MonkeyKing", "Rakan", "Rell"],
+    "pick_extra": ["Ahri", "Ashe", "Morgana", "Lux", "Nidalee", "Thresh", "Blitzcrank", "Pyke", "Bard", "Zoe"],
+    "peel_extra": ["Janna", "Lulu", "Taric", "Braum", "TahmKench", "Shen", "Renata", "Milio"]
+  },
+  "lane_class": {
+    "_about": "Overrides of the rule-derived lane class (juggernaut / diver / skirmisher / tank / assassin / mage / marksman / enchanter / engage).",
+    "KSante": "tank", "Teemo": "marksman", "Kayle": "marksman", "Quinn": "marksman", "Gnar": "marksman",
+    "Zyra": "mage", "Seraphine": "mage", "Karma": "mage", "Senna": "marksman", "Gangplank": "skirmisher",
+    "Akshan": "marksman", "Leblanc": "assassin", "Rengar": "assassin", "Pantheon": "diver", "Galio": "tank",
+    "Rumble": "mage", "Swain": "mage", "Shyvana": "diver", "Zaahen": "skirmisher", "Locke": "assassin",
+    "Taric": "engage", "Maokai": "engage", "Morgana": "mage", "Neeko": "mage", "Lux": "mage", "Brand": "mage",
+    "Xerath": "mage", "Velkoz": "mage", "Hwei": "mage", "Mel": "mage", "Zilean": "enchanter", "Heimerdinger": "mage",
+    "Kennen": "mage", "Jayce": "mage", "Smolder": "marksman", "Vayne": "marksman", "Yasuo": "skirmisher",
+    "Yone": "skirmisher", "Sylas": "skirmisher", "Diana": "assassin", "Ekko": "assassin", "Akali": "assassin",
+    "Camille": "diver", "Irelia": "diver", "Renekton": "diver", "Olaf": "diver", "Urgot": "juggernaut",
+    "Gragas": "tank", "Sion": "tank", "Malphite": "tank", "Ornn": "tank", "Chogath": "tank", "Singed": "tank",
+    "TahmKench": "tank", "Shen": "tank", "Poppy": "tank"
+  },
+  "new_champions": {
+    "_about": "Champions missing from the Meraki data: class roles transcribed from the League of Legends Wiki champion pages (CC BY-SA 3.0, 2026-10-01). Positions, damage type, range and ratings come from the Riot client data.",
+    "Locke": {"cls": ["ASSASSIN", "MAGE"]},
+    "Zaahen": {"cls": ["FIGHTER", "SKIRMISHER"]}
+  }
+}

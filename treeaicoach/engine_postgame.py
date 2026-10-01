@@ -47,9 +47,13 @@ class PostgameMixin:
                     self._banner = BREAK_TEXT
                     self._say(BREAK_TEXT, 0)
         plays_summary = self.plays_summary()
+        health = None
+        sc = getattr(self, "_selfcheck", None)
+        if sc is not None and sc.enabled:      # "Santé TreeAI" of this game (what went wrong / was fixed)
+            health = sc.game_report()
         if rec is not None:
-            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary), name="TreeAICoach-report",
-                                  daemon=True)
+            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary, health),
+                                  name="TreeAICoach-report", daemon=True)
             self._bg_threads = [b for b in self._bg_threads if b.is_alive()] + [th]
             th.start()
 
@@ -70,7 +74,7 @@ class PostgameMixin:
         except Exception:
             log.debug("End-of-game summary unavailable", exc_info=True)
 
-    def _finish_job(self, rec: Any, plays_summary: dict | None = None) -> None:
+    def _finish_job(self, rec: Any, plays_summary: dict | None = None, health: dict | None = None) -> None:
         try:
             path = rec.finish()
             if path is None:
@@ -79,6 +83,10 @@ class PostgameMixin:
                 from treeaicoach.plays import attach_to_record
 
                 attach_to_record(path, plays_summary)
+            if health:                          # self-check of the game (selfcheck.py) -> report section
+                from treeaicoach.selfcheck import attach_to_record as attach_health
+
+                attach_health(path, health)
             self.last_record_path = Path(path)
             cfg = self._cfg
             self._say_game_summary(Path(path))

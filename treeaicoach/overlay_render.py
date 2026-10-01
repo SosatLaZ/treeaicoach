@@ -1443,6 +1443,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     icon_r = mr * 0.95
     for lx, ly in live:
         taken.append((lx - icon_r, ly - icon_r, 2 * icon_r, 2 * icon_r))
+    taken.extend(minimap_corner_rects(W, H))       # League's "!" / zoom buttons: no label there
     labels: list[tuple[int, float, float, float, str, Any, Any, float]] = []   # placed last, by priority
 
     def near_live(x: float, y: float, d: float = 1.6) -> bool:
@@ -1608,11 +1609,22 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
              + [_uv_ok(a.uv) for a in allies if a.visible and a.uv is not None] if p is not None]
     _draw_guides(cv_, list(getattr(state, "guides", None) or []), me, icons, W, H, now,
                  max(1, MAX_MAP_ELEMENTS - n_arrows) if detailed else 1, taken)
-    _draw_timers(cv_, state, W, H)
+    # timers: their own strip OUTSIDE the minimap frame (render_timers), never over the map's
+    # bases / turrets / the frame buttons
     return cv_.to_bgra()
 
 
-# ---- timers column (outer top corner of the minimap layer) -----------------------------
+#: League draws buttons over the minimap's corners (the "!" ping diamond top-left, the zoom /
+#: camera button bottom-right): no label of ours is placed there (fractions of the minimap side).
+MM_CORNER_BUTTONS = ((0.0, 0.0, 0.12, 0.12), (0.88, 0.88, 0.12, 0.12))
+
+
+def minimap_corner_rects(W: float, H: float) -> list[tuple[float, float, float, float]]:
+    """The minimap's corner-button areas in layer pixels (labels avoid them)."""
+    return [(x * W, y * H, w * W, h * H) for x, y, w, h in MM_CORNER_BUTTONS]
+
+
+# ---- timers strip (outside the minimap frame, inner side, top: layout slot "timers") -----
 TIMER_SOON_S = 90.0             # objective spawns shown this long before (and "UP" this long after)
 TIMER_MAX_ROWS = 3
 TIMER_MAX_ROWS_DETAILED = 5     # F6 / detailed mode: every objective
@@ -1693,33 +1705,64 @@ def timer_rows(state: Any) -> list[tuple[str, tuple]]:
         return []
 
 
-def _draw_timers(cv_: Canvas, state: Any, W: int, H: int) -> None:
-    """The :func:`timer_rows` column: white text on a dark plate with an accent dot, in the outer
-    top corner of the minimap (top-right; top-left when the minimap sits on the left half of the
-    screen), below the "TreeAI" frame label. Never raises."""
+#: Timers strip font at 1080p (docs/DESIGN.md: never below 12 px) and the widest rows it holds.
+TIMER_FONT_PX = 13.0
+TIMER_SAMPLE_ROWS = ("Ancestral ennemi 2:30", "Buff Ancestral 2:30", "Baron ennemi 2:30", "5 morts · 30 s")
+
+
+def _timer_metrics(unit: float) -> dict[str, Any]:
+    k = max(0.6, min(3.0, float(unit) / 1080.0))
+    f = get_font(max(12, int(round(TIMER_FONT_PX * k))), "bold")
+    cap = _cap_height(f)
+    pad, dot = max(4.0, 6 * k), max(2.5, 3.0 * k)
+    return {"k": k, "font": f, "pad": pad, "dot": dot, "row_h": cap + max(8.0, 9 * k),
+            "text_x": pad + 2 * dot + max(4.0, 5 * k)}
+
+
+def timers_strip_size(screen: Any, detailed: bool = False) -> tuple[int, int]:
+    """Window size of the timers strip (layout slot): the widest row at the strip font, and
+    :data:`TIMER_MAX_ROWS` rows (:data:`TIMER_MAX_ROWS_DETAILED` in detailed mode)."""
+    try:
+        unit = min(float(screen[3]), float(screen[2]) * 9.0 / 16.0)
+    except Exception:
+        unit = 1080.0
+    m = _timer_metrics(unit)
+    tw = max(text_width(t, m["font"]) for t in TIMER_SAMPLE_ROWS)
+    rows = TIMER_MAX_ROWS_DETAILED if detailed else TIMER_MAX_ROWS
+    w = int(math.ceil(m["text_x"] + tw + m["pad"] + 2))
+    h = int(math.ceil(m["row_h"] * rows + 2 * m["pad"] * 0.6 + 2))
+    return w, h
+
+
+def render_timers(state: Any, screen: Any = None, max_w: int | None = None) -> np.ndarray | None:
+    """The :func:`timer_rows` strip: white text with an accent dot on a dark plate, sized to its
+    rows (premultiplied BGRA), or None when there is nothing to show. The overlay hangs it
+    OUTSIDE the minimap frame (layout slot "timers", aligned towards the minimap). Never raises."""
     try:
         rows = timer_rows(state)
         if not rows:
-            return
-        k = min(W, H) / 256.0
-        f = get_font(max(8, int(round(9 * k))), "bold")
-        cap = _cap_height(f)
-        pad, dot, row_h = max(2.0, 3 * k), max(2.0, 2.2 * k), cap + max(4.0, 5 * k)
+            return None
+        scr = _rect_tuple(screen) or _rect_tuple(getattr(state, "screen_rect", None)) or (0, 0, 1920, 1080)
+        unit = min(float(scr[3]), float(scr[2]) * 9.0 / 16.0)
+        m = _timer_metrics(unit)
+        f, pad, dot, row_h, tx = m["font"], m["pad"], m["dot"], m["row_h"], m["text_x"]
         tw = max(text_width(t, f) for t, _c in rows)
-        pw = min(W * 0.48, tw + 2 * pad + 2 * dot + max(2.0, 3 * k))
-        ph = row_h * len(rows) + max(2.0, 2 * k)
-        y0 = 2.0 + _cap_height(get_font(max(7, int(round(7 * k))), "bold")) + 4 + max(2.0, 2 * k)
-        mm, sc = _rect_tuple(getattr(state, "minimap_rect", None)), _rect_tuple(getattr(state, "screen_rect", None))
-        left = mm is not None and sc is not None and mm[0] + mm[2] / 2 < sc[0] + sc[2] / 2
-        x0 = 2.0 if left else W - pw - 2.0
-        cv_.rrect(x0, y0, pw, ph, max(2.0, 4 * k), PANEL_DEEP, 0.72, border=TAI_EDGE, border_alpha=0.5)
+        W = int(math.ceil(tx + tw + pad + 2))
+        if max_w is not None:
+            W = int(min(W, max(40, int(max_w))))
+        H = int(math.ceil(row_h * len(rows) + 2 * pad * 0.6 + 2))
+        cv_ = Canvas(W, H)
+        cv_.rrect(1, 1, W - 2, H - 2, max(3.0, 4 * m["k"]), (11, 13, 17), 0.9, border=TAI_EDGE, border_alpha=0.8,
+                  border_w=max(1.0, 0.9 * m["k"]))
+        y0 = 1 + pad * 0.6
         for i, (text, rgb) in enumerate(rows):
-            cy = y0 + max(1.0, k) + row_h * (i + 0.5)
-            cv_.disc(x0 + pad + dot, cy, dot, rgb, 0.95)
-            cv_.text(x0 + pad + 2 * dot + max(2.0, 3 * k), cy, fit_text(text, f, pw - 2 * pad - 2 * dot - 3 * k),
-                     f, TAI_TEXT, 0.98, shadow=0.6)
+            cy = y0 + row_h * (i + 0.5)
+            cv_.disc(pad + dot, cy, dot, rgb, 1.0)
+            cv_.text(tx, cy, fit_text(text, f, W - tx - pad), f, TAI_TEXT, 1.0, shadow=0.0)
+        return cv_.to_bgra()
     except Exception:
-        log.debug("timers column failed", exc_info=True)
+        log.debug("timers strip failed", exc_info=True)
+        return None
 
 
 #: Logical paths: at most this many drawn, faded below this probability.
@@ -2322,8 +2365,12 @@ def hud_visible(state: Any, now: float | None = None) -> bool:
 
 
 def _compact_layout(state: Any, width: int, now: float) -> dict[str, Any]:
-    k = width / COMPACT_REF_W
     c = compact_content(state, now) or {"mode": "ok", "colour": TAI_GO, "word": "", "line": "", "icon": None}
+    return _compact_layout_for(c, width)
+
+
+def _compact_layout_for(c: dict[str, Any], width: int) -> dict[str, Any]:
+    k = width / COMPACT_REF_W
     ms, mt, mb = round(3 * k), round(2 * k), round(4 * k)
     cx0, cw = float(ms), float(width - 2 * ms)
     left, right = cx0 + 16 * k, cx0 + cw - 11 * k
@@ -2412,6 +2459,45 @@ def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
     if not bool(getattr(state, "hud_detailed", False)):
         return width, _compact_layout(state, width, time.monotonic())["height"]
     return width, _hud_layout(state, width, width / HUD_REF_W)["height"]
+
+
+_card_h_cache: dict[tuple[int, bool], int] = {}
+_LONG_LINE = "Pose une balise de contrôle dans la rivière avant le Dragon"
+
+
+def card_max_height(width: int, detailed: bool = False) -> int:
+    """Height of the TALLEST card :func:`render_hud` can draw at ``width`` (the layout slot: a
+    1-line card, a 2-line card or a danger card all fit in it, so the card never moves when its
+    text changes). Compact: danger word + line / two lines + icon; detailed: every row. Cached."""
+    width = int(min(max(int(width) if _finite(width) else 280, 200), 1200))
+    key = (width, bool(detailed))
+    hit = _card_h_cache.get(key)
+    if hit is not None:
+        return hit
+    try:
+        if detailed:
+            st = OverlayState(hud_detailed=True, tip=_LONG_LINE + " et garde ton jungler en tête", threat_level=1,
+                              jungler_line="Jungler : Lee Sin — vu il y a 14 s, rivière du haut",
+                              hint="Balise de contrôle (75 or)", role_notice="Rôle détecté : MID",
+                              objectives=[_DemoObjective("Dragon", 60.0)], game_time=0.0)
+            h = _hud_layout(st, width, width / HUD_REF_W)["height"]
+        else:
+            icon = np.zeros((8, 8, 4), np.uint8)
+            hs = [_compact_layout_for({"mode": m, "colour": TAI_GO, "word": w, "line": ln, "icon": ic}, width)["height"]
+                  for m, w, ln, ic in (("danger", "GANK !", DANGER_LINE, None),
+                                       ("careful", "2 CONTRE 1", DANGER_LINE, None),
+                                       ("ok", "", _LONG_LINE, icon), ("ok", "", _LONG_LINE, None))]
+            h = max(hs)
+    except Exception:
+        log.debug("card_max_height failed", exc_info=True)
+        h = int(round((210 if detailed else 66) * width / COMPACT_REF_W))
+    _card_h_cache[key] = int(h)
+    return int(h)
+
+
+def card_envelope(width: int, height: int, detailed: bool = False) -> tuple[int, int, int, int] | None:
+    """Content box of the card inside its slot (None: the whole slot, shadow margins included)."""
+    return None
 
 
 def render_hud(state: OverlayState, width: int = 280, now: float | None = None) -> np.ndarray:
@@ -2674,10 +2760,26 @@ def flash_profile(thickness: int) -> np.ndarray:
     return np.where(d < th, core, glow).astype(np.float32)
 
 
-def render_flash(w: int, h: int, intensity: float, exclude: "Rect | None", thickness: int = 10) -> np.ndarray:
+def _rect_list(exclude: Any) -> list[tuple[int, int, int, int]]:
+    """One rect or a sequence of rects -> list of ``(x, y, w, h)`` (invalid ones dropped)."""
+    one = _rect_tuple(exclude) if exclude is not None and not (
+        isinstance(exclude, (list, tuple)) and exclude and isinstance(exclude[0], (list, tuple))) else None
+    if one is not None:
+        return [one]
+    out = []
+    for r in exclude or ():
+        t = _rect_tuple(r)
+        if t is not None:
+            out.append(t)
+    return out
+
+
+def render_flash(w: int, h: int, intensity: float, exclude: Any, thickness: int = 10) -> np.ndarray:
     """Red frame on the screen edges (premultiplied BGRA ``h x w``), never covering ``exclude``.
 
-    ``exclude`` is the minimap rectangle relative to the flash image (x, y, w, h). Never raises.
+    ``exclude``: one rectangle (the minimap) or a list of them (layout.Layout.flash_exclusions:
+    minimap block, its buttons, the spells / items bar - HP and cooldowns stay readable),
+    relative to the flash image (x, y, w, h). Never raises.
     """
     try:
         w = int(min(max(int(w), 1), _MAX_SIDE))
@@ -2707,8 +2809,7 @@ def render_flash(w: int, h: int, intensity: float, exclude: "Rect | None", thick
         if h - 2 * D > 0:
             fill(slice(D, h - D), slice(0, D))
             fill(slice(D, h - D), slice(max(D, w - D), w))
-        ex = _rect_tuple(exclude)
-        if ex is not None:
+        for ex in _rect_list(exclude):
             m = 2
             x0, y0 = max(0, ex[0] - m), max(0, ex[1] - m)
             x1, y1 = min(w, ex[0] + ex[2] + m), min(h, ex[1] + ex[3] + m)
@@ -2920,38 +3021,58 @@ def render_world_marker(m: Any, k: float = 1.0, now: float | None = None) -> tup
 def place_world_patch(x: int, y: int, w: int, h: int, screen: Any,
                       avoid: Sequence[Any] = ()) -> tuple[int, int]:
     """Top-left of a ``w`` x ``h`` patch wanted at (x, y): inside ``screen`` and never over the
-    ``avoid`` rectangles (minimap, bottom HUD bar): moved above (or left of) them."""
+    ``avoid`` rectangles (League's HUD zones, our own slots): moved by the SMALLEST shift (up,
+    down, left or right, one or two steps) that clears all of them; when nothing is free, the
+    first move above the blocking rectangle (the old behaviour)."""
     try:
         sx, sy, sw, sh = (int(c) for c in screen[:4])
     except Exception:
         return int(x), int(y)
-    x = min(max(int(x), sx), sx + sw - w)
-    y = min(max(int(y), sy), sy + sh - h)
-    for _ in range(3):
-        hit = False
-        for r in avoid or ():
-            try:
-                rx, ry, rw, rh = (int(c) for c in r[:4])
-            except Exception:
-                continue
-            if x < rx + rw and rx < x + w and y < ry + rh and ry < y + h:
-                hit = True
-                up = (x, ry - h - 2)
-                left = (rx - w - 2, y)
-                cands = [c for c in (up, left) if c[0] >= sx and c[1] >= sy]
-                x, y = min(cands, key=lambda c: abs(c[0] - x) + abs(c[1] - y)) if cands else up
-        if not hit:
-            break
-    return int(x), int(y)
+    rects = _rect_list(list(avoid or ()))
+    x0 = min(max(int(x), sx), sx + sw - w)
+    y0 = min(max(int(y), sy), sy + sh - h)
+
+    def free(px: int, py: int) -> bool:
+        if px < sx or py < sy or px + w > sx + sw or py + h > sy + sh:
+            return False
+        return not any(px < rx + rw and rx < px + w and py < ry + rh and ry < py + h for rx, ry, rw, rh in rects)
+
+    if free(x0, y0):
+        return int(x0), int(y0)
+    cands: list[tuple[int, int]] = []
+    frontier = [(x0, y0)]
+    for _depth in range(2):                      # shifts out of one rect, then out of the next one
+        nxt = []
+        for px, py in frontier:
+            for rx, ry, rw, rh in rects:
+                if not (px < rx + rw and rx < px + w and py < ry + rh and ry < py + h):
+                    continue
+                for c in ((px, ry - h - 2), (px, ry + rh + 2), (rx - w - 2, py), (rx + rw + 2, py)):
+                    nxt.append(c)
+        cands += nxt
+        frontier = nxt
+    ok = [c for c in cands if free(*c)]
+    if ok:
+        bx, by = min(ok, key=lambda c: (abs(c[0] - x0) + abs(c[1] - y0), c[1], c[0]))
+        return int(bx), int(by)
+    for rx, ry, rw, rh in rects:                  # nothing free: above the first blocking rect
+        if x0 < rx + rw and rx < x0 + w and y0 < ry + rh and ry < y0 + h:
+            return int(x0), int(max(sy, ry - h - 2))
+    return int(x0), int(y0)
 
 
 def render_world_guides(markers: Sequence[Any], screen: Any, now: float | None = None,
-                        avoid: Sequence[Any] = ()) -> list[tuple[np.ndarray, int, int]]:
+                        avoid: Sequence[Any] = (), edge_avoid: Sequence[Any] | None = None
+                        ) -> list[tuple[np.ndarray, int, int]]:
     """Patches ``(premultiplied BGRA, x, y)`` (absolute screen px) of the game-view ward markers,
-    at most 2, kept inside ``screen`` and off the ``avoid`` rectangles. Never raises."""
+    at most 2, kept inside ``screen`` and off the ``avoid`` rectangles (``edge_avoid`` for the
+    screen-edge arrows, which may slide along the border: every League zone; default ``avoid``).
+    A ground marker keeps its ring on the real spot unless it would cover League's HUD / our own
+    elements. Two markers never overlap each other. Never raises."""
     out: list[tuple[np.ndarray, int, int]] = []
     try:
         k = world_scale(screen)
+        placed: list[tuple[int, int, int, int]] = []
         for m in list(markers or [])[:2]:
             if not _finite(getattr(m, "x", None), getattr(m, "y", None)) or _world_alpha(m) <= 0.01:
                 continue
@@ -2959,7 +3080,10 @@ def render_world_guides(markers: Sequence[Any], screen: Any, now: float | None =
             h, w = img.shape[:2]
             if w < 2 or h < 2:
                 continue
-            x, y = place_world_patch(int(round(float(m.x))) - ax, int(round(float(m.y))) - ay, w, h, screen, avoid)
+            rects = list(edge_avoid if (edge_avoid is not None and str(getattr(m, "kind", "")) == "edge")
+                         else avoid) + placed
+            x, y = place_world_patch(int(round(float(m.x))) - ax, int(round(float(m.y))) - ay, w, h, screen, rects)
+            placed.append((x, y, w, h))
             out.append((img, x, y))
     except Exception:
         log.exception("render_world_guides failed")
@@ -3122,15 +3246,30 @@ def _render_preview(state: OverlayState, width: int, texture_bgr: np.ndarray | N
                                            getattr(cfg, "radar_xy", None))
         composite_over(bg, render_radar(state, rsize, texture_bgr, now), rx - sx, ry - sy)
         radar_rect = (rx, ry, rsize, rsize)
+    from treeaicoach import layout as _layout   # the in-game layout (same solver as overlay.py)
+
+    lay = _layout.layout_for(scr, mm, cfg, detailed=bool(getattr(state, "hud_detailed", False)), radar=radar_rect)
     if cfg is None or getattr(cfg, "hud_enabled", True):
         hud = render_hud(state, _ov.hud_width(scr), now)
-        avoid = [r for r in (mm, radar_rect) if r is not None]
-        hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0], getattr(cfg, "hud_position", "left_of_minimap"),
-                                   getattr(cfg, "hud_xy", None), avoid=avoid, anchor=radar_rect or mm, minimap=mm)
+        slot = lay.slot("card")
+        if slot is not None:
+            hx, hy = slot.place(hud.shape[1], hud.shape[0])
+        else:
+            avoid = [r for r in (mm, radar_rect) if r is not None]
+            hx, hy = _ov.hud_placement(scr, hud.shape[1], hud.shape[0],
+                                       getattr(cfg, "hud_position", "left_of_minimap"), getattr(cfg, "hud_xy", None),
+                                       avoid=avoid, anchor=radar_rect or mm, minimap=mm)
         composite_over(bg, hud, hx - sx, hy - sy)
+    slot = lay.slot("timers")
+    strip = render_timers(state, scr, slot.rect[2]) if slot is not None and (
+        cfg is None or getattr(cfg, "overlay_timers", True)) else None
+    if strip is not None:
+        tx, ty = slot.place(strip.shape[1], strip.shape[0])
+        composite_over(bg, strip, tx - sx, ty - sy)
     if _clamp01(state.flash) > 0 and (cfg is None or getattr(cfg, "danger_flash", True)):
-        fl = render_flash(sw, sh, state.flash, (mm[0] - sx, mm[1] - sy, mm[2], mm[3]),
-                          thickness=_ov.flash_thickness(scr))
+        excl = [(r[0] - sx, r[1] - sy, r[2], r[3]) for r in lay.flash_exclusions()] + [
+            (mm[0] - sx, mm[1] - sy, mm[2], mm[3])]
+        fl = render_flash(sw, sh, state.flash, excl, thickness=_ov.flash_thickness(scr))
         composite_over(bg, fl, 0, 0)
     width = int(min(max(int(width), 64), 4096))
     out = cv2.resize(bg, (width, max(1, int(round(sh * width / sw)))), interpolation=cv2.INTER_AREA)

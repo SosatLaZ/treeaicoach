@@ -1,8 +1,9 @@
 """On-screen toasts / banners ("coups de génie", warnings, insights) - pure renderers + queue.
 
-A toast is a small hextech banner shown for ~3 s at the top-centre of the screen, just under
-League's top area: it never covers the minimap (bottom-right), the champion (screen centre)
-or the Tab scoreboard / KDA block (top-right). Kinds and colours:
+A toast is a small banner shown for ~3 s at the top-centre of the screen, right UNDER League's
+kill / objective announcer (layout slot "toasts", :mod:`treeaicoach.layout`): it never covers
+the announcer, the minimap (bottom-right), the champion (screen centre) or the scoreboard /
+kill feed (top-right). Kinds and colours:
 
 * ``praise``  gold with a teal glow (a good play: "SOLO KILL"),
 * ``insight`` blue (Tab analysis: "ALLIÉ EN DIFFICULTÉ"),
@@ -77,7 +78,7 @@ INSIGHT_GAP_S = 25.0            # low-priority "insight" toasts: at most one eve
 MAX_WAIT_S = 10.0               # a queued toast not shown within this delay is dropped (stale)
 BASE_W, BASE_H = 440, 68        # at 1080p
 GAP = 8                         # between stacked toasts (1080p px)
-TOP_FRAC = 0.045                # top of the layer: 4.5 % of the screen height (top-centre is free in LoL)
+TOP_FRAC = 0.045                # fallback only (no layout): the layout slot sits under the kill announcer
 
 _base_cache = orr._LRU(24)
 
@@ -375,15 +376,33 @@ def scale_for_screen(screen: Any) -> float:
     return max(0.6, min(2.2, h / 1080.0)) if math.isfinite(h) and h > 0 else 1.0
 
 
-def toast_layer_rect(screen: Sequence[int], minimap: Sequence[int] | None = None) -> tuple[int, int, int, int]:
-    """(x, y, w, h) of the toast layer: top-centre of ``screen``, under LoL's top area.
+def layer_envelope(scale: float = 1.0) -> tuple[int, int, int, int]:
+    """Where pixels can appear inside the toast layer (x, y, w, h): the plate of a toast or of a
+    big banner, from the layer's top (the slide-in comes from above and the fade-out moves up,
+    both clipped by the layer). Used by the layout solver."""
+    W, H = toast_size(scale)
+    k = H / BASE_H
+    pad = int(round(14 * k))
+    return pad, 0, W, pad + max(H, banner_size(scale)[1])
 
-    Never over the minimap (moved left if it would overlap, e.g. an exotic HUD scale) nor over
-    the Tab / KDA block at the top-right; stays in the top ~25 % (champion at the centre)."""
+
+def toast_layer_rect(screen: Sequence[int], minimap: Sequence[int] | None = None,
+                     cfg: Any = None) -> tuple[int, int, int, int]:
+    """(x, y, w, h) of the toast layer: the layout's "toasts" slot (:mod:`treeaicoach.layout`):
+    top-centre, right UNDER League's kill / objective announcer (never over it), off the
+    scoreboard, the kill feed and the minimap; stays in the top ~30 % (champion at the centre)."""
     sx, sy, sw, sh = (int(v) for v in screen[:4])
     s = scale_for_screen(screen)
     w, h = layer_size(s)
     w, h = min(w, max(1, sw)), min(h, max(1, sh))
+    try:
+        from treeaicoach import layout as lay
+
+        slot = (lay.published(screen, minimap) or lay.layout_for(screen, minimap, cfg)).slot("toasts")
+        if slot is not None and slot.rect[2] == w and slot.rect[3] == h:
+            return slot.rect
+    except Exception:
+        log.debug("toast slot unavailable", exc_info=True)
     x = sx + (sw - w) // 2
     y = sy + int(round(sh * TOP_FRAC)) - int(round(14 * s))
     if minimap is not None:

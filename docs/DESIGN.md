@@ -51,6 +51,38 @@ d'affichage en 28, les valeurs de réglage en 16. Contraste minimal 4,5:1 pour t
 Repli hors Windows : DejaVu Sans / Liberation Sans. Interdites comme identité :
 Inter, Poppins, Space Grotesk, Geist.
 
+## Navigation : ce qui est où
+
+Pensé pour le joueur qui ouvre l'application 30 s avant une partie.
+
+* **4 pages** dans la barre latérale : **En jeu** · **Analyses** · **Réglages** · **Aide**
+  (Ctrl+1 … 4). L'application s'ouvre toujours sur « En jeu ».
+* **À un clic, sur toutes les pages** (barre latérale) : Voix, Overlay, Mode sûr, **Ton niveau**
+  (4 boutons, toujours visibles même à 980 × 640), l'état de l'analyse (clic : retour sur « En jeu »)
+  et, quand elle existe, la **nouvelle version** (bouton vert, ouvre Réglages > Mises à jour).
+* **En jeu** : Démarrer / Arrêter, tester la voix, tester l'overlay, mode démo, diagnostic complet
+  (avec sa touche en jeu, Ctrl+F8 par défaut), rapport et replay de la dernière partie.
+* **Réglages** = une seule page, des onglets nommés d'après ce qu'ils changent :
+  Général (démarrage, après la partie, fenêtre) · **Affichage** (ce que tu vois en jeu, avec
+  l'aperçu) · **Voix** (ce que tu entends) · Détection · IA · Mises à jour · **Avancé** (touches
+  en jeu, performance, maintenance). Un réglage n'existe qu'à un seul endroit.
+* Chaque champ de `Config` a un contrôle dans Réglages, ou figure dans
+  `ui_common.HIDDEN_SETTINGS` avec sa raison (barre latérale, appris, écrit par une autre
+  action). `tests/test_ui_settings.py` le vérifie : aucun réglage mort ni inaccessible.
+* Une seule échelle d'aide : le **niveau** (Débutant … Expert). Pas de deuxième jeu de
+  « préréglages » qui le contredit.
+
+## État d'abord
+
+* La page « En jeu » commence par **une** ligne d'état : un titre (« En attente d'une partie »,
+  « En jeu : Garen top », « Capture noire »…), **un** message utile (jamais la répétition du
+  titre) et, en cas de problème, **un** bouton de correction à côté (Calibrer, Aide,
+  Diagnostic). Texte : `ui_kit.status_line`.
+* Avant la partie, la page ne montre que ce qui sert avant la partie : carte de la sélection des
+  champions, dernière partie (rapport, replay, progrès), objectif, point à travailler ou les
+  3 vérifications du premier lancement, et le panneau « Système ». Ennemis, alliés, conseil du
+  moment et radar n'apparaissent qu'en partie (pas de cases « ? » vides).
+
 ## Mise en page
 
 * Une colonne de contenu centrée, 860 px au plus (1300 px pour « En jeu »), marges de 32 px :
@@ -59,7 +91,9 @@ Inter, Poppins, Space Grotesk, Geist.
   dont les lignes sont séparées par un trait de 1 px. Pas de carte dans une carte.
 * Ligne de réglage : libellé (14) + description (13) à gauche, contrôle juste à droite ;
   hauteur minimale identique pour toutes les lignes ; si la fenêtre est étroite, un contrôle
-  large passe sous le texte.
+  large passe sous le texte. Une action propre à une section (« Tester la voix »,
+  « Déplacer ») va à droite de son titre, pas dans l'en-tête de la page.
+* Une section qui ne s'applique pas (ex. « Radar » hors du mode radar) est masquée, pas grisée.
 * Contrôles : boutons 34 px (30 dans les barres d'outils et les tableaux), menus, champs et
   sélecteurs 34 px.
 * Interrupteurs : pilule 46 × 26 (38 × 22 dans la barre latérale). Éteint : piste sombre
@@ -67,7 +101,11 @@ Inter, Poppins, Space Grotesk, Geist.
 
 ## Espacement, formes
 
-* Grille de 4 px : 4 / 8 / 12 / 16 / 24.
+* Grille de 4 px : 4 / 8 / 12 / 16 / 24. Jetons (`ui_common.py`) : `CTL_GAP` 8 entre deux
+  contrôles, `ROW_PAD_Y` 12 dans une ligne de réglage, `ROW_CTL_GAP` 24 entre le texte et son
+  contrôle, `TAB_GAP` 24 entre deux onglets, `SECTION_GAP` 28 entre deux sections, `CARD_PAD` 20,
+  `PAGE_PAD` 32. Hauteurs : `BTN_H` 34, `BTN_H_SMALL` 30 (barres d'outils, tableaux, barre
+  latérale), `CTL_H` 34, `LINK_H` 22 (liens de correction du panneau « Système »), `ICON_BTN` 30.
 * Rayon : **4 px** (contrôles, portraits carrés), 6 px maximum (cartes, dialogues). Pas de pilule
   ronde, sauf les interrupteurs et le bouton des curseurs (leur forme est celle qu'on reconnaît).
 * Pas d'ombre portée douce. Pas de carte dans une carte.
@@ -77,6 +115,8 @@ Inter, Poppins, Space Grotesk, Geist.
 ## Textes
 
 * Libellés de 1 à 2 mots sur les boutons (« Démarrer », « Rapport », « Dossier »).
+* Les touches citées dans un texte sont les touches **réglées** (lues dans la configuration),
+  jamais une touche par défaut écrite en dur.
 * Pas de tiret cadratin (—) dans l'interface : « : », « · » ou un retour à la ligne.
 * Pas d'emoji, pas d'icône « étincelle », pas de « magie », pas de « Bienvenue dans… ».
 * Français simple, tutoiement, phrases courtes.

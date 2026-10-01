@@ -1,27 +1,28 @@
-"""Alerts & voice page ("Alertes et voix"): alert switches, voice engine / level, coach extras.
+"""Réglages > Voix ("ce que tu entends"): how much the coach speaks, gank alerts, reminders, the voice.
 
-Mixin of :class:`treeaicoach.ui.CoachApp` (split out of ``ui.py`` without any behaviour
-change): the methods use the app state (``self.cfg``, ``self.ctk``, widgets ...) created in
-``CoachApp.__init__`` and run on the Tk thread only. Not meant to be used on its own.
+Mixin of :class:`treeaicoach.ui.CoachApp`: the methods use the app state (``self.cfg``, ``self.ctk``,
+widgets ...) created in ``CoachApp.__init__`` and run on the Tk thread only. Not meant to be used on
+its own. (This was the "Alertes" page before the settings were grouped in one page.)
 """
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import Any
 
-from treeaicoach import ui_kit
 from treeaicoach.ui_common import (
     AUTO_VOICE,
     BORDER_GOLD,
+    BTN_H_SMALL,
+    DANGER_MODES,
     DIM,
     ENGINE_LABELS,
     GOLD,
-    HOTKEY_CHOICES,
-    MUTED,
     PANEL_HI,
     RADIUS,
     TEXT,
+    VOICE_LEVELS,
     Dropdown,
     Segmented,
     _example_phrases,
@@ -35,51 +36,64 @@ from treeaicoach.ui_common import (
 log = logging.getLogger("treeaicoach.ui")   # same logger as before the split
 
 
-class AlertsPageMixin:
-    """Alerts & voice page ("Alertes et voix"): alert switches, voice engine / level, coach extras."""
+def danger_mode(cfg: Any) -> str:
+    """The "Annonce d'un danger" choice from (beep_on_danger, danger_voice): "bip_voix" | "bip" | "voix"."""
+    if not bool(getattr(cfg, "beep_on_danger", True)):
+        return "voix"
+    return "bip" if getattr(cfg, "danger_voice", "bip_voix") == "bip" else "bip_voix"
 
-    # ------------------------------------------------------------------ alerts & voice page
-    def _build_alerts_page(self) -> Any:
-        page, right, body = self._page("Alertes", "Ce que le coach annonce et comment il parle")
-        self._button(right, "Tester la voix", self.test_voice, "secondary", icon="voice", height=26).grid(
-            row=0, column=0)
+
+def danger_mode_fields(mode: str) -> dict[str, Any]:
+    """(beep_on_danger, danger_voice) of an "Annonce d'un danger" choice."""
+    if mode == "voix":
+        return {"beep_on_danger": False, "danger_voice": "bip_voix"}
+    return {"beep_on_danger": True, "danger_voice": "bip" if mode == "bip" else "bip_voix"}
+
+
+class AlertsPageMixin:
+    """Réglages > Voix: what the coach says out loud and with which voice."""
+
+    # ------------------------------------------------------------------ Voix tab
+    def _build_voice_tab(self, body: Any, row: int) -> int:
         ex = _example_phrases()
         self._examples = _example_speech()
 
-        # --- presets -------------------------------------------------------------------
-        s = self._section(body, 0, "Préréglage", "Un clic pour tout régler (alertes et overlay). Tu peux ensuite "
-                                                 "ajuster chaque option.", icon="sliders")
-        _row, slot = self._row(s, "Style du coach", None)
-        labels = [f"  {lbl}  " for _k, lbl in ui_kit.PRESET_LABELS]
-        to_key = {f"  {lbl}  ": k for k, lbl in ui_kit.PRESET_LABELS}
-        self.preset_seg = Segmented(self, slot, labels,
-                                    self.cb(lambda lbl: self.apply_preset(to_key.get(lbl, ""))))
-        self.preset_seg.grid(row=0, column=0)
-        self.preset_lbl = self._row_desc(slot)
-        self._refresh_preset_label()
+        s = self._section(body, row, "Ce que le coach dit", "Seulement ce qui ne peut pas attendre : le reste est "
+                                                            "écrit dans le panneau.")
+        self._section_button(s, "Tester la voix", self.test_voice, icon="voice",
+                             tip="Fait dire une alerte d'exemple au coach.")
+        self._choice_row(s, "voice_level", "Quantité", "Minimal : ganks, « Recule », objectifs à 60 s. Normal : "
+                         "en plus, les gros appels après un combat gagné. Bavard : tout est lu.", VOICE_LEVELS,
+                         segmented=True)
+        self._danger_row(s)
+        self._switch_row(s, "stance_voice", "Annoncer la posture", "« Prudent » ou « Attaque » quand elle change.")
+        if hasattr(self.cfg, "caster_style"):
+            from treeaicoach.hype import STYLE_LABELS  # noqa: PLC0415
 
-        s = self._section(body, 1, "Alertes de gank", "Annonces vocales quand un ennemi menace ta position. "
-                                                      "▶ fait entendre un exemple.", icon="swords")
+            self._choice_row(s, "caster_style", "Mode annonceur", "Sobre : rien n'est lu. Coach : la probabilité "
+                             "de victoire sur les gros retournements. Caster : en plus, des annonces de "
+                             "commentateur.", STYLE_LABELS, segmented=True)
+
+        s = self._section(body, row + 1, "Alertes de gank", "Quand un ennemi menace ta position. ▶ fait entendre "
+                                                            "un exemple.")
         for field, title, key in (("alert_jungler_approach", "Jungler ennemi qui approche", "jungler_approach"),
+                                  ("gank_pre_alert", "Alerte immédiate", None),
                                   ("alert_roam", "Roam d'un autre ennemi", "roam_approach"),
                                   ("alert_collapse", "Plusieurs ennemis convergent", "collapse"),
                                   ("alert_jungler_spotted", "Jungler ennemi aperçu", "jungler_spotted"),
                                   ("alert_laner_mia", "Adversaire de voie disparu", "laner_mia")):
-            self._switch_row(s, field, title, ex[key])
-            self._example_button(key)
-
-        s = self._section(body, 2, "Sensibilité",
-                          "Plus la sensibilité est haute, plus les alertes arrivent tôt (et plus souvent).",
-                          icon="target")
+            desc = ex[key] if key else "« Lee Sin ! » dès que le jungler sort du brouillard près de toi."
+            self._switch_row(s, field, title, desc)
+            if key:
+                self._example_button(key)
         self.radius_lbl: Any = None
-        self._slider_row(s, "sensitivity", "Sensibilité des alertes", self._radius_text(), 0.6, 1.6, 0.05,
-                         lambda v: f"× {fmt_decimal_fr(v, 2)}", float,
-                         on_change=lambda _v: (self._refresh_radius_text(), self._refresh_preset_label()))
+        self._slider_row(s, "sensitivity", "Sensibilité", self._radius_text(), 0.6, 1.6, 0.05,
+                         lambda v: f"× {fmt_decimal_fr(v, 2)}", float, on_change=lambda _v: self._refresh_radius_text())
         self.radius_lbl = self._last_slot.desc_label
 
-        s = self._section(body, 3, "Aides de jeu", "Rappels basés uniquement sur l'API officielle de Riot.",
-                          icon="clock")
-        self._switch_row(s, "objective_timers", "Minuteurs des objectifs", ex["objective_soon"])
+        s = self._section(body, row + 2, "Rappels", "Écrits dans le panneau ; lus à voix haute en quantité "
+                                                    "« Bavard » (l'objectif à 60 s est toujours lu).")
+        self._switch_row(s, "objective_timers", "Annonce des objectifs", ex["objective_soon"])
         self._example_button("objective_soon")
         self._switch_row(s, "recall_reminder", "Rappel pour dépenser ton or", ex["recall_gold"])
         self._example_button("recall_gold")
@@ -89,11 +103,11 @@ class AlertsPageMixin:
         self._example_button("control_ward")
         self._switch_row(s, "death_recap", "Récap de mort", ex["death_recap"])
         self._example_button("death_recap")
-        self._switch_row(s, "break_reminder", "Conseil de pause",
-                         "Après 3 défaites d'affilée : « une pause de 10 minutes aide à rester concentré ».")
+        self._switch_row(s, "item_advice_speak", "Lire les conseils d'achat",
+                         "Désactivé par défaut : le conseil reste écrit.")
 
-        s = self._section(body, 4, "Voix", "La voix neurale (en ligne) est la plus naturelle ; les voix Windows "
-                                           "servent de secours hors ligne.", icon="voice")
+        s = self._section(body, row + 3, "Voix", "La voix neurale (en ligne) est la plus naturelle ; les voix "
+                                                 "Windows servent de secours hors ligne.")
         self._choice_row(s, "voice_engine", "Moteur de voix", "« Automatique » utilise la voix neurale si "
                          "Internet répond, sinon une voix Windows.", self._engine_choices(), width=260,
                          on_change=lambda _v: self._refresh_voice_rows())
@@ -111,77 +125,43 @@ class AlertsPageMixin:
         self.voice_menu.grid(row=0, column=0)
         self._fill_voice_menu()
         self._widgets_by_field["voice_name"] = lambda: self.voice_menu.set(self.cfg.voice_name or AUTO_VOICE)
-        self._slider_row(s, "voice_rate", "Vitesse", "De -10 (lent) à 10 (rapide). Défaut : 2.", -10, 10, 1,
-                         lambda v: f"{int(v):+d}" if int(v) else "0", int)
+        self._slider_row(s, "voice_rate", "Vitesse de la voix Windows", "De -10 (lent) à 10 (rapide). Défaut : 2.",
+                         -10, 10, 1, lambda v: f"{int(v):+d}" if int(v) else "0", int)
         self._slider_row(s, "voice_volume", "Volume", None, 0, 100, 1, lambda v: f"{int(v)} %", int)
-        self._switch_row(s, "beep_on_danger", "Bip avant un danger", "Deux bips courts avant « Gank ! ».")
         self._refresh_voice_rows()
+        return row + 4
 
-        s = self._section(body, 5, "Raccourcis clavier",
-                          "Touches globales (RegisterHotKey, comme Discord ou OBS) : rien n'est envoyé au jeu.",
-                          icon="keyboard")
-        for field, title, desc in (
-                ("hotkey_jungler", "Où est le jungler ?", "Annonce la dernière position connue du jungler ennemi."),
-                ("hotkey_mute", "Couper / rétablir la voix", None),
-                ("hotkey_overlay", "Afficher / masquer l'overlay", None),
-                ("hotkey_ai", "Demander à l'IA", "Conseil d'achat et de macro immédiat (si un fournisseur "
-                 "d'IA est configuré dans Réglages > IA).")):
-            if not hasattr(self.cfg, field):
-                continue
-            cur = getattr(self.cfg, field) or "Désactivé"
-            values = list(HOTKEY_CHOICES) + ([cur] if cur not in HOTKEY_CHOICES else [])
-            self._choice_row(s, field, title, desc, [("" if v == "Désactivé" else v, v) for v in values],
-                             width=150)
-        try:
-            self._build_coach_extras(body, 6)
-        except Exception:
-            log.exception("Cannot build the build-advice / caster sections")
-        self._tabs(page, body, (("Alertes", ("Préréglage", "Alertes de gank", "Sensibilité")),
-                                ("Voix", ("Voix", "Mode annonceur")),
-                                ("Aides", ("Aides de jeu", "Conseils d'achat")),
-                                ("Touches", ("Raccourcis clavier",))))
-        return page
+    def _danger_row(self, body: Any) -> None:
+        """One choice for two settings: is a danger a beep, a beep and a sentence, or a sentence only."""
+        _row, slot = self._row(body, "Annonce d'un danger", "Bip + voix : le bip part tout de suite, la phrase "
+                               "suit si elle est prête. Bip seul : le plus rapide, rien à écouter.")
+        labels = [f"  {lbl}  " for _v, lbl in DANGER_MODES]
+        to_value = {f"  {lbl}  ": v for v, lbl in DANGER_MODES}
+        to_label = {v: f"  {lbl}  " for v, lbl in DANGER_MODES}
 
-    def _build_coach_extras(self, body: Any, row: int) -> None:
-        """Alertes page: build advice switches + "mode annonceur" (hype.py)."""
-        if hasattr(self.cfg, "item_advice"):
-            s = self._section(body, row, "Conseils d'achat", "Le prochain objet adapté à la partie (soins "
-                              "adverses, ennemi très fort, dégâts magiques…), d'après l'API officielle.", icon="star")
-            self._switch_row(s, "item_advice", "Conseils d'achat", "Ligne « Prochain objet » dans le HUD.")
-            self._switch_row(s, "item_advice_toasts", "Bandeau à l'écran",
-                             "Affiche le conseil en bandeau au retour en base, à la mort, aux niveaux 6/11/16.")
-            self._switch_row(s, "item_advice_speak", "Lire les conseils d'achat à voix haute",
-                             "Désactivé par défaut : le conseil reste écrit.")
-        if hasattr(self.cfg, "caster_style"):
-            from treeaicoach.hype import STYLE_LABELS  # noqa: PLC0415
+        def changed(label: str) -> None:
+            mode = to_value.get(label)
+            if mode is None:
+                return
+            upd = {k: v for k, v in danger_mode_fields(mode).items() if hasattr(self.cfg, k)}
+            new = dataclasses.replace(self.cfg, **upd).validated()
+            self._replace_config(new, changed=set(upd))
 
-            s = self._section(body, row + 1, "Mode annonceur",
-                              "Probabilité de victoire en direct et, en style « Caster esport », des annonces "
-                              "enflammées pour les grands moments (multikill, shutdown, ace, vol de Baron).",
-                              icon="star")
-            self._choice_row(s, "caster_style", "Style", "Sobre : rien n'est lu · Coach : la probabilité de "
-                             "victoire est lue sur les gros retournements (+/-15 points, 3 min max) · Caster : "
-                             "en plus, des annonces de commentateur.", STYLE_LABELS, segmented=True)
-            if hasattr(self.cfg, "win_prob_hud"):
-                self._switch_row(s, "win_prob_hud", "Afficher la probabilité de victoire",
-                                 "Dans le HUD et le tableau de bord (modèle sur l'or, kills, tours, dragons, "
-                                 "Baron et Elder).")
+        seg = Segmented(self, slot, labels, self.cb(changed))
+        seg.grid(row=0, column=0)
+        self._danger_seg = seg
 
-    def _row_desc(self, slot: Any) -> Any:
-        """The description label of the row owning ``slot`` (created empty if the row had none)."""
-        lbl = getattr(slot, "desc_label", None)
-        if lbl is None:
-            left = slot.master.grid_slaves(row=0, column=0)[0]
-            lbl = self._label(left, " ", self.fonts.tiny, MUTED, anchor="w", justify="left", wraplength=430)
-            lbl.grid(row=1, column=0, sticky="w", pady=(3, 0))
-            slot.desc_label = lbl
-        return lbl
+        def refresh() -> None:
+            seg.set(to_label.get(danger_mode(self.cfg), labels[0]))
+        refresh()
+        self._widgets_by_field["beep_on_danger"] = refresh
+        self._widgets_by_field["danger_voice"] = refresh
 
     def _example_button(self, key: str) -> None:
         """A small "▶" button in the last row: speaks an example of this alert."""
         slot = self._last_slot
-        b = self.ctk.CTkButton(slot, text="", width=30, height=28, corner_radius=RADIUS, fg_color="transparent",
-                               hover_color=PANEL_HI, border_width=1, border_color=BORDER_GOLD,
+        b = self.ctk.CTkButton(slot, text="", width=BTN_H_SMALL, height=BTN_H_SMALL - 2, corner_radius=RADIUS,
+                               fg_color="transparent", hover_color=PANEL_HI, border_width=1, border_color=BORDER_GOLD,
                                image=self._icon("play", 11, GOLD), command=self.cb(lambda: self.play_example(key)))
         for w in slot.grid_slaves(row=0):
             w.grid_configure(column=int(w.grid_info().get("column", 0)) + 1)
@@ -255,7 +235,7 @@ class AlertsPageMixin:
         return out
 
     def _refresh_voice_rows(self) -> None:
-        """Neural voice row only for auto / neural; Windows voice row only for auto / onecore / sapi."""
+        """Neural voice rows only for auto / neural; Windows voice row only for auto / onecore / sapi."""
         eng = getattr(self.cfg, "voice_engine", "auto")
         for row, show in ((getattr(self, "_neural_row", None), eng in ("auto", "neural")),
                           (getattr(self, "_neural_rate_row", None), eng in ("auto", "neural")),
@@ -283,8 +263,8 @@ class AlertsPageMixin:
         except Exception:
             warn = self.cfg.effective_warn_radius() * 14870.0
             danger = self.cfg.effective_danger_radius() * 14870.0
-        return (f"Rayon d'alerte ≈ {fmt_int_fr(round(warn, -2))} unités · "
-                f"danger ≈ {fmt_int_fr(round(danger, -2))} unités")
+        return (f"Plus haut : alertes plus tôt (et plus souvent). Rayon ≈ {fmt_int_fr(round(warn, -2))} unités, "
+                f"danger ≈ {fmt_int_fr(round(danger, -2))}.")
 
     def _refresh_radius_text(self) -> None:
         if getattr(self, "radius_lbl", None) is not None:
@@ -319,3 +299,4 @@ class AlertsPageMixin:
             self._fill_voice_menu()
 
         self._dispatcher.run(job, done, name="TreeAI-ui-voices")
+

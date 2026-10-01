@@ -12,10 +12,18 @@ raises from its public functions.
 * :class:`ItemAdvisor` - when to say it (death, back in base / purchase, level 6/11/16, an
   enemy becoming fed) with strict anti-spam: the same recommendation is never repeated within
   :data:`REPEAT_S` unless the situation changed. Text only by default (HUD + toast).
+
+The build tables (:data:`CORE`, :data:`NEED_ITEMS`, :data:`SAME_NEED`, :data:`BOOTS_CLASS`,
+:data:`BOOTS_VS`, :data:`START_ITEMS`, :data:`SUPPORT_UPGRADE`, :data:`CHAMPION_BUILDS`) come from
+``assets/item_builds.json`` (``tools/fetch_builds.py``: expert preference lists checked against the
+item data - sold on the Rift, kind, stats, semantic flags); the constants written below are the
+fallback when that file is missing. Items unknown to / not sold by the live item data (runtime
+Data Dragon refresh) are skipped at advice time, so a removed item is never named.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import threading
@@ -45,8 +53,8 @@ TRUE_DMG = frozenset("Vayne Fiora Camille Gwen MasterYi Olaf Darius Garen".split
 HEALERS = frozenset(
     "Aatrox Soraka Yuumi Sona Nami Vladimir Sylas Warwick DrMundo Fiddlesticks Swain Briar Illaoi Olaf "
     "Volibear Kayn Trundle Milio Taric Seraphine Zac Gwen Irelia Samira Aphelios Fiora Udyr Maokai "
-    "Ivern Viego Belveth Nidalee Rakan Bard Ekko XinZhao Nasus Renata Senna".split())
-STRONG_HEALERS = frozenset("Soraka Yuumi Aatrox Vladimir DrMundo Sylas Warwick Swain Briar Illaoi".split())
+    "Ivern Viego Belveth Nidalee Rakan Bard Ekko XinZhao Nasus Renata Senna Zaahen Locke".split())
+STRONG_HEALERS = frozenset("Soraka Yuumi Aatrox Vladimir DrMundo Sylas Warwick Swain Briar Illaoi Zaahen".split())
 HEAVY_CC = frozenset(
     "Leona Nautilus Morgana Lissandra Sejuani Amumu Rell Thresh Ashe Malzahar Skarner Annie Veigar Zyra "
     "Lux Maokai Rammus Alistar Blitzcrank Vi Warwick Ornn Chogath Galio Braum Poppy JarvanIV Zac "
@@ -57,7 +65,7 @@ SHIELDS = frozenset(
     "Lulu Janna Karma Sett Seraphine Lux Orianna Shen Riven Rakan Sion Ivern Renata Milio Yasuo Yone "
     "Camille Mordekaiser Skarner Taric Morgana Rell Sona Diana Rumble TahmKench Poppy Annie Urgot Garen "
     "Ekko Udyr Vi Vex".split())
-BURST = frozenset("Syndra Veigar Annie Brand Lux Viktor Ahri Vex Zoe Hwei Mel Neeko Karthus LeBlanc".split())
+BURST = frozenset("Syndra Veigar Annie Brand Lux Viktor Ahri Vex Zoe Hwei Mel Neeko Karthus Leblanc".split())
 NOT_CRIT = frozenset("KogMaw Varus Kindred Ezreal Corki Senna Kalista Vayne Smolder Kaisa Azir".split())
 CRIT_EXTRA = frozenset("Yasuo Yone Tryndamere Gangplank MasterYi Nilah".split())
 
@@ -103,24 +111,30 @@ def _meta(alias: str) -> Any:
         return None
 
 
+def _damage_type(alias: str) -> str:
+    """"P" / "M" / "X": the champion profile (official Riot client damage type, curated mixed
+    damage) first, the curated :data:`AP` / :data:`MIXED` lists for champions without a profile."""
+    m = _meta(alias)
+    if m is not None and m.known and m.damage in ("P", "M", "X"):
+        return m.damage
+    return "M" if alias in AP else "X" if alias in MIXED else "P"
+
+
 def damage_split(alias: str) -> tuple[float, float, float]:
-    """(physical, magic, true) share of a champion's damage (sums to 1). Curated lists first,
-    then the bundled champion meta (Meraki / Data Dragon) for champions they do not list."""
-    m = None if (alias in AP or alias in MIXED) else _meta(alias)
-    if alias in AP or (m is not None and m.known and m.damage == "M"):
-        ad, ap = 0.1, 0.9
-    elif alias in MIXED or (m is not None and m.known and m.damage == "X"):
-        ad, ap = 0.5, 0.5
-    else:
-        ad, ap = 0.9, 0.1
+    """(physical, magic, true) share of a champion's damage (sums to 1)."""
+    dt = _damage_type(alias)
+    ad, ap = (0.1, 0.9) if dt == "M" else (0.5, 0.5) if dt == "X" else (0.9, 0.1)
     tr = 0.25 if alias in TRUE_DMG else 0.0
     return ad * (1 - tr), ap * (1 - tr), tr
 
 
 def champion_class(alias: str, role: str | None = None) -> str:
+    over = (CHAMPION_BUILDS.get(str(alias or "")) or {}).get("class")
+    if over in CLASSES:
+        return str(over)
     tags = champion_tags(alias)
     primary = tags[0] if tags else "Fighter"
-    ap = alias in AP
+    ap = alias in AP or _damage_type(alias) == "M"
     if alias == "Pyke":
         return "assassin_ad"
     if role == "UTILITY" or primary == "Support":
@@ -427,6 +441,113 @@ TRINKETS = frozenset({3340, 3363, 3364, 3330, 3513})
 BOOTS_GT = 420.0              # first boots from ~7:00 at the latest
 BOOTS2_GT = 780.0             # tier-2 boots from ~13:00
 
+#: starting items per start kind (``champ_select.start_kind``) and why (fallback of the builds file)
+START_ITEMS: dict[str, tuple[int, ...]] = {
+    "support": (3865, 2003, 2003), "jungle_tank": (1103, 2003), "jungle_mobile": (1102, 2003),
+    "jungle": (1101, 2003), "marksman": (1055, 2003), "mage": (1056, 2003, 2003), "tank": (1054, 2003),
+    "fighter": (1055, 2003),
+}
+START_WHY: dict[str, str] = {
+    "support": "l'objet de support : or et balises", "jungle_tank": "familier résistant pour ta jungle",
+    "jungle_mobile": "familier rapide pour ganker tôt", "jungle": "familier offensif pour nettoyer vite",
+    "marksman": "dégâts et vol de vie en voie", "mage": "mana et puissance pour farmer de loin",
+    "tank": "tenir la voie face aux échanges", "fighter": "dégâts et vol de vie en voie",
+}
+#: support quest done (Trésor des mondes, 3867): its free upgrade per class / subclass
+BOUNTY_OF_WORLDS = 3867
+SUPPORT_UPGRADE: dict[str, int] = {"support_tank": 3869, "catcher": 3876, "enchanter": 3870, "mage": 3871,
+                                   "marksman": 3877, "assassin_ad": 3877, "fighter": 3877}
+#: per-champion build exceptions: {"Kayle": {"class": "mage", "core": (3115, ...)}}
+CHAMPION_BUILDS: dict[str, dict[str, Any]] = {}
+#: header of the loaded builds file ({"schema", "version", "patch"}; {} = code fallback)
+BUILDS_INFO: dict[str, Any] = {}
+BUILDS_FILE = "item_builds.json"
+
+
+def _ids_tuple(xs: Any) -> tuple[int, ...]:
+    out = []
+    for x in xs if isinstance(xs, (list, tuple)) else ():
+        if isinstance(x, int) and not isinstance(x, bool) and x > 0:
+            out.append(x)
+    return tuple(out)
+
+
+def apply_builds(data: Any) -> bool:
+    """Replace the build tables with ``data`` (the ``assets/item_builds.json`` format); invalid
+    parts keep the code defaults. Returns True when the file was usable. Never raises."""
+    global CORE, NEED_ITEMS, SAME_NEED, BOOTS_CLASS, BOOTS_VS, START_ITEMS, START_WHY, SUPPORT_UPGRADE
+    global CHAMPION_BUILDS, BUILDS_INFO
+    try:
+        if not isinstance(data, dict) or not isinstance(data.get("core"), dict):
+            return False
+        core = {c: _ids_tuple(v) for c, v in data["core"].items() if c in CLASSES and _ids_tuple(v)}
+        if len(core) < len(CLASSES):
+            return False
+        need = {}
+        for n, by_cls in (data.get("counters") or {}).items():
+            if isinstance(by_cls, dict):
+                need[str(n)] = {c: _ids_tuple(v) for c, v in by_cls.items() if c in CLASSES and _ids_tuple(v)}
+        same = {str(n): frozenset(_ids_tuple(v)) for n, v in (data.get("same_need") or {}).items() if _ids_tuple(v)}
+        boots = data.get("boots") if isinstance(data.get("boots"), dict) else {}
+        bc = {c: int(i) for c, i in (boots.get("class") or {}).items() if c in CLASSES and isinstance(i, int)}
+        bv = {n: int(i) for n, i in (boots.get("vs") or {}).items() if isinstance(i, int)}
+        start = {k: _ids_tuple(v) for k, v in (data.get("start") or {}).items() if _ids_tuple(v)}
+        why = {str(k): str(v) for k, v in (data.get("start_why") or {}).items() if isinstance(v, str)}
+        upg = {str(k): int(i) for k, i in (data.get("support_upgrade") or {}).items() if isinstance(i, int)}
+        champs: dict[str, dict[str, Any]] = {}
+        for alias, row in (data.get("champions") or {}).items():
+            if isinstance(row, dict):
+                r: dict[str, Any] = {}
+                if row.get("class") in CLASSES:
+                    r["class"] = str(row["class"])
+                if _ids_tuple(row.get("core")):
+                    r["core"] = _ids_tuple(row.get("core"))
+                if r:
+                    champs[str(alias)] = r
+        CORE = core
+        NEED_ITEMS = need or NEED_ITEMS
+        SAME_NEED = same or SAME_NEED
+        BOOTS_CLASS = bc or BOOTS_CLASS
+        BOOTS_VS = bv or BOOTS_VS
+        START_ITEMS = start or START_ITEMS
+        START_WHY = {**START_WHY, **why}
+        SUPPORT_UPGRADE = upg or SUPPORT_UPGRADE
+        CHAMPION_BUILDS = champs
+        BUILDS_INFO = {k: data.get(k) for k in ("schema", "version", "patch", "generated") if data.get(k)}
+        return True
+    except Exception:
+        log.warning("Invalid item builds table; code defaults kept", exc_info=True)
+        return False
+
+
+def _load_builds() -> None:
+    try:
+        from treeaicoach.paths import asset_path
+
+        data = json.loads(asset_path(BUILDS_FILE).read_text(encoding="utf-8"))
+    except Exception:
+        log.warning("Item builds unavailable (assets/%s): code defaults", BUILDS_FILE, exc_info=True)
+        return
+    if not apply_builds(data):
+        log.warning("Item builds file rejected (assets/%s): code defaults", BUILDS_FILE)
+
+
+def core_items(alias: str, cls: str) -> tuple[int, ...]:
+    """Core build path of a champion: its own (:data:`CHAMPION_BUILDS`) else its class."""
+    own = (CHAMPION_BUILDS.get(str(alias or "")) or {}).get("core")
+    return tuple(own) if own else CORE.get(cls, ())
+
+
+def support_upgrade(alias: str, cls: str) -> int | None:
+    """Free upgrade of the finished support item (Trésor des mondes) for this champion."""
+    m = _meta(alias)
+    sub = getattr(m, "subclass", "") if m is not None else ""
+    lane = getattr(m, "lane_class", "") if m is not None else ""
+    for key in (("catcher" if sub == "catcher" else ""), (lane if lane in ("mage", "marksman") else ""), cls):
+        if key and key in SUPPORT_UPGRADE:
+            return SUPPORT_UPGRADE[key]
+    return None
+
 
 def situational_buys(game: Any, cls: str, prof: EnemyProfile, owned: Iterable[int], gold_left: float,
                      items: dict[int, Item], objective_soon: bool = False) -> tuple[list[int], str]:
@@ -498,11 +619,19 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
             iid in items[o].parts for o in owned if o in items)
 
     choice: tuple[int, str, str] | None = None
+    # support quest done: the free upgrade of the support item first (it costs nothing)
+    if BOUNTY_OF_WORLDS in owned:
+        up = support_upgrade(me.champion_alias, cls)
+        it = items.get(up) if up is not None else None
+        if it is not None and it.rift and up not in owned:
+            choice = (int(up), "support_upgrade", "ta quête de support est finie : amélioration gratuite")
     # V2 audit: a full counter item (Rappel mortel, Force de la nature...) as the FIRST item breaks the
     # build (no damage / no spike); before the first legendary only cheap counter components
     # (Appel du bourreau, Orbe de l'oubli...) may come before the core item
     first_done = any(o in items and items[o].gold >= LEGENDARY_GOLD and items[o].kind != "boots" for o in owned)
     for need, sev in sorted(prof.needs.items(), key=lambda kv: -kv[1]):
+        if choice is not None:
+            break
         if sev < NEED_MIN or _owned_need(need, owned):
             continue
         fed_need = any(n in prof.fed for n in (prof.names.get(need) or []))   # a fed assassin: rushing is right
@@ -525,7 +654,7 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
             break
     if choice is None:
         # continue the item already started (owned component of a core item), else first core item
-        core = [i for i in CORE.get(cls, ()) if usable(i)]
+        core = [i for i in core_items(me.champion_alias, cls) if usable(i)]
         started = [i for i in core if any(o in items[i].parts for o in owned)]
         pick = (started or core or [None])[0]
         if pick is None:
@@ -641,6 +770,8 @@ class ItemAdvisor:
         return [BuyAdvice(rec.text, f"ACHAT : {rec.item_name.upper()}"[:40], sub[:120],
                           f"item:{rec.item_id}:{rec.need}", moment, rec, t)]
 
+
+_load_builds()
 
 try:  # reload the tables after a runtime Data Dragon update
     from treeaicoach import game_data as _game_data

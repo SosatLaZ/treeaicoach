@@ -273,9 +273,12 @@ def test_vision_reminder_after_3_minutes_without_ward():
 
 
 def test_level6_once():
+    # concrete and champion-aware (game_changers.ULT): Garen's R executes, said once
     sim = Sim().run(300, 400, lambda t: me_at(TOP_TOWER_SAFE) + [icon("LeeSin", "enemy", (0.3, 0.15))],
                     game=lambda t: make_game(t, level=5 if t < 320 else 6))
-    assert sim.texts().count("Utilise ton ultime sur ton adversaire : tu es niveau 6") == 1
+    lines = [x for x in sim.texts() if "ton R" in x or "ultime" in x]
+    assert lines == ["Garde ton R pour achever Darius quand il est bas"]
+    assert "Utilise ton ultime sur ton adversaire : tu es niveau 6" not in sim.texts()     # generic: gone
 
 
 # ------------------------------------------------------------------------------ deep in enemy jungle

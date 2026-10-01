@@ -206,7 +206,7 @@ class OverlayStateMixin:
         elif level >= Level.WARNING and self._grouped(now, me_uv):
             # a gank alarm with my team around me is a team fight: "COMBAT", not "GANK, recule"
             level, text = int(Level.WARNING), "ATTENTION — COMBAT"
-        elif level >= Level.WARNING and self._team_fight_now():
+        elif self._team_fight_now() and (level >= Level.WARNING or self._team_fight_now() != "retreat"):
             # a team fight going on (fight tracker: allies engaged): never the word "GANK" in a 5 v 5;
             # a lost fight (RECULE call) stays red
             if self._team_fight_now() == "retreat":
@@ -373,8 +373,13 @@ class OverlayStateMixin:
             if g is not None:
                 out.update(gauge=int(g.step), gauge_reason=g.reason or None, gauge_since=float(g.since) + to_mono)
             if tip != self._hud_tip_prev:
-                self._hud_tip_prev, self._hud_tip_since = tip, now
-                self._hud_tip_careful = g is not None and int(g.step) <= -1
+                from treeaicoach.engine_coaching import _ticking
+
+                ticking = tip is not None and self._hud_tip_prev is not None and _ticking(tip, self._hud_tip_prev)
+                self._hud_tip_prev = tip
+                if not ticking:              # a countdown ticking is the same line (same age, no fade)
+                    self._hud_tip_since = now
+                    self._hud_tip_careful = g is not None and int(g.step) <= -1
             if tip:
                 out.update(tip_tone=self._tip_tone(tip), tip_since=self._hud_tip_since + to_mono,
                            card_careful=bool(getattr(self, "_hud_tip_careful", False)))

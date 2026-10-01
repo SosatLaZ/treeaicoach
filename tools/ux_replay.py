@@ -104,7 +104,28 @@ class Scenario:
     danger: list = field(default_factory=list)    # (a, b, label): must be RED (gank / 2v1 / siege / ace)
     contacts: list = field(default_factory=list)  # (gt, label): a warning >= 3 s before
     need: list = field(default_factory=list)      # (a, b, label, regex, levels): a card / banner must say it
+    moments: list = field(default_factory=list)   # [Moment]: game-changer moments (value judge)
+    waves: dict = field(default_factory=dict)     # lane -> [(gt, meet)] keyframes (default: oscillating)
     warmup: float = 25.0                          # first seconds not judged (tracker warm-up)
+
+
+@dataclass(frozen=True)
+class Moment:
+    """A scripted moment where a game-changer call is THE thing to say (VALUE judge): between ``a``
+    and ``b`` a card / banner must match ``card`` (levels ``levels``), the voice must say ``voice``
+    (levels ``voice_levels``), and no generic low-value line may take the card meanwhile."""
+
+    a: float
+    b: float
+    label: str
+    card: str
+    voice: str | None = None
+    levels: tuple = ("debutant", "intermediaire", "avance")
+    voice_levels: tuple = ("debutant",)
+
+
+#: "experience" (scripted seconds x rate) needed for each level 1..18
+XP_LEVELS = (0, 35, 85, 150, 230, 325, 425, 530, 640, 755, 875, 1000, 1130, 1265, 1405, 1550, 1700, 1855)
 
 
 def _death_s(gt: float) -> float:
@@ -167,10 +188,10 @@ class ScriptGame:
         return 0.85 if v == "default" else float(v)
 
     def level(self, alias: str, gt: float) -> int:
+        """Monotonic level curve (rate 1: level 2 at 1:50, 3 at 2:40, 6 at 6:40, 11 at ~16:00)."""
         rate = self.sc.xp.get(alias, 0.85 if POS[alias] == "UTILITY" else 1.0)
         x = max(0.0, gt - 75.0) * rate
-        lvl = 1 + int(math.sqrt(x / 7.5)) if x < 400 else 6 + int((x - 400) / 110)
-        return int(max(1, min(18, lvl)))
+        return int(max(1, min(18, sum(1 for th in XP_LEVELS if x >= th))))
 
     def items(self, alias: str, gt: float) -> list[int]:
         rows = self.sc.items.get(alias)
@@ -258,6 +279,9 @@ class ScriptGame:
 
         push = 0.5 + 0.4 * math.sin(gt / 45.0)
         meet = round(0.3 + 0.45 * push, 3)
+        fixed = _keyframes(self.sc.waves.get("top", []), gt)
+        if fixed != "default" and fixed is not None:
+            meet = round(float(fixed), 3)
         state = "pushing" if meet >= 0.58 else "pushed_in" if meet <= 0.42 else "even"
         return {"top": LaneWave("top", ally=5, enemy=4, meet=meet, state=state),
                 "mid": LaneWave("mid", ally=4, enemy=4, meet=0.5, state="even"),
@@ -354,6 +378,9 @@ def _scenarios() -> dict[str, Scenario]:
             (240.0, 0.36), (270.0, 0.5)],
         danger=[(198.0, 214.0, "gank Lee Sin"), (203.0, 214.0, "2 contre 1")],
         contacts=[(200.0, "Lee Sin au contact")])
+    S["losing"] = Scenario(**{**S["losing"].__dict__, "moments": [
+        Moment(316.0, 336.0, "Darius niveau 6 avant moi : recule", r"(?i)^recule|· recule",
+               levels=("debutant", "intermediaire", "avance"))]})
     S["death"] = Scenario(
         "death", "Mort contre Darius puis réapparition", 210.0, 330.0,
         kills=[(250.0, "Darius", "Garen", ["LeeSin"])],
@@ -375,7 +402,10 @@ def _scenarios() -> dict[str, Scenario]:
                "Thresh": [(230.0, "default"), (280.0, (0.64, 0.78)), (330.0, (0.64, 0.78))]},
         events=[(322.0, "DragonKill", "Vi", {"DragonType": "Fire"})],
         need=[(263.0, 280.0, "leur jungler est en bas : jeu côté top", r"(?i)(pousse|tour|plaque|frappe|farm|pression|attaque|joue agressif)",
-               ("debutant",))])
+               ("debutant",))],
+        moments=[Moment(262.0, 285.0, "leur jungler est vu en bas : joue agressif en haut",
+                        r"(?i)joue agressif|frappe|plaque|mets la pression", r"(?i)jungler est en bas",
+                        levels=("debutant", "intermediaire"))])
     S["dragon_jg"] = Scenario(
         "dragon_jg", "Dragon à 5:00 vu par mon jungler (Vi)", 220.0, 340.0, me="Vi",
         paths={"Vi": [(220.0, (0.30, 0.65)), (265.0, (0.60, 0.76)), (330.0, (0.63, 0.73))],
@@ -391,7 +421,9 @@ def _scenarios() -> dict[str, Scenario]:
                "Darius": [(820.0, None)]},
         kills=[(815.0, "Garen", "Darius", [])],
         need=[(851.0, 880.0, "après la tour : prochaine action", r"(?i)\b(va|rejoins|rentre|pousse|aide|prends)\b",
-               ("debutant", "intermediaire"))])
+               ("debutant", "intermediaire"))],
+        moments=[Moment(820.0, 845.0, "Darius est mort : plaque la tour", r"(?i)plaque|frappe (la|leur) tour",
+                        r"(?i)plaque|frappe la tour")])
     S["fight_won"] = Scenario(
         "fight_won", "Combat d'équipe gagné au milieu", 1180.0, 1290.0, late=True,
         paths={a: [(1180.0, "default"), (1200.0, (0.50 + 0.012 * (i - 5), 0.50 + 0.01 * ((i * 3) % 5 - 2))),
@@ -404,7 +436,9 @@ def _scenarios() -> dict[str, Scenario]:
         events=[(1100.0, "DragonKill", "Vi", {"DragonType": "Earth"})],
         hp=[(1180.0, 0.9), (1205.0, 0.7), (1215.0, 0.5), (1240.0, 0.55)],
         need=[(1211.0, 1240.0, "après le combat gagné (3 morts, Baron en vie) : Baron", r"(?i)baron",
-               ("debutant", "intermediaire", "avance"))])
+               ("debutant", "intermediaire", "avance"))],
+        moments=[Moment(1211.0, 1240.0, "3 ennemis morts, Baron en vie : Baron maintenant", r"(?i)baron",
+                        r"(?i)morts : baron", voice_levels=("debutant", "intermediaire"))])
     S["fight_lost"] = Scenario(
         "fight_lost", "Combat d'équipe perdu, je suis bas", 1300.0, 1400.0, late=True,
         paths={**{a: [(1300.0, "default"), (1320.0, (0.48 + 0.012 * (i - 5), 0.52)), (1345.0, "default")]
@@ -443,7 +477,60 @@ def _scenarios() -> dict[str, Scenario]:
                "LeeSin": [(1620.0, "default"), (1650.0, None)], "Darius": [(1620.0, "default"), (1650.0, None)],
                "Garen": [(1620.0, "default"), (1632.0, (0.43, 0.47)), (1660.0, (0.40, 0.38)), (1700.0, (0.36, 0.32))],
                "Vi": [(1620.0, "default"), (1632.0, (0.41, 0.46)), (1660.0, (0.38, 0.36)), (1700.0, (0.35, 0.31))]},
-        need=[(1656.0, 1690.0, "3 ennemis morts : Baron", r"(?i)baron", ("debutant", "intermediaire", "avance"))])
+        need=[(1656.0, 1690.0, "3 ennemis morts : Baron", r"(?i)baron", ("debutant", "intermediaire", "avance"))],
+        moments=[Moment(1656.0, 1690.0, "3 ennemis morts : Baron maintenant", r"(?i)baron", r"(?i)morts : baron",
+                        voice_levels=("debutant", "intermediaire"))])
+    # ---------------------------------------------------------------- game-changer scenarios (VALUE judge)
+    S["jungler_bot"] = Scenario(
+        "jungler_bot", "Leur jungler est vu en bas (gank bot) pendant que je suis top", 420.0, 520.0,
+        paths={"LeeSin": [(420.0, None), (452.0, (0.78, 0.86)), (466.0, (0.82, 0.84)), (470.0, None)]},
+        waves={"top": [(420.0, 0.5)]},
+        moments=[Moment(451.0, 472.0, "leur jungler est vu en bas : joue agressif en haut",
+                        r"(?i)joue agressif|frappe|plaque|mets la pression", r"(?i)jungler est en bas",
+                        levels=("debutant", "intermediaire"))])
+    S["laner_recall"] = Scenario(
+        "laner_recall", "Darius rentre en base pendant que ma vague pousse : plaques", 540.0, 620.0,
+        paths={"Darius": [(540.0, "default"), (552.0, (0.11, 0.15)), (556.0, (0.12, 0.13)), (557.0, None),
+                          (565.0, FOUNTAIN["CHAOS"]), (592.0, FOUNTAIN["CHAOS"]), (593.0, None)],
+               "Garen": [(540.0, ME_TOP), (558.0, (0.09, 0.21)), (620.0, (0.09, 0.21))]},
+        waves={"top": [(540.0, 0.66)]},
+        moments=[Moment(566.0, 590.0, "Darius est rentré et ma vague pousse : prends les plaques",
+                        r"(?i)plaque|frappe (la|leur) tour", r"(?i)plaque|frappe la tour")])
+    fight3 = {a: [(1470.0, "default"), (1482.0, (0.50 + 0.012 * (i - 5), 0.50 + 0.01 * ((i * 3) % 5 - 2))),
+                  (1493.0, (0.50 + 0.012 * (i - 5), 0.50 + 0.01 * ((i * 3) % 5 - 2))),
+                  (1502.0, (0.42 + 0.01 * i, 0.42) if TEAM[a] == "ORDER" else (0.82, 0.16)),
+                  (1520.0, (0.36 + 0.01 * i, 0.34) if TEAM[a] == "ORDER" else (0.82, 0.16))]
+              for i, a in enumerate(ALIASES)}
+    S["baron_3v0"] = Scenario(
+        "baron_3v0", "Combat gagné 3 contre 0 à 24:50, Baron en vie", 1470.0, 1550.0, late=True,
+        kills=[(1488.0, "Garen", "Ahri", ["Vi"]), (1490.0, "Jinx", "Caitlyn", ["Thresh"]),
+               (1492.0, "Vi", "Nautilus", ["Lux", "Garen"])],
+        paths=fight3, hp=[(1470.0, 0.9), (1488.0, 0.7), (1500.0, 0.65)],
+        moments=[Moment(1494.0, 1520.0, "3 ennemis morts, Baron en vie : Baron maintenant", r"(?i)baron",
+                        r"(?i)morts : baron", voice_levels=("debutant", "intermediaire"))])
+    fed_paths = {
+        "Garen": [(470.0, (0.09, 0.25)), (480.0, (0.09, 0.25)), (503.0, FOUNTAIN["ORDER"]), (512.0, FOUNTAIN["ORDER"]),
+                  (545.0, ME_TOP), (546.0, "default"), (590.0, (0.09, 0.25)), (600.0, (0.09, 0.25)),
+                  (626.0, FOUNTAIN["ORDER"]), (634.0, FOUNTAIN["ORDER"]), (662.0, ME_TOP), (670.0, (0.09, 0.25)),
+                  (680.0, (0.09, 0.25)), (708.0, FOUNTAIN["ORDER"]), (728.0, FOUNTAIN["ORDER"]), (750.0, (0.08, 0.36))],
+        "Darius": [(470.0, (0.10, 0.22)), (479.0, (0.09, 0.24)), (484.0, (0.10, 0.18)), (485.0, "default"),
+                   (590.0, (0.10, 0.22)), (599.0, (0.09, 0.24)), (604.0, (0.10, 0.18)), (605.0, "default"),
+                   (670.0, (0.10, 0.22)), (679.0, (0.09, 0.24)), (684.0, (0.10, 0.18)), (685.0, "default")]}
+    S["fed_enemy"] = Scenario(
+        "fed_enemy", "Darius 5/0 (3 fois sur moi) : achat défensif au retour", 470.0, 735.0,
+        kills=[(480.0, "Darius", "Garen", []), (540.0, "Darius", "Vi", []), (600.0, "Darius", "Garen", ["LeeSin"]),
+               (640.0, "Darius", "Lux", []), (680.0, "Darius", "Garen", [])],
+        paths=fed_paths, xp={"Darius": 1.25, "Garen": 0.95},
+        items={"Darius": [(0, [1055]), (500, [1055, 3044]), (620, [3071]), (700, [3071, 3047])],
+               "Garen": [(0, [1055]), (510, [1055, 1001])]},
+        gold=[(470.0, 600.0), (700.0, 1500.0), (726.0, 1500.0), (726.5, 350.0)],
+        hp=[(470.0, 0.6), (479.0, 0.1), (479.9, 0.05), (480.0, 1.0), (590.0, 0.5), (599.0, 0.08), (599.9, 0.04),
+            (600.0, 1.0), (670.0, 0.4), (679.0, 0.05), (679.9, 0.03), (680.0, 1.0)],
+        danger=[(476.0, 479.5, "Darius sur moi à peu de vie"), (595.0, 599.5, "Darius sur moi à peu de vie"),
+                (674.0, 679.5, "Darius sur moi à peu de vie")],
+        contacts=[(480.0, "mort contre Darius"), (600.0, "mort contre Darius"), (680.0, "mort contre Darius")],
+        moments=[Moment(708.0, 726.0, "Darius 5/0 : achat défensif au retour",
+                        r"(?i)achète (cotte de mailles|armure d'étoffe)")])
     return S
 
 
@@ -668,6 +755,27 @@ TYPO = re.compile(r"  |\s[,.]|\.\.(?!\.)|\b(\w+) \1\b|\ba dire\b|[(][^)]*$")
 #: budgets per game minute outside danger: (card changes, banners, voice lines)
 BUDGET = {"debutant": (6, 2, 3), "intermediaire": (5, 2, 2), "avance": (4, 1, 2), "expert": (3, 1, 2)}
 
+# ---- VALUE judge (does the line change what a beginner does in the next 10 s, is it the best now?)
+#: generic / low-value lines: never on the card while a game-changer moment is on
+GENERIC = re.compile(r"(?i)(sbires/min|par minute|score de vision|laisse ta tour taper|regarde la carte|"
+                     r"avance seulement derrière|ne donne pas le premier sang|tape le plus proche|"
+                     r"reste collé à ton tireur|farme jusqu'à|reste sur ta vague|pense à|"
+                     r"prends les sbires sous ta tour|^farme prudemment|^joue prudent : reste sous ta tour|"
+                     r"^pose ta balise|^balise le buisson|dépense tes)")
+#: statistics / tutorial lines: never on a beginner's card at all
+STATS = re.compile(r"(?i)(sbires/min|\d par minute|score de vision|laisse ta tour taper|regarde la carte pendant)")
+#: non-danger voice lines per rolling minute, one topic per minute, length of a spoken line
+VOICE_PER_MIN = 2
+VOICE_TOPIC_S = 60.0
+VOICE_MAX_CHARS = 42
+#: where an instruction sends the player (card / banner agreement)
+DEST = (("top", r"\bva top\b|\bvers le haut\b|\bva en haut\b|\bhéraut\b|\blarves\b"),
+        ("bot", r"\bva bot\b|\bva en bas\b|\bdragon\b|\bancestral\b"),
+        ("mid", r"\bva mid\b|\bau milieu\b|\bva au milieu\b"),
+        ("baron", r"\bbaron\b"),
+        ("base", r"\brentre\b|\bta base\b|\bfontaine\b|\bnexus\b"))
+_OBJ_TIMER = re.compile(r"(?i)\b(baron|dragon|héraut|larves|ancestral)\b[^:]*?\bdans (?:(\d+):(\d\d)|(\d+) s)")
+
 
 def _shape(card: Any) -> Any:
     """A card / banner without its live numbers (a ticking countdown is not a new card); a banner
@@ -877,11 +985,12 @@ def judge(rp: Replay) -> list[Violation]:
             continue
         if not any(a - 10.0 <= f.gt <= b and f.beep for f in rp.frames):
             out.append(Violation(a, "voix:bip-manquant", f"pas de bip pendant : {label}", 4))
+    out += judge_value(rp, frames)
     # ---------------------------------------------------------------- voice
     voice_level = {"debutant": "normal"}.get(lvl, "minimal")
     for f in frames:
         for text, key, lv in f.voice:
-            ok = _voice_whitelisted(key, lv, voice_level, POS[sc.me], f.me_uv, f.gt)
+            ok = _voice_whitelisted(key, lv, voice_level, POS[sc.me], f.me_uv, f.gt, lvl)
             if not ok:
                 out.append(Violation(f.gt, "voix:hors-liste", f"{text!r} (clé {key or '?'})", 3))
             if f.fight and lv < 2 and "call:retreat" not in key:
@@ -911,10 +1020,145 @@ def judge(rp: Replay) -> list[Violation]:
     return out
 
 
-def _voice_whitelisted(key: str, level: int, voice_level: str, role: str, me_uv: Any, gt: float) -> bool:
+def _dest(text: str) -> set[str]:
+    """Places an instruction sends the player to (first clause only: "Va top : Héraut dans 1:00")."""
+    head = str(text or "").split(" · ", 1)[-1].split(" : ", 1)[0].lower()
+    if not re.match(r"(?i)^(va|rejoins|rentre|prends|aide|pousse ta vague puis va|regroupe)", head):
+        return set()
+    return {k for k, rx in DEST if re.search(rx, head)}
+
+
+def _objective_truth(sc: Scenario, gt: float) -> dict[str, tuple[bool, float | None]]:
+    """``key -> (alive, seconds before the spawn)`` from the 2026 timers + the scripted kills."""
+    import json
+
+    from treeaicoach import paths as _p  # noqa: F401  (assets path)
+
+    try:
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(here, "treeaicoach", "assets", "objectives.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return {}
+    out: dict[str, tuple[bool, float | None]] = {}
+    kills = {"dragon": "DragonKill", "baron": "BaronKill", "herald": "HeraldKill"}
+    for key, fr in (("dragon", "dragon"), ("baron", "baron"), ("herald", "héraut"), ("grubs", "larves")):
+        row = data.get(key) or {}
+        first = row.get("first")
+        if first is None:
+            continue
+        spawn = float(first)
+        for tt, ev, _k, _x in sorted(sc.events):
+            if ev == kills.get(key) and tt <= gt and row.get("respawn"):
+                spawn = tt + float(row["respawn"])
+        despawn = row.get("despawn")
+        if despawn is not None and gt >= float(despawn):
+            continue
+        out[fr] = (gt >= spawn, max(0.0, spawn - gt))
+    return out
+
+
+def judge_value(rp: Replay, frames: list[Frame]) -> list[Violation]:
+    """The VALUE judge: missed game-changer moments (text and voice), generic lines shown while a
+    game changer was due, statistics on a beginner's card, voice budget / topic repeats / length,
+    card and banner sending the player to different places, stale objective countdowns, a death
+    without its lesson."""
+    sc, lvl = rp.scenario, rp.level
+    out: list[Violation] = []
+    in_danger = lambda gt: any(a <= gt <= b for a, b, _l in sc.danger)  # noqa: E731
+    # ---- game-changer moments
+    for m in sc.moments:
+        win = [f for f in rp.frames if m.a <= f.gt <= m.b]
+        hit = [f.gt for f in win if (f.card is not None and re.search(m.card, f.card[1]))
+               or (f.banner is not None and re.search(m.card, f.banner[1]))]
+        if lvl in m.levels:
+            if not hit:
+                out.append(Violation(m.a, "valeur:moment-manqué", f"rien entre {fmt(m.a)} et {fmt(m.b)} : {m.label}", 5))
+            first = hit[0] if hit else m.b
+            for f in win:
+                if f.gt >= first:
+                    break
+                if f.card is not None and GENERIC.search(f.card[1].split(" · ", 1)[-1]):
+                    out.append(Violation(f.gt, "valeur:générique", f"{f.card[1]!r} au lieu de : {m.label}", 3))
+                    break
+        if m.voice and lvl in m.voice_levels:
+            said = any(re.search(m.voice, text) for f in rp.frames if m.a <= f.gt <= m.b + 2.0
+                       for text, _k, _l in f.voice)
+            if not said:
+                out.append(Violation(m.a, "voix:moment-manqué", f"pas de voix entre {fmt(m.a)} et {fmt(m.b)} : "
+                                                                 f"{m.label}", 4))
+    # ---- statistics / tutorial lines on a beginner's card
+    if lvl == "debutant":
+        seen: set[str] = set()
+        for f in frames:
+            if f.card is not None and STATS.search(f.card[1]) and _norm(f.card[1]) not in seen:
+                seen.add(_norm(f.card[1]))
+                out.append(Violation(f.gt, "valeur:statistique", f"{f.card[1]!r} (ne change rien aux 10 s suivantes)", 2))
+    # ---- voice: budget, topic repeats, length
+    calm: list[tuple[float, str]] = []
+    for f in frames:
+        for text, key, lv in f.voice:
+            if len(text) > VOICE_MAX_CHARS:
+                out.append(Violation(f.gt, "voix:longue", f"{text!r} ({len(text)} car. > {VOICE_MAX_CHARS})", 2))
+            kind = key.split("|", 1)[0]
+            if lv >= 2 or kind in ("jungler_approach", "roam_approach", "collapse", "jungler_where") \
+                    or "call:retreat" in key or "siege" in key:
+                continue
+            calm.append((f.gt, text))
+    for i, (t1, x1) in enumerate(calm):
+        n = sum(1 for t2, _x in calm if t1 <= t2 < t1 + 60.0)
+        if n > VOICE_PER_MIN:
+            out.append(Violation(t1, "voix:budget", f"{n} phrases (hors danger) en 60 s à partir de {fmt(t1)}", 2))
+            break
+        for t2, x2 in calm[i + 1:]:
+            if t2 - t1 < VOICE_TOPIC_S and _norm(x2) == _norm(x1):
+                out.append(Violation(t2, "voix:sujet-répété", f"{x2!r} déjà dit il y a {t2 - t1:.0f} s", 2))
+    # ---- card and banner agree; objective countdowns are true
+    told: set[tuple[str, str]] = set()
+    stale: set[str] = set()
+    for f in frames:
+        if f.card is not None and f.banner is not None and f.banner[0] not in ("danger", "retreat") \
+                and not _is_alarm(f.card):
+            dc, db = _dest(f.card[1]), _dest(f.banner[1].split(" : ", 1)[-1])
+            if dc and db and not (dc & db) and (f.card[1], f.banner[1]) not in told:
+                told.add((f.card[1], f.banner[1]))
+                out.append(Violation(f.gt, "incohérence:carte-bandeau", f"carte {f.card[1]!r} / bandeau "
+                                                                          f"{f.banner[1]!r}", 4))
+        truth = None
+        for text in ([f.card[1]] if f.card else []) + ([f.banner[1]] if f.banner else []):
+            mm = _OBJ_TIMER.search(text)
+            if mm is None:
+                continue
+            truth = truth if truth is not None else _objective_truth(sc, f.gt)
+            key = mm.group(1).lower()
+            said = float(mm.group(4)) if mm.group(4) else 60.0 * float(mm.group(2)) + float(mm.group(3))
+            alive, rem = truth.get(key, (False, None))
+            if (alive or (rem is not None and abs(rem - said) > 15.0)) and _shape((None, text)) not in stale:
+                stale.add(_shape((None, text)))
+                out.append(Violation(f.gt, "état:objectif-périmé", f"{text!r} alors que {key} "
+                                     f"{'est déjà là' if alive else f'apparaît dans {int(rem or 0)} s'}", 4))
+    # ---- one concrete lesson per death (beginner / intermediate)
+    if lvl in ("debutant", "intermediaire"):
+        game = ScriptGame(sc)
+        for tk, _k, v, _a in sc.kills:
+            if v != sc.me or not (sc.t0 + sc.warmup <= tk <= sc.t1 - 8.0) or in_danger(tk) or in_danger(tk + 3.0):
+                continue
+            end = min(sc.t1, tk + _death_s(tk) - 1.0)
+            ok = any(tk + 1.0 <= f.gt <= end and f.dead and f.card is not None and f.card[1] for f in rp.frames)
+            if not ok and game.dead_until(sc.me, tk + 1.0) is not None:
+                out.append(Violation(tk, "valeur:leçon-mort", "aucune leçon écrite pendant la mort", 3))
+    return out
+
+
+def _voice_whitelisted(key: str, level: int, voice_level: str, role: str, me_uv: Any, gt: float,
+                       skill: str = "debutant") -> bool:
+    from treeaicoach import game_changers as gcm
     from treeaicoach import voice_policy as vp
 
     kind, _, key = key.partition("|")
+    if key.startswith("gc:"):                     # game changer: its class decides who hears it
+        cls = key.split(":")[1] if key.count(":") >= 2 else ""
+        return skill in gcm.VOICE_LEVELS.get(cls, frozenset())
     if kind in ("jungler_approach", "roam_approach", "collapse", "jungler_where"):
         return True
     if level >= 2 or key.startswith("call:retreat"):

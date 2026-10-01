@@ -1,0 +1,1031 @@
+{
+ "coords": "Minimap uv in ABSOLUTE map coordinates (u left -> right, v top -> bottom; blue base bottom-left). The minimap is never flipped for the red team and lanes / epic pits are the same for both teams, so spots are NOT mirrored: 'side' says whose jungle a spot is in (blue / red / null = river, neutral) and wards.WardSpot.area_for(team) turns it into own / enemy / river. 'label' is the French label for a blue player, 'label_red' for a red player (team-owned spots).",
+ "fields": {
+  "after_rift": "Faelight that only appears once the Elemental Rift transformed (after the 2nd elemental dragon)",
+  "control": "good control ward spot (brush / pit)",
+  "faelight": "Faelight pad (26.1+): a ward on it gets +25 % vision radius and reveals a bonus region for 45 s",
+  "from_s": "not worth warding before this game time (s)",
+  "objective": "dragon | baron: pit approaches (the baron pit also hosts the Voidgrubs 8:00-14:45 and the Herald 15:00-19:45)",
+  "phases": "game phases where the spot matters (phase.py: laning / mid / late)",
+  "roles": "roles for which it is a lane / routine spot (Live Client names)",
+  "until_s": "not worth warding after this game time (s), null = never stale"
+ },
+ "generated": "2026-10-01",
+ "map": {
+  "camps": [
+   {
+    "camp": "wolves",
+    "uv": [
+     0.2542,
+     0.5698
+    ],
+    "x": 3781,
+    "y": 6444
+   },
+   {
+    "camp": "blue",
+    "uv": [
+     0.257,
+     0.4726
+    ],
+    "x": 3821,
+    "y": 7901
+   },
+   {
+    "camp": "gromp",
+    "uv": [
+     0.1419,
+     0.4358
+    ],
+    "x": 2111,
+    "y": 8451
+   },
+   {
+    "camp": "blue",
+    "uv": [
+     0.7419,
+     0.5333
+    ],
+    "x": 11032,
+    "y": 6991
+   },
+   {
+    "camp": "red",
+    "uv": [
+     0.5222,
+     0.7316
+    ],
+    "x": 7765,
+    "y": 4020
+   },
+   {
+    "camp": "red",
+    "uv": [
+     0.4776,
+     0.2723
+    ],
+    "x": 7102,
+    "y": 10901
+   },
+   {
+    "camp": "gromp",
+    "uv": [
+     0.8527,
+     0.5709
+    ],
+    "x": 12680,
+    "y": 6428
+   },
+   {
+    "camp": "wolves",
+    "uv": [
+     0.7403,
+     0.4401
+    ],
+    "x": 11008,
+    "y": 8387
+   },
+   {
+    "camp": "raptors",
+    "uv": [
+     0.4563,
+     0.6339
+    ],
+    "x": 6786,
+    "y": 5483
+   },
+   {
+    "camp": "raptors",
+    "uv": [
+     0.5371,
+     0.3677
+    ],
+    "x": 7987,
+    "y": 9471
+   },
+   {
+    "camp": "krugs",
+    "uv": [
+     0.5704,
+     0.8194
+    ],
+    "x": 8482,
+    "y": 2706
+   },
+   {
+    "camp": "krugs",
+    "uv": [
+     0.4248,
+     0.1892
+    ],
+    "x": 6317,
+    "y": 12146
+   },
+   {
+    "camp": "herald",
+    "uv": [
+     0.3321,
+     0.3068
+    ],
+    "x": 4939,
+    "y": 10384
+   },
+   {
+    "camp": "baron",
+    "uv": [
+     0.3367,
+     0.301
+    ],
+    "x": 5007,
+    "y": 10471
+   },
+   {
+    "camp": "scuttle",
+    "uv": [
+     0.2959,
+     0.3591
+    ],
+    "x": 4400,
+    "y": 9600
+   },
+   {
+    "camp": "scuttle",
+    "uv": [
+     0.7061,
+     0.6549
+    ],
+    "x": 10500,
+    "y": 5170
+   }
+  ],
+  "faelights": {
+   "ChaosBaseBot": {
+    "after_rift": false,
+    "uv": [
+     0.795,
+     0.3391
+    ],
+    "x": 11822.1,
+    "y": 9900.0
+   },
+   "ChaosBaseTop": {
+    "after_rift": false,
+    "uv": [
+     0.6607,
+     0.2103
+    ],
+    "x": 9823.9,
+    "y": 11830.3
+   },
+   "ChaosSplitPushBot": {
+    "after_rift": true,
+    "uv": [
+     0.8718,
+     0.6059
+    ],
+    "x": 12963.0,
+    "y": 5903.3
+   },
+   "ChaosSplitPushTop": {
+    "after_rift": true,
+    "uv": [
+     0.3561,
+     0.1307
+    ],
+    "x": 5294.8,
+    "y": 13022.0
+   },
+   "OrderBaseBot": {
+    "after_rift": false,
+    "uv": [
+     0.3344,
+     0.7934
+    ],
+    "x": 4972.3,
+    "y": 3094.7
+   },
+   "OrderBaseTop": {
+    "after_rift": false,
+    "uv": [
+     0.1951,
+     0.6607
+    ],
+    "x": 2900.7,
+    "y": 5082.0
+   },
+   "OrderSplitPushBot": {
+    "after_rift": true,
+    "uv": [
+     0.6234,
+     0.8566
+    ],
+    "x": 9269.7,
+    "y": 2148.4
+   },
+   "OrderSplitPushTop": {
+    "after_rift": true,
+    "uv": [
+     0.1571,
+     0.3515
+    ],
+    "x": 2336.8,
+    "y": 9714.1
+   },
+   "RiverPixelBot": {
+    "after_rift": false,
+    "uv": [
+     0.7755,
+     0.7427
+    ],
+    "x": 11531.5,
+    "y": 3853.6
+   },
+   "RiverPixelTop": {
+    "after_rift": false,
+    "uv": [
+     0.2249,
+     0.2404
+    ],
+    "x": 3345.0,
+    "y": 11379.0
+   },
+   "RiverWallBot": {
+    "after_rift": false,
+    "uv": [
+     0.6764,
+     0.595
+    ],
+    "x": 10058.5,
+    "y": 6066.5
+   },
+   "RiverWallTop": {
+    "after_rift": false,
+    "uv": [
+     0.3305,
+     0.4294
+    ],
+    "x": 4914.4,
+    "y": 8547.8
+   }
+  },
+  "source": "CommunityDragon base_srx.materials.bin (map placeables of the live patch), tools/fetch_map.py"
+ },
+ "patch": "26.19",
+ "schema": 2,
+ "sources": {
+  "game": "Faelight pads from the game files of the live patch: CommunityDragon game/data/maps/mapgeometry/map11/base_srx.materials.bin, MapPlaceableContainer MapGroup 'FaerieLightsGroup_<name>' (x, y game units -> uv with render.game_to_uv); the 4 'SplitPush' pads appear after the Elemental Rift transformation (League of Legends Wiki 'Faelights', CC BY-SA 3.0). tools/fetch_map.py refreshes them.",
+  "manual": "Classic ward spots placed on the official minimap texture (2dlevelminimap_base_baron1.png, walkable pixel after a 5x5 erosion) and compared with the real 2026 minimap crops (tests/fixtures/real)."
+ },
+ "spots": [
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": false,
+   "from_s": 120,
+   "id": "pixel_top",
+   "label": "buisson pixel (rivière du haut)",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "MIDDLE",
+    "JUNGLE",
+    "UTILITY"
+   ],
+   "side": null,
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.414,
+    0.395
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": false,
+   "from_s": 120,
+   "id": "pixel_bot",
+   "label": "buisson pixel (rivière du bas)",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "MIDDLE",
+    "JUNGLE",
+    "UTILITY"
+   ],
+   "side": null,
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.586,
+    0.605
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": true,
+   "from_s": 120,
+   "game": "RiverPixelTop",
+   "game_xy": [
+    3345.0,
+    11379.0
+   ],
+   "id": "river_top_lane",
+   "label": "buisson de rivière en haut (lampe féerique)",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "TOP",
+    "JUNGLE"
+   ],
+   "side": null,
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.2249,
+    0.2404
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": true,
+   "from_s": 120,
+   "game": "RiverPixelBot",
+   "game_xy": [
+    11531.5,
+    3853.6
+   ],
+   "id": "river_bot_lane",
+   "label": "buisson de rivière en bas (lampe féerique)",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "BOTTOM",
+    "UTILITY",
+    "JUNGLE"
+   ],
+   "side": null,
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.7755,
+    0.7427
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": false,
+   "from_s": 240,
+   "id": "dragon_front",
+   "label": "devant le dragon (rivière)",
+   "objective": "dragon",
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "BOTTOM",
+    "UTILITY",
+    "JUNGLE"
+   ],
+   "side": null,
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.598,
+    0.678
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": false,
+   "from_s": 420,
+   "id": "baron_front",
+   "label": "devant le Baron (rivière)",
+   "objective": "baron",
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "TOP",
+    "JUNGLE"
+   ],
+   "side": null,
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.373,
+    0.367
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": true,
+   "from_s": 180,
+   "game": "RiverWallTop",
+   "game_xy": [
+    4914.4,
+    8547.8
+   ],
+   "id": "fae_banana_top",
+   "label": "lampe féerique face au Baron (mur de rivière)",
+   "objective": "baron",
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "MIDDLE",
+    "JUNGLE"
+   ],
+   "side": null,
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.3305,
+    0.4294
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": true,
+   "from_s": 180,
+   "game": "RiverWallBot",
+   "game_xy": [
+    10058.5,
+    6066.5
+   ],
+   "id": "fae_banana_bot",
+   "label": "lampe féerique face au dragon (mur de rivière)",
+   "objective": "dragon",
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "MIDDLE",
+    "JUNGLE",
+    "UTILITY"
+   ],
+   "side": null,
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.6764,
+    0.595
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": false,
+   "from_s": 150,
+   "id": "tri_own",
+   "label": "tri-buisson de ta jungle (haut)",
+   "label_red": "tri-buisson ennemi (haut)",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "TOP",
+    "JUNGLE"
+   ],
+   "side": "blue",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.137,
+    0.346
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": false,
+   "from_s": 150,
+   "id": "tri_enemy",
+   "label": "tri-buisson ennemi (bas)",
+   "label_red": "tri-buisson de ta jungle (bas)",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "BOTTOM",
+    "UTILITY"
+   ],
+   "side": "red",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.887,
+    0.67
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": false,
+   "from_s": 120,
+   "id": "raptors_own",
+   "label": "entrée de tes raptors",
+   "label_red": "raptors ennemis",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "MIDDLE",
+    "JUNGLE"
+   ],
+   "side": "blue",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.439,
+    0.58
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": false,
+   "from_s": 120,
+   "id": "raptors_enemy",
+   "label": "raptors ennemis",
+   "label_red": "entrée de tes raptors",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "MIDDLE",
+    "JUNGLE"
+   ],
+   "side": "red",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.561,
+    0.42
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": false,
+   "from_s": 240,
+   "id": "dragon_own_entrance",
+   "label": "entrée du dragon de ton côté",
+   "label_red": "entrée du dragon côté ennemi",
+   "objective": "dragon",
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "UTILITY",
+    "JUNGLE"
+   ],
+   "side": "blue",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.6,
+    0.74
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": false,
+   "from_s": 240,
+   "id": "dragon_enemy_entrance",
+   "label": "entrée du dragon côté ennemi",
+   "label_red": "entrée du dragon de ton côté",
+   "objective": "dragon",
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "UTILITY",
+    "JUNGLE"
+   ],
+   "side": "red",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.699,
+    0.619
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": false,
+   "from_s": 420,
+   "id": "baron_own_entrance",
+   "label": "entrée du Baron de ton côté",
+   "label_red": "entrée du Baron côté ennemi",
+   "objective": "baron",
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "JUNGLE",
+    "MIDDLE"
+   ],
+   "side": "blue",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.301,
+    0.381
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": true,
+   "faelight": false,
+   "from_s": 420,
+   "id": "baron_enemy_entrance",
+   "label": "entrée du Baron côté ennemi",
+   "label_red": "entrée du Baron de ton côté",
+   "objective": "baron",
+   "phases": [
+    "laning",
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "JUNGLE",
+    "MIDDLE"
+   ],
+   "side": "red",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.4,
+    0.26
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": false,
+   "from_s": 90,
+   "id": "bluebuff_own",
+   "label": "ton buff bleu",
+   "label_red": "buff bleu ennemi",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "JUNGLE"
+   ],
+   "side": "blue",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.256,
+    0.473
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": false,
+   "from_s": 90,
+   "id": "redbuff_own",
+   "label": "ton buff rouge",
+   "label_red": "buff rouge ennemi",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "JUNGLE"
+   ],
+   "side": "blue",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.52,
+    0.73
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": false,
+   "from_s": 90,
+   "id": "bluebuff_enemy",
+   "label": "buff bleu ennemi",
+   "label_red": "ton buff bleu",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "JUNGLE"
+   ],
+   "side": "red",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.744,
+    0.527
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": false,
+   "from_s": 90,
+   "id": "redbuff_enemy",
+   "label": "buff rouge ennemi",
+   "label_red": "ton buff rouge",
+   "objective": null,
+   "phases": [
+    "laning",
+    "mid"
+   ],
+   "roles": [
+    "JUNGLE"
+   ],
+   "side": "red",
+   "src": "manual",
+   "until_s": null,
+   "uv": [
+    0.48,
+    0.27
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": true,
+   "from_s": 840,
+   "game": "OrderBaseTop",
+   "game_xy": [
+    2900.7,
+    5082.0
+   ],
+   "id": "fae_gate_top",
+   "label": "lampe féerique à la sortie de ta base (côté haut)",
+   "label_red": "lampe féerique à la sortie de leur base (côté haut)",
+   "objective": null,
+   "phases": [
+    "mid",
+    "late"
+   ],
+   "roles": [],
+   "side": "blue",
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.1951,
+    0.6607
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": true,
+   "from_s": 840,
+   "game": "OrderBaseBot",
+   "game_xy": [
+    4972.3,
+    3094.7
+   ],
+   "id": "fae_gate_bot",
+   "label": "lampe féerique à la sortie de ta base (côté bas)",
+   "label_red": "lampe féerique à la sortie de leur base (côté bas)",
+   "objective": null,
+   "phases": [
+    "mid",
+    "late"
+   ],
+   "roles": [],
+   "side": "blue",
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.3344,
+    0.7934
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": true,
+   "from_s": 840,
+   "game": "ChaosBaseTop",
+   "game_xy": [
+    9823.9,
+    11830.3
+   ],
+   "id": "fae_gate_enemy_top",
+   "label": "lampe féerique à la sortie de leur base (côté haut)",
+   "label_red": "lampe féerique à la sortie de ta base (côté haut)",
+   "objective": null,
+   "phases": [
+    "mid",
+    "late"
+   ],
+   "roles": [],
+   "side": "red",
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.6607,
+    0.2103
+   ]
+  },
+  {
+   "after_rift": false,
+   "control": false,
+   "faelight": true,
+   "from_s": 840,
+   "game": "ChaosBaseBot",
+   "game_xy": [
+    11822.1,
+    9900.0
+   ],
+   "id": "fae_gate_enemy_bot",
+   "label": "lampe féerique à la sortie de leur base (côté bas)",
+   "label_red": "lampe féerique à la sortie de ta base (côté bas)",
+   "objective": null,
+   "phases": [
+    "mid",
+    "late"
+   ],
+   "roles": [],
+   "side": "red",
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.795,
+    0.3391
+   ]
+  },
+  {
+   "after_rift": true,
+   "control": true,
+   "faelight": true,
+   "from_s": 600,
+   "game": "OrderSplitPushBot",
+   "game_xy": [
+    9269.7,
+    2148.4
+   ],
+   "id": "fae_krugs_own",
+   "label": "lampe féerique près de tes krugs",
+   "label_red": "lampe féerique près de leurs krugs",
+   "objective": null,
+   "phases": [
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "BOTTOM",
+    "UTILITY"
+   ],
+   "side": "blue",
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.6234,
+    0.8566
+   ]
+  },
+  {
+   "after_rift": true,
+   "control": true,
+   "faelight": true,
+   "from_s": 600,
+   "game": "OrderSplitPushTop",
+   "game_xy": [
+    2336.8,
+    9714.1
+   ],
+   "id": "fae_gromp_own",
+   "label": "lampe féerique près de ton grompe (voie du haut)",
+   "label_red": "lampe féerique près de leur grompe (voie du haut)",
+   "objective": null,
+   "phases": [
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "TOP"
+   ],
+   "side": "blue",
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.1571,
+    0.3515
+   ]
+  },
+  {
+   "after_rift": true,
+   "control": true,
+   "faelight": true,
+   "from_s": 600,
+   "game": "ChaosSplitPushTop",
+   "game_xy": [
+    5294.8,
+    13022.0
+   ],
+   "id": "fae_krugs_enemy",
+   "label": "lampe féerique près de leurs krugs",
+   "label_red": "lampe féerique près de tes krugs",
+   "objective": null,
+   "phases": [
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "TOP"
+   ],
+   "side": "red",
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.3561,
+    0.1307
+   ]
+  },
+  {
+   "after_rift": true,
+   "control": true,
+   "faelight": true,
+   "from_s": 600,
+   "game": "ChaosSplitPushBot",
+   "game_xy": [
+    12963.0,
+    5903.3
+   ],
+   "id": "fae_gromp_enemy",
+   "label": "lampe féerique près de leur grompe (voie du bas)",
+   "label_red": "lampe féerique près de ton grompe (voie du bas)",
+   "objective": null,
+   "phases": [
+    "mid",
+    "late"
+   ],
+   "roles": [
+    "BOTTOM",
+    "UTILITY"
+   ],
+   "side": "red",
+   "src": "game",
+   "until_s": null,
+   "uv": [
+    0.8718,
+    0.6059
+   ]
+  }
+ ],
+ "version": "16.19.1"
+}

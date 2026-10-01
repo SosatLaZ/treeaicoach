@@ -40,9 +40,10 @@ def test_toggle_image_reads_on_off() -> None:
 def test_page_attribute_index() -> None:
     idx = ui._page_attr_index()
     assert idx["hero"] == "dashboard" and idx["journal"] == "dashboard"
-    assert idx["_examples"] == "alerts" and idx["voice_menu"] == "alerts"
+    assert idx["_examples"] == "settings" and idx["voice_menu"] == "settings"      # Réglages > Voix
     assert idx["_update_btn"] == "settings" and idx["_ai_key_entry"] == "settings"
-    assert idx["_replay"] == "analysis" and idx["overlay_preview"] == "overlay"
+    assert idx["_replay"] == "analysis" and idx["overlay_preview"] == "settings"  # Réglages > Affichage
+    assert idx["sys_rows"] == "dashboard" and idx["btn_fix"] == "dashboard"
     assert "_closing" not in idx and "cfg" not in idx
 
 

@@ -331,6 +331,7 @@ class MapCoach:
                 self._enabled = on if isinstance(on, bool) else True
                 self._scoreboard_on = board if isinstance(board, bool) else True
                 self._safe = bool(safe) if isinstance(safe, bool) else False
+                self._beginner = str(getattr(cfg, "skill_level", "") or "") == "debutant"
         except Exception:
             log.exception("MapCoach.apply_config failed")
 
@@ -980,6 +981,8 @@ class MapCoach:
         return CS_TARGET.get(ctx.my_role or "")
 
     def _rule_cs(self, ctx: _Ctx) -> list[tuple[str, str]]:
+        if getattr(self, "_beginner", False):
+            return []                     # a statistic does not change a beginner's next 10 s
         cp = self._cs_checkpoint(ctx)
         target = self._cs_target(ctx)
         if cp is None or target is None:
@@ -997,7 +1000,19 @@ class MapCoach:
         if lvl > 7:                       # joined late / restarted: not news any more
             self._level6_done = True
             return []
-        return [("level6", "Utilise ton ultime sur ton adversaire : tu es niveau 6")]
+        # concrete, champion-aware ("Garde ton R pour achever Darius quand il est bas"); a generic
+        # "utilise ton ultime" changes nothing: unknown champion -> no line
+        try:
+            from treeaicoach.game_changers import level_spike_text
+
+            opp = ctx.opponents[0][1] if ctx.opponents else None
+            line = level_spike_text(getattr(ctx.me_player, "champion_alias", None), opp)
+        except Exception:
+            line = None
+        if not line:
+            self._level6_done = True
+            return []
+        return [("level6", line)]
 
     def _rule_vision(self, ctx: _Ctx) -> list[tuple[str, str]]:
         if ctx.gt < VISION_MIN_GT or self._ward_change_gt is None:

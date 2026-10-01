@@ -194,7 +194,7 @@ def _as_bgr(img: Any) -> np.ndarray | None:
     return None
 
 
-_UNSEEN_RE = re.compile(r"(?i)(pas encore vu|caché depuis|invisible depuis)")
+_UNSEEN_RE = re.compile(r"(?i)(pas encore vu|caché depuis|invisible depuis|jungler invisible|, \w+( \w+)? invisible$)")
 _BEHIND_RE = re.compile(r"(?i)(plus fort|d'avance|te domine|est \d+, pas toi|prudem|sans combattre|fort tôt)")
 
 

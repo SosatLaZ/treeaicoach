@@ -768,6 +768,26 @@ class Tracker:
             self._dts.clear()
             self.hide_after = HIDE_AFTER
 
+    def forget(self, key: str) -> bool:
+        """Drop the track ``key`` now (self-check: one identity seen at two places, a phantom
+        enemy): its champion is tracked again from his next observation. True if it existed.
+        Never raises."""
+        try:
+            with self._lock:
+                k = str(key)
+                if self._tracks.pop(k, None) is None:
+                    return False
+                if k == self._self_key:
+                    self._self_key = None
+                for tr in self._tracks.values():
+                    if tr.stacked_with == k:          # nothing hides under a forgotten track
+                        tr.stacked_with = None
+                        tr.stacked_since = None
+                return True
+        except Exception:
+            log.debug("Tracker.forget failed", exc_info=True)
+            return False
+
     @property
     def frame_interval(self) -> float | None:
         """Measured time between two updates (s, median of the last ones), None before two."""

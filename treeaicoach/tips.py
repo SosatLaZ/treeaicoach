@@ -588,6 +588,20 @@ WARD_TIPS = frozenset({"vis_faelight", "vis_score_low", "vis_mid_side", "vis_top
 LOW_VALUE_TIPS = frozenset({"cs_low", "jg_cs", "cs_under_tower", "vis_score_low", "goal_cs", "early_safe",
                             "wave_pushed_in", "late_vision", "teamfight_adc", "teamfight_sup", "dead_watch",
                             "cs_side"})
+#: tips whose subject a game-changer call owns at these levels (game_changers.py tiers: the level
+#: races 2 / 6 up to "avancé", 3 and the jungler side up to "intermédiaire")
+GC_OWNED_TIPS: dict[str, frozenset[str]] = {
+    "spike_me_big": frozenset({"debutant", "intermediaire", "avance"}),
+    "spike_opp_big": frozenset({"debutant", "intermediaire", "avance"}),
+    "spike_me": frozenset({"debutant", "intermediaire"}),
+    "jg_far": frozenset({"debutant", "intermediaire"}),
+    # the planner's fight_won call ("Prends le Baron maintenant : 3 ennemis morts (28 s)") owns it
+    "baron_window": frozenset({"debutant", "intermediaire", "avance", "expert"}),
+}
+#: statistics lines (a debrief, not an instruction) and always-true generic lines ("Avance seulement
+#: derrière une balise"): dropped up to "intermédiaire" (game_changers.py says the concrete version)
+STAT_TIPS = frozenset({"cs_low", "jg_cs", "cs_under_tower", "vis_score_low", "goal_cs", "late_vision",
+                       "early_safe", "teamfight_adc", "teamfight_sup", "dead_watch"})
 #: a macro / game-changer call (kind) already said this: the tips repeating it wait (90 s)
 CALL_OVERLAPS: dict[str, frozenset[str]] = {
     "gc_level": frozenset({"spike_me_big", "spike_me", "lvl_ahead", "spike_opp_big", "lvl_behind", "level2"}),
@@ -865,4 +879,4 @@ class TipRotator:
 
 
 __all__ = ["Tip", "TipContext", "TipRotator", "TIPS", "build_context", "tip_count", "ROTATE_S", "MAX_WORDS",
-           "WARD_TIPS", "LOW_VALUE_TIPS", "CALL_OVERLAPS"]
+           "WARD_TIPS", "LOW_VALUE_TIPS", "CALL_OVERLAPS", "GC_OWNED_TIPS", "STAT_TIPS"]

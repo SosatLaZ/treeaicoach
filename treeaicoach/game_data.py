@@ -17,6 +17,20 @@ patch does not need a new release:
   names derived from the data (no hard-coded item names elsewhere).
 * :func:`add_listener` - callbacks run after an update (itemization / scoreboard / champion
   database reload their tables).
+* :func:`data_versions` / :func:`data_versions_text` - the version / patch of every game data
+  table in use (items, champions, champion profiles, builds, matchups, ward spots, objectives),
+  for the About page and the diagnostics.
+
+Item table details (same conversion for the bundled snapshot and the runtime refresh):
+
+* ``k`` kind - tier-3 boots (built from boots, sometimes without the "Boots" tag) are "boots";
+* ``x`` semantic flags read from the English description (:func:`item_flags`: "antiheal",
+  "shieldbreak", "anticrit", "stasis", "spellshield", "cleanse", "lifeline", "revive",
+  "armorpen", "magicpen", "lethality", "slowresist", "armorshred", "pcthp", "hsp", "antiattack");
+* ``p`` - purchasable in a normal Summoner's Rift game. Data Dragon's map flag is too permissive
+  (Swiftplay / ARAM starters are flagged for map 11), so ``tools/fetch_items.py`` also intersects
+  with the CLASSIC shop lists of the game files (CommunityDragon) and stores the excluded ids as
+  ``not_sr``; the runtime refresh carries that list over.
 
 Never raises from its public functions.
 """
@@ -32,7 +46,7 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 log = logging.getLogger(__name__)
 
@@ -120,8 +134,45 @@ def _ids(xs: Any) -> list[int]:
     return out
 
 
-def build_items_table(fr: dict, en: dict, version: str) -> dict:
-    """Compact item table (the ``assets/items.json`` format) from the Data Dragon ``data`` dicts."""
+#: Semantic item flags read from the ENGLISH Data Dragon description (tags alone do not say
+#: "applies Wounds"). Checked by ``tools/validate_data.py`` against the build tables.
+ITEM_FLAG_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("antiheal", r"\bWounds\b"),
+    ("shieldbreak", r"Shield Reaver"),
+    ("anticrit", r"less damage from Critical Strikes"),
+    ("stasis", r"Enter Stasis"),
+    ("revive", r"Upon taking lethal damage"),
+    ("spellshield", r"Spell Shield"),
+    ("cleanse", r"Removes? all crowd control"),
+    ("lifeline", r"\bLifeline\b"),
+    ("armorpen", r"\d+% Armor Penetration"),
+    ("magicpen", r"\d+% Magic Penetration"),
+    ("lethality", r"\bLethality\b"),
+    ("slowresist", r"effectiveness of Slows"),
+    ("armorshred", r"reduces the target's Armor"),
+    ("pcthp", r"\d% max Health magic damage|percentage of enemy's current Health"),
+    ("hsp", r"Heal and Shield Power"),
+    ("antiattack", r"Reduce the Attack Speed|damage from Attacks"),
+)
+
+
+def item_flags(item: Any) -> list[str]:
+    """Sorted semantic flags of a Data Dragon item (English description), see :data:`ITEM_FLAG_PATTERNS`."""
+    try:
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str((item or {}).get("description") or "")))
+    except Exception:
+        return []
+    return sorted(flag for flag, pat in ITEM_FLAG_PATTERNS if re.search(pat, text))
+
+
+def build_items_table(fr: dict, en: dict, version: str, shop: Iterable[Any] | None = None,
+                      exclude: Iterable[Any] | None = None) -> dict:
+    """Compact item table (the ``assets/items.json`` format) from the Data Dragon ``data`` dicts.
+
+    ``shop`` (item ids of the CLASSIC Summoner's Rift shop, from the game files) and ``exclude``
+    (ids known not to be sold on the Rift, e.g. the ``not_sr`` list of the previous table) lower
+    ``p`` to 0 for the items Data Dragon flags for map 11 but a normal game does not sell; those
+    ids are listed in ``not_sr``."""
     items: dict[str, dict] = {}
     for key, it in sorted(fr.items(), key=lambda kv: int(kv[0]) if str(kv[0]).isdigit() else 0):
         if not str(key).isdigit() or int(key) >= 10000 or not isinstance(it, dict):   # >= 10000: Arena variants
@@ -130,7 +181,7 @@ def build_items_table(fr: dict, en: dict, version: str) -> dict:
         e = en.get(key) or {}
         stats = {k: v for k, v in (it.get("stats") or {}).items()
                  if isinstance(v, (int, float)) and not isinstance(v, bool) and v}
-        items[str(key)] = {
+        row = {
             "n": clean_name(it.get("name")),
             "en": clean_name(e.get("name")) or clean_name(it.get("name")),
             "g": int(gold.get("total") or 0),
@@ -142,11 +193,32 @@ def build_items_table(fr: dict, en: dict, version: str) -> dict:
             "i": _ids(it.get("into")),
             "p": 1 if purchasable_on_rift(it) else 0,
         }
-    return {"version": str(version), "lang": LANG, "items": items}
+        flags = item_flags(e) or item_flags(it)
+        if flags:
+            row["x"] = flags
+        items[str(key)] = row
+    for row in items.values():               # tier-3 boots (Gunmetal Greaves has no "Boots" tag)
+        if row["k"] != "boots" and any((items.get(str(p)) or {}).get("k") == "boots" for p in row["f"]):
+            row["k"] = "boots"
+    not_sr: set[int] = set()
+    shop_ids = None if shop is None else set(_ids(shop))
+    excl = set(_ids(exclude or ()))
+    for key, row in items.items():
+        if row["p"] and ((shop_ids is not None and int(key) not in shop_ids) or int(key) in excl):
+            row["p"] = 0
+            not_sr.add(int(key))
+    out: dict[str, Any] = {"version": str(version), "lang": LANG, "items": items}
+    if not_sr:
+        out["not_sr"] = sorted(not_sr)
+    return out
 
 
 def build_champions_table(fr: dict, en: dict, version: str) -> dict:
-    """Compact champion list (``{"version", "champions": [{alias, key, name_en, name_fr, tags}]}``)."""
+    """Compact champion list (``{"version", "champions": [{alias, key, name_en, name_fr, tags, st}]}``).
+
+    ``st`` = a few base stats (attack range, health, health per level, move speed) and Riot's
+    ``info`` ratings, so a champion released after the build still gets a rule-derived profile
+    (:func:`treeaicoach.meta.profile`)."""
     out = []
     for alias, c in sorted(fr.items()):
         if not isinstance(c, dict):
@@ -156,10 +228,18 @@ def build_champions_table(fr: dict, en: dict, version: str) -> dict:
             key = int(c.get("key") or 0)
         except (TypeError, ValueError):
             key = 0
-        out.append({"alias": str(c.get("id") or alias), "key": key,
-                    "name_en": str(e.get("name") or c.get("name") or alias),
-                    "name_fr": str(c.get("name") or e.get("name") or alias),
-                    "tags": [str(t) for t in (c.get("tags") or [])]})
+        row: dict[str, Any] = {"alias": str(c.get("id") or alias), "key": key,
+                               "name_en": str(e.get("name") or c.get("name") or alias),
+                               "name_fr": str(c.get("name") or e.get("name") or alias),
+                               "tags": [str(t) for t in (c.get("tags") or [])]}
+        st, info = c.get("stats") or {}, c.get("info") or {}
+        try:
+            row["st"] = {"ar": int(float(st.get("attackrange") or 0)), "hp": int(float(st.get("hp") or 0)),
+                         "hpl": int(float(st.get("hpperlevel") or 0)), "ms": int(float(st.get("movespeed") or 0)),
+                         "info": [int(info.get(k) or 0) for k in ("attack", "defense", "magic", "difficulty")]}
+        except (TypeError, ValueError):
+            pass
+        out.append(row)
     return {"version": str(version), "champions": out}
 
 
@@ -281,6 +361,67 @@ def champion_name(alias: Any, default: str = "") -> str:
     return default or str(alias or "")
 
 
+#: Bundled derived tables whose header carries a version / patch (``tools/fetch_all.py``).
+DERIVED_TABLES: tuple[tuple[str, str], ...] = (
+    ("profiles", "champion_meta.json"),
+    ("builds", "item_builds.json"),
+    ("matchups", "matchups.json"),
+    ("wards", "ward_spots.json"),
+    ("objectives", "objectives.json"),
+)
+
+
+def _header(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for k in ("schema", "version", "patch", "generated"):
+        v = data.get(k)
+        if v in (None, ""):
+            v = data.get(f"_{k}") or (data.get("_checked") if k == "generated" else None)   # objectives.json
+        if v not in (None, ""):
+            out[k] = v
+    return out
+
+
+def data_versions() -> dict[str, dict[str, Any]]:
+    """Version / patch of every game data table in use, e.g. ``{"items": {"version": "16.19.1",
+    "source": "bundled"}, "profiles": {"schema": 2, "version": "16.19.1", "patch": "26.19"}, ...}``.
+    For the About page and the diagnostics. Never raises."""
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        items = items_data()
+        bundled = _bundled(ITEMS_FILE)
+        src = "bundled" if isinstance(bundled, dict) and bundled.get("version") == items.get("version") else "cache"
+        out["items"] = {"version": str(items.get("version") or ""), "source": src,
+                        "count": len(items.get("items") or {})}
+        champs = champions_data()
+        out["champions"] = {"version": str(champs.get("version") or champs.get("patch") or ""),
+                            "count": len(champs.get("champions") or [])}
+        for name, fname in DERIVED_TABLES:
+            out[name] = _header(_bundled(fname))
+    except Exception:
+        log.debug("data_versions failed", exc_info=True)
+    return out
+
+
+def data_versions_text() -> str:
+    """One line: ``"Données du jeu : objets 16.19.1, champions 16.19.1, profils 26.19, ..."``."""
+    try:
+        v = data_versions()
+        names = {"items": "objets", "champions": "champions", "profiles": "profils", "builds": "builds",
+                 "matchups": "duels", "wards": "balises", "objectives": "objectifs"}
+        parts = []
+        for key, label in names.items():
+            d = v.get(key) or {}
+            ver = d.get("patch") or d.get("version")
+            if ver:
+                parts.append(f"{label} {ver}")
+        return "Données du jeu : " + (", ".join(parts) if parts else "indisponibles")
+    except Exception:
+        return "Données du jeu : indisponibles"
+
+
 def invalidate() -> None:
     """Forget the in-memory tables (next access re-reads the files) and notify the listeners."""
     global _items_cache, _champs_cache
@@ -340,10 +481,12 @@ def refresh(force: bool = False, fetch: Callable[[str], Any] | None = None, now:
         if not version_tuple(latest):
             raise ValueError(f"bad versions.json: {str(versions)[:80]}")
         changed = False
-        if version_tuple(latest) > version_tuple(items_data().get("version")):
+        current = items_data()
+        if version_tuple(latest) > version_tuple(current.get("version")):
             fr = fetch(f"{DDRAGON}/cdn/{latest}/data/{LANG}/item.json")["data"]
             en = fetch(f"{DDRAGON}/cdn/{latest}/data/en_US/item.json")["data"]
-            table = build_items_table(fr, en, latest)
+            # the Rift shop filter of the game files is not on Data Dragon: keep the known exclusions
+            table = build_items_table(fr, en, latest, exclude=current.get("not_sr") or ())
             if not _valid_items(table):
                 raise ValueError("item table too small")
             changed |= _write_json(folder / ITEMS_FILE, table)
@@ -391,4 +534,4 @@ def refresh_async(allow_network: bool = True, force: bool = False) -> threading.
 
 __all__ = ["items_data", "champions_data", "item_name", "champion_name", "data_version", "refresh",
            "refresh_async", "add_listener", "invalidate", "build_items_table", "build_champions_table",
-           "version_tuple"]
+           "version_tuple", "item_flags", "data_versions", "data_versions_text"]

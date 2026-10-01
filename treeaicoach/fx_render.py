@@ -144,14 +144,43 @@ def layer_size(size: str = "big", scale: float = 1.0) -> tuple[int, int]:
     return int(math.ceil(w)), int(math.ceil(h))
 
 
+def layer_envelope(size: str = "big", scale: float = 1.0) -> tuple[int, int, int, int]:
+    """Where pixels can appear inside the animation layer (x, y, w, h): the whole width (the plate
+    width depends on the text, up to :data:`MAX_W` + the overshoot) and, vertically, from the
+    layer's top (the fade-out slides the plate UP by up to 0.7 plate heights) down to the bottom of
+    the overshooting plate (+12 % around the centre)."""
+    LW, LH = layer_size(size, scale)
+    k = max(0.4, min(3.0, float(scale) if math.isfinite(scale) else 1.0))
+    ph = (BASE_H if size == "big" else SMALL_H) * k
+    bottom = int(math.ceil(min(LH, LH / 2.0 + ph * 0.58)))
+    return 0, 0, LW, bottom
+
+
 def fx_layer_rect(screen: Sequence[int] | None, minimap: Sequence[int] | None, position: str = "top_center",
-                  size: str = "big", scale: float | None = None) -> tuple[int, int, int, int]:
-    """``(x, y, w, h)`` of the animation layer in screen pixels. Small badges always go next to the
-    minimap (out of the way during a fight). Never over the minimap; clamped to the screen."""
+                  size: str = "big", scale: float | None = None, cfg: Any = None) -> tuple[int, int, int, int]:
+    """``(x, y, w, h)`` of the animation layer in screen pixels: the layout's "badge_big" /
+    "badge_small" slot (:mod:`treeaicoach.layout`, the one the overlay uses when it runs): big
+    badges under the toasts at the top centre (``position`` "minimap": next to the minimap),
+    small badges next to the minimap (out of the way during a fight); never over the minimap,
+    the HUD card, the timers, the toasts or League's own UI. Clamped to the screen."""
     try:
         scr = tuple(int(v) for v in screen) if screen is not None else (0, 0, 1920, 1080)
         k = scale if scale is not None else scale_for_screen(scr)
         w, h = layer_size(size, k)
+        try:
+            from treeaicoach import layout as lay
+
+            pub = lay.published(scr, minimap)
+            prefs = pub.key[2] if pub is not None and len(pub.key) > 2 else None
+            if pub is not None and getattr(prefs, "plays_position", position) != position:
+                pub = None                       # the overlay's layout was solved for another position
+            if pub is None:
+                pub = lay.layout_for(scr, minimap, _PositionCfg(cfg, position))
+            slot = pub.slot("badge_small" if size == "small" else "badge_big")
+            if slot is not None and slot.rect[2] == w and slot.rect[3] == h:
+                return slot.rect
+        except Exception:
+            log.debug("badge slot unavailable", exc_info=True)
         sx, sy, sw, sh = scr
         mm = tuple(int(v) for v in minimap) if minimap is not None else None
         if (position == "minimap" or size == "small") and mm is not None:
@@ -167,6 +196,19 @@ def fx_layer_rect(screen: Sequence[int] | None, minimap: Sequence[int] | None, p
         return x, y, w, h
     except Exception:
         return 0, 0, 2, 2
+
+
+class _PositionCfg:
+    """A config view whose ``plays_position`` is forced (layout_for reads the rest from ``base``)."""
+
+    def __init__(self, base: Any, position: str) -> None:
+        self._base = base
+        self.plays_position = position if position in POSITIONS else "top_center"
+
+    def __getattr__(self, name: str) -> Any:
+        if self._base is None:
+            raise AttributeError(name)
+        return getattr(self._base, name)
 
 
 # ------------------------------------------------------------------------------ easing

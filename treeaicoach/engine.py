@@ -86,6 +86,7 @@ from treeaicoach.engine_capture import CaptureMixin
 from treeaicoach.engine_coaching import CoachingMixin
 from treeaicoach.engine_overlay_state import OverlayStateMixin
 from treeaicoach.engine_postgame import PostgameMixin
+from treeaicoach.engine_selfcheck import SelfCheckMixin, push_roster_knobs
 from treeaicoach.engine_vision import VisionMixin
 from treeaicoach.fmtutil import finite_loose as _finite, seconds_fr
 from treeaicoach.live_client import GameInfo
@@ -95,7 +96,7 @@ from treeaicoach.sysperf import CpuMeter, PerfBudget, RateMeter, RollingStats
 log = logging.getLogger(__name__)
 
 
-class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, OverlayStateMixin):
+class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, OverlayStateMixin, SelfCheckMixin):
     """The analysis engine. See the module docstring. All public methods are thread-safe."""
 
     def __init__(self, cfg: Config, voice: Any, detector: Any = None,
@@ -274,6 +275,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._occluded = False
         #: tests: ``probe(minimap_rect) -> bool`` replaces the WindowFromPoint occlusion check
         self.occlusion_probe: Callable[[Rect], bool | None] | None = None
+        self._init_selfcheck()       # watchdog: detect our own problems and act (engine_selfcheck.py)
 
     # ================================================================== configuration
     @staticmethod
@@ -325,7 +327,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             sdv = getattr(self._voice, "set_danger_voice", None)
             if callable(sdv):
                 try:
-                    sdv(getattr(new, "danger_voice", "bip_voix"))
+                    sdv(self._voice_override or getattr(new, "danger_voice", "bip_voix"))
                 except Exception:
                     log.debug("voice.set_danger_voice failed", exc_info=True)
             set_params = getattr(self._voice, "set_params", None)
@@ -513,7 +515,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         """Push the budget's knobs (detection rates, coaching rate, generic detector cadence,
         thread counts) to the components; cheap no-op when unchanged."""
         prof = self._budget.profile
-        sig = (prof.name, prof.calm_fps, prof.burst_fps, prof.heavy_hz)
+        sig = (prof.name, prof.calm_fps, prof.burst_fps, prof.heavy_hz, prof.load)
         if sig == self._applied_profile:
             return
         self._applied_profile = sig
@@ -542,8 +544,10 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             roster_matcher.LOST_EVERY = int(prof.lost_every)
         except Exception:
             pass
-        log.info("Performance budget %s (%s): detection %.0f-%.0f img/s, overlay %.0f img/s",
-                 prof.name, self._budget.reason or "auto", prof.calm_fps, prof.burst_fps, prof.overlay_fps)
+        push_roster_knobs(prof)        # self-check load level: ring / stack proposals every Nth frame
+        log.info("Performance budget %s (%s, load %s): detection %.0f-%.0f img/s, overlay %.0f img/s",
+                 prof.name, self._budget.reason or "auto", prof.load, prof.calm_fps, prof.burst_fps,
+                 prof.overlay_fps)
 
     def _store_icon_scale(self, key: str, ratio: float) -> None:
         """Calibrated icon scale (roster matcher) -> config, prior of the next games."""
@@ -679,7 +683,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             t = self._clock()
             self._poll_once(t)
             period = POLL_IN_GAME_S if self._in_game or self._game is not None else POLL_IDLE_S
-            self._stop_evt.wait(period)
+            self._stop_evt.wait(self._poll_backoff(period))      # (slower while the API is silent: rule 9)
 
     def _poll_once(self, t: float) -> None:
         client = self._live_client
@@ -697,6 +701,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._err.exception("LiveClient.fetch failed")
             game = None
         self._handle_game_info(game if isinstance(game, GameInfo) else None, t)
+        self._selfcheck_api(t, isinstance(game, GameInfo))      # API silent while the game window exists?
 
     def _analysis_loop(self) -> None:
         next_t = self._clock()
@@ -784,8 +789,9 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             return
         try:
             sdv = getattr(self._voice, "set_danger_voice", None)
-            if callable(sdv) and getattr(self._voice, "danger_voice", None) != getattr(self._cfg, "danger_voice", None):
-                sdv(getattr(self._cfg, "danger_voice", "bip_voix"))
+            want = self._danger_voice_mode()        # (the self-check may force beep-only: rule 7)
+            if callable(sdv) and getattr(self._voice, "danger_voice", None) != want:
+                sdv(want)
             tone = "gank"
             if str(a.key).endswith(":siege"):
                 tone = "siege"
@@ -884,6 +890,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             return
         if t - self._last_game_seen <= GAME_GONE_S:
             return
+        if self._in_game and not self._ended and self._api_outage_hold(t):
+            return      # API silent but the game window is still open: an outage, not a game over
         if self._in_game and not self._ended:
             log.info("Live Client gone for %.0f s: game over", t - self._last_game_seen)
             self._end_game(None, t)
@@ -958,6 +966,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._motion = None
         self._capture_status, self._capture_note = "ok", None
         self._minimap_score = None
+        self._selfcheck_new_game(t, _finite(game.game_time))
         self._fullscreen_check(game)
         self._tip_text = None
         self._text_msg = None
@@ -1072,6 +1081,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._tick_ms = 0.8 * self._tick_ms + 0.2 * dt * 1000.0 if self._tick_ms else dt * 1000.0
             try:
                 self._observe_tick_cost(float(t), dt * 1000.0)
+                self._selfcheck_tick(float(t))         # watchdog (~1 Hz): our own problems -> actions
             except Exception:
                 pass
             return out
@@ -1091,7 +1101,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         elif not self._threads or not any(th.name.endswith("poller") for th in self._threads):
             if t >= self._next_poll:           # synchronous use (tests): poll from here
                 self._poll_once(t)
-                self._next_poll = t + (POLL_IN_GAME_S if self._in_game else POLL_IDLE_S)
+                self._next_poll = t + self._poll_backoff(POLL_IN_GAME_S if self._in_game else POLL_IDLE_S)
         with self._lock:
             in_game, game = self._in_game, self._game
             game_t = self._game_t
@@ -1130,6 +1140,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 t_vis = time.perf_counter()
                 identified = self._stabilize(t, self._vision(frame))
                 self._stats["vision"].add((time.perf_counter() - t_vis) * 1000.0)
+                self._selfcheck.on_frame(t)          # effective detection rate (self-check rule 3)
                 self._last_frame_t = t
             self._self_icon_tick(t, gt, game)
         tracker = self._tracker
@@ -1221,6 +1232,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         try:
             tracks = tracker.tracks() if tracker is not None else []
             self._motion = MotionSnapshot.from_tracks(t, tracks)
+            self._selfcheck_tracks(t, tracks)        # one champion at two places (self-check rule 5)
             if self._adaptive:
                 tac = self._tactics
                 why = burst_reason(t, tracks, me_pos, self._cfg.effective_warn_radius(), threat=int(threat),
@@ -1242,6 +1254,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
 
     def _observe_tick_cost(self, t: float, ms: float) -> None:
         self._stats["tick"].add(ms)
+        if self._in_game:
+            self._selfcheck.on_tick(t, ms)
         if self._in_game and self._last_frame_t is not None and not self._paused:
             if self._budget.observe_tick(t, ms):
                 self._applied_profile = None      # switched to low-end: push the knobs next tick
@@ -1332,17 +1346,20 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 out["overlay"] = None
             d = self._diag
             out["diagnostic"] = d.status() if d is not None else None
+            out["selfcheck"] = self.selfcheck_summary()      # "Santé TreeAI" (selfcheck.py)
         except Exception:
             log.debug("health() failed", exc_info=True)
         return out
 
     # ---------------------------------------------------------------- diagnostic bundle
-    def start_diagnostic(self, duration_s: float | None = None, interval_s: float | None = None) -> Any:
+    def start_diagnostic(self, duration_s: float | None = None, interval_s: float | None = None,
+                         announce: bool = True, open_folder: bool = True) -> Any:
         """Record a diagnostic bundle (minimap crops, detections / tracks, capture + timings,
         settings...) every ``interval_s`` for ``duration_s`` (config ``diag_*``), then zip it
         into ``<user data>/diagnostics`` and open the folder. Returns the bundle folder (Path)
         or None when one is already recording / not possible. Safe from any thread (UI button,
-        hotkey). Never raises."""
+        hotkey). The self-check's automatic diagnostic passes ``announce=False`` (nothing spoken)
+        and ``open_folder=False`` (no Explorer window over the game). Never raises."""
         try:
             from treeaicoach.diag import DiagRecorder
 
@@ -1352,13 +1369,15 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                     return None
                 dur = float(duration_s if duration_s is not None else getattr(self._cfg, "diag_duration_s", 60.0))
                 itv = float(interval_s if interval_s is not None else getattr(self._cfg, "diag_interval_s", 2.0))
-                self._diag = DiagRecorder(self, duration_s=dur, interval_s=itv)
+                kw: dict[str, Any] = {} if open_folder else {"opener": lambda _p: None}
+                self._diag = DiagRecorder(self, duration_s=dur, interval_s=itv, **kw)
             path = self._diag.start()
-            try:
-                self._say("Diagnostic en cours : joue normalement pendant une minute.", int(Level.INFO),
-                          force=True)
-            except Exception:
-                pass
+            if announce:
+                try:
+                    self._say("Diagnostic en cours : joue normalement pendant une minute.", int(Level.INFO),
+                              force=True)
+                except Exception:
+                    pass
             return path
         except Exception:
             log.exception("Cannot start the diagnostic recorder")

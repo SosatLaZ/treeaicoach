@@ -29,10 +29,18 @@ separate popup windows of the TreeAI Coach process:
   minimap (shrunk rather than moved towards the centre), never over it. Every window is
   clamped inside the screen, and the screen used for the layout always contains the minimap
   (see :func:`effective_screen`).
+* every element is placed by ONE layout (:mod:`treeaicoach.layout`, memoized, published for the
+  play badges' thread): the HUD card, the timers strip (its own "timers" window, OUTSIDE the
+  minimap frame), the toast / banner layer (under League's kill announcer) and the play badges
+  each get a slot that avoids League's own UI (zones measured on real captures: ally portraits,
+  votes, item bar, minimap buttons, kill feed, chat, death recap...) and each other; slots only
+  change with the screen, the minimap, the settings, the detailed mode (F6) or a dragged window.
+  The danger flash never covers the minimap block or the spells / items bar.
 * ward guide in the game view (``state.world``, :mod:`treeaicoach.ward_guide`): at most two
   small click-through windows ("world0", "world1") around the markers, refreshed at
-  :data:`WORLD_HZ` only while a guide is active, hidden otherwise; never over the minimap or
-  the bottom HUD bar (``overlay_render.place_world_patch``).
+  :data:`WORLD_HZ` only while a guide is active, hidden otherwise; never over League's always-on
+  HUD or our own elements (edge arrows also off the kill feed / chat / votes:
+  ``overlay_render.place_world_patch``).
 * "move mode" (:meth:`OverlayManager.set_move_mode`): windows stop being click-through, can be
   dragged (``WM_NCHITTEST`` -> ``HTCAPTION``) and report their new position through
   ``on_moved(name, x, y)`` so the UI can save ``cfg.radar_xy`` / ``cfg.hud_xy``.
@@ -42,7 +50,8 @@ asks for per-monitor-v2 awareness). Off Windows, or after any Win32 failure (log
 :attr:`OverlayManager.ok` is False and every method is a harmless no-op.
 
 The placement helpers at the top (:func:`radar_geometry`, :func:`hud_placement`, ...) are pure
-functions, shared with ``overlay_render.render_preview`` and unit-tested everywhere.
+functions (the radar's geometry; :func:`hud_placement` is the legacy card helper, kept as a
+fallback); the in-game placement of the card / timers / toasts / badges is the layout solver's.
 """
 
 from __future__ import annotations
@@ -1197,6 +1206,8 @@ class OverlayManager:
         self._foreground: Callable[[], tuple[bool | None, bool]] = _default_foreground
         self._mm_session = False
         self._mm_no_rect_logged = False
+        #: current layout (treeaicoach.layout.Layout) of the card / timers / toasts / badges
+        self.layout: Any = None
         self.ok = sys.platform == "win32"
         if not self.ok:
             log.info("Overlay disabled: Windows only")
@@ -1287,7 +1298,8 @@ class OverlayManager:
             # creation order = z-order among topmost windows: flash below radar / minimap / HUD
             # "toasts": banners at the top-centre (praise / Tab insights), captured like the HUD
             # "world0" / "world1": small click-through windows of the ward guide in the game view
-            for name in ("flash", "radar", "minimap", "hud", "toasts") + WORLD_WINDOWS:
+            # "timers": the timers strip hanging outside the minimap frame (layout slot)
+            for name in ("flash", "radar", "minimap", "timers", "hud", "toasts") + WORLD_WINDOWS:
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved)
             # The minimap layer is captured by default (visible in the user's screenshots):
             # it never draws portraits, so the detector does not re-detect it. Optional
@@ -1485,7 +1497,7 @@ class OverlayManager:
 
     @staticmethod
     def _refresh_toasts(win: "LayeredWindow | None", state: Any, cfg: Any, scr: RectT, mm: RectT | None,
-                        move: bool) -> None:
+                        move: bool, slot_rect: RectT | None = None) -> None:
         if win is None:
             return
         views = list(getattr(state, "toasts", None) or [])
@@ -1498,13 +1510,47 @@ class OverlayManager:
         if not views:
             win.hide()
             return
-        x, y, _w, _h = tst.toast_layer_rect(scr, mm)
-        win.update(tst.render_toast_layer(views, tst.scale_for_screen(scr)), x, y)
+        img = tst.render_toast_layer(views, tst.scale_for_screen(scr))
+        # the layout's slot (one consistent place, under League's kill announcer); its size is the
+        # layer's, else the standalone helper
+        if slot_rect is not None and (slot_rect[2], slot_rect[3]) == (img.shape[1], img.shape[0]):
+            x, y = slot_rect[0], slot_rect[1]
+        else:
+            x, y, _w, _h = tst.toast_layer_rect(scr, mm, cfg)
+        win.update(img, x, y)
+
+    def _refresh_timers(self, win: "LayeredWindow | None", state: Any, cfg: Any, scr: RectT, lay: Any,
+                        move: bool, now: float) -> None:
+        """Timers strip (Baron / Elder buff, enemy death window, objective respawns): its own small
+        window OUTSIDE the minimap frame (layout slot "timers"), re-rendered when its rows change."""
+        if win is None:
+            return
+        slot = lay.slot("timers") if lay is not None else None
+        if move or slot is None or not getattr(cfg, "overlay_timers", True):
+            win.hide()
+            self._sig.pop("timers", None)
+            return
+        from treeaicoach import overlay_render as orr
+
+        rows = tuple(orr.timer_rows(state))
+        if not rows:
+            win.hide()
+            self._sig.pop("timers", None)
+            return
+        if self._due("timers", (rows, slot.rect), now) or not win.visible:
+            img = self._render("timers", orr.render_timers, state, scr, slot.rect[2])
+            if img is None:
+                win.hide()
+                return
+            x, y = slot.place(img.shape[1], img.shape[0])
+            self._show(win, "timers", img, x, y, dedupe=True)
 
     def _refresh_world(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any,
                        move: bool) -> None:
         """Ward guide markers in the game view (``state.world``): one small window per marker, hidden
-        when there is none (nothing drawn / no CPU while no guide is active)."""
+        when there is none (nothing drawn / no CPU while no guide is active). Patches stay off
+        League's HUD (minimap, its buttons, spells / items bar, scoreboard; edge arrows also off the
+        chat, kill feed, votes...) and off our own card / timers / toasts / badges."""
         wins = [windows[n] for n in WORLD_WINDOWS if n in windows]
         markers = list(getattr(state, "world", None) or [])
         if not markers or move or not getattr(cfg, "ward_world", True):
@@ -1512,18 +1558,43 @@ class OverlayManager:
                 w.hide()
             return
         from treeaicoach import camera_proj as cp
+        from treeaicoach import layout as layout_mod
         from treeaicoach import overlay_render as orr
 
         scr, mm = self._screen_for(api, state)
         game = as_rect(getattr(state, "screen_rect", None)) or scr
-        avoid = [cp.hud_bar_rect(game)] + ([mm] if mm is not None else [])
-        patches = orr.render_world_guides(markers, game, avoid=avoid)
+        lay = getattr(self, "layout", None)
+        if lay is None or lay.screen != scr or lay.minimap != mm:
+            lay = layout_mod.layout_for(scr, mm, cfg)
+        avoid = [cp.hud_bar_rect(game)] + ([mm] if mm is not None else []) + lay.avoid(hud_only=True)
+        edge_avoid = avoid + lay.avoid(hud_only=False, slots=False)
+        patches = orr.render_world_guides(markers, game, avoid=avoid, edge_avoid=edge_avoid)
         for i, w in enumerate(wins):
             if i < len(patches):
                 img, x, y = patches[i]
                 w.update(img, x, y)
             else:
                 w.hide()
+
+    def _layout(self, scr: RectT, mm: RectT | None, cfg: Any, state: Any, radar: RectT | None,
+                custom: dict[str, tuple[int, int]]) -> Any:
+        """The memoized layout (:func:`treeaicoach.layout.layout_for`) for this frame, published
+        for the play badges' thread. Never raises (None on failure: legacy placement)."""
+        try:
+            from treeaicoach import layout as layout_mod
+
+            lay = layout_mod.layout_for(scr, mm, cfg, detailed=bool(getattr(state, "hud_detailed", False)),
+                                        radar=radar, custom_card=custom.get("hud"))
+            if lay is not getattr(self, "layout", None):
+                old = getattr(self, "layout", None)
+                if old is None or old.slots != lay.slots:
+                    log.info("Overlay layout: %s", ", ".join(f"{n} {s.rect} ({s.anchor})" for n, s in lay.slots.items()))
+                self.layout = lay
+                layout_mod.publish(lay)
+            return lay
+        except Exception:
+            log.debug("overlay layout failed", exc_info=True)
+            return None
 
     def _due(self, layer: str, sig: Any, now: float, min_period: float = 0.0) -> bool:
         """True when ``layer`` must be re-rendered: signature changed (at most every
@@ -1605,6 +1676,10 @@ class OverlayManager:
                 self._show(radar_win, "radar", img, x, y)
         else:
             radar_win.hide()
+        # ---- ONE layout for the card, timers, toasts and play badges (layout.py): memoized, it
+        #      only changes with the screen, the minimap, the settings, the detailed mode or a
+        #      window dragged in move mode - nothing jumps when a text changes
+        lay = self._layout(scr, mm, cfg, state, radar_rect, custom)
         # ---- HUD (re-rendered only when its content changed; never re-sent when identical)
         hud_win = windows["hud"]
         if getattr(cfg, "hud_enabled", True) and not move and not orr.hud_visible(state, now):
@@ -1617,21 +1692,29 @@ class OverlayManager:
                 img = self._render("hud", orr.render_hud, state, hud_width(scr))
                 if move:
                     img = move_mode_frame(img, "HUD — glisser")
-                pos = getattr(cfg, "hud_position", "left_of_minimap")
-                xy = getattr(cfg, "hud_xy", None)
-                if "hud" in custom:
-                    pos, xy = "custom", custom["hud"]
-                avoid = [r for r in (mm, radar_rect) if r is not None]
-                gap = None if radar_rect is not None else minimap_clearance(mm)
-                x, y = hud_placement(scr, img.shape[1], img.shape[0], pos, xy, avoid=avoid,
-                                     anchor=radar_rect or mm, anchor_gap=gap, minimap=mm)
+                slot = lay.slot("card") if lay is not None else None
+                if slot is not None:
+                    x, y = clamp_to_screen(*slot.place(img.shape[1], img.shape[0]), img.shape[1], img.shape[0], scr)
+                else:                      # no layout (should not happen): the legacy helper
+                    pos = getattr(cfg, "hud_position", "left_of_minimap")
+                    xy = getattr(cfg, "hud_xy", None)
+                    if "hud" in custom:
+                        pos, xy = "custom", custom["hud"]
+                    avoid = [r for r in (mm, radar_rect) if r is not None]
+                    gap = None if radar_rect is not None else minimap_clearance(mm)
+                    x, y = hud_placement(scr, img.shape[1], img.shape[0], pos, xy, avoid=avoid,
+                                         anchor=radar_rect or mm, anchor_gap=gap, minimap=mm)
                 self._show(hud_win, "hud", img, x, y, dedupe=True)
         else:
             hud_win.hide()
-        # ---- toasts (top-centre banners; never over the minimap / Tab block / champion)
+        # ---- timers strip (outside the minimap frame; never over the map's bases / buttons)
+        self._refresh_timers(windows.get("timers"), state, cfg, scr, lay, move, now)
+        # ---- toasts (top-centre, right under League's kill announcer; one at a time)
         if self._due("toasts", None, now, 1.0 / TOAST_HZ) or not getattr(cfg, "toasts_enabled", True):
             t = time.perf_counter()
-            self._refresh_toasts(windows.get("toasts"), state, cfg, scr, mm, move)
+            slot = lay.slot("toasts") if lay is not None else None
+            self._refresh_toasts(windows.get("toasts"), state, cfg, scr, mm, move,
+                                 slot.rect if slot is not None else None)
             self._perf.add("render_toasts", (time.perf_counter() - t) * 1000.0)
         # ---- danger flash: rendered ONCE per geometry at full intensity, the fade only changes the
         #      window's global alpha (no full-screen pixel upload per step)
@@ -1641,10 +1724,14 @@ class OverlayManager:
             flash_win.hide()
             return None
         rel = (mm[0] - scr[0], mm[1] - scr[1], mm[2], mm[3]) if mm is not None else None
-        key = (scr, rel)
+        # never over the minimap block, its buttons or the spells / items bar (HP, cooldowns)
+        excl = [(r[0] - scr[0], r[1] - scr[1], r[2], r[3]) for r in (lay.flash_exclusions() if lay is not None else [])]
+        if rel is not None:
+            excl.append(rel)
+        key = (scr, rel, tuple(excl))
         alpha = int(round(255 * intensity))
         if key != flash_key or not flash_win.visible:
-            img = self._render("flash", orr.render_flash, scr[2], scr[3], 1.0, rel, thickness=flash_thickness(scr))
+            img = self._render("flash", orr.render_flash, scr[2], scr[3], 1.0, excl, thickness=flash_thickness(scr))
             self._show(flash_win, "flash", img, scr[0], scr[1], alpha=alpha)
         else:
             t = time.perf_counter()

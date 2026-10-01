@@ -606,6 +606,12 @@ def static_phrases(leads: Sequence[int] = (60, 20)) -> list[str]:
     except Exception as exc:
         log.debug("static_phrases (alerts) failed: %s", exc)
     try:
+        from treeaicoach.game_changers import voice_phrases  # noqa: PLC0415
+
+        out.extend(voice_phrases())              # the game-changer calls: static, pre-generated
+    except Exception as exc:
+        log.debug("static_phrases (game changers) failed: %s", exc)
+    try:
         from treeaicoach.objectives import NAMES_FR, announcement_text  # noqa: PLC0415
 
         for kind in NAMES_FR:

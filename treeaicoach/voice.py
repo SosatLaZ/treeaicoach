@@ -1099,6 +1099,10 @@ class VoiceEngine:
         self.beeper = _beep_player if _beep_player is not None else BeepPlayer()
         self._beep_end: float = -math.inf          # perf_counter end of the last instant beep
         self.beep_only_count = 0                   # DANGER alerts signalled by the beep alone
+        #: self-check (selfcheck.py rule 7): synthesis time of the recent alerts (ms, level >=
+        #: WARNING: time until the backend started speaking) and synthesis failures
+        self._alert_ms: deque[float] = deque(maxlen=16)
+        self.speak_failures = 0
         try:
             self.beeper.preload(self._params.volume)
         except Exception:
@@ -1339,6 +1343,28 @@ class VoiceEngine:
                 self._queue.clear()
                 self._purge_requests += 1
                 self._cond.notify_all()
+
+    def health(self) -> dict[str, Any]:
+        """Self-check view (selfcheck.py rule 7): ``backend``, ``expected`` (a real speech backend
+        should run: Windows, default factory), ``alert_p95_ms`` / ``alert_samples`` (time the
+        backend took to start saying the recent alerts), ``failures`` (synthesis errors). Never raises."""
+        try:
+            with self._cond:
+                ms = sorted(self._alert_ms)
+                fails = int(self.speak_failures)
+            return {"backend": self.backend, "expected": bool(sys.platform == "win32" and not self._custom_factory),
+                    "alert_p95_ms": round(ms[int(0.95 * (len(ms) - 1))], 1) if ms else None,
+                    "alert_samples": len(ms), "failures": fails, "danger_voice": self.danger_voice}
+        except Exception:
+            return {}
+
+    def _note_speech(self, ms: float | None, level: int) -> None:
+        """One sentence handed to the backend: its synthesis time (None = failed)."""
+        with self._cond:
+            if ms is None:
+                self.speak_failures += 1
+            elif level >= LEVEL_WARNING and math.isfinite(ms):
+                self._alert_ms.append(float(ms))
 
     def wait_ready(self, timeout: float = 3.0) -> bool:
         """Wait until the voice thread has created its backend (tests / selftest)."""
@@ -1666,6 +1692,7 @@ class _Worker:
     def _speak(self, item: _Item, purge: bool) -> None:
         self.item_level = item.level
         for attempt in range(2):
+            t_call = time.perf_counter()
             try:
                 urgent = getattr(self.backend, "speak_urgent", None) if item.level >= LEVEL_WARNING else None
                 if callable(urgent):
@@ -1674,6 +1701,7 @@ class _Worker:
                     self.backend.speak(item.text, purge)
             except Exception as exc:
                 self.failures += 1
+                self.e._note_speech(None, item.level)
                 log.warning("Échec de la synthèse vocale (%s) : %s", exc, item.text)
                 if self.backend.name == "print":
                     return
@@ -1688,6 +1716,7 @@ class _Worker:
                     self._apply_params()
                 continue
             self.failures = 0
+            self.e._note_speech((time.perf_counter() - t_call) * 1000.0, item.level)
             self.started_at = float(self.e._clock())
             self.cur_level = item.level
             self.e._count_spoken()

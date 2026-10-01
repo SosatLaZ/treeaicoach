@@ -385,7 +385,9 @@ class EndGameCaller:
                                      "TOUR !", 88, True, None, "engage", t))
         else:
             carries = [d for d in long_dead if d.position in _CARRY_POS and d.respawn >= 30.0]
-            if len(carries) >= 2 and my_alive and st.phase in ("mid", "late", "end"):
+            # 3 dead with the Baron up: the planner's Baron call (macro fight_won) is the play, not a tower
+            baron_play = up("baron") and st.gt >= 1200 and len(long_dead) >= 3
+            if len(carries) >= 2 and my_alive and st.phase in ("mid", "late", "end") and not baron_play:
                 secs = int(min(d.respawn for d in carries))
                 who = " et ".join(d.name for d in carries[:2])
                 out.append(MacroCall("carries_dead", f"Frappe une tour avec ton équipe : {who} morts {secs} s",

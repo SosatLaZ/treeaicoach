@@ -23,8 +23,8 @@ def test_ai_section_and_share_summary(home: Path, tmp_path: Path, monkeypatch: p
                         lambda name: {"list_games": lambda n=50: games}.get(name) or real(name))
     app, _voice, _ = tu._build(tmp_path)
     try:
-        for key in ("alerts", "settings", "analysis"):
-            app.show_page(key)
+        for key, tab in (("settings", "Voix"), ("settings", "IA"), ("analysis", None)):
+            app.show_page(key, tab)
             tu._pump(app, 0.2)
         assert "item_advice_speak" in app._widgets_by_field and "caster_style" in app._widgets_by_field
         assert "ai_provider" in app._widgets_by_field and "ai_speak" in app._widgets_by_field

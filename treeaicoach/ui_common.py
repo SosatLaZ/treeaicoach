@@ -84,6 +84,13 @@ CONTENT_MAX = 860                 # max width of the centred content column (set
 WIDE_MAX = 1300                   # dashboard / analyses
 PAGE_PAD = 32                     # minimum side gutter of a page
 CARD_PAD = 20                     # inner padding of a section card
+SECTION_GAP = 28                  # space between two sections (title + card)
+ROW_PAD_Y = 12                    # vertical padding of a setting row (rows are separated by 1 px lines)
+CTL_GAP = 8                       # gap between two controls side by side
+ROW_CTL_GAP = 24                  # gap between the text of a setting row and its control
+TAB_GAP = 24                      # gap between two tabs of a page header
+LINK_H = 22                       # inline text buttons (fix links of the "Système" rows, moments)
+ICON_BTN = 30                     # square icon-only buttons (toolbars)
 
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
 #: "jouer plus fort ou non" gauge step -> colour; tip tone -> colour (dashboard coach strip)
@@ -111,27 +118,31 @@ TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
 PREBUILD_GAP_MS = 400
-PREBUILD_ORDER = ("settings", "alerts", "overlay", "analysis", "help", "dashboard")
+PREBUILD_ORDER = ("settings", "analysis", "help", "dashboard")
 GAMES_PAGE = 15                  # rows of the Analyses table drawn at once ("Afficher plus")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "TreeAICoach"
 
+#: Sidebar navigation: 4 pages. Everything the player can set lives in ONE page (Réglages), in tabs
+#: named after what they change (docs/DESIGN.md, "Navigation").
 PAGES: tuple[tuple[str, str, str], ...] = (
     ("dashboard", "En jeu", "dashboard"),
-    ("alerts", "Alertes", "voice"),
-    ("overlay", "Overlay", "overlay"),
     ("analysis", "Analyses", "analysis"),
     ("settings", "Réglages", "settings"),
     ("help", "Aide", "help"),
 )
+#: Tabs of the Réglages page, in order (label shown in the tab bar).
+SETTINGS_TABS: tuple[str, ...] = ("Général", "Affichage", "Voix", "Détection", "IA", "Mises à jour", "Avancé")
+#: Pages of older versions -> (page, tab) of the Réglages page that replaced them.
+PAGE_ALIASES: dict[str, tuple[str, str]] = {"alerts": ("settings", "Voix"), "overlay": ("settings", "Affichage")}
 
 #: Engine state name -> (short French title, colour).
 STATE_INFO: dict[str, tuple[str, str]] = {
     "STOPPED": ("Analyse arrêtée", DIM),
     "WAITING_GAME": ("En attente d'une partie", GOLD),
     "LOCATING": ("Recherche de la minimap", TEAL),
-    "RUNNING": ("Analyse en cours", SAFE),
+    "RUNNING": ("En jeu", SAFE),
     "UNSUPPORTED_MODE": ("Mode de jeu non pris en charge", WARNING),
     "CAPTURE_BLACK": ("Capture noire", WARNING),
     "ERROR": ("Erreur", DANGER),
@@ -140,7 +151,7 @@ STATE_INFO: dict[str, tuple[str, str]] = {
 }
 PILL_TEXT: dict[str, str] = {
     "STOPPED": "Arrêté", "WAITING_GAME": "En attente", "LOCATING": "Localisation",
-    "RUNNING": "En partie", "UNSUPPORTED_MODE": "Mode non géré", "CAPTURE_BLACK": "Capture noire",
+    "RUNNING": "En jeu", "UNSUPPORTED_MODE": "Mode non géré", "CAPTURE_BLACK": "Capture noire",
     "ERROR": "Erreur", "NO_ENGINE": "Indisponible", "STARTING": "Démarrage",
 }
 
@@ -158,9 +169,18 @@ HUD_POSITIONS: tuple[tuple[str, str], ...] = (
     ("left_middle", "Au milieu à gauche"),
     ("custom", "Personnalisée"),
 )
-FOG_MODES: tuple[tuple[str, str], ...] = (("jungler", "Jungler"), ("all", "Tous"), ("off", "Off"))
+FOG_MODES: tuple[tuple[str, str], ...] = (("jungler", "Jungler"), ("all", "Tous"), ("off", "Aucun"))
 OVERLAY_MODES: tuple[tuple[str, str], ...] = (("minimap", "Sur la minimap"), ("radar", "Radar à côté"),
                                               ("off", "Aucun"))
+#: cfg.voice_level (voice_policy.py): how much the coach says out loud (the rest is written).
+VOICE_LEVELS: tuple[tuple[str, str], ...] = (("minimal", "Minimal"), ("normal", "Normal"), ("bavard", "Bavard"))
+#: One control for (cfg.beep_on_danger, cfg.danger_voice): "voix" = no beep, the sentence only.
+DANGER_MODES: tuple[tuple[str, str], ...] = (("bip_voix", "Bip + voix"), ("bip", "Bip seul"), ("voix", "Voix seule"))
+PERF_MODES: tuple[tuple[str, str], ...] = (("auto", "Auto"), ("normal", "Normal"), ("low_end", "PC modeste"))
+CAPTURE_BACKENDS: tuple[tuple[str, str], ...] = (("auto", "Auto"), ("dxgi", "DXGI"), ("mss", "Compatible"))
+UI_SCALINGS: tuple[tuple[str, str], ...] = (("auto", "Auto"), ("90", "90 %"), ("100", "100 %"), ("110", "110 %"),
+                                            ("125", "125 %"), ("150", "150 %"))
+PLAYS_POSITIONS: tuple[tuple[str, str], ...] = (("top_center", "En haut"), ("minimap", "Près de la minimap"))
 DETECTORS: tuple[tuple[str, str], ...] = (
     ("auto", "Automatique"),
     ("onnx", "Réseau de neurones (ONNX)"),
@@ -183,6 +203,36 @@ ENGINE_LABELS: tuple[tuple[str, str], ...] = (
     ("sapi", "Windows classique (SAPI)"),
 )
 HOTKEY_FIELDS = frozenset({"hotkey_jungler", "hotkey_mute", "hotkey_overlay", "hotkey_ai", "hotkey_ward"})
+#: Fields read once when the engine starts (the engine is rebuilt, the detector kept).
+ENGINE_RESTART_FIELDS = frozenset({"hotkey_diag"})
+
+#: Settings deliberately NOT shown in Réglages, with the reason (tests/test_ui_settings.py checks that
+#: every other Config field has a control: no setting is dead or unreachable).
+HIDDEN_SETTINGS: dict[str, str] = {
+    "manual_minimap_rect": "écrit par « Calibrer la minimap »",
+    "icon_scale_by_res": "appris pendant les parties",
+    "objective_lead_s": "annonces des objectifs : réglées par le niveau de voix",
+    "warn_radius": "réglé par la sensibilité",
+    "danger_radius": "réglé par la sensibilité",
+    "detection_threshold": "0 = valeur du modèle (réglage de développeur)",
+    "radar_enabled": "remplacé par « Où dessiner » (overlay_mode)",
+    "radar_xy": "écrit par « Déplacer les fenêtres »",
+    "hud_xy": "écrit par « Déplacer les fenêtres »",
+    "overlay_show_allies": "suivi du niveau du joueur (skill.py) et du mode détaillé",
+    "overlay_show_roles": "suivi du niveau du joueur (skill.py) et du mode détaillé",
+    "overlay_show_ghosts": "suivi du niveau du joueur (skill.py) et du mode détaillé",
+    "overlay_show_last_seen": "suivi du niveau du joueur (skill.py) et du mode détaillé",
+    "skill_level": "barre latérale « Ton niveau »",
+    "safe_mode": "barre latérale « Mode sûr » (Ctrl+Maj+S)",
+    "ui_geometry": "position de la fenêtre, mémorisée",
+    "ui_scale": "ancien réglage, remplacé par « Taille de l'interface »",
+    "ui_onboarding_done": "suivi du mode guidé",
+    "ui_seen_changelog": "suivi des nouveautés",
+    "update_channel_url": "réglage de développeur",
+    "diag_duration_s": "réglage de développeur",
+    "diag_interval_s": "réglage de développeur",
+    "selfcheck_enabled": "auto-diagnostic (selfcheck.py) : réglage de développeur",
+}
 
 _ctk: Any = None      # customtkinter module (imported lazily by _import_ctk)
 
@@ -904,12 +954,10 @@ class _Fonts:
         self.nav = ctk.CTkFont(family=f, size=14)
         self.nav_active = ctk.CTkFont(family=f, size=14, weight="bold")
         self.button = ctk.CTkFont(family=f, size=13, weight="bold")
-        self.big_button = ctk.CTkFont(family=d, size=15, weight=dw)
         self.state = ctk.CTkFont(family=d, size=21, weight=dw)
         self.clock = ctk.CTkFont(family=d, size=28, weight=dw)
         self.stat = ctk.CTkFont(family=d, size=28, weight=dw)
         self.num = ctk.CTkFont(family=d, size=16, weight=dw)
-        self.threat = ctk.CTkFont(family=d, size=15, weight=dw)
 
 
 # ======================================================================================
@@ -1018,6 +1066,10 @@ class HeroBanner:
         self._button_win: int | None = None
         self._mu_win: int | None = None
         self._mu_widget: Any = None
+        self._fix_win: int | None = None          # one-click fix of a problem state ("Calibrer", "Aide"...)
+        self._fix_widget: Any = None
+        self._fix_on = False
+        self._mu_on = False                       # the match-up block (in game only)
         self._badge = False
         self._detail_full = "Hors partie"
         self.title = _CanvasText(c, self.title_item, self.layout)
@@ -1039,6 +1091,23 @@ class HeroBanner:
         self._mu_widget = widget
         self._mu_win = self.canvas.create_window(0, 0, window=widget, anchor="e")
         self.layout()
+
+    def attach_fix(self, widget: Any) -> None:
+        """The fix button of a problem state: shown in place of the match-up (no game data then)."""
+        self._fix_widget = widget
+        self._fix_win = self.canvas.create_window(0, 0, window=widget, anchor="e", state="hidden")
+        self.layout()
+
+    def set_fix(self, on: bool) -> None:
+        if bool(on) != self._fix_on:
+            self._fix_on = bool(on)
+            self.layout()
+
+    def set_matchup(self, on: bool) -> None:
+        """Show the match-up block (me VS my lane opponent) only when there is a game to show."""
+        if bool(on) != self._mu_on:
+            self._mu_on = bool(on)
+            self.layout()
 
     def set_badge(self, on: bool) -> None:
         if on != self._badge:
@@ -1068,9 +1137,14 @@ class HeroBanner:
             clock_left = (cb[0] if cb else clock_x - s(80)) - s(16)
             c.coords(self.vsep, clock_left, top - s(24), clock_left, top + s(24))
             right_limit = clock_left - s(16)
+            if self._fix_win is not None:
+                c.itemconfigure(self._fix_win, state="normal" if self._fix_on else "hidden")
+                if self._fix_on:
+                    c.coords(self._fix_win, right_limit, top)
+                    right_limit -= int(self._fix_widget.winfo_reqwidth()) + s(16)
             if self._mu_win is not None:
                 mw = int(self._mu_widget.winfo_reqwidth()) if self._mu_widget is not None else 0
-                fits = right_limit - mw - s(16) - (pad + s(24)) >= s(300)    # else: room for the state text
+                fits = self._mu_on and not self._fix_on and right_limit - mw - s(16) - (pad + s(24)) >= s(300)
                 c.itemconfigure(self._mu_win, state="normal" if fits else "hidden")
                 if fits:
                     c.coords(self._mu_win, right_limit, top)
@@ -1218,10 +1292,12 @@ class HeroBanner:
                 rb = "#%02X%02X%02X" % img.getpixel((max(0, w - self.s(30)), min(h - 1, self.s(50))))[:3]
                 if rb != self.right_bg:
                     self.right_bg = rb
-                    try:
-                        self.app.btn_start.configure(bg_color=rb)
-                    except Exception:
-                        pass
+                    for btn in (self.app.btn_start, self._fix_widget):
+                        try:
+                            if btn is not None:
+                                btn.configure(bg_color=rb)
+                        except Exception:
+                            pass
             self.layout()
         except Exception:
             log.debug("hero background failed", exc_info=True)
@@ -1843,6 +1919,27 @@ def detector_short(name: Any) -> str:
         return "Classique"
     return _DETECTOR_FR.get(d, str(name))[:9]
 _VOICE_FR = {"sapi": "SAPI", "onecore": "Windows", "neural": "Neurale", "print": "Journal", "": "-"}
+ROLE_GAMER = ui_kit.ROLE_GAMER
+_champ_names: dict[str, str] = {}
+
+
+def champion_name(alias: Any) -> str:
+    """Display name of a champion alias ("MonkeyKing" -> "Wukong"), cached; the alias when unknown."""
+    a = str(alias or "").strip()
+    if not a:
+        return ""
+    name = _champ_names.get(a)
+    if name is None:
+        name = a
+        try:
+            from treeaicoach.champions import get_default_db  # noqa: PLC0415
+
+            entry = get_default_db().get(a)
+            name = str(getattr(entry, "name_fr", "") or getattr(entry, "name_en", "") or a)
+        except Exception:
+            log.debug("champion name unavailable for %s", a, exc_info=True)
+        _champ_names[a] = name
+    return name
 _ALERT_KINDS = frozenset({"jungler_approach", "roam_approach", "collapse", "jungler_spotted", "laner_mia",
                           "objective_soon", "recall_gold", "control_ward", "jungler_where", "death_recap"})
 _POSITION_FR = {"TOP": "Haut", "JUNGLE": "Jungle", "MIDDLE": "Milieu", "BOTTOM": "Bas", "UTILITY": "Support"}
@@ -1948,6 +2045,14 @@ def _example_speech() -> dict[str, tuple[str, int]]:
         out[key] = (t.replace("«", "").replace("»", "").strip(), 2 if key == "collapse" else
                     (1 if key in ("jungler_approach", "roam_approach") else 0))
     return out
+
+
+def _report_function(name: str) -> Callable[..., Any] | None:
+    """``list_games`` / ``write_report``, resolved through :mod:`treeaicoach.ui` at call time (tests patch
+    ``ui._report_function``; imported lazily: ui imports this module)."""
+    from treeaicoach import ui  # noqa: PLC0415 - circular at import time
+
+    return ui._report_function(name)
 
 
 def _game_json_path(game: dict) -> Path | None:

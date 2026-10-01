@@ -1,4 +1,7 @@
 {
+  "_patch": "26.19",
+  "_checked": "2026-10-01",
+  "_sources": "Patch 26.1 notes (Baron 20:00, Atakhan supprimé) ; League of Legends Wiki (CC BY-SA 3.0) : Dragon pit, Voidgrub camp, Rift Herald, Baron Nashor, historique vérifié jusqu'au patch 26.19 ; contrôlé par tools/validate_data.py (OFFICIAL_2026).",
   "_comment": "Temps d'apparition des objectifs en secondes de jeu (saison 2026, patch 26.1+ : Atakhan supprimé, Baron à 20:00, larves à 8:00 jusqu'à 14:45, Héraut à 15:00 jusqu'à 19:45). first = 1re apparition (null = jamais), respawn = délai après un kill (null = ne réapparaît pas), despawn = disparaît à ce temps de jeu, count = larves par vague, soul = dragons élémentaires pour l'âme. Une copie dans %APPDATA%\\TreeAICoach\\objectives.json est prioritaire.",
   "dragon": {"first": 300, "respawn": 300, "soul": 4},
   "elder": {"respawn": 360},

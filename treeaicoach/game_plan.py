@@ -10,17 +10,43 @@
 * :func:`map_fields` - soul point, Baron / Elder buff owner and time left from
   :class:`treeaicoach.phase.MapState`, as :class:`treeaicoach.tips.TipContext` fields.
 * :data:`OBJ_ROLES` - which roles an objective concerns (the recall-timing tips).
+* :func:`lane_lines` - 2-3 lane tips from the matchup knowledge base ``assets/matchups.json``
+  (champion pair > tips against that champion > lane class pair > rules from the champion
+  profiles: power curve, level-6 spike, range, mobility, poke, sustain > tips against the lane
+  class). Every line is an instruction, verb first, "action : raison", 12 words at most.
 
 Nothing about enemy cooldowns or summoner spells. Pure Python, never raises.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+MATCHUPS_FILE = "matchups.json"
+_MATCHUPS: dict[str, Any] | None = None
+_mlock = threading.Lock()
+
+
+def matchups() -> dict[str, Any]:
+    """The matchup knowledge base (``assets/matchups.json``, cached; ``{}`` when unavailable)."""
+    global _MATCHUPS
+    with _mlock:
+        if _MATCHUPS is None:
+            data: Any = {}
+            try:
+                from treeaicoach.paths import asset_path
+
+                data = json.loads(asset_path(MATCHUPS_FILE).read_text(encoding="utf-8"))
+            except Exception:
+                log.warning("Matchup tips unavailable (assets/%s)", MATCHUPS_FILE, exc_info=True)
+            _MATCHUPS = data if isinstance(data, dict) else {}
+        return _MATCHUPS
 
 CURVE_RANK = {"early": 2, "mid": 1, "late": 0}
 SIDE_FR = {"top": "en haut", "bot": "en bas"}
@@ -96,29 +122,87 @@ def fit(line: str | None) -> str | None:
     return " ".join(words[:MAX_WORDS]) if len(words) > MAX_WORDS else line
 
 
-def lane_lines(me_alias: str, opp_alias: str, opp_name: str) -> list[str]:
-    """1-2 lane plan lines (plain French, "action : raison"). Pure."""
+def rule_lines(me_alias: str, opp_alias: str, opp_name: str) -> list[str]:
+    """Lane lines derived from the two champion profiles (curve, level-6 spike, range, mobility,
+    poke, sustain). Pure."""
     me, op = _profile(me_alias), _profile(opp_alias)
     out: list[str] = []
-    if me.known and op.known:
-        d = CURVE_RANK.get(me.curve, 1) - CURVE_RANK.get(op.curve, 1)
-        if d > 0:
-            out.append("Joue agressif avant le niveau 6 : tu es plus fort tôt")
-        elif d < 0 and op.curve == "early":
-            out.append(f"Farme prudemment jusqu'au niveau 6 : {opp_name} est fort tôt")
-        elif d < 0:
-            out.append(f"Prends l'avantage tôt : {opp_name} devient fort plus tard")
-        if op.ranged and not me.ranged:
-            out.append("Reste derrière tes sbires : il a plus de portée que toi")
-        elif me.ranged and not op.ranged:
-            out.append("Tape-le quand il prend un sbire : tu as plus de portée")
-        elif int(op.ratings[3]) >= 3 and int(me.ratings[3]) <= 2:
-            out.append(f"Garde une balise dans ta rivière : {opp_name} est très mobile")
-        elif op.has("poke"):
-            out.append(f"Ne reste pas en face de ses sorts : {opp_name} harcèle de loin")
+    if not (me.known and op.known):
+        return out
+    d = CURVE_RANK.get(me.curve, 1) - CURVE_RANK.get(op.curve, 1)
+    e = "e" if op.female else ""
+    if d > 0:
+        out.append("Joue agressif avant le niveau 6 : tu es plus fort tôt")
+    elif d < 0 and op.curve == "early":
+        out.append(f"Farme prudemment jusqu'au niveau 6 : {opp_name} est fort{e} tôt")
+    elif d < 0:
+        out.append(f"Prends l'avantage tôt : {opp_name} devient fort{e} plus tard")
+    if op.spike6 >= 3 and me.spike6 <= 2:
+        out.append("Recule à son niveau 6 : son ultime change le combat")
+    elif me.spike6 >= 3 and op.spike6 <= 2:
+        out.append("Attaque à ton niveau 6 : ton ultime gagne l'échange")
+    if op.ranged and not me.ranged:
+        out.append(f"Reste derrière tes sbires : {'elle' if op.female else 'il'} a plus de portée que toi")
+    elif me.ranged and not op.ranged:
+        out.append(f"Frappe quand {'elle' if op.female else 'il'} prend un sbire : tu as plus de portée")
+    elif int(op.ratings[3]) >= 3 and int(me.ratings[3]) <= 2:
+        out.append(f"Garde une balise dans ta rivière : {opp_name} est très mobile")
+    elif op.has("poke"):
+        out.append(f"Ne reste pas en face de ses sorts : {opp_name} harcèle de loin")
+    if op.sustain >= 3 and me.sustain <= 2:
+        out.append(f"Achète un anti-soin tôt : {opp_name} se soigne beaucoup")
+    return out
+
+
+def _fill(lines: Any, opp_name: str, female: bool = False) -> list[str]:
+    """Placeholders: ``{opp}`` name, ``{il}`` il / elle, ``{e}`` feminine agreement."""
+    out = []
+    for line in lines if isinstance(lines, list) else []:
+        if isinstance(line, str) and line.strip():
+            out.append(line.replace("{opp}", opp_name).replace("{il}", "elle" if female else "il")
+                       .replace("{e}", "e" if female else ""))
+    return out
+
+
+def matchup_lines(me_alias: str, opp_alias: str, opp_name: str) -> list[tuple[str, str]]:
+    """Every candidate lane line with its tier, most specific first: ``("pair_champion", line)``,
+    ``vs_champion``, ``pair_class``, ``rule``, ``vs_class``. Pure, never raises."""
+    try:
+        kb = matchups()
+        me, op = _profile(me_alias), _profile(opp_alias)
+        ma, oa = getattr(me, "alias", me_alias), getattr(op, "alias", opp_alias)
+        fem = bool(getattr(op, "female", False))
+        tiers: list[tuple[str, list[str]]] = [
+            ("pair_champion", _fill((kb.get("pair_champion") or {}).get(f"{ma}>{oa}"), opp_name, fem)),
+            ("vs_champion", _fill((kb.get("vs_champion") or {}).get(oa), opp_name, fem)),
+            ("pair_class", _fill((kb.get("pair_class") or {}).get(f"{me.lane_class}>{op.lane_class}"), opp_name, fem)
+             if me.lane_class and op.lane_class else []),
+            ("rule", rule_lines(me_alias, opp_alias, opp_name)),
+            ("vs_class", _fill((kb.get("vs_class") or {}).get(op.lane_class), opp_name, fem)
+             if op.lane_class else []),
+        ]
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for tier, lines in tiers:
+            for line in lines:
+                action, _sep, why = line.partition(" : ")
+                keys = {action.strip().casefold(), why.strip().casefold() or line.casefold()}
+                if not keys & seen:          # same advice or same reason already given
+                    seen |= keys
+                    out.append((tier, line))
+        return out
+    except Exception:
+        log.debug("matchup_lines failed", exc_info=True)
+        return []
+
+
+def lane_lines(me_alias: str, opp_alias: str, opp_name: str, n: int = 2) -> list[str]:
+    """``n`` (2 by default, 3 for the pre-game card) lane plan lines in plain French, "action :
+    raison", the most specific first (see the module doc). Pure."""
+    out = [line for _tier, line in matchup_lines(me_alias, opp_alias, opp_name)]
     if not out:
         out.append("Tue vite la première vague : le premier niveau 2 gagne l'échange")
-    return out[:2]
+    return out[:max(1, int(n))]
 
 
 def jungle_line(jungler: Any, gank_side: str | None, my_role: str | None) -> str | None:
@@ -212,5 +296,5 @@ def map_fields(state: Any) -> dict[str, Any]:
     return out
 
 
-__all__ = ["MatchupCard", "matchup_card", "lane_lines", "jungle_line", "probable_gank_side",
-           "jungler_first_gank", "map_fields", "OBJ_ROLES"]
+__all__ = ["MatchupCard", "matchup_card", "lane_lines", "rule_lines", "matchup_lines", "matchups", "jungle_line",
+           "probable_gank_side", "jungler_first_gank", "map_fields", "OBJ_ROLES"]

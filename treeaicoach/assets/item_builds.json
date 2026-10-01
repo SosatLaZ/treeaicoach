@@ -1,0 +1,541 @@
+{
+ "boots": {
+  "class": {
+   "assassin_ad": 3158,
+   "assassin_ap": 3020,
+   "enchanter": 3158,
+   "fighter": 3047,
+   "fighter_ap": 3020,
+   "mage": 3020,
+   "marksman": 3006,
+   "support_tank": 3047,
+   "tank": 3047
+  },
+  "vs": {
+   "cc": 3111,
+   "magic": 3111,
+   "physical": 3047
+  }
+ },
+ "champions": {
+  "Ezreal": {
+   "core": [
+    3004,
+    3078,
+    6694,
+    3161
+   ]
+  },
+  "Gwen": {
+   "class": "fighter_ap",
+   "core": [
+    3115,
+    4633,
+    3089,
+    3157
+   ]
+  },
+  "Kalista": {
+   "core": [
+    3153,
+    3124,
+    3085,
+    3302
+   ]
+  },
+  "Katarina": {
+   "class": "assassin_ap",
+   "core": [
+    4646,
+    4645,
+    3089,
+    3135,
+    3157
+   ]
+  },
+  "Kayle": {
+   "class": "mage",
+   "core": [
+    3115,
+    3124,
+    3089,
+    4645,
+    3135
+   ]
+  },
+  "KogMaw": {
+   "core": [
+    3153,
+    3124,
+    3302,
+    3085,
+    3091
+   ]
+  },
+  "Senna": {
+   "class": "marksman",
+   "core": [
+    3142,
+    3179,
+    6694,
+    3036
+   ]
+  },
+  "Shyvana": {
+   "class": "fighter_ap",
+   "core": [
+    4633,
+    6653,
+    3089,
+    3157
+   ]
+  },
+  "Teemo": {
+   "class": "mage",
+   "core": [
+    3115,
+    6653,
+    3089,
+    4645
+   ]
+  },
+  "Vayne": {
+   "core": [
+    3153,
+    3124,
+    3302,
+    3036
+   ]
+  }
+ },
+ "classes": [
+  "marksman",
+  "mage",
+  "assassin_ad",
+  "assassin_ap",
+  "fighter",
+  "fighter_ap",
+  "tank",
+  "support_tank",
+  "enchanter"
+ ],
+ "core": {
+  "assassin_ad": [
+   3142,
+   6697,
+   6694,
+   6696,
+   3814
+  ],
+  "assassin_ap": [
+   4646,
+   4645,
+   3089,
+   3135,
+   3157
+  ],
+  "enchanter": [
+   6617,
+   6616,
+   3107,
+   3222,
+   3504
+  ],
+  "fighter": [
+   3071,
+   6610,
+   3053,
+   6333
+  ],
+  "fighter_ap": [
+   4633,
+   6653,
+   3157,
+   3089
+  ],
+  "mage": [
+   6655,
+   4645,
+   3089,
+   3135,
+   3157
+  ],
+  "marksman": [
+   3032,
+   3031,
+   3046,
+   3036,
+   3072,
+   6672
+  ],
+  "support_tank": [
+   3190,
+   2524,
+   3109,
+   3050
+  ],
+  "tank": [
+   3068,
+   3084,
+   6665,
+   2502,
+   4401
+  ]
+ },
+ "counters": {
+  "antiheal": {
+   "assassin_ad": [
+    6609,
+    3123
+   ],
+   "assassin_ap": [
+    3165,
+    3916
+   ],
+   "enchanter": [
+    3916
+   ],
+   "fighter": [
+    6609,
+    3123
+   ],
+   "fighter_ap": [
+    3165,
+    3916
+   ],
+   "mage": [
+    3165,
+    3916
+   ],
+   "marksman": [
+    3033,
+    3123
+   ],
+   "support_tank": [
+    3075,
+    3076
+   ],
+   "tank": [
+    3075,
+    3076
+   ]
+  },
+  "armor": {
+   "assassin_ad": [
+    6694
+   ],
+   "assassin_ap": [
+    3135
+   ],
+   "fighter": [
+    3071,
+    6694,
+    3153
+   ],
+   "fighter_ap": [
+    6653,
+    3135
+   ],
+   "mage": [
+    3135,
+    6653
+   ],
+   "marksman": [
+    3036,
+    3153
+   ]
+  },
+  "cc": {
+   "assassin_ad": [
+    3814
+   ],
+   "assassin_ap": [
+    3102
+   ],
+   "enchanter": [
+    3222
+   ],
+   "fighter": [
+    3053
+   ],
+   "fighter_ap": [
+    3102
+   ],
+   "mage": [
+    3102
+   ],
+   "marksman": [
+    3139
+   ],
+   "support_tank": [
+    3222
+   ],
+   "tank": [
+    3111
+   ]
+  },
+  "crit": {
+   "assassin_ap": [
+    3157
+   ],
+   "fighter": [
+    3143,
+    6333
+   ],
+   "fighter_ap": [
+    3157
+   ],
+   "mage": [
+    3157
+   ],
+   "support_tank": [
+    3110,
+    3143
+   ],
+   "tank": [
+    3143,
+    3110
+   ]
+  },
+  "magic": {
+   "assassin_ad": [
+    3156,
+    3814
+   ],
+   "assassin_ap": [
+    3102
+   ],
+   "enchanter": [
+    3190
+   ],
+   "fighter": [
+    3156,
+    2504
+   ],
+   "fighter_ap": [
+    3102,
+    2504
+   ],
+   "mage": [
+    3102
+   ],
+   "marksman": [
+    3156,
+    3139
+   ],
+   "support_tank": [
+    3190,
+    8020
+   ],
+   "tank": [
+    4401,
+    2504,
+    3065
+   ]
+  },
+  "physical": {
+   "assassin_ad": [
+    6333,
+    3026
+   ],
+   "assassin_ap": [
+    3157
+   ],
+   "enchanter": [
+    3190
+   ],
+   "fighter": [
+    6333,
+    3053
+   ],
+   "fighter_ap": [
+    3157
+   ],
+   "mage": [
+    3157
+   ],
+   "marksman": [
+    3026,
+    6673
+   ],
+   "support_tank": [
+    3109,
+    3190
+   ],
+   "tank": [
+    3143,
+    3075
+   ]
+  },
+  "shields": {
+   "assassin_ad": [
+    6695
+   ],
+   "fighter": [
+    6695
+   ]
+  }
+ },
+ "generated": "2026-10-01",
+ "patch": "26.19",
+ "problems": [],
+ "rules": "tools/fetch_builds.py: expert preference lists checked against the item data (sold on the Rift, kind, stats / semantic flags), empty lists filled from the data",
+ "same_need": {
+  "antiheal": [
+   3033,
+   3075,
+   3076,
+   3123,
+   3165,
+   3916,
+   6609
+  ],
+  "cc": [
+   2517,
+   2525,
+   3053,
+   3091,
+   3102,
+   3111,
+   3139,
+   3140,
+   3173,
+   3222,
+   3814,
+   4632
+  ]
+ },
+ "schema": 1,
+ "src": {
+  "champions.Ezreal": "rule",
+  "champions.Gwen": "rule",
+  "champions.Kalista": "rule",
+  "champions.Katarina": "rule",
+  "champions.Kayle": "rule",
+  "champions.KogMaw": "rule",
+  "champions.Senna": "rule",
+  "champions.Shyvana": "rule",
+  "champions.Teemo": "rule",
+  "champions.Vayne": "rule",
+  "core.assassin_ad": "rule",
+  "core.assassin_ap": "rule",
+  "core.enchanter": "rule",
+  "core.fighter": "rule",
+  "core.fighter_ap": "rule",
+  "core.mage": "rule",
+  "core.marksman": "rule",
+  "core.support_tank": "rule",
+  "core.tank": "rule",
+  "counters.antiheal.assassin_ad": "rule",
+  "counters.antiheal.assassin_ap": "rule",
+  "counters.antiheal.enchanter": "rule",
+  "counters.antiheal.fighter": "rule",
+  "counters.antiheal.fighter_ap": "rule",
+  "counters.antiheal.mage": "rule",
+  "counters.antiheal.marksman": "rule",
+  "counters.antiheal.support_tank": "rule",
+  "counters.antiheal.tank": "rule",
+  "counters.armor.assassin_ad": "rule",
+  "counters.armor.assassin_ap": "rule",
+  "counters.armor.fighter": "rule",
+  "counters.armor.fighter_ap": "rule",
+  "counters.armor.mage": "rule",
+  "counters.armor.marksman": "rule",
+  "counters.cc.assassin_ad": "rule",
+  "counters.cc.assassin_ap": "rule",
+  "counters.cc.enchanter": "rule",
+  "counters.cc.fighter": "rule",
+  "counters.cc.fighter_ap": "rule",
+  "counters.cc.mage": "rule",
+  "counters.cc.marksman": "rule",
+  "counters.cc.support_tank": "rule",
+  "counters.cc.tank": "rule",
+  "counters.crit.assassin_ap": "rule",
+  "counters.crit.fighter": "rule",
+  "counters.crit.fighter_ap": "rule",
+  "counters.crit.mage": "rule",
+  "counters.crit.support_tank": "rule",
+  "counters.crit.tank": "rule",
+  "counters.magic.assassin_ad": "rule",
+  "counters.magic.assassin_ap": "rule",
+  "counters.magic.enchanter": "rule",
+  "counters.magic.fighter": "rule",
+  "counters.magic.fighter_ap": "rule",
+  "counters.magic.mage": "rule",
+  "counters.magic.marksman": "rule",
+  "counters.magic.support_tank": "rule",
+  "counters.magic.tank": "rule",
+  "counters.physical.assassin_ad": "rule",
+  "counters.physical.assassin_ap": "rule",
+  "counters.physical.enchanter": "rule",
+  "counters.physical.fighter": "rule",
+  "counters.physical.fighter_ap": "rule",
+  "counters.physical.mage": "rule",
+  "counters.physical.marksman": "rule",
+  "counters.physical.support_tank": "rule",
+  "counters.physical.tank": "rule",
+  "counters.shields.assassin_ad": "rule",
+  "counters.shields.fighter": "rule"
+ },
+ "start": {
+  "fighter": [
+   1055,
+   2003
+  ],
+  "jungle": [
+   1101,
+   2003
+  ],
+  "jungle_mobile": [
+   1102,
+   2003
+  ],
+  "jungle_tank": [
+   1103,
+   2003
+  ],
+  "mage": [
+   1056,
+   2003,
+   2003
+  ],
+  "marksman": [
+   1055,
+   2003
+  ],
+  "support": [
+   3865,
+   2003,
+   2003
+  ],
+  "tank": [
+   1054,
+   2003
+  ]
+ },
+ "start_why": {
+  "fighter": "dégâts et vol de vie en voie",
+  "jungle": "familier offensif pour nettoyer vite",
+  "jungle_mobile": "familier rapide pour ganker tôt",
+  "jungle_tank": "familier résistant pour ta jungle",
+  "mage": "mana et puissance pour farmer de loin",
+  "marksman": "dégâts et vol de vie en voie",
+  "support": "l'objet de support : or et balises",
+  "tank": "tenir la voie face aux échanges"
+ },
+ "support_item_chain": [
+  3865,
+  3866,
+  3867
+ ],
+ "support_upgrade": {
+  "assassin_ad": 3877,
+  "catcher": 3876,
+  "enchanter": 3870,
+  "fighter": 3877,
+  "mage": 3871,
+  "marksman": 3877,
+  "support_tank": 3869
+ },
+ "version": "16.19.1"
+}

@@ -751,7 +751,7 @@ def test_pipeline_v2_migration_and_defaults(tmp_path):
     c = Config()
     assert (c.capture_backend, c.perf_mode, c.adaptive_rate, c.overlay_fps) == ("auto", "auto", True, 30.0)
     assert c.overlay_hide_from_capture is True and c.hotkey_diag == "Ctrl+F8"
-    assert (c.low_priority, c.eco_qos, c.pause_when_unfocused) == (True, True, True)
+    assert (c.low_priority, c.eco_qos_v2, c.pause_when_unfocused) == (True, False, True)
     p = tmp_path / "config.json"
     p.write_text(json.dumps({"overlay_hide_from_capture": False, "hud_position": "above_minimap"}), encoding="utf-8")
     c = load_config(p)

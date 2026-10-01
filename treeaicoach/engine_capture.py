@@ -78,6 +78,9 @@ class CaptureMixin:
                 # window moved (same size): the minimap moved with it, no new search
                 self._minimap_rect = self._minimap_rect.offset(win.x - old.x, win.y - old.y)
                 self._rect_window = win
+                good = getattr(self, "_last_good", None)
+                if good is not None and good[1] == old:
+                    self._last_good = (good[0].offset(win.x - old.x, win.y - old.y), win, good[2])
                 log.info("Game window moved: minimap rect now %s", self._minimap_rect)
             self._window = win
         return win
@@ -133,6 +136,15 @@ class CaptureMixin:
                 hint = self._rect_cache.get(hint_key)
         except Exception:
             log.debug("Game settings prior failed", exc_info=True)
+        # self-check (rule 2): the rectangle last located in this same window is the cheap hint
+        # (one verify) when the game settings give none; the full search runs if it fails
+        good = getattr(self, "_last_good", None)
+        if good is not None and good[1] != win:
+            good = None
+        if hint is None and good is not None:
+            r = good[0]
+            hint = (r.x - win.x, r.y - win.y, r.w, r.h, good[2])
+        self._loc_attempts = getattr(self, "_loc_attempts", 0) + 1
         self._set_state(EngineState.LOCATING, MSG_LOCATING)
         loc = None
         try:
@@ -150,10 +162,24 @@ class CaptureMixin:
         self._rect_window = win
         if loc is not None:
             self._minimap_rect, self._locate_method = loc.rect, "auto"
+            self._locate_score = float(loc.score)
+            self._last_good = (loc.rect, win, float(loc.score))
+            self._loc_fails = 0
             log.info("Minimap located at %s (score %.2f)", loc.rect, loc.score)
             if hint_key is not None:
                 self._rect_cache.put(hint_key, loc.rect.x - win.x, loc.rect.y - win.y,
                                      loc.rect.w, loc.rect.h, loc.score)
+            return
+        self._loc_fails = getattr(self, "_loc_fails", 0) + 1
+        if good is not None:
+            # not found now (minimap covered, being resized...): keep the rectangle located before
+            # in this window - still verified at every tick, no detection while it does not look
+            # like the minimap - rather than an unverified default square (phantom detections)
+            self._minimap_rect, self._locate_method = good[0], "auto"
+            self._bad_since = t
+            self._next_verify = t
+            log.info("Minimap not found (%d in a row): keeping the last located rectangle %s",
+                     self._loc_fails, good[0])
             return
         from treeaicoach.minimap_locator import fallback_rect
 
@@ -218,13 +244,16 @@ class CaptureMixin:
                 score = 1.0
             self._minimap_score = score
             if score < VERIFY_MIN_SCORE:
+                # relocation after VERIFY_BAD_S, then backoff while the locations fail (3, 6, 12... s)
+                bad_s = VERIFY_BAD_S * min(16, 2 ** int(getattr(self, "_loc_fails", 0) or 0))
                 if self._bad_since is None:
                     self._bad_since = t
-                elif t - self._bad_since >= VERIFY_BAD_S:
-                    log.info("Minimap verification low (%.2f) for %.0f s: relocating", score, VERIFY_BAD_S)
+                elif t - self._bad_since >= bad_s:
+                    log.info("Minimap verification low (%.2f) for %.0f s: relocating", score, bad_s)
                     self._relocate = True
             else:
                 self._bad_since = None
+                self._loc_fails = 0                 # the rectangle verifies again (self-check rule 2)
             if self._bad_since is not None:
                 # the crop does not look like the minimap (shop / scoreboard over it, scale
                 # being changed...): no detection on it (phantoms), checked again next tick

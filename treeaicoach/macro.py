@@ -119,9 +119,12 @@ KIND_COOLDOWN_S: dict[str, float] = {
     "fight_won": 40.0, "fight_lost": 40.0, "jungler_dead": 60.0, "plates": 60.0, "cross_trade": 180.0,
     "free_dragon": 180.0, "rotate_mid": 120.0, "side_wave": 75.0, "split_safe": 90.0, "lane_swap": 120.0,
     "wave_recall": 120.0, "wave_freeze": 120.0, "back_off": 75.0,
+    # game changers (game_changers.py)
+    "gc_level": 20.0, "gc_jungler_far": 150.0, "gc_jungler_unseen": 150.0, "gc_baron_setup": 240.0,
+    "gc_fed_defense": 240.0, "gc_facecheck": 180.0,
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
-URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates"})
+URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level"})
 #: "go" calls that stay valid whatever my own gauge says (the numbers decide, not my lane)
 POST_FIGHT_KINDS = frozenset({"fight_won"})
 #: coach.MapCoach rules saying the same thing in words (suppressed around a call of the kind)
@@ -139,8 +142,18 @@ OVERLAPS: dict[str, frozenset[str]] = {
     "back_off": frozenset({"lane_left", "missing"}),
     "rotate_mid": frozenset(),
     "lane_swap": frozenset({"bot_missing"}),
+    "gc_level": frozenset({"level2", "level_diff", "level6"}),
+    "gc_jungler_far": frozenset({"jungler_side", "pressure"}),
+    "gc_jungler_unseen": frozenset({"jungler_unseen", "missing", "wave_push"}),
+    "gc_baron_setup": frozenset({"objective_window", "baron_pick", "objective_setup"}),
+    "gc_fed_defense": frozenset(),
+    "gc_facecheck": frozenset({"missing", "deep"}),
 }
 OVERLAP_S = 90.0
+#: a new call waits until the card line has been still this long (no card flicker), unless it is
+#: urgent (short window), a "coup de génie" or an immediate safety call
+CARD_SETTLE_S = 5.0
+SETTLE_EXEMPT = frozenset({"wave_freeze", "back_off"})
 BADGE_MIN_SCORE = 0.6          # the "COUP DE GÉNIE" badge only for strong calls...
 BADGE_KIND_GAP_S = 240.0       # ...and not twice in 4 min for the same kind
 
@@ -326,6 +339,7 @@ class MacroCtx:
     recent_director_call: bool = False               # phase.EndGameCaller spoke in the last seconds
     stance_score: float | None = None                # play gauge score (coach.Stance.score), None = unknown
     keep: bool = False                               # re-validating an active call: relaxed thresholds
+    card_age: float | None = None                    # seconds since the HUD card line last changed (engine)
 
     @property
     def enemy_team(self) -> str | None:
@@ -337,7 +351,7 @@ def build_ctx(t: float, gt: float, game: Any, st: Any, *, role: str | None, me_u
               enemies: Iterable[Any] = (), objectives: Iterable[Any] = (), waves: Any = None, jint: Any = None,
               roles: Any = None, scoreboard: Any = None, in_fight: bool = False, threat: int = 0,
               in_base: bool = False, recent_director_call: bool = False,
-              stance_score: float | None = None) -> MacroCtx:
+              stance_score: float | None = None, card_age: float | None = None) -> MacroCtx:
     """A :class:`MacroCtx` from the engine's objects (any of them may be None). Never raises."""
     ctx = MacroCtx(t=float(t), gt=float(gt))
     try:
@@ -403,6 +417,7 @@ def build_ctx(t: float, gt: float, game: Any, st: Any, *, role: str | None, me_u
         ctx.threat = int(_f(threat, 0) or 0)
         ctx.recent_director_call = bool(recent_director_call)
         ctx.stance_score = _f(stance_score)
+        ctx.card_age = _f(card_age)
     except Exception:
         log.debug("macro.build_ctx failed", exc_info=True)
     return ctx
@@ -861,8 +876,10 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
                 if role != "JUNGLE" and not _ally_jungler_alive(ctx):
                     break
                 head = f"Prends {OBJ_LE[key]}" if role == "JUNGLE" else f"Aide ton jungler {OBJ_AUX[key]}"
-                return _call("cross_trade", f"cross:{key}:{int(ctx.gt // 60)}", OBJ_TITLE[key],
-                             f"{head} maintenant : {who} {where}.",
+                line = f"{head} maintenant : {who} {where}."
+                if len(line) > 60:
+                    line = f"{head} : {who} {where}."
+                return _call("cross_trade", f"cross:{key}:{int(ctx.gt // 60)}", OBJ_TITLE[key], line,
                              "Ils sont de l'autre côté : échange l'objectif au lieu de perdre un combat.",
                              BARON_UV, tier="high", score=_clamp(0.55 + 0.35 * conf + 0.1 * edge), priority=86,
                              color="safe", genius=True, life=18.0, label=OBJ_TITLE[key].rstrip(" !"),
@@ -1312,6 +1329,9 @@ class MacroPlanner:
                 continue
             if c.kind not in URGENT_KINDS and self._last_start is not None and t - self._last_start < cfg["gap"]:
                 continue
+            if ctx.card_age is not None and ctx.card_age < CARD_SETTLE_S and not c.genius \
+                    and c.kind not in SETTLE_EXEMPT and c.kind not in ("fight_won", "fight_lost", "jungler_dead"):
+                continue                                   # the card just changed: let it be read first
             if self._active is not None:
                 self._cancel(up, ctx, "remplacé")
             if c.genius:

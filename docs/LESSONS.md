@@ -43,3 +43,8 @@ Hard rules distilled from real user feedback. Each one cost a bad release.
 16. **One router decides where every message goes** (banner / panel line / badge / voice / drop),
     by urgency and context. The small panel shows ONE line; low-value tips are dropped, not shown small.
 17. **Danger is beep-first.** The beep plays instantly; voice is optional and never delays it.
+18. **Never over the game's own UI.** Everything we draw is placed by ONE solver (`layout.py`)
+    against League's zones measured on real captures (kill announcer, ally portraits, votes, item
+    bar, minimap buttons, kill feed, chat, death recap...): one consistent slot per element, sized
+    for its largest content so nothing jumps, never two of our elements on top of each other. Check
+    any placement change with `tools/layout_audit.py` on the real screenshots (before / after).

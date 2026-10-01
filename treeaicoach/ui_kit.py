@@ -1,24 +1,19 @@
-"""Building blocks of the v1.5 interface (ui.py): drawings, presets, diagnostics, voice gate.
+"""Building blocks of the interface (ui.py): drawings, status texts, diagnostics, help texts.
 
 Everything here is pure / Tk-free except :class:`Tooltip` (Tk imported lazily), so it is unit-tested
 without a display. Nothing in this module may raise into the UI: every public helper is defensive.
 
 * PIL drawings: :func:`extra_icon` (line icons), :func:`role_glyph` / :func:`decorate_portrait`
-  (role badge + MIA arc on a round champion portrait), :func:`hero_background` (hextech banner),
-  :func:`gradient_rule` (gold separator).
-* Settings helpers: :data:`PRESETS` / :func:`preset_of` / :func:`preset_changes`,
-  :func:`export_settings` / :func:`import_settings`, :func:`in_quiet_hours`.
-* :class:`VoiceGate`: wraps the voice handed to the engine and applies the "quiet" settings
-  (first seconds of a game, quiet hours, information announcements) without touching voice.py.
-* :func:`diagnostic_text` (clipboard report), :data:`CHANGELOG`, :data:`SHORTCUTS`, :data:`ABOUT_TEXT`.
-* :func:`lane_opponent`: my role + the enemy of the same role, from an ``OverlayState``.
+  (role badge + MIA arc on a round champion portrait), :func:`hero_background` (status strip).
+* Dashboard texts: :func:`status_line` (the ONE status line + its fix), :func:`subsystem_rows`
+  ("Système" rows), :func:`objectives_text`, :func:`lane_opponent`, :func:`window_mode_status`.
+* :func:`diagnostic_text` (clipboard report), :func:`game_keys`, :data:`CHANGELOG`, :data:`SHORTCUTS`,
+  :data:`ABOUT_TEXT`, :func:`onboarding_steps`.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as _dt
-import json
 import logging
 import math
 import os
@@ -28,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +42,9 @@ ROLE_FR: dict[str, str] = {"TOP": "Haut", "JUNGLE": "Jungle", "MIDDLE": "Milieu"
                            "UTILITY": "Support"}
 ROLE_SHORT: dict[str, str] = {"TOP": "TOP", "JUNGLE": "JGL", "MIDDLE": "MID", "BOTTOM": "ADC",
                               "UTILITY": "SUP"}
+#: Role as players say it, for the status line ("En jeu : Garen top").
+ROLE_GAMER: dict[str, str] = {"TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "ADC",
+                              "UTILITY": "support"}
 
 
 def hex_rgb(color: str) -> tuple[int, int, int]:
@@ -289,202 +287,6 @@ def hero_background(w: int, h: int, glow: str, bg: str = "#0C0E0D", panel: str =
     return out
 
 
-def glow_dot(size: int, color: str, bg: str) -> Image.Image:
-    """Soft glowing dot (status indicator), RGB on ``bg``."""
-    ss = 4
-    S = size * ss
-    im = Image.new("RGBA", (S, S), hex_rgb(bg) + (255,))
-    halo = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    ImageDraw.Draw(halo).ellipse((S * .2, S * .2, S * .8, S * .8), fill=hex_rgb(color) + (160,))
-    halo = halo.filter(ImageFilter.GaussianBlur(S * .12))
-    im.alpha_composite(halo)
-    ImageDraw.Draw(im).ellipse((S * .34, S * .34, S * .66, S * .66), fill=hex_rgb(color) + (255,))
-    return im.resize((size, size), Image.LANCZOS).convert("RGB")
-
-
-# ======================================================================================
-# Presets
-# ======================================================================================
-PRESET_LABELS: tuple[tuple[str, str], ...] = (("discret", "Discret"), ("equilibre", "Équilibré"),
-                                              ("complet", "Complet"))
-PRESET_HELP: dict[str, str] = {
-    "discret": "Seulement les vrais dangers, overlay minimal, aucune annonce d'information.",
-    "equilibre": "Réglages recommandés : alertes de gank, minuteurs et rappels utiles.",
-    "complet": "Tout est annoncé et affiché (ennemis disparus, zones, flèches, fantômes, conseils).",
-}
-PRESETS: dict[str, dict[str, Any]] = {
-    "discret": {
-        "alert_jungler_approach": True, "alert_roam": False, "alert_collapse": True,
-        "alert_jungler_spotted": False, "alert_laner_mia": False, "objective_timers": False,
-        "recall_reminder": False, "control_ward_reminder": False, "voice_info_alerts": False,
-        "sensitivity": 0.85, "danger_flash": False, "hud_enabled": False, "fog_mode": "off",
-        "layer_roles": False, "layer_arrows": False, "layer_zones": True, "layer_ghosts": False,
-        "overlay_opacity": 0.8,
-    },
-    "equilibre": {
-        "alert_jungler_approach": True, "alert_roam": True, "alert_collapse": True,
-        "alert_jungler_spotted": True, "alert_laner_mia": False, "objective_timers": True,
-        "recall_reminder": True, "control_ward_reminder": True, "voice_info_alerts": True,
-        "sensitivity": 1.0, "danger_flash": True, "hud_enabled": True, "fog_mode": "jungler",
-        "layer_roles": False, "layer_arrows": True, "layer_zones": True, "layer_ghosts": False,
-        "overlay_opacity": 1.0,
-    },
-    "complet": {
-        "alert_jungler_approach": True, "alert_roam": True, "alert_collapse": True,
-        "alert_jungler_spotted": True, "alert_laner_mia": True, "objective_timers": True,
-        "recall_reminder": True, "control_ward_reminder": True, "voice_info_alerts": True,
-        "sensitivity": 1.2, "danger_flash": True, "hud_enabled": True, "fog_mode": "all",
-        "layer_roles": True, "layer_arrows": True, "layer_zones": True, "layer_ghosts": True,
-        "overlay_opacity": 1.0,
-    },
-}
-
-
-def preset_changes(cfg: Any, name: str) -> dict[str, Any]:
-    """Fields of preset ``name`` that exist on ``cfg`` (unknown preset -> {})."""
-    spec = PRESETS.get(name, {})
-    return {k: v for k, v in spec.items() if hasattr(cfg, k)}
-
-
-def preset_of(cfg: Any) -> str | None:
-    """Name of the preset ``cfg`` matches exactly, else None ("personnalisé")."""
-    for name in PRESETS:
-        ch = preset_changes(cfg, name)
-        if ch and all(_close(getattr(cfg, k, None), v) for k, v in ch.items()):
-            return name
-    return None
-
-
-def _close(a: Any, b: Any) -> bool:
-    if isinstance(a, float) or isinstance(b, float):
-        try:
-            return abs(float(a) - float(b)) < 1e-6
-        except (TypeError, ValueError):
-            return False
-    return a == b
-
-
-# ======================================================================================
-# Settings export / import
-# ======================================================================================
-#: Never exported (secret / machine specific).
-EXPORT_EXCLUDE = frozenset({"github_token", "ai_api_key", "ui_geometry", "manual_minimap_rect", "icon_scale_by_res",
-                            "radar_xy", "hud_xy", "ui_last_page", "ui_onboarding_done", "ui_seen_changelog"})
-
-
-def export_settings(cfg: Any, path: str | os.PathLike[str]) -> bool:
-    """Write the shareable settings as JSON (UTF-8). Never raises."""
-    try:
-        data = cfg.to_dict() if hasattr(cfg, "to_dict") else dict(cfg)
-        payload = {"treeaicoach_settings": 1, "exported_at": _dt.datetime.now().isoformat(timespec="seconds")}
-        payload.update({k: v for k, v in data.items() if k not in EXPORT_EXCLUDE})
-        Path(path).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return True
-    except Exception:
-        log.exception("Settings export failed")
-        return False
-
-
-def import_settings(cfg: Any, path: str | os.PathLike[str]) -> tuple[Any, int]:
-    """(new validated config, number of imported fields). Machine-specific fields are kept.
-
-    Raises ValueError (French message) when the file is not a settings file.
-    """
-    try:
-        raw = Path(path).read_bytes()
-        if len(raw) > 1_000_000:
-            raise ValueError("fichier trop volumineux")
-        data = json.loads(raw.decode("utf-8-sig"))
-    except ValueError as exc:
-        raise ValueError(f"Fichier de réglages illisible ({exc}).") from exc
-    except OSError as exc:
-        raise ValueError(f"Impossible de lire le fichier ({exc}).") from exc
-    if not isinstance(data, dict):
-        raise ValueError("Ce fichier ne contient pas de réglages TreeAI Coach.")
-    names = {f.name for f in dataclasses.fields(cfg)}
-    upd = {k: v for k, v in data.items() if k in names and k not in EXPORT_EXCLUDE}
-    if not upd:
-        raise ValueError("Ce fichier ne contient aucun réglage TreeAI Coach reconnu.")
-    new = dataclasses.replace(cfg, **upd).validated()
-    return new, len(upd)
-
-
-# ======================================================================================
-# Quiet settings & voice gate
-# ======================================================================================
-def in_quiet_hours(hour: int, start: int, end: int) -> bool:
-    """True if ``hour`` (0-23) is in [start, end) — the range may wrap past midnight."""
-    try:
-        hour, start, end = int(hour) % 24, int(start) % 24, int(end) % 24
-    except (TypeError, ValueError):
-        return False
-    if start == end:
-        return False
-    if start < end:
-        return start <= hour < end
-    return hour >= start or hour < end
-
-
-def speech_allowed(cfg: Any, level: int, game_time: float | None, hour: int | None = None,
-                   explicit: bool = False) -> bool:
-    """Whether the coach may speak an announcement of ``level`` now. DANGER always passes."""
-    try:
-        level = int(level)
-    except (TypeError, ValueError):
-        level = 1
-    if level >= 2 or explicit:
-        return True
-    if level <= 0 and not bool(getattr(cfg, "voice_info_alerts", True)):
-        return False
-    quiet_s = getattr(cfg, "voice_quiet_start_s", 0) or 0
-    try:
-        if quiet_s > 0 and game_time is not None and 0 <= float(game_time) < float(quiet_s):
-            return False
-    except (TypeError, ValueError):
-        pass
-    if bool(getattr(cfg, "quiet_hours", False)):
-        h = _dt.datetime.now().hour if hour is None else hour
-        if in_quiet_hours(h, getattr(cfg, "quiet_start_h", 23), getattr(cfg, "quiet_end_h", 8)):
-            return False
-    return True
-
-
-class VoiceGate:
-    """Voice proxy given to the engine: drops non-danger speech while the user wants calm.
-
-    Everything except :meth:`say` is forwarded to the current real voice (``get_voice()``), so the
-    UI can swap the voice object without rebuilding the engine.
-    """
-
-    def __init__(self, get_voice: Callable[[], Any], get_cfg: Callable[[], Any],
-                 get_game_time: Callable[[], float | None]) -> None:
-        self._get_voice = get_voice
-        self._get_cfg = get_cfg
-        self._get_game_time = get_game_time
-        self.dropped = 0
-
-    def say(self, text: str, level: int = 1) -> None:
-        voice = self._get_voice()
-        if voice is None:
-            return
-        try:
-            if not speech_allowed(self._get_cfg(), level, self._get_game_time()):
-                self.dropped += 1
-                log.debug("Announcement muted by the quiet settings: %s", text)
-                return
-        except Exception:
-            log.debug("VoiceGate check failed", exc_info=True)
-        voice.say(text, level)
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith("__"):
-            raise AttributeError(name)
-        voice = self._get_voice()
-        if voice is None:
-            raise AttributeError(name)
-        return getattr(voice, name)
-
-
 # ======================================================================================
 # Dashboard helpers
 # ======================================================================================
@@ -645,6 +447,65 @@ def subsystem_rows(*, state: str = "", message: str = "", running: bool = False,
     return rows
 
 
+#: Default engine messages that only repeat the state title (replaced by something useful).
+_WAITING_PREFIX = "En attente d'une partie"
+_RUNNING_GENERIC = ("Analyse de la minimap en cours", "Analyse en cours")
+
+
+def status_line(state: str, message: str = "", *, champion: str = "", role: Any = None) -> tuple[str, str, str, str]:
+    """The dashboard's ONE status line: ``(title, message, fix label, fix action)``.
+
+    "En attente d'une partie" / "En jeu : Garen top" / a problem with its one-click fix (the action
+    keys are the ones of :func:`subsystem_rows`, run by the UI). Pure, never raises."""
+    try:
+        st = str(state or "").upper()
+        msg = str(message or "").strip()
+        if st == "RUNNING":
+            r = ROLE_GAMER.get(norm_role(role) or "", "")
+            title = f"En jeu : {champion} {r}".rstrip() if champion else "En jeu"
+            if msg.startswith("Minimap non trouvée"):
+                return title, msg, "Calibrer", "calibrate"
+            if not msg or msg.rstrip(".…").startswith(_RUNNING_GENERIC):
+                msg = "Alertes et overlay actifs."
+            return title, msg, "", ""
+        if st == "WAITING_GAME":
+            if not msg or msg.startswith(_WAITING_PREFIX):
+                msg = "Lance une partie : l'analyse démarre toute seule."
+            return "En attente d'une partie", msg, "", ""
+        if st == "LOCATING":
+            if not msg or msg.startswith("Recherche de la minimap"):
+                return "Recherche de la minimap", "Le coach cherche la minimap sur ton écran.", "Calibrer", "calibrate"
+            return "En pause", msg, "", ""
+        if st == "CAPTURE_BLACK":
+            return "Capture noire", msg or "Passe le jeu en Sans bordure (Options > Vidéo).", "Aide", "help_borderless"
+        if st == "UNSUPPORTED_MODE":
+            return "Mode de jeu non pris en charge", msg or "Seulement la Faille de l'invocateur.", "", ""
+        if st == "ERROR":
+            return "Erreur", msg or "Erreur d'analyse.", "Diagnostic", "diagnostic"
+        if st == "NO_ENGINE":
+            return "Moteur indisponible", msg or "Le moteur d'analyse n'a pas démarré.", "Diagnostic", "diagnostic"
+        if st == "STARTING":
+            return "Démarrage…", msg or "Chargement du détecteur et de la voix…", "", ""
+        return ("Analyse arrêtée", msg if msg and not msg.startswith("Analyse arrêtée") else
+                "Clique sur « Démarrer l'analyse » pour suivre ta prochaine partie.", "", "")
+    except Exception:
+        return "TreeAI Coach", str(message or ""), "", ""
+
+
+def game_keys(cfg: Any) -> list[tuple[str, str]]:
+    """In-game keys with their current binding ("F9", "Où est le jungler ?"), for the Aide page."""
+    rows = (("hotkey_details", "Maintenir : overlay détaillé"), ("hotkey_ward", "Où poser une balise ?"),
+            ("hotkey_ai", "Demander à l'IA"), ("hotkey_diag", "Diagnostic complet (60 s)"),
+            ("hotkey_jungler", "Où est le jungler ?"), ("hotkey_mute", "Couper / rétablir la voix"),
+            ("hotkey_overlay", "Afficher / masquer l'overlay"))
+    out = []
+    for field_name, what in rows:
+        key = str(getattr(cfg, field_name, "") or "").strip()
+        if key:
+            out.append((key.replace("+", " + "), what))
+    return out
+
+
 OBJECTIVE_SHORT_FR: dict[str, str] = {"dragon": "Drake", "dragon ancestral": "Ancien", "baron": "Baron",
                                        "héraut": "Héraut", "larves": "Larves"}
 
@@ -796,7 +657,7 @@ CHANGELOG: tuple[tuple[str, str], ...] = (
     ("Panneau en jeu", "Une seule consigne claire, rouge en cas de danger, F6 pour le détail."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
-    ("Ctrl + 1 … 6", "Aller à une page (En jeu … Aide)"),
+    ("Ctrl + 1 … 4", "Aller à une page (En jeu, Analyses, Réglages, Aide)"),
     ("Ctrl + M", "Couper / rétablir la voix"),
     ("Ctrl + Maj + S", "Activer / désactiver le mode sûr"),
     ("Ctrl + D", "Copier le diagnostic"),
@@ -897,13 +758,8 @@ class Tooltip:
             self._tip = None
 
 
-def caps(text: str) -> str:
-    """Spaced small-caps style label ("MENACE" -> "M E N A C E" with thin spaces)."""
-    return " ".join(str(text).upper())
-
-
 __all__ = [
-    "extra_icon", "role_glyph", "decorate_portrait", "hero_background", "glow_dot", "PRESETS", "preset_of",
-    "preset_changes", "export_settings", "import_settings", "in_quiet_hours", "speech_allowed", "VoiceGate",
-    "lane_opponent", "objectives_text", "subsystem_rows", "ai_row", "test_ai_key", "window_mode_status", "CpuMeter", "diagnostic_text", "CHANGELOG", "SHORTCUTS", "ABOUT_TEXT", "norm_role",
+    "extra_icon", "role_glyph", "decorate_portrait", "hero_background", "lane_opponent", "objectives_text",
+    "subsystem_rows", "status_line", "game_keys", "ai_row", "test_ai_key", "window_mode_status", "CpuMeter",
+    "diagnostic_text", "CHANGELOG", "SHORTCUTS", "ABOUT_TEXT", "norm_role", "onboarding_steps",
 ]

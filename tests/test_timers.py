@@ -1,4 +1,4 @@
-"""Timers column of the minimap layer (overlay_render.timer_rows / _draw_timers) + buff tracking."""
+"""Timers strip (overlay_render.timer_rows / render_timers, outside the minimap frame) + buff tracking."""
 
 from __future__ import annotations
 
@@ -71,16 +71,23 @@ def test_priority_cap_and_danger_hides():
     assert all("—" not in t for t in rows)
 
 
-def test_render_smoke_top_right_column():
+def test_timers_strip_outside_the_minimap_layer():
     st = _state(enemy_respawns=[618.0, 625.0, 640.0], buffs=[("baron", "CHAOS", 700.0)])
+    # the minimap layer never draws the timers (they covered the bases / turrets of the corner)
     img = R.render_minimap(st, 256, 256, now=0.0)
     assert img.shape == (256, 256, 4) and img.dtype == np.uint8
-    assert img[:60, 128:, 3].max() > 0                       # drawn in the top-right corner
-    assert img[:60, :100, 3].max() == 0
-    empty = R.render_minimap(_state(), 256, 256, now=0.0)
-    assert empty[:60, 128:, 3].max() == 0
+    assert img[:60, 128:, 3].max() == 0 and img[:60, :100, 3].max() == 0
     framed = R.render_minimap(st, 300, 300, now=0.0, show_frame=True)
     assert framed.shape == (300, 300, 4)
+    # their own strip (layout slot "timers"): rows on an opaque plate, legible font, fits its slot
+    strip = R.render_timers(st, (0, 0, 1920, 1080))
+    sw, sh = R.timers_strip_size((0, 0, 1920, 1080))
+    assert strip is not None and strip.shape[2] == 4 and strip.shape[1] <= sw and strip.shape[0] <= sh
+    assert strip[..., 3].max() >= 220
+    assert R._timer_metrics(1080.0)["font"].size >= 12            # docs/DESIGN.md: never below 12 px
+    assert R.render_timers(_state(), (0, 0, 1920, 1080)) is None   # nothing to show: no strip
+    big = R.render_timers(st, (0, 0, 2560, 1440))
+    assert big is not None and big.shape[0] > strip.shape[0]      # scales with the screen
 
 
 def test_buffs_from_kill_events():

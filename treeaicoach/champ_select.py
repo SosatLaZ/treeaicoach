@@ -45,27 +45,10 @@ ROLE_QUEST_TIP = {
     "BOTTOM": "Finis ta quête de rôle : tes bottes libèrent un emplacement",
     "UTILITY": "Finis ta quête de support : balises de contrôle moins chères",
 }
-#: Starting items per (role, class), Data Dragon ids (names / prices read from the live data).
-START_ITEMS: dict[str, tuple[int, ...]] = {
-    "support": (3865, 2003, 2003),            # Atlas + 2 potions
-    "jungle_tank": (1103, 2003),              # Bébé Ixamandre (tank pet)
-    "jungle_mobile": (1102, 2003),            # Bébé Saute-nuages
-    "jungle": (1101, 2003),                   # Bébé Chardent (damage pet)
-    "marksman": (1055, 2003),                 # Lame de Doran
-    "mage": (1056, 2003, 2003),               # Anneau de Doran
-    "tank": (1054, 2003),                     # Bouclier de Doran
-    "fighter": (1055, 2003),
-}
-START_WHY = {
-    "support": "l'objet de support : or et balises",
-    "jungle_tank": "familier résistant pour ta jungle",
-    "jungle_mobile": "familier rapide pour ganker tôt",
-    "jungle": "familier offensif pour nettoyer vite",
-    "marksman": "dégâts et vol de vie en voie",
-    "mage": "mana et puissance pour farmer de loin",
-    "tank": "tenir la voie face aux échanges",
-    "fighter": "dégâts et vol de vie en voie",
-}
+#: Starting items per start kind and why (Data Dragon ids; names / prices read from the live data):
+#: the builds table of :mod:`treeaicoach.itemization` (``assets/item_builds.json``).
+from treeaicoach.itemization import START_ITEMS, START_WHY  # noqa: E402  (re-exported)
+
 MAX_WORDS = 12
 
 
@@ -247,11 +230,11 @@ def start_items(alias: str, role: str) -> tuple[tuple[tuple[int, str, int], ...]
     kind = start_kind(alias, role)
     items = iz.load_items()
     out = []
-    for iid in START_ITEMS.get(kind, ()):
+    for iid in iz.START_ITEMS.get(kind, ()):
         it = items.get(iid)
         if it is not None and it.rift:
             out.append((iid, it.name, it.gold))
-    return tuple(out), START_WHY.get(kind, "")
+    return tuple(out), iz.START_WHY.get(kind, "")
 
 
 def build_card(state: ChampSelectState | None) -> PregameCard | None:

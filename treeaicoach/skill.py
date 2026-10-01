@@ -96,13 +96,22 @@ def tip_min_prio(cfg: Any) -> int:
 
 def tip_skip(cfg: Any) -> frozenset:
     """Tip ids never shown at this level: a beginner gets no statistics / tutorial line
-    ("4,5 sbires/min, vise 7"), only instructions that change the next seconds (tips.LOW_VALUE_TIPS)."""
+    ("4,5 sbires/min, vise 7"), only instructions that change the next seconds (tips.LOW_VALUE_TIPS);
+    the level-race / jungler-side tips are said by the game-changer calls at the levels that get
+    them (tips.GC_OWNED_TIPS: one source, no "Recule : Darius est 6" next to the same call)."""
     try:
-        if normalize(getattr(cfg, "skill_level", "intermediaire")) != "debutant":
-            return frozenset()
-        from treeaicoach.tips import LOW_VALUE_TIPS
+        from treeaicoach.tips import GC_OWNED_TIPS, LOW_VALUE_TIPS, STAT_TIPS
 
-        return LOW_VALUE_TIPS
+        lvl = normalize(getattr(cfg, "skill_level", "intermediaire"))
+        out: frozenset = frozenset()
+        if lvl == "debutant":
+            out |= LOW_VALUE_TIPS
+        if lvl in ("debutant", "intermediaire"):
+            out |= STAT_TIPS
+        for tid, levels in GC_OWNED_TIPS.items():
+            if lvl in levels:
+                out |= {tid}
+        return out
     except Exception:
         return frozenset()
 

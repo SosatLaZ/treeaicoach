@@ -20,7 +20,7 @@ import sys
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 log = logging.getLogger(__name__)
@@ -205,6 +205,9 @@ class PerfProfile:
     cv_threads: int          # cv2.setNumThreads
     onnx_threads: int        # onnxruntime intra-op threads (applies to detectors created after)
     lost_every: int = 4      # roster matcher: whole-map search of lost champions every N frames
+    ring_every: int = 0      # roster matcher: ring proposals every N frames (0 = module default)
+    stack_every: int = 0     # roster matcher: stack proposals (verifier) every N frames (0 = default)
+    load: str = "normal"     # self-check load level (LOAD_LEVELS): "normal" | "allege" | "minimal"
     extras: dict[str, Any] = field(default_factory=dict)
 
 
@@ -214,6 +217,30 @@ PROFILES: dict[str, PerfProfile] = {
     "low_end": PerfProfile("low_end", calm_fps=4.0, burst_fps=8.0, overlay_fps=15.0, heavy_hz=1.0,
                            verify_s=1.5, onnx_every=4, cv_threads=1, onnx_threads=1, lost_every=8),
 }
+
+#: Load levels decided live by the self-check (selfcheck.py, rule "perf": detection starving) on
+#: top of the budget's profile: "allege" then "minimal" cut the optional per-frame work.
+LOAD_LEVELS: tuple[str, ...] = ("normal", "allege", "minimal")
+
+
+def degraded(p: PerfProfile, level: int) -> PerfProfile:
+    """``p`` with the cost cuts of load ``level`` (0 = unchanged): generic ONNX extras rarer, ring /
+    stack proposals and the whole-map search of lost champions every Nth frame, minimap
+    verification less often, overlay frame rate capped (15 img/s at "minimal"), coaching stages
+    slower (staggered further apart). The detection rates are kept: the cuts make each analysis
+    tick cheaper so that the rate is reached again."""
+    lvl = max(0, min(len(LOAD_LEVELS) - 1, int(level)))
+    if lvl == 0:
+        return p
+    if lvl == 1:
+        return replace(p, onnx_every=max(4, 2 * p.onnx_every), ring_every=max(4, p.ring_every),
+                       stack_every=max(4, p.stack_every), lost_every=max(8, p.lost_every),
+                       verify_s=max(1.5, p.verify_s), overlay_fps=min(20.0, p.overlay_fps),
+                       heavy_hz=min(1.0, p.heavy_hz), load=LOAD_LEVELS[1])
+    return replace(p, onnx_every=max(16, p.onnx_every), ring_every=max(8, p.ring_every),
+                   stack_every=max(8, p.stack_every), lost_every=max(12, p.lost_every),
+                   verify_s=max(2.0, p.verify_s), overlay_fps=min(15.0, p.overlay_fps),
+                   heavy_hz=min(0.5, p.heavy_hz), cv_threads=1, load=LOAD_LEVELS[2])
 
 
 class PerfBudget:
@@ -242,16 +269,32 @@ class PerfBudget:
             self.name, self.reason, self._decided = "low_end", f"{self.cores} CPU logiques", True
         else:
             self.name = "normal"
+        #: self-check load level (0 normal, 1 allégé, 2 minimal, see :func:`degraded`)
+        self.load_level = 0
         self._lock = threading.Lock()
 
     @property
     def profile(self) -> PerfProfile:
         p = PROFILES[self.name]
         tf = max(2.0, float(self.target_fps))
-        return PerfProfile(p.name, calm_fps=min(p.calm_fps, tf), burst_fps=min(p.burst_fps, tf),
+        base = PerfProfile(p.name, calm_fps=min(p.calm_fps, tf), burst_fps=min(p.burst_fps, tf),
                            overlay_fps=p.overlay_fps, heavy_hz=p.heavy_hz, verify_s=p.verify_s,
                            onnx_every=p.onnx_every, cv_threads=p.cv_threads, onnx_threads=p.onnx_threads,
-                           lost_every=p.lost_every)
+                           lost_every=p.lost_every, ring_every=p.ring_every, stack_every=p.stack_every)
+        return degraded(base, self.load_level)
+
+    def set_load_level(self, level: int) -> bool:
+        """Self-check load level (0..2) applied on top of the profile. True when it changed."""
+        try:
+            lvl = max(0, min(len(LOAD_LEVELS) - 1, int(level)))
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            if lvl == self.load_level:
+                return False
+            self.load_level = lvl
+        log.info("Performance load level: %s", LOAD_LEVELS[lvl])
+        return True
 
     def observe_tick(self, t: float, ms: float) -> bool:
         """Feed one analysis tick (engine time ``t``, cost ``ms``). True when the budget just
@@ -278,7 +321,7 @@ class PerfBudget:
         p = self.profile
         return {"mode": self.mode, "profile": p.name, "reason": self.reason, "cores": self.cores,
                 "calm_fps": p.calm_fps, "burst_fps": p.burst_fps, "overlay_fps": p.overlay_fps,
-                "heavy_hz": p.heavy_hz}
+                "heavy_hz": p.heavy_hz, "load": p.load}
 
 
 def precise_sleep(seconds: float, stop: threading.Event | None = None, chunk: float = 0.05) -> bool:

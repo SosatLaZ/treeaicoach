@@ -20,6 +20,7 @@ from treeaicoach.ui_common import (
     ACCENT,
     BG,
     BTN_H_SMALL,
+    CTL_GAP,
     DANGER,
     DIM,
     GAMES_PAGE,
@@ -40,6 +41,7 @@ from treeaicoach.ui_common import (
     _guarded,
     _hex_rgb,
     _int_or_none,
+    _report_function,
     flat_placeholder,
     fmt_clock,
     fmt_decimal_fr,
@@ -58,32 +60,23 @@ from treeaicoach.ui_common import (
 log = logging.getLogger("treeaicoach.ui")   # same logger as before the split
 
 
-def _report_function(name: str) -> Any:
-    """Resolved through :mod:`treeaicoach.ui` at call time (tests patch ``ui._report_function``)."""
-    from treeaicoach import ui  # noqa: PLC0415 - circular at import time
-
-    return ui._report_function(name)
-
-
 class AnalysisPageMixin:
     """Analysis page ("Analyses"): game list and reports, progress tab, replay tab."""
 
     # ------------------------------------------------------------------ analysis page
     def _build_analysis_page(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("Analyses", "Parties, progrès et replay", max_width=1120)
-        b = self._button(right, "Dernier rapport", self.open_last_report, "primary", icon="report", height=26)
-        b.grid(row=0, column=0, padx=(0, 6))
+        page, right, body = self._page("Analyses", "Tes parties, tes progrès et le replay", max_width=1120)
+        b = self._button(right, "Dernier rapport", self.open_last_report, "primary", icon="report",
+                         height=BTN_H_SMALL)
+        b.grid(row=0, column=0, padx=(0, CTL_GAP))
         self._tip(b, "Ouvre le rapport de ta dernière partie dans le navigateur.")
-        b = self._button(right, "", self.refresh_games, "ghost", icon="refresh", width=30, height=26)
-        b.grid(row=0, column=1, padx=(0, 2))
-        self._tip(b, "Actualiser la liste")
-        b = self._button(right, "", self.open_games_dir, "ghost", icon="folder", width=30, height=26)
-        b.grid(row=0, column=2, padx=(0, 2))
-        self._tip(b, "Ouvrir le dossier des parties et des rapports")
-        b = self._button(right, "", self.copy_share_summary, "ghost", icon="copy", width=30, height=26)
-        b.grid(row=0, column=3)
-        self._tip(b, "Copier un résumé de ta dernière partie à partager (Discord, réseaux).")
+        b = self._button(right, "Partager", self.copy_share_summary, "ghost", icon="copy", height=BTN_H_SMALL)
+        b.grid(row=0, column=1, padx=(0, CTL_GAP))
+        self._tip(b, "Copie un résumé de ta dernière partie à coller sur Discord ou ailleurs.")
+        b = self._button(right, "Dossier", self.open_games_dir, "ghost", icon="folder", height=BTN_H_SMALL)
+        b.grid(row=0, column=2)
+        self._tip(b, "Ouvre le dossier des parties et des rapports.")
         body._sections = []  # type: ignore[attr-defined]
 
         # ---------------------------------------------------------------- tab "Parties"
@@ -143,16 +136,14 @@ class AnalysisPageMixin:
         body._sections.append(rp)
         self._build_replay(rp)
 
-        def on_tab(label: str) -> None:
+        def on_tab(label: str) -> None:       # clicked or programmatic (open_replay, tests): load what it shows
             if label == "Progrès":
                 self.refresh_progress()
             elif label == "Replay":
                 self._replay_ensure_loaded()
-        self._analysis_tabs = self._tabs(page, body, (("Parties", ("Parties",)), ("Progrès", ("Progrès",)),
-                                                      ("Replay", ("Replay",))))
         self._analysis_page = page
-        for lbl, btn in self._analysis_tabs.items():
-            btn.configure(command=self.cb(lambda ll=lbl: (page.select_tab(ll), on_tab(ll))))
+        self._analysis_tabs = self._tabs(page, body, (("Parties", ("Parties",)), ("Progrès", ("Progrès",)),
+                                                      ("Replay", ("Replay",))), on_select=on_tab)
         return page
 
     def _games_empty(self, text: str | None = None) -> None:
@@ -227,7 +218,14 @@ class AnalysisPageMixin:
     @_guarded
     def _show_games(self, games: list[dict]) -> None:
         """New history: dashboard "avant la partie"; the Analyses table is redrawn only when it is
-        on screen and the history changed (50 rows of widgets are not rebuilt for nothing)."""
+        on screen and the history changed (50 rows of widgets are not rebuilt for nothing). After a
+        game, the new record is announced once (report and replay one click away on "En jeu")."""
+        watch = self._post_game_watch
+        if watch is not None and games:
+            newest = str(_game_json_path(games[0]) or "")
+            if newest and newest != watch:
+                self._post_game_watch = None
+                self.show_toast("Partie enregistrée : rapport et replay sur « En jeu » et dans Analyses.")
         self._games = games
         self._games_sig = tuple((str(game_field(g, "start", "date", default="") or ""), game_result(g),
                                  game_field(g, "precision"), str(_game_json_path(g) or "")) for g in games[:50])
@@ -523,6 +521,8 @@ class AnalysisPageMixin:
             pass
 
     def _replay_ensure_loaded(self) -> None:
+        if getattr(self, "_replay_want", None) is not None:
+            return                      # open_replay loads the game it was asked for
         if self._replay.get("model") is None and not self._replay.get("loading") and self._replay_choices:
             self._replay_menu_pick(next(iter(self._replay_choices)))
 
@@ -533,12 +533,13 @@ class AnalysisPageMixin:
 
     @_guarded
     def open_replay(self, game: dict) -> None:
-        """Replay button of a game row: switch to the Replay tab and load that game."""
-        page = getattr(self, "_analysis_page", None)
-        if page is not None and hasattr(page, "select_tab"):
-            page.select_tab("Replay")
+        """Replay of a game (table row, dashboard): Analyses > Replay with that game loaded."""
+        self._replay_want = game
+        self.show_page("analysis", "Replay")
+        self._replay_want = None
+        path = _game_json_path(game)
         for label, g in self._replay_choices.items():
-            if g is game:
+            if g is game or (path is not None and _game_json_path(g) == path):
                 self.replay_menu.set(label)
         self._replay_load(game)
 

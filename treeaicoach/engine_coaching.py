@@ -38,6 +38,20 @@ from treeaicoach.live_client import GameInfo
 
 log = logging.getLogger("treeaicoach.engine")   # same logger as before the split
 
+def _digits(a: Any) -> str:
+    """A line without its live numbers."""
+    return __import__("re").sub(r"\d+([,.]\d+)?", "#", str(a))
+
+
+def _ticking(a: str, b: str) -> bool:
+    """Same line but its live numbers ("Dragon dans 0:45" / "Dragon dans 0:44")."""
+    return _digits(a) == _digits(b)
+
+
+#: a statistic ("5,5 par minute, vise 7", "4,6 sbires/min"): never the card's instruction
+STAT_LINE_RE = __import__("re").compile(r"(?i)(\d+([,.]\d+)? (sbires/min|par minute)|score de vision|/min, vise)")
+#: a line with a live countdown ("Dragon dans 0:45", "Baron dans 20 s")
+COUNTDOWN_RE = __import__("re").compile(r"(?i)\bdans (\d+:\d\d|\d+ s)\b")
 #: a card line about wards (one ward call at a time: CoachingMixin.WARD_TOPIC_S)
 WARD_LINE_RE = __import__("re").compile(r"(?i)^(balise|pose (ta|une) balise|garde (le buisson|une balise)|"
                                         r"surveille ta rivière|va baliser|achète une balise)")
@@ -61,7 +75,8 @@ class CoachingMixin:
                            objectives=self._objectives.states() if self._objectives is not None else [],
                            danger_radius=self._cfg.effective_danger_radius(),
                            stance=self._stance.current() if self._stance is not None else None,
-                           waves=self._macro_waves(), jungle_intel=self.jungle_intel(), threat=threat)
+                           waves=self._macro_waves(), jungle_intel=self.jungle_intel(), threat=threat,
+                           card_age=self._card_age(t))
             for kind, title, sub, key in out.toasts:
                 self._toast(kind, title, sub, None, key, t)
             self._macro_show(out, t, gt)
@@ -74,6 +89,16 @@ class CoachingMixin:
             self._errors += 1
             self._err.exception("Tactical director failed")
             return [], gank
+
+    def _card_age(self, t: float) -> float | None:
+        """Seconds since the HUD card line last changed (a new call waits for it to be read)."""
+        shown = getattr(self, "_hud_shown", None)
+        if shown is None:
+            return None
+        try:
+            return max(0.0, float(t) - float(shown[1]))
+        except (TypeError, ValueError):
+            return None
 
     # ================================================================== COUPS DE GÉNIE (macro.py)
     def _macro_waves(self) -> dict:
@@ -870,7 +895,8 @@ class CoachingMixin:
         from treeaicoach import voice_policy as vp
 
         kind = vp.kind_name(a)
-        self._text_msg, self._text_kind = (t, a.text), kind
+        if not self._keeps_death_lesson(kind):
+            self._text_msg, self._text_kind = (t, a.text), kind
         self.text_messages.append((t, kind, a.text))
         del self.text_messages[:-100]
         toast = vp.TEXT_TOAST.get(kind)
@@ -895,6 +921,9 @@ class CoachingMixin:
         if me_dead and msg is not None and getattr(self, "_text_kind", None) not in DEAD_TEXT_KINDS:
             msg = self._text_msg = None  # dead: only the death lesson / an objective / a call (a lane
             #                              advice written now would also be stale at the respawn)
+        if msg is not None and not me_dead and msg[0] < getattr(self, "_hud_alarm_t", -1e9) \
+                and getattr(self, "_text_kind", None) not in DEAD_TEXT_KINDS:
+            msg = self._text_msg = None  # written before a gank / fight alarm: the situation changed
         if msg is not None and (0.0 <= now - msg[0] < TEXT_MSG_S
                                 or (me_dead and getattr(self, "_text_kind", None) == "death_cause")):
             valid.append(msg[1])         # (the death lesson stays the whole death)
@@ -941,6 +970,8 @@ class CoachingMixin:
             lines: list[str] = []
             for v in valid:
                 c = card_line(v)
+                if c and STAT_LINE_RE.search(c):
+                    continue             # a statistic is a debrief (report), not an instruction for the card
                 if c and c not in lines:
                     src[c] = v
                     lines.append(c)
@@ -961,7 +992,7 @@ class CoachingMixin:
         except Exception:
             pass
         if not early and siege is None:
-            valid = self._with_objective_line(valid, now)
+            valid = self._with_objective_line(valid, now, mc.text if mc is not None else None)
         valid = self._no_contradiction(valid, now, siege is not None or me_dead)
         # the gauge's two extremes ARE the instruction when nothing else is said (beginner levels)
         try:
@@ -978,9 +1009,14 @@ class CoachingMixin:
         retired = getattr(self, "_hud_retired", None)
         if retired is None:
             retired = self._hud_retired = {}
+        live = {_digits(v) for v in valid}
         valid = [v for v in valid
                  if not (0.0 <= now - retired.get(_line_shape(v), -1e9) < HUD_RETIRE_S)
                  or self._tip_tone(v) == "danger"]
+        expired = getattr(self, "_hud_expired", None)
+        if expired:                  # a line that had its whole show window stays off while it is valid
+            expired &= live
+            valid = [v for v in valid if _digits(v) not in expired or self._tip_tone(v) == "danger"]
         cand = valid[0] if valid else None
         shown = getattr(self, "_hud_shown", None)
         pr = getattr(self, "_presenter", None)
@@ -998,7 +1034,10 @@ class CoachingMixin:
                 if len(retired) > 100:
                     for k in sorted(retired, key=retired.get)[:50]:
                         del retired[k]
-            self._hud_shown = (cand, now)
+            same = shown is not None and shown[0] is not None and cand is not None \
+                and _ticking(shown[0], cand)
+            # a countdown ticking ("Dragon dans 0:45" -> "0:44") is the same line: it keeps its age
+            self._hud_shown = (cand, shown[1] if same else now)
         return cand
 
     def _objective_line(self, now: float) -> str | None:
@@ -1025,14 +1064,16 @@ class CoachingMixin:
             log.debug("objective line failed", exc_info=True)
             return None
 
-    def _with_objective_line(self, valid: list[str], now: float) -> list[str]:
-        """The objective instruction goes before every line but a danger / warning one, and the
-        lines about the same objective are dropped (one message per subject)."""
+    def _with_objective_line(self, valid: list[str], now: float, call: str | None = None) -> list[str]:
+        """The objective instruction goes before every line but a danger / warning one and the
+        active planner call (its banner / voice say the same thing: one source), and the lines
+        about the same objective are dropped (one message per subject)."""
         line = self._objective_line(now)
         if line is None:
             return valid
         name = line.split(" : ", 1)[-1].split(" dans ", 1)[0].strip().lower()
-        urgent = [v for v in valid if self._tip_tone(v) in ("danger", "warning") and name not in v.lower()]
+        urgent = [v for v in valid if (self._tip_tone(v) in ("danger", "warning") or (call is not None and v == call))
+                  and name not in v.lower()]
         rest = [v for v in valid if v not in urgent and name not in v.lower()]
         return urgent + [line] + rest
 
@@ -1061,14 +1102,22 @@ class CoachingMixin:
 
             lvl = str(getattr(self._cfg, "skill_level", "") or "intermediaire")
             win = orr.ADVICE_SHOW_S.get(lvl, orr.ADVICE_SHOW_S["intermediaire"])
-            if line is not None and win is not None and now - since >= win and (cand is None or cand == line):
+            if line is not None and win is not None and now - since >= win \
+                    and (cand is None or cand == line or _ticking(cand, line)):
                 tone = self._tip_tone(line)
                 if not (tone == "danger" or (tone == "warning" and lvl != "expert")):
+                    exp = getattr(self, "_hud_expired", None)
+                    if not isinstance(exp, set):
+                        exp = self._hud_expired = set()
+                    exp.add(_digits(line))                # shown its whole window: not again while valid
                     return None
             if cand == line:
                 return cand
+            if cand is not None and line is not None and _ticking(cand, line):
+                return cand                  # same line, live numbers (a countdown never freezes)
             if cand is not None and line is not None and cand.split(" : ", 1)[0] == line.split(" : ", 1)[0]:
-                return line                  # same instruction (a call repeating a tip): keep the card still
+                if not COUNTDOWN_RE.search(line):
+                    return line              # same instruction (a call repeating a tip): keep the card still
             rank = {"danger": 3, "warning": 2}
             r_new = rank.get(self._tip_tone(cand), 1) if cand is not None else 0
             r_old = rank.get(self._tip_tone(line), 1) if line is not None else 0
@@ -1076,7 +1125,9 @@ class CoachingMixin:
                 and (bool(getattr(mc, "genius", False)) or getattr(mc, "color", "") == "danger")
             if cand is not None and (call or (r_new > r_old if line is not None else r_new == 3)):
                 return cand                                     # more urgent than what is shown: at once
-            keep_ok = line is not None and bool(self._no_contradiction([line], now, False))
+            # a countdown no longer valid ("Baron dans 0:20" once the Baron is up) is never kept
+            keep_ok = line is not None and bool(self._no_contradiction([line], now, False)) \
+                and not (COUNTDOWN_RE.search(line) and not any(_line_shape(v) == _line_shape(line) for v in valid))
             if line is not None and 0.0 <= now - since < HUD_DWELL_S and keep_ok:
                 return line                                     # dwell
             if cand is None and line is not None and keep_ok \
@@ -1088,6 +1139,17 @@ class CoachingMixin:
             return cand
         except Exception:
             return cand
+
+    def _keeps_death_lesson(self, kind: str) -> bool:
+        """While I am dead, the death lesson keeps the card: a written message that the dead card
+        does not show (DEAD_TEXT_KINDS) must not erase it (the card went blank before the respawn)."""
+        try:
+            game = self._game
+            dead = bool(getattr(getattr(game, "me", None), "is_dead", False)) if game is not None else False
+            return dead and getattr(self, "_text_kind", None) == "death_cause" and self._text_msg is not None \
+                and kind not in DEAD_TEXT_KINDS
+        except Exception:
+            return False
 
     def _siege_alert(self, t: float) -> list[Alert]:
         """"Ta base est attaquée, défends !" (DANGER: beep + voice, even while dead) when a siege of
@@ -1196,8 +1258,9 @@ class CoachingMixin:
             if d.channel == prs.DROP:
                 return
             if d.channel == prs.PANEL:
-                self._text_msg = (t, subtitle or title)   # the ONE HUD line, no toast
-                self._text_kind = mk
+                if not self._keeps_death_lesson(mk):
+                    self._text_msg = (t, subtitle or title)   # the ONE HUD line, no toast
+                    self._text_kind = mk
                 return
         icon = None
         if alias:

@@ -894,6 +894,41 @@ def _scoreboard_section(a: dict) -> str:
     return f'<div class="panel"><h2>Tableau des scores (Tab)</h2>{body}</div>'
 
 
+def _selfcheck_section(record: dict) -> str:
+    """"Santé de TreeAI" of the game (selfcheck.py, ``record["selfcheck"]``): what went wrong in our
+    own pipeline (capture, minimap, detection, voice, API...) and what was fixed automatically."""
+    sc = record.get("selfcheck") if isinstance(record, dict) else None
+    if not isinstance(sc, dict):
+        return ""
+    probs = [p for p in sc.get("problems") or [] if isinstance(p, dict)]
+    head = '<div class="panel"><h2>Santé de TreeAI pendant la partie</h2>'
+    if not probs:
+        return (head + '<p class="small">Rien à signaler : capture, minimap, détection, voix et API du jeu '
+                'ont fonctionné normalement.</p></div>')
+    sym = {"good": "✓", "warn": "!", "info": "i"}
+    lis = []
+    for p in probs:
+        kind = "good" if p.get("outcome") == "fixed" else ("warn" if p.get("outcome") == "open" else "info")
+        when = f" à {_fmt_time(p.get('first_gt'))}" if p.get("first_gt") is not None else ""
+        dur = p.get("active_s")
+        dur_txt = f", {int(round(float(dur)))} s" if isinstance(dur, (int, float)) and dur >= 1 else ""
+        count = int(p.get("count") or 1)
+        times = f" ({count} fois)" if count > 1 else ""
+        acts = [str(x) for x in p.get("actions") or []]
+        fix = f" Actions : {_e('; '.join(acts))}." if acts else ""
+        lis.append(f'<li class="{kind}"><span class="i">{sym[kind]}</span><span><b>{_e(p.get("label"))}</b>'
+                   f'{_e(when)}{times}{_e(dur_txt)} : {_e(p.get("status"))}.{fix} '
+                   f'<i>{_e(p.get("outcome_fr") or "")}</i></span></li>')
+    extra = ""
+    if sc.get("profile_max") not in (None, "", "normal"):
+        extra = (f'<p class="small">Analyse allégée automatiquement pendant la partie (niveau le plus bas : '
+                 f'{_e(sc.get("profile_max"))}) pour garder la détection fluide.</p>')
+    if sc.get("diagnostic"):
+        extra += ('<p class="small">Un diagnostic automatique de 60 s a été enregistré (dossier diagnostics) : '
+                  'joins-le à ton signalement.</p>')
+    return head + f'<ul class="tips">{"".join(lis)}</ul>{extra}</div>'
+
+
 def _tips_section(a: dict) -> str:
     items = a.get("tip_items") or [{"text": t, "kind": "info"} for t in a.get("tips") or []]
     if not items:
@@ -1156,7 +1191,7 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
                    lambda: _positioning_section(a),
                    lambda: _deaths_section(rec, a), lambda: _ganks_section(rec, a),
                    lambda: _jungler_section(rec, a), lambda: _objectives_section(a),
-                   lambda: _scoreboard_section(a), lambda: _trends_section(a)):
+                   lambda: _scoreboard_section(a), lambda: _selfcheck_section(rec), lambda: _trends_section(a)):
             try:
                 parts.append(fn())
             except Exception:

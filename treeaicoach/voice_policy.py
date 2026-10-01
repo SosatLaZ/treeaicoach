@@ -24,6 +24,12 @@ Same list at every skill level; ``cfg.voice_level`` only adds to it:
 
 * ``"normal"`` (débutant preset): + the big numbers call right after a won fight / an ace
   ("Ils sont 3 morts : Baron !", keys ``urgent:ace:`` / ``urgent:genie:``).
+* GAME CHANGERS (``gc:big:`` / ``gc:lane:`` keys, :mod:`treeaicoach.game_changers`): short
+  pre-generated lines for the calls that win games ("Ils sont trois morts : Baron !", "Leur jungler
+  est en bas : avance !", "Niveau d'avance : frappe-le !"); the emitter already chose them by skill
+  level (big: beginner + intermediate, lane: beginner). Voice-only (the card / banner show the
+  call), never in a fight / high concentration / while dead, budgeted like the rest (~1-2 per
+  minute), a stale one expires after :data:`GC_TTL_S`.
 * ``"bavard"`` (opt-in): + everything else, still budgeted and never during a fight.
 
 :meth:`VoiceGate.decide` then applies the "would a Challenger coach say this RIGHT NOW?" rules:
@@ -79,7 +85,7 @@ OBJECTIVE_VOICE_MAX_LEAD_S = 20
 BIG_CALL_PREFIXES: tuple[str, ...] = ("urgent:ace:", "urgent:genie:")
 #: Keys that are only a voice duplicate of something already on screen (banner / HUD line): when
 #: they are not spoken they are dropped, never written a second time.
-VOICE_ONLY_PREFIXES: tuple[str, ...] = ("urgent:genie:", "call:engage",
+VOICE_ONLY_PREFIXES: tuple[str, ...] = ("urgent:genie:", "call:engage", "gc:",
                                        "stance:",          # the gauge pill shows it
                                        "hype:swing:")      # the HUD win-probability shows it
 #: role -> epic objectives that concern it (an objective warning is spoken only for these)
@@ -92,17 +98,21 @@ OBJ_ROLES_VOICE: dict[str, frozenset[str]] = {
 }
 OBJ_NEAR_R = 0.30              # standing this close to the pit = involved whatever the role
 
+#: Game-changer voice keys (game_changers.voice_for): "gc:big:<kind>:<ident>" / "gc:lane:<kind>:<ident>".
+GC_PREFIX = "gc:"
+GC_TTL_S = 6.0                 # a queued game-changer line is stale after this (the call moved on)
+GC_GAP_S = 20.0                # a game-changer line needs only this gap after the previous budgeted line
 #: Minimum interval between two messages of one kind (spoken or written), seconds.
 KIND_GAP_S: dict[str, float] = {
     "macro_tip": 20.0, "praise": 12.0, "scoreboard": 30.0, "recall_gold": 150.0, "control_ward": 300.0,
     "objective_soon": 6.0, "jungler_spotted": 30.0, "laner_mia": 30.0, "death_recap": 0.0, "stance": 120.0,
-    "macro_call": 8.0,
+    "macro_call": 8.0, "gc": 15.0,
 }
 #: The same key or the same text is not repeated within this window (per game), seconds.
 DEDUPE_S: dict[str, float] = {
     "macro_tip": 240.0, "praise": 600.0, "scoreboard": 600.0, "recall_gold": 180.0, "control_ward": 600.0,
     "objective_soon": 200.0, "jungler_spotted": 60.0, "laner_mia": 90.0, "death_recap": 30.0, "stance": 120.0,
-    "macro_call": 60.0,
+    "macro_call": 60.0, "gc": 60.0,
 }
 DEFAULT_GAP_S = 15.0
 DEFAULT_DEDUPE_S = 180.0
@@ -127,6 +137,8 @@ def kind_name(alert: Any) -> str:
     key = str(getattr(alert, "key", "") or "")
     if key.startswith(STANCE_PREFIX):
         return "stance"
+    if key.startswith(GC_PREFIX):
+        return "gc"
     if key.startswith(MACRO_CALL_PREFIXES):
         return "macro_call"
     k = getattr(alert, "kind", "")
@@ -192,6 +204,8 @@ def route(alert: Any, voice_level: Any = DEFAULT_VOICE_LEVEL) -> str:
             return "voice" if int(getattr(alert, "level", 0) or 0) >= 2 else "text"
         if key.startswith("call:"):
             return "text"                      # "Attaque !": the big banner says it
+        if key.startswith(GC_PREFIX):
+            return "voice"                     # game changer: the emitter chose it for this skill level
         level = normalize_level(voice_level)
         if kind == AlertKind.OBJECTIVE_SOON:
             lead = _objective_lead(key)
@@ -351,8 +365,12 @@ def speech_priority(alert: Any) -> int:
     kind = getattr(alert, "kind", None)
     if is_critical(alert):
         return 100
+    if key.startswith(GC_PREFIX + "big:"):
+        return 85
     if key.startswith("urgent:"):
         return 80
+    if key.startswith(GC_PREFIX):
+        return 70
     if kind == AlertKind.OBJECTIVE_SOON:
         return 60
     if key.startswith(STANCE_PREFIX):
@@ -387,11 +405,12 @@ class SpeechBudget:
         with self._lock:
             self._quiet_until = max(self._quiet_until, float(until))
 
-    def _can(self, t: float) -> bool:
+    def _can(self, t: float, alert: Any = None) -> bool:
         if t < self._quiet_until or 0.0 <= t - self._critical_t < AFTER_CRITICAL_S:
             return False
         self._spoken = [x for x in self._spoken if 0.0 <= t - x < 60.0]
-        if self._spoken and t - self._spoken[-1] < self.gap_s:
+        gap = GC_GAP_S if str(getattr(alert, "key", "") or "").startswith(GC_PREFIX) else self.gap_s
+        if self._spoken and t - self._spoken[-1] < min(gap, self.gap_s):
             return False
         return len(self._spoken) < self.per_min
 
@@ -409,7 +428,7 @@ class SpeechBudget:
                     self._critical_t = now
                 rest.sort(key=lambda a: -speech_priority(a))
                 for a in rest:
-                    if not out and self._can(now):
+                    if not out and self._can(now, a):
                         self._spoken.append(now)
                         out.append(a)
                     else:
@@ -422,6 +441,7 @@ class SpeechBudget:
     def _enqueue(self, a: Any, now: float) -> None:
         prio = speech_priority(a)
         ttl = PRAISE_TTL_S if getattr(a, "kind", None) == AlertKind.PRAISE else (
+            GC_TTL_S if str(getattr(a, "key", "") or "").startswith(GC_PREFIX) else
             URGENT_TTL_S if prio >= 80 else QUEUE_TTL_S)
         key = str(getattr(a, "key", "") or "")
         self._queue = [q for q in self._queue if str(getattr(q[3], "key", "")) != key]
@@ -435,7 +455,7 @@ class SpeechBudget:
             now = float(t)
             with self._lock:
                 self._queue = [q for q in self._queue if q[1] > now]
-                if not self._queue or not self._can(now):
+                if not self._queue or not self._can(now, self._queue[0][3]):
                     return None
                 q = self._queue.pop(0)
                 self._spoken.append(now)

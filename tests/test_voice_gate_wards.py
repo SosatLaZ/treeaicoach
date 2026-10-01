@@ -89,7 +89,10 @@ def test_ward_spots_are_walkable_and_recommendations():
     assert "river_top_lane" in top and "tri_own" in top
     drag = wards.recommend("CHAOS", "UTILITY", objective=("dragon", 60.0))
     assert drag[0].spot.objective == "dragon" and len(drag) <= 3
-    assert "bas" in wards.SPOT_BY_ID["pixel_top"].label_for("CHAOS")
+    # absolute map: the top pixel brush is "du haut" for both teams; own / enemy follow the team
+    assert "haut" in wards.SPOT_BY_ID["pixel_top"].label_for("CHAOS")
+    assert wards.SPOT_BY_ID["tri_own"].label_for("CHAOS").startswith("tri-buisson ennemi")
+    assert all(abs(p.uv[1] - 0.70) < 0.15 for p in drag)            # red player: still the dragon pit
     behind = [p.spot.area for p in wards.recommend("ORDER", "JUNGLE", ahead=-3.0)]
     assert "enemy" not in behind
 

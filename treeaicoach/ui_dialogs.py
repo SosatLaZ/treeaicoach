@@ -1,4 +1,4 @@
-"""Help page, toasts and dialogs (changelog, about, onboarding), presets, diagnostics, shortcuts.
+"""Help page, toasts and dialogs (changelog, about, onboarding), diagnostics, shortcuts.
 
 Mixin of :class:`treeaicoach.ui.CoachApp` (split out of ``ui.py`` without any behaviour
 change): the methods use the app state (``self.cfg``, ``self.ctk``, widgets ...) created in
@@ -19,6 +19,7 @@ from treeaicoach.ui_common import (
     ACCENT,
     ACCENT_DIM,
     BG,
+    BTN_H_SMALL,
     CARD_PAD,
     DANGER,
     DIM,
@@ -40,6 +41,7 @@ from treeaicoach.ui_common import (
     WARNING,
     _game_json_path,
     _guarded,
+    _report_function,
     game_datetime,
     open_path,
     state_key,
@@ -49,25 +51,19 @@ from treeaicoach.ui_common import (
 log = logging.getLogger("treeaicoach.ui")   # same logger as before the split
 
 
-def _report_function(name: str) -> Any:
-    """Resolved through :mod:`treeaicoach.ui` at call time (tests patch ``ui._report_function``)."""
-    from treeaicoach import ui  # noqa: PLC0415 - circular at import time
-
-    return ui._report_function(name)
-
-
 class DialogsMixin:
-    """Help page, toasts and dialogs (changelog, about, onboarding), presets, diagnostics, shortcuts."""
+    """Help page, toasts and dialogs (changelog, about, onboarding), diagnostics, shortcuts."""
 
     # ------------------------------------------------------------------ help page
     def _build_help_page(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("Aide", "Bien démarrer, sécurité et dépannage", icon="help")
-        b = self._button(right, "Mode guidé", lambda: self.show_onboarding(0), "secondary", icon="star")
+        page, right, body = self._page("Aide", "Bien démarrer, touches, sécurité et dépannage", icon="help")
+        b = self._button(right, "Mode guidé", lambda: self.show_onboarding(0), "secondary", icon="star",
+                         height=BTN_H_SMALL)
         b.grid(row=0, column=0, padx=(0, 8))
         self._tip(b, "Relancer le mode guidé (niveau, Sans bordure, test de l'overlay)")
-        self._button(right, f"Nouveautés v{ui_kit.CHANGELOG_VERSION}", self.show_changelog, "ghost",
-                     icon="star").grid(row=0, column=1)
+        self._button(right, "Nouveautés", self.show_changelog, "ghost", icon="star", height=BTN_H_SMALL).grid(
+            row=0, column=1)
         steps = (
             ("Passe le jeu en mode « Sans bordure »",
              "Options du jeu → Vidéo → Mode d'affichage : Sans bordure (ou Fenêtré). En plein écran exclusif, "
@@ -79,11 +75,12 @@ class DialogsMixin:
              "Dès le chargement terminé, le coach trouve la minimap et suit les ennemis. Écoute les annonces et "
              "regarde les marques posées sur ta minimap."),
             ("Réagis aux alertes",
-             "« Attention » : un ennemi se rapproche, reste prudent. « Gank ! … recule ! » : recule tout de suite "
-             "vers ta tour. F9 : où est le jungler ?"),
+             "Un bip puis « Gank ! … recule ! » : recule tout de suite vers ta tour. « Attention » : un ennemi se "
+             "rapproche, reste prudent." + (f" {self._key_label('hotkey_jungler')} : où est le jungler ?"
+                                            if getattr(self.cfg, "hotkey_jungler", "") else "")),
             ("Consulte ton analyse",
              "À la fin de la partie, un rapport s'ouvre : morts, ganks subis, habitudes du jungler ennemi et "
-             "conseils. Retrouve-les dans l'onglet Analyses."),
+             "conseils. Retrouve-le avec le replay sur « En jeu » et dans Analyses."),
         )
         s = self._section(body, 0, "Mode d'emploi en 5 étapes", icon="play")
         for i, (title, text) in enumerate(steps):
@@ -106,7 +103,7 @@ class DialogsMixin:
                 "pourrais voir toi-même.",
                 "L'overlay est une fenêtre séparée et transparente posée au-dessus du jeu, jamais dessinée dans "
                 "le jeu.",
-                "Besoin d'encore plus de prudence ? Active le « Mode sûr » (tableau de bord ou Ctrl+Maj+S).")):
+                "Besoin d'encore plus de prudence ? Active le « Mode sûr » (barre de gauche ou Ctrl+Maj+S).")):
             r = self._frame(s)
             r.grid(row=i, column=0, sticky="ew", pady=6)
             r.grid_columnconfigure(1, weight=1)
@@ -115,30 +112,25 @@ class DialogsMixin:
             lbl = self._label(r, text, self.fonts.small, TEXT, anchor="w", justify="left", wraplength=580)
             lbl.grid(row=0, column=1, sticky="w")
             self._wrap_labels.append((lbl, 2 * CARD_PAD + 36))
-        s = self._section(body, 2, "Raccourcis clavier", "Dans la fenêtre de TreeAI Coach (les touches F9 à F11 "
-                                                         "marchent aussi en jeu).", icon="keyboard")
-        for i, (keys, what) in enumerate(ui_kit.SHORTCUTS):
-            if keys.startswith("Échap"):
-                what = "Fermer une fenêtre de dialogue"
-            r = self._frame(s)
-            r.grid(row=i, column=0, sticky="ew", pady=3)
-            r.grid_columnconfigure(1, weight=1)
-            ctk.CTkLabel(r, text=keys, font=self.fonts.tiny_bold, text_color=GOLD, fg_color=PANEL_LO,
-                         corner_radius=RADIUS, width=130, height=24).grid(row=0, column=0, sticky="w", padx=(0, 14))
-            self._label(r, what, self.fonts.small, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
+        s = self._section(body, 2, "Touches", "En jeu : touches globales, à changer dans Réglages > Avancé. "
+                                              "Dans cette fenêtre : raccourcis de l'application.", icon="keyboard")
+        self._help_keys = s
+        self._fill_help_keys()
         s = self._section(body, 3, "Dépannage", icon="target")
         for i, (q, a) in enumerate((
                 ("« Capture noire »", "Le jeu est en plein écran exclusif : passe en « Sans bordure »."),
-                ("La minimap n'est pas trouvée", "Vérifie l'échelle de la minimap dans le jeu, puis utilise "
-                 "« Calibrer la minimap » (Réglages ou tableau de bord)."),
+                ("La minimap n'est pas trouvée", "Le bouton « Calibrer » apparaît sur « En jeu » : trace un carré "
+                 "autour de la minimap. Aussi dans Réglages > Détection."),
                 ("Aucune voix", "Clique sur « Tester la voix ». Vérifie le volume de Windows ; sans Internet, "
-                 "choisis une voix Windows dans « Alertes & voix »."),
-                ("L'overlay n'apparaît pas", "Mode Sans bordure obligatoire ; vérifie l'interrupteur de l'onglet "
-                 "Overlay (ou appuie sur F11)."),
-                ("Alertes trop fréquentes ou trop tardives", "Choisis le préréglage « Discret » ou ajuste la "
-                 "sensibilité dans « Alertes & voix »."),
-                ("Un autre problème", "Réglages → « Copier le diagnostic » et colle-le dans ton message, avec le "
-                 "dernier fichier du dossier des journaux."))):
+                 "choisis une voix Windows dans Réglages > Voix."),
+                ("L'overlay n'apparaît pas", "Mode Sans bordure obligatoire ; vérifie l'interrupteur « Overlay » de "
+                 f"la barre de gauche (ou {self._key_label('hotkey_overlay')} en jeu), puis « Tester l'overlay »."),
+                ("Trop d'annonces, ou pas assez", "Choisis ton niveau dans la barre de gauche, puis ajuste la "
+                 "quantité de voix et la sensibilité dans Réglages > Voix."),
+                ("Un autre problème", ("Pendant la partie, appuie sur " + self._key_label("hotkey_diag") +
+                                       " (diagnostic complet de 60 s)" if getattr(self.cfg, "hotkey_diag", "") else
+                                       "Pendant la partie, clique sur « Diagnostic complet » (page « En jeu »)") +
+                 ", puis copie le diagnostic ci-dessous et colle-le dans ton message."))):
             r = self._frame(s)
             r.grid(row=i, column=0, sticky="ew", pady=5)
             r.grid_columnconfigure(0, weight=1)
@@ -156,6 +148,31 @@ class DialogsMixin:
         about.grid(row=0, column=0, sticky="w", pady=(12, 12))
         self._wrap_labels.append((about, 2 * CARD_PAD + 4))
         return page
+
+    def _key_label(self, field: str) -> str:
+        """Current binding of an in-game key ("F9", "Ctrl + F8"), or a plain-French "sans touche"."""
+        key = str(getattr(self.cfg, field, "") or "").strip()
+        return key.replace("+", " + ") if key else "sans touche"
+
+    def _fill_help_keys(self) -> None:
+        """Aide > Touches: the in-game keys with their CURRENT binding, then the window shortcuts."""
+        s = getattr(self, "_help_keys", None)
+        if s is None:
+            return
+        for w in s.winfo_children():
+            w.destroy()
+        rows = [(k, w, True) for k, w in ui_kit.game_keys(self.cfg)] + [(k, w, False) for k, w in ui_kit.SHORTCUTS]
+        for i, (keys, what, in_game) in enumerate(rows):
+            r = self._frame(s)
+            r.grid(row=i, column=0, sticky="ew", pady=3)
+            r.grid_columnconfigure(1, weight=1)
+            self.ctk.CTkLabel(r, text=keys, font=self.fonts.tiny_bold, text_color=GOLD if in_game else MUTED,
+                              fg_color=PANEL_LO, corner_radius=RADIUS, width=130, height=24).grid(
+                row=0, column=0, sticky="w", padx=(0, 14))
+            self._label(r, what + ("" if in_game else " (fenêtre)"), self.fonts.small, TEXT, anchor="w").grid(
+                row=0, column=1, sticky="w")
+        tail = self._frame(s)
+        tail.grid(row=len(rows), column=0, sticky="ew", pady=(6, 10))
 
     def _number_badge(self, parent: Any, n: int) -> Any:
         """Step number: the display face in the accent colour (no badge, no circle)."""
@@ -441,19 +458,7 @@ class DialogsMixin:
         except Exception:
             log.debug("skill selector sync failed", exc_info=True)
 
-    # ------------------------------------------------------------------ presets, diagnostics, shortcuts
-    @_guarded
-    def apply_preset(self, name: str) -> None:
-        """Apply the Discret / Équilibré / Complet preset (alerts + overlay)."""
-        changes = ui_kit.preset_changes(self.cfg, name)
-        if not changes:
-            return
-        new = dataclasses.replace(self.cfg, **changes).validated()
-        self._replace_config(new, changed=set(changes))
-        self._refresh_all_widgets()
-        label = dict(ui_kit.PRESET_LABELS).get(name, name)
-        self.show_toast(f"Préréglage « {label} » appliqué.")
-
+    # ------------------------------------------------------------------ widgets refresh, diagnostics
     def _refresh_all_widgets(self) -> None:
         for refresh in list(self._widgets_by_field.values()):
             try:
@@ -464,20 +469,13 @@ class DialogsMixin:
         self._refresh_position_menus()
         self._sync_quick()
         self._sync_skill_seg()
-        self._refresh_preset_label()
-
-    def _refresh_preset_label(self) -> None:
-        seg = getattr(self, "preset_seg", None)
-        if seg is None:
-            return
+        self._fill_help_keys()
         try:
-            cur = ui_kit.preset_of(self.cfg)
-            labels = dict(ui_kit.PRESET_LABELS)
-            seg.set(f"  {labels[cur]}  " if cur in labels else "")
-            self._set_text(self.preset_lbl, ui_kit.PRESET_HELP.get(cur, "") if cur else
-                           "Personnalisé : tes réglages ne correspondent à aucun préréglage.")
+            if "settings" in self._built:
+                self._refresh_radar_rows()
+                self._refresh_voice_rows()
         except Exception:
-            log.debug("preset label refresh failed", exc_info=True)
+            log.debug("settings rows refresh failed", exc_info=True)
 
     def diagnostic(self) -> str:
         """Plain-text diagnostic report (no secret)."""

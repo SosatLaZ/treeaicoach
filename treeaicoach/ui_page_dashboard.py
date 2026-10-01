@@ -1,4 +1,4 @@
-"""Dashboard page ("Tableau de bord"): status hero, live tiles, coach gauge, journal.
+"""Page "En jeu": the ONE status line (+ fix), pre-game panel or live game (coach, enemies, radar), "Système".
 
 Mixin of :class:`treeaicoach.ui.CoachApp` (split out of ``ui.py`` without any behaviour
 change): the methods use the app state (``self.cfg``, ``self.ctk``, widgets ...) created in
@@ -21,10 +21,16 @@ from treeaicoach.ui_common import (
     ALLY_RING,
     BG,
     BORDER,
+    BTN_H,
+    BTN_H_SMALL,
+    CTL_GAP,
     DIM,
     ENEMY_RING,
+    HOVER,
+    ICON_BTN,
     LEVEL_COLORS,
     LINE_STRONG,
+    LINK_H,
     MUTED,
     ON_ACCENT,
     PANEL,
@@ -45,36 +51,32 @@ from treeaicoach.ui_common import (
     circle_icon,
     flat_placeholder,
     radar_placeholder,
+    ui_text,
 )
 
 log = logging.getLogger("treeaicoach.ui")   # same logger as before the split
 
 
 class DashboardPageMixin:
-    """Dashboard page ("Tableau de bord"): status hero, live tiles, coach gauge, journal."""
+    """Page "En jeu": status strip, pre-game / in-game layouts, "Système" panel, journal."""
 
     # ------------------------------------------------------------------ dashboard
     def _build_dashboard(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("En jeu", "Minimap et alertes en direct", max_width=WIDE_MAX)
-        self.dash_safe_var = ctk.BooleanVar(value=bool(getattr(self.cfg, "safe_mode", False)))
-        self.dash_safe = self._toggle(right, self.dash_safe_var,
-                                      lambda: self.set_safe_mode(bool(self.dash_safe_var.get())), color=WARNING,
-                                      small=True, text="Mode sûr")
-        self.dash_safe.grid(row=0, column=0, padx=(0, 18))
-        self._tip(self.dash_safe.lbl, "Mode sûr : aucune alerte de gank ni suivi du jungler, aucune zone dans le "
-                                  "brouillard. Minuteurs et rappels restent actifs. (Ctrl+Maj+S)")
-        self.btn_test_voice = self._button(right, "Tester la voix", self.test_voice, "ghost", icon="voice", width=0,
-                                           height=26)
-        self.btn_test_voice.grid(row=0, column=1, padx=(0, 8))
+        page, right, body = self._page("En jeu", "Ta partie en direct : état, ennemis, alertes", max_width=WIDE_MAX)
+        self.btn_test_voice = self._button(right, "Tester la voix", self.test_voice, "ghost", icon="voice",
+                                           height=BTN_H_SMALL)
+        self.btn_test_voice.grid(row=0, column=0, padx=(0, CTL_GAP))
         self._tip(self.btn_test_voice, "Fait dire une alerte d'exemple au coach.")
-        self.btn_demo = self._button(right, "Mode démo", self.toggle_demo, "ghost", icon="demo", width=0, height=26)
-        self.btn_demo.grid(row=0, column=2, padx=(0, 8))
+        self.btn_test_overlay = self._button(right, "Tester l'overlay", self.test_overlay, "ghost", icon="overlay",
+                                             height=BTN_H_SMALL)
+        self.btn_test_overlay.grid(row=0, column=1, padx=(0, CTL_GAP))
+        self._tip(self.btn_test_overlay, "Affiche l'overlay sur une partie d'exemple pendant 10 s "
+                                         "(sûr, attention, danger), hors partie.")
+        self._overlay_test: tuple[float, list] | None = None
+        self.btn_demo = self._button(right, "Mode démo", self.toggle_demo, "ghost", icon="demo", height=BTN_H_SMALL)
+        self.btn_demo.grid(row=0, column=2)
         self._tip(self.btn_demo, "Partie simulée : le jungler ennemi vient te ganker vers 40 s.")
-        self.btn_calib = self._button(right, "Calibrer la minimap", self.calibrate, "ghost", icon="target", width=0,
-                                      height=26)
-        self.btn_calib.grid(row=0, column=3)
-        self._tip(self.btn_calib, "Trace un carré autour de la minimap si elle n'est pas trouvée toute seule.")
 
         body.grid_columnconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=0)
@@ -87,7 +89,7 @@ class DashboardPageMixin:
             row=0, column=0, sticky="ns", padx=(0, 10))
         self.banner_lbl = self._label(self.banner, "", self.fonts.small, TEXT, anchor="w", justify="left")
         self.banner_lbl.grid(row=0, column=1, sticky="w", pady=8)
-        self._button(self.banner, "Compris", self._dismiss_banner, "ghost", width=90, height=28).grid(
+        self._button(self.banner, "Compris", self._dismiss_banner, "ghost", width=90, height=BTN_H_SMALL).grid(
             row=0, column=2, padx=10)
         self._banner_dismissed: str | None = None
 
@@ -105,12 +107,19 @@ class DashboardPageMixin:
         self.threat_lbl = hero.threat
         self.threat_detail = hero.detail
         self.demo_badge = hero.badge
-        self.btn_start = ctk.CTkButton(hero.canvas, text="Démarrer l'analyse", width=150, height=34,
+        self.btn_start = ctk.CTkButton(hero.canvas, text="Démarrer l'analyse", width=150, height=BTN_H,
                                        corner_radius=RADIUS, font=self.fonts.button, fg_color=ACCENT,
                                        hover_color=ACCENT_HOVER, text_color=ON_ACCENT, text_color_disabled=DIM,
                                        bg_color=hero.right_bg, image=self._icon("play", 12, ON_ACCENT),
                                        compound="left", command=self.cb(self.toggle_engine))
         hero.attach_button(self.btn_start)
+        # the one-click fix of a problem state ("Calibrer", "Aide", "Diagnostic"), next to the status
+        self._fix_action = ""
+        self.btn_fix = ctk.CTkButton(hero.canvas, text="", width=0, height=BTN_H, corner_radius=RADIUS,
+                                     font=self.fonts.button, fg_color=PANEL_HI, hover_color=HOVER, text_color=TEXT,
+                                     border_width=1, border_color=LINE_STRONG, border_spacing=8,
+                                     bg_color=hero.right_bg, command=self.cb(lambda: self._run_fix(self._fix_action)))
+        hero.attach_fix(self.btn_fix)
 
         # --- champion select: pre-game card (champ_select.py, League Client, read-only) ----
         self.cs_card = ctk.CTkFrame(body, fg_color=SURFACE, corner_radius=RADIUS_DIALOG, border_width=1,
@@ -140,8 +149,8 @@ class DashboardPageMixin:
         self._tip(self.coach_role_lbl, "Rôle détecté d'après la partie (et les échanges de voie).")
         self.coach_ai_lbl = self._label(co, "", self.fonts.tiny_bold, TEAL, anchor="e")
         self.coach_ai_lbl.grid(row=0, column=2, sticky="e", padx=(8, 0))
-        self._tip(self.coach_ai_lbl, "Conseils IA utilisés dans cette partie : 5 automatiques max "
-                                     "+ 1 en urgence (F8 à part).")
+        self._tip(self.coach_ai_lbl, lambda: "Conseils IA utilisés dans cette partie : 5 automatiques max "
+                                             "+ 1 en urgence (« Demander à l'IA » à part).")
         self.coach_tip_lbl = self._label(co, "Le conseil du moment s'affichera ici pendant la partie.",
                                          self.fonts.small, DIM, anchor="w", justify="left", wraplength=520)
         self.coach_tip_lbl.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(2, 8))
@@ -242,7 +251,7 @@ class DashboardPageMixin:
         self.journal.tag_config("empty", foreground=DIM)
         self._render_journal()
 
-        # --- right column: radar + tech -------------------------------------------------
+        # --- right column: radar + system -------------------------------------------------
         rc = self._frame(body, width=RADAR_PX + 8)
         rc.grid(row=3, column=1, sticky="n")
         rc.grid_columnconfigure(0, weight=1)
@@ -250,15 +259,11 @@ class DashboardPageMixin:
         rh.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         rh.grid_columnconfigure(1, weight=1)
         self._caption(rh, "Radar", MUTED, anchor="w").grid(row=0, column=0, sticky="w")
-        for i, (icon, tip, fn) in enumerate((
-                ("refresh", "Rechercher la minimap maintenant", lambda: self.relocate()),
-                ("report", "Ouvrir le dernier rapport", lambda: self.open_last_report()),
-                ("folder", "Ouvrir le dossier des rapports", lambda: self.open_games_dir()),
-                ("copy", "Copier le diagnostic (Ctrl+D)", lambda: self.copy_diagnostic()))):
-            b = ctk.CTkButton(rh, text="", width=28, height=26, corner_radius=RADIUS, fg_color="transparent",
-                              hover_color=PANEL_HI, image=self._icon(icon, 15, MUTED), command=self.cb(fn))
-            b.grid(row=0, column=i + 2, padx=(2, 0))
-            self._tip(b, tip)
+        b = ctk.CTkButton(rh, text="", width=ICON_BTN - 2, height=LINK_H + 4, corner_radius=RADIUS,
+                          fg_color="transparent", hover_color=PANEL_HI, image=self._icon("refresh", 15, MUTED),
+                          command=self.cb(lambda: self.relocate()))
+        b.grid(row=0, column=2)
+        self._tip(b, "Rechercher la minimap maintenant (après un changement de résolution)")
         import tkinter as tk  # noqa: PLC0415
 
         from PIL import ImageTk  # noqa: PLC0415
@@ -276,6 +281,9 @@ class DashboardPageMixin:
         holder = tk.Frame(rc, bg=BG, width=self._radar_size, height=self._radar_size)
         holder.grid(row=1, column=0)
         holder.grid_propagate(False)
+        # in-game only blocks (hidden before a game: the pre-game panel and "Système" move up)
+        self._live_blocks = ((co, {"row": 0}), (en, {"row": 1}), (rh, {"row": 0}), (holder, {"row": 1}))
+        self._live_layout: bool | None = None
         self.radar_lbl = tk.Label(holder, image=self._radar_photo, bg=BG, bd=0, highlightthickness=0)
         self.radar_lbl.place(x=0, y=0, relwidth=1, relheight=1)
         self.radar_msg = tk.Label(holder, text="En attente d'une partie…", bg=PANEL_LO, fg=MUTED,
@@ -284,72 +292,136 @@ class DashboardPageMixin:
         self.radar_badge = ctk.CTkLabel(holder, text=" HORS LIGNE ", font=self.fonts.caps, text_color=MUTED,
                                         fg_color=PANEL_HI, corner_radius=RADIUS, height=18, bg_color=PANEL_LO)
         self.radar_badge.place(x=self._scaled(8), y=self._scaled(8))
-        # --- launcher: status of each subsystem with a one-click fix ----------------------
+        # --- "Système": status of each subsystem with a one-click fix (ui_kit.subsystem_rows) -----
         sysf = self._frame(rc)
-        sysf.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        sysf.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         sysf.grid_columnconfigure(2, weight=1)
+        self.sys_panel = sysf
         self._caption(sysf, "Système", MUTED, anchor="w").grid(row=0, column=0, columnspan=4, sticky="w")
         self._hline(sysf, LINE_STRONG).grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 2))
         self.sys_rows: dict[str, dict[str, Any]] = {}
-        sys_tips = {"ia": "Modèle qui reconnaît les champions sur la minimap.",
-                    "ai": "Conseils écrits par une IA en ligne (facultatif) : fournisseur, clé, conseils utilisés "
-                          "dans la partie (5 + 1 en urgence)."}
-        for i, (key, label) in enumerate((("game", "Jeu"), ("minimap", "Minimap"), ("lcu", "Client LoL"),
-                                          ("ia", "Détection"), ("ai", "IA conseil"), ("voice", "Voix"))):
-            r = 2 + i
-            dot = ctk.CTkFrame(sysf, width=6, height=6, corner_radius=0, fg_color=DIM)
-            dot.grid(row=r, column=0, padx=(0, 8))
-            name = self._label(sysf, label, self.fonts.small, TEXT, anchor="w")
-            name.grid(row=r, column=1, sticky="w", padx=(0, 8), pady=1)
-            val = self._label(sysf, "-", self.fonts.tiny, MUTED, anchor="w")
-            val.grid(row=r, column=2, sticky="w")
-            if key in sys_tips:
-                self._tip(name, sys_tips[key])
-            self._tip(val, lambda v=val: v.cget("text"))
-            btn = ctk.CTkButton(sysf, text="", width=10, height=18, corner_radius=RADIUS, fg_color="transparent",
-                                hover_color=PANEL_HI, text_color=ACCENT, font=self.fonts.tiny_bold,
-                                command=self.cb(lambda k=key: self._system_fix(k)))
-            btn.grid(row=r, column=3, sticky="e")
-            btn.grid_remove()
-            self.sys_rows[key] = {"dot": dot, "val": val, "btn": btn, "sig": None, "action": ""}
-        self.btn_test_overlay = self._button(rc, "Tester l'overlay", self.test_overlay, "secondary", icon="overlay",
-                                             height=26)
-        self.btn_test_overlay.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        self._tip(self.btn_test_overlay, "Affiche l'overlay sur une partie d'exemple pendant 10 s "
-                                         "(sûr, attention, danger), hors partie.")
-        self._overlay_test: tuple[float, list] | None = None
-
-        tech = self._frame(rc)
-        tech.grid(row=4, column=0, sticky="ew", pady=(10, 0))
-        self.tech: dict[str, Any] = {}
-        for i, (key, label, tip) in enumerate((
-                ("fps", "FPS", "Images de minimap analysées par seconde"),
-                ("cpu", "CPU", "Processeur utilisé par TreeAI Coach (en % de la machine)"),
-                ("detector", "MODÈLE", "Détecteur de champions utilisé"),
-                ("voice", "VOIX", "Moteur de synthèse vocale utilisé"))):
-            tech.grid_columnconfigure(i, weight=1, uniform="tech")
-            tile = self._frame(tech)
-            tile.grid(row=0, column=i, sticky="ew")
-            tile.grid_columnconfigure(0, weight=1)
-            self._label(tile, label, self.fonts.caps, DIM, anchor="w").grid(row=0, column=0, sticky="w")
-            val = self._label(tile, "-", self.fonts.tiny_bold, TEXT, anchor="w")
-            val.grid(row=1, column=0, sticky="w")
-            self.tech[key] = val
-            self._tip(tile, tip)
-        # live health (engine status.health, in game): capture, detection timings, overlay, champions
-        self.health_lbl = self._label(rc, "", self.fonts.tiny, MUTED, anchor="w", justify="left",
-                                      wraplength=RADAR_PX + 20)
-        self.health_lbl.grid(row=5, column=0, sticky="w", pady=(8, 0))
+        self._sys_next_row = 2
+        self._add_health_summary()          # "Santé TreeAI" (engine self-check) on top of the rows
+        for key, label in (("game", "Jeu"), ("minimap", "Minimap"), ("lcu", "Client LoL"), ("ia", "Détection"),
+                           ("ai", "IA conseil"), ("voice", "Voix")):
+            self._add_sys_row(key, label)
+        # rows the panel may get later go above this footer: the health line, then the diagnostic
+        foot = self._frame(rc)
+        foot.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        foot.grid_columnconfigure(0, weight=1)
+        self.sys_foot = foot
+        # live health (engine status.health in game, else this app's CPU)
+        self.health_lbl = self._label(foot, "", self.fonts.tiny, MUTED, anchor="w", justify="left",
+                                      wraplength=RADAR_PX)
+        self.health_lbl.grid(row=0, column=0, columnspan=2, sticky="w")
         self._tip(self.health_lbl, "Santé de l'analyse : capture, temps de détection (médiane / pire 5 %), "
                                    "overlay, champions vus sur la minimap, processeur.")
         self._health_sig: Any = None
-        self.btn_diag = self._button(rc, "Diagnostic complet", self.start_diagnostic, "ghost", icon="report",
-                                     height=30)
-        self.btn_diag.grid(row=6, column=0, sticky="w", pady=(6, 0))
-        self._tip(self.btn_diag, "Enregistre 60 s d'analyse (minimap, détections, temps de calcul, réglages) "
-                                 "dans un zip à joindre à un signalement. Joue normalement pendant ce temps.")
+        hk = str(getattr(self.cfg, "hotkey_diag", "") or "").replace("+", " + ")
+        self.btn_diag = self._button(foot, "Diagnostic complet", self.start_diagnostic, "ghost", icon="report",
+                                     height=BTN_H_SMALL)
+        self.btn_diag.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self._diag_hint = self._label(foot, hk + " en jeu" if hk else "", self.fonts.tiny, DIM, anchor="e")
+        self._diag_hint.grid(row=1, column=1, sticky="e", pady=(6, 0))
+        self._tip(self.btn_diag, "Enregistre 60 s d'analyse (minimap, détections, temps de calcul, réglages) dans "
+                                 "un zip à joindre à un signalement. Joue normalement pendant ce temps." +
+                  (f" En jeu, la touche {hk} fait la même chose." if hk else ""))
         self._cpu = ui_kit.CpuMeter()
+        self._set_live_layout(False)          # pre-game layout until the first status says otherwise
         return page
+
+    def _add_health_summary(self) -> None:
+        """"Santé TreeAI" line of the "Système" panel: OK / dégradé + reasons + what was fixed
+        automatically (engine self-check, :mod:`treeaicoach.selfcheck`). Self-contained: it takes the
+        panel's next row and refreshes itself every second from ``engine.selfcheck_summary()``;
+        shown in game, or while there is something to say."""
+        sysf = getattr(self, "sys_panel", None)
+        if sysf is None:
+            return
+        from treeaicoach.selfcheck import summary_text  # noqa: PLC0415
+        from treeaicoach.ui_common import DANGER  # noqa: PLC0415
+
+        r = self._sys_next_row
+        self._sys_next_row += 1
+        lbl = self._label(sysf, "", self.fonts.small, MUTED, anchor="w", justify="left", wraplength=RADAR_PX)
+        lbl.grid(row=r, column=0, columnspan=4, sticky="w", pady=(2, 4))
+        lbl.grid_remove()
+        self._tip(lbl, "TreeAI surveille son propre fonctionnement (capture, minimap, détection, voix, API du "
+                       "jeu) et corrige seul ce qu'il peut ; sinon il te dit quoi faire.")
+        sig: list[Any] = [None]
+
+        def refresh() -> None:
+            if getattr(self, "_closing", False):
+                return
+            try:
+                if not lbl.winfo_exists():
+                    return
+                eng = getattr(self, "engine", None)
+                fn = getattr(eng, "selfcheck_summary", None) if eng is not None else None
+                summ = fn() if callable(fn) else None
+                text, level = summary_text(summ)
+                if text and not (bool(getattr(eng, "in_game", False)) or (summ or {}).get("reasons")
+                                 or (summ or {}).get("fixed")):
+                    text = ""                       # nothing to say outside a game
+                if (text, level) != sig[0]:
+                    sig[0] = (text, level)
+                    if text:
+                        lbl.configure(text=ui_text(text), text_color={1: WARNING, 2: DANGER}.get(level, MUTED))
+                        lbl.grid()
+                    else:
+                        lbl.grid_remove()
+            except Exception:
+                log.debug("Santé TreeAI refresh failed", exc_info=True)
+            try:
+                self.root.after(1000, refresh)
+            except Exception:
+                pass
+
+        self.root.after(1000, refresh)
+
+    def _set_live_layout(self, live: bool) -> None:
+        """In game: coach strip, enemies / allies and radar. Before a game: only what helps 30 s before
+        it (status, champion select, last game, goal, checks, "Système"), nothing to scroll to."""
+        if live == self._live_layout:
+            return
+        self._live_layout = live
+        for w, _info in getattr(self, "_live_blocks", ()):
+            try:
+                (w.grid if live else w.grid_remove)()
+            except Exception:
+                log.debug("live layout toggle failed", exc_info=True)
+        if live:        # the wrap widths depend on the enemies card, measured once it is on screen
+            self.root.after(80, self._apply_layout)
+
+    def _add_sys_row(self, key: str, label: str) -> dict[str, Any] | None:
+        """One row of the "Système" panel (dot, name, value, fix link). Rows are created in the order
+        :func:`ui_kit.subsystem_rows` returns them; a key it adds later gets its row on first use."""
+        sysf = getattr(self, "sys_panel", None)
+        if sysf is None:
+            return None
+        ctk = self.ctk
+        r = self._sys_next_row
+        self._sys_next_row += 1
+        dot = ctk.CTkFrame(sysf, width=6, height=6, corner_radius=0, fg_color=DIM)
+        dot.grid(row=r, column=0, padx=(0, 8))
+        name = self._label(sysf, ui_text(label), self.fonts.small, TEXT, anchor="w")
+        name.grid(row=r, column=1, sticky="w", padx=(0, 8), pady=1)
+        val = self._label(sysf, "-", self.fonts.tiny, MUTED, anchor="w")
+        val.grid(row=r, column=2, sticky="w")
+        tip = {"ia": "Modèle qui reconnaît les champions sur la minimap.",
+               "ai": "Conseils écrits par une IA en ligne (facultatif) : fournisseur, clé, conseils utilisés "
+                     "dans la partie (5 + 1 en urgence)."}.get(key)
+        if tip:
+            self._tip(name, tip)
+        self._tip(val, lambda v=val: v.cget("text"))
+        btn = ctk.CTkButton(sysf, text="", width=10, height=LINK_H, corner_radius=RADIUS, fg_color="transparent",
+                            hover_color=PANEL_HI, text_color=ACCENT, font=self.fonts.tiny_bold, border_spacing=2,
+                            command=self.cb(lambda k=key: self._system_fix(k)))
+        btn.grid(row=r, column=3, sticky="e")
+        btn.grid_remove()
+        row = {"dot": dot, "val": val, "btn": btn, "sig": None, "action": ""}
+        self.sys_rows[key] = row
+        return row
 
     def _scaled(self, px: int) -> int:
         try:

@@ -123,6 +123,7 @@ class TacticalDirector:
             self._written_t: dict[str, float] = {}
             self._director_call_t: float | None = None
             self._stance_score: float | None = None
+            self._gc_topic_t: dict[str, float] = {}
 
     # ------------------------------------------------------------------ public state
     def speech_context(self) -> Any:
@@ -173,11 +174,13 @@ class TacticalDirector:
     # ------------------------------------------------------------------ tick
     def tick(self, t: float, gt: float, game: Any, tracker: Any, *, heavy: bool = True, scoreboard: Any = None,
              roles: Any = None, objectives: Any = None, danger_radius: float = 0.12,
-             stance: Any = None, waves: Any = None, jungle_intel: Any = None, threat: int = 0) -> TickOut:
+             stance: Any = None, waves: Any = None, jungle_intel: Any = None, threat: int = 0,
+             card_age: float | None = None) -> TickOut:
         out = TickOut()
         try:
             with self._lock:
                 self._macro_in = (waves, jungle_intel, int(threat or 0))
+                self._card_age = card_age
                 self._tick(out, float(t), float(gt), game, tracker, heavy, scoreboard, roles,
                            list(objectives or []), float(danger_radius), stance)
         except Exception:
@@ -253,10 +256,15 @@ class TacticalDirector:
             fresh = [a for t0, a in self._held if t - t0 <= HOLD_PRAISE_S]
             self._held = []
             out.alerts.extend(fresh[:2])
-        if not heavy:
+        # the tick a fight ends is a coaching tick: the post-fight call ("Ils sont 3 morts : Baron")
+        # replaces the fight card at once (no stale pre-fight line, no blank card in between)
+        fight_ended = bool(getattr(self, "_was_fighting", False)) and not fs.active
+        self._was_fighting = bool(fs.active)
+        if not heavy and not fight_ended:
             return
-        # ---- end-game calls
-        calls = self.calls.update(t, st, objectives)
+        # ---- end-game calls (not during a fight: the call would be dropped and still block the
+        # planner's post-fight call for DIRECTOR_CALL_RECENT_S)
+        calls = self.calls.update(t, st, objectives) if not fs.active else []
         if calls:
             self._director_call_t = t
         for c in calls:
@@ -321,7 +329,8 @@ class TacticalDirector:
         ctx = build_ctx(t, gt, game, st, role=role, me_uv=me_uv, allies=allies, enemies=enemies,
                         objectives=objectives, waves=waves, jint=jint, roles=roles, scoreboard=scoreboard,
                         in_fight=fighting, threat=threat, in_base=in_base, recent_director_call=recent,
-                        stance_score=getattr(self, "_stance_score", None))
+                        stance_score=getattr(self, "_stance_score", None),
+                        card_age=getattr(self, "_card_age", None))
         up = self.macro.update(ctx, getattr(self.cfg, "skill_level", "intermediaire"))
         if up.cancelled is not None:
             out.macro_cancelled = up.cancelled
@@ -334,14 +343,7 @@ class TacticalDirector:
         out.macro_new = c
         if c.kind in ("fight_won", "fight_lost"):        # the planner's follow-up replaces the fight summary
             out.alerts = [a for a in out.alerts if not str(a.key).startswith("macro:fight_end")]
-        if c.kind == "fight_won":
-            # voice whitelist ("normal" / débutant): the big numbers call may be spoken; when it is
-            # not, the gate drops it (the HUD line + banner already show it: no double text)
-            import re as _re
-
-            spoken = _re.sub(r"\s*\(\d+ s\)", "", c.text).replace(" maintenant", "")
-            out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=spoken,
-                                    key=f"urgent:genie:{c.ident}", t=t))
+        self._gc_voice(out, c, ctx, t)
         from treeaicoach.macro import level_key
 
         dur = GENIE_BANNER_S.get(level_key(getattr(self.cfg, "skill_level", "")), 3.5)
@@ -350,6 +352,28 @@ class TacticalDirector:
             label = c.label if c.color == "danger" or c.label.startswith("VA ICI") else f"VA ICI · {c.label}"
             self._add_guide(MapGuide("genie", c.target, label[:16], PRIORITY["genie"], True, c.color,
                                      t + max(HOLD_S_MIN, c.life_s), t))
+
+    def _gc_voice(self, out: TickOut, c: Any, ctx: Any, t: float) -> None:
+        """THE game-changer voice (game_changers.voice_for): a short pre-generated line for the big
+        calls (objective now, Baron set-up) and, for a beginner, the lane calls (level window,
+        jungler side, plates, critical recall). Visual first: the line is voice-only (the card and
+        the banner already show the call), the voice gate drops it in a fight / high concentration,
+        its budget keeps ~1-2 per minute, and one topic is spoken at most once per
+        game_changers.VOICE_TOPIC_S. Never raises."""
+        try:
+            from treeaicoach import game_changers as gcm
+
+            v = gcm.voice_for(c, ctx, getattr(self.cfg, "skill_level", "intermediaire"))
+            if v is None:
+                return
+            topic = gcm.topic_of(str(getattr(c, "kind", "")))
+            last = self._gc_topic_t.get(topic)
+            if last is not None and 0.0 <= t - last < gcm.VOICE_TOPIC_S:
+                return
+            self._gc_topic_t[topic] = t
+            out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=v[1], key=v[0], t=t))
+        except Exception:
+            log.debug("game changer voice failed", exc_info=True)
 
     def macro_active(self) -> Any:
         """The active COUP DE GÉNIE call (macro.GeniusCall) or None."""
