@@ -406,8 +406,26 @@ def download_update(info: UpdateInfo, cfg: Any = None, *, progress: ProgressFn |
         else:
             src, api = ch.exe_url, ch.api
         part = final.with_name(final.name + ".part")
+        # Fast path first: raw.githubusercontent.com (CDN, accepts the token for private repos);
+        # the GitHub contents API is much slower for ~80 MB files and is only the fallback.
+        sources: list[tuple[str, bool]] = []
+        if not info.url and ch.api:
+            sources.append((DEFAULT_CHANNEL_URL.rsplit("/", 1)[0] + "/" + EXE_NAME, False))
+        sources.append((src, api))
         try:
-            _stream(src, ch.token, api, part, info, progress, cancel, timeout)
+            last_exc: Exception | None = None
+            for s_url, s_api in sources:
+                try:
+                    _stream(s_url, ch.token, s_api, part, info, progress, cancel, timeout)
+                    last_exc = None
+                    break
+                except _UpdateError as exc:
+                    if cancel is not None and cancel.is_set():
+                        raise
+                    log.info("Update download via %s failed, trying next source", s_url)
+                    last_exc = exc
+            if last_exc is not None:
+                raise last_exc
             if not verify_file(part, info.sha256, info.size):
                 raise _UpdateError("Le fichier téléchargé est corrompu (empreinte SHA-256 différente). Réessaie.")
             _replace_retry(part, final)
