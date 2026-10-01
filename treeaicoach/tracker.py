@@ -205,7 +205,7 @@ def _kf_step(kf: list[float], t: float, u: float, v: float) -> None:
     yu, yv = u - pu, v - pv
     d2 = yu * yu / (au + r2) + yv * yv / (av + r2)
     if d2 > KF_GATE_D2:                    # outlier / sharp turn: trust it less, never ignore it
-        r2 *= d2 / KF_GATE_D2
+        r2 *= (d2 / KF_GATE_D2) ** 2
     su, sv = au + r2, av + r2
     ku0, ku1 = au / su, bu / su
     kv0, kv1 = av / sv, bv / sv
@@ -245,6 +245,7 @@ class Track:
     confirmed: bool = True                # False: tentative anonymous track (champion locker)
     stacked_with: str | None = None       # key of the icon drawn over this one (stacked hold)
     stacked_since: float | None = None    # last real sighting when the stacked hold started
+    stack_released_at: float | None = None  # when the last stacked hold ended (until the next sighting)
     _obs: deque = field(default_factory=lambda: deque(maxlen=OBS_MAXLEN), repr=False)
     _segs: deque = field(default_factory=lambda: deque(maxlen=ZONE_SEG_MAXLEN), repr=False)
     _last_obs_t: float | None = field(default=None, repr=False)
@@ -468,7 +469,7 @@ class Track:
                 self._kf = None
             prev_t = self._stack_t
         self._stack_pos = self._stack_vel = self._stack_t = None
-        self.stacked_with = self.stacked_since = None
+        self.stacked_with = self.stacked_since = self.stack_released_at = None
         if prev_t is None:
             self.appeared_at = t
             self.prev_hidden_s = None
@@ -581,7 +582,7 @@ class Track:
         self.score, self.radius = late.score, late.radius
         self.visible, self.hidden_since = late.visible, late.hidden_since
         self._stack_pos = self._stack_vel = self._stack_t = None
-        self.stacked_with = self.stacked_since = None
+        self.stacked_with = self.stacked_since = self.stack_released_at = None
         self._pending = None
         self._kf_rebuild()
 
@@ -893,6 +894,7 @@ class Tracker:
                     tr.last_seen = max(tr.last_seen, min(occ.last_seen, tr._stack_t))
                 tr.stacked_with = None
                 tr.stacked_since = None
+                tr.stack_released_at = now
                 continue
             if now - tr.last_seen >= HIDE_AFTER or tr._stack_pos is not None:
                 continue                           # not a fresh disappearance

@@ -58,3 +58,28 @@ def test_never_raises():
     assert rd.read(np.zeros((100, 100, 3), np.uint8)) is None
     assert rd.read(np.zeros((720, 1280, 3), np.uint8)) is None
     assert locate_portrait("x") is None
+
+
+def test_roi_patch_read_matches_full_read(screen):
+    rd = HudReader()
+    assert rd.roi() is None and rd.read_patch(screen) is None      # not calibrated yet
+    full = rd.read(screen, alive_hint=True)
+    x, y, w, h = rd.roi()
+    assert w == h and w > 10
+    patch = screen[y:y + h, x:x + w]
+    t0 = time.perf_counter()
+    for _ in range(20):
+        p = rd.read_patch(patch)
+    assert (time.perf_counter() - t0) / 20 < 0.002
+    assert p is not None and p.dead is False
+    assert np.abs(p.portrait.astype(int) - full.portrait.astype(int)).mean() < 1.0
+    grey = cv2.cvtColor(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    assert rd.read_patch(grey).dead is True
+    assert rd.read_patch(None) is None
+
+
+def test_calibration_timing(screen):
+    big = cv2.resize(screen, (1920, 1080))
+    t0 = time.perf_counter()
+    assert locate_portrait(big) is not None
+    assert time.perf_counter() - t0 < 0.1                         # once per window size

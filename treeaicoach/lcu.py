@@ -511,7 +511,8 @@ def get_default_client() -> LcuClient:
     global _default
     with _default_lock:
         if _default is None:
-            _default = LcuClient()
+            # never query the real client / spawn WMI processes from the test suite (Windows CI)
+            _default = LcuClient(enabled=False) if "pytest" in sys.modules else LcuClient()
         return _default
 
 

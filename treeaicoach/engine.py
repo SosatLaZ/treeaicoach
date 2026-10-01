@@ -90,6 +90,7 @@ BREAK_TEXT = "3 défaites d'affilée : une pause de 10 minutes aide à rester co
 GANK_KINDS = frozenset({AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE})
 #: Coaching chatter (macro tips, compliments, Tab insights): never spoken during a gank threat.
 COACH_KINDS = frozenset({AlertKind.MACRO_TIP, AlertKind.PRAISE, AlertKind.SCOREBOARD})
+ON_SCREEN_MARGIN = 0.015        # a gank threat this far inside the camera view is on my screen
 ROLE_NOTICE_S = 20.0             # the "role detected (lane swap)" HUD notice stays this long
 TEXT_MSG_S = 10.0                # a written-only message stays on the HUD line this long
 
@@ -573,7 +574,8 @@ class CoachEngine:
                                          db=self._champion_db(),
                                          scale_store=dict(getattr(cfg, "icon_scale_by_res",
                                                                   None) or {}),
-                                         on_scale=self._store_icon_scale)
+                                         on_scale=self._store_icon_scale,
+                                         learn_cache=self._frame_source is None)
         self._detector_key = key
         if self._game is not None and hasattr(self._detector, "set_roster"):
             self._detector.set_roster(self._game)   # roster matcher (portraits of the 10)
@@ -1236,7 +1238,7 @@ class CoachEngine:
         tac_alerts, gank_now = self._tactics_tick(t, gt, game, tracker, gank_alerts)
         self._ward_guide_tick(t, game, tracker, frame, identified)
         # latency first: a gank alert (or the fight call) is spoken NOW, before the heavier stages
-        said_now = self._say_gank_now(gank_now, t, gt)
+        said_now = self._say_gank_now(gank_now, t, gt, frame)
         raw_alerts += [a for a in gank_alerts if a.kind not in GANK_KINDS] + tac_alerts
         # coaching stages (coach, Tab, tips, items, hype / AI) at HEAVY_HZ, the gank check every tick
         heavy = t >= self._next_heavy_t or t < self._next_heavy_t - 2.0 / HEAVY_HZ
@@ -1434,13 +1436,17 @@ class CoachEngine:
             if rec is not None:
                 rec.on_alert(a, gt)
 
-    def _say_gank_now(self, gank: list[Alert], t: float, gt: float) -> list[Alert]:
+    def _say_gank_now(self, gank: list[Alert], t: float, gt: float, frame: Any = None) -> list[Alert]:
         """Gank alerts go to the voice right after the gank check (throttled, routed), before
-        the coaching stages of the tick. Returns the alerts said. Never raises."""
+        the coaching stages of the tick. Returns the alerts said. Never raises.
+
+        A WARNING gank alert whose enemies are all inside my camera view (white rectangle of the
+        minimap: they are on my screen already) is written, not spoken (DANGER is always spoken)."""
         if not gank:
             return []
         try:
             calls = [a for a in gank if str(a.key).startswith("call:")]   # fight decision: not throttled
+            gank = self._written_if_on_screen([a for a in gank if a not in calls], t, gt, frame) + calls
             routed = self._route_messages([a for a in gank if a not in calls], t, gt)
             said = self._speech_budget(self._route_messages(calls, t, gt) + self._throttler.filter(routed, t), t)
             self._speak_alerts(said, t, gt)
@@ -1449,6 +1455,61 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Gank alert fast path failed")
             return []
+
+    def _camera_rect_now(self, t: float, frame: Any) -> Any:
+        """Camera rectangle on the minimap (``camera_proj.CameraRect``-like: u0, v0, u1, v1), from
+        a camera tracker already fed elsewhere, else found on this frame; None if unknown."""
+        for obj in (getattr(self, "_camera", None), getattr(self, "_camera_tracker", None),
+                    getattr(getattr(self, "_ward_guide", None), "camera", None)):
+            cur = getattr(obj, "current", None)
+            if callable(cur):
+                rect = cur(t)
+                if rect is not None:
+                    return rect
+        if frame is None:
+            return None
+        from treeaicoach import camera_proj
+
+        find = getattr(camera_proj, "find_camera_rect", None)
+        return find(frame) if callable(find) else None
+
+    def _written_if_on_screen(self, gank: list[Alert], t: float, gt: float, frame: Any) -> list[Alert]:
+        """Gank alerts to speak: WARNING ones (and pre-alerts) whose enemies are all inside the
+        camera view (on my screen) are throttled and written instead (HUD line + toast; the
+        overlay threat level is unchanged). DANGER ("recule !") is always spoken: it is an
+        instruction, not news, and its latency is guaranteed. Without a camera rectangle,
+        everything is spoken. Never raises."""
+        tracker = self._tracker
+        if tracker is None or not any(int(a.level) < Level.DANGER for a in gank):
+            return gank
+        try:
+            rect = self._camera_rect_now(t, frame)
+            box = tuple(_finite(getattr(rect, k, None)) for k in ("u0", "v0", "u1", "v1")) \
+                if rect is not None else ()
+            if len(box) != 4 or any(c is None for c in box):
+                return gank
+            u0, v0, u1, v1 = (float(c) for c in box)        # type: ignore[arg-type]
+            m = ON_SCREEN_MARGIN
+            speak: list[Alert] = []
+            seen: list[Alert] = []
+            for a in gank:
+                if int(a.level) >= Level.DANGER:
+                    speak.append(a)
+                    continue
+                members = tuple(a.members) or ((a.alias,) if a.alias else ())
+                pts = []
+                for k in members:
+                    tr = tracker.get(k)
+                    pts.append(tr.position() if tr is not None and tr.visible else None)
+                on = bool(pts) and all(p is not None and u0 + m <= p[0] <= u1 - m and v0 + m <= p[1] <= v1 - m
+                                       for p in pts)
+                (seen if on else speak).append(a)
+            for a in self._throttler.filter(self._route_messages(seen, t, gt), t):
+                self._write_text(a, t, gt)
+            return speak
+        except Exception:
+            self._err.exception("On-screen gank check failed")
+            return gank
 
     def _scoreboard_and_praise(self, t: float, tracker: Any, game: GameInfo, threat: int,
                                gank_alerts: list[Alert], gt: float) -> list[Alert]:

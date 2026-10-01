@@ -321,6 +321,22 @@ class ChampionIdentifier:
         # a priori selon det.cls_probs ; affectation unique par champion (glouton sur le score) ; seuil minimal.
 ```
 
+### 4.10b Skins personnalisés : `self_icon.py` + `hud_reader.py`
+Un mod de skin (côté client) dessine sur la minimap une icône qui n'est AUCUN portrait officiel : le
+`RosterMatcher` ne trouve alors pas « moi ». `self_icon.IconLearner` (possédé par le matcher, appelé à
+chaque image) : anneaux de la couleur alliée / ennemie / turquoise « moi » non expliqués par un portrait
+reconnu (`ring_candidates`, ~3 ms, uniquement quand il en faut), suivis dans le temps ; chaque piste garde
+l'INTERSECTION des champions de son camp non reconnus (élimination cohérente) ; pour moi : point de caméra
+verrouillée (64 % de la hauteur du rectangle caméra), contour turquoise, continuité → position « bootstrap »
+immédiate. Puis capture de l'icône (médiane alignée de ≥ 8 recadrages isolés, cohérence ≥ 0,75) enregistrée
+comme gabarit (`RosterMatcher.register_icon`), rafraîchie en EMA, désapprise si elle ne correspond plus
+(25 s vivant sans correspondance, ou décentrée 3 fois). Mon icône est gardée dans
+`<cache>/learned_icons/<Alias>_<skin>.png` (partie suivante, même champion + skin). Les autres champions :
+élimination stricte (déplacement ≥ 0,06, non reconnus depuis 20 s). `SkinGuesser` : le portrait du HUD
+(bas-centre, `hud_reader.HudReader`, calibré une fois par taille de fenêtre puis lecture d'un petit patch
+< 1 ms, état mort = portrait grisé) est comparé aux icônes officielles des skins (téléchargées à la demande) ;
+l'icône apprise reste toujours le recours. `engine.my_observed_lane()` → `RoleResolver.my_lane_hook`.
+
 ### 4.11 `tracker.py`
 ```python
 @dataclass

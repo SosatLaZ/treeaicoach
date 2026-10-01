@@ -20,6 +20,14 @@ computes that region; it never predicts a single position.
 * :class:`FogTracker` keeps one :class:`FogEstimate` per hidden enemy: the distance field is
   computed once per disappearance, the region for the current elapsed time is a cheap
   threshold + Flash dilation of that cached field.
+* **Re-anchoring from visible facts** (Live Client Data API, i.e. the kill feed / announcer the
+  player sees): the region restarts from a new "last known place / time" when
+  (a) a dead enemy respawns (respawn timer) -> his fountain; (b) a ``ChampionKill`` names him as
+  killer or assister -> where the victim (one of us, always tracked) was at that moment;
+  (c) a ``DragonKill`` / ``HeraldKill`` / ``BaronKill`` / ``HordeKill`` names him as killer ->
+  the pit. :meth:`FogTracker.anchor` adds such a fact by hand. An anchor older than the
+  track's last sighting is ignored; an anchored enemy never seen yet still gets a region.
+  Tracks in a stacked hold (``tracker.Track.stacked_with``) are visible: no region for them.
 
 Speeds: nominal movement speed 345 units/s before 2:30 of game time, 390 after (boots),
 converted to normalized units per second with ``geometry.MAP_GAME_UNITS``; the speed
@@ -76,6 +84,17 @@ FOG_MAX_S = 60.0
 #: Extra time an estimate is kept (faded, confidence 0) after the maximum duration.
 FOG_GRACE_S = 10.0
 MODES = ("jungler", "all", "off")
+#: A victim's track must have been seen this close (s) to the kill to anchor the killer there.
+ANCHOR_VICTIM_MAX_DT = 3.0
+#: An observed respawn this much later than the predicted respawn time is anchored "now".
+RESPAWN_MAX_LATE_S = 10.0
+#: Epic monster kill events -> pit (normalized centre).
+_PIT_EVENTS = {
+    "DragonKill": (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1]),
+    "HeraldKill": (geometry.BARON_PIT[0], geometry.BARON_PIT[1]),
+    "BaronKill": (geometry.BARON_PIT[0], geometry.BARON_PIT[1]),
+    "HordeKill": (geometry.BARON_PIT[0], geometry.BARON_PIT[1]),
+}
 
 
 def nominal_speed(game_time: float | None) -> float:
@@ -308,6 +327,10 @@ class FogTracker:
         self._dismissed: dict[str, float] = {}       # key -> last_seen of a closed disappearance
         self._vel: dict[str, tuple[float, float, float]] = {}   # key -> (t, vx, vy) while visible
         self._estimates: list[FogEstimate] = []
+        # re-anchoring (normalized alias -> (t, uv, reason)), death watch, events consumed
+        self._anchors: dict[str, tuple[float, tuple[float, float], str]] = {}
+        self._dead: dict[str, float | None] = {}
+        self._events_seen = 0
 
     # ------------------------------------------------------------------ configuration
     def set_max_s(self, max_s: Any) -> None:
@@ -331,6 +354,31 @@ class FogTracker:
             self._dismissed.clear()
             self._vel.clear()
             self._estimates = []
+            self._anchors.clear()
+            self._dead.clear()
+            self._events_seen = 0
+
+    def anchor(self, alias: str, uv: tuple[float, float], t: float, reason: str = "") -> None:
+        """New "last known place / time" of the enemy ``alias`` (a visible fact: kill feed,
+        objective, respawn). Ignored when older than his last sighting. Never raises."""
+        try:
+            key = _norm_alias(alias)
+            tt = float(t)
+            if not key or not math.isfinite(tt):
+                return
+            u, v = geometry.clamp_uv(uv[0], uv[1])
+            with self._lock:
+                cur = self._anchors.get(key)
+                if cur is None or tt >= cur[0]:
+                    self._anchors[key] = (tt, (u, v), str(reason))
+                    log.debug("Fog anchor %s at (%.3f, %.3f) t=%.1f (%s)", alias, u, v, tt, reason)
+        except Exception:
+            log.debug("FogTracker.anchor failed", exc_info=True)
+
+    def anchors(self) -> dict[str, tuple[float, tuple[float, float], str]]:
+        """Current anchors ``normalized alias -> (t, (u, v), reason)`` (snapshot)."""
+        with self._lock:
+            return dict(self._anchors)
 
     # ------------------------------------------------------------------ queries
     def estimates(self) -> list[FogEstimate]:
@@ -388,6 +436,18 @@ class FogTracker:
 
         tracks = self._enemy_tracks(tracker)
         jungler_alias = _jungler_alias(game)
+        try:
+            self._ingest_facts(t, tracker, game)
+        except Exception:
+            log.debug("Fog anchors from the Live Client data failed", exc_info=True)
+        seen_aliases = {_norm_alias(getattr(tr, "alias", None)) for tr in tracks} - {""}
+        for akey, (at, auv, _why) in list(self._anchors.items()):
+            if akey in seen_aliases or t - at > self.max_s + FOG_GRACE_S:
+                continue
+            if mode == "jungler" and akey != jungler_alias:
+                continue
+            player = _player(game, akey)
+            tracks.append(_AnchorTrack(getattr(player, "champion_alias", None) or akey, at, auv))
         alive_keys: set[str] = set()
         out: list[FogEstimate] = []
         for tr in tracks:
@@ -408,6 +468,9 @@ class FogTracker:
                 self._losses.pop(key, None)
                 self._dismissed.pop(key, None)
                 self._remember_velocity(key, tr, t)
+                anc = self._anchors.get(_norm_alias(alias))
+                if anc is not None and anc[0] <= t:
+                    self._anchors.pop(_norm_alias(alias), None)   # seen since: obsolete
                 continue
             est = self._estimate_hidden(t, key, tr, alias, is_jungler, game)
             if est is not None:
@@ -422,8 +485,78 @@ class FogTracker:
         for key in list(self._dismissed):
             if key not in alive_keys:
                 del self._dismissed[key]
+        for akey in [k for k, a in self._anchors.items() if t - a[0] > self.max_s + FOG_GRACE_S]:
+            del self._anchors[akey]
         out.sort(key=lambda e: (not e.is_jungler, e.elapsed))
         return out
+
+    # ------------------------------------------------------------------ Live Client facts
+    def _ingest_facts(self, t: float, tracker: Any, game: Any) -> None:
+        """Respawns, kills and epic monsters from the Live Client data -> anchors."""
+        if game is None:
+            return
+        enemies = list(getattr(game, "enemies", None) or [])
+        my_team = geometry.normalize_team(getattr(getattr(game, "me", None), "team", None))
+        # (a) respawn at the fountain (the respawn timer tells when)
+        for p in enemies:
+            key = _norm_alias(getattr(p, "champion_alias", ""))
+            if not key:
+                continue
+            if bool(getattr(p, "is_dead", False)):
+                timer = _finite_or(getattr(p, "respawn_timer", None), None)
+                self._dead[key] = t + max(0.0, timer) if timer is not None and timer > 0 else self._dead.get(key)
+                continue
+            if key in self._dead:
+                due = self._dead.pop(key)
+                when = due if due is not None and due <= t and t - due <= RESPAWN_MAX_LATE_S else t
+                team = geometry.normalize_team(getattr(p, "team", None))
+                if team is None and my_team is not None:
+                    team = "CHAOS" if my_team == "ORDER" else "ORDER"
+                if team is not None:
+                    fountain = geometry.RED_FOUNTAIN if team == "CHAOS" else geometry.BLUE_FOUNTAIN
+                    self._set_anchor(key, fountain, when, "respawn")
+        # (b) / (c) new events
+        events = getattr(game, "events", None)
+        if not isinstance(events, list):
+            return
+        if len(events) < self._events_seen:
+            self._events_seen = 0                          # new game / API restarted
+        new = events[self._events_seen:]
+        self._events_seen = len(events)
+        if not new or not enemies:
+            return
+        names = _name_lookup(game)
+        enemy_keys = {_norm_alias(getattr(p, "champion_alias", "")) for p in enemies} - {""}
+        gt_now = _game_time_now(game, t)
+        for ev in new:
+            if not isinstance(ev, dict):
+                continue
+            name = ev.get("EventName")
+            if name != "ChampionKill" and name not in _PIT_EVENTS:
+                continue
+            et = _finite_or(ev.get("EventTime"), None)
+            t_ev = t - max(0.0, gt_now - et) if (gt_now is not None and et is not None) else t
+            killer = names.get(str(ev.get("KillerName") or "").casefold())
+            if name in _PIT_EVENTS:
+                k = _norm_alias(getattr(killer, "champion_alias", "")) if killer is not None else ""
+                if k in enemy_keys:
+                    self._set_anchor(k, _PIT_EVENTS[name], t_ev, name)
+                continue
+            victim = names.get(str(ev.get("VictimName") or "").casefold())
+            pos = _victim_position(tracker, game, victim, t_ev)
+            if pos is None:
+                continue
+            actors = [killer] + [names.get(str(a or "").casefold()) for a in (ev.get("Assisters") or [])]
+            for a in actors:
+                k = _norm_alias(getattr(a, "champion_alias", "")) if a is not None else ""
+                if k in enemy_keys:
+                    self._set_anchor(k, pos, t_ev, "kill")
+
+    def _set_anchor(self, key: str, uv: tuple[float, float], t: float, reason: str) -> None:
+        cur = self._anchors.get(key)
+        if cur is None or t >= cur[0]:
+            self._anchors[key] = (float(t), geometry.clamp_uv(uv[0], uv[1]), reason)
+            log.debug("Fog anchor %s at %s t=%.1f (%s)", key, uv, t, reason)
 
     @staticmethod
     def _enemy_tracks(tracker: Any) -> list[Any]:
@@ -450,6 +583,10 @@ class FogTracker:
         last_seen = _finite_or(getattr(tr, "last_seen", None), None)
         if last_seen is None:
             return None
+        anc = self._anchors.get(_norm_alias(alias)) if alias else None
+        anchor_uv: tuple[float, float] | None = None
+        if anc is not None and last_seen + 1e-6 < anc[0] <= t + 1.0:
+            last_seen, anchor_uv = anc[0], anc[1]     # a newer visible fact than the last sighting
         loss = self._losses.get(key)
         if loss is not None and abs(loss.last_seen - last_seen) > 1e-6:
             loss = None          # a new disappearance of the same champion
@@ -465,7 +602,7 @@ class FogTracker:
         if loss is None:
             if abs(self._dismissed.get(key, math.nan) - last_seen) <= 1e-6:
                 return None
-            pos = _safe_position(tr)
+            pos = anchor_uv if anchor_uv is not None else _safe_position(tr)
             if pos is None:
                 return None
             gt = _finite_or(getattr(game, "game_time", None), None) if game is not None else None
@@ -488,6 +625,72 @@ class FogTracker:
 
 
 # ---------------------------------------------------------------------- helpers
+
+class _AnchorTrack:
+    """Stand-in track for an enemy known only from an anchor (never seen on the minimap)."""
+
+    relation = "enemy"
+    visible = False
+    has_smite = False
+
+    def __init__(self, alias: str, t: float, uv: tuple[float, float]) -> None:
+        self.key = alias
+        self.alias = alias
+        self.last_seen = t
+        self._uv = uv
+
+    def position(self) -> tuple[float, float]:
+        return self._uv
+
+    def velocity(self) -> tuple[float, float]:
+        return (0.0, 0.0)
+
+
+def _name_lookup(game: Any) -> dict[str, Any]:
+    """casefolded Riot ID / game name / summoner name -> player."""
+    out: dict[str, Any] = {}
+    try:
+        players = list(game.all_players())
+    except Exception:
+        me = getattr(game, "me", None)
+        players = ([me] if me is not None else []) + list(getattr(game, "allies", None) or []) \
+            + list(getattr(game, "enemies", None) or [])
+    for p in players:
+        for n in (getattr(p, "riot_id", ""), getattr(p, "summoner_name", "")):
+            if isinstance(n, str) and n.strip():
+                out.setdefault(n.strip().casefold(), p)
+                out.setdefault(n.split("#", 1)[0].strip().casefold(), p)
+    return out
+
+
+def _game_time_now(game: Any, t: float) -> float | None:
+    gt = _finite_or(getattr(game, "game_time", None), None)
+    if gt is None:
+        return None
+    fetched = _finite_or(getattr(game, "fetched_at", None), None)
+    return gt + (min(max(0.0, t - fetched), 3.0) if fetched is not None else 0.0)
+
+
+def _victim_position(tracker: Any, game: Any, victim: Any, t_ev: float) -> tuple[float, float] | None:
+    """Where the victim (tracked: one of us) was when the kill happened, or None."""
+    if victim is None or tracker is None:
+        return None
+    alias = getattr(victim, "champion_alias", "") or ""
+    tr = None
+    try:
+        if victim is getattr(game, "me", None) and hasattr(tracker, "me"):
+            tr = tracker.me()
+        if tr is None and alias and hasattr(tracker, "get"):
+            tr = tracker.get(alias)
+    except Exception:
+        tr = None
+    if tr is None:
+        return None
+    seen = _finite_or(getattr(tr, "last_seen", None), None)
+    if seen is None or abs(seen - t_ev) > ANCHOR_VICTIM_MAX_DT:
+        return None
+    return _safe_position(tr)
+
 
 def _finite_or(x: Any, default: float | None) -> float | None:
     try:

@@ -752,6 +752,7 @@ class GameRecorder:
                     rec["my_positions"] = [p for p in rec["my_positions"] if p[0] >= t0]
                     rec["sightings"] = {k: [p for p in v if p[0] >= t0] for k, v in rec["sightings"].items()}
                     rec["alerts"] = [a for a in rec["alerts"] if a[0] >= t0]
+                    rec["fog"] = [f for f in rec["fog"] if f[0] >= t0]
                 return rec
         except Exception:
             log.exception("GameRecorder.snapshot failed")

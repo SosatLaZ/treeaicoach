@@ -31,9 +31,9 @@ repeated for 12 s). Few alerts, but trustworthy ones:
 * **Travel time through the walls.** "Inside the radius" is decided on the estimated time
   the enemy needs to reach me, not on the straight line: geodesic distance on the walkable
   mask (:func:`treeaicoach.fog_tracker.shared_reachability`, one distance field from my cell,
-  cached while I stay within 2 cells, computed only when an enemy is within a coarse radius)
-  minus a Flash, divided by the enemy's speed (boots speed, or a faster speed measured by the
-  Kalman filter). WARNING when that ETA <= ``(warn_radius - Flash) / boots speed`` (~7.4 s by
+  cached while I stay within 1 cell, computed only when an enemy is within a coarse radius)
+  minus a Flash, divided by the enemy's movement speed (boots speed: the speed measured on the
+  minimap is too noisy, +-0.03 / s, to tell a faster champion apart). WARNING when that ETA <= ``(warn_radius - Flash) / boots speed`` (~7.4 s by
   default) and the enemy comes towards me, DANGER when <= ``(danger_radius - Flash) / boots
   speed`` (~3.5 s): identical to the radii in the open, but an enemy behind a wall (his
   raptors while I am mid) is far. Without the walkable mask, the straight-line radii are used.
@@ -143,11 +143,8 @@ GAME_TIME_EXTRAPOLATION_MAX_S = 3.0
 STATE_MAXLEN = 64                # per-track analyser states kept at most
 # travel time (ETA) through the walls
 ETA_FLASH = 0.027                # a Flash (~400 units) is free distance for the ganker
-ETA_REF_SPEED = 390.0 / 14870.0  # boots speed (normalized / s): the ETA reference speed
-ETA_FAST_FACTOR = 1.15           # a Kalman speed above this x reference is used instead...
-ETA_FAST_MAX_STD = 0.004         # ...when its standard error is below this (/ s)
-ETA_MAX_FACTOR = 1.35            # fastest speed considered (x reference)
-ETA_REFIELD_CELLS = 2            # the distance field from me is recomputed when I moved more
+ETA_REF_SPEED = 390.0 / 14870.0  # boots speed (normalized / s): the enemy's assumed speed
+ETA_REFIELD_CELLS = 1            # the distance field from me is recomputed when I moved more
 
 _LANES = ("top", "mid", "bot")
 _LANE_DIRECTION = {"top": "par le haut", "mid": "par le milieu", "bot": "par le bas"}
@@ -485,7 +482,7 @@ class GankAnalyzer:
         pending_anon: list[tuple[Track, _TrackState, float]] = []
         pre_alerts: list[Alert] = []
 
-        coarse = warn * COMPANION_RADIUS_FACTOR * ETA_MAX_FACTOR + ETA_FLASH
+        coarse = warn * COMPANION_RADIUS_FACTOR + ETA_FLASH   # travel times only computed inside
         etas: list[tuple[str, float]] = []
         for tr in enemies:
             st = self._states.get(tr.key)
@@ -598,9 +595,10 @@ class GankAnalyzer:
 
     def _effective_distance(self, tr: Track, me_pos: tuple[float, float], pos: tuple[float, float],
                             d_line: float, coarse: float) -> float:
-        """Distance equivalent of the enemy's travel time to me: ``Flash + ETA x boots speed``
-        (= the path length through the walls for an enemy at boots speed). Straight line when
-        the walkable mask is unavailable or the enemy is beyond the coarse radius."""
+        """Distance equivalent of the enemy's travel time to me (``Flash + ETA x boots speed``,
+        i.e. the path length through the walls): comparing it with the radii is comparing the
+        ETA with :meth:`eta_thresholds`. Straight line when the walkable mask is unavailable
+        or the enemy is beyond the coarse radius (where only the straight line matters)."""
         if d_line >= coarse:
             return d_line
         geo = self._paths.distance(me_pos, pos, coarse + 0.05)
@@ -608,16 +606,7 @@ class GankAnalyzer:
             return d_line
         if not math.isfinite(geo):
             return max(d_line, coarse)
-        speed = ETA_REF_SPEED
-        try:
-            kv = tr.kf_velocity()
-            ks = math.hypot(kv[0], kv[1])
-            if ks > ETA_FAST_FACTOR * ETA_REF_SPEED and tr.kf_speed_std() < ETA_FAST_MAX_STD:
-                speed = min(ks, ETA_MAX_FACTOR * ETA_REF_SPEED)
-        except Exception:
-            pass
-        eta = max(0.0, geo - ETA_FLASH) / speed
-        return ETA_FLASH + eta * ETA_REF_SPEED if geo > ETA_FLASH else geo
+        return geo
 
     def eta_thresholds(self) -> tuple[float, float]:
         """(WARNING, DANGER) travel-time thresholds in seconds for the current settings."""
@@ -904,7 +893,9 @@ class GankAnalyzer:
             return None
         if gt is None or gt < MIA_AFTER_GT or my_lane is None or lane_of(my_zone) != my_lane:
             return None
-        hidden = now - tr.last_seen
+        # a stacked hold (icon drawn under another one) is not a disappearance
+        released = _finite(getattr(tr, "stack_released_at", None))
+        hidden = now - max(tr.last_seen, released if released is not None else -math.inf)
         if hidden < MIA_HIDDEN_S or hidden > MIA_MAX_HIDDEN_S or st.mia_for == tr.last_seen:
             return None
         st.mia_for = tr.last_seen

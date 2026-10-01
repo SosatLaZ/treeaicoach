@@ -997,7 +997,8 @@ def _generic_detector(b: str, threshold: float) -> BaseDetector:
 
 def create_detector(backend: str = "auto", threshold: float = 0.0, *, db: Any = None,
                     scale_store: dict | None = None,
-                    on_scale: Any = None, roster: bool = True) -> BaseDetector:
+                    on_scale: Any = None, roster: bool = True,
+                    learn_cache: Any = None) -> BaseDetector:
     """Build the detector for ``backend`` ("auto" | "onnx" | "classic"). Never raises.
 
     "auto" and "onnx" try the bundled ONNX model and fall back to :class:`ClassicDetector`
@@ -1005,7 +1006,8 @@ def create_detector(backend: str = "auto", threshold: float = 0.0, *, db: Any = 
     With ``roster`` (default) the result is a :class:`HybridDetector`: once the engine gives
     it the game's roster (``set_roster``) it finds the 10 champions by their portraits
     (:mod:`treeaicoach.roster_matcher`, champion icons from ``db``; icon scale prior /
-    persistence in ``scale_store`` + ``on_scale(key, ratio)``), and behaves exactly like
+    persistence in ``scale_store`` + ``on_scale(key, ratio)``; ``learn_cache``: where the
+    learned icon of a custom skin is kept, see self_icon.py), and behaves exactly like
     the generic detector otherwise.
     """
     try:
@@ -1021,7 +1023,8 @@ def create_detector(backend: str = "auto", threshold: float = 0.0, *, db: Any = 
     try:
         from treeaicoach.roster_matcher import RosterMatcher
 
-        matcher = RosterMatcher(db=db, scale_store=scale_store, on_scale=on_scale)
+        matcher = RosterMatcher(db=db, scale_store=scale_store, on_scale=on_scale,
+                                learn_cache=learn_cache)
         return HybridDetector(base, matcher)
     except Exception:
         log.exception("Roster matcher unavailable: generic detector only")

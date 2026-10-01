@@ -342,8 +342,9 @@ def test_bot_lane_2v2_then_jungler_gank() -> None:
 
 
 def test_bot_lane_jungler_and_mid_gank_together() -> None:
-    lee = [(0.60, 0.62), (0.70, 0.76), (0.75, 0.88)]
-    ahri = [(0.62, 0.64), (0.71, 0.77), (0.76, 0.89)]
+    # walkable paths down the bot river (gank radii are travel times through the walls)
+    lee = [(0.62, 0.60), (0.78, 0.76), (0.76, 0.88)]
+    ahri = [(0.64, 0.62), (0.79, 0.775), (0.77, 0.89)]
 
     def enemies(t: float) -> dict:
         out = {"Caitlyn": (0.84 + 0.02 * math.sin(0.6 * t), 0.905),
@@ -574,11 +575,12 @@ def test_laner_mia_once_per_disappearance() -> None:
     cfg = Config(alert_laner_mia=True)
 
     def enemies(t: float) -> dict:
-        return {"Darius": darius_wobble(t)} if t < 10.0 or 30.0 <= t < 32.0 else {}
+        # (he vanishes >= 1.2 icon radii away from my icon: not a stacked icon, a real disappearance)
+        return {"Darius": darius_wobble(t)} if t < 10.0 or 30.0 <= t < 34.0 else {}
 
     ticks = simulate(45.0, enemies, cfg=cfg)
     mia = raw_of(ticks, AlertKind.LANER_MIA)
-    assert [round(tk.t) for tk, _a in mia] == [16, 38]
+    assert [round(tk.t) for tk, _a in mia] == [16, 40]
     assert all(a.level == Level.INFO and a.text == "Darius a disparu, prudence." for _tk, a in mia)
     assert raw_of(simulate(20.0, enemies), AlertKind.LANER_MIA) == []
     early = simulate(20.0, enemies, cfg=cfg, game=lambda t: make_game(t, game_time0=100.0))
