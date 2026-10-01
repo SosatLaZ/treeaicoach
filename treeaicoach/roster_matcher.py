@@ -175,6 +175,19 @@ OCC_AREA_PENALTY = 0.15
 #: TRIM_FRAC of the pixels are dropped and the NCC re-computed (occlusion penalty), for a
 #: candidate whose ring clearly has its own team's colour (TRIM_RING_OWN / _OPP).
 TRIM_FRAC = 0.25
+#: Ring proposals (stage 5c): annuli (x icon radius) of the ring / inside / outside, Lab
+#: lightness weight and width of the colour closeness, minimum ring evidence of a proposal,
+#: proposals this close (x diameter) to an accepted icon are explained, identity score needed
+#: (occlusion-tolerant NCC) and margin over the second best champion of that team.
+RING_PROP_ANNULI = ((0.86, 1.02), (0.62, 0.78), (1.12, 1.3))
+RING_PROP_LW = 0.3
+RING_PROP_SIGMA = 18.0
+RING_PROP_MIN = 0.12
+RING_PROP_EXPLAINED = 0.6
+RING_PROP_MAX = 6
+RING_PROP_ID_MIN = 0.55
+RING_PROP_ID_GAP = 0.1
+RING_DEBUG: list | None = None
 TRIM_RING_OWN = 0.65
 TRIM_RING_OPP = 0.12
 TRIM_MIN_SCORE = 0.75              # trimmed NCC needed (synthetic: no false accept above)
@@ -392,6 +405,16 @@ def _make_bank(entries: Sequence[RosterEntry], inner_px: float) -> _Bank:
     return _Bank(size=size, mask=mask, n=n, tmpl=tmpls, norms=np.asarray(norms, np.float32),
                  stds=np.asarray(stds, np.float32), raw=raws, split=split,
                  caps=_cap_masks(size, rin))
+
+
+def _annulus(R: float, r0: float, r1: float) -> np.ndarray:
+    """Normalized annulus kernel (radii r0..r1 x R)."""
+    n = 2 * int(math.ceil(R * 1.35)) + 1
+    c = n // 2
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32) - c
+    d = np.hypot(xx, yy)
+    k = ((d >= r0 * R) & (d <= r1 * R)).astype(np.float32)
+    return k / max(float(k.sum()), 1.0)
 
 
 def _cap_masks(size: int, radius: float) -> np.ndarray:
@@ -855,6 +878,8 @@ class RosterMatcher:
         self.stack_search: bool = True
         #: occlusion re-scoring also drops the worst-fitting pixels (unknown occluders)
         self.trim_rescue: bool = True
+        #: unexplained team-coloured rings are given to that team's missing champions
+        self.ring_proposals: bool = True
         #: Camera locked on me (my matches follow the camera point): my position.
         self.camlock = CameraLock()
         #: Last frame was colourless (lightness-only matching).
@@ -1797,6 +1822,78 @@ class RosterMatcher:
         self.last_rescue_pos = (x0 + dx + half + 0.5, y0 + dy + half + 0.5)
         return best if best > -1.0 else None
 
+    def ring_map(self, feat: np.ndarray, R_w: float) -> dict[str, np.ndarray]:
+        """Per team side ("ally" / "enemy"): ring evidence map at the working resolution =
+        mean closeness to the side's (learned) ring colour on the ring annulus minus the
+        larger of the same inside / outside it (a thin ring, not an area of that colour)."""
+        H, W = feat.shape[:2]
+        kr, ki, ko = (_annulus(R_w, a, b) for a, b in RING_PROP_ANNULI)
+        out: dict[str, np.ndarray] = {}
+        cent = self.rings.centroid
+        for side, rels in (("ally", ("ally", "self")), ("enemy", ("enemy",))):
+            close = np.zeros((H, W), np.float32)
+            for rel in rels:
+                c = cent[rel] - np.float32([0.0, 128.0, 128.0])
+                d2 = RING_PROP_LW * (feat[:, :, 0] - c[0]) ** 2 + (feat[:, :, 1] - c[1]) ** 2 + \
+                    (feat[:, :, 2] - c[2]) ** 2
+                np.maximum(close, np.exp(-d2 / RING_PROP_SIGMA ** 2), out=close)
+            r = cv2.filter2D(close, -1, kr)
+            out[side] = r - np.maximum(cv2.filter2D(close, -1, ki), cv2.filter2D(close, -1, ko))
+        return out
+
+    def _ring_proposals(self, feat: np.ndarray, bank: _Bank, accepted: list, used: set,
+                        dead: set, kx: float, ky: float, R_w: float, D_work: float,
+                        thr: float) -> list[_Cand]:
+        """Stage 5c (see _detect): candidates from unexplained rings, identity among the
+        ring team's missing alive champions only, one-to-one (best score first)."""
+        ents = self._entries
+        maps = self.ring_map(feat, R_w)
+        k = max(2, int(round(R_w)))
+        K = np.ones((k, k), np.uint8)
+        structs = self._structures()
+        props: list[tuple[float, str, float, float]] = []
+        for side, S in maps.items():
+            pk = (S >= RING_PROP_MIN) & (S >= cv2.dilate(S, K))
+            ys, xs = np.nonzero(pk)
+            for y, x in zip(ys.tolist(), xs.tolist()):
+                cx, cy = x + 0.5, y + 0.5
+                if any(math.hypot(cx - a.x, cy - a.y) < RING_PROP_EXPLAINED * D_work for a in accepted):
+                    continue
+                u, v = cx / kx, cy / ky
+                if any(math.hypot(u - su, v - sv) < STRUCT_DIST for su, sv, _t in structs) or \
+                        any(math.hypot(u - fu, v - fv) < FOUNTAIN_DIST for fu, fv in _FOUNTAINS.values()):
+                    continue        # structure glyphs / fountains have team-coloured outlines
+                props.append((float(S[y, x]), side, cx, cy))
+        out: list[_Cand] = []
+        taken = set(used)
+        for score, side, cx, cy in sorted(props, reverse=True)[:RING_PROP_MAX]:
+            pool = [j for j, e in enumerate(ents) if j not in taken and j not in dead
+                    and (e.relation == "enemy") == (side == "enemy")]
+            if not pool:
+                continue
+            near = [(a.x, a.y) for a in accepted + out
+                    if math.hypot(cx - a.x, cy - a.y) < 1.05 * D_work]
+            if any(math.hypot(cx - a.x, cy - a.y) < RING_PROP_EXPLAINED * D_work for a in out):
+                continue
+            scored = []
+            for j in pool:
+                sj = self._rescue(_Cand(j, cx, cy, 0.0, 0.0), feat, bank, near, D_work, caps=True)
+                if sj is not None:
+                    scored.append((sj, j, self.last_rescue_pos))
+            if not scored:
+                continue
+            scored.sort(key=lambda z: -z[0])
+            best, j, pos = scored[0]
+            second = scored[1][0] if len(scored) > 1 else RING_PROP_ID_MIN - RING_PROP_ID_GAP
+            if RING_DEBUG is not None:
+                RING_DEBUG.append((ents[j].alias, side, cx / kx, cy / ky, score, best, second))
+            if best < RING_PROP_ID_MIN or best - second < RING_PROP_ID_GAP:
+                continue
+            c = _Cand(j, pos[0], pos[1], best, best, note="ring")
+            taken.add(j)
+            out.append(c)
+        return out
+
     def _best_identity(self, i: int, score: float, px: float, py: float, feat: np.ndarray,
                        bank: _Bank, near: list, D_work: float, caps: bool, dead: set) -> bool:
         """A trimmed re-score keeps only the best part of an icon: chance matches of the
@@ -2261,6 +2358,21 @@ class RosterMatcher:
                     info(c, True, "stacked")
             except Exception:
                 self._errors.exception("Roster matcher stack search failed")
+
+        # 5c. ring proposals: an icon-like ring of one team's colour that no accepted match
+        #     explains (an icon partly covered by another one, a ping, a label) is given to
+        #     the best of THAT team's missing alive champions (occlusion-tolerant score)
+        if self.ring_proposals and not self.grey and len(used) + len(dead) < n_e:
+            try:
+                for c in self._ring_proposals(feat, bank, accepted, used, dead, kx, ky,
+                                              R_px * fx, D_work, thr):
+                    self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0,
+                                     exclude=[(a.x / kx * W, a.y / ky * H) for a in accepted])
+                    used.add(c.i)
+                    accepted.append(c)
+                    info(c, True, "ring")
+            except Exception:
+                self._errors.exception("Roster matcher ring proposals failed")
 
         # 6. the local player: camera lock (confirmed by my own matches), camera rectangle
         #    prior, then coasting on its track
