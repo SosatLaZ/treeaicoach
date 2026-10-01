@@ -38,3 +38,8 @@ Hard rules distilled from real user feedback. Each one cost a bad release.
     camera moves, stacks and brief misses.
 15. After every game, compare with LCU ground truth, log errors, and auto-tune bounded parameters
     (see `analysis.py` / `ground_truth.py`). Be severe in the "Erreurs de TreeAI" report section.
+
+## Added after more feedback
+16. **One router decides where every message goes** (banner / panel line / badge / voice / drop),
+    by urgency and context. The small panel shows ONE line; low-value tips are dropped, not shown small.
+17. **Danger is beep-first.** The beep plays instantly; voice is optional and never delays it.
