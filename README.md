@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v1.9.0-C8AA6E?style=for-the-badge&labelColor=0A1428" alt="Télécharger TreeAICoach.exe" height="56"></a>
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v1.9.5-C8AA6E?style=for-the-badge&labelColor=0A1428" alt="Télécharger TreeAICoach.exe" height="56"></a>
 </p>
 
 <p align="center">
@@ -66,7 +66,7 @@
 * 🧭 **HUD** : jauge de menace (sûr / attention / danger), ligne du jungler, les 5 ennemis
   (« vu » ou « MIA 23 s »), les objectifs et la dernière alerte.
 * 🚨 **Flash de danger** : un cadre rouge sur les bords de l'écran pendant un gank (sans jamais couvrir la minimap).
-* ⏱️ **Chronos des objectifs** : Dragon, Larves du Néant, Héraut, Atakhan, Baron, Dragon ancestral,
+* ⏱️ **Chronos des objectifs** : Dragon, Larves du Néant, Héraut, Baron, Dragon ancestral (saison 2026),
   annoncés 60 s et 20 s avant leur apparition.
 * 🔔 **Rappels personnels** : « pense à rentrer » quand tu as assez d'or, balise de contrôle quand tu es en base,
   petit récap après ta mort, et une suggestion de pause après 3 défaites d'affilée.

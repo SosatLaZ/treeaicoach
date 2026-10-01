@@ -1,6 +1,6 @@
 {
-  "version": "1.9.0",
-  "sha256": "8f49bba0727ec8a75b44e6c6a8841711ddf9caddce5c2107dec999690e8ab27b",
-  "size": 82364630,
-  "notes": "1.9.0 : nouvelle interface, coups notés façon chess.com (COUP DE MAÎTRE !! / GAFFE ??) avec précision sur 100, replay et courbes de progrès, coach plus malin et moins bavard, champions morts ignorés, jungler suivi via le Tab, IA avec plans concrets, mises à jour plus fiables."
+  "version": "1.9.5",
+  "sha256": "88fa8db302fea83f6975d25a5716058630857ac74ec31c2484045c775f12a3a8",
+  "size": 82703804,
+  "notes": "1.9.5 (pré-V2) : capture plus rapide, overlay fluide à 30 i/s qui suit les champions, overlay caché hors du jeu, mode PC faible, Ctrl+F8 diagnostic, conseils revus par un pro, coups de génie, Atakhan… (données en cours de mise à jour), états MORT / SIÈGE / ACE."
 }
