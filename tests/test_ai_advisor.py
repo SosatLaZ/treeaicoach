@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 
@@ -152,14 +153,75 @@ def G(gt=600.0, dead=False, level=9, gold=0.0, enemies=None, events=()):
 
 
 def test_snapshot_and_prompt_no_names():
-    ev = [{"EventName": "ChampionKill", "EventTime": 500.0, "VictimName": "Moi", "KillerName": "Zed"}]
-    snap = ai.build_snapshot(G(events=ev, gold=1500), moment="death", item_text="Prochain objet : Zhonya")
-    assert snap["moi"]["champion"] == "Ahri" and snap["moi"]["or"] == 1500 and snap["moi"]["role"] == "mid"
-    assert snap["ennemis"][0]["champion"] == "Zed"
-    assert snap["mes_dernieres_morts"] == [{"temps": "8:20", "tue_par": "Zed"}]
+    ev = [{"EventName": "ChampionKill", "EventTime": 500.0, "VictimName": "Moi", "KillerName": "Zed",
+           "Assisters": ["Garen#EUW"]},
+          {"EventName": "TurretKilled", "EventTime": 520.0, "TurretKilled": "Turret_T2_L_03_A", "KillerName": "Garen"},
+          {"EventName": "DragonKill", "EventTime": 530.0, "DragonType": "Fire", "Stolen": "False",
+           "KillerName": "Zed"}]
+    g = G(events=ev, gold=1500)
+    g.champion_stats = {"attackDamage": 75.123, "abilityPower": 210.0, "currentHealth": 800.0, "maxHealth": 1500.0}
+    g.active_info = {"runes": {"keystone": "Électrocution"}, "abilities": {"Q": 3, "W": 1, "E": 1, "R": 1}}
+    ctx = {"map": {"moi": "voie du milieu"}, "wp": 55, "co": {"posture": "prudent : jungler vu"}}
+    snap = ai.build_snapshot(g, moment="death", item_text="Prochain objet : Zhonya", context=ctx)
+    me = snap["me"]
+    assert me["c"] == "Ahri" and me["g"] == 1500 and me["r"] == "mid" and me["it"]
+    assert me["st"]["ad"] == 75 and me["st"]["pv"] == "800/1500" and me["ru"]["keystone"] == "Électrocution"
+    assert me["ab"]["Q"] == 3 and me["ig"] > 0
+    assert snap["en"][0]["c"] == "Zed" and snap["en"][0]["r"] == "mid"
+    assert snap["morts"] == [{"t": "8:20", "par": "Zed", "aide": ["Garen"]}]
+    assert any("tour détruit (la leur)" in e for e in snap["ev"]) and any("dragon Fire pour eux" in e for e in snap["ev"])
+    assert snap["wp"] == 55 and snap["map"]["moi"] == "voie du milieu"
     prompt = ai.build_prompt(snap)
-    assert "2 phrases courtes max" in prompt and "Moi#EUW" not in prompt
-    json.loads(prompt.split("API officielle) : ", 1)[1].split("\n", 1)[0])
+    assert "2 phrases courtes max" in prompt and "Moi#EUW" not in prompt and "EUW" not in prompt
+    json.loads(prompt.split("minimap) : ", 1)[1].split("\n", 1)[0])
+    assert "t=temps de jeu" in ai.system_prompt()
+
+
+def test_snapshot_size_limit():
+    events = [{"EventName": "ChampionKill", "EventTime": 100.0 + i, "VictimName": "Zed", "KillerName": "Moi",
+               "Assisters": ["Garen"]} for i in range(60)]
+    big = {"co": {"faits": {f"fait{i}": "x" * 70 for i in range(40)}}, "map": {"en": [{"c": "Zed", "z": "y" * 100}]}}
+    snap = ai.build_snapshot(G(events=events), context=big, limit=2500)
+    assert len(json.dumps(snap, ensure_ascii=False, separators=(",", ":")).encode()) <= 2500
+    assert snap["me"]["c"] == "Ahri"
+
+
+def test_compact_values():
+    import enum
+    from dataclasses import dataclass
+
+    class E(enum.Enum):
+        A = "a"
+
+    @dataclass
+    class D:
+        x: float
+        e: E
+        _p: int = 1
+        icon: object = None
+
+    assert ai.compact({"d": D(1.23456, E.A), "n": float("nan"), "l": list(range(30))}) == \
+        {"d": {"x": 1.23, "e": "a"}, "l": list(range(10))}
+
+
+def test_engine_context_with_fake_engine():
+    from types import SimpleNamespace as NS
+
+    tr = NS(alias="Zed", last_seen=95.0, position=lambda: (0.5, 0.5))
+    tracker = NS(me=lambda: NS(position=lambda: (0.1, 0.9)), allies=lambda visible_only=False: [],
+                 enemies=lambda visible_only=False: [tr])
+    eng = NS(_clock=lambda: 100.0, _game=G(), _tracker=tracker, jungler_status_text=lambda: "Jungler vu bot",
+             _coach=NS(facts=lambda: {"phase": "mid", "arr": [1, 2]}, insight=lambda: "Joue le dragon"),
+             _stance=NS(current=lambda: NS(level="prudent", reason="jungler proche")),
+             _fight=NS(state=lambda: NS(active=True, allies=2, enemies=3)),
+             _wards=NS(current=lambda t: NS(spot="rivière", why="dragon")),
+             win_probability=lambda: 0.61, _tip_text="Farm")
+    ctx = ai.engine_context(eng)
+    assert ctx["map"]["en"][0]["c"] == "Zed" and ctx["map"]["en"][0]["vu"] == 5 and ctx["map"]["moi"]
+    assert ctx["jgl"] == "Jungler vu bot" and ctx["wp"] == 61
+    assert ctx["co"]["posture"].startswith("prudent") and ctx["co"]["combat"]["enemies"] == 3
+    assert ctx["ward"]["spot"] == "rivière"
+    assert ai.engine_context(None) == {} and isinstance(ai.engine_context(object()), dict)
 
 
 def test_moment_detector():
@@ -207,6 +269,56 @@ def test_advisor_never_raises():
     adv = ai.AIAdvisor(SimpleNamespace(ai_provider="gemini", ai_api_key="k"))
     assert adv.update(0.0, object()) is False
     assert adv.update(0.0, None) is False
+
+
+def test_manual_ask():
+    calls = []
+
+    def caller(prov, key, model, system, prompt, timeout, url):
+        calls.append(prompt)
+        if len(calls) == 2:
+            raise ai.AIError("offline")
+        return "Va mid."
+
+    adv = ai.AIAdvisor(SimpleNamespace(ai_provider="ollama", ai_api_key="", ai_model=""), caller=caller,
+                       clock=lambda: 0.0)
+    assert "Pas de partie" in adv.ask(0.0, GameInfo())
+    assert adv.ask(0.0, G(gt=30.0), context=lambda: {"wp": 40}) == "Question envoyée à l'IA…"
+    adv.wait()
+    res = adv.poll()
+    assert res.moment == "manual" and res.text == "Va mid." and not res.error
+    assert '"wp":40' in calls[0] and "demande un conseil" in calls[0]
+    assert "Patiente" in adv.ask(5.0, G())
+    adv.ask(30.0, G())
+    adv.wait()
+    res = adv.poll()
+    assert res.error and "Ollama" in res.text
+    off = ai.AIAdvisor(SimpleNamespace(ai_provider="off"))
+    assert "désactivé" in off.ask(0.0, G())
+
+
+@pytest.mark.parametrize("provider", list(ai.PROVIDERS))
+def test_postgame_review_and_html(server, provider, tmp_path):
+    long_text = "Point fort : ta vision. Axe 1 : farm. Axe 2 : morts. Axe 3 : objectifs. Exercice : 10 min."
+    payload = json.loads(json.dumps(RESPONSES[provider], ensure_ascii=False).replace("Achète Zhonya. Va mid.", long_text)
+                         .replace("Achète **Zhonya**. Puis joue le dragon.", long_text))
+    server.payload = payload
+    from treeaicoach.analysis import analyze_game
+
+    rec = json.loads((Path(__file__).parent / "fixtures" / "game_record_sample.json").read_text(encoding="utf-8"))
+    cfg = SimpleNamespace(ai_provider=provider, ai_api_key="k", ai_model="")
+    review = ai.postgame_review(cfg, analyze_game(rec), url=server.url(PATHS[provider]))
+    assert review == long_text                                     # not cut to 2 sentences
+    req = server.requests[-1]["body"]
+    sent = json.dumps(req, ensure_ascii=False)
+    assert "Analyse de la partie (JSON)" in sent and len(sent.encode()) < 40000
+    html = tmp_path / "r.html"
+    html.write_text("<html><body><h1>Rapport</h1></body></html>", encoding="utf-8")
+    assert ai.append_review_html(html, review + "\n<b>x</b>", provider)
+    doc = html.read_text(encoding="utf-8")
+    assert "Revue de l'IA" in doc and doc.index("ai-review") < doc.index("</body>") and "&lt;b&gt;" in doc
+    assert ai.postgame_review(SimpleNamespace(ai_provider="off"), {}) is None
+    assert ai.postgame_review(cfg, {}, url="http://127.0.0.1:9/x") is None
 
 
 def test_check_connection(server):

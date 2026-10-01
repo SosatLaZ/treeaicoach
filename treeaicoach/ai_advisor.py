@@ -22,6 +22,7 @@ only - never a summoner name / Riot ID.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import math
@@ -44,6 +45,11 @@ MIN_GAME_TIME_S = 90.0
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_OUTPUT_TOKENS = 200
 MAX_ADVICE_CHARS = 260
+MAX_REVIEW_CHARS = 2500
+REVIEW_TIMEOUT_S = 20.0
+REVIEW_MAX_TOKENS = 700
+MAX_ANALYSIS_BYTES = 12000
+MANUAL_MIN_INTERVAL_S = 20.0    # "Demander à l'IA" (hotkey / button)
 BASE_GOLD_MIN = 800             # "base visit with gold"
 FED_LEVELS = (6, 11, 16)
 OBJECTIVE_LEAD_S = 60.0
@@ -106,6 +112,7 @@ MOMENT_FR = {
     "objective": "objectif neutre dans 60 secondes",
     "fed": "un ennemi devient très fort (fed)",
     "test": "test de connexion",
+    "manual": "le joueur demande un conseil maintenant",
 }
 ROLE_FR = {"TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "adc", "UTILITY": "support"}
 
@@ -133,7 +140,7 @@ def error_text(code: str, provider: str | None = None) -> str:
 # HTTP: request building / response parsing (pure) + the urllib call
 # ======================================================================================
 def build_request(provider: str, model: str, api_key: str, system: str, prompt: str,
-                  url: str | None = None) -> tuple[str, dict[str, str], bytes]:
+                  url: str | None = None, max_tokens: int = MAX_OUTPUT_TOKENS) -> tuple[str, dict[str, str], bytes]:
     """``(url, headers, json body)`` for one chat request. Raises :class:`AIError` ("nokey")."""
     spec = provider_spec(provider)
     if spec is None:
@@ -150,7 +157,7 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
         body: dict[str, Any] = {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS, "temperature": 0.4},
+            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.4},
         }
     elif provider in ("groq", "openrouter"):
         target = url or spec.url
@@ -158,22 +165,22 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
         if provider == "openrouter":
             headers["HTTP-Referer"] = "https://github.com/treeaicoach"
             headers["X-Title"] = "TreeAI Coach"
-        body = {"model": model, "max_tokens": MAX_OUTPUT_TOKENS, "temperature": 0.4,
+        body = {"model": model, "max_tokens": max_tokens, "temperature": 0.4,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}
     elif provider == "ollama":
         target = url or spec.url
-        body = {"model": model, "stream": False, "options": {"num_predict": MAX_OUTPUT_TOKENS, "temperature": 0.4},
+        body = {"model": model, "stream": False, "options": {"num_predict": max_tokens, "temperature": 0.4},
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}
     else:  # anthropic
         target = url or spec.url
         headers["x-api-key"] = key
         headers["anthropic-version"] = "2023-06-01"
-        body = {"model": model, "max_tokens": MAX_OUTPUT_TOKENS, "system": system,
+        body = {"model": model, "max_tokens": max_tokens, "system": system,
                 "messages": [{"role": "user", "content": prompt}]}
     return target, headers, json.dumps(body, ensure_ascii=False).encode("utf-8")
 
 
-def parse_response(provider: str, data: Any) -> str:
+def parse_response(provider: str, data: Any, long: bool = False) -> str:
     """Text of a provider's JSON answer. Raises :class:`AIError` ("empty" / "bad")."""
     try:
         if provider == "gemini":
@@ -190,7 +197,7 @@ def parse_response(provider: str, data: Any) -> str:
                            if isinstance(b, dict) and b.get("type", "text") == "text")
     except (AttributeError, TypeError, IndexError, KeyError) as exc:
         raise AIError("bad", str(exc)) from exc
-    text = clean_advice(text)
+    text = clean_review(text) if long else clean_advice(text)
     if not text:
         raise AIError("empty")
     return text
@@ -213,6 +220,15 @@ def clean_advice(text: Any) -> str:
     return s
 
 
+def clean_review(text: Any) -> str:
+    """Longer plain text (post-game review): no markdown emphasis, paragraphs kept, bounded."""
+    s = re.sub(r"<think>.*?</think>", " ", str(text or ""), flags=re.S | re.I)
+    s = re.sub(r"[*_#`]+", "", s)
+    paras = [" ".join(p.split()) for p in re.split(r"\n\s*\n|\n(?=\s*[-•\d])", s)]
+    s = "\n".join(p for p in paras if p).strip()
+    return s[:MAX_REVIEW_CHARS]
+
+
 def _classify_http(code: int, body: str) -> str:
     low = body.lower()
     if code in (401, 403) or (code == 400 and ("api key" in low or "api_key" in low or "apikey" in low)):
@@ -232,9 +248,10 @@ def _opener_for(url: str) -> urllib.request.OpenerDirector:
 
 
 def call_llm(provider: str, api_key: str, model: str, system: str, prompt: str,
-             timeout: float = TIMEOUT_S, url: str | None = None) -> str:
+             timeout: float = TIMEOUT_S, url: str | None = None, max_tokens: int = MAX_OUTPUT_TOKENS,
+             long: bool = False) -> str:
     """One blocking request; returns the cleaned advice. Raises :class:`AIError` only."""
-    target, headers, body = build_request(provider, model, api_key, system, prompt, url)
+    target, headers, body = build_request(provider, model, api_key, system, prompt, url, max_tokens)
     req = urllib.request.Request(target, data=body, headers=headers, method="POST")
     try:
         with _opener_for(target).open(req, timeout=timeout) as resp:
@@ -255,12 +272,30 @@ def call_llm(provider: str, api_key: str, model: str, system: str, prompt: str,
         raise AIError("bad", "not JSON") from exc
     if not isinstance(data, dict):
         raise AIError("bad", "not an object")
-    return parse_response(provider, data)
+    return parse_response(provider, data, long)
 
 
 # ======================================================================================
 # Game snapshot + prompt
 # ======================================================================================
+#: Abbreviated keys of the snapshot (sent once in the system prompt).
+LEGEND = ("Clés JSON : t=temps de jeu, mo=moment, me=moi, al=alliés, en=ennemis, c=champion, r=rôle, "
+          "lv=niveau, it=objets, ig=valeur des objets (or), g=or disponible, k=K/D/A, cs=sbires, "
+          "ss=sorts d'invocateur, rs=réapparition dans (s), st=stats, ru=runes, ab=niveaux de sorts, "
+          "ev=derniers événements, obj=objectifs (s avant apparition ou dispo), sb=tableau des scores "
+          "(gd=écart d'or équipe estimé, kd=kills, ln=duels de voie), map=carte (z=zone, vu=vu il y a s), "
+          "jgl=jungler ennemi, co=analyse du coach, wp=probabilité de victoire %, morts=mes dernières morts, "
+          "achat=suggestion d'objet actuelle, ward=balise conseillée.")
+MAX_SNAPSHOT_BYTES = 6000
+STAT_KEYS = {"attackDamage": "ad", "abilityPower": "ap", "armor": "ar", "magicResist": "mr",
+             "attackSpeed": "as", "moveSpeed": "ms", "abilityHaste": "ah", "critChance": "crit",
+             "lifeSteal": "vol", "physicalLethality": "leta", "magicPenetrationFlat": "penm",
+             "armorPenetrationPercent": "pena%"}
+_DROP_KEYS = frozenset({"icon", "me_icon", "skin", "skin_id", "image", "frame", "minimap_bgr", "raw",
+                        "series", "samples", "points", "path", "spots", "heatmap", "riot_id",
+                        "summoner_name", "name_raw"})
+
+
 def _clock(gt: Any) -> str:
     try:
         s = max(0, int(float(gt)))
@@ -269,17 +304,65 @@ def _clock(gt: Any) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
-def _item_names(items: Iterable[Any]) -> list[str]:
+def compact(value: Any, depth: int = 0, max_list: int = 10, max_str: int = 160) -> Any:
+    """JSON-friendly, rounded, truncated copy of any value (dataclasses, enums, tuples...)."""
+    if depth > 5:
+        return None
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        return round(value, 2) if abs(value) < 10 else int(round(value))
+    if isinstance(value, str):
+        return value[:max_str]
+    if hasattr(value, "value") and type(value).__module__ != "builtins" and isinstance(
+            getattr(value, "value", None), (str, int)):          # Enum
+        return compact(value.value, depth + 1)
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        value = {f.name: getattr(value, f.name, None) for f in dataclasses.fields(value)
+                 if not f.name.startswith("_")}
+    elif not isinstance(value, (dict, list, tuple, set, frozenset)) and hasattr(value, "__dict__") \
+            and type(value).__module__ != "numpy":
+        value = {k: v for k, v in vars(value).items() if not k.startswith("_") and not callable(v)}
+    if isinstance(value, dict):
+        out = {}
+        for k, v in list(value.items())[:40]:
+            ks = str(k)
+            if ks in _DROP_KEYS or ks.startswith("_"):
+                continue
+            cv = compact(v, depth + 1, max_list, max_str)
+            if cv is None or cv == [] or cv == {} or cv == "":
+                continue
+            out[ks] = cv
+        return out
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)[:max_list]
+        return [c for c in (compact(v, depth + 1, max_list, max_str) for v in items) if c is not None]
+    if type(value).__module__ == "numpy":
+        try:
+            return compact(value.item(), depth + 1) if getattr(value, "size", 2) == 1 else None
+        except Exception:
+            return None
+    return None
+
+
+def _item_list(items: Iterable[Any]) -> tuple[list[str], int]:
     try:
         from treeaicoach.scoreboard import item_info
     except Exception:  # pragma: no cover
-        return []
-    out = []
+        return [], 0
+    names, gold = [], 0
     for it in items or ():
         info = item_info(it)
-        if info is not None and info[0] and info[2] not in ("trinket",):
-            out.append(info[0])
-    return out[:7]
+        if info is None:
+            continue
+        gold += int(info[1])
+        if info[0] and info[2] not in ("trinket",):
+            names.append(info[0])
+    return names[:7], gold
 
 
 def _role(p: Any, side: str, roles: Any) -> str | None:
@@ -294,16 +377,21 @@ def _role(p: Any, side: str, roles: Any) -> str | None:
 
 
 def _player(p: Any, side: str, roles: Any) -> dict[str, Any]:
-    d: dict[str, Any] = {"champion": p.champion_name or p.champion_alias}
+    d: dict[str, Any] = {"c": p.champion_name or p.champion_alias}
     role = _role(p, side, roles)
     if role:
-        d["role"] = role
-    d.update({"niveau": int(p.level), "kda": f"{p.kills}/{p.deaths}/{p.assists}", "cs": int(p.creep_score)})
-    names = _item_names(p.items)
+        d["r"] = role
+    names, gold = _item_list(p.items)
+    d.update({"lv": int(p.level), "k": f"{p.kills}/{p.deaths}/{p.assists}", "cs": int(p.creep_score)})
     if names:
-        d["objets"] = names
+        d["it"] = names
+    if gold:
+        d["ig"] = gold
+    spells = [str(s)[:20] for s in (getattr(p, "spells", ()) or ())][:2]
+    if spells:
+        d["ss"] = spells
     if getattr(p, "is_dead", False):
-        d["mort"] = True
+        d["rs"] = int(max(0.0, float(getattr(p, "respawn_timer", 0.0) or 0.0)))
     return d
 
 
@@ -320,8 +408,70 @@ def _names_to_champ(game: Any) -> dict[str, str]:
     return out
 
 
-def last_deaths(game: Any, limit: int = 3) -> list[dict[str, str]]:
-    """My last deaths from the event feed: ``[{"temps": "12:04", "tue_par": "Darius"}]``."""
+def _who(name: Any, lookup: dict[str, str]) -> str:
+    s = str(name or "")
+    if not s:
+        return "?"
+    c = lookup.get(s.casefold()) or lookup.get(s.split("#", 1)[0].casefold())
+    if c:
+        return c
+    low = s.lower()
+    if "turret" in low:
+        return "tourelle"
+    if "minion" in low:
+        return "sbire"
+    return "monstre" if ("sru_" in low or "baron" in low or "dragon" in low) else "?"
+
+
+def _team_of(name: Any, game: Any) -> str | None:
+    try:
+        from treeaicoach.scoreboard import player_names
+
+        s = str(name or "").casefold()
+        for p in game.all_players():
+            if s in player_names(p):
+                return "nous" if p.team == game.my_team else "eux"
+    except Exception:
+        pass
+    return None
+
+
+def recent_events(game: Any, limit: int = 10) -> list[str]:
+    """The last notable events as short French strings ("12:01 kill Zed>Ahri +Lee Sin")."""
+    lookup = _names_to_champ(game)
+    out: list[str] = []
+    for ev in getattr(game, "events", None) or []:
+        if not isinstance(ev, dict):
+            continue
+        name = ev.get("EventName")
+        t = _clock(ev.get("EventTime"))
+        if name == "ChampionKill":
+            ast = [_who(a, lookup) for a in (ev.get("Assisters") or [])[:4]]
+            out.append(f"{t} kill {_who(ev.get('KillerName'), lookup)}>{_who(ev.get('VictimName'), lookup)}"
+                       + (f" +{','.join(ast)}" if ast else ""))
+        elif name in ("DragonKill", "BaronKill", "HeraldKill", "HordeKill", "AtakhanKill"):
+            kind = {"DragonKill": f"dragon {ev.get('DragonType') or ''}".strip(), "BaronKill": "baron",
+                    "HeraldKill": "héraut", "HordeKill": "larves", "AtakhanKill": "atakhan"}[name]
+            stolen = " volé" if str(ev.get("Stolen")).casefold() == "true" else ""
+            out.append(f"{t} {kind}{stolen} pour {_team_of(ev.get('KillerName'), game) or '?'}")
+        elif name in ("TurretKilled", "InhibKilled"):
+            struct = str(ev.get("TurretKilled") or ev.get("InhibKilled") or "")
+            mine = game.my_team
+            owner = "ORDER" if "_T1_" in struct else "CHAOS" if "_T2_" in struct else None
+            whose = "" if owner is None else (" (la nôtre)" if owner == mine else " (la leur)")
+            out.append(f"{t} {'tour' if name == 'TurretKilled' else 'inhibiteur'} détruit{whose}")
+        elif name in ("Ace", "Multikill", "FirstBlood"):
+            if name == "Ace":
+                out.append(f"{t} ace par {'nous' if ev.get('AcingTeam') == game.my_team else 'eux'}")
+            elif name == "Multikill":
+                out.append(f"{t} multikill x{ev.get('KillStreak')} {_who(ev.get('KillerName'), lookup)}")
+            else:
+                out.append(f"{t} premier sang {_who(ev.get('Recipient'), lookup)}")
+    return out[-limit:]
+
+
+def last_deaths(game: Any, limit: int = 3) -> list[dict[str, Any]]:
+    """My last deaths: ``[{"t": "12:04", "par": "Darius", "aide": ["Lee Sin"]}]``."""
     me = getattr(game, "me", None)
     if me is None:
         return []
@@ -335,22 +485,152 @@ def last_deaths(game: Any, limit: int = 3) -> list[dict[str, str]]:
             continue
         if str(ev.get("VictimName") or "").casefold() not in mine:
             continue
-        killer = str(ev.get("KillerName") or "")
-        out.append({"temps": _clock(ev.get("EventTime")),
-                    "tue_par": lookup.get(killer.casefold()) or ("tourelle" if "turret" in killer.lower()
-                                                                  else "sbire/monstre" if killer else "?")})
+        d: dict[str, Any] = {"t": _clock(ev.get("EventTime")), "par": _who(ev.get("KillerName"), lookup)}
+        ast = [_who(a, lookup) for a in (ev.get("Assisters") or [])[:4]]
+        if ast:
+            d["aide"] = ast
+        out.append(d)
     return out[-limit:]
 
 
+def engine_context(engine: Any, now: float | None = None) -> dict[str, Any]:
+    """Live analysis of the engine (map state, coach, stance, fight, wards, win probability...).
+
+    Every piece is optional (``getattr``-guarded): a missing analyser is simply left out. Never raises.
+    """
+    ctx: dict[str, Any] = {}
+    if engine is None:
+        return ctx
+    try:
+        if now is None:
+            clock = getattr(engine, "_clock", None)
+            now = float(clock()) if callable(clock) else time.monotonic()
+    except Exception:
+        now = time.monotonic()
+    game = getattr(engine, "_game", None)
+    my_team = getattr(game, "my_team", None)
+
+    def safe(fn: Callable[[], Any]) -> Any:
+        try:
+            return fn()
+        except Exception:
+            return None
+
+    tracker = getattr(engine, "_tracker", None)
+    if tracker is not None:
+        def tracks() -> dict[str, Any]:
+            from treeaicoach import geometry
+
+            def one(tr: Any) -> dict[str, Any] | None:
+                pos = tr.position() if hasattr(tr, "position") else None
+                if pos is None:
+                    return None
+                d = {"c": tr.alias or "?", "z": geometry.zone_label_fr(geometry.classify_zone(*pos), my_team)}
+                ago = now - float(tr.last_seen)
+                if ago > 1.5:
+                    d["vu"] = int(ago)
+                return d
+            m: dict[str, Any] = {}
+            me = tracker.me()
+            if me is not None and me.position() is not None:
+                m["moi"] = geometry.zone_label_fr(geometry.classify_zone(*me.position()), my_team)
+            m["al"] = [x for x in (one(t) for t in tracker.allies(visible_only=False)[:4]) if x]
+            m["en"] = [x for x in (one(t) for t in tracker.enemies(visible_only=False)[:5]) if x]
+            return m
+        ctx["map"] = safe(tracks)
+    jt = getattr(engine, "jungler_status_text", None)
+    if callable(jt):
+        ctx["jgl"] = safe(jt)
+    co: dict[str, Any] = {}
+    coach = getattr(engine, "_coach", None)
+    if coach is not None and hasattr(coach, "facts"):
+        co["faits"] = safe(lambda: compact(coach.facts(), max_list=5, max_str=80))
+        co["insight"] = safe(coach.insight) if hasattr(coach, "insight") else None
+    stance = getattr(engine, "_stance", None)
+    cur = safe(stance.current) if stance is not None and hasattr(stance, "current") else None
+    if cur is not None:
+        co["posture"] = f"{getattr(cur, 'level', '')} : {getattr(cur, 'reason', '')}"[:160]
+    for attr in ("_fight", "_fight_tracker"):
+        ft = getattr(engine, attr, None)
+        if ft is not None and hasattr(ft, "state"):
+            co["combat"] = safe(lambda ft=ft: compact(ft.state(), max_list=5, max_str=80))
+            break
+    for attr in ("_phase", "_map_state", "_endgame", "_macro"):
+        ph = getattr(engine, attr, None)
+        if ph is None:
+            continue
+        for meth in ("current", "state", "last"):
+            if hasattr(ph, meth) and callable(getattr(ph, meth)):
+                co["phase"] = safe(lambda ph=ph, meth=meth: compact(getattr(ph, meth)(), max_list=5, max_str=80))
+                break
+        break
+    tip = getattr(engine, "_tip_text", None)
+    if tip:
+        co["astuce"] = str(tip)[:120]
+    ctx["co"] = co
+    for attr in ("_wards", "_ward_adv", "_ward_advisor"):
+        wa = getattr(engine, attr, None)
+        if wa is not None and hasattr(wa, "current"):
+            ctx["ward"] = safe(lambda wa=wa: compact(wa.current(now), max_list=3, max_str=100))
+            break
+    wp = getattr(engine, "win_probability", None)
+    p = safe(wp) if callable(wp) else None
+    if isinstance(p, (int, float)):
+        ctx["wp"] = int(round(100 * p))
+    return compact(ctx) or {}
+
+
+def _scoreboard(sb: Any) -> dict[str, Any] | None:
+    if sb is None or not getattr(sb, "players", None):
+        return None
+    d: dict[str, Any] = {"gd": int(sb.team_gold_diff), "kd": f"{sb.ally_kills}-{sb.enemy_kills}"}
+    try:
+        d["ln"] = [m.text for m in sb.matchups][:5]
+        if sb.fed:
+            d["fed"] = list(sb.fed)[:3]
+        if sb.spikes:
+            d["pics"] = list(sb.spikes)[-3:]
+    except Exception:
+        pass
+    return d
+
+
+def _fit(snap: dict[str, Any], limit: int) -> dict[str, Any]:
+    """Drop the least useful details until the JSON fits in ``limit`` bytes."""
+    def size() -> int:
+        return len(json.dumps(snap, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+    steps: list[Callable[[], None]] = [
+        lambda: snap.get("co", {}).pop("faits", None),
+        lambda: snap.__setitem__("ev", snap.get("ev", [])[-6:]) if "ev" in snap else None,
+        lambda: [p.pop("ss", None) for p in snap.get("al", []) + snap.get("en", [])],
+        lambda: snap.get("co", {}).pop("phase", None),
+        lambda: snap.get("me", {}).pop("ru", None),
+        lambda: [p.pop("it", None) for p in snap.get("al", [])],
+        lambda: snap.pop("map", None),
+        lambda: snap.pop("ev", None),
+        lambda: snap.pop("co", None),
+    ]
+    for step in steps:
+        if size() <= limit:
+            break
+        try:
+            step()
+        except Exception:
+            pass
+    return snap
+
+
 def build_snapshot(game: Any, *, moment: str = "", roles: Any = None, scoreboard: Any = None,
-                   objectives: Iterable[Any] = (), item_text: str | None = None) -> dict[str, Any]:
-    """Compact JSON-friendly game state for the prompt (no player names). Never raises."""
+                   objectives: Iterable[Any] = (), item_text: str | None = None,
+                   context: dict[str, Any] | None = None, limit: int = MAX_SNAPSHOT_BYTES) -> dict[str, Any]:
+    """Complete but compact game state for the prompt (no player names, < ``limit`` bytes). Never raises."""
     snap: dict[str, Any] = {}
     try:
         gt = float(getattr(game, "game_time", 0.0) or 0.0)
-        snap["temps_de_jeu"] = _clock(gt)
+        snap["t"] = _clock(gt)
         if moment:
-            snap["moment"] = MOMENT_FR.get(moment, moment)
+            snap["mo"] = MOMENT_FR.get(moment, moment)
         me = getattr(game, "me", None)
         if me is not None:
             mine = _player(me, "ally", None)
@@ -359,39 +639,59 @@ def build_snapshot(game: Any, *, moment: str = "", roles: Any = None, scoreboard
             except Exception:
                 r = None
             if r and ROLE_FR.get(str(r).upper()):
-                mine["role"] = ROLE_FR[str(r).upper()]
-            mine["or"] = int(getattr(game, "current_gold", 0.0) or 0)
-            snap["moi"] = mine
-        snap["allies"] = [_player(p, "ally", roles) for p in list(getattr(game, "allies", []))[:4]]
-        snap["ennemis"] = [_player(p, "enemy", roles) for p in list(getattr(game, "enemies", []))[:5]]
-        if scoreboard is not None and getattr(scoreboard, "players", None):
-            snap["diff_or_equipe_estimee"] = int(scoreboard.team_gold_diff)
-            snap["kills_equipes"] = f"{scoreboard.ally_kills}-{scoreboard.enemy_kills}"
+                mine["r"] = ROLE_FR[str(r).upper()]
+            mine["g"] = int(getattr(game, "current_gold", 0.0) or 0)
+            cs = getattr(game, "champion_stats", None) or {}
+            if cs:
+                st = {short: compact(float(cs[k])) for k, short in STAT_KEYS.items() if k in cs}
+                if "currentHealth" in cs and "maxHealth" in cs:
+                    st["pv"] = f"{int(cs['currentHealth'])}/{int(cs['maxHealth'])}"
+                if "resourceMax" in cs and float(cs.get("resourceMax") or 0) > 0:
+                    st["res"] = f"{int(cs.get('resourceValue', 0))}/{int(cs['resourceMax'])}"
+                mine["st"] = {k: v for k, v in st.items() if v not in (None, 0)}
+            info = getattr(game, "active_info", None) or {}
+            if info.get("runes"):
+                mine["ru"] = compact(info["runes"], max_list=9, max_str=40)
+            if info.get("abilities"):
+                mine["ab"] = info["abilities"]
+            snap["me"] = mine
+        snap["al"] = [_player(p, "ally", roles) for p in list(getattr(game, "allies", []))[:4]]
+        snap["en"] = [_player(p, "enemy", roles) for p in list(getattr(game, "enemies", []))[:5]]
+        sb = _scoreboard(scoreboard)
+        if sb:
+            snap["sb"] = sb
         objs = []
         for o in objectives or ():
             name = getattr(o, "name", "")
             if not name:
                 continue
             if getattr(o, "alive", False):
-                objs.append({"objectif": name, "etat": "disponible"})
-            elif getattr(o, "remaining", None) is not None and o.remaining < 600:
-                objs.append({"objectif": name, "apparait_dans_s": int(o.remaining)})
+                objs.append(f"{name}: dispo")
+            elif getattr(o, "remaining", None) is not None and o.remaining < 900:
+                objs.append(f"{name}: {int(o.remaining)} s")
         if objs:
-            snap["objectifs"] = objs[:6]
+            snap["obj"] = objs[:6]
+        ev = recent_events(game)
+        if ev:
+            snap["ev"] = ev
         deaths = last_deaths(game)
         if deaths:
-            snap["mes_dernieres_morts"] = deaths
+            snap["morts"] = deaths
         if item_text:
-            snap["suggestion_objet_actuelle"] = str(item_text)[:160]
+            snap["achat"] = str(item_text)[:160]
+        for k, v in (context or {}).items():
+            if v not in (None, "", [], {}):
+                snap[k] = v
+        snap = _fit(snap, limit)
     except Exception:
         log.debug("AI snapshot incomplete", exc_info=True)
     return snap
 
 
 def build_prompt(snapshot: dict[str, Any]) -> str:
-    moment = snapshot.get("moment") or "point de situation"
+    moment = snapshot.get("mo") or "point de situation"
     data = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-    return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle) : {data}\n"
+    return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle + analyse de la minimap) : {data}\n"
             "Réponds en 2 phrases courtes max, conseils concrets d'achat et de macro, "
             "pas de spéculation sur les temps de recharge ennemis.")
 
@@ -455,6 +755,7 @@ class Advice:
     text: str
     moment: str
     t: float
+    error: bool = False       # True: ``text`` is a French error message (manual request only)
 
 
 class AIAdvisor:
@@ -515,8 +816,11 @@ class AIAdvisor:
     # ------------------------------------------------------------------ live use
     def update(self, t: float, game: Any, *, in_base: bool = False, objectives: Iterable[Any] = (),
                roles: Any = None, scoreboard: Any = None, item_text: str | None = None,
-               threat: int = 0) -> bool:
-        """Detect a key moment and maybe start a request. Returns True if one was started."""
+               threat: int = 0, context: Any = None) -> bool:
+        """Detect a key moment and maybe start a request. Returns True if one was started.
+
+        ``context``: extra snapshot sections (dict), or a callable returning them (only called
+        when a request is really sent), e.g. ``lambda: engine_context(engine)``."""
         try:
             objectives = list(objectives or ())
             moment = self.detector.update(game, in_base, objectives)
@@ -530,12 +834,40 @@ class AIAdvisor:
                     return False
                 self._last_call = t
             snap = build_snapshot(game, moment=moment, roles=roles, scoreboard=scoreboard,
-                                  objectives=objectives, item_text=item_text)
+                                  objectives=objectives, item_text=item_text, context=_resolve(context))
             self._start(build_prompt(snap), moment, t)
             return True
         except Exception:
             log.exception("AIAdvisor.update failed")
             return False
+
+    def ask(self, t: float, game: Any, *, roles: Any = None, scoreboard: Any = None,
+            objectives: Iterable[Any] = (), item_text: str | None = None, context: Any = None) -> str:
+        """Manual request ("Demander à l'IA"): returns a French acknowledgement for the user.
+
+        The answer (or the error) arrives later through :meth:`poll` with ``moment == "manual"``."""
+        try:
+            if not self.enabled:
+                return "Conseil IA désactivé : choisis un fournisseur dans Réglages > IA."
+            if getattr(game, "me", None) is None:
+                return "Pas de partie en cours : l'IA a besoin d'une partie pour conseiller."
+            with self._lock:
+                if self._thread is not None and self._thread.is_alive():
+                    return "L'IA réfléchit déjà…"
+                wait = MANUAL_MIN_INTERVAL_S - (t - self._last_call)
+                if wait > 0:
+                    return f"Patiente encore {int(math.ceil(wait))} s avant de redemander."
+                if self._blocked_until == math.inf and self._status:
+                    return self._status
+                self._last_call = t
+            snap = build_snapshot(game, moment="manual", roles=roles, scoreboard=scoreboard,
+                                  objectives=list(objectives or ()), item_text=item_text,
+                                  context=_resolve(context))
+            self._start(build_prompt(snap), "manual", t)
+            return "Question envoyée à l'IA…"
+        except Exception:
+            log.exception("AIAdvisor.ask failed")
+            return "Conseil IA indisponible."
 
     def poll(self) -> Advice | None:
         """The finished advice (once), else None."""
@@ -549,24 +881,26 @@ class AIAdvisor:
 
         def job() -> None:
             try:
-                text = self._caller(prov, key, model, SYSTEM_PROMPT, prompt, timeout=TIMEOUT_S, url=url)
+                text = self._caller(prov, key, model, system_prompt(), prompt, timeout=TIMEOUT_S, url=url)
                 with self._lock:
                     self._result = Advice(text, moment, t)
                     self.calls += 1
             except AIError as exc:
-                self._fail(exc.code, prov)
+                self._fail(exc.code, prov, moment, t)
             except Exception:
                 log.exception("AI request failed")
-                self._fail("server", prov)
+                self._fail("server", prov, moment, t)
 
         th = threading.Thread(target=job, name="TreeAICoach-ai", daemon=True)
         self._thread = th
         th.start()
 
-    def _fail(self, code: str, provider: str) -> None:
+    def _fail(self, code: str, provider: str, moment: str = "", t: float = 0.0) -> None:
         log.info("AI advice unavailable (%s, %s)", provider, code)
         with self._lock:
             text = error_text(code, provider)
+            if moment == "manual":
+                self._result = Advice(text, moment, t, error=True)
             if text != self._status:
                 self._status_seq += 1
             self._status = text
@@ -577,6 +911,91 @@ class AIAdvisor:
         if th is not None:
             th.join(timeout)
         return not self.busy()
+
+
+def _resolve(context: Any) -> dict[str, Any] | None:
+    try:
+        ctx = context() if callable(context) else context
+        return ctx if isinstance(ctx, dict) else None
+    except Exception:
+        log.debug("AI context unavailable", exc_info=True)
+        return None
+
+
+def system_prompt() -> str:
+    return f"{SYSTEM_PROMPT} {LEGEND}"
+
+
+# ======================================================================================
+# Post-game review
+# ======================================================================================
+REVIEW_PROMPT = (
+    "Tu es un coach expert de League of Legends. Voici l'analyse complète (JSON) de la partie que "
+    "le joueur vient de terminer. Écris en français une revue d'après-partie concrète : 2 points forts, "
+    "3 axes de progrès prioritaires avec un exercice précis pour chacun, et un conseil d'objets ou de "
+    "macro pour la prochaine partie avec ce champion. 8 phrases maximum, tutoiement, pas de markdown, "
+    "pas de spéculation sur les temps de recharge."
+)
+
+
+def compact_analysis(analysis: Any, limit: int = MAX_ANALYSIS_BYTES) -> dict[str, Any]:
+    """The analysis.py result, compacted (rounded, heavy series dropped) to fit ``limit`` bytes."""
+    a = compact(analysis if isinstance(analysis, dict) else {}, max_list=12, max_str=200) or {}
+    for k in ("errors", "ok", "schema", "spoken_summary", "tip_items"):
+        a.pop(k, None)
+
+    def size() -> int:
+        return len(json.dumps(a, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+    for k in ("trends", "pathing", "exposure", "presence", "objective_presence", "zones", "phases",
+              "alerts", "jungler", "ganks", "objectives", "scoreboard", "deaths"):
+        if size() <= limit:
+            break
+        a.pop(k, None)
+    return a
+
+
+def postgame_review(cfg: Any, analysis: Any, *, caller: Callable[..., Any] = call_llm,
+                    url: str | None = None) -> str | None:
+    """Blocking AI review of a finished game (None if no provider / on error). Never raises."""
+    prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
+    if provider_spec(prov) is None:
+        return None
+    try:
+        data = json.dumps(compact_analysis(analysis), ensure_ascii=False, separators=(",", ":"))
+        return caller(prov, str(getattr(cfg, "ai_api_key", "") or ""), str(getattr(cfg, "ai_model", "") or ""),
+                      REVIEW_PROMPT, f"Analyse de la partie (JSON) : {data}", timeout=REVIEW_TIMEOUT_S,
+                      url=url, max_tokens=REVIEW_MAX_TOKENS, long=True) or None
+    except AIError as exc:
+        log.info("AI post-game review unavailable (%s)", exc.code)
+        return None
+    except Exception:
+        log.exception("AI post-game review failed")
+        return None
+
+
+def append_review_html(html_path: Any, review: str, provider: str = "") -> bool:
+    """Insert a "Revue de l'IA" section in a report (before ``</body>``). Never raises."""
+    try:
+        import html as _html
+        from pathlib import Path
+
+        p = Path(html_path)
+        doc = p.read_text(encoding="utf-8")
+        label = PROVIDERS[provider].label if provider in PROVIDERS else "IA"
+        paras = "".join(f"<p>{_html.escape(x)}</p>" for x in str(review).splitlines() if x.strip())
+        block = (f'\n<section class="card ai-review" id="ai-review" style="margin:24px auto;max-width:960px;'
+                 f'padding:16px 20px;border:1px solid #785A28;border-radius:12px">'
+                 f"<h2>Revue de l'IA</h2>{paras}<p style=\"opacity:.7;font-size:.85em\">Générée par "
+                 f"{_html.escape(label)} à partir de l'analyse ci-dessus ; à prendre comme un avis.</p></section>\n")
+        low = doc.lower()
+        i = low.rfind("</body>")
+        doc = doc[:i] + block + doc[i:] if i >= 0 else doc + block
+        p.write_text(doc, encoding="utf-8")
+        return True
+    except Exception:
+        log.exception("Cannot add the AI review to the report")
+        return False
 
 
 def check_connection(cfg: Any, *, caller: Callable[..., str] = call_llm,
@@ -590,7 +1009,7 @@ def check_connection(cfg: Any, *, caller: Callable[..., str] = call_llm,
               "League of Legends qui revient en base avec 1300 pièces d'or.")
     try:
         text = caller(prov, str(getattr(cfg, "ai_api_key", "") or ""), str(getattr(cfg, "ai_model", "") or ""),
-                      SYSTEM_PROMPT, prompt, timeout=TIMEOUT_S, url=url)
+                      system_prompt(), prompt, timeout=TIMEOUT_S, url=url)
         return True, f"Connexion OK ({spec.label}) : {text}"
     except AIError as exc:
         return False, error_text(exc.code, prov)
