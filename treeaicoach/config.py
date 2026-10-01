@@ -160,6 +160,9 @@ class Config:
     minimap_side: str = "auto"      # "auto" | "right" | "left"
     manual_minimap_rect: dict | None = None   # {"screen_w","screen_h","x","y","w","h"} screen pixels
     download_skin_icons: bool = True
+    #: Calibrated champion icon diameter / minimap width, per minimap size ("316x316": 0.094),
+    #: learned live by the roster matcher (prior for the next games).
+    icon_scale_by_res: dict = field(default_factory=dict)
     # misc
     autostart: bool = True          # start the analysis at launch
     collect_samples: bool = False   # save minimaps for re-training
@@ -325,6 +328,28 @@ def _as_rect(value: Any) -> dict[str, int] | None:
     return out
 
 
+ICON_SCALE_RANGE = (0.03, 0.2)
+ICON_SCALE_MAX_ENTRIES = 32
+_RES_KEY_RE = re.compile(r"\d{2,5}x\d{2,5}")
+
+
+def _as_scale_map(value: Any) -> Any:
+    """Validate icon_scale_by_res ({"WxH": ratio}); bad entries dropped, non-dict -> _INVALID."""
+    if not isinstance(value, Mapping):
+        return _INVALID
+    out: dict[str, float] = {}
+    for k, v in list(value.items())[:4 * ICON_SCALE_MAX_ENTRIES]:
+        if not isinstance(k, str) or not _RES_KEY_RE.fullmatch(k):
+            continue
+        f = _real(v)
+        if f is _INVALID or not ICON_SCALE_RANGE[0] <= f <= ICON_SCALE_RANGE[1]:
+            continue
+        out[k] = round(float(f), 5)
+        if len(out) >= ICON_SCALE_MAX_ENTRIES:
+            break
+    return out
+
+
 def _as_hotkey(value: Any) -> Any:
     """Canonical hotkey name ("" = disabled); invalid -> _INVALID."""
     res = normalize_hotkey(value)
@@ -403,6 +428,8 @@ def _validate_field(name: str, value: Any, default: Any) -> Any:
         res = _as_voice_name(value)
     elif name == "manual_minimap_rect":
         res = _as_rect(value)
+    elif name == "icon_scale_by_res":
+        res = _as_scale_map(value)
     elif name in HOTKEY_FIELDS:
         res = _as_hotkey(value)
     elif name in XY_FIELDS:

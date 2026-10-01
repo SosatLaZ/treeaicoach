@@ -479,13 +479,28 @@ class CoachEngine:
         from treeaicoach.detector import create_detector
 
         old = self._detector
-        self._detector = create_detector(cfg.detector_backend, cfg.detection_threshold)
+        self._detector = create_detector(cfg.detector_backend, cfg.detection_threshold,
+                                         db=self._champion_db(),
+                                         scale_store=dict(getattr(cfg, "icon_scale_by_res",
+                                                                  None) or {}),
+                                         on_scale=self._store_icon_scale)
         self._detector_key = key
+        if self._game is not None and hasattr(self._detector, "set_roster"):
+            self._detector.set_roster(self._game)   # roster matcher (portraits of the 10)
         if old is not None:
             try:
                 old.close()
             except Exception:
                 pass
+
+    def _store_icon_scale(self, key: str, ratio: float) -> None:
+        """Calibrated icon scale (roster matcher) -> config, prior of the next games."""
+        try:
+            store = getattr(self._cfg, "icon_scale_by_res", None)
+            if isinstance(store, dict):
+                store[str(key)] = round(float(ratio), 5)
+        except Exception:
+            log.debug("Cannot store the icon scale", exc_info=True)
 
     def _ensure_locator(self) -> Any:
         if self._locator is None:
@@ -922,6 +937,11 @@ class CoachEngine:
             self._identifier.set_roster(game)
         except Exception:
             self._err.exception("identifier.set_roster failed")
+        try:
+            if self._detector is not None and hasattr(self._detector, "set_roster"):
+                self._detector.set_roster(game)
+        except Exception:
+            self._err.exception("detector.set_roster failed")
         if not self._prefetched and self._cfg.download_skin_icons and not self._demo:
             self._prefetched = True
             db = self._champion_db()

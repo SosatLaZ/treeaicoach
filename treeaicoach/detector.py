@@ -477,16 +477,25 @@ _PALE_H = (100, 135)
 _PALE_S, _PALE_V = 20, 150
 _YEL_H = (16, 36)
 _YEL_S, _YEL_V = 100, 130
+# Bright teal / cyan outline of the local player (2025+ clients) and the recall halo: ally
+# side. Bright only (V), so the dark teal river does not count.
+_TEAL_H = (80, 99)
+_TEAL_S, _TEAL_V = 60, 150
 
 
 def ring_color_labels(hsv: np.ndarray) -> np.ndarray:
-    """Per-pixel ring colour evidence: bool array ``[3, ...]`` (red, blue, yellow) from HSV."""
+    """Per-pixel ring colour evidence: bool array ``[3, ...]`` (red, blue, yellow) from HSV.
+
+    "blue" (ally side) also covers the pale 2024 ring and the bright teal outline of the
+    local player / the cyan recall halo.
+    """
     h = hsv[..., 0]
     s = hsv[..., 1]
     v = hsv[..., 2]
     red = ((h <= _RED_H[0]) | (h >= _RED_H[1])) & (s >= _RED_S) & (v >= _RED_V)
     blue = (((h >= _BLUE_H[0]) & (h <= _BLUE_H[1]) & (s >= _BLUE_S) & (v >= _BLUE_V))
-            | ((h >= _PALE_H[0]) & (h <= _PALE_H[1]) & (s >= _PALE_S) & (v >= _PALE_V)))
+            | ((h >= _PALE_H[0]) & (h <= _PALE_H[1]) & (s >= _PALE_S) & (v >= _PALE_V))
+            | ((h >= _TEAL_H[0]) & (h <= _TEAL_H[1]) & (s >= _TEAL_S) & (v >= _TEAL_V)))
     yellow = (h >= _YEL_H[0]) & (h <= _YEL_H[1]) & (s >= _YEL_S) & (v >= _YEL_V)
     return np.stack([red, blue, yellow])
 
@@ -499,6 +508,13 @@ class ClassicDetector(BaseDetector):
     :attr:`N_ANGLES` rays at several radii (HSV) and must be consistently red / blue /
     yellow; the interior must be textured (portrait) and not ring-coloured. Classes come
     from the dominant ring colour (red -> enemy, blue -> ally, yellow -> self).
+
+    Live calibration (optional, fed by the roster matcher): :meth:`set_ring_colors` adds
+    the ring colours actually seen on the user's screen (any client, colourblind mode,
+    capture colour shifts) to the fixed HSV ranges, and :meth:`set_scale` gives the icon
+    size. Besides the Hough circles, candidates also come from a ring-colour annulus filter
+    (colour mask convolved with a ring of the expected radius), which finds icons whose
+    edges are too blurred / overlapped for Hough.
     """
 
     name = "classic"
@@ -548,6 +564,93 @@ class ClassicDetector(BaseDetector):
         self._errors = _RateLimitedLog()
         #: Rejection counters of the last call (diagnostics).
         self.last_rejections: dict[str, int] = {}
+        #: Learned ring colours: class index (0 enemy, 1 ally) -> Lab centroids [m, 3].
+        self._learned: dict[int, np.ndarray] = {}
+        #: Calibrated icon diameter / minimap width (None: unknown).
+        self._scale: float | None = None
+
+    # ------------------------------------------------------------------ calibration
+    LEARNED_DIST = 24.0          # weighted Lab distance to a learned ring colour
+    _LAB_W = np.asarray([0.35, 1.0, 1.0], np.float32)
+
+    def set_ring_colors(self, colors: dict[str, Any] | None) -> None:
+        """Ring colours seen live (relation -> BGR), e.g. ``RosterMatcher.ring_colors``."""
+        learned: dict[int, list[np.ndarray]] = {}
+        for rel, bgr in (colors or {}).items():
+            try:
+                c = 0 if rel == "enemy" else 1 if rel in ("ally", "self") else None
+                if c is None:
+                    continue
+                px = np.clip(np.asarray(bgr, np.float64)[:3], 0, 255).astype(np.uint8)
+                lab = cv2.cvtColor(px.reshape(1, 1, 3), cv2.COLOR_BGR2LAB).reshape(3)
+                if float(np.hypot(float(lab[1]) - 128.0, float(lab[2]) - 128.0)) < 10.0:
+                    continue             # a grey "ring colour" would match everything
+                learned.setdefault(c, []).append(lab.astype(np.float32))
+            except Exception:
+                continue
+        self._learned = {c: np.stack(v) for c, v in learned.items()}
+
+    def set_scale(self, diameter_ratio: float | None) -> None:
+        """Calibrated icon diameter / minimap width (None to forget it)."""
+        try:
+            d = float(diameter_ratio) if diameter_ratio is not None else None
+        except (TypeError, ValueError):
+            d = None
+        self._scale = d if d is not None and math.isfinite(d) and 0.03 <= d <= 0.2 else None
+
+    def _labels(self, bgr: np.ndarray, hsv: np.ndarray) -> np.ndarray:
+        """Ring colour evidence ``[3, ...]`` from the HSV ranges + the learned colours."""
+        lab = ring_color_labels(hsv)
+        if self._learned:
+            L = cv2.cvtColor(np.ascontiguousarray(bgr.reshape(-1, 1, 3), np.uint8),
+                             cv2.COLOR_BGR2LAB).reshape(bgr.shape).astype(np.float32)
+            for c, cents in self._learned.items():
+                d = np.min(np.stack([np.sqrt((((L - ct) * self._LAB_W) ** 2).sum(axis=-1))
+                                     for ct in cents]), axis=0)
+                lab[c] |= d < self.LEARNED_DIST
+        return lab
+
+    def _ring_candidates(self, work: np.ndarray) -> np.ndarray:
+        """Circles ``[n, 3]`` where a ring of the expected radius has a ring colour."""
+        S = work.shape[0]
+        hsv = cv2.cvtColor(work, cv2.COLOR_BGR2HSV)
+        lab = self._labels(work, hsv)
+        if self._scale is not None:
+            radii = [0.5 * self._scale * S * f for f in (0.92, 1.0, 1.08)]
+        else:
+            radii = list(np.linspace(0.043, 0.052, 3) * S)
+        # filtered at half resolution (fractional coverage): 16x cheaper, precise enough
+        # for candidates (the ring verification runs at full resolution)
+        h = 0.5
+        radii = [r * h for r in radii]
+        out: list[tuple[float, float, float]] = []
+        for c in (0, 1):
+            m = lab[c].astype(np.float32)
+            if float(m.mean()) < 1e-4:
+                continue
+            m = cv2.resize(m, (S // 2, S // 2), interpolation=cv2.INTER_AREA)
+            best = None
+            for r in radii:
+                k = int(math.ceil(1.1 * r)) * 2 + 1
+                yy, xx = np.mgrid[0:k, 0:k].astype(np.float32) - (k - 1) / 2.0
+                d = np.sqrt(xx * xx + yy * yy)
+                ring = ((d >= 0.8 * r) & (d <= 1.02 * r)).astype(np.float32)
+                inner = (d <= 0.5 * r).astype(np.float32)
+                cov = cv2.filter2D(m, -1, ring / ring.sum(), borderType=cv2.BORDER_CONSTANT)
+                ins = cv2.filter2D(m, -1, inner / inner.sum(), borderType=cv2.BORDER_CONSTANT)
+                sc = cov - 0.8 * ins
+                if best is None:
+                    best, rad = sc, np.full(sc.shape, r, np.float32)
+                else:
+                    better = sc > best
+                    best = np.where(better, sc, best)
+                    rad = np.where(better, np.float32(r), rad)
+            dil = cv2.dilate(best, np.ones((5, 5), np.uint8))
+            ys, xs = np.nonzero((best >= dil) & (best > 0.4))
+            order = np.argsort(-best[ys, xs])[:40]
+            out += [((xs[j] + 0.5) / h - 0.5, (ys[j] + 0.5) / h - 0.5, rad[ys[j], xs[j]] / h)
+                    for j in order]
+        return np.asarray(out, np.float32).reshape(-1, 3)
 
     # ------------------------------------------------------------------ public
     def detect(self, minimap_bgr: np.ndarray) -> list[Detection]:
@@ -596,6 +699,12 @@ class ClassicDetector(BaseDetector):
                           if min(bgr.shape[:2]) >= S else cv2.INTER_LINEAR) \
             if bgr.shape[:2] != (S, S) else bgr
         cand = self._candidates(work)
+        try:
+            extra = self._ring_candidates(work)
+            if extra.size:
+                cand = np.concatenate([extra, cand])[: self.MAX_CANDIDATES]
+        except Exception:
+            self._errors.exception("Ring-colour candidates failed")
         n = cand.shape[0]
         if n == 0:
             return []
@@ -609,7 +718,7 @@ class ClassicDetector(BaseDetector):
         valid = (xs >= -0.5) & (xs <= S - 0.5) & (ys >= -0.5) & (ys <= S - 0.5)
         samp = self._sample(work, xs, ys)                                   # [n, K, N, 3]
         hsv = cv2.cvtColor(samp.reshape(n * K, N, 3), cv2.COLOR_BGR2HSV).reshape(n, K, N, 3)
-        lab = ring_color_labels(hsv) & valid[None]                          # [3, n, K, N]
+        lab = self._labels(samp, hsv) & valid[None]                         # [3, n, K, N]
         # tolerate small centre / radius errors: a ray counts at radius k if the colour is
         # present at k-1, k or k+1
         band = lab.copy()
@@ -693,7 +802,7 @@ class ClassicDetector(BaseDetector):
             reasons["flat"] = reasons.get("flat", 0) + 1
             return None
         hsv = cv2.cvtColor(samp[None].astype(np.uint8), cv2.COLOR_BGR2HSV)[0]
-        if float(ring_color_labels(hsv)[c].mean()) > self.MAX_INSIDE_COVERAGE \
+        if float(self._labels(samp.astype(np.uint8), hsv)[c].mean()) > self.MAX_INSIDE_COVERAGE \
                 and std < 2.5 * self.MIN_TEXTURE_STD:
             reasons["inside"] = reasons.get("inside", 0) + 1
             return None
@@ -722,19 +831,126 @@ class _NullDetector(BaseDetector):
         return []
 
 
-def create_detector(backend: str = "auto", threshold: float = 0.0) -> BaseDetector:
-    """Build the detector for ``backend`` ("auto" | "onnx" | "classic"). Never raises.
+class HybridDetector(BaseDetector):
+    """Roster matcher first, the generic detector only for what the roster does not explain.
 
-    "auto" and "onnx" try the bundled ONNX model and fall back to :class:`ClassicDetector`
-    (with a logged reason). ``threshold`` 0 = value from ``model_meta.json`` (ONNX only).
+    With a roster (:meth:`set_roster`), :class:`treeaicoach.roster_matcher.RosterMatcher`
+    finds the match's champions by their portraits (``alias`` set). The generic detector
+    (ONNX or classic) still runs, every ``FALLBACK_EVERY`` frames, when some champions are
+    not matched (unknown skin portrait, heavy occlusion...): its detections that do not
+    overlap a roster match are added with ``alias=None``. The classic detector is fed the
+    ring colours and the icon scale learned by the matcher (live calibration). Without a
+    roster it is exactly the generic detector. Never raises.
     """
-    try:
-        b = str(backend or "auto").strip().lower()
-    except Exception:
-        b = "auto"
-    if b not in ("auto", "onnx", "classic"):
-        log.warning("Unknown detector backend %r: using auto", backend)
-        b = "auto"
+
+    FALLBACK_EVERY = 2
+    EXTRA_MIN_SCORE = 0.6
+    #: Extra detections this close (x the sum of radii) to a roster match are the same icon.
+    EXTRA_OVERLAP = 0.8
+    #: Extra detections this close (normalized) to a structure glyph need a higher score.
+    STRUCTURE_DIST = 0.03
+    STRUCTURE_MIN_SCORE = 0.85
+
+    def __init__(self, fallback: BaseDetector, matcher: Any) -> None:
+        self.fallback = fallback
+        self.matcher = matcher
+        self._frame = 0
+        self._last_extra: list[Detection] = []
+        self._errors = _RateLimitedLog()
+        self._structures: list[tuple[float, float]] | None = None
+
+    @property
+    def name(self) -> str:  # type: ignore[override]
+        fb = str(getattr(self.fallback, "name", "") or "none")
+        return f"roster+{fb}" if self._has_roster() else fb
+
+    def __getattr__(self, item: str) -> Any:
+        # attributes of the generic detector (threshold, model_path...) stay reachable
+        if item in ("fallback", "matcher"):
+            raise AttributeError(item)
+        return getattr(self.fallback, item)
+
+    def _has_roster(self) -> bool:
+        try:
+            return bool(self.matcher is not None and self.matcher.has_roster)
+        except Exception:
+            return False
+
+    def set_roster(self, game: Any) -> None:
+        """Roster of the current game (``GameInfo``; None clears it). Never raises."""
+        try:
+            if self.matcher is not None:
+                self.matcher.set_roster(game)
+            self._last_extra = []
+        except Exception:
+            self._errors.exception("Hybrid detector set_roster failed")
+
+    def _structure_uv(self) -> list[tuple[float, float]]:
+        if self._structures is None:
+            try:
+                from treeaicoach.render import iter_structures
+
+                self._structures = [(float(u), float(v)) for _, u, v, _, _ in iter_structures()]
+            except Exception:
+                self._structures = []
+        return self._structures
+
+    def _extras(self, img: np.ndarray, dets: list[Detection]) -> list[Detection]:
+        m = self.matcher
+        if isinstance(self.fallback, ClassicDetector):
+            self.fallback.set_ring_colors(getattr(m, "ring_colors", None))
+            self.fallback.set_scale(getattr(m, "scale", None))
+        n_roster = len(getattr(m, "entries", ()) or ())
+        if n_roster and len(dets) >= n_roster:
+            self._last_extra = []
+            return []
+        self._frame += 1
+        if self._frame % self.FALLBACK_EVERY == 1 or self.FALLBACK_EVERY <= 1:
+            raw = [d for d in (self.fallback.detect(img) or []) if d.score >= self.EXTRA_MIN_SCORE]
+            structs = self._structure_uv()
+            keep = []
+            for d in raw:
+                near_struct = any(math.hypot(d.u - u, d.v - v) < self.STRUCTURE_DIST
+                                  for u, v in structs)
+                if near_struct and d.score < self.STRUCTURE_MIN_SCORE:
+                    continue
+                keep.append(d)
+            self._last_extra = keep
+        out = []
+        for d in self._last_extra:
+            if any(math.hypot(d.u - k.u, d.v - k.v) < self.EXTRA_OVERLAP * (d.r + k.r)
+                   for k in dets):
+                continue
+            out.append(Detection(u=d.u, v=d.v, r=d.r, score=d.score, cls=d.cls,
+                                 cls_probs=d.cls_probs, alias=None))
+        return out
+
+    def detect(self, minimap_bgr: np.ndarray) -> list[Detection]:
+        """Roster matches (+ unexplained generic detections); [] on error. Never raises."""
+        try:
+            if not self._has_roster():
+                return list(self.fallback.detect(minimap_bgr) or [])
+            dets = list(self.matcher.detect(minimap_bgr) or [])
+            img = _as_bgr(minimap_bgr)
+            if img is None:
+                return dets
+            try:
+                dets += self._extras(img, dets)
+            except Exception:
+                self._errors.exception("Hybrid detector fallback failed")
+            return dets
+        except Exception:
+            self._errors.exception("Hybrid detection failed")
+            return []
+
+    def close(self) -> None:
+        try:
+            self.fallback.close()
+        except Exception:
+            pass
+
+
+def _generic_detector(b: str, threshold: float) -> BaseDetector:
     if b in ("auto", "onnx"):
         try:
             model = default_model_path()
@@ -756,8 +972,41 @@ def create_detector(backend: str = "auto", threshold: float = 0.0) -> BaseDetect
         return _NullDetector()
 
 
+def create_detector(backend: str = "auto", threshold: float = 0.0, *, db: Any = None,
+                    scale_store: dict | None = None,
+                    on_scale: Any = None, roster: bool = True) -> BaseDetector:
+    """Build the detector for ``backend`` ("auto" | "onnx" | "classic"). Never raises.
+
+    "auto" and "onnx" try the bundled ONNX model and fall back to :class:`ClassicDetector`
+    (with a logged reason). ``threshold`` 0 = value from ``model_meta.json`` (ONNX only).
+    With ``roster`` (default) the result is a :class:`HybridDetector`: once the engine gives
+    it the game's roster (``set_roster``) it finds the 10 champions by their portraits
+    (:mod:`treeaicoach.roster_matcher`, champion icons from ``db``; icon scale prior /
+    persistence in ``scale_store`` + ``on_scale(key, ratio)``), and behaves exactly like
+    the generic detector otherwise.
+    """
+    try:
+        b = str(backend or "auto").strip().lower()
+    except Exception:
+        b = "auto"
+    if b not in ("auto", "onnx", "classic"):
+        log.warning("Unknown detector backend %r: using auto", backend)
+        b = "auto"
+    base = _generic_detector(b, threshold)
+    if not roster:
+        return base
+    try:
+        from treeaicoach.roster_matcher import RosterMatcher
+
+        matcher = RosterMatcher(db=db, scale_store=scale_store, on_scale=on_scale)
+        return HybridDetector(base, matcher)
+    except Exception:
+        log.exception("Roster matcher unavailable: generic detector only")
+        return base
+
+
 __all__ = [
-    "CLASSES", "Detection", "BaseDetector", "OnnxDetector", "ClassicDetector",
+    "CLASSES", "Detection", "BaseDetector", "OnnxDetector", "ClassicDetector", "HybridDetector",
     "preprocess", "decode_outputs", "create_detector", "ring_color_labels",
     "default_model_path", "default_meta_path", "load_model_meta",
 ]

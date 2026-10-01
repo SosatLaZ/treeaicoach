@@ -117,6 +117,7 @@ RECAL_DROP = 0.5
 RECAL_WINDOW = 24
 RECAL_MIN_FRAMES = 48             # frames between two automatic re-calibrations
 CALIB_FRAMES = 3                  # first frames combined for the initial calibration
+REFRESH_FRAMES = 80               # period of the check for newly downloaded skin portraits
 #: Calibration quality below which the result is ignored.
 MIN_CALIB_QUALITY = 0.10
 
@@ -164,6 +165,8 @@ class RosterEntry:
     icon: np.ndarray                    # RGBA (or BGR) uint8 round portrait
     skin_id: int = 0
     team: str | None = None
+    #: False when the skin's own portrait is not available yet (base portrait used).
+    exact: bool = True
 
 
 @dataclass
@@ -422,6 +425,7 @@ class RosterMatcher:
         self._banks: dict[int, _Bank] = {}
         self._state = _State()
         self._size_key: str | None = None
+        self._game: Any = None
         self.rings = RingColorModel()
         self._errors = _RateLimitedLog()
         #: Diagnostics of the last detect() call.
@@ -476,6 +480,7 @@ class RosterMatcher:
         """Build the portrait templates from a ``GameInfo`` (None clears). Never raises."""
         try:
             if game is None:
+                self._game = None
                 self.set_entries(())
                 return
             me = getattr(game, "me", None)
@@ -497,11 +502,14 @@ class RosterMatcher:
                     skin = int(getattr(p, "skin_id", 0) or 0)
                 except (TypeError, ValueError):
                     skin = 0
-                icon = None
+                icon, exact = None, True
                 try:
+                    if skin > 0:
+                        path = db.cached_icon_path(alias, skin)
+                        exact = bool(path is not None and path.is_file())
                     icon = db.load_icon(alias, skin)
                     if icon is None and skin:
-                        icon = db.load_icon(alias, 0)
+                        icon, exact = db.load_icon(alias, 0), False
                 except Exception:
                     icon = None
                 if icon is None:
@@ -509,9 +517,11 @@ class RosterMatcher:
                     continue
                 seen.add(alias)
                 ents.append(RosterEntry(alias=alias, relation=rel, icon=icon, skin_id=skin,
-                                        team=str(getattr(p, "team", "") or "") or None))
-            old = [(e.alias, e.skin_id, e.relation) for e in self._entries]
-            if old == [(e.alias, e.skin_id, e.relation) for e in ents]:
+                                        team=str(getattr(p, "team", "") or "") or None,
+                                        exact=exact))
+            self._game = game
+            old = [(e.alias, e.skin_id, e.relation, e.exact) for e in self._entries]
+            if old == [(e.alias, e.skin_id, e.relation, e.exact) for e in ents]:
                 return
             self.set_entries(ents)
             log.info("Roster matcher: %d portraits", len(ents))
@@ -678,12 +688,28 @@ class RosterMatcher:
             if bgr is None or not self._entries:
                 return []
             with self._lock:
+                if self._state.frames % REFRESH_FRAMES == REFRESH_FRAMES - 1:
+                    self._refresh_skins()
                 return self._detect(bgr)
         except Exception:
             self._errors.exception("Roster matcher detection failed")
             return []
         finally:
             self.last_time_ms = 1000 * (time.perf_counter() - t0)
+
+    def _refresh_skins(self) -> None:
+        """Skin portraits downloaded since set_roster: rebuild (keeps the calibration)."""
+        if self._game is None or all(e.exact for e in self._entries) or self.db is None:
+            return
+        for e in self._entries:
+            if not e.exact and e.skin_id > 0:
+                try:
+                    path = self.db.cached_icon_path(e.alias, e.skin_id)
+                    if path is not None and path.is_file():
+                        self.set_roster(self._game)
+                        return
+                except Exception:
+                    return
 
     def _current_scale(self, bgr: np.ndarray) -> float:
         st = self._state

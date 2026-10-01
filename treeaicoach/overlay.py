@@ -10,8 +10,8 @@ separate popup windows of the TreeAI Coach process:
   *Windowed* mode.
 * one dedicated thread owns every window and pumps its messages with ``PeekMessageW``; it
   refreshes at ~12 Hz from ``state_provider()`` and hides everything when the state is None.
-* every window is excluded from screen capture (``SetWindowDisplayAffinity(hwnd,
-  WDA_EXCLUDEFROMCAPTURE)``, Windows 10 2004+). The default "minimap" mode then draws thin
+* the window drawn over the minimap is excluded from screen capture (``SetWindowDisplayAffinity(hwnd,
+  WDA_EXCLUDEFROMCAPTURE)``, Windows 10 2004+); HUD, radar and flash stay capturable. The default "minimap" mode then draws thin
   marks *exactly over the real minimap* (``state.minimap_rect``): the engine keeps capturing the
   minimap without seeing them. When the exclusion is unavailable the manager falls back to the
   "radar" mode: an enlarged copy placed *above* the minimap (shrunk rather than moved towards
@@ -979,15 +979,10 @@ class OverlayManager:
             # creation order = z-order among topmost windows: flash below radar / minimap / HUD
             for name in ("flash", "radar", "minimap", "hud"):
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved)
-            excluded = [w.exclude_from_capture() for w in windows.values()]
-            self.capture_excluded = all(excluded)
-            if not self.capture_excluded:
-                for w in windows.values():   # never leave a half-excluded set behind
-                    try:
-                        if w._api.SetWindowDisplayAffinity is not None:
-                            w._api.SetWindowDisplayAffinity(w.hwnd, WDA_NONE)
-                    except Exception:  # pragma: no cover
-                        pass
+            # Only the window drawn ON the minimap must be hidden from screen capture (so we
+            # never re-detect our own drawings). The HUD / radar / flash never overlap the
+            # captured minimap: keep them visible in the user's screenshots and streams.
+            self.capture_excluded = windows["minimap"].exclude_from_capture()
             log.info("Overlay: capture exclusion %s -> mode %s",
                      "OK" if self.capture_excluded else "indisponible", self.effective_mode)
         except Exception:

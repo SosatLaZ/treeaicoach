@@ -1,6 +1,6 @@
 {
-  "version": "1.4.0",
-  "sha256": "a3e96b09e88e259cbbde9474f2b26e1128951e00932595639769ff7866a4dcf1",
-  "size": 78976870,
-  "notes": "Affichage sur la minimap, alertes par rôle, mode sûr, mises à jour intégrées, correctif échelle Windows 125 %"
+  "version": "1.4.1",
+  "sha256": "24427b6660b1d59e6d637c638cc207e53ad85e5fc931a9c09bf420157c72fcac",
+  "size": 78989378,
+  "notes": "Correctif : le bandeau d'infos redevient visible dans les captures d'écran ; seul le calque de la minimap est exclu."
 }

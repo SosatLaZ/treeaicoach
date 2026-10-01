@@ -430,17 +430,35 @@ class ChampionIdentifier:
         if img.dtype != np.uint8:
             img = np.clip(img, 0, 255).astype(np.uint8)
         if roster is not None and roster.members:
-            self._match(img, dets, roster, out)
+            self._trust_aliases(dets, roster, out)
+            if any(o.alias is None for o in out):
+                self._match(img, dets, roster, out)
         if roster is not None and roster.has_me and not any(o.relation == "self" for o in out):
             self._camera_fallback(img, out, roster)
         return out
+
+    @staticmethod
+    def _trust_aliases(dets: list[Detection], roster: _Roster, out: list[Identified]) -> None:
+        """Detections already recognised by the detector (roster matcher): trusted as is."""
+        by_alias = {m.alias: m for m in roster.members}
+        for i, d in enumerate(dets):
+            mem = by_alias.get(getattr(d, "alias", None) or "")
+            if mem is None:
+                continue
+            team = mem.team or (roster.my_team if mem.relation != "enemy"
+                                else _other_team(roster.my_team))
+            out[i] = Identified(det=d, alias=mem.alias, relation=mem.relation, team=team,
+                                id_score=min(1.0, max(0.0, float(d.score))))
 
     def _match(self, img: np.ndarray, dets: list[Detection], roster: _Roster,
                out: list[Identified]) -> None:
         H, W = img.shape[:2]
         rows: list[int] = []
         qf: list[np.ndarray] = []
+        taken_m = {o.alias for o in out if o.alias is not None}
         for i, d in enumerate(dets):
+            if out[i].alias is not None:
+                continue
             u, v, r = float(d.u), float(d.v), float(d.r)
             if not (math.isfinite(u) and math.isfinite(v) and math.isfinite(r)):
                 continue
@@ -460,6 +478,7 @@ class ChampionIdentifier:
         if not rows:
             return
         nm, nv = len(roster.members), roster.n_variants
+        used_m: set[int] = {m for m, mem in enumerate(roster.members) if mem.alias in taken_m}
         # one matrix-vector product per crop: BLAS gemm spawns threads that are very slow
         # on a busy CPU, gemv stays single-threaded and fast
         Q = _features(qf)
@@ -474,7 +493,6 @@ class ChampionIdentifier:
         # greedy unique assignment
         flat = np.argsort(-S, axis=None)
         used_d: set[int] = set()
-        used_m: set[int] = set()
         for idx in flat:
             a, m = divmod(int(idx), nm)
             s = float(S[a, m])
