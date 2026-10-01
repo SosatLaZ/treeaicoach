@@ -16,7 +16,7 @@ import pytest
 
 from treeaicoach.alerts import Alert, AlertKind, AlertThrottler, Level
 from treeaicoach.config import Config
-from treeaicoach.gank import GankAnalyzer, GankState
+from treeaicoach.gank import JUNGLER_EARLY_FACTOR, GankAnalyzer, GankState
 from treeaicoach.live_client import GameInfo, PlayerInfo
 from treeaicoach.tracker import Tracker
 
@@ -238,16 +238,21 @@ def test_jungler_gank_warning_then_danger(jitter: float, drop: float) -> None:
     ticks = simulate(16.0, jungler_path_fn(), jitter=jitter, drop=drop, seed=3)
     gank = gank_raw(ticks)
     assert gank, "no gank alert"
-    for tk, _a in gank:                   # never before entering the warn radius
-        assert tk.true_d["LeeSin"] < WARN + 0.015
+    early = WARN * JUNGLER_EARLY_FACTOR    # the jungler clearly coming at me: ~2 s earlier
+    for tk, _a in gank:                   # never before entering the (early) warn radius
+        assert tk.true_d["LeeSin"] < early + 0.015
     assert {a.kind for _tk, a in gank} == {AlertKind.JUNGLER_APPROACH}
     first_warn = next(tk for tk, a in gank if a.level == Level.WARNING)
     first_danger = next(tk for tk, a in gank if a.level == Level.DANGER)
     assert first_warn.t < first_danger.t
-    assert WARN - 0.05 < first_warn.true_d["LeeSin"] < WARN + 0.015
+    assert WARN < first_warn.true_d["LeeSin"] < early + 0.015
+    # contact lead: WARNING >= 5 s before the enemy reaches the danger radius
+    assert first_danger.t - first_warn.t >= 5.0
     assert DANGER - 0.03 < first_danger.true_d["LeeSin"] < DANGER + 0.015
     said = [a for _tk, a in said_of(ticks, GANK_KINDS)]
-    assert [a.text for a in said] == ["Lee Sin arrive par la rivière !", "Gank ! Lee Sin, recule !"]
+    # announced earlier (ETA ~9 s): he is still in the enemy jungle, not yet in the river
+    assert [a.text for a in said] in (["Lee Sin arrive par la jungle ennemie !", "Gank ! Lee Sin, recule !"],
+                                      ["Lee Sin arrive par la rivière !", "Gank ! Lee Sin, recule !"])
     assert all(a.key == "jungler_approach:LeeSin" and a.alias == "LeeSin" for a in said)
     # first sighting after 1:30, far away: announced once (it will not be repeated on the same side)
     spotted = raw_of(ticks, AlertKind.JUNGLER_SPOTTED)
@@ -265,7 +270,7 @@ def test_enemy_appearing_from_fog_close_is_danger_after_confirmation(name: str, 
     assert first.raw[0].kind == AlertKind.ROAM_APPROACH
     assert first.said and first.said[0].level == Level.DANGER
     if name == "Ahri":
-        assert first.said[0].text == "Gank ! Ahri, recule !"
+        assert first.said[0].text == "Roam ! Ahri, recule !"
     else:
         assert first.said[0].text == "Gank ! Un ennemi arrive, recule !"
         assert first.said[0].key == "roam_approach:enemy?1" and first.said[0].alias is None
@@ -288,7 +293,7 @@ def test_mid_laner_roaming_top(positions: bool) -> None:
     assert roam and all(tk.t >= 40.0 for tk, _a in roam)
     levels = [a.level for _tk, a in roam]
     assert Level.WARNING in levels and Level.DANGER in levels
-    assert said_texts(ticks) == ["Ahri arrive par la jungle ennemie !", "Gank ! Ahri, recule !"]
+    assert said_texts(ticks) == ["Roam : Ahri arrive par la jungle ennemie !", "Roam ! Ahri, recule !"]
 
 
 def test_three_enemies_converging_merged_into_one_sentence() -> None:
@@ -424,7 +429,7 @@ def test_noisy_jungler_walk_no_early_alert_and_no_flapping() -> None:
     for seed in range(3):
         ticks = simulate(16.0, jungler_path_fn(), jitter=0.01, drop=0.2, seed=seed)
         gank = gank_raw(ticks)
-        assert gank and all(tk.true_d["LeeSin"] < WARN + 0.015 for tk, _a in gank)
+        assert gank and all(tk.true_d["LeeSin"] < WARN * JUNGLER_EARLY_FACTOR + 0.015 for tk, _a in gank)
         said = [a for _tk, a in said_of(ticks, GANK_KINDS)]
         assert [a.level for a in said] in ([Level.WARNING, Level.DANGER], [Level.DANGER])
 

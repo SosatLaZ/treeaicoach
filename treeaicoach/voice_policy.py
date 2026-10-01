@@ -14,7 +14,9 @@ Same list at every skill level; ``cfg.voice_level`` only adds to it:
   1. gank alerts after triage (:func:`triage_gank`): "Gank ! Lee Sin, recule !", "Lee Sin
      arrive !" (an enemy jungler / roamer coming AT ME), dropped during a fight;
   2. the fight call RECULE (``call:retreat``) - the only voice line during a fight. "Attaque !"
-     (``call:engage``) is never spoken: the big green banner says it;
+     (``call:engage``) is never spoken: the big green banner says it; and the PERSONAL "Recule !"
+     (``AlertKind.PERSONAL_DANGER`` at DANGER, danger.py: low HP with an enemy on me, on screen
+     or not, gank or lane duel; never twice within 20 s). Its WARNING level is written only;
   3. the F9 answer (the player asked);
   4. an epic objective spawning in <= :data:`OBJECTIVE_VOICE_MAX_LEAD_S` s (the last
      announcement) WHEN I AM INVOLVED (alive, my role plays it or I stand near the pit, see
@@ -26,7 +28,8 @@ Same list at every skill level; ``cfg.voice_level`` only adds to it:
 
 :meth:`VoiceGate.decide` then applies the "would a Challenger coach say this RIGHT NOW?" rules:
 
-* gank alerts: dropped during a fight (the fight call speaks) or while I am dead / in base;
+* gank alerts: dropped during a fight (the fight call speaks) or while I am dead (NOT in my base:
+  a siege of my base is announced; the analyser itself is silent in the fountain);
   written only when uncertain (confidence < :data:`CONFIDENCE_MIN`), when the enemy is already in
   the danger radius and a gank was called in the last :data:`GANK_REPEAT_S` (no second sentence
   while I am fighting for my life), and per :func:`triage_gank` (grouped, ganker behind my allies,
@@ -59,6 +62,7 @@ log = logging.getLogger(__name__)
 VOICE_LEVELS: tuple[str, ...] = ("minimal", "normal", "bavard")
 DEFAULT_VOICE_LEVEL = "minimal"
 GANK_KINDS = frozenset({AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE})
+PERSONAL = AlertKind.PERSONAL_DANGER
 #: Always spoken (answers to a hotkey the player pressed).
 ALWAYS_VOICE = frozenset({AlertKind.JUNGLER_WHERE})
 #: Praise keys (praise.PraiseCoach) of the big moments, spoken even in "minimal".
@@ -115,6 +119,7 @@ TEXT_TOAST: dict[str, tuple[str, str]] = {
     "control_ward": ("insight", "BALISE"), "objective_soon": ("warning", "OBJECTIF"),
     "death_recap": ("danger", "TA MORT"),
     "laner_mia": ("warning", "DISPARU"), "macro_call": ("insight", "CONSEIL"),
+    "personal_danger": ("danger", "DANGER"),
 }
 
 
@@ -189,6 +194,8 @@ def route(alert: Any, voice_level: Any = DEFAULT_VOICE_LEVEL) -> str:
         key = str(getattr(alert, "key", "") or "")
         if kind in GANK_KINDS or kind in ALWAYS_VOICE or key.startswith("call:retreat"):
             return "voice"
+        if kind == PERSONAL:
+            return "voice" if int(getattr(alert, "level", 0) or 0) >= 2 else "text"
         if key.startswith("call:"):
             return "text"                      # "Attaque !": the big banner says it
         level = normalize_level(voice_level)
@@ -221,7 +228,9 @@ class MessageGate:
 
     @staticmethod
     def _exempt(alert: Any) -> bool:
+        # personal danger: own cooldowns (danger.py + the throttler's 20 s), never gated here
         return (getattr(alert, "kind", None) in GANK_KINDS or getattr(alert, "kind", None) in ALWAYS_VOICE
+                or getattr(alert, "kind", None) == PERSONAL
                 or str(getattr(alert, "key", "") or "").startswith("call:"))
 
     def check(self, alert: Any, t: float) -> bool:
@@ -338,6 +347,8 @@ URGENT_TTL_S = 8.0
 def is_critical(alert: Any) -> bool:
     """Gank alerts, F9 answers and fight calls: never budgeted (they ARE the point)."""
     kind = getattr(alert, "kind", None)
+    if kind == PERSONAL:
+        return int(getattr(alert, "level", 0) or 0) >= 2          # the personal "Recule !"
     return kind in GANK_KINDS or kind in ALWAYS_VOICE or str(getattr(alert, "key", "") or "").startswith("call:")
 
 
@@ -471,7 +482,8 @@ def triage_gank(alert: Any, *, me_pos: Any, allies: list[Any], enemies: list[Any
     """Is this gank alert worth SPEAKING? Returns ``(decision, text)``:
 
     * ``("speak", None)`` - say it (the word "Gank" is kept);
-    * ``("drop", None)``  - fight going on / I am dead / in my base: nothing (the fight call speaks);
+    * ``("drop", None)``  - fight going on / I am dead: nothing (the fight call speaks). ``in_base``
+      is ignored (kept for compatibility): a siege of my base must be announced;
     * ``("text", reason)`` - (WARNING only) grouped with >= 2 allies, or the ganker is behind my
       allies: written only; a DANGER gank is always spoken outside a fight;
     * ``("opportunity", text)`` - the "ganker" is alone and clearly weaker than me (+ close
@@ -484,7 +496,7 @@ def triage_gank(alert: Any, *, me_pos: Any, allies: list[Any], enemies: list[Any
         me = getattr(game, "me", None)
         if in_fight:
             return "drop", None
-        if (me is not None and bool(getattr(me, "is_dead", False))) or in_base:
+        if me is not None and bool(getattr(me, "is_dead", False)):
             return "drop", None
         if me_pos is None or int(getattr(alert, "level", 0) or 0) >= 2:
             return "speak", None                     # a DANGER gank on me is never delayed / downgraded
@@ -621,8 +633,12 @@ class VoiceGate:
             if ctx.dead or not key.startswith("call:retreat"):
                 return "drop"                                # "Attaque !": the banner says it (no double)
             return "voice"                                   # RECULE: the one line spoken in a fight
+        if kind == PERSONAL:
+            if ctx.dead:
+                return "drop"
+            return "voice" if int(getattr(alert, "level", 0) or 0) >= 2 else "text"
         if kind in GANK_KINDS:
-            if ctx.in_fight or ctx.dead or ctx.in_base:
+            if ctx.in_fight or ctx.dead:
                 return "drop"
             with self._lock:
                 recent = 0.0 <= t - self._gank_t < GANK_REPEAT_S

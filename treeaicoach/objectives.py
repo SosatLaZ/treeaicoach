@@ -1,9 +1,15 @@
-"""Epic objective timers (dragon, elder, voidgrubs, herald, Atakhan, baron) and voice announcements.
+"""Epic objective timers (dragon, elder, voidgrubs, herald, baron) and voice announcements.
 
 Sources (official only): the match clock and the kill events of the Live Client Data API
-(``DragonKill`` with ``DragonType``, ``BaronKill``, ``HeraldKill``, ``HordeKill``, ``AtakhanKill``).
+(``DragonKill`` with ``DragonType``, ``BaronKill``, ``HeraldKill``, ``HordeKill``).
 Respawns after a kill are exact (dragon 5:00, elder / baron 6:00); first spawns come from a
-schedule that changes with patches, so it can be overridden without rebuilding the app:
+schedule that changes with patches, so it can be overridden without rebuilding the app.
+
+Season 2026 (patch 26.1+, checked against patch 26.19): Atakhan was removed from the game
+(an ``AtakhanKill`` event or an ``"atakhan"`` key in an old override file is silently ignored),
+Baron spawns at 20:00 again, the single Voidgrub camp (3 grubs) spawns at 8:00 and leaves at 14:45,
+the Rift Herald spawns at 15:00 (gone at 19:45), dragons at 5:00 (+5:00 respawn), soul at 4 dragons,
+Elder 6:00 after the soul / an Elder kill.  Schedule chain:
 
 ``OBJECTIVE_SCHEDULE`` (code) <- ``assets/objectives.json`` (bundled) <- ``user_data_dir()/objectives.json``.
 
@@ -48,10 +54,9 @@ log = logging.getLogger(__name__)
 OBJECTIVE_SCHEDULE: dict[str, dict[str, float | None]] = {
     "dragon": {"first": 300, "respawn": 300, "soul": 4},
     "elder": {"respawn": 360},
-    "grubs": {"first": 360, "respawn": None, "despawn": 840, "count": 3},
+    "grubs": {"first": 480, "respawn": None, "despawn": 885, "count": 3},
     "herald": {"first": 900, "despawn": 1185},
-    "atakhan": {"first": 1200},
-    "baron": {"first": 1500, "respawn": 360},
+    "baron": {"first": 1200, "respawn": 360},
 }
 SCHEDULE_FILE_NAME = "objectives.json"
 SCHEDULE_KEYS: dict[str, tuple[str, ...]] = {
@@ -59,9 +64,10 @@ SCHEDULE_KEYS: dict[str, tuple[str, ...]] = {
     "elder": ("respawn",),
     "grubs": ("first", "respawn", "despawn", "count"),
     "herald": ("first", "respawn", "despawn"),
-    "atakhan": ("first", "respawn", "despawn"),
     "baron": ("first", "respawn", "despawn"),
 }
+#: Objectives removed from the game: silently ignored in override files (Atakhan: removed in 26.1).
+LEGACY_KEYS: frozenset[str] = frozenset({"atakhan"})
 MAX_SCHEDULE_TIME_S = 4 * 3600.0
 MAX_SCHEDULE_FILE_BYTES = 64 * 1024
 
@@ -71,17 +77,15 @@ NAMES_FR: dict[str, str] = {
     "elder": "Dragon ancestral",
     "grubs": "Larves",
     "herald": "Héraut",
-    "atakhan": "Atakhan",
     "baron": "Baron",
 }
 #: Order of the objective slots (the dragon slot turns into "elder" after the soul).
-SLOT_ORDER: tuple[str, ...] = ("dragon", "grubs", "herald", "atakhan", "baron")
+SLOT_ORDER: tuple[str, ...] = ("dragon", "grubs", "herald", "baron")
 KILL_EVENTS: dict[str, str] = {
     "DragonKill": "dragon",
     "BaronKill": "baron",
     "HeraldKill": "herald",
     "HordeKill": "grubs",
-    "AtakhanKill": "atakhan",
 }
 
 DEFAULT_LEADS_S: tuple[int, ...] = (60, 20)
@@ -104,11 +108,11 @@ class ObjectiveState:
     ``remaining`` = seconds until the spawn at the last update (0 when alive).
     """
 
-    name: str                           # "Dragon", "Baron", "Héraut", "Larves", "Atakhan", "Dragon ancestral"
+    name: str                           # "Dragon", "Baron", "Héraut", "Larves", "Dragon ancestral"
     next_spawn: float | None
     alive: bool
     source: str                         # "schedule" | "event"
-    key: str = ""                       # "dragon" | "elder" | "grubs" | "herald" | "atakhan" | "baron"
+    key: str = ""                       # "dragon" | "elder" | "grubs" | "herald" | "baron"
     remaining: float | None = None
 
 
@@ -137,7 +141,7 @@ def merge_schedule(base: Mapping[str, Any], override: Any, source: str = "overri
             log.warning("Objective schedule %s is not an object; ignored", source)
         return out
     for obj, entry in override.items():
-        if not isinstance(obj, str) or obj.startswith("_"):
+        if not isinstance(obj, str) or obj.startswith("_") or obj in LEGACY_KEYS:
             continue
         allowed = SCHEDULE_KEYS.get(obj)
         if allowed is None or not isinstance(entry, Mapping):

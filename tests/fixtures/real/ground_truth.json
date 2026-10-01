@@ -1,0 +1,400 @@
+{
+ "about": "Real in-game minimap crops (user screenshots, 2000x1125 client, 300 px minimap; shot2 306 px other setup). u,v = icon centre / crop side. team from ring colour; name null = not identifiable. self = local player. Screens 3-10 contain the TreeAI overlay drawn over the minimap.",
+ "rosters": {
+  "g1": {
+   "self": "Garen",
+   "ally": [
+    "MasterYi",
+    "Mel",
+    "Ezreal",
+    "Brand"
+   ],
+   "enemy": [
+    "Vladimir",
+    "Kindred",
+    "Ekko",
+    "Seraphine",
+    "Thresh"
+   ]
+  },
+  "g2": {
+   "self": "Zaahen",
+   "ally": [
+    "Jinx",
+    "Ahri"
+   ],
+   "enemy": [
+    "Kassadin",
+    "Shen"
+   ],
+   "note": "other players unknown: fill with random distinct champions"
+  }
+ },
+ "images": {
+  "shot2": {
+   "game": "g2",
+   "time": "?",
+   "champions": [
+    {
+     "u": 0.285,
+     "v": 0.075,
+     "team": "ally",
+     "name": "Zaahen",
+     "self": true
+    },
+    {
+     "u": 0.593,
+     "v": 0.425,
+     "team": "enemy",
+     "name": "Kassadin"
+    },
+    {
+     "u": 0.546,
+     "v": 0.461,
+     "team": "ally",
+     "name": "Jinx"
+    },
+    {
+     "u": 0.638,
+     "v": 0.914,
+     "team": "ally",
+     "name": "Ahri"
+    },
+    {
+     "u": 0.77,
+     "v": 0.899,
+     "team": "enemy",
+     "name": "Shen"
+    }
+   ],
+   "note": "older setup, no TreeAI overlay, timers text",
+   "file": "shot2.png"
+  },
+  "shot3": {
+   "game": "g1",
+   "time": "0:26",
+   "champions": [
+    {
+     "u": 0.95,
+     "v": 0.047,
+     "team": "ally",
+     "name": "Garen",
+     "self": true,
+     "note": "in fountain, corner"
+    },
+    {
+     "u": 0.53,
+     "v": 0.432,
+     "team": "ally",
+     "name": "Mel",
+     "note": "overlay ring drawn across"
+    },
+    {
+     "u": 0.757,
+     "v": 0.54,
+     "team": "ally",
+     "name": "MasterYi"
+    },
+    {
+     "u": 0.887,
+     "v": 0.615,
+     "team": "ally",
+     "name": null,
+     "note": "bot duo stacked, under Brand"
+    },
+    {
+     "u": 0.89,
+     "v": 0.66,
+     "team": "ally",
+     "name": "Brand"
+    }
+   ],
+   "note": "overlay rings/labels over icons",
+   "file": "shot3.png"
+  },
+  "shot4": {
+   "game": "g1",
+   "time": "15:25",
+   "dead": [
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.473,
+     "v": 0.26,
+     "team": "ally",
+     "name": "MasterYi"
+    },
+    {
+     "u": 0.583,
+     "v": 0.407,
+     "team": "ally",
+     "name": "Mel"
+    },
+    {
+     "u": 0.533,
+     "v": 0.47,
+     "team": "enemy",
+     "name": "Kindred"
+    },
+    {
+     "u": 0.866,
+     "v": 0.716,
+     "team": "ally",
+     "name": "Brand",
+     "note": "partly covered by Ezreal"
+    },
+    {
+     "u": 0.93,
+     "v": 0.763,
+     "team": "ally",
+     "name": "Ezreal"
+    },
+    {
+     "u": 0.83,
+     "v": 0.83,
+     "team": "enemy",
+     "name": "Seraphine"
+    },
+    {
+     "u": 0.897,
+     "v": 0.837,
+     "team": "enemy",
+     "name": "Thresh"
+    }
+   ],
+   "note": "dead, shop open (minimap visible)",
+   "file": "shot4.png"
+  },
+  "shot5": {
+   "game": "g1",
+   "time": "~16:10",
+   "champions": [
+    {
+     "u": 0.953,
+     "v": 0.035,
+     "team": "ally",
+     "name": null,
+     "note": "fountain corner"
+    },
+    {
+     "u": 0.487,
+     "v": 0.257,
+     "team": "ally",
+     "name": "MasterYi"
+    },
+    {
+     "u": 0.947,
+     "v": 0.283,
+     "team": "ally",
+     "name": "Ezreal"
+    },
+    {
+     "u": 0.933,
+     "v": 0.47,
+     "team": "ally",
+     "name": "Brand"
+    }
+   ],
+   "note": "client window covers the left ~20% and the bottom strip; minimap located 10 px off",
+   "file": "shot5.png"
+  },
+  "shot6": {
+   "game": "g1",
+   "time": "25:08",
+   "champions": [
+    {
+     "u": 0.958,
+     "v": 0.035,
+     "team": "ally",
+     "name": "Garen",
+     "self": true,
+     "note": "fountain corner"
+    },
+    {
+     "u": 0.333,
+     "v": 0.31,
+     "team": "ally",
+     "name": "MasterYi"
+    },
+    {
+     "u": 0.71,
+     "v": 0.313,
+     "team": "ally",
+     "name": "Mel"
+    },
+    {
+     "u": 0.603,
+     "v": 0.387,
+     "team": "enemy",
+     "name": "Seraphine"
+    },
+    {
+     "u": 0.613,
+     "v": 0.433,
+     "team": "enemy",
+     "name": "Kindred",
+     "note": "partly under Seraphine"
+    },
+    {
+     "u": 0.847,
+     "v": 0.627,
+     "team": "enemy",
+     "name": "Thresh"
+    },
+    {
+     "u": 0.933,
+     "v": 0.657,
+     "team": "ally",
+     "name": "Brand"
+    },
+    {
+     "u": 0.89,
+     "v": 0.707,
+     "team": "enemy",
+     "name": "Vladimir"
+    }
+   ],
+   "note": "red wall outline late game",
+   "file": "shot6.png"
+  },
+  "shot7": {
+   "game": "g1",
+   "time": "26:26",
+   "dead": [
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.947,
+     "v": 0.043,
+     "team": "ally",
+     "name": "MasterYi",
+     "note": "fountain corner"
+    },
+    {
+     "u": 0.893,
+     "v": 0.187,
+     "team": "ally",
+     "name": "Ezreal",
+     "note": "covered by overlay labels"
+    },
+    {
+     "u": 0.928,
+     "v": 0.237,
+     "team": "enemy",
+     "name": "Thresh"
+    },
+    {
+     "u": 0.53,
+     "v": 0.43,
+     "team": "enemy",
+     "name": null,
+     "note": "mostly covered by overlay labels"
+    }
+   ],
+   "file": "shot7.png"
+  },
+  "shot8": {
+   "game": "g1",
+   "time": "32:22",
+   "dead": [
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.59,
+     "v": 0.06,
+     "team": "enemy",
+     "name": "Thresh"
+    },
+    {
+     "u": 0.693,
+     "v": 0.057,
+     "team": "ally",
+     "name": "Brand"
+    },
+    {
+     "u": 0.547,
+     "v": 0.127,
+     "team": "ally",
+     "name": "Ezreal"
+    },
+    {
+     "u": 0.647,
+     "v": 0.203,
+     "team": "ally",
+     "name": "Mel"
+    }
+   ],
+   "file": "shot8.png"
+  },
+  "shot9": {
+   "game": "g1",
+   "time": "33:25",
+   "champions": [
+    {
+     "u": 0.683,
+     "v": 0.067,
+     "team": "enemy",
+     "name": "Thresh"
+    },
+    {
+     "u": 0.707,
+     "v": 0.095,
+     "team": "enemy",
+     "name": null,
+     "note": "mostly hidden under Thresh / MasterYi"
+    },
+    {
+     "u": 0.763,
+     "v": 0.107,
+     "team": "ally",
+     "name": "MasterYi"
+    },
+    {
+     "u": 0.363,
+     "v": 0.653,
+     "team": "enemy",
+     "name": "Ekko"
+    }
+   ],
+   "note": "enemies in our base",
+   "file": "shot9.png"
+  },
+  "shot10": {
+   "game": "g1",
+   "time": "34:26",
+   "champions": [
+    {
+     "u": 0.943,
+     "v": 0.047,
+     "team": "ally",
+     "name": "Mel",
+     "note": "fountain corner"
+    },
+    {
+     "u": 0.835,
+     "v": 0.172,
+     "team": "ally",
+     "name": null,
+     "note": "stack in base"
+    },
+    {
+     "u": 0.867,
+     "v": 0.24,
+     "team": "ally",
+     "name": "MasterYi"
+    },
+    {
+     "u": 0.77,
+     "v": 0.253,
+     "team": "enemy",
+     "name": "Thresh"
+    }
+   ],
+   "note": "siege stack in our base",
+   "file": "shot10.png"
+  }
+ }
+}

@@ -44,8 +44,8 @@ def test_spec_examples() -> None:
     assert phrase(J, Level.WARNING, "Lee Sin", "par la rivière") == "Lee Sin arrive par la rivière !"
     assert phrase(J, Level.WARNING, "Lee Sin") == "Lee Sin arrive !"
     assert phrase(J, Level.DANGER, "Lee Sin") == "Gank ! Lee Sin, recule !"
-    assert phrase(R, Level.WARNING, "Ahri", "par ta jungle") == "Ahri arrive par ta jungle !"
-    assert phrase(R, Level.DANGER, "Ahri") == "Gank ! Ahri, recule !"
+    assert phrase(R, Level.WARNING, "Ahri", "par ta jungle") == "Roam : Ahri arrive par ta jungle !"
+    assert phrase(R, Level.DANGER, "Ahri") == "Roam ! Ahri, recule !"
     assert phrase(C, Level.WARNING, None, "bot", count=2, names=["Lee Sin", "Ahri"]) == (
         "Gank bot : Lee Sin et Ahri !")
     assert phrase(C, Level.DANGER, None, "top", count=3, names=["Lee Sin", "Ahri"]) == (
@@ -167,7 +167,7 @@ def test_phrase_never_raises() -> None:
     assert phrase("bogus", Level.DANGER, "X") == "Danger, recule !"  # type: ignore[arg-type]
     assert phrase("collapse", "danger", None, count=2) == "Danger, 2 ennemis arrivent, recule !"  # type: ignore[arg-type]
     assert phrase(AlertKind.ROAM_APPROACH, 99, Evil()) == "Gank ! Un ennemi arrive, recule !"  # type: ignore[arg-type]
-    assert phrase(AlertKind.ROAM_APPROACH, None, "Zed") == "Zed arrive !"  # type: ignore[arg-type]
+    assert phrase(AlertKind.ROAM_APPROACH, None, "Zed") == "Roam : Zed arrive !"  # type: ignore[arg-type]
     assert phrase(AlertKind.COLLAPSE, Level.DANGER, None, count=float("inf")) == (
         "Danger, 5 ennemis arrivent, recule !")
     assert phrase(AlertKind.ROAM_APPROACH, Level.WARNING, "X" * 500).endswith(" arrive !")
@@ -231,9 +231,20 @@ def test_cooldown_per_key_by_level(level: Level, cooldown: float) -> None:
 def test_gank_kinds_not_repeated_for_12s(kind: AlertKind, level: Level) -> None:
     th = AlertThrottler()
     assert th.filter([A(kind, level, 0.0)], 0.0)
-    for t in (1.0, 6.5, 8.5, 11.9):
+    repeat = 25.0 if kind == RA else 12.0      # a roam of the same laner: once per roam (25 s)
+    for t in (1.0, 6.5, 8.5, 11.9, repeat - 0.1):
         assert th.filter([A(kind, level, t)], t) == []
-    assert th.filter([A(kind, level, 12.0)], 12.0)
+    assert th.filter([A(kind, level, repeat)], repeat)
+
+
+def test_personal_danger_recule_never_twice_within_20s() -> None:
+    th = AlertThrottler()
+    pd = AlertKind.PERSONAL_DANGER
+    assert phrase(pd, Level.DANGER, None) == "Recule !"
+    assert th.filter([A(pd, Level.DANGER, 0.0)], 0.0)
+    for t in (2.0, 10.0, 19.9):
+        assert th.filter([A(pd, Level.DANGER, t)], t) == []
+    assert th.filter([A(pd, Level.DANGER, 20.0)], 20.0)
 
 
 def test_same_gank_under_another_key_is_not_repeated() -> None:

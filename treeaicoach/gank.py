@@ -48,7 +48,14 @@ repeated for 12 s). Few alerts, but trustworthy ones:
 * **LANER_MIA** (option) - my lane opponent is hidden for >= 6 s while I am in my lane, after
   3:00 -> INFO, once per disappearance.
 
-Nothing is produced when I am dead (``game.me.is_dead``), in my base, when my position has been
+* **Roams** (a laner, not the jungler): announced as "Roam ! Ekko, recule !" only when he
+  comes at me (approach established / popped out of the fog close / very close), never while
+  he farms HIS lane (I am the visitor; the personal danger module speaks then).
+* **Earlier jungler warning**: an enemy jungler clearly coming at me raises the WARNING from
+  :data:`JUNGLER_EARLY_FACTOR` x the warn radius (~2 s earlier).
+
+Nothing is produced when I am dead (``game.me.is_dead``), in my FOUNTAIN (a siege of my base
+is still announced), when my position has been
 unknown for more than 3 s, outside Summoner's Rift, when the matching option is disabled, or in
 **safe mode** (``cfg.safe_mode``: no gank / jungler-tracking alerts at all).
 
@@ -145,6 +152,11 @@ STATE_MAXLEN = 64                # per-track analyser states kept at most
 ETA_FLASH = 0.027                # a Flash (~400 units) is free distance for the ganker
 ETA_REF_SPEED = 390.0 / 14870.0  # boots speed (normalized / s): the enemy's assumed speed
 ETA_REFIELD_CELLS = 1            # the distance field from me is recomputed when I moved more
+# earlier jungler warning (real game: deaths 0-4 s after the alert): an enemy jungler clearly
+# coming at me is announced from this factor of the warn radius (ETA ~9.5 s instead of ~7.4 s)
+JUNGLER_EARLY_FACTOR = 1.25
+# a roamer (laner) inside the danger radius without coming at me is only a gank when this close
+ROAM_STILL_DANGER_FACTOR = 0.6
 
 _LANES = ("top", "mid", "bot")
 _LANE_DIRECTION = {"top": "par le haut", "mid": "par le milieu", "bot": "par le bas"}
@@ -457,8 +469,9 @@ class GankAnalyzer:
             return self._suppress("unknown_position", now)
         my_team = normalize_team(getattr(me_info, "team", None)) or normalize_team(me.team)
         my_zone = classify_zone(me_pos[0], me_pos[1])
-        if (is_base(my_zone) and (my_team is None or zone_owner(my_zone) == my_team)) \
-                or in_fountain(me_pos[0], me_pos[1], my_team):
+        # only the fountain is silent: during a siege of my base (inhibitors, Nexus turrets) the
+        # ganks must still be announced (real game: 3 deaths in my base at 33-35 min, no alert)
+        if in_fountain(me_pos[0], me_pos[1], my_team):
             return self._suppress("base", now)
         my_vel = me.velocity() if me.visible else (0.0, 0.0)
         me_raw = me.raw_position() or me_pos
@@ -540,6 +553,8 @@ class GankAnalyzer:
                 self._jg_last_side = side_of(pos[0], pos[1])
             if lane_opp or d >= warn * COMPANION_RADIUS_FACTOR:
                 continue
+            if relation == "enemy" and not is_jungler and self._in_own_lane(tr, roster, pos, my_lane):
+                continue                           # a laner farming his own lane is not a roam
             if relation == "anon":
                 if d < warn:
                     pending_anon.append((tr, st, d))   # decided once the lane opponents are known
@@ -559,10 +574,15 @@ class GankAnalyzer:
             threat = _Threat(track_key=tr.key, member=tr.alias or tr.key,
                              name=roster.name(tr.alias), alias=tr.alias, level=Level.WARNING,
                              d=d, jungler=is_jungler, direction=self._direction(tr, my_team))
-            if d < danger:
+            if d < danger and (is_jungler or moving_in or st.on_count >= 1 or popped
+                               or d < danger * ROAM_STILL_DANGER_FACTOR):
                 threats.append(dataclasses.replace(threat, level=Level.DANGER))
-            elif d < warn and (moving_in or (popped and not pre)):
+            elif d < danger:
+                continue                            # a roamer standing still near me: no gank call
+            elif d < warn and (moving_in or (popped and not pre and is_jungler)):
                 threats.append(threat)              # popped out of the fog inside the warn radius
+            elif is_jungler and moving_in and d < warn * JUNGLER_EARLY_FACTOR:
+                threats.append(threat)              # the jungler coming at me: ~2 s earlier
             elif moving_in or st.on_count >= 1:
                 companions.append(threat)           # coming too, a little behind
 
@@ -727,6 +747,19 @@ class GankAnalyzer:
         if roster.role_certain(tr.alias):
             return by_role
         return by_role or self._history_in_lane(tr, my_lane, now)
+
+    def _in_own_lane(self, tr: Track, roster: _Roster, pos: tuple[float, float],
+                     my_lane: str | None) -> bool:
+        """A laner (not the jungler) standing in HIS lane, which is not mine: I am the visitor
+        (Ekko farming mid while I walk by), not the target of a roam."""
+        try:
+            info = roster.roles.info(tr.alias, "enemy") if tr.alias else None
+            lane = ROLE_LANE.get(info.role) if info is not None and info.role else None
+        except Exception:
+            lane = None
+        if lane is None or lane == my_lane:
+            return False
+        return lane_of(classify_zone(pos[0], pos[1])) == lane
 
     def _is_laner_ghost(self, tr: Track, laners: list[Track], roster: _Roster,
                         my_lane: str | None, now: float) -> bool:

@@ -62,17 +62,23 @@ def test_deaths_with_context(result: dict) -> None:
     assert set(d1["participants"]) == {"LeeSin", "Darius"}
     assert set(d1["nearby"]) == {"LeeSin", "Darius"}
     assert d1["jungler_involved"] and d1["warned"] and d1["alert_before_s"] == pytest.approx(4.0)
-    assert d1["verdict"] == "alerte ignorée"
-    # 9:20 solo death to the lane opponent, visible, no alert
+    assert d1["verdict"] == "alerte ignorée" and d1["verdict_key"] == "ignored" and not d1["app_fault"]
+    assert d1["alert_lead_s"] == pytest.approx(6.0)        # the WARNING 6 s before (DANGER 4 s before)
+    # 9:20 solo death to the lane opponent, visible, no alert: a lost lane duel, not an app failure
     assert d2["involved"] == ["Darius"] and not d2["jungler_involved"]
-    assert not d2["warned"] and d2["verdict"] == "mort sans alerte" and d2["nearby"] == ["Darius"]
+    assert not d2["warned"] and d2["nearby"] == ["Darius"]
+    assert d2["lane_duel"] and d2["verdict_key"] == "duel" and d2["verdict"] == "1v1 perdu"
+    assert not d2["app_fault"] and "Duel perdu" in d2["recap"]
     # 14:30 in the top river, nobody visible
     assert d3["zone"] == "top_river" and d3["nearby"] == [] and not d3["visible_any"]
     assert d3["jungler_involved"] and d3["enemy_count"] == 2 and not d3["warned"]
+    assert d3["verdict_key"] == "unseen"
     # 21:05 collapse in the enemy jungle, warned 10 s before
     assert d4["zone"] == "red_jungle_top" and d4["enemy_count"] == 3
     assert d4["warned"] and d4["alert_before_s"] == pytest.approx(10.0) and d4["alert_kind"] == "collapse"
     assert result["deaths_warned"] == 2 and result["deaths_unwarned"] == 2
+    assert result["death_verdicts"]["ignored"] == 2 and result["death_verdicts"]["duel"] == 1
+    assert result["alert_lead"]["n"] == 2 and result["alert_lead"]["late"] == 0
     for d in deaths:
         assert len(d["recap"].split()) <= 20
 
@@ -142,7 +148,7 @@ def test_death_recap_live(record: dict) -> None:
     partial["alerts"] = [a for a in partial["alerts"] if a[0] <= cut]
     partial["events"] = [e for e in partial["events"] if e["EventTime"] <= cut]
     text = death_recap(partial, ev)
-    assert text == "Mort face à 2 ennemis, dont le jungler. L'alerte avait été donnée 4 secondes avant."
+    assert text == "Mort face à 2 ennemis, dont le jungler. L'alerte avait été donnée 6 secondes avant."
     assert len(text.split()) <= 20
     ev3 = next(e for e in record["events"] if e.get("EventName") == "ChampionKill" and e["EventTime"] == 870.0)
     t3 = death_recap(record, ev3)
@@ -314,3 +320,29 @@ def test_spoken_summary(result: dict) -> None:
     assert analysis.spoken_summary({}) == "Partie terminée. 0 kill, 0 mort, 0 assistance."
     assert isinstance(analysis.spoken_summary(None), str)
     assert isinstance(analysis.spoken_summary(analyze_game({})), str)
+
+
+def test_death_verdicts_separate_app_failures_from_player_mistakes(record: dict) -> None:
+    """Real game report (Garen 1/15/5): deaths 0-1 s after the alert were blamed on the player,
+    lane 1v1 deaths were "mort sans alerte". Now: late alert = the app's fault, duel = neither."""
+    rec = copy.deepcopy(record)
+    # the 21:05 collapse alert moved to 1 s before the death: too late to react
+    death_t = 1265.0
+    rec["alerts"] = [a for a in rec["alerts"] if not (death_t - 12 <= a[0] <= death_t)]
+    rec["alerts"].append([death_t - 1.0, "collapse", 2, "Danger, 3 ennemis arrivent, recule !", None])
+    rec["alerts"].sort(key=lambda a: a[0])
+    res = analyze_game(rec)
+    d4 = res["deaths"][3]
+    assert d4["warned"] and d4["verdict_key"] == "late" and d4["app_fault"]
+    assert d4["verdict"] == "alerte trop tardive" and "trop tard" in d4["recap"]
+    assert res["deaths_warned"] == 1                    # only the in-time one counts against the player
+    assert res["alert_lead"]["late"] == 1
+    tip = next(t for t in res["tip_items"] if t["rule"] == "ignored_alerts")
+    assert tip["text"].startswith("1 mort dans les 12 s")
+    # a personal danger warning ("Darius te domine") 5 s before the duel death counts as a warning
+    rec2 = copy.deepcopy(record)
+    t2 = res["deaths"][1]["game_time"]
+    rec2["alerts"].append([t2 - 5.0, "personal_danger", 1, "Darius te domine : ne trade pas.", "Darius"])
+    rec2["alerts"].sort(key=lambda a: a[0])
+    d2 = analyze_game(rec2)["deaths"][1]
+    assert d2["warned"] and d2["verdict_key"] == "ignored" and d2["alert_lead_s"] == pytest.approx(5.0)

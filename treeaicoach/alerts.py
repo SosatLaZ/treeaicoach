@@ -9,7 +9,8 @@
   re-emit an alert for as long as its condition holds) into at most ONE message per tick:
 
   - cooldown per ``Alert.key`` depending on the level (INFO 30 s, WARNING 8 s, DANGER 6 s;
-    ``JUNGLER_WHERE`` 3 s; gank kinds 12 s; ``JUNGLER_SPOTTED`` 45 s);
+    ``JUNGLER_WHERE`` 3 s; gank kinds 12 s, a roam of the same laner 25 s; ``JUNGLER_SPOTTED``
+    45 s; ``PERSONAL_DANGER`` 20 s: "Recule !" is never repeated within 20 s);
   - the same gank is not repeated for 12 s: a gank alert (``JUNGLER_APPROACH``,
     ``ROAM_APPROACH``, ``COLLAPSE``) whose ``members`` (the champions involved) were all already
     announced in a gank alert of at least the same level during the last 12 s is dropped, even
@@ -64,6 +65,9 @@ class AlertKind(str, Enum):
     # v2: praise (praise.py) and Tab scoreboard insights (scoreboard.py), INFO only, free text
     PRAISE = "praise"
     SCOREBOARD = "scoreboard"
+    #: personal danger (danger.py): my HP / level / items vs the enemies close to me, on screen
+    #: or not, gank or not ("Vladimir te domine : ne trade pas", spoken "Recule !" when low)
+    PERSONAL_DANGER = "personal_danger"
 
     @classmethod
     def _missing_(cls, value: object) -> AlertKind | None:
@@ -169,6 +173,7 @@ FREE_TEXT_KINDS: frozenset[AlertKind] = frozenset({
     AlertKind.MACRO_TIP,
     AlertKind.PRAISE,
     AlertKind.SCOREBOARD,
+    AlertKind.PERSONAL_DANGER,
 })
 _WS_RE = re.compile(r"\s+")
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -260,11 +265,13 @@ def _jungler_approach(level: Level, champ: str | None, zone: str | None, n: int)
 
 
 def _roam_approach(level: Level, champ: str | None, zone: str | None, n: int) -> str:
+    """A laner (not the jungler) leaving his lane for me: labelled "Roam" (the report and the
+    voice say who it is and that it is not the jungler)."""
     who = champ or "un ennemi"
     if level >= Level.DANGER:
-        return f"Gank ! {champ}, recule !" if champ else "Gank ! Un ennemi arrive, recule !"
+        return f"Roam ! {champ}, recule !" if champ else "Gank ! Un ennemi arrive, recule !"
     if level == Level.WARNING:
-        return _arrives(who, zone)
+        return f"Roam : {_arrives(champ, zone)}" if champ else _arrives(who, zone)
     return f"{_cap(who)} rôde près de toi."
 
 
@@ -368,6 +375,12 @@ def _scoreboard(level: Level, champ: str | None, zone: str | None, n: int) -> st
     return f"Attention à {champ}." if champ else "Regarde le tableau des scores."
 
 
+def _personal_danger(level: Level, champ: str | None, zone: str | None, n: int) -> str:
+    if level >= Level.DANGER:
+        return "Recule !"
+    return f"{champ} est plus fort que toi : recule." if champ else "Danger près de toi : recule."
+
+
 def _death_recap(level: Level, champ: str | None, zone: str | None, n: int) -> str:
     if n >= 2:
         return f"Mort face à {min(n, 5)} ennemis."
@@ -390,6 +403,7 @@ _BUILDERS = {
     AlertKind.MACRO_TIP: _macro_tip,
     AlertKind.PRAISE: _praise,
     AlertKind.SCOREBOARD: _scoreboard,
+    AlertKind.PERSONAL_DANGER: _personal_danger,
 }
 _GENERIC = {Level.INFO: "Attention.", Level.WARNING: "Attention !", Level.DANGER: "Danger, recule !"}
 
@@ -471,15 +485,18 @@ def make_alert(kind: AlertKind, level: Level | int, t: float, champ: str | None 
 
 COOLDOWN_S: dict[Level, float] = {Level.INFO: 30.0, Level.WARNING: 8.0, Level.DANGER: 6.0}
 GANK_REPEAT_S = 12.0        # the same gank is not announced again for this long
+ROAM_REPEAT_S = 25.0        # the same roamer (a laner, not the jungler): one announcement per roam
+PERSONAL_DANGER_REPEAT_S = 20.0   # "Recule !" / a personal danger line: never twice within 20 s
 JUNGLER_SPOTTED_COOLDOWN_S = 45.0
 GANK_ALERT_KINDS: frozenset[AlertKind] = frozenset(
     {AlertKind.JUNGLER_APPROACH, AlertKind.ROAM_APPROACH, AlertKind.COLLAPSE})
 KIND_COOLDOWN_S: dict[AlertKind, float] = {
     AlertKind.JUNGLER_WHERE: 3.0,
     AlertKind.JUNGLER_APPROACH: GANK_REPEAT_S,
-    AlertKind.ROAM_APPROACH: GANK_REPEAT_S,
+    AlertKind.ROAM_APPROACH: ROAM_REPEAT_S,
     AlertKind.COLLAPSE: GANK_REPEAT_S,
     AlertKind.JUNGLER_SPOTTED: JUNGLER_SPOTTED_COOLDOWN_S,
+    AlertKind.PERSONAL_DANGER: PERSONAL_DANGER_REPEAT_S,
 }
 # Answers the player waits for: never delayed by the global gap (they keep their key cooldown).
 GAP_EXEMPT_KINDS: frozenset[AlertKind] = frozenset({AlertKind.JUNGLER_WHERE, AlertKind.DEATH_RECAP})
@@ -488,6 +505,7 @@ KIND_PRIORITY: tuple[AlertKind, ...] = (
     AlertKind.COLLAPSE,
     AlertKind.JUNGLER_APPROACH,
     AlertKind.ROAM_APPROACH,
+    AlertKind.PERSONAL_DANGER,
     AlertKind.JUNGLER_WHERE,
     AlertKind.DEATH_RECAP,
     AlertKind.JUNGLER_SPOTTED,
@@ -638,8 +656,8 @@ class AlertThrottler:
         return False
 
     def _gap_ok(self, a: Alert, now: float) -> bool:
-        if a.kind in GANK_ALERT_KINDS and a.level < Level.DANGER:
-            return True                         # a gank warning is never delayed by the gap
+        if (a.kind in GANK_ALERT_KINDS or a.kind == AlertKind.PERSONAL_DANGER) and a.level < Level.DANGER:
+            return True                         # a gank / danger warning is never delayed by the gap
         if a.level >= Level.DANGER:
             last = self._last_danger_t
             return last is None or now - last >= self.danger_gap_s

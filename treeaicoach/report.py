@@ -607,8 +607,7 @@ def _cards(a: dict) -> str:
          f"{s.get('team_kills')} kills d'équipe" if s.get("team_kills") is not None else "kills d'équipe inconnus"),
         ("g" if ganks and surv / ganks >= 0.5 else "r" if ganks else "g", f"{surv} / {ganks}", "Ganks survécus",
          "alertes DANGER de l'app"),
-        ("r", str(a.get("deaths_warned", 0)), "Morts après alerte",
-         f"{a.get('deaths_unwarned', 0)} mort(s) sans alerte"),
+        ("r", str(a.get("deaths_warned", 0)), "Morts après alerte", _death_card_note(a)),
         ("", str(s.get("level") or "-"), "Niveau final", f"{_num(s.get('gold'), 0)} PO en poche" if s.get("gold")
          is not None else ""),
         ("t", f"{mine.get('dragons', 0)} – {theirs.get('dragons', 0)}" if mine and theirs else "-", "Dragons",
@@ -617,6 +616,21 @@ def _cards(a: dict) -> str:
     out = "".join(f'<div class="card {c}"><div class="v">{_e(v)}</div><div class="l">{_e(l)}</div>'
                   f'<div class="x">{_e(x)}</div></div>' for c, v, l, x in cards)
     return f'<div class="cards">{out}</div>'
+
+
+def _death_card_note(a: dict) -> str:
+    """Under "Morts après alerte": who was responsible for the other deaths (app vs duel)."""
+    v = a.get("death_verdicts") if isinstance(a.get("death_verdicts"), dict) else None
+    if not v:
+        return f"{a.get('deaths_unwarned', 0)} mort(s) sans alerte"
+    parts = [f"{int(v.get('missed') or 0)} sans alerte de l'app"]
+    if v.get("late"):
+        parts.append(f"{int(v['late'])} alerte(s) trop tardive(s)")
+    if v.get("duel"):
+        parts.append(f"{int(v['duel'])} en 1v1")
+    if v.get("unseen"):
+        parts.append(f"{int(v['unseen'])} ennemis invisibles")
+    return " · ".join(parts)
 
 
 def _gradient_css(stops: list[tuple[float, str]]) -> str:
@@ -687,11 +701,14 @@ def _deaths_section(record: dict, a: dict) -> str:
             chips.append(_chip(roster, k, _name_for(roster, k)))
         who = f'<div class="who">{"".join(chips)}</div>' if chips else '<span class="small">inconnu</span>'
         if d.get("warned"):
-            tag = f'<span class="tag ok">Oui, {_num(d.get("alert_before_s"), 0)} s avant</span>'
-            verdict = "alerte ignorée"
+            lead = d.get("alert_lead_s") if d.get("alert_lead_s") is not None else d.get("alert_before_s")
+            tag = f'<span class="tag ok">Oui, {_num(lead, 0)} s avant</span>'
+            verdict = d.get("verdict") or "alerte ignorée"
         else:
             tag = '<span class="tag no">Non</span>'
-            verdict = "mort sans alerte"
+            verdict = d.get("verdict") or "mort sans alerte"
+        if d.get("app_fault"):
+            verdict += " (faute de l'app)"
         near = d.get("nearby") or []
         near_txt = (", ".join(_name_for(roster, k) for k in near) if near else "personne")
         rows.append(
@@ -701,8 +718,15 @@ def _deaths_section(record: dict, a: dict) -> str:
             f'{_unseen_note(d)}</td>'
             f'<td>{tag}<div class="recap">{_e(verdict)}</div></td></tr>'
             f'<tr><td></td><td colspan="4" class="recap" style="padding-top:0">« {_e(d.get("recap"))} »</td></tr>')
-    return ('<div class="panel"><h2>Mes morts</h2><div class="tw"><table><thead><tr><th>Heure</th><th>Zone</th><th>Tué par</th>'
-            '<th>Jungler ?</th><th>Alerte donnée ?</th></tr></thead><tbody>' + "".join(rows) + '</tbody></table></div></div>')
+    lead = a.get("alert_lead") if isinstance(a.get("alert_lead"), dict) else {}
+    note = ""
+    if lead.get("n"):
+        note = (f'<p class="small">Avance des alertes avant tes morts : {_num(lead.get("mean"), 1)} s en moyenne '
+                f'(objectif : 5 s ou plus pour avoir le temps de reculer)'
+                + (f' · {lead.get("late")} trop tardive(s) (moins de 3 s)' if lead.get("late") else "") + '.</p>')
+    return ('<div class="panel"><h2>Mes morts</h2>' + note + '<div class="tw"><table><thead><tr><th>Heure</th><th>Zone</th>'
+            '<th>Tué par</th><th>Jungler ?</th><th>Alerte donnée ?</th></tr></thead><tbody>' + "".join(rows)
+            + '</tbody></table></div></div>')
 
 
 def _unseen_note(d: dict) -> str:

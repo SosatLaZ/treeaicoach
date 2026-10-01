@@ -61,8 +61,11 @@ WORLD_WINDOWS = ("world0", "world1")
 REFRESH_HZ = 30.0
 #: Hard bounds of ``cfg.overlay_fps`` / the engine budget cap.
 FPS_MIN, FPS_MAX = 5.0, 60.0
-#: Every layer is re-rendered at least this often even when its signature did not change (s).
+#: Every layer is re-rendered at least this often even when its signature did not change (s):
+#: a safety net for a field the signature does not cover. The HUD signature covers its content
+#: (and identical HUD images are never re-sent): longer period.
 FORCE_REDRAW_S = 0.5
+FORCE_REDRAW_LAYER_S = {"hud": 2.0}
 #: HUD card re-render rate while animated / calm (Hz) - and never re-sent when identical.
 HUD_FAST_HZ, HUD_CALM_HZ = 10.0, 4.0
 #: Toast banners animation rate (Hz).
@@ -1469,7 +1472,7 @@ class OverlayManager:
         last = self._sig_t.get(layer, -1e9)
         if now - last < min_period:
             return False
-        if old is None or old != sig or now - last >= FORCE_REDRAW_S:
+        if old is None or old != sig or now - last >= FORCE_REDRAW_LAYER_S.get(layer, FORCE_REDRAW_S):
             self._sig[layer] = sig
             self._sig_t[layer] = now
             return True

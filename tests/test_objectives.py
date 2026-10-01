@@ -87,7 +87,6 @@ def test_announcement_phrases_are_short_french():
     assert announcement_text("grubs", 60) == "Les larves apparaissent dans une minute."
     assert announcement_text("herald", 90) == "Héraut dans 1 minute 30."
     assert announcement_text("elder", 120) == "Dragon ancestral dans 2 minutes."
-    assert announcement_text("atakhan", 150) == "Atakhan dans 2 minutes 30."
     assert announcement_text("unknown", 1) == "Objectif dans une seconde."
 
 
@@ -100,14 +99,12 @@ def test_default_schedule_announcements_whole_game():
     assert said == [
         (240.0, "Dragon dans une minute."),
         (280.0, "Dragon dans 20 secondes."),
-        (300.0, "Les larves apparaissent dans une minute."),
-        (340.0, "Les larves apparaissent dans 20 secondes."),
+        (420.0, "Les larves apparaissent dans une minute."),
+        (460.0, "Les larves apparaissent dans 20 secondes."),
         (840.0, "Héraut dans une minute."),
         (880.0, "Héraut dans 20 secondes."),
-        (1140.0, "Atakhan dans une minute."),
-        (1180.0, "Atakhan dans 20 secondes."),
-        (1440.0, "Baron dans une minute."),
-        (1480.0, "Baron dans 20 secondes."),
+        (1140.0, "Baron dans une minute."),           # 2026: Atakhan removed, Baron back at 20:00
+        (1180.0, "Baron dans 20 secondes."),
     ]
 
 
@@ -130,16 +127,16 @@ def test_states_before_during_and_after_spawns():
     timers = ObjectiveTimers(Config(), schedule={})
     timers.update(make_game(100.0), 100.0)
     st = by_key(timers.states())
-    assert list(st) == ["dragon", "grubs", "herald", "atakhan", "baron"]
+    assert list(st) == ["dragon", "grubs", "herald", "baron"]
     assert st["dragon"] == ObjectiveState("Dragon", 300.0, False, "schedule", "dragon", 200.0)
     assert st["herald"].name == "Héraut" and st["grubs"].name == "Larves"
-    timers.update(make_game(400.0), 400.0)
+    timers.update(make_game(500.0), 500.0)
     st = by_key(timers.states())
     assert st["dragon"].alive and st["dragon"].remaining == 0.0 and st["dragon"].next_spawn == 300.0
-    assert st["grubs"].alive
-    timers.update(make_game(850.0), 850.0)
+    assert st["grubs"].alive                     # 2026: grubs at 8:00
+    timers.update(make_game(890.0), 890.0)
     st = by_key(timers.states())
-    assert "grubs" not in st                     # despawned at 14:00
+    assert "grubs" not in st                     # despawned at 14:45
     timers.update(make_game(1190.0), 1190.0)
     assert "herald" not in by_key(timers.states())   # despawned at 19:45
 
@@ -196,17 +193,17 @@ def test_soul_team_from_assisters():
     assert "elder" in by_key(timers.states())
 
 
-def test_baron_herald_atakhan_grubs_events():
+def test_baron_herald_grubs_events_and_removed_atakhan():
     timers = ObjectiveTimers(Config(), schedule={})
     events = [
-        ev(10, "HordeKill", 400.0, KillerName="Moi"),
-        ev(11, "HordeKill", 401.0, KillerName="Moi"),
+        ev(10, "HordeKill", 500.0, KillerName="Moi"),
+        ev(11, "HordeKill", 501.0, KillerName="Moi"),
     ]
-    timers.update(make_game(402.0, events), 402.0)
+    timers.update(make_game(502.0, events), 502.0)
     assert by_key(timers.states())["grubs"].alive       # 1 grub left
-    events.append(ev(12, "HordeKill", 401.0, KillerName="Allie1"))
+    events.append(ev(12, "HordeKill", 501.0, KillerName="Allie1"))
     events.append(ev(20, "HeraldKill", 950.0, KillerName="Ennemi1"))
-    events.append(ev(30, "AtakhanKill", 1300.0, KillerName="Moi"))
+    events.append(ev(30, "AtakhanKill", 1300.0, KillerName="Moi"))     # removed in 26.1: ignored
     events.append(ev(40, "BaronKill", 1600.0, KillerName="Ennemi1"))
     timers.update(make_game(1610.0, events), 1610.0)
     st = by_key(timers.states())
@@ -218,12 +215,12 @@ def test_baron_herald_atakhan_grubs_events():
 
 def test_duplicate_events_are_ignored():
     timers = ObjectiveTimers(Config(), schedule={})
-    grub = ev(10, "HordeKill", 400.0, KillerName="Moi")
-    for gt in (401.0, 402.0, 403.0):
+    grub = ev(10, "HordeKill", 500.0, KillerName="Moi")
+    for gt in (501.0, 502.0, 503.0):
         timers.update(make_game(gt, [grub, dict(grub), dict(grub)]), gt)   # same EventID 3x, 3 polls
     assert by_key(timers.states())["grubs"].alive
-    no_id = {"EventName": "HordeKill", "EventTime": 405.0, "KillerName": "Moi"}
-    timers.update(make_game(406.0, [grub, no_id, dict(no_id)]), 406.0)    # no id: dedupe by content
+    no_id = {"EventName": "HordeKill", "EventTime": 505.0, "KillerName": "Moi"}
+    timers.update(make_game(506.0, [grub, no_id, dict(no_id)]), 506.0)    # no id: dedupe by content
     assert by_key(timers.states())["grubs"].alive
 
 
@@ -287,14 +284,17 @@ def test_custom_lead_times():
     assert run(timers, 200.0, 280.0) == [
         (210.0, "Dragon dans 1 minute 30."),
         (270.0, "Dragon dans 30 secondes."),
-        (272.5, "Les larves apparaissent dans 1 minute 30."),   # same moment: spaced by 2.5 s
+    ]
+    assert run(timers, 380.0, 460.0) == [
+        (390.0, "Les larves apparaissent dans 1 minute 30."),
+        (450.0, "Les larves apparaissent dans 30 secondes."),
     ]
 
 
 def test_simultaneous_announcements_are_spaced():
-    timers = ObjectiveTimers(Config(), schedule={"herald": {"first": 900}, "atakhan": {"first": 900}})
+    timers = ObjectiveTimers(Config(), schedule={"herald": {"first": 900}, "baron": {"first": 900}})
     said = run(timers, 830.0, 850.0, step=0.125)
-    assert [s for _g, s in said] == ["Héraut dans une minute.", "Atakhan dans une minute."]
+    assert [s for _g, s in said] == ["Héraut dans une minute.", "Baron dans une minute."]
     assert said[1][0] - said[0][0] == pytest.approx(obj_mod.ANNOUNCE_SPACING_S)
 
 
@@ -377,7 +377,8 @@ def test_user_schedule_override(caplog):
     }), encoding="utf-8")
     sched = load_schedule()
     assert sched["dragon"] == {"first": 310.0, "respawn": 300, "soul": 4}
-    assert sched["atakhan"]["first"] is None and sched["baron"]["first"] == 1500
+    assert "atakhan" not in sched and sched["baron"]["first"] == 1200      # legacy key: silently ignored
+    assert "atakhan" not in caplog.text
     assert sched["grubs"] == OBJECTIVE_SCHEDULE["grubs"]
     assert "invalid value baron.first" in caplog.text and "unknown key baron.bogus" in caplog.text
     timers = ObjectiveTimers(Config())                 # schedule=None: files are read
@@ -396,7 +397,7 @@ def test_corrupt_or_huge_schedule_files_are_ignored(tmp_path):
     lst.write_text("[1, 2]", encoding="utf-8")
     assert load_schedule([bad, huge, lst, tmp_path / "missing.json", tmp_path]) == OBJECTIVE_SCHEDULE
     assert merge_schedule(OBJECTIVE_SCHEDULE, {"grubs": {"count": 0, "respawn": 240}})["grubs"] == {
-        "first": 360, "respawn": 240.0, "despawn": 840, "count": 3}
+        "first": 480, "respawn": 240.0, "despawn": 885, "count": 3}
 
 
 def test_grubs_second_wave_when_respawn_configured():

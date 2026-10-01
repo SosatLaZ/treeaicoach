@@ -1166,7 +1166,7 @@ class CoachEngine:
                      self._stance, self._tip_rotator, self._gate, self._tactics, self._gauge,
                      getattr(self, "_ai", None), self._ward_guide, getattr(self, "_plays", None),
                      getattr(self, "_coach_plus", None), getattr(self, "_item_adv", None),
-                     getattr(self, "_hype", None)):
+                     getattr(self, "_hype", None), getattr(self, "_danger", None)):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -1463,7 +1463,9 @@ class CoachEngine:
         self._serve_diag_requests(t)
         gt = (_finite(game.game_time) or 0.0) + min(max(0.0, t - game_t), 3.0)
         stagger = self.stagger if self.stagger is not None else bool(self._running and self._threads)
-        self._heavy_now = self._heavy.plan(t, stagger)
+        verify_due = (self._frame_source is None and self._locate_method == "auto" and self._bad_since is None
+                      and t >= self._next_verify)
+        self._heavy_now = self._heavy.plan(t, stagger, busy=verify_due)
         if self._frame_source is None:
             t_grab = time.perf_counter()
             frame = self._grab_minimap(t, gt)
@@ -1501,11 +1503,12 @@ class CoachEngine:
                 self._errors += 1
                 self._err.exception("GankAnalyzer.update failed")
         threat = self._update_threat(t, gank_alerts)
+        danger_now = self._personal_danger(t, gt, game, tracker, threat)
         # v3 director: fight decision + speech context every tick, macro / positioning / wards at HEAVY_HZ
         tac_alerts, gank_now = self._tactics_tick(t, gt, game, tracker, gank_alerts, threat=threat)
         self._ward_guide_tick(t, game, tracker, frame, identified)
         # latency first: a gank alert (or the fight call) is spoken NOW, before the heavier stages
-        said_now = self._say_gank_now(gank_now, t, gt, frame)
+        said_now = self._say_gank_now(gank_now + danger_now, t, gt, frame)
         raw_alerts += [a for a in gank_alerts if a.kind not in GANK_KINDS] + tac_alerts
         # coaching stages (coach, Tab, tips, items, hype / AI) at the budget's heavy rate, the gank
         # check every tick; threaded: one slot per tick (staggered, no spike), see scheduler.py
@@ -2160,6 +2163,14 @@ class CoachEngine:
         except Exception:
             return None
 
+    def _is_go_line(self, text: str | None) -> bool:
+        """A "play harder" line (tone "go" or its wording): hidden under a PRUDENT / SAFE gauge
+        and during a base siege / ace."""
+        if not text:
+            return False
+        low = text.casefold()
+        return self._tip_tone(text) == "go" or any(w in low for w in GO_WORDS)
+
     def _tip_tone(self, text: str | None) -> str:
         """Tone of the HUD line ("danger" / "warning" / "go" / "info")."""
         if not text:
@@ -2409,7 +2420,7 @@ class CoachEngine:
             early = True
         siege, siege_line = self._siege(now)
         if siege is not None:   # ace / siege: that line first, no "à toi de jouer", no tip
-            valid = [siege_line] + [v for v in valid if self._tip_tone(v) != "go"]
+            valid = [siege_line] + [v for v in valid if not self._is_go_line(v)]
             early = True
         if coach is not None and not early:
             try:
@@ -2423,7 +2434,7 @@ class CoachEngine:
         try:
             g = self._gauge.current() if self._gauge is not None else None
             if g is not None and int(g.step) <= -1 and len(valid) > 0:
-                valid = [v for v in valid if self._tip_tone(v) != "go"]
+                valid = [v for v in valid if not self._is_go_line(v)]
         except Exception:
             pass
         cand = valid[0] if valid else None
@@ -2778,6 +2789,32 @@ class CoachEngine:
         while self._threat_hist and t - self._threat_hist[0][0] > THREAT_HOLD_S:
             self._threat_hist.popleft()
         return max((lvl for _t, lvl, _a in self._threat_hist), default=0)
+
+    def _personal_danger(self, t: float, gt: float, game: GameInfo, tracker: Any, threat: int) -> list[Alert]:
+        """Personal danger (danger.py): my HP / level / items vs the visible enemies on me, lane
+        opponent and on-screen enemies included (written warning, spoken "Recule !" when low).
+        Goes through the gank fast path (latency first). Never raises."""
+        if getattr(self._cfg, "safe_mode", False):
+            return []
+        try:
+            pd = getattr(self, "_danger", None)
+            if pd is None:
+                from treeaicoach.danger import PersonalDanger
+
+                pd = self._danger = PersonalDanger()
+            roles = self._role_resolver
+            lane = list(roles.lane_opponents() or ()) if roles is not None else []
+            jg = roles.enemy_jungler() if roles is not None else None
+            if not jg and game.enemy_jungler() is not None:
+                jg = game.enemy_jungler().champion_alias
+            tac = self._tactics
+            fog = self._fog.estimates() if self._fog is not None else []
+            return pd.update(t, gt, game, tracker, lane_opponents=lane, jungler=jg, threat=threat,
+                             gank_danger_t=self._last_danger_t,
+                             in_fight=bool(tac is not None and tac.in_fight()), fog=fog)
+        except Exception:
+            self._err.exception("Personal danger failed")
+            return []
 
     def _death_recap_alerts(self, t: float) -> list[Alert]:
         due = self._death_due

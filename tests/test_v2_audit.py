@@ -182,7 +182,7 @@ def test_tip_objective_wording_and_role():
     c = _tc(gt=1300.0, role="BOTTOM", lane="bot", soon={"herald": 0.5, "dragon": 40.0})
     assert not _applies("group_obj", _tc(gt=1300.0, role="BOTTOM", lane="bot", soon={"herald": 0.5}))
     assert next(t for t in tips.TIPS if t.id == "group_obj").render(c) == "Rejoins ton équipe vers le dragon : 40 s"
-    assert tips.OBJ_LE["atakhan"] == "Atakhan"              # never "l'Atakhan"
+    assert "atakhan" not in tips.OBJ_LE                     # Atakhan removed from the game in 26.1
     assert not _applies("tp_obj", _tc(gt=1300.0, soon={"herald": 40.0}))   # TP is for the other side
 
 

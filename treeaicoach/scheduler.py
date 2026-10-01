@@ -33,7 +33,11 @@ UNFOCUSED_AFTER_S = 3.0
 PAUSED_PERIOD_S = 1.0
 #: Render-time extrapolation horizon (s): positions are predicted at most this far past the
 #: last observation (beyond, the champion is drawn where last seen).
-PREDICT_HORIZON_S = 0.6
+PREDICT_HORIZON_S = 0.9
+#: Velocity damping time constant of the render-time extrapolation (s). Gentler than the
+#: tracker's association gate (0.6 s): measured on walking champions at 2-8 detections / s,
+#: tau 1.5 s / horizon 0.9 s halves the median display error of tau 0.6 s / 0.6 s at 2.6 fps.
+RENDER_TAU_S = 1.5
 #: A visible track whose last observation is older than this is drawn as a ghost (no label).
 STALE_DRAW_S = 0.45
 
@@ -115,7 +119,9 @@ class HeavyScheduler:
     def period(self) -> float:
         return 1.0 / max(0.1, self.hz)
 
-    def plan(self, t: float, stagger: bool) -> set[str]:
+    def plan(self, t: float, stagger: bool, busy: bool = False) -> set[str]:
+        """Slots to run at ``t``. ``busy`` (staggered only): this tick already carries other
+        periodic work (minimap verification): no slot, they wait for the next tick."""
         t = float(t)
         p = self.period
         if not stagger:
@@ -132,7 +138,7 @@ class HeavyScheduler:
             for i, s in enumerate(SLOTS):
                 self.next[s] = t + i * p / len(SLOTS)
         due = [s for s in SLOTS if t >= self.next[s]]
-        if not due:
+        if not due or busy:
             return set()
         s = min(due, key=lambda x: self.next[x])        # most overdue first, one per tick
         self.next[s] = max(self.next[s] + p, t + 0.5 * p)
@@ -179,19 +185,26 @@ class MotionSnapshot:
     def predict(self, now: float, horizon: float = PREDICT_HORIZON_S) -> dict[str, tuple[tuple[float, float], float]]:
         """Position of every visible track extrapolated to engine time ``now`` + age of its data.
 
-        Uses ``Track.predict`` (Kalman position + damped velocity) when available, else the
-        smoothed position. Never raises (an item failing is skipped)."""
+        Kalman position + gently damped Kalman velocity (read-only ``Track.kf_position`` /
+        ``kf_velocity``), else ``Track.predict`` / the smoothed position. Never raises (an item failing is skipped)."""
         out: dict[str, tuple[tuple[float, float], float]] = {}
         for key, it in self.items.items():
             if not it.visible:
                 continue
             try:
                 age = max(0.0, float(now) - it.last_obs)
-                pred = getattr(it.track, "predict", None)
-                if callable(pred) and not it.stacked:
-                    uv = pred(it.last_obs + min(age, horizon), horizon=horizon)
+                tr = it.track
+                kfp = getattr(tr, "kf_position", None)
+                kf = kfp() if callable(kfp) and not it.stacked else None
+                if kf is not None:
+                    vx, vy = tr.kf_velocity()
+                    dt = min(age, max(0.0, float(horizon)))
+                    k = RENDER_TAU_S * (1.0 - math.exp(-dt / RENDER_TAU_S))
+                    uv = (kf[0] + vx * k, kf[1] + vy * k)
                 else:
-                    uv = it.track.position()
+                    pred = getattr(tr, "predict", None)
+                    uv = pred(it.last_obs + min(age, horizon), horizon=horizon) \
+                        if callable(pred) and not it.stacked else tr.position()
                 if uv is None:
                     continue
                 u, v = float(uv[0]), float(uv[1])

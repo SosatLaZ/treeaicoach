@@ -1,9 +1,8 @@
 {
-  "_comment": "Temps d'apparition des objectifs en secondes de jeu (modifiable selon les patchs). first = 1re apparition (null = jamais), respawn = délai après un kill (null = ne réapparaît pas), despawn = disparaît à ce temps de jeu, count = larves par vague, soul = dragons élémentaires pour l'âme. Une copie dans %APPDATA%\\TreeAICoach\\objectives.json est prioritaire.",
+  "_comment": "Temps d'apparition des objectifs en secondes de jeu (saison 2026, patch 26.1+ : Atakhan supprimé, Baron à 20:00, larves à 8:00 jusqu'à 14:45, Héraut à 15:00 jusqu'à 19:45). first = 1re apparition (null = jamais), respawn = délai après un kill (null = ne réapparaît pas), despawn = disparaît à ce temps de jeu, count = larves par vague, soul = dragons élémentaires pour l'âme. Une copie dans %APPDATA%\\TreeAICoach\\objectives.json est prioritaire.",
   "dragon": {"first": 300, "respawn": 300, "soul": 4},
   "elder": {"respawn": 360},
-  "grubs": {"first": 360, "respawn": null, "despawn": 840, "count": 3},
+  "grubs": {"first": 480, "respawn": null, "despawn": 885, "count": 3},
   "herald": {"first": 900, "despawn": 1185},
-  "atakhan": {"first": 1200},
-  "baron": {"first": 1500, "respawn": 360}
+  "baron": {"first": 1200, "respawn": 360}
 }

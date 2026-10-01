@@ -165,7 +165,7 @@ class TipContext:
         """'le dragon' / 'le Héraut'... free because their jungler is dead: up (or <= 20 s), for my
         role, never Baron / Elder with only the jungler down."""
         from treeaicoach.game_plan import OBJ_ROLES
-        for key in ("dragon", "herald", "grubs", "atakhan", "baron", "elder"):
+        for key in ("dragon", "herald", "grubs", "baron", "elder"):
             up = key in self.alive or (self.soon.get(key) is not None and self.soon[key] <= 20)
             if not up or (self.role is not None and self.role not in OBJ_ROLES.get(key, ROLES)):
                 continue
@@ -221,7 +221,7 @@ class TipContext:
             "other": SIDE_FR.get({"top": "bot", "bot": "top"}.get(self.jg_last_side or "", ""), "ailleurs"),
             "jg_opp_side": opp_side,
             "drag_s": secs("dragon"), "baron_s": secs("baron"), "herald_s": secs("herald"),
-            "grubs_s": secs("grubs"), "atakhan_s": secs("atakhan"), "elder_s": secs("elder"),
+            "grubs_s": secs("grubs"), "elder_s": secs("elder"),
             "fed": self.fed[0] if self.fed else "leur carry", "lvl": lvl,
             "lvl_txt": f"{lvl} niveau{'x' if lvl > 1 else ''}",
             "gold": int(self.gold), "deaths": self.deaths, "missing": self.missing,
@@ -245,7 +245,7 @@ class TipContext:
             "my_obj_s": int(round(mo[1] / 5.0) * 5) if mo else 60,
             "plan1": self.plan1 or "Tue vite la première vague : le premier niveau 2 gagne",
             "plan2": self.plan2 or "Reste derrière tes sbires : ils prennent les coups à ta place",
-            "plan_jg": self.plan_jg or "Balise ta rivière vers 2:45 : premier gank possible",
+            "plan_jg": self.plan_jg or "Balise ta rivière vers 2:30 : premier gank possible",
             "jgobj": self.jg_objective() or "l'objectif",
             "n_dead": len(self.dead_names), "resp": int(self.dead_respawn),
         }
@@ -253,7 +253,7 @@ class TipContext:
 
 #: objective key -> "le dragon" (French article included)
 OBJ_LE = {"dragon": "le dragon", "baron": "le Baron", "herald": "le Héraut", "grubs": "les larves",
-          "atakhan": "Atakhan", "elder": "l'ancestral"}
+          "elder": "l'ancestral"}
 
 #: Tone of a tip (HUD accent colour): "danger" (red), "warning" (amber), "go" (green), "info" (gold)
 TONES = ("danger", "warning", "go", "info")
@@ -337,8 +337,8 @@ TIPS: tuple[Tip, ...] = (
     T("jg_unseen", "jungle", "Ne t'avance pas : {jg} invisible depuis {jg_h} s",
       lambda c: c.jg_hidden_s is not None and c.jg_hidden_s >= 60 and 180 <= c.gt and c.early and not c.jg_dead,
       roles=LANERS, prio=3, tone="warning", conf=MAP, cooldown=150.0),
-    T("jg_level3", "jungle", "Balise ta rivière avant 3:15 : {jg} peut ganker",
-      lambda c: 150 <= c.gt <= 200 and not c.plan_jg, roles=LANERS, prio=3, tone="warning"),
+    T("jg_level3", "jungle", "Balise ta rivière avant 2:40 : {jg} peut ganker",
+      lambda c: 115 <= c.gt <= 165 and not c.plan_jg, roles=LANERS, prio=3, tone="warning"),
     T("jg_counter", "jungle", "Prends ses camps {jg_opp_side} : {jg} est {jg_side}",
       lambda c: c.jg_visible and c.jg_side in ("top", "bot"), roles=("JUNGLE",), prio=3, tone="go", conf=MAP,
       cooldown=120.0, ttl=10.0),
@@ -381,14 +381,16 @@ TIPS: tuple[Tip, ...] = (
       lambda c: "herald" in c.alive and c.early and c.wave != "pushed_in", roles=("TOP", "MIDDLE"), prio=2),
     T("grubs", "objectives", "Pousse ta vague puis aide aux larves : {grubs_s} s",
       lambda c: c.soon_within("grubs", 10, 80), roles=TOPSIDE, prio=3, ttl=15.0),
-    T("atakhan", "objectives", "Regroupez-vous près d'Atakhan : apparition dans {atakhan_s} s",
-      lambda c: c.soon_within("atakhan", 0, 90), prio=3, ttl=15.0),
     T("group_obj", "macro", "Rejoins ton équipe vers {my_le} : {my_obj_s} s",
       lambda c: not c.early and c.my_objective(10, 60) is not None and not c.in_base and not c.dead,
       prio=3, ttl=15.0),
     # TP for the fight on the OTHER side of the map (a top laner is already next to Baron / Herald)
     T("tp_obj", "macro", "Garde ta Téléportation pour le dragon : {drag_s} s",
       lambda c: c.gt >= 600 and c.has_tp and c.soon_within("dragon", 10, 70), roles=("TOP",), prio=3, ttl=15.0),
+    # 2026 top role quest: completing it gives a free Teleport (or upgrades the one taken)
+    T("tp_quest_obj", "macro", "Quête de rôle finie ? Téléporte-toi au dragon : {drag_s} s",
+      lambda c: c.gt >= 900 and not c.has_tp and c.soon_within("dragon", 10, 70), roles=("TOP",), prio=2,
+      ttl=15.0),
     T("sup_obj_vision", "vision", "Va baliser {next_le} : apparition dans {next_s} s",
       lambda c: c.next_objective(90) is not None and (c.next_objective(90) or ("", 0))[1] >= 30,
       roles=("UTILITY",), prio=3, ttl=15.0),
@@ -425,9 +427,10 @@ TIPS: tuple[Tip, ...] = (
     T("fed_enemy", "matchup", "Évite {fed} en un contre un : il est trop fort",
       lambda c: bool(c.fed), prio=3, tone="warning"),
     T("level2", "matchup", "Tue vite la première vague : le premier niveau 2 gagne",
-      lambda c: 60 <= c.gt <= 115, roles=LANERS, prio=3),
-    T("plates_end", "matchup", "Pousse et tape la tour : plaques finies à 14:00",
-      lambda c: 720 <= c.gt < 840 and c.wave in ("pushing", None), roles=LANERS, prio=3, tone="go"),
+      lambda c: 30 <= c.gt <= 85, roles=LANERS, prio=3),
+    # 2026: plates stay all game, but outer plates lose 10 gold per minute from 11:00 (-40 at 15:00)
+    T("plates_decay", "matchup", "Prends les plaques avant 11:00 : ensuite elles valent moins",
+      lambda c: 540 <= c.gt < 660 and c.wave in ("pushing", None), roles=LANERS, prio=3, tone="go"),
     # ------------------------------------------------------------------ farm
     T("cs_low", "farm", "Reste sur ta vague : {cspm} sbires/min, vise {target}",
       lambda c: c.gt >= 300 and c.cs_target > 0 and c.cspm < c.cs_target - 1.0, roles=CARRIES, prio=3),
@@ -454,8 +457,12 @@ TIPS: tuple[Tip, ...] = (
     T("mid_roam", "macro", "Va aider top ou bot : ta vague est poussée",
       lambda c: 240 <= c.gt <= 1200 and c.wave == "pushing", roles=("MIDDLE",), prio=2, conf=MAP),
     # ------------------------------------------------------------------ vision
-    T("vis_river", "vision", "Pose ta balise dans la rivière : premier gank vers 3:00",
-      lambda c: 60 <= c.gt <= 150, roles=LANERS, prio=2),
+    T("vis_river", "vision", "Pose ta balise dans la rivière : premier gank vers 2:30",
+      lambda c: 45 <= c.gt <= 120, roles=LANERS, prio=2),
+    # 2026 Faelights ("lampes féeriques"): a ward on one gets +25 % vision and reveals an area 45 s
+    T("vis_faelight", "vision", "Pose ta balise sur une lampe féerique : vision bonus 45 s",
+      lambda c: 90 <= c.gt <= 900 and not c.in_base and not c.dead, roles=("UTILITY", "JUNGLE", "MIDDLE"),
+      prio=2, cooldown=300.0),
     T("vis_control_base", "vision", "Achète une balise de contrôle (75 or) : elle révèle leurs balises",
       lambda c: c.in_base and not c.has_control_ward and c.gt >= 240, prio=3),
     T("vis_sweeper", "vision", "Passe au Balayeur : il enlève leurs balises avant les objectifs",
@@ -538,7 +545,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.team_gold_diff >= 3000 and not c.early, prio=3, tone="go"),
     T("behind_team", "macro", "Défendez sous vos tours : {tgd} d'or de retard",
       lambda c: c.team_gold_diff <= -3000, prio=3, tone="warning"),
-    T("mid_transition", "phase", "Plaques finies : rejoins ton équipe autour des objectifs",
+    T("mid_transition", "phase", "Phase de voies finie : rejoins ton équipe autour des objectifs",
       lambda c: 840 <= c.gt <= 960, roles=LANERS, prio=2),
     T("late_vision", "phase", "Avance seulement derrière une balise : sinon embuscade",
       lambda c: c.late and not c.in_base, prio=2),
@@ -553,9 +560,9 @@ TIPS: tuple[Tip, ...] = (
     T("jg_gank", "macro", "Va ganker une voie poussée : l'ennemi est loin de sa tour",
       lambda c: 180 <= c.gt <= 840, roles=("JUNGLE",), prio=2),
     T("jg_scuttle", "macro", "Prends le Carapateur : ta voie forte peut t'aider",
-      lambda c: 195 <= c.gt <= 260, roles=("JUNGLE",), prio=3),
-    T("early_safe", "phase", "Ne meurs pas avant 3:00 : le premier mort rapporte beaucoup d'or",
-      lambda c: 60 <= c.gt <= 180 and c.level_diff <= 0, roles=LANERS, prio=1),
+      lambda c: 170 <= c.gt <= 235, roles=("JUNGLE",), prio=3),    # scuttles at 2:55 (2026)
+    T("early_safe", "phase", "Ne donne pas le premier sang : 100 d'or de bonus pour lui",
+      lambda c: 30 <= c.gt <= 180 and c.level_diff <= 0, roles=LANERS, prio=1),
 )
 
 

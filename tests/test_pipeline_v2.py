@@ -75,7 +75,7 @@ def test_staggered_coaching_slots_one_per_tick():
     eng.stagger = True
     plans = []
     orig = eng._heavy.plan
-    eng._heavy.plan = lambda t, st: plans.append(orig(t, st)) or plans[-1]
+    eng._heavy.plan = lambda t, st, busy=False: plans.append(orig(t, st, busy)) or plans[-1]
     run(eng, clock, 48)
     assert plans and all(len(p) <= 1 for p in plans)
     assert all(eng._heavy.runs[s] >= 3 for s in eng._heavy.runs)

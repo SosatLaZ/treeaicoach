@@ -54,6 +54,20 @@ LEVEL_DANGER = 2
 NEAR_RADIUS = 0.2            # enemy "near" my death (normalized minimap distance)
 NEAR_WINDOW_S = 8.0          # ... seen in the 8 s before the death
 WARN_WINDOW_S = 12.0         # gank alert in the 12 s before the death -> "alerte ignorée"
+REACT_S = 3.0                # an alert less than 3 s before the death came too late to react
+LEAD_CHAIN_GAP_S = 8.0       # alerts closer than this form one warning chain (lead = its first alert)
+LEAD_MAX_S = 25.0            # ... looked back at most this far
+#: Alert kinds that warn me of a danger (gank alerts + the personal danger of danger.py).
+DANGER_ALERT_KINDS: frozenset[str] = GANK_KINDS | {"personal_danger"}
+#: Death verdicts: key -> French label (who is responsible is explicit: the app or the player).
+VERDICT_FR: dict[str, str] = {
+    "ignored": "alerte ignorée",               # warned >= 3 s before: on the player
+    "late": "alerte trop tardive",             # warned < 3 s before: the app was late
+    "duel": "1v1 perdu",                       # lane opponent(s) only, no gank: not an app failure
+    "missed": "l'app n'a pas prévenu",         # enemies visible near me / a gank, no alert: app failure
+    "unseen": "ennemis invisibles",            # nobody visible on the minimap: nothing to announce
+    "tower": "tué par la tour",
+}
 GANK_OUTCOME_S = 15.0        # death within 15 s after a DANGER alert -> gank "mort"
 GANK_MERGE_S = 10.0          # DANGER alerts closer than this belong to the same gank episode
 DEATH_POS_WINDOW_S = 6.0     # my last position at most 6 s before the death
@@ -447,6 +461,21 @@ class _Rec:
     def gank_alerts(self, t0: float, t1: float) -> list[tuple[float, str, int, str, str | None]]:
         return [a for a in self.alerts if t0 <= a[0] <= t1 and a[1] in GANK_KINDS]
 
+    def danger_alerts(self, t0: float, t1: float) -> list[tuple[float, str, int, str, str | None]]:
+        """Gank alerts + personal danger warnings (level >= WARNING) between ``t0`` and ``t1``."""
+        return [a for a in self.alerts if t0 <= a[0] <= t1 and (a[1] in GANK_KINDS or (
+            a[1] == "personal_danger" and a[2] >= LEVEL_WARNING))]
+
+    def lane_opponents(self) -> set[str]:
+        """alnum aliases of my lane opponent(s) (same Riot position; bot lane: BOTTOM + UTILITY)."""
+        pos = _str(self.me.get("position")).upper() or _str(self.meta.get("position")).upper()
+        if not pos or pos == "JUNGLE" or self.enemy_team is None:
+            return set()
+        want = {"BOTTOM", "UTILITY"} if pos in ("BOTTOM", "UTILITY") else {pos}
+        return {alnum_name(p.get("alias")) for p in self.roster
+                if _str(p.get("team")).upper() == self.enemy_team and _str(p.get("position")).upper() in want
+                and p.get("alias")} - {""}
+
     def last_snapshot(self) -> dict:
         return self.snapshots[-1] if self.snapshots else {}
 
@@ -565,8 +594,17 @@ def _death_context(rec: _Rec, event: Any) -> dict[str, Any] | None:
     enemy_count = len(involved) + (1 if anon_near and not involved else 0)
     jungler_involved = any(rec.is_jungler_key(x) for x in involved) or bool(
         killer and killer.get("is_jungler")) or any(a.get("is_jungler") for a in assisters)
-    warn = rec.gank_alerts(T - WARN_WINDOW_S, T + 0.5)
+    warn = rec.danger_alerts(T - WARN_WINDOW_S, T + 0.5)
     last_alert = warn[-1] if warn else None
+    # lead time: the FIRST alert of the warning chain that ends with the last one
+    lead = None
+    if last_alert is not None:
+        chain = rec.danger_alerts(T - LEAD_MAX_S, T + 0.5)
+        first = last_alert[0]
+        for a in reversed(chain):
+            if a[0] <= first and first - a[0] <= LEAD_CHAIN_GAP_S:
+                first = a[0]
+        lead = round(T - first, 1)
     zone = _zone_value(*pos) if pos else None
     ctx: dict[str, Any] = {
         "game_time": round(T, 1),
@@ -587,9 +625,25 @@ def _death_context(rec: _Rec, event: Any) -> dict[str, Any] | None:
         "alert_before_s": round(T - last_alert[0], 1) if last_alert else None,
         "alert_kind": last_alert[1] if last_alert else None,
         "alert_text": last_alert[3] if last_alert else None,
-        "verdict": "alerte ignorée" if last_alert else "mort sans alerte",
+        "alert_lead_s": lead,
         "source": "snapshot" if ev.get("_approx") else "event",
     }
+    lane = rec.lane_opponents()
+    ctx["lane_duel"] = bool(involved) and not jungler_involved and bool(lane) and all(
+        alnum_name(x) in lane or alnum_name(rec.display(x)) in lane for x in involved)
+    if last_alert is not None:
+        key = "ignored" if (lead or 0.0) >= REACT_S else "late"
+    elif killer and killer.get("kind") == "turret" and not involved:
+        key = "tower"
+    elif ctx["lane_duel"]:
+        key = "duel"
+    elif near:
+        key = "missed"
+    else:
+        key = "unseen"
+    ctx["verdict_key"] = key
+    ctx["verdict"] = VERDICT_FR[key]
+    ctx["app_fault"] = key in ("missed", "late")
     jser = rec.jungler_series()
     unseen = None
     if rec.jungler is not None:
@@ -631,8 +685,14 @@ def _recap_sentence(ctx: dict[str, Any], rec: _Rec) -> str:
     else:
         first = ""
     if ctx.get("warned"):
-        s = max(1, int(round(ctx.get("alert_before_s") or 0)))
-        second = f"L'alerte avait été donnée {_plural(s, 'seconde')} avant."
+        lead = ctx.get("alert_lead_s")
+        s = max(1, int(round(lead if lead is not None else ctx.get("alert_before_s") or 0)))
+        if ctx.get("verdict_key") == "late":
+            second = f"L'alerte est arrivée trop tard, {_plural(s, 'seconde')} avant."
+        else:
+            second = f"L'alerte avait été donnée {_plural(s, 'seconde')} avant."
+    elif ctx.get("lane_duel"):
+        second = "Duel perdu : ne l'affronte pas quand il a plus de niveaux ou d'objets."
     elif not ctx.get("visible_any"):
         second = "Aucune alerte : personne n'était visible sur la minimap."
         if not first:
@@ -758,6 +818,15 @@ def _deaths(rec: _Rec) -> list[dict]:
     return out
 
 
+def _lead_stats(deaths: list[dict]) -> dict[str, Any]:
+    """How long before my deaths the alerts came (lead time of the warning chain)."""
+    leads = sorted(float(d["alert_lead_s"]) for d in deaths if d.get("alert_lead_s") is not None)
+    if not leads:
+        return {"n": 0, "mean": None, "median": None, "late": 0}
+    return {"n": len(leads), "mean": round(sum(leads) / len(leads), 1), "median": leads[len(leads) // 2],
+            "late": sum(1 for x in leads if x < REACT_S)}
+
+
 def _enemies_near_me(rec: _Rec, t0: float, t1: float) -> list[str]:
     """Named enemies seen < NEAR_RADIUS from me between ``t0 - 3 s`` and ``t1 + 3 s``."""
     out: list[str] = []
@@ -774,7 +843,8 @@ def _enemies_near_me(rec: _Rec, t0: float, t1: float) -> list[str]:
 
 def _ganks(rec: _Rec, deaths: list[dict]) -> list[dict]:
     """DANGER threat alerts grouped in episodes; outcome = my death within 15 s."""
-    danger = [a for a in rec.alerts if a[2] >= LEVEL_DANGER and a[1] not in NON_THREAT_KINDS]
+    danger = [a for a in rec.alerts if a[2] >= LEVEL_DANGER and a[1] not in NON_THREAT_KINDS
+              and a[1] != "personal_danger"]          # "Recule !" (danger.py) is not a gank
     episodes: list[list[tuple]] = []
     for a in danger:
         if episodes and a[0] - episodes[-1][-1][0] <= GANK_MERGE_S:
@@ -1628,13 +1698,29 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
     n_deaths = len(deaths)
     jname = jungler.get("name") or "Le jungler ennemi"
 
-    # R1 — deaths after a gank alert: the voice warned within 12 s and I still died.
-    ignored = [d for d in deaths if d.get("warned")]
+    # R1 — deaths after a gank alert: the voice warned in time (>= 3 s before, within 12 s) and I
+    #      still died. Alerts 0-2 s before the death were too late to react: not counted here.
+    ignored = [d for d in deaths if d.get("warned")
+               and d.get("verdict_key", "ignored") == "ignored"]
     if ignored:
-        avg = sum(d.get("alert_before_s") or 0 for d in ignored) / len(ignored)
+        avg = sum((d.get("alert_lead_s") if d.get("alert_lead_s") is not None else d.get("alert_before_s")) or 0
+                  for d in ignored) / len(ignored)
         tips.append((100, "ignored_alerts", "warn",
                      f"{_plural(len(ignored), 'mort')} dans les 12 s après une alerte "
                      f"(en moyenne {fmt_num(avg, 0)} s après l'annonce) : recule dès l'annonce vocale."))
+
+    # R1b — lane duels lost (only my lane opponent(s) involved, no gank): the matchup, not a gank.
+    duels = [d for d in deaths if d.get("verdict_key") == "duel"]
+    if len(duels) >= 2:
+        names = []
+        for d in duels:
+            for n in d.get("involved_names") or []:
+                if n not in names:
+                    names.append(n)
+        who = _names_fr(names[:2]) or "ton adversaire"
+        tips.append((95, "lane_duels", "warn",
+                     f"{len(duels)} morts en 1 contre 1 face à {who} : quand il a plus de niveaux ou "
+                     f"d'objets, ne l'échange pas, farme sous ta tour et attends ton pic d'objet."))
 
     # R2 — the enemy jungler took part in >= 2 of my deaths (kill event or seen near me).
     jd = [d for d in deaths if d.get("jungler_involved")]
@@ -1644,7 +1730,8 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
                      f"depuis plus de 30 s, joue près de ta tour."))
 
     # R3 — >= 2 deaths with no alert and no enemy visible near me: I was caught in the fog.
-    blind = [d for d in deaths if not d.get("warned") and not d.get("nearby")]
+    blind = [d for d in deaths if not d.get("warned") and not d.get("nearby")
+             and d.get("verdict_key") not in ("tower", "duel")]
     if len(blind) >= 2:
         tips.append((85, "blind_deaths", "warn",
                      f"{len(blind)} morts sans alerte ni ennemi visible près de toi : avance seulement "
@@ -1878,8 +1965,13 @@ def analyze_game(record: Any, truth: Any = None) -> dict[str, Any]:
         "ok": not errors,
         "summary": summary,
         "deaths": deaths,
-        "deaths_warned": sum(1 for d in deaths if d.get("warned")),
+        # "after an alert" = warned in time (>= 3 s): an alert 0-2 s before the death is the app's
+        # lateness, not the player's ("alerte trop tardive")
+        "deaths_warned": sum(1 for d in deaths if d.get("verdict_key", "ignored" if d.get("warned") else "")
+                             == "ignored"),
         "deaths_unwarned": sum(1 for d in deaths if not d.get("warned")),
+        "death_verdicts": {k: sum(1 for d in deaths if d.get("verdict_key") == k) for k in VERDICT_FR},
+        "alert_lead": _lead_stats(deaths),
         "ganks": ganks,
         "ganks_faced": len(ganks),
         "ganks_survived": survived,
