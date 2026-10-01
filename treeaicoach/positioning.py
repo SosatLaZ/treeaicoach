@@ -187,7 +187,8 @@ class PositionCoach:
             pos = self._pos_at(T)
             phase = getattr(st, "phase", "laning")
             sc = self._score(phase)
-            in_roles = getattr(me, "position", "") in roles_for(kind, phase) or phase != "laning"
+            role = getattr(self, "_role", None) or getattr(me, "position", "")   # resolved role (lane swaps)
+            in_roles = role in roles_for(kind, phase) or phase != "laning"
             if not in_roles:
                 continue
             sc.moments += 1
@@ -223,6 +224,7 @@ class PositionCoach:
             if not self._my_hist or gt - self._my_hist[-1][0] >= 1.0:
                 self._my_hist.append((gt, float(me_pos[0]), float(me_pos[1])))
                 del self._my_hist[:-240]
+        self._role = role
         self._moments(game, st, gt)
         phase = getattr(st, "phase", "laning")
         if bool(getattr(me, "is_dead", False)) or me_pos is None or in_base:

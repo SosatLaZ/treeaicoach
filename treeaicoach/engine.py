@@ -2187,17 +2187,18 @@ class CoachEngine:
         allies: list[Any] = []
         roles: dict[str, str] = {}
         try:
-            for p in (game.all_players() if game is not None else []):
-                if p.champion_alias and getattr(p, "position", ""):
-                    roles[p.champion_alias] = str(p.position)
-            # inferred roles (roles.RoleResolver: alias -> RoleInfo), when the engine has one
+            # resolved roles first (roles.RoleResolver: observed lanes beat the champ select
+            # position after a lane swap), the Riot position only as a fallback
             resolver = getattr(self, "_role_resolver", None) or getattr(self, "_roles", None)
             extra = resolver.roles() if callable(getattr(resolver, "roles", None)) else resolver
             if isinstance(extra, dict):
                 for k, info in extra.items():
                     role = getattr(info, "role", info)
-                    if k and isinstance(role, str) and role and not roles.get(str(k)):
+                    if k and isinstance(role, str) and role:
                         roles[str(k)] = role
+            for p in (game.all_players() if game is not None else []):
+                if p.champion_alias and getattr(p, "position", "") and not roles.get(p.champion_alias):
+                    roles[p.champion_alias] = str(p.position)
             seen: set[str] = set()
             for p in (list(game.allies) if game is not None else [])[:4]:
                 tr = tracker.get(p.champion_alias) if (tracker is not None and p.champion_alias) else None

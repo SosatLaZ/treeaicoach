@@ -261,8 +261,8 @@ class _Roster:
     def role_certain(self, alias: str | None) -> bool:
         me = self.my_role_info
         other = self.roles.info(alias, "enemy") if alias else None
-        return (me is not None and other is not None and me.source in ("riot", "smite")
-                and other.source in ("riot", "smite"))
+        sure = ("riot", "smite", "observed")
+        return (me is not None and other is not None and me.source in sure and other.source in sure)
 
 
 class GankAnalyzer:
