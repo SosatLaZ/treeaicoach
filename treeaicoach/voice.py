@@ -10,9 +10,14 @@
 * :class:`VoiceEngine` is the public entry point. :meth:`VoiceEngine.say` is thread-safe and
   never blocks: it only appends to a queue consumed by a daemon thread.
 * Queue rules: a DANGER message (level 2) drops everything queued before it, cuts the current
-  sentence (``SVSFPurgeBeforeSpeak``) and is optionally preceded by a short double beep; other
-  messages wait for the current sentence to finish; a message queued for more than 2.5 s is
-  dropped (it is no longer relevant in a fight).
+  sentence (``SVSFPurgeBeforeSpeak`` / ``PlaySound(None)``) and is optionally preceded by a short
+  double beep that starts at once; a WARNING goes ahead of the less urgent queued messages and
+  cuts a less urgent sentence being spoken; other messages wait for the current sentence to
+  finish; a message queued for more than 2.5 s is dropped (it is no longer relevant in a fight).
+  WARNING / DANGER sentences never wait for the network: cached neural WAV, else the local
+  (SAPI) voice at once, the neural synthesis filling the cache in the background
+  (``NeuralBackend.speak_urgent``); a network wait for a less urgent sentence stops as soon as
+  a gank alert is queued.
 * Backends (:class:`SpeechBackend`): ``"sapi"`` (:class:`SapiBackend`, Windows, pywin32:
   ``pythoncom.CoInitialize()`` + ``win32com.client.Dispatch("SAPI.SpVoice")`` created and used
   in the voice thread only) and ``"print"`` (:class:`PrintBackend`, logs the text). Anything
@@ -772,15 +777,36 @@ class NeuralBackend(_WavBackend):
         except Exception as exc:
             log.debug("Neural prefetch failed: %s", exc)
 
+    #: set by the voice worker: True when an urgent message waits (stops a network wait)
+    abort_check: Callable[[], bool] | None = None
+
     def speak(self, text: str, purge: bool) -> None:
         if purge:
             self.purge()
         timeout = 0.9 if purge else self._tn.LIVE_TIMEOUT_S
         path = None
         try:
+            path = self._tts.get(text, timeout, abort=self.abort_check)
+        except TypeError:                     # test doubles without ``abort``
             path = self._tts.get(text, timeout)
         except Exception as exc:
             log.debug("Neural synthesis failed: %s", exc)
+        if path is None and self.abort_check is not None and self.abort_check():
+            return                            # superseded by an urgent message: not said
+        if path is not None and self._play(Path(path)):
+            return
+        self._get_local().speak(text, purge)
+
+    def speak_urgent(self, text: str, purge: bool) -> None:
+        """Gank alerts: the cached neural WAV, else the local voice RIGHT NOW (no network wait;
+        the synthesis runs in the background so the next one is cached)."""
+        if purge:
+            self.purge()
+        path = None
+        try:
+            path = self._tts.get(text, 0.0)
+        except Exception as exc:
+            log.debug("Neural cache lookup failed: %s", exc)
         if path is not None and self._play(Path(path)):
             return
         self._get_local().speak(text, purge)
@@ -1055,7 +1081,11 @@ class VoiceEngine:
                     self._queue.clear()
                     self._queue.append(item)
                 else:
-                    self._queue.append(item)
+                    # a WARNING (gank) goes before the less urgent messages already queued
+                    i = len(self._queue)
+                    while i > 0 and self._queue[i - 1].level < lvl:
+                        i -= 1
+                    self._queue.insert(i, item)
                     while len(self._queue) > MAX_QUEUE:
                         self._drop_oldest_locked()
                 self._cond.notify_all()
@@ -1189,6 +1219,11 @@ class VoiceEngine:
         with self._cond:
             return any(it.level >= LEVEL_DANGER for it in self._queue)
 
+    def _urgent_queued(self, above: int = LEVEL_INFO) -> bool:
+        """A message of level > ``above`` and >= WARNING waits in the queue."""
+        with self._cond:
+            return any(it.level > above and it.level >= LEVEL_WARNING for it in self._queue)
+
     # -- worker -------------------------------------------------------------------------
 
     def _run(self, token: threading.Event) -> None:
@@ -1209,6 +1244,8 @@ class _Worker:
         self.backend_key: tuple[str, str] | None = None   # (engine, neural voice) of the backend
         self.roster_seen = -1
         self._last_error_log = -math.inf
+        self.cur_level = LEVEL_INFO               # level of the sentence being spoken
+        self.item_level = LEVEL_INFO              # level of the sentence being synthesised
 
     # -- setup ------------------------------------------------------------------------
 
@@ -1229,6 +1266,11 @@ class _Worker:
 
     def _install(self, backend: SpeechBackend) -> None:
         self.backend = backend
+        if hasattr(backend, "abort_check"):
+            try:     # a network wait for an INFO sentence stops as soon as a gank alert waits
+                backend.abort_check = lambda: self.e._urgent_queued(self.item_level)  # type: ignore[attr-defined]
+            except Exception:
+                pass
         self.applied_version = -1
         self.roster_seen = -1
         self.started_at = None
@@ -1374,6 +1416,9 @@ class _Worker:
 
     def _say_normal(self, item: _Item) -> None:
         e = self.e
+        if item.level >= LEVEL_WARNING and item.level > self.cur_level and self._speaking():
+            self._speak(item, purge=True)       # a gank warning cuts a less urgent sentence
+            return
         while self._speaking():
             if self.token.is_set():
                 return
@@ -1411,9 +1456,14 @@ class _Worker:
         self._speak(item, purge=True)
 
     def _speak(self, item: _Item, purge: bool) -> None:
+        self.item_level = item.level
         for attempt in range(2):
             try:
-                self.backend.speak(item.text, purge)
+                urgent = getattr(self.backend, "speak_urgent", None) if item.level >= LEVEL_WARNING else None
+                if callable(urgent):
+                    urgent(item.text, purge)
+                else:
+                    self.backend.speak(item.text, purge)
             except Exception as exc:
                 self.failures += 1
                 log.warning("Échec de la synthèse vocale (%s) : %s", exc, item.text)
@@ -1431,5 +1481,6 @@ class _Worker:
                 continue
             self.failures = 0
             self.started_at = float(self.e._clock())
+            self.cur_level = item.level
             self.e._count_spoken()
             return

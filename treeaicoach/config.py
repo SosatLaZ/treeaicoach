@@ -73,6 +73,7 @@ BOOL_FIELDS: tuple[str, ...] = (
     "alert_collapse",
     "alert_jungler_spotted",
     "alert_laner_mia",
+    "gank_pre_alert",
     "safe_mode",
     "download_skin_icons",
     "autostart",
@@ -194,12 +195,13 @@ class Config:
     alert_collapse: bool = True
     alert_jungler_spotted: bool = True
     alert_laner_mia: bool = False
+    gank_pre_alert: bool = True     # "Lee Sin !" as soon as the jungler pops out of the fog near me
     safe_mode: bool = False         # "mode sûr": no gank / jungler-tracking alerts, no fog
     sensitivity: float = 1.0        # 0.6..1.6, multiplies the radii
     warn_radius: float = 0.22       # normalized minimap (~3300 game units)
     danger_radius: float = 0.12     # (~1800 units)
     # capture / detection
-    target_fps: float = 8.0         # 2..20
+    target_fps: float = 12.0        # 2..20 (the gank check runs on every tick)
     detector_backend: str = "auto"  # "auto" | "onnx" | "classic"
     detection_threshold: float = 0.0  # 0 = value from model_meta.json
     minimap_mode: str = "auto"      # "auto" | "manual"
@@ -711,6 +713,9 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         # pre-"overlay_mode" file: the old default HUD position (top-left, over LoL's ally
         # portraits) moves to the new default, just above the minimap
         data = {**data, "hud_position": "above_minimap"}
+    if "gank_pre_alert" not in data and data.get("target_fps") in (8, 8.0):
+        # pre-latency-work file still on the old default analysis rate: gank alerts need 12 fps
+        data = {**data, "target_fps": 12.0}
     cfg = Config.from_dict(data)
     log.info("Config loaded from %s", p)
     return cfg

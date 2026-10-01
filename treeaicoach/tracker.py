@@ -15,7 +15,7 @@ per-frame observations into :class:`Track` objects that live across frames:
 * the local player (relation ``"self"``) is at most one track, returned by :meth:`Tracker.me`.
 
 Per track: smoothed position (component-wise median of the last 3 observations), velocity
-(least squares over the last ~1.2 s, ``(0, 0)`` without >= 3 points spanning >= 0.35 s),
+(least squares over the last ~1.2 s, ``(0, 0)`` without >= 3 points spanning >= 0.25 s),
 jump detection (recall / teleport: > 0.15 in < 0.3 s, or any displacement faster than a
 champion can walk, resets the history), visibility (seen < :data:`HIDE_AFTER` s ago),
 appearance time (first sighting, or back in sight after >= :data:`REAPPEAR_AFTER` s hidden)
@@ -53,7 +53,7 @@ POS_MEDIAN_N = 3            # smoothed position = median of the last N observati
 POS_WINDOW_S = 1.0          # ...not older than this before the newest one
 VEL_WINDOW_S = 1.2          # least-squares velocity window
 VEL_MIN_POINTS = 3
-VEL_MIN_SPAN_S = 0.35
+VEL_MIN_SPAN_S = 0.25        # (latency: radial velocity available ~3 frames after a sighting at 12 fps)
 VEL_MAX = 0.2               # clamp of the velocity magnitude (champions walk <= ~0.06 / s)
 TELEPORT_DIST = 0.15        # jump > 0.15 in < 0.3 s = recall / teleport -> history reset
 TELEPORT_DT = 0.3
@@ -184,7 +184,7 @@ class Track:
     def velocity(self) -> tuple[float, float]:
         """Least-squares velocity (normalized units / s) over the last ~1.2 s of observations.
 
-        ``(0, 0)`` without at least 3 points spanning 0.35 s (e.g. just after a jump). For a
+        ``(0, 0)`` without at least 3 points spanning 0.25 s (e.g. just after a jump). For a
         hidden track this is the velocity observed just before it disappeared.
         """
         obs = self._obs

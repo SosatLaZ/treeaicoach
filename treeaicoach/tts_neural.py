@@ -29,6 +29,7 @@ import time
 import wave
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future
+from concurrent.futures import TimeoutError as _FutureTimeout
 from pathlib import Path
 from typing import Any
 
@@ -426,16 +427,30 @@ class NeuralTTS:
         threading.Thread(target=job, name="TreeAICoach-tts-job", daemon=True).start()
         return fut
 
-    def get(self, text: str, timeout: float = LIVE_TIMEOUT_S) -> Path | None:
-        """Cached WAV, else synthesise for at most ``timeout`` s (the job keeps filling the cache)."""
+    def get(self, text: str, timeout: float = LIVE_TIMEOUT_S,
+            abort: Callable[[], bool] | None = None) -> Path | None:
+        """Cached WAV, else synthesise for at most ``timeout`` s (the job keeps filling the cache).
+        ``timeout <= 0``: cache only (the synthesis is started in the background for next time).
+        ``abort()`` returning True (an urgent message is waiting) stops the wait at once."""
         p = self.cached(text)
         if p is not None:
             return p
         if not self.online():
             return None
         fut = self._start(text)
+        if timeout <= 0:
+            return None
+        deadline = time.monotonic() + timeout
         try:
-            return fut.result(max(0.0, timeout))
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise _FutureTimeout
+                try:
+                    return fut.result(min(left, 0.02) if abort is not None else left)
+                except _FutureTimeout:
+                    if abort is not None and abort():
+                        return None
         except Exception:
             log.info("Voix naturelle trop lente (> %.1f s) pour : %s", timeout, text)
             return None
@@ -609,16 +624,19 @@ def static_phrases(leads: Sequence[int] = (60, 20)) -> list[str]:
 
 
 def roster_phrases(enemies: Sequence[str], allies: Sequence[str] = ()) -> list[str]:
-    """Every gank sentence the coach may say for these enemy champions, most urgent first."""
+    """Every gank sentence the coach may say for these enemy champions, most urgent first
+    (``gank.py`` emits exactly these: tests/test_latency.py checks it)."""
     names = [n for n in (str(x).strip() for x in enemies if x) if n][:5]
     danger: list[str] = []
     warn: list[str] = []
     other: list[str] = []
     try:
         from treeaicoach.alerts import AlertKind, Level, phrase  # noqa: PLC0415
+        from treeaicoach.gank import pre_alert_text  # noqa: PLC0415
 
-        lanes = ("top", "mid", "bot")
+        lanes = ("top", "mid", "bot", None)
         for name in names:
+            danger.append(pre_alert_text(name))
             danger.append(phrase(AlertKind.JUNGLER_APPROACH, Level.DANGER, name))
             danger.append(phrase(AlertKind.COLLAPSE, Level.DANGER, name, count=1))
             for d in DIRECTIONS:
@@ -629,12 +647,21 @@ def roster_phrases(enemies: Sequence[str], allies: Sequence[str] = ()) -> list[s
             warn.append(phrase(AlertKind.LANER_MIA, Level.WARNING, name))
             other.append(phrase(AlertKind.ROAM_APPROACH, Level.INFO, name))
             other.append(phrase(AlertKind.LANER_MIA, Level.INFO, name))
-            for lane in lanes:
-                other.append(phrase(AlertKind.COLLAPSE, Level.DANGER, None, lane, count=1, names=[name]))
-        for i, a in enumerate(names):
-            for b in names[i + 1:]:
+            for lvl in (Level.DANGER, Level.WARNING):
                 for lane in lanes:
-                    other.append(phrase(AlertKind.COLLAPSE, Level.DANGER, None, lane, count=2, names=[a, b]))
+                    # merged gank with an anonymous second enemy ("Gank top : Lee Sin et un ennemi !")
+                    (danger if lvl >= Level.DANGER else warn).append(
+                        phrase(AlertKind.COLLAPSE, lvl, None, lane, count=2, names=[name]))
+                    other.append(phrase(AlertKind.COLLAPSE, lvl, None, lane, count=1, names=[name]))
+        # merged duos (both orders: the jungler is named first, whoever it is)
+        for a in names:
+            for b in names:
+                if a == b:
+                    continue
+                for lvl in (Level.DANGER, Level.WARNING):
+                    for lane in lanes:
+                        (danger if lvl >= Level.DANGER else warn).append(
+                            phrase(AlertKind.COLLAPSE, lvl, None, lane, count=2, names=[a, b]))
     except Exception as exc:
         log.debug("roster_phrases failed: %s", exc)
     return danger + warn + other

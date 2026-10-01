@@ -41,7 +41,7 @@ def test_defaults_match_contract():
         True, True, True, True)
     assert c.alert_laner_mia is False
     assert c.sensitivity == 1.0 and c.warn_radius == 0.22 and c.danger_radius == 0.12
-    assert c.target_fps == 8.0 and c.detector_backend == "auto" and c.detection_threshold == 0.0
+    assert c.target_fps == 12.0 and c.detector_backend == "auto" and c.detection_threshold == 0.0
     assert c.minimap_mode == "auto" and c.minimap_side == "auto" and c.manual_minimap_rect is None
     assert c.download_skin_icons is True and c.autostart is True
     assert c.collect_samples is False and c.collect_interval_s == 2.0 and c.show_preview is False
@@ -88,7 +88,7 @@ def test_effective_radii():
         ("warn_radius", 2.0, 0.5),
         ("target_fps", 0, 2.0),
         ("target_fps", 100, 20.0),
-        ("target_fps", "12", 8.0),
+        ("target_fps", "12", 12.0),
         ("target_fps", 12, 12.0),
         ("detection_threshold", -1.0, 0.0),
         ("detection_threshold", 0.01, 0.05),
@@ -396,7 +396,7 @@ def test_load_ignores_unknown_keys_and_fixes_wrong_types(tmp_path):
     assert c.sensitivity == 1.6
     assert c.alert_roam is False
     assert c.detector_backend == "classic"
-    assert c.target_fps == 8.0
+    assert c.target_fps == 12.0
     assert c.minimap_mode == "manual" and c.manual_minimap_rect == VALID_RECT
     assert p.exists() and not (tmp_path / "config.json.bak").exists()  # valid JSON: not renamed
 
@@ -439,7 +439,7 @@ def test_save_writes_validated_values(tmp_path):
     p = tmp_path / "config.json"
     assert save_config(Config(voice_rate=99, target_fps=float("nan")), p)  # type: ignore[arg-type]
     data = json.loads(p.read_text(encoding="utf-8"))
-    assert data["voice_rate"] == 10 and data["target_fps"] == 8.0
+    assert data["voice_rate"] == 10 and data["target_fps"] == 12.0
 
 
 def test_save_accepts_str_path_and_overwrites(tmp_path):

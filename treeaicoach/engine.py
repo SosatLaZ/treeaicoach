@@ -58,6 +58,7 @@ WINDOW_REFRESH_S = 2.0           # game window rectangle cache
 VERIFY_PERIOD_S = 1.0            # minimap verify() period
 VERIFY_BAD_S = 3.0               # verify() below threshold this long -> relocate
 LOCATE_RETRY_S = 10.0            # retry the auto location this often while on the fallback rect
+HEAVY_HZ = 2.0                   # rate of the coaching stages (coach, Tab, tips, items, hype / AI)
 THREAT_HOLD_S = 2.0              # overlay threat = max raw gank level over this window
 DEATH_RECAP_DELAY_S = 2.0        # the death recap is spoken this long after my death
 OVERLAY_MIN_PERIOD_S = 1.0 / 12  # get_overlay_state() rebuilt at most at 12 Hz
@@ -325,6 +326,7 @@ class CoachEngine:
         self._text_msg: tuple[float, str] | None = None   # latest written-only message (HUD line)
         self.text_messages: list[tuple[float, str, str]] = []   # (t, kind, text) written-only, this game
         self._sb_recorded: Any = None
+        self._next_heavy_t = -math.inf          # next tick running the coaching stages
         self._throttler = AlertThrottler()
         self._recorder: Any = None
         self._hotkeys: Any = None
@@ -901,6 +903,7 @@ class CoachEngine:
                 except Exception:
                     log.exception("reset failed for %r", type(comp).__name__)
         self._ended = False
+        self._next_heavy_t = -math.inf
         self._tip_text = None
         self._text_msg = None
         self.text_messages = []
@@ -1115,8 +1118,14 @@ class CoachEngine:
             except Exception:
                 self._errors += 1
                 self._err.exception("GankAnalyzer.update failed")
-        raw_alerts += gank_alerts
         threat = self._update_threat(t, gank_alerts)
+        # latency first: a gank alert is spoken NOW, before the heavier stages of the tick
+        said_now = self._say_gank_now([a for a in gank_alerts if a.kind in GANK_KINDS], t, gt)
+        raw_alerts += [a for a in gank_alerts if a.kind not in GANK_KINDS]
+        # coaching stages (coach, Tab, tips, items, hype / AI) at HEAVY_HZ, the gank check every tick
+        heavy = t >= self._next_heavy_t or t < self._next_heavy_t - 2.0 / HEAVY_HZ
+        if heavy:
+            self._next_heavy_t = t + 1.0 / HEAVY_HZ
         if self._objectives is not None:
             raw_alerts += list(self._objectives.update(game, t) or [])
         me = tracker.me()
@@ -1127,16 +1136,18 @@ class CoachEngine:
                 z = geometry.classify_zone(*me_pos)
                 in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
             raw_alerts += list(self._reminders.update(t, game, me_pos, in_base) or [])
-        if self._coach is not None:
+        if self._coach is not None and heavy:
             raw_alerts += list(self._coach.update(
                 t, tracker, game, self._role_resolver,
                 self._objectives.states() if self._objectives is not None else [],
                 me_pos, threat=threat, minimap_bgr=frame) or [])
-        raw_alerts += self._scoreboard_and_praise(t, tracker, game, threat, gank_alerts, gt)
-        raw_alerts += self._stance_and_tips(t, game, threat)
-        if threat < Level.WARNING:
+        if heavy:
+            raw_alerts += self._scoreboard_and_praise(t, tracker, game, threat, gank_alerts, gt)
+            raw_alerts += self._stance_and_tips(t, game, threat)
+        if threat < Level.WARNING and heavy:
             raw_alerts += self._item_advice(t, game, me_pos, gt)
-        raw_alerts = self._hype_and_ai(t, game, gt, threat, me_pos, raw_alerts)
+        if heavy:
+            raw_alerts = self._hype_and_ai(t, game, gt, threat, me_pos, raw_alerts)
         if self._fog is not None and not getattr(self._cfg, "safe_mode", False):
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
         rec = self._recorder
@@ -1146,9 +1157,22 @@ class CoachEngine:
         if threat >= Level.WARNING:     # gank first: no macro tip / praise / Tab insight now
             raw_alerts = [a for a in raw_alerts if a.kind not in COACH_KINDS]
         raw_alerts = self._route_messages(raw_alerts, t, gt)
-        said = self._throttler.filter(raw_alerts, t)
+        # one message per tick: nothing else when a gank alert was just said
+        said = [] if said_now else self._throttler.filter(raw_alerts, t)
         if threat >= Level.WARNING:     # (a held-back coaching alert released by the throttler)
             said = [a for a in said if a.kind not in COACH_KINDS]
+        self._speak_alerts(said, t, gt)
+        said = said_now + said
+        with self._lock:
+            self._frame = frame
+            self._identified = identified
+            self._frame_id += 1
+        if frame is not None and self._cfg.collect_samples:
+            self._collect(frame, t)
+        return said
+
+    def _speak_alerts(self, said: list[Alert], t: float, gt: float) -> None:
+        rec = self._recorder
         if self._gate is not None:
             for a in said:
                 self._gate.record(a, t)
@@ -1160,13 +1184,20 @@ class CoachEngine:
                                      else str(a.kind)))
             if rec is not None:
                 rec.on_alert(a, gt)
-        with self._lock:
-            self._frame = frame
-            self._identified = identified
-            self._frame_id += 1
-        if frame is not None and self._cfg.collect_samples:
-            self._collect(frame, t)
-        return said
+
+    def _say_gank_now(self, gank: list[Alert], t: float, gt: float) -> list[Alert]:
+        """Gank alerts go to the voice right after the gank check (throttled, routed), before
+        the coaching stages of the tick. Returns the alerts said. Never raises."""
+        if not gank:
+            return []
+        try:
+            said = self._throttler.filter(self._route_messages(gank, t, gt), t)
+            self._speak_alerts(said, t, gt)
+            return said
+        except Exception:
+            self._errors += 1
+            self._err.exception("Gank alert fast path failed")
+            return []
 
     def _scoreboard_and_praise(self, t: float, tracker: Any, game: GameInfo, threat: int,
                                gank_alerts: list[Alert], gt: float) -> list[Alert]:

@@ -17,8 +17,9 @@
   - escalation (a more severe alert than the last one said for the same key, or a DANGER
     about a champion whose last announcement was a WARNING) passes immediately;
   - highest level wins, then the most recent (``Alert.t``), then the kind priority;
-  - global minimum gap between two messages, except for DANGER (and for ``JUNGLER_WHERE`` /
-    ``DEATH_RECAP``, answers the player explicitly waits for);
+  - global minimum gap between two messages, except for DANGER and gank WARNINGs (never delayed
+    by another message: latency first) and for ``JUNGLER_WHERE`` / ``DEATH_RECAP``, answers the
+    player explicitly waits for; at equal level a gank alert wins over any other kind;
   - a DANGER is not said within ``danger_gap_s`` (1.5 s) of the previous DANGER, so that two
     gank alerts raised on consecutive ticks do not cut each other off (the voice purges the
     current sentence for a DANGER);
@@ -637,6 +638,8 @@ class AlertThrottler:
         return False
 
     def _gap_ok(self, a: Alert, now: float) -> bool:
+        if a.kind in GANK_ALERT_KINDS and a.level < Level.DANGER:
+            return True                         # a gank warning is never delayed by the gap
         if a.level >= Level.DANGER:
             last = self._last_danger_t
             return last is None or now - last >= self.danger_gap_s
@@ -680,7 +683,7 @@ class AlertThrottler:
             return []
 
         best: tuple[Alert, float] | None = None
-        best_rank: tuple[int, float, int, int] | None = None
+        best_rank: tuple[int, int, float, int, int] | None = None
         held: list[tuple[Alert, float]] = []
         for index, (a, raised_at) in enumerate(candidates):
             if not self._key_ok(a, now):
@@ -691,6 +694,7 @@ class AlertThrottler:
                 continue
             rank = (
                 int(a.level),
+                int(a.kind in GANK_ALERT_KINDS),                    # gank first, at equal level
                 _finite_or(a.t, -math.inf),
                 -_PRIORITY_RANK.get(a.kind, len(_PRIORITY_RANK)),  # type: ignore[arg-type]
                 index,                                              # later in the list = more recent
