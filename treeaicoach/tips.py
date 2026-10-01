@@ -550,6 +550,7 @@ class TipRotator:
         self._rng = random.Random(seed)
         self.rotate_s = float(rotate_s)
         self._tips = tuple(tips)
+        self.min_prio = 1                  # skill level: only tips with prio >= this (skill.py)
         self.reset()
 
     def reset(self) -> None:
@@ -653,6 +654,8 @@ class TipRotator:
                 continue
             last = self._shown_gt.get(tip.id)
             if last is not None and 0.0 <= gt - last < tip.cooldown:
+                continue
+            if tip.prio < self.min_prio and tip.tone not in ("red",):
                 continue
             if tip.applies(ctx):
                 cands.append(tip)

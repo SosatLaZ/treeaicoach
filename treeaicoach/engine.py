@@ -421,6 +421,12 @@ class CoachEngine:
                         fn(new)
                     except Exception:
                         log.exception("apply_config failed for %r", type(comp).__name__)
+            if self._tip_rotator is not None:
+                try:
+                    from treeaicoach.skill import tip_min_prio
+                    self._tip_rotator.min_prio = tip_min_prio(new)
+                except Exception:
+                    log.debug("skill level unavailable", exc_info=True)
             set_params = getattr(self._voice, "set_params", None)
             if callable(set_params):
                 try:
@@ -482,6 +488,11 @@ class CoachEngine:
             self._gauge = PlayGauge()
             self._stance = StanceAdvisor(cfg)
             self._tip_rotator = TipRotator()
+            try:
+                from treeaicoach.skill import tip_min_prio
+                self._tip_rotator.min_prio = tip_min_prio(cfg)
+            except Exception:
+                log.debug("skill level unavailable", exc_info=True)
             self._gate = MessageGate()
         except Exception:
             log.exception("Stance / tips / voice policy unavailable")

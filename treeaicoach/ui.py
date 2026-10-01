@@ -1725,7 +1725,35 @@ class CoachApp:
             self._tip(lbl, tip)
             self._tip(sw, tip)
             self._quick[key] = (var, sw)
+        # one-click player level (skill.py): the higher the level, the fewer basic indications
+        try:
+            from treeaicoach import skill as _skill
+            row = 2 + len(specs)
+            self._label(box, "TON NIVEAU", self.fonts.caps, DIM, anchor="w").grid(
+                row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(12, 4))
+            short = {"debutant": "Déb.", "intermediaire": "Inter.", "avance": "Avancé", "expert": "Expert"}
+            to_key = {short[k]: k for k, _l in _skill.SKILL_LEVELS}
+            self.skill_seg = ctk.CTkSegmentedButton(
+                box, values=[short[k] for k, _l in _skill.SKILL_LEVELS], height=28, font=self.fonts.tiny_bold,
+                fg_color=PANEL_LO, selected_color=GOLD_DARK, selected_hover_color="#8C6A32",
+                unselected_color=PANEL_LO, unselected_hover_color=PANEL_HI, text_color=TEXT, corner_radius=8,
+                command=self.cb(lambda lbl: self.apply_skill_level(to_key.get(lbl, "intermediaire"))))
+            self.skill_seg.grid(row=row + 1, column=0, columnspan=3, sticky="ew", padx=4)
+            self.skill_seg.set(short[_skill.normalize(getattr(self.cfg, "skill_level", "intermediaire"))])
+            self._tip(self.skill_seg, "\n".join(f"{l} : {_skill.SKILL_HELP[k]}" for k, l in _skill.SKILL_LEVELS))
+        except Exception:
+            log.exception("Cannot build the skill level selector")
         self._sync_quick()
+
+    @_guarded
+    def apply_skill_level(self, level: str) -> None:
+        """Débutant / Intermédiaire / Avancé / Expert: adapts tips, voice and overlay in one click."""
+        from treeaicoach import skill as _skill
+        changes = _skill.preset_changes(self.cfg, level)
+        new = dataclasses.replace(self.cfg, **changes).validated()
+        self._replace_config(new, changed=set(changes))
+        self._refresh_all_widgets()
+        self.show_toast(f"Niveau « {_skill.label(level)} » : {_skill.SKILL_HELP[_skill.normalize(level)]}")
 
     def _sync_quick(self, muted: bool | None = None) -> None:
         """Quick toggles <- configuration / engine state (never fires their callbacks)."""
