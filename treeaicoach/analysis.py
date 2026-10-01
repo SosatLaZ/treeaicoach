@@ -1206,6 +1206,135 @@ def _objective_presence(rec: _Rec) -> dict[str, Any]:
             "theirs": len(theirs), "theirs_near": sum(1 for i in theirs if i["near"]), "percent": pct}
 
 
+POS_PRESENT_R = 0.25         # near the pit when an epic monster dies
+POS_FAR_R = 0.40             # farther than this = absent
+SIDE_ALONE_MISSING = 3       # enemies not sighted for >= 10 s = "missing"
+POS_PHASES_FR = {"laning": "Phase de voie", "mid": "Milieu de partie", "late": "Fin de partie"}
+
+
+def phase_bounds(rec: _Rec) -> dict[str, tuple[float, float]]:
+    """Live phase boundaries (same rules as phase.py): laning ends at 14:00 or when the 2nd outer
+    turret falls; late game starts at 25:00 or at the first Baron."""
+    try:
+        from treeaicoach.phase import parse_turret
+    except Exception:
+        parse_turret = None  # type: ignore[assignment]
+    outer = []
+    baron = None
+    for e in rec.events:
+        T = _finite(e.get("EventTime"))
+        if T is None:
+            continue
+        if e.get("EventName") == "TurretKilled" and parse_turret is not None:
+            tur = parse_turret(e.get("TurretKilled"))
+            if tur is not None and tur[2] == 1:
+                outer.append(T)
+        elif e.get("EventName") == "BaronKill" and baron is None:
+            baron = T
+    outer.sort()
+    mid = min(840.0, outer[1]) if len(outer) >= 2 else 840.0
+    late = max(mid, min(1500.0, baron if baron is not None else 1500.0))
+    return {"laning": (0.0, mid), "mid": (mid, late), "late": (late, math.inf)}
+
+
+def _alive_at(rec: _Rec, gt: float) -> bool:
+    snap = None
+    for sn in rec.snapshots:
+        T = _finite(sn.get("game_time"))
+        if T is None or T > gt:
+            break
+        snap = sn
+    return not bool((snap or {}).get("is_dead"))
+
+
+def _missing_at(rec: _Rec, gt: float, window: float = 10.0) -> int:
+    seen = 0
+    for ser in rec.sightings.values():
+        if ser.window(gt - window, gt + 0.5):
+            seen += 1
+    return max(0, 5 - seen)
+
+
+def _positioning(rec: _Rec, summary: dict) -> dict[str, Any]:
+    """"Right place at the right time" per phase: key moments (epic monsters taken while I was
+    alive and my role should be there), objectives missed because absent, risky side-lane time in
+    late game (alone deep in a side lane with >= 3 enemies unseen), with concrete French tips."""
+    from treeaicoach.positioning import roles_for
+
+    role = _str(summary.get("position")).upper()
+    bounds = phase_bounds(rec)
+    phases: dict[str, dict[str, Any]] = {
+        k: {"phase": k, "label": POS_PHASES_FR[k], "moments": 0, "present": 0, "missed": [], "side_risk_s": 0.0}
+        for k in bounds}
+
+    def phase_at(gt: float) -> str:
+        for k, (a, b) in bounds.items():
+            if a <= gt < b:
+                return k
+        return "late"
+    for e in rec.events:
+        kind = _EPIC_EVENTS.get(_str(e.get("EventName")))
+        T = _finite(e.get("EventTime"))
+        if kind is None or T is None or kind == "atakhan" or not _alive_at(rec, T):
+            continue
+        if kind == "dragon" and _str(e.get("DragonType")).lower() == "elder":
+            kind = "elder"
+        ph = phase_at(T)
+        if role and role not in roles_for(kind, ph if ph != "late" else "late"):
+            continue
+        took_part = any(rec.is_me(n) for n in [e.get("KillerName")] + _list(e.get("Assisters")) if _str(n))
+        pos = rec.my_pos.nearest(T, OBJ_TIME_TOL_S)
+        dist = None
+        if pos is not None:
+            dist = min(geometry.dist((pos[1], pos[2]), p) for p in _pit_points("dragon" if kind == "elder" else kind))
+        if dist is None and not took_part:
+            continue                                  # my position unknown: not scored
+        P = phases[ph]
+        P["moments"] += 1
+        if took_part or (dist is not None and dist <= POS_PRESENT_R):
+            P["present"] += 1
+        elif dist is not None and dist > POS_FAR_R:
+            P["missed"].append({"time": fmt_time(T), "label": "Dragon ancestral" if kind == "elder"
+                                else _EPIC_LABEL.get(kind, kind)})
+    # risky side-lane time (mid game after 20:00 and late game)
+    base = geometry.BLUE_FOUNTAIN if rec.my_team != "CHAOS" else geometry.RED_FOUNTAIN
+    for gt, u, v, w in _position_samples(rec, 1200.0):
+        z = geometry.classify_zone(u, v)
+        lane = geometry.lane_of(z)
+        if lane not in ("top", "bot") or geometry.dist((u, v), base) <= 0.55:
+            continue
+        if _missing_at(rec, gt) >= SIDE_ALONE_MISSING:
+            phases[phase_at(gt)]["side_risk_s"] += w
+    out_phases = []
+    tips: list[str] = []
+    for k in ("laning", "mid", "late"):
+        P = phases[k]
+        a, b = bounds[k]
+        if a >= max(rec.duration, 1.0):
+            continue
+        pct = round(100.0 * P["present"] / P["moments"]) if P["moments"] else None
+        risk = round(P["side_risk_s"])
+        score = pct
+        if k != "laning" and (pct is not None or risk):
+            score = int(round(0.7 * (pct if pct is not None else 100) + 0.3 * max(0.0, 100.0 - risk / 1.5)))
+        P.update({"percent": pct, "side_risk_s": risk, "score": score,
+                  "range": f"{fmt_time(a)} – {fmt_time(b) if math.isfinite(b) else 'fin'}"})
+        out_phases.append(P)
+        if P["missed"]:
+            what = ", ".join(f'{m["label"]} ({m["time"]})' for m in P["missed"][:3])
+            tips.append(f"{P['label']} : absent pour {what}. 60 à 90 s avant un objectif, pousse ta vague "
+                        f"puis rejoins la rivière avec ton équipe.")
+        if risk >= 30:
+            tips.append(f"{P['label']} : {risk} s seul loin dans une voie de côté alors qu'au moins 3 ennemis "
+                        f"étaient invisibles. Ne dépasse pas la moitié de la voie sans vision ni équipe.")
+        if pct is not None and pct >= 80 and P["moments"] >= 2:
+            tips.append(f"{P['label']} : présent sur {P['present']} des {P['moments']} objectifs, très bon placement.")
+    scored = [p["score"] for p in out_phases if p.get("score") is not None]
+    return {"role": role, "phases": out_phases, "tips": tips,
+            "score": int(round(sum(scored) / len(scored))) if scored else None,
+            "bounds": {k: [round(a, 1), (round(b, 1) if math.isfinite(b) else None)] for k, (a, b) in bounds.items()}}
+
+
 def _team_kills_until(rec: _Rec, gt: float) -> tuple[int, int, int]:
     """(team kills, my kills, my assists) of ChampionKill events up to ``gt``."""
     team = mine = assists = 0
@@ -1736,8 +1865,9 @@ def analyze_game(record: Any) -> dict[str, Any]:
     trends = section("trends", lambda: _trends(rec), {"series": []})
     pathing = section("pathing", lambda: _pathing(rec, jungler), {"known": False})
     scoreboard = section("scoreboard", lambda: _scoreboard(rec), {"available": False, "praise": []})
+    positioning = section("positioning", lambda: _positioning(rec, summary), {"phases": [], "tips": []})
     extra = {"phases": phases, "presence": presence, "exposure": exposure, "objective_presence": obj_presence,
-             "trends": trends, "pathing": pathing, "scoreboard": scoreboard}
+             "trends": trends, "pathing": pathing, "scoreboard": scoreboard, "positioning": positioning}
     tip_items = section("tips", lambda: _tips(rec, summary, deaths, ganks, jungler, zones, objectives, extra), [])
     survived = sum(1 for g in ganks if g.get("outcome") == "survived")
     out.update({
