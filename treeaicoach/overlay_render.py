@@ -1531,8 +1531,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         uv = _uv_ok(e.uv)
         assert uv is not None
         x, y = px(uv)
-        if not detailed and (not e.approaching or is_ghost(e)):
-            continue             # compact: the game's own icon is enough
+        if not detailed and is_ghost(e):
+            continue             # compact: no stale marks; live enemies keep a thin ring (shows detection works)
         if STACKED_HIDDEN and bool(getattr(e, "stacked", False)):
             continue             # under another icon: the game's own icon cluster shows him
         if is_ghost(e):          # stale / stacked / unsure: faint dashed ring, no label, no arrow
@@ -1552,7 +1552,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             cv_.ring(x, y, mr * 1.02, lw * 1.6, DANGER, 0.9)
         else:
             cv_.ring(x, y, mr, lw, DANGER, 0.8)
-        tag = tag_of(e) if detailed else ""
+        tag = tag_of(e) if detailed else ("JGL" if e.is_jungler else "")
         if tag:
             labels.append((0 if e.is_jungler else 2, x, y, mr + 1, tag, f_tag,
                            WHITE if e.is_jungler else ENEMY_TAG_RGB, 1.0, e.key))

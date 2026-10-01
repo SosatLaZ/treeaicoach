@@ -120,7 +120,7 @@ def apply_process_policy(cfg: Any) -> dict[str, Any]:
         if bool(getattr(cfg, "low_priority", True)):
             from treeaicoach.sysperf import lower_process_priority
 
-            out.update(lower_process_priority(eco_qos=bool(getattr(cfg, "eco_qos", True))))
+            out.update(lower_process_priority(eco_qos=bool(getattr(cfg, "eco_qos_v2", False))))
     except Exception:
         log.debug("Process policy failed", exc_info=True)
     return out

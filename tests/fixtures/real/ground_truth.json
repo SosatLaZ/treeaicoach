@@ -28,6 +28,20 @@
     "Shen"
    ],
    "note": "other players unknown: fill with random distinct champions"
+  },
+  "g3": {
+   "self": "Garen",
+   "ally": [
+    "Warwick",
+    "Viktor",
+    "Seraphine",
+    "Amumu"
+   ],
+   "enemy": [
+    "Senna",
+    "Caitlyn"
+   ],
+   "note": "2026-10 user crop, 384 px minimap; allies from the HUD portraits (Garen 11 s, Viktor 22 s, Seraphine 12 s dead), enemies identified from the map portraits; other enemies unknown"
   }
  },
  "images": {
@@ -396,6 +410,48 @@
    ],
    "note": "siege stack in our base",
    "file": "shot10.png"
+  },
+  "shot14": {
+   "game": "g3",
+   "file": "shot14.png",
+   "dead": [
+    "Garen",
+    "Viktor",
+    "Seraphine"
+   ],
+   "note": "larger minimap (384 px), overlay excluded from capture, two enemies stacked (Senna on top of an unidentified enemy) under the camera-rectangle corner",
+   "champions": [
+    {
+     "name": "Amumu",
+     "team": "ally",
+     "u": 0.219,
+     "v": 0.896
+    },
+    {
+     "name": "Warwick",
+     "team": "ally",
+     "u": 0.557,
+     "v": 0.638
+    },
+    {
+     "name": "Senna",
+     "team": "enemy",
+     "u": 0.355,
+     "v": 0.591
+    },
+    {
+     "name": null,
+     "team": "enemy",
+     "u": 0.407,
+     "v": 0.597
+    },
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.707,
+     "v": 0.637
+    }
+   ]
   }
  }
 }

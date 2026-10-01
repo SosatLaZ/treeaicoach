@@ -82,7 +82,7 @@ def test_minimap_compact_keeps_jungler_arrows_one_guide():
     st = orr.OverlayState(me_uv=(0.2, 0.2), enemies=[yi, vis], roles={"Darius": "TOP"}, show_roles=True)
     img = orr.render_minimap(st, 256, 256, now=0.0)
     assert img[128, 128 + int(orr.MM_MARKER_R * 256), 3] > 0                # jungler ghost
-    assert not img[180:230, 180:230].any()                                   # calm visible enemy: nothing
+    assert img[180:230, 180:230, 3].any()                                    # visible enemy: thin ring (2.1.1)
     come = E("Darius", "Darius", "Darius", True, (0.3, 0.3), 0.0, approaching=True, velocity=(-0.02, -0.02))
     st2 = orr.OverlayState(me_uv=(0.2, 0.2), enemies=[come])
     assert orr.render_minimap(st2, 256, 256, now=0.0)[..., 3].any()         # danger arrow

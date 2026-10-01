@@ -282,8 +282,10 @@ def test_minimap_marks_enemies_red_allies_blue_me_teal():
                             enemies=[E("Darius", "Darius", "Darius", True, (0.7, 0.7), 0.0, role="TOP")],
                             allies=[E("Lux", "Lux", "Lux", True, (0.5, 0.2), 0.0, relation="ally", role="MIDDLE")])
     r = orr.MM_MARKER_R * 256
-    # compact default: nothing on a visible, calm enemy (the game draws it)
-    assert not orr.render_minimap(base, 256, 256, now=0.0).any()
+    # compact default (2.1.1): a thin red ring on the visible enemy, nothing on allies / me
+    img = orr.render_minimap(base, 256, 256, now=0.0)
+    assert img[int(0.7 * 256), int(0.7 * 256 + r), 3] > 0
+    assert not img[int(0.2 * 256), int(0.5 * 256 + r), 3]
     # detailed mode: the enemy only - no ally ring, no ring on me, no role tag
     base = orr.OverlayState(**{**base.__dict__, "hud_detailed": True})
     img = orr.render_minimap(base, 256, 256, now=0.0)

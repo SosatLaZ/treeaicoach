@@ -172,7 +172,7 @@ CHOICES["plays_position"] = ("top_center", "minimap")
 CHOICES.update({"capture_backend": ("auto", "dxgi", "mss"), "perf_mode": ("auto", "normal", "low_end")})
 FLOAT_RANGES.update({"overlay_fps": (10.0, 60.0), "diag_duration_s": (10.0, 300.0),
                      "diag_interval_s": (0.5, 10.0)})
-BOOL_FIELDS = BOOL_FIELDS + ("adaptive_rate", "low_priority", "eco_qos", "pause_when_unfocused")
+BOOL_FIELDS = BOOL_FIELDS + ("adaptive_rate", "low_priority", "eco_qos", "eco_qos_v2", "pause_when_unfocused")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_diag",)
 # declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
@@ -344,7 +344,8 @@ class Config:
     adaptive_rate: bool = True           # detection 4-6 img/s when calm, target_fps on threat
     overlay_fps: float = 30.0            # minimap layer frame rate (predicted positions), 10..60
     low_priority: bool = True            # process below normal priority: the game always wins
-    eco_qos: bool = True                 # + Windows 11 EcoQoS (power throttling) hint
+    eco_qos: bool = True                 # legacy (ignored since 2.1.1: EcoQoS throttled detection)
+    eco_qos_v2: bool = False             # Windows 11 EcoQoS hint, opt-in (can make tracking stutter)
     pause_when_unfocused: bool = True    # overlay hidden + detection slowed when the game is not in front
     hotkey_diag: str = "Ctrl+F8"         # record a diagnostic bundle (60 s), "" = disabled
     diag_duration_s: float = 60.0
