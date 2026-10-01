@@ -1985,7 +1985,7 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
                 gr = 6.5 * k
                 cv_.disc(left + gr, cy, gr, TAI_DANGER if lvl >= 2 else TAI_MUTED, 0.9)
                 rs = getattr(state, "respawn_s", None)
-                text = "MORT" + (f" · réapparition dans {int(math.ceil(float(rs)))} s"
+                text = "MORT" + (f" · retour dans {int(math.ceil(float(rs)))} s"
                                  if rs is not None and _finite(rs) and float(rs) > 0 else "")
                 tx = left + 2 * gr + 6 * k
                 cv_.text(tx, cy, fit_text(text, fonts["head"], avail_r - tx), fonts["head"],

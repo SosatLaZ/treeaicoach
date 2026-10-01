@@ -3732,10 +3732,10 @@ class CoachApp:
         head = self._frame(card)
         head.grid(row=0, column=0, sticky="ew")
         head.grid_columnconfigure(0, weight=1)
-        self._caption(head, "Aperçu", MUTED, anchor="w").grid(row=0, column=0, sticky="w")
+        self._label(head, "Aperçu", self.fonts.h2, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
         self.overlay_preview_tag = self._label(head, "", self.fonts.caps, DIM, anchor="e")
         self.overlay_preview_tag.grid(row=0, column=1, sticky="e")
-        self._hline(card, LINE_STRONG).grid(row=1, column=0, sticky="ew", pady=(4, 10))
+        self._hline(card, LINE_STRONG).grid(row=1, column=0, sticky="ew", pady=(8, 12))
         grid = self._frame(card)
         grid.grid(row=2, column=0, sticky="w")
         self._overlay_tiles: dict[str, tuple[Any, Any]] = {}
@@ -4661,6 +4661,7 @@ class CoachApp:
         self._ai_status = self._label(box, "", self.fonts.small, MUTED, anchor="w", justify="left",
                                       wraplength=620)
         self._ai_status.grid(row=0, column=0, sticky="w")
+        self._wrap_labels.append((self._ai_status, 2 * CARD_PAD + 4))
         self._ai_status_box = box
         box.grid_remove()               # shown with the first test result
         self._switch_row(s, "ai_speak", "Lire le conseil IA à voix haute", "Désactivé par défaut : le conseil "
@@ -4760,6 +4761,7 @@ class CoachApp:
         self._update_status = self._label(box, "", self.fonts.small, MUTED, anchor="w", justify="left",
                                           wraplength=620)
         self._update_status.grid(row=0, column=0, sticky="w")
+        self._wrap_labels.append((self._update_status, 2 * CARD_PAD + 4))
         self._update_status_box = box
         box.grid_remove()               # shown with the first message
         self._update_bar = self.ctk.CTkProgressBar(box, height=8)
@@ -5010,13 +5012,14 @@ class CoachApp:
         s = self._section(body, 0, "Mode d'emploi en 5 étapes", icon="play")
         for i, (title, text) in enumerate(steps):
             r = self._frame(s)
-            r.grid(row=i, column=0, sticky="ew", pady=7)
+            r.grid(row=i, column=0, sticky="ew", pady=10)
             r.grid_columnconfigure(1, weight=1)
             badge = self._number_badge(r, i + 1)
             badge.grid(row=0, column=0, rowspan=2, sticky="n", padx=(0, 14), pady=(2, 0))
             self._label(r, title, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=1, sticky="w")
-            self._label(r, text, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=560).grid(
-                row=1, column=1, sticky="w")
+            lbl = self._label(r, text, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=560)
+            lbl.grid(row=1, column=1, sticky="w")
+            self._wrap_labels.append((lbl, 2 * CARD_PAD + 48))
         s = self._section(body, 1, "Sécurité et règles de Riot",
                           "TreeAI Coach fonctionne comme un logiciel de streaming (OBS, Discord) :", icon="shield")
         for i, text in enumerate((
@@ -5029,12 +5032,13 @@ class CoachApp:
                 "le jeu.",
                 "Besoin d'encore plus de prudence ? Active le « Mode sûr » (tableau de bord ou Ctrl+Maj+S).")):
             r = self._frame(s)
-            r.grid(row=i, column=0, sticky="ew", pady=3)
+            r.grid(row=i, column=0, sticky="ew", pady=6)
             r.grid_columnconfigure(1, weight=1)
             ctk.CTkLabel(r, text="", image=self._icon("check", 14, TEAL), fg_color="transparent", width=16).grid(
                 row=0, column=0, sticky="n", padx=(2, 12), pady=(3, 0))
-            self._label(r, text, self.fonts.small, TEXT, anchor="w", justify="left", wraplength=580).grid(
-                row=0, column=1, sticky="w")
+            lbl = self._label(r, text, self.fonts.small, TEXT, anchor="w", justify="left", wraplength=580)
+            lbl.grid(row=0, column=1, sticky="w")
+            self._wrap_labels.append((lbl, 2 * CARD_PAD + 36))
         s = self._section(body, 2, "Raccourcis clavier", "Dans la fenêtre de TreeAI Coach (les touches F9 à F11 "
                                                          "marchent aussi en jeu).", icon="keyboard")
         for i, (keys, what) in enumerate(ui_kit.SHORTCUTS):
@@ -5063,16 +5067,18 @@ class CoachApp:
             r.grid(row=i, column=0, sticky="ew", pady=5)
             r.grid_columnconfigure(0, weight=1)
             self._label(r, q, self.fonts.h3, GOLD_HOVER, anchor="w").grid(row=0, column=0, sticky="w")
-            self._label(r, a, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=600).grid(
-                row=1, column=0, sticky="w")
+            lbl = self._label(r, a, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=600)
+            lbl.grid(row=1, column=0, sticky="w")
+            self._wrap_labels.append((lbl, 2 * CARD_PAD + 4))
         bar = self._frame(s)
         bar.grid(row=10, column=0, sticky="w", pady=(10, 4))
         self._button(bar, "Copier le diagnostic", self.copy_diagnostic, "secondary", icon="copy").grid(
             row=0, column=0, padx=(0, 8))
         self._button(bar, "Ouvrir les journaux", self.open_logs, "secondary", icon="folder").grid(row=0, column=1)
         s = self._section(body, 4, "À propos et mentions légales", f"{APP_NAME} {__version__}", icon="info")
-        self._label(s, ui_kit.ABOUT_TEXT, self.fonts.small, MUTED, anchor="w", justify="left",
-                    wraplength=620).grid(row=0, column=0, sticky="w", pady=(4, 8))
+        about = self._label(s, ui_kit.ABOUT_TEXT, self.fonts.small, MUTED, anchor="w", justify="left", wraplength=620)
+        about.grid(row=0, column=0, sticky="w", pady=(12, 12))
+        self._wrap_labels.append((about, 2 * CARD_PAD + 4))
         return page
 
     def _number_badge(self, parent: Any, n: int) -> Any:
