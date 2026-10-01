@@ -1104,6 +1104,9 @@ class HeroBanner:
             bb = c.bbox(self.title_item)
             if bb and self._badge:
                 bx = bb[2] + s(10)
+                fits = bx + s(50) <= right_limit           # narrow window: the sidebar pill says "démo"
+                for item in (self.badge_bg, self.badge_txt):
+                    c.itemconfigure(item, state="normal" if fits else "hidden")
                 c.coords(self.badge_bg, bx, top - s(20), bx + s(50), top)
                 c.coords(self.badge_txt, bx + s(25), top - s(10))
             c.coords(self.msg_item, tx, top + s(6))
@@ -1927,6 +1930,7 @@ class CoachApp:
         self._ui_scale = ui_scale_of(self.cfg)
         try:   # Windows display scaling is applied on top by CustomTkinter (per-monitor DPI factor)
             ctk.set_widget_scaling(self._ui_scale)
+            ctk.set_window_scaling(self._ui_scale)       # a bigger interface gets a bigger window
             ctk.ScalingTracker.update_loop_interval = 1000     # DPI-change poll: 1 s instead of 100 ms
         except Exception:
             log.debug("Cannot set the UI scaling", exc_info=True)
@@ -1946,7 +1950,7 @@ class CoachApp:
             log.debug("Cannot track the DPI scaling", exc_info=True)
         self._set_window_icon(self.root)
         self._apply_geometry()
-        self.root.minsize(MIN_W, MIN_H)
+        self.root.minsize(*getattr(self, "_min_size", (MIN_W, MIN_H)))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.grid_columnconfigure(1, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
@@ -2161,10 +2165,19 @@ class CoachApp:
                     x, y = int(m.group(3)), int(m.group(4))
         except Exception:
             pass
-        w = min(max(w, MIN_W), max(MIN_W, sw))
-        h = min(max(h, MIN_H), max(MIN_H, sh))
-        if x is None or y is None or x < -w + 120 or y < 0 or x > sw - 120 or y > sh - 80:
-            x, y = max(0, (sw - w) // 2), max(0, (sh - h) // 3)
+        # CTk geometry: width / height in logical px (x window scaling = DPI x ui scale), x / y physical
+        try:
+            k = max(0.5, float(self.ctk.ScalingTracker.get_window_scaling(self.root)))
+        except Exception:
+            k = 1.0
+        lw, lh = int(sw / k), int(sh / k)                      # screen size in logical px
+        min_w, min_h = min(MIN_W, lw - 16), min(MIN_H, lh - 72)
+        self._min_size = (max(640, min_w), max(480, min_h))
+        w = min(max(w, self._min_size[0]), max(self._min_size[0], lw - 16))
+        h = min(max(h, self._min_size[1]), max(self._min_size[1], lh - 72))
+        pw, ph = int(w * k), int(h * k)
+        if x is None or y is None or x < -pw + 120 or y < 0 or x > sw - 120 or y > sh - 80:
+            x, y = max(0, (sw - pw) // 2), max(0, (sh - ph) // 3)
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
     def _on_root_configure(self, event: Any) -> None:
@@ -2190,6 +2203,13 @@ class CoachApp:
                 self.btn_calib.configure(text="Calibrer" if compact else "Calibrer la minimap")
                 self._demo_button_text()
             if "dashboard" in self._built:
+                sub = getattr(dict.get(self.pages, "dashboard"), "subtitle", None)
+                if sub is not None:      # narrow window: the toolbar needs the room next to the title
+                    narrow = width < 1080
+                    if narrow and sub.winfo_manager():
+                        sub.grid_remove()
+                    elif not narrow and not sub.winfo_manager():
+                        sub.grid()
                 en_w = self.enemies_card.winfo_width() / scale
                 if en_w > 50:
                     self.jungler_lbl.configure(wraplength=int(max(200, en_w - 40)))
@@ -3910,7 +3930,7 @@ class CoachApp:
                     alias = str(game_field(g, "champion", "alias", default="") or "")
                     if alias and alias not in icons and alias not in self._game_icons:
                         try:
-                            icons[alias] = square_icon(db.load_icon(alias), 56, bg=SURFACE)
+                            icons[alias] = square_icon(db.load_icon(alias), 56, bg=BG)
                         except Exception:
                             icons[alias] = None
             except Exception:
@@ -4020,7 +4040,7 @@ class CoachApp:
         res = game_result(g)
         pil = self._game_icons.get(alias)
         if pil is None:
-            pil = square_icon(None, 56, bg=SURFACE)
+            pil = square_icon(None, 56, bg=BG)
         img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(36, 36))
         self._images[f"game-{i}"] = img
         ctk.CTkLabel(box, text="", image=img, fg_color="transparent").grid(row=r, column=0, sticky="w", pady=8)
@@ -4283,14 +4303,26 @@ class CoachApp:
             from treeaicoach import replay  # noqa: PLC0415
 
             rec = json.loads(Path(p).read_text(encoding="utf-8"))
-            return replay.ReplayModel(rec)
+            icons: dict[str, Any] = {}
+            try:     # champion portraits read here, not on the Tk thread while drawing
+                from treeaicoach.champions import get_default_db  # noqa: PLC0415
 
-        def done(model: Any) -> None:
+                db = get_default_db()
+                for r in rec.get("roster") or []:
+                    alias = str((r or {}).get("alias") or "")
+                    if alias and "?" not in alias and alias not in icons:
+                        icons[alias] = db.load_icon(alias)
+            except Exception:
+                log.debug("replay portraits unavailable", exc_info=True)
+            return replay.ReplayModel(rec), icons
+
+        def done(res: Any) -> None:
+            model, icons = res
             self._replay["loading"] = False
             self._replay["model"] = model
             self._replay["path"] = p
             self._replay["t"] = model.start
-            self._replay["icons"] = {}
+            self._replay["icons"] = dict(icons)
             self._replay_fill_moments(model)
             m = model.next_marker(model.start - 1)
             self._replay_seek(m.t - 8 if m is not None else model.start)
@@ -6638,14 +6670,7 @@ class CoachApp:
         row.grid(row=0, column=0, sticky="ew", pady=(2, 8))
         row.grid_columnconfigure(1, weight=1)
         alias = str(game_field(g, "champion", "alias", default="") or "")
-        icon = None
-        try:
-            from treeaicoach.champions import get_default_db  # noqa: PLC0415
-
-            icon = get_default_db().load_icon(alias) if alias else None
-        except Exception:
-            icon = None
-        pil = square_icon(icon, 72, bg=BG)
+        pil = self._game_icons.get(alias) or square_icon(None, 56, bg=BG)     # loaded by refresh_games
         img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(36, 36))
         self._images["pregame-last"] = img
         ctk.CTkLabel(row, text="", image=img, fg_color="transparent").grid(row=0, column=0, rowspan=3,
@@ -6893,8 +6918,8 @@ class CoachApp:
             log.warning("Shutdown did not finish in 8 s; closing the window anyway")
         try:   # cancel every pending after() (ours and CustomTkinter's): no "invalid command name" noise
             for job in self.root.tk.splitlist(self.root.tk.call("after", "info")):
-                try:
-                    self.root.after_cancel(job)
+                try:   # plain Tcl cancel: the widgets still own (and delete) their callback commands
+                    self.root.tk.call("after", "cancel", job)
                 except Exception:
                     pass
         except Exception:
@@ -6903,7 +6928,7 @@ class CoachApp:
             self.root.quit()
             self.root.destroy()
         except Exception:
-            pass
+            log.debug("root destroy failed", exc_info=True)
         self._closed.set()
 
     @staticmethod

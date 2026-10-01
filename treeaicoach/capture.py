@@ -762,3 +762,84 @@ class SmartCapture:
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
+
+
+# ======================================================================================
+# Focus / occlusion (overlay hiding, frames discarded while another window covers the minimap)
+# ======================================================================================
+
+def _find_game_hwnd(user32: Any) -> int:
+    hwnd = user32.FindWindowW(GAME_WINDOW_CLASS, None) or user32.FindWindowW(None, GAME_WINDOW_TITLE)
+    return int(hwnd or 0)
+
+
+def foreground_state() -> tuple[bool | None, bool]:
+    """``(game_in_front, own_window_in_front)``: ``game_in_front`` is None when no game window
+    exists (demo, overlay test). Cheap (3 user32 calls): fine at the overlay's frame rate.
+    Never raises; off Windows ``(None, False)``."""
+    if sys.platform != "win32":
+        return None, False
+    try:
+        import ctypes
+        import os
+        from ctypes import wintypes
+
+        user32 = _user32()
+        game = _find_game_hwnd(user32)
+        if not game:
+            return None, False
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        fg = int(user32.GetForegroundWindow() or 0)
+        if not fg:
+            return False, False
+        if fg == game:
+            return True, False
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+        if int(user32.GetAncestor(fg, 3) or 0) == game:          # GA_ROOTOWNER: a game popup
+            return True, False
+        pid = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(wintypes.HWND(fg), ctypes.byref(pid))
+        return False, int(pid.value) == os.getpid()
+    except Exception:
+        return None, False
+
+
+def occlusion_points(rect: Rect, inset: float = 0.12) -> list[tuple[int, int]]:
+    """Sample points of ``rect`` checked for occlusion: 4 inset corners + the centre."""
+    dx, dy = max(1, int(rect.w * inset)), max(1, int(rect.h * inset))
+    return [(rect.x + dx, rect.y + dy), (rect.right - 1 - dx, rect.y + dy), (rect.x + dx, rect.bottom - 1 - dy),
+            (rect.right - 1 - dx, rect.bottom - 1 - dy), (rect.x + rect.w // 2, rect.y + rect.h // 2)]
+
+
+def rect_occluded(rect: Rect | None, window_at: Callable[[int, int], int | None] | None = None,
+                  game_hwnd: int | None = None) -> bool | None:
+    """True when another top-level window (League client, browser, our own UI...) covers a sample
+    point of ``rect`` over the game window; None when unknown (off Windows / no game). Click-through
+    layered windows (our overlay) are ignored by ``WindowFromPoint``. ``window_at(x, y)`` returns
+    the root window at a point (tests). Never raises."""
+    if rect is None:
+        return None
+    try:
+        if window_at is None:
+            if sys.platform != "win32":
+                return None
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = _user32()
+            game_hwnd = _find_game_hwnd(user32) if game_hwnd is None else game_hwnd
+            user32.WindowFromPoint.restype = wintypes.HWND
+            user32.WindowFromPoint.argtypes = [wintypes.POINT]
+            user32.GetAncestor.restype = wintypes.HWND
+            user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+
+            def window_at(x: int, y: int) -> int | None:
+                h = user32.WindowFromPoint(wintypes.POINT(int(x), int(y)))
+                return int(user32.GetAncestor(h, 2) or 0) if h else 0          # GA_ROOT
+        if not game_hwnd:
+            return None
+        hits = [window_at(x, y) for x, y in occlusion_points(rect)]
+        return any(h is not None and h != game_hwnd for h in hits)
+    except Exception:
+        return None

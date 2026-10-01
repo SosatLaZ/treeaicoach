@@ -62,6 +62,8 @@ VERIFY_PERIOD_S = 1.0            # first minimap verify() after a location (then
 UNFOCUSED_HIDE_S = 1.5           # game not in the foreground this long -> overlay hidden
 STATS_EVERY_S = 1.0              # health monitor refresh (CPU %, rates)
 STALE_MIN_GAME_S = 90.0          # frozen-capture check only once minions walk (game time, s)
+TRIVIAL_BUY_AFTER_S = 1200.0     # after 20:00 ...
+TRIVIAL_BUY_GOLD = 500           # ... no HUD chip for a lone component cheaper than this (not completing)
 EARLY_ADVICE_GT_S = 65.0         # no lane-phase tip / insight on the HUD line before the minions spawn
 #: words of a "go" HUD line (hidden under a PRUDENT / SAFE gauge: no contradiction on the card)
 GO_WORDS = ("à toi de jouer", "joue agressif", "vas-y", "va-y", "attaque", "engage", "force ", "punis")
@@ -120,6 +122,7 @@ MSG_FROZEN = ("Capture figée : l'image de la minimap ne change plus. Passe le j
 MSG_FULLSCREEN = ("Le jeu est en Plein écran : l'overlay ne peut pas s'afficher et la capture peut "
                   "être noire. Passe en Sans bordure (Paramètres > Vidéo > Mode fenêtre).")
 MSG_MINIMIZED = "Jeu réduit : analyse en pause."
+MSG_OCCLUDED = "Minimap cachée par une autre fenêtre : analyse en pause."
 MSG_UNSUPPORTED = "Mode de jeu non pris en charge : uniquement la Faille de l'invocateur."
 MSG_MINIMAP_COVERED = "Minimap masquée (boutique ou tableau des scores) : analyse en pause."
 MSG_SPECTATOR = "Mode spectateur : aucune analyse."
@@ -476,6 +479,9 @@ class CoachEngine:
         self._diag: Any = None                      # diag.DiagRecorder while a bundle is recorded
         self._diag_req: dict[str, Any] = {}         # requests served by the analysis thread
         self._diag_hotkeys: Any = None
+        self._occluded = False
+        #: tests: ``probe(minimap_rect) -> bool`` replaces the WindowFromPoint occlusion check
+        self.occlusion_probe: Callable[[Rect], bool | None] | None = None
 
     # ================================================================== configuration
     @staticmethod
@@ -1410,6 +1416,11 @@ class CoachEngine:
             frame = self._grab_minimap(t, gt)
             if frame is not None:
                 self._stats["grab"].add((time.perf_counter() - t_grab) * 1000.0)
+            elif self._occluded or self._paused:
+                # minimap covered / game minimized: frozen tick (no "not seen" for the tracker, no
+                # alert from stale data); resumes with the first visible frame
+                self._last_tick_t = None
+                return []
         elif frame is None:
             self._set_state(EngineState.RUNNING, MSG_NO_FRAME)
         else:
@@ -2870,6 +2881,12 @@ class CoachEngine:
         rect = self._minimap_rect
         if rect is None:
             return None
+        self._occluded = bool(self._occlusion(rect))
+        if self._occluded:
+            # another window (League client, browser...) covers the minimap: its pixels must never
+            # become detections; the tick is frozen (tracks keep their state) until it is visible
+            self._set_state(EngineState.RUNNING, MSG_OCCLUDED)
+            return None
         cap = self._grabber()
         frame = _as_bgr(cap.grab(rect))
         if frame is None:
@@ -2924,6 +2941,22 @@ class CoachEngine:
         self._set_state(EngineState.RUNNING,
                         MSG_FALLBACK if self._locate_method == "fallback" else MSG_RUNNING)
         return frame
+
+    def _occlusion(self, rect: Rect) -> bool | None:
+        """Is the minimap covered by another window? (``occlusion_probe`` for tests; live
+        capture only). Never raises."""
+        probe = self.occlusion_probe
+        try:
+            if probe is not None:
+                return probe(rect)
+            if self._window_finder is not None or self._frame_source is not None:
+                return False
+            from treeaicoach.capture import rect_occluded
+
+            info = self._win_info
+            return rect_occluded(rect, game_hwnd=info.hwnd if info is not None else None)
+        except Exception:
+            return False
 
     def _settings_changed_check(self) -> None:
         """The game's own settings changed (minimap scale, flip, resolution, HUD scale): the
@@ -3359,6 +3392,10 @@ class CoachEngine:
                 if tr.key not in seen_keys and len(enemies) < 10:
                     enemies.append(self._enemy_view(EnemyView, tr.alias, tr.alias or "?", 0, tr, me_uv,
                                                     now, False))
+        dead = {p.champion_alias for p in roster if getattr(p, "is_dead", False)}
+        for v in enemies:              # dead enemies: no ghost on the map (HUD row shows the timer)
+            if v.alias in dead and hasattr(v, "dead"):
+                v.dead = True
         allies, roles = self._overlay_allies_roles(EnemyView, game, tracker, now)
         for v in enemies:
             v.role = roles.get(v.key) or roles.get(v.alias or "")
@@ -3456,7 +3493,7 @@ class CoachEngine:
             out["in_base"] = bool(in_base)
             adv = getattr(self, "_item_adv", None)
             rec = adv.current() if adv is not None and getattr(self._cfg, "item_advice", True) else None
-            if rec is not None:
+            if rec is not None and not self._trivial_component_buy(rec, game, now):
                 names = list(getattr(rec, "buy_now_names", ()) or ())
                 out["item_hint"] = "Achète " + (" + ".join(names[:2]) if names and not rec.completes
                                                 else rec.item_name)
@@ -3464,6 +3501,25 @@ class CoachEngine:
         except Exception:
             log.debug("HUD card fields failed", exc_info=True)
         return out
+
+    def _trivial_component_buy(self, rec: Any, game: Any, now: float) -> bool:
+        """After 20:00, a lone cheap component (< 500 gold, e.g. "Épée longue" with a near-complete
+        build) that does not complete an item is not worth the HUD chip (real screenshot, 25:08)."""
+        try:
+            if getattr(rec, "completes", False) or game is None:
+                return False
+            gt = (_finite(game.game_time) or 0.0) + min(max(0.0, now - self._game_t), 3.0)
+            if gt < TRIVIAL_BUY_AFTER_S:
+                return False
+            ids = list(getattr(rec, "buy_now", ()) or ())
+            if not ids:
+                return False
+            from treeaicoach.itemization import load_items
+
+            items = load_items()
+            return all(i in items and int(items[i].gold) < TRIVIAL_BUY_GOLD for i in ids)
+        except Exception:
+            return False
 
     def _role_notice(self, now: float) -> str | None:
         """"Rôle détecté : MID (échange de voie)" for 20 s after a lane swap is detected. Never raises."""

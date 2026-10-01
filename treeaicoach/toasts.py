@@ -47,6 +47,23 @@ STYLE: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, in
     "retreat": (orr.TAI_DANGER, (225, 45, 45), (255, 155, 150)),
     "call": (orr.TAI_INFO, (30, 140, 220), (175, 225, 255)),
 }
+#: docs/DESIGN.md tokens used by the flat toasts / banners
+DS_SURFACE = (18, 21, 19)       # #121513
+DS_RAISED = (25, 29, 27)        # #191D1B
+DS_LINE_STRONG = (47, 53, 50)   # #2F3532
+DS_TEXT = (228, 232, 229)       # #E4E8E5
+DS_ACCENT = (155, 216, 74)      # #9BD84A (the only accent)
+DS_WARNING = (232, 162, 58)     # #E8A23A
+DS_DANGER = (229, 72, 77)       # #E5484D
+STYLE.update({
+    "praise": (DS_ACCENT, (70, 190, 90), DS_TEXT),
+    "insight": (DS_ACCENT, (30, 140, 220), DS_TEXT),
+    "warning": (DS_WARNING, (220, 150, 20), DS_TEXT),
+    "danger": (DS_DANGER, (220, 40, 40), DS_TEXT),
+    "engage": (DS_ACCENT, (20, 190, 120), DS_TEXT),
+    "retreat": (DS_DANGER, (225, 45, 45), DS_TEXT),
+    "call": (DS_ACCENT, (30, 140, 220), DS_TEXT),
+})
 BANNER_H = 84                   # big banner height at 1080p (same width as a toast)
 PULSE_S = 1.2                   # subtle pulse period of the banner glow
 DURATION_S = 3.2
@@ -115,9 +132,10 @@ def _sparkle(cv_: orr.Canvas, cx: float, cy: float, r: float, rgb: Any, alpha: f
 
 
 def _glyph(cv_: orr.Canvas, kind: str, cx: float, cy: float, r: float, accent: Any, glow: Any) -> None:
-    """Badge drawn when there is no champion icon."""
-    cv_.glow(cx, cy, r * 0.6, r * 1.25, glow, 0.35)
-    cv_.disc(cx, cy, r, orr.TAI_PANEL, 1.0)
+    """Badge drawn when there is no champion icon (``glow`` None: flat, docs/DESIGN.md)."""
+    if glow is not None:
+        cv_.glow(cx, cy, r * 0.6, r * 1.25, glow, 0.35)
+    cv_.disc(cx, cy, r, DS_RAISED if glow is None else orr.TAI_PANEL, 1.0)
     cv_.ring(cx, cy, r - 1.2, 2.2, accent, 1.0)
     if kind == "praise":
         _sparkle(cv_, cx, cy, r * 0.62, accent, 1.0)
@@ -165,15 +183,11 @@ def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int 
     pad = int(round(14 * k))
     cv_ = orr.Canvas(W + 2 * pad, H + 2 * pad)
     x0, y0 = float(pad), float(pad)
-    rad = 9 * k
-    for i in range(7, 0, -1):
-        g = i * 2.0 * k
-        cv_.rrect(x0 - g, y0 - g, W + 2 * g, H + 2 * g, rad + g, glow, 0.05)
-    grad = np.linspace(0, 1, 32, dtype=np.float32)[:, None, None]
-    top, bot = orr._rgb(orr.TAI_PANEL_TOP), orr._rgb(orr.TAI_PANEL)
-    col = (top * (1 - grad) + bot * grad).reshape(32, 1, 3)
-    cv_.rrect(x0, y0, W, H, rad, col, 0.94, border=accent, border_alpha=1.0, border_w=2.6 * k)
-    cv_.glow(x0 + W / 2, y0 + H / 2, 10 * k, W * 0.45, glow, 0.14)
+    title, subtitle = no_em_dash(title), no_em_dash(subtitle)
+    rad = 6 * k
+    cv_.rrect(x0, y0, W, H, rad, DS_SURFACE, 0.95, border=DS_LINE_STRONG, border_alpha=1.0,
+              border_w=max(1.0, 1.0 * k))
+    cv_.rrect(x0, y0, 4 * k, H, min(rad, 2 * k), accent, 1.0)       # accent: left bar only
     two = bool(subtitle) and orr.text_width(subtitle, orr.get_font(max(8, int(round(14 * k))), "semibold")) > W - 40 * k
     cy = y0 + H * (0.36 if two else 0.42 if subtitle else 0.5)
     if kind in ("engage", "retreat"):
@@ -187,9 +201,9 @@ def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int 
             cv_.polygon([(sx, cy - dd), (sx + dd, cy), (sx, cy + dd), (sx - dd, cy)], accent, 1.0)
     max_w = W - 120 * k
     size = 38 if len(title or "") <= 14 else 30
-    ft = orr.get_font(max(10, int(round(size * k))), "bold")
-    cv_.text(x0 + W / 2, cy, orr.fit_text((title or "").upper(), ft, max_w), ft, title_rgb, 1.0, anchor="m",
-             shadow=0.8)
+    ft = orr.get_font(max(12, int(round(size * k))), "display")
+    cv_.text(x0 + W / 2, cy, orr.fit_text((title or "").upper(), ft, max_w), ft, accent, 1.0, anchor="m",
+             shadow=0.0)
     if subtitle:
         fs = orr.get_font(max(8, int(round(14 * k))), "semibold")
         if orr.text_width(subtitle, fs) <= W - 40 * k:
@@ -229,8 +243,8 @@ def render_banner(kind: str, title: str, subtitle: str = "", scale: float = 1.0,
             pulse = 0.5 + 0.5 * math.sin(2 * math.pi * (age % PULSE_S) / PULSE_S)
             cv_ = orr.Canvas(1, 1)
             cv_.px, cv_.h, cv_.w = px, px.shape[0], px.shape[1]
-            cv_.rrect(pad - 2 * k, pad - 2 * k, W + 4 * k, H + 4 * k, 11 * k, None, 0.0, border=accent,
-                      border_alpha=0.15 + 0.35 * pulse, border_w=2.0 * k)
+            cv_.rrect(pad, pad, W, H, 6 * k, None, 0.0, border=accent,          # 1 px pulse (meaningful)
+                      border_alpha=0.25 + 0.45 * pulse, border_w=max(1.0, 1.0 * k))
         out = np.empty(px.shape[:2] + (4,), np.uint8)
         v = np.clip(px, 0.0, 1.0) * np.float32(255.0) + np.float32(0.5)
         out[..., 0], out[..., 1], out[..., 2], out[..., 3] = v[..., 2], v[..., 1], v[..., 0], v[..., 3]
@@ -255,58 +269,51 @@ def banner_view(banner: Any, now: float) -> "ToastView | None":
         return None
 
 
+def no_em_dash(text: str) -> str:
+    """docs/DESIGN.md: no em dash in the interface ("Thresh — Objet" -> "Thresh · Objet")."""
+    return " ".join(str(text or "").replace(" — ", " · ").replace("—", " · ").replace(" – ", " · ").split())
+
+
 def _render_base(kind: str, title: str, subtitle: str, icon: np.ndarray | None, scale: float) -> np.ndarray:
-    accent, glow, title_rgb = STYLE.get(kind, STYLE["insight"])
+    """docs/DESIGN.md toast: flat graphite plate, 1 px hairline, 4 px radius, the accent only as
+    a left bar and the icon ring, Bahnschrift caption title, no glow / gradient / sweep."""
+    accent, _glow, _title_rgb = STYLE.get(kind, STYLE["insight"])
+    title, subtitle = no_em_dash(title), no_em_dash(subtitle)
     W, H = toast_size(scale)
     k = H / BASE_H
-    pad = int(round(14 * k))                     # room for the outer glow
+    pad = int(round(14 * k))                     # layer margin (kept: layer geometry unchanged)
     cv_ = orr.Canvas(W + 2 * pad, H + 2 * pad)
     x0, y0 = float(pad), float(pad)
-    rad = 7 * k
-    # outer glow (a few expanding translucent rounded rects)
-    for i in range(6, 0, -1):
-        g = i * 2.0 * k
-        cv_.rrect(x0 - g, y0 - g, W + 2 * g, H + 2 * g, rad + g, glow, 0.045)
-    # panel: vertical gradient
-    grad = np.linspace(0, 1, 32, dtype=np.float32)[:, None, None]
-    top, bot = orr._rgb(orr.TAI_PANEL_TOP), orr._rgb(orr.TAI_PANEL)
-    col = (top * (1 - grad) + bot * grad).reshape(32, 1, 3)
-    cv_.rrect(x0, y0, W, H, rad, col, 0.92, border=accent, border_alpha=0.9, border_w=1.4 * k)
-    # inner accent wash on the left
-    cv_.glow(x0 + 40 * k, y0 + H / 2, 4 * k, 70 * k, glow, 0.16)
-    # left accent bar
-    cv_.capsule(x0 + 5 * k, y0 + 12 * k, x0 + 5 * k, y0 + H - 12 * k, 3.0 * k, accent, 0.95)
-    # TreeAI mark (top right): our own brand, no game-client ornament
-    fb_ = orr.get_font(max(7, int(round(9 * k))), "bold")
-    cv_.text(x0 + W - 10 * k, y0 + 10 * k, "TreeAI", fb_, orr.TAI_MUTED, 0.8, anchor="r", shadow=0.3)
-    # icon / badge
-    ir = 23 * k
-    icx, icy = x0 + 16 * k + ir, y0 + H / 2
+    rad = 4 * k
+    cv_.rrect(x0, y0, W, H, rad, DS_SURFACE, 0.95, border=DS_LINE_STRONG, border_alpha=1.0,
+              border_w=max(1.0, 1.0 * k))
+    # accent: left bar only
+    cv_.rrect(x0, y0, 3 * k, H, min(rad, 1.5 * k), accent, 1.0)
+    # icon / badge (no halo)
+    ir = 21 * k
+    icx, icy = x0 + 14 * k + ir, y0 + H / 2
     if icon is not None:
-        cv_.glow(icx, icy, ir * 0.8, ir * 1.35, glow, 0.45)
-        patch = orr.round_icon_patch(icon, 2 * ir, accent, ring_w=2.4 * k)
+        patch = orr.round_icon_patch(icon, 2 * ir, accent, ring_w=2.0 * k)
         cv_.image(icx, icy, patch)
     else:
-        _glyph(cv_, kind, icx, icy, ir, accent, glow)
-    # texts
-    tx = icx + ir + 14 * k
-    max_w = x0 + W - 14 * k - tx
-    ft = orr.get_font(max(8, int(round(13 * k))), "bold")
-    fs = orr.get_font(max(8, int(round(17 * k))), "semibold")
+        _glyph(cv_, kind, icx, icy, ir, accent, None)
+    tx = icx + ir + 12 * k
+    max_w = x0 + W - 12 * k - tx
+    ft = orr.get_font(max(12, int(round(13 * k))), "display")
+    fs = orr.get_font(max(12, int(round(16 * k))), "semibold")
     t_txt = orr.fit_text((title or "").upper(), ft, max_w)
     if subtitle and orr.text_width(subtitle, fs) > max_w:
-        # V2: a long advice is wrapped on two smaller lines instead of being cut ("…")
-        f2 = orr.get_font(max(8, int(round(14 * k))), "semibold")
+        f2 = orr.get_font(max(12, int(round(14 * k))), "semibold")
         lines = orr.wrap_text(subtitle, f2, max_w, 2)
-        cv_.text(tx, y0 + H * 0.25, t_txt, ft, title_rgb, 1.0, shadow=0.6)
+        cv_.text(tx, y0 + H * 0.24, t_txt, ft, accent, 1.0, shadow=0.0)
         for i, ln in enumerate(lines):
-            cv_.text(tx, y0 + H * (0.55 + 0.27 * i), ln, f2, orr.TAI_TEXT, 1.0, shadow=0.7)
+            cv_.text(tx, y0 + H * (0.55 + 0.27 * i), ln, f2, DS_TEXT, 1.0, shadow=0.0)
     elif subtitle:
-        cv_.text(tx, y0 + H * 0.33, t_txt, ft, title_rgb, 1.0, shadow=0.6)
-        cv_.text(tx, y0 + H * 0.66, orr.fit_text(subtitle, fs, max_w), fs, orr.TAI_TEXT, 1.0, shadow=0.7)
+        cv_.text(tx, y0 + H * 0.32, t_txt, ft, accent, 1.0, shadow=0.0)
+        cv_.text(tx, y0 + H * 0.66, orr.fit_text(subtitle, fs, max_w), fs, DS_TEXT, 1.0, shadow=0.0)
     else:
-        fb = orr.get_font(max(8, int(round(19 * k))), "bold")
-        cv_.text(tx, y0 + H / 2, orr.fit_text((title or "").upper(), fb, max_w), fb, title_rgb, 1.0)
+        fb = orr.get_font(max(12, int(round(18 * k))), "display")
+        cv_.text(tx, y0 + H / 2, orr.fit_text((title or "").upper(), fb, max_w), fb, DS_TEXT, 1.0, shadow=0.0)
     return cv_.px
 
 
@@ -345,7 +352,7 @@ def render_toast(kind: str, title: str, subtitle: str = "", icon: np.ndarray | N
             k = H / BASE_H
             pad = (px.shape[1] - W) / 2.0
             accent, glow, _t = STYLE[kind]
-            if kind == "praise" and _SHINE_S[0] <= age <= _SHINE_S[1]:
+            if False and kind == "praise" and _SHINE_S[0] <= age <= _SHINE_S[1]:   # (no decorative sweep)
                 p = (age - _SHINE_S[0]) / (_SHINE_S[1] - _SHINE_S[0])
                 pos = pad - 60 * k + p * (W + 120 * k)
                 xs = np.arange(px.shape[1], dtype=np.float32)[None, :]

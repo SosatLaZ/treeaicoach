@@ -971,6 +971,16 @@ def current_stats() -> dict[str, Any] | None:
     return perf.snapshot() if perf is not None else None
 
 
+#: The game may lose the foreground this long (s) before the overlay hides (focus flicker).
+FOCUS_GRACE_S = 0.3
+
+
+def _default_foreground() -> tuple[bool | None, bool]:
+    from treeaicoach.capture import foreground_state
+
+    return foreground_state()
+
+
 def _img_hash(img: np.ndarray) -> int:
     import zlib
 
@@ -1125,6 +1135,9 @@ class OverlayManager:
         self._sig_t: dict[str, float] = {}
         self._last_img: dict[str, Any] = {}
         self._perf = _OverlayPerf()
+        self._unfocused_since: float | None = None
+        #: ``() -> (game_in_front | None, own_window_in_front)`` (capture.foreground_state; tests)
+        self._foreground: Callable[[], tuple[bool | None, bool]] = _default_foreground
         self._mm_session = False
         self._mm_no_rect_logged = False
         self.ok = sys.platform == "win32"
@@ -1299,7 +1312,7 @@ class OverlayManager:
                         windows[name].set_click_through(not move)
                     click_through = not move
                 t_state = time.perf_counter()
-                state = self._state(move)
+                state = self._state(move) if (move or self._focus_ok(t0)) else None
                 self._perf.add("state", (time.perf_counter() - t_state) * 1000.0)
                 enabled = bool(getattr(cfg, "overlay_enabled", True)) and (visible or move)
                 if state is None or not enabled:
@@ -1338,6 +1351,21 @@ class OverlayManager:
             # time.sleep: high-resolution timer on Windows / Python 3.11 (Event.wait rounds to 15.6 ms)
             if precise_sleep(max(0.0, next_frame - now), self._stop):
                 break
+
+    def _focus_ok(self, now: float) -> bool:
+        """False while the game exists but neither it nor one of our windows is in the foreground
+        for more than :data:`FOCUS_GRACE_S` (alt-tab, League client on top): every overlay window
+        is then hidden (never drawn over another application); back instantly. Never raises."""
+        try:
+            game_front, own_front = self._foreground()
+        except Exception:
+            return True
+        if game_front is None or game_front or own_front:
+            self._unfocused_since = None
+            return True
+        if self._unfocused_since is None:
+            self._unfocused_since = now
+        return now - self._unfocused_since < FOCUS_GRACE_S
 
     @property
     def stats(self) -> dict[str, Any]:

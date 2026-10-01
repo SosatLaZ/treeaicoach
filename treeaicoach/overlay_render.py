@@ -140,6 +140,7 @@ class EnemyView:
     age: float | None = None                    # s since the observation behind ``uv`` (None = unknown)
     stacked: bool = False                       # hidden under another icon: ``uv`` is the occluder's
     confidence: float = 1.0                     # identity confidence (anonymous track: < 1)
+    dead: bool = False                          # dead (Live Client): no ghost on the map
 
 
 @dataclass
@@ -207,6 +208,8 @@ GHOST_AGE_S = 0.7
 #: At most this many text labels on the minimap layer at once (priority: visible jungler, jungler
 #: last seen / fog timer, enemy roles, ally roles).
 MM_MAX_LABELS = 4
+#: A last-seen ghost older than this (s) is drawn without text.
+GHOST_TEXT_MAX_S = 45.0
 GHOST_MIN_CONFIDENCE = 0.5
 
 
@@ -358,6 +361,9 @@ _FONT_FILES: dict[str, tuple[str, ...]] = {
     "semibold": ("seguisb.ttf", "segoeuib.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf",
                  "arialbd.ttf"),
     "bold": ("segoeuib.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf", "arialbd.ttf"),
+    # docs/DESIGN.md display face (titles): Bahnschrift SemiBold, else a bold sans
+    "display": ("bahnschrift.ttf", "segoeuib.ttf", "DejaVuSansCondensed-Bold.ttf", "DejaVuSans-Bold.ttf",
+                "LiberationSans-Bold.ttf", "arialbd.ttf"),
 }
 _FONT_DIRS: tuple[Path, ...] = (
     _windows_font_dir(),
@@ -391,6 +397,11 @@ def get_font(size: int, weight: str = "regular") -> Any:
                     if cand.is_absolute() and not cand.is_file():
                         continue
                     font = ImageFont.truetype(str(cand), size)
+                    if name == "bahnschrift.ttf":       # variable font: SemiBold instance
+                        try:
+                            font.set_variation_by_name("SemiBold")
+                        except Exception:
+                            pass
                     break
                 except (OSError, ValueError):
                     continue
@@ -1446,6 +1457,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             ago = e.last_seen_ago
             if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
                 continue
+            if bool(getattr(e, "dead", False)):      # dead: in his fountain, the HUD row has the timer
+                continue
             if not show_ghosts and not e.is_jungler and ago > LAST_SEEN_MAX_S / 2:
                 continue
             x, y = px(uv)
@@ -1456,8 +1469,9 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             cv_.ring(x, y, mr, lw * 0.9, DANGER, (0.6 if e.is_jungler else 0.35) * fade,
                      dash=(3.0 * k + 1, 2.5 * k + 1))
             cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.6 * fade)
-            if e.is_jungler:
-                labels.append((1, x, y, mr * 1.05, f"JGL {fmt_seconds(ago)}", f_time, GOLD_LIGHT, max(0.7, fade)))
+            if e.is_jungler and ago <= GHOST_TEXT_MAX_S:
+                labels.append((1, x, y, mr * 1.05, f"JGL {fmt_seconds(ago)}", f_time, GOLD_LIGHT, max(0.7, fade),
+                               e.key))
 
     # ---- (option) allies + me
     if show_allies:
@@ -1471,7 +1485,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
                 continue
             cv_.ring(x, y, mr, lw, ALLY_BLUE, 0.7)
             if show_roles:
-                labels.append((3, x, y, mr + 1, role_tag(a, roles), f_tag, ALLY_TAG_RGB, 0.9))
+                labels.append((3, x, y, mr + 1, role_tag(a, roles), f_tag, ALLY_TAG_RGB, 0.9, a.key))
         if me is not None:
             x, y = px(me)
             cv_.ring(x, y, mr * 1.03, lw * 1.3, TEAL, 0.9)
@@ -1503,7 +1517,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         tag = tag_of(e)
         if tag:
             labels.append((0 if e.is_jungler else 2, x, y, mr + 1, tag, f_tag,
-                           WHITE if e.is_jungler else ENEMY_TAG_RGB, 1.0))
+                           WHITE if e.is_jungler else ENEMY_TAG_RGB, 1.0, e.key))
 
     # ---- fog timer: small "JGL 12 s" at the last seen point of the jungler's fog zone
     for fog in fogs:
@@ -1516,18 +1530,28 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         if near_live(x, y):
             continue
         ev = by_key.get(fog.key)
-        if ev is not None and ev.visible:
+        if ev is not None and (ev.visible or bool(getattr(ev, "dead", False))):
             continue
         cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.7)
-        labels.append((1, x, y, max(3.0, 3 * k), f"JGL {fmt_seconds(fog.elapsed)}", f_time, GOLD_LIGHT, 0.9))
+        if _finite(fog.elapsed) and float(fog.elapsed) <= GHOST_TEXT_MAX_S:
+            labels.append((1, x, y, max(3.0, 3 * k), f"JGL {fmt_seconds(fog.elapsed)}", f_time, GOLD_LIGHT, 0.9,
+                           fog.key))
 
-    # ---- labels: by priority, never over a live icon or another label, at most MM_MAX_LABELS
+    # ---- labels: by priority, ONE per champion and per role word, never over a live icon or
+    #      another label, at most MM_MAX_LABELS
     placed = 0
-    for _prio, x, y, off, text, font, fg, alpha in sorted(labels, key=lambda l: l[0]):
+    seen_keys: set[Any] = set()
+    seen_words: set[str] = set()
+    for _prio, x, y, off, text, font, fg, alpha, key in sorted(labels, key=lambda l: l[0]):
         if placed >= MM_MAX_LABELS:
             break
+        word = (text or "").split(" ")[0]
+        if key in seen_keys or word in seen_words:
+            continue
         if _tag(cv_, x, y, off, text, font, fg, taken, alpha, drop=True):
             placed += 1
+            seen_keys.add(key)
+            seen_words.add(word)
 
     # ---- v3 guides: retreat / objective / regroup arrows and ward spots (priority ranked, capped)
     n_arrows = sum(1 for e in visible if e.approaching)
