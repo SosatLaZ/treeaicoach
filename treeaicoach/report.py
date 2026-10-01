@@ -890,6 +890,104 @@ def _tips_section(a: dict) -> str:
     return f'<div class="panel"><h2>Conseils pour la prochaine partie</h2><ul class="tips">{lis}</ul></div>'
 
 
+# ======================================================================================
+# rated plays (plays.py, chess.com style) : précision + counts + best / worst badges
+# ======================================================================================
+def play_badge_image(cls: str, title: str, reason: str = "") -> Any:
+    """The in-game badge of a rated play (``fx_render.render_frame(cls, title, reason, 1.2)``) as a
+    cropped RGBA PIL image, None if unavailable. Never raises."""
+    try:
+        from PIL import Image
+
+        from treeaicoach import fx_render
+
+        bgra = fx_render.render_frame(str(cls), str(title or ""), str(reason or ""), 1.2)
+        if bgra is None:
+            return None
+        a = bgra[..., 3]
+        ys, xs = np.nonzero(a > 8)
+        if not len(xs):
+            return None
+        crop = bgra[ys.min():ys.max() + 1, xs.min():xs.max() + 1].astype(np.float32)
+        alpha = crop[..., 3:4] / 255.0
+        rgb = np.where(alpha > 0, crop[..., :3] / np.maximum(alpha, 1e-6), 0.0)[..., ::-1]
+        out = np.dstack([np.clip(rgb, 0, 255), crop[..., 3]]).astype(np.uint8)
+        return Image.fromarray(np.ascontiguousarray(out), "RGBA")
+    except Exception:
+        log.debug("play badge unavailable", exc_info=True)
+        return None
+
+
+def _class_hex(cls: str) -> str:
+    try:
+        from treeaicoach import fx_render
+
+        r, g, b = fx_render.CLASS_RGB.get(cls, (139, 148, 143))
+        return f"#{r:02X}{g:02X}{b:02X}"
+    except Exception:
+        return MUTED
+
+
+def play_summary(record: dict) -> dict | None:
+    try:
+        from treeaicoach import plays
+
+        return plays.summary_from_record(record)
+    except Exception:
+        return None
+
+
+def _plays_section(record: dict) -> str:
+    summ = play_summary(record)
+    if not summ or not summ.get("total"):
+        return ""
+    from treeaicoach import plays
+
+    counts = summ.get("counts") or {}
+    prec = int(summ.get("precision") or 0)
+    pcol = GREEN if prec >= 75 else ORANGE if prec >= 50 else RED
+    cells = "".join(
+        f'<div class="pc"><b style="color:{_class_hex(c)}">{int(counts.get(c, 0) or 0)}</b>'
+        f'<span>{_e(plays.LABEL_FR.get(c, c))}</span></div>' for c in plays.CLASSES)
+
+    def rows(items: list) -> str:
+        out = []
+        for d in items[:3]:
+            cls = str(d.get("cls") or "")
+            title = str(d.get("title") or plays.TITLE_FR.get(cls, cls))
+            img = play_badge_image(cls, title, str(d.get("reason") or ""))
+            uri = None
+            if img is not None:
+                buf = io.BytesIO()
+                img.save(buf, "PNG", optimize=True)
+                uri = _data_uri_png(buf.getvalue())
+            body = (f'<img class="badge-img" src="{uri}" alt="{_e(title)}">' if uri else
+                    f'<b style="color:{_class_hex(cls)}">{_e(title)}</b> {_e(d.get("reason") or "")}')
+            out.append(f'<div class="prow"><span class="t">{_e(_fmt_time(d.get("gt")))}</span>{body}</div>')
+        return "".join(out) or '<p class="empty">Rien à signaler.</p>'
+
+    return (f'<div class="panel"><h2>Coups notés</h2><div class="plays-top">'
+            f'<div class="prec"><div class="v" style="color:{pcol}">{prec}</div><div class="l">Précision</div></div>'
+            f'<div class="pcounts">{cells}</div></div>'
+            f'<div class="grid2 pgrid"><div><h3 class="ph3">Tes meilleurs coups</h3>{rows(summ.get("best") or [])}</div>'
+            f'<div><h3 class="ph3">À corriger</h3>{rows(summ.get("worst") or [])}</div></div></div>')
+
+
+CSS_PLAYS = f"""
+.plays-top{{display:flex;gap:24px;align-items:center;flex-wrap:wrap;margin-bottom:14px}}
+.prec .v{{font-size:40px;font-weight:700;line-height:1}} .prec .l{{font-size:11px;color:{MUTED};text-transform:uppercase;
+  letter-spacing:.1em}}
+.pcounts{{display:grid;grid-template-columns:repeat(4,minmax(96px,1fr));gap:0;flex:1;border:1px solid {BORDER};
+  border-radius:4px}}
+.pc{{padding:6px 10px;border-right:1px solid {BORDER};border-bottom:1px solid {BORDER}}}
+.pc b{{font-size:18px;display:block}} .pc span{{font-size:11.5px;color:{MUTED}}}
+.ph3{{font-size:12px;color:{MUTED};margin:0 0 6px;font-weight:600}}
+.prow{{display:flex;gap:10px;align-items:center;padding:4px 0;border-bottom:1px solid {BORDER}}}
+.prow .t{{font-weight:700;min-width:42px}}
+.badge-img{{height:44px;width:auto;max-width:100%;display:block}}
+"""
+
+
 def summary_lines(a: dict) -> list[str]:
     """The 3-line summary at the top of the report, in plain French (HTML-free text)."""
     s = a.get("summary") or {}
@@ -910,6 +1008,9 @@ def summary_lines(a: dict) -> list[str]:
         second += f", dont {warned} juste après une alerte"
     if ganks:
         second += f". Ganks : {surv} évité{'s' if surv > 1 else ''} sur {ganks}"
+    prec = (a.get("plays") or {}).get("precision") if isinstance(a.get("plays"), dict) else None
+    if isinstance(prec, (int, float)):
+        second += f". Précision des coups : {int(prec)}/100"
     lines.append(second + ".")
     items = a.get("tip_items") or [{"text": t, "kind": "warn"} for t in a.get("tips") or []]
     tip = next((t.get("text") for t in items if t.get("kind") == "warn" and t.get("text")), None) or \
@@ -1027,11 +1128,15 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
 
             analysis = analyze_game(rec)
         a = analysis if isinstance(analysis, dict) else {}
+        if "plays" not in a:
+            ps = play_summary(rec)
+            if ps:
+                a = dict(a, plays=ps)
         s = a.get("summary") or {}
         title = f'{s.get("champion_name") or "Partie"} · {s.get("result_label") or ""}'.strip(" ·")
         parts = []
         for fn in (lambda: _header(rec, a), lambda: _cards(a), lambda: _tips_section(a),
-                   lambda: _moments_section(rec, a), lambda: _voice_box(a),
+                   lambda: _plays_section(rec), lambda: _moments_section(rec, a), lambda: _voice_box(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _truth_section(rec, a),
                    lambda: _presence_section(rec, a),
                    lambda: _positioning_section(a),
@@ -1056,7 +1161,7 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
                   f'sources : capture de la minimap et API Live Client de Riot</div>')
         page = ("<!DOCTYPE html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" + refresh +
-                f"<title>{_e(APP_NAME)} · {_e(title)}</title><style>{CSS}{CSS_V2}{CSS_TRUTH}</style></head>"
+                f"<title>{_e(APP_NAME)} · {_e(title)}</title><style>{CSS}{CSS_V2}{CSS_TRUTH}{CSS_PLAYS}</style></head>"
                 f"<body><div class=\"wrap\">{warn}{''.join(parts)}{footer}</div></body></html>")
         # design rule (docs/DESIGN.md): no em dash, even in texts coming from other modules
         em = chr(0x2014)

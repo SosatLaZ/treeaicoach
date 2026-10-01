@@ -82,3 +82,36 @@ def test_progress_metrics_trends_focus(tmp_path: Path) -> None:
     shutil.rmtree(tmp_path, ignore_errors=True)
     assert progress.collect(tmp_path) == []
     assert progress.game_metrics(None) is None and progress.focus_points([]) == []
+
+
+def _plays_record() -> dict:
+    from treeaicoach import plays
+
+    rec = _record()
+    rec["plays"] = plays.summarize([
+        {"cls": "brilliant", "rule": "x", "reason": "Baron volé", "gt": 1520.0, "title": "COUP DE MAÎTRE"},
+        {"cls": "blunder", "rule": "y", "reason": "Mort avec 2 100 PO en poche", "gt": 560.0, "title": "GAFFE"},
+        {"cls": "good", "rule": "z", "reason": "Balise posée", "gt": 400.0, "title": "BON COUP"}])
+    return rec
+
+
+def test_rated_plays_in_replay_progress_and_report() -> None:
+    from treeaicoach import report
+    from treeaicoach.analysis import analyze_game
+
+    rec = _plays_record()
+    m = replay.ReplayModel(rec)
+    pm = [mk for mk in m.markers if mk.kind == "play"]
+    assert len(pm) == 3 and {mk.cls for mk in pm} == {"brilliant", "blunder", "good"}
+    assert replay.play_rgb("blunder") != replay.play_rgb("brilliant")
+    assert replay.render_timeline(m, 300, 30, 600.0).size == (300, 30)
+    met = progress.game_metrics(rec)
+    assert met is not None and met["precision"] is not None and 0 <= met["precision"] <= 100
+    assert progress.game_metrics(_record())["precision"] is None          # old game: no rating
+    page = report.render_report_html(rec, analyze_game(rec))
+    assert "Coups notés" in page and "Précision" in page and 'class="badge-img"' in page
+    assert "Précision des coups" in page                                   # 3-line summary
+    old = report.render_report_html(_record(), analyze_game(_record()))
+    assert "Coups notés" not in old
+    img = report.play_badge_image("great", "EXCELLENT", "Gank esquivé")
+    assert img is None or (img.mode == "RGBA" and img.width > img.height)

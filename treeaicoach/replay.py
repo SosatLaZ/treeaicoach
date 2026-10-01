@@ -78,8 +78,9 @@ class Marker:
     """A moment on the timeline."""
 
     t: float
-    kind: str          # "death" | "gank" | "alert" | "kill" | "objective"
+    kind: str          # "death" | "gank" | "alert" | "kill" | "objective" | "play"
     label: str
+    cls: str = ""      # rated play class (plays.CLASSES) when kind == "play"
 
 
 @dataclass
@@ -230,6 +231,20 @@ class ReplayModel:
                 markers.append(Marker(t, "kill", f"Kill sur {by_player.get(victim.lower(), victim)}"))
             elif name in obj:
                 markers.append(Marker(t, "objective", obj[name]))
+        try:
+            from treeaicoach import plays as _plays  # noqa: PLC0415
+
+            summ = _plays.summary_from_record(rec)
+            for d in (summ or {}).get("plays") or []:
+                t = _f(d.get("gt"))
+                cls = str(d.get("cls") or "")
+                if t is None or cls not in _plays.CLASSES:
+                    continue
+                title = str(d.get("title") or _plays.TITLE_FR.get(cls, cls)).capitalize()
+                reason = str(d.get("reason") or "")
+                markers.append(Marker(t, "play", f"{title} : {reason}" if reason else title, cls))
+        except Exception:
+            log.debug("replay: no rated plays", exc_info=True)
         markers.sort(key=lambda m: m.t)
         return markers, sorted(deaths)
 
@@ -451,12 +466,26 @@ def render_timeline(model: ReplayModel, width: int, height: int = 34, t: float |
             d.polygon([(x, y - r - 2 * ss), (x + r, y + r - 2 * ss), (x - r, y + r - 2 * ss)], fill=col)
         elif mk.kind == "kill":
             d.rectangle((x - r * 0.6, y - r * 0.6, x + r * 0.6, y + r * 0.6), fill=col)
+        elif mk.kind == "play":
+            pc = play_rgb(mk.cls)
+            yy = y + 7 * ss
+            d.polygon([(x, yy - r * 0.8), (x + r * 0.8, yy), (x, yy + r * 0.8), (x - r * 0.8, yy)], fill=pc)
         else:
             d.line((x, y - r, x, y + r), fill=col, width=ss)
     if t is not None:
         x = x_of(t)
         d.line((x, 2 * ss, x, H - 13 * ss), fill=TEXT, width=max(1, ss))
     return im.resize((W // ss, H // ss), Image.LANCZOS)
+
+
+def play_rgb(cls: str) -> tuple[int, int, int]:
+    """Colour of a rated-play class (fx_render.CLASS_RGB), grey if unknown."""
+    try:
+        from treeaicoach.fx_render import CLASS_RGB  # noqa: PLC0415
+
+        return tuple(CLASS_RGB.get(cls, MUTED))  # type: ignore[return-value]
+    except Exception:
+        return MUTED
 
 
 def time_at_x(model: ReplayModel, x: float, width: int, ss_pad: float = 6.0) -> float:
@@ -487,5 +516,5 @@ def frame_caption(model: ReplayModel, t: float) -> str:
     return " · ".join(parts)
 
 
-__all__ = ["ReplayModel", "Frame", "Dot", "Marker", "render_frame", "render_timeline", "time_at_x",
+__all__ = ["ReplayModel", "Frame", "Dot", "Marker", "render_frame", "render_timeline", "time_at_x", "play_rgb",
            "frame_caption", "fmt_clock", "SPEEDS"]

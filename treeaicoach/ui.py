@@ -2699,7 +2699,47 @@ class CoachApp:
                                                  font=self.fonts.small, fg_color=PANEL_LO, corner_radius=RADIUS,
                                                  width=560, height=315)
         self.overlay_preview.grid(row=2, column=0, padx=20, pady=(10, 18))
+        try:
+            self._build_plays_section(body, 10)
+        except Exception:
+            log.exception("Cannot build the rated plays section")
         return page
+
+    def _build_plays_section(self, body: Any, row: int) -> None:
+        """Overlay page: rated plays (plays.py / fx_overlay.py, chess.com style badges)."""
+        if not hasattr(self.cfg, "plays_enabled"):
+            return
+        s = self._section(body, row, "Coups notés", "Après un moment clé, un badge note ton coup : coup de "
+                          "maître, excellent, erreur, gaffe… Jamais pendant un combat.")
+        self._switch_row(s, "plays_enabled", "Afficher les coups notés", "Badge à l'écran et précision dans le "
+                         "rapport d'après-partie.")
+        if hasattr(self.cfg, "plays_position"):
+            self._choice_row(s, "plays_position", "Position du badge", "En haut au centre de l'écran, ou près de "
+                             "la minimap.", (("top_center", "Haut, au centre"), ("minimap", "Près de la minimap")),
+                             segmented=True)
+        if hasattr(self.cfg, "plays_sound"):
+            self._switch_row(s, "plays_sound", "Son pour les bons coups", "Petit son court.")
+        if hasattr(self.cfg, "plays_sound_negative"):
+            self._switch_row(s, "plays_sound_negative", "Son aussi pour les erreurs", "Désactivé par défaut.")
+        try:
+            from treeaicoach import report  # noqa: PLC0415
+
+            imgs = [report.play_badge_image(c, t, r) for c, t, r in (
+                ("brilliant", "COUP DE MAÎTRE", "Baron volé sous le nez du jungler"),
+                ("blunder", "GAFFE", "Mort avec 2 100 PO en poche"))]
+            prev = self.ctk.CTkFrame(s, fg_color="transparent")
+            prev.grid(row=2 * s._rows, column=0, sticky="w", pady=(4, 8))
+            s._rows += 1
+            for i, im in enumerate(i for i in imgs if i is not None):
+                h = 34
+                w = max(1, int(im.width * h / max(1, im.height)))
+                bg = Image.new("RGB", im.size, _hex_rgb(BG))
+                bg.paste(im, (0, 0), im)
+                img = self.ctk.CTkImage(light_image=bg, dark_image=bg, size=(w, h))
+                self._images[f"play-prev-{i}"] = img
+                self.ctk.CTkLabel(prev, text="", image=img, fg_color="transparent").grid(row=0, column=i, padx=(0, 10))
+        except Exception:
+            log.debug("play badge preview unavailable", exc_info=True)
 
     def _overlay_supports(self, field: str) -> bool:
         """Whether the overlay module reads an optional look setting (``SUPPORTED_SETTINGS``)."""
@@ -3106,7 +3146,10 @@ class CoachApp:
         self.replay_clock.grid(row=0, column=0, sticky="w")
         self.replay_caption = self._label(side, "Choisis une partie.", self.fonts.small, MUTED, anchor="w",
                                           justify="left", wraplength=380)
-        self.replay_caption.grid(row=1, column=0, sticky="w", pady=(0, 8))
+        self.replay_caption.grid(row=1, column=0, sticky="w", pady=(0, 2))
+        self.replay_plays_lbl = self._label(side, "", self.fonts.tiny_bold, ACCENT, anchor="w")
+        self.replay_plays_lbl.grid(row=6, column=0, sticky="w", pady=(6, 0))
+        self._tip(self.replay_plays_lbl, "Coups notés de la partie (style échecs) : précision sur 100.")
         ctl = ctk.CTkFrame(side, fg_color="transparent")
         ctl.grid(row=2, column=0, sticky="w", pady=(0, 8))
         self.replay_play = self._button(ctl, "Lecture", self.replay_toggle, "primary", icon="play", width=86,
@@ -3136,8 +3179,8 @@ class CoachApp:
         self.replay_tl.bind("<Button-1>", lambda e: self._replay_click(e.x), add="+")
         self.replay_tl.bind("<B1-Motion>", lambda e: self._replay_click(e.x), add="+")
         self._replay_tl_photo: Any = None
-        self._replay_legend = self._label(rp, "x mort · ▲ gank · ■ kill · | objectif", self.fonts.tiny, DIM,
-                                          anchor="w")
+        self._replay_legend = self._label(rp, "x mort · ▲ gank · ■ kill · | objectif · ◆ coup noté", self.fonts.tiny,
+                                          DIM, anchor="w")
         self._replay_legend.grid(row=3, column=0, columnspan=2, sticky="w")
 
     def _replay_games_menu(self, games: list[dict]) -> None:
@@ -3222,14 +3265,25 @@ class CoachApp:
         from treeaicoach import replay  # noqa: PLC0415
 
         cols = {"death": DANGER, "gank": WARNING, "kill": SAFE, "objective": MUTED}
-        rows = [m for m in model.markers if m.kind in ("death", "gank", "kill")][:60]
+        rows = [m for m in model.markers if m.kind in ("death", "gank", "kill", "play")][:80]
+        summ = None
+        try:
+            from treeaicoach import plays as _plays  # noqa: PLC0415
+
+            summ = _plays.summary_from_record(model.record)
+            self.replay_plays_lbl.configure(text=ui_text(_plays.summary_line(summ)) if summ else "")
+        except Exception:
+            log.debug("no play summary", exc_info=True)
         if not rows:
             self._label(box, "Aucun moment clé enregistré.", self.fonts.small, DIM, anchor="w").grid(
                 row=0, column=0, columnspan=2, sticky="w")
         for i, m in enumerate(rows):
+            col = cols.get(m.kind, MUTED)
+            if m.kind == "play":
+                col = "#%02X%02X%02X" % replay.play_rgb(m.cls)
             b = self.ctk.CTkButton(box, text=replay.fmt_clock(m.t), width=44, height=20, corner_radius=RADIUS,
                                    font=self.fonts.tiny_bold, fg_color="transparent", hover_color=PANEL_HI,
-                                   text_color=cols.get(m.kind, MUTED), anchor="w",
+                                   text_color=col, anchor="w",
                                    command=self.cb(lambda tt=m.t: self._replay_seek(tt - 6)))
             b.grid(row=i, column=0, sticky="w")
             self._label(box, ui_text(m.label), self.fonts.small, TEXT, anchor="w").grid(row=i, column=1, sticky="w")

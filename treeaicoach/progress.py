@@ -6,7 +6,8 @@ small cache next to the records so that opening the page stays instant), :func:`
 summarises each metric and :func:`focus_points` writes "tes 3 points à travailler" in plain
 French. :func:`sparkline` draws a compact PIL chart (docs/DESIGN.md colours).
 
-Metrics (None when unknown): ``cs_per_min``, ``deaths``, ``gold_diff10`` / ``gold_diff15``
+Metrics (None when unknown): ``cs_per_min``, ``deaths``, ``precision`` (rated plays, plays.py),
+``gold_diff10`` / ``gold_diff15``
 (vs the lane opponent, League Client only), ``vision_per_min``, ``ganks`` /
 ``ganks_survived``, ``deaths_after_alert``, ``reliability`` (TreeAI's own score 0-100,
 League Client only). Never raises.
@@ -25,7 +26,7 @@ from PIL import Image, ImageDraw
 log = logging.getLogger(__name__)
 
 CACHE_NAME = "progress_cache.json"
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 # docs/DESIGN.md (RGB)
 BG = (12, 14, 13)
@@ -43,6 +44,7 @@ METRICS: dict[str, tuple[str, str, bool, int]] = {
     "gold_diff10": ("Or à 10 min", "PO", True, 0),
     "gold_diff15": ("Or à 15 min", "PO", True, 0),
     "vision_per_min": ("Vision / min", "", True, 2),
+    "precision": ("Précision des coups", "", True, 0),
     "reliability": ("Fiabilité TreeAI", "%", True, 0),
 }
 CS_TARGET = {"TOP": 7.0, "MIDDLE": 7.5, "BOTTOM": 8.0, "JUNGLE": 5.5}
@@ -94,8 +96,16 @@ def game_metrics(record: Any, truth: Any = None) -> dict[str, Any] | None:
             else int(a.get("deaths_warned") or 0),
             "deaths_unwarned": len(a.get("deaths_unwarned") or []) if isinstance(a.get("deaths_unwarned"), list)
             else int(a.get("deaths_unwarned") or 0),
-            "gold_diff10": None, "gold_diff15": None, "reliability": None,
+            "gold_diff10": None, "gold_diff15": None, "reliability": None, "precision": None,
         }
+        try:
+            from treeaicoach import plays  # noqa: PLC0415
+
+            ps = plays.summary_from_record(record)
+            if ps and ps.get("total"):
+                out["precision"] = _f(ps.get("precision"))
+        except Exception:
+            log.debug("no rated plays in this record", exc_info=True)
         if isinstance(truth, dict) and truth:
             from treeaicoach import ground_truth  # noqa: PLC0415
 
@@ -212,7 +222,7 @@ def trends(rows: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         before = _mean(known[:-3]) if len(known) > 3 else None
         delta = (recent - before) if (recent is not None and before is not None) else None
         tol = {"cs_per_min": 0.3, "deaths": 0.7, "gold_diff10": 150, "gold_diff15": 200,
-               "vision_per_min": 0.08, "reliability": 4}.get(key, 0.0)
+               "vision_per_min": 0.08, "reliability": 4, "precision": 4}.get(key, 0.0)
         direction = "flat" if delta is None or abs(delta) < tol else ("up" if delta > 0 else "down")
         better = None if direction == "flat" else ((direction == "up") == higher)
         out[key] = {"label": label, "unit": unit, "values": vals, "avg": _mean(known), "last": known[-1],
@@ -280,6 +290,12 @@ def focus_points(rows: Sequence[dict[str, Any]], n: int = 3) -> list[tuple[str, 
         cand.append(((0.6 - surv / ganks) * 4, "Ganks",
                      f"Tu survis à {surv} ganks sur {ganks}. Quand le jungler adverse n'est pas visible "
                      "depuis 30 s, reste près de ta tour."))
+
+    prec = tr.get("precision", {}).get("avg")
+    if prec is not None and prec < 60:
+        cand.append(((60 - prec) / 15, "Précision des coups",
+                     f"{fmt_num(prec, 0)}/100 en moyenne : relis les « gaffes » et « erreurs » du rapport "
+                     "pour voir ce qui revient."))
 
     cand.sort(key=lambda c: -c[0])
     out = [(t, a) for _s, t, a in cand[:n]]
