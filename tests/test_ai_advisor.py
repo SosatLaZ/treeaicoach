@@ -268,7 +268,8 @@ def test_advisor_policy_rate_limit_and_errors():
     res = adv.poll()
     assert res is not None and res.text == "Achète Zhonya." and res.moment == "death" and adv.poll() is None
     assert not adv.update(30.0, G(level=11))                  # rate limited (90 s)
-    assert adv.update(200.0, G(level=16)) and adv.wait()      # quota error
+    assert adv.update(200.0, G(gt=1000.0, level=16)) and adv.wait()      # mid-game slot, quota error
+    assert adv.budget_info()["auto_used"] == 1                # failed call refunded
     seq, status = adv.status()
     assert seq == 1 and "quota" in status and adv.poll() is None
     now[0] = 300.0
@@ -479,3 +480,40 @@ def test_comeback_call_prompt_title_and_guards():
     assert "Mode : redresser" in prompts[-1] and '"mode":"redresser"' in prompts[-1]
     assert ai.Advice("x", "comeback:ace", 0.0).title == "IA — Fenêtre à saisir"
     assert ai.Advice("x", "base", 0.0).title == "CONSEIL IA"
+
+
+def test_budget_five_auto_plus_one_urgent_and_manual_apart():
+    cfg = SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="")
+    adv = ai.AIAdvisor(cfg, caller=lambda *a, **k: "Achète Zhonya.")
+    t = [0.0]
+
+    def step(game, **kw):
+        t[0] += 100.0
+        ok = adv.update(t[0], game, **kw)
+        adv.wait()
+        adv.poll()
+        return ok
+
+    step(G(gt=300.0))
+    assert step(G(gt=300.0, gold=1200), in_base=True)                  # 1st base with gold
+    assert not step(G(gt=320.0, gold=0))
+    assert not step(G(gt=330.0, gold=1500), in_base=True)               # 2nd base early: no slot
+    assert step(G(gt=400.0, dead=True))                                # lost fight
+    assert not step(G(gt=420.0, level=11))                             # early level-up: skipped
+    assert step(G(gt=1000.0, level=16))                                # mid-game
+    baron = SimpleNamespace(key="baron", name="Baron", alive=False, remaining=60.0, next_spawn=1500.0)
+    assert step(G(gt=1440.0), objectives=[baron])                      # pre-Baron
+    assert step(G(gt=1800.0, dead=True))                               # late game
+    assert adv.budget_info()["auto_used"] == 5 and ai.budget_text(adv.budget_info()) == "IA : 5/5"
+    assert not step(G(gt=1900.0, dead=False, level=18, gold=2000), in_base=True)   # budget exhausted
+    ev = [_kill(1, 1990.0, "Garen"), _kill(2, 1995.0, "Moi#EUW")]
+    assert step(G(gt=2000.0, events=ev))                               # bonus "urgence" (lost big fight)
+    info = adv.budget_info()
+    assert info["urgent_used"] == 1 and ai.budget_text(info) == "IA : 5/5 +1"
+    ev2 = ev + [_kill(3, 2290.0, "Garen"), _kill(4, 2295.0, "Moi#EUW")]
+    assert not step(G(gt=2300.0, events=ev2))                          # only one bonus
+    assert adv.ask(t[0] + 100.0, G(gt=2400.0)) == "Question envoyée à l'IA…"
+    adv.wait()
+    assert adv.budget_info()["manual"] == 1 and adv.budget_info()["auto_used"] == 5
+    adv.reset()
+    assert adv.budget_info()["auto_used"] == 0 and ai.budget_text(None) == ""

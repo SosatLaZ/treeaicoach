@@ -322,6 +322,7 @@ class CoachEngine:
         self._toasts: Any = None               # toasts.ToastQueue (top-centre banners)
         self._stance: Any = None               # coach.StanceAdvisor (PRUDENT / ÉQUILIBRÉ / AGRESSIF)
         self._tip_rotator: Any = None          # tips.TipRotator (written tips, HUD)
+        self._gauge: Any = None                # coach.PlayGauge ("jouer plus fort ou non", HUD + dashboard)
         self._gate: Any = None                 # voice_policy.MessageGate (anti-spam, per game)
         self._tactics: Any = None              # tactics.TacticalDirector (fight / phase / positioning / wards / voice gate)
         self._tip_text: str | None = None
@@ -474,10 +475,11 @@ class CoachEngine:
         except Exception:
             log.exception("Map coach unavailable")
         try:
-            from treeaicoach.coach import StanceAdvisor
+            from treeaicoach.coach import PlayGauge, StanceAdvisor
             from treeaicoach.tips import TipRotator
             from treeaicoach.voice_policy import MessageGate
 
+            self._gauge = PlayGauge()
             self._stance = StanceAdvisor(cfg)
             self._tip_rotator = TipRotator()
             self._gate = MessageGate()
@@ -904,7 +906,8 @@ class CoachEngine:
         self._sb_recorded = None
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
                      self._throttler, self._coach, self._scoreboard, self._praise, self._toasts,
-                     self._stance, self._tip_rotator, self._gate, self._tactics):
+                     self._stance, self._tip_rotator, self._gate, self._tactics, self._gauge,
+                     getattr(self, "_ai", None)):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -1456,6 +1459,62 @@ class CoachEngine:
         ai = getattr(self, "_ai", None)
         return ai.status() if ai is not None else (0, None)
 
+    def ai_budget(self) -> dict | None:
+        """Per-game AI counters (``auto_used / auto_max``, ``urgent_used``, ``manual``), None when off."""
+        ai = getattr(self, "_ai", None)
+        try:
+            return ai.budget_info() if ai is not None and ai.enabled else None
+        except Exception:
+            return None
+
+    def ai_budget_text(self) -> str:
+        """"IA : 3/5" (empty when the AI advice is off)."""
+        from treeaicoach.ai_advisor import budget_text
+
+        return budget_text(self.ai_budget())
+
+    def play_gauge(self) -> Any:
+        """The "jouer plus fort ou non" gauge (:class:`treeaicoach.coach.Gauge`), None outside a game."""
+        g = self._gauge
+        return g.current() if g is not None and self._in_game else None
+
+    def top_tip(self) -> tuple[str, str] | None:
+        """``(text, tone)`` of the ONE written advice shown on the HUD right now, else None."""
+        try:
+            text = self._hud_line(self._clock())
+            return (text, self._tip_tone(text)) if text else None
+        except Exception:
+            return None
+
+    def _tip_tone(self, text: str | None) -> str:
+        """Tone of the HUD line ("danger" / "warning" / "go" / "info")."""
+        if not text:
+            return "info"
+        rot = self._tip_rotator
+        tip = rot.current_tip() if rot is not None else None
+        if tip is not None and text == self._tip_text:
+            return str(getattr(tip, "tone", "info") or "info")
+        low = text.casefold()
+        if any(w in low for w in ("recule", "danger", "gank", "rentre", "fuis")):
+            return "danger"
+        return "warning" if any(w in low for w in ("attention", "prudent", "évite", "safe")) else "info"
+
+    def detected_role(self) -> tuple[str | None, str | None]:
+        """``(my role short name, swap notice)`` for the dashboard, e.g. ``("MID", None)``."""
+        try:
+            from treeaicoach.roles import ROLE_SHORT
+
+            game = self._game
+            res = self._role_resolver
+            role = None
+            if res is not None and hasattr(res, "my_role"):
+                role = res.my_role()
+            if role is None and game is not None and game.me is not None:
+                role = getattr(game.me, "position", None) or None
+            return (ROLE_SHORT.get(role, role) if role else None), self._role_notice(self._clock())
+        except Exception:
+            return None, None
+
     def item_advice_text(self) -> str | None:
         """Current build advice line for the UI / HUD ("Prochain objet : ..."), None if none."""
         adv = getattr(self, "_item_adv", None)
@@ -1470,6 +1529,14 @@ class CoachEngine:
             summary = self.scoreboard_summary()
             if self._stance is not None:
                 out += list(self._stance.update(t, facts, game, summary, threat=threat) or [])
+            if self._gauge is not None:
+                st = self._stance.current() if self._stance is not None else None
+                tac = self._tactics
+                fs = tac.fight.state() if tac is not None else None
+                me = getattr(game, "me", None)
+                alive = me is not None and not bool(getattr(me, "is_dead", False))
+                self._gauge.update(t, st, fs, summary, threat,
+                                   active=alive and (st is not None or bool(getattr(fs, "active", False))))
             rot = self._tip_rotator
             if rot is not None and getattr(self._cfg, "text_tips", True):
                 from treeaicoach.tips import build_context

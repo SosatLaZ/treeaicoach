@@ -1722,5 +1722,131 @@ class StanceAdvisor:
         return [Alert(kind=_MACRO, level=Level.INFO, text=st.sentence, key=f"stance:{st.level}", t=t)]
 
 
+# ======================================================================================
+# "Jouer plus fort ou non": one 5-step gauge (HUD + dashboard)
+# ======================================================================================
+#: step -> (word, arrows, tone): tone "go" (green), "neutral" (grey), "warning" (amber), "danger" (red)
+GAUGE_STEPS: dict[int, tuple[str, str, str]] = {
+    2: ("ATTAQUE", "▲▲", "go"), 1: ("PLUS FORT", "▲", "go"), 0: ("NORMAL", "", "neutral"),
+    -1: ("PRUDENT", "▼", "warning"), -2: ("SAFE", "▼▼", "danger")}
+GAUGE_HOLD_S = 8.0              # at least this long between two changes (unless urgent)
+GAUGE_STRONG = 4.0              # stance score >= this -> ATTAQUE (<= -this -> SAFE)
+
+
+@dataclass(frozen=True)
+class Gauge:
+    step: int                   # -2..2
+    reason: str = ""            # short French reason (from the stance / the fight)
+    since: float = 0.0          # when this step was shown (engine clock): HUD fade
+
+    @property
+    def word(self) -> str:
+        return GAUGE_STEPS.get(self.step, GAUGE_STEPS[0])[0]
+
+    @property
+    def arrows(self) -> str:
+        return GAUGE_STEPS.get(self.step, GAUGE_STEPS[0])[1]
+
+    @property
+    def tone(self) -> str:
+        return GAUGE_STEPS.get(self.step, GAUGE_STEPS[0])[2]
+
+    @property
+    def label(self) -> str:
+        """"ATTAQUE ▲▲" / "NORMAL"."""
+        return f"{self.word} {self.arrows}".strip()
+
+
+def gauge_target(stance: Any = None, fight: Any = None, scoreboard: Any = None,
+                 threat: int = 0) -> tuple[int, str, bool]:
+    """``(step, reason, urgent)`` from the stance (score + reason), the live fight decision
+    (:class:`treeaicoach.fight.FightState`), the lane matchup (Tab) and the gank threat. Pure."""
+    try:
+        threat = int(_finite(threat) or 0)
+        if threat >= Level.DANGER:
+            return -2, "gank en cours", True
+        if fight is not None and getattr(fight, "active", False):
+            call = getattr(fight, "call", None)
+            win = _finite(getattr(fight, "win", None))
+            pct = f"{int(round(100 * win))} % de chances" if win is not None else ""
+            if call == "retreat":
+                return -2, f"combat perdu d'avance ({pct})" if pct else "combat perdu d'avance", True
+            if call == "engage":
+                return 2, f"combat gagnable ({pct})" if pct else "combat gagnable", True
+            if win is not None and win >= 0.55:
+                return 1, f"combat serré ({pct})", True
+            if win is not None and win <= 0.45:
+                return -1, f"combat serré ({pct})", True
+        score = _finite(getattr(stance, "score", None)) if stance is not None else None
+        reason = str(getattr(stance, "reason", "") or "") if stance is not None else ""
+        if score is None:
+            score = 0.0
+        m = getattr(scoreboard, "my_matchup", None) if scoreboard is not None else None
+        if m is not None:
+            lvl, gold = int(_finite(getattr(m, "level_diff", 0)) or 0), int(_finite(getattr(m, "gold_diff", 0)) or 0)
+            if lvl >= 2 or gold >= 2000:
+                score += 0.5
+            elif lvl <= -2 or gold <= -2000:
+                score -= 0.5
+        if score >= GAUGE_STRONG:
+            step = 2
+        elif score >= STANCE_AGGRO:
+            step = 1
+        elif score <= -GAUGE_STRONG:
+            step = -2
+        elif score <= STANCE_SAFE:
+            step = -1
+        else:
+            step = 0
+        if threat >= Level.WARNING:
+            return min(step, -1), "ennemi proche", True
+        return step, reason, False
+    except Exception:
+        log.debug("gauge_target failed", exc_info=True)
+        return 0, "", False
+
+
+class PlayGauge:
+    """The 5-step "jouer plus fort ou non" gauge with hysteresis: a new step is shown only
+    :data:`GAUGE_HOLD_S` after the previous change, unless it is urgent (gank, live fight call).
+    Thread-safe, never raises."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._cur: Gauge | None = None
+            self._changed = -math.inf
+
+    def current(self) -> Gauge | None:
+        with self._lock:
+            return self._cur
+
+    def update(self, t: float, stance: Any = None, fight: Any = None, scoreboard: Any = None,
+               threat: int = 0, active: bool = True) -> Gauge | None:
+        try:
+            t = float(t)
+            with self._lock:
+                if not active:
+                    self._cur = None
+                    return None
+                step, reason, urgent = gauge_target(stance, fight, scoreboard, threat)
+                cur = self._cur
+                if cur is None or t < self._changed:
+                    self._cur, self._changed = Gauge(step, reason, t), t
+                elif step == cur.step:
+                    if reason != cur.reason:
+                        self._cur = Gauge(step, reason, cur.since)
+                elif urgent or t - self._changed >= GAUGE_HOLD_S:
+                    self._cur, self._changed = Gauge(step, reason, t), t
+                return self._cur
+        except Exception:
+            log.exception("PlayGauge.update failed")
+            return None
+
+
 __all__ = ["MapCoach", "map_side", "fmt_dec", "PITS", "TURRETS", "GLOBAL_GAP_S", "ENEMY_RULES",
-           "Stance", "StanceAdvisor", "stance_factors", "stance_from_factors", "STANCE_LABEL"]
+           "Stance", "StanceAdvisor", "stance_factors", "stance_from_factors", "STANCE_LABEL",
+           "Gauge", "PlayGauge", "gauge_target", "GAUGE_STEPS"]
