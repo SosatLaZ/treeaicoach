@@ -335,7 +335,13 @@ TIPS: tuple[Tip, ...] = (
       and not c.opp_dead and not c.jg_dead and (c.hp is None or c.hp >= 0.5),
       roles=LANERS, prio=3, tone="go", conf=MAP, cooldown=120.0, ttl=12.0),
     T("jg_unseen", "jungle", "Ne t'avance pas : {jg} invisible depuis {jg_h} s",
-      lambda c: c.jg_hidden_s is not None and c.jg_hidden_s >= 60 and 180 <= c.gt and c.early and not c.jg_dead,
+      lambda c: c.jg_hidden_s is not None and c.jg_hidden_s >= 60 and 180 <= c.gt and c.early and not c.jg_dead
+      and c.jg_last_side is not None,
+      roles=LANERS, prio=3, tone="warning", conf=MAP, cooldown=150.0),
+    # never seen yet: no seconds count (it would contradict the "pas encore vu" JGL line of the HUD)
+    T("jg_never_seen", "jungle", "Ne t'avance pas : {jg} pas encore vu",
+      lambda c: c.jg_hidden_s is not None and c.jg_hidden_s >= 60 and 180 <= c.gt and c.early and not c.jg_dead
+      and c.jg_last_side is None and not c.jg_visible,
       roles=LANERS, prio=3, tone="warning", conf=MAP, cooldown=150.0),
     T("jg_level3", "jungle", "Balise ta rivière avant 2:40 : {jg} peut ganker",
       lambda c: 115 <= c.gt <= 165 and not c.plan_jg, roles=LANERS, prio=3, tone="warning"),
