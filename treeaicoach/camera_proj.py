@@ -19,9 +19,15 @@ footprint is a trapezoid (the far / top edge is wider than the near / bottom one
 draws it as a rectangle. We model the true footprint as the drawn rectangle with its top edge
 widened and its bottom edge narrowed by :data:`PERSPECTIVE_K` (same height, same centre line),
 and fit the homography trapezoid -> game-window corners. ``PERSPECTIVE_K = 0`` is the plain
-rectangle -> screen mapping; 0.10 matches the perspective of the default camera well enough for
-a ground marker of ~60 px (an error of a few % of the screen at the corners, none at the centre
-line). The parameter is a module constant so it can be re-calibrated empirically.
+rectangle -> screen mapping.
+
+Value: with a pitch of 56 deg and a vertical FOV of ~40 deg the far / near footprint widths are
+in a ratio ~1.65 -> ``k = (1.65 - 1) / (1.65 + 1) ~ 0.245``, and the screen centre then sees the
+ground at ~62 % of the rectangle height (not 50 %: the near half of the ground is magnified).
+Checked on a real 2000x1125 screenshot (``scratchpad/v2/user_ingame_screenshot2.png``): the
+enemy top outer turret (map 0.29, 0.067) projects at (1076, 547) px, its base is at ~(1120, 520);
+with k = 0 it would land at (1071, 686), 15 % of the screen height too low. Expected error: a few
+% of the screen, enough for a ground marker of ~70 px. Re-calibrate the constant if needed.
 
 Pure numpy / OpenCV, never raises from the public API.
 """
@@ -46,7 +52,7 @@ CAM_H = 0.155
 CAM_W_RANGE = (0.22, 0.33)
 CAM_H_RANGE = (0.11, 0.20)
 #: Top edge widened / bottom edge narrowed by this fraction (perspective, see module doc).
-PERSPECTIVE_K = 0.10
+PERSPECTIVE_K = 0.24
 #: Map width in game units (Summoner's Rift ~14 870) and a typical move speed (units / s).
 MAP_UNITS = 14870.0
 MOVE_SPEED = 345.0

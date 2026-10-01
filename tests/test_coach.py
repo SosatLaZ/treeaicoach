@@ -585,3 +585,29 @@ def test_engine_speaks_end_of_game_summary(tmp_path, monkeypatch):
     eng._say_game_summary(tmp_path / "missing.json")          # never raises
     assert said and said[0].startswith("Victoire en 28 minutes.")
     paths._reset_cache()
+
+
+def test_play_gauge_steps_and_hysteresis():
+    from types import SimpleNamespace as NS
+
+    from treeaicoach.coach import GAUGE_HOLD_S, PlayGauge, gauge_target
+
+    st = lambda score, reason="r": NS(score=score, reason=reason)   # noqa: E731
+    assert gauge_target(st(5.0))[0] == 2 and gauge_target(st(2.5))[0] == 1 and gauge_target(st(0.0))[0] == 0
+    assert gauge_target(st(-2.5))[0] == -1 and gauge_target(st(-4.5))[0] == -2
+    assert gauge_target(st(3.0), threat=2) == (-2, "gank en cours", True)
+    assert gauge_target(st(3.0), threat=1)[0] == -1
+    fight = NS(active=True, call="engage", win=0.7)
+    assert gauge_target(st(-3.0), fight)[:1] == (2,) and gauge_target(st(0), fight)[2]
+    assert gauge_target(st(3.0), NS(active=True, call="retreat", win=0.3))[0] == -2
+    sb = NS(my_matchup=NS(level_diff=2, gold_diff=0))
+    assert gauge_target(st(1.6), None, sb)[0] == 1                       # matchup nudges up
+    assert gauge_target(None) == (0, "", False)
+    g = PlayGauge()
+    assert g.update(0.0, st(0.0)).word == "NORMAL"
+    assert g.update(2.0, st(3.0)).word == "NORMAL"                       # held (hysteresis)
+    assert g.update(GAUGE_HOLD_S + 0.1, st(3.0)).label == "PLUS FORT ▲"
+    assert g.update(GAUGE_HOLD_S + 1.0, st(3.0), threat=2).word == "SAFE"  # urgent: at once
+    assert g.update(GAUGE_HOLD_S + 2.0, st(5.0)).word == "SAFE"
+    assert g.update(2 * GAUGE_HOLD_S + 2.0, st(5.0)).word == "ATTAQUE"
+    assert g.current().tone == "go" and g.update(30.0, st(0), active=False) is None
