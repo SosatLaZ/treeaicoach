@@ -342,7 +342,7 @@ def _build(tmp_path: Path, **kw: Any) -> tuple[Any, FakeVoice, list]:
         overlays.append(o)
         return o
 
-    cfg = kw.pop("cfg", Config())
+    cfg = kw.pop("cfg", Config(ui_onboarding_done=True, ui_seen_changelog="1.5"))
     app = ui.CoachApp(cfg, engine_factory=factory, overlay_factory=ov_factory, voice=voice,
                       detector_factory=lambda c: None, demo_source_factory=lambda: object(),
                       hotkeys=False, save_path=tmp_path / "config.json", **kw)
@@ -538,7 +538,7 @@ def test_run_app_with_real_engine_demo(home: Path, tmp_path: Path) -> None:
 
     ui.CoachApp.close = spy_close          # type: ignore[method-assign]
     try:
-        rc = ui.run_app(Config(), demo=True, smoke_seconds=4.5, _voice=voice, _hotkeys=False,
+        rc = ui.run_app(Config(ui_onboarding_done=True, ui_seen_changelog="1.5"), demo=True, smoke_seconds=4.5, _voice=voice, _hotkeys=False,
                         _overlay_factory=lambda c, p: None, _save_path=tmp_path / "c.json")
     finally:
         ui.CoachApp.close = orig_close     # type: ignore[method-assign]

@@ -90,6 +90,13 @@ BOOL_FIELDS: tuple[str, ...] = (
     "danger_flash",
     "overlay_hide_from_capture",
     "overlay_show_frame",
+    "overlay_show_allies",
+    "overlay_show_roles",
+    "overlay_show_ghosts",
+    "hud_detailed",
+    "text_tips",
+    "tip_toasts",
+    "stance_voice",
     "break_reminder",
     # updates
     "check_updates_on_start",
@@ -220,6 +227,14 @@ class Config:
     # minimap overlay: hide it from screen capture (False = visible in screenshots / streams)
     overlay_hide_from_capture: bool = False
     overlay_show_frame: bool = True  # discreet frame + "TreeAI" label on the minimap layer
+    # v2 decluttered minimap layer: only enemies / jungler fog / approach arrows / danger ring by default
+    overlay_show_allies: bool = False    # thin blue rings on allies + teal ring on me
+    overlay_show_roles: bool = False     # role tags (TOP/MID/ADC/SUP) on enemies (the jungler always has "JGL")
+    overlay_show_ghosts: bool = False    # last seen marks + fog zones of every hidden enemy (not only the jungler)
+    hud_detailed: bool = False           # HUD: also the jungler line and the 5 enemy portraits
+    text_tips: bool = True               # rotating written tips in the HUD (never spoken)
+    tip_toasts: bool = False             # ... also as a small toast
+    stance_voice: bool = True            # speak the stance (PRUDENT / AGRESSIF) when it changes
     fog_mode: str = "jungler"       # "jungler" | "all" | "off"
     fog_max_s: float = 60.0         # 10..180
     hotkey_mute: str = "F10"

@@ -70,6 +70,10 @@ PANEL_ALPHA = 0.86
 BORDER_ALPHA = 0.85
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
 THREAT_DEFAULT_TEXT = {0: "SÛR", 1: "ATTENTION", 2: "DANGER"}
+#: Stance pill (coach.StanceAdvisor): key -> (label, colour)
+STANCE_STYLE: dict[str, tuple[str, tuple[int, int, int]]] = {
+    "prudent": ("PRUDENT", DANGER), "equilibre": ("ÉQUILIBRÉ", WARNING), "agressif": ("AGRESSIF", SAFE),
+}
 LAST_SEEN_MAX_S = 60.0          # invisible enemies are drawn at their last position this long
 ALERT_FADE_S = 4.0              # the "last alert" line fades out over this duration
 HALO_PERIOD_S = 1.1             # jungler halo pulse period
@@ -136,6 +140,15 @@ class OverlayState:
     roles: dict[str, str] = field(default_factory=dict)     # champion key / alias -> role (API position)
     insight: str | None = None                # most relevant live macro insight (coach.MapCoach), one HUD line
     toasts: list = field(default_factory=list)  # toasts.ToastView list (top-centre banners), optional
+    # v2 stance + written tips (coach.StanceAdvisor / tips.TipRotator)
+    stance: str | None = None                 # "prudent" | "equilibre" | "agressif" | None
+    stance_reason: str | None = None          # short reason ("+1 niveau sur Darius, jungler vu en bas")
+    tip: str | None = None                    # the one written tip line of the HUD (rotating, never spoken)
+    # decluttered minimap layer (config toggles, all off by default)
+    show_allies: bool = False                 # rings on allies + me
+    show_roles: bool = False                  # role tags on enemies (the jungler always gets "JGL")
+    show_ghosts: bool = False                 # last seen marks / fog zones of every hidden enemy
+    hud_detailed: bool = False                # HUD: jungler line + 5 enemy portraits
 
 
 # ======================================================================================
@@ -1154,13 +1167,12 @@ def render_minimap(state: OverlayState, width: int, height: int | None = None,
     """Transparent overlay drawn *over the real minimap* (premultiplied BGRA ``height x width``).
 
     The layer is visible to screen capture, so it NEVER draws champion portraits / icons (they
-    would be re-detected): only thin, semi-transparent marks (the real minimap stays readable),
-    rings drawn outside the real icons (``MM_MARKER_R``) + role tags on
-    tracked enemies (red) / allies (blue), me (teal), the enemy jungler emphasized, fog regions
-    of hidden enemies with a dashed bound circle and a timer, ghost marks with "12 s" at the last
-    seen position of hidden enemies, warn / danger rings around me (only when threatened),
-    approach arrows and a threat-coloured frame. ``show_frame`` adds discreet corner marks and a
-    tiny "TreeAI" label (proof that the layer is alive, even with nothing tracked).
+    would be re-detected) and stays sparse: thin rings drawn outside the real icons
+    (``MM_MARKER_R``) on visible enemies ("JGL" tag on the jungler only), the enemy jungler's fog
+    zone as a soft outline with a small timer, one arrow per enemy approaching me and a danger
+    ring around me at DANGER only. ``state.show_allies`` / ``show_roles`` / ``show_ghosts``
+    (config ``overlay_show_*``) add ally rings, role tags and every hidden enemy's last seen mark.
+    ``show_frame`` adds a tiny "TreeAI" label (the layer is alive, even with nothing tracked).
     Never raises (transparent image on error).
     """
     try:
@@ -1179,49 +1191,62 @@ def render_minimap(state: OverlayState, width: int, height: int | None = None,
 
 
 def _minimap_frame(img: np.ndarray) -> np.ndarray:
-    """Corner marks + tiny "TreeAI" label over a minimap layer (premultiplied BGRA)."""
+    """Tiny "TreeAI" label (the layer is alive) over a minimap layer (premultiplied BGRA)."""
     H, W = img.shape[:2]
     cv_ = Canvas(W, H)
     cv_.px[:] = img[..., (2, 1, 0, 3)].astype(np.float32) / np.float32(255.0)  # BGRA u8 -> RGBA f32
     k = min(W, H) / 256.0
-    L, t = max(8.0, 14 * k), max(1.5, 1.6 * k)
-    for (x, y, dx, dy) in ((0, 0, 1, 1), (W, 0, -1, 1), (0, H, 1, -1), (W, H, -1, -1)):
-        x0 = x + dx * t / 2
-        y0 = y + dy * t / 2
-        cv_.capsule(x0, y0, x0 + dx * L, y0, t, TEAL, 0.8)
-        cv_.capsule(x0, y0, x0, y0 + dy * L, t, TEAL, 0.8)
-    f = get_font(max(8, int(round(8 * k))), "bold")
-    tw, th = text_width("TreeAI", f) + 6, _cap_height(f) + 5
-    tx, ty = W - tw - L - 2, 2.0
-    cv_.rrect(tx, ty, tw, th, th / 2, PANEL_DEEP, 0.55)
-    cv_.text(tx + tw / 2, ty + th / 2, "TreeAI", f, TEAL, 0.85, anchor="m", shadow=0)
+    f = get_font(max(7, int(round(7 * k))), "bold")      # tiny "alive" marker, top-right corner
+    tw, th = text_width("TreeAI", f) + 4, _cap_height(f) + 4
+    tx, ty = W - tw - 2.0, 2.0
+    cv_.rrect(tx, ty, tw, th, th / 2, PANEL_DEEP, 0.45)
+    cv_.text(tx + tw / 2, ty + th / 2, "TreeAI", f, TEAL, 0.7, anchor="m", shadow=0)
     return cv_.to_bgra()
 
 
 def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarray:
+    """Decluttered layer. Default: thin rings on visible enemies ("JGL" on the jungler only), the
+    enemy jungler's fog zone as a soft outline + small timer, one arrow per approaching enemy and
+    a danger ring around me at DANGER. ``state.show_allies / show_roles / show_ghosts`` add ally
+    rings (+ me), role tags and the last seen marks / fog zones of every hidden enemy."""
     cv_ = Canvas(W, H)
     S = float(min(W, H))
     k = S / 256.0
     phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
     pulse = 0.5 + 0.5 * math.sin(phase * 2 * math.pi)
     mr = MM_MARKER_R * S
-    lw = max(1.2, 1.35 * k)
+    lw = max(1.1, 1.2 * k)
     f_tag = get_font(max(8, int(round(8.5 * k))), "bold")
-    f_time = get_font(max(8, int(round(9 * k))), "bold")
+    f_time = get_font(max(8, int(round(8.5 * k))), "bold")
     roles = state.roles if isinstance(state.roles, dict) else {}
+    show_allies = bool(getattr(state, "show_allies", False))
+    show_roles = bool(getattr(state, "show_roles", False))
+    show_ghosts = bool(getattr(state, "show_ghosts", False))
     taken: list[tuple[float, float, float, float]] = []
 
     def px(uv: tuple[float, float]) -> tuple[float, float]:
         return uv[0] * W, uv[1] * H
+
+    def tag_of(e: Any) -> str:
+        if e is None:
+            return ""
+        if getattr(e, "is_jungler", False):
+            return "JGL"
+        if not show_roles:
+            return ""
+        t = role_tag(e, roles)
+        return "" if t == "?" else t
 
     lvl = int(state.threat_level or 0) if _finite(state.threat_level or 0) else 0
     lvl = min(max(lvl, 0), 2)
     me = _uv_ok(state.me_uv) if state.me_uv is not None else None
     enemies = [e for e in (state.enemies or []) if e is not None and getattr(e, "key", None)]
     allies = [a for a in (getattr(state, "allies", None) or []) if a is not None and getattr(a, "key", None)]
+    by_key = {e.key: e for e in enemies}
 
-    # ---- fog regions (where hidden enemies can be), least confident first
-    fogs = [f for f in (state.fogs or []) if f is not None]
+    # ---- fog zones: the enemy jungler's only (soft outline, very light fill), every one with show_ghosts
+    fogs = [f for f in (state.fogs or []) if f is not None
+            and (show_ghosts or bool(getattr(f, "is_jungler", False)))]
     for fog in sorted(fogs, key=lambda f: (bool(getattr(f, "is_jungler", False)), f.confidence)):
         uv = _uv_ok(fog.last_uv)
         if uv is None:
@@ -1237,58 +1262,48 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
                 if (W, H) != (int(S), int(S)):
                     fill = cv2.resize(fill, (W, H), interpolation=cv2.INTER_LINEAR)
                     edge = cv2.resize(edge, (W, H), interpolation=cv2.INTER_LINEAR)
-                cv_.paint(0, 0, fill, DANGER, (0.11 if main else 0.05) * vis)
-                cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.2), (0.5 if main else 0.25) * vis)
-        if main and vis > 0 and _finite(fog.radius) and fog.radius > 0:
-            x, y = px(uv)
-            cv_.ring(x, y, float(fog.radius) * S, lw, _mix(DANGER, WHITE, 0.35), 0.55 * vis,
-                     dash=(max(4.0, 5 * k), max(3.0, 4 * k)))
+                cv_.paint(0, 0, fill, DANGER, (0.04 if main else 0.025) * vis)
+                cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.25), (0.42 if main else 0.2) * vis)
 
-    # ---- warn / danger rings around me: only when threatened
-    if me is not None and lvl >= 1:
+    # ---- danger ring around me: only at DANGER
+    if me is not None and lvl >= 2:
         mx, my = px(me)
-        warn_r = max(0.0, float(state.warn_radius)) * S if _finite(state.warn_radius) else 0.0
         dang_r = max(0.0, float(state.danger_radius)) * S if _finite(state.danger_radius) else 0.0
-        if warn_r > 2:
-            cv_.ring(mx, my, warn_r, lw, WARNING, 0.6, dash=(max(4.0, 6 * k), max(3.0, 4 * k)),
-                     phase=now * 0.15)
-        if lvl >= 2 and dang_r > 2:
-            cv_.disc(mx, my, dang_r, DANGER, 0.07 + 0.05 * pulse)
-            cv_.ring(mx, my, dang_r, lw * 1.2, DANGER, 0.8)
+        if dang_r > 2:
+            cv_.disc(mx, my, dang_r, DANGER, 0.05 + 0.04 * pulse)
+            cv_.ring(mx, my, dang_r, lw * 1.3, DANGER, 0.6 + 0.3 * pulse)
 
-    # ---- hidden enemies: ghost at the last seen point + elapsed time
-    for e in enemies:
-        if e.visible:
-            continue
-        uv = _uv_ok(e.uv) if e.uv is not None else None
-        ago = e.last_seen_ago
-        if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
-            continue
-        fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
-        x, y = px(uv)
-        # no portrait here (captured layer): dashed circle + small centre dot only
-        cv_.ring(x, y, mr, lw * 0.9, DANGER, 0.7 * fade, dash=(3.0 * k + 1, 2.5 * k + 1))
-        cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.6 * fade)
-        tag = role_tag(e, roles)
-        label = f"{tag} {fmt_seconds(ago)}" if tag and tag != "?" else fmt_seconds(ago)
-        _tag(cv_, x, y, mr * 1.05, label, f_time, GOLD_LIGHT, taken, alpha=max(0.7, fade))
+    # ---- (option) hidden enemies: dashed mark at the last seen point + elapsed time
+    if show_ghosts:
+        for e in enemies:
+            if e.visible:
+                continue
+            uv = _uv_ok(e.uv) if e.uv is not None else None
+            ago = e.last_seen_ago
+            if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
+                continue
+            fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
+            x, y = px(uv)
+            cv_.ring(x, y, mr, lw * 0.9, DANGER, 0.6 * fade, dash=(3.0 * k + 1, 2.5 * k + 1))
+            tag = tag_of(e)
+            label = f"{tag} {fmt_seconds(ago)}" if tag else fmt_seconds(ago)
+            _tag(cv_, x, y, mr * 1.05, label, f_time, GOLD_LIGHT, taken, alpha=max(0.7, fade))
 
-    # ---- allies (thin blue rings)
-    for a in allies:
-        uv = _uv_ok(a.uv) if (a.visible and a.uv is not None) else None
-        if uv is None:
-            continue
-        x, y = px(uv)
-        cv_.ring(x, y, mr, lw, ALLY_BLUE, 0.75)
-        _tag(cv_, x, y, mr + 1, role_tag(a, roles), f_tag, ALLY_TAG_RGB, taken, 0.9)
+    # ---- (option) allies + me
+    if show_allies:
+        for a in allies:
+            uv = _uv_ok(a.uv) if (a.visible and a.uv is not None) else None
+            if uv is None:
+                continue
+            x, y = px(uv)
+            cv_.ring(x, y, mr, lw, ALLY_BLUE, 0.7)
+            if show_roles:
+                _tag(cv_, x, y, mr + 1, role_tag(a, roles), f_tag, ALLY_TAG_RGB, taken, 0.9)
+        if me is not None:
+            x, y = px(me)
+            cv_.ring(x, y, mr * 1.03, lw * 1.3, TEAL, 0.9)
 
-    # ---- me
-    if me is not None:
-        x, y = px(me)
-        cv_.ring(x, y, mr * 1.03, lw * 1.5, TEAL, 0.95)
-        cv_.ring(x, y, mr * 1.03 + lw * 2.2, lw * 0.8, TEAL, 0.35)
-
-    # ---- visible enemies: rings, approach arrows, jungler emphasis
+    # ---- visible enemies: thin rings, one arrow per approaching enemy, "JGL" on the jungler
     visible = [e for e in enemies if e.visible and e.uv is not None and _uv_ok(e.uv) is not None]
     visible.sort(key=lambda e: (e.is_jungler, e.approaching))
     for e in visible:
@@ -1306,35 +1321,29 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
                 sx, sy = x + ux * (mr + lw), y + uy * (mr + lw)
                 _arrow(cv_, sx, sy, sx + ux * L, sy + uy * L, max(1.5, 1.6 * k), DANGER, 0.9)
         if e.is_jungler:
-            cv_.ring(x, y, mr * (1.15 + 0.35 * phase), lw, DANGER, 0.75 * (1 - phase) ** 1.5)
-            cv_.ring(x, y, mr * 1.02, lw * 1.9, DANGER, 0.95)
+            cv_.ring(x, y, mr * 1.02, lw * 1.6, DANGER, 0.9)
         else:
-            cv_.ring(x, y, mr, lw * 1.2, DANGER, 0.85)
-        _tag(cv_, x, y, mr + 1, role_tag(e, roles), f_tag, ENEMY_TAG_RGB if not e.is_jungler else WHITE,
-             taken, 1.0)
+            cv_.ring(x, y, mr, lw, DANGER, 0.8)
+        tag = tag_of(e)
+        if tag:
+            _tag(cv_, x, y, mr + 1, tag, f_tag, WHITE if e.is_jungler else ENEMY_TAG_RGB, taken, 1.0)
 
-    # ---- fog timers (last seen point of the jungler's estimate when not drawn above)
-    ghost_keys = {e.key for e in enemies if not e.visible and e.uv is not None}
-    by_key = {e.key: e for e in enemies}
+    # ---- fog timers: small "JGL 12 s" at the last seen point of the (jungler) fog zone
+    ghost_drawn = {e.key for e in enemies if show_ghosts and not e.visible and e.uv is not None
+                   and e.last_seen_ago is not None and _finite(e.last_seen_ago)
+                   and e.last_seen_ago <= LAST_SEEN_MAX_S}
     for fog in fogs:
-        if fog.key in ghost_keys and by_key.get(fog.key) is not None \
-                and by_key[fog.key].last_seen_ago is not None and _finite(by_key[fog.key].last_seen_ago) \
-                and by_key[fog.key].last_seen_ago <= LAST_SEEN_MAX_S:
+        if fog.key in ghost_drawn:
             continue
         uv = _uv_ok(fog.last_uv)
         if uv is None:
             continue
         x, y = px(uv)
         ev = by_key.get(fog.key)
-        cv_.ring(x, y, mr * 0.95, lw * 0.9, DANGER, 0.55, dash=(3.0 * k + 1, 2.5 * k + 1))
-        tag = role_tag(ev, roles) if ev is not None else ("JGL" if getattr(fog, "is_jungler", False) else "")
-        _tag(cv_, x, y, mr * 1.05, f"{tag} {fmt_seconds(fog.elapsed)}".strip(), f_time, GOLD_LIGHT, taken)
-
-    # ---- frame: only when threatened (thin, threat-coloured)
-    if lvl >= 1:
-        col = DANGER if lvl >= 2 else WARNING
-        a = (0.55 + 0.4 * pulse) if lvl >= 2 else 0.55
-        cv_.rrect(0.5, 0.5, W - 1, H - 1, 2.0, None, border=col, border_alpha=a, border_w=max(1.5, 2 * k))
+        tag = tag_of(ev) if ev is not None else ("JGL" if getattr(fog, "is_jungler", False) else "")
+        cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.7)
+        _tag(cv_, x, y, max(3.0, 3 * k), f"{tag} {fmt_seconds(fog.elapsed)}".strip(), f_time, GOLD_LIGHT, taken,
+             alpha=0.9)
     return cv_.to_bgra()
 
 
@@ -1418,18 +1427,27 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
         "obj": get_font(round(10.5 * k), "semibold"),
     }
     rows: list[tuple[str, float]] = [("threat", 26 * k)]
-    jl = _jungler_text(state)
+    detailed = bool(getattr(state, "hud_detailed", False))
+    stance = getattr(state, "stance", None)
+    stance = stance if isinstance(stance, str) and stance in STANCE_STYLE else None
+    if stance:
+        rows.append(("stance", 18 * k))
+    jl = _jungler_text(state) if detailed else ""
     if jl:
         rows.append(("jungler", 20 * k))
     slot_w = inner / 5.0
     icon_d = min(32 * k, slot_w - 12 * k)
-    rows.append(("enemies", icon_d + 17 * k))
+    if detailed:
+        rows.append(("enemies", icon_d + 17 * k))
+    # ONE written line: the rotating tip (tips.TipRotator), else the coach's live insight
+    tip = getattr(state, "tip", None)
+    insight = tip if isinstance(tip, str) and tip.strip() else getattr(state, "insight", None)
+    insight = insight.strip() if isinstance(insight, str) else ""
+    if insight:
+        rows.append(("insight", 16 * k))
     objs = _objective_rows(state)
     if objs:
         rows.append(("objectives", 18 * k))
-    insight = (getattr(state, "insight", None) or "").strip() if isinstance(getattr(state, "insight", None), str) else ""
-    if insight:
-        rows.append(("insight", 16 * k))
     hint = (state.hint or "").strip()
     if hint:
         rows.append(("hint", 16 * k))
@@ -1437,7 +1455,8 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
     height = pad + sum(h for _, h in rows) + gap * (len(rows) - 1) + pad
     return {"pad": pad, "inner": inner, "fonts": fonts, "rows": rows, "gap": gap, "height": int(math.ceil(height)),
             "jl": jl, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint,
-            "insight": insight}
+            "insight": insight, "stance": stance,
+            "stance_reason": str(getattr(state, "stance_reason", "") or "").strip()}
 
 
 def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
@@ -1447,7 +1466,8 @@ def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
 
 
 def render_hud(state: OverlayState, width: int = 280, now: float | None = None) -> np.ndarray:
-    """Compact HUD panel (threat bar, jungler line, 5 enemies with roles, objectives) - premultiplied BGRA.
+    """Light HUD panel - premultiplied BGRA: threat bar, stance pill + reason, one written tip
+    line, objectives (``state.hud_detailed``: also the jungler line and the 5 enemy portraits).
 
     Never raises (an empty 1-row image on internal error, logged).
     """
@@ -1494,6 +1514,17 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
                 size -= 0.5 * k
                 tfont = get_font(round(size), "bold")
             cv_.text(tx, cy, fit_text(text, tfont, avail), tfont, WHITE, shadow=0.45)
+        elif name == "stance":
+            label, col = STANCE_STYLE[lay["stance"]]
+            f = fonts["tag"]
+            pw = text_width(label, f) + 12 * k
+            cv_.rrect(pad, y + 1 * k, pw, h - 2 * k, (h - 2 * k) / 2, _mix(col, BLACK, 0.25), 0.95,
+                      border=_mix(col, WHITE, 0.35), border_alpha=0.7)
+            cv_.text(pad + pw / 2, cy, label, f, WHITE, anchor="m", shadow=0.3)
+            tx = pad + pw + 6 * k
+            if lay["stance_reason"]:
+                cv_.text(tx, cy, fit_text(lay["stance_reason"], fonts["small"], W - pad - tx), fonts["small"],
+                         _mix(col, WHITE, 0.55), 0.95)
         elif name == "jungler":
             jg = next((e for e in enemies if e is not None and getattr(e, "is_jungler", False)), None)
             d = 18 * k

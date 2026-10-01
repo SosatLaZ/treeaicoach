@@ -131,6 +131,8 @@ HUD_POSITIONS: tuple[tuple[str, str], ...] = (
     ("custom", "Personnalisée"),
 )
 FOG_MODES: tuple[tuple[str, str], ...] = (("jungler", "Jungler"), ("all", "Tous"), ("off", "Off"))
+OVERLAY_MODES: tuple[tuple[str, str], ...] = (("minimap", "Sur la minimap"), ("radar", "Radar à côté"),
+                                              ("off", "Aucun"))
 DETECTORS: tuple[tuple[str, str], ...] = (
     ("auto", "Automatique"),
     ("onnx", "Réseau de neurones (ONNX)"),
@@ -144,7 +146,7 @@ AUTO_VOICE = "Automatique (meilleure voix française)"
 #: Fields whose change needs a new detector (the engine is rebuilt).
 DETECTOR_FIELDS = frozenset({"detector_backend", "detection_threshold"})
 VOICE_FIELDS = frozenset({"voice_name", "voice_rate", "voice_volume", "beep_on_danger", "voice_engine",
-                          "neural_voice"})
+                          "neural_voice", "neural_rate"})
 #: voice_engine -> label (voice.VoiceEngine.list_engines() may add / rename some).
 ENGINE_LABELS: tuple[tuple[str, str], ...] = (
     ("auto", "Automatique (recommandé)"),
@@ -1532,7 +1534,8 @@ class CoachApp:
 
     def _slider_row(self, body: Any, field: str, title: str, desc: str | None, lo: float, hi: float,
                     step: float, fmt: Callable[[float], str], cast: Callable[[float], Any] = float,
-                    on_change: Callable[[Any], None] | None = None) -> Any:
+                    on_change: Callable[[Any], None] | None = None,
+                    to_float: Callable[[Any], float] = float) -> Any:
         _row, slot = self._row(body, title, desc)
         value_lbl = self._label(slot, fmt(getattr(self.cfg, field)), self.fonts.h3, GOLD, width=78,
                                 anchor="e")
@@ -1548,12 +1551,12 @@ class CoachApp:
         sl = self.ctk.CTkSlider(slot, from_=lo, to=hi, number_of_steps=steps, width=210, height=18,
                                 command=self.cb(moved), fg_color="#1B2638", progress_color=GOLD_DARK,
                                 button_color=GOLD, button_hover_color=GOLD_HOVER)
-        sl.set(float(getattr(self.cfg, field)))
+        sl.set(to_float(getattr(self.cfg, field)))
         sl.grid(row=0, column=0, padx=(0, 8))
         value_lbl.grid(row=0, column=1)
 
         def refresh() -> None:
-            sl.set(float(getattr(self.cfg, field)))
+            sl.set(to_float(getattr(self.cfg, field)))
             value_lbl.configure(text=fmt(getattr(self.cfg, field)))
         self._widgets_by_field[field] = refresh
         return sl
@@ -2138,6 +2141,11 @@ class CoachApp:
         self._choice_row(s, "neural_voice", "Voix neurale", "Voix Microsoft en ligne (française).",
                          self._neural_choices(), width=260)
         self._neural_row = self._last_row
+        if hasattr(self.cfg, "neural_rate"):
+            self._slider_row(s, "neural_rate", "Vitesse de la voix neurale", "Défaut : +15 %.", -50, 100, 5,
+                             lambda v: str(v).replace("%", " %") if isinstance(v, str) else f"{int(v):+d} %",
+                             lambda v: f"{int(round(v)):+d}%", to_float=_pct_value)
+            self._neural_rate_row = self._last_row
         _row, slot = self._row(s, "Voix Windows", "« Automatique » choisit la meilleure voix française installée.")
         self._windows_voice_row = _row
         self.voice_menu = ctk.CTkOptionMenu(
@@ -2199,10 +2207,21 @@ class CoachApp:
         if getattr(self.voice, "backend", "") == "print":
             self.show_toast("Voix indisponible sur ce système : le message est écrit dans le journal.", "warning")
 
+    def _voice_api(self) -> Any:
+        """The voice object (or the VoiceEngine class before it exists) for the list_* selectors."""
+        if self.voice is not None:
+            return self.voice
+        try:
+            from treeaicoach.voice import VoiceEngine  # noqa: PLC0415
+
+            return VoiceEngine
+        except Exception:
+            return None
+
     def _engine_choices(self) -> list[tuple[str, str]]:
         labels = dict(ENGINE_LABELS)
         values: list[str] = []
-        fn = getattr(self.voice, "list_engines", None) if self.voice is not None else None
+        fn = getattr(self._voice_api(), "list_engines", None)
         try:
             got = fn() if callable(fn) else None
             for item in got or []:
@@ -2221,7 +2240,7 @@ class CoachApp:
 
     def _neural_choices(self) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
-        fn = getattr(self.voice, "list_neural_voices", None) if self.voice is not None else None
+        fn = getattr(self._voice_api(), "list_neural_voices", None)
         try:
             got = fn() if callable(fn) else None
             for item in got or []:
@@ -2247,6 +2266,7 @@ class CoachApp:
         """Neural voice row only for auto / neural; Windows voice row only for auto / onecore / sapi."""
         eng = getattr(self.cfg, "voice_engine", "auto")
         for row, show in ((getattr(self, "_neural_row", None), eng in ("auto", "neural")),
+                          (getattr(self, "_neural_rate_row", None), eng in ("auto", "neural")),
                           (getattr(self, "_windows_voice_row", None), eng != "neural")):
             if row is None:
                 continue
@@ -2303,52 +2323,103 @@ class CoachApp:
 
     # ------------------------------------------------------------------ overlay page
     def _build_overlay_page(self) -> Any:
-        page, right, body = self._page("Overlay", "Radar agrandi, panneau HUD et flash de danger par-dessus le jeu")
+        page, right, body = self._page("Overlay", "Les ennemis et les menaces dessinés directement sur ta minimap",
+                                       icon="overlay")
         self.btn_move = self._button(right, "Déplacer les fenêtres", self.toggle_move_mode, "secondary", icon="move")
         self.btn_move.grid(row=0, column=0)
-        s = self._section(body, 0, "Affichage",
-                          "Fenêtres transparentes traversées par la souris (mode Sans bordure ou Fenêtré). "
-                          "Rien n'est dessiné dans le jeu ni sur la minimap.")
+        self._tip(self.btn_move, "Fais glisser le radar et le HUD à la souris (Windows).")
+        prev = lambda _v=None: self._schedule_overlay_preview()  # noqa: E731
+        s = self._section(body, 0, "Affichage sur la minimap",
+                          "Fenêtres transparentes traversées par la souris (jeu en Sans bordure ou Fenêtré). "
+                          "Rien n'est injecté dans le jeu.", icon="map")
         self._switch_row(s, "overlay_enabled", "Activer l'overlay", "Interrupteur général (F11 en jeu).",
-                         on_change=lambda _v: self._schedule_overlay_preview())
-        self._switch_row(s, "radar_enabled", "Radar", "Copie agrandie de la minimap avec les menaces, "
-                         "placée à côté de la vraie minimap.", on_change=lambda _v: self._schedule_overlay_preview())
+                         on_change=lambda v: (prev(), self._sync_quick()))
+        if hasattr(self.cfg, "overlay_mode"):
+            self._choice_row(s, "overlay_mode", "Où dessiner", "Sur la minimap : marques posées sur la vraie "
+                             "minimap. Radar : copie agrandie à côté. Aucun : seulement le HUD et le flash.",
+                             OVERLAY_MODES, segmented=True, on_change=lambda _v: (prev(), self._refresh_radar_rows()))
+        if hasattr(self.cfg, "overlay_show_frame"):
+            self._switch_row(s, "overlay_show_frame", "Cadre discret « TreeAI »",
+                             "Fin liseré doré autour de la minimap pour voir que le coach est actif.",
+                             on_change=prev)
+        if hasattr(self.cfg, "overlay_hide_from_capture"):
+            self._switch_row(s, "overlay_hide_from_capture", "Masquer des captures et du stream",
+                             "Les marques sur la minimap n'apparaissent pas sur tes captures d'écran ni sur OBS "
+                             "(Windows 10 2004 ou plus récent).")
+        if self._overlay_supports("overlay_opacity"):
+            self._slider_row(s, "overlay_opacity", "Opacité", "Transparence des marques et du HUD.", 0.3, 1.0, 0.05,
+                             lambda v: f"{int(round(float(v) * 100))} %", float, on_change=prev)
+        if self._overlay_supports("overlay_scale"):
+            self._slider_row(s, "overlay_scale", "Taille des marques", None, 0.6, 1.6, 0.1,
+                             lambda v: f"× {fmt_decimal_fr(v, 1)}", float, on_change=prev)
+
+        s = self._section(body, 1, "HUD et flash", "Panneau compact (jauge de menace, jungler, objectifs) et "
+                                                    "alerte visuelle en cas de gank.", icon="eye")
         self._switch_row(s, "hud_enabled", "Panneau HUD", "Jauge de menace, jungler, 5 ennemis, objectifs.",
-                         on_change=lambda _v: self._schedule_overlay_preview())
+                         on_change=prev)
+        self._position_menus: dict[str, Any] = {}
+        self._position_menus["hud"] = self._choice_row(
+            s, "hud_position", "Position du HUD", None, HUD_POSITIONS, width=230, on_change=prev)
         self._switch_row(s, "danger_flash", "Flash de danger", "Cadre rouge sur les bords de l'écran en cas de gank.",
-                         on_change=lambda _v: self._schedule_overlay_preview())
-        s = self._section(body, 1, "Position possible dans le brouillard",
+                         on_change=prev)
+
+        s = self._section(body, 2, "Position possible dans le brouillard",
                           "Zone qui grandit là où un ennemi caché peut se trouver (dernière position vue "
-                          "+ vitesse de déplacement). Aucune prédiction.")
+                          "+ vitesse de déplacement). Aucune prédiction.", icon="clock")
         self._choice_row(s, "fog_mode", "Cercle de position", "Pour le jungler seulement, tous les ennemis, "
-                         "ou désactivé.", FOG_MODES, segmented=True,
-                         on_change=lambda _v: self._schedule_overlay_preview())
+                         "ou désactivé.", FOG_MODES, segmented=True, on_change=prev)
         self._slider_row(s, "fog_max_s", "Durée maximale", "Au-delà, la zone est trop grande : elle s'efface.",
                          10, 180, 5, lambda v: f"{int(v)} s", float)
-        s = self._section(body, 2, "Placement")
-        self._position_menus: dict[str, Any] = {}
+
+        s = self._section(body, 3, "Radar à côté de la minimap", "Utilisé seulement en mode « Radar ».",
+                          icon="target")
+        self._radar_section = s
         self._position_menus["radar"] = self._choice_row(
-            s, "radar_position", "Position du radar", None, RADAR_POSITIONS, width=230,
-            on_change=lambda _v: self._schedule_overlay_preview())
+            s, "radar_position", "Position du radar", None, RADAR_POSITIONS, width=230, on_change=prev)
         self._slider_row(s, "radar_scale", "Taille du radar", "1,0 = même taille que la minimap.", 0.5, 2.0, 0.1,
-                         lambda v: f"× {fmt_decimal_fr(v, 1)}", float,
-                         on_change=lambda _v: self._schedule_overlay_preview())
-        self._position_menus["hud"] = self._choice_row(
-            s, "hud_position", "Position du HUD", None, HUD_POSITIONS, width=230,
-            on_change=lambda _v: self._schedule_overlay_preview())
+                         lambda v: f"× {fmt_decimal_fr(v, 1)}", float, on_change=prev)
         self._refresh_position_menus()
-        prev = self._card(body)
-        prev.grid(row=3, column=0, sticky="ew", pady=(0, 14))
-        prev.grid_columnconfigure(0, weight=1)
-        self._label(prev, "Aperçu", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=0, sticky="w",
-                                                                         padx=20, pady=(16, 2))
-        self._label(prev, "Exemple d'écran en jeu (gank en cours, 1920 × 1080).", self.fonts.tiny, MUTED,
+        self._refresh_radar_rows()
+        prev_card = self._card(body)
+        prev_card.grid(row=4, column=0, sticky="ew", pady=(0, 14))
+        prev_card.grid_columnconfigure(0, weight=1)
+        self._label(prev_card, "Aperçu", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=0, sticky="w",
+                                                                              padx=20, pady=(16, 2))
+        self._label(prev_card, "Exemple d'écran en jeu (gank en cours, 1920 × 1080).", self.fonts.tiny, MUTED,
                     anchor="w").grid(row=1, column=0, sticky="w", padx=20)
-        self.overlay_preview = self.ctk.CTkLabel(prev, text="Génération de l'aperçu…", text_color=DIM,
+        self.overlay_preview = self.ctk.CTkLabel(prev_card, text="Génération de l'aperçu…", text_color=DIM,
                                                  font=self.fonts.small, fg_color=PANEL_LO, corner_radius=10,
                                                  width=560, height=315)
         self.overlay_preview.grid(row=2, column=0, padx=20, pady=(10, 18))
         return page
+
+    def _overlay_supports(self, field: str) -> bool:
+        """Whether the overlay module reads an optional look setting (``SUPPORTED_SETTINGS``)."""
+        if not hasattr(self.cfg, field):
+            return False
+        try:
+            import importlib  # noqa: PLC0415
+
+            mod = importlib.import_module("treeaicoach.overlay")
+            return field in tuple(getattr(mod, "SUPPORTED_SETTINGS", ()) or ())
+        except Exception:
+            return False
+
+    def _refresh_radar_rows(self) -> None:
+        """Dim the radar section when the map mode is not "radar"."""
+        s = getattr(self, "_radar_section", None)
+        if s is None:
+            return
+        on = getattr(self.cfg, "overlay_mode", "radar") == "radar"
+        try:
+            s.card.configure(border_color=BORDER if on else _blend(BORDER, BG, 0.5))
+            for w in s.winfo_children():
+                for lbl in w.winfo_children():
+                    for ch in lbl.winfo_children():
+                        if isinstance(ch, self.ctk.CTkLabel) and ch.cget("text_color") in (TEXT, DIM):
+                            ch.configure(text_color=TEXT if on else DIM)
+        except Exception:
+            log.debug("radar rows refresh failed", exc_info=True)
 
     def _position_choices(self, which: str) -> list[tuple[str, str]]:
         base = RADAR_POSITIONS if which == "radar" else HUD_POSITIONS
@@ -3269,9 +3340,10 @@ class CoachApp:
             base = dict(voice_name=cfg.voice_name, rate=cfg.voice_rate, volume=cfg.voice_volume,
                         beep_on_danger=cfg.beep_on_danger)
             try:
+                extra = {k: getattr(cfg, f) for k, f in (("engine", "voice_engine"), ("neural_voice", "neural_voice"),
+                                                         ("neural_rate", "neural_rate")) if hasattr(cfg, f)}
                 try:
-                    self.voice.set_params(**base, engine=getattr(cfg, "voice_engine", "auto"),
-                                          neural_voice=getattr(cfg, "neural_voice", ""))
+                    self.voice.set_params(**base, **extra)
                 except TypeError:          # older voice module without engine selection
                     self.voice.set_params(**base)
             except Exception:
@@ -3314,10 +3386,12 @@ class CoachApp:
                 try:
                     from treeaicoach.voice import VoiceEngine  # noqa: PLC0415
 
+                    extra = {k: getattr(cfg, f) for k, f in (("engine", "voice_engine"),
+                                                             ("neural_voice", "neural_voice"),
+                                                             ("neural_rate", "neural_rate")) if hasattr(cfg, f)}
                     try:
                         voice = VoiceEngine(cfg.voice_name, cfg.voice_rate, cfg.voice_volume, cfg.beep_on_danger,
-                                            engine=getattr(cfg, "voice_engine", "auto"),
-                                            neural_voice=getattr(cfg, "neural_voice", ""))
+                                            **extra)
                     except TypeError:
                         voice = VoiceEngine(cfg.voice_name, cfg.voice_rate, cfg.voice_volume, cfg.beep_on_danger)
                     voice.start()
@@ -4203,6 +4277,14 @@ def _example_phrases() -> dict[str, str]:
     except Exception:
         log.debug("Example phrases unavailable", exc_info=True)
     return out
+
+
+def _pct_value(v: Any) -> float:
+    """``"+15%"`` -> 15.0 (0.0 if unreadable)."""
+    try:
+        return float(str(v).strip().rstrip("%").strip())
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _example_speech() -> dict[str, tuple[str, int]]:
