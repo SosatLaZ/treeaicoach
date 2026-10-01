@@ -212,3 +212,15 @@ def test_jungle_intel_tracker_state_in_context():
     eng = NS(_clock=lambda: 50.0, _game=G(600.0), _jungle_intel=NS(state=lambda: st))
     ctx = ai.engine_context(eng)
     assert ctx["jint"] == {"c": "Vi", "txt": "Vi farme côté bas", "farm": "bot", "lv": 7}
+
+
+def test_hard_cap_of_ten_requests_per_game():
+    from treeaicoach.ai_advisor import AIBudget, GAME_HARD_CAP
+    b = AIBudget()
+    b.manual = GAME_HARD_CAP - 1
+    assert not b.exhausted
+    b.manual += 1
+    assert b.exhausted
+    assert b.pick("comeback:gold_swing", 1500.0) is None
+    assert b.pick("base", 300.0) is None
+    assert b.snapshot()["cap"] == GAME_HARD_CAP == 10

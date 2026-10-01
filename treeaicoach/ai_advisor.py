@@ -97,6 +97,9 @@ SLOT_FR = {"base": "1er retour en base", "objective": "avant Baron / Elder", "co
            "mid": "milieu de partie", "late": "fin de partie", "urgent": "urgence"}
 AUTO_BUDGET = len(SLOTS)
 URGENT_BUDGET = 1
+#: hard ceiling of AI requests per game, all kinds together (automatic + urgence + manual).
+#: Everything else is the rule-based engine (rule_plan), which costs nothing.
+GAME_HARD_CAP = 10
 URGENT_REASONS = frozenset({"gold", "death_streak", "teamfight"})
 URGENT_MIN_INTERVAL_S = 30.0
 MID_GAME_S = 14 * 60.0
@@ -1485,8 +1488,18 @@ class AIBudget:
     def auto_used(self) -> int:
         return len(self.used)
 
+    @property
+    def total(self) -> int:
+        return self.auto_used + self.urgent_used + self.manual
+
+    @property
+    def exhausted(self) -> bool:
+        return self.total >= GAME_HARD_CAP
+
     def pick(self, moment: str, game_time: float, objective: str = "") -> str | None:
         """The slot this moment would consume (``"urgent"`` for the bonus), or None (skip it)."""
+        if self.exhausted:
+            return None
         reason = moment.split(":", 1)[1] if moment.startswith("comeback:") else ""
         if reason in URGENT_REASONS and self.urgent_used < URGENT_BUDGET:
             return "urgent"
@@ -1520,7 +1533,8 @@ class AIBudget:
 
     def snapshot(self) -> dict[str, Any]:
         return {"auto_used": self.auto_used, "auto_max": AUTO_BUDGET, "urgent_used": self.urgent_used,
-                "urgent_max": URGENT_BUDGET, "manual": self.manual, "slots": list(self.used)}
+                "urgent_max": URGENT_BUDGET, "manual": self.manual, "slots": list(self.used),
+                "total": self.total, "cap": GAME_HARD_CAP}
 
 
 def budget_text(b: dict[str, Any] | None) -> str:
@@ -1708,6 +1722,8 @@ class AIAdvisor:
                     return f"Patiente encore {int(math.ceil(wait))} s avant de redemander."
                 if self._blocked_until == math.inf and self._status:
                     return self._status
+                if self.budget.exhausted:
+                    return f"Limite de {GAME_HARD_CAP} questions IA atteinte pour cette partie : le coach continue sans IA."
                 self._last_call = t
                 self.budget.manual += 1
             snap = build_snapshot(game, moment="manual", roles=roles, scoreboard=scoreboard,
