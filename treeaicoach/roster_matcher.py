@@ -114,6 +114,11 @@ LEARN_SCORE = 0.88
 #: icons); closer than MIN_SEP_FRAC x diameter they are the same spot.
 STACK_FRAC = 0.75
 MIN_SEP_FRAC = 0.33
+#: ... a candidate that close to an accepted icon is still a (stacked) champion when its
+#: score clears the threshold by this margin and its ring has its own team's colour
+STACK_RING_MARGIN = 0.05
+STACK_RING_OWN = 0.6
+STACK_RING_OPP = 0.12
 #: Re-calibrate when the mean number of confident matches over the recent frames drops
 #: below this fraction of the value measured right after calibration.
 RECAL_DROP = 0.5
@@ -165,6 +170,14 @@ OCC_MIN_NCC = 0.4
 OCC_MIN_AREA = 0.45
 OCC_SEARCH = 3                     # re-scoring window (+- working px) around a stacked icon
 OCC_AREA_PENALTY = 0.15
+#: Unexplained occluders (our own overlay's labels / rings, pings): the worst-fitting
+#: TRIM_FRAC of the pixels are dropped and the NCC re-computed (occlusion penalty), for a
+#: candidate whose ring clearly has its own team's colour (TRIM_RING_OWN / _OPP).
+TRIM_FRAC = 0.25
+TRIM_RING_OWN = 0.65
+TRIM_RING_OPP = 0.12
+TRIM_MIN_SCORE = 0.75              # trimmed NCC needed (synthetic: no false accept above)
+TRIM_ID_GAP = 0.08                 # ... and must beat every other champion of its side by this
 #: Stacks (an icon drawn UNDER another one, e.g. ADC + support): a champion tracked less
 #: than STACK_HOLD_S ago whose predicted position is within STACK_NEAR icon diameters of an
 #: accepted icon is searched under it (see ``RosterMatcher._stack_search``): the visible
@@ -753,6 +766,8 @@ class RosterMatcher:
         self.last_dead: list[str] = []
         #: Search champions hidden under other icons (stacks), see _stack_search.
         self.stack_search: bool = True
+        #: occlusion re-scoring also drops the worst-fitting pixels (unknown occluders)
+        self.trim_rescue: bool = True
         #: Camera locked on me (my matches follow the camera point): my position.
         self.camlock = CameraLock()
         #: Last frame was colourless (lightness-only matching).
@@ -1627,7 +1642,7 @@ class RosterMatcher:
         return float(w.mean()) > 0.04
 
     def _rescue(self, c: _Cand, feat: np.ndarray, bank: _Bank, work_centres: list,
-                D_work: float, caps: bool = False) -> float | None:
+                D_work: float, caps: bool = False, trim: bool = False) -> float | None:
         """Occlusion-tolerant evidence of candidate ``c``: best NCC on the visible part of
         the icon (partial discs, without overlapping accepted icons and white lines /
         texts), over +-1 working px. None when too little of the icon is visible."""
@@ -1662,6 +1677,8 @@ class RosterMatcher:
                 d2 = (xx + ox + 0.5 - ax) ** 2 + (yy + oy + 0.5 - ay) ** 2
                 keep[d2 < (0.53 * D_work) ** 2] = 0.0
             masks[j] = base * keep[None]
+        if trim:
+            masks = np.concatenate([masks, self._trimmed_masks(P, raw, masks[:, 0])], axis=1)
         area = masks.sum(axis=(2, 3)) / max(bank.n, 1e-6)                 # [p, k]
         sc = masked_ncc(P, raw, masks, wl=self._wl)
         # fewer pixels -> chance matches are easier: penalty growing with the hidden part
@@ -1673,6 +1690,52 @@ class RosterMatcher:
         dx, dy = offs[j // sc.shape[1]]
         self.last_rescue_pos = (x0 + dx + half + 0.5, y0 + dy + half + 0.5)
         return best if best > -1.0 else None
+
+    def _best_identity(self, i: int, score: float, px: float, py: float, feat: np.ndarray,
+                       bank: _Bank, near: list, D_work: float, caps: bool, dead: set) -> bool:
+        """A trimmed re-score keeps only the best part of an icon: chance matches of the
+        wrong champion of the same team get easier. True when champion ``i`` explains the
+        icon at ``(px, py)`` (working px) better than every other champion of its side by
+        TRIM_ID_GAP (each re-scored the same way)."""
+        ents = self._entries
+        side = ents[i].relation == "enemy"
+        saved = (self.last_rescue, self.last_rescue_pos)
+        try:
+            for j, e in enumerate(ents):
+                if j == i or j in dead or (e.relation == "enemy") != side:
+                    continue
+                cj = _Cand(j, px, py, 0.0, 0.0)
+                sj = self._rescue(cj, feat, bank, near, D_work, caps=caps, trim=True)
+                if sj is not None and sj > score - TRIM_ID_GAP:
+                    return False
+            return True
+        finally:
+            self.last_rescue, self.last_rescue_pos = saved
+
+    def _trimmed_masks(self, P: np.ndarray, raw: np.ndarray, m0: np.ndarray) -> np.ndarray:
+        """Masks ``[p, 1, s, s]``: ``m0`` without the TRIM_FRAC worst-fitting pixels of each
+        patch (z-scored residual against the template). Unknown occluders that are not white
+        (overlay labels on dark boxes, thin rings, pings) are dropped this way."""
+        wl = self._wl
+        out = np.empty((P.shape[0], 1) + m0.shape[1:], np.float32)
+        for j in range(P.shape[0]):
+            m = m0[j]
+            n = float(m.sum())
+            if n < 8:
+                out[j, 0] = m
+                continue
+            d = np.zeros(m.shape, np.float32)
+            for chs, w in (((0,), wl), ((1, 2), 1.0 - wl)):
+                for ch in chs:
+                    a, b = P[j][:, :, ch], raw[:, :, ch]
+                    ma, mb = float((a * m).sum() / n), float((b * m).sum() / n)
+                    sa = math.sqrt(max(float((((a - ma) ** 2) * m).sum() / n), 0.0)) + 3.0
+                    sb = math.sqrt(max(float((((b - mb) ** 2) * m).sum() / n), 0.0)) + 3.0
+                    d += (w / len(chs)) * ((a - ma) / sa - (b - mb) / sb) ** 2
+            vals = d[m > 0.5]
+            cut = float(np.percentile(vals, 100.0 * (1.0 - TRIM_FRAC))) if vals.size else 0.0
+            out[j, 0] = m * (d <= cut)
+        return out
 
     def _ring_membership(self, lab: np.ndarray, rel: str) -> tuple[np.ndarray, np.ndarray]:
         """Per-pixel (own, other team) ring-colour masks of a Lab crop ``[h, w, 3]``."""
@@ -1990,11 +2053,18 @@ class RosterMatcher:
                                    c.f_en, c.f_al, ok, reason))
 
         def conflict(c: _Cand, tot: float, stacked_ok: bool) -> bool:
+            # a partly covered icon with a clear match AND its own team's ring (real
+            # screenshots: bot duo / siege stacks, 0.6-0.75 diameter apart) is a stack
+            e_c = ents[c.i]
+            own_c, opp_c = (c.f_en, c.f_al) if e_c.relation == "enemy" else (c.f_al, c.f_en)
+            ringed = tot >= thr + STACK_RING_MARGIN and own_c >= STACK_RING_OWN and \
+                opp_c <= STACK_RING_OPP
             for a in accepted:
                 dd = math.hypot(c.x - a.x, c.y - a.y) / max(D_work, 1e-6)
                 if dd < MIN_SEP_FRAC:
                     return True
-                if dd < STACK_FRAC and not stacked_ok and tot < max(thr + 0.1, 0.85 * a.tot):
+                if dd < STACK_FRAC and not stacked_ok and not ringed and \
+                        tot < max(thr + 0.1, 0.85 * a.tot):
                     return True
             return False
 
@@ -2038,17 +2108,26 @@ class RosterMatcher:
             tr = self._tracks.get(i)
             tracked = tr is not None and now - tr.t <= TRACK_FRESH_S and math.hypot(
                 c.x / kx - tr.u, c.y / ky - tr.v) <= LOCAL_SLACK + MAX_SPEED * (now - tr.t)
-            if not near and not tracked:
-                continue
             if c.ring is None:
                 self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0)
             own0, opp0 = (c.f_en, c.f_al) if ents[i].relation == "enemy" else (c.f_al, c.f_en)
+            # ... or a clear ring of its own team's colour (an unknown occluder on it: our
+            # overlay's labels / rings when it is captured, a ping)
+            ringed = own0 >= TRIM_RING_OWN and opp0 <= TRIM_RING_OPP
+            if not near and not tracked and not ringed:
+                continue
             if own0 < 0.12 or opp0 > own0 + 0.1:
                 continue                   # no ring of the champion's colour around it
-            occ = self._rescue(c, feat, bank, near, D_work, caps=tracked)
+            # (trimmed only when nothing else explains the miss: measured, a trimmed re-score
+            # next to other icons mostly helps the wrong champion)
+            trim = self.trim_rescue and ringed and not near and not tracked
+            occ = self._rescue(c, feat, bank, near, D_work, caps=tracked, trim=trim)
             if occ is None or occ + (c.ev - c.ncc) <= c.ev:
                 continue
             px, py = self.last_rescue_pos
+            if trim and (occ < TRIM_MIN_SCORE or not self._best_identity(
+                    i, occ, px, py, feat, bank, near, D_work, tracked, dead)):
+                continue
             c2 = _Cand(c.i, px, py, occ, occ + (c.ev - c.ncc), c.local, margin=c.margin)
             excl = [(a.x / kx * W, a.y / ky * H) for a in accepted
                     if math.hypot(px - a.x, py - a.y) < 1.05 * D_work]

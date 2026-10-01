@@ -9,6 +9,11 @@
 * :meth:`ChampionDB.prefetch_skin_icons` downloads the skin icons of the current players from
   CommunityDragon in a background daemon thread (explicit User-Agent, 5 s timeout, 404s
   remembered, atomic writes, silent failures). It is the only network access of this module.
+  It also downloads the BASE icon (``<cache>/<Alias>_0.png``) of a champion released after the
+  app build (no bundled icon), so new champions get a roster portrait without a release.
+* The process-wide database (:func:`get_default_db`) also lists the champions of the runtime
+  Data Dragon refresh (:mod:`treeaicoach.game_data`) missing from the bundled index (new
+  champions, French names), and reloads when that data is updated.
 """
 
 from __future__ import annotations
@@ -48,6 +53,8 @@ RAW_SKIN_PREFIX = "game_character_skin_displayname_"
 #: CommunityDragon characters directory (monkeypatchable; ``ChampionDB.base_url`` overrides it).
 CDRAGON_CHARACTERS_URL = "https://raw.communitydragon.org/latest/game/assets/characters"
 SKIN_ICON_URL_TEMPLATE = "{base}/{alias}/hud/{alias}_circle_{skin}.png"
+#: Base (skin 0) minimap circle of a champion: ``<alias>_circle.png`` (some use ``_circle_0.png``).
+BASE_ICON_URL_TEMPLATE = "{base}/{alias}/hud/{alias}_circle.png"
 USER_AGENT = f"TreeAICoach/{_APP_VERSION} (screen-capture LoL coach; skin icon cache)"
 DOWNLOAD_TIMEOUT_S = 5.0
 MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024
@@ -191,8 +198,11 @@ def _no_proxy_opener() -> urllib.request.OpenerDirector:
 class ChampionDB:
     """Champion roster + icon loader. Thread-safe."""
 
-    def __init__(self, assets_dir: Path | None = None, cache_dir: Path | None = None):
+    def __init__(self, assets_dir: Path | None = None, cache_dir: Path | None = None,
+                 runtime_data: bool | None = None):
         self._lock = threading.RLock()
+        #: merge the champions of the runtime Data Dragon refresh (default: only on the bundled assets)
+        self._runtime_data = (assets_dir is None) if runtime_data is None else bool(runtime_data)
         self._entries: list[ChampionEntry] = []
         self._by_norm: dict[str, ChampionEntry] = {}
         self._by_key: dict[int, ChampionEntry] = {}
@@ -253,7 +263,33 @@ class ChampionDB:
                 entries.append(entry)
         if not entries:
             entries = self._entries_from_png_files()
+        if self._runtime_data:
+            entries += self._runtime_entries({e.alias.casefold() for e in entries})
         self._set_entries(entries)
+
+    def _runtime_entries(self, known: set[str]) -> list[ChampionEntry]:
+        """Champions of the runtime Data Dragon data missing from the bundled index (new releases)."""
+        out: list[ChampionEntry] = []
+        try:
+            from treeaicoach import game_data
+
+            for item in game_data.champions_data().get("champions") or []:
+                entry = self._entry_from_json(item)
+                if entry is not None and entry.alias.casefold() not in known:
+                    out.append(entry)
+                    known.add(entry.alias.casefold())
+            if out:
+                log.info("Champions added from the Data Dragon refresh: %s", ", ".join(e.alias for e in out))
+        except Exception:
+            log.debug("Runtime champion data unavailable", exc_info=True)
+        return out
+
+    def reload_index(self) -> None:
+        """Re-read the index (+ runtime data); called after a Data Dragon update. Never raises."""
+        try:
+            self._load_index()
+        except Exception:
+            log.exception("ChampionDB.reload_index failed")
 
     @staticmethod
     def _entry_from_json(item: Any) -> ChampionEntry | None:
@@ -387,6 +423,8 @@ class ChampionDB:
                 img = read_rgba(cdir / f"{entry.alias}_{skin}.png")
             if img is None:
                 img = read_rgba(self._icons_dir / entry.icon_file)
+            if img is None and cdir is not None and skin != 0:
+                img = read_rgba(cdir / f"{entry.alias}_0.png")    # new champion: downloaded base icon
             if img is None:
                 if entry.alias not in self._warned_missing_icon:
                     self._warned_missing_icon.add(entry.alias)
@@ -428,8 +466,13 @@ class ChampionDB:
                     skin = getattr(p, "skin_id", 0)
                 entry = self.get(alias) if alias else None
                 skin_n = _safe_int(skin, 0)
-                if entry is None or skin_n <= 0:
+                if entry is None:
                     continue
+                if skin_n <= 0 or not self._has_bundled_icon(entry):
+                    if not self._has_bundled_icon(entry):
+                        jobs.append((entry.alias, 0))      # champion newer than the build: base icon
+                    if skin_n <= 0:
+                        continue
                 jobs.append((entry.alias, skin_n))
             if not jobs:
                 return
@@ -501,6 +544,17 @@ class ChampionDB:
             if self._worker is threading.current_thread():
                 self._worker = None
 
+    def _has_bundled_icon(self, entry: ChampionEntry) -> bool:
+        try:
+            return (self._icons_dir / entry.icon_file).is_file()
+        except OSError:
+            return False
+
+    def base_icon_url(self, alias: str) -> str:
+        """CommunityDragon URL of a champion's base minimap circle icon."""
+        base = (self.base_url or CDRAGON_CHARACTERS_URL).rstrip("/")
+        return BASE_ICON_URL_TEMPLATE.format(base=base, alias=urllib.parse.quote(alias.lower()))
+
     def skin_icon_url(self, alias: str, skin_id: int) -> str:
         """CommunityDragon URL of a skin's minimap circle icon."""
         base = (self.base_url or CDRAGON_CHARACTERS_URL).rstrip("/")
@@ -517,31 +571,35 @@ class ChampionDB:
             with self._lock:
                 self._downloaded.add(key)
             return
-        url = self.skin_icon_url(alias, skin)
-        host = (urllib.parse.urlsplit(url).hostname or "").lower()
-        opener = _no_proxy_opener() if host in _LOOPBACK else urllib.request.build_opener()
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "image/png,*/*"})
-        try:
-            with opener.open(req, timeout=DOWNLOAD_TIMEOUT_S) as resp:
-                data = resp.read(MAX_DOWNLOAD_BYTES + 1)
-        except urllib.error.HTTPError as exc:
+        urls = [self.skin_icon_url(alias, skin)]
+        if skin == 0:                                # base icon of a champion newer than the build
+            urls.insert(0, self.base_icon_url(alias))
+        data = b""
+        url = urls[-1]
+        for i, url in enumerate(urls):
             try:
-                exc.close()
-            except Exception:
-                pass
-            with self._lock:
-                if exc.code in (403, 404, 410):
-                    self._missing.add(key)
-                else:
+                data = self._fetch(url)
+                break
+            except urllib.error.HTTPError as exc:
+                try:
+                    exc.close()
+                except Exception:
+                    pass
+                if exc.code in (403, 404, 410) and i < len(urls) - 1:
+                    continue                         # try the other file name
+                with self._lock:
+                    if exc.code in (403, 404, 410):
+                        self._missing.add(key)
+                    else:
+                        self._failed_at[key] = time.monotonic()
+                log.debug("Skin icon %s: HTTP %s", url, exc.code)
+                return
+            except Exception as exc:  # URLError, timeout, OSError, http.client errors...
+                with self._lock:
                     self._failed_at[key] = time.monotonic()
-            log.debug("Skin icon %s: HTTP %s", url, exc.code)
-            return
-        except Exception as exc:  # URLError, timeout, OSError, http.client errors...
-            with self._lock:
-                self._failed_at[key] = time.monotonic()
-                self._offline_until = time.monotonic() + RETRY_AFTER_S
-            log.info("Skin icon download unavailable (%s): %s", url, exc)
-            return
+                    self._offline_until = time.monotonic() + RETRY_AFTER_S
+                log.info("Skin icon download unavailable (%s): %s", url, exc)
+                return
         if len(data) > MAX_DOWNLOAD_BYTES:
             with self._lock:
                 self._missing.add(key)
@@ -566,6 +624,14 @@ class ChampionDB:
             self._downloaded.add(key)
             self._lru.pop(key, None)
         log.info("Skin icon cached: %s skin %d", alias, skin)
+
+    def _fetch(self, url: str) -> bytes:
+        """GET ``url`` (no proxy for loopback test servers); raises urllib errors."""
+        host = (urllib.parse.urlsplit(url).hostname or "").lower()
+        opener = _no_proxy_opener() if host in _LOOPBACK else urllib.request.build_opener()
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "image/png,*/*"})
+        with opener.open(req, timeout=DOWNLOAD_TIMEOUT_S) as resp:
+            return resp.read(MAX_DOWNLOAD_BYTES + 1)
 
     @staticmethod
     def _atomic_write(dest: Path, data: bytes) -> bool:
@@ -608,4 +674,10 @@ def get_default_db() -> ChampionDB:
     with _default_db_lock:
         if _default_db is None:
             _default_db = ChampionDB()
+            try:  # new champions / names after a runtime Data Dragon update
+                from treeaicoach import game_data
+
+                game_data.add_listener(_default_db.reload_index)
+            except Exception:
+                log.debug("game_data listener not registered", exc_info=True)
         return _default_db

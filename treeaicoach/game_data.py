@@ -315,10 +315,10 @@ def _get_json(url: str) -> Any:
 def _due(folder: Path, now: float) -> bool:
     st = _read_json(folder / STAMP_FILE)
     try:
-        last = float(st.get("checked_at")) if isinstance(st, dict) else 0.0
+        last = float(st.get("checked_at")) if isinstance(st, dict) else None
     except (TypeError, ValueError):
-        last = 0.0
-    return not (0.0 <= now - last < REFRESH_INTERVAL_S)
+        last = None
+    return last is None or not (0.0 <= now - last < REFRESH_INTERVAL_S)
 
 
 def refresh(force: bool = False, fetch: Callable[[str], Any] | None = None, now: float | None = None) -> str:

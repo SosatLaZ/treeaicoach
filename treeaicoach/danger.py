@@ -85,6 +85,7 @@ FOG_MIN_HIDDEN_S = 8.0
 FOG_MAX_HIDDEN_S = 60.0
 FOG_ETA_S = 7.0
 FOG_MIN_MASS = 0.35
+FOG_EVAL_S = 0.5            # the fog question is re-evaluated at most twice a second
 FOG_SPEED = 390.0 / 14870.0  # boots speed (normalized / s), as gank.ETA_REF_SPEED
 FOG_FLASH = 0.027
 PAST_MID_MARGIN = 0.05      # past the river diagonal (u - v) by this much = "past mid-lane"
@@ -194,6 +195,8 @@ class PersonalDanger:
         self._last_t: float | None = None
         self._reach: Any = None
         self._reach_failed = False
+        self._fog_t = -math.inf
+        self._fog_cache: tuple[float | None, str | None] | None = None
 
     def state(self) -> DangerState:
         return self._state
@@ -289,7 +292,9 @@ class PersonalDanger:
             if outnumbered and threat < Level.WARNING and (hp is None or hp < OUTNUMBERED_HP) and not just_said:
                 cands.append(("outnumbered", f"{len(near)} ennemis près de toi : recule vers ta tour.", None))
             if threat < Level.WARNING and not near:
-                fog_mass, jg = self._jungler_fog(me_pos, team, jungler, fog)
+                if t - self._fog_t >= FOG_EVAL_S or self._fog_cache is None:
+                    self._fog_t, self._fog_cache = t, self._jungler_fog(me_pos, team, jungler, fog)
+                fog_mass, jg = self._fog_cache
                 if jg is not None:
                     cands.append(("jungler_fog", f"{jg} peut arriver : recule vers ta tour.", None))
             for r, text, alias in cands:

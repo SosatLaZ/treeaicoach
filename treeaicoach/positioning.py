@@ -38,7 +38,7 @@ PIT_UV = {"dragon": (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1]),
           "herald": (geometry.BARON_PIT[0], geometry.BARON_PIT[1]),
           "grubs": (geometry.BARON_PIT[0], geometry.BARON_PIT[1])}
 OBJ_NAME = {"dragon": "dragon", "elder": "dragon ancestral", "baron": "Baron", "herald": "Héraut",
-            "grubs": "larves", "atakhan": "Atakhan"}
+            "grubs": "larves"}
 OBJ_SIDE = {"dragon": "bot", "elder": "bot", "baron": "top", "herald": "top", "grubs": "top"}
 SIDE_FR = {"top": "en haut", "mid": "au milieu", "bot": "en bas"}
 ROLE_LANE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
@@ -51,15 +51,14 @@ SIDE_ALONE_CONFIRM_S = 3.0
 GROUP_R = 0.20
 GROUP_FAR = 0.40
 ADVICE_COOLDOWN_S = {"objective": 75.0, "lane": 120.0, "alone": 40.0, "group": 120.0}
-OBJ_EVENTS = {"DragonKill": "dragon", "BaronKill": "baron", "HeraldKill": "herald", "HordeKill": "grubs",
-              "AtakhanKill": "atakhan"}
+OBJ_EVENTS = {"DragonKill": "dragon", "BaronKill": "baron", "HeraldKill": "herald", "HordeKill": "grubs"}
 PRESENT_R = 0.25                # near the pit when the monster dies
 #: middle of MY half of each lane (arrow target of "retourne en voie")
 LANE_POINT_BLUE = {"top": (0.085, 0.40), "mid": (0.42, 0.58), "bot": (0.60, 0.915)}
 LANE_POINT_RED = {"top": (0.40, 0.085), "mid": (0.58, 0.42), "bot": (0.915, 0.60)}
 PRAISE_FR = {"dragon": "Bien placé pour le dragon !", "elder": "Bien placé pour l'ancestral !",
              "baron": "Bien placé pour le Baron !", "herald": "Bien placé pour le Héraut !",
-             "grubs": "Bien placé pour les larves !", "atakhan": "Bien placé pour Atakhan !"}
+             "grubs": "Bien placé pour les larves !"}
 
 
 def _f(x: Any, default: float | None = None) -> float | None:
@@ -103,7 +102,7 @@ class PhaseScore:
 
 def roles_for(obj: str, phase: str) -> frozenset[str]:
     """Roles that should be on the pit side ``obj`` during ``phase``."""
-    if obj in ("baron", "elder", "atakhan") or phase in ("late", "end"):
+    if obj in ("baron", "elder") or phase in ("late", "end"):
         return frozenset({"TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"})
     if obj == "dragon":
         return frozenset({"JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"}) | (frozenset({"TOP"}) if phase == "mid" else frozenset())

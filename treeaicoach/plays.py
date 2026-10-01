@@ -107,21 +107,20 @@ MISS_MIN_WINDOW_S = 20.0
 MISS_ADVANTAGE = 2
 MISS_RESPAWN_S = 20.0
 TOWER_WINDOW_S = 35.0
-TOWER_MIN_GT = 840.0           # plates are gone: a tower is a real objective
-EPIC_KEYS = ("dragon", "elder", "baron", "herald", "atakhan")
+TOWER_MIN_GT = 840.0           # laning over (2026: plates stay, but a tower is now a team objective)
+EPIC_KEYS = ("dragon", "elder", "baron", "herald")
 OBJ_EVENT: dict[str, tuple[str, str, str]] = {
     # EventName -> (key, "le X", "du X")
     "DragonKill": ("dragon", "le dragon", "du dragon"),
     "BaronKill": ("baron", "le Baron", "du Baron"),
     "HeraldKill": ("herald", "le Héraut", "du Héraut"),
-    "AtakhanKill": ("atakhan", "Atakhan", "d'Atakhan"),
     "HordeKill": ("grubs", "les larves", "des larves"),
 }
 OBJ_NAME: dict[str, str] = {"dragon": "Dragon", "elder": "Dragon ancestral", "baron": "Baron",
-                            "herald": "Héraut", "atakhan": "Atakhan", "grubs": "Larves"}
+                            "herald": "Héraut", "grubs": "Larves"}
 #: lane whose wave matters for an objective setup
 OBJ_LANE: dict[str, str] = {"dragon": "bot", "elder": "bot", "baron": "top", "herald": "top",
-                            "atakhan": "top", "grubs": "top"}
+                            "grubs": "top"}
 ROLE_LANE: dict[str, str] = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 
 

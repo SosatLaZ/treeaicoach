@@ -8,10 +8,10 @@ player. :class:`JunglePathModel` turns that knowledge into a probability heat ma
 * **Hypotheses** = route x pace x start offset. Routes (camp names; each team's camps from
   :data:`treeaicoach.render.CAMPS`): four full clears (red / krugs / raptors side first or
   blue / gromp / wolves side first, ending on the scuttle of the last side, which spawns at
-  3:30) and six level-3 gank paths (3 camps, then mid or one side lane at ~2:45-3:15, then
+  2:55) and six level-3 gank paths (3 camps, then mid or one side lane at ~2:10-2:40, then
   the scuttle). Walking legs follow the geodesic shortest path on the walkable grid at the
-  early nominal speed; camps take a typical clear time; camps spawn at 1:30. Pace scales
-  every duration after 1:30 (0.85..1.18), the offset shifts the start (-8 / 0 / +8 s).
+  early nominal speed; camps take a typical clear time; camps spawn at 0:55 (season 2026). Pace
+  scales every duration after the camp spawn (0.85..1.18), the offset shifts the start (-8 / 0 / +8 s).
 * **Evidence** (all public): a sighting of the jungler (Gaussian likelihood around each
   hypothesis' position; a sighting no hypothesis explains, e.g. an invade, *breaks* the
   model: no heat any more), his creep score going up (Tab, :mod:`treeaicoach.jungle_intel`:
@@ -40,9 +40,10 @@ from treeaicoach import geometry
 
 log = logging.getLogger(__name__)
 
-#: Camps spawn at 1:30; scuttles at 3:30 (game time, s).
-CAMP_SPAWN_GT = 90.0
-SCUTTLE_SPAWN_GT = 210.0
+#: Camps spawn at 0:55 and scuttles at 2:55 since patch 26.1 (35 s earlier than 1:30 / 3:30;
+#: krugs / gromp at 1:07 - the 12 s difference is inside the pace / offset spread) (game time, s).
+CAMP_SPAWN_GT = 55.0
+SCUTTLE_SPAWN_GT = 175.0
 #: The jungler leaves his fountain around 0:15 (shopping) and walks to his first camp.
 LEAVE_FOUNTAIN_GT = 15.0
 #: Clear times (s) at a normal pace; the first camp of the clear is slower (level 1).

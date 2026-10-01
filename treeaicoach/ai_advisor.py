@@ -51,6 +51,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ BASE_GOLD_MIN = 800             # "base visit with gold"
 FED_LEVELS = (6, 11, 16)
 OBJECTIVE_LEAD_S = 80.0
 OBJECTIVE_WINDOW_S = 20.0       # announced once the remaining time is within 80 s +/- this (60..100 s)
-OBJECTIVE_KEYS = ("dragon", "baron", "elder", "atakhan")
+OBJECTIVE_KEYS = ("dragon", "baron", "elder")
 MAJOR_DRAGON_GT = 14 * 60.0     # a dragon is a "major" objective (budget slot) from 14:00
 #: back-off after an error (seconds before the next automatic request)
 BACKOFF_S: dict[str, float] = {"key": math.inf, "nokey": math.inf, "quota": 600.0, "offline": 300.0,
@@ -396,7 +397,7 @@ def _call_once(provider: str, api_key: str, model: str, system: str, prompt: str
 # ======================================================================================
 # Strict JSON plan
 # ======================================================================================
-PLAN_GOALS = ("dragon", "baron", "heraut", "larves", "atakhan", "tour", "farm", "vision", "defense", "regroupe",
+PLAN_GOALS = ("dragon", "baron", "heraut", "larves", "tour", "farm", "vision", "defense", "regroupe",
               "achat", "aucun")
 PLAN_URGENCY = ("haute", "moyenne", "basse")
 PLAN_SCHEMA_FR = ('{"plan": "1 phrase, 170 caractères max", "etapes": ["action concrète, 95 caractères max", '
@@ -839,7 +840,7 @@ def _ctx_wards(engine: Any, game: Any, now: float) -> list[str] | None:
     objs = getattr(engine, "_objectives", None)
     for o in sorted((objs.states() if objs is not None else []),
                     key=lambda o: 0.0 if getattr(o, "alive", False) else float(getattr(o, "remaining", None) or 1e9)):
-        if getattr(o, "key", "") in ("dragon", "baron", "elder", "herald", "atakhan", "grubs"):
+        if getattr(o, "key", "") in ("dragon", "baron", "elder", "herald", "grubs"):
             rem = 0.0 if getattr(o, "alive", False) else float(getattr(o, "remaining", None) or 1e9)
             if rem <= 120.0:
                 obj = (o.key, rem)
@@ -1178,7 +1179,7 @@ class MomentDetector:
             sig = (key, round(float(getattr(o, "next_spawn", 0.0) or 0.0)))
             if abs(float(rem) - OBJECTIVE_LEAD_S) <= OBJECTIVE_WINDOW_S and sig not in self._obj_done:
                 self._obj_done.add(sig)
-                if "objective" not in found or key in ("baron", "elder", "atakhan"):
+                if "objective" not in found or key in ("baron", "elder"):
                     self.last_objective = key
                 found.append("objective")
         self._dead, self._level, self._in_base, self._fed = dead, level, base_now, fed
@@ -1373,7 +1374,7 @@ class ComebackDetector:
 # ======================================================================================
 PLAN_MOMENTS = frozenset({"death", "objective", "fed"})
 _OBJ_LE = {"Dragon": "le dragon", "Baron": "le Baron", "Héraut": "le Héraut", "Larves": "les larves",
-           "Atakhan": "Atakhan", "Dragon ancestral": "le dragon ancestral"}
+           "Dragon ancestral": "le dragon ancestral"}
 _ROLE_LANE = {"top": "top", "mid": "mid", "adc": "bot", "support": "bot"}
 
 
@@ -1479,7 +1480,7 @@ def _rule_plan(moment: str, snap: dict[str, Any]) -> dict[str, Any] | None:
 
 def _goal(name: Any) -> str | None:
     n = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode().lower()
-    for g in ("baron", "atakhan", "larves"):
+    for g in ("baron", "larves"):
         if g in n:
             return g
     if "heraut" in n:
@@ -1525,7 +1526,7 @@ class AIBudget:
         cands: list[str] = []
         if moment == "base":
             cands.append("base")
-        if moment == "objective" and (objective in ("baron", "elder", "atakhan")
+        if moment == "objective" and (objective in ("baron", "elder")
                                       or (objective == "dragon" and game_time >= MAJOR_DRAGON_GT)):
             cands.append("objective")
         if moment == "death" or (reason and reason not in WINDOW_REASONS):
@@ -1860,20 +1861,41 @@ def _resolve(context: Any) -> dict[str, Any] | None:
         return None
 
 
+#: Rules of the live game the model may not know (its training data predates the 2026 season).
+#: Sources: official patch notes 26.1 -> 26.19 (leagueoflegends.com), League of Legends wiki.
+SEASON_RULES = (
+    "Règles de la saison 2026 (patchs 26.x) : Atakhan n'existe plus (supprimé en 26.1, ne le mentionne "
+    "jamais) ; larves du Néant à 8:00 (une seule fois, parties à 14:45), Héraut à 15:00, Baron à 20:00, "
+    "dragons dès 5:00, âme au 4e dragon puis dragon ancestral ; premier sang +100 PO et première tour "
+    "+300 PO ; les plaques de tour restent toute la partie (aussi sur les tours intérieures et "
+    "d'inhibiteur), celles des tours extérieures valent moins de 11:00 à 15:00 ; quêtes de rôle : top = "
+    "Téléportation gratuite (ou débridée), mid = bottes de niveau 3 et rappel en 4 s, bot = bottes dans un "
+    "7e emplacement, support = balises de contrôle moins chères ; lampes féeriques : une balise posée "
+    "dessus voit 25 % plus loin et révèle une zone 45 s."
+)
+
+
 def system_prompt() -> str:
-    return f"{SYSTEM_PROMPT} {LEGEND}"
+    return f"{SYSTEM_PROMPT} {SEASON_RULES} {LEGEND}"
 
 
 # ======================================================================================
 # Post-game review
 # ======================================================================================
 REVIEW_PROMPT = (
-    "Tu es un coach expert de League of Legends. Voici l'analyse complète (JSON) de la partie que "
-    "le joueur vient de terminer. Écris en français une revue d'après-partie concrète : 2 points forts, "
-    "3 axes de progrès prioritaires avec un exercice précis pour chacun, et un conseil d'objets ou de "
-    "macro pour la prochaine partie avec ce champion. 8 phrases maximum, tutoiement, pas de markdown, "
-    "pas de spéculation sur les temps de recharge."
+    "Tu es un coach expert de League of Legends. Voici l'analyse (JSON) de la partie que le joueur vient "
+    "de terminer. Écris UNIQUEMENT en français (tutoiement, pas de markdown, pas d'anglais) une revue "
+    "courte et concrète, 7 phrases maximum : 2 points forts, puis 3 axes de progrès avec un exercice précis "
+    "chacun, puis un conseil d'objets. Cite les chiffres exacts de l'analyse (morts, CS/min, écart d'or, "
+    "avance des alertes...). Respecte le classement des morts de l'analyse (champ verdict : « 1v1 perdu », "
+    "« alerte ignorée », « alerte trop tardive », « l'app n'a pas prévenu ») : ne reproche pas au joueur "
+    "une alerte arrivée trop tard. OBJETS : nomme seulement des objets de la liste « objets autorisés », "
+    "écrits exactement comme dans la liste (noms français) ; aucun autre objet, aucun nom anglais ; un objet "
+    "légendaire ne s'achète jamais avant le premier retour en base. Pas de spéculation sur les temps de recharge."
 )
+#: an English review is rejected (the player is French): stop words counted per review
+_EN_WORDS = re.compile(r"\b(the|and|you|your|with|should|before|after|item|build|first)\b", re.I)
+REVIEW_MAX_EN_WORDS = 6
 
 
 def compact_analysis(analysis: Any, limit: int = MAX_ANALYSIS_BYTES) -> dict[str, Any]:
@@ -1893,17 +1915,276 @@ def compact_analysis(analysis: Any, limit: int = MAX_ANALYSIS_BYTES) -> dict[str
     return a
 
 
+# ---------------------------------------------------------------- item grounding of the review
+def _fold(text: Any) -> str:
+    """Accent-free, lower-case, alphanumeric words separated by one space ("Sterak's Gage" ->
+    "sterak gage", "Hydre titanesque" -> "hydre titanesque")."""
+    s = unicodedata.normalize("NFKD", str(text or "").replace("’", "'"))
+    s = "".join(ch for ch in s if not unicodedata.combining(ch)).casefold()
+    s = re.sub(r"'s\b", "", s)
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", s).split())
+
+
+_FR_COMMON = frozenset(_fold(w) for w in (
+    "avant", "après", "premier", "première", "retour", "objets", "objet", "contre", "toujours", "pendant",
+    "partie", "ennemis", "ennemi", "dégâts", "défense", "protection", "puissance", "vitesse", "soutien",
+    "bouclier", "armure", "magique", "physique", "lumière", "dernier", "souffle", "gardien", "éternel",
+    "mortel", "infini", "esprit", "nature", "chaîne", "rapide", "control", "contrôle", "warding", "health",
+    "potion", "shield", "dragon", "guardian", "spirit", "mortal", "infinity", "sterling", "minion", "points",
+    "longsword", "pickaxe", "refillable", "doran", "dorans",
+))
+_LEXICON: tuple[list[tuple[str, int]], dict[str, set[int]]] | None = None
+
+
+def _item_lexicon() -> tuple[list[tuple[str, int]], dict[str, set[int]]]:
+    """``(full names, distinctive single words)`` of the Rift items, French AND English (the AI
+    sometimes answers with English names: "Titanic Hydra", "Sterak Gage"). Cached."""
+    global _LEXICON
+    if _LEXICON is not None:
+        return _LEXICON
+    full: list[tuple[str, int]] = []
+    words: dict[str, set[int]] = {}
+    try:
+        from treeaicoach.paths import asset_path
+
+        data = json.loads(asset_path("items.json").read_text(encoding="utf-8"))
+        fr_words: set[str] = set()
+        rows = []
+        for k, v in (data.get("items") or {}).items():
+            try:
+                iid = int(k)
+            except (TypeError, ValueError):
+                continue
+            if not v.get("p", 1):
+                continue
+            fr, en, kind = _fold(v.get("n")), _fold(v.get("en")), str(v.get("k") or "")
+            rows.append((iid, fr, en, kind))
+            fr_words.update(fr.split())
+        for iid, fr, en, kind in rows:
+            for name in {fr, en} - {""}:
+                if len(name) >= 4:
+                    full.append((name, iid))
+            if kind not in ("legendary", "boots"):
+                continue
+            for name in {fr, en} - {""}:
+                for w in name.split():
+                    if len(w) >= 6 and w not in _FR_COMMON and not (name == en and w in fr_words and w not in fr.split()):
+                        words.setdefault(w, set()).add(iid)
+        full.sort(key=lambda x: -len(x[0]))
+    except Exception:
+        log.debug("item lexicon unavailable", exc_info=True)
+    _LEXICON = (full, words)
+    return _LEXICON
+
+
+def items_mentioned(text: str) -> set[int]:
+    """Item ids named in ``text`` (French or English, full name or a distinctive word)."""
+    full, words = _item_lexicon()
+    f = f" {_fold(text)} "
+    out: set[int] = set()
+    for name, iid in full:
+        if f" {name} " in f:
+            out.add(iid)
+            f = f.replace(f" {name} ", " ")
+    for w in f.split():
+        ids = words.get(w)
+        if ids:
+            out.add(min(ids) if len(ids) == 1 else -min(ids))      # negative: ambiguous word ("hydra")
+            if len(ids) > 1:
+                _AMBIG[-min(ids)] = frozenset(ids)
+    return out
+
+
+_AMBIG: dict[int, frozenset[int]] = {}
+
+
+def review_item_candidates(analysis: Any, limit: int = 12) -> tuple[list[dict[str, Any]], list[str]]:
+    """``(allowed items, final build names)`` for the post-game review: my final build + the core
+    items of my champion class + the counters to the enemy team (itemization.py), French names.
+    Never raises."""
+    try:
+        from treeaicoach import itemization as iz
+
+        items = iz.load_items()
+        a = analysis if isinstance(analysis, dict) else {}
+        s = a.get("summary") if isinstance(a.get("summary"), dict) else {}
+        alias = str(s.get("champion") or "")
+        role = str(s.get("position") or "") or None
+        cls = iz.champion_class(alias, role)
+        owned = [int(i) for i in s.get("items") or [] if int(i) in items]
+        build = [items[i].name for i in owned if items[i].kind in ("legendary", "boots")]
+        out: list[dict[str, Any]] = []
+        seen: set[int] = set()
+
+        def add(iid: int, why: str) -> None:
+            it = items.get(int(iid))
+            if it is not None and it.rift and iid not in seen and it.kind in ("legendary", "boots"):
+                seen.add(iid)
+                out.append({"n": it.name, "po": it.gold, "pourquoi": why[:90]})
+
+        for iid in owned:
+            add(iid, "dans ton build final")
+        enemies = [SimpleNamespace(champion_alias=e.get("alias"), champion_name=e.get("name"), kills=0, deaths=0,
+                                   level=11, items=[])
+                   for e in s.get("enemies") or [] if isinstance(e, dict) and e.get("alias")]
+        prof = iz.enemy_profile(enemies, items)
+        for need, sev in sorted(prof.needs.items(), key=lambda kv: -kv[1]):
+            if sev < iz.NEED_MIN:
+                continue
+            why = iz.REASONS[need].format(names=iz._join(prof.names.get(need) or []) or "Les ennemis")
+            for iid in iz.NEED_ITEMS.get(need, {}).get(cls, ())[:2]:
+                add(iid, why)
+        for iid in iz.CORE.get(cls, ()):
+            add(iid, "objet de base de ta classe")
+        boots = iz.BOOTS_CLASS.get(cls)
+        if boots:
+            add(boots, "bottes de ta classe")
+        for b in set(iz.BOOTS_VS.values()):
+            add(b, "bottes défensives")
+        return out[:limit], build
+    except Exception:
+        log.debug("review item candidates unavailable", exc_info=True)
+        return [], []
+
+
+def _allowed_ids(names: Iterable[str]) -> set[int]:
+    """Ids of the allowed items and of their components (the path to an allowed item is fine)."""
+    try:
+        from treeaicoach import itemization as iz
+
+        items = iz.load_items()
+        want = {_fold(n) for n in names}
+        ids = {iid for iid, it in items.items() if _fold(it.name) in want}
+        stack = list(ids)
+        while stack:
+            it = items.get(stack.pop())
+            for p in it.parts if it is not None else ():
+                if p not in ids:
+                    ids.add(p)
+                    stack.append(p)
+        return ids
+    except Exception:
+        return set()
+
+
+def ground_review(text: str, allowed: Iterable[dict[str, Any]]) -> tuple[str, int]:
+    """``(review, number of sentences removed)``: every sentence naming an item outside the allowed
+    list (or its components) is dropped; English names of allowed items are replaced by the French
+    ones. Never raises (the text unchanged on error)."""
+    try:
+        cands = [c for c in allowed or () if c.get("n")]
+        ok = _allowed_ids(c["n"] for c in cands)
+        if not ok:
+            return text, 0
+        from treeaicoach import itemization as iz
+
+        items = iz.load_items()
+        removed = 0
+        paras: list[str] = []
+        for para in str(text).split("\n"):
+            keep: list[str] = []
+            for sent in re.findall(r"[^.!?]+[.!?]*", para):
+                ids = items_mentioned(sent)
+                bad = [i for i in ids if (i >= 0 and i not in ok) or (i < 0 and not (_AMBIG.get(i, frozenset()) & ok))]
+                if bad:
+                    removed += 1
+                    log.info("AI review: sentence with an item outside the list dropped: %r", sent.strip()[:120])
+                    continue
+                keep.append(_french_names(sent, ids, items))
+            joined = " ".join(x.strip() for x in keep if x.strip())
+            if joined:
+                paras.append(joined)
+        return "\n".join(paras), removed
+    except Exception:
+        log.debug("ground_review failed", exc_info=True)
+        return text, 0
+
+
+def _french_names(sentence: str, ids: set[int], items: dict) -> str:
+    """Replace the English name of each allowed item by its French name ("Sterak Gage" ->
+    "Gage de Sterak")."""
+    for iid in ids:
+        en, fr = _english_name(iid), getattr(items.get(iid), "name", "") if iid >= 0 else ""
+        if not en or not fr or _fold(en) == _fold(fr):
+            continue
+        toks = re.findall(r"[A-Za-z0-9]+", re.sub(r"['’]s\b", "", en))
+        if not toks:
+            continue
+        pat = r"\b" + r"(?:['’]?s)?[\s\-]+".join(re.escape(x) for x in toks) + r"(?:['’]?s)?\b"
+        sentence = re.sub(pat, fr, sentence, flags=re.I)
+    return sentence
+
+
+_EN_NAMES: dict[int, str] | None = None
+
+
+def _english_name(iid: int) -> str:
+    global _EN_NAMES
+    if _EN_NAMES is None:
+        try:
+            from treeaicoach.paths import asset_path
+
+            data = json.loads(asset_path("items.json").read_text(encoding="utf-8")).get("items") or {}
+            _EN_NAMES = {int(k): str(v.get("en") or "") for k, v in data.items() if str(k).isdigit()}
+        except Exception:
+            _EN_NAMES = {}
+    return _EN_NAMES.get(int(iid), "")
+
+
+def _review_numbers(analysis: Any) -> str:
+    """The key numbers the review must cite (plain French)."""
+    a = analysis if isinstance(analysis, dict) else {}
+    s = a.get("summary") if isinstance(a.get("summary"), dict) else {}
+    parts = [f"{s.get('kills', 0)}/{s.get('deaths', 0)}/{s.get('assists', 0)}"]
+    if s.get("cs_per_min") is not None:
+        parts.append(f"{s.get('cs_per_min')} CS/min")
+    v = a.get("death_verdicts") if isinstance(a.get("death_verdicts"), dict) else {}
+    if v:
+        parts.append("morts : " + ", ".join(f"{n} {k}" for k, n in v.items() if n))
+    lead = a.get("alert_lead") if isinstance(a.get("alert_lead"), dict) else {}
+    if lead.get("n"):
+        parts.append(f"alertes {lead.get('mean')} s avant les morts en moyenne")
+    return " ; ".join(parts)
+
+
+def _looks_english(text: str) -> bool:
+    return len(_EN_WORDS.findall(text or "")) > REVIEW_MAX_EN_WORDS
+
+
 def postgame_review(cfg: Any, analysis: Any, *, caller: Callable[..., Any] = call_llm,
                     url: str | None = None) -> str | None:
-    """Blocking AI review of a finished game (None if no provider / on error). Never raises."""
+    """Blocking AI review of a finished game (None if no provider / on error). ONE request.
+
+    Grounded like the live advisor: the prompt carries my final build and the list of allowed
+    items (French names, itemization.py); the answer is validated afterwards: sentences naming
+    another item are dropped (an off-meta / impossible / English item never reaches the report),
+    English names of allowed items become French, an English answer is rejected. Never raises."""
     prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
     if provider_spec(prov) is None:
         return None
     try:
+        cands, build = review_item_candidates(analysis)
         data = json.dumps(compact_analysis(analysis), ensure_ascii=False, separators=(",", ":"))
-        return caller(prov, str(getattr(cfg, "ai_api_key", "") or ""), str(getattr(cfg, "ai_model", "") or ""),
-                      REVIEW_PROMPT, f"Analyse de la partie (JSON) : {data}", timeout=REVIEW_TIMEOUT_S,
+        names = ", ".join(c["n"] for c in cands)
+        prompt = (f"Analyse de la partie (JSON) : {data}\n"
+                  f"Build final du joueur : {', '.join(build) or 'inconnu'}.\n"
+                  f"Objets autorisés (noms exacts) : {names or 'aucun : ne conseille aucun objet'}.\n"
+                  f"Chiffres à citer : {_review_numbers(analysis)}.")
+        text = caller(prov, str(getattr(cfg, "ai_api_key", "") or ""), str(getattr(cfg, "ai_model", "") or ""),
+                      REVIEW_PROMPT, prompt, timeout=REVIEW_TIMEOUT_S,
                       url=url, max_tokens=REVIEW_MAX_TOKENS, long=True) or None
+        if not text:
+            return None
+        if _looks_english(text):
+            log.info("AI post-game review rejected: not in French")
+            return None
+        if cands:
+            text, removed = ground_review(text, cands)
+            if removed and len(cands) >= 2:
+                c1, c2 = cands[0], cands[1]
+                text = (text + "\n" if text else "") + (
+                    f"Objets : garde {c1['n']} ({c1['pourquoi']}) et vise {c2['n']} ({c2['pourquoi']}).")
+        return text or None
     except AIError as exc:
         log.info("AI post-game review unavailable (%s)", exc.code)
         return None

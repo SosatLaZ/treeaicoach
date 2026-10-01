@@ -244,9 +244,13 @@ class DxgiCapture:
         self._out_rect: tuple[int, int, int, int] | None = None   # desktop x, y, w, h
         self._staging: Any = None
         self._staging_size: tuple[int, int] = (0, 0)
+        self._spare: dict[tuple[int, int], Any] = {}
         self._last: dict[tuple[int, int, int, int], np.ndarray] = {}
         self._retry_at = -1e18
         self.last_error: str | None = None
+        #: permanent failure (no Desktop Duplication here: E_NOTIMPL / UNSUPPORTED, Wine, RDP...):
+        #: the caller stops using this backend instead of retrying every few seconds
+        self.dead = False
         #: diagnostics: grabs, new frames, timeouts (static desktop), re-inits, failures
         self.stats: dict[str, Any] = {"grabs": 0, "frames": 0, "static": 0, "reinit": 0,
                                       "fail": 0, "adapter": None, "output": None}
@@ -255,8 +259,12 @@ class DxgiCapture:
     def _release_all(self) -> None:
         if self._api_ok():
             api = _get_api()
+            for tex in list(getattr(self, "_spare", {}).values()):
+                api.release(tex)
             for name in ("_staging", "_dupl", "_ctx", "_device", "_output", "_adapter", "_factory"):
                 api.release(getattr(self, name))
+        if hasattr(self, "_spare"):
+            self._spare.clear()
         self._factory = self._adapter = self._output = self._device = None
         self._ctx = self._dupl = self._staging = None
         self._staging_size = (0, 0)
@@ -282,6 +290,7 @@ class DxgiCapture:
             factory = ctypes.c_void_p()
             hr = _u32(api.CreateDXGIFactory1(ctypes.byref(api.IID_IDXGIFactory1), ctypes.byref(factory)))
             if hr != S_OK or not factory.value:
+                self.dead = True
                 raise OSError(f"CreateDXGIFactory1 0x{hr:08X}")
             self._factory = factory
             found = None
@@ -334,6 +343,8 @@ class DxgiCapture:
             finally:
                 api.release(out1)
             if hr != S_OK or not dupl.value:
+                if hr in (E_NOTIMPL, DXGI_ERROR_UNSUPPORTED):
+                    self.dead = True
                 raise OSError(f"DuplicateOutput 0x{hr:08X}")
             self._dupl = dupl
             dd = api.DXGI_OUTDUPL_DESC()
@@ -355,12 +366,20 @@ class DxgiCapture:
             return False
 
     def _ensure_staging(self, w: int, h: int) -> bool:
+        """Staging texture of this size (a few sizes are kept: minimap, HUD patch, window)."""
         if self._staging is not None and self._staging_size == (w, h):
             return True
         api = _get_api()
         ctypes = api.ctypes
-        api.release(self._staging)
+        if self._staging is not None:
+            self._spare[self._staging_size] = self._staging
         self._staging, self._staging_size = None, (0, 0)
+        hit = self._spare.pop((w, h), None)
+        if hit is not None:
+            self._staging, self._staging_size = hit, (w, h)
+            return True
+        while len(self._spare) >= 3:
+            api.release(self._spare.pop(next(iter(self._spare))))
         desc = api.D3D11_TEXTURE2D_DESC()
         desc.Width, desc.Height, desc.MipLevels, desc.ArraySize = w, h, 1, 1
         desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM

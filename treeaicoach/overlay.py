@@ -8,16 +8,24 @@ separate popup windows of the TreeAI Coach process:
   WS_EX_NOACTIVATE | WS_EX_TOPMOST``: always on top, never activated, mouse clicks go through,
   no taskbar button. No injection, no DirectX hook: works with the game in *Borderless* or
   *Windowed* mode.
-* one dedicated thread owns every window and pumps its messages with ``PeekMessageW``; it
-  refreshes at ~12 Hz from ``state_provider()`` and hides everything when the state is None.
+* one dedicated thread owns every window and pumps its messages with ``PeekMessageW``; it runs
+  a steady loop (``cfg.overlay_fps``, 30 by default, capped by the engine's performance budget,
+  paced with ``time.sleep`` - high-resolution timer on Windows) and hides everything when the
+  state is None or when the game is not in the foreground (:data:`FOCUS_GRACE_S`). The minimap
+  layer is drawn at the positions *predicted for the render time* (``state.predict``, Kalman
+  state copied by the engine at each tick) and re-rendered / re-sent only when its quantized
+  signature changed (:func:`minimap_signature`); the HUD card only when its content changed
+  (:func:`hud_signature`, identical images never re-sent); the danger flash is uploaded once and
+  faded with the window's constant alpha. Per-layer render and ``UpdateLayeredWindow`` timings
+  are published (:func:`current_stats`, engine ``health()["overlay"]``).
 * the default "minimap" mode draws thin marks *exactly over the real minimap*
   (``state.minimap_rect``, physical px) on a transparent window. That window is captured like
   any other one (visible in the user's screenshots / streams), so it never draws champion
   portraits - only thin rings drawn *outside* the real icons, role tags, arrows, dashed
-  last-seen circles with timers and fog outlines - which the detector does not mistake for
-  champions. ``cfg.overlay_hide_from_capture`` (default False) additionally excludes it from
-  capture (``SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)``, Windows 10 2004+); the mode
-  works the same with or without it. "radar" mode shows an enlarged copy placed *above* the
+  last-seen circles with timers and fog outlines. ``cfg.overlay_hide_from_capture`` (default
+  True since pipeline v2: otherwise our own rings / labels end up in the frames the detector
+  reads) excludes it from capture (``SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)``,
+  Windows 10 2004+); the mode works the same with or without it. "radar" mode shows an enlarged copy placed *above* the
   minimap (shrunk rather than moved towards the centre), never over it. Every window is
   clamped inside the screen, and the screen used for the layout always contains the minimap
   (see :func:`effective_screen`).

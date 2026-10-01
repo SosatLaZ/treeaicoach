@@ -531,3 +531,42 @@ def test_expert_level_only_urgent_auto_calls():
     assert adv.budget_info()["urgent_used"] == 1
     adv.apply_config(SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="", skill_level="avance"))
     assert not adv._urgent_only
+
+
+def test_postgame_review_is_grounded_in_the_real_build_and_french_items():
+    """Real game report: the Groq review advised "Tiamat -> Titanic Hydra ... Sterak Gage avant le
+    premier rappel" (English, off-meta, impossible) for Garen. One request; the prompt carries the
+    final build + allowed French item names; sentences naming other items are dropped, English
+    names of allowed items become French, an English answer is rejected."""
+    analysis = {"summary": {"champion": "Garen", "champion_name": "Garen", "position": "TOP", "kills": 1,
+                            "deaths": 15, "assists": 5, "cs_per_min": 4.1, "items": [3047, 6631, 3071, 1055],
+                            "enemies": [{"alias": "Vladimir", "name": "Vladimir"}, {"alias": "Kindred", "name": "Kindred"},
+                                        {"alias": "Ekko", "name": "Ekko"}, {"alias": "Seraphine", "name": "Séraphine"},
+                                        {"alias": "Thresh", "name": "Thresh"}]},
+                "death_verdicts": {"duel": 4, "late": 3, "missed": 2}, "alert_lead": {"n": 4, "mean": 2.5}}
+    calls = []
+    hallucinated = ("Bon point : tu as survécu à 10 ganks sur 14. Axe 1 : farme mieux, 4,1 CS/min. "
+                    "Conseil d'objets : commence avec le Tiamat → Titanic Hydra pour plus de dégâts, puis achète "
+                    "un Sterak Gage avant le premier rappel. Contre Vladimir, prends Sterak's Gage en 3e objet.")
+
+    def caller(prov, key, model, system, prompt, **kw):
+        calls.append((system, prompt))
+        return hallucinated
+
+    cfg = SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="")
+    review = ai.postgame_review(cfg, analysis, caller=caller)
+    assert len(calls) == 1
+    system, prompt = calls[0]
+    assert "Objets autorisés" in prompt and "Estropieur" in prompt and "Gage de Sterak" in prompt
+    assert "Build final du joueur : Coques en acier, Estropieur, Couperet noir" in prompt
+    assert "Hydre titanesque" not in prompt and "français" in system and "trop tard" in system
+    assert "4 duel" in prompt and "2.5 s" in prompt
+    assert review is not None
+    for bad in ("Titanic", "Hydra", "Tiamat", "Sterak Gage", "Sterak's"):
+        assert bad not in review, bad
+    assert "prends Gage de Sterak en 3e objet" in review           # allowed item, French name
+    assert "Objets : garde Coques en acier" in review              # rule-based replacement of the dropped one
+    assert "10 ganks sur 14" in review
+    # an English answer never reaches the report
+    english = "You should build the Titanic Hydra first and then you should buy Sterak's Gage with your gold before the next fight."
+    assert ai.postgame_review(cfg, analysis, caller=lambda *a, **k: english) is None

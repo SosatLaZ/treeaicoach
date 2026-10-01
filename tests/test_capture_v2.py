@@ -208,3 +208,23 @@ def test_to_physical_scales_logical_rects(monkeypatch, dpi, expected):
 def test_to_physical_keeps_rect_when_aware(monkeypatch):
     monkeypatch.setattr(ctypes, "windll", types.SimpleNamespace(user32=_fake_user32(2, 144)), raising=False)
     assert cap._to_physical(1, Rect(1, 2, 3, 4)) == Rect(1, 2, 3, 4)
+
+
+def test_dead_backend_is_disabled_for_the_session():
+    img = live(20)
+    d = FakeBackend("dxgi", None)
+    d.dead, d.last_error = True, "DuplicateOutput 0x80004001"
+    m = FakeBackend("mss", img)
+    c = smart(d, m)
+    assert c.grab(R) is not None and c.current == "mss"
+    assert c.stats["disabled"] == {"dxgi": "DuplicateOutput 0x80004001"}
+    c.grab(R)
+    assert d.calls == 1                      # never retried
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="D3D11 only on Windows")
+def test_dxgi_d3d11_half_on_windows():
+    """CreateTexture2D / CopySubresourceRegion / Map vtable slots and struct layouts (also
+    validated under Wine; Desktop Duplication itself needs a real desktop)."""
+    out = dxgi_capture.self_test_copy()
+    assert out["ok"] or "D3D11CreateDevice" in str(out.get("error")), out

@@ -609,6 +609,7 @@ def static_phrases(leads: Sequence[int] = (60, 20)) -> list[str]:
             out.append(phrase(AlertKind.JUNGLER_APPROACH, lvl, None))
             out.append(phrase(AlertKind.ROAM_APPROACH, lvl, None))
             out.append(phrase(AlertKind.LANER_MIA, lvl, None))
+        out.append(phrase(AlertKind.PERSONAL_DANGER, Level.DANGER, None))      # "Recule !" (danger.py)
         out.append(phrase(AlertKind.CONTROL_WARD, Level.INFO, None))
     except Exception as exc:
         log.debug("static_phrases (alerts) failed: %s", exc)
@@ -638,10 +639,14 @@ def roster_phrases(enemies: Sequence[str], allies: Sequence[str] = ()) -> list[s
         for name in names:
             danger.append(phrase(AlertKind.JUNGLER_APPROACH, Level.DANGER, name))
             danger.append(pre_alert_text(name))
+            danger.append(phrase(AlertKind.ROAM_APPROACH, Level.DANGER, name))      # "Roam ! Ekko, recule !"
             danger.append(phrase(AlertKind.COLLAPSE, Level.DANGER, name, count=1))
             for d in DIRECTIONS:
                 warn.append(phrase(AlertKind.JUNGLER_APPROACH, Level.WARNING, name, d))
             warn.append(phrase(AlertKind.JUNGLER_APPROACH, Level.WARNING, name))
+            for d in DIRECTIONS:
+                warn.append(phrase(AlertKind.ROAM_APPROACH, Level.WARNING, name, d))
+            warn.append(phrase(AlertKind.ROAM_APPROACH, Level.WARNING, name))
             warn.append(phrase(AlertKind.COLLAPSE, Level.WARNING, name, count=1))
             warn.append(phrase(AlertKind.LANER_MIA, Level.DANGER, name))
             warn.append(phrase(AlertKind.LANER_MIA, Level.WARNING, name))

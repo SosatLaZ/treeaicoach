@@ -3,7 +3,6 @@ performance budget / process resources."""
 
 from __future__ import annotations
 
-import math
 import sys
 import threading
 import time

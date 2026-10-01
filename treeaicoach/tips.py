@@ -561,7 +561,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: 180 <= c.gt <= 840, roles=("JUNGLE",), prio=2),
     T("jg_scuttle", "macro", "Prends le Carapateur : ta voie forte peut t'aider",
       lambda c: 170 <= c.gt <= 235, roles=("JUNGLE",), prio=3),    # scuttles at 2:55 (2026)
-    T("early_safe", "phase", "Ne donne pas le premier sang : 100 d'or de bonus pour lui",
+    T("early_safe", "phase", "Ne donne pas le premier sang : il rapporte 100 d'or",
       lambda c: 30 <= c.gt <= 180 and c.level_diff <= 0, roles=LANERS, prio=1),
 )
 

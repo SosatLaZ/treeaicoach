@@ -155,6 +155,9 @@ ETA_REFIELD_CELLS = 1            # the distance field from me is recomputed when
 # earlier jungler warning (real game: deaths 0-4 s after the alert): an enemy jungler clearly
 # coming at me is announced from this factor of the warn radius (ETA ~9.5 s instead of ~7.4 s)
 JUNGLER_EARLY_FACTOR = 1.25
+EARLY_HEADING_COS = 0.92         # ... only when he walks straight at me (cos of the heading angle)
+EARLY_TICKS = 5                  # ... on this many consecutive ticks (velocity noise)
+EARLY_MIN_SPEED = 0.015          # ... at a walking speed (normalized / s), not drifting
 # a roamer (laner) inside the danger radius without coming at me is only a gank when this close
 ROAM_STILL_DANGER_FACTOR = 0.6
 
@@ -199,6 +202,7 @@ class _TrackState:
     pop_for: float | None = None         # appeared_at of ``pop_d``
     pre_for: float | None = None         # appeared_at already pre-announced ("Lee Sin !")
     seen_t: float = 0.0                  # last tick this key existed in the tracker
+    early_n: int = 0                     # consecutive ticks walking straight at me (early warning)
 
 
 @dataclass(frozen=True)
@@ -545,6 +549,8 @@ class GankAnalyzer:
             if moving_in:
                 approaching.add(tr.key)
             popped = self._popped_close(tr, st, d, warn, now)
+            st.early_n = st.early_n + 1 if is_jungler and moving_in and \
+                self._heading_at_me(tr, me_pos, my_vel, pos) else 0
 
             if is_jungler:
                 spotted = self._jungler_spotted(tr, st, roster, gt, d_line, warn, my_team, now)
@@ -581,8 +587,9 @@ class GankAnalyzer:
                 continue                            # a roamer standing still near me: no gank call
             elif d < warn and (moving_in or (popped and not pre and is_jungler)):
                 threats.append(threat)              # popped out of the fog inside the warn radius
-            elif is_jungler and moving_in and d < warn * JUNGLER_EARLY_FACTOR:
-                threats.append(threat)              # the jungler coming at me: ~2 s earlier
+            elif is_jungler and moving_in and d < warn * JUNGLER_EARLY_FACTOR \
+                    and st.early_n >= EARLY_TICKS:
+                threats.append(threat)              # the jungler walking straight at me: ~2 s earlier
             elif moving_in or st.on_count >= 1:
                 companions.append(threat)           # coming too, a little behind
 
@@ -747,6 +754,19 @@ class GankAnalyzer:
         if roster.role_certain(tr.alias):
             return by_role
         return by_role or self._history_in_lane(tr, my_lane, now)
+
+    @staticmethod
+    def _heading_at_me(tr: Track, me_pos: tuple[float, float], my_vel: tuple[float, float],
+                       pos: tuple[float, float]) -> bool:
+        """The enemy walks straight at me (not along a camp-to-camp path that passes by)."""
+        ev = tr.velocity()
+        vx, vy = ev[0] - my_vel[0], ev[1] - my_vel[1]
+        sp = math.hypot(vx, vy)
+        dx, dy = me_pos[0] - pos[0], me_pos[1] - pos[1]
+        dn = math.hypot(dx, dy)
+        if sp < EARLY_MIN_SPEED or dn < 1e-6:
+            return False
+        return (vx * dx + vy * dy) / (sp * dn) >= EARLY_HEADING_COS
 
     def _in_own_lane(self, tr: Track, roster: _Roster, pos: tuple[float, float],
                      my_lane: str | None) -> bool:

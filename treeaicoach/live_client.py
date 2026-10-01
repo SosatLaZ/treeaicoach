@@ -39,6 +39,11 @@ _POSITION_ALIASES = {
 #: Normalized (accent-less, case-folded, alphanumeric) display names of Smite and its upgrades.
 _SMITE_WORDS = ("smite", "chatiment")
 SUMMONERS_RIFT_MAP_NUMBER = 11
+#: League Classic (patch 26.15, Season-3 throwback mode, client codename "Jade"): its own map
+#: "Classic Rift" (id 453, CommunityDragon maps.json) with old champion kits / items / minimap.
+#: Not supported (the detector, item and objective knowledge are for the live Rift).
+CLASSIC_RIFT_MAP_NUMBER = 453
+CLASSIC_GAME_MODES = frozenset({"JADE", "CLASSICRIFT", "LEAGUECLASSIC"})
 #: Keys of ``PlayerInfo.scores`` (same names as the API's ``scores`` object).
 ZERO_SCORES: dict[str, float] = {"kills": 0, "deaths": 0, "assists": 0, "creepScore": 0, "wardScore": 0.0}
 _warned_unmatched = False
@@ -159,8 +164,14 @@ class GameInfo:
 
     @property
     def is_summoners_rift(self) -> bool:
-        """True on Summoner's Rift (map 11)."""
-        return self.map_number == SUMMONERS_RIFT_MAP_NUMBER
+        """True on the live Summoner's Rift (map 11; never in League Classic)."""
+        return self.map_number == SUMMONERS_RIFT_MAP_NUMBER and not self.is_league_classic
+
+    @property
+    def is_league_classic(self) -> bool:
+        """True in League Classic (map 453 "Classic Rift", or a Classic game mode name)."""
+        return self.map_number == CLASSIC_RIFT_MAP_NUMBER or \
+            str(self.game_mode or "").upper().replace(" ", "").replace("_", "") in CLASSIC_GAME_MODES
 
     @property
     def is_spectator(self) -> bool:

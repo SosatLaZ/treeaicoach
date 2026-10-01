@@ -12,7 +12,14 @@ point-symmetric) for a red side player. Every spot was checked on the official m
   pixel brushes + raptors entrance, bot: river brush + dragon front);
 * the enemy jungler last seen on one side: the brushes on his way to my lane;
 * ahead (stance / gold): deep wards in the enemy jungle; behind: defensive wards in my jungle;
-* close spots preferred (I can walk there).
+* close spots preferred (I can walk there);
+* Faelights ("lampes féeriques", season 2026, patch 26.1): fixed rings on the map where a ward
+  gets +25 % vision radius and reveals a bonus area for 45 s. 8 exist from the start (one near
+  each base gate (4), the river brushes at the top / bot ends of the river (2), the "banana"
+  river-wall brushes across the Baron / dragon pits (2)) and 4 more appear when the Elemental
+  Rift transforms (after the 2nd dragon: the krug brushes and the gromp side-lane brushes).
+  They get a bonus score. Positions are APPROXIMATE (placed from the patch notes / wiki
+  descriptions on the minimap texture, checked walkable), within ~2-3 % of the map width.
 
 :class:`WardAdvisor` decides WHEN to show them (no trinket cooldown is known - nothing is read
 from the game but the official API): when I come back to lane after a base, every
@@ -52,6 +59,8 @@ class WardSpot:
     roles: frozenset = frozenset()  # roles for which it is a lane / routine spot
     objective: str | None = None    # "dragon" | "baron" (pit approaches)
     control: bool = False           # good control ward spot (brush / pit)
+    faelight: bool = False          # a Faelight ring (2026): ward vision +25 % and a 45 s reveal
+    after_rift: bool = False        # Faelight that only appears once the Elemental Rift transformed
 
     def uv_for(self, team: str | None) -> tuple[float, float]:
         if team != "CHAOS":
@@ -74,9 +83,10 @@ SPOTS: tuple[WardSpot, ...] = (
              None, True),
     WardSpot("pixel_bot", "buisson pixel (rivière du bas)", (0.586, 0.605), "river", _r("MIDDLE", "JUNGLE", "UTILITY"),
              None, True),
-    WardSpot("river_top_lane", "buisson de rivière en haut", (0.160, 0.221), "river", _r("TOP"), None, True),
-    WardSpot("river_bot_lane", "buisson de rivière en bas", (0.793, 0.842), "river", _r("BOTTOM", "UTILITY"), None,
-             True),
+    WardSpot("river_top_lane", "buisson de rivière en haut (lampe féerique)", (0.160, 0.221), "river", _r("TOP"),
+             None, True, True),
+    WardSpot("river_bot_lane", "buisson de rivière en bas (lampe féerique)", (0.793, 0.842), "river",
+             _r("BOTTOM", "UTILITY"), None, True, True),
     WardSpot("tri_own", "tri-buisson de ta jungle", (0.137, 0.346), "own", _r("TOP", "JUNGLE"), None, True),
     WardSpot("raptors_own", "entrée des raptors", (0.439, 0.580), "own", _r("MIDDLE", "JUNGLE"), None, False),
     WardSpot("dragon_front", "devant le dragon (rivière)", (0.598, 0.678), "river", _r("BOTTOM", "UTILITY", "JUNGLE"),
@@ -93,7 +103,29 @@ SPOTS: tuple[WardSpot, ...] = (
     WardSpot("raptors_enemy", "raptors ennemis", (0.561, 0.420), "enemy", _r("MIDDLE", "JUNGLE"), None, False),
     WardSpot("bluebuff_enemy", "buff bleu ennemi", (0.744, 0.527), "enemy", _r("JUNGLE"), None, False),
     WardSpot("redbuff_enemy", "buff rouge ennemi", (0.480, 0.270), "enemy", _r("JUNGLE"), None, False),
+    # Faelights (2026, approximate positions - see the module doc)
+    WardSpot("fae_banana_top", "lampe féerique du buisson-banane (rivière du haut)", (0.385, 0.425), "river",
+             _r("MIDDLE", "JUNGLE"), "baron", True, True),
+    WardSpot("fae_banana_bot", "lampe féerique du buisson-banane (rivière du bas)", (0.615, 0.575), "river",
+             _r("MIDDLE", "JUNGLE", "UTILITY"), "dragon", True, True),
+    WardSpot("fae_gate_top", "lampe féerique à la sortie de ta base (côté haut)", (0.190, 0.640), "own", _r(),
+             None, False, True),
+    WardSpot("fae_gate_bot", "lampe féerique à la sortie de ta base (côté bas)", (0.360, 0.810), "own", _r(),
+             None, False, True),
+    WardSpot("fae_gate_enemy_top", "lampe féerique à la sortie de leur base (côté haut)", (0.640, 0.190), "enemy",
+             _r(), None, False, True),
+    WardSpot("fae_gate_enemy_bot", "lampe féerique à la sortie de leur base (côté bas)", (0.810, 0.360), "enemy",
+             _r(), None, False, True),
+    WardSpot("fae_krugs_own", "lampe féerique près de tes krugs", (0.572, 0.861), "own", _r("BOTTOM", "UTILITY"),
+             None, True, True, True),
+    WardSpot("fae_gromp_own", "lampe féerique près de ton golem (voie du haut)", (0.135, 0.440), "own", _r("TOP"),
+             None, True, True, True),
+    WardSpot("fae_krugs_enemy", "lampe féerique près de leurs krugs", (0.428, 0.139), "enemy", _r("TOP"),
+             None, True, True, True),
+    WardSpot("fae_gromp_enemy", "lampe féerique près de leur golem (voie du bas)", (0.865, 0.560), "enemy",
+             _r("BOTTOM", "UTILITY"), None, True, True, True),
 )
+FAELIGHT_BONUS = 8.0             # score bonus of a Faelight spot (bigger vision, 45 s reveal)
 SPOT_BY_ID = {s.id: s for s in SPOTS}
 #: The texture is not perfectly point-symmetric: red side spots moved onto walkable pixels.
 RED_OVERRIDE: dict[str, tuple[float, float]] = {
@@ -135,10 +167,11 @@ def _side_of_uv(uv: tuple[float, float]) -> str:
 def recommend(team: str | None, role: str | None = None, *, phase: str = "laning",
               me_pos: tuple[float, float] | None = None, objective: tuple[str, float] | None = None,
               jungler_side: str | None = None, ahead: float = 0.0, n: int = MAX_SPOTS,
-              exclude: Iterable[str] = ()) -> list[WardPick]:
+              exclude: Iterable[str] = (), rift: bool = False) -> list[WardPick]:
     """Best ward spots (``n`` at most), best first. ``objective`` = (key, seconds to spawn, <= 0 if up);
     ``jungler_side`` = "top" / "bot" where the enemy jungler was last seen; ``ahead`` > 0 when I /
-    my team am ahead (stance score or gold), < 0 when behind. Never raises."""
+    my team am ahead (stance score or gold), < 0 when behind; ``rift`` = the Elemental Rift has
+    transformed (the 4 late Faelights exist). Never raises."""
     try:
         role = str(role or "").upper() or None
         team = geometry.normalize_team(team) or "ORDER"
@@ -152,7 +185,7 @@ def recommend(team: str | None, role: str | None = None, *, phase: str = "laning
         my_side = ROLE_SIDE.get(role or "")
         picks: list[WardPick] = []
         for s in SPOTS:
-            if s.id in skip:
+            if s.id in skip or (s.after_rift and not rift):
                 continue
             uv = s.uv_for(team)
             side = _side_of_uv(uv)
@@ -184,6 +217,8 @@ def recommend(team: str | None, role: str | None = None, *, phase: str = "laning
                 score += 12.0
             if my_side in ("top", "bot") and phase == "laning" and side not in (my_side, "mid") and obj_pit is None:
                 score -= 30.0                       # the other half of the map: not my job in lane
+            if s.faelight and score > 0.0:
+                score += FAELIGHT_BONUS
             if me_pos is not None:
                 score -= 30.0 * geometry.dist(uv, me_pos)
             if score > 5.0:
@@ -284,7 +319,7 @@ class WardAdvisor:
         if reason is None:
             return None
         picks = recommend(team, role, phase=phase, me_pos=me_pos, objective=obj, jungler_side=jungler_side,
-                          ahead=ahead, n=2 if reason == "periodic" else MAX_SPOTS)
+                          ahead=ahead, n=2 if reason == "periodic" else MAX_SPOTS, rift=rift_transformed(game))
         if not picks:
             return None
         dur = {"base": SHOW_AFTER_BASE_S, "periodic": SHOW_PERIODIC_S}.get(reason, 30.0)
@@ -296,7 +331,7 @@ class WardAdvisor:
             best = picks[0]
             if reason == "objective" and obj is not None:
                 name = {"dragon": "le dragon", "elder": "l'ancestral", "baron": "le Baron", "herald": "le Héraut",
-                        "grubs": "les larves", "atakhan": "Atakhan"}.get(obj[0], "l'objectif")
+                        "grubs": "les larves"}.get(obj[0], "l'objectif")
                 text = f"Avant {name} : balise {best.label}"
                 if has_control and best.spot.control:
                     text += " (ta balise de contrôle)"
@@ -311,4 +346,24 @@ class WardAdvisor:
         return self._show if text else None
 
 
-__all__ = ["WardSpot", "SPOTS", "SPOT_BY_ID", "recommend", "WardPick", "WardAdvisor", "WardAdvice", "CONTROL_WARD"]
+def rift_transformed(game: Any) -> bool:
+    """True once the Elemental Rift has transformed: 2 elemental dragons killed (Live Client
+    ``DragonKill`` events; the 3rd dragon's element is then known and the map changes). Never raises."""
+    try:
+        n = 0
+        for ev in getattr(game, "events", None) or ():
+            if isinstance(ev, dict) and ev.get("EventName") == "DragonKill" \
+                    and str(ev.get("DragonType") or "").casefold() != "elder":
+                n += 1
+        return n >= 2
+    except Exception:
+        return False
+
+
+def faelight_spots(rift: bool = False) -> list[WardSpot]:
+    """The Faelight spots present on the map (the 4 late ones only once the rift transformed)."""
+    return [s for s in SPOTS if s.faelight and (rift or not s.after_rift)]
+
+
+__all__ = ["WardSpot", "SPOTS", "SPOT_BY_ID", "recommend", "WardPick", "WardAdvisor", "WardAdvice", "CONTROL_WARD",
+           "rift_transformed", "faelight_spots", "FAELIGHT_BONUS"]

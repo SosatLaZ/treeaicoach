@@ -639,3 +639,46 @@ def test_never_raises_and_reset() -> None:
     an.reset()
     assert an.state().t is None
     assert an.is_approaching("LeeSin") is False
+
+
+# --------------------------------------------------------------------------------------
+# Real game report (Garen 1/15/5): siege of my base, roams of the mid laner
+# --------------------------------------------------------------------------------------
+
+
+def test_siege_of_my_base_is_still_announced() -> None:
+    """33-35 min of the real game: 3 deaths in my base with the enemy jungler, no alert (the
+    analyser was silent in the whole base). Only the fountain is silent now."""
+    me_base = (0.16, 0.84)                            # my base, outside the fountain
+    path = [(0.40, 0.70), (0.18, 0.82)]
+    ticks = simulate(12.0, lambda t: {"LeeSin": lerp_path(path, 0.025, t)}, me=lambda t: me_base)
+    levels = [a.level for _tk, a in gank_raw(ticks)]
+    assert Level.WARNING in levels and Level.DANGER in levels
+    said = said_texts(ticks)
+    assert said and said[-1] == "Gank ! Lee Sin, recule !"
+
+
+def test_mid_laner_farming_his_lane_is_not_a_roam() -> None:
+    """Ekko farming mid while I walk through the mid lane: not "Roam ! Ekko" (8 roam alerts of the
+    real game were mostly unverifiable / false)."""
+    me_mid = (0.45, 0.55)
+    ticks = simulate(30.0, lambda t: {"Ahri": (0.52 + 0.02 * math.sin(t), 0.48)}, me=lambda t: me_mid)
+    assert min(tk.true_d["Ahri"] for tk in ticks) < DANGER
+    assert raw_of(ticks, AlertKind.ROAM_APPROACH) == []
+
+
+def test_roamer_standing_still_near_me_is_not_a_gank_danger() -> None:
+    """A roamer already standing near me (warded bush, no approach): no repeated "Roam !" DANGER."""
+    still = (ME_TOP[0] + 0.09, ME_TOP[1] + 0.01)      # inside the danger radius, not too close
+    ticks = simulate(20.0, lambda t: {"Ahri": still}, t0=0.0)
+    roam = [a for _tk, a in raw_of(ticks, AlertKind.ROAM_APPROACH) if a.level == Level.DANGER]
+    assert len(said_of(ticks, GANK_KINDS)) <= 1         # at most once (popped at the start), never repeated
+    assert len(roam) <= 2
+
+
+def test_roam_is_labelled_and_announced_once_per_roam() -> None:
+    path = [(0.30, 0.24), (0.12, 0.22)]
+    ticks = simulate(24.0, lambda t: {"Ahri": lerp_path(path, 0.025, t)})   # then stays on me
+    said = said_texts(ticks)
+    assert said and all(x.startswith("Roam") for x in said)
+    assert said.count("Roam ! Ahri, recule !") == 1

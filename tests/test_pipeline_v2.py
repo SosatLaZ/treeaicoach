@@ -10,7 +10,6 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
 
-import numpy as np
 import pytest
 
 from treeaicoach import overlay as ov

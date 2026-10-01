@@ -155,11 +155,13 @@ def test_smarter_moments_swing_lead_trade_blunders_and_objective_lead():
           _kill(4, 596.0, "Zed", "Garen")]
     g = G(600.0, events=ev)
     assert ai.ComebackDetector().update(0.0, g) != "teamfight"
-    # objective moment fires in the 60..100 s window (plan time), atakhan included
+    # objective moment fires in the 60..100 s window (plan time); Atakhan (removed in 26.1) never does
     md = ai.MomentDetector()
     md.update(G())
     atk = NS(key="atakhan", name="Atakhan", alive=False, remaining=95.0, next_spawn=1200.0)
-    assert md.update(G(), objectives=[atk]) == "objective" and md.last_objective == "atakhan"
+    assert md.update(G(), objectives=[atk]) is None
+    baron = NS(key="baron", name="Baron", alive=False, remaining=95.0, next_spawn=1200.0)
+    assert md.update(G(), objectives=[baron]) == "objective" and md.last_objective == "baron"
     # dragon = major objective (budget slot) only from 14:00
     b = ai.AIBudget()
     assert b.pick("objective", 600.0, "dragon") is None

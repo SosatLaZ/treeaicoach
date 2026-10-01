@@ -388,7 +388,10 @@ class GankAnalyzer:
     def reset(self) -> None
 ```
 Règles (rayons = `cfg.effective_*`) :
-* Pas d'alerte si je suis mort, dans ma base (fontaine), si `game` indique un mode ≠ Faille, ou si ma position est inconnue depuis > 3 s.
+* Pas d'alerte si je suis mort, dans ma **fontaine** (un siège de ma base est annoncé), si `game` indique un mode ≠ Faille, ou si ma position est inconnue depuis > 3 s.
+* Jungler qui vient clairement sur moi : WARNING dès `JUNGLER_EARLY_FACTOR` (1,25) × le rayon d'alerte (~2 s plus tôt, ETA ~9,5 s).
+* Roam (laner non-jungler) : « Roam ! Ekko, recule ! » / « Roam : Ekko arrive ... ! » seulement s'il vient sur moi (approche,
+  sortie du brouillard tout près, ou très proche) ; jamais quand il farme SA voie ; pas répété avant 25 s (`ROAM_REPEAT_S`).
 * **JUNGLER_APPROACH** : jungler ennemi visible à `d < warn` ET (se rapproche : vitesse radiale < −0.006/s OU vient d'apparaître < 1 s) → WARNING ; `d < danger` → DANGER.
 * **ROAM_APPROACH** : idem pour un ennemi non-jungler qui n'est **pas** mon adversaire de voie
   (adversaire de voie = même `position` Riot, ou ≥ 50 % de son temps visible des 90 dernières s dans ma voie ; BOTTOM et UTILITY sont regroupés).
@@ -530,8 +533,11 @@ def write_report(record_path: Path) -> Path | None            # lit le JSON, éc
 def list_games(limit: int = 50) -> list[dict]                 # résumé des parties enregistrées (pour l'onglet Historique)
 ```
 `analyze_game` produit : résumé (champion, durée, K/D/A, CS/min, vision/min, niveau final), **morts** (heure de jeu, zone,
-ennemis vus à < 0.2 dans les 8 s avant, jungler impliqué ?, alerte donnée dans les 12 s avant ? → « alerte ignorée » /
-« mort sans alerte »), **ganks subis** (alertes DANGER + issue : mort / survie), **jungler ennemi** (1re apparition, répartition
+ennemis vus à < 0.2 dans les 8 s avant, jungler impliqué ?, alerte (gank ou danger perso) dans les 12 s avant ?,
+**avance de l'alerte** `alert_lead_s` = 1re alerte de la chaîne ; `verdict_key` : `ignored` « alerte ignorée » (≥ 3 s) /
+`late` « alerte trop tardive » (< 3 s, faute de l'app) / `duel` « 1v1 perdu » (seulement mon adversaire de voie) /
+`missed` « l'app n'a pas prévenu » (ennemis visibles près de moi) / `unseen` « ennemis invisibles » / `tower` ;
+`death_verdicts`, `alert_lead` ; `deaths_warned` ne compte que les alertes données à temps), **ganks subis** (alertes DANGER + issue : mort / survie), **jungler ennemi** (1re apparition, répartition
 des apparitions par zone et par phase 0–10 / 10–20 / 20+ min, voies gankées d'après les kills où il participe),
 **temps par zone** pour moi, **objectifs** (kills par équipe), et une liste de **conseils** en français générés par règles
 (ex. « 3 morts dans les 10 s après une alerte : recule dès l'annonce », « CS/min 5,8 : objectif 7+ »,
@@ -887,7 +893,8 @@ Tout est **visuel** (ligne du HUD via `TipRotator`, toasts), jamais dit à voix 
 ## 16. V2 — audit pro des conseils, liste blanche de la voix, cohérence entre systèmes
 
 * **Liste blanche de la voix** (`voice_policy.route` / `VoiceGate.decide`, même liste à tous les niveaux) :
-  1. alertes de gank après tri (`triage_gank`) ; 2. RECULE (`call:retreat`) — « Attaque ! » n'est jamais dit (bannière) ;
+  1. alertes de gank après tri (`triage_gank`) ; 2. RECULE (`call:retreat`, et le « Recule ! » personnel de `danger.py`) —
+  « Attaque ! » n'est jamais dit (bannière) ;
   3. réponse F9 ; 4. objectif à ≤ `OBJECTIVE_VOICE_MAX_LEAD_S` (20 s) **si je suis concerné** (`objective_involved` :
   rôle, ou près de la fosse ; Baron / ancestral pour tous après 20:00). `voice_level="normal"` (préréglage débutant)
   ajoute l'appel chiffré d'après-combat (`urgent:ace:` de `EndGameCaller`, `urgent:genie:` = `macro` `fight_won`) ;
@@ -905,3 +912,80 @@ Tout est **visuel** (ligne du HUD via `TipRotator`, toasts), jamais dit à voix 
   temps de prise (`TAKE_S`) et plancher (`WINDOW_FLOOR_S`) ; `EndGameCaller` : Baron / finir ≥ 25 s, dragon ≥ 15 s.
 * Toasts et bannières : un sous-titre trop long passe sur deux lignes plus petites au lieu d'être coupé.
 * Audit complet + tests : `tests/test_v2_audit.py`.
+
+## 17. Danger personnel, ganks plus tôt, revue IA ancrée (retour de la 1re vraie partie)
+
+Rapport réel (Garen top, 1/15/5, 11 morts « sans alerte ») : morts en 1v1 face à l'adversaire de voie visible, jungler
+visible à l'écran 7 s avant la mort sans alerte, alertes 0–4 s avant la mort, 8 « Roam Ekko » douteux, aucune alerte
+dans ma base pendant le siège, revue IA avec des objets anglais hors méta.
+
+* `danger.py` — `PersonalDanger.update(t, gt, game, tracker, lane_opponents, jungler, threat, gank_danger_t,
+  in_fight, fog) -> list[Alert]` (kind `PERSONAL_DANGER`) : mes PV / niveau / objets (Live Client) contre les ennemis
+  visibles autour de moi, **à l'écran ou non, gank ou non**. DANGER « Recule ! » (dit : PV ≤ 35 % et un ennemi sur moi,
+  ou PV ≤ 55 % et en infériorité) ; WARNING écrits : « Vladimir te domine : ne trade pas, farme sous la tour. »
+  (adversaire de voie avec +2 niveaux / 6 contre 5 / +900 PO d'objets / puissance ×1,3), « Peu de vie et X près de
+  toi : recule. », « N ennemis près de toi : recule vers ta tour. », « Kindred peut arriver : recule vers ta tour. »
+  (jungler invisible 8–60 s, ≥ 35 % de la chaleur `FogEstimate.heat` à ≤ 7 s de marche, moi au-delà du milieu).
+  Anti-spam : 1 message / tick, « Recule ! » jamais 2 fois en 20 s, même ligne jamais en 20 s, cooldowns par règle,
+  rien dans la fontaine / mort / en combat / juste après un gank DANGER. Branché dans `engine._personal_danger` et la
+  voie rapide des ganks (`_say_gank_now`).
+* `voice_policy` : `PERSONAL_DANGER` DANGER = voix critique (hors budget), WARNING = écrit (toast « DANGER »).
+* `ground_truth` : `alert_lead_s` par mort, `lead_mean` / `lead_late` dans la fiabilité (carte « Avance des alertes »).
+* `ai_advisor.postgame_review` : 1 requête ; le prompt porte le build final et la liste des objets autorisés
+  (`review_item_candidates` : build + objets de base de la classe + contres, noms français) ; `ground_review` retire
+  toute phrase qui nomme un autre objet (FR ou anglais) et francise les noms anglais autorisés ; réponse anglaise rejetée.
+
+## 17. Pipeline v2 — capture, cadence, overlay fluide, diagnostic (systèmes)
+
+Pourquoi les vraies parties échouaient là où nos tests passaient : capture GDI (mss) lente, noire
+ou figée selon le mode d'affichage ; notre propre calque minimap capturé et relu par le détecteur ;
+overlay redessiné à 4 Hz « au calme » avec des positions médianes déjà vieilles d'un ou deux ticks
+(mesuré : 0,8 s de retard moyen, p95 2,8 s sur une machine chargée) ; overlay dessiné par-dessus le
+client / le navigateur après un alt-tab ; carte HUD posée sur les portraits alliés et les votes.
+
+* **Capture** (`capture.SmartCapture`, `dxgi_capture.py`) : Desktop Duplication DXGI en ctypes pur
+  (aucune dépendance) — copie GPU du seul rectangle de la minimap (`CopySubresourceRegion`) vers une
+  texture de staging, repli automatique sur mss (rectangle sur deux écrans, RDP, Windows 7, Wine).
+  La 1re image DXGI est comparée à mss (désactivée si elles diffèrent). `check()` : images noires
+  (3 de suite) ou figées (12 images et 4 s, seulement après 1:30 de jeu) → l'autre backend est
+  essayé ; s'il voit une image vivante on bascule, sinon « Capture noire / figée : passe le jeu en
+  Sans bordure ». `game.cfg` `WindowMode=0` → avertissement (bannière) « Plein écran ».
+  `cfg.capture_backend` = auto | dxgi | mss.
+* **Focus / occultation** : `capture.foreground_state()` (overlay, à chaque image, grâce 0,3 s :
+  tout est masqué dès que le jeu n'est plus au premier plan, sauf nos propres fenêtres) ;
+  `capture.rect_occluded()` (`WindowFromPoint` sur 5 points de la minimap) : une autre fenêtre
+  couvre la minimap → tick gelé (aucune image lue, le tracker n'est pas mis à jour). Jeu réduit :
+  pause (1 contrôle / s). Fenêtre déplacée (même taille) : rectangle décalé sans nouvelle recherche ;
+  réglages du jeu modifiés (empreinte `game_settings`) : relocalisation.
+* **Cadence** (`scheduler.py`, `sysperf.py`) : détection adaptative (`RateGovernor`) 6 img/s au
+  calme, `target_fps` (12) pendant 3 s après une menace / un ennemi proche / une apparition ;
+  2 img/s jeu en arrière-plan. Étapes de coaching étalées (`HeavyScheduler` : tactics, coach, Tab,
+  conseils — un créneau par tick, jamais sur le tick de vérification de la minimap). Budget
+  `PerfBudget` : « low_end » (≤ 4 CPU logiques, ou ticks mesurés > 30 ms en moyenne / 60 ms p95 sur
+  les 30 premières secondes) → 4-8 img/s, coaching 1 Hz, ONNX d'appoint toutes les 16 images,
+  1 thread OpenCV / onnxruntime, overlay 15 img/s. Processus en priorité « inférieure à la
+  normale » + EcoQoS (`cfg.low_priority`, `cfg.eco_qos`), OpenCV ≤ 2 threads (`main.apply_process_policy`).
+* **Overlay** (`overlay.py`) : boucle régulière `cfg.overlay_fps` (30, budget 15), `time.sleep`
+  haute résolution ; positions **prédites à l'instant du rendu** (`engine.predict_positions` →
+  `scheduler.MotionSnapshot` : position + vitesse de Kalman, amortissement 1,5 s, horizon 0,9 s) ;
+  calques re-rendus seulement si leur signature change ; flash rendu une fois puis fondu par alpha
+  global. Règles du calque minimap (`overlay_render`) : piste vieille > 0,7 s / empilée / anonyme =
+  fantôme pointillé sans étiquette ; ≤ 4 étiquettes, une par champion et par rôle, jamais sur une
+  icône vivante ; texte des fantômes seulement pour le jungler ennemi et ≤ 45 s ; aucun fantôme
+  d'un ennemi mort ou dans sa fontaine ; carte de chaleur OU contour du brouillard, pas les deux ;
+  plus de marque « TreeAI » (elle couvrait mon portrait). Carte HUD : défaut « left_of_minimap »
+  (validé sur les captures réelles : portraits alliés, vote de reddition / Baron, boutons caméra,
+  barre d'objets), état « MORT · retour dans 8 s », siège de base / ace en DANGER (événements
+  `TurretKilled` / `InhibKilled` / `Ace`), jamais de conseil « à toi de jouer » sous une jauge
+  PRUDENT, rien de la phase de voie avant 1:05 ou mort. Toasts / bannières au style `DESIGN.md`.
+  `cfg.overlay_hide_from_capture` = True par défaut (migration des anciens fichiers).
+* **Santé** : `CoachEngine.health()` (aussi `EngineStatus.health`) : backend et img/s de capture,
+  ms p50/p95 de capture / détection / tick / coaching, overlay (img/s, ms par calque, ms
+  `UpdateLayeredWindow`), champions vus / attendus, score de la minimap, cadence et budget,
+  CPU % d'un cœur, état de la capture, pause.
+* **Diagnostic** (`diag.py`) : `Ctrl+F8` (`cfg.hotkey_diag`, enregistré par le moteur) ou
+  `CoachEngine.start_diagnostic()` (bouton de l'UI) : 60 s, une image / 2 s (minimap brute +
+  annotée + JSON détections / pistes / santé / roster réduit), une vignette de la fenêtre,
+  `meta.json` (système, réglages en liste blanche, réglages du jeu, écrans, DPI), fin du journal
+  (chemins masqués) → `%APPDATA%\TreeAICoach\diagnostics\diag_AAAAMMJJ_HHMMSS.zip`, dossier ouvert.
+  `diagnostic_status()` pour l'UI.

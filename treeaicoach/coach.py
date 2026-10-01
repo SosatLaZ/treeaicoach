@@ -12,7 +12,7 @@ Rules (each with its own cooldown; see the ``RULE_*`` constants):
   "Jungler ennemi pas vu depuis 45 s : prudence." (once per disappearance)
 * ``missing``       - >= 3 enemies seen in the last minute are now hidden, I am in a lane far
   from my towers: "3 ennemis disparus : reste prudent."
-* ``objective_setup`` - 40-55 s before a dragon / baron / herald / grubs / Atakhan spawn:
+* ``objective_setup`` - 40-55 s before a dragon / baron / herald / grubs spawn:
   "Dragon dans 45 s : préparez la vision, 2 ennemis visibles en bas."
 * ``objective_window`` - an epic monster is up and >= 4 enemies are visible far from its pit:
   "Baron dispo et 4 ennemis visibles en bas : bonne fenêtre pour Baron."
@@ -65,6 +65,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -105,7 +106,7 @@ MAX_EXTRAPOLATION_S = 2.5
 LANE_LEFT_S = 8.0              # lane opponent hidden this long (after being seen in my lane)
 LANE_LEFT_MAX_S = 60.0
 LANE_RULES_MIN_GT = 150.0
-PLATES_END_GT = 840.0          # turret plates fall at 14:00
+PLATES_END_GT = 840.0          # 14:00: end of the laning phase ("prends des plaques" wording; 2026 plates stay)
 WAVE_PUSH_S = 0.62             # meeting point (from my base) for "ta vague pousse"
 WAVE_BACK_S = 0.42
 WAVE_BIG_ENEMY = 7
@@ -152,11 +153,10 @@ CS_TARGET: dict[str, float] = {"TOP": 7.0, "MIDDLE": 7.0, "BOTTOM": 7.5, "JUNGLE
 
 _DRAGON_PIT = (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1])
 _BARON_PIT = (geometry.BARON_PIT[0], geometry.BARON_PIT[1])
-#: objective key -> (pit uv, map half) ; Atakhan's pit depends on the game: no side.
+#: objective key -> (pit uv, map half) (Atakhan was removed from the game in 26.1).
 PITS: dict[str, tuple[tuple[float, float], str] | None] = {
     "dragon": (_DRAGON_PIT, "bot"), "elder": (_DRAGON_PIT, "bot"),
     "baron": (_BARON_PIT, "top"), "herald": (_BARON_PIT, "top"), "grubs": (_BARON_PIT, "top"),
-    "atakhan": None,
 }
 _WINDOW_NAMES = {"dragon": "le dragon", "elder": "l'ancestral", "baron": "le Baron", "herald": "le Héraut",
                  "grubs": "les larves"}
@@ -173,21 +173,49 @@ TURRETS: dict[str, list[tuple[float, float]]] = {
 SIDE_FR = {"top": "en haut", "mid": "au milieu", "bot": "en bas"}
 LANE_OPP_ROLES = {"TOP": ("TOP",), "MIDDLE": ("MIDDLE",), "BOTTOM": ("BOTTOM", "UTILITY"),
                   "UTILITY": ("BOTTOM", "UTILITY")}
-#: Major (legendary) items worth announcing, itemID -> French name (Live Client ids).
-ITEM_NAMES_FR: dict[int, str] = {
-    3078: "Force de la trinité", 3071: "Couperet noir", 3031: "Lame d'infini", 3089: "Coiffe de Rabadon",
-    3153: "Lame du roi déchu", 3157: "Sablier de Zhonya", 3036: "Salutations de Dominik",
-    3072: "Soif-de-sang", 3074: "Hydre vorace", 3748: "Hydre titanesque", 6672: "Tueur de krakens",
-    6673: "Arc-bouclier immortel", 3161: "Lance de Shojin", 3508: "Collecteur d'essence",
-    3094: "Canon ultrarapide", 3046: "Danseur fantôme", 3087: "Surin de Statikk", 3115: "Dent de Nashor",
-    3135: "Bâton du vide", 3165: "Morellonomicon", 4645: "Flamme-ombre", 6653: "Tourment de Liandry",
-    3100: "Fléau de liche", 3152: "Ceinture-fusée hextech", 6655: "Compagnon de Luden",
-    3142: "Spectre de Youmuu", 6692: "Éclipse", 6694: "Rancune de Serylda", 3814: "Lame de la nuit",
-    3026: "Ange gardien", 3065: "Visage spirituel", 3075: "Cotte épineuse", 3068: "Égide de feu solaire",
-    3083: "Armure de Warmog", 3143: "Présage de Randuin", 3742: "Plaque du mort", 6333: "Danse de la mort",
-    3053: "Gage de Sterak", 6610: "Ciel fracturé", 3124: "Lame enragée de Guinsoo", 3091: "Fin de l'esprit",
-    3085: "Ouragan de Runaan", 3033: "Rappel mortel", 3139: "Cimeterre mercuriel", 3156: "Gueule de Malmortius",
-}
+#: Major (legendary) items worth announcing (Live Client ids). The French names come from the
+#: item data (:mod:`treeaicoach.game_data`: runtime Data Dragon refresh, else the bundled table), so a
+#: renamed item is never announced with a stale name ("Ciel éventré", not "Ciel fracturé").
+MAJOR_ITEM_IDS: frozenset[int] = frozenset({
+    3078, 3071, 3031, 3089, 3153, 3157, 3036, 3072, 3074, 3748, 6672, 6673, 3161, 3508, 3094, 3046, 3087,
+    3115, 3135, 3165, 4645, 6653, 3100, 3152, 6655, 3142, 6692, 6694, 3814, 3026, 3065, 3075, 3068, 3083,
+    3143, 3742, 6333, 3053, 6610, 3124, 3091, 3085, 3033, 3139, 3156,
+    # 2026 season items (patch 26.1): Aube et crépuscule, Faim insatiable, Briseur de bastion,
+    # Actualisateur, Lunettes Hextech C44, Chasseur de monstres
+    2510, 2517, 2520, 2522, 2523, 2512,
+})
+
+
+class _ItemNames(Mapping):
+    """``itemID -> French name`` for :data:`MAJOR_ITEM_IDS`, names read from the item data
+    (ids missing from the live data are left out). Read-only, cheap (dict lookups)."""
+
+    def _table(self) -> dict[int, str]:
+        from treeaicoach import game_data
+        data = game_data.items_data()
+        cached = getattr(self, "_cache", None)
+        if cached is not None and cached[0] is data:
+            return cached[1]
+        items = data.get("items") or {}
+        table = {i: str(items[str(i)].get("n") or "") for i in MAJOR_ITEM_IDS
+                 if isinstance(items.get(str(i)), dict) and items[str(i)].get("n")}
+        self._cache = (data, table)
+        return table
+
+    def __getitem__(self, key: Any) -> str:
+        return self._table()[key]
+
+    def __iter__(self):
+        return iter(self._table())
+
+    def __len__(self) -> int:
+        return len(self._table())
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._table()
+
+
+ITEM_NAMES_FR: Mapping[int, str] = _ItemNames()
 ROLE_LANE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 
 
@@ -1242,7 +1270,7 @@ class MapCoach:
             target = None
             n_dead = len(ctx.dead_enemies)
             jg_resp = self._respawn(ctx, str(ctx.jungler_alias).lower()) if ctx.jungler_alias else 0.0
-            for key in ("baron", "elder", "dragon", "herald", "grubs", "atakhan"):
+            for key in ("baron", "elder", "dragon", "herald", "grubs"):
                 s = states.get(key)
                 if s is None:
                     continue

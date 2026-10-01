@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import time
 import zipfile
-from types import SimpleNamespace as NS
 
 import numpy as np
 

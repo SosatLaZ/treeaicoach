@@ -31,7 +31,7 @@ from treeaicoach import geometry
 
 log = logging.getLogger(__name__)
 
-LANING_END_GT = 840.0          # 14:00: plates fall, laning phase over
+LANING_END_GT = 840.0          # 14:00: laning phase over (2026: plates stay all game, waves every 25 s)
 LATE_GT = 1500.0               # 25:00
 END_DEATH_TIMER_S = 40.0       # death timers this long = the game can end on one fight
 BARON_BUFF_S = 180.0

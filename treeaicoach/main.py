@@ -224,6 +224,17 @@ def _default_selftest_out() -> Path | None:
         return None
 
 
+def _start_game_data_refresh(cfg: Any) -> None:
+    """Background Data Dragon refresh (items / champions of the live patch, at most once a day).
+    Uses the same switch as the other public-asset downloads (``download_skin_icons``)."""
+    try:
+        from treeaicoach import game_data
+
+        game_data.refresh_async(allow_network=bool(getattr(cfg, "download_skin_icons", True)))
+    except Exception:
+        log.debug("Data Dragon refresh not started", exc_info=True)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point; returns the process exit code. ``argv`` defaults to ``sys.argv[1:]``."""
     try:
@@ -259,6 +270,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             message_box(ALREADY_RUNNING_TEXT)
             return 0
         apply_process_policy(cfg)
+        if not args.ui_smoke and not args.demo:
+            _start_game_data_refresh(cfg)
         if args.nogui:
             return run_console(cfg, demo=args.demo, duration=args.duration)
         return run_gui(cfg, demo=args.demo, smoke_seconds=UI_SMOKE_SECONDS if args.ui_smoke else None)

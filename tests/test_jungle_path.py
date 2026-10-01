@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from treeaicoach import geometry
+from treeaicoach import jungle_path as jp
 from treeaicoach.fog_tracker import FogTracker, shared_reachability
 from treeaicoach.jungle_intel import JungleIntelTracker
 from treeaicoach.jungle_path import JunglePathModel, _camps_of
@@ -37,10 +38,10 @@ def test_sighting_selects_the_start_side_and_follows_the_clear():
     m = JunglePathModel()
     m.set_team("CHAOS")
     camps = _camps_of("CHAOS")
-    m.observe_seen(100.0, RED_BUFF_CHAOS)          # red buff start (top side for CHAOS)
-    s = m.summary(100.0)
+    m.observe_seen(65.0, RED_BUFF_CHAOS)           # red buff start (top side for CHAOS; camps at 0:55)
+    s = m.summary(65.0)
     assert s["p_red_side_start"] > 0.95 and s["broken"] is None
-    h = m.heat(140.0)
+    h = m.heat(105.0)
     near_side = max(_mass_near(h, camps["krugs"]), _mass_near(h, camps["raptors"]))
     far_side = max(_mass_near(h, camps["blue"]), _mass_near(h, camps["gromp"]))
     assert near_side > 0.15 and near_side > 5 * far_side
@@ -65,9 +66,9 @@ def test_cs_tick_favours_hypotheses_finishing_a_camp():
     m = JunglePathModel()
     m.set_team("CHAOS")
     w0 = m.summary(0)["p_route"]
-    m.observe_farm(104.0, 112.0)                   # first camp done ~1:50: normal pace
+    m.observe_farm(69.0, 77.0)                     # first camp done ~1:15: normal pace (camps at 0:55)
     assert m.summary(0)["p_route"] >= w0 * 0.9
-    assert m.heat(115.0) is not None
+    assert m.heat(80.0) is not None
 
 
 def test_fog_estimate_carries_heat_and_is_kept_alive_early():
@@ -100,13 +101,13 @@ def test_heat_beats_uniform_on_a_scripted_clear():
     m = JunglePathModel()
     m.set_team("CHAOS")
     route = next(r for r in m._routes["CHAOS"] if r.name == "full_red_start")
-    m.observe_seen(100.0, RED_BUFF_CHAOS)
+    m.observe_seen(65.0, RED_BUFF_CHAOS)
     walk = shared_reachability().walkable
     uni = walk.astype(np.float32) / walk.sum()
     gains = []
-    for gt in range(110, 200, 5):
-        tu = float(np.interp(gt - 90.0, route.ts, route.us))
-        tv = float(np.interp(gt - 90.0, route.ts, route.vs))
+    for gt in range(75, 165, 5):
+        tu = float(np.interp(gt - jp.CAMP_SPAWN_GT, route.ts, route.us))
+        tv = float(np.interp(gt - jp.CAMP_SPAWN_GT, route.ts, route.vs))
         h = m.heat(float(gt))
         gains.append(_mass_near(h, (tu, tv)) / max(_mass_near(uni, (tu, tv)), 1e-9))
     assert float(np.median(gains)) > 5.0, gains

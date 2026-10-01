@@ -4,7 +4,7 @@
   power curve, range, play style, mobility) and the public roster of the Live Client API: two
   short lines of lane plan against my lane opponent ("Darius est plus fort tôt : farme prudemment
   jusqu'au niveau 6", "Il a moins de portée : tape-le quand il prend un sbire") and one line about
-  the enemy jungler ("Lee Sin ganke tôt : balise ta rivière avant 2:45"), with the side of his
+  the enemy jungler ("Balise ta rivière avant 2:30 : Lee Sin ganke tôt" - 2026: camps spawn at 0:55), with the side of his
   PROBABLE first gank (the enemy side lane with the strongest early game / most crowd control:
   a heuristic, always labelled "probable"). Junglers get a "first gank" lane instead.
 * :func:`map_fields` - soul point, Baron / Elder buff owner and time left from
@@ -31,7 +31,6 @@ OBJ_ROLES: dict[str, tuple[str, ...]] = {
     "herald": ("JUNGLE", "TOP", "MIDDLE"),
     "baron": ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"),
     "elder": ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"),
-    "atakhan": ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"),
 }
 _CC_STYLES = ("engage", "pick")
 
@@ -129,10 +128,10 @@ def jungle_line(jungler: Any, gank_side: str | None, my_role: str | None) -> str
     name = _name(jungler)
     where = f" (probable {SIDE_FR[gank_side]})" if gank_side in SIDE_FR else ""
     if m.curve == "early" or m.has("dive") or m.has("engage"):
-        return f"Balise ta rivière avant 3:00 : {name} ganke tôt{where}"
+        return f"Balise ta rivière avant 2:30 : {name} ganke tôt{where}"
     if m.curve == "late":
-        return f"Joue ta voie : {name} farme surtout, premier gank vers 3:30{where}"
-    return f"Surveille ta rivière vers 3:00 : premier gank de {name}{where}"
+        return f"Joue ta voie : {name} farme surtout, premier gank vers 3:00{where}"
+    return f"Surveille ta rivière vers 2:30 : premier gank de {name}{where}"
 
 
 def jungler_first_gank(enemies: list[Any]) -> tuple[str, str] | None:

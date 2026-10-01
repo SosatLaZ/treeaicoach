@@ -65,7 +65,7 @@ STATS_EVERY_S = 1.0              # health monitor refresh (CPU %, rates)
 STALE_MIN_GAME_S = 90.0          # frozen-capture check only once minions walk (game time, s)
 TRIVIAL_BUY_AFTER_S = 1200.0     # after 20:00 ...
 TRIVIAL_BUY_GOLD = 500           # ... no HUD chip for a lone component cheaper than this (not completing)
-EARLY_ADVICE_GT_S = 65.0         # no lane-phase tip / insight on the HUD line before the minions spawn
+EARLY_ADVICE_GT_S = 30.0         # no lane-phase tip / insight on the HUD line before the minions spawn (0:30 since 26.1)
 #: words of a "go" HUD line (hidden under a PRUDENT / SAFE gauge: no contradiction on the card)
 GO_WORDS = ("à toi de jouer", "joue agressif", "vas-y", "va-y", "attaque", "engage", "force ", "punis")
 VERIFY_BAD_S = 3.0               # verify() below threshold this long -> relocate
@@ -177,13 +177,14 @@ class FrameSource(Protocol):
 
 
 # ------------------------------------------------------------------------------ helpers
-_MAP_NAMES = {12: "ARAM", 30: "Arène", 21: "Nexus Blitz", 22: "TFT"}
+_MAP_NAMES = {12: "ARAM", 30: "Arène", 21: "Nexus Blitz", 22: "TFT", 453: "League Classic"}
 
 
 def unsupported_message(game: Any) -> str:
     """MSG_UNSUPPORTED + the detected map / mode (ARAM, Arène...) when known."""
     try:
         name = _MAP_NAMES.get(int(getattr(game, "map_number", 0) or 0)) or \
+            ("League Classic" if getattr(game, "is_league_classic", False) is True else None) or \
             (str(getattr(game, "game_mode", "") or "").strip() or None)
     except (TypeError, ValueError):
         name = None
@@ -1838,11 +1839,14 @@ class CoachEngine:
         """Gank alerts to speak: WARNING ones (and pre-alerts) whose enemies are all inside the
         camera view (on my screen) are throttled and written instead (HUD line + toast; the
         overlay threat level is unchanged). DANGER ("recule !") is always spoken: it is an
-        instruction, not news, and its latency is guaranteed. Without a camera rectangle,
+        instruction, not news, and its latency is guaranteed. Without a camera rectangle, or for
+        a beginner (``skill_level == "debutant"``: real game, he died to enemies on his screen),
         everything is spoken. Never raises."""
         tracker = self._tracker
         if tracker is None or not any(int(a.level) < Level.DANGER for a in gank):
             return gank
+        if str(getattr(self._cfg, "skill_level", "") or "") == "debutant":
+            return gank          # a beginner does not read an enemy on his screen as a gank: spoken
         try:
             rect = self._camera_rect_now(t, frame)
             box = tuple(_finite(getattr(rect, k, None)) for k in ("u0", "v0", "u1", "v1")) \
@@ -1940,7 +1944,7 @@ class CoachEngine:
             try:
                 for o in (self._objectives.states() if self._objectives is not None else []):
                     rem = getattr(o, "remaining", None)
-                    if getattr(o, "key", "") in ("dragon", "baron", "herald", "grubs", "elder", "atakhan") and (
+                    if getattr(o, "key", "") in ("dragon", "baron", "herald", "grubs", "elder") and (
                             getattr(o, "alive", False) or (rem is not None and 0 <= rem <= 120)):
                         soon = True
             except Exception:

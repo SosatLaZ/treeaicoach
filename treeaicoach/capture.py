@@ -660,7 +660,10 @@ class SmartCapture:
         try:
             if name == "mss":
                 return impl.grab(rect, pad=pad)
-            return impl.grab(rect)
+            out = impl.grab(rect)
+            if out is None and getattr(impl, "dead", False):
+                self.disable(name, getattr(impl, "last_error", None) or "unsupported")
+            return out
         except Exception as exc:   # backends never raise, but be safe
             log.debug("%s grab raised: %s", name, exc)
             return None
