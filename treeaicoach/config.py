@@ -147,6 +147,14 @@ BOOL_FIELDS = BOOL_FIELDS + (
 )
 UPDATE_TEXT_FIELDS["ui_seen_changelog"] = 32
 BOOL_FIELDS = BOOL_FIELDS + ("item_advice", "item_advice_toasts", "item_advice_speak")
+# optional LLM advice (ai_advisor.py) + "mode annonceur" / win probability (hype.py)
+CHOICES.update({
+    "ai_provider": ("off", "gemini", "groq", "openrouter", "ollama", "anthropic"),
+    "caster_style": ("sobre", "coach", "caster"),
+})
+BOOL_FIELDS = BOOL_FIELDS + ("ai_speak", "win_prob_hud")
+UPDATE_TEXT_FIELDS["ai_api_key"] = 512
+UPDATE_TEXT_FIELDS["ai_model"] = 128
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -280,6 +288,14 @@ class Config:
     item_advice: bool = True
     item_advice_toasts: bool = True
     item_advice_speak: bool = False
+    # optional LLM advice (ai_advisor.py): off by default, the key stays on this PC (never exported)
+    ai_provider: str = "off"         # "off" | "gemini" | "groq" | "openrouter" | "ollama" | "anthropic"
+    ai_api_key: str = ""
+    ai_model: str = ""               # "" = default model of the provider
+    ai_speak: bool = False           # written only (toast + HUD) unless enabled
+    # "mode annonceur" (hype.py): sobre = nothing spoken, coach = win-probability swings, caster = + hype lines
+    caster_style: str = "coach"
+    win_prob_hud: bool = True        # show the live win probability (HUD line / dashboard)
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""

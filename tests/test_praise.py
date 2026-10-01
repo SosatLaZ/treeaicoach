@@ -293,7 +293,7 @@ def test_engine_praise_voice_toast_and_recorder(monkeypatch, tmp_path):
     rec = _Rec()
     clock = [0.0]
     voice = _Voice()
-    eng = CoachEngine(Config(), voice, frame_source=_Source(sim), clock=lambda: clock[0],
+    eng = CoachEngine(Config(voice_level="normal"), voice, frame_source=_Source(sim), clock=lambda: clock[0],
                       enable_hotkeys=False, manage_overlay=False, recorder_factory=lambda: rec)
     try:
         said = []

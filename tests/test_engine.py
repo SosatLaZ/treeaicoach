@@ -418,7 +418,8 @@ class FakeRecorder:
 def test_death_recap_spoken_two_seconds_later():
     rec = FakeRecorder()
     game_ref: dict[str, Any] = {"g": game_info(500.0)}
-    eng, voice, clock = make_engine(ListSource([None], lambda t: game_ref["g"]), recorder_factory=lambda: rec)
+    eng, voice, clock = make_engine(ListSource([None], lambda t: game_ref["g"]), recorder_factory=lambda: rec,
+                                    cfg=Config(voice_level="normal"))   # "minimal": the recap is written
     kill = {"EventID": 5, "EventName": "ChampionKill", "EventTime": 501.0, "VictimName": "Moi#EUW",
             "KillerName": "LeeSin#T", "Assisters": []}
     spoken_at = None

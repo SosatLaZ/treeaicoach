@@ -412,7 +412,7 @@ def _close(a: Any, b: Any) -> bool:
 # Settings export / import
 # ======================================================================================
 #: Never exported (secret / machine specific).
-EXPORT_EXCLUDE = frozenset({"github_token", "ui_geometry", "manual_minimap_rect", "icon_scale_by_res",
+EXPORT_EXCLUDE = frozenset({"github_token", "ai_api_key", "ui_geometry", "manual_minimap_rect", "icon_scale_by_res",
                             "radar_xy", "hud_xy", "ui_last_page", "ui_onboarding_done", "ui_seen_changelog"})
 
 
