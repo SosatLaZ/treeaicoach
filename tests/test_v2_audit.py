@@ -313,9 +313,9 @@ def test_plays_no_gaffe_for_things_out_of_the_players_hands():
 
 # ====================================================================== wording
 def test_win_probability_line_follows_the_level():
-    assert "L'avantage est pour nous" not in swing_phrase(0.50, 0.30, "sobre")
-    assert "Partie serrée" in swing_phrase(0.50, 0.30, "sobre")
-    assert "L'avantage est pour nous" in swing_phrase(0.62, 0.40, "sobre")
+    assert "avantage" not in swing_phrase(0.50, 0.30, "sobre")
+    assert "partie serrée" in swing_phrase(0.50, 0.30, "sobre")
+    assert "avantage" in swing_phrase(0.62, 0.40, "sobre")
     assert "prudent" in swing_phrase(0.38, 0.60, "sobre")
 
 
