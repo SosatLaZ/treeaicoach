@@ -453,7 +453,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: 240 <= c.gt <= 1200 and c.wave == "pushing", roles=("MIDDLE",), prio=2, conf=MAP),
     # ------------------------------------------------------------------ vision
     T("vis_river", "vision", "Pose ta balise dans la rivière : premier gank vers 2:30",
-      lambda c: 45 <= c.gt <= 120, roles=LANERS, prio=2),
+      lambda c: 100 <= c.gt <= 150, roles=LANERS, prio=2),   # a ward at 0:45 has expired by the 2:30 gank
     # 2026 Faelights ("lampes féeriques"): a ward on one gets +25 % vision and reveals an area 45 s
     T("vis_faelight", "vision", "Pose ta balise sur une lampe féerique : vision bonus 45 s",
       lambda c: 90 <= c.gt <= 900 and not c.in_base and not c.dead, roles=("UTILITY", "JUNGLE", "MIDDLE"),
@@ -468,7 +468,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.early and c.jg_last_side in ("top", "bot") and c.jg_hidden_s is not None
       and 10 <= c.jg_hidden_s <= 60, roles=("MIDDLE",), prio=2, conf=MAP),
     T("vis_top_bush", "vision", "Balise le buisson de la rivière : ganks par derrière",
-      lambda c: 150 <= c.gt <= 480, roles=("TOP",), prio=2),
+      lambda c: 330 <= c.gt <= 480, roles=("TOP",), prio=2),   # (not on top of the 2:00 river ward line)
     T("vis_bot_bush", "vision", "Garde le buisson de ta voie : il cache leurs attaques",
       lambda c: 90 <= c.gt <= 480, roles=("BOTTOM", "UTILITY"), prio=2),
     T("vis_deep", "vision", "Balise leur jungle : tu sauras où va {jg}",
