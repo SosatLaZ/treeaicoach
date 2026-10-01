@@ -60,11 +60,11 @@ from typing import Any, Callable, Iterable
 log = logging.getLogger(__name__)
 
 RULES: tuple[str, ...] = ("capture", "minimap", "perf", "champions", "identity", "overlay", "voice", "ai",
-                          "api")
+                          "api", "adapt")
 RULE_LABELS: dict[str, str] = {
     "capture": "Capture d'écran", "minimap": "Minimap", "perf": "Performance",
     "champions": "Détection des champions", "identity": "Identités des champions", "overlay": "Overlay",
-    "voice": "Voix", "ai": "IA conseil", "api": "API du jeu",
+    "voice": "Voix", "ai": "IA conseil", "api": "API du jeu", "adapt": "Adaptations automatiques",
 }
 #: Load levels of rule 3 (sysperf.PerfBudget.load_level): internal name, French label.
 LOAD_NAMES: tuple[str, ...] = ("normal", "allege", "minimal")
@@ -250,6 +250,14 @@ class Snapshot:
     ai_seq: int = 0
     ai_code: str | None = None
     ai_backoff_until: float | None = None    # the advisor's back-off deadline (a later one = a new failure)
+    # automatic adaptations of this PC (never silent): budget, capture backend, icon scale
+    perf_forced: bool = False             # the player forced the normal profile (no load level)
+    budget_profile: str | None = None     # "normal" | "low_end"
+    budget_auto: bool = True              # chosen automatically (perf_mode "auto")
+    budget_reason: str | None = None
+    capture_switches: int = 0
+    capture_last_switch: str | None = None
+    icon_scale: float | None = None       # roster matcher calibration of this game
     # (9 api: fed by the Live Client poller, see SelfCheck.api_update)
 
 
@@ -407,6 +415,7 @@ class SelfCheck:
                        frames=None, frames_t=None, explained=set())
         self._voice = _ns(hold=_Hold(VOICE_ON_S, VOICE_OFF_S), failures=None, fail_t=deque(maxlen=16))
         self._ai = _ns(mark=None, blocked=False, errors=0)
+        self._adapt = _ns(scale0=None, scale_last=None, notes={})
         self._t0 = t
 
     def new_game(self, t: float, game_time: float | None = None) -> None:
@@ -521,7 +530,7 @@ class SelfCheck:
                 for name, fn in (("capture", self._r_capture), ("minimap", self._r_minimap),
                                  ("perf", self._r_perf), ("champions", self._r_champions),
                                  ("identity", self._r_identity), ("overlay", self._r_overlay),
-                                 ("voice", self._r_voice), ("ai", self._r_ai)):
+                                 ("voice", self._r_voice), ("ai", self._r_ai), ("adapt", self._r_adapt)):
                     if name not in self.rules:
                         continue
                     try:
@@ -611,6 +620,14 @@ class SelfCheck:
     def _r_perf(self, s: Snapshot) -> list[Action]:
         st = self._perf
         t = s.t
+        if s.perf_forced:                  # "Forcer profil normal": no automatic load level
+            st.starve_since = st.healthy_since = None
+            if self.load_level > 0:
+                self.load_level = 0
+                self._perf_changed_t = t
+                self._resolve(t, "perf", "profil normal forcé")
+                return [Action("perf_level", "perf", 0)]
+            return []
         if not (s.in_game and s.detecting):
             st.detecting_since = None
             st.starve_since = st.healthy_since = None
@@ -847,6 +864,51 @@ class SelfCheck:
             self._acted(t, "ai", f"IA arrêtée pour la partie ({why})")
             return [Action("ai_block", "ai", True)]
         return []
+
+    # ---- 10 automatic adaptations (made visible: "same version, different analysis" between PCs)
+    def _r_adapt(self, s: Snapshot) -> list[Action]:
+        st = self._adapt
+        t = s.t
+        if s.budget_profile == "low_end" and s.budget_auto:
+            self._adapt_note(t, "budget", f"Profil PC faible activé automatiquement ({s.budget_reason or 'auto'})")
+        if s.capture_switches > 0 and s.capture_last_switch:
+            self._adapt_note(t, "capture", f"Capture changée automatiquement : {s.capture_last_switch}")
+        sc = s.icon_scale
+        if sc:
+            if st.scale0 is None:
+                st.scale0 = st.scale_last = sc
+            elif abs(math.log(sc / st.scale_last)) > 0.06:
+                self._adapt_note(t, "scale", f"Taille des icônes recalibrée automatiquement "
+                                             f"({st.scale0:.3f} → {sc:.3f})".replace(".", ","))
+                st.scale_last = sc
+        return []
+
+    def _adapt_note(self, t: float, key: str, text: str) -> None:
+        notes = self._adapt.notes
+        if notes.get(key) == text:
+            return
+        notes[key] = text
+        self._raise(t, "adapt", " · ".join(notes.values()), 0)
+        self._acted(t, "adapt", text)
+
+    def note(self, t: float, rule: str, text: str) -> None:
+        """An action of the player or of the app worth the log / the report (reset, forced profile)."""
+        with self._lock:
+            g = self._game.get(rule)
+            if g is not None:
+                g.actions.append(text)
+            self._event(float(t), rule, "action", text)
+
+    def force_normal(self, t: float) -> None:
+        """"Forcer profil normal": load level 0 now (the engine pushes the knobs)."""
+        with self._lock:
+            self.load_level = 0
+            self._perf_changed_t = float(t)
+            self._problems.pop("perf", None)
+            self._adapt.notes.pop("budget", None)
+            if not self._adapt.notes:
+                self._problems.pop("adapt", None)
+            self._event(float(t), "perf", "action", "profil normal forcé")
 
     # ---- 9 api (fed by the Live Client poller: one source of truth, in and out of a game)
     def api_update(self, t: float, ok: bool, window: bool | None, in_game: bool = False,
@@ -1100,8 +1162,7 @@ def summary_text(summary: Any) -> tuple[str, int]:
         level = int(summary.get("level") or 0)
         bits = [str(summary.get("title") or ("Santé TreeAI : OK" if level == 0 else "Santé TreeAI : dégradé"))]
         bits += [str(r) for r in (summary.get("reasons") or [])[:3]]
-        if level == 0:
-            bits += [str(r) for r in (summary.get("notes") or [])[:1]]
+        bits += [str(r) for r in (summary.get("notes") or [])[:2]]      # adaptations: never silent
         fixed = [str(f) for f in (summary.get("fixed") or [])[:2]]
         if fixed:
             bits.append("corrigé : " + ", ".join(fixed))
@@ -1264,6 +1325,17 @@ def snapshot_from_engine(eng: Any, t: float) -> Snapshot:
             s.ai_code = _ai_code(text)
             bu = getattr(ai, "_blocked_until", None)
             s.ai_backoff_until = float(bu) if isinstance(bu, (int, float)) and not math.isnan(bu) else None
+        # automatic adaptations (rule "adapt")
+        b = eng._budget
+        s.budget_profile, s.budget_auto, s.budget_reason = b.name, b.mode == "auto", b.reason
+        s.perf_forced = str(getattr(eng._cfg, "perf_mode", "auto")) == "normal"
+        st = getattr(cap, "stats", None)
+        if isinstance(st, dict):
+            s.capture_switches = int(st.get("switches") or 0)
+            s.capture_last_switch = st.get("last_switch")
+        m = getattr(eng._detector, "matcher", None) if eng._detector is not None else None
+        sc_ = getattr(m, "scale", None) if m is not None else None
+        s.icon_scale = float(sc_) if isinstance(sc_, (int, float)) and sc_ > 0 else None
     except Exception:
         log.debug("selfcheck snapshot failed", exc_info=True)
     return s

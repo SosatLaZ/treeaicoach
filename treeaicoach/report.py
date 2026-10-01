@@ -909,6 +909,8 @@ def _selfcheck_section(record: dict) -> str:
     lis = []
     for p in probs:
         kind = "good" if p.get("outcome") == "fixed" else ("warn" if p.get("outcome") == "open" else "info")
+        if p.get("rule") == "adapt":            # automatic adaptations of this PC: shown, not a fault
+            kind, p = "info", dict(p, outcome_fr="adaptation automatique", actions=[])
         when = f" à {_fmt_time(p.get('first_gt'))}" if p.get("first_gt") is not None else ""
         dur = p.get("active_s")
         dur_txt = f", {int(round(float(dur)))} s" if isinstance(dur, (int, float)) and dur >= 1 else ""

@@ -373,10 +373,28 @@ class VisionMixin:
             fog = self._fog.estimates() if self._fog is not None else []
             return pd.update(t, gt, game, tracker, lane_opponents=lane, jungler=jg, threat=threat,
                              gank_danger_t=self._last_danger_t,
-                             in_fight=bool(tac is not None and tac.in_fight()), fog=fog)
+                             in_fight=bool(tac is not None and tac.in_fight()), fog=fog,
+                             recalling=self.recalling(t))
         except Exception:
             self._err.exception("Personal danger failed")
             return []
+
+    RECALL_HOLD_S = 1.5             # a recall reading this old still counts (detector cadence)
+
+    def note_recall(self, active: bool, t: float | None = None) -> None:
+        """My recall channel was seen (True) / is over (False) - fed by a screen / minimap reader of
+        the recall bar ("Rappel 6.1"). Coaching side: danger.PersonalDanger (cancel or nothing).
+        Never raises."""
+        try:
+            now = self._clock() if t is None else float(t)
+            self._recall_seen_t = now if active else None
+        except Exception:
+            self._recall_seen_t = None
+
+    def recalling(self, t: float) -> bool:
+        """My recall is channelling right now (see :meth:`note_recall`)."""
+        seen = getattr(self, "_recall_seen_t", None)
+        return seen is not None and 0.0 <= float(t) - seen <= self.RECALL_HOLD_S
 
     def _death_recap_alerts(self, t: float) -> list[Alert]:
         due = self._death_due

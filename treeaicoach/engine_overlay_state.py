@@ -314,6 +314,8 @@ class OverlayStateMixin:
             if lvl <= 0 or now - float(getattr(st, "t", now)) > 1.5:
                 return None
             reason = str(getattr(st, "reason", "") or "")
+            if getattr(st, "rule", None) == "recall":
+                return lvl, "RAPPEL EN DANGER"      # card line: "Annule ton rappel : Lux peut l'interrompre"
             if "contre" in reason:
                 return lvl, reason.upper()
             foes = list(getattr(st, "foes", ()) or ())

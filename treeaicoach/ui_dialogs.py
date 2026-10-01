@@ -180,6 +180,7 @@ class DialogsMixin:
 
     def _error_page(self, key: str) -> Any:
         page = self.ctk.CTkFrame(self.content, fg_color=BG, corner_radius=0)
+        page.is_error_page = True  # type: ignore[attr-defined]
         self._label(page, "Cette page n'a pas pu être affichée (voir les journaux).", self.fonts.h3,
                     DANGER).pack(pady=60)
         return page

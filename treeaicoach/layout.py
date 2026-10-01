@@ -70,6 +70,7 @@ ZONE_LABELS: dict[str, str] = {
     "team_frames": "Portraits alliés (colonne de gauche)",
     "death_recap": "Récap de mort",
     "respawn": "Retour dans (mort)",
+    "cast_bar": "Barre de canalisation (Rappel)",
     "shop": "Boutique",
 }
 #: Zones that only exist in some states (relaxed last, never for the default card).
@@ -132,9 +133,12 @@ def _box(x0: float, y0: float, x1: float, y1: float) -> RectT:
 
 
 def ui_unit(screen: Sequence[int]) -> float:
-    """League's UI unit: ``min(h, w * 9 / 16)`` px (1080 at 1080p, 1440 at 3440 x 1440)."""
+    """League's UI unit: the screen height, down to 4:3 (``min(h, w * 3 / 4)``): 1080 at 1080p,
+    1440 at 3440 x 1440, 1344 on a 1899 x 1344 window. A screen taller than 16:9 keeps its
+    height-sized HUD (a 1899 x 1344 stream capture had the card against the item panel when the
+    unit was width-limited to 1068): conservative envelope."""
     try:
-        return float(max(200.0, min(float(screen[3]), float(screen[2]) * 9.0 / 16.0)))
+        return float(max(200.0, min(float(screen[3]), float(screen[2]) * 3.0 / 4.0)))
     except Exception:
         return REF_H
 
@@ -238,7 +242,9 @@ def game_zones(screen: Any, minimap: Any, side: str | None = None, hud_scale: fl
         add("scoreboard", right - 0.37 * u, sy, right, sy + 0.062 * u)
         add("announcer", cx - 0.32 * u, sy + 0.072 * u, cx + 0.32 * u, sy + 0.142 * u)
         # ---- bottom centre
-        add("bottom_bar", cx - 0.30 * u, bottom - 0.135 * u, cx + 0.30 * u, bottom)
+        add("bottom_bar", cx - 0.31 * u, bottom - 0.135 * u, cx + 0.31 * u, bottom)
+        # recall / channel bar ("Rappel"), right above the spells: frequent (every recall)
+        add("cast_bar", cx - 0.16 * u, bottom - 0.215 * u, cx + 0.16 * u, bottom - 0.13 * u)
         add("stats_panel", cx - 0.42 * u, bottom - 0.18 * u, cx - 0.26 * u, bottom)
         add("respawn", cx - 0.14 * u, bottom - 0.335 * u, cx + 0.14 * u, bottom - 0.165 * u)
         # ---- left side (the chat moves away from a left-side minimap)
@@ -265,7 +271,7 @@ def zone_rects(zones: Iterable[Zone], *, soft: bool = True, conditional: bool = 
 
 #: Always-on parts of League's HUD (in-world ground markers must never cover them; the ally
 #: portraits are either the row above the minimap or the column on the left, both kept).
-HUD_KEYS = ("minimap", "minimap_buttons", "bottom_bar", "scoreboard", "ally_row", "team_frames")
+HUD_KEYS = ("minimap", "minimap_buttons", "bottom_bar", "cast_bar", "scoreboard", "ally_row", "team_frames")
 
 
 # ======================================================================================
@@ -689,6 +695,11 @@ def _place(name: str, spec: ElementSpec, rails: list[tuple[_Rail, str, int]], c:
     return Slot(name, (x, y, spec.w, spec.h), spec.content(x, y), "fallback!", "top", halign, ("unplaced",))
 
 
+def _dirty(slot: Slot) -> bool:
+    """A slot that still covers League's UI (other than the soft shop) or another element."""
+    return any(h != "shop" for h in slot.hits) or slot.anchor.endswith("!")
+
+
 def solve(screen: Any, minimap: Any, specs: dict[str, ElementSpec], prefs: Prefs | None = None,
           zones: list[Zone] | None = None) -> Layout:
     """Place every element of ``specs`` ("card", "toasts", "timers", "badge_big", "badge_small";
@@ -704,6 +715,11 @@ def solve(screen: Any, minimap: Any, specs: dict[str, ElementSpec], prefs: Prefs
         if prefs.radar is not None:
             placed["radar"] = Slot("radar", prefs.radar, prefs.radar, "radar")
         halign_in = "right" if side != "left" else "left"
+        # ---- toast / banner layer first: its band (top centre, right under the kill announcer)
+        #      is fixed by League's UI, the card has many other places
+        spec = specs.get("toasts")
+        if spec is not None and prefs.toasts:
+            placed["toasts"] = _place("toasts", spec, _toast_rails(c, spec), c, placed, "center")
         # ---- the HUD card (the main channel): its named position first
         spec = specs.get("card")
         if spec is not None and prefs.hud_enabled:
@@ -720,10 +736,6 @@ def solve(screen: Any, minimap: Any, specs: dict[str, ElementSpec], prefs: Prefs
                 rails = _card_rails(c, spec.w, spec.h, prefs.hud_position)
                 halign = halign_in if prefs.hud_position in ("left_of_minimap", "above_minimap") else "left"
                 placed["card"] = _place("card", spec, rails, c, placed, halign)
-        # ---- toast / banner layer (top centre, under the kill announcer)
-        spec = specs.get("toasts")
-        if spec is not None and prefs.toasts:
-            placed["toasts"] = _place("toasts", spec, _toast_rails(c, spec), c, placed, "center")
         # ---- timers strip (hangs outside the minimap frame, inner side, top)
         spec = specs.get("timers")
         if spec is not None and prefs.timers:
@@ -737,6 +749,12 @@ def solve(screen: Any, minimap: Any, specs: dict[str, ElementSpec], prefs: Prefs
             if spec is not None:
                 placed["badge_small"] = _place("badge_small", spec, _badge_rails(c, spec, True, placed), c, placed,
                                                "center")
+            big, small = placed.get("badge_big"), placed.get("badge_small")
+            if big is not None and small is not None and _dirty(big) and not _dirty(small):
+                # no clean place for the big badge (narrow / tall screen): big plays are shown at
+                # the small size in the small badge's slot (fx_render.badge_size)
+                placed["badge_big"] = Slot("badge_big", small.rect, small.content, "as_small", small.valign,
+                                           small.halign, ())
         placed.pop("radar", None)
         return Layout(scr, mm, side, c.U, tuple(zl), placed)
     except Exception:

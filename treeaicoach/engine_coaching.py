@@ -689,7 +689,8 @@ class CoachingMixin:
         if text in memo:
             return memo[text]
         low = text.casefold()
-        if any(w in low for w in ("recule", "danger", "gank !", "fuis", "ta base", "ace :")):
+        if any(w in low for w in ("recule", "danger", "gank !", "fuis", "ta base", "ace :", "annule ton rappel",
+                                  "reste sous ta tour :")):
             return "danger"
         if any(w in low for w in ("attention", "prudent", "évite", "safe")):
             return "warning"

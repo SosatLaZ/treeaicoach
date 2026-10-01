@@ -663,7 +663,11 @@ def test_engine_load_levels_push_and_restore_the_cost_knobs(restore_knobs):
     from treeaicoach import overlay, roster_matcher
 
     base_ring, base_stack = roster_matcher.RING_PROP_EVERY, roster_matcher.STACKV_EVERY
-    eng, clock, *_ = live(cfg=replace(Config(), perf_mode="normal"))
+    from treeaicoach.sysperf import PerfBudget
+
+    eng, clock, *_ = live()
+    eng._budget = PerfBudget("auto", cores=16, target_fps=12.0)
+    eng._budget._decided = True                             # (auto, normal profile: no low-end switch here)
     eng._selfcheck.rules.add("perf")
     eng._selfcheck.tick_p95 = lambda since: 12.0            # (deterministic: the rate drives this test)
     run(eng, clock, 35.0, dt=0.5)                           # 2 img/s analysed for a 6-12 img/s target
@@ -889,3 +893,105 @@ def test_selfcheck_overhead_per_tick_is_small():
     cost = eng._selfcheck.cost.summary()
     assert cost["n"] >= 200
     assert cost["mean"] < 1.0, cost                           # (measured ~0.03-0.1 ms; generous for CI)
+
+
+# ======================================================================================
+# per-PC consistency: adaptations made visible, fingerprint, reset / forced profile
+# ======================================================================================
+def test_automatic_adaptations_are_visible_notes_and_reported():
+    from treeaicoach import report
+
+    sc = SelfCheck()
+    drive(sc, 0, 5, lambda t: Snapshot(t=t, game_time=100 + t, budget_profile="low_end", budget_auto=True,
+                                        budget_reason="4 CPU logiques", capture_switches=1,
+                                        capture_last_switch="dxgi -> mss: black frames", icon_scale=0.094))
+    drive(sc, 6, 8, lambda t: Snapshot(t=t, budget_profile="low_end", budget_auto=True,
+                                        budget_reason="4 CPU logiques", icon_scale=0.104))
+    p = status(sc, "adapt")
+    assert p is not None and p[1] == 0                                   # a note: Santé stays OK
+    assert "Profil PC faible activé automatiquement (4 CPU logiques)" in p[0]
+    assert "dxgi -> mss" in p[0] and "recalibrée" in p[0]
+    text, level = summary_text(sc.summary())
+    assert level == 0 and "Profil PC faible" in text                     # never silent in the app
+    html = report._selfcheck_section({"selfcheck": sc.game_report()})
+    assert "Adaptations automatiques" in html and "adaptation automatique" in html
+    sc2 = SelfCheck()                                                     # forced by the player: no note
+    drive(sc2, 0, 5, lambda t: Snapshot(t=t, budget_profile="low_end", budget_auto=False))
+    assert status(sc2, "adapt") is None
+
+
+def test_forced_normal_profile_stops_the_load_levels():
+    sc = SelfCheck()
+    drive(sc, 0, 30, lambda t: perf(t, detect_fps=2.0))
+    assert sc.load_level == 1
+    acts = drive(sc, 31, 100, lambda t: perf(t, detect_fps=2.0, perf_forced=True))
+    assert [(a.kind, a.arg) for _t, a in acts] == [("perf_level", 0)] and sc.load_level == 0
+    assert status(sc, "perf") is None
+
+
+def test_fingerprint_text_compare_and_no_secret():
+    from treeaicoach import fingerprint
+
+    eng, clock, *_ = live(cfg=Config(ai_api_key="SECRET-123", skill_level="expert", target_fps=10.0))
+    run(eng, clock, 2.0)
+    fp = eng.config_fingerprint()
+    text = fingerprint.to_text(fp)
+    assert text.startswith("Empreinte TreeAI") and "SECRET" not in text
+    for key in ("app.version", "réglage.skill_level", "perf.profil", "perf.charge", "capture.backend",
+                "minimap.taille_px", "détection.modèle", "réglages.empreinte", "cache.icônes_apprises"):
+        assert key in fp, key
+    assert fp["réglage.skill_level"] == "expert"
+    assert fingerprint.compare(text, text) == []
+    other = text.replace("réglage.target_fps = 10", "réglage.target_fps = 8")
+    diff = fingerprint.compare(text, other)
+    assert diff == ["réglage.target_fps : moi 10 / l'autre 8"]
+    assert fingerprint.compare(text, "pas une empreinte") == []
+    fp2 = fingerprint.collect(cfg=Config(skill_level="debutant"))           # (no engine: settings + files)
+    assert fp2["réglage.skill_level"] == "debutant" and fp2["empreinte"] != fp["empreinte"]
+
+
+def test_reset_detection_forgets_learned_state(tmp_path):
+    from treeaicoach.detector import create_detector
+    from treeaicoach.paths import cache_dir, user_data_dir
+
+    learned = Path(cache_dir()) / "learned_icons"
+    learned.mkdir(parents=True, exist_ok=True)
+    (learned / "Garen_3.png").write_bytes(b"x")
+    (Path(user_data_dir()) / "minimap_cache.json").write_text("{}", encoding="utf-8")
+    det = create_detector("classic")
+    eng, clock, *_ = live(cfg=Config(icon_scale_by_res={"180x180": 0.1}), detector=det)
+    run(eng, clock, 2.0)
+    det.matcher.scale_store = {"180x180": 0.1}
+    eng._budget.set_load_level(2)
+    eng.reset_detection()
+    assert not list(learned.glob("*.png")) and not (Path(user_data_dir()) / "minimap_cache.json").exists()
+    assert eng._cfg.icon_scale_by_res == {}
+    run(eng, clock, 0.25)                                     # analysis thread part at the next tick
+    assert det.matcher.scale_store == {} and eng._budget.load_level == 0
+    run(eng, clock, 1.5)
+    assert det.matcher.has_roster                             # rebuilt from the roster
+    assert any("Détection réinitialisée" in e["text"] for e in eng._selfcheck.events)
+
+
+def test_force_normal_profile_on_the_engine():
+    eng, clock, *_ = live(cfg=Config(perf_mode="low_end"))
+    run(eng, clock, 1.0)
+    assert eng._budget.profile.name == "low_end"
+    eng.force_normal_profile()
+    run(eng, clock, 0.5)
+    assert eng._budget.profile.name == "normal" and eng._budget.profile.load == "normal"
+    assert any(e["text"] == "profil normal forcé" for e in eng._selfcheck.events)
+
+
+def test_diag_bundle_contains_the_fingerprint(tmp_path):
+    from treeaicoach import diag
+
+    eng, clock, *_ = live()
+    run(eng, clock, 1.0)
+    rec = diag.DiagRecorder(eng, duration_s=1.0, interval_s=0.5, out_root=tmp_path, opener=lambda p: None)
+    folder = rec.start()
+    rec.join(10.0)
+    with zipfile.ZipFile(rec.status()["zip"]) as zf:
+        txt = zf.read(f"{folder.name}/fingerprint.txt").decode("utf-8")
+        data = json.loads(zf.read(f"{folder.name}/fingerprint.json"))
+    assert txt.startswith("Empreinte TreeAI") and data["app.version"]

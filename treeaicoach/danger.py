@@ -62,6 +62,8 @@ CLOSE_R = 0.09              # on me (on my screen, < ~1350 units)
 NEAR_R = 0.12               # near (a few seconds away)
 LANE_R = 0.15               # my lane opponent "in front of me"
 ALLY_R = 0.10               # allies with me
+RECALL_REACH_R = 0.09       # an enemy this close can interrupt my recall (~1300 units: a Lux Q)
+TOWER_R = 0.055             # in range of my turret (~775 units + margin)
 APPROACH_DROP = 0.012       # distance drop over APPROACH_WINDOW_S = "coming closer"
 APPROACH_WINDOW_S = 1.2
 POS_MAX_AGE_S = 3.0         # my position unknown for longer -> nothing
@@ -81,7 +83,7 @@ LANE_FAR_BEHIND_RATIO = 1.5  # this far behind: warned even at full HP
 # anti-spam
 RECULE_REPEAT_S = 20.0
 SAME_TEXT_S = 20.0
-RULE_COOLDOWN_S = {"lane": 90.0, "low": 25.0, "outnumbered": 25.0, "jungler_fog": 45.0}
+RULE_COOLDOWN_S = {"lane": 90.0, "low": 25.0, "outnumbered": 25.0, "jungler_fog": 45.0, "recall": 15.0}
 WRITTEN_GAP_S = 8.0         # two written danger lines at least this far apart
 AFTER_RECULE_S = 10.0       # no written "low HP" / "outnumbered" echo right after "Recule !"
 AFTER_GANK_DANGER_S = 4.0   # a gank DANGER ("..., recule !") was raised this recently: no "Recule !"
@@ -203,14 +205,21 @@ class PersonalDanger:
     # ------------------------------------------------------------------ public
     def update(self, t: float, gt: float, game: Any, tracker: Any, *, lane_opponents: Iterable[str] = (),
                jungler: str | None = None, threat: int = 0, gank_danger_t: float | None = None,
-               in_fight: bool = False, fog: Iterable[Any] = ()) -> list[Alert]:
+               in_fight: bool = False, fog: Iterable[Any] = (), recalling: bool = False) -> list[Alert]:
         """At most one alert for time ``t`` (engine clock), ``gt`` = game time. Never raises.
 
         ``lane_opponents``: aliases of my lane opponent(s) (roles); ``jungler``: alias of the
         enemy jungler; ``threat``: current gank threat level (0 / 1 / 2); ``gank_danger_t``: engine
         time of the last gank DANGER alert; ``fog``: :class:`treeaicoach.fog_tracker.FogEstimate`
-        list of the last tick."""
+        list of the last tick; ``recalling``: my recall is channelling (engine.note_recall).
+
+        Recalling (real case "Rappel 6.1" with Lux next to me, the card said "Recule vers ta tour :
+        Lux sur toi"): an enemy within interrupt reach -> "Annule ton rappel : Lux peut
+        l'interrompre" (written, DANGER only when low on HP); nobody near -> nothing at all (the
+        recall IS the retreat). Under my own tower the instruction is "Reste sous ta tour", never
+        "Recule vers ta tour"."""
         try:
+            self._recalling = bool(recalling)
             return self._update(float(t), float(gt or 0.0), game, tracker, lane_opponents, jungler,
                                 int(threat or 0), gank_danger_t, bool(in_fight), fog)
         except Exception:
@@ -218,6 +227,40 @@ class PersonalDanger:
             return []
 
     # ------------------------------------------------------------------ internals
+    def _recall_check(self, t: float, hp: float | None, foes: list, near: list, on_me: list) -> list[Alert]:
+        """My recall is channelling: one line only, "Annule ton rappel : X peut l'interrompre" when
+        an enemy can reach me before it ends (DANGER when low on HP with him on me), else nothing."""
+        threat = [f for f in foes if f.d < RECALL_REACH_R]
+        if not threat:
+            self._state = DangerState(t=t, hp=hp, foes=tuple(foes), suppressed="recall")
+            return []
+        f0 = min(threat, key=lambda f: f.d)
+        low = hp is not None and hp <= RECULE_HP and bool(on_me)
+        text = f"Annule ton rappel : {f0.name} peut l'interrompre"
+        self._state = DangerState(t=t, hp=hp, foes=tuple(foes), rule="recall", level=2 if low else 1,
+                                  reason=f"{f0.name} près pendant ton rappel")
+        if not self._written_ok("recall", text, t):
+            return []
+        self._m.written_t = t
+        self._m.rule_t["recall"] = t
+        self._m.text_t[text] = t
+        return [Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.WARNING, text=text,
+                      key=alert_key(AlertKind.PERSONAL_DANGER, f"recall:{f0.alias}"), t=t, alias=f0.alias)]
+
+    def _under_my_tower(self, game: Any, gt: float, me_pos: Any, team: str | None) -> bool:
+        """Standing in range of one of my standing turrets (destroyed ones from the events)."""
+        try:
+            from treeaicoach import phase
+
+            key = (len(getattr(game, "events", None) or []), team)
+            if getattr(self, "_tower_key", None) != key:
+                st = phase.map_state(game, gt, None)
+                self._tower_key = key
+                self._towers = [uv for _ln, _tier, uv in st.standing_turrets(team)] if team else []
+            return any(dist(uv, me_pos) < TOWER_R for uv in getattr(self, "_towers", []))
+        except Exception:
+            return False
+
     def _quiet(self, t: float, why: str, hp: float | None = None) -> list[Alert]:
         self._m.dists.clear()
         self._state = DangerState(t=t, hp=hp, suppressed=why)
@@ -261,6 +304,9 @@ class PersonalDanger:
         mine = _power(my_level, my_gold, getattr(me_info, "champion_alias", None), gt, hp)
         near = [f for f in foes if f.d < NEAR_R]
         on_me = [f for f in foes if f.d < CLOSE_R or (f.d < NEAR_R and f.approaching)]
+        if getattr(self, "_recalling", False):
+            return self._recall_check(t, hp, foes, near, on_me)
+        retreat = "Reste sous ta tour" if self._under_my_tower(game, gt, me_pos, team) else "Recule vers ta tour"
         theirs = sum(f.power for f in near) or 0.0
         recent_gank = gank_danger_t is not None and 0.0 <= t - gank_danger_t < AFTER_GANK_DANGER_S
         fog_mass = None
@@ -280,7 +326,7 @@ class PersonalDanger:
                       else f"{(on_me or near)[0].name} sur toi")
         if level == 2 and not in_fight and t - self._m.recule_t >= RECULE_REPEAT_S:
             who = (on_me or near)[0]
-            why = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.WARNING, text=f"Recule vers ta tour : {reason}",
+            why = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.WARNING, text=f"{retreat} : {reason}",
                         key=alert_key(AlertKind.PERSONAL_DANGER, "recule:why"), t=t, alias=who.alias)
             if not recent_gank and threat < Level.DANGER:
                 out = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.DANGER, text="Recule !",
@@ -299,9 +345,9 @@ class PersonalDanger:
             just_said = t - self._m.recule_t < AFTER_RECULE_S     # "Recule !" said: no written echo
             if hp is not None and hp < LOW_HP and near and threat < Level.WARNING and not just_said:
                 f0 = min(near, key=lambda f: f.d)
-                cands.append(("low", f"Recule vers ta tour : peu de vie, {f0.name} près", f0.alias))
+                cands.append(("low", f"{retreat} : peu de vie, {f0.name} près", f0.alias))
             if outnumbered and threat < Level.WARNING and (hp is None or hp < OUTNUMBERED_HP) and not just_said:
-                cands.append(("outnumbered", f"Recule vers ta tour : {len(near)} ennemis près de toi", None))
+                cands.append(("outnumbered", f"{retreat} : {len(near)} ennemis près de toi", None))
             if threat < Level.WARNING and not near:
                 if t - self._fog_t >= FOG_EVAL_S or self._fog_cache is None:
                     self._fog_t, self._fog_cache = t, self._jungler_fog(me_pos, team, jungler, fog)

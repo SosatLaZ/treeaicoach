@@ -438,8 +438,172 @@ def rule_facecheck(ctx: M.MacroCtx) -> M.GeniusCall | None:
                    voice="Pas de buisson sans balise !")
 
 
+# ----------------------------------------------------------------------------- enemy buys
+#: an enemy purchase stays "news" this long (the player meets the new item when the enemy comes back)
+BUY_NEWS_S = 90.0
+STASIS = frozenset({3157})              # Sablier de Zhonya (never say when it is used / ready)
+#: Item.tags the coach reads (Data Dragon / itemization tables, no hand-made item list)
+RESIST_TAG = {"physical": "Armor", "magic": "SpellBlock"}
+
+
+class EnemyBuys:
+    """Purchases of the enemies (public Tab data of the Live Client: ``allPlayers[].items``), as
+    events ``(gt, alias, item_id)``: new legendary items and the key components (anti-heal, stasis).
+    One per game (``reset``); fed by :meth:`update` every coaching tick. Never raises."""
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._seen: dict[str, frozenset[int]] = {}
+        self.events: list[tuple[float, str, int]] = []
+        self._last_gt: float | None = None
+
+    def update(self, gt: float, game: Any) -> list[tuple[float, str, int]]:
+        try:
+            from treeaicoach.itemization import SAME_NEED, load_items
+
+            if self._last_gt is not None and gt < self._last_gt - 5.0:
+                self.reset()
+            self._last_gt = gt
+            table = load_items()
+            watch = SAME_NEED.get("antiheal", frozenset()) | STASIS
+            new: list[tuple[float, str, int]] = []
+            for p in getattr(game, "enemies", None) or []:
+                a = str(getattr(p, "champion_alias", "") or "").lower()
+                ids = frozenset(int(i) for i in (getattr(p, "items", None) or []) if isinstance(i, int))
+                prev = self._seen.get(a)
+                self._seen[a] = ids
+                if prev is None:
+                    continue                          # first look (game joined late): not news
+                for i in ids - prev:
+                    it = table.get(i)
+                    if it is not None and (it.kind == "legendary" or i in watch):
+                        new.append((float(gt), a, i))
+            self.events = [e for e in self.events + new if 0.0 <= gt - e[0] <= BUY_NEWS_S][-20:]
+            return new
+        except Exception:
+            log.debug("enemy buys failed", exc_info=True)
+            return []
+
+    def recent(self, gt: float) -> list[tuple[float, str, int]]:
+        return [e for e in self.events if 0.0 <= gt - e[0] <= BUY_NEWS_S]
+
+
+def _my_damage(ctx: M.MacroCtx) -> str:
+    try:
+        from treeaicoach.itemization import damage_split
+
+        ad, ap, _tr = damage_split(str(getattr(_my_player(ctx), "champion_alias", "") or ""))
+        return "physical" if ad >= ap else "magic"
+    except Exception:
+        return "physical"
+
+
+def _legendaries(items: Any, tag: str | None = None) -> list[int]:
+    from treeaicoach.itemization import load_items
+
+    table = load_items()
+    return [int(i) for i in items or () if int(i) in table and table[int(i)].kind == "legendary"
+            and (tag is None or tag in table[int(i)].tags)]
+
+
+def rule_enemy_buys(ctx: M.MacroCtx) -> M.GeniusCall | None:
+    """The enemy purchases that change MY next fights, most impactful first: my lane opponent's
+    first big item (step back), a stasis item on my lane opponent / a fed carry (bait it before your
+    combo - never when it is used or ready), anti-heal against my healing, 2+ enemies stacking
+    the resistance I deal (penetration), a fed enemy with a defensive core (hit the squishy one)."""
+    buys = getattr(ctx, "buys", None)
+    if not ctx.me_alive or buys is None:
+        return None
+    try:
+        from treeaicoach.itemization import HEALERS, NEED_ITEMS, SAME_NEED, champion_class, load_items
+
+        table = load_items()
+        me = _my_player(ctx)
+        my_alias = str(getattr(me, "champion_alias", "") or "")
+        my_items = [int(i) for i in (getattr(me, "items", None) or []) if isinstance(i, int)]
+        cls = champion_class(my_alias, ctx.role)
+        recent = buys.recent(ctx.gt) if not ctx.keep else buys.events
+        lane = set(ctx.lane_opps)
+        for gt0, a, iid in sorted(recent, key=lambda e: -e[0]):
+            p = M._player(ctx, a)
+            it = table.get(iid)
+            if p is None or it is None:
+                continue
+            name = _name(ctx, p)
+            sc = getattr(p, "scores", None) or {}
+            fed = int(_f(sc.get("kills"), 0) or 0) - int(_f(sc.get("deaths"), 0) or 0) >= 2
+            ident = f"gc_buy:{a}:{iid}"
+            # 1) my lane opponent's first big item: his window, not mine (laning, in my lane)
+            if a in lane and it.kind == "legendary" and len(_legendaries(getattr(p, "items", None))) == 1 \
+                    and ctx.gt < 1500.0 and _in_my_lane(ctx):
+                melee = "Health" in it.tags and "Damage" in it.tags
+                text = (f"Évite les longs échanges : {name} a fini {it.name}" if melee
+                        else f"Évite les échanges : {name} a fini {it.name}")
+                if len(text) > 60:
+                    text = f"Évite les échanges : {name} a fini {it.name}"
+                return replace(M._call("gc_enemy_buy", ident, f"{name.upper()[:12]} : OBJET", text,
+                                       f"Son premier gros objet le rend bien plus fort pendant ~1 minute : "
+                                       f"farme sous ta tour, attends ton prochain achat.",
+                                       M._safe_uv(ctx), tier="mid", score=0.6 + (0.1 if fed else 0.0), priority=76,
+                                       color="danger", life=16.0, label="TA TOUR",
+                                       factors=(f"{name} {it.name}",)),
+                               voice="Il a son objet : recule." if fed else "")
+            # 2) stasis on my lane opponent / a fed enemy: bait it out (no timing, ever)
+            if iid in STASIS and (a in lane or fed):
+                return M._call("gc_enemy_buy", ident, "ZHONYA", f"Fais utiliser son {it.name} à {name} avant ton combo",
+                               f"Pendant {it.name}, {name} ne prend aucun dégât : ne gaspille pas ton combo dessus.",
+                               None, tier="mid", score=0.55, priority=70, color="gold", life=14.0,
+                               factors=(f"{name} {it.name}",))
+            # 3) anti-heal against MY healing
+            if iid in SAME_NEED.get("antiheal", frozenset()) and (
+                    my_alias in HEALERS or _legendaries(my_items, "LifeSteal") or _legendaries(my_items, "SpellVamp")):
+                return M._call("gc_enemy_buy", ident, "ANTI-SOIN", f"Évite les longs combats : {name} a {it.name}",
+                               f"{it.name} réduit tes soins : tes échanges longs ne marchent plus contre {name}.",
+                               None, tier="mid", score=0.5, priority=66, color="gold", life=14.0,
+                               factors=(f"{name} {it.name}",))
+        # 4) 2+ enemies stacking the resistance I deal: penetration, in the shop
+        if ctx.in_base and ctx.me_uv is not None and geometry.in_fountain(ctx.me_uv[0], ctx.me_uv[1], ctx.my_team):
+            tag = RESIST_TAG[_my_damage(ctx)]
+            heavy = [p for p in (getattr(ctx.game, "enemies", None) or []) if len(_legendaries(getattr(p, "items", None), tag)) >= 2]
+            pen = "ArmorPenetration" if tag == "Armor" else "MagicPenetration"
+            if len(heavy) >= 2 and not _legendaries(my_items, pen):
+                pick = next((table[i] for i in NEED_ITEMS.get("armor", {}).get(cls, ()) if i in table
+                             and i not in my_items), None)
+                if pick is not None:
+                    what = "d'armure" if tag == "Armor" else "de résistance magique"
+                    return M._call("gc_enemy_buy", f"gc_buy:pen:{int(ctx.gt // 300)}", "PÉNÉTRATION",
+                                   f"Achète {pick.name} : {len(heavy)} ennemis empilent {what}",
+                                   f"Contre {len(heavy)} ennemis très résistants, tes dégâts ne passent plus sans pénétration.",
+                                   None, tier="mid", score=0.5, priority=64, color="gold", life=18.0,
+                                   factors=(f"{len(heavy)} ennemis {what}",))
+        # 5) a fed enemy with a defensive core: hit the squishy one in fights (mid / late game)
+        if ctx.gt >= 900.0 and not ctx.in_base:
+            for p in getattr(ctx.game, "enemies", None) or []:
+                sc = getattr(p, "scores", None) or {}
+                k, d = int(_f(sc.get("kills"), 0) or 0), int(_f(sc.get("deaths"), 0) or 0)
+                tanky = len(_legendaries(getattr(p, "items", None), "Armor")) + \
+                    len(_legendaries(getattr(p, "items", None), "SpellBlock"))
+                if k >= 4 and k - d >= 3 and tanky >= 2:
+                    carry = next((x for x in (getattr(ctx.game, "enemies", None) or [])
+                                  if str(getattr(x, "position", "")).upper() in ("BOTTOM", "MIDDLE")
+                                  and x is not p and not bool(getattr(x, "is_dead", False))), None)
+                    if carry is None:
+                        break
+                    return M._call("gc_enemy_buy", f"gc_buy:focus:{str(getattr(p, 'champion_alias', '')).lower()}",
+                                   "FRAPPE LE PLUS FRAGILE",
+                                   f"Frappe {_name(ctx, carry)} en combat : {_name(ctx, p)} est trop solide",
+                                   f"{_name(ctx, p)} a des objets défensifs : tes dégâts sur lui sont perdus.",
+                                   None, tier="mid", score=0.45, priority=60, color="gold", life=14.0,
+                                   factors=(f"{_name(ctx, p)} {k}/{d} défensif",))
+    except Exception:
+        log.debug("enemy buys rule failed", exc_info=True)
+    return None
+
+
 RULES = (rule_level_race, rule_jungler_far, rule_jungler_unseen, rule_baron_setup, rule_fed_defense,
-         rule_facecheck)
+         rule_facecheck, rule_enemy_buys)
 
 
 # ----------------------------------------------------------------------------- voice
@@ -459,7 +623,7 @@ def voice_class(kind: str) -> str | None:
     if kind in ("fight_won", "jungler_dead", "gc_baron_setup"):
         return "big"
     if kind in ("plates", "cross_trade", "free_dragon", "wave_recall", "gc_level", "gc_jungler_far",
-                "gc_jungler_unseen", "gc_facecheck"):
+                "gc_jungler_unseen", "gc_facecheck", "gc_enemy_buy"):
         return "lane"
     return None
 
@@ -519,9 +683,10 @@ def voice_for(call: Any, ctx: Any = None, level: Any = "intermediaire") -> tuple
 def topic_of(kind: str) -> str:
     """Voice topic of a call kind (one topic is never spoken twice within :data:`VOICE_TOPIC_S`)."""
     return {"fight_won": "objective_now", "jungler_dead": "objective_now", "gc_baron_setup": "objective_now",
-            "plates": "opp_gone", "cross_trade": "jungler_side", "free_dragon": "jungler_side",
+            "plates": "opp_gone", "cross_trade": "objective_trade", "free_dragon": "objective_trade",
             "gc_jungler_far": "jungler_side", "gc_jungler_unseen": "jungler_unseen",
-            "wave_recall": "recall", "gc_level": "level", "gc_facecheck": "facecheck"}.get(kind, kind)
+            "wave_recall": "recall", "gc_level": "level", "gc_facecheck": "facecheck",
+            "gc_enemy_buy": "enemy_buy"}.get(kind, kind)
 
 
 def voice_phrases() -> list[str]:
@@ -542,7 +707,7 @@ def voice_phrases() -> list[str]:
             "Il a un niveau d'avance : recule.", "Il a son ultime : recule !",
             "Leur jungler est en bas : avance !", "Leur jungler est en haut : avance !",
             "Jungler invisible : recule !", "Vous êtes devant : balises au Baron.",
-            "Pas de buisson sans balise !"]
+            "Pas de buisson sans balise !", "Il a son objet : recule."]
     return [x for x in dict.fromkeys(out) if len(x) <= VOICE_MAX_CHARS]
 
 

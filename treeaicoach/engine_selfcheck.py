@@ -232,6 +232,108 @@ class SelfCheckMixin:
         except Exception:
             log.debug("AI block failed", exc_info=True)
 
+    # ------------------------------------------------------------------ user actions (app buttons)
+    def reset_detection(self) -> None:
+        """"Réinitialiser la détection": forget everything learned on this PC that changes the
+        analysis - icon scale per minimap size, learned custom-skin icons, located minimap
+        rectangles (``minimap_cache.json``), this game's calibration / learned colours / tracks,
+        the capture backend choice and the load level. The engine objects are reset by the
+        analysis thread at its next tick (at once outside a game). The caller (UI) also saves
+        ``icon_scale_by_res = {}``. Never raises."""
+        try:
+            store = getattr(self._cfg, "icon_scale_by_res", None)
+            if isinstance(store, dict):
+                store.clear()
+            from treeaicoach.paths import cache_dir, user_data_dir
+
+            from pathlib import Path
+
+            learned = Path(cache_dir()) / "learned_icons"
+            n = 0
+            if learned.is_dir():
+                for f in learned.glob("*.png"):
+                    try:
+                        f.unlink()
+                        n += 1
+                    except OSError:
+                        pass
+            mc = Path(user_data_dir()) / "minimap_cache.json"
+            if mc.is_file():
+                try:
+                    mc.unlink()
+                except OSError:
+                    pass
+            if self._rect_cache is not None:
+                from treeaicoach.game_settings import RectCache
+
+                self._rect_cache = RectCache()
+            log.info("Detection reset by the user (%d learned icon(s) deleted)", n)
+            self._selfcheck.note(self._clock(), "adapt", "Détection réinitialisée (caches et icônes apprises)")
+            with self._lock:
+                self._diag_req["reset_detection"] = True
+            if not self._in_game:
+                self._reset_detection_now(self._clock())
+        except Exception:
+            log.exception("reset_detection failed")
+
+    def _reset_detection_now(self, t: float) -> None:
+        """Analysis thread part of :meth:`reset_detection`."""
+        with self._lock:
+            self._diag_req.pop("reset_detection", None)
+        try:
+            m = getattr(self._detector, "matcher", None) if self._detector is not None else None
+            if m is not None:
+                if isinstance(getattr(m, "scale_store", None), dict):
+                    m.scale_store.clear()
+                if callable(getattr(m, "set_entries", None)):
+                    m.set_entries(())                  # calibration, colours, learned icons, tracks
+            db = self._champion_db() if self._in_game else self._db
+            if db is not None and callable(getattr(db, "clear_icon_cache", None)):
+                db.clear_icon_cache()
+            with self._lock:
+                self._roster_sig = None                # templates rebuilt at the next poll
+                self._prefetched = False
+                self._relocate = True
+            self._last_good = None
+            self._loc_fails = 0
+            if self._tracker is not None:
+                self._tracker.reset()
+            if self._window_finder is None and self._frame_source is None and self._capture is not None:
+                self._diag_req["recreate_capture"] = True
+            if self._budget.set_load_level(0):
+                self._applied_profile = None
+            self._selfcheck.load_level = 0
+        except Exception:
+            log.exception("Detection reset failed")
+
+    def force_normal_profile(self) -> None:
+        """"Forcer profil normal": the normal performance budget and no automatic load level for
+        this session (the caller saves ``perf_mode = "normal"``). Never raises."""
+        try:
+            from treeaicoach.sysperf import PerfBudget
+
+            with self._lock:
+                self._budget = PerfBudget("normal", target_fps=float(self._cfg.target_fps))
+                self._applied_profile = None
+            self._selfcheck.force_normal(self._clock())
+        except Exception:
+            log.exception("force_normal_profile failed")
+
+    def config_fingerprint(self) -> dict[str, Any]:
+        """"Empreinte de config" (fingerprint.py): what makes this PC analyse differently."""
+        try:
+            from treeaicoach import fingerprint
+
+            return fingerprint.collect(self)
+        except Exception:
+            log.debug("fingerprint failed", exc_info=True)
+            return {}
+
+    def config_fingerprint_text(self) -> str:
+        from treeaicoach import fingerprint
+
+        return fingerprint.to_text(self.config_fingerprint())
+
     # ------------------------------------------------------------------ read side
     def selfcheck_summary(self) -> dict[str, Any]:
         """"Santé TreeAI" (selfcheck.SelfCheck.summary): ``state``, ``title``, ``reasons``,

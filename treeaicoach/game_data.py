@@ -26,7 +26,8 @@ Item table details (same conversion for the bundled snapshot and the runtime ref
 * ``k`` kind - tier-3 boots (built from boots, sometimes without the "Boots" tag) are "boots";
 * ``x`` semantic flags read from the English description (:func:`item_flags`: "antiheal",
   "shieldbreak", "anticrit", "stasis", "spellshield", "cleanse", "lifeline", "revive",
-  "armorpen", "magicpen", "lethality", "slowresist", "armorshred", "pcthp", "hsp", "antiattack");
+  "armorpen", "magicpen", "lethality", "slowresist", "armorshred", "pcthp", "hsp", "antiattack", "omnivamp",
+  "shield");
 * ``p`` - purchasable in a normal Summoner's Rift game. Data Dragon's map flag is too permissive
   (Swiftplay / ARAM starters are flagged for map 11), so ``tools/fetch_items.py`` also intersects
   with the CLASSIC shop lists of the game files (CommunityDragon) and stores the excluded ids as
@@ -152,6 +153,8 @@ ITEM_FLAG_PATTERNS: tuple[tuple[str, str], ...] = (
     ("armorshred", r"reduces the target's Armor"),
     ("pcthp", r"\d% max Health magic damage|percentage of enemy's current Health"),
     ("hsp", r"Heal and Shield Power"),
+    ("omnivamp", r"Omnivamp|Life Steal"),
+    ("shield", r"(?<!Spell )(?<!Heal and )\bShields?\b(?! Reaver| Power| on | they)"),
     ("antiattack", r"Reduce the Attack Speed|damage from Attacks"),
 )
 
@@ -163,6 +166,38 @@ def item_flags(item: Any) -> list[str]:
     except Exception:
         return []
     return sorted(flag for flag, pat in ITEM_FLAG_PATTERNS if re.search(pat, text))
+
+
+#: Effect tags of an item for the advice (enemy buys, counters): semantic flags + Data Dragon tags.
+EFFECT_TAGS: tuple[str, ...] = ("antiheal", "armorpen", "magicpen", "lifesteal", "shield", "tenacity", "stasis",
+                                "armor", "mr", "cleanse", "anticrit", "pcthp", "health")
+_EFFECT_FROM_FLAGS = {"antiheal": {"antiheal"}, "armorpen": {"armorpen", "lethality", "armorshred"},
+                      "magicpen": {"magicpen"}, "lifesteal": {"omnivamp"},
+                      "shield": {"shield", "lifeline", "spellshield"}, "stasis": {"stasis", "revive"},
+                      "cleanse": {"cleanse"}, "anticrit": {"anticrit"}, "pcthp": {"pcthp"}}
+_EFFECT_FROM_TAGS = {"armorpen": {"ArmorPenetration"}, "magicpen": {"MagicPenetration"},
+                     "lifesteal": {"LifeSteal", "SpellVamp"}, "tenacity": {"Tenacity"}, "armor": {"Armor"},
+                     "mr": {"SpellBlock", "MagicResist"}, "health": {"Health"}}
+
+
+def effects_of_row(row: Any) -> frozenset[str]:
+    """Effect tags (:data:`EFFECT_TAGS`) of a compact item row (``x`` flags + ``t`` tags)."""
+    if not isinstance(row, dict):
+        return frozenset()
+    flags, tags = set(row.get("x") or ()), set(row.get("t") or ())
+    out = {e for e, f in _EFFECT_FROM_FLAGS.items() if flags & f}
+    out |= {e for e, t in _EFFECT_FROM_TAGS.items() if tags & t}
+    return frozenset(out)
+
+
+def item_effects(item_id: Any) -> frozenset[str]:
+    """Effect tags of an item id from the live item data ("antiheal", "armorpen", "magicpen",
+    "lifesteal", "shield", "tenacity", "stasis", "armor", "mr", "cleanse", "anticrit", "pcthp",
+    "health"); empty when unknown. Never raises."""
+    try:
+        return effects_of_row((items_data().get("items") or {}).get(str(int(item_id))))
+    except Exception:
+        return frozenset()
 
 
 def build_items_table(fr: dict, en: dict, version: str, shop: Iterable[Any] | None = None,
@@ -534,4 +569,5 @@ def refresh_async(allow_network: bool = True, force: bool = False) -> threading.
 
 __all__ = ["items_data", "champions_data", "item_name", "champion_name", "data_version", "refresh",
            "refresh_async", "add_listener", "invalidate", "build_items_table", "build_champions_table",
-           "version_tuple", "item_flags", "data_versions", "data_versions_text"]
+           "version_tuple", "item_flags", "data_versions", "data_versions_text", "item_effects",
+           "effects_of_row", "EFFECT_TAGS"]

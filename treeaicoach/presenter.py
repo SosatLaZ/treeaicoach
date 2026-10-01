@@ -128,7 +128,7 @@ class _Panel:
 
 #: French imperatives (tutoiement) a card instruction may start with ("Recule vers ta tour").
 CARD_VERBS = frozenset("""
-va recule pousse rentre achète pose frappe joue reste attends défends farme prends aide regroupe
+va recule pousse rentre achète pose frappe joue reste attends défends farme prends aide regroupe annule
 change évite tue retourne suis garde bloque contrôle place utilise vise arrête laisse tiens protège sors
 cours fuis prépare lance engage attaque rejoins tourne ramasse récupère monte descends gèle fais ne
 regarde surveille mets reviens profite plaque tape nettoie cache harcèle sécurise vole balise

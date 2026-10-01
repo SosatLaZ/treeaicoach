@@ -595,6 +595,8 @@ GC_OWNED_TIPS: dict[str, frozenset[str]] = {
     "spike_opp_big": frozenset({"debutant", "intermediaire", "avance"}),
     "spike_me": frozenset({"debutant", "intermediaire"}),
     "jg_far": frozenset({"debutant", "intermediaire"}),
+    "jg_never_seen": frozenset({"debutant", "intermediaire"}),     # gc_jungler_unseen: concrete version
+    "jg_unseen": frozenset({"debutant", "intermediaire"}),
     # the planner's fight_won call ("Prends le Baron maintenant : 3 ennemis morts (28 s)") owns it
     "baron_window": frozenset({"debutant", "intermediaire", "avance", "expert"}),
 }
@@ -816,7 +818,7 @@ class TipRotator:
             age = t - self._since
             if age < 0:
                 self._since, age = t, 0.0
-            still = cur.applies(ctx)
+            still = cur.applies(ctx) and not self._blocked(cur, ctx)
             if not still:
                 self._stale_since = t if self._stale_since is None else self._stale_since
                 if t - self._stale_since >= STALE_GRACE_S:
@@ -841,6 +843,11 @@ class TipRotator:
             return self._text
         return self._show(best, t, gt, ctx)
 
+    @staticmethod
+    def _blocked(tip: Tip, ctx: TipContext) -> bool:
+        """A macro / game-changer call of the last ~90 s already said this tip's subject."""
+        return bool(ctx.recent_calls) and any(tip.id in CALL_OVERLAPS.get(k, ()) for k in ctx.recent_calls)
+
     def candidates(self, ctx: TipContext) -> list[tuple[float, Tip]]:
         """Every applicable tip with its utility, best first (cooldowns ignored)."""
         out = [(tp.utility(), tp) for tp in self._tips if tp.applies(ctx)]
@@ -857,12 +864,8 @@ class TipRotator:
                 continue
             if tip.prio < self.min_prio and tip.tone not in ("red",):
                 continue
-            if tip.id in self.skip:
-                continue                       # low value for this level (statistics, tutorial lines)
-            if ctx.ward_recent and tip.id in WARD_TIPS:
-                continue                       # one ward call at a time
-            if ctx.recent_calls and any(tip.id in CALL_OVERLAPS.get(k, ()) for k in ctx.recent_calls):
-                continue                       # a call just said it (no repeat under another wording)
+            if tip.id in self.skip or (ctx.ward_recent and tip.id in WARD_TIPS) or self._blocked(tip, ctx):
+                continue                       # low value at this level / one ward call / a call just said it
             if ctx.macro_tone == "go" and tip.tone in ("warning", "danger") and tip.prio < 4:
                 continue                       # a "go" macro call is on screen: no cautious tip next to it
             if ctx.macro_tone == "danger" and tip.tone == "go":

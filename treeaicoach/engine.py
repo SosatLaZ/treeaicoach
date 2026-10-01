@@ -1399,6 +1399,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
     def _serve_diag_requests(self, t: float) -> None:
         """Analysis thread: full-window thumbnail for the diagnostic (the capture objects are
         owned by this thread)."""
+        if self._diag_req.get("reset_detection"):
+            self._reset_detection_now(t)          # "Réinitialiser la détection" (engine_selfcheck.py)
         if not self._diag_req.get("screen"):
             return
         self._diag_req.pop("screen", None)

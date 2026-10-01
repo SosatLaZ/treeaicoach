@@ -936,7 +936,9 @@ class MapCoach:
                                                 f"est là"))
         hidden = ctx.jungler_hidden_s
         jg_dead = str(ctx.jungler_alias).lower() in ctx.dead_enemies
-        if hidden is not None and hidden >= JUNGLER_UNSEEN_S and ctx.my_lane is not None and not jg_dead:
+        # (a beginner gets the concrete version: game_changers "vague poussée, jungler invisible")
+        if hidden is not None and hidden >= JUNGLER_UNSEEN_S and ctx.my_lane is not None and not jg_dead \
+                and not getattr(self, "_beginner", False):
             marker = getattr(tr, "last_seen", None) if tr is not None else -1.0
             if marker != self._jg_unseen_done:
                 secs = int(hidden // 5 * 5)

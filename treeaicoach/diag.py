@@ -268,6 +268,16 @@ class DiagRecorder:
         except Exception:
             pass
         _write_json(self.folder / "meta.json", meta)
+        try:   # "Empreinte de config": what makes this PC analyse differently (fingerprint.py)
+            fp = getattr(eng, "config_fingerprint", None)
+            if callable(fp):
+                from treeaicoach import fingerprint
+
+                data = fp()
+                _write_json(self.folder / "fingerprint.json", data)
+                (self.folder / "fingerprint.txt").write_text(fingerprint.to_text(data), encoding="utf-8")
+        except Exception:
+            log.debug("Diagnostic fingerprint failed", exc_info=True)
 
     def _sample(self) -> None:
         import cv2

@@ -222,7 +222,8 @@ def place_new(shot: Shot, states: dict[str, Any], cfg: Any = None) -> tuple[dict
         for size in ("big", "small"):
             slot = layout_.slot(f"badge_{size}")
             if slot is not None:
-                out.append(Placed(f"badge_{size}", size, _badge(size, k), slot.rect[0], slot.rect[1], 17 * k))
+                drawn = "small" if slot.anchor == "as_small" else size
+                out.append(Placed(f"badge_{size}", drawn, _badge(drawn, k), slot.rect[0], slot.rect[1], 17 * k))
         out += _world(shot, layout_, legacy=None)
         scenes[scene] = out
     return scenes, lay
@@ -387,6 +388,8 @@ def overlaps(shot: Shot, placed: list[Placed], zones: list[L.Zone]) -> dict[str,
     names = [g for g in GROUPS if g in boxes]
     for i, a in enumerate(names):
         for b in names[i + 1:]:
+            if {a, b} == {"badge_big", "badge_small"}:
+                continue        # one fx window animates the badges one after the other
             ar = L.overlap_area(boxes[a], boxes[b])
             if ar > 0:
                 mine.append({"element": a, "with": b, "area": ar})

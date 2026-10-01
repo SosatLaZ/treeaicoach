@@ -1094,7 +1094,29 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
 * Saison 2026 dans les règles : sbires 0:30, camps 0:55, carapateurs 2:55, vagues toutes les 25 s dès
   14:00 (20 s dès ~30:00), canon toutes les 2 vagues dès 14:00 ; plaques permanentes (120 PO, −10/min de
   11:00 à 15:00 sur les tours extérieures) ; lampes féeriques (`wards.SPOTS` avec `faelight=True`,
-  positions approximatives ; 4 n'existent qu'après la transformation de la Faille : `wards.rift_transformed`).
+  positions EXACTES des fichiers du jeu ; 4 n'existent qu'après la transformation de la Faille : `wards.rift_transformed`).
+
+### 19.1 Base de données du jeu (patch 26.19) — `python tools/fetch_all.py`
+
+Une commande régénère tout (cache de téléchargement `training/cache/gamedata`, `--offline` possible),
+puis lance l'audit `tools/validate_data.py` (code de sortie 1 sur une ERREUR ; `--offline` = données
+embarquées seules, ce que fait `tests/test_data_integrity.py`). Sources et licences : THIRD_PARTY_NOTICES.md.
+
+| fichier (assets/) | outil | contenu |
+|---|---|---|
+| `items.json` | `fetch_items.py` | Data Dragon fr/en ; `p` = vendu en partie normale (filtre des listes de boutique CLASSIC des fichiers du jeu, ids exclus dans `not_sr`, conservés par la mise à jour au lancement) ; `k` (bottes niveau 3 = boots) ; `x` drapeaux d'effet lus dans la description anglaise |
+| `champion_meta.json` (schéma 2) | `fetch_meta.py` + `tools/data/champion_curation.json` | un profil par champion avec la source de chaque champ (`src`) : stats Data Dragon, notes officielles du client Riot (dégâts, robustesse, contrôle, mobilité, utilité ; type de dégâts / d'attaque), postes recommandés par Riot (le principal d'abord, noms Live Client), rôles Meraki, courbe / pic niveau 6 / nettoyage de vague / split / soin / classe de voie / genre (curation) |
+| `item_builds.json` | `fetch_builds.py` | chemins par classe (+ exceptions par champion), contres par besoin (confirmés par les drapeaux / stats), bottes, départs, amélioration de l'objet de support (quête finie) |
+| `matchups.json` | à la main | conseils de voie (verbe en tête, « action : raison », ≤ 12 mots) : paire de champions > contre un champion > paire de classes > règles des profils > contre une classe |
+| `ward_spots.json` | `fetch_map.py` (Faelights / camps) + à la main | balises en coordonnées ABSOLUES (`side` blue / red / rivière ; plus de miroir pour le côté rouge), rôles, phases, fenêtre `from_s` / `until_s` |
+| `objectives.json` | à la main | minuteurs 2026, vérifiés contre `validate_data.OFFICIAL_2026` |
+
+API : `meta.profile()` (champs `spike6`, `mobility`, `cc`, `sustain`, `waveclear`, `splitpush`,
+`lane_class`, `female`, `source` "data" / "rule" — un champion sorti après le build reçoit un profil
+déduit des tags et stats de la mise à jour Data Dragon) ; `game_data.item_effects(id)` /
+`itemization.item_effects`, `inventory_effects`, `enemy_effects` (étiquettes d'effet : antiheal,
+armorpen, magicpen, lifesteal, shield, tenacity, stasis, armor, mr, cleanse, anticrit, pcthp, health) ;
+`game_data.data_versions()` / `data_versions_text()` (diagnostic `meta.json` → `system.game_data`).
 
 ## 20. Overlay épuré : une seule chose à la fois + routeur de présentation
 
@@ -1183,6 +1205,19 @@ texte « verbe d'abord » pour la carte), 90 s au moins entre deux avis.
   autonome) ; fin de partie : `SelfCheck.game_report()` → `record["selfcheck"]` → section « Santé de
   TreeAI pendant la partie » du rapport (ce qui a mal tourné, ce qui a été corrigé seul) ; diagnostic :
   `selfcheck.json` + `selfcheck_log.txt` dans le zip.
+* **Même version, analyse différente selon le PC** (retour réel) : rien ne change en silence. Règle 10
+  `adapt` : profil PC faible choisi automatiquement, changement de backend de capture, taille des icônes
+  recalibrée en cours de partie → note visible dans « Santé TreeAI » et dans le rapport d'après-partie.
+  **Empreinte de config** (`fingerprint.py`, `engine.config_fingerprint()`, `fingerprint.txt/json` du zip de
+  diagnostic, boutons « Copier l'empreinte » / « Comparer » du panneau Système) : version, système / CPU,
+  réglages clés + tous les réglages ≠ défaut + empreinte de tous les réglages (clé IA / jeton exclus),
+  profil / charge / cadences, backend de capture, fenêtre / DPI / taille de la minimap, réglages du jeu
+  (mode fenêtre, échelles minimap / HUD, daltonien), modèle, `det_params.json` (hash), caches propres au PC
+  (icônes apprises, `minimap_cache.json`, `icon_scale_by_res`), versions des données ; `compare(a, b)` liste
+  les écarts, causes d'abord. Boutons « Réinitialiser la détection » (`engine.reset_detection()` : échelles
+  mémorisées, icônes apprises, rectangles de minimap, calibrage / couleurs / pistes de la partie, backend,
+  niveau de charge) et « Profil normal » (`engine.force_normal_profile()` + `perf_mode = "normal"` : plus
+  aucun allègement automatique).
 * Coût mesuré : ~0,03 ms par tick d'analyse en moyenne (évaluation 1 Hz amortie comprise), actions
   ponctuelles exclues (recalibrage ~0,1 s une fois par partie au plus).
 

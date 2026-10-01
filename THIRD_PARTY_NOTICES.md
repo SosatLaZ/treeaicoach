@@ -127,3 +127,24 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Game data sources — `treeaicoach/assets/*.json`, `tools/fetch_*.py`, `tools/validate_data.py`
+
+TreeAI Coach isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or
+anyone officially involved in producing or managing Riot Games properties. Riot Games, and all
+associated properties are trademarks or registered trademarks of Riot Games, Inc.
+
+| Data | Source | Terms |
+|---|---|---|
+| Items, champions, base stats, names (fr_FR / en_US) | Riot **Data Dragon** (ddragon.leagueoflegends.com) | Riot Developer Policies / "Legal Jibber Jabber" |
+| Champion playstyle ratings, damage / attack type, recommended positions; Summoner's Rift CLASSIC shop lists; Faelight pads and camp positions | Riot game / client files served by **CommunityDragon** (raw.communitydragon.org) | Same Riot policy; CommunityDragon is a community project, not affiliated with Riot |
+| Champion class roles (JUGGERNAUT, CATCHER...), fallback ratings | **Meraki Analytics** `champions.json` (github.com/meraki-analytics/lolstaticdata), cached as they ask | Code: MIT (Copyright (c) 2020 Meraki Analytics, LLC); data derived from the League of Legends Wiki, **CC BY-SA 3.0** |
+| Class roles of Locke / Zaahen, Faelight descriptions, 2026 objective timers (cross-check) | **League of Legends Wiki** (wiki.leagueoflegends.com), read by hand, never crawled (its robots.txt disallows `?action=` URLs) | **CC BY-SA 3.0** — https://creativecommons.org/licenses/by-sa/3.0/ |
+| Power curve, level-6 spike, waveclear, splitpush, sustain, lane classes, matchup tips, build preferences, classic ward spots | TreeAI Coach curation (`tools/data/champion_curation.json`, `assets/matchups.json`, `tools/fetch_builds.py`, `assets/ward_spots.json`) | Project license |
+
+Because `assets/champion_meta.json` contains data adapted from the League of Legends Wiki (via
+Meraki), **that file is shared under CC BY-SA 3.0** (attribution: League of Legends Wiki
+contributors, Meraki Analytics); its header repeats this. Every profile field records its source
+(`src`: dd = Data Dragon, rc = Riot client data, rr = Riot rune recommendations, mk = Meraki,
+wk = wiki, cu = curation, ru = rule). No site whose terms forbid automated access (op.gg, u.gg,
+Mobalytics...) is scraped.

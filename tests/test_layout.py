@@ -32,7 +32,7 @@ SHOTS = json.loads(FIXTURE.read_text(encoding="utf-8"))["shots"]
 
 def _synthetic() -> list[tuple[str, tuple, tuple]]:
     out = []
-    for sw, sh in ((1366, 768), (1920, 1080), (2560, 1440), (3440, 1440)):
+    for sw, sh in ((1366, 768), (1920, 1080), (2560, 1440), (3440, 1440), (1899, 1344)):
         for px in (220, 300, 384):
             side_px = int(min(px, 0.34 * sh))          # League's largest minimap is ~0.31 x height
             m = max(4, round(sh * 0.009))
@@ -62,6 +62,8 @@ def _check_layout(name: str, lay: L.Layout, measured: list) -> list[str]:
     names = list(lay.slots)
     for i, a in enumerate(names):
         for b in names[i + 1:]:
+            if {a, b} == {"badge_big", "badge_small"} and lay.slots["badge_big"].anchor == "as_small":
+                continue           # one fx window plays the badges one after the other: same slot
             if L.overlap(lay.slots[a].content, lay.slots[b].content):
                 bad.append(f"{name}: {a} over {b}")
     return bad
@@ -316,3 +318,29 @@ def test_overlay_thread_puts_every_window_in_its_slot(monkeypatch):
     # nothing to time: the strip window hides; danger: no timers (the card says what to do)
     m._refresh(api, wins, replace(st, objectives=[], enemy_respawns=[]), Config(), False, {}, None, now=11.0)
     assert not wins["timers"].visible
+
+
+def test_tall_window_keeps_the_card_off_the_item_panel_and_recall_bar():
+    # 1899 x 1344 stream capture (taller than 16:9): our card sat right against the item / gold
+    # panel at y ~1260-1295. League's HUD keeps its height-sized width there.
+    scr, mm = (0, 0, 1899, 1344), (1899 - 360 - 12, 1344 - 360 - 12, 360, 360)
+    assert L.ui_unit(scr) == 1344
+    for detailed in (False, True):
+        lay = L.layout_for(scr, mm, Config(), detailed=detailed)
+        z = {k.key: k.rect for k in lay.zones}
+        items_right = 1899 / 2 + 0.29 * 1344                # measured items / W-B-P column, height-scaled
+        for s in lay.slots.values():
+            assert not L.overlap(s.content, z["bottom_bar"]) and not L.overlap(s.content, z["cast_bar"])
+            if s.content[1] + s.content[3] > 1344 - 0.135 * 1344:
+                assert s.content[0] >= items_right + 4
+
+
+def test_big_badge_shown_small_when_it_has_no_clean_place():
+    scr, mm = (0, 0, 1899, 1344), (1899 - 300 - 12, 1344 - 300 - 12, 300, 300)
+    lay = L.layout_for(scr, mm, Config())
+    if lay.slot("badge_big").anchor == "as_small":
+        assert lay.rect("badge_big") == lay.rect("badge_small")
+        assert fx.badge_size(scr, mm, "big") == "small"
+        assert fx.fx_layer_rect(scr, mm, "top_center", "big") == lay.rect("badge_small")
+    assert fx.badge_size((0, 0, 1920, 1080), (1653, 813, 256, 256), "big") == "big"
+

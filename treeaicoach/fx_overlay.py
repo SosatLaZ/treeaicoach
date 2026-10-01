@@ -282,10 +282,10 @@ class PlayFx:
         except Exception:
             pair = (None, None)
         scr_t, mm_t = screen_and_minimap(*pair)
-        size = str(getattr(play, "size", "big"))
+        pos = str(getattr(cfg, "plays_position", "top_center"))
+        size = fx.badge_size(scr_t, mm_t, str(getattr(play, "size", "big")), pos, cfg)
         scale = fx.scale_for_screen(scr_t) if scr_t else 1.0
-        x, y, _w, _h = fx.fx_layer_rect(scr_t, mm_t, str(getattr(cfg, "plays_position", "top_center")), size, scale,
-                                        cfg=cfg)
+        x, y, _w, _h = fx.fx_layer_rect(scr_t, mm_t, pos, size, scale, cfg=cfg)
         cls = str(getattr(play, "cls", "good"))
         if sound_wanted(cfg, cls):
             play_sound(cls)
@@ -293,7 +293,8 @@ class PlayFx:
         t0 = time.monotonic()
         while not self._stop.is_set():
             age = time.monotonic() - t0
-            img = fx.render_play_frame(play, age, scale)
+            img = fx.render_frame(str(getattr(play, "cls", "good")), str(getattr(play, "title", "")),
+                                  str(getattr(play, "reason", "")), age, size=size, scale=scale)
             if img is None:
                 break
             win.update(img, x, y)

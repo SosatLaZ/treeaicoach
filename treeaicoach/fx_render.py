@@ -177,6 +177,8 @@ def fx_layer_rect(screen: Sequence[int] | None, minimap: Sequence[int] | None, p
             if pub is None:
                 pub = lay.layout_for(scr, minimap, _PositionCfg(cfg, position))
             slot = pub.slot("badge_small" if size == "small" else "badge_big")
+            if slot is not None and slot.anchor == "as_small":
+                return slot.rect                 # big play shown small (see badge_size)
             if slot is not None and slot.rect[2] == w and slot.rect[3] == h:
                 return slot.rect
         except Exception:
@@ -196,6 +198,26 @@ def fx_layer_rect(screen: Sequence[int] | None, minimap: Sequence[int] | None, p
         return x, y, w, h
     except Exception:
         return 0, 0, 2, 2
+
+
+def badge_size(screen: Sequence[int] | None, minimap: Sequence[int] | None, size: str = "big",
+               position: str = "top_center", cfg: Any = None) -> str:
+    """Size a badge is really drawn at: "small" when the layout found no clean place for a big
+    one (narrow or tall screens) and gave it the small badge's slot. Never raises."""
+    try:
+        if size != "big":
+            return size
+        from treeaicoach import layout as lay
+
+        scr = tuple(int(v) for v in screen) if screen is not None else (0, 0, 1920, 1080)
+        pub = lay.published(scr, minimap)
+        prefs = pub.key[2] if pub is not None and len(pub.key) > 2 else None
+        if pub is None or getattr(prefs, "plays_position", position) != position:
+            pub = lay.layout_for(scr, minimap, _PositionCfg(cfg, position))
+        slot = pub.slot("badge_big")
+        return "small" if slot is not None and slot.anchor == "as_small" else size
+    except Exception:
+        return size
 
 
 class _PositionCfg:
@@ -368,5 +390,5 @@ def render_play_frame(play: Any, age: float, scale: float = 1.0) -> np.ndarray |
                         scale=scale)
 
 
-__all__ = ["CLASS_RGB", "DURATION", "FPS", "POSITIONS", "anim_state", "frame_times", "fx_layer_rect",
+__all__ = ["CLASS_RGB", "DURATION", "FPS", "POSITIONS", "anim_state", "badge_size", "frame_times", "fx_layer_rect",
            "layer_size", "plate", "plate_size", "render_frame", "render_play_frame", "scale_for_screen"]

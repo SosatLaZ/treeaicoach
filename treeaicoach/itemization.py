@@ -771,6 +771,54 @@ class ItemAdvisor:
                           f"item:{rec.item_id}:{rec.need}", moment, rec, t)]
 
 
+# ----------------------------------------------------------------------------- effect tags (enemy buys)
+def item_effects(item_id: Any) -> frozenset[str]:
+    """Effect tags of an item from the live item data (:data:`treeaicoach.game_data.EFFECT_TAGS`:
+    "antiheal", "armorpen", "magicpen", "lifesteal", "shield", "tenacity", "stasis", "armor", "mr",
+    "cleanse", "anticrit", "pcthp", "health"). Never raises."""
+    try:
+        from treeaicoach import game_data
+
+        return game_data.item_effects(item_id)
+    except Exception:
+        return frozenset()
+
+
+def inventory_effects(item_ids: Iterable[Any], legendary_only: bool = False) -> dict[str, int]:
+    """``{effect: number of items}`` of an inventory (a player's Live Client ``items``); with
+    ``legendary_only`` only completed legendary items / boots count. Never raises."""
+    out: dict[str, int] = {}
+    try:
+        items = load_items() if legendary_only else {}
+        for i in item_ids or ():
+            try:
+                iid = int(i)
+            except (TypeError, ValueError):
+                continue
+            if legendary_only and (iid not in items or items[iid].kind not in ("legendary", "boots")):
+                continue
+            for e in item_effects(iid):
+                out[e] = out.get(e, 0) + 1
+    except Exception:
+        log.debug("inventory_effects failed", exc_info=True)
+    return out
+
+
+def enemy_effects(enemies: Iterable[Any], legendary_only: bool = True) -> dict[str, list[str]]:
+    """``{effect: [enemy names who bought it]}`` from the public enemy inventories (Tab /
+    Live Client), e.g. ``{"antiheal": ["Darius"], "stasis": ["Ahri"]}``. For the enemy-buy advice
+    ("Darius a acheté un anti-soin : ..."). Never raises."""
+    out: dict[str, list[str]] = {}
+    for p in enemies or ():
+        try:
+            name = str(getattr(p, "champion_name", "") or getattr(p, "champion_alias", "") or "?")
+            for e in inventory_effects(getattr(p, "items", None) or (), legendary_only):
+                out.setdefault(e, []).append(name)
+        except Exception:
+            continue
+    return out
+
+
 _load_builds()
 
 try:  # reload the tables after a runtime Data Dragon update

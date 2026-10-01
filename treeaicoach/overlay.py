@@ -310,9 +310,14 @@ def radar_placement(minimap: Any, screen: Any, size: int, position: str = "above
 
 
 def hud_width(screen: Any) -> int:
-    """HUD width (px) for a screen: 340 px at 1080p, proportional to the height."""
+    """HUD width (px) for a screen: 300 px at 1080p, proportional to the height, but never wider
+    than on the 16:9 screen of the same width (a tall 1899 x 1344 window has no room for a wider
+    card between League's respawn panel / item bar and the minimap)."""
     scr = as_rect(screen)
-    w = HUD_BASE_WIDTH * _scale_of(scr)
+    k = _scale_of(scr)
+    if scr is not None:
+        k = min(k, max(0.5, scr[2] * 9.0 / 16.0 / 1080.0))
+    w = HUD_BASE_WIDTH * k
     return int(min(max(round(w), HUD_MIN_WIDTH), HUD_MAX_WIDTH))
 
 

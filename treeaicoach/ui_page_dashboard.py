@@ -348,6 +348,60 @@ class DashboardPageMixin:
         lbl.grid_remove()
         self._tip(lbl, "TreeAI surveille son propre fonctionnement (capture, minimap, détection, voix, API du "
                        "jeu) et corrige seul ce qu'il peut ; sinon il te dit quoi faire.")
+        # empreinte de config (fingerprint.py) + remises à zéro : comparer deux PC d'un coup d'oeil
+        links = self.ctk.CTkFrame(sysf, fg_color="transparent")
+        links.grid(row=self._sys_next_row, column=0, columnspan=4, sticky="w")
+        self._sys_next_row += 1
+
+        def eng_call(name: str) -> Any:
+            fn = getattr(getattr(self, "engine", None), name, None)
+            return fn() if callable(fn) else None
+
+        def copy_fp() -> None:
+            text = eng_call("config_fingerprint_text")
+            if text:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(text)
+                self.show_toast("Empreinte de config copiée : colle-la à un ami pour comparer vos PC.")
+
+        def compare_fp() -> None:
+            from treeaicoach import fingerprint  # noqa: PLC0415
+
+            try:
+                theirs = self.root.clipboard_get()
+            except Exception:
+                theirs = ""
+            diff = fingerprint.compare(eng_call("config_fingerprint_text") or "", theirs)
+            if not fingerprint.parse(theirs):
+                self.show_toast("Copie d'abord l'empreinte de l'autre PC (texte « Empreinte TreeAI … »).", "warning")
+            elif not diff:
+                self.show_toast("Mêmes réglages et même configuration que l'autre PC.")
+            else:
+                log.info("Fingerprint differences:\n%s", "\n".join(diff))
+                self.show_toast(f"{len(diff)} différence(s) : " + " ; ".join(diff[:4]), "warning")
+
+        def reset_det() -> None:
+            eng_call("reset_detection")
+            if hasattr(self.cfg, "icon_scale_by_res"):
+                self.set_option("icon_scale_by_res", {})
+            self.show_toast("Détection réinitialisée : tailles d'icônes, icônes apprises et minimap seront réappris.")
+
+        def force_normal() -> None:
+            eng_call("force_normal_profile")
+            self.set_option("perf_mode", "normal")
+            self.show_toast("Profil normal forcé : plus d'allègement automatique de l'analyse.")
+
+        for i, (text, fn, tip) in enumerate((
+                ("Copier l'empreinte", copy_fp, "Réglages, profil, capture, tailles, caches : de quoi comparer deux PC."),
+                ("Comparer", compare_fp, "Compare avec l'empreinte d'un autre PC copiée dans le presse-papiers."),
+                ("Réinitialiser la détection", reset_det, "Oublie les tailles d'icônes, icônes apprises et "
+                                                          "emplacements de minimap appris sur ce PC."),
+                ("Profil normal", force_normal, "Désactive l'allègement automatique (PC faible / chargé)."))):
+            b = self.ctk.CTkButton(links, text=text, width=10, height=LINK_H, corner_radius=RADIUS,
+                                   fg_color="transparent", hover_color=PANEL_HI, text_color=ACCENT,
+                                   font=self.fonts.tiny_bold, border_spacing=2, command=self.cb(fn))
+            b.grid(row=0, column=i, sticky="w", padx=(0, 4))
+            self._tip(b, tip)
         sig: list[Any] = [None]
 
         def refresh() -> None:
@@ -361,7 +415,7 @@ class DashboardPageMixin:
                 summ = fn() if callable(fn) else None
                 text, level = summary_text(summ)
                 if text and not (bool(getattr(eng, "in_game", False)) or (summ or {}).get("reasons")
-                                 or (summ or {}).get("fixed")):
+                                 or (summ or {}).get("notes") or (summ or {}).get("fixed")):
                     text = ""                       # nothing to say outside a game
                 if (text, level) != sig[0]:
                     sig[0] = (text, level)

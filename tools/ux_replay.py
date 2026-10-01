@@ -106,6 +106,7 @@ class Scenario:
     need: list = field(default_factory=list)      # (a, b, label, regex, levels): a card / banner must say it
     moments: list = field(default_factory=list)   # [Moment]: game-changer moments (value judge)
     waves: dict = field(default_factory=dict)     # lane -> [(gt, meet)] keyframes (default: oscillating)
+    recalls: list = field(default_factory=list)   # (a, b): my recall channelling (engine.note_recall)
     warmup: float = 25.0                          # first seconds not judged (tracker warm-up)
 
 
@@ -531,6 +532,23 @@ def _scenarios() -> dict[str, Scenario]:
         contacts=[(480.0, "mort contre Darius"), (600.0, "mort contre Darius"), (680.0, "mort contre Darius")],
         moments=[Moment(708.0, 726.0, "Darius 5/0 : achat défensif au retour",
                         r"(?i)achète (cotte de mailles|armure d'étoffe)")])
+    S["recall_tower"] = Scenario(
+        "recall_tower", "Rappel sous ma tour, Darius arrive à portée puis rappel tranquille", 570.0, 630.0,
+        paths={"Garen": [(570.0, (0.075, 0.38)), (630.0, (0.075, 0.38))],
+               "Darius": [(570.0, (0.10, 0.22)), (582.0, (0.10, 0.22)), (586.0, (0.08, 0.33)), (592.0, (0.08, 0.33)),
+                          (598.0, (0.10, 0.20)), (630.0, (0.10, 0.20))]},
+        hp=[(570.0, 0.45)], waves={"top": [(570.0, 0.5)]},
+        recalls=[(580.0, 588.0), (605.0, 613.0)],
+        moments=[Moment(584.0, 589.0, "rappel avec Darius à portée : annule ton rappel", r"(?i)annule ton rappel",
+                        levels=("debutant", "intermediaire", "avance"))])
+    S["enemy_buys"] = Scenario(
+        "enemy_buys", "Darius finit Couperet noir en voie, Ahri (4/0) achète Sablier de Zhonya", 480.0, 600.0,
+        kills=[(420.0, "Ahri", "Lux", []), (430.0, "Ahri", "Vi", []), (440.0, "Ahri", "Jinx", []),
+               (450.0, "Ahri", "Thresh", [])],
+        items={"Darius": [(0, [1055, 3044]), (500, [1055, 3071])], "Ahri": [(0, [1056]), (545, [1056, 3157])]},
+        waves={"top": [(480.0, 0.5)]},
+        moments=[Moment(500.0, 530.0, "Darius a fini Couperet noir : évite les échanges", r"(?i)couperet noir"),
+                 Moment(545.0, 580.0, "Ahri (4/0) a un Sablier de Zhonya : force-la à l'utiliser", r"(?i)zhonya à ahri")])
     return S
 
 
@@ -667,6 +685,8 @@ def run(scenario: str | Scenario, level: str = "debutant", hz: float = 2.0) -> R
             t = i / hz
             clock[0] = t
             voice.gt = sc.t0 + t
+            if sc.recalls:
+                eng.note_recall(any(a <= sc.t0 + t <= b for a, b in sc.recalls), t)
             eng.step(t)
             gt = src.gt
             st = eng._build_overlay_state(t)
@@ -721,7 +741,8 @@ class Violation:
 
 #: verbs a card instruction may start with (French imperative, tutoiement)
 VERBS = frozenset("""
-va vas recule pousse rentre achète pose frappe joue reste attends défends farme prends aide regroupe
+va vas recule pousse rentre achète pose frappe joue reste attends défends farme prends aide regroupe annule
+force
 change évite tue retourne suis garde bloque contrôle place utilise vise arrête laisse tiens protège sors
 cours fuis prépare lance engage attaque rejoins tourne ramasse récupère monte descends gèle fais ne
 regarde surveille mets reviens profite plaque tape nettoie prends cache échange harcèle sécurise vole
@@ -1137,6 +1158,12 @@ def judge_value(rp: Replay, frames: list[Frame]) -> list[Violation]:
                 stale.add(_shape((None, text)))
                 out.append(Violation(f.gt, "état:objectif-périmé", f"{text!r} alors que {key} "
                                      f"{'est déjà là' if alive else f'apparaît dans {int(rem or 0)} s'}", 4))
+    # ---- recalling: never "recule vers ta tour" (the recall IS the retreat; cancel it if threatened)
+    for a, b in sc.recalls:
+        bad = next((f for f in frames if a + 1.0 <= f.gt <= b and f.card is not None
+                    and re.search(r"(?i)recule vers ta tour", f.card[1])), None)
+        if bad is not None:
+            out.append(Violation(bad.gt, "état:recule-pendant-rappel", f"{bad.card[1]!r} pendant le rappel", 4))
     # ---- one concrete lesson per death (beginner / intermediate)
     if lvl in ("debutant", "intermediaire"):
         game = ScriptGame(sc)

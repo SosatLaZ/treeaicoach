@@ -121,7 +121,7 @@ KIND_COOLDOWN_S: dict[str, float] = {
     "wave_recall": 120.0, "wave_freeze": 120.0, "back_off": 75.0,
     # game changers (game_changers.py)
     "gc_level": 20.0, "gc_jungler_far": 150.0, "gc_jungler_unseen": 150.0, "gc_baron_setup": 240.0,
-    "gc_fed_defense": 240.0, "gc_facecheck": 180.0,
+    "gc_fed_defense": 240.0, "gc_facecheck": 180.0, "gc_enemy_buy": 45.0,
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
 URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level"})
@@ -148,6 +148,7 @@ OVERLAPS: dict[str, frozenset[str]] = {
     "gc_baron_setup": frozenset({"objective_window", "baron_pick", "objective_setup"}),
     "gc_fed_defense": frozenset(),
     "gc_facecheck": frozenset({"missing", "deep"}),
+    "gc_enemy_buy": frozenset({"item_spike"}),
 }
 OVERLAP_S = 90.0
 #: a new call waits until the card line has been still this long (no card flicker), unless it is
@@ -341,6 +342,7 @@ class MacroCtx:
     keep: bool = False                               # re-validating an active call: relaxed thresholds
     card_age: float | None = None                    # seconds since the HUD card line last changed (engine)
     recent_stances: frozenset = frozenset()          # "push" / "retreat" lines shown in the last ~10 s
+    buys: Any = None                                 # game_changers.EnemyBuys (enemy purchases), None = unknown
 
     @property
     def enemy_team(self) -> str | None:

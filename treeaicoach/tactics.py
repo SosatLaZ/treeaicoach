@@ -124,6 +124,7 @@ class TacticalDirector:
             self._director_call_t: float | None = None
             self._stance_score: float | None = None
             self._gc_topic_t: dict[str, float] = {}
+            self.buys = None
 
     # ------------------------------------------------------------------ public state
     def speech_context(self) -> Any:
@@ -333,6 +334,15 @@ class TacticalDirector:
                         stance_score=getattr(self, "_stance_score", None),
                         card_age=getattr(self, "_card_age", None),
                         recent_stances=getattr(self, "_recent_stances", frozenset()))
+        try:
+            if getattr(self, "buys", None) is None:
+                from treeaicoach.game_changers import EnemyBuys
+
+                self.buys = EnemyBuys()
+            self.buys.update(gt, game)
+            ctx.buys = self.buys
+        except Exception:
+            log.debug("enemy buys failed", exc_info=True)
         up = self.macro.update(ctx, getattr(self.cfg, "skill_level", "intermediaire"))
         if up.cancelled is not None:
             out.macro_cancelled = up.cancelled
