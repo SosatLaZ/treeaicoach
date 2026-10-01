@@ -100,6 +100,8 @@ BOOL_FIELDS: tuple[str, ...] = (
     "overlay_show_roles",
     "overlay_show_ghosts",
     "overlay_show_last_seen",
+    "overlay_timers",
+    "jungle_paths",
     "hud_detailed",
     "text_tips",
     "tip_toasts",
@@ -274,6 +276,7 @@ class Config:
     overlay_show_roles: bool = False     # role tags (TOP/MID/ADC/SUP) on enemies (the jungler always has "JGL")
     overlay_show_ghosts: bool = False    # last seen marks + fog zones of every hidden enemy (not only the jungler)
     overlay_show_last_seen: bool = False  # (detailed mode) dashed mark + "12 s" where each enemy entered the fog
+    overlay_timers: bool = True          # minimap layer: objective respawn / Baron-Elder buff / enemy death window timers
     hud_detailed: bool = False           # "mode détaillé": full HUD card (jungler line, 5 portraits, chips) + map extras
     text_tips: bool = True               # rotating written tips in the HUD (never spoken)
     tip_toasts: bool = False             # ... also as a small toast
@@ -282,6 +285,7 @@ class Config:
     voice_level: str = "minimal"         # "minimal" | "normal" | "bavard" (the rest is written: HUD + toasts)
     fog_mode: str = "jungler"       # "jungler" | "all" | "off"
     fog_max_s: float = 60.0         # 10..180
+    jungle_paths: bool = False      # enemy jungler as 1-2 likely dotted paths (jungle_graph.py), opt-in v1
     hotkey_mute: str = "F10"
     hotkey_overlay: str = "F11"
     break_reminder: bool = True

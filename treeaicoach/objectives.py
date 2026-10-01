@@ -97,6 +97,8 @@ MAX_EXTRAPOLATION_S = 2.5         # max extrapolation of the API clock between p
 MAX_EVENTS = 2000                 # bound on the remembered kill events
 
 _OBJECTIVE_SOON: Any = getattr(AlertKind, "OBJECTIVE_SOON", "objective_soon")
+#: Buff durations (s) after a kill: Hand of Baron 3:00, Aspect of the Elder Dragon 2:30.
+BUFF_DURATION_S: dict[str, float] = {"baron": 180.0, "elder": 150.0}
 
 
 @dataclass
@@ -324,6 +326,8 @@ def _parse_kill(ev: Any, lookup: Mapping[str, str]) -> _KillEvent | None:
         dtype = ev.get("DragonType")
         elder = isinstance(dtype, str) and dtype.strip().casefold() == "elder"
         team = _killer_team(ev, lookup)
+    elif slot == "baron":
+        team = _killer_team(ev, lookup)            # buff owner (overlay timers)
     return _KillEvent(uid=uid, content=content, slot=slot, time=t, elder=elder, team=team)
 
 
@@ -476,6 +480,29 @@ class ObjectiveTimers:
         """Current objectives for the HUD (spawned or upcoming; gone ones omitted), fixed order."""
         with self._lock:
             return [copy.copy(s) for s in self._states]
+
+    def buffs(self) -> list[tuple[str, str | None, float]]:
+        """Active Baron / Elder buffs at the last update's clock: ``(kind, killer team or None,
+        game time the buff ends)``, baron first. The buff is lost earlier by a dead holder, so the
+        end time is an upper bound. Never raises."""
+        try:
+            with self._lock:
+                g = self._game_time
+                if g is None:
+                    return []
+                best: dict[str, tuple[str, str | None, float]] = {}
+                for ev in self._events.values():
+                    kind = "elder" if (ev.slot == "dragon" and ev.elder) else ev.slot
+                    dur = BUFF_DURATION_S.get(kind)
+                    if dur is None:
+                        continue
+                    end = ev.time + dur
+                    if ev.time - 2.0 <= g < end and (kind not in best or end > best[kind][2]):
+                        best[kind] = (kind, ev.team, end)
+                return [best[k] for k in ("baron", "elder") if k in best]
+        except Exception:
+            log.debug("ObjectiveTimers.buffs failed", exc_info=True)
+            return []
 
     def reset(self) -> None:
         """Forget everything (new game)."""

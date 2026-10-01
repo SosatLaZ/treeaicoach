@@ -413,6 +413,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             from treeaicoach.fog_tracker import FogTracker
 
             self._fog = FogTracker(max_s=cfg.fog_max_s)
+            self._fog.apply_config(cfg)
         except Exception:
             log.exception("Fog tracker unavailable")
         try:

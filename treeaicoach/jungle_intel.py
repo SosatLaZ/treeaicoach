@@ -267,6 +267,8 @@ class JungleIntelTracker:
         self._farm = (since, uvs, side, owner)
         if fog is not None and not visible:
             fog.anchor(alias, None, since, "farm", points=uvs)
+        if fog is not None and not visible and hasattr(fog, "observe_farm"):
+            fog.observe_farm(alias)
         log.debug("Tab: jungler %s farming (%d candidate places, side %s)", alias, len(uvs), side)
 
     # ---------------------------------------------------------------- early clear model

@@ -201,6 +201,10 @@ class OverlayState:
     tip_curated: bool = False                 # True: ``tip`` is the engine's final card line (no insight /
                                               # gauge-line fallback here: contradiction / repeat checked)
     my_role: str | None = None                # "TOP" | "JUNGLE" | "MIDDLE" | "BOTTOM" | "UTILITY" | None
+    # timers column on the minimap layer (timer_rows): config ``overlay_timers``
+    show_timers: bool = True
+    buffs: list = field(default_factory=list)          # (kind "baron"|"elder", killer team|None, end game time)
+    enemy_respawns: list = field(default_factory=list)  # game time each dead enemy respawns (Live Client)
 
 
 #: A visible champion whose data is older than this (s) - or stacked under another icon, or not
@@ -1456,6 +1460,11 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         vis = 0.35 + 0.65 * math.sqrt(conf) if conf > 0 else 0.0
         main = bool(getattr(fog, "is_jungler", False))
         region = fog.region
+        if main and getattr(fog, "paths", None):      # logical paths (jungle_graph.py): no blob
+            ev = by_key.get(fog.key)
+            if not (ev is not None and (ev.visible or bool(getattr(ev, "dead", False)))):
+                _draw_jungle_paths(cv_, fog, W, H, k, vis, f_time, labels, me)
+            continue
         if vis > 0 and isinstance(region, np.ndarray) and region.ndim == 2 and region.shape[0] >= 4:
             heat = _heat_layer(getattr(fog, "heat", None), W, H)
             if heat is not None:          # where he probably is (early clear model): heat only
@@ -1599,7 +1608,165 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
              + [_uv_ok(a.uv) for a in allies if a.visible and a.uv is not None] if p is not None]
     _draw_guides(cv_, list(getattr(state, "guides", None) or []), me, icons, W, H, now,
                  max(1, MAX_MAP_ELEMENTS - n_arrows) if detailed else 1, taken)
+    _draw_timers(cv_, state, W, H)
     return cv_.to_bgra()
+
+
+# ---- timers column (outer top corner of the minimap layer) -----------------------------
+TIMER_SOON_S = 90.0             # objective spawns shown this long before (and "UP" this long after)
+TIMER_MAX_ROWS = 3
+TIMER_MAX_ROWS_DETAILED = 5     # F6 / detailed mode: every objective
+TIMER_DEATHS_MIN = 2            # enemy death window from this many dead enemies
+_TIMER_KEYS = {"dragon ancestral": "elder", "héraut": "herald", "larves": "grubs"}
+
+
+def timer_rows(state: Any) -> list[tuple[str, tuple]]:
+    """``(text, accent colour)`` rows of the timers column, most useful first, at most
+    :data:`TIMER_MAX_ROWS` (detailed: :data:`TIMER_MAX_ROWS_DETAILED`). What the game shows badly
+    first: Baron / Elder buff remaining (enemy, then ours), the enemy death window (>= 2 dead),
+    respawns after a kill, then objectives up / first spawns. Objectives my role does not play
+    (voice_policy.objective_involved) and spawns more than 90 s away are left out unless detailed.
+    Empty while a danger banner shows (threat >= 1 and I am alive) or with ``show_timers`` off.
+    Never raises."""
+    try:
+        if not bool(getattr(state, "show_timers", True)):
+            return []
+        dead_me = bool(getattr(state, "me_dead", False))
+        lvl = state.threat_level if _finite(state.threat_level or 0) else 0
+        if int(lvl or 0) >= 1 and not dead_me:
+            return []
+        gt = state.game_time if state.game_time is not None and _finite(state.game_time) else None
+        if gt is None:
+            return []
+        gt = float(gt)
+        detailed = bool(getattr(state, "hud_detailed", False))
+        my_team = getattr(state, "my_team", None)
+        rows: list[tuple[int, float, str, tuple]] = []
+        for b in getattr(state, "buffs", None) or []:
+            try:
+                kind, team, end = str(b[0]), b[1], float(b[2])
+            except (TypeError, ValueError, IndexError):
+                continue
+            rem = end - gt
+            if not _finite(rem) or rem <= 0:
+                continue
+            label = "Baron" if kind == "baron" else "Ancestral"
+            if team is not None and my_team is not None and team != my_team:
+                rows.append((0, rem, f"{label} ennemi {fmt_clock(rem)}", TAI_DANGER))
+            elif team is not None and my_team is not None:
+                rows.append((1, rem, f"{label} allié {fmt_clock(rem)}", TAI_GO))
+            else:
+                rows.append((1, rem, f"Buff {label} {fmt_clock(rem)}", TAI_WARN))
+        ends = [float(t) - gt for t in (getattr(state, "enemy_respawns", None) or []) if _finite(t)]
+        ends = [r for r in ends if r > 0.5]
+        if len(ends) >= TIMER_DEATHS_MIN:
+            rem = min(ends)
+            rows.append((2, rem, f"{len(ends)} morts · {fmt_seconds(rem)}", TAI_GO))
+        from treeaicoach.voice_policy import objective_involved
+
+        for ob in state.objectives or []:
+            name = str(getattr(ob, "name", "") or "")
+            nxt = getattr(ob, "next_spawn", None)
+            if not name or nxt is None or not _finite(nxt):
+                continue
+            key = str(getattr(ob, "key", "") or name).lower()
+            key = _TIMER_KEYS.get(key, key)
+            if not detailed and not objective_involved(f"objective_soon:{key}:60", getattr(state, "my_role", None),
+                                                       getattr(state, "me_uv", None), gt):
+                continue
+            label = OBJECTIVE_SHORT.get(name.lower(), name)
+            rem = float(nxt) - gt
+            if bool(getattr(ob, "alive", False)):
+                if detailed or -rem <= TIMER_SOON_S:
+                    rows.append((4, -1.0, f"{label} UP", TAI_GO_SOFT))
+                continue
+            if rem < 0 or (rem > TIMER_SOON_S and not detailed):
+                continue
+            respawn = str(getattr(ob, "source", "") or "") == "event"
+            rows.append((3 if respawn else 5, rem, f"{label} {fmt_clock(rem)}",
+                         TAI_WARN if rem <= 30 else TAI_INFO))
+        rows.sort(key=lambda r: (r[0], r[1]))
+        cap = TIMER_MAX_ROWS_DETAILED if detailed else TIMER_MAX_ROWS
+        return [(text, rgb) for _p, _r, text, rgb in rows[:cap]]
+    except Exception:
+        log.debug("timer rows failed", exc_info=True)
+        return []
+
+
+def _draw_timers(cv_: Canvas, state: Any, W: int, H: int) -> None:
+    """The :func:`timer_rows` column: white text on a dark plate with an accent dot, in the outer
+    top corner of the minimap (top-right; top-left when the minimap sits on the left half of the
+    screen), below the "TreeAI" frame label. Never raises."""
+    try:
+        rows = timer_rows(state)
+        if not rows:
+            return
+        k = min(W, H) / 256.0
+        f = get_font(max(8, int(round(9 * k))), "bold")
+        cap = _cap_height(f)
+        pad, dot, row_h = max(2.0, 3 * k), max(2.0, 2.2 * k), cap + max(4.0, 5 * k)
+        tw = max(text_width(t, f) for t, _c in rows)
+        pw = min(W * 0.48, tw + 2 * pad + 2 * dot + max(2.0, 3 * k))
+        ph = row_h * len(rows) + max(2.0, 2 * k)
+        y0 = 2.0 + _cap_height(get_font(max(7, int(round(7 * k))), "bold")) + 4 + max(2.0, 2 * k)
+        mm, sc = _rect_tuple(getattr(state, "minimap_rect", None)), _rect_tuple(getattr(state, "screen_rect", None))
+        left = mm is not None and sc is not None and mm[0] + mm[2] / 2 < sc[0] + sc[2] / 2
+        x0 = 2.0 if left else W - pw - 2.0
+        cv_.rrect(x0, y0, pw, ph, max(2.0, 4 * k), PANEL_DEEP, 0.72, border=TAI_EDGE, border_alpha=0.5)
+        for i, (text, rgb) in enumerate(rows):
+            cy = y0 + max(1.0, k) + row_h * (i + 0.5)
+            cv_.disc(x0 + pad + dot, cy, dot, rgb, 0.95)
+            cv_.text(x0 + pad + 2 * dot + max(2.0, 3 * k), cy, fit_text(text, f, pw - 2 * pad - 2 * dot - 3 * k),
+                     f, TAI_TEXT, 0.98, shadow=0.6)
+    except Exception:
+        log.debug("timers column failed", exc_info=True)
+
+
+#: Logical paths: at most this many drawn, faded below this probability.
+MAX_JUNGLE_PATHS = 2
+
+
+def _draw_jungle_paths(cv_: Canvas, fog: Any, W: int, H: int, k: float, vis: float, font: Any,
+                       labels: list, me: Any) -> None:
+    """The 1-2 likely paths of the hidden jungler: thin dotted polylines with an arrowhead at
+    the next stop, opacity = probability x confidence, "≈ 12 s de toi" when a path passes by me,
+    "autre côté" when the mass is far from me."""
+    paths = list(getattr(fog, "paths", None) or ())[:MAX_JUNGLE_PATHS]
+    lw = max(1.0, 1.15 * k)
+    dash, gap = max(2.0, 2.6 * k), max(2.0, 2.4 * k)
+    for rank, jp in enumerate(paths):
+        pts = [(float(x) * W, float(y) * H) for x, y in (getattr(jp, "points", None) or ())]
+        if len(pts) < 2:
+            continue
+        a = _clamp01(0.35 + 0.9 * float(getattr(jp, "prob", 0.0))) * max(0.3, vis) * (1.0 if rank == 0 else 0.7)
+        rgb = DANGER if rank == 0 else _mix(DANGER, WHITE, 0.35)
+        carry = 0.0                                     # dotted line continuous along the polyline
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+            L = math.hypot(x1 - x0, y1 - y0)
+            if L < 1e-6:
+                continue
+            ux, uy = (x1 - x0) / L, (y1 - y0) / L
+            s0 = carry
+            while s0 < L:
+                s1 = min(L, s0 + dash)
+                cv_.capsule(x0 + ux * s0, y0 + uy * s0, x0 + ux * s1, y0 + uy * s1, lw, rgb, a)
+                s0 = s1 + gap
+            carry = s0 - L
+        # arrowhead on the last segment
+        (xa, ya), (xb, yb) = pts[-2], pts[-1]
+        L = math.hypot(xb - xa, yb - ya)
+        if L > 1e-6:
+            back = min(L, 6.0 * k + 3)
+            _arrow(cv_, xb - (xb - xa) / L * back, yb - (yb - ya) / L * back, xb, yb, lw, rgb, a)
+        if rank == 0:
+            eta = getattr(jp, "eta_me", None)
+            text = None
+            if eta is not None and _finite(eta) and float(eta) <= 30.0:
+                text = f"≈ {int(round(float(eta)))} s de toi"
+            elif bool(getattr(fog, "far_side", False)):
+                text = "autre côté"
+            if text:
+                labels.append((1, xb, yb, max(3.0, 3 * k), text, font, GOLD_LIGHT, max(0.7, a), "jgl_path"))
 
 
 def _clear_of(uv: tuple[float, float], icons: list[tuple[float, float]], r: float = GUIDE_CLEAR_R) -> bool:

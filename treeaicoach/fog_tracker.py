@@ -281,6 +281,12 @@ class FogEstimate:
     #: Probability of each cell (float32 [grid, grid], sums to 1 over ``region``) from the
     #: early jungle clear model (jungle_path.py), or None (uniform over the region).
     heat: np.ndarray | None = None
+    #: Logical paths (jungle_graph.py, ``FogTracker.paths_enabled``): the 1-2 most likely
+    #: :class:`treeaicoach.jungle_graph.JunglePath`, P(he reaches me within 8 s), and
+    #: "probably on the other half of the map".
+    paths: tuple = ()
+    p_reach: float | None = None
+    far_side: bool = False
 
 
 class _Loss:
@@ -369,6 +375,10 @@ class FogTracker:
         #: ``max_s`` while the early clear model is informative) and
         #: ``fog_heat(alias, t, game, region) -> ndarray | None``.
         self.heat_source: Any = None
+        #: Logical paths (particle filter on the jungle graph, jungle_graph.py). Opt-in
+        #: (config ``jungle_paths``) until the jungle gym shows it beats the heat model.
+        self.paths_enabled = False
+        self._pf: Any = None
 
     def _held(self, alias: Any, t: float, game: Any) -> bool:
         src = self.heat_source
@@ -405,6 +415,7 @@ class FogTracker:
     def apply_config(self, cfg: Any) -> None:
         """Read ``cfg.fog_max_s`` (default 60 s)."""
         self.set_max_s(getattr(cfg, "fog_max_s", FOG_MAX_S))
+        self.paths_enabled = bool(getattr(cfg, "jungle_paths", False))
 
     def reset(self) -> None:
         """Forget every estimate (new game)."""
@@ -417,6 +428,55 @@ class FogTracker:
             self._anchor_pts.clear()
             self._dead.clear()
             self._events_seen = 0
+            self._pf = None
+
+    def observe_farm(self, alias: Any = None) -> None:
+        """The jungler's creep score went up (Tab): feeds the logical-paths filter."""
+        pf = self._pf
+        if pf is not None:
+            pf.observe_farm()
+
+    def _paths_for(self, t: float, loss: "_Loss", tracker: Any, game: Any, elapsed: float
+                   ) -> tuple[Any, tuple, float | None, bool]:
+        """(heat, paths, p_reach, far_side) of the jungler from the particle filter."""
+        try:
+            from treeaicoach.jungle_graph import JunglerFilter
+
+            gt_now = _game_time_now(game, t) if game is not None else None
+            if gt_now is None:
+                return None, (), None, False
+            key = (round(loss.last_seen, 3), loss.last_uv)
+            pf = self._pf
+            refine = pf is not None and len(loss.seeds) > 1    # CS-tick anchor: same walk, refined
+            if pf is None or (pf.start_key != key and not refine):
+                team = None
+                try:
+                    jg = game.enemy_jungler()
+                    team = getattr(jg, "team", None) if jg is not None else None
+                except Exception:
+                    team = None
+                pf = JunglerFilter()
+                pf.reset(loss.last_uv, gt_now - elapsed, team, key=key)
+                self._pf = pf
+            pf.step(gt_now)
+            viewers: list[tuple[float, float]] = []
+            me = None
+            try:
+                mt = tracker.me() if hasattr(tracker, "me") else None
+                me = _safe_position(mt) if mt is not None else None
+                if me is not None:
+                    viewers.append(me)
+                for a in (tracker.allies(visible_only=True) if hasattr(tracker, "allies") else []):
+                    p = _safe_position(a)
+                    if p is not None:
+                        viewers.append(p)
+            except Exception:
+                pass
+            pf.observe_vision(viewers)
+            return pf.heat(self.grid), tuple(pf.paths(me=me)), pf.p_reach(me), pf.far_side(me)
+        except Exception:
+            log.debug("Logical paths failed", exc_info=True)
+            return None, (), None, False
 
     def anchor(self, alias: str, uv: tuple[float, float] | None, t: float, reason: str = "",
                points: Iterable[tuple[float, float]] | None = None) -> None:
@@ -548,7 +608,7 @@ class FogTracker:
                     self._anchors.pop(_norm_alias(alias), None)   # seen since: obsolete
                     self._anchor_pts.pop(_norm_alias(alias), None)
                 continue
-            est = self._estimate_hidden(t, key, tr, alias, is_jungler, game)
+            est = self._estimate_hidden(t, key, tr, alias, is_jungler, game, tracker)
             if est is not None:
                 out.append(est)
 
@@ -658,7 +718,7 @@ class FogTracker:
         return math.hypot(*vel) if vel is not None else 0.0
 
     def _estimate_hidden(self, t: float, key: str, tr: Any, alias: str | None, is_jungler: bool,
-                         game: Any) -> FogEstimate | None:
+                         game: Any, tracker: Any = None) -> FogEstimate | None:
         last_seen = _finite_or(getattr(tr, "last_seen", None), None)
         if last_seen is None:
             return None
@@ -724,11 +784,16 @@ class FogTracker:
         last_uv, shown_seen, radius = shown.last_uv, shown.last_seen, s_reach + FLASH_MARGIN + shown.spread
         if region is not loss._region:
             region.setflags(write=False)
+        heat, paths, p_reach, far = None, (), None, False
+        if loss.is_jungler and self.paths_enabled:
+            heat, paths, p_reach, far = self._paths_for(t, loss, tracker, game, elapsed)
+        if loss.is_jungler and heat is None:
+            heat = self._heat(alias, t, game, region)
         return FogEstimate(
             key=key, alias=loss.alias, name=loss.name, last_uv=last_uv, last_seen=shown_seen,
             elapsed=max(0.0, t - shown_seen), speed=loss.speed, radius=radius,
             region=region, confidence=confidence, is_jungler=loss.is_jungler, seeds=loss.seeds,
-            heat=self._heat(alias, t, game, region) if loss.is_jungler else None,
+            heat=heat, paths=paths, p_reach=p_reach, far_side=far,
         )
 
 

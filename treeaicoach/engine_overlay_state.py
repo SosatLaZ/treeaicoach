@@ -255,9 +255,27 @@ class OverlayStateMixin:
             phase=tac.phase() if tac is not None else None,
             role_notice=self._role_notice(now),
             tip_curated=True,               # _hud_line: the final card line (gauge line, no contradiction)
+            **self._timer_fields(game, cfg),
             **self._hud_card_fields(game, me_uv, tip, now),
             **self._prediction_fields(me, game, game_t, now),
         )
+
+    def _timer_fields(self, game: Any, cfg: Any) -> dict[str, Any]:
+        """Timers column of the minimap layer (overlay_render.timer_rows): the toggle, the Baron /
+        Elder buffs (objectives.ObjectiveTimers.buffs) and the game time each dead enemy respawns
+        (Live Client ``isDead`` / ``respawnTimer``, the Tab screen's data). Never raises."""
+        out: dict[str, Any] = {"show_timers": bool(getattr(cfg, "overlay_timers", True))}
+        try:
+            obj = self._objectives
+            out["buffs"] = obj.buffs() if obj is not None and hasattr(obj, "buffs") else []
+            base = _finite(game.game_time) if game is not None else None
+            if base is not None:
+                out["enemy_respawns"] = [float(base) + float(p.respawn_timer) for p in game.enemies
+                                         if getattr(p, "is_dead", False)
+                                         and (_finite(getattr(p, "respawn_timer", 0.0)) or 0.0) > 0.0]
+        except Exception:
+            log.debug("timer fields failed", exc_info=True)
+        return out
 
     def _grouped(self, now: float, me_uv: Any) -> bool:
         """>= 2 visible allies next to me and at least as many of us as of them (a team fight)."""
