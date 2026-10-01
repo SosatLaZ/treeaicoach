@@ -29,6 +29,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import re
 import sys
 import threading
 import time
@@ -62,11 +63,6 @@ VERIFY_PERIOD_S = 1.0            # first minimap verify() after a location (then
 UNFOCUSED_HIDE_S = 1.5           # game not in the foreground this long -> overlay hidden
 STATS_EVERY_S = 1.0              # health monitor refresh (CPU %, rates)
 STALE_MIN_GAME_S = 90.0          # frozen-capture check only once minions walk (game time, s)
-#: my fountain (normalized; the minimap is never flipped by team) - no enemy icon there
-MY_FOUNTAIN_UV = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
-FOUNTAIN_REJECT_R = 0.10         # enemy detections this close to my fountain: dropped
-BASE_STRICT_R = 0.22             # ... in the rest of my base: an enemy identity needs ...
-BASE_ENEMY_MIN_ID = 0.85         # ... at least this identification score (else anonymous)
 TRIVIAL_BUY_AFTER_S = 1200.0     # after 20:00 ...
 TRIVIAL_BUY_GOLD = 500           # ... no HUD chip for a lone component cheaper than this (not completing)
 EARLY_ADVICE_GT_S = 65.0         # no lane-phase tip / insight on the HUD line before the minions spawn
@@ -308,6 +304,58 @@ def _default_opener(path: Path) -> None:
 
 
 # ------------------------------------------------------------------------------ engine
+# ------------------------------------------------------------------------------ base siege / ace
+_BASE_TURRET_RE = re.compile(r"_(?:[LR]_01|C_0[123])_")
+SIEGE_EVENT_S = 45.0             # a base structure of ours fell this recently -> siege
+ACE_EVENT_S = 35.0               # enemy ace this recently -> ace state
+SIEGE_TEXT = "Ils sont dans ta base : défends le nexus en réapparaissant, attends le groupe."
+ACE_TEXT = "Ace : ils prennent ta base, attendez la réapparition ensemble."
+ACE_TEXT_FAR = "Ace : attendez la réapparition ensemble, ne sortez pas seuls."
+
+
+def structure_owner(name: Any) -> str | None:
+    """"Turret_T1_C_05_A" / "Barracks_T2_L1" -> "ORDER" / "CHAOS" (None if unknown)."""
+    n = str(name or "")
+    return "ORDER" if "_T1_" in n or n.endswith("_T1") else "CHAOS" if "_T2_" in n or n.endswith("_T2") else None
+
+
+def siege_state(game: Any, gt: float, enemies_in_base: int = 0) -> tuple[str | None, str | None]:
+    """``("ace" | "siege" | None, HUD line)`` from the Live Client events + enemies seen in my
+    base: an enemy ace (or 4+ of us dead) dominates everything; a siege is my base open (an
+    inhibitor or a base turret of mine destroyed) with enemies inside, or a base structure of mine
+    falling right now. Pure, never raises."""
+    try:
+        my = getattr(game, "my_team", None)
+        if my not in ("ORDER", "CHAOS"):
+            return None, None
+        events = list(getattr(game, "events", None) or [])
+        ace = False
+        base_open = recent = False
+        for e in events:
+            name = e.get("EventName") if isinstance(e, dict) else None
+            et = _finite(e.get("EventTime")) if isinstance(e, dict) else None
+            age = (gt - et) if et is not None else 1e9
+            if name == "Ace" and e.get("AcingTeam") not in (None, my) and 0 <= age <= ACE_EVENT_S:
+                ace = True
+            elif name in ("TurretKilled", "InhibKilled"):
+                struct = e.get("TurretKilled") or e.get("InhibKilled")
+                if structure_owner(struct) != my:
+                    continue
+                base = name == "InhibKilled" or bool(_BASE_TURRET_RE.search(str(struct)))
+                base_open = base_open or base
+                if base and 0 <= age <= SIEGE_EVENT_S:
+                    recent = True
+        team = [p for p in (game.all_players() if hasattr(game, "all_players") else []) if p.team == my]
+        dead = sum(1 for p in team if getattr(p, "is_dead", False))
+        if ace or (len(team) >= 5 and dead >= 4):
+            return "ace", (ACE_TEXT if base_open or enemies_in_base > 0 else ACE_TEXT_FAR)
+        if recent or (base_open and enemies_in_base >= 2):
+            return "siege", SIEGE_TEXT
+        return None, None
+    except Exception:
+        return None, None
+
+
 class CoachEngine:
     """The analysis engine. See the module docstring. All public methods are thread-safe."""
 
@@ -2121,7 +2169,7 @@ class CoachEngine:
         if tip is not None and text == self._tip_text:
             return str(getattr(tip, "tone", "info") or "info")
         low = text.casefold()
-        if any(w in low for w in ("recule", "danger", "gank", "rentre", "fuis")):
+        if any(w in low for w in ("recule", "danger", "gank", "rentre", "fuis", "ta base", "ace :")):
             return "danger"
         if any(w in low for w in ("attention", "prudent", "évite", "safe")):
             return "warning"
@@ -2359,6 +2407,10 @@ class CoachEngine:
         me_dead = bool(getattr(getattr(game, "me", None), "is_dead", False)) if game is not None else False
         if me_dead:      # dead: the respawn countdown + the death cause / active call only
             early = True
+        siege, siege_line = self._siege(now)
+        if siege is not None:   # ace / siege: that line first, no "à toi de jouer", no tip
+            valid = [siege_line] + [v for v in valid if self._tip_tone(v) != "go"]
+            early = True
         if coach is not None and not early:
             try:
                 urgent = [it for it in coach.insight_items() if it[0] >= 65 and it[2] != "objective"]
@@ -2548,31 +2600,6 @@ class CoachEngine:
             log.debug("Cannot update %r", item, exc_info=True)
         return item
 
-    def _reject_enemy_in_my_fountain(self, identified: list[Any]) -> list[Any]:
-        """An "enemy" icon in MY fountain is impossible (the fountain laser): it is my icon, an
-        ally or a structure misread (real game: "Kindred vu il y a 73 s, ta base"). Inside the
-        rest of my base an enemy identity needs a strong portrait match. Never raises."""
-        game = self._game
-        team = getattr(game, "my_team", None) if game is not None else None
-        if team not in MY_FOUNTAIN_UV:
-            return identified
-        fu, fv = MY_FOUNTAIN_UV[team]
-        out = []
-        for x in identified:
-            det = getattr(x, "det", x)
-            if getattr(x, "relation", None) == "enemy":
-                try:
-                    d = math.hypot(float(det.u) - fu, float(det.v) - fv)
-                    if d < FOUNTAIN_REJECT_R:
-                        continue
-                    if d < BASE_STRICT_R and getattr(x, "alias", None) and \
-                            float(getattr(x, "id_score", 0.0) or 0.0) < BASE_ENEMY_MIN_ID:
-                        x = self._with(x, alias=None, id_score=0.0)
-                except Exception:
-                    pass
-            out.append(x)
-        return out
-
     def _stabilize(self, t: float, identified: list[Any]) -> list[Any]:
         """Temporal sanity checks between the identifier and the tracker.
 
@@ -2586,7 +2613,7 @@ class CoachEngine:
         tracker = self._tracker
         if tracker is None or not identified:
             return identified
-        out = self._reject_enemy_in_my_fountain(list(identified))
+        out = list(identified)
         tracks = {tr.alias: tr for tr in tracker.tracks() if tr.alias}
         for i, x in enumerate(out):
             alias = getattr(x, "alias", None)
@@ -3435,7 +3462,14 @@ class CoachEngine:
         level = max((lvl for t_, lvl, _a in hist if now - t_ <= THREAT_HOLD_S), default=0)
         top = max((a for t_, lvl, a in hist if now - t_ <= THREAT_HOLD_S and lvl == level),
                   key=lambda a: a.t, default=None)
-        if level >= Level.DANGER:
+        siege, _siege_line = self._siege(now)
+        if siege is not None:           # base siege / ace dominate: never "SÛR" while the base falls
+            level = max(level, int(Level.DANGER))
+        if siege == "ace":
+            text = "DANGER — ACE"
+        elif siege == "siege":
+            text = "DANGER — TA BASE EST ATTAQUÉE"
+        elif level >= Level.DANGER:
             text = "DANGER — GANK !"
         elif level == Level.WARNING:
             who = self._display_name(game, top.alias) if top is not None else None
@@ -3534,6 +3568,27 @@ class CoachEngine:
         except Exception:
             log.debug("HUD card fields failed", exc_info=True)
         return out
+
+    def _siege(self, now: float) -> tuple[str | None, str | None]:
+        """Current base-siege / ace state (see :func:`siege_state`). Never raises."""
+        game = self._game
+        if game is None:
+            return None, None
+        try:
+            gt = (_finite(game.game_time) or 0.0) + min(max(0.0, now - self._game_t), 3.0)
+            n = 0
+            tr = self._tracker
+            if tr is not None:
+                for e in tr.enemies(visible_only=False):
+                    pos = e.position()
+                    if pos is None or now - e.last_seen > 5.0:
+                        continue
+                    z = geometry.classify_zone(*pos)
+                    if geometry.is_base(z) and geometry.zone_owner(z) == game.my_team:
+                        n += 1
+            return siege_state(game, gt, n)
+        except Exception:
+            return None, None
 
     def _trivial_component_buy(self, rec: Any, game: Any, now: float) -> bool:
         """After 20:00, a lone cheap component (< 500 gold, e.g. "Épée longue" with a near-complete

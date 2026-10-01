@@ -676,12 +676,13 @@ class SmartCapture:
                 img = None
         if img is None:
             self._fails += 1
-            alt = self.other()
+            # (the backend may just have been disabled -> already switched: use the new one)
+            alt = self.current if self.current != name else self.other()
             if alt is not None:
                 img = self._grab_with(alt, rect, pad)
                 if img is not None:
                     self.stats["fallback_grabs"] += 1
-                    if self._fails >= FAIL_SWITCH:
+                    if self._fails >= FAIL_SWITCH and alt != self.current:
                         self._switch(f"{FAIL_SWITCH} failed grabs", to=alt)
         else:
             self._fails = 0

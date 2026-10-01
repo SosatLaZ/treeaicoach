@@ -1983,7 +1983,7 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
             avail_r = right - _brand(cv_, right, cy, k) - 8 * k
             if bool(getattr(state, "me_dead", False)):      # dead: no "SÛR" / gauge, the respawn timer
                 gr = 6.5 * k
-                cv_.disc(left + gr, cy, gr, TAI_MUTED, 0.9)
+                cv_.disc(left + gr, cy, gr, TAI_DANGER if lvl >= 2 else TAI_MUTED, 0.9)
                 rs = getattr(state, "respawn_s", None)
                 text = "MORT" + (f" · réapparition dans {int(math.ceil(float(rs)))} s"
                                  if rs is not None and _finite(rs) and float(rs) > 0 else "")
