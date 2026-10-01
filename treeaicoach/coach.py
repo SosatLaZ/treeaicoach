@@ -1322,4 +1322,295 @@ class MapCoach:
         return [it[1] for it in items[:4]]
 
 
-__all__ = ["MapCoach", "map_side", "fmt_dec", "PITS", "TURRETS", "GLOBAL_GAP_S", "ENEMY_RULES"]
+# ======================================================================================
+# Stance: PRUDENT / ÉQUILIBRÉ / AGRESSIF
+# ======================================================================================
+STANCE_LABEL: dict[str, str] = {"prudent": "PRUDENT", "equilibre": "ÉQUILIBRÉ", "agressif": "AGRESSIF"}
+STANCE_AGGRO = 2.0              # score >= this -> agressif
+STANCE_SAFE = -2.0              # score <= this -> prudent
+STANCE_CONFIRM_S = 4.0          # a new stance must hold this long before it is shown
+STANCE_CONFIRM_SAFE_S = 1.5     # ... (going prudent is confirmed faster)
+STANCE_VOICE_GAP_S = 120.0      # spoken at most every 2 min, only when it changed
+STANCE_MIN_GT = 90.0            # nothing before 1:30 (everyone is still walking to lane)
+STANCE_RECENT_DEATHS_S = 180.0
+STANCE_RECENT_KILLS_S = 120.0
+OPPOSITE_SIDE = {"top": "bot", "bot": "top"}
+
+
+@dataclass(frozen=True)
+class Stance:
+    """A live stance recommendation."""
+
+    level: str                  # "prudent" | "equilibre" | "agressif"
+    reason: str                 # short French reason ("+1 niveau sur Darius et jungler ennemi vu en bas")
+    score: float
+    factors: tuple[tuple[float, str], ...] = ()
+    t: float = 0.0
+
+    @property
+    def label(self) -> str:
+        return STANCE_LABEL.get(self.level, self.level.upper())
+
+    @property
+    def sentence(self) -> str:
+        """Voice sentence: "Joue agressif : +1 niveau sur Darius."."""
+        head = {"prudent": "Joue prudent", "agressif": "Joue agressif"}.get(self.level, "Situation équilibrée")
+        return f"{head} : {self.reason}." if self.reason else f"{head}."
+
+
+def _pct(x: float) -> int:
+    return int(round(100 * x / 5.0) * 5)
+
+
+def _gold_short(n: float) -> str:
+    a = abs(int(n))
+    body = f"{a / 1000:.1f}".replace(".", ",") + " k" if a >= 1000 else str(a)
+    return ("+" if n >= 0 else "−") + body + " PO"
+
+
+def _my_events(game: Any, gt: float) -> tuple[int, int]:
+    """(my deaths in the last STANCE_RECENT_DEATHS_S, my kills in the last STANCE_RECENT_KILLS_S)."""
+    me = getattr(game, "me", None)
+    names = set()
+    for attr in ("riot_id", "summoner_name"):
+        v = str(getattr(me, attr, "") or "").strip().casefold()
+        if v:
+            names.add(v)
+            names.add(v.split("#", 1)[0])
+    deaths = kills = 0
+    for e in getattr(game, "events", None) or []:
+        if not isinstance(e, dict) or e.get("EventName") != "ChampionKill":
+            continue
+        T = _finite(e.get("EventTime"))
+        if T is None or T > gt + 1.0:
+            continue
+        victim = str(e.get("VictimName") or "").strip().casefold()
+        killer = str(e.get("KillerName") or "").strip().casefold()
+        if (victim in names or victim.split("#", 1)[0] in names) and gt - T <= STANCE_RECENT_DEATHS_S:
+            deaths += 1
+        if (killer in names or killer.split("#", 1)[0] in names) and gt - T <= STANCE_RECENT_KILLS_S:
+            kills += 1
+    return deaths, kills
+
+
+def stance_factors(facts: dict[str, Any], game: Any, scoreboard: Any = None, threat: int = 0) -> list[tuple[float, str]]:
+    """Weighted reasons (+ = play aggressive, - = play safe), strongest first. Pure, never raises."""
+    out: list[tuple[float, str]] = []
+    try:
+        f = facts or {}
+        gt = _finite(f.get("gt")) or _finite(getattr(game, "game_time", None)) or 0.0
+        if int(_finite(threat) or 0) >= Level.WARNING:
+            out.append((-5.0, "gank en cours"))
+        # -- my health (activePlayer.championStats)
+        stats = getattr(game, "champion_stats", None) or {}
+        cur, mx = _finite(stats.get("currentHealth")), _finite(stats.get("maxHealth"))
+        if cur is not None and mx and mx > 0 and not f.get("in_base"):
+            frac = max(0.0, min(1.0, cur / mx))
+            if frac < 0.35:
+                out.append((-3.0, f"tu es à {_pct(frac)} % PV"))
+            elif frac < 0.55:
+                out.append((-1.5, f"tu es à {_pct(frac)} % PV"))
+        # -- lane matchup (Tab: levels / item gold), else Live Client levels
+        m = getattr(scoreboard, "my_matchup", None) if scoreboard is not None else None
+        opp_name = None
+        lvl_diff = gold_diff = None
+        if m is not None:
+            opp_name, lvl_diff, gold_diff = m.enemy, int(m.level_diff), int(m.gold_diff)
+        else:
+            opps = [o for o in f.get("opponents") or [] if o.get("level")]
+            my_lvl = _finite(getattr(getattr(game, "me", None), "level", None))
+            if opps and my_lvl is not None:
+                o = opps[0]
+                opp_name, lvl_diff = o.get("name"), int(my_lvl - o["level"])
+        if opp_name and lvl_diff:
+            n = abs(lvl_diff)
+            word = "niveau" if n == 1 else "niveaux"
+            if lvl_diff > 0:
+                out.append((1.5 * min(n, 2), f"+{n} {word} sur {opp_name}"))
+            else:
+                out.append((-1.5 * min(n, 2), f"{opp_name} a {n} {word} d'avance"))
+        if opp_name and gold_diff is not None and abs(gold_diff) >= 700:
+            w = 1.5 if abs(gold_diff) >= 1500 else 1.0
+            if gold_diff > 0:
+                out.append((w, f"{_gold_short(gold_diff)} sur {opp_name}"))
+            else:
+                out.append((-w, f"{opp_name} a {_gold_short(-gold_diff)[1:]} d'avance"))
+        # -- my lane opponent dead
+        if f.get("my_role") != "JUNGLE":
+            dead = [o for o in f.get("opponents") or [] if o.get("dead")
+                    and (o.get("respawn") is None or o.get("respawn") == 0 or o.get("respawn") >= 5)]
+            if dead:
+                who = " et ".join(str(o.get("name")) for o in dead)
+                out.append((3.0, f"{who} {'sont morts' if len(dead) > 1 else 'est mort'}"))
+        # -- enemy jungler (positions: none in safe mode, the facts are already stripped)
+        jg = f.get("jungler") or {}
+        my_side = f.get("role_lane") or f.get("my_lane")
+        if f.get("my_role") == "JUNGLE" and f.get("me_pos") is not None:
+            my_side = geometry.side_of(*f["me_pos"])
+        if jg.get("dead"):
+            out.append((2.0, "jungler ennemi mort"))
+        elif jg.get("known") and gt >= JUNGLE_RULES_MIN_GT:
+            side, dist, hidden = jg.get("side"), _finite(jg.get("dist")), _finite(jg.get("hidden_s"))
+            if jg.get("visible") and dist is not None and dist < 0.25:
+                out.append((-3.0, "jungler ennemi proche"))
+            elif jg.get("visible") and side in ("top", "bot") and OPPOSITE_SIDE.get(side) == my_side:
+                out.append((2.0, f"jungler ennemi vu {SIDE_FR[side]}"))
+            elif jg.get("visible") and side in ("top", "bot") and side == my_side:
+                out.append((-1.5, f"jungler ennemi {SIDE_FR[side]}, de ton côté"))
+            elif not jg.get("visible") and hidden is not None:
+                last = jg.get("last_side")
+                if hidden < 25 and last in ("top", "bot") and last == my_side:
+                    out.append((-2.0, f"jungler ennemi vu {SIDE_FR[last]} il y a {int(hidden)} s"))
+                elif hidden < 25 and last in ("top", "bot") and OPPOSITE_SIDE.get(last) == my_side:
+                    out.append((1.5, f"jungler ennemi vu {SIDE_FR[last]} il y a {int(hidden)} s"))
+                elif hidden >= JUNGLER_UNSEEN_S:
+                    out.append((-1.0, f"jungler ennemi invisible depuis {int(hidden // 5 * 5)} s"))
+        # -- missing / numbers / wave
+        miss = int(_finite(f.get("missing")) or 0)
+        if miss >= 3:
+            out.append((-2.0, f"{min(miss, 5)} ennemis disparus"))
+        elif miss == 2:
+            out.append((-0.5, "2 ennemis disparus"))
+        en, al = (f.get("numbers") or (0, 1))[:2]
+        if en >= 2 and en - al >= 2:
+            out.append((-3.0, f"{en} contre {al} autour de toi"))
+        elif en >= 1 and al - en >= 2:
+            out.append((1.5, f"{al} contre {en} autour de toi"))
+        wave = f.get("wave")
+        if wave == "pushing" and not jg.get("visible") and not jg.get("dead"):
+            out.append((-0.75, "ta vague pousse, gare aux ganks"))
+        elif wave == "pushed_in":
+            out.append((0.5, "la vague est chez toi"))
+        # -- team gold (Tab) + objectives
+        team = int(scoreboard.team_gold_diff) if scoreboard is not None and getattr(scoreboard, "players", None) else 0
+        soon = None
+        for o in f.get("objectives") or []:
+            rem = _finite(o.get("remaining"))
+            if o.get("alive") or (rem is not None and 0 <= rem <= 60):
+                soon = o
+                break
+        if soon is not None and abs(team) >= 1500:
+            name = soon.get("name") or "objectif"
+            when = "dispo" if soon.get("alive") else f"dans {int(_finite(soon.get('remaining')) or 0)} s"
+            if team > 0:
+                out.append((1.0, f"équipe en avance, {name} {when}"))
+            else:
+                out.append((-1.0, f"équipe en retard, {name} {when}"))
+        elif abs(team) >= 3000:
+            out.append((1.0 if team > 0 else -1.0, f"équipe {_gold_short(team)}"))
+        # -- my recent kills / deaths (event feed)
+        deaths, kills = _my_events(game, gt)
+        if deaths >= 2:
+            out.append((-1.5, f"{deaths} morts en 3 min"))
+        elif kills >= 2:
+            out.append((0.5, "tu es en forme"))
+    except Exception:
+        log.debug("stance_factors failed", exc_info=True)
+    out.sort(key=lambda x: -abs(x[0]))
+    return out
+
+
+def stance_from_factors(factors: list[tuple[float, str]], t: float = 0.0) -> Stance:
+    score = round(sum(w for w, _ in factors), 2)
+    level = "agressif" if score >= STANCE_AGGRO else "prudent" if score <= STANCE_SAFE else "equilibre"
+    pos = [txt for w, txt in factors if w > 0]
+    neg = [txt for w, txt in factors if w < 0]
+    if level == "agressif":
+        reason = " et ".join(pos[:2])
+    elif level == "prudent":
+        reason = " et ".join(neg[:2])
+    elif pos and neg:
+        reason = f"{pos[0]} mais {neg[0]}"
+    elif pos or neg:
+        reason = (pos or neg)[0]
+    else:
+        reason = "pas d'avantage net, farme et garde ta vision"
+    return Stance(level, reason, score, tuple(factors), t)
+
+
+class StanceAdvisor:
+    """Live PRUDENT / ÉQUILIBRÉ / AGRESSIF recommendation with a short reason (HUD pill) and a
+    spoken sentence when it CHANGES (at most every :data:`STANCE_VOICE_GAP_S`, never during a
+    gank threat, never while dead). Inputs: :meth:`MapCoach.facts` (jungler, missing enemies,
+    numbers, wave, lane opponents, objectives), the Live Client data (my health, level, event
+    feed) and the Tab summary (:class:`scoreboard.ScoreboardSummary`). Safe mode: the coach
+    facts carry no enemy position, so only public / personal data is used. Thread-safe."""
+
+    def __init__(self, cfg: Any = None) -> None:
+        self._lock = threading.RLock()
+        self._voice = True
+        self.apply_config(cfg)
+        self.reset()
+
+    def apply_config(self, cfg: Any) -> None:
+        v = getattr(cfg, "stance_voice", True)
+        with self._lock:
+            self._voice = v if isinstance(v, bool) else True
+
+    def reset(self) -> None:
+        with self._lock:
+            self._current: Stance | None = None
+            self._cand: tuple[str, float] | None = None     # (level, since)
+            self._spoken_level: str | None = None
+            self._spoken_t: float | None = None
+            self._last_t: float | None = None
+
+    def current(self) -> Stance | None:
+        with self._lock:
+            return self._current
+
+    def update(self, t: float, facts: dict[str, Any], game: Any, scoreboard: Any = None,
+               threat: int = 0) -> list[Alert]:
+        """One tick; returns ``[]`` or ``[the stance sentence]`` (MACRO_TIP, key ``stance:<level>``)."""
+        try:
+            with self._lock:
+                return self._update_locked(float(t), facts or {}, game, scoreboard, int(_finite(threat) or 0))
+        except Exception:
+            log.exception("StanceAdvisor.update failed")
+            return []
+
+    def _update_locked(self, t: float, facts: dict[str, Any], game: Any, scoreboard: Any, threat: int) -> list[Alert]:
+        if self._last_t is not None and t < self._last_t - 1.0:
+            self.reset()
+        self._last_t = t
+        me = getattr(game, "me", None) if game is not None else None
+        gt = _finite(facts.get("gt")) or _finite(getattr(game, "game_time", None)) or 0.0
+        if me is None or not facts or gt < STANCE_MIN_GT:
+            self._current, self._cand = None, None
+            return []
+        if bool(getattr(me, "is_dead", False)) or facts.get("dead"):
+            self._current, self._cand = None, None
+            return []
+        new = stance_from_factors(stance_factors(facts, game, scoreboard, threat), t)
+        cur = self._current
+        if cur is None:
+            self._current = new                         # first value: shown at once
+            self._cand = None
+        elif new.level == cur.level:
+            self._current = new                         # same stance, fresher reason
+            self._cand = None
+        else:
+            if self._cand is None or self._cand[0] != new.level:
+                self._cand = (new.level, t)
+            need = STANCE_CONFIRM_SAFE_S if new.level == "prudent" else STANCE_CONFIRM_S
+            if t - self._cand[1] >= need:
+                self._current = new
+                self._cand = None
+        st = self._current
+        if st is None or not self._voice or threat >= Level.WARNING:
+            return []
+        if self._spoken_level is None and st.level == "equilibre":
+            self._spoken_level = st.level               # nothing to say about a neutral start
+            return []
+        if st.level == self._spoken_level:
+            return []
+        if self._spoken_t is not None and 0.0 <= t - self._spoken_t < STANCE_VOICE_GAP_S:
+            return []
+        if any(w <= -5.0 for w, _ in st.factors):
+            return []                                   # "gank en cours": the gank alert speaks
+        self._spoken_level, self._spoken_t = st.level, t
+        return [Alert(kind=_MACRO, level=Level.INFO, text=st.sentence, key=f"stance:{st.level}", t=t)]
+
+
+__all__ = ["MapCoach", "map_side", "fmt_dec", "PITS", "TURRETS", "GLOBAL_GAP_S", "ENEMY_RULES",
+           "Stance", "StanceAdvisor", "stance_factors", "stance_from_factors", "STANCE_LABEL"]
