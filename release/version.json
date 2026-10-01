@@ -1,6 +1,6 @@
 {
-  "version": "2.0.0",
-  "sha256": "6f52b3a126c644753fbc5176e266b657ee7100bc0707192e4c256646fa8ad17c",
-  "size": 81863728,
-  "notes": "2.0 : panneau en jeu épuré (une seule consigne, danger en rouge, rien quand il n'y a rien à dire), bip immédiat pour les dangers, alerte 2 contre 1 / peu de vie, ganks annoncés plus tôt, détection retravaillée sur tes vraies parties (nouveau modèle, caméra, suivi sans retard), nouvelle interface lisible et rapide, données 2026 (plus d'Atakhan, Baron 20:00, lampes féeriques), carte de sélection des champions."
+  "version": "2.1.0",
+  "sha256": "a7112364bd1688ada99a43b3b64a4cecb1c6a292f2dcd7df9ed50d809e7813fc",
+  "size": 81928564,
+  "notes": "2.1 : détection plus fiable (95 % des champions trouvés en test, plus de fantômes sur les champions visibles, empilements et caméra mieux suivis, moins de CPU), messages réécrits (une consigne claire qui commence par un verbe, pas de contradiction, objectifs selon ton rôle), combat d'équipe distinct d'un gank, code nettoyé et plus rapide."
 }
