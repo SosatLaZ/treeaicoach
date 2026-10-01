@@ -186,6 +186,11 @@ class _Bank:
     norms: np.ndarray                   # [n, 2] L2 norms (lightness, chroma) of each template
     stds: np.ndarray                    # per-pixel std of each template (contrast check)
     specs: dict = field(default_factory=dict)   # DFT shape -> (mask spec, template specs)
+    raw: list = field(default_factory=list)     # template features before centring [s, s, 3]
+    #: Contiguous channel views for cv2.matchTemplate: (lightness [s, s], chroma [s, s, 2]).
+    split: list = field(default_factory=list)
+    #: Partial masks [k, s, s] (disc minus one side) for the occlusion-tolerant re-scoring.
+    caps: np.ndarray | None = None
 
 
 def _icon_bgr(icon: np.ndarray) -> np.ndarray:
@@ -224,6 +229,7 @@ def _make_bank(entries: Sequence[RosterEntry], inner_px: float) -> _Bank:
     side = 2.0 * PORTRAIT_RATIO * R / PORTRAIT_FILL        # portrait image side
     c = (size - 1) / 2.0
     tmpls: list[np.ndarray] = []
+    raws: list[np.ndarray] = []
     norms: list[np.ndarray] = []
     stds: list[float] = []
     for e in entries:
@@ -244,10 +250,27 @@ def _make_bank(entries: Sequence[RosterEntry], inner_px: float) -> _Bank:
         t0 = (f - mean) * mask[:, :, None]
         sq = (t0 ** 2).sum(axis=(0, 1))
         tmpls.append(np.ascontiguousarray(t0, np.float32))
+        raws.append(np.ascontiguousarray(f, np.float32))
         norms.append(np.sqrt([sq[0], sq[1] + sq[2]]) + 1e-6)
         stds.append(float(np.sqrt(sq.sum() / (3.0 * n))) + 1e-6)
+    split = [(np.ascontiguousarray(t[:, :, 0]), np.ascontiguousarray(t[:, :, 1:]))
+             for t in tmpls]
     return _Bank(size=size, mask=mask, n=n, tmpl=tmpls, norms=np.asarray(norms, np.float32),
-                 stds=np.asarray(stds, np.float32))
+                 stds=np.asarray(stds, np.float32), raw=raws, split=split,
+                 caps=_cap_masks(size, rin))
+
+
+def _cap_masks(size: int, radius: float) -> np.ndarray:
+    """The disc minus one side (4 directions + 4 diagonals): ~62 % of the disc each."""
+    c = (size - 1) / 2.0
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    disc = _disc_mask(size, radius)
+    out = []
+    for k in range(8):
+        a = k * math.pi / 4.0
+        proj = (xx - c) * math.cos(a) + (yy - c) * math.sin(a)
+        out.append(disc * (proj >= -0.3 * radius))
+    return np.asarray(out, np.float32)
 
 
 def _spec(a: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -311,6 +334,68 @@ def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None
         num_c = corr(spc)
         out[k] = num_l * (wl / nl) / den_l + num_c * (wc / nc) / den_c
     return out, std
+
+
+def local_ncc(roi: np.ndarray, bank: _Bank, i: int) -> tuple[np.ndarray, np.ndarray] | None:
+    """Same NCC as :func:`ncc_maps` for one template over a small feature window ``roi``.
+
+    Direct (spatial) correlation with ``cv2.matchTemplate``: much faster than the Fourier
+    path for the small search windows of the tracked champions. Returns
+    ``(ncc [h-s+1, w-s+1], std map)`` or None when the window is smaller than the template.
+    """
+    s = bank.size
+    if roi.shape[0] < s or roi.shape[1] < s:
+        return None
+    L = np.ascontiguousarray(roi[:, :, 0])
+    A = np.ascontiguousarray(roi[:, :, 1])
+    B = np.ascontiguousarray(roi[:, :, 2])
+    C = np.ascontiguousarray(roi[:, :, 1:])
+    m, n = bank.mask, bank.n
+    tl, tc = bank.split[i]
+    mt = cv2.TM_CCORR
+    s1l = cv2.matchTemplate(L, m, mt)
+    s1a = cv2.matchTemplate(A, m, mt)
+    s1b = cv2.matchTemplate(B, m, mt)
+    s2l = cv2.matchTemplate(L * L, m, mt)
+    s2c = cv2.matchTemplate(A * A + B * B, m, mt)
+    var_l = np.maximum(s2l - s1l * s1l / n, 0.0)
+    var_c = np.maximum(s2c - (s1a * s1a + s1b * s1b) / n, 0.0)
+    std = np.sqrt((var_l + var_c) / (3.0 * n))
+    nl, nc = bank.norms[i]
+    num_l = cv2.matchTemplate(L, tl, mt)
+    num_c = cv2.matchTemplate(C, tc, mt)
+    wl, wc = LIGHTNESS_WEIGHT, 1.0 - LIGHTNESS_WEIGHT
+    out = num_l * (wl / nl) / np.sqrt(var_l + VAR_EPS[0] * n) + \
+        num_c * (wc / nc) / np.sqrt(var_c + VAR_EPS[1] * n)
+    return out.astype(np.float32, copy=False), std
+
+
+def masked_ncc(patches: np.ndarray, raw: np.ndarray, masks: np.ndarray) -> np.ndarray:
+    """NCC (same definition as :func:`ncc_maps`) of ``patches`` ``[p, s, s, 3]`` against the
+    raw template features ``raw`` ``[s, s, 3]`` under arbitrary masks ``[p, k, s, s]``
+    (or ``[k, s, s]`` shared by all patches) -> scores ``[p, k]``.
+
+    Used to re-score occluded icons on their visible part only (stacked icons, pings,
+    camera lines, timer texts).
+    """
+    P = patches.astype(np.float32, copy=False)
+    M = masks if masks.ndim == 4 else np.broadcast_to(masks, (P.shape[0],) + masks.shape)
+    n = M.sum(axis=(2, 3)) + 1e-6                                       # [p, k]
+    sP = np.einsum("pkyx,pyxc->pkc", M, P)
+    sT = np.einsum("pkyx,yxc->pkc", M, raw)
+    sPP = np.einsum("pkyx,pyxc->pkc", M, P * P)
+    sTT = np.einsum("pkyx,yxc->pkc", M, raw * raw)
+    sPT = np.einsum("pkyx,pyxc->pkc", M, P * raw[None])
+    nn = n[:, :, None]
+    num = sPT - sP * sT / nn
+    vp = np.maximum(sPP - sP * sP / nn, 0.0)
+    vt = np.maximum(sTT - sT * sT / nn, 0.0)
+    wl, wc = LIGHTNESS_WEIGHT, 1.0 - LIGHTNESS_WEIGHT
+    sl = num[:, :, 0] / (np.sqrt(vp[:, :, 0] + VAR_EPS[0] * n) * np.sqrt(vt[:, :, 0]) + 1e-6)
+    sc = (num[:, :, 1] + num[:, :, 2]) / (
+        np.sqrt(vp[:, :, 1] + vp[:, :, 2] + VAR_EPS[1] * n)
+        * np.sqrt(vt[:, :, 1] + vt[:, :, 2]) + 1e-6)
+    return (wl * sl + wc * sc).astype(np.float32)
 
 
 # ======================================================================================

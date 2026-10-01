@@ -289,8 +289,7 @@ LEGEND = ("Clés JSON : t=temps de jeu, mo=moment, me=moi, al=alliés, en=ennemi
 MAX_SNAPSHOT_BYTES = 6000
 STAT_KEYS = {"attackDamage": "ad", "abilityPower": "ap", "armor": "ar", "magicResist": "mr",
              "attackSpeed": "as", "moveSpeed": "ms", "abilityHaste": "ah", "critChance": "crit",
-             "lifeSteal": "vol", "physicalLethality": "leta", "magicPenetrationFlat": "penm",
-             "armorPenetrationPercent": "pena%"}
+             "lifeSteal": "vol", "physicalLethality": "leta", "magicPenetrationFlat": "penm"}
 _DROP_KEYS = frozenset({"icon", "me_icon", "skin", "skin_id", "image", "frame", "minimap_bgr", "raw",
                         "series", "samples", "points", "path", "spots", "heatmap", "riot_id",
                         "summoner_name", "name_raw"})

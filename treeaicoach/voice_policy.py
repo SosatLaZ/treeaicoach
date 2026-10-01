@@ -1,25 +1,30 @@
-"""What is SPOKEN and what is only WRITTEN (HUD tip line + toasts), plus the anti-spam gate.
+"""What is SPOKEN and what is only SHOWN - THE single voice gate (visual first, x1000).
 
-The user wants a quiet coach: by default (``cfg.voice_level == "minimal"``) the voice only says
+The user wants a quiet coach that never says low-value or uncertain things. Everything the
+engine may say goes through :class:`VoiceGate` (:meth:`VoiceGate.decide` + its
+:class:`SpeechBudget`); when in doubt, the message is VISUAL only (HUD line, toast, banner,
+minimap marks).
 
-* gank alerts (jungler / roam approach, collapse: WARNING and DANGER) and the F9 answer - only
-  when they are RELEVANT (:func:`triage_gank`: not during a fight, not when I am grouped, not
-  when the "ganker" is behind my allies; a lone weaker enemy is a written opportunity instead);
-* the fight calls ("Engage !" / "Repli !", ``call:`` keys) and the urgent macro / positioning
-  calls (``urgent:`` keys: "Ils sont 4 morts : Baron maintenant !", "Tu es seul en haut...");
-* the objective warnings 60 s before a spawn (``objective_soon:<kind>:<lead>`` with lead >= 45);
-* the "prudent" stance change only (``stance:prudent``; the other stances are written);
-* praise for the big moments only (multikill, shutdown, solo kill, steal).
+:func:`route` - what is a candidate for speech at each ``cfg.voice_level``:
 
-On top of that, :class:`SpeechBudget` caps what is said outside gank / fight calls: at most one
-message every :data:`BUDGET_GAP_S` (20 s) and :data:`BUDGET_PER_MIN` (3) per minute, nothing for a
-few seconds after a gank / fight call, nothing during a fight; a message over budget waits in a
-small priority queue until it expires (big praise waits for the end of the fight).
+* ``"minimal"`` (default): a REAL gank ("Gank ! Lee Sin, recule !"), the fight decision
+  ("Engage !" / "Recule !", ``call:`` keys, only when it flips), the F9 answer, and ONE objective
+  warning (>= 45 s before the spawn). Nothing else.
+* ``"normal"``: + urgent macro / positioning calls (``urgent:``), the "prudent" stance, big
+  praise, macro tips, death recap, sightings, Tab insights.
+* ``"bavard"``: everything.
 
-Everything else (macro tips, Tab insights, buy / recall / ward reminders, small praise, death
-recap, jungler sightings...) is written in the HUD and as a toast. ``"normal"`` also speaks the
-objective timers, macro tips, death recap, sightings, Tab insights and every praise (reminders
-stay written); ``"bavard"`` speaks everything.
+:meth:`VoiceGate.decide` then applies the "would a Challenger coach say this RIGHT NOW?" rules:
+
+* gank alerts: dropped during a fight (the fight call speaks) or while I am dead / in base;
+  written only when uncertain (confidence < :data:`CONFIDENCE_MIN`), when the enemy is already in
+  the danger radius and a gank was called in the last :data:`GANK_REPEAT_S` (no second sentence
+  while I am fighting for my life), and per :func:`triage_gank` (grouped, ganker behind my allies,
+  lone weaker enemy = written opportunity);
+* high concentration (fight in progress, me under :data:`LOW_HP_QUIET` HP, >= 2 enemies near me,
+  an enemy in the danger radius): nothing else is spoken;
+* the budget (:class:`SpeechBudget`): at most one non-critical message every 20 s and 3 per
+  minute, nothing right after a gank / fight call; over budget -> queued with an expiry.
 
 :class:`MessageGate` is the per-game anti-spam memory applied to every non-gank message,
 spoken or written: a minimum interval per kind (e.g. one recall reminder every 150 s) and no
@@ -34,6 +39,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
+from dataclasses import dataclass
 from typing import Any
 
 from treeaicoach.alerts import AlertKind
@@ -155,7 +161,8 @@ class MessageGate:
 
     @staticmethod
     def _exempt(alert: Any) -> bool:
-        return getattr(alert, "kind", None) in GANK_KINDS or getattr(alert, "kind", None) in ALWAYS_VOICE
+        return (getattr(alert, "kind", None) in GANK_KINDS or getattr(alert, "kind", None) in ALWAYS_VOICE
+                or str(getattr(alert, "key", "") or "").startswith("call:"))
 
     def check(self, alert: Any, t: float) -> bool:
         """True when ``alert`` may be said / shown now (nothing is remembered). Never raises."""
@@ -434,5 +441,117 @@ def triage_gank(alert: Any, *, me_pos: Any, allies: list[Any], enemies: list[Any
         return "speak", None
 
 
+# ======================================================================================
+# The single gate
+# ======================================================================================
+CONFIDENCE_MIN = 0.55          # below this, a message is never spoken
+GANK_REPEAT_S = 8.0            # a gank was called this recently + enemy in the danger radius: quiet
+LOW_HP_QUIET = 0.35            # me under this HP share: high concentration
+
+
+@dataclass(frozen=True)
+class SpeechContext:
+    """What the player is going through right now (high concentration = no chatter)."""
+
+    in_fight: bool = False
+    hp: float | None = None                  # my HP share (Live Client), None = unknown
+    enemies_near: int = 0                    # visible enemies within ~0.15 of me
+    enemy_in_danger: bool = False            # a visible enemy inside the danger radius
+    dead: bool = False
+    in_base: bool = False
+
+    @property
+    def concentrating(self) -> bool:
+        return (self.in_fight or (self.hp is not None and self.hp < LOW_HP_QUIET) or self.enemies_near >= 2
+                or self.enemy_in_danger)
+
+
+def alert_confidence(alert: Any) -> float:
+    """``alert.confidence`` when the analyser set one (0..1), else 1."""
+    try:
+        c = float(getattr(alert, "confidence", 1.0))
+        return c if math.isfinite(c) else 1.0
+    except (TypeError, ValueError):
+        return 1.0
+
+
+class VoiceGate:
+    """THE single voice gate (see the module docstring). Thread-safe, never raises."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.budget = SpeechBudget()
+        self.reset()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._gank_t = -math.inf
+            self.stats = {"voice": 0, "text": 0, "drop": 0}
+        self.budget.reset()
+
+    def decide(self, alert: Any, t: float, ctx: SpeechContext | None = None,
+               voice_level: Any = DEFAULT_VOICE_LEVEL, confidence: float | None = None) -> str:
+        """``"voice"`` | ``"text"`` | ``"drop"`` for one alert (the budget is applied later, by
+        :meth:`filter_speech`). Never raises (``"text"`` on error)."""
+        try:
+            out = self._decide(alert, float(t), ctx or SpeechContext(), voice_level,
+                               alert_confidence(alert) if confidence is None else float(confidence))
+        except Exception:
+            log.debug("VoiceGate.decide failed", exc_info=True)
+            out = "text"
+        with self._lock:
+            self.stats[out] = self.stats.get(out, 0) + 1
+        return out
+
+    def _decide(self, alert: Any, t: float, ctx: SpeechContext, level: Any, conf: float) -> str:
+        kind = getattr(alert, "kind", None)
+        key = str(getattr(alert, "key", "") or "")
+        if key.startswith("call:"):
+            return "drop" if ctx.dead else "voice"           # fight decision flip: the point of it
+        if kind in GANK_KINDS:
+            if ctx.in_fight or ctx.dead or ctx.in_base:
+                return "drop"
+            if conf < CONFIDENCE_MIN:
+                return "text"
+            with self._lock:
+                recent = 0.0 <= t - self._gank_t < GANK_REPEAT_S
+            if recent and ctx.enemy_in_danger:
+                return "text"                                # already called: the flash shows it
+            return "voice"
+        if kind in ALWAYS_VOICE:
+            return "voice"                                   # the player asked (F9)
+        if route(alert, level) != "voice":
+            return "text"
+        if ctx.concentrating or ctx.dead or conf < CONFIDENCE_MIN:
+            return "text"
+        return "voice"
+
+    def note_spoken(self, alert: Any, t: float) -> None:
+        """Remember a message that was actually spoken (gank repeat rule)."""
+        if getattr(alert, "kind", None) in GANK_KINDS:
+            with self._lock:
+                self._gank_t = float(t)
+
+    def filter_speech(self, alerts: list[Any], t: float, ctx: SpeechContext | None = None) -> list[Any]:
+        """Budget pass on the alerts about to be spoken (critical ones always pass). During high
+        concentration only critical ones pass (the others wait in the budget queue)."""
+        c = ctx or SpeechContext()
+        if c.concentrating:
+            crit = [a for a in alerts or [] if is_critical(a)]
+            rest = [a for a in alerts or [] if not is_critical(a)]
+            self.budget.quiet(float(t) + 2.0)
+            out = self.budget.filter(crit, t)
+            for a in rest:
+                self.budget.filter([a], t)                  # queued (quiet), may be said later
+            return out
+        return self.budget.filter(list(alerts or []), t)
+
+    def pop_ready(self, t: float, ctx: SpeechContext | None = None) -> Any | None:
+        if ctx is not None and ctx.concentrating:
+            return None
+        return self.budget.pop_ready(t)
+
+
 __all__ = ["VOICE_LEVELS", "DEFAULT_VOICE_LEVEL", "route", "MessageGate", "TEXT_TOAST", "is_big_praise",
-           "kind_name", "normalize_level", "SpeechBudget", "triage_gank", "is_critical", "speech_priority"]
+           "kind_name", "normalize_level", "SpeechBudget", "triage_gank", "is_critical", "speech_priority",
+           "VoiceGate", "SpeechContext", "alert_confidence"]

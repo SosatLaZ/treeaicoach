@@ -154,7 +154,7 @@ ENGINE_LABELS: tuple[tuple[str, str], ...] = (
     ("onecore", "Windows moderne (OneCore)"),
     ("sapi", "Windows classique (SAPI)"),
 )
-HOTKEY_FIELDS = frozenset({"hotkey_jungler", "hotkey_mute", "hotkey_overlay"})
+HOTKEY_FIELDS = frozenset({"hotkey_jungler", "hotkey_mute", "hotkey_overlay", "hotkey_ai"})
 
 _ctk: Any = None      # customtkinter module (imported lazily by _import_ctk)
 
@@ -2189,7 +2189,11 @@ class CoachApp:
         for field, title, desc in (
                 ("hotkey_jungler", "Où est le jungler ?", "Annonce la dernière position connue du jungler ennemi."),
                 ("hotkey_mute", "Couper / rétablir la voix", None),
-                ("hotkey_overlay", "Afficher / masquer l'overlay", None)):
+                ("hotkey_overlay", "Afficher / masquer l'overlay", None),
+                ("hotkey_ai", "Demander à l'IA", "Conseil d'achat et de macro immédiat (si un fournisseur "
+                 "d'IA est configuré dans Réglages > IA).")):
+            if not hasattr(self.cfg, field):
+                continue
             cur = getattr(self.cfg, field) or "Désactivé"
             values = list(HOTKEY_CHOICES) + ([cur] if cur not in HOTKEY_CHOICES else [])
             self._choice_row(s, field, title, desc, [("" if v == "Désactivé" else v, v) for v in values],
@@ -2826,9 +2830,13 @@ class CoachApp:
         model_entry.bind("<FocusOut>", save_model, add="+")
         model_entry.bind("<Return>", save_model, add="+")
         self._ai_model_entry = model_entry
-        _row, slot = self._row(s, "Tester la connexion", "Envoie une petite question de test au fournisseur.")
+        hk = getattr(self.cfg, "hotkey_ai", "") or "sans raccourci"
+        _row, slot = self._row(s, "Tester la connexion", "Envoie une petite question de test au fournisseur. "
+                               f"En partie : « Demander à l'IA » ({hk}) donne un conseil immédiat ; une revue "
+                               "IA est ajoutée au rapport d'après-partie.")
         self._ai_test_btn = self._button(slot, "Tester", self.test_ai, "secondary", icon="check")
-        self._ai_test_btn.grid(row=0, column=0)
+        self._ai_test_btn.grid(row=0, column=0, padx=(0, 8))
+        self._button(slot, "Demander à l'IA", self.ask_ai, "ghost", icon="sparkle").grid(row=0, column=1)
         box = self.ctk.CTkFrame(s, fg_color="transparent")
         box.grid(row=2 * s._rows, column=0, sticky="ew", pady=(0, 6))
         box.grid_columnconfigure(0, weight=1)
@@ -3939,7 +3947,7 @@ class CoachApp:
         cfg = self.cfg
         bindings: dict[str, Callable[[], None]] = {}
         for key, fn in ((cfg.hotkey_jungler, self._hk_jungler), (cfg.hotkey_mute, self._hk_mute),
-                        (cfg.hotkey_overlay, self._hk_overlay)):
+                        (cfg.hotkey_overlay, self._hk_overlay), (getattr(cfg, "hotkey_ai", ""), self._hk_ai)):
             if key:
                 bindings[key] = fn
         try:
@@ -3974,6 +3982,20 @@ class CoachApp:
                 voice.say(text, 1)
         except Exception:
             log.exception("F9 hotkey failed")
+
+    def _hk_ai(self) -> None:               # hotkey thread
+        self._dispatcher.post(self.ask_ai)
+
+    @_guarded
+    def ask_ai(self) -> None:
+        """"Demander à l'IA": manual request through the engine (the answer comes back as a toast)."""
+        fn = getattr(self.engine, "ask_ai", None)
+        if not callable(fn):
+            self.show_toast("Conseil IA indisponible : le moteur n'est pas démarré.")
+            return
+        self._dispatcher.run(fn, lambda msg: self.show_toast(str(msg or "")),
+                             self.cb(lambda e: self.show_error(f"Conseil IA impossible : {e}")),
+                             name="TreeAI-ui-ask-ai")
 
     def _hk_mute(self) -> None:             # hotkey thread
         eng = self.engine
@@ -4108,6 +4130,12 @@ class CoachApp:
                     self._ai_status_seq = seq
                     self._set_ai_status(text, DANGER)
                     self.show_error(text)
+            aseq = getattr(eng, "ai_answer_seq", 0)
+            if isinstance(aseq, int) and aseq != getattr(self, "_ai_answer_seq", 0):
+                self._ai_answer_seq = aseq
+                answer = getattr(eng, "last_ai_advice", None)
+                if answer:
+                    self.show_toast(f"IA : {answer}")
             wp = getattr(eng, "win_probability", None)
             p = wp() if callable(wp) and key == "RUNNING" and getattr(self.cfg, "win_prob_hud", True) else None
             if isinstance(p, (int, float)):

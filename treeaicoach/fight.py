@@ -401,8 +401,8 @@ class FightTracker:
                     cond = True
                 elif n_al + n_en >= 4 and n_en >= 1 and (non_lane or not laning):
                     cond = True
-                elif len(in_danger) >= 2:
-                    cond = True
+                elif len(in_danger) >= 2 and n_al >= 2:
+                    cond = True                     # dived next to an ally (alone: it is a gank)
                 elif n_en >= 1 and self._recent_kill_near(game, gt, me_uv, vis_al, players):
                     cond = True
         prev = self._state

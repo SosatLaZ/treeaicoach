@@ -28,6 +28,9 @@ def test_ai_section_and_share_summary(home: Path, tmp_path: Path, monkeypatch: p
             tu._pump(app, 0.2)
         assert "item_advice_speak" in app._widgets_by_field and "caster_style" in app._widgets_by_field
         assert "ai_provider" in app._widgets_by_field and "ai_speak" in app._widgets_by_field
+        assert "hotkey_ai" in app._widgets_by_field and app.cfg.hotkey_ai == "F8"
+        app.ask_ai()                                   # fake engine without ask_ai: a toast, no crash
+        tu._pump(app, 0.5)
         app._ai_key_entry.insert(0, "secret-key")
         app.test_ai()                                  # provider "off": explains what to do
         tu._pump(app, 3.0, lambda: "fournisseur" in app._ai_status.cget("text"))

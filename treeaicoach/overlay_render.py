@@ -77,6 +77,11 @@ STANCE_STYLE: dict[str, tuple[str, tuple[int, int, int]]] = {
 LAST_SEEN_MAX_S = 60.0          # invisible enemies are drawn at their last position this long
 ALERT_FADE_S = 4.0              # the "last alert" line fades out over this duration
 HALO_PERIOD_S = 1.1             # jungler halo pulse period
+MAX_MAP_ELEMENTS = 6            # minimap layer: at most this many guides + approach arrows
+GUIDE_RGB = {"gold": (240, 200, 90), "danger": (232, 64, 87), "safe": (45, 198, 107), "teal": (10, 200, 185)}
+GUIDE_MAX_LEN = 0.30            # guide arrows are at most this long (fraction of the minimap)
+WARD_ICON = "minimap_ward_green_full.png"
+GUIDE_CLEAR_R = 0.055           # nothing of a guide is drawn this close to a champion icon centre
 
 #: Objective display name (FR) -> minimap icon file (assets/icons/minimap).
 OBJECTIVE_ICONS: dict[str, str] = {
@@ -149,6 +154,9 @@ class OverlayState:
     show_roles: bool = False                  # role tags on enemies (the jungler always gets "JGL")
     show_ghosts: bool = False                 # last seen marks / fog zones of every hidden enemy
     hud_detailed: bool = False                # HUD: jungler line + 5 enemy portraits
+    # v3 visual guides (tactics.TacticalDirector): arrows / ward spots on the minimap layer
+    guides: list = field(default_factory=list)  # tactics.MapGuide list, highest priority first
+    phase: str | None = None                  # "laning" | "mid" | "late" | "end" (phase.py)
 
 
 # ======================================================================================
@@ -1345,7 +1353,71 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.7)
         _tag(cv_, x, y, max(3.0, 3 * k), f"{tag} {fmt_seconds(fog.elapsed)}".strip(), f_time, GOLD_LIGHT, taken,
              alpha=0.9)
+
+    # ---- v3 guides: retreat / objective / regroup arrows and ward spots (priority ranked, capped)
+    n_arrows = sum(1 for e in visible if e.approaching)
+    icons = [p for p in ([me] if me is not None else []) + [_uv_ok(e.uv) for e in visible]
+             + [_uv_ok(a.uv) for a in allies if a.visible and a.uv is not None] if p is not None]
+    _draw_guides(cv_, list(getattr(state, "guides", None) or []), me, icons, W, H, now,
+                 max(1, MAX_MAP_ELEMENTS - n_arrows), taken)
     return cv_.to_bgra()
+
+
+def _clear_of(uv: tuple[float, float], icons: list[tuple[float, float]], r: float = GUIDE_CLEAR_R) -> bool:
+    return all(math.hypot(uv[0] - p[0], uv[1] - p[1]) >= r for p in icons)
+
+
+def _draw_guides(cv_: Canvas, guides: list[Any], me: tuple[float, float] | None,
+                 icons: list[tuple[float, float]], W: int, H: int, now: float, cap: int,
+                 taken: list[tuple[float, float, float, float]]) -> None:
+    """Guides of the minimap layer: big arrows from me to a target (retreat / objective / regroup)
+    and pulsing ward spots. Never over a champion portrait (:data:`GUIDE_CLEAR_R`)."""
+    S = float(min(W, H))
+    k = S / 256.0
+    pulse = 0.5 + 0.5 * math.sin(2 * math.pi * (now % 1.2) / 1.2)
+    f_lab = get_font(max(8, int(round(8.5 * k))), "bold")
+    drawn = 0
+    labelled = False
+    ward = load_asset_icon(WARD_ICON)
+    for g in sorted(guides, key=lambda g: -float(getattr(g, "priority", 0) or 0)):
+        if drawn >= cap:
+            break
+        uv = _uv_ok(getattr(g, "uv", None))
+        if uv is None:
+            continue
+        rgb = GUIDE_RGB.get(str(getattr(g, "color", "gold")), GUIDE_RGB["gold"])
+        x, y = uv[0] * W, uv[1] * H
+        if not bool(getattr(g, "arrow", True)):
+            # ward spot: dashed pulsing ring + small ward sprite (not over a champion icon)
+            if not _clear_of(uv, icons):
+                continue
+            r = (0.024 + 0.004 * pulse) * S
+            cv_.disc(x, y, r, PANEL_DEEP, 0.35)
+            cv_.ring(x, y, r, max(1.2, 1.3 * k), rgb, 0.65 + 0.3 * pulse, dash=(2.6 * k + 1, 2.0 * k + 1))
+            if ward is not None:
+                cv_.image(x, y, sprite_patch(ward, max(6.0, 0.032 * S), 0.9))
+            drawn += 1
+            continue
+        if me is not None:
+            dx, dy = uv[0] - me[0], uv[1] - me[1]
+            d = math.hypot(dx, dy)
+            if d > 0.03:
+                ux, uy = dx / d, dy / d
+                start = 0.065                                     # leave my icon readable
+                L = min(d - 0.01, GUIDE_MAX_LEN)
+                if L > start + 0.02:
+                    sx, sy = (me[0] + ux * start) * W, (me[1] + uy * start) * H
+                    ex, ey = (me[0] + ux * L) * W, (me[1] + uy * L) * H
+                    _arrow(cv_, sx, sy, ex, ey, max(2.4, 2.6 * k), rgb, 0.78 + 0.2 * pulse)
+        if _clear_of(uv, icons):
+            r = (0.03 + 0.006 * pulse) * S
+            cv_.ring(x, y, r, max(1.5, 1.8 * k), rgb, 0.7 + 0.25 * pulse)
+            cv_.disc(x, y, max(1.8, 2.0 * k), rgb, 0.9)
+            label = str(getattr(g, "label", "") or "")
+            if label and not labelled:
+                _tag(cv_, x, y, r + 1, label[:16], f_lab, rgb, taken, 1.0)
+                labelled = True
+        drawn += 1
 
 
 # ======================================================================================

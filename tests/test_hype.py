@@ -179,3 +179,47 @@ def test_engine_wiring(monkeypatch, tmp_path):
     finally:
         eng.stop()
         paths._reset_cache()
+
+
+def test_engine_ask_ai_and_postgame_review(monkeypatch, tmp_path):
+    import shutil
+
+    from treeaicoach import ai_advisor, paths
+    from treeaicoach.config import Config
+    from treeaicoach.engine import CoachEngine
+
+    monkeypatch.setenv(paths.ENV_HOME, str(tmp_path / "home"))
+    paths._reset_cache()
+    prompts = []
+
+    def fake_call(prov, key, model, system, prompt, timeout, url, **kw):
+        prompts.append((prompt, kw))
+        return "Revue : bonne vision. Axe : farm." if kw.get("long") else "Achète une Zhonya."
+
+    cfg = Config(ai_provider="groq", ai_api_key="k")
+    state = {"g": G(900.0)}
+    eng = CoachEngine(cfg, _Voice(), frame_source=_Source(lambda t: state["g"]), clock=lambda: 50.0,
+                      enable_hotkeys=False, manage_overlay=False)
+    try:
+        assert "F8" in eng._hotkey_bindings()
+        eng.step(0.0)
+        eng._ai._caller = fake_call
+        assert eng.ask_ai() == "Question envoyée à l'IA…"
+        eng._ai.wait()
+        eng.step(1.0)
+        assert eng.last_ai_advice == "Achète une Zhonya." and eng.ai_answer_seq == 1
+        snap = prompts[0][0]
+        assert '"me":' in snap and '"en":' in snap and '"wp":' in snap
+        # post-game review appended to the report
+        rec = tmp_path / "g.json"
+        shutil.copy(Path(__file__).parent / "fixtures" / "game_record_sample.json", rec)
+        html = tmp_path / "g.html"
+        html.write_text("<html><body>R</body></html>", encoding="utf-8")
+        monkeypatch.setattr(ai_advisor, "call_llm", fake_call)
+        monkeypatch.setattr(ai_advisor.postgame_review, "__kwdefaults__",
+                            {"caller": fake_call, "url": None})
+        eng._ai_postgame_review(rec, html)
+        assert "Revue de l'IA" in html.read_text(encoding="utf-8") and eng.last_ai_review.startswith("Revue")
+    finally:
+        eng.stop()
+        paths._reset_cache()

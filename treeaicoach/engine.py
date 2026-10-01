@@ -322,6 +322,7 @@ class CoachEngine:
         self._stance: Any = None               # coach.StanceAdvisor (PRUDENT / ÉQUILIBRÉ / AGRESSIF)
         self._tip_rotator: Any = None          # tips.TipRotator (written tips, HUD)
         self._gate: Any = None                 # voice_policy.MessageGate (anti-spam, per game)
+        self._tactics: Any = None              # tactics.TacticalDirector (fight / phase / positioning / wards / voice gate)
         self._tip_text: str | None = None
         self._text_msg: tuple[float, str] | None = None   # latest written-only message (HUD line)
         self.text_messages: list[tuple[float, str, str]] = []   # (t, kind, text) written-only, this game
@@ -411,7 +412,7 @@ class CoachEngine:
                         (new.minimap_mode, new.minimap_side, new.manual_minimap_rect):
                     self._relocate = True
             for comp in (self._gank, self._objectives, self._reminders, self._fog, self._overlay_mgr,
-                         self._coach, self._stance):
+                         self._coach, self._stance, self._tactics):
                 fn = getattr(comp, "apply_config", None)
                 if callable(fn):
                     try:
@@ -481,6 +482,12 @@ class CoachEngine:
             self._gate = MessageGate()
         except Exception:
             log.exception("Stance / tips / voice policy unavailable")
+        try:
+            from treeaicoach.tactics import TacticalDirector
+
+            self._tactics = TacticalDirector(cfg)
+        except Exception:
+            log.exception("Tactical director unavailable (fight calls / positioning / wards)")
         try:
             from treeaicoach.fog_tracker import FogTracker
 
@@ -720,7 +727,8 @@ class CoachEngine:
         out: dict[str, Callable[[], None]] = {}
         for name, cb in ((cfg.hotkey_jungler, self.speak_jungler_status),
                          (cfg.hotkey_mute, self.toggle_mute),
-                         (cfg.hotkey_overlay, self.toggle_overlay)):
+                         (cfg.hotkey_overlay, self.toggle_overlay),
+                         (getattr(cfg, "hotkey_ai", ""), self.ask_ai)):
             if isinstance(name, str) and name.strip():
                 out[name.strip()] = cb
         return out
@@ -895,7 +903,7 @@ class CoachEngine:
         self._sb_recorded = None
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
                      self._throttler, self._coach, self._scoreboard, self._praise, self._toasts,
-                     self._stance, self._tip_rotator, self._gate):
+                     self._stance, self._tip_rotator, self._gate, self._tactics):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -996,6 +1004,7 @@ class CoachEngine:
                 return
             self.last_report_path = Path(html)
             log.info("Post-game report: %s", html)
+            self._ai_postgame_review(Path(path), Path(html))
             if cfg.open_report_automatically:
                 self._report_opener(Path(html))
         except Exception:
@@ -1119,9 +1128,11 @@ class CoachEngine:
                 self._errors += 1
                 self._err.exception("GankAnalyzer.update failed")
         threat = self._update_threat(t, gank_alerts)
-        # latency first: a gank alert is spoken NOW, before the heavier stages of the tick
-        said_now = self._say_gank_now([a for a in gank_alerts if a.kind in GANK_KINDS], t, gt)
-        raw_alerts += [a for a in gank_alerts if a.kind not in GANK_KINDS]
+        # v3 director: fight decision + speech context every tick, macro / positioning / wards at HEAVY_HZ
+        tac_alerts, gank_now = self._tactics_tick(t, gt, game, tracker, gank_alerts)
+        # latency first: a gank alert (or the fight call) is spoken NOW, before the heavier stages
+        said_now = self._say_gank_now(gank_now, t, gt)
+        raw_alerts += [a for a in gank_alerts if a.kind not in GANK_KINDS] + tac_alerts
         # coaching stages (coach, Tab, tips, items, hype / AI) at HEAVY_HZ, the gank check every tick
         heavy = t >= self._next_heavy_t or t < self._next_heavy_t - 2.0 / HEAVY_HZ
         if heavy:
@@ -1156,11 +1167,14 @@ class CoachEngine:
         raw_alerts += self._death_recap_alerts(t)
         if threat >= Level.WARNING:     # gank first: no macro tip / praise / Tab insight now
             raw_alerts = [a for a in raw_alerts if a.kind not in COACH_KINDS]
+        if self._tactics is not None:   # fight: nothing but the call (praise held for after)
+            raw_alerts = self._tactics.hold_if_fighting(raw_alerts, t)
         raw_alerts = self._route_messages(raw_alerts, t, gt)
         # one message per tick: nothing else when a gank alert was just said
         said = [] if said_now else self._throttler.filter(raw_alerts, t)
         if threat >= Level.WARNING:     # (a held-back coaching alert released by the throttler)
             said = [a for a in said if a.kind not in COACH_KINDS]
+        said = self._speech_budget(said, t, bool(said_now))
         self._speak_alerts(said, t, gt)
         said = said_now + said
         with self._lock:
@@ -1171,11 +1185,59 @@ class CoachEngine:
             self._collect(frame, t)
         return said
 
+    def _tactics_tick(self, t: float, gt: float, game: GameInfo, tracker: Any,
+                      gank_alerts: list[Alert]) -> tuple[list[Alert], list[Alert]]:
+        """v3 director (tactics.py): ``(alerts to route, gank alerts + fight call for the fast path)``.
+        Gank alerts not worth the voice (grouped, screened, fight...) are written or dropped here."""
+        gank = [a for a in gank_alerts if a.kind in GANK_KINDS]
+        tac = self._tactics
+        if tac is None:
+            return [], gank
+        try:
+            heavy = t >= self._next_heavy_t or t < self._next_heavy_t - 2.0 / HEAVY_HZ
+            out = tac.tick(t, gt, game, tracker, heavy=heavy, scoreboard=self.scoreboard_summary(),
+                           roles=self._role_resolver,
+                           objectives=self._objectives.states() if self._objectives is not None else [],
+                           danger_radius=self._cfg.effective_danger_radius(),
+                           stance=self._stance.current() if self._stance is not None else None)
+            for kind, title, sub, key in out.toasts:
+                self._toast(kind, title, sub, None, key, t)
+            calls = [a for a in out.alerts if str(a.key).startswith("call:")]
+            keep, written = tac.triage_ganks(gank, game, self.scoreboard_summary())
+            for a in written:
+                self._write_text(a, t, gt)
+            return [a for a in out.alerts if a not in calls], calls + keep
+        except Exception:
+            self._errors += 1
+            self._err.exception("Tactical director failed")
+            return [], gank
+
+    def _speech_budget(self, said: list[Alert], t: float, busy: bool = False) -> list[Alert]:
+        """THE voice gate's budget (voice_policy.VoiceGate): critical alerts pass, the rest within
+        the budget (or queued); a queued message may be released when nothing else is said."""
+        tac = self._tactics
+        if tac is None:
+            return said
+        try:
+            ctx = tac.speech_context()
+            out = tac.gate.filter_speech(said, t, ctx)
+            if not out and not busy:
+                q = tac.gate.pop_ready(t, ctx)
+                if q is not None:
+                    out = [q]
+            return out
+        except Exception:
+            self._err.exception("Speech budget failed")
+            return said
+
     def _speak_alerts(self, said: list[Alert], t: float, gt: float) -> None:
         rec = self._recorder
         if self._gate is not None:
             for a in said:
                 self._gate.record(a, t)
+        if self._tactics is not None:
+            for a in said:
+                self._tactics.gate.note_spoken(a, t)
         for a in said:
             self._say(a.text, int(a.level))
             with self._lock:
@@ -1191,7 +1253,9 @@ class CoachEngine:
         if not gank:
             return []
         try:
-            said = self._throttler.filter(self._route_messages(gank, t, gt), t)
+            calls = [a for a in gank if str(a.key).startswith("call:")]   # fight decision: not throttled
+            routed = self._route_messages([a for a in gank if a not in calls], t, gt)
+            said = self._speech_budget(self._route_messages(calls, t, gt) + self._throttler.filter(routed, t), t)
             self._speak_alerts(said, t, gt)
             return said
         except Exception:
@@ -1301,21 +1365,68 @@ class CoachEngine:
             if me_pos is not None:
                 z = geometry.classify_zone(*me_pos)
                 in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
+            from treeaicoach.ai_advisor import engine_context
+
             ai.update(t, game, in_base=in_base, roles=self._role_resolver, scoreboard=summary,
                       objectives=self._objectives.states() if self._objectives is not None else [],
-                      item_text=self.item_advice_text(), threat=threat)
+                      item_text=self.item_advice_text(), threat=threat, context=lambda: engine_context(self, t))
             adv = ai.poll()
             if adv is not None:
                 self.last_ai_advice = adv.text
+                self.ai_answer_seq = getattr(self, "ai_answer_seq", 0) + 1
                 self._text_msg = (t, adv.text)
                 self.text_messages.append((t, "ai", adv.text))
-                self._toast("insight", "CONSEIL IA", adv.text, None, f"ai:{adv.t:.0f}", t)
-                if getattr(cfg, "ai_speak", False) and threat < Level.WARNING:
+                title = "IA" if adv.error else ("RÉPONSE IA" if adv.moment == "manual" else "CONSEIL IA")
+                self._toast("warning" if adv.error else "insight", title, adv.text, None, f"ai:{adv.t:.0f}", t)
+                if getattr(cfg, "ai_speak", False) and threat < Level.WARNING and not adv.error:
                     self._say(adv.text, int(Level.INFO))
         except Exception:
             self._errors += 1
             self._err.exception("Hype / AI advice failed")
         return alerts
+
+    def ask_ai(self) -> str:
+        """"Demander à l'IA" (hotkey / button): manual AI request, answer later as toast + HUD line.
+
+        Returns a French acknowledgement (also shown as a toast). Never raises, never blocks."""
+        try:
+            from treeaicoach.ai_advisor import AIAdvisor, engine_context
+
+            ai = getattr(self, "_ai", None)
+            if ai is None:
+                ai = self._ai = AIAdvisor(self._cfg, clock=self._clock)
+            ai.apply_config(self._cfg)
+            now = self._clock()
+            with self._lock:
+                game = self._game if self._in_game else None
+            msg = ai.ask(now, game, roles=self._role_resolver, scoreboard=self.scoreboard_summary(),
+                         objectives=self._objectives.states() if self._objectives is not None else [],
+                         item_text=self.item_advice_text(), context=lambda: engine_context(self, now))
+            self.last_ai_ack = msg
+            self._toast("insight", "IA", msg, None, f"ai-ask:{now:.0f}", now)
+            return msg
+        except Exception:
+            self._err.exception("ask_ai failed")
+            return "Conseil IA indisponible."
+
+    def _ai_postgame_review(self, record: Path, html: Path) -> None:
+        """AI review of the finished game appended to the HTML report (provider configured). Never raises."""
+        try:
+            cfg = self._cfg
+            if str(getattr(cfg, "ai_provider", "off") or "off") == "off" or self._demo:
+                return
+            import json
+
+            from treeaicoach.ai_advisor import append_review_html, postgame_review
+            from treeaicoach.analysis import analyze_game
+
+            data = json.loads(Path(record).read_text(encoding="utf-8"))
+            review = postgame_review(cfg, analyze_game(data))
+            if review and append_review_html(html, review, str(cfg.ai_provider)):
+                self.last_ai_review = review
+                log.info("AI post-game review added to %s", html)
+        except Exception:
+            log.exception("AI post-game review failed")
 
     def win_probability(self) -> float | None:
         """Live probability (0..1) that my team wins (hype.py model), None outside a game."""
@@ -1371,28 +1482,40 @@ class CoachEngine:
             return alerts
         level = getattr(self._cfg, "voice_level", vp.DEFAULT_VOICE_LEVEL)
         gate = self._gate
+        tac = self._tactics
+        ctx = tac.speech_context() if tac is not None else None
         voice: list[Alert] = []
         for a in alerts:
             try:
-                if vp.route(a, level) == "voice":
+                way = tac.gate.decide(a, t, ctx, level) if tac is not None else vp.route(a, level)
+                if way == "drop":
+                    continue
+                if way == "voice":
                     if gate is None or gate.check(a, t):
                         voice.append(a)
                     continue
                 if gate is not None and not gate.allow(a, t):
                     continue
-                kind = vp.kind_name(a)
-                self._text_msg = (t, a.text)
-                self.text_messages.append((t, kind, a.text))
-                del self.text_messages[:-100]
-                toast = vp.TEXT_TOAST.get(kind)
-                if toast is not None:
-                    self._toast(toast[0], toast[1], a.text, a.alias, f"text:{a.key}", t)
-                rec = self._recorder
-                if rec is not None:
-                    rec.on_alert(a, gt)
+                self._write_text(a, t, gt)
             except Exception:
                 self._err.exception("Message routing failed")
         return voice
+
+    def _write_text(self, a: Alert, t: float, gt: float) -> None:
+        """A written-only message: HUD line + toast (by kind) + record."""
+        from treeaicoach import voice_policy as vp
+
+        kind = vp.kind_name(a)
+        self._text_msg = (t, a.text)
+        self.text_messages.append((t, kind, a.text))
+        del self.text_messages[:-100]
+        toast = vp.TEXT_TOAST.get(kind)
+        banner = self._tactics.banner(t) if self._tactics is not None else None
+        if toast is not None and not (banner is not None and banner.subtitle == a.text):
+            self._toast(toast[0], toast[1], a.text, a.alias, f"text:{a.key}", t)
+        rec = self._recorder
+        if rec is not None:
+            rec.on_alert(a, gt)
 
     def _hud_line(self, now: float) -> str | None:
         """The ONE written HUD line: a fresh written-only message (10 s), else an urgent live
@@ -1983,7 +2106,9 @@ class CoachEngine:
         else:
             text = "SÛR"
         flash = 0.0
-        if cfg.danger_flash and last_danger is not None and 0.0 <= now - last_danger < FLASH_DECAY_S:
+        tac = self._tactics
+        fighting = tac is not None and tac.in_fight()
+        if cfg.danger_flash and last_danger is not None and 0.0 <= now - last_danger < FLASH_DECAY_S and not fighting:
             flash = float(1.0 - (now - last_danger) / FLASH_DECAY_S)
         la = None
         if last_alert is not None and last_alert_t is not None:
@@ -2010,8 +2135,28 @@ class CoachEngine:
             hud_detailed=bool(getattr(cfg, "hud_detailed", False)),
             me_icon=self._icon(game.me.champion_alias, game.me.skin_id) if game and game.me else None,
             allies=allies, roles=roles,
-            toasts=self._toasts.active(now) if self._toasts is not None else [],
+            toasts=self._overlay_toasts(now),
+            guides=tac.guides(now) if tac is not None else [],
+            phase=tac.phase() if tac is not None else None,
         )
+
+    def _overlay_toasts(self, now: float) -> list:
+        """Toasts of the overlay, the director's big banner (live fight decision) on top."""
+        views = list(self._toasts.active(now)) if self._toasts is not None else []
+        tac = self._tactics
+        if tac is None or not getattr(self._cfg, "toasts_enabled", True):
+            return views
+        try:
+            b = tac.banner(now)
+            if b is not None:
+                from treeaicoach.toasts import banner_view
+
+                v = banner_view(b, now)
+                if v is not None:
+                    views = [v] + views[:1]
+        except Exception:
+            log.debug("banner view failed", exc_info=True)
+        return views
 
     def _scoreboard_hud_line(self) -> str | None:
         try:

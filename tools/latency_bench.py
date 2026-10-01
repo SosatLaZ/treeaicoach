@@ -129,7 +129,7 @@ def detect_latency(fps: float = 12.0, phases: int = 4, end_s: float = 44.0,
             # spoken outside the throttler (pre-alert "Lee Sin !")
             for ts, text, lvl in voice.said[n_before:]:
                 if first["pre"] is None and gt["appear"] is not None and ts >= gt["appear"] \
-                        and text.endswith("!") and len(text.split()) <= 3 and "Gank" not in text:
+                        and text.endswith(" !") and text[:-2] in ("Lee Sin", "LeeSin"):
                     first["pre"] = t + cpu
             i += 1
         runs.append({"gt": gt, "first": first, "texts": [x for x in texts if x[0] >= 30.0]})

@@ -34,13 +34,20 @@ from treeaicoach import overlay_render as orr
 log = logging.getLogger(__name__)
 
 KINDS = ("praise", "insight", "warning", "danger")
+#: Big banner styles (tactics.Banner): live fight decision / key macro call.
+BANNER_KINDS = ("engage", "retreat", "call")
 #: (accent, glow, title colour) per kind (RGB).
 STYLE: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]] = {
     "praise": (orr.GOLD, orr.TEAL, (240, 210, 140)),
     "insight": ((90, 170, 255), (40, 120, 230), (150, 200, 255)),
     "warning": (orr.WARNING, (230, 120, 20), (255, 190, 100)),
     "danger": (orr.DANGER, (220, 30, 50), (255, 130, 140)),
+    "engage": (orr.SAFE, (20, 200, 90), (150, 255, 180)),
+    "retreat": (orr.DANGER, (230, 40, 60), (255, 150, 160)),
+    "call": (orr.GOLD, (230, 170, 60), (255, 225, 150)),
 }
+BANNER_H = 84                   # big banner height at 1080p (same width as a toast)
+PULSE_S = 1.2                   # subtle pulse period of the banner glow
 DURATION_S = 3.2
 SLIDE_IN_S = 0.28
 FADE_OUT_S = 0.6
@@ -128,6 +135,115 @@ def _glyph(cv_: orr.Canvas, kind: str, cx: float, cy: float, r: float, accent: A
         cv_.polygon([(cx, cy - d), (cx + d, cy), (cx, cy + d), (cx - d, cy)], accent, 1.0)
         f = orr.get_font(max(7, int(r * 0.8)), "bold")
         cv_.text(cx, cy, "i", f, orr.PANEL_DEEP, 1.0, anchor="m", shadow=0)
+
+
+def banner_size(scale: float = 1.0) -> tuple[int, int]:
+    k = max(0.5, min(3.0, float(scale) if math.isfinite(scale) else 1.0))
+    return int(round(BASE_W * k)), int(round(BANNER_H * k))
+
+
+def _chevrons(cv_: orr.Canvas, cx: float, cy: float, h: float, direction: int, rgb: Any, alpha: float) -> None:
+    """Two chevrons pointing right (direction 1) or left (-1)."""
+    w = h * 0.42
+    th = h * 0.16
+    for i in range(2):
+        x = cx + direction * i * w * 0.85
+        tip = x + direction * w * 0.5
+        back = x - direction * w * 0.5
+        cv_.polygon([(back, cy - h / 2), (back + direction * th, cy - h / 2), (tip + direction * th, cy),
+                     (back + direction * th, cy + h / 2), (back, cy + h / 2), (tip, cy)], rgb, alpha * (1.0 - 0.3 * i))
+
+
+def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int | None) -> np.ndarray:
+    """Big ENGAGE / RECULE / call banner (premultiplied RGBA float canvas pixels)."""
+    accent, glow, title_rgb = STYLE.get(kind, STYLE["call"])
+    W, H = banner_size(scale)
+    k = H / BANNER_H
+    pad = int(round(14 * k))
+    cv_ = orr.Canvas(W + 2 * pad, H + 2 * pad)
+    x0, y0 = float(pad), float(pad)
+    rad = 9 * k
+    for i in range(7, 0, -1):
+        g = i * 2.0 * k
+        cv_.rrect(x0 - g, y0 - g, W + 2 * g, H + 2 * g, rad + g, glow, 0.05)
+    grad = np.linspace(0, 1, 32, dtype=np.float32)[:, None, None]
+    top, bot = orr._rgb(orr.PANEL), orr._rgb(orr.PANEL_DEEP)
+    col = (top * (1 - grad) + bot * grad).reshape(32, 1, 3)
+    cv_.rrect(x0, y0, W, H, rad, col, 0.94, border=accent, border_alpha=1.0, border_w=2.6 * k)
+    cv_.glow(x0 + W / 2, y0 + H / 2, 10 * k, W * 0.45, glow, 0.14)
+    cy = y0 + H * (0.42 if subtitle else 0.5)
+    if kind in ("engage", "retreat"):
+        d = 1 if kind == "engage" else -1
+        ch = H * 0.46
+        _chevrons(cv_, x0 + 30 * k, cy, ch, d, accent, 0.95)
+        _chevrons(cv_, x0 + W - 30 * k - 0.85 * ch * 0.42, cy, ch, d, accent, 0.95)
+    else:
+        for sx in (x0 + 30 * k, x0 + W - 30 * k):
+            dd = 8 * k
+            cv_.polygon([(sx, cy - dd), (sx + dd, cy), (sx, cy + dd), (sx - dd, cy)], accent, 1.0)
+    max_w = W - 120 * k
+    size = 38 if len(title or "") <= 14 else 30
+    ft = orr.get_font(max(10, int(round(size * k))), "bold")
+    cv_.text(x0 + W / 2, cy, orr.fit_text((title or "").upper(), ft, max_w), ft, title_rgb, 1.0, anchor="m",
+             shadow=0.8)
+    if subtitle:
+        fs = orr.get_font(max(8, int(round(14 * k))), "semibold")
+        cv_.text(x0 + W / 2, y0 + H * 0.80, orr.fit_text(subtitle, fs, W - 40 * k), fs, orr.GOLD_LIGHT, 0.95,
+                 anchor="m", shadow=0.6)
+    if pct is not None and kind in ("engage", "retreat"):
+        f = max(0.0, min(1.0, pct / 100.0))
+        yb = y0 + H - 4.0 * k
+        cv_.capsule(x0 + 14 * k, yb, x0 + W - 14 * k, yb, 2.2 * k, orr.GREY, 0.7)
+        cv_.capsule(x0 + 14 * k, yb, x0 + 14 * k + (W - 28 * k) * f, yb, 2.2 * k, accent, 1.0)
+    return cv_.px
+
+
+def render_banner(kind: str, title: str, subtitle: str = "", scale: float = 1.0, age: float | None = None,
+                  pct: int | None = None) -> np.ndarray:
+    """One big banner as premultiplied BGRA uint8 (:func:`banner_size` + glow margin); ``age``
+    animates a subtle pulse of the border glow. Never raises."""
+    try:
+        kind = kind if kind in BANNER_KINDS else "call"
+        key = ("banner", kind, str(title), str(subtitle), round(float(scale), 3), pct)
+        base = _base_cache.get(key)
+        if base is None:
+            base = _render_banner(kind, str(title or ""), str(subtitle or ""), float(scale), pct)
+            base.setflags(write=False)
+            _base_cache.put(key, base)
+        px = base
+        if age is not None and math.isfinite(age):
+            px = base.copy()
+            W, H = banner_size(scale)
+            k = H / BANNER_H
+            pad = (px.shape[1] - W) / 2.0
+            accent = STYLE[kind][0]
+            pulse = 0.5 + 0.5 * math.sin(2 * math.pi * (age % PULSE_S) / PULSE_S)
+            cv_ = orr.Canvas(1, 1)
+            cv_.px, cv_.h, cv_.w = px, px.shape[0], px.shape[1]
+            cv_.rrect(pad - 2 * k, pad - 2 * k, W + 4 * k, H + 4 * k, 11 * k, None, 0.0, border=accent,
+                      border_alpha=0.15 + 0.35 * pulse, border_w=2.0 * k)
+        out = np.empty(px.shape[:2] + (4,), np.uint8)
+        v = np.clip(px, 0.0, 1.0) * np.float32(255.0) + np.float32(0.5)
+        out[..., 0], out[..., 1], out[..., 2], out[..., 3] = v[..., 2], v[..., 1], v[..., 0], v[..., 3]
+        return out
+    except Exception:
+        log.exception("render_banner failed")
+        return np.zeros((2, 2, 4), np.uint8)
+
+
+def banner_view(banner: Any, now: float) -> "ToastView | None":
+    """:class:`ToastView` of a :class:`treeaicoach.tactics.Banner` (shown first in the toast layer)."""
+    try:
+        since = float(getattr(banner, "since", now))
+        until = float(getattr(banner, "until", math.inf))
+        dur = (until - since) if math.isfinite(until) else 3600.0
+        pct = getattr(banner, "pct", None)
+        t = Toast(str(getattr(banner, "style", "call")), str(getattr(banner, "title", "")),
+                  str(getattr(banner, "subtitle", "") or ""), None, f"banner:{pct if pct is not None else ''}",
+                  since, max(0.5, dur))
+        return ToastView(t, max(0.0, float(now) - since))
+    except Exception:
+        return None
 
 
 def _render_base(kind: str, title: str, subtitle: str, icon: np.ndarray | None, scale: float) -> np.ndarray:
@@ -245,7 +361,8 @@ def layer_size(scale: float = 1.0, max_visible: int = MAX_VISIBLE) -> tuple[int,
     W, H = toast_size(scale)
     k = H / BASE_H
     pad = int(round(14 * k))
-    return W + 2 * pad, max_visible * (H + int(round(GAP * k))) + 2 * pad
+    extra = int(round((BANNER_H - BASE_H) * k))          # room for a big banner in the first slot
+    return W + 2 * pad, max_visible * (H + int(round(GAP * k))) + 2 * pad + extra
 
 
 def scale_for_screen(screen: Any) -> float:
@@ -283,15 +400,23 @@ def render_toast_layer(views: Sequence[ToastView], scale: float = 1.0) -> np.nda
     try:
         W, H = toast_size(scale)
         k = H / BASE_H
-        slot = H + int(round(GAP * k))
-        for i, v in enumerate(list(views)[:MAX_VISIBLE]):
+        gap = int(round(GAP * k))
+        y0 = 0
+        for v in list(views)[:MAX_VISIBLE]:
             op, dy = toast_anim(v.age, v.toast.duration)
-            if op <= 0.0:
-                continue
-            img = render_toast(v.toast.kind, v.toast.title, v.toast.subtitle, v.toast.icon, scale,
-                               age=v.age, duration=v.toast.duration)
-            y = i * slot + int(round(dy * H))
-            _blend_premul(out, img, 0, y, op)
+            big = v.toast.kind in BANNER_KINDS
+            h = banner_size(scale)[1] if big else H
+            if op > 0.0:
+                if big:
+                    pct = None
+                    if v.toast.key.startswith("banner:") and v.toast.key[7:].isdigit():
+                        pct = int(v.toast.key[7:])
+                    img = render_banner(v.toast.kind, v.toast.title, v.toast.subtitle, scale, age=v.age, pct=pct)
+                else:
+                    img = render_toast(v.toast.kind, v.toast.title, v.toast.subtitle, v.toast.icon, scale,
+                                       age=v.age, duration=v.toast.duration)
+                _blend_premul(out, img, 0, y0 + int(round(dy * h)), op)
+            y0 += h + gap
     except Exception:
         log.exception("render_toast_layer failed")
     return out

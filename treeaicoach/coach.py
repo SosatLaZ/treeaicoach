@@ -123,6 +123,9 @@ RULE_COOLDOWN_S: dict[str, float] = {
     "wave_push": 120.0, "wave_back": 120.0, "wave_big": 90.0, "lane_left": 45.0, "lane_recall": 45.0,
     "bot_missing": 90.0, "level_diff": 180.0, "item_spike": 20.0, "jg_level6": 1e9, "kill_lead": 120.0,
     "objective_trade": 120.0, "lane_dead": 45.0, "jungler_dead": 90.0,
+    # v3 macro (Challenger fundamentals)
+    "recall_item": 150.0, "freeze": 240.0, "crash_roam": 150.0, "first_item": 1e9, "level2": 1e9,
+    "baron_pick": 90.0, "objective_wave": 60.0,
 }
 #: Rules that use enemy positions (disabled in safe mode).
 ENEMY_RULES: frozenset[str] = frozenset({
@@ -133,13 +136,16 @@ ENEMY_RULES: frozenset[str] = frozenset({
 ALIVE_RULES: frozenset[str] = frozenset({
     "jungler_side", "jungler_unseen", "missing", "numbers_bad", "numbers_good", "pressure", "deep",
     "vision", "objective_window", "wave_push", "wave_back", "wave_big", "lane_left", "lane_recall",
-    "bot_missing", "objective_trade", "level_diff", "lane_dead", "jungler_dead"})
+    "bot_missing", "objective_trade", "level_diff", "lane_dead", "jungler_dead", "recall_item", "freeze",
+    "crash_roam", "level2", "baron_pick", "objective_wave"})
 PRIORITY: dict[str, int] = {
     "numbers_bad": 100, "deep": 90, "wave_big": 87, "objective_trade": 86, "objective_window": 85,
     "objective_setup": 80, "jungler_dead": 79, "lane_dead": 79, "lane_recall": 78, "lane_left": 77, "missing": 75, "bot_missing": 72,
     "jungler_unseen": 70, "jungler_side": 65, "item_spike": 64, "level_diff": 62, "wave_back": 61,
     "wave_push": 60, "numbers_good": 59, "jg_level6": 58, "pressure": 55, "kill_lead": 45, "cs_check": 40,
     "level6": 35, "vision": 30,
+    "baron_pick": 84, "objective_wave": 81, "level2": 76, "recall_item": 66, "crash_roam": 63,
+    "first_item": 61, "freeze": 57,
 }
 
 CS_TARGET: dict[str, float] = {"TOP": 7.0, "MIDDLE": 7.0, "BOTTOM": 7.5, "JUNGLE": 5.5}
@@ -403,6 +409,10 @@ class MapCoach:
         self._jg6_done = False
         self._kill_marks_done: set[float] = set()
         self._dead_done: dict[str, float] = {}      # alias -> game time of the death already used
+        self._first_item_done = False
+        self._legendaries: int | None = None
+        self._level2_done = False
+        self._obj_wave_done: set = set()
 
     def _game_time(self, game: Any, t: float) -> float:
         gt = _finite(getattr(game, "game_time", None)) or 0.0
@@ -622,6 +632,14 @@ class MapCoach:
         elif rule in ("lane_dead", "jungler_dead"):
             for alias in self._dead_targets(ctx, rule):
                 self._dead_done[alias] = ctx.gt
+        elif rule == "first_item":
+            self._first_item_done = True
+        elif rule == "level2":
+            self._level2_done = True
+        elif rule == "objective_wave":
+            tgt = self._setup_target_window(ctx, 50.0, 80.0)
+            if tgt is not None:
+                self._obj_wave_done.add((str(getattr(tgt[0], "key", "")), int(round(ctx.gt + tgt[1]) // 30)))
         elif rule == "kill_lead":
             mark = self._kill_mark(ctx)
             if mark is not None:
@@ -668,7 +686,7 @@ class MapCoach:
         for fn in (self._rule_numbers, self._rule_deep, self._rule_objectives, self._rule_missing,
                    self._rule_jungler, self._rule_pressure, self._rule_cs, self._rule_level6,
                    self._rule_vision, self._rule_waves, self._rule_lane, self._rule_bot_missing,
-                   self._rule_scoreboard, self._rule_trade, self._rule_dead):
+                   self._rule_scoreboard, self._rule_trade, self._rule_dead, self._rule_macro_v3):
             try:
                 out.extend(fn(ctx))
             except Exception:
@@ -1196,6 +1214,97 @@ class MapCoach:
                 out.append(("jungler_dead", "Leur jungler est mort : envahis sa jungle et prends ses camps."))
             else:
                 out.append(("jungler_dead", "Leur jungler est mort : tu peux jouer agressif dans ta voie."))
+        return out
+
+    # ---------------------------------------------------------------- v3 macro fundamentals
+    def _setup_target_window(self, ctx: _Ctx, lo: float, hi: float) -> tuple[Any, float] | None:
+        best = None
+        for s in ctx.objectives:
+            if getattr(s, "alive", False):
+                continue
+            rem = self._remaining(s, ctx.gt)
+            if rem is not None and lo <= rem <= hi and (best is None or rem < best[1]):
+                best = (s, rem)
+        return best
+
+    def _rule_macro_v3(self, ctx: _Ctx) -> list[tuple[str, str]]:
+        """Wave management, recall timing, power spikes, picks -> objectives."""
+        out: list[tuple[str, str]] = []
+        if ctx.dead:
+            return out
+        me = ctx.me_player
+        lvl = int(_finite(getattr(me, "level", None)) or 0)
+        laner = ctx.my_role in ("TOP", "MIDDLE", "BOTTOM", "UTILITY")
+        in_lane = ctx.my_lane is not None and ctx.my_lane == ctx.role_lane
+        lw = self._my_wave(ctx)
+        # -- level 2 first in lane: the first all-in window of the game
+        if not self._level2_done and laner and ctx.gt < 200 and lvl >= 2:
+            opp_lv = [int(_finite(getattr(p, "level", None)) or 0) for _a, _n, p, _t in ctx.opponents or [] if p is not None]
+            if lvl >= 3 or ctx.gt >= 200:
+                self._level2_done = True
+            elif opp_lv and lvl == 2 and max(opp_lv) <= 1:
+                out.append(("level2", "Niveau 2 avant ton adversaire : c'est le moment d'échanger fort."))
+        # -- first legendary item: power spike
+        try:
+            from treeaicoach.scoreboard import major_items
+
+            n_leg = len(major_items(getattr(me, "items", None) or []))
+        except Exception:
+            n_leg = 0
+        if self._legendaries is not None and n_leg >= 1 and self._legendaries == 0 and not self._first_item_done:
+            out.append(("first_item", "Premier objet complet : c'est ton pic de puissance, cherche un échange "
+                                      "ou une escarmouche maintenant."))
+        self._legendaries = n_leg
+        # -- recall timing: enough gold to complete the next item
+        gold = _finite(getattr(ctx.game, "current_gold", None)) or 0.0
+        if gold >= 900 and not self._in_my_base(ctx) and ctx.me_pos is not None and ctx.gt >= 180:
+            try:
+                from treeaicoach.itemization import recommend
+
+                rec = recommend(ctx.game, ctx.my_role)
+            except Exception:
+                rec = None
+            if rec is not None and rec.completes:
+                if lw is not None and lw.state == "pushing" and in_lane:
+                    out.append(("recall_item", f"{int(gold)} PO : assez pour {rec.item_name}. Pousse ta vague "
+                                               "sous leur tour puis rentre."))
+                else:
+                    out.append(("recall_item", f"{int(gold)} PO : assez pour {rec.item_name}, rentre dès que "
+                                               "ta vague est poussée."))
+        # -- freeze when ahead (laning)
+        diff, opp = self._level_diff(ctx)
+        if (laner and in_lane and ctx.gt < PLATES_END_GT and lw is not None and lw.state == "pushed_in"
+                and diff >= 1 and opp):
+            out.append(("freeze", f"Tu es en avance sur {opp} : gèle la vague devant ta tour, il devra "
+                                  "s'exposer pour farmer."))
+        # -- crash the wave, then roam (mid / support)
+        jg = ctx.jungler
+        jside = map_side(*_track_pos(jg)) if jg is not None and getattr(jg, "visible", False) and _track_pos(jg) else None
+        if (ctx.my_role in ("MIDDLE", "UTILITY") and in_lane and lw is not None and lw.state == "pushing"
+                and lw.meet is not None and lw.meet >= WAVE_PUSH_S and jside in ("top", "bot") and ctx.gt >= 240):
+            out.append(("crash_roam", f"Ta vague s'écrase et leur jungler est {SIDE_FR[jside]} : bon moment "
+                                      f"pour roam de l'autre côté ou prendre la vision."))
+        # -- slow push / crash before an objective
+        tgt = self._setup_target_window(ctx, 50.0, 80.0)
+        if tgt is not None and laner and in_lane:
+            s_obj, rem = tgt
+            key = str(getattr(s_obj, "key", "") or "")
+            ident = (key, int(round(ctx.gt + rem) // 30))
+            near_side = PITS.get(key)
+            if ident not in self._obj_wave_done and near_side is not None and (
+                    ctx.role_lane == near_side[1] or ctx.my_role == "MIDDLE"):
+                name = str(getattr(s_obj, "name", "") or "Objectif")
+                out.append(("objective_wave", f"{name} dans {int(round(rem / 5) * 5)} s : pousse ta vague maintenant "
+                                              "pour arriver le premier à la rivière."))
+        # -- picks -> Baron (2-3 enemies dead for long; an ace is handled by phase.EndGameCaller)
+        states = {str(getattr(o, "key", "") or ""): o for o in ctx.objectives}
+        baron = states.get("baron")
+        if baron is not None and getattr(baron, "alive", False) and ctx.gt >= 1200:
+            long_dead = [p for p in getattr(ctx.game, "enemies", None) or []
+                         if bool(getattr(p, "is_dead", False)) and (_finite(getattr(p, "respawn_timer", 0)) or 0) >= 20]
+            if 2 <= len(long_dead) <= 3:
+                out.append(("baron_pick", f"{len(long_dead)} ennemis morts pour 20 s et plus : Baron possible "
+                                          "si vous êtes au moins 4 autour."))
         return out
 
     # ---------------------------------------------------------------- facts (stance / tips)

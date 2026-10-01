@@ -1,6 +1,6 @@
 {
-  "version": "1.6.1",
-  "sha256": "e786916151f39ad91a7e7d9c68dcfea3d1508851648ba83f25e63598131d6b56",
-  "size": 81720050,
-  "notes": "Correctif détection (version propre), conseils écrits branchés, posture prudent/agressif, carte allégée, anti-spam."
+  "version": "1.6.5",
+  "sha256": "808477ba7d9b33fe090ed877f4206deb6c8e3c4f127756095f764e4feb4523db",
+  "size": 81848717,
+  "notes": "Version intermédiaire : gank plus rapide, mode combat FIGHT/RECULE, budget de parole, balises, phases de jeu, détection améliorée."
 }
