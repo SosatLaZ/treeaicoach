@@ -70,21 +70,13 @@ ALWAYS_VOICE = frozenset({AlertKind.JUNGLER_WHERE})
 #: Praise keys (praise.PraiseCoach) of the big moments, spoken even in "minimal".
 BIG_PRAISE_PREFIXES: tuple[str, ...] = ("multi:", "shutdown:", "solo:", "steal:")
 STANCE_PREFIX = "stance:"
-#: Keys always spoken (subject to the budget): fight calls and urgent macro / positioning calls.
-URGENT_PREFIXES: tuple[str, ...] = ("call:", "urgent:")
 #: Director calls (tactics.py: phase / end-game / positioning / fight summary): own anti-spam kind.
 MACRO_CALL_PREFIXES: tuple[str, ...] = ("urgent:", "macro:")
-#: Stances spoken in "normal" (safety only; never in "minimal").
-MINIMAL_STANCES = ("stance:prudent",)
 #: Objective warnings this close to the spawn (the last announcement, default leads 60 / 20 s) are
 #: spoken when I am involved; earlier ones are written.
 OBJECTIVE_VOICE_MAX_LEAD_S = 20
-#: (compat) old name: objective warnings are no longer spoken this early.
-OBJECTIVE_VOICE_MIN_LEAD_S = OBJECTIVE_VOICE_MAX_LEAD_S
 #: "normal" adds only these keys (the post-fight numbers call: an ace / a won fight -> Baron...).
 BIG_CALL_PREFIXES: tuple[str, ...] = ("urgent:ace:", "urgent:genie:")
-#: (compat) "normal" no longer speaks whole kinds: everything outside the whitelist is written.
-NORMAL_VOICE: frozenset = frozenset()
 #: Keys that are only a voice duplicate of something already on screen (banner / HUD line): when
 #: they are not spoken they are dropped, never written a second time.
 VOICE_ONLY_PREFIXES: tuple[str, ...] = ("urgent:genie:", "call:engage",
@@ -92,11 +84,11 @@ VOICE_ONLY_PREFIXES: tuple[str, ...] = ("urgent:genie:", "call:engage",
                                        "hype:swing:")      # the HUD win-probability shows it
 #: role -> epic objectives that concern it (an objective warning is spoken only for these)
 OBJ_ROLES_VOICE: dict[str, frozenset[str]] = {
-    "JUNGLE": frozenset({"dragon", "elder", "baron", "herald", "grubs", "atakhan"}),
-    "MIDDLE": frozenset({"dragon", "elder", "baron", "herald", "grubs", "atakhan"}),
-    "BOTTOM": frozenset({"dragon", "elder", "baron", "atakhan"}),
-    "UTILITY": frozenset({"dragon", "elder", "baron", "atakhan"}),
-    "TOP": frozenset({"baron", "herald", "grubs", "elder", "atakhan"}),
+    "JUNGLE": frozenset({"dragon", "elder", "baron", "herald", "grubs"}),
+    "MIDDLE": frozenset({"dragon", "elder", "baron", "herald", "grubs"}),
+    "BOTTOM": frozenset({"dragon", "elder", "baron"}),
+    "UTILITY": frozenset({"dragon", "elder", "baron"}),
+    "TOP": frozenset({"baron", "herald", "grubs", "elder"}),
 }
 OBJ_NEAR_R = 0.30              # standing this close to the pit = involved whatever the role
 
@@ -161,7 +153,7 @@ def _objective_key(key: str) -> str:
 def objective_involved(key: str, role: Any = None, me_uv: Any = None, gt: float | None = None) -> bool:
     """Is the player concerned by this objective warning (``objective_soon:<obj>:<lead>``)? His
     role plays it (bot side: dragon; top side: Herald / grubs; everybody: Baron / Elder after
-    20:00, Atakhan) or he stands near the pit. Unknown role and position: True. Never raises."""
+    20:00) or he stands near the pit. Unknown role and position: True. Never raises."""
     try:
         obj = _objective_key(str(key or ""))
         from treeaicoach import geometry
@@ -300,7 +292,7 @@ _TOPICS: dict[str, tuple[str, ...]] = {
     "jg_dead": ("macro_tip:jungler_dead", "jg_dead_window", "jg_dead_lane", "genie:jungler_dead"),
     "objective": ("objective_soon", "macro_tip:objective_setup", "macro_tip:objective_wave", "macro:pos:obj",
                   "urgent:pos:obj", "drag_buy", "drag_prio", "drag_vision", "drag_top", "drag_smite",
-                  "baron_soon", "herald_soon", "grubs", "atakhan", "group_obj", "tp_obj", "sup_obj_vision",
+                  "baron_soon", "herald_soon", "grubs", "group_obj", "tp_obj", "sup_obj_vision",
                   "obj_stay", "urgent:elder_soon", "macro:elder_soon"),
     "jungler_pos": ("jungler_spotted", "macro_tip:jungler_side", "jg_far", "jg_coming", "jg_counter"),
     "cs": ("macro_tip:cs_check", "cs_low", "goal_cs", "goal:ok", "goal:cs"),
@@ -450,17 +442,6 @@ class SpeechBudget:
                 return q[3]
         except Exception:
             return None
-
-    def allow_text(self, t: float) -> bool:
-        """For free-text speech outside the alert pipeline (caster lines...): budget check + record."""
-        try:
-            with self._lock:
-                if self._can(float(t)):
-                    self._spoken.append(float(t))
-                    return True
-                return False
-        except Exception:
-            return False
 
     def queued(self) -> list[Any]:
         with self._lock:

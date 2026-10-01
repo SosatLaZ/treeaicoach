@@ -48,9 +48,6 @@ ROLE_FR: dict[str, str] = {"TOP": "Haut", "JUNGLE": "Jungle", "MIDDLE": "Milieu"
 ROLE_SHORT: dict[str, str] = {"TOP": "TOP", "JUNGLE": "JGL", "MIDDLE": "MID", "BOTTOM": "ADC",
                               "UTILITY": "SUP"}
 
-#: Colour-blind friendly threat palette (Okabe-Ito): safe / warning / danger.
-COLORBLIND_THREAT = {0: "#56B4E9", 1: "#F0E442", 2: "#D55E00"}
-
 
 def hex_rgb(color: str) -> tuple[int, int, int]:
     c = color.lstrip("#")
@@ -464,7 +461,6 @@ class VoiceGate:
         self._get_voice = get_voice
         self._get_cfg = get_cfg
         self._get_game_time = get_game_time
-        self.explicit_until = 0.0        # monotonic deadline: user-requested speech (F9...) passes
         self.dropped = 0
 
     def say(self, text: str, level: int = 1) -> None:
@@ -472,17 +468,13 @@ class VoiceGate:
         if voice is None:
             return
         try:
-            explicit = time.monotonic() < self.explicit_until
-            if not speech_allowed(self._get_cfg(), level, self._get_game_time(), explicit=explicit):
+            if not speech_allowed(self._get_cfg(), level, self._get_game_time()):
                 self.dropped += 1
                 log.debug("Announcement muted by the quiet settings: %s", text)
                 return
         except Exception:
             log.debug("VoiceGate check failed", exc_info=True)
         voice.say(text, level)
-
-    def allow_next(self, seconds: float = 3.0) -> None:
-        self.explicit_until = time.monotonic() + seconds
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("__"):

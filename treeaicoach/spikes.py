@@ -23,10 +23,11 @@ ratings...). Pure Python, thread-safe, never raises from its public methods.
 from __future__ import annotations
 
 import logging
-import math
 import threading
 from dataclasses import dataclass
 from typing import Any, Iterable
+
+from treeaicoach.fmtutil import finite_loose as _f
 
 log = logging.getLogger(__name__)
 
@@ -108,14 +109,6 @@ def item_spike(my_items: Iterable[Any], opp_items: Iterable[Any]) -> tuple[str, 
     if b > a:
         return "opp", b - a
     return None
-
-
-def _f(x: Any) -> float | None:
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    return v if math.isfinite(v) else None
 
 
 class SpikeTracker:

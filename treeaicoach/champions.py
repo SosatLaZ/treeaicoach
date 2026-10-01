@@ -236,11 +236,6 @@ class ChampionDB:
             pass
         return base / "icons" / "champions"
 
-    @property
-    def icons_dir(self) -> Path:
-        """Folder of the bundled champion icons."""
-        return self._icons_dir
-
     def _load_index(self) -> None:
         index_path = self._icons_dir / "index.json"
         raw_list: list[Any] = []

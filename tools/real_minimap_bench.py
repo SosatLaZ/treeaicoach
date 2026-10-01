@@ -69,8 +69,8 @@ class ImageResult:
         return self.id_ok / self.id_n if self.id_n else 1.0
 
 
-def load_truth() -> dict:
-    return json.loads((FIX / "ground_truth.json").read_text(encoding="utf-8"))
+def load_truth(fix: Path = FIX) -> dict:
+    return json.loads((Path(fix) / "ground_truth.json").read_text(encoding="utf-8"))
 
 
 def roster_entries(game: dict, db, seed: int = 0):
@@ -94,12 +94,12 @@ def roster_entries(game: dict, db, seed: int = 0):
 
 
 def run_image(name: str, spec: dict, truth: dict, db, backend: str = "auto",
-              frames: int = FRAMES, detector=None) -> ImageResult:
+              frames: int = FRAMES, detector=None, fix: Path = FIX) -> ImageResult:
     import cv2
 
     from treeaicoach.detector import create_detector
 
-    img = cv2.imread(str(FIX / spec["file"]))
+    img = cv2.imread(str(Path(fix) / spec["file"]))
     game = truth["rosters"][spec["game"]]
     det = detector or create_detector(backend, db=db, learn_cache=None)
     det.matcher.set_entries(roster_entries(game, db))
@@ -154,16 +154,17 @@ def _detect(det, img, t):
         m.detect = orig
 
 
-def run_all(backend: str = "auto", names=None, verbose: bool = False) -> dict[str, ImageResult]:
+def run_all(backend: str = "auto", names=None, verbose: bool = False,
+            fix: Path = FIX) -> dict[str, ImageResult]:
     from treeaicoach.champions import get_default_db
 
     db = get_default_db()
-    truth = load_truth()
+    truth = load_truth(fix)
     out = {}
     for name, spec in truth["images"].items():
         if names and name not in names:
             continue
-        out[name] = run_image(name, spec, truth, db, backend)
+        out[name] = run_image(name, spec, truth, db, backend, fix=fix)
     return out
 
 
@@ -196,9 +197,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", action="store_true")
     ap.add_argument("--backend", default="auto")
+    ap.add_argument("--dir", default=str(FIX), help="case folder (ground_truth.json + images)")
     ap.add_argument("images", nargs="*")
     a = ap.parse_args()
-    print(report(run_all(a.backend, a.images or None), verbose=a.v))
+    print(report(run_all(a.backend, a.images or None, fix=Path(a.dir)), verbose=a.v))
 
 
 if __name__ == "__main__":

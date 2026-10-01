@@ -54,6 +54,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
+from treeaicoach.fmtutil import clock
+
 log = logging.getLogger(__name__)
 
 TIMEOUT_S = 6.0
@@ -94,8 +96,6 @@ BACKOFF_S: dict[str, float] = {"key": math.inf, "nokey": math.inf, "quota": 600.
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 #: per-game budget of automatic calls: one per priority slot (in priority order)
 SLOTS = ("base", "objective", "comeback", "mid", "late")
-SLOT_FR = {"base": "1er retour en base", "objective": "avant Baron / Elder", "comeback": "combat perdu",
-           "mid": "milieu de partie", "late": "fin de partie", "urgent": "urgence"}
 AUTO_BUDGET = len(SLOTS)
 URGENT_BUDGET = 1
 #: hard ceiling of AI requests per game, all kinds together (automatic + urgence + manual).
@@ -488,11 +488,7 @@ _DROP_KEYS = frozenset({"icon", "me_icon", "skin", "skin_id", "image", "frame", 
 
 
 def _clock(gt: Any) -> str:
-    try:
-        s = max(0, int(float(gt)))
-    except (TypeError, ValueError, OverflowError):
-        s = 0
-    return f"{s // 60}:{s % 60:02d}"
+    return clock(gt, "0:00", clamp=True)
 
 
 def compact(value: Any, depth: int = 0, max_list: int = 10, max_str: int = 160) -> Any:
@@ -781,7 +777,6 @@ def engine_context(engine: Any, now: float | None = None) -> dict[str, Any]:
 
 
 WAVE_FR = {"pushing": "prio (vague chez eux)", "pushed_in": "vague chez nous", "even": "équilibrée"}
-LANE_OF_ROLE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 
 
 def _ctx_genie(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
@@ -1383,8 +1378,7 @@ def is_plan_moment(moment: str) -> bool:
 
 
 def _mmss(sec: Any) -> str:
-    s = max(0, int(sec or 0))
-    return f"{s // 60}:{s % 60:02d}"
+    return clock(sec, "0:00", clamp=True)
 
 
 def _gold(n: Any) -> str:

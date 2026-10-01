@@ -42,6 +42,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from treeaicoach.fmtutil import clock
 from treeaicoach.fog_tracker import FogEstimate
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -85,16 +86,10 @@ TAI_WARN = (251, 191, 36)       # #FBBF24 amber
 TAI_DANGER = (248, 81, 73)      # #F85149
 TAI_BRAND = (132, 225, 100)     # #84E164 TreeAI leaf
 TAI_THREAT = {0: TAI_GO, 1: TAI_WARN, 2: TAI_DANGER}
-PANEL_ALPHA = 0.86
 BORDER_ALPHA = 0.85
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
 THREAT_DEFAULT_TEXT = {0: "SÛR", 1: "ATTENTION", 2: "DANGER"}
-#: Stance pill (coach.StanceAdvisor): key -> (label, colour)
-STANCE_STYLE: dict[str, tuple[str, tuple[int, int, int]]] = {
-    "prudent": ("PRUDENT", DANGER), "equilibre": ("ÉQUILIBRÉ", WARNING), "agressif": ("AGRESSIF", SAFE),
-}
 LAST_SEEN_MAX_S = 60.0          # invisible enemies are drawn at their last position this long
-ALERT_FADE_S = 4.0              # the "last alert" line fades out over this duration
 HALO_PERIOD_S = 1.1             # jungler halo pulse period
 MAX_MAP_ELEMENTS = 6            # minimap layer: at most this many guides + approach arrows
 GUIDE_RGB = {"gold": (251, 191, 36), "danger": (248, 81, 73), "safe": (52, 211, 153), "teal": (56, 189, 248)}
@@ -110,7 +105,6 @@ OBJECTIVE_ICONS: dict[str, str] = {
     "héraut": "riftherald.png",
     "heraut": "riftherald.png",
     "larves": "grub.png",
-    "atakhan": "atakhan_r.png",
 }
 #: Short labels for the HUD objectives row.
 OBJECTIVE_SHORT: dict[str, str] = {"dragon ancestral": "Ancestral"}
@@ -335,12 +329,7 @@ def _uv_ok(uv: Any) -> tuple[float, float] | None:
 
 def fmt_clock(seconds: float | None) -> str:
     """``m:ss`` (``h:mm:ss`` over an hour); ``--:--`` when unknown."""
-    if seconds is None or not _finite(seconds):
-        return "--:--"
-    s = max(0, int(seconds))
-    h, rem = divmod(s, 3600)
-    m, sec = divmod(rem, 60)
-    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+    return clock(seconds, "--:--", clamp=True, hours=True)
 
 
 def fmt_seconds(seconds: float | None) -> str:
@@ -1483,31 +1472,30 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     #      12 s") for the enemy jungler only; never on / next to a live icon (that icon is most
     #      likely the same champion, not identified yet)
     ghost_drawn: set[str] = set()
-    if True:
-        for e in enemies:
-            if e.visible or not (e.is_jungler or show_ghosts or show_last_seen):
-                continue
-            uv = _uv_ok(e.uv) if e.uv is not None else None
-            ago = e.last_seen_ago
-            if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
-                continue
-            if bool(getattr(e, "dead", False)):      # dead: in his fountain, the HUD row has the timer
-                continue
-            if _in_enemy_fountain(uv, getattr(state, "my_team", None)):   # home: no information
-                continue
-            if not show_ghosts and not e.is_jungler and ago > LAST_SEEN_MAX_S / 2:
-                continue
-            x, y = px(uv)
-            if near_live(x, y):
-                continue
-            ghost_drawn.add(e.key)
-            fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
-            cv_.ring(x, y, mr, lw * 0.9, DANGER, (0.6 if e.is_jungler else 0.35) * fade,
-                     dash=(3.0 * k + 1, 2.5 * k + 1))
-            cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.6 * fade)
-            if e.is_jungler and ago <= GHOST_TEXT_MAX_S:
-                labels.append((1, x, y, mr * 1.05, f"JGL {fmt_seconds(ago)}", f_time, GOLD_LIGHT, max(0.7, fade),
-                               e.key))
+    for e in enemies:
+        if e.visible or not (e.is_jungler or show_ghosts or show_last_seen):
+            continue
+        uv = _uv_ok(e.uv) if e.uv is not None else None
+        ago = e.last_seen_ago
+        if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
+            continue
+        if bool(getattr(e, "dead", False)):      # dead: in his fountain, the HUD row has the timer
+            continue
+        if _in_enemy_fountain(uv, getattr(state, "my_team", None)):   # home: no information
+            continue
+        if not show_ghosts and not e.is_jungler and ago > LAST_SEEN_MAX_S / 2:
+            continue
+        x, y = px(uv)
+        if near_live(x, y):
+            continue
+        ghost_drawn.add(e.key)
+        fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
+        cv_.ring(x, y, mr, lw * 0.9, DANGER, (0.6 if e.is_jungler else 0.35) * fade,
+                 dash=(3.0 * k + 1, 2.5 * k + 1))
+        cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.6 * fade)
+        if e.is_jungler and ago <= GHOST_TEXT_MAX_S:
+            labels.append((1, x, y, mr * 1.05, f"JGL {fmt_seconds(ago)}", f_time, GOLD_LIGHT, max(0.7, fade),
+                           e.key))
 
     # ---- (option) allies + me
     if show_allies:
@@ -1891,7 +1879,7 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
 # ======================================================================================
 # Compact HUD (default): ONE question, "what do I do now?"
 # ======================================================================================
-#: The compact card (docs/ARCHITECTURE.md §19) holds ONE instruction, verb first, at most two
+#: The compact card (docs/ARCHITECTURE.md §20) holds ONE instruction, verb first, at most two
 #: short lines, white, full opacity, 15 px semibold at 1080p, on a solid dark plate; the left
 #: colour bar is the state (green ok / amber careful / red danger). Nothing else: no chips, no
 #: AI counter, no jungler line, no roster row - they only appear when they ARE the instruction
@@ -1908,7 +1896,7 @@ OBJECTIVE_CONTEXT_S = 60.0
 OBJECTIVE_LEVELS = frozenset({"debutant", "intermediaire", "avance"})
 #: where to go for each objective (beginner wording: a concrete place)
 OBJECTIVE_GO: dict[str, str] = {"dragon": "Va bot", "elder": "Va bot", "baron": "Va vers le Baron",
-                                "herald": "Va top", "grubs": "Va top", "atakhan": "Va au centre"}
+                                "herald": "Va top", "grubs": "Va top"}
 #: the gauge's two extremes ARE instructions when nothing else is said
 GAUGE_LINE: dict[int, str] = {2: "Joue agressif dans ta voie : tu es plus fort", -2: "Joue prudent : reste sous ta tour"}
 GAUGE_LEVELS = frozenset({"debutant", "intermediaire"})
@@ -3108,8 +3096,7 @@ def sample_states(db: Any = None) -> dict[str, OverlayState]:
                          "Thresh": (False, (0.8, 0.8), 38.0, False, None)}),
         fogs=[f1, f2], threat_level=1, threat_text="ATTENTION — Jinx approche",
         last_alert=("Le Baron est disponible.", 0, 2.6),
-        objectives=[_DemoObjective("Baron", None, alive=True), _DemoObjective("Dragon ancestral", 1790.0),
-                    _DemoObjective("Atakhan", None)],
+        objectives=[_DemoObjective("Baron", None, alive=True), _DemoObjective("Dragon ancestral", 1790.0)],
         game_time=1660.0, jungler_line="Jungler : Lee Sin — vu il y a 21 s, rivière du bas",
         hint="Balise de contrôle : aucune dans l'inventaire", me_icon=ic["Garen"],
         allies=allies(ally_bot), roles=roles,

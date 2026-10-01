@@ -48,6 +48,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from treeaicoach.fmtutil import finite_loose
+
 log = logging.getLogger(__name__)
 
 CLASSES: tuple[str, ...] = ("brilliant", "great", "best", "good", "inaccuracy", "mistake", "blunder", "miss")
@@ -141,14 +143,6 @@ class Play:
     def title(self) -> str:
         return TITLE_FR.get(self.cls, self.cls.upper())
 
-    @property
-    def symbol(self) -> str:
-        return SYMBOL.get(self.cls, "")
-
-    @property
-    def positive(self) -> bool:
-        return self.cls in POSITIVE
-
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["title"] = self.title
@@ -183,11 +177,7 @@ class PlayContext:
 
 
 def _f(x: Any, default: float = 0.0) -> float:
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
+    return finite_loose(x, default)  # type: ignore[return-value]
 
 
 def _truthy(x: Any) -> bool:

@@ -71,6 +71,7 @@ from typing import Any, Iterable
 
 from treeaicoach import geometry
 from treeaicoach.alerts import Alert, AlertKind, Level
+from treeaicoach.fmtutil import finite as _finite
 
 log = logging.getLogger(__name__)
 
@@ -186,8 +187,6 @@ MAJOR_ITEM_IDS: frozenset[int] = frozenset({
 })
 
 
-
-
 def _involved(obj: Any, ctx: Any) -> bool:
     """Does the objective concern me (voice_policy.objective_involved: my role plays it or I
     stand near the pit)? Unknown: True. Never raises."""
@@ -234,16 +233,6 @@ ROLE_LANE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 
 
 # -------------------------------------------------------------------------- helpers
-def _finite(x: Any) -> float | None:
-    if x is None or isinstance(x, bool):
-        return None
-    try:
-        f = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return f if math.isfinite(f) else None
-
-
 def _uv(pos: Any) -> tuple[float, float] | None:
     try:
         u, v = _finite(pos[0]), _finite(pos[1])
@@ -406,11 +395,6 @@ class MapCoach:
         with self._lock:
             return {k: v.as_dict() for k, v in (self._last_waves or {}).items()}
 
-    def last_tips(self) -> list[tuple[float, str, str]]:
-        """``(t, rule, text)`` of the tips produced (diagnostics / tests), oldest first."""
-        with self._lock:
-            return list(self._said)
-
     # -- internals ----------------------------------------------------------------------
     def _clear(self) -> None:
         self._last_tip_t: float | None = None
@@ -433,7 +417,6 @@ class MapCoach:
         self._insight_items: list[tuple[int, str, str]] = []
         self._facts: dict[str, Any] = {}
         self._pressure: dict[str, Any] | None = None
-        self._said: list[tuple[float, str, str]] = []
         self._roles: Any = None
         self._frame: Any = None
         try:
@@ -621,8 +604,6 @@ class MapCoach:
         self._commit(rule, ctx)
         self._last_tip_t = now
         self._rule_t[rule] = now
-        self._said.append((now, rule, text))
-        del self._said[:-50]
         return [Alert(kind=_MACRO, level=Level.INFO, text=text, key=f"macro_tip:{rule}", t=now)]
 
     def _allowed(self, rule: str, ctx: _Ctx) -> bool:

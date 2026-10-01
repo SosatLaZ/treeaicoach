@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from treeaicoach import geometry
+from treeaicoach.fmtutil import clock, finite as _f
 
 log = logging.getLogger(__name__)
 
@@ -59,20 +60,8 @@ FLASH = 0.027
 PATH_END_S = 900.0          # jungler path: first 15 minutes
 SENS_MIN, SENS_MAX, SENS_STEP = 0.6, 1.6, 0.1
 
-POSITION_FR = {"TOP": "haut", "JUNGLE": "jungle", "MIDDLE": "milieu", "BOTTOM": "tireur", "UTILITY": "support"}
-
 
 # ---------------------------------------------------------------------------------- helpers
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
-
-
 def _i(x: Any, default: int | None = None) -> int | None:
     v = _f(x)
     return int(v) if v is not None else default
@@ -83,11 +72,7 @@ def _norm(x: Any) -> str:
 
 
 def fmt_time(gt: Any) -> str:
-    v = _f(gt)
-    if v is None or v < 0:
-        return "—"
-    s = int(round(v))
-    return f"{s // 60}:{s % 60:02d}"
+    return clock(gt, "—", rounded=True)
 
 
 def _uv(pos: Any) -> tuple[float, float] | None:

@@ -82,7 +82,6 @@ BOOL_FIELDS: tuple[str, ...] = (
     "download_skin_icons",
     "autostart",
     "collect_samples",
-    "show_preview",
     # v1.1 (§6.7)
     "objective_timers",
     "recall_reminder",
@@ -144,12 +143,10 @@ FLOAT_RANGES.update({
 CHOICES.update({
     "ui_last_page": ("dashboard", "alerts", "overlay", "analysis", "settings", "help"),
     "ui_scaling": ("auto", "90", "100", "110", "125", "150"),
-    "voice_language": ("fr", "en"),
 })
 BOOL_FIELDS = BOOL_FIELDS + (
     "voice_info_alerts", "quiet_hours", "colorblind", "layer_roles", "layer_arrows", "layer_zones",
-    "layer_ghosts", "ui_remember_page", "ui_onboarding_done", "ui_start_minimized", "ui_minimize_on_game",
-    "ui_confirm_quit", "ui_notify_report", "ui_notify_game",
+    "layer_ghosts", "ui_remember_page", "ui_onboarding_done", "ui_confirm_quit",
 )
 UPDATE_TEXT_FIELDS["ui_seen_changelog"] = 32
 BOOL_FIELDS = BOOL_FIELDS + ("item_advice", "item_advice_toasts", "item_advice_speak")
@@ -193,7 +190,9 @@ RECT_SCREEN_RANGE = (200, 32768)   # screen_w / screen_h
 RECT_SIZE_MIN = 32                 # minimap w / h (and w <= screen_w, h <= screen_h)
 RECT_COORD_LIMIT = 65536           # |x|, |y| (multi-monitor virtual coords may be negative)
 
-_META_KEYS = frozenset({"config_version"})
+#: Keys silently ignored on load: metadata, and settings removed in a later version (old files keep them).
+_META_KEYS = frozenset({"config_version", "show_preview", "voice_language", "ui_start_minimized",
+                        "ui_minimize_on_game", "ui_notify_report", "ui_notify_game"})
 _io_lock = threading.RLock()
 
 
@@ -246,7 +245,6 @@ class Config:
     autostart: bool = True          # start the analysis at launch
     collect_samples: bool = False   # save minimaps for re-training
     collect_interval_s: float = 2.0
-    show_preview: bool = False
     # v1.1 helpers (§6.7)
     objective_timers: bool = True
     objective_lead_s: list[int] = field(default_factory=lambda: list(DEFAULT_OBJECTIVE_LEAD_S))
@@ -300,7 +298,6 @@ class Config:
     quiet_hours: bool = False
     quiet_start_h: int = 23
     quiet_end_h: int = 8
-    voice_language: str = "fr"       # "fr" | "en" (en: not available yet)
     # v1.5 overlay look (read by the overlay with getattr)
     overlay_opacity: float = 1.0     # 0.3..1.0
     overlay_scale: float = 1.0       # 0.6..1.6 (markers / HUD size)
@@ -314,11 +311,7 @@ class Config:
     ui_remember_page: bool = True
     ui_onboarding_done: bool = False
     ui_seen_changelog: str = ""
-    ui_start_minimized: bool = False
-    ui_minimize_on_game: bool = False
     ui_confirm_quit: bool = True
-    ui_notify_report: bool = True
-    ui_notify_game: bool = True
     ui_scaling: str = "auto"         # "auto" | "90" | "100" | "110" | "125" | "150" (% of the system scale)
     # build advice (itemization.py): written by default (HUD line + toast), spoken only if item_advice_speak
     item_advice: bool = True

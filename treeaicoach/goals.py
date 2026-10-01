@@ -21,6 +21,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from treeaicoach.fmtutil import finite_loose as _f
+
 log = logging.getLogger(__name__)
 
 CS_TARGET = {"TOP": 7.0, "MIDDLE": 7.0, "BOTTOM": 7.5}
@@ -46,14 +48,6 @@ class Goal:
 
 def _dec(x: float) -> str:
     return f"{x:.1f}".replace(".", ",")
-
-
-def _f(x: Any) -> float | None:
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    return v if math.isfinite(v) else None
 
 
 def pick_goal(history: list[dict] | None, role: str | None) -> Goal:

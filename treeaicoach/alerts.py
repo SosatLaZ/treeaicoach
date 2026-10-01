@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import Any
 
+from treeaicoach.fmtutil import seconds_fr
+
 log = logging.getLogger(__name__)
 
 
@@ -241,16 +243,6 @@ def _cap(s: str) -> str:
     return s[:1].upper() + s[1:] if s else s
 
 
-def _seconds_fr(n: int) -> str:
-    """``"une seconde"`` / ``"23 secondes"`` / ``"une minute"`` / ``"1 minute 30"``."""
-    if n < 60:
-        return "une seconde" if n == 1 else f"{n} secondes"
-    m, s = divmod(n, 60)
-    unit = "minute" if m == 1 else "minutes"
-    head = "une minute" if m == 1 else f"{m} {unit}"
-    return head if s == 0 else f"{m} {unit} {s}"
-
-
 def _arrives(who: str, zone: str | None) -> str:
     """``"Lee Sin arrive par la rivière !"`` (``zone`` is a direction such as "par la rivière")."""
     return f"{_cap(who)} arrive {zone} !" if zone else f"{_cap(who)} arrive !"
@@ -337,7 +329,7 @@ def _laner_mia(level: Level, champ: str | None, zone: str | None, n: int) -> str
 def _objective_soon(level: Level, champ: str | None, zone: str | None, n: int) -> str:
     name = _cap(champ) if champ else "Objectif"
     if n > 0:
-        return f"{name} dans {_seconds_fr(n)}."
+        return f"{name} dans {seconds_fr(n)}."
     return f"{name} bientôt."
 
 
@@ -360,7 +352,7 @@ def _jungler_where(level: Level, champ: str | None, zone: str | None, n: int) ->
         return f"{_cap(who)} est visible {zone}."
     if n >= 60:
         return f"{_cap(who)} vu {zone} il y a plus d'une minute."
-    return f"{_cap(who)} vu {zone} il y a {_seconds_fr(n)}."
+    return f"{_cap(who)} vu {zone} il y a {seconds_fr(n)}."
 
 
 def _macro_tip(level: Level, champ: str | None, zone: str | None, n: int) -> str:

@@ -21,10 +21,11 @@ Only the minimap facts of the coach + the official Live Client API. Pure Python,
 from __future__ import annotations
 
 import logging
-import math
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
+
+from treeaicoach.fmtutil import finite_loose as _f
 
 log = logging.getLogger(__name__)
 
@@ -82,14 +83,6 @@ def classify_death(s: DeathSnapshot) -> tuple[str, str] | None:
     except Exception:
         log.debug("classify_death failed", exc_info=True)
         return None
-
-
-def _f(x: Any) -> float | None:
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    return v if math.isfinite(v) else None
 
 
 def _names(p: Any) -> set[str]:

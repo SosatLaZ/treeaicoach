@@ -181,6 +181,7 @@ JUMP_MEMORY_S = 6.0
 #: confirming frame let a structure glyph matching an occluded champion's portrait steal
 #: his identity for seconds; a glyph confirms itself on every frame).
 JUMP_CONFIRM_S = 1.5
+RECALL_STILL_SPEED = 0.006          # (ally / me) last known speed below this: may be recalling
 JUMP_CONFIRM_N = 4
 #: Smoothing of the reported confidence (weight of the new frame).
 CONF_SMOOTH = 0.5
@@ -194,6 +195,8 @@ SELF_RELAX = 0.1
 #: my icon is not seen -> my position is that icon's (detection score UNDER_SCORE).
 UNDER_CONFIRM = 6
 UNDER_SCORE = 0.3
+UNDER_STABLE = 0.012                # ... at a stable offset from the camera point
+UNDER_VERIFY = 0.8                  # ... or the verifier's icon probability at the camera point
 SELF_COAST_UNDER = True             # no coasting while an accepted icon covers my track
 SELF_CAM_DIST = 0.06
 #: Track hysteresis (every champion): a champion matched in the previous frames
@@ -1787,8 +1790,12 @@ class RosterMatcher:
         if math.hypot(u - pu, v - pv) <= JUMP_SLACK + MAX_SPEED * max(age, 0.0):
             return 0.0
         team = self._team_of(e)
-        for t_, (fu, fv) in _FOUNTAINS.items():          # recall: back to the fountain
-            if (team is None or t_ == team) and math.hypot(u - fu, v - fv) < FOUNTAIN_DIST:
+        # recall: back to the fountain. An ally is never in the fog: he recalls standing still
+        # (8 s channel) where we see him, so a walking ally does not jump home (measured,
+        # det_gym: an ally portrait matching the fountain glyph while he walked mid)
+        still = e.relation == "enemy" or math.hypot(tr.vu, tr.vv) < RECALL_STILL_SPEED
+        for t_, (fu, fv) in _FOUNTAINS.items():
+            if still and (team is None or t_ == team) and math.hypot(u - fu, v - fv) < FOUNTAIN_DIST:
                 return 0.0
         p = tr.pend
         if p is not None and now - p[4] < 1.0 and math.hypot(u - p[0], v - p[1]) < 0.03 and \
@@ -2084,9 +2091,12 @@ class RosterMatcher:
         return out
 
     def _me_under(self, accepted: list, cam_pt: tuple | None, kx: float, ky: float, me: int,
-                  now: float) -> tuple[float, float] | None:
-        """My position when my icon is not seen at all but the camera point has stayed on the
-        same accepted ally icon for UNDER_CONFIRM frames (my icon drawn under it)."""
+                  now: float, bgr: np.ndarray | None = None, r_norm: float = 0.0
+                  ) -> tuple[float, float] | None:
+        """My position when my portrait is not matched at all (custom skin not learned yet,
+        icon under my support) but the camera point has stayed for UNDER_CONFIRM frames on
+        the same accepted ally icon, or on an unexplained icon the verifier calls an ally icon
+        (camera locked on me)."""
         if UNDER_CONFIRM <= 0 or cam_pt is None:
             self._under = (None, 0)
             return None
@@ -2097,13 +2107,46 @@ class RosterMatcher:
             d = math.hypot(a.x / kx - cam_pt[0], a.y / ky - cam_pt[1])
             if d < SELF_CAM_DIST and (best is None or d < best[0]):
                 best = (d, a)
-        if best is None:
-            self._under = (None, 0)
+        # an unexplained ally icon right at the camera point (my custom icon) first; an accepted
+        # ally icon only when nothing else is there (mine drawn under it)
+        pos = self._verified_ally_at(bgr, cam_pt, r_norm, accepted, kx, ky)
+        key = "cam"
+        if pos is None:
+            if best is None:
+                self._under = (None, 0)
+                return None
+            a = best[1]
+            key, pos = a.i, (a.x / kx, a.y / ky)
+        # the camera must FOLLOW that icon (same offset), not sweep over it (dragged camera)
+        off = (pos[0] - cam_pt[0], pos[1] - cam_pt[1])
+        prev = self._under
+        same = prev[0] == key and len(prev) > 2 and \
+            math.hypot(off[0] - prev[2][0], off[1] - prev[2][1]) < UNDER_STABLE
+        n = prev[1] + 1 if same else 1
+        self._under = (key, n, prev[2] if same else off)
+        return pos if n >= UNDER_CONFIRM else None
+
+    def _verified_ally_at(self, bgr: np.ndarray | None, p: tuple, r_norm: float, accepted: list,
+                          kx: float, ky: float) -> tuple[float, float] | None:
+        """An ally-side icon (patch verifier) within SELF_CAM_DIST of ``p`` not explained by an
+        accepted match: its centre (best of a few probes), else None."""
+        ver = self._get_verifier()
+        if ver is None or bgr is None or r_norm <= 0:
             return None
-        a = best[1]
-        n = self._under[1] + 1 if self._under[0] == a.i else 1
-        self._under = (a.i, n)
-        return (a.x / kx, a.y / ky) if n >= UNDER_CONFIRM else None
+        d = 0.35 * 2 * r_norm
+        pts = [(p[0] + dx, p[1] + dy) for dx in (-d, 0.0, d) for dy in (-d, 0.0, d)]
+        pts = [q for q in pts if not any(math.hypot(q[0] - a.x / kx, q[1] - a.y / ky) < 2 * r_norm * 0.6
+                                         for a in accepted)]
+        if not pts:
+            return None
+        P = ver.verify_candidates(bgr, [(u, v, r_norm) for u, v in pts])
+        best = None
+        for q, pr in zip(pts, P):
+            icon = 1.0 - float(pr[0])
+            if icon >= UNDER_VERIFY and float(pr[2]) >= STACKV_TEAM * icon and \
+                    (best is None or icon > best[0]):
+                best = (icon, q)
+        return best[1] if best is not None else None
 
     def _stack_proposals(self, bgr: np.ndarray, feat: np.ndarray, bank: _Bank, accepted: list,
                          used: set, dead: set, kx: float, ky: float, r_norm: float,
@@ -2756,7 +2799,8 @@ class RosterMatcher:
                 infos.append(MatchInfo(e.alias, e.relation, pu, pv, r_norm, score, 0.0, 0.0,
                                        True, "coast"))
                 continue
-            under = self._me_under(accepted, cam_pt, kx, ky, i, now)
+            me_dead = getattr(self.learner, "_me_dead", None) is True
+            under = None if me_dead else self._me_under(accepted, cam_pt, kx, ky, i, now, raw_bgr, r_norm)
             if under is not None:
                 # my icon is under an ally icon the camera has followed for a while (my
                 # support on me, camera locked): I am there (a position, not a match)

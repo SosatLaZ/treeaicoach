@@ -4,7 +4,7 @@ A toast is a small hextech banner shown for ~3 s at the top-centre of the screen
 League's top area: it never covers the minimap (bottom-right), the champion (screen centre)
 or the Tab scoreboard / KDA block (top-right). Kinds and colours:
 
-* ``praise``  gold with a teal glow and a light sweep (a good play: "SOLO KILL"),
+* ``praise``  gold with a teal glow (a good play: "SOLO KILL"),
 * ``insight`` blue (Tab analysis: "ALLIÉ EN DIFFICULTÉ"),
 * ``warning`` orange ("ENNEMI AVANCÉ", "PIC DE PUISSANCE"),
 * ``danger``  red.
@@ -78,7 +78,6 @@ MAX_WAIT_S = 10.0               # a queued toast not shown within this delay is 
 BASE_W, BASE_H = 440, 68        # at 1080p
 GAP = 8                         # between stacked toasts (1080p px)
 TOP_FRAC = 0.045                # top of the layer: 4.5 % of the screen height (top-centre is free in LoL)
-_SHINE_S = (0.15, 1.0)          # praise light sweep window (age, s)
 
 _base_cache = orr._LRU(24)
 
@@ -318,20 +317,11 @@ def _render_base(kind: str, title: str, subtitle: str, icon: np.ndarray | None, 
     return cv_.px
 
 
-def _rrect_mask(w: int, h: int, x0: float, y0: float, W: float, H: float, rad: float) -> np.ndarray:
-    xs = np.arange(w, dtype=np.float32)[None, :] + 0.5
-    ys = np.arange(h, dtype=np.float32)[:, None] + 0.5
-    qx = np.abs(xs - (x0 + W / 2)) - (W / 2 - rad)
-    qy = np.abs(ys - (y0 + H / 2)) - (H / 2 - rad)
-    sdf = np.sqrt(np.maximum(qx, 0) ** 2 + np.maximum(qy, 0) ** 2) + np.minimum(np.maximum(qx, qy), 0) - rad
-    return np.clip(0.5 - sdf, 0.0, 1.0)
-
-
 def render_toast(kind: str, title: str, subtitle: str = "", icon: np.ndarray | None = None,
                  scale: float = 1.0, age: float | None = None, duration: float = DURATION_S) -> np.ndarray:
     """One toast as premultiplied BGRA uint8 (size :func:`toast_size` + glow margin).
 
-    ``age`` (s) animates the light sweep (praise) and the remaining-time line; the slide / fade
+    ``age`` (s) animates the remaining-time line; the slide / fade
     are applied by :func:`render_toast_layer` (``age=None``: static, fully drawn). Never raises.
     """
     try:
@@ -352,15 +342,7 @@ def render_toast(kind: str, title: str, subtitle: str = "", icon: np.ndarray | N
             W, H = toast_size(scale)
             k = H / BASE_H
             pad = (px.shape[1] - W) / 2.0
-            accent, glow, _t = STYLE[kind]
-            if False and kind == "praise" and _SHINE_S[0] <= age <= _SHINE_S[1]:   # (no decorative sweep)
-                p = (age - _SHINE_S[0]) / (_SHINE_S[1] - _SHINE_S[0])
-                pos = pad - 60 * k + p * (W + 120 * k)
-                xs = np.arange(px.shape[1], dtype=np.float32)[None, :]
-                ys = np.arange(px.shape[0], dtype=np.float32)[:, None]
-                band = np.clip(1.0 - np.abs(xs - pos + (ys - px.shape[0] / 2) * 0.45) / (26 * k), 0.0, 1.0)
-                mask = _rrect_mask(px.shape[1], px.shape[0], pad, pad, W, H, 7 * k)
-                cv_.paint(0, 0, band * band * mask, orr.WHITE, 0.18)
+            accent = STYLE[kind][0]
             remain = _clamp01(1.0 - age / max(0.1, duration))
             if remain > 0:
                 y = pad + H - 3.0 * k

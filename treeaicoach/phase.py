@@ -21,13 +21,13 @@ whether it is worth speaking. Pure Python, thread-safe, never raises from its pu
 from __future__ import annotations
 
 import logging
-import math
 import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any
 
 from treeaicoach import geometry
+from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
 
@@ -63,16 +63,6 @@ _TIER = {("L", "03"): 1, ("L", "02"): 2, ("L", "01"): 3, ("R", "03"): 1, ("R", "
 PHASE_FR = {"laning": "phase de voie", "mid": "milieu de partie", "late": "fin de partie",
             "end": "fin de partie décisive"}
 OTHER = {"ORDER": "CHAOS", "CHAOS": "ORDER"}
-
-
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
 
 
 def parse_turret(name: Any) -> tuple[str, str, int] | None:

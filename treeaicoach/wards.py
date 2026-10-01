@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from treeaicoach import geometry
+from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
 
@@ -132,16 +133,6 @@ RED_OVERRIDE: dict[str, tuple[float, float]] = {
     "river_top_lane": (0.834, 0.785), "tri_own": (0.848, 0.650), "dragon_front": (0.406, 0.322)}
 OBJ_PIT = {"dragon": "dragon", "elder": "dragon", "baron": "baron", "herald": "baron", "grubs": "baron"}
 ROLE_SIDE = {"TOP": "top", "BOTTOM": "bot", "UTILITY": "bot", "MIDDLE": "mid"}
-
-
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
 
 
 @dataclass(frozen=True)

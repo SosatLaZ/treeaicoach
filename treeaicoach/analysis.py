@@ -37,9 +37,10 @@ import logging
 import math
 import re
 import unicodedata
-from typing import Any, Iterable
+from typing import Any
 
 from treeaicoach import geometry
+from treeaicoach.fmtutil import clock, finite as _finite
 from treeaicoach.geometry import Zone
 
 log = logging.getLogger(__name__)
@@ -57,8 +58,6 @@ WARN_WINDOW_S = 12.0         # gank alert in the 12 s before the death -> "alert
 REACT_S = 3.0                # an alert less than 3 s before the death came too late to react
 LEAD_CHAIN_GAP_S = 8.0       # alerts closer than this form one warning chain (lead = its first alert)
 LEAD_MAX_S = 25.0            # ... looked back at most this far
-#: Alert kinds that warn me of a danger (gank alerts + the personal danger of danger.py).
-DANGER_ALERT_KINDS: frozenset[str] = GANK_KINDS | {"personal_danger"}
 #: Death verdicts: key -> French label (who is responsible is explicit: the app or the player).
 VERDICT_FR: dict[str, str] = {
     "ignored": "alerte ignorée",               # warned >= 3 s before: on the player
@@ -98,16 +97,6 @@ RESULT_FR = {"Win": "Victoire", "Lose": "Défaite"}
 # ======================================================================================
 # small helpers
 # ======================================================================================
-def _finite(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        f = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return f if math.isfinite(f) else default
-
-
 def _int(x: Any, default: int = 0) -> int:
     f = _finite(x)
     return int(f) if f is not None else default
@@ -148,11 +137,7 @@ def alnum_name(x: Any) -> str:
 
 def fmt_time(gt: Any) -> str:
     """Game time as ``m:ss`` (``"4:07"``, ``"28:14"``); ``"?"`` if invalid."""
-    f = _finite(gt)
-    if f is None or f < 0:
-        return "?"
-    s = int(round(f))
-    return f"{s // 60}:{s % 60:02d}"
+    return clock(gt, "?", rounded=True)
 
 
 def fmt_num(x: Any, decimals: int = 1) -> str:
@@ -1996,8 +1981,3 @@ def analyze_game(record: Any, truth: Any = None) -> dict[str, Any]:
         out["truth"] = section("truth", _truth, {"available": False})
     out["spoken_summary"] = spoken_summary(out)
     return out
-
-
-def iter_phase_names() -> Iterable[tuple[str, str]]:
-    """(phase id, French label) in order."""
-    return [(name, PHASE_LABELS_FR[name]) for name, _, _ in PHASES]

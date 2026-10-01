@@ -44,7 +44,7 @@ def test_defaults_match_contract():
     assert c.target_fps == 12.0 and c.detector_backend == "auto" and c.detection_threshold == 0.0
     assert c.minimap_mode == "auto" and c.minimap_side == "auto" and c.manual_minimap_rect is None
     assert c.download_skin_icons is True and c.autostart is True
-    assert c.collect_samples is False and c.collect_interval_s == 2.0 and c.show_preview is False
+    assert c.collect_samples is False and c.collect_interval_s == 2.0
 
 
 def test_defaults_are_valid_and_validated_is_a_copy(caplog):
@@ -106,7 +106,6 @@ def test_effective_radii():
         ("beep_on_danger", 0, False),
         ("alert_laner_mia", 1, True),
         ("alert_laner_mia", 2, False),
-        ("show_preview", None, False),
         ("voice_name", 42, ""),
         ("voice_name", "  Microsoft Hortense\x00 ", "Microsoft Hortense"),
         ("voice_name", "é" * 1000, "é" * config_mod.VOICE_NAME_MAX_LEN),
@@ -424,7 +423,7 @@ def test_save_roundtrip_utf8_and_no_temp_left(tmp_path):
         sensitivity=1.3, warn_radius=0.25, danger_radius=0.1, target_fps=10.0,
         detector_backend="onnx", detection_threshold=0.4, minimap_mode="manual",
         minimap_side="left", manual_minimap_rect=dict(VALID_RECT), download_skin_icons=False,
-        autostart=False, collect_samples=True, collect_interval_s=5.0, show_preview=True,
+        autostart=False, collect_samples=True, collect_interval_s=5.0,
     )
     assert save_config(cfg, p) is True
     raw = p.read_bytes()

@@ -54,6 +54,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
 from treeaicoach import geometry
+from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
 
@@ -142,16 +143,6 @@ OVERLAPS: dict[str, frozenset[str]] = {
 OVERLAP_S = 90.0
 BADGE_MIN_SCORE = 0.6          # the "COUP DE GÉNIE" badge only for strong calls...
 BADGE_KIND_GAP_S = 240.0       # ...and not twice in 4 min for the same kind
-
-
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
 
 
 def _uv(p: Any) -> tuple[float, float] | None:
@@ -871,7 +862,7 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
                 head = f"Prends {OBJ_LE[key]}" if role == "JUNGLE" else f"Aide ton jungler {OBJ_AUX[key]}"
                 return _call("cross_trade", f"cross:{key}:{int(ctx.gt // 60)}", OBJ_TITLE[key],
                              f"{head} maintenant : {who} {where}.",
-                             f"Ils sont de l'autre côté : échange l'objectif au lieu de perdre un combat.",
+                             "Ils sont de l'autre côté : échange l'objectif au lieu de perdre un combat.",
                              BARON_UV, tier="high", score=_clamp(0.55 + 0.35 * conf + 0.1 * edge), priority=86,
                              color="safe", genius=True, life=18.0, label=OBJ_TITLE[key].rstrip(" !"),
                              factors=(f"jungler {jl.source} {jl.side} ({conf:.0%})", *why_edge))

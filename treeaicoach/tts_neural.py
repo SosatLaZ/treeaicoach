@@ -505,14 +505,6 @@ class NeuralTTS:
 # Windows OneCore voices (WinRT)
 # --------------------------------------------------------------------------------------
 
-def onecore_available() -> bool:
-    try:
-        from winrt.windows.media.speechsynthesis import SpeechSynthesizer  # noqa: F401, PLC0415
-        return True
-    except Exception:
-        return False
-
-
 class OneCoreSynth:
     """WinRT ``SpeechSynthesizer`` -> WAV bytes. Create and use in one thread."""
 

@@ -33,6 +33,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from treeaicoach.fmtutil import finite_loose
 from treeaicoach.scoreboard import fmt_dec, fmt_gold, item_info, items_gold, major_items, player_names
 
 log = logging.getLogger(__name__)
@@ -109,7 +110,6 @@ OBJECTIVES: dict[str, tuple[str, str, str, str]] = {
     "HeraldKill": ("Héraut", "le Héraut", "du Héraut", "m"),
     "BaronKill": ("Baron", "le Baron", "du Baron", "m"),
     "HordeKill": ("Larves", "les larves", "des larves", "f"),
-    "AtakhanKill": ("Atakhan", "Atakhan", "d'Atakhan", "m"),
 }
 STRUCTURES: dict[str, tuple[str, str]] = {
     "TurretKilled": ("Tour", "la tour"),
@@ -130,11 +130,7 @@ class Praise:
 
 
 def _finite(x: Any, default: float = 0.0) -> float:
-    try:
-        f = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return f if math.isfinite(f) else default
+    return finite_loose(x, default)  # type: ignore[return-value]
 
 
 def _truthy(x: Any) -> bool:

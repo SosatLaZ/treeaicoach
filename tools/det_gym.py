@@ -33,8 +33,13 @@ champion; ``me`` median / p95 error of my position and frames > 0.03 off; ``ms``
 per-frame cost (vision + stabilize + tracker).
 
     python tools/det_gym.py [--quick] [--only NAME ...] [--no-real] [-v] [--json OUT]
+                            [--suite main|holdout|hard] [--gallery DIR] [--compare] [--note TXT]
+                            [--no-record]
 
 Deterministic: every scenario has a fixed seed; the matcher's clock is the simulated clock.
+Every run is appended to ``tools/det_gym_history.jsonl`` (``--compare``: delta vs the previous
+and the best comparable run, regressions flagged). See tools/README_detection_gym.md for the
+whole method (suites, gallery, hard-case mining, tuning, micro-gyms, real cases, sim-to-real).
 """
 
 from __future__ import annotations
@@ -71,6 +76,13 @@ VISION_R = 0.105         # champion sight radius (normalized, ~1500 units incl. 
 TOWER_VISION_R = 0.065
 
 FOUNTAIN = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
+#: Renderer version (stored in the history: runs of different versions are not compared).
+#: v2 (tools/det_sim2real.py calibration): lighter fog, ring colours of the real crops
+#: (enemy chroma ~25, warm), lossless capture / light blur in most main games.
+GYM_VERSION = 2
+FOG_DIM = 0.85                 # fogged map = x FOG_DIM (the real backgrounds already hold fog)
+ENEMY_RING_RGB = ((170, 58, 48), (230, 115, 95))
+ALLY_RING_RGB = ((85, 122, 150), (130, 158, 185))
 OTHER = {"ORDER": "CHAOS", "CHAOS": "ORDER"}
 
 
@@ -241,7 +253,7 @@ class Sim:
             c = Champ(alias, rel, team, role, np.array(FOUNTAIN[team], float),
                       float(rng.uniform(*SPEED)))
             c.portrait = db.load_icon(alias)
-            ring_rgb = RA.ENEMY_RING_RGB if rel == "enemy" else RA.ALLY_RING_RGB
+            ring_rgb = ENEMY_RING_RGB if rel == "enemy" else ALLY_RING_RGB
             c.ring = RA._lerp_bgr(rng, ring_rgb)
             if sc.ring_dark > 0:
                 k_d = 1.0 - sc.ring_dark * float(rng.uniform(0.3, 1.0))
@@ -487,7 +499,7 @@ class Sim:
         sc = self.sc
         n = sc.size
         vis = self._vision()
-        fog = (0.5 + 0.5 * vis)[:, :, None]
+        fog = (FOG_DIM + (1.0 - FOG_DIM) * vis)[:, :, None]
         img = (self.bg.astype(np.float32) * fog).astype(np.uint8)
         # minions near the lane fronts
         for lane in self.lanes.values():
@@ -567,7 +579,8 @@ class Sim:
         # capture degradations
         if sc.blur > 0:
             img = cv2.GaussianBlur(img, (0, 0), sc.blur)
-        img = cv2.imdecode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, int(sc.jpeg)])[1], 1)
+        if sc.jpeg > 0:          # (0: lossless capture, as the app's own screen grab)
+            img = cv2.imdecode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, int(sc.jpeg)])[1], 1)
         dead = [c.alias for c in self.champs if not c.alive]
         return img, truth, dead, fogged
 
@@ -604,10 +617,10 @@ def _iter_structs():
 def scenarios(quick: bool = False) -> list[Scenario]:
     S = []
     # laning: camera locked on me, everybody in lane / jungle, fog, 6 img/s, 300 px
-    S.append(Scenario("laning", 11, 6.0, 30.0, 300, "ORDER", "locked",
+    S.append(Scenario("laning", 11, 6.0, 30.0, 300, "ORDER", "locked", jpeg=0, blur=0.35,
                       events=[(12.0, "flash", {"who": [6]}), (20.0, "recall", {"who": ["me"]})]))
     # bot-lane 2v2 + jungler gank: stacks of 3-5 icons, a death, 12 img/s, 260 px, panning
-    S.append(Scenario("botfight", 23, 12.0, 14.0, 260, "CHAOS", "pan", jpeg=65,
+    S.append(Scenario("botfight", 23, 12.0, 14.0, 260, "CHAOS", "pan", jpeg=85, blur=0.4,
                       events=[(0.0, "goto", {"who": [3, 4, 8, 9], "uv": (0.86, 0.86), "spread": 0.02}),
                               (0.0, "goto", {"who": [6], "uv": (0.8, 0.8), "spread": 0.01, "speed_k": 1.1}),
                               (4.0, "mill", {"who": [3, 4, 6, 8, 9], "n": 10, "spread": 0.03}),
@@ -615,7 +628,7 @@ def scenarios(quick: bool = False) -> list[Scenario]:
                               (8.0, "die", {"who": [9], "respawn": 4.0}),
                               (9.0, "die", {"who": [4], "respawn": 30.0})]))
     # siege in my base: 4 enemies + 3 allies stacked near the inhibitor, camera jumping, 6 img/s
-    S.append(Scenario("siege", 37, 6.0, 20.0, 320, "CHAOS", "jump", jpeg=70,
+    S.append(Scenario("siege", 37, 6.0, 20.0, 320, "CHAOS", "jump", jpeg=0, blur=0.3,
                       events=[(0.0, "goto", {"who": [5, 6, 7, 8], "uv": (0.80, 0.22), "spread": 0.03}),
                               (0.0, "goto", {"who": [0, 1, 2], "uv": (0.85, 0.17), "spread": 0.02}),
                               (8.0, "mill", {"who": [0, 1, 2, 5, 6, 7, 8], "n": 10, "spread": 0.025}),
@@ -628,7 +641,7 @@ def scenarios(quick: bool = False) -> list[Scenario]:
                               (10.0, "die", {"who": [2], "respawn": 8.0}),
                               (16.0, "flash", {"who": [5]})]))
     # custom-skin me (portrait not in the roster), camera locked, small minimap 220 px
-    S.append(Scenario("customskin", 53, 6.0, 24.0, 220, "ORDER", "locked", custom_me=True, jpeg=70,
+    S.append(Scenario("customskin", 53, 6.0, 24.0, 220, "ORDER", "locked", custom_me=True, jpeg=0, blur=0.45,
                       events=[(10.0, "goto", {"who": ["me", 1], "uv": (0.3, 0.6), "spread": 0.015}),
                               (16.0, "camera", {"mode": "pan"})]))
     if quick:
@@ -915,8 +928,9 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
             g = tmap.get(alias) if alias else None
             if g is None and rel == "self":
                 g = tmap.get(sim.champs[0].alias)
-            if g is not None and math.hypot(uv[0] - g[2], uv[1] - g[3]) < TOL:
-                M.live_ok += 1
+            if g is not None and (math.hypot(uv[0] - g[2], uv[1] - g[3]) < TOL or (
+                    g[4] < VISIBLE_FRAC and math.hypot(uv[0] - g[2], uv[1] - g[3]) < 2 * TOL)):
+                M.live_ok += 1           # (an icon mostly hidden under another: its place)
                 continue
             near = [(math.hypot(uv[0] - u, uv[1] - v), a, r_) for a, (r_, _tm, u, v, _f) in tmap.items()]
             near = [n_ for n_ in near if n_[0] < TOL]
@@ -1022,11 +1036,11 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
 # Real set
 # ======================================================================================
 
-def run_real() -> dict:
+def run_real(fix: Path | None = None) -> dict:
     sys.path.insert(0, str(ROOT / "tools"))
     import real_minimap_bench as RB
 
-    res = RB.run_all()
+    res = RB.run_all(fix=fix) if fix is not None else RB.run_all()
     T = {"gt": 0, "det": 0, "tp": 0, "team": 0, "idn": 0, "idok": 0}
     misses, fps = [], []
     for name, r in res.items():
@@ -1084,6 +1098,11 @@ def run(quick: bool = False, only: list[str] | None = None, real: bool = True,
     if real:
         t1 = _time.perf_counter()
         out["real"] = run_real()
+        # converted user bug reports (tools/diag_to_gym.py): one entry per case folder
+        cases = sorted(p.parent for p in (ROOT / "tests" / "fixtures" / "real_cases").glob("*/ground_truth.json"))
+        if cases:
+            out["real_cases"] = {c.name: {k: v for k, v in run_real(c).items() if k not in ("misses", "errors")}
+                                 for c in cases}
         out["real_s"] = _time.perf_counter() - t1
     return out
 
@@ -1211,7 +1230,7 @@ TRACKED = {
 REAL_TRACKED = {"rec": (+1, 0.0), "prec": (+1, 0.0), "team": (+1, 0.0), "id": (+1, 0.0)}
 
 
-def score(total: dict, real: dict | None = None) -> float:
+def score(total: dict, real: dict | None = None, cost: bool = True) -> float:
     """One number to rank runs (higher is better): recall + precision, minus the rates of the
     errors the user sees (ghost on a live champion x3, wrong identity / team x2, identity
     switches x5, dead champion drawn x10), my position off, and the cost above 15 ms."""
@@ -1219,7 +1238,8 @@ def score(total: dict, real: dict | None = None) -> float:
     s = total["rec"] + total["prec"]
     s -= 3.0 * total["g_live"] / n + 2.0 * (total["id_wrong"] + total["team"]) / n
     s -= 5.0 * total["idsw"] / n + 10.0 * total["g_dead"] / n + total["me_bad"]
-    s -= 0.01 * max(0.0, total.get("ms", 0.0) - 15.0)
+    if cost:                    # (timing is noisy on shared machines: off for tuning)
+        s -= 0.01 * max(0.0, total.get("ms", 0.0) - 15.0)
     if real:
         s += 0.5 * (real["rec"] + real["prec"] + real["id"] + real["team"]) - 2.0
     return float(s)
@@ -1243,9 +1263,10 @@ def history_entry(out: dict, note: str = "") -> dict:
     games = {g: {k: v for k, v in m.items() if not isinstance(v, (list, dict))}
              for g, m in out["games"].items()}
     real = {k: v for k, v in out.get("real", {}).items() if not isinstance(v, (list, dict))} or None
-    return {"time": _time.strftime("%Y-%m-%d %H:%M:%S"), "rev": _git_rev(), "note": note,
+    return {"time": _time.strftime("%Y-%m-%d %H:%M:%S"), "rev": _git_rev(), "note": note, "gym": GYM_VERSION,
             "suite": out.get("suite", "main"), "quick": out.get("quick", False),
-            "only": out.get("only"), "score": score(out["total"], real), "total": tot, "games": games,
+            "only": out.get("only"), "score": score(out["total"], real),
+            "quality": score(out["total"], real, cost=False), "total": tot, "games": games,
             "real": real}
 
 
@@ -1285,7 +1306,7 @@ def regressions(cur: dict, ref: dict) -> list[str]:
 def compare(cur: dict, history: list[dict]) -> str:
     """Delta table vs the previous comparable run and the best one (same suite / quick)."""
     same = [h for h in history if h.get("suite") == cur.get("suite") and h.get("quick") == cur.get("quick")
-            and h.get("only") == cur.get("only") and h is not cur]
+            and h.get("only") == cur.get("only") and h.get("gym", 1) == cur.get("gym", 1) and h is not cur]
     if not same:
         return "compare: no previous run of this suite"
     prev, best = same[-1], max(same, key=lambda h: h.get("score", -1e9))
@@ -1317,6 +1338,9 @@ def report(out: dict, verbose: bool = False) -> str:
         r = out["real"]
         L.append(f"REAL (9 crops, {r['gt']} icons): recall {r['rec']:.3f}  precision {r['prec']:.3f}  "
                  f"team {r['team']:.3f}  identity {r['id']:.3f}  ms {r['ms']:.1f}")
+        for cname, rc in out.get("real_cases", {}).items():
+            L.append(f"REAL CASE {cname} ({rc['gt']} labels): recall {rc['rec']:.3f}  precision {rc['prec']:.3f}  "
+                     f"team {rc['team']:.3f}  identity {rc['id']:.3f}")
         if verbose:
             for m in r["misses"]:
                 L.append(f"    real miss {m}")

@@ -42,6 +42,8 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
+from treeaicoach.fmtutil import finite_loose as _num
+
 log = logging.getLogger(__name__)
 
 CASTER_STYLES = ("sobre", "coach", "caster")
@@ -446,14 +448,6 @@ class HypeCaster:
 # Shareable end-of-game summary
 # ======================================================================================
 ROLE_FR = {"TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "ADC", "UTILITY": "support"}
-
-
-def _num(x: Any) -> float | None:
-    try:
-        f = float(x)
-        return f if math.isfinite(f) else None
-    except (TypeError, ValueError):
-        return None
 
 
 def _dec(x: float, n: int = 1) -> str:

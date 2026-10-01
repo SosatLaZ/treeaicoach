@@ -16,7 +16,7 @@ one channel:
 plus a ``voice`` flag (only the voice whitelist of :mod:`treeaicoach.voice_policy`; the
 :class:`~treeaicoach.voice_policy.VoiceGate` still has the last word on speech).
 
-Routing table (:data:`ROUTES`, also in docs/ARCHITECTURE.md §19)::
+Routing table (:data:`ROUTES`, also in docs/ARCHITECTURE.md §20)::
 
     kind         normal     fight / gank   dead       voice   value
     danger       BANNER     BANNER         BANNER*    yes     1.00   (* siege / ace only)
@@ -44,7 +44,7 @@ Pure Python, no I/O, never raises from the public API.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 log = logging.getLogger(__name__)

@@ -27,8 +27,6 @@ BURST_NEAR = 1.5
 BURST_APPEARED_S = 2.0
 #: Detection rate while the game window is not in the foreground (alt-tab, other monitor).
 UNFOCUSED_FPS = 2.0
-#: Game not in the foreground this long before the unfocused rate applies (s).
-UNFOCUSED_AFTER_S = 3.0
 #: Window check period while paused (minimized / no window), s.
 PAUSED_PERIOD_S = 1.0
 #: Render-time extrapolation horizon (s): positions are predicted at most this far past the
@@ -38,8 +36,6 @@ PREDICT_HORIZON_S = 0.9
 #: tracker's association gate (0.6 s): measured on walking champions at 2-8 detections / s,
 #: tau 1.5 s / horizon 0.9 s halves the median display error of tau 0.6 s / 0.6 s at 2.6 fps.
 RENDER_TAU_S = 1.5
-#: A visible track whose last observation is older than this is drawn as a ghost (no label).
-STALE_DRAW_S = 0.45
 
 SLOTS = ("tactics", "coach", "board", "tips")
 
@@ -144,10 +140,6 @@ class HeavyScheduler:
         self.next[s] = max(self.next[s] + p, t + 0.5 * p)
         self.runs[s] += 1
         return {s}
-
-    def due_soon(self, t: float) -> bool:
-        """A slot will run at ``t`` (used to keep other periodic work off that tick)."""
-        return any(float(t) >= n for n in self.next.values())
 
 
 @dataclass(frozen=True)

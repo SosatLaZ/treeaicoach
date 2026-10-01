@@ -218,10 +218,6 @@ def french_score(info: VoiceInfo) -> int:
     return score
 
 
-def is_french_voice(info: VoiceInfo) -> bool:
-    return french_score(info) > 0
-
-
 def rank_voices(voices: Sequence[VoiceInfo], wanted: str = "") -> list[int]:
     """Indices of the acceptable voices, most preferred first.
 

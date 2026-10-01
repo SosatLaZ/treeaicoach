@@ -60,7 +60,6 @@ SHIELDS = frozenset(
 BURST = frozenset("Syndra Veigar Annie Brand Lux Viktor Ahri Vex Zoe Hwei Mel Neeko Karthus LeBlanc".split())
 NOT_CRIT = frozenset("KogMaw Varus Kindred Ezreal Corki Senna Kalista Vayne Smolder Kaisa Azir".split())
 CRIT_EXTRA = frozenset("Yasuo Yone Tryndamere Gangplank MasterYi Nilah".split())
-STEALTH = frozenset("Evelynn Twitch Akali Shaco Khazix Rengar Pyke Talon MonkeyKing Vayne Teemo".split())
 
 CLASSES = ("marksman", "mage", "assassin_ad", "assassin_ap", "fighter", "fighter_ap", "tank",
            "support_tank", "enchanter")

@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from treeaicoach import APP_NAME, __version__
+from treeaicoach.fmtutil import finite as _finite
 
 log = logging.getLogger(__name__)
 
@@ -94,17 +95,6 @@ def default_games_dir() -> Path:
     except Exception:  # defensive: never raise
         log.exception("Cannot resolve the games directory")
         return Path(tempfile.gettempdir()) / "TreeAICoach" / GAMES_DIR_NAME
-
-
-def _finite(x: Any, default: float | None = None) -> float | None:
-    """``float(x)`` if finite, else ``default``."""
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        f = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return f if math.isfinite(f) else default
 
 
 def _int(x: Any, default: int = 0) -> int:
@@ -319,12 +309,6 @@ class GameRecorder:
     def out_dir(self) -> Path:
         """Folder of the game records."""
         return self._out_dir_arg if self._out_dir_arg is not None else default_games_dir()
-
-    @property
-    def last_path(self) -> Path | None:
-        """Path of the last finished record (None if none yet)."""
-        with self._lock:
-            return self._last_path
 
     # ------------------------------------------------------------------ time helpers
     def _estimate_gt(self, t: Any) -> float | None:

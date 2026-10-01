@@ -31,20 +31,21 @@ def board():
 def test_quick_games_scoreboard(board):
     s = board["total"]
     assert s["frames"] >= 250
-    assert s["rec"] >= 0.89, s                  # visible icons drawn live, right identity
+    assert s["rec"] >= 0.93, s                  # visible icons drawn live, right identity
     assert s["prec"] >= 0.95, s                 # live icons that are the right champion
     assert s["g_dead"] == 0, s                  # a dead champion is never drawn
-    assert s["idsw"] <= 3, s
+    assert s["idsw"] <= 12, s
     assert s["team"] <= 10, s
-    assert s["err95"] <= 0.012, s               # drawn position error (minimap units)
+    assert s["err95"] <= 0.016, s               # drawn position error (minimap units)
     assert s["me_bad"] <= 0.02, s               # my position > 0.03 off
     assert s["me50"] <= 0.006, s
+    assert s["g_live"] <= 25, s                 # visible enemy drawn as a ghost / last-seen mark
 
 
 def test_real_crops(board):
     r = board["real"]
     assert r["gt"] == 45
-    assert r["rec"] >= 0.86, r
+    assert r["rec"] >= 0.88, r
     assert r["prec"] >= 0.99, r
     assert r["team"] >= 0.99, r
     assert r["id"] >= 0.97, r

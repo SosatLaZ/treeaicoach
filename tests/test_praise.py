@@ -6,7 +6,6 @@ import copy
 import json
 from pathlib import Path
 
-import pytest
 
 from treeaicoach.live_client import parse_allgamedata
 from treeaicoach.praise import MIN_GAP_S, PraiseCoach

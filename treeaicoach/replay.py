@@ -22,6 +22,8 @@ from typing import Any, Callable
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from treeaicoach.fmtutil import clock, finite_loose as _f
+
 log = logging.getLogger(__name__)
 
 # docs/DESIGN.md tokens (RGB)
@@ -46,14 +48,6 @@ SPEEDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0)   # game seconds per real
 IconLoader = Callable[[str], "np.ndarray | None"]
 
 
-def _f(x: Any) -> float | None:
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    return v if math.isfinite(v) else None
-
-
 def _series(raw: Any) -> list[tuple[float, float, float]]:
     out: list[tuple[float, float, float]] = []
     for p in raw if isinstance(raw, list) else []:
@@ -66,11 +60,7 @@ def _series(raw: Any) -> list[tuple[float, float, float]]:
 
 
 def fmt_clock(t: Any) -> str:
-    v = _f(t)
-    if v is None:
-        return "--:--"
-    v = max(0, int(v))
-    return f"{v // 60}:{v % 60:02d}"
+    return clock(t, "--:--", clamp=True)
 
 
 @dataclass

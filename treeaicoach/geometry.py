@@ -66,7 +66,6 @@ MAP_GAME_HEIGHT: float = 14980.0    # map height in game units (v = 1 - y / MAP_
 #   * bases: grey-blue quarter discs around the corners, radius 0.37-0.41.
 # --------------------------------------------------------------------------------------
 SIDE_LANE_OFFSET: float = 0.082     # distance between the map edge and a side-lane centre line
-LANE_BAND_HALF_WIDTH: float = 0.034  # half-width of the painted lane band (informative)
 
 _O = SIDE_LANE_OFFSET
 #: Top lane: up the left edge, around the top-left bend, then along the top edge.

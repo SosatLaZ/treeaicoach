@@ -33,6 +33,8 @@ import threading
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
+from treeaicoach.fmtutil import finite_loose
+
 log = logging.getLogger(__name__)
 
 ROLE_ORDER: tuple[str, ...] = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
@@ -62,7 +64,12 @@ _ITEMS: dict[int, tuple[str, int, str]] | None = None
 _items_lock = threading.Lock()
 
 
+def _finite(x: Any, default: float = 0.0) -> float:
+    return finite_loose(x, default)  # type: ignore[return-value]
+
+
 # -------------------------------------------------------------------------- item table
+
 def item_table() -> dict[int, tuple[str, int, str]]:
     """``itemID -> (name, total gold, kind)`` from ``assets/items.json`` (cached; {} if absent)."""
     global _ITEMS
@@ -127,14 +134,6 @@ def major_items(items: Iterable[Any]) -> list[int]:
 
 
 # -------------------------------------------------------------------------- helpers
-def _finite(x: Any, default: float = 0.0) -> float:
-    try:
-        f = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return f if math.isfinite(f) else default
-
-
 def fmt_gold(n: float, signed: bool = True) -> str:
     """French gold amount: "+1 500 PO" / "-300 PO" (narrow no-break space)."""
     v = int(round(n / 50.0) * 50) if abs(n) >= 1000 else int(round(n / 10.0) * 10)

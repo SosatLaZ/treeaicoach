@@ -6,7 +6,6 @@ import json
 import shutil
 from pathlib import Path
 
-import pytest
 import test_ui as tu
 
 from treeaicoach import report, ui, ui_kit, ui_preview

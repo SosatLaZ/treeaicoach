@@ -22,16 +22,16 @@ the public Tab scoreboard). Pure Python, thread-safe, never raises from its publ
 from __future__ import annotations
 
 import logging
-import math
 import random
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from treeaicoach.fmtutil import finite as _f
+
 log = logging.getLogger(__name__)
 
 ROTATE_S = 25.0                 # a tip is shown at most this long when others apply
-MIN_SHOW_S = 6.0                # (compat) minimum display time, see HOLD_S
 DEFAULT_COOLDOWN_S = 480.0      # the same tip is not shown again for 8 min (game time)
 
 ROLES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
@@ -40,19 +40,7 @@ SIDE_FR = {"top": "en haut", "mid": "au milieu", "bot": "en bas"}
 LANE_FR = {"top": "top", "mid": "mid", "bot": "bot"}
 CONTROL_WARD = 2055
 SWEEPER = 3364
-FARSIGHT = 3363
 BOOTS = frozenset({1001, 3006, 3009, 3020, 3047, 3111, 3117, 3158, 3010, 2422})
-SUPPORT_QUEST = frozenset({3865, 3866, 3867, 3869, 3870, 3871, 3876, 3877})
-
-
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
 
 
 def _k(n: float) -> str:

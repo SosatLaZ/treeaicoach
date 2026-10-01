@@ -34,7 +34,6 @@ WM_HOTKEY = 0x0312
 WM_QUIT = 0x0012
 PM_NOREMOVE = 0x0000
 VK_F1 = 0x70                   # VK_F1..VK_F24 = 0x70..0x87
-MAX_FKEY = 24
 FIRST_HOTKEY_ID = 0x0A11       # application ids must be in 0x0000..0xBFFF
 
 START_TIMEOUT_S = 2.0          # start() waits this long for the registrations

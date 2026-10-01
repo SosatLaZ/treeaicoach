@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from PIL import Image, ImageDraw
+
+from treeaicoach.fmtutil import finite_loose as _f
 
 log = logging.getLogger(__name__)
 
@@ -50,14 +51,6 @@ METRICS: dict[str, tuple[str, str, bool, int]] = {
 CS_TARGET = {"TOP": 7.0, "MIDDLE": 7.5, "BOTTOM": 8.0, "JUNGLE": 5.5}
 VISION_TARGET = {"UTILITY": 1.6}
 VISION_TARGET_DEFAULT = 0.7
-
-
-def _f(x: Any) -> float | None:
-    try:
-        v = float(x)
-    except (TypeError, ValueError):
-        return None
-    return v if math.isfinite(v) else None
 
 
 def fmt_num(v: Any, decimals: int = 1, signed: bool = False) -> str:

@@ -13,7 +13,15 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "treeaicoach"
-UI_FILES = ("ui.py", "ui_kit.py", "report.py", "replay.py", "progress.py")
+UI_FILES = ("ui.py", "ui_common.py", "ui_dialogs.py", "ui_page_alerts.py", "ui_page_analysis.py",
+            "ui_page_dashboard.py", "ui_page_overlay.py", "ui_page_settings.py", "ui_kit.py", "report.py",
+            "replay.py", "progress.py")
+#: the CustomTkinter window, split over several modules (ui.py + ui_common.py + one module per page)
+APP_FILES = tuple(f for f in UI_FILES if f.startswith("ui") and f != "ui_kit.py")
+
+
+def _app_source() -> str:
+    return "\n".join((PKG / f).read_text(encoding="utf-8") for f in APP_FILES)
 
 EM_DASH = chr(0x2014)
 BANNED_COLORS = (
@@ -65,7 +73,7 @@ def test_no_template_fonts() -> None:
 
 
 def test_ui_radius_is_small() -> None:
-    src = (PKG / "ui.py").read_text(encoding="utf-8")
+    src = _app_source()
     radii = [int(x) for x in re.findall(r"corner_radius=(\d+)", src)]
     assert all(r <= 6 for r in radii), radii
     from treeaicoach import ui
@@ -92,7 +100,7 @@ def test_text_is_legible() -> None:
     for bg in (ui.BG, ui.SURFACE, ui.RAISED):
         for fg in (ui.TEXT, ui.MUTED, ui.DIM, ui.ACCENT):
             assert _contrast(fg, bg) >= 4.5, (fg, bg, round(_contrast(fg, bg), 2))
-    src = (PKG / "ui.py").read_text(encoding="utf-8")
+    src = _app_source()
     m = re.search(r"class _Fonts:.*?(?=\n\n\n)", src, re.S)
     assert m
     sizes = [int(x) for x in re.findall(r"size=(\d+)", m.group(0))]

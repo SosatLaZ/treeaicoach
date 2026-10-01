@@ -28,6 +28,7 @@ from typing import Any, Iterable
 import numpy as np
 
 from treeaicoach import APP_NAME, __version__
+from treeaicoach.fmtutil import clock, finite as _f
 
 log = logging.getLogger(__name__)
 
@@ -67,16 +68,6 @@ def _e(x: Any) -> str:
     return html.escape("" if x is None else str(x), quote=True)
 
 
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
-
-
 def _num(x: Any, decimals: int = 1) -> str:
     v = _f(x)
     if v is None:
@@ -86,11 +77,7 @@ def _num(x: Any, decimals: int = 1) -> str:
 
 
 def _fmt_time(gt: Any) -> str:
-    v = _f(gt)
-    if v is None or v < 0:
-        return "-"
-    s = int(round(v))
-    return f"{s // 60}:{s % 60:02d}"
+    return clock(gt, "-", rounded=True)
 
 
 def _hex_rgb(h: str) -> tuple[int, int, int]:
@@ -2033,11 +2020,11 @@ def _truth_section(record: dict, a: dict) -> str:
              f"{_e(next((p.get('zone_label') for p in j.get('path') or [] if not p.get('in_base')), ''))}). "
              if j.get("first_side_label") else "")
     ganks = j.get("early_ganks") or []
-    gank_txt = (f"Kills avec lui avant 15 min : " + ", ".join(f"{g['time']} ({g['victim']})" for g in ganks) + "."
+    gank_txt = ("Kills avec lui avant 15 min : " + ", ".join(f"{g['time']} ({g['victim']})" for g in ganks) + "."
                 if ganks else "Aucun kill avec lui avant 15 min.")
     maps = (
         '<div class="phases" style="grid-template-columns:repeat(2,minmax(0,1fr))">'
-        f'<div class="phase"><h3>Mes morts (positions exactes)</h3>'
+        '<div class="phase"><h3>Mes morts (positions exactes)</h3>'
         + (f'<img src="{deaths_uri}" alt="Morts exactes" style="max-width:360px">' if deaths_uri else "")
         + '<p class="small">Libellé orange : le jungler ennemi a participé.</p></div>'
         f'<div class="phase"><h3>Vrai parcours de {_e(jname)} <span>1 point = 1 minute</span></h3>'

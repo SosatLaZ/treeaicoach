@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from treeaicoach import geometry
+from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
 
@@ -58,16 +59,6 @@ WORN_HP = 0.85                 # unknown HP of a champion fighting for WORN_AFTE
 WORN_AFTER_S = 4.0
 CALL_WORD = {"engage": "Attaque !", "retreat": "Recule !"}
 CALL_TITLE = {"engage": "ATTAQUE", "retreat": "RECULE"}
-
-
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
 
 
 def _uv(p: Any) -> tuple[float, float] | None:

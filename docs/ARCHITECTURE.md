@@ -4,6 +4,29 @@
 > Les signatures ci-dessous sont des contrats : ne les changez pas sans mettre à jour ce fichier.
 > Langue du code : anglais (identifiants, docstrings). Langue de l'interface et des phrases vocales : **français**.
 
+## Sommaire
+
+* [1. Objectif](#1-objectif)
+* [2. Arborescence](#2-arborescence)
+* [3. Conventions communes](#3-conventions-communes)
+* [4. Contrats par module](#4-contrats-par-module)
+* [5. Entraînement (`training/`)](#5-entraînement-training)
+* [6. Fonctions d'aide supplémentaires (v1.1)](#6-fonctions-daide-supplémentaires-v11)
+* [7. Indicateurs visuels (overlay) — v1.2](#7-indicateurs-visuels-overlay--v12)
+* [8. Interface & livraison — v1.3](#8-interface--livraison--v13)
+* [9. v3 — chef d'orchestre (combat, phases, positionnement, balises, voix)](#9-v3--chef-dorchestre-combat-phases-positionnement-balises-voix)
+* [10. Client LoL (LCU) — vérité terrain d'après-partie (optionnel)](#10-client-lol-lcu--vérité-terrain-daprès-partie-optionnel)
+* [11. Détection v4 — a priori gratuits (API officielle + fichiers de config du jeu)](#11-détection-v4--a-priori-gratuits-api-officielle--fichiers-de-config-du-jeu)
+* [12. Coups notés (style chess.com) + plans IA v2](#12-coups-notés-style-chesscom--plans-ia-v2)
+* [13. Coaching extras (v1.9) — pics de puissance, plan de voie, objectif de partie, cause de mort](#13-coaching-extras-v19--pics-de-puissance-plan-de-voie-objectif-de-partie-cause-de-mort)
+* [14. COUPS DE GÉNIE — planificateur macro (`macro.py`, 100 % règles, zéro appel IA)](#14-coups-de-génie--planificateur-macro-macropy-100--règles-zéro-appel-ia)
+* [15. Détection v5 — piles d'icônes, mon icône, trajet du jungler, robustesse, coût](#15-détection-v5--piles-dicônes-mon-icône-trajet-du-jungler-robustesse-coût)
+* [16. V2 — audit pro des conseils, liste blanche de la voix, cohérence entre systèmes](#16-v2--audit-pro-des-conseils-liste-blanche-de-la-voix-cohérence-entre-systèmes)
+* [17. Danger personnel, ganks plus tôt, revue IA ancrée (retour de la 1re vraie partie)](#17-danger-personnel-ganks-plus-tôt-revue-ia-ancrée-retour-de-la-1re-vraie-partie)
+* [18. Pipeline v2 — capture, cadence, overlay fluide, diagnostic (systèmes)](#18-pipeline-v2--capture-cadence-overlay-fluide-diagnostic-systèmes)
+* [19. Données de jeu vivantes (Data Dragon) + carte d'avant-partie (sélection des champions)](#19-données-de-jeu-vivantes-data-dragon--carte-davant-partie-sélection-des-champions)
+* [20. Overlay épuré : une seule chose à la fois + routeur de présentation](#20-overlay-épuré--une-seule-chose-à-la-fois--routeur-de-présentation)
+
 ## 1. Objectif
 
 Application Windows (`TreeAICoach.exe`) qui, pendant une partie de League of Legends (Faille de l'invocateur) :
@@ -129,7 +152,6 @@ class Config:
     autostart: bool = True          # démarre l'analyse au lancement
     collect_samples: bool = False   # enregistre des minimaps pour ré-entraîner
     collect_interval_s: float = 2.0
-    show_preview: bool = False
     def effective_warn_radius(self) -> float      # warn_radius * sensitivity
     def effective_danger_radius(self) -> float    # danger_radius * sensitivity
     def validated(self) -> "Config"               # copie avec valeurs bornées / corrigées
@@ -767,7 +789,7 @@ fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; ic�
 * `FogTracker.anchor(alias, uv, t, reason, points=None)` accepte plusieurs points ; `Reachability.distance_field_multi` ;
   `FogEstimate.seeds`.
 
-## 11. Coups notés (style chess.com) + plans IA v2
+## 12. Coups notés (style chess.com) + plans IA v2
 
 * `plays.py` (pur) : `PlayClassifier.update(PlayContext) -> list[Play]` note les moments clés à partir des
   événements Live Client, de mes stats (or, PV, score de vision), de la menace de gank, du cercle du jungler
@@ -935,7 +957,7 @@ dans ma base pendant le siège, revue IA avec des objets anglais hors méta.
   (`review_item_candidates` : build + objets de base de la classe + contres, noms français) ; `ground_review` retire
   toute phrase qui nomme un autre objet (FR ou anglais) et francise les noms anglais autorisés ; réponse anglaise rejetée.
 
-## 17. Pipeline v2 — capture, cadence, overlay fluide, diagnostic (systèmes)
+## 18. Pipeline v2 — capture, cadence, overlay fluide, diagnostic (systèmes)
 
 Pourquoi les vraies parties échouaient là où nos tests passaient : capture GDI (mss) lente, noire
 ou figée selon le mode d'affichage ; notre propre calque minimap capturé et relu par le détecteur ;
@@ -990,7 +1012,7 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
   (chemins masqués) → `%APPDATA%\TreeAICoach\diagnostics\diag_AAAAMMJJ_HHMMSS.zip`, dossier ouvert.
   `diagnostic_status()` pour l'UI.
 
-## 18. Données de jeu vivantes (Data Dragon) + carte d'avant-partie (sélection des champions)
+## 19. Données de jeu vivantes (Data Dragon) + carte d'avant-partie (sélection des champions)
 
 * `game_data.py` : `items_data()` / `champions_data()` = la plus récente des données en cache
   (`user_data_dir()/ddragon/items.json`, `champions.json`) et des données embarquées (`assets/items.json`,
@@ -1012,7 +1034,7 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
   11:00 à 15:00 sur les tours extérieures) ; lampes féeriques (`wards.SPOTS` avec `faelight=True`,
   positions approximatives ; 4 n'existent qu'après la transformation de la Faille : `wards.rift_transformed`).
 
-## 19. Overlay épuré : une seule chose à la fois + routeur de présentation
+## 20. Overlay épuré : une seule chose à la fois + routeur de présentation
 
 Retour réel (« il y a trop de trucs ») : carte HUD avec jauge, conseil sur 2 lignes, puces « Dragon 3:58 »
 et « IA 0/5 », ligne JGL « pas encore vu », 5 portraits « non vu / visible », plus Blitz à l'écran.

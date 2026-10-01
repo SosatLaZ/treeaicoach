@@ -91,8 +91,6 @@ RADAR_MIN, RADAR_MAX = 96, 1024
 HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 300, 240, 520
 #: Flash intensity quantization (the full-screen image is re-rendered only when it changes).
 FLASH_STEP = 0.1
-#: Refresh rate (Hz) of the radar / HUD while nothing is animated (saves CPU).
-CALM_HZ = 4.0
 #: How often (s) visible windows are re-asserted as topmost.
 TOPMOST_EVERY_S = 2.0
 RADAR_POSITIONS = ("above_minimap", "left_of_minimap", "top_left", "custom")
@@ -481,7 +479,6 @@ AC_SRC_ALPHA = 0x01
 BI_RGB = 0
 DIB_RGB_COLORS = 0
 PM_REMOVE = 0x0001
-WM_DESTROY = 0x0002
 WM_CLOSE = 0x0010
 WM_NCHITTEST = 0x0084
 WM_EXITSIZEMOVE = 0x0232

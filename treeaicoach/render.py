@@ -59,8 +59,6 @@ RING_BGR: dict[str, BGR] = {
     "ally": (218, 152, 78),
     "self": (218, 152, 78),
 }
-#: Paler blue-lavender ally ring seen on 2024 clients (~ RGB(133-183, 143-187, 162-204)).
-RING_BGR_ALLY_PALE: BGR = (183, 165, 158)
 #: Ring thickness / icon radius (1.5-2 px for a 27 px icon).
 RING_FRAC: float = 0.13
 #: Thin dark line between the ring and the portrait (~ RGB(30-65, 37-75, 55-130)).
@@ -128,10 +126,6 @@ ENEMY_WARD_DOT_BGR: BGR = (60, 45, 215)
 #: Pings: symbol glyphs and pulsing rings (~0.10 of the width).
 PING_SIZE: float = 0.045
 PING_RING_SIZE: float = 0.10
-PING_BGR: dict[str, BGR] = {
-    "generic": (253, 188, 33), "enemy_vision": (67, 34, 248),
-    "caution": (15, 190, 245), "assist": (128, 215, 9),
-}
 #: Recall: bright cyan halo (~RGB(106-113, 180, 201-214)), 2-4 px, at 1.1-1.25 x the radius.
 RECALL_BGR: BGR = (208, 180, 110)
 #: Recall of a visible enemy (``recallhostileoutline``: red / pink), not verified on captures.
@@ -1294,13 +1288,6 @@ class MinimapRenderer:
             except Exception:
                 log.exception("Minimap layer %r failed", name)
         return holder[0]
-
-    def clear_caches(self) -> None:
-        """Drop resized assets (textures and icons stay loaded)."""
-        self._pyramid_cache.clear()
-        self._base_cache.clear()
-        self._fog_cache.clear()
-        self._sprite_cache.clear()
 
 
 def _redigit_badge(base_rgba: np.ndarray, n: int) -> np.ndarray | None:

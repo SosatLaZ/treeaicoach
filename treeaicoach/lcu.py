@@ -47,6 +47,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from treeaicoach.fmtutil import finite as _num
+
 log = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"                      # the only host this module ever talks to
@@ -82,7 +84,6 @@ MATCH_DURATION_TOL_S = 150.0            # gameDuration vs recorded duration
 STATUS_DISABLED = "disabled"
 STATUS_CONNECTED = "connected"
 STATUS_NOT_FOUND = "not_found"
-STATUS_FR = {STATUS_DISABLED: "désactivé", STATUS_CONNECTED: "connecté", STATUS_NOT_FOUND: "non trouvé"}
 
 _PORT_RE = re.compile(r"--app-port=\"?(\d{2,5})")
 _TOKEN_RE = re.compile(r"--remoting-auth-token=\"?([\w\-]+)")
@@ -484,16 +485,6 @@ class LcuClient:
         if isinstance(d, dict) and isinstance(d.get("frames"), list) and d["frames"]:
             return d
         return None
-
-
-def _num(x: Any) -> float | None:
-    if x is None or isinstance(x, bool):
-        return None
-    try:
-        f = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return f if f == f and abs(f) != float("inf") else None
 
 
 def _game_id(x: Any) -> int | None:

@@ -32,6 +32,7 @@ snapshots. Never raises from its public methods. Pure Python (+ geometry), impor
 
 from __future__ import annotations
 
+import functools
 import itertools
 import logging
 import math
@@ -40,6 +41,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable
 
+from treeaicoach.fmtutil import finite as _as_float
 from treeaicoach.geometry import classify_zone, is_base, is_jungle, is_river, lane_of
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -154,8 +156,12 @@ PRIOR_SWAP_GAIN = 3.5     # champion priors + spells gain needed to swap two Rio
 
 
 def _norm(s: Any) -> str:
-    if not isinstance(s, str):
-        return ""
+    return _norm_str(s) if isinstance(s, str) else ""
+
+
+@functools.lru_cache(maxsize=1024)
+def _norm_str(s: str) -> str:
+    """Accent / case / punctuation-free key ("Kai'Sa" -> "kaisa"); cached: ~35 calls per engine tick."""
     s = unicodedata.normalize("NFKD", s)
     return "".join(ch for ch in s if ch.isalnum() and not unicodedata.combining(ch)).casefold()
 
@@ -661,16 +667,6 @@ class _Obs:
         if gt <= OBS_EARLY_GT and self.raw.get(best, 0.0) >= OBS_EARLY_LANE_S and frac >= OBS_EARLY_FRAC:
             return best
         return None
-
-
-def _as_float(x: Any) -> float | None:
-    if x is None or isinstance(x, bool):
-        return None
-    try:
-        f = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return f if math.isfinite(f) else None
 
 
 __all__ = ["ROLES", "TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY", "ROLE_LANE", "ROLE_LABEL_FR",

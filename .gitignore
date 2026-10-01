@@ -11,3 +11,12 @@ training/runs/
 training/data/
 .pytest_cache/
 *.log
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.tmp
+scratch/
+tmp/
+# stray outputs of ad-hoc scripts at the repository root
+/*.json

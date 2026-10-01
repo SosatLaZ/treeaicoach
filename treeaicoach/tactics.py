@@ -27,6 +27,7 @@ from typing import Any
 
 from treeaicoach import geometry
 from treeaicoach.alerts import Alert, AlertKind, Level
+from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
 
@@ -78,16 +79,6 @@ class TickOut:
     in_fight: bool = False
     macro_new: Any = None                               # macro.GeniusCall started this tick (HUD + badge)
     macro_cancelled: Any = None                         # macro.GeniusCall cancelled this tick
-
-
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
 
 
 class TacticalDirector:

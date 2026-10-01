@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from treeaicoach.alerts import Alert, AlertKind, Level, alert_key
+from treeaicoach.fmtutil import finite as _f
 from treeaicoach.geometry import dist, in_fountain, normalize_team
 
 log = logging.getLogger(__name__)
@@ -93,16 +94,6 @@ FOG_EVAL_S = 0.5            # the fog question is re-evaluated at most twice a s
 FOG_SPEED = 390.0 / 14870.0  # boots speed (normalized / s), as gank.ETA_REF_SPEED
 FOG_FLASH = 0.027
 PAST_MID_MARGIN = 0.05      # past the river diagonal (u - v) by this much = "past mid-lane"
-
-
-def _f(x: Any) -> float | None:
-    if x is None or isinstance(x, bool):
-        return None
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return v if math.isfinite(v) else None
 
 
 def _key(s: Any) -> str:

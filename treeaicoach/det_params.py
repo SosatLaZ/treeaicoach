@@ -35,6 +35,8 @@ TUNABLE: dict[str, tuple[float, float, str]] = {
     "roster_matcher.RING_VERIFY_TEAM": (0.6, 0.99, "float"),
     "roster_matcher.JUMP_CONFIRM_S": (0.5, 3.0, "float"),
     "roster_matcher.STACK_RING_MARGIN": (0.0, 0.15, "float"),
+    "roster_matcher.STACKV_MIN": (0.5, 0.95, "float"),
+    "roster_matcher.STACKV_ID_MIN": (0.45, 0.75, "float"),
     "tracker.HIDE_AFTER": (0.3, 1.2, "float"),
     "tracker.HIDE_FRAMES": (2.0, 6.0, "float"),
     "tracker.IDENTITY_COAST_S": (0.3, 2.0, "float"),

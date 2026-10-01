@@ -79,8 +79,8 @@ def main() -> None:
     t_end = time.time() + 60.0 * a.minutes
     best: dict = {}
     base = evaluate({})
-    best_score = base["score"]
-    print(f"tune baseline score {best_score:.4f} (rec {base['total']['rec']:.3f} prec {base['total']['prec']:.3f} "
+    best_score = base["quality"]
+    print(f"tune baseline quality {best_score:.4f} (rec {base['total']['rec']:.3f} prec {base['total']['prec']:.3f} "
           f"g_live {base['total']['g_live']})", flush=True)
     for key in keys:
         cur = float(best.get(key, DP.get_value(key)))
@@ -88,14 +88,14 @@ def main() -> None:
             if time.time() > t_end:
                 break
             e = evaluate({**best, key: v})
-            gain = e["score"] - best_score
-            print(f"  {key} = {v:<8g} score {e['score']:.4f} ({gain:+.4f})", flush=True)
+            gain = e["quality"] - best_score
+            print(f"  {key} = {v:<8g} quality {e['quality']:.4f} ({gain:+.4f})", flush=True)
             if gain > a.min_gain:
-                best[key], best_score = v, e["score"]
+                best[key], best_score = v, e["quality"]
         if time.time() > t_end:
             print("time budget reached")
             break
-    print("best on tune:", best, f"score {best_score:.4f} vs {base['score']:.4f}")
+    print("best on tune:", best, f"score {best_score:.4f} vs {base['quality']:.4f}")
     if not best:
         print("nothing to validate")
         return
@@ -103,8 +103,8 @@ def main() -> None:
     h0 = evaluate({}, suite="holdout", quick=False, real=True)
     h1 = evaluate(best, suite="holdout", quick=False, real=True)
     real_ok = all(h1["real"][k] >= h0["real"][k] - 1e-9 for k in ("rec", "prec", "team", "id"))
-    ok = h1["score"] > h0["score"] + 1e-4 and real_ok
-    print(f"holdout score {h0['score']:.4f} -> {h1['score']:.4f}; real ok {real_ok}; "
+    ok = h1["quality"] > h0["quality"] + 1e-4 and real_ok
+    print(f"holdout score {h0['quality']:.4f} -> {h1['quality']:.4f}; real ok {real_ok}; "
           f"regressions {G.regressions(h1, h0)}")
     print("VALIDATED" if ok else "REJECTED (holdout / real)")
     if ok and a.write:
@@ -116,8 +116,8 @@ def main() -> None:
         cur.update(best)
         DP.PARAMS_FILE.write_text(json.dumps({
             "params": cur, "validated": {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "rev": G._git_rev(),
-                                         "tune_score": best_score, "holdout_before": h0["score"],
-                                         "holdout_after": h1["score"]}}, indent=1), encoding="utf-8")
+                                         "tune_score": best_score, "holdout_before": h0["quality"],
+                                         "holdout_after": h1["quality"]}}, indent=1), encoding="utf-8")
         print("written", DP.PARAMS_FILE)
 
 

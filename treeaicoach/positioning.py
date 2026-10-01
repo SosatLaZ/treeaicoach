@@ -23,12 +23,12 @@ raises from its public methods.
 from __future__ import annotations
 
 import logging
-import math
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 from treeaicoach import geometry
+from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
 
@@ -59,16 +59,6 @@ LANE_POINT_RED = {"top": (0.40, 0.085), "mid": (0.58, 0.42), "bot": (0.915, 0.60
 PRAISE_FR = {"dragon": "Bien placé pour le dragon !", "elder": "Bien placé pour l'ancestral !",
              "baron": "Bien placé pour le Baron !", "herald": "Bien placé pour le Héraut !",
              "grubs": "Bien placé pour les larves !"}
-
-
-def _f(x: Any, default: float | None = None) -> float | None:
-    if x is None or isinstance(x, bool):
-        return default
-    try:
-        v = float(x)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return v if math.isfinite(v) else default
 
 
 def _side(uv: tuple[float, float]) -> str:
@@ -238,7 +228,6 @@ class PositionCoach:
         n_known = len({str(getattr(e, "alias", "") or "").lower() for e in enemies if getattr(e, "alias", None)})
         n_missing = len(missing) + max(0, 5 - len(dead_en) - max(n_known, len(enemies)))
         near_allies = [a for a in allies if getattr(a, "uv", None) is not None and geometry.dist(a.uv, me_pos) < ALONE_R]
-        my_side = _side(me_pos)
         zone = geometry.classify_zone(*me_pos)
         lane = geometry.lane_of(zone)
         cands: list[PositionAdvice] = []
