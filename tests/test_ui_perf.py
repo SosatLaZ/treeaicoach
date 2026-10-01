@@ -117,3 +117,30 @@ def test_light_controls(home: Path, tmp_path: Path, monkeypatch) -> None:
         app._refresh_all_widgets()
     finally:
         app.close()
+
+
+def test_health_text_and_new_hooks() -> None:
+    h = {"capture_backend": "dxcam", "capture_fps": 29.6, "detect_ms": {"p50": 11.2, "p95": 24.0},
+         "overlay": {"fps": 60.0}, "champions_seen": 9, "champions_expected": 10, "cpu_percent": 7.5}
+    text, level = ui.health_text(h)
+    assert "dxcam" in text and "11/24 ms" in text and "9/10" in text and "CPU 8 %" in text and level == 0
+    assert ui.health_text({**h, "cpu_percent": 90.0, "capture_note": "capture lente"})[1] == 1
+    assert ui.health_text(None) == ("", 0) and ui.health_text({"detect_ms": "x"})[0] == ""
+    assert ui.HUD_POSITIONS[0][0] == "left_of_minimap"          # the new default first
+
+
+def test_default_detector_factory_passes_the_engine_options(monkeypatch) -> None:
+    from treeaicoach import detector
+
+    got: dict = {}
+
+    def fake(backend, threshold, **kw):
+        got.update(kw, backend=backend)
+        return "det"
+
+    monkeypatch.setattr(detector, "create_detector", fake)
+    cfg = Config()
+    assert ui._default_detector_factory(cfg, learn=False) == "det"
+    assert got["learn_cache"] is False and "db" in got and isinstance(got["scale_store"], dict)
+    ui._default_detector_factory(cfg)
+    assert got["learn_cache"] is True

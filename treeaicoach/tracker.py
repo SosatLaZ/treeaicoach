@@ -14,9 +14,11 @@ per-frame observations into :class:`Track` objects that live across frames:
   track is later identified nearby it is merged into the identity track (history kept);
 * the local player (relation ``"self"``) is at most one track, returned by :meth:`Tracker.me`.
 
-Per track: smoothed position (component-wise median of the last 3 observations), velocity
+Per track: smoothed position (component-wise median of the last 3 observations, projected to
+the newest time along the fitted velocity when the motion is consistent: no lag), velocity
 (least squares over the last ~1.2 s, ``(0, 0)`` without >= 3 points spanning >= 0.25 s),
-visibility (seen < :data:`HIDE_AFTER` s ago), appearance time (first sighting, or back in
+visibility (seen < :data:`HIDE_AFTER` s ago, or :data:`HIDE_FRAMES` frames at a low measured
+detection rate), appearance time (first sighting, or back in
 sight after >= :data:`REAPPEAR_AFTER` s hidden) and a run-length zone history for
 :meth:`Track.zone_fraction`. Memory is bounded (deques with ``maxlen``, anonymous tracks
 forgotten after 20 s unseen, :data:`MAX_TRACKS` tracks at most).
@@ -72,10 +74,14 @@ log = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 # Tunables (normalized minimap units, seconds)
 # --------------------------------------------------------------------------------------
-HIDE_AFTER = 0.6            # a track is visible if seen less than this ago
+HIDE_AFTER = 0.6            # a track is visible if seen less than this ago...
+HIDE_FRAMES = 3.5           # ...or than this many frames at the measured detection rate
+HIDE_MAX_S = 1.6            # (slow detection: 4 img/s -> 0.875 s, 2 img/s -> 1.6 s)
+RATE_WINDOW = 9             # frame interval = median of the last intervals (a pause is not a rate)
 REAPPEAR_AFTER = 1.5        # hidden at least this long -> a new sighting sets appeared_at
 POS_MEDIAN_N = 3            # smoothed position = median of the last N observations...
 POS_WINDOW_S = 1.0          # ...not older than this before the newest one
+POS_CONSIST = 0.006         # projected along the velocity when they agree this well (no lag)
 VEL_WINDOW_S = 1.2          # least-squares velocity window
 VEL_MIN_POINTS = 3
 VEL_MIN_SPAN_S = 0.25        # (latency: radial velocity available ~3 frames after a sighting at 12 fps)
@@ -276,6 +282,17 @@ class Track:
             if t_last - o[0] > POS_WINDOW_S or len(recent) >= POS_MEDIAN_N:
                 break
             recent.append(o)
+        if len(recent) >= POS_MEDIAN_N:
+            # walking: the older points are projected to the newest time with the fitted
+            # velocity (a plain median trails a walking champion by one frame); only when
+            # the motion is consistent (else: outlier / turn -> plain median)
+            vx, vy = self.velocity()
+            if vx or vy:
+                pu = [o[1] + vx * (t_last - o[0]) for o in recent]
+                pv = [o[2] + vy * (t_last - o[0]) for o in recent]
+                mu, mv = _median3(pu), _median3(pv)
+                if max(math.hypot(a - mu, b - mv) for a, b in zip(pu, pv)) <= POS_CONSIST:
+                    return (mu, mv)
         return (_median3([o[1] for o in recent]), _median3([o[2] for o in recent]))
 
     def raw_position(self) -> tuple[float, float] | None:
@@ -533,9 +550,9 @@ class Track:
         while segs and segs[0][1] < t - ZONE_HISTORY_S:
             segs.popleft()
 
-    def refresh(self, now: float) -> None:
+    def refresh(self, now: float, hide_after: float = HIDE_AFTER) -> None:
         """Update ``visible`` / ``hidden_since`` for the current time (stacked = visible)."""
-        self.visible = self.stacked_with is not None or (now - self.last_seen) < HIDE_AFTER
+        self.visible = self.stacked_with is not None or (now - self.last_seen) < hide_after
         self.hidden_since = None if self.visible else self.last_seen
 
     def absorb(self, other: Track) -> None:
@@ -657,6 +674,11 @@ class Tracker:
         self._self_key: str | None = None
         self._last_t: float | None = None
         self._frame = 0
+        self._dts: deque = deque(maxlen=RATE_WINDOW)
+        self._dt_ema: float | None = None
+        #: Current hide timeout (s): HIDE_AFTER, longer when the detection rate is low
+        #: (HIDE_FRAMES frames at the measured rate, at most HIDE_MAX_S).
+        self.hide_after = HIDE_AFTER
 
     # -- public API ---------------------------------------------------------------------
 
@@ -708,6 +730,14 @@ class Tracker:
             self._self_key = None
             self._last_t = None
             self._frame = 0
+            self._dt_ema = None
+            self._dts.clear()
+            self.hide_after = HIDE_AFTER
+
+    @property
+    def frame_interval(self) -> float | None:
+        """Measured time between two updates (s, median of the last ones), None before two."""
+        return self._dt_ema
 
     @property
     def last_update(self) -> float | None:
@@ -740,6 +770,10 @@ class Tracker:
             return
         self._frame += 1
         frame = self._frame
+        if self._last_t is not None and 0.0 < now - self._last_t <= 3.0:
+            self._dts.append(now - self._last_t)
+            self._dt_ema = float(sorted(self._dts)[len(self._dts) // 2])
+            self.hide_after = min(HIDE_MAX_S, max(HIDE_AFTER, HIDE_FRAMES * self._dt_ema))
         entries = [e for e in (_entry_from(x) for x in (identified or ())) if e is not None]
         entries = self._dedupe(entries)
         # An identity-based "self" seen recently outranks the identifier's camera fallback.
@@ -807,7 +841,7 @@ class Tracker:
         for key, tr in self._tracks.items():
             if tr.relation == "self" and key != self._self_key:
                 tr.relation = "ally"
-            tr.refresh(now)
+            tr.refresh(now, self.hide_after)
 
         self._forget(now)
         self._last_t = now
@@ -886,7 +920,7 @@ class Tracker:
             if tr.stacked_with is not None:
                 occ = self._tracks.get(tr.stacked_with)
                 occ_visible = occ is not None and occ.stacked_with is None \
-                    and now - occ.last_seen < HIDE_AFTER
+                    and now - occ.last_seen < self.hide_after
                 if occ_visible and now - (tr.stacked_since or now) <= STACK_HOLD_S:
                     if tr.stacked_with in updated:
                         tr.follow(occ, now)        # type: ignore[arg-type]
@@ -898,7 +932,7 @@ class Tracker:
                 tr.stacked_since = None
                 tr.stack_released_at = now
                 continue
-            if now - tr.last_seen >= HIDE_AFTER or tr._stack_pos is not None:
+            if now - tr.last_seen >= self.hide_after or tr._stack_pos is not None:
                 continue                           # not a fresh disappearance
             last = tr.raw_position()
             pred = tr.predict(now)
@@ -933,7 +967,8 @@ class Tracker:
         for key, tr in self._tracks.items():
             if key in named_keys:
                 continue
-            if tr.alias is not None and now - tr.last_seen > IDENTITY_COAST_S:
+            if tr.alias is not None and now - tr.last_seen > max(IDENTITY_COAST_S,
+                                                                 self.hide_after + 0.4):
                 continue
             pred = self._predicted(tr, now)
             if pred is not None:
