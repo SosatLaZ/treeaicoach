@@ -87,6 +87,8 @@ BOOL_FIELDS: tuple[str, ...] = (
     "radar_enabled",
     "hud_enabled",
     "danger_flash",
+    "overlay_hide_from_capture",
+    "overlay_show_frame",
     "break_reminder",
     # updates
     "check_updates_on_start",
@@ -189,6 +191,9 @@ class Config:
     overlay_mode: str = "minimap"   # "minimap" (marks on the real minimap) | "radar" | "off"
     hud_xy: list[int] | None = None
     danger_flash: bool = True
+    # minimap overlay: hide it from screen capture (False = visible in screenshots / streams)
+    overlay_hide_from_capture: bool = False
+    overlay_show_frame: bool = True  # discreet frame + "TreeAI" label on the minimap layer
     fog_mode: str = "jungler"       # "jungler" | "all" | "off"
     fog_max_s: float = 60.0         # 10..180
     hotkey_mute: str = "F10"

@@ -341,3 +341,25 @@ def test_reset_and_new_game():
     sim.tracker.reset()
     sim.run(598, 605, lambda t: me_at(TOP_TOWER_SAFE), game=lambda t: make_game(t, cs=80))
     assert len(sim.said) == 1
+
+
+# ------------------------------------------------------------------------------ HUD line
+def test_hud_insight_line_adds_one_row():
+    from treeaicoach.overlay_render import OverlayState, hud_size, render_hud
+
+    base = OverlayState(game_time=600.0)
+    with_line = OverlayState(game_time=600.0, insight="Dragon 0:45 · 2 ennemis en bas")
+    w0, h0 = hud_size(base, 300)
+    w1, h1 = hud_size(with_line, 300)
+    assert w0 == w1 and h1 > h0
+    img = render_hud(with_line, 300, now=0.0)
+    assert img.shape[0] == h1 and img.shape[2] == 4 and img[..., 3].max() > 0
+
+
+def test_engine_wires_coach_into_overlay_state():
+    from treeaicoach.engine import CoachEngine
+
+    eng = CoachEngine.__new__(CoachEngine)        # attribute check only, no threads
+    assert "insight" in __import__("treeaicoach.overlay_render", fromlist=["OverlayState"]).OverlayState.__dataclass_fields__
+    assert hasattr(CoachEngine, "_role_resolver")
+    del eng

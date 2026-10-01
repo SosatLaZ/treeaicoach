@@ -134,6 +134,7 @@ class OverlayState:
     me_icon: np.ndarray | None = None         # my champion icon (RGBA), optional
     allies: list[EnemyView] = field(default_factory=list)   # allied champions (relation "ally"), without me
     roles: dict[str, str] = field(default_factory=dict)     # champion key / alias -> role (API position)
+    insight: str | None = None                # most relevant live macro insight (coach.MapCoach), one HUD line
 
 
 # ======================================================================================
@@ -1397,13 +1398,17 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
     objs = _objective_rows(state)
     if objs:
         rows.append(("objectives", 18 * k))
+    insight = (getattr(state, "insight", None) or "").strip() if isinstance(getattr(state, "insight", None), str) else ""
+    if insight:
+        rows.append(("insight", 16 * k))
     hint = (state.hint or "").strip()
     if hint:
         rows.append(("hint", 16 * k))
     gap = 6 * k
     height = pad + sum(h for _, h in rows) + gap * (len(rows) - 1) + pad
     return {"pad": pad, "inner": inner, "fonts": fonts, "rows": rows, "gap": gap, "height": int(math.ceil(height)),
-            "jl": jl, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint}
+            "jl": jl, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint,
+            "insight": insight}
 
 
 def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
@@ -1490,6 +1495,12 @@ def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
                     cv_.text(x + isz / 2, cy, label[:1], fonts["obj"], GOLD, anchor="m")
                 cv_.text(x + isz + 4 * k, cy, text, fonts["obj"], colour)
                 x += need + 11 * k
+        elif name == "insight":
+            r = 3.6 * k                                   # small teal diamond = coach insight
+            cx = pad + 5 * k
+            cv_.polygon([(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)], TEAL, 0.95)
+            cv_.text(pad + 14 * k, cy, fit_text(lay["insight"], fonts["small"], inner - 14 * k), fonts["small"],
+                     WHITE, 0.92)
         elif name == "hint":
             _coin(cv_, pad + 5 * k, cy, 5 * k)
             cv_.text(pad + 14 * k, cy, fit_text(lay["hint"], fonts["small"], inner - 14 * k), fonts["small"],

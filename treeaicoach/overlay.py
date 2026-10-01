@@ -10,13 +10,17 @@ separate popup windows of the TreeAI Coach process:
   *Windowed* mode.
 * one dedicated thread owns every window and pumps its messages with ``PeekMessageW``; it
   refreshes at ~12 Hz from ``state_provider()`` and hides everything when the state is None.
-* the window drawn over the minimap is excluded from screen capture (``SetWindowDisplayAffinity(hwnd,
-  WDA_EXCLUDEFROMCAPTURE)``, Windows 10 2004+); HUD, radar and flash stay capturable. The default "minimap" mode then draws thin
-  marks *exactly over the real minimap* (``state.minimap_rect``): the engine keeps capturing the
-  minimap without seeing them. When the exclusion is unavailable the manager falls back to the
-  "radar" mode: an enlarged copy placed *above* the minimap (shrunk rather than moved towards
-  the centre), never over it. Every window is clamped inside the screen, and the screen used
-  for the layout always contains the minimap (see :func:`effective_screen`).
+* the default "minimap" mode draws thin marks *exactly over the real minimap*
+  (``state.minimap_rect``, physical px) on a transparent window. That window is captured like
+  any other one (visible in the user's screenshots / streams), so it never draws champion
+  portraits - only thin rings drawn *outside* the real icons, role tags, arrows, dashed
+  last-seen circles with timers and fog outlines - which the detector does not mistake for
+  champions. ``cfg.overlay_hide_from_capture`` (default False) additionally excludes it from
+  capture (``SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)``, Windows 10 2004+); the mode
+  works the same with or without it. "radar" mode shows an enlarged copy placed *above* the
+  minimap (shrunk rather than moved towards the centre), never over it. Every window is
+  clamped inside the screen, and the screen used for the layout always contains the minimap
+  (see :func:`effective_screen`).
 * "move mode" (:meth:`OverlayManager.set_move_mode`): windows stop being click-through, can be
   dragged (``WM_NCHITTEST`` -> ``HTCAPTION``) and report their new position through
   ``on_moved(name, x, y)`` so the UI can save ``cfg.radar_xy`` / ``cfg.hud_xy``.
@@ -63,8 +67,8 @@ CALM_HZ = 4.0
 TOPMOST_EVERY_S = 2.0
 RADAR_POSITIONS = ("above_minimap", "left_of_minimap", "top_left", "custom")
 HUD_POSITIONS = ("above_minimap", "top_left", "top_right", "left_middle", "custom")
-#: ``cfg.overlay_mode``: "minimap" draws the marks *on* the real minimap (needs the windows to be
-#: excluded from screen capture, else falls back to "radar"), "radar" shows an enlarged copy
+#: ``cfg.overlay_mode``: "minimap" draws the marks *on* the real minimap (with or without capture
+#: exclusion), "radar" shows an enlarged copy
 #: above the minimap, "off" draws no map at all (HUD / flash keep their own switches).
 OVERLAY_MODES = ("minimap", "radar", "off")
 #: SetWindowDisplayAffinity values (WDA_EXCLUDEFROMCAPTURE: Windows 10 2004 / build 19041+).
@@ -146,13 +150,14 @@ def effective_screen(screen: Any, minimap: Any, monitor: Any = None) -> RectT:
     return x0, y0, x1 - x0, y1 - y0
 
 
-def resolve_overlay_mode(mode: Any, capture_excluded: bool) -> str:
-    """Mode actually used: "minimap" needs capture exclusion (else "radar"); junk -> "minimap"."""
+def resolve_overlay_mode(mode: Any, capture_excluded: bool = False) -> str:
+    """Mode actually used: the configured one, junk -> "minimap".
+
+    ``capture_excluded`` is kept for compatibility and ignored: the minimap layer draws no
+    portraits, so it works whether or not it is hidden from screen capture.
+    """
     m = str(mode or "").strip().lower()
-    m = m if m in OVERLAY_MODES else "minimap"
-    if m == "minimap" and not capture_excluded:
-        return "radar"
-    return m
+    return m if m in OVERLAY_MODES else "minimap"
 
 
 def radar_size(minimap: Any, scale: float = 1.0) -> int:
@@ -658,6 +663,15 @@ class LayeredWindow:
             log.debug("SetWindowDisplayAffinity failed", exc_info=True)
             return False
 
+    def include_in_capture(self) -> None:
+        """Undo :meth:`exclude_from_capture` (``WDA_NONE``). Never raises."""
+        try:
+            api = self._api
+            if api.SetWindowDisplayAffinity is not None:
+                api.SetWindowDisplayAffinity(self.hwnd, WDA_NONE)
+        except Exception:
+            log.debug("SetWindowDisplayAffinity(WDA_NONE) failed", exc_info=True)
+
     # ------------------------------------------------------------------ drawing
     def _ensure_dib(self, w: int, h: int) -> bool:
         if self._dib_size == (w, h) and self._bits:
@@ -866,10 +880,9 @@ def _monitor_rect_at(api: _Api, x: int, y: int) -> RectT | None:
 class OverlayManager:
     """Owns the overlay thread and its windows (flash, radar, minimap marks, HUD).
 
-    Every window is excluded from screen capture when Windows allows it
-    (:meth:`LayeredWindow.exclude_from_capture`); only then can the "minimap" mode draw over
-    the real minimap (our own capture of it would otherwise see the drawings). Without it the
-    manager falls back to the "radar" mode: :attr:`effective_mode` tells which one is used.
+    The window drawn over the minimap is excluded from screen capture only when
+    ``cfg.overlay_hide_from_capture`` is True (:meth:`LayeredWindow.exclude_from_capture`);
+    the "minimap" mode works either way (:attr:`effective_mode` = the configured mode).
 
     ``state_provider`` is called from the overlay thread (~12 Hz) and must be cheap and
     thread-safe (e.g. ``CoachEngine.get_overlay_state``). ``on_moved(name, x, y)`` ("radar" |
@@ -891,6 +904,10 @@ class OverlayManager:
         self._failed_logged = False
         self._demo_state: Any = None
         self.capture_excluded = False
+        #: minimap-layer diagnostics (overlay thread): updates / frames drawn, rect, session logs
+        self.mm_stats: dict[str, Any] = {"updates": 0, "rect": None, "no_rect": 0}
+        self._mm_session = False
+        self._mm_no_rect_logged = False
         self.ok = sys.platform == "win32"
         if not self.ok:
             log.info("Overlay disabled: Windows only")
@@ -979,12 +996,12 @@ class OverlayManager:
             # creation order = z-order among topmost windows: flash below radar / minimap / HUD
             for name in ("flash", "radar", "minimap", "hud"):
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved)
-            # Only the window drawn ON the minimap must be hidden from screen capture (so we
-            # never re-detect our own drawings). The HUD / radar / flash never overlap the
-            # captured minimap: keep them visible in the user's screenshots and streams.
-            self.capture_excluded = windows["minimap"].exclude_from_capture()
-            log.info("Overlay: capture exclusion %s -> mode %s",
-                     "OK" if self.capture_excluded else "indisponible", self.effective_mode)
+            # The minimap layer is captured by default (visible in the user's screenshots):
+            # it never draws portraits, so the detector does not re-detect it. Optional
+            # exclusion: cfg.overlay_hide_from_capture (applied in _sync_capture_exclusion).
+            with self._lock:
+                cfg0 = self._cfg
+            self._sync_capture_exclusion(windows["minimap"], cfg0, force_log=True)
         except Exception:
             self._fail("window creation")
             for w in windows.values():
@@ -997,6 +1014,22 @@ class OverlayManager:
             pump_messages()
         except Exception:  # pragma: no cover
             pass
+
+    def _sync_capture_exclusion(self, mm_win: "LayeredWindow", cfg: Any, force_log: bool = False) -> None:
+        """Apply ``cfg.overlay_hide_from_capture`` to the minimap window (only calls
+        SetWindowDisplayAffinity when exclusion is wanted, or to undo a previous one)."""
+        want = bool(getattr(cfg, "overlay_hide_from_capture", False))
+        if want and not self.capture_excluded:
+            self.capture_excluded = mm_win.exclude_from_capture()
+            log.info("Overlay: minimap layer hidden from capture: %s",
+                     "OK" if self.capture_excluded else "indisponible")
+        elif not want and self.capture_excluded:
+            mm_win.include_in_capture()
+            self.capture_excluded = False
+            log.info("Overlay: minimap layer visible in captures again")
+        elif force_log:
+            log.info("Overlay: mode %s, minimap layer %s", self.effective_mode,
+                     "hidden from capture" if self.capture_excluded else "visible in captures")
 
     def _window_moved(self, name: str, x: int, y: int) -> None:
         if name not in ("radar", "hud"):
@@ -1024,6 +1057,7 @@ class OverlayManager:
                 with self._lock:
                     cfg, move, visible = self._cfg, self._move_mode, self._visible
                     custom = dict(self._custom)
+                self._sync_capture_exclusion(windows["minimap"], cfg)
                 if click_through == move:     # move mode changed
                     for name in ("radar", "hud"):
                         windows[name].set_click_through(not move)
@@ -1034,6 +1068,8 @@ class OverlayManager:
                     for w in windows.values():
                         w.hide()
                     flash_key = None
+                    if state is None:
+                        self._end_mm_session()
                 else:
                     fast = move or needs_fast_refresh(state) or not any(w.visible for w in windows.values())
                     if fast or t0 - last_draw >= 1.0 / CALM_HZ - 1e-3:
@@ -1080,18 +1116,55 @@ class OverlayManager:
                    max(1, int(api.user32.GetSystemMetrics(SM_CYSCREEN))))
         return effective_screen(scr, mm, mon), mm
 
+    def _note_mm_update(self, state: Any, mm: RectT, img: np.ndarray) -> None:
+        """Count minimap-layer updates; log the rect once per game (and when it changes)."""
+        st = self.mm_stats
+        st["updates"] += 1
+        if not self._mm_session or st["rect"] != mm:
+            self._mm_session = True
+            st["rect"] = mm
+            try:
+                lit = int(np.count_nonzero(img[..., 3]))
+            except Exception:
+                lit = -1
+            n_tracks = sum(1 for e in list(getattr(state, "enemies", None) or [])
+                           + list(getattr(state, "allies", None) or [])
+                           if e is not None and getattr(e, "uv", None) is not None)
+            log.info("Overlay minimap: layer at x=%d y=%d %dx%d px (physical), %d visible px, %d tracks, %s",
+                     mm[0], mm[1], mm[2], mm[3], lit, n_tracks,
+                     "hidden from capture" if self.capture_excluded else "visible in captures")
+
+    def _end_mm_session(self) -> None:
+        """End of game (state gone): log the update count once and reset the per-game logs."""
+        if self._mm_session:
+            log.info("Overlay minimap: end of game, %d updates on %s (no rect: %d)",
+                     self.mm_stats["updates"], self.mm_stats["rect"], self.mm_stats["no_rect"])
+        self._mm_session = False
+        self._mm_no_rect_logged = False
+        self.mm_stats.update(updates=0, rect=None, no_rect=0)
+
     def _refresh(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any, move: bool,
                  custom: dict[str, tuple[int, int]], flash_key: Any) -> Any:
         from treeaicoach import overlay_render as orr
 
         scr, mm = self._screen_for(api, state)
         mode = resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
-        # ---- marks drawn exactly over the real minimap (excluded from our own capture)
+        # ---- marks drawn exactly over the real minimap (transparent window, same physical rect)
         mm_win = windows["minimap"]
-        if mode == "minimap" and mm is not None and not (move and state is self._demo_state):
-            mm_win.update(orr.render_minimap(state, mm[2], mm[3]), mm[0], mm[1])
+        demo = move and state is self._demo_state
+        if mode == "minimap" and mm is not None and not demo:
+            img = orr.render_minimap(state, mm[2], mm[3],
+                                     show_frame=bool(getattr(cfg, "overlay_show_frame", True)))
+            mm_win.update(img, mm[0], mm[1])
+            self._note_mm_update(state, mm, img)
         else:
             mm_win.hide()
+            if mode == "minimap" and mm is None and not demo:
+                self.mm_stats["no_rect"] += 1
+                if not self._mm_no_rect_logged:
+                    self._mm_no_rect_logged = True
+                    log.info("Overlay minimap: minimap_rect inconnu (minimap pas encore localisée, "
+                             "ou source de démo) - rien n'est dessiné sur la minimap")
         # ---- radar (needs the minimap position)
         radar_rect: RectT | None = None
         radar_win = windows["radar"]
