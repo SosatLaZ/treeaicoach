@@ -67,7 +67,7 @@ RING_RATIO = 2.0            # ... and this many times the other side's fraction
 INTERIOR_MAX = 0.4          # interior of the same colour: inside a coloured area, not an icon
 RELAX_DIST = 0.06           # ... except this close to where my icon is expected
 MAX_LOOSE = 4               # filled-interior candidates verified per search (cost bound)
-SELF_OUTLINE_MIN = 0.6      # teal fraction of the ring: my outline, accepted like ``relax``
+SELF_OUTLINE_MIN = 0.6      # teal fraction of the ring: my outline (always verified)
 RING_LINE_DL = 15.0         # ... or with a ring this much lighter than the dark line inside it
 OUTSIDE_MAX = 0.4           # same outside the ring (a thin ring, not the edge of a blue area)
 _NEAR = 26.0
@@ -381,26 +381,6 @@ def _best_contrast(L: np.ndarray, x: float, y: float, Rw: float, span: int = 2,
     return float(c[k]), int(sh[k, 0]), int(sh[k, 1])
 
 
-def _blob_centre(m3: np.ndarray, x: float, y: float, Rw: float) -> tuple[float, float]:
-    """Centroid of the teal pixels (my ring + glowing outline: a symmetric annulus) within
-    1.35 icon radii of ``(x, y)`` (working px), refined twice."""
-    h, w = m3.shape[:2]
-    mask = m3[:, :, 2]
-    r = 1.35 * Rw
-    for _ in range(2):
-        x0, x1 = max(0, int(x - r)), min(w, int(math.ceil(x + r)) + 1)
-        y0, y1 = max(0, int(y - r)), min(h, int(math.ceil(y + r)) + 1)
-        if x1 - x0 < 2 or y1 - y0 < 2:
-            break
-        yy, xx = np.mgrid[y0:y1, x0:x1].astype(np.float32)
-        wgt = mask[y0:y1, x0:x1] * ((xx - x) ** 2 + (yy - y) ** 2 <= r * r)
-        sw = float(wgt.sum())
-        if sw < 4:
-            break
-        x, y = float((wgt * xx).sum() / sw), float((wgt * yy).sum() / sw)
-    return x, y
-
-
 def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
                     exclude: Sequence[tuple[float, float]] = (),
                     fountains: bool = True,
@@ -464,14 +444,13 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
             # skin) inside my teal glow: accepted there
             # elsewhere too when the ring is brighter than the dark line inside it (icon
             # drawing), which a coloured area does not have
-            # my teal outline all around (outline-shape cue): a cyan custom portrait inside
-            # it is my icon wherever the camera is (unlocked camera); the ring does not
-            # centre a filled teal disc: the centroid of the teal / blue blob does
             loose = around(pin, x, y, core) > INTERIOR_MAX
-            outline = loose and side == "ally" and float(fs[y, x]) >= SELF_OUTLINE_MIN
             if loose:
                 uu, vv = (x + 0.5) / w, (y + 0.5) / h
                 relaxed = any(math.hypot(uu - a, vv - b) < RELAX_DIST for a, b in relax)
+                # my teal outline all around (outline-shape cue): a cyan custom portrait
+                # inside it is always verified, whatever the number of filled candidates
+                outline = side == "ally" and float(fs[y, x]) >= SELF_OUTLINE_MIN
                 if not relaxed and not outline:
                     n_loose += 1
                     if n_loose > MAX_LOOSE:
@@ -480,8 +459,8 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
                 # the dark line inside the ring does (best contrast over +-2 px)
                 if Lw is None:
                     Lw = cv2.cvtColor(work, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
-                best = _best_contrast(Lw, x, y, Rw, 4 if relaxed else 2, not (relaxed or outline))
-                if best[0] < RING_LINE_DL and not (relaxed or outline):
+                best = _best_contrast(Lw, x, y, Rw, 4 if relaxed else 2, not relaxed)
+                if best[0] < RING_LINE_DL and not relaxed:
                     continue
                 if any((x + best[1] - a) ** 2 + (y + best[2] - b) ** 2 < rr * rr
                        for a, b, rr in taken):
