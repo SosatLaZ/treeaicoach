@@ -20,6 +20,7 @@ import json
 import logging
 import math
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
@@ -422,8 +423,10 @@ def render_phase_map_png(record: dict, analysis: dict, t0: float, t1: float,
 CSS = f"""
 *{{box-sizing:border-box}}
 html,body{{margin:0;padding:0;background:{BG};color:{TEXT}}}
-body{{font-family:Bahnschrift,"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;font-size:14px;
-  line-height:1.45;font-variant-numeric:tabular-nums}}
+body{{font-family:"Segoe UI",system-ui,-apple-system,"Helvetica Neue","DejaVu Sans","Liberation Sans",Arial,sans-serif;
+  font-size:14px;line-height:1.45;font-variant-numeric:tabular-nums}}
+.title .name,.hstat .v,.card .v,.lane .v,.champ.ph{{font-family:"Bahnschrift SemiBold",Bahnschrift,"Segoe UI Semibold",
+  "Segoe UI","DejaVu Sans Condensed","Liberation Sans Narrow","Arial Narrow",sans-serif}}
 .wrap{{max-width:1080px;margin:0 auto;padding:20px 20px 36px}}
 h2{{font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:{MUTED};margin:0 0 12px;font-weight:700;
   padding-bottom:6px;border-bottom:1px solid {LINE_STRONG}}}
@@ -1691,8 +1694,8 @@ def _read_summary(path: Path) -> dict | None:
                 except ValueError:
                     pass
         data = json.loads(Path(path).read_text(encoding="utf-8"))     # slow path (old / reordered files)
-        if not isinstance(data, dict):
-            return None
+        if not isinstance(data, dict) or not any(k in data for k in ("summary", "meta", "snapshots")):
+            return None                                                 # not a game record (cache, settings...)
         s = data.get("summary")
         if isinstance(s, dict):
             return s
@@ -1708,15 +1711,67 @@ def _read_summary(path: Path) -> dict | None:
         return None
 
 
+#: JSON files of the games folder that are not game records (caches written next to them)
+NOT_RECORDS = frozenset({"progress_cache.json"})
+TAIL_BYTES = 65536             # list_games(): bytes read at the end of a record to find the play summary
+_PLAYS_RE = re.compile(r'"plays"\s*:\s*\{\s*"schema"')
+_precision_cache: dict[str, tuple[tuple[int, int], int | None]] = {}
+
+
 def _iter_record_files(d: Path) -> Iterable[Path]:
     try:
         for p in d.iterdir():
-            if p.is_file() and p.name.endswith(".json") and not p.name.startswith("."):
+            n = p.name
+            if (p.is_file() and n.endswith(".json") and not n.startswith(".") and n not in NOT_RECORDS
+                    and not n.endswith(".truth.json") and not n.endswith("_cache.json")):
                 yield p
     except FileNotFoundError:
         return
     except OSError as exc:
         log.warning("Cannot list %s: %s", d, exc)
+
+
+def read_precision(path: Path) -> int | None:
+    """Rated-play precision (0-100, :mod:`treeaicoach.plays`) of a game record, None when the game
+    was not rated. Cheap: the summary is the record's last key, so only the file's tail is parsed;
+    cached by (mtime, size). Never raises."""
+    try:
+        p = Path(path)
+        st = p.stat()
+        sig = (int(st.st_mtime_ns), int(st.st_size))
+        hit = _precision_cache.get(str(p))
+        if hit is not None and hit[0] == sig:
+            return hit[1]
+        with open(p, "rb") as fh:
+            if st.st_size > TAIL_BYTES:
+                fh.seek(st.st_size - TAIL_BYTES)
+            tail = fh.read().decode("utf-8", errors="ignore")
+        block: Any = None
+        matches = list(_PLAYS_RE.finditer(tail))
+        if matches:
+            try:
+                block, _ = json.JSONDecoder().raw_decode(tail, tail.index("{", matches[-1].start() + 7))
+            except ValueError:
+                block = None
+        if block is None and '"plays"' in tail and st.st_size <= 8 * 1024 * 1024:
+            data = json.loads(p.read_text(encoding="utf-8"))           # summary longer than the tail
+            block = data.get("plays") if isinstance(data, dict) else None
+        val: int | None = None
+        if isinstance(block, dict):
+            prec = block.get("precision")
+            if not isinstance(prec, (int, float)) and isinstance(block.get("counts"), dict):
+                from treeaicoach import plays as _plays
+
+                prec = _plays.precision(block["counts"])
+            if isinstance(prec, (int, float)) and math.isfinite(prec) and int(block.get("total") or 1) > 0:
+                val = int(round(min(max(float(prec), 0.0), 100.0)))
+        if len(_precision_cache) > 512:
+            _precision_cache.clear()
+        _precision_cache[str(p)] = (sig, val)
+        return val
+    except Exception as exc:
+        log.debug("Cannot read the play precision of %s: %s", path, exc)
+        return None
 
 
 def list_games(limit: int = 50, games_dir: Path | None = None) -> list[dict]:
@@ -1725,7 +1780,8 @@ def list_games(limit: int = 50, games_dir: Path | None = None) -> list[dict]:
     Each entry: ``path``, ``report_path`` (or None), ``start``, ``date_label``, ``champion``,
     ``champion_name``, ``result`` ("Win"/"Lose"/None), ``result_label``, ``kills``, ``deaths``,
     ``assists``, ``kda`` ("3/4/5"), ``cs``, ``duration``, ``duration_text``, ``ganks``,
-    ``ganks_survived``, ``incomplete`` (True for a ``.partial.json`` left by a crash).
+    ``ganks_survived``, ``incomplete`` (True for a ``.partial.json`` left by a crash), ``precision``
+    (rated plays 0-100, None when not rated).
     """
     try:
         d = _games_dir(games_dir)
@@ -1770,6 +1826,7 @@ def list_games(limit: int = 50, games_dir: Path | None = None) -> list[dict]:
                 "ganks": s.get("ganks"),
                 "ganks_survived": s.get("ganks_survived"),
                 "incomplete": bool(e["_partial"] or s.get("incomplete")),
+                "precision": read_precision(e["_p"]),
                 "mtime": e["_mtime"],
             })
         out.sort(key=lambda g: (str(g.get("start") or ""), g["mtime"]), reverse=True)

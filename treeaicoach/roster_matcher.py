@@ -164,6 +164,23 @@ OCC_MIN_NCC = 0.4
 OCC_MIN_AREA = 0.45
 OCC_SEARCH = 3                     # re-scoring window (+- working px) around a stacked icon
 OCC_AREA_PENALTY = 0.15
+#: Stacks (an icon drawn UNDER another one, e.g. ADC + support): a champion tracked less
+#: than STACK_HOLD_S ago whose predicted position is within STACK_NEAR icon diameters of an
+#: accepted icon is searched under it (see ``RosterMatcher._stack_search``): the visible
+#: arc of his ring (champion's team colour, outside the covering icons' discs +
+#: STACK_EXCL) is fitted with the known icon radius, and the visible part of the portrait
+#: (masked NCC) must not contradict it. STACK_ARC_* bound the arc evidence.
+STACK_HOLD_S = 3.0
+STACK_NEAR = 1.15
+STACK_EXCL = 1.14                   # x covering icon radius (ring + dark line + blur)
+STACK_EXCL_SELF = 1.4               # ... my icon has a glowing teal outline
+STACK_ARC_VIS = 0.14                # visible part of the ring (fraction of its samples)
+STACK_ARC_OWN = 0.55                # own-colour fraction of the visible ring
+STACK_ARC_OPP = 0.15                # other-team-colour fraction of the visible ring
+STACK_NCC_AREA = 0.3                # portrait visible this much: its NCC must agree ...
+STACK_NCC_MIN = 0.35                # ... at least this much
+STACK_NCC_STRONG = 0.62             # ... or a strong partial-portrait match alone is enough
+STACK_NCC_STRONG_AREA = 0.38
 #: Tracked mode, champions not tracked: whole-map search at a lower resolution (matched
 #: disc COARSE_INNER_PX wide); its peaks above COARSE_VERIFY_MIN are verified at full res.
 COARSE_INNER_PX = 9.0
@@ -642,6 +659,9 @@ class RosterMatcher:
         self._dead_idx: set[int] = set()
         #: Diagnostics: champions skipped as dead by the last detect() call.
         self.last_dead: list[str] = []
+        #: Search champions hidden under other icons (stacks), see _stack_search.
+        self.stack_search: bool = True
+        self.last_stack: tuple | None = None
         self.learner: Any = None
         try:
             from treeaicoach.self_icon import IconLearner
@@ -1537,6 +1557,132 @@ class RosterMatcher:
         self.last_rescue_pos = (x0 + dx + half + 0.5, y0 + dy + half + 0.5)
         return best if best > -1.0 else None
 
+    def _ring_membership(self, lab: np.ndarray, rel: str) -> tuple[np.ndarray, np.ndarray]:
+        """Per-pixel (own, other team) ring-colour masks of a Lab crop ``[h, w, 3]``."""
+        w = np.asarray([0.35, 1.0, 1.0], np.float32)
+        if rel == "enemy":
+            pe, po = self.rings._protos("enemy"), self.rings._protos("ally") + self.rings._protos("self")
+        else:
+            pe, po = self.rings._protos("ally") + self.rings._protos("self"), self.rings._protos("enemy")
+        X = lab.reshape(-1, 3).astype(np.float32) * w
+        out = []
+        for P in (pe, po):
+            Pm = np.asarray(P, np.float32) * w
+            d2 = (X * X).sum(1)[:, None] - 2.0 * (X @ Pm.T) + (Pm * Pm).sum(1)[None]
+            out.append(np.sqrt(np.maximum(d2, 0.0)).min(axis=1))
+        d_own, d_opp = out
+        near = RingColorModel.NEAR
+        own = (d_own < near) & (d_own < 0.8 * d_opp)
+        opp = (d_opp < near) & (d_opp < 0.8 * d_own)
+        h, w_ = lab.shape[:2]
+        return own.reshape(h, w_), opp.reshape(h, w_)
+
+    def _stack_search(self, bgr: np.ndarray, feat: np.ndarray, bank: _Bank,
+                      accepted: list, used: set, dead: set, now: float, kx: float, ky: float,
+                      R_px: float, D_work: float, thr: float) -> list[_Cand]:
+        """Champions hidden UNDER accepted icons (stacks). For each champion tracked less
+        than STACK_HOLD_S ago whose predicted position is next to an accepted icon: the
+        visible arc of its ring (own team colour, outside the covering icons) is fitted
+        with the known radius over the speed-bounded window around the prediction; the
+        best fits are checked against the visible part of the portrait (masked NCC).
+        Returns accepted candidates (working px), ``note == "stacked"``."""
+        H, W = bgr.shape[:2]
+        ents = self._entries
+        D_n = 2.0 * R_px / W
+        out: list[_Cand] = []
+        s = bank.size
+        half = (s - 1) / 2.0
+        Hf, Wf = feat.shape[:2]
+        for i, tr in list(self._tracks.items()):
+            if i in used or i in dead or i >= len(ents):
+                continue
+            age = now - tr.t
+            if age > STACK_HOLD_S or age < 0 or tr.hits < 2:
+                continue
+            pu, pv = tr.predict(now)
+            rs = LOCAL_SLACK + MAX_SPEED * min(age, 1.0)
+            cover = [a for a in accepted + out
+                     if math.hypot(a.x / kx - pu, a.y / ky - pv) < STACK_NEAR * D_n + rs]
+            if not cover:
+                continue
+            e = ents[i]
+            # candidate centres (original px) in the window, next to / under a cover
+            cxp, cyp, rsp = pu * W, pv * H, rs * W
+            step = max(1.0, R_px / 6.0)
+            g = np.arange(-rsp, rsp + 1e-6, step, dtype=np.float32)
+            gx, gy = np.meshgrid(g, g)
+            keep = gx * gx + gy * gy <= rsp * rsp
+            C = np.stack([cxp + gx[keep], cyp + gy[keep]], axis=1)          # [n, 2]
+            cov = np.asarray([(a.x / kx * W, a.y / ky * H) for a in cover], np.float32)
+            cov_ex = np.asarray([(STACK_EXCL_SELF if ents[a.i].relation == "self" else STACK_EXCL)
+                                 * R_px for a in cover], np.float32)
+            dc = np.sqrt(((C[:, None, :] - cov[None]) ** 2).sum(-1))       # [n, k]
+            C = C[(dc.min(axis=1) < 2.0 * R_px) & (dc.min(axis=1) > 0.3 * R_px)]
+            if len(C) == 0:
+                continue
+            # ring-colour masks of the region
+            m = int(math.ceil(1.2 * R_px)) + 2
+            x0, x1 = max(0, int(C[:, 0].min()) - m), min(W, int(C[:, 0].max()) + m + 1)
+            y0, y1 = max(0, int(C[:, 1].min()) - m), min(H, int(C[:, 1].max()) + m + 1)
+            if x1 - x0 < 4 or y1 - y0 < 4:
+                continue
+            lab = cv2.cvtColor(np.ascontiguousarray(bgr[y0:y1, x0:x1]), cv2.COLOR_BGR2LAB)
+            own_m, opp_m = self._ring_membership(lab, e.relation)
+            px = C[:, None, 0] + R_px * _RING_DX.reshape(1, -1)              # [n, 120]
+            py = C[:, None, 1] + R_px * _RING_DY.reshape(1, -1)
+            xi, yi = np.floor(px).astype(np.int32), np.floor(py).astype(np.int32)
+            vis = (xi >= x0) & (xi < x1) & (yi >= y0) & (yi < y1)
+            for (ax, ay), ex in zip(cov, cov_ex):
+                vis &= (px - ax) ** 2 + (py - ay) ** 2 > ex * ex
+            xc = np.clip(xi - x0, 0, x1 - x0 - 1)
+            yc = np.clip(yi - y0, 0, y1 - y0 - 1)
+            own = own_m[yc, xc] & vis
+            opp = opp_m[yc, xc] & vis
+            nvis = vis.sum(axis=1)
+            n_own, n_opp = own.sum(axis=1), opp.sum(axis=1)
+            dpred = np.hypot(C[:, 0] - cxp, C[:, 1] - cyp) / max(R_px, 1e-6)
+            score = n_own - 1.5 * n_opp - 0.5 * dpred
+            for j in np.argsort(-score)[:3]:
+                if n_own[j] < 4:
+                    break
+                vis_f = nvis[j] / float(vis.shape[1])
+                own_f = n_own[j] / max(1.0, float(nvis[j]))
+                opp_f = n_opp[j] / max(1.0, float(nvis[j]))
+                # visible part of the portrait (working px)
+                xw, yw = C[j, 0] * kx / W, C[j, 1] * ky / H
+                tx, ty = int(round(xw - half - 0.5)), int(round(yw - half - 0.5))
+                area, nv = 0.0, 0.0
+                if 0 <= tx <= Wf - s and 0 <= ty <= Hf - s:
+                    P = feat[ty:ty + s, tx:tx + s]
+                    yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
+                    mk = bank.mask.copy()
+                    for a in cover:
+                        d2 = (xx + tx + 0.5 - a.x) ** 2 + (yy + ty + 0.5 - a.y) ** 2
+                        mk[d2 < (0.53 * D_work) ** 2] = 0.0
+                    white = (P[:, :, 0] > 215.0) & (np.abs(P[:, :, 1]) < 14.0) & \
+                        (np.abs(P[:, :, 2]) < 14.0) & (bank.raw[i][:, :, 0] < 190.0)
+                    mk[white] = 0.0
+                    area = float(mk.sum()) / max(bank.n, 1e-6)
+                    if area >= 0.12:
+                        nv = float(masked_ncc(P[None], bank.raw[i], mk[None])[0, 0])
+                arc_ok = vis_f >= STACK_ARC_VIS and own_f >= STACK_ARC_OWN and \
+                    opp_f <= STACK_ARC_OPP
+                ncc_ok = area < STACK_NCC_AREA or nv >= STACK_NCC_MIN
+                strong = area >= STACK_NCC_STRONG_AREA and nv >= STACK_NCC_STRONG and \
+                    own_f >= 0.3 and opp_f <= own_f
+                self.last_stack = (e.alias, round(vis_f, 3), round(own_f, 3), round(opp_f, 3),
+                                   round(area, 3), round(nv, 3), bool(arc_ok), bool(ncc_ok))
+                if not ((arc_ok and ncc_ok) or strong):
+                    continue
+                c = _Cand(i, xw, yw, nv, thr + 0.02, local=True, tot=thr + 0.02,
+                          f_en=own_f if e.relation == "enemy" else opp_f,
+                          f_al=opp_f if e.relation == "enemy" else own_f, note="stacked")
+                if any(math.hypot(c.x - a.x, c.y - a.y) < 0.2 * D_work for a in accepted + out):
+                    continue
+                out.append(c)
+                break
+        return out
+
     def _detect(self, bgr: np.ndarray, now: float) -> list[Detection]:
         st = self._state
         H, W = bgr.shape[:2]
@@ -1690,6 +1836,17 @@ class RosterMatcher:
             used.add(i)
             accepted.append(c2)
             info(c2, True, "occluded")
+
+        # 5b. stacks: tracked champions drawn under an accepted icon (ring arc + portrait)
+        if accepted and self.stack_search:
+            try:
+                for c in self._stack_search(bgr, feat, bank, accepted, used, dead, now, kx, ky,
+                                            R_px, D_work, thr):
+                    used.add(c.i)
+                    accepted.append(c)
+                    info(c, True, "stacked")
+            except Exception:
+                self._errors.exception("Roster matcher stack search failed")
 
         # 6. the local player: camera rectangle prior, then coasting on its track
         dets_extra: list[Detection] = []

@@ -503,15 +503,87 @@ class VoiceGate:
 SubsystemRow = tuple[str, str, int, str, str, str]      # (key, label, level, text, fix label, fix action)
 
 
+#: short provider names (dashboard row "IA conseil")
+AI_SHORT: dict[str, str] = {"gemini": "Gemini", "groq": "Groq", "openrouter": "OpenRouter", "ollama": "Ollama",
+                            "anthropic": "Claude"}
+#: ai_advisor.AIError code -> short French status (dashboard row, "Tester la clé")
+AI_ERR_SHORT: dict[str, str] = {"key": "clé refusée", "nokey": "clé manquante", "quota": "quota atteint",
+                                "offline": "service injoignable", "model": "modèle inconnu",
+                                "server": "erreur du service", "bad": "réponse illisible"}
+
+
+def ai_row(provider: str = "off", key_set: bool = False, budget: str = "",
+           test: tuple[bool, str] | None = None) -> SubsystemRow:
+    """Dashboard row "IA conseil": provider, key set or not, budget left ("IA 3/5"), last key test."""
+    prov = str(provider or "off").lower()
+    if prov in ("", "off"):
+        return ("ai", "IA conseil", -1, "désactivée", "Activer", "settings_ai")
+    name = AI_SHORT.get(prov, prov.title())
+    needs_key = prov != "ollama"
+    if needs_key and not key_set:
+        return ("ai", "IA conseil", 1, f"{name} · clé manquante", "Ajouter", "settings_ai")
+    if test is not None:
+        ok, short = test
+        if not ok:
+            return ("ai", "IA conseil", 2, f"{name} · {short}", "Tester la clé", "test_ai")
+        return ("ai", "IA conseil", 0, f"{name} · {budget or 'clé OK'}", "Tester la clé", "test_ai")
+    extra = budget or ("local" if not needs_key else "clé enregistrée")
+    return ("ai", "IA conseil", 0, f"{name} · {extra}", "Tester la clé" if needs_key else "Tester", "test_ai")
+
+
+def test_ai_key(cfg: Any, caller: Callable[..., str] | None = None) -> tuple[bool, str, str]:
+    """Blocking tiny request to the chosen AI provider: ``(ok, short status, French message)``.
+
+    Run it on a worker thread. An empty answer still proves the key works. Never raises."""
+    try:
+        from treeaicoach import ai_advisor  # noqa: PLC0415
+
+        prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
+        spec = ai_advisor.provider_spec(prov)
+        if spec is None:
+            return False, "désactivée", "Choisis d'abord un fournisseur d'IA dans Réglages > IA."
+        name = AI_SHORT.get(prov, spec.label)
+        key = str(getattr(cfg, "ai_api_key", "") or "").strip()
+        if spec.needs_key and not key:
+            return False, AI_ERR_SHORT["nokey"], f"{name} : colle d'abord ta clé dans Réglages > IA."
+        call = caller or ai_advisor.call_llm
+        try:
+            call(prov, key, str(getattr(cfg, "ai_model", "") or ""), "Réponds en un mot.", "Réponds : OK",
+                 timeout=8.0, max_tokens=16)
+        except ai_advisor.AIError as exc:
+            if exc.code != "empty":           # an empty answer = the key was accepted
+                return (False, AI_ERR_SHORT.get(exc.code, AI_ERR_SHORT["server"]),
+                        ai_advisor.error_text(exc.code, prov).replace("Conseil IA", name))
+        return True, "clé OK", f"{name} : la clé fonctionne."
+    except Exception as exc:  # pragma: no cover - defensive
+        log.debug("AI key test failed", exc_info=True)
+        return False, "erreur", f"Test impossible ({type(exc).__name__})."
+
+
+def window_mode_status(window_mode: Any) -> tuple[int, str]:
+    """Game display mode (game_settings.GameSettings.window_mode) -> (level, French text).
+
+    level 0 = fine (borderless / windowed), 2 = exclusive fullscreen, -1 = unknown."""
+    if window_mode == 2:
+        return 0, "Sans bordure : parfait"
+    if window_mode == 1:
+        return 0, "Fenêtré : ça marche"
+    if window_mode == 0:
+        return 2, "Plein écran : passe en Sans bordure"
+    return -1, "réglage du jeu introuvable : vérifie à la main"
+
+
 def subsystem_rows(*, state: str = "", message: str = "", running: bool = False, demo: bool = False,
                    minimap_found: bool = False, minimap_method: str | None = None, detector: str = "",
                    voice_backend: str = "", muted: bool = False, lcu_text: str = "",
-                   lcu_enabled: bool = True, engine_ok: bool = True) -> list[SubsystemRow]:
-    """Plain-French status of "Jeu / Minimap / Client LoL / IA / Voix" for the dashboard.
+                   lcu_enabled: bool = True, engine_ok: bool = True, ai_provider: str = "off",
+                   ai_key_set: bool = False, ai_budget: str = "",
+                   ai_test: tuple[bool, str] | None = None) -> list[SubsystemRow]:
+    """Plain-French status of "Jeu / Minimap / Client LoL / Détection / IA conseil / Voix" for the dashboard.
 
     Each row carries a short fix hint and an action key the UI maps to a button:
-    "start", "calibrate", "help_borderless", "settings_ia", "voice", "unmute", "lcu_help", "".
-    Pure: no I/O, never raises.
+    "start", "calibrate", "help_borderless", "settings_ia", "settings_ai", "test_ai", "voice", "unmute",
+    "lcu_help", "". Pure: no I/O, never raises.
     """
     rows: list[SubsystemRow] = []
     st = str(state or "").upper()
@@ -554,16 +626,18 @@ def subsystem_rows(*, state: str = "", message: str = "", running: bool = False,
         rows.append(("lcu", "Client LoL", 1, "non trouvé", "Aide", "lcu_help"))
     else:
         rows.append(("lcu", "Client LoL", -1, "vérification…", "", ""))
-    # detector ("IA")
+    # champion detection model (key "ia" kept for compatibility)
     d = str(detector or "").lower()
     if "onnx" in d or "roster" in d:
-        rows.append(("ia", "IA", 0, "réseau de neurones", "", ""))
+        rows.append(("ia", "Détection", 0, "réseau de neurones", "", ""))
     elif "classic" in d:
-        rows.append(("ia", "IA", 1, "mode secours (classique)", "Réglages", "settings_ia"))
+        rows.append(("ia", "Détection", 1, "mode secours", "Réglages", "settings_ia"))
     elif d in ("", "-", "none", "aucun"):
-        rows.append(("ia", "IA", 2 if engine_ok else -1, "non chargée", "Réglages", "settings_ia"))
+        rows.append(("ia", "Détection", 2 if engine_ok else -1, "non chargée", "Réglages", "settings_ia"))
     else:
-        rows.append(("ia", "IA", 0, detector[:24], "", ""))
+        rows.append(("ia", "Détection", 0, detector[:24], "", ""))
+    # optional LLM advice (ai_advisor.py)
+    rows.append(ai_row(ai_provider, ai_key_set, ai_budget, ai_test))
     # voice
     vb = str(voice_backend or "").lower()
     if muted:
@@ -755,16 +829,17 @@ ABOUT_TEXT = (
 
 
 def onboarding_steps() -> list[tuple[str, str]]:
+    """The 3 steps of the guided first run ("Mode guidé"): level, borderless check, overlay test."""
     return [
-        ("Passe le jeu en « Sans bordure »",
-         "Options du jeu → Vidéo → Mode d'affichage : Sans bordure. En plein écran exclusif, la capture est "
-         "noire et rien ne peut s'afficher sur ta minimap."),
-        ("Teste la voix",
-         "Clique sur « Écouter » : tu dois entendre une alerte d'exemple. Règle le volume ici ou dans "
-         "Alertes & voix."),
-        ("Choisis ton style",
-         "Discret : seulement les dangers. Équilibré : recommandé. Complet : tout est annoncé et affiché. "
-         "Tu pourras tout ajuster ensuite."),
+        ("Ton niveau",
+         "Plus tu es débutant, plus le coach explique. Tu pourras le changer à tout moment dans la barre "
+         "de gauche."),
+        ("Jeu en « Sans bordure »",
+         "Options du jeu > Vidéo > Mode d'affichage : Sans bordure. En plein écran exclusif, la capture est "
+         "noire et rien ne s'affiche sur ta minimap."),
+        ("Teste l'overlay et la voix",
+         "Un exemple de gank s'affiche 10 s sur ton écran et le coach parle. Si tu ne vois ou n'entends "
+         "rien, ouvre la page Aide."),
     ]
 
 
@@ -844,5 +919,5 @@ def caps(text: str) -> str:
 __all__ = [
     "extra_icon", "role_glyph", "decorate_portrait", "hero_background", "glow_dot", "PRESETS", "preset_of",
     "preset_changes", "export_settings", "import_settings", "in_quiet_hours", "speech_allowed", "VoiceGate",
-    "lane_opponent", "objectives_text", "subsystem_rows", "CpuMeter", "diagnostic_text", "CHANGELOG", "SHORTCUTS", "ABOUT_TEXT", "norm_role",
+    "lane_opponent", "objectives_text", "subsystem_rows", "ai_row", "test_ai_key", "window_mode_status", "CpuMeter", "diagnostic_text", "CHANGELOG", "SHORTCUTS", "ABOUT_TEXT", "norm_role",
 ]

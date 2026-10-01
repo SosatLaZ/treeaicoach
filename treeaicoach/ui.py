@@ -395,6 +395,14 @@ def _int_or_none(v: Any) -> int | None:
         return None
 
 
+def precision_color(prec: Any) -> str:
+    """Colour of a rated-play precision (0-100): green from 80, plain text from 60, amber below, dim if None."""
+    p = _int_or_none(prec)
+    if p is None:
+        return DIM
+    return SAFE if p >= 80 else TEXT if p >= 60 else WARNING
+
+
 def session_stats(games: Sequence[dict], today: _dt.date | None = None) -> dict[str, Any]:
     """Stats of the session cards: today's games, or the 10 most recent ones when none today."""
     today = today or _dt.date.today()
@@ -408,6 +416,7 @@ def session_stats(games: Sequence[dict], today: _dt.date | None = None) -> dict[
     survived = [_int_or_none(game_field(g, "ganks_survived")) for g in sel]
     total_ganks = sum(x for x in ganks if x is not None)
     avoided = sum(x for x in survived if x is not None)
+    precs = [p for p in (_int_or_none(game_field(g, "precision")) for g in sel) if p is not None]
     return {
         "scope": scope,
         "games": n,
@@ -416,6 +425,7 @@ def session_stats(games: Sequence[dict], today: _dt.date | None = None) -> dict[
         "deaths_per_game": (sum(deaths) / len(deaths)) if deaths else None,
         "ganks": total_ganks,
         "ganks_avoided": avoided,
+        "precision": (sum(precs) / len(precs)) if precs else None,
     }
 
 
@@ -1201,6 +1211,8 @@ class CoachApp:
         self._journal_sig: tuple = ()
         self._journal_hidden: set = set()
         self._last_alert_seen: tuple[str, float] | None = None
+        self._ai_test: tuple[bool, str] | None = None     # last "Tester la clé" result (ok, short text)
+        self._ai_test_busy = False
         self._last_status_alert: str | None = None
         self._last_state_key = ""
         self._games: list[dict] = []
@@ -2249,15 +2261,21 @@ class CoachApp:
         self._caption(sysf, "Système", MUTED, anchor="w").grid(row=0, column=0, columnspan=4, sticky="w")
         self._hline(sysf, LINE_STRONG).grid(row=1, column=0, columnspan=4, sticky="ew", pady=(4, 2))
         self.sys_rows: dict[str, dict[str, Any]] = {}
+        sys_tips = {"ia": "Modèle qui reconnaît les champions sur la minimap.",
+                    "ai": "Conseils écrits par une IA en ligne (facultatif) : fournisseur, clé, conseils utilisés "
+                          "dans la partie (5 + 1 en urgence)."}
         for i, (key, label) in enumerate((("game", "Jeu"), ("minimap", "Minimap"), ("lcu", "Client LoL"),
-                                          ("ia", "IA"), ("voice", "Voix"))):
+                                          ("ia", "Détection"), ("ai", "IA conseil"), ("voice", "Voix"))):
             r = 2 + i
             dot = ctk.CTkFrame(sysf, width=6, height=6, corner_radius=0, fg_color=DIM)
             dot.grid(row=r, column=0, padx=(0, 8))
-            self._label(sysf, label, self.fonts.small, TEXT, anchor="w").grid(row=r, column=1, sticky="w",
-                                                                              padx=(0, 8), pady=1)
+            name = self._label(sysf, label, self.fonts.small, TEXT, anchor="w")
+            name.grid(row=r, column=1, sticky="w", padx=(0, 8), pady=1)
             val = self._label(sysf, "-", self.fonts.tiny, MUTED, anchor="w")
             val.grid(row=r, column=2, sticky="w")
+            if key in sys_tips:
+                self._tip(name, sys_tips[key])
+            self._tip(val, lambda v=val: v.cget("text"))
             btn = ctk.CTkButton(sysf, text="", width=10, height=18, corner_radius=RADIUS, fg_color="transparent",
                                 hover_color=PANEL_HI, text_color=ACCENT, font=self.fonts.tiny_bold,
                                 command=self.cb(lambda k=key: self._system_fix(k)))
@@ -2279,7 +2297,7 @@ class CoachApp:
         for i, (key, label, tip) in enumerate((
                 ("fps", "FPS", "Images de minimap analysées par seconde"),
                 ("cpu", "CPU", "Processeur utilisé par TreeAI Coach (en % de la machine)"),
-                ("detector", "IA", "Détecteur de champions utilisé"),
+                ("detector", "MODÈLE", "Détecteur de champions utilisé"),
                 ("voice", "VOIX", "Moteur de synthèse vocale utilisé"))):
             tech.grid_columnconfigure(i, weight=1, uniform="tech")
             tile = ctk.CTkFrame(tech, fg_color="transparent", corner_radius=0)
@@ -2960,13 +2978,16 @@ class CoachApp:
             return
         box = self.games_box
         for c, (txt, anchor) in enumerate((("", "w"), ("Champion", "w"), ("Résultat", "w"), ("K / D / A", "e"),
-                                           ("Ganks", "e"), ("Durée", "e"), ("", "e"))):
+                                           ("Ganks", "e"), ("Précision", "e"), ("Durée", "e"), ("", "e"))):
             if txt:
-                self._caption(box, txt, DIM, anchor=anchor).grid(row=0, column=c, sticky=anchor, padx=(0, 16),
-                                                                pady=(0, 4))
-        for c, w in ((0, 36), (2, 70), (3, 70), (4, 56), (5, 52)):
+                cap = self._caption(box, txt, DIM, anchor=anchor)
+                cap.grid(row=0, column=c, sticky=anchor, padx=(0, 16), pady=(0, 4))
+                if txt == "Précision":
+                    self._tip(cap, "Précision des coups notés (sur 100) : coups de maître, erreurs, gaffes… "
+                                   "« - » : partie non notée.")
+        for c, w in ((0, 36), (2, 70), (3, 70), (4, 48), (5, 64), (6, 48)):
             box.grid_columnconfigure(c, minsize=w)
-        self._hline(box, LINE_STRONG).grid(row=1, column=0, columnspan=7, sticky="ew")
+        self._hline(box, LINE_STRONG).grid(row=1, column=0, columnspan=8, sticky="ew")
         for i, g in enumerate(games[:50]):
             self._game_row(i, g)
 
@@ -3007,11 +3028,15 @@ class CoachApp:
         gl = self._label(box, gtxt, self.fonts.num, TEXT, anchor="e")
         gl.grid(row=r, column=4, sticky="e", padx=(0, 16))
         self._tip(gl, "Ganks évités / ganks subis")
+        prec = _int_or_none(game_field(g, "precision"))
+        pl = self._label(box, "-" if prec is None else str(prec), self.fonts.num, precision_color(prec), anchor="e")
+        pl.grid(row=r, column=5, sticky="e", padx=(0, 16))
+        self._tip(pl, "Précision des coups notés (sur 100)" if prec is not None else "Partie non notée")
         dur = game_field(g, "duration")
         self._label(box, fmt_clock(dur) if isinstance(dur, (int, float)) and dur > 0 else "-", self.fonts.small,
-                    MUTED, anchor="e").grid(row=r, column=5, sticky="e", padx=(0, 16))
+                    MUTED, anchor="e").grid(row=r, column=6, sticky="e", padx=(0, 16))
         btns = ctk.CTkFrame(box, fg_color="transparent")
-        btns.grid(row=r, column=6, sticky="e")
+        btns.grid(row=r, column=7, sticky="e")
         self._button(btns, "Rapport", lambda gg=g: self.open_report(gg), "secondary", width=70,
                      height=24).grid(row=0, column=0, padx=(0, 4))
         self._button(btns, "Replay", lambda gg=g: self.open_replay(gg), "secondary", width=62,
@@ -3020,7 +3045,7 @@ class CoachApp:
                           height=24)
         fb.grid(row=0, column=2)
         self._tip(fb, "Afficher le fichier")
-        self._hline(box).grid(row=r + 1, column=0, columnspan=7, sticky="ew")
+        self._hline(box).grid(row=r + 1, column=0, columnspan=8, sticky="ew")
 
     # ------------------------------------------------------------------ progress tab (progress.py)
     @_guarded
@@ -3555,8 +3580,9 @@ class CoachApp:
         key_entry.bind("<FocusOut>", save_key, add="+")
         key_entry.bind("<Return>", save_key, add="+")
         self._ai_key_entry = key_entry
-        _row, slot = self._row(s, "Modèle", "Vide = modèle par défaut (gemini-2.0-flash, llama-3.3-70b-versatile, "
-                               "…:free, llama3.1, claude-haiku-4-5).")
+        defaults = ", ".join(f"{ui_kit.AI_SHORT.get(k, k)} : {p.default_model}"
+                             for k, p in getattr(ai_advisor, "PROVIDERS", {}).items())
+        _row, slot = self._row(s, "Modèle", f"Vide = modèle par défaut ({defaults}).")
         model_entry = self.ctk.CTkEntry(slot, width=260, placeholder_text="par défaut")
         if self.cfg.ai_model:
             model_entry.insert(0, self.cfg.ai_model)
@@ -3617,11 +3643,45 @@ class CoachApp:
 
         def done(res: Any) -> None:
             ok, msg = res
+            self._ai_test = (bool(ok), "clé OK" if ok else "erreur")
             self._set_ai_status(msg, SAFE if ok else DANGER)
 
         self._dispatcher.run(lambda: ai_advisor.check_connection(cfg), done,
                              self.cb(lambda e: self._set_ai_status(f"Test impossible : {e}", DANGER)),
                              name="TreeAI-ui-ai-test")
+
+    def _ai_budget(self) -> str:
+        """"IA 3/5" while a game runs (engine.ai_budget_text), "" otherwise."""
+        eng = self.engine
+        fn = getattr(eng, "ai_budget_text", None) if eng is not None else None
+        if not callable(fn) or not self._in_game():
+            return ""
+        try:
+            return str(fn() or "")
+        except Exception:
+            return ""
+
+    @_guarded
+    def test_ai_key(self) -> None:
+        """Dashboard "Tester la clé": one tiny request on a worker thread, result in French (row + toast)."""
+        if self._ai_test_busy:
+            return
+        self._ai_test_busy = True
+        cfg = self.cfg
+
+        def done(res: Any) -> None:
+            self._ai_test_busy = False
+            ok, short, msg = res
+            self._ai_test = (bool(ok), str(short))
+            self._set_ai_status(msg, SAFE if ok else DANGER)
+            self.show_toast(msg, "info" if ok else "error")
+
+        def failed(exc: BaseException) -> None:
+            self._ai_test_busy = False
+            self._ai_test = (False, "erreur")
+            self.show_error(f"Test de la clé impossible : {exc}")
+
+        self._dispatcher.run(lambda: ui_kit.test_ai_key(cfg), done, self.cb(failed), name="TreeAI-ui-ai-key")
 
     # ------------------------------------------------------------------ updates (updater.py)
     def _build_updates_section(self, body: Any, row: int) -> None:
@@ -4379,6 +4439,8 @@ class CoachApp:
             self._rebind_hotkeys()
         if diff & DETECTOR_FIELDS and self.engine is not None:
             self._rebuild_engine(self.demo, start=None, new_detector=True)
+        if diff & {"ai_provider", "ai_api_key", "ai_model"}:
+            self._ai_test = None           # the last key test no longer applies
         if diff & {"sensitivity", "warn_radius", "danger_radius"}:
             self._refresh_radius_text()
         if "manual_minimap_rect" in diff or "minimap_mode" in diff:
@@ -4547,7 +4609,11 @@ class CoachApp:
             minimap_found=getattr(st, "minimap_rect", None) is not None,
             minimap_method=getattr(st, "locate_method", None), detector=det, voice_backend=vb,
             muted=self._is_muted(), lcu_text=self._lcu_text, lcu_enabled=bool(getattr(self.cfg, "lcu_enabled", True)),
-            engine_ok=self.engine is not None or self._busy)
+            engine_ok=self.engine is not None or self._busy, ai_provider=str(getattr(self.cfg, "ai_provider", "off")),
+            ai_key_set=bool(str(getattr(self.cfg, "ai_api_key", "") or "").strip()), ai_budget=self._ai_budget(),
+            ai_test=None if self._ai_test_busy else self._ai_test)
+        if self._ai_test_busy:     # "test en cours" replaces the AI row while the request runs
+            data = [r if r[0] != "ai" else (r[0], r[1], -1, "test en cours…", "", "") for r in data]
         cols = {0: SAFE, 1: WARNING, 2: DANGER, -1: DIM}
         for k, label, level, text, fix, action in data:
             row = rows.get(k)
@@ -4584,6 +4650,13 @@ class CoachApp:
             sel = getattr(self.pages.get("settings"), "select_tab", None)
             if callable(sel):
                 sel("Minimap")
+        elif action == "settings_ai":
+            self.show_page("settings")
+            sel = getattr(self.pages.get("settings"), "select_tab", None)
+            if callable(sel):
+                sel("IA")
+        elif action == "test_ai":
+            self.test_ai_key()
         elif action == "voice":
             self.test_voice()
         elif action == "unmute":
@@ -5012,7 +5085,7 @@ class CoachApp:
         self._set_text(self.tech["fps"], fmt_decimal_fr(fps, 1) if isinstance(fps, (int, float)) and running
                        and key == "RUNNING" else "-")
         det = str(getattr(st, "detector", "") or getattr(self._detector, "name", "") or "-")
-        self._set_text(self.tech["detector"], _DETECTOR_FR.get(det.lower(), det)[:8])
+        self._set_text(self.tech["detector"], detector_short(det))
         vname = str(getattr(st, "voice", "") or getattr(self.voice, "backend", "") or "-")
         if st is not None and getattr(st, "muted", False):
             self._set_text(self.tech["voice"], "Coupée")
@@ -5487,6 +5560,18 @@ class CoachApp:
 # Module-level helpers used by the app
 # ======================================================================================
 _DETECTOR_FR = {"onnx": "ONNX", "classic": "Classique", "none": "Aucun", "auto": "Auto"}
+
+
+def detector_short(name: Any) -> str:
+    """Short label of the detector backend for the dashboard tile ("roster+onnx" -> "ONNX")."""
+    d = str(name or "").strip().lower()
+    if not d or d == "-":
+        return "-"
+    if "onnx" in d:
+        return "ONNX"
+    if "classic" in d:
+        return "Classique"
+    return _DETECTOR_FR.get(d, str(name))[:9]
 _VOICE_FR = {"sapi": "SAPI", "onecore": "Windows", "neural": "Neurale", "print": "Journal", "": "-"}
 _ALERT_KINDS = frozenset({"jungler_approach", "roam_approach", "collapse", "jungler_spotted", "laner_mia",
                           "objective_soon", "recall_gold", "control_ward", "jungler_where", "death_recap"})
