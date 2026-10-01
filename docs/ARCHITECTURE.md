@@ -1011,3 +1011,58 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
   14:00 (20 s dès ~30:00), canon toutes les 2 vagues dès 14:00 ; plaques permanentes (120 PO, −10/min de
   11:00 à 15:00 sur les tours extérieures) ; lampes féeriques (`wards.SPOTS` avec `faelight=True`,
   positions approximatives ; 4 n'existent qu'après la transformation de la Faille : `wards.rift_transformed`).
+
+## 19. Overlay épuré : une seule chose à la fois + routeur de présentation
+
+Retour réel (« il y a trop de trucs ») : carte HUD avec jauge, conseil sur 2 lignes, puces « Dragon 3:58 »
+et « IA 0/5 », ligne JGL « pas encore vu », 5 portraits « non vu / visible », plus Blitz à l'écran.
+Règle (docs/LESSONS.md n° 5) : **danger > une action > rien**.
+
+* **Carte compacte** (`overlay_render.compact_content` / `_render_compact`, défaut) : UNE instruction,
+  verbe en tête, ≤ 2 lignes courtes, blanche, opaque, 15,5 px demi-gras à 1080p, sur plaque sombre pleine ;
+  barre de gauche = état (vert ok / ambre prudence / rouge danger), pas de mot de jauge ni de glyphes.
+  ≤ 300 × 64 px à 1080p. Danger (gank, siège, ace, menace ≥ 1) : plaque rouge / ambre avec le mot court
+  (« GANK ! », « BASE ATTAQUÉE », « 2 CONTRE 1 ») et au plus une ligne de ton danger. En infériorité
+  (≥ 2 ennemis frais à ≤ 0,09 de moi, plus que nous) : jamais « NORMAL ». Mort : seulement la leçon
+  (le jeu affiche déjà le chrono). Rien d'utile : **pas de carte** (`hud_visible` → fenêtre cachée).
+  Objectif : devient l'instruction (« Va bot : Dragon dans 0:45 » + icône) dans les 60 dernières
+  secondes **si mon rôle le joue** (`voice_policy.objective_involved`, `OverlayState.my_role`).
+  Par niveau (`OverlayState.skill_level`) : débutant = la ligne tant qu'elle est valable, intermédiaire
+  30 s, avancé 12 s, expert seulement danger (+ ton « danger »). Supprimés en jeu : « IA x/5 » (dans
+  l'app), « non vu », ligne JGL, portraits, puces, minuteurs du jeu, marque TreeAI.
+* **Mode détaillé** (`cfg.hud_detailed` ou maintien de `cfg.hotkey_details`, F6 par défaut : LoL utilise
+  F1-F5 et F12 ; touche lue par `GetAsyncKeyState` dans le fil de l'overlay, jamais enregistrée) :
+  l'ancienne carte complète + anneaux / rôles / alliés / fantômes de la minimap.
+* **Minimap compacte** : seulement (a) le fantôme / la chaleur du jungler ennemi invisible, (b) flèches
+  et anneau de danger quand un ennemi arrive, (c) UN guide (« VA ICI » / balise).
+* **Toasts** (`toasts.select_views`) : un seul visible, ≤ 2 lignes, 4 s max ; pendant un combat
+  (bannière engage / retreat, menace ≥ 1, ennemi frais à ≤ 0,07) seulement danger / retreat ;
+  sortes permises par niveau (`LEVEL_KINDS`) ; un toast qui répète la ligne HUD est retiré.
+* **Migration** : un fichier de réglages sans `hotkey_details` (antérieur) repasse une fois aux
+  valeurs compactes (`config.DECLUTTER_RESET`) ; les préréglages de niveau n'activent plus le détaillé.
+* **Routeur de présentation** (`presenter.py`) : chaque message (`Message{kind, urgency, value, ttl,
+  topic}`) reçoit exactement un canal selon le contexte (`Context{fight, gank, dead, siege, skill}`) :
+
+  | sorte        | normal   | combat / gank | mort     | voix | valeur |
+  |--------------|----------|---------------|----------|------|--------|
+  | danger       | BANNER   | BANNER        | BANNER*  | oui  | 1,00   |
+  | retreat      | BANNER   | BANNER        | DROP     | oui  | 0,95   |
+  | engage       | BANNER   | BANNER        | DROP     | non  | 0,80   |
+  | macro        | BANNER** | DROP          | PANEL    | non  | 0,70   |
+  | plan         | BANNER** | DROP          | PANEL    | non  | 0,75   |
+  | objective    | PANEL    | DROP          | PANEL    | oui***| 0,60  |
+  | death_cause  | PANEL    | DROP          | PANEL    | non  | 0,65   |
+  | warning      | PANEL    | DROP          | DROP     | non  | 0,55   |
+  | ai           | PANEL    | DROP          | PANEL    | non  | 0,50   |
+  | insight      | PANEL    | DROP          | DROP     | non  | 0,40   |
+  | tip          | PANEL    | DROP          | DROP     | non  | 0,30   |
+  | praise       | BADGE    | DROP          | DROP     | non  | 0,35   |
+  | play         | BADGE    | BADGE (DROP sur gank) | BADGE | non | 0,45 |
+
+  \* siège / ace seulement ; \*\* PANEL sous la barre du niveau ou à < 20 s d'une autre bannière ;
+  \*\*\* ≤ 20 s et mon rôle (la `VoiceGate` décide toujours de la parole). Plafonds : la ligne change au
+  plus toutes les 5 s sauf urgence plus haute ; une bannière non-danger toutes les 20 s ; un sujet par
+  40 s ; valeur minimale par niveau (`PANEL_MIN_VALUE`, `BANNER_MIN_VALUE`). Branché dans
+  `engine._toast`, `engine._hud_line` (combat / gank : seulement une ligne danger / prudence),
+  `engine._overlay_toasts` (bannières du directeur) et les badges de coups. `coach_sim` (30 min,
+  `--no-presenter` = avant) : bannières / toasts 2,13 → 0,47 / min (débutant et intermédiaire).

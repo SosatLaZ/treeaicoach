@@ -1,46 +1,66 @@
 {
- "input_size": 256,
+ "input_size": 160,
  "stride": 4,
  "classes": [
   "enemy",
   "ally",
   "self"
  ],
- "threshold": 0.3,
- "version": "minimapnet-quick-2min-2026-09-30",
+ "threshold": 0.4,
+ "version": "minimapnet-fast-tiny160-2026-10-01",
  "metrics": {
-  "threshold": 0.3,
-  "images": 150,
-  "gt": 848,
-  "det": 812,
-  "tp": 642,
-  "precision": 0.79064,
-  "recall": 0.75708,
-  "f1": 0.77349,
-  "cls_acc": 0.92177,
-  "pos_err_pct": 1.03851,
-  "r_err_pct": 0.5815,
-  "per_class": {
-   "enemy": {
-    "gt": 270,
-    "recall": 0.68889,
-    "precision": 0.71481,
-    "cls_acc": 0.85484
-   },
-   "ally": {
-    "gt": 499,
-    "recall": 0.80561,
-    "precision": 0.82841,
-    "cls_acc": 0.95274
-   }
-  }
+  "threshold": 0.4,
+  "gt": 1087,
+  "det": 1111,
+  "tp": 871,
+  "precision": 0.783978397839784,
+  "recall": 0.8012879484820608,
+  "f1": 0.7925386715195633,
+  "cls_acc": 0.9683544303797469,
+  "pos_err_pct": 0.5806971698273299,
+  "r_err_pct": 0.3883178960681646
  },
- "train_step": 103,
- "params": 358207,
+ "train_step": 1244,
+ "params": 97087,
  "weights": "ema",
  "opset": 17,
- "exported": "2026-09-30",
- "onnx_max_abs_diff": 2.15e-06,
- "size_bytes": 1445378,
- "note": "class 'self' is not learned visually (self icons are trained as 'ally')"
+ "exported": "2026-10-01",
+ "onnx_max_abs_diff": 1.19e-06,
+ "size_bytes": 411606,
+ "note": "class 'self' is not learned visually (self icons are trained as 'ally'). Fast recipe (training/fast_train.py --holdout): backgrounds from real crops shot3/4/6/7 only; metrics_real = held-out crops shot2/5/8/9/10.",
+ "metrics_real": {
+  "threshold": 0.4,
+  "gt": 21,
+  "det": 19,
+  "tp": 18,
+  "precision": 0.9473684210526315,
+  "recall": 0.8571428571428571,
+  "f1": 0.9,
+  "cls_acc": 1.0,
+  "pos_err_pct": 0.8178832456762292,
+  "r_err_pct": 0.2703016805979941
+ },
+ "metrics_real_art": {
+  "threshold": 0.4,
+  "gt": 752,
+  "det": 681,
+  "tp": 583,
+  "precision": 0.856093979441997,
+  "recall": 0.7752659574468085,
+  "f1": 0.8136775994417307,
+  "cls_acc": 0.9554030874785592,
+  "pos_err_pct": 0.534200032503652,
+  "r_err_pct": 0.2554809592363152
+ },
+ "train": {
+  "recipe": "training/fast_train.py",
+  "images": 6000,
+  "n_synth": 3000,
+  "n_real_art": 3000,
+  "gen_s": 0.0,
+  "train_s": 480.3,
+  "steps": 1244,
+  "batch": 64,
+  "total_s": 488.4
+ }
 }

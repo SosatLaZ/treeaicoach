@@ -23,9 +23,8 @@ def _state(**kw):
 
 
 def test_action_text_is_short_and_verb_first():
-    assert orr.action_text("Pose ta balise dans la rivière : premier gank vers 2:30") == "Pose ta balise dans la rivière"
-    assert orr.action_text("Ne t'avance pas : Maître Yi invisible depuis 113 s") == "Ne t'avance pas : Maître Yi invisible depuis 113 s"[:51] \
-        or len(orr.action_text("Ne t'avance pas : Maître Yi invisible depuis 113 s")) <= orr.ACTION_MAX_CHARS
+    long = "Pose ta balise dans la rivière : premier gank vers 2:30 " + "et encore des mots " * 3
+    assert orr.action_text(long) == "Pose ta balise dans la rivière"
     assert len(orr.action_text("mot " * 40)) <= orr.ACTION_MAX_CHARS
     assert orr.action_text("+1 200 PO · victoire 55 %") == ""
     assert orr.action_text(None) == ""
@@ -34,17 +33,18 @@ def test_action_text_is_short_and_verb_first():
 def test_compact_card_size_and_content():
     st = _state()
     w, h = orr.hud_size(st, 300)
-    assert w == 300 and h <= 70
+    assert w == 300 and h <= 64
     c = orr.compact_content(st, now=0.0)
-    assert c["mode"] == "normal" and c["word"] == "NORMAL" and c["line"] == "Pose ta balise dans la rivière"
-    assert c["note"] is None                     # dragon 3:58 away and Garen is top: nothing
+    assert c["line"].startswith("Pose ta balise dans la rivière") and c["word"] == "" and c["mode"] == "ok"
     img = orr.render_hud(st, 300, now=0.0)
     assert img.shape[1] == 300 and img[..., 3].any()
+    # the instruction is white and fully opaque (never a faded grey line)
+    assert orr._compact_fade(0.0, 5.0) == 1.0 and orr._compact_fade(None, 0.0) == 1.0
     # detailed mode (setting / hold key): the full card is still reachable
     assert orr.hud_size(orr.OverlayState(**{**st.__dict__, "hud_detailed": True}), 300)[1] > h
 
 
-def test_danger_is_the_only_thing():
+def test_danger_replaces_the_card():
     st = _state(threat_level=2, threat_text="DANGER — GANK !")
     c = orr.compact_content(st, now=0.0)
     assert c["mode"] == "danger" and c["word"] == "GANK !" and c["line"] == ""
@@ -55,28 +55,25 @@ def test_danger_is_the_only_thing():
     assert orr.hud_size(st, 300)[1] <= 80
 
 
-def test_levels_and_hidden_card():
-    st = _state(skill_level="expert")
-    assert orr.compact_content(st, now=0.0) is None and not orr.hud_visible(st, now=0.0)
-    assert orr.hud_visible(_state(skill_level="expert", gauge=-2), now=0.0)
+def test_levels_and_silence():
+    assert orr.compact_content(_state(skill_level="expert"), now=0.0) is None
+    assert not orr.hud_visible(_state(tip=None), now=0.0)                    # nothing useful: no card
+    assert orr.compact_content(_state(tip=None, gauge=-2), now=0.0)["line"].startswith("Joue prudent")
     inter = _state(skill_level="intermediaire", tip_since=0.0)
     assert orr.compact_content(inter, now=5.0)["line"]
-    assert not orr.compact_content(inter, now=60.0)["line"]                  # shown 30 s
+    assert orr.compact_content(inter, now=60.0) is None                      # shown 30 s
     deb = _state(skill_level="debutant", tip_since=0.0)
     assert orr.compact_content(deb, now=600.0)["line"]                       # beginners: while valid
     dead = _state(me_dead=True, respawn_s=8.0, tip=None)
     assert orr.compact_content(dead, now=0.0) is None                        # the game shows the timer
 
 
-def test_context_note_only_when_it_matters():
+def test_objective_is_an_instruction_only_for_my_role():
     st = _state(game_time=260.0, my_role="BOTTOM", skill_level="debutant")
-    assert orr.compact_content(st, now=0.0)["note"][0] == "Dragon 0:40"
-    assert orr.compact_content(_state(game_time=260.0, my_role="TOP"), now=0.0)["note"] is None
-    yi = E("MasterYi", "MasterYi", "Maître Yi", False, (0.3, 0.3), 45.0, True)
-    st = _state(enemies=[yi], tip="Farme sous ta tour")
-    assert orr.compact_content(st, now=0.0)["note"][0] == "Maître Yi caché 45 s"
-    st = _state(enemies=[yi], tip="Ne t'avance pas : Maître Yi invisible")
-    assert orr.compact_content(st, now=0.0)["note"] is None                  # no repeat
+    c = orr.compact_content(st, now=0.0)
+    assert c["line"] == "Va bot : Dragon dans 0:40"
+    top = orr.compact_content(_state(game_time=260.0, my_role="TOP"), now=0.0)
+    assert top["line"].startswith("Pose ta balise")                          # Garen top: no dragon
 
 
 def test_minimap_compact_keeps_jungler_arrows_one_guide():
@@ -137,6 +134,4 @@ def test_outnumbered_is_never_normal():
     a = E("Darius", "Darius", "Darius", True, (0.14, 0.31), 0.0)
     b = E("MasterYi", "MasterYi", "Maître Yi", True, (0.10, 0.28), 0.0, True)
     c = orr.compact_content(_state(enemies=[a, b]), now=0.0)
-    assert c["mode"] == "warning" and c["word"].startswith("2 CONTRE 1")
-    one = orr.compact_content(_state(enemies=[a]), now=0.0)
-    assert one["word"] != "NORMAL"
+    assert c["mode"] == "careful" and c["word"] == "2 CONTRE 1" and c["line"] == "Recule vers ta tour"

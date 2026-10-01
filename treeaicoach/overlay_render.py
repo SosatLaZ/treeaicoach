@@ -2098,21 +2098,25 @@ def _compact_layout(state: Any, width: int, now: float) -> dict[str, Any]:
     icon_w = 20 * k if c["icon"] is not None else 0.0
     f_line = get_font(round(15.5 * k), "semibold")
     avail = right - left - icon_w
-    lines = wrap_text(c["line"], f_line, avail, 2) if c["line"] else []
+    danger = c["mode"] in ("danger", "careful") and bool(c["word"])
+    nmax = 1 if danger else 2                          # danger word + one short line
+    def wrap(t: str) -> list[str]:
+        return ([fit_text(t, f_line, avail)] if nmax == 1 else wrap_text(t, f_line, avail, nmax)) if t else []
+
+    lines = wrap(c["line"])
     if lines and lines[-1].endswith("…"):              # too long: the action head, not a cut word
         head = action_text(c["line"], max(8, len(c["line"]) - 1))
-        alt = wrap_text(head, f_line, avail, 2) if head else []
+        alt = wrap(head)
         if alt and not alt[-1].endswith("…"):
             lines = alt
-    danger = c["mode"] in ("danger", "careful") and bool(c["word"])
     f_word = get_font(round((20 if c["mode"] == "danger" else 17) * k), "display")
     rows: list[tuple[str, float]] = []
     if danger:
-        rows.append(("word", 24 * k))
+        rows.append(("word", 22 * k))
     if lines:
         rows.append(("line", 19 * k * len(lines)))
     gap = 2 * k if len(rows) == 2 else 0.0
-    pad_t, pad_b = 9 * k, 9 * k
+    pad_t = pad_b = (7 if danger else 9) * k
     ch = pad_t + sum(h for _, h in rows) + gap + pad_b
     return {"k": k, "c": c, "ms": ms, "mt": mt, "cx0": cx0, "cw": cw, "ch": ch, "left": left, "right": right,
             "f_word": f_word, "f_line": f_line, "lines": lines, "icon_w": icon_w, "rows": rows, "gap": gap,

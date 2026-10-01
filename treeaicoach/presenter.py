@@ -23,6 +23,7 @@ Routing table (:data:`ROUTES`, also in docs/ARCHITECTURE.md §19)::
     retreat      BANNER     BANNER         DROP       yes     0.95
     engage       BANNER     BANNER         DROP       no      0.80
     macro        BANNER**   DROP           PANEL      no      0.70   (** PANEL below the level's banner bar)
+    plan         BANNER**   DROP           PANEL      no      0.75   (game goal / lane plan, start of game)
     objective    PANEL      DROP           PANEL      yes***  0.60   (*** <= 20 s and my role plays it)
     death_cause  PANEL      DROP           PANEL      no      0.65
     warning      PANEL      DROP           DROP       no      0.55
@@ -72,6 +73,7 @@ ROUTES: dict[str, Route] = {
     "retreat": Route(BANNER, BANNER, DROP, True, 0.95),
     "engage": Route(BANNER, BANNER, DROP, False, 0.80),
     "macro": Route(BANNER, DROP, PANEL, False, 0.70),
+    "plan": Route(BANNER, DROP, PANEL, False, 0.75),
     "objective": Route(PANEL, DROP, PANEL, True, 0.60),
     "death_cause": Route(PANEL, DROP, PANEL, False, 0.65),
     "warning": Route(PANEL, DROP, DROP, False, 0.55),
@@ -130,7 +132,7 @@ def message_kind(toast_kind: str, key: str = "") -> str:
                          ("call:engage", "engage"), ("call:", "macro"), ("macro", "macro"), ("tip:", "tip"),
                          ("ai", "ai"), ("objective", "objective"), ("death", "death_cause"),
                          ("text:objective", "objective"), ("text:death", "death_cause"),
-                         ("text:personal", "danger"), ("plan:", "insight")):
+                         ("text:personal", "danger"), ("plan:", "plan"), ("goal:", "plan")):
         if k.startswith(prefix):
             return kind
     return {"danger": "danger", "warning": "warning", "praise": "praise"}.get(str(toast_kind), "insight")
@@ -191,11 +193,11 @@ class Presenter:
             return Decision(DROP, False, "topic")
         if ch == BANNER and not danger:
             if value < BANNER_MIN_VALUE[skill]:
-                ch = PANEL if route.normal == BANNER and msg.kind == "macro" else ch
+                ch = PANEL if route.normal == BANNER and msg.kind in ("macro", "plan") else ch
                 if ch == BANNER:
                     return Decision(DROP, False, "value")
             elif ctx.t - self._last_banner_t < BANNER_GAP_S:
-                if msg.kind == "macro":
+                if msg.kind in ("macro", "plan"):
                     ch = PANEL
                 else:
                     return Decision(DROP, False, "banner-gap")

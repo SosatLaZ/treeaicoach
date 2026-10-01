@@ -188,7 +188,7 @@ RING_PROP_MAX = 6
 RING_PROP_ID_MIN = 0.55
 RING_PROP_ID_GAP = 0.1
 RING_PROP_ID_W = 0.5                # accepted when ring + w x (identity - ID_MIN) >= ACCEPT
-RING_PROP_ACCEPT = 0.16             # (measured: no proposal on an empty spot accepted)
+RING_PROP_ACCEPT = 0.19             # (measured: no proposal on an empty spot accepted)
 RING_DEBUG: list | None = None
 TRIM_RING_OWN = 0.65
 TRIM_RING_OPP = 0.12

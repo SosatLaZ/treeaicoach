@@ -58,7 +58,7 @@ HIDDEN = 32
 CLASSES = ("background", "enemy", "ally")
 MODEL_FILE = "patch_verifier.npz"
 #: Largest icon radius (px) sampled at full resolution; bigger -> pyrDown levels.
-MAX_R_PX = 9.0
+MAX_R_PX = 16.0
 _POLAR_R, _POLAR_A = 12, 16
 _POLAR_MAX = 1.45          # polar profile up to 1.45 radii (ring + outside)
 
