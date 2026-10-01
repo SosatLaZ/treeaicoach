@@ -445,16 +445,26 @@ def _cap_height(font: Any) -> float:
         return float(getattr(font, "size", 10)) * 0.7
 
 
+_width_cache = _LRU(4096)
+
+
 def text_width(text: str, font: Any) -> float:
-    """Advance width of ``text`` in pixels."""
+    """Advance width of ``text`` in pixels (cached: the same lines are measured on every frame, and
+    ``font.getlength`` costs ~40 µs; the fonts come from :func:`get_font`, which keeps them alive)."""
+    key = (text, id(font), getattr(font, "size", None))
+    hit = _width_cache.get(key)
+    if hit is not None:
+        return hit
     try:
-        return float(font.getlength(text))
+        w = float(font.getlength(text))
     except Exception:
         try:
             bb = font.getbbox(text)
-            return float(bb[2] - bb[0])
+            w = float(bb[2] - bb[0])
         except Exception:
-            return 7.0 * len(text)
+            w = 7.0 * len(text)
+    _width_cache.put(key, w)
+    return w
 
 
 def fit_text(text: str, font: Any, max_w: float) -> str:
@@ -2849,9 +2859,23 @@ def default_minimap_rect(screen_w: int, screen_h: int) -> tuple[int, int, int, i
     return screen_w - side - margin, screen_h - side - margin, side, side
 
 
+_background_cache = _LRU(2)     # ~6 MB each at 1080p; deterministic, ~0.5 s to draw
+
+
 def game_background(w: int, h: int, minimap: tuple[int, int, int, int] | None = None,
                     seed: int = 7) -> np.ndarray:
-    """A game-like RGB backdrop (terrain + bottom HUD + fogged minimap) for previews."""
+    """A game-like RGB backdrop (terrain + bottom HUD + fogged minimap) for previews (a fresh copy:
+    the callers draw on it; the drawing itself is cached)."""
+    key = (int(w), int(h), tuple(int(x) for x in minimap) if minimap is not None else None, seed)
+    hit = _background_cache.get(key)
+    if hit is None:
+        hit = _draw_game_background(w, h, minimap, seed)
+        hit.setflags(write=False)
+        _background_cache.put(key, hit)
+    return hit.copy()
+
+
+def _draw_game_background(w: int, h: int, minimap: tuple[int, int, int, int] | None, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     small = rng.random((max(2, h // 40), max(2, w // 40), 3)).astype(np.float32)
     noise = cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC)

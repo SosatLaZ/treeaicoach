@@ -14,10 +14,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "treeaicoach"
 UI_FILES = ("ui.py", "ui_common.py", "ui_dialogs.py", "ui_page_alerts.py", "ui_page_analysis.py",
-            "ui_page_dashboard.py", "ui_page_overlay.py", "ui_page_settings.py", "ui_kit.py", "report.py",
+            "ui_page_dashboard.py", "ui_page_overlay.py", "ui_page_settings.py", "ui_kit.py", "calibration.py", "report.py",
             "replay.py", "progress.py")
 #: the CustomTkinter window, split over several modules (ui.py + ui_common.py + one module per page)
-APP_FILES = tuple(f for f in UI_FILES if f.startswith("ui") and f != "ui_kit.py")
+APP_FILES = tuple(f for f in UI_FILES if f.startswith("ui") and f != "ui_kit.py") + ("calibration.py",)
 
 
 def _app_source() -> str:

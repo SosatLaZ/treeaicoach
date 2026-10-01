@@ -57,17 +57,10 @@ def sample_state() -> Any:
 
 
 def _background(w: int, h: int, minimap: tuple[int, int, int, int]) -> np.ndarray:
-    """``overlay_render.game_background`` (deterministic, ~0.5 s) cached per size: a fresh copy."""
-    key = ("bg", w, h, tuple(minimap))
-    bg = _sample_cache.get(key)
-    if bg is None:
-        from treeaicoach import overlay_render as orr  # noqa: PLC0415
+    """``overlay_render.game_background`` (deterministic, cached there): a fresh copy."""
+    from treeaicoach import overlay_render as orr  # noqa: PLC0415
 
-        bg = orr.game_background(w, h, minimap)
-        for k in [k for k in _sample_cache if isinstance(k, tuple) and k[0] == "bg"]:
-            del _sample_cache[k]
-        _sample_cache[key] = bg
-    return bg.copy()
+    return orr.game_background(w, h, minimap)
 
 
 def _with_cfg(state: Any, cfg: Any, live: bool) -> Any:

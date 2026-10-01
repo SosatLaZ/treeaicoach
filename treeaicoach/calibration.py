@@ -26,22 +26,32 @@ from typing import Any
 
 import numpy as np
 
+from treeaicoach.ui_common import (
+    ACCENT,
+    ACCENT_DIM,
+    ACCENT_HOVER,
+    BG,
+    DANGER,
+    DIM,
+    LINE_STRONG,
+    MUTED,
+    ON_ACCENT,
+    RAISED,
+    SURFACE,
+    TEXT,
+)
+
 log = logging.getLogger(__name__)
 
-# palette (same as ui.py)
-BG = "#010A13"
-PANEL = "#0A1428"
-PANEL_HI = "#0F1D36"
-BORDER = "#1E2328"
-GOLD = "#C8AA6E"
-GOLD_HOVER = "#DCC28E"
-GOLD_DARK = "#785A28"
-TEXT = "#F0E6D2"
-MUTED = "#A09B8C"
-DIM = "#5B5A56"
-TEAL = "#0AC8B9"
-DANGER = "#E84057"
-ON_GOLD = "#1A1408"
+# palette: the app's design tokens (docs/DESIGN.md); the old local names are kept as aliases
+PANEL = SURFACE
+PANEL_HI = RAISED
+BORDER = LINE_STRONG
+GOLD = ACCENT
+GOLD_HOVER = ACCENT_HOVER
+GOLD_DARK = ACCENT_DIM
+TEAL = ACCENT
+ON_GOLD = ON_ACCENT
 
 MIN_SIDE_PX = 32            # smallest accepted minimap side (screen pixels), = config.RECT_SIZE_MIN
 HIDE_DELAY_S = 0.35         # time for the main window to disappear before the capture
@@ -234,7 +244,7 @@ class CalibrationDialog:
                      font=f_small, text_color=MUTED, fg_color="transparent", anchor="w",
                      justify="left").grid(row=1, column=0, sticky="w")
 
-        box = ctk.CTkFrame(top, fg_color=PANEL, corner_radius=12, border_width=1, border_color=BORDER)
+        box = ctk.CTkFrame(top, fg_color=PANEL, corner_radius=6, border_width=1, border_color=BORDER)
         box.grid(row=1, column=0, sticky="nsew", padx=24)
         box.grid_columnconfigure(0, weight=1)
         box.grid_rowconfigure(0, weight=1)
@@ -251,7 +261,7 @@ class CalibrationDialog:
         self.status = ctk.CTkLabel(foot, text="", font=f_body, text_color=TEXT, fg_color="transparent",
                                    anchor="w", justify="left")
         self.status.grid(row=0, column=0, sticky="w")
-        common = dict(height=38, corner_radius=8, font=f_btn, text_color_disabled=DIM)
+        common = dict(height=38, corner_radius=4, font=f_btn, text_color_disabled=DIM)
         self.btn_auto = ctk.CTkButton(foot, text="Détection auto", width=150, fg_color=PANEL_HI,
                                       hover_color="#16284A", text_color=TEXT, border_width=1,
                                       border_color=GOLD_DARK, command=self._safe(self.auto_detect), **common)
@@ -543,7 +553,7 @@ class CalibrationDialog:
                     self._redraw()
                     self._update_ok()
                     self._set_status(f"Minimap trouvée (confiance {payload.score:.0%}). "
-                                     f"{self._sel_text()} — valide ou ajuste.".replace("%", " %"), TEAL)
+                                     f"{self._sel_text()} : valide ou ajuste.".replace("%", " %"), TEAL)
                 elif kind == "auto":
                     self._set_status("Minimap introuvable automatiquement : trace le carré à la main.", DANGER)
                 else:

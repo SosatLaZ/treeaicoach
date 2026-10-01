@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest>=8
+pytest-xdist>=3   # optional: python -m pytest -n auto --dist loadfile (~3x faster)
 pyinstaller>=6.6

@@ -49,33 +49,58 @@ Application Windows (`TreeAICoach.exe`) qui, pendant une partie de League of Leg
 
 ## 2. Arborescence
 
+Le paquet est plat (un module par fichier, aucun sous-paquet : PyInstaller embarque tout
+`treeaicoach/*.py` via `packaging/treeaicoach.spec`). Regroupement logique :
+
 ```
 treeaicoach/                    package Python (runtime, embarqué dans le .exe)
-  __init__.py                   __version__ = "1.0.0", APP_NAME = "TreeAI Coach"
-  __main__.py                   `python -m treeaicoach` -> main.main()
-  main.py                       CLI + point d'entrée (.exe)
-  paths.py                      chemins ressources / données utilisateur
-  config.py                     Config (dataclass) + load/save JSON
-  logging_setup.py              logs rotatifs
-  geometry.py                   zones de la carte, distances, libellés FR
-  live_client.py                Live Client Data API (parse + client HTTP)
-  champions.py                  base des champions + icônes (+ skins en cache)
-  render.py                     rendu de minimaps (partagé : entraînement, démo, selftest)
-  capture.py                    capture écran (mss), fenêtre du jeu, DPI
-  minimap_locator.py            localisation automatique de la minimap à l'écran
-  detector.py                   détecteur ONNX + détecteur classique de secours + décodage
-  identifier.py                 identification des champions détectés
-  tracker.py                    suivi temporel des champions
-  alerts.py                     types d'alertes, phrases FR, anti-spam (throttler)
-  gank.py                       logique de détection des ganks
-  voice.py                      synthèse vocale (SAPI Windows) + bips
-  engine.py                     boucle principale (threads)
-  demo.py                       partie simulée (démo + test de bout en bout)
+  __init__.py  __main__.py  main.py      version, `python -m treeaicoach`, CLI / point d'entrée (.exe)
+  paths.py  config.py  logging_setup.py  chemins, réglages (dataclass + JSON), journaux
+  fmtutil.py                    petites aides partagées : nombre fini toléré, chrono m:ss, durée parlée
+
+  # --- moteur (threads, cycle de partie, une étape d'analyse) ----------------------------
+  engine.py                     CoachEngine : threads, cycle de partie, step(), API publique
+  engine_base.py                réglages internes, messages d'état, EngineState / EngineStatus, siège / ace
+  engine_capture.py             mixin : fenêtre du jeu, localisation / vérification de la minimap, capture
+  engine_vision.py              mixin : mon icône, stabilisation des identités, tracker, menace, danger perso
+  engine_coaching.py            mixin : directeur, macro, balises, voix, Tab, objets, IA, coups, ligne HUD
+  engine_overlay_state.py       mixin : get_overlay_state() / aperçu / F9 (côté lecture pour l'UI et l'overlay)
+  engine_postgame.py            mixin : fin de partie, rapport en arrière-plan, vérité LCU
+  scheduler.py  sysperf.py      cadence adaptative, budget de performance, santé
+
+  # --- perception (écran + API officielle) -----------------------------------------------
+  capture.py  dxgi_capture.py  game_settings.py   capture (DXGI / mss), fenêtre, DPI, réglages du jeu
+  minimap_locator.py            localisation automatique de la minimap
+  detector.py  roster_matcher.py  patch_classifier.py  identifier.py  det_params.py   détection
+  self_icon.py  hud_reader.py  camera_proj.py      mon icône (skins perso), HUD du bas, rectangle caméra
+  tracker.py  fog_tracker.py  jungle_intel.py  jungle_path.py   suivi, brouillard, jungler ennemi
+  live_client.py  champions.py  game_data.py  meta.py  lcu.py  champ_select.py   données de partie
+  render.py  demo.py            rendu de minimaps (entraînement, démo, autotest), partie simulée
+
+  # --- conseils (règles) ------------------------------------------------------------------
+  alerts.py  gank.py  danger.py  objectives.py  reminders.py   alertes, ganks, danger perso, objectifs
+  roles.py  phase.py  fight.py  positioning.py  wards.py  waves.py  macro.py  tactics.py
+  coach.py  coach_plus.py  tips.py  spikes.py  goals.py  game_plan.py  death_cause.py  itemization.py
+  scoreboard.py  praise.py  plays.py  hype.py  ai_advisor.py  skill.py
+  presenter.py  voice_policy.py   LE routeur de présentation et LA porte de la voix
+  coach_sim.py                  simulateur de partie complète (tests, tools/ux_replay.py)
+
+  # --- sortie : voix, overlay, interface ---------------------------------------------------
+  voice.py  tts_neural.py  hotkeys.py
+  overlay.py  overlay_render.py  toasts.py  fx_overlay.py  fx_render.py  ward_guide.py
+  ui.py                         CoachApp : fenêtre, cycle du moteur, rafraîchissement, journal, run_app()
+  ui_common.py                  jetons de design, polices, widgets (Toggle, Dropdown, Segmented, bandeau)
+  ui_page_dashboard.py  ui_page_alerts.py  ui_page_overlay.py  ui_page_analysis.py  ui_page_settings.py
+  ui_dialogs.py                 page Aide, toasts, dialogues, préréglages, diagnostic, raccourcis
+  ui_kit.py  ui_preview.py  calibration.py   préréglages / VoiceGate, aperçu de l'overlay, calibration
+
+  # --- après la partie ------------------------------------------------------------------------
+  recorder.py  analysis.py  ground_truth.py  report.py  replay.py  progress.py  diag.py  updater.py
   selftest.py                   autotest (--selftest), utilisé par la CI Windows
-  calibration.py                calibration manuelle de la minimap (Tkinter)
-  ui.py                         interface Tkinter
+
   assets/                       ressources embarquées
     manifest.json               (généré par tools/fetch_assets.py)
+    items.json                  (tools/fetch_items.py, même conversion que game_data.py)
     minimap/2dlevelminimap_<variant>_baron<n>.png, fogofwaroverlay*.png
     icons/champions/<Alias>.png (64x64 RGBA) + index.json
     icons/minimap/*.png, icons/pings/*.png
@@ -83,13 +108,17 @@ treeaicoach/                    package Python (runtime, embarqué dans le .exe)
     selftest/*.png + selftest/labels.json                  (généré par training/evaluate.py)
     sounds/*.wav                                           (généré par voice.py au 1er besoin si absent)
 training/                       entraînement (PyTorch, hors .exe)
-  synth.py  dataset.py  model.py  train.py  export_onnx.py  evaluate.py
-  cache/                        (gitignored) icônes de tous les skins
-tools/fetch_assets.py           téléchargement des ressources officielles
-tests/                          pytest (tourne sous Linux ET Windows)
+tools/                          fetch_assets / fetch_items / fetch_meta, ux_replay (juge des consignes),
+                                latency_bench, det_* (banc de détection), camera_motion_bench
+tests/                          pytest (tourne sous Linux ET Windows ; UI sous Xvfb)
 packaging/                      PyInstaller (.spec, build_exe.bat, icon.ico)
+release/                        l'exe courant + version.json (mise à jour intégrée) + SHA256.txt, rien d'autre
 .github/workflows/build-windows.yml
 ```
+
+Les mixins du moteur et de l'interface ne portent aucun état : tout est créé dans
+`CoachEngine.__init__` / `CoachApp.__init__` ; `engine.py` et `ui.py` restent les seuls chemins
+d'import (ils ré-exportent les noms publics de `engine_base.py` / `ui_common.py`).
 
 Dépendances runtime : `numpy`, `opencv-python-headless`, `onnxruntime`, `mss`, `pillow`, `pywin32` (Windows seulement).
 Tkinter vient avec Python. **Aucune** autre dépendance runtime (pas de `requests` : utiliser `urllib`).
@@ -457,6 +486,12 @@ class CoachEngine:
 Threads : poller Live Client (1 Hz, 0.5 Hz hors partie), boucle d'analyse à `target_fps`. Toute exception est attrapée,
 journalisée (limitée en fréquence) et la boucle continue. Hors partie : aucune capture (CPU ≈ 0).
 
+Découpage (aucun changement de comportement) : `CoachEngine(PostgameMixin, CoachingMixin, VisionMixin,
+CaptureMixin, OverlayStateMixin)`. `engine.py` garde le constructeur, les threads, le cycle de partie,
+`step()` / `_step()`, la santé et le diagnostic ; chaque `engine_*.py` regroupe une étape (voir §2).
+Les mixins utilisent le même journal (`treeaicoach.engine`) et les mêmes attributs privés qu'avant
+(les tests y accèdent : ne pas les renommer). Réglages internes et messages : `engine_base.py`.
+
 ### 4.16 `demo.py`
 ```python
 class DemoSource(FrameSource):
@@ -716,6 +751,12 @@ Tk sous Windows 10+), sinon Segoe UI Semibold, sinon une sans-serif condensée, 
 Règles : toutes les mises à jour de widgets passent par `root.after` (jamais depuis un autre thread) ; toute action utilisateur
 est protégée par try/except + message d'erreur FR (jamais de crash) ; fermeture propre (arrêt engine/voix/overlay, sauvegarde config) ;
 fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; icône de fenêtre = icône de l'app.
+Découpage (aucun changement de comportement) : `CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin,
+AnalysisPageMixin, SettingsPageMixin, DialogsMixin)`, une page par module `ui_page_*.py` + `ui_dialogs.py` ;
+jetons, polices et widgets dans `ui_common.py` (ré-exportés par `ui.py`). Restent dans `ui.py` : les pages
+paresseuses (`PAGE_METHODS`, `_page_attr_index` lit le bytecode des constructeurs de page, hérités compris),
+`PREBUILD_DELAY_MS` et `_report_function` (les tests les remplacent sur `ui` : les pages appellent
+`ui._report_function` au moment de l'appel). `tests/test_design_rules.py` contrôle tous les fichiers `ui*.py`.
 
 ## 9. v3 — chef d'orchestre (combat, phases, positionnement, balises, voix)
 

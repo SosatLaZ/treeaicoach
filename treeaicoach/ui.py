@@ -1,4 +1,4 @@
-"""CustomTkinter user interface of TreeAI Coach (ARCHITECTURE.md §8.2) - dark "hextech" theme, French.
+"""CustomTkinter user interface of TreeAI Coach (ARCHITECTURE.md §8.2) - "régie esport" look (docs/DESIGN.md), French.
 
 Public entry point: :func:`run_app`. It creates the voice, the detector, the analysis engine
 (:mod:`treeaicoach.engine`, imported lazily) and the overlay manager, shows the main window and

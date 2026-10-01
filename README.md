@@ -9,18 +9,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.0.0-C8AA6E?style=for-the-badge&labelColor=0A1428" alt="Télécharger TreeAICoach.exe" height="56"></a>
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.0.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="56"></a>
 </p>
 
 <p align="center">
-  <b>👉 <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe">Clique ici pour télécharger TreeAICoach.exe</a></b> (Windows 10/11, ~75 Mo) — puis double-clique dessus.<br>
+  <b>👉 <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe">Clique ici pour télécharger TreeAICoach.exe</a></b> (Windows 10/11, ~78 Mo) — puis double-clique dessus.<br>
   <sub>Dossier <a href="release/">release/</a> · empreinte SHA-256 dans <a href="release/SHA256.txt">SHA256.txt</a> · si Windows affiche « PC protégé » : <i>Informations complémentaires → Exécuter quand même</i>.</sub>
 </p>
 
 <p align="center">
   <a href="https://github.com/SosatLaZ/treeaicoach/actions/workflows/build-windows.yml"><img src="https://github.com/SosatLaZ/treeaicoach/actions/workflows/build-windows.yml/badge.svg" alt="Construction de TreeAICoach.exe"></a>
-  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0A1428?logo=windows" alt="Windows 10 | 11">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-C8AA6E" alt="Licence MIT"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0C0E0D?logo=windows" alt="Windows 10 | 11">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-9BD84A" alt="Licence MIT"></a>
 </p>
 
 ---
@@ -54,28 +54,39 @@
 
 💡 Sans partie en cours, essaie **« Tester la voix »** et **« Mode démo »** sur le tableau de bord.
 
-## ✨ Fonctionnalités
+## ✨ Fonctionnalités (v2)
 
-* 🗣️ **Alertes de gank vocales en français**, courtes et claires :
-  « Attention, Lee Sin approche. », « Gank ! Lee Sin, recule ! », « Danger, 3 ennemis arrivent, recule ! »,
-  « Jungler ennemi vu en haut. », et en option « Darius a disparu. » (ton adversaire de voie est MIA).
-* 🎯 **Cercle du jungler** : quand le jungler ennemi entre dans le brouillard, la zone où il peut se trouver
-  s'affiche et grandit avec le temps (en tenant compte des murs), à partir de sa dernière position vue.
-* 📡 **Radar** : une copie agrandie de la minimap, placée juste à côté de la vraie, avec tes zones d'alerte,
-  les ennemis visibles, leurs flèches d'approche et les dernières positions connues des ennemis disparus.
-* 🧭 **HUD** : jauge de menace (sûr / attention / danger), ligne du jungler, les 5 ennemis
-  (« vu » ou « MIA 23 s »), les objectifs et la dernière alerte.
-* 🚨 **Flash de danger** : un cadre rouge sur les bords de l'écran pendant un gank (sans jamais couvrir la minimap).
-* ⏱️ **Chronos des objectifs** : Dragon, Larves du Néant, Héraut, Baron, Dragon ancestral (saison 2026),
-  annoncés 60 s et 20 s avant leur apparition.
-* 🔔 **Rappels personnels** : « pense à rentrer » quand tu as assez d'or, balise de contrôle quand tu es en base,
-  petit récap après ta mort, et une suggestion de pause après 3 défaites d'affilée.
-* ⌨️ **Raccourcis** : **F9** « Où est le jungler ? » (réponse vocale), **F10** couper / rétablir la voix,
-  **F11** afficher / masquer l'overlay.
-* 📊 **Analyse d'après-partie** : un rapport s'ouvre à la fin de la partie — morts (avec ou sans alerte),
-  ganks subis, habitudes du jungler ennemi (zones, timings, voies gankées), temps passé par zone, CS/min
-  et **conseils personnalisés**.
-* 🗂️ **Historique** : l'onglet **Analyses** liste toutes tes parties et tes statistiques de session.
+* 🧭 **Une seule chose à la fois** : à côté de la minimap, une petite carte affiche **une consigne**
+  (« Va bot : Dragon dans 0:45 », « Recule : 2 contre 1 »), en rouge s'il y a un danger, et **rien du tout**
+  quand il n'y a rien d'utile à dire. Le niveau du joueur (débutant → expert) règle la quantité de conseils.
+* 🚨 **Dangers bip d'abord** : le bip part immédiatement ; la phrase (« Gank ! Lee Sin, recule ! ») suit
+  seulement si elle est prête. Ganks annoncés plus tôt, alerte **2 contre 1** et **peu de vie** même quand
+  l'ennemi est déjà à l'écran, siège de la base / ace.
+* 🗣️ **Voix sobre** : seuls les dangers, la retraite en combat, F9 et l'objectif imminent qui te concerne
+  sont dits à voix haute ; le reste est écrit.
+* 🎯 **Jungler ennemi** : sur la minimap, sa dernière position et la zone où il peut être (murs compris)
+  quand il entre dans le brouillard.
+* ⏱️ **Objectifs de la saison 2026** (Dragon, Larves, Héraut, Baron à 20:00, Dragon ancestral ; plus
+  d'Atakhan), données d'objets et de champions mises à jour automatiquement (Data Dragon).
+* 💡 **Coups de génie et coups notés** : appels macro (plaques, échange d'objectif, retour sur la vague…)
+  et badges « coup de maître / gaffe » façon chess.com ; guide de balises (**F7**).
+* 🗂️ **Avant et après la partie** : carte de la sélection des champions, rapport d'après-partie (morts,
+  ganks subis, trajet réel du jungler ennemi via le client LoL, précision des coups, conseils), historique
+  et progression dans l'onglet **Analyses**.
+* 🤖 **Conseils IA (facultatif)** : avec ta propre clé (Gemini, Groq, OpenRouter, Anthropic ou Ollama local),
+  **F8** pose une question à l'IA ; désactivé par défaut.
+
+### Raccourcis
+
+| Touche | Action |
+| --- | --- |
+| **F6** (maintenir) | **Mode détaillé** tant que la touche est enfoncée : carte complète (ligne du jungler, portraits) + anneaux, rôles et fantômes sur la minimap. Touche modifiable (`hotkey_details`) ; `hud_detailed` le garde toujours actif. |
+| **F7** | Où poser une balise ? |
+| **F8** | Demander à l'IA (si configurée) |
+| **F9** | Où est le jungler ? (réponse vocale) |
+| **F10** | Couper / rétablir la voix |
+| **F11** | Afficher / masquer l'overlay |
+| **Ctrl+F8** | **Diagnostic** : enregistre 60 s (une image toutes les 2 s, état de la détection, santé, journal) dans `%APPDATA%\TreeAICoach\diagnostics\diag_….zip` et ouvre le dossier. Joins ce fichier à ton signalement. |
 
 ## 🔍 Comment ça marche
 
@@ -88,7 +99,7 @@
    (`https://127.0.0.1:2999`), donne la liste des 10 champions, leurs équipes et leurs skins. L'app reconnaît ainsi
    chaque icône et sait qui est le jungler ennemi.
 4. **Analyse** : les positions sont suivies dans le temps ; si un ennemi dangereux se rapproche de toi,
-   l'alerte est prononcée par la synthèse vocale de Windows.
+   un bip et une phrase courte te préviennent, et la carte à côté de la minimap affiche la consigne.
 
 Tout est calculé **sur ton PC** et aucune donnée personnelle n'est envoyée. La seule connexion à Internet
 (facultative) télécharge les icônes des skins de la partie depuis CommunityDragon, pour mieux reconnaître les champions.
@@ -101,8 +112,8 @@ Ses fenêtres d'overlay sont de simples fenêtres Windows transparentes, posées
 **Ce qu'il ne fait jamais :**
 
 * ❌ aucune lecture ni écriture de la mémoire du jeu, aucune injection, aucun hook DirectX ;
-* ❌ aucune touche ni aucun clic simulé (les raccourcis F9/F10/F11 utilisent l'API Windows standard
-  `RegisterHotKey`, comme Discord ou OBS) ;
+* ❌ aucune touche ni aucun clic simulé (les raccourcis utilisent l'API Windows standard
+  `RegisterHotKey`, comme Discord ou OBS ; F6 est seulement lu, jamais intercepté) ;
 * ❌ aucun contournement ni aucune dissimulation vis-à-vis de Vanguard ou de l'anti-triche ;
 * ❌ aucun suivi des sorts, des ultimes ou des temps de recharge ennemis.
 
@@ -112,9 +123,9 @@ Ses fenêtres d'overlay sont de simples fenêtres Windows transparentes, posées
 * La politique de Riot sur les applications tierces **évolue** : par exemple, depuis **mars 2025**, les
   applications qui suivent les ultimes et les temps de recharge des ennemis sont **interdites**. Riot peut juger à tout
   moment qu'un outil donne un avantage injuste.
-* Le **cercle du jungler** est la fonction **la plus sensible** : même s'il n'utilise que ce que tu as vu à l'écran,
-  il estime la zone où se trouve un ennemi invisible. Tu peux le **désactiver** : onglet **Overlay** →
-  **Cercle du jungler** → **Off**. Si tu veux être le plus prudent possible, désactive-le.
+* La **zone du jungler** est la fonction **la plus sensible** : même si elle n'utilise que ce que tu as vu à l'écran,
+  elle estime la zone où se trouve un ennemi invisible. Tu peux la **désactiver** : onglet **Overlay** →
+  **Cercle du jungler** → **Off**. Si tu veux être le plus prudent possible, désactive-la.
 * **Tu utilises TreeAI Coach à tes propres risques**, sans aucune garantie (voir la [licence](LICENSE)).
 
 ## ⚙️ Réglages
@@ -123,9 +134,9 @@ Ses fenêtres d'overlay sont de simples fenêtres Windows transparentes, posées
 | --- | --- |
 | **Tableau de bord** | Démarrer / arrêter l'analyse, tester la voix, mode démo, calibrer la minimap |
 | **Alertes & voix** | Chaque type d'alerte, **sensibilité** (taille de la zone d'alerte), voix, vitesse, volume, bip de danger, raccourcis |
-| **Overlay** | Radar, HUD, flash de danger, **cercle du jungler** (Jungler / Tous / Off), position et taille des fenêtres (« Déplacer les fenêtres ») |
-| **Analyses** | Historique des parties, rapports, statistiques de session |
-| **Réglages** | Minimap automatique ou manuelle, côté de la minimap, images par seconde, détecteur, **lancer avec Windows**, journaux, réinitialisation |
+| **Overlay** | Carte compacte (mode détaillé : maintenir F6), marques sur la minimap ou radar, flash de danger, **cercle du jungler** (Jungler / Tous / Off), badges des coups, position et taille des fenêtres (« Déplacer les fenêtres ») |
+| **Analyses** | Onglets **Parties** (historique, rapports), **Progrès** et **Replay** |
+| **Réglages** | Minimap automatique ou manuelle, images par seconde, détecteur, **lancer avec Windows**, conseils IA, mises à jour, journaux, réinitialisation |
 
 Tes réglages, journaux et rapports sont rangés dans **`%APPDATA%\TreeAICoach`**
 (copie ce chemin dans la barre d'adresse de l'Explorateur de fichiers).
@@ -141,6 +152,7 @@ Tes réglages, journaux et rapports sont rangés dans **`%APPDATA%\TreeAICoach`*
 | **Overlay invisible** | Vérifie le mode **Sans bordure**, l'onglet **Overlay**, et appuie sur **F11**. |
 | **Antivirus : faux positif** | Les exécutables non signés créés avec PyInstaller sont parfois signalés à tort. Télécharge l'exe **uniquement** depuis la page officielle des Releases, compare son SHA-256, puis ajoute une exception dans ton antivirus. |
 | **Démarrage un peu lent** | Normal : l'exe se décompresse en quelques secondes au lancement. |
+| **Alertes fausses / détection bizarre** | Pendant la partie, appuie sur **Ctrl+F8** : un diagnostic de 60 s est enregistré (dossier ouvert à la fin). Joins le `.zip` à ton signalement. |
 | **Autre problème** | Réglages → **Ouvrir les journaux**, et joins le dernier fichier à ton signalement dans les [Issues](https://github.com/SosatLaZ/treeaicoach/issues). |
 
 ## 👩‍💻 Pour les développeurs
@@ -157,11 +169,15 @@ py -3.11 -m venv .venv
 .venv\Scripts\python -m treeaicoach              # interface
 .venv\Scripts\python -m treeaicoach --demo       # partie simulée
 .venv\Scripts\python -m treeaicoach --selftest   # autotest (--selftest-out rapport.txt)
-.venv\Scripts\python -m pytest -q                # tests
+.venv\Scripts\python -m pytest -q                # tests (~1500, quelques minutes)
+.venv\Scripts\python -m pytest -q -n auto --dist loadfile   # idem en parallèle (pytest-xdist, ~3x plus rapide)
+.venv\Scripts\python -m tools.ux_replay --level all --scenario all --quiet   # juge des consignes : 0 violation
 ```
 
-* Architecture et contrats entre modules : [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ;
-  faits mesurés sur de vraies minimaps : [`docs/MINIMAP_FACTS.md`](docs/MINIMAP_FACTS.md).
+* À lire avant de modifier quoi que ce soit : [`docs/LESSONS.md`](docs/LESSONS.md) (règles tirées des retours
+  joueurs), [`docs/DESIGN.md`](docs/DESIGN.md) (direction visuelle) ; architecture et contrats entre modules :
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ; faits mesurés sur de vraies minimaps :
+  [`docs/MINIMAP_FACTS.md`](docs/MINIMAP_FACTS.md).
 * **Entraînement du modèle** (PyTorch, hors exe) : toutes les commandes et options sont dans
   [`training/README.md`](training/README.md). En résumé :
 
@@ -184,7 +200,8 @@ py -3.11 -m venv .venv
 
 * **Publier** : chaque push sur la branche principale (ou sur une branche `claude…`) met à jour la pré-version
   « latest » ; un tag `vX.Y.Z` identique à `treeaicoach.__version__` crée une release stable :
-  `git tag v1.3.0` puis `git push origin v1.3.0`.
+  `git tag v2.0.0` puis `git push origin v2.0.0`. Le dossier `release/` ne contient que l'exe courant,
+  `version.json` (lu par la mise à jour intégrée) et `SHA256.txt`.
 
 ## ⚖️ Mentions légales
 
