@@ -114,9 +114,17 @@ def test_lane_2v2_in_laning_is_not_a_fight_but_a_dive_is():
     ups = [tr.update(i * 0.25, g, ME, allies, enemies, map_state=st, lane_opponents=("Ezreal", "Leona"))
            for i in range(8)]
     assert not any(u.state.active for u in ups)          # 2v2 farming in lane, ~0.1 apart
+    # alone against 2 diving enemies: that is a GANK (the gank alert speaks), not a fight
     dive = [fg.Seen("Ezreal", (0.63, 0.85)), fg.Seen("Leona", (0.60, 0.88))]
     ups = [tr.update(3 + i * 0.25, g, ME, [], dive, map_state=st, lane_opponents=("Ezreal", "Leona"))
            for i in range(4)]
+    assert not ups[-1].state.active
+    # ... with my support next to me, it is a fight (2v2 + their jungler arriving)
+    en3 = en + [P("LeeSin", "CHAOS", pos="JUNGLE")]
+    g3 = game(allies=al, enemies=en3, gt=300.0)
+    dive3 = dive + [fg.Seen("LeeSin", (0.62, 0.80))]
+    ups = [tr.update(5 + i * 0.25, g3, ME, [fg.Seen("Thresh", (0.61, 0.86))], dive3, map_state=st,
+                     lane_opponents=("Ezreal", "Leona")) for i in range(4)]
     assert ups[-1].state.active and ups[-1].state.call == "retreat"
 
 

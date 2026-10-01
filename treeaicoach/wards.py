@@ -54,7 +54,9 @@ class WardSpot:
     control: bool = False           # good control ward spot (brush / pit)
 
     def uv_for(self, team: str | None) -> tuple[float, float]:
-        return (1.0 - self.uv[0], 1.0 - self.uv[1]) if team == "CHAOS" else self.uv
+        if team != "CHAOS":
+            return self.uv
+        return RED_OVERRIDE.get(self.id) or (1.0 - self.uv[0], 1.0 - self.uv[1])
 
     def label_for(self, team: str | None) -> str:
         """French label from ``team``'s point of view (top / bottom swapped for the red side)."""
@@ -93,6 +95,9 @@ SPOTS: tuple[WardSpot, ...] = (
     WardSpot("redbuff_enemy", "buff rouge ennemi", (0.480, 0.270), "enemy", _r("JUNGLE"), None, False),
 )
 SPOT_BY_ID = {s.id: s for s in SPOTS}
+#: The texture is not perfectly point-symmetric: red side spots moved onto walkable pixels.
+RED_OVERRIDE: dict[str, tuple[float, float]] = {
+    "river_top_lane": (0.834, 0.785), "tri_own": (0.848, 0.650), "dragon_front": (0.406, 0.322)}
 OBJ_PIT = {"dragon": "dragon", "elder": "dragon", "baron": "baron", "herald": "baron", "grubs": "baron"}
 ROLE_SIDE = {"TOP": "top", "BOTTOM": "bot", "UTILITY": "bot", "MIDDLE": "mid"}
 

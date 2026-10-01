@@ -163,7 +163,7 @@ OCC_PENALTY = 0.05
 OCC_MIN_NCC = 0.4
 OCC_MIN_AREA = 0.45
 OCC_SEARCH = 3                     # re-scoring window (+- working px) around a stacked icon
-OCC_AREA_PENALTY = 0.0
+OCC_AREA_PENALTY = 0.15
 #: Tracked mode, champions not tracked: whole-map search at a lower resolution (matched
 #: disc COARSE_INNER_PX wide); its peaks above COARSE_VERIFY_MIN are verified at full res.
 COARSE_INNER_PX = 9.0
@@ -1389,8 +1389,7 @@ class RosterMatcher:
             tr = self._tracks.get(i)
             tracked = tr is not None and now - tr.t <= TRACK_FRESH_S and math.hypot(
                 c.x / kx - tr.u, c.y / ky - tr.v) <= LOCAL_SLACK + MAX_SPEED * (now - tr.t)
-            if not near and not tracked and \
-                    not self._has_white(feat, c.x, c.y, 0.5 * INNER_RATIO * D_work):
+            if not near and not tracked:
                 continue
             if c.ring is None:
                 self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0)
