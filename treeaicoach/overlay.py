@@ -388,7 +388,7 @@ def move_mode_frame(bgra: np.ndarray, label: str = "") -> np.ndarray:
         try:
             from treeaicoach.overlay_render import Canvas, get_font, TEAL
             cv_ = Canvas(w, h)
-            cv_.paint_premul(0, 0, img)
+            cv_.px[:] = img[..., (2, 1, 0, 3)].astype(np.float32) / np.float32(255.0)
             cv_.rrect(6, 6, min(w - 12, 150), 20, 5, (1, 10, 19), 0.9, border=TEAL, border_alpha=0.9)
             cv_.text(12, 16, label, get_font(12, "bold"), TEAL)
             img = cv_.to_bgra()

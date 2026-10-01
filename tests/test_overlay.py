@@ -28,6 +28,8 @@ class Cfg:
     hud_xy: list | None = None
     danger_flash: bool = True
     overlay_mode: str = "minimap"
+    overlay_hide_from_capture: bool = False
+    overlay_show_frame: bool = True
 
 
 def inside(r, screen=SCREEN) -> bool:
@@ -95,11 +97,12 @@ def test_radar_user_screenshot_bug_dpi_virtualized_screen():
 
 def test_resolve_overlay_mode():
     assert ov.resolve_overlay_mode("minimap", True) == "minimap"
-    assert ov.resolve_overlay_mode("minimap", False) == "radar"
+    assert ov.resolve_overlay_mode("minimap", False) == "minimap"   # no radar fallback any more
+    assert ov.resolve_overlay_mode("minimap") == "minimap"
     assert ov.resolve_overlay_mode("radar", True) == "radar"
     assert ov.resolve_overlay_mode("off", False) == "off"
     assert ov.resolve_overlay_mode(None, True) == "minimap"
-    assert ov.resolve_overlay_mode("junk", False) == "radar"
+    assert ov.resolve_overlay_mode("junk", False) == "minimap"
 
 
 def test_radar_other_positions_and_custom():
@@ -364,3 +367,49 @@ def test_manager_runs_on_windows():
     finally:
         m.stop()
     assert not m.is_running()
+
+
+# ---------------------------------------------------------------------------- capture exclusion / diagnostics
+class _FakeMmWin:
+    def __init__(self, ok=True):
+        self.calls = []
+        self.ok = ok
+
+    def exclude_from_capture(self):
+        self.calls.append("exclude")
+        return self.ok
+
+    def include_in_capture(self):
+        self.calls.append("include")
+
+
+def test_capture_exclusion_off_by_default_and_toggles():
+    m = ov.OverlayManager(Cfg(), lambda: None)
+    w = _FakeMmWin()
+    m._sync_capture_exclusion(w, Cfg(), force_log=True)
+    assert w.calls == [] and not m.capture_excluded          # default: never touches the affinity
+    m._sync_capture_exclusion(w, Cfg(overlay_hide_from_capture=True))
+    assert w.calls == ["exclude"] and m.capture_excluded
+    m._sync_capture_exclusion(w, Cfg(overlay_hide_from_capture=True))
+    assert w.calls == ["exclude"]
+    assert m.effective_mode == "minimap"
+    m._sync_capture_exclusion(w, Cfg())
+    assert w.calls == ["exclude", "include"] and not m.capture_excluded
+    assert m.effective_mode == "minimap"                     # mode independent of the exclusion
+
+
+def test_minimap_layer_stats_logged_once_per_game(caplog):
+    import logging
+    from treeaicoach import overlay_render as orr
+    m = ov.OverlayManager(Cfg(), lambda: None)
+    st = orr.OverlayState(minimap_rect=MINIMAP)
+    img = orr.render_minimap(st, 255, 255, show_frame=True)
+    with caplog.at_level(logging.INFO, logger="treeaicoach.overlay"):
+        for _ in range(3):
+            m._note_mm_update(st, MINIMAP, img)
+        assert m.mm_stats["updates"] == 3
+        assert sum("layer at" in r.getMessage() for r in caplog.records) == 1
+        m._end_mm_session()
+        assert any("end of game, 3 updates" in r.getMessage() for r in caplog.records)
+        m._note_mm_update(st, MINIMAP, img)
+        assert sum("layer at" in r.getMessage() for r in caplog.records) == 2

@@ -282,3 +282,32 @@ def test_minimap_never_raises_on_junk():
                           roles=None, fogs=[None])  # type: ignore
     img = orr.render_minimap(st, 0, -5)
     assert img.ndim == 3 and img.shape[2] == 4
+
+
+def test_minimap_never_draws_portraits_and_rings_stay_outside_icons():
+    """The minimap layer is captured: no portrait, and nothing inside the real icon (r < 0.05 S)."""
+    E = orr.EnemyView
+    icon = np.full((64, 64, 4), 255, np.uint8)
+    st = orr.OverlayState(me_uv=(0.2, 0.2),
+                          enemies=[E("Darius", "Darius", "Darius", True, (0.7, 0.7), 0.0, role="TOP", icon=icon),
+                                   E("Ahri", "Ahri", "Ahri", False, (0.3, 0.75), 8.0, role="MIDDLE", icon=icon)],
+                          allies=[E("Lux", "Lux", "Lux", True, (0.5, 0.2), 0.0, relation="ally", icon=icon)],
+                          me_icon=icon)
+    S = 306
+    img = orr.render_minimap(st, S, S, now=0.0)
+    assert orr.MM_MARKER_R >= 1.2 * 0.05 - 1e-9
+    yy, xx = np.mgrid[0:S, 0:S] + 0.5
+    for (u, v) in ((0.7, 0.7), (0.3, 0.75), (0.5, 0.2), (0.2, 0.2)):
+        d = np.hypot(xx - u * S, yy - v * S)
+        annulus = (d > 0.012 * S) & (d < 0.046 * S)            # the portrait area (minus a centre dot)
+        assert img[..., 3][annulus].max() == 0, (u, v)
+
+
+def test_minimap_show_frame_marks_an_empty_layer():
+    empty = orr.render_minimap(orr.OverlayState(), 306, 306, now=0.0)
+    assert not empty.any()
+    framed = orr.render_minimap(orr.OverlayState(), 306, 306, now=0.0, show_frame=True)
+    assert_premultiplied(framed)
+    assert framed[1, 1, 3] > 100 and framed[304, 304, 3] > 100   # corner marks
+    assert framed[153, 153, 3] == 0                              # centre untouched
+    assert (framed[..., 3] > 0).mean() < 0.03

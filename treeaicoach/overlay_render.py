@@ -1084,8 +1084,10 @@ ROLE_TAGS: dict[str, str] = {
 }
 ENEMY_TAG_RGB = (255, 150, 160)
 ALLY_TAG_RGB = (150, 205, 255)
-#: Ring radius around a champion icon, as a fraction of the minimap side (icons are ~8.5 %).
-MM_MARKER_R = 0.052
+#: Ring radius around a champion icon, as a fraction of the minimap side. Real icons have a
+#: radius of 0.044-0.050 (docs/MINIMAP_FACTS.md): ~1.25x keeps our stroke OUTSIDE the portrait,
+#: which stays untouched (the minimap layer is captured by our own detector).
+MM_MARKER_R = 0.06
 
 
 def role_tag(view: Any, roles: dict[str, str] | None = None) -> str:
@@ -1147,14 +1149,18 @@ def _tag(cv_: Canvas, x: float, y: float, off: float, text: str, font: Any, fg: 
 
 
 def render_minimap(state: OverlayState, width: int, height: int | None = None,
-                   now: float | None = None) -> np.ndarray:
+                   now: float | None = None, show_frame: bool = False) -> np.ndarray:
     """Transparent overlay drawn *over the real minimap* (premultiplied BGRA ``height x width``).
 
-    Only thin, semi-transparent marks (the real minimap stays readable): rings + role tags on
+    The layer is visible to screen capture, so it NEVER draws champion portraits / icons (they
+    would be re-detected): only thin, semi-transparent marks (the real minimap stays readable),
+    rings drawn outside the real icons (``MM_MARKER_R``) + role tags on
     tracked enemies (red) / allies (blue), me (teal), the enemy jungler emphasized, fog regions
     of hidden enemies with a dashed bound circle and a timer, ghost marks with "12 s" at the last
     seen position of hidden enemies, warn / danger rings around me (only when threatened),
-    approach arrows and a threat-coloured frame. Never raises (transparent image on error).
+    approach arrows and a threat-coloured frame. ``show_frame`` adds discreet corner marks and a
+    tiny "TreeAI" label (proof that the layer is alive, even with nothing tracked).
+    Never raises (transparent image on error).
     """
     try:
         w = int(min(max(int(width), 16), 2048))
@@ -1162,10 +1168,33 @@ def render_minimap(state: OverlayState, width: int, height: int | None = None,
     except (TypeError, ValueError):
         w = h = 256
     try:
-        return _render_minimap(state, w, h, time.monotonic() if now is None else float(now))
+        img = _render_minimap(state, w, h, time.monotonic() if now is None else float(now))
+        if show_frame:
+            img = _minimap_frame(img)
+        return img
     except Exception:
         log.exception("render_minimap failed")
         return np.zeros((h, w, 4), np.uint8)
+
+
+def _minimap_frame(img: np.ndarray) -> np.ndarray:
+    """Corner marks + tiny "TreeAI" label over a minimap layer (premultiplied BGRA)."""
+    H, W = img.shape[:2]
+    cv_ = Canvas(W, H)
+    cv_.px[:] = img[..., (2, 1, 0, 3)].astype(np.float32) / np.float32(255.0)  # BGRA u8 -> RGBA f32
+    k = min(W, H) / 256.0
+    L, t = max(8.0, 14 * k), max(1.5, 1.6 * k)
+    for (x, y, dx, dy) in ((0, 0, 1, 1), (W, 0, -1, 1), (0, H, 1, -1), (W, H, -1, -1)):
+        x0 = x + dx * t / 2
+        y0 = y + dy * t / 2
+        cv_.capsule(x0, y0, x0 + dx * L, y0, t, TEAL, 0.8)
+        cv_.capsule(x0, y0, x0, y0 + dy * L, t, TEAL, 0.8)
+    f = get_font(max(8, int(round(8 * k))), "bold")
+    tw, th = text_width("TreeAI", f) + 6, _cap_height(f) + 5
+    tx, ty = W - tw - L - 2, 2.0
+    cv_.rrect(tx, ty, tw, th, th / 2, PANEL_DEEP, 0.55)
+    cv_.text(tx + tw / 2, ty + th / 2, "TreeAI", f, TEAL, 0.85, anchor="m", shadow=0)
+    return cv_.to_bgra()
 
 
 def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarray:
@@ -1236,10 +1265,9 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             continue
         fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
         x, y = px(uv)
-        d = mr * 1.35
-        cv_.image(x, y, round_icon_patch(e.icon, d, _mix(DANGER, GREY, 0.3), max(1.2, lw * 0.9), grey=True,
-                                         letter=e.name or e.alias or "?"), 0.62 * fade)
-        cv_.ring(x, y, mr * 0.95, lw * 0.9, DANGER, 0.55 * fade, dash=(3.0 * k + 1, 2.5 * k + 1))
+        # no portrait here (captured layer): dashed circle + small centre dot only
+        cv_.ring(x, y, mr, lw * 0.9, DANGER, 0.7 * fade, dash=(3.0 * k + 1, 2.5 * k + 1))
+        cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.6 * fade)
         tag = role_tag(e, roles)
         label = f"{tag} {fmt_seconds(ago)}" if tag and tag != "?" else fmt_seconds(ago)
         _tag(cv_, x, y, mr * 1.05, label, f_time, GOLD_LIGHT, taken, alpha=max(0.7, fade))
@@ -1256,8 +1284,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     # ---- me
     if me is not None:
         x, y = px(me)
-        cv_.ring(x, y, mr * 1.08, lw * 1.5, TEAL, 0.95)
-        cv_.ring(x, y, mr * 1.08 + lw * 2.2, lw * 0.8, TEAL, 0.35)
+        cv_.ring(x, y, mr * 1.03, lw * 1.5, TEAL, 0.95)
+        cv_.ring(x, y, mr * 1.03 + lw * 2.2, lw * 0.8, TEAL, 0.35)
 
     # ---- visible enemies: rings, approach arrows, jungler emphasis
     visible = [e for e in enemies if e.visible and e.uv is not None and _uv_ok(e.uv) is not None]
