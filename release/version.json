@@ -1,6 +1,6 @@
 {
-  "version": "2.2.1",
-  "sha256": "d102db288a0bf1eac02f8abff107c0e62be2be36d71e071f840ed638c6de5521",
-  "size": 81963421,
-  "notes": "2.2.1 : conseils corrigés (une seule consigne de balise au bon moment, achats que tu peux vraiment payer, plus de lignes de statistiques inutiles, plus de « pousse » quand tu perds ta voie)."
+  "version": "2.3.0",
+  "sha256": "a1b4c821c9533ff7c3b2349bfd3bf7f8f551cbb88b89fd4a8ac23749f49578d5",
+  "size": 82169886,
+  "notes": "2.3 : conseils qui changent la partie avec la voix (niveaux, jungler ailleurs, plaques, Baron après un combat gagné), conseils sur les achats ennemis, placement propre sans rien sur l'interface du jeu, l'appli se surveille et se répare seule (Santé TreeAI), comparer la config de deux PC, launcher sans bug de chargement, données du jeu revérifiées (173 champions, builds, 228 conseils de duel, balises exactes)."
 }
