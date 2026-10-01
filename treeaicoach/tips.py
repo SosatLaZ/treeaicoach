@@ -453,7 +453,7 @@ TIPS: tuple[Tip, ...] = (
       lambda c: 240 <= c.gt <= 1200 and c.wave == "pushing", roles=("MIDDLE",), prio=2, conf=MAP),
     # ------------------------------------------------------------------ vision
     T("vis_river", "vision", "Pose ta balise dans la rivière : premier gank vers 2:30",
-      lambda c: 100 <= c.gt <= 150, roles=LANERS, prio=2),   # a ward at 0:45 has expired by the 2:30 gank
+      lambda c: 45 <= c.gt <= 120, roles=LANERS, prio=2),
     # 2026 Faelights ("lampes féeriques"): a ward on one gets +25 % vision and reveals an area 45 s
     T("vis_faelight", "vision", "Pose ta balise sur une lampe féerique : vision bonus 45 s",
       lambda c: 90 <= c.gt <= 900 and not c.in_base and not c.dead, roles=("UTILITY", "JUNGLE", "MIDDLE"),
@@ -468,15 +468,14 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.early and c.jg_last_side in ("top", "bot") and c.jg_hidden_s is not None
       and 10 <= c.jg_hidden_s <= 60, roles=("MIDDLE",), prio=2, conf=MAP),
     T("vis_top_bush", "vision", "Balise le buisson de la rivière : ganks par derrière",
-      lambda c: 330 <= c.gt <= 480, roles=("TOP",), prio=2),   # (not on top of the 2:00 river ward line)
+      lambda c: 150 <= c.gt <= 480, roles=("TOP",), prio=2),
     T("vis_bot_bush", "vision", "Garde le buisson de ta voie : il cache leurs attaques",
       lambda c: 90 <= c.gt <= 480, roles=("BOTTOM", "UTILITY"), prio=2),
     T("vis_deep", "vision", "Balise leur jungle : tu sauras où va {jg}",
       lambda c: c.gt >= 600 and not c.alive, roles=("UTILITY", "JUNGLE"), prio=2),
     # ------------------------------------------------------------------ items / gold
-    # in the shop: name what the gold buys NOW (components), never a 3000-gold legendary with 900 gold
-    T("buy_item", "items", "Achète {buy} maintenant : tu as l'or",
-      lambda c: c.in_base and bool(c.buy_names) and c.gold >= 300, prio=4, tone="go", ttl=12.0),
+    T("buy_item", "items", "Achète {item} maintenant : ton meilleur achat",
+      lambda c: c.in_base and c.item is not None and c.gold >= 300, prio=4, tone="go", ttl=12.0),
     T("comp_ready", "items", "Rentre acheter {buy} : tu as l'or",
       lambda c: bool(c.buy_names) and c.buy_value >= 700 and not c.in_base and not c.dead and c.missing < 3
       and c.enemies_near == 0 and c.my_objective(0, 50) is None and not c.recall_said, prio=3, cooldown=150.0,
