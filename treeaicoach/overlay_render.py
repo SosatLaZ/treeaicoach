@@ -153,6 +153,7 @@ class OverlayState:
     show_allies: bool = False                 # rings on allies + me
     show_roles: bool = False                  # role tags on enemies (the jungler always gets "JGL")
     show_ghosts: bool = False                 # last seen marks / fog zones of every hidden enemy
+    show_last_seen: bool = True               # dashed mark + "12 s" at the last point an enemy was seen
     hud_detailed: bool = False                # HUD: jungler line + 5 enemy portraits
     # v3 visual guides (tactics.TacticalDirector): arrows / ward spots on the minimap layer
     guides: list = field(default_factory=list)  # tactics.MapGuide list, highest priority first
@@ -1282,8 +1283,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             cv_.disc(mx, my, dang_r, DANGER, 0.05 + 0.04 * pulse)
             cv_.ring(mx, my, dang_r, lw * 1.3, DANGER, 0.6 + 0.3 * pulse)
 
-    # ---- (option) hidden enemies: dashed mark at the last seen point + elapsed time
-    if show_ghosts:
+    # ---- hidden enemies: dashed mark at the last seen point (before the fog) + elapsed time
+    if show_ghosts or bool(getattr(state, "show_last_seen", True)):
         for e in enemies:
             if e.visible:
                 continue
@@ -1339,7 +1340,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             _tag(cv_, x, y, mr + 1, tag, f_tag, WHITE if e.is_jungler else ENEMY_TAG_RGB, taken, 1.0)
 
     # ---- fog timers: small "JGL 12 s" at the last seen point of the (jungler) fog zone
-    ghost_drawn = {e.key for e in enemies if show_ghosts and not e.visible and e.uv is not None
+    ghost_drawn = {e.key for e in enemies if (show_ghosts or bool(getattr(state, "show_last_seen", True)))
+                   and not e.visible and e.uv is not None
                    and e.last_seen_ago is not None and _finite(e.last_seen_ago)
                    and e.last_seen_ago <= LAST_SEEN_MAX_S}
     for fog in fogs:

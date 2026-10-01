@@ -531,7 +531,7 @@ def build_context(facts: dict[str, Any] | None, game: Any, scoreboard: Any = Non
     return c
 
 
-HOLD_S = 6.0                    # the shown advice stays at least this long ...
+HOLD_S = 10.0                   # the shown advice stays at least this long ...
 PREEMPT_GAIN = 0.2              # ... unless a new one is this much more useful
 STALE_GRACE_S = 1.5             # a tip that stops applying disappears after this grace
 

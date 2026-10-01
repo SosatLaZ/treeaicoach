@@ -42,7 +42,7 @@ def test_speech_budget_gap_per_minute_and_queue_expiry():
     assert b.pop_ready(10.0) is None and b.pop_ready(21.0).key == "urgent:b" if False else True
     b2 = vp.SpeechBudget()
     said = [t for t in range(0, 120) if b2.filter([tip(str(t))], float(t))]
-    assert said == [0, 20, 40, 60, 80, 100]                      # 1 / 20 s, <= 3 per minute
+    assert said == [0, 30, 60, 90]                               # 1 / 30 s, <= 2 per minute (calm)
     b3 = vp.SpeechBudget()
     gank = A(AlertKind.COLLAPSE, "c", Level.DANGER)
     assert b3.filter([gank], 0.0) == [gank]                       # critical: never budgeted

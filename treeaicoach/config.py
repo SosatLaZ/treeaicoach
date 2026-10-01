@@ -44,6 +44,7 @@ INT_RANGES: dict[str, tuple[int, int]] = {
 }
 FLOAT_RANGES: dict[str, tuple[float, float]] = {
     "sensitivity": (0.6, 1.6),
+    "ui_scale": (0.7, 1.4),
     "warn_radius": (0.05, 0.50),   # normalized by minimap width
     "danger_radius": (0.03, 0.35),
     "target_fps": (2.0, 20.0),
@@ -96,6 +97,7 @@ BOOL_FIELDS: tuple[str, ...] = (
     "overlay_show_allies",
     "overlay_show_roles",
     "overlay_show_ghosts",
+    "overlay_show_last_seen",
     "hud_detailed",
     "text_tips",
     "tip_toasts",
@@ -245,6 +247,7 @@ class Config:
     overlay_show_allies: bool = False    # thin blue rings on allies + teal ring on me
     overlay_show_roles: bool = False     # role tags (TOP/MID/ADC/SUP) on enemies (the jungler always has "JGL")
     overlay_show_ghosts: bool = False    # last seen marks + fog zones of every hidden enemy (not only the jungler)
+    overlay_show_last_seen: bool = True  # dashed mark + "12 s" where each enemy entered the fog
     hud_detailed: bool = False           # HUD: also the jungler line and the 5 enemy portraits
     text_tips: bool = True               # rotating written tips in the HUD (never spoken)
     tip_toasts: bool = False             # ... also as a small toast
@@ -256,7 +259,8 @@ class Config:
     hotkey_overlay: str = "F11"
     break_reminder: bool = True
     # UI (§8.2)
-    ui_geometry: str = ""           # main window geometry "WxH+X+Y" ("" = default)
+    ui_geometry: str = ""
+    ui_scale: float = 0.88               # interface size (0.7-1.4)
     # updates (updater.py)
     update_channel_url: str = ""    # "" = default GitHub URL of release/version.json
     github_token: str = ""          # personal access token for the private repo ("" = none)

@@ -54,6 +54,7 @@ FADE_OUT_S = 0.6
 MAX_VISIBLE = 2
 MAX_QUEUED = 6
 DEDUPE_S = 20.0                 # same key not shown again for this long
+INSIGHT_GAP_S = 25.0            # low-priority "insight" toasts: at most one every 25 s (anti-spam)
 MAX_WAIT_S = 10.0               # a queued toast not shown within this delay is dropped (stale)
 BASE_W, BASE_H = 440, 68        # at 1080p
 GAP = 8                         # between stacked toasts (1080p px)
@@ -445,6 +446,7 @@ class ToastQueue:
         self._shown: list[Toast] = []
         self._waiting: list[Toast] = []
         self._recent: dict[str, float] = {}
+        self._last_insight = -1e9
 
     def reset(self) -> None:
         with self._lock:
@@ -464,6 +466,10 @@ class ToastQueue:
                     return False
                 if len(self._waiting) >= MAX_QUEUED:
                     return False
+                if kind not in ("danger", "warning", "praise"):
+                    if 0.0 <= now - self._last_insight < INSIGHT_GAP_S:
+                        return False
+                    self._last_insight = now
                 self._recent[k] = now
                 if len(self._recent) > 64:
                     for old in sorted(self._recent, key=self._recent.get)[:32]:

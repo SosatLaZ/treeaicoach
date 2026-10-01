@@ -2215,6 +2215,7 @@ class CoachEngine:
             show_allies=bool(getattr(cfg, "overlay_show_allies", False)),
             show_roles=bool(getattr(cfg, "overlay_show_roles", False)) or bool(getattr(cfg, "layer_roles", False)),
             show_ghosts=bool(getattr(cfg, "overlay_show_ghosts", False)) or bool(getattr(cfg, "layer_ghosts", False)),
+            show_last_seen=bool(getattr(cfg, "overlay_show_last_seen", True)),
             hud_detailed=bool(getattr(cfg, "hud_detailed", False)),
             me_icon=self._icon(game.me.champion_alias, game.me.skin_id) if game and game.me else None,
             allies=allies, roles=roles,

@@ -291,7 +291,7 @@ def test_minimap_hidden_enemy_ghost_and_fog_timer():
     fog = _open_fog().simulate("LeeSin", "LeeSin", "Lee Sin", (0.5, 0.5), 10.0, is_jungler=True, game_time=400)
     st = orr.OverlayState(enemies=[E("LeeSin", "LeeSin", "Lee Sin", False, (0.5, 0.5), 10.0, True, role="JUNGLE"),
                                    E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 12.0)],
-                          fogs=[fog])
+                          fogs=[fog], show_last_seen=False)
     img = orr.render_minimap(st, 256, 256, now=0.0)
     assert_premultiplied(img)
     assert not img[190:218, 37:65].any()                      # default: no ghost for Ahri
@@ -305,6 +305,8 @@ def test_minimap_hidden_enemy_ghost_and_fog_timer():
     none = orr.render_minimap(orr.OverlayState(enemies=[E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 90.0)],
                                                show_ghosts=True), 256)
     assert not none.any()                                     # too old: nothing drawn
+    last = orr.render_minimap(orr.OverlayState(enemies=[E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 12.0)]), 256)
+    assert last[204, 51, 3] > 0                                # default: last seen position before the fog
 
 
 def test_role_tags():

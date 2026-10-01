@@ -789,23 +789,23 @@ class _Fonts:
     def __init__(self, ctk: Any, family: str) -> None:
         f = family
         self.family = f
-        self.brand = ctk.CTkFont(family=f, size=17, weight="bold")
-        self.title = ctk.CTkFont(family=f, size=22, weight="bold")
-        self.h2 = ctk.CTkFont(family=f, size=15, weight="bold")
-        self.h3 = ctk.CTkFont(family=f, size=13, weight="bold")
-        self.body = ctk.CTkFont(family=f, size=13)
-        self.small = ctk.CTkFont(family=f, size=12)
-        self.tiny = ctk.CTkFont(family=f, size=11)
-        self.tiny_bold = ctk.CTkFont(family=f, size=11, weight="bold")
-        self.caps = ctk.CTkFont(family=f, size=10, weight="bold")
-        self.nav = ctk.CTkFont(family=f, size=14)
-        self.nav_active = ctk.CTkFont(family=f, size=14, weight="bold")
-        self.button = ctk.CTkFont(family=f, size=13, weight="bold")
-        self.big_button = ctk.CTkFont(family=f, size=15, weight="bold")
-        self.state = ctk.CTkFont(family=f, size=18, weight="bold")
-        self.clock = ctk.CTkFont(family=f, size=26, weight="bold")
-        self.stat = ctk.CTkFont(family=f, size=24, weight="bold")
-        self.threat = ctk.CTkFont(family=f, size=17, weight="bold")
+        self.brand = ctk.CTkFont(family=f, size=16, weight="bold")
+        self.title = ctk.CTkFont(family=f, size=21, weight="bold")
+        self.h2 = ctk.CTkFont(family=f, size=14, weight="bold")
+        self.h3 = ctk.CTkFont(family=f, size=12, weight="bold")
+        self.body = ctk.CTkFont(family=f, size=12)
+        self.small = ctk.CTkFont(family=f, size=11)
+        self.tiny = ctk.CTkFont(family=f, size=10)
+        self.tiny_bold = ctk.CTkFont(family=f, size=10, weight="bold")
+        self.caps = ctk.CTkFont(family=f, size=9, weight="bold")
+        self.nav = ctk.CTkFont(family=f, size=13)
+        self.nav_active = ctk.CTkFont(family=f, size=13, weight="bold")
+        self.button = ctk.CTkFont(family=f, size=12, weight="bold")
+        self.big_button = ctk.CTkFont(family=f, size=14, weight="bold")
+        self.state = ctk.CTkFont(family=f, size=17, weight="bold")
+        self.clock = ctk.CTkFont(family=f, size=25, weight="bold")
+        self.stat = ctk.CTkFont(family=f, size=23, weight="bold")
+        self.threat = ctk.CTkFont(family=f, size=16, weight="bold")
 
 
 # ======================================================================================
@@ -1127,6 +1127,10 @@ class CoachApp:
         self._radar_live = False
 
         _apply_theme(ctk)
+        try:  # compact by default (Windows display scaling already enlarges everything)
+            ctk.set_widget_scaling(min(1.4, max(0.7, float(getattr(cfg, "ui_scale", 0.88)))))
+        except Exception:
+            log.debug("Cannot set the UI scaling", exc_info=True)
         self.root = ctk.CTk()
         # NB: never withdraw() the CTk root before mainloop: on Windows CTk re-applies the
         # saved "withdrawn" state after colouring the title bar and the window never shows.

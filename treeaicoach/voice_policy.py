@@ -230,8 +230,8 @@ def _norm(text: Any) -> str:
 # ======================================================================================
 # Speech budget
 # ======================================================================================
-BUDGET_GAP_S = 20.0            # min time between two budgeted (non gank / fight) spoken messages
-BUDGET_PER_MIN = 3             # ... and at most this many per rolling minute
+BUDGET_GAP_S = 30.0            # min time between two budgeted (non gank / fight) spoken messages
+BUDGET_PER_MIN = 2             # ... and at most this many per rolling minute
 AFTER_CRITICAL_S = 6.0         # nothing budgeted this long after a gank / fight call
 QUEUE_MAX = 4
 QUEUE_TTL_S = 12.0             # a waiting message is dropped after this (stale)
