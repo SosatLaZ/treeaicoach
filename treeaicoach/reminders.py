@@ -36,6 +36,8 @@ RECALL_REPEAT_S = 90.0           # min delay between two recall reminders (monot
 RECALL_MIN_GAIN = 250            # left the base with >= threshold gold: wait for this much more
 RECALL_MIN_GAME_TIME_S = 90.0
 CONTROL_WARD_MIN_GAME_TIME_S = 180.0
+#: Hard anti-spam: at most one control-ward reminder per this many seconds (base detection can flicker).
+CONTROL_WARD_COOLDOWN_S = 300.0
 BASE_DWELL_S = 1.0               # in base this long before the control ward reminder
 BASE_EXIT_DEBOUNCE_S = 3.0       # out of base this long = the base visit is over
 RESPAWN_IN_BASE_S = 8.0          # just respawned = at the fountain even if not detected yet
@@ -147,6 +149,7 @@ class PersonalReminders:
         self._base_since: float | None = None
         self._out_since: float | None = None
         self._ward_reminded_visit = -1
+        self._ward_last_t = -1e9
         self._gold_at_exit: float | None = None
         self._last_recall_t: float | None = None
         self._was_dead = False
@@ -156,6 +159,21 @@ class PersonalReminders:
         self._hint: str | None = None
 
     def _update_locked(self, t: Any, game: Any, me_pos: Any, in_base: Any) -> list[Alert]:
+        alerts = self._update_inner(t, game, me_pos, in_base)
+        out: list[Alert] = []
+        for a in alerts:
+            if a.kind == _CONTROL_WARD or getattr(a, "key", "") == "control_ward":
+                try:
+                    now = float(t)
+                except Exception:
+                    now = 0.0
+                if now - getattr(self, "_ward_last_t", -1e9) < CONTROL_WARD_COOLDOWN_S:
+                    continue
+                self._ward_last_t = now
+            out.append(a)
+        return out
+
+    def _update_inner(self, t: Any, game: Any, me_pos: Any, in_base: Any) -> list[Alert]:
         now = _finite(t)
         if now is None or game is None:
             return []

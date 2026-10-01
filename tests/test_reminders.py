@@ -110,7 +110,11 @@ def test_control_ward_once_per_base_visit():
     for t in (430.0, 431.0, 432.0, 434.0):                           # really leaves
         step(r, t, gold=50)
     assert step(r, 600.0, pos=BASE, gold=500) == []
-    assert kinds(step(r, 601.5, pos=BASE, gold=500)) == [AlertKind.CONTROL_WARD]   # new visit
+    assert step(r, 601.5, pos=BASE, gold=500) == []                  # new visit but < 5 min: anti-spam
+    for t in (610.0, 611.0, 612.0, 614.0):
+        step(r, t, gold=50)
+    assert step(r, 760.0, pos=BASE, gold=500) == []
+    assert kinds(step(r, 761.5, pos=BASE, gold=500)) == [AlertKind.CONTROL_WARD]   # new visit after cooldown
 
 
 @pytest.mark.parametrize("kw", [
