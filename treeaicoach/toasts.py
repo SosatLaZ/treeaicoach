@@ -143,15 +143,16 @@ def banner_size(scale: float = 1.0) -> tuple[int, int]:
 
 
 def _chevrons(cv_: orr.Canvas, cx: float, cy: float, h: float, direction: int, rgb: Any, alpha: float) -> None:
-    """Two chevrons pointing right (direction 1) or left (-1)."""
-    w = h * 0.42
-    th = h * 0.16
+    """Two chevrons (two thick strokes each) pointing right (direction 1) or left (-1)."""
+    w = h * 0.36
+    th = max(1.5, h * 0.13)
     for i in range(2):
-        x = cx + direction * i * w * 0.85
+        x = cx + direction * i * w * 0.9
         tip = x + direction * w * 0.5
         back = x - direction * w * 0.5
-        cv_.polygon([(back, cy - h / 2), (back + direction * th, cy - h / 2), (tip + direction * th, cy),
-                     (back + direction * th, cy + h / 2), (back, cy + h / 2), (tip, cy)], rgb, alpha * (1.0 - 0.3 * i))
+        a = alpha * (1.0 - 0.35 * i)
+        cv_.capsule(back, cy - h / 2, tip, cy, th, rgb, a)
+        cv_.capsule(tip, cy, back, cy + h / 2, th, rgb, a)
 
 
 def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int | None) -> np.ndarray:

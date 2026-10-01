@@ -376,7 +376,8 @@ def triage_gank(alert: Any, *, me_pos: Any, allies: list[Any], enemies: list[Any
 
     * ``("speak", None)`` - say it (the word "Gank" is kept);
     * ``("drop", None)``  - fight going on / I am dead / in my base: nothing (the fight call speaks);
-    * ``("text", reason)`` - grouped with >= 2 allies, or the ganker is behind my allies: written only;
+    * ``("text", reason)`` - (WARNING only) grouped with >= 2 allies, or the ganker is behind my
+      allies: written only; a DANGER gank is always spoken outside a fight;
     * ``("opportunity", text)`` - the "ganker" is alone and clearly weaker than me (+ close
       allies): written "Lee Sin seul et plus faible : tu peux le punir".
 
@@ -389,8 +390,8 @@ def triage_gank(alert: Any, *, me_pos: Any, allies: list[Any], enemies: list[Any
             return "drop", None
         if (me is not None and bool(getattr(me, "is_dead", False))) or in_base:
             return "drop", None
-        if me_pos is None:
-            return "speak", None
+        if me_pos is None or int(getattr(alert, "level", 0) or 0) >= 2:
+            return "speak", None                     # a DANGER gank on me is never delayed / downgraded
         from treeaicoach import geometry
 
         # identified allies only (an anonymous "ally" icon is often a misread enemy)

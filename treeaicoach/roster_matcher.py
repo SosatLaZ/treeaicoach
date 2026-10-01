@@ -172,7 +172,7 @@ COARSE_VERIFY_GAP = 0.03
 #: Structure glyphs (turrets, inhibitors, nexus) have team-coloured rings: a candidate
 #: this close (normalized) to a structure of the same colour needs STRUCT_PENALTY more.
 STRUCT_DIST = 0.03
-STRUCT_PENALTY = 0.08
+STRUCT_PENALTY = 0.0                # disabled: hurts real champions on turrets (measured)
 #: Fountains (normalized) for the recall jump exception.
 _FOUNTAINS = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
 FOUNTAIN_DIST = 0.09

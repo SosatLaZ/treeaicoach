@@ -662,3 +662,25 @@ Structure : **barre latérale** (logo + nom, navigation, pastille d'état, versi
 Règles : toutes les mises à jour de widgets passent par `root.after` (jamais depuis un autre thread) ; toute action utilisateur
 est protégée par try/except + message d'erreur FR (jamais de crash) ; fermeture propre (arrêt engine/voix/overlay, sauvegarde config) ;
 fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; icône de fenêtre = icône de l'app.
+
+## 9. v3 — chef d'orchestre (combat, phases, positionnement, balises, voix)
+
+* `meta.py` + `assets/champion_meta.json` (généré par `tools/fetch_meta.py` : Meraki Analytics + Data Dragon, gratuits) :
+  `profile(alias) -> ChampMeta` (dégâts P/M/X, portée, classes, notes, style engage/pick/poke/burst/dive/sustain/peel/splitpush,
+  courbe early/mid/late).
+* `fight.py` : `FightTracker.update(t, game, me_uv, allies, enemies, ...) -> FightUpdate` ; un combat exige un allié identifié
+  à côté de moi (seul = GANK) ; calculateur `evaluate()` (niveau, or des objets, courbe, PV, arrivées possibles en 5 s, morts)
+  -> `win` 0..1 ; décision FIGHT (>= 60 %) / RECULE (<= 40 % ou PV < 25 %) avec hystérésis et 4 s entre deux bascules.
+* `phase.py` : `map_state(game) -> MapState` (phase laning/mid/late/end, tours / inhibs tombés, dragons / âme, buffs Baron /
+  ancestral, morts + timers) ; `EndGameCaller` (ace -> Baron / finir, carrys morts, ancestral, Baron ennemi, âme, inhibs).
+* `positioning.py` : `PositionCoach` (« Va en bas : dragon dans 60 s », retour en voie, seul en side en fin de partie,
+  regroupement) + score par phase ; `analysis._positioning` / section « Positionnement » du rapport.
+* `wards.py` : table des emplacements de balises (coordonnées minimap, côté bleu, miroir pour le rouge, vérifiées sur la
+  texture) ; `recommend()` (1-3 spots) ; `WardAdvisor` (après un retour, toutes les ~2,5 min, avant un objectif).
+* `voice_policy.VoiceGate` : LA porte unique de la voix (visuel d'abord) : en « minimal » seuls le gank réel, la décision de
+  combat (`call:`) et un avertissement d'objectif sont dits ; règles de concentration (combat, PV bas, ennemis sur moi) ;
+  `SpeechBudget` (1 message / 20 s, 3 / min, file à expiration) ; `triage_gank` (groupé, derrière mes alliés, opportunité ;
+  un gank DANGER sur moi hors combat n'est jamais retardé).
+* `tactics.TacticalDirector` : relie le tout pour `engine.py` (`_tactics_tick`, `_speech_budget`) ; guides minimap
+  (`MapGuide` : flèches repli / objectif / regroupement, spots de balise, max 6 éléments) dans `OverlayState.guides` et
+  grande bannière (`Banner` -> `toasts.render_banner` : « FIGHT 72 % » vert / « RECULE 28 % » rouge, en direct pendant le combat).

@@ -69,6 +69,8 @@ def test_gank_triage_grouped_screened_and_opportunity():
     screen = [Seen("Vi", (0.37, 0.65))]
     assert vp.triage_gank(gank, me_pos=me_uv, allies=screen, enemies=en, game=None)[0] == "text"
     assert vp.triage_gank(gank, me_pos=me_uv, allies=[], enemies=en, game=None, in_fight=True)[0] == "drop"
+    danger = A(AlertKind.JUNGLER_APPROACH, "g", Level.DANGER, alias="LeeSin")      # never downgraded
+    assert vp.triage_gank(danger, me_pos=me_uv, allies=grouped, enemies=en, game=g)[0] == "speak"
 
 
 def test_ward_spots_are_walkable_and_recommendations():
