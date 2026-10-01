@@ -1136,6 +1136,7 @@ class CoachEngine:
         raw_alerts += self._stance_and_tips(t, game, threat)
         if threat < Level.WARNING:
             raw_alerts += self._item_advice(t, game, me_pos, gt)
+        raw_alerts = self._hype_and_ai(t, game, gt, threat, me_pos, raw_alerts)
         if self._fog is not None and not getattr(self._cfg, "safe_mode", False):
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
         rec = self._recorder
@@ -1241,6 +1242,64 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Item advice failed")
             return []
+
+    def _hype_and_ai(self, t: float, game: GameInfo, gt: float, threat: int, me_pos: Any,
+                     alerts: list[Alert]) -> list[Alert]:
+        """hype.py (win probability, caster lines) + ai_advisor.py (optional LLM tip). Never raises."""
+        cfg = self._cfg
+        try:
+            from treeaicoach.ai_advisor import AIAdvisor
+            from treeaicoach.hype import HypeCaster, restyle_praise
+
+            hc, ai = getattr(self, "_hype", None), getattr(self, "_ai", None)
+            if hc is None or ai is None:
+                hc, ai = self._hype, self._ai = HypeCaster(cfg), AIAdvisor(cfg, clock=self._clock)
+            elif gt + 5.0 < getattr(self, "_extras_gt", 0.0):          # new game
+                hc.reset()
+                ai.reset()
+            self._extras_gt = gt
+            hc.apply_config(cfg)
+            ai.apply_config(cfg)
+            summary = self.scoreboard_summary()
+            if hc.style == "caster":
+                alerts = [dataclasses.replace(a, text=restyle_praise(a.key, a.text, "caster"))
+                          if a.kind == AlertKind.PRAISE else a for a in alerts]
+            for line in hc.update(t, game, summary, threat=threat):
+                self._say(line, int(Level.INFO))
+            in_base = False
+            if me_pos is not None:
+                z = geometry.classify_zone(*me_pos)
+                in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
+            ai.update(t, game, in_base=in_base, roles=self._role_resolver, scoreboard=summary,
+                      objectives=self._objectives.states() if self._objectives is not None else [],
+                      item_text=self.item_advice_text(), threat=threat)
+            adv = ai.poll()
+            if adv is not None:
+                self.last_ai_advice = adv.text
+                self._text_msg = (t, adv.text)
+                self.text_messages.append((t, "ai", adv.text))
+                self._toast("insight", "CONSEIL IA", adv.text, None, f"ai:{adv.t:.0f}", t)
+                if getattr(cfg, "ai_speak", False) and threat < Level.WARNING:
+                    self._say(adv.text, int(Level.INFO))
+        except Exception:
+            self._errors += 1
+            self._err.exception("Hype / AI advice failed")
+        return alerts
+
+    def win_probability(self) -> float | None:
+        """Live probability (0..1) that my team wins (hype.py model), None outside a game."""
+        hc = getattr(self, "_hype", None)
+        return hc.win_probability() if hc is not None and self._in_game else None
+
+    def hype_stats(self) -> dict:
+        """Win-probability statistics of the current / last game (shareable summary)."""
+        hc = getattr(self, "_hype", None)
+        return hc.stats() if hc is not None else {}
+
+    def ai_status(self) -> tuple[int, str | None]:
+        """``(sequence, French error)`` of the optional AI advisor (the sequence changes per new error)."""
+        ai = getattr(self, "_ai", None)
+        return ai.status() if ai is not None else (0, None)
 
     def item_advice_text(self) -> str | None:
         """Current build advice line for the UI / HUD ("Prochain objet : ..."), None if none."""
@@ -1915,8 +1974,8 @@ class CoachEngine:
             stance=getattr(self._stance.current(), "level", None) if self._stance is not None else None,
             stance_reason=getattr(self._stance.current(), "reason", None) if self._stance is not None else None,
             show_allies=bool(getattr(cfg, "overlay_show_allies", False)),
-            show_roles=bool(getattr(cfg, "overlay_show_roles", False)) and bool(getattr(cfg, "layer_roles", True)),
-            show_ghosts=bool(getattr(cfg, "overlay_show_ghosts", False)) and bool(getattr(cfg, "layer_ghosts", True)),
+            show_roles=bool(getattr(cfg, "overlay_show_roles", False)) or bool(getattr(cfg, "layer_roles", False)),
+            show_ghosts=bool(getattr(cfg, "overlay_show_ghosts", False)) or bool(getattr(cfg, "layer_ghosts", False)),
             hud_detailed=bool(getattr(cfg, "hud_detailed", False)),
             me_icon=self._icon(game.me.champion_alias, game.me.skin_id) if game and game.me else None,
             allies=allies, roles=roles,
@@ -1926,7 +1985,11 @@ class CoachEngine:
     def _scoreboard_hud_line(self) -> str | None:
         try:
             s = self.scoreboard_summary()
-            return s.hud_line() if s is not None else None
+            line = s.hud_line() if s is not None else None
+            wp = self.win_probability() if getattr(self._cfg, "win_prob_hud", True) else None
+            if wp is not None:
+                line = f"{line} · victoire {int(round(100 * wp))} %" if line else f"Victoire {int(round(100 * wp))} %"
+            return line
         except Exception:
             return None
 

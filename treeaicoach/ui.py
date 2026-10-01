@@ -2194,7 +2194,36 @@ class CoachApp:
             values = list(HOTKEY_CHOICES) + ([cur] if cur not in HOTKEY_CHOICES else [])
             self._choice_row(s, field, title, desc, [("" if v == "Désactivé" else v, v) for v in values],
                              width=150)
+        try:
+            self._build_coach_extras(body, 6)
+        except Exception:
+            log.exception("Cannot build the build-advice / caster sections")
         return page
+
+    def _build_coach_extras(self, body: Any, row: int) -> None:
+        """Alertes page: build advice switches + "mode annonceur" (hype.py)."""
+        if hasattr(self.cfg, "item_advice"):
+            s = self._section(body, row, "Conseils d'achat", "Le prochain objet adapté à la partie (soins "
+                              "adverses, ennemi fed, dégâts magiques…), d'après l'API officielle.", icon="star")
+            self._switch_row(s, "item_advice", "Conseils d'achat", "Ligne « Prochain objet » dans le HUD.")
+            self._switch_row(s, "item_advice_toasts", "Bandeau à l'écran",
+                             "Affiche le conseil en bandeau au retour en base, à la mort, aux niveaux 6/11/16.")
+            self._switch_row(s, "item_advice_speak", "Lire les conseils d'achat à voix haute",
+                             "Désactivé par défaut : le conseil reste écrit.")
+        if hasattr(self.cfg, "caster_style"):
+            from treeaicoach.hype import STYLE_LABELS  # noqa: PLC0415
+
+            s = self._section(body, row + 1, "Mode annonceur",
+                              "Probabilité de victoire en direct et, en style « Caster esport », des annonces "
+                              "enflammées pour les grands moments (multikill, shutdown, ace, vol de Baron).",
+                              icon="sparkle")
+            self._choice_row(s, "caster_style", "Style", "Sobre : rien n'est lu · Coach : la probabilité de "
+                             "victoire est lue sur les gros retournements (+/-15 points, 3 min max) · Caster : "
+                             "en plus, des annonces de commentateur.", STYLE_LABELS, segmented=True)
+            if hasattr(self.cfg, "win_prob_hud"):
+                self._switch_row(s, "win_prob_hud", "Afficher la probabilité de victoire",
+                                 "Dans le HUD et le tableau de bord (modèle sur l'or, kills, tours, dragons, "
+                                 "Baron et Elder).")
 
     def _row_desc(self, slot: Any) -> Any:
         """The description label of the row owning ``slot`` (created empty if the row had none)."""
@@ -2487,6 +2516,9 @@ class CoachApp:
         b = self._button(right, "Dossier", self.open_games_dir, "secondary", icon="folder")
         b.grid(row=0, column=2)
         self._tip(b, "Ouvrir le dossier des parties et des rapports")
+        b = self._button(right, "Copier le résumé", self.copy_share_summary, "secondary", icon="copy")
+        b.grid(row=0, column=3, padx=(8, 0))
+        self._tip(b, "Copie un résumé de ta dernière partie à partager (Discord, réseaux).")
         self.session_scope = self._label(body, "SESSION", self.fonts.caps, DIM, anchor="w")
         self.session_scope.grid(row=0, column=0, sticky="w", pady=(0, 6))
         cards = ctk.CTkFrame(body, fg_color="transparent")
@@ -2754,10 +2786,99 @@ class CoachApp:
         _row, slot = self._row(s, "Réinitialiser", "Remet tous les réglages par défaut.")
         self._button(slot, "Réinitialiser", self.ask_reset, "danger").grid(row=0, column=0)
         try:
-            self._build_updates_section(body, 5)
+            self._build_ai_section(body, 5)
+        except Exception:
+            log.exception("Cannot build the AI section")
+        try:
+            self._build_updates_section(body, 6)
         except Exception:
             log.exception("Cannot build the updates section")
         return page
+
+    # ------------------------------------------------------------------ optional AI advice (ai_advisor.py)
+    def _build_ai_section(self, body: Any, row: int) -> None:
+        if not hasattr(self.cfg, "ai_provider"):
+            return
+        from treeaicoach import ai_advisor  # noqa: PLC0415
+
+        s = self._section(body, row, "IA (facultatif)", "Un conseil d'achat et de macro écrit par une IA aux "
+                          "moments clés (retour en base, mort, niveaux 6/11/16, 60 s avant dragon / Baron). "
+                          "Désactivé par défaut ; ta clé reste sur ce PC et aucun pseudo n'est envoyé.",
+                          icon="sparkle")
+        self._choice_row(s, "ai_provider", "Fournisseur", "Gemini, Groq et OpenRouter ont une offre gratuite ; "
+                         "Ollama tourne sur ton PC.", ai_advisor.PROVIDER_CHOICES, width=260)
+        _row, slot = self._row(s, "Clé API", "Collée ici, enregistrée localement (jamais exportée).")
+        key_entry = self.ctk.CTkEntry(slot, width=260, show="•", placeholder_text="Clé du fournisseur")
+        if self.cfg.ai_api_key:
+            key_entry.insert(0, self.cfg.ai_api_key)
+        key_entry.grid(row=0, column=0)
+        save_key = self.cb(lambda _e=None: self.set_option("ai_api_key", key_entry.get().strip()))
+        key_entry.bind("<FocusOut>", save_key, add="+")
+        key_entry.bind("<Return>", save_key, add="+")
+        self._ai_key_entry = key_entry
+        _row, slot = self._row(s, "Modèle", "Vide = modèle par défaut (gemini-2.0-flash, llama-3.3-70b-versatile, "
+                               "…:free, llama3.1, claude-haiku-4-5).")
+        model_entry = self.ctk.CTkEntry(slot, width=260, placeholder_text="par défaut")
+        if self.cfg.ai_model:
+            model_entry.insert(0, self.cfg.ai_model)
+        model_entry.grid(row=0, column=0)
+        save_model = self.cb(lambda _e=None: self.set_option("ai_model", model_entry.get().strip()))
+        model_entry.bind("<FocusOut>", save_model, add="+")
+        model_entry.bind("<Return>", save_model, add="+")
+        self._ai_model_entry = model_entry
+        _row, slot = self._row(s, "Tester la connexion", "Envoie une petite question de test au fournisseur.")
+        self._ai_test_btn = self._button(slot, "Tester", self.test_ai, "secondary", icon="check")
+        self._ai_test_btn.grid(row=0, column=0)
+        box = self.ctk.CTkFrame(s, fg_color="transparent")
+        box.grid(row=2 * s._rows, column=0, sticky="ew", pady=(0, 6))
+        box.grid_columnconfigure(0, weight=1)
+        s._rows += 1
+        self._ai_status = self._label(box, "", self.fonts.small, MUTED, anchor="w", justify="left",
+                                      wraplength=620)
+        self._ai_status.grid(row=0, column=0, sticky="w")
+        self._switch_row(s, "ai_speak", "Lire le conseil IA à voix haute", "Désactivé par défaut : le conseil "
+                         "s'affiche en bandeau et dans le HUD.")
+        links = self.ctk.CTkFrame(s, fg_color="transparent")
+        links.grid(row=2 * s._rows, column=0, sticky="ew", pady=(4, 6))
+        s._rows += 1
+        self._label(links, "Obtenir une clé gratuite :", self.fonts.tiny, MUTED, anchor="w").grid(
+            row=0, column=0, sticky="w", padx=(0, 8))
+        for i, (label, url) in enumerate((("Gemini", "https://aistudio.google.com/apikey"),
+                                          ("Groq", "https://console.groq.com/keys"),
+                                          ("OpenRouter", "https://openrouter.ai/keys"),
+                                          ("Ollama (local)", "https://ollama.com"))):
+            lnk = self._label(links, label, self.fonts.tiny, TEAL, anchor="w", cursor="hand2")
+            lnk.grid(row=0, column=i + 1, sticky="w", padx=(0, 10))
+            lnk.bind("<Button-1>", self.cb(lambda _e=None, u=url: webbrowser.open(u)), add="+")
+            self._tip(lnk, url)
+
+    def _set_ai_status(self, text: str, color: str = MUTED) -> None:
+        lbl = getattr(self, "_ai_status", None)
+        if lbl is not None:
+            try:
+                lbl.configure(text=text, text_color=color)
+            except Exception:
+                pass
+
+    @_guarded
+    def test_ai(self) -> None:
+        """"Tester" button: one request to the chosen provider (background thread)."""
+        for field, entry in (("ai_api_key", getattr(self, "_ai_key_entry", None)),
+                             ("ai_model", getattr(self, "_ai_model_entry", None))):
+            if entry is not None and entry.get().strip() != getattr(self.cfg, field, ""):
+                self.set_option(field, entry.get().strip())
+        from treeaicoach import ai_advisor  # noqa: PLC0415
+
+        cfg = self.cfg
+        self._set_ai_status("Test en cours…")
+
+        def done(res: Any) -> None:
+            ok, msg = res
+            self._set_ai_status(msg, SAFE if ok else DANGER)
+
+        self._dispatcher.run(lambda: ai_advisor.check_connection(cfg), done,
+                             self.cb(lambda e: self._set_ai_status(f"Test impossible : {e}", DANGER)),
+                             name="TreeAI-ui-ai-test")
 
     # ------------------------------------------------------------------ updates (updater.py)
     def _build_updates_section(self, body: Any, row: int) -> None:
@@ -2928,7 +3049,8 @@ class CoachApp:
     @_guarded
     def reset_settings(self) -> None:
         keep = {"manual_minimap_rect": self.cfg.manual_minimap_rect, "ui_geometry": self.cfg.ui_geometry}
-        for k in ("ui_onboarding_done", "ui_seen_changelog", "ui_last_page", "github_token", "icon_scale_by_res"):
+        for k in ("ui_onboarding_done", "ui_seen_changelog", "ui_last_page", "github_token", "ai_api_key",
+                  "icon_scale_by_res"):
             if hasattr(self.cfg, k):
                 keep[k] = getattr(self.cfg, k)
         new = dataclasses.replace(Config(), **keep).validated()
@@ -3366,6 +3488,44 @@ class CoachApp:
 
         self._dispatcher.run(job, done, self.cb(lambda e: self.show_error(f"Rapport impossible : {e}")),
                              name="TreeAI-ui-last-report")
+
+    @_guarded
+    def copy_share_summary(self) -> None:
+        """Copy a shareable summary of the most recent game (hype.share_summary) to the clipboard."""
+        eng = self.engine
+        stats = {}
+        try:
+            fn = getattr(eng, "hype_stats", None)
+            stats = fn() if callable(fn) else {}
+        except Exception:
+            stats = {}
+
+        def job() -> str | None:
+            fn = _report_function("list_games")
+            games = [g for g in (fn(5) or []) if isinstance(g, dict)] if fn is not None else []
+            if not games:
+                return None
+            best = max(games, key=lambda g: game_datetime(g) or _dt.datetime.min)
+            src = _game_json_path(best)
+            if src is None or not Path(src).is_file():
+                return None
+            import json  # noqa: PLC0415
+
+            from treeaicoach.analysis import analyze_game  # noqa: PLC0415
+            from treeaicoach.hype import share_summary  # noqa: PLC0415
+
+            return share_summary(analyze_game(json.loads(Path(src).read_text(encoding="utf-8"))), stats)
+
+        def done(text: str | None) -> None:
+            if not text:
+                self.show_toast("Aucune partie enregistrée pour l'instant.")
+                return
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.show_toast("Résumé copié : colle-le (Ctrl+V) où tu veux.")
+
+        self._dispatcher.run(job, done, self.cb(lambda e: self.show_error(f"Résumé impossible : {e}")),
+                             name="TreeAI-ui-share")
 
     @_guarded
     def clear_journal(self) -> None:
@@ -3870,6 +4030,7 @@ class CoachApp:
             if key == "STOPPED" and not msg:
                 msg = "Clique sur « Démarrer l'analyse » pour suivre ta prochaine partie."
         title, color = STATE_INFO.get(key, (key.title(), GOLD))
+        msg = self._with_extras(msg, key)
         self._set_text(self.state_title, title)
         self._set_text(self.state_msg, msg or " ")
         self._state_color = color
@@ -3933,6 +4094,28 @@ class CoachApp:
             self._sync_quick(muted)
         if self._current_page == "dashboard":
             self._draw_gauge_step()
+
+    def _with_extras(self, msg: str, key: str) -> str:
+        """Win probability (hype.py) appended to the dashboard message; new AI error shown once."""
+        eng = self.engine
+        if eng is None:
+            return msg
+        try:
+            status = getattr(eng, "ai_status", None)
+            if callable(status):
+                seq, text = status()
+                if text and seq != getattr(self, "_ai_status_seq", 0):
+                    self._ai_status_seq = seq
+                    self._set_ai_status(text, DANGER)
+                    self.show_error(text)
+            wp = getattr(eng, "win_probability", None)
+            p = wp() if callable(wp) and key == "RUNNING" and getattr(self.cfg, "win_prob_hud", True) else None
+            if isinstance(p, (int, float)):
+                return f"{msg} · Probabilité de victoire : {int(round(100 * p))} %" if msg else \
+                    f"Probabilité de victoire : {int(round(100 * p))} %"
+        except Exception:
+            log.debug("win probability / AI status unavailable", exc_info=True)
+        return msg
 
     def _dismiss_banner(self) -> None:
         self._banner_dismissed = self.banner_lbl.cget("text")

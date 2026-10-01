@@ -268,10 +268,10 @@ class Config:
     # v1.5 overlay look (read by the overlay with getattr)
     overlay_opacity: float = 1.0     # 0.3..1.0
     overlay_scale: float = 1.0       # 0.6..1.6 (markers / HUD size)
-    layer_roles: bool = True         # role badges on the minimap layer
+    layer_roles: bool = False        # role badges on the minimap layer
     layer_arrows: bool = True        # movement arrows
     layer_zones: bool = True         # danger / warning circles
-    layer_ghosts: bool = True        # last-seen "ghost" portraits in the fog
+    layer_ghosts: bool = False       # last-seen "ghost" portraits in the fog
     colorblind: bool = False         # colour-blind friendly palette (UI + overlay)
     # v1.5 interface
     ui_last_page: str = "dashboard"

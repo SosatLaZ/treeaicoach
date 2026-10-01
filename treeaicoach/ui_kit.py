@@ -370,7 +370,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         "alert_jungler_spotted": True, "alert_laner_mia": False, "objective_timers": True,
         "recall_reminder": True, "control_ward_reminder": True, "voice_info_alerts": True,
         "sensitivity": 1.0, "danger_flash": True, "hud_enabled": True, "fog_mode": "jungler",
-        "layer_roles": True, "layer_arrows": True, "layer_zones": True, "layer_ghosts": True,
+        "layer_roles": False, "layer_arrows": True, "layer_zones": True, "layer_ghosts": False,
         "overlay_opacity": 1.0,
     },
     "complet": {
