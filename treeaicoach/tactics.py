@@ -34,6 +34,7 @@ MAX_GUIDES = 6
 CALL_BANNER_S = 2.2            # short call banner ("BARON !") duration
 GUIDE_S = {"objective": 14.0, "retreat": 6.0, "group": 12.0, "lane": 10.0, "alone": 10.0, "push": 10.0,
            "call": 12.0}
+WRITTEN_GANK_GAP_S = 12.0      # a gank alert turned into text is written at most this often
 HOLD_PRAISE_S = 45.0           # praise held during a fight is released after it (if fresh)
 PRIORITY = {"retreat": 100, "alone": 95, "call": 90, "objective": 80, "push": 75, "group": 60, "lane": 50,
             "ward": 40}
@@ -119,6 +120,7 @@ class TacticalDirector:
             self._held: list[tuple[float, Alert]] = []
             self._ctx = self._ctx_cls()
             self._seen: tuple = ((), (), None)
+            self._written_t: dict[str, float] = {}
 
     # ------------------------------------------------------------------ public state
     def speech_context(self) -> Any:
@@ -334,7 +336,12 @@ class TacticalDirector:
             if dec == "speak":
                 keep.append(a)
             elif dec == "text":
-                written.append(a)
+                k = f"{a.kind}:{a.alias}"
+                with self._lock:
+                    last = self._written_t.get(k)
+                    if last is None or a.t - last >= WRITTEN_GANK_GAP_S:
+                        self._written_t[k] = a.t
+                        written.append(a)
             elif dec == "opportunity":
                 written.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=text or a.text,
                                      key=f"macro_tip:opportunity:{a.alias}", t=a.t, alias=a.alias))

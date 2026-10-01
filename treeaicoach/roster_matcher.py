@@ -127,6 +127,47 @@ MIN_CALIB_QUALITY = 0.62
 CALIB_TOP_K = 3
 CALIB_PRIOR_WEIGHT = 1.5
 
+# --- temporal tracking (per champion) -------------------------------------------------
+#: Frames between two full searches (every champion over the whole map: refreshes the
+#: uniqueness margins and the background statistics, catches a track stuck on a wrong spot).
+FULL_EVERY = 12
+#: A tracked champion is searched only in a small window around its predicted position;
+#: after this many consecutive local misses (or TRACK_FRESH_S without a match) it is
+#: searched over the whole map again (in the same frame when the local search fails).
+TRACK_FRESH_S = 1.5
+#: Champion speed bound (normalized map units / s: ~1350 game units / s, fast champion
+#: with haste) and slack (flash / dash / detection noise), for the impossible-jump test.
+MAX_SPEED = 0.09
+JUMP_SLACK = 0.035
+#: Local search window radius = LOCAL_SLACK + MAX_SPEED x dt (normalized).
+LOCAL_SLACK = 0.022
+#: Evidence penalty of an impossible jump (far from the track, not confirmed by a second
+#: frame, not to the champion's fountain): a strong match still passes.
+JUMP_PENALTY = 0.15
+#: Tracks older than this are forgotten for the jump test (long fog: anywhere is possible).
+JUMP_MEMORY_S = 6.0
+#: Smoothing of the reported confidence (weight of the new frame).
+CONF_SMOOTH = 0.5
+#: The local player: kept at its predicted position for up to SELF_COAST_S when its icon is
+#: momentarily not matched (stacked under an enemy, ping on it...), threshold relaxed by
+#: SELF_RELAX near its track or near the camera rectangle centre (camera locked).
+SELF_COAST_S = 1.2
+SELF_RELAX = 0.1
+SELF_CAM_DIST = 0.06
+#: Occlusion: candidates down to OCC_RANGE below the threshold are re-scored on their
+#: visible part only (partial disc masks, without the pixels of overlapping accepted icons
+#: and of white lines / texts), minus OCC_PENALTY (fewer pixels: chance matches are easier).
+OCC_RANGE = 0.3
+OCC_PENALTY = 0.05
+OCC_MIN_NCC = 0.4
+#: Structure glyphs (turrets, inhibitors, nexus) have team-coloured rings: a candidate
+#: this close (normalized) to a structure of the same colour needs STRUCT_PENALTY more.
+STRUCT_DIST = 0.03
+STRUCT_PENALTY = 0.08
+#: Fountains (normalized) for the recall jump exception.
+_FOUNTAINS = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
+FOUNTAIN_DIST = 0.09
+
 # Initial ring colours (BGR), learned live afterwards.
 _RING_INIT_BGR: dict[str, tuple[int, int, int]] = {
     "enemy": (51, 51, 200),
@@ -490,9 +531,47 @@ class MatchInfo:
 
 
 @dataclass
+class _Track:
+    """Temporal state of one roster champion (normalized coordinates)."""
+
+    u: float
+    v: float
+    t: float                            # time of the last match
+    vu: float = 0.0                     # velocity (normalized units / s)
+    vv: float = 0.0
+    conf: float = 0.0                   # smoothed confidence
+    margin: float = UNIQUE_CAP          # uniqueness margin of the last whole-map search
+    hits: int = 0
+    misses: int = 0                     # consecutive frames without a match
+    pend: tuple | None = None           # (u, v, t) far candidate awaiting confirmation
+
+    def predict(self, t: float) -> tuple[float, float]:
+        dt = min(max(t - self.t, 0.0), 0.5)
+        return self.u + self.vu * dt, self.v + self.vv * dt
+
+
+@dataclass
+class _Cand:
+    """A candidate position of one champion (working px, continuous centre)."""
+
+    i: int
+    x: float
+    y: float
+    ncc: float
+    ev: float                           # evidence (NCC + uniqueness / track margin)
+    local: bool = False
+    tot: float = 0.0                    # final score (evidence + ring + penalties)
+    f_en: float = 0.0
+    f_al: float = 0.0
+    ring: Any = None
+    note: str = ""
+
+
+@dataclass
 class _State:
     scale: float | None = None          # calibrated icon diameter / minimap width
     frames: int = 0
+    last_full: int = -10 ** 9           # frame of the last full search
     since_calib: int = 0
     calib: list = field(default_factory=list)       # (scale, quality) of the first frames
     conf_hist: list = field(default_factory=list)   # confident matches per frame
@@ -524,6 +603,12 @@ class RosterMatcher:
         self.last_time_ms: float = 0.0
         self.last_threshold: float = THR_MIN
         self.last_calib_ms: float = 0.0
+        #: "full" / "tracked" search of the last detect() call (diagnostics, benchmarks).
+        self.last_mode: str = ""
+        self._tracks: dict[int, _Track] = {}
+        self._my_team: str | None = None
+        self._cam: tuple[int, tuple[float, float] | None] = (-10 ** 9, None)
+        self._structs: list[tuple[float, float, str]] | None = None
 
     # ------------------------------------------------------------------ roster
     @property
@@ -566,6 +651,8 @@ class RosterMatcher:
                 # a new game: new calibration (the stored ratio is the prior), new colours
                 self._state = _State()
                 self.rings.reset()
+                self._tracks = {}
+                self._cam = (-10 ** 9, None)
 
     def set_roster(self, game: Any) -> None:
         """Build the portrait templates from a ``GameInfo`` (None clears). Never raises."""
@@ -611,6 +698,7 @@ class RosterMatcher:
                                         team=str(getattr(p, "team", "") or "") or None,
                                         exact=exact))
             self._game = game
+            self._my_team = str(getattr(me, "team", "") or "") or None
             old = [(e.alias, e.skin_id, e.relation, e.exact) for e in self._entries]
             if old == [(e.alias, e.skin_id, e.relation, e.exact) for e in ents]:
                 return

@@ -387,7 +387,9 @@ def triage_gank(alert: Any, *, me_pos: Any, allies: list[Any], enemies: list[Any
             return "speak", None
         from treeaicoach import geometry
 
-        near = [a for a in allies if getattr(a, "uv", None) is not None and geometry.dist(a.uv, me_pos) < GROUPED_R]
+        # identified allies only (an anonymous "ally" icon is often a misread enemy)
+        allies = [a for a in allies if getattr(a, "uv", None) is not None and getattr(a, "alias", None)]
+        near = [a for a in allies if geometry.dist(a.uv, me_pos) < GROUPED_R]
         members = [str(m).lower() for m in (getattr(alert, "members", ()) or ())]
         alias = str(getattr(alert, "alias", "") or "").lower()
         if alias and alias not in members:
@@ -486,6 +488,7 @@ class VoiceGate:
     def reset(self) -> None:
         with self._lock:
             self._gank_t = -math.inf
+            self._gank_text: dict[str, float] = {}
             self.stats = {"voice": 0, "text": 0, "drop": 0}
         self.budget.reset()
 
@@ -511,13 +514,18 @@ class VoiceGate:
         if kind in GANK_KINDS:
             if ctx.in_fight or ctx.dead or ctx.in_base:
                 return "drop"
-            if conf < CONFIDENCE_MIN:
-                return "text"
             with self._lock:
                 recent = 0.0 <= t - self._gank_t < GANK_REPEAT_S
-            if recent and ctx.enemy_in_danger:
-                return "text"                                # already called: the flash shows it
-            return "voice"
+            if conf >= CONFIDENCE_MIN and not (recent and ctx.enemy_in_danger):
+                return "voice"
+            # uncertain, or the DANGER call was already made (the flash shows it): written, once
+            with self._lock:
+                k = f"{getattr(kind, 'value', kind)}:{getattr(alert, 'alias', None)}"
+                last = self._gank_text.get(k)
+                if last is not None and 0.0 <= t - last < GANK_REPEAT_S:
+                    return "drop"
+                self._gank_text[k] = t
+            return "text"
         if kind in ALWAYS_VOICE:
             return "voice"                                   # the player asked (F9)
         if route(alert, level) != "voice":
@@ -528,9 +536,9 @@ class VoiceGate:
 
     def note_spoken(self, alert: Any, t: float) -> None:
         """Remember a message that was actually spoken (gank repeat rule)."""
-        if getattr(alert, "kind", None) in GANK_KINDS:
+        if getattr(alert, "kind", None) in GANK_KINDS and int(getattr(alert, "level", 0) or 0) >= 2:
             with self._lock:
-                self._gank_t = float(t)
+                self._gank_t = float(t)                       # the DANGER call ("Gank ! ..., recule !")
 
     def filter_speech(self, alerts: list[Any], t: float, ctx: SpeechContext | None = None) -> list[Any]:
         """Budget pass on the alerts about to be spoken (critical ones always pass). During high

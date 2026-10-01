@@ -378,7 +378,9 @@ class FightTracker:
         dead_aliases = {a for a, p in players.items() if bool(getattr(p, "is_dead", False))}
         vis_en = [e for e in enemies if e.visible and e.uv is not None
                   and str(e.alias or "").lower() not in dead_aliases]
-        vis_al = [a for a in allies if a.uv is not None and str(a.alias or "").lower() not in dead_aliases]
+        # anonymous "ally" icons are often a misread enemy / my own icon: only identified allies count
+        vis_al = [a for a in allies if a.uv is not None and a.alias
+                  and str(a.alias).lower() not in dead_aliases]
         cond = False
         near_en: list[Seen] = []
         near_al: list[Seen] = []
@@ -396,13 +398,13 @@ class FightTracker:
                 pass
             laning = getattr(st_map, "phase", "laning") == "laning"
             non_lane = [e for e in near_en if str(e.alias or "").lower() not in lane_opps]
-            if not in_base:
-                if n_al >= 2 and n_en >= 2 and (not laning or non_lane or n_al + n_en >= 5):
+            if not in_base and n_al >= 2:           # alone against enemies = a GANK (gank alerts speak)
+                if n_en >= 2 and (not laning or non_lane or n_al + n_en >= 5):
                     cond = True
                 elif n_al + n_en >= 4 and n_en >= 1 and (non_lane or not laning):
                     cond = True
-                elif len(in_danger) >= 2 and n_al >= 2:
-                    cond = True                     # dived next to an ally (alone: it is a gank)
+                elif len(in_danger) >= 2:
+                    cond = True
                 elif n_en >= 1 and self._recent_kill_near(game, gt, me_uv, vis_al, players):
                     cond = True
         prev = self._state
