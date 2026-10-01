@@ -159,6 +159,17 @@ class OverlayState:
     guides: list = field(default_factory=list)  # tactics.MapGuide list, highest priority first
     phase: str | None = None                  # "laning" | "mid" | "late" | "end" (phase.py)
     role_notice: str | None = None            # "Rôle détecté : MID (échange de voie)" (roles.RoleResolver)
+    # ward guide in the game view (ward_guide.WorldMarker list, screen px): ground marker / edge arrow
+    world: list = field(default_factory=list)
+    # HUD v3 card: "jouer plus fort ou non" gauge + ONE advice line (fade) + 2 chips
+    gauge: int | None = None                  # -2 SAFE .. 2 ATTAQUE (coach.PlayGauge); None: from ``stance``
+    gauge_reason: str | None = None           # short reason ("combat gagnable (68 % de chances)")
+    gauge_since: float | None = None          # monotonic time the step was shown (fade)
+    tip_tone: str | None = None               # "danger" | "warning" | "go" | "info": accent colour
+    tip_since: float | None = None            # monotonic time the advice line appeared (fade)
+    item_hint: str | None = None              # "Achète Zhonya (3 250 or)": chip, in base only
+    in_base: bool = False
+    ai_counter: str | None = None             # "IA 3/5": chip when nothing more useful
 
 
 # ======================================================================================
@@ -1397,7 +1408,10 @@ def _draw_guides(cv_: Canvas, guides: list[Any], me: tuple[float, float] | None,
             r = (0.024 + 0.004 * pulse) * S
             cv_.disc(x, y, r, PANEL_DEEP, 0.35)
             cv_.ring(x, y, r, max(1.2, 1.3 * k), rgb, 0.65 + 0.3 * pulse, dash=(2.6 * k + 1, 2.0 * k + 1))
-            if ward is not None:
+            if bool(getattr(g, "done", False)):          # ward placed (ward_guide): small check mark
+                _check_glyph(cv_, x, y, max(5.0, 0.03 * S), BLACK, 0.6)
+                _check_glyph(cv_, x, y - 0.5, max(4.5, 0.027 * S), rgb, 1.0)
+            elif ward is not None:
                 cv_.image(x, y, sprite_patch(ward, max(6.0, 0.032 * S), 0.9))
             drawn += 1
             continue
@@ -1490,52 +1504,131 @@ def _jungler_text(state: OverlayState) -> str:
     return text.replace(" — ", " · ")
 
 
-def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
-    pad = 9 * k
-    inner = width - 2 * pad
-    fonts = {
-        "threat": get_font(round(12.5 * k), "bold"),
-        "clock": get_font(round(10.5 * k), "semibold"),
-        "body": get_font(round(11 * k), "regular"),
-        "body_bold": get_font(round(11 * k), "bold"),
-        "tag": get_font(max(7, round(8 * k)), "bold"),
-        "small": get_font(max(7, round(9 * k)), "semibold"),
-        "obj": get_font(round(10.5 * k), "semibold"),
-    }
-    rows: list[tuple[str, float]] = [("threat", 26 * k)]
-    detailed = bool(getattr(state, "hud_detailed", False))
-    stance = getattr(state, "stance", None)
-    stance = stance if isinstance(stance, str) and stance in STANCE_STYLE else None
-    if stance:
-        rows.append(("stance", 18 * k))
-    jl = _jungler_text(state) if detailed else ""
-    if jl:
-        rows.append(("jungler", 20 * k))
-    slot_w = inner / 5.0
-    icon_d = min(32 * k, slot_w - 12 * k)
-    if detailed:
-        rows.append(("enemies", icon_d + 17 * k))
-    # ONE written line: the rotating tip (tips.TipRotator), else the coach's live insight
-    tip = getattr(state, "tip", None)
-    insight = tip if isinstance(tip, str) and tip.strip() else getattr(state, "insight", None)
-    insight = insight.strip() if isinstance(insight, str) else ""
-    if insight:
-        rows.append(("insight", 16 * k))
+#: "Jouer plus fort ou non" gauge (coach.PlayGauge): step -> (word, colour). 5 bars: more bars = play harder.
+GAUGE_STYLE: dict[int, tuple[str, tuple[int, int, int]]] = {
+    2: ("ATTAQUE", SAFE), 1: ("PLUS FORT", (120, 214, 150)), 0: ("NORMAL", (196, 190, 172)),
+    -1: ("PRUDENT", WARNING), -2: ("SAFE", DANGER),
+}
+STANCE_TO_GAUGE: dict[str, int] = {"agressif": 1, "equilibre": 0, "prudent": -1}
+#: accent bar / advice tone colours (calm = gold)
+TONE_RGB: dict[str, tuple[int, int, int]] = {"danger": DANGER, "warning": WARNING, "go": SAFE, "info": GOLD}
+HUD_FADE_S = 0.25               # fade-in of a new advice line / gauge step
+CARD_BG = (8, 15, 27)
+CARD_BG_TOP = (18, 28, 46)
+ADVICE_RGB = (246, 244, 236)
+
+
+def _gauge_step(state: OverlayState) -> int | None:
+    g = getattr(state, "gauge", None)
+    try:
+        if g is not None and _finite(g):
+            return int(min(max(int(g), -2), 2))
+    except (TypeError, ValueError):
+        pass
+    st = getattr(state, "stance", None)
+    return STANCE_TO_GAUGE.get(st) if isinstance(st, str) else None
+
+
+def _fade(since: Any, now: float) -> float:
+    """0..1 smooth fade-in over :data:`HUD_FADE_S` after ``since`` (1 when unknown)."""
+    try:
+        if since is None or not _finite(since, now):
+            return 1.0
+        d = float(now) - float(since)
+        if d < -0.05:                       # other clock / in the future: no fade
+            return 1.0
+        a = min(max(d / HUD_FADE_S, 0.0), 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return a * a * (3.0 - 2.0 * a)
+
+
+def _short_role_notice(text: str) -> str:
+    """"Rôle détecté : MID (échange de voie)" -> "Rôle : MID (échange de voie)"."""
+    return text.replace("Rôle détecté :", "Rôle :").strip()
+
+
+def _hud_chips(state: OverlayState) -> list[tuple[str, str, tuple[int, int, int], Any]]:
+    """At most 2 small chips ``(kind, text, colour, icon)``: next objective, then the most useful
+    of item to buy (in base) / role notice / reminder / AI counter."""
+    chips: list[tuple[str, str, tuple[int, int, int], Any]] = []
     objs = _objective_rows(state)
     if objs:
-        rows.append(("objectives", 18 * k))
-    hint = (state.hint or "").strip()
-    if hint:
-        rows.append(("hint", 16 * k))
+        label, icon, text, colour = objs[0]
+        chips.append(("objective", f"{label} {text}", colour, icon))
+    extra: list[tuple[str, str, tuple[int, int, int], Any]] = []
+    item = str(getattr(state, "item_hint", "") or "").strip()
+    if item and getattr(state, "in_base", False):
+        extra.append(("item", item, GOLD_LIGHT, None))
     notice = str(getattr(state, "role_notice", "") or "").strip()
     if notice:
-        rows.append(("role", 16 * k))
-    gap = 6 * k
-    height = pad + sum(h for _, h in rows) + gap * (len(rows) - 1) + pad
-    return {"pad": pad, "inner": inner, "fonts": fonts, "rows": rows, "gap": gap, "height": int(math.ceil(height)),
-            "jl": jl, "slot_w": slot_w, "icon_d": icon_d, "objs": objs, "hint": hint,
-            "insight": insight, "stance": stance, "notice": notice,
-            "stance_reason": str(getattr(state, "stance_reason", "") or "").strip()}
+        extra.append(("role", _short_role_notice(notice), _mix(TEAL, WHITE, 0.45), None))
+    hint = str(getattr(state, "hint", "") or "").strip()
+    if hint:
+        extra.append(("hint", hint, GOLD_LIGHT, None))
+    ai = str(getattr(state, "ai_counter", "") or "").strip()
+    if ai:
+        extra.append(("ai", ai, _mix(TEAL, WHITE, 0.35), None))
+    return (chips + extra)[:2]
+
+
+def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
+    ms, mt, mb = round(5 * k), round(3 * k), round(8 * k)          # soft shadow margins
+    cx0, cw = float(ms), float(width - 2 * ms)
+    left = cx0 + 15 * k                                             # after the accent bar
+    right = cx0 + cw - 11 * k
+    inner = right - left
+    fonts = {
+        "head": get_font(round(11.5 * k), "bold"),
+        "reason": get_font(max(7, round(9.5 * k)), "regular"),
+        "clock": get_font(max(7, round(9.5 * k)), "semibold"),
+        "advice": get_font(round(12.5 * k), "semibold"),
+        "chip": get_font(max(7, round(9.5 * k)), "semibold"),
+        "body": get_font(round(11 * k), "regular"),
+        "tag": get_font(max(7, round(8 * k)), "bold"),
+        "small": get_font(max(7, round(9 * k)), "semibold"),
+    }
+    lvl = 0
+    try:
+        if _finite(state.threat_level or 0):
+            lvl = int(min(max(int(state.threat_level or 0), 0), 2))
+    except (TypeError, ValueError):
+        lvl = 0
+    rows: list[tuple[str, float]] = [("header", 18 * k)]
+    gaps: list[float] = []
+    tip = getattr(state, "tip", None)
+    advice = tip if isinstance(tip, str) and tip.strip() else getattr(state, "insight", None)
+    advice = " ".join(advice.split()) if isinstance(advice, str) else ""
+    lines = wrap_text(advice, fonts["advice"], inner, 2) if advice else []
+    if lines and lines[-1].endswith("…"):                         # too long: one size smaller first
+        small = get_font(round(11.5 * k), "semibold")
+        alt = wrap_text(advice, small, inner, 2)
+        if not alt[-1].endswith("…"):
+            lines, fonts["advice"] = alt, small
+    if lines:
+        gaps.append(7 * k)
+        rows.append(("advice", 16 * k * len(lines) - 1 * k))
+    chips = _hud_chips(state)
+    if chips:
+        gaps.append(8 * k)
+        rows.append(("chips", 18 * k))
+    detailed = bool(getattr(state, "hud_detailed", False))
+    jl = _jungler_text(state) if detailed else ""
+    slot_w = (cw - 20 * k) / 5.0
+    icon_d = min(30 * k, slot_w - 12 * k)
+    if jl:
+        gaps.append(8 * k)
+        rows.append(("jungler", 18 * k))
+    if detailed:
+        gaps.append(7 * k)
+        rows.append(("enemies", icon_d + 16 * k))
+    pad_t, pad_b = 8 * k, 9 * k
+    card_h = pad_t + sum(h for _, h in rows) + sum(gaps) + pad_b
+    height = int(math.ceil(mt + card_h + mb))
+    return {"ms": ms, "mt": mt, "cx0": cx0, "cw": cw, "ch": card_h, "left": left, "right": right,
+            "inner": inner, "fonts": fonts, "rows": rows, "gaps": gaps, "pad_t": pad_t, "height": height,
+            "lvl": lvl, "lines": lines, "chips": chips, "jl": jl, "slot_w": slot_w, "icon_d": icon_d,
+            "step": _gauge_step(state), "detailed": detailed}
 
 
 def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
@@ -1545,8 +1638,10 @@ def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
 
 
 def render_hud(state: OverlayState, width: int = 280, now: float | None = None) -> np.ndarray:
-    """Light HUD panel - premultiplied BGRA: threat bar, stance pill + reason, one written tip
-    line, objectives (``state.hud_detailed``: also the jungler line and the 5 enemy portraits).
+    """Compact HUD card - premultiplied BGRA: accent bar coloured by urgency, the "jouer plus
+    fort ou non" gauge (or the gank threat), ONE advice line (max 2 lines, fades in) and at
+    most 2 chips (next objective, item / role / AI counter). ``state.hud_detailed``: also the
+    jungler line and the 5 enemy portraits. ``width`` includes the soft shadow margin.
 
     Never raises (an empty 1-row image on internal error, logged).
     """
@@ -1558,99 +1653,155 @@ def render_hud(state: OverlayState, width: int = 280, now: float | None = None) 
         return np.zeros((1, width, 4), np.uint8)
 
 
+def _bars(cv_: Canvas, x: float, cy: float, k: float, step: int, rgb: Any, alpha: float) -> float:
+    """5 ascending bars, ``step + 3`` of them lit (SAFE 1 ... ATTAQUE 5). Returns the width."""
+    bw, gap = 3.0 * k, 1.6 * k
+    hmax = 12.0 * k
+    lit = step + 3
+    for i in range(5):
+        h = hmax * (0.36 + 0.16 * i)
+        bx = x + i * (bw + gap)
+        on = i < lit
+        cv_.rrect(bx, cy + hmax / 2 - h, bw, h, bw * 0.45, rgb if on else (120, 120, 128),
+                  (0.95 * alpha) if on else 0.28)
+    return 5 * bw + 4 * gap
+
+
+def _arrows(cv_: Canvas, x: float, cy: float, k: float, n: int, up: bool, rgb: Any, alpha: float) -> float:
+    s = 4.2 * k
+    for i in range(n):
+        ax = x + i * (s * 1.9) + s
+        pts = ([(ax - s, cy + s * 0.6), (ax + s, cy + s * 0.6), (ax, cy - s * 0.75)] if up else
+               [(ax - s, cy - s * 0.6), (ax + s, cy - s * 0.6), (ax, cy + s * 0.75)])
+        cv_.polygon(pts, rgb, alpha)
+    return n * s * 1.9 + (s * 0.2 if n else 0.0)
+
+
+def _chip_icon(cv_: Canvas, kind: str, icon: Any, cx: float, cy: float, k: float, colour: Any) -> None:
+    if kind == "objective" and icon is not None:
+        cv_.image(cx, cy, sprite_patch(icon, 14 * k))
+    elif kind in ("item", "hint"):
+        _coin(cv_, cx, cy, 4.6 * k)
+    elif kind == "role":
+        cv_.disc(cx, cy, 3.4 * k, TEAL, 0.95)
+    elif kind == "ai":
+        r = 4.2 * k                                             # four-point spark
+        cv_.polygon([(cx, cy - r), (cx + r * 0.3, cy), (cx, cy + r), (cx - r * 0.3, cy)], TEAL, 0.95)
+        cv_.polygon([(cx - r, cy), (cx, cy - r * 0.3), (cx + r, cy), (cx, cy + r * 0.3)], TEAL, 0.95)
+    else:
+        cv_.disc(cx, cy, 3.0 * k, colour, 0.9)
+
+
 def _render_hud(state: OverlayState, width: int, now: float) -> np.ndarray:
     k = width / HUD_REF_W
     lay = _hud_layout(state, width, k)
     W, H = width, lay["height"]
-    pad, inner, fonts, gap = lay["pad"], lay["inner"], lay["fonts"], lay["gap"]
+    fonts, lvl, step = lay["fonts"], lay["lvl"], lay["step"]
+    x0, y0, cw, ch = lay["cx0"], float(lay["mt"]), lay["cw"], lay["ch"]
+    left, right = lay["left"], lay["right"]
     cv_ = Canvas(W, H)
-    cv_.rrect(0, 0, W, H, 8 * k, PANEL, 0.80, border=GOLD, border_alpha=0.45, border_w=1.0)
     phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
-    enemies = list(state.enemies or [])[:5]
-    roles = state.roles if isinstance(state.roles, dict) else {}
-    y = pad
-    for name, h in lay["rows"]:
+    # ---- urgency colour: gank threat, else the advice tone, else calm gold
+    tone = str(getattr(state, "tip_tone", "") or "").lower()
+    if lvl >= 2:
+        accent = DANGER
+    elif lvl == 1:
+        accent = WARNING
+    elif lay["lines"] and tone in TONE_RGB:
+        accent = TONE_RGB[tone]
+    elif step is not None and step != 0:
+        accent = GAUGE_STYLE[step][1]
+    else:
+        accent = GOLD
+    # ---- soft shadow, card, hextech gold hairline
+    rad = 8 * k
+    for i, a in enumerate((0.16, 0.11, 0.07, 0.04)):
+        g = (i + 1) * 1.3 * k
+        cv_.rrect(x0 - g, y0 - g * 0.6 + 2 * k, cw + 2 * g, ch + 2 * g, rad + g, BLACK, a)
+    grad = np.linspace(np.asarray(CARD_BG_TOP, np.float32), np.asarray(CARD_BG, np.float32), 24)
+    cv_.rrect(x0, y0, cw, ch, rad, (grad / 255.0)[:, None, :], 0.93,
+              border=GOLD, border_alpha=0.55, border_w=max(1.0, 0.9 * k))
+    cv_.capsule(x0 + rad, y0 + 1.2 * k, x0 + cw - rad, y0 + 1.2 * k, max(0.8, 0.7 * k), GOLD_LIGHT, 0.18)
+    # accent bar (pulses on a gank)
+    a_acc = 0.95 if lvl < 2 else 0.75 + 0.25 * math.sin(phase * 2 * math.pi)
+    cv_.capsule(x0 + 6 * k, y0 + 8 * k, x0 + 6 * k, y0 + ch - 8 * k, 3.2 * k, accent, a_acc)
+    cv_.glow(x0 + 6 * k, y0 + ch / 2, 2 * k, 10 * k, accent, 0.10)
+    y = y0 + lay["pad_t"]
+    gaps = list(lay["gaps"])
+    for idx, (name, h) in enumerate(lay["rows"]):
         cy = y + h / 2
-        if name == "threat":
-            lvl = int(min(max(int(state.threat_level or 0), 0), 2)) if _finite(state.threat_level or 0) else 0
-            base = THREAT_COLORS[lvl]
-            a = 0.92
-            if lvl == 2:
-                a = 0.8 + 0.2 * math.sin(phase * 2 * math.pi)
-            cv_.rrect(pad, y, inner, h, 6 * k, _mix(base, BLACK, 0.18), a,
-                      border=_mix(base, WHITE, 0.3), border_alpha=0.5)
-            gr = h * 0.3
-            _threat_glyph(cv_, pad + 6 * k + gr, cy, gr, lvl, base)
+        if name == "header":
             clock = fmt_clock(state.game_time)
-            cw = text_width(clock, fonts["clock"])
-            cv_.text(pad + inner - 7 * k, cy, clock, fonts["clock"], WHITE, 0.85, anchor="r", shadow=0.3)
-            text = (state.threat_text or "").strip() or THREAT_DEFAULT_TEXT[lvl]
-            tx = pad + 12 * k + 2 * gr
-            avail = inner - (tx - pad) - cw - 14 * k
-            tfont = fonts["threat"]
-            size = 12.5 * k
-            while text_width(text, tfont) > avail and size > 9.5 * k:
-                size -= 0.5 * k
-                tfont = get_font(round(size), "bold")
-            cv_.text(tx, cy, fit_text(text, tfont, avail), tfont, WHITE, shadow=0.45)
-        elif name == "stance":
-            label, col = STANCE_STYLE[lay["stance"]]
-            f = fonts["tag"]
-            pw = text_width(label, f) + 12 * k
-            cv_.rrect(pad, y + 1 * k, pw, h - 2 * k, (h - 2 * k) / 2, _mix(col, BLACK, 0.25), 0.95,
-                      border=_mix(col, WHITE, 0.35), border_alpha=0.7)
-            cv_.text(pad + pw / 2, cy, label, f, WHITE, anchor="m", shadow=0.3)
-            tx = pad + pw + 6 * k
-            if lay["stance_reason"]:
-                cv_.text(tx, cy, fit_text(lay["stance_reason"], fonts["small"], W - pad - tx), fonts["small"],
-                         _mix(col, WHITE, 0.55), 0.95)
+            cwid = cv_.text(right, cy, clock, fonts["clock"], MUTED, 0.9, anchor="r", shadow=0.3)
+            avail_r = right - cwid - 8 * k
+            if lvl >= 1 or step is None:
+                col = THREAT_COLORS[lvl]
+                gr = 6.5 * k
+                _threat_glyph(cv_, left + gr, cy, gr, lvl, col)
+                text = (state.threat_text or "").strip() or THREAT_DEFAULT_TEXT[lvl]
+                if lvl == 1 and text.upper().startswith("ATTENTION — "):
+                    text = text[len("ATTENTION — "):]
+                tx = left + 2 * gr + 6 * k
+                hcol = _mix(col, WHITE, 0.25) if lvl >= 1 else _mix(col, WHITE, 0.2)
+                cv_.text(tx, cy, fit_text(text, fonts["head"], avail_r - tx), fonts["head"], hcol, shadow=0.6)
+            else:
+                word, col = GAUGE_STYLE[step]
+                fa = _fade(getattr(state, "gauge_since", None), now)
+                bw = _bars(cv_, left, cy, k, step, col, max(0.35, fa))
+                tx = left + bw + 7 * k
+                tw = cv_.text(tx, cy, word, fonts["head"], col, max(0.25, fa), shadow=0.6)
+                tx += tw + 4 * k
+                if step:
+                    tx += _arrows(cv_, tx, cy, k, abs(step), step > 0, col, max(0.25, fa)) + 3 * k
+                reason = " ".join(str(getattr(state, "gauge_reason", "") or getattr(state, "stance_reason", "")
+                                      or "").split())
+                if reason and text_width("· " + reason, fonts["reason"]) <= avail_r - tx - 3 * k:
+                    cv_.text(tx + 3 * k, cy, "· " + reason, fonts["reason"], (176, 172, 160), 0.95 * fa, shadow=0.3)
+        elif name == "advice":
+            fa = _fade(getattr(state, "tip_since", None), now)
+            lh = 16 * k
+            for i, line in enumerate(lay["lines"]):
+                cv_.text(left, y + lh * i + lh / 2 - 0.5 * k, line, fonts["advice"], ADVICE_RGB, fa,
+                         shadow=0.0, outline=1, outline_alpha=0.55)
+        elif name == "chips":
+            x = left
+            f = fonts["chip"]
+            for i, (kind, text, colour, icon) in enumerate(lay["chips"]):
+                isz = 14 * k if kind == "objective" else 10 * k
+                need = 7 * k + isz + 5 * k + text_width(text, f) + 8 * k
+                avail = right + 4 * k - x
+                if avail < 40 * k:
+                    break
+                if need > avail and "(" in text:
+                    text = text.split("(", 1)[0].strip()
+                    need = 7 * k + isz + 5 * k + text_width(text, f) + 8 * k
+                cwid = min(need, avail)
+                cv_.rrect(x, y, cwid, h, h / 2, (255, 255, 255), 0.06, border=GOLD, border_alpha=0.30,
+                          border_w=max(0.8, 0.8 * k))
+                _chip_icon(cv_, kind, icon, x + 7 * k + isz / 2, cy, k, colour)
+                tx = x + 7 * k + isz + 5 * k
+                cv_.text(tx, cy, fit_text(text, f, x + cwid - 8 * k - tx + 1.5), f, colour, shadow=0.4)
+                x += cwid + 6 * k
         elif name == "jungler":
+            enemies = list(state.enemies or [])[:5]
             jg = next((e for e in enemies if e is not None and getattr(e, "is_jungler", False)), None)
-            d = 18 * k
-            icx = pad + d / 2
+            d = 16 * k
+            icx = left + d / 2
             if jg is not None:
-                cv_.image(icx, cy, round_icon_patch(jg.icon, d, DANGER, max(1.2, 1.5 * k), grey=not jg.visible,
+                cv_.image(icx, cy, round_icon_patch(jg.icon, d, DANGER, max(1.2, 1.4 * k), grey=not jg.visible,
                                                     letter=jg.name or jg.alias or "J"))
             else:
-                cv_.image(icx, cy, round_icon_patch(None, d, GOLD_DARK, max(1.2, 1.5 * k), letter="J"))
-            tx = pad + d + 6 * k
+                cv_.image(icx, cy, round_icon_patch(None, d, GOLD_DARK, max(1.2, 1.4 * k), letter="J"))
+            tx = left + d + 6 * k
             tw = cv_.text(tx, cy, "JGL", fonts["tag"], GOLD, shadow=0)
             tx += tw + 5 * k
             colour = _mix(DANGER, WHITE, 0.35) if (jg is not None and jg.visible) else GOLD_LIGHT
-            cv_.text(tx, cy, fit_text(lay["jl"], fonts["body"], W - pad - tx), fonts["body"], colour)
+            cv_.text(tx, cy, fit_text(lay["jl"], fonts["small"], right - tx), fonts["small"], colour)
         elif name == "enemies":
-            _draw_enemy_slots(cv_, enemies, pad, y, lay["slot_w"], lay["icon_d"], k, fonts, phase, roles)
-        elif name == "objectives":
-            x = pad
-            isz = 16 * k
-            for label, icon, text, colour in lay["objs"]:
-                tw = text_width(text, fonts["obj"])
-                need = isz + 4 * k + tw
-                if x + need > W - pad + 0.5:
-                    break
-                if icon is not None:
-                    cv_.image(x + isz / 2, cy, sprite_patch(icon, isz))
-                else:
-                    cv_.text(x + isz / 2, cy, label[:1], fonts["obj"], GOLD, anchor="m")
-                cv_.text(x + isz + 4 * k, cy, text, fonts["obj"], colour)
-                x += need + 11 * k
-        elif name == "insight":
-            r = 3.6 * k                                   # small teal diamond = coach insight
-            cx = pad + 5 * k
-            cv_.polygon([(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)], TEAL, 0.95)
-            cv_.text(pad + 14 * k, cy, fit_text(lay["insight"], fonts["small"], inner - 14 * k), fonts["small"],
-                     WHITE, 0.92)
-        elif name == "role":
-            r = 3.6 * k
-            cx = pad + 5 * k
-            cv_.disc(cx, cy, r, TEAL, 0.95)
-            cv_.text(pad + 14 * k, cy, fit_text(lay["notice"], fonts["small"], inner - 14 * k), fonts["small"],
-                     _mix(TEAL, WHITE, 0.45))
-        elif name == "hint":
-            _coin(cv_, pad + 5 * k, cy, 5 * k)
-            cv_.text(pad + 14 * k, cy, fit_text(lay["hint"], fonts["small"], inner - 14 * k), fonts["small"],
-                     GOLD_LIGHT)
-        y += h + gap
+            roles = state.roles if isinstance(state.roles, dict) else {}
+            _draw_enemy_slots(cv_, list(state.enemies or [])[:5], x0 + 10 * k, y, lay["slot_w"], lay["icon_d"],
+                              k, fonts, phase, roles)
+        y += h + (gaps[idx] if idx < len(gaps) else 0.0)
     return cv_.to_bgra()
 
 
@@ -1768,6 +1919,249 @@ def render_flash(w: int, h: int, intensity: float, exclude: "Rect | None", thick
     except Exception:
         log.exception("render_flash failed")
         return np.zeros((h, w, 4), np.uint8)
+
+
+# ======================================================================================
+# Game-view ward guides (ward_guide.WorldMarker): ground marker / edge arrow / check mark
+# ======================================================================================
+WORLD_RGB = GUIDE_RGB["gold"]
+WORLD_DONE_RGB = GUIDE_RGB["safe"]
+WORLD_FADE_IN_S = 0.35
+WORLD_FADE_OUT_S = 0.8
+WORLD_PULSE_S = 1.4
+
+
+def world_scale(screen: Any) -> float:
+    """Size factor of the game-view markers (1.0 at 1080 px of screen height)."""
+    try:
+        return float(min(2.0, max(0.6, float(screen[3]) / 1080.0)))
+    except Exception:
+        return 1.0
+
+
+def _ellipse_ring(cv_: Canvas, cx: float, cy: float, rx: float, ry: float, width: float, rgb: Any,
+                  alpha: float = 1.0, fill_alpha: float = 0.0) -> None:
+    """Anti-aliased ellipse outline (+ optional soft fill): a ring lying on the ground."""
+    if not _finite(cx, cy, rx, ry, width) or rx <= 1 or ry <= 1 or alpha <= 0:
+        return
+    ext = width / 2 + 1
+    g = cv_._grid(cx - rx - ext, cy - ry - ext, cx + rx + ext, cy + ry + ext)
+    if g is None:
+        return
+    X0, Y0, xs, ys = g
+    nx, ny = (xs - cx) / rx, (ys - cy) / ry
+    q = np.sqrt(nx * nx + ny * ny) + 1e-6
+    grad = np.sqrt((nx / rx) ** 2 + (ny / ry) ** 2) / q + 1e-6
+    d = (q - 1.0) / grad                                   # ~ signed distance to the ellipse (px)
+    cov = np.clip(width * 0.5 - np.abs(d) + 0.5, 0.0, 1.0)
+    if fill_alpha > 0:
+        inner = np.clip(0.5 - d, 0.0, 1.0) * (0.35 + 0.65 * np.clip(q, 0.0, 1.0) ** 2)
+        cv_.paint(X0, Y0, inner, rgb, alpha * fill_alpha)
+    cv_.paint(X0, Y0, cov, rgb, alpha)
+
+
+def _eye_glyph(cv_: Canvas, cx: float, cy: float, r: float, rgb: Any, alpha: float = 1.0) -> None:
+    """Ward icon: a vision "eye" (lens + pupil), ``r`` = half width."""
+    n = 12
+    top = [(cx + r * math.cos(math.pi * i / n), cy - 0.58 * r * math.sin(math.pi * i / n)) for i in range(n + 1)]
+    bot = [(cx - r * math.cos(math.pi * i / n), cy + 0.58 * r * math.sin(math.pi * i / n)) for i in range(1, n)]
+    cv_.polygon(top + bot, rgb, alpha)
+    inner = [(cx + (x - cx) * 0.78, cy + (y - cy) * 0.66) for x, y in top + bot]
+    cv_.polygon(inner, PANEL_DEEP, alpha)
+    cv_.disc(cx, cy, 0.34 * r, rgb, alpha)
+    cv_.disc(cx - 0.1 * r, cy - 0.1 * r, 0.1 * r, WHITE, alpha * 0.8)
+
+
+def _check_glyph(cv_: Canvas, cx: float, cy: float, s: float, rgb: Any, alpha: float = 1.0) -> None:
+    """Check mark ("✓") of size ``s`` centred on (cx, cy)."""
+    w = max(1.6, 0.2 * s)
+    cv_.capsule(cx - 0.42 * s, cy + 0.02 * s, cx - 0.12 * s, cy + 0.3 * s, w, rgb, alpha)
+    cv_.capsule(cx - 0.12 * s, cy + 0.3 * s, cx + 0.45 * s, cy - 0.3 * s, w, rgb, alpha)
+
+
+def _world_badge(cv_: Canvas, cx: float, cy: float, r: float, rgb: Any, alpha: float, done: bool = False) -> None:
+    for i, a in enumerate((0.18, 0.1, 0.05)):
+        cv_.disc(cx, cy + 1.5, r + (i + 1) * 1.6, BLACK, a * alpha)
+    cv_.disc(cx, cy, r, PANEL_DEEP, 0.92 * alpha)
+    cv_.ring(cx, cy, r - 0.6, max(1.4, 0.11 * r), rgb, 0.95 * alpha)
+    if done:
+        _check_glyph(cv_, cx, cy, 1.05 * r, rgb, alpha)
+    else:
+        _eye_glyph(cv_, cx, cy + 0.04 * r, 0.62 * r, rgb, alpha)
+
+
+def _world_alpha(m: Any) -> float:
+    age = float(getattr(m, "age", 1.0) or 0.0)
+    left = float(getattr(m, "left", 99.0) or 0.0)
+    a = min(1.0, max(0.0, age / WORLD_FADE_IN_S)) if age < WORLD_FADE_IN_S else 1.0
+    return float(max(0.0, min(a, left / WORLD_FADE_OUT_S if left < WORLD_FADE_OUT_S else 1.0)))
+
+
+def _world_layout(m: Any, k: float) -> dict[str, Any]:
+    """Geometry of one marker relative to its anchor (the ground point / screen-edge point)."""
+    kind = str(getattr(m, "kind", "ground"))
+    f_lab = get_font(max(10, int(round(15 * k))), "bold")
+    f_sub = get_font(max(9, int(round(12 * k))), "regular")
+    label = str(getattr(m, "label", "") or "")
+    sub = str(getattr(m, "sub", "") or "") if kind == "edge" else ""
+    hint = str(getattr(m, "hint", "") or "")
+    L: dict[str, Any] = {"kind": kind, "f_lab": f_lab, "f_sub": f_sub, "label": label, "sub": sub, "hint": hint}
+    pad = 6 * k
+    if kind == "edge":
+        br = 19 * k
+        tw = text_width(label, f_lab) + (text_width("  " + sub, f_sub) if sub else 0.0)
+        hw = text_width(hint, f_sub) if hint else 0.0
+        ph = (_cap_height(f_lab) + 12 * k) + ((_cap_height(f_sub) + 7 * k) if hint else 0.0)
+        pw = max(tw, hw) + 22 * k
+        dx, dy = float(getattr(m, "dx", 0.0) or 0.0), float(getattr(m, "dy", -1.0) or 0.0)
+        n = math.hypot(dx, dy) or 1.0
+        dx, dy = dx / n, dy / n
+        if abs(dx) >= abs(dy):          # left / right border: the pill goes inwards horizontally
+            pcx, pcy = -math.copysign(br + 8 * k + pw / 2, dx), 0.0
+        else:
+            pcx, pcy = 0.0, -math.copysign(br + 8 * k + ph / 2, dy)
+        tip = br + 19 * k
+        pts = [(-br - pad, -br - pad), (br + pad, br + pad), (dx * tip - pad, dy * tip - pad),
+               (dx * tip + pad, dy * tip + pad), (pcx - pw / 2 - pad, pcy - ph / 2 - pad),
+               (pcx + pw / 2 + pad, pcy + ph / 2 + pad)]
+        L.update(br=br, pw=pw, ph=ph, pc=(pcx, pcy), dir=(dx, dy), tip=tip)
+    else:
+        R = 40 * k
+        br = 15 * k
+        stem = 40 * k
+        bc = (0.0, -stem - br)
+        ph = _cap_height(f_lab) + 12 * k
+        pw = text_width(label, f_lab) + 22 * k
+        pc = (0.0, bc[1] - br - 6 * k - ph / 2)
+        hw = text_width(hint, f_sub) + 14 * k if hint else 0.0
+        hc = (0.0, 0.42 * R + 9 * k + _cap_height(f_sub) / 2)
+        pts = [(-1.4 * R - pad, -0.62 * R - pad), (1.4 * R + pad, 0.62 * R + pad),
+               (-pw / 2 - pad, pc[1] - ph / 2 - pad), (pw / 2 + pad, pc[1] + ph / 2 + pad)]
+        if hint:
+            pts += [(-hw / 2 - pad, hc[1] - 10 * k), (hw / 2 + pad, hc[1] + 10 * k)]
+        L.update(R=R, br=br, stem=stem, bc=bc, pw=pw, ph=ph, pc=pc, hw=hw, hc=hc)
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    L["box"] = (math.floor(min(xs)), math.floor(min(ys)), math.ceil(max(xs)), math.ceil(max(ys)))
+    return L
+
+
+def render_world_marker(m: Any, k: float = 1.0, now: float | None = None) -> tuple[np.ndarray, int, int]:
+    """One game-view marker as a premultiplied BGRA patch + the anchor position inside it.
+    Never raises (empty 1x1 patch on error)."""
+    try:
+        now = time.monotonic() if now is None else float(now)
+        L = _world_layout(m, k)
+        bx0, by0, bx1, by1 = L["box"]
+        cv_ = Canvas(bx1 - bx0, by1 - by0)
+        ax, ay = -bx0, -by0
+        alpha = _world_alpha(m)
+        kind = L["kind"]
+        done = kind == "done"
+        rgb = WORLD_DONE_RGB if done else WORLD_RGB
+        phase = (now % WORLD_PULSE_S) / WORLD_PULSE_S
+        if kind == "edge":
+            br = L["br"]
+            dx, dy = L["dir"]
+            tip = L["tip"]
+            # arrow head towards the spot (outlined), then the badge
+            px, py = -dy, dx
+            base = br + 3 * k
+            hw = 10 * k
+            tri = [(ax + dx * tip, ay + dy * tip), (ax + dx * base + px * hw, ay + dy * base + py * hw),
+                   (ax + dx * base - px * hw, ay + dy * base - py * hw)]
+            cv_.polygon(tri, BLACK, 0.55 * alpha, grow=1.6 * k)
+            cv_.polygon(tri, rgb, (0.8 + 0.2 * math.sin(2 * math.pi * phase)) * alpha)
+            _world_badge(cv_, ax, ay, br, rgb, alpha)
+            pcx, pcy = L["pc"]
+            pw, ph = L["pw"], L["ph"]
+            x, y = ax + pcx - pw / 2, ay + pcy - ph / 2
+            cv_.rrect(x, y, pw, ph, min(ph / 2, 11 * k), PANEL_DEEP, 0.86 * alpha, border=rgb,
+                      border_alpha=0.75 * alpha, border_w=max(1.0, 1.1 * k))
+            line_h = _cap_height(L["f_lab"]) + 12 * k
+            ty = y + line_h / 2
+            tx = x + 11 * k
+            tx += cv_.text(tx, ty, L["label"], L["f_lab"], GOLD_LIGHT, alpha, shadow=0)
+            if L["sub"]:
+                cv_.text(tx, ty, "  " + L["sub"], L["f_sub"], MUTED, alpha, shadow=0)
+            if L["hint"]:
+                cv_.text(x + 11 * k, y + line_h + (_cap_height(L["f_sub"]) + 7 * k) / 2 - 3 * k, L["hint"],
+                         L["f_sub"], rgb, alpha, shadow=0)
+        else:
+            R, br = L["R"], L["br"]
+            ry = 0.4 * R
+            if not done:                                   # expanding "sonar" wave
+                _ellipse_ring(cv_, ax, ay, R * (1.0 + 0.38 * phase), ry * (1.0 + 0.38 * phase),
+                              max(1.2, 1.6 * k), rgb, 0.55 * (1.0 - phase) * alpha)
+            _ellipse_ring(cv_, ax, ay + 1.5 * k, R, ry, max(2.0, 3.2 * k), BLACK, 0.35 * alpha)
+            _ellipse_ring(cv_, ax, ay, R, ry, max(1.6, 2.4 * k), rgb, 0.92 * alpha, fill_alpha=0.16)
+            cv_.disc(ax, ay, max(1.5, 2.6 * k), rgb, 0.9 * alpha)
+            bcx, bcy = ax + L["bc"][0], ay + L["bc"][1]
+            cv_.capsule(ax, ay - 2 * k, bcx, bcy + br - 1, max(1.4, 1.8 * k), BLACK, 0.35 * alpha)
+            cv_.capsule(ax, ay - 2 * k, bcx, bcy + br - 1, max(1.0, 1.3 * k), rgb, 0.85 * alpha)
+            bob = 0.0 if done else 2.0 * k * math.sin(2 * math.pi * phase)
+            _world_badge(cv_, bcx, bcy + bob, br, rgb, alpha, done=done)
+            pw, ph = L["pw"], L["ph"]
+            pcx, pcy = ax + L["pc"][0], ay + L["pc"][1] + bob
+            cv_.rrect(pcx - pw / 2, pcy - ph / 2, pw, ph, ph / 2, PANEL_DEEP, 0.86 * alpha, border=rgb,
+                      border_alpha=0.75 * alpha, border_w=max(1.0, 1.1 * k))
+            cv_.text(pcx, pcy, L["label"], L["f_lab"], GOLD_LIGHT if not done else WHITE, alpha, anchor="m", shadow=0)
+            if L["hint"] and not done:
+                hcx, hcy = ax + L["hc"][0], ay + L["hc"][1]
+                cv_.text(hcx, hcy, L["hint"], L["f_sub"], GOLD_LIGHT, alpha, anchor="m", outline=max(1, int(round(2 * k))))
+        return cv_.to_bgra(), int(round(ax)), int(round(ay))
+    except Exception:
+        log.exception("render_world_marker failed")
+        return np.zeros((1, 1, 4), np.uint8), 0, 0
+
+
+def place_world_patch(x: int, y: int, w: int, h: int, screen: Any,
+                      avoid: Sequence[Any] = ()) -> tuple[int, int]:
+    """Top-left of a ``w`` x ``h`` patch wanted at (x, y): inside ``screen`` and never over the
+    ``avoid`` rectangles (minimap, bottom HUD bar): moved above (or left of) them."""
+    try:
+        sx, sy, sw, sh = (int(c) for c in screen[:4])
+    except Exception:
+        return int(x), int(y)
+    x = min(max(int(x), sx), sx + sw - w)
+    y = min(max(int(y), sy), sy + sh - h)
+    for _ in range(3):
+        hit = False
+        for r in avoid or ():
+            try:
+                rx, ry, rw, rh = (int(c) for c in r[:4])
+            except Exception:
+                continue
+            if x < rx + rw and rx < x + w and y < ry + rh and ry < y + h:
+                hit = True
+                up = (x, ry - h - 2)
+                left = (rx - w - 2, y)
+                cands = [c for c in (up, left) if c[0] >= sx and c[1] >= sy]
+                x, y = min(cands, key=lambda c: abs(c[0] - x) + abs(c[1] - y)) if cands else up
+        if not hit:
+            break
+    return int(x), int(y)
+
+
+def render_world_guides(markers: Sequence[Any], screen: Any, now: float | None = None,
+                        avoid: Sequence[Any] = ()) -> list[tuple[np.ndarray, int, int]]:
+    """Patches ``(premultiplied BGRA, x, y)`` (absolute screen px) of the game-view ward markers,
+    at most 2, kept inside ``screen`` and off the ``avoid`` rectangles. Never raises."""
+    out: list[tuple[np.ndarray, int, int]] = []
+    try:
+        k = world_scale(screen)
+        for m in list(markers or [])[:2]:
+            if not _finite(getattr(m, "x", None), getattr(m, "y", None)) or _world_alpha(m) <= 0.01:
+                continue
+            img, ax, ay = render_world_marker(m, k, now)
+            h, w = img.shape[:2]
+            if w < 2 or h < 2:
+                continue
+            x, y = place_world_patch(int(round(float(m.x))) - ax, int(round(float(m.y))) - ay, w, h, screen, avoid)
+            out.append((img, x, y))
+    except Exception:
+        log.exception("render_world_guides failed")
+    return out
 
 
 # ======================================================================================

@@ -1167,10 +1167,10 @@ class AIBudget:
 
 
 def budget_text(b: dict[str, Any] | None) -> str:
-    """Short French counter for the HUD / dashboard, e.g. ``"IA : 3/5"`` (``+1`` once the bonus is used)."""
+    """Short French counter for the HUD / dashboard, e.g. ``"IA 3/5"`` (``+1`` once the bonus is used)."""
     if not b:
         return ""
-    text = f"IA : {int(b.get('auto_used', 0))}/{int(b.get('auto_max', AUTO_BUDGET))}"
+    text = f"IA {int(b.get('auto_used', 0))}/{int(b.get('auto_max', AUTO_BUDGET))}"
     if b.get("urgent_used"):
         text += " +1"
     return text
@@ -1198,6 +1198,7 @@ class AIAdvisor:
         self.budget = AIBudget()
         self.detector = MomentDetector()
         self.comeback = ComebackDetector()
+        self._urgent_only = False
         self.apply_config(cfg)
 
     # ------------------------------------------------------------------ config / state
@@ -1206,6 +1207,8 @@ class AIAdvisor:
             prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
             key = str(getattr(cfg, "ai_api_key", "") or "").strip()
             model = str(getattr(cfg, "ai_model", "") or "").strip()
+            # Expert players: no automatic AI tip, only the bonus "urgence" call (and F8)
+            self._urgent_only = str(getattr(cfg, "skill_level", "") or "").strip().lower() == "expert"
             with self._lock:
                 if (prov, key, model) != (self._provider, self._key, self._model):
                     self._blocked_until = -math.inf     # new settings: retry right away
@@ -1260,7 +1263,7 @@ class AIAdvisor:
             gt = float(getattr(game, "game_time", 0.0) or 0.0)
             with self._lock:
                 slot = self.budget.pick(moment, gt, self.detector.last_objective)
-                if slot is None:
+                if slot is None or (self._urgent_only and slot != "urgent"):
                     return False
                 interval = URGENT_MIN_INTERVAL_S if slot == "urgent" else MIN_INTERVAL_S
                 if gt < MIN_GAME_TIME_S or t - self._last_call < interval or t < self._blocked_until:

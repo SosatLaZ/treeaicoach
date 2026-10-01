@@ -504,12 +504,12 @@ def test_budget_five_auto_plus_one_urgent_and_manual_apart():
     baron = SimpleNamespace(key="baron", name="Baron", alive=False, remaining=60.0, next_spawn=1500.0)
     assert step(G(gt=1440.0), objectives=[baron])                      # pre-Baron
     assert step(G(gt=1800.0, dead=True))                               # late game
-    assert adv.budget_info()["auto_used"] == 5 and ai.budget_text(adv.budget_info()) == "IA : 5/5"
+    assert adv.budget_info()["auto_used"] == 5 and ai.budget_text(adv.budget_info()) == "IA 5/5"
     assert not step(G(gt=1900.0, dead=False, level=18, gold=2000), in_base=True)   # budget exhausted
     ev = [_kill(1, 1990.0, "Garen"), _kill(2, 1995.0, "Moi#EUW")]
     assert step(G(gt=2000.0, events=ev))                               # bonus "urgence" (lost big fight)
     info = adv.budget_info()
-    assert info["urgent_used"] == 1 and ai.budget_text(info) == "IA : 5/5 +1"
+    assert info["urgent_used"] == 1 and ai.budget_text(info) == "IA 5/5 +1"
     ev2 = ev + [_kill(3, 2290.0, "Garen"), _kill(4, 2295.0, "Moi#EUW")]
     assert not step(G(gt=2300.0, events=ev2))                          # only one bonus
     assert adv.ask(t[0] + 100.0, G(gt=2400.0)) == "Question envoyée à l'IA…"
@@ -517,3 +517,17 @@ def test_budget_five_auto_plus_one_urgent_and_manual_apart():
     assert adv.budget_info()["manual"] == 1 and adv.budget_info()["auto_used"] == 5
     adv.reset()
     assert adv.budget_info()["auto_used"] == 0 and ai.budget_text(None) == ""
+
+
+def test_expert_level_only_urgent_auto_calls():
+    cfg = SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="", skill_level="expert")
+    adv = ai.AIAdvisor(cfg, caller=lambda *a, **k: "Joue avec ton équipe.")
+    adv.update(100.0, G(gt=300.0))
+    assert not adv.update(200.0, G(gt=300.0, gold=1200), in_base=True)      # 1st base: skipped (expert)
+    assert adv.budget_info()["auto_used"] == 0
+    ev = [_kill(1, 1990.0, "Garen"), _kill(2, 1995.0, "Moi#EUW")]
+    assert adv.update(400.0, G(gt=2000.0, events=ev))                        # urgent: still allowed
+    adv.wait()
+    assert adv.budget_info()["urgent_used"] == 1
+    adv.apply_config(SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="", skill_level="avance"))
+    assert not adv._urgent_only

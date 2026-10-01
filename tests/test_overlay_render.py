@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -137,27 +139,58 @@ def test_hud_sizes_and_format(states):
     assert big.shape[1] == 510 and big.shape[0] > orr.render_hud(states["danger"], 340).shape[0]
 
 
-def test_hud_is_light_by_default_with_stance_pill_and_one_tip_line(states):
+def _accent(img, k=1.0):
+    """Mean BGRA of the HUD card's left accent bar."""
+    x = int(round(5 * k + 6 * k))
+    h = img.shape[0]
+    return img[int(h * 0.35):int(h * 0.65), x - 1:x + 2].reshape(-1, 4).astype(int).mean(axis=0)
+
+
+def test_hud_is_light_by_default_with_gauge_and_one_advice_line(states):
     st = states["danger"]
     light = orr.hud_size(st, 280)[1]
     detailed = orr.hud_size(orr.OverlayState(**{**st.__dict__, "hud_detailed": True}), 280)[1]
-    assert light < detailed and light < 120                    # threat + tip + objectives only
-    pill = orr.OverlayState(**{**st.__dict__, "stance": "agressif", "stance_reason": "+1 niveau sur Darius"})
-    assert orr.hud_size(pill, 280)[1] > light
-    img = orr.render_hud(pill, 280, now=0.0)
-    assert_premultiplied(img)
-    # the pill row is green-dominant (agressif); prudent is red-dominant
-    row = img[38:52, 10:60].reshape(-1, 4).astype(int).mean(axis=0)
-    assert row[1] > row[2]
-    red = orr.render_hud(orr.OverlayState(**{**pill.__dict__, "stance": "prudent"}), 280, now=0.0)
-    row = red[38:52, 10:60].reshape(-1, 4).astype(int).mean(axis=0)
-    assert row[2] > row[1]
-    # one written line: the rotating tip wins over the insight, same height
+    assert light < detailed and light < 130                    # gauge/threat + advice + chips only
+    calm = orr.OverlayState(**{**st.__dict__, "threat_level": 0, "tip": None, "insight": None})
+    # gauge: ATTAQUE is green, SAFE red (accent bar + bars), stance is the fallback
+    up = orr.render_hud(orr.OverlayState(**{**calm.__dict__, "gauge": 2}), 280, now=0.0)
+    down = orr.render_hud(orr.OverlayState(**{**calm.__dict__, "gauge": -2}), 280, now=0.0)
+    assert_premultiplied(up)
+    g, r = _accent(up), _accent(down)
+    assert g[1] > g[2] and r[2] > r[1] + 30
+    fb = orr.render_hud(orr.OverlayState(**{**calm.__dict__, "stance": "prudent"}), 280, now=0.0)
+    assert _accent(fb)[2] > _accent(fb)[0]                     # PRUDENT (amber) from the stance
+    assert orr._gauge_step(orr.OverlayState(stance="agressif")) == 1
+    assert orr._gauge_step(orr.OverlayState(gauge=9)) == 2 and orr._gauge_step(orr.OverlayState()) is None
+    # one advice line: the tip wins over the insight, same height
     t1 = orr.OverlayState(**{**st.__dict__, "insight": "Héraut 0:40", "tip": None})
     t2 = orr.OverlayState(**{**st.__dict__, "insight": "Héraut 0:40", "tip": "Pose une balise dans la rivière"})
     assert orr.hud_size(t1, 280) == orr.hud_size(t2, 280)
     assert np.abs(orr.render_hud(t1, 280, now=0.0).astype(int) - orr.render_hud(t2, 280, now=0.0).astype(int)).sum() > 0
+    # long advice: at most 2 lines
+    long = orr.OverlayState(**{**t2.__dict__, "tip": "mot " * 80})
+    assert orr.hud_size(long, 280)[1] <= orr.hud_size(t2, 280)[1] + 20
+    # fade-in of a new advice line (~250 ms)
+    t3 = orr.OverlayState(**{**t2.__dict__, "tip_since": 10.0})
+    a0 = orr.render_hud(t3, 280, now=10.0)[..., 3].astype(int).sum()
+    a1 = orr.render_hud(t3, 280, now=10.3)[..., 3].astype(int).sum()
+    assert a0 < a1 and orr._fade(10.0, 10.3) == 1.0 and orr._fade(None, 0.0) == 1.0
+    assert orr._fade(50.0, 10.0) == 1.0                        # other clock: no invisible text
     assert orr.OverlayState(stance="nimporte").stance and orr.render_hud(orr.OverlayState(stance="x"), 280).ndim == 3
+
+
+def test_hud_chips_at_most_two():
+    obj = SimpleNamespace(name="Dragon", key="dragon", next_spawn=300.0, alive=False)
+    st = orr.OverlayState(game_time=250.0, objectives=[obj], tip="Pose une balise", item_hint="Achète Zhonya",
+                          in_base=True, role_notice="Rôle détecté : MID (échange de voie)", hint="1 450 PO",
+                          ai_counter="IA 3/5")
+    chips = orr._hud_chips(st)
+    assert [c[0] for c in chips] == ["objective", "item"]
+    st2 = orr.OverlayState(**{**st.__dict__, "objectives": [], "in_base": False})
+    assert [c[1] for c in orr._hud_chips(st2)] == ["Rôle : MID (échange de voie)", "1 450 PO"]
+    assert orr._hud_chips(orr.OverlayState(ai_counter="IA 0/5"))[0][1] == "IA 0/5"
+    img = orr.render_hud(st, 280, now=0.0)
+    assert_premultiplied(img) and img.shape[1] == 280
 
 
 def test_hud_is_compact_and_shows_roles(states):
@@ -172,13 +205,12 @@ def test_hud_is_compact_and_shows_roles(states):
 
 
 def test_hud_threat_colours():
-    imgs = {lvl: orr.render_hud(orr.OverlayState(threat_level=lvl, threat_text=""), 340, now=0.0)
+    imgs = {lvl: orr.render_hud(orr.OverlayState(threat_level=lvl, threat_text="", tip="Recule"), 340, now=0.0)
             for lvl in (0, 1, 2)}
-    # threat bar row: dominant channel follows green / orange / red
-    rows = {lvl: im[14:38, 60:220].reshape(-1, 4).astype(int).mean(axis=0) for lvl, im in imgs.items()}
-    assert rows[0][1] > rows[0][2]            # green > red (BGRA)
-    assert rows[1][2] > rows[1][0]            # orange: red > blue
-    assert rows[2][2] > rows[2][1] + 30       # red
+    k = 340 / 280
+    rows = {lvl: _accent(im, k) for lvl, im in imgs.items()}
+    assert rows[1][2] > rows[1][0] + 30       # orange accent: red > blue (BGRA)
+    assert rows[2][2] > rows[2][1] + 30       # red accent
 
 
 def test_hud_never_raises_on_junk():

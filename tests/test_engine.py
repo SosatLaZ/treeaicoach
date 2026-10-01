@@ -188,6 +188,10 @@ def test_demo_status_overlay_preview(demo_run):
     assert ov.jungler_line and ov.jungler_line.startswith("Jungler : Lee Sin")
     assert ov.warn_radius == pytest.approx(Config().effective_warn_radius())
     assert ov.objectives and ov.game_time is not None
+    # HUD v3 card extras: gauge (with the gank threat it is at most PRUDENT), no AI (off by default)
+    assert ov.gauge is None or -2 <= ov.gauge <= -1
+    assert ov.ai_counter is None and isinstance(ov.in_base, bool)
+    assert ov.tip is None or (ov.tip_tone in ("danger", "warning", "go", "info") and ov.tip_since is not None)
     prev = demo_run["preview"]
     assert isinstance(prev, np.ndarray) and prev.shape == (280, 280, 3) and prev.dtype == np.uint8
 

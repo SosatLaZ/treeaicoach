@@ -110,6 +110,15 @@ class HudReader:
         self._loc, self._size = loc, img.shape[:2]
         return True
 
+    def roi(self) -> tuple[int, int, int, int] | None:
+        """``(x, y, w, h)`` (window px) of the patch :meth:`read_patch` needs, or None before
+        calibration: the engine grabs only this small square (cheap 1-2 Hz reads)."""
+        if self._loc is None:
+            return None
+        cx, cy, r = self._loc
+        ri = max(4, int(round(INNER * r)))
+        return cx - ri, cy - ri, 2 * ri, 2 * ri
+
     def read(self, screen_bgr: Any, alive_hint: bool | None = None) -> HudRead | None:
         """Portrait crop + dead / alive. ``alive_hint`` (Live API) updates the reference."""
         t0 = time.perf_counter()
@@ -120,31 +129,47 @@ class HudReader:
             if self._loc is None or self._size != img.shape[:2]:
                 if not self.calibrate(img):
                     return None
-            cx, cy, r = self._loc  # type: ignore[misc]
-            ri = max(4, int(round(INNER * r)))
+            x, y, w, h = self.roi()  # type: ignore[misc]
             H, W = img.shape[:2]
-            if cx - ri < 0 or cy - ri < 0 or cx + ri >= W or cy + ri >= H:
+            if x < 0 or y < 0 or x + w >= W or y + h >= H:
                 return None
-            crop = cv2.resize(img[cy - ri:cy + ri, cx - ri:cx + ri], (PORTRAIT_PX, PORTRAIT_PX),
-                              interpolation=cv2.INTER_AREA)
-            if self._mask is None:
-                yy, xx = np.mgrid[0:PORTRAIT_PX, 0:PORTRAIT_PX]
-                c = (PORTRAIT_PX - 1) / 2.0
-                self._mask = ((xx - c) ** 2 + (yy - c) ** 2) <= (0.95 * c) ** 2
-            sat = float(cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 1][self._mask].mean())
-            if alive_hint is not False and (alive_hint or self._ref_sat is None
-                                            or sat >= DEAD_SAT_FRAC * self._ref_sat):
-                self._ref_sat = sat if self._ref_sat is None else \
-                    (1 - REF_RATE) * self._ref_sat + REF_RATE * sat
-            dead: bool | None = None
-            if self._ref_sat is not None and self._ref_sat >= MIN_ALIVE_SAT:
-                dead = sat < DEAD_SAT_FRAC * self._ref_sat
-            return HudRead(portrait=crop, saturation=sat, dead=dead, centre=(cx, cy), radius=r)
+            return self._read(img[y:y + h, x:x + w], alive_hint)
         except Exception:
             log.debug("HUD read failed", exc_info=True)
             return None
         finally:
             self.last_ms = 1000 * (time.perf_counter() - t0)
+
+    def read_patch(self, patch_bgr: Any, alive_hint: bool | None = None) -> HudRead | None:
+        """Same as :meth:`read` on the patch grabbed at :meth:`roi` (calibrated reader)."""
+        t0 = time.perf_counter()
+        try:
+            img = _as_bgr(patch_bgr)
+            if img is None or self._loc is None or min(img.shape[:2]) < 8:
+                return None
+            return self._read(img, alive_hint)
+        except Exception:
+            log.debug("HUD patch read failed", exc_info=True)
+            return None
+        finally:
+            self.last_ms = 1000 * (time.perf_counter() - t0)
+
+    def _read(self, patch: np.ndarray, alive_hint: bool | None) -> HudRead:
+        cx, cy, r = self._loc  # type: ignore[misc]
+        crop = cv2.resize(patch, (PORTRAIT_PX, PORTRAIT_PX), interpolation=cv2.INTER_AREA)
+        if self._mask is None:
+            yy, xx = np.mgrid[0:PORTRAIT_PX, 0:PORTRAIT_PX]
+            c = (PORTRAIT_PX - 1) / 2.0
+            self._mask = ((xx - c) ** 2 + (yy - c) ** 2) <= (0.95 * c) ** 2
+        sat = float(cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 1][self._mask].mean())
+        if alive_hint is not False and (alive_hint or self._ref_sat is None
+                                        or sat >= DEAD_SAT_FRAC * self._ref_sat):
+            self._ref_sat = sat if self._ref_sat is None else \
+                (1 - REF_RATE) * self._ref_sat + REF_RATE * sat
+        dead: bool | None = None
+        if self._ref_sat is not None and self._ref_sat >= MIN_ALIVE_SAT:
+            dead = sat < DEAD_SAT_FRAC * self._ref_sat
+        return HudRead(portrait=crop, saturation=sat, dead=dead, centre=(cx, cy), radius=r)
 
 
 __all__ = ["HudReader", "HudRead", "locate_portrait"]

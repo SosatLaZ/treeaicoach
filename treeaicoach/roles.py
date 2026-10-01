@@ -314,6 +314,10 @@ class RoleResolver:
         self._obs: dict[tuple[str, str], _Obs] = {}
         self._gt: float | None = None
         self._my_swap: tuple[str, float] | None = None     # (role, wall time of the change)
+        #: Optional ``() -> "top" | "mid" | "bot" | None``: MY observed lane from another source
+        #: (engine.my_observed_lane: the learned minimap icon, custom skins). Used while the
+        #: tracker-based observation of me has not decided.
+        self.my_lane_hook: Any = None
 
     # -- public API ---------------------------------------------------------------------
 
@@ -438,6 +442,7 @@ class RoleResolver:
         if tracker is not None and gt is not None and OCC_START_GT <= gt <= OCC_END_GT and dt > 0:
             self._accumulate(tracker, game, dt)
             changed = self._decide_lanes(gt)
+        changed = self._apply_my_lane_hook(game) or changed
         sig = tuple((_norm(getattr(p, "champion_alias", "")), side, getattr(p, "position", ""),
                      bool(getattr(p, "has_smite", False)), tuple(getattr(p, "spells", ()) or ()))
                     for p, side, _me in self._players(game))
@@ -477,6 +482,24 @@ class RoleResolver:
             ob = self._obs.setdefault((alias, side), _Obs())
             ob.raw[cls] = ob.raw.get(cls, 0.0) + dt
             ob.dec[cls] = ob.dec.get(cls, 0.0) + dt
+
+    def _apply_my_lane_hook(self, game: Any) -> bool:
+        """My lane from :attr:`my_lane_hook` when my own observation is undecided."""
+        hook = self.my_lane_hook
+        if hook is None:
+            return False
+        try:
+            lane = hook()
+        except Exception:
+            return False
+        me = _norm(getattr(getattr(game, "me", None), "champion_alias", ""))
+        if lane not in LANE_ROLES or not me:
+            return False
+        ob = self._obs.setdefault((me, "ally"), _Obs())
+        if ob.lane is not None:
+            return False
+        ob.lane = lane
+        return True
 
     def _decide_lanes(self, gt: float) -> bool:
         """Commit / change every player's observed lane (with confirmation). True on a change."""

@@ -4,18 +4,23 @@
 an objective) and which spots are best. This module turns that advice - or a hotkey press
 (``cfg.hotkey_ward``, default F7) - into at most :data:`MAX_GUIDES` short-lived guides:
 
-* on the minimap layer: the usual pulsing ward ring (``tactics.MapGuide`` kind "ward"), turned
-  green when the ward is placed;
+* on the minimap layer: a pulsing ward ring (duck-typed ``tactics.MapGuide`` kind "ward"),
+  turned green with a check mark once the ward is placed;
 * in the game view (:meth:`WardGuideManager.world_markers`, drawn by
   ``overlay_render.render_world_guides`` in small click-through windows): a ground marker
   (ellipse ring + ward icon + "Ward ici") at the spot projected with
   :mod:`treeaicoach.camera_proj` when it is on screen, else an arrow at the screen edge pointing
   towards it with the walking time; a short check mark once the ward is placed.
 
+Skill level (``cfg.skill_level``, :mod:`treeaicoach.skill`): "expert" only gets guides before an
+objective or on the hotkey; "debutant" also gets a short text hint under the marker.
+
 A guide lasts :data:`GUIDE_S` at most, or until an ALLIED ward glyph appears on the minimap near
-the spot (:class:`WardPlacedDetector`: template match of the three friendly ward glyphs on a
-small patch, compared with the patch when the guide started; ~0.1 ms, run at
-:data:`CHECK_HZ`). Nothing runs while no guide is active (no camera search, hidden windows).
+the spot (:class:`WardPlacedDetector`: small bright-blue blobs - the friendly ward glyphs are
+~5 px blue / cyan stars - in a ~30 px patch, not inside a champion icon, NEW compared with the
+patch when the guide started and STATIC over :data:`PLACE_HITS` checks, which rejects walking
+minions and pings; ~0.05 ms, run at :data:`CHECK_HZ`). Nothing runs while no guide is active (no
+camera search, hidden windows).
 
 Visual only: no voice. ``cfg.ward_sound`` (default False) plays one short system sound when a
 guide starts (Windows only). Thread-safe, never raises from its public methods.
@@ -42,75 +47,77 @@ GUIDE_S = 20.0                 # a guide is shown this long at most
 CONFIRM_S = 2.5                # "ward placed" check mark duration
 CHECK_HZ = 2.0                 # ward-placed detection rate
 PLACE_R = 0.045                # a ward within this map distance of the spot counts as placed
-WARD_SIZE = 0.036              # allied ward glyph size, fraction of the minimap width
-PLACE_SCORE = 0.60             # template score of a ward glyph ...
-PLACE_GAIN = 0.15              # ... clearly higher than when the guide started
-PLACE_HITS = 2                 # consecutive checks
+AVOID_R = 0.055                # ... but not inside a champion icon (ring colours look like wards)
+BLOB_MAX = 0.016               # ward glyph (~5 px star) bbox <= this fraction of the width + 1 px (minion dots: 0.018-0.026)
+BLOB_TOL = 0.008               # a blob "did not move" between two checks (fraction of the width)
+BASELINE_CHECKS = 2            # the blobs seen in the first checks are the baseline (not new)
+PLACE_HITS = 3                 # consecutive checks with the same new static blob
 HOTKEY_COOLDOWN_S = 1.0
-FRIENDLY_WARDS = ("minimap_ward_green_full.png", "minimap_ward_blue_full.png", "minimap_ward_pink_friendly.png")
 LABEL = "Ward ici"
 DONE_LABEL = "Balise posée"
+#: Short text hint for beginners (cfg.skill_level == "debutant"); 4 = default trinket key.
+REASON_HINT = {"objective": "Vision avant l'objectif", "base": "Vision de ta voie",
+               "periodic": "Balise rechargée", "hotkey": "Meilleur spot maintenant"}
+KEY_HINT = "touche 4"
+#: Expert players only get these guides (before an objective / on request).
+EXPERT_REASONS = frozenset({"objective", "hotkey"})
 
 
 # ======================================================================================
 # Ward-placed detection
 # ======================================================================================
+def ward_mask(bgr: np.ndarray) -> np.ndarray:
+    """uint8 0/1 mask of bright blue / cyan pixels (friendly ward glyphs, allied minions, rings)."""
+    p = bgr[..., :3].astype(np.int16)
+    b, g, r = p[..., 0], p[..., 1], p[..., 2]
+    return ((b >= 110) & (b - r >= 40) & (g >= 60)).astype(np.uint8)
+
+
 class WardPlacedDetector:
-    """Best match score (0..1) of a friendly ward glyph near a map point. Never raises."""
+    """Small friendly-ward-like blobs near a map point (see the module doc). Never raises."""
 
-    def __init__(self, icons: Sequence[np.ndarray] | None = None) -> None:
-        self._icons = list(icons) if icons is not None else None
-        self._tpl: dict[int, list[np.ndarray]] = {}
-        self._lock = threading.Lock()
-
-    def _load_icons(self) -> list[np.ndarray]:
-        if self._icons is None:
-            from treeaicoach.overlay_render import load_asset_icon
-
-            self._icons = [i for i in (load_asset_icon(n) for n in FRIENDLY_WARDS) if i is not None]
-        return self._icons
-
-    def _templates(self, size: int) -> list[np.ndarray]:
-        with self._lock:
-            hit = self._tpl.get(size)
-            if hit is not None:
-                return hit
-            out = []
-            for rgba in self._load_icons():
-                img = cv2.resize(np.asarray(rgba), (size, size), interpolation=cv2.INTER_AREA).astype(np.float32)
-                a = img[..., 3:4] / 255.0
-                bg = np.array([45.0, 50.0, 40.0], np.float32)          # dark map ground (RGB)
-                rgb = img[..., :3] * a + bg * (1.0 - a)
-                out.append(np.ascontiguousarray(rgb[..., ::-1]).astype(np.uint8))   # -> BGR
-            self._tpl[size] = out
-            return out
-
-    def score(self, minimap_bgr: Any, uv: Sequence[float], radius: float = PLACE_R) -> float:
+    def blobs(self, minimap_bgr: Any, uv: Sequence[float], radius: float = PLACE_R,
+              avoid: Sequence[Sequence[float]] = ()) -> list[tuple[float, float]] | None:
+        """Centres (map u, v) of the small blue blobs within ``radius`` of ``uv``, away from the
+        ``avoid`` points (champion icon centres). None when the frame is unusable."""
         try:
-            if not isinstance(minimap_bgr, np.ndarray) or minimap_bgr.ndim != 3:
-                return 0.0
+            if not isinstance(minimap_bgr, np.ndarray) or minimap_bgr.ndim != 3 or minimap_bgr.shape[2] < 3:
+                return None
             H, W = minimap_bgr.shape[:2]
-            size = max(6, int(round(WARD_SIZE * W)))
-            tpls = self._templates(size)
-            if not tpls:
-                return 0.0
-            cx, cy = float(uv[0]) * W, float(uv[1]) * H
-            r = radius * W + size / 2 + 1
-            x0, y0 = max(0, int(cx - r)), max(0, int(cy - r))
-            x1, y1 = min(W, int(cx + r) + 1), min(H, int(cy + r) + 1)
-            if x1 - x0 < size or y1 - y0 < size:
-                return 0.0
-            patch = np.ascontiguousarray(minimap_bgr[y0:y1, x0:x1, :3])
-            best = 0.0
-            for t in tpls:
-                res = cv2.matchTemplate(patch, t, cv2.TM_CCOEFF_NORMED)
-                m = float(res.max()) if res.size else 0.0
-                if math.isfinite(m):
-                    best = max(best, m)
-            return best
+            if min(H, W) < 48:
+                return None
+            u, v = float(uv[0]), float(uv[1])
+            if not (math.isfinite(u) and math.isfinite(v)):
+                return None
+            r = radius * W + 3
+            x0, y0 = max(0, int(u * W - r)), max(0, int(v * H - r))
+            x1, y1 = min(W, int(u * W + r) + 1), min(H, int(v * H + r) + 1)
+            if x1 - x0 < 4 or y1 - y0 < 4:
+                return []
+            mask = ward_mask(minimap_bgr[y0:y1, x0:x1])
+            if not mask.any():
+                return []
+            n, _lab, st, cen = cv2.connectedComponentsWithStats(mask, connectivity=8)
+            big = max(3.0, BLOB_MAX * W + 1.0)
+            av = [(float(a[0]), float(a[1])) for a in (avoid or ()) if a is not None]
+            out: list[tuple[float, float]] = []
+            for i in range(1, n):
+                x, y, w, h, _area = (int(c) for c in st[i])
+                if w > big or h > big:
+                    continue                      # champion ring, turret, ping...
+                if x == 0 or y == 0 or x + w >= x1 - x0 or y + h >= y1 - y0:
+                    if w > 2 or h > 2:            # cut by the patch border: part of something bigger
+                        continue
+                cu, cv_ = (x0 + float(cen[i][0]) + 0.5) / W, (y0 + float(cen[i][1]) + 0.5) / H
+                if math.hypot(cu - u, cv_ - v) > radius:
+                    continue
+                if any(math.hypot(cu - a[0], cv_ - a[1]) < AVOID_R for a in av):
+                    continue
+                out.append((cu, cv_))
+            return out
         except Exception:
-            log.debug("ward score failed", exc_info=True)
-            return 0.0
+            log.debug("ward blobs failed", exc_info=True)
+            return None
 
 
 # ======================================================================================
@@ -125,12 +132,19 @@ class WardGuide:
     since: float
     until: float
     placed_t: float | None = None
-    baseline: float | None = None
+    base: list = field(default_factory=list)     # blobs already there when the guide started
+    base_n: int = 0                               # checks merged into ``base``
+    cand: tuple[float, float] | None = None       # new static blob being confirmed
     hits: int = 0
 
     @property
     def placed(self) -> bool:
         return self.placed_t is not None
+
+    @property
+    def hint(self) -> str:
+        why = REASON_HINT.get(self.reason, "")
+        return f"{why} · {KEY_HINT}" if why else KEY_HINT
 
 
 @dataclass(frozen=True)
@@ -147,11 +161,12 @@ class WorldMarker:
     age: float = 0.0                 # seconds since the guide started (fade in / confirmation)
     left: float = 99.0               # seconds before it disappears (fade out)
     key: str = ""
+    hint: str = ""                   # beginner text hint ("Vision de ta voie · touche 4"), else ""
 
 
 @dataclass(frozen=True)
 class GuideView:
-    """Minimap guide (duck-typed like ``tactics.MapGuide``)."""
+    """Minimap guide (duck-typed like ``tactics.MapGuide``; ``done`` = ward placed)."""
 
     kind: str
     uv: tuple[float, float]
@@ -161,6 +176,7 @@ class GuideView:
     color: str = "gold"
     until: float = 0.0
     since: float = 0.0
+    done: bool = False
 
 
 def _beep() -> None:
@@ -174,8 +190,21 @@ def _beep() -> None:
         pass
 
 
+def _skill(cfg: Any) -> str:
+    try:
+        from treeaicoach.skill import normalize
+
+        return normalize(getattr(cfg, "skill_level", "intermediaire"))
+    except Exception:
+        return "intermediaire"
+
+
 class WardGuideManager:
-    """Lifecycle of the ward guides + camera tracking while one is active. Thread-safe."""
+    """Lifecycle of the ward guides + camera tracking while one is active. Thread-safe.
+
+    ``cfg`` fields read (getattr, defaults in brackets): ``ward_guide`` [True] (the whole
+    feature), ``ward_world`` [True] (game-view markers), ``ward_sound`` [False],
+    ``skill_level`` ["intermediaire"]."""
 
     def __init__(self, cfg: Any = None, detector: WardPlacedDetector | None = None,
                  sound: Callable[[], None] | None = None) -> None:
@@ -188,6 +217,23 @@ class WardGuideManager:
 
     def apply_config(self, cfg: Any) -> None:
         self.cfg = cfg
+        if not self.enabled:
+            with self._lock:
+                self._guides = []
+
+    @property
+    def enabled(self) -> bool:
+        return bool(getattr(self.cfg, "ward_guide", True))
+
+    @property
+    def world_enabled(self) -> bool:
+        return self.enabled and bool(getattr(self.cfg, "ward_world", True))
+
+    def allows(self, reason: str) -> bool:
+        """Is a guide for ``reason`` shown at this skill level (expert: objective / hotkey only)?"""
+        if not self.enabled:
+            return False
+        return _skill(self.cfg) != "expert" or str(reason) in EXPERT_REASONS
 
     def reset(self) -> None:
         with self._lock:
@@ -200,7 +246,9 @@ class WardGuideManager:
 
     # ------------------------------------------------------------------ inputs
     def request(self, t: float) -> bool:
-        """Hotkey: show the best spots now (on the next :meth:`update`). False when debounced."""
+        """Hotkey: show the best spots now (on the next :meth:`update`). False when debounced / off."""
+        if not self.enabled:
+            return False
         with self._lock:
             if t - self._last_request < HOTKEY_COOLDOWN_S:
                 return False
@@ -211,6 +259,8 @@ class WardGuideManager:
     def start(self, t: float, picks: Sequence[Any], reason: str, until: float | None = None) -> int:
         """Start guides for ``picks`` (``wards.WardPick``-like: ``.spot.id``, ``.uv``, ``.label``)."""
         try:
+            if not self.allows(reason):
+                return 0
             end = t + GUIDE_S if until is None else min(float(until), t + GUIDE_S)
             new: list[WardGuide] = []
             for p in list(picks or [])[:MAX_GUIDES]:
@@ -235,9 +285,11 @@ class WardGuideManager:
             return 0
 
     def update(self, t: float, advice: Any = None, minimap_bgr: Any = None,
-               recommend: Callable[[], Sequence[Any]] | None = None) -> list[str]:
+               recommend: Callable[[], Sequence[Any]] | None = None,
+               avoid: Sequence[Sequence[float]] = ()) -> list[str]:
         """One engine tick: new advice / hotkey -> guides; camera + ward-placed detection while active.
-        Returns events ("start", "placed", "end"). Never raises."""
+        ``avoid`` = champion icon centres on the minimap (u, v). Returns events ("start", "placed",
+        "end"). Never raises."""
         events: list[str] = []
         try:
             if advice is not None and getattr(advice, "picks", None):
@@ -268,27 +320,40 @@ class WardGuideManager:
             if not guides:
                 return events
             if isinstance(minimap_bgr, np.ndarray):
-                self.camera.update(minimap_bgr, t)
+                if self.world_enabled:
+                    self.camera.update(minimap_bgr, t)
                 if check:
                     for g in guides:
-                        if not g.placed and self._check_placed(g, minimap_bgr, t):
+                        if not g.placed and self._check_placed(g, minimap_bgr, t, avoid):
                             events.append("placed")
             return events
         except Exception:
             log.exception("WardGuideManager.update failed")
             return events
 
-    def _check_placed(self, g: WardGuide, frame: np.ndarray, t: float) -> bool:
-        s = self.detector.score(frame, g.uv)
+    def _check_placed(self, g: WardGuide, frame: np.ndarray, t: float,
+                      avoid: Sequence[Sequence[float]] = ()) -> bool:
+        blobs = self.detector.blobs(frame, g.uv, PLACE_R, avoid)
+        if blobs is None:
+            return False
         with self._lock:
-            if g.baseline is None:
-                g.baseline = s
+            if g.base_n < BASELINE_CHECKS:
+                g.base.extend(blobs)
+                g.base_n += 1
                 return False
-            if s >= PLACE_SCORE and s - g.baseline >= PLACE_GAIN:
-                g.hits += 1
+            new = [b for b in blobs if all(math.hypot(b[0] - o[0], b[1] - o[1]) > BLOB_TOL * 1.5 for o in g.base)]
+            if g.cand is not None:
+                same = [b for b in new if math.hypot(b[0] - g.cand[0], b[1] - g.cand[1]) <= BLOB_TOL]
             else:
-                g.hits = 0
-                g.baseline = min(g.baseline, s) if s < PLACE_SCORE else g.baseline
+                same = []
+            if same:
+                g.hits += 1
+                g.cand = same[0]
+            elif new:
+                g.cand = min(new, key=lambda b: math.hypot(b[0] - g.uv[0], b[1] - g.uv[1]))
+                g.hits = 1
+            else:
+                g.cand, g.hits = None, 0
             if g.hits >= PLACE_HITS:
                 g.placed_t = t
                 g.until = t + CONFIRM_S
@@ -304,17 +369,20 @@ class WardGuideManager:
         return bool(self.guides(t))
 
     def minimap_guides(self, t: float) -> list[GuideView]:
-        """Minimap ward rings (gold; green once placed)."""
+        """Minimap ward rings (gold; green with a check mark once placed)."""
         out = []
         for g in self.guides(t):
             out.append(GuideView("ward", g.uv, DONE_LABEL if g.placed else g.label, 40, False,
-                                 "safe" if g.placed else "gold", g.until, g.since))
+                                 "safe" if g.placed else "gold", g.until, g.since, g.placed))
         return out
 
     def world_markers(self, t: float, screen: Any, minimap_rect: Any = None,
                       me_uv: Sequence[float] | None = None) -> list[WorldMarker]:
-        """Game-view markers (empty without an active guide or a camera rectangle). Never raises."""
+        """Game-view markers (empty without an active guide, a camera rectangle, or when
+        ``cfg.ward_world`` is off). Never over the minimap / bottom HUD bar. Never raises."""
         try:
+            if not self.world_enabled:
+                return []
             guides = self.guides(t)
             if not guides or screen is None:
                 return []
@@ -327,6 +395,7 @@ class WardGuideManager:
             if minimap_rect is not None:
                 exclude.append(tuple(float(c) for c in minimap_rect[:4]))
             ref = tuple(me_uv) if me_uv is not None else proj.cam_center
+            beginner = _skill(self.cfg) == "debutant"
             out: list[WorldMarker] = []
             for g in guides:
                 age, left = t - g.since, g.until - t
@@ -337,15 +406,16 @@ class WardGuideManager:
                         out.append(WorldMarker("done", p[0], p[1], label=DONE_LABEL, age=t - (g.placed_t or t),
                                                left=left, key=g.spot_id))
                     continue
+                hint = g.hint if beginner else ""
                 if vis:
                     out.append(WorldMarker("ground", p[0], p[1], label=LABEL, sub=g.label, age=age, left=left,
-                                           key=g.spot_id))
+                                           key=g.spot_id, hint=hint))
                     continue
                 dx, dy = proj.direction(*g.uv)
                 ex, ey = edge_point((sx, sy, sw, sh), dx, dy, 70 * k, exclude)
                 secs = cp.walk_seconds(ref, g.uv)
                 out.append(WorldMarker("edge", ex, ey, dx, dy, LABEL, f"≈ {max(1, int(round(secs)))} s", age, left,
-                                       g.spot_id))
+                                       g.spot_id, hint))
             return out[:MAX_GUIDES]
         except Exception:
             log.exception("world_markers failed")
@@ -378,4 +448,5 @@ def edge_point(screen: Sequence[float], dx: float, dy: float, margin: float,
 
 
 __all__ = ["WardGuideManager", "WardGuide", "WorldMarker", "GuideView", "WardPlacedDetector", "edge_point",
+           "ward_mask",
            "MAX_GUIDES", "GUIDE_S", "CONFIRM_S", "LABEL", "DONE_LABEL"]

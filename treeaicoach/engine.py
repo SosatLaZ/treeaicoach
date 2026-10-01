@@ -69,6 +69,7 @@ ERROR_LOG_EVERY_S = 30.0         # full traceback of a failing tick at most this
 CONSECUTIVE_ERRORS_STATE = 5     # that many failing ticks in a row -> ERROR state
 BACKOFF_MAX_S = 10.0
 CAMERA_SELF_MAX_DIST = 0.12      # camera-centre fallback for "self": ally icon within this
+SELF_ICON_PERIOD_S = 0.5         # HUD portrait / icon learner status refresh (2 Hz)
 STICKY_SELF_S = 0.6              # my icon misread: my track seen this recently...
 STICKY_SELF_DIST = 0.04          # ... and an unidentified icon this close to it -> it is me
 JUMP_CHECK_S = 1.0               # an identity seen this recently cannot jump farther than
@@ -326,6 +327,8 @@ class CoachEngine:
         self._gate: Any = None                 # voice_policy.MessageGate (anti-spam, per game)
         self._tactics: Any = None              # tactics.TacticalDirector (fight / phase / positioning / wards / voice gate)
         self._tip_text: str | None = None
+        self._hud_tip_prev: str | None = None   # HUD advice line shown last + since when (fade-in)
+        self._hud_tip_since = 0.0
         self._text_msg: tuple[float, str] | None = None   # latest written-only message (HUD line)
         self.text_messages: list[tuple[float, str, str]] = []   # (t, kind, text) written-only, this game
         self._sb_recorded: Any = None
@@ -377,6 +380,11 @@ class CoachEngine:
         self._last_danger_t: float | None = None
         self._frame: np.ndarray | None = None
         self._identified: list[Any] = []
+        # learned minimap icon of me (custom skins) + HUD portrait (self_icon.py, hud_reader.py)
+        self._selficon_next = -math.inf
+        self._selficon_t: float | None = None
+        self._hud_reader: Any = None
+        self._hud_cal: tuple[float, tuple[int, int] | None] = (-math.inf, None)
         self._preview_cache: tuple[int, np.ndarray] | None = None
         self._frame_id = 0
         self._overlay_cache: tuple[float, Any] | None = None
@@ -1132,6 +1140,7 @@ class CoachEngine:
                 frame = None
             else:
                 identified = self._stabilize(t, self._vision(frame))
+            self._self_icon_tick(t, gt, game)
         tracker = self._tracker
         tracker.update(t, identified)
         raw_alerts: list[Alert] = []
@@ -1479,7 +1488,7 @@ class CoachEngine:
             return None
 
     def ai_budget_text(self) -> str:
-        """"IA : 3/5" (empty when the AI advice is off)."""
+        """"IA 3/5" (empty when the AI advice is off)."""
         from treeaicoach.ai_advisor import budget_text
 
         return budget_text(self.ai_budget())
@@ -1675,6 +1684,80 @@ class CoachEngine:
         if identified and not any(getattr(x, "relation", None) == "self" for x in identified):
             self._camera_self_fallback(frame, identified)
         return identified
+
+    # ------------------------------------------------------------------ my icon / HUD
+    def _icon_learner(self) -> Any:
+        """The roster matcher's icon learner (self_icon.IconLearner), or None."""
+        return getattr(getattr(self._detector, "matcher", None), "learner", None)
+
+    def my_observed_lane(self) -> str | None:
+        """Lane ("top" / "mid" / "bot") where MY icon was seen laning (1:30-10:00), from the
+        icon learner (works with custom skins), or None. Never raises."""
+        try:
+            lr = self._icon_learner()
+            return lr.observed_lane() if lr is not None else None
+        except Exception:
+            return None
+
+    def _self_icon_tick(self, t: float, gt: float, game: Any) -> None:
+        """2 Hz: HUD portrait (dead flag, skin guess), dead players and my lane occupancy for
+        the icon learner; hooks my observed lane into roles.RoleResolver. Never raises."""
+        if t < self._selficon_next and t >= self._selficon_next - 1.0:
+            return
+        self._selficon_next = t + SELF_ICON_PERIOD_S
+        try:
+            matcher = getattr(self._detector, "matcher", None)
+            lr = getattr(matcher, "learner", None)
+            if lr is None:
+                return
+            hud = self._read_hud(t, game) if self._frame_source is None else None
+            if hud is not None:
+                lr.feed_hud(hud.portrait, hud.dead)
+                if lr.skin_guesser is None and not self._demo:
+                    from treeaicoach.self_icon import SkinGuesser
+
+                    lr.skin_guesser = SkinGuesser(self._champion_db(), allow_network=bool(
+                        getattr(self._cfg, "download_skin_icons", True)))
+            matcher.set_status(game, me_dead=hud.dead if hud is not None else None, game_time=gt)
+            lr.observe_lane(t, gt)
+            res = self._role_resolver
+            if res is not None and getattr(res, "my_lane_hook", False) is None:
+                res.my_lane_hook = self.my_observed_lane
+        except Exception:
+            self._err.exception("Self icon tick failed")
+
+    def _read_hud(self, t: float, game: Any) -> Any:
+        """HUD portrait read (hud_reader.HudReader): one full-window grab to calibrate (per
+        window size, retried every 15 s), then only the small portrait patch. None if unknown."""
+        win = self._window
+        if win is None:
+            return None
+        if self._hud_reader is None:
+            from treeaicoach.hud_reader import HudReader
+
+            self._hud_reader = HudReader()
+        hr = self._hud_reader
+        size = (win.w, win.h)
+        cal_t, cal_size = self._hud_cal
+        if cal_size != size:
+            if t - cal_t < 15.0 and cal_t <= t:
+                return None
+            self._hud_cal = (t, None)
+            screen = self._grabber().grab(win)
+            if screen is None or is_black_frame(screen) or not hr.calibrate(screen):
+                return None
+            self._hud_cal = (t, size)
+            log.info("HUD portrait found at %s", hr.location)
+        roi = hr.roi()
+        if roi is None:
+            return None
+        x, y, w, h = roi
+        patch = self._grabber().grab(Rect(win.x + x, win.y + y, w, h))
+        alive = None
+        me = getattr(game, "me", None)
+        if me is not None:
+            alive = not bool(getattr(me, "is_dead", False))
+        return hr.read_patch(patch, alive_hint=alive)
 
     @staticmethod
     def _with(item: Any, **changes: Any) -> Any:
@@ -2208,6 +2291,7 @@ class CoachEngine:
         if last_alert is not None and last_alert_t is not None:
             la = (last_alert.text, int(last_alert.level), max(0.0, now - last_alert_t))
         minimap_rect, screen_rect = self._screen_rects()
+        tip = self._hud_line(now)
         gt = (_finite(game.game_time) or 0.0) + min(max(0.0, now - game_t), 3.0) if game else None
         fogs = self._fog.estimates() if self._fog is not None and not getattr(self._cfg, "safe_mode", False) else []
         return OverlayState(
@@ -2220,7 +2304,7 @@ class CoachEngine:
             jungler_line=self._jungler_line(game, jungler, now),
             hint=self._reminders.hint() if self._reminders is not None else None,
             insight=(self._coach.insight() if self._coach is not None else None) or self._scoreboard_hud_line(),
-            tip=self._hud_line(now),
+            tip=tip,
             stance=getattr(self._stance.current(), "level", None) if self._stance is not None else None,
             stance_reason=getattr(self._stance.current(), "reason", None) if self._stance is not None else None,
             show_allies=bool(getattr(cfg, "overlay_show_allies", False)),
@@ -2234,7 +2318,37 @@ class CoachEngine:
             guides=tac.guides(now) if tac is not None else [],
             phase=tac.phase() if tac is not None else None,
             role_notice=self._role_notice(now),
+            **self._hud_card_fields(game, me_uv, tip, now),
         )
+
+    def _hud_card_fields(self, game: Any, me_uv: Any, tip: str | None, now: float) -> dict[str, Any]:
+        """HUD v3 card extras: gauge (+ reason, since), advice tone + fade start, item chip (in
+        base), AI counter. Times are converted to ``time.monotonic`` (the overlay's clock). Never raises."""
+        out: dict[str, Any] = {}
+        try:
+            to_mono = time.monotonic() - now
+            g = self._gauge.current() if self._gauge is not None else None
+            if g is not None:
+                out.update(gauge=int(g.step), gauge_reason=g.reason or None, gauge_since=float(g.since) + to_mono)
+            if tip != self._hud_tip_prev:
+                self._hud_tip_prev, self._hud_tip_since = tip, now
+            if tip:
+                out.update(tip_tone=self._tip_tone(tip), tip_since=self._hud_tip_since + to_mono)
+            in_base = False
+            if me_uv is not None and game is not None:
+                z = geometry.classify_zone(*me_uv)
+                in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
+            out["in_base"] = bool(in_base)
+            adv = getattr(self, "_item_adv", None)
+            rec = adv.current() if adv is not None and getattr(self._cfg, "item_advice", True) else None
+            if rec is not None:
+                names = list(getattr(rec, "buy_now_names", ()) or ())
+                out["item_hint"] = "Achète " + (" + ".join(names[:2]) if names and not rec.completes
+                                                else rec.item_name)
+            out["ai_counter"] = self.ai_budget_text() or None
+        except Exception:
+            log.debug("HUD card fields failed", exc_info=True)
+        return out
 
     def _role_notice(self, now: float) -> str | None:
         """"Rôle détecté : MID (échange de voie)" for 20 s after a lane swap is detected. Never raises."""

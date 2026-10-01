@@ -228,6 +228,8 @@ class RosterEntry:
     team: str | None = None
     #: False when the skin's own portrait is not available yet (base portrait used).
     exact: bool = True
+    #: True when ``icon`` was captured from the minimap (custom skin, see self_icon.py).
+    learned: bool = False
 
 
 @dataclass
@@ -601,7 +603,8 @@ class RosterMatcher:
     name = "roster"
 
     def __init__(self, db: Any = None, scale_store: dict | None = None,
-                 on_scale: Callable[[str, float], None] | None = None) -> None:
+                 on_scale: Callable[[str, float], None] | None = None,
+                 learn_cache: Any = None) -> None:
         self.db = db
         self.scale_store = scale_store
         self.on_scale = on_scale
@@ -625,6 +628,16 @@ class RosterMatcher:
         self._my_team: str | None = None
         self._cam: tuple[int, tuple[float, float] | None] = (-10 ** 9, None)
         self._structs: list[tuple[float, float, str]] | None = None
+        #: Learned / guessed icons (custom skins): alias -> (icon, source), see self_icon.py.
+        self._overrides: dict[str, tuple[np.ndarray, str]] = {}
+        self._camlock: tuple[int, tuple[float, float] | None] = (-10 ** 9, None)
+        self.learner: Any = None
+        try:
+            from treeaicoach.self_icon import IconLearner
+
+            self.learner = IconLearner(cache_dir=learn_cache)
+        except Exception:
+            log.exception("Icon learner unavailable")
 
     # ------------------------------------------------------------------ roster
     @property
@@ -669,6 +682,9 @@ class RosterMatcher:
                 self.rings.reset()
                 self._tracks = {}
                 self._cam = (-10 ** 9, None)
+                self._camlock = (-10 ** 9, None)
+                if self.learner is not None:
+                    self.learner.on_roster(ents)
 
     def set_roster(self, game: Any) -> None:
         """Build the portrait templates from a ``GameInfo`` (None clears). Never raises."""
@@ -715,13 +731,165 @@ class RosterMatcher:
                                         exact=exact))
             self._game = game
             self._my_team = str(getattr(me, "team", "") or "") or None
-            old = [(e.alias, e.skin_id, e.relation, e.exact) for e in self._entries]
-            if old == [(e.alias, e.skin_id, e.relation, e.exact) for e in ents]:
+            ents = self._apply_overrides(ents)
+            old = [(e.alias, e.skin_id, e.relation, e.exact, e.learned) for e in self._entries]
+            if old == [(e.alias, e.skin_id, e.relation, e.exact, e.learned) for e in ents]:
                 return
             self.set_entries(ents)
+            for i, e in enumerate(self._entries):
+                ov = self._overrides.get(e.alias)
+                if ov is not None and ov[1] == "cached" and self.learner is not None and \
+                        i not in self.learner.learned:
+                    self.learner.adopt(i, e.alias, ov[0], time.monotonic(), "cached")
             log.info("Roster matcher: %d portraits", len(ents))
         except Exception:
             self._errors.exception("Roster matcher set_roster failed")
+
+    # ------------------------------------------------------------------ learned icons
+    def _apply_overrides(self, ents: list[RosterEntry]) -> list[RosterEntry]:
+        """Learned icons on the official roster; a new game drops them and loads my
+        persisted icon (same champion + skin) from the learner's cache."""
+        import dataclasses
+
+        cur = [(e.alias, e.skin_id, e.relation) for e in self._entries]
+        if cur != [(e.alias, e.skin_id, e.relation) for e in ents]:
+            self._overrides = {}
+            for e in ents:
+                if e.relation == "self" and self.learner is not None:
+                    icon = self.learner.load_cached(e.alias, e.skin_id)
+                    if icon is not None:
+                        self._overrides[e.alias] = (icon, "cached")
+                        log.info("Roster matcher: learned icon of %s (skin %d) from the cache",
+                                 e.alias, e.skin_id)
+        out = []
+        for e in ents:
+            ov = self._overrides.get(e.alias)
+            out.append(dataclasses.replace(e, icon=ov[0], exact=True, learned=ov[1] != "skin")
+                       if ov is not None else e)
+        return out
+
+    def register_icon(self, i: int, icon: np.ndarray, source: str = "learned") -> bool:
+        """Entry ``i`` is matched with ``icon`` from now on (BGR crop in the template
+        geometry, or an RGBA official portrait for ``source="skin"``). Keeps the
+        calibration and the tracks. Never raises."""
+        import dataclasses
+
+        try:
+            with self._lock:
+                if not 0 <= i < len(self._entries) or not isinstance(icon, np.ndarray):
+                    return False
+                e = self._entries[i]
+                ne = dataclasses.replace(e, icon=icon, exact=True, learned=source != "skin")
+                ents = list(self._entries)
+                ents[i] = ne
+                self._overrides[e.alias] = (icon, source)
+                self.set_entries(ents)
+                return True
+        except Exception:
+            self._errors.exception("Roster matcher register_icon failed")
+            return False
+
+    def revert_icon(self, i: int) -> bool:
+        """Entry ``i`` back to its official portrait. Never raises."""
+        import dataclasses
+
+        try:
+            with self._lock:
+                if not 0 <= i < len(self._entries):
+                    return False
+                e = self._entries[i]
+                self._overrides.pop(e.alias, None)
+                db = self.db
+                icon = None
+                if db is not None:
+                    icon = db.load_icon(e.alias, e.skin_id) if e.skin_id else None
+                    if icon is None:
+                        icon = db.load_icon(e.alias, 0)
+                if icon is None:
+                    return False
+                ents = list(self._entries)
+                ents[i] = dataclasses.replace(e, icon=icon, learned=False)
+                self.set_entries(ents)
+                return True
+        except Exception:
+            self._errors.exception("Roster matcher revert_icon failed")
+            return False
+
+    def learned_aliases(self) -> dict[str, str]:
+        """alias -> source ("learned" / "cached" / "skin") of the non-official templates."""
+        with self._lock:
+            return {a: src for a, (_ic, src) in self._overrides.items()}
+
+    def set_status(self, game: Any = None, me_dead: bool | None = None,
+                   game_time: float | None = None) -> None:
+        """Dead players (Live API) and my HUD dead flag for the icon learner. Never raises."""
+        try:
+            if self.learner is None:
+                return
+            dead = []
+            if game is not None:
+                for p in [getattr(game, "me", None)] + list(getattr(game, "allies", None) or []) + \
+                        list(getattr(game, "enemies", None) or []):
+                    if p is not None and bool(getattr(p, "is_dead", False)):
+                        dead.append(str(getattr(p, "champion_alias", "") or ""))
+                if me_dead is None and getattr(game, "me", None) is not None:
+                    me_dead = bool(getattr(game.me, "is_dead", False))
+            self.learner.set_status(dead, me_dead, game_time)
+        except Exception:
+            self._errors.exception("Roster matcher set_status failed")
+
+    def _cam_point(self, bgr: np.ndarray) -> tuple[float, float] | None:
+        """Where my icon is when the camera is locked on me (camera rectangle), cached."""
+        f = self._state.frames
+        if f - self._camlock[0] >= 2:
+            p = None
+            try:
+                from treeaicoach.camera_proj import find_camera_rect
+                from treeaicoach.self_icon import CAM_V_FRAC
+
+                r = find_camera_rect(bgr)
+                if r is not None:
+                    p = (0.5 * (r.u0 + r.u1), r.v0 + CAM_V_FRAC * (r.v1 - r.v0))
+            except Exception:
+                c = self._camera_centre(bgr)
+                p = (c[0], c[1] + 0.022) if c is not None else None
+            self._camlock = (f, p)
+        return self._camlock[1]
+
+    def _learn(self, bgr: np.ndarray, now: float, R_px: float, r_norm: float,
+               accepted: list, thr: float, kx: float, ky: float, used: set,
+               dets_extra: list) -> list[Detection]:
+        """Icon learner step (self_icon.py): registrations, reverts, bootstrap position of
+        me (replaces the coasting one). Returns the extra detections."""
+        lr = self.learner
+        if lr is None:
+            return dets_extra
+        ents = self._entries
+        acc = {c.i: (c.x / kx, c.y / ky, c.tot - thr) for c in accepted}
+        out = lr.step(bgr, now, R_px, ents, acc, self.rings, self._cam_point(bgr), self.db)
+        me = next((i for i, e in enumerate(ents) if e.relation == "self"), None)
+        if out.self_pos is not None and me is not None and me not in used:
+            u, v, sc = out.self_pos
+            e = ents[me]
+            dets_extra = [d for d in dets_extra if d.alias != e.alias]
+            dets_extra.append(Detection(u=u, v=v, r=r_norm, score=float(sc), cls="ally",
+                                        cls_probs=(0.03, 0.97, 0.0), alias=e.alias))
+            self.last_matches.append(MatchInfo(e.alias, e.relation, u, v, r_norm, float(sc),
+                                               0.0, 0.0, True, "bootstrap"))
+            tr = self._tracks.get(me)
+            if tr is None:
+                self._tracks[me] = _Track(u, v, now, conf=float(sc), margin=0.0)
+            else:
+                tr.u, tr.v, tr.t, tr.vu, tr.vv = u, v, now, 0.0, 0.0
+        for i in out.revert:
+            self.revert_icon(i)
+        for i, (src, skin, icon) in out.register.items():
+            if self.register_icon(i, icon, "skin" if src == "skin" else "learned") and \
+                    src == "skin":
+                lr.adopt(i, ents[i].alias, cv2.resize(_icon_bgr(icon), (48, 48)), now, "skin")
+            if src == "skin":
+                log.info("Roster matcher: %s tried with its skin %s portrait", ents[i].alias, skin)
+        return dets_extra
 
     # ------------------------------------------------------------------ internals
     def _bank(self, inner_px: float) -> _Bank:
@@ -1477,6 +1645,14 @@ class RosterMatcher:
             if far is not None and far.note == "jump" and far.tot + JUMP_PENALTY >= thr:
                 tr.pend = (far.x / kx, far.y / ky, now)
 
+        self.last_matches = infos
+        # 8. learned icons (custom skins): bootstrap / capture / refresh (self_icon.py)
+        try:
+            dets_extra = self._learn(bgr, now, R_px, r_norm, accepted, thr, kx, ky, used,
+                                     dets_extra)
+        except Exception:
+            self._errors.exception("Roster matcher icon learning failed")
+
         # statistics for the adaptive threshold and the re-calibration trigger
         conf = [a for a in accepted if a.tot >= thr + 0.08]
         st.bg.extend(bg_scores)
@@ -1486,7 +1662,6 @@ class RosterMatcher:
         if st.since_calib >= RECAL_WINDOW:
             st.ref_conf = max(st.ref_conf, float(np.mean(st.conf_hist[-RECAL_WINDOW:])))
 
-        self.last_matches = infos
         dets: list[Detection] = []
         for c in accepted:
             e = ents[c.i]

@@ -6,8 +6,9 @@
    opening) -> candidate rows / columns. A pair of rows ~0.155 W apart (or ONE row when the
    rectangle leaves the map: the other one is put at the known height, on the side where the
    vertical segments go) and likewise for the columns; every candidate rectangle is scored by
-   how much of its *visible* sides is really drawn (icons drawn over the lines are tolerated).
-   About 0.3 ms on a 300 px crop.
+   how much of its *visible* sides is really drawn (icons drawn over the lines are tolerated;
+   one side may even be fully hidden when the three others are drawn). 0.3-1 ms on a 300 px
+   crop (larger crops are searched on a 320 px mask).
 2. :class:`CameraTracker` smooths it over time (EMA, snap on a big jump: Space / recall / click
    on the minimap) and holds the last rectangle ~1.5 s when it is not found (icons, fights).
 3. :class:`CameraProjection` maps a map point to a screen pixel of the game window.
@@ -63,6 +64,8 @@ TOPHAT_MIN = 55
 _TOPHAT_K = np.ones((5, 5), np.uint8)
 #: A visible side must be drawn on at least this fraction of its length.
 SIDE_MIN = 0.35
+#: ... except ONE side hidden by icons (the three others drawn), scored this much lower.
+WEAK_PENALTY = 0.5
 #: Downscale the mask above this width (keeps the search ~ constant time).
 MAX_W = 420
 WORK_W = 320
@@ -112,14 +115,17 @@ def _cover(line: np.ndarray) -> float:
 def _side_support(horiz: np.ndarray, vert: np.ndarray, x0: float, y0: float, x1: float, y1: float
                   ) -> tuple[float, int, int]:
     """Mean coverage of the visible sides of the rectangle, (#visible horizontal, #visible vertical)
-    sides with enough coverage; -1 when a visible side is clearly not drawn."""
+    sides with enough coverage; -1 when the rectangle is not supported.
+
+    One visible side may be hidden (champion icons drawn over it) when the three others are well
+    drawn: it then counts for :data:`WEAK_PENALTY` less."""
     h_, w_ = horiz.shape
     xa, xb = max(0, int(round(x0))), min(w_, int(round(x1)) + 1)
     ya, yb = max(0, int(round(y0))), min(h_, int(round(y1)) + 1)
     if xb - xa < 3 or yb - ya < 3:
         return -1.0, 0, 0
     covs: list[float] = []
-    nh = nv = 0
+    nh = nv = weak = 0
     for y in (y0, y1):
         r = int(round(y))
         if 0 <= r < h_:
@@ -128,7 +134,9 @@ def _side_support(horiz: np.ndarray, vert: np.ndarray, x0: float, y0: float, x1:
             if c < SIDE_MIN:
                 if min(r, h_ - 1 - r) <= 2:      # at the very border: treated as clipped
                     continue
-                return -1.0, 0, 0
+                weak += 1
+                covs.append(c - WEAK_PENALTY)
+                continue
             covs.append(c)
             nh += 1
     for x in (x0, x1):
@@ -139,10 +147,12 @@ def _side_support(horiz: np.ndarray, vert: np.ndarray, x0: float, y0: float, x1:
             if c < SIDE_MIN:
                 if min(c_, w_ - 1 - c_) <= 2:
                     continue
-                return -1.0, 0, 0
+                weak += 1
+                covs.append(c - WEAK_PENALTY)
+                continue
             covs.append(c)
             nv += 1
-    if not covs:
+    if not covs or weak > 1 or (weak and nh + nv < 3):
         return -1.0, 0, 0
     return float(np.mean(covs)), nh, nv
 
@@ -315,6 +325,11 @@ class CameraProjection:
         self.H = cv2.getPerspectiveTransform(src, dst).astype(np.float64)
         self.Hinv = np.linalg.inv(self.H)
 
+    @property
+    def cam_center(self) -> tuple[float, float]:
+        """Centre of the camera rectangle (map u, v)."""
+        return 0.5 * (self.cam[0] + self.cam[2]), 0.5 * (self.cam[1] + self.cam[3])
+
     def map_to_screen(self, u: float, v: float) -> tuple[float, float] | None:
         """Screen pixel of the map point (None if behind the camera / not finite)."""
         p = self.H @ np.array([float(u), float(v), 1.0])
@@ -369,6 +384,26 @@ def make_projection(cam: CameraRect | None, screen: Any, persp: float = PERSPECT
         return None
 
 
+def map_to_screen(cam: CameraRect | None, screen: Any, u: float, v: float,
+                  persp: float = PERSPECTIVE_K) -> tuple[float, float] | None:
+    """One-shot :meth:`CameraProjection.map_to_screen` (None without a camera / screen). Never raises."""
+    proj = make_projection(cam, screen, persp)
+    try:
+        return proj.map_to_screen(u, v) if proj is not None else None
+    except Exception:
+        return None
+
+
+def is_visible(cam: CameraRect | None, screen: Any, u: float, v: float, margin: float = 0.0,
+               exclude: Sequence[Sequence[float]] = (), persp: float = PERSPECTIVE_K) -> bool:
+    """One-shot :meth:`CameraProjection.is_visible` (False without a camera / screen). Never raises."""
+    proj = make_projection(cam, screen, persp)
+    try:
+        return bool(proj is not None and proj.is_visible(u, v, margin, exclude))
+    except Exception:
+        return False
+
+
 def walk_seconds(a: Sequence[float], b: Sequence[float]) -> float:
     """Rough walking time (s) between two map points."""
     return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1])) * MAP_UNITS / MOVE_SPEED
@@ -382,4 +417,5 @@ def hud_bar_rect(screen: Sequence[float]) -> tuple[int, int, int, int]:
 
 
 __all__ = ["CameraRect", "find_camera_rect", "CameraTracker", "CameraProjection", "make_projection",
+           "map_to_screen", "is_visible",
            "walk_seconds", "hud_bar_rect", "PERSPECTIVE_K", "CAM_W", "CAM_H"]
