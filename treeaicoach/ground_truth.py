@@ -45,6 +45,9 @@ CONFIRM_AFTER_S = 20.0      # ... or this long after it can confirm it
 ANCHOR_MAX_GAP_S = 90.0     # anchors farther than this from the alert are ignored
 EPISODE_MERGE_S = 10.0      # alerts on the same target closer than this = one episode
 MISSED_WINDOW_S = 15.0      # a gank alert in the 15 s before a death = "warned"
+PERSONAL_KIND = "personal_danger"
+REACT_S = 3.0               # an alert less than 3 s before the death came too late to react
+LEAD_CHAIN_GAP_S = 8.0      # alerts this close form one warning chain (lead = its first alert)
 FOG_MATCH_S = 1.5           # fog sample <-> truth anchor time tolerance
 FOG_MARGIN = 0.02
 SIGHT_MATCH_S = 1.0         # sighting <-> truth frame time tolerance
@@ -411,14 +414,17 @@ def _my_pos_fn(record: dict, tr: _Truth) -> Callable[[float], tuple[float, float
     return at
 
 
-def _alerts(record: dict) -> list[tuple[float, str, int, str]]:
+def _alerts(record: dict, personal: bool = False) -> list[tuple[float, str, int, str]]:
+    """Gank alerts of the record (+ the personal danger warnings of danger.py with ``personal``)."""
     out = []
     for a in record.get("alerts") or []:
         if not isinstance(a, list) or len(a) < 3:
             continue
         t = _f(a[0])
         kind = str(a[1] or "").lower()
-        if t is None or kind not in GANK_KINDS:
+        if t is None:
+            continue
+        if kind not in GANK_KINDS and not (personal and kind == PERSONAL_KIND and (_i(a[2], 0) or 0) >= 1):
             continue
         alias = str(a[4]) if len(a) >= 5 and a[4] else ""
         out.append((t, kind, _i(a[2], 0) or 0, alias))
@@ -474,14 +480,23 @@ def _reliability(record: dict, tr: _Truth, my_pos: Callable) -> dict[str, Any]:
     n_prob = sum(1 for e in episodes if e["verdict"] == "probable_false")
     scored = n_conf + n_false + n_prob
     precision = (n_conf / scored) if scored else None
-    # 2) missed ganks: my deaths with the enemy jungler involved and no gank alert just before
+    # 2) missed ganks: my deaths with the enemy jungler involved and no gank / danger alert just
+    #    before; lead time of the alerts before ALL my deaths (>= 5 s wanted, < 3 s = too late)
+    warn_alerts = _alerts(record, personal=True)
     jdeaths = []
+    leads: list[float] = []
     for t, killer, victim, assists, uv in tr.kills:
-        if victim != tr.me or tr.me is None or tr.jungler is None:
+        if victim != tr.me or tr.me is None:
+            continue
+        lead = _lead(warn_alerts, t)
+        if lead is not None:
+            leads.append(lead)
+        if tr.jungler is None:
             continue
         if killer == tr.jungler or tr.jungler in assists:
-            warned = any(t - MISSED_WINDOW_S <= a[0] <= t + 1.0 for a in alerts)
-            jdeaths.append({"game_time": round(t, 1), "time": fmt_time(t), "warned": warned, "uv": list(uv)})
+            warned = lead is not None
+            jdeaths.append({"game_time": round(t, 1), "time": fmt_time(t), "warned": warned, "uv": list(uv),
+                            "alert_lead_s": lead, "late": warned and lead < REACT_S})
     missed = [d for d in jdeaths if not d["warned"]]
     # 3) fog circle coverage of the true jungler position
     jalias = _norm(tr.alias(tr.jungler))
@@ -534,6 +549,9 @@ def _reliability(record: dict, tr: _Truth, my_pos: Callable) -> dict[str, Any]:
         "unknown": len(episodes) - scored, "precision": None if precision is None else round(precision, 3),
         "episodes": episodes[:60],
         "jungler_deaths": len(jdeaths), "missed": len(missed), "missed_times": [d["time"] for d in missed],
+        "late": sum(1 for d in jdeaths if d.get("late")),
+        "lead_mean": round(sum(leads) / len(leads), 1) if leads else None,
+        "lead_n": len(leads), "lead_late": sum(1 for x in leads if x < REACT_S),
         "fog_checks": fog_checks, "fog_inside": fog_inside,
         "fog_coverage": None if coverage is None else round(coverage, 3),
         "sightings_checked": sight_n, "sightings_ok": sight_ok,
@@ -543,6 +561,21 @@ def _reliability(record: dict, tr: _Truth, my_pos: Callable) -> dict[str, Any]:
     out["suggestion"] = suggest_sensitivity(out, sens)
     out["grade"], out["grade_label"] = _grade(out)
     return out
+
+
+def _lead(alerts: list[tuple[float, str, int, str]], t: float) -> float | None:
+    """Seconds between the first alert of the warning chain ending within ``MISSED_WINDOW_S``
+    before ``t`` and ``t`` (None when no alert)."""
+    before = [a for a in alerts if t - MISSED_WINDOW_S <= a[0] <= t + 1.0]
+    if not before:
+        return None
+    first = before[-1][0]
+    for a in reversed([a for a in alerts if a[0] <= first]):
+        if first - a[0] <= LEAD_CHAIN_GAP_S:
+            first = a[0]
+        else:
+            break
+    return round(max(0.0, t - first), 1)
 
 
 def _grade(rel: dict) -> tuple[int | None, str]:
@@ -642,7 +675,7 @@ def _lane(tr: _Truth) -> dict[str, Any]:
 
 
 def _deaths(record: dict, tr: _Truth) -> list[dict]:
-    alerts = _alerts(record)
+    alerts = _alerts(record, personal=True)
     out = []
     for t, killer, victim, assists, uv in tr.kills:
         if tr.me is None or victim != tr.me:
@@ -653,7 +686,8 @@ def _deaths(record: dict, tr: _Truth) -> list[dict]:
                     "zone_label": _zone_label(uv[0], uv[1], tr.my_team),
                     "killer": tr.name(killer) if killer else "exécution", "killer_alias": tr.alias(killer),
                     "assisters": [tr.name(a) for a in assists], "jungler_involved": bool(involved),
-                    "warned": bool(before), "alert_before_s": round(t - before[-1][0], 1) if before else None})
+                    "warned": bool(before), "alert_before_s": round(t - before[-1][0], 1) if before else None,
+                    "alert_lead_s": _lead(alerts, t)})
     return out
 
 

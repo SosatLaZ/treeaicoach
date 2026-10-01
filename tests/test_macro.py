@@ -128,7 +128,7 @@ def test_plates_when_lane_opponent_dead():
     g = game(600.0, dead={"Darius": 20.0})
     c = ctx_for(g, me_uv=TOP_LANE_ME)
     call = [x for x in macro.evaluate(c) if x.kind == "plates"][0]
-    assert call.text.startswith("Plaque la tour (20 s)") and "Darius" in call.text and "125 PO" in call.why
+    assert call.text.startswith("Plaque la tour (20 s)") and "Darius" in call.text and "120 PO" in call.why
     assert call.target == phase.TURRET_UV[("CHAOS", "top", 1)]
     # after 14:00: the tower itself
     c = ctx_for(game(900.0, dead={"Darius": 25.0}), me_uv=TOP_LANE_ME)
@@ -332,7 +332,7 @@ def test_director_shows_arrow_and_banner():
     gl = [x for x in tac.guides(100.5) if x.kind == "genie"]
     assert gl and gl[0].uv == phase.TURRET_UV[("CHAOS", "top", 1)] and gl[0].arrow and gl[0].label == "VA ICI · TOUR"
     b = tac.banner(100.5)
-    assert b is not None and b.title == "PLAQUES !" and "125 PO" in b.subtitle
+    assert b is not None and b.title == "PLAQUES !" and "120 PO" in b.subtitle
     assert tac.macro_active() is out.macro_new
 
 

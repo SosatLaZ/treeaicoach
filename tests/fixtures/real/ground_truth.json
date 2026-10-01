@@ -174,8 +174,9 @@
      "u": 0.953,
      "v": 0.035,
      "team": "ally",
-     "name": null,
-     "note": "fountain corner"
+     "name": "Garen",
+     "note": "fountain corner",
+     "self": true
     },
     {
      "u": 0.487,
@@ -377,8 +378,8 @@
      "u": 0.835,
      "v": 0.172,
      "team": "ally",
-     "name": null,
-     "note": "stack in base"
+     "name": "Ezreal",
+     "note": "stack in base (portrait match)"
     },
     {
      "u": 0.867,

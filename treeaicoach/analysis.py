@@ -803,6 +803,11 @@ def _summary(rec: _Rec, deaths: list[dict]) -> dict[str, Any]:
         "recorded_from": _finite(rec.meta.get("start_game_time"), 0.0),
         "complete": rec.result is not None and not rec.raw.get("incomplete", False),
         "app_version": _str(rec.meta.get("app_version")),
+        # final inventory (item ids, Live Client) and the enemy team: ground the AI review's item advice
+        "items": [_int(i) for i in _list(snap.get("items")) if _int(i) > 0][:7] if snap else [],
+        "enemies": [{"alias": _str(p.get("alias")), "name": _str(p.get("name")) or _str(p.get("alias")),
+                     "position": _str(p.get("position")).upper()}
+                    for p in rec.roster if rec.enemy_team and _str(p.get("team")).upper() == rec.enemy_team][:5],
     }
 
 

@@ -21,8 +21,8 @@ information x team edge - risk), see :func:`evaluate`:
 * ``fight_lost`` - 2+ allies dead more than enemies: "Recule : défends sous ta tour";
 * ``jungler_dead`` - enemy jungler dead (respawnTimer): invade (jungler), free objective, or
   plates / aggressive lane (laners);
-* ``plates``     - lane opponent dead / back in his base: "Plaque la tour (18 s)" (plate gold
-  before 14:00, the tower after);
+* ``plates``     - lane opponent dead / back in his base: "Plaque la tour (18 s)" (laning phase:
+  plate gold - 2026: plates stay all game, outer ones worth less from 11:00 -; the tower after);
 * ``cross_trade`` / ``free_dragon`` - enemy jungler (or 3+ enemies) committed on the other side
   (seen, Tab farm side, pit crowd): trade the objective / the tower on MY side;
 * ``rotate_mid`` - bot outer tower down after laning: bot duo goes mid;
@@ -63,19 +63,25 @@ GRACE_S = 2.0                  # invalid this long -> cancelled
 DEFAULT_LIFE_S = 20.0
 PREEMPT_MARGIN = 0.25          # a new call replaces a held one only if its score is this much higher
 FRESH_S = 4.0                  # an enemy "seen" (for counts) at most this long ago
-LANING_END_GT = 840.0          # plates fall at 14:00
-PLATE_GOLD = 125               # gold per plate (team: 125 to the local player for a solo plate)
+LANING_END_GT = 840.0          # 14:00: end of the laning phase (minion waves every 25 s, cannon every 2nd wave)
+PLATE_GOLD = 120               # gold per outer turret plate (2026: 125 -> 120; plates no longer fall at 14:00)
+PLATE_DECAY_START_GT = 660.0   # outer plates lose 10 gold per minute from 11:00 ...
+PLATE_DECAY_MAX = 40           # ... down to -40 (15:00)
 RECALL_GOLD = 1100
 LOW_HP = 0.35
-MINION_FIRST_SPAWN = 30.0      # first wave spawn (game time)
-MINION_WAVE_S = 30.0
+MINION_FIRST_SPAWN = 30.0      # first wave spawn (game time; 2026: 1:05 -> 0:30)
+MINION_WAVE_S = 30.0           # wave interval until 14:00 ...
+MINION_WAVE_MID_S = 25.0       # ... every 25 s from 14:00 ...
+MINION_WAVE_LATE_S = 20.0      # ... and every 20 s from ~30:00 (wiki: 29:25 / 29:50 / 30:10)
+_WAVES_EARLY = 28              # wave 28 spawns at 14:00
+_WAVES_MID = 66                # wave 66 spawns at 29:50
 MINION_WALK_S = 28.0           # spawn -> middle of a lane
 OBJ_SOON_S = 45.0              # an objective this close: the group call of positioning.py wins
 JG_NEAR_R = 0.35
 SIDE_WAVE_EMPTY_R = 0.18
 MOVE_SPEED = 360.0             # game units / s (boots, mid game): travel time to a target
 #: seconds a group needs to kill / take each target (respawn window = travel + this)
-TAKE_S = {"baron": 28.0, "elder": 15.0, "dragon": 14.0, "herald": 16.0, "atakhan": 20.0, "inhib": 8.0,
+TAKE_S = {"baron": 28.0, "elder": 15.0, "dragon": 14.0, "herald": 16.0, "inhib": 8.0,
           "tower": 12.0}
 STANCE_SAFE_BLOCK = -4.0       # gauge SAFE (stance score <= this): no "go" call except post-fight ones
 
@@ -83,10 +89,10 @@ ROLE_LANE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 LANE_FR = {"top": "top", "mid": "mid", "bot": "bot"}
 SIDE_FR = {"top": "en haut", "mid": "au milieu", "bot": "en bas"}
 OBJ_LE = {"baron": "le Baron", "dragon": "le dragon", "elder": "l'ancestral", "herald": "le Héraut",
-          "grubs": "les larves", "atakhan": "Atakhan"}
+          "grubs": "les larves"}
 OBJ_AUX = {"herald": "au Héraut", "grubs": "aux larves", "dragon": "au dragon", "baron": "au Baron"}
 OBJ_TITLE = {"baron": "BARON !", "dragon": "DRAGON !", "elder": "ANCESTRAL !", "herald": "HÉRAUT !",
-             "grubs": "LARVES !", "atakhan": "ATAKHAN !"}
+             "grubs": "LARVES !"}
 DRAGON_UV = (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1])
 BARON_UV = (geometry.BARON_PIT[0], geometry.BARON_PIT[1])
 PIT_UV = {"dragon": DRAGON_UV, "elder": DRAGON_UV, "baron": BARON_UV, "herald": BARON_UV, "grubs": BARON_UV}
@@ -196,20 +202,45 @@ def lane_uv(lane: str, s_from_my_base: float, team: str | None) -> tuple[float, 
     return poly[-1]
 
 
+def plate_gold(gt: float) -> int:
+    """Gold of one outer turret plate at game time ``gt`` (2026: 120, -10 per minute from 11:00, -40 max)."""
+    if gt < PLATE_DECAY_START_GT:
+        return PLATE_GOLD
+    return PLATE_GOLD - min(PLATE_DECAY_MAX, 10 * (int((gt - PLATE_DECAY_START_GT) // 60.0) + 1))
+
+
+def wave_spawn_time(k: int) -> float:
+    """Game time of the spawn of minion wave ``k`` (1-based): every 30 s from 0:30, every 25 s
+    from 14:00, every 20 s from 29:50."""
+    if k <= _WAVES_EARLY:
+        return MINION_FIRST_SPAWN + (k - 1) * MINION_WAVE_S
+    t14 = MINION_FIRST_SPAWN + (_WAVES_EARLY - 1) * MINION_WAVE_S
+    if k <= _WAVES_MID:
+        return t14 + (k - _WAVES_EARLY) * MINION_WAVE_MID_S
+    return t14 + (_WAVES_MID - _WAVES_EARLY) * MINION_WAVE_MID_S + (k - _WAVES_MID) * MINION_WAVE_LATE_S
+
+
 def wave_number(gt: float) -> int:
     """Index (1-based) of the last minion wave spawned at game time ``gt`` (0 before the first)."""
     if gt < MINION_FIRST_SPAWN:
         return 0
-    return int((gt - MINION_FIRST_SPAWN) // MINION_WAVE_S) + 1
+    t14 = wave_spawn_time(_WAVES_EARLY)
+    if gt < t14:
+        return int((gt - MINION_FIRST_SPAWN) // MINION_WAVE_S) + 1
+    t30 = wave_spawn_time(_WAVES_MID)
+    if gt < t30:
+        return _WAVES_EARLY + int((gt - t14) // MINION_WAVE_MID_S)
+    return _WAVES_MID + int((gt - t30) // MINION_WAVE_LATE_S)
 
 
 def is_cannon_wave(k: int, spawn_gt: float) -> bool:
-    """Cannon (siege) minion in wave ``k``: every 3rd wave, every 2nd from 15:00, all from 25:00."""
+    """Cannon (siege) minion in wave ``k``: every 3rd wave (first: wave 3), every 2nd from 14:00,
+    all from 25:00."""
     if k <= 0:
         return False
     if spawn_gt >= 1500.0:
         return True
-    if spawn_gt >= 900.0:
+    if spawn_gt >= LANING_END_GT:
         return k % 2 == 0
     return k % 3 == 0
 
@@ -218,7 +249,7 @@ def next_cannon_arrival(gt: float) -> float:
     """Seconds until the next cannon wave reaches the middle of a lane (>= 0)."""
     k = max(1, wave_number(gt - MINION_WALK_S))
     for kk in range(k, k + 8):
-        spawn = MINION_FIRST_SPAWN + (kk - 1) * MINION_WAVE_S
+        spawn = wave_spawn_time(kk)
         arrive = spawn + MINION_WALK_S
         if arrive >= gt and is_cannon_wave(kk, spawn):
             return arrive - gt
@@ -567,7 +598,7 @@ def travel_s(ctx: MacroCtx, target: Any) -> float:
 
 
 #: minimum respawn window per target, whatever the distances (a Baron started with 20 s is a throw)
-WINDOW_FLOOR_S = {"baron": 25.0, "elder": 18.0, "dragon": 15.0, "herald": 15.0, "atakhan": 18.0, "tower": 12.0,
+WINDOW_FLOOR_S = {"baron": 25.0, "elder": 18.0, "dragon": 15.0, "herald": 15.0, "tower": 12.0,
                   "inhib": 10.0}
 
 
@@ -779,12 +810,12 @@ def _rule_plates(ctx: MacroCtx) -> GeniusCall | None:
     verb = ("sont morts" if len(absent) > 1 else "est mort") if dead else ("sont en base" if len(absent) > 1 else "est en base")
     if plates:
         text = f"Plaque la tour ({_secs(window)} s) : {who} {verb}." if dead else f"Pousse et plaque la tour : {who} {verb}."
-        why = f"Chaque plaque = {PLATE_GOLD} PO jusqu'à 14:00, et personne ne la défend."
+        why = f"Chaque plaque = {plate_gold(ctx.gt)} PO, et personne ne la défend."
     else:
         text = f"Frappe la tour ({_secs(window)} s) : {who} {verb}." if dead else f"Pousse et frappe la tour : {who} {verb}."
         why = "Une tour = de l'or pour toute l'équipe et la carte s'ouvre pour vous."
     if jg_unknown:
-        why = (f"{PLATE_GOLD} PO par plaque, mais leur jungler est invisible : recule s'il apparaît." if plates
+        why = (f"{plate_gold(ctx.gt)} PO par plaque, mais leur jungler est invisible : recule s'il apparaît." if plates
                else "Leur jungler est invisible : frappe avec ta vague, recule s'il apparaît.")
     risk = 0.0 if jl.dead else (0.2 if jl.conf < 0.3 else 0.0)
     score = _clamp(0.45 + window / 80.0 + (0.1 if plates else 0.0) - risk)
@@ -1282,4 +1313,5 @@ def ai_plan(call: GeniusCall | None) -> dict[str, Any] | None:
 
 __all__ = ["MacroPlanner", "MacroCtx", "MacroUpdate", "GeniusCall", "JunglerLoc", "build_ctx", "evaluate",
            "jungler_location", "team_edge", "lane_uv", "next_cannon_arrival", "is_cannon_wave", "wave_number",
+           "wave_spawn_time", "plate_gold",
            "LEVELS", "OVERLAPS", "ai_plan", "vision_share"]

@@ -1943,6 +1943,11 @@ def _reliability_html(t: dict, history: dict | None) -> str:
         ("r" if rel.get("missed") else "g", f"{rel.get('missed', 0)} / {jd}", "Ganks manqués",
          ("sans alerte : " + ", ".join(rel.get("missed_times") or [])) if rel.get("missed") else
          "morts avec le jungler ennemi impliqué"),
+        ("g" if (rel.get("lead_mean") or 0) >= 5 else "r" if rel.get("lead_n") else "",
+         f"{_num(rel.get('lead_mean'), 1)} s" if rel.get("lead_mean") is not None else "-",
+         "Avance des alertes",
+         (f"avant {rel.get('lead_n')} de tes morts, {rel.get('lead_late', 0)} trop tardive(s) (< 3 s)"
+          if rel.get("lead_n") else "aucune alerte avant tes morts")),
         ("t", _pct(rel.get("fog_coverage")), "Cercle du brouillard",
          f"contenait le vrai jungler ({rel.get('fog_inside', 0)}/{rel.get('fog_checks', 0)} vérifs)"),
         ("t", f"{rel.get('sightings_ok', 0)} / {rel.get('sightings_checked', 0)}", "Identifications minimap",

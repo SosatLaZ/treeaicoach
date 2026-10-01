@@ -72,9 +72,9 @@ def item_table() -> dict[int, tuple[str, int, str]]:
             return _ITEMS
         table: dict[int, tuple[str, int, str]] = {}
         try:
-            from treeaicoach.paths import asset_path
+            from treeaicoach import game_data   # runtime Data Dragon table, else assets/items.json
 
-            data = json.loads(asset_path("items.json").read_text(encoding="utf-8"))
+            data = game_data.items_data()
             for k, v in (data.get("items") or {}).items():
                 try:
                     table[int(k)] = (str(v.get("n") or ""), int(v.get("g") or 0), str(v.get("k") or "other"))
@@ -84,6 +84,20 @@ def item_table() -> dict[int, tuple[str, int, str]]:
             log.warning("Item price table unavailable (assets/items.json)", exc_info=True)
         _ITEMS = table
         return table
+
+
+def _reset_item_table() -> None:
+    global _ITEMS
+    with _items_lock:
+        _ITEMS = None
+
+
+try:  # reload after a runtime Data Dragon update
+    from treeaicoach import game_data as _game_data
+
+    _game_data.add_listener(_reset_item_table)
+except Exception:  # pragma: no cover - defensive
+    log.debug("game_data listener not registered", exc_info=True)
 
 
 def item_info(item_id: Any) -> tuple[str, int, str] | None:

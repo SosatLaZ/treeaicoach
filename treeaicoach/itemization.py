@@ -70,16 +70,24 @@ _TAGS: dict[str, tuple[str, ...]] | None = None
 _lock = threading.Lock()
 
 
+def _reset_tables() -> None:
+    """Data Dragon refresh (:mod:`treeaicoach.game_data`): reload the item / tag tables."""
+    global _TAGS, _ITEMS
+    with _lock:
+        _TAGS = None
+        _ITEMS = None
+
+
 def champion_tags(alias: str) -> tuple[str, ...]:
-    """Data Dragon tags of a champion from the bundled index (``()`` if unknown)."""
+    """Data Dragon tags of a champion (runtime-refreshed data, else the bundled index; ``()`` if unknown)."""
     global _TAGS
     with _lock:
         if _TAGS is None:
             tags: dict[str, tuple[str, ...]] = {}
             try:
-                from treeaicoach.paths import asset_path
+                from treeaicoach import game_data
 
-                data = json.loads(asset_path("icons/champions/index.json").read_text(encoding="utf-8"))
+                data = game_data.champions_data()
                 for c in data.get("champions") or []:
                     tags[str(c.get("alias"))] = tuple(str(t) for t in (c.get("tags") or ()))
             except Exception:
@@ -151,7 +159,10 @@ _ITEMS: dict[int, Item] | None = None
 
 
 def load_items(data: dict | None = None) -> dict[int, Item]:
-    """``id -> Item`` from ``assets/items.json`` (cached), or from ``data`` (tests). Never raises."""
+    """``id -> Item`` from the item data (cached), or from ``data`` (tests). Never raises.
+
+    The data is :func:`treeaicoach.game_data.items_data`: the Data Dragon table refreshed at
+    runtime (new / renamed items, prices of the live patch), else the bundled ``assets/items.json``."""
     global _ITEMS
     if data is None and _ITEMS is not None:
         return _ITEMS
@@ -159,9 +170,9 @@ def load_items(data: dict | None = None) -> dict[int, Item]:
     cache = data is None
     try:
         if data is None:
-            from treeaicoach.paths import asset_path
+            from treeaicoach import game_data
 
-            data = json.loads(asset_path("items.json").read_text(encoding="utf-8"))
+            data = game_data.items_data()
         for k, v in (data.get("items") or {}).items():
             try:
                 table[int(k)] = Item(int(k), str(v.get("n") or ""), int(v.get("g") or 0), int(v.get("b") or 0),
@@ -631,3 +642,11 @@ class ItemAdvisor:
         sub = (rec.buy_text if shopping else None) or rec.reason or ""
         return [BuyAdvice(rec.text, f"ACHAT : {rec.item_name.upper()}"[:40], sub[:120],
                           f"item:{rec.item_id}:{rec.need}", moment, rec, t)]
+
+
+try:  # reload the tables after a runtime Data Dragon update
+    from treeaicoach import game_data as _game_data
+
+    _game_data.add_listener(_reset_tables)
+except Exception:  # pragma: no cover - defensive
+    log.debug("game_data listener not registered", exc_info=True)

@@ -2036,6 +2036,8 @@ class CoachApp:
                 self.root.after(PREBUILD_GAP_MS * 10, self._prebuild_next)
                 return
             self.pages[pending[0]]
+            if pending[0] == "overlay":      # its preview (sample game screen) rendered off the Tk thread
+                self._dispatcher.run(_prewarm_preview, None, None, name="TreeAI-ui-prewarm")
             if len(pending) > 1:
                 self.root.after(PREBUILD_GAP_MS, lambda: self.root.after_idle(self._prebuild_next))
         except Exception:
@@ -4012,7 +4014,7 @@ class CoachApp:
                                            ("Ganks", "e"), ("Précision", "e"), ("Durée", "e"), ("", "e"))):
             if txt:
                 cap = self._caption(box, txt, DIM, anchor=anchor)
-                cap.grid(row=0, column=c, sticky=anchor, padx=(0, 18), pady=(12, 8))
+                cap.grid(row=0, column=c, sticky=anchor, padx=(0, 12), pady=(12, 8))
                 if txt == "Précision":
                     self._tip(cap, "Précision des coups notés (sur 100) : coups de maître, erreurs, gaffes… "
                                    "« - » : partie non notée.")
@@ -4045,7 +4047,7 @@ class CoachApp:
         self._images[f"game-{i}"] = img
         ctk.CTkLabel(box, text="", image=img, fg_color="transparent").grid(row=r, column=0, sticky="w", pady=8)
         cell = self._frame(box)
-        cell.grid(row=r, column=1, sticky="w", padx=(0, 16))
+        cell.grid(row=r, column=1, sticky="w", padx=(0, 12))
         self._label(cell, name, self.fonts.h3, TEXT, anchor="w").grid(row=0, column=0, sticky="w")
         when = fmt_game_date(game_datetime(g))
         pos = game_field(g, "position")
@@ -4053,23 +4055,23 @@ class CoachApp:
         self._label(cell, sub, self.fonts.tiny, DIM, anchor="w").grid(row=1, column=0, sticky="w")
         rtxt, rcol = {"win": ("Victoire", SAFE), "lose": ("Défaite", DANGER)}.get(
             res or "", ("Inachevée" if game_field(g, "incomplete") else "-", MUTED))
-        self._label(box, rtxt, self.fonts.h3, rcol, anchor="w").grid(row=r, column=2, sticky="w", padx=(0, 16))
+        self._label(box, rtxt, self.fonts.h3, rcol, anchor="w").grid(row=r, column=2, sticky="w", padx=(0, 12))
         k, d, a = (_int_or_none(game_field(g, x)) for x in ("kills", "deaths", "assists"))
         kda = f"{k if k is not None else '?'} / {d if d is not None else '?'} / {a if a is not None else '?'}"
-        self._label(box, kda, self.fonts.num, TEXT, anchor="e").grid(row=r, column=3, sticky="e", padx=(0, 16))
+        self._label(box, kda, self.fonts.num, TEXT, anchor="e").grid(row=r, column=3, sticky="e", padx=(0, 12))
         ganks = _int_or_none(game_field(g, "ganks"))
         surv = _int_or_none(game_field(g, "ganks_survived"))
         gtxt = "-" if ganks is None else (f"{surv}/{ganks}" if surv is not None and ganks else str(ganks))
         gl = self._label(box, gtxt, self.fonts.num, TEXT, anchor="e")
-        gl.grid(row=r, column=4, sticky="e", padx=(0, 16))
+        gl.grid(row=r, column=4, sticky="e", padx=(0, 12))
         self._tip(gl, "Ganks évités / ganks subis")
         prec = _int_or_none(game_field(g, "precision"))
         pl = self._label(box, "-" if prec is None else str(prec), self.fonts.num, precision_color(prec), anchor="e")
-        pl.grid(row=r, column=5, sticky="e", padx=(0, 16))
+        pl.grid(row=r, column=5, sticky="e", padx=(0, 12))
         self._tip(pl, "Précision des coups notés (sur 100)" if prec is not None else "Partie non notée")
         dur = game_field(g, "duration")
         self._label(box, fmt_clock(dur) if isinstance(dur, (int, float)) and dur > 0 else "-", self.fonts.small,
-                    MUTED, anchor="e").grid(row=r, column=6, sticky="e", padx=(0, 16))
+                    MUTED, anchor="e").grid(row=r, column=6, sticky="e", padx=(0, 12))
         btns = self._frame(box)
         btns.grid(row=r, column=7, sticky="e")
         self._button(btns, "Rapport", lambda gg=g: self.open_report(gg), "secondary", width=70,

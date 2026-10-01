@@ -45,7 +45,8 @@ def test_html_is_self_contained(html_page: str) -> None:
 
 def test_html_content(html_page: str) -> None:
     for text in ("Victoire", "Garen", "28:10", "Mes morts", "Ganks subis", "Parcours du jungler ennemi",
-                 "Conseils pour la prochaine partie", "Alerte donnée ?", "alerte ignorée", "mort sans alerte",
+                 "Conseils pour la prochaine partie", "Alerte donnée ?", "alerte ignorée", "1v1 perdu", "ennemis invisibles",
+                 "Avance des alertes avant tes morts",
                  "rapport généré localement", "Lee Sin", "K'Santé", "Mon temps par zone", "Objectifs"):
         assert report.html.escape(text, quote=True) in html_page or text in html_page, text
     for color in ("#0C0E0D", "#121513", "#9BD84A", "#E4E8E5", "#E5484D", "#E8A23A"):     # docs/DESIGN.md
