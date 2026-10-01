@@ -1311,6 +1311,7 @@ class CoachApp:
             self.root.after(UPDATE_CHECK_DELAY_MS, self._startup_update_check)
         self.root.after(2500, self.cb(self._check_last_update))      # did the last update apply?
         self.root.after(1800, self.cb(self.refresh_games))           # dashboard "avant la partie" + table
+        self.root.after(3000, lambda: self._dispatcher.run(_prewarm_preview, None, None, name="TreeAI-ui-prewarm"))
 
     # ------------------------------------------------------------------ infrastructure
     def cb(self, fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -1568,7 +1569,24 @@ class CoachApp:
             opts["image"] = self._icon(icon, 14, col)
             opts["compound"] = "left"
         opts.update(kw)
-        return self.ctk.CTkButton(parent, text=text, command=self.cb(command), **opts)
+        if kind == "primary" and opts.get("state") == "disabled":     # a disabled primary must not look active
+            opts.update(fg_color=PANEL_HI, image=self._icon(icon, 14, DIM) if icon else None)
+        btn = self.ctk.CTkButton(parent, text=text, command=self.cb(command), **opts)
+        btn._tree_kind = kind  # type: ignore[attr-defined]
+        btn._tree_icon = icon  # type: ignore[attr-defined]
+        return btn
+
+    def _btn_state(self, btn: Any, enabled: bool) -> None:
+        """Enable / disable a button made by :meth:`_button` (a disabled primary turns grey)."""
+        try:
+            btn.configure(state="normal" if enabled else "disabled")
+            if getattr(btn, "_tree_kind", "") == "primary":
+                icon = getattr(btn, "_tree_icon", None)
+                btn.configure(fg_color=ACCENT if enabled else PANEL_HI)
+                if icon:
+                    btn.configure(image=self._icon(icon, 14, ON_ACCENT if enabled else DIM))
+        except Exception:
+            log.debug("button state failed", exc_info=True)
 
     def _rule_image(self, width: int = 220) -> Any:
         """Gold rule fading out to the right (page titles)."""
@@ -2825,6 +2843,8 @@ class CoachApp:
             cap = self._label(f, caption, self.fonts.tiny, DIM, anchor="w")
             cap.grid(row=1, column=0, sticky="w", pady=(3, 0))
             self._overlay_tiles[key] = (f, img)
+            if key != "screen":
+                f.grid_remove()          # shown once rendered
 
         left = ctk.CTkFrame(grid, fg_color="transparent")
         left.grid(row=0, column=0, sticky="nw", padx=(0, 16))
@@ -2854,7 +2874,7 @@ class CoachApp:
             from treeaicoach import ui_preview  # noqa: PLC0415
 
             comp = ui_preview.compose(cfg, live_state)
-            return ui_preview.preview_images(comp, screen_w=int(400 * scale), zoom=0.62 * scale), comp.live
+            return ui_preview.preview_images(comp, screen_w=int(400 * scale), zoom=0.75 * scale), comp.live
 
         def done(res: tuple[dict[str, Image.Image], bool]) -> None:
             self._overlay_preview_busy = False
@@ -2878,7 +2898,7 @@ class CoachApp:
                               text_color=WARNING if off else (ACCENT if live else DIM))
             self._overlay_preview_live = live
             if live and self._current_page == "overlay" and self._overlay_preview_job is None:
-                self._overlay_preview_job = self.root.after(1000, self._render_overlay_preview)
+                self._overlay_preview_job = self.root.after(1500, self._render_overlay_preview)
 
         def failed(exc: BaseException) -> None:
             self._overlay_preview_busy = False
@@ -3573,7 +3593,7 @@ class CoachApp:
         _row, slot = self._row(s, "Lancer avec Windows",
                                "Ouvre TreeAI Coach à l'ouverture de ta session." if ok else reason)
         self.win_autostart_var = self.ctk.BooleanVar(value=get_windows_autostart() if ok else False)
-        sw = self.ctk.CTkSwitch(slot, text="", variable=self.win_autostart_var, width=38, switch_width=34,
+        sw = self.ctk.CTkSwitch(slot, text="", variable=self.win_autostart_var, width=46, switch_width=34,
                                 switch_height=16, command=self.cb(self._on_windows_autostart),
                                 fg_color=SWITCH_OFF, progress_color=TEAL, button_color=TEXT)
         sw.grid(row=0, column=0)
@@ -3675,6 +3695,8 @@ class CoachApp:
         self._ai_status = self._label(box, "", self.fonts.small, MUTED, anchor="w", justify="left",
                                       wraplength=620)
         self._ai_status.grid(row=0, column=0, sticky="w")
+        self._ai_status_box = box
+        box.grid_remove()               # shown with the first test result
         self._switch_row(s, "ai_speak", "Lire le conseil IA à voix haute", "Désactivé par défaut : le conseil "
                          "s'affiche en bandeau et dans le HUD.")
         links = self.ctk.CTkFrame(s, fg_color="transparent")
@@ -3696,6 +3718,9 @@ class CoachApp:
         if lbl is not None:
             try:
                 lbl.configure(text=text, text_color=color)
+                box = getattr(self, "_ai_status_box", None)
+                if box is not None:
+                    (box.grid if text else box.grid_remove)()
             except Exception:
                 pass
 
@@ -3771,6 +3796,8 @@ class CoachApp:
         self._update_status = self._label(box, "", self.fonts.small, MUTED, anchor="w", justify="left",
                                           wraplength=620)
         self._update_status.grid(row=0, column=0, sticky="w")
+        self._update_status_box = box
+        box.grid_remove()               # shown with the first message
         self._update_bar = self.ctk.CTkProgressBar(box, height=8)
         self._update_bar.set(0)
         self._update_bar.grid(row=1, column=0, sticky="ew", pady=(6, 2))
@@ -3847,6 +3874,9 @@ class CoachApp:
         if lbl is not None:
             try:
                 lbl.configure(text=text, text_color=color)
+                box = getattr(self, "_update_status_box", None)
+                if box is not None:
+                    (box.grid if text else box.grid_remove)()
             except Exception:
                 pass
 
@@ -3877,7 +3907,7 @@ class CoachApp:
                                     else res.message, color)
             btn = getattr(self, "_update_btn", None)
             if btn is not None:
-                btn.configure(state="normal" if res.available and res.can_install else "disabled")
+                self._btn_state(btn, bool(res.available and res.can_install))
             if res.available and quiet:
                 self.show_toast(f"Nouvelle version {res.info.version} disponible : Réglages → Mises à jour.")
             elif not quiet:
@@ -3897,7 +3927,7 @@ class CoachApp:
             return
         from treeaicoach import updater
         self._update_busy = True
-        self._update_btn.configure(state="disabled")
+        self._btn_state(self._update_btn, False)
         self._update_check_btn.configure(state="disabled")
         self._update_bar.set(0)
         self._update_bar.grid()
@@ -3930,7 +3960,7 @@ class CoachApp:
                 self.root.after(800, self.close)
                 return
             self._update_bar.grid_remove()
-            self._update_btn.configure(state="normal")
+            self._btn_state(self._update_btn, True)
             msg = updater.manual_hint(res.message)
             self._set_update_status(msg, DANGER)
             self.show_error(res.message + " Lien direct : Réglages > Mises à jour > Télécharger manuellement.")
@@ -4266,9 +4296,11 @@ class CoachApp:
         self._onboarding_step = step
         dots = self.ctk.CTkFrame(body, fg_color="transparent")
         dots.grid(row=0, column=0, sticky="w", pady=(0, 12))
+        import tkinter as tk  # noqa: PLC0415
+
         for i in range(len(steps)):
-            self.ctk.CTkFrame(dots, width=40, height=3, corner_radius=0,
-                              fg_color=ACCENT if i <= step else LINE_STRONG).grid(row=0, column=i, padx=(0, 4))
+            tk.Frame(dots, width=self._scaled(40), height=max(2, self._scaled(3)), bd=0, highlightthickness=0,
+                     bg=ACCENT if i <= step else LINE_STRONG).grid(row=0, column=i, padx=(0, self._scaled(4)))
         r = self.ctk.CTkFrame(body, fg_color="transparent")
         r.grid(row=1, column=0, sticky="ew")
         r.grid_columnconfigure(1, weight=1)
@@ -4745,7 +4777,11 @@ class CoachApp:
     @_guarded
     def _system_fix(self, key: str) -> None:
         row = (getattr(self, "sys_rows", {}) or {}).get(key) or {}
-        action = row.get("action") or ""
+        self._run_fix(str(row.get("action") or ""))
+
+    @_guarded
+    def _run_fix(self, action: str) -> None:
+        """One-click fix of a "Système" row / of the first-game checklist, by action name."""
         if action == "start":
             self.toggle_engine()
         elif action == "calibrate":
@@ -5229,6 +5265,9 @@ class CoachApp:
             log.debug("team update failed", exc_info=True)
         self._collect_alerts(st, ov)
         self._journal_caption()
+        self._pregame_tick = (getattr(self, "_pregame_tick", 0) + 1) % 8
+        if self._pregame_tick == 0 and self._current_page == "dashboard" and not self._journal:
+            self._render_pregame()          # the game's own goal / its status can change
         try:
             self._update_coach_strip(ov, running and key == "RUNNING")
         except Exception:
@@ -5265,11 +5304,11 @@ class CoachApp:
             return
         self._coach_sig = sig
         if step is None:
-            self.coach_gauge_lbl.configure(text="-", text_color=DIM)
+            self.coach_gauge_lbl.configure(text="-" if live else "", text_color=DIM)
         else:
             col = GAUGE_UI_COLORS.get(int(step), MUTED)
             self.coach_gauge_lbl.configure(text=str(getattr(gauge, "label", "") or "-"), text_color=col)
-        role_txt = f"Rôle : {role}" if role else "Rôle : -"
+        role_txt = f"Rôle : {role}" if role else ("Rôle : -" if live else "")
         if notice:
             role_txt += " · échange de voie"
         reason = str(getattr(gauge, "reason", "") or "")
@@ -5609,9 +5648,18 @@ class CoachApp:
         games = data.get("games") or []
         goal = data.get("goal")
         focus = data.get("focus")
+        goal_label, goal_why, goal_status = getattr(goal, "label", "") or "", getattr(goal, "why", "") or "", ""
+        if self._last_state_key == "RUNNING" and self.engine is not None:   # this game's own goal
+            try:
+                ex = self.engine.coach_extras() if callable(getattr(self.engine, "coach_extras", None)) else {}
+                if isinstance(ex, dict) and ex.get("goal"):
+                    goal_label, goal_why = str(ex["goal"]), ""
+                    goal_status = str(ex.get("goal_status") or "")
+            except Exception:
+                log.debug("coach extras unavailable", exc_info=True)
         window = data.get("window") or (-1, "")
         sig = (tuple(str(g.get("path", "")) + str(g.get("precision")) for g in games[:10]),
-               getattr(goal, "label", None), focus, window)
+               goal_label, goal_status, focus, window)
         if sig == self._pregame_sig:
             return
         self._pregame_sig = sig
@@ -5637,8 +5685,8 @@ class CoachApp:
         pil = square_icon(icon, 72, bg=BG)
         img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(36, 36))
         self._images["pregame-last"] = img
-        ctk.CTkLabel(row, text="", image=img, fg_color="transparent").grid(row=0, column=0, rowspan=2,
-                                                                         padx=(0, 12))
+        ctk.CTkLabel(row, text="", image=img, fg_color="transparent").grid(row=0, column=0, rowspan=3,
+                                                                         padx=(0, 12), sticky="n")
         name = str(game_field(g, "champion_name", "name", default="") or alias or "Champion inconnu")
         res = game_result(g)
         rtxt, rcol = {"win": ("Victoire", SAFE), "lose": ("Défaite", DANGER)}.get(res or "", ("Inachevée", MUTED))
@@ -5654,16 +5702,29 @@ class CoachApp:
         if isinstance(dur, (int, float)) and dur > 0:
             bits.append(fmt_clock(dur))
         self._label(row, " · ".join(bits), self.fonts.tiny, MUTED, anchor="w").grid(row=1, column=1, sticky="w")
+        brief = g.get("plays_brief") if isinstance(g.get("plays_brief"), dict) else {}
+        moments = [(brief.get(k), col) for k, col in (("best", SAFE), ("worst", DANGER)) if brief.get(k)]
+        if moments:
+            mf = ctk.CTkFrame(row, fg_color="transparent")
+            mf.grid(row=2, column=1, sticky="w", pady=(2, 0))
+            for i, (pl, col) in enumerate(moments):
+                gt = pl.get("gt")
+                self._label(mf, str(pl.get("title") or "").upper(), self.fonts.tiny_bold, col, anchor="w").grid(
+                    row=i, column=0, sticky="w", padx=(0, 6))
+                txt = _ellipsize(ui_text(str(pl.get("reason") or "")), 48)
+                if isinstance(gt, (int, float)):
+                    txt += f" ({fmt_clock(gt)})"
+                self._label(mf, txt, self.fonts.tiny, MUTED, anchor="w").grid(row=i, column=1, sticky="w")
         prec = _int_or_none(game_field(g, "precision"))
         pc = ctk.CTkFrame(row, fg_color="transparent")
-        pc.grid(row=0, column=2, rowspan=2, sticky="e", padx=(12, 12))
+        pc.grid(row=0, column=2, rowspan=3, sticky="e", padx=(12, 12))
         self._caption(pc, "Précision", DIM, anchor="e").grid(row=0, column=0, sticky="e")
         self._label(pc, "-" if prec is None else str(prec), self.fonts.stat, precision_color(prec),
                     anchor="e").grid(row=1, column=0, sticky="e")
         self._tip(pc, "Précision des coups notés de ta dernière partie (sur 100)." if prec is not None
                   else "Cette partie n'a pas de coups notés.")
         self._button(row, "Rapport", lambda gg=g: self.open_report(gg), "secondary", width=72, height=26).grid(
-            row=0, column=3, rowspan=2, sticky="e")
+            row=0, column=3, rowspan=3, sticky="e")
         self._hline(pg).grid(row=1, column=0, sticky="ew")
         # goal of the next game | point to work on
         cols = ctk.CTkFrame(pg, fg_color="transparent")
@@ -5673,9 +5734,10 @@ class CoachApp:
         gl = ctk.CTkFrame(cols, fg_color="transparent")
         gl.grid(row=0, column=0, sticky="nw", padx=(0, 16))
         self._caption(gl, "Objectif de la partie", DIM, anchor="w").grid(row=0, column=0, sticky="w")
-        self._label(gl, getattr(goal, "label", "") or "-", self.fonts.num, ACCENT, anchor="w").grid(
+        self._label(gl, goal_label or "-", self.fonts.num,
+                    {"raté": DANGER, "réussi": SAFE}.get(goal_status, ACCENT), anchor="w").grid(
             row=1, column=0, sticky="w", pady=(2, 0))
-        why = getattr(goal, "why", "") or ""
+        why = goal_status or goal_why
         if why:
             self._label(gl, why, self.fonts.tiny, DIM, anchor="w").grid(row=2, column=0, sticky="w")
         fl = ctk.CTkFrame(cols, fg_color="transparent")
@@ -5726,12 +5788,13 @@ class CoachApp:
             row=0, column=0, sticky="w", pady=(2, 6))
         voice_ok = str(getattr(self.voice, "backend", "") or "").lower() in ("sapi", "onecore", "neural")
         items = (
-            ("Jeu en Sans bordure", window[0], window[1], "Aide", lambda: self._system_fix_action("help_borderless")),
+            ("Jeu en Sans bordure", window[0], window[1], "Aide", lambda: self._run_fix("help_borderless")),
             ("Overlay", 0 if getattr(self.cfg, "overlay_enabled", True) else 1,
              "affiche un exemple de gank 10 s" if getattr(self.cfg, "overlay_enabled", True) else "désactivé",
              "Tester", self.test_overlay),
             ("Voix", 0 if voice_ok else 1, "écoute une alerte d'exemple" if voice_ok else "aucune voix Windows",
-             "Écouter", self.test_voice),
+             "Écouter" if voice_ok else "Réglages",
+             self.test_voice if voice_ok else (lambda: self._run_fix("voice_settings"))),
         )
         for i, (title, level, text, btn, fn) in enumerate(items):
             r = 1 + 2 * i
@@ -5747,17 +5810,6 @@ class CoachApp:
             self._label(row, ui_text(text), self.fonts.small, cols.get(level, MUTED) if level == 2 else MUTED,
                         anchor="w").grid(row=0, column=2, sticky="w")
             self._button(row, btn, fn, "secondary", width=80, height=26).grid(row=0, column=3, sticky="e")
-
-    def _system_fix_action(self, action: str) -> None:
-        """Run a "Système" fix action by name (shared with the empty-journal checklist)."""
-        row = (getattr(self, "sys_rows", {}) or {}).get("game")
-        if row is not None:
-            old = row.get("action")
-            row["action"] = action
-            try:
-                self._system_fix("game")
-            finally:
-                row["action"] = old
 
     # ------------------------------------------------------------------ radar preview & pulse
     def _preview_loop(self) -> None:
@@ -6041,6 +6093,16 @@ def _game_html_path(game: dict, src: Path | None) -> Path | None:
     if src is not None:
         return src.with_suffix(".html")
     return None
+
+
+def _prewarm_preview() -> None:
+    """Build the Overlay page preview once in the background (sample state, backdrop) so the page opens fast."""
+    try:
+        from treeaicoach import ui_preview  # noqa: PLC0415
+
+        ui_preview.compose(Config())
+    except Exception:
+        log.debug("overlay preview prewarm failed", exc_info=True)
 
 
 def _default_engine_factory(cfg: Config, voice: Any, detector: Any, frame_source: Any) -> Any:

@@ -175,10 +175,10 @@ STACK_NEAR = 1.15
 STACK_EXCL = 1.14                   # x covering icon radius (ring + dark line + blur)
 STACK_EXCL_SELF = 1.4               # ... my icon has a glowing teal outline
 STACK_ARC_VIS = 0.14                # visible part of the ring (fraction of its samples)
-STACK_ARC_OWN = 0.7                 # own-colour fraction of the visible ring
+STACK_ARC_OWN = 0.8                 # own-colour fraction of the visible ring directions
 STACK_ARC_OPP = 0.15                # other-team-colour fraction of the visible ring
 STACK_NCC_AREA = 0.15               # portrait visible this much: its NCC must agree ...
-STACK_NCC_MIN = (0.2, 0.2, 0.5)     # ... at least a + b x min(1, (area - AREA) / c)
+STACK_NCC_MIN = (0.2, 0.35, 0.5)    # ... at least a + b x min(1, (area - AREA) / c)
 STACK_NCC_STRONG = 0.62             # ... or a strong partial-portrait match alone is enough
 STACK_NCC_STRONG_AREA = 0.38
 #: Tracked mode, champions not tracked: whole-map search at a lower resolution (matched
@@ -1636,13 +1636,18 @@ class RosterMatcher:
             own_m, opp_m = self._ring_membership(lab, e.relation)
             # adaptive exclusion: how far each covering icon's own ring / glow bleeds (blur,
             # JPEG, outline) = first radius where that colour is on few of its directions
+            # (on the side away from the hidden icon's predicted position: not its own ring)
             for k in range(len(cov)):
+                ddx, ddy = cxp - cov[k, 0], cyp - cov[k, 1]
+                dn = math.hypot(ddx, ddy)
+                far = (_LEAK_COS * ddx + _LEAK_SIN * ddy < -0.2 * dn) if dn > 0.15 * R_px \
+                    else np.ones(_LEAK_COS.shape, bool)
                 for rr in _STACK_LEAK_R:
                     if rr * R_px < cov_ex[k]:
                         continue
                     qx = np.floor(cov[k, 0] + rr * R_px * _LEAK_COS).astype(np.int32)
                     qy = np.floor(cov[k, 1] + rr * R_px * _LEAK_SIN).astype(np.int32)
-                    ok = (qx >= x0) & (qx < x1) & (qy >= y0) & (qy < y1)
+                    ok = (qx >= x0) & (qx < x1) & (qy >= y0) & (qy < y1) & far
                     if not ok.any():
                         break
                     frac = float(own_m[qy[ok] - y0, qx[ok] - x0].mean())
@@ -1657,14 +1662,22 @@ class RosterMatcher:
                 vis &= (px - ax) ** 2 + (py - ay) ** 2 > ex * ex
             xc = np.clip(xi - x0, 0, x1 - x0 - 1)
             yc = np.clip(yi - y0, 0, y1 - y0 - 1)
-            own = own_m[yc, xc] & vis
-            opp = opp_m[yc, xc] & vis
+            # per direction (40 angles): own / other colour on any of the 3 radii (robust
+            # to a sub-pixel radius error), visible at the middle radius
+            n = len(C)
+            own_s, opp_s = own_m[yc, xc] & vis, opp_m[yc, xc] & vis
+            own = own_s.reshape(n, 3, -1).any(axis=1)
+            opp = opp_s.reshape(n, 3, -1).any(axis=1)
+            vis = vis.reshape(n, 3, -1)[:, 1]
+            own &= vis
+            opp &= vis
             nvis = vis.sum(axis=1)
             n_own, n_opp = own.sum(axis=1), opp.sum(axis=1)
             dpred = np.hypot(C[:, 0] - cxp, C[:, 1] - cyp) / max(R_px, 1e-6)
-            score = n_own - 1.5 * n_opp - 0.5 * dpred
+            # ring fit: own-colour samples on the circle (all radii), other colour penalized
+            score = own_s.sum(axis=1) - 1.5 * opp_s.sum(axis=1) - 0.5 * dpred
             for j in np.argsort(-score)[:3]:
-                if n_own[j] < 4:
+                if n_own[j] < 3:
                     break
                 vis_f = nvis[j] / float(vis.shape[1])
                 own_f = n_own[j] / max(1.0, float(nvis[j]))

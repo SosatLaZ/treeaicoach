@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 SCREEN = (0, 0, 1920, 1080)
 SAMPLE_PLAY = ("brilliant", "COUP DE MAÎTRE", "Baron volé sous le nez du jungler")
-_sample_cache: dict[str, Any] = {}
+_sample_cache: dict[Any, Any] = {}
 
 
 @dataclass
@@ -41,6 +41,7 @@ class Composition:
     screen: np.ndarray
     rects: dict[str, tuple[int, int, int, int]] = field(default_factory=dict)
     live: bool = False
+    layers: np.ndarray | None = None      # same screen without the danger flash (the cut-out tiles)
 
 
 def sample_state() -> Any:
@@ -53,6 +54,20 @@ def sample_state() -> Any:
         st = states.get("danger") or next(iter(states.values()))
         _sample_cache["danger"] = st
     return st
+
+
+def _background(w: int, h: int, minimap: tuple[int, int, int, int]) -> np.ndarray:
+    """``overlay_render.game_background`` (deterministic, ~0.5 s) cached per size: a fresh copy."""
+    key = ("bg", w, h, tuple(minimap))
+    bg = _sample_cache.get(key)
+    if bg is None:
+        from treeaicoach import overlay_render as orr  # noqa: PLC0415
+
+        bg = orr.game_background(w, h, minimap)
+        for k in [k for k in _sample_cache if isinstance(k, tuple) and k[0] == "bg"]:
+            del _sample_cache[k]
+        _sample_cache[key] = bg
+    return bg.copy()
 
 
 def _with_cfg(state: Any, cfg: Any, live: bool) -> Any:
@@ -110,7 +125,7 @@ def compose(cfg: Any, state: Any = None, now: float = 0.3,
             scr, mm = SCREEN, orr.default_minimap_rect(1920, 1080)
             sx, sy, sw, sh = scr
         loc = (mm[0] - sx, mm[1] - sy, mm[2], mm[3])
-        img = orr.game_background(sw, sh, loc)
+        img = _background(sw, sh, loc)
         out = Composition(img, {"screen": (0, 0, sw, sh), "minimap": loc}, live)
         if not bool(getattr(cfg, "overlay_enabled", True)):
             return out
@@ -157,6 +172,7 @@ def compose(cfg: Any, state: Any = None, now: float = 0.3,
                                               int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1))
             except Exception:
                 log.debug("play badge preview failed", exc_info=True)
+        out.layers = img.copy()
         if getattr(st, "flash", 0.0) and getattr(cfg, "danger_flash", True):
             th = ov.flash_thickness(scr) if ov is not None else 10
             orr.composite_over(img, orr.render_flash(sw, sh, float(st.flash), loc, thickness=th), 0, 0)
@@ -187,8 +203,8 @@ def preview_images(comp: Composition, screen_w: int = 420, zoom: float = 0.62) -
     ``minimap`` / ``radar`` / ``hud`` / ``badge`` layers cut out of it at ``zoom``. Never raises."""
     out: dict[str, Image.Image] = {}
     try:
-        img = comp.screen
-        out["screen"] = Image.fromarray(np.ascontiguousarray(_resize(img, screen_w)), "RGB")
+        out["screen"] = Image.fromarray(np.ascontiguousarray(_resize(comp.screen, screen_w)), "RGB")
+        img = comp.layers if comp.layers is not None else comp.screen    # tiles: without the edge flash
         for key, pad in (("hud", 6), ("minimap", 6), ("radar", 6), ("badge", 4)):
             r = comp.rects.get(key)
             if r is None:

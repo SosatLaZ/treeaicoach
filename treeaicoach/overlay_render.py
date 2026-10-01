@@ -918,6 +918,24 @@ def _region_layers(region: np.ndarray, size: int) -> tuple[np.ndarray, np.ndarra
     return fill, edge
 
 
+def _heat_layer(heat: Any, W: int, H: int) -> np.ndarray | None:
+    """Coverage 0..1 of a fog heat map (jungle_path.py) upsampled to ``W x H`` (cached)."""
+    if not isinstance(heat, np.ndarray) or heat.ndim != 2 or heat.shape[0] < 4:
+        return None
+    key = ("heat", id(heat), W, H)
+    hit = _region_cache.get(key)
+    if hit is not None and hit[0] is heat:
+        return hit[1]
+    mx = float(heat.max())
+    if not mx > 0:
+        return None
+    m = np.sqrt(np.clip(heat / mx, 0.0, 1.0)).astype(np.float32)      # soft: sqrt contrast
+    up = cv2.resize(cv2.GaussianBlur(m, (0, 0), 1.0), (W, H), interpolation=cv2.INTER_LINEAR)
+    up[up < 0.12] = 0.0
+    _region_cache.put(key, (heat, up))
+    return up
+
+
 def _label_pill(cv_: Canvas, cx: float, cy: float, text: str, font: Any, fg: Any, border: Any,
                 alpha: float = 1.0, bg_alpha: float = 0.88) -> tuple[float, float]:
     """Small rounded label centred on (cx, cy); returns its (w, h)."""
@@ -1101,7 +1119,10 @@ def _draw_fog(cv_: Canvas, fog: FogEstimate, S: float, phase: float) -> None:
         layers = _region_layers(region, int(S))
         if layers is not None:
             fill, edge = layers
-            cv_.paint(0, 0, fill, DANGER, (0.24 if main else 0.10) * vis)
+            heat = _heat_layer(getattr(fog, "heat", None), int(S), int(S))
+            cv_.paint(0, 0, fill, DANGER, (0.24 if main else 0.10) * vis * (0.4 if heat is not None else 1.0))
+            if heat is not None:          # where he probably is (early clear model)
+                cv_.paint(0, 0, heat, DANGER, 0.95 * vis)
             cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.15), (0.85 if main else 0.45) * vis)
     if main and vis > 0 and _finite(fog.radius) and fog.radius > 0:
         rr = float(fog.radius) * S
@@ -1301,6 +1322,9 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
                     fill = cv2.resize(fill, (W, H), interpolation=cv2.INTER_LINEAR)
                     edge = cv2.resize(edge, (W, H), interpolation=cv2.INTER_LINEAR)
                 cv_.paint(0, 0, fill, DANGER, (0.04 if main else 0.025) * vis)
+                heat = _heat_layer(getattr(fog, "heat", None), W, H)
+                if heat is not None:      # soft heat: where he probably is (early clear model)
+                    cv_.paint(0, 0, heat, DANGER, 0.5 * vis)
                 cv_.paint(0, 0, edge, _mix(DANGER, WHITE, 0.25), (0.42 if main else 0.2) * vis)
 
     # ---- danger ring around me: only at DANGER

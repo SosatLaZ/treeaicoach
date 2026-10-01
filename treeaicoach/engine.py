@@ -36,6 +36,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Protocol
 
 import cv2
@@ -1261,7 +1262,7 @@ class CoachEngine:
                 self._err.exception("GankAnalyzer.update failed")
         threat = self._update_threat(t, gank_alerts)
         # v3 director: fight decision + speech context every tick, macro / positioning / wards at HEAVY_HZ
-        tac_alerts, gank_now = self._tactics_tick(t, gt, game, tracker, gank_alerts)
+        tac_alerts, gank_now = self._tactics_tick(t, gt, game, tracker, gank_alerts, threat=threat)
         self._ward_guide_tick(t, game, tracker, frame, identified)
         # latency first: a gank alert (or the fight call) is spoken NOW, before the heavier stages
         said_now = self._say_gank_now(gank_now, t, gt, frame)
@@ -1308,6 +1309,7 @@ class CoachEngine:
             raw_alerts = [a for a in raw_alerts if a.kind not in COACH_KINDS]
         if self._tactics is not None:   # fight: nothing but the call (praise held for after)
             raw_alerts = self._tactics.hold_if_fighting(raw_alerts, t)
+            raw_alerts = self._tactics.drop_overlaps(raw_alerts, t)   # a macro call already said it
         raw_alerts = self._route_messages(raw_alerts, t, gt)
         # one message per tick: nothing else when a gank alert was just said
         said = [] if said_now else self._throttler.filter(raw_alerts, t)
@@ -1325,7 +1327,7 @@ class CoachEngine:
         return said
 
     def _tactics_tick(self, t: float, gt: float, game: GameInfo, tracker: Any,
-                      gank_alerts: list[Alert]) -> tuple[list[Alert], list[Alert]]:
+                      gank_alerts: list[Alert], threat: int = 0) -> tuple[list[Alert], list[Alert]]:
         """v3 director (tactics.py): ``(alerts to route, gank alerts + fight call for the fast path)``.
         Gank alerts not worth the voice (grouped, screened, fight...) are written or dropped here."""
         gank = [a for a in gank_alerts if a.kind in GANK_KINDS]
@@ -1338,9 +1340,11 @@ class CoachEngine:
                            roles=self._role_resolver,
                            objectives=self._objectives.states() if self._objectives is not None else [],
                            danger_radius=self._cfg.effective_danger_radius(),
-                           stance=self._stance.current() if self._stance is not None else None)
+                           stance=self._stance.current() if self._stance is not None else None,
+                           waves=self._macro_waves(), jungle_intel=self.jungle_intel(), threat=threat)
             for kind, title, sub, key in out.toasts:
                 self._toast(kind, title, sub, None, key, t)
+            self._macro_show(out, t, gt)
             calls = [a for a in out.alerts if str(a.key).startswith("call:")]
             keep, written = tac.triage_ganks(gank, game, self.scoreboard_summary())
             for a in written:
@@ -1350,6 +1354,56 @@ class CoachEngine:
             self._errors += 1
             self._err.exception("Tactical director failed")
             return [], gank
+
+    # ================================================================== COUPS DE GÉNIE (macro.py)
+    def _macro_waves(self) -> dict:
+        """Per-lane wave state of the coach (waves.py, as dicts) for the macro planner."""
+        try:
+            return dict(self._coach.waves() or {}) if self._coach is not None else {}
+        except Exception:
+            return {}
+
+    def _macro_show(self, out: Any, t: float, gt: float) -> None:
+        """A new macro call: HUD line (held while active) + "COUP DE GÉNIE" badge (plays fx) +
+        record; a cancelled one leaves the HUD line. The arrow / banner are the director's."""
+        c = getattr(out, "macro_cancelled", None)
+        if c is not None:
+            msg = self._text_msg
+            if msg is not None and msg[1] == c.text:
+                self._text_msg = None
+        c = getattr(out, "macro_new", None)
+        if c is None:
+            return
+        self._text_msg = (t, c.text)
+        self.text_messages.append((t, "genie", f"{c.text} ({c.why})"))
+        del self.text_messages[:-100]
+        self.macro_calls = (getattr(self, "macro_calls", []) + [(gt, c)])[-50:]
+        rec = self._recorder
+        if rec is not None:
+            try:
+                rec.on_alert(make_alert(AlertKind.MACRO_TIP, Level.INFO, t, text=c.text,
+                                        key=f"macro:genie:{c.kind}"), gt)
+            except Exception:
+                log.debug("macro call record failed", exc_info=True)
+        if c.genius:
+            self._push_fx(SimpleNamespace(cls="brilliant", rule=f"genie:{c.kind}", reason=c.text, t=t, gt=gt,
+                                          key=f"genie:{c.ident}", alias=None, size="big", title="COUP DE GÉNIE"))
+
+    def _push_fx(self, play: Any) -> None:
+        """Animate one badge (fx_overlay.PlayFx, Windows only; recorded in ``fx_pushed`` elsewhere)."""
+        try:
+            self.fx_pushed = (getattr(self, "fx_pushed", []) + [play])[-50:]
+            fx = getattr(self, "_play_fx", None)
+            if fx is None and sys.platform == "win32" and self._running:
+                from treeaicoach.fx_overlay import PlayFx
+
+                fx = self._play_fx = PlayFx(self._cfg, self._screen_rects,
+                                            lambda: self._overlay_visible and self._in_game)
+            if fx is not None:
+                fx.apply_config(self._cfg)
+                fx.push(play)
+        except Exception:
+            self._err.exception("Badge animation failed")
 
     # ================================================================== ward guide
     def request_ward_guide(self) -> bool:
@@ -1604,7 +1658,16 @@ class CoachEngine:
             roles = self._role_resolver
             role = roles.my_role() if roles is not None and hasattr(roles, "my_role") else None
             out: list[Alert] = []
-            for a in adv.update(t, game, role=role, in_base=in_base):
+            soon = False
+            try:
+                for o in (self._objectives.states() if self._objectives is not None else []):
+                    rem = getattr(o, "remaining", None)
+                    if getattr(o, "key", "") in ("dragon", "baron", "herald", "grubs", "elder", "atakhan") and (
+                            getattr(o, "alive", False) or (rem is not None and 0 <= rem <= 120)):
+                        soon = True
+            except Exception:
+                soon = False
+            for a in adv.update(t, game, role=role, in_base=in_base, objective_soon=soon):
                 if getattr(cfg, "item_advice_toasts", True):
                     self._toast("insight", a.title, a.subtitle, None, a.key, t)
                 if getattr(cfg, "item_advice_speak", False):
@@ -1987,6 +2050,9 @@ class CoachEngine:
         msg = self._text_msg
         if msg is not None and 0.0 <= now - msg[0] < TEXT_MSG_S:
             valid.append(msg[1])
+        mc = self._tactics.macro_active() if self._tactics is not None else None
+        if mc is not None and mc.text not in valid and (msg is None or msg[0] <= mc.t or now - msg[0] >= TEXT_MSG_S):
+            valid.insert(0, mc.text)                  # an active macro call keeps the line while it is valid
         coach = self._coach
         if coach is not None:
             try:
@@ -2872,7 +2938,9 @@ class CoachEngine:
         if tr.visible:
             return f"Jungler : {name} — visible, {zone}" if zone else f"Jungler : {name} — visible"
         ago = int(max(0.0, now - tr.last_seen))
-        return f"Jungler : {name} — vu il y a {ago} s, {zone}" if zone else f"Jungler : {name} — vu il y a {ago} s"
+        when = ("vu à l'instant" if ago < 2 else f"vu il y a {ago} s" if ago < 60
+                else f"vu il y a {ago // 60}:{ago % 60:02d}")
+        return f"Jungler : {name} — {when}, {zone}" if zone else f"Jungler : {name} — {when}"
 
     def jungle_intel(self) -> Any:
         """Enemy jungler Tab intel (``jungle_intel.JungleIntel``: farming side, recall, text

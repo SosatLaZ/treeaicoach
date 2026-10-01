@@ -187,6 +187,21 @@ class SimGame:
                 out[p.alias] = (base[0] - 0.04 + wob(i), base[1] + 0.03)
         return out
 
+    def waves(self, gt: float) -> dict[str, Any]:
+        """Scripted minion waves (waves.LaneWave per lane, ``s`` from my base): my top wave follows
+        my push cycle; in mid game an enemy wave regularly reaches the empty bot lane."""
+        from treeaicoach.waves import LaneWave
+
+        push = 0.5 + 0.4 * math.sin(gt / 45.0)
+        meet = round(0.3 + 0.45 * push, 3)
+        state = "pushing" if meet >= 0.58 else "pushed_in" if meet <= 0.42 else "even"
+        out = {"top": LaneWave("top", ally=5, enemy=4, meet=meet, state=state),
+               "mid": LaneWave("mid", ally=4, enemy=4, meet=0.5, state="even")}
+        bot_meet = 0.33 if gt > 1000 and (gt // 60) % 3 == 0 else 0.55
+        out["bot"] = LaneWave("bot", ally=3, enemy=6 if bot_meet < 0.4 else 4, meet=bot_meet,
+                              state="pushed_in" if bot_meet < 0.42 else "even")
+        return out
+
     def game_info(self, gt: float, t: float) -> GameInfo:
         players: dict[str, PlayerInfo] = {}
         for p in ROSTER:
@@ -300,6 +315,10 @@ class SimResult:
         return {"voice/min": round(len(self.voice) / m, 2), "toasts/min": round(len(self.toasts) / m, 2),
                 "tips/min": round(len(self.tips) / m, 2), "texts/min": round(len(self.texts) / m, 2)}
 
+    def genie_rate(self) -> float:
+        """COUPS DE GÉNIE macro calls per minute."""
+        return round(len(self.extras.get("genie") or []) / max(self.minutes, 1e-6), 2)
+
     def busiest_minute(self) -> int:
         """Most messages (voice + toasts + tip changes) in one game minute."""
         cnt: dict[int, int] = {}
@@ -336,6 +355,10 @@ def run(level: str = "intermediaire", minutes: float = 30.0, hz: float = 4.0, se
     prev_tip = None
     steps = int(minutes * 60.0 * hz)
     eng._ensure_components()
+    from treeaicoach import waves as waves_mod
+    patched = (waves_mod.WaveTracker.update, waves_mod.WaveTracker.waves)
+    waves_mod.WaveTracker.update = lambda self, *a, **k: False              # type: ignore[method-assign]
+    waves_mod.WaveTracker.waves = lambda self, *a, **k: sim.waves(src.gt)   # type: ignore[method-assign]
     q = eng._toasts
     if q is not None:
         push = q.push
@@ -344,19 +367,27 @@ def run(level: str = "intermediaire", minutes: float = 30.0, hz: float = 4.0, se
             toasts.append((src.gt, str(title), str(subtitle)))
             return push(kind, title, subtitle, **kw)
         q.push = _push                                              # type: ignore[method-assign]
-    for i in range(steps):
-        t = i / hz
-        clock[0] = t
-        voice.gt = src.gt
-        eng.step(t)
-        tip = eng.top_tip()
-        text = tip[0] if tip else None
-        shape = re.sub(r"\d+", "#", text) if text else None      # live numbers ticking is not a new line
-        if shape and shape != prev_tip:
-            tips.append((src.gt, text))
-        prev_tip = shape
+    try:
+        for i in range(steps):
+            t = i / hz
+            clock[0] = t
+            voice.gt = src.gt
+            eng.step(t)
+            tip = eng.top_tip()
+            text = tip[0] if tip else None
+            shape = re.sub(r"\d+", "#", text) if text else None      # live numbers ticking is not a new line
+            if shape and shape != prev_tip:
+                tips.append((src.gt, text))
+            prev_tip = shape
+    finally:
+        waves_mod.WaveTracker.update, waves_mod.WaveTracker.waves = patched   # type: ignore[method-assign]
     texts = [(t, k, x) for t, k, x in eng.text_messages]
     extras = eng.coach_extras() if hasattr(eng, "coach_extras") else {}
+    extras = dict(extras or {})
+    extras["genie"] = [(gt, c) for gt, c in getattr(eng, "macro_calls", [])]
+    tac = getattr(eng, "_tactics", None)
+    extras["genie_cancelled"] = list(getattr(getattr(tac, "macro", None), "cancelled", []) or [])
+    extras["badges"] = [p for p in getattr(eng, "fx_pushed", []) if str(getattr(p, "rule", "")).startswith("genie:")]
     return SimResult(minutes, list(voice.said), toasts, tips, texts, extras)
 
 
@@ -374,8 +405,17 @@ def main(argv: list[str] | None = None) -> int:
     if out is None:
         return 0
     print(f"niveau {a.level}: {res.rates()}  minute la plus chargée: {res.busiest_minute()}", file=out)
+    fmt = lambda gt: f"{int(gt // 60):02d}:{int(gt % 60):02d}"     # noqa: E731
+    genie = res.extras.get("genie") or []
+    kinds: dict[str, int] = {}
+    for _gt, c in genie:
+        kinds[c.kind] = kinds.get(c.kind, 0) + 1
+    print(f"COUPS DE GÉNIE : {len(genie)} appels ({res.genie_rate()} / min), {len(res.extras.get('badges') or [])} "
+          f"badges, {len(res.extras.get('genie_cancelled') or [])} annulés ; par type : {kinds}", file=out)
+    for gt, c in genie:
+        print(f"  GÉNIE {fmt(gt)} [{c.title}] {c.text} | POURQUOI : {c.why} (score {c.score:.2f}"
+              f"{', badge' if c.genius else ''})", file=out)
     if not a.quiet:
-        fmt = lambda gt: f"{int(gt // 60):02d}:{int(gt % 60):02d}"     # noqa: E731
         for gt, txt in res.voice:
             print(f"  VOIX  {fmt(gt)} {txt}", file=out)
         for gt, title, sub in res.toasts:

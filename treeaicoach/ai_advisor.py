@@ -768,7 +768,7 @@ def engine_context(engine: Any, now: float | None = None) -> dict[str, Any]:
     if isinstance(p, (int, float)):
         ctx["wp"] = int(round(100 * p))
     for key, fn in (("coups", _ctx_plays), ("diff", _ctx_diff), ("prio", _ctx_prio), ("balises", _ctx_wards),
-                    ("jint", _ctx_jungle)):
+                    ("jint", _ctx_jungle), ("genie", _ctx_genie)):
         val = safe(lambda fn=fn: fn(engine, game, now))
         if val not in (None, "", [], {}):
             ctx[key] = val
@@ -781,6 +781,16 @@ def engine_context(engine: Any, now: float | None = None) -> dict[str, Any]:
 
 WAVE_FR = {"pushing": "prio (vague chez eux)", "pushed_in": "vague chez nous", "even": "équilibrée"}
 LANE_OF_ROLE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
+
+
+def _ctx_genie(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
+    """The active rule-based macro call (macro.py, "COUP DE GÉNIE"): ``{"appel", "pourquoi"}``."""
+    tac = getattr(engine, "_tactics", None)
+    fn = getattr(tac, "macro_active", None)
+    c = fn() if callable(fn) else None
+    if c is None:
+        return None
+    return {"appel": str(c.text)[:110], "pourquoi": str(c.why)[:140]}
 
 
 def _ctx_plays(engine: Any, game: Any, now: float) -> list[dict[str, Any]]:
@@ -1392,6 +1402,11 @@ def rule_plan(moment: str, snap: dict[str, Any]) -> dict[str, Any] | None:
 
 def _rule_plan(moment: str, snap: dict[str, Any]) -> dict[str, Any] | None:
     reason = moment.split(":", 1)[1] if moment.startswith("comeback:") else ""
+    genie = snap.get("genie")
+    if isinstance(genie, dict) and genie.get("appel"):        # the macro planner's active call (macro.py)
+        steps = [_short(genie.get("pourquoi"), MAX_STEP_CHARS)] if genie.get("pourquoi") else []
+        return {"plan": str(genie["appel"]), "etapes": steps, "objectif": _goal(genie["appel"]),
+                "urgence": "haute"}
     me = snap.get("me") or {}
     lane = _ROLE_LANE.get(str(me.get("r") or ""))
     prio = (snap.get("prio") or {}).get(lane or "", "")

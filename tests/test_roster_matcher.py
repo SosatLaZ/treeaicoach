@@ -453,3 +453,55 @@ def test_set_game_status_respawn_timer(db):
     m.set_dead(["Ahri"])                        # iterable: dead until the next call
     assert m._dead_now(now) == {0}
     m.set_dead(object())                        # never raises
+
+
+def _stack_run(db, renderer, vanish: bool, d: float = 0.3, stack: bool = True):
+    """Two icons walk side by side, then one is drawn UNDER the other (offset d x diameter)
+    for 12 frames (``vanish``: the bottom one goes into the fog instead)."""
+    from treeaicoach.render import ChampionSprite, Scene
+
+    roster = [("Garen", "self"), ("Jinx", "ally"), ("Thresh", "ally"), ("Ahri", "ally"),
+              ("Shen", "ally"), ("LeeSin", "enemy"), ("Caitlyn", "enemy"), ("Leona", "enemy"),
+              ("Darius", "enemy"), ("Kassadin", "enemy")]
+    m = RosterMatcher(db=db, learn_cache=False)
+    m.stack_search = stack
+    m.set_entries(_entries(db, roster))
+    rad, size = 0.046, 280
+    spots = [(0.15, 0.85), (0.3, 0.6), (0.62, 0.14), (0.85, 0.3), (0.2, 0.2), (0.85, 0.75),
+             (0.5, 0.85), (0.15, 0.45)]
+    hits = []
+    for f in range(40):     # approach at ~0.1 map / s (a champion's speed)
+        off = 2.4 if f < 8 else max(d, 2.4 - (2.4 - d) * (f - 7) / 16.0)
+        base = np.array([0.52 + 0.003 * f, 0.5])
+        champs = []
+        for k, (u, v) in enumerate(spots):
+            alias, rel = roster[k]
+            champs.append(ChampionSprite(u=u, v=v, r=rad, relation=rel, icon=db.load_icon(alias)))
+        bottom = base + np.array([0.0, off * 2 * rad])
+        if not (vanish and f >= 8):        # Darius under Kassadin (same team colour)
+            champs.append(ChampionSprite(u=float(bottom[0]), v=float(bottom[1]), r=rad,
+                                         relation="enemy", icon=db.load_icon("Darius")))
+        champs.append(ChampionSprite(u=float(base[0]), v=float(base[1]), r=rad, relation="enemy",
+                                     icon=db.load_icon("Kassadin")))
+        img = renderer.render(Scene(texture=renderer.textures()[0], size=size, champions=champs))
+        img = cv2.GaussianBlur(img, (0, 0), 0.6)
+        dets = m.detect(img, t=f / 8.0)
+        if f >= 25:
+            dd = [x for x in dets if x.alias == "Darius"]
+            hits.append(bool(dd) and math.hypot(dd[0].u - bottom[0], dd[0].v - bottom[1]) < 0.6 * rad)
+            if vanish:
+                hits[-1] = bool(dd)
+    return hits, m
+
+
+def test_stacked_icon_found_under_another_one(db, renderer):
+    hits, m = _stack_run(db, renderer, vanish=False)
+    assert sum(hits) >= len(hits) - 2, hits
+    assert any(x.reason == "stacked" for x in m.last_matches)
+    hits2, _ = _stack_run(db, renderer, vanish=False, stack=False)
+    assert sum(hits2) < sum(hits)          # the plain matcher misses the bottom icon
+
+
+def test_stacked_icon_not_invented_after_it_vanished(db, renderer):
+    hits, _ = _stack_run(db, renderer, vanish=True)
+    assert sum(hits) <= 1, hits

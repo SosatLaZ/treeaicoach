@@ -83,6 +83,8 @@ VELOCITY_WINDOW_S = 1.5
 FOG_MAX_S = 60.0
 #: Extra time an estimate is kept (faded, confidence 0) after the maximum duration.
 FOG_GRACE_S = 10.0
+#: Confidence of the jungler's estimate kept past max_s by the early clear model.
+HELD_CONFIDENCE = 0.2
 MODES = ("jungler", "all", "off")
 #: A victim's track must have been seen this close (s) to the kill to anchor the killer there.
 ANCHOR_VICTIM_MAX_DT = 3.0
@@ -276,6 +278,9 @@ class FogEstimate:
     is_jungler: bool = False
     #: Start points of the region (one: ``last_uv``; several after a multi-point anchor).
     seeds: tuple = ()
+    #: Probability of each cell (float32 [grid, grid], sums to 1 over ``region``) from the
+    #: early jungle clear model (jungle_path.py), or None (uniform over the region).
+    heat: np.ndarray | None = None
 
 
 class _Loss:
@@ -359,6 +364,32 @@ class FogTracker:
         self._anchor_pts: dict[str, tuple[tuple[float, float], ...]] = {}
         self._dead: dict[str, float | None] = {}
         self._events_seen = 0
+        #: Optional heat-map source (``jungle_intel.JungleIntelTracker``): methods
+        #: ``fog_active(alias, t, game) -> bool`` (keeps the jungler's estimate alive past
+        #: ``max_s`` while the early clear model is informative) and
+        #: ``fog_heat(alias, t, game, region) -> ndarray | None``.
+        self.heat_source: Any = None
+
+    def _held(self, alias: Any, t: float, game: Any) -> bool:
+        src = self.heat_source
+        if src is None or not alias:
+            return False
+        try:
+            return bool(src.fog_active(alias, t, game))
+        except Exception:
+            log.debug("Fog heat source failed", exc_info=True)
+            return False
+
+    def _heat(self, alias: Any, t: float, game: Any, region: np.ndarray) -> np.ndarray | None:
+        src = self.heat_source
+        if src is None or not alias:
+            return None
+        try:
+            h = src.fog_heat(alias, t, game, region)
+            return h if isinstance(h, np.ndarray) and h.shape == region.shape else None
+        except Exception:
+            log.debug("Fog heat source failed", exc_info=True)
+            return None
 
     # ------------------------------------------------------------------ configuration
     def set_max_s(self, max_s: Any) -> None:
@@ -485,7 +516,8 @@ class FogTracker:
             log.debug("Fog anchors from the Live Client data failed", exc_info=True)
         seen_aliases = {_norm_alias(getattr(tr, "alias", None)) for tr in tracks} - {""}
         for akey, (at, auv, _why) in list(self._anchors.items()):
-            if akey in seen_aliases or t - at > self.max_s + FOG_GRACE_S:
+            if akey in seen_aliases or (t - at > self.max_s + FOG_GRACE_S
+                                        and not self._held(akey, t, game)):
                 continue
             if mode == "jungler" and akey != jungler_alias:
                 continue
@@ -529,7 +561,8 @@ class FogTracker:
         for key in list(self._dismissed):
             if key not in alive_keys:
                 del self._dismissed[key]
-        for akey in [k for k, a in self._anchors.items() if t - a[0] > self.max_s + FOG_GRACE_S]:
+        for akey in [k for k, a in self._anchors.items() if t - a[0] > self.max_s + FOG_GRACE_S
+                     and not self._held(k, t, game)]:
             del self._anchors[akey]
             self._anchor_pts.pop(akey, None)
         out.sort(key=lambda e: (not e.is_jungler, e.elapsed))
@@ -645,7 +678,8 @@ class FogTracker:
         elapsed = max(0.0, t - last_seen)
         player = _player(game, alias)
         dead = bool(player is not None and getattr(player, "is_dead", False))
-        expired = elapsed > self.max_s + FOG_GRACE_S
+        held = is_jungler and elapsed > self.max_s and self._held(alias, t, game)
+        expired = elapsed > self.max_s + FOG_GRACE_S and not held
         if dead or expired:
             self._losses.pop(key, None)
             self._dismissed[key] = last_seen
@@ -676,6 +710,8 @@ class FogTracker:
         reach = loss.speed * elapsed + REACH_MARGIN
         region = loss.region(reach, self.grid, self._walk_u8, self._flash_kernel)
         confidence = max(0.0, 1.0 - elapsed / self.max_s)
+        if held:
+            confidence = max(confidence, HELD_CONFIDENCE)
         shown = loss            # display circle: the latest single-point fact of the chain
         node = loss.parent
         while node is not None and t - node.last_seen <= self.max_s + FOG_GRACE_S:
@@ -692,6 +728,7 @@ class FogTracker:
             key=key, alias=loss.alias, name=loss.name, last_uv=last_uv, last_seen=shown_seen,
             elapsed=max(0.0, t - shown_seen), speed=loss.speed, radius=radius,
             region=region, confidence=confidence, is_jungler=loss.is_jungler, seeds=loss.seeds,
+            heat=self._heat(alias, t, game, region) if loss.is_jungler else None,
         )
 
 

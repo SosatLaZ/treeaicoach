@@ -665,15 +665,26 @@ Menace courante = niveau max des alertes brutes du GankAnalyzer du dernier tick 
 Structure : **barre latérale** (logo, navigation courte, accès rapide, niveau, statut) + pages :
 1. **En jeu** : bandeau d'état (point « en direct », état + message, face-à-face moi VS adversaire de voie, jauge de
    menace, minuteurs d'objectifs, chrono, bouton Démarrer/Arrêter), ligne coach, ennemis + alliés, journal, radar,
-   **Système** (Jeu / Minimap / Client LoL / IA / Voix avec correction en un clic, `ui_kit.subsystem_rows`),
-   « Tester l'overlay » (états d'exemple 10 s), FPS / CPU.
-2. **Alertes** (onglets Alertes / Voix / Aides / Touches) ; 3. **Overlay**.
-4. **Analyses** (onglets) : **Parties** (bandeau de session + tableau), **Progrès** (`progress.py` : courbes des
+   **Système** (Jeu / Minimap / Client LoL / Détection (modèle) / IA conseil (fournisseur, clé saisie ou non, « IA 3/5 »,
+   « Tester la clé » : petite requête dans un thread, résultat en français) / Voix, correction en un clic,
+   `ui_kit.subsystem_rows`), « Tester l'overlay » (états d'exemple 10 s), FPS / CPU. Journal vide → **« Avant la partie »** :
+   dernière partie (résultat, K/D/A, précision, meilleur coup / pire erreur), objectif de la partie (`goals.pick_goal`, ou
+   celui de la partie en cours), point à travailler (`progress.focus_points`), session ; sans aucune partie : 3 vérifications
+   (Sans bordure lu dans les réglages du jeu, overlay, voix).
+2. **Alertes** (onglets Alertes / Voix / Aides / Touches) ; 3. **Overlay** (aperçu en tête de page, `ui_preview.py` : les
+   vrais rendus de l'overlay (minimap, HUD, badge de coup noté, flash) placés comme en jeu pour les réglages courants, sur
+   la partie en cours si l'analyse tourne, sinon sur un exemple de gank).
+4. **Analyses** (onglets) : **Parties** (bandeau de session + tableau avec colonne **Précision** des coups notés,
+   lue à la fin du fichier de la partie par `report.read_plays_brief`, en cache), **Progrès** (`progress.py` : courbes des
    20 dernières parties, CS/min, morts, or à 10/15 min contre l'adversaire et fiabilité TreeAI quand le client LoL
    est disponible, « tes 3 points à travailler »), **Replay** (`replay.py` : minimap minute par minute, dernières
    positions connues, cercle du jungler, frise des morts / ganks / kills, lecture x10 à x120).
 5. **Réglages** (onglets Général / Minimap / IA / Avancé ; mises à jour avec « Télécharger manuellement »).
 6. **Aide** : mode d'emploi en 5 étapes (mode Sans bordure, lancer l'app, jouer…), sécurité / règles Riot, dépannage.
+**Mode guidé** (premier lancement, relançable dans Réglages / Aide) : 3 étapes courtes (ton niveau, jeu en Sans bordure
+vérifié dans les fichiers de réglages du jeu, test de l'overlay et de la voix).
+Polices : `ui.pick_font` (insensible à la casse) ; titres / chiffres « Bahnschrift SemiBold » (instance nommée listée par
+Tk sous Windows 10+), sinon Segoe UI Semibold, sinon une sans-serif condensée, sinon la police du corps.
 Règles : toutes les mises à jour de widgets passent par `root.after` (jamais depuis un autre thread) ; toute action utilisateur
 est protégée par try/except + message d'erreur FR (jamais de crash) ; fermeture propre (arrêt engine/voix/overlay, sauvegarde config) ;
 fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; icône de fenêtre = icône de l'app.
@@ -807,3 +818,35 @@ Tout est **visuel** (ligne du HUD via `TipRotator`, toasts), jamais dit à voix 
   normal) ; conseil d'achat : 1 par passage en base ; « N ennemis disparus » ne prend plus la ligne HUD.
 * Mesure : `python -m treeaicoach.coach_sim --level intermediaire` (partie scriptée de 30 min, moteur réel) ->
   voix / toasts / changements de ligne HUD par minute ; `tests/test_coach_plus.py` borne ces taux.
+
+## 14. COUPS DE GÉNIE — planificateur macro (`macro.py`, 100 % règles, zéro appel IA)
+
+* `macro.MacroPlanner` (un par `TacticalDirector`, appelé au rythme lourd par `tactics._macro_tick`) : **un seul appel
+  actif** (`GeniusCall` : `text` impératif court « Va mid : ta tour du bas est tombée », `why` d'une ligne, `target` uv,
+  `title`, `tier` basic/mid/high, `score` 0-1, `genius`) ; gardé ≥ 10 s (`HOLD_S`), revalidé à chaque tick avec des
+  seuils relâchés (hystérésis, `MacroCtx.keep`) et annulé après 2 s invalide ; rien pendant un combat / une menace de
+  gank / mort (l'appel actif est annulé) ; écart entre appels, score minimum et paliers par niveau (`LEVELS` :
+  débutant tout, expert seulement `high`) ; situations « une fois » (`ident`), retour en base une fois par aller-retour.
+* Contexte (`build_ctx`) : `phase.MapState` (tours, inhibs, morts + `respawnTimer`), `fight.snapshot` (alliés vus,
+  ennemis + temps caché), timers d'objectifs, vagues (`coach.waves()`), `engine.jungle_intel()`, rôles, or d'équipe (Tab).
+  Score : valeur de l'appel × confiance de l'info × avantage (`team_edge` : or, nombre en vie, niveaux) × part de la
+  carte vue (`vision_share`) ; position probable du jungler ennemi (`jungler_location` : vu sur la minimap, décroît
+  sur 40 s ; côté de farm Tab, décroît sur 30 s ; foule à un puits).
+* Règles : `fight_won` (2-3 morts → Baron / ancestral / dragon / Héraut / inhibiteur / tour avec la fenêtre de
+  réapparition ; ace / 4+ = `phase.EndGameCaller`), `fight_lost`, `jungler_dead` (envahir / objectif libre / jouer
+  avancé), `plates` (adversaire mort ou en base : plaques avant 14:00, la tour après), `cross_trade` / `free_dragon`
+  (jungler ou 3+ ennemis de l'autre côté → Héraut / larves / tour / dragon), `rotate_mid` (duo bot après la tour du
+  bas), `side_wave` (« Change de voie : va top » ; règle de split sûr : jungler localisé ailleurs / mort ou 3+ ennemis
+  vus de l'autre côté), `split_safe`, `lane_swap`, `wave_recall` / `wave_freeze` / `back_off` (vague du canon d'après le
+  chrono : `next_cannon_arrival`). Le regroupement avant objectif reste `positioning.PositionCoach`.
+* Visuel : flèche minimap `MapGuide("genie", label « VA ICI » / « TOUR » …)`, grande bannière (`title` + `why`), ligne
+  HUD tenue tant que l'appel est actif (`engine._hud_line`), badge « COUP DE GÉNIE » (classe `brilliant` de
+  `fx_overlay.PlayFx`, hors précision des coups notés) pour les appels `genius` de score ≥ 0,6, 1 / 4 min par type.
+  Jamais de voix. Les conseils écrits redondants de `coach.MapCoach` sont retirés autour d'un appel
+  (`OVERLAPS`, `TacticalDirector.drop_overlaps`). `engine.macro_calls` : historique ; `ai_advisor` reçoit l'appel actif
+  (`snap["genie"]`) et `rule_plan` (plan hors ligne) le reprend en priorité.
+* Achats (`itemization.situational_buys`) : avec l'or restant après le chemin d'objet, bottes (≥ 7:00), bottes de
+  niveau 2 selon les dégâts ennemis (Coques / Mercure), balise de contrôle si aucune et objectif ≤ 2 min (support,
+  jungle ou après 15:00) → `Recommendation.extras` + `buy_text` ; toujours 1 conseil par passage en base.
+* Mesure : `python -m treeaicoach.coach_sim --level debutant` affiche « COUPS DE GÉNIE : n appels (x / min) » et chaque
+  appel avec son POURQUOI ; `tests/test_macro.py` (états scriptés + partie simulée débutant / expert).

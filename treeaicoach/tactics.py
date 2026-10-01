@@ -342,7 +342,8 @@ class TacticalDirector:
         dur = GENIE_BANNER_S.get(level_key(getattr(self.cfg, "skill_level", "")), 3.5)
         self._banner = Banner(GENIE_STYLE.get(c.color, "call"), c.title, c.why, t, t + dur)
         if c.target is not None:
-            self._add_guide(MapGuide("genie", c.target, c.label, PRIORITY["genie"], True, c.color,
+            label = c.label if c.color == "danger" or c.label.startswith("VA ICI") else f"VA ICI · {c.label}"
+            self._add_guide(MapGuide("genie", c.target, label[:16], PRIORITY["genie"], True, c.color,
                                      t + max(HOLD_S_MIN, c.life_s), t))
 
     def macro_active(self) -> Any:

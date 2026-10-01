@@ -1715,7 +1715,7 @@ def _read_summary(path: Path) -> dict | None:
 NOT_RECORDS = frozenset({"progress_cache.json"})
 TAIL_BYTES = 65536             # list_games(): bytes read at the end of a record to find the play summary
 _PLAYS_RE = re.compile(r'"plays"\s*:\s*\{\s*"schema"')
-_precision_cache: dict[str, tuple[tuple[int, int], int | None]] = {}
+_precision_cache: dict[str, tuple[tuple[int, int], dict[str, Any] | None]] = {}
 
 
 def _iter_record_files(d: Path) -> Iterable[Path]:
@@ -1731,10 +1731,12 @@ def _iter_record_files(d: Path) -> Iterable[Path]:
         log.warning("Cannot list %s: %s", d, exc)
 
 
-def read_precision(path: Path) -> int | None:
-    """Rated-play precision (0-100, :mod:`treeaicoach.plays`) of a game record, None when the game
-    was not rated. Cheap: the summary is the record's last key, so only the file's tail is parsed;
-    cached by (mtime, size). Never raises."""
+def read_plays_brief(path: Path) -> dict[str, Any] | None:
+    """``{"precision": 0-100, "best": play | None, "worst": play | None}`` of a rated game record
+    (play = ``{"cls", "title", "reason", "gt"}``), None when the game was not rated.
+
+    Cheap: the play summary (:mod:`treeaicoach.plays`) is the record's last key, so only the file's
+    tail is parsed; cached by (mtime, size). Never raises."""
     try:
         p = Path(path)
         st = p.stat()
@@ -1756,22 +1758,35 @@ def read_precision(path: Path) -> int | None:
         if block is None and '"plays"' in tail and st.st_size <= 8 * 1024 * 1024:
             data = json.loads(p.read_text(encoding="utf-8"))           # summary longer than the tail
             block = data.get("plays") if isinstance(data, dict) else None
-        val: int | None = None
-        if isinstance(block, dict):
+        val: dict[str, Any] | None = None
+        if isinstance(block, dict) and int(block.get("total") or 0) > 0:
             prec = block.get("precision")
             if not isinstance(prec, (int, float)) and isinstance(block.get("counts"), dict):
                 from treeaicoach import plays as _plays
 
                 prec = _plays.precision(block["counts"])
-            if isinstance(prec, (int, float)) and math.isfinite(prec) and int(block.get("total") or 1) > 0:
-                val = int(round(min(max(float(prec), 0.0), 100.0)))
+            if isinstance(prec, (int, float)) and math.isfinite(prec):
+                def brief(items: Any) -> dict[str, Any] | None:
+                    d = items[0] if isinstance(items, list) and items and isinstance(items[0], dict) else None
+                    if d is None:
+                        return None
+                    return {k: d.get(k) for k in ("cls", "title", "reason", "gt")}
+
+                val = {"precision": int(round(min(max(float(prec), 0.0), 100.0))),
+                       "best": brief(block.get("best")), "worst": brief(block.get("worst"))}
         if len(_precision_cache) > 512:
             _precision_cache.clear()
         _precision_cache[str(p)] = (sig, val)
         return val
     except Exception as exc:
-        log.debug("Cannot read the play precision of %s: %s", path, exc)
+        log.debug("Cannot read the play summary of %s: %s", path, exc)
         return None
+
+
+def read_precision(path: Path) -> int | None:
+    """Rated-play precision (0-100) of a game record, None when the game was not rated (cheap, cached)."""
+    b = read_plays_brief(path)
+    return int(b["precision"]) if b else None
 
 
 def list_games(limit: int = 50, games_dir: Path | None = None) -> list[dict]:
@@ -1781,7 +1796,7 @@ def list_games(limit: int = 50, games_dir: Path | None = None) -> list[dict]:
     ``champion_name``, ``result`` ("Win"/"Lose"/None), ``result_label``, ``kills``, ``deaths``,
     ``assists``, ``kda`` ("3/4/5"), ``cs``, ``duration``, ``duration_text``, ``ganks``,
     ``ganks_survived``, ``incomplete`` (True for a ``.partial.json`` left by a crash), ``precision``
-    (rated plays 0-100, None when not rated).
+    (rated plays 0-100, None when not rated), ``plays_brief`` (:func:`read_plays_brief`).
     """
     try:
         d = _games_dir(games_dir)
@@ -1808,6 +1823,7 @@ def list_games(limit: int = 50, games_dir: Path | None = None) -> list[dict]:
                 continue
             k, dd, a = s.get("kills") or 0, s.get("deaths") or 0, s.get("assists") or 0
             rp = report_path_for(e["_p"])
+            brief = read_plays_brief(e["_p"])
             res = s.get("result") if s.get("result") in ("Win", "Lose") else None
             out.append({
                 "path": e["_p"],
@@ -1826,7 +1842,8 @@ def list_games(limit: int = 50, games_dir: Path | None = None) -> list[dict]:
                 "ganks": s.get("ganks"),
                 "ganks_survived": s.get("ganks_survived"),
                 "incomplete": bool(e["_partial"] or s.get("incomplete")),
-                "precision": read_precision(e["_p"]),
+                "precision": (brief or {}).get("precision"),
+                "plays_brief": brief,
                 "mtime": e["_mtime"],
             })
         out.sort(key=lambda g: (str(g.get("start") or ""), g["mtime"]), reverse=True)

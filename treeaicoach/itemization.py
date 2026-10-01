@@ -377,6 +377,9 @@ class Recommendation:
     buy_now_names: tuple[str, ...] = ()
     completes: bool = False
     gold: int = 0
+    extras: tuple[int, ...] = ()            # cheap situational buys with the gold left (boots, control ward)
+    extra_names: tuple[str, ...] = ()
+    extra_why: str = ""                     # one line: why the extras
 
     @property
     def text(self) -> str:
@@ -387,11 +390,15 @@ class Recommendation:
 
     @property
     def buy_text(self) -> str | None:
-        if not self.buy_now:
+        if not self.buy_now and not self.extras:
             return None
+        tail = (" + " + " + ".join(self.extra_names)) if self.extra_names else ""
+        if not self.buy_now:
+            return f"Achète maintenant : {' + '.join(self.extra_names)} ({self.extra_why})." if self.extra_why \
+                else f"Achète maintenant : {' + '.join(self.extra_names)}."
         if self.completes:
-            return f"Achat immédiat : {self.item_name} ({self.gold} PO disponibles)."
-        return f"Achat immédiat : {' + '.join(self.buy_now_names)}."
+            return f"Achat immédiat : {self.item_name}{tail} ({self.gold} PO disponibles)."
+        return f"Achat immédiat : {' + '.join(self.buy_now_names)}{tail}."
 
 
 def _owned_need(need: str, owned: set[int]) -> bool:
@@ -399,17 +406,71 @@ def _owned_need(need: str, owned: set[int]) -> bool:
     return bool(group and owned & group)
 
 
+CONTROL_WARD = 2055
+BOOTS = 1001
+#: tier-2 boots per need / class (enemy damage profile first, then the class default)
+BOOTS_VS = {"physical": 3047, "magic": 3111, "cc": 3111}
+BOOTS_CLASS = {"marksman": 3006, "mage": 3020, "assassin_ap": 3020, "enchanter": 3158, "assassin_ad": 3158,
+               "support_tank": 3047, "tank": 3047, "fighter": 3047, "fighter_ap": 3020}
+NO_BOOTS = frozenset({"Cassiopeia"})
+TRINKETS = frozenset({3340, 3363, 3364, 3330, 3513})
+BOOTS_GT = 420.0              # first boots from ~7:00 at the latest
+BOOTS2_GT = 780.0             # tier-2 boots from ~13:00
+
+
+def situational_buys(game: Any, cls: str, prof: EnemyProfile, owned: Iterable[int], gold_left: float,
+                     items: dict[int, Item], objective_soon: bool = False) -> tuple[list[int], str]:
+    """Cheap situational buys with the gold left after the build path (``(ids, why)``): a control
+    ward when none is in the inventory (objective soon / support / jungle / mid game), boots in
+    time, tier-2 boots against the enemy damage profile. Never contradicts the build path (it only
+    spends leftover gold). Pure."""
+    out: list[int] = []
+    why: list[str] = []
+    own = [int(i) for i in owned or ()]
+    left = float(gold_left)
+    me = getattr(game, "me", None)
+    gt = _f(getattr(game, "game_time", 0.0))
+    slots = len([i for i in own if i not in TRINKETS])
+    alias = str(getattr(me, "champion_alias", "") or "")
+    boots_owned = [i for i in own if i == BOOTS or (i in items and items[i].kind == "boots")]
+    if alias not in NO_BOOTS and BOOTS in items:
+        if not boots_owned and gt >= BOOTS_GT and left >= items[BOOTS].gold and slots < 6:
+            out.append(BOOTS)
+            left -= items[BOOTS].gold
+            slots += 1
+            why.append("des bottes pour te déplacer plus vite")
+        elif boots_owned == [BOOTS] and gt >= BOOTS2_GT:
+            need = max((n for n in ("physical", "magic", "cc") if prof.needs.get(n, 0.0) >= NEED_MIN),
+                       key=lambda n: prof.needs.get(n, 0.0), default=None)
+            iid = BOOTS_VS.get(need or "") or BOOTS_CLASS.get(cls)
+            if iid in items:
+                cost = remaining_cost(iid, own, items)
+                if 0 < cost <= left:
+                    out.append(iid)
+                    left -= cost
+                    why.append({"physical": "contre leurs dégâts physiques", "magic": "contre leurs dégâts magiques",
+                                "cc": "moins de temps sous contrôle"}.get(need or "", "tes bottes complètes"))
+    has_cw = CONTROL_WARD in own
+    cw_role = str(getattr(me, "position", "") or "").upper() in ("UTILITY", "JUNGLE")
+    if not has_cw and CONTROL_WARD in items and left >= items[CONTROL_WARD].gold and slots < 6 and gt >= 240.0 \
+            and (objective_soon or cw_role or gt >= 900.0):
+        out.append(CONTROL_WARD)
+        why.append("une balise de contrôle pour l'objectif" if objective_soon else "une balise de contrôle")
+    return out, " et ".join(why)
+
+
 def recommend(game: Any, role: str | None = None, items: dict[int, Item] | None = None,
-              gold: float | None = None) -> Recommendation | None:
+              gold: float | None = None, objective_soon: bool = False) -> Recommendation | None:
     """Best next item for me (None when spectating / unknown data). Never raises."""
     try:
-        return _recommend(game, role, items, gold)
+        return _recommend(game, role, items, gold, objective_soon)
     except Exception:
         log.exception("itemization.recommend failed")
         return None
 
 
-def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold: float | None) -> Recommendation | None:
+def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold: float | None,
+               objective_soon: bool = False) -> Recommendation | None:
     items = items if items is not None else load_items()
     me = getattr(game, "me", None)
     if me is None or not items:
@@ -454,8 +515,15 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
         choice = (pick, "core", "")
     iid, need, reason = choice
     buys, completes = plan_purchase(iid, owned_list, gold, items)
+    pool, spent = list(owned_list), 0
+    for b in buys:
+        p = list(pool)
+        spent += _remaining(b, p, items)
+        pool = p + [b]
+    extras, why = situational_buys(game, cls, prof, pool, gold - spent, items, objective_soon)
     return Recommendation(iid, items[iid].name, need, reason, tuple(buys),
-                          tuple(items[b].name for b in buys if b in items), completes, int(gold))
+                          tuple(items[b].name for b in buys if b in items), completes, int(gold),
+                          tuple(extras), tuple(items[e].name for e in extras if e in items), why)
 
 
 # ----------------------------------------------------------------------------- advisor
@@ -492,9 +560,11 @@ class ItemAdvisor:
         """Latest recommendation (for a persistent HUD line)."""
         return self._current
 
-    def update(self, t: float, game: Any, role: str | None = None, in_base: bool | None = None) -> list[BuyAdvice]:
+    def update(self, t: float, game: Any, role: str | None = None, in_base: bool | None = None,
+               objective_soon: bool = False) -> list[BuyAdvice]:
         try:
             with self._lock:
+                self._objective_soon = bool(objective_soon)
                 return self._update(float(t), game, role, in_base)
         except Exception:
             log.exception("ItemAdvisor.update failed")
@@ -522,7 +592,7 @@ class ItemAdvisor:
                 moment = "fed"
         self._was_dead, self._level, self._items_owned = dead, level, inv
         self._fed = fed
-        rec = recommend(game, role, self._items)
+        rec = recommend(game, role, self._items, objective_soon=getattr(self, "_objective_soon", False))
         self._current = rec or self._current
         if moment is None or rec is None or gt < MIN_GT:
             return []
@@ -530,12 +600,12 @@ class ItemAdvisor:
         if t - self._last_emit < gap:
             return []
         shopping = moment in ("death", "base")
-        sig = (rec.item_id, rec.need, rec.reason, rec.buy_now if shopping else ())
+        sig = (rec.item_id, rec.need, rec.reason, (rec.buy_now + rec.extras) if shopping else ())
         last = self._shown.get(sig)
         if last is not None and t - last < REPEAT_S:
             return []
         same_item = [ts for s, ts in self._shown.items() if s[:2] == sig[:2]]
-        if same_item and t - max(same_item) < REPEAT_S and not (shopping and rec.buy_now):
+        if same_item and t - max(same_item) < REPEAT_S and not (shopping and (rec.buy_now or rec.extras)):
             return []
         self._shown[sig] = t
         self._last_emit = t

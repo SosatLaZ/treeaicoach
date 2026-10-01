@@ -121,6 +121,14 @@ class JungleIntelTracker:
         self._lock = threading.Lock()
         self._camps = _camps()
         self._lanes = _lane_points()
+        #: Early clear model (jungle_path.py): heat map of the jungler in his fog region.
+        self.path: Any = None
+        try:
+            from treeaicoach.jungle_path import JunglePathModel
+
+            self.path = JunglePathModel()
+        except Exception:
+            log.exception("Jungle path model unavailable")
         self.reset()
 
     def reset(self) -> None:
@@ -132,6 +140,12 @@ class JungleIntelTracker:
             self._recall: dict[str, float] = {}
             self._farm: tuple[float, tuple, str | None, str | None] | None = None
             self._state = JungleIntel()
+            self._jg_key = ""
+            self._game: Any = None
+            self._start_anchored = False
+            self._last_obs_t = -math.inf
+            if getattr(self, "path", None) is not None:
+                self.path.reset()
 
     # ---------------------------------------------------------------- queries
     def state(self) -> JungleIntel:
@@ -162,6 +176,7 @@ class JungleIntelTracker:
         jg = game.enemy_jungler() if hasattr(game, "enemy_jungler") else None
         gt = _f(getattr(game, "game_time", None))
         speed = _speed(gt)
+        self._path_tick(t, game, jg, tracker, fog)
         if key != self._snap_key:
             prev_t = self._snap_t
             self._snap_key, self._snap_t = key, t
@@ -188,10 +203,14 @@ class JungleIntelTracker:
         old_items, old_cs = self._items.get(alias), self._cs.get(alias)
         self._items[alias], self._cs[alias] = items, cs
         dead = bool(getattr(p, "is_dead", False))
+        if is_jg and dead and self.path is not None:
+            self.path.observe_left_route("dead")
         if old_items is None or dead or (gt is not None and gt < START_GRACE_GT):
             return
         bought = [i for i, n in items.items() if n > old_items.get(i, 0) and i not in NOT_BOUGHT]
         if bought:
+            if is_jg and self.path is not None:
+                self.path.observe_left_route("recall")
             self._recall[alias] = since
             team = geometry.normalize_team(getattr(p, "team", None))
             fountain = geometry.RED_FOUNTAIN if team == "CHAOS" else geometry.BLUE_FOUNTAIN
@@ -233,6 +252,10 @@ class JungleIntelTracker:
                        <= budget]
             else:
                 pts = list(cands)                  # never seen: anywhere he can farm
+        if self.path is not None:
+            gtn = _gt_now(self._game, t)
+            if gtn is not None:
+                self.path.observe_farm(gtn - (t - since), gtn)
         if not pts:
             return
         # mid lane / centre points (on the diagonal) belong to no half
@@ -245,6 +268,53 @@ class JungleIntelTracker:
         if fog is not None and not visible:
             fog.anchor(alias, None, since, "farm", points=uvs)
         log.debug("Tab: jungler %s farming (%d candidate places, side %s)", alias, len(uvs), side)
+
+    # ---------------------------------------------------------------- early clear model
+    def _path_tick(self, t: float, game: Any, jg: Any, tracker: Any, fog: Any) -> None:
+        """Feeds the early clear model (jungle_path.py): team, sightings; anchors the
+        jungler at his fountain at the start of a fresh game; plugs the model into the fog
+        tracker (``FogTracker.heat_source``)."""
+        self._game = game
+        path = self.path
+        if path is None or jg is None:
+            return
+        alias = str(getattr(jg, "champion_alias", "") or "")
+        self._jg_key = _norm(alias)
+        team = geometry.normalize_team(getattr(jg, "team", None))
+        path.set_team(team)
+        if fog is not None and hasattr(fog, "heat_source") and fog.heat_source is not self:
+            fog.heat_source = self
+        gtn = _gt_now(game, t)
+        if gtn is None:
+            return
+        tr = _track(tracker, alias)
+        visible = tr is not None and bool(getattr(tr, "visible", False))
+        if visible and t - self._last_obs_t >= 0.5:
+            pos = _pos(tr)
+            if pos is not None:
+                self._last_obs_t = t
+                path.observe_seen(gtn, pos)
+        if not self._start_anchored and fog is not None and team is not None:
+            self._start_anchored = True
+            if gtn < 80.0 and not visible and tr is None:
+                from treeaicoach.jungle_path import LEAVE_FOUNTAIN_GT
+
+                fountain = geometry.RED_FOUNTAIN if team == "CHAOS" else geometry.BLUE_FOUNTAIN
+                fog.anchor(alias, fountain, min(t, t - (gtn - LEAVE_FOUNTAIN_GT)), "start")
+
+    def fog_active(self, alias: Any, t: float, game: Any) -> bool:
+        """FogTracker hook: keep the jungler's estimate alive while the model is informative."""
+        path = self.path
+        if path is None or not self._jg_key or _norm(alias) != self._jg_key:
+            return False
+        return path.active(_gt_now(game, t))
+
+    def fog_heat(self, alias: Any, t: float, game: Any, region: Any) -> Any:
+        """FogTracker hook: heat map of the jungler inside ``region`` (or None)."""
+        path = self.path
+        if path is None or not self._jg_key or _norm(alias) != self._jg_key:
+            return None
+        return path.heat(_gt_now(game, t), region, grid=int(region.shape[0]))
 
     def _make_state(self, t: float, jg: Any, speed: float) -> JungleIntel:
         if jg is None:
@@ -294,6 +364,19 @@ def _speed(gt: float | None) -> float:
         return SPEED_FACTOR_MAX * nominal_speed(gt)
     except Exception:
         return 0.035
+
+
+def _norm(alias: Any) -> str:
+    return "".join(ch for ch in str(alias or "").lower() if ch.isalnum())
+
+
+def _gt_now(game: Any, t: float) -> float | None:
+    """Game time at engine time ``t`` (the poll's game time + the time since the poll)."""
+    gt = _f(getattr(game, "game_time", None)) if game is not None else None
+    if gt is None:
+        return None
+    fetched = _f(getattr(game, "fetched_at", None))
+    return gt + (min(max(0.0, t - fetched), 3.0) if fetched is not None else 0.0)
 
 
 def _track(tracker: Any, alias: str) -> Any:
