@@ -530,6 +530,63 @@ def masked_ncc(patches: np.ndarray, raw: np.ndarray, masks: np.ndarray,
     return (wl * sl + wc * sc).astype(np.float32)
 
 
+def clean_camera_lines(bgr: np.ndarray, rect: Any, band: int = 2) -> np.ndarray:
+    """Copy of ``bgr`` without the white camera-rectangle lines of ``rect``
+    (``camera_proj.CameraRect``, normalized; None -> ``bgr`` itself).
+
+    Only white, unsaturated pixels within ``band`` px of a side are replaced, by the mean of
+    the pixels just outside the line on both sides (above / below a horizontal side, left /
+    right of a vertical one): an icon drawn over the line keeps its pixels, an icon under
+    the line gets its covered row back approximately. ~0.3 ms on a 300 px minimap.
+    """
+    if rect is None:
+        return bgr
+    try:
+        from treeaicoach.camera_proj import white_mask
+
+        H, W = bgr.shape[:2]
+        wm = cv2.dilate(white_mask(bgr), np.ones((3, 3), np.uint8))   # + anti-aliased edges
+        out = None
+        d = band + 1
+        sides = (("h", rect.v0, rect.u0, rect.u1), ("h", rect.v1, rect.u0, rect.u1),
+                 ("v", rect.u0, rect.v0, rect.v1), ("v", rect.u1, rect.v0, rect.v1))
+        for kind, c, a0, a1 in sides:
+            n_c, n_a = (H, W) if kind == "h" else (W, H)
+            pc = int(round(c * n_c - 0.5))
+            if pc < -band or pc > n_c - 1 + band:
+                continue
+            lo = max(0, int(math.floor(a0 * n_a)) - 1)
+            hi = min(n_a, int(math.ceil(a1 * n_a)) + 2)
+            if hi - lo < 2:
+                continue
+            c0, c1 = max(0, pc - band), min(n_c, pc + band + 1)
+            if c1 <= c0:
+                continue
+            if kind == "h":
+                m = wm[c0:c1, lo:hi]
+            else:
+                m = wm[lo:hi, c0:c1].T
+            if not m.any():
+                continue
+            if out is None:
+                out = bgr.copy()
+            pa, pb = max(0, pc - d), min(n_c - 1, pc + d)
+            if kind == "h":
+                fill = (bgr[pa, lo:hi].astype(np.uint16) + bgr[pb, lo:hi]) // 2
+                for k, row in enumerate(range(c0, c1)):
+                    sel = m[k] > 0
+                    out[row, lo:hi][sel] = fill[sel].astype(np.uint8)
+            else:
+                fill = (bgr[lo:hi, pa].astype(np.uint16) + bgr[lo:hi, pb]) // 2
+                for k, col in enumerate(range(c0, c1)):
+                    sel = m[k] > 0
+                    out[lo:hi, col][sel] = fill[sel].astype(np.uint8)
+        return bgr if out is None else out
+    except Exception:
+        log.debug("clean_camera_lines failed", exc_info=True)
+        return bgr
+
+
 # ======================================================================================
 # Ring colour model (learned live)
 # ======================================================================================
@@ -759,6 +816,10 @@ class RosterMatcher:
         #: Learned / guessed icons (custom skins): alias -> (icon, source), see self_icon.py.
         self._overrides: dict[str, tuple[np.ndarray, str]] = {}
         self._camlock: tuple[int, tuple[float, float] | None] = (-10 ** 9, None)
+        #: (frame, CameraRect | None) of the current frame (see _camera_rect_now).
+        self._camrect: tuple[int, Any] = (-10 ** 9, None)
+        #: Erase the white camera-rectangle lines before matching (see clean_camera_lines).
+        self.clean_camera: bool = True
         #: alias -> respawn deadline (time.monotonic()) of the dead champions (Live API).
         self._dead: dict[str, float] = {}
         self._dead_idx: set[int] = set()
@@ -1078,16 +1139,30 @@ class RosterMatcher:
         self.last_dead = [self._entries[i].alias for i in sorted(dead)]
         return dead
 
+    def _camera_rect_now(self, bgr: np.ndarray) -> Any:
+        """White camera rectangle of this frame (``camera_proj.find_camera_rect``, one search
+        per frame, shared by the line cleaning, the camera lock and the self fallback)."""
+        f = self._state.frames
+        if self._camrect[0] != f:
+            r = None
+            try:
+                from treeaicoach.camera_proj import find_camera_rect
+
+                r = find_camera_rect(bgr)
+            except Exception:
+                r = None
+            self._camrect = (f, r)
+        return self._camrect[1]
+
     def _cam_point(self, bgr: np.ndarray) -> tuple[float, float] | None:
         """Where my icon is when the camera is locked on me (camera rectangle), cached."""
         f = self._state.frames
-        if f - self._camlock[0] >= 2:
+        if f != self._camlock[0]:
             p = None
             try:
-                from treeaicoach.camera_proj import find_camera_rect
                 from treeaicoach.self_icon import CAM_V_FRAC
 
-                r = find_camera_rect(bgr)
+                r = self._camera_rect_now(bgr)
                 if r is not None:
                     p = (0.5 * (r.u0 + r.u1), r.v0 + CAM_V_FRAC * (r.v1 - r.v0))
                     self._cam = (f, (0.5 * (r.u0 + r.u1), 0.5 * (r.v0 + r.v1)))
@@ -1589,8 +1664,13 @@ class RosterMatcher:
         return JUMP_PENALTY
 
     def _camera_centre(self, bgr: np.ndarray) -> tuple[float, float] | None:
-        """Camera rectangle centre (cached a few frames)."""
+        """Camera rectangle centre: this frame's rectangle, else the older finder (cached a
+        few frames)."""
         f = self._state.frames
+        r = self._camera_rect_now(bgr)
+        if r is not None:
+            self._cam = (f, r.center)
+            return r.center
         if f - self._cam[0] >= 4:
             try:
                 from treeaicoach.identifier import find_camera_center
@@ -1959,6 +2039,11 @@ class RosterMatcher:
         scale = self._current_scale(bgr)
         st.frames += 1
         st.since_calib += 1
+        raw_bgr = bgr
+        if self.clean_camera:
+            # the minimap never moves, the camera rectangle does: its 1-2 px white lines
+            # crossing an icon must not break the match (nor be a ring colour)
+            bgr = clean_camera_lines(bgr, self._camera_rect_now(raw_bgr))
         ents = self._entries
         n_e = len(ents)
         inner_full = INNER_RATIO * scale * W
@@ -2154,7 +2239,7 @@ class RosterMatcher:
         # 6. the local player: camera lock (confirmed by my own matches), camera rectangle
         #    prior, then coasting on its track
         dets_extra: list[Detection] = []
-        cam_pt = self._cam_point(bgr)
+        cam_pt = self._cam_point(raw_bgr)
         if self._camlock[0] == st.frames:       # (a fresh camera rectangle)
             self.camlock.feed_cam(cam_pt, now)
         for c in accepted:
@@ -2180,7 +2265,7 @@ class RosterMatcher:
                 used.add(i)
                 continue
             best = rejected.get(i)
-            cam = self._camera_centre(bgr) if best is not None else None
+            cam = self._camera_centre(raw_bgr) if best is not None else None
             if best is not None and cam is not None and best.ncc >= OCC_MIN_NCC and \
                     math.hypot(best.x / kx - cam[0], best.y / ky - cam[1]) < SELF_CAM_DIST \
                     and best.tot >= thr - SELF_RELAX and not conflict(best, best.tot, True):

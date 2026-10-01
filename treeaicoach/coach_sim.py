@@ -76,7 +76,7 @@ KILLS = (
 #: (game time, event name, killer alias, extra)
 OBJECTIVES = (
     (330.0, "DragonKill", "LeeSin", {"DragonType": "Fire"}),
-    (440.0, "HordeKill", "Vi", {}),
+    (500.0, "HordeKill", "Vi", {}),          # grubs spawn at 8:00 (2026)
     (660.0, "DragonKill", "Vi", {"DragonType": "Earth"}),
     (930.0, "HeraldKill", "LeeSin", {}),
     (980.0, "TurretKilled", "Darius", {"TurretKilled": "Turret_T1_L_03_A"}),

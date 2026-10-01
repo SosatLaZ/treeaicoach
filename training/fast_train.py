@@ -437,7 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ema-decay", type=float, default=0.998)
     p.add_argument("--ema-tau", type=float, default=200.0)
     p.add_argument("--width", type=float, default=0.5)
-    p.add_argument("--fpn", type=int, default=32)
+    p.add_argument("--fpn", type=int, default=48, help="FPN channels (before --width)")
     p.add_argument("--head", type=int, default=16)
     p.add_argument("--threads", type=int, default=2,
                    help="torch threads (2 is best on a busy 4-core machine; see README)")

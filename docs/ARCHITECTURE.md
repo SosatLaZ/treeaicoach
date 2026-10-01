@@ -477,21 +477,21 @@ ne sont jamais filtrés par l'écart global du throttler (mais gardent leur cool
 ### 6.2 `objectives.py`
 ```python
 @dataclass
-class ObjectiveState: name: str (FR: "Dragon", "Baron", "Héraut", "Larves", "Atakhan", "Dragon ancestral")
+class ObjectiveState: name: str (FR: "Dragon", "Baron", "Héraut", "Larves", "Dragon ancestral")
                       next_spawn: float | None (game_time) ; alive: bool ; source: "schedule" | "event"
 class ObjectiveTimers:
     def __init__(self, cfg: Config, schedule: dict | None = None)   # schedule par défaut = OBJECTIVE_SCHEDULE (modifiable)
     def update(self, game: GameInfo | None, t: float) -> list[Alert]   # annonce à 60 s et 20 s avant l'apparition (configurable)
     def states(self) -> list[ObjectiveState]
     def reset(self) -> None
-OBJECTIVE_SCHEDULE = {  # valeurs par défaut, surchargeables dans assets/objectives.json
-  "dragon":  {"first": 300, "respawn": 300},  "elder": {"respawn": 360},
-  "grubs":   {"first": 360, "respawn": None, "despawn": 840}, "herald": {"first": 900, "despawn": 1185},
-  "atakhan": {"first": 1200}, "baron": {"first": 1500, "respawn": 360}
+OBJECTIVE_SCHEDULE = {  # saison 2026 (patch 26.1+), surchargeables dans assets/objectives.json
+  "dragon":  {"first": 300, "respawn": 300, "soul": 4},  "elder": {"respawn": 360},
+  "grubs":   {"first": 480, "respawn": None, "despawn": 885, "count": 3}, "herald": {"first": 900, "despawn": 1185},
+  "baron": {"first": 1200, "respawn": 360}      # Atakhan supprimé en 26.1 (clé "atakhan" ignorée)
 }
 ```
 Événements Live Client utilisés : `DragonKill` (`DragonType` = "Elder" → elder), `BaronKill`, `HeraldKill`, `HordeKill`
-(larves), `AtakhanKill`, `GameStart`. Aucune annonce si le mode n'est pas la Faille, ou si l'option est désactivée.
+(larves), `GameStart` (`AtakhanKill` est ignoré : Atakhan n'existe plus depuis 26.1). Aucune annonce si le mode n'est pas la Faille, ou si l'option est désactivée.
 Les réapparitions après un kill (dragon 5:00, baron 6:00, ancestral 6:00) sont fiables ; les apparitions initiales viennent
 du tableau (qui peut changer selon les patchs → fichier JSON modifiable).
 
@@ -792,7 +792,7 @@ fenêtre redimensionnable, taille min 980×640, se souvient de sa position ; ic�
   `objectif`, `urgence`) ; le snapshot contient `coups` (coups notés), `prec`, `diff` (or / niveau / CS),
   `prio` (vagues), `objt` (timers), `balises` (wards.recommend), `jint` (infos jungle si disponibles) ;
   moments : combat perdu (morts alliées > ennemies), 80 s avant un objectif majeur (dragon dès 14:00, Baron,
-  ancestral, Atakhan), bascule d'or ±1 500 en 1-2,5 min, fenêtre de retour, 2 gaffes en 4 min ; budget
+  ancestral), bascule d'or ±1 500 en 1-2,5 min, fenêtre de retour, 2 gaffes en 4 min ; budget
   inchangé (5 auto + 1 urgence) ; hors ligne / quota / JSON cassé → `rule_plan(moment, snapshot)`
   (`Advice.source == "rules"`, titre « PLAN », sans réseau, sans budget). `AIAdvisor.note_play(play)`.
 
@@ -989,3 +989,25 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
   `meta.json` (système, réglages en liste blanche, réglages du jeu, écrans, DPI), fin du journal
   (chemins masqués) → `%APPDATA%\TreeAICoach\diagnostics\diag_AAAAMMJJ_HHMMSS.zip`, dossier ouvert.
   `diagnostic_status()` pour l'UI.
+
+## 18. Données de jeu vivantes (Data Dragon) + carte d'avant-partie (sélection des champions)
+
+* `game_data.py` : `items_data()` / `champions_data()` = la plus récente des données en cache
+  (`user_data_dir()/ddragon/items.json`, `champions.json`) et des données embarquées (`assets/items.json`,
+  `assets/icons/champions/index.json`), comparées par version Data Dragon ; `item_name(id)`, `champion_name(alias)`.
+  `refresh_async(allow_network)` (lancé par `main.main`, sauf `--demo` / `--ui-smoke`, interrupteur
+  `download_skin_icons`) : thread démon, au plus une fois par 24 h (`last_check.json`), urllib, User-Agent,
+  timeouts, tailles bornées, échecs silencieux. Après une mise à jour : `add_listener` → itemization,
+  scoreboard et `champions.get_default_db()` rechargent leurs tables. `coach.ITEM_NAMES_FR` lit les noms
+  dans ces données (plus aucun nom d'objet codé en dur). Un champion plus récent que le build reçoit son icône
+  de base CommunityDragon (`<cache>/<Alias>_0.png`) via `ChampionDB.prefetch_skin_icons`.
+* `champ_select.py` : lecture seule (GET `/lol-champ-select/v1/session`, client LCU local) →
+  `PregameCard` (titre « AHRI · MID », adversaire de voie probable, 3 conseils « action : raison »,
+  objets de départ avec noms / prix des données vivantes, `lines` prêtes à afficher). Aucun nom de joueur
+  lu ni gardé, aucune action sur le client. API pour l'UI : `champ_select.pregame_card()` (sondage limité à
+  1 / 2 s) ou `ChampSelectWatcher(...).start()` + `.card()`. League Classic (ids ≥ 60000) ignoré.
+* `live_client.GameInfo.is_league_classic` : carte 453 « Classic Rift » / mode « JADE » → non pris en charge.
+* Saison 2026 dans les règles : sbires 0:30, camps 0:55, carapateurs 2:55, vagues toutes les 25 s dès
+  14:00 (20 s dès ~30:00), canon toutes les 2 vagues dès 14:00 ; plaques permanentes (120 PO, −10/min de
+  11:00 à 15:00 sur les tours extérieures) ; lampes féeriques (`wards.SPOTS` avec `faelight=True`,
+  positions approximatives ; 4 n'existent qu'après la transformation de la Faille : `wards.rift_transformed`).
