@@ -206,6 +206,13 @@ class OverlayStateMixin:
         elif level >= Level.WARNING and self._grouped(now, me_uv):
             # a gank alarm with my team around me is a team fight: "COMBAT", not "GANK, recule"
             level, text = int(Level.WARNING), "ATTENTION — COMBAT"
+        elif level >= Level.WARNING and self._team_fight_now():
+            # a team fight going on (fight tracker: allies engaged): never the word "GANK" in a 5 v 5;
+            # a lost fight (RECULE call) stays red
+            if self._team_fight_now() == "retreat":
+                level, text = int(Level.DANGER), "DANGER — COMBAT PERDU"
+            else:
+                level, text = int(Level.WARNING), "ATTENTION — COMBAT"
         elif level >= Level.DANGER:
             text = "DANGER — GANK !"
         elif personal is not None and personal[0] >= Level.DANGER:
@@ -343,6 +350,18 @@ class OverlayStateMixin:
             return out
         except Exception:
             return {}
+
+    def _team_fight_now(self) -> str | None:
+        """``"retreat"`` / ``"engage"`` / ``"fight"`` while the fight tracker sees a team fight
+        (allies engaged around me), else None. Never raises."""
+        try:
+            tac = self._tactics
+            if tac is None or not tac.in_fight():
+                return None
+            fs = tac.fight.state()
+            return str(getattr(fs, "call", None) or "fight")
+        except Exception:
+            return None
 
     def _hud_card_fields(self, game: Any, me_uv: Any, tip: str | None, now: float) -> dict[str, Any]:
         """HUD v3 card extras: gauge (+ reason, since), advice tone + fade start, item chip (in

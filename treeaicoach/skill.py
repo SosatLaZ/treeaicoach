@@ -94,5 +94,18 @@ def tip_min_prio(cfg: Any) -> int:
     return TIP_MIN_PRIO[normalize(getattr(cfg, "skill_level", "intermediaire"))]
 
 
+def tip_skip(cfg: Any) -> frozenset:
+    """Tip ids never shown at this level: a beginner gets no statistics / tutorial line
+    ("4,5 sbires/min, vise 7"), only instructions that change the next seconds (tips.LOW_VALUE_TIPS)."""
+    try:
+        if normalize(getattr(cfg, "skill_level", "intermediaire")) != "debutant":
+            return frozenset()
+        from treeaicoach.tips import LOW_VALUE_TIPS
+
+        return LOW_VALUE_TIPS
+    except Exception:
+        return frozenset()
+
+
 __all__ = ["SKILL_LEVELS", "SKILL_HELP", "SKILL_PRESETS", "TIP_MIN_PRIO", "normalize", "label",
-           "preset_changes", "apply", "tip_min_prio"]
+           "preset_changes", "apply", "tip_min_prio", "tip_skip"]

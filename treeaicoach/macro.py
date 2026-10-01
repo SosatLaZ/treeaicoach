@@ -268,6 +268,7 @@ class GeniusCall:
     life_s: float = DEFAULT_LIFE_S
     factors: tuple[str, ...] = ()  # scoring breakdown (debug / tests / AI plan)
     t: float = 0.0
+    voice: str = ""                # short spoken line (game_changers.voice_for decides if it is said)
 
 
 @dataclass
@@ -1170,10 +1171,22 @@ RULES = (_rule_fight_lost, _rule_fight_won, _rule_jungler_dead, _rule_cross_map,
          _rule_rotate_mid, _rule_split_safe, _rule_side_wave, _rule_waves)
 
 
+def _all_rules() -> tuple:
+    """:data:`RULES` + the game-changer library (:mod:`treeaicoach.game_changers`, imported lazily:
+    it builds on this module's helpers)."""
+    try:
+        from treeaicoach.game_changers import RULES as GC_RULES
+
+        return RULES + tuple(GC_RULES)
+    except Exception:
+        log.debug("game changers unavailable", exc_info=True)
+        return RULES
+
+
 def evaluate(ctx: MacroCtx) -> list[GeniusCall]:
     """Every call the situation supports, best first (score x priority). Pure, never raises."""
     out: list[GeniusCall] = []
-    for rule in RULES:
+    for rule in _all_rules():
         try:
             c = rule(ctx)
         except Exception:
@@ -1228,6 +1241,12 @@ class MacroPlanner:
                 if 0.0 <= t - t0 < OVERLAP_S:
                     out |= OVERLAPS.get(kind, frozenset())
             return frozenset(out)
+
+    def recent_kinds(self, t: float, window: float = OVERLAP_S) -> frozenset[str]:
+        """Kinds of the calls started in the last ``window`` seconds (the written tips repeating
+        them wait: tips.CALL_OVERLAPS)."""
+        with self._lock:
+            return frozenset(k for k, t0 in self._kind_t.items() if 0.0 <= t - t0 < window)
 
     def update(self, ctx: MacroCtx, level: Any = "intermediaire") -> MacroUpdate:
         try:

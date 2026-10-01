@@ -350,7 +350,10 @@ class EndGameCaller:
             return None if o is None or getattr(o, "alive", False) else _f(getattr(o, "remaining", None))
 
         # ---- phase change (written once per phase)
-        if self._phase is not None and st.phase != self._phase:
+        # (an epic objective up or spawning within 90 s IS the plan: "rejoins le milieu" next to
+        # "Va top : Héraut dans 1:00" was a card / banner contradiction)
+        obj_soon = any(up(k, 90.0) for k in ("dragon", "herald", "grubs", "baron", "elder"))
+        if self._phase is not None and st.phase != self._phase and not obj_soon:
             if st.phase == "mid":
                 out.append(MacroCall("phase:mid", "Rejoins ton équipe au milieu : la phase de voie est finie",
                                      "MILIEU DE PARTIE", 40))

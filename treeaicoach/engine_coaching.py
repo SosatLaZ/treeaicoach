@@ -38,6 +38,10 @@ from treeaicoach.live_client import GameInfo
 
 log = logging.getLogger("treeaicoach.engine")   # same logger as before the split
 
+#: a card line about wards (one ward call at a time: CoachingMixin.WARD_TOPIC_S)
+WARD_LINE_RE = __import__("re").compile(r"(?i)^(balise|pose (ta|une) balise|garde (le buisson|une balise)|"
+                                        r"surveille ta rivière|va baliser|achète une balise)")
+
 
 class CoachingMixin:
     """Coaching stages of a tick: director / macro / wards, speech, scoreboard, items, hype / AI,"""
@@ -699,9 +703,9 @@ class CoachingMixin:
                 item = getattr(rec, "item_name", None) if rec is not None else None
                 extra: dict = {}
                 if plus is not None:
-                    from treeaicoach.coach_plus import buy_fields
-                    extra = {**plus.tip_fields(), **buy_fields(rec, bool(facts.get("in_base")))}
-                extra.update(self._tip_consistency_fields(t))
+                    from treeaicoach.coach_plus import buy_fields, shop_fields
+                    extra = {**plus.tip_fields(), **buy_fields(rec, bool(facts.get("in_base"))), **shop_fields(rec)}
+                extra.update(self._tip_consistency_fields(t, facts))
                 self._tip_text = rot.update(t, build_context(facts, game, summary, stance, item=item, extra=extra))
                 # a toast only for a NEW tip (its live numbers refreshing is not news)
                 # (and at most one tip toast every TIP_TOAST_GAP_S, contextual tips only: the HUD line
@@ -739,10 +743,12 @@ class CoachingMixin:
             log.debug("macro gauge factor failed", exc_info=True)
             return []
 
-    def _tip_consistency_fields(self, t: float) -> dict:
+    def _tip_consistency_fields(self, t: float, facts: dict | None = None) -> dict:
         """TipContext fields that keep the written tip in line with the other systems: the tone of
-        the active macro call (a "go" call hides the cautious tips and vice versa) and whether a
-        recall reminder was shown recently (one recall message per trip, not four)."""
+        the active macro call (a "go" call hides the cautious tips and vice versa), whether a
+        recall reminder was shown recently (one recall message per trip, not four), a base visit
+        just happened (no "rentre acheter" 10 s after leaving the shop), a ward line was just shown
+        (one ward call, not four) and the calls of the last 90 s (their tips wait)."""
         out: dict = {}
         try:
             tac = self._tactics
@@ -753,10 +759,28 @@ class CoachingMixin:
                     self._recall_topic_t = t
             last = getattr(self, "_recall_topic_t", None)
             out["recall_said"] = last is not None and 0.0 <= t - last < self.RECALL_TOPIC_S
+            in_base = bool((facts or {}).get("in_base"))
+            if in_base:
+                self._base_t = t
+            out["base_recent"] = self._base_recent(t) and not in_base
+            out["ward_recent"] = self._ward_recent(t)
+            if tac is not None:
+                out["recent_calls"] = tac.macro.recent_kinds(t)
         except Exception:
             log.debug("tip consistency failed", exc_info=True)
             pass
         return out
+
+    BASE_RECENT_S = 75.0           # after a base visit: no "rentre acheter" reminder this long
+    WARD_TOPIC_S = 180.0           # after a ward line on the card: no other ward line this long
+
+    def _base_recent(self, t: float) -> bool:
+        last = getattr(self, "_base_t", None)
+        return last is not None and 0.0 <= t - last < self.BASE_RECENT_S
+
+    def _ward_recent(self, t: float) -> bool:
+        last = getattr(self, "_ward_topic_t", None)
+        return last is not None and 0.0 <= t - last < self.WARD_TOPIC_S
 
     def _recall_consistency(self, alerts: list[Alert], t: float) -> list[Alert]:
         """Recall reminders ("Tu as 1300 pièces d'or, pense à rentrer") are dropped when another
@@ -772,7 +796,7 @@ class CoachingMixin:
                 if str(a.key).startswith(self.RECALL_KEYS):
                     last = getattr(self, "_recall_topic_t", None)
                     if (last is not None and 0.0 <= t - last < self.RECALL_TOPIC_S) or tip_id in self.RECALL_TIP_IDS \
-                            or active is not None:
+                            or active is not None or self._base_recent(t):
                         continue
                     self._recall_topic_t = t
                 keep.append(a)
@@ -825,6 +849,8 @@ class CoachingMixin:
         voice: list[Alert] = []
         for a in alerts:
             try:
+                if a.kind == AlertKind.CONTROL_WARD and self._ward_recent(t):
+                    continue                     # one ward call at a time (the card just said it)
                 way = tac.gate.decide(a, t, ctx, level) if tac is not None else vp.route(a, level)
                 if way == "drop":
                     continue
@@ -964,6 +990,8 @@ class CoachingMixin:
                 cand = pr.filter_panel_line(cand, self._tip_tone(cand), ctx)
         cand = self._steady_line(cand, shown, valid, now, me_dead, siege is not None, mc)
         self._note_stance(cand, now)
+        if cand and WARD_LINE_RE.match(cand):
+            self._ward_topic_t = now
         if shown is None or shown[0] != cand:
             if shown is not None and shown[0] and _line_shape(shown[0]) != _line_shape(cand or ""):
                 retired[_line_shape(shown[0])] = now

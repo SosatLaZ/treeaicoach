@@ -165,7 +165,7 @@ class CoachPlus:
         return list(self.deaths.causes)
 
 
-__all__ = ["CoachPlus", "Note", "NOTE_GAP_S", "buy_fields"]
+__all__ = ["CoachPlus", "Note", "NOTE_GAP_S", "buy_fields", "shop_fields"]
 
 
 def buy_fields(rec: Any, in_base: bool = False) -> dict[str, Any]:
@@ -183,5 +183,22 @@ def buy_fields(rec: Any, in_base: bool = False) -> dict[str, Any]:
         else:
             names = " + ".join(list(getattr(rec, "buy_now_names", ()) or ())[:2])
         return {"buy_names": names or None, "buy_value": value}
+    except Exception:
+        return {}
+
+
+def shop_fields(rec: Any) -> dict[str, Any]:
+    """TipContext ``shop_names``: what the gold buys right now in the shop ("Cristal de rubis +
+    Épée longue", or the item it completes), for the in-base line "Achète ... maintenant".
+    Never raises."""
+    try:
+        ids = tuple(getattr(rec, "buy_now", ()) or ())
+        if not ids:
+            return {}
+        if getattr(rec, "completes", False):
+            names = str(getattr(rec, "item_name", "") or "")
+        else:
+            names = " + ".join(list(getattr(rec, "buy_now_names", ()) or ())[:2])
+        return {"shop_names": names or None}
     except Exception:
         return {}

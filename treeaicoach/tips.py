@@ -98,6 +98,7 @@ class TipContext:
     item: str | None = None              # next recommended item (itemization)
     buy_names: str | None = None         # components affordable now ("Phage + Épée longue")
     buy_value: int = 0                   # their price
+    shop_names: str | None = None        # in the shop: what the gold buys right now (coach_plus.shop_fields)
     # power spikes vs my lane opponent (spikes.SpikeTracker): who reached a key level / item first
     spike_who: str | None = None         # "me" | "opp"
     spike_what: str | None = None        # "level" | "item"
@@ -121,6 +122,9 @@ class TipContext:
     macro_tone: str | None = None        # "go" | "danger" | None
     recall_said: bool = False            # a recall reminder / "rentre" call was shown recently
     dead_respawn: float = 0.0            # shortest respawn timer of the dead enemies (s), 0 = none
+    base_recent: bool = False            # I was in my base (shop) less than BASE_RECENT_S ago: no "rentre acheter"
+    ward_recent: bool = False            # a ward line was on the card recently (one ward call, not four)
+    recent_calls: frozenset = frozenset()   # kinds of the macro / game-changer calls of the last ~90 s
 
     # ---- helpers used by the conditions
     @property
@@ -161,6 +165,12 @@ class TipContext:
                 continue
             return OBJ_LE.get(key, "l'objectif")
         return None
+
+    @property
+    def lane_ok(self) -> bool:
+        """Not losing my lane (a lane behind in levels / gold does not push first for an objective)."""
+        return (self.level_diff >= 0 and self.gold_diff > -800 and not self.recent_deaths >= 2
+                and (self.hp is None or self.hp >= 0.5))
 
     @property
     def has_control_ward(self) -> bool:
@@ -223,6 +233,7 @@ class TipContext:
             "dead": self.dead_names[0] if self.dead_names else (self.opp or "un ennemi"),
             "item": self.item or "ton prochain objet",
             "buy": self.buy_names or "ton composant",
+            "shop": self.shop_names or self.buy_names or "ton composant",
             "sp_lvl": self.spike_level, "sp_item": self.spike_item or "un gros objet",
             "baron_left": int(self.baron_buff_s // 5 * 5), "ebaron": int(self.enemy_baron_s // 5 * 5),
             "elder_left": int(self.elder_buff_s // 5 * 5), "eelder": int(self.enemy_elder_s // 5 * 5),
@@ -331,8 +342,9 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.jg_hidden_s is not None and c.jg_hidden_s >= 60 and 180 <= c.gt and c.early and not c.jg_dead
       and c.jg_last_side is None and not c.jg_visible,
       roles=LANERS, prio=3, tone="warning", conf=MAP, cooldown=150.0),
+    # THE early ward call (2:00-2:20: a ward placed at 0:50 has expired when the level-3 gank comes)
     T("jg_level3", "jungle", "Balise ta rivière avant 2:40 : {jg} peut ganker",
-      lambda c: 115 <= c.gt <= 165 and not c.plan_jg, roles=LANERS, prio=3, tone="warning"),
+      lambda c: 120 <= c.gt <= 150 and not c.plan_jg, roles=LANERS, prio=3, tone="warning"),
     T("jg_counter", "jungle", "Prends ses camps {jg_opp_side} : {jg} est {jg_side}",
       lambda c: c.jg_visible and c.jg_side in ("top", "bot"), roles=("JUNGLE",), prio=3, tone="go", conf=MAP,
       cooldown=120.0, ttl=10.0),
@@ -345,8 +357,8 @@ TIPS: tuple[Tip, ...] = (
       lambda c: c.soon_within("dragon", 50, 100) and not c.has_control_ward and not c.in_base,
       roles=BOTSIDE, prio=4, tone="warning", ttl=15.0),
     T("drag_prio", "objectives", "Pousse ta vague puis va au dragon : apparition dans {drag_s} s",
-      lambda c: c.soon_within("dragon", 25, 75), roles=("MIDDLE", "BOTTOM", "UTILITY"), prio=3, tone="info",
-      ttl=15.0),
+      lambda c: c.soon_within("dragon", 25, 75) and c.lane_ok, roles=("MIDDLE", "BOTTOM", "UTILITY"), prio=3,
+      tone="info", ttl=15.0),
     T("drag_vision", "objectives", "Balise la rivière du bas : dragon dans {drag_s} s",
       lambda c: c.soon_within("dragon", 20, 80), roles=("UTILITY", "JUNGLE"), prio=3, ttl=15.0),
     T("drag_top", "objectives", "Pousse et frappe leur tour : leur équipe regarde le dragon",
@@ -371,11 +383,11 @@ TIPS: tuple[Tip, ...] = (
       lambda c: "baron" in c.alive and len(c.dead_names) >= 2 and c.gt >= 1200
       and c.dead_respawn >= (25 if len(c.dead_names) >= 3 else 40), prio=4, tone="go", ttl=10.0),
     T("herald_soon", "objectives", "Pousse ta vague puis aide au Héraut : {herald_s} s",
-      lambda c: c.soon_within("herald", 20, 90), roles=TOPSIDE, prio=3, ttl=15.0),
+      lambda c: c.soon_within("herald", 20, 90) and c.lane_ok, roles=TOPSIDE, prio=3, ttl=15.0),
     T("herald_up", "objectives", "Aide ton jungler au Héraut : il détruit une tour",
       lambda c: "herald" in c.alive and c.early and c.wave != "pushed_in", roles=("TOP", "MIDDLE"), prio=2),
     T("grubs", "objectives", "Pousse ta vague puis aide aux larves : {grubs_s} s",
-      lambda c: c.soon_within("grubs", 10, 80), roles=TOPSIDE, prio=3, ttl=15.0),
+      lambda c: c.soon_within("grubs", 10, 80) and c.lane_ok, roles=TOPSIDE, prio=3, ttl=15.0),
     T("group_obj", "macro", "Rejoins ton équipe vers {my_le} : {my_obj_s} s",
       lambda c: not c.early and c.my_objective(10, 60) is not None and not c.in_base and not c.dead,
       prio=3, ttl=15.0),
@@ -439,7 +451,7 @@ TIPS: tuple[Tip, ...] = (
     # ------------------------------------------------------------------ waves
     T("wave_push_back", "wave", "Pousse ta vague puis rentre : {gold} d'or à dépenser",
       lambda c: c.wave == "pushing" and c.gold >= 1100 and not c.in_base and not c.recall_said
-      and c.my_objective(0, 50) is None, roles=CARRIES, prio=3, conf=MAP),
+      and not c.base_recent and c.my_objective(0, 50) is None, roles=CARRIES, prio=3, conf=MAP),
     T("wave_push_ward", "wave", "Balise la rivière : ta vague pousse, tu es exposé",
       lambda c: c.wave == "pushing" and not c.jg_visible and c.early and c.gt >= 150, roles=LANERS, prio=2,
       tone="warning",
@@ -452,8 +464,6 @@ TIPS: tuple[Tip, ...] = (
     T("mid_roam", "macro", "Va aider top ou bot : ta vague est poussée",
       lambda c: 240 <= c.gt <= 1200 and c.wave == "pushing", roles=("MIDDLE",), prio=2, conf=MAP),
     # ------------------------------------------------------------------ vision
-    T("vis_river", "vision", "Pose ta balise dans la rivière : premier gank vers 2:30",
-      lambda c: 45 <= c.gt <= 120, roles=LANERS, prio=2),
     # 2026 Faelights ("lampes féeriques"): a ward on one gets +25 % vision and reveals an area 45 s
     T("vis_faelight", "vision", "Pose ta balise sur une lampe féerique : vision bonus 45 s",
       lambda c: 90 <= c.gt <= 900 and not c.in_base and not c.dead, roles=("UTILITY", "JUNGLE", "MIDDLE"),
@@ -474,19 +484,21 @@ TIPS: tuple[Tip, ...] = (
     T("vis_deep", "vision", "Balise leur jungle : tu sauras où va {jg}",
       lambda c: c.gt >= 600 and not c.alive, roles=("UTILITY", "JUNGLE"), prio=2),
     # ------------------------------------------------------------------ items / gold
-    T("buy_item", "items", "Achète {item} maintenant : ton meilleur achat",
-      lambda c: c.in_base and c.item is not None and c.gold >= 300, prio=4, tone="go", ttl=12.0),
+    # in the shop: what the gold buys NOW (components), never a 3000-gold legendary with 900 gold
+    T("buy_item", "items", "Achète {shop} : tu as l'or",
+      lambda c: c.in_base and bool(c.shop_names) and c.gold >= 300, prio=4, tone="go", ttl=12.0),
     T("comp_ready", "items", "Rentre acheter {buy} : tu as l'or",
       lambda c: bool(c.buy_names) and c.buy_value >= 700 and not c.in_base and not c.dead and c.missing < 3
-      and c.enemies_near == 0 and c.my_objective(0, 50) is None and not c.recall_said, prio=3, cooldown=150.0,
-      ttl=15.0),
+      and c.enemies_near == 0 and c.my_objective(0, 50) is None and not c.recall_said and not c.base_recent,
+      prio=3, cooldown=150.0, ttl=15.0),
     T("gold_back", "items", "Rentre acheter : {gold} d'or, ça fait un objet",
       lambda c: c.gold >= 1300 and not c.buy_names and not c.in_base and not c.dead and c.missing < 3
-      and c.my_objective(0, 50) is None and not c.recall_said, prio=3, cooldown=150.0),
+      and c.my_objective(0, 50) is None and not c.recall_said and not c.base_recent, prio=3, cooldown=150.0),
     # objective timing: recall now to be back in time / don't recall right before it
     T("obj_recall_now", "objectives", "Rentre maintenant : tu reviendras à temps pour {my_le}",
       lambda c: c.my_objective(75, 120) is not None and not c.in_base and not c.dead and c.enemies_near == 0
-      and (c.gold >= 900 or (c.hp is not None and c.hp < 0.6)), prio=3, cooldown=240.0, ttl=15.0),
+      and not c.base_recent and (c.gold >= 900 or (c.hp is not None and c.hp < 0.6)), prio=3, cooldown=240.0,
+      ttl=15.0),
     T("obj_stay", "objectives", "Ne rentre pas : {my_obj} dans {my_obj_s} s, reste prêt",
       lambda c: c.my_objective(10, 50) is not None and not c.in_base and not c.dead and c.gold >= 1100
       and (c.hp is None or c.hp >= 0.5), prio=3, tone="warning", cooldown=240.0, ttl=12.0),
@@ -516,7 +528,7 @@ TIPS: tuple[Tip, ...] = (
       cooldown=9999.0, ttl=15.0),
     T("plan_lane2", "matchup", "{plan2}", lambda c: bool(c.plan2) and 40 <= c.gt <= 160, prio=2,
       cooldown=9999.0, ttl=15.0),
-    T("plan_jg", "jungle", "{plan_jg}", lambda c: bool(c.plan_jg) and 110 <= c.gt <= 190, roles=LANERS,
+    T("plan_jg", "jungle", "{plan_jg}", lambda c: bool(c.plan_jg) and 120 <= c.gt <= 170, roles=LANERS,
       prio=3, tone="warning", cooldown=9999.0, ttl=15.0),
     T("gold_spend", "items", "Dépense tes {gold} d'or : l'or gardé ne sert à rien",
       lambda c: c.in_base and c.gold >= 500, prio=3, ttl=10.0),
@@ -529,7 +541,8 @@ TIPS: tuple[Tip, ...] = (
     T("elixir", "items", "Prends un élixir avant le combat : gros bonus 3 minutes",
       lambda c: c.late and c.gold >= 500 and c.in_base, prio=2),
     T("first_back", "items", "Farme jusqu'à 1100 d'or : puis rentre en base",
-      lambda c: 240 <= c.gt <= 420 and 600 <= c.gold < 1100 and not c.in_base, roles=LANERS, prio=2),
+      lambda c: 240 <= c.gt <= 420 and 600 <= c.gold < 1100 and not c.in_base and not c.base_recent,
+      roles=LANERS, prio=2),
     # ------------------------------------------------------------------ death / respawn
     T("dead_obj", "survival", "Va vers {my_le} en réapparaissant : {my_obj_s} s",
       lambda c: c.dead and c.my_objective(0, 90) is not None, prio=4, cooldown=120.0, ttl=15.0),
@@ -563,6 +576,32 @@ TIPS: tuple[Tip, ...] = (
 
 def tip_count() -> int:
     return len(TIPS)
+
+
+#: ward lines: ONE at a time (a second ward tip waits until the ward topic is old, see
+#: :attr:`TipContext.ward_recent`)
+WARD_TIPS = frozenset({"vis_faelight", "vis_score_low", "vis_mid_side", "vis_top_bush", "vis_bot_bush",
+                       "vis_deep", "jg_level3", "plan_jg", "wave_push_ward", "drag_vision", "baron_soon",
+                       "sup_obj_vision"})
+#: statistics / tutorial lines that do not change the next 10 seconds (dropped for a beginner:
+#: "Reste sur ta vague : 4,5 sbires/min, vise 7", "Laisse ta tour taper : puis achève le sbire")
+LOW_VALUE_TIPS = frozenset({"cs_low", "jg_cs", "cs_under_tower", "vis_score_low", "goal_cs", "early_safe",
+                            "wave_pushed_in", "late_vision", "teamfight_adc", "teamfight_sup", "dead_watch",
+                            "cs_side"})
+#: a macro / game-changer call (kind) already said this: the tips repeating it wait (90 s)
+CALL_OVERLAPS: dict[str, frozenset[str]] = {
+    "gc_level": frozenset({"spike_me_big", "spike_me", "lvl_ahead", "spike_opp_big", "lvl_behind", "level2"}),
+    "gc_jungler_far": frozenset({"jg_far", "drag_top", "jg_coming"}),
+    "gc_jungler_unseen": frozenset({"jg_unseen", "jg_never_seen", "wave_push_ward", "jg_coming", "jg_far"}),
+    "plates": frozenset({"opp_dead", "opp_dead_late", "gold_ahead"}),
+    "jungler_dead": frozenset({"jg_dead_window", "jg_dead_lane"}),
+    "fight_won": frozenset({"baron_window", "drag_up_team", "outnumber"}),
+    "wave_recall": frozenset({"comp_ready", "gold_back", "wave_push_back", "first_back", "obj_recall_now"}),
+    "gc_baron_setup": frozenset({"baron_unknown", "baron_soon", "ahead_team", "group_obj"}),
+    "gc_fed_defense": frozenset({"fed_enemy", "defensive", "buy_item", "gold_spend"}),
+    "gc_facecheck": frozenset({"late_vision", "side_late", "missing_3"}),
+    "cross_trade": frozenset({"jg_far", "drag_top", "split_top"}),
+}
 
 
 def _player_names(p: Any) -> set[str]:
@@ -697,6 +736,7 @@ class TipRotator:
         self.rotate_s = float(rotate_s)
         self._tips = tuple(tips)
         self.min_prio = 1                  # skill level: only tips with prio >= this (skill.py)
+        self.skip: frozenset = frozenset()  # skill level: tip ids never shown (skill.tip_skip)
         self.reset()
 
     def reset(self) -> None:
@@ -803,6 +843,12 @@ class TipRotator:
                 continue
             if tip.prio < self.min_prio and tip.tone not in ("red",):
                 continue
+            if tip.id in self.skip:
+                continue                       # low value for this level (statistics, tutorial lines)
+            if ctx.ward_recent and tip.id in WARD_TIPS:
+                continue                       # one ward call at a time
+            if ctx.recent_calls and any(tip.id in CALL_OVERLAPS.get(k, ()) for k in ctx.recent_calls):
+                continue                       # a call just said it (no repeat under another wording)
             if ctx.macro_tone == "go" and tip.tone in ("warning", "danger") and tip.prio < 4:
                 continue                       # a "go" macro call is on screen: no cautious tip next to it
             if ctx.macro_tone == "danger" and tip.tone == "go":
@@ -818,4 +864,5 @@ class TipRotator:
                                           -self._shown_gt.get(tp.id, -1e9)))
 
 
-__all__ = ["Tip", "TipContext", "TipRotator", "TIPS", "build_context", "tip_count", "ROTATE_S", "MAX_WORDS"]
+__all__ = ["Tip", "TipContext", "TipRotator", "TIPS", "build_context", "tip_count", "ROTATE_S", "MAX_WORDS",
+           "WARD_TIPS", "LOW_VALUE_TIPS", "CALL_OVERLAPS"]

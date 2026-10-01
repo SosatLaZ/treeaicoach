@@ -317,8 +317,9 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                         log.exception("apply_config failed for %r", type(comp).__name__)
             if self._tip_rotator is not None:
                 try:
-                    from treeaicoach.skill import tip_min_prio
+                    from treeaicoach.skill import tip_min_prio, tip_skip
                     self._tip_rotator.min_prio = tip_min_prio(new)
+                    self._tip_rotator.skip = tip_skip(new)
                 except Exception:
                     log.debug("skill level unavailable", exc_info=True)
             sdv = getattr(self._voice, "set_danger_voice", None)
@@ -390,8 +391,9 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._stance = StanceAdvisor(cfg)
             self._tip_rotator = TipRotator()
             try:
-                from treeaicoach.skill import tip_min_prio
+                from treeaicoach.skill import tip_min_prio, tip_skip
                 self._tip_rotator.min_prio = tip_min_prio(cfg)
+                self._tip_rotator.skip = tip_skip(cfg)
             except Exception:
                 log.debug("skill level unavailable", exc_info=True)
             self._gate = MessageGate()

@@ -1357,7 +1357,9 @@ class MapCoach:
                                       f"pour aider l'autre côté ou poser des balises."))
         # -- slow push / crash before an objective
         tgt = self._setup_target_window(ctx, 50.0, 80.0)
-        if tgt is not None and laner and in_lane:
+        hp_now = self._my_hp(ctx)
+        # a lane behind (levels) or a low HP does not push first for an objective: it dies doing it
+        if tgt is not None and laner and in_lane and diff1 >= 0 and (hp_now is None or hp_now >= 0.5):
             s_obj, rem = tgt
             key = str(getattr(s_obj, "key", "") or "")
             ident = (key, int(round(ctx.gt + rem) // 30))
