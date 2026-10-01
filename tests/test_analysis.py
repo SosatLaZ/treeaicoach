@@ -231,3 +231,86 @@ def test_analysis_speed(record: dict) -> None:
     t0 = time.perf_counter()
     analyze_game(record)
     assert time.perf_counter() - t0 < 2.0     # typically ~0.1 s (shared CI cores: generous bound)
+
+
+# ------------------------------------------------------------------------------ v2 coaching sections
+def test_phase_breakdown(result: dict) -> None:
+    ph = result["phases"]
+    assert [p["phase"] for p in ph] == ["laning", "mid", "late"]
+    assert [p["deaths"] for p in ph] == [2, 2, 0]
+    assert sum(p["kills"] for p in ph) == 3 and sum(p["assists"] for p in ph) == 5
+    assert sum(p["cs"] for p in ph) == 168
+    assert ph[0]["range"] == "0:00–14:00" and ph[2]["range"] == "25:00–28:10"
+    assert ph[0]["cs_per_min"] == pytest.approx(79 / 14, abs=0.01)
+    assert ph[0]["lane_percent"] > ph[1]["lane_percent"] > ph[2]["lane_percent"]
+    assert [p["ganks"] for p in ph] == [2, 2, 0]
+    assert ph[1]["objectives_ours"] == 4
+
+
+def test_presence_vs_ideal(result: dict) -> None:
+    pres = result["presence"]
+    assert pres["role"] == "TOP" and [p["phase"] for p in pres["phases"]] == ["laning", "mid", "late"]
+    lan = pres["phases"][0]
+    assert lan["own_key"] == "lane_top" and lan["own_ideal"] == pytest.approx(70.0)
+    assert lan["own_mine"] > 80 and 0 <= lan["match"] <= 100
+    for p in pres["phases"]:
+        assert sum(r["ideal"] for r in p["rows"]) == pytest.approx(100.0, abs=0.5)
+    ideal_j = analysis._ideal_presence("JUNGLE", "laning")
+    assert max(ideal_j, key=ideal_j.get) == "my_jungle"
+
+
+def test_deaths_jungler_unseen_and_exposure(result: dict) -> None:
+    assert [d["jungler_unseen_s"] for d in result["deaths"]] == [1.0, 10.0, 139.0, 1.0]
+    assert [d["jungler_unseen"] for d in result["deaths"]] == [False, False, True, False]
+    exp = result["exposure"]
+    assert exp["score"] == pytest.approx(100 * exp["exposed_s"] / exp["total_s"], abs=0.1)
+    assert 0 < exp["score"] < 30 and exp["spots"]
+
+
+def test_objective_presence(result: dict) -> None:
+    op = result["objective_presence"]
+    assert op["ours"] == 7 and op["ours_near"] == 2 and op["percent"] == 29
+    baron = [i for i in op["items"] if i["kind"] == "baron"][0]
+    assert baron["near"] and baron["took_part"] and baron["mine"]
+    assert {i["kind"] for i in op["items"]} == {"dragon", "grubs", "herald", "atakhan", "baron"}
+
+
+def test_trends_and_pathing(result: dict) -> None:
+    tr = result["trends"]
+    assert len(tr["series"]) == 28 and tr["series"][9]["minute"] == 10
+    assert tr["cs_per_min_10"] == pytest.approx(5.1) and tr["cs_per_min_after_10"] == pytest.approx(6.44, abs=0.01)
+    assert tr["series"][-1]["kp"] == pytest.approx(0.8)
+    pa = result["pathing"]
+    assert pa["first_side"] == "top" and pa["first_time"] == "2:28" and pa["main_lane"] == "bot"
+    assert pa["summary"] == "Lee Sin vu d'abord en haut à 2:28, ganks surtout en bas (4 kills)."
+    assert 5 <= len(pa["path"]) <= 10
+
+
+def test_new_tips_are_prioritised(result: dict) -> None:
+    items = result["tip_items"]
+    assert 5 <= len(items) <= 8
+    assert [t["priority"] for t in items] == sorted((t["priority"] for t in items), reverse=True)
+    assert any(t["rule"] == "objective_presence" and "2 des 7 objectifs" in t["text"] for t in items)
+
+
+def test_new_tips_jungler_unseen_and_exposure(record: dict) -> None:
+    r = copy.deepcopy(record)
+    # remove every Lee Sin sighting: he is never seen -> unseen deaths + high exposure
+    r["sightings"].pop("LeeSin", None)
+    a = analyze_game(r)
+    rules = [t["rule"] for t in a["tip_items"]]
+    assert "jungler_unseen_deaths" in rules
+    text = next(t["text"] for t in a["tip_items"] if t["rule"] == "jungler_unseen_deaths")
+    assert text.startswith("4 morts alors que Lee Sin était invisible")
+    assert a["exposure"]["score"] > 10
+
+
+def test_spoken_summary(result: dict) -> None:
+    text = analysis.spoken_summary(result)
+    assert text == result["spoken_summary"]
+    assert text == ("Victoire en 28 minutes. 3 kills, 4 morts, 5 assistances, 6 CS par minute. "
+                    "2 morts juste après une alerte. Priorité : recule dès l'annonce vocale.")
+    assert len(text.split()) <= 45
+    assert analysis.spoken_summary({}) == "Partie terminée. 0 kill, 0 mort, 0 assistance."
+    assert isinstance(analysis.spoken_summary(None), str)
+    assert isinstance(analysis.spoken_summary(analyze_game({})), str)

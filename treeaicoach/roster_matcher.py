@@ -18,10 +18,13 @@ and :meth:`ChampionDB.load_icon` gives their round portraits. Instead of a gener
    (NCC) of every portrait over the minimap (Lab channels; the image is downscaled so that
    the matched disc is at most ``WORK_INNER_PX`` pixels wide; all correlations are done in
    the Fourier domain: a few milliseconds for 10 champions), local maxima (NMS), a contrast
-   consistency check (a dark portrait must not match a flat dark area), acceptance above an
-   adaptive threshold learned from the score distribution (confident matches versus
-   background peaks), conflict resolution (one position per champion; two champions cannot
-   share a spot unless they are visibly stacked), sub-pixel refinement.
+   consistency check (a dark portrait must not match a flat dark area). The evidence of a
+   peak is its NCC + a uniqueness bonus (a champion is on the map once: its true peak stands
+   out from its other peaks) + the ring colour agreement (step 4); it is accepted above an
+   adaptive threshold derived from the background score distribution (the champions'
+   secondary peaks over the recent frames), then conflicts are resolved (one position per
+   champion; two champions cannot share a spot unless they are visibly stacked); sub-pixel
+   refinement of the positions.
 4. **Ring colour second opinion**: the annulus of each match is sampled and compared to the
    enemy / ally ring colours, which are *learned live* from confident matches (adaptive Lab
    centroids: any client colour, colourblind mode, JPEG or photo colour shifts). A match

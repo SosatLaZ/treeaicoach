@@ -351,6 +351,8 @@ def needs_fast_refresh(state: Any) -> bool:
             return True
         if float(getattr(state, "flash", 0.0) or 0.0) > 0:
             return True
+        if getattr(state, "toasts", None):      # toast slide / fade animation
+            return True
         la = getattr(state, "last_alert", None)
         if la and float(la[2]) < 4.5:
             return True
@@ -994,7 +996,8 @@ class OverlayManager:
                 except Exception:  # pragma: no cover
                     pass
             # creation order = z-order among topmost windows: flash below radar / minimap / HUD
-            for name in ("flash", "radar", "minimap", "hud"):
+            # "toasts": banners at the top-centre (praise / Tab insights), captured like the HUD
+            for name in ("flash", "radar", "minimap", "hud", "toasts"):
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved)
             # The minimap layer is captured by default (visible in the user's screenshots):
             # it never draws portraits, so the detector does not re-detect it. Optional
@@ -1143,6 +1146,20 @@ class OverlayManager:
         self._mm_no_rect_logged = False
         self.mm_stats.update(updates=0, rect=None, no_rect=0)
 
+    @staticmethod
+    def _refresh_toasts(win: "LayeredWindow | None", state: Any, cfg: Any, scr: RectT, mm: RectT | None,
+                        move: bool) -> None:
+        if win is None:
+            return
+        views = list(getattr(state, "toasts", None) or [])
+        if not views or move or not getattr(cfg, "toasts_enabled", True):
+            win.hide()
+            return
+        from treeaicoach import toasts as tst
+
+        x, y, _w, _h = tst.toast_layer_rect(scr, mm)
+        win.update(tst.render_toast_layer(views, tst.scale_for_screen(scr)), x, y)
+
     def _refresh(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any, move: bool,
                  custom: dict[str, tuple[int, int]], flash_key: Any) -> Any:
         from treeaicoach import overlay_render as orr
@@ -1197,6 +1214,8 @@ class OverlayManager:
             hud_win.update(img, x, y)
         else:
             hud_win.hide()
+        # ---- toasts (top-centre banners; never over the minimap / Tab block / champion)
+        self._refresh_toasts(windows.get("toasts"), state, cfg, scr, mm, move)
         # ---- danger flash (re-rendered only when intensity / geometry change)
         flash_win = windows["flash"]
         intensity = quantize_flash(getattr(state, "flash", 0.0)) if getattr(cfg, "danger_flash", True) else 0.0

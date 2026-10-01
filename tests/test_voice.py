@@ -469,3 +469,215 @@ def test_engine_uses_sapi_backend_class(fake_pywin32) -> None:
         assert sp.Rate == 3
     finally:
         eng.stop()
+
+
+# -- natural voices (tts_neural + NeuralBackend / OneCoreBackend) ----------------------
+
+from treeaicoach import tts_neural  # noqa: E402
+
+
+def _wav_bytes(n: int = 2400, amp: int = 8000) -> bytes:
+    import array
+    import io
+
+    bio = io.BytesIO()
+    with wave.open(bio, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(array.array("h", [amp, -amp] * (n // 2)).tobytes())
+    return bio.getvalue()
+
+
+class FakePlayer:
+    def __init__(self) -> None:
+        self.played: list[tuple[str, int]] = []
+        self.stops = 0
+        self.playing = False
+
+    def play(self, path, volume=100) -> bool:
+        self.played.append((Path(path).name, volume))
+        self.playing = True
+        return True
+
+    def is_playing(self) -> bool:
+        return self.playing
+
+    def stop(self) -> None:
+        self.stops += 1
+        self.playing = False
+
+
+class FakeTTS:
+    def __init__(self, known: dict[str, Path]) -> None:
+        self.known = known
+        self.voice = "fr-FR-DeniseNeural"
+        self.rate_pct = 15
+        self.gets: list[tuple[str, float]] = []
+        self.prefetched: list[list[str]] = []
+
+    def set_params(self, voice: str, rate: int) -> None:
+        self.rate_pct = tts_neural.rate_percent(rate)
+
+    def get(self, text: str, timeout: float = 1.5):
+        self.gets.append((text, timeout))
+        return self.known.get(text)
+
+    def prefetch(self, texts) -> None:
+        self.prefetched.append(list(texts))
+
+
+def test_neural_backend_plays_cache_and_falls_back(tmp_path: Path) -> None:
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(_wav_bytes())
+    tts, player, local = FakeTTS({"Gank ! Lee Sin, recule !": wav}), FakePlayer(), FakeBackend()
+    b = voice.NeuralBackend(_tts=tts, _player=player, _local_factory=lambda: local)
+    b.configure("", 2, 80)
+    assert tts.prefetched and "Dragon dans une minute." in tts.prefetched[-1]
+    b.speak("Gank ! Lee Sin, recule !", True)
+    assert player.played == [("a.wav", 80)] and player.stops >= 1
+    assert tts.gets[-1][1] < tts_neural.LIVE_TIMEOUT_S        # DANGER: shorter wait
+    assert b.is_speaking()
+    b.speak("Phrase inconnue.", False)                       # miss -> local voice
+    assert local.texts() == ["Phrase inconnue."] and local.configs == [("", 2, 80)]
+    b.set_roster(["Lee Sin"], ["Ahri"])
+    assert "Gank ! Lee Sin, recule !" in tts.prefetched[-1]
+    b.purge()
+    assert not b.is_speaking() and ("purge", None) in local.events
+    b.close()
+    assert local.closed
+
+
+def test_engine_prefetch_and_engine_switch(monkeypatch) -> None:
+    made: list[tuple[str, str]] = []
+    backends: list[FakeBackend] = []
+
+    def fake_make(engine="auto", neural_voice=""):
+        made.append((engine, neural_voice))
+        fb = FakeBackend()
+        fb.rosters = []
+        fb.set_roster = lambda e, a=(): fb.rosters.append((tuple(e), tuple(a)))
+        backends.append(fb)
+        return fb
+
+    monkeypatch.setattr(voice, "make_backend", fake_make)
+    eng = VoiceEngine(engine="neural", neural_voice="fr-FR-HenriNeural")
+    try:
+        eng.start()
+        assert eng.wait_ready(3.0)
+        assert made == [("neural", "fr-FR-HenriNeural")]
+        eng.prefetch(["Lee Sin", "Ahri", ""], ["Jinx"])
+        assert _wait_for(lambda: backends[0].rosters[-1:] == [(("Lee Sin", "Ahri"), ("Jinx",))])
+        eng.set_params(engine="sapi")
+        assert _wait_for(lambda: len(made) == 2 and made[1][0] == "sapi")
+        assert backends[0].closed
+        assert _wait_for(lambda: backends[1].rosters[-1:] == [(("Lee Sin", "Ahri"), ("Jinx",))])
+        eng.set_params(engine="bogus")                  # invalid -> auto
+        assert _wait_for(lambda: len(made) == 3 and made[2][0] == "auto")
+    finally:
+        eng.stop()
+
+
+def test_make_backend_off_windows_is_print() -> None:
+    if sys.platform == "win32":
+        pytest.skip("Windows")
+    assert isinstance(voice.make_backend("neural"), PrintBackend)
+    assert VoiceEngine(engine="onecore").backend == "print"
+
+
+def test_onecore_backend_with_fake_synth(tmp_path: Path) -> None:
+    class Synth:
+        voice_name = "Microsoft Denise"
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.cfg = None
+
+        def voices(self):
+            return ["Microsoft Denise"]
+
+        def select(self, wanted):
+            pass
+
+        def configure(self, rate, volume):
+            self.cfg = (rate, volume)
+
+        def wav(self, text):
+            self.calls += 1
+            return _wav_bytes()
+
+    synth, player = Synth(), FakePlayer()
+    b = voice.OneCoreBackend(_synth=synth, _player=player, cache_root=tmp_path)
+    b.configure("", 4, 50)
+    assert synth.cfg == (4, 100)
+    b.speak("Dragon dans une minute.", False)
+    b.speak("Dragon dans une minute.", True)               # cached the 2nd time
+    assert synth.calls == 1 and len(player.played) == 2 and player.played[0][1] == 50
+    assert b.voices() == ["Microsoft Denise"]
+
+
+def test_neural_tts_cache_timeout_and_offline(tmp_path: Path) -> None:
+    calls: list[str] = []
+    slow = threading.Event()
+
+    def synth(text, v, rate):
+        calls.append(text)
+        if text == "lent":
+            slow.wait(2.0)
+        if text == "panne":
+            raise OSError("no network")
+        return _wav_bytes()
+
+    t = tts_neural.NeuralTTS("fr-FR-HenriNeural", 2, cache_root=tmp_path, _synth=synth)
+    assert t.rate_pct == 15
+    p = t.get("Gank ! Lee Sin, recule !")
+    assert p is not None and p.parent.name == "fr-FR-HenriNeural" and p.read_bytes()[:4] == b"RIFF"
+    assert t.get("Gank ! Lee Sin, recule !") == p and calls.count("Gank ! Lee Sin, recule !") == 1
+    assert t.get("lent", timeout=0.05) is None                # too slow -> None, keeps running
+    slow.set()
+    assert _wait_for(lambda: t.cached("lent") is not None)
+    assert t.get("panne") is None and not t.online()
+    assert t.get("autre") is None and "autre" not in calls      # offline: no new attempt
+    t.set_params("garbage", 0)
+    assert t.voice == tts_neural.DEFAULT_NEURAL_VOICE and t.rate_pct == 0
+
+
+def test_neural_tts_prefetch(tmp_path: Path) -> None:
+    t = tts_neural.NeuralTTS(cache_root=tmp_path, _synth=lambda text, v, r: _wav_bytes())
+    texts = tts_neural.roster_phrases(["Lee Sin", "Ahri"]) + tts_neural.static_phrases()
+    assert texts[0] == "Gank ! Lee Sin, recule !"
+    assert "Lee Sin arrive par la rivière !" in texts and "Gank bot : Lee Sin et Ahri, recule !" in texts
+    t.prefetch(texts + texts)
+    assert _wait_for(lambda: all(t.cached(x) for x in texts), 10.0)
+
+
+def test_mp3_decode_and_wav_player(tmp_path: Path) -> None:
+    assert tts_neural.mp3_to_wav(b"") is None
+    assert tts_neural.mp3_to_wav(b"not an mp3" * 50) is None
+    src = tmp_path / "s.wav"
+    src.write_bytes(_wav_bytes(24000))
+    now = [0.0]
+    played: list = []
+    p = tts_neural.WavPlayer(_play=played.append, _clock=lambda: now[0])
+    assert p.play(src, 50)
+    assert played[-1].endswith("s_v50.wav") and p.is_playing()
+    with wave.open(played[-1]) as w:
+        import array
+        a = array.array("h", w.readframes(4))
+        assert abs(a[0]) == 4000
+    now[0] = 2.0
+    assert not p.is_playing()
+    assert p.play(src, 100) and played[-1] == str(src)
+    p.stop()
+    assert played[-1] is None and not p.is_playing()
+
+
+def test_config_voice_engine_fields() -> None:
+    from treeaicoach.config import Config, _validate_field
+
+    c = Config()
+    assert c.voice_engine == "auto" and c.neural_voice == "fr-FR-DeniseNeural"
+    assert _validate_field("voice_engine", "Neural", "auto") == "neural"
+    assert _validate_field("voice_engine", "x", "auto") == "auto"
+    assert _validate_field("neural_voice", "fr-FR-HenriNeural", "d") == "fr-FR-HenriNeural"
+    assert _validate_field("neural_voice", "rm -rf", "d") == "d"

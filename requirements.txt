@@ -7,3 +7,11 @@ pillow>=10.0
 customtkinter>=5.2,<7
 pywin32>=306; sys_platform == "win32"
 msvc-runtime>=14.40; sys_platform == "win32"
+# Natural voice (Microsoft Edge neural voices, online) + MP3 decoding without ffmpeg
+edge-tts>=7.0,<8
+miniaudio>=1.59,<2
+# Windows OneCore voices (WinRT) — offline fallback, better than the SAPI desktop voices
+winrt-runtime>=2.3,<4; sys_platform == "win32"
+winrt-Windows.Foundation>=2.3,<4; sys_platform == "win32"
+winrt-Windows.Media.SpeechSynthesis>=2.3,<4; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=2.3,<4; sys_platform == "win32"

@@ -102,6 +102,8 @@ class GameInfo:
     events: list[dict] = field(default_factory=list)
     fetched_at: float = field(default_factory=time.monotonic)
     current_gold: float = 0.0                  # my gold (activePlayer.currentGold), 0 when spectating
+    #: my numeric ``activePlayer.championStats`` (currentHealth, maxHealth...), {} when spectating
+    champion_stats: dict[str, float] = field(default_factory=dict)
 
     @property
     def items(self) -> list[int]:
@@ -346,6 +348,18 @@ def _parse_scores(scores: Any) -> dict[str, float]:
     return out
 
 
+def _champion_stats(active: dict | None) -> dict[str, float]:
+    """Numeric fields of ``activePlayer.championStats`` (finite floats only)."""
+    stats = active.get("championStats") if isinstance(active, dict) else None
+    if not isinstance(stats, dict):
+        return {}
+    out: dict[str, float] = {}
+    for k, v in stats.items():
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v)):
+            out[str(k)] = float(v)
+    return out
+
+
 def _find_me(active: dict | None, raws: list[dict]) -> int | None:
     """Index in ``raws`` of the local player: riotId, then summonerName, then game name."""
     if not active or not raws:
@@ -441,6 +455,7 @@ def _parse(data: Any, now: float | None) -> GameInfo | None:
         events=events,
         fetched_at=t_now if math.isfinite(t_now) else time.monotonic(),
         current_gold=current_gold,
+        champion_stats=_champion_stats(active) if me is not None else {},
     )
 
 

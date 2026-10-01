@@ -26,7 +26,25 @@ Rules (each with its own cooldown; see the ``RULE_*`` constants):
 * ``deep``          - I am in the enemy jungle while their jungler is unseen for 30 s:
   "Tu es dans la jungle ennemie et leur jungler est invisible : attention."
 
-Policy: at most one tip every :data:`GLOBAL_GAP_S` (40 s; the "numbers" disadvantage warning
+Extra rules (v2.1):
+
+* ``wave_push`` / ``wave_back`` / ``wave_big`` - minion waves read from the minimap dots
+  (:mod:`treeaicoach.waves`): "Ta vague pousse vers leur tour : bon moment pour rentrer après
+  l'avoir poussée.", "La vague revient vers toi : attends-la sous ta tour.", "Grosse vague
+  ennemie qui arrive en bas."
+* ``lane_left`` / ``lane_recall`` - my lane opponent left the lane for > 8 s / was seen back in
+  his base: "Darius a quitté la voie : pousse et prends des plaques, ping s'il roam." /
+  "Darius est rentré : pousse ta vague et récupère des plaques."
+* ``bot_missing`` - both enemy bot laners disappeared: "Les deux bot ennemis ont disparu : prudence."
+* scoreboard (public Tab data of the Live Client API: levels, items, kills):
+  ``level_diff`` ("Tu as 2 niveaux d'avance sur Darius : joue agressif."), ``item_spike``
+  ("Darius vient de finir Couperet noir : attention à son pic de puissance."), ``jg_level6``
+  ("Leur jungler est niveau 6 avant le vôtre : prudence."), ``kill_lead`` (every 5 min).
+* ``objective_trade`` - >= 3 enemies on one pit: "4 ennemis au dragon : prenez les larves ou
+  des tours en haut."
+* ``jungler_side`` is role aware: a jungler gets invade / counter-gank suggestions.
+
+Policy: at most one tip every :data:`GLOBAL_GAP_S` (35 s; the "numbers" disadvantage warning
 only needs :data:`SAFETY_GAP_S` since the previous tip), nothing while a gank threat is
 active nor during :data:`QUIET_AFTER_THREAT_S` after it, nothing about positions while I am
 dead. **Safe mode** (``cfg.safe_mode``): only the objective timing and my personal data are
@@ -54,7 +72,7 @@ log = logging.getLogger(__name__)
 _MACRO: Any = getattr(AlertKind, "MACRO_TIP", AlertKind.OBJECTIVE_SOON)
 
 # -------------------------------------------------------------------------- tunables
-GLOBAL_GAP_S = 40.0            # min time between two spoken tips
+GLOBAL_GAP_S = 35.0            # min time between two spoken tips
 SAFETY_GAP_S = 10.0            # the "outnumbered" warning only needs this since the last tip
 QUIET_AFTER_THREAT_S = 8.0     # no tip during / just after a gank threat
 NEAR_RADIUS = 0.16             # "around me" (normalized minimap, ~2400 units)
@@ -79,30 +97,50 @@ PRESSURE_MIN_GT = 600.0
 JUNGLER_SIDE_FRESH_S = 4.0     # a jungler sighting is "new" this long after appeared_at
 INSIGHT_JUNGLER_S = 20.0       # jungler side insight lasts this long after the sighting
 MAX_EXTRAPOLATION_S = 2.5
+LANE_LEFT_S = 8.0              # lane opponent hidden this long (after being seen in my lane)
+LANE_LEFT_MAX_S = 60.0
+LANE_RULES_MIN_GT = 150.0
+PLATES_END_GT = 840.0          # turret plates fall at 14:00
+WAVE_PUSH_S = 0.62             # meeting point (from my base) for "ta vague pousse"
+WAVE_BACK_S = 0.42
+WAVE_BIG_ENEMY = 7
+TRADE_PIT_R = 0.22
+TRADE_MIN = 3
+LEVEL_DIFF_MIN = 2
+ITEM_ANNOUNCE_S = 60.0         # an item completion is news for this long
+KILL_MARKS = tuple(float(m) for m in range(600, 3601, 300))
+KILL_LEAD_MIN = 3
 
 RULE_COOLDOWN_S: dict[str, float] = {
     "jungler_side": 60.0, "jungler_unseen": 60.0, "missing": 60.0, "objective_setup": 30.0,
     "objective_window": 120.0, "numbers_bad": 30.0, "numbers_good": 60.0, "pressure": 90.0,
     "cs_check": 60.0, "vision": 180.0, "level6": 1e9, "deep": 60.0,
+    "wave_push": 120.0, "wave_back": 120.0, "wave_big": 90.0, "lane_left": 45.0, "lane_recall": 45.0,
+    "bot_missing": 90.0, "level_diff": 180.0, "item_spike": 20.0, "jg_level6": 1e9, "kill_lead": 120.0,
+    "objective_trade": 120.0,
 }
 #: Rules that use enemy positions (disabled in safe mode).
 ENEMY_RULES: frozenset[str] = frozenset({
     "jungler_side", "jungler_unseen", "missing", "objective_window", "numbers_bad", "numbers_good",
-    "pressure", "deep"})
+    "pressure", "deep", "wave_push", "wave_back", "wave_big", "lane_left", "lane_recall", "bot_missing",
+    "objective_trade"})
 #: Rules that need me alive.
 ALIVE_RULES: frozenset[str] = frozenset({
     "jungler_side", "jungler_unseen", "missing", "numbers_bad", "numbers_good", "pressure", "deep",
-    "vision", "objective_window"})
+    "vision", "objective_window", "wave_push", "wave_back", "wave_big", "lane_left", "lane_recall",
+    "bot_missing", "objective_trade", "level_diff"})
 PRIORITY: dict[str, int] = {
-    "numbers_bad": 100, "deep": 90, "objective_window": 85, "objective_setup": 80, "missing": 75,
-    "jungler_unseen": 70, "jungler_side": 65, "numbers_good": 60, "pressure": 55, "cs_check": 40,
+    "numbers_bad": 100, "deep": 90, "wave_big": 87, "objective_trade": 86, "objective_window": 85,
+    "objective_setup": 80, "lane_recall": 78, "lane_left": 77, "missing": 75, "bot_missing": 72,
+    "jungler_unseen": 70, "jungler_side": 65, "item_spike": 64, "level_diff": 62, "wave_back": 61,
+    "wave_push": 60, "numbers_good": 59, "jg_level6": 58, "pressure": 55, "kill_lead": 45, "cs_check": 40,
     "level6": 35, "vision": 30,
 }
 
 CS_TARGET: dict[str, float] = {"TOP": 7.0, "MIDDLE": 7.0, "BOTTOM": 7.5, "JUNGLE": 5.5}
 
-_DRAGON_PIT = geometry.game_to_uv(9866, 4414)
-_BARON_PIT = geometry.game_to_uv(5007, 10471)
+_DRAGON_PIT = (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1])
+_BARON_PIT = (geometry.BARON_PIT[0], geometry.BARON_PIT[1])
 #: objective key -> (pit uv, map half) ; Atakhan's pit depends on the game: no side.
 PITS: dict[str, tuple[tuple[float, float], str] | None] = {
     "dragon": (_DRAGON_PIT, "bot"), "elder": (_DRAGON_PIT, "bot"),
@@ -122,6 +160,23 @@ TURRETS: dict[str, list[tuple[float, float]]] = {
     team: [geometry.game_to_uv(x, y) for x, y in pts] for team, pts in _TURRETS_GAME.items()}
 
 SIDE_FR = {"top": "en haut", "mid": "au milieu", "bot": "en bas"}
+LANE_OPP_ROLES = {"TOP": ("TOP",), "MIDDLE": ("MIDDLE",), "BOTTOM": ("BOTTOM", "UTILITY"),
+                  "UTILITY": ("BOTTOM", "UTILITY")}
+#: Major (legendary) items worth announcing, itemID -> French name (Live Client ids).
+ITEM_NAMES_FR: dict[int, str] = {
+    3078: "Force de la trinité", 3071: "Couperet noir", 3031: "Lame d'infini", 3089: "Coiffe de Rabadon",
+    3153: "Lame du roi déchu", 3157: "Sablier de Zhonya", 3036: "Salutations de Dominik",
+    3072: "Soif-de-sang", 3074: "Hydre vorace", 3748: "Hydre titanesque", 6672: "Tueur de krakens",
+    6673: "Arc-bouclier immortel", 3161: "Lance de Shojin", 3508: "Collecteur d'essence",
+    3094: "Canon ultrarapide", 3046: "Danseur fantôme", 3087: "Surin de Statikk", 3115: "Dent de Nashor",
+    3135: "Bâton du vide", 3165: "Morellonomicon", 4645: "Flamme-ombre", 6653: "Tourment de Liandry",
+    3100: "Fléau de liche", 3152: "Ceinture-fusée hextech", 6655: "Compagnon de Luden",
+    3142: "Spectre de Youmuu", 6692: "Éclipse", 6694: "Rancune de Serylda", 3814: "Lame de la nuit",
+    3026: "Ange gardien", 3065: "Visage spirituel", 3075: "Cotte épineuse", 3068: "Égide de feu solaire",
+    3083: "Armure de Warmog", 3143: "Présage de Randuin", 3742: "Plaque du mort", 6333: "Danse de la mort",
+    3053: "Gage de Sterak", 6610: "Ciel fracturé", 3124: "Lame enragée de Guinsoo", 3091: "Fin de l'esprit",
+    3085: "Ouragan de Runaan", 3033: "Rappel mortel", 3139: "Cimeterre mercuriel", 3156: "Gueule de Malmortius",
+}
 ROLE_LANE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 
 
@@ -204,6 +259,9 @@ class _Ctx:
     jungler_hidden_s: float | None  # None: unknown jungler
     objectives: list[Any]
     me_player: Any
+    game: Any = None
+    waves: dict = None              # lane -> waves.LaneWave (None / {} when unknown)
+    opponents: list = None          # [(alias, display name, PlayerInfo | None, Track | None)]
 
 
 class MapCoach:
@@ -213,17 +271,21 @@ class MapCoach:
         self._lock = threading.RLock()
         self._enabled = True
         self._safe = False
+        self._scoreboard_on = True
         self.apply_config(cfg)
         self._clear()
 
     # -- public -------------------------------------------------------------------------
     def apply_config(self, cfg: Any) -> None:
-        """``cfg.safe_mode`` and the optional ``cfg.macro_coach`` switch (default on)."""
+        """``cfg.safe_mode``, the optional ``cfg.macro_coach`` switch (default on) and
+        ``cfg.coach_scoreboard_tips`` (default on: level / item / kill scoreboard tips)."""
         try:
             on = getattr(cfg, "macro_coach", True)
             safe = getattr(cfg, "safe_mode", False)
+            board = getattr(cfg, "coach_scoreboard_tips", True)
             with self._lock:
                 self._enabled = on if isinstance(on, bool) else True
+                self._scoreboard_on = board if isinstance(board, bool) else True
                 self._safe = bool(safe) if isinstance(safe, bool) else False
         except Exception:
             log.exception("MapCoach.apply_config failed")
@@ -235,13 +297,17 @@ class MapCoach:
 
     def update(self, t: float, tracker: Any, game: Any, roles: Any = None,
                objectives_states: Iterable[Any] | None = None,
-               my_pos: tuple[float, float] | None = None, *, threat: int = 0) -> list[Alert]:
-        """One analysis tick. ``threat`` = current gank threat level (0 safe, 1 warning, 2 danger).
+               my_pos: tuple[float, float] | None = None, *, threat: int = 0,
+               minimap_bgr: Any = None) -> list[Alert]:
+        """One analysis tick. ``threat`` = current gank threat level (0 safe, 1 warning, 2 danger);
+        ``minimap_bgr`` = the minimap crop of this tick (minion waves, analysed at most 1 Hz).
 
         Returns ``[]`` or ``[one MACRO_TIP alert]``. Never raises.
         """
         try:
             with self._lock:
+                self._roles = roles
+                self._frame = minimap_bgr
                 return self._update_locked(t, tracker, game, roles, objectives_states, my_pos, threat)
         except Exception:
             log.exception("MapCoach.update failed")
@@ -261,6 +327,11 @@ class MapCoach:
         """Visible enemy team pressure: ``{"visible", "centroid", "side", "grouped"}`` (None in safe mode)."""
         with self._lock:
             return dict(self._pressure) if self._pressure is not None else None
+
+    def waves(self) -> dict[str, Any]:
+        """Latest per-lane wave state (``lane -> LaneWave.as_dict()``), {} if unknown."""
+        with self._lock:
+            return {k: v.as_dict() for k, v in (self._last_waves or {}).items()}
 
     def last_tips(self) -> list[tuple[float, str, str]]:
         """``(t, rule, text)`` of the tips produced (diagnostics / tests), oldest first."""
@@ -288,6 +359,22 @@ class MapCoach:
         self._insights: list[str] = []
         self._pressure: dict[str, Any] | None = None
         self._said: list[tuple[float, str, str]] = []
+        self._roles: Any = None
+        self._frame: Any = None
+        try:
+            from treeaicoach.waves import WaveTracker
+
+            self._wave_tracker: Any = WaveTracker()
+        except Exception:
+            self._wave_tracker = None
+        self._last_waves: dict[str, Any] = {}
+        self._lane_left_done: dict[str, float] = {}
+        self._bot_missing_done: tuple | None = None
+        self._level_diff_said: int = 0
+        self._items_seen: dict[str, set[int]] = {}
+        self._item_news: list[tuple[float, str, str, int]] = []   # (t, alias, name, item id)
+        self._jg6_done = False
+        self._kill_marks_done: set[float] = set()
 
     def _game_time(self, game: Any, t: float) -> float:
         gt = _finite(getattr(game, "game_time", None)) or 0.0
@@ -360,12 +447,49 @@ class MapCoach:
                 jhidden = 0.0 if getattr(jtrack, "visible", False) else max(0.0, t - float(jtrack.last_seen))
             elif self._jg_ref_t is not None:
                 jhidden = max(0.0, t - self._jg_ref_t)
+        waves: dict = {}
+        if self._wave_tracker is not None and not self._safe:
+            if self._frame is not None:
+                excl = [p for _tr, p in enemies_vis] + [p for _tr, p in allies_vis] + ([pos] if pos else [])
+                self._wave_tracker.update(t, self._frame, excl, team)
+            waves = self._wave_tracker.waves(t)
+        self._last_waves = waves
         return _Ctx(t=t, gt=self._game_time(game, t), team=team, enemy_team=enemy_team, me_pos=pos,
                      my_zone=zone, my_lane=my_lane, role_lane=ROLE_LANE.get(my_role or ""), my_role=my_role,
                      dead=bool(getattr(me_player, "is_dead", False)), safe=self._safe,
                      enemies_vis=enemies_vis, allies_vis=allies_vis, enemies_all=enemies_all,
                      jungler_alias=jalias, jungler=jtrack, jungler_hidden_s=jhidden,
-                     objectives=list(objectives or []), me_player=me_player)
+                     objectives=list(objectives or []), me_player=me_player, game=game, waves=waves,
+                     opponents=self._opponents(game, roles, my_role, tracker, enemies_all))
+
+    @staticmethod
+    def _opponents(game: Any, roles: Any, my_role: str | None, tracker: Any,
+                   enemies_all: list[Any]) -> list[tuple[str, str, Any, Any]]:
+        """My lane opponents: roles.lane_opponents(), else enemies with the facing Riot position."""
+        aliases: list[str] = []
+        try:
+            if roles is not None and hasattr(roles, "lane_opponents"):
+                aliases = sorted(str(a) for a in (roles.lane_opponents() or ()))
+        except Exception:
+            aliases = []
+        enemies = list(getattr(game, "enemies", None) or [])
+        if not aliases:
+            want = LANE_OPP_ROLES.get(my_role or "", ())
+            aliases = [p.champion_alias for p in enemies
+                       if str(getattr(p, "position", "") or "").upper() in want and p.champion_alias]
+        out = []
+        for a in aliases:
+            p = next((x for x in enemies if str(x.champion_alias).lower() == a.lower()), None)
+            name = (getattr(p, "champion_name", "") or a) if p is not None else a
+            tr = None
+            try:
+                tr = tracker.get(a) if tracker is not None else None
+            except Exception:
+                tr = None
+            if tr is None:
+                tr = next((x for x in enemies_all if str(getattr(x, "alias", "") or "").lower() == a.lower()), None)
+            out.append((a, name, p, tr))
+        return out
 
     def _update_locked(self, t: Any, tracker: Any, game: Any, roles: Any, objectives: Any,
                        my_pos: Any, threat: Any) -> list[Alert]:
@@ -445,9 +569,47 @@ class MapCoach:
             self._ward_change_gt = ctx.gt
         elif rule == "level6":
             self._level6_done = True
+        elif rule in ("lane_left", "lane_recall"):
+            for alias, _n, _p, tr in ctx.opponents or []:
+                if tr is not None and not getattr(tr, "visible", False):
+                    self._lane_left_done[alias] = float(getattr(tr, "last_seen", 0.0))
+        elif rule == "bot_missing":
+            self._bot_missing_done = self._bot_marker(ctx)
+        elif rule == "level_diff":
+            self._level_diff_said = self._level_diff(ctx)[0]
+        elif rule == "item_spike":
+            if self._item_news:
+                self._item_news.pop(0)
+        elif rule == "jg_level6":
+            self._jg6_done = True
+        elif rule == "kill_lead":
+            mark = self._kill_mark(ctx)
+            if mark is not None:
+                self._kill_marks_done.add(mark)
 
     # ---------------------------------------------------------------- personal tracking
+    def _track_items(self, ctx: _Ctx) -> None:
+        """Remember the enemies' items (public scoreboard) and queue fresh major item completions."""
+        for p in getattr(ctx.game, "enemies", None) or []:
+            alias = str(getattr(p, "champion_alias", "") or "")
+            if not alias:
+                continue
+            items = {int(i) for i in (getattr(p, "items", None) or []) if isinstance(i, int) and not isinstance(i, bool)}
+            known = self._items_seen.get(alias)
+            self._items_seen[alias] = items
+            if known is None:
+                continue                                    # first look: nothing is "new"
+            for item in sorted(items - known):
+                if item in ITEM_NAMES_FR:
+                    name = str(getattr(p, "champion_name", "") or alias)
+                    self._item_news.append((ctx.t, alias, name, item))
+        self._item_news = [x for x in self._item_news if 0.0 <= ctx.t - x[0] <= ITEM_ANNOUNCE_S][-6:]
+
     def _track_personal(self, ctx: _Ctx) -> None:
+        try:
+            self._track_items(ctx)
+        except Exception:
+            log.debug("item tracking failed", exc_info=True)
         me = ctx.me_player
         scores = getattr(me, "scores", None)
         ward = _finite(scores.get("wardScore")) if isinstance(scores, dict) else None
@@ -465,7 +627,8 @@ class MapCoach:
         out: list[tuple[str, str]] = []
         for fn in (self._rule_numbers, self._rule_deep, self._rule_objectives, self._rule_missing,
                    self._rule_jungler, self._rule_pressure, self._rule_cs, self._rule_level6,
-                   self._rule_vision):
+                   self._rule_vision, self._rule_waves, self._rule_lane, self._rule_bot_missing,
+                   self._rule_scoreboard, self._rule_trade):
             try:
                 out.extend(fn(ctx))
             except Exception:
@@ -635,18 +798,29 @@ class MapCoach:
         if ctx.jungler_alias is None or ctx.gt < JUNGLE_RULES_MIN_GT or ctx.dead or ctx.me_pos is None:
             return out
         tr = ctx.jungler
-        my_side = ctx.my_lane or ctx.role_lane
+        is_jungler = ctx.my_role == "JUNGLE"
+        my_side = geometry.side_of(*ctx.me_pos) if is_jungler else (ctx.my_lane or ctx.role_lane)
         if tr is not None and getattr(tr, "visible", False):
             appeared = getattr(tr, "appeared_at", None) or getattr(tr, "first_seen", None)
             pos = _track_pos(tr)
             if pos is not None and appeared is not None:
                 jside = map_side(*pos)
+                fresh = (0.0 <= ctx.t - float(appeared) <= JUNGLER_SIDE_FRESH_S
+                         and appeared != self._jg_side_done)
+                far = geometry.dist(pos, ctx.me_pos) > 0.35
                 if jside in ("top", "bot") and my_side in ("top", "mid", "bot") and my_side != jside:
                     self._jg_side_info = (ctx.t, jside, my_side)
-                    fresh = 0.0 <= ctx.t - float(appeared) <= JUNGLER_SIDE_FRESH_S
-                    if fresh and appeared != self._jg_side_done and geometry.dist(pos, ctx.me_pos) > 0.35:
-                        out.append(("jungler_side", f"Leur jungler est {SIDE_FR[jside]} : tu peux jouer plus "
-                                                    f"agressif {SIDE_FR[my_side]}."))
+                    if fresh and far:
+                        if is_jungler:
+                            text = (f"Leur jungler est {SIDE_FR[jside]} : envahis sa jungle "
+                                    f"{'du haut' if jside == 'bot' else 'du bas'} ou prends tes camps.")
+                        else:
+                            text = (f"Leur jungler est {SIDE_FR[jside]} : tu peux jouer plus agressif "
+                                    f"{SIDE_FR[my_side]}.")
+                        out.append(("jungler_side", text))
+                elif is_jungler and jside in ("top", "bot") and my_side == jside and fresh:
+                    out.append(("jungler_side", f"Leur jungler est {SIDE_FR[jside]}, de ton côté : "
+                                                f"prépare le contre-gank."))
         hidden = ctx.jungler_hidden_s
         if hidden is not None and hidden >= JUNGLER_UNSEEN_S and ctx.my_lane is not None:
             marker = getattr(tr, "last_seen", None) if tr is not None else -1.0
@@ -719,6 +893,210 @@ class MapCoach:
             return []
         return [("vision", "Pense à placer une balise.")]
 
+    # ---------------------------------------------------------------- waves
+    def _my_wave(self, ctx: _Ctx) -> Any:
+        lane = ctx.role_lane or ctx.my_lane
+        return (ctx.waves or {}).get(lane) if lane else None
+
+    def _rule_waves(self, ctx: _Ctx) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        waves = ctx.waves or {}
+        if not waves or ctx.dead or ctx.gt < 100:
+            return out
+        for lane, lw in waves.items():
+            if (lw.enemy >= WAVE_BIG_ENEMY and lw.enemy >= 2 * max(1, lw.ally) and lw.enemy_front is not None
+                    and lw.enemy_front <= 0.5):
+                out.append(("wave_big", f"Grosse vague ennemie qui arrive {SIDE_FR[lane]}."))
+                break
+        lw = self._my_wave(ctx)
+        in_my_lane = ctx.my_lane is not None and ctx.my_lane == (ctx.role_lane or ctx.my_lane)
+        if lw is None or not in_my_lane or lw.meet is None:
+            return out
+        if lw.state == "pushing" and lw.meet >= WAVE_PUSH_S and lw.ally >= 3:
+            out.append(("wave_push", "Ta vague pousse vers leur tour : bon moment pour rentrer après l'avoir poussée."))
+        elif lw.state == "pushed_in" and lw.meet <= WAVE_BACK_S and lw.enemy >= 3 and lw.enemy >= lw.ally + 2:
+            out.append(("wave_back", "La vague revient vers toi : attends-la sous ta tour."))
+        return out
+
+    # ---------------------------------------------------------------- lane opponents
+    def _gone(self, ctx: _Ctx, tr: Any, lane: str | None) -> str | None:
+        """``"recall"`` / ``"left"`` when this opponent left ``lane`` (else None)."""
+        if tr is None or getattr(tr, "visible", False):
+            return None
+        hidden = ctx.t - float(getattr(tr, "last_seen", ctx.t))
+        if not LANE_LEFT_S <= hidden <= LANE_LEFT_MAX_S:
+            return None
+        pos = _track_pos(tr)
+        if pos is None:
+            return None
+        zone = geometry.classify_zone(*pos)
+        if geometry.is_base(zone) and geometry.zone_owner(zone) == ctx.enemy_team:
+            return "recall"
+        if lane is not None and geometry.lane_of(zone) == lane:
+            return "left"
+        return None
+
+    def _rule_lane(self, ctx: _Ctx) -> list[tuple[str, str]]:
+        lane = ctx.role_lane
+        if (not ctx.opponents or lane is None or ctx.dead or ctx.gt < LANE_RULES_MIN_GT
+                or ctx.my_lane != lane):
+            return []
+        gone = []
+        for alias, name, _p, tr in ctx.opponents:
+            why = self._gone(ctx, tr, lane)
+            if why is None or self._lane_left_done.get(alias) == float(getattr(tr, "last_seen", -1.0)):
+                continue
+            gone.append((name, why))
+        if not gone:
+            return []
+        plates = ctx.gt < PLATES_END_GT
+        if all(w == "recall" for _n, w in gone):
+            who = " et ".join(n for n, _w in gone)
+            verb = "sont rentrés" if len(gone) > 1 else "est rentré"
+            tail = "pousse ta vague et récupère des plaques" if plates else "pousse ta vague"
+            return [("lane_recall", f"{who} {verb} : {tail}.")]
+        if len(gone) >= 2:
+            who = "Tes deux adversaires ont"
+        else:
+            who = f"{gone[0][0]} a"
+        tail = "pousse et prends des plaques, ping s'il roam" if plates else "pousse ta vague, ping s'il roam"
+        if len(gone) >= 2:
+            tail = tail.replace("s'il roam", "s'ils roam")
+        return [("lane_left", f"{who} quitté la voie : {tail}.")]
+
+    def _bot_pair(self, ctx: _Ctx) -> list[Any]:
+        pair = []
+        for p in getattr(ctx.game, "enemies", None) or []:
+            if str(getattr(p, "position", "") or "").upper() in ("BOTTOM", "UTILITY"):
+                low = str(p.champion_alias).lower()
+                tr = next((x for x in ctx.enemies_all if str(getattr(x, "alias", "") or "").lower() == low), None)
+                pair.append(tr)
+        if not pair:
+            try:
+                aliases = self._roles.bot_lane("enemy") if self._roles is not None else ()
+            except Exception:
+                aliases = ()
+            for a in aliases or ():
+                tr = next((x for x in ctx.enemies_all if str(getattr(x, "alias", "") or "").lower() == str(a).lower()), None)
+                pair.append(tr)
+        return pair
+
+    def _bot_marker(self, ctx: _Ctx) -> tuple | None:
+        pair = self._bot_pair(ctx)
+        if len(pair) != 2 or any(tr is None for tr in pair):
+            return None
+        return tuple(float(getattr(tr, "last_seen", 0.0)) for tr in pair)
+
+    def _rule_bot_missing(self, ctx: _Ctx) -> list[tuple[str, str]]:
+        if ctx.dead or ctx.gt < LANE_RULES_MIN_GT or ctx.role_lane == "bot" or ctx.me_pos is None:
+            return []
+        pair = self._bot_pair(ctx)
+        if len(pair) != 2 or any(self._gone(ctx, tr, "bot") is None for tr in pair):
+            return []
+        if self._bot_missing_done == self._bot_marker(ctx):
+            return []
+        return [("bot_missing", "Les deux bot ennemis ont disparu : prudence, ils peuvent roam.")]
+
+    # ---------------------------------------------------------------- scoreboard
+    def _level_diff(self, ctx: _Ctx) -> tuple[int, str | None]:
+        """(my level - lane opponent level, opponent name) for my single lane opponent / the ADC."""
+        my_lvl = _finite(getattr(ctx.me_player, "level", None))
+        if my_lvl is None or not ctx.opponents:
+            return 0, None
+        opp = ctx.opponents[0]
+        if len(ctx.opponents) > 1:      # bot lane: compare with the enemy of my own role
+            mine = ctx.my_role
+            opp = next((o for o in ctx.opponents if o[2] is not None
+                        and str(getattr(o[2], "position", "")).upper() == mine), ctx.opponents[0])
+        lvl = _finite(getattr(opp[2], "level", None)) if opp[2] is not None else None
+        if lvl is None:
+            return 0, None
+        return int(my_lvl - lvl), opp[1]
+
+    def _kill_mark(self, ctx: _Ctx) -> float | None:
+        for m in KILL_MARKS:
+            if m <= ctx.gt <= m + 60.0 and m not in self._kill_marks_done:
+                return m
+        return None
+
+    def _team_kills(self, ctx: _Ctx) -> tuple[int, int]:
+        def kills(players: Iterable[Any]) -> int:
+            return sum(int(_finite((getattr(p, "scores", None) or {}).get("kills")) or 0) for p in players)
+        g = ctx.game
+        ours = kills(([g.me] if getattr(g, "me", None) is not None else []) + list(getattr(g, "allies", None) or []))
+        return ours, kills(getattr(g, "enemies", None) or [])
+
+    def _rule_scoreboard(self, ctx: _Ctx) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        if not self._scoreboard_on:      # cfg.coach_scoreboard_tips = False (another analyser speaks them)
+            return out
+        for _t, _alias, name, item in self._item_news[:1]:
+            out.append(("item_spike", f"{name} vient de finir {ITEM_NAMES_FR[item]} : attention à son pic de puissance."))
+        diff, name = self._level_diff(ctx)
+        if name and abs(diff) >= LEVEL_DIFF_MIN and diff != self._level_diff_said and ctx.gt >= 180:
+            n = abs(diff)
+            if diff > 0:
+                out.append(("level_diff", f"Tu as {n} niveaux d'avance sur {name} : joue agressif."))
+            else:
+                out.append(("level_diff", f"{name} a {n} niveaux d'avance sur toi : joue prudent."))
+        elif abs(diff) < LEVEL_DIFF_MIN:
+            self._level_diff_said = 0
+        if not self._jg6_done:
+            g = ctx.game
+            ej = None
+            try:
+                ej = g.enemy_jungler()
+            except Exception:
+                ej = None
+            mine = [p for p in ([g.me] + list(g.allies or [])) if p is not None
+                    and (getattr(p, "has_smite", False) or str(getattr(p, "position", "")).upper() == "JUNGLE")]
+            aj = mine[0] if mine else None
+            if ej is not None and aj is not None and (ej.level or 0) >= 6 and (aj.level or 0) < 6:
+                who = "toi" if aj is g.me else "le vôtre"
+                out.append(("jg_level6", f"Leur jungler est niveau 6 avant {who} : prudence."))
+            elif aj is not None and (aj.level or 0) >= 6:
+                self._jg6_done = True
+        if self._kill_mark(ctx) is not None:
+            ours, theirs = self._team_kills(ctx)
+            if ours - theirs >= KILL_LEAD_MIN:
+                out.append(("kill_lead", f"Vous menez {ours} à {theirs} aux kills : jouez les objectifs."))
+            elif theirs - ours >= KILL_LEAD_MIN:
+                out.append(("kill_lead", f"Vous êtes derrière, {ours} à {theirs} : jouez groupés et farmez."))
+        return out
+
+    # ---------------------------------------------------------------- objective trading
+    def _rule_trade(self, ctx: _Ctx) -> list[tuple[str, str]]:
+        if ctx.dead or not ctx.enemies_vis:
+            return []
+        states = {str(getattr(s, "key", "") or ""): s for s in ctx.objectives}
+
+        def up(key: str) -> bool:
+            s = states.get(key)
+            if s is None:
+                return False
+            if getattr(s, "alive", False):
+                return True
+            rem = self._remaining(s, ctx.gt)
+            return rem is not None and rem <= 30
+        for pit_key, pit, label, other_side in (("dragon", _DRAGON_PIT, "au dragon", "top"),
+                                                 ("baron", _BARON_PIT, "au Baron", "bot")):
+            n = sum(1 for _tr, p in ctx.enemies_vis if geometry.dist(p, pit) < TRADE_PIT_R)
+            if n < TRADE_MIN:
+                continue
+            if pit_key == "dragon" and not (up("dragon") or up("elder")):
+                continue
+            if pit_key == "baron" and not (up("baron") or up("herald") or up("grubs")):
+                continue
+            if other_side == "top":
+                alt = ("les larves" if up("grubs") else "le Héraut" if up("herald")
+                       else "le Baron" if up("baron") else None)
+            else:
+                alt = "le dragon" if (up("dragon") or up("elder")) else None
+            where = SIDE_FR[other_side]
+            what = f"{alt} ou des tours {where}" if alt else f"des tours {where}"
+            return [("objective_trade", f"{n} ennemis {label} : prenez {what}.")]
+        return []
+
     # ---------------------------------------------------------------- insights
     def _build_insights(self, ctx: _Ctx) -> list[str]:
         items: list[tuple[int, str]] = []
@@ -764,6 +1142,23 @@ class MapCoach:
             if (self._in_enemy_jungle(ctx) and ctx.jungler_hidden_s is not None
                     and ctx.jungler_hidden_s >= DEEP_UNSEEN_S):
                 items.append((90, "Jungle ennemie, leur JGL invisible"))
+        if not ctx.safe:
+            lw = self._my_wave(ctx)
+            if lw is not None and lw.state == "pushing":
+                items.append((45, f"Ta vague pousse ({SIDE_FR.get(lw.lane, '')})"))
+            elif lw is not None and lw.state == "pushed_in":
+                items.append((45, f"La vague revient vers toi ({SIDE_FR.get(lw.lane, '')})"))
+            for _a, name, _p, tr in ctx.opponents or []:
+                why = self._gone(ctx, tr, ctx.role_lane)
+                if why == "recall":
+                    items.append((68, f"{name} est rentré : pousse"))
+                elif why == "left" and ctx.my_lane == ctx.role_lane:
+                    items.append((66, f"{name} a quitté la voie"))
+        for _t, _alias, name, item in self._item_news[:1]:
+            items.append((64, f"{name} : {ITEM_NAMES_FR[item]} fini"))
+        diff, name = self._level_diff(ctx)
+        if name and abs(diff) >= LEVEL_DIFF_MIN:
+            items.append((40, f"{'+' if diff > 0 else '−'}{abs(diff)} niveaux vs {name}"))
         target = self._cs_target(ctx)
         if target is not None and ctx.gt >= 300:
             cs = _finite((getattr(ctx.me_player, "scores", None) or {}).get("creepScore")) or 0.0

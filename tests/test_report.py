@@ -181,3 +181,40 @@ def test_icons_and_textures() -> None:
     assert report.icon_data_uri("NotAChampion") is None
     assert report._texture_name("Infernal") == "2dlevelminimap_infernal_baron1.png"
     assert report._texture_name(None) == "2dlevelminimap_base_baron1.png"
+
+
+# ------------------------------------------------------------------------------ v2 coaching sections
+def _png_ok(data: bytes | None, size: int) -> None:
+    from PIL import Image
+
+    assert data and data[:8] == b"\x89PNG\r\n\x1a\n"
+    with Image.open(io.BytesIO(data)) as im:
+        assert im.size == (size, size)
+
+
+def test_v2_sections_present(html_page: str) -> None:
+    for title in ("Résumé vocal de fin de partie", "Partie phase par phase", "Présence sur la carte : toi vs idéal",
+                  "Score d'exposition aux ganks", "Parcours en début de partie", "Tendances (minute par minute)",
+                  "objectifs pris par ton équipe", "Idéal pour ton rôle", "invisible depuis 2:19"):
+        assert title in html_page, title
+    assert "Victoire en 28 minutes" in html_page
+    assert html_page.count("<svg class=\"spark\"") == 3
+    assert "Phase de voie" in html_page and "Milieu de partie" in html_page and "Fin de partie" in html_page
+
+
+def test_v2_images(record: dict) -> None:
+    a = analyze_game(record)
+    _png_ok(report.render_ideal_png(record, "TOP"), report.SMALL_MAP)
+    _png_ok(report.render_ideal_png(record, "JUNGLE", "mid", size=120), 120)
+    _png_ok(report.render_phase_heat_png(record, 0, 840), report.SMALL_MAP)
+    _png_ok(report.render_exposure_png(record, a), report.SMALL_MAP)
+    _png_ok(report.render_pathing_png(record, a), report.PATH_MAP)
+    # degraded inputs: still an image or None, never an exception
+    assert report.render_pathing_png({}, {}) is None or isinstance(report.render_pathing_png({}, {}), bytes)
+    assert isinstance(report._spark_svg([], "cs", "#fff", str), str)
+
+
+def test_v2_sections_degrade_gracefully() -> None:
+    page = report.render_report_html({}, analyze_game({}))
+    assert page.startswith("<!DOCTYPE html>")
+    assert "Le rapport n'a pas pu être généré" not in page

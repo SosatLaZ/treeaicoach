@@ -39,7 +39,7 @@ from typing import Any, Callable, Sequence
 import numpy as np
 from PIL import Image, ImageDraw
 
-from treeaicoach import APP_NAME, __version__, paths
+from treeaicoach import APP_NAME, __version__, paths, ui_kit
 from treeaicoach.config import Config, save_config
 
 log = logging.getLogger(__name__)
@@ -66,6 +66,9 @@ DANGER_DARK = "#4A1520"
 WARNING = "#F0A030"
 SAFE = "#2DC66B"
 ON_GOLD = "#1A1408"         # text on gold buttons
+ALLY = ui_kit.ALLY          # allied team ring (blue)
+ENEMY_RING = DANGER         # enemy team ring (red)
+HOVER = "#16284A"           # hover of secondary buttons
 
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
 THREAT_LABELS = {0: "SÛR", 1: "ATTENTION", 2: "DANGER"}
@@ -82,7 +85,7 @@ DISPATCH_MS = 40
 SAVE_DEBOUNCE_MS = 500
 TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
-JOURNAL_MAX = 12
+JOURNAL_MAX = 60                 # alerts kept in the dashboard journal (filterable)
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "TreeAICoach"
@@ -140,7 +143,8 @@ AUTO_VOICE = "Automatique (meilleure voix française)"
 
 #: Fields whose change needs a new detector (the engine is rebuilt).
 DETECTOR_FIELDS = frozenset({"detector_backend", "detection_threshold"})
-VOICE_FIELDS = frozenset({"voice_name", "voice_rate", "voice_volume", "beep_on_danger"})
+VOICE_FIELDS = frozenset({"voice_name", "voice_rate", "voice_volume", "beep_on_danger", "voice_engine",
+                          "neural_voice"})
 HOTKEY_FIELDS = frozenset({"hotkey_jungler", "hotkey_mute", "hotkey_overlay"})
 
 _ctk: Any = None      # customtkinter module (imported lazily by _import_ctk)
@@ -798,6 +802,238 @@ class _Fonts:
 # ======================================================================================
 # The application
 # ======================================================================================
+class _CanvasText:
+    """Label-like shim over a canvas text item (``configure(text=, text_color=)`` / ``cget("text")``)."""
+
+    def __init__(self, canvas: Any, item: int, on_change: Callable[[], None] | None = None) -> None:
+        self.canvas, self.item, self._on_change = canvas, item, on_change
+
+    def configure(self, **kw: Any) -> None:
+        opts: dict[str, Any] = {}
+        if "text" in kw:
+            opts["text"] = kw["text"]
+        if "text_color" in kw:
+            opts["fill"] = kw["text_color"]
+        if opts:
+            self.canvas.itemconfigure(self.item, **opts)
+            if "text" in opts and self._on_change is not None:
+                self._on_change()
+
+    def cget(self, name: str) -> Any:
+        return self.canvas.itemcget(self.item, "text" if name == "text" else "fill")
+
+    def winfo_width(self) -> int:
+        return int(self.canvas.winfo_width())
+
+
+class _CanvasBadge:
+    """grid()/grid_remove() shim showing the "DÉMO" badge drawn on the hero canvas."""
+
+    def __init__(self, hero: "HeroBanner") -> None:
+        self.hero = hero
+
+    def grid(self, **_kw: Any) -> None:
+        self.hero.set_badge(True)
+
+    def grid_remove(self) -> None:
+        self.hero.set_badge(False)
+
+
+class HeroBanner:
+    """Dashboard hero: state + pulse, game clock, threat gauge and the start button on one canvas."""
+
+    SEGMENTS = 16
+
+    def __init__(self, app: "CoachApp", parent: Any) -> None:
+        import tkinter as tk  # noqa: PLC0415
+
+        self.app = app
+        s = app._scaled
+        self.s = s
+        self.h = s(124)
+        fam, px = app.fonts.family, app._font_px
+        c = tk.Canvas(parent, height=self.h, bg=BG, highlightthickness=0, bd=0)
+        self.canvas = c
+        self._photo: Any = None
+        self._glow = PANEL_HI
+        self._rendered: tuple = ()
+        self._bg_job: str | None = None
+        self.dot_bg = "#0E1D38"
+        self.right_bg = "#0A1426"
+        self._bg_item = c.create_image(0, 0, anchor="nw")
+        self.halo = c.create_oval(0, 0, 0, 0, fill="", outline="")
+        self.core = c.create_oval(0, 0, 0, 0, fill=DIM, outline="")
+        self.title_item = c.create_text(0, 0, anchor="w", text="Démarrage…", fill=TEXT, font=(fam, px(19), "bold"))
+        self.msg_item = c.create_text(0, 0, anchor="nw", text="", fill=MUTED, font=(fam, px(12)))
+        self.badge_bg = c.create_rectangle(0, 0, 0, 0, fill=GOLD, outline="", state="hidden")
+        self.badge_txt = c.create_text(0, 0, text="DÉMO", fill=ON_GOLD, font=(fam, px(9), "bold"), state="hidden")
+        self.clock_cap = c.create_text(0, 0, text="TEMPS DE JEU", fill=DIM, font=(fam, px(9), "bold"))
+        self.clock_item = c.create_text(0, 0, text="--:--", fill=DIM, font=(fam, px(30), "bold"))
+        self.threat_cap = c.create_text(0, 0, anchor="w", text="MENACE", fill=DIM, font=(fam, px(9), "bold"))
+        self.threat_item = c.create_text(0, 0, anchor="w", text="—", fill=DIM, font=(fam, px(14), "bold"))
+        self.detail_item = c.create_text(0, 0, anchor="w", text="Hors partie", fill=MUTED, font=(fam, px(12)))
+        self.segs = [c.create_polygon(0, 0, 0, 0, 0, 0, fill="#1B2638", outline="") for _ in range(self.SEGMENTS)]
+        self.rule = c.create_line(0, 0, 0, 0, fill=_blend(BORDER, PANEL, 0.2))
+        self._button_win: int | None = None
+        self._badge = False
+        self._detail_full = "Hors partie"
+        self.title = _CanvasText(c, self.title_item, self.layout)
+        self.msg = _CanvasText(c, self.msg_item)
+        self.clock = _CanvasText(c, self.clock_item)
+        self.threat = _CanvasText(c, self.threat_item, self.layout)
+        self.detail = _CanvasText(c, self.detail_item, self._fit_detail)
+        self.badge = _CanvasBadge(self)
+        c.bind("<Configure>", lambda _e: self._schedule_bg(), add="+")
+
+    # ---------------------------------------------------------------- geometry
+    def attach_button(self, btn: Any) -> None:
+        self._button_win = self.canvas.create_window(0, 0, window=btn, anchor="e")
+        self.layout()
+
+    def set_badge(self, on: bool) -> None:
+        if on != self._badge:
+            self._badge = on
+            state = "normal" if on else "hidden"
+            self.canvas.itemconfigure(self.badge_bg, state=state)
+            self.canvas.itemconfigure(self.badge_txt, state=state)
+            self.layout()
+
+    def layout(self) -> None:
+        c, s = self.canvas, self.s
+        try:
+            w = max(s(400), int(c.winfo_width()))
+            h = self.h
+            pad = s(24)
+            top = s(48)
+            btn_w = 0
+            if self._button_win is not None:
+                btn = self.app.btn_start
+                btn_w = int(btn.winfo_reqwidth())
+                c.coords(self._button_win, w - pad, top)
+            clock_x = w - pad - btn_w - s(64)
+            c.coords(self.clock_cap, clock_x, top - s(20))
+            c.coords(self.clock_item, clock_x, top + s(6))
+            dx, dy = pad + s(12), top - s(4)
+            self._dot = (dx, dy)
+            c.coords(self.core, dx - s(6), dy - s(6), dx + s(6), dy + s(6))
+            tx = pad + s(36)
+            c.coords(self.title_item, tx, top - s(14))
+            bb = c.bbox(self.title_item)
+            if bb and self._badge:
+                bx = bb[2] + s(10)
+                c.coords(self.badge_bg, bx, top - s(23), bx + s(44), top - s(5))
+                c.coords(self.badge_txt, bx + s(22), top - s(14))
+            c.coords(self.msg_item, tx, top + s(2))
+            c.itemconfigure(self.msg_item, width=max(s(120), clock_x - s(64) - tx))
+            # threat row
+            ty = h - s(26)
+            c.coords(self.rule, pad, ty - s(22), w - pad, ty - s(22))
+            c.coords(self.threat_cap, pad, ty)
+            c.coords(self.threat_item, pad + s(62), ty)
+            tb = c.bbox(self.threat_item)
+            dx0 = (tb[2] if tb else pad + s(140)) + s(12)
+            c.coords(self.detail_item, dx0, ty)
+            gx0 = max(int(w * 0.55), dx0 + s(120))
+            self._gauge_box = (gx0, ty - s(5), w - pad, ty + s(5))
+            self._fit_detail()
+            self.draw_gauge(self.app._gauge_frac, self.app._gauge_color)
+        except Exception:
+            log.debug("hero layout failed", exc_info=True)
+
+    def _fit_detail(self) -> None:
+        """Ellipsize the threat detail so it never runs into the gauge."""
+        c = self.canvas
+        try:
+            full = c.itemcget(self.detail_item, "text")
+            if not full.endswith("…"):
+                self._detail_full = full
+            box = getattr(self, "_gauge_box", None)
+            if box is None:
+                return
+            limit = box[0] - self.s(14)
+            text = self._detail_full
+            c.itemconfigure(self.detail_item, text=text)
+            while text and (c.bbox(self.detail_item) or (0, 0, 0, 0))[2] > limit:
+                text = text[:-2]
+                c.itemconfigure(self.detail_item, text=text + "…")
+        except Exception:
+            pass
+
+    def draw_gauge(self, frac: float, color: str) -> None:
+        box = getattr(self, "_gauge_box", None)
+        if box is None:
+            return
+        c, n = self.canvas, self.SEGMENTS
+        x0, y0, x1, y1 = box
+        gap = self.s(3)
+        skew = self.s(4)
+        sw = max(2.0, (x1 - x0 - (n - 1) * gap) / n)
+        lit = max(0.0, min(1.0, frac)) * n
+        for i, item in enumerate(self.segs):
+            a = x0 + i * (sw + gap)
+            c.coords(item, a + skew, y0, a + sw + skew, y0, a + sw, y1, a, y1)
+            k = min(1.0, max(0.0, lit - i))
+            if k <= 0:
+                fill = "#16213A"
+            else:
+                ramp = 0.5 * (1 - i / max(1, n - 1))           # brighter towards the right
+                fill = _blend(_blend(color, "#16213A", ramp), "#16213A", 1 - k)
+            c.itemconfigure(item, fill=fill)
+
+    def pulse(self, color: str, k: float) -> None:
+        dot = getattr(self, "_dot", None)
+        if dot is None:
+            return
+        r = self.s(6) + self.s(11) * k
+        x, y = dot
+        self.canvas.coords(self.halo, x - r, y - r, x + r, y + r)
+        self.canvas.itemconfigure(self.halo, fill=_blend(color, self.dot_bg, 0.5 * (1 - k) + 0.12 + 0.38 * k))
+        self.canvas.itemconfigure(self.core, fill=color)
+
+    # ---------------------------------------------------------------- background
+    def set_glow(self, color: str) -> None:
+        if color != self._glow:
+            self._glow = color
+            self._schedule_bg()
+
+    def _schedule_bg(self) -> None:
+        if self._bg_job is not None:
+            try:
+                self.canvas.after_cancel(self._bg_job)
+            except Exception:
+                pass
+        self._bg_job = self.canvas.after(40, self._render_bg)
+
+    def _render_bg(self) -> None:
+        self._bg_job = None
+        c = self.canvas
+        try:
+            from PIL import ImageTk  # noqa: PLC0415
+
+            w, h = int(c.winfo_width()), self.h
+            if w < 20:
+                return
+            sig = (w, h, self._glow)
+            if sig != self._rendered:
+                self._rendered = sig
+                img = ui_kit.hero_background(w, h, self._glow, bg=BG, panel=PANEL, border=BORDER, gold=GOLD,
+                                             radius=self.s(14))
+                self._photo = ImageTk.PhotoImage(img, master=c)
+                c.itemconfigure(self._bg_item, image=self._photo)
+                dot = getattr(self, "_dot", (self.s(36), self.s(44)))
+                self.dot_bg = "#%02X%02X%02X" % img.getpixel((int(dot[0]), int(dot[1])))[:3]
+                rb = "#%02X%02X%02X" % img.getpixel((max(0, w - self.s(30)), self.s(48)))[:3]
+                if rb != self.right_bg:
+                    self.right_bg = rb
+                    try:
+                        self.app.btn_start.configure(bg_color=rb)
+                    except Exception:
+                        pass
+            self.layout()
+        except Exception:
+            log.debug("hero background failed", exc_info=True)
+
+
 EngineFactory = Callable[[Config, Any, Any, Any], Any]
 
 
@@ -1014,23 +1250,33 @@ class CoachApp:
         self._layout_job = self.root.after(60, self._apply_layout)
 
     def _apply_layout(self) -> None:
-        """Responsive tweaks: short toolbar labels and text wrapping at small window sizes."""
+        """Responsive tweaks: short toolbar labels, wrapping, match-up placement, session card."""
         self._layout_job = None
         try:
             scale = max(0.5, self._scaled(100) / 100)
             width = self.root.winfo_width() / scale
+            height = self.root.winfo_height() / scale
             compact = width < 1080
             if compact != self._compact:
                 self._compact = compact
                 self.btn_test_voice.configure(text="Voix" if compact else "Tester la voix")
                 self.btn_calib.configure(text="Calibrer" if compact else "Calibrer la minimap")
                 self._demo_button_text()
-            st_w = self.status_card.winfo_width() / scale
-            if st_w > 50:
-                self.state_msg.configure(wraplength=int(max(180, st_w - 480)))
+                if compact:     # lane match-up under the allies
+                    self.matchup_box.grid_configure(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+                    self.matchup_cap.grid_configure(sticky="w")
+                    self.matchup_lbl.grid_configure(sticky="w")
+                else:
+                    self.matchup_box.grid_configure(row=0, column=2, columnspan=1, sticky="e", pady=0)
+                    self.matchup_cap.grid_configure(sticky="e")
+                    self.matchup_lbl.grid_configure(sticky="e")
+            show_session = height >= 770
+            if show_session != bool(self.session_card.grid_info()):
+                (self.session_card.grid if show_session else self.session_card.grid_remove)()
             en_w = self.enemies_card.winfo_width() / scale
             if en_w > 50:
-                self.jungler_lbl.configure(wraplength=int(max(160, en_w - 44)))
+                self.jungler_lbl.configure(wraplength=int(max(160, en_w - 40)))
+            self.hero.layout()
         except Exception:
             log.debug("Layout update failed", exc_info=True)
 
@@ -1042,10 +1288,34 @@ class CoachApp:
         self._set_text(self.btn_demo, text)
 
     # ------------------------------------------------------------------ small widget factories
-    def _card(self, parent: Any, **kw: Any) -> Any:
+    def _card(self, parent: Any, accent: bool = True, **kw: Any) -> Any:
         opts = dict(fg_color=PANEL, corner_radius=14, border_width=1, border_color=BORDER)
         opts.update(kw)
-        return self.ctk.CTkFrame(parent, **opts)
+        card = self.ctk.CTkFrame(parent, **opts)
+        if accent:
+            self._accent_line(card, opts.get("fg_color", PANEL))
+        return card
+
+    def _accent_line(self, card: Any, bg: str = PANEL, width: int = 240, color: str = GOLD) -> None:
+        """Hextech touch: a thin gold highlight fading out along the top edge of a card."""
+        try:
+            import tkinter as tk  # noqa: PLC0415
+            from PIL import ImageTk  # noqa: PLC0415
+
+            bg = bg if isinstance(bg, str) and bg.startswith("#") else PANEL
+            key = f"accent-{bg}-{width}-{color}"
+            photo = self._images.get(key)
+            if photo is None:
+                w = self._scaled(width)
+                row = [_blend(_blend(color, bg, 0.25), bg, min(1.0, (i / max(1, w - 1)) ** 0.8)) for i in range(w)]
+                im = Image.new("RGB", (w, 1))
+                im.putdata([_hex_rgb(c) for c in row])
+                photo = ImageTk.PhotoImage(im, master=self.root)
+                self._images[key] = photo
+            lbl = tk.Label(card, image=photo, bd=0, highlightthickness=0, bg=bg)
+            lbl.place(x=self._scaled(16), y=0)
+        except Exception:
+            log.debug("accent line failed", exc_info=True)
 
     def _label(self, parent: Any, text: str = "", font: Any = None, color: str = TEXT, **kw: Any) -> Any:
         kw.setdefault("height", 1)      # size to the text (CTkLabel's default minimum is 28 px)
@@ -1056,7 +1326,7 @@ class CoachApp:
         key = f"{kind}-{size}-{color}"
         img = self._images.get(key)
         if img is None:
-            pil = nav_icon(kind, size, color)
+            pil = ui_kit.extra_icon(kind, size, color) if kind in ui_kit.EXTRA_ICONS else nav_icon(kind, size, color)
             img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(size, size))
             self._images[key] = img
         return img
@@ -1115,18 +1385,67 @@ class CoachApp:
     def _section(self, parent: Any, row: int, title: str, subtitle: str | None = None) -> Any:
         """A titled card; returns its content frame (1 column, rows added by the caller)."""
         card = self._card(parent)
-        card.grid(row=row, column=0, sticky="ew", pady=(0, 14))
+        card.grid(row=row, column=0, sticky="ew", pady=(0, 16))
         card.grid_columnconfigure(0, weight=1)
-        self._label(card, title, self.fonts.h2, GOLD, anchor="w").grid(
-            row=0, column=0, sticky="w", padx=20, pady=(18, 0 if subtitle else 4))
+        head = self.ctk.CTkFrame(card, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=(16, 16), pady=(16, 0 if subtitle else 4))
+        head.grid_columnconfigure(1, weight=1)
+        self.ctk.CTkFrame(head, width=3, height=18, corner_radius=2, fg_color=GOLD).grid(
+            row=0, column=0, sticky="w", padx=(0, 10))
+        self._label(head, title, self.fonts.h2, GOLD, anchor="w").grid(row=0, column=1, sticky="w")
+        reset_btn = self.ctk.CTkButton(head, text="Réinitialiser", width=0, height=24, corner_radius=6,
+                                       font=self.fonts.tiny, fg_color="transparent", hover_color=PANEL_HI,
+                                       text_color=DIM, image=self._icon("reset", 12, DIM), compound="left")
         if subtitle:
             self._label(card, subtitle, self.fonts.tiny, MUTED, anchor="w", justify="left", wraplength=640).grid(
-                row=1, column=0, sticky="w", padx=20, pady=(4, 4))
+                row=1, column=0, sticky="w", padx=(29, 20), pady=(4, 4))
         body = self.ctk.CTkFrame(card, fg_color="transparent")
-        body.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 12))
+        body.grid(row=2, column=0, sticky="ew", padx=(29, 20), pady=(0, 10))
         body.grid_columnconfigure(0, weight=1)
         body._rows = 0  # type: ignore[attr-defined]
+        body._fields = []  # type: ignore[attr-defined]     # settings of this section (reset button)
+        body._reset_btn = reset_btn  # type: ignore[attr-defined]
+        body._title = title  # type: ignore[attr-defined]
+        reset_btn.configure(command=self.cb(lambda b=body: self.reset_fields(list(b._fields), b._title)))
         return body
+
+    def _register_field(self, body: Any, field: str, widget: Any, default_text: str | None = None) -> None:
+        """Remember a setting of a section (per-section reset) and add a tooltip with its default."""
+        try:
+            fields_ = getattr(body, "_fields", None)
+            if isinstance(fields_, list) and field not in fields_:
+                fields_.append(field)
+                btn = getattr(body, "_reset_btn", None)
+                if btn is not None and not btn.winfo_ismapped() and len(fields_) == 1:
+                    btn.grid(row=0, column=2, sticky="e")
+                    ui_kit.Tooltip(btn, "Remet les réglages de cette section à leur valeur par défaut.",
+                                   font=(self.fonts.family, self._font_px(12)))
+            if default_text:
+                ui_kit.Tooltip(widget, f"Valeur par défaut : {default_text}",
+                               font=(self.fonts.family, self._font_px(12)))
+        except Exception:
+            log.debug("register_field failed", exc_info=True)
+
+    @_guarded
+    def reset_fields(self, fields_: Sequence[str], title: str = "") -> None:
+        """Reset some settings to their default value (section "Réinitialiser" button)."""
+        defaults = Config()
+        upd = {f: copy_value(getattr(defaults, f)) for f in fields_ if hasattr(defaults, f)}
+        if not upd:
+            return
+        new = dataclasses.replace(self.cfg, **upd).validated()
+        self._replace_config(new, changed=set(upd))
+        self._refresh_widgets()
+        self.show_toast(f"Section « {title} » réinitialisée." if title else "Réglages réinitialisés.")
+
+    def _refresh_widgets(self) -> None:
+        for refresh in list(self._widgets_by_field.values()):
+            try:
+                refresh()
+            except Exception:
+                log.debug("Widget refresh failed", exc_info=True)
+        self._refresh_radius_text()
+        self._refresh_position_menus()
 
     def _row(self, body: Any, title: str, desc: str | None = None) -> tuple[Any, Any]:
         """A setting row (title + description on the left, control slot on the right)."""
@@ -1168,6 +1487,7 @@ class CoachApp:
                                 button_color=TEXT, button_hover_color="#FFFFFF")
         sw.grid(row=0, column=0)
         self._widgets_by_field[field] = lambda: var.set(bool(getattr(self.cfg, field)))
+        self._register_field(body, field, sw, "activé" if getattr(Config(), field, False) else "désactivé")
         return sw
 
     def _slider_row(self, body: Any, field: str, title: str, desc: str | None, lo: float, hi: float,
@@ -1196,6 +1516,7 @@ class CoachApp:
             sl.set(float(getattr(self.cfg, field)))
             value_lbl.configure(text=fmt(getattr(self.cfg, field)))
         self._widgets_by_field[field] = refresh
+        self._register_field(body, field, sl, fmt(getattr(Config(), field)))
         return sl
 
     def _choice_row(self, body: Any, field: str, title: str, desc: str | None,
@@ -1234,6 +1555,7 @@ class CoachApp:
             w.set(to_label.get(getattr(self.cfg, field), labels[0]))
         refresh()
         self._widgets_by_field[field] = refresh
+        self._register_field(body, field, w, to_label.get(getattr(Config(), field, None)))
         return w
 
     # ------------------------------------------------------------------ sidebar
@@ -1274,6 +1596,11 @@ class CoachApp:
                                 command=self.cb(lambda k=key: self.show_page(k)))
             btn.grid(row=i, column=1, sticky="ew", pady=2)
             self._nav[key] = (btn, ind, icon)
+            ui_kit.Tooltip(btn, f"{label}  (Ctrl+{i})", font=(self.fonts.family, self._font_px(12)))
+        try:
+            self._build_quick_toggles(sb)
+        except Exception:
+            log.exception("Cannot build the quick toggles")
 
         foot = ctk.CTkFrame(sb, fg_color="transparent")
         foot.grid(row=3, column=0, sticky="sew", padx=14, pady=(8, 18))
@@ -1286,8 +1613,98 @@ class CoachApp:
         self._pill_dot_item = self.pill_dot.create_oval(1, 1, 11, 11, fill=DIM, outline="")
         self.pill_text = self._label(pill, "Démarrage…", self.fonts.small, TEXT, anchor="w")
         self.pill_text.grid(row=0, column=1, sticky="w", padx=(0, 12))
-        self._label(foot, f"Version {__version__}", self.fonts.tiny, DIM, anchor="w").grid(
-            row=1, column=0, sticky="w", padx=6, pady=(10, 0))
+        meta = ctk.CTkFrame(foot, fg_color="transparent")
+        meta.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        meta.grid_columnconfigure(0, weight=1)
+        ver = ctk.CTkButton(meta, text=f"Version {__version__}", anchor="w", width=0, height=24, corner_radius=6,
+                            font=self.fonts.tiny, fg_color="transparent", hover_color=PANEL_HI, text_color=DIM,
+                            command=self.cb(self.show_changelog))
+        ver.grid(row=0, column=0, sticky="w")
+        ui_kit.Tooltip(ver, "Nouveautés de cette version", font=(self.fonts.family, self._font_px(12)))
+        for col, (icon, tip, fn) in enumerate((("info", "À propos", lambda: self.show_about()),
+                                               ("minimize", "Réduire la fenêtre", lambda: self.minimize()))):
+            b = ctk.CTkButton(meta, text="", width=26, height=24, corner_radius=6, fg_color="transparent",
+                              hover_color=PANEL_HI, image=self._icon(icon, 14, DIM), command=self.cb(fn))
+            b.grid(row=0, column=col + 1, padx=(2, 0))
+            ui_kit.Tooltip(b, tip, font=(self.fonts.family, self._font_px(12)))
+
+    def _build_quick_toggles(self, sb: Any) -> None:
+        """Sidebar "ACCÈS RAPIDE": safe mode, voice, overlay switches (always visible)."""
+        ctk = self.ctk
+        box = ctk.CTkFrame(sb, fg_color="transparent")
+        box.grid(row=2, column=0, sticky="new", padx=14, pady=(18, 0))
+        box.grid_columnconfigure(1, weight=1)
+        self._label(box, "ACCÈS RAPIDE", self.fonts.caps, DIM, anchor="w").grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=8, pady=(0, 6))
+        self._quick: dict[str, tuple[Any, Any]] = {}
+        specs = (("safe", "shield", "Mode sûr", "Mode sûr : pas d'alerte de gank ni de suivi du jungler, "
+                                                  "pas de zone dans le brouillard (Ctrl+Maj+S)."),
+                 ("voice", "voice", "Voix", "Couper / rétablir les annonces vocales (Ctrl+M)."),
+                 ("overlay", "overlay", "Overlay", "Afficher / masquer les indications sur la minimap."))
+        for i, (key, icon, text, tip) in enumerate(specs, start=1):
+            ctk.CTkLabel(box, text="", image=self._icon(icon, 16, MUTED), fg_color="transparent", width=20).grid(
+                row=i, column=0, padx=(8, 8), pady=4)
+            lbl = self._label(box, text, self.fonts.small, MUTED, anchor="w")
+            lbl.grid(row=i, column=1, sticky="w")
+            var = ctk.BooleanVar(value=False)
+            sw = ctk.CTkSwitch(box, text="", variable=var, width=40, switch_width=34, switch_height=18,
+                               fg_color="#1B2638", progress_color=TEAL, button_color=TEXT,
+                               button_hover_color="#FFFFFF", command=self.cb(lambda k=key: self._quick_toggled(k)))
+            sw.grid(row=i, column=2, sticky="e")
+            ui_kit.Tooltip(lbl, tip, font=(self.fonts.family, self._font_px(12)))
+            ui_kit.Tooltip(sw, tip, font=(self.fonts.family, self._font_px(12)))
+            self._quick[key] = (var, sw)
+        self._sync_quick()
+
+    def _sync_quick(self, muted: bool | None = None) -> None:
+        """Quick toggles <- configuration / engine state (never fires their callbacks)."""
+        q = getattr(self, "_quick", None)
+        if not q:
+            return
+        try:
+            if muted is None:
+                muted = bool(getattr(self.engine, "muted", self._muted)) if self.engine is not None else self._muted
+            want = {"safe": bool(self.cfg.safe_mode), "voice": not muted,
+                    "overlay": bool(self.cfg.overlay_enabled)}
+            for key, (var, _sw) in q.items():
+                if bool(var.get()) != want[key]:
+                    var.set(want[key])
+            dash = getattr(self, "dash_safe_var", None)
+            if dash is not None and bool(dash.get()) != bool(self.cfg.safe_mode):
+                dash.set(bool(self.cfg.safe_mode))
+        except Exception:
+            log.debug("quick toggles sync failed", exc_info=True)
+
+    def _quick_toggled(self, key: str) -> None:
+        var = self._quick[key][0]
+        on = bool(var.get())
+        if key == "safe":
+            self.set_safe_mode(on)
+        elif key == "voice":
+            if on == bool(getattr(self.engine, "muted", self._muted) if self.engine is not None else self._muted):
+                self.toggle_mute()
+        elif key == "overlay":
+            self.set_option("overlay_enabled", on)
+            self.show_toast("Overlay affiché." if on else "Overlay masqué.")
+
+    @_guarded
+    def set_safe_mode(self, on: bool) -> None:
+        """One-click "mode sûr" (dashboard, sidebar, settings, Ctrl+Maj+S)."""
+        self.set_option("safe_mode", bool(on))
+        self._sync_quick()
+        self.show_toast("Mode sûr activé : aucune alerte de gank ni suivi du jungler." if on else
+                        "Mode sûr désactivé : toutes les alertes choisies sont actives.", "warning" if on else "info")
+
+    @_guarded
+    def toggle_mute(self) -> None:
+        """Mute / unmute the voice (Tk thread)."""
+        self._hk_mute()
+        self.root.after(50, self._sync_quick)
+
+    @_guarded
+    def minimize(self) -> None:
+        """Reduce the window to the taskbar (the analysis keeps running)."""
+        self.root.iconify()
 
     def show_page(self, key: str) -> None:
         """Switch the visible page."""
@@ -1298,6 +1715,10 @@ class CoachApp:
                 page.grid_remove()
         self.pages[key].grid()
         self._current_page = key
+        self._animate_page(self.pages[key])
+        if getattr(self.cfg, "ui_remember_page", False) and getattr(self.cfg, "ui_last_page", key) != key:
+            self.cfg = dataclasses.replace(self.cfg, ui_last_page=key).validated()
+            self._schedule_save()
         for k, (btn, ind, icon) in self._nav.items():
             active = k == key
             btn.configure(fg_color=PANEL_HI if active else "transparent",
@@ -1314,17 +1735,60 @@ class CoachApp:
         if key == "overlay":
             self._schedule_overlay_preview()
 
+    def _animate_page(self, page: Any, steps: int = 6) -> None:
+        """Smooth page entrance: the page slides up a few pixels (Tk has no per-widget alpha)."""
+        job = getattr(self, "_page_anim_job", None)
+        if job is not None:
+            try:
+                self.root.after_cancel(job)
+            except Exception:
+                pass
+        offsets = [int(round(14 * (1 - (i / steps)) ** 2)) for i in range(steps + 1)]
+
+        def step(i: int = 0) -> None:
+            self._page_anim_job = None
+            try:
+                if self._closing or not page.winfo_exists():
+                    return
+                page.grid_configure(pady=(offsets[i], 0))
+                if i < steps:
+                    self._page_anim_job = self.root.after(16, lambda: step(i + 1))
+            except Exception:
+                pass
+        step()
+
+    def _bind_shortcuts(self) -> None:
+        """Window shortcuts: Ctrl+1..6 pages, Ctrl+M mute, Ctrl+Shift+S safe mode, Ctrl+D diagnostic, F1."""
+        r = self.root
+        for i, (key, _l, _i) in enumerate(PAGES, start=1):
+            r.bind(f"<Control-Key-{i}>", lambda _e, k=key: self.show_page(k), add="+")
+        r.bind("<Control-m>", lambda _e: self.toggle_mute(), add="+")
+        r.bind("<Control-S>", lambda _e: self.set_safe_mode(not self.cfg.safe_mode), add="+")
+        r.bind("<Control-d>", lambda _e: self.copy_diagnostic(), add="+")
+        r.bind("<F1>", lambda _e: self.show_page("help"), add="+")
+        r.bind("<Escape>", lambda _e: self._close_sheet(), add="+")
+
     # ------------------------------------------------------------------ dashboard
     def _build_dashboard(self) -> Any:
         ctk = self.ctk
         page, right, body = self._page("Tableau de bord", "Suivi en direct de la minimap et des alertes",
                                        scroll=False)
+        self.dash_safe_var = ctk.BooleanVar(value=bool(self.cfg.safe_mode))
+        self.dash_safe = ctk.CTkSwitch(right, text="Mode sûr", variable=self.dash_safe_var, font=self.fonts.small,
+                                       text_color=MUTED, width=46, switch_width=36, switch_height=18,
+                                       fg_color="#1B2638", progress_color=WARNING, button_color=TEXT,
+                                       button_hover_color="#FFFFFF",
+                                       command=self.cb(lambda: self.set_safe_mode(bool(self.dash_safe_var.get()))))
+        self.dash_safe.grid(row=0, column=0, padx=(0, 14))
+        ui_kit.Tooltip(self.dash_safe, "Mode sûr : pas d'alerte de gank ni de suivi du jungler, pas de zone dans "
+                       "le brouillard. Les minuteurs et rappels restent actifs.",
+                       font=(self.fonts.family, self._font_px(12)))
         self.btn_test_voice = self._button(right, "Tester la voix", self.test_voice, "secondary", icon="voice", width=0)
-        self.btn_test_voice.grid(row=0, column=0, padx=(0, 8))
+        self.btn_test_voice.grid(row=0, column=1, padx=(0, 8))
         self.btn_demo = self._button(right, "Mode démo", self.toggle_demo, "secondary", icon="demo", width=0)
-        self.btn_demo.grid(row=0, column=1, padx=(0, 8))
+        self.btn_demo.grid(row=0, column=2, padx=(0, 8))
         self.btn_calib = self._button(right, "Calibrer la minimap", self.calibrate, "secondary", icon="target", width=0)
-        self.btn_calib.grid(row=0, column=2)
+        self.btn_calib.grid(row=0, column=3)
 
         body.grid_columnconfigure(0, weight=1)
         body.grid_columnconfigure(1, weight=0)
@@ -1335,86 +1799,55 @@ class CoachApp:
                                    border_color=WARNING)
         self.banner.grid_columnconfigure(1, weight=1)
         ctk.CTkFrame(self.banner, width=4, height=20, corner_radius=2, fg_color=WARNING).grid(
-            row=0, column=0, padx=(14, 10), pady=10)
+            row=0, column=0, padx=(14, 10), pady=8)
         self.banner_lbl = self._label(self.banner, "", self.fonts.small, TEXT, anchor="w", justify="left")
-        self.banner_lbl.grid(row=0, column=1, sticky="w", pady=10)
+        self.banner_lbl.grid(row=0, column=1, sticky="w", pady=8)
         self._button(self.banner, "Compris", self._dismiss_banner, "ghost", width=90, height=28).grid(
             row=0, column=2, padx=10)
         self._banner_dismissed: str | None = None
 
-        # --- status card -----------------------------------------------------------
-        st = self._card(body)
-        self.status_card = st
-        st.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-        st.grid_columnconfigure(1, weight=1)
-        self.dot_canvas = ctk.CTkCanvas(st, width=34, height=34, bg=PANEL, highlightthickness=0, bd=0)
-        self.dot_canvas.grid(row=0, column=0, rowspan=2, padx=(20, 12), pady=18)
-        self._dot_halo = self.dot_canvas.create_oval(2, 2, 32, 32, fill=PANEL, outline="")
-        self._dot_core = self.dot_canvas.create_oval(11, 11, 23, 23, fill=DIM, outline="")
-        tl = ctk.CTkFrame(st, fg_color="transparent")
-        tl.grid(row=0, column=1, rowspan=2, sticky="w")
-        title_row = ctk.CTkFrame(tl, fg_color="transparent")
-        title_row.grid(row=0, column=0, sticky="w")
-        self.state_title = self._label(title_row, "Démarrage…", self.fonts.state, TEXT, anchor="w")
-        self.state_title.grid(row=0, column=0, sticky="w")
-        self.demo_badge = ctk.CTkLabel(title_row, text=" DÉMO ", font=self.fonts.caps, text_color=ON_GOLD,
-                                       fg_color=GOLD, corner_radius=6, height=20)
-        self.state_msg = self._label(tl, "Initialisation du moteur d'analyse…", self.fonts.small, MUTED,
-                                     anchor="w", justify="left", wraplength=360)
-        self.state_msg.grid(row=1, column=0, sticky="w", pady=(4, 0))
-        clock = ctk.CTkFrame(st, fg_color="transparent")
-        clock.grid(row=0, column=2, rowspan=2, padx=(12, 22))
-        self._label(clock, "TEMPS DE JEU", self.fonts.caps, DIM).grid(row=0, column=0)
-        self.clock_lbl = self._label(clock, "--:--", self.fonts.clock, TEXT)
-        self.clock_lbl.grid(row=1, column=0)
-        self.btn_start = ctk.CTkButton(st, text="Démarrer l'analyse", width=210, height=48, corner_radius=10,
-                                       font=self.fonts.big_button, fg_color=GOLD, hover_color=GOLD_HOVER,
-                                       text_color=ON_GOLD, text_color_disabled="#4A4232",
-                                       image=self._icon("play", 16, ON_GOLD), compound="left",
-                                       command=self.cb(self.toggle_engine))
-        self.btn_start.grid(row=0, column=3, rowspan=2, padx=(0, 20), pady=18)
-
-        # --- left column -------------------------------------------------------------
-        left = ctk.CTkFrame(body, fg_color="transparent")
-        left.grid(row=2, column=0, sticky="nsew", padx=(0, 14))
-        left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(2, weight=1)
-
-        th = self._card(left)
-        th.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        th.grid_columnconfigure(1, weight=1)
-        th.grid_columnconfigure(0, minsize=self._scaled(150))
-        self._label(th, "MENACE", self.fonts.caps, DIM, anchor="w").grid(row=0, column=0, sticky="w",
-                                                                           padx=(20, 0), pady=(14, 0))
-        self.threat_lbl = self._label(th, "—", self.fonts.threat, DIM, anchor="w")
-        self.threat_lbl.grid(row=1, column=0, sticky="w", padx=(20, 14), pady=(3, 16))
-        gauge_box = ctk.CTkFrame(th, fg_color="transparent")
-        gauge_box.grid(row=0, column=1, rowspan=2, sticky="ew", padx=(0, 20), pady=12)
-        gauge_box.grid_columnconfigure(0, weight=1)
-        self.threat_detail = self._label(gauge_box, "Hors partie", self.fonts.small, MUTED, anchor="w")
-        self.threat_detail.grid(row=0, column=0, sticky="w")
-        self.gauge = ctk.CTkCanvas(gauge_box, height=14, bg=PANEL, highlightthickness=0, bd=0)
-        self.gauge.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        # --- hero (state, clock, threat gauge, start button) ----------------------------
         self._gauge_frac = 0.0
         self._gauge_target = 0.0
         self._gauge_color = DIM
-        self.gauge.bind("<Configure>", lambda _e: self._draw_gauge())
+        hero = HeroBanner(self, body)
+        self.hero = hero
+        hero.canvas.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+        self.status_card = hero.canvas
+        self.state_title = hero.title
+        self.state_msg = hero.msg
+        self.clock_lbl = hero.clock
+        self.threat_lbl = hero.threat
+        self.threat_detail = hero.detail
+        self.demo_badge = hero.badge
+        self.btn_start = ctk.CTkButton(hero.canvas, text="Démarrer l'analyse", width=200, height=46,
+                                       corner_radius=10, font=self.fonts.big_button, fg_color=GOLD,
+                                       hover_color=GOLD_HOVER, text_color=ON_GOLD, text_color_disabled="#4A4232",
+                                       bg_color=hero.right_bg, image=self._icon("play", 16, ON_GOLD),
+                                       compound="left", command=self.cb(self.toggle_engine))
+        hero.attach_button(self.btn_start)
+
+        # --- left column -------------------------------------------------------------
+        left = ctk.CTkFrame(body, fg_color="transparent")
+        left.grid(row=2, column=0, sticky="nsew", padx=(0, 16))
+        left.grid_columnconfigure(0, weight=1)
+        left.grid_rowconfigure(1, weight=1)
 
         en = self._card(left)
         self.enemies_card = en
-        en.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        en.grid(row=0, column=0, sticky="ew", pady=(0, 16))
         en.grid_columnconfigure(0, weight=1)
         head = ctk.CTkFrame(en, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 4))
+        head.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 2))
         head.grid_columnconfigure(1, weight=1)
         self._label(head, "Ennemis", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=0, sticky="w")
         self.visible_lbl = self._label(head, "", self.fonts.tiny, MUTED, anchor="e")
         self.visible_lbl.grid(row=0, column=1, sticky="e")
         self.jungler_lbl = self._label(en, "Jungler : en attente d'une partie", self.fonts.small, TEXT,
                                        anchor="w", justify="left", wraplength=480)
-        self.jungler_lbl.grid(row=1, column=0, sticky="ew", padx=20)
+        self.jungler_lbl.grid(row=1, column=0, sticky="ew", padx=16)
         slots = ctk.CTkFrame(en, fg_color="transparent")
-        slots.grid(row=2, column=0, sticky="ew", padx=14, pady=(8, 14))
+        slots.grid(row=2, column=0, sticky="ew", padx=12, pady=(8, 8))
         self.enemy_slots: list[dict[str, Any]] = []
         for i in range(5):
             slots.grid_columnconfigure(i, weight=1, uniform="enemy")
@@ -1423,24 +1856,71 @@ class CoachApp:
             box.grid_columnconfigure(0, weight=1)
             img = self._enemy_image(None, None, "empty")
             icon = ctk.CTkLabel(box, text="", image=img, fg_color="transparent")
-            icon.grid(row=0, column=0, pady=(10, 2))
+            icon.grid(row=0, column=0, pady=(10, 0))
             name = self._label(box, "—", self.fonts.tiny_bold, MUTED)
             name.grid(row=1, column=0, padx=4, pady=(4, 0))
             status = self._label(box, " ", self.fonts.tiny, DIM)
-            status.grid(row=2, column=0, pady=(2, 10), padx=4)
+            status.grid(row=2, column=0, pady=(1, 9), padx=4)
             self.enemy_slots.append({"box": box, "icon": icon, "name": name, "status": status, "sig": None})
+        # allies + lane match-up
+        ctk.CTkFrame(en, height=1, fg_color=BORDER, corner_radius=0).grid(row=3, column=0, sticky="ew", padx=16)
+        team = ctk.CTkFrame(en, fg_color="transparent")
+        team.grid(row=4, column=0, sticky="ew", padx=16, pady=(8, 12))
+        team.grid_columnconfigure(1, weight=1)
+        self.team_row = team
+        al = ctk.CTkFrame(team, fg_color="transparent")
+        al.grid(row=0, column=0, sticky="w")
+        self._label(al, "ALLIÉS", self.fonts.caps, DIM, anchor="w").grid(row=0, column=0, columnspan=4, sticky="w")
+        self.ally_slots: list[dict[str, Any]] = []
+        for i in range(4):
+            cell = ctk.CTkFrame(al, fg_color="transparent")
+            cell.grid(row=1, column=i, padx=(0, 10), pady=(4, 0))
+            ic = ctk.CTkLabel(cell, text="", image=self._ally_image(None, None, None, False), fg_color="transparent")
+            ic.grid(row=0, column=0)
+            nm = self._label(cell, "—", self.fonts.tiny, DIM)
+            nm.grid(row=1, column=0, pady=(2, 0))
+            self.ally_slots.append({"icon": ic, "name": nm, "sig": None})
+        mu = ctk.CTkFrame(team, fg_color="transparent")
+        self.matchup_box = mu
+        mu.grid(row=0, column=2, sticky="e")
+        self.matchup_cap = self._label(mu, "FACE-À-FACE", self.fonts.caps, DIM, anchor="e")
+        self.matchup_cap.grid(row=0, column=0, columnspan=3, sticky="e")
+        self.mu_me = ctk.CTkLabel(mu, text="", image=self._ally_image(None, None, None, False), fg_color="transparent")
+        self.mu_me.grid(row=1, column=0, pady=(4, 0))
+        self._label(mu, "VS", self.fonts.tiny_bold, GOLD).grid(row=1, column=1, padx=6, pady=(4, 0))
+        self.mu_opp = ctk.CTkLabel(mu, text="", image=self._ally_image(None, None, None, False, ring=ENEMY_RING),
+                                   fg_color="transparent")
+        self.mu_opp.grid(row=1, column=2, pady=(4, 0))
+        self.matchup_lbl = self._label(mu, "En attente", self.fonts.tiny, DIM, anchor="e")
+        self.matchup_lbl.grid(row=2, column=0, columnspan=3, sticky="e", pady=(2, 0))
+        self._matchup_sig: tuple = ()
 
         jr = self._card(left)
-        jr.grid(row=2, column=0, sticky="nsew")
+        jr.grid(row=1, column=0, sticky="nsew")
         jr.grid_columnconfigure(0, weight=1)
         jr.grid_rowconfigure(1, weight=1)
-        self._label(jr, "Journal des alertes", self.fonts.h2, GOLD, anchor="w").grid(
-            row=0, column=0, sticky="w", padx=20, pady=(14, 4))
+        jh = ctk.CTkFrame(jr, fg_color="transparent")
+        jh.grid(row=0, column=0, sticky="ew", padx=(16, 12), pady=(12, 4))
+        jh.grid_columnconfigure(0, weight=1)
+        self._label(jh, "Journal", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=0, sticky="w")
+        self._journal_filter = "all"
+        self._journal_filters = {"Tout": "all", "Dangers": "danger", "Alertes": "warning", "Infos": "info"}
+        self.journal_seg = ctk.CTkSegmentedButton(jh, values=list(self._journal_filters), height=24,
+                                                  font=self.fonts.tiny, fg_color=PANEL_LO, selected_color=GOLD_DARK,
+                                                  selected_hover_color="#8C6A32", unselected_color=PANEL_LO,
+                                                  unselected_hover_color=PANEL_HI, text_color=TEXT, corner_radius=6,
+                                                  command=self.cb(self._on_journal_filter))
+        self.journal_seg.set("Tout")
+        self.journal_seg.grid(row=0, column=1, sticky="e")
+        clr = ctk.CTkButton(jh, text="", width=26, height=24, corner_radius=6, fg_color="transparent",
+                            hover_color=PANEL_HI, image=self._icon("close", 12, DIM), command=self.cb(self.clear_journal))
+        clr.grid(row=0, column=2, padx=(6, 0))
+        ui_kit.Tooltip(clr, "Effacer le journal", font=(self.fonts.family, self._font_px(12)))
         self.journal = ctk.CTkTextbox(jr, fg_color=PANEL, text_color=TEXT, font=self.fonts.small,
                                       wrap="word", activate_scrollbars=True, border_width=0,
                                       scrollbar_button_color="#1B2638",
-                                      scrollbar_button_hover_color=GOLD_DARK, height=80)
-        self.journal.grid(row=1, column=0, sticky="nsew", padx=(14, 8), pady=(0, 12))
+                                      scrollbar_button_hover_color=GOLD_DARK, height=60)
+        self.journal.grid(row=1, column=0, sticky="nsew", padx=(10, 8), pady=(0, 10))
         for lvl, col in LEVEL_COLORS.items():
             self.journal.tag_config(f"lvl{lvl}", foreground=col)
         self.journal.tag_config("time", foreground=DIM)
@@ -1448,17 +1928,26 @@ class CoachApp:
         self.journal.tag_config("empty", foreground=DIM)
         self._render_journal()
 
-        # --- right column (radar + tech) ----------------------------------------------
-        rc = self._card(body, width=RADAR_PX + 40)
-        rc.grid(row=2, column=1, sticky="n")
+        # --- right column (radar + tech + session) ----------------------------------------
+        col = ctk.CTkFrame(body, fg_color="transparent")
+        col.grid(row=2, column=1, sticky="nsew")
+        col.grid_columnconfigure(0, weight=1)
+        rc = self._card(col, width=RADAR_PX + 40)
+        rc.grid(row=0, column=0, sticky="new")
         rc.grid_columnconfigure(0, weight=1)
         rh = ctk.CTkFrame(rc, fg_color="transparent")
-        rh.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 8))
+        rh.grid(row=0, column=0, sticky="ew", padx=(16, 12), pady=(12, 8))
         rh.grid_columnconfigure(0, weight=1)
-        self._label(rh, "Radar en direct", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=0, sticky="w")
-        self.radar_badge = ctk.CTkLabel(rh, text=" HORS LIGNE ", font=self.fonts.caps, text_color=MUTED,
-                                        fg_color=PANEL_HI, corner_radius=6, height=20)
-        self.radar_badge.grid(row=0, column=1, sticky="e")
+        self._label(rh, "Radar", self.fonts.h2, GOLD, anchor="w").grid(row=0, column=0, sticky="w")
+        for i, (icon, tip, fn) in enumerate((
+                ("refresh", "Vérifier la minimap maintenant (relocaliser)", lambda: self.relocate()),
+                ("report", "Ouvrir le dernier rapport", lambda: self.open_last_report()),
+                ("folder", "Ouvrir le dossier des rapports", lambda: self.open_games_dir()),
+                ("copy", "Copier le diagnostic (Ctrl+D)", lambda: self.copy_diagnostic()))):
+            b = ctk.CTkButton(rh, text="", width=28, height=26, corner_radius=6, fg_color="transparent",
+                              hover_color=PANEL_HI, image=self._icon(icon, 15, MUTED), command=self.cb(fn))
+            b.grid(row=0, column=i + 1, padx=(2, 0))
+            ui_kit.Tooltip(b, tip, font=(self.fonts.family, self._font_px(12)))
         import tkinter as tk  # noqa: PLC0415
         from PIL import ImageTk  # noqa: PLC0415
 
@@ -1466,25 +1955,46 @@ class CoachApp:
         self._radar_placeholder = radar_placeholder(self._radar_size)
         self._radar_photo = ImageTk.PhotoImage(self._radar_placeholder, master=self.root)
         holder = tk.Frame(rc, bg=PANEL, width=self._radar_size, height=self._radar_size)
-        holder.grid(row=1, column=0, padx=20)
+        holder.grid(row=1, column=0, padx=16)
         holder.grid_propagate(False)
         self.radar_lbl = tk.Label(holder, image=self._radar_photo, bg=PANEL, bd=0, highlightthickness=0)
         self.radar_lbl.place(x=0, y=0, relwidth=1, relheight=1)
         self.radar_msg = tk.Label(holder, text="En attente d'une partie…", bg=PANEL_LO, fg=MUTED,
                                   font=(self.fonts.family, self._font_px(12)), padx=12, pady=6)
         self.radar_msg.place(relx=0.5, rely=0.5, anchor="center")
+        self.radar_badge = ctk.CTkLabel(holder, text=" HORS LIGNE ", font=self.fonts.caps, text_color=MUTED,
+                                        fg_color=PANEL_HI, corner_radius=6, height=18, bg_color=PANEL_LO)
+        self.radar_badge.place(x=self._scaled(8), y=self._scaled(8))
         tech = ctk.CTkFrame(rc, fg_color="transparent")
-        tech.grid(row=2, column=0, sticky="ew", padx=16, pady=(12, 16))
+        tech.grid(row=2, column=0, sticky="ew", padx=12, pady=(10, 14))
         self.tech: dict[str, Any] = {}
-        for i, (key, label) in enumerate((("fps", "FPS"), ("detector", "DÉTECTEUR"), ("voice", "VOIX"))):
+        for i, (key, label, tip) in enumerate((
+                ("fps", "FPS", "Images de minimap analysées par seconde"),
+                ("cpu", "CPU", "Processeur utilisé par TreeAI Coach (toute la machine)"),
+                ("detector", "IA", "Détecteur de champions"),
+                ("voice", "VOIX", "Moteur de voix"))):
             tech.grid_columnconfigure(i, weight=1, uniform="tech")
             tile = ctk.CTkFrame(tech, fg_color=PANEL_LO, corner_radius=8)
-            tile.grid(row=0, column=i, sticky="ew", padx=4)
-            self._label(tile, label, self.fonts.caps, DIM).grid(row=0, column=0, padx=8, pady=(7, 0))
+            tile.grid(row=0, column=i, sticky="ew", padx=3)
+            self._label(tile, label, self.fonts.caps, DIM).grid(row=0, column=0, padx=6, pady=(6, 0))
             val = self._label(tile, "—", self.fonts.tiny_bold, TEXT)
-            val.grid(row=1, column=0, padx=8, pady=(0, 7))
+            val.grid(row=1, column=0, padx=6, pady=(0, 6))
             tile.grid_columnconfigure(0, weight=1)
             self.tech[key] = val
+            ui_kit.Tooltip(tile, tip, font=(self.fonts.family, self._font_px(12)))
+        # session mini card (hidden when the window is too short)
+        ss = self._card(col)
+        self.session_card = ss
+        ss.grid(row=1, column=0, sticky="new", pady=(16, 0))
+        ss.grid_columnconfigure((0, 1, 2), weight=1, uniform="sess")
+        self.dash_session_scope = self._label(ss, "SESSION", self.fonts.caps, DIM, anchor="w")
+        self.dash_session_scope.grid(row=0, column=0, columnspan=3, sticky="w", padx=16, pady=(12, 2))
+        self.dash_session: dict[str, Any] = {}
+        for i, (key, label) in enumerate((("games", "parties"), ("winrate", "victoires"), ("avoided", "ganks évités"))):
+            v = self._label(ss, "—", self.fonts.h2, TEXT)
+            v.grid(row=1, column=i, pady=(2, 0))
+            self._label(ss, label, self.fonts.tiny, MUTED).grid(row=2, column=i, pady=(0, 12))
+            self.dash_session[key] = v
         return page
 
     def _scaled(self, px: int) -> int:
@@ -1496,44 +2006,48 @@ class CoachApp:
     def _font_px(self, size: int) -> int:
         return -abs(self._scaled(size))
 
-    def _enemy_image(self, icon: np.ndarray | None, alias: str | None, mode: str) -> Any:
-        """CTkImage of an enemy slot portrait (cached per champion and visibility)."""
-        key = (alias, mode, icon is not None)
+    def _enemy_image(self, icon: np.ndarray | None, alias: str | None, mode: str, role: str | None = None,
+                     mia: float | None = None, jungler: bool = False) -> Any:
+        """CTkImage of an enemy card portrait: team ring, role badge, MIA arc (cached)."""
+        bucket = None if mia is None else min(20, int(mia // 3))
+        key = (alias, mode, icon is not None, role, bucket, jungler)
         img = self._enemy_cache.get(key)
         if img is None:
-            ring = {"visible": DANGER, "approach": WARNING, "mia": DIM, "empty": BORDER}.get(mode, DIM)
-            pil = circle_icon(icon, 88, ring, grey=(mode == "mia"), bg=PANEL_LO)
-            img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(44, 44))
-            if len(self._enemy_cache) > 80:
+            ring = {"visible": ENEMY_RING, "approach": WARNING, "mia": DIM, "empty": BORDER}.get(mode, DIM)
+            pil = circle_icon(icon, 104, ring, grey=(mode == "mia"), bg=PANEL_LO)
+            if mode != "empty":
+                pil = ui_kit.decorate_portrait(pil, role, None if bucket is None else min(1.0, bucket * 3 / 60.0),
+                                               arc_color=WARNING, badge_bg=PANEL_LO, star=jungler)
+            img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(52, 52))
+            if len(self._enemy_cache) > 120:
                 self._enemy_cache.clear()
             self._enemy_cache[key] = img
         return img
 
+    def _ally_image(self, icon: np.ndarray | None, alias: str | None, role: str | None, visible: bool,
+                    ring: str = ALLY) -> Any:
+        key = ("ally", alias, icon is not None, role, visible, ring)
+        img = self._enemy_cache.get(key)
+        if img is None:
+            pil = circle_icon(icon, 72, ring if (visible or alias) else BORDER, grey=not visible and icon is not None,
+                              bg=PANEL)
+            if alias:
+                pil = ui_kit.decorate_portrait(pil, role, badge_bg=PANEL)
+            img = self.ctk.CTkImage(light_image=pil, dark_image=pil, size=(36, 36))
+            self._enemy_cache[key] = img
+        return img
+
     def _draw_gauge(self) -> None:
-        c = self.gauge
-        try:
-            w = max(10, int(c.winfo_width()))
-            h = max(6, int(c.winfo_height()))
-        except Exception:
-            return
-        c.delete("all")
-        r = h / 2
-        self._round_bar(c, 0, 0, w, h, r, "#1B2638")
-        # segment ticks
-        for f in (1 / 3, 2 / 3):
-            x = w * f
-            c.create_line(x, 2, x, h - 2, fill=PANEL, width=2)
-        fw = max(0.0, min(1.0, self._gauge_frac)) * w
-        if fw >= h:
-            self._round_bar(c, 0, 0, fw, h, r, self._gauge_color)
-        elif fw > 1:
-            c.create_oval(0, 0, h, h, fill=self._gauge_color, outline="")
+        hero = getattr(self, "hero", None)
+        if hero is not None:
+            hero.draw_gauge(self._gauge_frac, self._gauge_color)
 
     @staticmethod
     def _round_bar(c: Any, x0: float, y0: float, x1: float, y1: float, r: float, color: str) -> None:
         c.create_oval(x0, y0, x0 + 2 * r, y1, fill=color, outline="")
         c.create_oval(x1 - 2 * r, y0, x1, y1, fill=color, outline="")
         c.create_rectangle(x0 + r, y0, x1 - r, y1, fill=color, outline="")
+
 
     # ------------------------------------------------------------------ alerts & voice page
     def _build_alerts_page(self) -> Any:
@@ -1565,8 +2079,17 @@ class CoachApp:
         self._switch_row(s, "break_reminder", "Conseil de pause",
                          "Après 3 défaites d'affilée : « une pause de 10 minutes aide à rester concentré ».")
 
-        s = self._section(body, 3, "Voix", "Synthèse vocale Windows (SAPI), voix française de préférence.")
-        _row, slot = self._row(s, "Voix", "« Automatique » choisit la meilleure voix française installée.")
+        s = self._section(body, 3, "Voix", "Voix naturelle Microsoft (en ligne, mise en cache), sinon voix Windows.")
+        self._choice_row(s, "voice_engine", "Moteur de voix",
+                         "La voix naturelle est préparée en début de partie ; sans Internet, la voix Windows prend le relais.",
+                         [("auto", "Naturelle (Microsoft Neural, en ligne)"), ("onecore", "Windows (OneCore)"),
+                          ("sapi", "Windows (SAPI)")], width=300)
+        from treeaicoach.tts_neural import NEURAL_VOICES  # noqa: PLC0415
+
+        neural = list(NEURAL_VOICES) + ([(self.cfg.neural_voice, self.cfg.neural_voice)]
+                                        if self.cfg.neural_voice not in dict(NEURAL_VOICES) else [])
+        self._choice_row(s, "neural_voice", "Voix naturelle", None, neural, width=300)
+        _row, slot = self._row(s, "Voix Windows", "« Automatique » choisit la meilleure voix française installée.")
         self.voice_menu = self.ctk.CTkOptionMenu(
             slot, values=[AUTO_VOICE], command=self.cb(self._on_voice_choice), width=300, height=32,
             font=self.fonts.small, dropdown_font=self.fonts.small, fg_color=PANEL_HI, button_color="#16284A",
@@ -2126,13 +2649,7 @@ class CoachApp:
         keep = {"manual_minimap_rect": self.cfg.manual_minimap_rect, "ui_geometry": self.cfg.ui_geometry}
         new = dataclasses.replace(Config(), **keep).validated()
         self._replace_config(new, changed=set(f.name for f in dataclasses.fields(Config)))
-        for refresh in list(self._widgets_by_field.values()):
-            try:
-                refresh()
-            except Exception:
-                log.debug("Widget refresh failed", exc_info=True)
-        self._refresh_radius_text()
-        self._refresh_position_menus()
+        self._refresh_widgets()
         self.show_toast("Réglages réinitialisés.")
 
     # ------------------------------------------------------------------ help page
@@ -2338,13 +2855,26 @@ class CoachApp:
         if diff & VOICE_FIELDS and self.voice is not None:
             try:
                 self.voice.set_params(voice_name=cfg.voice_name, rate=cfg.voice_rate, volume=cfg.voice_volume,
-                                      beep_on_danger=cfg.beep_on_danger)
+                                      beep_on_danger=cfg.beep_on_danger, engine=cfg.voice_engine,
+                                      neural_voice=cfg.neural_voice)
             except Exception:
                 log.exception("voice.set_params failed")
         if diff & HOTKEY_FIELDS:
             self._rebind_hotkeys()
         if diff & DETECTOR_FIELDS and self.engine is not None:
             self._rebuild_engine(self.demo, start=None, new_detector=True)
+        for f in diff:     # keep every switch of a boolean setting in sync (dashboard / sidebar / pages)
+            if isinstance(getattr(cfg, f, None), bool) and f in self._widgets_by_field:
+                try:
+                    self._widgets_by_field[f]()
+                except Exception:
+                    pass
+        if diff & {"safe_mode", "overlay_enabled"}:
+            self._sync_quick()
+        if "colorblind" in diff:
+            self._apply_palette()
+        if diff & set(ui_kit.PRESETS["equilibre"]):
+            self._refresh_preset_label()
         if diff & {"sensitivity", "warn_radius", "danger_radius"}:
             self._refresh_radius_text()
         if "manual_minimap_rect" in diff or "minimap_mode" in diff:
@@ -2379,7 +2909,8 @@ class CoachApp:
                 try:
                     from treeaicoach.voice import VoiceEngine  # noqa: PLC0415
 
-                    voice = VoiceEngine(cfg.voice_name, cfg.voice_rate, cfg.voice_volume, cfg.beep_on_danger)
+                    voice = VoiceEngine(cfg.voice_name, cfg.voice_rate, cfg.voice_volume, cfg.beep_on_danger,
+                                        engine=cfg.voice_engine, neural_voice=cfg.neural_voice)
                     voice.start()
                 except Exception:
                     log.exception("Voice unavailable")
@@ -2794,6 +3325,8 @@ class CoachApp:
         self.clock_lbl.configure(text_color=TEXT if gt is not None else DIM)
 
         # tech tiles
+        cpu = self._cpu.sample()
+        self._set_text(self.tech["cpu"], f"{cpu:.0f} %" if cpu is not None else "—")
         fps = getattr(st, "fps", None) if st is not None else None
         self._set_text(self.tech["fps"], fmt_decimal_fr(fps, 1) if isinstance(fps, (int, float)) and running
                        and key == "RUNNING" else "—")
@@ -2808,13 +3341,15 @@ class CoachApp:
         if banner and banner != self._banner_dismissed:
             self._set_text(self.banner_lbl, str(banner))
             if not self.banner.grid_info():
-                self.banner.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+                self.banner.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         elif self.banner.grid_info():
             self.banner.grid_remove()
 
         self._update_threat(ov)
         self._update_enemies(ov, st)
+        self._update_team(ov)
         self._collect_alerts(st, ov)
+        self._game_events(key, st)
         if self._current_page == "dashboard":
             self._draw_gauge_step()
 
@@ -2850,6 +3385,8 @@ class CoachApp:
             self.threat_lbl.configure(text_color=DIM)
             self._set_text(self.threat_detail, "Hors partie")
             self._gauge_target, self._gauge_color = 0.0, DIM
+            self.hero.set_glow(getattr(self, "_state_color", PANEL_HI) if self._last_state_key != "STOPPED"
+                               else PANEL_HI)
             return
         lvl = int(getattr(ov, "threat_level", 0) or 0)
         lvl = min(max(lvl, 0), 2)
@@ -2861,6 +3398,7 @@ class CoachApp:
         self.threat_lbl.configure(text_color=THREAT_COLORS[lvl])
         self._set_text(self.threat_detail, detail)
         self._gauge_target, self._gauge_color = threat_fraction(lvl), THREAT_COLORS[lvl]
+        self.hero.set_glow(THREAT_COLORS[lvl] if lvl else SAFE)
 
     def _draw_gauge_step(self) -> None:
         diff = self._gauge_target - self._gauge_frac
@@ -2872,6 +3410,7 @@ class CoachApp:
 
     def _update_enemies(self, ov: Any, st: Any) -> None:
         enemies = list(getattr(ov, "enemies", []) or [])[:5] if ov is not None else []
+        roles = dict(getattr(ov, "roles", {}) or {}) if ov is not None else {}
         jl = getattr(ov, "jungler_line", None) if ov is not None else None
         if ov is None:
             jl = "Jungler : en attente d'une partie"
@@ -2896,23 +3435,82 @@ class CoachApp:
             appr = bool(getattr(e, "approaching", False))
             jungler = bool(getattr(e, "is_jungler", False))
             ago = getattr(e, "last_seen_ago", None)
+            alias = getattr(e, "alias", None)
+            role = ui_kit.norm_role(getattr(e, "role", None) or roles.get(alias or "") or
+                                    roles.get(getattr(e, "key", "") or ""))
             mode = "approach" if visible and appr else "visible" if visible else "mia"
-            name = str(getattr(e, "name", "") or getattr(e, "alias", "") or "?")
+            name = str(getattr(e, "name", "") or alias or "?")
+            mia = None
             if visible:
                 status, scol = ("Approche", WARNING) if appr else ("Visible", SAFE)
             elif isinstance(ago, (int, float)) and math.isfinite(ago):
                 status, scol = f"MIA {_fmt_ago(ago)}", (WARNING if jungler and ago < 45 else MUTED)
+                mia = float(ago)
             else:
                 status, scol = "Jamais vu", DIM
-            sig = (getattr(e, "alias", None), mode, name, status, jungler)
+            sig = (alias, mode, name, status, jungler, role)
             if slot["sig"] == sig:
                 continue
             slot["sig"] = sig
-            slot["icon"].configure(image=self._enemy_image(getattr(e, "icon", None), getattr(e, "alias", None), mode))
-            slot["name"].configure(text=_ellipsize(name, 11) + (" ★" if jungler else ""),
-                                   text_color=GOLD if jungler else TEXT)
+            slot["icon"].configure(image=self._enemy_image(getattr(e, "icon", None), alias, mode, role, mia, jungler))
+            slot["name"].configure(text=_ellipsize(name, 11), text_color=GOLD if jungler else TEXT)
             slot["status"].configure(text=status, text_color=scol)
             slot["box"].configure(border_color=WARNING if appr else (GOLD_DARK if jungler else BORDER))
+
+    def _update_team(self, ov: Any) -> None:
+        """Allies row + lane match-up (me vs the enemy of my role)."""
+        allies = list(getattr(ov, "allies", []) or [])[:4] if ov is not None else []
+        roles = dict(getattr(ov, "roles", {}) or {}) if ov is not None else {}
+        for i, slot in enumerate(self.ally_slots):
+            a = allies[i] if i < len(allies) else None
+            if a is None:
+                sig: tuple = ("empty",)
+                if slot["sig"] != sig:
+                    slot["sig"] = sig
+                    slot["icon"].configure(image=self._ally_image(None, None, None, False))
+                    slot["name"].configure(text="—", text_color=DIM)
+                continue
+            alias = getattr(a, "alias", None)
+            role = ui_kit.norm_role(getattr(a, "role", None) or roles.get(alias or ""))
+            visible = bool(getattr(a, "visible", False))
+            name = str(getattr(a, "name", "") or alias or "?")
+            sig = (alias, role, visible, name)
+            if slot["sig"] == sig:
+                continue
+            slot["sig"] = sig
+            slot["icon"].configure(image=self._ally_image(getattr(a, "icon", None), alias, role, True))
+            slot["name"].configure(text=_ellipsize(name, 9), text_color=TEXT if visible else MUTED)
+        me, my_role, opp = ui_kit.lane_opponent(ov) if ov is not None else (None, None, None)
+        if ov is None:
+            text, col = "En attente", DIM
+        elif my_role is None:
+            text, col = "Rôle inconnu", DIM
+        elif opp is None:
+            text, col = f"{ui_kit.ROLE_FR.get(my_role, my_role)} · adversaire inconnu", MUTED
+        else:
+            ago = getattr(opp, "last_seen_ago", None)
+            oname = _ellipsize(str(getattr(opp, "name", "") or getattr(opp, "alias", "") or "?"), 12)
+            if getattr(opp, "visible", False):
+                text, col = f"{oname} · visible", SAFE
+            elif isinstance(ago, (int, float)) and math.isfinite(ago):
+                text, col = f"{oname} · MIA {_fmt_ago(ago)}", WARNING if ago > 20 else MUTED
+            else:
+                text, col = f"{oname} · jamais vu", MUTED
+        self._set_text(self.matchup_lbl, text)
+        try:
+            self.matchup_lbl.configure(text_color=col)
+        except Exception:
+            pass
+        sig = (me, my_role, getattr(opp, "alias", None), bool(getattr(opp, "visible", False)),
+               getattr(ov, "me_icon", None) is not None if ov is not None else False)
+        if sig != self._matchup_sig:
+            self._matchup_sig = sig
+            self.mu_me.configure(image=self._ally_image(getattr(ov, "me_icon", None) if ov is not None else None,
+                                                        me or ("me" if my_role else None), my_role, True))
+            self.mu_opp.configure(image=self._ally_image(getattr(opp, "icon", None) if opp is not None else None,
+                                                         getattr(opp, "alias", None), my_role if opp else None,
+                                                         bool(getattr(opp, "visible", False)) or opp is not None,
+                                                         ring=ENEMY_RING))
 
     # ------------------------------------------------------------------ alerts journal
     def _collect_alerts(self, st: Any, ov: Any) -> None:
@@ -2921,9 +3519,13 @@ class CoachApp:
         recent = getattr(eng, "recent_alerts", None) if eng is not None else None
         if callable(recent):
             try:
-                items = list(recent() or [])[-JOURNAL_MAX:]
+                try:
+                    items = list(recent(JOURNAL_MAX) or [])[-JOURNAL_MAX:]
+                except TypeError:
+                    items = list(recent() or [])[-JOURNAL_MAX:]
                 entries = [_alert_entry(a) for a in items]
-                entries = [e for e in entries if e is not None]
+                hidden = getattr(self, "_journal_hidden", set())
+                entries = [e for e in entries if e is not None and e not in hidden]
                 sig = tuple(entries)
                 if sig != self._journal_sig:
                     self._journal_sig = sig
@@ -2950,14 +3552,31 @@ class CoachApp:
             self._journal.append((gt, 1, str(last)))
             self._render_journal()
 
+    def _on_journal_filter(self, label: str) -> None:
+        self._journal_filter = self._journal_filters.get(label, "all")
+        self._render_journal()
+
+    @_guarded
+    def clear_journal(self) -> None:
+        """Empty the dashboard journal (alerts already spoken are not shown again)."""
+        hidden = getattr(self, "_journal_hidden", set())
+        hidden.update(self._journal)
+        self._journal_hidden = hidden
+        self._journal.clear()
+        self._render_journal()
+
     def _render_journal(self) -> None:
         tb = self.journal
+        want = {"all": None, "danger": 2, "warning": 1, "info": 0}.get(getattr(self, "_journal_filter", "all"))
         try:
             tb.configure(state="normal")
             tb.delete("1.0", "end")
-            if not self._journal:
-                tb.insert("end", "Aucune alerte pour l'instant. Les annonces vocales apparaîtront ici.", "empty")
-            for gt, lvl, text in reversed(self._journal):
+            rows = [(gt, lvl, text) for gt, lvl, text in self._journal
+                    if want is None or min(max(int(lvl), 0), 2) == want]
+            if not rows:
+                tb.insert("end", "Aucune alerte pour l'instant. Les annonces vocales apparaîtront ici."
+                          if not self._journal else "Aucune alerte de ce type.", "empty")
+            for gt, lvl, text in reversed(rows):
                 lvl = min(max(int(lvl), 0), 2)
                 tb.insert("end", f"{fmt_clock(gt) if gt is not None else '  —  '}   ", ("time", "line"))
                 tb.insert("end", "● ", (f"lvl{lvl}", "line"))
@@ -3006,11 +3625,15 @@ class CoachApp:
                 color = getattr(self, "_state_color", DIM)
                 active = self._last_state_key in ("RUNNING", "WAITING_GAME", "LOCATING", "STARTING")
                 k = 0.5 - 0.5 * math.cos(2 * math.pi * self._pulse_phase) if active else 0.0
-                r = 6 + 10 * k
-                self.dot_canvas.coords(self._dot_halo, 17 - r, 17 - r, 17 + r, 17 + r)
-                self.dot_canvas.itemconfigure(self._dot_halo, fill=_blend(color, PANEL, 0.55 * (1 - k) + 0.1))
-                self.dot_canvas.itemconfigure(self._dot_core, fill=color)
+                self.hero.pulse(color, k)
                 self._draw_gauge_step()
+            # sidebar status dot breathes too (all pages)
+            if self.root.state() != "iconic":
+                self._pill_phase = (getattr(self, "_pill_phase", 0.0) + PULSE_MS / 1000 / 2.2) % 1.0
+                color = getattr(self, "_state_color", DIM)
+                active = self._last_state_key in ("RUNNING", "WAITING_GAME", "LOCATING", "STARTING")
+                k2 = 0.5 - 0.5 * math.cos(2 * math.pi * self._pill_phase) if active else 1.0
+                self.pill_dot.itemconfigure(self._pill_dot_item, fill=_blend(color, PANEL, 0.55 * (1 - k2)))
         except Exception:
             log.debug("Pulse failed", exc_info=True)
         self.root.after(PULSE_MS, self._pulse_loop)
@@ -3106,6 +3729,13 @@ def _fmt_ago(s: float) -> str:
 
 def _ellipsize(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def copy_value(v: Any) -> Any:
+    """Deep copy of a config default (lists / dicts)."""
+    import copy  # noqa: PLC0415
+
+    return copy.deepcopy(v)
 
 
 def _blend(c1: str, c2: str, t: float) -> str:

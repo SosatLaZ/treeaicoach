@@ -60,6 +60,7 @@ SNAPSHOT_PERIOD_S = 10.0        # game seconds between two periodic snapshots
 MY_POS_PERIOD_S = 1.0           # my position: 1 Hz (game time)
 SIGHTING_PERIOD_S = 0.5         # enemy sightings: <= 2 Hz per champion (game time)
 AUTOSAVE_PERIOD_S = 60.0        # .partial.json refresh period (monotonic time)
+SCOREBOARD_EVERY_S = 60.0       # Tab scoreboard timeline: one sample per game minute
 NEW_GAME_BACKJUMP_S = 60.0      # game_time going back more than this = another game
 SAME_GAME_TOLERANCE_S = 30.0    # after finish(): same player/champion and game_time >= end - this -> same game
 MAX_SNAPSHOTS = 2000
@@ -292,6 +293,9 @@ class GameRecorder:
         self._anchor: tuple[float, float] | None = None    # (game_time, monotonic t) of last game info
         self._dirty = False
         self._last_autosave: float | None = None
+        self._scoreboard: dict[str, Any] | None = None          # latest scoreboard.ScoreboardSummary.to_dict()
+        self._scoreboard_timeline: list[list[Any]] = []         # [gt, team gold diff, {role: [gold, cs, lvl]}]
+        self._last_sb_gt: float = -math.inf
 
     def _warn_once(self, key: str, msg: str, *args: Any) -> None:
         if key not in self._warned:
@@ -573,6 +577,28 @@ class GameRecorder:
                 _decimate(lst)
 
     # ------------------------------------------------------------------ alerts
+    def on_scoreboard(self, summary: Any, game_time: float | None) -> None:
+        """Tab scoreboard summary (``ScoreboardSummary.to_dict()``): kept as the latest value +
+        a compact timeline every :data:`SCOREBOARD_EVERY_S` of game time (lane diffs by role)."""
+        try:
+            if not isinstance(summary, dict):
+                return
+            with self._lock:
+                if not self.active:
+                    return
+                self._scoreboard = summary
+                gt = _finite(game_time, None)
+                if gt is not None and gt - self._last_sb_gt >= SCOREBOARD_EVERY_S:
+                    self._last_sb_gt = gt
+                    lanes = {str(m.get("role")): [m.get("gold_diff", 0), m.get("cs_diff", 0), m.get("level_diff", 0)]
+                             for m in summary.get("matchups") or [] if isinstance(m, dict)}
+                    self._scoreboard_timeline.append([round(gt, 1), summary.get("team_gold_diff", 0), lanes])
+                    if len(self._scoreboard_timeline) > 400:
+                        _decimate(self._scoreboard_timeline)
+                self._dirty = True
+        except Exception:
+            log.exception("GameRecorder.on_scoreboard failed")
+
     def on_alert(self, alert: Any, game_time: float | None) -> None:
         """Record an announced alert. Never raises."""
         try:
@@ -650,6 +676,7 @@ class GameRecorder:
             "sightings": {k: list(v) for k, v in self._sightings.items()},
             "alerts": list(self._alerts),
             "events": list(self._events),
+            "scoreboard": {"final": self._scoreboard, "timeline": list(self._scoreboard_timeline)},
         }
 
     def snapshot(self, recent_s: float | None = None) -> dict[str, Any] | None:

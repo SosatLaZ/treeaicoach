@@ -62,6 +62,7 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "hud_position": ("above_minimap", "top_left", "top_right", "left_middle", "custom"),
     "overlay_mode": ("minimap", "radar", "off"),
     "fog_mode": ("jungler", "all", "off"),
+    "voice_engine": ("auto", "neural", "onecore", "sapi"),
 }
 BOOL_FIELDS: tuple[str, ...] = (
     "beep_on_danger",
@@ -115,6 +116,28 @@ VOICE_NAME_MAX_LEN = 256
 #: Update settings: free text fields (URL / GitHub token), printable, stripped, bounded.
 UPDATE_TEXT_FIELDS: dict[str, int] = {"update_channel_url": 2048, "github_token": 512}
 
+# v1.5 interface settings (ui.py / ui_kit.py; overlay_* and layer_* are read by the overlay with getattr)
+INT_RANGES.update({
+    "voice_quiet_start_s": (0, 300),   # no non-danger speech during the first N seconds of a game
+    "quiet_start_h": (0, 23),
+    "quiet_end_h": (0, 23),
+})
+FLOAT_RANGES.update({
+    "overlay_opacity": (0.3, 1.0),
+    "overlay_scale": (0.6, 1.6),
+})
+CHOICES.update({
+    "ui_last_page": ("dashboard", "alerts", "overlay", "analysis", "settings", "help"),
+    "ui_scaling": ("auto", "90", "100", "110", "125", "150"),
+    "voice_language": ("fr", "en"),
+})
+BOOL_FIELDS = BOOL_FIELDS + (
+    "voice_info_alerts", "quiet_hours", "colorblind", "layer_roles", "layer_arrows", "layer_zones",
+    "layer_ghosts", "ui_remember_page", "ui_onboarding_done", "ui_start_minimized", "ui_minimize_on_game",
+    "ui_confirm_quit", "ui_notify_report", "ui_notify_game",
+)
+UPDATE_TEXT_FIELDS["ui_seen_changelog"] = 32
+
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
 RECT_SCREEN_RANGE = (200, 32768)   # screen_w / screen_h
@@ -143,6 +166,8 @@ class Config:
     voice_name: str = ""            # "" = best available French voice
     voice_rate: int = 2             # -10..10 (SAPI)
     voice_volume: int = 100         # 0..100
+    voice_engine: str = "auto"      # auto (= neural) | neural | onecore | sapi (see voice.py)
+    neural_voice: str = "fr-FR-DeniseNeural"   # Microsoft Edge neural voice id (online)
     beep_on_danger: bool = True
     # alerts
     alert_jungler_approach: bool = True
@@ -205,6 +230,32 @@ class Config:
     update_channel_url: str = ""    # "" = default GitHub URL of release/version.json
     github_token: str = ""          # personal access token for the private repo ("" = none)
     check_updates_on_start: bool = True
+    # v1.5 voice comfort (ui_kit.VoiceGate: DANGER announcements always pass)
+    voice_info_alerts: bool = True   # INFO announcements (objectives, tips, praise...)
+    voice_quiet_start_s: int = 0     # 0..300: silence (except danger) at the start of a game
+    quiet_hours: bool = False
+    quiet_start_h: int = 23
+    quiet_end_h: int = 8
+    voice_language: str = "fr"       # "fr" | "en" (en: not available yet)
+    # v1.5 overlay look (read by the overlay with getattr)
+    overlay_opacity: float = 1.0     # 0.3..1.0
+    overlay_scale: float = 1.0       # 0.6..1.6 (markers / HUD size)
+    layer_roles: bool = True         # role badges on the minimap layer
+    layer_arrows: bool = True        # movement arrows
+    layer_zones: bool = True         # danger / warning circles
+    layer_ghosts: bool = True        # last-seen "ghost" portraits in the fog
+    colorblind: bool = False         # colour-blind friendly palette (UI + overlay)
+    # v1.5 interface
+    ui_last_page: str = "dashboard"
+    ui_remember_page: bool = True
+    ui_onboarding_done: bool = False
+    ui_seen_changelog: str = ""
+    ui_start_minimized: bool = False
+    ui_minimize_on_game: bool = False
+    ui_confirm_quit: bool = True
+    ui_notify_report: bool = True
+    ui_notify_game: bool = True
+    ui_scaling: str = "auto"         # "auto" | "90" | "100" | "110" | "125" | "150" (% of the system scale)
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""
@@ -311,6 +362,16 @@ def _as_voice_name(value: Any) -> Any:
         return _INVALID
     s = "".join(ch for ch in value if ch.isprintable()).strip()
     return s[:VOICE_NAME_MAX_LEN]
+
+
+_NEURAL_VOICE_RE = re.compile(r"[a-z]{2,3}-[A-Z]{2}-[A-Za-z]{2,40}Neural")
+
+
+def _as_neural_voice(value: Any) -> Any:
+    if not isinstance(value, str):
+        return _INVALID
+    s = value.strip()
+    return s if _NEURAL_VOICE_RE.fullmatch(s) else _INVALID
 
 
 def _as_rect(value: Any) -> dict[str, int] | None:
@@ -431,6 +492,8 @@ def _validate_field(name: str, value: Any, default: Any) -> Any:
         res = _as_choice(value, CHOICES[name])
     elif name == "voice_name":
         res = _as_voice_name(value)
+    elif name == "neural_voice":
+        res = _as_neural_voice(value)
     elif name == "manual_minimap_rect":
         res = _as_rect(value)
     elif name == "icon_scale_by_res":

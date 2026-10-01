@@ -60,6 +60,9 @@ class AlertKind(str, Enum):
     DEATH_RECAP = "death_recap"
     # v2: live macro coaching (coach.py), INFO only, free text
     MACRO_TIP = "macro_tip"
+    # v2: praise (praise.py) and Tab scoreboard insights (scoreboard.py), INFO only, free text
+    PRAISE = "praise"
+    SCOREBOARD = "scoreboard"
 
     @classmethod
     def _missing_(cls, value: object) -> AlertKind | None:
@@ -163,6 +166,8 @@ FREE_TEXT_KINDS: frozenset[AlertKind] = frozenset({
     AlertKind.JUNGLER_WHERE,
     AlertKind.DEATH_RECAP,
     AlertKind.MACRO_TIP,
+    AlertKind.PRAISE,
+    AlertKind.SCOREBOARD,
 })
 _WS_RE = re.compile(r"\s+")
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -354,6 +359,14 @@ def _macro_tip(level: Level, champ: str | None, zone: str | None, n: int) -> str
     return "Conseil : regarde la minimap."
 
 
+def _praise(level: Level, champ: str | None, zone: str | None, n: int) -> str:
+    return "Bien joué !"
+
+
+def _scoreboard(level: Level, champ: str | None, zone: str | None, n: int) -> str:
+    return f"Attention à {champ}." if champ else "Regarde le tableau des scores."
+
+
 def _death_recap(level: Level, champ: str | None, zone: str | None, n: int) -> str:
     if n >= 2:
         return f"Mort face à {min(n, 5)} ennemis."
@@ -374,6 +387,8 @@ _BUILDERS = {
     AlertKind.JUNGLER_WHERE: _jungler_where,
     AlertKind.DEATH_RECAP: _death_recap,
     AlertKind.MACRO_TIP: _macro_tip,
+    AlertKind.PRAISE: _praise,
+    AlertKind.SCOREBOARD: _scoreboard,
 }
 _GENERIC = {Level.INFO: "Attention.", Level.WARNING: "Attention !", Level.DANGER: "Danger, recule !"}
 
@@ -480,6 +495,8 @@ KIND_PRIORITY: tuple[AlertKind, ...] = (
     AlertKind.RECALL_GOLD,
     AlertKind.CONTROL_WARD,
     AlertKind.MACRO_TIP,
+    AlertKind.SCOREBOARD,
+    AlertKind.PRAISE,
 )
 DEFAULT_MIN_GAP_S = 1.2
 DEFAULT_DANGER_GAP_S = 1.5  # min time between two DANGER messages (≈ one spoken sentence)

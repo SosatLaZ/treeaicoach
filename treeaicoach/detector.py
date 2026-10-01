@@ -847,9 +847,11 @@ class HybridDetector(BaseDetector):
     EXTRA_MIN_SCORE = 0.6
     #: Extra detections this close (x the sum of radii) to a roster match are the same icon.
     EXTRA_OVERLAP = 0.8
-    #: Extra detections this close (normalized) to a structure glyph need a higher score.
-    STRUCTURE_DIST = 0.03
-    STRUCTURE_MIN_SCORE = 0.85
+    #: Extra detections this close (normalized) to a structure glyph or to a fountain are
+    #: ignored: structure glyphs have team-coloured rings too, and a champion standing there
+    #: is normally recognised by its portrait anyway.
+    STRUCTURE_DIST = 0.04
+    FOUNTAIN_DIST = 0.12
 
     def __init__(self, fallback: BaseDetector, matcher: Any) -> None:
         self.fallback = fallback
@@ -857,7 +859,8 @@ class HybridDetector(BaseDetector):
         self._frame = 0
         self._last_extra: list[Detection] = []
         self._errors = _RateLimitedLog()
-        self._structures: list[tuple[float, float]] | None = None
+        self._structures: list[tuple[float, float, str]] | None = None
+        self._fountains: list[tuple[float, float]] = []
 
     @property
     def name(self) -> str:  # type: ignore[override]
@@ -885,14 +888,18 @@ class HybridDetector(BaseDetector):
         except Exception:
             self._errors.exception("Hybrid detector set_roster failed")
 
-    def _structure_uv(self) -> list[tuple[float, float]]:
+    def _structure_uv(self) -> list[tuple[float, float, str]]:
         if self._structures is None:
             try:
                 from treeaicoach.render import iter_structures
 
-                self._structures = [(float(u), float(v)) for _, u, v, _, _ in iter_structures()]
+                from treeaicoach.render import game_to_uv
+
+                self._structures = [(float(u), float(v), str(t))
+                                    for _, u, v, _, t in iter_structures()]
+                self._fountains = [game_to_uv(394, 461), game_to_uv(14340, 14390)]
             except Exception:
-                self._structures = []
+                self._structures, self._fountains = [], []
         return self._structures
 
     def _extras(self, img: np.ndarray, dets: list[Detection]) -> list[Detection]:
@@ -908,19 +915,35 @@ class HybridDetector(BaseDetector):
         if self._frame % self.FALLBACK_EVERY == 1 or self.FALLBACK_EVERY <= 1:
             raw = [d for d in (self.fallback.detect(img) or []) if d.score >= self.EXTRA_MIN_SCORE]
             structs = self._structure_uv()
+            game = getattr(m, "_game", None)
+            my_team = str(getattr(getattr(game, "me", None), "team", "") or "")
             keep = []
             for d in raw:
-                near_struct = any(math.hypot(d.u - u, d.v - v) < self.STRUCTURE_DIST
-                                  for u, v in structs)
-                if near_struct and d.score < self.STRUCTURE_MIN_SCORE:
+                # a ring of the structure's own colour on a structure glyph: the glyph itself
+                # (an icon of the other colour there is a champion standing on it)
+                if any(math.hypot(d.u - u, d.v - v) < self.STRUCTURE_DIST
+                       and (not my_team or (d.cls == "enemy") == (t != my_team))
+                       for u, v, t in structs):
+                    continue
+                if any(math.hypot(d.u - u, d.v - v) < self.FOUNTAIN_DIST
+                       for u, v in self._fountains):
                     continue
                 keep.append(d)
             self._last_extra = keep
+        # at most as many extras per side as roster champions of that side not matched
+        ents = getattr(m, "entries", ()) or ()
+        n_enemy = sum(1 for e in ents if getattr(e, "relation", "") == "enemy")
+        free = {"enemy": n_enemy - sum(1 for k in dets if k.cls == "enemy"),
+                "ally": len(ents) - n_enemy - sum(1 for k in dets if k.cls != "enemy")}
         out = []
-        for d in self._last_extra:
-            if any(math.hypot(d.u - k.u, d.v - k.v) < self.EXTRA_OVERLAP * (d.r + k.r)
-                   for k in dets):
+        for d in sorted(self._last_extra, key=lambda x: -x.score):
+            side = "enemy" if d.cls == "enemy" else "ally"
+            if free[side] <= 0:
                 continue
+            if any(math.hypot(d.u - k.u, d.v - k.v) < self.EXTRA_OVERLAP * (d.r + k.r)
+                   for k in dets + out):
+                continue
+            free[side] -= 1
             out.append(Detection(u=d.u, v=d.v, r=d.r, score=d.score, cls=d.cls,
                                  cls_probs=d.cls_probs, alias=None))
         return out

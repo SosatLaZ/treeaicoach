@@ -312,6 +312,10 @@ class CoachEngine:
         self._reminders: Any = None
         self._coach: Any = None                # coach.MapCoach (live macro tips + HUD insight)
         self._fog: Any = None
+        self._scoreboard: Any = None           # scoreboard.ScoreboardAnalyzer (Tab analysis)
+        self._praise: Any = None               # praise.PraiseCoach (compliments)
+        self._toasts: Any = None               # toasts.ToastQueue (top-centre banners)
+        self._sb_recorded: Any = None
         self._throttler = AlertThrottler()
         self._recorder: Any = None
         self._hotkeys: Any = None
@@ -459,6 +463,20 @@ class CoachEngine:
             self._fog = FogTracker(max_s=cfg.fog_max_s)
         except Exception:
             log.exception("Fog tracker unavailable")
+        try:
+            from treeaicoach.praise import PraiseCoach
+            from treeaicoach.scoreboard import ScoreboardAnalyzer
+
+            self._scoreboard = ScoreboardAnalyzer()
+            self._praise = PraiseCoach()
+        except Exception:
+            log.exception("Scoreboard / praise unavailable")
+        try:
+            from treeaicoach.toasts import ToastQueue
+
+            self._toasts = ToastQueue(clock=self._clock)
+        except Exception:
+            log.exception("Toasts unavailable")
         if self._identifier is None:
             try:
                 from treeaicoach.identifier import ChampionIdentifier
@@ -847,8 +865,9 @@ class CoachEngine:
 
     def _start_game(self, game: GameInfo, t: float) -> None:
         log.info("New game detected (game time %.0f s, mode %s)", game.game_time, game.game_mode)
+        self._sb_recorded = None
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
-                     self._throttler, self._coach):
+                     self._throttler, self._coach, self._scoreboard, self._praise, self._toasts):
             fn = getattr(comp, "reset", None)
             if callable(fn):
                 try:
@@ -910,6 +929,23 @@ class CoachEngine:
             self._bg_threads = [b for b in self._bg_threads if b.is_alive()] + [th]
             th.start()
 
+    def _say_game_summary(self, record_path: Path) -> None:
+        """Speak the short end-of-game summary (analysis.spoken_summary). Never raises."""
+        try:
+            if not getattr(self._cfg, "post_game_summary", True):
+                return
+            import json
+
+            from treeaicoach.analysis import analyze_game, spoken_summary
+
+            data = json.loads(Path(record_path).read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("meta"), dict):
+                text = spoken_summary(analyze_game(data))
+                if text:
+                    self._say(text, 0)
+        except Exception:
+            log.debug("End-of-game summary unavailable", exc_info=True)
+
     def _finish_job(self, rec: Any) -> None:
         try:
             path = rec.finish()
@@ -917,6 +953,7 @@ class CoachEngine:
                 return
             self.last_record_path = Path(path)
             cfg = self._cfg
+            self._say_game_summary(Path(path))
             if not cfg.post_game_report:
                 return
             writer = self._report_writer
@@ -950,6 +987,12 @@ class CoachEngine:
                 self._detector.set_roster(game)
         except Exception:
             self._err.exception("detector.set_roster failed")
+        try:  # natural voice: pre-generate the gank sentences of this game (voice.VoiceEngine.prefetch)
+            prefetch = getattr(self._voice, "prefetch", None)
+            if callable(prefetch):
+                prefetch([p.champion_name for p in game.enemies], [p.champion_name for p in game.allies])
+        except Exception:
+            log.debug("voice.prefetch failed", exc_info=True)
         if not self._prefetched and self._cfg.download_skin_icons and not self._demo:
             self._prefetched = True
             db = self._champion_db()
@@ -1058,7 +1101,8 @@ class CoachEngine:
             raw_alerts += list(self._coach.update(
                 t, tracker, game, self._role_resolver,
                 self._objectives.states() if self._objectives is not None else [],
-                me_pos, threat=threat) or [])
+                me_pos, threat=threat, minimap_bgr=frame) or [])
+        raw_alerts += self._scoreboard_and_praise(t, tracker, game, threat, gank_alerts, gt)
         if self._fog is not None and not getattr(self._cfg, "safe_mode", False):
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
         rec = self._recorder
@@ -1081,6 +1125,71 @@ class CoachEngine:
         if frame is not None and self._cfg.collect_samples:
             self._collect(frame, t)
         return said
+
+    def _scoreboard_and_praise(self, t: float, tracker: Any, game: GameInfo, threat: int,
+                               gank_alerts: list[Alert], gt: float) -> list[Alert]:
+        """Tab scoreboard insights + praise -> INFO alerts (voice, throttled) and toasts. Never raises."""
+        out: list[Alert] = []
+        cfg = self._cfg
+        roles = self._role_resolver
+        sb, pr = self._scoreboard, self._praise
+        summary = None
+        try:
+            if sb is not None:
+                sb.track_positions(t, tracker, game)
+                insights = sb.update(game, t, roles=roles, tracker=tracker, threat=threat)
+                summary = sb.summary()
+                if getattr(cfg, "scoreboard_insights", True):
+                    for ins in insights:
+                        out.append(make_alert(AlertKind.SCOREBOARD, Level.INFO, t, alias=ins.alias,
+                                              text=ins.text, key=ins.key))
+                        self._toast(ins.toast_kind, ins.title, ins.subtitle, ins.alias, ins.key, t)
+                rec = self._recorder
+                if rec is not None and summary is not self._sb_recorded and summary.players:
+                    self._sb_recorded = summary
+                    on_sb = getattr(rec, "on_scoreboard", None)
+                    if callable(on_sb):
+                        on_sb(summary.to_dict(), gt)
+        except Exception:
+            self._errors += 1
+            self._err.exception("Scoreboard analysis failed")
+        try:
+            if pr is not None:
+                if any(int(a.level) >= Level.DANGER and a.kind in GANK_KINDS for a in gank_alerts):
+                    pr.note_danger(t)
+                role = None
+                try:
+                    role = roles.my_role() if roles is not None else None
+                except Exception:
+                    role = None
+                for p in pr.update(t, game, threat=threat, scoreboard=summary, role=role):
+                    if not getattr(cfg, "praise_enabled", True):
+                        continue
+                    out.append(make_alert(AlertKind.PRAISE, Level.INFO, t, alias=p.alias, text=p.text, key=p.key))
+                    self._toast("praise", p.title, p.subtitle, p.alias, p.key, t)
+        except Exception:
+            self._errors += 1
+            self._err.exception("Praise failed")
+        return out
+
+    def _toast(self, kind: str, title: str, subtitle: str, alias: str | None, key: str, t: float) -> None:
+        q = self._toasts
+        if q is None or not getattr(self._cfg, "toasts_enabled", True):
+            return
+        icon = None
+        if alias:
+            skin = 0
+            game = self._game
+            p = game.player_by_alias(alias) if game is not None else None
+            if p is not None:
+                skin = p.skin_id
+            icon = self._icon(alias, skin)
+        q.push(kind, title, subtitle, icon=icon, key=key, t=t)
+
+    def scoreboard_summary(self) -> Any:
+        """Latest :class:`scoreboard.ScoreboardSummary` (None before the first game poll)."""
+        sb = self._scoreboard
+        return sb.summary() if sb is not None else None
 
     def _set_state(self, state: EngineState, message: str) -> None:
         with self._lock:
@@ -1653,10 +1762,18 @@ class CoachEngine:
             danger_radius=cfg.effective_danger_radius(), flash=flash,
             jungler_line=self._jungler_line(game, jungler, now),
             hint=self._reminders.hint() if self._reminders is not None else None,
-            insight=self._coach.insight() if self._coach is not None else None,
+            insight=(self._coach.insight() if self._coach is not None else None) or self._scoreboard_hud_line(),
             me_icon=self._icon(game.me.champion_alias, game.me.skin_id) if game and game.me else None,
             allies=allies, roles=roles,
+            toasts=self._toasts.active(now) if self._toasts is not None else [],
         )
+
+    def _scoreboard_hud_line(self) -> str | None:
+        try:
+            s = self.scoreboard_summary()
+            return s.hud_line() if s is not None else None
+        except Exception:
+            return None
 
     def _overlay_allies_roles(self, cls: Any, game: GameInfo | None, tracker: Any,
                               now: float) -> tuple[list[Any], dict[str, str]]:

@@ -144,7 +144,8 @@ def run_console(cfg: Any, demo: bool = False, duration: float | None = None) -> 
     from treeaicoach.engine import CoachEngine
     from treeaicoach.voice import VoiceEngine
 
-    voice = VoiceEngine(cfg.voice_name, cfg.voice_rate, cfg.voice_volume, cfg.beep_on_danger)
+    voice = VoiceEngine(cfg.voice_name, cfg.voice_rate, cfg.voice_volume, cfg.beep_on_danger,
+                        engine=getattr(cfg, "voice_engine", "auto"), neural_voice=getattr(cfg, "neural_voice", ""))
     source = None
     if demo:
         from treeaicoach.demo import DemoSource

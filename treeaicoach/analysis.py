@@ -13,6 +13,19 @@ listed in ``result["errors"]``). It produces (ARCHITECTURE.md §6.5):
   20+ min), lanes where he took part in kills;
 * ``zones``: my time per zone; ``objectives`` per team; ``tips``: 3-8 French tips with numbers.
 
+v2 coaching sections:
+
+* ``phases``: laning (0-14 min) / mid game (14-25) / late game (25+) breakdown: deaths, K/A,
+  CS/min, vision/min, time in lane, gank exposure, ganks, epic objectives;
+* ``presence``: my zone distribution per phase vs the ideal one for my role, with a 0-100 match;
+* ``exposure``: gank exposure score (share of my visible time spent past the middle of my lane,
+  or in the enemy jungle, while the enemy jungler was unseen for 30 s or more);
+* ``objective_presence``: was I near the pit when each epic monster was taken?
+* ``trends``: per-minute CS/min, vision score and kill participation from the snapshots;
+* ``pathing``: enemy jungler pathing summary (first side seen, path of his appearances,
+  lanes he ganked); each death also gets ``jungler_unseen_s``;
+* ``spoken_summary(analysis)``: a short French end-of-game summary for the voice.
+
 :func:`death_recap` builds the short sentence spoken ~2 s after my death.
 Only the standard library and ``treeaicoach.geometry`` are used.
 """
@@ -34,7 +47,7 @@ log = logging.getLogger(__name__)
 # Alert kinds (values of alerts.AlertKind, as stored in records)
 GANK_KINDS: frozenset[str] = frozenset({"jungler_approach", "roam_approach", "collapse"})
 NON_THREAT_KINDS: frozenset[str] = frozenset({"objective_soon", "recall_gold", "control_ward",
-                                              "jungler_where", "death_recap"})
+                                              "jungler_where", "death_recap", "macro_tip"})
 LEVEL_WARNING = 1
 LEVEL_DANGER = 2
 
@@ -53,6 +66,14 @@ PHASES: tuple[tuple[str, float, float], ...] = (("0-10", 0.0, 600.0), ("10-20", 
 PHASE_LABELS_FR = {"0-10": "0–10 min", "10-20": "10–20 min", "20+": "20 min et +"}
 RECAP_MAX_WORDS = 20
 MIN_TIPS, MAX_TIPS = 3, 8
+JUNGLER_UNSEEN_RISK_S = 30.0  # enemy jungler unseen this long = he can be anywhere
+#: Game phases of the v2 breakdown (id, French label, start, end).
+GAME_PHASES: tuple[tuple[str, str, float, float], ...] = (
+    ("laning", "Phase de voie", 0.0, 840.0), ("mid", "Milieu de partie", 840.0, 1500.0),
+    ("late", "Fin de partie", 1500.0, math.inf))
+EXPOSED_LANE_S = 0.55        # past this fraction of my lane (from my base) = exposed to ganks
+OBJ_NEAR_R = 0.22            # "near the pit" when an epic monster dies
+OBJ_TIME_TOL_S = 10.0
 
 LANE_ROLE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 LANE_FR = {"top": "en haut", "mid": "au milieu", "bot": "en bas", "jungle": "en jungle"}
@@ -569,6 +590,17 @@ def _death_context(rec: _Rec, event: Any) -> dict[str, Any] | None:
         "verdict": "alerte ignorée" if last_alert else "mort sans alerte",
         "source": "snapshot" if ev.get("_approx") else "event",
     }
+    jser = rec.jungler_series()
+    unseen = None
+    if rec.jungler is not None:
+        last = None
+        if jser is not None and len(jser):
+            i = bisect.bisect_right(jser.times, T - 1.0) - 1
+            if i >= 0:
+                last = jser.pts[i][0]
+        unseen = round(T - last, 1) if last is not None else (round(T - 90.0, 1) if T > 90.0 else None)
+    ctx["jungler_unseen_s"] = unseen
+    ctx["jungler_unseen"] = unseen is not None and unseen >= JUNGLER_UNSEEN_RISK_S
     ctx["recap"] = _recap_sentence(ctx, rec)
     return ctx
 
@@ -1001,11 +1033,378 @@ def _alert_stats(rec: _Rec) -> dict[str, Any]:
 
 
 # ======================================================================================
+# v2 coaching sections
+# ======================================================================================
+_EPIC_EVENTS = {"DragonKill": "dragon", "BaronKill": "baron", "HeraldKill": "herald", "HordeKill": "grubs",
+                "AtakhanKill": "atakhan"}
+_EPIC_LABEL = {"dragon": "Dragon", "baron": "Baron Nashor", "herald": "Héraut", "grubs": "Larves",
+               "atakhan": "Atakhan"}
+GROUP_KEYS = ("lane_top", "lane_mid", "lane_bot", "river", "my_jungle", "enemy_jungle", "my_base", "enemy_base")
+_GROUP_LABEL = dict(ZONE_GROUPS)
+
+
+def _pit_points(kind: str) -> list[tuple[float, float]]:
+    d = (geometry.DRAGON_PIT[0], geometry.DRAGON_PIT[1])
+    b = (geometry.BARON_PIT[0], geometry.BARON_PIT[1])
+    return {"dragon": [d], "baron": [b], "herald": [b], "grubs": [b]}.get(kind, [d, b])
+
+
+def _lane_frac(u: float, v: float, lane: str, my_team: str | None) -> float | None:
+    """Fraction of ``lane`` from MY base (0) to the enemy base (1) at (u, v)."""
+    try:
+        from treeaicoach.waves import lane_position
+
+        ln, s = lane_position(u, v)
+    except Exception:
+        return None
+    if ln != lane or s is None:
+        return None
+    return 1.0 - s if my_team == "CHAOS" else s
+
+
+def _jungler_last_seen(jser: _Series | None, gt: float) -> float | None:
+    if jser is None or not len(jser):
+        return None
+    i = bisect.bisect_right(jser.times, gt) - 1
+    return jser.pts[i][0] if i >= 0 else None
+
+
+def _position_samples(rec: _Rec, t0: float = 0.0, t1: float = math.inf) -> list[tuple[float, float, float, float]]:
+    """(gt, u, v, weight s) of my positions inside [t0, t1)."""
+    pts = rec.my_pos.pts
+    out = []
+    for i, (gt, u, v) in enumerate(pts):
+        if not t0 <= gt < t1:
+            continue
+        dt = (pts[i + 1][0] - gt) if i + 1 < len(pts) else 1.0
+        out.append((gt, u, v, min(MAX_SAMPLE_DT, max(0.0, dt))))
+    return out
+
+
+def _exposure(rec: _Rec, t0: float = 0.0, t1: float = math.inf) -> dict[str, Any]:
+    """Gank exposure: time past the middle of my lane / in the enemy jungle, enemy jungler unseen >= 30 s."""
+    jser = rec.jungler_series()
+    total = exposed = 0.0
+    spots: list[list[float]] = []
+    for gt, u, v, w in _position_samples(rec, t0, t1):
+        z = geometry.classify_zone(u, v)
+        if geometry.is_base(z):
+            continue
+        total += w
+        last = _jungler_last_seen(jser, gt)
+        unseen = (gt - last) if last is not None else (gt - 90.0)
+        if rec.jungler is None or unseen < JUNGLER_UNSEEN_RISK_S or gt < 120.0:
+            continue
+        group = _zone_group(z.value, rec.my_team)
+        risky = group == "enemy_jungle"
+        lane = geometry.lane_of(z)
+        if lane and not risky:
+            f = _lane_frac(u, v, lane, rec.my_team)
+            risky = f is not None and f >= EXPOSED_LANE_S
+        if risky:
+            exposed += w
+            if len(spots) < 400:
+                spots.append([round(u, 3), round(v, 3)])
+    score = round(100.0 * exposed / total, 1) if total >= 30.0 else None
+    return {"score": score, "exposed_s": round(exposed, 1), "total_s": round(total, 1), "spots": spots}
+
+
+def _ideal_presence(role: str, phase: str) -> dict[str, float]:
+    """Ideal share of time per zone group for a role and a game phase (sums to 1)."""
+    lane = LANE_ROLE.get(role)
+    g = {k: 0.0 for k in GROUP_KEYS}
+    if role == "JUNGLE":
+        table = {"laning": {"my_jungle": .45, "enemy_jungle": .10, "river": .18, "lane_top": .06, "lane_mid": .06,
+                            "lane_bot": .06, "my_base": .09},
+                 "mid": {"my_jungle": .30, "enemy_jungle": .12, "river": .25, "lane_top": .07, "lane_mid": .08,
+                         "lane_bot": .10, "my_base": .08},
+                 "late": {"my_jungle": .22, "enemy_jungle": .12, "river": .28, "lane_top": .08, "lane_mid": .12,
+                          "lane_bot": .10, "my_base": .08}}
+        g.update(table.get(phase, table["mid"]))
+        return g
+    if lane is None:
+        lane = "mid"
+    own = f"lane_{lane}"
+    others = [k for k in ("lane_top", "lane_mid", "lane_bot") if k != own]
+    if phase == "laning":
+        river = .10 if role == "UTILITY" else .06
+        g.update({own: .70 - (river - .06), "river": river, "my_jungle": .08, "enemy_jungle": .02, "my_base": .12})
+        for k in others:
+            g[k] = .01
+    elif phase == "mid":
+        g.update({own: .35, "river": .16, "my_jungle": .14, "enemy_jungle": .05, "my_base": .08})
+        for k in others:
+            g[k] = .11
+    else:
+        g.update({own: .22, "river": .22, "my_jungle": .12, "enemy_jungle": .06, "my_base": .06})
+        for k in others:
+            g[k] = .16
+    total = sum(g.values())
+    return {k: v / total for k, v in g.items()}
+
+
+def _presence_in(rec: _Rec, t0: float, t1: float) -> tuple[dict[str, float], float]:
+    secs = {k: 0.0 for k in GROUP_KEYS}
+    for _gt, u, v, w in _position_samples(rec, t0, t1):
+        secs[_zone_group(geometry.classify_zone(u, v).value, rec.my_team)] += w
+    return secs, sum(secs.values())
+
+
+def _presence(rec: _Rec, summary: dict) -> dict[str, Any]:
+    role = _str(summary.get("position")).upper()
+    out = {"role": role, "phases": []}
+    for pid, label, t0, t1 in GAME_PHASES:
+        if t0 >= max(rec.duration, 1.0):
+            continue
+        secs, total = _presence_in(rec, t0, t1)
+        if total < 60.0:
+            continue
+        mine = {k: secs[k] / total for k in GROUP_KEYS}
+        ideal = _ideal_presence(role, pid)
+        l1 = sum(abs(mine[k] - ideal[k]) for k in GROUP_KEYS)
+        rows = [{"key": k, "label": _GROUP_LABEL.get(k, k), "mine": round(100 * mine[k], 1),
+                 "ideal": round(100 * ideal[k], 1), "delta": round(100 * (mine[k] - ideal[k]), 1)}
+                for k in GROUP_KEYS if mine[k] > 0.005 or ideal[k] > 0.005]
+        rows.sort(key=lambda r: -max(r["mine"], r["ideal"]))
+        own = f"lane_{LANE_ROLE.get(role, 'mid')}" if role != "JUNGLE" else "my_jungle"
+        out["phases"].append({"phase": pid, "label": label, "seconds": round(total, 1),
+                              "match": round(max(0.0, 100.0 - 50.0 * l1), 0), "rows": rows,
+                              "own_key": own, "own_mine": round(100 * mine.get(own, 0.0), 1),
+                              "own_ideal": round(100 * ideal.get(own, 0.0), 1)})
+    return out
+
+
+def _objective_presence(rec: _Rec) -> dict[str, Any]:
+    items = []
+    for e in rec.events:
+        kind = _EPIC_EVENTS.get(_str(e.get("EventName")))
+        T = _finite(e.get("EventTime"))
+        if kind is None or T is None:
+            continue
+        if kind == "dragon" and _str(e.get("DragonType")).lower() == "elder":
+            kind = "elder"
+        team = None
+        for n in [e.get("KillerName")] + _list(e.get("Assisters")):
+            p = rec.player(n)
+            if p is not None and _str(p.get("team")).upper() in ("ORDER", "CHAOS"):
+                team = _str(p.get("team")).upper()
+                break
+        took_part = any(rec.is_me(n) for n in [e.get("KillerName")] + _list(e.get("Assisters")) if _str(n))
+        pos = rec.my_pos.nearest(T, OBJ_TIME_TOL_S)
+        dist = None
+        if pos is not None:
+            dist = min(geometry.dist((pos[1], pos[2]), p) for p in _pit_points("dragon" if kind == "elder" else kind))
+        near = took_part or (dist is not None and dist < OBJ_NEAR_R)
+        items.append({"game_time": round(T, 1), "time": fmt_time(T), "kind": kind,
+                      "label": "Dragon ancestral" if kind == "elder" else _EPIC_LABEL.get(kind, kind),
+                      "team": team, "mine": team is not None and team == rec.my_team, "near": bool(near),
+                      "took_part": took_part, "distance": round(dist, 3) if dist is not None else None})
+    ours = [i for i in items if i["mine"]]
+    theirs = [i for i in items if not i["mine"]]
+    pct = round(100.0 * sum(1 for i in ours if i["near"]) / len(ours), 0) if ours else None
+    return {"items": items, "ours": len(ours), "ours_near": sum(1 for i in ours if i["near"]),
+            "theirs": len(theirs), "theirs_near": sum(1 for i in theirs if i["near"]), "percent": pct}
+
+
+def _team_kills_until(rec: _Rec, gt: float) -> tuple[int, int, int]:
+    """(team kills, my kills, my assists) of ChampionKill events up to ``gt``."""
+    team = mine = assists = 0
+    for e in rec.events:
+        if e.get("EventName") != "ChampionKill":
+            continue
+        T = _finite(e.get("EventTime"), 0.0) or 0.0
+        if T > gt:
+            break
+        a = rec.actor(e.get("KillerName"))
+        if a.get("kind") == "champion" and rec.my_team and a.get("team") == rec.my_team:
+            team += 1
+        if rec.is_me(e.get("KillerName")):
+            mine += 1
+        if any(rec.is_me(x) for x in _list(e.get("Assisters"))):
+            assists += 1
+    return team, mine, assists
+
+
+def _snapshot_at(rec: _Rec, gt: float) -> dict | None:
+    times = [_finite(s.get("game_time"), 0.0) for s in rec.snapshots]
+    i = bisect.bisect_right(times, gt) - 1
+    return rec.snapshots[i] if i >= 0 else None
+
+
+def _trends(rec: _Rec) -> dict[str, Any]:
+    series = []
+    if rec.snapshots:
+        end = int(rec.duration // 60)
+        for m in range(1, end + 1):
+            snap = _snapshot_at(rec, m * 60.0)
+            if snap is None:
+                continue
+            cs = _int(snap.get("cs"))
+            team, k, a = _team_kills_until(rec, m * 60.0)
+            series.append({"minute": m, "cs": cs, "cs_per_min": round(cs / m, 2),
+                           "vision": round(_finite(snap.get("ward_score"), 0.0) or 0.0, 1),
+                           "kp": round((k + a) / team, 3) if team else None, "level": _int(snap.get("level"), 0)})
+    out: dict[str, Any] = {"series": series, "cs_per_min_10": None, "cs_per_min_after_10": None,
+                           "vision_per_min_laning": None, "vision_per_min_after": None}
+    s10 = _snapshot_at(rec, 600.0)
+    last = rec.last_snapshot()
+    if s10 is not None and rec.duration >= 600.0:
+        cs10 = _int(s10.get("cs"))
+        out["cs_per_min_10"] = round(cs10 / 10.0, 2)
+        if rec.duration >= 900.0 and last:
+            out["cs_per_min_after_10"] = round((_int(last.get("cs")) - cs10) / ((rec.duration - 600.0) / 60.0), 2)
+    s14 = _snapshot_at(rec, 840.0)
+    if s14 is not None and rec.duration >= 840.0:
+        w14 = _finite(s14.get("ward_score"), 0.0) or 0.0
+        out["vision_per_min_laning"] = round(w14 / 14.0, 2)
+        if rec.duration >= 1140.0 and last:
+            out["vision_per_min_after"] = round(((_finite(last.get("ward_score"), 0.0) or 0.0) - w14)
+                                                / ((rec.duration - 840.0) / 60.0), 2)
+    return out
+
+
+def _phases(rec: _Rec, deaths: list[dict], ganks: list[dict]) -> list[dict[str, Any]]:
+    out = []
+    for pid, label, t0, t1 in GAME_PHASES:
+        if t0 >= rec.duration:
+            continue
+        end = min(t1, rec.duration)
+        minutes = max(1e-6, (end - t0) / 60.0)
+        s0 = _snapshot_at(rec, t0) if t0 > 0 else (rec.snapshots[0] if rec.snapshots else None)
+        s1 = _snapshot_at(rec, end)
+        cs = vis = None
+        if s0 is not None and s1 is not None:
+            cs = max(0, _int(s1.get("cs")) - (_int(s0.get("cs")) if t0 > 0 else 0))
+            vis = max(0.0, (_finite(s1.get("ward_score"), 0.0) or 0.0)
+                      - ((_finite(s0.get("ward_score"), 0.0) or 0.0) if t0 > 0 else 0.0))
+        kills = assists = 0
+        for e in rec.events:
+            T = _finite(e.get("EventTime"), -1.0)
+            if e.get("EventName") != "ChampionKill" or not (t0 <= (T or 0) < end):
+                continue
+            if rec.is_me(e.get("KillerName")):
+                kills += 1
+            elif any(rec.is_me(a) for a in _list(e.get("Assisters"))):
+                assists += 1
+        secs, total = _presence_in(rec, t0, end)
+        lane_s = secs["lane_top"] + secs["lane_mid"] + secs["lane_bot"]
+        exp = _exposure(rec, t0, end)
+        ph_deaths = [d for d in deaths if t0 <= d.get("game_time", -1) < end]
+        ph_ganks = [g for g in ganks if t0 <= g.get("game_time", -1) < end]
+        epic_ours = epic_theirs = 0
+        for e in rec.events:
+            T = _finite(e.get("EventTime"), -1.0) or -1.0
+            if _EPIC_EVENTS.get(_str(e.get("EventName"))) and t0 <= T < end:
+                p = rec.player(e.get("KillerName"))
+                if p is not None and _str(p.get("team")).upper() == rec.my_team:
+                    epic_ours += 1
+                elif p is not None:
+                    epic_theirs += 1
+        out.append({
+            "phase": pid, "label": label, "start": t0, "end": round(end, 1),
+            "range": f"{fmt_time(t0)}–{fmt_time(end)}", "minutes": round(minutes, 1),
+            "deaths": len(ph_deaths), "kills": kills, "assists": assists,
+            "cs": cs, "cs_per_min": round(cs / minutes, 2) if cs is not None else None,
+            "vision": round(vis, 1) if vis is not None else None,
+            "vision_per_min": round(vis / minutes, 2) if vis is not None else None,
+            "lane_percent": round(100.0 * lane_s / total, 1) if total >= 30 else None,
+            "exposure": exp.get("score"),
+            "ganks": len(ph_ganks), "ganks_survived": sum(1 for g in ph_ganks if g.get("outcome") == "survived"),
+            "objectives_ours": epic_ours, "objectives_theirs": epic_theirs,
+        })
+    return out
+
+
+def _pathing(rec: _Rec, jungler: dict) -> dict[str, Any]:
+    out: dict[str, Any] = {"known": bool(jungler.get("known")), "name": jungler.get("name"),
+                           "first_side": None, "first_side_label": None, "first_time": None,
+                           "path": [], "gank_lanes": {}, "main_lane": None, "summary": ""}
+    ser = rec.jungler_series()
+    if not out["known"]:
+        return out
+    if ser is not None and len(ser):
+        groups = _appearances(ser)
+        for g in groups:
+            gt, u, v = g[0]
+            if gt > 900 or len(out["path"]) >= 10:
+                break
+            side = geometry.side_of(u, v)
+            out["path"].append({"game_time": round(gt, 1), "time": fmt_time(gt), "uv": [round(u, 3), round(v, 3)],
+                                "zone": _zone_value(u, v), "zone_label": _zone_name(_zone_value(u, v), rec.my_team),
+                                "side": side})
+        if out["path"]:
+            first = out["path"][0]
+            out["first_side"] = first["side"]
+            out["first_side_label"] = "en haut" if first["side"] == "top" else "en bas"
+            out["first_time"] = first["time"]
+    lanes = {k: v for k, v in (jungler.get("ganks_by_lane") or {}).items() if k in ("top", "mid", "bot") and v}
+    out["gank_lanes"] = lanes
+    if lanes:
+        out["main_lane"] = max(lanes.items(), key=lambda kv: kv[1])[0]
+    parts = []
+    name = jungler.get("name") or "Le jungler ennemi"
+    if out["first_side"]:
+        parts.append(f"{name} vu d'abord {out['first_side_label']} à {out['first_time']}")
+    if out["main_lane"]:
+        parts.append(f"ganks surtout {LANE_FR[out['main_lane']]} ({lanes[out['main_lane']]} kills)")
+    out["summary"] = ", ".join(parts) + ("." if parts else "")
+    return out
+
+
+def spoken_summary(analysis: Any) -> str:
+    """Short French end-of-game summary for the voice (<= ~40 words). Never raises."""
+    try:
+        a = analysis if isinstance(analysis, dict) else {}
+        s = a.get("summary") or {}
+        res = {"Win": "Victoire", "Lose": "Défaite"}.get(s.get("result") or "", "Partie terminée")
+        mins = int(round((_finite(s.get("duration"), 0.0) or 0.0) / 60.0))
+        head = f"{res} en {mins} minutes." if mins else f"{res}."
+        k, d, ast = int(s.get("kills") or 0), int(s.get("deaths") or 0), int(s.get("assists") or 0)
+        stats = (f"{_plural(k, 'kill')}, {_plural(d, 'mort')}, {_plural(ast, 'assistance')}")
+        cspm = _finite(s.get("cs_per_min"))
+        if cspm is not None:
+            stats += f", {fmt_num(cspm, 0) if round(cspm, 1).is_integer() else fmt_num(cspm)} CS par minute"
+        parts = [head, f"{stats}."]
+        unseen = [d for d in a.get("deaths") or [] if d.get("jungler_unseen")]
+        warned = a.get("deaths_warned") or 0
+        if len(unseen) >= 2:
+            parts.append(f"{len(unseen)} morts avec le jungler ennemi invisible.")
+        elif warned >= 2:
+            parts.append(f"{warned} morts juste après une alerte.")
+        elif (a.get("ganks_faced") or 0) >= 2:
+            parts.append(f"{a.get('ganks_survived', 0)} ganks survécus sur {a.get('ganks_faced')}.")
+        tips = a.get("tip_items") or []
+        first = next((t for t in tips if t.get("kind") == "warn"), tips[0] if tips else None)
+        if first is not None:
+            text = _str(first.get("speech") or first.get("text"))
+            text = text.split(" : ")[-1] if " : " in text else text
+            text = text[:1].upper() + text[1:]
+            if not text.endswith((".", "!", "?")):
+                text += "."
+            parts.append(f"Priorité : {text[:1].lower() + text[1:]}")
+        out = " ".join(parts)
+        words = out.split()
+        if len(words) > 45:
+            out = " ".join(words[:45]).rstrip(",;:") + "."
+        return out
+    except Exception:
+        log.exception("spoken_summary failed")
+        return "Partie terminée. Le rapport est prêt."
+
+
+# ======================================================================================
 # tips
 # ======================================================================================
 CS_TARGET = {"TOP": 7.0, "MIDDLE": 7.0, "BOTTOM": 7.5, "JUNGLE": 5.5, "": 7.0}
 VISION_TARGET = {"UTILITY": 2.0, "JUNGLE": 1.0}      # others: VISION_TARGET_DEFAULT
 VISION_TARGET_DEFAULT = 0.6
+
+
+def _first_uv(rec: _Rec) -> tuple[float, float]:
+    ser = rec.jungler_series()
+    if ser is not None and len(ser):
+        return ser.pts[0][1], ser.pts[0][2]
+    return 0.5, 0.5
 
 
 def _ward_time(first_gank: float) -> str:
@@ -1015,9 +1414,10 @@ def _ward_time(first_gank: float) -> str:
 
 
 def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungler: dict,
-          zones: dict, objectives: dict) -> list[dict[str, Any]]:
+          zones: dict, objectives: dict, extra: dict | None = None) -> list[dict[str, Any]]:
     """Rule-based tips, most important first. Each rule is explained in the comment above it."""
     tips: list[tuple[int, str, str, str]] = []     # (priority, rule id, kind, text)
+    extra = extra or {}
     minutes = (summary.get("duration") or 0.0) / 60.0
     position = summary.get("position") or ""
     n_deaths = len(deaths)
@@ -1120,9 +1520,60 @@ def _tips(rec: _Rec, summary: dict, deaths: list[dict], ganks: list[dict], jungl
 
     # R13 — first jungler sighting before 5:00: tells his starting side for the next games.
     if jungler.get("first_seen") is not None and jungler["first_seen"] < 300:
-        tips.append((35, "jungler_start", "info",
+        side = "en haut" if geometry.side_of(*_first_uv(rec)) == "top" else "en bas"
+        tips.append((50, "jungler_start", "info",
                      f"{jname} a été vu pour la première fois à {jungler['first_seen_time']} "
-                     f"({jungler['first_zone_label']}) : surveille ce côté en début de partie."))
+                     f"({jungler['first_zone_label']}, côté {side.split()[-1]}) : en début de partie, "
+                     f"attends-toi à son premier gank {side} vers {fmt_time(max(165.0, jungler['first_seen'] + 20))}."))
+
+    # R14 — >= 2 deaths while the enemy jungler had been unseen for 30 s or more.
+    unseen = [d for d in deaths if d.get("jungler_unseen")]
+    if jungler.get("known") and len(unseen) >= 2:
+        avg = sum(d.get("jungler_unseen_s") or 0 for d in unseen) / len(unseen)
+        tips.append((72, "jungler_unseen_deaths", "warn",
+                     f"{len(unseen)} morts alors que {jname} était invisible depuis {fmt_num(avg, 0)} s en "
+                     f"moyenne : quand il disparaît, recule vers ta tour ou balise son chemin."))
+
+    # R15 — gank exposure during the laning phase >= 25 %: pushed past the middle blind.
+    exp_lane = next((p.get("exposure") for p in extra.get("phases") or [] if p.get("phase") == "laning"), None)
+    if exp_lane is not None and exp_lane >= 25 and jungler.get("known"):
+        tips.append((62, "exposure", "warn",
+                     f"Exposition aux ganks {fmt_num(exp_lane, 0)} % en phase de voie (avancé sans savoir où "
+                     f"était {jname}) : vise moins de 15 %, pousse quand il est vu ailleurs."))
+
+    # R16 — present on < 50 % of the (>= 3) epic objectives taken by my team.
+    op = extra.get("objective_presence") or {}
+    if (op.get("ours") or 0) >= 3 and op.get("percent") is not None and op["percent"] < 50:
+        tips.append((57, "objective_presence", "warn",
+                     f"Présent sur {op.get('ours_near')} des {op.get('ours')} objectifs pris par ton équipe : "
+                     f"rejoins le dragon ou le Baron 45 s avant l'apparition."))
+    elif (op.get("ours") or 0) >= 3 and (op.get("percent") or 0) >= 75:
+        tips.append((32, "objective_presence_good", "good",
+                     f"Présent sur {op.get('ours_near')} des {op.get('ours')} objectifs de ton équipe : "
+                     f"excellent réflexe de regroupement."))
+
+    # R17 — laning phase: time in my own lane far below the ideal for my role.
+    pres = next((p for p in (extra.get("presence") or {}).get("phases") or [] if p.get("phase") == "laning"), None)
+    if pres is not None and position not in ("JUNGLE", "") and pres["own_mine"] < pres["own_ideal"] - 20:
+        tips.append((56, "presence", "warn",
+                     f"Phase de voie : {fmt_num(pres['own_mine'], 0)} % de ton temps dans ta voie (idéal "
+                     f"≈ {fmt_num(pres['own_ideal'], 0)} %) : chaque minute hors de la voie coûte de l'or et de l'XP."))
+
+    # R18 — >= 3 deaths in the mid or late game.
+    for ph in extra.get("phases") or []:
+        if ph.get("phase") in ("mid", "late") and (ph.get("deaths") or 0) >= 3:
+            tips.append((66, f"phase_deaths_{ph['phase']}", "warn",
+                         f"{ph['deaths']} morts en {ph['label'].lower()} ({ph['range']}) : reste groupé et "
+                         f"ne pars pas seul en side sans vision."))
+            break
+
+    # R19 — CS/min dropping after 10:00 by >= 1.
+    tr = extra.get("trends") or {}
+    a10, b10 = tr.get("cs_per_min_10"), tr.get("cs_per_min_after_10")
+    if a10 is not None and b10 is not None and position != "UTILITY" and a10 - b10 >= 1.0:
+        tips.append((33, "cs_trend", "warn",
+                     f"CS/min {fmt_num(a10)} avant 10:00 puis {fmt_num(b10)} : en milieu de partie, "
+                     f"continue de farmer les vagues de côté entre deux objectifs."))
 
     # Fallbacks (always true, with numbers) so the report has at least 3 tips.
     fallbacks: list[tuple[int, str, str, str]] = []
@@ -1190,7 +1641,15 @@ def analyze_game(record: Any) -> dict[str, Any]:
     zones = section("zones", lambda: _zones(rec), {})
     objectives = section("objectives", lambda: _objectives(rec), {})
     alerts = section("alerts", lambda: _alert_stats(rec), {})
-    tip_items = section("tips", lambda: _tips(rec, summary, deaths, ganks, jungler, zones, objectives), [])
+    phases = section("phases", lambda: _phases(rec, deaths, ganks), [])
+    presence = section("presence", lambda: _presence(rec, summary), {"phases": []})
+    exposure = section("exposure", lambda: _exposure(rec), {"score": None})
+    obj_presence = section("objective_presence", lambda: _objective_presence(rec), {"items": []})
+    trends = section("trends", lambda: _trends(rec), {"series": []})
+    pathing = section("pathing", lambda: _pathing(rec, jungler), {"known": False})
+    extra = {"phases": phases, "presence": presence, "exposure": exposure, "objective_presence": obj_presence,
+             "trends": trends, "pathing": pathing}
+    tip_items = section("tips", lambda: _tips(rec, summary, deaths, ganks, jungler, zones, objectives, extra), [])
     survived = sum(1 for g in ganks if g.get("outcome") == "survived")
     out.update({
         "ok": not errors,
@@ -1207,7 +1666,9 @@ def analyze_game(record: Any) -> dict[str, Any]:
         "alerts": alerts,
         "tips": [t["text"] for t in tip_items],
         "tip_items": tip_items,
+        **extra,
     })
+    out["spoken_summary"] = spoken_summary(out)
     return out
 
 

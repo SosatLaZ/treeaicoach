@@ -71,7 +71,32 @@ hiddenimports = [
     "customtkinter",
     "onnxruntime",
     "mss",
+    # natural voice (tts_neural): edge-tts + aiohttp, miniaudio (cffi), WinRT OneCore voices
+    "edge_tts",
+    "aiohttp",
+    "certifi",
+    "miniaudio",
+    "_miniaudio",
+    "_cffi_backend",
 ] + _package_modules()
+
+
+def _optional_submodules(pkg):
+    try:
+        return collect_submodules(pkg)
+    except Exception:
+        return []
+
+
+hiddenimports += _optional_submodules("edge_tts")
+hiddenimports += [m for m in _optional_submodules("winrt")
+                  if m.startswith(("winrt.system", "winrt._winrt", "winrt.windows.foundation",
+                                   "winrt.windows.media.speechsynthesis", "winrt.windows.storage.streams"))
+                  or m == "winrt"]
+try:
+    datas += collect_data_files("certifi")          # cacert.pem (edge-tts TLS)
+except Exception:
+    pass
 
 excludes = [
     # training / development only

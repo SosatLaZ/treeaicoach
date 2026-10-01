@@ -1,4 +1,10 @@
-"""Text-to-speech: Windows SAPI in a dedicated thread, with a small priority-aware queue.
+"""Text-to-speech in a dedicated thread, with a small priority-aware queue.
+
+* Engines (``engine`` / ``cfg.voice_engine``): ``"auto"`` = ``"neural"`` (Microsoft Edge neural
+  voice, online, sentences cached as WAV and pre-generated for the champions of the game:
+  :meth:`VoiceEngine.prefetch`, see :mod:`treeaicoach.tts_neural`) -> ``"onecore"`` (Windows
+  10/11 OneCore voices through WinRT) -> ``"sapi"`` -> ``"print"``. A neural sentence that is not
+  cached and not synthesised within ~1.5 s is said by the local voice instead.
 
 * :class:`VoiceEngine` is the public entry point. :meth:`VoiceEngine.say` is thread-safe and
   never blocks: it only appends to a queue consumed by a daemon thread.
@@ -558,15 +564,249 @@ class SapiBackend(SpeechBackend):
                 pass
 
 
-def _default_backend_factory() -> SpeechBackend:
-    """SAPI on Windows, else (or on any failure) the logging backend."""
-    if sys.platform == "win32":
+class _WavBackend(SpeechBackend):
+    """Common part of the backends playing WAV files with winsound (:class:`tts_neural.WavPlayer`)."""
+
+    name = "wav"
+
+    def __init__(self, *, _player: Any = None) -> None:
+        from treeaicoach.tts_neural import WavPlayer  # noqa: PLC0415
+
+        self._player = _player if _player is not None else WavPlayer()
+        self._volume = DEFAULT_VOLUME
+
+    def _play(self, path: Path) -> bool:
+        return bool(self._player.play(path, self._volume))
+
+    def is_speaking(self) -> bool:
+        return bool(self._player.is_playing())
+
+    def purge(self) -> None:
+        self._player.stop()
+
+    def beep(self, volume: int) -> float:
+        path = danger_beep_path(volume)
+        if path is None:
+            return 0.0
         try:
-            return SapiBackend()
+            if self._player.play(path, 100):     # the beep WAV is already scaled
+                return BEEP_DURATION_S + 0.02
         except Exception as exc:
-            log.warning("Synthèse vocale Windows (SAPI) indisponible (%s) : "
-                        "les annonces seront seulement écrites dans le journal.", exc)
+            log.debug("Beep playback failed: %s", exc)
+        return 0.0
+
+    def close(self) -> None:
+        self.purge()
+
+
+class OneCoreBackend(_WavBackend):
+    """Windows 10/11 OneCore voices through WinRT (pywinrt); sentences cached as WAV."""
+
+    name = "onecore"
+
+    def __init__(self, *, _synth: Any = None, _player: Any = None, cache_root: Path | None = None) -> None:
+        super().__init__(_player=_player)
+        from treeaicoach import tts_neural  # noqa: PLC0415
+
+        self._synth = _synth if _synth is not None else tts_neural.OneCoreSynth()
+        self._root = Path(cache_root) if cache_root is not None else tts_neural.tts_cache_root()
+        self._rate = DEFAULT_RATE
+        self._wanted: str | None = None
+        log.info("Voix Windows OneCore : %s", getattr(self._synth, "voice_name", "") or "par défaut")
+
+    def voices(self) -> list[str]:
+        try:
+            return list(self._synth.voices())
+        except Exception:
+            return []
+
+    def configure(self, voice_name: str, rate: int, volume: int) -> None:
+        wanted = _clean_voice_name(voice_name)
+        if wanted != self._wanted:
+            self._wanted = wanted
+            self._synth.select(wanted)
+        self._rate = _clamp_int(rate, *RATE_RANGE, DEFAULT_RATE)
+        self._volume = _clamp_int(volume, *VOLUME_RANGE, DEFAULT_VOLUME)
+        self._synth.configure(self._rate, 100)          # volume applied on the samples
+        try:
+            danger_beep_path(self._volume)
+        except Exception:
+            pass
+
+    def speak(self, text: str, purge: bool) -> None:
+        import hashlib  # noqa: PLC0415
+
+        if purge:
+            self.purge()
+        vname = re.sub(r"[^A-Za-z0-9_-]+", "_", str(getattr(self._synth, "voice_name", "") or "default"))[:60]
+        key = hashlib.sha1(f"{vname}|{self._rate}|{text}".encode()).hexdigest()
+        path = self._root / f"onecore-{vname}" / f"{key}.wav"
+        if not (path.is_file() and path.stat().st_size > 100):
+            data = self._synth.wav(text)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = Path(f"{path}.{os.getpid()}.tmp")
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+        if not self._play(path):
+            raise RuntimeError("OneCore: playback failed")
+
+
+class NeuralBackend(_WavBackend):
+    """Microsoft Edge neural voice (online, cached) with a local backend for the misses.
+
+    A cached sentence plays instantly. Otherwise it is synthesised for at most
+    ``tts_neural.LIVE_TIMEOUT_S`` (0.9 s for a DANGER); on timeout / no network the local
+    backend says it (and the synthesis continues in the background to fill the cache).
+    """
+
+    name = "neural"
+
+    def __init__(self, neural_voice: str = "", *, _tts: Any = None, _player: Any = None,
+                 _local_factory: Callable[[], SpeechBackend] | None = None) -> None:
+        super().__init__(_player=_player)
+        from treeaicoach import tts_neural  # noqa: PLC0415
+
+        self._tn = tts_neural
+        if _tts is None and not tts_neural.neural_available():
+            raise RuntimeError("edge-tts / miniaudio absents")
+        self._tts = _tts if _tts is not None else tts_neural.NeuralTTS(tts_neural.clean_voice_id(neural_voice))
+        self._local_factory = _local_factory or (lambda: _local_backend("onecore"))
+        self._local: SpeechBackend | None = None
+        self._local_cfg: tuple[str, int, int] | None = None
+        self._roster: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
+        self._configured = False
+        log.info("Voix naturelle : %s (en ligne, mise en cache)", getattr(self._tts, "voice", neural_voice))
+
+    def _get_local(self) -> SpeechBackend:
+        if self._local is None:
+            try:
+                self._local = self._local_factory()
+            except Exception as exc:
+                log.warning("Voix Windows de secours indisponible : %s", exc)
+                self._local = PrintBackend()
+            if self._local_cfg is not None:
+                try:
+                    self._local.configure(*self._local_cfg)
+                except Exception as exc:
+                    log.debug("Local voice configure failed: %s", exc)
+        return self._local
+
+    def voices(self) -> list[str]:
+        try:
+            return list(self._get_local().voices())
+        except Exception:
+            return []
+
+    def configure(self, voice_name: str, rate: int, volume: int) -> None:
+        self._volume = _clamp_int(volume, *VOLUME_RANGE, DEFAULT_VOLUME)
+        self._local_cfg = (voice_name, rate, volume)
+        old = getattr(self._tts, "rate_pct", None)
+        self._tts.set_params(getattr(self._tts, "voice", ""), rate)
+        if self._local is not None:
+            self._local.configure(voice_name, rate, volume)
+        if not self._configured or getattr(self._tts, "rate_pct", None) != old:
+            self._configured = True
+            self._prefetch()
+        try:
+            danger_beep_path(self._volume)
+        except Exception:
+            pass
+
+    def set_roster(self, enemies: Sequence[str], allies: Sequence[str] = ()) -> None:
+        roster = (tuple(enemies), tuple(allies))
+        if roster != self._roster:
+            self._roster = roster
+            self._prefetch()
+
+    def _prefetch(self) -> None:
+        try:
+            texts = self._tn.roster_phrases(*self._roster) + self._tn.static_phrases()
+            self._tts.prefetch(texts)
+        except Exception as exc:
+            log.debug("Neural prefetch failed: %s", exc)
+
+    def speak(self, text: str, purge: bool) -> None:
+        if purge:
+            self.purge()
+        timeout = 0.9 if purge else self._tn.LIVE_TIMEOUT_S
+        path = None
+        try:
+            path = self._tts.get(text, timeout)
+        except Exception as exc:
+            log.debug("Neural synthesis failed: %s", exc)
+        if path is not None and self._play(Path(path)):
+            return
+        self._get_local().speak(text, purge)
+
+    def is_speaking(self) -> bool:
+        if self._player.is_playing():
+            return True
+        local = self._local
+        return bool(local is not None and local.is_speaking())
+
+    def purge(self) -> None:
+        self._player.stop()
+        if self._local is not None:
+            try:
+                self._local.purge()
+            except Exception:
+                pass
+
+    def pump(self) -> None:
+        if self._local is not None:
+            self._local.pump()
+
+    def close(self) -> None:
+        self.purge()
+        if self._local is not None:
+            try:
+                self._local.close()
+            except Exception:
+                pass
+            self._local = None
+
+
+ENGINES: tuple[str, ...] = ("auto", "neural", "onecore", "sapi")
+
+
+def _coerce_engine(value: Any) -> str:
+    s = value.strip().lower() if isinstance(value, str) else ""
+    return s if s in ENGINES else "auto"
+
+
+def _local_backend(engine: str = "onecore") -> SpeechBackend:
+    """OneCore (if asked) -> SAPI -> print. Never raises."""
+    if sys.platform != "win32":
+        return PrintBackend()
+    if engine == "onecore":
+        try:
+            return OneCoreBackend()
+        except Exception as exc:
+            log.info("Voix Windows OneCore indisponible (%s) : essai de SAPI.", exc)
+    try:
+        return SapiBackend()
+    except Exception as exc:
+        log.warning("Synthèse vocale Windows (SAPI) indisponible (%s) : "
+                    "les annonces seront seulement écrites dans le journal.", exc)
     return PrintBackend()
+
+
+def make_backend(engine: str = "auto", neural_voice: str = "") -> SpeechBackend:
+    """Backend chain for ``engine``: neural -> onecore -> sapi -> print. Never raises."""
+    engine = _coerce_engine(engine)
+    if sys.platform != "win32":
+        return PrintBackend()
+    if engine in ("auto", "neural"):
+        try:
+            return NeuralBackend(neural_voice)
+        except Exception as exc:
+            log.warning("Voix naturelle indisponible (%s) : voix Windows utilisée.", exc)
+    return _local_backend("sapi" if engine == "sapi" else "onecore")
+
+
+def _default_backend_factory() -> SpeechBackend:
+    """Default chain (auto)."""
+    return make_backend("auto")
 
 
 # --------------------------------------------------------------------------------------
@@ -579,6 +819,8 @@ class _Params:
     rate: int
     volume: int
     beep_on_danger: bool
+    engine: str = "auto"
+    neural_voice: str = ""
 
 
 @dataclass(frozen=True)
@@ -593,7 +835,7 @@ class VoiceEngine:
     """Non-blocking French voice. ``say()`` may be called from any thread."""
 
     def __init__(self, voice_name: str = "", rate: int = DEFAULT_RATE, volume: int = DEFAULT_VOLUME,
-                 beep_on_danger: bool = True, *,
+                 beep_on_danger: bool = True, engine: str = "auto", neural_voice: str = "", *,
                  _backend_factory: Callable[[], SpeechBackend] | None = None,
                  _clock: Callable[[], float] = time.monotonic,
                  _max_age_s: float = MAX_AGE_S) -> None:
@@ -609,8 +851,12 @@ class VoiceEngine:
             rate=_clamp_int(rate, *RATE_RANGE, DEFAULT_RATE),
             volume=_clamp_int(volume, *VOLUME_RANGE, DEFAULT_VOLUME),
             beep_on_danger=bool(beep_on_danger),
+            engine=_coerce_engine(engine),
+            neural_voice=_clean_voice_name(neural_voice),
         )
         self._params_version = 0
+        self._roster: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
+        self._roster_version = 0
         self._purge_requests = 0
         self._thread: threading.Thread | None = None
         self._token: threading.Event | None = None      # stop token of the current worker
@@ -627,13 +873,36 @@ class VoiceEngine:
 
     @property
     def backend(self) -> str:
-        """``"sapi"`` or ``"print"`` (the expected one until the voice thread has started)."""
+        """``"neural"``, ``"onecore"``, ``"sapi"`` or ``"print"`` (expected one until started)."""
         name = self._backend_name
         if name:
             return name
         if not self._custom_factory and sys.platform == "win32":
-            return "sapi"
+            eng = self._params.engine
+            return "neural" if eng == "auto" else eng
         return "print"
+
+    def prefetch(self, enemies: Sequence[str], allies: Sequence[str] = ()) -> None:
+        """Champions of the game (localised names): the neural voice pre-generates every
+        sentence the coach may say about them, so a gank alert plays without network latency.
+        Thread-safe, non-blocking, never raises."""
+        try:
+            def clean(names: Any) -> tuple[str, ...]:
+                out = []
+                for n in list(names or ())[:10]:
+                    c = _clean_text(n, 40)
+                    if c and c not in out:
+                        out.append(c)
+                return tuple(out)
+
+            roster = (clean(enemies), clean(allies))
+            with self._cond:
+                if roster != self._roster:
+                    self._roster = roster
+                    self._roster_version += 1
+                    self._cond.notify_all()
+        except Exception:
+            log.exception("VoiceEngine.prefetch failed")
 
     def start(self) -> None:
         """Start the voice thread (idempotent, returns immediately)."""
@@ -735,7 +1004,8 @@ class VoiceEngine:
         return []
 
     def set_params(self, voice_name: str | None = None, rate: int | None = None,
-                   volume: int | None = None, beep_on_danger: bool | None = None) -> None:
+                   volume: int | None = None, beep_on_danger: bool | None = None,
+                   engine: str | None = None, neural_voice: str | None = None) -> None:
         """Change the voice settings (applied live by the voice thread). Never raises."""
         try:
             with self._cond:
@@ -745,6 +1015,8 @@ class VoiceEngine:
                     rate=p.rate if rate is None else _clamp_int(rate, *RATE_RANGE, p.rate),
                     volume=p.volume if volume is None else _clamp_int(volume, *VOLUME_RANGE, p.volume),
                     beep_on_danger=p.beep_on_danger if beep_on_danger is None else bool(beep_on_danger),
+                    engine=p.engine if engine is None else _coerce_engine(engine),
+                    neural_voice=p.neural_voice if neural_voice is None else _clean_voice_name(neural_voice),
                 )
                 if new != p:
                     self._params = new
@@ -838,13 +1110,20 @@ class _Worker:
         self.purges_seen = 0
         self.failures = 0
         self.started_at: float | None = None      # start of the current sentence (engine clock)
+        self.backend_key: tuple[str, str] | None = None   # (engine, neural voice) of the backend
+        self.roster_seen = -1
         self._last_error_log = -math.inf
 
     # -- setup ------------------------------------------------------------------------
 
     def _create_backend(self) -> SpeechBackend:
+        p = self.e._params
+        self.backend_key = (p.engine, p.neural_voice)
         try:
-            backend = self.e._factory()
+            if self.e._custom_factory:
+                backend = self.e._factory()
+            else:
+                backend = make_backend(p.engine, p.neural_voice)
             if backend is None:
                 raise RuntimeError("backend factory returned None")
             return backend
@@ -855,6 +1134,7 @@ class _Worker:
     def _install(self, backend: SpeechBackend) -> None:
         self.backend = backend
         self.applied_version = -1
+        self.roster_seen = -1
         self.started_at = None
         self.e._backend_name = str(getattr(backend, "name", "print") or "print")
         try:
@@ -930,6 +1210,12 @@ class _Worker:
         if purges != self.purges_seen:
             self.purges_seen = purges
             self._purge()
+        if not e._custom_factory and self.backend_key is not None \
+                and self.backend_key != (params.engine, params.neural_voice):
+            log.info("Moteur de voix : %s", params.engine)
+            self._purge()
+            self._close_backend()
+            self._install(self._create_backend())
         if version != self.applied_version:
             self.applied_version = version
             try:
@@ -940,6 +1226,14 @@ class _Worker:
                 e._voices_cache = list(self.backend.voices())
             except Exception:
                 pass
+        if e._roster_version != self.roster_seen:
+            self.roster_seen = e._roster_version
+            set_roster = getattr(self.backend, "set_roster", None)
+            if callable(set_roster):
+                try:
+                    set_roster(*e._roster)
+                except Exception as exc:
+                    log.debug("Voice set_roster failed: %s", exc)
         return params
 
     def _next(self) -> _Item | None:

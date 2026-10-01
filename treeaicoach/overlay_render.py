@@ -135,6 +135,7 @@ class OverlayState:
     allies: list[EnemyView] = field(default_factory=list)   # allied champions (relation "ally"), without me
     roles: dict[str, str] = field(default_factory=dict)     # champion key / alias -> role (API position)
     insight: str | None = None                # most relevant live macro insight (coach.MapCoach), one HUD line
+    toasts: list = field(default_factory=list)  # toasts.ToastView list (top-centre banners), optional
 
 
 # ======================================================================================
