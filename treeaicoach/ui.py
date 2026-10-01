@@ -712,9 +712,14 @@ def _guarded(method: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator for :class:`CoachApp` callbacks: log + French toast instead of an exception."""
     @functools.wraps(method)
     def wrapper(self: "CoachApp", *args: Any, **kwargs: Any) -> Any:
+        if getattr(self, "_closing", False):
+            return None
         try:
             return method(self, *args, **kwargs)
         except Exception as exc:
+            if getattr(self, "_closing", False):
+                log.debug("UI action %s interrupted by shutdown: %s", method.__name__, exc)
+                return None
             log.exception("UI action %s failed", method.__name__)
             try:
                 self.show_error(f"Une erreur est survenue : {exc}")
@@ -4586,9 +4591,12 @@ class CoachApp:
             self.root.mainloop()
         except KeyboardInterrupt:
             self.close()
-        except Exception:
-            log.exception("Tk main loop failed")
-            self.close()
+        except Exception as exc:
+            if self._closing:
+                log.debug("Tk main loop ended during shutdown: %s", exc)
+            else:
+                log.exception("Tk main loop failed")
+                self.close()
         return 0
 
     def close(self) -> None:

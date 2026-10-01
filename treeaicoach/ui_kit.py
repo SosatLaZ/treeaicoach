@@ -644,17 +644,19 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 # ======================================================================================
 # Texts
 # ======================================================================================
-CHANGELOG_VERSION = "1.5"
+CHANGELOG_VERSION = "1.8"
 CHANGELOG: tuple[tuple[str, str], ...] = (
-    ("Nouvelle interface", "Bandeau de partie avec chrono et jauge de menace, cartes des champions avec rôle "
-                           "et minuteur des ennemis disparus, alliés et face-à-face de ta voie."),
-    ("Préréglages", "Discret, Équilibré ou Complet en un clic (alertes et overlay)."),
-    ("Calme quand tu veux", "Silence pendant les premières secondes de la partie, heures calmes et "
-                            "annonces d'information désactivables (les dangers sont toujours annoncés)."),
-    ("Overlay sur mesure", "Opacité, taille et couches (rôles, flèches, zones, fantômes), palette daltonien."),
-    ("Mode sûr en un clic", "Depuis le tableau de bord, la barre latérale ou les réglages."),
-    ("Outils", "Copier le diagnostic, export / import des réglages, historique filtrable des alertes, "
-               "raccourcis Ctrl+1…6, indicateur CPU."),
+    ("Ton niveau en un clic", "Débutant, Intermédiaire, Avancé ou Expert dans la barre de gauche : "
+                              "plus tu montes, moins on te rappelle les bases."),
+    ("Carte nouvelle génération", "Moins de fausses alertes de gank (murs pris en compte), champions "
+                                  "cachés sous une autre icône suivis, dernière position avant le brouillard."),
+    ("Ton skin moddé reconnu", "Ton icône est apprise en direct sur la minimap et gardée pour la partie "
+                               "suivante. Ta vraie voie est détectée, même après un échange."),
+    ("Guide de balise", "« Ward ici » au sol dans le jeu ou flèche au bord de l'écran, anneau sur la "
+                        "minimap. F7 pour l'afficher."),
+    ("Panneau de jeu TreeAI", "Jauge ATTAQUE → SAFE, 3 conseils classés, IA 5 fois par partie + 1 urgence."),
+    ("Analyse après la partie", "Avec le client LoL : tes morts exactes, le vrai trajet du jungler adverse "
+                                "et la fiabilité de TreeAI sur la partie."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl + 1 … 6", "Aller à une page (Tableau de bord … Aide)"),

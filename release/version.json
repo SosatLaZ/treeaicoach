@@ -1,6 +1,6 @@
 {
-  "version": "1.7.2",
-  "sha256": "6652c40abdc3e5fd2d2ba008a75c93daccc5106e8583eb2a352b9ed45d878842",
-  "size": 81943333,
-  "notes": "1.7.2 : moins de spam, interface plus compacte, dernière position des ennemis avant le brouillard."
+  "version": "1.8.0",
+  "sha256": "914d2a47dc3b2bb9b22dba7c1f8465be6f133c7e41594f142b75019e98cd34a8",
+  "size": 82118734,
+  "notes": "1.8.0 : niveau en un clic (Débutant → Expert), suivi de la carte v2 (moins de fausses alertes, murs pris en compte), ton skin moddé reconnu, guide de balise « Ward ici », panneau de jeu TreeAI, analyse d'après-partie avec le client LoL."
 }
