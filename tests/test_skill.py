@@ -9,7 +9,9 @@ def test_levels_apply_and_filter_tips():
         new = skill.apply(cfg, key)
         assert new.skill_level == key
     assert skill.apply(cfg, "expert").recall_reminder is False
-    assert skill.apply(cfg, "debutant").overlay_show_roles is True
+    for key, _label in skill.SKILL_LEVELS:          # declutter: compact overlay at every level
+        new = skill.apply(cfg, key)
+        assert not new.hud_detailed and not new.overlay_show_roles and not new.overlay_show_allies
     assert skill.tip_min_prio(skill.apply(cfg, "expert")) == 4
     assert skill.tip_min_prio(skill.apply(cfg, "debutant")) == 1
     assert skill.normalize("Avancé") == "avance" and skill.normalize("???") == "intermediaire"

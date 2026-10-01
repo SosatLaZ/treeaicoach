@@ -17,7 +17,7 @@ SKILL_LEVELS: tuple[tuple[str, str], ...] = (
 )
 
 SKILL_HELP: dict[str, str] = {
-    "debutant": "Tout est expliqué : rappels (retour, balises, achats), rôles sur la carte, conseils simples.",
+    "debutant": "Tout est expliqué, une chose à la fois : la prochaine action, les rappels (retour, balises, achats).",
     "intermediaire": "L'essentiel : ganks, combats, objectifs et conseils précis. Les bases ne sont plus rappelées.",
     "avance": "Seulement les infos qui changent une décision : ganks, combats, objectifs, dangers, pics de puissance.",
     "expert": "Le strict minimum, comme un coach en tournoi : gank, ATTAQUE / RECULE et vrais dangers. IA seulement en urgence.",
@@ -29,31 +29,31 @@ TIP_MIN_PRIO: dict[str, int] = {"debutant": 1, "intermediaire": 2, "avance": 3, 
 #: Config values applied when a level is chosen (only fields that exist on Config are used).
 SKILL_PRESETS: dict[str, dict[str, Any]] = {
     "debutant": {
-        "voice_level": "normal", "text_tips": True, "tip_toasts": True,
+        "voice_level": "normal", "text_tips": True, "tip_toasts": False,
         "recall_reminder": True, "control_ward_reminder": True, "objective_timers": True,
         "item_advice": True, "item_advice_toasts": True, "alert_jungler_spotted": True,
-        "overlay_show_roles": True, "overlay_show_last_seen": True, "overlay_show_allies": True,
-        "hud_detailed": True, "death_recap": True,
+        "overlay_show_roles": False, "overlay_show_last_seen": False, "overlay_show_allies": False,
+        "hud_detailed": False, "death_recap": True,
     },
     "intermediaire": {
         "voice_level": "minimal", "text_tips": True, "tip_toasts": False,
         "recall_reminder": True, "control_ward_reminder": True, "objective_timers": True,
         "item_advice": True, "item_advice_toasts": True, "alert_jungler_spotted": True,
-        "overlay_show_roles": False, "overlay_show_last_seen": True, "overlay_show_allies": False,
+        "overlay_show_roles": False, "overlay_show_last_seen": False, "overlay_show_allies": False,
         "hud_detailed": False, "death_recap": True,
     },
     "avance": {
         "voice_level": "minimal", "text_tips": True, "tip_toasts": False,
         "recall_reminder": False, "control_ward_reminder": False, "objective_timers": True,
         "item_advice": True, "item_advice_toasts": False, "alert_jungler_spotted": True,
-        "overlay_show_roles": False, "overlay_show_last_seen": True, "overlay_show_allies": False,
+        "overlay_show_roles": False, "overlay_show_last_seen": False, "overlay_show_allies": False,
         "hud_detailed": False, "death_recap": False,
     },
     "expert": {
         "voice_level": "minimal", "text_tips": True, "tip_toasts": False,
         "recall_reminder": False, "control_ward_reminder": False, "objective_timers": False,
         "item_advice": False, "item_advice_toasts": False, "alert_jungler_spotted": False,
-        "overlay_show_roles": False, "overlay_show_last_seen": True, "overlay_show_allies": False,
+        "overlay_show_roles": False, "overlay_show_last_seen": False, "overlay_show_allies": False,
         "hud_detailed": False, "death_recap": False,
     },
 }

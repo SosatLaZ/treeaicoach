@@ -162,14 +162,17 @@ def test_hud_is_light_by_default_with_gauge_and_one_advice_line(states):
     assert _accent(fb)[2] > _accent(fb)[0]                     # PRUDENT (amber) from the stance
     assert orr._gauge_step(orr.OverlayState(stance="agressif")) == 1
     assert orr._gauge_step(orr.OverlayState(gauge=9)) == 2 and orr._gauge_step(orr.OverlayState()) is None
+    # danger: the danger word only (one thing), the advice line waits
+    assert orr.hud_size(st, 280) == orr.hud_size(orr.OverlayState(**{**st.__dict__, "tip": "Farm"}), 280)
     # one advice line: the tip wins over the insight, same height
+    st = orr.OverlayState(**{**st.__dict__, "threat_level": 0, "gauge": 0})
     t1 = orr.OverlayState(**{**st.__dict__, "insight": "Héraut 0:40", "tip": None})
     t2 = orr.OverlayState(**{**st.__dict__, "insight": "Héraut 0:40", "tip": "Pose une balise dans la rivière"})
     assert orr.hud_size(t1, 280) == orr.hud_size(t2, 280)
     assert np.abs(orr.render_hud(t1, 280, now=0.0).astype(int) - orr.render_hud(t2, 280, now=0.0).astype(int)).sum() > 0
-    # long advice: at most 2 lines
+    # long advice: one line (cut to the action)
     long = orr.OverlayState(**{**t2.__dict__, "tip": "mot " * 80})
-    assert orr.hud_size(long, 280)[1] <= orr.hud_size(t2, 280)[1] + 20
+    assert orr.hud_size(long, 280)[1] == orr.hud_size(t2, 280)[1]
     # fade-in of a new advice line (~250 ms)
     t3 = orr.OverlayState(**{**t2.__dict__, "tip_since": 10.0})
     a0 = orr.render_hud(t3, 280, now=10.0)[..., 3].astype(int).sum()
@@ -188,7 +191,7 @@ def test_hud_chips_at_most_two():
     assert [c[0] for c in chips] == ["objective", "item"]
     st2 = orr.OverlayState(**{**st.__dict__, "objectives": [], "in_base": False})
     assert [c[1] for c in orr._hud_chips(st2)] == ["Rôle : MID (échange de voie)", "1 450 PO"]
-    assert orr._hud_chips(orr.OverlayState(ai_counter="IA 0/5"))[0][1] == "IA 0/5"
+    assert orr._hud_chips(orr.OverlayState(ai_counter="IA 0/5")) == []      # AI budget: app only
     img = orr.render_hud(st, 280, now=0.0)
     assert_premultiplied(img) and img.shape[1] == 280
 
@@ -279,7 +282,10 @@ def test_minimap_marks_enemies_red_allies_blue_me_teal():
                             enemies=[E("Darius", "Darius", "Darius", True, (0.7, 0.7), 0.0, role="TOP")],
                             allies=[E("Lux", "Lux", "Lux", True, (0.5, 0.2), 0.0, relation="ally", role="MIDDLE")])
     r = orr.MM_MARKER_R * 256
-    # default (decluttered): the enemy only - no ally ring, no ring on me, no role tag
+    # compact default: nothing on a visible, calm enemy (the game draws it)
+    assert not orr.render_minimap(base, 256, 256, now=0.0).any()
+    # detailed mode: the enemy only - no ally ring, no ring on me, no role tag
+    base = orr.OverlayState(**{**base.__dict__, "hud_detailed": True})
     img = orr.render_minimap(base, 256, 256, now=0.0)
     assert img[int(0.7 * 256), int(0.7 * 256 + r), 3] > 100
     assert not img[int(0.2 * 256) - 30:int(0.2 * 256) + 30, int(0.5 * 256) - 30:int(0.5 * 256) + 30].any()
@@ -332,13 +338,19 @@ def test_minimap_hidden_enemy_ghost_and_fog_timer():
     a = img[128 + 20, 128 - 20]
     assert a[3] < 60
     assert img[..., 3].max() > 0 and (img[..., 3] > 0).mean() < 0.5
-    ghosts = orr.render_minimap(orr.OverlayState(**{**st.__dict__, "show_ghosts": True}), 256, 256, now=0.0)
+    assert not orr.render_minimap(orr.OverlayState(**{**st.__dict__, "show_ghosts": True}), 256, 256,
+                                  now=0.0)[190:218, 37:65].any()   # compact: show_ghosts needs detailed mode
+    ghosts = orr.render_minimap(orr.OverlayState(**{**st.__dict__, "show_ghosts": True, "hud_detailed": True}),
+                                256, 256, now=0.0)
     assert ghosts[204, 51, 3] > 0                              # Ahri ghost at her last position
     none = orr.render_minimap(orr.OverlayState(enemies=[E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 90.0)],
-                                               show_ghosts=True), 256)
+                                               show_ghosts=True, hud_detailed=True), 256)
     assert not none.any()                                     # too old: nothing drawn
-    last = orr.render_minimap(orr.OverlayState(enemies=[E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 12.0)]), 256)
-    assert last[204, 51, 3] > 0                                # default: last seen position before the fog
+    last = orr.render_minimap(orr.OverlayState(enemies=[E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 12.0)],
+                                               show_last_seen=True, hud_detailed=True), 256)
+    assert last[204, 51, 3] > 0                                # detailed: last seen position before the fog
+    assert not orr.render_minimap(orr.OverlayState(enemies=[E("Ahri", "Ahri", "Ahri", False, (0.2, 0.8), 12.0)]),
+                                  256).any()                  # compact: only the jungler's ghost
 
 
 def test_role_tags():

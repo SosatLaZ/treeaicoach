@@ -1392,9 +1392,14 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     f_tag = get_font(max(8, int(round(8.5 * k))), "bold")
     f_time = get_font(max(8, int(round(8.5 * k))), "bold")
     roles = state.roles if isinstance(state.roles, dict) else {}
-    show_allies = bool(getattr(state, "show_allies", False))
-    show_roles = bool(getattr(state, "show_roles", False))
-    show_ghosts = bool(getattr(state, "show_ghosts", False))
+    # declutter: by default only (a) the enemy jungler's last seen mark / heat while unseen,
+    # (b) danger arrows / ring when a gank comes, (c) ONE guide arrow. Rings on visible champions
+    # (the game already draws them), role tags, allies and the other ghosts: detailed mode only.
+    detailed = bool(getattr(state, "hud_detailed", False))
+    show_allies = detailed and bool(getattr(state, "show_allies", False))
+    show_roles = detailed and bool(getattr(state, "show_roles", False))
+    show_ghosts = detailed and bool(getattr(state, "show_ghosts", False))
+    show_last_seen = detailed and bool(getattr(state, "show_last_seen", True))
     taken: list[tuple[float, float, float, float]] = []
 
     def px(uv: tuple[float, float]) -> tuple[float, float]:
@@ -1470,9 +1475,9 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     #      12 s") for the enemy jungler only; never on / next to a live icon (that icon is most
     #      likely the same champion, not identified yet)
     ghost_drawn: set[str] = set()
-    if show_ghosts or bool(getattr(state, "show_last_seen", True)):
+    if True:
         for e in enemies:
-            if e.visible:
+            if e.visible or not (e.is_jungler or show_ghosts or show_last_seen):
                 continue
             uv = _uv_ok(e.uv) if e.uv is not None else None
             ago = e.last_seen_ago
@@ -1520,6 +1525,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         uv = _uv_ok(e.uv)
         assert uv is not None
         x, y = px(uv)
+        if not detailed and (not e.approaching or is_ghost(e)):
+            continue             # compact: the game's own icon is enough
         if is_ghost(e):          # stale / stacked / unsure: faint dashed ring, no label, no arrow
             cv_.ring(x, y, mr, lw, DANGER, 0.4, dash=(3.0 * k + 1, 2.5 * k + 1))
             continue
@@ -1537,7 +1544,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             cv_.ring(x, y, mr * 1.02, lw * 1.6, DANGER, 0.9)
         else:
             cv_.ring(x, y, mr, lw, DANGER, 0.8)
-        tag = tag_of(e)
+        tag = tag_of(e) if detailed else ""
         if tag:
             labels.append((0 if e.is_jungler else 2, x, y, mr + 1, tag, f_tag,
                            WHITE if e.is_jungler else ENEMY_TAG_RGB, 1.0, e.key))
@@ -1583,7 +1590,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     icons = [p for p in ([me] if me is not None else []) + [_uv_ok(e.uv) for e in visible]
              + [_uv_ok(a.uv) for a in allies if a.visible and a.uv is not None] if p is not None]
     _draw_guides(cv_, list(getattr(state, "guides", None) or []), me, icons, W, H, now,
-                 max(1, MAX_MAP_ELEMENTS - n_arrows), taken)
+                 max(1, MAX_MAP_ELEMENTS - n_arrows) if detailed else 1, taken)
     return cv_.to_bgra()
 
 
@@ -1808,9 +1815,7 @@ def _hud_chips(state: OverlayState) -> list[tuple[str, str, tuple[int, int, int]
     hint = short_chip_text(str(getattr(state, "hint", "") or ""))
     if hint:
         extra.append(("hint", hint, TAI_TEXT, None))
-    ai = str(getattr(state, "ai_counter", "") or "").strip()
-    if ai:
-        extra.append(("ai", ai, _mix(TAI_INFO, WHITE, 0.3), None))
+    # the AI budget ("IA 0/5") lives in the app, never in game (declutter)
     return (chips + extra)[:2]
 
 
@@ -1873,9 +1878,278 @@ def _hud_layout(state: OverlayState, width: int, k: float) -> dict[str, Any]:
             "step": _gauge_step(state), "detailed": detailed}
 
 
+# ======================================================================================
+# Compact HUD (default): ONE thing at a time
+# ======================================================================================
+#: Strict hierarchy of the compact card (docs/ARCHITECTURE.md §19):
+#:   1. danger (gank / recule / siege / personal danger): red card, big short word, nothing else;
+#:   2. one "next action" line (<= ACTION_MAX_CHARS, verb first) under a tiny gauge word;
+#:   3. everything else hidden; at most one small context note (objective in the last 60 s that
+#:      my role plays, enemy jungler hidden 30-120 s) right of the gauge word, beginners only.
+#: The full card (jungler line, 5 portraits, chips) is the "mode détaillé" (setting or hold key).
+COMPACT_REF_W = 300.0
+ACTION_MAX_CHARS = 45
+#: seconds an action line stays on the compact card after it appeared, per level (None = while
+#: valid); a "danger" toned line always shows, a "warning" one except for experts.
+ADVICE_SHOW_S: dict[str, float | None] = {"debutant": None, "intermediaire": 30.0, "avance": 12.0,
+                                          "expert": 0.0}
+#: gauge steps shown on the compact card per level (beginners always see where they stand)
+GAUGE_SHOW: dict[str, frozenset[int]] = {
+    "debutant": frozenset({-2, -1, 0, 1, 2}), "intermediaire": frozenset({-2, -1, 0, 1, 2}),
+    "avance": frozenset({-2, 2}), "expert": frozenset({-2, 2}),
+}
+CONTEXT_LEVELS = frozenset({"debutant", "intermediaire"})
+OBJECTIVE_CONTEXT_S = 60.0
+JUNGLER_CONTEXT_S = (30.0, 120.0)
+#: short danger words (threat_text "DANGER — TA BASE EST ATTAQUÉE" -> "BASE ATTAQUÉE")
+DANGER_SHORT: dict[str, str] = {"TA BASE EST ATTAQUÉE": "BASE ATTAQUÉE", "ACE": "ACE : DÉFENDS",
+                                "GANK !": "GANK !"}
+_STATS_WORDS = ("victoire", "kda")
+
+
+def _skill(state: Any) -> str:
+    s = str(getattr(state, "skill_level", "") or "").strip().lower()
+    return s if s in ADVICE_SHOW_S else "intermediaire"
+
+
+def action_text(text: Any, max_chars: int = ACTION_MAX_CHARS) -> str:
+    """The "next action" wording of an advice line: verb-first head before " : " / " (" / " · "
+    when the whole line is too long ("Pose ta balise dans la rivière : premier gank vers 2:30" ->
+    "Pose ta balise dans la rivière"), cut at a word boundary beyond ``max_chars``. A pure
+    statistics line ("+1 200 PO · victoire 55 %") is not an action: "". Never raises."""
+    try:
+        t = " ".join(str(text or "").replace(" — ", " : ").split())
+        if not t:
+            return ""
+        low = t.lower()
+        if "%" in t and any(w in low for w in _STATS_WORDS):     # scoreboard / win-probability line
+            return ""
+        if len(t) > max_chars:
+            for sep in (" : ", " (", " · ", ", ", " ; "):
+                head = t.split(sep, 1)[0].strip()
+                if sep in t and 8 <= len(head) <= max_chars:
+                    return head.rstrip(".,;:")
+            cut = t[:max_chars].rsplit(" ", 1)[0].rstrip(",;:·-")
+            t = cut if len(cut) >= 8 else t[:max_chars]
+        return t
+    except Exception:
+        return ""
+
+
+def _danger_word(state: Any) -> str:
+    text = " ".join(str(getattr(state, "threat_text", "") or "").split())
+    for prefix in ("DANGER — ", "DANGER : ", "ATTENTION — ", "ATTENTION : "):
+        if text.upper().startswith(prefix) and len(text) > len(prefix):
+            text = text[len(prefix):]
+            break
+    if not text or text.upper() in ("SÛR", "SUR"):
+        lvl = int(getattr(state, "threat_level", 0) or 0)
+        return "DANGER" if lvl >= 2 else "ATTENTION"
+    return DANGER_SHORT.get(text.upper(), text)
+
+
+def _advice_raw(state: Any) -> str:
+    tip = getattr(state, "tip", None)
+    advice = tip if isinstance(tip, str) and tip.strip() else getattr(state, "insight", None)
+    return advice if isinstance(advice, str) else ""
+
+
+def _advice_shown(state: Any, now: float) -> str:
+    """The compact action line for the player's level ("" = none)."""
+    line = action_text(_advice_raw(state))
+    if not line:
+        return ""
+    tone = str(getattr(state, "tip_tone", "") or "").lower()
+    lvl = _skill(state)
+    if tone == "danger":
+        return line
+    if tone == "warning" and lvl != "expert":
+        return line
+    win = ADVICE_SHOW_S.get(lvl)
+    if win is None:
+        return line
+    since = getattr(state, "tip_since", None)
+    try:
+        if since is None or not _finite(since):
+            return line if win > 0 else ""
+        age = float(now) - float(since)
+    except (TypeError, ValueError):
+        return line if win > 0 else ""
+    return line if -0.5 <= age < win else ""
+
+
+def _context_note(state: Any, advice: str) -> tuple[str, tuple[int, int, int]] | None:
+    """At most one small note right of the gauge word (beginner / intermediate levels):
+    the next objective in its last :data:`OBJECTIVE_CONTEXT_S` s when my role plays it, else the
+    enemy jungler hidden for 30-120 s (unless the action line already names him)."""
+    if _skill(state) not in CONTEXT_LEVELS:
+        return None
+    try:
+        gt = state.game_time if state.game_time is not None and _finite(state.game_time) else None
+        if gt is not None:
+            from treeaicoach.voice_policy import objective_involved
+
+            best = None
+            for ob in state.objectives or []:
+                nxt = getattr(ob, "next_spawn", None)
+                if getattr(ob, "alive", False) or nxt is None or not _finite(nxt):
+                    continue
+                rem = float(nxt) - float(gt)
+                if not (0.0 <= rem <= OBJECTIVE_CONTEXT_S):
+                    continue
+                key = str(getattr(ob, "key", "") or getattr(ob, "name", "")).lower()
+                key = {"dragon ancestral": "elder", "héraut": "herald", "larves": "grubs"}.get(key, key)
+                if not objective_involved(f"objective_soon:{key}:60", getattr(state, "my_role", None),
+                                          getattr(state, "me_uv", None), float(gt)):
+                    continue
+                if best is None or rem < best[0]:
+                    name = str(getattr(ob, "name", "") or key)
+                    best = (rem, f"{OBJECTIVE_SHORT.get(name.lower(), name)} {fmt_clock(rem)}")
+            if best is not None:
+                return best[1], TAI_WARN
+        jg = next((e for e in (state.enemies or []) if e is not None and getattr(e, "is_jungler", False)), None)
+        if jg is not None and not jg.visible and not getattr(jg, "dead", False):
+            ago = jg.last_seen_ago
+            name = str(jg.name or jg.alias or "").strip()
+            lo, hi = JUNGLER_CONTEXT_S
+            if (ago is not None and _finite(ago) and lo <= float(ago) <= hi and name
+                    and name.lower() not in advice.lower()):
+                return f"{name} caché {int(ago)} s", TAI_MUTED
+    except Exception:
+        log.debug("context note failed", exc_info=True)
+    return None
+
+
+def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | None:
+    """What the compact card shows, or None when there is nothing worth a card (the overlay then
+    hides the HUD window). Keys: ``mode`` ("danger" | "normal"), ``word``, ``colour``, ``step``
+    (gauge or None), ``line`` (action line or ""), ``note`` ((text, colour) or None)."""
+    now = time.monotonic() if now is None else float(now)
+    lvl = 0
+    try:
+        if _finite(state.threat_level or 0):
+            lvl = int(min(max(int(state.threat_level or 0), 0), 2))
+    except (TypeError, ValueError):
+        lvl = 0
+    advice = _advice_shown(state, now)
+    if lvl >= 1 and not bool(getattr(state, "me_dead", False)):
+        tone = str(getattr(state, "tip_tone", "") or "").lower()
+        line = advice if tone == "danger" else ""
+        return {"mode": "danger" if lvl >= 2 else "warning", "word": _danger_word(state),
+                "colour": TAI_DANGER if lvl >= 2 else TAI_WARN, "step": None, "line": line, "note": None}
+    if bool(getattr(state, "me_dead", False)):
+        # dead: the game shows the respawn timer; only the lesson / next action, if any
+        if not advice:
+            return None
+        return {"mode": "normal", "word": "", "colour": TAI_MUTED, "step": None, "line": advice, "note": None}
+    step = _gauge_step(state)
+    if step is not None and step not in GAUGE_SHOW[_skill(state)]:
+        step = None
+    note = _context_note(state, advice)
+    if step is None and not advice and note is None:
+        return None
+    word, colour = GAUGE_STYLE[step] if step is not None else ("", TAI_INFO)
+    return {"mode": "normal", "word": word, "colour": colour, "step": step, "line": advice, "note": note}
+
+
+def hud_visible(state: Any, now: float | None = None) -> bool:
+    """False when the HUD card has nothing to show (compact mode): the window is hidden."""
+    try:
+        if bool(getattr(state, "hud_detailed", False)):
+            return True
+        return compact_content(state, now) is not None
+    except Exception:
+        return True
+
+
+def _compact_layout(state: Any, width: int, now: float) -> dict[str, Any]:
+    k = width / COMPACT_REF_W
+    c = compact_content(state, now) or {"mode": "normal", "word": "", "colour": TAI_INFO, "step": None,
+                                          "line": "", "note": None}
+    ms, mt, mb = round(4 * k), round(3 * k), round(6 * k)
+    cx0, cw = float(ms), float(width - 2 * ms)
+    left, right = cx0 + 15 * k, cx0 + cw - 10 * k
+    danger = c["mode"] in ("danger", "warning")
+    f_word = get_font(round((19 if c["mode"] == "danger" else 16) * k), "display") if danger \
+        else get_font(max(7, round(11 * k)), "bold")
+    f_line = get_font(round(14 * k), "semibold")
+    line = c["line"]
+    if line and text_width(line, f_line) > right - left:
+        f_line = get_font(round(13 * k), "semibold")
+    rows: list[tuple[str, float]] = []
+    has_head = bool(c["word"]) or c["step"] is not None or c["note"] is not None
+    if has_head:
+        rows.append(("head", (24 if danger else 14) * k))
+    if line:
+        rows.append(("line", 18 * k))
+    gap = 4 * k if len(rows) == 2 else 0.0
+    pad_t, pad_b = 7 * k, 8 * k
+    ch = pad_t + sum(h for _, h in rows) + gap + pad_b
+    return {"k": k, "c": c, "ms": ms, "mt": mt, "cx0": cx0, "cw": cw, "ch": ch, "left": left, "right": right,
+            "f_word": f_word, "f_line": f_line, "f_note": get_font(max(7, round(11 * k)), "semibold"),
+            "rows": rows, "gap": gap, "pad_t": pad_t, "height": int(math.ceil(mt + ch + mb)), "danger": danger}
+
+
+def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
+    lay = _compact_layout(state, width, now)
+    k, c = lay["k"], lay["c"]
+    W, H = width, lay["height"]
+    x0, y0, cw, ch = lay["cx0"], float(lay["mt"]), lay["cw"], lay["ch"]
+    left, right = lay["left"], lay["right"]
+    cv_ = Canvas(W, H)
+    accent = c["colour"]
+    if not lay["danger"]:
+        tone = str(getattr(state, "tip_tone", "") or "").lower()
+        if c["line"] and tone in TONE_RGB:
+            accent = TONE_RGB[tone]
+        elif c["step"] is None:
+            accent = TAI_INFO
+    rad = 6 * k
+    for i, a in enumerate((0.14, 0.09, 0.05)):
+        g = (i + 1) * 1.2 * k
+        cv_.rrect(x0 - g, y0 - g * 0.6 + 2 * k, cw + 2 * g, ch + 2 * g, rad + g, BLACK, a)
+    if lay["danger"]:
+        bg = _mix(TAI_PANEL, accent, 0.30 if c["mode"] == "danger" else 0.16)
+        cv_.rrect(x0, y0, cw, ch, rad, bg, 0.95, border=accent, border_alpha=0.95, border_w=max(1.2, 1.4 * k))
+    else:
+        cv_.rrect(x0, y0, cw, ch, rad, TAI_PANEL, 0.90, border=TAI_EDGE, border_alpha=0.8,
+                  border_w=max(1.0, 0.9 * k))
+    phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
+    a_acc = 0.95 if c["mode"] != "danger" else 0.75 + 0.25 * math.sin(phase * 2 * math.pi)
+    cv_.capsule(x0 + 7 * k, y0 + 6 * k, x0 + 7 * k, y0 + ch - 6 * k, 3.0 * k, accent, a_acc)
+    y = y0 + lay["pad_t"]
+    for idx, (name, h) in enumerate(lay["rows"]):
+        cy = y + h / 2
+        if name == "head":
+            if lay["danger"]:
+                cv_.text(left, cy, fit_text(c["word"].upper(), lay["f_word"], right - left), lay["f_word"],
+                         _mix(accent, WHITE, 0.35), shadow=0.6)
+            else:
+                x = left
+                fa = _fade(getattr(state, "gauge_since", None), now)
+                if c["step"] is not None:
+                    x += _bars(cv_, x, cy, k * 0.85, c["step"], c["colour"], max(0.35, fa)) + 6 * k
+                if c["word"]:
+                    x += cv_.text(x, cy, c["word"], lay["f_word"], c["colour"], max(0.25, fa), shadow=0.5) + 8 * k
+                note = c["note"]
+                if note is not None:
+                    avail = right - x
+                    if avail > 40 * k:
+                        cv_.text(right, cy, fit_text(note[0], lay["f_note"], avail), lay["f_note"], note[1], 0.95,
+                                 anchor="r", shadow=0.4)
+        elif name == "line":
+            fa = _fade(getattr(state, "tip_since", None), now)
+            cv_.text(left, cy - 0.5 * k, fit_text(c["line"], lay["f_line"], right - left), lay["f_line"],
+                     ADVICE_RGB, fa, shadow=0.0, outline=1, outline_alpha=0.55)
+        y += h + (lay["gap"] if idx == 0 else 0.0)
+    return cv_.to_bgra()
+
+
 def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
     """(width, height) that :func:`render_hud` will produce for ``state``."""
     width = int(min(max(int(width) if _finite(width) else 280, 200), 1200))
+    if not bool(getattr(state, "hud_detailed", False)):
+        return width, _compact_layout(state, width, time.monotonic())["height"]
     return width, _hud_layout(state, width, width / HUD_REF_W)["height"]
 
 
@@ -1889,7 +2163,10 @@ def render_hud(state: OverlayState, width: int = 280, now: float | None = None) 
     """
     width = int(min(max(int(width) if _finite(width) else 280, 200), 1200))
     try:
-        return _render_hud(state, width, time.monotonic() if now is None else float(now))
+        t = time.monotonic() if now is None else float(now)
+        if not bool(getattr(state, "hud_detailed", False)):
+            return _render_compact(state, width, t)
+        return _render_hud(state, width, t)
     except Exception:
         log.exception("render_hud failed")
         return np.zeros((1, width, 4), np.uint8)
@@ -2100,7 +2377,7 @@ def _draw_enemy_slots(cv_: Canvas, enemies: list[EnemyView], x0: float, y0: floa
         if e.visible:
             text, colour = ("approche", TAI_DANGER) if e.approaching else ("visible", TAI_GO)
         elif ago is None:
-            text, colour = "non vu", GREY
+            continue                                    # never seen: the grey portrait says it
         elif ago < LAST_SEEN_MAX_S:
             text, colour = fmt_seconds(ago), TAI_WARN
         else:

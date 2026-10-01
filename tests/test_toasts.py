@@ -62,12 +62,11 @@ def test_layer_render_and_queue():
     assert q.push("warning", "ENNEMI AVANCÉ", "b", t=0.5, key="fed:Darius")
     assert q.push("insight", "TAB", "c", t=0.6)
     views = q.active(1.0)
-    assert [v.toast.title for v in views] == ["SOLO KILL", "ENNEMI AVANCÉ"]  # max 2 visible
+    assert [v.toast.title for v in views] == ["SOLO KILL"]                  # one at a time
     layer = T.render_toast_layer(views, 1.0)
     assert layer[..., 3].max() > 200
-    later = q.active(3.5)                                                    # first expired -> third shows
-    assert [v.toast.title for v in later] == ["ENNEMI AVANCÉ", "TAB"]
-    assert later[1].age == 0.0
+    later = q.active(4.5)                                                    # first expired (4 s) -> next
+    assert [v.toast.title for v in later] == ["ENNEMI AVANCÉ"] and later[0].age == 0.0
     assert q.active(20.0) == [] and len(q) == 0
     for i in range(20):
         q.push("insight", f"t{i}", t=30.0)

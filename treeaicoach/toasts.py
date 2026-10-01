@@ -66,10 +66,11 @@ STYLE.update({
 })
 BANNER_H = 84                   # big banner height at 1080p (same width as a toast)
 PULSE_S = 1.2                   # subtle pulse period of the banner glow
-DURATION_S = 3.2
+DURATION_S = 4.0                # auto-hide (declutter: never longer than MAX_DURATION_S)
+MAX_DURATION_S = 4.0
 SLIDE_IN_S = 0.28
 FADE_OUT_S = 0.6
-MAX_VISIBLE = 2
+MAX_VISIBLE = 1                 # declutter: one toast at a time
 MAX_QUEUED = 6
 DEDUPE_S = 20.0                 # same key not shown again for this long
 INSIGHT_GAP_S = 25.0            # low-priority "insight" toasts: at most one every 25 s (anti-spam)
@@ -303,11 +304,11 @@ def _render_base(kind: str, title: str, subtitle: str, icon: np.ndarray | None, 
     fs = orr.get_font(max(12, int(round(16 * k))), "semibold")
     t_txt = orr.fit_text((title or "").upper(), ft, max_w)
     if subtitle and orr.text_width(subtitle, fs) > max_w:
+        # at most 2 lines: the subtitle (the useful part) on two lines, the caption title dropped
         f2 = orr.get_font(max(12, int(round(14 * k))), "semibold")
         lines = orr.wrap_text(subtitle, f2, max_w, 2)
-        cv_.text(tx, y0 + H * 0.24, t_txt, ft, accent, 1.0, shadow=0.0)
         for i, ln in enumerate(lines):
-            cv_.text(tx, y0 + H * (0.55 + 0.27 * i), ln, f2, DS_TEXT, 1.0, shadow=0.0)
+            cv_.text(tx, y0 + H * (0.34 + 0.32 * i), ln, f2, DS_TEXT, 1.0, shadow=0.0)
     elif subtitle:
         cv_.text(tx, y0 + H * 0.32, t_txt, ft, accent, 1.0, shadow=0.0)
         cv_.text(tx, y0 + H * 0.66, orr.fit_text(subtitle, fs, max_w), fs, DS_TEXT, 1.0, shadow=0.0)
@@ -491,8 +492,9 @@ class ToastQueue:
                 if len(self._recent) > 64:
                     for old in sorted(self._recent, key=self._recent.get)[:32]:
                         self._recent.pop(old, None)
+                dur = min(float(duration), MAX_DURATION_S) if math.isfinite(float(duration)) else DURATION_S
                 self._waiting.append(Toast(kind if kind in STYLE else "insight", str(title or ""),
-                                           str(subtitle or ""), icon, k, now, float(duration)))
+                                           str(subtitle or ""), icon, k, now, max(0.5, dur)))
             return True
         except Exception:
             log.exception("ToastQueue.push failed")
@@ -518,3 +520,73 @@ class ToastQueue:
     def __len__(self) -> int:
         with self._lock:
             return len(self._shown) + len(self._waiting)
+
+
+# ------------------------------------------------------------------------------ declutter policy
+#: Toast kinds allowed per player level outside a fight (danger / retreat always pass).
+#: "insight" toasts mostly repeat the HUD action line: beginners only.
+LEVEL_KINDS: dict[str, frozenset[str]] = {
+    "debutant": frozenset({"danger", "retreat", "warning", "call", "engage", "praise", "insight"}),
+    "intermediaire": frozenset({"danger", "retreat", "warning", "call", "engage", "praise"}),
+    "avance": frozenset({"danger", "retreat", "warning", "call"}),
+    "expert": frozenset({"danger", "retreat"}),
+}
+DANGER_KINDS = frozenset({"danger", "retreat"})
+_PRIORITY = {"danger": 0, "retreat": 0, "warning": 1, "call": 2, "engage": 2, "praise": 3, "insight": 4}
+#: a visible enemy this close to me (normalized minimap units) = fight / skirmish
+FIGHT_NEAR_UV = 0.07
+
+
+def in_fight(state: Any, views: Sequence[ToastView] = ()) -> bool:
+    """Heuristic fight flag from the overlay state: a live fight banner, a gank threat, or a
+    visible (fresh) enemy right next to me. Never raises."""
+    try:
+        if any(v.toast.kind in ("engage", "retreat") for v in views):
+            return True
+        if int(getattr(state, "threat_level", 0) or 0) >= 1:
+            return True
+        me = getattr(state, "me_uv", None)
+        if me is None:
+            return False
+        for e in getattr(state, "enemies", None) or []:
+            if e is None or not getattr(e, "visible", False) or getattr(e, "uv", None) is None:
+                continue
+            if orr.is_ghost(e):
+                continue
+            if math.hypot(float(e.uv[0]) - float(me[0]), float(e.uv[1]) - float(me[1])) <= FIGHT_NEAR_UV:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def select_views(views: Sequence[ToastView], state: Any = None, level: Any = None) -> list[ToastView]:
+    """At most ONE toast: danger first; during a fight only danger / retreat; outside a fight the
+    kinds of :data:`LEVEL_KINDS` for the player's level; a toast that only repeats the HUD action
+    line is dropped; nothing older than :data:`MAX_DURATION_S` unless it is a danger banner."""
+    try:
+        lvl = str(level or getattr(state, "skill_level", "") or "intermediaire").lower()
+        allowed = LEVEL_KINDS.get(lvl, LEVEL_KINDS["intermediaire"])
+        fight = in_fight(state, views) if state is not None else False
+        hud_line = ""
+        if state is not None:
+            tip = getattr(state, "tip", None) or getattr(state, "insight", None)
+            hud_line = " ".join(str(tip or "").split()).lower()
+        out = []
+        for v in views:
+            kind = v.toast.kind
+            if fight and kind not in DANGER_KINDS:
+                continue
+            if kind not in allowed and kind not in DANGER_KINDS:
+                continue
+            if kind not in DANGER_KINDS and v.age > MAX_DURATION_S:
+                continue
+            sub = " ".join(str(v.toast.subtitle or "").split()).lower()
+            if kind not in DANGER_KINDS and hud_line and sub and (sub in hud_line or hud_line in sub):
+                continue
+            out.append(v)
+        out.sort(key=lambda v: _PRIORITY.get(v.toast.kind, 5))
+        return out[:1]
+    except Exception:
+        log.debug("select_views failed", exc_info=True)
+        return list(views)[:1]

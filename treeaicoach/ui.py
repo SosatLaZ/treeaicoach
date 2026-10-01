@@ -3377,7 +3377,6 @@ class CoachApp:
 
     # ------------------------------------------------------------------ alerts & voice page
     def _build_alerts_page(self) -> Any:
-        ctk = self.ctk
         page, right, body = self._page("Alertes", "Ce que le coach annonce et comment il parle")
         self._button(right, "Tester la voix", self.test_voice, "secondary", icon="voice", height=26).grid(
             row=0, column=0)
@@ -5956,7 +5955,7 @@ class CoachApp:
     def _radar_source(self) -> tuple[Any, Any]:
         """(overlay state, raw preview) for the radar worker thread."""
         eng = self.engine
-        if eng is None:
+        if eng is None or not self._engine_running():     # stopped: no stale "EN DIRECT" picture
             return None, None
         state = None
         try:

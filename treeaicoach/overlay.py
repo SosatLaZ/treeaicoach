@@ -88,7 +88,7 @@ HUD_MARGIN = 16
 #: Radar side limits (px).
 RADAR_MIN, RADAR_MAX = 96, 1024
 #: HUD width at 1080p and its limits.
-HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 280, 240, 520
+HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 300, 240, 520
 #: Flash intensity quantization (the full-screen image is re-rendered only when it changes).
 FLASH_STEP = 0.1
 #: Refresh rate (Hz) of the radar / HUD while nothing is animated (saves CPU).
@@ -986,6 +986,55 @@ def current_stats() -> dict[str, Any] | None:
 FOCUS_GRACE_S = 0.3
 
 
+#: Win32 modifier virtual keys (GetAsyncKeyState) for the "hold for details" key.
+_VK_MODS = {"Ctrl": 0x11, "Alt": 0x12, "Shift": 0x10, "Win": 0x5B}
+
+
+def _async_key_down(vk: int) -> bool:
+    """``GetAsyncKeyState`` (Windows only, reads the key state; no hook, nothing sent)."""
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.GetAsyncKeyState(int(vk)) & 0x8000)  # type: ignore[attr-defined]
+    except Exception:
+        return False
+
+
+def details_key_held(name: Any, key_down: Callable[[int], bool] | None = None) -> bool:
+    """True while the "mode détaillé" key (``cfg.hotkey_details``, F6 by default: League binds
+    F1-F5 and F12, not F6) and its modifiers are held down. Polled by the overlay thread (the key
+    is NOT registered with ``RegisterHotKey``: the game still receives it). Never raises."""
+    try:
+        from treeaicoach.hotkeys import parse_hotkey
+
+        hk = parse_hotkey(name)
+        if hk is None:
+            return False
+        down = key_down or (_async_key_down if sys.platform == "win32" else None)
+        if down is None or not down(hk.vk):
+            return False
+        names = hk.name.split("+")[:-1]
+        return all(down(_VK_MODS[m]) for m in names if m in _VK_MODS)
+    except Exception:
+        return False
+
+
+def decorate_state(state: Any, cfg: Any, details_held: bool = False) -> Any:
+    """Copy of the engine's overlay state with the overlay-side settings: the player's level
+    (``skill_level``) and the detailed mode (``cfg.hud_detailed`` or the hold key). Never raises."""
+    if state is None:
+        return None
+    try:
+        new = copy.copy(state)
+        if hasattr(new, "skill_level"):
+            new.skill_level = getattr(cfg, "skill_level", None) or getattr(state, "skill_level", None)
+        new.hud_detailed = bool(getattr(cfg, "hud_detailed", getattr(state, "hud_detailed", False))) \
+            or bool(details_held)
+        return new
+    except Exception:
+        return state
+
+
 def _default_foreground() -> tuple[bool | None, bool]:
     from treeaicoach.capture import foreground_state
 
@@ -1036,7 +1085,7 @@ def minimap_signature(state: Any, mm: Sequence[int], now: float) -> tuple:
                 None if me is None else (_q(me[0] * W, 1.0), _q(me[1] * H, 1.0)), lvl, fogs, guides,
                 _q(getattr(state, "danger_radius", 0), 0.002), bool(getattr(state, "show_allies", False)),
                 bool(getattr(state, "show_roles", False)), bool(getattr(state, "show_ghosts", False)),
-                bool(getattr(state, "show_last_seen", True)),
+                bool(getattr(state, "show_last_seen", True)), bool(getattr(state, "hud_detailed", False)),
                 int(now * 15) if animated else None, (W, H))
     except Exception:
         return (now,)      # unknown: always redraw
@@ -1064,8 +1113,8 @@ def hud_signature(state: Any, now: float) -> tuple:
                      _q(getattr(e, "last_seen_ago", None), 1.0)) for e in (getattr(state, "enemies", None) or []))
         fields_ = tuple(getattr(state, k, None) for k in (
             "threat_level", "threat_text", "tip", "tip_tone", "gauge", "gauge_reason", "stance",
-            "stance_reason", "insight", "hint", "item_hint", "ai_counter", "jungler_line", "role_notice",
-            "phase", "hud_detailed", "in_base"))
+            "stance_reason", "insight", "hint", "item_hint", "jungler_line", "role_notice",
+            "phase", "hud_detailed", "in_base", "skill_level", "my_role", "me_dead"))
         return (fields_, objs, ens, None if not la else (la[0], la[1], _q(la[2], 0.25) if la[2] < 4.5 else None),
                 f(getattr(state, "tip_since", None)), f(getattr(state, "gauge_since", None)),
                 _q(getattr(state, "game_time", None), 1.0))
@@ -1324,6 +1373,8 @@ class OverlayManager:
                     click_through = not move
                 t_state = time.perf_counter()
                 state = self._state(move) if (move or self._focus_ok(t0)) else None
+                if state is not None:
+                    state = decorate_state(state, cfg, details_key_held(getattr(cfg, "hotkey_details", "")))
                 self._perf.add("state", (time.perf_counter() - t_state) * 1000.0)
                 enabled = bool(getattr(cfg, "overlay_enabled", True)) and (visible or move)
                 if state is None or not enabled:
@@ -1446,6 +1497,10 @@ class OverlayManager:
             return
         from treeaicoach import toasts as tst
 
+        views = tst.select_views(views, state, getattr(cfg, "skill_level", None))
+        if not views:
+            win.hide()
+            return
         x, y, _w, _h = tst.toast_layer_rect(scr, mm)
         win.update(tst.render_toast_layer(views, tst.scale_for_screen(scr)), x, y)
 
@@ -1555,7 +1610,10 @@ class OverlayManager:
             radar_win.hide()
         # ---- HUD (re-rendered only when its content changed; never re-sent when identical)
         hud_win = windows["hud"]
-        if getattr(cfg, "hud_enabled", True):
+        if getattr(cfg, "hud_enabled", True) and not move and not orr.hud_visible(state, now):
+            hud_win.hide()                 # compact card with nothing to say: no card at all
+            self._sig.pop("hud", None)
+        elif getattr(cfg, "hud_enabled", True):
             fast = needs_fast_refresh(state) or move
             sig = hud_signature(state, now)
             if self._due("hud", sig, now, 1.0 / (HUD_FAST_HZ if fast else HUD_CALM_HZ)) or not hud_win.visible:

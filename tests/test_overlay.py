@@ -148,7 +148,7 @@ def test_radar_placement_wrapper_and_no_minimap():
 
 # ---------------------------------------------------------------------------- HUD placement
 def test_hud_width_and_flash_thickness():
-    assert ov.hud_width(SCREEN) == ov.HUD_BASE_WIDTH == 280
+    assert ov.hud_width(SCREEN) == ov.HUD_BASE_WIDTH == 300
     assert ov.hud_width((0, 0, 3840, 2160)) == ov.HUD_MAX_WIDTH
     assert ov.hud_width((0, 0, 1280, 720)) == ov.HUD_MIN_WIDTH
     assert ov.flash_thickness(SCREEN) == 10 and ov.flash_thickness((0, 0, 2560, 1440)) == 13

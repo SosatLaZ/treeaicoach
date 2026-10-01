@@ -175,6 +175,15 @@ FLOAT_RANGES.update({"overlay_fps": (10.0, 60.0), "diag_duration_s": (10.0, 300.
                      "diag_interval_s": (0.5, 10.0)})
 BOOL_FIELDS = BOOL_FIELDS + ("adaptive_rate", "low_priority", "eco_qos", "pause_when_unfocused")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_diag",)
+# declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
+HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
+#: Compact overlay defaults, applied ONCE to config files written before the declutter
+#: (no "hotkey_details" key): the detailed HUD / map extras become opt-in again.
+DECLUTTER_RESET: dict[str, Any] = {
+    "hud_detailed": False, "overlay_show_allies": False, "overlay_show_roles": False,
+    "overlay_show_ghosts": False, "overlay_show_last_seen": False, "layer_roles": False,
+    "layer_ghosts": False, "tip_toasts": False,
+}
 
 # manual_minimap_rect: {"screen_w","screen_h","x","y","w","h"} in physical screen pixels.
 RECT_KEYS: tuple[str, ...] = ("screen_w", "screen_h", "x", "y", "w", "h")
@@ -263,8 +272,8 @@ class Config:
     overlay_show_allies: bool = False    # thin blue rings on allies + teal ring on me
     overlay_show_roles: bool = False     # role tags (TOP/MID/ADC/SUP) on enemies (the jungler always has "JGL")
     overlay_show_ghosts: bool = False    # last seen marks + fog zones of every hidden enemy (not only the jungler)
-    overlay_show_last_seen: bool = True  # dashed mark + "12 s" where each enemy entered the fog
-    hud_detailed: bool = False           # HUD: also the jungler line and the 5 enemy portraits
+    overlay_show_last_seen: bool = False  # (detailed mode) dashed mark + "12 s" where each enemy entered the fog
+    hud_detailed: bool = False           # "mode détaillé": full HUD card (jungler line, 5 portraits, chips) + map extras
     text_tips: bool = True               # rotating written tips in the HUD (never spoken)
     tip_toasts: bool = False             # ... also as a small toast
     stance_voice: bool = True            # speak the stance (PRUDENT / AGRESSIF) when it changes
@@ -344,6 +353,7 @@ class Config:
     hotkey_diag: str = "Ctrl+F8"         # record a diagnostic bundle (60 s), "" = disabled
     diag_duration_s: float = 60.0
     diag_interval_s: float = 2.0
+    hotkey_details: str = "F6"           # hold in game: detailed overlay while held ("" = disabled)
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""
@@ -770,6 +780,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         # pre-"pipeline v2" file: the minimap layer was visible to our own screen capture, so the
         # detector saw our rings / labels (feedback loop on stale positions) -> excluded now
         data = {**data, "overlay_hide_from_capture": True}
+    if "hotkey_details" not in data:
+        # pre-declutter file: the overlay goes back to the compact defaults once (the user's
+        # detailed extras were mostly preset side effects); "mode détaillé" stays one click away
+        data = {**data, **DECLUTTER_RESET}
     cfg = Config.from_dict(data)
     log.info("Config loaded from %s", p)
     return cfg

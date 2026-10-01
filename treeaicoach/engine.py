@@ -3606,6 +3606,11 @@ class CoachEngine:
                 out["item_hint"] = "Achète " + (" + ".join(names[:2]) if names and not rec.completes
                                                 else rec.item_name)
             out["ai_counter"] = self.ai_budget_text() or None
+            res = self._role_resolver      # compact HUD: objective note only for the objectives my role plays
+            role = res.my_role() if res is not None and hasattr(res, "my_role") else None
+            if role is None and game is not None and game.me is not None:
+                role = getattr(game.me, "position", None) or None
+            out["my_role"] = str(role).upper() if role else None
         except Exception:
             log.debug("HUD card fields failed", exc_info=True)
         return out
