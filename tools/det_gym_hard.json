@@ -1,0 +1,279 @@
+{
+ "about": "hard cases mined by tools/det_mine.py; run with det_gym.py --suite hard",
+ "cases": [
+  {
+   "name": "hard_siege_9",
+   "seed": 562232,
+   "fps": 12.0,
+   "seconds": 6.0,
+   "size": 233,
+   "my_team": "CHAOS",
+   "camera": "pan",
+   "custom_me": false,
+   "self_outline": true,
+   "jpeg": 59,
+   "blur": 0.4,
+   "events": [
+    [
+     0.0,
+     "goto",
+     {
+      "who": [
+       5,
+       6,
+       7,
+       8
+      ],
+      "uv": [
+       0.8,
+       0.22
+      ],
+      "spread": 0.020766615140151552
+     }
+    ],
+    [
+     0.0,
+     "goto",
+     {
+      "who": [
+       0,
+       1,
+       2
+      ],
+      "uv": [
+       0.85,
+       0.17
+      ],
+      "spread": 0.02
+     }
+    ],
+    [
+     3.1722461296254654,
+     "mill",
+     {
+      "who": [
+       0,
+       1,
+       2,
+       5,
+       6,
+       7,
+       8
+      ],
+      "n": 10,
+      "spread": 0.025
+     }
+    ]
+   ],
+   "pings": 0.55,
+   "labels": 1.21,
+   "distractors": 0,
+   "ring_dark": 0.17,
+   "duo_close": 0.37,
+   "cam_px": 2,
+   "suite": "hard",
+   "mined_badness": 1.5682
+  },
+  {
+   "name": "hard_siege_0",
+   "seed": 511136,
+   "fps": 3.0,
+   "seconds": 6.0,
+   "size": 240,
+   "my_team": "CHAOS",
+   "camera": "locked",
+   "custom_me": true,
+   "self_outline": false,
+   "jpeg": 76,
+   "blur": 0.79,
+   "events": [
+    [
+     0.0,
+     "goto",
+     {
+      "who": [
+       5,
+       6,
+       7,
+       8
+      ],
+      "uv": [
+       0.8,
+       0.22
+      ],
+      "spread": 0.02958993121967997
+     }
+    ],
+    [
+     0.0,
+     "goto",
+     {
+      "who": [
+       0,
+       1,
+       2
+      ],
+      "uv": [
+       0.85,
+       0.17
+      ],
+      "spread": 0.02
+     }
+    ],
+    [
+     3.087249982930846,
+     "mill",
+     {
+      "who": [
+       0,
+       1,
+       2,
+       5,
+       6,
+       7,
+       8
+      ],
+      "n": 10,
+      "spread": 0.025
+     }
+    ]
+   ],
+   "pings": 0.94,
+   "labels": 1.22,
+   "distractors": 11,
+   "ring_dark": 0.0,
+   "duo_close": 0.77,
+   "cam_px": 2,
+   "suite": "hard",
+   "mined_badness": 1.4678
+  },
+  {
+   "name": "hard_laning_1",
+   "seed": 729655,
+   "fps": 12.0,
+   "seconds": 6.0,
+   "size": 223,
+   "my_team": "CHAOS",
+   "camera": "locked",
+   "custom_me": false,
+   "self_outline": true,
+   "jpeg": 85,
+   "blur": 0.64,
+   "events": [
+    [
+     2.084959013436389,
+     "flash",
+     {
+      "who": [
+       5
+      ]
+     }
+    ]
+   ],
+   "pings": 0.67,
+   "labels": 0.97,
+   "distractors": 1,
+   "ring_dark": 0.37,
+   "duo_close": 0.35,
+   "cam_px": 2,
+   "suite": "hard",
+   "mined_badness": 1.3909
+  },
+  {
+   "name": "hard_laning_5",
+   "seed": 942113,
+   "fps": 3.0,
+   "seconds": 6.0,
+   "size": 247,
+   "my_team": "CHAOS",
+   "camera": "jump",
+   "custom_me": false,
+   "self_outline": false,
+   "jpeg": 54,
+   "blur": 0.65,
+   "events": [
+    [
+     4.863771481072211,
+     "flash",
+     {
+      "who": [
+       5
+      ]
+     }
+    ]
+   ],
+   "pings": 0.43,
+   "labels": 0.93,
+   "distractors": 6,
+   "ring_dark": 0.6,
+   "duo_close": 0.85,
+   "cam_px": 1,
+   "suite": "hard",
+   "mined_badness": 1.2789
+  },
+  {
+   "name": "hard_laning_17",
+   "seed": 734944,
+   "fps": 12.0,
+   "seconds": 6.0,
+   "size": 325,
+   "my_team": "ORDER",
+   "camera": "pan",
+   "custom_me": false,
+   "self_outline": true,
+   "jpeg": 60,
+   "blur": 0.94,
+   "events": [
+    [
+     3.4437814897258057,
+     "flash",
+     {
+      "who": [
+       9
+      ]
+     }
+    ]
+   ],
+   "pings": 0.81,
+   "labels": 0.9,
+   "distractors": 9,
+   "ring_dark": 0.55,
+   "duo_close": 0.06,
+   "cam_px": 2,
+   "suite": "hard",
+   "mined_badness": 1.264
+  },
+  {
+   "name": "hard_laning_12",
+   "seed": 983703,
+   "fps": 3.0,
+   "seconds": 6.0,
+   "size": 266,
+   "my_team": "ORDER",
+   "camera": "free",
+   "custom_me": false,
+   "self_outline": true,
+   "jpeg": 76,
+   "blur": 1.1,
+   "events": [
+    [
+     2.9478306361031006,
+     "flash",
+     {
+      "who": [
+       6
+      ]
+     }
+    ]
+   ],
+   "pings": 0.18,
+   "labels": 1.32,
+   "distractors": 3,
+   "ring_dark": 0.4,
+   "duo_close": 0.86,
+   "cam_px": 3,
+   "suite": "hard",
+   "mined_badness": 0.8874
+  }
+ ]
+}

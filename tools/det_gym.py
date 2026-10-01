@@ -194,6 +194,10 @@ class Scenario:
     pings: float = 0.3                         # pings / s
     labels: float = 0.5                        # overlay labels per icon-second
     distractors: int = 5
+    ring_dark: float = 0.0                     # 0..1: rings darkened by up to this factor
+    duo_close: float = 0.3                     # probability of a support ON his ADC
+    cam_px: int = 0                            # camera line width (0: from the size)
+    suite: str = "main"
 
 
 @dataclass
@@ -239,6 +243,9 @@ class Sim:
             c.portrait = db.load_icon(alias)
             ring_rgb = RA.ENEMY_RING_RGB if rel == "enemy" else RA.ALLY_RING_RGB
             c.ring = RA._lerp_bgr(rng, ring_rgb)
+            if sc.ring_dark > 0:
+                k_d = 1.0 - sc.ring_dark * float(rng.uniform(0.3, 1.0))
+                c.ring = tuple(int(x * k_d) for x in c.ring)
             self.champs.append(c)
         # roles of allies: the four that are not mine
         roles_left = [r for r in ROLES if r != self.champs[0].role]
@@ -307,7 +314,8 @@ class Sim:
     def _duo_offset(self) -> tuple[float, float]:
         """Support next to his ADC: mostly side by side, sometimes on top of him."""
         a = self.rng.uniform(0, 2 * math.pi)
-        d = self.rng.uniform(0.012, 0.03) if self.rng.random() < 0.3 else self.rng.uniform(0.03, 0.07)
+        d = self.rng.uniform(0.012, 0.03) if self.rng.random() < self.sc.duo_close \
+            else self.rng.uniform(0.03, 0.07)
         return (float(d * math.cos(a)), float(d * math.sin(a)))
 
     def _default(self, c: Champ, dt: float) -> None:
@@ -555,7 +563,7 @@ class Sim:
         cam = self._camera(dt)
         g = 235
         cv2.rectangle(img, (int(cam[0] * n), int(cam[1] * n)), (int(cam[2] * n), int(cam[3] * n)), (g, g, g),
-                      max(1, int(round(n / 160))))
+                      int(sc.cam_px) if sc.cam_px > 0 else max(1, int(round(n / 160))))
         # capture degradations
         if sc.blur > 0:
             img = cv2.GaussianBlur(img, (0, 0), sc.blur)
@@ -628,6 +636,51 @@ def scenarios(quick: bool = False) -> list[Scenario]:
         for s in S:
             s.seconds = min(s.seconds, 14.0)
     return S
+
+
+HARD_FILE = ROOT / "tools" / "det_gym_hard.json"
+HISTORY_FILE = ROOT / "tools" / "det_gym_history.jsonl"
+SUITES = ("main", "holdout", "hard")
+
+
+def scenario_from_dict(d: dict) -> Scenario:
+    d = dict(d)
+    d["events"] = [tuple(e) for e in d.get("events", [])]
+    for e in d["events"]:
+        if "uv" in e[2]:
+            e[2]["uv"] = tuple(e[2]["uv"])
+    return Scenario(**{k: v for k, v in d.items() if k in Scenario.__dataclass_fields__})
+
+
+def suite_scenarios(suite: str = "main", quick: bool = False) -> list[Scenario]:
+    """``main``: the tuning games (stable, for comparisons); ``holdout``: the same kinds of
+    games with other seeds / rosters / sizes / sides (a change is kept only if it also helps
+    here); ``hard``: the worst cases found by ``tools/det_mine.py`` (det_gym_hard.json)."""
+    if suite == "main":
+        return scenarios(quick)
+    if suite == "holdout":
+        out = []
+        sizes = {"laning": 260, "botfight": 300, "siege": 240, "slow3": 280, "customskin": 250}
+        for sc in scenarios(quick):
+            sc.seed += 1000
+            sc.size = sizes.get(sc.name, sc.size)
+            sc.my_team = OTHER[sc.my_team]
+            sc.name = "h_" + sc.name
+            sc.suite = "holdout"
+            out.append(sc)
+        return out
+    if suite == "hard":
+        try:
+            data = json.loads(HARD_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        out = [scenario_from_dict(d) for d in data.get("cases", [])]
+        for sc in out:
+            sc.suite = "hard"
+            if quick:
+                sc.seconds = min(sc.seconds, 8.0)
+        return out
+    raise ValueError(f"unknown suite {suite!r}")
 
 
 # ======================================================================================
@@ -820,7 +873,7 @@ def _miss_cause(alias: str, rel: str, u: float, v: float, ids: list, my_alias: s
     return "nodet"
 
 
-def run_game(sc: Scenario, db, art, verbose: bool = False) -> GameMetrics:
+def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) -> GameMetrics:
     sim = Sim(sc, db, art)
     pipe = Pipeline(db)
     M = GameMetrics()
@@ -842,6 +895,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False) -> GameMetrics:
             for a, *_ in truth:
                 vis_run[a] = vis_run.get(a, 0) + 1
             continue
+        n_fail0 = len(M.fails)
         M.frames += 1
         M.ms.append(ms)
         M.cpu.append(pipe.cpu_ms)
@@ -959,6 +1013,8 @@ def run_game(sc: Scenario, db, art, verbose: bool = False) -> GameMetrics:
                 M.me_bad += 1
                 M.fails.append((sc.name, round(t, 2), "me", f"err {e:.3f}"))
         prev_truth = {a: (u, v) for a, _r, _tm, u, v, _f in truth}
+        if gallery is not None and len(M.fails) > n_fail0:
+            gallery.add(M.fails[n_fail0:], img, truth, out, tuple(me.pos))
     return M
 
 
@@ -993,7 +1049,7 @@ def run_real() -> dict:
 # ======================================================================================
 
 def run(quick: bool = False, only: list[str] | None = None, real: bool = True,
-        verbose: bool = False) -> dict:
+        verbose: bool = False, suite: str = "main", gallery: str | None = None) -> dict:
     import logging
 
     prev_disable = logging.root.manager.disable
@@ -1008,16 +1064,20 @@ def run(quick: bool = False, only: list[str] | None = None, real: bool = True,
         out: dict = {"games": {}}
         tot = GameMetrics()
         t0 = _time.perf_counter()
-        for sc in scenarios(quick):
+        gal = Gallery(Path(gallery)) if gallery else None
+        for sc in suite_scenarios(suite, quick):
             if only and sc.name not in only:
                 continue
-            M = run_game(sc, db, art, verbose)
+            M = run_game(sc, db, art, verbose, gallery=gal)
             out["games"][sc.name] = M.summary()
             out["games"][sc.name]["fails"] = M.fails
             tot.merge(M)
         out["total"] = tot.summary()
         out["fails"] = tot.fails
         out["games_s"] = _time.perf_counter() - t0
+        out["suite"], out["quick"] = suite, bool(quick)
+        if gal is not None:
+            out["gallery"] = gal.finish()
     finally:
         _unpatch_clock()
         logging.disable(prev_disable)
@@ -1026,6 +1086,219 @@ def run(quick: bool = False, only: list[str] | None = None, real: bool = True,
         out["real"] = run_real()
         out["real_s"] = _time.perf_counter() - t1
     return out
+
+
+# ======================================================================================
+# Failure gallery
+# ======================================================================================
+
+class Gallery:
+    """Zoomed (x4) annotated crops of every failure, one folder per cause + contact sheets.
+
+    Green: ground truth (dot + name, the icon disc); yellow: icons the overlay draws live
+    (ring + label); magenta: ghosts / last-seen marks; red cross: the failure's point."""
+
+    ZOOM = 4
+    HALF = 0.11                     # crop half-size (normalized)
+    PER_CAUSE = 60                  # crops kept per cause (evenly spread over the run)
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.tiles: dict[str, list] = {}
+        self.count: dict[str, int] = {}
+
+    def _centre(self, kind: str, detail: str, truth: list, me_pos) -> tuple[float, float] | None:
+        import re
+
+        m = re.search(r"\(([\d.]+),([\d.]+)\)", detail)
+        if m:
+            return float(m.group(1)), float(m.group(2))
+        name = detail.split(" ")[0].rstrip(":")
+        for a, _r, _tm, u, v, _f in truth:
+            if a == name:
+                return u, v
+        if kind == "me" and me_pos is not None:
+            return float(me_pos[0]), float(me_pos[1])
+        return None
+
+    def add(self, fails: list, img: np.ndarray, truth: list, out: dict, me_pos) -> None:
+        for sc_name, t, kind, detail in fails:
+            cause = kind
+            if kind == "miss":
+                import re
+
+                m = re.search(r"\[(\w+)", detail)
+                cause = f"miss_{m.group(1)}" if m else kind
+            n = self.count.get(cause, 0)
+            self.count[cause] = n + 1
+            lst = self.tiles.setdefault(cause, [])
+            if len(lst) >= self.PER_CAUSE and n % max(1, n // self.PER_CAUSE) != 0:
+                continue
+            c = self._centre(kind, detail, truth, me_pos)
+            if c is None:
+                continue
+            tile = self._tile(img, c, truth, out, f"{sc_name} t={t} {kind}", detail)
+            d = self.root / cause
+            d.mkdir(exist_ok=True)
+            cv2.imwrite(str(d / f"{sc_name}_{t:07.2f}_{n:04d}.png"), tile)
+            lst.append(tile)
+            if len(lst) > self.PER_CAUSE:
+                del lst[0]
+
+    def _tile(self, img: np.ndarray, c, truth: list, out: dict, head: str, detail: str) -> np.ndarray:
+        n = img.shape[0]
+        Z = self.ZOOM
+        h = int(round(self.HALF * n))
+        cx, cy = int(round(c[0] * n)), int(round(c[1] * n))
+        pad = cv2.copyMakeBorder(img, h, h, h, h, cv2.BORDER_CONSTANT)
+        crop = pad[cy:cy + 2 * h, cx:cx + 2 * h]
+        big = cv2.resize(crop, (2 * h * Z, 2 * h * Z), interpolation=cv2.INTER_NEAREST)
+
+        def P(u, v):
+            return int(round((u * n - cx + h) * Z)), int(round((v * n - cy + h) * Z))
+
+        r = int(round(ICON_R * n * Z))
+        for a, rel, _tm, u, v, fr in truth:
+            x, y = P(u, v)
+            cv2.circle(big, (x, y), r, (0, 200, 0), 1)
+            cv2.circle(big, (x, y), 3, (0, 255, 0), -1)
+            cv2.putText(big, f"{a[:9]} {fr:.1f}", (x - r, y + r + 12), 0, 0.4, (0, 255, 0), 1)
+        for key, alias, rel, uv in out["live"]:
+            x, y = P(*uv)
+            cv2.circle(big, (x, y), r + 4, (0, 230, 255), 2)
+            cv2.putText(big, str(alias or key)[:9], (x - r, y - r - 6), 0, 0.4, (0, 230, 255), 1)
+        for key, alias, rel, uv, why in out["ghost"]:
+            if uv is None:
+                continue
+            x, y = P(*uv)
+            cv2.circle(big, (x, y), r + 8, (255, 0, 255), 1)
+            cv2.putText(big, f"{str(alias or key)[:8]}:{why.split('-')[-1]}", (x - r, y - r - 18), 0, 0.35,
+                        (255, 0, 255), 1)
+        x, y = P(*c)
+        cv2.drawMarker(big, (x, y), (0, 0, 255), cv2.MARKER_TILTED_CROSS, 14, 2)
+        bar = np.zeros((34, big.shape[1], 3), np.uint8)
+        cv2.putText(bar, head, (4, 13), 0, 0.42, (255, 255, 255), 1)
+        cv2.putText(bar, detail[:70], (4, 28), 0, 0.38, (200, 200, 200), 1)
+        return np.vstack([bar, big])
+
+    def finish(self) -> dict:
+        """Contact sheet per cause (``<cause>.png``, 6 tiles per row); returns the counts."""
+        for cause, tiles in self.tiles.items():
+            if not tiles:
+                continue
+            th, tw = 200, 180
+            small = [cv2.resize(t, (tw, th), interpolation=cv2.INTER_AREA) for t in tiles]
+            rows = []
+            for i in range(0, len(small), 6):
+                row = small[i:i + 6]
+                row += [np.zeros_like(small[0])] * (6 - len(row))
+                rows.append(np.hstack(row))
+            cv2.imwrite(str(self.root / f"{cause}.png"), np.vstack(rows))
+        return dict(self.count)
+
+
+# ======================================================================================
+# Score, history, comparison
+# ======================================================================================
+
+#: metric -> (direction (+1 higher is better), absolute tolerance before "regression")
+TRACKED = {
+    "rec": (+1, 0.005), "prec": (+1, 0.005), "idsw": (-1, 2), "frag": (-1, 6), "id_wrong": (-1, 5),
+    "team": (-1, 3), "err95": (-1, 0.002), "lag": (-1, 0.1), "g_live": (-1, 8), "g_dead": (-1, 0),
+    "me95": (-1, 0.005), "me_bad": (-1, 0.01), "ms": (-1, 4.0), "cpu": (-1, 4.0),
+}
+REAL_TRACKED = {"rec": (+1, 0.0), "prec": (+1, 0.0), "team": (+1, 0.0), "id": (+1, 0.0)}
+
+
+def score(total: dict, real: dict | None = None) -> float:
+    """One number to rank runs (higher is better): recall + precision, minus the rates of the
+    errors the user sees (ghost on a live champion x3, wrong identity / team x2, identity
+    switches x5, dead champion drawn x10), my position off, and the cost above 15 ms."""
+    n = max(1, int(total.get("n_vis", 0)))
+    s = total["rec"] + total["prec"]
+    s -= 3.0 * total["g_live"] / n + 2.0 * (total["id_wrong"] + total["team"]) / n
+    s -= 5.0 * total["idsw"] / n + 10.0 * total["g_dead"] / n + total["me_bad"]
+    s -= 0.01 * max(0.0, total.get("ms", 0.0) - 15.0)
+    if real:
+        s += 0.5 * (real["rec"] + real["prec"] + real["id"] + real["team"]) - 2.0
+    return float(s)
+
+
+def _git_rev() -> str:
+    import subprocess
+
+    try:
+        rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True,
+                             text=True, timeout=5).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
+                               capture_output=True, text=True, timeout=5).stdout.strip()
+        return rev + ("+dirty" if dirty else "")
+    except Exception:
+        return "?"
+
+
+def history_entry(out: dict, note: str = "") -> dict:
+    tot = {k: v for k, v in out["total"].items() if not isinstance(v, (list, dict))}
+    games = {g: {k: v for k, v in m.items() if not isinstance(v, (list, dict))}
+             for g, m in out["games"].items()}
+    real = {k: v for k, v in out.get("real", {}).items() if not isinstance(v, (list, dict))} or None
+    return {"time": _time.strftime("%Y-%m-%d %H:%M:%S"), "rev": _git_rev(), "note": note,
+            "suite": out.get("suite", "main"), "quick": out.get("quick", False),
+            "only": out.get("only"), "score": score(out["total"], real), "total": tot, "games": games,
+            "real": real}
+
+
+def load_history(path: Path = HISTORY_FILE) -> list[dict]:
+    try:
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def record(out: dict, note: str = "", path: Path = HISTORY_FILE) -> dict:
+    e = history_entry(out, note)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(e, default=float) + "\n")
+    return e
+
+
+def regressions(cur: dict, ref: dict) -> list[str]:
+    """Metrics of ``cur`` worse than ``ref`` beyond their tolerance."""
+    bad = []
+    for k, (d, tol) in TRACKED.items():
+        a, b = cur["total"].get(k), ref["total"].get(k)
+        if a is None or b is None or not (math.isfinite(a) and math.isfinite(b)):
+            continue
+        if k in ("ms", "cpu"):
+            continue                      # timing: reported, never a failure (shared machines)
+        if d * (a - b) < -tol:
+            bad.append(f"{k} {b:.4g} -> {a:.4g}")
+    if cur.get("real") and ref.get("real"):
+        for k, (d, tol) in REAL_TRACKED.items():
+            a, b = cur["real"].get(k), ref["real"].get(k)
+            if a is not None and b is not None and d * (a - b) < -tol - 1e-9:
+                bad.append(f"real.{k} {b:.4g} -> {a:.4g}")
+    return bad
+
+
+def compare(cur: dict, history: list[dict]) -> str:
+    """Delta table vs the previous comparable run and the best one (same suite / quick)."""
+    same = [h for h in history if h.get("suite") == cur.get("suite") and h.get("quick") == cur.get("quick")
+            and h.get("only") == cur.get("only") and h is not cur]
+    if not same:
+        return "compare: no previous run of this suite"
+    prev, best = same[-1], max(same, key=lambda h: h.get("score", -1e9))
+    L = [f"{'metric':8s} {'now':>9s} {'prev':>9s} {'d_prev':>9s} {'best':>9s} {'d_best':>9s}"]
+    for k, (d, tol) in TRACKED.items():
+        a, p, b = cur["total"].get(k), prev["total"].get(k), best["total"].get(k)
+        if a is None or p is None or b is None:
+            continue
+        flag = "  REGRESSION" if k not in ("ms", "cpu") and d * (a - b) < -tol else ""
+        L.append(f"{k:8s} {a:9.4g} {p:9.4g} {a - p:+9.3g} {b:9.4g} {a - b:+9.3g}{flag}")
+    L.append(f"{'score':8s} {cur['score']:9.4f} {prev['score']:9.4f} {cur['score'] - prev['score']:+9.4f} "
+             f"{best['score']:9.4f} {cur['score'] - best['score']:+9.4f}   (best: {best['rev']} {best['time']})")
+    return "\n".join(L)
 
 
 def report(out: dict, verbose: bool = False) -> str:
@@ -1073,9 +1346,24 @@ def main() -> None:
     ap.add_argument("--only", nargs="*")
     ap.add_argument("-v", action="store_true")
     ap.add_argument("--json")
+    ap.add_argument("--suite", default="main", choices=SUITES)
+    ap.add_argument("--gallery", help="folder for the failure gallery (crops + contact sheets)")
+    ap.add_argument("--compare", action="store_true", help="delta vs the previous / best run")
+    ap.add_argument("--no-record", action="store_true", help="do not append to det_gym_history.jsonl")
+    ap.add_argument("--note", default="", help="note stored with the history entry")
     a = ap.parse_args()
-    out = run(a.quick, a.only, not a.no_real, a.v)
+    out = run(a.quick, a.only, not a.no_real, a.v, suite=a.suite, gallery=a.gallery)
+    out["only"] = a.only
     print(report(out, a.v))
+    if a.gallery:
+        print("gallery:", a.gallery, out.get("gallery"))
+    hist = load_history()
+    entry = history_entry(out, a.note)
+    print(f"score {entry['score']:.4f}")
+    if a.compare:
+        print(compare(entry, hist))
+    if not a.no_record:
+        record(out, a.note)
     if a.json:
         Path(a.json).write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
 

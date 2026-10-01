@@ -1108,3 +1108,9 @@ __all__ = [
     "default_model_path", "default_meta_path", "load_model_meta",
 ]
 
+
+
+# validated tuning overrides (assets/model/det_params.json, written by tools/det_tune.py)
+from treeaicoach import det_params as _det_params  # noqa: E402
+
+_det_params.apply("detector", globals())

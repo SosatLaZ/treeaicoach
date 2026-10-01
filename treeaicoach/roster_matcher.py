@@ -118,7 +118,7 @@ VETO_FRESH_S = 1.0
 #: instead when it is >= RING_VERIFY_TEAM (at most RING_VERIFY_MAX per frame).
 RING_VERIFY_MAX = 8
 RING_VERIFY_OWN = 0.3
-RING_VERIFY_TEAM = 0.8
+RING_VERIFY_TEAM = 0.95
 VETO_MARGIN = 0.12
 VETO_MAX = 0.03
 THR_BG_PCT = 97
@@ -190,6 +190,10 @@ CONF_SMOOTH = 0.5
 SELF_COAST_S = 1.2
 SELF_COAST_VEL_S = 0.25            # ... extrapolating the last velocity for this long at most
 SELF_RELAX = 0.1
+#: Me under an ally icon: the camera point stays on the same ally icon this many frames while
+#: my icon is not seen -> my position is that icon's (detection score UNDER_SCORE).
+UNDER_CONFIRM = 6
+UNDER_SCORE = 0.3
 SELF_COAST_UNDER = True             # no coasting while an accepted icon covers my track
 SELF_CAM_DIST = 0.06
 #: Track hysteresis (every champion): a champion matched in the previous frames
@@ -230,6 +234,20 @@ RING_PROP_MAX = 6
 #: proposals the patch verifier gives less than this icon probability are not re-scored
 #: (measured on the real crops: glyphs 0.00-0.01, stacked icons >= 0.1)
 RING_PROP_VERIFY = 0.05
+#: Stack proposals (stage 5d, RosterMatcher._stack_proposals): verifier probes at
+#: STACKV_DIST x diameter around each accepted icon (STACKV_ANGLES directions), kept when the
+#: icon probability >= STACKV_MIN with a clear team; identity: occlusion-tolerant NCC >=
+#: STACKV_ID_MIN and STACKV_ID_GAP above the second best of that team's missing champions.
+STACKV_EVERY = 2
+STACKV_DIST = (0.5, 0.8)
+STACKV_ANGLES = 8
+STACKV_MIN_SEP = 0.4
+STACKV_MIN = 0.7
+STACKV_TEAM = 0.8
+STACKV_MAX = 4
+STACKV_ID_MIN = 0.6
+STACKV_ID_GAP = 0.15
+STACKV_SEARCH = 3
 RING_PROP_EVERY = 2                 # (cost) every N frames; the tracker holds them between
 RING_PROP_SEARCH = 1                # re-scoring window (+- working px): the ring peak is precise
 RING_PROP_ID_MIN = 0.55
@@ -590,12 +608,18 @@ def masked_ncc(patches: np.ndarray, raw: np.ndarray, masks: np.ndarray,
     """
     P = patches.astype(np.float32, copy=False)
     M = masks if masks.ndim == 4 else np.broadcast_to(masks, (P.shape[0],) + masks.shape)
-    n = M.sum(axis=(2, 3)) + 1e-6                                       # [p, k]
-    sP = np.einsum("pkyx,pyxc->pkc", M, P)
-    sT = np.einsum("pkyx,yxc->pkc", M, raw)
-    sPP = np.einsum("pkyx,pyxc->pkc", M, P * P)
-    sTT = np.einsum("pkyx,yxc->pkc", M, raw * raw)
-    sPT = np.einsum("pkyx,pyxc->pkc", M, P * raw[None])
+    p_, k_ = M.shape[:2]
+    S = P.shape[1] * P.shape[2]
+    Mf = np.ascontiguousarray(M, dtype=np.float32).reshape(p_, k_, S)
+    n = Mf.sum(axis=2) + 1e-6                                           # [p, k]
+    T = raw.astype(np.float32, copy=False)
+    # (one batched matmul for the 9 patch sums, one for the 6 template sums: ~4x faster
+    # than five einsums)
+    F = np.concatenate([P, P * P, P * T[None]], axis=3).reshape(p_, S, 9)
+    sums = np.matmul(Mf, F)                                             # [p, k, 9]
+    tsum = np.matmul(Mf, np.concatenate([T, T * T], axis=2).reshape(S, 6))   # [p, k, 6]
+    sP, sPP, sPT = sums[:, :, 0:3], sums[:, :, 3:6], sums[:, :, 6:9]
+    sT, sTT = tsum[:, :, 0:3], tsum[:, :, 3:6]
     nn = n[:, :, None]
     num = sPT - sP * sT / nn
     vp = np.maximum(sPP - sP * sP / nn, 0.0)
@@ -947,6 +971,7 @@ class RosterMatcher:
         self._verifier_tried = False
         self._ring_img: np.ndarray | None = None
         self._ring_specs: dict = {}
+        self._under: tuple = (None, 0)
         try:
             from treeaicoach.self_icon import IconLearner
 
@@ -1934,20 +1959,18 @@ class RosterMatcher:
         # partial discs (unknown occluder on one side: ping...) only for a tracked champion
         base = np.concatenate([bank.mask[None], bank.caps], axis=0) if caps and \
             bank.caps is not None else bank.mask[None]                    # [k, s, s]
-        masks = np.empty((len(offs), base.shape[0], s, s), np.float32)
-        # white lines / texts on the patch where the portrait is not white
+        # white lines / texts on the patch where the portrait is not white (all offsets at once)
         tl = raw[:, :, 0]
-        for j, (dx, dy) in enumerate(offs):
-            keep = np.ones((s, s), np.float32)
-            p = P[j]
-            white = (p[:, :, 0] > 215.0) & (np.abs(p[:, :, 1]) < 14.0) & \
-                (np.abs(p[:, :, 2]) < 14.0) & (tl < 190.0)
-            keep[white] = 0.0
-            ox, oy = x0 + dx, y0 + dy
+        white = (P[:, :, :, 0] > 215.0) & (np.abs(P[:, :, :, 1]) < 14.0) & \
+            (np.abs(P[:, :, :, 2]) < 14.0) & (tl < 190.0)[None]
+        keep = ~white                                                    # [p, s, s]
+        if work_centres:
+            ox = np.asarray([x0 + dx for dx, _dy in offs], np.float32)[:, None, None]
+            oy = np.asarray([y0 + dy for _dx, dy in offs], np.float32)[:, None, None]
+            r2 = (0.53 * D_work) ** 2
             for (ax, ay) in work_centres:          # accepted icons drawn over this one
-                d2 = (xx + ox + 0.5 - ax) ** 2 + (yy + oy + 0.5 - ay) ** 2
-                keep[d2 < (0.53 * D_work) ** 2] = 0.0
-            masks[j] = base * keep[None]
+                keep &= (xx[None] + ox + 0.5 - ax) ** 2 + (yy[None] + oy + 0.5 - ay) ** 2 >= r2
+        masks = base[None] * keep[:, None].astype(np.float32)
         if trim:
             masks = np.concatenate([masks, self._trimmed_masks(P, raw, masks[:, 0])], axis=1)
         area = masks.sum(axis=(2, 3)) / max(bank.n, 1e-6)                 # [p, k]
@@ -2056,6 +2079,101 @@ class RosterMatcher:
                     score + RING_PROP_ID_W * (best - RING_PROP_ID_MIN) < RING_PROP_ACCEPT:
                 continue
             c = _Cand(j, pos[0], pos[1], best, best, note="ring")
+            taken.add(j)
+            out.append(c)
+        return out
+
+    def _me_under(self, accepted: list, cam_pt: tuple | None, kx: float, ky: float, me: int,
+                  now: float) -> tuple[float, float] | None:
+        """My position when my icon is not seen at all but the camera point has stayed on the
+        same accepted ally icon for UNDER_CONFIRM frames (my icon drawn under it)."""
+        if UNDER_CONFIRM <= 0 or cam_pt is None:
+            self._under = (None, 0)
+            return None
+        best = None
+        for a in accepted:
+            if a.i == me or self._entries[a.i].relation == "enemy":
+                continue
+            d = math.hypot(a.x / kx - cam_pt[0], a.y / ky - cam_pt[1])
+            if d < SELF_CAM_DIST and (best is None or d < best[0]):
+                best = (d, a)
+        if best is None:
+            self._under = (None, 0)
+            return None
+        a = best[1]
+        n = self._under[1] + 1 if self._under[0] == a.i else 1
+        self._under = (a.i, n)
+        return (a.x / kx, a.y / ky) if n >= UNDER_CONFIRM else None
+
+    def _stack_proposals(self, bgr: np.ndarray, feat: np.ndarray, bank: _Bank, accepted: list,
+                         used: set, dead: set, kx: float, ky: float, r_norm: float,
+                         D_work: float) -> list[_Cand]:
+        """Stage 5d (see _detect): verifier probes around the accepted icons -> proposals of
+        partly covered icons -> identity among the proposal team's missing alive champions."""
+        ver = self._get_verifier()
+        if ver is None:
+            return []
+        ents = self._entries
+        D = D_work / kx                                   # icon diameter (normalized)
+        pts = []
+        for a in accepted:
+            au, av = a.x / kx, a.y / ky
+            for d in STACKV_DIST:
+                for k in range(STACKV_ANGLES):
+                    ang = 2.0 * math.pi * (k + 0.5 * (d != STACKV_DIST[0])) / STACKV_ANGLES
+                    u, v = au + d * D * math.cos(ang), av + d * D * math.sin(ang)
+                    if not (0.02 < u < 0.98 and 0.02 < v < 0.98):
+                        continue
+                    if any(math.hypot(u - b.x / kx, v - b.y / ky) < STACKV_MIN_SEP * D for b in accepted):
+                        continue
+                    pts.append((u, v))
+        if not pts:
+            return []
+        structs = self._structures()
+        pts = [p for p in pts if not any(math.hypot(p[0] - su, p[1] - sv) < STRUCT_DIST for su, sv, _t in structs)
+               and not any(math.hypot(p[0] - fu, p[1] - fv) < FOUNTAIN_DIST for fu, fv in _FOUNTAINS.values())]
+        if not pts:
+            return []
+        P = ver.verify_candidates(bgr, [(u, v, r_norm) for u, v in pts])
+        props = []
+        for (u, v), p in zip(pts, P):
+            icon = 1.0 - float(p[0])
+            if icon < STACKV_MIN:
+                continue
+            side = "enemy" if p[1] >= p[2] else "ally"
+            if max(p[1], p[2]) < STACKV_TEAM * icon:
+                continue
+            props.append((icon, side, u, v))
+        props.sort(reverse=True)
+        kept: list = []
+        for pr in props:
+            if all(math.hypot(pr[2] - q[2], pr[3] - q[3]) > 0.5 * D for q in kept):
+                kept.append(pr)
+        out: list[_Cand] = []
+        taken = set(used)
+        for icon, side, u, v in kept[:STACKV_MAX]:
+            pool = [j for j, e in enumerate(ents) if j not in taken and j not in dead
+                    and (e.relation == "enemy") == (side == "enemy")]
+            if not pool:
+                continue
+            cx, cy = u * kx, v * ky
+            if any(math.hypot(cx - c.x, cy - c.y) < 0.5 * D_work for c in out):
+                continue
+            near = [(a.x, a.y) for a in accepted + out if math.hypot(cx - a.x, cy - a.y) < 1.05 * D_work]
+            scored = []
+            for j in pool:
+                sj = self._rescue(_Cand(j, cx, cy, 0.0, 0.0), feat, bank, near, D_work, caps=True,
+                                  search=STACKV_SEARCH)
+                if sj is not None:
+                    scored.append((sj, j, self.last_rescue_pos))
+            if not scored:
+                continue
+            scored.sort(key=lambda z: -z[0])
+            best, j, pos = scored[0]
+            second = scored[1][0] if len(scored) > 1 else STACKV_ID_MIN - STACKV_ID_GAP
+            if best < STACKV_ID_MIN or best - second < STACKV_ID_GAP:
+                continue
+            c = _Cand(j, pos[0], pos[1], best, best, note="stacked")
             taken.add(j)
             out.append(c)
         return out
@@ -2565,6 +2683,22 @@ class RosterMatcher:
             except Exception:
                 self._errors.exception("Roster matcher ring proposals failed")
 
+        # 5d. stack proposals: the patch verifier looks around every accepted icon for an
+        #     icon partly drawn under it (bot duo, fights, sieges); each proposal is given to
+        #     the best of ITS team's missing alive champions (occlusion-tolerant score)
+        if STACKV_EVERY > 0 and accepted and not self.grey and len(used) + len(dead) < n_e and \
+                st.frames % STACKV_EVERY == (1 % STACKV_EVERY):
+            try:
+                for c in self._stack_proposals(raw_bgr, feat, bank, accepted, used, dead, kx, ky,
+                                               r_norm, D_work):
+                    self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0,
+                                     exclude=[(a.x / kx * W, a.y / ky * H) for a in accepted])
+                    used.add(c.i)
+                    accepted.append(c)
+                    info(c, True, "vstack")
+            except Exception:
+                self._errors.exception("Roster matcher stack proposals failed")
+
         # 6. the local player: camera lock (confirmed by my own matches), camera rectangle
         #    prior, then coasting on its track
         dets_extra: list[Detection] = []
@@ -2621,6 +2755,15 @@ class RosterMatcher:
                                             cls_probs=(0.03, 0.97, 0.0), alias=e.alias))
                 infos.append(MatchInfo(e.alias, e.relation, pu, pv, r_norm, score, 0.0, 0.0,
                                        True, "coast"))
+                continue
+            under = self._me_under(accepted, cam_pt, kx, ky, i, now)
+            if under is not None:
+                # my icon is under an ally icon the camera has followed for a while (my
+                # support on me, camera locked): I am there (a position, not a match)
+                dets_extra.append(Detection(u=under[0], v=under[1], r=r_norm, score=UNDER_SCORE,
+                                            cls="ally", cls_probs=(0.03, 0.97, 0.0), alias=e.alias))
+                infos.append(MatchInfo(e.alias, e.relation, under[0], under[1], r_norm, UNDER_SCORE,
+                                       0.0, 0.0, True, "under"))
 
         # 7. tracks
         for c in accepted:
@@ -2703,3 +2846,9 @@ class RosterMatcher:
 
 __all__ = ["RosterMatcher", "RosterEntry", "RingColorModel", "MatchInfo", "ncc_maps",
            "INNER_RATIO", "SCALE_MIN", "SCALE_MAX", "DEFAULT_SCALE"]
+
+
+# validated tuning overrides (assets/model/det_params.json, written by tools/det_tune.py)
+from treeaicoach import det_params as _det_params  # noqa: E402
+
+_det_params.apply("roster_matcher", globals())
