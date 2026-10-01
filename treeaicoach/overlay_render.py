@@ -11,9 +11,9 @@ Rendering model
     resampling, then the canvas is converted to premultiplied **BGRA uint8** - the pixel format
     ``UpdateLayeredWindow`` expects (``AC_SRC_ALPHA``).
 
-Palette ("hextech"): gold ``#C8AA6E``, light gold ``#F0E6D2``, teal ``#0AC8B9``, danger
-``#E84057``, warning ``#F0A030``, safe ``#2DC66B``, dark panels ``#0A1428`` (~85 % opacity,
-1 px gold border, rounded corners).
+Palette (TreeAI, deliberately not the game's gold / navy): slate ``#94A3B8``, text ``#F1F5F9``,
+sky ``#38BDF8``, danger ``#F85149``, warning ``#FBBF24``, safe ``#34D399``, graphite panels
+``#0F1218`` (~85 % opacity, 1 px slate border, rounded corners).
 
 Fonts: Segoe UI / Segoe UI Bold (Windows), DejaVu Sans (Linux), PIL's default font as the last
 resort; cached. French text with accents is rendered as is (UTF-8).
@@ -51,17 +51,19 @@ log = logging.getLogger(__name__)
 # ======================================================================================
 # Palette (RGB 0..255) and tunable constants
 # ======================================================================================
-GOLD = (200, 170, 110)          # #C8AA6E
-GOLD_LIGHT = (240, 230, 210)    # #F0E6D2
-GOLD_DARK = (120, 90, 40)       # #785A28
-TEAL = (10, 200, 185)           # #0AC8B9
-DANGER = (232, 64, 87)          # #E84057
-WARNING = (240, 160, 48)        # #F0A030
-SAFE = (45, 198, 107)           # #2DC66B
-PANEL = (10, 20, 40)            # #0A1428
-PANEL_DEEP = (1, 10, 19)        # #010A13
-MUTED = (160, 155, 140)         # #A09B8C
-GREY = (91, 90, 86)             # #5B5A56
+# Legacy names kept for callers, remapped onto the TreeAI palette (no Riot gold / navy look on
+# the minimap layer or the radar either).
+GOLD = (148, 163, 184)          # #94A3B8 slate (borders, neutral marks)
+GOLD_LIGHT = (241, 245, 249)    # #F1F5F9 text
+GOLD_DARK = (71, 85, 105)       # #475569
+TEAL = (56, 189, 248)           # #38BDF8 sky
+DANGER = (248, 81, 73)          # #F85149
+WARNING = (251, 191, 36)        # #FBBF24
+SAFE = (52, 211, 153)           # #34D399
+PANEL = (15, 18, 24)            # #0F1218 graphite
+PANEL_DEEP = (8, 10, 14)        # #080A0E
+MUTED = (148, 163, 184)         # #94A3B8
+GREY = (100, 110, 125)          # #646E7D
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 ALLY_BLUE = (78, 152, 218)
@@ -93,7 +95,7 @@ LAST_SEEN_MAX_S = 60.0          # invisible enemies are drawn at their last posi
 ALERT_FADE_S = 4.0              # the "last alert" line fades out over this duration
 HALO_PERIOD_S = 1.1             # jungler halo pulse period
 MAX_MAP_ELEMENTS = 6            # minimap layer: at most this many guides + approach arrows
-GUIDE_RGB = {"gold": (240, 200, 90), "danger": (232, 64, 87), "safe": (45, 198, 107), "teal": (10, 200, 185)}
+GUIDE_RGB = {"gold": (251, 191, 36), "danger": (248, 81, 73), "safe": (52, 211, 153), "teal": (56, 189, 248)}
 GUIDE_MAX_LEN = 0.30            # guide arrows are at most this long (fraction of the minimap)
 WARD_ICON = "minimap_ward_green_full.png"
 GUIDE_CLEAR_R = 0.055           # nothing of a guide is drawn this close to a champion icon centre
