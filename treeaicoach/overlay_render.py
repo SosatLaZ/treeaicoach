@@ -1285,6 +1285,7 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
             x, y = px(uv)
             cv_.ring(x, y, mr, lw * 0.9, DANGER, 0.6 * fade, dash=(3.0 * k + 1, 2.5 * k + 1))
+            cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.6 * fade)
             tag = tag_of(e)
             label = f"{tag} {fmt_seconds(ago)}" if tag else fmt_seconds(ago)
             _tag(cv_, x, y, mr * 1.05, label, f_time, GOLD_LIGHT, taken, alpha=max(0.7, fade))

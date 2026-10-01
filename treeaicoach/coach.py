@@ -1180,13 +1180,14 @@ class MapCoach:
 
     # ---------------------------------------------------------------- insights
     def _build_insights(self, ctx: _Ctx) -> list[str]:
-        items: list[tuple[int, str]] = []
+        items: list[tuple] = []
+        add = items.append
         if not ctx.safe and not ctx.dead and ctx.me_pos is not None and not self._in_my_base(ctx):
             en, al = self._numbers(ctx)
             if en >= 2 and en - al >= 2:
-                items.append((100, f"{en} contre {al} autour de toi"))
+                add((100, f"{en} contre {al} autour de toi"))
             elif en >= 1 and al - en >= 2:
-                items.append((60, f"{al} contre {en} autour de toi : engage"))
+                add((60, f"{al} contre {en} autour de toi : engage"))
         # objective coming / up
         for s in ctx.objectives:
             kind = str(getattr(s, "key", "") or "")
@@ -1205,57 +1206,58 @@ class MapCoach:
                     extra = f" · {n} ennemi{'s' if n > 1 else ''} {SIDE_FR[side]}" if n else " · prépare la vision"
                 else:
                     extra = " · prépare la vision"
-                items.append((80, f"{name} {clock}{extra}"))
+                add((80, f"{name} {clock}{extra}", "objective"))
             elif pit is not None and not ctx.safe and kind in _WINDOW_NAMES:
                 far = [p for _tr, p in ctx.enemies_vis if geometry.dist(p, pit[0]) > WINDOW_FAR]
                 if len(far) >= 4:
-                    items.append((85, f"{name} dispo · {len(far)} ennemis loin"))
+                    add((85, f"{name} dispo · {len(far)} ennemis loin", "objective"))
         if not ctx.safe:
             n = self._missing(ctx)
             if n >= MISSING_MIN:
-                items.append((70, f"{min(n, 5)} ennemis disparus"))
+                add((70, f"{min(n, 5)} ennemis disparus"))
             info = self._pressure or {}
             if info.get("grouped"):
-                items.append((55, f"Ennemis groupés {SIDE_FR.get(info.get('side'), '')} ({info.get('visible')})"))
+                add((55, f"Ennemis groupés {SIDE_FR.get(info.get('side'), '')} ({info.get('visible')})"))
             js = self._jg_side_info
             if js is not None and 0.0 <= ctx.t - js[0] <= INSIGHT_JUNGLER_S:
-                items.append((50, f"JGL {SIDE_FR[js[1]]} → joue agressif {SIDE_FR[js[2]]}"))
+                add((50, f"JGL {SIDE_FR[js[1]]} → joue agressif {SIDE_FR[js[2]]}"))
             if (self._in_enemy_jungle(ctx) and ctx.jungler_hidden_s is not None
                     and ctx.jungler_hidden_s >= DEEP_UNSEEN_S):
-                items.append((90, "Jungle ennemie, leur JGL invisible"))
+                add((90, "Jungle ennemie, leur JGL invisible"))
         if not ctx.safe:
             lw = self._my_wave(ctx)
             if lw is not None and lw.state == "pushing":
-                items.append((45, f"Ta vague pousse ({SIDE_FR.get(lw.lane, '')})"))
+                add((45, f"Ta vague pousse ({SIDE_FR.get(lw.lane, '')})"))
             elif lw is not None and lw.state == "pushed_in":
-                items.append((45, f"La vague revient vers toi ({SIDE_FR.get(lw.lane, '')})"))
+                add((45, f"La vague revient vers toi ({SIDE_FR.get(lw.lane, '')})"))
             for _a, name, _p, tr in ctx.opponents or []:
                 why = self._gone(ctx, tr, ctx.role_lane)
                 if why == "recall":
-                    items.append((68, f"{name} est rentré : pousse"))
+                    add((68, f"{name} est rentré : pousse"))
                 elif why == "left" and ctx.my_lane == ctx.role_lane:
-                    items.append((66, f"{name} a quitté la voie"))
+                    add((66, f"{name} a quitté la voie"))
         for a, name, _p, _tr in ctx.opponents or []:
             if str(a).lower() in ctx.dead_enemies:
-                items.append((69, f"{name} mort : pousse ta vague"))
+                add((69, f"{name} mort : pousse ta vague"))
         if ctx.jungler_alias and str(ctx.jungler_alias).lower() in ctx.dead_enemies:
-            items.append((67, "Jungler ennemi mort : fenêtre"))
+            add((67, "Jungler ennemi mort : fenêtre"))
         for _t, _alias, name, item in self._item_news[:1]:
-            items.append((64, f"{name} : {ITEM_NAMES_FR[item]} fini"))
+            add((64, f"{name} : {ITEM_NAMES_FR[item]} fini"))
         diff, name = self._level_diff(ctx)
         if name and abs(diff) >= LEVEL_DIFF_MIN:
-            items.append((40, f"{'+' if diff > 0 else '−'}{abs(diff)} niveaux vs {name}"))
+            add((40, f"{'+' if diff > 0 else '−'}{abs(diff)} niveaux vs {name}"))
         target = self._cs_target(ctx)
         if target is not None and ctx.gt >= 300:
             cs = _finite((getattr(ctx.me_player, "scores", None) or {}).get("creepScore")) or 0.0
             cspm = cs / (ctx.gt / 60.0)
             if cspm < target - 0.5:
-                items.append((20, f"CS/min {fmt_dec(round(cspm, 1))} · objectif {fmt_dec(target)}"))
+                add((20, f"CS/min {fmt_dec(round(cspm, 1))} · objectif {fmt_dec(target)}"))
         if (self._ward_change_gt is not None and ctx.gt >= VISION_MIN_GT
                 and ctx.gt - self._ward_change_gt >= VISION_STALE_S):
-            items.append((15, "Pas de balise depuis 3 min"))
+            add((15, "Pas de balise depuis 3 min"))
         items.sort(key=lambda x: -x[0])
-        return [text for _p, text in items[:4]]
+        self._insight_items = [(int(it[0]), str(it[1]), it[2] if len(it) > 2 else "live") for it in items]
+        return [it[1] for it in items[:4]]
 
 
 __all__ = ["MapCoach", "map_side", "fmt_dec", "PITS", "TURRETS", "GLOBAL_GAP_S", "ENEMY_RULES"]
