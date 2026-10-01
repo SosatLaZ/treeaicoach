@@ -132,6 +132,7 @@ def plate_size(size: str = "big", scale: float = 1.0, title: str = "", reason: s
     h = BASE_H * k
     need = h + 14 * k + 12 * k + max(orr.text_width((title or "").upper(), get_font(int(round(25 * k)), "bold")),
                                      orr.text_width(reason or "", get_font(int(round(17 * k)), "semibold")))
+    need += 2.0 * k            # rounding slack: the text must not be cut by fit_text at exactly its width
     return int(round(min(max(need, BASE_W * k), MAX_W * k))), int(round(h))
 
 

@@ -34,11 +34,15 @@ MAX_GUIDES = 6
 CALL_BANNER_S = 2.2            # short call banner ("BARON !") duration
 GUIDE_S = {"objective": 14.0, "retreat": 6.0, "group": 12.0, "lane": 10.0, "alone": 10.0, "push": 10.0,
            "call": 12.0}
+GENIE_BANNER_S = {"debutant": 4.5, "intermediaire": 3.5, "avance": 3.0, "expert": 2.6}
+DIRECTOR_CALL_RECENT_S = 15.0  # an end-game call this recent: no "fight won" macro call on top of it
 CONCENTRATION_R = 0.10         # enemies this close to me = I am busy (no chatter)
 WRITTEN_GANK_GAP_S = 12.0      # a gank alert turned into text is written at most this often
 HOLD_PRAISE_S = 45.0           # praise held during a fight is released after it (if fresh)
-PRIORITY = {"retreat": 100, "alone": 95, "call": 90, "objective": 80, "push": 75, "group": 60, "lane": 50,
-            "ward": 40}
+HOLD_S_MIN = 10.0              # a macro call's arrow stays at least this long
+PRIORITY = {"retreat": 100, "alone": 95, "call": 90, "genie": 88, "objective": 80, "push": 75, "group": 60,
+            "lane": 50, "ward": 40}
+GENIE_STYLE = {"safe": "engage", "danger": "retreat"}
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,8 @@ class TickOut:
     alerts: list = field(default_factory=list)          # Alerts to route (gate decides voice / text)
     toasts: list = field(default_factory=list)          # (kind, title, subtitle, key)
     in_fight: bool = False
+    macro_new: Any = None                               # macro.GeniusCall started this tick (HUD + badge)
+    macro_cancelled: Any = None                         # macro.GeniusCall cancelled this tick
 
 
 def _f(x: Any, default: float | None = None) -> float | None:
@@ -89,6 +95,7 @@ class TacticalDirector:
 
     def __init__(self, cfg: Any = None) -> None:
         from treeaicoach.fight import FightTracker
+        from treeaicoach.macro import MacroPlanner
         from treeaicoach.phase import EndGameCaller
         from treeaicoach.positioning import PositionCoach
         from treeaicoach.voice_policy import SpeechContext, VoiceGate
@@ -100,6 +107,7 @@ class TacticalDirector:
         self.calls = EndGameCaller()
         self.position = PositionCoach()
         self.wards = WardAdvisor()
+        self.macro = MacroPlanner()
         self.gate = VoiceGate()
         self._ctx_cls = SpeechContext
         self.reset()
@@ -109,7 +117,7 @@ class TacticalDirector:
 
     def reset(self) -> None:
         with self._lock:
-            for c in (self.fight, self.calls, self.position, self.wards, self.gate):
+            for c in (self.fight, self.calls, self.position, self.wards, self.gate, self.macro):
                 try:
                     c.reset()
                 except Exception:
@@ -122,6 +130,7 @@ class TacticalDirector:
             self._ctx = self._ctx_cls()
             self._seen: tuple = ((), (), None)
             self._written_t: dict[str, float] = {}
+            self._director_call_t: float | None = None
 
     # ------------------------------------------------------------------ public state
     def speech_context(self) -> Any:
@@ -172,10 +181,11 @@ class TacticalDirector:
     # ------------------------------------------------------------------ tick
     def tick(self, t: float, gt: float, game: Any, tracker: Any, *, heavy: bool = True, scoreboard: Any = None,
              roles: Any = None, objectives: Any = None, danger_radius: float = 0.12,
-             stance: Any = None) -> TickOut:
+             stance: Any = None, waves: Any = None, jungle_intel: Any = None, threat: int = 0) -> TickOut:
         out = TickOut()
         try:
             with self._lock:
+                self._macro_in = (waves, jungle_intel, int(threat or 0))
                 self._tick(out, float(t), float(gt), game, tracker, heavy, scoreboard, roles,
                            list(objectives or []), float(danger_radius), stance)
         except Exception:
@@ -252,6 +262,8 @@ class TacticalDirector:
             return
         # ---- end-game calls
         calls = self.calls.update(t, st, objectives)
+        if calls:
+            self._director_call_t = t
         for c in calls:
             prefix = "urgent:" if c.speak else "macro:"
             out.alerts.append(Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text=c.text, key=prefix + c.key, t=t))
@@ -299,6 +311,57 @@ class TacticalDirector:
                                quiet=fs.active or self._ctx.concentrating)
         if wa is not None and wa.text:
             out.alerts.append(Alert(kind=AlertKind.CONTROL_WARD, level=Level.INFO, text=wa.text, key=wa.key, t=t))
+        # ---- COUPS DE GÉNIE: the macro planner (one call at a time, visual: arrow + banner + HUD line)
+        self._macro_tick(out, t, gt, game, st, role, me_uv, allies, enemies, objectives, scoreboard, roles,
+                         fs.active, in_base)
+
+    def _macro_tick(self, out: TickOut, t: float, gt: float, game: Any, st: Any, role: str | None, me_uv: Any,
+                    allies: list, enemies: list, objectives: list, scoreboard: Any, roles: Any, fighting: bool,
+                    in_base: bool) -> None:
+        from treeaicoach.macro import build_ctx
+
+        waves, jint, threat = getattr(self, "_macro_in", (None, None, 0))
+        recent = self._director_call_t is not None and 0.0 <= t - self._director_call_t < DIRECTOR_CALL_RECENT_S
+        ctx = build_ctx(t, gt, game, st, role=role, me_uv=me_uv, allies=allies, enemies=enemies,
+                        objectives=objectives, waves=waves, jint=jint, roles=roles, scoreboard=scoreboard,
+                        in_fight=fighting, threat=threat, in_base=in_base, recent_director_call=recent)
+        up = self.macro.update(ctx, getattr(self.cfg, "skill_level", "intermediaire"))
+        if up.cancelled is not None:
+            out.macro_cancelled = up.cancelled
+            self._guides = [g for g in self._guides if g.kind != "genie"]
+            if self._banner is not None and self._banner.title == up.cancelled.title:
+                self._banner = None
+        c = up.new
+        if c is None:
+            return
+        out.macro_new = c
+        if c.kind in ("fight_won", "fight_lost"):        # the planner's follow-up replaces the fight summary
+            out.alerts = [a for a in out.alerts if not str(a.key).startswith("macro:fight_end")]
+        from treeaicoach.macro import level_key
+
+        dur = GENIE_BANNER_S.get(level_key(getattr(self.cfg, "skill_level", "")), 3.5)
+        self._banner = Banner(GENIE_STYLE.get(c.color, "call"), c.title, c.why, t, t + dur)
+        if c.target is not None:
+            self._add_guide(MapGuide("genie", c.target, c.label, PRIORITY["genie"], True, c.color,
+                                     t + max(HOLD_S_MIN, c.life_s), t))
+
+    def macro_active(self) -> Any:
+        """The active COUP DE GÉNIE call (macro.GeniusCall) or None."""
+        try:
+            return self.macro.active()
+        except Exception:
+            return None
+
+    def drop_overlaps(self, alerts: list[Alert], t: float) -> list[Alert]:
+        """Drop the coach tips (``macro_tip:<rule>``) that would repeat a recent macro call."""
+        try:
+            rules = self.macro.suppressed_rules(t)
+        except Exception:
+            return alerts
+        if not rules:
+            return alerts
+        return [a for a in alerts if not (str(getattr(a, "key", "") or "").startswith("macro_tip:")
+                                          and str(a.key).split(":", 1)[1] in rules)]
 
     def hold_if_fighting(self, alerts: list[Alert], t: float) -> list[Alert]:
         """During a fight: only the fight call passes; praise is held for after, the rest dropped."""

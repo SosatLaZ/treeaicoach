@@ -175,10 +175,10 @@ STACK_NEAR = 1.15
 STACK_EXCL = 1.14                   # x covering icon radius (ring + dark line + blur)
 STACK_EXCL_SELF = 1.4               # ... my icon has a glowing teal outline
 STACK_ARC_VIS = 0.14                # visible part of the ring (fraction of its samples)
-STACK_ARC_OWN = 0.55                # own-colour fraction of the visible ring
+STACK_ARC_OWN = 0.7                 # own-colour fraction of the visible ring
 STACK_ARC_OPP = 0.15                # other-team-colour fraction of the visible ring
-STACK_NCC_AREA = 0.3                # portrait visible this much: its NCC must agree ...
-STACK_NCC_MIN = 0.35                # ... at least this much
+STACK_NCC_AREA = 0.15               # portrait visible this much: its NCC must agree ...
+STACK_NCC_MIN = (0.2, 0.2, 0.5)     # ... at least a + b x min(1, (area - AREA) / c)
 STACK_NCC_STRONG = 0.62             # ... or a strong partial-portrait match alone is enough
 STACK_NCC_STRONG_AREA = 0.38
 #: Tracked mode, champions not tracked: whole-map search at a lower resolution (matched
@@ -222,6 +222,9 @@ _RING_DX = (np.asarray([0.86, 0.93, 1.0], np.float32)[:, None] * np.cos(_RING_AN
             ).astype(np.float32)
 _RING_DY = (np.asarray([0.86, 0.93, 1.0], np.float32)[:, None] * np.sin(_RING_ANG)[None]
             ).astype(np.float32)
+_STACK_LEAK_R = (1.04, 1.12, 1.2, 1.28, 1.36, 1.44)
+_LEAK_COS = np.cos(np.linspace(0, 2 * np.pi, 48, endpoint=False)).astype(np.float32)
+_LEAK_SIN = np.sin(np.linspace(0, 2 * np.pi, 48, endpoint=False)).astype(np.float32)
 
 
 def _lab1(bgr: Sequence[int]) -> np.ndarray:
@@ -1620,14 +1623,32 @@ class RosterMatcher:
             C = C[(dc.min(axis=1) < 2.0 * R_px) & (dc.min(axis=1) > 0.3 * R_px)]
             if len(C) == 0:
                 continue
-            # ring-colour masks of the region
+            # ring-colour masks of the region (candidates + the covering icons' halos)
             m = int(math.ceil(1.2 * R_px)) + 2
-            x0, x1 = max(0, int(C[:, 0].min()) - m), min(W, int(C[:, 0].max()) + m + 1)
-            y0, y1 = max(0, int(C[:, 1].min()) - m), min(H, int(C[:, 1].max()) + m + 1)
+            mc = int(math.ceil(1.5 * R_px)) + 2
+            x0 = max(0, min(int(C[:, 0].min()) - m, int(cov[:, 0].min()) - mc))
+            x1 = min(W, max(int(C[:, 0].max()) + m, int(cov[:, 0].max()) + mc) + 1)
+            y0 = max(0, min(int(C[:, 1].min()) - m, int(cov[:, 1].min()) - mc))
+            y1 = min(H, max(int(C[:, 1].max()) + m, int(cov[:, 1].max()) + mc) + 1)
             if x1 - x0 < 4 or y1 - y0 < 4:
                 continue
             lab = cv2.cvtColor(np.ascontiguousarray(bgr[y0:y1, x0:x1]), cv2.COLOR_BGR2LAB)
             own_m, opp_m = self._ring_membership(lab, e.relation)
+            # adaptive exclusion: how far each covering icon's own ring / glow bleeds (blur,
+            # JPEG, outline) = first radius where that colour is on few of its directions
+            for k in range(len(cov)):
+                for rr in _STACK_LEAK_R:
+                    if rr * R_px < cov_ex[k]:
+                        continue
+                    qx = np.floor(cov[k, 0] + rr * R_px * _LEAK_COS).astype(np.int32)
+                    qy = np.floor(cov[k, 1] + rr * R_px * _LEAK_SIN).astype(np.int32)
+                    ok = (qx >= x0) & (qx < x1) & (qy >= y0) & (qy < y1)
+                    if not ok.any():
+                        break
+                    frac = float(own_m[qy[ok] - y0, qx[ok] - x0].mean())
+                    if frac < 0.35:
+                        break
+                    cov_ex[k] = (rr + 0.06) * R_px
             px = C[:, None, 0] + R_px * _RING_DX.reshape(1, -1)              # [n, 120]
             py = C[:, None, 1] + R_px * _RING_DY.reshape(1, -1)
             xi, yi = np.floor(px).astype(np.int32), np.floor(py).astype(np.int32)
@@ -1667,7 +1688,9 @@ class RosterMatcher:
                         nv = float(masked_ncc(P[None], bank.raw[i], mk[None])[0, 0])
                 arc_ok = vis_f >= STACK_ARC_VIS and own_f >= STACK_ARC_OWN and \
                     opp_f <= STACK_ARC_OPP
-                ncc_ok = area < STACK_NCC_AREA or nv >= STACK_NCC_MIN
+                a_, b_, c_ = STACK_NCC_MIN
+                ncc_ok = area < STACK_NCC_AREA or \
+                    nv >= a_ + b_ * min(1.0, (area - STACK_NCC_AREA) / c_)
                 strong = area >= STACK_NCC_STRONG_AREA and nv >= STACK_NCC_STRONG and \
                     own_f >= 0.3 and opp_f <= own_f
                 self.last_stack = (e.alias, round(vis_f, 3), round(own_f, 3), round(opp_f, 3),
