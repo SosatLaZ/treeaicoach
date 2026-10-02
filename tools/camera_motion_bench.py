@@ -9,6 +9,16 @@ rendered with :mod:`treeaicoach.render`, real champion portraits, JPEG + blur):
 * ``cross``  - champions walking through each other (identity swaps), camera static;
 * ``lockhide`` - as ``locked`` but an ally stands ON my icon while the camera is dragged away
   (my icon is not visible: the camera lock must not move me with the camera).
+* ``stackpan`` - bot lane: me glued to my ADC (0.2-0.6 icon diameter, as on the LCU truth of
+  real support games), the enemy duo glued too, the camera sweeping back and forth over them;
+* ``corner``   - champions standing at the four corners of a static camera rectangle (two
+  lines over / next to each icon) and walking along its sides;
+* ``dragstack`` - camera locked on me while I am stacked under my ADC, dragged over the
+  enemy stack and back (``lockhide`` with stacks).
+
+``arc``: how much of the ring colour of the icons crossed by a camera line the line cleaning
+(``roster_matcher.clean_camera_lines``) leaves: own-team ring fraction on the cleaned frame /
+on the same frame rendered without the camera (1.0 = no ring arc deleted).
 
 Pipeline: :class:`RosterMatcher` -> ``Identified`` -> :class:`Tracker` (as the engine).
 Metrics: detection recall / precision, ID errors (a champion's name on another one's icon),
@@ -37,6 +47,7 @@ if _PKG not in sys.path:
     sys.path.insert(0, _PKG)
 
 FPS = 8.0
+WITH_REF = True        # render each frame a second time without the camera (ring-arc test)
 CAM_W, CAM_H = 0.275, 0.155
 WALK = 0.025          # normalized minimap units / s (~350-400 game units / s)
 
@@ -77,6 +88,29 @@ def make_scenario(kind: str, seed: int, db, n_frames: int = 80, size: int = 300)
     if kind in ("locked", "lockhide"):
         goal[0] = pos[0] + [0.2, 0.1]
         vis[1] = True
+    D = 2 * rad
+    glue = {}                                   # j -> (anchor j, offset)
+    if kind in ("stackpan", "dragstack"):
+        pos[4] = np.array([0.80, 0.86]) + rng.normal(0, 0.01, 2)
+        pos[9] = np.array([0.86, 0.80]) + rng.normal(0, 0.01, 2)
+        for j, a in ((0, 4), (8, 9)):
+            ang = rng.uniform(0, 2 * np.pi)
+            glue[j] = (a, np.array([np.cos(ang), np.sin(ang)]) * rng.uniform(0.2, 0.6) * D)
+            vis[j] = vis[a] = True
+        goal[4] = pos[4] + [0.04, -0.04]
+        goal[9] = pos[9] + [-0.04, 0.04]
+    corner_rect = None
+    if kind == "corner":
+        cc = np.array([0.5, 0.5]) + rng.normal(0, 0.05, 2)
+        corner_rect = (cc[0] - CAM_W / 2, cc[1] - CAM_H / 2, cc[0] + CAM_W / 2, cc[1] + CAM_H / 2)
+        corners = [(corner_rect[0], corner_rect[1]), (corner_rect[2], corner_rect[1]),
+                   (corner_rect[0], corner_rect[3]), (corner_rect[2], corner_rect[3])]
+        for k, j in enumerate((0, 1, 5, 6)):
+            pos[j] = np.array(corners[k]) + rng.normal(0, 0.006, 2)
+            # walk along a side of the rectangle (the lines stay on / next to the icon)
+            other = corners[k ^ 1]
+            goal[j] = np.array(other)
+            vis[j] = True
     dt = 1.0 / FPS
     frames = []
     cam_c = pos[0].copy()
@@ -87,6 +121,8 @@ def make_scenario(kind: str, seed: int, db, n_frames: int = 80, size: int = 300)
         t = f * dt
         # champions walk
         for j in range(10):
+            if j in glue:
+                continue
             if kind in ("locked", "lockhide") and j == 0 and 3.0 <= t < 7.0:
                 continue                                  # I stand still while the camera moves
             if kind == "lockhide" and j == 1 and 2.5 <= t < 7.0:
@@ -99,8 +135,22 @@ def make_scenario(kind: str, seed: int, db, n_frames: int = 80, size: int = 300)
                 goal[j] = rng.uniform(0.1, 0.9, 2)
             else:
                 pos[j] += d / L * min(L, speed * dt)
-            if kind != "cross" and rng.random() < 0.004:      # flash / dash
+            if kind not in ("cross", "corner") and rng.random() < 0.004:      # flash / dash
                 pos[j] += rng.normal(0, 1, 2) / math.sqrt(2) * 0.03
+            if kind == "corner" and j in (0, 1, 5, 6) and L < 0.01:
+                goal[j] = pos[j] + (pos[j] - goal[j]) * 0 + rng.normal(0, 0.004, 2)
+        for j, (a, off) in glue.items():                  # glued supports trade with their ADC
+            if rng.random() < 0.25 * dt:
+                ang = rng.uniform(0, 2 * np.pi)
+                glue[j] = (a, np.array([np.cos(ang), np.sin(ang)]) * rng.uniform(0.2, 0.6) * D)
+            tgt = pos[a] + glue[j][1]
+            d = tgt - pos[j]
+            L = float(np.hypot(*d))
+            pos[j] += d / max(L, 1e-9) * min(L, 2.0 * WALK * dt)
+        if kind in ("stackpan", "dragstack"):
+            for a, base in ((4, np.array([0.80, 0.86])), (9, np.array([0.86, 0.80]))):
+                if float(np.hypot(*(goal[a] - pos[a]))) < 0.01:      # trading back and forth
+                    goal[a] = base + rng.normal(0, 0.03, 2)
         pos[:] = np.clip(pos, 0.05, 0.95)
         # camera
         if kind == "pan":
@@ -119,6 +169,18 @@ def make_scenario(kind: str, seed: int, db, n_frames: int = 80, size: int = 300)
                 cam_c = pos[0] + [0.0, -0.022]           # locked: my icon at a fixed offset
             else:
                 cam_c = cam_c + np.array([0.12, 0.05]) * dt  # dragged away, I stand still
+        elif kind == "stackpan":
+            # sweeps back and forth across the bot-lane stacks (edge scroll)
+            ph = (t * 0.35) % 2.0
+            k = ph if ph < 1.0 else 2.0 - ph
+            cam_c = np.array([0.55 + 0.4 * k, 0.83 + 0.03 * math.sin(3 * t)])
+        elif kind == "dragstack":
+            if t < 3.0 or t >= 7.0:
+                cam_c = pos[0] + [0.0, -0.022]
+            else:
+                cam_c = cam_c + np.array([0.03, -0.03]) * dt   # dragged over the enemy stack
+        elif kind == "corner":
+            cam_c = np.array([(corner_rect[0] + corner_rect[2]) / 2, (corner_rect[1] + corner_rect[3]) / 2])
         else:  # cross: camera on the crossing
             cam_c = np.array([0.5, 0.5])
         cam = (float(cam_c[0] - CAM_W / 2), float(cam_c[1] - CAM_H / 2),
@@ -141,7 +203,14 @@ def make_scenario(kind: str, seed: int, db, n_frames: int = 80, size: int = 300)
         img = ren.render(sc)
         img = cv2.GaussianBlur(img, (0, 0), 0.6)
         img = cv2.imdecode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])[1], 1)
-        frames.append((img, truth, cam))
+        ref = None
+        if WITH_REF:                                   # same frame without the camera (arc test)
+            import dataclasses as _dc
+
+            ref = ren.render(_dc.replace(sc, camera=None))
+            ref = cv2.GaussianBlur(ref, (0, 0), 0.6)
+            ref = cv2.imdecode(cv2.imencode(".jpg", ref, [cv2.IMWRITE_JPEG_QUALITY, 70])[1], 1)
+        frames.append((img, truth, cam, ref))
     return names, rels, icons, rad, frames
 
 
@@ -155,6 +224,7 @@ class Metrics:
         self.err_kf: list[float] = []
         self.me_err_frames = self.me_frames = 0
         self.ms: list[float] = []
+        self.arc: list[float] = []
 
     def merge(self, o: "Metrics") -> None:
         for k, v in vars(o).items():
@@ -174,7 +244,8 @@ class Metrics:
                 f"drops {self.drops:3d} drop_frames {self.drop_frames:4d} "
                 f"lag(pos) {m(self.lag_pos):5.2f}f lag(kf) {m(self.lag_kf):5.2f}f "
                 f"err(pos) {m(self.err_pos) * 1000:4.1f} err(kf) {m(self.err_kf) * 1000:4.1f} (x1e-3) "
-                f"me_bad {self.me_err_frames}/{self.me_frames} ms {m(self.ms):5.1f}")
+                f"me_bad {self.me_err_frames}/{self.me_frames} ms {m(self.ms):5.1f} "
+                f"arc {m(self.arc):.3f}")
 
 
 def run_scenario(kind: str, seed: int, db, n_frames: int = 80) -> Metrics:
@@ -190,10 +261,29 @@ def run_scenario(kind: str, seed: int, db, n_frames: int = 80) -> Metrics:
     prev_truth: dict[str, tuple[float, float]] = {}
     was_vis: dict[str, bool] = {}
     tol = 0.6 * rad
-    for f, (img, truth, cam) in enumerate(frames):
+    from treeaicoach import roster_matcher as RMM
+
+    for f, (img, truth, cam, ref) in enumerate(frames):
         t = f / FPS
         t0 = time.perf_counter()
         dets = m.detect(img, t=t)
+        if ref is not None and f >= 6 and m.scale:
+            # ring arcs under the camera lines: own-colour ring fraction kept by the cleaning
+            rect = m._camera_rect_now(img)
+            if rect is not None:
+                clean = RMM.clean_camera_lines(img, rect)
+                H = img.shape[0]
+                R = 0.5 * m.scale * H
+                for n_, rel_, u_, v_ in truth:
+                    near = min(abs(u_ - rect.u0), abs(u_ - rect.u1)) < 1.1 * R / H and rect.v0 - R / H < v_ < rect.v1 + R / H \
+                        or min(abs(v_ - rect.v0), abs(v_ - rect.v1)) < 1.1 * R / H and rect.u0 - R / H < u_ < rect.u1 + R / H
+                    if not near:
+                        continue
+                    a0 = m.rings.classify(RMM.RosterMatcher._ring_pixels(ref, u_ * H, v_ * H, R))
+                    a1 = m.rings.classify(RMM.RosterMatcher._ring_pixels(clean, u_ * H, v_ * H, R))
+                    own0, own1 = (a0[0], a1[0]) if rel_ == "enemy" else (a0[1], a1[1])
+                    if own0 > 0.3:
+                        M.arc.append(min(1.0, own1 / own0))
         ids = [Identified(det=d, alias=d.alias,
                           relation=("self" if rels[names.index(d.alias)] == "self" else d.cls)
                           if d.alias in names else d.cls, team=None, id_score=float(d.score))
@@ -251,7 +341,8 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, default=3)
     ap.add_argument("--frames", type=int, default=80)
     ap.add_argument("--fps", type=float, default=FPS, help="detection rate (frames / s)")
-    ap.add_argument("kinds", nargs="*", default=["pan", "jump", "locked", "lockhide", "cross"])
+    ap.add_argument("kinds", nargs="*", default=["pan", "jump", "locked", "lockhide", "cross", "stackpan",
+                                                 "corner", "dragstack"])
     a = ap.parse_args()
     FPS = float(a.fps)
     db = get_default_db()

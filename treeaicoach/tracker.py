@@ -131,6 +131,11 @@ ELIM_ENABLED = True
 ELIM_MIN_OBS = 3            # the unidentified icon was seen this often recently...
 ELIM_MIN_SCORE = 0.45       # ...with this mean detection score
 ELIM_ALLY_REACH = 0.12      # an ally is identified by elimination this close to his last place
+#: ... and only when that place is known and recent: an ally never seen yet (hidden under
+#: his support from the first frame, a custom skin) must not take the identity of an
+#: unidentified ally-coloured blob anywhere on the map (det_gym bl_split, real records: an
+#: ally drawn on a glyph across the map for minutes)
+ELIM_ALLY_MEMORY_S = 20.0
 
 RELATIONS = ("self", "ally", "enemy")
 _CLASSES = ("enemy", "ally", "self")   # detector class order (ARCHITECTURE.md §3)
@@ -1107,6 +1112,9 @@ class Tracker:
             alias = cands[0]
             tr = self._tracks.get(alias)
             pos = a.raw_position()
+            if side == "ally" and (tr is None or tr.raw_position() is None
+                                   or now - tr.last_seen > ELIM_ALLY_MEMORY_S):
+                continue
             if tr is not None and pos is not None and tr.raw_position() is not None:
                 last = tr.raw_position()
                 reach = MAX_WALK_SPEED * max(0.0, now - tr.last_seen) + JUMP_SLACK

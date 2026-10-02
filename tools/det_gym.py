@@ -450,7 +450,7 @@ class Sim:
     def _default(self, c: Champ, dt: float) -> None:
         rng = self.rng
         if c.stick and self.by_alias[c.stick].alive and c.plan == [] and \
-                self.by_alias[c.stick].recall_until < 0:
+                (not self.sc.glue or self.by_alias[c.stick].recall_until < 0):
             o = self.by_alias[c.stick]
             goal = o.pos + np.asarray(c.stick_off)
             # (glued: the support keeps up with his trading ADC)

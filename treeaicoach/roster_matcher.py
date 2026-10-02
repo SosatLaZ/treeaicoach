@@ -182,6 +182,12 @@ JUMP_MEMORY_S = 6.0
 #: his identity for seconds; a glyph confirms itself on every frame).
 JUMP_CONFIRM_S = 1.5
 RECALL_STILL_SPEED = 0.006          # (ally / me) last known speed below this: may be recalling
+#: ... and standing within RECALL_STILL_DIST of one spot for RECALL_STILL_S (the recall
+#: channel is 8 s): an ally whose velocity was zeroed by an inferred position (stacked under
+#: his ADC, camera point) is not "still" (det_gym bl_swain_lane: a stacked jungler's portrait
+#: matching the base glyph was taken for a recall and kept there for good)
+RECALL_STILL_S = 6.0
+RECALL_STILL_DIST = 0.015
 JUMP_CONFIRM_N = 4
 #: Smoothing of the reported confidence (weight of the new frame).
 CONF_SMOOTH = 0.5
@@ -799,6 +805,8 @@ class _Track:
     hits: int = 0
     misses: int = 0                     # consecutive frames without a match
     pend: tuple | None = None           # (u, v, t_first, n, t_last) far candidate awaiting confirmation
+    #: (u, v, t): where / since when the champion stands within RECALL_STILL_DIST (recall test)
+    still: tuple | None = None
 
     def predict(self, t: float) -> tuple[float, float]:
         dt = min(max(t - self.t, 0.0), 0.5)
@@ -1793,7 +1801,9 @@ class RosterMatcher:
         # recall: back to the fountain. An ally is never in the fog: he recalls standing still
         # (8 s channel) where we see him, so a walking ally does not jump home (measured,
         # det_gym: an ally portrait matching the fountain glyph while he walked mid)
-        still = e.relation == "enemy" or math.hypot(tr.vu, tr.vv) < RECALL_STILL_SPEED
+        still = e.relation == "enemy" or (
+            math.hypot(tr.vu, tr.vv) < RECALL_STILL_SPEED and tr.still is not None
+            and now - tr.still[2] >= RECALL_STILL_S)
         for t_, (fu, fv) in _FOUNTAINS.items():
             if still and (team is None or t_ == team) and math.hypot(u - fu, v - fv) < FOUNTAIN_DIST:
                 return 0.0
@@ -2844,6 +2854,8 @@ class RosterMatcher:
             tr.hits += 1
             tr.misses = 0
             tr.pend = None
+            if tr.still is None or math.hypot(u - tr.still[0], v - tr.still[1]) > RECALL_STILL_DIST:
+                tr.still = (u, v, now)
         for i, tr in self._tracks.items():
             if i in used:
                 continue
