@@ -199,6 +199,7 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     precision_color,
     radar_placeholder,
     rounded_on_bg,
+    scroll_frame_class,
     session_stats,
     set_windows_autostart,
     square_icon,
@@ -589,7 +590,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             return
         self._wrap_width = content_w
         scale = max(0.5, self._scaled(100) / 100)
-        col_w = min(content_w - 2 * PAGE_PAD - 18, CONTENT_MAX)    # centred column (minus the scrollbar)
+        col_w = min(content_w - 2 * PAGE_PAD - 10, CONTENT_MAX)    # centred column (minus the scrollbar)
         row_w = col_w - 2 * CARD_PAD - 2
         for slot in list(self._row_slots):
             lbl = getattr(slot, "desc_label", None)
@@ -835,16 +836,14 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         rule.grid(row=1, column=0, sticky="ew", padx=PAGE_PAD, pady=(14, 0))
         targets: list[tuple[Any, int, int]] = [(head, 0, 0), (rule, 0, 0)]
         if scroll:
-            body = ctk.CTkScrollableFrame(page, fg_color=BG, corner_radius=0,
-                                          scrollbar_button_color=SWITCH_OFF,
-                                          scrollbar_button_hover_color=LINE_STRONG)
+            body = scroll_frame_class()(page, fg_color=BG)
             body.grid(row=2, column=0, sticky="nsew", padx=(0, 4), pady=(0, 2))
             body.grid_columnconfigure(0, weight=1)
             page.scroll_frame = body  # type: ignore[attr-defined]
             inner = self._frame(body)
             inner.grid(row=0, column=0, sticky="nsew", padx=PAGE_PAD, pady=(22, 28))
             inner.grid_columnconfigure(0, weight=1)
-            targets.append((inner, 0, -18))          # the scrollbar already takes ~18 px on the right
+            targets.append((inner, 0, -10))          # the scrollbar already takes 10 px on the right
             self._center_column(page, targets, max_width)
             return page, right, inner
         body = self._frame(page)

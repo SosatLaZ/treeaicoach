@@ -41,7 +41,6 @@ from treeaicoach.ui_common import (
     RADIUS_DIALOG,
     SUNKEN,
     SURFACE,
-    SWITCH_OFF,
     TEAL,
     TEXT,
     WARNING,
@@ -239,10 +238,21 @@ class DashboardPageMixin:
         # empty journal -> "avant la partie": last game + précision, goal, point to work on (or a checklist)
         self.pregame = self._frame(jr)
         self.pregame.grid_columnconfigure(0, weight=1)
-        self.journal = ctk.CTkTextbox(jr, fg_color=SUNKEN, text_color=TEXT, font=self.fonts.small,
-                                      wrap="word", activate_scrollbars=True, border_width=0,
-                                      scrollbar_button_color=SWITCH_OFF,
-                                      scrollbar_button_hover_color=LINE_STRONG, height=190)
+        # plain Tk text (scrolls with the wheel): a CTkTextbox adds 2 CTkScrollbars that flush every
+        # pending layout (update_idletasks) on each new line
+        import tkinter as tk  # noqa: PLC0415
+        import tkinter.font as tkfont  # noqa: PLC0415
+
+        from treeaicoach.ui_common import _font_tuple, _sc  # noqa: PLC0415
+
+        jfont = _font_tuple(self.fonts.small)
+        try:
+            lines = max(4, int(_sc(190) / (tkfont.Font(root=self.root, font=jfont).metrics("linespace") + _sc(6))))
+        except Exception:
+            lines = 8
+        self.journal = tk.Text(jr, bg=SUNKEN, fg=TEXT, font=jfont, wrap="word", bd=0, highlightthickness=0,
+                               padx=_sc(10), pady=_sc(6), height=lines, width=10, cursor="arrow",
+                               insertwidth=0, selectbackground=PANEL_HI, takefocus=0)
         self.journal.grid(row=1, column=0, sticky="nsew")
         for lvl, col in LEVEL_COLORS.items():
             self.journal.tag_config(f"lvl{lvl}", foreground=col)

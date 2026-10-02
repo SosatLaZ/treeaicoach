@@ -809,6 +809,7 @@ class LayeredWindow:
                                                 ctypes.byref(blend), ULW_ALPHA)
             if ok:
                 self.alpha = a
+                note_push(self.name, 0)
         except Exception:
             log.debug("set_alpha failed", exc_info=True)
 
@@ -841,6 +842,7 @@ class LayeredWindow:
                 api.user32.ReleaseDC(None, screen_dc)
             if not ok:
                 raise OSError(f"UpdateLayeredWindow failed ({api.last_error()})")
+            note_push(self.name, w * h * 4)
             self.alpha = a
             self.x, self.y, self.w, self.h = int(x), int(y), w, h
             if not self.visible:
@@ -875,6 +877,7 @@ class LayeredWindow:
             api = self._api
             api.user32.SetWindowPos(self.hwnd, api.ctypes.c_void_p(HWND_TOPMOST), 0, 0, 0, 0,
                                     SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE)
+            note_push(self.name, -1)
         except Exception:  # pragma: no cover
             log.debug("SetWindowPos failed", exc_info=True)
 
@@ -976,6 +979,62 @@ def _monitor_rect_at(api: _Api, x: int, y: int) -> RectT | None:
 # ======================================================================================
 _budget_fps: float | None = None
 _current_perf: "_OverlayPerf | None" = None
+
+#: Every pixel upload to the compositor (``UpdateLayeredWindow`` with a bitmap), every alpha-only
+#: update and every topmost re-assertion of ANY overlay window of the process (overlay thread,
+#: play badges): the overlay's cost for the game is mostly here (each upload = a copy into DWM's
+#: surface + a recomposition of that rectangle). Cumulative; :func:`push_stats` / rates.
+_push_lock = threading.Lock()
+_push_totals: dict[str, Any] = {"pushes": 0, "bytes": 0, "alpha": 0, "topmost": 0, "layers": {}}
+_push_recent: "deque[tuple[float, int]]" = None  # type: ignore[assignment]
+
+
+def note_push(layer: str, nbytes: int) -> None:
+    """Account one window update: ``nbytes`` > 0 pixels uploaded, 0 alpha-only, -1 topmost.
+    Called by :class:`LayeredWindow` (and by test / benchmark fakes). Never raises."""
+    global _push_recent
+    try:
+        with _push_lock:
+            if _push_recent is None:
+                from collections import deque
+
+                _push_recent = deque(maxlen=600)
+            if nbytes > 0:
+                _push_totals["pushes"] += 1
+                _push_totals["bytes"] += int(nbytes)
+                lay = _push_totals["layers"]
+                c = lay.setdefault(str(layer), [0, 0])
+                c[0] += 1
+                c[1] += int(nbytes)
+                _push_recent.append((time.monotonic(), int(nbytes)))
+            elif nbytes == 0:
+                _push_totals["alpha"] += 1
+            else:
+                _push_totals["topmost"] += 1
+    except Exception:  # pragma: no cover
+        pass
+
+
+def push_stats(window: float = 5.0) -> dict[str, Any]:
+    """Cumulative window updates (``pushes``, ``bytes``, ``alpha``, ``topmost``, per ``layers``:
+    [pushes, bytes]) + the recent rates ``pushes_per_s`` / ``kb_per_s`` over ``window`` s."""
+    with _push_lock:
+        out = {k: (dict((n, list(v)) for n, v in val.items()) if isinstance(val, dict) else val)
+               for k, val in _push_totals.items()}
+        rec = list(_push_recent or ())
+    now = time.monotonic()
+    rec = [r for r in rec if now - r[0] <= window]
+    out["pushes_per_s"] = round(len(rec) / window, 2)
+    out["kb_per_s"] = round(sum(r[1] for r in rec) / 1024.0 / window, 1)
+    return out
+
+
+def reset_push_stats() -> None:
+    """Zero the counters (benchmarks)."""
+    with _push_lock:
+        _push_totals.update(pushes=0, bytes=0, alpha=0, topmost=0, layers={})
+        if _push_recent is not None:
+            _push_recent.clear()
 
 
 def set_budget_fps(fps: float | None) -> None:
@@ -1172,6 +1231,18 @@ class _OverlayPerf:
         return out
 
 
+class _StubApi:
+    """Stand-in for :class:`_Api` when the windows are injected (``window_factory``): a 1920 x 1080
+    screen, no monitor lookup, no DPI call."""
+
+    SetThreadDpiAwarenessContext = None
+
+    class user32:  # noqa: N801 - mimics the ctypes DLL attribute
+        @staticmethod
+        def GetSystemMetrics(i: int) -> int:
+            return 1080 if i else 1920
+
+
 class OverlayManager:
     """Owns the overlay thread and its windows (flash, radar, minimap marks, HUD).
 
@@ -1186,8 +1257,12 @@ class OverlayManager:
     """
 
     def __init__(self, cfg: Any, state_provider: Callable[[], Any],
-                 on_moved: Callable[[str, int, int], None] | None = None) -> None:
+                 on_moved: Callable[[str, int, int], None] | None = None, *,
+                 window_factory: Callable[[str], Any] | None = None) -> None:
         self._lock = threading.Lock()
+        #: ``(name) -> window`` with the :class:`LayeredWindow` interface (benchmarks / tests off
+        #: Windows: the real loop runs with fake windows); None = real layered windows
+        self._window_factory = window_factory
         self._cfg = copy.copy(cfg)
         self._provider = state_provider
         self._on_moved_cb = on_moved
@@ -1213,7 +1288,7 @@ class OverlayManager:
         self._mm_no_rect_logged = False
         #: current layout (treeaicoach.layout.Layout) of the card / timers / toasts / badges
         self.layout: Any = None
-        self.ok = sys.platform == "win32"
+        self.ok = sys.platform == "win32" or window_factory is not None
         if not self.ok:
             log.info("Overlay disabled: Windows only")
 
@@ -1294,7 +1369,7 @@ class OverlayManager:
         _current_perf = self._perf
         windows: dict[str, LayeredWindow] = {}
         try:
-            api = _get_api()
+            api = _get_api() if self._window_factory is None else _StubApi()
             if api.SetThreadDpiAwarenessContext is not None:
                 try:   # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
                     api.SetThreadDpiAwarenessContext(api.ctypes.c_void_p(-4))
@@ -1305,7 +1380,8 @@ class OverlayManager:
             # "world0" / "world1": small click-through windows of the ward guide in the game view
             # "timers": the timers strip hanging outside the minimap frame (layout slot)
             for name in ("flash", "radar", "minimap", "timers", "hud", "toasts") + WORLD_WINDOWS:
-                windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved)
+                windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved) \
+                    if self._window_factory is None else self._window_factory(name)
             # The minimap layer is captured by default (visible in the user's screenshots):
             # it never draws portraits, so the detector does not re-detect it. Optional
             # exclusion: cfg.overlay_hide_from_capture (applied in _sync_capture_exclusion).

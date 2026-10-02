@@ -831,6 +831,11 @@ def _guarded(method: Callable[..., Any]) -> Callable[..., Any]:
 def _apply_theme(ctk: Any) -> None:
     """Point every CustomTkinter default at the TreeAI tokens (docs/DESIGN.md): flat, 4 px radius."""
     ctk.set_appearance_mode("dark")
+    try:   # rounded shapes drawn as 1 polygon instead of antialiased font glyphs (8+ text items per
+        # frame, the slowest thing to draw on Windows; radii are 4-6 px, the difference is invisible)
+        ctk.DrawEngine.preferred_drawing_method = "polygon_shapes"
+    except Exception:
+        pass
     try:
         ctk.set_default_color_theme("dark-blue")
     except Exception:
@@ -1809,6 +1814,212 @@ class Segmented:
             self.state = str(kw["state"])
             for v in self.values:
                 self._paint(v)
+
+
+_SCROLL_CLS: list[Any] = [None]
+
+
+def scroll_frame_class() -> Any:
+    """:class:`ScrollFrame`: a light vertical scrolling container (replaces CTkScrollableFrame).
+
+    One canvas + one thin canvas scrollbar: no CTk drawing, and above all no ``update_idletasks``
+    inside the scrollbar (CTkScrollbar flushes every pending layout each time the content height
+    changes: the page was drawn half laid out, then again). The gutter is always reserved, so
+    the content never shifts when the scrollbar appears or disappears.
+
+    The object IS the inner frame (children go in it, like CTkScrollableFrame); ``grid`` /
+    ``grid_remove`` / ``destroy`` act on the outer frame; ``_parent_canvas`` is the canvas.
+    """
+    if _SCROLL_CLS[0] is not None:
+        return _SCROLL_CLS[0]
+    import tkinter as tk  # noqa: PLC0415
+
+    class ScrollFrame(tk.Frame):
+        BAR_W = 10                      # logical px (gutter); the thumb is 6 px wide in it
+        WHEEL_PX = 60                   # logical px per wheel notch
+
+        def __init__(self, master: Any, fg_color: str | None = None, height: int = 0, width: int = 0,
+                     thumb: str = SWITCH_OFF, thumb_hover: str = LINE_STRONG, **_kw: Any) -> None:
+            bg = fg_color if fg_color and fg_color != "transparent" else _widget_bg(master)
+            self._bg, self._thumb, self._thumb_hover = bg, thumb, thumb_hover
+            self._dead = False
+            outer = tk.Frame(master, bg=bg, bd=0, highlightthickness=0)
+            outer.grid_columnconfigure(0, weight=1)
+            outer.grid_rowconfigure(0, weight=1)
+            self._outer = outer
+            cv = tk.Canvas(outer, bg=bg, bd=0, highlightthickness=0, width=_sc(width) or 1,
+                           height=_sc(height) or 1, yscrollincrement=1)
+            cv.grid(row=0, column=0, sticky="nsew")
+            bar = tk.Canvas(outer, bg=bg, bd=0, highlightthickness=0, width=_sc(self.BAR_W), height=1)
+            bar.grid(row=0, column=1, sticky="ns")
+            self._parent_canvas, self._bar = cv, bar
+            tk.Frame.__init__(self, cv, bg=bg, bd=0, highlightthickness=0)
+            self._win = cv.create_window(0, 0, window=self, anchor="nw")
+            self._thumb_id = bar.create_line(0, 0, 0, 0, fill=thumb, width=_sc(6), capstyle="round",
+                                             state="hidden")
+            self._span = (0.0, 1.0)
+            self._drag: tuple[int, float] | None = None
+            cv.configure(yscrollcommand=self._on_scroll)
+            cv._tree_scroll = self  # type: ignore[attr-defined]
+            outer._tree_scroll = self  # type: ignore[attr-defined]
+            self._tree_scroll = self
+            self.bind("<Configure>", self._on_inner, add="+")
+            cv.bind("<Configure>", self._on_canvas, add="+")
+            bar.bind("<Configure>", lambda _e: self._draw_bar(), add="+")
+            bar.bind("<Button-1>", self._bar_press, add="+")
+            bar.bind("<B1-Motion>", self._bar_drag, add="+")
+            bar.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None), add="+")
+            bar.bind("<Enter>", lambda _e: bar.itemconfigure(self._thumb_id, fill=self._thumb_hover), add="+")
+            bar.bind("<Leave>", lambda _e: bar.itemconfigure(self._thumb_id, fill=self._thumb), add="+")
+            _install_wheel(self)
+
+        # ---- geometry: the outer frame is the one laid out in the parent
+        def grid(self, **kw: Any) -> None:  # type: ignore[override]
+            self._outer.grid(**kw)
+
+        grid_configure = grid
+
+        def grid_remove(self) -> None:  # type: ignore[override]
+            self._outer.grid_remove()
+
+        def grid_forget(self) -> None:  # type: ignore[override]
+            self._outer.grid_forget()
+
+        def grid_info(self) -> Any:  # type: ignore[override]
+            return self._outer.grid_info()
+
+        def pack(self, **kw: Any) -> None:  # type: ignore[override]
+            self._outer.pack(**kw)
+
+        def place(self, **kw: Any) -> None:  # type: ignore[override]
+            self._outer.place(**kw)
+
+        def winfo_manager(self) -> str:  # type: ignore[override]
+            return self._outer.winfo_manager()
+
+        def destroy(self) -> None:  # type: ignore[override]
+            if self._dead:
+                return
+            self._dead = True
+            try:
+                self._outer.destroy()
+            except Exception:
+                pass
+
+        def cget(self, key: str) -> Any:  # type: ignore[override]
+            return tk.Frame.cget(self, "bg" if key == "fg_color" else key)
+
+        def configure(self, **kw: Any) -> Any:  # type: ignore[override]
+            fg = kw.pop("fg_color", None)
+            if fg and fg != "transparent":
+                kw["bg"] = fg
+                for w in (self._outer, self._parent_canvas, self._bar):
+                    w.configure(bg=fg)
+            for k in ("corner_radius", "border_width", "border_color", "scrollbar_button_color",
+                      "scrollbar_button_hover_color", "label_fg_color"):
+                kw.pop(k, None)
+            if "height" in kw:
+                self._parent_canvas.configure(height=_sc(kw.pop("height")))
+            return tk.Frame.configure(self, **kw) if kw else None
+
+        config = configure
+
+        # ---- scrolling
+        def _on_inner(self, _e: Any = None) -> None:
+            cv = self._parent_canvas
+            h = max(1, self.winfo_reqheight(), self.winfo_height())
+            cv.configure(scrollregion=(0, 0, max(1, cv.winfo_width()), h))
+
+        def _on_canvas(self, e: Any) -> None:
+            self._parent_canvas.itemconfigure(self._win, width=e.width)
+            self._on_inner()
+
+        def _on_scroll(self, lo: str, hi: str) -> None:
+            self._span = (float(lo), float(hi))
+            self._draw_bar()
+
+        def _draw_bar(self) -> None:
+            lo, hi = self._span
+            bar = self._bar
+            try:
+                if hi - lo >= 0.999:
+                    bar.itemconfigure(self._thumb_id, state="hidden")
+                    return
+                h = max(1, bar.winfo_height())
+                r = _sc(3)
+                x = _sc(self.BAR_W) / 2
+                y0 = lo * h + r + 1
+                y1 = max(y0 + _sc(12), hi * h - r - 1)
+                bar.coords(self._thumb_id, x, y0, x, y1)
+                bar.itemconfigure(self._thumb_id, state="normal")
+            except Exception:
+                pass
+
+        def scrollable(self) -> bool:
+            return self._span[1] - self._span[0] < 0.999
+
+        def scroll_px(self, px: int) -> None:
+            if self.scrollable():
+                self._parent_canvas.yview_scroll(int(px), "units")
+
+        def _bar_press(self, e: Any) -> None:
+            lo, hi = self._span
+            h = max(1, self._bar.winfo_height())
+            f = e.y / h
+            if lo <= f <= hi:
+                self._drag = (e.y, lo)
+            else:                       # click in the trough: one page up / down
+                self._drag = None
+                self._parent_canvas.yview_scroll(-1 if f < lo else 1, "pages")
+
+        def _bar_drag(self, e: Any) -> None:
+            if self._drag is None:
+                return
+            y0, lo0 = self._drag
+            h = max(1, self._bar.winfo_height())
+            self._parent_canvas.yview_moveto(max(0.0, lo0 + (e.y - y0) / h))
+
+    _SCROLL_CLS[0] = ScrollFrame
+    return ScrollFrame
+
+
+def _install_wheel(sf: Any) -> None:
+    """One global mouse-wheel binding: the innermost :class:`ScrollFrame` under the pointer scrolls
+    (a text box scrolls itself)."""
+    root = sf.winfo_toplevel()
+    if getattr(root, "_tree_wheel", False):
+        return
+    root._tree_wheel = True
+
+    def wheel(e: Any) -> None:
+        w = e.widget
+        if isinstance(w, str):
+            try:
+                w = root.nametowidget(w)
+            except Exception:
+                return
+        if w.winfo_class() in ("Text", "Listbox", "Menu"):
+            return
+        if getattr(e, "num", None) == 4:
+            notches = 1.0
+        elif getattr(e, "num", None) == 5:
+            notches = -1.0
+        else:
+            notches = float(getattr(e, "delta", 0) or 0) / (120.0 if sys.platform.startswith("win") else 1.0)
+        while w is not None:
+            owner = getattr(w, "_tree_scroll", None)
+            if owner is not None and owner.scrollable():
+                owner.scroll_px(-notches * _sc(owner.WHEEL_PX))
+                return
+            w = getattr(w, "master", None)
+
+    try:
+        root.bind_all("<MouseWheel>", wheel, add="+")
+        if not sys.platform.startswith("win"):
+            root.bind_all("<Button-4>", wheel, add="+")
+            root.bind_all("<Button-5>", wheel, add="+")
+    except Exception:
+        log.debug("wheel binding failed", exc_info=True)
 
 
 class _LazyPages(dict):

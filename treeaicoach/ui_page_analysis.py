@@ -17,6 +17,7 @@ from PIL import Image
 from treeaicoach import paths
 from treeaicoach.ui_common import (
     _POSITION_FR,
+    scroll_frame_class,
     ACCENT,
     BG,
     BTN_H_SMALL,
@@ -421,7 +422,6 @@ class AnalysisPageMixin:
     def _build_replay(self, rp: Any) -> None:
         import tkinter as tk  # noqa: PLC0415
 
-        ctk = self.ctk
         self._replay: dict[str, Any] = {"model": None, "t": 0.0, "playing": False, "speed": 30.0, "job": None,
                                         "path": None, "loading": False, "icons": {}}
         bar = self._frame(rp)
@@ -476,7 +476,7 @@ class AnalysisPageMixin:
         self._tip(self.replay_speed, "Vitesse : secondes de jeu par seconde")
         self._caption(side, "Moments clés", DIM, anchor="w").grid(row=3, column=0, sticky="w", pady=(4, 0))
         self._hline(side, LINE_STRONG).grid(row=4, column=0, sticky="ew", pady=(4, 0))
-        self.replay_moments = ctk.CTkScrollableFrame(side, fg_color="transparent", height=200, corner_radius=0)
+        self.replay_moments = scroll_frame_class()(side, fg_color="transparent", height=200)
         self.replay_moments.grid(row=5, column=0, sticky="ew")
         self.replay_moments.grid_columnconfigure(1, weight=1)
         tl_w = self._scaled(640)
@@ -599,16 +599,47 @@ class AnalysisPageMixin:
         if not rows:
             self._label(box, "Aucun moment clé enregistré.", self.fonts.small, DIM, anchor="w").grid(
                 row=0, column=0, columnspan=2, sticky="w")
+            return
+        # ONE canvas for the whole list (80 rows = 80 buttons + 80 labels before: ~0.5 s on Windows)
+        import tkinter as tk  # noqa: PLC0415
+
+        from treeaicoach.ui_common import _font_tuple, _sc  # noqa: PLC0415
+
+        rh, tx = _sc(22), _sc(52)
+        bg = box.cget("bg")
+        cv = tk.Canvas(box, bg=bg, bd=0, highlightthickness=0, height=rh * len(rows), width=_sc(200),
+                       cursor="hand2")
+        cv.grid(row=0, column=0, columnspan=2, sticky="ew")
+        hover = cv.create_rectangle(0, 0, 0, 0, fill=PANEL_HI, width=0, state="hidden")
+        tf, lf = _font_tuple(self.fonts.tiny_bold), _font_tuple(self.fonts.small)
         for i, m in enumerate(rows):
             col = cols.get(m.kind, MUTED)
             if m.kind == "play":
                 col = "#%02X%02X%02X" % replay.play_rgb(m.cls)
-            b = self.ctk.CTkButton(box, text=replay.fmt_clock(m.t), width=44, height=20, corner_radius=RADIUS,
-                                   font=self.fonts.tiny_bold, fg_color="transparent", hover_color=PANEL_HI,
-                                   text_color=col, anchor="w",
-                                   command=self.cb(lambda tt=m.t: self._replay_seek(tt - 6)))
-            b.grid(row=i, column=0, sticky="w")
-            self._label(box, ui_text(m.label), self.fonts.small, TEXT, anchor="w").grid(row=i, column=1, sticky="w")
+            y = i * rh + rh // 2
+            cv.create_text(_sc(6), y, text=replay.fmt_clock(m.t), fill=col, font=tf, anchor="w")
+            cv.create_text(tx, y, text=ui_text(m.label), fill=TEXT, font=lf, anchor="w")
+
+        def row_at(e: Any) -> int:
+            return int(cv.canvasy(e.y) // rh)
+
+        def motion(e: Any) -> None:
+            i = row_at(e)
+            if 0 <= i < len(rows):
+                cv.coords(hover, 0, i * rh, cv.winfo_width(), (i + 1) * rh)
+                cv.itemconfigure(hover, state="normal")
+            else:
+                cv.itemconfigure(hover, state="hidden")
+
+        def click(e: Any) -> None:
+            i = row_at(e)
+            if 0 <= i < len(rows):
+                self._replay_seek(rows[i].t - 6)
+
+        cv.bind("<Motion>", motion, add="+")
+        cv.bind("<Leave>", lambda _e: cv.itemconfigure(hover, state="hidden"), add="+")
+        cv.bind("<Button-1>", self.cb(click), add="+")
+        self._replay["moment_rows"] = rows
 
     def _replay_icon(self, alias: str) -> Any:
         cache = self._replay["icons"]

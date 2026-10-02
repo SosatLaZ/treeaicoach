@@ -160,12 +160,14 @@ MIN_CALIB_QUALITY = 0.62
 #: at 0:17). A provisional scale is re-checked (full sweep) every CALIB_RETRY_FRAMES frames,
 #: and only a confident one is stored as the prior of the next games; the stored prior never
 #: restricts the first sweep (a wrong stored value used to confirm itself game after game).
+CALIB_CERTIFY = True                # False: the pre-2.5 calibration (comparisons)
 CALIB_MIN_SPREAD = 3
 CALIB_CONF_EV = 0.75
 CALIB_SPREAD_D = 1.0
 CALIB_FOUNTAIN_R = 0.16
 CALIB_RETRY_FRAMES = 12
 CALIB_RETRY_MAX = 48
+CALIB_KEEP = 0.03                   # a certified scale this close to the provisional one: kept
 #: Champions averaged by the calibration quality, and weight of the log-normal scale prior.
 CALIB_TOP_K = 3
 CALIB_PRIOR_WEIGHT = 1.5
@@ -1497,7 +1499,11 @@ class RosterMatcher:
         st = self._state
         full = around is None
         confident = False
-        if full:
+        if not CALIB_CERTIFY:
+            best, q = sweep(stored or DEFAULT_SCALE)
+            confident = True
+            st.confident = True
+        elif full:
             # the evidence decides with the generic prior; the ratio stored by the previous
             # games is the prior only when this frame's evidence is not confident
             prior = DEFAULT_SCALE
@@ -1522,8 +1528,13 @@ class RosterMatcher:
             st.retry_every = min(CALIB_RETRY_MAX, 2 * st.retry_every)
             return st.scale
         if confident and not st.confident:
-            st.calib.clear()                   # the provisional sweeps do not vote any more
             st.confident = True
+            if st.scale is not None and abs(math.log(best / st.scale)) < CALIB_KEEP:
+                # certified: the provisional scale was right (no restart of the searches)
+                if store:
+                    self._store_scale(bgr, st.scale)
+                return st.scale
+            st.calib.clear()                   # the provisional sweeps do not vote any more
         st.calib.append((best, q))
         # combine the calibrations of the first frames (quality-weighted median)
         vals = sorted([c for c in st.calib[-CALIB_FRAMES:] if c[0] is not None],
@@ -1642,7 +1653,7 @@ class RosterMatcher:
                 around = self._stored_scale(bgr)
         elif len(st.calib) < CALIB_FRAMES and st.frames < 2 * CALIB_FRAMES:
             need, around = True, st.scale         # initial phase: confirm narrowly
-        elif not st.confident and st.frames - st.retry_at >= st.retry_every:
+        elif CALIB_CERTIFY and not st.confident and st.frames - st.retry_at >= st.retry_every:
             # provisional scale (stored prior, base stack at 0:00...): full sweep with the
             # generic prior until confident multi-icon evidence certifies it
             need, around = True, None

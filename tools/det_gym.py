@@ -56,9 +56,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 _PKG = os.environ.get("BENCH_PKG_ROOT") or str(ROOT)
-for p in (_PKG, str(ROOT)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+for p in (str(ROOT), _PKG):          # (_PKG first: BENCH_PKG_ROOT compares another package)
+    if p in sys.path:
+        sys.path.remove(p)
+    sys.path.insert(0, p)
 
 import treeaicoach  # noqa: E402,F401  (first, as in the app: single-threaded BLAS, see its __init__)
 import numpy as np  # noqa: E402
@@ -802,6 +803,14 @@ def start_scenarios(quick: bool = False) -> list[Scenario]:
          Scenario("st_prior090", 95, 6.0, 45.0, 300, "ORDER", "free", jpeg=0, blur=0.35,
                   start="fountain", scale_prior=0.09),
          Scenario("st_noprior", 97, 6.0, 45.0, 260, "CHAOS", "locked", jpeg=0, blur=0.4,
+                  start="fountain"),
+         Scenario("st_prior104", 191, 6.0, 45.0, 250, "CHAOS", "free", jpeg=0, blur=0.45,
+                  start="fountain", scale_prior=0.104),
+         Scenario("st_prior100", 193, 8.0, 45.0, 290, "ORDER", "locked", jpeg=0, blur=0.35,
+                  start="fountain", scale_prior=0.1),
+         Scenario("st_prior086", 195, 6.0, 45.0, 270, "ORDER", "locked", jpeg=0, blur=0.4,
+                  start="fountain", scale_prior=0.086),
+         Scenario("st_noprior2", 197, 4.0, 45.0, 230, "CHAOS", "locked", jpeg=0, blur=0.5,
                   start="fountain")]
     for sc in S:
         sc.suite = "start"
