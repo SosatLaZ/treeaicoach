@@ -550,9 +550,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--styles", default="farm,gank,invade")
     ap.add_argument("--lanes", default="top,mid,bot")
     ap.add_argument("--real", action="store_true", help="also replay the real Kindred LCU path")
+    ap.add_argument("--truth", nargs="*", default=None, help="real LCU *.truth.json games to replay")
+    ap.add_argument("--no-sim", action="store_true", help="skip the simulated games")
     args = ap.parse_args(argv)
-    res = evaluate(args.seeds, args.minutes, args.styles.split(","), args.lanes.split(","))
-    print_table(res)
+    if not args.no_sim:
+        res = evaluate(args.seeds, args.minutes, args.styles.split(","), args.lanes.split(","))
+        print_table(res)
+    if args.truth:
+        print_truth([replay_truth_file(f) for f in args.truth])
     if args.real:
         print_real(replay_real())
     return 0
@@ -673,6 +678,174 @@ def print_real(r: dict[str, list[float]]) -> None:
     for k in ("old", "paths"):
         print(f"  {k:<6} mass05={np.mean(r[k + '05']):.3f}  mass10={np.mean(r[k + '10']):.3f}  "
               f"shown={np.mean(r[k + '_shown']):.2f}")
+
+
+# ---------------------------------------------------------------------- real LCU games
+def _interp(frames: list[tuple[float, dict]], pid: str, t: float) -> UV | None:
+    prev = None
+    for ft, row in frames:
+        r = row.get(pid)
+        if r is None:
+            continue
+        if ft >= t:
+            if prev is None or ft == prev[0]:
+                return (r[0], r[1])
+            f = (t - prev[0]) / (ft - prev[0])
+            return (prev[1][0] + (r[0] - prev[1][0]) * f, prev[1][1] + (r[1] - prev[1][1]) * f)
+        prev = (ft, (r[0], r[1]))
+    return prev[1] if prev else None
+
+
+def replay_truth_file(path: str) -> dict[str, Any]:
+    """Replay one real game (LCU truth: per-minute positions / CS, kills, monsters).
+
+    Our vision = our 5 champions (truth positions, linear between minutes), sight ``SIGHT``.
+    The enemy jungler is SEEN only at moments where his position is exact (a minute frame or a
+    kill / monster event he took part in) and inside our vision, or in a kill / epic event
+    (kill feed). CS ticks: each minute's CS increase is spread as one Tab tick per 4 CS.
+    Scored at every minute frame where he is NOT seen: mass near truth, node rank, path hit.
+    """
+    import json
+
+    d = json.load(open(path, encoding="utf-8"))
+    parts = {str(p["id"]): p for p in d["participants"]}
+    ej = str(d["enemy_jungler"])
+    my_team = d.get("my_team") or "ORDER"
+    allies = [k for k, p in parts.items() if p.get("team") == my_team]
+    me_id = str(d.get("me"))
+    frames = sorted(((float(f[0]), {str(k): v for k, v in f[1].items()}) for f in d["frames"]),
+                    key=lambda x: x[0])
+    dur = float(d.get("duration") or frames[-1][0])
+    events: list[tuple[float, UV]] = []
+    for k in d.get("kills") or []:
+        t, killer, victim, assisters, u, v = k[:6]
+        if str(killer) == ej or ej in [str(a) for a in (assisters or [])]:
+            events.append((float(t), (float(u), float(v))))
+    for m in d.get("monsters") or []:
+        if str(m[1]) == ej:
+            events.append((float(m[0]), (float(m[5]), float(m[6]))))
+    exact = [(ft, (row[ej][0], row[ej][1])) for ft, row in frames if ej in row] + events
+    exact.sort()
+    sightings: list[tuple[float, UV]] = []
+    for t, uv in exact:
+        in_event = any(abs(t - et) < 1e-6 for et, _ in events)
+        seen = in_event or any(
+            (a := _interp(frames, al, t)) is not None and math.dist(a, uv) < SIGHT for al in allies)
+        if seen:
+            sightings.append((t, uv))
+    # CS ticks
+    ticks: list[float] = []
+    prev_cs = None
+    for ft, row in frames:
+        if ej not in row:
+            continue
+        cs = row[ej][4]
+        if prev_cs is not None and cs > prev_cs:
+            n = max(1, int((cs - prev_cs) // 4))
+            ticks += [ft - 60.0 + 60.0 * (i + 0.5) / n for i in range(n)]
+        prev_cs = cs
+    res: dict[str, Any] = {"file": path.split("/")[-1], "jungler": parts[ej].get("alias"), "n": 0,
+                           "seen": len(sightings)}
+    for paths in (False, True):
+        name = "paths" if paths else "old"
+        fog = FogTracker()
+
+        class Cfg:
+            fog_max_s = 60.0
+            jungle_paths = paths
+
+        fog.apply_config(Cfg())
+        intel = JungleIntelTracker()
+        jg = P(parts[ej].get("alias") or "Jungler", parts[ej].get("team") or "CHAOS")
+        tr = Tracker()
+        tr.jg.alias = jg.champion_alias
+        tr.ally_ts = [T(f"a{k}", parts[k].get("alias") or k, "ally") for k in allies if k != me_id]
+        game = Game(jg, P(parts.get(me_id, {}).get("alias") or "Me", my_team))
+        si = 0
+        cs = 0
+        ti = 0
+        score = {"mass05": [], "mass10": [], "shown": [], "top1": [], "top2": [], "path1": [], "path2": []}
+        frame_t = {round(ft) for ft, _ in frames}
+        gt = 0.0
+        while gt <= dur:
+            game.game_time = game.fetched_at = gt
+            while ti < len(ticks) and ticks[ti] <= gt:
+                cs += 4
+                jg.scores = {"creepScore": cs}
+                ti += 1
+            mp = _interp(frames, me_id, gt)
+            tr.me_t._pos, tr.me_t.visible, tr.me_t.last_seen = mp, mp is not None, gt
+            for a in tr.ally_ts:
+                p = _interp(frames, a.key[1:], gt)
+                a._pos, a.visible, a.last_seen = p, p is not None, gt
+            seen_now = si < len(sightings) and abs(sightings[si][0] - gt) <= 0.5
+            if seen_now:
+                tr.ever = True
+                tr.jg._pos, tr.jg.visible, tr.jg.last_seen = sightings[si][1], True, gt
+            else:
+                tr.jg.visible = False
+            while si < len(sightings) and sightings[si][0] <= gt + 0.5:
+                si += 1
+            intel.update(gt, game, tr, fog)
+            ests = fog.update(gt, tr, game, mode="jungler")
+            est = next((e for e in ests if e.is_jungler), None)
+            if round(gt) in frame_t and not seen_now and tr.ever and gt >= 90:
+                truth = _interp(frames, ej, gt)
+                if truth is not None:
+                    score["mass05"].append(_mass_near(est, truth, 0.05))
+                    score["mass10"].append(_mass_near(est, truth, 0.10))
+                    score["shown"].append(est is not None)
+                    stops = _ranked_heat_nodes(est)
+                    hit = [math.dist(s_, truth) < 0.08 for s_ in stops]
+                    score["top1"].append(bool(hit[:1] and hit[0]))
+                    score["top2"].append(any(hit[:2]))
+                    pl = list(getattr(est, "paths", ()) or ()) if est is not None else []
+                    ph = [_near_polyline(p_.points, truth, 0.08) for p_ in pl]
+                    score["path1"].append(bool(ph[:1] and ph[0]))
+                    score["path2"].append(any(ph[:2]))
+            gt += 1.0
+        res[name] = score
+        res["n"] = len(score["mass05"])
+    return res
+
+
+def _ranked_heat_nodes(est: Any) -> list[UV]:
+    """Graph nodes ranked by the estimate's probability mass around them (both models)."""
+    if est is None:
+        return []
+    g = shared_graph()
+    m = [(_mass_near(est, tuple(g.uv[j]), 0.06), j) for j in range(len(g.nodes))]
+    m.sort(reverse=True)
+    return [tuple(g.uv[j]) for v, j in m[:5] if v > 0]
+
+
+def _near_polyline(pts: Any, uv: UV, r: float) -> bool:
+    pts = list(pts or ())
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        dx, dy = x1 - x0, y1 - y0
+        L2 = dx * dx + dy * dy
+        f = 0.0 if L2 <= 0 else max(0.0, min(1.0, ((uv[0] - x0) * dx + (uv[1] - y0) * dy) / L2))
+        if math.dist((x0 + dx * f, y0 + dy * f), uv) < r:
+            return True
+    return len(pts) == 1 and math.dist(pts[0], uv) < r
+
+
+def print_truth(results: list[dict[str, Any]]) -> None:
+    print("\nReal LCU games (enemy jungler, scored at every minute he is hidden):")
+    keys = ("mass05", "mass10", "shown", "top1", "top2", "path1", "path2")
+    print(f"{'game':<34}{'jungler':<12}{'n':>4}{'seen':>6}  model " + "".join(f"{k:>8}" for k in keys))
+    tot: dict[str, dict[str, list]] = {"old": {k: [] for k in keys}, "paths": {k: [] for k in keys}}
+    for r in results:
+        for name in ("old", "paths"):
+            sc = r[name]
+            vals = [float(np.mean(sc[k])) if sc[k] else float("nan") for k in keys]
+            print(f"{r['file'][:33]:<34}{str(r['jungler'])[:11]:<12}{r['n']:>4}{r['seen']:>6}  {name:<6}"
+                  + "".join(f"{v:>8.3f}" for v in vals))
+            for k in keys:
+                tot[name][k] += sc[k]
+    for name in ("old", "paths"):
+        vals = [float(np.mean(tot[name][k])) if tot[name][k] else float("nan") for k in keys]
+        print(f"{'ALL':<34}{'':<12}{len(tot[name]['mass05']):>4}{'':>6}  {name:<6}" + "".join(f"{v:>8.3f}" for v in vals))
 
 
 if __name__ == "__main__":
