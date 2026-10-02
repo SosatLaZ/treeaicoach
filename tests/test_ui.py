@@ -571,9 +571,15 @@ def test_run_app_with_real_engine_demo(home: Path, tmp_path: Path) -> None:
 
 
 @needs_display
-def test_calibration_dialog(tmp_path: Path) -> None:
+def test_calibration_dialog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ctk = pytest.importorskip("customtkinter")
+    import sys
+    import tkinter
+
     from treeaicoach.capture import Rect
+
+    if not sys.platform.startswith("win"):   # Xvfb without a window manager: "focus -force" on a window
+        monkeypatch.setattr(tkinter.Misc, "focus_force", lambda self: None)   # being mapped can crash Tk
 
     root = ctk.CTk()
     try:

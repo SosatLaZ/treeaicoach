@@ -111,7 +111,7 @@ def test_motion_snapshot_skips_hidden_and_handles_stacked():
 def test_perf_budget_by_cores_and_measurement():
     assert sysperf.PerfBudget("auto", cores=2).profile.name == "low_end"
     b = sysperf.PerfBudget("auto", cores=12, target_fps=12.0)
-    assert b.profile.name == "normal" and b.profile.burst_fps == 12.0 and b.profile.calm_fps == 6.0
+    assert b.profile.name == "normal" and b.profile.burst_fps == 12.0 and b.profile.calm_fps == 5.0
     t = 0.0
     switched = False
     while t < sysperf.MEASURE_S + 2:
@@ -175,3 +175,45 @@ def test_main_applies_the_process_policy(monkeypatch):
     assert calls == [False]
     import cv2
     assert cv2.getNumThreads() <= 2
+
+
+# ------------------------------------------------------------------ game-first budget (tools/perf_budget.py)
+def test_blas_guard_and_gc_freeze_never_raise():
+    out = sysperf.limit_blas_threads(1)
+    assert out == {} or out["threads"] == 1
+    assert sysperf.freeze_gc_once() in (True, False)
+    assert sysperf.freeze_gc_once() is False             # once per process
+
+
+def test_thread_cpu_meter_names_groups():
+    m = sysperf.ThreadCpuMeter()
+    assert m.sample() == {}
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < 0.6:
+        pass
+    pct = m.sample()
+    if sys.platform.startswith("linux") or sys.platform == "win32":
+        assert pct.get("interface", 0.0) > 30.0            # (MainThread = the UI thread in the app)
+    assert sysperf.thread_group("TreeAICoach-analysis") == "analyse"
+    assert sysperf.thread_group("overlay") == "overlay" and sysperf.thread_group("whatever") == "autres"
+
+
+def test_performance_summary_levels():
+    h = {"cpu_percent": 8.0, "detect_rate": {"measured_fps": 5.0, "target_fps": 5.0},
+         "tick_ms": {"mean": 20.0, "p95": 30.0}, "overlay": {"fps": 8.0},
+         "overlay_pushes": {"pushes_per_s": 3.0, "kb_per_s": 900.0}, "capture": {"fps": 7.0},
+         "budget": {"profile": "normal", "load": "normal"}}
+    s = sysperf.performance_summary(h, {"analyse": 6.0})
+    assert s["level"] == "ok" and s["threads"] == {"analyse": 6.0} and s["overlay_uploads_per_s"] == 3.0
+    assert s["text"].startswith("Impact sur le jeu : faible") and "8 % d'un cœur" in s["text"]
+    assert sysperf.performance_summary(dict(h, cpu_percent=18.0))["level"] == "eleve"
+    assert sysperf.performance_summary(dict(h, overlay_pushes={"pushes_per_s": 20.0}))["level"] == "eleve"
+    assert sysperf.performance_summary(dict(h, cpu_percent=40.0))["level"] == "lourd"
+    assert sysperf.performance_summary(None)["level"] == "ok"
+
+
+def test_profiles_keep_the_game_first():
+    n, lo = sysperf.PROFILES["normal"], sysperf.PROFILES["low_end"]
+    assert n.overlay_fps <= 20.0 and lo.overlay_fps <= 15.0
+    assert n.calm_fps <= 5.0 and lo.calm_fps <= 4.0 and n.burst_fps >= 12.0
+    assert sysperf.degraded(n, 1).overlay_fps <= 15.0 and sysperf.degraded(n, 2).overlay_fps <= 12.0

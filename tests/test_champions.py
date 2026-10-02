@@ -212,8 +212,11 @@ class _CDragonHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         type(self).requests.append(self.path)
-        if self.path == "/characters/ahri/hud/ahri_circle_27.png":
+        if self.path in ("/characters/ahri/hud/ahri_circle_27.png", "/characters/kindred/hud/kindred_circle_3.png"):
             body, code, ctype = self.png, 200, "image/png"
+        elif self.path == "/characters/kindred/hud/":
+            body, code, ctype = (b'<a href="kindred_circle.png"></a><a href="kindred_circle_1.png"></a>'
+                                 b'<a href="kindred_circle_3.png"></a><a href="kindred_circle_12.png"></a>'), 200, "text/html"
         elif self.path == "/characters/garen/hud/garen_circle_5.png":
             body, code, ctype = b"<html>oops</html>", 200, "text/html"
         else:
@@ -260,7 +263,7 @@ def test_prefetch_downloads_and_remembers_404(tmp_path, cdragon_server, monkeypa
     assert tuple(after[32, 32]) == (0, 255, 0, 255)
     assert not np.array_equal(before, after)
     n_requests = len(_CDragonHandler.requests)
-    assert n_requests == 3
+    assert n_requests == 4                                        # (+ the folder listing: chroma parent)
     local.prefetch_skin_icons(players)                            # 404 / invalid / done: no new request
     assert local.wait_for_prefetch(15)
     assert len(_CDragonHandler.requests) == n_requests
@@ -280,3 +283,17 @@ def test_skin_icon_url(db):
 def test_default_db_singleton():
     a = champions.get_default_db()
     assert a is champions.get_default_db() and a.get("Ahri") is not None
+
+
+def test_prefetch_chroma_uses_its_parent_skin_icon(tmp_path, cdragon_server, monkeypatch):
+    """A chroma (Kindred 9 = a Spirit Blossom chroma) has no circle icon of its own: the minimap
+    shows the parent skin's (highest skin number below it with an icon: 3), cached as skin 9."""
+    for k in ("HTTP_PROXY", "http_proxy"):
+        monkeypatch.setenv(k, f"http://127.0.0.1:{_closed_port()}")
+    local = ChampionDB(cache_dir=tmp_path)
+    local.base_url = cdragon_server
+    local.prefetch_skin_icons([PlayerInfo(champion_alias="Kindred", skin_id=9)])
+    assert local.wait_for_prefetch(15)
+    assert (tmp_path / "Kindred_9.png").is_file()
+    assert "/characters/kindred/hud/kindred_circle_3.png" in _CDragonHandler.requests
+    assert tuple(local.load_icon("Kindred", 9)[32, 32]) == (0, 255, 0, 255)

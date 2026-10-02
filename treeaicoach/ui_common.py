@@ -117,8 +117,8 @@ SAVE_DEBOUNCE_MS = 500
 TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
-PREBUILD_GAP_MS = 150             # idle gap between two prebuild slots (each slot: one page or one section, < 100 ms)
-PREBUILD_ORDER = ("settings", "analysis", "help", "dashboard")
+PREBUILD_GAP_MS = 150             # older name (no idle prebuild any more: see ui.STARTUP_BUILD_MS)
+PREBUILD_ORDER = ("settings", "analysis", "help", "dashboard")   # start-up build order (ui._startup_build)
 GAMES_PAGE = 15                  # rows of the Analyses table drawn at once ("Afficher plus")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -878,6 +878,25 @@ def _apply_theme(ctk: Any) -> None:
     put("DropdownMenu", fg_color=PANEL_HI, hover_color=HOVER, text_color=TEXT)
 
 
+def dark_titlebar(win: Any) -> None:
+    """Dark title bar of a mapped toplevel on Windows 10/11 (DWM attribute + frame refresh), without
+    hiding and showing the window again like CustomTkinter does. No-op elsewhere, never raises."""
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes  # noqa: PLC0415
+
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        val = ctypes.c_int(1)
+        for attr in (20, 19):            # DWMWA_USE_IMMERSIVE_DARK_MODE (20H1+), then the older id
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(val), ctypes.sizeof(val)) == 0:
+                break
+        # SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED: repaint the frame only
+        ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020)
+    except Exception:
+        log.debug("dark title bar failed", exc_info=True)
+
+
 #: Body font candidates (Segoe UI on Windows). Inter / Poppins / Space Grotesk / Geist are
 #: deliberately absent: they are the "generated template" look (docs/DESIGN.md).
 BODY_FONTS: tuple[str, ...] = ("Segoe UI", "Segoe UI Variable Text", "Noto Sans", "DejaVu Sans",
@@ -1390,10 +1409,14 @@ class Toggle:
         self._sig: tuple = ()
         self._photo: Any = None
         self.bg = _widget_bg(parent)
-        self.frame = tk.Frame(parent, bg=self.bg, bd=0, highlightthickness=0)
+        if text:
+            self.frame = tk.Frame(parent, bg=self.bg, bd=0, highlightthickness=0)
+            self.lbl = tk.Label(self.frame, bd=0, highlightthickness=0, bg=self.bg, cursor="hand2", takefocus=1)
+            self.lbl.grid(row=0, column=0)
+        else:       # the switch alone: one window (45 of them on the Réglages page)
+            self.lbl = self.frame = tk.Label(parent, bd=0, highlightthickness=0, bg=self.bg, cursor="hand2",
+                                             takefocus=1)
         self.frame._toggle = self  # type: ignore[attr-defined]
-        self.lbl = tk.Label(self.frame, bd=0, highlightthickness=0, bg=self.bg, cursor="hand2", takefocus=1)
-        self.lbl.grid(row=0, column=0)
         self.text_lbl = None
         widgets = [self.lbl]
         if text:
@@ -1627,41 +1650,84 @@ def _plain_classes() -> tuple[Any, Any]:
                 pass
 
     PFrame.rescale_all = staticmethod(rescale_all)  # type: ignore[attr-defined]
+    PFrame.live = live  # type: ignore[attr-defined]
     _PLAIN[0], _PLAIN[1] = PFrame, PLabel
     return PFrame, PLabel
 
 
-class Dropdown:
-    """Light option menu (CTkOptionMenu API subset: ``set`` / ``get`` / ``configure(values=, state=)``).
+# ======================================================================================
+# Canvas-drawn controls: ONE window each (a CTkFrame + labels cost 3 to 6 windows, and every
+# window is created, laid out, mapped and painted separately: what made a page appear piece by
+# piece on Windows). Shapes are canvas items, text is measured once, nothing is redrawn on map.
+# ======================================================================================
+def _tkfont(widget: Any, ftuple: Any) -> Any:
+    """A cached ``tkinter.font.Font`` for a font tuple (measure / metrics)."""
+    import tkinter.font as tkfont  # noqa: PLC0415
 
-    A rounded CTkFrame with two plain labels (value + chevron); the Tk menu is created on the first
-    click. About 5x cheaper to build than a CTkOptionMenu (which builds its menu and redraws eagerly).
-    """
+    root = widget._root()
+    cache = root.__dict__.setdefault("_tree_fonts", {})     # per Tk interpreter (tests build many)
+    f = cache.get(ftuple)
+    if f is None:
+        f = tkfont.Font(root=root, font=ftuple)
+        cache[ftuple] = f
+    return f
 
-    def __init__(self, app: "CoachApp", parent: Any, values: Sequence[str], command: Callable[[str], Any] | None = None,
-                 width: int = 240, height: int = CTL_H, font: Any = None) -> None:
-        ctk = app.ctk
-        self.app, self.values, self.command = app, [str(v) for v in values], command
-        self._value = self.values[0] if self.values else ""
-        self.state = "normal"
-        self._menu: Any = None
-        self._font = font or app.fonts.small
-        self.frame = ctk.CTkFrame(parent, width=width, height=height, fg_color=RAISED, border_width=1,
-                                  border_color=LINE_STRONG, corner_radius=RADIUS)
-        self.frame.grid_propagate(False)
-        self.frame.grid_columnconfigure(0, weight=1)
-        self.frame.grid_rowconfigure(0, weight=1)
-        self.frame._dropdown = self  # type: ignore[attr-defined]
-        self.lbl = app._PLabel(self.frame, text=self._value, font=self._font, text_color=TEXT)
-        self.lbl.grid(row=0, column=0, sticky="w", padx=(12, 4))
-        self.chev = app._PLabel(self.frame, text="▾", font=self._font, text_color=MUTED)
-        self.chev.grid(row=0, column=1, sticky="e", padx=(0, 12))
-        for w in (self.frame, self.lbl, self.chev):
-            w.bind("<Button-1>", self._open, add="+")
-            w.bind("<Enter>", lambda _e: self._hover(True), add="+")
-            w.bind("<Leave>", lambda _e: self._hover(False), add="+")
-        for w in (self.lbl, self.chev):
-            w.configure(cursor="hand2")
+
+def text_width(widget: Any, ftuple: Any, text: str) -> int:
+    try:
+        return int(_tkfont(widget, ftuple).measure(text))
+    except Exception:
+        return 8 * len(text)
+
+
+def text_linespace(widget: Any, ftuple: Any) -> int:
+    try:
+        return int(_tkfont(widget, ftuple).metrics("linespace"))
+    except Exception:
+        return 18
+
+
+def rr_points(x0: float, y0: float, x1: float, y1: float, r: float) -> list[float]:
+    """Points of a rounded rectangle (one canvas polygon)."""
+    r = max(0.0, min(float(r), (x1 - x0) / 2, (y1 - y0) / 2))
+    if r < 1:
+        return [x0, y0, x1, y0, x1, y1, x0, y1]
+    pts: list[float] = []
+    for cx, cy, a0 in ((x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180)):
+        for k in range(4):
+            a = math.radians(a0 + 30 * k)
+            pts += [cx + r * math.cos(a), cy + r * math.sin(a)]
+    return pts
+
+
+def _fit_text(widget: Any, ftuple: Any, text: str, max_w: int) -> str:
+    if max_w <= 0 or text_width(widget, ftuple, text) <= max_w:
+        return text
+    while len(text) > 1 and text_width(widget, ftuple, text + "…") > max_w:
+        text = text[:-1]
+    return text.rstrip() + "…"
+
+
+def _live_add(w: Any) -> None:
+    """Rescaled with the plain widgets on a DPI change (``w._rescale()``)."""
+    live = getattr(_PLAIN[0], "live", None)
+    if live is not None:
+        live.add(w)
+
+
+def _owned_canvas(owner: Any, parent: Any, **kw: Any) -> Any:
+    import tkinter as tk  # noqa: PLC0415
+
+    cv = tk.Canvas(parent, bd=0, highlightthickness=0, **kw)
+    cv._owner = owner  # type: ignore[attr-defined]
+    _live_add(owner)
+    return cv
+
+
+class _CanvasControl:
+    """Common geometry API of the canvas controls (``grid`` / ``grid_remove`` / ``winfo_*``)."""
+
+    frame: Any
 
     def grid(self, **kw: Any) -> None:
         self.frame.grid(**kw)
@@ -1672,20 +1738,70 @@ class Dropdown:
     def winfo_reqwidth(self) -> int:
         return int(self.frame.winfo_reqwidth())
 
-    def _hover(self, on: bool) -> None:
-        if self.state == "disabled":
-            return
-        col = HOVER if on else RAISED
+    def winfo_exists(self) -> bool:
         try:
-            self.frame.configure(fg_color=col)
-            self.lbl.configure(fg_color=col)
-            self.chev.configure(fg_color=col)
+            return bool(self.frame.winfo_exists())
+        except Exception:
+            return False
+
+    def winfo_ismapped(self) -> bool:
+        return bool(self.frame.winfo_ismapped())
+
+
+class Dropdown(_CanvasControl):
+    """Light option menu (CTkOptionMenu API subset: ``set`` / ``get`` / ``configure(values=, state=)``).
+
+    One canvas (rounded box, value, chevron); the Tk menu is created on the first click."""
+
+    def __init__(self, app: "CoachApp", parent: Any, values: Sequence[str], command: Callable[[str], Any] | None = None,
+                 width: int = 240, height: int = CTL_H, font: Any = None) -> None:
+        self.app, self.values, self.command = app, [str(v) for v in values], command
+        self._value = self.values[0] if self.values else ""
+        self.state = "normal"
+        self._menu: Any = None
+        self._font = font or app.fonts.small
+        self._size = (width, height)
+        self._hovered = False
+        self.frame = cv = _owned_canvas(self, parent, bg=_widget_bg(parent), cursor="hand2")
+        cv._dropdown = self  # type: ignore[attr-defined]
+        self._box = cv.create_polygon(0, 0, 0, 0, fill=RAISED, outline=LINE_STRONG)
+        self._txt = cv.create_text(0, 0, anchor="w", fill=TEXT)
+        self._chev = cv.create_text(0, 0, anchor="e", text="▾", fill=MUTED)
+        cv.bind("<Button-1>", self._open, add="+")
+        cv.bind("<Enter>", lambda _e: self._hover(True), add="+")
+        cv.bind("<Leave>", lambda _e: self._hover(False), add="+")
+        self._rescale()
+
+    def _rescale(self) -> None:
+        cv = self.frame
+        w, h = _sc(self._size[0]), _sc(self._size[1])
+        ft = _font_tuple(self._font)
+        cv.configure(width=w, height=h)
+        cv.coords(self._box, *rr_points(0, 0, w - 1, h - 1, _sc(RADIUS)))
+        cv.coords(self._txt, _sc(12), h / 2)
+        cv.coords(self._chev, w - _sc(12), h / 2)
+        cv.itemconfigure(self._txt, font=ft)
+        cv.itemconfigure(self._chev, font=ft)
+        self._draw_text()
+
+    def _draw_text(self) -> None:
+        cv = self.frame
+        w = _sc(self._size[0])
+        ft = _font_tuple(self._font)
+        cv.itemconfigure(self._txt, text=_fit_text(cv, ft, self._value, w - _sc(12 + 12 + 16)))
+
+    def _hover(self, on: bool) -> None:
+        self._hovered = on
+        if self.state == "disabled":
+            on = False
+        try:
+            self.frame.itemconfigure(self._box, fill=HOVER if on else RAISED)
         except Exception:
             pass
 
     def set(self, value: str) -> None:
         self._value = str(value)
-        self.lbl.configure(text=self._value)
+        self._draw_text()
 
     def get(self) -> str:
         return self._value
@@ -1702,10 +1818,11 @@ class Dropdown:
         if "state" in kw:
             self.state = str(kw["state"])
             dis = self.state == "disabled"
-            self.lbl.configure(text_color=DIM if dis else TEXT)
-            self.chev.configure(text_color=DIM if dis else MUTED)
-            for w in (self.lbl, self.chev):
-                w.configure(cursor="arrow" if dis else "hand2")
+            cv = self.frame
+            cv.itemconfigure(self._txt, fill=DIM if dis else TEXT)
+            cv.itemconfigure(self._chev, fill=DIM if dis else MUTED)
+            cv.configure(cursor="arrow" if dis else "hand2")
+            self._hover(self._hovered)
 
     def _pick(self, value: str) -> None:
         self.set(value)
@@ -1738,56 +1855,90 @@ class Dropdown:
         return "break"
 
 
-class Segmented:
+class Segmented(_CanvasControl):
     """Light segmented choice (CTkSegmentedButton API subset: ``set`` / ``get`` / ``configure(state=)``).
 
-    One rounded CTkFrame holding plain labels; the selected segment is filled with the accent tint.
-    """
+    One canvas: rounded well, one cell per value; the selected cell is filled with the accent tint."""
+
+    PAD_X, INSET = 14, 3
 
     def __init__(self, app: "CoachApp", parent: Any, values: Sequence[str], command: Callable[[str], Any] | None = None,
                  height: int = CTL_H, font: Any = None) -> None:
-        ctk = app.ctk
         self.app, self.values, self.command = app, [str(v) for v in values], command
         self._value = ""
         self.state = "normal"
-        self.frame = ctk.CTkFrame(parent, height=height, fg_color=SUNKEN, border_width=1, border_color=LINE_STRONG,
-                                  corner_radius=RADIUS)
-        self.frame._dropdown = self  # type: ignore[attr-defined]
-        self.frame.grid_rowconfigure(0, weight=1)
-        self._cells: dict[str, Any] = {}
-        font = font or app.fonts.small
+        self._height = height
+        self._font = font or app.fonts.small
+        self._hover_v: str | None = None
+        self.frame = cv = _owned_canvas(self, parent, bg=_widget_bg(parent), cursor="hand2")
+        cv._dropdown = self  # type: ignore[attr-defined]
+        self._box = cv.create_polygon(0, 0, 0, 0, fill=SUNKEN, outline=LINE_STRONG)
+        self._cells: dict[str, tuple[int, int]] = {}
+        for v in self.values:
+            self._cells[v] = (cv.create_rectangle(0, 0, 0, 0, width=0, fill=SUNKEN),
+                              cv.create_text(0, 0, text=v.strip(), fill=MUTED))
+        self._spans: list[tuple[float, float, str]] = []
+        cv.bind("<Button-1>", lambda e: self._click_at(e.x), add="+")
+        cv.bind("<Motion>", lambda e: self._hover_at(e.x), add="+")
+        cv.bind("<Leave>", lambda _e: self._hover_at(None), add="+")
+        self._rescale()
+
+    def _rescale(self) -> None:
+        cv = self.frame
+        ft = _font_tuple(self._font)
+        h = _sc(self._height)
+        ins = _sc(self.INSET)
+        x = ins
+        self._spans = []
         for i, v in enumerate(self.values):
-            lbl = app._PLabel(self.frame, text=v.strip(), font=font, text_color=MUTED, anchor="center",
-                              fg_color=SUNKEN)
-            lbl.configure(padx=_sc(14), pady=_sc(6), cursor="hand2")
-            lbl.grid(row=0, column=i, sticky="nsew", padx=(3 if i == 0 else 1, 3 if i == len(self.values) - 1 else 0),
-                     pady=3)
-            lbl.bind("<Button-1>", lambda _e, vv=v: self._click(vv), add="+")
-            lbl.bind("<Enter>", lambda _e, vv=v: self._hover(vv, True), add="+")
-            lbl.bind("<Leave>", lambda _e, vv=v: self._hover(vv, False), add="+")
-            self._cells[v] = lbl
+            w = text_width(cv, ft, v.strip()) + 2 * _sc(self.PAD_X)
+            rect, txt = self._cells[v]
+            cv.coords(rect, x, ins, x + w, h - ins)
+            cv.coords(txt, x + w / 2, h / 2)
+            cv.itemconfigure(txt, font=ft)
+            self._spans.append((x, x + w, v))
+            x += w + (1 if i < len(self.values) - 1 else 0)
+        total = int(x + ins)
+        cv.configure(width=total, height=h)
+        cv.coords(self._box, *rr_points(0, 0, total - 1, h - 1, _sc(RADIUS)))
+        for v in self.values:
+            self._paint(v)
 
-    def grid(self, **kw: Any) -> None:
-        self.frame.grid(**kw)
+    def _at(self, x: Any) -> str | None:
+        if x is None:
+            return None
+        for x0, x1, v in self._spans:
+            if x0 <= x <= x1:
+                return v
+        return None
 
-    def grid_remove(self) -> None:
-        self.frame.grid_remove()
-
-    def winfo_reqwidth(self) -> int:
-        return int(self.frame.winfo_reqwidth())
-
-    def _paint(self, v: str, hover: bool = False) -> None:
-        lbl = self._cells.get(v)
-        if lbl is None:
+    def _paint(self, v: str | None) -> None:
+        cell = self._cells.get(v) if v is not None else None
+        if cell is None:
             return
         on = v == self._value
         dis = self.state == "disabled"
-        bg = ACCENT_DIM if on else (RAISED if hover and not dis else SUNKEN)
+        bg = ACCENT_DIM if on else (RAISED if v == self._hover_v and not dis else SUNKEN)
         fg = DIM if dis else (TEXT if on else MUTED)
-        lbl.configure(fg_color=bg, text_color=fg)
+        self.frame.itemconfigure(cell[0], fill=bg)
+        self.frame.itemconfigure(cell[1], fill=fg)
+
+    def _hover_at(self, x: Any) -> None:
+        v = self._at(x)
+        if v != self._hover_v:
+            old, self._hover_v = self._hover_v, v
+            self._paint(old)
+            self._paint(v)
 
     def _hover(self, v: str, on: bool) -> None:
-        self._paint(v, on)
+        old, self._hover_v = self._hover_v, (v if on else None)
+        self._paint(old)
+        self._paint(v)
+
+    def _click_at(self, x: Any) -> None:
+        v = self._at(x)
+        if v is not None:
+            self._click(v)
 
     def _click(self, v: str) -> None:
         if self.state == "disabled":
@@ -1812,8 +1963,305 @@ class Segmented:
             self.command = kw["command"]
         if "state" in kw:
             self.state = str(kw["state"])
+            self.frame.configure(cursor="arrow" if self.state == "disabled" else "hand2")
             for v in self.values:
                 self._paint(v)
+
+
+_KNOBS: dict[tuple, Any] = {}
+
+
+def _knob_image(r: int, color: str, bg: str) -> Any:
+    """Anti-aliased round slider knob (PIL, drawn at 4x then reduced), cached."""
+    key = (r, color, bg)
+    img = _KNOBS.get(key)
+    if img is None:
+        k = 4
+        d = 2 * r
+        big = Image.new("RGB", (d * k, d * k), bg)
+        ImageDraw.Draw(big).ellipse((0, 0, d * k - 1, d * k - 1), fill=color)
+        img = big.resize((d, d), Image.LANCZOS)
+        _KNOBS[key] = img
+    return img
+
+
+class Slider(_CanvasControl):
+    """Light slider (CTkSlider API subset: ``set`` / ``get`` / ``configure(state=)``) with its value
+    written on the right (``set_text``): one canvas instead of a CTkSlider + a CTkLabel (5 windows)."""
+
+    def __init__(self, app: "CoachApp", parent: Any, lo: float, hi: float, steps: int,
+                 command: Callable[[float], Any] | None = None, width: int = 240, height: int = 22,
+                 text_width: int = 84, gap: int = 8, color: str = GOLD, hover: str = GOLD_HOVER,
+                 track: str = SWITCH_OFF, progress: str = ACCENT_DIM, font: Any = None,
+                 text_color: str = GOLD) -> None:
+        self.app, self.lo, self.hi, self.steps, self.command = app, float(lo), float(hi), max(1, int(steps)), command
+        self._dims = (width, height, text_width, gap)
+        self._colors = (color, hover, track, progress, text_color)
+        self._font = font or app.fonts.num
+        self._value = self.lo
+        self.state = "normal"
+        self._hovered = False
+        self._photos: dict[str, Any] = {}
+        self.frame = cv = _owned_canvas(self, parent, bg=_widget_bg(parent), cursor="hand2")
+        cv._dropdown = self  # type: ignore[attr-defined]
+        self._track = cv.create_line(0, 0, 0, 0, fill=track, capstyle="round")
+        self._prog = cv.create_line(0, 0, 0, 0, fill=progress, capstyle="round")
+        self._knob = cv.create_image(0, 0)
+        self._txt = cv.create_text(0, 0, anchor="e", fill=text_color)
+        cv.bind("<Button-1>", self._press, add="+")
+        cv.bind("<B1-Motion>", self._press, add="+")
+        cv.bind("<Enter>", lambda _e: self._set_hover(True), add="+")
+        cv.bind("<Leave>", lambda _e: self._set_hover(False), add="+")
+        self._rescale()
+
+    def _geom(self) -> tuple[int, int, int, int, int]:
+        w, h, tw, gap = self._dims
+        r = _sc(SLIDER_KNOB_R)
+        return _sc(w), max(_sc(h), 2 * r + 2), _sc(tw), _sc(gap), r
+
+    def _rescale(self) -> None:
+        cv = self.frame
+        w, h, tw, gap, _r = self._geom()
+        cv.configure(width=w + (gap + tw if tw else 0), height=h)
+        t = _sc(6)
+        cv.itemconfigure(self._track, width=t)
+        cv.itemconfigure(self._prog, width=t)
+        cv.itemconfigure(self._txt, font=_font_tuple(self._font))
+        cv.coords(self._txt, w + gap + tw, h / 2)
+        self._photos.clear()
+        self._draw()
+
+    def _x_range(self) -> tuple[float, float]:
+        w, _h, _tw, _gap, r = self._geom()
+        return r + 1, w - r - 1
+
+    def _draw(self) -> None:
+        cv = self.frame
+        _w, h, _tw, _gap, r = self._geom()
+        x0, x1 = self._x_range()
+        f = 0.0 if self.hi == self.lo else (self._value - self.lo) / (self.hi - self.lo)
+        x = x0 + max(0.0, min(1.0, f)) * (x1 - x0)
+        y = h / 2
+        cv.coords(self._track, x0, y, x1, y)
+        cv.coords(self._prog, x0, y, x, y)
+        color, hover, track, progress, text_color = self._colors
+        dis = self.state == "disabled"
+        knob = DIM if dis else (hover if self._hovered else color)
+        photo = self._photos.get(knob)
+        if photo is None:
+            from PIL import ImageTk  # noqa: PLC0415
+
+            photo = ImageTk.PhotoImage(_knob_image(r, knob, str(cv.cget("bg"))), master=cv)
+            self._photos[knob] = photo
+        cv.itemconfigure(self._knob, image=photo)
+        cv.coords(self._knob, x, y)
+        cv.itemconfigure(self._prog, fill=track if dis else progress)
+        cv.itemconfigure(self._txt, fill=DIM if dis else text_color)
+
+    def _set_hover(self, on: bool) -> None:
+        if on != self._hovered:
+            self._hovered = on
+            self._draw()
+
+    def _press(self, e: Any) -> None:
+        if self.state == "disabled":
+            return
+        x0, x1 = self._x_range()
+        f = max(0.0, min(1.0, (e.x - x0) / max(1.0, x1 - x0)))
+        v = self.lo + round(f * self.steps) / self.steps * (self.hi - self.lo)
+        if v == self._value:
+            return
+        self._value = v
+        self._draw()
+        if self.command is not None:
+            self.command(v)
+
+    def set(self, value: float) -> None:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return
+        self._value = max(min(v, max(self.lo, self.hi)), min(self.lo, self.hi))
+        self._draw()
+
+    def get(self) -> float:
+        return self._value
+
+    def set_text(self, text: str) -> None:
+        self.frame.itemconfigure(self._txt, text=text)
+
+    def cget(self, name: str) -> Any:
+        return {"state": self.state, "from_": self.lo, "to": self.hi}.get(name)
+
+    def configure(self, **kw: Any) -> None:
+        if "command" in kw:
+            self.command = kw["command"]
+        if "state" in kw:
+            self.state = str(kw["state"])
+            self.frame.configure(cursor="arrow" if self.state == "disabled" else "hand2")
+            self._draw()
+
+
+class _RowText:
+    """Label-like handle on a canvas text item (``configure(text=, text_color=)`` / ``cget``)."""
+
+    def __init__(self, row: Any, item: int) -> None:
+        self.row, self.item = row, item
+
+    def configure(self, **kw: Any) -> None:
+        cv = self.row
+        if "text_color" in kw:
+            cv.itemconfigure(self.item, fill=kw["text_color"])
+        if "text" in kw:
+            cv.itemconfigure(self.item, text=str(kw["text"]))
+            cv.relayout()
+
+    config = configure
+
+    def cget(self, key: str) -> Any:
+        if key == "text_color":
+            key = "fill"
+        return self.row.itemcget(self.item, key)
+
+    def winfo_exists(self) -> bool:
+        try:
+            return bool(self.row.winfo_exists())
+        except Exception:
+            return False
+
+    def grid(self, **_kw: Any) -> None:
+        pass
+
+
+_ROW_CLS: list[Any] = [None]
+
+
+def setting_row_class() -> Any:
+    """:class:`SettingRow`: one setting row drawn on ONE canvas (title, description wrapped to the
+    room left by the control, 1 px separator on top) + the control slot (a plain frame on the right,
+    or under the text when the window is narrow). Replaces 5 windows per row (row frame, title,
+    description, separator, slot holder): the Réglages page went from ~950 windows to ~500."""
+    if _ROW_CLS[0] is not None:
+        return _ROW_CLS[0]
+    import tkinter as tk  # noqa: PLC0415
+
+    class SettingRow(tk.Canvas):
+        def __init__(self, body: Any, app: Any, title: str, desc: str | None, line: bool) -> None:
+            bg = _widget_bg(body)
+            tk.Canvas.__init__(self, body, bg=bg, bd=0, highlightthickness=0, width=1,
+                               height=_sc(CTL_H + 2 * ROW_PAD_Y))
+            self._fonts = (app.fonts.body, app.fonts.small)
+            self._t = self.create_text(0, 0, anchor="nw", text=title, fill=TEXT)
+            self._d = self.create_text(0, 0, anchor="nw", text=desc or "", fill=MUTED) if desc else None
+            self._line = self.create_line(0, 0, 0, 0, fill=ROW_LINE) if line else None
+            self.slot = app._PFrame(self)
+            self._slot_win = self.create_window(0, 0, window=self.slot, anchor="e")
+            self.title_label = _RowText(self, self._t)
+            self.slot.desc_label = _RowText(self, self._d) if self._d is not None else None  # type: ignore[attr-defined]
+            self._sig: tuple = ()
+            self._fonts_set = None
+            self.bind("<Configure>", lambda _e: self.relayout(), add="+")
+            self.slot.bind("<Configure>", lambda _e: self.relayout(), add="+")
+            _live_add(self)
+            self._set_fonts()
+
+        def _set_fonts(self) -> None:
+            ft, fd = (_font_tuple(f) for f in self._fonts)
+            if self._fonts_set != (ft, fd):
+                self._fonts_set = (ft, fd)
+                self.itemconfigure(self._t, font=ft)
+                if self._d is not None:
+                    self.itemconfigure(self._d, font=fd)
+
+        def _rescale(self) -> None:
+            self._set_fonts()
+            self._sig = ()
+            self.relayout()
+
+        def relayout(self) -> None:
+            """Place the texts and the control for the current width (cheap: no-op when unchanged)."""
+            try:
+                W = int(self.winfo_width())
+                if W < 20:
+                    return
+                sw, sh = int(self.slot.winfo_reqwidth()), int(self.slot.winfo_reqheight())
+                dtext = self.itemcget(self._d, "text") if self._d is not None else ""
+                sig = (W, sw, sh, self.itemcget(self._t, "text"), dtext, _PLAIN_SCALE[0])
+                if sig == self._sig:
+                    return
+                self._sig = sig
+                pad, gap = _sc(ROW_PAD_Y), _sc(ROW_CTL_GAP)
+                below = W - sw - gap < _sc(260)          # wide control, narrow window: control under the text
+                text_w = W if below else W - sw - gap
+                self.itemconfigure(self._t, width=max(_sc(120), text_w))
+                tb = self.bbox(self._t) or (0, 0, 0, 0)
+                th = tb[3] - tb[1]
+                dh = 0
+                if self._d is not None:
+                    self.itemconfigure(self._d, width=max(_sc(120), min(_sc(640), text_w)))
+                    db = self.bbox(self._d) or (0, 0, 0, 0)
+                    dh = _sc(3) + db[3] - db[1]
+                text_h = th + dh
+                if below:
+                    content = text_h + _sc(CTL_GAP) + sh
+                    ty = pad
+                    self.itemconfigure(self._slot_win, anchor="nw")
+                    self.coords(self._slot_win, 0, pad + text_h + _sc(CTL_GAP))
+                else:
+                    content = max(text_h, sh, _sc(CTL_H))
+                    ty = pad + (content - text_h) // 2
+                    self.itemconfigure(self._slot_win, anchor="e")
+                    self.coords(self._slot_win, W, pad + content / 2)
+                self.coords(self._t, 0, ty)
+                if self._d is not None:
+                    self.coords(self._d, 0, ty + th + _sc(3))
+                if self._line is not None:
+                    self.coords(self._line, 0, 0, W, 0)
+                h = int(content + 2 * pad)
+                if int(self.cget("height")) != h:
+                    self.configure(height=h)
+            except Exception:
+                log.debug("setting row layout failed", exc_info=True)
+
+    _ROW_CLS[0] = SettingRow
+    return SettingRow
+
+
+def _place_raw(w: Any, **opts: Any) -> None:
+    """``place configure`` straight to Tk (CTk widgets refuse ``width`` / ``height`` in ``place``)."""
+    w = getattr(w, "_outer", w)                     # a ScrollFrame is laid out by its outer frame
+    args: list[Any] = []
+    for k, v in opts.items():
+        args += [f"-{k}", v]
+    w.tk.call("place", "configure", w._w, *args)
+
+
+def is_parked(w: Any) -> bool:
+    """``w`` is in a hidden page or tab panel (see :func:`park`)."""
+    for _ in range(40):
+        if w is None:
+            return False
+        if getattr(w, "_parked", False):
+            return True
+        w = getattr(w, "master", None)
+    return False
+
+
+def park(w: Any, holder: Any) -> None:
+    """Hide a page / tab panel WITHOUT unmapping it: placed just right of its holder (clipped, never
+    drawn), at the holder's current size (fixed, so a window resize does not lay out hidden pages)."""
+    w._parked = True
+    W, H = int(holder.winfo_width()), int(holder.winfo_height())
+    if W > 20 and H > 20:
+        _place_raw(w, relx=1.0, x=0, y=0, relwidth="", relheight="", width=W, height=H)
+    else:                                   # holder not laid out yet: follow it
+        _place_raw(w, relx=1.0, x=0, y=0, relwidth=1, relheight=1, width="", height="")
+
+
+def unpark(w: Any) -> None:
+    """Show a parked page / panel: it fills its holder again (laid out again only if the size changed)."""
+    w._parked = False
+    _place_raw(w, relx=0.0, x=0, y=0, relwidth=1, relheight=1, width="", height="")
 
 
 _SCROLL_CLS: list[Any] = [None]
@@ -1893,6 +2341,14 @@ def scroll_frame_class() -> Any:
 
         def place(self, **kw: Any) -> None:  # type: ignore[override]
             self._outer.place(**kw)
+
+        place_configure = place
+
+        def place_info(self) -> Any:  # type: ignore[override]
+            return self._outer.place_info()
+
+        def place_forget(self) -> None:  # type: ignore[override]
+            self._outer.place_forget()
 
         def winfo_manager(self) -> str:  # type: ignore[override]
             return self._outer.winfo_manager()

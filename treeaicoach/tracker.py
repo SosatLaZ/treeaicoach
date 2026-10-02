@@ -1112,8 +1112,8 @@ class Tracker:
             alias = cands[0]
             tr = self._tracks.get(alias)
             pos = a.raw_position()
-            if side == "ally" and (tr is None or tr.raw_position() is None
-                                   or now - tr.last_seen > ELIM_ALLY_MEMORY_S):
+            if side == "ally" and ELIM_ALLY_MEMORY_S > 0 and (
+                    tr is None or tr.raw_position() is None or now - tr.last_seen > ELIM_ALLY_MEMORY_S):
                 continue
             if tr is not None and pos is not None and tr.raw_position() is not None:
                 last = tr.raw_position()

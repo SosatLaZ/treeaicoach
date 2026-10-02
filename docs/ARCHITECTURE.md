@@ -1095,16 +1095,17 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
   couvre la minimap → tick gelé (aucune image lue, le tracker n'est pas mis à jour). Jeu réduit :
   pause (1 contrôle / s). Fenêtre déplacée (même taille) : rectangle décalé sans nouvelle recherche ;
   réglages du jeu modifiés (empreinte `game_settings`) : relocalisation.
-* **Cadence** (`scheduler.py`, `sysperf.py`) : détection adaptative (`RateGovernor`) 6 img/s au
-  calme, `target_fps` (12) pendant 3 s après une menace / un ennemi proche / une apparition ;
+* **Cadence** (`scheduler.py`, `sysperf.py`) : détection adaptative (`RateGovernor`) 5 img/s au
+  calme (6 auparavant, voir § 18 bis), `target_fps` (12) pendant 3 s après une menace / un ennemi proche / une apparition ;
   2 img/s jeu en arrière-plan. Étapes de coaching étalées (`HeavyScheduler` : tactics, coach, Tab,
   conseils — un créneau par tick, jamais sur le tick de vérification de la minimap). Budget
   `PerfBudget` : « low_end » (≤ 4 CPU logiques, ou ticks mesurés > 30 ms en moyenne / 60 ms p95 sur
   les 30 premières secondes) → 4-8 img/s, coaching 1 Hz, ONNX d'appoint toutes les 16 images,
-  1 thread OpenCV / onnxruntime, overlay 15 img/s. Processus en priorité « inférieure à la
+  1 thread OpenCV / onnxruntime, overlay 15 img/s ; profil normal : ONNX d'appoint 1 image / 2. Processus en priorité « inférieure à la
   normale » + EcoQoS (`cfg.low_priority`, `cfg.eco_qos_v2` opt-in depuis 2.1.1), OpenCV ≤ 2 threads (`main.apply_process_policy`).
-* **Overlay** (`overlay.py`) : boucle régulière `cfg.overlay_fps` (30, budget 15), `time.sleep`
-  haute résolution ; positions **prédites à l'instant du rendu** (`engine.predict_positions` →
+* **Overlay** (`overlay.py`) : boucle cadencée par ce qui bouge (§ 18 bis : 8 img/s au calme,
+  10 si menace / jungler visible / flash, `cfg.overlay_fps` plafonné par le budget à 20 seulement
+  pendant l'entrée / la sortie d'un toast), `time.sleep` haute résolution ; positions **prédites à l'instant du rendu** (`engine.predict_positions` →
   `scheduler.MotionSnapshot` : position + vitesse de Kalman, amortissement 1,5 s, horizon 0,9 s) ;
   calques re-rendus seulement si leur signature change ; flash rendu une fois puis fondu par alpha
   global. Règles du calque minimap (`overlay_render`) : piste vieille > 0,7 s / empilée / anonyme =
@@ -1127,6 +1128,64 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
   `meta.json` (système, réglages en liste blanche, réglages du jeu, écrans, DPI), fin du journal
   (chemins masqués) → `%APPDATA%\TreeAICoach\diagnostics\diag_AAAAMMJJ_HHMMSS.zip`, dossier ouvert.
   `diagnostic_status()` pour l'UI.
+
+### 18 bis. Le jeu d'abord : budget de performance (`tools/perf_budget.py`)
+
+Retour réel : « en jeu ça saccade aussi, je pense que c'est l'appli ». Mesuré avec
+`python tools/perf_budget.py [--scenario real|demo] [--perf-mode normal|low_end] [--real-windows]` :
+les VRAIS fils (analyse + Live Client + boucle de l'overlay + voix + sondage du lanceur) pendant 60 s
+après 15 s de chauffe, sur la vraie capture `tests/fixtures/ingame4_2000x1125.jpg` (capture factice
+qui compte chaque saisie) ; CPU % d'un cœur par fil (`/proc` ou `GetThreadTimes`), ticks moyen / p95,
+envois de pixels de l'overlay (`overlay.push_stats` : chaque `UpdateLayeredWindow`, par calque) / s et
+Ko / s, saisies / s, pauses du GC. `--real-windows` sous Windows / Wine : vraies fenêtres superposées.
+
+* **Overlay** : chaque envoi de pixels est copié dans le compositeur (DWM) et recompose ce rectangle
+  par-dessus le jeu sans bordure. La boucle suit ce qui bouge (`overlay.loop_fps`) : 8 img/s au calme,
+  10 si quelque chose compte (menace, jungler ennemi visible, flash), 20 (plafond du budget) seulement
+  pendant l'entrée / la sortie d'un toast. Calque minimap : signature à 2 px et ≤ 4 envois / s au calme
+  (1 px et ≤ 10 / s sinon), *zone morte* (une marque doit bouger de 2,5 / 1,5 px depuis son dernier
+  dessin : la gigue de détection / prédiction d'un champion immobile ne renvoie rien), image identique
+  jamais renvoyée (hash), fenêtre cachée quand il n'y a rien à dessiner, rendu de sécurité toutes les
+  2 s (et plus 0,5 s). Flash de danger : quatre bandes fines (`FLASH_WINDOWS`) au lieu d'une fenêtre
+  plein écran (2560 × 1440 = 14 Mo par envoi), découpées une fois par géométrie, fondu par alpha
+  global. Toasts : 20 img/s en entrée / sortie, 8 pendant l'affichage, images identiques non renvoyées.
+  Carte HUD : sa signature suit le TEXTE des comptes à rebours, plus la seconde de jeu (≈ 8 ms par
+  rendu évité chaque seconde). Badges de coups : 20 img/s, images de la pause non rendues ni envoyées
+  (66 → 25 envois par grand badge). Topmost réaffirmé toutes les 5 s (2 s avant).
+* **État de l'overlay** (`engine_overlay_state.overlay_cache_fresh`) : reconstruit (3-4 ms de Python
+  sur le fil de l'overlay) après un nouveau tick, pendant une animation (toast, flash, alerte récente)
+  ou toutes les 0,5 s — plus à 12 Hz quoi qu'il arrive ; les positions viennent de `state.predict` à
+  l'instant du rendu. `_siege` mémorisé par instant.
+* **Analyse** : profil normal 5 img/s au calme (6 avant ; rafale 12 inchangée), ONNX d'appoint une
+  image sur 2 (détections identiques au gym rapide, il tourne aussi dès qu'une icône apparaît).
+  Qualité : gym `laning` + `customskin`, 4 graines, après 10 s de chauffe, 6 → 5 img/s : rappel
+  0,896 → 0,913, précision 0,938 → 0,940, identités fausses / icône 4,0 → 2,5 %, fantômes sur vivant
+  12 → 4, erreur p95 0,0048 → 0,0055 (≈ 0,2 px sur 300 px) : dans le bruit. 4 img/s (profil PC faible)
+  : rappel 0,927, précision 0,957, erreur p95 0,0060.
+* **Fils natifs** : `treeaicoach/__init__` met OpenBLAS à 1 fil avant numpy ; si numpy a été importé
+  avant (lanceur, outil, test), `sysperf.limit_blas_threads(1)` (appelé par `main.apply_process_policy`)
+  le force à l'exécution : mesuré, 3 fils OpenBLAS en attente active = 67 % d'un cœur pour rien.
+  `gc.freeze()` une fois au 30e tick de partie (`sysperf.freeze_gc_once`) ; mesuré : 0 collecte de
+  génération 2 en 60 s de régime établi. Calibrages ratés du portrait / de la barre de sorts (capture
+  de toute la fenêtre) : nouvel essai 15 → 30 → 60 → 120 s / 30 → 60 → 120 s, plus toutes les 15 s.
+* **Coûts au repos vérifiés** : voix (attente 4 Hz) 0,05-0,1 %, Live Client (1 Hz) 0,2 %, sondage du
+  lanceur (1 Hz) 0,2 %, raccourcis (GetMessage bloquant) 0, badges (fil bloqué sur un événement) 0.
+* **Mesures** (bac à sable Linux Xeon 2,8 GHz, 4 CPU ≈ 2 × plus lent qu'un PC de jeu en Python mono-fil ;
+  avant = 2.4.1, après) : capture réelle, profil normal : processus 44,7 → 33,6 % d'un cœur (analyse
+  36,3 → 28,8, overlay 7,1 → 3,5), envois overlay 5,5 → 2,5 / s (1,9 → 0,86 Mo / s), saisies 9,0 →
+  7,7 / s ; profil PC faible : 28,1 → 26,6 % (overlay 4,9 → 2,9), envois 4,7 → 1,7 / s ; démo (gank,
+  toasts, flash ; analyse en rafale 11 img/s) : overlay 8,1 → 5,9 %, 443 → 181 Ko / s, flash 135 →
+  11 Ko / s. Sous Wine avec de vraies fenêtres superposées (profil PC faible) : overlay 13,4 → 6,4 %,
+  processus 44,6 → 35,8 %, envois 4,7 → 1,6 / s. Le reste est la détection elle-même (~50-65 ms de CPU
+  par image ici, ≈ 25-30 ms sur un PC de jeu) : à 5 img/s ≈ 13-15 % d'un cœur sur un PC de jeu.
+* **Non mesurable ici** : le coût DWM réel (bascule du jeu en composition quand une fenêtre est
+  au-dessus, si le PC n'a pas de plans de superposition MPO) et celui de la duplication DXGI ; à
+  vérifier avec PresentMon (temps de trame du jeu avec / sans TreeAI) sur une vraie machine.
+* **Résumé « Performance »** (`health()["performance"]`, `sysperf.performance_summary`, données pour
+  le lanceur / le diagnostic) : `level` ok / eleve / lourd, `text` (« Impact sur le jeu : faible (8 %
+  d'un cœur, analyse 5 img/s, overlay 2 envois/s) »), `cpu_pct`, `threads` (CPU % par fil :
+  analyse, overlay, api, voix, interface, natif...), `detect_fps`, `tick_ms`, `tick_p95_ms`,
+  `overlay_fps`, `overlay_uploads_per_s`, `overlay_kb_per_s`, `capture_per_s`, `profile`, `load`.
 
 ## 19. Données de jeu vivantes (Data Dragon) + carte d'avant-partie (sélection des champions)
 
@@ -1241,7 +1300,7 @@ texte « verbe d'abord » pour la carte), 90 s au moins entre deux avis.
 |---|-------|----------|--------------------|-------------|
 | 1 | `capture` | capture noire / figée ≥ 3 s (fenêtre là, non masquée) | autre backend (`SmartCapture.disable`), +6 s : nouvel objet de capture | +6 s : « Capture noire : passe le jeu en Sans bordure » (avis) |
 | 2 | `minimap` | rectangle de secours, vérification basse ≥ 3 s, échecs | relocalisation : indice bon marché (dernier rectangle trouvé dans cette fenêtre) puis recherche complète, recul 3 / 6 / 12… s ; échec = on garde le dernier rectangle vérifié (pas un carré par défaut) ; score qui dérive (< 0,6 et < 0,75 × score trouvé, 15 s) : relocalisation (1 / min, 3 / partie) | 3 échecs : « Minimap introuvable : ouvre Réglages > Calibrer » (avis) |
-| 3 | `perf` | < min(4, 0,75 × cible) img/s analysées ou p95 du tick > 60 ms pendant 20 s | niveau de charge normal → allégé → minimal (`sysperf.degraded` : ONNX d'appoint 1/4 → 1/16, propositions d'anneau / de pile 1/4 → 1/8, recherche des perdus 1/8 → 1/12, vérification minimap moins souvent, overlay 20 → 15 img/s, coaching 1 → 0,5 Hz) ; retour après 60 s sain (doublé à chaque rechute < 5 min) | « Analyse allégée : PC chargé » |
+| 3 | `perf` | < min(4, 0,75 × cible) img/s analysées ou p95 du tick > 60 ms pendant 20 s | niveau de charge normal → allégé → minimal (`sysperf.degraded` : ONNX d'appoint 1/4 → 1/16, propositions d'anneau / de pile 1/4 → 1/8, recherche des perdus 1/8 → 1/12, vérification minimap moins souvent, overlay 15 → 12 img/s, coaching 1 → 0,5 Hz) ; retour après 60 s sain (doublé à chaque rechute < 5 min) | « Analyse allégée : PC chargé » |
 | 4 | `champions` | moi + alliés (toujours visibles pour mon équipe) vivants depuis 60 s : ≤ 40 % vus (dès 1:30, ≥ 3 attendus, ≥ 1 img/s, pas pendant ma mort) | recalibrage de la taille des icônes (balayage complet), +40 s : icônes rechargées (gabarits, échelle, icône apprise relue du cache), +40 s : diagnostic auto de 60 s (1 / partie, `cfg.selfcheck_auto_diag`, sans voix ni dossier ouvert) | « Détection faible : envoie un diagnostic (Ctrl+F8) » (avis) |
 | 5 | `identity` | un champion à deux endroits éloignés en < 1 s (aller-retour), plus d'ennemis visibles que de vivants (2 s) | `Tracker.forget` de cette piste / des pistes anonymes en trop (recul après 3 essais en 2 min) | note ; « Identités instables » si répété |
 | 6 | `overlay` | jeu pas au premier plan 8 s, minimap couverte par une fenêtre 5 s, fil de l'overlay arrêté 5 s | expliqué une fois par partie | « Overlay masqué … » (note), « Une fenêtre couvre la minimap … », « Overlay arrêté … » |

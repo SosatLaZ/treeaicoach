@@ -35,6 +35,9 @@ from typing import Any, Callable
 log = logging.getLogger(__name__)
 
 MAX_QUEUE = 3
+#: Badge animation frame rate (the scale-in / shine / fade); frames identical to the previous one
+#: (the ~1 s hold) are neither rendered nor uploaded (:func:`anim_key`).
+ANIM_FPS = 20.0
 STALE_S = 20.0                  # a queued badge not started within this delay is dropped
 SAMPLE_RATE = 22050
 #: per class: (frequencies of the notes in Hz, note length ms, volume 0..1)
@@ -48,6 +51,13 @@ TONES: dict[str, tuple[tuple[float, ...], int, float]] = {
     "blunder": ((392.0, 311.1, 261.6), 110, 0.26),
     "miss": ((493.9, 415.3), 100, 0.22),
 }
+
+
+def anim_key(st: dict[str, float]) -> tuple:
+    """What a badge frame looks like (scale / opacity / offset / shine quantized below what is
+    visible): equal keys = identical frames."""
+    return (round(st.get("scale", 1.0), 3), round(st.get("opacity", 1.0), 2), round(st.get("dy", 0.0), 3),
+            round(st.get("shine", -1.0), 2))
 
 
 # ------------------------------------------------------------------------------ sounds
@@ -289,21 +299,28 @@ class PlayFx:
         cls = str(getattr(play, "cls", "good"))
         if sound_wanted(cfg, cls):
             play_sound(cls)
-        period = 1.0 / fx.FPS
+        period = 1.0 / ANIM_FPS
         t0 = time.monotonic()
+        last_key: Any = None
         while not self._stop.is_set():
             age = time.monotonic() - t0
-            img = fx.render_frame(str(getattr(play, "cls", "good")), str(getattr(play, "title", "")),
-                                  str(getattr(play, "reason", "")), age, size=size, scale=scale)
-            if img is None:
+            st = fx.anim_state(age, size)
+            if st is None:
                 break
-            win.update(img, x, y)
-            if getattr(win, "failed", False):
-                raise OSError("fx window update failed")
-            self.frames_drawn += 1
+            key = anim_key(st)
+            if key != last_key:          # the badge is still during its hold: no render, no upload
+                last_key = key
+                img = fx.render_frame(str(getattr(play, "cls", "good")), str(getattr(play, "title", "")),
+                                      str(getattr(play, "reason", "")), age, size=size, scale=scale)
+                if img is None:
+                    break
+                win.update(img, x, y)
+                if getattr(win, "failed", False):
+                    raise OSError("fx window update failed")
+                self.frames_drawn += 1
             pump_messages()
             time.sleep(max(0.001, period - (time.monotonic() - t0 - age)))
         win.hide()
 
 
-__all__ = ["PlayFx", "TONES", "make_tone_wav", "play_wav_path", "play_sound", "sound_wanted", "screen_and_minimap"]
+__all__ = ["ANIM_FPS", "PlayFx", "TONES", "anim_key", "make_tone_wav", "play_wav_path", "play_sound", "sound_wanted", "screen_and_minimap"]

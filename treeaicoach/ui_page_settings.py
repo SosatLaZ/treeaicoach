@@ -55,15 +55,15 @@ class SettingsPageMixin:
 
     # ------------------------------------------------------------------ page
     def _build_settings_page(self) -> Any:
-        page, _right, body = self._page("Réglages", "Ce que le coach montre, dit et analyse")
+        page, _right, body = self._page("Réglages", "Ce que le coach montre, dit et analyse", tabs=SETTINGS_TABS)
         self._settings_page = page
         builders = {"Général": self._build_general_tab, "Affichage": self._build_display_tab,
                     "Voix": self._build_voice_tab, "Détection": self._build_detection_tab,
                     "IA": self._build_ai_section, "Mises à jour": self._build_updates_section,
                     "Avancé": self._build_advanced_tab}
-        # each tab is built on its first visit (or in an idle slot): the page opens fast
-        lazy = {tab: (lambda b=builders[tab], r=20 * i: self._build_settings_tab(b, body, r))
-                for i, tab in enumerate(SETTINGS_TABS)}
+        # one panel per tab (body.tab_bodies), all built with the page at start-up (CoachApp.__init__)
+        lazy = {tab: (lambda b=builders[tab], t=tab: self._build_settings_tab(b, body.tab_bodies[t], 0))
+                for tab in SETTINGS_TABS}
         self._tabs(page, body, tuple((t, ()) for t in SETTINGS_TABS), on_select=self._on_settings_tab, lazy=lazy)
         return page
 

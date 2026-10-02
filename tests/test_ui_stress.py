@@ -25,7 +25,7 @@ from treeaicoach.config import Config
 
 home = tu.home
 FIXTURE = Path(__file__).parent / "fixtures" / "game_record_sample.json"
-SWITCH_MAX_S = float(os.environ.get("TREEAI_STRESS_SWITCH_MAX", "0.3"))
+SWITCH_MAX_S = float(os.environ.get("TREEAI_STRESS_SWITCH_MAX", "0.2"))
 STEPS = int(os.environ.get("TREEAI_STRESS_STEPS", "260"))
 SEEDS = [int(s) for s in os.environ.get("TREEAI_STRESS_SEEDS", "1,2").split(",") if s.strip()]
 
@@ -52,9 +52,17 @@ def _games(dir_: Path, n: int) -> list[dict]:
     return list(reversed(out))
 
 
+def _on_screen(w: Any) -> bool:
+    """Placed in its holder at relx 0 (hidden pages / tab panels sit at relx 1: off-screen)."""
+    try:
+        return w.winfo_manager() == "place" and float(w.place_info().get("relx", 1)) == 0.0
+    except Exception:
+        return False
+
+
 def _visible_page(app: Any) -> list[str]:
     return [k for k in app._page_builders if k in app._built and dict.get(app.pages, k) is not None
-            and dict.get(app.pages, k).winfo_manager() == "grid"]
+            and _on_screen(dict.get(app.pages, k))]
 
 
 def _check_page(app: Any, key: str, problems: list[str], where: str) -> None:
@@ -69,6 +77,10 @@ def _check_page(app: Any, key: str, problems: list[str], where: str) -> None:
         problems.append(f"{where}: page {key} is the error page")
     tab = getattr(page, "current_tab", None)
     if tab is not None:
+        panels = getattr(page, "tab_bodies", {})
+        shown = [t for t, b in panels.items() if _on_screen(b.scroll)]
+        if shown != [tab]:
+            problems.append(f"{where}: page {key} shows tab panels {shown}, expected [{tab}]")
         sf = getattr(page, "scroll_frame", None)
         inner = sf.winfo_children()[0] if sf is not None and sf.winfo_children() else None
         secs = [s for s in getattr(inner, "_sections", []) or [] if s.winfo_manager() == "grid"]
@@ -107,9 +119,9 @@ def run_stress(app: Any, engines: list, seed: int, steps: int, games_dir: Path) 
         app.root.update_idletasks()
         dt = time.perf_counter() - t0
         real = ui.PAGE_ALIASES.get(key, (key, None))[0]
-        if dt > SWITCH_MAX_S:
+        if dt > SWITCH_MAX_S and app._startup_done:       # before: a click may build its page (complete)
             slow.append(dt)
-            problems.append(f"slow switch to {key}/{tab}: {1000 * dt:.0f} ms")
+            problems.append(f"slow switch to {key}/{tab}: {1000 * dt:.0f} ms (after {recent[-3:]})")
         app.root.update()
         _check_page(app, real, problems, f"switch {key}/{tab}")
 
@@ -121,7 +133,7 @@ def run_stress(app: Any, engines: list, seed: int, steps: int, games_dir: Path) 
             t0 = time.perf_counter()
             sel(rng.choice(tabs))
             app.root.update_idletasks()
-            if time.perf_counter() - t0 > SWITCH_MAX_S:
+            if time.perf_counter() - t0 > SWITCH_MAX_S and app._startup_done:
                 problems.append(f"slow tab switch: {1000 * (time.perf_counter() - t0):.0f} ms")
 
     def act_game() -> None:
@@ -186,13 +198,19 @@ def run_stress(app: Any, engines: list, seed: int, steps: int, games_dir: Path) 
             app.clear_journal()
 
     actions = [(act_switch, 0.40), (act_tab, 0.15), (act_game, 0.12), (act_window, 0.08), (act_inject, 0.25)]
+    recent: list[str] = []
     for i in range(steps):
         r, acc = rng.random(), 0.0
         for fn, w in actions:
             acc += w
             if r <= acc:
                 break
+        state = rng.getstate()
         fn()
+        after = rng.getstate()
+        rng.setstate(state)                       # same random stream: name the action for the report
+        recent.append(f"{fn.__name__}:{rng.random():.2f}")
+        rng.setstate(after)
         if rng.random() < 0.35:                      # let timers / worker callbacks run in between
             tu._pump(app, rng.choice((0.0, 0.02, 0.1, 0.3)))
         else:
@@ -234,33 +252,44 @@ def test_launcher_stress(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 
 @tu.needs_display
-def test_idle_prebuild_in_short_slices(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every page and every Réglages tab gets built while idle, one page or ONE SECTION per slot:
-    no slot freezes the window long, and a first visit afterwards builds nothing."""
-    monkeypatch.setattr(ui, "PREBUILD_DELAY_MS", 200)
-    monkeypatch.setattr(ui, "PREBUILD_GAP_MS", 20)
+def test_everything_built_at_startup(home: Path, tmp_path: Path) -> None:
+    """The window opens on the dashboard; every other page and tab is built (and laid out off-screen)
+    in short start-up slots right after; then nothing is ever built again and every first visit is as
+    fast as a warm one."""
     app, _voice, _ = tu._build(tmp_path, cfg=Config(ui_onboarding_done=True, ui_seen_changelog="1.5",
                                                      autostart=False))
     slots: list[float] = []
-    orig = app._prebuild_next
+    orig = app._startup_build
 
     def timed() -> None:
         t0 = time.perf_counter()
         orig()
         slots.append(time.perf_counter() - t0)
 
-    app._prebuild_next = timed
+    app._startup_build = timed
     try:
-        def done() -> bool:
-            pages = all(k in app._built for k in app._page_builders)
-            return pages and not app.pages["settings"].pending_tabs()
-        tu._pump(app, 30.0, done)
-        assert done(), (app._built, app.pages["settings"].pending_tabs())
-        assert max(slots) < SWITCH_MAX_S, [round(1000 * s) for s in slots]
+        assert app._built == {"dashboard"}
+        t0 = time.perf_counter()
+        tu._pump(app, 30.0, lambda: app._startup_done)
+        total = time.perf_counter() - t0
+        assert app._startup_done and app._built == set(app._page_builders)
         for key in app._page_builders:
-            t0 = time.perf_counter()
-            app.show_page(key)
-            app.root.update_idletasks()
-            assert time.perf_counter() - t0 < SWITCH_MAX_S, key
+            assert not getattr(dict.get(app.pages, key), "pending_tabs", lambda: [])(), key
+        assert getattr(app, "_update_check_btn", None) is not None        # a widget of the last tab
+        print(f"start-up build: {len(slots)} slots, max {1000 * max(slots):.0f} ms, total {1000 * total:.0f} ms")
+        assert max(slots) < 2 * SWITCH_MAX_S + 0.2, [round(1000 * x) for x in slots]
+        built = app._build_page
+        app._build_page = lambda key: (_ for _ in ()).throw(AssertionError(f"late build of {key}"))
+        try:
+            for key in [*app._page_builders, "dashboard"]:
+                for tab in [None, *getattr(dict.get(app.pages, key), "tab_bodies", {})]:
+                    t0 = time.perf_counter()
+                    app.show_page(key, tab)
+                    app.root.update_idletasks()
+                    assert time.perf_counter() - t0 < SWITCH_MAX_S, (key, tab)
+                    app.root.update()
+                    assert _visible_page(app) == [key]
+        finally:
+            app._build_page = built
     finally:
         app.close()

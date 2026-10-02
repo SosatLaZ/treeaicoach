@@ -11,11 +11,19 @@
 * ``stacks``   - 2-4 icons overlapping (0.3-0.9 diameter apart) on real art, a static scene
                  fed 6 times to a fresh HybridDetector: recall of the icons >= 50 % visible,
                  identity accuracy, false positives.
+* ``duo``      - permanent bot-lane duo stacks: me = support glued to my ADC (0.15-0.7 icon
+                 diameter apart, the distances measured on the LCU truth of real support games),
+                 the enemy duo glued too, both trading back and forth for ~10 s, then my duo
+                 splits; real art, HybridDetector + engine-like Tracker + self-check rule 5:
+                 ``together`` = champions mostly hidden under their partner still reported at
+                 the stack (within 2 x 0.03), ``me`` = my position within 0.03 / stack-aware,
+                 ``resets`` = "X vu à deux endroits", ``split_ok`` = right identity on both
+                 icons after the split.
 * ``tracker``  - no images: champions walking through each other with identification noise
                  (wrong / missing names, dropped frames) fed to the Tracker: identity
                  switches (a track drawn on another champion), lag (frames).
 
-    python tools/det_micro.py [ring|identity|stacks|tracker|all] [--n N] [--seed S]
+    python tools/det_micro.py [ring|identity|stacks|duo|tracker|all] [--n N] [--seed S]
 """
 
 from __future__ import annotations
@@ -283,7 +291,117 @@ def micro_tracker(n: int = 40, seed: int = 0) -> dict:
             "lag_frames_mean": round(float(np.mean(lags)), 3) if lags else None}
 
 
-GYMS = {"ring": micro_ring, "identity": micro_identity, "stacks": micro_stacks, "tracker": micro_tracker}
+def micro_duo(n: int = 6, seed: int = 0) -> dict:
+    from treeaicoach import render as R
+    from treeaicoach.champions import get_default_db
+    from treeaicoach.detector import create_detector
+    from treeaicoach.identifier import Identified
+    from treeaicoach.roster_matcher import RosterEntry
+    from treeaicoach.selfcheck import SelfCheck
+    from treeaicoach.tracker import Tracker
+
+    rng = np.random.default_rng(seed)
+    art, db = _art(), get_default_db()
+    names = [e.alias for e in db.all() if db.load_icon(e.alias) is not None]
+    D = 2 * R_ICON
+    tog = tog_n = me_ok = me_n = resets = split_ok = split_n = 0
+    by_role: dict = {}
+    for run in range(n):
+        size = int(rng.integers(230, 321))
+        fps = float(rng.choice([4.0, 6.0, 8.0]))
+        pick = list(rng.choice(names, 10, replace=False))
+        rels = ["self"] + ["ally"] * 4 + ["enemy"] * 5
+        det = create_detector("auto", db=db, learn_cache=None)
+        det.matcher.set_entries([RosterEntry(a, r, db.load_icon(a)) for a, r in zip(pick, rels)])
+        trk = Tracker()
+        trk.set_roster({a: r for a, r in zip(pick, rels)})
+        sc = SelfCheck(rules=("identity",))
+        bg = _bg(art, rng, size)
+        rings = {i: _ring_colour(rng, "enemy" if i >= 5 else "ally", 0.3) for i in range(10)}
+        # duos: me (0) on my ADC (4); enemy support (9) on the enemy ADC (8); a few others away
+        adc = {4: np.array([0.80, 0.87]) + rng.normal(0, 0.01, 2), 8: np.array([0.87, 0.80]) + rng.normal(0, 0.01, 2)}
+        others = {i: rng.uniform(0.15, 0.6, 2) for i in (1, 2, 5, 6)}
+        sup_of = {0: 4, 9: 8}
+        off = {}
+        for s_ in sup_of:
+            a = rng.uniform(0, 2 * math.pi)
+            off[s_] = np.array([math.cos(a), math.sin(a)]) * rng.uniform(0.15, 0.7) * D
+        me_under = rng.random() < 0.5
+        T_glue, T_all = 10.0, 14.0
+        for f in range(int(T_all * fps)):
+            t = f / fps
+            for a_, base in ((4, np.array([0.80, 0.87])), (8, np.array([0.87, 0.80]))):
+                adc[a_] = base + 0.03 * np.array([math.sin(0.7 * t + a_), math.cos(0.5 * t + a_)])
+            if rng.random() < 0.3 / fps:
+                k = int(rng.choice([0, 9]))
+                a = rng.uniform(0, 2 * math.pi)
+                off[k] = np.array([math.cos(a), math.sin(a)]) * rng.uniform(0.15, 0.7) * D
+            pos = dict(others)
+            pos.update(adc)
+            for s_, a_ in sup_of.items():
+                pos[s_] = adc[a_] + off[s_]
+            if t >= T_glue:                               # my duo splits: I walk to the river
+                pos[0] = adc[4] + off[0] + np.array([-0.025, -0.025]) * (t - T_glue) * 2.0
+            order = [i for i in pos if i not in (0, 4)] + ([0, 4] if me_under else [4, 0])
+            img = bg.copy()
+            for i in order:
+                u, v = pos[i]
+                R.draw_champion_icon(img, u * size, v * size, R_ICON * size, db.load_icon(pick[i]), rings[i],
+                                     ring_frac=0.12, inner_line_bgr=R.INNER_LINE_BGR, outline_px=0.6)
+                if i == 0:
+                    cv2.circle(img, (int(u * size * 16), int(v * size * 16)), int(R_ICON * size * 1.06 * 16),
+                               (225, 190, 100), 1, cv2.LINE_AA, 4)
+            img = cv2.GaussianBlur(img, (0, 0), 0.5)
+            dets = list(det.matcher.detect(img, t=t) or [])
+            dets += det._extras(img, dets)
+            ids = []
+            for d in dets:
+                rel = None
+                if d.alias in pick:
+                    rel = rels[pick.index(d.alias)]
+                    rel = "self" if rel == "self" else d.cls
+                ids.append(Identified(det=d, alias=d.alias, relation=rel or d.cls, team=None,
+                                      id_score=float(d.score)))
+            trk.update(t, ids)
+            sc.on_tracks(t, trk.tracks())
+            for a in sc._pending:
+                if a.kind == "forget_track":
+                    resets += 1
+                    trk.forget(str(a.arg))
+            sc._pending = []
+            if f < 6:
+                continue
+            # visible fraction (drawn later = on top)
+            for j, i in enumerate(order):
+                u, v = pos[i]
+                cov = 0.0
+                for i2 in order[j + 1:]:
+                    if math.hypot(pos[i2][0] - u, pos[i2][1] - v) < 1.2 * D:
+                        cov = max(cov, 1.0 - math.hypot(pos[i2][0] - u, pos[i2][1] - v) / D)
+                tr = trk.me() if i == 0 else trk.get(pick[i])
+                p = tr.position() if tr is not None and tr.visible else None
+                ok = p is not None and math.hypot(p[0] - u, p[1] - v) < 2 * 0.03
+                if i == 0:
+                    me_n += 1
+                    me_ok += ok
+                if cov > 0.5:
+                    tog_n += 1
+                    tog += ok
+                    role = {0: "me", 4: "my_adc", 8: "en_adc", 9: "en_sup"}.get(i, "other")
+                    b = by_role.setdefault(role, [0, 0])
+                    b[0] += ok
+                    b[1] += 1
+                if t >= T_glue + 2.0 and i in (0, 4):
+                    split_n += 1
+                    split_ok += p is not None and math.hypot(p[0] - u, p[1] - v) < 0.03
+    return {"runs": n, "together": round(tog / max(1, tog_n), 3), "together_n": tog_n,
+            "me": round(me_ok / max(1, me_n), 3), "resets": resets,
+            "split_ok": round(split_ok / max(1, split_n), 3),
+            "together_by": {k: f"{a}/{b}" for k, (a, b) in sorted(by_role.items())}}
+
+
+GYMS = {"ring": micro_ring, "identity": micro_identity, "stacks": micro_stacks, "duo": micro_duo,
+        "tracker": micro_tracker}
 
 
 def main() -> None:

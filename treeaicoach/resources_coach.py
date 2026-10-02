@@ -617,7 +617,7 @@ class ResourcesCoach:
 
 # =============================================================================== engine glue
 BAR_PERIOD_S = 0.5               # HUD bar reads: <= 2 Hz
-CAL_RETRY_S = 30.0               # a failed calibration is retried this late
+CAL_RETRY_S = 30.0               # a failed calibration (full-window grab) is retried this late, x2, x4
 REMOTE_FIGHT_UV = 0.08           # champions this close to a fight centre fight there
 REMOTE_MIN_DIST = 0.35           # a fight this far from me is "elsewhere"
 CARD_READ_S = 5.5                # a new line waits until the card's current line was shown this long
@@ -635,6 +635,7 @@ class _EngineGlue:
         self.cal_t = -1e9
         self.cal_size: tuple[int, int] | None = None
         self.cal_thread: Any = None
+        self.cal_fails = 0                 # failed calibrations in a row (retry delay doubles)
         self.read_t = -1e9
         self.bar: Any = None
         self.gt = 0.0
@@ -678,8 +679,10 @@ def _engine_bar(eng: Any, glue: _EngineGlue, t: float) -> Any:
             if th is not None and th.is_alive():
                 return None
             if glue.cal_thread is not None and rd.layout is not None and rd._size == (size[1], size[0]):
-                glue.cal_size, glue.cal_thread = size, None          # the background fit just finished
-            elif t - glue.cal_t >= CAL_RETRY_S or t < glue.cal_t:
+                glue.cal_size, glue.cal_thread, glue.cal_fails = size, None, 0   # the background fit just finished
+            elif t - glue.cal_t >= CAL_RETRY_S * 2 ** min(2, glue.cal_fails) or t < glue.cal_t:
+                if glue.cal_thread is not None:       # the previous background fit found nothing
+                    glue.cal_fails += 1
                 glue.cal_t = t
                 screen = eng._grabber().grab(win)
                 if screen is None:

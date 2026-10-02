@@ -162,6 +162,7 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     _LazyPages,
     _RadarWorker,
     Segmented,
+    Slider,
     Toggle,
     _alert_entry,
     app_icon_path,
@@ -199,7 +200,11 @@ from treeaicoach.ui_common import (  # noqa: F401 - public names re-exported
     precision_color,
     radar_placeholder,
     rounded_on_bg,
+    is_parked,
+    park,
     scroll_frame_class,
+    setting_row_class,
+    unpark,
     session_stats,
     set_windows_autostart,
     square_icon,
@@ -218,8 +223,13 @@ from treeaicoach.ui_page_settings import SettingsPageMixin
 
 log = logging.getLogger(__name__)
 
-# ------------------------------------------------------------------ lazy pages (patched by tests: stays here)
-PREBUILD_DELAY_MS = 1500          # other pages are built in idle slots after this delay (0 = on first visit only)
+# ------------------------------------------------------------------ pages
+# The dashboard is built in CoachApp.__init__; every other page and tab right after the window is
+# first drawn (start-up slots of one page or one tab, each laid out off-screen at once), so the
+# window appears fast and a page switch only moves two frames (see show_page).
+STARTUP_BUILD_MS = 40             # delay between two start-up slots (the window stays responsive)
+STARTUP_FIRST_MS = 150            # first slot: this long after the window is on screen (drawn first)
+PREBUILD_DELAY_MS = 0             # older name, kept for tests / tools that patch it
 
 # ======================================================================================
 # The application
@@ -335,8 +345,9 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         self.content.grid(row=0, column=1, sticky="nsew")
         self.content.grid_columnconfigure(0, weight=1)
         self.content.grid_rowconfigure(0, weight=1)
-        # Pages are built lazily: the first one now, each other one on its first visit (or when
-        # an attribute of a page not built yet is read: see __getattr__).
+        # The dashboard is built now (the window appears with it), every other page and tab in the
+        # start-up slots right after (_startup_build): a page switch never builds, lays out or maps
+        # anything (docs/DESIGN.md, "Chargement des pages").
         self._page_builders: dict[str, Callable[[], Any]] = {
             "dashboard": self._build_dashboard, "analysis": self._build_analysis_page,
             "settings": self._build_settings_page, "help": self._build_help_page}
@@ -350,6 +361,10 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         self.root.bind("<Configure>", self._on_root_configure, add="+")
         self._bind_shortcuts()
         self.show_page("dashboard")              # status first: the app always opens on "En jeu"
+        self._startup_steps = self._startup_build_steps()
+        self._startup_done = False
+        self._startup_t0 = time.perf_counter()
+        self._startup_next(STARTUP_BUILD_MS)
         self.root.protocol("WM_DELETE_WINDOW", self.request_close)
         self.root.after(1200, self._first_run_dialogs)
         self.root.after(350, self._ensure_visible)
@@ -365,12 +380,10 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             self.root.after(UPDATE_CHECK_DELAY_MS, self._startup_update_check)
         self.root.after(2500, self.cb(self._check_last_update))      # did the last update apply?
         self.root.after(1800, self.cb(self.refresh_games))           # dashboard "avant la partie" + table
-        if PREBUILD_DELAY_MS:
-            self.root.after(PREBUILD_DELAY_MS, lambda: self.root.after_idle(self._prebuild_next))
 
     # ------------------------------------------------------------------ lazy pages
     def _build_page(self, key: str) -> Any:
-        """Build one page (Tk thread), grid it hidden; an error page if its builder fails."""
+        """Build one page (Tk thread), placed just off-screen; an error page if its builder fails."""
         building = self.__dict__.setdefault("_building", set())
         if key in building:
             raise KeyError(key)
@@ -383,8 +396,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 log.exception("Cannot build page %s", key)
                 self._failed_pages.add(key)
                 page = self._error_page(key)
-            page.grid(row=0, column=0, sticky="nsew")
-            page.grid_remove()
+            park(page, self.content)                  # laid out at the window size, just off-screen
             dict.__setitem__(self.pages, key, page)
             self._built.add(key)
         finally:
@@ -397,33 +409,57 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             pass
         return page
 
-    def _prebuild_next(self) -> None:
-        """Build the next page not visited yet while the app is idle (one page per idle slot), so
-        that even a first visit is instant. Never while minimised or during a game."""
-        if self._closing:
+    def _startup_build_steps(self) -> Any:
+        """Generator: one start-up slot per page shell, then per tab (see :meth:`_startup_build`)."""
+        for key in PREBUILD_ORDER:
+            if key in self._page_builders and key not in self._built:
+                self.pages[key]
+                yield key
+            page = dict.get(self.pages, key)
+            for tab in list(getattr(page, "pending_tabs", lambda: [])()):
+                n = 0
+                while not page.step_tab(tab):          # one section per slot
+                    n += 1
+                    yield f"{key}/{tab}#{n}"
+                if tab == "Affichage":                  # its preview (sample game screen), off the Tk thread
+                    self._dispatcher.run(_prewarm_preview, None, None, name="TreeAI-ui-prewarm")
+                yield f"{key}/{tab}"
+
+    def _startup_build(self) -> None:
+        """Build the next page / tab once the window is on screen, lay it out off-screen in the same
+        slot (so a first visit costs no more than any other), then let the event loop breathe."""
+        if self._closing or self._startup_done:
             return
         try:
-            pending = [k for k in PREBUILD_ORDER if k not in self._built]
-            tabs = [(k, t) for k in PREBUILD_ORDER if k in self._built
-                    for t in getattr(dict.get(self.pages, k), "pending_tabs", lambda: [])()]
-            if not pending and not tabs:
+            if not self.__dict__.get("_startup_shown"):              # the dashboard is drawn first
+                if self.root.winfo_viewable() or time.perf_counter() - self._startup_t0 > 3.0:
+                    self._startup_shown = True
+                    self._startup_next(STARTUP_FIRST_MS)
+                else:
+                    self._startup_next(STARTUP_BUILD_MS)
                 return
-            if self._iconic() or self._in_game() or self._busy or self.__dict__.get("_building"):
-                self.root.after(PREBUILD_GAP_MS * 10, self._prebuild_next)
+            t0 = time.perf_counter()
+            what = next(self._startup_steps, None)
+            page = dict.get(self.pages, str(what).split("/")[0]) if what else None
+            if callable(getattr(page, "center_apply", None)):
+                page.center_apply(True)          # hidden: laid out at its final column width now
+            if what is None:
+                self._startup_done = True
+                log.info("all pages built %.0f ms after start", 1000 * (time.perf_counter() - self._startup_t0))
                 return
-            if pending:
-                self.pages[pending[0]]
-            else:                            # one SECTION per idle slot: never a long freeze
-                key, tab = tabs[0]
-                done = dict.get(self.pages, key).step_tab(tab)
-                if done and tab == "Affichage":     # its preview (sample game screen), off the Tk thread
-                    self._dispatcher.run(_prewarm_preview, None, None, name="TreeAI-ui-prewarm")
-            self.root.after(PREBUILD_GAP_MS, lambda: self.root.after_idle(self._prebuild_next))
+            self.root.update_idletasks()         # its layout (off-screen) now, not on its first visit
+            log.debug("start-up build of %s in %.0f ms", what, 1000 * (time.perf_counter() - t0))
         except Exception:
-            log.exception("page prebuild failed")
+            log.exception("start-up page build failed")
+        self._startup_next(STARTUP_BUILD_MS)
+
+    def _startup_next(self, ms: int) -> None:
+        """Next start-up slot ``ms`` after now AND once pending events are handled (the window draws
+        itself and answers clicks between two slots)."""
+        self.root.after(ms, lambda: None if self._closing else self.root.after_idle(self._startup_build))
 
     def build_all_pages(self) -> None:
-        """Build every page (and every tab of a page) not built yet (tests, diagnostics)."""
+        """Build every page and every tab not built yet (tests, diagnostics; idempotent)."""
         for key in self._page_builders:
             if key not in self._built and not self.__dict__.get("_building"):
                 self.pages[key]
@@ -463,7 +499,8 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             self.root.lift()
             self.root.attributes("-topmost", True)
             self.root.after(200, lambda: self._safe_untop())
-            self.root.focus_force()
+            if sys.platform.startswith("win"):    # (X11: "focus -force" on a window being mapped can crash Tk)
+                self.root.focus_force()
         except Exception:
             log.debug("ensure_visible failed", exc_info=True)
 
@@ -589,33 +626,23 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         if content_w < 200 or (content_w == self._wrap_width and not force):
             return
         self._wrap_width = content_w
-        scale = max(0.5, self._scaled(100) / 100)
         col_w = min(content_w - 2 * PAGE_PAD - 10, CONTENT_MAX)    # centred column (minus the scrollbar)
-        row_w = col_w - 2 * CARD_PAD - 2
-        for slot in list(self._row_slots):
-            lbl = getattr(slot, "desc_label", None)
-            if lbl is None:
-                continue
-            try:
-                if not lbl.winfo_exists():
-                    continue
-                sw = slot.winfo_reqwidth() / scale
-                below = row_w - sw - ROW_CTL_GAP < 260   # wide control, narrow window: control under the text
-                if below != getattr(slot, "_below", False):
-                    slot._below = below
-                    if below:
-                        slot.grid_configure(row=2, column=0, rowspan=1, sticky="w", padx=0, pady=(CTL_GAP, 0))
-                    else:
-                        slot.grid_configure(row=0, column=1, rowspan=2, sticky="e", padx=(ROW_CTL_GAP, 0), pady=0)
-                lbl.configure(wraplength=int(max(200, min(640, row_w if below else row_w - sw - ROW_CTL_GAP))))
-            except Exception:
-                pass
+        # setting rows (canvas) wrap themselves; section subtitles follow the column width. Labels of
+        # hidden pages / tabs are left alone (changing them would lay the hidden page out again):
+        # they are updated when their page or tab is shown (_wrap_shown).
         for lbl, inset in list(self._wrap_labels):
             try:
-                if lbl.winfo_exists():
-                    lbl.configure(wraplength=int(max(240, col_w - inset)))
+                if lbl.winfo_exists() and not is_parked(lbl):
+                    want = int(max(240, col_w - inset))
+                    if lbl.cget("wraplength") != want:
+                        lbl.configure(wraplength=want)
             except Exception:
                 pass
+
+    def _wrap_shown(self) -> None:
+        """A page / tab was just shown: its wrapped labels follow the current width."""
+        if self._wrap_width:
+            self._wrap_rows(self._wrap_width, force=True)
 
     def _demo_button_text(self) -> None:
         if self.demo:
@@ -809,12 +836,15 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             log.debug("button state failed", exc_info=True)
 
     def _page(self, title: str, subtitle: str, scroll: bool = True,
-              icon: str | None = None, max_width: int = CONTENT_MAX) -> tuple[Any, Any, Any]:
+              icon: str | None = None, max_width: int = CONTENT_MAX,
+              tabs: Sequence[str] | None = None) -> tuple[Any, Any, Any]:
         """(page frame, header right slot, body frame).
 
         Header (title + subtitle, actions on the right, tabs below) and body share one centred
         column at most ``max_width`` px wide (no controls stuck to the far edge of a big window);
-        the scrollbar stays on the window edge.
+        the scrollbar stays on the window edge. With ``tabs``, the body is a holder with one
+        scrolling panel per tab (``body.tab_bodies[label]``: build that tab's sections in it); see
+        :meth:`_tabs`.
         """
         ctk = self.ctk
         page = ctk.CTkFrame(self.content, fg_color=BG, corner_radius=0)
@@ -835,15 +865,34 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         rule = self._hline(page)
         rule.grid(row=1, column=0, sticky="ew", padx=PAGE_PAD, pady=(14, 0))
         targets: list[tuple[Any, int, int]] = [(head, 0, 0), (rule, 0, 0)]
-        if scroll:
-            body = scroll_frame_class()(page, fg_color=BG)
-            body.grid(row=2, column=0, sticky="nsew", padx=(0, 4), pady=(0, 2))
-            body.grid_columnconfigure(0, weight=1)
-            page.scroll_frame = body  # type: ignore[attr-defined]
-            inner = self._frame(body)
+        sf_cls = scroll_frame_class()
+
+        def scroller(parent: Any) -> tuple[Any, Any]:
+            sf = sf_cls(parent, fg_color=BG)
+            sf.grid_columnconfigure(0, weight=1)
+            inner = self._frame(sf)
             inner.grid(row=0, column=0, sticky="nsew", padx=PAGE_PAD, pady=(22, 28))
             inner.grid_columnconfigure(0, weight=1)
+            inner.scroll = sf  # type: ignore[attr-defined]
             targets.append((inner, 0, -10))          # the scrollbar already takes 10 px on the right
+            return sf, inner
+
+        if tabs:
+            holder = self._frame(page)
+            holder.grid(row=2, column=0, sticky="nsew", padx=(0, 4), pady=(0, 2))
+            holder.tab_bodies = {}  # type: ignore[attr-defined]
+            for label in tabs:
+                sf, inner = scroller(holder)
+                inner._sections = []  # type: ignore[attr-defined]
+                park(sf, holder)                                       # off-screen until selected
+                holder.tab_bodies[label] = inner  # type: ignore[attr-defined]
+                page.scroll_frame = page.scroll_frame if hasattr(page, "scroll_frame") else sf  # type: ignore[attr-defined]
+            self._center_column(page, targets, max_width)
+            return page, right, holder
+        if scroll:
+            sf, inner = scroller(page)
+            sf.grid(row=2, column=0, sticky="nsew", padx=(0, 4), pady=(0, 2))
+            page.scroll_frame = sf  # type: ignore[attr-defined]
             self._center_column(page, targets, max_width)
             return page, right, inner
         body = self._frame(page)
@@ -856,7 +905,7 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         """Keep ``targets`` (gridded with padx) in a centred column of at most ``max_width`` px."""
         state = {"pad": None, "job": None}
 
-        def apply() -> None:
+        def apply(include_hidden: bool = False) -> None:
             state["job"] = None
             try:
                 scale = max(0.5, self._scaled(100) / 100)
@@ -866,10 +915,13 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 if w < 50:
                     return
                 pad = int(max(PAGE_PAD, (w - max_width) / 2))
-                if pad == state["pad"]:
-                    return
                 state["pad"] = pad
                 for wdg, dl, dr in targets:
+                    # a hidden tab panel keeps its layout (it would be laid out again for nothing): it
+                    # gets the new padding when it is shown (select -> center_apply)
+                    if getattr(wdg, "_center_pad", None) == pad or (not include_hidden and is_parked(wdg)):
+                        continue
+                    wdg._center_pad = pad
                     wdg.grid_configure(padx=(max(8, pad + dl), max(8, pad + dr)))
             except Exception:
                 log.debug("centre column failed", exc_info=True)
@@ -939,76 +991,33 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
     def _tabs(self, page: Any, body: Any, groups: Sequence[tuple[str, Sequence[str]]],
               default: str | None = None, on_select: Callable[[str], Any] | None = None,
               lazy: dict[str, Callable[[], Any]] | None = None) -> dict[str, Any]:
-        """Underlined tabs in the page header showing one group of sections at a time.
+        """Underlined tabs in the page header, one scrolling panel per tab (``body`` made by
+        ``_page(tabs=...)``: ``body.tab_bodies``).
 
-        ``groups`` = (tab label, section titles); sections not listed go to the last tab
-        (usually "Avancé", i.e. collapsed by default). ``lazy`` = {tab label: builder}: that tab's
-        sections are built on its first selection (or by ``page.ensure_tab(label)``: idle prebuild,
-        a widget read before), so a page with many tabs opens fast. ``on_select(label)`` runs after
-        every change of tab, clicked or programmatic (``page.select_tab``): lazy loads (progress,
-        replay, preview). Returns {label: button}.
+        Every panel stays laid out at the page size; the hidden ones sit just outside the page
+        (``place(relx=1)``), so a tab switch moves two windows: nothing is unmapped / re-mapped
+        widget by widget, nothing is laid out again, nothing is drawn half done. ``lazy`` =
+        {tab label: builder (a generator may ``yield`` between sections)}: run by ``ensure_tab``
+        (the app builds every tab at start-up) or on the first selection. ``on_select(label)`` runs
+        after every change of tab, clicked or programmatic (``page.select_tab``). Returns {label: button}.
         """
         ctk = self.ctk
-        sections = list(getattr(body, "_sections", []))
+        bodies: dict[str, Any] = dict(getattr(body, "tab_bodies", {}) or {})
         pending = dict(lazy or {})
         bar = self._frame(page.head)
         bar.grid(row=1, column=0, columnspan=2, sticky="w", pady=(16, 0))
-        labels = [g for g, _t in groups]
-        owner: dict[int, str] = {}
-        for g, titles in groups:
-            for card in sections:
-                if getattr(card, "title", None) in titles:
-                    owner[id(card)] = g
-        for card in sections:
-            owner.setdefault(id(card), labels[-1])
+        labels = [g for g, _t in groups if g in bodies]
         btns: dict[str, Any] = {}
         unders: dict[str, Any] = {}
-        state = {"cur": None}
+        state: dict[str, Any] = {"cur": None}
 
         running: dict[str, Any] = {}      # tab label -> its builder generator, part-way through
 
-        cold: list[tuple[str, Any]] = []     # (tab, section) built by the idle prebuild, never laid out
-
-        def adopt(label: str, first: int, warm: bool = False) -> None:
-            for card in list(getattr(body, "_sections", []))[first:]:
-                owner[id(card)] = label
-                sections.append(card)
-                card.tab_shown = state["cur"] == label
-                if not card.tab_shown or getattr(card, "hidden", False):
-                    card.grid_remove()
-                    if warm:
-                        cold.append((label, card))
-
-        def prewarm_one() -> bool:
-            """Idle prebuild of a hidden page: lay ONE built section out (gridded in the unmapped page,
-            nothing is drawn). Tk computes a widget's geometry (text measuring) on its first show,
-            about half the cost of a first tab switch: done here, in its own idle slot."""
-            while cold:
-                label, card = cold.pop(0)
-                if page.winfo_ismapped():         # on screen: no hidden layout pass (it would flash)
-                    cold.clear()
-                    return True
-                try:
-                    if not card.winfo_exists() or state["cur"] == label:
-                        continue
-                    card.grid()
-                    body.update_idletasks()
-                    if state["cur"] != label:
-                        card.grid_remove()
-                except Exception:
-                    log.debug("section prewarm failed", exc_info=True)
-                return False
-            return True
-
-        def advance(label: str, one: bool) -> bool:
-            """Run the lazy builder of a tab: one section (``one``, idle prebuild) or to the end.
+        def step(label: str, one: bool = True) -> bool:
+            """Run a lazy tab's builder: one section (``one``: start-up slots) or to the end.
             True once the tab is complete. A builder may be a generator yielding after each section."""
-            if one and cold:
-                prewarm_one()
-                return False
             if label not in pending:
                 return True
-            first = len(getattr(body, "_sections", []))
             building = self.__dict__.setdefault("_building", set())
             building.add(f"tab:{label}")
             try:
@@ -1035,32 +1044,33 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                 return True
             finally:
                 building.discard(f"tab:{label}")
-                adopt(label, first, warm=one)
 
         def ensure(label: str) -> None:
-            """Build a lazy tab completely now (its sections stay hidden unless it is the current tab)."""
-            advance(label, one=False)
-            cold[:] = [(t, c) for t, c in cold if t != label]
+            """Build a lazy tab completely now (it stays off-screen unless it is the current tab)."""
+            step(label, one=False)
 
         def select(label: str) -> None:
-            if state["cur"] == label:
+            if state["cur"] == label or label not in bodies:
                 return
             ensure(label)
-            state["cur"] = label
-            for card in sections:
-                card.tab_shown = owner[id(card)] == label
-                if card.tab_shown and not getattr(card, "hidden", False):
-                    card.grid()
-                else:
-                    card.grid_remove()
+            old, state["cur"] = state["cur"], label
+            sf = bodies[label].scroll
+            try:
+                sf._parent_canvas.yview_moveto(0)
+            except Exception:
+                pass
+            apply = getattr(page, "center_apply", None)
+            unpark(sf)
+            if callable(apply):
+                apply()                        # its column width before it is drawn (no jump)
+            if old is not None:
+                park(bodies[old].scroll, body)
+            self._wrap_shown()
+            page.scroll_frame = sf  # type: ignore[attr-defined]
             for g, b in btns.items():
                 on = g == label
                 b.configure(text_color=TEXT if on else MUTED, font=self.fonts.nav_active if on else self.fonts.nav)
                 unders[g].configure(fg_color=ACCENT if on else "transparent")
-            try:
-                page.scroll_frame._parent_canvas.yview_moveto(0)
-            except Exception:
-                pass
             page.current_tab = label  # type: ignore[attr-defined]
             if on_select is not None:
                 try:
@@ -1069,8 +1079,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                     log.debug("tab hook failed", exc_info=True)
 
         for i, g in enumerate(labels):
-            if g not in pending and not any(owner[id(c)] == g for c in sections):
-                continue
             try:
                 scale = max(0.5, self._scaled(100) / 100)
                 tw = int(self.fonts.nav_active.measure(g) / scale) + 8
@@ -1083,10 +1091,20 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             u = self._frame(bar, width=1, height=3)
             u.grid(row=1, column=i, padx=(0, TAB_GAP), sticky="ew")
             btns[g], unders[g] = b, u
+        def first_size(_e: Any = None) -> None:
+            """Once the holder has its size, the hidden panels stop following it (see ``park``)."""
+            if body.winfo_width() > 20 and body.winfo_height() > 20 and state.get("bind"):
+                body.unbind("<Configure>", state.pop("bind"))
+                for g, b in bodies.items():
+                    if g != state["cur"]:
+                        park(b.scroll, body)
+
+        state["bind"] = body.bind("<Configure>", first_size, add="+")
         page.select_tab = select  # type: ignore[attr-defined]
         page.ensure_tab = ensure  # type: ignore[attr-defined]
-        page.step_tab = lambda label: advance(label, one=True)  # type: ignore[attr-defined]
-        page.pending_tabs = lambda: list(dict.fromkeys([*pending, *(t for t, _c in cold)]))  # type: ignore[attr-defined]
+        page.step_tab = step  # type: ignore[attr-defined]
+        page.pending_tabs = lambda: list(pending)  # type: ignore[attr-defined]
+        page.tab_bodies = bodies  # type: ignore[attr-defined]
         first = default if default in btns else next(iter(btns), None)
         if first is not None:
             select(first)
@@ -1099,27 +1117,12 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         the description wraps before the control (see :meth:`_wrap_rows`).
         """
         r = body._rows
-        if r:
-            self._hline(body, ROW_LINE).grid(row=2 * r - 1, column=0, sticky="ew")
-        row = self._frame(body, height=ROW_MIN_H)
-        row.grid(row=2 * r, column=0, sticky="ew", pady=ROW_PAD_Y)
-        row.grid_columnconfigure(0, weight=1)
+        # ONE canvas per row (title, wrapped description, separator) + the control slot: see
+        # ui_common.setting_row_class (5 windows less per row than labels in frames)
+        row = setting_row_class()(body, self, title, desc, line=bool(r))
+        row.grid(row=2 * r, column=0, sticky="ew")
         body._rows = r + 1
-        # flat: title / description / control directly in the row (no nested frame: fewer windows
-        # to build and to map on every tab switch); the control spans both text lines
-        row.title_label = self._label(row, title, self.fonts.body, TEXT, anchor="w")  # type: ignore[attr-defined]
-        row.title_label.grid(row=0, column=0, sticky="w")
-        desc_lbl = None
-        if desc:
-            desc_lbl = self._label(row, desc, self.fonts.small, MUTED, anchor="w", justify="left",
-                                   wraplength=440)
-            desc_lbl.grid(row=1, column=0, sticky="w", pady=(3, 0))
-        else:
-            row.grid_rowconfigure(0, minsize=CTL_H)
-        slot = self._frame(row)
-        slot.grid(row=0, column=1, rowspan=2 if desc else 1, sticky="e", padx=(ROW_CTL_GAP, 0))
-        slot.desc_label = desc_lbl  # type: ignore[attr-defined]
-        row.slot = slot  # type: ignore[attr-defined]
+        slot = row.slot
         self._last_slot = slot
         self._last_row = row
         self._row_slots.append(slot)
@@ -1151,28 +1154,25 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
                     on_change: Callable[[Any], None] | None = None,
                     to_float: Callable[[Any], float] = float) -> Any:
         _row, slot = self._row(body, title, desc)
-        value_lbl = self._label(slot, fmt(getattr(self.cfg, field)), self.fonts.num, GOLD, width=84,
-                                anchor="e")
         steps = max(1, int(round((hi - lo) / step)))
+        sl: Any = None
 
         def moved(v: float) -> None:
             val = cast(round(float(v) / step) * step)
-            value_lbl.configure(text=fmt(val))
+            sl.set_text(fmt(val))
             self.set_option(field, val)
             if on_change is not None:
                 on_change(val)
 
-        sl = self.ctk.CTkSlider(slot, from_=lo, to=hi, number_of_steps=steps, width=240, height=22,
-                                command=self.cb(moved), fg_color=SWITCH_OFF, progress_color=ACCENT_DIM,
-                                button_color=GOLD, button_hover_color=GOLD_HOVER, button_length=0,
-                                button_corner_radius=SLIDER_KNOB_R, corner_radius=3)
+        # one canvas: track, knob and the value on the right (a CTkSlider + a CTkLabel: 5 windows)
+        sl = Slider(self, slot, lo, hi, steps, self.cb(moved), width=240, height=22, text_width=84, gap=8)
         sl.set(to_float(getattr(self.cfg, field)))
-        sl.grid(row=0, column=0, padx=(0, 8))
-        value_lbl.grid(row=0, column=1)
+        sl.set_text(fmt(getattr(self.cfg, field)))
+        sl.grid(row=0, column=0)
 
         def refresh() -> None:
             sl.set(to_float(getattr(self.cfg, field)))
-            value_lbl.configure(text=fmt(getattr(self.cfg, field)))
+            sl.set_text(fmt(getattr(self.cfg, field)))
         self._widgets_by_field[field] = refresh
         return sl
 
@@ -1433,14 +1433,20 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             return
         t0 = time.perf_counter()
         prev = self._current_page
-        page = self.pages[key]                 # builds it the first time
+        page = self.pages[key]                 # built in the start-up slots (here if clicked before)
+        if key == "analysis" and self._games_shown_sig != self._games_sig:
+            self._show_games_table()           # filled before it is shown
+        # every page stays mapped and laid out at the window size; the hidden ones sit just right of
+        # the window (clipped, never drawn). Showing one = moving two frames: no widget is mapped,
+        # laid out or drawn piece by piece (grid_remove / grid re-mapped every widget one by one).
+        unpark(page)
         apply = getattr(page, "center_apply", None)
         if callable(apply):
-            apply()                            # right column width before it is shown (no jump)
+            apply()                            # right column width before it is drawn (no jump)
         old = dict.get(self.pages, prev) if prev else None
-        if old is not None:
-            old.grid_remove()
-        page.grid()
+        if old is not None and old is not page:
+            park(old, self.content)
+        self._wrap_shown()
         self._current_page = key
         for k in (prev, key):
             if k not in self._nav:
@@ -1464,8 +1470,6 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         else:
             self._radar_worker.active.clear()
         if key == "analysis":
-            if self._games_shown_sig != self._games_sig:
-                self._show_games_table()
             self.refresh_games()
         if key == "settings" and self._settings_tab == "Affichage":
             self._schedule_overlay_preview()

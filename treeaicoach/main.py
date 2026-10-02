@@ -116,6 +116,12 @@ def apply_process_policy(cfg: Any) -> dict[str, Any]:
         out["cv_threads"] = cv2.getNumThreads()
     except Exception:
         pass
+    try:   # numpy imported before the package (BLAS env not applied): one BLAS thread anyway
+        from treeaicoach.sysperf import limit_blas_threads
+
+        out.update(limit_blas_threads(1))
+    except Exception:
+        pass
     try:
         if bool(getattr(cfg, "low_priority", True)):
             from treeaicoach.sysperf import lower_process_priority

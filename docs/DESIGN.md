@@ -129,17 +129,30 @@ n'est pas affichée ou que la fenêtre est réduite (rafraîchissement 1 s, 2 s 
 
 Chargement des pages (règles, vérifiées par `tests/test_ui_stress.py`) :
 
-- une page ou un onglet se construit **seulement** à sa première visite (`show_page`,
-  `select_tab`) ou pendant un temps mort ; jamais en lisant un attribut (le code lit
-  `getattr(self, "x", None)` ou teste `"page" in self._built`) ;
-- la construction en temps mort avance par tranches : une page, ou **une section** d'onglet
-  (générateur qui fait `yield` après chaque section), ou la mise en page cachée d'une section
-  déjà construite ; une tranche reste sous 100 ms, jamais pendant une partie ni fenêtre réduite ;
+- la fenêtre s'ouvre sur « En jeu », seule page construite dans `CoachApp.__init__` ; toutes
+  les autres pages et tous les onglets sont construits juste après son premier affichage, par
+  tranches (`_startup_build` : une page, puis **une section** d'onglet par tranche, chacune mise
+  en page hors écran dans la même tranche, sous 100 ms sur un PC de jeu) ; ensuite plus rien
+  n'est jamais construit (un clic avant la fin construit la page demandée, complète) ;
+- une page cachée n'est **jamais démappée** : elle reste placée juste à droite de la fenêtre
+  (`park`, à taille fixe : un redimensionnement ne la remet pas en page), et l'afficher déplace
+  deux cadres (`unpark`). Même chose pour les onglets : un panneau défilant par onglet
+  (`_page(tabs=...)`). `grid_remove` / `grid` redessinaient chaque widget un par un (la page
+  apparaissait morceau par morceau sous Windows) ;
+- les commandes répétées sont dessinées sur **un seul canevas** : ligne de réglage
+  (`setting_row_class` : titre, description qui se replie, séparateur), `Segmented`,
+  `Dropdown`, `Slider` (valeur écrite à droite), liste des moments du replay ; le défilement
+  est un canevas léger (`scroll_frame_class`) : jamais de `CTkScrollableFrame` /
+  `CTkScrollbar` (qui force une mise en page complète à chaque changement de hauteur) ni de
+  `CTkTextbox` ;
+- les formes arrondies de CustomTkinter sont des polygones (`polygon_shapes`) : les coins en
+  glyphes de police coûtaient 8 éléments texte par cadre, le plus lent à dessiner sous Windows ;
 - les listes répétées utilisent des widgets Tk simples (`_label`, `_icon_label`,
   `_image_label`, `_light_icon_button`) : un `CTkLabel` avec image ou un `CTkButton` coûte
   trois fenêtres, cinq fois plus à construire et à afficher ;
-- une ligne de réglage est plate (titre, description, contrôle dans le même cadre) ;
-- un changement de page ou d'onglet reste sous 300 ms (test de stress : clics au hasard dès
+- les dialogues n'utilisent pas la recoloration de barre de titre de CustomTkinter (masquer,
+  `update()` complet, réafficher : un clignotement) mais `dark_titlebar` une fois affichés ;
+- un changement de page ou d'onglet reste sous 200 ms (test de stress : clics au hasard dès
   le lancement, partie qui démarre / s'arrête, fenêtre réduite, résultats des tâches de fond
   injectés n'importe quand).
 

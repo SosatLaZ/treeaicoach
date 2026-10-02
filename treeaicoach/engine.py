@@ -91,9 +91,12 @@ from treeaicoach.engine_vision import VisionMixin
 from treeaicoach.fmtutil import finite_loose as _finite, seconds_fr
 from treeaicoach.live_client import GameInfo
 from treeaicoach.scheduler import HeavyScheduler, MotionSnapshot, RateGovernor, burst_reason
-from treeaicoach.sysperf import CpuMeter, PerfBudget, RateMeter, RollingStats
+from treeaicoach.sysperf import CpuMeter, PerfBudget, RateMeter, RollingStats, ThreadCpuMeter, performance_summary
 
 log = logging.getLogger(__name__)
+
+#: In-game analysis tick after which the long-lived objects are frozen out of the GC (~5 s in).
+GC_FREEZE_TICK = 30
 
 
 class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, OverlayStateMixin, SelfCheckMixin):
@@ -230,7 +233,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._hud_cal: tuple[float, tuple[int, int] | None] = (-math.inf, None)
         self._preview_cache: tuple[int, np.ndarray] | None = None
         self._frame_id = 0
-        self._overlay_cache: tuple[float, Any] | None = None
+        self._overlay_cache: tuple | None = None    # (built_at, state, frame_id)
         self._overlay_visible = True
         self._demo_rects: tuple[Rect | None, Rect | None] | None = None
         self._muted = False
@@ -259,6 +262,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._stats = {k: RollingStats() for k in ("tick", "vision", "grab", "coach", "latency")}
         self._cap_rate = RateMeter()
         self._cpu = CpuMeter()
+        self._thread_cpu = ThreadCpuMeter()
+        self._ticks_in_game = 0
         self._stats_next = -math.inf
         self._win_info: Any = None
         self._unfocused_since: float | None = None
@@ -1111,6 +1116,12 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._update_fps(t)
         self._apply_perf_profile()
         self._serve_diag_requests(t)
+        self._ticks_in_game += 1
+        if self._ticks_in_game == GC_FREEZE_TICK and self._frame_source is None:
+            # game components loaded (icons, templates, models, data): out of the GC's way
+            from treeaicoach.sysperf import freeze_gc_once
+
+            freeze_gc_once()
         gt = (_finite(game.game_time) or 0.0) + min(max(0.0, t - game_t), 3.0)
         stagger = self.stagger if self.stagger is not None else bool(self._running and self._threads)
         verify_due = (self._frame_source is None and self._locate_method == "auto" and self._bad_since is None
@@ -1301,6 +1312,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             if now >= self._stats_next:
                 self._stats_next = now + STATS_EVERY_S
                 self._cpu.sample()
+                self._thread_cpu.sample()
             cap = self._capture
             timings = cap.timings() if cap is not None and hasattr(cap, "timings") else {}
             out["capture_backend"] = timings.get("backend") or (type(cap).__name__ if cap is not None else None)
@@ -1342,11 +1354,14 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 from treeaicoach import overlay as _ov  # stats published by the overlay thread
 
                 out["overlay"] = _ov.current_stats()
+                out["overlay_pushes"] = _ov.push_stats()
             except Exception:
                 out["overlay"] = None
             d = self._diag
             out["diagnostic"] = d.status() if d is not None else None
             out["selfcheck"] = self.selfcheck_summary()      # "Santé TreeAI" (selfcheck.py)
+            # "Performance": what TreeAI costs the game (CPU per thread, analysis / overlay / capture rates)
+            out["performance"] = performance_summary(out, self._thread_cpu.percent)
         except Exception:
             log.debug("health() failed", exc_info=True)
         return out

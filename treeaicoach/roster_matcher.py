@@ -142,6 +142,11 @@ MIN_SEP_FRAC = 0.33
 STACK_RING_MARGIN = 0.05
 STACK_RING_OWN = 0.6
 STACK_RING_OPP = 0.12
+#: ... or when it clears the threshold, has no ring of the other team's colour and stands at
+#: least STACK_CLEAR_FRAC diameters away (a fully visible icon 0.45-0.75 diameter from another
+#: one, its ring partly covered: measured on main + holdout + hard + botlane, 9 right icons
+#: recovered, no wrong one; 0 disables)
+STACK_CLEAR_FRAC = 0.45
 #: Re-calibrate when the mean number of confident matches over the recent frames drops
 #: below this fraction of the value measured right after calibration.
 RECAL_DROP = 0.5
@@ -1475,66 +1480,55 @@ class RosterMatcher:
             self._errors.exception("Roster matcher calibration failed")
             return None
 
-    def _calibrate(self, bgr: np.ndarray, store: bool, around: float | None = None
-                   ) -> float | None:
-        """Full sweep, or a narrow one (+-12 %) ``around`` a previous scale."""
+    def _calibrate(self, bgr: np.ndarray, store: bool, around: float | None = None,
+                   prior: float | None = None) -> float | None:
+        """Full sweep, or a narrow one (+-12 %) ``around`` a previous scale; ``prior``: the
+        scale the log-normal prior is centred on (default: the stored ratio, else
+        DEFAULT_SCALE)."""
         t0 = time.perf_counter()
         n_steps = int(math.log(SCALE_MAX / SCALE_MIN) / math.log(SCALE_STEP)) + 1
         scales = [SCALE_MIN * SCALE_STEP ** i for i in range(n_steps)]
         if around is not None:
             scales = [s for s in scales if abs(math.log(s / around)) <= 0.12] or [around]
-        def sweep(prior: float) -> tuple[float, float]:
-            quals = [self._scale_quality(bgr, s, CALIB_INNER_PX, prior) for s in scales]
-            i = int(np.argmax(quals))
-            # refine at the detection resolution around the best coarse scale
-            fine = [min(SCALE_MAX, max(SCALE_MIN, scales[i] * f)) for f in FINE_STEPS]
-            fq = [self._scale_quality(bgr, s, WORK_INNER_PX, prior) for s in fine]
-            # NCC tolerates a few % of scale error, so the quality curve has a plateau: take
-            # the (quality-weighted, log-scale) centre of the plateau rather than its argmax
-            q_ = max(fq)
-            w = np.clip(np.asarray(fq) - (q_ - PLATEAU), 0.0, None)
-            return float(np.exp(np.sum(w * np.log(fine)) / max(float(w.sum()), 1e-9))), q_
-
-        stored = self._stored_scale(bgr)
+        if prior is None:
+            prior = self._stored_scale(bgr) or DEFAULT_SCALE
+        quals = [self._scale_quality(bgr, s, CALIB_INNER_PX, prior) for s in scales]
+        i = int(np.argmax(quals))
+        # refine at the detection resolution around the best coarse scale
+        fine = [min(SCALE_MAX, max(SCALE_MIN, scales[i] * f)) for f in FINE_STEPS]
+        fq = [self._scale_quality(bgr, s, WORK_INNER_PX, prior) for s in fine]
+        # NCC tolerates a few % of scale error, so the quality curve has a plateau: take
+        # the (quality-weighted, log-scale) centre of the plateau rather than its argmax
+        q = max(fq)
+        w = np.clip(np.asarray(fq) - (q - PLATEAU), 0.0, None)
+        best = float(np.exp(np.sum(w * np.log(fine)) / max(float(w.sum()), 1e-9)))
         st = self._state
-        full = around is None
-        confident = False
-        if not CALIB_CERTIFY:
-            best, q = sweep(stored or DEFAULT_SCALE)
-            confident = True
-            st.confident = True
-        elif full:
-            # the evidence decides with the generic prior; the ratio stored by the previous
-            # games is the prior only when this frame's evidence is not confident
-            prior = DEFAULT_SCALE
-            best, q = sweep(prior)
+        confident = True
+        if CALIB_CERTIFY and q >= MIN_CALIB_QUALITY:
             spread: list = []
-            if q >= MIN_CALIB_QUALITY:
-                self._scale_quality(bgr, best, WORK_INNER_PX, prior, spread=spread)
+            self._scale_quality(bgr, best, WORK_INNER_PX, prior, spread=spread)
             confident = self._calib_spread(spread, best) >= CALIB_MIN_SPREAD
-            if not confident and stored is not None and abs(math.log(stored / prior)) > 0.01:
-                best, q = sweep(stored)
-        else:
-            # narrow confirmation (first frames, weak matches): never certifies a scale
-            best, q = sweep(stored or DEFAULT_SCALE)
         self.last_calib_ms = ms = 1000 * (time.perf_counter() - t0)
         if q < MIN_CALIB_QUALITY:
             log.info("Roster matcher: calibration inconclusive (q=%.3f, %.0f ms)", q, ms)
             st.calib.append((None, 0.0))
             return None
-        if full and not confident and st.scale is not None and not st.confident:
+        if not confident and st.scale is not None and not st.confident and \
+                len(st.calib) >= CALIB_FRAMES:
             # a provisional re-check that is still not confident: keep the current scale (a
             # scale change restarts the searches; base stacks make the sweeps noisy)
             st.retry_every = min(CALIB_RETRY_MAX, 2 * st.retry_every)
             return st.scale
         if confident and not st.confident:
             st.confident = True
-            if st.scale is not None and abs(math.log(best / st.scale)) < CALIB_KEEP:
+            if st.scale is not None and len(st.calib) >= CALIB_FRAMES and \
+                    abs(math.log(best / st.scale)) < CALIB_KEEP:
                 # certified: the provisional scale was right (no restart of the searches)
                 if store:
                     self._store_scale(bgr, st.scale)
                 return st.scale
-            st.calib.clear()                   # the provisional sweeps do not vote any more
+            if len(st.calib) >= CALIB_FRAMES:
+                st.calib.clear()               # the provisional sweeps do not vote any more
         st.calib.append((best, q))
         # combine the calibrations of the first frames (quality-weighted median)
         vals = sorted([c for c in st.calib[-CALIB_FRAMES:] if c[0] is not None],
@@ -1644,32 +1638,44 @@ class RosterMatcher:
                 st.confident = False
             self._size_key = key
         around: float | None = None              # None: full sweep
+        prior: float | None = None               # None: the stored ratio, else DEFAULT_SCALE
         need = False
         if st.scale is None:
-            # not calibrated yet: first frames, then a retry from time to time; a stored
-            # ratio for this minimap size (previous game) is only confirmed narrowly first
+            # not calibrated yet: first frames, then a retry from time to time. A full sweep:
+            # the ratio stored by the previous games is the prior, never the search range (a
+            # narrow sweep around a wrong stored ratio confirmed it, real reports: 0,104 /
+            # 0,108 for minutes at the start of every game, true ratio ~0,09)
             need = st.frames < CALIB_FRAMES or st.frames % RECAL_MIN_FRAMES == 0
-            if need and st.frames == 0:
-                around = self._stored_scale(bgr)
+            if need and st.frames == 0 and not CALIB_CERTIFY:
+                around = self._stored_scale(bgr)            # (pre-2.5 behaviour)
+            elif need and CALIB_CERTIFY:
+                prior = DEFAULT_SCALE
         elif len(st.calib) < CALIB_FRAMES and st.frames < 2 * CALIB_FRAMES:
             need, around = True, st.scale         # initial phase: confirm narrowly
+            if CALIB_CERTIFY and not st.confident:
+                prior = DEFAULT_SCALE             # (stored = this game's scale once confident)
         elif CALIB_CERTIFY and not st.confident and st.frames - st.retry_at >= st.retry_every:
-            # provisional scale (stored prior, base stack at 0:00...): full sweep with the
-            # generic prior until confident multi-icon evidence certifies it
-            need, around = True, None
+            # provisional scale (base stack at 0:00, few icons...): narrow re-check with the
+            # generic prior until confident multi-icon evidence certifies a scale
+            need, around, prior = True, st.scale, DEFAULT_SCALE
             st.retry_at = st.frames
         elif st.since_calib >= RECAL_WEAK_FRAMES and len(st.conf_hist) >= RECAL_WINDOW:
             recent = float(np.mean(st.conf_hist[-RECAL_WINDOW:]))
             if recent < max(RECAL_DROP * st.ref_conf, 0.5):
-                # matches became weak (or never were): the scale may be a bit off. Narrow
-                # sweep around it only (cost): a new minimap size is a new key (full sweep)
-                need, around = True, st.scale
+                # matches became weak (or never were): the scale may be off. A full sweep
+                # with the generic prior (a narrow one around the current scale needed two
+                # steps, minutes apart, to leave a wrong scale: 0,104 -> 0,097 -> 0,090)
+                need = True
+                if CALIB_CERTIFY:
+                    prior = DEFAULT_SCALE
+                else:
+                    around = st.scale
                 log.info("Roster matcher: weak matches (%.1f, reference %.1f): re-calibrating",
                          recent, st.ref_conf)
                 st.calib.clear()
                 st.calib.append((st.scale, 0.2))     # the old scale keeps a vote
         if need:
-            self._calibrate(bgr, store=True, around=around)
+            self._calibrate(bgr, store=True, around=around, prior=prior)
         if st.scale is not None:
             return st.scale
         return self._stored_scale(bgr) or DEFAULT_SCALE
@@ -2695,11 +2701,13 @@ class RosterMatcher:
             own_c, opp_c = (c.f_en, c.f_al) if e_c.relation == "enemy" else (c.f_al, c.f_en)
             ringed = tot >= thr + STACK_RING_MARGIN and own_c >= STACK_RING_OWN and \
                 opp_c <= STACK_RING_OPP
+            clear = STACK_CLEAR_FRAC > 0 and tot >= thr and opp_c <= STACK_RING_OPP
             for a in accepted:
                 dd = math.hypot(c.x - a.x, c.y - a.y) / max(D_work, 1e-6)
                 if dd < MIN_SEP_FRAC:
                     return True
                 if dd < STACK_FRAC and not stacked_ok and not ringed and \
+                        not (clear and dd >= STACK_CLEAR_FRAC) and \
                         tot < max(thr + 0.1, 0.85 * a.tot):
                     return True
             return False

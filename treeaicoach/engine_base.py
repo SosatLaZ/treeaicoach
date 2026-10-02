@@ -46,7 +46,8 @@ VERIFY_BAD_S = 3.0               # verify() below threshold this long -> relocat
 LOCATE_RETRY_S = 10.0            # retry the auto location this often while on the fallback rect
 THREAT_HOLD_S = 2.0              # overlay threat = max raw gank level over this window
 DEATH_RECAP_DELAY_S = 2.0        # the death recap is spoken this long after my death
-OVERLAY_MIN_PERIOD_S = 1.0 / 12  # get_overlay_state() rebuilt at most at 12 Hz
+OVERLAY_MIN_PERIOD_S = 1.0 / 12  # get_overlay_state() rebuilt at most at 12 Hz ...
+OVERLAY_MAX_AGE_S = 0.5          # ... after a new tick / while animating, else at least this often
 FLASH_DECAY_S = 2.0              # danger flash fades out over this duration
 HOTKEY_DEBOUNCE_S = 0.8          # repeated F9 presses closer than this are ignored
 MUTE_DELAY_S = 1.6               # "Voix coupée" is spoken, then the voice is muted

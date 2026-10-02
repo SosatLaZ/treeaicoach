@@ -151,7 +151,8 @@ def test_settings_controls_write_the_config(home: Path, tmp_path: Path) -> None:
         assert radar.winfo_manager() == "grid"
         app.open_settings("Général")
         tu._pump(app, 0.05)
-        assert radar.winfo_manager() == ""                              # other tab: hidden again
+        aff = app.pages["settings"].tab_bodies["Affichage"].scroll        # other tab: its panel is off-screen
+        assert aff.place_info()["relx"] == "1" and app.pages["settings"].current_tab == "Général"
         # an engine-start setting rebuilds the engine (detector kept)
         n = len(engines)
         app.set_option("hotkey_diag", "Ctrl+F7")

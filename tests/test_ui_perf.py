@@ -38,22 +38,19 @@ def test_toggle_image_reads_on_off() -> None:
 
 
 @tu.needs_display
-def test_lazy_pages_and_quiet_timers(home: Path, tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(ui, "PREBUILD_DELAY_MS", 0)
+def test_eager_pages_and_quiet_timers(home: Path, tmp_path: Path) -> None:
     app, voice, (engines, _ov) = tu._build(tmp_path)
     try:
-        assert app._built == {"dashboard"}                     # only the visible page at start-up
-        assert "settings" in app.pages and dict.get(app.pages, "settings") is None
-        tu._pump(app, 1.0)
-        # no implicit build: a widget of a page not built yet simply does not exist (code uses getattr),
-        # a page is built when it is shown (or in an idle slot), its tabs on their first visit
-        assert getattr(app, "_update_check_btn", None) is None and app._built == {"dashboard"}
+        # the window opens on the dashboard; every other page and tab is built in the start-up slots
+        assert app._built == {"dashboard"}
+        tu._pump(app, 20.0, lambda: app._startup_done)
+        assert app._built == set(app._page_builders)
+        assert app._update_check_btn is not None and not app.pages["settings"].pending_tabs()
         app.show_page("settings", "Mises à jour")
-        assert app._update_check_btn is not None and app._built == {"dashboard", "settings"}
-        assert "Voix" in app.pages["settings"].pending_tabs()
+        assert app.pages["settings"].current_tab == "Mises à jour"
         t0 = time.perf_counter()
         app.show_page("help")
-        assert "help" in app._built and app._current_page == "help"
+        assert app._current_page == "help"
         app.root.update()
         t1 = time.perf_counter()
         app.show_page("settings")
@@ -67,7 +64,7 @@ def test_lazy_pages_and_quiet_timers(home: Path, tmp_path: Path, monkeypatch) ->
         assert app.clock_lbl.cget("text") == before
         app.show_page("dashboard")
         tu._pump(app, 1.5, lambda: app.clock_lbl.cget("text") != before)
-        app.build_all_pages()
+        app.build_all_pages()                                  # idempotent
         assert app._built == set(app._page_builders)
     finally:
         app.close()
@@ -75,7 +72,6 @@ def test_lazy_pages_and_quiet_timers(home: Path, tmp_path: Path, monkeypatch) ->
 
 @tu.needs_display
 def test_light_controls(home: Path, tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(ui, "PREBUILD_DELAY_MS", 0)
     app, voice, _ = tu._build(tmp_path)
     try:
         calls: list = []
@@ -148,7 +144,6 @@ def test_champ_select_card(home: Path, tmp_path: Path, monkeypatch) -> None:
 
     card = SimpleNamespace(title="AHRI · MID", lines=("Face à Zed (probable)", "Joue loin : il a la priorité"))
     monkeypatch.setattr(champ_select, "pregame_card", lambda: card)
-    monkeypatch.setattr(ui, "PREBUILD_DELAY_MS", 0)
     app, _voice, _ = tu._build(tmp_path, cfg=Config(ui_onboarding_done=True, ui_seen_changelog="1.5",
                                                      autostart=False))
     try:

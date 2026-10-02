@@ -86,6 +86,10 @@ CAPTURE_OFF_S = 5.0          # ... live frames this long -> cleared
 MINIMAP_ON_S = 3.0           # 2: lost / covered / fallback this long -> problem
 MINIMAP_OFF_S = 5.0
 MINIMAP_FAILS = 3            # consecutive failed locations -> "ouvre Réglages > Calibrer"
+#: game start (loading screen, opening fade): a minimap not found yet is not a problem before
+#: this game time (the engine retries every 2 s meanwhile, see engine_capture.START_GRACE_GT_S;
+#: real reports: "Minimap introuvable : ouvre Réglages > Calibrer" at 0:00 every game)
+MINIMAP_START_GRACE_S = 90.0
 DRIFT_ABS = 0.6              # verify score below this ...
 DRIFT_REL = 0.75             # ... and below this fraction of the score at location ...
 DRIFT_ON_S = 15.0            # ... for this long -> relocate (cheap hint first)
@@ -589,6 +593,8 @@ class SelfCheck:
         bad = None
         if measurable:
             bad = s.locate_method == "fallback" or s.bad_s is not None or s.loc_fails > 0
+            if bad and s.game_time is not None and s.game_time < MINIMAP_START_GRACE_S:
+                bad = None                     # game start: not judged yet
         active = st.hold.update(t, bad)
         st.max_fails = max(st.max_fails, int(s.loc_fails))
         if active:

@@ -67,7 +67,9 @@ class AnalysisPageMixin:
     # ------------------------------------------------------------------ analysis page
     def _build_analysis_page(self) -> Any:
         ctk = self.ctk
-        page, right, body = self._page("Analyses", "Tes parties, tes progrès et le replay", max_width=1120)
+        page, right, body = self._page("Analyses", "Tes parties, tes progrès et le replay", max_width=1120,
+                                       tabs=("Parties", "Progrès", "Replay"))
+        tabs = body.tab_bodies
         b = self._button(right, "Dernier rapport", self.open_last_report, "primary", icon="report",
                          height=BTN_H_SMALL)
         b.grid(row=0, column=0, padx=(0, CTL_GAP))
@@ -78,14 +80,12 @@ class AnalysisPageMixin:
         b = self._button(right, "Dossier", self.open_games_dir, "ghost", icon="folder", height=BTN_H_SMALL)
         b.grid(row=0, column=2)
         self._tip(b, "Ouvre le dossier des parties et des rapports.")
-        body._sections = []  # type: ignore[attr-defined]
-
         # ---------------------------------------------------------------- tab "Parties"
-        games = self._frame(body)
+        games = self._frame(tabs["Parties"])
         games.grid(row=0, column=0, sticky="ew")
         games.grid_columnconfigure(0, weight=1)
         games.title = "Parties"  # type: ignore[attr-defined]
-        body._sections.append(games)
+        tabs["Parties"]._sections.append(games)
         top = self._frame(games)
         top.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         top.grid_columnconfigure(0, weight=1)
@@ -120,21 +120,21 @@ class AnalysisPageMixin:
         self._games_empty(text="Chargement…")
 
         # ---------------------------------------------------------------- tab "Progrès"
-        prog = self._frame(body)
-        prog.grid(row=1, column=0, sticky="ew")
+        prog = self._frame(tabs["Progrès"])
+        prog.grid(row=0, column=0, sticky="ew")
         prog.grid_columnconfigure(0, weight=1)
         prog.title = "Progrès"  # type: ignore[attr-defined]
-        body._sections.append(prog)
+        tabs["Progrès"]._sections.append(prog)
         self.progress_box = prog
         self._progress_sig: Any = None
         self._label(prog, "Chargement…", self.fonts.small, DIM, anchor="w").grid(row=0, column=0, sticky="w")
 
         # ---------------------------------------------------------------- tab "Replay"
-        rp = self._frame(body)
-        rp.grid(row=2, column=0, sticky="ew")
+        rp = self._frame(tabs["Replay"])
+        rp.grid(row=0, column=0, sticky="ew")
         rp.grid_columnconfigure(1, weight=1)
         rp.title = "Replay"  # type: ignore[attr-defined]
-        body._sections.append(rp)
+        tabs["Replay"]._sections.append(rp)
         self._build_replay(rp)
 
         def on_tab(label: str) -> None:       # clicked or programmatic (open_replay, tests): load what it shows
@@ -218,8 +218,8 @@ class AnalysisPageMixin:
 
     @_guarded
     def _show_games(self, games: list[dict]) -> None:
-        """New history: dashboard "avant la partie"; the Analyses table is redrawn only when it is
-        on screen and the history changed (50 rows of widgets are not rebuilt for nothing). After a
+        """New history: dashboard "avant la partie"; the Analyses table is redrawn when the history
+        changed (hidden page: only outside a game). After a
         game, the new record is announced once (report and replay one click away on "En jeu")."""
         watch = self._post_game_watch
         if watch is not None and games:
@@ -231,7 +231,10 @@ class AnalysisPageMixin:
         self._games_sig = tuple((str(game_field(g, "start", "date", default="") or ""), game_result(g),
                                  game_field(g, "precision"), str(_game_json_path(g) or "")) for g in games[:50])
         self.refresh_pregame()
-        if "analysis" in self._built and self._current_page == "analysis" and self._games_sig != self._games_shown_sig:
+        # drawn now even when the page is hidden (it is parked off-screen: built and laid out without
+        # being painted, so the first visit shows the finished table); not during a game
+        if ("analysis" in self._built and self._games_sig != self._games_shown_sig
+                and (self._current_page == "analysis" or not self._in_game())):
             self._show_games_table()
 
     @_guarded

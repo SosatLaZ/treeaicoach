@@ -571,7 +571,9 @@ class ChampionDB:
             urls.insert(0, self.base_icon_url(alias))
         data = b""
         url = urls[-1]
-        for i, url in enumerate(urls):
+        i = 0
+        while i < len(urls):
+            url = urls[i]
             try:
                 data = self._fetch(url)
                 break
@@ -580,7 +582,17 @@ class ChampionDB:
                     exc.close()
                 except Exception:
                     pass
+                if exc.code in (403, 404, 410) and i == len(urls) - 1 and skin > 0 and \
+                        key not in getattr(self, "_parent_tried", ()):
+                    # a chroma has no circle icon of its own: the minimap shows its parent
+                    # skin's (real games: Kindred skin 9 -> 404, the enemy jungler matched with
+                    # the base portrait, almost never identified, ganks missed)
+                    self._parent_tried = getattr(self, "_parent_tried", set()) | {key}
+                    parent = self._parent_skin(alias, skin)
+                    if parent is not None:
+                        urls.append(parent)
                 if exc.code in (403, 404, 410) and i < len(urls) - 1:
+                    i += 1
                     continue                         # try the other file name
                 with self._lock:
                     if exc.code in (403, 404, 410):
@@ -619,6 +631,21 @@ class ChampionDB:
             self._downloaded.add(key)
             self._lru.pop(key, None)
         log.info("Skin icon cached: %s skin %d", alias, skin)
+
+    def _parent_skin(self, alias: str, skin: int) -> str | None:
+        """URL of the circle icon of the skin a chroma ``skin`` belongs to: the highest skin
+        number below it that has a circle icon (CommunityDragon folder listing), else None."""
+        try:
+            base = (self.base_url or CDRAGON_CHARACTERS_URL).rstrip("/")
+            a = urllib.parse.quote(alias.lower())
+            listing = self._fetch(f"{base}/{a}/hud/").decode("utf-8", "replace")
+            nums = {int(n) for n in re.findall(rf"{re.escape(alias.lower())}_circle_(\d+)\.png", listing)}
+            below = [n for n in nums if 0 < n < int(skin)]
+            if not below:
+                return None
+            return self.skin_icon_url(alias, max(below))
+        except Exception:
+            return None
 
     def _fetch(self, url: str) -> bytes:
         """GET ``url`` (no proxy for loopback test servers); raises urllib errors."""

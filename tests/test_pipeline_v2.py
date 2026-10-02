@@ -10,10 +10,12 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace as NS
 
+import numpy as np
 import pytest
 
 from treeaicoach import overlay as ov
 from treeaicoach import overlay_render as orr
+from treeaicoach import toasts as tst
 from treeaicoach import paths
 from treeaicoach.capture import Rect
 from treeaicoach.config import Config
@@ -65,7 +67,7 @@ def test_low_end_budget_slows_and_caps():
     assert ov._budget_fps == 15.0
     eng2, clock2, _ = TE.live_engine(cap, TE.FakeLocator(cap), cfg=replace(Config(), perf_mode="normal"))
     run(eng2, clock2, 2)
-    assert ov._budget_fps == 30.0
+    assert ov._budget_fps == 20.0
 
 
 def test_staggered_coaching_slots_one_per_tick():
@@ -250,7 +252,7 @@ class FakeWin:
 def manager_and_windows(monkeypatch):
     monkeypatch.setattr(ov, "_monitor_rect_at", lambda api, x, y: None)
     m = ov.OverlayManager(Config(), lambda: None)
-    wins = {n: FakeWin(n) for n in ("flash", "radar", "minimap", "hud", "toasts") + ov.WORLD_WINDOWS}
+    wins = {n: FakeWin(n) for n in ov.FLASH_WINDOWS + ("radar", "minimap", "hud", "toasts") + ov.WORLD_WINDOWS}
     api = NS(user32=NS(GetSystemMetrics=lambda i: 1080 if i else 1920))
     return m, wins, api
 
@@ -277,7 +279,8 @@ def test_minimap_layer_redrawn_only_when_it_changes(monkeypatch):
     m._refresh(api, wins, st2, cfg, False, {}, None, now=10.12)
     assert wins["minimap"].updates == 2
     m._refresh(api, wins, st2, cfg, False, {}, None, now=10.12 + ov.FORCE_REDRAW_S + 0.01)
-    assert wins["minimap"].updates == 3                            # forced refresh (safety)
+    assert m.stats["render_minimap"]["n"] == 3                     # forced re-render (safety) ...
+    assert wins["minimap"].updates == 2                            # ... identical pixels: not re-sent
     stats = m.stats
     assert "render_minimap" in stats and "ulw" in stats and stats["skipped"].get("minimap", 0) >= 2
 
@@ -289,17 +292,37 @@ def test_prediction_moves_the_minimap_layer(monkeypatch):
     m._refresh(api, wins, st, Config(), False, {}, None, now=1.0)
     pos["LeeSin"] = ((0.41, 0.40), 0.1)                            # same tick, later render time
     m._refresh(api, wins, st, Config(), False, {}, None, now=1.034)
+    assert wins["minimap"].updates == 1                            # (rate cap: <= MM_FAST_HZ uploads / s)
+    m._refresh(api, wins, st, Config(), False, {}, None, now=1.0 + 1.0 / ov.MM_FAST_HZ + 0.001)
     assert wins["minimap"].updates == 2
 
 
 def test_flash_fades_with_constant_alpha(monkeypatch):
     m, wins, api = manager_and_windows(monkeypatch)
     key = m._refresh(api, wins, overlay_state(flash=1.0), Config(), False, {}, None, now=1.0)
-    assert wins["flash"].updates == 1 and wins["flash"].alphas[-1] == 255
+    for n in ov.FLASH_WINDOWS:                    # four thin edge windows, uploaded once
+        assert wins[n].updates == 1 and wins[n].alphas[-1] == 255
     key = m._refresh(api, wins, overlay_state(flash=0.5), Config(), False, {}, key, now=1.1)
-    assert wins["flash"].updates == 1 and wins["flash"].alphas[-1] == ("alpha", 128)
+    for n in ov.FLASH_WINDOWS:
+        assert wins[n].updates == 1 and wins[n].alphas[-1] == ("alpha", 128)
     m._refresh(api, wins, overlay_state(flash=0.0), Config(), False, {}, key, now=1.2)
-    assert not wins["flash"].visible
+    assert not any(wins[n].visible for n in ov.FLASH_WINDOWS)
+    # a new flash with the same geometry: the cached strips are uploaded again, nothing re-rendered
+    m._refresh(api, wins, overlay_state(flash=1.0), Config(), False, {}, None, now=5.0)
+    assert m.stats["render_flash"]["n"] == 1 and wins["flash_t"].updates == 2
+
+
+def test_flash_strips_are_small_and_cover_the_frame():
+    from treeaicoach import overlay_render as orr
+
+    w, h, th = 2560, 1440, ov.flash_thickness((0, 0, 2560, 1440))
+    img = orr.render_flash(w, h, 1.0, [(2000, 1000, 500, 400)], thickness=th)
+    strips = ov.flash_strip_rects(w, h, len(orr.flash_profile(th)))
+    mask = np.zeros((h, w), bool)
+    for x, y, sw, sh in strips:
+        mask[y:y + sh, x:x + sw] = True
+    assert not img[..., 3][~mask].any()                    # every lit pixel is in a strip
+    assert sum(sw * sh for _x, _y, sw, sh in strips) < 0.12 * w * h     # vs one full-screen window
 
 
 def test_focus_hiding_with_grace(monkeypatch):
@@ -446,3 +469,61 @@ def test_toasts_have_no_em_dash():
     assert toasts.no_em_dash("Thresh — Rayonnement du vide (2e objet)") == "Thresh · Rayonnement du vide (2e objet)"
     img = toasts.render_toast("praise", "Thresh — Rayonnement du vide", "Bien joué")
     assert img.ndim == 3 and img.shape[2] == 4 and img[..., 3].max() > 0
+
+
+# ------------------------------------------------------------------ overlay pacing (game first)
+def test_overlay_loop_rate_follows_what_animates():
+    assert ov.loop_fps(20.0, 0) == ov.CALM_LOOP_HZ
+    assert ov.loop_fps(20.0, 1) == ov.MM_FAST_HZ
+    assert ov.loop_fps(20.0, 2) == 20.0 and ov.loop_fps(6.0, 1) == 6.0
+    t = tst.Toast("warning", "X", "", None, "k", 0.0, 4.0)
+    assert ov.toasts_animating(NS(toasts=[])) is None
+    assert ov.toasts_animating(NS(toasts=[tst.ToastView(t, 0.1)])) is True        # sliding in
+    assert ov.toasts_animating(NS(toasts=[tst.ToastView(t, 2.0)])) is False       # held
+    assert ov.toasts_animating(NS(toasts=[tst.ToastView(t, 3.7)])) is True        # fading out
+
+
+def test_calm_minimap_layer_uploads_at_most_mm_calm_hz(monkeypatch):
+    m, wins, api = manager_and_windows(monkeypatch)
+    e = orr.EnemyView(key="Ahri", alias="Ahri", name="Ahri", visible=True, uv=(0.4, 0.4), age=0.1)
+    ov.reset_push_stats()
+    for i in range(40):                            # 2 s at 20 fps, one champion walking 0.5 px / frame
+        uv = (0.4 + i * 0.5 / 280.0, 0.4)
+        st = overlay_state(enemies=[replace(e, uv=uv)])
+        assert not ov.needs_fast_refresh(st)
+        m._refresh(api, wins, st, Config(), False, {}, None, now=10.0 + i * 0.05)
+    assert 2 <= wins["minimap"].updates <= 2 * ov.MM_CALM_HZ + 1
+    assert m._tier == 0
+
+
+def test_blank_minimap_layer_hides_its_window(monkeypatch):
+    m, wins, api = manager_and_windows(monkeypatch)
+    monkeypatch.setattr(orr, "render_minimap", lambda *a, **k: np.zeros((280, 280, 4), np.uint8))
+    m._refresh(api, wins, overlay_state(), Config(), False, {}, None, now=1.0)
+    assert not wins["minimap"].visible and wins["minimap"].updates == 0
+    n = m.stats["render_minimap"]["n"]
+    m._refresh(api, wins, overlay_state(), Config(), False, {}, None, now=1.05)
+    assert m.stats["render_minimap"]["n"] == n           # not re-rendered every frame while blank
+
+
+def test_push_accounting():
+    ov.reset_push_stats()
+    ov.note_push("minimap", 1000)
+    ov.note_push("minimap", 1000)
+    ov.note_push("flash_t", 0)
+    ov.note_push("hud", -1)
+    st = ov.push_stats()
+    assert st["pushes"] == 2 and st["bytes"] == 2000 and st["alpha"] == 1 and st["topmost"] == 1
+    assert st["layers"]["minimap"] == [2, 2000] and st["pushes_per_s"] > 0
+
+
+def test_play_badge_hold_frames_not_uploaded():
+    from treeaicoach import fx_overlay as fo
+    from treeaicoach import fx_render as fx
+
+    keys, t = [], 0.0
+    while (st := fx.anim_state(t, "big")) is not None:
+        keys.append(fo.anim_key(st))
+        t += 1.0 / fo.ANIM_FPS
+    uploads = sum(1 for i, k in enumerate(keys) if i == 0 or k != keys[i - 1])
+    assert uploads < 0.7 * len(keys) and uploads < fx.DURATION["big"] * 30 / 2

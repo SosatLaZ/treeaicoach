@@ -211,9 +211,16 @@ class PerfProfile:
     extras: dict[str, Any] = field(default_factory=dict)
 
 
+#: Measured with ``tools/perf_budget.py`` (real engine + overlay threads, 60 s) and the detection gym
+#: (``tools/det_gym.py --quick``, quality unchanged): the generic ONNX extras every 2nd frame give
+#: the same detections (they also run at once when something new appears) for ~3 % less CPU per
+#: frame; calm detection 5 img/s instead of 6 (-17 % analysis CPU; 4 seeds x laning / custom skin
+#: after warm-up: recall, precision, identity, ghosts within noise, position p95 +0.0007), bursts at
+#: ``target_fps`` unchanged; the overlay is paced by what animates (overlay.py), 20 img/s only
+#: while a toast slides.
 PROFILES: dict[str, PerfProfile] = {
-    "normal": PerfProfile("normal", calm_fps=6.0, burst_fps=12.0, overlay_fps=30.0, heavy_hz=2.0,
-                          verify_s=1.0, onnx_every=1, cv_threads=2, onnx_threads=2, lost_every=4),
+    "normal": PerfProfile("normal", calm_fps=5.0, burst_fps=12.0, overlay_fps=20.0, heavy_hz=2.0,
+                          verify_s=1.0, onnx_every=2, cv_threads=2, onnx_threads=2, lost_every=4),
     "low_end": PerfProfile("low_end", calm_fps=4.0, burst_fps=8.0, overlay_fps=15.0, heavy_hz=1.0,
                            verify_s=1.5, onnx_every=4, cv_threads=1, onnx_threads=1, lost_every=8),
 }
@@ -226,7 +233,7 @@ LOAD_LEVELS: tuple[str, ...] = ("normal", "allege", "minimal")
 def degraded(p: PerfProfile, level: int) -> PerfProfile:
     """``p`` with the cost cuts of load ``level`` (0 = unchanged): generic ONNX extras rarer, ring /
     stack proposals and the whole-map search of lost champions every Nth frame, minimap
-    verification less often, overlay frame rate capped (15 img/s at "minimal"), coaching stages
+    verification less often, overlay frame rate capped (15 then 12 img/s), coaching stages
     slower (staggered further apart). The detection rates are kept: the cuts make each analysis
     tick cheaper so that the rate is reached again."""
     lvl = max(0, min(len(LOAD_LEVELS) - 1, int(level)))
@@ -235,11 +242,11 @@ def degraded(p: PerfProfile, level: int) -> PerfProfile:
     if lvl == 1:
         return replace(p, onnx_every=max(4, 2 * p.onnx_every), ring_every=max(4, p.ring_every),
                        stack_every=max(4, p.stack_every), lost_every=max(8, p.lost_every),
-                       verify_s=max(1.5, p.verify_s), overlay_fps=min(20.0, p.overlay_fps),
+                       verify_s=max(1.5, p.verify_s), overlay_fps=min(15.0, p.overlay_fps),
                        heavy_hz=min(1.0, p.heavy_hz), load=LOAD_LEVELS[1])
     return replace(p, onnx_every=max(16, p.onnx_every), ring_every=max(8, p.ring_every),
                    stack_every=max(8, p.stack_every), lost_every=max(12, p.lost_every),
-                   verify_s=max(2.0, p.verify_s), overlay_fps=min(15.0, p.overlay_fps),
+                   verify_s=max(2.0, p.verify_s), overlay_fps=min(12.0, p.overlay_fps),
                    heavy_hz=min(0.5, p.heavy_hz), cv_threads=1, load=LOAD_LEVELS[2])
 
 
@@ -336,3 +343,222 @@ def precise_sleep(seconds: float, stop: threading.Event | None = None, chunk: fl
         if left <= 0:
             return False
         time.sleep(min(left, chunk))
+
+
+# ======================================================================================
+# Native thread pools, GC, per-thread CPU, "Performance" summary (tools/perf_budget.py)
+# ======================================================================================
+def limit_blas_threads(n: int = 1) -> dict[str, Any]:
+    """Force numpy's OpenBLAS to ``n`` threads at run time (``openblas_set_num_threads``).
+
+    ``treeaicoach/__init__`` sets ``OPENBLAS_NUM_THREADS=1`` before numpy loads; when numpy was
+    imported first (a launcher, a test runner, a tool) OpenBLAS starts one busy-waiting worker per
+    core: measured with ``tools/perf_budget.py`` on 4 cores, 3 workers burned 67 % of a core in
+    steady state for the small matrix products of the detection. Returns ``{"blas": lib name,
+    "threads": n}`` or ``{}`` when no OpenBLAS was found. Never raises."""
+    out: dict[str, Any] = {}
+    try:
+        if "numpy" not in sys.modules:
+            return out
+        import ctypes
+        import glob
+
+        import numpy
+
+        base = os.path.dirname(os.path.abspath(numpy.__file__))
+        cands: list[str] = []
+        for d in (os.path.join(base, os.pardir, "numpy.libs"), os.path.join(base, ".libs"), base):
+            cands += glob.glob(os.path.join(d, "*openblas*"))
+        for path in cands:
+            try:
+                lib = ctypes.CDLL(path)
+            except OSError:
+                continue
+            for sym in ("openblas_set_num_threads64_", "openblas_set_num_threads", "openblas_set_num_threads_"):
+                fn = getattr(lib, sym, None)
+                if fn is None:
+                    continue
+                fn.argtypes = [ctypes.c_int]
+                fn(int(max(1, n)))
+                out = {"blas": os.path.basename(path), "threads": int(max(1, n))}
+                APPLIED["blas_threads"] = out["threads"]
+                return out
+    except Exception:
+        log.debug("limit_blas_threads failed", exc_info=True)
+    return out
+
+
+_gc_frozen = False
+
+
+def freeze_gc_once() -> bool:
+    """``gc.freeze()`` once, after the game's components are loaded (champion icons, templates,
+    models, data tables): those long-lived objects move to the permanent generation, so a later
+    full collection (a pause of the analysis AND overlay threads, GIL held) does not walk them
+    again. True the first time. Never raises."""
+    global _gc_frozen
+    if _gc_frozen:
+        return False
+    try:
+        import gc
+
+        gc.collect()
+        gc.freeze()
+        _gc_frozen = True
+        APPLIED["gc_frozen"] = gc.get_freeze_count()
+        return True
+    except Exception:
+        return False
+
+
+def _thread_seconds_win(native_ids: list[int]) -> dict[int, float]:
+    import ctypes
+    from ctypes import wintypes as wt
+
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.OpenThread.restype = wt.HANDLE
+    k.OpenThread.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+    k.GetThreadTimes.argtypes = [wt.HANDLE] + [ctypes.POINTER(wt.FILETIME)] * 4
+    k.CloseHandle.argtypes = [wt.HANDLE]
+    out: dict[int, float] = {}
+    for tid in native_ids:
+        h = k.OpenThread(0x0800, False, int(tid))          # THREAD_QUERY_LIMITED_INFORMATION
+        if not h:
+            continue
+        try:
+            c, e, kt, ut = (wt.FILETIME() for _ in range(4))
+            if k.GetThreadTimes(h, ctypes.byref(c), ctypes.byref(e), ctypes.byref(kt), ctypes.byref(ut)):
+                out[int(tid)] = sum(((f.dwHighDateTime << 32) | f.dwLowDateTime) for f in (kt, ut)) / 1e7
+        finally:
+            k.CloseHandle(h)
+    return out
+
+
+def _thread_seconds_linux(native_ids: list[int]) -> dict[int, float]:
+    tck = float(os.sysconf("SC_CLK_TCK")) if hasattr(os, "sysconf") else 100.0
+    out: dict[int, float] = {}
+    for tid in native_ids:
+        try:
+            with open(f"/proc/self/task/{int(tid)}/stat", encoding="ascii", errors="replace") as fh:
+                stat = fh.read()
+            rest = stat[stat.rindex(")") + 2:].split()
+            out[int(tid)] = (int(rest[11]) + int(rest[12])) / tck
+        except Exception:
+            continue
+    return out
+
+
+#: Python thread name -> short name of the "Performance" summary (the rest is grouped by name).
+THREAD_GROUPS = (("TreeAICoach-analysis", "analyse"), ("overlay", "overlay"), ("TreeAICoach-fx", "badges"),
+                 ("TreeAICoach-poller", "api"), ("MainThread", "interface"), ("TreeAICoach-voice", "voix"),
+                 ("treeai-beep", "voix"), ("TreeAICoach-tts", "voix"), ("TreeAICoach-ai", "ia"),
+                 ("champ-select", "lcu"), ("TreeAI-hotkeys", "raccourcis"), ("TreeAICoach-diag", "diagnostic"))
+
+
+def thread_group(name: str) -> str:
+    for prefix, short in THREAD_GROUPS:
+        if str(name).startswith(prefix):
+            return short
+    return "autres"
+
+
+class ThreadCpuMeter:
+    """CPU % of one core per Python thread group between two :meth:`sample` calls (>= 0.5 s apart),
+    + ``"natif"`` = the process total minus the Python threads (OpenCV / onnxruntime / BLAS pools,
+    audio). Windows: ``GetThreadTimes``; Linux: ``/proc``; elsewhere only the process total.
+    Cheap (one ``OpenThread`` per Python thread). Never raises."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._last: tuple[float, float, dict[int, tuple[str, float]]] | None = None
+        self.percent: dict[str, float] = {}
+
+    @staticmethod
+    def _now_threads() -> dict[int, tuple[str, float]]:
+        ths = [(int(th.native_id), th.name) for th in threading.enumerate()
+               if getattr(th, "native_id", None) is not None]
+        ids = [tid for tid, _ in ths]
+        if sys.platform == "win32":
+            secs = _thread_seconds_win(ids)
+        elif sys.platform.startswith("linux"):
+            secs = _thread_seconds_linux(ids)
+        else:
+            secs = {}
+        return {tid: (name, secs[tid]) for tid, name in ths if tid in secs}
+
+    def sample(self) -> dict[str, float]:
+        try:
+            now, proc = float(self._clock()), time.process_time()
+            if self._last is not None and now - self._last[0] < 0.5:
+                return self.percent
+            cur = self._now_threads()
+            if self._last is not None:
+                t0, p0, prev = self._last
+                dt = max(1e-6, now - t0)
+                groups: dict[str, float] = {}
+                py = 0.0
+                for tid, (name, sec) in cur.items():
+                    d = max(0.0, sec - prev.get(tid, (name, sec))[1])
+                    py += d
+                    g = thread_group(name)
+                    groups[g] = groups.get(g, 0.0) + d
+                if cur:
+                    groups["natif"] = max(0.0, (proc - p0) - py)
+                self.percent = {k: round(100.0 * v / dt, 1) for k, v in
+                                sorted(groups.items(), key=lambda kv: -kv[1]) if v > 0}
+            self._last = (now, proc, cur)
+        except Exception:
+            log.debug("ThreadCpuMeter.sample failed", exc_info=True)
+        return self.percent
+
+
+#: "Performance" summary thresholds: total CPU (% of one core) / overlay uploads per second.
+PERF_CPU_OK, PERF_CPU_HIGH = 12.0, 25.0
+PERF_PUSH_OK = 8.0
+
+
+def performance_summary(health: dict[str, Any] | None, threads: dict[str, float] | None = None) -> dict[str, Any]:
+    """What TreeAI costs the game right now (data for the launcher's status / diagnostic):
+    ``{"level": "ok" | "eleve" | "lourd", "text", "cpu_pct", "threads", "detect_fps",
+    "tick_ms", "tick_p95_ms", "overlay_fps", "overlay_uploads_per_s", "overlay_kb_per_s",
+    "capture_per_s", "profile", "load", "blas_threads"}`` from ``engine.health()``. Pure;
+    never raises (missing fields are None)."""
+    h = health or {}
+    out: dict[str, Any] = {}
+    try:
+        ov = h.get("overlay") or {}
+        cap = h.get("capture") or {}
+        tick = h.get("tick_ms") or {}
+        bud = h.get("budget") or {}
+        rate = h.get("detect_rate") or {}
+        pushes = h.get("overlay_pushes") or {}
+        cpu = h.get("cpu_percent")
+        out = {"cpu_pct": cpu, "threads": dict(threads or {}),
+               "detect_fps": rate.get("measured_fps"), "detect_target_fps": rate.get("target_fps"),
+               "tick_ms": tick.get("mean"), "tick_p95_ms": tick.get("p95"),
+               "overlay_fps": ov.get("fps"), "overlay_uploads_per_s": pushes.get("pushes_per_s"),
+               "overlay_kb_per_s": pushes.get("kb_per_s"),
+               "capture_per_s": cap.get("fps"), "capture_backend": h.get("capture_backend"),
+               "profile": bud.get("profile"), "load": bud.get("load"),
+               "blas_threads": APPLIED.get("blas_threads"),
+               "priority_below_normal": APPLIED.get("priority")}
+        level = "ok"
+        if cpu is not None and cpu > PERF_CPU_HIGH:
+            level = "lourd"
+        elif (cpu is not None and cpu > PERF_CPU_OK) or (
+                (out["overlay_uploads_per_s"] or 0.0) > PERF_PUSH_OK):
+            level = "eleve"
+        out["level"] = level
+        parts = []
+        if cpu is not None:
+            parts.append(f"{cpu:.0f} % d'un cœur")
+        if out["detect_fps"]:
+            parts.append(f"analyse {out['detect_fps']:.0f} img/s")
+        if out["overlay_uploads_per_s"] is not None:
+            parts.append(f"overlay {out['overlay_uploads_per_s']:.0f} envois/s")
+        head = {"ok": "Impact sur le jeu : faible", "eleve": "Impact sur le jeu : moyen",
+                "lourd": "Impact sur le jeu : élevé"}[level]
+        out["text"] = head + (" (" + ", ".join(parts) + ")" if parts else "")
+    except Exception:
+        log.debug("performance_summary failed", exc_info=True)
+    return out

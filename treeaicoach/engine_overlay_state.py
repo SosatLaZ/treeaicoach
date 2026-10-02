@@ -23,6 +23,7 @@ from treeaicoach.capture import Rect
 from treeaicoach.engine_base import (
     FLASH_DECAY_S,
     HOTKEY_DEBOUNCE_S,
+    OVERLAY_MAX_AGE_S,
     OVERLAY_MIN_PERIOD_S,
     ROLE_NOTICE_S,
     THREAT_HOLD_S,
@@ -34,6 +35,33 @@ from treeaicoach.fmtutil import finite_loose as _finite, seconds_fr
 from treeaicoach.live_client import GameInfo, PlayerInfo
 
 log = logging.getLogger("treeaicoach.engine")   # same logger as before the split
+
+
+def overlay_cache_fresh(cache: tuple, now: float, frame_id: int) -> bool:
+    """Is the cached overlay state ``(built_at, state, frame_id)`` still good at ``now``?
+
+    The build (~3-4 ms of Python, on the OVERLAY thread) used to run at 12 Hz whatever happened;
+    positions do not need it (the overlay predicts them at render time through ``state.predict``).
+    Rebuilt: after a new analysis tick (at most :data:`OVERLAY_MIN_PERIOD_S`), at the same rate
+    while something animates from the state (toasts sliding / counting down, danger flash fading,
+    a fresh alert), and at least every :data:`OVERLAY_MAX_AGE_S` (per-second countdowns,
+    "seen N s ago", text pushed from another thread)."""
+    try:
+        age = now - float(cache[0])
+        if not 0.0 <= age < OVERLAY_MAX_AGE_S:
+            return False
+        if age < OVERLAY_MIN_PERIOD_S:
+            return True
+        old_fid = cache[2] if len(cache) > 2 else None
+        if old_fid != frame_id:
+            return False
+        st = cache[1]
+        la = getattr(st, "last_alert", None)
+        animating = bool(getattr(st, "toasts", None)) or float(getattr(st, "flash", 0.0) or 0.0) > 0.0 \
+            or bool(la and float(la[2]) < 4.5) or bool(getattr(st, "world", None))
+        return not animating
+    except Exception:
+        return False
 
 
 class OverlayStateMixin:
@@ -118,7 +146,8 @@ class OverlayStateMixin:
         return self._icons[key]
 
     def get_overlay_state(self) -> Any:
-        """Immutable :class:`OverlayState` snapshot (None outside a game / overlay hidden)."""
+        """Immutable :class:`OverlayState` snapshot (None outside a game / overlay hidden); cached,
+        see :func:`overlay_cache_fresh`."""
         try:
             now = self._clock()
             if self.overlay_paused(now):     # minimized / alt-tabbed: never draw over other apps
@@ -127,11 +156,12 @@ class OverlayStateMixin:
                 if not self._overlay_visible or not self._in_game or self._game is None:
                     return None
                 cache = self._overlay_cache
-                if cache is not None and 0.0 <= now - cache[0] < OVERLAY_MIN_PERIOD_S:
+                fid = self._frame_id
+                if cache is not None and overlay_cache_fresh(cache, now, fid):
                     return cache[1]
             state = self._build_overlay_state(now)
             with self._lock:
-                self._overlay_cache = (now, state)
+                self._overlay_cache = (now, state, fid)
             return state
         except Exception:
             self._err.exception("get_overlay_state failed")
@@ -407,10 +437,19 @@ class OverlayStateMixin:
         return out
 
     def _siege(self, now: float) -> tuple[str | None, str | None]:
-        """Current base-siege / ace state (see :func:`siege_state`). Never raises."""
+        """Current base-siege / ace state (see :func:`siege_state`). Never raises. Memoized per
+        ``now`` (the overlay state build and the HUD line ask it several times at the same time)."""
         game = self._game
         if game is None:
             return None, None
+        memo = getattr(self, "_siege_memo", None)
+        if memo is not None and memo[0] == now and memo[1] is game and memo[2] == self._frame_id:
+            return memo[3]
+        out = self._siege_now(now, game)
+        self._siege_memo = (now, game, self._frame_id, out)
+        return out
+
+    def _siege_now(self, now: float, game: Any) -> tuple[str | None, str | None]:
         try:
             gt = (_finite(game.game_time) or 0.0) + min(max(0.0, now - self._game_t), 3.0)
             n = 0

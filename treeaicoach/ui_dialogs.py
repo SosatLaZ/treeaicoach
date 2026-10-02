@@ -20,6 +20,7 @@ from treeaicoach.ui_common import (
     ACCENT_DIM,
     BG,
     BTN_H_SMALL,
+    dark_titlebar,
     CARD_PAD,
     DANGER,
     DIM,
@@ -48,6 +49,19 @@ from treeaicoach.ui_common import (
 )
 
 log = logging.getLogger("treeaicoach.ui")   # same logger as before the split
+
+
+_QUIET_TOP: list[Any] = [None]
+
+
+def _quiet_toplevel(ctk: Any) -> Any:
+    """CTkToplevel without CustomTkinter's title-bar colouring on Windows (it hides the window, runs a
+    full ``update()`` and shows it again on creation and on ``resizable()``: a visible blink, ~1 s
+    under Wine). :func:`dark_titlebar` sets the same attribute once the dialog is mapped."""
+    if _QUIET_TOP[0] is None:
+        _QUIET_TOP[0] = type("QuietToplevel", (ctk.CTkToplevel,),
+                             {"_deactivate_windows_window_header_manipulation": True})
+    return _QUIET_TOP[0]
 
 
 class DialogsMixin:
@@ -226,7 +240,7 @@ class DialogsMixin:
                 width: int = 460) -> tuple[Any, Any, Any, Callable[[], None]]:
         """Themed modal-less dialog: (toplevel, body frame, button bar, close function)."""
         ctk = self.ctk
-        top = ctk.CTkToplevel(self.root)
+        top = _quiet_toplevel(ctk)(self.root)
         top.title(title)
         top.resizable(False, False)
         top.transient(self.root)
@@ -277,6 +291,7 @@ class DialogsMixin:
     def _place_dialog(self, top: Any, grab: bool = True) -> None:
         try:
             top.update_idletasks()
+            dark_titlebar(top)
             x = self.root.winfo_rootx() + (self.root.winfo_width() - top.winfo_width()) // 2
             y = self.root.winfo_rooty() + (self.root.winfo_height() - top.winfo_height()) // 3
             top.geometry(f"+{max(0, x)}+{max(0, y)}")

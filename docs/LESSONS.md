@@ -59,3 +59,8 @@ Hard rules distilled from real user feedback. Each one cost a bad release.
     that contradicts the live card (an explained disagreement waits for the card to end), never shows a
     stale plan, never asks during a fight. Live-test providers (`tools/ai_live_check.py`): their models,
     limits and formats change (Groq dropped llama-3.3 and caps 8 000 tokens / minute in 2026).
+21. **The game's frames come first.** Every overlay pixel upload recomposes over the game: upload only
+    what visibly changed (signatures + dead band + hashes), at the rate of what animates (calm = no
+    upload), in the smallest windows (never full screen); keep native thread pools at one thread.
+    Measure CPU per thread and uploads / s with `tools/perf_budget.py` before / after any change to
+    the overlay, the capture or the analysis cadence (`docs/ARCHITECTURE.md` § 18 bis).

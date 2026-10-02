@@ -39,6 +39,15 @@ from treeaicoach.engine_base import (
 
 log = logging.getLogger("treeaicoach.engine")   # same logger as before the split
 
+#: Game start (game clock below START_GRACE_GT_S, or unknown): the screen may still be the
+#: loading screen / the opening fade, the minimap appears any second. While on the fallback
+#: rectangle the location is retried every LOCATE_RETRY_START_S (the cached rectangle of this
+#: window / settings is checked first: one ~8 ms verify), and an unverified fallback crop is
+#: not analysed (loading-screen art is no minimap: phantom detections, a wrong icon scale).
+#: Real reports: "Minimap introuvable" at 0:00 for 57 s (6 relocations, one every 10 s).
+START_GRACE_GT_S = 90.0
+LOCATE_RETRY_START_S = 2.0
+
 
 class CaptureMixin:
     """Capture stage of a tick: game window, minimap location / verification, grab, occlusion,"""
@@ -185,7 +194,7 @@ class CaptureMixin:
 
         fb_side = "left" if side == "left" else "right"
         self._minimap_rect, self._locate_method = fallback_rect(win, fb_side), "fallback"
-        self._next_locate = t + LOCATE_RETRY_S
+        self._next_locate = t + (LOCATE_RETRY_START_S if getattr(self, "_loc_early", False) else LOCATE_RETRY_S)
         log.info("Minimap not found: fallback rectangle %s", self._minimap_rect)
 
     def _grab_minimap(self, t: float, gt: float | None = None) -> np.ndarray | None:
@@ -194,6 +203,8 @@ class CaptureMixin:
             self._set_state(EngineState.LOCATING, MSG_MINIMIZED if self._paused else MSG_NO_WINDOW)
             return None
         self._settings_changed_check()
+        early = gt is None or gt < START_GRACE_GT_S
+        self._loc_early = early
         if self._relocate or self._minimap_rect is None or self._rect_window != win or (
                 self._locate_method == "fallback" and t >= self._next_locate):
             self._locate(t, win)
@@ -227,6 +238,18 @@ class CaptureMixin:
                 return None
             elif st == "stale":
                 self._capture_note = MSG_FROZEN
+        if self._locate_method == "fallback" and early:
+            # game start: analyse the default square only when it looks like the minimap
+            try:
+                from treeaicoach.minimap_locator import VERIFY_MIN_SCORE
+
+                score = float(self._ensure_locator().verify(frame))
+            except Exception:
+                score = 1.0
+            self._minimap_score = score
+            if score < VERIFY_MIN_SCORE:
+                self._set_state(EngineState.LOCATING, MSG_LOCATING)
+                return None
         verify_due = t >= self._next_verify
         if verify_due and self._bad_since is None and self._heavy_now and not self._verify_due_deferred:
             # keep the verification off the tick running a coaching slot (no spike); next tick

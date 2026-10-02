@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import gc
 import json
-import math
 import os
 import sys
 import tempfile
@@ -306,7 +305,7 @@ def _pct(vals: list[float], q: float) -> float | None:
 
 def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_hz: float = 1.0,
         real_windows: bool = False, perf_mode: str = "auto", cfg_changes: dict | None = None,
-        quiet: bool = False) -> dict[str, Any]:
+        quiet: bool = False, real_voice: bool = True) -> dict[str, Any]:
     """Run the pipeline for ``warmup + seconds`` (wall clock) and return the measurements."""
     import dataclasses
     import logging
@@ -325,6 +324,12 @@ def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_
     changes = {k: v for k, v in changes.items() if hasattr(cfg, k)}
     cfg = dataclasses.replace(cfg, **changes).validated()
 
+    voice: Any = QuietVoice()
+    if real_voice:
+        # the real voice worker thread (queue, polling, params) with a silent backend
+        from treeaicoach.voice import SpeechBackend, VoiceEngine
+
+        voice = VoiceEngine(_backend_factory=SpeechBackend)
     cap = None
     src = None
     src_cpu = [0.0]
@@ -342,13 +347,13 @@ def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_
                 src_cpu[0] += time.thread_time() - c0
 
         src.next = timed_next          # type: ignore[method-assign]
-        eng = CoachEngine(cfg, QuietVoice(), frame_source=src, enable_hotkeys=False, manage_overlay=False)
+        eng = CoachEngine(cfg, voice, frame_source=src, enable_hotkeys=False, manage_overlay=False)
     else:
         img = cv2.imread(str(SCREEN))
         if img is None:
             raise SystemExit(f"missing fixture {SCREEN}")
         cap = CountingCapture(img)
-        eng = CoachEngine(cfg, QuietVoice(), live_client=FakeLiveClient(),
+        eng = CoachEngine(cfg, voice, live_client=FakeLiveClient(),
                           window_finder=lambda: Rect(0, 0, img.shape[1], img.shape[0]),
                           screen_capture=cap, enable_hotkeys=False, manage_overlay=False)
 
@@ -427,6 +432,12 @@ def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_
         stop.set()
         mgr.stop()
         eng.stop()
+        stop_voice = getattr(voice, "stop", None)
+        if callable(stop_voice):
+            try:
+                stop_voice()
+            except Exception:
+                pass
         try:
             gc.callbacks.remove(gc_cb)
         except ValueError:

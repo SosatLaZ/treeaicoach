@@ -673,7 +673,7 @@ def test_engine_load_levels_push_and_restore_the_cost_knobs(restore_knobs):
     run(eng, clock, 35.0, dt=0.5)                           # 2 img/s analysed for a 6-12 img/s target
     assert eng._budget.load_level == 1 and eng._budget.profile.load == "allege"
     assert roster_matcher.RING_PROP_EVERY == max(4, base_ring) and roster_matcher.STACKV_EVERY == max(4, base_stack)
-    assert overlay._budget_fps == 20.0 and eng._heavy.hz == 1.0
+    assert overlay._budget_fps == 15.0 and eng._heavy.hz == 1.0
     assert roster_matcher.LOST_EVERY == 8
     assert MSG["perf_1"] in eng.selfcheck_summary()["reasons"]
     assert eng.health()["budget"]["load"] == "allege"
@@ -681,7 +681,7 @@ def test_engine_load_levels_push_and_restore_the_cost_knobs(restore_knobs):
     run(eng, clock, 75.0, dt=0.5)                           # healthy for 60 s -> back to normal
     assert eng._budget.load_level == 0
     assert (roster_matcher.RING_PROP_EVERY, roster_matcher.STACKV_EVERY) == (base_ring, base_stack)
-    assert overlay._budget_fps == 30.0 and roster_matcher.LOST_EVERY == 4
+    assert overlay._budget_fps == 20.0 and roster_matcher.LOST_EVERY == 4
     assert not any("Analyse" in r for r in eng.selfcheck_summary()["reasons"])
 
 

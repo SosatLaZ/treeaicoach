@@ -8,16 +8,24 @@ separate popup windows of the TreeAI Coach process:
   WS_EX_NOACTIVATE | WS_EX_TOPMOST``: always on top, never activated, mouse clicks go through,
   no taskbar button. No injection, no DirectX hook: works with the game in *Borderless* or
   *Windowed* mode.
-* one dedicated thread owns every window and pumps its messages with ``PeekMessageW``; it runs
-  a steady loop (``cfg.overlay_fps``, 30 by default, capped by the engine's performance budget,
-  paced with ``time.sleep`` - high-resolution timer on Windows) and hides everything when the
-  state is None or when the game is not in the foreground (:data:`FOCUS_GRACE_S`). The minimap
+* one dedicated thread owns every window and pumps its messages with ``PeekMessageW``; it hides
+  everything when the state is None or when the game is not in the foreground
+  (:data:`FOCUS_GRACE_S`). **The game first**: every pixel upload (``UpdateLayeredWindow``) is
+  copied into the compositor and recomposes that rectangle over the borderless game, so the loop
+  is paced by what animates (:func:`loop_fps`, ``time.sleep`` = high-resolution timer on Windows):
+  :data:`CALM_LOOP_HZ` when nothing moves, :data:`MM_FAST_HZ` while something matters (threat,
+  visible enemy jungler, flash fade), ``cfg.overlay_fps`` capped by the engine's budget (20) only
+  while a toast slides in / fades out; and it uploads only what visibly changed. The minimap
   layer is drawn at the positions *predicted for the render time* (``state.predict``, Kalman
-  state copied by the engine at each tick) and re-rendered / re-sent only when its quantized
-  signature changed (:func:`minimap_signature`); the HUD card only when its content changed
-  (:func:`hud_signature`, identical images never re-sent); the danger flash is uploaded once and
-  faded with the window's constant alpha. Per-layer render and ``UpdateLayeredWindow`` timings
-  are published (:func:`current_stats`, engine ``health()["overlay"]``).
+  state copied by the engine at each tick), re-rendered only when its quantized signature changed
+  (:func:`minimap_signature`: 2 px steps at <= :data:`MM_CALM_HZ` uploads / s when calm, 1 px at
+  <= :data:`MM_FAST_HZ`), never re-sent when identical, and its window is hidden when it has
+  nothing to draw; the HUD card / timers / toasts / badges likewise (signatures + image hashes);
+  the danger flash is four thin edge windows (:data:`FLASH_WINDOWS`), uploaded once per flash and
+  faded with the windows' constant alpha; topmost is re-asserted every :data:`TOPMOST_EVERY_S`.
+  Per-layer render and ``UpdateLayeredWindow`` timings are published (:func:`current_stats`,
+  engine ``health()["overlay"]``) and every upload is counted (:func:`push_stats`,
+  ``tools/perf_budget.py``).
 * the default "minimap" mode draws thin marks *exactly over the real minimap*
   (``state.minimap_rect``, physical px) on a transparent window. That window is captured like
   any other one (visible in the user's screenshots / streams), so it never draws champion
@@ -73,20 +81,40 @@ RectT = tuple[int, int, int, int]
 #: Game-view ward guide windows ("world0", "world1"): refreshed at most this often, only while shown.
 WORLD_HZ = 10.0
 WORLD_WINDOWS = ("world0", "world1")
-#: Default frame rate of the overlay thread (Hz): the minimap layer is re-drawn at the render
-#: time with predicted positions, but only when something visibly changed (signature).
-REFRESH_HZ = 30.0
+#: Frame-rate cap of the overlay thread (Hz) while something animates (the engine's budget may
+#: cap it lower). Game first: every pixel upload (``UpdateLayeredWindow``) is copied into the
+#: compositor and recomposes that rectangle over a borderless game, so the loop only runs at this
+#: rate while something moves on screen and uploads only what visibly changed (signatures, image
+#: hashes); with nothing animating it polls at :data:`CALM_LOOP_HZ` and uploads nothing.
+REFRESH_HZ = 20.0
+#: Loop rate while nothing animates (Hz): new engine data (6 ticks / s at most when calm) is
+#: picked up within ~1/8 s, the focus check (hide on alt-tab) runs at this rate.
+CALM_LOOP_HZ = 8.0
+#: Minimap layer upload rate caps (Hz): calm (no threat, no visible jungler / approaching enemy:
+#: icons walk ~6 px / s on a 280 px minimap, 1-2 px steps at 4 Hz with render-time prediction)
+#: and while something matters (threat, visible enemy jungler...).
+MM_CALM_HZ, MM_FAST_HZ = 4.0, 10.0
+#: Positions of the minimap signature are quantized to this many px when calm (1 px when fast),
+#: and a mark must move at least MM_DEAD_PX_* px from where it was last drawn to count as moved:
+#: the detection / render-time prediction jitter of a standing champion (measured on a static real
+#: screenshot: 5.5 uploads / s of the same scene) does not re-upload the layer.
+MM_CALM_QUANT_PX = 2.0
+MM_DEAD_PX_CALM, MM_DEAD_PX_FAST = 2.5, 1.5
 #: Hard bounds of ``cfg.overlay_fps`` / the engine budget cap.
 FPS_MIN, FPS_MAX = 5.0, 60.0
 #: Every layer is re-rendered at least this often even when its signature did not change (s):
-#: a safety net for a field the signature does not cover. The HUD signature covers its content
-#: (and identical HUD images are never re-sent): longer period.
-FORCE_REDRAW_S = 0.5
-FORCE_REDRAW_LAYER_S = {"hud": 2.0}
+#: a safety net for a field the signature does not cover; identical images are never re-sent.
+FORCE_REDRAW_S = 2.0
+FORCE_REDRAW_LAYER_S = {"hud": 3.0}
 #: HUD card re-render rate while animated / calm (Hz) - and never re-sent when identical.
 HUD_FAST_HZ, HUD_CALM_HZ = 10.0, 4.0
-#: Toast banners animation rate (Hz).
+#: Toast banners: slide-in / fade-out rate, and the hold phase (remaining-time line, banner pulse).
 TOAST_HZ = 20.0
+TOAST_HOLD_HZ = 8.0
+#: Danger flash: four thin edge windows (top, bottom, left, right) instead of one full-screen
+#: layered window (a 2560 x 1440 upload = 14 MB, and a full-screen per-pixel-alpha layer for DWM
+#: to blend at every game frame while it is shown).
+FLASH_WINDOWS = ("flash_t", "flash_b", "flash_l", "flash_r")
 #: Gap (fraction of the minimap height) kept between the HUD card and the minimap when the card
 #: sits above it: League draws its own frame, ping button and portraits there.
 MINIMAP_FRAME_CLEAR = 0.34
@@ -100,8 +128,9 @@ RADAR_MIN, RADAR_MAX = 96, 1024
 HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 300, 240, 520
 #: Flash intensity quantization (the full-screen image is re-rendered only when it changes).
 FLASH_STEP = 0.1
-#: How often (s) visible windows are re-asserted as topmost.
-TOPMOST_EVERY_S = 2.0
+#: How often (s) visible windows are re-asserted as topmost (each call re-orders the window in the
+#: compositor's z-order; League does not put itself above topmost windows).
+TOPMOST_EVERY_S = 5.0
 RADAR_POSITIONS = ("above_minimap", "left_of_minimap", "top_left", "custom")
 HUD_POSITIONS = ("left_of_minimap", "above_minimap", "top_left", "top_right", "left_middle", "custom")
 #: "left_of_minimap": the card's bottom edge stays this fraction of the minimap height above the
@@ -431,6 +460,43 @@ def needs_fast_refresh(state: Any) -> bool:
                    for e in (getattr(state, "enemies", None) or []) if e is not None)
     except Exception:
         return True
+
+
+def toasts_animating(state: Any) -> bool | None:
+    """None without toast; True while a toast slides in / fades out (full frame rate), False while
+    it is held (remaining-time line / banner pulse: :data:`TOAST_HOLD_HZ`). Never raises."""
+    try:
+        views = list(getattr(state, "toasts", None) or [])
+        if not views:
+            return None
+        from treeaicoach import toasts as tst
+
+        for v in views:
+            age = float(getattr(v, "age", 0.0))
+            dur = float(getattr(getattr(v, "toast", None), "duration", tst.DURATION_S))
+            if age < tst.SLIDE_IN_S + 0.05 or dur - age < tst.FADE_OUT_S + 0.05:
+                return True
+        return False
+    except Exception:
+        return True
+
+
+def loop_fps(cap: float, tier: int) -> float:
+    """Overlay loop rate for what animates (see ``OverlayManager._tier``): ``cap`` (budget /
+    settings) only while a toast slides / fades, :data:`MM_FAST_HZ` while something matters
+    (threat, flash fade, visible jungler...), :data:`CALM_LOOP_HZ` otherwise."""
+    if tier >= 2:
+        return float(cap)
+    return float(min(cap, MM_FAST_HZ if tier >= 1 else CALM_LOOP_HZ))
+
+
+def flash_strip_rects(w: int, h: int, depth: int) -> list[RectT]:
+    """``(x, y, w, h)`` of the four edge strips (top, bottom, left, right) of a ``w x h`` danger
+    flash whose glow reaches ``depth`` px from the edges (relative to the flash image)."""
+    w, h = max(1, int(w)), max(1, int(h))
+    d = int(max(1, min(int(depth), w // 2, h // 2)))
+    side_h = max(0, h - 2 * d)
+    return [(0, 0, w, d), (0, h - d, w, d), (0, d, d, side_h), (w - d, d, d, side_h)]
 
 
 def move_mode_frame(bgra: np.ndarray, label: str = "") -> np.ndarray:
@@ -986,7 +1052,7 @@ _current_perf: "_OverlayPerf | None" = None
 #: surface + a recomposition of that rectangle). Cumulative; :func:`push_stats` / rates.
 _push_lock = threading.Lock()
 _push_totals: dict[str, Any] = {"pushes": 0, "bytes": 0, "alpha": 0, "topmost": 0, "layers": {}}
-_push_recent: "deque[tuple[float, int]]" = None  # type: ignore[assignment]
+_push_recent: Any = None          # collections.deque of (time, bytes), created at the first upload
 
 
 def note_push(layer: str, nbytes: int) -> None:
@@ -1128,17 +1194,37 @@ def _q(x: Any, step: float) -> Any:
         return None
 
 
-def minimap_signature(state: Any, mm: Sequence[int], now: float) -> tuple:
-    """What the minimap layer shows, quantized to whole pixels / seconds: equal signatures give
-    the same image (the layer is then not re-rendered nor re-sent)."""
+def _anchored(key: Any, px: float, py: float, anchors: dict | None, dead: float) -> tuple[float, float]:
+    """Position used by the signature: the last one drawn while ``(px, py)`` stays within ``dead``
+    px of it (a standing champion's detection / prediction jitter does not re-upload the layer),
+    else the new one (which becomes the anchor)."""
+    if anchors is None or key is None:
+        return px, py
+    a = anchors.get(key)
+    if a is not None and math.hypot(px - a[0], py - a[1]) < dead:
+        return a
+    anchors[key] = (px, py)
+    return px, py
+
+
+def minimap_signature(state: Any, mm: Sequence[int], now: float, quant: float = 1.0,
+                      anchors: dict | None = None, dead: float = 0.0) -> tuple:
+    """What the minimap layer shows, quantized to ``quant`` pixels (positions) / seconds: equal
+    signatures give the same image (the layer is then not re-rendered nor re-sent). With
+    ``anchors`` (kept by the caller between frames), a position moving less than ``dead`` px from
+    the last one that changed the signature keeps that one (dead band)."""
     try:
         from treeaicoach.overlay_render import is_ghost
 
         W, H = max(1, int(mm[2])), max(1, int(mm[3]))
+        qp = max(1.0, float(quant))
 
         def view(v: Any) -> tuple:
             uv = getattr(v, "uv", None)
-            p = (_q(uv[0] * W, 1.0), _q(uv[1] * H, 1.0)) if uv is not None else None
+            p = None
+            if uv is not None:
+                px, py = _anchored(getattr(v, "key", None), float(uv[0]) * W, float(uv[1]) * H, anchors, dead)
+                p = (_q(px, qp), _q(py, qp))
             ago = getattr(v, "last_seen_ago", None)
             return (getattr(v, "key", None), bool(getattr(v, "visible", False)), p, is_ghost(v),
                     bool(getattr(v, "approaching", False)), bool(getattr(v, "is_jungler", False)),
@@ -1152,7 +1238,8 @@ def minimap_signature(state: Any, mm: Sequence[int], now: float) -> tuple:
         animated = lvl >= 2 or bool(guides)
         return (tuple(view(v) for v in (getattr(state, "enemies", None) or []) if v is not None),
                 tuple(view(v) for v in (getattr(state, "allies", None) or []) if v is not None),
-                None if me is None else (_q(me[0] * W, 1.0), _q(me[1] * H, 1.0)), lvl, fogs, guides,
+                None if me is None else tuple(_q(c, qp) for c in _anchored(
+                    "__me__", float(me[0]) * W, float(me[1]) * H, anchors, dead)), lvl, fogs, guides,
                 _q(getattr(state, "danger_radius", 0), 0.002), bool(getattr(state, "show_allies", False)),
                 bool(getattr(state, "show_roles", False)), bool(getattr(state, "show_ghosts", False)),
                 bool(getattr(state, "show_last_seen", True)), bool(getattr(state, "hud_detailed", False)),
@@ -1185,9 +1272,16 @@ def hud_signature(state: Any, now: float) -> tuple:
             "threat_level", "threat_text", "tip", "tip_tone", "gauge", "gauge_reason", "stance",
             "stance_reason", "insight", "hint", "item_hint", "jungler_line", "role_notice",
             "phase", "hud_detailed", "in_base", "skill_level", "my_role", "me_dead"))
+        # the clock only matters through the countdowns the card prints (objective rows, "Dragon
+        # dans 0:45"): their TEXTS, not the second, so a card without countdown is not re-rendered
+        # every second for nothing (~8 ms per render)
+        try:
+            clock: Any = (tuple(r[2] for r in orr._objective_rows(state)),
+                          (orr._objective_instruction(state) or ("",))[0])
+        except Exception:
+            clock = _q(getattr(state, "game_time", None), 1.0)
         return (fields_, objs, ens, None if not la else (la[0], la[1], _q(la[2], 0.25) if la[2] < 4.5 else None),
-                f(getattr(state, "tip_since", None)), f(getattr(state, "gauge_since", None)),
-                _q(getattr(state, "game_time", None), 1.0))
+                f(getattr(state, "tip_since", None)), f(getattr(state, "gauge_since", None)), clock)
     except Exception:
         return (now,)
 
@@ -1288,6 +1382,14 @@ class OverlayManager:
         self._mm_no_rect_logged = False
         #: current layout (treeaicoach.layout.Layout) of the card / timers / toasts / badges
         self.layout: Any = None
+        #: minimap layer with nothing to draw (window hidden, not re-rendered every frame)
+        self._mm_blank = False
+        #: last position (px) of each mark that changed the minimap signature (dead band)
+        self._mm_anchors: dict[str, tuple[float, float]] = {}
+        #: what animates in the last refresh: 0 nothing (calm loop rate), 1 something that matters
+        #: (threat, flash fade, toast held...: MM_FAST_HZ), 2 a toast sliding / fading (full rate)
+        self._tier = 0
+        self._flash_cache: Any = None
         self.ok = sys.platform == "win32" or window_factory is not None
         if not self.ok:
             log.info("Overlay disabled: Windows only")
@@ -1379,7 +1481,7 @@ class OverlayManager:
             # "toasts": banners at the top-centre (praise / Tab insights), captured like the HUD
             # "world0" / "world1": small click-through windows of the ward guide in the game view
             # "timers": the timers strip hanging outside the minimap frame (layout slot)
-            for name in ("flash", "radar", "minimap", "timers", "hud", "toasts") + WORLD_WINDOWS:
+            for name in FLASH_WINDOWS + ("radar", "minimap", "timers", "hud", "toasts") + WORLD_WINDOWS:
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved) \
                     if self._window_factory is None else self._window_factory(name)
             # The minimap layer is captured by default (visible in the user's screenshots):
@@ -1472,6 +1574,7 @@ class OverlayManager:
                         w.hide()
                     flash_key = None
                     self._sig.clear()
+                    self._mm_anchors.clear()
                     if state is None:
                         self._end_mm_session()
                     fps = min(fps, 5.0)          # nothing shown: poll the state slowly
@@ -1480,6 +1583,9 @@ class OverlayManager:
                     if t0 - last_world >= 1.0 / WORLD_HZ - 1e-3:
                         last_world = t0
                         self._refresh_world(api, windows, state, cfg, move)
+                    if any(windows[n].visible for n in WORLD_WINDOWS if n in windows):
+                        self._tier = max(self._tier, 1)
+                    fps = loop_fps(fps, self._tier)
                     if t0 - last_top >= TOPMOST_EVERY_S:
                         last_top = t0
                         for w in windows.values():
@@ -1578,7 +1684,8 @@ class OverlayManager:
 
     @staticmethod
     def _refresh_toasts(win: "LayeredWindow | None", state: Any, cfg: Any, scr: RectT, mm: RectT | None,
-                        move: bool, slot_rect: RectT | None = None) -> None:
+                        move: bool, slot_rect: RectT | None = None,
+                        show: Callable[..., None] | None = None) -> None:
         if win is None:
             return
         views = list(getattr(state, "toasts", None) or [])
@@ -1598,7 +1705,10 @@ class OverlayManager:
             x, y = slot_rect[0], slot_rect[1]
         else:
             x, y, _w, _h = tst.toast_layer_rect(scr, mm, cfg)
-        win.update(img, x, y)
+        if show is not None:
+            show(win, "toasts", img, x, y, dedupe=True)     # identical frame (held, faded out): not re-sent
+        else:
+            win.update(img, x, y)
 
     def _refresh_timers(self, win: "LayeredWindow | None", state: Any, cfg: Any, scr: RectT, lay: Any,
                         move: bool, now: float) -> None:
@@ -1653,7 +1763,7 @@ class OverlayManager:
         for i, w in enumerate(wins):
             if i < len(patches):
                 img, x, y = patches[i]
-                w.update(img, x, y)
+                self._show(w, w.name if hasattr(w, "name") else f"world{i}", img, x, y, dedupe=True)
             else:
                 w.hide()
 
@@ -1683,6 +1793,7 @@ class OverlayManager:
         old = self._sig.get(layer)
         last = self._sig_t.get(layer, -1e9)
         if now - last < min_period:
+            self._perf.skip(layer)          # (rate cap: a change waits for the next allowed frame)
             return False
         if old is None or old != sig or now - last >= FORCE_REDRAW_LAYER_S.get(layer, FORCE_REDRAW_S):
             self._sig[layer] = sig
@@ -1702,7 +1813,10 @@ class OverlayManager:
                 return
             self._last_img[layer] = key
         t = time.perf_counter()
-        win.update(img, x, y, alpha)
+        if alpha == 255:
+            win.update(img, x, y)
+        else:
+            win.update(img, x, y, alpha)
         self._perf.add("ulw", (time.perf_counter() - t) * 1000.0)
         self._perf.add(f"ulw_{layer}", (time.perf_counter() - t) * 1000.0)
 
@@ -1717,21 +1831,36 @@ class OverlayManager:
         from treeaicoach import overlay_render as orr
 
         now = time.monotonic() if now is None else float(now)
+        self._tier = 0
         scr, mm = self._screen_for(api, state)
         mode = resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
         # ---- marks drawn exactly over the real minimap (transparent window, same physical rect),
         #      at the positions predicted for NOW (they follow the icons between two detections)
         mm_win = windows["minimap"]
         demo = move and state is self._demo_state
+        fast = needs_fast_refresh(state) or move
+        self._tier = max(getattr(self, "_tier", 0), 1 if fast else 0)
         if mode == "minimap" and mm is not None and not demo:
             st = orr.with_predicted(state)
-            if self._due("minimap", minimap_signature(st, mm, now), now) or not mm_win.visible:
+            # calm: 2 px position steps at <= 4 uploads / s; something matters: 1 px at <= 10 / s
+            sig = minimap_signature(st, mm, now, 1.0 if fast else MM_CALM_QUANT_PX, self._mm_anchors,
+                                    MM_DEAD_PX_FAST if fast else MM_DEAD_PX_CALM)
+            if self._due("minimap", sig, now, 1.0 / (MM_FAST_HZ if fast else MM_CALM_HZ)) \
+                    or not (mm_win.visible or self._mm_blank):
                 # no "TreeAI" mark: at the minimap corner it covered my own portrait (red side)
                 img = self._render("minimap", orr.render_minimap, st, mm[2], mm[3], now=now, show_frame=False)
-                self._show(mm_win, "minimap", img, mm[0], mm[1])
-                self._note_mm_update(state, mm, img)
+                if img.ndim == 3 and img.shape[2] == 4 and not img[..., 3].any():
+                    # nothing to draw: no window at all over the game (not an empty transparent one)
+                    mm_win.hide()
+                    self._mm_blank = True
+                    self._last_img.pop("minimap", None)
+                else:
+                    self._mm_blank = False
+                    self._show(mm_win, "minimap", img, mm[0], mm[1], dedupe=True)
+                    self._note_mm_update(state, mm, img)
         else:
             mm_win.hide()
+            self._mm_blank = False
             self._sig.pop("minimap", None)
             if mode == "minimap" and mm is None and not demo:
                 self.mm_stats["no_rect"] += 1
@@ -1749,12 +1878,11 @@ class OverlayManager:
                 pos, xy = "custom", custom["radar"]
             x, y, size = radar_geometry(mm, scr, getattr(cfg, "radar_scale", 1.0), pos, xy)
             radar_rect = (x, y, size, size)
-            fast = needs_fast_refresh(state) or move
             if self._due("radar", None, now, 1.0 / (HUD_FAST_HZ if fast else HUD_CALM_HZ)) or not radar_win.visible:
                 img = self._render("radar", orr.render_radar, orr.with_predicted(state), size, None)
                 if move:
                     img = move_mode_frame(img, "Radar — glisser")
-                self._show(radar_win, "radar", img, x, y)
+                self._show(radar_win, "radar", img, x, y, dedupe=True)
         else:
             radar_win.hide()
         # ---- ONE layout for the card, timers, toasts and play badges (layout.py): memoized, it
@@ -1767,7 +1895,6 @@ class OverlayManager:
             hud_win.hide()                 # compact card with nothing to say: no card at all
             self._sig.pop("hud", None)
         elif getattr(cfg, "hud_enabled", True):
-            fast = needs_fast_refresh(state) or move
             sig = hud_signature(state, now)
             if self._due("hud", sig, now, 1.0 / (HUD_FAST_HZ if fast else HUD_CALM_HZ)) or not hud_win.visible:
                 img = self._render("hud", orr.render_hud, state, hud_width(scr))
@@ -1790,20 +1917,28 @@ class OverlayManager:
             hud_win.hide()
         # ---- timers strip (outside the minimap frame; never over the map's bases / buttons)
         self._refresh_timers(windows.get("timers"), state, cfg, scr, lay, move, now)
-        # ---- toasts (top-centre, right under League's kill announcer; one at a time)
-        if self._due("toasts", None, now, 1.0 / TOAST_HZ) or not getattr(cfg, "toasts_enabled", True):
+        # ---- toasts (top-centre, right under League's kill announcer; one at a time): 20 Hz while
+        #      sliding in / fading out, 8 Hz while held (remaining-time line), identical images not re-sent
+        tanim = toasts_animating(state)
+        if tanim is not None:
+            self._tier = max(self._tier, 2 if tanim else 1)
+        if self._due("toasts", None, now, 1.0 / (TOAST_HZ if tanim else TOAST_HOLD_HZ)) \
+                or not getattr(cfg, "toasts_enabled", True):
             t = time.perf_counter()
             slot = lay.slot("toasts") if lay is not None else None
             self._refresh_toasts(windows.get("toasts"), state, cfg, scr, mm, move,
-                                 slot.rect if slot is not None else None)
+                                 slot.rect if slot is not None else None, show=self._show)
             self._perf.add("render_toasts", (time.perf_counter() - t) * 1000.0)
-        # ---- danger flash: rendered ONCE per geometry at full intensity, the fade only changes the
-        #      window's global alpha (no full-screen pixel upload per step)
-        flash_win = windows["flash"]
+        # ---- danger flash: four thin edge windows (never one full-screen layered window), rendered
+        #      and uploaded ONCE per geometry at full intensity; the fade only changes the windows'
+        #      global alpha (no pixel upload per step)
+        flash_wins = [windows[n] for n in FLASH_WINDOWS if n in windows]
         intensity = quantize_flash(getattr(state, "flash", 0.0)) if getattr(cfg, "danger_flash", True) else 0.0
         if intensity <= 0 or move:
-            flash_win.hide()
+            for w in flash_wins:
+                w.hide()
             return None
+        self._tier = max(self._tier, 1)
         rel = (mm[0] - scr[0], mm[1] - scr[1], mm[2], mm[3]) if mm is not None else None
         # never over the minimap block, its buttons or the spells / items bar (HP, cooldowns)
         excl = [(r[0] - scr[0], r[1] - scr[1], r[2], r[3]) for r in (lay.flash_exclusions() if lay is not None else [])]
@@ -1811,11 +1946,39 @@ class OverlayManager:
             excl.append(rel)
         key = (scr, rel, tuple(excl))
         alpha = int(round(255 * intensity))
-        if key != flash_key or not flash_win.visible:
-            img = self._render("flash", orr.render_flash, scr[2], scr[3], 1.0, excl, thickness=flash_thickness(scr))
-            self._show(flash_win, "flash", img, scr[0], scr[1], alpha=alpha)
+        if key != flash_key or not any(w.visible for w in flash_wins):
+            strips = self._flash_strips(key, scr, excl)
+            for w, strip in zip(flash_wins, strips):
+                if strip is None:
+                    w.hide()
+                else:
+                    img, x, y = strip
+                    self._show(w, "flash", img, x, y, alpha=alpha)
         else:
             t = time.perf_counter()
-            flash_win.set_alpha(alpha)
+            for w in flash_wins:
+                if w.visible:
+                    w.set_alpha(alpha)
             self._perf.add("ulw_flash_alpha", (time.perf_counter() - t) * 1000.0)
         return key
+
+    def _flash_strips(self, key: Any, scr: RectT, excl: list) -> list:
+        """The flash frame cut into its four edge strips ``(img, x, y)`` (top, bottom, left, right;
+        None when empty), cached per geometry: rendered once, uploaded once per flash."""
+        cache = getattr(self, "_flash_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        from treeaicoach import overlay_render as orr
+
+        th = flash_thickness(scr)
+        img = self._render("flash", orr.render_flash, scr[2], scr[3], 1.0, excl, thickness=th)
+        strips = flash_strip_rects(scr[2], scr[3], len(orr.flash_profile(th)))
+        out: list = []
+        for (x, y, w, h) in strips:
+            part = img[y:y + h, x:x + w] if w > 0 and h > 0 else None
+            if part is None or not part[..., 3].any():
+                out.append(None)
+            else:
+                out.append((np.ascontiguousarray(part), scr[0] + x, scr[1] + y))
+        self._flash_cache = (key, out)
+        return out

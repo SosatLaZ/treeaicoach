@@ -44,6 +44,11 @@ from treeaicoach.live_client import GameInfo
 
 log = logging.getLogger("treeaicoach.engine")   # same logger as before the split
 
+#: HUD portrait calibration (one full-window grab + search) retried after a failure this late (s),
+#: doubled at each new failure up to HUD_CAL_RETRY_MAX_S.
+HUD_CAL_RETRY_S = 15.0
+HUD_CAL_RETRY_MAX_S = 120.0
+
 #: Camera-centre fallback for "self": when my track was seen this recently, the chosen ally
 #: icon must be within CAMERA_SELF_REACH + JUMP_SPEED x elapsed of my last position.
 CAMERA_SELF_MEMORY_S = 20.0
@@ -130,12 +135,18 @@ class VisionMixin:
         size = (win.w, win.h)
         cal_t, cal_size = self._hud_cal
         if cal_size != size:
-            if t - cal_t < 15.0 and cal_t <= t:
+            # a failed calibration (full-window grab + search) is retried 15 s later, then 30, 60,
+            # 120 s (never a full-screen capture every 15 s for a whole game)
+            fails = int(getattr(self, "_hud_cal_fails", 0) or 0)
+            wait = min(HUD_CAL_RETRY_MAX_S, HUD_CAL_RETRY_S * 2 ** (fails - 1)) if fails > 0 else 0.0
+            if cal_t <= t and t - cal_t < wait:
                 return None
             self._hud_cal = (t, None)
             screen = self._grabber().grab(win)
             if screen is None or is_black_frame(screen) or not hr.calibrate(screen):
+                self._hud_cal_fails = fails + 1
                 return None
+            self._hud_cal_fails = 0
             self._hud_cal = (t, size)
             log.info("HUD portrait found at %s", hr.location)
         roi = hr.roi()
