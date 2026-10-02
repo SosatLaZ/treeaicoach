@@ -1,6 +1,6 @@
 {
-  "version": "2.3.0",
-  "sha256": "a1b4c821c9533ff7c3b2349bfd3bf7f8f551cbb88b89fd4a8ac23749f49578d5",
-  "size": 82169886,
-  "notes": "2.3 : conseils qui changent la partie avec la voix (niveaux, jungler ailleurs, plaques, Baron après un combat gagné), conseils sur les achats ennemis, placement propre sans rien sur l'interface du jeu, l'appli se surveille et se répare seule (Santé TreeAI), comparer la config de deux PC, launcher sans bug de chargement, données du jeu revérifiées (173 champions, builds, 228 conseils de duel, balises exactes)."
+  "version": "2.4.0",
+  "sha256": "56c3626ccf000b7a1431d9e26630aa340c5412d12690aebe16ad4cba661664c4",
+  "size": 82310917,
+  "notes": "2.4 : compréhension de la partie (compos, qui est plus fort et jusqu'à quand, conditions de victoire, ton rôle), ce que tu oublies (point de compétence, potion, balises, or, sort prêt à ta mort), IA corrigée (22 bugs, plans cohérents, limite Groq gérée), rapport avec « Compréhension de la partie »."
 }
