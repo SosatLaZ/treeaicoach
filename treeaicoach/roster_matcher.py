@@ -153,6 +153,19 @@ REFRESH_FRAMES = 80               # (kept for compatibility)
 SKIN_CHECK_FRAMES = 24            # period of the check for newly downloaded skin portraits
 #: Calibration quality (evidence units) below which the result is ignored.
 MIN_CALIB_QUALITY = 0.62
+#: Confident calibration: at least CALIB_MIN_SPREAD champions matched with evidence >=
+#: CALIB_CONF_EV at the chosen scale, at least CALIB_SPREAD_D diameters apart from each other
+#: and CALIB_FOUNTAIN_R away from the fountains (game start: everybody stacked in the base,
+#: real reports: a scale 15-20 % too big for minutes, 0,104 -> 0,090 at 3:01, 0,108 -> 0,091
+#: at 0:17). A provisional scale is re-checked (full sweep) every CALIB_RETRY_FRAMES frames,
+#: and only a confident one is stored as the prior of the next games; the stored prior never
+#: restricts the first sweep (a wrong stored value used to confirm itself game after game).
+CALIB_MIN_SPREAD = 3
+CALIB_CONF_EV = 0.75
+CALIB_SPREAD_D = 1.0
+CALIB_FOUNTAIN_R = 0.16
+CALIB_RETRY_FRAMES = 12
+CALIB_RETRY_MAX = 48
 #: Champions averaged by the calibration quality, and weight of the log-normal scale prior.
 CALIB_TOP_K = 3
 CALIB_PRIOR_WEIGHT = 1.5
@@ -913,6 +926,12 @@ class _State:
     bg: list = field(default_factory=list)          # recent background peak scores
     bg_grey: list = field(default_factory=list)     # ... of the greyscale frames
     full_parity: int = 0                            # half of the roster of the next full search
+    #: the scale was calibrated on confident multi-icon evidence (CALIB_MIN_SPREAD separate
+    #: champions outside the fountains); until then it is provisional: re-checked with a full
+    #: sweep every CALIB_RETRY_FRAMES frames and never stored for the next games
+    confident: bool = False
+    retry_at: int = 0
+    retry_every: int = CALIB_RETRY_FRAMES
 
 
 class RosterMatcher:
@@ -1411,7 +1430,7 @@ class RosterMatcher:
 
     # ------------------------------------------------------------------ calibration
     def _scale_quality(self, bgr: np.ndarray, scale: float, inner_cap: float,
-                       prior: float = DEFAULT_SCALE) -> float:
+                       prior: float = DEFAULT_SCALE, spread: list | None = None) -> float:
         """How well the best roster portraits stand out at ``scale``.
 
         Mean evidence (best NCC + uniqueness margin, like the detection) of the
@@ -1428,12 +1447,17 @@ class RosterMatcher:
         mm = np.where(valid, maps, -1.0)
         rad = max(2, int(round(0.5 * bank.size)))
         evs = []
+        half = (bank.size - 1) / 2.0
+        Wm = maps.shape[2] + bank.size - 1
+        Hm = maps.shape[1] + bank.size - 1
         for i in range(n):
             m = mm[i]
             y, x = divmod(int(np.argmax(m)), m.shape[1])
             best = float(m[y, x])
             m[max(0, y - rad):y + rad + 1, max(0, x - rad):x + rad + 1] = -1.0
             evs.append(best + UNIQUE_WEIGHT * min(best - float(m.max()), UNIQUE_CAP))
+            if spread is not None:
+                spread.append((evs[-1], (x + half + 0.5) / Wm, (y + half + 0.5) / Hm))
         top = np.sort(evs)[::-1][:CALIB_TOP_K]
         return float(np.mean(top)) - CALIB_PRIOR_WEIGHT * math.log(scale / prior) ** 2
 
@@ -1457,23 +1481,49 @@ class RosterMatcher:
         scales = [SCALE_MIN * SCALE_STEP ** i for i in range(n_steps)]
         if around is not None:
             scales = [s for s in scales if abs(math.log(s / around)) <= 0.12] or [around]
-        prior = self._stored_scale(bgr) or DEFAULT_SCALE
-        quals = [self._scale_quality(bgr, s, CALIB_INNER_PX, prior) for s in scales]
-        i = int(np.argmax(quals))
-        # refine at the detection resolution around the best coarse scale
-        fine = [min(SCALE_MAX, max(SCALE_MIN, scales[i] * f)) for f in FINE_STEPS]
-        fq = [self._scale_quality(bgr, s, WORK_INNER_PX, prior) for s in fine]
-        # NCC tolerates a few % of scale error, so the quality curve has a plateau: take
-        # the (quality-weighted, log-scale) centre of the plateau rather than its argmax
-        q = max(fq)
-        w = np.clip(np.asarray(fq) - (q - PLATEAU), 0.0, None)
-        best = float(np.exp(np.sum(w * np.log(fine)) / max(float(w.sum()), 1e-9)))
-        self.last_calib_ms = ms = 1000 * (time.perf_counter() - t0)
+        def sweep(prior: float) -> tuple[float, float]:
+            quals = [self._scale_quality(bgr, s, CALIB_INNER_PX, prior) for s in scales]
+            i = int(np.argmax(quals))
+            # refine at the detection resolution around the best coarse scale
+            fine = [min(SCALE_MAX, max(SCALE_MIN, scales[i] * f)) for f in FINE_STEPS]
+            fq = [self._scale_quality(bgr, s, WORK_INNER_PX, prior) for s in fine]
+            # NCC tolerates a few % of scale error, so the quality curve has a plateau: take
+            # the (quality-weighted, log-scale) centre of the plateau rather than its argmax
+            q_ = max(fq)
+            w = np.clip(np.asarray(fq) - (q_ - PLATEAU), 0.0, None)
+            return float(np.exp(np.sum(w * np.log(fine)) / max(float(w.sum()), 1e-9))), q_
+
+        stored = self._stored_scale(bgr)
         st = self._state
+        full = around is None
+        confident = False
+        if full:
+            # the evidence decides with the generic prior; the ratio stored by the previous
+            # games is the prior only when this frame's evidence is not confident
+            prior = DEFAULT_SCALE
+            best, q = sweep(prior)
+            spread: list = []
+            if q >= MIN_CALIB_QUALITY:
+                self._scale_quality(bgr, best, WORK_INNER_PX, prior, spread=spread)
+            confident = self._calib_spread(spread, best) >= CALIB_MIN_SPREAD
+            if not confident and stored is not None and abs(math.log(stored / prior)) > 0.01:
+                best, q = sweep(stored)
+        else:
+            # narrow confirmation (first frames, weak matches): never certifies a scale
+            best, q = sweep(stored or DEFAULT_SCALE)
+        self.last_calib_ms = ms = 1000 * (time.perf_counter() - t0)
         if q < MIN_CALIB_QUALITY:
             log.info("Roster matcher: calibration inconclusive (q=%.3f, %.0f ms)", q, ms)
             st.calib.append((None, 0.0))
             return None
+        if full and not confident and st.scale is not None and not st.confident:
+            # a provisional re-check that is still not confident: keep the current scale (a
+            # scale change restarts the searches; base stacks make the sweeps noisy)
+            st.retry_every = min(CALIB_RETRY_MAX, 2 * st.retry_every)
+            return st.scale
+        if confident and not st.confident:
+            st.calib.clear()                   # the provisional sweeps do not vote any more
+            st.confident = True
         st.calib.append((best, q))
         # combine the calibrations of the first frames (quality-weighted median)
         vals = sorted([c for c in st.calib[-CALIB_FRAMES:] if c[0] is not None],
@@ -1489,10 +1539,25 @@ class RosterMatcher:
         st.since_calib = 0
         st.conf_hist.clear()
         st.ref_conf = 0.0
-        log.info("Roster matcher: icon scale %.4f (q=%.3f, %.0f ms)", st.scale, q, ms)
-        if store:
+        log.info("Roster matcher: icon scale %.4f (q=%.3f, %s, %.0f ms)", st.scale, q,
+                 "confident" if st.confident else "provisional", ms)
+        if store and st.confident:
             self._store_scale(bgr, st.scale)
         return st.scale
+
+    @staticmethod
+    def _calib_spread(spread: list, scale: float) -> int:
+        """Champions confidently matched at separate places outside the fountains."""
+        kept: list[tuple[float, float]] = []
+        for ev, u, v in sorted(spread, reverse=True):
+            if ev < CALIB_CONF_EV:
+                break
+            if any(math.hypot(u - fu, v - fv) < CALIB_FOUNTAIN_R for fu, fv in _FOUNTAINS.values()):
+                continue
+            if any(math.hypot(u - a, v - b) < CALIB_SPREAD_D * scale for a, b in kept):
+                continue
+            kept.append((u, v))
+        return len(kept)
 
     @staticmethod
     def _key(bgr: np.ndarray) -> str:
@@ -1565,6 +1630,7 @@ class RosterMatcher:
             if self._size_key is not None:
                 st.scale = None
                 st.calib.clear()
+                st.confident = False
             self._size_key = key
         around: float | None = None              # None: full sweep
         need = False
@@ -1576,6 +1642,11 @@ class RosterMatcher:
                 around = self._stored_scale(bgr)
         elif len(st.calib) < CALIB_FRAMES and st.frames < 2 * CALIB_FRAMES:
             need, around = True, st.scale         # initial phase: confirm narrowly
+        elif not st.confident and st.frames - st.retry_at >= st.retry_every:
+            # provisional scale (stored prior, base stack at 0:00...): full sweep with the
+            # generic prior until confident multi-icon evidence certifies it
+            need, around = True, None
+            st.retry_at = st.frames
         elif st.since_calib >= RECAL_WEAK_FRAMES and len(st.conf_hist) >= RECAL_WINDOW:
             recent = float(np.mean(st.conf_hist[-RECAL_WINDOW:]))
             if recent < max(RECAL_DROP * st.ref_conf, 0.5):

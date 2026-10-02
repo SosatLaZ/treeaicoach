@@ -217,6 +217,8 @@ class Scenario:
     truth: str = ""                            # LCU truth file (tests/fixtures/lcu_truth/<name>)
     truth_t: float = 0.0                       # ... game time the game starts at (roster, positions,
     #                                            kills -> fights / deaths from the real game)
+    start: str = ""                            # "fountain": game start, everybody home at 0:00
+    scale_prior: float = 0.0                   # stored icon scale of a previous game (0: none)
 
 
 @dataclass
@@ -337,6 +339,11 @@ class Sim:
             self.order = [0] + self.order if sc.me_draw == "under" else self.order + [0]
         if self.truth is not None:
             self._truth_init()
+        if sc.start == "fountain":                   # 0:00: everybody in the fountain
+            for c in self.champs:
+                c.pos = np.array(FOUNTAIN[c.team], float) + rng.normal(0, 0.012, 2)
+                c.plan = [self._home_exit(c)]
+                c.stick = None
         self.cam_c = self.champs[0].pos + [0.0, -0.022]
         self.pan_dir = rng.normal(0, 1, 2)
         self.pan_dir /= np.linalg.norm(self.pan_dir)
@@ -723,7 +730,7 @@ class Sim:
                 position=c.role, is_dead=dead, respawn_timer=max(0.0, c.dead_until - t) if dead else 0.0,
                 level=6, has_smite=c.role == "JUNGLE")
         me = players[self.champs[0].alias]
-        gt0 = float(self.sc.truth_t) if self.truth is not None else 600.0
+        gt0 = float(self.sc.truth_t) if self.truth is not None else (0.0 if self.sc.start == "fountain" else 600.0)
         return GameInfo(game_time=gt0 + t, game_mode="CLASSIC", map_number=11, map_terrain="Default",
                         team_relative_colors=True, me=me,
                         allies=[players[c.alias] for c in self.champs if c.rel == "ally"],
@@ -780,7 +787,27 @@ def scenarios(quick: bool = False) -> list[Scenario]:
 
 HARD_FILE = ROOT / "tools" / "det_gym_hard.json"
 HISTORY_FILE = ROOT / "tools" / "det_gym_history.jsonl"
-SUITES = ("main", "holdout", "hard", "botlane")
+SUITES = ("main", "holdout", "hard", "botlane", "start")
+
+
+def start_scenarios(quick: bool = False) -> list[Scenario]:
+    """Game start (0:00, everybody in the fountain, walking out): the icon scale must be right
+    from the first minute, whatever the scale stored by the previous game (real reports:
+    0,104 -> 0,090 at 3:01, 0,108 -> 0,091 at 0:17 = the first minutes with a scale 15-20 %
+    too big). ``scl`` = mean |log(scale / true scale)|."""
+    S = [Scenario("st_prior108", 91, 6.0, 45.0, 280, "ORDER", "locked", jpeg=0, blur=0.4,
+                  start="fountain", scale_prior=0.108),
+         Scenario("st_prior080", 93, 6.0, 45.0, 240, "CHAOS", "locked", jpeg=0, blur=0.5,
+                  start="fountain", scale_prior=0.08),
+         Scenario("st_prior090", 95, 6.0, 45.0, 300, "ORDER", "free", jpeg=0, blur=0.35,
+                  start="fountain", scale_prior=0.09),
+         Scenario("st_noprior", 97, 6.0, 45.0, 260, "CHAOS", "locked", jpeg=0, blur=0.4,
+                  start="fountain")]
+    for sc in S:
+        sc.suite = "start"
+        if quick:
+            sc.seconds = 20.0
+    return S
 
 
 def botlane_scenarios(quick: bool = False) -> list[Scenario]:
@@ -854,6 +881,8 @@ def suite_scenarios(suite: str = "main", quick: bool = False) -> list[Scenario]:
         return out
     if suite == "botlane":
         return botlane_scenarios(quick)
+    if suite == "start":
+        return start_scenarios(quick)
     raise ValueError(f"unknown suite {suite!r}")
 
 
@@ -873,13 +902,13 @@ class _Voice:
 
 
 class Pipeline:
-    def __init__(self, db) -> None:
+    def __init__(self, db, scale_store: dict | None = None) -> None:
         from treeaicoach.config import Config
         from treeaicoach.detector import create_detector
         from treeaicoach.engine import CoachEngine
 
         self.now = 0.0
-        self.det = create_detector("auto", db=db, learn_cache=None)
+        self.det = create_detector("auto", db=db, learn_cache=None, scale_store=scale_store)
         self.eng = CoachEngine(Config(), _Voice(), detector=self.det, clock=lambda: self.now,
                                champion_db=db, enable_hotkeys=False, manage_overlay=False)
         self.eng._ensure_components()
@@ -1010,6 +1039,7 @@ class GameMetrics:
     me_dead: int = 0         # frames where I am dead but my position is still drawn
     stk_n: int = 0           # champions mostly hidden under another icon (stacked) ...
     stk_ok: int = 0          # ... reported visible at the stack (within 2 TOL)
+    scale_err: list = field(default_factory=list)   # |log(matcher scale / true scale)| per frame
     fails: list = field(default_factory=list)     # (scenario, t, kind, detail)
     miss_cause: dict = field(default_factory=dict)
     ghost_kind: dict = field(default_factory=dict)
@@ -1041,6 +1071,8 @@ class GameMetrics:
             "cpu": float(np.mean(self.cpu)) if self.cpu else float("nan"),
             "resets": self.resets, "me_dead": self.me_dead,
             "stk": self.stk_ok / max(1, self.stk_n), "stk_n": self.stk_n,
+            "scl": float(np.mean(self.scale_err)) if self.scale_err else float("nan"),
+            "scl_bad": float(np.mean([e > 0.05 for e in self.scale_err])) if self.scale_err else float("nan"),
             "frames": self.frames, "n_vis": self.n_vis, "miss_cause": dict(self.miss_cause),
             "ghost_kind": dict(self.ghost_kind),
         }
@@ -1068,7 +1100,7 @@ def _miss_cause(alias: str, rel: str, u: float, v: float, ids: list, my_alias: s
 
 def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) -> GameMetrics:
     sim = Sim(sc, db, art)
-    pipe = Pipeline(db)
+    pipe = Pipeline(db, {f"{sc.size}x{sc.size}": float(sc.scale_prior)} if sc.scale_prior > 0 else None)
     M = GameMetrics()
     dt = 1.0 / sc.fps
     n_frames = int(round(sc.seconds * sc.fps))
@@ -1083,6 +1115,9 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
         game = sim.game_info(t)
         ids, ms = pipe.step(t, img, game)
         out = pipe.drawn(t, game)
+        scl = getattr(getattr(pipe.eng._detector, "matcher", None), "scale", None)
+        if scl:
+            M.scale_err.append(abs(math.log(float(scl) / (2 * ICON_R))))
         if t < WARMUP_S:
             prev_truth = {a: (u, v) for a, _r, _tm, u, v, _f in truth}
             for a, *_ in truth:
@@ -1527,7 +1562,7 @@ def report(out: dict, verbose: bool = False) -> str:
     hdr = (f"{'game':11s} {'frm':>4s} {'vis':>5s} {'rec':>6s} {'prec':>6s} {'det':>5s} {'idsw':>4s} {'frag':>4s} "
            f"{'idX':>3s} {'team':>4s} {'err50':>6s} {'err95':>6s} {'lag':>5s} {'gLive':>5s} {'gDead':>5s} "
            f"{'me50':>6s} {'me95':>6s} {'meBad':>5s} {'ms':>5s} {'ms95':>5s} {'cpu':>5s} "
-           f"{'stk':>5s} {'rst':>3s} {'meDd':>4s}")
+           f"{'stk':>5s} {'rst':>3s} {'meDd':>4s} {'scl':>5s}")
     L.append(hdr)
     rows = list(out["games"].items()) + [("TOTAL", out["total"])]
     for name, s in rows:
@@ -1535,7 +1570,8 @@ def report(out: dict, verbose: bool = False) -> str:
                  f"{s['idsw']:4d} {s['frag']:4d} {s['id_wrong']:3d} {s['team']:4d} {s['err50']:6.4f} "
                  f"{s['err95']:6.4f} {s['lag']:5.2f} {s['g_live']:5d} {s['g_dead']:5d} {s['me50']:6.4f} "
                  f"{s['me95']:6.4f} {s['me_bad']:5.3f} {s['ms']:5.1f} {s['ms95']:5.1f} {s['cpu']:5.1f} "
-                 f"{s.get('stk', float('nan')):5.3f} {s.get('resets', 0):3d} {s.get('me_dead', 0):4d}")
+                 f"{s.get('stk', float('nan')):5.3f} {s.get('resets', 0):3d} {s.get('me_dead', 0):4d} "
+                 f"{s.get('scl', float('nan')):5.3f}")
     if "real" in out:
         r = out["real"]
         L.append(f"REAL (9 crops, {r['gt']} icons): recall {r['rec']:.3f}  precision {r['prec']:.3f}  "
