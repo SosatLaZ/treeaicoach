@@ -249,31 +249,36 @@ def find_camera_rect(minimap_bgr: Any) -> CameraRect | None:
 
 def rect_still_there(minimap_bgr: Any, rect: CameraRect | None, keep: float = 0.6) -> bool:
     """True when the white lines of ``rect`` (found in a previous frame) are still drawn at the
-    same pixels: each side inside the map covered by white on >= ``keep`` of its length (one
-    side may be hidden by icons). A 1-px camera move empties the old rows / columns, so a moved
-    rectangle is never kept. ~0.1 ms instead of a ~4 ms search. Never raises."""
+    same pixels: every side inside the map covered by white on >= ``keep`` of its length, at
+    least one horizontal and one vertical side checked (a pan along one axis keeps the lines of
+    the other axis in place), and no white line 3 px outside / inside (moved by >= 2 px). Any
+    doubt -> False (the full search runs). ~0.1 ms instead of a ~4 ms search. Never raises."""
     try:
         if rect is None or not isinstance(minimap_bgr, np.ndarray) or minimap_bgr.ndim != 3:
             return False
         H, W = minimap_bgr.shape[:2]
-        ok = weak = 0
+        ok = {"h": 0, "v": 0}
         for kind, c, a0, a1 in (("h", rect.v0, rect.u0, rect.u1), ("h", rect.v1, rect.u0, rect.u1),
                                 ("v", rect.u0, rect.v0, rect.v1), ("v", rect.u1, rect.v0, rect.v1)):
             n_c, n_a = (H, W) if kind == "h" else (W, H)
             pc = int(round(c * n_c - 0.5))
-            if pc < 1 or pc > n_c - 2:
+            if pc < 4 or pc > n_c - 5:
                 continue                                   # clipped by the map border
             lo, hi = max(0, int(math.ceil(a0 * n_a)) + 1), min(n_a, int(math.floor(a1 * n_a)) - 1)
             if hi - lo < 6:
                 continue
-            strip = minimap_bgr[pc - 1:pc + 2, lo:hi] if kind == "h" else \
-                minimap_bgr[lo:hi, pc - 1:pc + 2].transpose(1, 0, 2)
-            m = white_mask(np.ascontiguousarray(strip)).max(axis=0)
-            if float(m.mean()) >= keep:
-                ok += 1
-            else:
-                weak += 1
-        return ok >= 2 and weak <= 1
+
+            def cover(r0: int, r1: int) -> float:
+                strip = minimap_bgr[r0:r1, lo:hi] if kind == "h" else \
+                    minimap_bgr[lo:hi, r0:r1].transpose(1, 0, 2)
+                return float(white_mask(np.ascontiguousarray(strip)).max(axis=0).mean())
+
+            if cover(pc - 1, pc + 2) < keep:
+                return False
+            if max(cover(pc - 4, pc - 2), cover(pc + 3, pc + 5)) >= 0.5 * keep:
+                return False                               # a line next to it: moved
+            ok[kind] += 1
+        return ok["h"] >= 1 and ok["v"] >= 1
     except Exception:
         return False
 
