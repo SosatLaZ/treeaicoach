@@ -1,6 +1,6 @@
 {
-  "version": "2.4.1",
-  "sha256": "e4e83a53273eaec8012ce2552f774be52e181dd00843f312cda22228d2076dbc",
-  "size": 82315865,
-  "notes": "2.4.1 (intermédiaire) : trajets logiques du jungler ennemi activés (fini la grosse zone), corrections de détection en cours, timers et conseils inchangés."
+  "version": "2.5.0",
+  "sha256": "978b042bdd9f525c89194b3d01961f0f8114f3a5144cc4eca97de1f2492064f8",
+  "size": 82359368,
+  "notes": "2.5 : détection corrigée sur tes vraies parties (plus de « vu à deux endroits » en support, duo empilé suivi, bonne taille d'icônes dès le début, plus de « minimap introuvable » au chargement, skins chroma reconnus — Kindred n'était presque jamais identifié), launcher qui charge les pages sans bug, moins d'impact sur les images par seconde du jeu."
 }
