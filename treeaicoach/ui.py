@@ -2181,11 +2181,24 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
             log.exception("Status refresh failed")
         if self._iconic():
             delay = STATUS_ICONIC_MS
-        elif self._current_page == "dashboard" and (self._busy or self._last_state_key in ("RUNNING", "LOCATING")):
+        elif (self._current_page == "dashboard" and (self._busy or self._last_state_key in ("RUNNING", "LOCATING"))
+              and self._launcher_in_front()):
             delay = STATUS_MS
         else:
             delay = STATUS_IDLE_MS
         self._status_job = self.root.after(delay, self._status_loop)
+
+    @staticmethod
+    def _launcher_in_front() -> bool:
+        """The launcher may be looked at: no game window, or one of our windows has the focus. With
+        the game (or another app) in front, the status loop runs at 1 Hz instead of 4 Hz."""
+        try:
+            from treeaicoach.capture import foreground_state  # noqa: PLC0415
+
+            game_front, own_front = foreground_state()
+        except Exception:
+            return True
+        return game_front is None or bool(own_front)
 
     def _get_status(self) -> Any:
         if self.engine is None:
@@ -2388,6 +2401,10 @@ class CoachApp(DashboardPageMixin, AlertsPageMixin, OverlayPageMixin, AnalysisPa
         text, level = health_text(h)
         if not text:
             text = f"Processeur utilisé par TreeAI : {cpu:.0f} %" if isinstance(cpu, (int, float)) else ""
+        perf = (h.get("performance") if isinstance(h, dict) else None) or {}
+        if isinstance(perf, dict) and perf.get("text"):        # engine.health()["performance"] (sysperf)
+            text = f"{text}\n{perf['text']}" if text else str(perf["text"])
+            level = max(level, {"ok": 0, "eleve": 1, "lourd": 2}.get(str(perf.get("level")), 0))
         col = {0: MUTED, 1: WARNING, 2: DANGER}.get(level, MUTED)
         sig = (text, col)
         if sig != self._health_sig:

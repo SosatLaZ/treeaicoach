@@ -325,7 +325,8 @@ class CalibrationDialog:
     def _grab_focus(self) -> None:
         try:
             self.top.lift()
-            self.top.focus_force()
+            if sys.platform == "win32":      # focus -force can crash Tk under some X servers
+                self.top.focus_force()
             self.top.grab_set()
         except Exception:
             log.debug("Calibration grab failed", exc_info=True)

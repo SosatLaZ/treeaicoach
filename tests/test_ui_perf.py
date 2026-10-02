@@ -153,3 +153,21 @@ def test_champ_select_card(home: Path, tmp_path: Path, monkeypatch) -> None:
         assert not app.cs_card.winfo_manager()
     finally:
         app.close()
+
+
+@tu.needs_display
+def test_health_shows_game_impact_and_status_loop_rate(home: Path, tmp_path: Path) -> None:
+    app, _voice, _ = tu._build(tmp_path, cfg=Config(ui_onboarding_done=True, ui_seen_changelog="1.5",
+                                                     autostart=False))
+    try:
+        h = {"capture_backend": "dxcam", "capture_fps": 29.6, "detect_ms": {"p50": 11.0, "p95": 20.0},
+             "performance": {"level": "eleve", "text": "Impact sur le jeu : moyen (31 % d'un cœur)"}}
+        app._update_health(h, 5.0)
+        text = app.health_lbl.cget("text")
+        assert "dxcam" in text and "Impact sur le jeu : moyen" in text
+        assert str(app.health_lbl.cget("text_color")).upper() == ui.WARNING.upper()
+        app._update_health({"performance": {"level": "ok", "text": "Impact sur le jeu : faible"}}, None)
+        assert app.health_lbl.cget("text").endswith("Impact sur le jeu : faible")
+        assert ui.CoachApp._launcher_in_front() is True          # no game window here: 4 Hz allowed
+    finally:
+        app.close()

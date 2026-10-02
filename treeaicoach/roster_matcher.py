@@ -330,6 +330,9 @@ DEAD_UNKNOWN_S = 3.0
 #: yet...) my position is the camera point + the learned offset, for CAMLOCK_HOLD_S after
 #: the last confirmation, unless the camera point jumps (panning) faster than me.
 CAMLOCK_MARGIN = 0.05
+#: (cost) the camera rectangle of the previous frame is kept while its lines are still drawn on
+#: the same pixels (camera_proj.rect_still_there), the full search runs only when it moved
+CAMRECT_REUSE = True
 CAMLOCK_TOL = 0.025
 CAMLOCK_CONFIRM = 4
 CAMLOCK_HOLD_S = 6.0
@@ -1313,9 +1316,12 @@ class RosterMatcher:
         if self._camrect[0] != f:
             r = None
             try:
-                from treeaicoach.camera_proj import find_camera_rect
+                from treeaicoach.camera_proj import find_camera_rect, rect_still_there
 
-                r = find_camera_rect(bgr)
+                prev = self._camrect[1]
+                # (cost) the camera rectangle did not move: its lines are still on the same
+                # pixels -> no new search (~0.1 ms instead of ~4 ms)
+                r = prev if CAMRECT_REUSE and rect_still_there(bgr, prev) else find_camera_rect(bgr)
             except Exception:
                 r = None
             self._camrect = (f, r)

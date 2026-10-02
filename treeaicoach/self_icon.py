@@ -111,6 +111,13 @@ ELIGIBLE_AFTER_S = 20.0     # another champion matched this recently is not re-l
 OK_MARGIN_OTHER = 0.2       # ... matched this well (a weak match may be a false one)
 OTHERS_EVERY = 8            # frames between two searches for the other unmatched champions
 OTHERS_PENDING_EVERY = 3    # ... while an unexplained icon is about to be bound
+#: (cost) only the champions never matched in this game are searched by the bootstrap (an
+#: official / learned portrait that matched works: an unmatched champion is in the fog or under
+#: another icon, not a custom skin)
+OTHERS_NEVER_OK_ONLY = True
+#: (cost) my portrait matched in this game: my bootstrap (stacked under my ADC, a ping...) runs
+#: every SELF_KNOWN_EVERY frames only, not on every frame
+SELF_KNOWN_EVERY = 2
 WANT_SELF_S = 2.0           # self unmatched this long -> the bootstrap runs every frame
 SKIN_GUESS_AFTER_S = 6.0
 CENTRED_SKIP_MARGIN = 0.15  # a learned icon matched this well is not re-checked
@@ -757,7 +764,11 @@ class IconLearner:
         others = [i for i, e in enumerate(entries) if i != me
                   and (i not in accepted or accepted[i][2] < OK_MARGIN_OTHER)
                   and getattr(e, "alias", None) not in self._dead
-                  and now - self._last_ok.get(i, -1e9) >= ELIGIBLE_AFTER_S]
+                  and now - self._last_ok.get(i, -1e9) >= ELIGIBLE_AFTER_S
+                  and not (OTHERS_NEVER_OK_ONLY and i in self._last_ok)]
+        if want_self and SELF_KNOWN_EVERY > 1 and me in self._last_ok and \
+                self._frames % SELF_KNOWN_EVERY != 0:
+            want_self = False
         if fix is not None:
             out.self_pos = (fix.u, fix.v, 0.6)
             self._self_seen = (fix.u, fix.v, now)

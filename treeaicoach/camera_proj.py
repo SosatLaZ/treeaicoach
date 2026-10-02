@@ -247,6 +247,37 @@ def find_camera_rect(minimap_bgr: Any) -> CameraRect | None:
         return None
 
 
+def rect_still_there(minimap_bgr: Any, rect: CameraRect | None, keep: float = 0.6) -> bool:
+    """True when the white lines of ``rect`` (found in a previous frame) are still drawn at the
+    same pixels: each side inside the map covered by white on >= ``keep`` of its length (one
+    side may be hidden by icons). A 1-px camera move empties the old rows / columns, so a moved
+    rectangle is never kept. ~0.1 ms instead of a ~4 ms search. Never raises."""
+    try:
+        if rect is None or not isinstance(minimap_bgr, np.ndarray) or minimap_bgr.ndim != 3:
+            return False
+        H, W = minimap_bgr.shape[:2]
+        ok = weak = 0
+        for kind, c, a0, a1 in (("h", rect.v0, rect.u0, rect.u1), ("h", rect.v1, rect.u0, rect.u1),
+                                ("v", rect.u0, rect.v0, rect.v1), ("v", rect.u1, rect.v0, rect.v1)):
+            n_c, n_a = (H, W) if kind == "h" else (W, H)
+            pc = int(round(c * n_c - 0.5))
+            if pc < 1 or pc > n_c - 2:
+                continue                                   # clipped by the map border
+            lo, hi = max(0, int(math.ceil(a0 * n_a)) + 1), min(n_a, int(math.floor(a1 * n_a)) - 1)
+            if hi - lo < 6:
+                continue
+            strip = minimap_bgr[pc - 1:pc + 2, lo:hi] if kind == "h" else \
+                minimap_bgr[lo:hi, pc - 1:pc + 2].transpose(1, 0, 2)
+            m = white_mask(np.ascontiguousarray(strip)).max(axis=0)
+            if float(m.mean()) >= keep:
+                ok += 1
+            else:
+                weak += 1
+        return ok >= 2 and weak <= 1
+    except Exception:
+        return False
+
+
 class CameraTracker:
     """Temporal smoothing of :func:`find_camera_rect` (thread-safe)."""
 
