@@ -1466,6 +1466,13 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             if not (ev is not None and (ev.visible or bool(getattr(ev, "dead", False)))):
                 _draw_jungle_paths(cv_, fog, W, H, k, vis, f_time, labels, me)
             continue
+        if not detailed:
+            # compact: never the reachable-region contour (a wall-hugging outline over a whole
+            # quadrant, real feedback "crap"): at most a very faint heat; the "JGL 12 s" mark stays
+            heat = _heat_layer(getattr(fog, "heat", None), W, H) if vis > 0 else None
+            if heat is not None:
+                cv_.paint(0, 0, heat, DANGER, COMPACT_HEAT_ALPHA * vis)
+            continue
         if vis > 0 and isinstance(region, np.ndarray) and region.ndim == 2 and region.shape[0] >= 4:
             heat = _heat_layer(getattr(fog, "heat", None), W, H)
             if heat is not None:          # where he probably is (early clear model): heat only
@@ -1765,18 +1772,20 @@ def render_timers(state: Any, screen: Any = None, max_w: int | None = None) -> n
         return None
 
 
-#: Logical paths: at most this many drawn, faded below this probability.
+#: Logical paths: at most this many drawn.
 MAX_JUNGLE_PATHS = 2
+#: Compact minimap layer without paths: opacity of the jungler's (faint) heat.
+COMPACT_HEAT_ALPHA = 0.2
 
 
 def _draw_jungle_paths(cv_: Canvas, fog: Any, W: int, H: int, k: float, vis: float, font: Any,
                        labels: list, me: Any) -> None:
-    """The 1-2 likely paths of the hidden jungler: thin dotted polylines with an arrowhead at
-    the next stop, opacity = probability x confidence, "≈ 12 s de toi" when a path passes by me,
+    """The 1-2 likely paths of the hidden jungler: thin dotted polylines (dark outline) with an
+    arrowhead and a small ring at the most likely next stop, opacity = probability x confidence, "≈ 12 s de toi" when a path passes by me,
     "autre côté" when the mass is far from me."""
     paths = list(getattr(fog, "paths", None) or ())[:MAX_JUNGLE_PATHS]
-    lw = max(1.0, 1.15 * k)
-    dash, gap = max(2.0, 2.6 * k), max(2.0, 2.4 * k)
+    lw = max(1.4, 1.5 * k)
+    dash, gap = max(2.5, 3.2 * k), max(2.0, 2.6 * k)
     for rank, jp in enumerate(paths):
         pts = [(float(x) * W, float(y) * H) for x, y in (getattr(jp, "points", None) or ())]
         if len(pts) < 2:
@@ -1792,15 +1801,19 @@ def _draw_jungle_paths(cv_: Canvas, fog: Any, W: int, H: int, k: float, vis: flo
             s0 = carry
             while s0 < L:
                 s1 = min(L, s0 + dash)
-                cv_.capsule(x0 + ux * s0, y0 + uy * s0, x0 + ux * s1, y0 + uy * s1, lw, rgb, a)
+                xa0, ya0, xa1, ya1 = x0 + ux * s0, y0 + uy * s0, x0 + ux * s1, y0 + uy * s1
+                cv_.capsule(xa0, ya0, xa1, ya1, lw + 2.0, BLACK, 0.45 * a)     # contrast on the map
+                cv_.capsule(xa0, ya0, xa1, ya1, lw, rgb, a)
                 s0 = s1 + gap
             carry = s0 - L
         # arrowhead on the last segment
         (xa, ya), (xb, yb) = pts[-2], pts[-1]
         L = math.hypot(xb - xa, yb - ya)
         if L > 1e-6:
-            back = min(L, 6.0 * k + 3)
+            back = min(L, 7.0 * k + 4)
             _arrow(cv_, xb - (xb - xa) / L * back, yb - (yb - ya) / L * back, xb, yb, lw, rgb, a)
+        if rank == 0:                                   # his most likely next stop
+            cv_.ring(pts[-1][0], pts[-1][1], max(4.0, 5.0 * k), lw, rgb, 0.8 * a)
         if rank == 0:
             eta = getattr(jp, "eta_me", None)
             text = None

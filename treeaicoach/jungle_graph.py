@@ -63,6 +63,13 @@ SEEN_W = 0.15
 FARM_MISS_W = 0.2
 #: Gank-warning horizon (s) and the Flash allowance (normalized).
 REACH_S = 8.0
+#: A path shows its second stop when at least this share of its particles agree on it.
+SECOND_STOP_SHARE = 0.45
+#: Behaviour weights of a gank spot with / without one of our laners on it.
+GANK_W = 0.3
+GANK_W_EMPTY = 0.06
+#: A lane gank spot follows our laner closest to it within this distance.
+VICTIM_R = 0.2
 FLASH = 0.027
 GRID = 128
 
@@ -220,8 +227,9 @@ class JunglerFilter:
 
     # ------------------------------------------------------------------ state
     def reset(self, uv: Sequence[float], gt: float, team: str | None, key: Any = None,
-              camps_up: np.ndarray | None = None) -> None:
-        """New start: he was at ``uv`` at game time ``gt``."""
+              camps_up: np.ndarray | None = None, since_recall: float | None = None) -> None:
+        """New start: he was at ``uv`` at game time ``gt``. ``camps_up`` / ``since_recall``:
+        memory of the previous filter (:meth:`memory`) - camps he cleared stay down."""
         g = self.graph
         n, m = self.n, len(g.nodes)
         self.rng = np.random.default_rng(self._seed)
@@ -230,6 +238,8 @@ class JunglerFilter:
         self.start_uv = (float(uv[0]), float(uv[1]))
         self.gt = float(gt)
         self.w = np.full(n, 1.0 / n)
+        #: Node positions for this filter: gank spots follow our laners (set_victims).
+        self.node_uv = g.uv.copy()
         self.src = np.tile(np.asarray(self.start_uv), (n, 1))     # leg start point
         self.tgt = np.full(n, -1, np.int64)                       # target node (-1: choose)
         self.leg_t = np.zeros(n)                                  # leg duration (s)
@@ -252,9 +262,39 @@ class JunglerFilter:
         if camps_up is not None and camps_up.shape == up.shape:
             up = np.maximum(up, camps_up)
         self.up = np.tile(up, (n, 1))
-        self.since_recall = np.full(n, max(0.0, gt - 90.0))
+        self.since_recall = np.full(n, max(0.0, gt - 90.0) if since_recall is None else float(since_recall))
         self._ok = True
         self._choose(np.ones(n, bool))
+
+    def memory(self) -> tuple[np.ndarray | None, float | None]:
+        """(expected respawn game time of every node, time since his last recall) to carry
+        into the next reset (weighted over the particles)."""
+        try:
+            if not self._ok:
+                return None, None
+            return (self.w[:, None] * self.up).sum(axis=0), float((self.w * self.since_recall).sum())
+        except Exception:
+            return None, None
+
+    def set_victims(self, laners: Sequence[Sequence[float]]) -> None:
+        """Our champions' positions (me + visible allies): each lane gank spot moves to the
+        laner closest to it (within ``VICTIM_R``) - he ganks people, not fixed points."""
+        try:
+            if not self._ok:
+                return
+            g = self.graph
+            pts = [(float(p[0]), float(p[1])) for p in laners or ()]
+            for j, nd in enumerate(g.nodes):
+                if nd.kind != "gank":
+                    continue
+                best = None
+                for p in pts:
+                    d = math.dist(p, nd.uv)
+                    if d < VICTIM_R and (best is None or d < best[0]):
+                        best = (d, p)
+                self.node_uv[j] = best[1] if best is not None else g.uv[j]
+        except Exception:
+            log.debug("set_victims failed", exc_info=True)
 
     # ------------------------------------------------------------------ behaviour
     def _choose(self, mask: np.ndarray) -> None:
@@ -272,8 +312,9 @@ class JunglerFilter:
             elif nd.kind == "scuttle":
                 base[j] = 0.9
             elif nd.kind == "gank":
-                side = (nd.owner or ":").split(":")[1]
-                base[j] = 0.45 if side != own else 0.12     # gank from the river side of the lane
+                # someone to gank there (a laner of ours moved the spot onto him)?
+                manned = math.dist(self.node_uv[j], g.uv[j]) > 1e-3
+                base[j] = GANK_W if manned else GANK_W_EMPTY
             elif nd.kind == "pit":
                 base[j] = 0.5 if gt >= (300.0 if nd.name == "dragon" else 480.0) - 30 else 0.0
             elif nd.kind == "fountain":
@@ -281,7 +322,8 @@ class JunglerFilter:
         own_f = g.index.get(f"fountain_{own}") if own else None
         # distance from each particle's current point to each node (straight line x 1.25, cheap)
         P = self.src[idx]
-        d = np.hypot(P[:, None, 0] - g.uv[None, :, 0], P[:, None, 1] - g.uv[None, :, 1]) * 1.25
+        nu = self.node_uv
+        d = np.hypot(P[:, None, 0] - nu[None, :, 0], P[:, None, 1] - nu[None, :, 1]) * 1.25
         travel = d / spd
         arrive = gt + travel
         w = np.tile(base, (idx.size, 1))
@@ -301,7 +343,7 @@ class JunglerFilter:
         cum = np.cumsum(w, axis=1)
         r = self.rng.random(idx.size)[:, None]
         choice = np.minimum((cum < r).sum(axis=1), len(g.nodes) - 1)
-        lens = np.hypot(P[:, 0] - g.uv[choice, 0], P[:, 1] - g.uv[choice, 1]) * 1.25
+        lens = np.hypot(P[:, 0] - nu[choice, 0], P[:, 1] - nu[choice, 1]) * 1.25
         jitter = self.rng.uniform(0.9, 1.15, idx.size)
         self.tgt[idx] = choice
         self.leg_t[idx] = lens / spd * jitter
@@ -318,7 +360,7 @@ class JunglerFilter:
         for i in idx:
             j = int(self.tgt[i])
             nd = g.nodes[j]
-            self.src[i] = g.uv[j]
+            self.src[i] = self.node_uv[j]
             self.busy[i] = True
             if nd.kind == "camp":
                 base = nd.name.split("_")[0]
@@ -370,7 +412,7 @@ class JunglerFilter:
         g = self.graph
         tgt = np.clip(self.tgt, 0, len(g.nodes) - 1)
         f = np.where(self.busy, 1.0, np.clip(self.prog / np.maximum(self.leg_t, 1e-3), 0.0, 1.0))
-        return self.src + (g.uv[tgt] - self.src) * f[:, None]
+        return self.src + (self.node_uv[tgt] - self.src) * f[:, None]
 
     def observe_vision(self, viewers: Sequence[Sequence[float]], radius: float = SIGHT_R) -> None:
         """He is NOT seen while our champions at ``viewers`` see ``radius`` around them."""
@@ -462,7 +504,7 @@ class JunglerFilter:
             g = self.graph
             acc: dict[tuple[int, int], float] = {}
             for a, b, w in zip(self.first, self.second, self.w):
-                key = (int(a), int(b) if b >= 0 and g.nodes[int(b)].kind in ("gank", "pit") else -1)
+                key = (int(a), int(b))
                 acc[key] = acc.get(key, 0.0) + float(w)
             # merge per first stop when the second differs (keep the best second)
             firsts: dict[int, tuple[float, int, float]] = {}
@@ -478,9 +520,13 @@ class JunglerFilter:
                 if p < min_p or a < 0:
                     continue
                 pts = list(g.polyline(self.start_uv, a))
+                if math.dist(self.node_uv[a], g.uv[a]) > 1e-3:
+                    pts.append(tuple(self.node_uv[a]))        # the laner he goes to
                 label = _label(g.nodes[a])
-                if b >= 0 and pb >= 0.5 * p:
-                    pts += list(g.polyline(g.uv[a], b))[1:]
+                if b >= 0 and pb >= SECOND_STOP_SHARE * p:
+                    pts += list(g.polyline(pts[-1], b))[1:]
+                    if math.dist(self.node_uv[b], g.uv[b]) > 1e-3:
+                        pts.append(tuple(self.node_uv[b]))
                     label += " → " + _label(g.nodes[b])
                 eta = None
                 if me is not None:
@@ -495,7 +541,7 @@ class JunglerFilter:
                                 best = (dd, along)
                         eta = max(0.0, best[1] / spd - 0.0)
                 out.append(JunglePath(tuple((float(x), float(y)) for x, y in pts), float(p), label,
-                                      g.nodes[b if b >= 0 and pb >= 0.5 * p else a].name, eta))
+                                      g.nodes[b if b >= 0 and pb >= SECOND_STOP_SHARE * p else a].name, eta))
             return out
         except Exception:
             log.debug("paths failed", exc_info=True)

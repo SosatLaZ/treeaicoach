@@ -375,9 +375,9 @@ class FogTracker:
         #: ``max_s`` while the early clear model is informative) and
         #: ``fog_heat(alias, t, game, region) -> ndarray | None``.
         self.heat_source: Any = None
-        #: Logical paths (particle filter on the jungle graph, jungle_graph.py). Opt-in
-        #: (config ``jungle_paths``) until the jungle gym shows it beats the heat model.
-        self.paths_enabled = False
+        #: Logical paths (particle filter on the jungle graph, jungle_graph.py; config
+        #: ``jungle_paths``, on by default: tools/jungle_gym.py shows it beats the region / heat).
+        self.paths_enabled = True
         self._pf: Any = None
 
     def _held(self, alias: Any, t: float, game: Any) -> bool:
@@ -415,7 +415,7 @@ class FogTracker:
     def apply_config(self, cfg: Any) -> None:
         """Read ``cfg.fog_max_s`` (default 60 s)."""
         self.set_max_s(getattr(cfg, "fog_max_s", FOG_MAX_S))
-        self.paths_enabled = bool(getattr(cfg, "jungle_paths", False))
+        self.paths_enabled = bool(getattr(cfg, "jungle_paths", True))
 
     def reset(self) -> None:
         """Forget every estimate (new game)."""
@@ -455,8 +455,14 @@ class FogTracker:
                     team = getattr(jg, "team", None) if jg is not None else None
                 except Exception:
                     team = None
+                up, since = pf.memory() if pf is not None else (None, None)
+                if since is not None and loss.last_seen is not None and pf is not None:
+                    since += max(0.0, (gt_now - elapsed) - pf.gt)
+                anc = self._anchors.get(_norm_alias(loss.alias))
+                if anc is not None and anc[2] == "recall" and abs(anc[0] - loss.last_seen) < 1e-6:
+                    since = 0.0                              # he just bought: fresh recall timer
                 pf = JunglerFilter()
-                pf.reset(loss.last_uv, gt_now - elapsed, team, key=key)
+                pf.reset(loss.last_uv, gt_now - elapsed, team, key=key, camps_up=up, since_recall=since)
                 self._pf = pf
             pf.step(gt_now)
             viewers: list[tuple[float, float]] = []
@@ -472,6 +478,7 @@ class FogTracker:
                         viewers.append(p)
             except Exception:
                 pass
+            pf.set_victims(viewers)
             pf.observe_vision(viewers)
             return pf.heat(self.grid), tuple(pf.paths(me=me)), pf.p_reach(me), pf.far_side(me)
         except Exception:

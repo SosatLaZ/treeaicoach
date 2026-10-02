@@ -33,7 +33,7 @@ from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
-CONFIG_VERSION = 1                 # written as "config_version" (ignored on load for now)
+CONFIG_VERSION = 2                 # written as "config_version"; < 2: one-time migrations in load_config
 MAX_CONFIG_BYTES = 1_000_000       # a bigger config.json is treated as corrupt
 BACKUP_SUFFIX = ".bak"
 
@@ -281,7 +281,7 @@ class Config:
     voice_level: str = "minimal"         # "minimal" | "normal" | "bavard" (the rest is written: HUD + toasts)
     fog_mode: str = "jungler"       # "jungler" | "all" | "off"
     fog_max_s: float = 60.0         # 10..180
-    jungle_paths: bool = False      # enemy jungler as 1-2 likely dotted paths (jungle_graph.py), opt-in v1
+    jungle_paths: bool = True       # enemy jungler as 1-2 likely dotted paths (jungle_graph.py; tools/jungle_gym.py)
     hotkey_mute: str = "F10"
     hotkey_overlay: str = "F11"
     break_reminder: bool = True
@@ -710,6 +710,12 @@ def _resolve(path: str | os.PathLike[str] | None) -> Path:
     return Path(path) if path is not None else paths.config_path()
 
 
+def _version(data: Mapping[str, Any]) -> int:
+    """``config_version`` of a loaded file (1 when missing / invalid)."""
+    v = data.get("config_version")
+    return int(v) if isinstance(v, int) and not isinstance(v, bool) else 1
+
+
 def load_config(path: str | os.PathLike[str] | None = None) -> Config:
     """Load the config (default path: ``paths.config_path()``). Never raises.
 
@@ -773,6 +779,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             if data.get(old) is True:
                 # 2.3 cleanup: "layer_roles" / "layer_ghosts" were OR-ed with the overlay_show_* toggles
                 data = {**data, new: True}
+    if _version(data) < 2 and data.get("jungle_paths") is False:
+        # 2.4 shipped the logical jungler paths as an opt-in trial (False written as the default);
+        # the jungle gym shows they beat the fog region -> on once (the switch stays in Overlay)
+        data = {**data, "jungle_paths": True}
     cfg = Config.from_dict(data)
     log.info("Config loaded from %s", p)
     return cfg
