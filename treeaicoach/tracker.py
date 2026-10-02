@@ -114,7 +114,11 @@ TP_CONFIRM_DIST = 0.04      # ...by an observation this close to it (+ walking)
 # stacked icons (DeepestLeague "occlusion-aware hold", MIT)
 STACK_RADII = 1.2           # disappeared within this many icon radii of a visible icon
 STACK_DEFAULT_R = 0.045     # icon radius when unknown (normalized)
-STACK_HOLD_S = 5.0          # longest stacked hold
+STACK_HOLD_S = 5.0          # longest stacked hold (enemies)
+#: my team (me + allies) is never in the fog: an allied icon that disappeared under another
+#: visible icon is still under it (support glued on his ADC for minutes, LCU truth of real
+#: games: median 0.5 icon diameter apart during the laning phase) -> much longer hold
+STACK_HOLD_FRIEND_S = 90.0
 STACK_ASSOC_PENALTY = 0.01  # the occluder's own track wins an association tie
 # champion locker (DeepestLeague ``ChampionLocker``, MIT) for anonymous tracks
 LOCK_MIN_OBS = 3            # observations before an anonymous track is confirmed...
@@ -834,6 +838,14 @@ class Tracker:
             for e in entries:
                 if e.alias and e.alias in dead:
                     e.alias = None        # a dead champion has no icon: wrong identity
+        # I am dead (Live Client): no icon of mine on the map, no "self" claim (an icon next
+        # to where I died would otherwise carry my position around until the respawn)
+        my_alias = next((a for a, r in self._roster.items() if r == "self"), None)
+        me_dead = my_alias is not None and my_alias in dead
+        if me_dead:
+            for e in entries:
+                if e.relation == "self":
+                    e.relation = "ally"
         entries = self._dedupe(entries)
         # An identity-based "self" seen recently outranks the identifier's camera fallback.
         cur_self = self._tracks.get(self._self_key) if self._self_key else None
@@ -906,7 +918,7 @@ class Tracker:
             if tr.relation == "self" and key != self._self_key:
                 tr.relation = "ally"
             tr.refresh(now, self.hide_after)
-            if dead and tr.alias in dead:
+            if (dead and tr.alias in dead) or (me_dead and key == self._self_key):
                 # dead: hidden at once (a stacked hold or the hide timeout would keep
                 # drawing him where he died)
                 tr.stacked_with = tr.stacked_since = None
@@ -992,7 +1004,8 @@ class Tracker:
                 occ = self._tracks.get(tr.stacked_with)
                 occ_visible = occ is not None and occ.stacked_with is None \
                     and now - occ.last_seen < self.hide_after
-                if occ_visible and now - (tr.stacked_since or now) <= STACK_HOLD_S:
+                hold = STACK_HOLD_S if tr.relation == "enemy" else STACK_HOLD_FRIEND_S
+                if occ_visible and now - (tr.stacked_since or now) <= hold:
                     if tr.stacked_with in updated:
                         tr.follow(occ, now)        # type: ignore[arg-type]
                     continue

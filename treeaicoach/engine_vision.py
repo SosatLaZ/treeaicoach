@@ -44,6 +44,11 @@ from treeaicoach.live_client import GameInfo
 
 log = logging.getLogger("treeaicoach.engine")   # same logger as before the split
 
+#: Camera-centre fallback for "self": when my track was seen this recently, the chosen ally
+#: icon must be within CAMERA_SELF_REACH + JUMP_SPEED x elapsed of my last position.
+CAMERA_SELF_MEMORY_S = 20.0
+CAMERA_SELF_REACH = 0.06
+
 
 class VisionMixin:
     """Vision stage of a tick: my icon / HUD reading, identity stabilisation (jumps, swaps,"""
@@ -187,6 +192,13 @@ class VisionMixin:
                 out[i] = self._with(x, alias=None, id_score=0.0)
         rel = [getattr(x, "relation", None) for x in out]
         me = tracker.me() if "self" not in rel else None
+        if self._me_dead():
+            # dead: no icon of mine on the map. The icon next to where I died (my killer, an
+            # ally) must not become "me" (real records: my position walked around while dead,
+            # then "Swain vu à deux endroits" at the respawn)
+            me = None
+            out = [self._with(x, relation="ally") if getattr(x, "relation", None) == "self" else x
+                   for x in out]
         if me is not None and t - me.last_seen <= STICKY_SELF_S:
             pos = me.position()
             if pos is not None:
@@ -313,21 +325,60 @@ class VisionMixin:
             kept.append(x)
         return [x for i, x in enumerate(out) if i not in drop] if drop else out
 
+    def _me_dead(self) -> bool:
+        """I am dead right now (Live Client, or the matcher's respawn-timed dead set)."""
+        try:
+            game = self._game
+            me = getattr(game, "me", None) if game is not None else None
+            if me is None:
+                return False
+            if bool(getattr(me, "is_dead", False)):
+                return True
+            return bool(me.champion_alias) and me.champion_alias in self._dead_aliases()
+        except Exception:
+            return False
+
     def _camera_self_fallback(self, frame: np.ndarray, identified: list[Any]) -> None:
-        """No icon identified as me: the ally icon nearest to the camera centre is me."""
+        """No icon identified as me: the ally icon nearest to the camera centre is me.
+
+        Not while I am dead (no icon of mine), not while my track is held under another icon
+        (my support / ADC on me: I am there, wherever the camera looks), and never farther
+        from my last known position than I can have walked (a dragged / free camera looking
+        at a team-mate is not me: real records, me drawn on the far side of the map)."""
+        if self._me_dead():
+            return
         game = self._game
         my_alias = game.me.champion_alias if game is not None and game.me is not None else None
         allies = [x for x in identified if getattr(x, "relation", None) == "ally"
                   and (getattr(x, "alias", None) in (None, my_alias))]
         if not allies:
             return
+        mine = None
+        tracker = self._tracker
+        if tracker is not None:
+            try:
+                mine = tracker.me()
+            except Exception:
+                mine = None
+        if mine is not None and getattr(mine, "stacked_with", None) is not None and mine.visible:
+            return
         center = find_camera_center(frame)
         if center is None:
             return
+        reach = None
+        t = float(getattr(tracker, "last_update", None) or 0.0) if tracker is not None else 0.0
+        if mine is not None and mine.position() is not None and mine.last_seen is not None:
+            dt = max(0.0, t - float(mine.last_seen))
+            if dt <= CAMERA_SELF_MEMORY_S:
+                reach = CAMERA_SELF_REACH + JUMP_SPEED * dt
         best, best_d = None, CAMERA_SELF_MAX_DIST
         for x in allies:
             det = getattr(x, "det", x)
             d = math.hypot(float(det.u) - center[0], float(det.v) - center[1])
+            if reach is not None:
+                p = mine.position()
+                if math.hypot(float(det.u) - p[0], float(det.v) - p[1]) > reach:
+                    continue
             if d < best_d:
                 best, best_d = x, d
         if best is None:

@@ -66,7 +66,7 @@ class OverlayPageMixin:
                          on_change=prev)
         self._slider_row(s, "fog_max_s", "Durée de la zone", "Au-delà, la zone est trop grande : elle s'efface.",
                          10, 180, 5, lambda v: f"{int(v)} s", float)
-        self._switch_row(s, "jungle_paths", "Trajets probables du jungler (essai)",
+        self._switch_row(s, "jungle_paths", "Trajets probables du jungler",
                          "1 ou 2 chemins en pointillés d'après ses derniers camps vus. Désactivé par défaut.",
                          on_change=prev)
         self._switch_row(s, "ward_guide", "Guide de balise",

@@ -210,6 +210,13 @@ class Scenario:
     duo_close: float = 0.3                     # probability of a support ON his ADC
     cam_px: int = 0                            # camera line width (0: from the size)
     suite: str = "main"
+    #: botlane / real-truth knobs (empty = the default behaviour of the main suite)
+    me_role: str = ""                          # force my role (e.g. "UTILITY": me glued to my ADC)
+    glue: tuple = ()                           # (lo, hi) support -> ADC offset, in icon DIAMETERS
+    me_draw: str = ""                          # "under" | "over": my icon drawn below / above all
+    truth: str = ""                            # LCU truth file (tests/fixtures/lcu_truth/<name>)
+    truth_t: float = 0.0                       # ... game time the game starts at (roster, positions,
+    #                                            kills -> fights / deaths from the real game)
 
 
 @dataclass
@@ -224,6 +231,16 @@ class Frame:
 
 
 ROLES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
+#: Death timer (s) by level (BRW, real games replayed from the LCU truth).
+BRW = (10, 10, 12, 12, 14, 16, 20, 25, 28, 32.5, 35, 37.5, 40, 42.5, 45, 47.5, 50, 52.5)
+TRUTH_DIR = ROOT / "tests" / "fixtures" / "lcu_truth"
+
+
+def _load_truth(name: str) -> dict:
+    p = Path(name)
+    if not p.is_file():
+        p = TRUTH_DIR / name
+    return json.loads(p.read_text(encoding="utf-8"))
 LANE_OF = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 
 
@@ -239,6 +256,22 @@ class Sim:
         self.lanes = _lanes()
         names = sorted(e.alias for e in db.all() if db.load_icon(e.alias) is not None)
         pick = list(rng.choice(names, 11, replace=False))
+        self.truth = _load_truth(sc.truth) if sc.truth else None
+        truth_roles: list = []
+        if self.truth is not None:
+            # real roster: me, my 4 team-mates, the 5 enemies (participant ids kept)
+            T = self.truth
+            parts = {int(p["id"]): p for p in T["participants"]}
+            me_p = parts[int(T["me"])]
+            sc.my_team = me_p["team"]
+            mates = [p for p in parts.values() if p["team"] == me_p["team"] and p is not me_p]
+            foes = [p for p in parts.values() if p["team"] != me_p["team"]]
+            order = [me_p] + mates + foes
+            for k, p in enumerate(order):
+                if db.load_icon(p["alias"]) is not None:
+                    pick[k] = p["alias"]
+            truth_roles = [p.get("position") or "" for p in order]
+            self.truth_pid = {pick[k]: int(p["id"]) for k, p in enumerate(order)}
         me_team = sc.my_team
         self.champs: list[Champ] = []
         from training import real_art as RA
@@ -249,6 +282,10 @@ class Sim:
             role = ROLES[(k if k < 5 else k - 5)] if k else "TOP"
             if k == 0:
                 role = str(rng.choice(["TOP", "MIDDLE", "BOTTOM"]))
+                if sc.me_role:
+                    role = sc.me_role
+            if truth_roles and truth_roles[k] in ROLES:
+                role = truth_roles[k]
             alias = pick[k]
             c = Champ(alias, rel, team, role, np.array(FOUNTAIN[team], float),
                       float(rng.uniform(*SPEED)))
@@ -261,8 +298,9 @@ class Sim:
             self.champs.append(c)
         # roles of allies: the four that are not mine
         roles_left = [r for r in ROLES if r != self.champs[0].role]
-        for c, r in zip(self.champs[1:5], roles_left):
-            c.role = r
+        if not truth_roles:
+            for c, r in zip(self.champs[1:5], roles_left):
+                c.role = r
         if sc.custom_me:                              # custom skin: a portrait not in the roster
             self.champs[0].portrait = db.load_icon(pick[10])
         self.by_alias = {c.alias: c for c in self.champs}
@@ -270,8 +308,10 @@ class Sim:
             self._init_place(c)
         # bot duos walk together
         for team in ("ORDER", "CHAOS"):
-            adc = next(c for c in self.champs if c.team == team and c.role == "BOTTOM")
-            sup = next(c for c in self.champs if c.team == team and c.role == "UTILITY")
+            adc = next((c for c in self.champs if c.team == team and c.role == "BOTTOM"), None)
+            sup = next((c for c in self.champs if c.team == team and c.role == "UTILITY"), None)
+            if adc is None or sup is None:
+                continue
             sup.stick = adc.alias
             sup.stick_off = self._duo_offset()
         # art: one real background per game at the native size, static glyphs
@@ -292,6 +332,11 @@ class Sim:
             spr = cv2.resize(spr, None, fx=kk, fy=kk, interpolation=cv2.INTER_LINEAR)
             _paste(self.bg, spr, rng.uniform(0.05, 0.95) * n, rng.uniform(0.05, 0.95) * n)
         self.order = list(rng.permutation(10))       # draw order (no priority for me)
+        if sc.me_draw in ("under", "over"):
+            self.order = [j for j in self.order if j != 0]
+            self.order = [0] + self.order if sc.me_draw == "under" else self.order + [0]
+        if self.truth is not None:
+            self._truth_init()
         self.cam_c = self.champs[0].pos + [0.0, -0.022]
         self.pan_dir = rng.normal(0, 1, 2)
         self.pan_dir /= np.linalg.norm(self.pan_dir)
@@ -300,6 +345,72 @@ class Sim:
         self.labels: list = []                       # (alias, t_end, text seed)
         self.towers = [(float(u), float(v), str(t)) for _sid, u, v, _k, t in _iter_structs()]
         self.t = 0.0
+
+    # ------------------------------------------------------------------ real games (LCU truth)
+    def _truth_pos(self, pid: int, t: float) -> np.ndarray:
+        """Position of participant ``pid`` at game time ``t``: linear between the minute frames."""
+        fr = self.truth["frames"]
+        ts = [float(f[0]) for f in fr]
+        i = int(np.clip(np.searchsorted(ts, t) - 1, 0, len(fr) - 1))
+        j = min(i + 1, len(fr) - 1)
+        a, b = fr[i][1].get(str(pid)), fr[j][1].get(str(pid))
+        if a is None or b is None:
+            return np.array(FOUNTAIN[self.sc.my_team], float)
+        k = 0.0 if j == i else float(np.clip((t - ts[i]) / max(1e-6, ts[j] - ts[i]), 0.0, 1.0))
+        return np.array([a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k], float)
+
+    def _truth_level(self, pid: int, t: float) -> int:
+        fr = self.truth["frames"]
+        best = 1
+        for ft, d in fr:
+            if float(ft) <= t and str(pid) in d:
+                try:
+                    best = int(d[str(pid)][5])
+                except (IndexError, TypeError, ValueError):
+                    pass
+        return best
+
+    def _truth_init(self) -> None:
+        """Real game: positions at ``truth_t`` (interpolated between the LCU minute frames),
+        walking towards the next frame's position (laners in lane keep trading along it),
+        supports glued to their ADC when they were together, and the kills of the window
+        replayed as fights (killer, victim and assisters converge, mill, the victim dies)."""
+        sc, T, rng = self.sc, self.truth, self.rng
+        t0 = float(sc.truth_t)
+        by_pid = {pid: self.by_alias[a] for a, pid in self.truth_pid.items() if a in self.by_alias}
+        for pid, c in by_pid.items():
+            c.pos = self._truth_pos(pid, t0) + rng.normal(0, 0.003, 2)
+            c.stick = None
+            lane = self.lanes.get(LANE_OF.get(c.role, ""), None)
+            if lane is not None and c.role != "UTILITY":
+                P, cum = lane
+                ss = np.linspace(0, 1, 400)
+                pts = np.array([_at(lane, x) for x in ss])
+                dd = np.hypot(*(pts - c.pos[None]).T)
+                if dd.min() < 0.06 and t0 < 14 * 60:
+                    c.lane_s = float(ss[int(dd.argmin())])
+                    continue                  # laning: default trading behaviour
+            nxt = self._truth_pos(pid, t0 + 60.0)
+            c.plan = [(float(nxt[0]), float(nxt[1]), 60.0)]
+        for team in ("ORDER", "CHAOS"):
+            adc = next((c for c in self.champs if c.team == team and c.role == "BOTTOM"), None)
+            sup = next((c for c in self.champs if c.team == team and c.role == "UTILITY"), None)
+            if adc is not None and sup is not None and float(np.hypot(*(adc.pos - sup.pos))) < 0.15:
+                sup.plan = []
+                sup.stick = adc.alias
+                sup.stick_off = self._duo_offset()
+        pid_alias = {pid: c.alias for pid, c in by_pid.items()}
+        for k in T.get("kills", []):
+            kt, killer, victim, ass, ku, kv = float(k[0]), int(k[1] or 0), int(k[2] or 0), k[3] or [], k[4], k[5]
+            if not (t0 + 2.0 < kt < t0 + sc.seconds) or victim not in pid_alias:
+                continue
+            who = [pid_alias[p] for p in [killer, victim] + [int(a) for a in ass] if p in pid_alias]
+            sc.events.append((max(0.0, kt - t0 - 8.0), "goto", {"who": who, "uv": (ku, kv), "spread": 0.025,
+                                                                "stay": 12.0, "speed_k": 1.2}))
+            sc.events.append((max(0.0, kt - t0 - 2.5), "mill", {"who": who, "n": 6, "spread": 0.02}))
+            lvl = self._truth_level(victim, kt)
+            sc.events.append((kt - t0, "die", {"who": [pid_alias[victim]],
+                                               "respawn": float(BRW[max(0, min(17, lvl - 1))])}))
 
     # ------------------------------------------------------------------ behaviour
     def _init_place(self, c: Champ) -> None:
@@ -324,19 +435,27 @@ class Sim:
         return False
 
     def _duo_offset(self) -> tuple[float, float]:
-        """Support next to his ADC: mostly side by side, sometimes on top of him."""
+        """Support next to his ADC: mostly side by side, sometimes on top of him (``glue``:
+        always ON him, lo..hi icon diameters apart, as measured on the LCU truth of real games:
+        median ~0.5 diameter during the laning phase, a third of the minutes below 0.3)."""
         a = self.rng.uniform(0, 2 * math.pi)
+        if self.sc.glue:
+            lo, hi = self.sc.glue
+            d = float(self.rng.uniform(lo, hi)) * 2 * ICON_R
+            return (float(d * math.cos(a)), float(d * math.sin(a)))
         d = self.rng.uniform(0.012, 0.03) if self.rng.random() < self.sc.duo_close \
             else self.rng.uniform(0.03, 0.07)
         return (float(d * math.cos(a)), float(d * math.sin(a)))
 
     def _default(self, c: Champ, dt: float) -> None:
         rng = self.rng
-        if c.stick and self.by_alias[c.stick].alive and c.plan == []:
+        if c.stick and self.by_alias[c.stick].alive and c.plan == [] and \
+                self.by_alias[c.stick].recall_until < 0:
             o = self.by_alias[c.stick]
             goal = o.pos + np.asarray(c.stick_off)
-            self._walk_to(c, goal, dt)
-            if rng.random() < 0.15 * dt:
+            # (glued: the support keeps up with his trading ADC)
+            self._walk_to(c, goal, dt * (2.0 if self.sc.glue else 1.0))
+            if rng.random() < (0.3 if self.sc.glue else 0.15) * dt:
                 c.stick_off = self._duo_offset()
             return
         if c.plan:
@@ -441,6 +560,13 @@ class Sim:
                 c.plan = []
         elif kind == "camera":
             self.sc.camera = a["mode"]
+        elif kind == "glue":          # walk next to / on another champion again (bot duo)
+            to = next(c for c in self.champs if c.team == self.sc.my_team and c.role == "BOTTOM") \
+                if a["to"] == "adc" else self._sel(a["to"])[0]
+            for c in self._sel(a["who"]):
+                c.plan = []
+                c.stick = to.alias
+                c.stick_off = self._duo_offset()
 
     # ------------------------------------------------------------------ vision / camera
     def _vision(self) -> np.ndarray:
@@ -597,7 +723,8 @@ class Sim:
                 position=c.role, is_dead=dead, respawn_timer=max(0.0, c.dead_until - t) if dead else 0.0,
                 level=6, has_smite=c.role == "JUNGLE")
         me = players[self.champs[0].alias]
-        return GameInfo(game_time=600.0 + t, game_mode="CLASSIC", map_number=11, map_terrain="Default",
+        gt0 = float(self.sc.truth_t) if self.truth is not None else 600.0
+        return GameInfo(game_time=gt0 + t, game_mode="CLASSIC", map_number=11, map_terrain="Default",
                         team_relative_colors=True, me=me,
                         allies=[players[c.alias] for c in self.champs if c.rel == "ally"],
                         enemies=[players[c.alias] for c in self.champs if c.rel == "enemy"],
@@ -653,7 +780,39 @@ def scenarios(quick: bool = False) -> list[Scenario]:
 
 HARD_FILE = ROOT / "tools" / "det_gym_hard.json"
 HISTORY_FILE = ROOT / "tools" / "det_gym_history.jsonl"
-SUITES = ("main", "holdout", "hard")
+SUITES = ("main", "holdout", "hard", "botlane")
+
+
+def botlane_scenarios(quick: bool = False) -> list[Scenario]:
+    """Permanent bot-lane stacks (me = support glued to my ADC, 0.1-0.7 icon diameters apart as
+    measured on the LCU truth of real games; enemy duo stacked too), two of them replayed from
+    the user's real Swain support game (tests/fixtures/lcu_truth: roster, positions, the 12:06
+    fight where I die, respawn at 12:40 = the "Swain vu à deux endroits" report), camera
+    locked / free / panning / jumping, deaths, a split and a re-stack."""
+    S = []
+    swain = "2026-10-02_2223_Swain.truth.json"
+    S.append(Scenario("bl_swain_lane", 61, 6.0, 30.0, 280, "ORDER", "locked", jpeg=0, blur=0.4,
+                      glue=(0.1, 0.7), me_draw="under", truth=swain, truth_t=360.0,
+                      events=[(10.0, "camera", {"mode": "free"}), (16.0, "camera", {"mode": "pan"}),
+                              (22.0, "camera", {"mode": "locked"})]))
+    S.append(Scenario("bl_swain_death", 67, 6.0, 50.0, 280, "ORDER", "locked", jpeg=0, blur=0.4,
+                      glue=(0.1, 0.7), me_draw="over", truth=swain, truth_t=718.0,
+                      events=[(12.0, "camera", {"mode": "pan"}), (30.0, "camera", {"mode": "jump"}),
+                              (44.0, "camera", {"mode": "locked"})]))
+    S.append(Scenario("bl_split", 71, 12.0, 26.0, 240, "ORDER", "locked", jpeg=0, blur=0.35,
+                      me_role="UTILITY", glue=(0.2, 0.7), me_draw="over",
+                      events=[(9.0, "goto", {"who": ["me"], "uv": (0.66, 0.8), "spread": 0.005, "stay": 4.0}),
+                              (16.0, "glue", {"who": ["me"], "to": "adc"}),
+                              (20.0, "camera", {"mode": "jump"})]))
+    S.append(Scenario("bl_tight", 83, 3.0, 36.0, 300, "CHAOS", "jump", jpeg=70, blur=0.7,
+                      me_role="UTILITY", glue=(0.08, 0.35), me_draw="under",
+                      events=[(14.0, "camera", {"mode": "free"}), (24.0, "camera", {"mode": "pan"})]))
+    if quick:
+        for sc in S:
+            sc.seconds = min(sc.seconds, 16.0)
+    for sc in S:
+        sc.suite = "botlane"
+    return S
 
 
 def scenario_from_dict(d: dict) -> Scenario:
@@ -693,6 +852,8 @@ def suite_scenarios(suite: str = "main", quick: bool = False) -> list[Scenario]:
             if quick:
                 sc.seconds = min(sc.seconds, 8.0)
         return out
+    if suite == "botlane":
+        return botlane_scenarios(quick)
     raise ValueError(f"unknown suite {suite!r}")
 
 
@@ -729,6 +890,11 @@ class Pipeline:
         self.eng._budget = PerfBudget(os.environ.get("GYM_BUDGET", "normal"))
         self.eng._applied_profile = None
         self.eng._apply_perf_profile()
+        # self-check rule 5 (one identity at two places -> track reset), as in the engine
+        from treeaicoach.selfcheck import SelfCheck
+
+        self.sc = SelfCheck(rules=("identity",), clock=lambda: self.now)
+        self.resets: list = []
 
     def step(self, t: float, frame: np.ndarray, game: Any) -> tuple[list, float]:
         eng = self.eng
@@ -741,6 +907,14 @@ class Pipeline:
         eng._self_icon_tick(t, float(game.game_time), game)
         eng._track_update(t, ids)
         ms = (_time.perf_counter() - t0) * 1000.0
+        sc = self.sc
+        sc.on_tracks(t, eng._tracker.tracks())
+        if sc._pending:
+            for a in sc._pending:
+                if a.kind == "forget_track":
+                    eng._tracker.forget(str(a.arg))
+                    self.resets.append((t, str(a.arg)))
+            sc._pending = []
         self.cpu_ms = (_time.process_time() - c0) * 1000.0
         return ids, ms
 
@@ -832,6 +1006,10 @@ class GameMetrics:
     me_n: int = 0
     ms: list = field(default_factory=list)
     cpu: list = field(default_factory=list)       # CPU ms of the process (all threads)
+    resets: int = 0          # self-check rule 5 resets ("X vu à deux endroits")
+    me_dead: int = 0         # frames where I am dead but my position is still drawn
+    stk_n: int = 0           # champions mostly hidden under another icon (stacked) ...
+    stk_ok: int = 0          # ... reported visible at the stack (within 2 TOL)
     fails: list = field(default_factory=list)     # (scenario, t, kind, detail)
     miss_cause: dict = field(default_factory=dict)
     ghost_kind: dict = field(default_factory=dict)
@@ -861,6 +1039,8 @@ class GameMetrics:
             "det_rec": self.det_tp / max(1, self.n_vis),
             "ms": float(np.mean(self.ms)) if self.ms else float("nan"), "ms95": pct(self.ms, 95),
             "cpu": float(np.mean(self.cpu)) if self.cpu else float("nan"),
+            "resets": self.resets, "me_dead": self.me_dead,
+            "stk": self.stk_ok / max(1, self.stk_n), "stk_n": self.stk_n,
             "frames": self.frames, "n_vis": self.n_vis, "miss_cause": dict(self.miss_cause),
             "ghost_kind": dict(self.ghost_kind),
         }
@@ -1016,8 +1196,25 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
             if alias in dead:
                 M.g_dead += 1
                 M.fails.append((sc.name, round(t, 2), "g_dead", f"{alias} live"))
+        # --- stacked champions (mostly under another icon): still reported, at the stack
+        trk = pipe.eng._tracker
+        my_tr = trk.me()
+        for a, (rel, team, u, v, fr) in tmap.items():
+            if fr >= VISIBLE_FRAC:
+                continue
+            M.stk_n += 1
+            tr = my_tr if rel == "self" else trk.get(a)
+            p = tr.position() if tr is not None and tr.visible else None
+            if p is not None and math.hypot(p[0] - u, p[1] - v) < 2 * TOL:
+                M.stk_ok += 1
+            else:
+                M.fails.append((sc.name, round(t, 2), "stk", f"{a} ({rel}) frac {fr:.2f} at ({u:.3f},{v:.3f})"
+                                + (f" reported ({p[0]:.3f},{p[1]:.3f})" if p is not None else " not reported")))
         # --- me
         me = sim.champs[0]
+        if not me.alive and out["me"] is not None and my_tr is not None and my_tr.visible:
+            M.me_dead += 1
+            M.fails.append((sc.name, round(t, 2), "me_dead", f"me drawn at ({out['me'][0]:.3f},{out['me'][1]:.3f})"))
         if me.alive and me.recall_until < 0:
             M.me_n += 1
             p = out["me"]
@@ -1029,6 +1226,9 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
         prev_truth = {a: (u, v) for a, _r, _tm, u, v, _f in truth}
         if gallery is not None and len(M.fails) > n_fail0:
             gallery.add(M.fails[n_fail0:], img, truth, out, tuple(me.pos))
+    M.resets = len(pipe.resets)
+    for rt, ra in pipe.resets:
+        M.fails.append((sc.name, round(rt, 2), "reset", f"{ra} vu à deux endroits"))
     return M
 
 
@@ -1326,14 +1526,16 @@ def report(out: dict, verbose: bool = False) -> str:
     L = []
     hdr = (f"{'game':11s} {'frm':>4s} {'vis':>5s} {'rec':>6s} {'prec':>6s} {'det':>5s} {'idsw':>4s} {'frag':>4s} "
            f"{'idX':>3s} {'team':>4s} {'err50':>6s} {'err95':>6s} {'lag':>5s} {'gLive':>5s} {'gDead':>5s} "
-           f"{'me50':>6s} {'me95':>6s} {'meBad':>5s} {'ms':>5s} {'ms95':>5s} {'cpu':>5s}")
+           f"{'me50':>6s} {'me95':>6s} {'meBad':>5s} {'ms':>5s} {'ms95':>5s} {'cpu':>5s} "
+           f"{'stk':>5s} {'rst':>3s} {'meDd':>4s}")
     L.append(hdr)
     rows = list(out["games"].items()) + [("TOTAL", out["total"])]
     for name, s in rows:
         L.append(f"{name:11s} {s['frames']:4d} {s['n_vis']:5d} {s['rec']:6.3f} {s['prec']:6.3f} {s['det_rec']:5.2f} "
                  f"{s['idsw']:4d} {s['frag']:4d} {s['id_wrong']:3d} {s['team']:4d} {s['err50']:6.4f} "
                  f"{s['err95']:6.4f} {s['lag']:5.2f} {s['g_live']:5d} {s['g_dead']:5d} {s['me50']:6.4f} "
-                 f"{s['me95']:6.4f} {s['me_bad']:5.3f} {s['ms']:5.1f} {s['ms95']:5.1f} {s['cpu']:5.1f}")
+                 f"{s['me95']:6.4f} {s['me_bad']:5.3f} {s['ms']:5.1f} {s['ms95']:5.1f} {s['cpu']:5.1f} "
+                 f"{s.get('stk', float('nan')):5.3f} {s.get('resets', 0):3d} {s.get('me_dead', 0):4d}")
     if "real" in out:
         r = out["real"]
         L.append(f"REAL (9 crops, {r['gt']} icons): recall {r['rec']:.3f}  precision {r['prec']:.3f}  "

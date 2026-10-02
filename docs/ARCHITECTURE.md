@@ -962,6 +962,15 @@ Tout est **visuel** (ligne du HUD via `TipRotator`, toasts), jamais dit à voix 
   `FogTracker.heat_source` (`fog_active` garde l'estimation du jungler au-delà de `fog_max_s` tant que le modèle est
   informatif, confiance 0,2) ; ancre « start » à sa fontaine en début de partie. `overlay_render` peint la chaleur
   (radar + couche minimap) au lieu du remplissage uniforme.
+* **`jungle_graph.py`** (trajets logiques, `Config.jungle_paths`, activé par défaut depuis 2.5, migration
+  `config_version` 2) : graphe de la jungle (12 camps 2026, crabes, fosses, 6 points de gank, fontaines ; trajets
+  géodésiques sur le masque praticable) + `JunglerFilter` (300 particules : camps levés / réapparitions par particule,
+  crabes 2:55, objectifs, ganks sur NOS laners réels (`set_victims`), invasion, rappel ; preuves : départ = dernière
+  vue / ancre, tick de CS (Tab), non-vu = nos champions ×0,15/s ; mémoire des camps entre deux apparitions).
+  `FogEstimate.paths` (≤ 2 `JunglePath` : polyligne, probabilité, ETA vers moi), `p_reach` (8 s), `far_side`, `heat`
+  = nuage de particules (danger.py inchangé). Minimap compacte : jamais le contour de la région ; 1–2 trajets
+  pointillés + « ≈ 12 s de toi » / « autre côté », sinon chaleur très légère. Mesure : `python -m tools.jungle_gym
+  [--truth fichiers.truth.json]` (junglers simulés farm / gank / invade + vraies parties LCU).
 * **Robustesse** : minimap grisée (filtre de mort, capture désaturée) → NCC luminance seule + test du dessin de
   l'anneau (`GREY_*`), `MinimapLocator.verify` en luminance seule (pas de relocalisation en boucle) ; minimap
   masquée (boutique, tableau des scores : `verify` < seuil) → aucune détection sur ces images

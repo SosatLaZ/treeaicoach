@@ -114,3 +114,15 @@ def test_overlay_draws_paths_without_raising():
                           enemies=[], fogs=[est])
     img = orr.render_minimap(st, 256, now=0.0)
     assert img.shape == (256, 256, 4) and int(img[..., 3].max()) > 0
+
+
+def test_jungle_gym_smoke():
+    from tools.jungle_gym import ModelRun, lead_stats, run_episode
+
+    models = [ModelRun("old", False), ModelRun("paths", True)]
+    ep = run_episode("gank", "top", 0, 3.0, models)
+    assert isinstance(ep["contacts"], list)
+    for m in models:
+        assert m.warn and all(0.0 <= x <= 1.0 + 1e-6 for x in m.mass05)
+        leads, false, eps = lead_stats(m.warn, ep["contacts"])
+        assert false <= eps

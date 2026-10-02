@@ -385,15 +385,15 @@ class JunglerFilter:
             else:
                 self.dwell[i] = 3.0
 
-    def step(self, gt: float) -> None:
-        """Advance the particles to game time ``gt`` (1 s sub-steps). Never raises."""
+    def step(self, gt: float, max_dt: float = 1.0) -> None:
+        """Advance the particles to game time ``gt`` (``max_dt`` s sub-steps). Never raises."""
         try:
             with self._lock:
                 if not self._ok:
                     return
                 gt = float(gt)
                 while self.gt < gt - 1e-6:
-                    dt = min(1.0, gt - self.gt)
+                    dt = min(max_dt, gt - self.gt)
                     self.gt += dt
                     self.since_recall += dt
                     moving = ~self.busy
@@ -566,7 +566,7 @@ class JunglerFilter:
             setattr(c, name, getattr(self, name).copy())
         c._lock = threading.Lock()
         c.rng = np.random.default_rng(int(self.gt * 10) + 1)
-        c.step(self.gt + max(0.0, float(seconds)))
+        c.step(self.gt + max(0.0, float(seconds)), max_dt=2.0)      # coarse: display only
         return c
 
     def far_side(self, me: Sequence[float] | None) -> bool:
