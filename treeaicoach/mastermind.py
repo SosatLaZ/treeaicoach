@@ -48,7 +48,7 @@ import logging
 import math
 import threading
 import weakref
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 log = logging.getLogger(__name__)

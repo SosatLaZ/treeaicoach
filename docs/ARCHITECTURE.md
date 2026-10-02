@@ -1381,3 +1381,43 @@ l'écran. Jamais un temps de recharge ennemi, jamais une entrée envoyée au jeu
   attend que la carte actuelle ait été lue 5,5 s.
 * **Juge** : scénarios `skill_r6`, `death_heal`, `trinket_full` ; tests `tests/test_hud_abilities.py`
   (vraies bandes HUD `tests/fixtures/hud_bar/`, HUD synthétique, coût) et `tests/test_resources_coach.py`.
+
+## 25. Compréhension de la partie (`mastermind.py`) : compositions, fenêtres de puissance, plans, menaces
+
+Demande réelle : « une app vraiment mastermind qui capte tout, avec les métadonnées et l'analyse ». Un
+modèle de partie recalculé à chaque tick de coaching (≤ 1 Hz, ~0,7 ms) à partir des seules données
+publiques (Live Client : niveaux, objets du Tab, K/D/A, mes résistances) + profils `meta.py` + effets
+d'objets `itemization` :
+
+* **Compositions** (`Comp`) : identité (engage / pick / poke / dive / split / siège, avec les champions
+  derrière), tempo (tôt / milieu / fin de partie), profil de dégâts (part AD / AP / brut), ligne de front
+  (robustesse 3, classes TANK / VANGUARD / WARDEN / JUGGERNAUT ou 2 objets défensifs), protection, nettoyage,
+  carry.
+* **Fenêtres** (`Window`, équipe / ma voie / junglers) : avantage = écart des courbes de puissance
+  (`CURVE_POINTS` tôt / milieu / tard) + écart de ressources (or des objets + 250 PO par niveau + bonus
+  d'ultime 6 / 11 / 16) rapporté aux ressources attendues à cette minute ; projection minute par minute
+  avec l'écart d'aujourd'hui → « Ton équipe est plus forte jusqu'à ~22:00 : force les objectifs »,
+  « Ils sont plus forts jusqu'à ~19:00 : joue le temps, défends ».
+* **Plans** (≤ 3 lignes par équipe, tutoiement), **mon rôle** (« Toi : seul tank de l'équipe, ouvre les
+  combats, tiens le top sans mourir, TP sur les dragons »), **menaces** classées (carry, le plus avancé,
+  dangereux pour toi : type de dégâts contre mes résistances, contrôle, burst, mobilité ; effets clés de
+  leurs objets), **achats** (« Résistance magique en priorité : 3 ennemis font des dégâts magiques »).
+* **Consommateurs** : jauge (`Reading.gauge_factors` : courbe seulement, ±0,6, et seulement si l'écart
+  réel va dans le même sens ; l'or et les niveaux sont déjà comptés par `coach.stance_factors`) ;
+  `game_changers.rule_power_window` (type `gc_window`, ligne de carte ≤ 60 car.) : objectif dans ≤ 45 s
+  joué par mon rôle avec une équipe nettement plus forte (« Prépare le dragon : ton équipe domine jusqu'à
+  ~19:00 » / « Ne conteste pas le dragon : ils sont plus forts », remplace le compte à rebours jusqu'à
+  l'apparition), fenêtre de voie NOUVELLE (à 2:30 ou à un changement : « Punis Vladimir maintenant : tu es
+  plus fort jusqu'à ~21:00 » / « Farme sans forcer : tu bats Darius après ~19:00 »), fenêtre d'équipe à
+  14:00 ou à un changement (« Force un objectif maintenant… » / « Joue le temps : ton équipe est plus forte
+  après ~19:00 ») ; appels **souples** (`macro.SOFT_KINDS`) : n'importe quel autre appel les remplace et ils
+  ne lancent pas l'écart entre deux appels ; jamais au démarrage de l'app en cours de partie ; voix débutant
+  seulement, 1 fenêtre dite / 3 min (`VOICE_GAP_S`) ; bandeau « PLAN D'ÉQUIPE » une fois entre 1:20 et 3:20
+  (`game_plan.team_card`) ; IA : `engine.mastermind_reading()` / `mastermind_snapshot()` ; rapport :
+  `record["mastermind"]` (plan de départ, historique des fenêtres, avantage par minute, appels montrés) et
+  section « Compréhension de la partie » (`mastermind.understanding(record)` : compositions, plan, qui était
+  le plus fort minute par minute, objectifs pris / perdus dans chaque fenêtre, mon rôle contre la réalité ;
+  recalculé depuis le roster + la chronologie d'or du Tab pour un ancien enregistrement).
+* **Juge** : scénarios `scaling_lane`, `scaling_team`, `engage_dragon`, `fed_carry` (`Scenario.cast` : autres
+  champions dans les mêmes rôles) ; tests `tests/test_mastermind.py` (dont la vraie partie Garen contre
+  Vladimir / Kindred / Ekko / Séraphine / Thresh).

@@ -650,16 +650,15 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 # ======================================================================================
 # Texts
 # ======================================================================================
-CHANGELOG_VERSION = "2.3"
+CHANGELOG_VERSION = "2.4"
 CHANGELOG: tuple[tuple[str, str], ...] = (
-    ("Conseils qui changent la partie", "Fenêtres de niveau, jungler vu ailleurs, plaques, Baron après un "
-                                        "combat gagné : les gros appels sont dits à voix haute."),
-    ("Achats ennemis", "Couperet noir, Zhonya, anti-soin, résistances : quoi faire et quoi acheter."),
-    ("Placement", "Plus rien sur l'interface du jeu : panneau, timers et notifications ont chacun leur place."),
-    ("Santé TreeAI", "L'appli repère ses propres problèmes (capture, minimap, lenteur, voix) et les corrige."),
-    ("Comparer deux PC", "Copier l'empreinte de config, Réinitialiser la détection, Profil normal."),
-    ("Launcher", "Pages qui se chargent sans bug ni gel, réglages simplifiés."),
-    ("Données du jeu", "173 champions, objets et builds à jour, 228 conseils de duel, balises exactes."),
+    ("Compréhension de la partie", "Compos, qui est plus fort et jusqu'à quand, conditions de victoire et "
+                                   "ton rôle : « Tu es plus fort que Vladimir jusqu'à ~21:00 : punis-le »."),
+    ("Ce que tu oublies", "Point de compétence, potion, balises, or non dépensé, et la leçon quand tu "
+                          "meurs avec un sort prêt."),
+    ("IA corrigée", "22 bugs corrigés : plus de plan en plein combat, limite Groq gérée, plans "
+                    "cohérents avec le panneau, analyse de fin de partie en 3 axes."),
+    ("Rapport", "Nouvelle section « Compréhension de la partie »."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl + 1 … 4", "Aller à une page (En jeu, Analyses, Réglages, Aide)"),
