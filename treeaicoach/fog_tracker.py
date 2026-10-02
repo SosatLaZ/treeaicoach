@@ -83,6 +83,8 @@ VELOCITY_WINDOW_S = 1.5
 FOG_MAX_S = 60.0
 #: Extra time an estimate is kept (faded, confidence 0) after the maximum duration.
 FOG_GRACE_S = 10.0
+#: The logical paths output is recomputed at most this often (game seconds).
+PATHS_EVERY_S = 0.5
 #: Confidence of the jungler's estimate kept past max_s by the early clear model.
 HELD_CONFIDENCE = 0.2
 MODES = ("jungler", "all", "off")
@@ -480,7 +482,13 @@ class FogTracker:
                 pass
             pf.set_victims(viewers)
             pf.observe_vision(viewers)
-            return pf.heat(self.grid), tuple(pf.paths(me=me)), pf.p_reach(me), pf.far_side(me)
+            me_key = (round(me[0], 2), round(me[1], 2)) if me is not None else None
+            cached = getattr(pf, "_out", None)
+            if cached is not None and abs(cached[0] - gt_now) < PATHS_EVERY_S and cached[1] == me_key:
+                return cached[2]
+            out = (pf.heat(self.grid), tuple(pf.paths(me=me)), pf.p_reach(me), pf.far_side(me))
+            pf._out = (gt_now, me_key, out)
+            return out
         except Exception:
             log.debug("Logical paths failed", exc_info=True)
             return None, (), None, False

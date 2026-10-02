@@ -26,6 +26,7 @@ Pure numpy / OpenCV, deterministic (seeded), never raises from the public method
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import threading
@@ -63,6 +64,8 @@ SEEN_W = 0.15
 FARM_MISS_W = 0.2
 #: Gank-warning horizon (s) and the Flash allowance (normalized).
 REACH_S = 8.0
+#: Paths are judged on the particles rolled this far ahead (s).
+LOOKAHEAD_S = 20.0
 #: A path shows its second stop when at least this share of its particles agree on it.
 SECOND_STOP_SHARE = 0.45
 #: Behaviour weights of a gank spot with / without one of our laners on it.
@@ -237,6 +240,7 @@ class JunglerFilter:
         self.start_key = key
         self.start_uv = (float(uv[0]), float(uv[1]))
         self.gt = float(gt)
+        self.start_gt = float(gt)
         self.w = np.full(n, 1.0 / n)
         #: Node positions for this filter: gank spots follow our laners (set_victims).
         self.node_uv = g.uv.copy()
@@ -420,10 +424,15 @@ class JunglerFilter:
             with self._lock:
                 if not self._ok or not viewers:
                     return
+                # evidence per game second (the engine ticks ~12 Hz, the gym 1 Hz)
+                dt = min(1.0, self.gt - getattr(self, "_vis_gt", self.gt - 1.0))
+                if dt <= 0:
+                    return
+                self._vis_gt = self.gt
                 P = self.positions()
                 V = np.asarray(viewers, np.float64).reshape(-1, 2)
                 d = np.min(np.hypot(P[:, None, 0] - V[None, :, 0], P[:, None, 1] - V[None, :, 1]), axis=1)
-                f = np.where(d < radius, SEEN_W, 1.0)
+                f = np.where(d < radius, SEEN_W ** dt, 1.0)
                 self._reweight(f)
         except Exception:
             log.debug("observe_vision failed", exc_info=True)
@@ -497,13 +506,15 @@ class JunglerFilter:
 
     def paths(self, me: Sequence[float] | None = None, k: int = 2, min_p: float = 0.12
               ) -> list[JunglePath]:
-        """The ``k`` most likely (first stop, second stop) paths from the start point."""
+        """The ``k`` most likely (first stop, second stop) paths from the start point, judged
+        ``LOOKAHEAD_S`` ahead (a rolled-forward copy of the particles: where he is GOING)."""
         try:
             if not self._ok:
                 return []
             g = self.graph
+            ahead = self.lookahead(LOOKAHEAD_S)
             acc: dict[tuple[int, int], float] = {}
-            for a, b, w in zip(self.first, self.second, self.w):
+            for a, b, w in zip(ahead.first, ahead.second, ahead.w):
                 key = (int(a), int(b))
                 acc[key] = acc.get(key, 0.0) + float(w)
             # merge per first stop when the second differs (keep the best second)
@@ -539,13 +550,24 @@ class JunglerFilter:
                             dd = math.dist(q1, me)
                             if dd < best[0]:
                                 best = (dd, along)
-                        eta = max(0.0, best[1] / spd - 0.0)
+                        eta = max(0.0, best[1] / spd - max(0.0, self.gt - self.start_gt))
                 out.append(JunglePath(tuple((float(x), float(y)) for x, y in pts), float(p), label,
                                       g.nodes[b if b >= 0 and pb >= SECOND_STOP_SHARE * p else a].name, eta))
             return out
         except Exception:
             log.debug("paths failed", exc_info=True)
             return []
+
+    def lookahead(self, seconds: float) -> "JunglerFilter":
+        """A copy of the filter stepped ``seconds`` ahead (same weights, own random stream)."""
+        c = copy.copy(self)
+        for name in ("w", "src", "tgt", "leg_t", "prog", "dwell", "busy", "first", "second", "up",
+                     "since_recall"):
+            setattr(c, name, getattr(self, name).copy())
+        c._lock = threading.Lock()
+        c.rng = np.random.default_rng(int(self.gt * 10) + 1)
+        c.step(self.gt + max(0.0, float(seconds)))
+        return c
 
     def far_side(self, me: Sequence[float] | None) -> bool:
         """True when >= 75 % of the mass is on the other half of the map (top/bot) than me."""
