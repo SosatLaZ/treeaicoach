@@ -1,6 +1,6 @@
 {
-  "version": "2.4.0",
-  "sha256": "56c3626ccf000b7a1431d9e26630aa340c5412d12690aebe16ad4cba661664c4",
-  "size": 82310917,
-  "notes": "2.4 : compréhension de la partie (compos, qui est plus fort et jusqu'à quand, conditions de victoire, ton rôle), ce que tu oublies (point de compétence, potion, balises, or, sort prêt à ta mort), IA corrigée (22 bugs, plans cohérents, limite Groq gérée), rapport avec « Compréhension de la partie »."
+  "version": "2.4.1",
+  "sha256": "e4e83a53273eaec8012ce2552f774be52e181dd00843f312cda22228d2076dbc",
+  "size": 82315865,
+  "notes": "2.4.1 (intermédiaire) : trajets logiques du jungler ennemi activés (fini la grosse zone), corrections de détection en cours, timers et conseils inchangés."
 }
