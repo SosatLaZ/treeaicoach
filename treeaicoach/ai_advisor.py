@@ -72,18 +72,33 @@ MAX_ADVICE_CHARS = 260
 MAX_REVIEW_CHARS = 2500
 REVIEW_TIMEOUT_S = 20.0
 REVIEW_MAX_TOKENS = 700
+REVIEW_RATE_WAIT_S = 30.0       # post-game review: a per-minute 429 asking <= this is waited out once
 MAX_ANALYSIS_BYTES = 12000
 MANUAL_MIN_INTERVAL_S = 20.0
+PLAN_MAX_AGE_S = 25.0           # an automatic plan not shown within this (fight, card) is dropped
+MANUAL_MAX_AGE_S = 60.0         # the answer to F8 waits longer (the player asked for it)
+DEFER_S = 30.0                  # a key moment during a fight / gank is retried this long after it
+TREND_WINDOW_S = 120.0          # team gold trend measured over this (game time)
+TIMELINE_EVERY_S = 120.0        # one timeline line every 2 min of game time (post-game review)
 GROQ_MIN_TOKENS = 500
+GEMINI_MIN_TOKENS = 1024        # Gemini 2.5 / 3 count their (reduced) thinking in maxOutputTokens
 #: auto-pick order when the configured / default model does not exist for the key
+#: (Groq, 2026-10: llama-3.3-70b and llama-3.1-8b are gone; the live list is gpt-oss-120b / 20b, qwen3.8)
 MODEL_PREFERENCE: dict[str, tuple[str, ...]] = {
-    "groq": ("openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "qwen/qwen3-32b",
-             "meta-llama/llama-4-maverick-17b-128e-instruct", "llama-3.1-8b-instant"),
-    "openrouter": ("meta-llama/llama-3.3-70b-instruct:free", "openai/gpt-oss-120b:free",
+    "groq": ("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile",
+             "qwen/qwen3-32b", "meta-llama/llama-4-maverick-17b-128e-instruct", "llama-3.1-8b-instant"),
+    "openrouter": ("openai/gpt-oss-120b:free", "meta-llama/llama-3.3-70b-instruct:free",
                    "deepseek/deepseek-chat-v3-0324:free", "google/gemini-2.0-flash-exp:free"),
+    "gemini": ("gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite",
+               "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"),
 }
-_NOT_CHAT = ("whisper", "guard", "tts", "playai", "distil", "embed", "moderation", "allam", "compound")
-_auto_model: dict[str, str] = {}    # "Demander à l'IA" (hotkey / button)
+#: never auto-picked: audio / speech / safety classifiers / embeddings (not chat models)
+_NOT_CHAT = ("whisper", "guard", "safeguard", "tts", "orpheus", "playai", "distil", "embed", "moderation",
+             "allam", "compound", "image", "vision-only", "aqa", "imagen", "veo", "live", "audio")
+#: substitutions learnt when a model does not exist for the key: (provider, requested model) -> model used
+_auto_model: dict[tuple[str, str], str] = {}
+RATE_RETRY_MAX_S = 3.0          # a per-minute limit (429) asking to wait <= this: wait and retry ONCE
+RATE_BACKOFF_MIN_S, RATE_BACKOFF_MAX_S = 15.0, 120.0
 BASE_GOLD_MIN = 800             # "base visit with gold"
 FED_LEVELS = (6, 11, 16)
 OBJECTIVE_LEAD_S = 80.0
@@ -91,8 +106,10 @@ OBJECTIVE_WINDOW_S = 20.0       # announced once the remaining time is within 80
 OBJECTIVE_KEYS = ("dragon", "baron", "elder")
 MAJOR_DRAGON_GT = 14 * 60.0     # a dragon is a "major" objective (budget slot) from 14:00
 #: back-off after an error (seconds before the next automatic request)
+#: "rate" = a per-minute limit (429 + a short "try again in 7 s"): transient, the real wait is used;
+#: "quota" = the daily / account quota (429 per day, insufficient_quota): long back-off.
 BACKOFF_S: dict[str, float] = {"key": math.inf, "nokey": math.inf, "quota": 600.0, "offline": 300.0,
-                               "model": math.inf, "server": 180.0, "empty": 90.0, "bad": 180.0}
+                               "model": math.inf, "server": 180.0, "empty": 90.0, "bad": 180.0, "rate": 30.0}
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 #: per-game budget of automatic calls: one per priority slot (in priority order)
 SLOTS = ("base", "objective", "comeback", "mid", "late")
@@ -118,9 +135,10 @@ class Provider:
 
 
 PROVIDERS: dict[str, Provider] = {
+    # gemini-2.0 / 2.5 are restricted to accounts that already used them (2026): new keys get a 404
     "gemini": Provider("gemini", "Google Gemini (gratuit)",
                        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                       "gemini-2.0-flash", True, "https://aistudio.google.com/apikey"),
+                       "gemini-3.5-flash-lite", True, "https://aistudio.google.com/apikey"),
     "groq": Provider("groq", "Groq (gratuit)", "https://api.groq.com/openai/v1/chat/completions",
                      "openai/gpt-oss-120b", True, "https://console.groq.com/keys"),
     "openrouter": Provider("openrouter", "OpenRouter (modèles :free)",
@@ -129,7 +147,7 @@ PROVIDERS: dict[str, Provider] = {
     "ollama": Provider("ollama", "Ollama (local, sans clé)", "http://127.0.0.1:11434/api/chat",
                        "llama3.1", False, "https://ollama.com"),
     "anthropic": Provider("anthropic", "Anthropic Claude", "https://api.anthropic.com/v1/messages",
-                          "claude-haiku-4-5-20251001", True, "https://console.anthropic.com/settings/keys"),
+                          "claude-haiku-4-5", True, "https://console.anthropic.com/settings/keys"),
 }
 PROVIDER_CHOICES: tuple[tuple[str, str], ...] = (("off", "Désactivé"),) + tuple(
     (p.key, p.label) for p in PROVIDERS.values())
@@ -138,6 +156,7 @@ ERROR_FR: dict[str, str] = {
     "key": "Conseil IA : clé API invalide ou refusée.",
     "nokey": "Conseil IA : aucune clé API saisie.",
     "quota": "Conseil IA : quota gratuit atteint, nouvel essai dans 10 minutes.",
+    "rate": "Conseil IA : trop de demandes en une minute, nouvel essai dans quelques secondes.",
     "offline": "Conseil IA : service injoignable (hors ligne ?).",
     "model": "Conseil IA : modèle introuvable, vérifie son nom.",
     "server": "Conseil IA : le service a renvoyé une erreur.",
@@ -147,11 +166,18 @@ ERROR_FR: dict[str, str] = {
 OLLAMA_OFFLINE = "Conseil IA : Ollama ne répond pas (lance « ollama serve »)."
 
 SYSTEM_PROMPT = (
-    "Tu es un coach expert de League of Legends qui conseille un joueur pendant sa partie. "
-    "Réponds en français, tutoiement, phrases très courtes, conseils concrets d'achat et de macro "
-    "fondés sur les données (temps, lieux, objets exacts), pas de spéculation sur les temps de recharge "
-    "ni les sorts d'invocateur ennemis. Pas de markdown, pas d'introduction. Quand un format JSON est "
-    "demandé, réponds uniquement avec cet objet JSON."
+    "Tu es le coach d'un joueur de League of Legends pendant sa partie. Tu reçois l'état complet de la "
+    "partie en JSON (API officielle du jeu + analyse de TreeAI). Règles : "
+    "1) Français uniquement, tutoiement, aucun mot anglais (balise, vague, sbires, objet, jungler). "
+    "2) Chaque phrase commence par un verbe à l'impératif (Rentre, Pousse, Pose, Prends, Recule, Achète...). "
+    "3) Un plan pour les 30 à 90 prochaines secondes, concret : quel lieu, quel temps (obj), quel objet exact. "
+    "4) Seulement les faits du JSON : ne cite jamais les clés du JSON, n'invente aucun chiffre, aucune "
+    "spéculation sur les temps de recharge, sorts d'invocateur ou ultimes ennemis. "
+    "5) carte = l'appel actif affiché par le coach : ton plan le suit et le prolonge ; si le JSON montre "
+    "clairement mieux, carte=differe et pourquoi = 1 ligne courte. "
+    "6) Objets : seulement ceux de objets_possibles ou de achat, noms exacts, jamais un objet déjà dans me.it ; "
+    "tiens compte de effets (anti-soin, stase, armure ennemie), de compo, du jungler (jgl) et de mes morts. "
+    "7) Réponds uniquement avec l'objet JSON demandé, sans markdown ni introduction."
 )
 MOMENT_FR = {
     "base": "retour en base avec de l'or à dépenser",
@@ -168,10 +194,11 @@ ROLE_FR = {"TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "adc", "
 class AIError(Exception):
     """A failed request; ``code`` is a key of :data:`ERROR_FR`."""
 
-    def __init__(self, code: str, detail: str = "") -> None:
+    def __init__(self, code: str, detail: str = "", retry_after: float | None = None) -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
         self.detail = detail
+        self.retry_after = retry_after      # seconds the provider asked to wait ("rate"), when known
 
 
 def provider_spec(name: Any) -> Provider | None:
@@ -187,6 +214,23 @@ def error_text(code: str, provider: str | None = None) -> str:
 # ======================================================================================
 # HTTP: request building / response parsing (pure) + the urllib call
 # ======================================================================================
+def _gemini_thinking(model: str) -> dict[str, Any] | None:
+    """Gemini thinking control: 2.5 Flash / Flash-Lite can switch it off (budget 0), 2.5 Pro needs
+    at least 128, Gemini 3 takes a level. Without it a 2.5 / 3 model spends the whole output budget
+    thinking and answers nothing (``finishReason`` MAX_TOKENS, no text)."""
+    m = model.lower().split("/")[-1]
+    if m.startswith("gemini-2.5"):
+        return {"thinkingBudget": 128} if "pro" in m else {"thinkingBudget": 0}
+    if m.startswith("gemini-3"):
+        return {"thinkingLevel": "low"}
+    return None
+
+
+#: Ollama models that think: ``think`` must be sent (False, or a level for gpt-oss); sending it to
+#: a model that does not think is a 400 ("does not support thinking"), so only for these names.
+_OLLAMA_THINKERS = ("qwen3", "deepseek-r1", "magistral", "gpt-oss", "phi4-reasoning", "cogito")
+
+
 def build_request(provider: str, model: str, api_key: str, system: str, prompt: str,
                   url: str | None = None, max_tokens: int = MAX_OUTPUT_TOKENS,
                   json_mode: bool = False) -> tuple[str, dict[str, str], bytes]:
@@ -206,10 +250,15 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
     if provider == "gemini":
         target = (url or spec.url).replace("{model}", urllib.parse.quote(model, safe=""))
         headers["x-goog-api-key"] = key
+        gen: dict[str, Any] = {"maxOutputTokens": max_tokens, "temperature": 0.4}
+        thinking = _gemini_thinking(model)
+        if thinking is not None:
+            gen["thinkingConfig"] = thinking
+            gen["maxOutputTokens"] = max(max_tokens, GEMINI_MIN_TOKENS)
         body: dict[str, Any] = {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.4},
+            "generationConfig": gen,
         }
         if json_mode:
             body["generationConfig"]["responseMimeType"] = "application/json"
@@ -229,12 +278,20 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
                 body["include_reasoning"] = False
             elif "qwen3" in model:
                 body["reasoning_format"] = "hidden"
+        elif "gpt-oss" in model or "deepseek-r1" in model or "qwen3" in model:
+            # OpenRouter: unified reasoning switch; low effort and never returned in the content
+            body["reasoning"] = {"effort": "low", "exclude": True}
+            body["max_tokens"] = max(max_tokens, GROQ_MIN_TOKENS)
         if json_mode:
             body["response_format"] = {"type": "json_object"}
     elif provider == "ollama":
         target = url or spec.url
         body = {"model": model, "stream": False, "options": {"num_predict": max_tokens, "temperature": 0.4},
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}
+        low = model.lower()
+        if any(w in low for w in _OLLAMA_THINKERS):
+            body["think"] = "low" if "gpt-oss" in low else False
+            body["options"]["num_predict"] = max(max_tokens, GROQ_MIN_TOKENS)
         if json_mode:
             body["format"] = "json"
     else:  # anthropic
@@ -246,26 +303,54 @@ def build_request(provider: str, model: str, api_key: str, system: str, prompt: 
     return target, headers, json.dumps(body, ensure_ascii=False).encode("utf-8")
 
 
+def _body_error(provider: str, data: dict[str, Any]) -> AIError | None:
+    """An error carried in a 200 answer (OpenRouter forwards the upstream provider's 429 / 5xx
+    as ``{"error": {"code": 429, ...}}`` with HTTP 200; Gemini blocks a prompt with
+    ``promptFeedback.blockReason``; Anthropic declines with ``stop_reason: "refusal"``)."""
+    err = data.get("error")
+    if isinstance(err, dict) or isinstance(err, str):
+        e = err if isinstance(err, dict) else {"message": err}
+        try:
+            code = int(e.get("code") or 0)
+        except (TypeError, ValueError):
+            code = 0
+        body = json.dumps(e, ensure_ascii=False)[:2000]
+        kind, wait = _classify_http(code or 500, body, None)
+        return AIError(kind, f"in-body error {code}", retry_after=wait)
+    if provider == "gemini":
+        fb = data.get("promptFeedback") or {}
+        if isinstance(fb, dict) and fb.get("blockReason") and not data.get("candidates"):
+            return AIError("empty", f"blocked: {fb.get('blockReason')}")
+    if provider == "anthropic" and data.get("stop_reason") == "refusal":
+        return AIError("empty", "refusal")
+    return None
+
+
 def parse_response(provider: str, data: Any, long: bool = False, raw: bool = False) -> str:
     """Text of a provider's JSON answer (``raw``: only the reasoning removed, for a JSON plan).
-    Raises :class:`AIError` ("empty" / "bad")."""
+    Raises :class:`AIError` ("empty" / "bad", or the error carried in the body)."""
     try:
+        err = _body_error(provider, data) if isinstance(data, dict) else None
+        if err is not None:
+            raise err
         if provider == "gemini":
             cands = data.get("candidates") or []
             parts = ((cands[0] or {}).get("content") or {}).get("parts") or [] if cands else []
-            text = "".join(str(p.get("text") or "") for p in parts if isinstance(p, dict))
+            text = "".join(str(p.get("text") or "") for p in parts
+                           if isinstance(p, dict) and not p.get("thought"))      # thought summaries: never shown
         elif provider in ("groq", "openrouter"):
             choices = data.get("choices") or []
             text = str(((choices[0] or {}).get("message") or {}).get("content") or "") if choices else ""
         elif provider == "ollama":
-            text = str((data.get("message") or {}).get("content") or "")
+            text = str((data.get("message") or {}).get("content") or "")         # message.thinking ignored
         else:
             text = "".join(str(b.get("text") or "") for b in data.get("content") or []
                            if isinstance(b, dict) and b.get("type", "text") == "text")
     except (AttributeError, TypeError, IndexError, KeyError) as exc:
         raise AIError("bad", str(exc)) from exc
     if raw:
-        text = re.sub(r"<think>.*?</think>", " ", text, flags=re.S | re.I).strip()[:4000]
+        text = re.sub(r"<think>.*?</think>", " ", text, flags=re.S | re.I)
+        text = re.sub(r"<think>.*$", " ", text, flags=re.S | re.I).strip()[:4000]    # unclosed (truncated)
     else:
         text = clean_review(text) if long else clean_advice(text)
     if not text:
@@ -277,6 +362,7 @@ def clean_advice(text: Any) -> str:
     """Plain text, no markdown, at most 2 sentences / :data:`MAX_ADVICE_CHARS` characters."""
     s = str(text or "")
     s = re.sub(r"<think>.*?</think>", " ", s, flags=re.S | re.I)    # reasoning models
+    s = re.sub(r"<think>.*$", " ", s, flags=re.S | re.I)            # ... cut before closing it
     s = re.sub(r"[*_#`>]+", "", s)
     s = re.sub(r"^\s*[-•]\s*", "", s, flags=re.M)
     s = " ".join(s.split()).strip(" \"'«»")
@@ -299,17 +385,53 @@ def clean_review(text: Any) -> str:
     return s[:MAX_REVIEW_CHARS]
 
 
-def _classify_http(code: int, body: str) -> str:
-    low = body.lower()
-    if code in (401, 403) or (code == 400 and ("api key" in low or "api_key" in low or "apikey" in low)):
-        return "key"
-    if "model_not_found" in low or "does not exist" in low or "decommissioned" in low:
-        return "model"
-    if code == 429 or "quota" in low or "rate limit" in low:
-        return "quota"
+_WAIT_RE = re.compile(r"(?:try again in|retry in|retrydelay\W*)\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m(?!s))?\s*"
+                      r"(?:(\d+(?:\.\d+)?)\s*s)?\s*(?:(\d+(?:\.\d+)?)\s*ms)?", re.I)
+#: daily / account quota markers. NOT "billing": Groq's per-minute 429 ends with "Upgrade to Dev Tier
+#: ... /settings/billing" (live, 2026-10) and was taken for the daily quota (10 min back-off)
+_DAILY = ("per day", "(rpd)", "(tpd)", "perday", "daily", "insufficient_quota", "requests_per_day",
+          "free_tier_requests_per_day", "credit balance")
+
+
+def _retry_after(body: str, headers: Any = None) -> float | None:
+    """Seconds the provider asks to wait: ``Retry-After`` header, else "try again in 1m2.5s" /
+    Gemini ``"retryDelay": "34s"`` in the body. None when not given."""
+    try:
+        v = headers.get("Retry-After") if headers is not None else None
+        if v not in (None, ""):
+            return max(0.0, float(v))
+    except (TypeError, ValueError, AttributeError):
+        pass
+    for m in _WAIT_RE.finditer(body or ""):
+        h, mi, sec, ms = m.groups()
+        if not any((h, mi, sec, ms)):
+            continue
+        return (float(h or 0) * 3600 + float(mi or 0) * 60 + float(sec or 0) + float(ms or 0) / 1000.0)
+    return None
+
+
+def _classify_http(code: int, body: str, headers: Any = None) -> tuple[str, float | None]:
+    """``(error code, seconds to wait or None)`` of an HTTP error.
+
+    A 429 is split: a per-minute limit ("rate": Groq TPM / RPM, Gemini per-minute, OpenRouter
+    upstream) waits the time the provider gives; the daily / account quota ("quota") backs off
+    long. 529 / 503 "overloaded" are transient service errors."""
+    low = (body or "").lower()
+    if code in (401, 403) and "no longer available" not in low and "not found" not in low:
+        return "key", None
+    if code == 400 and ("api key" in low or "api_key" in low or "apikey" in low) and "model" not in low:
+        return "key", None
+    if ("model_not_found" in low or "does not exist" in low or "decommissioned" in low
+            or "no longer available" in low or "is not found for api version" in low
+            or "not supported for generatecontent" in low or ("model" in low and "not found" in low)):
+        return "model", None
+    if code == 429 or "rate limit" in low or "rate_limit" in low or "resource_exhausted" in low or "quota" in low:
+        wait = _retry_after(body, headers)
+        daily = any(w in low for w in _DAILY) or (wait is not None and wait > 600.0)
+        return ("quota" if daily else "rate"), wait
     if code == 404:
-        return "model"
-    return "server"
+        return "model", None
+    return "server", None
 
 
 def _opener_for(url: str) -> urllib.request.OpenerDirector:
@@ -320,16 +442,25 @@ def _opener_for(url: str) -> urllib.request.OpenerDirector:
 
 
 def list_models(provider: str, api_key: str, url: str | None = None, timeout: float = TIMEOUT_S) -> list[str]:
-    """Model ids of an OpenAI-compatible provider (GET .../models). [] on any error."""
+    """Chat model ids available for this key (GET .../models; Gemini: the models supporting
+    ``generateContent``). [] on any error."""
     spec = provider_spec(provider)
-    if spec is None or provider not in ("groq", "openrouter"):
+    if spec is None or provider not in ("groq", "openrouter", "gemini"):
         return []
-    target = (url or spec.url).rsplit("/chat/completions", 1)[0] + "/models"
-    req = urllib.request.Request(target, headers={"Authorization": f"Bearer {api_key.strip()}",
-                                                  "Accept": "application/json", "User-Agent": "TreeAICoach"})
+    headers = {"Accept": "application/json", "User-Agent": "TreeAICoach"}
+    if provider == "gemini":
+        target = (url or spec.url).split("/models/", 1)[0] + "/models?pageSize=200"
+        headers["x-goog-api-key"] = api_key.strip()
+    else:
+        target = (url or spec.url).rsplit("/chat/completions", 1)[0] + "/models"
+        headers["Authorization"] = f"Bearer {api_key.strip()}"
+    req = urllib.request.Request(target, headers=headers)
     try:
         with _opener_for(target).open(req, timeout=timeout) as resp:
-            data = json.loads(resp.read(MAX_RESPONSE_BYTES).decode("utf-8", "replace"))
+            data = json.loads(resp.read(MAX_RESPONSE_BYTES * 4).decode("utf-8", "replace"))
+        if provider == "gemini":
+            return [str(m.get("name", "")).split("/", 1)[-1] for m in data.get("models") or []
+                    if isinstance(m, dict) and "generateContent" in (m.get("supportedGenerationMethods") or [])]
         return [str(m.get("id")) for m in data.get("data") or [] if isinstance(m, dict) and m.get("id")]
     except Exception:
         log.debug("Model list unavailable", exc_info=True)
@@ -338,12 +469,14 @@ def list_models(provider: str, api_key: str, url: str | None = None, timeout: fl
 
 def pick_model(provider: str, ids: Iterable[str]) -> str | None:
     """Best chat model among ``ids`` (preference list, then any non-audio / non-guard model)."""
-    ids = [i for i in ids if not any(w in i.lower() for w in _NOT_CHAT)]
+    ids = sorted(i for i in ids if not any(w in i.lower() for w in _NOT_CHAT))
     for pref in MODEL_PREFERENCE.get(provider, ()):
         if pref in ids:
             return pref
     if provider == "openrouter":
         ids = [i for i in ids if i.endswith(":free")]
+    if provider == "gemini":
+        ids = [i for i in ids if "flash" in i] or ids
     return ids[0] if ids else None
 
 
@@ -352,20 +485,36 @@ def call_llm(provider: str, api_key: str, model: str, system: str, prompt: str,
              long: bool = False, json_mode: bool = False) -> str:
     """One blocking request; returns the cleaned advice. Raises :class:`AIError` only.
 
-    OpenAI-compatible providers: when the model does not exist for this key, the available
-    models are listed once and the best chat model is picked (and remembered) automatically."""
-    model = (model or "").strip() or _auto_model.get(provider, "")
+    * a model that does not exist for this key (decommissioned / restricted): the available
+      models are listed once, the best chat model is picked and the substitution remembered
+      (later calls go straight to it, no failed request first);
+    * a per-minute rate limit asking to wait <= :data:`RATE_RETRY_MAX_S`: wait, retry once."""
+    want = (model or "").strip()
+    model = _auto_model.get((provider, want), want)
+    try:
+        return _call_rate_retry(provider, api_key, model, system, prompt, timeout, url, max_tokens, long, json_mode)
+    except AIError as exc:
+        if exc.code != "model" or provider not in ("groq", "openrouter", "gemini"):
+            raise
+        best = pick_model(provider, list_models(provider, api_key, url, timeout))
+        if not best or best == (model or (provider_spec(provider).default_model if provider_spec(provider) else "")):
+            raise
+        log.info("AI model %r unavailable, using %r", model or "default", best)
+        _auto_model[(provider, want)] = best
+        return _call_rate_retry(provider, api_key, best, system, prompt, timeout, url, max_tokens, long, json_mode)
+
+
+def _call_rate_retry(provider: str, api_key: str, model: str, system: str, prompt: str, timeout: float,
+                     url: str | None, max_tokens: int, long: bool, json_mode: bool) -> str:
     try:
         return _call_once(provider, api_key, model, system, prompt, timeout, url, max_tokens, long, json_mode)
     except AIError as exc:
-        if exc.code != "model" or provider not in ("groq", "openrouter"):
+        wait = exc.retry_after
+        if exc.code != "rate" or wait is None or wait > RATE_RETRY_MAX_S:
             raise
-        best = pick_model(provider, list_models(provider, api_key, url, timeout))
-        if not best or best == model:
-            raise
-        log.info("AI model %r unavailable, using %r", model or "default", best)
-        _auto_model[provider] = best
-        return _call_once(provider, api_key, best, system, prompt, timeout, url, max_tokens, long, json_mode)
+        log.info("AI rate limit (%s): retry in %.1f s", provider, wait)
+        time.sleep(max(0.2, wait + 0.2))
+        return _call_once(provider, api_key, model, system, prompt, timeout, url, max_tokens, long, json_mode)
 
 
 def _call_once(provider: str, api_key: str, model: str, system: str, prompt: str, timeout: float,
@@ -380,7 +529,8 @@ def _call_once(provider: str, api_key: str, model: str, system: str, prompt: str
             detail = exc.read(4096).decode("utf-8", "replace")
         except Exception:
             detail = ""
-        raise AIError(_classify_http(int(exc.code), detail), f"HTTP {exc.code}") from None
+        kind, wait = _classify_http(int(exc.code), detail, getattr(exc, "headers", None))
+        raise AIError(kind, f"HTTP {exc.code}", retry_after=wait) from None
     except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as exc:
         raise AIError("offline", type(exc).__name__) from None
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -400,8 +550,13 @@ def _call_once(provider: str, api_key: str, model: str, system: str, prompt: str
 PLAN_GOALS = ("dragon", "baron", "heraut", "larves", "tour", "farm", "vision", "defense", "regroupe",
               "achat", "aucun")
 PLAN_URGENCY = ("haute", "moyenne", "basse")
-PLAN_SCHEMA_FR = ('{"plan": "1 phrase, 170 caractères max", "etapes": ["action concrète, 95 caractères max", '
-                  '"... (0 à 3)"], "objectif": "' + "|".join(PLAN_GOALS) + '", "urgence": "haute|moyenne|basse"}')
+CARD_STANCES = ("suit", "differe", "aucune")      # the plan vs the live game-changer card ("carte")
+MAX_WHY_CHARS = 90
+PLAN_SCHEMA_FR = ('{"plan": "1 phrase courte (20 mots max) qui commence par un verbe à l\'impératif", '
+                  '"etapes": ["un détail NOUVEAU (lieu, temps, objet), verbe à l\'impératif, 15 mots max", '
+                  '"... (0 à 3)"], '
+                  '"objectif": "' + "|".join(PLAN_GOALS) + '", "urgence": "haute|moyenne|basse", '
+                  '"carte": "suit|differe|aucune", "pourquoi": "si differe : 1 ligne, sinon vide"}')
 
 
 def _json_block(text: str) -> str | None:
@@ -421,16 +576,88 @@ def _short(text: Any, limit: int) -> str:
     return s
 
 
+_STR_FIELD = r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"'
+
+
+def _salvage_plan(text: str) -> dict[str, Any] | None:
+    """A plan from a TRUNCATED JSON answer (``finish_reason: length`` / ``max_tokens``): the
+    complete ``"plan"`` string and the complete steps written before the cut. None otherwise."""
+    s = re.sub(r"<think>.*?</think>", " ", str(text or ""), flags=re.S | re.I)
+    i = s.find("{")
+    if i < 0:
+        return None
+    s = s[i:]
+    m = re.search(_STR_FIELD % "plan", s)
+    if m is None:
+        return None
+    try:
+        plan = json.loads(f'"{m.group(1)}"')
+    except ValueError:
+        return None
+    steps: list[str] = []
+    em = re.search(r'"etapes"\s*:\s*\[(.*)', s, flags=re.S)
+    if em:
+        for sm in re.finditer(r'"((?:[^"\\]|\\.)*)"\s*(?=[,\]])', em.group(1)):
+            try:
+                steps.append(json.loads(f'"{sm.group(1)}"'))
+            except ValueError:
+                break
+    data: dict[str, Any] = {"plan": plan, "etapes": steps}
+    for k in ("objectif", "urgence", "carte", "pourquoi"):
+        fm = re.search(_STR_FIELD % k, s)
+        if fm:
+            data[k] = fm.group(1)
+    return data
+
+
+#: English League words the models slip into French plans (live Groq, 2026-10: "farm", "lane",
+#: "last-hit", "ward") -> the French words the app uses everywhere
+_EN_TERMS: tuple[tuple[str, str], ...] = (
+    (r"\blast[\s\-\u2011]?hit(?:te[rz]?|s)?(?: (?:les|des|tes) sbires)?\b", "achève les sbires"), (r"\bfarm(?:e[rz]?|s)?\b", "farme"),
+    (r"\b(?:en|ta|la|sa|ma) lane\b", "dans ta voie"), (r"\blanes?\b", "voie"), (r"\bwards?\b", "balise"),
+    (r"\bcontrol ward\b", "balise de contrôle"), (r"\bpush(?:e[rz]?|s)?\b", "pousse"),
+    (r"\bback(?:e[rz]?)?\b", "rentre"), (r"\btrade(?:s|r)?\b", "échange"), (r"\bfreeze\b", "gèle la vague"),
+    (r"\bteamfights?\b", "combat d'équipe"), (r"\bsplit[\s\-]?push\b", "pousse seul"),
+    (r"\bpiton\b", "pit"))
+
+
+def frenchify(text: Any) -> str:
+    """Replace the English League jargon of a French line by the app's French words."""
+    s = str(text or "").replace("\u2011", "-")
+    for pat, fr in _EN_TERMS:
+        s = re.sub(pat, fr, s, flags=re.I)
+    return s
+
+
+def _redundant(step: str, plan: str) -> bool:
+    """A step that only repeats the plan (>= 70 % of its words already in it)."""
+    w = [x for x in re.findall(r"\w{3,}", step.lower())]
+    pw = set(re.findall(r"\w{3,}", plan.lower()))
+    return bool(w) and sum(1 for x in w if x in pw) / len(w) >= 0.7
+
+
 def parse_plan(text: Any) -> dict[str, Any] | None:
-    """Strict parse of the model's JSON plan: ``{"plan", "etapes", "objectif", "urgence"}`` or None.
+    """Strict parse of the model's JSON plan: ``{"plan", "etapes", "objectif", "urgence", "carte",
+    "pourquoi"}`` or None.
 
     ``plan`` must be a non-empty string; ``etapes`` a list of strings (at most :data:`MAX_STEPS`
-    kept); unknown ``objectif`` / ``urgence`` values are dropped; extra keys ignored. Never raises."""
+    kept); unknown ``objectif`` / ``urgence`` / ``carte`` values are dropped; extra keys ignored.
+    A truncated answer keeps its complete ``plan`` and steps (:func:`_salvage_plan`). Never raises."""
     try:
         block = _json_block(text)
-        if block is None:
-            return None
-        data = json.loads(block)
+        data: Any = None
+        if block is not None:
+            try:
+                data = json.loads(block)
+            except ValueError:
+                data = None
+        if data is None:
+            s = str(text or "")
+            if "{" not in s or (block is not None and s.rstrip().endswith("}")):
+                return None                       # complete but broken JSON: rejected
+            data = _salvage_plan(s)               # cut before its end: keep what is complete
+            if data is None:
+                return None
         if not isinstance(data, dict):
             return None
         plan = data.get("plan")
@@ -441,20 +668,30 @@ def parse_plan(text: Any) -> dict[str, Any] | None:
             steps_raw = []
         if not isinstance(steps_raw, list) or not all(isinstance(x, str) for x in steps_raw):
             return None
-        steps = [_short(x, MAX_STEP_CHARS) for x in steps_raw if x.strip()][:MAX_STEPS]
+        plan = frenchify(plan)
+        steps = [_short(frenchify(x), MAX_STEP_CHARS) for x in steps_raw if x.strip()]
+        steps = [x for x in steps if not _redundant(x, plan)][:MAX_STEPS]
         goal = str(data.get("objectif") or "").strip().lower()
         goal = unicodedata.normalize("NFKD", goal).encode("ascii", "ignore").decode()
         urg = str(data.get("urgence") or "").strip().lower()
+        card = unicodedata.normalize("NFKD", str(data.get("carte") or "").strip().lower()).encode(
+            "ascii", "ignore").decode()
+        why = _short(data.get("pourquoi"), MAX_WHY_CHARS) if isinstance(data.get("pourquoi"), str) else ""
         return {"plan": _short(plan, MAX_PLAN_CHARS), "etapes": steps,
                 "objectif": goal if goal in PLAN_GOALS else None,
-                "urgence": urg if urg in PLAN_URGENCY else None}
+                "urgence": urg if urg in PLAN_URGENCY else None,
+                "carte": card if card in CARD_STANCES else None,
+                "pourquoi": why if len(why) >= 4 else None}
     except (ValueError, TypeError):
         return None
 
 
 def plan_text(plan: dict[str, Any]) -> str:
-    """One display line: the plan, then the steps (bounded like an advice)."""
-    parts = [str(plan.get("plan") or "").strip()] + [str(x).strip() for x in plan.get("etapes") or []]
+    """One display line: the plan, the reason it departs from the live card (if it does), then
+    the steps (bounded like an advice)."""
+    why = str(plan.get("pourquoi") or "").strip() if plan.get("carte") == "differe" else ""
+    parts = [str(plan.get("plan") or "").strip()] + ([f"Pourquoi pas la carte : {why}"] if why else []) + [
+        str(x).strip() for x in plan.get("etapes") or []]
     parts = [p if p.endswith((".", "!", "?", "…")) else p + "." for p in parts if p]
     s = " ".join(parts)
     if len(s) > MAX_ADVICE_CHARS:
@@ -463,22 +700,79 @@ def plan_text(plan: dict[str, Any]) -> str:
     return s
 
 
+# ---------------------------------------------------------------- consistency with the live card
+_RETREAT_RE = re.compile(
+    r"\b(recule[rz]?|replie[rz]?|repli|d[ée]fends?|reste sous|sous ta tour|ne force pas|ne te bats pas|"
+    r"n'engage pas|[ée]vite|joue (?:la )?s[ée]curit[ée]|joue safe|ne trade pas|farme sous|rentre te soigner|"
+    r"ne va pas|ne te montre pas|pas de buisson)\b", re.I)
+_GO_RE = re.compile(
+    r"\b(prends|frappe|force|engage|avance|attaque|plaque|tue|punis|investis|joue agressif|"
+    r"va (?:au|à|a|sur|mid|top|bot|prendre)|all-?in|trade)\b", re.I)
+_OBJ_WORDS = {"baron": "baron", "nashor": "baron", "dragon": "dragon", "ancestral": "dragon", "héraut": "heraut",
+              "heraut": "heraut", "larves": "larves"}
+
+
+def stance_of(text: Any) -> str | None:
+    """"retreat" / "go" from the first imperative of a French line (the main clause decides:
+    "Recule, puis prends le dragon" is a retreat now), None when neutral."""
+    s = str(text or "")
+    head = re.split(r"[.:;!?]| puis | ensuite ", s, maxsplit=1)[0]
+    for part in (head, s):
+        r, g = _RETREAT_RE.search(part), _GO_RE.search(part)
+        if r or g:
+            if r and g:
+                return "retreat" if r.start() < g.start() else "go"
+            return "retreat" if r else "go"
+    return None
+
+
+def _objective_of(text: Any) -> str | None:
+    low = str(text or "").lower()
+    hits = [(low.find(w), g) for w, g in _OBJ_WORDS.items() if w in low]
+    return min(hits)[1] if hits else None
+
+
+def card_check(advice_text: Any, card: Any, *, stance: str | None = None, why: str | None = None,
+               goal: str | None = None) -> str:
+    """How an AI plan stands against the live game-changer card (``card``: its text, or a
+    :class:`treeaicoach.macro.GeniusCall`): ``"ok"`` (same call, or no card), ``"explained"`` (it
+    contradicts the card but the model said why in one line: shown once the card is gone),
+    ``"conflict"`` (contradicts the card without a reason: never shown). Never raises."""
+    try:
+        ctext = str(getattr(card, "text", card) or "").strip()
+        if not ctext:
+            return "ok"
+        a_st, c_st = stance_of(advice_text), stance_of(ctext)
+        clash = a_st is not None and c_st is not None and a_st != c_st
+        c_obj = _objective_of(ctext)
+        a_obj = goal if goal in ("dragon", "baron", "heraut", "larves") else _objective_of(
+            re.split(r"[.!?]", str(advice_text or ""), maxsplit=1)[0])
+        if c_obj and a_obj and c_obj != a_obj and c_st == "go" and a_st == "go":
+            clash = True                     # "prends le Baron" vs "prends le dragon": two places at once
+        if not clash:
+            return "ok"
+        return "explained" if (stance == "differe" and why) else "conflict"
+    except Exception:
+        return "ok"
+
+
 # ======================================================================================
 # Game snapshot + prompt
 # ======================================================================================
-#: Abbreviated keys of the snapshot (sent once in the system prompt).
-LEGEND = ("Clés JSON : t=temps de jeu, mo=moment, me=moi, al=alliés, en=ennemis, c=champion, r=rôle, "
-          "lv=niveau, it=objets, ig=valeur des objets (or), g=or disponible, k=K/D/A, cs=sbires, "
-          "ss=sorts d'invocateur, rs=réapparition dans (s), st=stats, ru=runes, ab=niveaux de sorts, "
-          "ev=derniers événements, obj=objectifs (s avant apparition ou dispo), sb=tableau des scores "
-          "(gd=écart d'or équipe estimé, kd=kills, ln=duels de voie), map=carte (z=zone, vu=vu il y a s), "
-          "jgl=jungler ennemi, co=analyse du coach, wp=probabilité de victoire %, morts=mes dernières morts, "
-          "achat=suggestion d'objet actuelle, ward=balise conseillée, coups=mes derniers coups notés "
-          "(classe : brilliant, great, best, good, inaccuracy, mistake, blunder, miss + raison), prec=précision "
-          "0-100, diff=écarts (eq=or d'équipe, po/niv/cs=contre mon adversaire de voie), prio=état des vagues "
-          "par voie, objt=[objectif, s avant apparition, 0=dispo], balises=emplacements de balise conseillés, "
-          "jint=infos sur la jungle ennemie.")
-MAX_SNAPSHOT_BYTES = 6000
+#: Keys of the snapshot (sent once in the system prompt). One compact "mastermind" state: everything
+#: TreeAI knows (Live Client + minimap + its own analysis), deterministic order, < 1.5k tokens.
+LEGEND = ("Clés : t=temps de jeu, ph=phase, mo=moment, carte=appel ACTIF de la carte du coach (appel + "
+          "pourquoi), me=moi (c champion, r rôle, lv niveau, k K/D/A, cs, g or dispo, pv %, it objets, "
+          "ig valeur des objets, rs réapparition s), voie=mon duel (vs adversaire, niv/po/cs écarts + = pour "
+          "moi, conseils du matchup), eq=écarts d'équipe (po or, tend évolution sur 2 min, kills, niv), "
+          "al/en=alliés/ennemis \"champion rôle niveau K/D/A or-en-objets [objets] [mort Xs]\", compo=profils "
+          "des compos (dégâts P/M, styles, courbe de puissance, contrôle) + plan de victoire, effets=objets "
+          "ennemis qui changent ton jeu (anti-soin, stase, armure...), jgl=jungler ennemi (vu = où et il y a "
+          "combien de s, farm, côté probable), obj=[objectif, s avant apparition, 0=dispo], carto=dragons, "
+          "âme, buffs, tours perdues, morts=mes morts récentes avec cause, ev=derniers événements, "
+          "coups=mes coups notés + prec précision 0-100, achat=objet conseillé, objets_possibles=objets "
+          "autorisés, prio=vagues, balises=balises conseillées, wp=probabilité de victoire %.")
+MAX_SNAPSHOT_BYTES = 3900       # ~1.3k tokens (French JSON ~ 2.9 bytes / token, measured on Groq)
 STAT_KEYS = {"attackDamage": "ad", "abilityPower": "ap", "armor": "ar", "magicResist": "mr",
              "attackSpeed": "as", "moveSpeed": "ms", "abilityHaste": "ah", "critChance": "crit",
              "lifeSteal": "vol", "physicalLethality": "leta", "magicPenetrationFlat": "penm"}
@@ -536,7 +830,9 @@ def compact(value: Any, depth: int = 0, max_list: int = 10, max_str: int = 160) 
     return None
 
 
-def _item_list(items: Iterable[Any]) -> tuple[list[str], int]:
+def _item_list(items: Iterable[Any], big_only: bool = False) -> tuple[list[str], int]:
+    """``(French item names, total item gold)`` of an inventory (trinkets left out; ``big_only``:
+    finished legendary items and boots only)."""
     try:
         from treeaicoach.scoreboard import item_info
     except Exception:  # pragma: no cover
@@ -547,7 +843,7 @@ def _item_list(items: Iterable[Any]) -> tuple[list[str], int]:
         if info is None:
             continue
         gold += int(info[1])
-        if info[0] and info[2] not in ("trinket",):
+        if info[0] and info[2] not in ("trinket",) and (not big_only or info[2] in ("legendary", "boots")):
             names.append(info[0])
     return names[:7], gold
 
@@ -563,23 +859,21 @@ def _role(p: Any, side: str, roles: Any) -> str | None:
     return ROLE_FR.get(str(r).upper(), None) if r else None
 
 
-def _player(p: Any, side: str, roles: Any) -> dict[str, Any]:
-    d: dict[str, Any] = {"c": p.champion_name or p.champion_alias}
-    role = _role(p, side, roles)
-    if role:
-        d["r"] = role
-    names, gold = _item_list(p.items)
-    d.update({"lv": int(p.level), "k": f"{p.kills}/{p.deaths}/{p.assists}", "cs": int(p.creep_score)})
-    if names:
-        d["it"] = names
-    if gold:
-        d["ig"] = gold
-    spells = [str(s)[:20] for s in (getattr(p, "spells", ()) or ())][:2]
-    if spells:
-        d["ss"] = spells
+def _kgold(g: Any) -> str:
+    return f"{float(g) / 1000.0:.1f}k"
+
+
+def _pline(p: Any, side: str, roles: Any) -> str:
+    """One player as a short line: "Zed mid 9 3/1/2 6.2k [Couperet noir] mort 23s"."""
+    name = str(p.champion_name or p.champion_alias)
+    names, gold = _item_list(p.items, big_only=True)
+    parts = [name, _role(p, side, roles) or "?", str(int(p.level)), f"{p.kills}/{p.deaths}/{p.assists}",
+             _kgold(gold)]
+    if names and side == "enemy":
+        parts.append("[" + ", ".join(names[:3]) + "]")
     if getattr(p, "is_dead", False):
-        d["rs"] = int(max(0.0, float(getattr(p, "respawn_timer", 0.0) or 0.0)))
-    return d
+        parts.append(f"mort {int(max(0.0, float(getattr(p, 'respawn_timer', 0.0) or 0.0)))}s")
+    return " ".join(parts)
 
 
 def _names_to_champ(game: Any) -> dict[str, str]:
@@ -681,121 +975,88 @@ def last_deaths(game: Any, limit: int = 3) -> list[dict[str, Any]]:
 
 
 def engine_context(engine: Any, now: float | None = None) -> dict[str, Any]:
-    """Live analysis of the engine (map state, coach, stance, fight, wards, win probability...).
+    """Live analysis of the engine for the snapshot: the active game-changer card (``carte``),
+    the phase (``ph``), lane / team diffs (``diff``), the matchup tips (``conseils``), both team
+    comps (``compo``), enemy item effects (``effets``), the enemy jungler (``jgl``: last seen
+    zone + age, Tab intel, probable side), the map state (``carto``: dragons, soul, buffs, towers
+    lost), my deaths with their cause (``causes``), rated plays (``coups`` + ``prec``), lane
+    priorities (``prio``), ward spots (``balises``), win probability (``wp``) and any analysis
+    another module exposes through ``engine.ai_extra_context()`` (``plus``).
 
-    Every piece is optional (``getattr``-guarded): a missing analyser is simply left out. Never raises.
-    """
+    Every piece is optional (guarded): a missing analyser is simply left out. Never raises."""
     ctx: dict[str, Any] = {}
     if engine is None:
         return ctx
     try:
         if now is None:
-            clock = getattr(engine, "_clock", None)
-            now = float(clock()) if callable(clock) else time.monotonic()
+            clock_fn = getattr(engine, "_clock", None)
+            now = float(clock_fn()) if callable(clock_fn) else time.monotonic()
     except Exception:
         now = time.monotonic()
     game = getattr(engine, "_game", None)
-    my_team = getattr(game, "my_team", None)
 
     def safe(fn: Callable[[], Any]) -> Any:
         try:
             return fn()
         except Exception:
+            log.debug("AI context section failed", exc_info=True)
             return None
 
-    tracker = getattr(engine, "_tracker", None)
-    if tracker is not None:
-        def tracks() -> dict[str, Any]:
-            from treeaicoach import geometry
-
-            def one(tr: Any) -> dict[str, Any] | None:
-                pos = tr.position() if hasattr(tr, "position") else None
-                if pos is None:
-                    return None
-                d = {"c": tr.alias or "?", "z": geometry.zone_label_fr(geometry.classify_zone(*pos), my_team)}
-                ago = now - float(tr.last_seen)
-                if ago > 1.5:
-                    d["vu"] = int(ago)
-                return d
-            m: dict[str, Any] = {}
-            me = tracker.me()
-            if me is not None and me.position() is not None:
-                m["moi"] = geometry.zone_label_fr(geometry.classify_zone(*me.position()), my_team)
-            m["al"] = [x for x in (one(t) for t in tracker.allies(visible_only=False)[:4]) if x]
-            m["en"] = [x for x in (one(t) for t in tracker.enemies(visible_only=False)[:5]) if x]
-            return m
-        ctx["map"] = safe(tracks)
-    jt = getattr(engine, "jungler_status_text", None)
-    if callable(jt):
-        ctx["jgl"] = safe(jt)
-    co: dict[str, Any] = {}
-    coach = getattr(engine, "_coach", None)
-    if coach is not None and hasattr(coach, "facts"):
-        co["faits"] = safe(lambda: compact(coach.facts(), max_list=5, max_str=80))
-        co["insight"] = safe(coach.insight) if hasattr(coach, "insight") else None
-    stance = getattr(engine, "_stance", None)
-    cur = safe(stance.current) if stance is not None and hasattr(stance, "current") else None
-    if cur is not None:
-        co["posture"] = f"{getattr(cur, 'level', '')} : {getattr(cur, 'reason', '')}"[:160]
-    for attr in ("_fight", "_fight_tracker"):
-        ft = getattr(engine, attr, None)
-        if ft is not None and hasattr(ft, "state"):
-            co["combat"] = safe(lambda ft=ft: compact(ft.state(), max_list=5, max_str=80))
-            break
-    for attr in ("_phase", "_map_state", "_endgame", "_macro"):
-        ph = getattr(engine, attr, None)
-        if ph is None:
-            continue
-        for meth in ("current", "state", "last"):
-            if hasattr(ph, meth) and callable(getattr(ph, meth)):
-                co["phase"] = safe(lambda ph=ph, meth=meth: compact(getattr(ph, meth)(), max_list=5, max_str=80))
-                break
-        break
-    tip = getattr(engine, "_tip_text", None)
-    if tip:
-        co["astuce"] = str(tip)[:120]
-    ctx["co"] = co
-    for attr in ("_wards", "_ward_adv", "_ward_advisor"):
-        wa = getattr(engine, attr, None)
-        if wa is not None and hasattr(wa, "current"):
-            ctx["ward"] = safe(lambda wa=wa: compact(wa.current(now), max_list=3, max_str=100))
-            break
-    wp = getattr(engine, "win_probability", None)
-    p = safe(wp) if callable(wp) else None
-    if isinstance(p, (int, float)):
-        ctx["wp"] = int(round(100 * p))
-    for key, fn in (("coups", _ctx_plays), ("diff", _ctx_diff), ("prio", _ctx_prio), ("balises", _ctx_wards),
-                    ("jint", _ctx_jungle), ("genie", _ctx_genie)):
+    for key, fn in (("carte", _ctx_card), ("ph", _ctx_phase), ("diff", _ctx_diff), ("conseils", _ctx_lane_tips),
+                    ("compo", _ctx_comp), ("effets", _ctx_effects), ("jgl", _ctx_jungle), ("carto", _ctx_map),
+                    ("causes", _ctx_death_causes), ("coups", _ctx_plays), ("prio", _ctx_prio),
+                    ("balises", _ctx_wards), ("plus", _ctx_extra)):
         val = safe(lambda fn=fn: fn(engine, game, now))
         if val not in (None, "", [], {}):
             ctx[key] = val
+    wp = getattr(engine, "win_probability", None)
+    p = safe(wp) if callable(wp) else None
+    if isinstance(p, (int, float)) and math.isfinite(float(p)):
+        ctx["wp"] = int(round(100 * p))
     pl = getattr(engine, "plays_summary", None)
     summ = safe(pl) if callable(pl) else None
     if isinstance(summ, dict) and summ.get("total"):
         ctx["prec"] = summ.get("precision")
-    return compact(ctx) or {}
+    return compact(ctx, max_list=8, max_str=200) or {}
 
 
 WAVE_FR = {"pushing": "prio (vague chez eux)", "pushed_in": "vague chez nous", "even": "équilibrée"}
+PHASE_SHORT = {"laning": "voie", "mid": "milieu", "late": "fin"}
+EFFECT_FR = {"antiheal": "anti-soin", "stasis": "stase", "armor": "armure", "mr": "résistance magique",
+             "armorpen": "pénétration d'armure", "magicpen": "pénétration magique", "lifesteal": "vol de vie",
+             "shield": "boucliers", "tenacity": "ténacité", "cleanse": "purge", "anticrit": "anti-critique",
+             "pcthp": "dégâts % PV", "health": "PV"}
+#: effects that change MY game (the others are noise for the plan)
+EFFECT_KEYS = ("antiheal", "stasis", "armor", "mr", "armorpen", "magicpen", "lifesteal", "shield", "tenacity",
+               "cleanse", "anticrit", "pcthp")
 
 
-def _ctx_genie(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
-    """The active rule-based macro call (macro.py, "COUP DE GÉNIE"): ``{"appel", "pourquoi"}``."""
+def _ctx_card(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
+    """The ACTIVE game-changer card (macro.py / game_changers.py, the HUD line + banner):
+    ``{"appel", "pourquoi"}``. The AI plan must follow it (or say why not)."""
     tac = getattr(engine, "_tactics", None)
     fn = getattr(tac, "macro_active", None)
     c = fn() if callable(fn) else None
     if c is None:
         return None
-    return {"appel": str(c.text)[:110], "pourquoi": str(c.why)[:140]}
+    return {"appel": str(c.text)[:110], "pourquoi": str(c.why)[:120]}
 
 
-def _ctx_plays(engine: Any, game: Any, now: float) -> list[dict[str, Any]]:
-    """My last rated moments (plays.py), most recent last: ``[{"c": "blunder", "r": "...", "t": "12:04"}]``."""
+def _ctx_phase(engine: Any, game: Any, now: float) -> str | None:
+    tac = getattr(engine, "_tactics", None)
+    ph = tac.phase() if tac is not None and hasattr(tac, "phase") else None
+    if ph is None:
+        gt = float(getattr(game, "game_time", 0.0) or 0.0)
+        ph = "laning" if gt < 14 * 60 else "mid" if gt < 25 * 60 else "late"
+    return PHASE_SHORT.get(str(ph), str(ph))
+
+
+def _ctx_plays(engine: Any, game: Any, now: float) -> list[str]:
+    """My last rated moments (plays.py), most recent last: ``["12:04 blunder : raison"]``."""
     pc = getattr(engine, "_plays", None)
     hist = pc.history() if pc is not None and hasattr(pc, "history") else []
     gt = float(getattr(game, "game_time", 0.0) or 0.0)
-    out = [{"c": p.cls, "r": str(p.reason)[:90], "t": _clock(p.gt)} for p in hist if gt - float(p.gt) <= 600.0]
-    return out[-6:]
+    return [f"{_clock(p.gt)} {p.cls} : {str(p.reason)[:70]}" for p in hist if gt - float(p.gt) <= 600.0][-3:]
 
 
 def _ctx_diff(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
@@ -804,17 +1065,211 @@ def _ctx_diff(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
     if sb is None or not getattr(sb, "players", None):
         return None
     d: dict[str, Any] = {"eq": int(sb.team_gold_diff)}
+    try:
+        d["kills"] = f"{int(sb.ally_kills)}-{int(sb.enemy_kills)}"
+    except (AttributeError, TypeError, ValueError):
+        pass
     m = getattr(sb, "my_matchup", None)
     if m is not None:
         d.update(po=int(m.gold_diff), niv=int(m.level_diff), cs=int(m.cs_diff), vs=str(m.enemy))
+        if getattr(m, "enemy_alias", None):
+            d["vs_alias"] = str(m.enemy_alias)
     return d
+
+
+def _ctx_lane_tips(engine: Any, game: Any, now: float) -> list[str] | None:
+    """2 matchup lines of ``assets/matchups.json`` (game_plan.lane_lines) for my lane opponent,
+    during the laning phase only."""
+    from treeaicoach import game_plan
+
+    me = getattr(game, "me", None)
+    if me is None or float(getattr(game, "game_time", 0.0) or 0.0) > 16 * 60:
+        return None
+    fn = getattr(engine, "scoreboard_summary", None)
+    sb = fn() if callable(fn) else None
+    m = getattr(sb, "my_matchup", None) if sb is not None else None
+    if m is None or not getattr(m, "enemy_alias", None):
+        return None
+    return game_plan.lane_lines(me.champion_alias, m.enemy_alias, str(m.enemy), n=2)
+
+
+def team_profile(aliases: Iterable[Any]) -> str:
+    """A team comp in one line: damage split, play styles, power curve, crowd control
+    ("dégâts P3/M2 ; engage 2, poke 1 ; courbe tôt 1/milieu 3/tard 1 ; contrôle 9")."""
+    from treeaicoach import meta
+
+    profs = [meta.profile(a) for a in aliases if a]
+    if not profs:
+        return ""
+    dmg = {"P": 0, "M": 0, "X": 0}
+    curve = {"early": 0, "mid": 0, "late": 0}
+    styles: dict[str, int] = {}
+    cc = 0
+    for p in profs:
+        dmg[p.damage if p.damage in dmg else "X"] += 1
+        curve[p.curve if p.curve in curve else "mid"] += 1
+        cc += int(p.cc)
+        for st in p.style:
+            styles[st] = styles.get(st, 0) + 1
+    d = f"dégâts P{dmg['P']}/M{dmg['M']}" + (f"/X{dmg['X']}" if dmg["X"] else "")
+    st = ", ".join(f"{k} {n}" for k, n in sorted(styles.items(), key=lambda kv: (-kv[1], kv[0]))[:4])
+    c = f"courbe tôt {curve['early']}/milieu {curve['mid']}/tard {curve['late']}"
+    return " ; ".join(x for x in (d, st, c, f"contrôle {cc}") if x)
+
+
+def _ctx_comp(engine: Any, game: Any, now: float) -> dict[str, str] | None:
+    if game is None or getattr(game, "me", None) is None:
+        return None
+    fn = getattr(engine, "mastermind_reading", None)            # mastermind.py: comps, windows, win conditions
+    r = fn() if callable(fn) else None
+    if r is not None and getattr(r, "us", None) is not None:
+        out: dict[str, Any] = {"nous": str(r.us.summary())[:150], "eux": str(r.them.summary())[:150]}
+        if getattr(r, "team", None) is not None and getattr(r.team, "text", ""):
+            out["fenetre"] = str(r.team.text)[:120]
+        if getattr(r, "lane", None) is not None and getattr(r.lane, "text", ""):
+            out["fenetre_voie"] = str(r.lane.text)[:120]
+        if getattr(r, "ours", None):
+            out["plan"] = " ; ".join(str(x) for x in list(r.ours)[:2])[:180]
+        if getattr(r, "theirs", None):
+            out["plan_eux"] = str(list(r.theirs)[0])[:120]
+        if getattr(r, "role", ""):
+            out["mon_role"] = str(r.role)[:120]
+        threats = [t.line() for t in list(getattr(r, "threats", ()) or ())[:2] if hasattr(t, "line")]
+        if threats:
+            out["menaces"] = [str(x)[:90] for x in threats]
+        return out
+    ours = [game.me.champion_alias] + [p.champion_alias for p in getattr(game, "allies", []) or []]
+    theirs = [p.champion_alias for p in getattr(game, "enemies", []) or []]
+    out = {"nous": team_profile(ours), "eux": team_profile(theirs)}
+    for name in ("win_condition", "team_comp_summary", "comp_summary"):   # team-comp module (optional)
+        fn = getattr(engine, name, None)
+        if callable(fn):
+            v = fn()
+            text = v if isinstance(v, str) else getattr(v, "text", None) or (
+                json.dumps(compact(v, max_list=4, max_str=80), ensure_ascii=False) if v else "")
+            if text:
+                out["plan"] = str(text)[:180]
+            break
+    return {k: v for k, v in out.items() if v} or None
+
+
+def _ctx_effects(engine: Any, game: Any, now: float) -> dict[str, list[str]] | None:
+    """Enemy item effects that change my game: ``{"anti-soin": ["Darius"], "armure": ["Malphite x2"]}``
+    (finished items only; ``x2``: stacked)."""
+    from treeaicoach import itemization as iz
+
+    items = iz.load_items()
+    out: dict[str, list[str]] = {}
+    for p in getattr(game, "enemies", []) or []:
+        name = str(getattr(p, "champion_name", "") or p.champion_alias)
+        legendary = [i for i in getattr(p, "items", None) or () if getattr(items.get(int(i)), "kind", "") == "legendary"]
+        eff = iz.inventory_effects(legendary)               # boots left out: every pair has pen / resist
+        for k in EFFECT_KEYS:
+            n = int(eff.get(k, 0))
+            if n:
+                out.setdefault(EFFECT_FR[k], []).append(name + (f" x{n}" if n >= 2 else ""))
+    return out or None
+
+
+def _ctx_jungle(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
+    """The enemy jungler: where / when last seen (minimap tracker), the Tab intel (jungle_intel:
+    farming side, recall, dead, level), the probable first-gank side early, the F9 sentence."""
+    from treeaicoach import game_plan, geometry
+
+    jg = game.enemy_jungler() if game is not None and hasattr(game, "enemy_jungler") else None
+    d: dict[str, Any] = {}
+    intel = None                                               # jungle_intel.JungleIntel (Tab data)
+    for name in ("jungle_intel", "jungler_intel"):            # engine.jungle_intel(): the state, or a summary
+        fn = getattr(engine, name, None)
+        if callable(fn):
+            v = fn()
+            if v is not None and getattr(v, "alias", None) is not None and not isinstance(v, dict):
+                intel = v                                      # the raw state: only its useful fields below
+            elif isinstance(v, dict):
+                d.update(compact(v, max_list=4, max_str=90) or {})
+            elif v:
+                d["txt"] = str(v)[:90]
+            break
+    if jg is not None:
+        d.setdefault("c", jg.champion_name or jg.champion_alias)
+        d.setdefault("lv", int(jg.level))
+        if jg.is_dead:
+            d["mort"] = int(float(jg.respawn_timer or 0))
+        tracker = getattr(engine, "_tracker", None)
+        tr = tracker.get(jg.champion_alias) if tracker is not None and hasattr(tracker, "get") else None
+        pos = tr.position() if tr is not None and hasattr(tr, "position") else None
+        if pos is not None:
+            zone = geometry.zone_label_fr(geometry.classify_zone(*pos), getattr(game, "my_team", None))
+            d["vu"] = f"{zone}, il y a {int(max(0.0, now - float(tr.last_seen)))} s"
+    ji = getattr(engine, "_jungle_intel", None)
+    st = intel if intel is not None else (ji.state() if ji is not None and hasattr(ji, "state") else None)
+    if st is not None and getattr(st, "alias", None):          # jungle_intel.JungleIntel (Tab data)
+        d.setdefault("c", getattr(st, "name", None) or st.alias)
+        if getattr(st, "text", None):
+            d["txt"] = str(st.text)[:90]
+        if getattr(st, "farming", False) and getattr(st, "farm_side", None):
+            d["farm"] = st.farm_side
+        if getattr(st, "recalled", False):
+            d["achat"] = True
+        if getattr(st, "level", 0):
+            d["lv"] = int(st.level)
+    gt = float(getattr(game, "game_time", 0.0) or 0.0)
+    if jg is not None and gt < 6 * 60:
+        side = game_plan.probable_gank_side(list(getattr(game, "enemies", []) or []))
+        if side:
+            d["cote_probable"] = side
+    if "vu" not in d and "txt" not in d:
+        jt = getattr(engine, "jungler_status_text", None)
+        text = jt() if callable(jt) else None
+        if text:
+            d["txt"] = str(text)[:90]
+    return d or None
+
+
+def _ctx_map(engine: Any, game: Any, now: float) -> dict[str, Any] | None:
+    """Dragons per team, soul, Baron / Elder buff holder + time left, towers lost per team."""
+    tac = getattr(engine, "_tactics", None)
+    st = tac.map_state() if tac is not None and hasattr(tac, "map_state") else None
+    if st is None:
+        return None
+    mine = getattr(st, "my_team", None) or getattr(game, "my_team", None)
+
+    def who(team: Any) -> str:
+        return "nous" if team == mine else "eux"
+
+    d: dict[str, Any] = {}
+    dr = getattr(st, "dragons", None) or {}
+    if dr:
+        d["dragons"] = f"{int(dr.get(mine, 0))}-{sum(int(v) for k, v in dr.items() if k != mine)}"
+    if getattr(st, "soul_team", None):
+        d["ame"] = who(st.soul_team)
+    if getattr(st, "baron_team", None) and float(getattr(st, "baron_left", 0) or 0) > 0:
+        d["baron"] = f"{who(st.baron_team)} {int(st.baron_left)} s"
+    if getattr(st, "elder_team", None) and float(getattr(st, "elder_left", 0) or 0) > 0:
+        d["ancestral"] = f"{who(st.elder_team)} {int(st.elder_left)} s"
+    downs = getattr(st, "turrets_down", None) or ()
+    if downs:
+        lost_us = sum(1 for t in downs if t[0] == mine)
+        d["tours_perdues"] = f"nous {lost_us}, eux {len(downs) - lost_us}"
+    inh = getattr(st, "inhibs_down", None) or ()
+    if inh:
+        d["inhibs_perdus"] = f"nous {sum(1 for t in inh if t[0] == mine)}, eux {sum(1 for t in inh if t[0] != mine)}"
+    return d or None
+
+
+def _ctx_death_causes(engine: Any, game: Any, now: float) -> list[list[Any]] | None:
+    """``[[game time, cause line], ...]`` of my last deaths (death_cause.DeathCoach)."""
+    plus = getattr(engine, "_coach_plus", None)
+    dc = getattr(plus, "deaths", None)
+    hist = list(getattr(dc, "log", None) or [])
+    return [[int(gt), str(line)[:90]] for gt, _cause, line in hist[-3:]] or None
 
 
 def _ctx_prio(engine: Any, game: Any, now: float) -> dict[str, str] | None:
     coach = getattr(engine, "_coach", None)
     waves = coach.waves() if coach is not None and hasattr(coach, "waves") else {}
     out = {}
-    for lane, w in (waves or {}).items():
+    for lane, w in sorted((waves or {}).items()):
         st = w.get("state") if isinstance(w, dict) else getattr(w, "state", None)
         if st in WAVE_FR:
             out[str(lane)] = WAVE_FR[st]
@@ -856,43 +1311,12 @@ def _ctx_wards(engine: Any, game: Any, now: float) -> list[str] | None:
     return [p.label for p in picks][:2] or None
 
 
-def _ctx_jungle(engine: Any, game: Any, now: float) -> Any:
-    """Enemy jungle intel from the detection modules when available (``engine.jungle_intel()``,
-    ``engine._jungle_intel.summary()``...), compacted."""
-    for name in ("jungle_intel", "jungler_intel"):
-        fn = getattr(engine, name, None)
-        if callable(fn):
-            return compact(fn(), max_list=5, max_str=90)
-    ji = getattr(engine, "_jungle_intel", None)
-    st = ji.state() if ji is not None and hasattr(ji, "state") else None
-    if st is not None and getattr(st, "alias", None):            # jungle_intel.JungleIntel (Tab data)
-        d = {"c": getattr(st, "name", None) or st.alias, "txt": getattr(st, "text", None),
-             "farm": getattr(st, "farm_side", None) if getattr(st, "farming", False) else None,
-             "achat": bool(getattr(st, "recalled", False)) or None, "mort": bool(getattr(st, "dead", False)) or None,
-             "lv": getattr(st, "level", None)}
-        return {k: v for k, v in d.items() if v not in (None, "", 0)}
-    for name in ("_jungle", "_game_settings"):
-        obj = getattr(engine, name, None)
-        for meth in ("summary", "state", "current"):
-            fn = getattr(obj, meth, None) if obj is not None else None
-            if callable(fn):
-                return compact(fn(), max_list=5, max_str=90)
-    return None
-
-
-def _scoreboard(sb: Any) -> dict[str, Any] | None:
-    if sb is None or not getattr(sb, "players", None):
-        return None
-    d: dict[str, Any] = {"gd": int(sb.team_gold_diff), "kd": f"{sb.ally_kills}-{sb.enemy_kills}"}
-    try:
-        d["ln"] = [m.text for m in sb.matchups][:5]
-        if sb.fed:
-            d["fed"] = list(sb.fed)[:3]
-        if sb.spikes:
-            d["pics"] = list(sb.spikes)[-3:]
-    except Exception:
-        pass
-    return d
+def _ctx_extra(engine: Any, game: Any, now: float) -> Any:
+    """Analysis another module exposes for the AI (``engine.ai_extra_context() -> dict``, e.g. my
+    own resources, the win condition), compacted to a few short fields."""
+    fn = getattr(engine, "ai_extra_context", None)
+    v = fn() if callable(fn) else None
+    return compact(v, max_list=4, max_str=100) if isinstance(v, dict) and v else None
 
 
 def candidate_items(game: Any, role: str | None = None, limit: int = 8) -> list[dict[str, Any]]:
@@ -998,134 +1422,204 @@ def validate_item_advice(text: str, game: Any, candidates: Iterable[dict[str, An
         return True
 
 
-def _fit(snap: dict[str, Any], limit: int) -> dict[str, Any]:
-    """Drop the least useful details until the JSON fits in ``limit`` bytes."""
-    def size() -> int:
-        return len(json.dumps(snap, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+def _size(snap: dict[str, Any]) -> int:
+    return len(json.dumps(snap, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
+
+def _fit(snap: dict[str, Any], limit: int) -> dict[str, Any]:
+    """Drop the least useful details (in this order) until the JSON fits in ``limit`` bytes."""
     steps: list[Callable[[], None]] = [
-        lambda: snap.get("co", {}).pop("faits", None),
-        lambda: snap.__setitem__("ev", snap.get("ev", [])[-6:]) if "ev" in snap else None,
-        lambda: [p.pop("ss", None) for p in snap.get("al", []) + snap.get("en", [])],
-        lambda: snap.get("co", {}).pop("phase", None),
-        lambda: snap.get("me", {}).pop("ru", None),
-        lambda: [p.pop("it", None) for p in snap.get("al", [])],
-        lambda: snap.pop("map", None),
+        lambda: snap.__setitem__("ev", snap["ev"][-2:]) if "ev" in snap else None,
+        lambda: snap.pop("plus", None),
+        lambda: snap.__setitem__("coups", snap["coups"][-1:]) if "coups" in snap else None,
+        lambda: snap.pop("balises", None),
+        lambda: snap.__setitem__("objets_possibles", snap["objets_possibles"][:3])
+        if "objets_possibles" in snap else None,
+        lambda: snap.pop("prio", None),
         lambda: snap.pop("ev", None),
-        lambda: snap.pop("co", None),
+        lambda: snap.__setitem__("al", [" ".join(x.split()[:4]) for x in snap["al"]]) if "al" in snap else None,
+        lambda: snap.pop("coups", None),
+        lambda: [snap["compo"].pop(k, None) for k in ("menaces", "fenetre_voie", "plan_eux")]
+        if isinstance(snap.get("compo"), dict) else None,
+        lambda: snap.get("compo", {}).pop("plan", None) if isinstance(snap.get("compo"), dict) else None,
+        lambda: snap.pop("carto", None),
+        lambda: snap.pop("conseils", None) if "conseils" in snap else (snap.get("voie") or {}).pop("conseils", None),
+        lambda: snap.pop("compo", None),
+        lambda: snap.pop("effets", None),
+        lambda: snap.pop("objets_possibles", None),
+        lambda: snap.pop("jgl", None),
     ]
     for step in steps:
-        if size() <= limit:
+        if _size(snap) <= limit:
             break
         try:
             step()
         except Exception:
             pass
+    if _size(snap) > limit:                       # last resort: a hard cut of the extras
+        for k in [k for k in list(snap) if k not in ("t", "mo", "carte", "me", "voie", "eq", "en", "obj")][::-1]:
+            snap.pop(k, None)
+            if _size(snap) <= limit:
+                break
     return snap
+
+
+#: fixed key order of the snapshot (deterministic prompt); unknown context keys come after, sorted
+SNAP_ORDER = ("t", "ph", "mo", "mode", "carte", "me", "voie", "eq", "al", "en", "compo", "effets", "jgl", "obj",
+              "carto", "morts", "ev", "coups", "prec", "achat", "objets_possibles", "prio", "balises", "wp", "plus")
 
 
 def build_snapshot(game: Any, *, moment: str = "", roles: Any = None, scoreboard: Any = None,
                    objectives: Iterable[Any] = (), item_text: str | None = None,
-                   context: dict[str, Any] | None = None, limit: int = MAX_SNAPSHOT_BYTES) -> dict[str, Any]:
-    """Complete but compact game state for the prompt (no player names, < ``limit`` bytes). Never raises."""
-    snap: dict[str, Any] = {}
+                   context: dict[str, Any] | None = None, limit: int = MAX_SNAPSHOT_BYTES,
+                   trend: str | None = None) -> dict[str, Any]:
+    """THE game state for the AI ("mastermind" snapshot): ONE compact structured dict with
+    everything TreeAI knows, in a fixed key order (:data:`SNAP_ORDER`), < ``limit`` bytes
+    (~1.3k tokens), no player names. ``context``: :func:`engine_context` (the engine analysis);
+    ``trend``: the team gold trend ("-1 200 en 2 min"). Never raises."""
+    out: dict[str, Any] = {}
+    ctx = dict(context or {})
     try:
         gt = float(getattr(game, "game_time", 0.0) or 0.0)
-        snap["t"] = _clock(gt)
+        out["t"] = _clock(gt)
+        if ctx.get("ph"):
+            out["ph"] = ctx.pop("ph")
         if moment.startswith("comeback:"):
             reason = moment.split(":", 1)[1]
-            snap["mo"] = COMEBACK_FR.get(reason, reason)
-            snap["mode"] = "saisir" if reason in WINDOW_REASONS else "redresser"
+            out["mo"] = COMEBACK_FR.get(reason, reason)
+            out["mode"] = "saisir" if reason in WINDOW_REASONS else "redresser"
         elif moment:
-            snap["mo"] = MOMENT_FR.get(moment, moment)
+            out["mo"] = MOMENT_FR.get(moment, moment)
+        if ctx.get("carte"):
+            out["carte"] = ctx.pop("carte")
         me = getattr(game, "me", None)
         if me is not None:
-            mine = _player(me, "ally", None)
+            names, gold = _item_list(me.items)
+            mine: dict[str, Any] = {"c": me.champion_name or me.champion_alias}
             try:
                 r = roles.my_role() if roles is not None and hasattr(roles, "my_role") else None
             except Exception:
                 r = None
-            if r and ROLE_FR.get(str(r).upper()):
-                mine["r"] = ROLE_FR[str(r).upper()]
-            mine["g"] = int(getattr(game, "current_gold", 0.0) or 0)
+            role = ROLE_FR.get(str(r).upper()) if r else _role(me, "ally", None)
+            if role:
+                mine["r"] = role
+            mine.update(lv=int(me.level), k=f"{me.kills}/{me.deaths}/{me.assists}", cs=int(me.creep_score),
+                        g=int(getattr(game, "current_gold", 0.0) or 0))
             cs = getattr(game, "champion_stats", None) or {}
-            if cs:
-                st = {short: compact(float(cs[k])) for k, short in STAT_KEYS.items() if k in cs}
-                if "currentHealth" in cs and "maxHealth" in cs:
-                    st["pv"] = f"{int(cs['currentHealth'])}/{int(cs['maxHealth'])}"
-                if "resourceMax" in cs and float(cs.get("resourceMax") or 0) > 0:
-                    st["res"] = f"{int(cs.get('resourceValue', 0))}/{int(cs['resourceMax'])}"
-                mine["st"] = {k: v for k, v in st.items() if v not in (None, 0)}
-            info = getattr(game, "active_info", None) or {}
-            if info.get("runes"):
-                mine["ru"] = compact(info["runes"], max_list=9, max_str=40)
-            if info.get("abilities"):
-                mine["ab"] = info["abilities"]
-            snap["me"] = mine
-        snap["al"] = [_player(p, "ally", roles) for p in list(getattr(game, "allies", []))[:4]]
-        snap["en"] = [_player(p, "enemy", roles) for p in list(getattr(game, "enemies", []))[:5]]
-        sb = _scoreboard(scoreboard)
-        if sb:
-            snap["sb"] = sb
-        objs = []
-        for o in objectives or ():
-            name = getattr(o, "name", "")
-            if not name:
-                continue
-            if getattr(o, "alive", False):
-                objs.append(f"{name}: dispo")
-            elif getattr(o, "remaining", None) is not None and o.remaining < 900:
-                objs.append(f"{name}: {int(o.remaining)} s")
-        if objs:
-            snap["obj"] = objs[:6]
+            try:
+                if float(cs.get("maxHealth") or 0) > 0:
+                    mine["pv"] = f"{int(round(100 * float(cs.get('currentHealth', 0)) / float(cs['maxHealth'])))}%"
+            except (TypeError, ValueError):
+                pass
+            if names:
+                mine["it"] = names
+            if gold:
+                mine["ig"] = gold
+            if getattr(me, "is_dead", False):
+                mine["rs"] = int(max(0.0, float(getattr(me, "respawn_timer", 0.0) or 0.0)))
+            out["me"] = mine
+        diff = ctx.pop("diff", None) if isinstance(ctx.get("diff"), dict) else None
+        tips = ctx.pop("conseils", None)
+        if diff is not None and diff.get("vs"):
+            voie = {k: diff[k] for k in ("vs", "niv", "po", "cs") if k in diff}
+            if tips:
+                voie["conseils"] = [str(x)[:110] for x in tips][:2]
+            out["voie"] = voie
+        eq: dict[str, Any] = {}
+        sb_eq = getattr(scoreboard, "team_gold_diff", None) if scoreboard is not None and getattr(
+            scoreboard, "players", None) else None
+        if diff is not None and "eq" in diff:
+            eq["po"] = int(diff["eq"])
+        elif sb_eq is not None:
+            eq["po"] = int(sb_eq)
+        if trend:
+            eq["tend"] = trend
+        if diff is not None and diff.get("kills"):
+            eq["kills"] = diff["kills"]
+        elif scoreboard is not None and getattr(scoreboard, "players", None):
+            eq["kills"] = f"{scoreboard.ally_kills}-{scoreboard.enemy_kills}"
+        allies = list(getattr(game, "allies", []) or [])[:4]
+        enemies = list(getattr(game, "enemies", []) or [])[:5]
+        if me is not None and enemies:
+            eq["niv"] = int(sum(int(p.level) for p in [me] + allies) - sum(int(p.level) for p in enemies))
+        if eq:
+            out["eq"] = eq
+        out["al"] = [_pline(p, "ally", roles) for p in allies]
+        out["en"] = [_pline(p, "enemy", roles) for p in enemies]
+        for k in ("compo", "effets", "jgl"):
+            if ctx.get(k):
+                out[k] = ctx.pop(k)
         objt = []
         for o in objectives or ():
             name, rem = getattr(o, "name", ""), getattr(o, "remaining", None)
             if name and (getattr(o, "alive", False) or (rem is not None and rem < 900)):
                 objt.append([name, 0 if getattr(o, "alive", False) else int(rem)])
         if objt:
-            snap["objt"] = sorted(objt, key=lambda x: x[1])[:5]
-        ev = recent_events(game)
-        if ev:
-            snap["ev"] = ev
+            out["obj"] = sorted(objt, key=lambda x: (x[1], x[0]))[:5]
+        if ctx.get("carto"):
+            out["carto"] = ctx.pop("carto")
         deaths = last_deaths(game)
+        causes = ctx.pop("causes", None) or []
+        for d in deaths:
+            te = _secs_of(d.get("t"))
+            hit = next((c for c in causes if te is not None and abs(int(c[0]) - te) <= 4), None)
+            if hit is not None:
+                d["cause"] = hit[1]
         if deaths:
-            snap["morts"] = deaths
+            out["morts"] = deaths
+        ev = [e for e in recent_events(game, limit=12) if gt - (_secs_of(e.split(" ", 1)[0]) or 0) <= 150]
+        if ev:
+            out["ev"] = ev[-4:]
+        for k in ("coups", "prec"):
+            if ctx.get(k) not in (None, "", []):
+                out[k] = ctx.pop(k)
         if item_text:
-            snap["achat"] = str(item_text)[:160]
+            out["achat"] = str(item_text)[:120]
         try:
             api_role = roles.my_role() if roles is not None and hasattr(roles, "my_role") else None
         except Exception:
             api_role = None
         cands = candidate_items(game, api_role)
         if cands:
-            snap["objets_possibles"] = cands
-        for k, v in (context or {}).items():
-            if v not in (None, "", [], {}):
-                snap[k] = v
-        snap = _fit(snap, limit)
+            out["objets_possibles"] = cands[:6]
+        for k in ("prio", "balises", "wp", "plus"):
+            if ctx.get(k) not in (None, "", [], {}):
+                out[k] = ctx.pop(k)
+        for k in sorted(ctx):                       # unknown sections (other modules), after the known ones
+            if ctx[k] not in (None, "", [], {}) and k not in out:
+                out[k] = ctx[k]
+        out = _fit(out, limit)
     except Exception:
         log.debug("AI snapshot incomplete", exc_info=True)
-    return snap
+    return out
+
+
+def _secs_of(clock_text: Any) -> int | None:
+    """"12:04" -> 724 (None when not a clock)."""
+    m = re.match(r"^(\d+):(\d\d)$", str(clock_text or "").strip())
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+
+def snapshot_tokens(snap: dict[str, Any]) -> int:
+    """Rough token count of a snapshot as sent (French JSON ~ 2.9 bytes / token, measured)."""
+    return int(math.ceil(_size(snap) / 2.9))
 
 
 def build_prompt(snapshot: dict[str, Any]) -> str:
     moment = snapshot.get("mo") or "point de situation"
     data = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
-    plan = ""
+    mode = ""
     if snapshot.get("mode") == "redresser":
-        plan = ("Mode : redresser. Donne UN plan concret pour revenir dans la partie, fondé sur le JSON : où "
-                "jouer, quoi éviter, quoi acheter et quel objectif échanger. ")
+        mode = ("Mode : redresser. Donne UN plan pour revenir dans la partie : où jouer, quoi éviter, quel "
+                "objectif échanger. ")
     elif snapshot.get("mode") == "saisir":
-        plan = ("Mode : fenêtre favorable. Dis exactement quel objectif prendre maintenant et comment, "
-                "fondé sur le JSON. ")
-    return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle + analyse de la minimap) : {data}\n{plan}"
-            "Réponds UNIQUEMENT avec un objet JSON strict de cette forme : " + PLAN_SCHEMA_FR + ". "
-            "Plan concret en 2 phrases courtes max au total : cite les temps (objt), la prio des voies (prio), "
-            "les balises conseillées (balises), le jungler ennemi (jgl, jint) et mes coups récents (coups) quand "
-            "c'est utile. Pas de spéculation sur les temps de recharge ennemis. Pour un achat, choisis UNIQUEMENT "
-            "parmi objets_possibles (noms exacts) ou les composants de la suggestion « achat » ; ne conseille "
-            "jamais un objet que j'ai déjà (me.it).")
+        mode = "Mode : fenêtre favorable. Dis quel objectif prendre maintenant et comment. "
+    card = snapshot.get("carte")
+    rule = ("La carte du coach affiche : « " + str(card.get("appel")) + " ». Ton plan la SUIT (carte=suit) ; "
+            "si tu n'es pas d'accord, carte=differe et pourquoi = 1 ligne courte fondée sur le JSON. "
+            if isinstance(card, dict) and card.get("appel") else "Pas de carte active : carte=aucune. ")
+    return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle + analyse de la minimap) : {data}\n{mode}"
+            + rule + "Réponds UNIQUEMENT avec un objet JSON strict de cette forme : " + PLAN_SCHEMA_FR + ".")
 
 
 # ======================================================================================
@@ -1194,6 +1688,29 @@ class Advice:
     steps: tuple[str, ...] = ()   # the plan's steps (JSON plan), also folded into ``text``
     source: str = "ai"        # "ai" | "rules" (offline fallback, :func:`rule_plan`)
     goal: str | None = None   # PLAN_GOALS value of the plan, when given
+    card: str | None = None   # CARD_STANCES: the plan vs the live card ("suit" / "differe" / "aucune")
+    why: str | None = None    # one line: why the plan departs from the card (card == "differe")
+
+    @property
+    def urgency(self) -> int:
+        """Presenter urgency: 2 for the answer to F8 and the bonus "urgence" plan (shown even to an
+        expert, above an ordinary panel line), 1 otherwise."""
+        reason = self.moment.split(":", 1)[1] if self.moment.startswith("comeback:") else ""
+        return 2 if (self.error or self.moment == "manual" or reason in URGENT_REASONS) else 1
+
+    @property
+    def max_age(self) -> float:
+        """Seconds after the moment during which this advice may still be shown (a plan for a
+        moment that has passed is stale: never displayed late)."""
+        if self.error:
+            return 30.0
+        return MANUAL_MAX_AGE_S if self.moment == "manual" else PLAN_MAX_AGE_S
+
+    def check_card(self, card: Any) -> str:
+        """:func:`card_check` of this advice against the live card ("ok" / "explained" / "conflict")."""
+        if self.error or self.source == "rules" and self.card == "suit":
+            return "ok"
+        return card_check(self.text, card, stance=self.card, why=self.why, goal=self.goal)
 
     @property
     def title(self) -> str:
@@ -1395,23 +1912,40 @@ def rule_plan(moment: str, snap: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
 
+def _dead_enemies(snap: dict[str, Any]) -> list[dict[str, Any]]:
+    """``[{"c", "rs"}]`` of the dead enemies of a snapshot (player lines "Zed mid 9 ... mort 23s")."""
+    out = []
+    for e in snap.get("en") or []:
+        if isinstance(e, dict) and "rs" in e:
+            out.append({"c": e.get("c"), "rs": int(e.get("rs") or 0)})
+        elif isinstance(e, str):
+            m = re.search(r"\bmort (\d+)s\b", e)
+            if m:
+                out.append({"c": e.split(" ", 1)[0], "rs": int(m.group(1))})
+    return out
+
+
 def _rule_plan(moment: str, snap: dict[str, Any]) -> dict[str, Any] | None:
     reason = moment.split(":", 1)[1] if moment.startswith("comeback:") else ""
-    genie = snap.get("genie")
-    if isinstance(genie, dict) and genie.get("appel"):        # the macro planner's active call (macro.py)
+    genie = snap.get("carte") or snap.get("genie")
+    if isinstance(genie, dict) and genie.get("appel"):        # the live game-changer card (macro.py): follow it
         steps = [_short(genie.get("pourquoi"), MAX_STEP_CHARS)] if genie.get("pourquoi") else []
         return {"plan": str(genie["appel"]), "etapes": steps, "objectif": _goal(genie["appel"]),
-                "urgence": "haute"}
+                "urgence": "haute", "carte": "suit"}
     me = snap.get("me") or {}
     lane = _ROLE_LANE.get(str(me.get("r") or ""))
     prio = (snap.get("prio") or {}).get(lane or "", "")
     wards_ = [str(w) for w in (snap.get("balises") or [])][:2]
-    objt = [o for o in (snap.get("objt") or []) if isinstance(o, list) and len(o) == 2]
+    objt = [o for o in (snap.get("obj") or snap.get("objt") or []) if isinstance(o, list) and len(o) == 2]
     nxt = next((o for o in objt if int(o[1]) <= 120), None)
-    diff = snap.get("diff") or {}
-    gd = int(diff.get("eq", (snap.get("sb") or {}).get("gd", 0)) or 0)
-    dead = [e for e in snap.get("en") or [] if isinstance(e, dict) and "rs" in e]
-    jgl = str(snap.get("jgl") or "").strip()
+    diff = dict(snap.get("diff") or {})
+    diff.update({k: v for k, v in (snap.get("voie") or {}).items() if k == "vs"})
+    eq = snap.get("eq") or {}
+    gd = int(eq.get("po", diff.get("eq", (snap.get("sb") or {}).get("gd", 0))) or 0)
+    dead = _dead_enemies(snap)
+    jg = snap.get("jgl")
+    jgl = str((jg.get("txt") or (f"{jg.get('c')} vu {jg['vu']}" if jg.get("vu") else "")) if isinstance(jg, dict)
+              else (jg or "")).strip()
     steps: list[str] = []
     # 1) a window: enemies dead for a while -> the biggest objective now
     long_dead = [e for e in dead if int(e.get("rs") or 0) >= 20]
@@ -1495,6 +2029,7 @@ class AIBudget:
         self.used: list[str] = []         # automatic slots consumed, in order
         self.urgent_used = 0
         self.manual = 0
+        self.sent = 0                     # requests really sent this game (never refunded: the hard cap)
 
     @property
     def auto_used(self) -> int:
@@ -1506,7 +2041,8 @@ class AIBudget:
 
     @property
     def exhausted(self) -> bool:
-        return self.total >= GAME_HARD_CAP
+        # refunds give a slot back, never a request: failed / unusable answers still count here
+        return max(self.total, self.sent) >= GAME_HARD_CAP
 
     def pick(self, moment: str, game_time: float, objective: str = "") -> str | None:
         """The slot this moment would consume (``"urgent"`` for the bonus), or None (skip it)."""
@@ -1522,6 +2058,8 @@ class AIBudget:
             cands.append("base")
         if moment == "objective" and (objective in ("baron", "elder")
                                       or (objective == "dragon" and game_time >= MAJOR_DRAGON_GT)):
+            cands.append("objective")
+        if reason in WINDOW_REASONS:               # a game-changing window (ace, carries dead, numbers, lead)
             cands.append("objective")
         if moment == "death" or (reason and reason not in WINDOW_REASONS):
             cands.append("comeback")
@@ -1546,7 +2084,7 @@ class AIBudget:
     def snapshot(self) -> dict[str, Any]:
         return {"auto_used": self.auto_used, "auto_max": AUTO_BUDGET, "urgent_used": self.urgent_used,
                 "urgent_max": URGENT_BUDGET, "manual": self.manual, "slots": list(self.used),
-                "total": self.total, "cap": GAME_HARD_CAP}
+                "total": self.total, "sent": self.sent, "cap": GAME_HARD_CAP}
 
 
 def budget_text(b: dict[str, Any] | None) -> str:
@@ -1560,7 +2098,14 @@ def budget_text(b: dict[str, Any] | None) -> str:
 
 
 class AIAdvisor:
-    """Rate-limited background LLM advice. Thread-safe; public methods never raise."""
+    """Rate-limited background LLM advice. Thread-safe; public methods never raise.
+
+    One request at a time (an in-flight flag reserved under the lock: the engine thread and the
+    F8 hotkey / UI thread can never start two); an answer from a previous game is discarded
+    (generation counter); a key moment during a fight / gank is deferred, not lost (retried up
+    to :data:`DEFER_S` after); a failed or unusable answer gives its budget slot back but still
+    counts towards :data:`GAME_HARD_CAP`. The advisor also keeps the game's timeline (team gold
+    trend, one line every 2 min, the plans given) for the snapshot and the post-game review."""
 
     def __init__(self, cfg: Any = None, *, clock: Callable[[], float] = time.monotonic,
                  caller: Callable[..., str] = call_llm, urls: dict[str, str] | None = None) -> None:
@@ -1572,6 +2117,8 @@ class AIAdvisor:
         self._key = ""
         self._model = ""
         self._thread: threading.Thread | None = None
+        self._inflight = False
+        self._gen = 0
         self._result: Advice | None = None
         self._status: str | None = None
         self._status_seq = 0
@@ -1584,8 +2131,13 @@ class AIAdvisor:
         self._urgent_only = False
         self._bad_plays: list[float] = []
         self._last_rules = -math.inf
+        self._deferred: tuple[str, float] | None = None
+        self._samples: list[tuple[float, int]] = []      # (game time, team gold diff)
+        self.timeline: list[str] = []                    # post-game review: one line / 2 min + plans given
+        self._next_line_gt = 0.0
         self.rule_plans = 0                   # offline plans published (rules), this session
         self.json_errors = 0                  # answers that were broken JSON
+        self.conflicts = 0                    # AI plans dropped: they contradicted the live card
         self._caller_json = _accepts(caller, "json_mode") and _accepts(caller, "max_tokens")
         self.apply_config(cfg)
 
@@ -1611,10 +2163,15 @@ class AIAdvisor:
 
     def reset(self) -> None:
         with self._lock:
+            self._gen += 1                    # an answer still in flight belongs to the last game
             self._result = None
             self._last_call = -math.inf
             self._last_rules = -math.inf
             self._bad_plays = []
+            self._deferred = None
+            self._samples = []
+            self.timeline = []
+            self._next_line_gt = 0.0
             self.budget.reset()
         self.detector.reset()
         self.comeback.reset()
@@ -1630,8 +2187,41 @@ class AIAdvisor:
             return self.budget.snapshot()
 
     def busy(self) -> bool:
+        if self._inflight:
+            return True
         th = self._thread
         return th is not None and th.is_alive()
+
+    # ------------------------------------------------------------------ timeline / trend
+    def _record(self, gt: float, game: Any, scoreboard: Any) -> None:
+        """Team gold samples (trend) and one timeline line every :data:`TIMELINE_EVERY_S`."""
+        try:
+            if scoreboard is None or not getattr(scoreboard, "players", None):
+                return
+            gd = int(scoreboard.team_gold_diff)
+            with self._lock:
+                if not self._samples or gt - self._samples[-1][0] >= 10.0:
+                    self._samples.append((gt, gd))
+                    self._samples = [x for x in self._samples if gt - x[0] <= TREND_WINDOW_S + 60.0]
+                if gt >= self._next_line_gt and gt >= 60.0:
+                    self._next_line_gt = (gt // TIMELINE_EVERY_S + 1) * TIMELINE_EVERY_S
+                    me = getattr(game, "me", None)
+                    mine = f" moi niv {me.level} {me.kills}/{me.deaths}/{me.assists} {me.creep_score} cs" \
+                        if me is not None else ""
+                    self.timeline.append(f"{_clock(gt)} or {gd:+d} kills {scoreboard.ally_kills}-"
+                                         f"{scoreboard.enemy_kills}{mine}")
+                    del self.timeline[:-30]
+        except Exception:
+            log.debug("AI timeline failed", exc_info=True)
+
+    def trend(self, gt: float) -> str | None:
+        """Team gold change over the last :data:`TREND_WINDOW_S` ("-1200 en 2 min"), None if unknown."""
+        with self._lock:
+            old = [v for ts, v in self._samples if gt - ts >= TREND_WINDOW_S - 15.0]
+            if not old or not self._samples:
+                return None
+            delta = self._samples[-1][1] - old[-1]
+        return f"{delta:+d} en 2 min"
 
     # ------------------------------------------------------------------ live use
     def note_play(self, play: Any) -> None:
@@ -1649,10 +2239,9 @@ class AIAdvisor:
     def _blunder_moment(self, t: float) -> bool:
         with self._lock:
             recent = [x for x in self._bad_plays if 0.0 <= t - x <= BLUNDER_WINDOW_S]
-        if len(recent) < 2 or t - self.comeback._last.get("blunders", -math.inf) < COMEBACK_COOLDOWN_S:
-            return False
-        self.comeback._last["blunders"] = t
-        with self._lock:
+            if len(recent) < 2 or t - self.comeback._last.get("blunders", -math.inf) < COMEBACK_COOLDOWN_S:
+                return False
+            self.comeback._last["blunders"] = t
             self._bad_plays = []
         return True
 
@@ -1663,20 +2252,38 @@ class AIAdvisor:
         """Detect a key moment and maybe start a request. Returns True if one was started.
 
         ``context``: extra snapshot sections (dict), or a callable returning them (only called
-        when a request is really sent), e.g. ``lambda: engine_context(engine)``. When the provider
-        is unreachable (back-off after an error), a plan moment gets an offline :func:`rule_plan`
+        when a request is really sent), e.g. ``lambda: engine_context(engine)``. Never during a
+        fight or a gank threat: the moment is deferred (:data:`DEFER_S`). When the provider is
+        unreachable (back-off after an error), a plan moment gets an offline :func:`rule_plan`
         instead (``Advice.source == "rules"``, no budget used)."""
         try:
             objectives = list(objectives or ())
+            gt = float(getattr(game, "game_time", 0.0) or 0.0)
+            self._record(gt, game, scoreboard)
             moment = self.detector.update(game, in_base, objectives)
             reason = self.comeback.update(t, game, scoreboard, win_prob, objectives)
             if moment is None and reason is not None:
                 moment = f"comeback:{reason}"
             if moment is None and self._blunder_moment(t):
                 moment = "comeback:blunders"
-            if moment is None or not self.enabled or threat >= 1 or (in_fight and moment.startswith("comeback")):
+            if not self.enabled:
                 return False
-            gt = float(getattr(game, "game_time", 0.0) or 0.0)
+            busy_now = threat >= 1 or in_fight
+            if moment is None:
+                d = self._deferred
+                if d is None or busy_now:
+                    return False
+                if t - d[1] > DEFER_S:
+                    self._deferred = None
+                    return False
+                moment = d[0]                  # the fight is over: the deferred moment now
+            if busy_now:
+                if self._deferred is None or self._deferred[0] != moment:
+                    self._deferred = (moment, t)
+                return False
+            self._deferred = None
+            if moment == "base" and getattr(getattr(game, "me", None), "is_dead", False):
+                return False
             with self._lock:
                 slot = self.budget.pick(moment, gt, self.detector.last_objective)
                 if slot is None or (self._urgent_only and slot != "urgent"):
@@ -1685,19 +2292,30 @@ class AIAdvisor:
                 if gt < MIN_GAME_TIME_S or t - self._last_call < interval:
                     return False
                 offline = t < self._blocked_until
-                if not offline and self._thread is not None and self._thread.is_alive():
+                if not offline and (self._inflight or (self._thread is not None and self._thread.is_alive())):
                     return False
                 if not offline:
                     self._last_call = t
                     self.budget.take(slot)
-            snap = build_snapshot(game, moment=moment, roles=roles, scoreboard=scoreboard,
-                                  objectives=objectives, item_text=item_text, context=_resolve(context))
-            fallback = rule_plan(moment, snap) if is_plan_moment(moment) else None
+                    self.budget.sent += 1
+                    self._inflight = True       # reserved: no second request can start meanwhile
+                gen = self._gen
+            try:
+                snap = build_snapshot(game, moment=moment, roles=roles, scoreboard=scoreboard,
+                                      objectives=objectives, item_text=item_text, context=_resolve(context),
+                                      trend=self.trend(gt))
+                fallback = rule_plan(moment, snap) if is_plan_moment(moment) else None
+            except Exception:
+                if not offline:
+                    with self._lock:
+                        self._inflight = False
+                        self.budget.refund(slot)
+                raise
             if offline:
                 self._offline_plan(fallback, moment, t)
                 return False
             self._start(build_prompt(snap), moment, t, self._validator(game, snap, item_text), slot=slot,
-                        fallback=fallback)
+                        fallback=fallback, gen=gen)
             return True
         except Exception:
             log.exception("AIAdvisor.update failed")
@@ -1712,7 +2330,7 @@ class AIAdvisor:
                 return False
             self._last_rules = t
             self._result = Advice(plan_text(plan), moment, t, steps=tuple(plan.get("etapes") or ()),
-                                  source="rules", goal=plan.get("objectif"))
+                                  source="rules", goal=plan.get("objectif"), card=plan.get("carte"))
             self.rule_plans += 1
         return True
 
@@ -1727,21 +2345,32 @@ class AIAdvisor:
             if getattr(game, "me", None) is None:
                 return "Pas de partie en cours : l'IA a besoin d'une partie pour conseiller."
             with self._lock:
-                if self._thread is not None and self._thread.is_alive():
+                if self._inflight or (self._thread is not None and self._thread.is_alive()):
                     return "L'IA réfléchit déjà…"
                 wait = MANUAL_MIN_INTERVAL_S - (t - self._last_call)
                 if wait > 0:
                     return f"Patiente encore {int(math.ceil(wait))} s avant de redemander."
                 if self._blocked_until == math.inf and self._status:
                     return self._status
+                if t < self._blocked_until and self._status:
+                    return f"{self._status} ({int(math.ceil(self._blocked_until - t))} s)"
                 if self.budget.exhausted:
                     return f"Limite de {GAME_HARD_CAP} questions IA atteinte pour cette partie : le coach continue sans IA."
                 self._last_call = t
                 self.budget.manual += 1
-            snap = build_snapshot(game, moment="manual", roles=roles, scoreboard=scoreboard,
-                                  objectives=list(objectives or ()), item_text=item_text,
-                                  context=_resolve(context))
-            self._start(build_prompt(snap), "manual", t, self._validator(game, snap, item_text))
+                self.budget.sent += 1
+                self._inflight = True
+                gen = self._gen
+            gt = float(getattr(game, "game_time", 0.0) or 0.0)
+            try:
+                snap = build_snapshot(game, moment="manual", roles=roles, scoreboard=scoreboard,
+                                      objectives=list(objectives or ()), item_text=item_text,
+                                      context=_resolve(context), trend=self.trend(gt))
+            except Exception:
+                with self._lock:
+                    self._inflight = False
+                raise
+            self._start(build_prompt(snap), "manual", t, self._validator(game, snap, item_text), gen=gen)
             return "Question envoyée à l'IA…"
         except Exception:
             log.exception("AIAdvisor.ask failed")
@@ -1752,6 +2381,26 @@ class AIAdvisor:
         with self._lock:
             res, self._result = self._result, None
             return res
+
+    def note_shown(self, adv: Advice, gt: float | None = None) -> None:
+        """The engine displayed ``adv``: kept in the timeline for the post-game review."""
+        try:
+            if adv is None or adv.error:
+                return
+            with self._lock:
+                when = _clock(gt) if gt is not None else ""
+                who = "plan IA" if adv.source == "ai" else "plan règles"
+                self.timeline.append(f"{when} {who} : {adv.text[:140]}".strip())
+                del self.timeline[:-30]
+        except Exception:
+            log.debug("note_shown failed", exc_info=True)
+
+    def note_dropped(self, adv: Advice, why: str) -> None:
+        """The engine did NOT show ``adv`` (stale / contradicted the card)."""
+        log.info("AI advice not shown (%s): %s", why, getattr(adv, "text", "")[:100])
+        if why == "conflict":
+            with self._lock:
+                self.conflicts += 1
 
     @staticmethod
     def _validator(game: Any, snap: dict[str, Any], item_text: str | None) -> Callable[[str], str | None]:
@@ -1765,67 +2414,89 @@ class AIAdvisor:
 
     def _start(self, prompt: str, moment: str, t: float,
                validate: Callable[[str], str | None] | None = None, slot: str | None = None,
-               fallback: dict[str, Any] | None = None) -> None:
+               fallback: dict[str, Any] | None = None, gen: int | None = None) -> None:
         prov, key, model = self._provider, self._key, self._model
         url = self._urls.get(prov)
         kw: dict[str, Any] = {"timeout": TIMEOUT_S, "url": url}
         if _accepts(self._caller, "json_mode") and _accepts(self._caller, "max_tokens"):   # (may be swapped)
             kw.update(json_mode=True, max_tokens=PLAN_MAX_TOKENS)
+        gen = self._gen if gen is None else gen
+        with self._lock:
+            self._inflight = True
 
         def job() -> None:
             try:
                 raw = self._caller(prov, key, model, system_prompt(), prompt, **kw)
                 plan = parse_plan(raw) if "{" in str(raw or "") else None
                 steps: tuple[str, ...] = ()
-                goal = None
+                goal = card = why = None
                 if plan is not None:
                     text: str | None = plan_text(plan)
                     steps, goal = tuple(plan["etapes"]), plan.get("objectif")
+                    card, why = plan.get("carte"), plan.get("pourquoi")
                 elif "{" in str(raw or ""):
                     text = None                      # broken JSON: not shown as is
-                    self.json_errors += 1
+                    with self._lock:
+                        self.json_errors += 1
                 else:
                     text = clean_advice(raw)         # a plain answer (model ignored the format)
                 if text and validate is not None:
                     checked = validate(text)
                     if checked != text:
-                        steps, goal = (), None
+                        steps, goal, card, why = (), None, None, None
                     text = checked
                 with self._lock:
+                    if gen != self._gen:
+                        return                       # a new game started meanwhile: never shown
                     self.calls += 1
                     if text:
-                        self._result = Advice(text, moment, t, steps=steps, goal=goal)
-                    elif moment == "manual":
+                        self._result = Advice(text, moment, t, steps=steps, goal=goal, card=card, why=why)
+                        return
+                    if slot:
+                        self.budget.refund(slot)     # nothing usable: the slot stays for a later moment
+                    if moment == "manual":
                         self._result = Advice("L'IA n'a pas donné de conseil fiable cette fois.", moment, t,
                                               error=True)
                     elif fallback:
                         self._result = Advice(plan_text(fallback), moment, t, steps=tuple(fallback["etapes"]),
-                                              source="rules", goal=fallback.get("objectif"))
+                                              source="rules", goal=fallback.get("objectif"),
+                                              card=fallback.get("carte"))
                         self.rule_plans += 1
             except AIError as exc:
-                self._fail(exc.code, prov, moment, t, slot, fallback)
+                self._fail(exc.code, prov, moment, t, slot, fallback, gen=gen, retry_after=exc.retry_after)
             except Exception:
                 log.exception("AI request failed")
-                self._fail("server", prov, moment, t, slot, fallback)
+                self._fail("server", prov, moment, t, slot, fallback, gen=gen)
+            finally:
+                with self._lock:
+                    if gen == self._gen or self._thread is threading.current_thread():
+                        self._inflight = False
 
         th = threading.Thread(target=job, name="TreeAICoach-ai", daemon=True)
-        self._thread = th
+        with self._lock:
+            self._thread = th
         th.start()
 
     def _fail(self, code: str, provider: str, moment: str = "", t: float = 0.0,
-              slot: str | None = None, fallback: dict[str, Any] | None = None) -> None:
+              slot: str | None = None, fallback: dict[str, Any] | None = None, gen: int | None = None,
+              retry_after: float | None = None) -> None:
         log.info("AI advice unavailable (%s, %s)", provider, code)
         with self._lock:
-            if slot:
+            same_game = gen is None or gen == self._gen
+            if slot and same_game:
                 self.budget.refund(slot)          # no answer: the slot stays available
             text = error_text(code, provider)
-            if moment == "manual":
+            if moment == "manual" and same_game:
                 self._result = Advice(text, moment, t, error=True)
             if text != self._status:
                 self._status_seq += 1
             self._status = text
-            self._blocked_until = self._clock() + BACKOFF_S.get(code, 180.0)
-        if moment != "manual":
+            wait = BACKOFF_S.get(code, 180.0)
+            if code == "rate" and retry_after is not None:
+                wait = min(RATE_BACKOFF_MAX_S, max(RATE_BACKOFF_MIN_S, float(retry_after) + 2.0))
+            if self._blocked_until != math.inf:   # never shortens a block set for the game (self-check)
+                self._blocked_until = self._clock() + wait
+        if moment != "manual" and same_game:
             self._offline_plan(fallback, moment, t)
 
     def wait(self, timeout: float = 10.0) -> bool:
@@ -1877,15 +2548,15 @@ def system_prompt() -> str:
 # Post-game review
 # ======================================================================================
 REVIEW_PROMPT = (
-    "Tu es un coach expert de League of Legends. Voici l'analyse (JSON) de la partie que le joueur vient "
-    "de terminer. Écris UNIQUEMENT en français (tutoiement, pas de markdown, pas d'anglais) une revue "
-    "courte et concrète, 7 phrases maximum : 2 points forts, puis 3 axes de progrès avec un exercice précis "
-    "chacun, puis un conseil d'objets. Cite les chiffres exacts de l'analyse (morts, CS/min, écart d'or, "
-    "avance des alertes...). Respecte le classement des morts de l'analyse (champ verdict : « 1v1 perdu », "
-    "« alerte ignorée », « alerte trop tardive », « l'app n'a pas prévenu ») : ne reproche pas au joueur "
-    "une alerte arrivée trop tard. OBJETS : nomme seulement des objets de la liste « objets autorisés », "
-    "écrits exactement comme dans la liste (noms français) ; aucun autre objet, aucun nom anglais ; un objet "
-    "légendaire ne s'achète jamais avant le premier retour en base. Pas de spéculation sur les temps de recharge."
+    "Tu es un coach expert de League of Legends. Voici le rapport de la partie que le joueur vient de "
+    "terminer. Écris UNIQUEMENT en français (tutoiement, aucun mot anglais, pas de markdown, pas d'emoji) : "
+    "2 points forts, puis EXACTEMENT 3 axes de progrès ; chaque axe commence par un verbe à l'impératif, "
+    "cite le chiffre exact du rapport qui le prouve (morts, CS/min, vision, avance des alertes...) et "
+    "donne un exercice précis et mesurable pour la prochaine partie. Respecte le classement des morts du "
+    "rapport (« alerte ignorée », « alerte trop tardive », « 1v1 perdu », « l'app n'a pas prévenu ») : ne "
+    "reproche pas au joueur une alerte arrivée trop tard. OBJETS : nomme seulement des objets de la liste "
+    "« objets autorisés », écrits exactement comme dans la liste ; un objet légendaire ne s'achète jamais "
+    "avant le premier retour en base. Pas de spéculation sur les temps de recharge."
 )
 #: an English review is rejected (the player is French): stop words counted per review
 _EN_WORDS = re.compile(r"\b(the|and|you|your|with|should|before|after|item|build|first)\b", re.I)
@@ -2077,9 +2748,12 @@ def ground_review(text: str, allowed: Iterable[dict[str, Any]]) -> tuple[str, in
         paras: list[str] = []
         for para in str(text).split("\n"):
             keep: list[str] = []
-            for sent in re.findall(r"[^.!?]+[.!?]*", para):
+            # a decimal point ("0.44/min", "5.2 CS/min") does not end a sentence
+            for sent in re.findall(r"(?:[^.!?]|(?<=\d)\.(?=\d))+[.!?]*", para):
                 ids = items_mentioned(sent)
-                bad = [i for i in ids if (i >= 0 and i not in ok) or (i < 0 and not (_AMBIG.get(i, frozenset()) & ok))]
+                # consumables / trinkets / starters are always fine (a control ward is not a build)
+                bad = [i for i in ids if (i >= 0 and i not in ok and getattr(items.get(i), "kind", "") not in (
+                    "consumable", "trinket", "starter")) or (i < 0 and not (_AMBIG.get(i, frozenset()) & ok))]
                 if bad:
                     removed += 1
                     log.info("AI review: sentence with an item outside the list dropped: %r", sent.strip()[:120])
@@ -2126,15 +2800,26 @@ def _english_name(iid: int) -> str:
 
 
 def _review_numbers(analysis: Any) -> str:
-    """The key numbers the review must cite (plain French)."""
+    """The key numbers the review must cite (plain French, verdict labels of analysis.VERDICT_FR)."""
     a = analysis if isinstance(analysis, dict) else {}
     s = a.get("summary") if isinstance(a.get("summary"), dict) else {}
     parts = [f"{s.get('kills', 0)}/{s.get('deaths', 0)}/{s.get('assists', 0)}"]
     if s.get("cs_per_min") is not None:
         parts.append(f"{s.get('cs_per_min')} CS/min")
+    if s.get("vision_per_min") is not None:
+        parts.append(f"vision {s.get('vision_per_min')}/min")
+    if s.get("kill_participation") is not None:
+        try:
+            parts.append(f"participation {int(round(100 * float(s['kill_participation'])))} %")
+        except (TypeError, ValueError):
+            pass
     v = a.get("death_verdicts") if isinstance(a.get("death_verdicts"), dict) else {}
     if v:
-        parts.append("morts : " + ", ".join(f"{n} {k}" for k, n in v.items() if n))
+        try:
+            from treeaicoach.analysis import VERDICT_FR
+        except Exception:  # pragma: no cover
+            VERDICT_FR = {}
+        parts.append("morts : " + ", ".join(f"{n} {VERDICT_FR.get(k, k)}" for k, n in v.items() if n))
     lead = a.get("alert_lead") if isinstance(a.get("alert_lead"), dict) else {}
     if lead.get("n"):
         parts.append(f"alertes {lead.get('mean')} s avant les morts en moyenne")
@@ -2145,39 +2830,176 @@ def _looks_english(text: str) -> bool:
     return len(_EN_WORDS.findall(text or "")) > REVIEW_MAX_EN_WORDS
 
 
+def _rule_axes(analysis: Any) -> list[dict[str, str]]:
+    """Fallback progress axes from the report numbers (when the model gave fewer than 3 usable)."""
+    a = analysis if isinstance(analysis, dict) else {}
+    s = a.get("summary") if isinstance(a.get("summary"), dict) else {}
+    v = a.get("death_verdicts") if isinstance(a.get("death_verdicts"), dict) else {}
+    out: list[dict[str, str]] = []
+    deaths = int(s.get("deaths") or 0)
+    if v.get("ignored"):
+        out.append({"axe": "Recule dès l'alerte", "preuve": f"{v['ignored']} morts après une alerte ignorée",
+                    "exercice": "Partie suivante : à chaque alerte, fais 3 pas vers ta tour avant de regarder."})
+    if deaths >= 5:
+        out.append({"axe": "Meurs moins", "preuve": f"{deaths} morts",
+                    "exercice": "Fixe-toi 4 morts maximum ; après chaque mort, dis à voix haute qui t'a tué."})
+    try:
+        cs = float(s.get("cs_per_min") or 0)
+    except (TypeError, ValueError):
+        cs = 0.0
+    if 0 < cs < 7.0 and str(s.get("position") or "") not in ("UTILITY", "JUNGLE"):
+        out.append({"axe": "Farme mieux", "preuve": f"{cs} CS/min",
+                    "exercice": "Mode entraînement 10 min : 80 sbires sans objets, puis vise 7 CS/min en partie."})
+    try:
+        vis = float(s.get("vision_per_min") or 0)
+    except (TypeError, ValueError):
+        vis = 0.0
+    if 0 < vis < 0.8:
+        out.append({"axe": "Pose plus de balises", "preuve": f"vision {vis}/min",
+                    "exercice": "Achète une balise de contrôle à chaque retour et pose ta balise à 2:45."})
+    out.append({"axe": "Joue autour des objectifs", "preuve": "chaque dragon et Baron",
+                "exercice": "60 s avant chaque objectif : pousse ta vague puis rejoins la rivière."})
+    return out
+
+
+REVIEW_SCHEMA = ('{"forces": ["point fort 1 avec un chiffre", "point fort 2"], "axes": [{"axe": "verbe à '
+                 'l\'impératif, 60 caractères max", "preuve": "le chiffre exact de l\'analyse", "exercice": '
+                 '"un exercice précis et mesurable pour la prochaine partie"}, {...}, {...}], '
+                 '"objets": "1 phrase sur les objets (noms de la liste autorisée uniquement) ou vide"}')
+
+
+def parse_review(text: Any) -> dict[str, Any] | None:
+    """The review JSON (``forces`` <= 2, ``axes`` <= 3 with ``axe`` / ``preuve`` / ``exercice``,
+    ``objets``) or None. Never raises."""
+    try:
+        block = _json_block(text)
+        data = json.loads(block) if block else None
+        if not isinstance(data, dict):
+            return None
+        forces = [_short(x, 200) for x in data.get("forces") or [] if isinstance(x, str) and x.strip()][:2]
+        axes = []
+        for ax in data.get("axes") or []:
+            if isinstance(ax, dict) and isinstance(ax.get("axe"), str) and isinstance(ax.get("exercice"), str):
+                axes.append({"axe": _short(ax["axe"], 90), "preuve": _short(ax.get("preuve") or "", 120),
+                             "exercice": _short(ax["exercice"], 220)})
+        objets = _short(data.get("objets"), 240) if isinstance(data.get("objets"), str) else ""
+        if not axes and not forces:
+            return None
+        return {"forces": forces, "axes": axes[:3], "objets": objets}
+    except (ValueError, TypeError):
+        return None
+
+
+def render_review(rev: dict[str, Any]) -> str:
+    """Plain French text of a parsed review: strengths, 3 numbered axes with their drill, items."""
+    def dot(x: str) -> str:
+        x = x.strip()
+        return x if not x or x.endswith((".", "!", "?", "…")) else x + "."
+
+    lines = []
+    if rev.get("forces"):
+        lines.append("Points forts : " + " ".join(dot(f) for f in rev["forces"]))
+    for i, ax in enumerate(rev.get("axes") or [], 1):
+        proof = f" ({ax['preuve'].rstrip('.')})" if ax.get("preuve") else ""
+        lines.append(f"{i}. {ax['axe'].rstrip('.')}{proof}. Exercice : {dot(ax['exercice'])}")
+    if rev.get("objets"):
+        lines.append("Objets : " + dot(rev["objets"]))
+    return "\n".join(lines)
+
+
+def _ground_parsed(rev: dict[str, Any], cands: list[dict[str, Any]], build: list[str],
+                   analysis: Any) -> dict[str, Any]:
+    """Item grounding per field: a strength / axis / drill naming an item outside the allowed list
+    loses that sentence (an axis left empty is replaced from :func:`_rule_axes`), the items line is
+    replaced by a grounded one; English names of allowed items become French. Always 3 axes."""
+    def g(text: str) -> str:
+        out, _n = ground_review(text, cands)
+        return out.strip()
+
+    forces = [x for x in (g(f) for f in rev.get("forces") or []) if x]
+    axes = []
+    for ax in rev.get("axes") or []:
+        a2 = {"axe": g(ax["axe"]), "preuve": g(ax.get("preuve") or ""), "exercice": g(ax["exercice"])}
+        if a2["axe"] and a2["exercice"]:
+            axes.append(a2)
+    seen = {_fold(a["axe"])[:12] for a in axes}
+    for extra in _rule_axes(analysis):
+        if len(axes) >= 3:
+            break
+        if _fold(extra["axe"])[:12] not in seen:
+            axes.append(extra)
+    objets = rev.get("objets") or ""
+    if objets and cands:
+        grounded, removed = ground_review(objets, cands)
+        objets = grounded.strip() if not removed else ""
+    if not objets and cands:
+        keep = next((c for c in cands if c["n"] in build), None)
+        aim = next((c for c in cands if c["n"] not in build), None)
+        if keep and aim:
+            objets = f"Garde {keep['n']} et vise {aim['n']} ({aim['pourquoi']})"
+        elif aim:
+            objets = f"Vise {aim['n']} ({aim['pourquoi']})"
+    return {"forces": forces, "axes": axes[:3], "objets": objets}
+
+
 def postgame_review(cfg: Any, analysis: Any, *, caller: Callable[..., Any] = call_llm,
-                    url: str | None = None) -> str | None:
+                    url: str | None = None, timeline: Iterable[str] = ()) -> str | None:
     """Blocking AI review of a finished game (None if no provider / on error). ONE request.
 
-    Grounded like the live advisor: the prompt carries my final build and the list of allowed
-    items (French names, itemization.py); the answer is validated afterwards: sentences naming
-    another item are dropped (an off-meta / impossible / English item never reaches the report),
-    English names of allowed items become French, an English answer is rejected. Never raises."""
+    Grounded like the live advisor: the prompt carries the report (compacted analysis), the key
+    numbers to cite, the game's timeline (team gold / kills every 2 min + the plans given live,
+    :attr:`AIAdvisor.timeline`), my final build and the allowed items (French names). The model
+    answers a JSON review (2 strengths, exactly 3 progress axes, each with the number that proves
+    it and a drill, one items line), rendered in French; every sentence naming an item outside the
+    list is dropped (an off-meta / impossible / English item never reaches the report), English
+    names of allowed items become French, an English answer is rejected, a missing axis is filled
+    from the report numbers. A provider that ignores the JSON format: the plain text is grounded
+    the same way. Never raises."""
     prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
     if provider_spec(prov) is None:
         return None
     try:
         cands, build = review_item_candidates(analysis)
-        data = json.dumps(compact_analysis(analysis), ensure_ascii=False, separators=(",", ":"))
+        data = json.dumps(compact_analysis(analysis, limit=MAX_ANALYSIS_BYTES - 1500), ensure_ascii=False,
+                          separators=(",", ":"))
         names = ", ".join(c["n"] for c in cands)
+        tl = [str(x)[:160] for x in timeline or ()][-16:]
         prompt = (f"Analyse de la partie (JSON) : {data}\n"
-                  f"Build final du joueur : {', '.join(build) or 'inconnu'}.\n"
+                  + (f"Déroulé (écart d'or d'équipe, kills, plans donnés en direct) : {' | '.join(tl)}\n" if tl else "")
+                  + f"Build final du joueur : {', '.join(build) or 'inconnu'}.\n"
                   f"Objets autorisés (noms exacts) : {names or 'aucun : ne conseille aucun objet'}.\n"
-                  f"Chiffres à citer : {_review_numbers(analysis)}.")
-        text = caller(prov, str(getattr(cfg, "ai_api_key", "") or ""), str(getattr(cfg, "ai_model", "") or ""),
-                      REVIEW_PROMPT, prompt, timeout=REVIEW_TIMEOUT_S,
-                      url=url, max_tokens=REVIEW_MAX_TOKENS, long=True) or None
-        if not text:
+                  f"Chiffres à citer : {_review_numbers(analysis)}.\n"
+                  f"Réponds UNIQUEMENT avec un objet JSON de cette forme : {REVIEW_SCHEMA}")
+        kw: dict[str, Any] = {"timeout": REVIEW_TIMEOUT_S, "url": url, "max_tokens": REVIEW_MAX_TOKENS,
+                              "long": True}
+        if _accepts(caller, "json_mode"):
+            kw["json_mode"] = True
+        args = (prov, str(getattr(cfg, "ai_api_key", "") or ""), str(getattr(cfg, "ai_model", "") or ""),
+                f"{REVIEW_PROMPT} {SEASON_RULES}", prompt)
+        try:
+            raw = caller(*args, **kw) or None
+        except AIError as exc:
+            # after the game nothing is urgent: a per-minute limit (the live plans just used the
+            # minute's tokens) is waited out once
+            if exc.code != "rate" or (exc.retry_after or 0.0) > REVIEW_RATE_WAIT_S:
+                raise
+            time.sleep(max(1.0, float(exc.retry_after or 5.0) + 1.0))
+            raw = caller(*args, **kw) or None
+        if not raw:
             return None
-        if _looks_english(text):
-            log.info("AI post-game review rejected: not in French")
+        rev = parse_review(raw)
+        text = render_review(_ground_parsed(rev, cands, build, analysis)) if rev is not None else clean_review(raw)
+        text = frenchify(text)
+        if not text or _looks_english(text):
+            log.info("AI post-game review rejected: empty or not in French")
             return None
-        if cands:
+        if rev is None and cands:
             text, removed = ground_review(text, cands)
             if removed and len(cands) >= 2:
-                c1, c2 = cands[0], cands[1]
+                keep = next((c for c in cands if c["n"] in build), cands[0])
+                aim = next((c for c in cands if c["n"] not in build), cands[1])
                 text = (text + "\n" if text else "") + (
-                    f"Objets : garde {c1['n']} ({c1['pourquoi']}) et vise {c2['n']} ({c2['pourquoi']}).")
+                    f"Objets : garde {keep['n']} et vise {aim['n']} ({aim['pourquoi']}).")
         return text or None
     except AIError as exc:
         log.info("AI post-game review unavailable (%s)", exc.code)
@@ -2213,18 +3035,34 @@ def append_review_html(html_path: Any, review: str, provider: str = "") -> bool:
 
 def check_connection(cfg: Any, *, caller: Callable[..., str] = call_llm,
                      url: str | None = None) -> tuple[bool, str]:
-    """Blocking "Tester" button helper: ``(ok, French message)``. Never raises."""
+    """Blocking "Tester" button helper: ``(ok, French message)``. Never raises.
+
+    Sends the SAME kind of request as a live plan (system prompt + JSON mode + a small snapshot),
+    so a model that cannot do JSON plans fails here, not in game. A per-minute limit (429) still
+    proves the key works."""
     prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
     spec = provider_spec(prov)
     if spec is None:
         return False, "Choisis d'abord un fournisseur d'IA."
-    prompt = ("Moment : test de connexion. Donne un conseil générique d'une phrase pour un joueur de "
-              "League of Legends qui revient en base avec 1300 pièces d'or.")
+    snap = {"t": "8:30", "ph": "voie", "mo": "test de connexion : retour en base avec de l'or à dépenser",
+            "me": {"c": "Garen", "r": "top", "lv": 7, "k": "1/0/0", "cs": 62, "g": 1300},
+            "obj": [["Dragon", 75]]}
+    kw: dict[str, Any] = {"timeout": TIMEOUT_S + 4.0, "url": url}
+    json_ok = _accepts(caller, "json_mode") and _accepts(caller, "max_tokens")
+    if json_ok:
+        kw.update(json_mode=True, max_tokens=PLAN_MAX_TOKENS)
     try:
-        text = caller(prov, str(getattr(cfg, "ai_api_key", "") or ""), str(getattr(cfg, "ai_model", "") or ""),
-                      system_prompt(), prompt, timeout=TIMEOUT_S, url=url)
+        raw = caller(prov, str(getattr(cfg, "ai_api_key", "") or ""), str(getattr(cfg, "ai_model", "") or ""),
+                     system_prompt(), build_prompt(snap), **kw)
+        plan = parse_plan(raw) if "{" in str(raw or "") else None
+        if plan is None and json_ok and "{" in str(raw or ""):
+            return False, (f"{spec.label} répond, mais pas au format attendu : essaie un autre modèle "
+                           f"(par défaut : {spec.default_model}).")
+        text = plan_text(plan) if plan is not None else clean_advice(raw)
         return True, f"Connexion OK ({spec.label}) : {text}"
     except AIError as exc:
+        if exc.code == "rate":
+            return True, f"Connexion OK ({spec.label}) : clé valide, limite par minute atteinte pour l'instant."
         return False, error_text(exc.code, prov)
     except Exception as exc:  # pragma: no cover - defensive
         log.exception("AI test failed")

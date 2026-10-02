@@ -621,8 +621,149 @@ def rule_enemy_buys(ctx: M.MacroCtx) -> M.GeniusCall | None:
     return None
 
 
+# ----------------------------------------------------------------------------- power windows (mastermind)
+#: objectives a team window can be played on (alive, or spawning within WINDOW_OBJ_SOON_S)
+WINDOW_OBJECTIVES = ("baron", "dragon", "herald", "grubs")
+WINDOW_OBJ_SOON_S = 45.0
+WINDOW_TEAM_SOON_S = 480.0       # "force now": our team lead ends within 8 min
+WINDOW_FRESH_S = 60.0            # a lane / team window is a call only in its first minute ...
+WINDOW_WATCH_S = 30.0            # ... once the model has watched the game this long (not at app start)
+WINDOW_LANE_START_GT = 150.0     # the game-start lane window is told at 2:30 (first trades)
+VOICE_WINDOW_NOW = "C'est ta fenêtre : joue agressif !"
+VOICE_WINDOW_TEAM = "Ton équipe est plus forte : force !"
+VOICE_WINDOW_SCALE = "Tu scales mieux : ne force pas."
+
+
+def _fit(*lines: str) -> str:
+    """The first line that fits on the card (60 characters), else the last one cut at a word."""
+    for line in lines:
+        if line and len(line) <= 60:
+            return line
+    last = lines[-1] if lines else ""
+    return last if len(last) <= 60 else last[:60].rsplit(" ", 1)[0]
+
+
+def rule_power_window(ctx: M.MacroCtx) -> M.GeniusCall | None:
+    """The mastermind's power windows (:mod:`treeaicoach.mastermind`) turned into the ONE thing to
+    do now: an objective up while one team is clearly stronger ("Prends le dragon : ton équipe
+    domine jusqu'à ~22:00" / "Ne conteste pas le dragon : ils sont plus forts jusqu'à ~25:00"), my
+    lane window while laning ("Punis Vladimir maintenant : tu es plus fort jusqu'à ~12:00" /
+    "Évite les échanges : Darius est plus fort jusqu'à ~14:00") and, after the laning phase, the
+    team window ("Force un objectif maintenant : ton équipe domine jusqu'à ~24:00" / "Joue le
+    temps : ton équipe est plus forte après ~28:00"). Low priority: every situational call wins."""
+    if not ctx.me_alive or ctx.in_base or ctx.role is None or ctx.gt < 150.0:
+        return None
+    try:
+        from treeaicoach import mastermind as MM
+
+        r = MM.reading_for_ctx(ctx)
+    except Exception:
+        return None
+    if r is None:
+        return None
+    if len(M._dead_list(ctx, "allies", 5.0)) >= 2 or len(M._dead_list(ctx, "enemies", 5.0)) >= 2:
+        return None                                      # numbers decide: fight_won / fight_lost say it
+    team = r.team
+    t_end = MM.clock(team.until)
+    model = MM.for_ctx(ctx)
+    if model is None or model.watched(ctx.gt) < WINDOW_WATCH_S:
+        return None                                      # every window call needs the live model, watched a while
+    # 1) an objective spawning soon while one team is clearly stronger (once per spawn)
+    for key in WINDOW_OBJECTIVES:
+        o = ctx.objectives.get(key)
+        if o is None or not team.clear:
+            continue
+        alive, rem = o
+        if not ((rem is not None and 0.0 < rem <= WINDOW_OBJ_SOON_S) or (ctx.keep and alive)):
+            continue
+        if not M._role_plays(ctx, key):
+            continue
+        obj = M.OBJ_LE.get(key, key)
+        ident = f"gc_window:obj:{key}:{int((ctx.gt + (rem or 0.0)) // 60)}"
+        life = max(20.0, (rem or 0.0) + 3.0)             # it replaces the countdown line until the spawn
+        if team.leader == "us":
+            text = _fit(f"Prépare {obj} : ton équipe domine jusqu'à ~{t_end}" if team.until
+                        else f"Prépare {obj} : ton équipe est plus forte", f"Prépare {obj} : ton équipe est plus forte")
+            return M._call("gc_window", ident, "TA FENÊTRE", text, team.text, M.PIT_UV.get(key),
+                           tier="basic", score=0.5, priority=62, color="safe", life=life,
+                           label=obj.split(" ")[-1].upper()[:16], factors=(f"fenêtre équipe {team.edge:+.2f}",))
+        if team.leader == "them" and team.edge <= -0.08 and key in ("dragon", "baron"):
+            text = _fit(f"Ne conteste pas {obj} : ils sont plus forts jusqu'à ~{t_end}" if team.until
+                        else f"Ne conteste pas {obj} : ils sont plus forts", f"Ne conteste pas {obj} : ils sont plus forts")
+            return M._call("gc_window", ident, "LEUR FENÊTRE", text,
+                           "Un combat à 5 maintenant est perdu d'avance : prends des sbires ou une tour ailleurs.",
+                           None, tier="basic", score=0.45, priority=60, color="gold", life=life,
+                           factors=(f"fenêtre équipe {team.edge:+.2f}",))
+    # 2) + 3) a window is a call only when it is NEW (its leader changed in the last WINDOW_FRESH_S)
+    # 2) my lane window (laning phase, in my lane, both of us up)
+    lane = r.lane
+    if lane is not None and lane.clear and ctx.gt < LANING_END_GT and ctx.role != "JUNGLE" and _in_my_lane(ctx):
+        leader, since = model.since("lane")
+        if leader != lane.leader or since is None:
+            return None
+        first = model.first_gt if model.first_gt is not None else since
+        if since <= first + 1.0:                         # no change seen since the model started:
+            if first > WINDOW_LANE_START_GT - 60.0:      # app started mid-game: not news
+                return None
+            since = WINDOW_LANE_START_GT                 # the game-start lane window, told at ~2:30
+        if not (0.0 <= ctx.gt - since <= WINDOW_FRESH_S * (2 if ctx.keep else 1)):
+            return None
+        opp = M._player(ctx, (r.lane_opp or "").lower())
+        if opp is None or bool(getattr(opp, "is_dead", False)) or (ctx.hp is not None and ctx.hp < 0.5):
+            return None
+        who = _name(ctx, opp) or lane.who
+        t_l = MM.clock(lane.until)
+        ident = f"gc_window:lane:{lane.leader}:{int(since)}"
+        if lane.leader == "us":
+            if not _stance_ok(ctx) and not ctx.keep:
+                return None
+            jl = M.jungler_location(ctx)
+            if not jl.dead and jl.conf >= 0.5 and jl.side == M._my_lane(ctx):
+                return None                              # their jungler is on my side: not now
+            text = _fit(f"Punis {who} maintenant : tu es plus fort jusqu'à ~{t_l}" if lane.until
+                        else f"Punis {who} maintenant : tu es plus fort", f"Punis {who} : tu es plus fort")
+            return replace(M._call("gc_window", ident, "TA FENÊTRE", text, lane.text,
+                                   getattr(M._track(ctx, getattr(opp, "champion_alias", "")), "uv", None),
+                                   tier="basic", score=0.38, priority=58, color="safe", life=12.0,
+                                   label=who.upper()[:16] or "VA ICI", factors=(f"fenêtre voie {lane.edge:+.2f}",)),
+                           voice=VOICE_WINDOW_NOW)
+        if lane.leader == "them" and lane.until and lane.then == "us":
+            text = _fit(f"Farme sans forcer : tu bats {who} après ~{t_l}", f"Farme sans forcer : tu scales mieux que {who}")
+            return replace(M._call("gc_window", ident, "TU SCALES MIEUX", text, lane.text, None,
+                                   tier="basic", score=0.36, priority=57, color="gold", life=12.0,
+                                   factors=(f"fenêtre voie {lane.edge:+.2f}",)), voice=VOICE_WINDOW_SCALE)
+        return None
+    # 3) the team window after the laning phase (once per window: new, or the laning phase just ended)
+    if ctx.gt >= LANING_END_GT and team.clear:
+        leader, since = model.since("team")
+        if leader != team.leader or since is None:
+            return None
+        first = model.first_gt if model.first_gt is not None else since
+        if since <= first + 1.0 and first >= LANING_END_GT - 60.0:
+            return None                                  # app started mid-game: not news
+        start = max(since, LANING_END_GT)
+        if not (0.0 <= ctx.gt - start <= WINDOW_FRESH_S * (2 if ctx.keep else 1)):
+            return None
+        ident = f"gc_window:team:{team.leader}:{int(start)}"
+        if team.leader == "us" and team.until and team.until - ctx.gt <= WINDOW_TEAM_SOON_S:
+            text = _fit(f"Force un objectif maintenant : ton équipe domine jusqu'à ~{t_end}",
+                        f"Force un objectif : ton équipe domine jusqu'à ~{t_end}")
+            return replace(M._call("gc_window", ident, "TA FENÊTRE", text,
+                                   "Après, leurs champions deviennent plus forts que les vôtres : c'est maintenant.",
+                                   None, tier="mid", score=0.4, priority=56, color="safe", life=14.0,
+                                   factors=(f"fenêtre équipe {team.edge:+.2f}",)), voice=VOICE_WINDOW_TEAM)
+        if team.leader == "them" and team.until and team.then == "us":
+            text = _fit(f"Joue le temps : ton équipe est plus forte après ~{t_end}",
+                        f"Joue le temps : ton équipe sera plus forte après ~{t_end}")
+            return replace(M._call("gc_window", ident, "JOUE LE TEMPS", text,
+                                   "Farme et défends sous tes tours : ne force aucun combat avant.",
+                                   None, tier="mid", score=0.4, priority=56, color="gold", life=14.0,
+                                   factors=(f"fenêtre équipe {team.edge:+.2f}",)), voice=VOICE_WINDOW_SCALE)
+    return None
+
+
 RULES = (rule_level_race, rule_jungler_far, rule_jungler_unseen, rule_baron_setup, rule_fed_defense,
-         rule_facecheck, rule_enemy_buys)
+         rule_facecheck, rule_enemy_buys, rule_power_window)
 
 
 # ----------------------------------------------------------------------------- voice
@@ -642,7 +783,7 @@ def voice_class(kind: str) -> str | None:
     if kind in ("fight_won", "jungler_dead", "gc_baron_setup"):
         return "big"
     if kind in ("plates", "cross_trade", "free_dragon", "wave_recall", "gc_level", "gc_jungler_far",
-                "gc_jungler_unseen", "gc_facecheck", "gc_enemy_buy"):
+                "gc_jungler_unseen", "gc_facecheck", "gc_enemy_buy", "gc_window"):
         return "lane"
     return None
 
@@ -693,6 +834,14 @@ def voice_for(call: Any, ctx: Any = None, level: Any = "intermediaire") -> tuple
             text = "Ta vague est poussée : rentre !"
         if not text or len(text) > VOICE_MAX_CHARS:
             return None
+        if kind == "gc_window":                              # key windows: one spoken every 3 min
+            from treeaicoach import mastermind as MM
+
+            model = MM.for_ctx(ctx) if ctx is not None else None
+            gt = float(getattr(ctx, "gt", 0.0) or 0.0)
+            if model is None or not model.voice_ok(gt):
+                return None
+            model.note_voice(gt)
         return f"gc:{cls}:{kind}:{getattr(call, 'ident', '')}", text
     except Exception:
         log.debug("game changer voice failed", exc_info=True)
@@ -705,7 +854,7 @@ def topic_of(kind: str) -> str:
             "plates": "opp_gone", "cross_trade": "objective_trade", "free_dragon": "objective_trade",
             "gc_jungler_far": "jungler_side", "gc_jungler_unseen": "jungler_unseen",
             "wave_recall": "recall", "gc_level": "level", "gc_facecheck": "facecheck",
-            "gc_enemy_buy": "enemy_buy"}.get(kind, kind)
+            "gc_enemy_buy": "enemy_buy", "gc_window": "power_window"}.get(kind, kind)
 
 
 def voice_phrases() -> list[str]:
@@ -726,7 +875,8 @@ def voice_phrases() -> list[str]:
             "Il a un niveau d'avance : recule.", "Il a son ultime : recule !",
             "Leur jungler est en bas : avance !", "Leur jungler est en haut : avance !",
             "Jungler invisible : recule !", "Vous êtes devant : balises au Baron.",
-            "Pas de buisson sans balise !", "Il a son objet : recule."]
+            "Pas de buisson sans balise !", "Il a son objet : recule.",
+            VOICE_WINDOW_NOW, VOICE_WINDOW_TEAM, VOICE_WINDOW_SCALE]
     return [x for x in dict.fromkeys(out) if len(x) <= VOICE_MAX_CHARS]
 
 

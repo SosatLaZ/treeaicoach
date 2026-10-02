@@ -108,6 +108,12 @@ class Scenario:
     waves: dict = field(default_factory=dict)     # lane -> [(gt, meet)] keyframes (default: oscillating)
     recalls: list = field(default_factory=list)   # (a, b): my recall channelling (engine.note_recall)
     warmup: float = 25.0                          # first seconds not judged (tracker warm-up)
+    cast: dict = field(default_factory=dict)      # roster slot alias -> champion played (other comps)
+    # ---- my own resources (resources_coach): off unless scripted
+    auto_abilities: bool = False                  # Live Client ability levels follow my level (R at 6/11/16)
+    skill_lag: list = field(default_factory=list)  # (a, b, ability): that point is not spent between a and b
+    spells: tuple = ()                            # my summoner spell ids (D, F)
+    bar: list = field(default_factory=list)       # (gt, {slot: "ready" | "cd" | "off", "T": charges}) HUD bar
 
 
 @dataclass(frozen=True)
@@ -244,7 +250,8 @@ class ScriptGame:
             cs_rate = {"TOP": 6.6, "MIDDLE": 7.0, "BOTTOM": 7.6, "JUNGLE": 5.4, "UTILITY": 1.0}[pos]
             cs = int(max(0.0, gt - 90.0) / 60.0 * cs_rate * (1.0 + 0.3 * (sc.xp.get(alias, 1.0) - 1.0)))
             players[alias] = PlayerInfo(
-                riot_id=rid, summoner_name=rid, champion_alias=alias, champion_name=name, team=team,
+                riot_id=rid, summoner_name=rid, champion_alias=sc.cast.get(alias, alias),
+                champion_name=cast_name(sc.cast[alias]) if alias in sc.cast else name, team=team,
                 position=pos, is_dead=du is not None, respawn_timer=max(0.0, (du or gt) - gt),
                 level=self.level(alias, gt), has_smite=smite, items=self.items(alias, gt),
                 scores={"kills": kills, "deaths": deaths, "assists": assists, "creepScore": cs,
@@ -267,13 +274,54 @@ class ScriptGame:
         g = _keyframes(sc.gold, gt)
         gold = (min(1400.0, 4.0 * (max(0.0, gt - 60.0) % 360.0)) if g == "default" else float(g)) if gt >= 1 else 0.0
         me.current_gold = gold
+        if sc.spells:
+            me.spell_ids = tuple(sc.spells)
+        info = {"abilities": self.abilities(gt)} if sc.auto_abilities else {}
         my_team = TEAM[sc.me]
         return GameInfo(
             game_time=gt, game_mode="CLASSIC", map_number=11, map_terrain="Default", team_relative_colors=True,
             me=me, allies=[players[a] for a in ALIASES if a != sc.me and TEAM[a] == my_team],
             enemies=[players[a] for a in ALIASES if TEAM[a] != my_team], events=events,
             fetched_at=float(t), current_gold=gold,
-            champion_stats={"currentHealth": round(mx * self.hp(gt), 1), "maxHealth": mx})
+            champion_stats={"currentHealth": round(mx * self.hp(gt), 1), "maxHealth": mx}, active_info=info)
+
+    def abilities(self, gt: float) -> dict[str, int]:
+        """Live Client ability levels: one point per level (R at 6 / 11 / 16, then Q > E > W), minus
+        the points the script leaves unspent (``skill_lag``)."""
+        lvl = self.level(self.sc.me, gt)
+        ab = {"Q": 0, "W": 0, "E": 0, "R": 0}
+        order = ["Q", "E", "W"]
+        for n in range(1, lvl + 1):
+            if n in (6, 11, 16):
+                ab["R"] += 1
+            elif n <= 3:
+                ab[order[n - 1]] += 1
+            else:
+                k = next(k for k in order if ab[k] < min(5, (n + 1) // 2))
+                ab[k] += 1
+        for a, b, k in self.sc.skill_lag:
+            if a <= gt < b and ab.get(k, 0) > 0:
+                ab[k] -= 1
+        return ab
+
+    def bar(self, gt: float) -> Any:
+        """My HUD ability bar (hud_abilities.BarRead) from the scripted keyframes, None if none."""
+        from treeaicoach.hud_abilities import BarRead, SlotState
+
+        spec = _keyframes(self.sc.bar, gt)
+        if spec == "default" or not isinstance(spec, dict):
+            return None
+        dead = self.dead_until(self.sc.me, gt) is not None
+        slots = {}
+        for k in ("Q", "W", "E", "R", "D", "F", "1", "2", "3", "4", "5", "6", "T"):
+            st = spec.get(k, "ready" if k in ("Q", "W", "E", "R", "D", "F") else "off")
+            if k == "T":
+                ch = st if isinstance(st, int) else None
+                slots[k] = SlotState(k, False, 0.0, not dead, 120.0, charges=ch)
+                continue
+            cd = st == "cd"
+            slots[k] = SlotState(k, cd, 0.5 if cd else 0.0, st == "ready" and not dead, 150.0 if st == "ready" else 70.0)
+        return BarRead(slots=slots, valid=True)
 
     def waves(self, gt: float) -> dict[str, Any]:
         from treeaicoach.waves import LaneWave
@@ -316,9 +364,17 @@ def _identified(game: ScriptGame, gt: float) -> list[Any]:
             continue
         rel = "self" if alias == game.sc.me else ("ally" if TEAM[alias] == my_team else "enemy")
         probs = {"enemy": (0.9, 0.05, 0.05), "ally": (0.05, 0.9, 0.05), "self": (0.05, 0.05, 0.9)}[rel]
-        det = Detection(u=uv[0], v=uv[1], r=0.03, score=0.95, cls=rel, cls_probs=probs, alias=alias)
-        out.append(Identified(det=det, alias=alias, relation=rel, team=TEAM[alias], id_score=0.95))
+        played = game.sc.cast.get(alias, alias)
+        det = Detection(u=uv[0], v=uv[1], r=0.03, score=0.95, cls=rel, cls_probs=probs, alias=played)
+        out.append(Identified(det=det, alias=played, relation=rel, team=TEAM[alias], id_score=0.95))
     return out
+
+
+def cast_name(alias: str) -> str:
+    """French display name of a champion played in a cast scenario (champion profiles)."""
+    from treeaicoach import meta
+
+    return str(meta.profile(alias).name or alias)
 
 
 class _Voice:
@@ -549,6 +605,53 @@ def _scenarios() -> dict[str, Scenario]:
         waves={"top": [(480.0, 0.5)]},
         moments=[Moment(500.0, 530.0, "Darius a fini Couperet noir : évite les échanges", r"(?i)couperet noir"),
                  Moment(545.0, 580.0, "Ahri (4/0) a un Sablier de Zhonya : force-la à l'utiliser", r"(?i)zhonya à ahri")])
+    # ---------------------------------------------------------------- my own resources (resources_coach)
+    S["skill_r6"] = Scenario(
+        "skill_r6", "Niveau 6 à 6:40 mais je ne monte pas mon R (45 s)", 370.0, 470.0,
+        auto_abilities=True, skill_lag=[(400.0, 445.0, "R")], waves={"top": [(370.0, 0.5)]},
+        moments=[Moment(404.0, 430.0, "niveau 6 sans ultime : monte ton R", r"(?i)monte ton R")])
+    S["death_heal"] = Scenario(
+        **{**S["death"].__dict__, "name": "death_heal", "title": "Mort avec mon Soin prêt (Flash utilisé)",
+           "spells": ("SummonerFlash", "SummonerHeal"), "auto_abilities": True,
+           "bar": [(210.0, {"D": "cd", "F": "ready", "T": 1})],
+           "moments": [Moment(257.0, 265.0, "mort avec le Soin prêt : utilise-le", r"(?i)utilise ton soin")]})
+    S["trinket_full"] = Scenario(
+        "trinket_full", "Ma balise a 2 charges et je ne la pose pas", 300.0, 560.0,
+        items={"Garen": [(0, [1055, 2003, 3340])]}, bar=[(300.0, {"T": 2})], auto_abilities=True,
+        waves={"top": [(300.0, 0.5)]},
+        moments=[Moment(482.0, 540.0, "2 charges de balise inutilisées", r"(?i)pose ta balise",
+                        levels=("debutant", "intermediaire"))])
+    # ---------------------------------------------------------------- mastermind: other compositions
+    scaling = {"Garen": "Kayle", "Vi": "MasterYi", "Lux": "Kassadin", "Jinx": "Jinx", "Thresh": "Sona",
+               "Darius": "Darius", "LeeSin": "LeeSin", "Ahri": "Pantheon", "Caitlyn": "Draven",
+               "Nautilus": "Nautilus"}
+    S["scaling_lane"] = Scenario(
+        "scaling_lane", "Notre équipe scale (Kayle top) contre une équipe forte tôt : plan et voie", 60.0, 230.0,
+        cast=scaling, waves={"top": [(60.0, 0.5)]},
+        paths={"Garen": [(60.0, FOUNTAIN["ORDER"]), (70.0, FOUNTAIN["ORDER"]), (100.0, ME_TOP), (101.0, "default")]},
+        moments=[Moment(80.0, 140.0, "plan d'équipe : ton équipe scale, joue le temps", r"(?i)joue le temps",
+                        levels=("debutant", "intermediaire")),
+                 Moment(150.0, 200.0, "Kayle bat Darius plus tard : farme sans forcer", r"(?i)farme sans forcer",
+                        r"(?i)tu scales mieux", levels=("debutant", "intermediaire"))])
+    S["scaling_team"] = Scenario(
+        "scaling_team", "14:00 : ils sont plus forts jusqu'à ~19:00, nous après : joue le temps", 760.0, 900.0,
+        cast=scaling, waves={"top": [(760.0, 0.5)]},
+        moments=[Moment(840.0, 880.0, "fin de la phase de voie, on scale mieux : joue le temps", r"(?i)joue le temps",
+                        r"(?i)tu scales mieux", levels=("debutant", "intermediaire"))])
+    S["engage_dragon"] = Scenario(
+        "engage_dragon", "Notre comp d'engage (Jarvan IV) domine tôt : prépare le dragon", 200.0, 320.0, me="Vi",
+        cast={"Garen": "Malphite", "Vi": "JarvanIV", "Lux": "Orianna", "Jinx": "MissFortune", "Thresh": "Leona",
+              "Darius": "Kayle", "LeeSin": "MasterYi", "Ahri": "Kassadin", "Caitlyn": "Jinx", "Nautilus": "Sona"},
+        paths={"Vi": [(200.0, (0.30, 0.65)), (250.0, (0.55, 0.74)), (320.0, (0.60, 0.76))],
+               "LeeSin": [(200.0, None)]},
+        moments=[Moment(256.0, 300.0, "dragon dans 45 s, notre comp domine : prépare le dragon",
+                        r"(?i)prépare le dragon : ton équipe domine", levels=("debutant", "intermediaire"))])
+    S["fed_carry"] = Scenario(
+        "fed_carry", "Caitlyn 4/0 avec 3 objets à 15:00 : ils passent devant", 880.0, 1000.0,
+        kills=[(905.0, "Caitlyn", "Jinx", ["Nautilus"]), (912.0, "Caitlyn", "Thresh", []),
+               (930.0, "Caitlyn", "Lux", []), (940.0, "Caitlyn", "Vi", [])],
+        items={"Caitlyn": [(0, [1055, 3006, 3031]), (920, [3006, 3031, 3094, 3036])]},
+        waves={"top": [(880.0, 0.5)]})
     return S
 
 
@@ -674,6 +777,8 @@ def run(scenario: str | Scenario, level: str = "debutant", hz: float = 2.0) -> R
         orig_speak(said, t, gt)
     eng._speak_alerts = _speak                                        # type: ignore[method-assign]
     eng._ensure_components()
+    if sc.bar:
+        eng.resources_bar_source = lambda _t: game.bar(src.gt)     # type: ignore[attr-defined]
     patched = (waves_mod.WaveTracker.update, waves_mod.WaveTracker.waves)
     waves_mod.WaveTracker.update = lambda self, *a, **k: False              # type: ignore[method-assign]
     waves_mod.WaveTracker.waves = lambda self, *a, **k: game.waves(src.gt)  # type: ignore[method-assign]
@@ -747,13 +852,15 @@ change évite tue retourne suis garde bloque contrôle place utilise vise arrêt
 cours fuis prépare lance engage attaque rejoins tourne ramasse récupère monte descends gèle fais ne
 regarde surveille mets reviens profite plaque tape nettoie prends cache échange harcèle sécurise vole
 continue termine finis avance repousse punis gagne réapparais dépense économise sauve suis groupe
-balise baisse lâche enchaîne utilise rapproche-toi envahis regroupe-toi concentre-toi
+balise baisse lâche enchaîne utilise rapproche-toi envahis regroupe-toi concentre-toi bois téléporte-toi
 """.split())
 PLACES = re.compile(r"(?i)\b(top|mid|milieu|bot|haut|bas|tours?|tourelle|base|dragon|baron|héraut|larves|"
                     r"rivière|buisson|vague|sbires|jungle|camps?|nexus|inhibiteur|fontaine|voie|plaques?|balises?|"
                     r"objet|bottes|élixir|ancestral|équipe|alliés?|tireur|tank|ennemis?|adversaire|derrière|lampe|"
-                    r"châtiment|téléportation|or|PO|achète|acheter)\b|"
-                    + "|".join(re.escape(n) for n in NAME.values()))
+                    r"châtiment|téléportation|or|PO|achète|acheter|potion|charges?)\b|"
+                    r"\b(?-i:(?:ton|ta) [A-ZÉ])|"               # my own resource: "ton R", "ton Soin", "ta Barrière"
+                    + "|".join(re.escape(n) for n in list(NAME.values())
+                               + sorted({cast_name(c) for sc in SCENARIOS.values() for c in sc.cast.values()})))
 ENGLISH = re.compile(r"(?i)\b(the|and|you|your|with|go|safe|push|back|recall|care|wave|lane|wards?|roam|"
                      r"farm|gank it|play)\b")
 OBJ_WORD = re.compile(r"(?i)\b(dragon|baron|héraut|larves)\b")

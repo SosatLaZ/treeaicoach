@@ -1024,6 +1024,61 @@ def _plays_section(record: dict) -> str:
             f'<div><h3 class="ph3">À corriger</h3>{rows(summ.get("worst") or [])}</div></div></div>')
 
 
+# ======================================================================================
+# game understanding (mastermind.py): comps, power windows, plan vs what happened
+# ======================================================================================
+def _understanding_section(record: dict) -> str:
+    """"Compréhension de la partie": both compositions, the plan at the start (windows, win
+    conditions, my role), who was stronger when (bar), what the team did in each window, the
+    threats. Empty for a record without a roster. Never raises (the caller catches)."""
+    from treeaicoach import mastermind
+
+    u = mastermind.understanding(record)
+    if not u:
+        return ""
+    dur = max(1.0, float(record.get("duration") or 0.0) or max([b for _a, b, _l in u.get("fenetres") or []] or [1.0]))
+    col = {"us": GREEN, "them": RED, "even": MUTED}
+    bar = "".join(f'<span title="{_e(mastermind.clock(a))}-{_e(mastermind.clock(b))}" style="flex:{max(0.5, b - a):.0f};'
+                  f'background:{col.get(lv, MUTED)}"></span>' for a, b, lv in u.get("fenetres") or [] if b > a)
+    ticks = "".join(f'<span style="left:{100.0 * m * 60 / dur:.1f}%">{m}</span>' for m in range(0, int(dur // 60) + 1, 5))
+
+    def comp(title: str, d: dict) -> str:
+        return (f'<div><h3 class="ph3">{_e(title)}</h3><p>{_e(d.get("resume"))}</p>'
+                + (f'<p class="small">Carry : {_e(d.get("carry"))}</p>' if d.get("carry") else "") + "</div>")
+
+    plan = u.get("plan") or {}
+    lis = [f'<li class="info"><span class="i">i</span><span><b>Fenêtre :</b> {_e(plan.get("fenetre"))}</span></li>']
+    if plan.get("voie"):
+        lis.append(f'<li class="info"><span class="i">i</span><span><b>Ta voie :</b> {_e(plan.get("voie"))}</span></li>')
+    if plan.get("jungle"):
+        lis.append(f'<li class="info"><span class="i">i</span><span><b>Jungle :</b> {_e(plan.get("jungle"))}</span></li>')
+    lis += [f'<li class="good"><span class="i">✓</span><span>{_e(x)}</span></li>' for x in plan.get("nous") or []]
+    lis += [f'<li class="warn"><span class="i">!</span><span>Leur plan : {_e(x)}</span></li>' for x in plan.get("eux") or []]
+    did = "".join(f'<li class="{"good" if "bien joué" in x or "limité" in x else "warn"}"><span class="i">'
+                  f'{"✓" if "bien joué" in x or "limité" in x else "!"}</span><span>{_e(x)}</span></li>'
+                  for x in u.get("fait") or [])
+    role = f'<p><b>Ton rôle :</b> {_e(u.get("role"))}</p>' if u.get("role") else ""
+    thr = "".join(f'<li class="warn"><span class="i">!</span><span><b>{_e(t.get("c"))}</b> '
+                  f'{_e(", ".join(t.get("pourquoi") or []))}{" (" + _e(", ".join(t.get("tags"))) + ")" if t.get("tags") else ""}'
+                  f'</span></li>' for t in u.get("menaces") or [])
+    return (f'<div class="panel"><h2>Compréhension de la partie</h2><div class="grid2">{comp("Ton équipe", u.get("nous") or {})}'
+            f'{comp("Équipe adverse", u.get("eux") or {})}</div>'
+            f'<h3 class="ph3">Le plan au début</h3><ul class="tips">{"".join(lis)}</ul>'
+            + (f'<p class="small">{_e(plan.get("mon_role"))}</p>' if plan.get("mon_role") else "")
+            + f'<h3 class="ph3">Qui était le plus fort</h3><div class="mmbar">{bar}</div><div class="mmticks">{ticks}</div>'
+            f'<p class="small"><span style="color:{GREEN}">■</span> ton équipe · <span style="color:{RED}">■</span> '
+            f'adversaires · <span style="color:{MUTED}">■</span> égal (courbes de puissance + or du tableau Tab)</p>'
+            + (f'<h3 class="ph3">Ce que l\'équipe a fait</h3><ul class="tips">{did}</ul>' if did else "")
+            + role + (f'<h3 class="ph3">Menaces en fin de partie</h3><ul class="tips">{thr}</ul>' if thr else "")
+            + "</div>")
+
+
+CSS_MM = f"""
+.mmbar{{display:flex;height:14px;border:1px solid {BORDER};margin:6px 0 2px}} .mmbar span{{display:block;height:100%}}
+.mmticks{{position:relative;height:14px;font-size:10px;color:{MUTED}}} .mmticks span{{position:absolute;transform:translateX(-50%)}}
+"""
+
+
 CSS_PLAYS = f"""
 .plays-top{{display:flex;gap:24px;align-items:center;flex-wrap:wrap;margin-bottom:14px}}
 .prec .v{{font-size:40px;font-weight:700;line-height:1}} .prec .l{{font-size:11px;color:{MUTED};text-transform:uppercase;
@@ -1187,7 +1242,8 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
         title = f'{s.get("champion_name") or "Partie"} · {s.get("result_label") or ""}'.strip(" ·")
         parts = []
         for fn in (lambda: _header(rec, a), lambda: _cards(a), lambda: _tips_section(a),
-                   lambda: _plays_section(rec), lambda: _moments_section(rec, a), lambda: _voice_box(a),
+                   lambda: _plays_section(rec), lambda: _understanding_section(rec),
+                   lambda: _moments_section(rec, a), lambda: _voice_box(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _truth_section(rec, a),
                    lambda: _presence_section(rec, a),
                    lambda: _positioning_section(a),
@@ -1212,7 +1268,7 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
                   f'sources : capture de la minimap et API Live Client de Riot</div>')
         page = ("<!DOCTYPE html>\n<html lang=\"fr\"><head><meta charset=\"utf-8\">"
                 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" + refresh +
-                f"<title>{_e(APP_NAME)} · {_e(title)}</title><style>{CSS}{CSS_V2}{CSS_TRUTH}{CSS_PLAYS}</style></head>"
+                f"<title>{_e(APP_NAME)} · {_e(title)}</title><style>{CSS}{CSS_V2}{CSS_TRUTH}{CSS_PLAYS}{CSS_MM}</style></head>"
                 f"<body><div class=\"wrap\">{warn}{''.join(parts)}{footer}</div></body></html>")
         # design rule (docs/DESIGN.md): no em dash, even in texts coming from other modules
         em = chr(0x2014)

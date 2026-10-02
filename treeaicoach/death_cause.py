@@ -135,6 +135,7 @@ class DeathCoach:
         self._pending: tuple[float, tuple[str, str]] | None = None
         self.last: tuple[str, str] | None = None
         self.causes: list[str] = []
+        self.log: list[tuple[float, str, str]] = []      # (game time, cause, line) per death (AI snapshot)
 
     def update(self, gt: float, facts: dict, game: Any) -> tuple[str, str] | None:
         """``(cause, line)`` when it is time to show it (once per death), else None."""
@@ -154,6 +155,7 @@ class DeathCoach:
             self.last = res
             if res is not None:
                 self.causes.append(res[0])
+                self.log.append((float(gt), res[0], res[1]))
                 self._pending = (gt + CAUSE_DELAY_S, res)
         if self._pending is not None and gt >= self._pending[0]:
             res, self._pending = self._pending[1], None

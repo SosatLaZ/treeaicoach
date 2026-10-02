@@ -303,7 +303,8 @@ AI_SHORT: dict[str, str] = {"gemini": "Gemini", "groq": "Groq", "openrouter": "O
 #: ai_advisor.AIError code -> short French status (dashboard row, "Tester la clé")
 AI_ERR_SHORT: dict[str, str] = {"key": "clé refusée", "nokey": "clé manquante", "quota": "quota atteint",
                                 "offline": "service injoignable", "model": "modèle inconnu",
-                                "server": "erreur du service", "bad": "réponse illisible"}
+                                "server": "erreur du service", "bad": "réponse illisible",
+                                "rate": "limite / minute", "empty": "réponse vide"}
 
 
 def ai_row(provider: str = "off", key_set: bool = False, budget: str = "",
@@ -345,6 +346,8 @@ def test_ai_key(cfg: Any, caller: Callable[..., str] | None = None) -> tuple[boo
             call(prov, key, str(getattr(cfg, "ai_model", "") or ""), "Réponds en un mot.", "Réponds : OK",
                  timeout=8.0, max_tokens=16)
         except ai_advisor.AIError as exc:
+            if exc.code == "rate":            # 429 per minute: the key was accepted (it is metered)
+                return True, "clé OK", f"{name} : la clé fonctionne (limite par minute atteinte pour l'instant)."
             if exc.code != "empty":           # an empty answer = the key was accepted
                 return (False, AI_ERR_SHORT.get(exc.code, AI_ERR_SHORT["server"]),
                         ai_advisor.error_text(exc.code, prov).replace("Conseil IA", name))

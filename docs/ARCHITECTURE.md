@@ -77,6 +77,7 @@ treeaicoach/                    package Python (runtime, embarqué dans le .exe)
   minimap_locator.py            localisation automatique de la minimap
   detector.py  roster_matcher.py  patch_classifier.py  identifier.py  det_params.py   détection
   self_icon.py  hud_reader.py  camera_proj.py      mon icône (skins perso), HUD du bas, rectangle caméra
+  hud_abilities.py              MA barre de sorts (Q W E R, D F, objets, balise) : recharge, prêt, charges
   tracker.py  fog_tracker.py  jungle_intel.py  jungle_path.py   suivi, brouillard, jungler ennemi
   live_client.py  champions.py  game_data.py  meta.py  lcu.py  champ_select.py   données de partie
   render.py  demo.py            rendu de minimaps (entraînement, démo, autotest), partie simulée
@@ -1019,6 +1020,50 @@ dans ma base pendant le siège, revue IA avec des objets anglais hors méta.
   (`review_item_candidates` : build + objets de base de la classe + contres, noms français) ; `ground_review` retire
   toute phrase qui nomme un autre objet (FR ou anglais) et francise les noms anglais autorisés ; réponse anglaise rejetée.
 
+### 17 bis. IA v3 « mastermind » (audit en direct sur Groq, 2026-10)
+
+* **Un seul instantané** (`build_snapshot`, ordre fixe `SNAP_ORDER`, < 1,5 k jetons, mesuré 600–1 000) :
+  `t`, `ph` (voie / milieu / fin), `mo`, **`carte`** (appel actif de la carte : `macro_active()`), `me` (PV %,
+  objets, or, réapparition), `voie` (adversaire, écarts niv / or / CS, 2 conseils de `matchups.json` en phase de
+  voie), `eq` (or d'équipe + **tendance sur 2 min**, kills, somme des niveaux), `al` / `en` (une ligne par joueur,
+  objets finis des ennemis, « mort Xs »), `compo` (`team_profile` : dégâts P/M, styles, courbe, contrôle + plan de
+  victoire d'un module d'analyse de compo s'il expose `win_condition()` / `team_comp_summary()`), `effets` (objets
+  légendaires ennemis : anti-soin, stase, armure x2…), `jgl` (vu où / il y a combien, Tab : farm, achat, niveau,
+  côté probable < 6:00), `obj`, `carto` (dragons, âme, buffs, tours / inhibiteurs perdus), `morts` (+ cause de
+  `death_cause.DeathCoach.log`), `ev`, `coups` + `prec`, `achat`, `objets_possibles`, `prio`, `balises`, `wp`,
+  `plus` (**contrat ouvert** : `engine.ai_extra_context() -> dict` pour tout autre module). `engine_context(engine)`
+  construit la partie « moteur ».
+* **Plan JSON** (`PLAN_SCHEMA_FR`) : `plan` (verbe à l'impératif), `etapes` (détails nouveaux ; une étape qui répète
+  le plan est retirée), `objectif`, `urgence`, **`carte`** (`suit` / `differe` / `aucune`) + `pourquoi` (1 ligne si
+  `differe`). `frenchify` remplace le jargon anglais (farm, lane, last-hit, ward…). Réponse tronquée (`length`) :
+  `plan` et étapes complètes récupérés (`_salvage_plan`).
+* **Cohérence avec la carte** (`card_check`, `Advice.check_card`) : posture « recule » contre « prends / frappe »,
+  ou deux objectifs différents → `conflict` (jamais affiché) ; désaccord expliqué → `explained` (affiché quand la
+  carte n'est plus active, avec « Pourquoi pas la carte : … »).
+* **Publication** (`engine_coaching._ai_publish`) : TOUT passe par le présentateur (avant : la ligne HUD était écrite
+  directement, combats compris) ; retenu pendant un combat / une menace de gank, refusé s'il est périmé
+  (`Advice.max_age` : 25 s, F8 60 s) ; réponse à F8 et appel bonus « urgence » en urgence 2 (passent la barre
+  « expert » et une ligne ordinaire). `_ai_in_fight` lit `tactics.in_fight()` (avant : attributs inexistants,
+  toujours faux).
+* **Politique** : une seule requête en vol (drapeau réservé sous verrou : moteur + touche F8 ne lancent jamais
+  deux requêtes), génération par partie (une réponse de la partie précédente est jetée), moment clé pendant un
+  combat **différé** (`DEFER_S` = 30 s), fenêtres décisives (ace, carrys morts, surnombre, avance) sur le créneau
+  « objective » ; une réponse inutilisable rend son créneau ; `GAME_HARD_CAP` compte les requêtes **envoyées**
+  (`budget.sent`, jamais remboursé).
+* **Fournisseurs** : 429 séparé en `rate` (limite par minute : attente donnée par le fournisseur, 1 nouvel essai
+  si ≤ 3 s, recul 15–120 s, jamais bloquant pour l'auto-diagnostic) et `quota` (jour / compte) ; erreur dans un
+  corps 200 (OpenRouter) ; modèle remplacé mémorisé par (fournisseur, modèle demandé) ; modèles parole / sécurité
+  jamais choisis ; Gemini : modèle par défaut `gemini-3.5-flash-lite`, `thinkingConfig` (2.5 : budget 0, 3 :
+  niveau bas), parties `thought` ignorées, `promptFeedback.blockReason` ; Ollama : `think` pour les modèles qui
+  réfléchissent ; Anthropic : `claude-haiku-4-5`, `stop_reason: refusal`. « Tester » envoie une vraie requête de
+  plan JSON ; « Tester la clé » : une limite par minute prouve que la clé marche.
+* **Revue d'après-partie** : JSON (2 points forts, **exactement 3 axes** `axe` / `preuve` / `exercice`, `objets`),
+  rendue en français ; ancrage objet par champ (un consommable comme la balise de contrôle est toujours permis),
+  axe manquant complété depuis les chiffres du rapport (`_rule_axes`), verdicts des morts en français, déroulé de
+  la partie (`AIAdvisor.timeline` : écart d'or / kills toutes les 2 min + plans donnés) dans le prompt.
+* **Test en direct** : `GROQ_API_KEY=... python -m tools.ai_live_check` (clé lue dans l'environnement seulement,
+  ~7 requêtes) ; le test pytest réel ne tourne qu'avec `TREEAICOACH_LIVE_AI=1`.
+
 ## 18. Pipeline v2 — capture, cadence, overlay fluide, diagnostic (systèmes)
 
 Pourquoi les vraies parties échouaient là où nos tests passaient : capture GDI (mss) lente, noire
@@ -1306,3 +1351,33 @@ Retour réel (« les conseils sont nuls ») : la carte affichait des généralit
   `voix:longue`, `incohérence:carte-bandeau`, `état:objectif-périmé`, `valeur:leçon-mort`,
   `état:recule-pendant-rappel` ; scénarios `jungler_bot`, `laner_recall`, `baron_3v0`, `fed_enemy`,
   `recall_tower`, `enemy_buys`. Tests : `tests/test_game_changers.py`.
+
+## 24. Ressources oubliées (`resources_coach.py` + `hud_abilities.py`)
+
+Demande réelle : « capture tout, y compris les sorts que j'oublie d'utiliser ». Uniquement MON état
+(politique Riot) : API Live Client (`activePlayer` : niveaux de compétences, niveau, or, PV ; mes objets
+avec leur case et leur pile `item_slots` / `item_counts`, mes sorts d'invocateur) et MA barre de sorts à
+l'écran. Jamais un temps de recharge ennemi, jamais une entrée envoyée au jeu.
+
+* **Lecteur de barre** (`hud_abilities.AbilityBarReader`) : géométrie des cases mesurée sur de vraies
+  captures 2000×1125 (`SLOTS`, décalages depuis le portrait de `hud_reader`), ajustée une fois par taille de
+  fenêtre (échelle + décalage : chaque case est un carré, on maximise le côté le plus faible ; grossier sur
+  gradient flouté puis fin ; ~170 ms, sur un fil à part). Lecture d'un petit patch ≤ 2 Hz (~0,65 ms) :
+  recharge = bleu plat saturé (H 99-108, S ≥ 160) sur ≥ 5 % de l'icône, prêt = cadre doré, charges de la
+  balise = chiffre blanc du coin (1 étroit / 2 large ; 0 si compte à rebours au centre), `valid` = bords
+  des cases encore visibles (HUD masqué → rien). Mesure : 84/84 états Q W E R D F annotés à la main sur
+  14 vraies images (10 scènes distinctes, 4 tailles de fenêtre, vivant / mort, vidéo floue) ; charges de
+  la balise 13/14 (1 illisible en 1280×720 JPEG, 0 fausse).
+* **Règles** (une ligne courte, verbe en tête, routée par le présentateur, type `resource` : PANEL, en
+  combat seulement si urgence ≥ 2, jamais pendant un gank ; pas de voix) : point de compétence non dépensé
+  (« Monte ton R : tu es niveau 6 », R d'abord), leçon de mort (« Utilise ton Soin avant de mourir : il
+  était prêt », Flash / Soin / Barrière / Fantôme / Fatigue / Purge, actifs défensifs, R défensif ; après la
+  ligne de cause de mort), potion à < 40 % PV, R prêt au début d'un combat, Téléportation prête pendant un
+  combat de l'équipe loin de moi, or ≥ 1 500 pendant 60 s (coordonné avec les rappels existants : un seul
+  message de retour par trajet), balise de contrôle gardée 3 min, 2 charges de balise pendant 45 s, balise
+  rouge pour le support quête finie. Hors point de compétence et leçons de mort : débutant / intermédiaire.
+* **Affichage confirmé** : une ligne compte comme montrée seulement quand la carte l'affiche (un autre
+  système peut écrire la carte au même tick) ; sinon elle est reproposée 12 s plus tard. Une nouvelle ligne
+  attend que la carte actuelle ait été lue 5,5 s.
+* **Juge** : scénarios `skill_r6`, `death_heal`, `trinket_full` ; tests `tests/test_hud_abilities.py`
+  (vraies bandes HUD `tests/fixtures/hud_bar/`, HUD synthétique, coût) et `tests/test_resources_coach.py`.

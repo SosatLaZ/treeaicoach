@@ -54,3 +54,8 @@ Hard rules distilled from real user feedback. Each one cost a bad release.
     enemy buys, recall in danger) with its time window. Card, banner and voice say the SAME call; the
     voice never speaks a call the card does not show. `tools/ux_replay.py` judges VALUE (missed
     moments, generic lines in a key moment, voice budget, stale countdowns) - keep it at 0.
+20. **The AI is one more voice of the same coach, never a second opinion on screen.** It gets ONE compact
+    snapshot of everything we know, goes through the presenter like every message, never shows a plan
+    that contradicts the live card (an explained disagreement waits for the card to end), never shows a
+    stale plan, never asks during a fight. Live-test providers (`tools/ai_live_check.py`): their models,
+    limits and formats change (Groq dropped llama-3.3 and caps 8 000 tokens / minute in 2026).

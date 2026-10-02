@@ -186,7 +186,8 @@ NOTICES: dict[str, str] = {
 }
 AI_WHY: dict[str, str] = {"key": "clé refusée", "nokey": "aucune clé", "quota": "quota atteint",
                           "model": "modèle introuvable", "offline": "service injoignable",
-                          "server": "erreurs du service", "empty": "réponses vides", "bad": "réponses illisibles"}
+                          "server": "erreurs du service", "empty": "réponses vides", "bad": "réponses illisibles",
+                          "rate": "limite par minute"}
 OUTCOME_FR: dict[str, str] = {"fixed": "corrigé automatiquement", "resolved": "rentré dans l'ordre",
                               "open": "non résolu"}
 
@@ -849,7 +850,8 @@ class SelfCheck:
         # a NEW failure this game = the advisor set a later back-off deadline (a stale error text
         # from the previous game does not count; a settings change clears the deadline: not one)
         mark = s.ai_backoff_until
-        if mark is not None and st.mark is not None and mark > st.mark:
+        transient = s.ai_status is not None and s.ai_code == "rate"   # per-minute limit: waits, never stops
+        if mark is not None and st.mark is not None and mark > st.mark and not transient:
             st.errors += 1
         if mark is not None:
             st.mark = mark

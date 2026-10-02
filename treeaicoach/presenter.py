@@ -27,6 +27,7 @@ Routing table (:data:`ROUTES`, also in docs/ARCHITECTURE.md §20)::
     objective    PANEL      DROP           PANEL      yes***  0.60   (*** <= 20 s and my role plays it)
     death_cause  PANEL      DROP           PANEL      no      0.65
     warning      PANEL      DROP           DROP       no      0.55
+    resource     PANEL      PANEL****      DROP       no      0.55   (**** fight only: urgency >= 2, never in a gank)
     ai           PANEL      DROP           PANEL      no      0.50
     insight      PANEL      DROP           DROP       no      0.40
     tip          PANEL      DROP           DROP       no      0.30
@@ -78,6 +79,7 @@ ROUTES: dict[str, Route] = {
     "objective": Route(PANEL, DROP, PANEL, True, 0.60),
     "death_cause": Route(PANEL, DROP, PANEL, False, 0.65),
     "warning": Route(PANEL, DROP, DROP, False, 0.55),
+    "resource": Route(PANEL, PANEL, DROP, False, 0.55),   # resources_coach: skill point, potion, spells...
     "ai": Route(PANEL, DROP, PANEL, False, 0.50),
     "insight": Route(PANEL, DROP, DROP, False, 0.40),
     "tip": Route(PANEL, DROP, DROP, False, 0.30),
@@ -133,7 +135,7 @@ change évite tue retourne suis garde bloque contrôle place utilise vise arrêt
 cours fuis prépare lance engage attaque rejoins tourne ramasse récupère monte descends gèle fais ne
 regarde surveille mets reviens profite plaque tape nettoie cache harcèle sécurise vole balise
 continue termine finis avance repousse punis dépense économise sauve groupe concentre-toi regroupe-toi
-enchaîne passe passe-toi téléporte-toi envahis force conteste rapproche-toi
+enchaîne passe passe-toi téléporte-toi envahis force conteste rapproche-toi bois échange
 """.split())
 _STRIP = " .!"
 _COMMON_STARTS = frozenset("le la les leur leurs ton ta tes peu ils il elle tu un une des jungler sbires phase "
@@ -206,7 +208,7 @@ CONTRADICTION_S = 10.0
 def message_kind(toast_kind: str, key: str = "") -> str:
     """Router kind of an engine toast ``(kind, key)`` (``key`` prefixes say who sent it)."""
     k = str(key or "")
-    for prefix, kind in (("genie", "macro"), ("urgent:genie", "macro"), ("call:retreat", "retreat"),
+    for prefix, kind in (("res:", "resource"), ("genie", "macro"), ("urgent:genie", "macro"), ("call:retreat", "retreat"),
                          ("call:engage", "engage"), ("call:", "macro"), ("macro", "macro"), ("tip:", "tip"),
                          ("ai", "ai"), ("objective", "objective"), ("death", "death_cause"),
                          ("text:objective", "objective"), ("text:death", "death_cause"),
@@ -227,6 +229,7 @@ class Presenter:
         self._last_banner_t = -1e9
         self._banner_ids: dict[Any, bool] = {}
         self._panel: _Panel | None = None
+        self._fight_ok: dict[str, float] = {}                 # panel lines allowed during a fight (text -> t)
         self.log: list[tuple[float, str, str, str]] = []      # (t, kind, channel, text) for tests / sim
 
     # ------------------------------------------------------------------ routing
@@ -240,6 +243,10 @@ class Presenter:
                     self._last_banner_t = ctx.t
                 if d.channel == PANEL:
                     self._panel = _Panel(msg.text, int(msg.urgency), ctx.t, ctx.t + max(1.0, float(msg.ttl)))
+                    if msg.kind == "resource" and msg.urgency >= 2:
+                        if len(self._fight_ok) > 50:
+                            self._fight_ok.clear()
+                        self._fight_ok[msg.text] = ctx.t
             self.log.append((ctx.t, msg.kind, d.channel, msg.text))
             if len(self.log) > 2000:
                 del self.log[:1000]
@@ -261,6 +268,8 @@ class Presenter:
             ch = route.fight
             if msg.kind == "play" and ctx.gank:
                 ch = DROP
+            if msg.kind == "resource" and (ctx.gank or msg.urgency < 2):
+                ch = DROP                    # a fight: only the short resource lines that change it
         else:
             ch = route.normal
         if ch == DROP:
@@ -305,6 +314,9 @@ class Presenter:
             return None
         t = str(tone or "").lower()
         if (ctx.fight or ctx.gank) and t not in ("danger", "warning"):
+            ok_t = self._fight_ok.get(line)
+            if ctx.fight and not ctx.gank and ok_t is not None and 0.0 <= ctx.t - ok_t <= 12.0:
+                return line                  # "Monte ton R", "Bois ta potion": they change the fight
             return None
         return line
 

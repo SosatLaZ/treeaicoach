@@ -178,13 +178,11 @@ def test_smarter_moments_swing_lead_trade_blunders_and_objective_lead():
 
 
 def test_engine_context_v2_keys():
-    from treeaicoach.live_client import GameInfo  # noqa: F401
-
     tr_me = NS(position=lambda: (0.8, 0.9))
     tracker = NS(me=lambda: tr_me, allies=lambda visible_only=False: [], enemies=lambda visible_only=False: [],
                  get=lambda alias: None)
-    sb = NS(players=(1,), team_gold_diff=-1800,
-            my_matchup=NS(gold_diff=-600, level_diff=-1, cs_diff=-12, enemy="Zed"))
+    sb = NS(players=(1,), team_gold_diff=-1800, ally_kills=4, enemy_kills=7,
+            my_matchup=NS(gold_diff=-600, level_diff=-1, cs_diff=-12, enemy="Zed", enemy_alias="Zed"))
     plays_hist = [Play("blunder", "facecheck", "Mort dans le brouillard.", 1.0, 590.0, "k")]
     eng = NS(_clock=lambda: 100.0, _game=G(600.0), _tracker=tracker, scoreboard_summary=lambda: sb,
              _coach=NS(waves=lambda: {"bot": {"state": "pushing"}, "top": {"state": "pushed_in"}}),
@@ -192,14 +190,17 @@ def test_engine_context_v2_keys():
              _objectives=NS(states=lambda: [NS(key="dragon", name="Dragon", alive=False, remaining=70.0)]),
              jungle_intel=lambda: {"start": "rouge haut", "vu": "bot 0:45"})
     ctx = ai.engine_context(eng)
-    assert ctx["coups"][0]["c"] == "blunder" and ctx["prec"] == 58
-    assert ctx["diff"] == {"eq": -1800, "po": -600, "niv": -1, "cs": -12, "vs": "Zed"}
+    assert ctx["coups"][0].startswith("9:50 blunder") and ctx["prec"] == 58
+    assert ctx["diff"] == {"eq": -1800, "kills": "4-7", "po": -600, "niv": -1, "cs": -12, "vs": "Zed", "vs_alias": "Zed"}
+    assert ctx["conseils"] and all(isinstance(x, str) for x in ctx["conseils"])        # matchups.json lines
     assert ctx["prio"]["bot"].startswith("prio") and ctx["prio"]["top"] == "vague chez nous"
-    assert ctx["jint"]["start"] == "rouge haut"
+    assert ctx["jgl"]["start"] == "rouge haut"
     assert ctx["balises"] and all(isinstance(x, str) for x in ctx["balises"])
     snap = ai.build_snapshot(G(600.0), moment="objective", context=ctx,
                              objectives=[NS(key="dragon", name="Dragon", alive=False, remaining=70.0)])
-    assert snap["objt"] == [["Dragon", 70]]
+    assert snap["obj"] == [["Dragon", 70]]
+    assert snap["voie"]["vs"] == "Zed" and snap["voie"]["po"] == -600 and snap["voie"]["conseils"]
+    assert snap["eq"]["po"] == -1800 and snap["eq"]["kills"] == "4-7"
     assert ai.rule_plan("objective", snap)["plan"].startswith("Dragon dans 1:10")
 
 
@@ -217,7 +218,7 @@ def test_jungle_intel_tracker_state_in_context():
     st = JungleIntel(alias="Vi", name="Vi", level=7, farming=True, farm_side="bot", text="Vi farme côté bas")
     eng = NS(_clock=lambda: 50.0, _game=G(600.0), _jungle_intel=NS(state=lambda: st))
     ctx = ai.engine_context(eng)
-    assert ctx["jint"] == {"c": "Vi", "txt": "Vi farme côté bas", "farm": "bot", "lv": 7}
+    assert ctx["jgl"] == {"c": "Vi", "txt": "Vi farme côté bas", "farm": "bot", "lv": 7}
 
 
 def test_hard_cap_of_ten_requests_per_game():

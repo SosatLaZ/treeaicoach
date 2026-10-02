@@ -273,6 +273,37 @@ def matchup_card(game: Any, my_role: str | None, opp_alias: str | None) -> Match
         return None
 
 
+def team_card(reading: Any) -> MatchupCard | None:
+    """The game-start TEAM plan card from a :class:`treeaicoach.mastermind.Reading`: "PLAN D'ÉQUIPE"
+    + our main win condition (an instruction, verb first: card material) + my role in it. The
+    subtitle (first line) is what the banner shows. None without a reading. Never raises."""
+    try:
+        if reading is None:
+            return None
+        lines = [x for x in reading.team_plan() if x]
+        if not lines:
+            return None
+        first = fit(lines[0]) or lines[0]
+        rest = tuple(x for x in lines[1:] if x)
+        return MatchupCard("PLAN D'ÉQUIPE", (first,) + rest, None, None)
+    except Exception:
+        log.debug("team_card failed", exc_info=True)
+        return None
+
+
+def team_plan_lines(game: Any, my_role: str | None = None, opp_alias: str | None = None) -> list[str]:
+    """Pre-game / game-start team read in plain French from a Live Client snapshot (mastermind):
+    both compositions, the power window, our win conditions, my role. Pure, never raises."""
+    try:
+        from treeaicoach import mastermind
+
+        r = mastermind.analyze(game, role=my_role, lane_opp=opp_alias)
+        return r.lines() if r is not None else []
+    except Exception:
+        log.debug("team_plan_lines failed", exc_info=True)
+        return []
+
+
 def map_fields(state: Any) -> dict[str, Any]:
     """:class:`treeaicoach.tips.TipContext` fields from :class:`treeaicoach.phase.MapState`."""
     out: dict[str, Any] = {}
@@ -296,5 +327,5 @@ def map_fields(state: Any) -> dict[str, Any]:
     return out
 
 
-__all__ = ["MatchupCard", "matchup_card", "lane_lines", "rule_lines", "matchup_lines", "matchups", "jungle_line",
+__all__ = ["MatchupCard", "matchup_card", "team_card", "team_plan_lines", "lane_lines", "rule_lines", "matchup_lines", "matchups", "jungle_line",
            "probable_gank_side", "jungler_first_gank", "map_fields", "OBJ_ROLES"]

@@ -150,6 +150,9 @@ class CoachingMixin:
         self.text_messages.append((t, "genie", f"{c.text} ({c.why})"))
         del self.text_messages[:-100]
         self.macro_calls = (getattr(self, "macro_calls", []) + [(gt, c)])[-50:]
+        mm = getattr(self, "_mastermind", None)
+        if mm is not None and c.kind == "gc_window":
+            mm.note_call(gt, c.text)                      # post-game: the windows we told the player
         rec = self._recorder
         if rec is not None:
             try:
@@ -469,6 +472,7 @@ class CoachingMixin:
             elif gt + 5.0 < getattr(self, "_extras_gt", 0.0):          # new game
                 hc.reset()
                 ai.reset()
+                self._ai_held = None                                  # never a plan of the last game
             self._extras_gt = gt
             hc.apply_config(cfg)
             ai.apply_config(cfg)
@@ -488,20 +492,12 @@ class CoachingMixin:
                 in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
             from treeaicoach.ai_advisor import engine_context
 
+            in_fight = self._ai_in_fight()
             ai.update(t, game, in_base=in_base, roles=self._role_resolver, scoreboard=summary,
                       objectives=self._objectives.states() if self._objectives is not None else [],
                       item_text=self.item_advice_text(), threat=threat, context=lambda: engine_context(self, t),
-                      win_prob=hc.win_probability(), in_fight=self._ai_in_fight())
-            adv = ai.poll()
-            if adv is not None:
-                self.last_ai_advice = adv.text
-                self.ai_answer_seq = getattr(self, "ai_answer_seq", 0) + 1
-                self._text_msg, self._text_kind = (t, adv.text), "ai"
-                self.text_messages.append((t, "ai", adv.text))
-                title = adv.title
-                self._toast("warning" if adv.error else "insight", title, adv.text, None, f"ai:{adv.t:.0f}", t)
-                if getattr(cfg, "ai_speak", False) and threat < Level.WARNING and not adv.error:
-                    self._say(adv.text, int(Level.INFO))
+                      win_prob=hc.win_probability(), in_fight=in_fight)
+            self._ai_publish(t, gt, ai, threat, in_fight)
         except Exception:
             self._errors += 1
             self._err.exception("Hype / AI advice failed")
@@ -557,15 +553,88 @@ class CoachingMixin:
             return None
 
     def _ai_in_fight(self) -> bool:
-        for attr in ("_fight", "_fight_tracker"):
-            ft = getattr(self, attr, None)
-            fn = getattr(ft, "in_fight", None)
-            if fn is not None:
-                try:
-                    return bool(fn() if callable(fn) else fn)
-                except Exception:
-                    return False
+        """A fight is on (the tactical director's fight tracker, the same source as the presenter).
+        Bug fixed: this used to look for ``_fight`` / ``_fight_tracker`` attributes the engine does
+        not have, so the AI never knew about fights."""
+        tac = getattr(self, "_tactics", None)
+        fn = getattr(tac, "in_fight", None)
+        if callable(fn):
+            try:
+                return bool(fn())
+            except Exception:
+                return False
         return False
+
+    def _ai_publish(self, t: float, gt: float, ai: Any, threat: int, in_fight: bool) -> None:
+        """Show a finished AI / offline plan through the presenter, or hold / drop it:
+
+        * held while a fight / gank threat is on, and while it contradicts the live game-changer
+          card (an explained disagreement waits for the card to go; an unexplained one is dropped);
+        * dropped once older than its moment allows (``Advice.max_age``): never a stale plan;
+        * shown = routed by the presenter (kind "ai"); only then the HUD state / voice / timeline."""
+        adv = ai.poll()
+        if adv is not None:
+            prev = getattr(self, "_ai_held", None)
+            if prev is not None and prev is not adv:
+                ai.note_dropped(prev, "replaced")
+            self._ai_held = adv
+        adv = getattr(self, "_ai_held", None)
+        if adv is None:
+            return
+        if t - adv.t > adv.max_age:
+            self._ai_held = None
+            ai.note_dropped(adv, "stale")
+            return
+        if not adv.error and (in_fight or threat >= int(Level.WARNING)):
+            return                                          # after the fight, if still fresh
+        tac = getattr(self, "_tactics", None)
+        card = tac.macro_active() if tac is not None and hasattr(tac, "macro_active") else None
+        verdict = adv.check_card(card)
+        if verdict == "conflict":
+            self._ai_held = None
+            ai.note_dropped(adv, "conflict")
+            return
+        if verdict == "explained":
+            return                                          # shown once the card is gone (if still fresh)
+        self._ai_held = None
+        kind, key = ("warning" if adv.error else "insight"), f"ai:{adv.t:.0f}"
+        if getattr(self, "_ai_offer_t", None) == t:
+            self._ai_held = adv                             # one offer per tick
+            return
+        self._ai_offer_t = t
+        if self._toasts is not None and getattr(self._cfg, "toasts_enabled", True):
+            # the answer to F8 (asked by the player) outranks the "question envoyée" line it replaces
+            shown = self._toast(kind, adv.title, adv.text, None, key, t, urgency=adv.urgency)
+        else:                                               # no toast window: the HUD line only, still routed
+            shown = self._ai_hud_line(adv, key, t)
+        if shown is False:
+            if t - adv.t + 1.0 > adv.max_age:
+                ai.note_dropped(adv, "presenter")
+            else:
+                self._ai_held = adv                         # panel busy / banner gap: retried while fresh
+            return
+        self.last_ai_advice = adv.text
+        self.ai_answer_seq = getattr(self, "ai_answer_seq", 0) + 1
+        self.text_messages.append((t, "ai", adv.text))
+        ai.note_shown(adv, gt)
+        if getattr(self._cfg, "ai_speak", False) and threat < Level.WARNING and not adv.error:
+            self._say(adv.text, int(Level.INFO))
+
+    def _ai_hud_line(self, adv: Any, key: str, t: float) -> bool:
+        """The AI line on the HUD card when toasts are off, through the presenter. Never raises."""
+        try:
+            pr = getattr(self, "_presenter", None)
+            if pr is not None:
+                from treeaicoach import presenter as prs
+
+                d = pr.offer(prs.Message("ai", adv.text, adv.title, topic=key, urgency=adv.urgency),
+                             self._presenter_ctx(t))
+                if d.channel == prs.DROP:
+                    return False
+            self._text_msg, self._text_kind = (t, adv.text), "ai"
+            return True
+        except Exception:
+            return False
 
     def ask_ai(self) -> str:
         """"Demander à l'IA" (hotkey / button): manual AI request, answer later as toast + HUD line.
@@ -603,7 +672,8 @@ class CoachingMixin:
             from treeaicoach.analysis import analyze_game
 
             data = json.loads(Path(record).read_text(encoding="utf-8"))
-            review = postgame_review(cfg, analyze_game(data))
+            ai = getattr(self, "_ai", None)
+            review = postgame_review(cfg, analyze_game(data), timeline=list(getattr(ai, "timeline", None) or ()))
             if review and append_review_html(html, review, str(cfg.ai_provider)):
                 self.last_ai_review = review
                 log.info("AI post-game review added to %s", html)
@@ -723,6 +793,70 @@ class CoachingMixin:
         rec = adv.current() if adv is not None and getattr(self._cfg, "item_advice", True) else None
         return rec.text if rec is not None else None
 
+    # ================================================================== MASTERMIND (mastermind.py)
+    TEAM_PLAN_GT = (80.0, 200.0)       # the game-start team plan banner, once, in this game-time window
+
+    def _mastermind_tick(self, t: float, game: GameInfo, facts: dict | None) -> Any:
+        """The game model (mastermind.MastermindModel: comps, power windows, win conditions,
+        threats), updated at most once per game second; registered for the game-changer rule;
+        the game-start team plan banner ("PLAN D'ÉQUIPE"). Returns the model. Never raises."""
+        try:
+            from treeaicoach import mastermind
+
+            mm = getattr(self, "_mastermind", None)
+            if mm is None:
+                mm = self._mastermind = mastermind.MastermindModel()
+            mastermind.set_active(mm)
+            gt = _finite((facts or {}).get("gt")) or _finite(getattr(game, "game_time", None)) or 0.0
+            last = mm.last_gt
+            if last is not None and 0.0 <= gt - last < 1.0:
+                return mm
+            role, opp = None, None
+            try:
+                roles = self._role_resolver
+                role = roles.my_role() if roles is not None and hasattr(roles, "my_role") else None
+            except Exception:
+                role = None
+            for o in (facts or {}).get("opponents") or []:
+                if isinstance(o, dict) and o.get("alias"):
+                    opp = str(o["alias"])
+                    break
+            r = mm.update(gt, game, role=role or (facts or {}).get("my_role"), lane_opp=opp)
+            self._team_plan_toast(t, gt, game, r)
+            return mm
+        except Exception:
+            self._errors += 1
+            self._err.exception("Mastermind failed")
+            return None
+
+    def _team_plan_toast(self, t: float, gt: float, game: Any, reading: Any) -> None:
+        """Once per game, at the start: "PLAN D'ÉQUIPE" banner (our main win condition, verb first)."""
+        mm = getattr(self, "_mastermind", None)
+        if reading is None or mm is None or mm.plan_shown:
+            return
+        if not (self.TEAM_PLAN_GT[0] <= gt <= self.TEAM_PLAN_GT[1]):
+            return
+        me = getattr(game, "me", None)
+        tac = self._tactics
+        if me is None or bool(getattr(me, "is_dead", False)) or (tac is not None and tac.in_fight()):
+            return
+        from treeaicoach.game_plan import team_card
+
+        card = team_card(reading)
+        mm.plan_shown = True
+        if card is not None:
+            self._toast("insight", card.title, card.subtitle, None, "plan:team", t)
+
+    def mastermind_snapshot(self) -> dict | None:
+        """The mastermind reading as a compact dict (AI advisor snapshot, UI). None before data."""
+        mm = getattr(self, "_mastermind", None)
+        return mm.snapshot() if mm is not None else None
+
+    def mastermind_reading(self) -> Any:
+        """The latest mastermind.Reading (None before data)."""
+        mm = getattr(self, "_mastermind", None)
+        return mm.current() if mm is not None else None
+
     def _stance_and_tips(self, t: float, game: GameInfo, threat: int) -> list[Alert]:
         """Stance (HUD pill, spoken on change) + rotating written tip. Never raises."""
         out: list[Alert] = []
@@ -733,8 +867,10 @@ class CoachingMixin:
             facts = self._coach.facts() if self._coach is not None else {}
             summary = self.scoreboard_summary()
             plus = self._coach_plus_tick(t, game, facts, threat)
+            mm = self._mastermind_tick(t, game, facts)
             if self._stance is not None:
                 extra_f = list(plus.factors() if plus is not None else []) + self._macro_factors()
+                extra_f += mm.gauge_factors() if mm is not None else []
                 out += list(self._stance.update(t, facts, game, summary, threat=threat, extra=extra_f) or [])
             if self._gauge is not None:
                 st = self._stance.current() if self._stance is not None else None
@@ -773,6 +909,12 @@ class CoachingMixin:
         except Exception:
             self._errors += 1
             self._err.exception("Stance / tips failed")
+        try:   # resources I forget (skill points, spells / summoners at my death, potion, trinket, gold)
+            from treeaicoach.resources_coach import engine_tick as resources_tick
+
+            resources_tick(self, t, game, threat)
+        except Exception:
+            self._err.exception("Resources coach failed")
         return out
 
     # ------------------------------------------------------------------ cross-system consistency (V2 audit)
@@ -1112,6 +1254,10 @@ class CoachingMixin:
         if line is None:
             return valid
         name = line.split(" : ", 1)[-1].split(" dans ", 1)[0].strip().lower()
+        if call is not None and call in valid and name in call.lower():
+            # the active planner call IS about this objective ("Prépare le dragon : ton équipe domine"):
+            # it replaces the countdown line while it lasts (one message per subject)
+            return [call] + [v for v in valid if v != call and name not in v.lower()]
         urgent = [v for v in valid if (self._tip_tone(v) in ("danger", "warning") or (call is not None and v == call))
                   and name not in v.lower()]
         rest = [v for v in valid if v not in urgent and name not in v.lower()]
@@ -1287,28 +1433,33 @@ class CoachingMixin:
             log.debug("toast topic failed", exc_info=True)
             return False
 
-    def _toast(self, kind: str, title: str, subtitle: str, alias: str | None, key: str, t: float) -> None:
+    def _toast(self, kind: str, title: str, subtitle: str, alias: str | None, key: str, t: float,
+               urgency: int | None = None) -> bool:
+        """Offer a message to the presenter; True if it reached the player (banner / HUD line).
+        ``urgency``: overrides the urgency derived from ``kind`` (e.g. the answer to F8)."""
         q = self._toasts
         if q is None or not getattr(self._cfg, "toasts_enabled", True):
-            return
+            return False
         if kind not in ("danger", "praise") and self._topic_seen(key, t):
-            return
+            return False
         pr = getattr(self, "_presenter", None)
         if pr is not None:
             from treeaicoach import presenter as prs
 
             mk = prs.message_kind(kind, key)
             d = pr.offer(prs.Message(mk, subtitle or title, title,
-                                     urgency={"danger": 3, "warning": 2}.get(kind, 1), topic=key,
+                                     urgency=urgency if urgency is not None else {"danger": 3, "warning": 2}.get(kind, 1),
+                                     topic=key,
                                      siege=str(key).startswith(("text:siege", "siege", "ace", "urgent:ace"))),
                          self._presenter_ctx(t))
             if d.channel == prs.DROP:
-                return
+                return False
             if d.channel == prs.PANEL:
                 if not self._keeps_death_lesson(mk):
                     self._text_msg = (t, subtitle or title)   # the ONE HUD line, no toast
                     self._text_kind = mk
-                return
+                    return True
+                return False
         icon = None
         if alias:
             skin = 0
@@ -1318,6 +1469,7 @@ class CoachingMixin:
                 skin = p.skin_id
             icon = self._icon(alias, skin)
         q.push(kind, title, subtitle, icon=icon, key=key, t=t)
+        return True
 
     def _presenter_ctx(self, t: float) -> Any:
         """Context of the presentation router (fight, gank threat, dead, siege, level). Never raises."""

@@ -51,8 +51,15 @@ class PostgameMixin:
         sc = getattr(self, "_selfcheck", None)
         if sc is not None and sc.enabled:      # "Santé TreeAI" of this game (what went wrong / was fixed)
             health = sc.game_report()
+        mm_block = None
+        mm = getattr(self, "_mastermind", None)
+        if mm is not None:                     # the game model (mastermind.py): plan, windows, calls
+            try:
+                mm_block = mm.summary()
+            except Exception:
+                log.debug("mastermind summary failed", exc_info=True)
         if rec is not None:
-            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary, health),
+            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary, health, mm_block),
                                   name="TreeAICoach-report", daemon=True)
             self._bg_threads = [b for b in self._bg_threads if b.is_alive()] + [th]
             th.start()
@@ -74,7 +81,8 @@ class PostgameMixin:
         except Exception:
             log.debug("End-of-game summary unavailable", exc_info=True)
 
-    def _finish_job(self, rec: Any, plays_summary: dict | None = None, health: dict | None = None) -> None:
+    def _finish_job(self, rec: Any, plays_summary: dict | None = None, health: dict | None = None,
+                    mm_block: dict | None = None) -> None:
         try:
             path = rec.finish()
             if path is None:
@@ -87,6 +95,10 @@ class PostgameMixin:
                 from treeaicoach.selfcheck import attach_to_record as attach_health
 
                 attach_health(path, health)
+            if mm_block:                        # game understanding (mastermind.py) -> report section
+                from treeaicoach.mastermind import attach_to_record as attach_mm
+
+                attach_mm(path, mm_block)
             self.last_record_path = Path(path)
             cfg = self._cfg
             self._say_game_summary(Path(path))

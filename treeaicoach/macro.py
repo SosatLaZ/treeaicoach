@@ -125,6 +125,9 @@ KIND_COOLDOWN_S: dict[str, float] = {
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
 URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level"})
+#: soft calls (mastermind power windows, game_changers.rule_power_window): no hold against other
+#: calls, any other call replaces them, and they do not start the gap between two calls
+SOFT_KINDS = frozenset({"gc_window"})
 #: "go" calls that stay valid whatever my own gauge says (the numbers decide, not my lane)
 POST_FIGHT_KINDS = frozenset({"fight_won"})
 #: coach.MapCoach rules saying the same thing in words (suppressed around a call of the kind)
@@ -1325,7 +1328,7 @@ class MacroPlanner:
                 self._invalid_since = None
             if self._active is not None and t - self._active_since >= self._active.life_s:
                 self._active, self._invalid_since = None, None                # done (expired)
-        if self._active is not None and t - self._active_since < HOLD_S:
+        if self._active is not None and t - self._active_since < HOLD_S and self._active.kind not in SOFT_KINDS:
             up.active = self._active
             return up
         for c in cands:
@@ -1338,7 +1341,8 @@ class MacroPlanner:
             if c.kind == "wave_recall" and not self._recall_armed:
                 continue                                   # once per trip: wait for a base visit
             if self._active is not None:
-                if c.kind == self._active.kind or c.score < self._active.score + PREEMPT_MARGIN:
+                if c.kind == self._active.kind or (c.score < self._active.score + PREEMPT_MARGIN
+                                                   and self._active.kind not in SOFT_KINDS):
                     continue
             last_k = self._kind_t.get(c.kind)
             if last_k is not None and t - last_k < KIND_COOLDOWN_S.get(c.kind, 60.0):
@@ -1362,7 +1366,8 @@ class MacroPlanner:
             self._active, self._active_since, self._invalid_since = c, t, None
             if c.kind == "wave_recall":
                 self._recall_armed = False
-            self._last_start = t
+            if c.kind not in SOFT_KINDS:
+                self._last_start = t
             self._kind_t[c.kind] = t
             self._done.add(c.ident)
             self.history.append((ctx.gt, c))

@@ -102,11 +102,11 @@ def test_each_provider_request_and_response(server, provider):
         assert "authorization" not in h and b["stream"] is False and b["model"] == "llama3.1"
     else:
         assert h["x-api-key"] == "KEY123" and h["anthropic-version"] == "2023-06-01"
-        assert b["system"] == "SYS" and b["model"] == "claude-haiku-4-5-20251001" and b["max_tokens"] > 0
+        assert b["system"] == "SYS" and b["model"] == "claude-haiku-4-5" and b["max_tokens"] > 0
 
 
 def test_default_models():
-    assert ai.PROVIDERS["gemini"].default_model == "gemini-2.0-flash"
+    assert ai.PROVIDERS["gemini"].default_model == "gemini-3.5-flash-lite"     # 2.0 / 2.5: legacy accounts only
     assert ai.PROVIDERS["groq"].default_model == "openai/gpt-oss-120b"
     assert ai.PROVIDERS["openrouter"].default_model.endswith(":free")
 
@@ -120,7 +120,9 @@ def test_custom_model_used(server):
 @pytest.mark.parametrize("status,payload,code", [
     (401, {"error": "bad key"}, "key"),
     (400, {"error": {"message": "API key not valid. Please pass a valid API key."}}, "key"),
-    (429, {"error": "rate"}, "quota"),
+    (429, {"error": "rate"}, "rate"),
+    (429, {"error": {"message": "Rate limit reached on requests per day (RPD): Limit 1000"}}, "quota"),
+    (429, {"error": {"message": "You exceeded your current quota", "type": "insufficient_quota"}}, "quota"),
     (404, {"error": "no model"}, "model"),
     (500, {"error": "boom"}, "server"),
     (200, {"choices": []}, "empty"),
@@ -173,29 +175,34 @@ def test_snapshot_and_prompt_no_names():
            "KillerName": "Zed"}]
     g = G(events=ev, gold=1500)
     g.champion_stats = {"attackDamage": 75.123, "abilityPower": 210.0, "currentHealth": 800.0, "maxHealth": 1500.0}
-    g.active_info = {"runes": {"keystone": "Électrocution"}, "abilities": {"Q": 3, "W": 1, "E": 1, "R": 1}}
-    ctx = {"map": {"moi": "voie du milieu"}, "wp": 55, "co": {"posture": "prudent : jungler vu"}}
-    snap = ai.build_snapshot(g, moment="death", item_text="Prochain objet : Zhonya", context=ctx)
+    ctx = {"wp": 55, "carte": {"appel": "Recule vers ta tour", "pourquoi": "Zed est niveau 6"},
+           "causes": [[500, "Recule plus tôt : mort à 1 contre 2"]], "ph": "voie"}
+    snap = ai.build_snapshot(g, moment="death", item_text="Prochain objet : Zhonya", context=ctx,
+                             trend="-900 en 2 min")
     me = snap["me"]
-    assert me["c"] == "Ahri" and me["g"] == 1500 and me["r"] == "mid" and me["it"]
-    assert me["st"]["ad"] == 75 and me["st"]["pv"] == "800/1500" and me["ru"]["keystone"] == "Électrocution"
-    assert me["ab"]["Q"] == 3 and me["ig"] > 0
-    assert snap["en"][0]["c"] == "Zed" and snap["en"][0]["r"] == "mid"
-    assert snap["morts"] == [{"t": "8:20", "par": "Zed", "aide": ["Garen"]}]
+    assert me["c"] == "Ahri" and me["g"] == 1500 and me["r"] == "mid" and me["it"] and me["pv"] == "53%"
+    assert me["ig"] > 0
+    assert snap["en"][0].startswith("Zed mid 9 0/0/1")
+    assert snap["morts"] == [{"t": "8:20", "par": "Zed", "aide": ["Garen"], "cause": "Recule plus tôt : mort à 1 contre 2"}]
     assert any("tour détruit (la leur)" in e for e in snap["ev"]) and any("dragon Fire pour eux" in e for e in snap["ev"])
-    assert snap["wp"] == 55 and snap["map"]["moi"] == "voie du milieu"
+    assert snap["wp"] == 55 and snap["eq"]["tend"] == "-900 en 2 min" and snap["ph"] == "voie"
+    keys = list(snap)
+    assert keys.index("t") < keys.index("carte") < keys.index("me") < keys.index("en") < keys.index("wp")
     prompt = ai.build_prompt(snap)
-    assert "2 phrases courtes max" in prompt and "Moi#EUW" not in prompt and "EUW" not in prompt
+    assert "Recule vers ta tour" in prompt and "carte=differe" in prompt
+    assert "Moi#EUW" not in prompt and "EUW" not in prompt
     json.loads(prompt.split("minimap) : ", 1)[1].split("\n", 1)[0])
-    assert "t=temps de jeu" in ai.system_prompt()
+    assert "t=temps de jeu" in ai.system_prompt() and "impératif" in ai.system_prompt()
+    assert ai.build_snapshot(g, context=ctx) == ai.build_snapshot(g, context=ctx)      # deterministic
 
 
 def test_snapshot_size_limit():
     events = [{"EventName": "ChampionKill", "EventTime": 100.0 + i, "VictimName": "Zed", "KillerName": "Moi",
                "Assisters": ["Garen"]} for i in range(60)]
-    big = {"co": {"faits": {f"fait{i}": "x" * 70 for i in range(40)}}, "map": {"en": [{"c": "Zed", "z": "y" * 100}]}}
-    snap = ai.build_snapshot(G(events=events), context=big, limit=2500)
-    assert len(json.dumps(snap, ensure_ascii=False, separators=(",", ":")).encode()) <= 2500
+    big = {"plus": {f"fait{i}": "x" * 70 for i in range(40)}, "jgl": {"txt": "y" * 100},
+           "coups": ["12:00 blunder : " + "z" * 60] * 3, "balises": ["rivière"] * 2}
+    snap = ai.build_snapshot(G(events=events), context=big, limit=1500)
+    assert len(json.dumps(snap, ensure_ascii=False, separators=(",", ":")).encode()) <= 1500
     assert snap["me"]["c"] == "Ahri"
 
 
@@ -222,18 +229,17 @@ def test_engine_context_with_fake_engine():
 
     tr = NS(alias="Zed", last_seen=95.0, position=lambda: (0.5, 0.5))
     tracker = NS(me=lambda: NS(position=lambda: (0.1, 0.9)), allies=lambda visible_only=False: [],
-                 enemies=lambda visible_only=False: [tr])
-    eng = NS(_clock=lambda: 100.0, _game=G(), _tracker=tracker, jungler_status_text=lambda: "Jungler vu bot",
-             _coach=NS(facts=lambda: {"phase": "mid", "arr": [1, 2]}, insight=lambda: "Joue le dragon"),
-             _stance=NS(current=lambda: NS(level="prudent", reason="jungler proche")),
-             _fight=NS(state=lambda: NS(active=True, allies=2, enemies=3)),
-             _wards=NS(current=lambda t: NS(spot="rivière", why="dragon")),
-             win_probability=lambda: 0.61, _tip_text="Farm")
+                 enemies=lambda visible_only=False: [tr], get=lambda alias: tr if alias == "Zed" else None)
+    call = NS(text="Recule vers ta tour : Zed est niveau 6", why="Il a son ultime, pas toi.")
+    game = G()
+    game.enemy_jungler = lambda: game.enemies[0]
+    eng = NS(_clock=lambda: 100.0, _game=game, _tracker=tracker, jungler_status_text=lambda: "Jungler vu bot",
+             _tactics=NS(macro_active=lambda: call, phase=lambda: "laning", map_state=lambda: None),
+             win_probability=lambda: 0.61)
     ctx = ai.engine_context(eng)
-    assert ctx["map"]["en"][0]["c"] == "Zed" and ctx["map"]["en"][0]["vu"] == 5 and ctx["map"]["moi"]
-    assert ctx["jgl"] == "Jungler vu bot" and ctx["wp"] == 61
-    assert ctx["co"]["posture"].startswith("prudent") and ctx["co"]["combat"]["enemies"] == 3
-    assert ctx["ward"]["spot"] == "rivière"
+    assert ctx["carte"] == {"appel": call.text, "pourquoi": call.why} and ctx["ph"] == "voie"
+    assert ctx["jgl"]["c"] == "Zed" and ctx["jgl"]["vu"].endswith("il y a 5 s") and ctx["wp"] == 61
+    assert ctx["compo"]["nous"].startswith("dégâts") and "courbe" in ctx["compo"]["eux"]
     assert ai.engine_context(None) == {} and isinstance(ai.engine_context(object()), dict)
 
 
@@ -313,7 +319,7 @@ def test_manual_ask():
 
 @pytest.mark.parametrize("provider", list(ai.PROVIDERS))
 def test_postgame_review_and_html(server, provider, tmp_path):
-    long_text = "Point fort : ta vision. Axe 1 : farm. Axe 2 : morts. Axe 3 : objectifs. Exercice : 10 min."
+    long_text = "Point fort : ta vision. Axe 1 : farme. Axe 2 : morts. Axe 3 : objectifs. Exercice : 10 min."
     payload = json.loads(json.dumps(RESPONSES[provider], ensure_ascii=False).replace("Achète Zhonya. Va mid.", long_text)
                          .replace("Achète **Zhonya**. Puis joue le dragon.", long_text))
     server.payload = payload
@@ -373,8 +379,8 @@ def test_grounding_candidates_and_validation():
     cands = ai.candidate_items(g)
     assert cands and all({"n", "po", "pourquoi"} <= set(c) for c in cands)
     snap = ai.build_snapshot(g, moment="base")
-    assert snap["objets_possibles"] == cands
-    assert "UNIQUEMENT parmi" in ai.build_prompt(snap)
+    assert snap["objets_possibles"] == cands[:6]
+    assert "objets_possibles" in ai.system_prompt()
     ok = f"Achète {cands[0]['n']} puis prends le Baron."
     assert ai.validate_item_advice(ok, g, cands)
     assert not ai.validate_item_advice("Achète Cris du crépuscule pour survivre.", g, cands)
@@ -390,28 +396,26 @@ def test_grounding_candidates_and_validation():
     assert adv.poll().text == "Prochain objet : Gage de Sterak."            # itemization fallback
 
 
-KEY_FILE = Path("/tmp/claude-0/-home-user-treeaicoach/7921ebab-74f2-5948-aa26-5594b199fca8/scratchpad/.groq_key")
-
-
 def _real_key():
+    """LIVE test, opt-in only: ``TREEAICOACH_LIVE_AI=1`` + ``GROQ_API_KEY`` in the environment.
+    (It used to read a key file automatically: every test run spent real requests.)"""
     import os
 
-    k = os.environ.get("TREEAICOACH_TEST_GROQ_KEY", "")
-    if not k and KEY_FILE.is_file():
-        k = KEY_FILE.read_text(encoding="utf-8").strip()
-    return k
+    return os.environ.get("GROQ_API_KEY", "") if os.environ.get("TREEAICOACH_LIVE_AI") == "1" else ""
 
 
-@pytest.mark.skipif(not _real_key(), reason="no real Groq key available (file / env)")
+@pytest.mark.skipif(not _real_key(), reason="live AI test: set TREEAICOACH_LIVE_AI=1 and GROQ_API_KEY")
 def test_real_groq_end_to_end():
     from treeaicoach.live_client import parse_allgamedata
 
     g = parse_allgamedata(json.loads((Path(__file__).parent / "fixtures" / "allgamedata_sample.json")
                                      .read_text(encoding="utf-8")))
     snap = ai.build_snapshot(g, moment="base", item_text="Prochain objet : Gage de Sterak.")
-    text = ai.call_llm("groq", _real_key(), "", ai.system_prompt(), ai.build_prompt(snap), timeout=15.0)
-    assert text and len(text) <= ai.MAX_ADVICE_CHARS + 1
-    print("GROQ:", text, "| valid:", ai.validate_item_advice(text, g, snap["objets_possibles"]))
+    raw = ai.call_llm("groq", _real_key(), "", ai.system_prompt(), ai.build_prompt(snap), timeout=15.0,
+                      json_mode=True, max_tokens=ai.PLAN_MAX_TOKENS)
+    plan = ai.parse_plan(raw)
+    assert plan is not None and plan["plan"]
+    print("GROQ:", ai.plan_text(plan), "| valid:", ai.validate_item_advice(ai.plan_text(plan), g, snap["objets_possibles"]))
 
 
 # ------------------------------------------------------------------------------ comeback triggers
@@ -560,12 +564,12 @@ def test_postgame_review_is_grounded_in_the_real_build_and_french_items():
     assert "Objets autorisés" in prompt and "Estropieur" in prompt and "Gage de Sterak" in prompt
     assert "Build final du joueur : Coques en acier, Estropieur, Couperet noir" in prompt
     assert "Hydre titanesque" not in prompt and "français" in system and "trop tard" in system
-    assert "4 duel" in prompt and "2.5 s" in prompt
+    assert "4 1v1 perdu" in prompt and "3 alerte trop tardive" in prompt and "2.5 s" in prompt
     assert review is not None
     for bad in ("Titanic", "Hydra", "Tiamat", "Sterak Gage", "Sterak's"):
         assert bad not in review, bad
     assert "prends Gage de Sterak en 3e objet" in review           # allowed item, French name
-    assert "Objets : garde Coques en acier" in review              # rule-based replacement of the dropped one
+    assert "Objets : garde Coques en acier et vise" in review      # rule-based replacement of the dropped one
     assert "10 ganks sur 14" in review
     # an English answer never reaches the report
     english = "You should build the Titanic Hydra first and then you should buy Sterak's Gage with your gold before the next fight."

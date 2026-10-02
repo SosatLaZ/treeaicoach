@@ -68,6 +68,8 @@ class PlayerInfo:
     spells: tuple[str, ...] = ()   # summoner spells (localized display names)
     spell_ids: tuple[str, ...] = ()  # language-independent ids ("SummonerHeal"), when known
     items: list[int] = field(default_factory=list)            # itemIDs, by inventory slot
+    item_slots: dict[int, int] = field(default_factory=dict)  # inventory slot (0-5, 6 trinket) -> itemID
+    item_counts: dict[int, int] = field(default_factory=dict)  # itemID -> stack count (potions, wards)
     scores: dict[str, float] = field(default_factory=lambda: dict(ZERO_SCORES))
     current_gold: float = 0.0      # only known for me (activePlayer.currentGold)
 
@@ -334,6 +336,8 @@ def _parse_player(d: dict) -> PlayerInfo | None:
         spells=tuple(_str(s.get("displayName")) for s in spell_list),
         spell_ids=tuple(i for i in (_spell_id(s) for s in spell_list) if i),
         items=_parse_items(d.get("items")),
+        item_slots=_parse_item_slots(d.get("items")),
+        item_counts=_parse_item_counts(d.get("items")),
         scores=_parse_scores(d.get("scores")),
     )
 
@@ -350,6 +354,30 @@ def _parse_items(items: Any) -> list[int]:
         if item_id > 0:
             found.append((_int(it.get("slot"), 100 + n), item_id))
     return [item_id for _, item_id in sorted(found, key=lambda x: x[0])]
+
+
+def _parse_item_slots(items: Any) -> dict[int, int]:
+    """``{slot: itemID}`` (entries without a valid slot skipped)."""
+    out: dict[int, int] = {}
+    if isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict):
+                item_id, slot = _int(it.get("itemID"), 0), _int(it.get("slot"), -1)
+                if item_id > 0 and 0 <= slot <= 6:
+                    out[slot] = item_id
+    return out
+
+
+def _parse_item_counts(items: Any) -> dict[int, int]:
+    """``{itemID: total count}`` (a stack of 3 potions counts 3)."""
+    out: dict[int, int] = {}
+    if isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict):
+                item_id = _int(it.get("itemID"), 0)
+                if item_id > 0:
+                    out[item_id] = out.get(item_id, 0) + max(1, _int(it.get("count"), 1))
+    return out
 
 
 def _parse_scores(scores: Any) -> dict[str, float]:

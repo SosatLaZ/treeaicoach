@@ -376,7 +376,7 @@ TIPS: tuple[Tip, ...] = (
       and c.jg_last_side == "bot" and c.jg_hidden_s is not None and c.jg_hidden_s < 25,
       roles=("TOP",), prio=3, tone="go", ttl=15.0),
     T("drag_smite", "objectives", "Garde ton Châtiment pour la fin : dragon dans {drag_s} s",
-      lambda c: c.soon_within("dragon", 0, 60), roles=("JUNGLE",), prio=3, ttl=15.0),
+      lambda c: c.soon_within("dragon", 5, 60), roles=("JUNGLE",), prio=3, ttl=15.0),
     T("drag_up_team", "objectives", "Va au dragon avec ton équipe : {tgd} d'or d'avance",
       lambda c: "dragon" in c.alive and c.team_gold_diff >= 1500, prio=3, tone="go"),
     T("drag_up_behind", "objectives", "Dragon seulement avec des balises posées : {tgd} d'or de retard",
