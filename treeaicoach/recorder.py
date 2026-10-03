@@ -73,6 +73,8 @@ MAX_SIGHTINGS_PER_KEY = 8000    # ~66 min of continuous visibility at 2 Hz, then
 MAX_SIGHTING_KEYS = 16          # 5 enemies + anonymous tracks; overflow goes to "enemy?"
 OVERFLOW_KEY = "enemy?"
 MAX_ALERTS = 3000
+#: The same alert (kind + text) recorded again within this many game seconds is a duplicate.
+ALERT_DEDUP_S = 3.0
 MAX_EVENTS = 3000
 FOG_PERIOD_S = 1.0              # fog circle samples: <= 1 Hz (game time)
 ALLY_PERIOD_S = 2.0             # allied positions (replay viewer): <= 0.5 Hz per champion
@@ -690,8 +692,13 @@ class GameRecorder:
                 kind_s = _text(getattr(kind, "value", kind), 32)
                 level = _int(getattr(alert, "level", 0))
                 alias = getattr(alert, "alias", None)
-                self._alerts.append([round(gt, 1), kind_s, level, _text(getattr(alert, "text", "")),
-                                     _text(alias, 40) or None])
+                text = _text(getattr(alert, "text", ""))
+                for prev in reversed(self._alerts[-12:]):    # same call re-routed on the next ticks
+                    if gt - prev[0] > ALERT_DEDUP_S:
+                        break
+                    if prev[1] == kind_s and prev[3] == text:
+                        return
+                self._alerts.append([round(gt, 1), kind_s, level, text, _text(alias, 40) or None])
                 self._dirty = True
         except Exception:
             log.exception("GameRecorder.on_alert failed")

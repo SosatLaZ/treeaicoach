@@ -346,3 +346,12 @@ def test_death_verdicts_separate_app_failures_from_player_mistakes(record: dict)
     rec2["alerts"].sort(key=lambda a: a[0])
     d2 = analyze_game(rec2)["deaths"][1]
     assert d2["warned"] and d2["verdict_key"] == "ignored" and d2["alert_lead_s"] == pytest.approx(5.0)
+
+
+def test_danger_level_retreat_call_counts_as_a_warning() -> None:
+    """Real game 2026-10-03: "Recule !" spoken 8 s before a death was reported as "no warning"."""
+    from treeaicoach.analysis import _Rec
+    rec = _Rec({"alerts": [[1234.2, "macro_tip", 2, "Recule !", None],
+                           [1236.0, "macro_tip", 0, "Pose une balise", None]]})
+    got = rec.danger_alerts(1230.0, 1243.0)
+    assert [a[3] for a in got] == ["Recule !"]

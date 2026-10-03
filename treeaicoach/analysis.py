@@ -447,9 +447,10 @@ class _Rec:
         return [a for a in self.alerts if t0 <= a[0] <= t1 and a[1] in GANK_KINDS]
 
     def danger_alerts(self, t0: float, t1: float) -> list[tuple[float, str, int, str, str | None]]:
-        """Gank alerts + personal danger warnings (level >= WARNING) between ``t0`` and ``t1``."""
+        """Gank alerts + personal danger warnings (level >= WARNING) + danger-level calls ("Recule !",
+        recorded as ``macro_tip`` at level DANGER by the fight tactics) between ``t0`` and ``t1``."""
         return [a for a in self.alerts if t0 <= a[0] <= t1 and (a[1] in GANK_KINDS or (
-            a[1] == "personal_danger" and a[2] >= LEVEL_WARNING))]
+            a[1] == "personal_danger" and a[2] >= LEVEL_WARNING) or (a[1] == "macro_tip" and a[2] >= LEVEL_DANGER))]
 
     def lane_opponents(self) -> set[str]:
         """alnum aliases of my lane opponent(s) (same Riot position; bot lane: BOTTOM + UTILITY)."""

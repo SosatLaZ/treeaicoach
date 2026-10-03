@@ -68,6 +68,10 @@ WARD_LINE_RE = __import__("re").compile(r"(?i)^(balise|pose (ta|une) balise|gard
                                         r"surveille ta rivière|va baliser|achète une balise)")
 
 
+#: A written toast with the same text within this many seconds is not shown again.
+TEXT_TOAST_DEDUP_S = 5.0
+
+
 class CoachingMixin:
     """Coaching stages of a tick: director / macro / wards, speech, scoreboard, items, hype / AI,"""
 
@@ -1072,8 +1076,12 @@ class CoachingMixin:
         if kind == "personal_danger" and int(a.level) < int(Level.DANGER):
             toast = None                 # a written warning ("Farme sous ta tour") is the card, not a red banner
         banner = self._tactics.banner(t) if self._tactics is not None else None
+        last = getattr(self, "_text_toast_last", None)
+        if last is not None and last[0] == a.text and 0.0 <= t - last[1] < TEXT_TOAST_DEDUP_S:
+            toast = None                 # the same written line again on the next ticks: one banner only
         if toast is not None and not (banner is not None and banner.subtitle == a.text):
             self._toast(toast[0], toast[1], a.text, a.alias, f"text:{a.key}", t)
+            self._text_toast_last = (a.text, t)
         rec = self._recorder
         if rec is not None:
             rec.on_alert(a, gt)

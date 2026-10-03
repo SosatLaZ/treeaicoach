@@ -533,3 +533,16 @@ if __name__ == "__main__":
     if "--regen" in sys.argv:
         p = regenerate_fixture()
         sys.stdout.write(f"written {p} ({p.stat().st_size} bytes)\n")
+
+
+def test_same_alert_rerouted_within_seconds_is_recorded_once(tmp_path: Path) -> None:
+    """Real game 2026-10-03: one call recorded ~25 times in 0.6 s (re-routed every tick)."""
+    r = GameRecorder(tmp_path)
+    r.on_game_info(make_game(100.0), 1.0)
+    for i in range(25):
+        r.on_alert(Alert(kind=AlertKind.COLLAPSE, level=Level.DANGER, text="Recule !", key="k", t=1.0), 100.0 + i * 0.02)
+    r.on_alert(Alert(kind=AlertKind.COLLAPSE, level=Level.DANGER, text="Autre", key="k2", t=1.0), 100.6)
+    r.on_alert(Alert(kind=AlertKind.COLLAPSE, level=Level.DANGER, text="Recule !", key="k", t=1.0), 110.0)
+    snap = r.snapshot()
+    assert snap is not None
+    assert [a[3] for a in snap["alerts"]] == ["Recule !", "Autre", "Recule !"]
