@@ -125,7 +125,7 @@ HUD_MARGIN = 16
 #: Radar side limits (px).
 RADAR_MIN, RADAR_MAX = 96, 1024
 #: HUD width at 1080p and its limits.
-HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 300, 240, 520
+HUD_BASE_WIDTH, HUD_MIN_WIDTH, HUD_MAX_WIDTH = 300, 220, 640
 #: Flash intensity quantization (the full-screen image is re-rendered only when it changes).
 FLASH_STEP = 0.1
 #: How often (s) visible windows are re-asserted as topmost (each call re-orders the window in the
@@ -339,14 +339,12 @@ def radar_placement(minimap: Any, screen: Any, size: int, position: str = "above
 
 
 def hud_width(screen: Any) -> int:
-    """HUD width (px) for a screen: 300 px at 1080p, proportional to the height, but never wider
-    than on the 16:9 screen of the same width (a tall 1899 x 1344 window has no room for a wider
-    card between League's respawn panel / item bar and the minimap)."""
-    scr = as_rect(screen)
-    k = _scale_of(scr)
-    if scr is not None:
-        k = min(k, max(0.5, scr[2] * 9.0 / 16.0 / 1080.0))
-    w = HUD_BASE_WIDTH * k
+    """HUD card width (px): :data:`HUD_BASE_WIDTH` x the card's :func:`layout.overlay_scale` (one
+    size model for every element: 16:9 height unit, League's HUD scale, compact factor, text
+    never below ``layout.MIN_FONT_PX``): 258 px at 1080p, 344 px at 1440p, 232 px at 720p."""
+    from treeaicoach import layout as _lay
+
+    w = HUD_BASE_WIDTH * _lay.overlay_scale(as_rect(screen), "card")
     return int(min(max(round(w), HUD_MIN_WIDTH), HUD_MAX_WIDTH))
 
 

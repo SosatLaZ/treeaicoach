@@ -51,7 +51,7 @@ def test_layer_rect_top_centre_never_over_minimap():
         # the Tab / KDA block at the top-right (~ last 18 % of the width) stays free
         assert x + w < sw * 0.82
     lw, lh = T.layer_size(T.scale_for_screen((0, 0, 1920, 1080)))
-    assert T.render_toast_layer([], 1.0).shape == (lh, lw, 4)
+    assert T.render_toast_layer([], T.scale_for_screen((0, 0, 1920, 1080))).shape == (lh, lw, 4)
 
 
 def test_layer_render_and_queue():

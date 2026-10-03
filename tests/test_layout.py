@@ -206,7 +206,7 @@ def test_play_badges_never_laid_out_inside_the_minimap():
     scr, mm = screen_and_minimap(Rect(1653, 813, 256, 256), Rect(0, 0, 1920, 1080))
     for size in ("big", "small"):
         r = fx.fx_layer_rect(scr, mm, "top_center", size, fx.scale_for_screen(scr))
-        assert not L.overlap(r, mm) and fx.scale_for_screen(scr) == 1.0
+        assert not L.overlap(r, mm) and fx.scale_for_screen(scr) == L.overlay_scale(scr, "badge")
 
 
 def test_flash_spares_the_minimap_block_and_the_spell_bar():
@@ -344,3 +344,44 @@ def test_big_badge_shown_small_when_it_has_no_clean_place():
         assert fx.fx_layer_rect(scr, mm, "top_center", "big") == lay.rect("badge_small")
     assert fx.badge_size((0, 0, 1920, 1080), (1653, 813, 256, 256), "big") == "big"
 
+
+
+def test_one_compact_size_model_for_every_format():
+    """layout.overlay_scale: 16:9 height unit (ultrawide = its height, 16:10 / 4:3 width-limited),
+    compact factor per element, text never below 12 px, physical px (no DPI factor)."""
+    s1080 = L.overlay_scale((0, 0, 1920, 1080), "card")
+    assert 0.8 <= s1080 <= 0.9                                           # smaller than before (1.0)
+    assert L.overlay_scale((0, 0, 3440, 1440), "card") == L.overlay_scale((0, 0, 2560, 1440), "card")
+    assert L.overlay_scale((0, 0, 1920, 1200), "card") == s1080
+    for el, base in L.BASE_FONT_PX.items():
+        for scr in ((0, 0, 1280, 720), (0, 0, 1024, 768), (0, 0, 800, 600)):
+            assert base * L.overlay_scale(scr, el) >= L.MIN_FONT_PX - 1e-6
+    assert L.overlay_scale((0, 0, 3840, 2160), "badge") > L.overlay_scale((0, 0, 1920, 1080), "badge")
+    assert L.overlay_scale(None, "card") > 0 and L.overlay_scale((0, 0, -5, 0), "toasts") > 0
+
+
+def test_game_hud_scale_only_grows_and_resets():
+    assert L.hud_factor_from_global_scale(None) == 1.0
+    assert L.hud_factor_from_global_scale(0.0) == 1.0                   # never smaller than measured
+    assert L.hud_factor_from_global_scale(1.0) == 1.25
+    assert L.hud_factor_from_global_scale("junk") == 1.0
+    base = L.overlay_scale((0, 0, 2560, 1440), "card")
+    try:
+        L.set_game_hud_scale(1.0)
+        assert L.overlay_scale((0, 0, 2560, 1440), "card") > base
+        lay = L.layout_for((0, 0, 2560, 1440), (2160, 1040, 380, 380), Config())
+        assert lay.slot("card") is not None and not L._dirty(lay.slot("card"))
+    finally:
+        L.set_game_hud_scale(None)
+    assert L.overlay_scale((0, 0, 2560, 1440), "card") == base
+
+
+def test_formats_sheet_has_no_overlap():
+    import tempfile
+    from pathlib import Path
+
+    from tools import overlay_formats_sheet as F
+
+    with tempfile.TemporaryDirectory() as d:
+        res = F.run(Path(d), zoom=False)
+    assert res["overlaps"] == 0 and len(res["rows"]) == len(F.FORMATS)

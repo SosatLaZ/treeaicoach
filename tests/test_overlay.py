@@ -148,9 +148,16 @@ def test_radar_placement_wrapper_and_no_minimap():
 
 # ---------------------------------------------------------------------------- HUD placement
 def test_hud_width_and_flash_thickness():
-    assert ov.hud_width(SCREEN) == ov.HUD_BASE_WIDTH == 300
-    assert ov.hud_width((0, 0, 3840, 2160)) == ov.HUD_MAX_WIDTH
-    assert ov.hud_width((0, 0, 1280, 720)) == ov.HUD_MIN_WIDTH
+    # one size model (layout.overlay_scale): compact, proportional to the 16:9 height, the line
+    # font (15.5 px x width / 300) never below layout.MIN_FONT_PX
+    w1080 = ov.hud_width(SCREEN)
+    assert 240 <= w1080 <= 270
+    assert ov.hud_width((0, 0, 2560, 1440)) == round(w1080 * 4 / 3) or abs(ov.hud_width((0, 0, 2560, 1440)) - w1080 * 4 / 3) <= 1
+    assert ov.hud_width((0, 0, 3440, 1440)) == ov.hud_width((0, 0, 2560, 1440))      # ultrawide: height-sized
+    assert ov.hud_width((0, 0, 1920, 1200)) == w1080                                    # 16:10: width-limited
+    w720 = ov.hud_width((0, 0, 1280, 720))
+    assert 15.5 * w720 / 300 >= 11.4 and w720 < w1080
+    assert ov.hud_width((0, 0, 3840, 2160)) <= ov.HUD_MAX_WIDTH
     assert ov.flash_thickness(SCREEN) == 10 and ov.flash_thickness((0, 0, 2560, 1440)) == 13
     assert ov.flash_thickness(None) == 10
 

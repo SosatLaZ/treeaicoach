@@ -143,6 +143,68 @@ def ui_unit(screen: Sequence[int]) -> float:
         return REF_H
 
 
+# ======================================================================================
+# ONE size model for everything TreeAI draws in game
+# ======================================================================================
+#: Size of each of our elements relative to League's HUD (1.0 = the 1080p reference sizes the
+#: renderers are written for). Compact by default (user feedback 2.5.0: "les trucs sont trop
+#: gros"): the card, banners and badges are clearly smaller than League's own panels, the
+#: timers keep League's small-text size. Text never goes below :data:`MIN_FONT_PX`.
+SIZE: dict[str, float] = {"card": 0.86, "timers": 0.92, "toasts": 0.76, "badge": 0.66}
+#: Smallest text we draw in game (px, docs/DESIGN.md: never below 12 px).
+MIN_FONT_PX = 12.0
+#: Base font (px at scale 1) of each element's main text line, for the legibility floor.
+BASE_FONT_PX: dict[str, float] = {"card": 15.5, "timers": 13.0, "toasts": 14.0, "badge": 17.0}
+#: League's ``GlobalScale`` (HUD scale slider, 0..1) is mapped to a HUD size factor ONLY upwards
+#: (unverified mapping: 0.5 = the measured captures, 1.0 = +25 %); a smaller HUD keeps the
+#: measured zones (never a risk of drawing over a bigger real HUD).
+_game_hud = {"k": 1.0}
+
+
+def hud_factor_from_global_scale(global_scale: Any) -> float:
+    """League's HUD size factor for its ``GlobalScale`` setting (>= 1.0, see :data:`_game_hud`)."""
+    try:
+        g = float(global_scale)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(g) or g < 0:
+        return 1.0
+    return float(min(1.25, max(1.0, 0.75 + 0.5 * min(g, 1.0))))
+
+
+def set_game_hud_scale(global_scale: Any) -> None:
+    """Record League's ``GlobalScale`` (from ``game_settings``); None = unknown (factor 1)."""
+    _game_hud["k"] = hud_factor_from_global_scale(global_scale) if global_scale is not None else 1.0
+
+
+def game_hud_scale() -> float:
+    return float(_game_hud["k"])
+
+
+def overlay_scale(screen: Any, element: str = "card", hud_scale: Any = None) -> float:
+    """Scale of one of our elements on ``screen`` (1.0 = the renderer's 1080p reference size).
+
+    Physical pixels: Windows DPI scaling does NOT change League's HUD (the game renders in
+    physical px and our windows are per-monitor DPI aware), so it does not change ours either.
+    The unit is the 16:9 height of the screen (``min(h, w * 9 / 16)``: an ultrawide screen keeps
+    its height-sized HUD, a 16:10 / 4:3 one is width-limited so the card still fits between the
+    item bar and the minimap), times League's HUD scale and the element's compact :data:`SIZE`,
+    floored so the element's main text stays >= :data:`MIN_FONT_PX`. Never raises."""
+    try:
+        scr = as_rect(screen)
+        u = min(float(scr[3]), float(scr[2]) * 9.0 / 16.0) / REF_H if scr is not None else 1.0
+    except Exception:
+        u = 1.0
+    try:
+        k = float(hud_scale) if hud_scale is not None else game_hud_scale()
+        k = k if math.isfinite(k) and k > 0 else 1.0
+    except (TypeError, ValueError):
+        k = 1.0
+    s = u * min(max(k, 0.6), 1.6) * SIZE.get(element, 1.0)
+    floor = MIN_FONT_PX / BASE_FONT_PX.get(element, 14.0)
+    return float(min(2.6, max(floor, s)))
+
+
 def minimap_side(screen: Any, minimap: Any, flip: Any = None) -> str:
     """"left" / "right": ``FlipMiniMap`` from the game's settings when known, else the half of the
     screen holding the minimap's centre (right when unknown)."""
@@ -398,7 +460,7 @@ class Prefs:
             if pos == "custom" and xy_t is None:
                 pos = "left_of_minimap"
             try:
-                hs = float(hud_scale) if hud_scale is not None else 1.0
+                hs = float(hud_scale) if hud_scale is not None else game_hud_scale()
                 hs = hs if math.isfinite(hs) else 1.0
             except (TypeError, ValueError):
                 hs = 1.0
@@ -874,4 +936,5 @@ def published(screen: Any = None, minimap: Any = None) -> Layout | None:
 
 __all__ = ["Zone", "Slot", "Layout", "ElementSpec", "Prefs", "LayoutCache", "game_zones", "minimap_frame",
            "minimap_side", "ui_unit", "zone_rects", "solve", "element_specs", "layout_for", "publish", "published",
-           "overlap", "overlap_area", "as_rect", "ZONE_LABELS", "ELEMENTS", "CARD_POSITIONS", "HUD_KEYS"]
+           "overlap", "overlap_area", "as_rect", "ZONE_LABELS", "ELEMENTS", "CARD_POSITIONS", "HUD_KEYS",
+           "overlay_scale", "set_game_hud_scale", "game_hud_scale", "hud_factor_from_global_scale", "SIZE"]

@@ -115,9 +115,11 @@ def get_font(size: int, weight: str = "bold") -> Any:
 
 # ------------------------------------------------------------------------------ geometry
 def scale_for_screen(screen: Any) -> float:
+    """Play badge scale: :func:`layout.overlay_scale` ("badge": compact, text >= 12 px)."""
     try:
-        h = float(screen[3])
-        return max(0.6, min(2.5, h / 1080.0)) if h > 0 else 1.0
+        from treeaicoach import layout as _lay
+
+        return _lay.overlay_scale(screen, "badge")
     except Exception:
         return 1.0
 

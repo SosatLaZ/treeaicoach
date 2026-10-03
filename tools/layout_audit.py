@@ -217,7 +217,7 @@ def place_new(shot: Shot, states: dict[str, Any], cfg: Any = None) -> tuple[dict
         strip = orr.render_timers(tst_state, scr, slot.rect[2]) if slot is not None else None
         if strip is not None and slot is not None:
             x, y = slot.place(strip.shape[1], strip.shape[0])
-            out.append(Placed("timers", "rows", strip, x, y, orr._timer_metrics(U)["font"].size))
+            out.append(Placed("timers", "rows", strip, x, y, orr._timer_metrics(orr._timers_unit(scr))["font"].size))
         k = fx.scale_for_screen(scr)
         for size in ("big", "small"):
             slot = layout_.slot(f"badge_{size}")
@@ -637,8 +637,8 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
                                     for k, v in m.items()} for n, m in sorted(agg.items())}
     lab = [r["minimap_labels_on_buttons"] for r in rows if "minimap_labels_on_buttons" in r]
     if lab:
-        out["minimap_label_px_on_corner_buttons"] = {"before": sum(x["before"] for x in lab),
-                                                     "after": sum(x["after"] for x in lab)}
+        out["minimap_label_px_on_corner_buttons"] = {"before": sum(x.get("before", 0) for x in lab),
+                                                     "after": sum(x.get("after", 0) for x in lab)}
     return out
 
 

@@ -1719,21 +1719,27 @@ TIMER_SAMPLE_ROWS = ("Ancestral ennemi 2:30", "Buff Ancestral 2:30", "Baron enne
 
 def _timer_metrics(unit: float) -> dict[str, Any]:
     k = max(0.6, min(3.0, float(unit) / 1080.0))
-    f = get_font(max(12, int(round(TIMER_FONT_PX * k))), "bold")
+    f = get_font(max(12, int(round(TIMER_FONT_PX * k))), "semibold")
     cap = _cap_height(f)
     pad, dot = max(4.0, 6 * k), max(2.5, 3.0 * k)
     return {"k": k, "font": f, "pad": pad, "dot": dot, "row_h": cap + max(8.0, 9 * k),
             "text_x": pad + 2 * dot + max(4.0, 5 * k)}
 
 
+def _timers_unit(screen: Any) -> float:
+    """1080 x the timers' :func:`layout.overlay_scale` (one size model for every element)."""
+    try:
+        from treeaicoach import layout as _lay
+
+        return 1080.0 * _lay.overlay_scale(_rect_tuple(screen) or (0, 0, 1920, 1080), "timers")
+    except Exception:
+        return 1080.0
+
+
 def timers_strip_size(screen: Any, detailed: bool = False) -> tuple[int, int]:
     """Window size of the timers strip (layout slot): the widest row at the strip font, and
     :data:`TIMER_MAX_ROWS` rows (:data:`TIMER_MAX_ROWS_DETAILED` in detailed mode)."""
-    try:
-        unit = min(float(screen[3]), float(screen[2]) * 9.0 / 16.0)
-    except Exception:
-        unit = 1080.0
-    m = _timer_metrics(unit)
+    m = _timer_metrics(_timers_unit(screen))
     tw = max(text_width(t, m["font"]) for t in TIMER_SAMPLE_ROWS)
     rows = TIMER_MAX_ROWS_DETAILED if detailed else TIMER_MAX_ROWS
     w = int(math.ceil(m["text_x"] + tw + m["pad"] + 2))
@@ -1750,8 +1756,7 @@ def render_timers(state: Any, screen: Any = None, max_w: int | None = None) -> n
         if not rows:
             return None
         scr = _rect_tuple(screen) or _rect_tuple(getattr(state, "screen_rect", None)) or (0, 0, 1920, 1080)
-        unit = min(float(scr[3]), float(scr[2]) * 9.0 / 16.0)
-        m = _timer_metrics(unit)
+        m = _timer_metrics(_timers_unit(scr))
         f, pad, dot, row_h, tx = m["font"], m["pad"], m["dot"], m["row_h"], m["text_x"]
         tw = max(text_width(t, f) for t, _c in rows)
         W = int(math.ceil(tx + tw + pad + 2))

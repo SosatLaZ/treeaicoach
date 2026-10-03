@@ -160,12 +160,26 @@ class OverlayStateMixin:
                 if cache is not None and overlay_cache_fresh(cache, now, fid):
                     return cache[1]
             state = self._build_overlay_state(now)
+            self._sync_game_hud_scale()
             with self._lock:
                 self._overlay_cache = (now, state, fid)
             return state
         except Exception:
             self._err.exception("get_overlay_state failed")
             return None
+
+    def _sync_game_hud_scale(self) -> None:
+        """League's HUD scale (``GlobalScale`` in its config, read-only) -> the overlay's size
+        model (:func:`treeaicoach.layout.set_game_hud_scale`). Cheap: the watcher re-reads the
+        files at most every 10 s; unknown -> factor 1."""
+        try:
+            w = getattr(self, "_settings_watcher", None)
+            gs = w.get() if w is not None else None
+            from treeaicoach import layout as _layout
+
+            _layout.set_game_hud_scale(getattr(gs, "global_scale", None) if gs is not None else None)
+        except Exception:
+            log.debug("game HUD scale unavailable", exc_info=True)
 
     def _screen_rects(self) -> tuple[Rect | None, Rect | None]:
         if self._frame_source is None:
