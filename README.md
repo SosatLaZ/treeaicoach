@@ -1,110 +1,138 @@
 <p align="center">
-  <img src="packaging/icon.png" width="140" height="140" alt="Logo de TreeAI Coach">
+  <img src="packaging/icon.png" width="128" height="128" alt="Logo de TreeAI Coach">
 </p>
 
 <h1 align="center">TreeAI Coach</h1>
 
 <p align="center">
-  <b>Ton coach vocal anti-gank pour League of Legends : il surveille la minimap et te prévient à voix haute quand le jungler ennemi arrive.</b>
+  <b>Le coach qui regarde ta minimap pour toi.</b><br>
+  Un bip dès que le jungler ennemi arrive, une seule consigne claire à côté de la minimap,<br>
+  et un rapport honnête après chaque partie de League of Legends.
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.6.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="56"></a>
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.6.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="52"></a>
 </p>
 
 <p align="center">
-  <b>👉 <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe">Clique ici pour télécharger TreeAICoach.exe</a></b> (Windows 10/11, ~78 Mo) — puis double-clique dessus.<br>
-  <sub>Dossier <a href="release/">release/</a> · empreinte SHA-256 dans <a href="release/SHA256.txt">SHA256.txt</a> · si Windows affiche « PC protégé » : <i>Informations complémentaires → Exécuter quand même</i>.</sub>
+  <sub>Windows 10 / 11 · un seul fichier, sans installation (~90 Mo) · gratuit et open source ·
+  <a href="CHANGELOG.md">nouveautés</a> · <a href="release/SHA256.txt">SHA-256</a></sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/actions/workflows/build-windows.yml"><img src="https://github.com/SosatLaZ/treeaicoach/actions/workflows/build-windows.yml/badge.svg" alt="Construction de TreeAICoach.exe"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0C0E0D?logo=windows" alt="Windows 10 | 11">
+  <img src="https://img.shields.io/badge/donn%C3%A9es-saison%202026-0C0E0D" alt="Données saison 2026">
+  <img src="https://img.shields.io/badge/100%25-local-0C0E0D" alt="Tout est calculé sur ton PC">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-9BD84A" alt="Licence MIT"></a>
+</p>
+
+<p align="center">
+  <img src="docs/img/launcher-accueil-sombre.png" width="820" alt="L'accueil de TreeAI Coach, thème sombre">
 </p>
 
 ---
 
-## 📥 Télécharger
+## Nouveautés de la 2.6
 
-1. Va sur la page des **[Releases](https://github.com/SosatLaZ/treeaicoach/releases)** et télécharge **`TreeAICoach.exe`** :
-   * **version stable** : [dernière release](https://github.com/SosatLaZ/treeaicoach/releases/latest) ;
-   * **dernière version de développement** (mise à jour à chaque modification) :
-     [TreeAICoach.exe « latest »](https://github.com/SosatLaZ/treeaicoach/releases/download/latest/TreeAICoach.exe).
-2. C'est **un seul fichier**, sans installation : mets-le où tu veux (Bureau, Documents…).
-   Python n'est pas nécessaire.
+| | |
+| --- | --- |
+| **Nouveau launcher** | Refait de zéro : toutes les pages prêtes en environ 1 s, plus aucun bug de chargement, design épuré en clair et en sombre. |
+| **Voix naturelle** | La voix naturelle d'abord, les noms de champions bien prononcés (Kai'Sa, K'Santé…), des sons doux à la place des bips. |
+| **Overlay compact** | Environ 25 % plus petit, à la bonne taille sur chaque écran (720p à 4K, ultra-large, 16:10). |
+| **Détection** | Duo empilé et caméra mieux suivis, capture rapide qui ne se coupe plus, alertes en double supprimées. |
+
+Tout l'historique : [CHANGELOG.md](CHANGELOG.md).
+
+## Télécharger
+
+1. Clique sur le bouton **Télécharger** ci-dessus : tu obtiens **`TreeAICoach.exe`**. Les versions publiées
+   sont aussi sur la page des [Releases](https://github.com/SosatLaZ/treeaicoach/releases).
+2. C'est **un seul fichier**, sans installation : mets-le où tu veux. Python n'est pas nécessaire.
+   Les mises à jour se font ensuite depuis l'appli (**À propos → Mise à jour**).
 3. Au premier lancement, Windows peut afficher **« Windows a protégé votre ordinateur »** (SmartScreen).
    Clique sur **Informations complémentaires**, puis sur **Exécuter quand même**.
 
-> **Pourquoi cet avertissement ?** L'exécutable n'est pas signé numériquement (un certificat de signature
-> coûte plusieurs centaines d'euros par an). SmartScreen se méfie donc de tout programme récent et peu téléchargé.
-> Le code source est public et l'exe est construit automatiquement par GitHub Actions à partir de ce code ;
-> l'empreinte **SHA-256** de chaque version est indiquée dans sa release
-> (vérification : `Get-FileHash .\TreeAICoach.exe` dans PowerShell).
+> **Pourquoi cet avertissement ?** L'exécutable n'est pas signé numériquement : un certificat coûte plusieurs
+> centaines d'euros par an. Le code source est public, et l'empreinte **SHA-256** de chaque version est dans
+> [`release/SHA256.txt`](release/SHA256.txt). Pour vérifier dans PowerShell : `Get-FileHash .\TreeAICoach.exe`.
 
-**Configuration :** Windows 10 ou 11 (64 bits), League of Legends en mode d'affichage **Sans bordure** (ou Fenêtré).
+**Configuration :** Windows 10 ou 11 (64 bits), League of Legends en mode d'affichage **Sans bordure**
+(ou Fenêtré), sur la Faille de l'invocateur.
 
-## 🚀 Démarrage en 3 étapes
+## Démarrage en 3 étapes
 
-1. **Dans League of Legends** : `Échap` → **Vidéo** → **Mode d'affichage : Sans bordure**.
-   *(En plein écran, Windows ne laisse aucun programme capturer l'image du jeu : la capture serait noire.)*
-2. **Double-clique sur `TreeAICoach.exe`** : l'interface s'ouvre et l'analyse démarre toute seule ;
-   elle attend le début de la partie (aucune capture tant que tu n'es pas en jeu).
-3. **Joue !** Les alertes arrivent automatiquement sur la Faille de l'invocateur.
+1. **Dans League of Legends :** `Échap` → **Vidéo** → **Mode d'affichage : Sans bordure**.
+   *(En plein écran, Windows ne laisse aucun programme capturer l'image du jeu.)*
+2. **Double-clique sur `TreeAICoach.exe`.** L'analyse démarre toute seule et attend le début de la partie.
+   Rien n'est capturé tant que tu n'es pas en jeu.
+3. **Joue.** Les alertes arrivent automatiquement.
 
-💡 Sans partie en cours, essaie **« Tester la voix »** et **« Mode démo »** sur le tableau de bord.
+Sans partie en cours, essaie **Tester la voix**, **Tester l'overlay** et **Partie de démonstration** sur
+l'**Accueil**.
 
-## ✨ Fonctionnalités (v2)
+## Ce que fait TreeAI Coach
 
-* 🧭 **Une seule chose à la fois** : à côté de la minimap, une petite carte affiche **une consigne**
-  (« Va bot : Dragon dans 0:45 », « Recule : 2 contre 1 »), en rouge s'il y a un danger, et **rien du tout**
-  quand il n'y a rien d'utile à dire. Le niveau du joueur (débutant → expert) règle la quantité de conseils.
-* 🚨 **Dangers bip d'abord** : le bip part immédiatement ; la phrase (« Gank ! Lee Sin, recule ! ») suit
-  seulement si elle est prête. Ganks annoncés plus tôt, alerte **2 contre 1** et **peu de vie** même quand
-  l'ennemi est déjà à l'écran, siège de la base / ace.
-* 🗣️ **Voix sobre** : seuls les dangers, la retraite en combat, F9 et l'objectif imminent qui te concerne
-  sont dits à voix haute ; le reste est écrit.
-* 🎯 **Jungler ennemi** : sur la minimap, sa dernière position et la zone où il peut être (murs compris)
-  quand il entre dans le brouillard.
-* ⏱️ **Objectifs de la saison 2026** (Dragon, Larves, Héraut, Baron à 20:00, Dragon ancestral ; plus
-  d'Atakhan), données d'objets et de champions mises à jour automatiquement (Data Dragon).
-* 💡 **Coups de génie et coups notés** : appels macro (plaques, échange d'objectif, retour sur la vague…)
-  et badges « coup de maître / gaffe » façon chess.com ; guide de balises (**F7**).
-* 🗂️ **Avant et après la partie** : carte de la sélection des champions, rapport d'après-partie (morts,
-  ganks subis, trajet réel du jungler ennemi via le client LoL, précision des coups, conseils), historique
-  et progression dans l'onglet **Analyses**.
-* 🤖 **Conseils IA (facultatif)** : avec ta propre clé (Gemini, Groq, OpenRouter, Anthropic ou Ollama local),
-  **F8** pose une question à l'IA ; désactivé par défaut.
+**En partie**
 
-### Raccourcis
+- **Ganks annoncés tôt, bip d'abord.** Le bip part tout de suite ; la phrase (« Gank ! Lee Sin, recule ! »)
+  suit seulement si elle est prête. Alerte aussi quand tu es seul contre deux, ou peu de vie face à un ennemi
+  plus fort, même s'il est déjà à l'écran.
+- **Une seule consigne à la fois.** À côté de la minimap, une petite carte : « Va bot : Dragon dans 0:45 »,
+  « Recule : 2 contre 1 ». En rouge s'il y a un danger, et rien du tout quand il n'y a rien d'utile à dire.
+- **Le jungler ennemi.** Sa dernière position et ses trajets probables quand il entre dans le brouillard.
+- **Timers.** Buffs du Baron et de l'Ancien, ennemis morts (« 3 morts · 18 s »), objectifs qui te concernent.
+- **Coups qui changent la partie.** Course aux niveaux, plaques quand ton adversaire disparaît, Baron après un
+  combat gagné, achats ennemis, ce que tu oublies (point de compétence, potion, balises, or).
+- **Voix sobre.** Seuls les dangers et les appels importants sont dits à voix haute ; le reste est écrit.
+
+**Avant et après la partie**
+
+- **Sélection des champions :** une carte avec ton adversaire, ses forces et ses faiblesses.
+- **Rapport d'après-partie :** tes morts expliquées, les ganks subis, le vrai trajet du jungler ennemi (lu dans
+  le client LoL), qui était le plus fort et quand, tes meilleurs coups et tes erreurs, façon chess.com.
+- **Progression** d'une partie à l'autre dans la page **Analyse**.
+
+**Facultatif**
+
+- **Conseils IA** avec ta propre clé (Gemini, Groq, OpenRouter, Anthropic ou Ollama en local) : **F8** pose une
+  question. Au plus 10 appels par partie ; désactivé par défaut.
+
+<p align="center">
+  <img src="docs/img/launcher-alertes-clair.png" width="410" alt="Page Alertes et voix, thème clair">
+  <img src="docs/img/launcher-overlay-sombre.png" width="410" alt="Page Overlay avec l'aperçu, thème sombre">
+</p>
+
+### Raccourcis en jeu
 
 | Touche | Action |
 | --- | --- |
-| **F6** (maintenir) | **Mode détaillé** tant que la touche est enfoncée : carte complète (ligne du jungler, portraits) + anneaux, rôles et fantômes sur la minimap. Touche modifiable (`hotkey_details`) ; `hud_detailed` le garde toujours actif. |
+| **F6** (maintenir) | Mode détaillé : carte complète, anneaux, rôles et dernières positions sur la minimap |
 | **F7** | Où poser une balise ? |
 | **F8** | Demander à l'IA (si configurée) |
 | **F9** | Où est le jungler ? (réponse vocale) |
 | **F10** | Couper / rétablir la voix |
 | **F11** | Afficher / masquer l'overlay |
-| **Ctrl+F8** | **Diagnostic** : enregistre 60 s (une image toutes les 2 s, état de la détection, santé, journal) dans `%APPDATA%\TreeAICoach\diagnostics\diag_….zip` et ouvre le dossier. Joins ce fichier à ton signalement. |
+| **Ctrl+Maj+S** | Mode sûr (plus d'alertes de gank ni de suivi du jungler) |
+| **Ctrl+F8** | Diagnostic : enregistre 60 s dans `%APPDATA%\TreeAICoach\diagnostics\` et ouvre le dossier |
 
-## 🔍 Comment ça marche
+Dans le launcher : **Ctrl+1 … 6** pour changer de page.
 
-1. **Capture d'écran uniquement** : l'app regarde la minimap en bas à droite de l'écran, exactement comme OBS ou
-   Discord capturent ton écran. Elle trouve la minimap toute seule.
-2. **Détection des icônes** : un petit réseau de neurones (format ONNX, exécuté sur le processeur) repère les icônes
-   de champions. Il a été entraîné sur des **minimaps synthétiques** fabriquées à partir des **textures officielles**
-   du jeu (carte, icônes des champions et de leurs skins, brouillard, sbires, balises…).
-3. **Identification** : l'**API officielle Live Client Data** de Riot, fournie par le jeu lui-même pendant la partie
-   (`https://127.0.0.1:2999`), donne la liste des 10 champions, leurs équipes et leurs skins. L'app reconnaît ainsi
-   chaque icône et sait qui est le jungler ennemi.
-4. **Analyse** : les positions sont suivies dans le temps ; si un ennemi dangereux se rapproche de toi,
-   un bip et une phrase courte te préviennent, et la carte à côté de la minimap affiche la consigne.
+## Comment ça marche
 
-Tout est calculé **sur ton PC** et aucune donnée personnelle n'est envoyée. La seule connexion à Internet
-(facultative) télécharge les icônes des skins de la partie depuis CommunityDragon, pour mieux reconnaître les champions.
+1. **Capture d'écran uniquement.** L'appli regarde la minimap, exactement comme OBS ou Discord capturent ton
+   écran, et la trouve toute seule.
+2. **Détection des icônes.** Un petit réseau de neurones (ONNX, sur le processeur) repère les icônes de
+   champions. Il est entraîné sur des minimaps synthétiques fabriquées à partir des textures officielles du jeu,
+   puis vérifié sur de vraies parties.
+3. **Identification.** L'**API officielle Live Client Data** de Riot, fournie par le jeu pendant la partie, donne
+   les 10 champions, leurs équipes et leurs skins. L'appli sait ainsi qui est qui, et qui est le jungler ennemi.
+4. **Analyse.** Les positions sont suivies dans le temps ; un ennemi dangereux qui se rapproche déclenche un bip,
+   une phrase courte et une consigne sur la carte.
 
-## 🛡️ Sécurité et règles de Riot
+Tout est calculé **sur ton PC**. La seule connexion (facultative) télécharge les icônes des skins de la partie
+et la voix naturelle.
+
+## Sécurité et règles de Riot
 
 **Ce que TreeAI Coach fait :** il lit les pixels déjà affichés sur ton écran et l'API officielle Live Client Data.
 Ses fenêtres d'overlay sont de simples fenêtres Windows transparentes, posées au-dessus du jeu.
@@ -123,47 +151,50 @@ Ses fenêtres d'overlay sont de simples fenêtres Windows transparentes, posées
 * La politique de Riot sur les applications tierces **évolue** : par exemple, depuis **mars 2025**, les
   applications qui suivent les ultimes et les temps de recharge des ennemis sont **interdites**. Riot peut juger à tout
   moment qu'un outil donne un avantage injuste.
-* La **zone du jungler** est la fonction **la plus sensible** : même si elle n'utilise que ce que tu as vu à l'écran,
-  elle estime la zone où se trouve un ennemi invisible. Tu peux la **désactiver** : **Réglages** → **Affichage** →
-  **Zone des ennemis cachés** → **Aucun** (ou le **Mode sûr** de la barre de gauche). Si tu veux être le plus prudent
-  possible, désactive-la.
+* La **zone du jungler** et ses **trajets probables** sont les fonctions **les plus sensibles** : même si
+  elles n'utilisent que ce que tu as vu à l'écran, elles estiment où se trouve un ennemi invisible. Tu peux les
+  **désactiver** : **Overlay** → **Sur la minimap** → **Zone des ennemis cachés : Aucun** et **Trajets probables du
+  jungler** désactivé, ou d'un coup avec le **Mode sûr** (Accueil, ou **Ctrl+Maj+S**).
 * **Tu utilises TreeAI Coach à tes propres risques**, sans aucune garantie (voir la [licence](LICENSE)).
 
-## ⚙️ Réglages
+## Réglages
 
-Toujours à un clic, dans la barre de gauche : **Voix**, **Overlay**, **Mode sûr** et **ton niveau**
-(Débutant … Expert : plus tu es expérimenté, moins le coach en dit).
+Le launcher a six pages, dans la barre de gauche :
 
-| Page / onglet | Ce que tu y trouves |
+| Page | Ce que tu y trouves |
 | --- | --- |
-| **En jeu** | L'état en une ligne (avec le bouton qui corrige un problème), Démarrer / Arrêter, tester la voix et l'overlay, mode démo ; avant la partie : ta dernière partie (rapport, replay), ton objectif, le panneau « Système » ; en partie : ennemis, radar, journal |
-| **Analyses** | Onglets **Parties** (historique, rapports), **Progrès** et **Replay** |
-| **Réglages › Général** | Démarrage (avec Windows), rapport d'après-partie, client LoL, taille de l'interface |
-| **Réglages › Affichage** | Ce que tu vois en jeu, avec un aperçu : overlay, minuteurs, **zone des ennemis cachés** (Jungler / Tous / Aucun), trajets du jungler (essai), panneau (mode détaillé : maintenir F6), flash de danger, coups notés, « Déplacer » |
-| **Réglages › Voix** | Ce que tu entends : quantité de voix, **bip et/ou voix** pour un danger, chaque alerte de gank, **sensibilité**, rappels, moteur de voix, vitesse, volume |
-| **Réglages › Détection** | Minimap automatique ou manuelle (calibrer), images par seconde, détecteur |
-| **Réglages › IA, Mises à jour, Avancé** | Conseils IA facultatifs ; mises à jour (lien direct en cas d'échec) ; touches en jeu, performance, diagnostic, journaux, réinitialisation |
+| **Accueil** | L'état de l'analyse, ton niveau (Débutant … Expert), voix / overlay / mode sûr, les tests sans jouer, ta dernière partie, l'état du système |
+| **Overlay** | Un aperçu sur une partie fictive, ce qui s'affiche en jeu (consigne, timers, minimap, jungler), « Déplacer » |
+| **Alertes et voix** | Ce que le coach dit, bip et/ou voix pour un danger, chaque alerte de gank, sensibilité, voix, vitesse, volume, **Tester la voix** |
+| **Analyse** | Tes parties, leurs rapports et ta progression |
+| **Réglages** | Démarrage, rapport d'après-partie, client LoL, minimap (calibrer), performance, conseils IA, diagnostic |
+| **À propos** | Version, mise à jour, nouveautés, raccourcis |
 
-Tes réglages, journaux et rapports sont rangés dans **`%APPDATA%\TreeAICoach`**
-(copie ce chemin dans la barre d'adresse de l'Explorateur de fichiers).
+Tes réglages, journaux et rapports sont dans **`%APPDATA%\TreeAICoach`** (copie ce chemin dans la barre
+d'adresse de l'Explorateur de fichiers).
 
-## 🧰 Dépannage
+<p align="center">
+  <img src="docs/img/launcher-reglages-clair.png" width="640" alt="Page Réglages, thème clair">
+</p>
+
+## Dépannage
 
 | Problème | Solution |
 | --- | --- |
 | **Capture noire** / « passe en mode Sans bordure » | Dans LoL : `Échap` → **Vidéo** → **Mode d'affichage : Sans bordure**. |
-| **Pas de voix** | Installe la voix française de Windows : **Paramètres > Heure et langue > Voix** → *Ajouter des voix* → **Français (France)**. Choisis-la ensuite dans **Réglages › Voix** puis clique sur **Tester la voix**. Vérifie aussi que la voix n'est pas coupée (**F10**). |
-| **Minimap non trouvée** | Le bouton **Calibrer** apparaît sur **En jeu** : trace un carré autour de ta minimap. Si ta minimap est à gauche, change le côté dans **Réglages › Détection**. |
-| **L'app ne voit pas la partie** | L'API de Riot ne répond qu'une fois la partie commencée (pas pendant l'écran de chargement). Seule la Faille de l'invocateur est prise en charge. |
-| **Overlay invisible** | Vérifie le mode **Sans bordure** et l'interrupteur **Overlay** de la barre de gauche (ou **F11** en jeu), puis **Tester l'overlay**. |
-| **Antivirus : faux positif** | Les exécutables non signés créés avec PyInstaller sont parfois signalés à tort. Télécharge l'exe **uniquement** depuis la page officielle des Releases, compare son SHA-256, puis ajoute une exception dans ton antivirus. |
-| **Démarrage un peu lent** | Normal : l'exe se décompresse en quelques secondes au lancement. |
-| **Alertes fausses / détection bizarre** | Pendant la partie, appuie sur **Ctrl+F8** : un diagnostic de 60 s est enregistré (dossier ouvert à la fin). Joins le `.zip` à ton signalement. |
-| **Autre problème** | **Réglages › Avancé** → **Journaux**, et joins le dernier fichier à ton signalement dans les [Issues](https://github.com/SosatLaZ/treeaicoach/issues). |
+| **Voix robotique** | La voix naturelle a besoin d'Internet. Sans connexion, l'appli prend la meilleure voix Windows : installe la voix française dans **Paramètres > Heure et langue > Voix** → *Ajouter des voix* → **Français (France)**, puis **Tester la voix**. |
+| **Pas de voix du tout** | Vérifie qu'elle n'est pas coupée (**F10**) et l'interrupteur **Voix du coach** sur l'Accueil. |
+| **Minimap non trouvée** | **Réglages → Minimap → Calibrer** : trace un carré autour de ta minimap. Si ta minimap est à gauche, change le côté au même endroit. |
+| **L'appli ne voit pas la partie** | L'API de Riot répond seulement une fois la partie commencée, pas pendant l'écran de chargement. Seule la Faille de l'invocateur est analysée en direct (en ARAM, tu as un rapport limité aux statistiques). |
+| **Overlay invisible** | Vérifie le mode **Sans bordure**, **F11** en jeu, puis **Tester l'overlay** sur l'Accueil. |
+| **Antivirus : faux positif** | Les exe non signés créés avec PyInstaller sont parfois signalés à tort. Télécharge-le **uniquement** ici, compare son SHA-256, puis ajoute une exception. |
+| **Alertes fausses / détection bizarre** | En partie, appuie sur **Ctrl+F8** : un diagnostic de 60 s est enregistré. Joins le `.zip` à ton signalement. |
+| **Autre problème** | **Réglages → Maintenance et support → Journaux**, et joins le dernier fichier dans les [Issues](https://github.com/SosatLaZ/treeaicoach/issues). |
 
-## 👩‍💻 Pour les développeurs
+## Pour les développeurs
 
-Python 3.11 (Windows pour la voix, la capture et l'overlay ; les tests tournent aussi sous Linux).
+Python 3.11. Launcher en Qt (PySide6), overlay en fenêtres Win32, détection en numpy / OpenCV / ONNX Runtime.
+Windows pour la voix, la capture et l'overlay ; les tests tournent aussi sous Linux.
 Commandes pour PowerShell, depuis le dossier du projet :
 
 ```powershell
@@ -175,7 +206,7 @@ py -3.11 -m venv .venv
 .venv\Scripts\python -m treeaicoach              # interface
 .venv\Scripts\python -m treeaicoach --demo       # partie simulée
 .venv\Scripts\python -m treeaicoach --selftest   # autotest (--selftest-out rapport.txt)
-.venv\Scripts\python -m pytest -q                # tests (~1500, quelques minutes)
+.venv\Scripts\python -m pytest -q                # tests (~1600, quelques minutes)
 .venv\Scripts\python -m pytest -q -n auto --dist loadfile   # idem en parallèle (pytest-xdist, ~3x plus rapide)
 .venv\Scripts\python -m tools.ux_replay --level all --scenario all --quiet   # juge des consignes : 0 violation
 ```
@@ -183,7 +214,8 @@ py -3.11 -m venv .venv
 * À lire avant de modifier quoi que ce soit : [`docs/LESSONS.md`](docs/LESSONS.md) (règles tirées des retours
   joueurs), [`docs/DESIGN.md`](docs/DESIGN.md) (direction visuelle) ; architecture et contrats entre modules :
   [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ; faits mesurés sur de vraies minimaps :
-  [`docs/MINIMAP_FACTS.md`](docs/MINIMAP_FACTS.md).
+  [`docs/MINIMAP_FACTS.md`](docs/MINIMAP_FACTS.md) ; launcher : [`docs/LAUNCHER.md`](docs/LAUNCHER.md) ;
+  banc de test de la détection : [`tools/README_detection_gym.md`](tools/README_detection_gym.md).
 * **Entraînement du modèle** (PyTorch, hors exe) : toutes les commandes et options sont dans
   [`training/README.md`](training/README.md). En résumé :
 
@@ -204,12 +236,11 @@ py -3.11 -m venv .venv
   .venv\Scripts\python packaging/make_icon.py    # régénère packaging/icon.png et icon.ico
   ```
 
-* **Publier** : chaque push sur la branche principale (ou sur une branche `claude…`) met à jour la pré-version
-  « latest » ; un tag `vX.Y.Z` identique à `treeaicoach.__version__` crée une release stable :
-  `git tag v2.6.0` puis `git push origin v2.0.0`. Le dossier `release/` ne contient que l'exe courant,
-  `version.json` (lu par la mise à jour intégrée) et `SHA256.txt`.
+* **Publier** : un tag `vX.Y.Z` identique à `treeaicoach.__version__` lance la construction sur GitHub Actions
+  et crée la release. Le dossier `release/` contient l'exe courant, `version.json` (lu par la mise à jour
+  intégrée) et `SHA256.txt`. L'historique des versions est dans [`CHANGELOG.md`](CHANGELOG.md).
 
-## ⚖️ Mentions légales
+## Mentions légales
 
 TreeAI Coach isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
 

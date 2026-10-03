@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 60
     concurrency:
       group: build-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false     # let a build finish (frequent pushes cancelled every run); a newer push waits
     defaults:
       run:
         shell: pwsh
