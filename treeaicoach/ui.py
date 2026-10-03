@@ -791,14 +791,30 @@ class CoachApp:
 
     @_guarded
     def test_voice(self) -> None:
-        if self.voice is None:
+        """"Tester la voix" / "Écouter": a sample said by the REAL chosen voice (``voice.preview``
+        waits for the natural voice instead of switching to a Windows voice; it only queues the line),
+        then a note if a Windows voice had to say it."""
+        voice = self.voice
+        if voice is None:
             self.show_error("La synthèse vocale n'est pas disponible (elle démarre peut-être encore).")
             return
-        self.voice.say("Test de la voix. Attention, Lee Sin approche !", 1)
-        if getattr(self.voice, "backend", "") == "print":
-            self.show_toast("Voix indisponible sur ce système : le message est écrit dans le journal.", "warning")
+        preview = getattr(voice, "preview", None)
+        if callable(preview):
+            preview()
         else:
-            self.show_toast("Test de la voix en cours…")
+            voice.say("Test de la voix. Attention, Lee Sin arrive par la rivière !", 1)
+        if getattr(voice, "backend", "") == "print":
+            self.show_toast("Voix indisponible sur ce système : le message est écrit dans le journal.", "warning")
+            return
+        self.show_toast("Test de la voix en cours…")
+        self.later(7500, self._voice_test_report)
+
+    def _voice_test_report(self) -> None:
+        src = str(getattr(self.voice, "last_source", "") or "")
+        if getattr(self.cfg, "voice_engine", "auto") in ("auto", "neural") and src in ("onecore", "sapi"):
+            self.show_toast("La voix naturelle n'a pas répondu (Internet ou antivirus ?) : une voix Windows "
+                            "l'a remplacée. Les phrases du match sont préparées dès que la connexion revient.",
+                            "warning")
 
     @_guarded
     def test_overlay(self) -> None:

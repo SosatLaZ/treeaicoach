@@ -28,8 +28,11 @@ class FakeVoice:
         self.params: dict = {}
         self.stopped = False
 
-    def say(self, text: str, prio: int = 0) -> None:
+    def say(self, text: str, prio: int = 0, **_kw: object) -> None:
         self.said.append(text)
+
+    def preview(self, text: str = "") -> None:
+        self.said.append("preview:" + text)
 
     def set_params(self, **kw: object) -> None:
         self.params = kw
@@ -173,6 +176,8 @@ def test_setting_change_applies_live_and_saves(home: Path) -> None:
         assert app.page_views["overlay"].radar.isVisibleTo(app.page_views["overlay"].page)
         _pump(app, 0.7)                           # debounced save
         assert load_config(home / "config.json").voice_volume == 40
+        app.test_voice()                          # the real chosen voice (voice.preview), never say()
+        assert voice.said == ["preview:"]
         app.apply_skill_level("debutant")
         assert app.cfg.skill_level == "debutant"
         assert app.page_views["home"].level.value() == "debutant"
