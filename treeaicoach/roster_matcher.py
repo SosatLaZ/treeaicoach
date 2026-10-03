@@ -563,6 +563,21 @@ def _cap_masks(size: int, radius: float) -> np.ndarray:
     return np.asarray(out, np.float32)
 
 
+#: DFT sizes of mostly-2 radix: cv2.getOptimalDFTSize also returns sizes with 3^3 / 5^3
+#: factors that are slower than a slightly larger power-of-two-heavy size (measured, one
+#: inverse transform: 243 px 0.35 ms vs 256 px 0.24 ms; 225 px 0.27 ms vs 240 px 0.23 ms).
+_FAST_DFT = (64, 72, 80, 96, 100, 108, 128, 144, 160, 162, 192, 200, 216, 240, 256, 288, 320,
+             384, 432, 480, 512, 576, 640)
+
+
+def _dft_size(n: int) -> int:
+    """Fast DFT length >= ``n`` (zero padding: same correlation values on the valid part)."""
+    for m in _FAST_DFT:
+        if m >= n:
+            return m
+    return cv2.getOptimalDFTSize(n)
+
+
 def _spec(a: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     # (cost) zero padding in one cv2 call; nonzeroRows: the padding rows are skipped
     buf = cv2.copyMakeBorder(np.asarray(a, np.float32), 0, shape[0] - a.shape[0], 0,
@@ -594,7 +609,7 @@ def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None,
     idx = list(range(len(bank.tmpl))) if idx is None else list(idx)
     if oh < 1 or ow < 1:
         return np.zeros((len(idx), 1, 1), np.float32), np.zeros((1, 1), np.float32)
-    shape = (cv2.getOptimalDFTSize(H), cv2.getOptimalDFTSize(W))
+    shape = (_dft_size(H), _dft_size(W))
     mspec, tspecs = _bank_specs(bank, shape)
     chans = cv2.split(feat)
     fs = [_spec(ch, shape) for ch in chans]
@@ -2191,7 +2206,7 @@ class RosterMatcher:
         # 8 DFTs per frame instead of 18 with cv2.filter2D (same values, zero borders)
         n = 2 * int(math.ceil(R_w * 1.35)) + 1
         h0 = n // 2
-        shape = (cv2.getOptimalDFTSize(H + n - 1), cv2.getOptimalDFTSize(W + n - 1))
+        shape = (_dft_size(H + n - 1), _dft_size(W + n - 1))
         key = (round(float(R_w), 4), shape)
         specs = self._ring_specs.get(key)
         if specs is None:
