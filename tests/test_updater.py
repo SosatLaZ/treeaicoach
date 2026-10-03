@@ -282,27 +282,28 @@ def test_published_manifest_matches_release_exe():
 
 
 def test_ui_updates_section(tmp_path, monkeypatch):
-    import test_ui as tu
-    if not tu._display_ok():
-        pytest.skip("no display / Tk available")
+    """À propos > Mise à jour of the Qt launcher: check, failed download with progress, install + close."""
+    pytest.importorskip("PySide6.QtWidgets")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import test_launcher as tl
+
     monkeypatch.setenv("TREEAICOACH_HOME", str(tmp_path / "home"))
     from treeaicoach import paths
     paths._reset_cache()
     info = updater.UpdateInfo("9.0.0", SHA, len(EXE))
     monkeypatch.setattr(updater, "check_for_update", lambda cfg=None, **k: updater.CheckResult(
         updater.AVAILABLE, "Nouvelle version 9.0.0 disponible (tu as la 1.0.0).", "1.0.0", info, True))
-    app, _voice, _ = tu._build(tmp_path)
+    app, _voice, _ = tl._build(tmp_path)
     try:
-        app.show_page("settings", "Mises à jour")         # tabs are built on their first visit
-        assert app._update_btn.cget("state") == "disabled"
-        app._update_token_entry.insert(0, "tok123")
+        app.show_page("about")
+        view = app.page_views["about"]
+        assert not view.install_btn.isEnabled()
         app.check_updates()
-        tu._pump(app, 3.0, lambda: not app._update_busy)
-        assert "Nouvelle version 9.0.0" in app._update_status.cget("text")
-        assert app._update_btn.cget("state") == "normal" and app.cfg.github_token == "tok123"
-        app._startup_update_check()                                 # quiet: toast only
-        tu._pump(app, 3.0, lambda: not app._update_busy)
-
+        tl._pump(app, 0.5)
+        assert "Nouvelle version 9.0.0" in view.status_row.desc.text()
+        assert view.install_btn.isEnabled() and not app.sidebar.update_btn.isHidden()
         progress_seen: list[int] = []
 
         def fake_download(i, cfg=None, progress=None, **k):
@@ -313,16 +314,14 @@ def test_ui_updates_section(tmp_path, monkeypatch):
 
         monkeypatch.setattr(updater, "download_update", fake_download)
         app.install_update()
-        tu._pump(app, 3.0, lambda: not app._update_busy)
-        assert "test" in app._update_status.cget("text") and progress_seen
-        assert app._update_btn.cget("state") == "normal" and not app._closing
-
+        tl._pump(app, 0.5)
+        assert "test" in view.status_row.desc.text() and progress_seen and not app._closing
         monkeypatch.setattr(updater, "download_update",
                             lambda i, cfg=None, **k: updater.DownloadResult(True, "ok", tmp_path / "x.exe"))
         monkeypatch.setattr(updater, "apply_update",
                             lambda p, i=None, **k: updater.ApplyResult(True, "Installation : redémarrage."))
         app.install_update()
-        tu._pump(app, 3.0, lambda: app._closing)
+        tl._pump(app, 1.5)
         assert app._closing
     finally:
         app.close()

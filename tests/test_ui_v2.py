@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 import test_ui as tu
 
-from treeaicoach import ui, ui_kit
+from treeaicoach import ui_kit
+from treeaicoach import ui_common as ui
 
 home = tu.home
 
@@ -46,71 +47,5 @@ def test_objectives_text_and_ui_text() -> None:
     assert ui.ui_text(chr(0x2014)) == "-"
 
 
-@tu.needs_display
-def test_analysis_tabs_replay_progress(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    games_dir = home / "home" / "games"
-    games_dir.mkdir(parents=True)
-    src = Path(__file__).parent / "fixtures" / "game_record_sample.json"
-    rec = json.loads(src.read_text(encoding="utf-8"))
-    paths_ = []
-    for i in range(3):
-        p = games_dir / f"2026-09-{20 + i}_2100_Garen.json"
-        shutil.copy(src, p)
-        paths_.append(p)
-    games = [{"path": str(p), "start": rec["summary"]["start"], "champion": "Garen", "result": "Win",
-              "kills": 3, "deaths": 4, "assists": 5, "duration": 1690.0, "ganks": 4, "ganks_survived": 2}
-             for p in paths_]
-    real = ui._report_function
-    monkeypatch.setattr(ui, "_report_function", lambda name: {"list_games": lambda n=50: games}.get(name)
-                        or real(name))
-    app, _voice, _ = tu._build(tmp_path)
-    try:
-        app.show_page("analysis")
-        tu._pump(app, 3.0, lambda: app._games == games)
-        assert app._games == games and len(app._replay_choices) == 3
-        page = app.pages["analysis"]
-        page.select_tab("Progrès")
-        app.refresh_progress()
-        tu._pump(app, 8.0, lambda: isinstance(app._progress_sig, int))
-        assert app._progress_sig == 3
-        app.open_replay(games[0])
-        tu._pump(app, 8.0, lambda: app._replay.get("model") is not None)
-        model = app._replay["model"]
-        assert model is not None and model.markers
-        assert "/" in app.replay_clock.cget("text")
-        t0 = app._replay["t"]
-        app.replay_jump(1)
-        assert app._replay["t"] >= t0
-        app.replay_toggle()
-        tu._pump(app, 0.6)
-        assert app._replay["playing"] and app._replay["t"] > t0
-        app.replay_toggle()
-        assert not app._replay["playing"]
-        app._replay_click(10)
-        assert abs(app._replay["t"] - model.start) < 60
-    finally:
-        app.close()
 
 
-@tu.needs_display
-def test_system_rows_overlay_test_and_update_fallback(home: Path, tmp_path: Path,
-                                                      monkeypatch: pytest.MonkeyPatch) -> None:
-    opened: list[str] = []
-    monkeypatch.setattr(ui.webbrowser, "open", lambda url: opened.append(url))
-    app, _voice, (engines, overlays) = tu._build(tmp_path)
-    try:
-        tu._pump(app, 4.0, lambda: app.sys_rows["game"]["sig"] is not None and engines and engines[0].is_running())
-        assert all(r["sig"] is not None for r in app.sys_rows.values())
-        assert app.hero.timers.cget("text") is not None
-        overlays[0].ok = True
-        monkeypatch.setattr(app, "_in_game", lambda: False)
-        app.test_overlay()
-        tu._pump(app, 6.0, lambda: app._overlay_test is not None)
-        assert app._overlay_test is not None
-        st = overlays[0].provider()
-        assert st is not None and getattr(st, "threat_level", None) == 0      # "safe" sample first
-        app.open_manual_download()
-        from treeaicoach import updater
-        assert opened == [updater.MANUAL_DOWNLOAD_URL]
-    finally:
-        app.close()

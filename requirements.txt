@@ -4,7 +4,7 @@ opencv-python-headless>=4.9,<4.11
 onnxruntime>=1.18,<1.20
 mss>=9.0,<11
 pillow>=10.0
-customtkinter>=5.2,<7
+PySide6-Essentials>=6.7,<6.8     # launcher (Qt Widgets): QtCore / QtGui / QtWidgets only
 pywin32>=306; sys_platform == "win32"
 msvc-runtime>=14.40; sys_platform == "win32"
 # Natural voice (Microsoft Edge neural voices, online) + MP3 decoding without ffmpeg

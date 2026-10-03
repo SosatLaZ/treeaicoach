@@ -7,7 +7,7 @@ from pathlib import Path
 
 import test_ui as tu
 
-from treeaicoach import ui
+from treeaicoach import ui_common as ui
 from treeaicoach.config import Config
 
 home = tu.home
@@ -20,93 +20,6 @@ def test_ui_scale_of() -> None:
     assert ui.ui_scale_of(type("C", (), {"ui_scale": 1.0, "ui_scaling": "125"})()) == 1.25
     assert ui.ui_scale_of(type("C", (), {"ui_scale": "x", "ui_scaling": "?"})()) == 1.0
     assert ui.ui_scale_of(type("C", (), {"ui_scale": 9.0})()) == 1.4
-
-
-def test_toggle_image_reads_on_off() -> None:
-    on = ui.toggle_image(46, 26, True, ui.ACCENT, ui.SURFACE)
-    off = ui.toggle_image(46, 26, False, ui.ACCENT, ui.SURFACE)
-    assert on.size == off.size == (46, 26)
-    # on: green track on the left, dark knob on the right; off: no green anywhere
-    r, g, b = on.getpixel((10, 13))[:3]
-    assert g > 180 and r < 190
-    assert sum(on.getpixel((33, 13))[:3]) < 120
-    pixels = [off.getpixel((x, y))[:3] for x in range(46) for y in range(26)]
-    assert all(px[1] - px[0] < 30 for px in pixels)          # nothing green when off
-    assert ui.toggle_image(46, 26, True, ui.ACCENT, ui.SURFACE) is on        # cached
-    dis = ui.toggle_image(46, 26, True, ui.ACCENT, ui.SURFACE, disabled=True)
-    assert dis.getpixel((10, 13))[1] < on.getpixel((10, 13))[1]
-
-
-@tu.needs_display
-def test_eager_pages_and_quiet_timers(home: Path, tmp_path: Path) -> None:
-    app, voice, (engines, _ov) = tu._build(tmp_path)
-    try:
-        # the window opens on the dashboard; every other page and tab is built in the start-up slots
-        assert app._built == {"dashboard"}
-        tu._pump(app, 20.0, lambda: app._startup_done)
-        assert app._built == set(app._page_builders)
-        assert app._update_check_btn is not None and not app.pages["settings"].pending_tabs()
-        app.show_page("settings", "Mises à jour")
-        assert app.pages["settings"].current_tab == "Mises à jour"
-        t0 = time.perf_counter()
-        app.show_page("help")
-        assert app._current_page == "help"
-        app.root.update()
-        t1 = time.perf_counter()
-        app.show_page("settings")
-        app.root.update()
-        assert time.perf_counter() - t1 < max(0.5, t1 - t0)   # a built page switches fast
-        # dashboard hidden: the status loop slows down and does not touch its widgets
-        tu._pump(app, 0.3)
-        assert not app._dash_live()
-        before = app.clock_lbl.cget("text")
-        tu._pump(app, 1.2)
-        assert app.clock_lbl.cget("text") == before
-        app.show_page("dashboard")
-        tu._pump(app, 1.5, lambda: app.clock_lbl.cget("text") != before)
-        app.build_all_pages()                                  # idempotent
-        assert app._built == set(app._page_builders)
-    finally:
-        app.close()
-
-
-@tu.needs_display
-def test_light_controls(home: Path, tmp_path: Path, monkeypatch) -> None:
-    app, voice, _ = tu._build(tmp_path)
-    try:
-        calls: list = []
-        var = app.ctk.BooleanVar(value=False)
-        t = app._toggle(app.content, var, lambda: calls.append(var.get()))
-        t.grid(row=5, column=0)
-        app.root.update()
-        t._click()
-        assert var.get() is True and calls == [True]
-        t.configure(state="disabled")
-        t._click()
-        assert var.get() is True and calls == [True]
-        var.set(False)                                         # variable -> image follows
-        assert t._sig[2] is False
-
-        picked: list = []
-        d = ui.Dropdown(app, app.content, ["A", "B"], picked.append)
-        d.set("B")
-        assert d.get() == "B"
-        d._pick("A")
-        assert picked == ["A"] and d.get() == "A"
-        d.configure(values=["C"], state="disabled")
-        assert d.cget("values") == ["C"] and d.cget("state") == "disabled"
-
-        seg = ui.Segmented(app, app.content, ["  x  ", "  y  "], picked.append)
-        seg._click("  y  ")
-        assert seg.get() == "  y  " and picked[-1] == "  y  "
-        seg.set("")
-        assert seg.get() == ""
-        # settings rows are built with the light controls and stay in sync with the config
-        app.show_page("settings")
-        app.set_option("minimap_side", "left")
-        app._refresh_all_widgets()
-    finally:
-        app.close()
 
 
 def test_health_text_and_new_hooks() -> None:
@@ -130,44 +43,13 @@ def test_default_detector_factory_passes_the_engine_options(monkeypatch) -> None
 
     monkeypatch.setattr(detector, "create_detector", fake)
     cfg = Config()
-    assert ui._default_detector_factory(cfg, learn=False) == "det"
+    from treeaicoach import ui as uimod
+
+    assert uimod._default_detector_factory(cfg, learn=False) == "det"
     assert got["learn_cache"] is False and "db" in got and isinstance(got["scale_store"], dict)
-    ui._default_detector_factory(cfg)
+    uimod._default_detector_factory(cfg)
     assert got["learn_cache"] is True
 
 
-@tu.needs_display
-def test_champ_select_card(home: Path, tmp_path: Path, monkeypatch) -> None:
-    from types import SimpleNamespace
-
-    from treeaicoach import champ_select
-
-    card = SimpleNamespace(title="AHRI · MID", lines=("Face à Zed (probable)", "Joue loin : il a la priorité"))
-    monkeypatch.setattr(champ_select, "pregame_card", lambda: card)
-    app, _voice, _ = tu._build(tmp_path, cfg=Config(ui_onboarding_done=True, ui_seen_changelog="1.5",
-                                                     autostart=False))
-    try:
-        tu._pump(app, 4.0, lambda: app.cs_card.winfo_manager() == "grid")
-        assert app.cs_card.winfo_manager() == "grid" and app._cs_sig[0] == "AHRI · MID"
-        app._show_champ_select(None)
-        assert not app.cs_card.winfo_manager()
-    finally:
-        app.close()
 
 
-@tu.needs_display
-def test_health_shows_game_impact_and_status_loop_rate(home: Path, tmp_path: Path) -> None:
-    app, _voice, _ = tu._build(tmp_path, cfg=Config(ui_onboarding_done=True, ui_seen_changelog="1.5",
-                                                     autostart=False))
-    try:
-        h = {"capture_backend": "dxcam", "capture_fps": 29.6, "detect_ms": {"p50": 11.0, "p95": 20.0},
-             "performance": {"level": "eleve", "text": "Impact sur le jeu : moyen (31 % d'un cœur)"}}
-        app._update_health(h, 5.0)
-        text = app.health_lbl.cget("text")
-        assert "dxcam" in text and "Impact sur le jeu : moyen" in text
-        assert str(app.health_lbl.cget("text_color")).upper() == ui.WARNING.upper()
-        app._update_health({"performance": {"level": "ok", "text": "Impact sur le jeu : faible"}}, None)
-        assert app.health_lbl.cget("text").endswith("Impact sur le jeu : faible")
-        assert ui.CoachApp._launcher_in_front() is True          # no game window here: 4 Hz allowed
-    finally:
-        app.close()
