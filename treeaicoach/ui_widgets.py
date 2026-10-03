@@ -639,8 +639,9 @@ class Section(QtWidgets.QWidget):
         lay.addWidget(self.group)
         self.footnote = label(footnote, "footnote", wrap=True)
         self.footnote.setContentsMargins(16, 0, 16, 0)
-        self.footnote.setVisible(bool(footnote))
-        lay.addWidget(self.footnote)
+        lay.addWidget(self.footnote)          # parented first: setVisible(True) on an orphan makes a window
+        if not footnote:
+            self.footnote.hide()
 
     def add(self, row: QtWidgets.QWidget) -> QtWidgets.QWidget:
         return self.group.add(row)
@@ -673,8 +674,9 @@ class Page(QtWidgets.QScrollArea):
         self.title = label(title, "title")
         head.addWidget(self.title)
         self.subtitle = label(subtitle, "secondary", wrap=True)
-        self.subtitle.setVisible(bool(subtitle))
         head.addWidget(self.subtitle)
+        if not subtitle:
+            self.subtitle.hide()
         self.lay.addLayout(head)
         self.lay.addStretch(1)
         self.setWidget(body)

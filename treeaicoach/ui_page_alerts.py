@@ -83,8 +83,12 @@ class AlertsPage:
                                       "sans Internet.")
         app.choice_row(v, "voice_engine", "Moteur de voix", "« Automatique » utilise la voix neurale si "
                        "Internet répond.", ENGINE_LABELS)
+        cur = str(app.cfg.neural_voice or "fr-FR-DeniseNeural")
         self.neural = app.choice_row(v, "neural_voice", "Voix neurale", "Voix Microsoft en ligne (française).",
-                                     neural_voices())
+                                     [(cur, cur.replace("fr-FR-", "").replace("Neural", ""))])
+        # the full list needs tts_neural (edge-tts, aiohttp: a slow import): read on a worker
+        app.run_job(neural_voices, lambda vs: self.neural.ctl.set_choices(vs, app.cfg.neural_voice), None,
+                    name="TreeAI-ui-neural-voices")
         self.neural_rate = app.slider_row(v, "neural_rate", "Vitesse de la voix neurale", "Défaut : +15 %.",
                                           -50, 100, 5, lambda x: f"{x:+.0f} %", to_value=lambda x: f"{int(x):+d}%",
                                           from_value=_pct_value)

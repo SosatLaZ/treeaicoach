@@ -94,7 +94,11 @@ class SettingsPage:
 
         ai = self.page.section("Conseils IA (facultatif)", "Gemini, Groq et OpenRouter ont une offre gratuite. La clé "
                                                           "reste sur ton PC.")
-        app.choice_row(ai, "ai_provider", "Fournisseur", None, ai_providers())
+        prov = app.choice_row(ai, "ai_provider", "Fournisseur", None,
+                              [(app.cfg.ai_provider, "Désactivé" if app.cfg.ai_provider == "off" else
+                                str(app.cfg.ai_provider).capitalize())])
+        app.run_job(ai_providers, lambda ps: prov.ctl.set_choices(ps, app.cfg.ai_provider), None,
+                    name="TreeAI-ui-ai-providers")   # ai_advisor is a large module: imported on a worker
         app.entry_row(ai, "ai_api_key", "Clé API", None, secret=True, placeholder="Colle ta clé ici")
         app.entry_row(ai, "ai_model", "Modèle", "Vide = modèle conseillé du fournisseur.", placeholder="Par défaut")
         self.ai_test = ai.add(W.Row("Tester la clé", "Une toute petite requête au fournisseur.",
