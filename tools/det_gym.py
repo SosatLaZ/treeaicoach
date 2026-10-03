@@ -568,6 +568,10 @@ class Sim:
                 c.plan = []
         elif kind == "camera":
             self.sc.camera = a["mode"]
+            if a["mode"] == "follow":   # camera on another champion (ally portrait clicked, F2-F5)
+                role = a.get("role", "JUNGLE")
+                self.cam_follow = next((c for c in self.champs[1:] if c.team == self.sc.my_team
+                                        and c.role == role), self.champs[1])
         elif kind == "glue":          # walk next to / on another champion again (bot duo)
             to = next(c for c in self.champs if c.team == self.sc.my_team and c.role == "BOTTOM") \
                 if a["to"] == "adc" else self._sel(a["to"])[0]
@@ -609,6 +613,8 @@ class Sim:
         me = self.champs[0]
         if mode == "locked":
             self.cam_c = me.pos + [0.0, -0.022]
+        elif mode == "follow" and getattr(self, "cam_follow", None) is not None:
+            self.cam_c = self.cam_follow.pos + [0.0, -0.022]
         elif mode == "pan":
             self.cam_c = self.cam_c + self.pan_dir * 0.15 * dt
             if not (0.12 < self.cam_c[0] < 0.88 and 0.1 < self.cam_c[1] < 0.9):
@@ -843,6 +849,14 @@ def botlane_scenarios(quick: bool = False) -> list[Scenario]:
     S.append(Scenario("bl_tight", 83, 3.0, 36.0, 300, "CHAOS", "jump", jpeg=70, blur=0.7,
                       me_role="UTILITY", glue=(0.08, 0.35), me_draw="under",
                       events=[(14.0, "camera", {"mode": "free"}), (24.0, "camera", {"mode": "pan"})]))
+    # real 2.5.0 Swain game: camera moved onto the jungler / top laner (portrait clicked) while
+    # my icon was stacked under my ADC -> "me" drawn on their icons, 6 identity resets alive
+    S.append(Scenario("bl_follow", 89, 4.0, 40.0, 280, "ORDER", "locked", jpeg=0, blur=0.4,
+                      me_role="UTILITY", glue=(0.1, 0.5), me_draw="under",
+                      events=[(10.0, "camera", {"mode": "follow", "role": "JUNGLE"}),
+                              (20.0, "camera", {"mode": "locked"}),
+                              (26.0, "camera", {"mode": "follow", "role": "TOP"}),
+                              (36.0, "camera", {"mode": "locked"})]))
     if quick:
         for sc in S:
             sc.seconds = min(sc.seconds, 16.0)

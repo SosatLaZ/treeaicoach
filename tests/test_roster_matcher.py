@@ -528,3 +528,22 @@ def test_greyscale_minimap_lightness_only(db, renderer):
         elif f < 4:
             assert not m.grey
     assert TP >= 0.7 * N and FP <= 0.1 * max(1, TP + FP), (TP, FP, N)
+
+
+def test_self_position_from_camera_must_be_reachable():
+    """Real 2.5.0 Swain game: my icon under my ADC, camera moved onto the jungler (portrait
+    clicked): 'me' must not be claimed on his icon 0.7 away 1 s after I was bot lane."""
+    m = RosterMatcher(db=None)
+    icon = np.zeros((32, 32, 4), np.uint8)
+    m._entries = [RosterEntry("Swain", "self", icon, team="ORDER"),
+                  RosterEntry("Qiyana", "ally", icon, team="ORDER")]
+    m._tracks = {0: RMod._Track(0.85, 0.88, 100.0)}
+    assert m._self_reachable(0, (0.86, 0.87), 100.5)              # next to my last spot
+    assert not m._self_reachable(0, (0.20, 0.25), 101.0)          # jungler's icon far away
+    assert m._self_reachable(0, (0.05, 0.94), 101.0)              # recall / respawn: fountain
+    assert m._self_reachable(0, (0.20, 0.25), 100.0 + RMod.SELF_REACH_MAX_S + 1)
+    m._self_anchor = (0.25, 0.30, 120.0)                          # later anchor wins
+    assert m._self_reachable(0, (0.20, 0.25), 121.0)
+    m2 = RosterMatcher(db=None)
+    m2._entries = list(m._entries)
+    assert m2._self_reachable(0, (0.2, 0.25), 5.0)                # nothing known: no constraint

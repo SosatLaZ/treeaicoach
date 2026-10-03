@@ -233,6 +233,17 @@ UNDER_STABLE = 0.012                # ... at a stable offset from the camera poi
 UNDER_VERIFY = 0.8                  # ... or the verifier's icon probability at the camera point
 SELF_COAST_UNDER = True             # no coasting while an accepted icon covers my track
 SELF_CAM_DIST = 0.06
+#: A position of mine inferred from the camera (icon under an ally at the camera point, my
+#: portrait relaxed at the camera centre) must be reachable from my last known position:
+#: within SELF_REACH_SLACK + SELF_REACH_SPEED x elapsed (a fast champion + Flash), or near my
+#: fountain (recall / respawn); no constraint once my last position is SELF_REACH_MAX_S old.
+#: Real 2.5.0 Swain game: the camera moved to the jungler / top laner (ally portrait clicked,
+#: F-keys) while my icon was stacked under my ADC -> "me" drawn on their icons 0.6-0.9 away
+#: and back, "Swain vu à deux endroits" 6 times while alive.
+SELF_REACH_SPEED = 0.035
+SELF_REACH_SLACK = 0.06
+SELF_REACH_MAX_S = 30.0
+SELF_REACH_FOUNTAIN = 0.12
 #: Track hysteresis (every champion): a champion matched in the previous frames
 #: (TRACK_RELAX_HITS hits, last match <= TRACK_RELAX_S ago) is accepted TRACK_RELAX below
 #: the threshold at its predicted position (within TRACK_RELAX_DIST + walking) when the
@@ -1072,6 +1083,8 @@ class RosterMatcher:
         self._rescue_memo: tuple | None = None
         self._ring_specs: dict = {}
         self._under: tuple = (None, 0)
+        #: (u, v, t) of my last position inferred under an ally icon (see SELF_REACH_*)
+        self._self_anchor: tuple | None = None
         try:
             from treeaicoach.self_icon import IconLearner
 
@@ -1124,6 +1137,8 @@ class RosterMatcher:
                 self._cam = (-10 ** 9, None)
                 self._camlock = (-10 ** 9, None)
                 self.camlock.reset()
+                self._self_anchor = None
+                self._under = (None, 0)
                 if self.learner is not None:
                     self.learner.on_roster(ents)
 
@@ -2329,7 +2344,35 @@ class RosterMatcher:
             math.hypot(off[0] - prev[2][0], off[1] - prev[2][1]) < UNDER_STABLE
         n = prev[1] + 1 if same else 1
         self._under = (key, n, prev[2] if same else off)
-        return pos if n >= UNDER_CONFIRM else None
+        if n < UNDER_CONFIRM:
+            return None
+        if not self._self_reachable(me, pos, now):
+            return None                   # the camera follows another ally far from me
+        self._self_anchor = (pos[0], pos[1], now)
+        return pos
+
+    def _self_reachable(self, me: int, pos: tuple, now: float) -> bool:
+        """Can I be at ``pos`` now, given my last known position? (see SELF_REACH_*)"""
+        try:
+            anchors = []
+            tr = self._tracks.get(me)
+            if tr is not None:
+                anchors.append((tr.u, tr.v, tr.t))
+            if self._self_anchor is not None:
+                anchors.append(self._self_anchor)
+            if not anchors:
+                return True
+            au, av, at = max(anchors, key=lambda a: a[2])
+            dt = now - at
+            if dt < 0 or dt > SELF_REACH_MAX_S:
+                return True
+            if math.hypot(pos[0] - au, pos[1] - av) <= SELF_REACH_SLACK + SELF_REACH_SPEED * dt:
+                return True
+            team = self._entries[me].team if 0 <= me < len(self._entries) else None
+            f = _FOUNTAINS.get(team) if team else None
+            return f is not None and math.hypot(pos[0] - f[0], pos[1] - f[1]) <= SELF_REACH_FOUNTAIN
+        except Exception:
+            return True
 
     def _verified_ally_at(self, bgr: np.ndarray | None, p: tuple, r_norm: float, accepted: list,
                           kx: float, ky: float) -> tuple[float, float] | None:
@@ -2998,7 +3041,8 @@ class RosterMatcher:
             cam = self._camera_centre(raw_bgr) if best is not None else None
             if best is not None and cam is not None and best.ncc >= OCC_MIN_NCC and \
                     math.hypot(best.x / kx - cam[0], best.y / ky - cam[1]) < SELF_CAM_DIST \
-                    and best.tot >= thr - SELF_RELAX and not conflict(best, best.tot, True):
+                    and best.tot >= thr - SELF_RELAX and not conflict(best, best.tot, True) \
+                    and (best.tot >= thr or self._self_reachable(i, (best.x / kx, best.y / ky), now)):
                 own = best.f_al
                 if own >= 0.15 and best.f_en <= own:
                     used.add(i)
