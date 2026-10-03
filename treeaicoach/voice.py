@@ -949,6 +949,11 @@ class NeuralBackend(_WavBackend):
         if not self._configured or getattr(self._tts, "rate_pct", None) != old:
             self._configured = True
             self._prefetch()
+        if self._local is None and sys.platform == "win32":
+            try:        # create the offline voice now: the first miss must not wait for WinRT / COM
+                self._get_local()
+            except Exception:
+                pass
         try:
             danger_beep_path(self._volume)
         except Exception:

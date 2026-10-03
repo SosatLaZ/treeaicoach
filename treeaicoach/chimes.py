@@ -57,8 +57,8 @@ G4, D4, A4 = 392.0, 293.66, 440.0
 #: the others are softer and shorter.
 SOUNDS: dict[str, Sound] = {
     # gank coming: two quick rising bell notes (a fourth), the classic "attention"
-    "gank": Sound((_n(A5, 0.0, 0.07, ratio=3.5, index=1.6, decay=10.0),
-                   _n(D6, 0.085, 0.10, ratio=3.5, index=1.6, decay=8.0)), peak_db=-3.0, tail=0.10,
+    "gank": Sound((_n(A5, 0.0, 0.07, ratio=3.5, index=1.2, decay=10.0),
+                   _n(D6, 0.085, 0.10, ratio=3.5, index=1.2, decay=8.0)), peak_db=-3.0, tail=0.10,
                   release_ms=45.0),
     # personal danger ("Recule !"): three quick falling notes, lower
     "recule": Sound((_n(E6, 0.0, 0.05, ratio=2.0, index=1.4, decay=13.0),
