@@ -259,6 +259,13 @@ class VisionMixin:
             if float(getattr(x, "id_score", 0.0) or 0.0) >= DUP_KEEP_ID_SCORE:
                 continue                  # a confident portrait match is trusted
             det = getattr(x, "det", x)
+            own_pos = own.position() if own is not None and own.stacked_with is not None else None
+            if own_pos is not None and math.hypot(float(det.u) - own_pos[0], float(det.v) -
+                                                  own_pos[1]) <= IDENTITY_SWAP_DIST:
+                # its own track is held under an icon right there (enemy duo stacked under my
+                # ADC): it is coming out of the stack, not another enemy misidentified
+                # (det_gym bl_swain_death: Veigar relabelled Nami, both held under Tristana)
+                continue
             for tr in enemy_tracks:
                 if tr.alias in present or t - tr.last_seen > IDENTITY_SWAP_RECENT_S:
                     continue

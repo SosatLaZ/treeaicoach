@@ -1539,7 +1539,8 @@ def regressions(cur: dict, ref: dict) -> list[str]:
             continue                      # timing: reported, never a failure (shared machines)
         if d * (a - b) < -tol:
             bad.append(f"{k} {b:.4g} -> {a:.4g}")
-    if cur.get("real") and ref.get("real"):
+    if cur.get("real") and ref.get("real") and cur["real"].get("gt") == ref["real"].get("gt"):
+        # (only on the same real crops: a new labelled icon changes the ratios, 45 -> 50 icons)
         for k, (d, tol) in REAL_TRACKED.items():
             a, b = cur["real"].get(k), ref["real"].get(k)
             if a is not None and b is not None and d * (a - b) < -tol - 1e-9:

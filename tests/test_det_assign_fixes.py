@@ -172,3 +172,54 @@ def test_anonymous_track_parked_on_one_spot_is_a_phantom():
     anon = [x for x in tr.enemies() if "?" in x.key]
     # ... the one parked on a turret glyph for 4 s is not
     assert len(anon) == 1 and abs(anon[0].position()[1] - 0.8) < 0.01
+
+
+# ======================================================================================
+# stacked enemy duo: no identity swap, no live drawing after the hold
+# ======================================================================================
+def test_stack_released_without_sighting_is_hidden_at_once():
+    tr = Tracker()
+    tr.set_roster(ROSTER)
+    t = 0.0
+    for _ in range(8):           # Nami and Veigar walk together
+        tr.update(t, [_ident(0.70, 0.90, "Nami"), _ident(0.72, 0.90, "Veigar")])
+        t += 0.2
+    for _ in range(3):           # Veigar under Nami
+        tr.update(t, [_ident(0.70, 0.90, "Nami")])
+        t += 0.2
+    assert tr.get("Veigar").stacked_with == "Nami" and tr.get("Veigar").visible
+    while tr.get("Veigar").stacked_with is not None and t < 10:
+        tr.update(t, [])        # Nami gone (fog / under another icon): the hold ends
+        t += 0.2
+    v = tr.get("Veigar")
+    assert v.stack_released_at is not None and not v.visible
+    assert "Veigar" not in [x.key for x in tr.enemies()]
+    # (refresh: a released hold whose last sighting is still recent is hidden too)
+    v.last_seen = v.stack_released_at
+    v.refresh(v.stack_released_at + 0.1)
+    assert not v.visible
+
+
+def test_identity_coming_out_of_its_own_stack_is_not_swapped():
+    import types
+
+    from treeaicoach.engine_vision import VisionMixin
+
+    tracker = Tracker()
+    tracker.set_roster(ROSTER)
+    t = 0.0
+    for _ in range(8):           # Tristana (ADC) with Nami and Veigar stacked on her
+        tracker.update(t, [_ident(0.72, 0.93, "Tristana", "ally"), _ident(0.73, 0.93, "Nami"),
+                           _ident(0.74, 0.92, "Veigar")])
+        t += 0.2
+    for _ in range(12):
+        tracker.update(t, [_ident(0.72, 0.93, "Tristana", "ally")])
+        t += 0.2
+    assert tracker.get("Veigar").stacked_with == "Tristana"
+    eng = types.SimpleNamespace(_tracker=tracker, _game=None, _detector=None)
+    for name in ("_with", "_me_dead", "_dead_aliases", "_drop_duplicates"):
+        setattr(eng, name, types.MethodType(getattr(VisionMixin, name), eng)
+                if not isinstance(VisionMixin.__dict__[name], staticmethod) else getattr(VisionMixin, name))
+    x = _ident(0.765, 0.92, "Veigar", score=0.5)          # Veigar walks out of the stack
+    out = VisionMixin._stabilize(eng, t, [x])
+    assert [o.alias for o in out] == ["Veigar"]

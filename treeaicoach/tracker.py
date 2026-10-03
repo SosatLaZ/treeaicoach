@@ -585,8 +585,14 @@ class Track:
             segs.popleft()
 
     def refresh(self, now: float, hide_after: float = HIDE_AFTER) -> None:
-        """Update ``visible`` / ``hidden_since`` for the current time (stacked = visible)."""
-        self.visible = self.stacked_with is not None or (now - self.last_seen) < hide_after
+        """Update ``visible`` / ``hidden_since`` for the current time (stacked = visible).
+
+        A stacked hold that ended without a sighting of the champion (his occluder went into
+        the fog / under another icon) leaves him hidden at once: he is no longer drawn live at
+        the occluder's place (det_gym bl_swain_death: an enemy gone into the fog next to his
+        support was drawn live on her for 0.6 s after the hold ended)."""
+        self.visible = self.stacked_with is not None or (
+            (now - self.last_seen) < hide_after and self.stack_released_at is None)
         self.hidden_since = None if self.visible else self.last_seen
 
     def absorb(self, other: Track) -> None:

@@ -35,6 +35,12 @@ def test_regression_guard_and_compare():
     assert any(s.startswith("rec") for s in bad) and any(s.startswith("g_live") for s in bad)
     assert any(s.startswith("real.rec") for s in bad)
     assert G.regressions(a, a) == []
+    # real metrics compare only runs scored on the same real icons (45 -> 50 labelled icons)
+    c, d = _entry(real_rec=0.8889), _entry(real_rec=0.88)
+    c["real"]["gt"], d["real"]["gt"] = 45, 50
+    assert not any(s.startswith("real.") for s in G.regressions(d, c))
+    d["real"]["gt"] = 45
+    assert any(s.startswith("real.rec") for s in G.regressions(d, c))
     assert G.score(a["total"]) > G.score(b["total"])
     txt = G.compare(b, [a])
     assert "REGRESSION" in txt and "score" in txt
