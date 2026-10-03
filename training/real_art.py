@@ -38,6 +38,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from treeaicoach import hershey  # noqa: E402
 from treeaicoach import render as R  # noqa: E402
 from training import synth  # noqa: E402
 
@@ -166,12 +167,12 @@ def _text(img: np.ndarray, rng: np.random.Generator, x: float, y: float, scale: 
         s += f" {int(rng.integers(1, 60))} s"
     if rng.random() < 0.15:
         s = f"{int(rng.integers(0, 40))}:{int(rng.integers(0, 60)):02d}"
-    font = cv2.FONT_HERSHEY_SIMPLEX
+    # (OpenCV-4 Hershey text under every OpenCV version: cv2 5's putText draws other glyphs)
     th = max(1, int(round(scale * 2.2)))
     org = (int(x), int(y))
-    cv2.putText(img, s, org, font, scale, (25, 25, 25), th + 2, cv2.LINE_AA)
+    hershey.put_text(img, s, org, scale, (25, 25, 25), th + 2, cv2.LINE_AA)
     col = int(rng.integers(200, 256))
-    cv2.putText(img, s, org, font, scale, (col, col, col), th, cv2.LINE_AA)
+    hershey.put_text(img, s, org, scale, (col, col, col), th, cv2.LINE_AA)
 
 
 class RealArt:

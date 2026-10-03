@@ -51,12 +51,64 @@ def test_committed_history_does_not_regress():
     (tools/det_gym_history.jsonl, appended by every det_gym.py run)."""
     import det_gym as G
 
+    # only runs under the exe's pinned numpy / OpenCV / onnxruntime (the reference: OpenCV 5
+    # draws other label glyphs, a run recorded in a venv once looked 3 recall points better)
     runs = [h for h in G.load_history() if h.get("suite") == "main" and not h.get("quick")
-            and not h.get("only") and h.get("real")]
+            and not h.get("only") and h.get("real") and not h.get("stale")
+            and G.entry_deps(h) == G.REF_DEPS]
     if len(runs) < 2:
         pytest.skip("no comparable history")
     best = max(runs, key=lambda h: h.get("quality", h["score"]))
     assert G.regressions(runs[-1], best) == [], G.compare(runs[-1], runs[:-1])
+
+
+def test_history_compares_only_same_library_versions():
+    import det_gym as G
+
+    e = G.history_entry({"total": _entry()["total"], "games": {}, "suite": "main"})
+    assert e["deps"] == G.deps_versions() and set(e["deps"]) == {"numpy", "opencv", "onnxruntime"}
+    a, b = _entry(), _entry(rec=0.8)
+    assert G.comparable(a, b)                                   # no "deps": the reference
+    b["deps"] = dict(G.REF_DEPS)
+    assert G.comparable(a, b)
+    b["deps"]["opencv"] = "5.0.0"
+    assert not G.comparable(a, b) and "no previous run" in G.compare(b, [a])
+    b["deps"] = dict(G.REF_DEPS)
+    a["stale"] = "putText of OpenCV 5"
+    assert not G.comparable(a, b)
+    # the venv run of 749c563 (OpenCV 5 labels) is tagged and out of the guard
+    hist = G.load_history()
+    tagged = [h for h in hist if h.get("rev") == "749c563"]
+    assert tagged and all(h.get("stale") and G.entry_deps(h)["opencv"] == "5.0.0" for h in tagged)
+
+
+def test_gym_label_text_is_opencv4_hershey():
+    """The gym's overlay labels (training.real_art._text) are the exe's OpenCV-4 Hershey glyphs
+    under every OpenCV version (OpenCV 5's putText draws thin, outline-free TrueType text)."""
+    import cv2
+    import numpy as np
+
+    from treeaicoach import hershey
+
+    img = np.full((40, 160, 3), 90, np.uint8)
+    hershey.put_text(img, "ADC 12 s", (5, 25), 0.4, (25, 25, 25), 3, cv2.LINE_AA)
+    hershey.put_text(img, "ADC 12 s", (5, 25), 0.4, (230, 230, 230), 1, cv2.LINE_AA)
+    import hashlib
+
+    assert hashlib.md5(img.tobytes()).hexdigest() == "14bd6559a8564ec250b58d93a10524a9"
+    assert hershey.get_text_size("ADC 12 s", 0.4, 1) == ((61, 9), 4)
+    if cv2.__version__.startswith("4."):                       # bit-identical to cv2.putText 4.x
+        rng = np.random.default_rng(0)
+        for k in range(40):
+            s = "".join(chr(int(c)) for c in rng.integers(32, 127, int(rng.integers(1, 10))))
+            sc, th = float(rng.uniform(0.2, 1.2)), int(rng.integers(1, 4))
+            lt = (cv2.LINE_AA, cv2.LINE_8)[k % 2]
+            a = rng.integers(0, 256, (50, 220, 3)).astype(np.uint8)
+            b = a.copy()
+            cv2.putText(a, s, (3, 35), cv2.FONT_HERSHEY_SIMPLEX, sc, (200, 30, 90), th, lt)
+            hershey.put_text(b, s, (3, 35), sc, (200, 30, 90), th, lt)
+            assert np.array_equal(a, b), (s, sc, th)
+            assert hershey.get_text_size(s, sc, th) == cv2.getTextSize(s, cv2.FONT_HERSHEY_SIMPLEX, sc, th)
 
 
 def test_det_params_overrides(tmp_path, monkeypatch):

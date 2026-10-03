@@ -81,6 +81,36 @@ FOUNTAIN = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
 #: v2 (tools/det_sim2real.py calibration): lighter fog, ring colours of the real crops
 #: (enemy chroma ~25, warm), lossless capture / light blur in most main games.
 GYM_VERSION = 2
+#: Library versions of the exe (requirements pins): the REFERENCE environment of the gym.
+#: Other versions give other numbers for the same code (OpenCV 5: other putText glyphs, exact
+#: sub-pixel remap / warpAffine instead of 4.x's 1/32 px grid), so the history compares and
+#: regression-guards only runs recorded under the same versions. Entries without "deps" were
+#: all recorded under the reference (before 2026-10-03), except those tagged by hand.
+REF_DEPS = {"numpy": "1.26.4", "opencv": "4.10.0", "onnxruntime": "1.19.2"}
+
+
+def deps_versions() -> dict:
+    """numpy / OpenCV / onnxruntime versions of this interpreter."""
+    out = {"numpy": np.__version__, "opencv": cv2.__version__}
+    try:
+        import onnxruntime
+
+        out["onnxruntime"] = str(onnxruntime.__version__)
+    except Exception:
+        out["onnxruntime"] = None
+    return out
+
+
+def entry_deps(h: dict) -> dict:
+    return h.get("deps") or REF_DEPS
+
+
+def comparable(h: dict, cur: dict) -> bool:
+    """``h`` can be compared with ``cur``: same suite / options / gym / library versions, and not
+    tagged stale (e.g. recorded with the OpenCV-5 putText labels before the Hershey fix)."""
+    return (h.get("suite") == cur.get("suite") and h.get("quick") == cur.get("quick")
+            and h.get("only") == cur.get("only") and h.get("gym", 1) == cur.get("gym", 1)
+            and not h.get("stale") and entry_deps(h) == entry_deps(cur) and h is not cur)
 FOG_DIM = 0.85                 # fogged map = x FOG_DIM (the real backgrounds already hold fog)
 ENEMY_RING_RGB = ((170, 58, 48), (230, 115, 95))
 ALLY_RING_RGB = ((85, 122, 150), (130, 158, 185))
@@ -1522,6 +1552,7 @@ def history_entry(out: dict, note: str = "") -> dict:
              for g, m in out["games"].items()}
     real = {k: v for k, v in out.get("real", {}).items() if not isinstance(v, (list, dict))} or None
     return {"time": _time.strftime("%Y-%m-%d %H:%M:%S"), "rev": _git_rev(), "note": note, "gym": GYM_VERSION,
+            "deps": deps_versions(),
             "suite": out.get("suite", "main"), "quick": out.get("quick", False),
             "only": out.get("only"), "score": score(out["total"], real),
             "quality": score(out["total"], real, cost=False), "total": tot, "games": games,
@@ -1564,10 +1595,9 @@ def regressions(cur: dict, ref: dict) -> list[str]:
 
 def compare(cur: dict, history: list[dict]) -> str:
     """Delta table vs the previous comparable run and the best one (same suite / quick)."""
-    same = [h for h in history if h.get("suite") == cur.get("suite") and h.get("quick") == cur.get("quick")
-            and h.get("only") == cur.get("only") and h.get("gym", 1) == cur.get("gym", 1) and h is not cur]
+    same = [h for h in history if comparable(h, cur)]
     if not same:
-        return "compare: no previous run of this suite"
+        return "compare: no previous run of this suite with these numpy / OpenCV / onnxruntime versions"
     prev, best = same[-1], max(same, key=lambda h: h.get("score", -1e9))
     L = [f"{'metric':8s} {'now':>9s} {'prev':>9s} {'d_prev':>9s} {'best':>9s} {'d_best':>9s}"]
     for k, (d, tol) in TRACKED.items():
@@ -1641,6 +1671,9 @@ def main() -> None:
     out = run(a.quick, a.only, not a.no_real, a.v, suite=a.suite, gallery=a.gallery)
     out["only"] = a.only
     print(report(out, a.v))
+    if deps_versions() != REF_DEPS:
+        print(f"WARNING: libraries {deps_versions()} != the exe's {REF_DEPS}: numbers not comparable "
+              f"with the reference runs (OpenCV 5 draws other label glyphs / interpolates exactly)")
     if a.gallery:
         print("gallery:", a.gallery, out.get("gallery"))
     hist = load_history()
