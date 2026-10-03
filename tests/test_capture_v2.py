@@ -228,3 +228,71 @@ def test_dxgi_d3d11_half_on_windows():
     validated under Wine; Desktop Duplication itself needs a real desktop)."""
     out = dxgi_capture.self_test_copy()
     assert out["ok"] or "D3D11CreateDevice" in str(out.get("error")), out
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _smart_clock(d, m):
+    clk = _Clock()
+    return SmartCapture("auto", factories={"dxgi": lambda: d, "mss": lambda: m}, platform="win32",
+                        clock=clk), clk
+
+
+def test_black_first_dxgi_frame_suspends_then_dxgi_comes_back():
+    """Real 2.5.0 game: DXGI disabled for the whole game. A black first duplication frame is a
+    transient: mss serves the grab, DXGI is retried after a short backoff and kept when it agrees."""
+    img = live(30)
+    black = np.zeros_like(img)
+    d = FakeBackend("dxgi", lambda n: black if n == 1 else img)
+    m = FakeBackend("mss", img)
+    c, clk = _smart_clock(d, m)
+    out = c.grab(R)
+    assert out is not None and np.array_equal(out, img) and c.current == "mss"
+    assert c.stats["crosscheck_info"]["verdict"] == "invalid"
+    clk.t = cap.CROSSCHECK_RETRY_S[0] + 0.1
+    assert c.grab(R) is not None and c.current == "dxgi" and "dxgi" not in c.stats["disabled"]
+    assert any("crosscheck ok" in e for e in c.stats["events"])
+    assert "black" in c.stats["last_switch"] or "retried" in c.stats["last_switch"]
+
+
+def test_tone_mapped_dxgi_image_is_not_a_mismatch():
+    """HDR desktop / colour profile: same picture, other tone curve (high correlation)."""
+    ref = live(31)
+    hdr = np.clip(ref.astype(np.float32) * 0.45 + 120, 0, 255).astype(np.uint8)     # washed out
+    verdict, info = cap.crosscheck_verdict(ref, hdr)
+    assert verdict == "ok" and info["corr"] > 0.9
+    assert cap.crosscheck_verdict(ref, live(32))[0] == "mismatch"
+    assert cap.crosscheck_verdict(np.zeros_like(ref), ref)[0] == "skipped"
+    half = ref.copy()
+    half[:, :40] = 0
+    assert cap.crosscheck_verdict(ref, half)[0] == "invalid"
+
+
+def test_dxgi_local_difference_is_tolerated():
+    """Cursor / animated area / something drawn over a part: the median ignores it."""
+    ref = live(33)
+    other = ref.copy()
+    other[:20, :20] = 255 - other[:20, :20]
+    assert cap.crosscheck_verdict(ref, other)[0] == "ok"
+
+
+def test_persistent_mismatch_ends_disabled_with_reason():
+    d, m = FakeBackend("dxgi", live(34)), FakeBackend("mss", live(35))
+    c, clk = _smart_clock(d, m)
+    for wait in cap.CROSSCHECK_RETRY_S + (1.0,):
+        c.grab(R)
+        assert c.current == "mss"
+        clk.t += wait + 0.1
+    c.grab(R)
+    assert "dxgi" in c.stats["disabled"] and "cross-checks failed" in c.stats["disabled"]["dxgi"]
+    calls = d.calls
+    clk.t += 10_000
+    c.grab(R)
+    assert d.calls == calls and c.current == "mss"
+    assert "image differs" in c.stats["last_switch"]

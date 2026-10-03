@@ -479,8 +479,20 @@ STALE_FRAMES = 12
 STALE_MIN_GAME_S = 90.0
 #: Two captures of the same rect differing less than this (mean abs, 8-bit) are "the same".
 SAME_FRAME_DIFF = 1.5
-#: First DXGI image cross-checked against mss: more different than this -> DXGI disabled.
-CROSSCHECK_MAX_DIFF = 40.0
+#: First DXGI image cross-checked against mss: a median worst-channel difference above this
+#: AND a weak structural correlation (below :data:`CROSSCHECK_MIN_CORR`) is a mismatch.
+CROSSCHECK_MAX_DIFF = 25.0
+#: Zero-mean normalized correlation of the two grey images above this = same picture with a
+#: different tone curve (HDR desktop converted to 8 bits, colour profile) or a few frames apart
+#: (camera moving between the two grabs): not a mismatch.
+CROSSCHECK_MIN_CORR = 0.5
+#: A DXGI image with more than this fraction of black pixels where mss sees content is not a
+#: valid frame yet (first frame of a new duplication, fullscreen switch): retried, never judged.
+CROSSCHECK_INVALID_FRAC = 0.3
+#: Backoff (s) before the DXGI cross-check is retried after a failed / invalid one; the backend
+#: is used again as soon as one retry agrees with mss. After the last step it is disabled for
+#: the session (real report 2.5.0: DXGI disabled for a whole 32-min game -> slower GDI capture).
+CROSSCHECK_RETRY_S = (2.0, 10.0, 30.0, 60.0, 120.0, 300.0)
 #: Consecutive failed grabs before the backend is abandoned for the next one.
 FAIL_SWITCH = 5
 
@@ -511,6 +523,53 @@ def mean_abs_diff(a: Any, b: Any) -> float:
         return float(np.abs(xs - ys).mean())
     except Exception:
         return float("inf")
+
+
+def crosscheck_verdict(ref: Any, img: Any) -> tuple[str, dict[str, Any]]:
+    """Compare a DXGI image ``img`` with the mss reference ``ref`` of the same rectangle.
+
+    ``("ok" | "mismatch" | "invalid" | "skipped", info)``: ``"skipped"`` when the reference is
+    unusable (missing, black, other size), ``"invalid"`` when the DXGI image is (partly) black
+    where mss sees content (first frame of a new duplication, mode switch: transient), otherwise
+    the comparison runs only on pixels valid in both images: median grey difference and
+    zero-mean correlation (a tone-curve change keeps a high correlation: HDR, colour profile).
+    ``info``: ``diff`` (median), ``mean`` (mean abs), ``corr``, ``valid`` (fraction). Never raises.
+    """
+    info: dict[str, Any] = {}
+    try:
+        x, y = np.asarray(ref), np.asarray(img)
+        if x.ndim < 2 or x.shape != y.shape or x.size == 0 or is_black_frame(x):
+            return "skipped", info
+        step = max(1, int(min(x.shape[0], x.shape[1]) // 64))
+        xc = x[::step, ::step].astype(np.float32)
+        yc = y[::step, ::step].astype(np.float32)
+        if xc.ndim == 3:
+            xc, yc = xc[:, :, :3], yc[:, :, :3]
+            dc = np.abs(xc - yc).max(axis=2)          # worst channel per pixel
+            xs, ys = xc.mean(axis=2), yc.mean(axis=2)
+        else:
+            dc, xs, ys = np.abs(xc - yc), xc, yc
+        info["mean"] = round(float(np.abs(xs - ys).mean()), 2)
+        dark_x, dark_y = xs < 6.0, ys < 6.0
+        lost = float((dark_y & ~dark_x).mean())
+        if is_black_frame(y) or lost > CROSSCHECK_INVALID_FRAC:
+            info["black"] = round(lost, 3)
+            return "invalid", info
+        valid = ~(dark_x | dark_y)
+        info["valid"] = round(float(valid.mean()), 3)
+        if int(valid.sum()) < 16:
+            return "skipped", info
+        a, b = xs[valid], ys[valid]
+        diff = float(np.median(dc[valid]))
+        info["diff"] = round(diff, 2)
+        sa, sb = float(a.std()), float(b.std())
+        corr = float(((a - a.mean()) * (b - b.mean())).mean() / (sa * sb)) if sa > 1.0 and sb > 1.0 else 0.0
+        info["corr"] = round(corr, 3)
+        if diff <= CROSSCHECK_MAX_DIFF or corr >= CROSSCHECK_MIN_CORR:
+            return "ok", info
+        return "mismatch", info
+    except Exception:
+        return "skipped", info
 
 
 class FrameHealth:
@@ -589,13 +648,16 @@ class SmartCapture:
         self._disabled: dict[str, str] = {}
         self._fails = 0
         self._crosschecked: set[str] = set()
+        #: backends suspended after a failed cross-check: name -> clock time of the next try
+        self._suspended: dict[str, float] = {}
+        self._xc_fails = 0
         self.health = FrameHealth()
         self.errors = 0
         self._ms: deque[float] = deque(maxlen=120)
         self._grab_times: deque[float] = deque(maxlen=120)
         self.stats: dict[str, Any] = {"backend": None, "switches": 0, "last_switch": None,
                                       "black_events": 0, "stale_events": 0, "fallback_grabs": 0,
-                                      "disabled": {}}
+                                      "disabled": {}, "events": []}
         self.current = self.order[0] if self.order else "mss"
 
     # ------------------------------------------------------------------ backends
@@ -628,8 +690,42 @@ class SmartCapture:
                 impl.close()
             except Exception:
                 pass
+        self._event(f"{name} disabled: {reason}")
         if name == self.current:
-            self._switch(f"{name} disabled")
+            self._switch(f"{name} disabled ({str(reason)[:80]})")
+
+    def _event(self, text: str) -> None:
+        """Capture event kept for the diagnostics (``stats["events"]``, last 12)."""
+        ev = self.stats.setdefault("events", [])
+        ev.append(f"{self._clock():.1f} {text}"[:160])
+        del ev[:-12]
+
+    def _suspend(self, name: str, reason: str) -> None:
+        """Failed / invalid cross-check: stop using ``name`` for a while (backoff), then try again;
+        disabled for the session after the last backoff step."""
+        self._xc_fails += 1
+        self._crosschecked.discard(name)
+        if self._xc_fails > len(CROSSCHECK_RETRY_S):
+            self.disable(name, f"{reason}; {self._xc_fails} cross-checks failed")
+            return
+        wait = CROSSCHECK_RETRY_S[self._xc_fails - 1]
+        self._suspended[name] = self._clock() + wait
+        self.disable(name, f"suspended {wait:.0f} s: {reason}")
+        self.stats["suspended"] = {n: round(v, 1) for n, v in self._suspended.items()}
+
+    def _resume_due(self) -> None:
+        """A suspended preferred backend whose backoff ran out is tried again (cross-checked)."""
+        now = self._clock()
+        for name, at in list(self._suspended.items()):
+            if now < at:
+                continue
+            del self._suspended[name]
+            self._disabled.pop(name, None)
+            self.stats["disabled"] = dict(self._disabled)
+            self.stats["suspended"] = {n: round(v, 1) for n, v in self._suspended.items()}
+            self._event(f"{name} retried")
+            if name in self.order and self.order.index(name) < self.order.index(self.current):
+                self._switch(f"{name} retried", to=name)
 
     def _switch(self, reason: str, to: str | None = None) -> bool:
         cands = [n for n in self.order if n not in self._disabled and n != self.current]
@@ -671,6 +767,8 @@ class SmartCapture:
     def grab(self, rect: Rect, pad: bool = True) -> np.ndarray | None:
         """BGR capture of ``rect`` (screen px) with the current backend, then the fallback."""
         t0 = time.perf_counter()
+        if self._suspended:
+            self._resume_due()
         name = self.current
         img = self._grab_with(name, rect, pad)
         if img is not None and name == "dxgi" and "dxgi" not in self._crosschecked:
@@ -697,15 +795,27 @@ class SmartCapture:
         return img
 
     def _crosscheck(self, rect: Rect, img: np.ndarray) -> None:
-        self._crosschecked.add("dxgi")
+        """First DXGI image (and the first after each suspension) against mss. A skipped check
+        (mss black / other size) is retried on a later grab; an invalid DXGI image (black first
+        frame) or a mismatch suspends DXGI with a backoff instead of disabling it for the game."""
         ref = self._grab_with("mss", rect, True)
-        if ref is None or is_black_frame(ref) or ref.shape != img.shape:
-            self.stats["crosscheck"] = "skipped"
+        verdict, info = crosscheck_verdict(ref, img)
+        self.stats["crosscheck"] = info.get("diff", info.get("mean", verdict)) if verdict == "ok" else verdict
+        self.stats["crosscheck_info"] = dict(info, verdict=verdict, rect=f"{rect.w}x{rect.h}")
+        if verdict == "skipped":
+            n = self.stats.get("crosscheck_skips", 0) + 1
+            self.stats["crosscheck_skips"] = n
+            if n >= 20:                 # mss never usable here: trust DXGI (black / frozen checks remain)
+                self._crosschecked.add("dxgi")
             return
-        d = mean_abs_diff(ref, img)
-        self.stats["crosscheck"] = round(d, 2)
-        if d > CROSSCHECK_MAX_DIFF:
-            self.disable("dxgi", f"image differs from mss (diff {d:.1f})")
+        self._event(f"crosscheck {verdict} {info}")
+        if verdict == "ok":
+            self._crosschecked.add("dxgi")
+            self._xc_fails = 0
+            return
+        what = "black / partial DXGI frame" if verdict == "invalid" else "image differs from mss"
+        detail = ", ".join(f"{k} {v}" for k, v in info.items())
+        self._suspend("dxgi", f"{what} ({detail})")
 
     def check(self, img: Any, t: float, rect: Rect | None = None, allow_stale: bool = True) -> str:
         """Frame health of a minimap image just grabbed: ``"ok"`` | ``"black"`` | ``"stale"``.
