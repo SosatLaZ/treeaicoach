@@ -20,6 +20,31 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _rss_mb() -> float:
+    """Working set (Windows) / max RSS (elsewhere) of this process, MB."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class PMC(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                            ("a", ctypes.c_size_t), ("b", ctypes.c_size_t), ("c", ctypes.c_size_t),
+                            ("d", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t), ("e", ctypes.c_size_t)]
+            pmc = PMC()
+            pmc.cb = ctypes.sizeof(pmc)
+            k32 = ctypes.WinDLL("kernel32")
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            ctypes.WinDLL("psapi").GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb)
+            return pmc.WorkingSetSize / 1e6
+        import resource
+
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e3
+    except Exception:
+        return float("nan")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", action="store_true")
@@ -70,13 +95,7 @@ def main(argv: list[str] | None = None) -> int:
             app.stack.currentWidget().repaint()
             app.qapp.processEvents()
             sw.append(1000 * (time.perf_counter() - t))
-    rss = ""
-    try:
-        import psutil
-
-        rss = f", RSS {psutil.Process().memory_info().rss / 1e6:.0f} MB"
-    except Exception:
-        pass
+    rss = f", memory {_rss_mb():.0f} MB"
     print(f"import {1000 * t_import:.0f} ms, window+home {1000 * t_init:.0f} ms, first paint {1000 * t_paint:.0f} ms, "
           f"page builds {', '.join(f'{k} {v:.0f}' for k, v in builds.items())} ms, switches (incl. paint) max "
           f"{max(sw):.1f} mean {sum(sw) / len(sw):.1f} ms{rss}")

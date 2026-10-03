@@ -682,14 +682,14 @@ def onboarding_steps() -> list[tuple[str, str]]:
     """The 3 steps of the guided first run ("Mode guidé"): level, borderless check, overlay test."""
     return [
         ("Ton niveau",
-         "Plus tu es débutant, plus le coach explique. Tu pourras le changer à tout moment dans la barre "
-         "de gauche."),
+         "Plus tu es débutant, plus le coach explique. Tu pourras le changer à tout moment sur "
+         "l'Accueil."),
         ("Jeu en « Sans bordure »",
          "Options du jeu > Vidéo > Mode d'affichage : Sans bordure. En plein écran exclusif, la capture est "
          "noire et rien ne s'affiche sur ta minimap."),
         ("Teste l'overlay et la voix",
          "Un exemple de gank s'affiche 10 s sur ton écran et le coach parle. Si tu ne vois ou n'entends "
-         "rien, ouvre la page Aide."),
+         "rien, ouvre la page À propos."),
     ]
 
 

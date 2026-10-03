@@ -94,10 +94,11 @@ treeaicoach/                    package Python (runtime, embarqué dans le .exe)
   voice.py  tts_neural.py  hotkeys.py
   overlay.py  overlay_render.py  toasts.py  fx_overlay.py  fx_render.py  ward_guide.py
   layout.py                     zones de l'UI de LoL + solveur de placement de tout ce qu'on dessine (§22)
-  ui.py                         CoachApp : fenêtre, cycle du moteur, rafraîchissement, journal, run_app()
-  ui_common.py                  jetons de design, polices, widgets (Toggle, Dropdown, Segmented, bandeau)
-  ui_page_dashboard.py  ui_page_alerts.py  ui_page_overlay.py  ui_page_analysis.py  ui_page_settings.py
-  ui_dialogs.py                 page Aide, toasts, dialogues, préréglages, diagnostic, raccourcis
+  ui.py                         CoachApp (Qt Widgets, docs/LAUNCHER.md) : fenêtre, cycle du moteur, tâches de fond, run_app()
+  ui_widgets.py                 thèmes clair / sombre, feuille de style, listes groupées, interrupteur, barre latérale
+  ui_common.py                  helpers sans interface : choix, HIDDEN_SETTINGS, icônes PIL, _Dispatcher, formats
+  ui_page_home.py  ui_page_overlay.py  ui_page_alerts.py  ui_page_analysis.py  ui_page_settings.py  ui_page_about.py
+  ui_dialogs.py                 dialogues (message, premier lancement, nouveautés)
   ui_kit.py  ui_preview.py  calibration.py   préréglages / VoiceGate, aperçu de l'overlay, calibration
 
   # --- après la partie ------------------------------------------------------------------------
@@ -726,7 +727,7 @@ Menace courante = niveau max des alertes brutes du GankAnalyzer du dernier tick 
 * Double-clic → l'interface s'ouvre, l'analyse démarre (autostart) et attend une partie. Rien à installer.
 * CI GitHub Actions (windows-latest) : tests → build → autotest de l'exe → artefact + **release** GitHub avec l'exe.
 
-### 8.2 `ui.py` — interface CustomTkinter (direction visuelle : `docs/DESIGN.md`)
+### 8.2 `ui.py` — lanceur Qt Widgets (technique : `docs/LAUNCHER.md`, direction visuelle : `docs/DESIGN.md`)
 > Mise à jour v1.9 : l'ancien thème « hextech » (or / marine du client du jeu) est remplacé par la direction
 > « régie esport » de **`docs/DESIGN.md`** (graphite vert-noir, un seul accent vert sève `#9BD84A`, rouge / ambre
 > pour le sens, séparateurs 1 px, rayon 4 px, Bahnschrift pour titres et chiffres, Segoe UI pour le texte).
@@ -1314,7 +1315,7 @@ texte « verbe d'abord » pour la carte), 90 s au moins entre deux avis.
   (tests) : tout sauf `perf` (mesuré en temps réel). `cfg.selfcheck_enabled` (interrupteur général).
 * Lecture : `engine.selfcheck_summary()` = `health()["selfcheck"]` (`state` ok / degraded, `title`
   « Santé TreeAI : OK / dégradé », `reasons`, `notes`, `fixed`, `profile`, `overhead_ms`) ;
-  `selfcheck.summary_text()` = la ligne du panneau Système (`ui_page_dashboard._add_health_summary`,
+  `selfcheck.summary_text()` = la ligne du panneau Système (`ui_page_home` (lignes « Système »),
   autonome) ; fin de partie : `SelfCheck.game_report()` → `record["selfcheck"]` → section « Santé de
   TreeAI pendant la partie » du rapport (ce qui a mal tourné, ce qui a été corrigé seul) ; diagnostic :
   `selfcheck.json` + `selfcheck_log.txt` dans le zip.

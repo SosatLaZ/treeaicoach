@@ -32,85 +32,34 @@ bordures lumineuses, halos de couleur en fond, verre dépoli / flou, bleu par d�
 frameworks (`#3B82F6`, `#6366F1`, `#8B5CF6`), gris shadcn / slate `#0F172A` comme identité,
 or / marine du client du jeu (`#C8AA6E`, `#0A1428`, `#010A13`).
 
-## Typographie
+## Lanceur (fenêtre principale)
 
-La lisibilité passe avant la compacité (retour joueur : « trop petit »). Tailles en pixels à
-100 % ; le facteur `ui_scale` (1,0 par défaut, réglable dans Réglages > Interface) et l'échelle
-d'affichage de Windows (facteur DPI par écran appliqué par CustomTkinter) s'y ajoutent.
+Qt Widgets (docs/LAUNCHER.md). Esprit « Réglages système » d'Apple : calme, lisible, rangé.
 
-| Rôle                     | Police                                   | Taille | Graisse        |
-|--------------------------|------------------------------------------|--------|----------------|
-| Titre de page            | Bahnschrift SemiBold                     | 26     | semi-gras      |
-| Titre de section         | Bahnschrift SemiBold                     | 17     | semi-gras      |
-| Corps (libellés, menus)  | Segoe UI                                 | 14     | normal / gras  |
-| Secondaire (descriptions)| Segoe UI, couleur `MUTED`                | 13     | normal         |
-| Légende                  | Segoe UI, MAJUSCULES                     | 12     | gras           |
-
-Jamais en dessous de 12 px. Les chiffres importants (chrono, statistiques) utilisent la police
-d'affichage en 28, les valeurs de réglage en 16. Contraste minimal 4,5:1 pour tout texte.
-Repli hors Windows : DejaVu Sans / Liberation Sans. Interdites comme identité :
-Inter, Poppins, Space Grotesk, Geist.
-
-## Navigation : ce qui est où
-
-Pensé pour le joueur qui ouvre l'application 30 s avant une partie.
-
-* **4 pages** dans la barre latérale : **En jeu** · **Analyses** · **Réglages** · **Aide**
-  (Ctrl+1 … 4). L'application s'ouvre toujours sur « En jeu ».
-* **À un clic, sur toutes les pages** (barre latérale) : Voix, Overlay, Mode sûr, **Ton niveau**
-  (4 boutons, toujours visibles même à 980 × 640), l'état de l'analyse (clic : retour sur « En jeu »)
-  et, quand elle existe, la **nouvelle version** (bouton vert, ouvre Réglages > Mises à jour).
-* **En jeu** : Démarrer / Arrêter, tester la voix, tester l'overlay, mode démo, diagnostic complet
-  (avec sa touche en jeu, Ctrl+F8 par défaut), rapport et replay de la dernière partie.
-* **Réglages** = une seule page, des onglets nommés d'après ce qu'ils changent :
-  Général (démarrage, après la partie, fenêtre) · **Affichage** (ce que tu vois en jeu, avec
-  l'aperçu) · **Voix** (ce que tu entends) · Détection · IA · Mises à jour · **Avancé** (touches
-  en jeu, performance, maintenance). Un réglage n'existe qu'à un seul endroit.
-* Chaque champ de `Config` a un contrôle dans Réglages, ou figure dans
-  `ui_common.HIDDEN_SETTINGS` avec sa raison (barre latérale, appris, écrit par une autre
-  action). `tests/test_ui_settings.py` le vérifie : aucun réglage mort ni inaccessible.
-* Une seule échelle d'aide : le **niveau** (Débutant … Expert). Pas de deuxième jeu de
-  « préréglages » qui le contredit.
-
-## État d'abord
-
-* La page « En jeu » commence par **une** ligne d'état : un titre (« En attente d'une partie »,
-  « En jeu : Garen top », « Capture noire »…), **un** message utile (jamais la répétition du
-  titre) et, en cas de problème, **un** bouton de correction à côté (Calibrer, Aide,
-  Diagnostic). Texte : `ui_kit.status_line`.
-* Avant la partie, la page ne montre que ce qui sert avant la partie : carte de la sélection des
-  champions, dernière partie (rapport, replay, progrès), objectif, point à travailler ou les
-  3 vérifications du premier lancement, et le panneau « Système ». Ennemis, alliés, conseil du
-  moment et radar n'apparaissent qu'en partie (pas de cases « ? » vides).
-
-## Mise en page
-
-* Une colonne de contenu centrée, 860 px au plus (1300 px pour « En jeu »), marges de 32 px :
-  jamais un libellé collé à gauche et son contrôle collé au bord droit d'un grand écran.
-* Une section = titre + phrase d'explication + **une** carte (`SURFACE`, bord 1 px, rayon 6)
-  dont les lignes sont séparées par un trait de 1 px. Pas de carte dans une carte.
-* Ligne de réglage : libellé (14) + description (13) à gauche, contrôle juste à droite ;
-  hauteur minimale identique pour toutes les lignes ; si la fenêtre est étroite, un contrôle
-  large passe sous le texte. Une action propre à une section (« Tester la voix »,
-  « Déplacer ») va à droite de son titre, pas dans l'en-tête de la page.
-* Une section qui ne s'applique pas (ex. « Radar » hors du mode radar) est masquée, pas grisée.
-* Contrôles : boutons 34 px (30 dans les barres d'outils et les tableaux), menus, champs et
-  sélecteurs 34 px.
-* Interrupteurs : pilule 46 × 26 (38 × 22 dans la barre latérale). Éteint : piste sombre
-  cerclée, bouton gris à gauche ; allumé : piste verte pleine, bouton sombre à droite.
-
-## Espacement, formes
-
-* Grille de 4 px : 4 / 8 / 12 / 16 / 24. Jetons (`ui_common.py`) : `CTL_GAP` 8 entre deux
-  contrôles, `ROW_PAD_Y` 12 dans une ligne de réglage, `ROW_CTL_GAP` 24 entre le texte et son
-  contrôle, `TAB_GAP` 24 entre deux onglets, `SECTION_GAP` 28 entre deux sections, `CARD_PAD` 20,
-  `PAGE_PAD` 32. Hauteurs : `BTN_H` 34, `BTN_H_SMALL` 30 (barres d'outils, tableaux, barre
-  latérale), `CTL_H` 34, `LINK_H` 22 (liens de correction du panneau « Système »), `ICON_BTN` 30.
-* Rayon : **4 px** (contrôles, portraits carrés), 6 px maximum (cartes, dialogues). Pas de pilule
-  ronde, sauf les interrupteurs et le bouton des curseurs (leur forme est celle qu'on reconnaît).
-* Pas d'ombre portée douce. Pas de carte dans une carte.
-* Tableaux alignés (colonnes fixes, chiffres alignés à droite) plutôt que des grilles de
-  cartes identiques.
+* **Thèmes** clair et sombre (suivent Windows), jetons dans `ui_widgets.LIGHT` / `ui_widgets.DARK` :
+  fond groupé, barre latérale, cellule de groupe, séparateur, texte / secondaire / tertiaire, **un
+  seul accent** (vert sève : `#9BD84A` en sombre, `#2A721B` en clair pour garder 4,5:1 sur blanc),
+  rouge et orange seulement pour le sens. Contraste ≥ 4,5:1 vérifié par `tests/test_design_rules.py`.
+* **Police** : Segoe UI Variable (Text / Display) sous Windows, repli Segoe UI, puis Inter / Noto /
+  DejaVu hors Windows (repli seulement, jamais l'identité). Titre de page 26 px semi-gras, corps
+  14, secondaire 13, notes 12 ; jamais en dessous de 12.
+* **Barre latérale** : 6 pages, icône au trait + nom, page courante en fond accent. Accueil ·
+  Overlay · Alertes et voix · Analyse · Réglages · À propos (Ctrl+1 … 6). En bas : le point d'état
+  et le bouton « Nouvelle version » quand elle existe.
+* **Page** = grand titre, une phrase, puis des **listes groupées en retrait** : un petit titre de
+  section, une cellule arrondie (10 px) dont les lignes sont séparées par un trait d'un pixel
+  décalé de 16 px, une note sous la cellule si besoin. Colonne centrée de 760 px au plus.
+* **Ligne** : titre (14) + description (13, secondaire) à gauche, contrôle à droite ; hauteur 48 px
+  minimum. Une ligne qui ne s'applique pas est masquée (et son séparateur avec).
+* **Contrôles** : interrupteur 42 × 24 (bouton qui glisse en 120 ms), contrôle segmenté, menu avec
+  double chevron, curseur avec sa valeur écrite à droite, boutons arrondis 7 px ; un seul bouton
+  accent par zone (l'action principale).
+* **Accueil** commence par **une** ligne d'état (`ui_kit.status_line` : titre, un message utile,
+  un bouton de correction si besoin) et le bouton Démarrer / Arrêter.
+* Chaque champ de `Config` a un contrôle, ou figure dans `ui_common.HIDDEN_SETTINGS` avec sa raison
+  (`tests/test_launcher.py` le vérifie) ; un réglage n'existe qu'à un seul endroit.
+* **Interdits** en plus de la liste ci-dessus : dégradés, ombres portées, halos, verre dépoli,
+  animations décoratives, icônes colorées multiples, cartes dans des cartes.
 
 ## Textes
 
@@ -123,38 +72,11 @@ Pensé pour le joueur qui ouvre l'application 30 s avant une partie.
 
 ## Mouvement et performance
 
-Seulement quand il a un sens : point « en direct » qui pulse pendant l'analyse, jauge de
-menace, flash de danger. Pas d'animation décorative. Rien ne bouge quand la page « En jeu »
-n'est pas affichée ou que la fenêtre est réduite (rafraîchissement 1 s, 2 s réduite).
-
-Chargement des pages (règles, vérifiées par `tests/test_ui_stress.py`) :
-
-- la fenêtre s'ouvre sur « En jeu », seule page construite dans `CoachApp.__init__` ; toutes
-  les autres pages et tous les onglets sont construits juste après son premier affichage, par
-  tranches (`_startup_build` : une page, puis **une section** d'onglet par tranche, chacune mise
-  en page hors écran dans la même tranche, sous 100 ms sur un PC de jeu) ; ensuite plus rien
-  n'est jamais construit (un clic avant la fin construit la page demandée, complète) ;
-- une page cachée n'est **jamais démappée** : elle reste placée juste à droite de la fenêtre
-  (`park`, à taille fixe : un redimensionnement ne la remet pas en page), et l'afficher déplace
-  deux cadres (`unpark`). Même chose pour les onglets : un panneau défilant par onglet
-  (`_page(tabs=...)`). `grid_remove` / `grid` redessinaient chaque widget un par un (la page
-  apparaissait morceau par morceau sous Windows) ;
-- les commandes répétées sont dessinées sur **un seul canevas** : ligne de réglage
-  (`setting_row_class` : titre, description qui se replie, séparateur), `Segmented`,
-  `Dropdown`, `Slider` (valeur écrite à droite), liste des moments du replay ; le défilement
-  est un canevas léger (`scroll_frame_class`) : jamais de `CTkScrollableFrame` /
-  `CTkScrollbar` (qui force une mise en page complète à chaque changement de hauteur) ni de
-  `CTkTextbox` ;
-- les formes arrondies de CustomTkinter sont des polygones (`polygon_shapes`) : les coins en
-  glyphes de police coûtaient 8 éléments texte par cadre, le plus lent à dessiner sous Windows ;
-- les listes répétées utilisent des widgets Tk simples (`_label`, `_icon_label`,
-  `_image_label`, `_light_icon_button`) : un `CTkLabel` avec image ou un `CTkButton` coûte
-  trois fenêtres, cinq fois plus à construire et à afficher ;
-- les dialogues n'utilisent pas la recoloration de barre de titre de CustomTkinter (masquer,
-  `update()` complet, réafficher : un clignotement) mais `dark_titlebar` une fois affichés ;
-- un changement de page ou d'onglet reste sous 200 ms (test de stress : clics au hasard dès
-  le lancement, partie qui démarre / s'arrête, fenêtre réduite, résultats des tâches de fond
-  injectés n'importe quand).
+Seulement quand il a un sens : interrupteur qui glisse, flash de danger en jeu. Rien ne se
+rafraîchit quand la fenêtre est réduite (2 s) ; l'Accueil se met à jour 4 fois par seconde
+seulement pendant une partie et quand il est affiché. Chargement des pages : voir
+docs/LAUNCHER.md (rien de bloquant sur le thread de la fenêtre, une page n'est jamais reconstruite).
 
 `tests/test_design_rules.py` vérifie automatiquement les interdits (tiret cadratin dans les
-textes de l'interface, couleurs et polices bannies, emoji).
+textes de l'interface, couleurs et polices bannies, emoji, dégradés et ombres dans la feuille de
+style, contrastes).

@@ -108,6 +108,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{theme} {w}x{h}: window {build_ms:.0f} ms, page switch (incl. paint) max "
                   f"{max(switches):.1f} ms mean {sum(switches) / len(switches):.1f} ms")
             app.close()
+            from PySide6 import QtCore
+
+            app.qapp.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)   # the next window starts clean
     print(f"screenshots in {out}")
     return 0
 
