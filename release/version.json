@@ -1,6 +1,6 @@
 {
-  "version": "2.5.0",
-  "sha256": "978b042bdd9f525c89194b3d01961f0f8114f3a5144cc4eca97de1f2492064f8",
-  "size": 82359368,
-  "notes": "2.5 : détection corrigée sur tes vraies parties (plus de « vu à deux endroits » en support, duo empilé suivi, bonne taille d'icônes dès le début, plus de « minimap introuvable » au chargement, skins chroma reconnus — Kindred n'était presque jamais identifié), launcher qui charge les pages sans bug, moins d'impact sur les images par seconde du jeu."
+  "version": "2.5.1",
+  "sha256": "078823abb28e84b3dba28c1053d1604ebfdbf617867eedfd955f163b2f6865e4",
+  "size": 82363615,
+  "notes": "2.5.1 : détection plus fiable — deux fois moins de mauvais noms sur les champions empilés, plus de faux cercles sans nom, ta position ne reste plus figée quand tu débloques la caméra, un champion mort ou caché sous un autre n'est plus dessiné au mauvais endroit ; détection environ 14 % plus rapide."
 }

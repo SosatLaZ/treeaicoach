@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.5.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="56"></a>
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/%E2%AC%87%EF%B8%8F%20T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.5.1-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="56"></a>
 </p>
 
 <p align="center">
@@ -206,7 +206,7 @@ py -3.11 -m venv .venv
 
 * **Publier** : chaque push sur la branche principale (ou sur une branche `claude…`) met à jour la pré-version
   « latest » ; un tag `vX.Y.Z` identique à `treeaicoach.__version__` crée une release stable :
-  `git tag v2.5.0` puis `git push origin v2.0.0`. Le dossier `release/` ne contient que l'exe courant,
+  `git tag v2.5.1` puis `git push origin v2.0.0`. Le dossier `release/` ne contient que l'exe courant,
   `version.json` (lu par la mise à jour intégrée) et `SHA256.txt`.
 
 ## ⚖️ Mentions légales
