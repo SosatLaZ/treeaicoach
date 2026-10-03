@@ -52,7 +52,6 @@ datas = [
     (ICON_ICO, "packaging"),                        # app icon, same relative place as in a checkout:
     (ICON_PNG, "packaging"),                        #   paths.package_dir().parent / "packaging" / "icon.*"
 ]
-datas += collect_data_files("customtkinter")        # themes (.json) and fonts
 _NOTICES = os.path.join(ROOT, "THIRD_PARTY_NOTICES.md")   # MIT notices of adapted code (lcu.py)
 if os.path.isfile(_NOTICES):
     datas.append((_NOTICES, "."))
@@ -70,8 +69,9 @@ hiddenimports = [
     "win32com.client",
     "pythoncom",
     "pywintypes",
-    "PIL._tkinter_finder",
-    "customtkinter",
+    "PySide6.QtCore",       # launcher (Qt Widgets, docs/LAUNCHER.md); PyInstaller's own PySide6 hook adds
+    "PySide6.QtGui",        # the platform plugin (qwindows.dll) and the Qt DLLs
+    "PySide6.QtWidgets",
     "onnxruntime",
     "mss",
     # natural voice (tts_neural): edge-tts + aiohttp, miniaudio (cffi), WinRT OneCore voices
@@ -107,8 +107,10 @@ excludes = [
     "matplotlib", "scipy", "pandas", "sympy",
     "pytest", "_pytest", "IPython", "jupyter", "notebook",
     "training",
-    # other GUI toolkits that could be dragged in by optional imports
-    "PyQt5", "PyQt6", "PySide2", "PySide6",
+    # other GUI toolkits (the launcher is Qt Widgets: QtCore / QtGui / QtWidgets only)
+    "PyQt5", "PyQt6", "PySide2", "tkinter", "_tkinter", "customtkinter",
+    "PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtWebEngineCore", "PySide6.QtPdf",
+    "PySide6.QtOpenGL", "PySide6.QtSvg", "PySide6.QtMultimedia", "PySide6.Qt3DCore",
 ]
 
 a = Analysis(  # noqa: F821
@@ -126,9 +128,20 @@ a = Analysis(  # noqa: F821
 )
 
 
+#: Qt files the launcher never loads (software OpenGL 20 MB, translations, unused plugins / modules).
+_QT_DROP = ("opengl32sw.dll", "qt6pdf", "qt6quick", "qt6qml", "qt6network", "qt6opengl", "qt6svg",
+            "qt6virtualkeyboard", "qdirect2d", "qminimal", "qoffscreen", "qwebgl", "qtvirtualkeyboard",
+            "qpdf", "qsvg", "qtuiotouch", "qnetworklistmanager", "qtiff", "qwebp", "qicns", "qtga", "qwbmp",
+            "qjpeg", "qgif")
+
+
 def _keep(entry):
-    """Drop files the app never uses: OpenCV's FFmpeg video plugin (~25 MB, Windows) and macOS litter."""
+    """Drop files the app never uses: OpenCV's FFmpeg video plugin (~25 MB, Windows), unused Qt parts,
+    Qt translations and macOS litter."""
     base = os.path.basename(entry[0]).lower()
+    path = entry[0].replace("\\", "/").lower()
+    if "pyside6/translations/" in path or (base.startswith(_QT_DROP) and "pyside6" in path):
+        return False
     return not (base.startswith("opencv_videoio_ffmpeg") or base == ".ds_store")
 
 

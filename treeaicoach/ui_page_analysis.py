@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 def game_line(g: dict) -> tuple[str, str, str, str]:
     """(title, detail, result text, result tone) of one recorded game."""
     champ = champion_name(game_field(g, "champion", "alias", default="")) or "Champion inconnu"
-    role = str(game_field(g, "role", default="") or "").lower()
+    role = str(game_field(g, "role", default="") or "").lower().capitalize()
     res = game_result(g)
     k, d, a = (_int_or_none(game_field(g, x)) for x in ("kills", "deaths", "assists"))
     parts = [fmt_game_date(game_datetime(g))]
@@ -38,7 +38,7 @@ def game_line(g: dict) -> tuple[str, str, str, str]:
         parts.append(fmt_clock(dur))
     if k is not None or d is not None:
         parts.append(f"{k if k is not None else '?'} / {d if d is not None else '?'} / {a if a is not None else '?'}")
-    title = champ + (f" · {role}" if role and role not in ("none", "?") else "")
+    title = champ + (f" · {role}" if role and role not in ("None", "?") else "")
     return (title, " · ".join(parts), {"win": "Victoire", "lose": "Défaite"}.get(res or "", ""),
             {"win": "ok", "lose": "danger"}.get(res or "", ""))
 

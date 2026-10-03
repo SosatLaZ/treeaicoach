@@ -13,10 +13,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "treeaicoach"
-UI_FILES = ("ui.py", "ui_common.py", "ui_dialogs.py", "ui_page_alerts.py", "ui_page_analysis.py",
-            "ui_page_dashboard.py", "ui_page_overlay.py", "ui_page_settings.py", "ui_kit.py", "calibration.py", "report.py",
-            "replay.py", "progress.py")
-#: the CustomTkinter window, split over several modules (ui.py + ui_common.py + one module per page)
+UI_FILES = ("ui.py", "ui_common.py", "ui_dialogs.py", "ui_widgets.py", "ui_page_home.py", "ui_page_alerts.py",
+            "ui_page_analysis.py", "ui_page_overlay.py", "ui_page_settings.py", "ui_page_about.py", "ui_kit.py",
+            "calibration.py", "report.py", "replay.py", "progress.py")
+#: the Qt launcher, split over several modules (ui.py + ui_widgets.py + one module per page)
 APP_FILES = tuple(f for f in UI_FILES if f.startswith("ui") and f != "ui_kit.py") + ("calibration.py",)
 
 
@@ -63,25 +63,30 @@ def test_no_banned_colours(name: str) -> None:
 
 
 def test_no_template_fonts() -> None:
-    from treeaicoach import ui
+    """The launcher's identity font is Segoe UI Variable (Windows); Inter / Noto / DejaVu are only
+    fallbacks for other systems (docs/DESIGN.md, "Lanceur")."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from treeaicoach import ui_widgets as W
 
-    for fam in ui.BODY_FONTS + ui.DISPLAY_FONTS:
-        assert not any(fam == b or fam.startswith(b + " ") for b in BANNED_FONTS), fam
+    for fams in (W.FONT_FAMILIES, W.DISPLAY_FAMILIES):
+        assert fams[0].startswith("Segoe UI"), fams
+        assert not any(f.startswith(("Poppins", "Space Grotesk", "Geist")) for f in fams), fams
     css = (PKG / "report.py").read_text(encoding="utf-8")
     for fam in BANNED_FONTS:
         assert not re.search(rf"font-family:[^;}}]*\b{fam}\b", css), fam
 
 
-def test_ui_radius_is_small() -> None:
-    src = _app_source()
-    radii = [int(x) for x in re.findall(r"corner_radius=(\d+)", src)]
-    assert all(r <= 6 for r in radii), radii
-    from treeaicoach import ui
+def test_launcher_shapes_are_quiet() -> None:
+    """Grouped lists 10 px, controls 6-8 px, pills only for switches; no gradient, glow or shadow."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from treeaicoach import ui_widgets as W
 
-    assert ui.RADIUS <= 6 and ui.RADIUS_DIALOG <= 6
-    # the one pill shape allowed: toggles (docs/DESIGN.md), and only them
-    assert ui.TOGGLE_RADIUS == ui.TOGGLE_H // 2
-    assert "corner_radius=TOGGLE_RADIUS" not in src          # drawn by ui.toggle_image, not a CTk shape
+    assert W.GROUP_RADIUS <= 12
+    qss = W.style_sheet(W.DARK, "Segoe UI", "Segoe UI") + W.style_sheet(W.LIGHT, "Segoe UI", "Segoe UI")
+    radii = [int(x) for x in re.findall(r"border-radius: (\d+)px", qss)]
+    assert radii and max(radii) <= 12, radii
+    for banned in ("gradient", "box-shadow", "qlineargradient", "qradialgradient"):
+        assert banned not in qss.lower(), banned
 
 
 def _contrast(a: str, b: str) -> float:
@@ -94,16 +99,18 @@ def _contrast(a: str, b: str) -> float:
 
 
 def test_text_is_legible() -> None:
-    """Readable sizes (nothing under 12 px) and WCAG AA contrast for every text colour."""
-    from treeaicoach import ui
+    """Readable sizes (nothing under 12 px) and WCAG AA contrast for every text colour, light and dark."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from treeaicoach import ui_widgets as W
 
-    for bg in (ui.BG, ui.SURFACE, ui.RAISED):
-        for fg in (ui.TEXT, ui.MUTED, ui.DIM, ui.ACCENT):
-            assert _contrast(fg, bg) >= 4.5, (fg, bg, round(_contrast(fg, bg), 2))
-    src = _app_source()
-    m = re.search(r"class _Fonts:.*?(?=\n\n\n)", src, re.S)
-    assert m
-    sizes = [int(x) for x in re.findall(r"size=(\d+)", m.group(0))]
+    for t in (W.LIGHT, W.DARK):
+        for bg in (t.window, t.group):
+            for fg in (t.text, t.secondary, t.tertiary, t.accent, t.danger, t.warning):
+                assert _contrast(fg, bg) >= 4.5, (t.name, fg, bg, round(_contrast(fg, bg), 2))
+        assert _contrast(t.on_accent, t.accent) >= 4.5
+    assert min(W.TITLE_PX, W.BODY_PX, W.SMALL_PX, W.CAPTION_PX) >= 12
+    qss = W.style_sheet(W.DARK, "Segoe UI", "Segoe UI")
+    sizes = [int(x) for x in re.findall(r"font-size: (\d+)px", qss)]
     assert sizes and min(sizes) >= 12, sizes
 
 

@@ -52,13 +52,13 @@ class Theme:
 
 LIGHT = Theme(
     name="light", window="#F2F2F4", sidebar="#E8E8EA", group="#FFFFFF", group_hover="#F7F7F8",
-    separator="#E3E3E6", text="#1D1D1F", secondary="#5E5E63", tertiary="#77777C",
-    accent="#2F7D1F", accent_hover="#286C1A", on_accent="#FFFFFF", accent_soft="#DCEBD3",
+    separator="#E3E3E6", text="#1D1D1F", secondary="#5E5E63", tertiary="#6B6B70",
+    accent="#2A721B", accent_hover="#236316", on_accent="#FFFFFF", accent_soft="#DCEBD3",
     control="#FFFFFF", control_hover="#F1F1F3", control_border="#D2D2D7", track_off="#E1E1E5", knob="#FFFFFF",
-    danger="#D70015", warning="#B25000", ok="#2F7D1F")
+    danger="#C8001A", warning="#A34A00", ok="#2A721B")
 DARK = Theme(
     name="dark", window="#1C1D1C", sidebar="#242524", group="#2B2C2B", group_hover="#323332",
-    separator="#3A3B3A", text="#F2F3F2", secondary="#B4B7B4", tertiary="#8E928E",
+    separator="#3A3B3A", text="#F2F3F2", secondary="#B4B7B4", tertiary="#9A9E9A",
     accent="#9BD84A", accent_hover="#AEE36A", on_accent="#0C0E0D", accent_soft="#34452A",
     control="#3A3B3A", control_hover="#444544", control_border="#4A4B4A", track_off="#48494A", knob="#FFFFFF",
     danger="#FF6961", warning="#FFB340", ok="#9BD84A")
@@ -186,7 +186,7 @@ QToolTip {{ background: {t.group}; color: {t.text}; border: 1px solid {t.control
 #Segmented {{ background: {t.track_off}; border-radius: 8px; }}
 QPushButton#Segment {{ background: transparent; border: none; border-radius: 6px; padding: 4px 12px;
   font-size: {SMALL_PX}px; font-weight: 500; min-height: 18px; }}
-QPushButton#Segment:checked {{ background: {t.group if t.name == "light" else "#5A5B5A"}; font-weight: 600; }}
+QPushButton#Segment:checked {{ background: {t.group if t.name == "light" else "#5A5B5A"}; }}
 #Toast {{ background: {"#2C2C2E" if t.name == "light" else "#F2F3F2"}; border-radius: 10px; }}
 #Toast QLabel {{ color: {"#FFFFFF" if t.name == "light" else "#1D1D1F"}; font-weight: 500; }}
 #Toast[level="error"] QLabel, #Toast[level="warning"] QLabel {{ font-weight: 600; }}

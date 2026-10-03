@@ -63,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     from treeaicoach import ui
     from treeaicoach.config import Config
 
+    ui._report_function = lambda name: (lambda n=50: list(SAMPLE_GAMES)) if name == "list_games" else None
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     cfg = Config(ui_onboarding_done=True, ui_seen_changelog="9", check_updates_on_start=False,
@@ -91,8 +92,12 @@ def main(argv: list[str] | None = None) -> int:
                 app.show_page(key)
                 app.stack.currentWidget().repaint()
                 switches.append(1000 * (time.perf_counter() - t1))
-                end = time.monotonic() + (0.6 if key == "overlay" else 0.15)
+                end = time.monotonic() + (8.0 if key == "overlay" else 0.2)
+                prev = app.page_views.get("overlay")
                 while time.monotonic() < end:
+                    if key == "overlay" and prev is not None and prev.preview.pixmap() is not None \
+                            and not prev.preview.pixmap().isNull() and time.monotonic() > end - 7.5:
+                        break
                     app.qapp.processEvents()
                     app._dispatcher.drain()
                     time.sleep(0.01)

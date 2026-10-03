@@ -29,11 +29,12 @@ ICON_PNG = PACKAGING / "icon.png"
 ICON_ICO = PACKAGING / "icon.ico"
 ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
-REQUIRED_HIDDEN = {"win32com", "win32com.client", "pythoncom", "pywintypes", "PIL._tkinter_finder",
-                   "customtkinter", "onnxruntime"}
+REQUIRED_HIDDEN = {"win32com", "win32com.client", "pythoncom", "pywintypes", "PySide6.QtCore", "PySide6.QtGui",
+                   "PySide6.QtWidgets", "onnxruntime"}
 REQUIRED_EXCLUDES = {"torch", "torchvision", "onnx", "matplotlib", "scipy", "pandas", "pytest",
                      "IPython", "training"}
-RUNTIME_DEPS = {"numpy", "cv2", "onnxruntime", "mss", "PIL", "customtkinter", "tkinter",
+RUNTIME_DEPS = {"numpy", "cv2", "onnxruntime", "mss", "PIL", "PySide6", "PySide6.QtCore", "PySide6.QtGui",
+                "PySide6.QtWidgets",
                 "win32com", "pythoncom", "pywintypes", "treeaicoach"}
 LEGAL_NOTICE = (
     "TreeAI Coach isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games "
@@ -57,7 +58,7 @@ class _FakeAnalysis:
         ]
         self.datas = [
             ("treeaicoach/assets/manifest.json", "C:/x/manifest.json", "DATA"),
-            ("customtkinter/assets/.DS_Store", "C:/x/.DS_Store", "DATA"),
+            ("treeaicoach/assets/.DS_Store", "C:/x/.DS_Store", "DATA"),
         ]
 
 
@@ -214,7 +215,6 @@ def test_spec_paths_are_absolute_and_exist(monkeypatch):
     for src_path, _ in datas:
         if "/site/" not in src_path.as_posix():
             assert src_path.is_absolute() and src_path.exists(), src_path
-    assert any(d.startswith("customtkinter") for _, d in datas), "customtkinter data files missing"
 
 
 def test_spec_hidden_imports_and_excludes(monkeypatch):
@@ -240,11 +240,8 @@ def test_spec_filters_unused_binaries(monkeypatch):
 
 def test_spec_with_real_pyinstaller_helpers(monkeypatch):
     pytest.importorskip("PyInstaller.utils.hooks")
-    pytest.importorskip("customtkinter")
     calls = _exec_spec(monkeypatch, fake_hooks=False)
     kw = calls["analysis"].kwargs
-    ctk = [d for _, d in kw["datas"] if d.replace("\\", "/").startswith("customtkinter")]
-    assert ctk, "collect_data_files('customtkinter') returned nothing"
     assert _package_module_names() <= set(kw["hiddenimports"])
 
 

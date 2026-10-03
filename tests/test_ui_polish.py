@@ -8,7 +8,8 @@ from pathlib import Path
 
 import test_ui as tu
 
-from treeaicoach import report, ui, ui_kit, ui_preview
+from treeaicoach import report, ui_kit, ui_preview
+from treeaicoach import ui_common as ui
 from treeaicoach.config import Config
 
 home = tu.home
@@ -17,25 +18,6 @@ FIXTURE = Path(__file__).parent / "fixtures" / "game_record_sample.json"
 WINDOWS_FAMILIES = ["@Malgun Gothic", "Arial", "Bahnschrift", "Bahnschrift Condensed", "Bahnschrift Light",
                     "Bahnschrift SemiBold", "Bahnschrift SemiBold Condensed", "Bahnschrift SemiLight",
                     "Segoe UI", "Segoe UI Semibold", "Segoe UI Variable Display Semib", "Tahoma"]
-
-
-def test_font_resolution_windows_and_fallbacks() -> None:
-    assert ui.pick_font(WINDOWS_FAMILIES, ui.BODY_FONTS, "TkDefaultFont") == "Segoe UI"
-    disp = ui.pick_font(WINDOWS_FAMILIES, ui.DISPLAY_FONTS, "Segoe UI")
-    assert disp == "Bahnschrift SemiBold" and ui.display_weight(disp) == "normal"
-    # Windows 7/8 (no Bahnschrift): Segoe UI Semibold, drawn "normal" (no synthetic double bold)
-    old = [f for f in WINDOWS_FAMILIES if not f.startswith("Bahnschrift") and "Variable" not in f]
-    assert ui.pick_font(old, ui.DISPLAY_FONTS, "Segoe UI") == "Segoe UI Semibold"
-    assert ui.display_weight("Segoe UI Semibold") == "normal"
-    # case-insensitive, spelled as Tk lists it; vertical "@" families ignored
-    assert ui.pick_font(["bahnschrift semibold"], ui.DISPLAY_FONTS, "x") == "bahnschrift semibold"
-    assert ui.pick_font(["@Bahnschrift"], ("Bahnschrift",), "x") == "x"
-    # Linux: DejaVu body, display falls back to the body family (never Tk's default font)
-    linux = ["DejaVu Sans", "Liberation Sans", "Roboto"]
-    body = ui.pick_font(linux, ui.BODY_FONTS, "TkDefaultFont")
-    assert body == "DejaVu Sans"
-    assert ui.pick_font(linux, ui.DISPLAY_FONTS, body) == "DejaVu Sans"
-    assert ui.display_weight("DejaVu Sans") == "bold"
 
 
 def test_ai_rows_and_key_test() -> None:
@@ -122,34 +104,3 @@ def test_overlay_preview_composition() -> None:
     assert "radar" in radar.rects
 
 
-@tu.needs_display
-def test_dashboard_pregame_preview_and_guided_run(home: Path, tmp_path: Path) -> None:
-    games_dir = home / "home" / "games"
-    games_dir.mkdir(parents=True)
-    shutil.copy(FIXTURE, games_dir / "2026-09-20_2100_Garen.json")
-    app, _voice, _ = tu._build(tmp_path)
-    try:
-        tu._pump(app, 4.0, until=lambda: app._pregame_data is not None)
-        assert app._pregame_data is not None and app._pregame_data["games"]
-        app.clear_journal()                                 # empty journal -> "avant la partie" panel
-        assert app.pregame.winfo_manager() == "grid" and app.pregame.winfo_children()
-        assert app.journal.winfo_manager() == ""
-        app._journal.append((60.0, 2, "Gank"))
-        app._render_journal()
-        assert app.journal.winfo_manager() == "grid" and app.pregame.winfo_manager() == ""
-        app.show_page("analysis")
-        tu._pump(app, 3.0, until=lambda: bool(app._games))
-        assert app._games
-        app.show_page("overlay")
-        tu._pump(app, 8.0, until=lambda: "overlay-preview-screen" in app._images)
-        assert "overlay-preview-screen" in app._images and "overlay-preview-hud" in app._images
-        for st in range(3):
-            app.show_onboarding(st)
-            tu._pump(app, 0.2)
-        app._open_dialog._close()
-        app.test_ai_key()
-        tu._pump(app, 3.0, until=lambda: not app._ai_test_busy)
-        assert app._ai_test is not None and app._ai_test[0] is False      # provider off
-        assert app.sys_rows["ai"]["val"].cget("text")
-    finally:
-        app.close()
