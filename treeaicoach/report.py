@@ -1241,7 +1241,7 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
         s = a.get("summary") or {}
         title = f'{s.get("champion_name") or "Partie"} · {s.get("result_label") or ""}'.strip(" ·")
         parts = []
-        for fn in (lambda: _header(rec, a), lambda: _cards(a), lambda: _tips_section(a),
+        sections = (lambda: _header(rec, a), lambda: _cards(a), lambda: _tips_section(a),
                    lambda: _plays_section(rec), lambda: _understanding_section(rec),
                    lambda: _moments_section(rec, a), lambda: _voice_box(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _truth_section(rec, a),
@@ -1249,7 +1249,10 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
                    lambda: _positioning_section(a),
                    lambda: _deaths_section(rec, a), lambda: _ganks_section(rec, a),
                    lambda: _jungler_section(rec, a), lambda: _objectives_section(a),
-                   lambda: _scoreboard_section(a), lambda: _selfcheck_section(rec), lambda: _trends_section(a)):
+                   lambda: _scoreboard_section(a), lambda: _selfcheck_section(rec), lambda: _trends_section(a))
+        if a.get("limited_mode"):        # ARAM / Arena: no minimap analysis -> header + honest tips only
+            sections = (lambda: _header(rec, a), lambda: _tips_section(a))
+        for fn in sections:
             try:
                 parts.append(fn())
             except Exception:
@@ -1258,6 +1261,9 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
         if rec.get("incomplete") or s.get("result") is None:
             warn = ('<div class="warnbox">Enregistrement incomplet (partie interrompue ou application fermée '
                     'avant la fin) : les chiffres couvrent uniquement la partie enregistrée.</div>')
+        if a.get("limited_mode"):
+            warn += (f'<div class="warnbox">Mode {_e(a["limited_mode"])} : TreeAI analyse en direct seulement la '
+                     "Faille de l'invocateur. Ce rapport se limite à tes statistiques.</div>")
         refresh = ""
         if lcu_pending:
             warn += _pending_html()

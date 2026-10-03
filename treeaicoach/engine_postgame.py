@@ -58,6 +58,7 @@ class PostgameMixin:
                 mm_block = mm.summary()
             except Exception:
                 log.debug("mastermind summary failed", exc_info=True)
+        self._mastermind = None                # never carried into the next game (ARAM record had the previous game's plan)
         if rec is not None:
             th = threading.Thread(target=self._finish_job, args=(rec, plays_summary, health, mm_block),
                                   name="TreeAICoach-report", daemon=True)

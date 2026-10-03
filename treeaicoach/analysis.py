@@ -1980,5 +1980,39 @@ def analyze_game(record: Any, truth: Any = None) -> dict[str, Any]:
 
             return analyze_truth(record, truth)
         out["truth"] = section("truth", _truth, {"available": False})
+    limited = _limited_mode(rec)
+    if limited:                          # ARAM / Arena...: no minimap analysis, no Rift advice (real report 2026-10-03)
+        out["limited_mode"] = limited
+        out["tips"] = _limited_tips(rec, summary, limited)
+        out["tip_items"] = [{"text": t, "kind": "mode"} for t in out["tips"]]
     out["spoken_summary"] = spoken_summary(out)
     return out
+
+
+#: Live Client map numbers -> mode label (Summoner's Rift = 11 is the analysed mode).
+LIMITED_MAPS = {12: "ARAM", 30: "Arène", 21: "Nexus Blitz", 22: "TFT"}
+
+
+def _limited_mode(rec: _Rec) -> str | None:
+    """Mode label when the game is not on Summoner's Rift (the app analyses only the Rift)."""
+    try:
+        m = int(rec.meta.get("map_number") or 0)
+    except (TypeError, ValueError):
+        m = 0
+    if m in LIMITED_MAPS:
+        return LIMITED_MAPS[m]
+    mode = _str(rec.meta.get("game_mode")).upper()
+    if mode in ("ARAM", "CHERRY", "NEXUSBLITZ"):
+        return {"ARAM": "ARAM", "CHERRY": "Arène", "NEXUSBLITZ": "Nexus Blitz"}[mode]
+    return None
+
+
+def _limited_tips(rec: _Rec, summary: dict, mode: str) -> list[str]:
+    """Few honest tips for a mode the app does not analyse live (no minimap, no jungle, no vision)."""
+    tips: list[str] = []
+    deaths = _int(summary.get("deaths"))
+    minutes = max(1.0, (rec.duration or 0.0) / 60.0)
+    if mode == "ARAM" and deaths / minutes >= 0.8:
+        tips.append(f"{deaths} morts en {int(minutes)} min : en ARAM, reste derrière ta ligne de front "
+                    "et recule dès qu'elle tombe.")
+    return tips

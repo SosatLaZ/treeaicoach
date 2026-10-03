@@ -988,6 +988,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self.last_ai_advice = None
         self._roster_sig = None
         self._prefetched = False
+        self._mastermind = None          # the game model is per game (rebuilt from this roster)
         self._was_dead = bool(game.me.is_dead) if game.me is not None else False
         self._death_due = None
         self._threat_hist.clear()

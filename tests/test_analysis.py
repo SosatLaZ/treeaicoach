@@ -355,3 +355,28 @@ def test_danger_level_retreat_call_counts_as_a_warning() -> None:
                            [1236.0, "macro_tip", 0, "Pose une balise", None]]})
     got = rec.danger_alerts(1230.0, 1243.0)
     assert [a[3] for a in got] == ["Recule !"]
+
+
+def test_aram_report_has_no_rift_advice() -> None:
+    """Real ARAM game 2026-10-03: the report spoke of junglers, ganks, dragons and vision."""
+    from treeaicoach.report import render_report_html
+    events = [{"EventName": "GameStart", "EventTime": 0.0}]
+    events += [{"EventName": "ChampionKill", "EventTime": 60.0 + 50 * i, "KillerName": "Foe",
+                "VictimName": "Me", "Assisters": []} for i in range(20)]
+    events.append({"EventName": "GameEnd", "EventTime": 1150.0, "Result": "Lose"})
+    rec = {"schema": 1, "meta": {"champion": "Velkoz", "champion_name": "Vel'Koz", "team": "CHAOS",
+                                 "riot_id": "Me#1", "summoner_name": "Me", "game_mode": "ARAM", "map_number": 12},
+           "roster": [{"alias": "Velkoz", "name": "Vel'Koz", "team": "CHAOS", "riot_id": "Me#1",
+                       "summoner_name": "Me", "is_me": True},
+                      {"alias": "LeeSin", "name": "Lee Sin", "team": "ORDER", "riot_id": "Foe#1",
+                       "summoner_name": "Foe"}],
+           "result": "Lose", "duration": 1150.0, "events": events,
+           "snapshots": [{"game_time": 1150.0, "deaths": 20, "kills": 1, "assists": 3, "cs": 20}]}
+    a = analyze_game(rec)
+    assert a["limited_mode"] == "ARAM"
+    import re
+    page = re.sub(r"<style.*?</style>|<[^>]+>", " ", render_report_html(rec, a), flags=re.S)
+    text = " ".join(a["tips"]) + a["spoken_summary"] + page
+    for banned in ("jungler", "gank", "Gank", "dragon", "balise"):
+        assert banned not in text, banned
+    assert "ARAM" in text
