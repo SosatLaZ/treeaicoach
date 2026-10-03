@@ -158,3 +158,17 @@ def test_surplus_rule_can_be_disabled(monkeypatch):
     tr = Tracker()
     _run(tr, 12, [(0.8, 0.8)])
     assert any("?" in x.key for x in tr.enemies())
+
+
+def test_anonymous_track_parked_on_one_spot_is_a_phantom():
+    tr = Tracker()
+    tr.set_roster(ROSTER)
+    t = 0.0
+    # Singed in the fog (never seen): a moving anonymous enemy may be him ...
+    for k in range(20):
+        tr.update(t, [_ident(u, v, a) for a, (u, v) in ENEMIES.items() if a != "Singed"]
+                  + [_ident(0.7 + 0.004 * k, 0.8), _ident(0.06, 0.29)])
+        t += 0.2
+    anon = [x for x in tr.enemies() if "?" in x.key]
+    # ... the one parked on a turret glyph for 4 s is not
+    assert len(anon) == 1 and abs(anon[0].position()[1] - 0.8) < 0.01

@@ -143,6 +143,12 @@ ELIM_ALLY_MEMORY_S = 20.0
 #: recall), the anonymous track is a phantom and is not reported (real records 2.1-2.4:
 #: 49 anonymous phantom samples, the 2nd failure mode). False disables.
 ANON_SURPLUS = True
+#: ... and an anonymous track parked on one spot (all its recent observations within
+#: ANON_STATIC_D of the last one over ANON_STATIC_S) is a glyph / text / ping, not a
+#: champion nobody could identify (det_gym: unidentified "enemies" parked on turrets for
+#: seconds; real records: enemy?N frozen at one spot for 3 s). <= 0 disables.
+ANON_STATIC_S = 2.5
+ANON_STATIC_D = 0.006
 
 RELATIONS = ("self", "ally", "enemy")
 _CLASSES = ("enemy", "ally", "self")   # detector class order (ARCHITECTURE.md §3)
@@ -1180,6 +1186,12 @@ class Tracker:
                 pos = a.raw_position()
                 if pos is None:
                     a.surplus = False
+                    continue
+                if ANON_STATIC_S > 0 and len(a._obs) >= 3 and \
+                        a._obs[-1][0] - a._obs[0][0] >= ANON_STATIC_S and \
+                        all(math.hypot(u - pos[0], v - pos[1]) <= ANON_STATIC_D
+                            for _t, u, v in a._obs):
+                    a.surplus = True
                     continue
                 ok = False
                 for tr in free:
