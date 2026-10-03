@@ -45,8 +45,8 @@ Tout l'historique : [CHANGELOG.md](CHANGELOG.md).
 
 ## Télécharger
 
-1. Clique sur le bouton **Télécharger** ci-dessus : tu obtiens **`TreeAICoach.exe`**. Les versions publiées
-   sont aussi sur la page des [Releases](https://github.com/SosatLaZ/treeaicoach/releases).
+1. Clique sur le bouton **Télécharger** ci-dessus : tu obtiens **`TreeAICoach.exe`** (dossier
+   [`release/`](release/), toujours la dernière version).
 2. C'est **un seul fichier**, sans installation : mets-le où tu veux. Python n'est pas nécessaire.
    Les mises à jour se font ensuite depuis l'appli (**À propos → Mise à jour**).
 3. Au premier lancement, Windows peut afficher **« Windows a protégé votre ordinateur »** (SmartScreen).
