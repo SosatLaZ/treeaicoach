@@ -40,6 +40,8 @@ from typing import Any, Callable, Iterable, Sequence
 import cv2
 import numpy as np
 
+from treeaicoach import hershey
+
 log = logging.getLogger(__name__)
 
 BGR = tuple[int, int, int]
@@ -1166,12 +1168,11 @@ class MinimapRenderer:
             if not _finite(u, v, hgt) or not text:
                 continue
             scale = max(0.2, hgt * S / 22.0)
-            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+            # (OpenCV-4 Hershey glyphs under every OpenCV: cv2 5's putText draws other text)
+            (tw, th), _ = hershey.get_text_size(text, scale, thick)
             org = (int(round(u * S - tw / 2)), int(round(v * S + th / 2)))
-            cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thick + 1,
-                        cv2.LINE_AA)
-            cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, col, thick,
-                        cv2.LINE_AA)
+            hershey.put_text(img, text, org, scale, (0, 0, 0), thick + 1, cv2.LINE_AA)
+            hershey.put_text(img, text, org, scale, col, thick, cv2.LINE_AA)
 
     def _draw_champions(self, img: np.ndarray, scene: Scene) -> None:
         S = img.shape[1]
@@ -1314,11 +1315,10 @@ def _redigit_badge(base_rgba: np.ndarray, n: int) -> np.ndarray | None:
         text = str(int(n))
         scale = dh / 22.0
         thick = max(1, int(round(dh / 7.0)))
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+        (tw, th), _ = hershey.get_text_size(text, scale, thick)
         org = (int(round(cx - tw / 2.0)), int(round(cy + th / 2.0)))
         rgb = np.ascontiguousarray(img[:, :, :3])
-        cv2.putText(rgb, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (235, 235, 235), thick,
-                    cv2.LINE_AA)
+        hershey.put_text(rgb, text, org, scale, (235, 235, 235), thick, cv2.LINE_AA)
         img[:, :, :3] = rgb
         return img
     except Exception:
