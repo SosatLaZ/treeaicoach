@@ -1,6 +1,6 @@
 {
-  "version": "2.5.1",
-  "sha256": "078823abb28e84b3dba28c1053d1604ebfdbf617867eedfd955f163b2f6865e4",
-  "size": 82363615,
-  "notes": "2.5.1 : détection plus fiable — deux fois moins de mauvais noms sur les champions empilés, plus de faux cercles sans nom, ta position ne reste plus figée quand tu débloques la caméra, un champion mort ou caché sous un autre n'est plus dessiné au mauvais endroit ; détection environ 14 % plus rapide."
+  "version": "2.6.0",
+  "sha256": "cc5afdd845055469ed0dbd2446684b3333b062b9be98256e1f03fed8426f021a",
+  "size": 94516222,
+  "notes": "2.6 : nouveau launcher refait de zéro (pages prêtes en 1 s, plus de bug de chargement, design épuré clair/sombre) ; voix naturelle d'abord avec la bonne prononciation des champions et des sons doux ; overlay environ 25 % plus compact et adapté à chaque résolution ; détection : duo empilé et caméra mieux suivis, capture rapide qui ne se coupe plus, minimap moins souvent recherchée ; alertes en double supprimées."
 }
