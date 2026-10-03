@@ -464,13 +464,32 @@ def _icon_bgr(icon: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(rgb[:, :, ::-1]).clip(0, 255).astype(np.uint8)
 
 
+_LAB_OFF = np.float32([0.0, 128.0, 128.0])
+
+
 def _features(bgr: np.ndarray) -> np.ndarray:
     """BGR uint8 -> float32 Lab feature image (L, w*a, w*b), lightly blurred."""
+    # (cost) one contiguous broadcast subtraction instead of an in-place strided one on the
+    # a / b planes: same values (integers - 128), ~3x faster
     lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
-    lab[:, :, 1:] -= 128.0
+    lab -= _LAB_OFF
     if BLUR_SIGMA > 0:
         lab = cv2.GaussianBlur(lab, (0, 0), BLUR_SIGMA)
     return lab
+
+
+_GRIDS: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _grid(s: int) -> tuple[np.ndarray, np.ndarray]:
+    """``np.mgrid[0:s, 0:s]`` as float32 (yy, xx), cached (read-only)."""
+    g = _GRIDS.get(s)
+    if g is None:
+        yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
+        yy.setflags(write=False)
+        xx.setflags(write=False)
+        g = _GRIDS[s] = (yy, xx)
+    return g
 
 
 def _disc_mask(size: int, radius: float) -> np.ndarray:
@@ -545,9 +564,10 @@ def _cap_masks(size: int, radius: float) -> np.ndarray:
 
 
 def _spec(a: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    buf = np.zeros(shape, np.float32)
-    buf[:a.shape[0], :a.shape[1]] = a
-    return cv2.dft(buf)                       # packed CCS spectrum
+    # (cost) zero padding in one cv2 call; nonzeroRows: the padding rows are skipped
+    buf = cv2.copyMakeBorder(np.asarray(a, np.float32), 0, shape[0] - a.shape[0], 0,
+                             shape[1] - a.shape[1], cv2.BORDER_CONSTANT, value=0)
+    return cv2.dft(buf, nonzeroRows=a.shape[0])   # packed CCS spectrum
 
 
 def _bank_specs(bank: _Bank, shape: tuple[int, int]) -> tuple[np.ndarray, list[list[np.ndarray]]]:
@@ -576,27 +596,31 @@ def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None,
         return np.zeros((len(idx), 1, 1), np.float32), np.zeros((1, 1), np.float32)
     shape = (cv2.getOptimalDFTSize(H), cv2.getOptimalDFTSize(W))
     mspec, tspecs = _bank_specs(bank, shape)
-    chans = [np.ascontiguousarray(feat[:, :, ch]) for ch in range(3)]
+    chans = cv2.split(feat)
     fs = [_spec(ch, shape) for ch in chans]
 
     def corr(spec: np.ndarray) -> np.ndarray:
         return cv2.idft(spec, flags=cv2.DFT_REAL_OUTPUT | cv2.DFT_SCALE)[:oh, :ow]
 
-    # local variance under the mask: lightness, and chroma (a + b jointly)
-    var = []
-    for f, ch in zip(fs, chans):
-        s1 = corr(cv2.mulSpectrums(f, mspec, 0, conjB=True))
-        s2 = corr(cv2.mulSpectrums(_spec(ch * ch, shape), mspec, 0, conjB=True))
-        var.append(np.maximum(s2 - s1 * s1 / bank.n, 0.0))
-    var_l, var_c = var[0], var[1] + var[2]
-    std = np.sqrt((var_l + var_c) / (3.0 * bank.n))
+    # local variance under the mask: lightness, and chroma (a + b jointly). (cost) the chroma
+    # second moment is ONE transform of a*a + b*b (linearity): 10 transforms instead of 12
+    s1 = [corr(cv2.mulSpectrums(f, mspec, 0, conjB=True)) for f in fs]
+    s2l = corr(cv2.mulSpectrums(_spec(chans[0] * chans[0], shape), mspec, 0, conjB=True))
+    s2c = corr(cv2.mulSpectrums(_spec(chans[1] * chans[1] + chans[2] * chans[2], shape),
+                                mspec, 0, conjB=True))
+    inv_n = 1.0 / bank.n
+    var_l = np.maximum(s2l - s1[0] * s1[0] * inv_n, 0.0)
+    var_c = np.maximum(s2c - (s1[1] * s1[1] + s1[2] * s1[2]) * inv_n, 0.0)
+    std = np.sqrt((var_l + var_c) * (1.0 / (3.0 * bank.n)))
     # NCC of the lightness and of the chroma, weighted mean: the chroma counts even where
-    # its variance is small (terrain has lightness contrast but almost no colour)
-    den_l = np.sqrt(var_l + VAR_EPS[0] * bank.n)
-    den_c = np.sqrt(var_c + VAR_EPS[1] * bank.n)
+    # its variance is small (terrain has lightness contrast but almost no colour).
+    # (cost) the weights / denominators are inverted once, not divided per template
     wl = LIGHTNESS_WEIGHT if wl is None else float(wl)
     wc = 1.0 - wl
+    inv_l = wl / np.sqrt(var_l + VAR_EPS[0] * bank.n)
+    inv_c = wc / np.sqrt(var_c + VAR_EPS[1] * bank.n)
     out = np.empty((len(idx), oh, ow), np.float32)
+    tmp = np.empty((oh, ow), np.float32)
     for k, i in enumerate(idx):
         ts = tspecs[i]
         nl, nc = bank.norms[i]
@@ -604,7 +628,12 @@ def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None,
         spc = cv2.mulSpectrums(fs[1], ts[1], 0, conjB=True)
         spc += cv2.mulSpectrums(fs[2], ts[2], 0, conjB=True)
         num_c = corr(spc)
-        out[k] = num_l * (wl / nl) / den_l + num_c * (wc / nc) / den_c
+        o = out[k]
+        np.multiply(num_l, inv_l, out=o)
+        o *= np.float32(1.0 / nl)
+        np.multiply(num_c, inv_c, out=tmp)
+        tmp *= np.float32(1.0 / nc)
+        o += tmp
     return out, std
 
 
@@ -1025,6 +1054,7 @@ class RosterMatcher:
         self.verifier: Any = None
         self._verifier_tried = False
         self._ring_img: np.ndarray | None = None
+        self._rescue_memo: tuple | None = None
         self._ring_specs: dict = {}
         self._under: tuple = (None, 0)
         try:
@@ -2102,28 +2132,41 @@ class RosterMatcher:
         rr = OCC_SEARCH if work_centres else 1     # a covered icon's NCC peak drifts away
         if search is not None:
             rr = min(rr, int(search))
-        offs = [(dx, dy) for dy in range(-rr, rr + 1) for dx in range(-rr, rr + 1)
-                if 0 <= x0 + dx <= Wf - s and 0 <= y0 + dy <= Hf - s]
-        if not offs:
-            return None
-        P = np.stack([feat[y0 + dy:y0 + dy + s, x0 + dx:x0 + dx + s] for dx, dy in offs])
+        # (cost) the image side (patches, white pixels, occluders) only depends on the spot:
+        # the callers score every champion of a pool at the same spot in a row -> memo
+        key = (feat.shape, s, x0, y0, rr, float(D_work), tuple(map(tuple, work_centres)))
+        memo = self._rescue_memo
+        if memo is not None and memo[0] is feat and memo[1] == key:
+            offs, P, wbase, occ = memo[2]
+        else:
+            offs = [(dx, dy) for dy in range(-rr, rr + 1) for dx in range(-rr, rr + 1)
+                    if 0 <= x0 + dx <= Wf - s and 0 <= y0 + dy <= Hf - s]
+            if not offs:
+                return None
+            P = np.stack([feat[y0 + dy:y0 + dy + s, x0 + dx:x0 + dx + s] for dx, dy in offs])
+            # white lines / texts on the patch (all offsets at once)
+            wbase = (P[:, :, :, 0] > 215.0) & (np.abs(P[:, :, :, 1]) < 14.0) & \
+                (np.abs(P[:, :, :, 2]) < 14.0)
+            occ = None
+            if work_centres:
+                yy, xx = _grid(s)
+                ox = np.asarray([x0 + dx for dx, _dy in offs], np.float32)[:, None, None]
+                oy = np.asarray([y0 + dy for _dx, dy in offs], np.float32)[:, None, None]
+                r2 = (0.53 * D_work) ** 2
+                occ = np.ones(wbase.shape, bool)
+                for (ax, ay) in work_centres:          # accepted icons drawn over this one
+                    occ &= (xx[None] + ox + 0.5 - ax) ** 2 + (yy[None] + oy + 0.5 - ay) ** 2 >= r2
+            self._rescue_memo = (feat, key, (offs, P, wbase, occ))
         raw = bank.raw[c.i]
-        yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
         # known occluders (accepted icons on top, white lines / texts) are masked out; the
         # partial discs (unknown occluder on one side: ping...) only for a tracked champion
         base = np.concatenate([bank.mask[None], bank.caps], axis=0) if caps and \
             bank.caps is not None else bank.mask[None]                    # [k, s, s]
-        # white lines / texts on the patch where the portrait is not white (all offsets at once)
+        # white lines / texts on the patch where the portrait is not white
         tl = raw[:, :, 0]
-        white = (P[:, :, :, 0] > 215.0) & (np.abs(P[:, :, :, 1]) < 14.0) & \
-            (np.abs(P[:, :, :, 2]) < 14.0) & (tl < 190.0)[None]
-        keep = ~white                                                    # [p, s, s]
-        if work_centres:
-            ox = np.asarray([x0 + dx for dx, _dy in offs], np.float32)[:, None, None]
-            oy = np.asarray([y0 + dy for _dx, dy in offs], np.float32)[:, None, None]
-            r2 = (0.53 * D_work) ** 2
-            for (ax, ay) in work_centres:          # accepted icons drawn over this one
-                keep &= (xx[None] + ox + 0.5 - ax) ** 2 + (yy[None] + oy + 0.5 - ay) ** 2 >= r2
+        keep = ~(wbase & (tl < 190.0)[None])                             # [p, s, s]
+        if occ is not None:
+            keep &= occ
         masks = base[None] * keep[:, None].astype(np.float32)
         if trim:
             masks = np.concatenate([masks, self._trimmed_masks(P, raw, masks[:, 0])], axis=1)
@@ -2394,24 +2437,31 @@ class RosterMatcher:
         patch (z-scored residual against the template). Unknown occluders that are not white
         (overlay labels on dark boxes, thin rings, pings) are dropped this way."""
         wl = self._wl
+        # (cost) the z-scored residuals of all patches at once; only the percentile cut is
+        # per patch (same values as the former per-patch loop)
+        m = m0.astype(np.float32, copy=False)                             # [p, s, s]
+        n = m.sum(axis=(1, 2))                                           # [p]
+        nn = np.maximum(n, 1e-6)[:, None, None]
+        d = np.zeros(m.shape, np.float32)
+        for chs, w in (((0,), wl), ((1, 2), 1.0 - wl)):
+            for ch in chs:
+                a = P[:, :, :, ch]
+                bb = raw[None, :, :, ch]
+                ma = (a * m).sum(axis=(1, 2), keepdims=True) / nn
+                mb = (bb * m).sum(axis=(1, 2), keepdims=True) / nn
+                sa = np.sqrt(np.maximum((((a - ma) ** 2) * m).sum(axis=(1, 2), keepdims=True)
+                                        / nn, 0.0)) + 3.0
+                sb = np.sqrt(np.maximum((((bb - mb) ** 2) * m).sum(axis=(1, 2), keepdims=True)
+                                        / nn, 0.0)) + 3.0
+                d += np.float32(w / len(chs)) * ((a - ma) / sa - (bb - mb) / sb) ** 2
         out = np.empty((P.shape[0], 1) + m0.shape[1:], np.float32)
         for j in range(P.shape[0]):
-            m = m0[j]
-            n = float(m.sum())
-            if n < 8:
-                out[j, 0] = m
+            if n[j] < 8:
+                out[j, 0] = m0[j]
                 continue
-            d = np.zeros(m.shape, np.float32)
-            for chs, w in (((0,), wl), ((1, 2), 1.0 - wl)):
-                for ch in chs:
-                    a, b = P[j][:, :, ch], raw[:, :, ch]
-                    ma, mb = float((a * m).sum() / n), float((b * m).sum() / n)
-                    sa = math.sqrt(max(float((((a - ma) ** 2) * m).sum() / n), 0.0)) + 3.0
-                    sb = math.sqrt(max(float((((b - mb) ** 2) * m).sum() / n), 0.0)) + 3.0
-                    d += (w / len(chs)) * ((a - ma) / sa - (b - mb) / sb) ** 2
-            vals = d[m > 0.5]
+            vals = d[j][m[j] > 0.5]
             cut = float(np.percentile(vals, 100.0 * (1.0 - TRIM_FRAC))) if vals.size else 0.0
-            out[j, 0] = m * (d <= cut)
+            out[j, 0] = m[j] * (d[j] <= cut)
         return out
 
     def _ring_membership(self, lab: np.ndarray, rel: str) -> tuple[np.ndarray, np.ndarray]:
