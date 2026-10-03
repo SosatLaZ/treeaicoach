@@ -1,7 +1,6 @@
 """Building blocks of the interface (ui.py): drawings, status texts, diagnostics, help texts.
 
-Everything here is pure / Tk-free except :class:`Tooltip` (Tk imported lazily), so it is unit-tested
-without a display. Nothing in this module may raise into the UI: every public helper is defensive.
+Everything here is pure (no GUI toolkit), so it is unit-tested without a display. Nothing in this module may raise into the UI: every public helper is defensive.
 
 * PIL drawings: :func:`extra_icon` (line icons), :func:`role_glyph` / :func:`decorate_portrait`
   (role badge + MIA arc on a round champion portrait), :func:`hero_background` (status strip).
@@ -661,7 +660,7 @@ CHANGELOG: tuple[tuple[str, str], ...] = (
     ("Rapport", "Nouvelle section « Compréhension de la partie »."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
-    ("Ctrl + 1 … 4", "Aller à une page (En jeu, Analyses, Réglages, Aide)"),
+    ("Ctrl + 1 … 6", "Aller à une page (Accueil, Overlay, Alertes et voix, Analyse, Réglages, À propos)"),
     ("Ctrl + M", "Couper / rétablir la voix"),
     ("Ctrl + Maj + S", "Activer / désactiver le mode sûr"),
     ("Ctrl + D", "Copier le diagnostic"),
@@ -692,74 +691,6 @@ def onboarding_steps() -> list[tuple[str, str]]:
          "Un exemple de gank s'affiche 10 s sur ton écran et le coach parle. Si tu ne vois ou n'entends "
          "rien, ouvre la page Aide."),
     ]
-
-
-class Tooltip:
-    """Delayed hover tooltip for any Tk / CustomTkinter widget. Never raises."""
-
-    DELAY_MS = 450
-
-    def __init__(self, widget: Any, text: str | Callable[[], str], bg: str = "#191D1B", fg: str = "#E4E8E5",
-                 border: str = GOLD_DARK, font: Any = None, wrap: int = 320) -> None:
-        self.widget = widget
-        self.text = text
-        self.bg, self.fg, self.border, self.font, self.wrap = bg, fg, border, font, wrap
-        self._job: Any = None
-        self._tip: Any = None
-        for seq, fn in (("<Enter>", self._schedule), ("<Leave>", self._hide), ("<ButtonPress>", self._hide)):
-            try:
-                widget.bind(seq, fn, add="+")
-            except Exception:
-                pass
-
-    def _schedule(self, _e: Any = None) -> None:
-        self._cancel()
-        try:
-            self._job = self.widget.after(self.DELAY_MS, self._show)
-        except Exception:
-            self._job = None
-
-    def _cancel(self) -> None:
-        if self._job is not None:
-            try:
-                self.widget.after_cancel(self._job)
-            except Exception:
-                pass
-            self._job = None
-
-    def _show(self) -> None:
-        self._job = None
-        try:
-            import tkinter as tk  # noqa: PLC0415
-
-            text = self.text() if callable(self.text) else self.text
-            if not text or self._tip is not None:
-                return
-            x = self.widget.winfo_rootx() + 12
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
-            tip = tk.Toplevel(self.widget)
-            tip.wm_overrideredirect(True)
-            try:
-                tip.attributes("-topmost", True)
-            except Exception:
-                pass
-            frame = tk.Frame(tip, bg=self.border, padx=1, pady=1)
-            frame.pack()
-            tk.Label(frame, text=text, bg=self.bg, fg=self.fg, justify="left", wraplength=self.wrap,
-                     padx=10, pady=6, font=self.font).pack()
-            tip.wm_geometry(f"+{x}+{y}")
-            self._tip = tip
-        except Exception:
-            log.debug("Tooltip failed", exc_info=True)
-
-    def _hide(self, _e: Any = None) -> None:
-        self._cancel()
-        if self._tip is not None:
-            try:
-                self._tip.destroy()
-            except Exception:
-                pass
-            self._tip = None
 
 
 __all__ = [

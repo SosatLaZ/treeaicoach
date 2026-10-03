@@ -1,35 +1,15 @@
-"""Réglages > Voix ("ce que tu entends"): how much the coach speaks, gank alerts, reminders, the voice.
-
-Mixin of :class:`treeaicoach.ui.CoachApp`: the methods use the app state (``self.cfg``, ``self.ctk``,
-widgets ...) created in ``CoachApp.__init__`` and run on the Tk thread only. Not meant to be used on
-its own. (This was the "Alertes" page before the settings were grouped in one page.)
-"""
+"""Alertes et voix: what the coach says out loud, which alerts exist, reminders, and the voice."""
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 from typing import Any
 
-from treeaicoach.ui_common import (
-    AUTO_VOICE,
-    DANGER_MODES,
-    DIM,
-    ENGINE_LABELS,
-    GOLD,
-    TEXT,
-    VOICE_LEVELS,
-    Dropdown,
-    Segmented,
-    _example_phrases,
-    _example_speech,
-    _guarded,
-    _pct_value,
-    fmt_decimal_fr,
-    fmt_int_fr,
-)
+from treeaicoach.ui_common import AUTO_VOICE, DANGER_MODES, ENGINE_LABELS, VOICE_LEVELS, _pct_value, fmt_decimal_fr, fmt_int_fr
 
-log = logging.getLogger("treeaicoach.ui")   # same logger as before the split
+log = logging.getLogger(__name__)
+
+CASTER_STYLES = (("sobre", "Sobre"), ("coach", "Coach"), ("caster", "Annonceur"))
 
 
 def danger_mode(cfg: Any) -> str:
@@ -46,253 +26,94 @@ def danger_mode_fields(mode: str) -> dict[str, Any]:
     return {"beep_on_danger": True, "danger_voice": "bip" if mode == "bip" else "bip_voix"}
 
 
-class AlertsPageMixin:
-    """Réglages > Voix: what the coach says out loud and with which voice."""
+def neural_voices() -> list[tuple[str, str]]:
+    try:
+        from treeaicoach.tts_neural import NEURAL_VOICES  # noqa: PLC0415
 
-    # ------------------------------------------------------------------ Voix tab
-    def _build_voice_tab(self, body: Any, row: int) -> int:
-        ex = _example_phrases()
-        self._examples = _example_speech()
+        return [(v, lbl) for v, lbl in NEURAL_VOICES]
+    except Exception:
+        return [("fr-FR-DeniseNeural", "Denise (France)")]
 
-        s = self._section(body, row, "Ce que le coach dit", "Seulement ce qui ne peut pas attendre : le reste est "
-                                                            "écrit dans le panneau.")
-        self._section_button(s, "Tester la voix", self.test_voice, icon="voice",
-                             tip="Fait dire une alerte d'exemple au coach.")
-        self._choice_row(s, "voice_level", "Quantité", "Minimal : ganks, « Recule », objectifs à 60 s. Normal : "
-                         "en plus, les gros appels après un combat gagné. Bavard : tout est lu.", VOICE_LEVELS,
-                         segmented=True)
-        self._danger_row(s)
-        self._switch_row(s, "stance_voice", "Annoncer la posture", "« Prudent » ou « Attaque » quand elle change.")
-        if hasattr(self.cfg, "caster_style"):
-            from treeaicoach.hype import STYLE_LABELS  # noqa: PLC0415
 
-            self._choice_row(s, "caster_style", "Mode annonceur", "Sobre : rien n'est lu. Coach : la probabilité "
-                             "de victoire sur les gros retournements. Caster : en plus, des annonces de "
-                             "commentateur.", STYLE_LABELS, segmented=True)
+class AlertsPage:
+    def __init__(self, app: Any) -> None:
+        self.app = app
+        W = app.W
+        self.page = W.Page("Alertes et voix", "Le coach ne parle que pour ce qui ne peut pas attendre ; le reste est "
+                                              "écrit dans le panneau.")
+        say = self.page.section("Ce que le coach dit", action=W.button("Tester la voix", app.test_voice))
+        app.choice_row(say, "voice_level", "Quantité", "Minimal : ganks, « Recule », objectifs. Normal : en plus "
+                       "les rappels. Bavard : presque tout.", VOICE_LEVELS, segmented=True)
+        self.danger = W.Segmented(DANGER_MODES, danger_mode(app.cfg))
+        self.danger.changed.connect(lambda m: app.set_options(**danger_mode_fields(m)))
+        say.add(W.Row("Annonce d'un danger", "Le bip part tout de suite ; la voix suit si elle est prête.",
+                      self.danger))
+        app.bind("beep_on_danger", lambda: self.danger.set_value(danger_mode(app.cfg)))
+        app.bind("danger_voice", lambda: self.danger.set_value(danger_mode(app.cfg)))
+        app.switch_row(say, "stance_voice", "Annoncer la posture", "« Prudent » ou « Attaque » quand elle change.")
+        app.choice_row(say, "caster_style", "Mode annonceur", "Sobre : rien n'est lu. Coach : la probabilité de "
+                       "victoire aux moments clés. Annonceur : plus vivant.", CASTER_STYLES, segmented=True)
+        app.switch_row(say, "item_advice_speak", "Lire les conseils d'achat", "Sinon ils restent écrits.")
+        app.switch_row(say, "ai_speak", "Lire le conseil IA à voix haute", "Désactivé par défaut : le conseil IA "
+                       "reste écrit.")
 
-        yield                                   # one section per idle slot (prebuild)
-        s = self._section(body, row + 1, "Alertes de gank", "Quand un ennemi menace ta position. ▶ fait entendre "
-                                                            "un exemple.")
-        for field, title, key in (("alert_jungler_approach", "Jungler ennemi qui approche", "jungler_approach"),
-                                  ("gank_pre_alert", "Alerte immédiate", None),
-                                  ("alert_roam", "Roam d'un autre ennemi", "roam_approach"),
-                                  ("alert_collapse", "Plusieurs ennemis convergent", "collapse"),
-                                  ("alert_jungler_spotted", "Jungler ennemi aperçu", "jungler_spotted"),
-                                  ("alert_laner_mia", "Adversaire de voie disparu", "laner_mia")):
-            desc = ex[key] if key else "« Lee Sin ! » dès que le jungler sort du brouillard près de toi."
-            self._switch_row(s, field, title, desc)
-            if key:
-                self._example_button(key)
-        self.radius_lbl: Any = None
-        self._slider_row(s, "sensitivity", "Sensibilité", self._radius_text(), 0.6, 1.6, 0.05,
-                         lambda v: f"× {fmt_decimal_fr(v, 2)}", float, on_change=lambda _v: self._refresh_radius_text())
-        self.radius_lbl = self._last_slot.desc_label
+        gank = self.page.section("Alertes de gank", "Quand un ennemi menace ta position. Le mode sûr les coupe "
+                                                    "toutes.")
+        app.switch_row(gank, "alert_jungler_approach", "Jungler ennemi qui approche", "L'alerte la plus utile.")
+        app.switch_row(gank, "gank_pre_alert", "Nom du jungler dès qu'il sort du brouillard",
+                       "« Lee Sin ! » quand il apparaît près de toi.")
+        app.switch_row(gank, "alert_jungler_spotted", "Jungler repéré", "Où il vient d'être vu.")
+        app.switch_row(gank, "alert_roam", "Ennemi en balade", "Un laner adverse quitte sa voie vers toi.")
+        app.switch_row(gank, "alert_collapse", "Plusieurs ennemis arrivent", "Deux ennemis ou plus convergent.")
+        app.switch_row(gank, "alert_laner_mia", "Adversaire de voie disparu", "« Manquant » quand ton adversaire "
+                       "n'est plus visible.")
+        app.slider_row(gank, "sensitivity", "Sensibilité", "Plus haut : alertes plus tôt, de plus loin.",
+                       0.6, 1.6, 0.05, lambda v: fmt_decimal_fr(v, 2), to_value=float)
 
-        yield                                   # one section per idle slot (prebuild)
-        s = self._section(body, row + 2, "Rappels", "Écrits dans le panneau ; lus à voix haute en quantité "
-                                                    "« Bavard » (l'objectif à 60 s est toujours lu).")
-        self._switch_row(s, "objective_timers", "Annonce des objectifs", ex["objective_soon"])
-        self._example_button("objective_soon")
-        self._switch_row(s, "recall_reminder", "Rappel pour dépenser ton or", ex["recall_gold"])
-        self._example_button("recall_gold")
-        self._slider_row(s, "recall_gold_threshold", "Seuil d'or du rappel", "Or à partir duquel le coach "
-                         "te conseille de rentrer.", 300, 5000, 50, lambda v: f"{fmt_int_fr(v)} PO", int)
-        self._switch_row(s, "control_ward_reminder", "Balise de contrôle", ex["control_ward"])
-        self._example_button("control_ward")
-        self._switch_row(s, "death_recap", "Récap de mort", ex["death_recap"])
-        self._example_button("death_recap")
-        self._switch_row(s, "item_advice_speak", "Lire les conseils d'achat",
-                         "Désactivé par défaut : le conseil reste écrit.")
+        rem = self.page.section("Rappels", "Écrits dans le panneau ; lus à voix haute selon la quantité choisie.")
+        app.switch_row(rem, "objective_timers", "Annonce des objectifs", "Dragon, Héraut, Baron avant leur apparition.")
+        app.switch_row(rem, "recall_reminder", "Rappel pour dépenser ton or", "Quand un retour à la base vaut le coup.")
+        app.slider_row(rem, "recall_gold_threshold", "Seuil d'or du rappel", "Or à partir duquel le coach propose "
+                       "un retour.", 500, 3000, 50, lambda v: f"{fmt_int_fr(v)} or", to_value=lambda v: int(v))
+        app.switch_row(rem, "control_ward_reminder", "Balise de contrôle", "Penser à en acheter une.")
+        app.switch_row(rem, "death_recap", "Récap de mort", "Une phrase sur la cause de ta mort.")
+        app.switch_row(rem, "break_reminder", "Conseil de pause", "Après plusieurs parties d'affilée.")
 
-        yield                                   # one section per idle slot (prebuild)
-        s = self._section(body, row + 3, "Voix", "La voix neurale (en ligne) est la plus naturelle ; les voix "
-                                                 "Windows servent de secours hors ligne.")
-        self._choice_row(s, "voice_engine", "Moteur de voix", "« Automatique » utilise la voix neurale si "
-                         "Internet répond, sinon une voix Windows.", self._engine_choices(), width=260,
-                         on_change=lambda _v: self._refresh_voice_rows())
-        self._choice_row(s, "neural_voice", "Voix neurale", "Voix Microsoft en ligne (française).",
-                         self._neural_choices(), width=260)
-        self._neural_row = self._last_row
-        if hasattr(self.cfg, "neural_rate"):
-            self._slider_row(s, "neural_rate", "Vitesse de la voix neurale", "Défaut : +15 %.", -50, 100, 5,
-                             lambda v: str(v).replace("%", " %") if isinstance(v, str) else f"{int(v):+d} %",
-                             lambda v: f"{int(round(v)):+d}%", to_float=_pct_value)
-            self._neural_rate_row = self._last_row
-        _row, slot = self._row(s, "Voix Windows", "« Automatique » choisit la meilleure voix française installée.")
-        self._windows_voice_row = _row
-        self.voice_menu = Dropdown(self, slot, [AUTO_VOICE], self.cb(self._on_voice_choice), width=320)
-        self.voice_menu.grid(row=0, column=0)
-        self._fill_voice_menu()
-        self._widgets_by_field["voice_name"] = lambda: self.voice_menu.set(self.cfg.voice_name or AUTO_VOICE)
-        self._slider_row(s, "voice_rate", "Vitesse de la voix Windows", "De -10 (lent) à 10 (rapide). Défaut : 2.",
-                         -10, 10, 1, lambda v: f"{int(v):+d}" if int(v) else "0", int)
-        self._slider_row(s, "voice_volume", "Volume", None, 0, 100, 1, lambda v: f"{int(v)} %", int)
-        self._refresh_voice_rows()
-        return row + 4
+        v = self.page.section("Voix", "La voix neurale (en ligne) est la plus naturelle ; les voix Windows marchent "
+                                      "sans Internet.")
+        app.choice_row(v, "voice_engine", "Moteur de voix", "« Automatique » utilise la voix neurale si "
+                       "Internet répond.", ENGINE_LABELS)
+        self.neural = app.choice_row(v, "neural_voice", "Voix neurale", "Voix Microsoft en ligne (française).",
+                                     neural_voices())
+        self.neural_rate = app.slider_row(v, "neural_rate", "Vitesse de la voix neurale", "Défaut : +15 %.",
+                                          -50, 100, 5, lambda x: f"{x:+.0f} %", to_value=lambda x: f"{int(x):+d}%",
+                                          from_value=_pct_value)
+        self.win_voice = app.choice_row(v, "voice_name", "Voix Windows", None, self._win_voices())
+        self.voice_rate = app.slider_row(v, "voice_rate", "Vitesse de la voix Windows", "De -10 (lent) à 10 "
+                                         "(rapide). Défaut : 2.", -10, 10, 1, lambda x: f"{x:+.0f}",
+                                         to_value=lambda x: int(x))
+        app.slider_row(v, "voice_volume", "Volume", None, 0, 100, 5, lambda x: f"{x:.0f} %",
+                       to_value=lambda x: int(x))
+        self._sync_engine_rows()
 
-    def _danger_row(self, body: Any) -> None:
-        """One choice for two settings: is a danger a beep, a beep and a sentence, or a sentence only."""
-        _row, slot = self._row(body, "Annonce d'un danger", "Bip + voix : le bip part tout de suite, la phrase "
-                               "suit si elle est prête. Bip seul : le plus rapide, rien à écouter.")
-        labels = [f"  {lbl}  " for _v, lbl in DANGER_MODES]
-        to_value = {f"  {lbl}  ": v for v, lbl in DANGER_MODES}
-        to_label = {v: f"  {lbl}  " for v, lbl in DANGER_MODES}
+    def _win_voices(self) -> list[tuple[str, str]]:
+        return [("", AUTO_VOICE)] + [(n, n) for n in self.app._voices]
 
-        def changed(label: str) -> None:
-            mode = to_value.get(label)
-            if mode is None:
-                return
-            upd = {k: v for k, v in danger_mode_fields(mode).items() if hasattr(self.cfg, k)}
-            new = dataclasses.replace(self.cfg, **upd).validated()
-            self._replace_config(new, changed=set(upd))
+    def on_voices(self) -> None:
+        self.win_voice.ctl.set_choices(self._win_voices(), self.app.cfg.voice_name)
 
-        seg = Segmented(self, slot, labels, self.cb(changed))
-        seg.grid(row=0, column=0)
-        self._danger_seg = seg
+    def _sync_engine_rows(self) -> None:
+        eng = str(self.app.cfg.voice_engine)
+        neural = eng in ("auto", "neural")
+        for row, vis in ((self.neural, neural), (self.neural_rate, neural), (self.win_voice, not neural or eng == "auto"),
+                         (self.voice_rate, eng != "neural")):
+            row.setVisible(vis)
+        self.neural.parentWidget().sync_separators()
 
-        def refresh() -> None:
-            seg.set(to_label.get(danger_mode(self.cfg), labels[0]))
-        refresh()
-        self._widgets_by_field["beep_on_danger"] = refresh
-        self._widgets_by_field["danger_voice"] = refresh
+    def on_config(self, diff: set[str]) -> None:
+        if "voice_engine" in diff:
+            self._sync_engine_rows()
 
-    def _example_button(self, key: str) -> None:
-        """A small "▶" button in the last row: speaks an example of this alert."""
-        slot = self._last_slot
-        b = self._light_icon_button(slot, "play", 13, GOLD, lambda: self.play_example(key), "Entendre un exemple")
-        for w in slot.grid_slaves(row=0):
-            w.grid_configure(column=int(w.grid_info().get("column", 0)) + 1)
-        b.grid(row=0, column=0, padx=(0, 14))
 
-    @_guarded
-    def play_example(self, key: str) -> None:
-        """Speak the example sentence of an alert type (always audible, even when muted by settings)."""
-        if self.voice is None:
-            self.show_error("La synthèse vocale n'est pas disponible.")
-            return
-        examples = getattr(self, "_examples", None) or _example_speech()   # the Voix tab may not exist yet
-        text, level = examples.get(key, ("Attention, Lee Sin approche !", 1))
-        self.voice.say(text, level)
-        if getattr(self.voice, "backend", "") == "print":
-            self.show_toast("Voix indisponible sur ce système : le message est écrit dans le journal.", "warning")
-
-    def _voice_api(self) -> Any:
-        """The voice object (or the VoiceEngine class before it exists) for the list_* selectors."""
-        if self.voice is not None:
-            return self.voice
-        try:
-            from treeaicoach.voice import VoiceEngine  # noqa: PLC0415
-
-            return VoiceEngine
-        except Exception:
-            return None
-
-    def _engine_choices(self) -> list[tuple[str, str]]:
-        labels = dict(ENGINE_LABELS)
-        values: list[str] = []
-        fn = getattr(self._voice_api(), "list_engines", None)
-        try:
-            got = fn() if callable(fn) else None
-            for item in got or []:
-                v = item[0] if isinstance(item, (tuple, list)) else item
-                if isinstance(item, (tuple, list)) and len(item) > 1 and isinstance(item[1], str):
-                    labels.setdefault(str(v), item[1])
-                values.append(str(v))
-        except Exception:
-            log.debug("list_engines failed", exc_info=True)
-        if not values:
-            values = [v for v, _l in ENGINE_LABELS]
-        cur = getattr(self.cfg, "voice_engine", "auto")
-        if cur not in values:
-            values.append(cur)
-        return [(v, labels.get(v, v)) for v in values]
-
-    def _neural_choices(self) -> list[tuple[str, str]]:
-        out: list[tuple[str, str]] = []
-        fn = getattr(self._voice_api(), "list_neural_voices", None)
-        try:
-            got = fn() if callable(fn) else None
-            for item in got or []:
-                if isinstance(item, (tuple, list)) and item:
-                    out.append((str(item[0]), str(item[1]) if len(item) > 1 else str(item[0])))
-                elif isinstance(item, str):
-                    out.append((item, item))
-        except Exception:
-            log.debug("list_neural_voices failed", exc_info=True)
-        if not out:
-            try:
-                from treeaicoach.tts_neural import NEURAL_VOICES  # noqa: PLC0415
-
-                out = [(v, lbl) for v, lbl in NEURAL_VOICES]
-            except Exception:
-                out = [("fr-FR-DeniseNeural", "Denise (femme, France)")]
-        cur = getattr(self.cfg, "neural_voice", "")
-        if cur and cur not in dict(out):
-            out.append((cur, cur))
-        return out
-
-    def _refresh_voice_rows(self) -> None:
-        """Neural voice rows only for auto / neural; Windows voice row only for auto / onecore / sapi."""
-        eng = getattr(self.cfg, "voice_engine", "auto")
-        for row, show in ((getattr(self, "_neural_row", None), eng in ("auto", "neural")),
-                          (getattr(self, "_neural_rate_row", None), eng in ("auto", "neural")),
-                          (getattr(self, "_windows_voice_row", None), eng != "neural")):
-            if row is None:
-                continue
-            try:
-                row.title_label.configure(text_color=TEXT if show else DIM)      # see ``_row``
-                for w in row.slot.winfo_children():
-                    w = getattr(w, "_dropdown", None) or getattr(w, "_toggle", None) or w
-                    try:
-                        w.configure(state="normal" if show else "disabled")
-                    except Exception:
-                        pass
-            except Exception:
-                log.debug("voice rows refresh failed", exc_info=True)
-
-    def _radius_text(self) -> str:
-        try:
-            from treeaicoach.geometry import to_game_units  # noqa: PLC0415
-
-            warn = to_game_units(self.cfg.effective_warn_radius())
-            danger = to_game_units(self.cfg.effective_danger_radius())
-        except Exception:
-            warn = self.cfg.effective_warn_radius() * 14870.0
-            danger = self.cfg.effective_danger_radius() * 14870.0
-        return (f"Plus haut : alertes plus tôt (et plus souvent). Rayon ≈ {fmt_int_fr(round(warn, -2))} unités, "
-                f"danger ≈ {fmt_int_fr(round(danger, -2))}.")
-
-    def _refresh_radius_text(self) -> None:
-        if getattr(self, "radius_lbl", None) is not None:
-            try:
-                self.radius_lbl.configure(text=self._radius_text())
-            except Exception:
-                pass
-
-    def _on_voice_choice(self, label: str) -> None:
-        self.set_option("voice_name", "" if label == AUTO_VOICE else label)
-
-    def _fill_voice_menu(self) -> None:
-        menu = getattr(self, "voice_menu", None)
-        if menu is None:
-            return
-        values = [AUTO_VOICE] + list(self._voices)
-        if self.cfg.voice_name and self.cfg.voice_name not in values:
-            values.append(self.cfg.voice_name)
-        menu.configure(values=values)
-        menu.set(self.cfg.voice_name or AUTO_VOICE)
-
-    def _load_voices(self) -> None:
-        voice = self.voice
-        if voice is None:
-            return
-
-        def job() -> list[str]:
-            return list(voice.list_voices() or [])
-
-        def done(voices: list[str]) -> None:
-            self._voices = [v for v in voices if isinstance(v, str) and v][:60]
-            self._fill_voice_menu()
-
-        self._dispatcher.run(job, done, name="TreeAI-ui-voices")
-
+def build(app: Any) -> AlertsPage:
+    return AlertsPage(app)
