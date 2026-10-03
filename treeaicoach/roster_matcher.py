@@ -209,6 +209,14 @@ RECALL_STILL_SPEED = 0.006          # (ally / me) last known speed below this: m
 RECALL_STILL_S = 6.0
 RECALL_STILL_DIST = 0.015
 JUMP_CONFIRM_N = 4
+#: A champion whose last matched spot is covered by an icon accepted in this frame is under
+#: that icon, not gone: a far candidate of his (recall / teleport exemptions included) is
+#: refused unless it beats the threshold by this much (det_gym bl_swain_lane: an ally
+#: jungler stacked under an enemy, his portrait matching a base glyph at the threshold, was
+#: drawn in the enemy base for 8 s). < 0 disables.
+JUMP_COVERED_MARGIN = 0.15
+JUMP_COVERED_S = 4.0                # ... for this long after his last match
+JUMP_COVERED_RING = 0.8             # ... and unless its ring is clean (own colour >= this)
 #: Smoothing of the reported confidence (weight of the new frame).
 CONF_SMOOTH = 0.5
 #: The local player: kept at its predicted position for up to SELF_COAST_S when its icon is
@@ -344,6 +352,13 @@ CAMLOCK_SCORE = 0.5
 CAMLOCK_CAM_SPEED = 0.06
 CAMLOCK_CAM_SLACK = 0.008
 CAMLOCK_STEP_SLACK = 0.005          # ... per camera step (frame to frame)
+#: Unconfirmed for longer than this (s), the camera-lock position must be covered by an
+#: accepted icon (my icon hidden under my ADC...): a locked camera that the player released
+#: ("free" camera, it stays still) while I walk on would otherwise pin me to the old camera
+#: spot for CAMLOCK_HOLD_S (det_gym bl_swain_lane: me frozen 6 s, 0.19 off). Nothing drawn
+#: over that spot, no match of mine there and no unexplained ally-side icon there (patch
+#: verifier: my custom skin not learned yet) = my icon is not there. < 0 disables.
+CAMLOCK_COVER_S = 0.6
 
 #: Greyscale minimap (death filter on some clients, desaturated capture): the ring colour
 #: cannot vote, the chroma half of the NCC is meaningless. Detected when the 95th
@@ -1907,6 +1922,34 @@ class RosterMatcher:
             return 0.0             # confirmed: seen there over JUMP_CONFIRM_S (teleport)
         return JUMP_PENALTY
 
+    def _camlock_uncovered(self, lp: tuple[float, float], accepted: list, now: float, kx: float,
+                           ky: float, r_norm: float, bgr: np.ndarray | None) -> bool:
+        """The camera-lock position ``lp`` is unconfirmed for > CAMLOCK_COVER_S and nothing
+        there can be my icon: no accepted icon drawn over it, no unexplained ally-side icon."""
+        anc = self.camlock.anchor
+        if CAMLOCK_COVER_S < 0 or anc is None or now - anc[2] <= CAMLOCK_COVER_S:
+            return False
+        cover = STACK_NEAR * 2.0 * r_norm
+        if any(math.hypot(a.x / kx - lp[0], a.y / ky - lp[1]) < cover for a in accepted):
+            return False
+        return self._verified_ally_at(bgr, lp, r_norm, accepted, kx, ky) is None
+
+    def _covered_jump(self, c: _Cand, accepted: list, now: float, kx: float, ky: float,
+                      r_norm: float) -> bool:
+        """``c`` is beyond walking reach of its champion's last match, and that spot is
+        covered by an icon accepted in this frame (he is under it: JUMP_COVERED_*)."""
+        tr = self._tracks.get(c.i)
+        if tr is None or not 0.0 <= now - tr.t <= JUMP_COVERED_S:
+            return False
+        own, opp = (c.f_en, c.f_al) if self._entries[c.i].relation == "enemy" else (c.f_al, c.f_en)
+        if own >= JUMP_COVERED_RING and opp <= STACK_RING_OPP:
+            return False      # a clean ring of his team (a real recall out of a stack: det_gym h_slow3)
+        u, v = c.x / kx, c.y / ky
+        if math.hypot(u - tr.u, v - tr.v) <= JUMP_SLACK + MAX_SPEED * (now - tr.t):
+            return False
+        cover = STACK_NEAR * 2.0 * r_norm
+        return any(math.hypot(a.x / kx - tr.u, a.y / ky - tr.v) < cover for a in accepted)
+
     def _camera_centre(self, bgr: np.ndarray) -> tuple[float, float] | None:
         """Camera rectangle centre: this frame's rectangle, else the older finder (cached a
         few frames)."""
@@ -2732,6 +2775,12 @@ class RosterMatcher:
                 rejected.setdefault(c.i, c)
                 info(c, False, "conflict")
                 continue
+            if JUMP_COVERED_MARGIN >= 0 and not c.local and not self.grey and \
+                    c.tot < thr + JUMP_COVERED_MARGIN \
+                    and self._covered_jump(c, accepted, now, kx, ky, r_norm):
+                rejected.setdefault(c.i, c)
+                info(c, False, "covered")
+                continue
             if ver is not None and c.tot < thr + VETO_MARGIN and not self.grey:
                 tr_c = self._tracks.get(c.i)
                 if tr_c is None or now - tr_c.t > VETO_FRESH_S or c.note == "jump":
@@ -2861,6 +2910,10 @@ class RosterMatcher:
             if e.relation != "self" or i in used or i in dead:
                 continue
             lp = self.camlock.position(cam_pt, now)
+            if lp is not None and self._camlock_uncovered(lp, accepted, now, kx, ky, r_norm,
+                                                          raw_bgr):
+                self.camlock.reset()       # (keeps no stale offset either)
+                lp = None
             if lp is not None:
                 # camera locked on me: my icon is where the camera says, even hidden
                 dets_extra.append(Detection(u=lp[0], v=lp[1], r=r_norm, score=CAMLOCK_SCORE,

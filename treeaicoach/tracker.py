@@ -137,6 +137,13 @@ ELIM_ALLY_REACH = 0.12      # an ally is identified by elimination this close to
 #: ally drawn on a glyph across the map for minutes)
 ELIM_ALLY_MEMORY_S = 20.0
 
+#: Anonymous tracks are checked against the Live Client roster: when every alive champion of
+#: their side is accounted for (identified and visible / stacked right now) or cannot have
+#: walked to the anonymous icon since he was last seen (MAX_WALK_SPEED, fountain = respawn /
+#: recall), the anonymous track is a phantom and is not reported (real records 2.1-2.4:
+#: 49 anonymous phantom samples, the 2nd failure mode). False disables.
+ANON_SURPLUS = True
+
 RELATIONS = ("self", "ally", "enemy")
 _CLASSES = ("enemy", "ally", "self")   # detector class order (ARCHITECTURE.md §3)
 
@@ -280,6 +287,10 @@ class Track:
     #: time of the last observation that carried the identity (an identified icon): an
     #: identity track continued by unidentified icons coasts IDENTITY_COAST_S from it
     last_id_t: float | None = None
+    #: anonymous track that no alive champion of its side can be (all of them accounted for
+    #: elsewhere, or too far to have walked there): a phantom (glyph, ping, a second detection
+    #: of one icon), not listed by Tracker.enemies() / allies() (see ANON_SURPLUS)
+    surplus: bool = False
 
     # -- derived quantities -----------------------------------------------------------
 
@@ -751,13 +762,15 @@ class Tracker:
         """Snapshots of the enemy tracks (only the visible ones by default)."""
         with self._lock:
             return [tr.copy() for tr in sorted(self._tracks.values(), key=lambda x: x.key)
-                    if tr.relation == "enemy" and tr.confirmed and (tr.visible or not visible_only)]
+                    if tr.relation == "enemy" and tr.confirmed and not tr.surplus
+                    and (tr.visible or not visible_only)]
 
     def allies(self, visible_only: bool = True) -> list[Track]:
         """Snapshots of the allied tracks (without me)."""
         with self._lock:
             return [tr.copy() for tr in sorted(self._tracks.values(), key=lambda x: x.key)
-                    if tr.relation == "ally" and tr.confirmed and (tr.visible or not visible_only)]
+                    if tr.relation == "ally" and tr.confirmed and not tr.surplus
+                    and (tr.visible or not visible_only)]
 
     def get(self, key: str) -> Track | None:
         """Snapshot of the track ``key`` (alias or anonymous key, tentative ones included), or None."""
@@ -931,6 +944,8 @@ class Tracker:
                 tr.visible = False
                 tr.hidden_since = tr.last_seen
 
+        if self._roster and ANON_SURPLUS:
+            self._mark_surplus(now)
         self._forget(now)
         self._last_t = now
 
@@ -1142,6 +1157,42 @@ class Tracker:
             updated.discard(a.key)
             updated.add(alias)
             log.debug("Tracker: %s identified as %s by elimination", a.key, alias)
+
+    def _mark_surplus(self, now: float) -> None:
+        """Flag the anonymous tracks no alive champion of their side can be (ANON_SURPLUS)."""
+        for side in ("enemy", "ally"):
+            anon = [tr for k, tr in self._tracks.items() if tr.alias is None
+                    and k != self._self_key and side_of_relation(tr.relation) == side]
+            if not anon:
+                continue
+            free = []                    # alive champions of the side not accounted for
+            for alias, rel in self._roster.items():
+                if side_of_relation(rel) != side or alias in self._dead:
+                    continue
+                tr = self._tracks.get(alias)
+                if rel == "self" and tr is None and self._self_key is not None:
+                    continue                     # (my track under an anonymous key)
+                if tr is not None and (tr.stacked_with is not None or (
+                        tr.visible and now - tr.last_seen < self.hide_after)):
+                    continue
+                free.append(tr)
+            for a in anon:
+                pos = a.raw_position()
+                if pos is None:
+                    a.surplus = False
+                    continue
+                ok = False
+                for tr in free:
+                    last = tr.raw_position() if tr is not None else None
+                    if last is None or in_fountain(pos[0], pos[1], tr.team):
+                        ok = True
+                        break
+                    since = max(0.0, now - tr.last_seen)
+                    if math.hypot(pos[0] - last[0], pos[1] - last[1]) <= \
+                            MAX_WALK_SPEED * since + JUMP_SLACK + ASSOC_DIST:
+                        ok = True
+                        break
+                a.surplus = not ok
 
     def _merge_candidate(self, e: _Entry, tr: Track | None, updated: set[str]) -> Track | None:
         """Nearest anonymous track (same side, not updated this frame) that was this champion."""
