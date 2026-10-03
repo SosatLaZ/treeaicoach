@@ -563,6 +563,33 @@ def test_locate_verify_and_relocate():
     assert eng.tracker.me() is not None       # the pipeline ran on the grabbed crops
 
 
+def test_covered_minimap_found_at_same_place_backs_off_relocations():
+    """Real 2.5.0 game: 103 relocations in 32 min. A low score whose relocation finds the same
+    rectangle is a covered minimap: the next relocations wait 6, 12, 24, 48 s (no detection on
+    the covered crops meanwhile) instead of a full search every ~4 s."""
+    cap = FakeCapture()
+    loc = FakeLocator(cap)
+    eng, clock, _client = live_engine(cap, loc)
+    while clock.t < 2.0:
+        clock.t += 0.125
+        eng.step(clock.t)
+    assert loc.locates == 1
+    loc.score = 0.1                           # covered for 90 s
+    t_bad = clock.t
+    while clock.t < t_bad + 90.0:
+        clock.t += 0.25
+        eng.step(clock.t)
+    assert 2 <= loc.locates - 1 <= 6, loc.locates          # was ~22 (one every ~4 s)
+    assert eng.get_status().state == EngineState.RUNNING
+    loc.score = 0.9                           # uncovered: detection resumes at once
+    n = loc.locates
+    t_ok = clock.t
+    while clock.t < t_ok + 70.0:
+        clock.t += 0.25
+        eng.step(clock.t)
+    assert loc.locates == n and eng._occl_n == 0             # backoff forgotten after good scores
+
+
 def test_locate_fallback_and_retry():
     cap = FakeCapture()
     loc = FakeLocator(cap, found=False)

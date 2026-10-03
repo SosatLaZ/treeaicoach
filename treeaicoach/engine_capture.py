@@ -47,6 +47,13 @@ log = logging.getLogger("treeaicoach.engine")   # same logger as before the spli
 #: Real reports: "Minimap introuvable" at 0:00 for 57 s (6 relocations, one every 10 s).
 START_GRACE_GT_S = 90.0
 LOCATE_RETRY_START_S = 2.0
+#: A relocation asked by a low verify score that finds the SAME rectangle (within this fraction
+#: of its size) proves the minimap did not move: it was covered (death recap, victory screen,
+#: something drawn over it). The next low-score relocation then waits twice as long (3, 6, 12,
+#: 24, 48 s) - the frames are still skipped while the score is low - and the backoff is
+#: forgotten after OCCLUSION_FORGET_S of good scores. Real 2.5.0 game: 103 relocations in 32 min.
+SAME_RECT_TOL = 0.03
+OCCLUSION_FORGET_S = 60.0
 
 
 class CaptureMixin:
@@ -127,6 +134,8 @@ class CaptureMixin:
     def _locate(self, t: float, win: Rect) -> None:
         """(Re)compute the minimap rectangle for window ``win``."""
         self._relocate = False
+        reason, self._reloc_reason = getattr(self, "_reloc_reason", None), None
+        prev_rect = self._minimap_rect if self._rect_window == win else None
         self._bad_since = None
         self._next_verify = t + VERIFY_PERIOD_S
         manual = self._manual_rect(win)
@@ -153,6 +162,8 @@ class CaptureMixin:
         if hint is None and good is not None:
             r = good[0]
             hint = (r.x - win.x, r.y - win.y, r.w, r.h, good[2])
+        if not getattr(self, "_loc_attempts", 0):
+            self._occl_n = 0                      # new game: no occlusion backoff yet
         self._loc_attempts = getattr(self, "_loc_attempts", 0) + 1
         self._set_state(EngineState.LOCATING, MSG_LOCATING)
         loc = None
@@ -170,6 +181,13 @@ class CaptureMixin:
             self._err.exception("Minimap location failed")
         self._rect_window = win
         if loc is not None:
+            if reason == "verify" and prev_rect is not None and _same_rect(prev_rect, loc.rect):
+                self._occl_n = getattr(self, "_occl_n", 0) + 1
+                self._occl_t = t
+                log.info("Minimap found at the same place (%d in a row): it was covered, not moved",
+                         self._occl_n)
+            elif reason == "verify":
+                self._occl_n = 0
             self._minimap_rect, self._locate_method = loc.rect, "auto"
             self._locate_score = float(loc.score)
             self._last_good = (loc.rect, win, float(loc.score))
@@ -268,15 +286,19 @@ class CaptureMixin:
             self._minimap_score = score
             if score < VERIFY_MIN_SCORE:
                 # relocation after VERIFY_BAD_S, then backoff while the locations fail (3, 6, 12... s)
-                bad_s = VERIFY_BAD_S * min(16, 2 ** int(getattr(self, "_loc_fails", 0) or 0))
+                steps = max(int(getattr(self, "_loc_fails", 0) or 0), int(getattr(self, "_occl_n", 0) or 0))
+                bad_s = VERIFY_BAD_S * min(16, 2 ** steps)
                 if self._bad_since is None:
                     self._bad_since = t
                 elif t - self._bad_since >= bad_s:
                     log.info("Minimap verification low (%.2f) for %.0f s: relocating", score, bad_s)
                     self._relocate = True
+                    self._reloc_reason = "verify"
             else:
                 self._bad_since = None
                 self._loc_fails = 0                 # the rectangle verifies again (self-check rule 2)
+                if getattr(self, "_occl_n", 0) and t - getattr(self, "_occl_t", t) >= OCCLUSION_FORGET_S:
+                    self._occl_n = 0
             if self._bad_since is not None:
                 # the crop does not look like the minimap (shop / scoreboard over it, scale
                 # being changed...): no detection on it (phantoms), checked again next tick
@@ -347,3 +369,13 @@ class CaptureMixin:
             return since is not None and now - since >= UNFOCUSED_HIDE_S
         except Exception:
             return False
+
+
+def _same_rect(a: Rect, b: Rect, tol: float = SAME_RECT_TOL) -> bool:
+    """Two minimap rectangles at the same place and size (within ``tol`` x their size)."""
+    try:
+        lim = max(2.0, tol * max(a.w, a.h, b.w, b.h))
+        return abs(a.x - b.x) <= lim and abs(a.y - b.y) <= lim and abs(a.w - b.w) <= lim \
+            and abs(a.h - b.h) <= lim
+    except Exception:
+        return False

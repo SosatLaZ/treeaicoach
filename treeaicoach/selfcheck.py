@@ -608,6 +608,10 @@ class SelfCheck:
         elif "minimap" in self._problems and bad is False:
             self._resolve(t, "minimap", "minimap retrouvée")
             st.attempts0 = int(s.loc_attempts)
+        elif "minimap" not in self._problems and bad is not True:
+            # the count shown is the relocations of THIS episode (real 2.5.0 report: the game's
+            # 103 locations - game start, covered minimap - were shown at the victory screen)
+            st.attempts0 = int(s.loc_attempts)
         # slowly drifting score (the minimap moved a little / changed size): cheap relocation
         drift = None
         if measurable and s.locate_method == "auto" and s.bad_s is None and s.minimap_score is not None \
