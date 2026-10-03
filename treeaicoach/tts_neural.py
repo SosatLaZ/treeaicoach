@@ -33,6 +33,8 @@ from concurrent.futures import TimeoutError as _FutureTimeout
 from pathlib import Path
 from typing import Any
 
+from treeaicoach.tts_lexicon import speakable
+
 log = logging.getLogger(__name__)
 
 DEFAULT_NEURAL_VOICE = "fr-FR-DeniseNeural"
@@ -50,9 +52,11 @@ NEURAL_VOICES: tuple[tuple[str, str], ...] = (
 )
 DEFAULT_NEURAL_RATE = "+15%"
 LIVE_TIMEOUT_S = 1.5          # a non-cached sentence waits at most this long for the service
+PATIENT_TIMEOUT_S = 4.0       # an information line (AI, reminder) / the voice test: not urgent, wait longer
+CACHE_MAX_MB = 250            # the WAV cache is pruned (oldest first) above this size
 BACKGROUND_TIMEOUT_S = 12.0   # a synthesis left running in the background (it fills the cache)
 OFFLINE_RETRY_S = 45.0        # after a failure, live synthesis is skipped for this long
-PREFETCH_CONCURRENCY = 3
+PREFETCH_CONCURRENCY = 4
 SAMPLE_RATE = 24000
 MAX_PREFETCH = 600
 CACHE_VERSION = "1"
@@ -216,6 +220,46 @@ def tts_cache_root() -> Path:
         return Path(tempfile.gettempdir()) / "TreeAICoach" / "tts"
 
 
+_PRUNED: set[str] = set()
+
+
+def prune_cache(root: Path, max_mb: float = CACHE_MAX_MB) -> int:
+    """Delete the least recently written WAVs above ``max_mb`` (once per root and process; a
+    game pre-generates ~30 MB). Returns the number of files removed. Never raises."""
+    key = str(root)
+    if key in _PRUNED:
+        return 0
+    _PRUNED.add(key)
+    try:
+        files = []
+        total = 0
+        for p in Path(root).rglob("*.wav"):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            files.append((st.st_mtime, st.st_size, p))
+            total += st.st_size
+        limit = int(max_mb * 1024 * 1024)
+        if total <= limit:
+            return 0
+        removed = 0
+        for _m, size, p in sorted(files):
+            if total <= limit * 0.8:
+                break
+            try:
+                p.unlink()
+                total -= size
+                removed += 1
+            except OSError:
+                pass
+        log.info("Cache de la voix : %d fichiers anciens supprimés.", removed)
+        return removed
+    except Exception as exc:
+        log.debug("prune_cache failed: %s", exc)
+        return 0
+
+
 # --------------------------------------------------------------------------------------
 # Playback (winsound, Windows only; tests inject a fake play function)
 # --------------------------------------------------------------------------------------
@@ -353,6 +397,7 @@ class NeuralTTS:
         self._offline_until = 0.0
         self._prefetch_gen = 0
         self.failures = 0
+        self.prefetch_stats: dict[str, Any] = {}
         _patch_ssl()
 
     # -- cache ------------------------------------------------------------------------
@@ -361,8 +406,13 @@ class NeuralTTS:
             self.voice = clean_voice_id(voice)
             self.rate_pct = rate_percent(rate)
 
+    @staticmethod
+    def norm(text: str) -> str:
+        """The text actually synthesised (French pronunciation, :func:`tts_lexicon.speakable`)."""
+        return speakable(text)
+
     def key(self, text: str) -> str:
-        raw = f"{CACHE_VERSION}|{self.voice}|{self.rate_pct}|{text}".encode()
+        raw = f"{CACHE_VERSION}|{self.voice}|{self.rate_pct}|{self.norm(text)}".encode()
         return hashlib.sha1(raw).hexdigest()
 
     def path_for(self, text: str) -> Path:
@@ -405,6 +455,7 @@ class NeuralTTS:
             return None
 
     def _start(self, text: str) -> Future[Path | None]:
+        text = self.norm(text)
         with self._lock:
             voice, rate = self.voice, self.rate_pct
             dest = self._root / voice / f"{self.key(text)}.wav"
@@ -460,6 +511,7 @@ class NeuralTTS:
         items: list[str] = []
         seen: set[str] = set()
         for t in texts:
+            t = self.norm(t) if isinstance(t, str) else t
             if isinstance(t, str) and t and t not in seen:
                 seen.add(t)
                 items.append(t)
@@ -470,6 +522,7 @@ class NeuralTTS:
             gen = self._prefetch_gen
 
         def run() -> None:
+            prune_cache(self._root)
             t0, done, made = time.monotonic(), 0, 0
             pending: list[Future[Path | None]] = []
             for text in items:
@@ -494,6 +547,8 @@ class NeuralTTS:
                 if f.result() is not None:
                     made += 1
                 done += 1
+            self.prefetch_stats = {"total": len(items), "ready": done, "made": made,
+                                   "seconds": round(time.monotonic() - t0, 1)}
             log.info("Voix naturelle : %d phrases prêtes (%d générées en %.1f s).",
                      done, made, time.monotonic() - t0)
 
@@ -504,6 +559,23 @@ class NeuralTTS:
 # --------------------------------------------------------------------------------------
 # Windows OneCore voices (WinRT)
 # --------------------------------------------------------------------------------------
+
+def onecore_quality(name: str) -> int:
+    """Bonus of a Windows voice by naturalness: "Natural" / "Online" voices (Windows 11 natural
+    voices registered for the apps) first, then Julie (the most natural OneCore French voice),
+    Hortense, Paul; the old "Desktop" (SAPI 5) voices last."""
+    n = (name or "").casefold()
+    score = 0
+    if "natural" in n or "online" in n or "neural" in n:
+        score += 40
+    for i, who in enumerate(("denise", "vivienne", "henri", "eloise", "julie", "hortense", "paul")):
+        if who in n:
+            score += 14 - 2 * i
+            break
+    if "desktop" in n:
+        score -= 10
+    return score
+
 
 class OneCoreSynth:
     """WinRT ``SpeechSynthesizer`` -> WAV bytes. Create and use in one thread."""
@@ -540,8 +612,7 @@ class OneCoreSynth:
                 score += 100
             elif lang.casefold().startswith("fr"):
                 score += 80
-            if "denise" in name.casefold() or "julie" in name.casefold():
-                score += 5
+            score += onecore_quality(name)
             if score > best_score:
                 best, best_score = v, score
         if best is not None and best_score >= 80:
@@ -584,6 +655,9 @@ class OneCoreSynth:
 # Phrases to pre-generate
 # --------------------------------------------------------------------------------------
 
+#: objective announcements said late (real remaining time), pre-generated after everything else
+EXTRA_OBJECTIVE_LEADS = (30, 25, 15, 10, 19, 18, 17, 16, 14, 13, 12, 11)
+
 DIRECTIONS = ("par la rivière", "par ta jungle", "par la jungle ennemie", "par la jungle",
               "par le haut", "par le milieu", "par le bas")
 
@@ -619,6 +693,15 @@ def static_phrases(leads: Sequence[int] = (60, 20)) -> list[str]:
                 out.append(announcement_text(kind, int(lead)))
     except Exception as exc:
         log.debug("static_phrases (objectives) failed: %s", exc)
+    out.append("Ta base est attaquée, défends !")         # engine_coaching: siege of my base (DANGER)
+    try:      # late announcements say the real remaining time (objectives._spoken_seconds): last
+        from treeaicoach.objectives import NAMES_FR, announcement_text  # noqa: PLC0415
+
+        for lead in EXTRA_OBJECTIVE_LEADS:
+            for kind in NAMES_FR:
+                out.append(announcement_text(kind, int(lead)))
+    except Exception as exc:
+        log.debug("static_phrases (objective leads) failed: %s", exc)
     return out
 
 

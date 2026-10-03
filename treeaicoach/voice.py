@@ -164,6 +164,25 @@ def _coerce_neural_rate(value: Any, default: str = "+15%") -> str:
     return f"{max(-50, min(100, n)):+d}%"
 
 
+def _speakable(text: str) -> str:
+    """French pronunciation of League words / champion names (:mod:`treeaicoach.tts_lexicon`)."""
+    try:
+        from treeaicoach.tts_lexicon import speakable  # noqa: PLC0415
+
+        return speakable(text)
+    except Exception:
+        return text
+
+
+def _patient_timeout() -> float:
+    try:
+        from treeaicoach.tts_neural import PATIENT_TIMEOUT_S  # noqa: PLC0415
+
+        return float(PATIENT_TIMEOUT_S)
+    except Exception:
+        return 4.0
+
+
 def _coerce_level(value: Any) -> int:
     return _clamp_int(value, LEVEL_INFO, LEVEL_DANGER, LEVEL_WARNING)
 
@@ -211,8 +230,14 @@ def french_score(info: VoiceInfo) -> int:
             score = 60
     if score == 0:
         return 0
-    if info.source == "sapi5":
-        score += 5                 # classic SAPI voices are the most reliable through SAPI
+    if info.source == "onecore":
+        score += 5                 # Windows 10/11 voices (Julie, Hortense, Paul): clearer than the "Desktop" ones
+    try:
+        from treeaicoach.tts_neural import onecore_quality  # noqa: PLC0415
+
+        score += onecore_quality(info.description)          # "Natural" voices, Julie > Hortense > Paul
+    except Exception:
+        pass
     if info.is_default:
         score += 3                 # the user's own choice in Windows settings
     return score
@@ -305,6 +330,8 @@ TONES: dict[str, tuple[int, int, int, int]] = {
     "siege": (660, 160, 80, 2),                                        # my base attacked: 2 long, low
 }
 DANGER_VOICE_CHOICES: tuple[str, ...] = ("bip_voix", "bip")
+PREVIEW_TEXT = "Test de la voix. Attention, Lee Sin arrive par la rivière !"
+PREVIEW_TIMEOUT_S = 6.0
 #: after the beep, the sentence is said only if the situation is this fresh (s since the alert)
 DANGER_SPEAK_MAX_AGE_S = 1.2
 BEEP_RECENT_S = 0.6            # a DANGER sentence queued this soon after alert_beep(): no 2nd beep
@@ -352,7 +379,42 @@ def tone_wav_bytes(tone: str = "gank", volume: int = DEFAULT_VOLUME) -> bytes:
         return b""
 
 
+#: soft chimes played before a non-danger spoken line (voice after the chime, never over it)
+CHIME_TONES: tuple[str, ...] = ("warning", "info", "objective")
+ALL_TONES: tuple[str, ...] = tuple(TONES) + CHIME_TONES
+_OBJECTIVE_RE = re.compile(r"(?i)\b(baron|nashor|dragon|drake|ancestral|h[ée]raut|larves|objectif)\b")
+
+
+def chime_bytes(tone: str, volume: int = DEFAULT_VOLUME) -> bytes:
+    """WAV bytes of a tone: the soft chime of :mod:`treeaicoach.chimes` (bundled
+    ``assets/sounds/<tone>.wav``), else the legacy synthetic tone. Never raises."""
+    try:
+        from treeaicoach import chimes  # noqa: PLC0415
+
+        data = chimes.wav_bytes(tone, volume)
+        if data:
+            return data
+    except Exception as exc:
+        log.debug("chime %s unavailable: %s", tone, exc)
+    return tone_wav_bytes(tone if tone in TONES else "gank", volume)
+
+
+def chime_for(text: str, level: int) -> str:
+    """The chime announcing a spoken non-danger line: objective / warning / info."""
+    if _OBJECTIVE_RE.search(text or ""):
+        return "objective"
+    return "warning" if level >= LEVEL_WARNING else "info"
+
+
 def tone_duration_s(tone: str = "gank") -> float:
+    try:
+        from treeaicoach import chimes  # noqa: PLC0415
+
+        d = chimes.duration_s(tone)
+        if d > 0:
+            return d
+    except Exception:
+        pass
     freq, tone_ms, gap_ms, count = TONES.get(tone, TONES["gank"])
     return (2 * BEEP_EDGE_MS + count * tone_ms + (count - 1) * gap_ms) / 1000.0
 
@@ -390,9 +452,9 @@ class BeepPlayer:
 
     def preload(self, volume: int = DEFAULT_VOLUME) -> None:
         bucket = int(round(_clamp_int(volume, *VOLUME_RANGE, DEFAULT_VOLUME) / 10.0)) * 10
-        for tone in TONES:
+        for tone in ALL_TONES:
             if (tone, bucket) not in self._cache:
-                self._cache[(tone, bucket)] = tone_wav_bytes(tone, bucket)
+                self._cache[(tone, bucket)] = chime_bytes(tone, bucket)
 
     def play(self, tone: str = "gank", volume: int = DEFAULT_VOLUME) -> bool:
         """Start ``tone`` now (non-blocking). False when unavailable / silent."""
@@ -402,10 +464,10 @@ class BeepPlayer:
             bucket = int(round(_clamp_int(volume, *VOLUME_RANGE, DEFAULT_VOLUME) / 10.0)) * 10
             if bucket <= 0:
                 return False
-            tone = tone if tone in TONES else "gank"
+            tone = tone if tone in ALL_TONES else "gank"
             data = self._cache.get((tone, bucket))
             if data is None:
-                data = self._cache[(tone, bucket)] = tone_wav_bytes(tone, bucket)
+                data = self._cache[(tone, bucket)] = chime_bytes(tone, bucket)
             with self._lock:
                 self._pending, self._tone_pending = data, tone
                 self.played.append((tone, time.perf_counter()))
@@ -467,12 +529,22 @@ def danger_beep_path(volume: int = DEFAULT_VOLUME) -> Path | None:
     bundled = _bundled_beep()
     if bundled is not None:
         return bundled
-    path = _sounds_dir() / f"danger_beep_v{bucket}.wav"
+    path = _sounds_dir() / f"danger_chime_v{bucket}.wav"
     try:
         if path.is_file() and path.stat().st_size > 44:
             return path
     except OSError:
         pass
+    data = chime_bytes("gank", bucket)
+    if data:
+        tmp = Path(f"{path}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+            return path
+        except OSError as exc:
+            log.debug("Cannot write %s: %s", path, exc)
     return path if make_beep_wav(path, bucket) else None
 
 
@@ -652,6 +724,7 @@ class SapiBackend(SpeechBackend):
     # -- speech --------------------------------------------------------------------------
 
     def speak(self, text: str, purge: bool) -> None:
+        text = _speakable(text)
         flags = SVSF_ASYNC | SVSF_IS_NOT_XML | (SVSF_PURGE_BEFORE_SPEAK if purge else 0)
         try:
             self._sp.Speak(text, flags)
@@ -694,7 +767,7 @@ class SapiBackend(SpeechBackend):
             try:
                 winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC
                                    | winsound.SND_NODEFAULT)
-                return BEEP_DURATION_S + 0.02
+                return tone_duration_s("gank") + 0.02
             except Exception as exc:
                 log.debug("PlaySound failed (%s), using Beep()", exc)
         try:
@@ -751,7 +824,7 @@ class _WavBackend(SpeechBackend):
             return 0.0
         try:
             if self._player.play(path, 100):     # the beep WAV is already scaled
-                return BEEP_DURATION_S + 0.02
+                return tone_duration_s("gank") + 0.02
         except Exception as exc:
             log.debug("Beep playback failed: %s", exc)
         return 0.0
@@ -799,6 +872,7 @@ class OneCoreBackend(_WavBackend):
 
         if purge:
             self.purge()
+        text = _speakable(text)
         vname = re.sub(r"[^A-Za-z0-9_-]+", "_", str(getattr(self._synth, "voice_name", "") or "default"))[:60]
         key = hashlib.sha1(f"{vname}|{self._rate}|{text}".encode()).hexdigest()
         path = self._root / f"onecore-{vname}" / f"{key}.wav"
@@ -835,7 +909,10 @@ class NeuralBackend(_WavBackend):
             tts_neural.clean_voice_id(neural_voice), neural_rate or tts_neural.DEFAULT_NEURAL_RATE)
         self._neural_rate = neural_rate or tts_neural.DEFAULT_NEURAL_RATE
         self._phrases: tuple[str, ...] = ()
-        self._local_factory = _local_factory or (lambda: _local_backend("sapi"))
+        # misses: Windows OneCore voices (offline, far better than the SAPI "Desktop" voices),
+        # SAPI only as the last resort
+        self._local_factory = _local_factory or (lambda: _local_backend("onecore"))
+        self.last_source = ""         # "neural" | local backend name: who said the last sentence
         self._local: SpeechBackend | None = None
         self._local_cfg: tuple[str, int, int] | None = None
         self._roster: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
@@ -914,10 +991,19 @@ class NeuralBackend(_WavBackend):
     #: set by the voice worker: True when an urgent message waits (stops a network wait)
     abort_check: Callable[[], bool] | None = None
 
-    def speak(self, text: str, purge: bool) -> None:
+    def warm(self, text: str) -> None:
+        """Start synthesising ``text`` now in the background (a line just queued: it is ready
+        when its turn comes). Thread-safe, never raises."""
+        try:
+            self._tts.get(text, 0.0)
+        except Exception:
+            pass
+
+    def speak(self, text: str, purge: bool, timeout: float | None = None) -> None:
         if purge:
             self.purge()
-        timeout = 0.9 if purge else self._tn.LIVE_TIMEOUT_S
+        if timeout is None:
+            timeout = 0.9 if purge else self._tn.LIVE_TIMEOUT_S
         path = None
         try:
             path = self._tts.get(text, timeout, abort=self.abort_check)
@@ -928,8 +1014,15 @@ class NeuralBackend(_WavBackend):
         if path is None and self.abort_check is not None and self.abort_check():
             return                            # superseded by an urgent message: not said
         if path is not None and self._play(Path(path)):
+            self.last_source = "neural"
             return
-        self._get_local().speak(text, purge)
+        self._speak_local(text, purge)
+
+    def _speak_local(self, text: str, purge: bool) -> None:
+        local = self._get_local()
+        self.last_source = str(getattr(local, "name", "print") or "print")
+        log.info("Voix naturelle pas prête : voix Windows (%s) pour « %s »", self.last_source, text)
+        local.speak(text, purge)
 
     def ready(self, text: str) -> bool:
         """The sentence plays without any synthesis wait (cached neural WAV)."""
@@ -949,8 +1042,9 @@ class NeuralBackend(_WavBackend):
         except Exception as exc:
             log.debug("Neural cache lookup failed: %s", exc)
         if path is not None and self._play(Path(path)):
+            self.last_source = "neural"
             return
-        self._get_local().speak(text, purge)
+        self._speak_local(text, purge)
 
     def is_speaking(self) -> bool:
         if self._player.is_playing():
@@ -1052,6 +1146,7 @@ class _Item:
     t: float          # enqueue time (engine clock)
     seq: int
     beep_end: float | None = None   # perf_counter end of the beep already played for it (beep-first)
+    patient: bool = False           # not urgent: wait longer for the natural voice (AI line, voice test)
 
 
 class VoiceEngine:
@@ -1092,6 +1187,10 @@ class VoiceEngine:
         self._busy = False
         self._ready = threading.Event()
         self._backend_name: str | None = None
+        self._warm: Callable[[str], None] | None = None      # backend.warm (neural): set by the worker
+        self._backend_ref: SpeechBackend | None = None
+        #: soft chime before a spoken non-danger line (the voice starts after it)
+        self.chime_before_voice = True
         self._voices_cache: list[str] | None = None
         self.spoken_count = 0          # statistics (read-only for callers)
         self.dropped_count = 0
@@ -1162,6 +1261,20 @@ class VoiceEngine:
                     self._cond.notify_all()
         except Exception:
             log.exception("VoiceEngine.prewarm failed")
+
+    def preview(self, text: str = "") -> None:
+        """"Tester la voix": say a sample with the REAL chosen voice (waits for the natural voice
+        up to :data:`PREVIEW_TIMEOUT_S` instead of switching to a Windows voice). Never raises."""
+        self.say(text or PREVIEW_TEXT, LEVEL_WARNING, patient=True)
+
+    @property
+    def last_source(self) -> str:
+        """Who said the last sentence: ``"neural"``, ``"onecore"``, ``"sapi"``, ``"print"`` or ``""``."""
+        b = self._backend_ref
+        src = getattr(b, "last_source", None) if b is not None else None
+        if src:
+            return str(src)
+        return self._backend_name or ""
 
     @staticmethod
     def list_engines() -> list[tuple[str, str]]:
@@ -1235,14 +1348,25 @@ class VoiceEngine:
             log.debug("alert_beep failed", exc_info=True)
             return False
 
-    def say(self, text: str, level: int = LEVEL_WARNING) -> None:
+    def say(self, text: str, level: int = LEVEL_WARNING, patient: bool | None = None) -> None:
         """Queue ``text`` (never blocks, never raises). Level 2 (DANGER) cuts the current sentence;
-        it is beep-first: the tone starts here at once (unless :meth:`alert_beep` just played it)."""
+        it is beep-first: the tone starts here at once (unless :meth:`alert_beep` just played it).
+        The synthesisers respell it for a French voice (:func:`tts_lexicon.speakable`). ``patient``
+        (default: INFO lines) waits longer for the natural voice instead of a Windows voice; the
+        synthesis of a non-danger line starts at once in the background (ready when its turn comes)."""
         try:
             s = _clean_text(text)
             if not s:
                 return
             lvl = _coerce_level(level)
+            if patient is None:
+                patient = lvl <= LEVEL_INFO
+            warm = self._warm
+            if warm is not None and lvl < LEVEL_DANGER:
+                try:
+                    warm(s)
+                except Exception:
+                    pass
             beep_end = None
             if lvl >= LEVEL_DANGER and not self._muted and not self._closed:
                 now = time.perf_counter()
@@ -1255,7 +1379,7 @@ class VoiceEngine:
                 if self._muted:
                     return
                 self._seq += 1
-                item = _Item(s, lvl, float(self._clock()), self._seq, beep_end)
+                item = _Item(s, lvl, float(self._clock()), self._seq, beep_end, bool(patient))
                 if lvl >= LEVEL_DANGER:
                     self.dropped_count += len(self._queue)
                     self._queue.clear()
@@ -1481,6 +1605,9 @@ class _Worker:
         self.roster_seen = -1
         self.started_at = None
         self.e._backend_name = str(getattr(backend, "name", "print") or "print")
+        self.e._backend_ref = backend
+        warm = getattr(backend, "warm", None)
+        self.e._warm = warm if callable(warm) else None
         try:
             self.e._voices_cache = list(backend.voices())
         except Exception:
@@ -1620,10 +1747,27 @@ class _Worker:
         if seconds > 0:
             self.token.wait(min(seconds, 1.0))
 
+    def _chime(self, item: _Item) -> None:
+        """Soft chime before a non-danger line, then wait for its end (winsound plays one sound
+        at a time: the voice would cut it). Skipped when the beep just played. Never raises."""
+        e = self.e
+        try:
+            if not e.chime_before_voice or e._muted or not e.beeper.available:
+                return
+            if e._beep_end - time.perf_counter() > -BEEP_RECENT_S:
+                return
+            tone = chime_for(item.text, item.level)
+            if e.beeper.play(tone, e._params.volume):
+                self._wait(tone_duration_s(tone) + 0.01)
+        except Exception:
+            log.debug("chime failed", exc_info=True)
+
     def _say_normal(self, item: _Item) -> None:
         e = self.e
         if item.level >= LEVEL_WARNING and item.level > self.cur_level and self._speaking():
-            self._speak(item, purge=True)       # a gank warning cuts a less urgent sentence
+            self._purge()                       # a gank warning cuts a less urgent sentence
+            self._chime(item)
+            self._speak(item, purge=True)
             return
         while self._speaking():
             if self.token.is_set():
@@ -1643,6 +1787,7 @@ class _Worker:
             e._count_drop()
             log.debug("Voice: stale message dropped: %s", item.text)
             return
+        self._chime(item)
         self._speak(item, purge=False)
 
     def _say_danger(self, item: _Item, params: _Params) -> None:
@@ -1694,9 +1839,13 @@ class _Worker:
         for attempt in range(2):
             t_call = time.perf_counter()
             try:
-                urgent = getattr(self.backend, "speak_urgent", None) if item.level >= LEVEL_WARNING else None
+                urgent = getattr(self.backend, "speak_urgent", None) \
+                    if item.level >= LEVEL_WARNING and not item.patient else None
                 if callable(urgent):
                     urgent(item.text, purge)
+                elif item.patient and getattr(self.backend, "warm", None) is not None:
+                    timeout = PREVIEW_TIMEOUT_S if item.level >= LEVEL_WARNING else _patient_timeout()
+                    self.backend.speak(item.text, purge, timeout)       # type: ignore[call-arg]
                 else:
                     self.backend.speak(item.text, purge)
             except Exception as exc:

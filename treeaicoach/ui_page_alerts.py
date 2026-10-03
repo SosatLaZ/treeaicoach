@@ -56,8 +56,8 @@ class AlertsPageMixin:
 
         s = self._section(body, row, "Ce que le coach dit", "Seulement ce qui ne peut pas attendre : le reste est "
                                                             "écrit dans le panneau.")
-        self._section_button(s, "Tester la voix", self.test_voice, icon="voice",
-                             tip="Fait dire une alerte d'exemple au coach.")
+        self._section_button(s, "Tester la voix", self.preview_voice, icon="voice",
+                             tip="Fait dire une alerte d'exemple au coach, avec la voix choisie.")
         self._choice_row(s, "voice_level", "Quantité", "Minimal : ganks, « Recule », objectifs à 60 s. Normal : "
                          "en plus, les gros appels après un combat gagné. Bavard : tout est lu.", VOICE_LEVELS,
                          segmented=True)
@@ -172,9 +172,42 @@ class AlertsPageMixin:
             return
         examples = getattr(self, "_examples", None) or _example_speech()   # the Voix tab may not exist yet
         text, level = examples.get(key, ("Attention, Lee Sin approche !", 1))
-        self.voice.say(text, level)
+        try:
+            self.voice.say(text, level, patient=True)      # the real chosen voice, not a fallback
+        except TypeError:
+            self.voice.say(text, level)
         if getattr(self.voice, "backend", "") == "print":
             self.show_toast("Voix indisponible sur ce système : le message est écrit dans le journal.", "warning")
+
+    @_guarded
+    def preview_voice(self) -> None:
+        """"Tester la voix": a sample said by the REAL chosen voice (the natural voice is awaited
+        instead of switching to a Windows voice), then a note if a Windows voice had to say it."""
+        voice = self.voice
+        if voice is None:
+            self.show_error("La synthèse vocale n'est pas disponible.")
+            return
+        preview = getattr(voice, "preview", None)
+        if callable(preview):
+            preview()
+        else:
+            voice.say("Test de la voix. Attention, Lee Sin arrive par la rivière !", 1)
+        if getattr(voice, "backend", "") == "print":
+            self.show_toast("Voix indisponible sur ce système : le message est écrit dans le journal.", "warning")
+            return
+        self.show_toast("Test de la voix en cours…")
+        try:
+            self.root.after(7500, self.cb(self._voice_test_report))
+        except Exception:
+            log.debug("voice test report not scheduled", exc_info=True)
+
+    def _voice_test_report(self) -> None:
+        voice = self.voice
+        src = str(getattr(voice, "last_source", "") or "")
+        if getattr(self.cfg, "voice_engine", "auto") in ("auto", "neural") and src in ("onecore", "sapi"):
+            self.show_toast("La voix naturelle n'a pas répondu (Internet ou antivirus ?) : une voix Windows "
+                            "l'a remplacée. Les phrases du match sont préparées dès que la connexion revient.",
+                            "warning")
 
     def _voice_api(self) -> Any:
         """The voice object (or the VoiceEngine class before it exists) for the list_* selectors."""

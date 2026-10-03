@@ -465,7 +465,8 @@ def test_engine_uses_sapi_backend_class(fake_pywin32) -> None:
         assert eng.wait_ready(3.0)
         assert eng.wait_idle(3.0)
         assert eng.backend == "sapi"
-        assert ("Attention, Lee Sin approche.", voice.SVSF_ASYNC | voice.SVSF_IS_NOT_XML) in sp.calls
+        # the text is respelled for a French voice (tts_lexicon) at the synthesiser
+        assert ("Attention, Li Sine approche.", voice.SVSF_ASYNC | voice.SVSF_IS_NOT_XML) in sp.calls
         assert sp.Rate == 3
     finally:
         eng.stop()
@@ -632,7 +633,7 @@ def test_neural_tts_cache_timeout_and_offline(tmp_path: Path) -> None:
     assert t.rate_pct == 15
     p = t.get("Gank ! Lee Sin, recule !")
     assert p is not None and p.parent.name == "fr-FR-HenriNeural" and p.read_bytes()[:4] == b"RIFF"
-    assert t.get("Gank ! Lee Sin, recule !") == p and calls.count("Gank ! Lee Sin, recule !") == 1
+    assert t.get("Gank ! Lee Sin, recule !") == p and calls.count("Gank ! Li Sine, recule !") == 1
     assert t.get("lent", timeout=0.05) is None                # too slow -> None, keeps running
     slow.set()
     assert _wait_for(lambda: t.cached("lent") is not None)
