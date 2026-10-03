@@ -649,15 +649,13 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 # ======================================================================================
 # Texts
 # ======================================================================================
-CHANGELOG_VERSION = "2.4"
+CHANGELOG_VERSION = "2.6"
 CHANGELOG: tuple[tuple[str, str], ...] = (
-    ("Compréhension de la partie", "Compos, qui est plus fort et jusqu'à quand, conditions de victoire et "
-                                   "ton rôle : « Tu es plus fort que Vladimir jusqu'à ~21:00 : punis-le »."),
-    ("Ce que tu oublies", "Point de compétence, potion, balises, or non dépensé, et la leçon quand tu "
-                          "meurs avec un sort prêt."),
-    ("IA corrigée", "22 bugs corrigés : plus de plan en plein combat, limite Groq gérée, plans "
-                    "cohérents avec le panneau, analyse de fin de partie en 3 axes."),
-    ("Rapport", "Nouvelle section « Compréhension de la partie »."),
+    ("Nouveau launcher", "Refait de zéro : pages prêtes en 1 s, plus de bug de chargement, design épuré."),
+    ("Voix naturelle", "La voix naturelle d'abord, prononciation des champions corrigée, sons doux."),
+    ("Overlay compact", "Environ 25 % plus petit, adapté à ta résolution et à l'échelle de l'interface du jeu."),
+    ("Détection", "Duo empilé et caméra mieux suivis, capture rapide qui ne se coupe plus, minimap "
+                  "moins souvent recherchée, alertes en double supprimées."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl + 1 … 6", "Aller à une page (Accueil, Overlay, Alertes et voix, Analyse, Réglages, À propos)"),
