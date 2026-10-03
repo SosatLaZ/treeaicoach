@@ -3,9 +3,17 @@
 * Engines (``engine`` / ``cfg.voice_engine``): ``"auto"`` = ``"neural"`` (Microsoft Edge neural
   voice, online, sentences cached as WAV and pre-generated for the champions of the game:
   :meth:`VoiceEngine.prewarm` / :meth:`VoiceEngine.prefetch`, see :mod:`treeaicoach.tts_neural`)
-  -> ``"sapi"`` -> ``"print"``; ``"onecore"`` (Windows 10/11 OneCore voices through WinRT) only
-  when chosen explicitly. A neural sentence that is not cached and not synthesised within
-  ~1.5 s (0.9 s for a DANGER) is said by SAPI instead (the synthesis keeps filling the cache).
+  -> ``"onecore"`` (Windows 10/11 voices through WinRT, offline: Natural > Julie > Hortense >
+  Paul) -> ``"sapi"`` (OneCore tokens preferred over the old "Desktop" voices) -> ``"print"``.
+  A neural sentence that is not cached and not synthesised in time (1.5 s, 0.9 s for a DANGER,
+  4 s for a patient INFO / AI line, 6 s for the voice test) is said by the offline voice instead
+  (the synthesis keeps filling the cache). Every non-danger line starts synthesising when it is
+  queued (``NeuralBackend.warm``).
+* Pronunciation: the synthesisers respell League words and champion names for a French voice
+  (:func:`treeaicoach.tts_lexicon.speakable`: "Kai'Sa" -> "Kaïssa", "8:00" -> "8 minutes").
+* Sounds: soft chimes (:mod:`treeaicoach.chimes`, ``assets/sounds/*.wav``) on the
+  :class:`BeepPlayer`; a spoken non-danger line is preceded by its chime (objective / warning /
+  info) and starts after it (winsound plays one sound at a time: never cut, never overlapped).
 
 * :class:`VoiceEngine` is the public entry point. :meth:`VoiceEngine.say` is thread-safe and
   never blocks: it only appends to a queue consumed by a daemon thread.
@@ -26,8 +34,8 @@
 * The best French voice is chosen automatically (language id 0x..0C such as ``40C``, or a
   description containing French / Français / Hortense / Julie / Paul / Claude), including the
   Windows 10/11 "OneCore" voices when SAPI accepts them.
-* The danger beep is a small WAV generated with the stdlib :mod:`wave` module in
-  ``paths.cache_dir()/sounds`` (temp dir as a fallback), played with ``winsound``.
+* The danger chime (legacy backends' ``beep``) is ``assets/sounds/gank.wav`` scaled to the volume
+  in ``paths.cache_dir()/sounds`` (temp dir as a fallback), played with ``winsound``.
 
 Tests inject a fake backend with ``VoiceEngine(..., _backend_factory=...)``.
 """
@@ -1081,7 +1089,7 @@ class NeuralBackend(_WavBackend):
 
 ENGINES: tuple[str, ...] = ("auto", "neural", "onecore", "sapi")
 ENGINE_LABELS: dict[str, str] = {
-    "auto": "Automatique (voix naturelle, sinon Windows)",
+    "auto": "Automatique (voix naturelle, sinon voix Windows 10/11)",
     "neural": "Voix naturelle Microsoft (en ligne)",
     "onecore": "Voix Windows 10/11 (hors ligne)",
     "sapi": "Voix Windows classique (SAPI)",
