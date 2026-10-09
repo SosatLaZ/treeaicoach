@@ -240,3 +240,32 @@ def test_calibration_dialog_validates(home: Path) -> None:
     d.release()
     d.validate()
     assert d.result_rect == {"screen_w": 1920, "screen_h": 1080, "x": 1600, "y": 780, "w": 280, "h": 280}
+
+
+def test_export_button_builds_one_zip(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Réglages → Maintenance et support → "Créer le zip": captures + games in one file, shown in
+    the file manager (users were sending dozens of files one by one)."""
+    from treeaicoach import paths, ui_common
+
+    opened: list[Path] = []
+    monkeypatch.setattr(ui_common, "open_path", lambda p, select=False: opened.append(Path(p)) or True)
+    paths._reset_cache()
+    base = paths.user_data_dir()
+    (base / "collect").mkdir(parents=True, exist_ok=True)
+    (base / "collect" / "20261009_200000_0000.png").write_bytes(b"\x89PNG")
+    (base / "games").mkdir(parents=True, exist_ok=True)
+    (base / "games" / "2026-10-09_2006_Swain.json").write_text("{}", encoding="utf-8")
+    app, _v, _e = _build(home)
+    try:
+        app.show_page("settings")
+        _pump(app, 0.3)
+        texts = [b.text() for b in app.win.findChildren(app.QtWidgets.QPushButton)]
+        assert "Créer le zip" in texts
+        app.export_for_treeai()
+        end = time.monotonic() + 10
+        while not opened and time.monotonic() < end:
+            _pump(app, 0.05)
+        assert opened and opened[0].suffix == ".zip" and opened[0].parent == base / "exports"
+    finally:
+        app.close()
+        paths._reset_cache()

@@ -1432,6 +1432,26 @@ class CoachApp:
         self.show_toast("Diagnostic copié : colle-le (Ctrl+V) dans ton message.")
 
     @_guarded
+    def export_for_treeai(self) -> None:
+        """"Créer le zip": captures + games + truth + last diagnostics in one file (export.py),
+        built on a worker thread, then shown in the file manager."""
+        from treeaicoach import export  # noqa: PLC0415
+        from treeaicoach.ui_common import open_path  # noqa: PLC0415
+
+        def done(res: Any) -> None:
+            path, st = res
+            if path is None:
+                self.show_error(f"Zip impossible : {st.get('error') or 'rien à envoyer'}.")
+                return
+            self.show_toast(f"Zip prêt : {st['captures']} captures, {st['games']} parties, {st['truth']} vérités "
+                            f"({export.size_label(int(st['bytes']))}). Glisse-le dans ton message.")
+            open_path(path, select=True)
+
+        self.show_toast("Création du zip en cours…")
+        self.run_job(export.build_export, done, lambda e: self.show_error(f"Zip impossible : {e}"),
+                     name="TreeAI-ui-export")
+
+    @_guarded
     def open_logs(self) -> None:
         from treeaicoach.ui_common import open_path  # noqa: PLC0415
 

@@ -3,6 +3,12 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.6.2 · 9 octobre 2026
+
+- **Tout envoyer en un seul fichier :** **Réglages → Maintenance et support → Créer le zip** rassemble tes
+  captures de minimap, tes parties et leur vérité (fichiers `.truth.json`) et tes derniers diagnostics dans
+  un seul `.zip`, puis ouvre le dossier. Plus besoin d'envoyer les fichiers un par un.
+
 ## 2.6.1 · 9 octobre 2026
 
 - **Ta position ne saute plus à travers la carte.** Une position de toi que tu ne peux pas avoir atteinte

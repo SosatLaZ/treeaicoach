@@ -188,6 +188,7 @@ d'adresse de l'Explorateur de fichiers).
 | **L'appli ne voit pas la partie** | L'API de Riot répond seulement une fois la partie commencée, pas pendant l'écran de chargement. Seule la Faille de l'invocateur est analysée en direct (en ARAM, tu as un rapport limité aux statistiques). |
 | **Overlay invisible** | Vérifie le mode **Sans bordure**, **F11** en jeu, puis **Tester l'overlay** sur l'Accueil. |
 | **Antivirus : faux positif** | Les exe non signés créés avec PyInstaller sont parfois signalés à tort. Télécharge-le **uniquement** ici, compare son SHA-256, puis ajoute une exception. |
+| **M'envoyer tes captures et tes parties** | **Réglages → Maintenance et support → Créer le zip** : un seul fichier avec tes captures de minimap, tes parties et leur vérité (le dossier s'ouvre tout seul). Joins-le à ton message. |
 | **Alertes fausses / détection bizarre** | En partie, appuie sur **Ctrl+F8** : un diagnostic de 60 s est enregistré. Joins le `.zip` à ton signalement. |
 | **Autre problème** | **Réglages → Maintenance et support → Journaux**, et joins le dernier fichier dans les [Issues](https://github.com/SosatLaZ/treeaicoach/issues). |
 

@@ -132,6 +132,8 @@ class SettingsPage:
         mnt.add(W.Row("Copier le diagnostic", "Un résumé texte à coller dans ton message (Ctrl+D).",
                       W.button("Copier", app.copy_diagnostic)))
         mnt.add(W.Row("Journaux", "Fichiers de journal de TreeAI.", W.button("Ouvrir", app.open_logs)))
+        mnt.add(W.Row("Tout envoyer en un fichier", "Un seul .zip avec tes captures de minimap, tes parties et "
+                      "leur vérité, prêt à envoyer.", W.button("Créer le zip", app.export_for_treeai)))
         app.switch_row(mnt, "selfcheck_auto_diag", "Diagnostic automatique", "Un diagnostic est enregistré tout seul "
                        "quand TreeAI détecte un problème.")
         app.switch_row(mnt, "collect_samples", "Collecter des captures de minimap", "Pour améliorer la détection "
