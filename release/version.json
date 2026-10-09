@@ -1,6 +1,6 @@
 {
-  "version": "2.6.0",
-  "sha256": "cc5afdd845055469ed0dbd2446684b3333b062b9be98256e1f03fed8426f021a",
-  "size": 94516222,
-  "notes": "2.6 : nouveau launcher refait de zéro (pages prêtes en 1 s, plus de bug de chargement, design épuré clair/sombre) ; voix naturelle d'abord avec la bonne prononciation des champions et des sons doux ; overlay environ 25 % plus compact et adapté à chaque résolution ; détection : duo empilé et caméra mieux suivis, capture rapide qui ne se coupe plus, minimap moins souvent recherchée ; alertes en double supprimées."
+  "version": "2.6.1",
+  "sha256": "2b8b4de99adc086b549e557ae02cdefe52ca25a8c1047e016d400e4ee54aa07e",
+  "size": 94522550,
+  "notes": "2.6.1 : ta position ne saute plus à travers la carte (une position impossible à atteindre à pied est refusée tant qu'elle n'est pas confirmée, Téléportation et fontaine comprises) ; rapport ARAM / Arène honnête, limité à tes statistiques ; le plan d'une partie ne fuit plus dans la suivante."
 }
