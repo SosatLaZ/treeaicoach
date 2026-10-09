@@ -1,6 +1,6 @@
 {
-  "version": "2.6.1",
-  "sha256": "2b8b4de99adc086b549e557ae02cdefe52ca25a8c1047e016d400e4ee54aa07e",
-  "size": 94522550,
-  "notes": "2.6.1 : ta position ne saute plus à travers la carte (une position impossible à atteindre à pied est refusée tant qu'elle n'est pas confirmée, Téléportation et fontaine comprises) ; rapport ARAM / Arène honnête, limité à tes statistiques ; le plan d'une partie ne fuit plus dans la suivante."
+  "version": "2.6.2",
+  "sha256": "ed5de781a13d28ebbab1ad75b3b71db20adca6c04928e424235ee3d0cbd20bc8",
+  "size": 94527186,
+  "notes": "2.6.2 : nouveau bouton Réglages → Maintenance et support → « Créer le zip » : tes captures de minimap, tes parties et leur vérité dans un seul fichier à envoyer ; inclut aussi la 2.6.1 (ta position ne saute plus à travers la carte, rapport ARAM honnête)."
 }
