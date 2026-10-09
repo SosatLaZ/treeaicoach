@@ -3,8 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
-## Prochaine version (en préparation)
+## 2.6.1 · 9 octobre 2026
 
+- **Ta position ne saute plus à travers la carte.** Une position de toi que tu ne peux pas avoir atteinte
+  à pied est refusée tant qu'elle n'est pas confirmée (au moins 3 reconnaissances sûres de ton champion sur
+  1,5 s, par exemple à l'arrivée d'une Téléportation). Ta fontaine reste toujours possible (rappel,
+  réapparition). Sur tes vraies parties en Swain, ta position sautait 77 fois en 15 minutes quand la caméra
+  regardait ailleurs pendant que tu étais collé à ton ADC. Sur le banc de test qui reproduit ce cas, ta
+  position est fausse dans 2 % des images au lieu de 51 %, et les mauvais noms passent de 194 à 23.
 - **Rapport ARAM / Arène honnête :** l'appli n'analyse en direct que la Faille de l'invocateur. Dans les
   autres modes, le rapport le dit et se limite à tes statistiques, sans conseils de jungle, de ganks, de
   dragons ou de vision.

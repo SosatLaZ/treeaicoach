@@ -40,6 +40,15 @@ THIRD_PARTY_NOTICES.md):
   :data:`STACK_HOLD_S` s: it stays *visible*, its position / velocity follow the occluding icon,
   so no fog circle, "a disparu" message or fog pop is produced for an icon that is simply
   drawn under another one.
+* **My position is physically plausible** (:meth:`Tracker._self_guard`) - a "self" claim
+  (my portrait, the camera fallback, the icon learner, the camera lock...) that I cannot have
+  walked to from my last accepted position (:data:`SELF_GUARD_SLACK` +
+  :data:`SELF_GUARD_SPEED` x elapsed) is not "me" until it is confirmed: the same spot kept
+  for :data:`SELF_GUARD_CONFIRM_S` s by >= :data:`SELF_GUARD_CONF_N` confident matches of my
+  champion (a Teleport landing, a wrong old position). My fountain is always reachable
+  (recall, respawn), and while I am dead (Live Client) my last position becomes my fountain.
+  Until then the claim is an unidentified ally icon and my old position is kept (never two
+  places). The anchor survives a forgotten self track (self-check reset).
 * **Champion locker** - an *anonymous* track (no identity, not "self") is *tentative* until it
   was observed in >= 30 % of the recent frames (at least :data:`LOCK_MIN_OBS` observations)
   with a mean detection score >= 0.40. Tentative tracks are hidden from :meth:`Tracker.tracks`,
@@ -143,6 +152,23 @@ ELIM_ALLY_MEMORY_S = 20.0
 #: recall), the anonymous track is a phantom and is not reported (real records 2.1-2.4:
 #: 49 anonymous phantom samples, the 2nd failure mode). False disables.
 ANON_SURPLUS = True
+#: My position (see the module docstring): reach = SLACK + SPEED x time since my last
+#: accepted position (a fast champion + Flash + detection noise)...
+SELF_GUARD = True
+SELF_GUARD_SPEED = 0.04
+SELF_GUARD_SLACK = 0.07
+#: ...an unreachable claim is "me" once the same spot (within SELF_GUARD_CAND_DIST + walking)
+#: was claimed for SELF_GUARD_CONFIRM_S s by SELF_GUARD_CONF_N confident matches of my
+#: champion (alias + score >= SELF_GUARD_CONF_SCORE; camera-only claims never confirm).
+SELF_GUARD_CONFIRM_S = 1.5
+SELF_GUARD_CONF_N = 3
+SELF_GUARD_CONF_SCORE = 0.45
+SELF_GUARD_CAND_DIST = 0.04
+#: my position refreshes the anchor when it comes from a sighting more confident than a guess
+#: under an ally (roster_matcher.UNDER_SCORE 0.3) or from a stacked
+#: hold (a fading coast does not: its place may be wrong, det_gym bl_swain_lane)
+SELF_GUARD_ANCHOR_SCORE = 0.35
+SELF_GUARD_CAND_GAP_S = 1.0         # a candidate not claimed for this long is dropped
 #: ... and an anonymous track parked on one spot (all its recent observations within
 #: ANON_STATIC_D of the last one over ANON_STATIC_S) is a glyph / text / ping, not a
 #: champion nobody could identify (det_gym: unidentified "enemies" parked on turrets for
@@ -552,6 +578,15 @@ class Track:
         self._record_zone(prev_t, t)
         return True
 
+    def clear_history(self) -> None:
+        """Forget the past positions (my confirmed far move): the next observation starts a new
+        history instead of being held back as an impossible jump."""
+        self._obs.clear()
+        self._kf = None
+        self._pending = None
+        self._stack_pos = self._stack_vel = self._stack_t = None
+        self.stacked_with = self.stacked_since = self.stack_released_at = None
+
     def follow(self, occluder: Track, now: float) -> None:
         """Stacked hold: take the occluding icon's position / velocity (tracker thread only)."""
         pos = occluder.position()
@@ -726,6 +761,15 @@ class Tracker:
         #: Live Client roster ``{alias: "self" | "ally" | "enemy"}`` (see :meth:`set_roster`):
         #: identity by elimination of an unidentified icon (ELIM_*).
         self._roster: dict[str, str] = {}
+        #: my last accepted position (t, u, v) and the pending far claim (SELF_GUARD_*):
+        #: [t0, t_last, u, v, n_confident]
+        self._self_anchor: tuple[float, float, float] | None = None
+        self._self_cand: list | None = None
+        self._self_anchor_weak = False
+        self._my_team: str | None = None
+        #: far "self" claims held back / confirmed by the guard (diagnostics, tests)
+        self.self_rejected = 0
+        self.self_confirmed = 0
 
     # -- public API ---------------------------------------------------------------------
 
@@ -770,6 +814,11 @@ class Tracker:
             tr = self._tracks.get(self._self_key) if self._self_key else None
             return tr.copy() if tr is not None and tr.relation == "self" else None
 
+    def self_anchor(self) -> tuple[float, float, float] | None:
+        """My last plausible position ``(t, u, v)`` (SELF_GUARD_*), or None."""
+        with self._lock:
+            return self._self_anchor
+
     def enemies(self, visible_only: bool = True) -> list[Track]:
         """Snapshots of the enemy tracks (only the visible ones by default)."""
         with self._lock:
@@ -796,6 +845,8 @@ class Tracker:
             self._tracks.clear()
             self._anon_counter = {"enemy": 0, "ally": 0}
             self._self_key = None
+            self._self_anchor = None
+            self._self_cand = None
             self._last_t = None
             self._frame = 0
             self._dt_ema = None
@@ -877,6 +928,7 @@ class Tracker:
                 if e.relation == "self":
                     e.relation = "ally"
         entries = self._dedupe(entries)
+        entries = self._self_guard(now, entries, my_alias, me_dead)
         # An identity-based "self" seen recently outranks the identifier's camera fallback.
         cur_self = self._tracks.get(self._self_key) if self._self_key else None
         if cur_self is not None and cur_self.alias and now - cur_self.last_seen <= SELF_STICKY_S:
@@ -959,7 +1011,83 @@ class Tracker:
         if self._roster and ANON_SURPLUS:
             self._mark_surplus(now)
         self._forget(now)
+        # my last plausible position (SELF_GUARD_*)
+        me_tr = self._tracks.get(self._self_key) if self._self_key else None
+        if me_tr is not None and me_tr.relation == "self" and me_tr.visible and not me_dead and (
+                me_tr.stacked_with is not None or me_tr.score >= SELF_GUARD_ANCHOR_SCORE):
+            pos = me_tr.position()
+            if pos is not None:
+                self._self_anchor = (now, pos[0], pos[1])
+                # (an anonymous "self" = the camera fallback: a guess my portrait overrides)
+                self._self_anchor_weak = not me_tr.alias
         self._last_t = now
+
+    def _self_guard(self, now: float, entries: list[_Entry], my_alias: str | None,
+                    me_dead: bool) -> list[_Entry]:
+        """Physical plausibility of my position (see the module docstring, SELF_GUARD_*).
+
+        Real 2.5.0 / 2.5.1 Swain games: 77-95 jumps of "me" across the map per game (the camera
+        on a fight, my base, the top laner; the icon learner's bootstrap on an ally icon),
+        then the stacked hold carried me on that ally for ~47 s."""
+        for e in entries:
+            if e.team and e.relation in ("self", "ally"):
+                self._my_team = e.team
+                break
+        team = self._my_team
+        if me_dead:
+            # dead: I come back at my fountain (Live Client respawn)
+            c = {"ORDER": (0.04, 0.96), "CHAOS": (0.96, 0.04)}.get(team or "")
+            self._self_anchor = (now, c[0], c[1]) if c is not None else None
+            self._self_anchor_weak = False
+            self._self_cand = None
+            return entries
+        anchor = self._self_anchor
+        if anchor is None or not SELF_GUARD:
+            return entries
+        if my_alias is None:                # (no Live Client roster: my identity track)
+            cur = self._tracks.get(self._self_key) if self._self_key else None
+            my_alias = cur.alias if cur is not None else None
+        reach = SELF_GUARD_SLACK + SELF_GUARD_SPEED * max(0.0, now - anchor[0])
+        cand = self._self_cand
+        if cand is not None and now - cand[1] > SELF_GUARD_CAND_GAP_S:
+            cand = self._self_cand = None
+        out: list[_Entry] = []
+        near_conf = False
+        for e in entries:
+            claim = e.relation == "self" or (my_alias is not None and e.alias == my_alias)
+            if not claim or math.hypot(e.u - anchor[1], e.v - anchor[2]) <= reach or \
+                    in_fountain(e.u, e.v, team):
+                near_conf = near_conf or (claim and bool(e.alias) and e.alias == my_alias
+                                          and e.score >= SELF_GUARD_CONF_SCORE)
+                out.append(e)
+                continue
+            confident = bool(e.alias) and e.alias == my_alias and e.score >= SELF_GUARD_CONF_SCORE
+            if confident and self._self_anchor_weak:
+                out.append(e)               # my portrait beats a camera guess (det_gym h_slow3)
+                continue
+            if cand is not None and math.hypot(e.u - cand[2], e.v - cand[3]) <= \
+                    SELF_GUARD_CAND_DIST + MAX_WALK_SPEED * max(0.0, now - cand[1]):
+                cand[1], cand[2], cand[3] = now, e.u, e.v
+                cand[4] += int(confident)
+            elif cand is None or confident:
+                cand = self._self_cand = [now, now, e.u, e.v, int(confident)]
+            if now - cand[0] >= SELF_GUARD_CONFIRM_S and cand[4] >= SELF_GUARD_CONF_N:
+                # confirmed (Teleport landing, my old position was wrong): a new history
+                log.debug("Tracker: my position confirmed at (%.3f, %.3f)", e.u, e.v)
+                self.self_confirmed += 1
+                for tr in self._tracks.values():
+                    if tr.relation == "self" or (my_alias and tr.alias == my_alias):
+                        tr.clear_history()
+                self._self_anchor = (now, e.u, e.v)
+                self._self_cand = None
+                out.append(e)
+                continue
+            # not me (yet): an unidentified ally icon, my track keeps its place
+            self.self_rejected += 1
+            out.append(dataclasses.replace(e, relation="ally", alias=None, id_score=0.0))
+        if near_conf and self._self_cand is not None and now - self._self_cand[1] > 0.0:
+            self._self_cand = None          # I am seen where I was: the far claim was not me
+        return out
 
     @staticmethod
     def _dedupe(entries: list[_Entry]) -> list[_Entry]:

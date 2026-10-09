@@ -81,6 +81,7 @@ FOUNTAIN = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
 #: v2 (tools/det_sim2real.py calibration): lighter fog, ring colours of the real crops
 #: (enemy chroma ~25, warm), lossless capture / light blur in most main games.
 GYM_VERSION = 2
+MJMP_SLACK, MJMP_SPEED = 0.06, 0.035   # mjmp: "impossible self jump" = farther than this + speed * dt
 #: Library versions of the exe (requirements pins): the REFERENCE environment of the gym.
 #: Other versions give other numbers for the same code (OpenCV 5: other putText glyphs, exact
 #: sub-pixel remap / warpAffine instead of 4.x's 1/32 px grid), so the history compares and
@@ -598,6 +599,8 @@ class Sim:
                 c.plan = []
         elif kind == "camera":
             self.sc.camera = a["mode"]
+            if a["mode"] == "at":       # camera parked on a spot (minimap click / drag, held)
+                self.cam_c = np.asarray(a["uv"], float) + [0.0, -0.022]
             if a["mode"] == "follow":   # camera on another champion (ally portrait clicked, F2-F5)
                 role = a.get("role", "JUNGLE")
                 self.cam_follow = next((c for c in self.champs[1:] if c.team == self.sc.my_team
@@ -643,6 +646,8 @@ class Sim:
         me = self.champs[0]
         if mode == "locked":
             self.cam_c = me.pos + [0.0, -0.022]
+        elif mode == "at":
+            pass
         elif mode == "follow" and getattr(self, "cam_follow", None) is not None:
             self.cam_c = self.cam_follow.pos + [0.0, -0.022]
         elif mode == "pan":
@@ -887,6 +892,29 @@ def botlane_scenarios(quick: bool = False) -> list[Scenario]:
                               (20.0, "camera", {"mode": "locked"}),
                               (26.0, "camera", {"mode": "follow", "role": "TOP"}),
                               (36.0, "camera", {"mode": "locked"})]))
+    # real 2.5.0 / 2.5.1 Swain games (77-95 impossible jumps of "me" per game): the camera
+    # looks elsewhere (minimap click / drag: a top fight 1-5 s, mid, my own base, the top lane
+    # for ~45 s, following the top laner) while my icon is stacked under my ADC
+    S.append(Scenario("bl_look", 101, 6.0, 60.0, 280, "ORDER", "locked", jpeg=0, blur=0.4,
+                      me_role="UTILITY", glue=(0.1, 0.5), me_draw="under",
+                      events=[(0.0, "goto", {"who": [1, 5], "uv": (0.12, 0.2), "spread": 0.02, "stay": 99}),
+                              (6.0, "camera", {"mode": "at", "uv": (0.15, 0.2)}),
+                              (7.5, "camera", {"mode": "locked"}),
+                              (12.0, "camera", {"mode": "at", "uv": (0.12, 0.86)}),
+                              (17.0, "camera", {"mode": "locked"}),
+                              (21.0, "camera", {"mode": "at", "uv": (0.5, 0.5)}),
+                              (24.0, "camera", {"mode": "locked"}),
+                              (27.0, "camera", {"mode": "follow", "role": "TOP"}),
+                              (52.0, "camera", {"mode": "locked"})]))
+    S.append(Scenario("bl_look_red", 103, 4.0, 60.0, 260, "CHAOS", "locked", jpeg=0, blur=0.45,
+                      me_role="UTILITY", glue=(0.1, 0.6), me_draw="under",
+                      events=[(0.0, "goto", {"who": [1, 5], "uv": (0.07, 0.28), "spread": 0.02, "stay": 99}),
+                              (5.0, "camera", {"mode": "at", "uv": (0.88, 0.15)}),
+                              (10.0, "camera", {"mode": "locked"}),
+                              (14.0, "camera", {"mode": "at", "uv": (0.07, 0.28)}),
+                              (44.0, "camera", {"mode": "locked"}),
+                              (48.0, "camera", {"mode": "at", "uv": (0.45, 0.48)}),
+                              (50.0, "camera", {"mode": "locked"})]))
     if quick:
         for sc in S:
             sc.seconds = min(sc.seconds, 16.0)
@@ -1093,6 +1121,9 @@ class GameMetrics:
     stk_n: int = 0           # champions mostly hidden under another icon (stacked) ...
     stk_ok: int = 0          # ... reported visible at the stack (within 2 TOL)
     scale_err: list = field(default_factory=list)   # |log(matcher scale / true scale)| per frame
+    mjmp: int = 0            # my drawn position jumped farther than I can walk, to a wrong place
+    #                          (not to my fountain; a jump that corrects my position is not counted)
+    secs: float = 0.0        # scored game time (s), for the per-minute rates
     fails: list = field(default_factory=list)     # (scenario, t, kind, detail)
     miss_cause: dict = field(default_factory=dict)
     ghost_kind: dict = field(default_factory=dict)
@@ -1125,6 +1156,7 @@ class GameMetrics:
             "resets": self.resets, "me_dead": self.me_dead,
             "stk": self.stk_ok / max(1, self.stk_n), "stk_n": self.stk_n,
             "scl": float(np.mean(self.scale_err)) if self.scale_err else float("nan"),
+            "mjmp": self.mjmp, "mjmp_pm": 60.0 * self.mjmp / max(1e-6, self.secs),
             "scl_bad": float(np.mean([e > 0.05 for e in self.scale_err])) if self.scale_err else float("nan"),
             "frames": self.frames, "n_vis": self.n_vis, "miss_cause": dict(self.miss_cause),
             "ghost_kind": dict(self.ghost_kind),
@@ -1161,6 +1193,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
     prev_key: dict[str, str] = {}
     was_ok: dict[str, bool] = {}
     vis_run: dict[str, int] = {}
+    last_me: tuple | None = None            # (t, u, v) of my last drawn position (mjmp)
     for f in range(n_frames):
         t = f * dt
         sim.step(t, dt)
@@ -1178,6 +1211,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
             continue
         n_fail0 = len(M.fails)
         M.frames += 1
+        M.secs += dt
         M.ms.append(ms)
         M.cpu.append(pipe.cpu_ms)
         live = out["live"]
@@ -1300,6 +1334,19 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
                                 + (f" reported ({p[0]:.3f},{p[1]:.3f})" if p is not None else " not reported")))
         # --- me
         me = sim.champs[0]
+        if out["me"] is not None and my_tr is not None and my_tr.visible:
+            p = out["me"]
+            if last_me is not None:
+                jd = math.hypot(p[0] - last_me[1], p[1] - last_me[2])
+                fu = FOUNTAIN[sc.my_team]
+                wrong = math.hypot(p[0] - me.pos[0], p[1] - me.pos[1]) > 0.03   # (a correction is fine)
+                if jd > MJMP_SLACK + MJMP_SPEED * (t - last_me[0]) and wrong and \
+                        math.hypot(p[0] - fu[0], p[1] - fu[1]) > 0.06:
+                    M.mjmp += 1
+                    M.fails.append((sc.name, round(t, 2), "mjmp",
+                                    f"me ({last_me[1]:.3f},{last_me[2]:.3f}) -> ({p[0]:.3f},{p[1]:.3f}) "
+                                    f"in {t - last_me[0]:.2f} s, truth ({me.pos[0]:.3f},{me.pos[1]:.3f})"))
+            last_me = (t, p[0], p[1])
         if not me.alive and out["me"] is not None and my_tr is not None and my_tr.visible:
             M.me_dead += 1
             M.fails.append((sc.name, round(t, 2), "me_dead", f"me drawn at ({out['me'][0]:.3f},{out['me'][1]:.3f})"))
@@ -1616,7 +1663,7 @@ def report(out: dict, verbose: bool = False) -> str:
     hdr = (f"{'game':11s} {'frm':>4s} {'vis':>5s} {'rec':>6s} {'prec':>6s} {'det':>5s} {'idsw':>4s} {'frag':>4s} "
            f"{'idX':>3s} {'team':>4s} {'err50':>6s} {'err95':>6s} {'lag':>5s} {'gLive':>5s} {'gDead':>5s} "
            f"{'me50':>6s} {'me95':>6s} {'meBad':>5s} {'ms':>5s} {'ms95':>5s} {'cpu':>5s} "
-           f"{'stk':>5s} {'rst':>3s} {'meDd':>4s} {'scl':>5s}")
+           f"{'stk':>5s} {'rst':>3s} {'meDd':>4s} {'scl':>5s} {'mjmp':>4s} {'mj/m':>5s}")
     L.append(hdr)
     rows = list(out["games"].items()) + [("TOTAL", out["total"])]
     for name, s in rows:
@@ -1625,7 +1672,7 @@ def report(out: dict, verbose: bool = False) -> str:
                  f"{s['err95']:6.4f} {s['lag']:5.2f} {s['g_live']:5d} {s['g_dead']:5d} {s['me50']:6.4f} "
                  f"{s['me95']:6.4f} {s['me_bad']:5.3f} {s['ms']:5.1f} {s['ms95']:5.1f} {s['cpu']:5.1f} "
                  f"{s.get('stk', float('nan')):5.3f} {s.get('resets', 0):3d} {s.get('me_dead', 0):4d} "
-                 f"{s.get('scl', float('nan')):5.3f}")
+                 f"{s.get('scl', float('nan')):5.3f} {s.get('mjmp', 0):4d} {s.get('mjmp_pm', 0.0):5.2f}")
     if "real" in out:
         r = out["real"]
         L.append(f"REAL (9 crops, {r['gt']} icons): recall {r['rec']:.3f}  precision {r['prec']:.3f}  "
