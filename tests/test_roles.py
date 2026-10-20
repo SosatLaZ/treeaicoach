@@ -310,3 +310,47 @@ def test_enemy_swap_from_sightings_changes_my_lane_opponent() -> None:
     assert res.lane_opponents() == frozenset({"Caitlyn"})
     assert res.role_of("Syndra", "enemy") in ("BOTTOM", "UTILITY")
     assert res.info("Caitlyn", "enemy").source == "observed"
+
+
+# ---------------------------------------------------------------- Smite = authority for the jungler
+def test_smite_beats_a_wrong_jungle_position() -> None:
+    """Champ select says Darius is JUNGLE, but Lee Sin has Smite: Lee Sin is the jungler."""
+    me = P("Garen", "ORDER", "TOP")
+    enemies = [P("Darius", "CHAOS", "JUNGLE"), P("LeeSin", "CHAOS", "TOP", smite=True),
+               P("Ahri", "CHAOS", "MIDDLE"), P("Jinx", "CHAOS", "BOTTOM"), P("Lulu", "CHAOS", "UTILITY")]
+    res = RoleResolver()
+    res.update(0.0, None, game(me, [], enemies))
+    assert res.enemy_jungler() == "LeeSin"
+    assert res.role_of("LeeSin", "enemy") == "JUNGLE" and res.info("LeeSin", "enemy").source == "smite"
+    assert res.role_of("Darius", "enemy") == "TOP"
+
+
+def test_two_smiters_position_jungle_breaks_the_tie() -> None:
+    me = P("Garen", "ORDER", "TOP")
+    enemies = [P("Darius", "CHAOS", "TOP", smite=True), P("Graves", "CHAOS", "JUNGLE", smite=True),
+               P("Ahri", "CHAOS", "MIDDLE"), P("Jinx", "CHAOS", "BOTTOM"), P("Lulu", "CHAOS", "UTILITY")]
+    res = RoleResolver()
+    res.update(0.0, None, game(me, [], enemies))
+    assert res.enemy_jungler() == "Graves" and res.role_of("Darius", "enemy") == "TOP"
+
+
+def test_no_smite_no_position_means_no_jungler() -> None:
+    """ARAM / Arena / custom: nobody has Smite nor a JUNGLE position -> never name a jungler."""
+    me = P("Vladimir", "ORDER")
+    allies = [P("Hwei", "ORDER"), P("Morgana", "ORDER"), P("Anivia", "ORDER"), P("Aatrox", "ORDER")]
+    enemies = [P("Heimerdinger", "CHAOS"), P("Ashe", "CHAOS"), P("Azir", "CHAOS"), P("Samira", "CHAOS"),
+               P("Kayle", "CHAOS")]
+    res = RoleResolver()
+    res.update(0.0, None, game(me, allies, enemies))
+    assert res.enemy_jungler() is None
+    assert all(i.role != "JUNGLE" for i in res.roles().values())
+    # the other role guesses are kept
+    assert sum(1 for i in res.roles().values() if i.side == "enemy" and i.role) == 4
+
+
+def test_jungle_position_without_any_smite_is_still_trusted() -> None:
+    me = P("Garen", "ORDER", "TOP")
+    enemies = [P("Darius", "CHAOS", "TOP"), P("Shaco", "CHAOS", "JUNGLE"), P("Ahri", "CHAOS", "MIDDLE")]
+    res = RoleResolver()
+    res.update(0.0, None, game(me, [], enemies))
+    assert res.enemy_jungler() == "Shaco"

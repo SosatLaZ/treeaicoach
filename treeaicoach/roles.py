@@ -12,7 +12,10 @@
 1. the Riot ``position`` of the Live Client Data API when present (dominant score), unless the
    champions + summoner spells of two players strongly say they swapped (``Heal`` on the "mid",
    ``Teleport`` on the "ADC"...) and the map has not decided yet;
-2. else Smite => JUNGLE (a player without Smite in a team that has one is not the jungler);
+2. Smite => JUNGLE, above the Riot position (a player without Smite in a team that has one is
+   not the jungler; two smiters: the Riot position JUNGLE breaks the tie). A team with no Smite
+   and no Riot position JUNGLE (ARAM, Arena, custom...) has NO jungler: the player the
+   assignment would call JUNGLE gets ``role=None`` (never "jungler" on a guess);
 3. else inference from
    * the early-game minimap occupancy (visible time per lane / jungle between 1:30 and 5:00 of
      game time, accumulated from the :class:`~treeaicoach.tracker.Tracker`),
@@ -127,7 +130,10 @@ SPELL_HINTS: dict[str, dict[str, float]] = {
     "cleanse": {BOTTOM: 0.5},
 }
 RIOT_SCORE = 100.0
-SMITE_SCORE = 50.0
+# Smite is the authority for JUNGLE: it beats the champ select position (a player listed JUNGLE
+# without Smite while a team mate has it is not the jungler) and an observed lane. Two smiters:
+# both get it, the Riot position JUNGLE breaks the tie.
+SMITE_SCORE = 300.0
 NO_SMITE_PENALTY = 3.0
 
 # Early-game occupancy (game time window, seconds) and weights.
@@ -393,10 +399,11 @@ class RoleResolver:
             return ob.lane if ob is not None else None
 
     def enemy_jungler(self) -> str | None:
-        """Alias of the enemy assigned JUNGLE (None if unknown)."""
+        """Alias of the enemy jungler: the enemy with Smite (two smiters: the one assigned
+        JUNGLE), else the Riot position JUNGLE. None when neither says so (never a guess)."""
         with self._lock:
             for (_k, side), info in self._roles.items():
-                if side == "enemy" and info.role == JUNGLE:
+                if side == "enemy" and info.role == JUNGLE and (info.source == "smite" or info.assigned == JUNGLE):
                     return info.alias
         return None
 
@@ -586,7 +593,8 @@ class RoleResolver:
                     conf = 0.3 + 0.5 * c
         if riot is not None:
             scores[riot] += RIOT_SCORE
-            source, conf = ("inferred", 0.6) if riot_fix else ("riot", 1.0)
+            if "smite" not in kinds or riot == JUNGLE:   # Smite outranks a non-jungle position
+                source, conf = ("inferred", 0.6) if riot_fix else ("riot", 1.0)
         ob = self._obs.get((_norm(alias), side))
         if ob is not None and ob.lane in LANE_ROLES and "smite" not in kinds:
             for role in LANE_ROLES[ob.lane]:
@@ -622,6 +630,10 @@ class RoleResolver:
                     source, conf = "observed", 0.9          # seen laning there (lane swap)
                 elif source == "riot" and riot != role:
                     source, conf = "inferred", 0.5          # conflicting Riot positions
+                if role == JUNGLE and source != "smite" and riot != JUNGLE and not smite \
+                        and not any(normalize_role(getattr(q, "position", None)) == JUNGLE
+                                    for q, _m in team_players):
+                    role, conf = None, 0.0                  # no Smite, no JUNGLE position: no jungler
                 info = RoleInfo(alias=alias, team=str(getattr(p, "team", "") or ""), side=side,
                                 role=role, source=source, is_me=is_me, confidence=conf,
                                 assigned=riot, lane_seen=lane)
