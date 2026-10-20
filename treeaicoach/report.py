@@ -894,6 +894,21 @@ def _scoreboard_section(a: dict) -> str:
     return f'<div class="panel"><h2>Tableau des scores (Tab)</h2>{body}</div>'
 
 
+def _item_img(key: Any, kind: str = "item", px: int = 24) -> str:
+    """Inline icon (data URI) of an item / summoner spell / rune for the report, "" when absent."""
+    try:
+        from treeaicoach import item_icons
+
+        uri = _data_uri_png(item_icons.png_bytes(kind, key))
+    except Exception:
+        uri = None
+    if not uri:
+        return ""
+    rad = "50%" if kind == "perk" else "4px"
+    return (f'<img src="{uri}" alt="" width="{px}" height="{px}" '
+            f'style="vertical-align:middle;margin-right:6px;border-radius:{rad}">')
+
+
 def _meta_build_section(record: dict) -> str:
     """My final items vs the meta build of the patch (:mod:`treeaicoach.meta_builds`): core items
     bought / missing, situational items with their win rate, items outside the meta, the spells and
@@ -915,10 +930,26 @@ def _meta_build_section(record: dict) -> str:
         return ""
     c = meta_builds.compare(build, final, items)
     d = meta_builds.describe(build, items)
-    chips = "".join(f'<span class="chip">{_e(n)}</span>' for n in c["core_done"])
-    chips += "".join(f'<span class="chip" style="opacity:.55">{_e(n)} (manque)</span>' for n in c["core_missing"])
-    chips += "".join(f'<span class="chip">{_e(n)} · {wr:g} %</span>' for n, wr in c["options_bought"])
-    chips += "".join(f'<span class="chip" style="border-style:dashed">{_e(n)} (hors méta)</span>' for n in c["off_meta"])
+    # the build with its icons, OP.GG style: core in buy order (missing ones faded), then my other items
+    own = {int(i) for i in final if isinstance(i, (int, float)) and int(i) > 0}
+    opts = {i: wr for i, wr, _n in build.options}
+    chips = ""
+    for iid in meta_builds.core_to_buy(build, items):
+        name = _e(items[iid].name if iid in items else str(iid))
+        if iid in own:
+            chips += f'<span class="chip">{_item_img(iid)}{name}</span>'
+        else:
+            chips += f'<span class="chip" style="opacity:.55">{_item_img(iid)}{name} (manque)</span>'
+    for iid in sorted(own):
+        it = items.get(iid)
+        if it is None or iid in build.core or it.kind not in ("legendary", "boots"):
+            continue
+        if iid in opts:
+            chips += f'<span class="chip">{_item_img(iid)}{_e(it.name)} · {opts[iid]:g} %</span>'
+        elif it.kind == "legendary":
+            chips += f'<span class="chip" style="border-style:dashed">{_item_img(iid)}{_e(it.name)} (hors méta)</span>'
+    extra = "".join(_item_img(k, kind="spell") for k in build.spells[:2])
+    extra += "".join(_item_img(k, kind="perk") for k in build.runes[:1])
     lis = []
     if c["core_missing"]:
         lis.append(("warn", "Objets du build jamais achetés : " + ", ".join(c["core_missing"])))
@@ -930,7 +961,8 @@ def _meta_build_section(record: dict) -> str:
     if d.get("spells") or d.get("runes"):
         lis.append(("info", "Sorts et runes du build : " + " · ".join(x for x in (d.get("spells"), d.get("runes")) if x)))
     sym = {"warn": "!", "good": "✓", "info": "i"}
-    ul = "".join(f'<li class="{k}"><span class="i">{sym[k]}</span><span>{_e(t)}</span></li>' for k, t in lis)
+    ul = "".join(f'<li class="{k}"><span class="i">{sym[k]}</span><span>'
+                 f'{extra if t.startswith("Sorts et runes") else ""}{_e(t)}</span></li>' for k, t in lis)
     score = f' · build suivi à {int(c["score"])} %' if c.get("score") is not None else ""
     head = (f'<p>Build du moment : <b>{_e(d.get("core", ""))}</b>{_e(score)}</p>'
             f'<p class="lg" style="flex-wrap:wrap">{chips}</p>'

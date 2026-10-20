@@ -22,6 +22,12 @@ log = logging.getLogger(__name__)
 
 #: seconds the card stays after leaving the base (the shop closes, the card follows)
 LINGER_S = 4.0
+#: after a respawn I stand in my fountain, but the tracker needs a few seconds to see me there
+RESPAWN_LINGER_S = 8.0
+#: after the card is gone, a "Achète X : tu as l'or" line of the shop (tips.py, 12 s) is stale: hidden
+TAIL_S = 12.0
+#: no item card in the first minutes (the start in the fountain belongs to the team plan)
+MIN_GT = 150.0
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,35 @@ class ItemCard:
     shop: bool                 # I can shop now (in base / dead, or lingering after the base)
     meta: bool = False         # the item comes from the live meta build
     sub_short: str = ""        # the same, shorter ("objet 2 du build (55 %)"), when ``sub`` does not fit
+    buy_ids: tuple[int, ...] = ()   # components the gold buys now (the whole item is not affordable)
+    buy_names: tuple[str, ...] = ()
+    buy_gold: int = 0               # their cost
+    ward: bool = False              # the gold left also buys a control ward (itemization extras)
+
+    @property
+    def shown_price(self) -> int:
+        """The price printed: the components bought now, else the whole item."""
+        return int(self.buy_gold) if self.buy_ids and not self.affordable else int(self.price)
+
+    @property
+    def buy_now(self) -> bool:
+        """Something is bought now: the whole item, or its components (green border)."""
+        return self.affordable or bool(self.buy_ids)
+
+    @property
+    def title(self) -> str:
+        """Verb first: "Achète Estropieur" / "Achète Phage" (component now) / "Vise Estropieur"."""
+        tail = " + balise" if self.ward else ""
+        if self.affordable:
+            return f"Achète {self.name}{tail}"
+        if self.buy_names:      # the first component only: the title does not flicker as the gold grows
+            return f"Achète {self.buy_names[0]}{tail}"
+        return f"Vise {self.name}"
+
+    @property
+    def icon_id(self) -> int:
+        """The icon shown: what the click buys now (the component), else the item itself."""
+        return int(self.buy_ids[0]) if self.buy_ids and not self.affordable else int(self.item_id)
 
     @property
     def missing(self) -> int:
@@ -78,16 +113,29 @@ def build_card(rec: Any, gold: float, owned: Any = (), shop: bool = False,
         gold_i = int(max(0.0, float(gold or 0.0)))
         affordable = bool(price > 0 and gold_i >= price)
         why, why_short = _why(rec)
+        buy_ids: tuple[int, ...] = ()
+        buy_names: tuple[str, ...] = ()
+        buy_gold = 0
         if affordable:
             sub, short = (why, why_short) if why else ("tu as l'or : achète-le", "tu as l'or")
-        elif getattr(rec, "buy_now_names", ()) and not getattr(rec, "completes", False):
-            names = list(rec.buy_now_names)
-            sub, short = "pour l'instant : " + " + ".join(names[:2]), "pour l'instant : " + names[0]
+        elif getattr(rec, "buy_now", ()) and not getattr(rec, "completes", False):
+            # a component now, on the way to the item: "Achète Phage" · "vers Estropieur (objet 2 du build)"
+            buy_ids = tuple(int(i) for i in rec.buy_now)[:2]
+            buy_names = tuple(str(n) for n in getattr(rec, "buy_now_names", ()) or ())[:2]
+            pool = list(own)
+            for b in buy_ids:
+                buy_gold += int(iz.remaining_cost(b, pool, items)) if b in items else 0
+                pool.append(b)
+            head = f"vers {rec.item_name}"
+            if len(buy_names) > 1:
+                head = f"puis {buy_names[1]}, " + head
+            sub, short = (f"{head} ({why_short})" if why.startswith("objet") else head), f"vers {rec.item_name}"
         else:
             miss = f"il manque {fmt_gold(max(0, price - gold_i))} PO"
             sub, short = (f"{miss} · {why_short}" if why.startswith("objet") else miss), miss
         return ItemCard(iid, str(rec.item_name), price, gold_i, affordable, sub, bool(shop),
-                        bool(getattr(rec, "meta", False)), short)
+                        bool(getattr(rec, "meta", False)), short, buy_ids, buy_names, buy_gold,
+                        2055 in tuple(getattr(rec, "extras", ()) or ()))
     except Exception:
         log.debug("item card failed", exc_info=True)
         return None
@@ -99,13 +147,24 @@ class ItemCardState:
 
     def __init__(self) -> None:
         self._last_shop: float | None = None
+        self._last_dead: float | None = None
+
+    def tail(self, now: float) -> bool:
+        """The shop card ended less than :data:`TAIL_S` ago (buy lines of the shop are stale then)."""
+        last = self._last_shop if self._last_dead is None else max(self._last_shop or 0.0, self._last_dead)
+        return last is not None and LINGER_S < float(now) - last <= LINGER_S + TAIL_S
 
     def update(self, now: float, rec: Any, gold: float, owned: Any, in_base: bool, dead: bool,
-               items: dict | None = None) -> ItemCard | None:
+               items: dict | None = None, game_time: float | None = None) -> ItemCard | None:
         try:
+            if game_time is not None and game_time < MIN_GT and not dead:
+                return None              # the start in the fountain: the starting items are the client's
             if in_base or dead:
                 self._last_shop = float(now)
-            shop = self._last_shop is not None and 0.0 <= float(now) - self._last_shop <= LINGER_S
+            if dead:
+                self._last_dead = float(now)
+            shop = (self._last_shop is not None and 0.0 <= float(now) - self._last_shop <= LINGER_S) or \
+                (self._last_dead is not None and 0.0 <= float(now) - self._last_dead <= RESPAWN_LINGER_S)
             if rec is not None and int(getattr(rec, "item_id", 0) or 0) in {int(i) for i in owned or ()}:
                 return None              # just bought: the advice of the next item is not computed yet
             card = build_card(rec, gold, owned, shop=shop, items=items)

@@ -670,7 +670,10 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
         if sev < NEED_MIN or _owned_need(need, owned):
             continue
         fed_need = any(n in prof.fed for n in (prof.names.get(need) or []))   # a fed assassin: rushing is right
-        if meta_first and not fed_need:
+        # a fed enemy and his team's damage type: the defensive buy the game changer calls ("ACHAT
+        # DÉFENSIF") beats the meta core (never two contradictory buy lines, LESSONS 6)
+        fed_any = bool(prof.fed) and need in ("physical", "magic")
+        if meta_first and not (fed_need or fed_any):
             continue
         cands = list(NEED_ITEMS.get(need, {}).get(cls, ()))
         # among the counters of that need, the meta's own situational items first (win-rate data)

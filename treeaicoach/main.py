@@ -165,6 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration", type=float, default=None, help=argparse.SUPPRESS)  # --nogui auto-stop (tests)
     p.add_argument("--version", action="store_true", help="affiche la version")
     p.add_argument("--discord-probe", metavar="FICHIER", default=None, help=argparse.SUPPRESS)
+    p.add_argument("--meta-probe", metavar="FICHIER", default=None, help=argparse.SUPPRESS)
     return p
 
 
@@ -273,6 +274,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(text, end="", flush=True)
             except Exception:              # windowed exe: no console
                 pass
+            return 0
+        if args.meta_probe:
+            from treeaicoach.meta_builds import probe as meta_probe
+
+            Path(args.meta_probe).write_text(meta_probe(), encoding="utf-8")
             return 0
         if args.selftest:
             from treeaicoach.selftest import run_selftest

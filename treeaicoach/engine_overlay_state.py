@@ -441,6 +441,8 @@ class OverlayStateMixin:
                 out["item_hint"] = "Achète " + (" + ".join(names[:2]) if names and not rec.completes
                                                 else rec.item_name)
             out["item_card"] = self._item_card(rec, game, in_base, now)
+            st_ic = getattr(self, "_item_card_state", None)
+            out["buy_tail"] = bool(st_ic is not None and out["item_card"] is None and not in_base and st_ic.tail(now))
             out["ai_counter"] = self.ai_budget_text() or None
             res = self._role_resolver      # compact HUD: objective note only for the objectives my role plays
             role = res.my_role() if res is not None and hasattr(res, "my_role") else None
@@ -496,10 +498,11 @@ class OverlayStateMixin:
             if st is None:
                 st = self._item_card_state = item_card.ItemCardState()
             card = st.update(now, rec, _finite(getattr(game, "current_gold", 0.0)) or 0.0, game.me.items or (),
-                             in_base, bool(getattr(game.me, "is_dead", False)))
+                             in_base, bool(getattr(game.me, "is_dead", False)),
+                             game_time=_finite(getattr(game, "game_time", None)))
             if card is not None and getattr(self, "_item_icon_asked", None) != card.item_id:
                 self._item_icon_asked = card.item_id
-                item_icons.prefetch({"item": [card.item_id]},
+                item_icons.prefetch({"item": [card.item_id, *card.buy_ids]},
                                     allow_network=bool(getattr(self._cfg, "allow_network", True)))
             return card
         except Exception:

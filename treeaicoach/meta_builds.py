@@ -535,7 +535,7 @@ def get(alias: str, role: str | None = None, patch: str | None = None) -> MetaBu
         if 0 <= rg < max(MIN_RUNE_GAMES, RUNE_SHARE * b.matches):
             # U.GG shows its best-win-rate page: on a handful of games it is noise (Swain support
             # 16.20: Moisson noire on 71 games of 7 589); Riot's official page of the role instead
-            riot = _riot_only(alias, role, patch, src_prefix)
+            riot = _riot_only(alias, role, patch, src_prefix, exact=True)
             if riot is not None and riot.runes:
                 b = replace(b, runes=riot.runes, primary_style=riot.primary_style,
                             secondary_style=riot.secondary_style, shards=riot.shards or b.shards)
@@ -545,8 +545,9 @@ def get(alias: str, role: str | None = None, patch: str | None = None) -> MetaBu
         return None
 
 
-def _riot_only(alias: str, role: str, patch: str, src_prefix: str = "") -> MetaBuild | None:
-    """Runes / spells from Riot's recommendations (cache of the patch, else bundled)."""
+def _riot_only(alias: str, role: str, patch: str, src_prefix: str = "", exact: bool = False) -> MetaBuild | None:
+    """Runes / spells from Riot's recommendations (cache of the patch, else bundled); ``exact``: only
+    Riot's page of that very position (Swain has no support page: his mid Conqueror is no better)."""
     key = _champion_key(alias)
     if key <= 0:
         return None
@@ -558,6 +559,8 @@ def _riot_only(alias: str, role: str, patch: str, src_prefix: str = "") -> MetaB
         src = "bundled:" + SOURCE_RIOT
     rows = (table or {}).get(str(key)) if isinstance(table, dict) else None
     if not isinstance(rows, dict) or not rows:
+        return None
+    if exact and role not in rows:
         return None
     row = rows.get(role) or rows.get(next(iter(rows)))
     return build_from_row(alias, role, row, patch=patch, source=src, fetched=str((row or {}).get("fetched") or ""))
@@ -907,6 +910,50 @@ def data_info() -> dict[str, Any]:
     except Exception:
         out["cached"] = []
     return out
+
+
+def probe(champions: Iterable[tuple[str, str]] = (("Garen", "TOP"), ("Swain", "UTILITY"))) -> str:
+    """Packaging check (``--meta-probe FICHIER``, run on the built exe): TLS stack, a live U.GG fetch
+    and a Data Dragon icon download into a throwaway cache, as text. Never raises."""
+    lines = []
+    try:
+        import ssl
+
+        lines.append(f"ssl: {ssl.OPENSSL_VERSION}")
+        try:
+            import certifi
+
+            lines.append(f"certifi: {certifi.where()}")
+        except Exception as exc:
+            lines.append(f"certifi: ABSENT ({exc})")
+        patch = _patch()
+        lines.append(f"patch: {patch} (Data Dragon {_patch_version()})")
+        for alias, role in champions:
+            t0 = time.monotonic()
+            st = refresh(alias, patch, force=True)
+            b = get(alias, role)
+            lines.append(f"{alias} {role}: {st} in {time.monotonic() - t0:.1f} s; source {b.source if b else None}; "
+                         f"core {list(b.core) if b else None}")
+        from treeaicoach import item_icons
+
+        b = get("Garen", "TOP")
+        if b is not None and b.core:
+            item_icons._failed.clear()
+            ok = item_icons._download("item", str(b.core[-1]))
+            lines.append(f"icon download: {'ok' if ok else 'no url'} -> {item_icons.png_path('item', b.core[-1])}")
+        lines.append(f"tls via certifi: {_tls_certifi}")
+    except Exception as exc:
+        lines.append(f"probe error: {type(exc).__name__}: {exc}")
+    return "\n".join(lines) + "\n"
+
+
+def _patch_version() -> str:
+    try:
+        from treeaicoach import game_data
+
+        return game_data.data_version()
+    except Exception:
+        return "?"
 
 
 def _reset(fetch: Callable[[str], Any] | None = None) -> None:

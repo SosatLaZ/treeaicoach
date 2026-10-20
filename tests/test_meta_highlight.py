@@ -175,19 +175,24 @@ def test_icon_download_goes_to_cache(tmp_path):
 
 
 # ----------------------------------------------------------------------------- item card
-def _rec(iid=6631, meta=True, buy=(), completes=False):
+def _rec(iid=6631, meta=True, buy=(), completes=False, buy_ids=()):
     items = iz.load_items()
     return NS(item_id=iid, item_name=items[iid].name, reason="objet 2 du build du moment (55.4 % de victoires)",
-              meta=meta, win_rate=55.4, buy_now_names=buy, completes=completes)
+              meta=meta, win_rate=55.4, buy_now_names=buy, buy_now=buy_ids, completes=completes)
 
 
 def test_item_card_texts():
     c = ic.build_card(_rec(), 3400, [3006], shop=True)
     assert c.affordable and c.price == 3300 and c.sub == "objet 2 du build · 55 % de victoires"
-    c2 = ic.build_card(_rec(buy=("Phage",)), 1300, [3006], shop=True)
-    assert not c2.affordable and c2.sub.startswith("pour l'instant : Phage")
+    assert c.title == "Achète Estropieur" and c.icon_id == 6631 and c.shown_price == 3300
+    c2 = ic.build_card(_rec(buy=("Phage",), buy_ids=(3044,)), 1300, [3006], shop=True)
+    assert not c2.affordable and c2.buy_now and c2.title == "Achète Phage" and c2.icon_id == 3044
+    c2b = ic.build_card(_rec(buy=("Phage", "Dague"), buy_ids=(3044, 1042)), 1500, [3006], shop=True)
+    assert c2b.title == "Achète Phage" and c2b.sub.startswith("puis Dague, vers Estropieur")
+    assert c2.sub.startswith("vers Estropieur") and c2.shown_price == 1100
     c3 = ic.build_card(_rec(), 300, [3006], shop=True)
-    assert c3.sub.startswith("il manque 3") and c3.missing == 3000
+    assert c3.sub.startswith("il manque 3") and c3.missing == 3000 and c3.title == "Vise Estropieur"
+    assert not c3.buy_now
 
 
 def test_item_card_state_shop_linger_and_bought():
@@ -201,6 +206,10 @@ def test_item_card_state_shop_linger_and_bought():
     assert out is not None and out.affordable and not out.shop
     assert st.update(21.0, rec, 3400, [3006, 6631], in_base=True, dead=False) is None  # just bought
     assert st.update(30.0, rec, 100, [3006], in_base=False, dead=True).shop            # dead: shop open
+    # respawned in the fountain before the tracker sees me there: still shown
+    assert st.update(30.0 + ic.RESPAWN_LINGER_S - 1, rec, 100, [3006], in_base=False, dead=False).shop
+    # the start of the game in the fountain belongs to the team plan
+    assert ic.ItemCardState().update(1.0, rec, 500, [], in_base=True, dead=False, game_time=30.0) is None
 
 
 def test_compact_card_priorities():
@@ -216,6 +225,10 @@ def test_compact_card_priorities():
     assert orr.compact_content(orr.OverlayState(item_card=off, game_time=600.0, tip="Va bot : aide ton tireur",
                                                 tip_curated=True))["mode"] != "item"
     assert orr.compact_content(orr.OverlayState(item_card=off, game_time=600.0, tip_curated=True))["mode"] == "item"
+    # dead with a lesson to read: the lesson first
+    dead = orr.OverlayState(item_card=card, game_time=600.0, me_dead=True, tip="Utilise ton Soin avant de mourir",
+                            tip_curated=True)
+    assert orr.compact_content(dead)["mode"] != "item"
     # the gold line naming the item gets its icon
     c4 = orr.compact_content(orr.OverlayState(item_card=off, game_time=600.0, tip="Rentre acheter Estropieur : 3 400 or",
                                               tip_curated=True))
@@ -248,3 +261,27 @@ def test_champ_select_card_has_icon_ids():
     assert any(x.startswith("Monte tes sorts : ") for x in card.lines)
     for i in card.core_ids:
         assert item_icons.png_bytes("item", i)
+
+
+# ----------------------------------------------------------------------------- report
+def test_report_meta_section_has_icons():
+    from treeaicoach import report
+
+    rec = {"meta": {"champion": "Garen", "position": "TOP"},
+           "snapshots": [{"game_time": 900.0, "items": [1055, 3006, 6631, 3071]}]}
+    html = report._meta_build_section(rec)
+    assert "Ton build face à la méta" in html and html.count("<img") >= 5
+    assert "(manque)" in html and "hors méta" in html
+
+
+def test_a_game_changer_buy_line_wins_over_the_item_card():
+    card = ic.build_card(_rec(buy=("Tiamat",), buy_ids=(3077,)), 1300, [3006], shop=True)
+    other = orr.OverlayState(item_card=card, game_time=700.0, in_base=True,
+                             tip="Achète Cotte de mailles : Darius est trop fort (5/0)", tip_curated=True)
+    assert orr.compact_content(other)["line"].startswith("Achète Cotte de mailles")
+    same = orr.OverlayState(item_card=card, game_time=700.0, in_base=True,
+                            tip="Achète Tiamat : tu as l'or", tip_curated=True)
+    assert orr.compact_content(same)["mode"] == "item"
+    # after the shop: the stale shop line is hidden
+    tail = orr.OverlayState(game_time=720.0, buy_tail=True, tip="Achète Tiamat : tu as l'or", tip_curated=True)
+    assert orr.compact_content(tail) is None

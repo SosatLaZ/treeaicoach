@@ -136,7 +136,17 @@ def bundle_icons(data: dict[str, Any], version: str) -> int:
         for r in rows.values():
             want["spell"].update(r.get("spells") or ())
             want["perk"].update([*(r.get("runes") or ())[:1], *(r.get("styles") or ())])
-    want["item"].update((1001, 2055, 3340, 3363, 3364, 2003, 2031))   # boots, control ward, trinkets, potions
+    # boots, control ward, trinkets, potions, the support item and its quest stages / upgrades
+    want["item"].update((1001, 2055, 3340, 3363, 3364, 2003, 2031, 3865, 3866, 3867, 3869, 3870, 3871, 3876, 3877))
+    # their components too (the item card shows the component bought now: "Achète Phage")
+    from treeaicoach.itemization import load_items
+
+    table = load_items(datalib.read_asset("items.json"))
+    for _ in range(2):
+        for iid in list(want["item"]):
+            it = table.get(int(iid))
+            if it is not None:
+                want["item"].update(int(p) for p in it.parts)
     names = data["names"]
     n = 0
     for kind, keys in want.items():

@@ -262,6 +262,8 @@ class HomePage:
                 it = lay.takeAt(0)
                 w = it.widget() if it is not None else None
                 if w is not None:
+                    w.hide()                 # deleteLater alone leaves it drawn until the event loop runs
+                    w.setParent(None)
                     w.deleteLater()
             if card is None:
                 self.cs_icons.hide()

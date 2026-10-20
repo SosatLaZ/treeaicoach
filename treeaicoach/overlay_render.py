@@ -187,6 +187,7 @@ class OverlayState:
     tip_since: float | None = None            # monotonic time the advice line appeared (fade)
     item_hint: str | None = None              # "Achète Zhonya (3 250 or)": chip, in base only
     item_card: Any = None                     # item_card.ItemCard: the next item highlighted (icon, price)
+    buy_tail: bool = False                    # the shop card just ended: a lingering "Achète ..." line is stale
     in_base: bool = False
     ai_counter: str | None = None             # "IA 3/5": chip when nothing more useful
     # pipeline v2: render-time prediction (engine.predict_positions): callable() ->
@@ -2348,14 +2349,18 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
         return {"mode": "careful", "colour": STATE_RGB["careful"], "word": f"{near_e} CONTRE {near_a + 1}",
                 "line": "Recule vers ta tour", "icon": None}
     card = getattr(state, "item_card", None)
-    if card is not None and getattr(card, "shop", False) and tone not in ("danger", "warning"):
-        # I can shop (dead / in base / just left): the next item of my build, highlighted with its icon
+    if card is not None and getattr(card, "shop", False) and tone not in ("danger", "warning") \
+            and not (dead and advice) and not _other_buy(advice, card):
+        # I can shop (in base / just left / dead without a lesson to read): the next item of my build,
+        # highlighted with its icon
         return _item_content(card)
     if dead:
         # dead: the game shows the respawn timer; only the lesson / next action, if any
         if not advice:
             return None
         return {"mode": "ok", "colour": TAI_MUTED, "word": "", "line": advice, "icon": None}
+    if getattr(state, "buy_tail", False) and line_is_buy(advice):
+        advice = ""                                   # the shop card said it; out of base it is stale
     step = _gauge_step(state)
     fixed = getattr(state, "card_careful", None)
     gauge_careful = bool(fixed) if fixed is not None else (step is not None and step <= -1)
@@ -2371,7 +2376,7 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
         line, icon = obj
     if card is not None and line and icon is None and getattr(card, "name", "") and \
             str(card.name).lower() in line.lower():
-        icon = _item_icon(card)                       # "Rentre acheter Estropieur : ..." with its icon
+        icon = _item_icon(card, card.item_id)         # "Rentre acheter Estropieur : ..." with its icon
     if not line and card is not None and getattr(card, "affordable", False):
         return _item_content(card)                    # nothing else to say and the gold buys it: show it
     if not line and step in GAUGE_LINE and _skill(state) in GAUGE_LEVELS and not getattr(state, "tip_curated", False):
@@ -2382,21 +2387,39 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
     return {"mode": mode, "colour": STATE_RGB[mode], "word": "", "line": line, "icon": icon}
 
 
-def _item_icon(card: Any) -> Any:
+def _other_buy(advice: str, card: Any) -> bool:
+    """The card line is a buy instruction for ANOTHER item (a game changer: "Achète Cotte de mailles :
+    Darius est trop fort"): it wins, never two different buys at once (LESSONS 6)."""
+    if not line_is_buy(advice):
+        return False
+    low = advice.lower()
+    if any(w in low for w in ("balise", "potion", "élixir")):
+        return False                                  # consumables of the shop: the card holds the buy
+    names = [str(getattr(card, "name", "") or "")] + [str(n) for n in getattr(card, "buy_names", ()) or ()]
+    return not any(n and n.lower() in low for n in names)
+
+
+def line_is_buy(text: Any) -> bool:
+    """A shop line ("Achète Épée longue : tu as l'or")."""
+    return str(text or "").strip().lower().startswith(("achète ", "achete "))
+
+
+def _item_icon(card: Any, iid: Any = None) -> Any:
     try:
         from treeaicoach import item_icons
 
-        return item_icons.item_rgba(int(card.item_id))
+        return item_icons.item_rgba(int(iid if iid is not None else getattr(card, "icon_id", card.item_id)))
     except Exception:
         return None
 
 
 def _item_content(card: Any) -> dict[str, Any]:
-    """The compact card as the item highlight (``mode`` "item")."""
-    ok = bool(getattr(card, "affordable", False))
-    # verb first (the card is an instruction): "Achète Estropieur" when the gold buys it, else "Vise ..."
-    return {"mode": "item", "colour": TAI_GO if ok else TAI_MUTED, "word": "",
-            "line": f"{'Achète' if ok else 'Vise'} {card.name}", "icon": _item_icon(card), "item": card}
+    """The compact card as the item highlight (``mode`` "item"), verb first: "Achète Estropieur",
+    "Achète Phage" (its component now), "Vise Estropieur" (not enough gold)."""
+    ok = bool(getattr(card, "buy_now", getattr(card, "affordable", False)))
+    title = str(getattr(card, "title", "") or f"Vise {card.name}")
+    return {"mode": "item", "colour": TAI_GO if ok else TAI_MUTED, "word": "", "line": title,
+            "icon": _item_icon(card), "item": card}
 
 
 #: item card geometry (UI px at the 300 px reference): icon side, rows
@@ -2488,7 +2511,7 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
     if c["mode"] == "danger":
         bg = _mix(TAI_PANEL, accent, 0.32)
         cv_.rrect(x0, y0, cw, ch, rad, bg, 0.97, border=accent, border_alpha=1.0, border_w=max(1.2, 1.4 * k))
-    elif c["mode"] == "item" and getattr(c.get("item"), "affordable", False):
+    elif c["mode"] == "item" and getattr(c.get("item"), "buy_now", False):
         # the gold buys it now: green border (the highlight), same dark plate
         cv_.rrect(x0, y0, cw, ch, rad, (11, 13, 17), 0.96, border=TAI_GO, border_alpha=1.0, border_w=max(1.5, 1.6 * k))
     else:                                              # solid dark plate (contrast first)
@@ -2523,7 +2546,7 @@ def _draw_item_row(cv_: Canvas, lay: dict[str, Any], c: dict[str, Any], y: float
     k, card = lay["k"], c.get("item")
     left, right = lay["left"], lay["right"]
     s = ITEM_ICON * k
-    ok = bool(getattr(card, "affordable", False))
+    ok = bool(getattr(card, "buy_now", False))
     iy = y + (h - s) / 2
     if c.get("icon") is not None:
         cv_.image(left + s / 2, iy + s / 2, sprite_patch(c["icon"], s))
@@ -2536,11 +2559,11 @@ def _draw_item_row(cv_: Canvas, lay: dict[str, Any], c: dict[str, Any], y: float
     name, f_name = str(c["line"]), lay["f_line"]
     if text_width(name, f_name) > right - tx:
         f_name = get_font(round(13.5 * k), "semibold")
-        if text_width(name, f_name) > right - tx and card is not None:
+        if text_width(name, f_name) > right - tx and card is not None and not getattr(card, "buy_ids", ()):
             name = str(card.name)                      # a long name: the name alone, never cut
     cv_.text(tx, y + 10 * k, fit_text(name, f_name, right - tx), f_name, WHITE, 1.0, shadow=0.0)
     # line 2: the price (green = the gold buys it now) · why / what is missing
-    price = f"{fmt_gold(getattr(card, 'price', 0))} PO"
+    price = f"{fmt_gold(getattr(card, 'shown_price', getattr(card, 'price', 0)))} PO"
     pw = text_width(price + "  ", lay["f_price"])
     cv_.text(tx, y + 29 * k, price, lay["f_price"], TAI_GO if ok else _mix(TAI_MUTED, WHITE, 0.45), 1.0, shadow=0.0)
     avail = right - tx - pw
