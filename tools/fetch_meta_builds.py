@@ -7,7 +7,12 @@ champion, cached in ``training/cache/gamedata``, 0.5 s between requests), Commun
 ``champion-rune-recommendations.json`` (official Riot data), Data Dragon ``runesReforged.json`` /
 ``summoner.json`` (fr_FR). The patch is the bundled item table's version (``assets/items.json``).
 
-Usage:  python tools/fetch_meta_builds.py [--out path] [--champions Garen,Swain,...] [--limit 60] [--offline]
+``--icons``: also bundle the icons the build highlight shows offline (``assets/icons/{item,spell,perk}``,
+48 px PNG): every item of the bundled builds (start, core, best options), the summoner spells and the
+keystones / rune trees (:mod:`treeaicoach.item_icons`).
+
+Usage:  python tools/fetch_meta_builds.py [--out path] [--champions Garen,Swain,...] [--limit 60]
+        [--patch 16_20] [--icons] [--offline]
 """
 from __future__ import annotations
 
@@ -65,10 +70,10 @@ def fetch_champion(alias: str, patch: str, items: dict, offline: bool) -> dict[s
     return mb.keep_roles(roles) or None
 
 
-def build(champions: list[str], offline: bool = False, limit: int = 60) -> dict[str, Any]:
+def build(champions: list[str], offline: bool = False, limit: int = 60, patch: str = "") -> dict[str, Any]:
     items_table = datalib.read_asset("items.json")
     version = str(items_table.get("version") or "")
-    patch = mb.patch_key(version)
+    patch = patch or mb.patch_key(version)
     from treeaicoach.itemization import load_items
 
     items = load_items(items_table)
@@ -109,15 +114,81 @@ def build(champions: list[str], offline: bool = False, limit: int = 60) -> dict[
             "champions": champs, "riot": riot, "names": names}
 
 
+def bundle_icons(data: dict[str, Any], version: str) -> int:
+    """Download and bundle (48 px PNG) the icons of the bundled builds. Returns the icon count."""
+    import urllib.request
+
+    import cv2
+    import numpy as np
+
+    want: dict[str, set] = {"item": set(), "spell": set(), "perk": set()}
+    for c in data["champions"].values():
+        for r in c["roles"].values():
+            b = mb.build_from_row("x", "TOP", r)
+            if b is None:
+                continue
+            want["item"].update(b.start)
+            want["item"].update(b.core)
+            want["item"].update(i for i, _w, _n in b.options[:4])
+            want["spell"].update(b.spells[:2])
+            want["perk"].update([*b.runes[:1], b.primary_style, b.secondary_style])
+    for rows in data["riot"].values():
+        for r in rows.values():
+            want["spell"].update(r.get("spells") or ())
+            want["perk"].update([*(r.get("runes") or ())[:1], *(r.get("styles") or ())])
+    want["item"].update((1001, 2055, 3340, 3363, 3364, 2003, 2031))   # boots, control ward, trinkets, potions
+    names = data["names"]
+    n = 0
+    for kind, keys in want.items():
+        folder = ROOT / "treeaicoach" / "assets" / "icons" / kind
+        folder.mkdir(parents=True, exist_ok=True)
+        for key in sorted(str(k) for k in keys if k):
+            if kind == "item":
+                url, fname = f"{datalib.DDRAGON}/cdn/{version}/img/item/{key}.png", f"{key}.png"
+            elif kind == "spell":
+                img = names.get("spell_images", {}).get(key)
+                if not img:
+                    continue
+                url, fname = f"{datalib.DDRAGON}/cdn/{version}/img/spell/{img}", img
+            else:
+                path = names.get("perk_icons", {}).get(key)
+                if not path:
+                    continue
+                url, fname = f"{datalib.DDRAGON}/cdn/img/{path}", f"{key}.png"
+            dest = folder / fname
+            if dest.is_file():
+                n += 1
+                continue
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": mb.USER_AGENT})
+                with urllib.request.urlopen(req, timeout=20) as resp:   # noqa: S310
+                    raw = resp.read()
+                img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
+                if img is None:
+                    raise ValueError("not an image")
+                img = cv2.resize(img, (48, 48), interpolation=cv2.INTER_AREA)
+                ok, png = cv2.imencode(".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+                if ok:
+                    dest.write_bytes(png.tobytes())
+                    n += 1
+            except Exception as exc:
+                print(f"  ! icon {kind}/{key}: {exc}")
+    return n
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default=str(OUT))
     ap.add_argument("--champions", default="", help="comma-separated aliases (default: the popular list)")
     ap.add_argument("--limit", type=int, default=60)
     ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--patch", default="", help="U.GG patch key (default: the bundled items' version)")
+    ap.add_argument("--icons", action="store_true", help="also bundle the build icons (48 px)")
     args = ap.parse_args(argv)
     champs = [c.strip() for c in args.champions.split(",") if c.strip()] or list(DEFAULT_CHAMPIONS)
-    data = build(champs, offline=args.offline, limit=args.limit)
+    data = build(champs, offline=args.offline, limit=args.limit, patch=args.patch)
+    if args.icons:
+        print(f"icons: {bundle_icons(data, data['version'])} bundled")
     out = Path(args.out)
     datalib.write_json(out, data, indent=None)
     n_roles = sum(len(c["roles"]) for c in data["champions"].values())

@@ -37,7 +37,7 @@ import tempfile
 import threading
 import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -74,6 +74,11 @@ ROLES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
 MIN_MATCHES = 200                                       # a role with fewer games: next tier / unknown
 ROLE_SHARE = 0.05                                       # a role played less than 5 % of the champion's games is noise
 OPTION_SHARE = 0.04                                     # a situational item needs 4 % of the slot's games
+MIN_OPTION_GAMES = 60                                   # ... and 60 games (a 100 % win rate on 6 games is noise)
+MIN_CORE_GAMES = 300                                    # the core's win rate is printed from 300 games only
+MIN_RUNE_GAMES = 150                                    # a rune page under 150 games / 3 % of the role (U.GG
+RUNE_SHARE = 0.03                                       # picks pages by win rate): Riot's official page instead
+STALE_S = 3 * 24 * 3600.0                               # a cache file older than 3 days is refetched (same patch)
 SR_MAP = 11
 
 _lock = threading.RLock()
@@ -109,6 +114,12 @@ class MetaBuild:
     wins: int = 0
     matches: int = 0
     core_wr: float = 0.0              # win rate of the core items (%)
+    core_games: int = -1              # games of that core (-1: unknown, old cache rows)
+
+    @property
+    def core_wr_ok(self) -> float:
+        """The core's win rate when it rests on enough games (:data:`MIN_CORE_GAMES`), else 0."""
+        return self.core_wr if self.core_wr and (self.core_games < 0 or self.core_games >= MIN_CORE_GAMES) else 0.0
 
     @property
     def win_rate(self) -> float:
@@ -125,7 +136,7 @@ class MetaBuild:
         out = []
         for slot in self.slots:
             for iid, wr, n in slot:
-                if iid not in seen:
+                if iid not in seen and n >= MIN_OPTION_GAMES:
                     seen.add(iid)
                     out.append((iid, wr, n))
         return tuple(sorted(out, key=lambda x: (-x[1], -x[2])))
@@ -135,7 +146,8 @@ class MetaBuild:
                 "slots": [[list(o) for o in s] for s in self.slots], "spells": list(self.spells),
                 "runes": list(self.runes), "styles": [self.primary_style, self.secondary_style],
                 "shards": list(self.shards), "skills": list(self.skill_order), "max": self.skill_max,
-                "wins": self.wins, "matches": self.matches, "core_wr": self.core_wr, "tier": self.tier}
+                "wins": self.wins, "matches": self.matches, "core_wr": self.core_wr, "core_games": self.core_games,
+                "tier": self.tier}
 
 
 def _ints(xs: Any) -> tuple[int, ...]:
@@ -181,7 +193,8 @@ def build_from_row(alias: str, role: str, row: Any, patch: str = "", source: str
                       secondary_style=styles[1] if len(styles) > 1 else 0, shards=_ints(row.get("shards")),
                       skill_order=tuple(str(s) for s in (row.get("skills") or ()) if str(s) in "QWER" and s),
                       skill_max=str(row.get("max") or ""), wins=int(_f(row.get("wins"))),
-                      matches=int(_f(row.get("matches"))), core_wr=round(_f(row.get("core_wr")), 1))
+                      matches=int(_f(row.get("matches"))), core_wr=round(_f(row.get("core_wr")), 1),
+                      core_games=int(_f(row.get("core_games"), -1)))
         return b if (b.core or b.runes or b.spells) else None
     except Exception:
         log.debug("meta build row rejected", exc_info=True)
@@ -190,9 +203,21 @@ def build_from_row(alias: str, role: str, row: Any, patch: str = "", source: str
 
 # ----------------------------------------------------------------------------- parsing (pure)
 def patch_key(version: str) -> str:
-    """Data Dragon version -> patch key of the sources (``"16.20.1"`` -> ``"16_20"``)."""
+    """Data Dragon / Live Client version -> patch key of the sources (``"16.20.1"`` -> ``"16_20"``,
+    ``"16.20.718.4512"`` -> ``"16_20"``)."""
     parts = [p for p in str(version or "").split(".") if p.isdigit()]
     return f"{parts[0]}_{parts[1]}" if len(parts) >= 2 else ""
+
+
+def previous_patch(patch: str) -> str:
+    """``"16_20"`` -> ``"16_19"`` (``"17_1"`` -> ``"16_24"``); "" when unknown."""
+    try:
+        a, b = (int(x) for x in str(patch).split("_")[:2])
+    except (TypeError, ValueError):
+        return ""
+    if b > 1:
+        return f"{a}_{b - 1}"
+    return f"{a - 1}_24" if a > 1 else ""
 
 
 def _block(x: Any, n: int = 3) -> tuple[int, int, list]:
@@ -262,6 +287,7 @@ def parse_ugg(data: Any, role: str, items: dict[int, Any] | None = None) -> dict
                     "skills": [str(k) for k in (kp[0] if kp and isinstance(kp[0], list) else ()) if str(k) in "QWER"],
                     "max": str(kp[1]) if len(kp) > 1 and isinstance(kp[1], str) else "",
                     "wins": wins, "matches": games, "core_wr": round(100.0 * cw / cg, 1) if cg else 0.0,
+                    "core_games": cg, "rune_games": rg,
                     "tier": UGG_TIER_NAMES.get(tier, tier), "fetched": ts[:10]}
         return None
     except Exception:
@@ -332,20 +358,29 @@ def names_from_ddragon(runes: Any, spells: Any) -> dict[str, dict[str, str]]:
     Dragon ``runesReforged.json`` / ``summoner.json``."""
     perks: dict[str, str] = {}
     styles: dict[str, str] = {}
+    icons: dict[str, str] = {}        # perk / style id -> Data Dragon image path ("perk-images/...png")
     for tree in runes if isinstance(runes, list) else []:
         if not isinstance(tree, dict):
             continue
         styles[str(tree.get("id"))] = str(tree.get("name") or "")
+        if tree.get("icon"):
+            icons[str(tree.get("id"))] = str(tree["icon"])
         for slot in tree.get("slots") or []:
             for r in (slot or {}).get("runes") or []:
                 if isinstance(r, dict):
                     perks[str(r.get("id"))] = str(r.get("name") or "")
+                    if r.get("icon"):
+                        icons[str(r.get("id"))] = str(r["icon"])
     sp: dict[str, str] = {}
+    sp_img: dict[str, str] = {}       # spell key -> Data Dragon image ("SummonerFlash.png")
     data = spells.get("data") if isinstance(spells, dict) else None
     for v in (data or {}).values():
         if isinstance(v, dict) and str(v.get("key") or "").isdigit():
             sp[str(v["key"])] = str(v.get("name") or "")
-    return {"perks": perks, "styles": styles, "spells": sp}
+            img = (v.get("image") or {}).get("full") if isinstance(v.get("image"), dict) else None
+            if img:
+                sp_img[str(v["key"])] = str(img)
+    return {"perks": perks, "styles": styles, "spells": sp, "perk_icons": icons, "spell_images": sp_img}
 
 
 # ----------------------------------------------------------------------------- files
@@ -422,7 +457,7 @@ def names() -> dict[str, dict[str, str]]:
     global _names_mem
     with _lock:
         if _names_mem is None:
-            out = {"perks": {}, "styles": {}, "spells": {}}
+            out = {"perks": {}, "styles": {}, "spells": {}, "perk_icons": {}, "spell_images": {}}
             for src in (bundled().get("names"), _read_json(cache_folder(_patch()) / NAMES_FILE)
                         if cache_folder(_patch()) is not None else None):
                 if isinstance(src, dict):
@@ -467,6 +502,10 @@ def get(alias: str, role: str | None = None, patch: str | None = None) -> MetaBu
             return None
         patch = patch if patch is not None else _patch()
         row = _cached_row(patch, alias) if patch else None
+        if row is None and patch:
+            # patch day: U.GG has no data for the new patch yet; the last patch's cache beats the bundle
+            prev = previous_patch(patch)
+            row = _cached_row(prev, alias) if prev else None
         src_prefix = ""
         if row is None:
             champs = bundled().get("champions") or {}
@@ -490,7 +529,17 @@ def get(alias: str, role: str | None = None, patch: str | None = None) -> MetaBu
         b = build_from_row(alias, role, roles.get(role), patch=str(row.get("patch") or patch),
                            source=src_prefix + str(row.get("source") or SOURCE_UGG),
                            fetched=str((roles.get(role) or {}).get("fetched") or row.get("fetched") or ""))
-        return b if b is not None else _riot_only(alias, role, patch, src_prefix)
+        if b is None:
+            return _riot_only(alias, role, patch, src_prefix)
+        rg = int(_f((roles.get(role) or {}).get("rune_games"), -1))
+        if 0 <= rg < max(MIN_RUNE_GAMES, RUNE_SHARE * b.matches):
+            # U.GG shows its best-win-rate page: on a handful of games it is noise (Swain support
+            # 16.20: Moisson noire on 71 games of 7 589); Riot's official page of the role instead
+            riot = _riot_only(alias, role, patch, src_prefix)
+            if riot is not None and riot.runes:
+                b = replace(b, runes=riot.runes, primary_style=riot.primary_style,
+                            secondary_style=riot.secondary_style, shards=riot.shards or b.shards)
+        return b
     except Exception:
         log.debug("meta_builds.get failed", exc_info=True)
         return None
@@ -519,12 +568,52 @@ def _get_json(url: str) -> Any:
     hook = _fetch_hook
     if hook is not None:
         return hook(url)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:   # noqa: S310 - fixed https hosts
-        data = resp.read(MAX_BYTES + 1)
+    data = get_bytes(url, "application/json")
     if len(data) > MAX_BYTES:
         raise ValueError(f"{url}: response too large")
     return json.loads(data.decode("utf-8"))
+
+
+_tls_certifi = False      # the system store refused a host once: certifi's bundle from then on
+
+
+def _certifi_context() -> Any:
+    import ssl
+
+    import certifi  # bundled by packaging/treeaicoach.spec (cacert.pem)
+
+    return ssl.create_default_context(cafile=certifi.where())
+
+
+def get_bytes(url: str, accept: str = "*/*", timeout: float = TIMEOUT_S, limit: int = MAX_BYTES) -> bytes:
+    """HTTPS GET (system proxy honoured by urllib). The frozen exe's default TLS context is the
+    Windows store; a machine whose store lacks the CA (old Windows, antivirus TLS proxy without its
+    root...) refuses U.GG / Data Dragon: retried once with certifi's bundle, which then sticks.
+    Raises urllib / ssl errors (callers log them)."""
+    global _tls_certifi
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
+
+    def go(ctx: Any) -> bytes:
+        opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx)) if ctx is not None \
+            else urllib.request.build_opener()
+        with opener.open(req, timeout=timeout) as resp:   # noqa: S310 - fixed https hosts
+            return resp.read(limit + 1)
+
+    if _tls_certifi:
+        return go(_certifi_context())
+    try:
+        return go(None)
+    except Exception as exc:
+        if "certificate" not in (type(exc).__name__ + str(exc)).lower():
+            raise
+        try:
+            ctx = _certifi_context()
+        except Exception:
+            raise exc from None
+        data = go(ctx)
+        _tls_certifi = True
+        log.info("TLS: the system certificate store refused %s; certifi's bundle is used", url.split("/")[2])
+        return data
 
 
 def _stamps(folder: Path) -> dict:
@@ -575,7 +664,15 @@ def refresh(alias: str, patch: str | None = None, force: bool = False, fetch: Ca
                 items = load_items()
             except Exception:
                 items = None
-            data = getter(UGG_URL.format(patch=patch, key=key)) if key > 0 else None
+            try:
+                data = getter(UGG_URL.format(patch=patch, key=key)) if key > 0 else None
+            except Exception as exc:
+                prev = previous_patch(patch)
+                if not prev:
+                    raise
+                # patch day: U.GG publishes the new patch after a few hours; the last one meanwhile
+                log.info("Meta builds (U.GG) patch %s unavailable for %s (%s): patch %s", patch, alias, exc, prev)
+                data = getter(UGG_URL.format(patch=prev, key=key))
             for role in ROLES:
                 row = parse_ugg(data, role, items)
                 if row:
@@ -596,7 +693,8 @@ def refresh(alias: str, patch: str | None = None, force: bool = False, fetch: Ca
         if riot_path.is_file():
             status = status or SOURCE_RIOT
         names_path = folder / NAMES_FILE
-        if not names_path.is_file():
+        old_names = _read_json(names_path) if names_path.is_file() else None
+        if not isinstance(old_names, dict) or not old_names.get("spell_images"):
             try:
                 from treeaicoach import game_data
 
@@ -631,6 +729,15 @@ def refresh(alias: str, patch: str | None = None, force: bool = False, fetch: Ca
     return status
 
 
+def _stale(folder: Path | None, alias: str, now: float | None = None) -> bool:
+    """The champion's cache file is older than :data:`STALE_S` (U.GG data moves during a patch)."""
+    try:
+        p = folder / f"{alias}.json" if folder is not None else None
+        return p is not None and p.is_file() and (time.time() if now is None else now) - p.stat().st_mtime > STALE_S
+    except OSError:
+        return False
+
+
 def ensure_async(alias: str, role: str | None = None, allow_network: bool = True) -> threading.Thread | None:
     """Fetch the champion's meta build for the current patch in a daemon thread when the cache has
     none (at most one attempt per day). Returns the thread (tests join it) or None. Never raises."""
@@ -642,9 +749,10 @@ def ensure_async(alias: str, role: str | None = None, allow_network: bool = True
         if not patch:
             return None
         row = _cached_row(patch, alias)
-        if row is not None and (not role or str(role).upper() in (row.get("roles") or {})):
-            return None
         folder = cache_folder(patch)
+        if row is not None and (not role or str(role).upper() in (row.get("roles") or {})) \
+                and not _stale(folder, alias):
+            return None
         if folder is None or not _due(folder, alias, time.time()):
             return None
         with _lock:
@@ -690,9 +798,9 @@ def next_item(build: MetaBuild, owned: Iterable[int], items: dict[int, Any] | No
                 continue
             if ok(iid):
                 why = f"objet {core_done + 1} du build du moment"
-                if build.core_wr:
-                    why += f" ({build.core_wr:g} % de victoires)"
-                return iid, why, float(build.core_wr)
+                if build.core_wr_ok:
+                    why += f" ({build.core_wr_ok:g} % de victoires)"
+                return iid, why, float(build.core_wr_ok)
         for iid, wr, _n in build.options:
             if ok(iid):
                 return iid, f"objet situationnel le plus gagnant ({wr:g} % de victoires)", float(wr)
