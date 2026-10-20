@@ -230,4 +230,4 @@ def test_hard_cap_of_ten_requests_per_game():
     assert b.exhausted
     assert b.pick("comeback:gold_swing", 1500.0) is None
     assert b.pick("base", 300.0) is None
-    assert b.snapshot()["cap"] == GAME_HARD_CAP == 10
+    assert b.snapshot()["cap"] == GAME_HARD_CAP == 15

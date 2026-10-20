@@ -280,7 +280,7 @@ def test_bug_hard_cap_counts_failed_requests():
         adv.poll()
     assert adv.budget.sent == ai.GAME_HARD_CAP and adv.budget.exhausted
     adv._blocked_until = -math.inf
-    assert "Limite de 10" in adv.ask(99999.0, G(600.0))
+    assert f"Limite de {ai.GAME_HARD_CAP}" in adv.ask(99999.0, G(600.0))
 
 
 def test_bug_unusable_answer_gives_the_slot_back():

@@ -117,7 +117,7 @@ AUTO_BUDGET = len(SLOTS)
 URGENT_BUDGET = 1
 #: hard ceiling of AI requests per game, all kinds together (automatic + urgence + manual).
 #: Everything else is the rule-based engine (rule_plan), which costs nothing.
-GAME_HARD_CAP = 10
+GAME_HARD_CAP = 15
 URGENT_REASONS = frozenset({"gold", "death_streak", "teamfight"})
 URGENT_MIN_INTERVAL_S = 30.0
 MID_GAME_S = 14 * 60.0
