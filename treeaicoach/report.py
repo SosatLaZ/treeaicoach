@@ -932,8 +932,10 @@ def _meta_build_section(record: dict) -> str:
     sym = {"warn": "!", "good": "✓", "info": "i"}
     ul = "".join(f'<li class="{k}"><span class="i">{sym[k]}</span><span>{_e(t)}</span></li>' for k, t in lis)
     score = f' · build suivi à {int(c["score"])} %' if c.get("score") is not None else ""
-    head = (f'<p>Build du moment ({_e(d.get("source", ""))}) : <b>{_e(d.get("core", ""))}</b>{_e(score)}</p>'
-            f'<p class="lg" style="flex-wrap:wrap">{chips}</p>')
+    head = (f'<p>Build du moment : <b>{_e(d.get("core", ""))}</b>{_e(score)}</p>'
+            f'<p class="lg" style="flex-wrap:wrap">{chips}</p>'
+            f'<p style="color:{MUTED};font-size:12.5px">Source : {_e(d.get("source", ""))} · '
+            f'{int(build.matches)} parties classées</p>')
     return f'<div class="panel"><h2>Ton build face à la méta</h2>{head}<ul class="tips">{ul}</ul></div>'
 
 

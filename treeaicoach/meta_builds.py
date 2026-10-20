@@ -702,6 +702,14 @@ def next_item(build: MetaBuild, owned: Iterable[int], items: dict[int, Any] | No
         return None
 
 
+def core_to_buy(build: MetaBuild, items: dict[int, Any] | None = None) -> tuple[int, ...]:
+    """The core items one actually buys: starters (the support quest upgrade heads the support
+    core) and consumables are left out."""
+    if items is None:
+        return build.core
+    return tuple(i for i in build.core if getattr(items.get(i), "kind", "legendary") not in ("starter", "consumable"))
+
+
 def _item_name(iid: int, items: dict[int, Any] | None) -> str:
     it = items.get(iid) if items else None
     if it is not None and getattr(it, "name", ""):
@@ -732,8 +740,8 @@ def describe(build: MetaBuild | None, items: dict[int, Any] | None = None) -> di
                 out["runes"] = key + (f" ({p} + {s})" if p and s else f" ({p})" if p else "")
         if build.start:
             out["start"] = " + ".join(_item_name(i, items) for i in build.start[:3])
-        if build.core:
-            out["core"] = " → ".join(_item_name(i, items) for i in build.core[:3])
+        if core_to_buy(build, items):
+            out["core"] = " → ".join(_item_name(i, items) for i in core_to_buy(build, items)[:3])
         opts = build.options[:3]
         if opts:
             out["options"] = ", ".join(f"{_item_name(i, items)} ({wr:g} %)" for i, wr, _n in opts)
@@ -759,7 +767,10 @@ def compare(build: MetaBuild | None, final_items: Iterable[int], items: dict[int
         own = {int(i) for i in final_items or () if int(i) > 0}
         if items:
             own = {i for i in own if i in items and getattr(items[i], "kind", "") in ("legendary", "boots")}
-        for iid in build.core:
+        core = core_to_buy(build, items)
+        if not core:
+            return out
+        for iid in core:
             (out["core_done"] if iid in own else out["core_missing"]).append(_item_name(iid, items))
         opts = {i: wr for i, wr, _n in build.options}
         for iid in sorted(own):
@@ -769,9 +780,7 @@ def compare(build: MetaBuild | None, final_items: Iterable[int], items: dict[int
                 out["options_bought"].append((_item_name(iid, items), opts[iid]))
             elif items is None or getattr(items.get(iid), "kind", "") == "legendary":
                 out["off_meta"].append(_item_name(iid, items))
-        n = len(build.core)
-        bought = len(out["core_done"]) + len(out["options_bought"])
-        out["score"] = int(round(100.0 * min(1.0, bought / max(1, n + 1)) - 10 * len(out["off_meta"])))
+        out["score"] = int(round(100.0 * len(out["core_done"]) / len(core) - 10 * len(out["off_meta"])))
         out["score"] = max(0, min(100, out["score"]))
     except Exception:
         log.debug("compare failed", exc_info=True)
