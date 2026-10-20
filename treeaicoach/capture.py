@@ -681,7 +681,7 @@ class SmartCapture:
         """Stop using backend ``name`` for this session (logged once)."""
         if name in self._disabled:
             return
-        self._disabled[name] = str(reason)[:200]
+        self._disabled[name] = str(reason)[:300]
         self.stats["disabled"] = dict(self._disabled)
         log.info("Capture backend %s disabled: %s", name, reason)
         impl = self._impl.pop(name, None)
@@ -692,7 +692,7 @@ class SmartCapture:
                 pass
         self._event(f"{name} disabled: {reason}")
         if name == self.current:
-            self._switch(f"{name} disabled ({str(reason)[:80]})")
+            self._switch(f"{name} disabled ({str(reason)[:240]})")
 
     def _event(self, text: str) -> None:
         """Capture event kept for the diagnostics (``stats["events"]``, last 12)."""
@@ -710,7 +710,10 @@ class SmartCapture:
             return
         wait = CROSSCHECK_RETRY_S[self._xc_fails - 1]
         self._suspended[name] = self._clock() + wait
+        impl = self._impl.get(name)
         self.disable(name, f"suspended {wait:.0f} s: {reason}")
+        if impl is not None:
+            self._impl[name] = impl          # kept (closed): it remembers the outputs already dropped
         self.stats["suspended"] = {n: round(v, 1) for n, v in self._suspended.items()}
 
     def _resume_due(self) -> None:
@@ -815,7 +818,40 @@ class SmartCapture:
             return
         what = "black / partial DXGI frame" if verdict == "invalid" else "image differs from mss"
         detail = ", ".join(f"{k} {v}" for k, v in info.items())
-        self._suspend("dxgi", f"{what} ({detail})")
+        where = self._dxgi_where()
+        reason = f"{what} ({detail})" + (f" on {where}" if where else "")
+        # the frames of this adapter x output are wrong: the backend drops it for the next
+        # candidate (hybrid laptop: the GPU that does not drive the panel; a cloned TV...); with a
+        # single candidate the black frame means the game is drawn on an overlay plane the
+        # duplication does not see (MPO / independent flip): mss stays, the record says so
+        impl = self._impl.get("dxgi")
+        mark = getattr(impl, "mark_bad", None)
+        rotated = False
+        if callable(mark):
+            try:
+                rotated = bool(mark(what))
+            except Exception:
+                rotated = False
+        if rotated:
+            self._event(f"dxgi output dropped: {where or '?'}")
+            self.stats["dxgi_rotations"] = self.stats.get("dxgi_rotations", 0) + 1
+            reason += "; next output tried"
+        elif verdict == "invalid":
+            reason += "; single output: an overlay plane (MPO / flip) probably hides the game from the duplication"
+        self._suspend("dxgi", reason)
+
+    def _dxgi_where(self) -> str:
+        """``output / adapter / format`` of the DXGI backend (``""`` when unknown)."""
+        try:
+            impl = self._impl.get("dxgi")
+            desc = getattr(impl, "describe", None)
+            return str(desc() or "") if callable(desc) else ""
+        except Exception:
+            return ""
+
+    def why(self) -> str:
+        """One French sentence for the app ("Système" panel): which backend is used and why."""
+        return capture_why(self.timings())
 
     def check(self, img: Any, t: float, rect: Rect | None = None, allow_stale: bool = True) -> str:
         """Frame health of a minimap image just grabbed: ``"ok"`` | ``"black"`` | ``"stale"``.
@@ -876,6 +912,71 @@ class SmartCapture:
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
+
+
+BACKEND_LABELS = {"dxgi": "rapide (Desktop Duplication)", "mss": "classique (GDI)"}
+
+
+def capture_why(timings: Any) -> str:
+    """French status of the screen capture from :meth:`SmartCapture.timings` (or
+    ``engine.health()["capture"]``): the backend in use and why. Pure, never raises; ``""``
+    when nothing is known yet."""
+    try:
+        if not isinstance(timings, dict) or not timings:
+            return ""
+        backend = str(timings.get("backend") or "")
+        if not backend:
+            return ""
+        label = BACKEND_LABELS.get(backend, backend)
+        bits = [f"{label}"]
+        dx = timings.get("dxgi_stats") if isinstance(timings.get("dxgi_stats"), dict) else {}
+        if backend == "dxgi":
+            where = [str(dx.get("output") or "").split(" ")[0], str(dx.get("adapter") or "")]
+            where = [w for w in where if w]
+            if where:
+                bits.append("sur " + " / ".join(where))
+            fmt = str(dx.get("format") or "")
+            if dx.get("hdr"):
+                bits.append("bureau HDR converti")
+            elif fmt and "B8G8R8" not in fmt:
+                bits.append(f"format {fmt}")
+            fps = timings.get("fps")
+            if isinstance(fps, (int, float)) and fps > 0:
+                bits.append(f"{fps:.0f} img/s")
+        else:
+            disabled = timings.get("disabled") if isinstance(timings.get("disabled"), dict) else {}
+            susp = timings.get("suspended") if isinstance(timings.get("suspended"), dict) else {}
+            reason = str(disabled.get("dxgi") or "")
+            if "dxgi" in susp and "dxgi" in disabled:
+                why = "capture rapide en pause après une image noire, nouvel essai bientôt"
+            elif reason:
+                if "init" in reason or "unavailable" in reason or "unsupported" in reason.lower() \
+                        or "0x8000" in reason or "0x887A" in reason.upper():
+                    why = "capture rapide indisponible sur ce PC"
+                elif "self-check" in reason:
+                    why = "capture rapide écartée par l'auto-diagnostic"
+                elif "overlay plane" in reason or "black" in reason:
+                    why = "capture rapide écartée : image noire"
+                    where = str(dx.get("output") or "").split(" ")[0]
+                    if where:
+                        why += f" sur {where}"
+                    if "overlay plane" in reason:
+                        why += " (jeu dessiné hors du bureau : MPO / flip)"
+                    elif "next output" in reason:
+                        why += " (autre sortie essayée)"
+                elif "differs" in reason:
+                    why = "capture rapide écartée : image différente du bureau"
+                else:
+                    why = "capture rapide écartée"
+            elif timings.get("switches"):
+                why = "après un changement automatique"
+            else:
+                why = "capture rapide non disponible" if sys.platform == "win32" else ""
+            if why:
+                bits.append(why)
+        return " · ".join(b for b in bits if b)
+    except Exception:
+        return ""
 
 
 # ======================================================================================

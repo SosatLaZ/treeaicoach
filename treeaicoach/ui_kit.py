@@ -374,7 +374,7 @@ def subsystem_rows(*, state: str = "", message: str = "", running: bool = False,
                    voice_backend: str = "", muted: bool = False, lcu_text: str = "",
                    lcu_enabled: bool = True, engine_ok: bool = True, ai_provider: str = "off",
                    ai_key_set: bool = False, ai_budget: str = "",
-                   ai_test: tuple[bool, str] | None = None) -> list[SubsystemRow]:
+                   ai_test: tuple[bool, str] | None = None, capture: str = "") -> list[SubsystemRow]:
     """Plain-French status of "Jeu / Minimap / Client LoL / Détection / IA conseil / Voix" for the dashboard.
 
     Each row carries a short fix hint and an action key the UI maps to a button:
@@ -413,6 +413,11 @@ def subsystem_rows(*, state: str = "", message: str = "", running: bool = False,
         rows.append(("minimap", "Minimap", 2, "invisible (plein écran)", "Passer en Sans bordure", "help_borderless"))
     else:
         rows.append(("minimap", "Minimap", -1, "en attente de partie", "", ""))
+    # screen capture backend and why (capture.capture_why; only once the engine captured something)
+    cw = str(capture or "").strip()
+    if cw and running and not demo:
+        lvl = 0 if cw.startswith("rapide") else (1 if ("écart" in cw or "noire" in cw) else -1)
+        rows.append(("capture", "Capture d'écran", lvl, cw, "", ""))
     # League client (post-game truth)
     if not lcu_enabled:
         rows.append(("lcu", "Client LoL", -1, "désactivé", "", ""))

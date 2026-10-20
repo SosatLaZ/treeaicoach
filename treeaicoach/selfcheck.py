@@ -217,6 +217,7 @@ class Snapshot:
     capture_black: bool = False           # engine state CAPTURE_BLACK
     capture_backend: str | None = None
     capture_alt: str | None = None        # fallback backend still available
+    capture_why: str = ""                 # capture.capture_why(): backend in use and why (French)
     # 2 minimap
     locate_method: str | None = None      # auto | manual | fallback | None
     minimap_score: float | None = None    # last verify score
@@ -885,6 +886,8 @@ class SelfCheck:
             self._adapt_note(t, "budget", f"Profil PC faible activé automatiquement ({s.budget_reason or 'auto'})")
         if s.capture_switches > 0 and s.capture_last_switch:
             self._adapt_note(t, "capture", f"Capture changée automatiquement : {s.capture_last_switch}")
+        if s.capture_why and s.capture_backend == "mss" and s.capture_switches == 0 and s.live:
+            self._adapt_note(t, "capture", f"Capture d'écran : {s.capture_why}")
         sc = s.icon_scale
         if sc:
             if st.scale0 is None:
@@ -1345,6 +1348,9 @@ def snapshot_from_engine(eng: Any, t: float) -> Snapshot:
         if isinstance(st, dict):
             s.capture_switches = int(st.get("switches") or 0)
             s.capture_last_switch = st.get("last_switch")
+        why = getattr(cap, "why", None)
+        if callable(why):
+            s.capture_why = str(why() or "")
         m = getattr(eng._detector, "matcher", None) if eng._detector is not None else None
         sc_ = getattr(m, "scale", None) if m is not None else None
         s.icon_scale = float(sc_) if isinstance(sc_, (int, float)) and sc_ > 0 else None

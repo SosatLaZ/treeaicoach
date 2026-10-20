@@ -263,8 +263,17 @@ class DiagRecorder:
             meta["monitors"] = [r.to_dict() for r in monitor_rects()]
         except Exception:
             meta["monitors"] = None
+        try:   # every GPU x display DXGI knows (hybrid laptop, cloned TV...) + the capture's own choice
+            from treeaicoach.dxgi_capture import enumerate_displays
+
+            meta["displays"] = enumerate_displays()
+        except Exception:
+            meta["displays"] = None
         try:
             meta["health"] = eng.health()
+            from treeaicoach.capture import capture_why
+
+            meta["capture_why"] = capture_why((meta["health"] or {}).get("capture"))
         except Exception:
             pass
         _write_json(self.folder / "meta.json", meta)

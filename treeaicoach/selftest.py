@@ -510,6 +510,44 @@ def check_voice(res: CheckResult, ctx: dict[str, Any]) -> None:
         v.stop()
 
 
+def check_capture(res: CheckResult, ctx: dict[str, Any]) -> None:
+    """Pixel decoders of the DXGI backend (every desktop format) + the D3D11 copy / map half on
+    Windows (Desktop Duplication itself needs a real desktop: not judged here)."""
+    from treeaicoach import dxgi_capture as dx
+
+    w, h, pitch = 9, 5, 9 * 4 + 12
+    raw = np.zeros(pitch * h, np.uint8)
+    view = np.lib.stride_tricks.as_strided(raw, (h, w, 4), (pitch, 4, 1))
+    view[..., 0], view[..., 1], view[..., 2], view[..., 3] = 10, 20, 30, 255
+    bgr = dx.convert_pixels(raw, w, h, pitch, dx.DXGI_FORMAT_B8G8R8A8_UNORM)
+    _expect(bgr.shape == (h, w, 3) and tuple(bgr[2, 3]) == (10, 20, 30), "décodage BGRA8 / BGRA8 decode")
+    rgb = dx.convert_pixels(raw, w, h, pitch, 28)
+    _expect(tuple(rgb[2, 3]) == (30, 20, 10), "décodage RGBA8 / RGBA8 decode")
+    words = np.full((h, w), (1023 << 20) | (512 << 10) | 0, np.uint32)      # B 255, G 128, R 0
+    raw10 = np.zeros(pitch * h, np.uint8)
+    np.lib.stride_tricks.as_strided(raw10, (h, w, 4), (pitch, 4, 1))[...] = words.view(np.uint8).reshape(h, w, 4)
+    p10 = dx.convert_pixels(raw10, w, h, pitch, 24)
+    _expect(tuple(p10[0, 0]) == (255, 128, 0), "décodage 10 bits / 10-bit decode")
+    pitch16 = w * 8 + 8
+    raw16 = np.zeros(pitch16 * h, np.uint8)
+    f16 = raw16.view(np.float16).reshape(h, pitch16 // 2)[:, :w * 4].reshape(h, w, 4)
+    f16[..., 0], f16[..., 1], f16[..., 2], f16[..., 3] = 1.0, 0.214, 0.0, 1.0
+    hdr = dx.convert_pixels(raw16, w, h, pitch16, 10)
+    _expect(tuple(hdr[0, 0]) == (0, 128, 255) or abs(int(hdr[0, 0][1]) - 128) <= 2 and hdr[0, 0][2] == 255,
+            "décodage HDR / HDR decode")
+    res.details.append("Formats BGRA8, RGBA8, R10G10B10A2, R16G16B16A16_FLOAT décodés / decoded")
+    displays = dx.enumerate_displays()
+    if displays:
+        res.details.append("Écrans DXGI / DXGI displays: " + "; ".join(displays[:6]))
+    if dx.available():
+        out = dx.self_test_copy()
+        res.details.append(f"D3D11 copie + lecture / copy + map: {out}")
+        _expect(bool(out.get("ok")) or "D3D11CreateDevice" in str(out.get("error")),
+                "copie D3D11 incorrecte / D3D11 copy mismatch")
+    else:
+        res.details.append("Desktop Duplication indisponible ici / unavailable here (normal hors Windows 8+)")
+
+
 CHECKS: list[tuple[str, str, Callable[[CheckResult, dict[str, Any]], None], bool]] = [
     ("Ressources embarquées", "Bundled assets", check_assets, True),
     ("Configuration", "Configuration", check_config, True),
@@ -520,6 +558,7 @@ CHECKS: list[tuple[str, str, Callable[[CheckResult, dict[str, Any]], None], bool
     ("Scénario de démo (moteur complet)", "Demo scenario (full engine)", check_demo, True),
     ("Analyse et rapport d'après-partie", "Post-game analysis and report", check_report, True),
     ("Voix", "Voice", check_voice, True),
+    ("Capture d'écran (DXGI)", "Screen capture (DXGI)", check_capture, False),
 ]
 
 

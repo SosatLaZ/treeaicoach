@@ -194,7 +194,8 @@ class HomePage:
             muted=app._is_muted(), lcu_text=app._lcu_text, lcu_enabled=bool(getattr(app.cfg, "lcu_enabled", True)),
             engine_ok=app.engine is not None or app._busy, ai_provider=str(getattr(app.cfg, "ai_provider", "off")),
             ai_key_set=bool(str(getattr(app.cfg, "ai_api_key", "") or "").strip()), ai_budget=app._ai_budget(),
-            ai_test=None if app._ai_test_busy else app._ai_test)
+            ai_test=None if app._ai_test_busy else app._ai_test,
+            capture=_capture_why(getattr(st, "health", None)))
         for k, label, level, text, fix, action in data:
             row = self.sys_rows.get(k)
             if row is None:
@@ -241,6 +242,15 @@ class HomePage:
         self.cs_title.setText(ui_text(title))
         self.cs_lines.setText("\n".join(ui_text(x) for x in lines[:6]))
         self.cs.show()
+
+
+def _capture_why(health: Any) -> str:
+    try:
+        from treeaicoach.capture import capture_why
+
+        return capture_why(health.get("capture")) if isinstance(health, dict) else ""
+    except Exception:
+        return ""
 
 
 def run_fix(app: Any, action: str) -> None:
