@@ -3,6 +3,20 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.10.0 · 20 octobre 2026
+
+- **Voix naturelle réparée** (bot Discord ET voix du coach sur le PC) : Microsoft refusait l'ancienne version, tout
+  retombait sur la voix Windows. Si elle retombe en panne : voix Windows, puis phrases enregistrées dans l'appli ;
+  jamais le bip seul.
+- **Bot Discord :** volume réglable (plus bas par défaut, bip sous la voix), et options désactivées par défaut :
+  « Dragon / Baron / Larves dans 30 secondes », « Jungler ennemi vu … », résumé de fin, couper la voix du PC quand le
+  bot parle, touche pour faire taire le bot.
+- **Objet suivant mis en avant en jeu :** à la base (ou quand tu as l'or), la carte devient une carte d'objet avec son
+  icône, « Achète … » ou le composant que ton or paie maintenant, le prix et le taux de victoire, bordure verte quand tu
+  peux l'acheter. Icônes des objets, sorts et runes à la sélection des champions et dans le rapport.
+- **Build de la méta d'abord :** les objets de contre ne passent plus avant ton build, sauf contre un ennemi très
+  avancé ; données moins bruitées, patch 26.20.
+
 ## 2.9.0 · 20 octobre 2026
 
 - **Page Discord dans le launcher :** l'état du bot en direct (avec la vraie raison d'une erreur), les étapes cochées
