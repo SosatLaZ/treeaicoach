@@ -146,7 +146,7 @@ class FakeApi(dx._Api):
             args[2]._obj.value = sid
             return S_OK
         if p == 301 and index == dx._CTX_COPY_SUBRESOURCE_REGION:
-            dst, src, box = self._ptr(args[0]), self._ptr(args[5]), args[7]._obj
+            dst, box = self._ptr(args[0]), args[7]._obj
             w, h, fmt = self.staging[dst]
             bpp = dx.FORMAT_BYTES[fmt]
             pitch = w * bpp + 32
@@ -346,6 +346,32 @@ def test_unsupported_desktop_format_fails_cleanly(win):
     install(win, [("GPU", [{"name": r"\\.\DISPLAY1", "desktop": desktop(6), "fmt": 2}])])
     c = dx.DxgiCapture()
     assert c.grab(R) is None and "format 2 not supported" in str(c.last_error) and c.stats["fail"] == 1
+
+
+def test_no_duplication_on_any_output_marks_the_backend_dead(win):
+    """Wine / Remote Desktop: DuplicateOutput E_NOTIMPL on every candidate -> dead (never retried
+    by SmartCapture); one candidate failing for another reason keeps it alive."""
+    api = install(win, [("A", [{"name": r"\.\DISPLAY1", "desktop": None, "out5": False}]),
+                        ("B", [{"name": r"\.\DISPLAY1", "desktop": None, "out5": False}])])
+    real_call = api.call
+
+    def call(obj, index, restype, argtypes, *args):
+        if index == dx._OUTPUT1_DUPLICATE_OUTPUT:
+            return E_NOTIMPL
+        return real_call(obj, index, restype, argtypes, *args)
+
+    api.call = call
+    c = dx.DxgiCapture()
+    assert c.grab(R) is None and c.dead is True and "DuplicateOutput 0x80004001" in str(c.last_error)
+
+    def call2(obj, index, restype, argtypes, *args):
+        if index == dx._OUTPUT1_DUPLICATE_OUTPUT and api._ptr(obj) == 200:
+            return E_NOTIMPL
+        return real_call(obj, index, restype, argtypes, *args)
+
+    api.call = call2
+    c2 = dx.DxgiCapture()
+    assert c2.grab(R) is not None and c2.dead is False and c2.stats["adapter"] == "B"
 
 
 def test_duplicate_output1_falls_back_to_duplicate_output(win):

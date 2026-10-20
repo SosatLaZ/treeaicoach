@@ -460,6 +460,7 @@ class DxgiCapture:
                 raise LookupError("rectangle not inside one monitor")
             order = [c for c in self._candidates if (c["ai"], c["oi"]) not in self._bad] or self._candidates
             errors: list[str] = []
+            dead = 0
             for cand in order:
                 try:
                     self._open_candidate(cand)
@@ -469,9 +470,9 @@ class DxgiCapture:
                     for name in ("_staging", "_dupl", "_ctx", "_device", "_output", "_adapter"):
                         api.release(getattr(self, name))
                         setattr(self, name, None)
-                    if self.dead and len(order) == 1:
-                        raise
+                    dead += int(self.dead)
                     self.dead = False
+            self.dead = dead == len(order)      # no Desktop Duplication on any output (Wine, RDP...)
             raise OSError("; ".join(errors)[:300])
         except Exception as exc:
             self.last_error = str(exc)
@@ -643,7 +644,10 @@ class DxgiCapture:
                     if mean >= BLACK_MEAN:
                         break
                     self.stats["first_black"] += 1
-                    if not self._acquire_copy(ox, oy, w, h, FIRST_FRAME_TIMEOUT_MS):
+                    got = self._acquire_copy(ox, oy, w, h, FIRST_FRAME_TIMEOUT_MS)
+                    if got is None:
+                        return None
+                    if not got:
                         continue
                     again = self._read_staging(w, h)
                     if again is not None:
