@@ -1,6 +1,6 @@
 {
-  "version": "2.9.0",
-  "sha256": "b5fca9b73e9836d8d7e10591543c3a7ac4ae11e7d16f623703f1dc00b711ac81",
-  "size": 97252147,
-  "notes": "2.9 : page Discord (état du bot en direct, serveurs, salons vocaux, droits, Rejoindre / Quitter, journal) ; le bot rejoint ton salon dès qu'il t'y voit et dit la cause exacte s'il n'y arrive pas."
+  "version": "2.10.0",
+  "sha256": "249793065cd2187f6443a3f735b1cb4edb7f641456e580272f05341f70eae09e",
+  "size": 98890716,
+  "notes": "2.10 : voix naturelle réparée (bot Discord et voix du coach), volume du bot réglable et nouvelles options, objet suivant mis en avant en jeu avec son icône, build de la méta d'abord."
 }
