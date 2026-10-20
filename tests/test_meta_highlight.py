@@ -258,7 +258,7 @@ def test_champ_select_card_has_icon_ids():
     st = cs.ChampSelectState(me=cs.Pick("Garen", "Garen", "TOP", True), allies=(), enemies=(), phase="BAN_PICK")
     card = cs.build_card(st)
     assert card is not None and card.core_ids and card.spell_ids and card.rune_ids
-    assert any(x.startswith("Monte tes sorts : ") for x in card.lines)
+    assert card.lines[-1].endswith(" · monte " + card.skills) and len(card.lines) <= 7
     for i in card.core_ids:
         assert item_icons.png_bytes("item", i)
 

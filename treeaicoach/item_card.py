@@ -59,11 +59,10 @@ class ItemCard:
     @property
     def title(self) -> str:
         """Verb first: "Achète Estropieur" / "Achète Phage" (component now) / "Vise Estropieur"."""
-        tail = " + balise" if self.ward else ""
         if self.affordable:
-            return f"Achète {self.name}{tail}"
+            return f"Achète {self.name}"
         if self.buy_names:      # the first component only: the title does not flicker as the gold grows
-            return f"Achète {self.buy_names[0]}{tail}"
+            return f"Achète {self.buy_names[0]}"
         return f"Vise {self.name}"
 
     @property
@@ -133,9 +132,11 @@ def build_card(rec: Any, gold: float, owned: Any = (), shop: bool = False,
         else:
             miss = f"il manque {fmt_gold(max(0, price - gold_i))} PO"
             sub, short = (f"{miss} · {why_short}" if why.startswith("objet") else miss), miss
+        ward = 2055 in tuple(getattr(rec, "extras", ()) or ())
+        if ward and (affordable or buy_ids):    # the gold left buys a control ward too (2nd line)
+            sub, short = f"+ balise · {sub}", f"+ balise · {short}"
         return ItemCard(iid, str(rec.item_name), price, gold_i, affordable, sub, bool(shop),
-                        bool(getattr(rec, "meta", False)), short, buy_ids, buy_names, buy_gold,
-                        2055 in tuple(getattr(rec, "extras", ()) or ()))
+                        bool(getattr(rec, "meta", False)), short, buy_ids, buy_names, buy_gold, ward)
     except Exception:
         log.debug("item card failed", exc_info=True)
         return None

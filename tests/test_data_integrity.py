@@ -107,11 +107,19 @@ def test_bundled_builds_match_the_generator():
     assert iz.BUILDS_INFO.get("patch") == "26.19" and iz.CORE == {c: tuple(v) for c, v in bundled["core"].items()}
 
 
-def test_support_quest_upgrade_and_champion_builds():
+def test_support_quest_upgrade_and_champion_builds(monkeypatch):
     me = PlayerInfo(champion_alias="Leona", champion_name="Leona", team="ORDER", items=[3867, 1001],
                     position="UTILITY")
+    # the rule table (no meta build): the class's upgrade
+    monkeypatch.setenv("TREEAI_META_BUILDS", "0")
     r = iz.recommend(GameInfo(game_time=900.0, me=me, enemies=[], current_gold=100.0), "UTILITY")
     assert r.need == "support_upgrade" and r.item_id == 3869 and r.completes
+    # with the meta build: the upgrade it names (win-rate data) when it names one
+    monkeypatch.delenv("TREEAI_META_BUILDS")
+    mbuild = iz.meta_build("Leona", "UTILITY")
+    ups = [i for i in (mbuild.core if mbuild else ()) if i in iz.SUPPORT_UPGRADE.values()]
+    r = iz.recommend(GameInfo(game_time=900.0, me=me, enemies=[], current_gold=100.0), "UTILITY")
+    assert r.need == "support_upgrade" and r.item_id == (ups[0] if ups else 3869) and r.completes
     assert iz.champion_class("Kayle", "TOP") == "mage" and iz.core_items("Kayle", "mage")[0] == 3115
 
 

@@ -321,10 +321,9 @@ def build_card(state: ChampSelectState | None) -> PregameCard | None:
             lines.append("Départ : " + " + ".join(n for _i, n, _g in items) + f" ({gold} PO)")
         if meta.get("core"):
             lines.append("Build : " + meta["core"])
-        if meta.get("spells") or meta.get("runes"):
-            lines.append(" · ".join(x for x in (meta.get("spells"), meta.get("runes")) if x))
-        if meta.get("skills"):
-            lines.append("Monte tes sorts : " + meta["skills"])
+        skills = f"monte {meta['skills']}" if meta.get("skills") else ""
+        if meta.get("spells") or meta.get("runes") or skills:
+            lines.append(" · ".join(x for x in (meta.get("spells"), meta.get("runes"), skills) if x))
         core_ids: tuple[int, ...] = ()
         spell_ids: tuple[int, ...] = ()
         rune_ids: tuple[int, ...] = ()

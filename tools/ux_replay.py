@@ -660,9 +660,9 @@ def _scenarios() -> dict[str, Scenario]:
                          (520.0, ME_TOP), (521.0, "default")]},
         recalls=[(428.0, 436.0)],
         need=[(440.0, 470.0, "en base avec l'or : l'objet du build (Estropieur)", r"Estropieur",
-               ("debutant", "intermediaire", "avance", "expert")),
+               ("debutant", "intermediaire", "avance")),
               (474.0, 482.0, "objet acheté : l'objet suivant du build", r"Youmuu",
-               ("debutant", "intermediaire", "avance", "expert"))])
+               ("debutant", "intermediaire", "avance"))])
     return S
 
 

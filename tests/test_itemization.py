@@ -28,7 +28,10 @@ def test_item_table_loaded_and_compatible():
     assert item_info(3157)[2] == "legendary"
 
 
-def test_antiheal_vs_healers():
+def test_antiheal_vs_healers(monkeypatch):
+    # the counter-item rules (with a meta build, its core comes first unless an enemy is fed:
+    # tests/test_meta_highlight.py)
+    monkeypatch.setenv("TREEAI_META_BUILDS", "0")
     me = P("Jinx", team="ORDER", items=[1055, 1036], pos="BOTTOM")
     r = iz.recommend(G(me, [P("Soraka"), P("Aatrox"), P("Zed"), P("Jinx"), P("Leona")], gold=1200))
     # V2 audit: no full Rappel mortel as a FIRST item (breaks the build): the cheap component first
@@ -78,7 +81,10 @@ def test_spectator_and_garbage_never_raise():
     assert iz.ItemAdvisor().update(0.0, None) == []
 
 
-def test_advisor_moments_and_antispam():
+def test_advisor_moments_and_antispam(monkeypatch):
+    # the counter-item rules (with a meta build, its core comes first unless an enemy is fed:
+    # tests/test_meta_highlight.py)
+    monkeypatch.setenv("TREEAI_META_BUILDS", "0")
     adv = iz.ItemAdvisor()
     enemies = [P("Soraka"), P("Aatrox"), P("Zed"), P("Jinx"), P("Leona")]
     me = P("Jinx", team="ORDER", items=[1055], pos="BOTTOM")

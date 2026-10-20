@@ -2349,10 +2349,10 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
         return {"mode": "careful", "colour": STATE_RGB["careful"], "word": f"{near_e} CONTRE {near_a + 1}",
                 "line": "Recule vers ta tour", "icon": None}
     card = getattr(state, "item_card", None)
-    if card is not None and getattr(card, "shop", False) and tone not in ("danger", "warning") \
+    if card is not None and getattr(card, "shop", False) and tone != "danger" \
             and not (dead and advice) and not _other_buy(advice, card):
         # I can shop (in base / just left / dead without a lesson to read): the next item of my build,
-        # highlighted with its icon
+        # highlighted with its icon ("Joue prudent" lane advice waits: I am in my fountain)
         return _item_content(card)
     if dead:
         # dead: the game shows the respawn timer; only the lesson / next action, if any
