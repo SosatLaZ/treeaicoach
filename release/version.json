@@ -1,6 +1,6 @@
 {
-  "version": "2.10.1",
-  "sha256": "a42b92b68699e62e85dae87add71284a3e6e441ab8184adf03b4a72a75f86cc4",
-  "size": 98890718,
-  "notes": "2.10.1 : captures de minimap activées par défaut pour améliorer la détection sur tes vraies parties (Réglages → Créer le zip pour me les envoyer)."
+  "version": "2.11.0",
+  "sha256": "abff54839675ed71d9b28c6124d9516d166a78836200c23f1c8eee69c832b000",
+  "size": 98924195,
+  "notes": "2.11 : le bot Discord annonce aussi les ganks de tes amis dans le vocal (qui joue quoi reconnu automatiquement, corrigeable sur la page Discord)."
 }
