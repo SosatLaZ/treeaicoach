@@ -285,3 +285,48 @@ def test_a_game_changer_buy_line_wins_over_the_item_card():
     # after the shop: the stale shop line is hidden
     tail = orr.OverlayState(game_time=720.0, buy_tail=True, tip="Achète Tiamat : tu as l'or", tip_curated=True)
     assert orr.compact_content(tail) is None
+
+
+def test_item_card_purchase_means_shop_and_toggle():
+    """A new item bought (Live Client) proves I am at the shop even if the tracker misses me."""
+    from treeaicoach import item_card as ic
+
+    class R:
+        item_id = 6631
+        item_name = "Estropieur"
+        reason = ""
+        meta = False
+        buy_now = ()
+        completes = True
+        extras = ()
+
+    st = ic.ItemCardState()
+    assert st.update(200.0, R(), 100, [1055], in_base=False, dead=False, game_time=600.0) is None
+    card = st.update(201.0, R(), 100, [1055, 3006], in_base=False, dead=False, game_time=601.0)
+    assert card is not None and card.shop
+    # a support quest upgrade happens out of base: not a shop proof
+    st2 = ic.ItemCardState()
+    st2.update(200.0, R(), 100, [3866], in_base=False, dead=False, game_time=600.0)
+    assert st2.update(201.0, R(), 100, [3867], in_base=False, dead=False, game_time=601.0) is None
+
+
+def test_item_card_shown_in_detailed_hud_and_larger():
+    from treeaicoach import item_card as ic, overlay_render as orr
+
+    class R:
+        item_id = 6631
+        item_name = "Estropieur"
+        reason = ""
+        meta = False
+        buy_now = ()
+        completes = True
+        extras = ()
+
+    shop = ic.build_card(R(), 3400, [3006], shop=True)
+    out = ic.build_card(R(), 3400, [3006], shop=False)
+    st = orr.OverlayState(in_base=True, item_card=shop, hud_detailed=True)
+    assert orr._item_takeover(st, 0.0)
+    h_shop = orr.hud_size(orr.OverlayState(item_card=shop), 300)[1]
+    h_out = orr.hud_size(orr.OverlayState(item_card=out), 300)[1]
+    assert h_shop > h_out
+    assert h_shop <= orr.card_max_height(300)

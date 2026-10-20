@@ -137,7 +137,7 @@ CHOICES.update({
 })
 BOOL_FIELDS = BOOL_FIELDS + ("ui_onboarding_done", "ui_confirm_quit")
 UPDATE_TEXT_FIELDS["ui_seen_changelog"] = 32
-BOOL_FIELDS = BOOL_FIELDS + ("item_advice", "item_advice_toasts", "item_advice_speak")
+BOOL_FIELDS = BOOL_FIELDS + ("item_advice", "item_advice_toasts", "item_advice_speak", "hud_item_card")
 # optional LLM advice (ai_advisor.py) + "mode annonceur" / win probability (hype.py)
 CHOICES.update({
     "ai_provider": ("off", "gemini", "groq", "openrouter", "ollama", "anthropic"),
@@ -310,6 +310,7 @@ class Config:
     ui_scaling: str = "auto"         # "auto" | "90" | "100" | "110" | "125" | "150" (% of the system scale)
     # build advice (itemization.py): written by default (HUD line + toast), spoken only if item_advice_speak
     item_advice: bool = True
+    hud_item_card: bool = True           # "Achats": the item card (icon + price) in base / dead / when affordable
     item_advice_toasts: bool = True
     item_advice_speak: bool = False
     # optional LLM advice (ai_advisor.py): off by default, the key stays on this PC (never exported)

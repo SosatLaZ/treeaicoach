@@ -2426,6 +2426,21 @@ def _item_content(card: Any) -> dict[str, Any]:
 #: item card geometry (UI px at the 300 px reference): icon side, rows
 ITEM_ICON = 36.0
 ITEM_ROW_H = 38.0
+#: in base / dead (I can shop now): the item card is this much larger (icon, row)
+ITEM_SHOP_SCALE = 1.2
+
+
+def _item_takeover(state: Any, now: float) -> bool:
+    """Detailed HUD (setting or hold key): the shop moment still shows the item card (the detailed
+    card has no item highlight; the player must see it whatever the mode)."""
+    try:
+        card = getattr(state, "item_card", None)
+        if card is None or not getattr(card, "shop", False):
+            return False
+        c = compact_content(state, now)
+        return c is not None and c.get("mode") == "item"
+    except Exception:
+        return False
 
 
 def hud_visible(state: Any, now: float | None = None) -> bool:
@@ -2449,12 +2464,15 @@ def _compact_layout_for(c: dict[str, Any], width: int) -> dict[str, Any]:
     cx0, cw = float(ms), float(width - 2 * ms)
     left, right = cx0 + 16 * k, cx0 + cw - 11 * k
     if c["mode"] == "item":
+        big = bool(getattr(c.get("item"), "shop", False))   # the shop moment: a slightly larger card
+        z = ITEM_SHOP_SCALE if big else 1.0
         pad = 9 * k
-        ch = pad + ITEM_ROW_H * k + pad
+        ch = pad + ITEM_ROW_H * k * z + pad
         return {"k": k, "c": c, "ms": ms, "mt": mt, "cx0": cx0, "cw": cw, "ch": ch, "left": left, "right": right,
                 "f_word": get_font(round(17 * k), "display"), "f_line": get_font(round(15.5 * k), "semibold"),
                 "f_sub": get_font(round(12.5 * k), "regular"), "f_price": get_font(round(13 * k), "semibold"),
-                "lines": [c["line"]], "icon_w": ITEM_ICON * k, "rows": [("item", ITEM_ROW_H * k)], "gap": 0.0,
+                "lines": [c["line"]], "icon_w": ITEM_ICON * k * z, "rows": [("item", ITEM_ROW_H * k * z)], "gap": 0.0,
+                "z": z,
                 "pad_t": pad, "height": int(math.ceil(mt + ch + mb)), "danger": False}
     icon_w = 20 * k if c["icon"] is not None else 0.0
     f_line = get_font(round(15.5 * k), "semibold")
@@ -2513,7 +2531,11 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
         bg = _mix(TAI_PANEL, accent, 0.32)
         cv_.rrect(x0, y0, cw, ch, rad, bg, 0.97, border=accent, border_alpha=1.0, border_w=max(1.2, 1.4 * k))
     elif c["mode"] == "item" and getattr(c.get("item"), "buy_now", False):
-        # the gold buys it now: green border (the highlight), same dark plate
+        # the gold buys it now: green glow + green border (the highlight), same dark plate
+        for i, a in enumerate((0.30, 0.16, 0.07)):
+            g = (i + 1) * 1.3 * k
+            cv_.rrect(x0 - g, y0 - g, cw + 2 * g, ch + 2 * g, rad + g, None, 0.0, border=TAI_GO, border_alpha=a,
+                      border_w=max(1.0, 1.3 * k))
         cv_.rrect(x0, y0, cw, ch, rad, (11, 13, 17), 0.96, border=TAI_GO, border_alpha=1.0, border_w=max(1.5, 1.6 * k))
     else:                                              # solid dark plate (contrast first)
         cv_.rrect(x0, y0, cw, ch, rad, (11, 13, 17), 0.96, border=TAI_EDGE, border_alpha=0.9,
@@ -2546,7 +2568,8 @@ def _draw_item_row(cv_: Canvas, lay: dict[str, Any], c: dict[str, Any], y: float
 
     k, card = lay["k"], c.get("item")
     left, right = lay["left"], lay["right"]
-    s = ITEM_ICON * k
+    z = float(lay.get("z", 1.0))
+    s = ITEM_ICON * k * z
     ok = bool(getattr(card, "buy_now", False))
     iy = y + (h - s) / 2
     if c.get("icon") is not None:
@@ -2562,26 +2585,31 @@ def _draw_item_row(cv_: Canvas, lay: dict[str, Any], c: dict[str, Any], y: float
         f_name = get_font(round(13.5 * k), "semibold")
         if text_width(name, f_name) > right - tx and card is not None and not getattr(card, "buy_ids", ()):
             name = str(card.name)                      # a long name: the name alone, never cut
-    cv_.text(tx, y + 10 * k, fit_text(name, f_name, right - tx), f_name, WHITE, 1.0, shadow=0.0)
+    cv_.text(tx, y + h / 2 - 9 * k, fit_text(name, f_name, right - tx), f_name, WHITE, 1.0, shadow=0.0)
     # line 2: the price (green = the gold buys it now) · why / what is missing
     price = f"{fmt_gold(getattr(card, 'shown_price', getattr(card, 'price', 0)))} PO"
     pw = text_width(price + "  ", lay["f_price"])
-    cv_.text(tx, y + 29 * k, price, lay["f_price"], TAI_GO if ok else _mix(TAI_MUTED, WHITE, 0.45), 1.0, shadow=0.0)
+    cv_.text(tx, y + h / 2 + 10 * k, price, lay["f_price"], TAI_GO if ok else _mix(TAI_MUTED, WHITE, 0.45), 1.0, shadow=0.0)
     avail = right - tx - pw
     sub = str(getattr(card, "sub", "") or "")
     if sub and text_width("· " + sub, lay["f_sub"]) > avail:
         sub = str(getattr(card, "sub_short", "") or sub)
     if sub:
-        cv_.text(tx + pw, y + 29 * k, fit_text("· " + sub, lay["f_sub"], avail), lay["f_sub"],
+        cv_.text(tx + pw, y + h / 2 + 10 * k, fit_text("· " + sub, lay["f_sub"], avail), lay["f_sub"],
                  _mix(TAI_MUTED, WHITE, 0.25), 1.0, shadow=0.0)
 
 
 def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
     """(width, height) that :func:`render_hud` will produce for ``state``."""
     width = int(min(max(int(width) if _finite(width) else 280, 200), 1200))
-    if not bool(getattr(state, "hud_detailed", False)):
+    if not bool(getattr(state, "hud_detailed", False)) or _item_takeover(state, time.monotonic()):
         return width, _compact_layout(state, width, time.monotonic())["height"]
     return width, _hud_layout(state, width, width / HUD_REF_W)["height"]
+
+
+class _ShopStandIn:
+    shop = True
+    buy_now = True
 
 
 _card_h_cache: dict[tuple[int, bool], int] = {}
@@ -2611,7 +2639,7 @@ def card_max_height(width: int, detailed: bool = False) -> int:
                                        ("careful", "2 CONTRE 1", DANGER_LINE, None),
                                        ("ok", "", _LONG_LINE, icon), ("ok", "", _LONG_LINE, None))]
             hs.append(_compact_layout_for({"mode": "item", "colour": TAI_GO, "word": "", "line": "Estropieur",
-                                           "icon": icon, "item": None}, width)["height"])
+                                           "icon": icon, "item": _ShopStandIn()}, width)["height"])
             h = max(hs)
     except Exception:
         log.debug("card_max_height failed", exc_info=True)
@@ -2636,7 +2664,7 @@ def render_hud(state: OverlayState, width: int = 280, now: float | None = None) 
     width = int(min(max(int(width) if _finite(width) else 280, 200), 1200))
     try:
         t = time.monotonic() if now is None else float(now)
-        if not bool(getattr(state, "hud_detailed", False)):
+        if not bool(getattr(state, "hud_detailed", False)) or _item_takeover(state, t):
             return _render_compact(state, width, t)
         return _render_hud(state, width, t)
     except Exception:

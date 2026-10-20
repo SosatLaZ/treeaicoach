@@ -490,7 +490,7 @@ class OverlayStateMixin:
         """The item highlight of the HUD card (item_card.py): in base / dead / just after, or when the
         gold buys the whole item. Starts the icon download of the build in a daemon thread. Never raises."""
         try:
-            if rec is None or game is None or game.me is None:
+            if rec is None or game is None or game.me is None or not getattr(self._cfg, "hud_item_card", True):
                 return None
             from treeaicoach import item_card, item_icons
 

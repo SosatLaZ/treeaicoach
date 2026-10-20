@@ -72,6 +72,8 @@ class OverlayPage:
                        f"Sinon, maintiens {self._key('hotkey_details')} en jeu pour le voir.")
         app.switch_row(hud, "text_tips", "Conseils écrits", "Un conseil court dans le panneau, jamais lu.")
         app.switch_row(hud, "item_advice", "Prochain objet", "L'objet à acheter au prochain retour.")
+        app.switch_row(hud, "hud_item_card", "Achats",
+                       "En base, mort ou avec l'or : l'objet à acheter, avec son icône et son prix.")
         app.switch_row(hud, "win_prob_hud", "Probabilité de victoire", "Dans le panneau et sur l'Accueil.")
 
         scr = self.page.section("À l'écran")

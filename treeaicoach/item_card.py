@@ -21,11 +21,14 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 #: seconds the card stays after leaving the base (the shop closes, the card follows)
-LINGER_S = 4.0
+LINGER_S = 6.0
 #: after a respawn I stand in my fountain, but the tracker needs a few seconds to see me there
 RESPAWN_LINGER_S = 8.0
 #: after the card is gone, a "Achète X : tu as l'or" line of the shop (tips.py, 12 s) is stale: hidden
 TAIL_S = 12.0
+#: items that appear in the inventory OUT of the shop (support quest upgrades, Muramana, Séraphin,
+#: Fimbulwinter): not a proof that I am shopping
+_NOT_SHOP = frozenset(range(3865, 3878)) | {3040, 3042, 3121}
 #: no item card in the first minutes (the start in the fountain belongs to the team plan)
 MIN_GT = 150.0
 
@@ -149,6 +152,7 @@ class ItemCardState:
     def __init__(self) -> None:
         self._last_shop: float | None = None
         self._last_dead: float | None = None
+        self._owned: frozenset[int] | None = None
 
     def tail(self, now: float) -> bool:
         """The shop card ended less than :data:`TAIL_S` ago (buy lines of the shop are stale then)."""
@@ -160,6 +164,11 @@ class ItemCardState:
         try:
             if game_time is not None and game_time < MIN_GT and not dead:
                 return None              # the start in the fountain: the starting items are the client's
+            own = frozenset(int(i) for i in owned or () if int(i or 0) > 0)
+            if self._owned is not None and any(i not in _NOT_SHOP for i in own - self._owned):
+                in_base = True           # a new item in my inventory (Live Client): I am at the shop,
+                #                          even when the minimap tracker does not see me in my fountain
+            self._owned = own
             if in_base or dead:
                 self._last_shop = float(now)
             if dead:
