@@ -2350,7 +2350,7 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
                 "line": "Recule vers ta tour", "icon": None}
     card = getattr(state, "item_card", None)
     if card is not None and getattr(card, "shop", False) and tone != "danger" \
-            and not (dead and advice) and not _other_buy(advice, card):
+            and not (dead and advice) and not _other_buy(_advice_raw(state), card):
         # I can shop (in base / just left / dead without a lesson to read): the next item of my build,
         # highlighted with its icon ("Joue prudent" lane advice waits: I am in my fountain)
         return _item_content(card)
@@ -2389,7 +2389,8 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
 
 def _other_buy(advice: str, card: Any) -> bool:
     """The card line is a buy instruction for ANOTHER item (a game changer: "Achète Cotte de mailles :
-    Darius est trop fort"): it wins, never two different buys at once (LESSONS 6)."""
+    Darius est trop fort"): it wins, never two different buys at once (LESSONS 6); when the player's
+    level already hid that line (advanced: 12 s), the item card does not replace it either."""
     if not line_is_buy(advice):
         return False
     low = advice.lower()

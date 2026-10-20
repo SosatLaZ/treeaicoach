@@ -134,7 +134,7 @@ def build_card(rec: Any, gold: float, owned: Any = (), shop: bool = False,
             sub, short = (f"{miss} · {why_short}" if why.startswith("objet") else miss), miss
         ward = 2055 in tuple(getattr(rec, "extras", ()) or ())
         if ward and (affordable or buy_ids):    # the gold left buys a control ward too (2nd line)
-            sub, short = f"+ balise · {sub}", f"+ balise · {short}"
+            sub, short = f"+ balise · {sub}", "+ balise de contrôle"
         return ItemCard(iid, str(rec.item_name), price, gold_i, affordable, sub, bool(shop),
                         bool(getattr(rec, "meta", False)), short, buy_ids, buy_names, buy_gold, ward)
     except Exception:

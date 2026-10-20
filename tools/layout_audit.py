@@ -33,6 +33,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import cv2
@@ -140,7 +141,13 @@ def sample_states(shot: Shot) -> dict[str, Any]:
                _ev("Ahri", (0.93, 0.95), approaching=True, vel=(-0.03, -0.01)),
                _ev("Jinx", (0.5, 0.5))]
     mmap = orr.OverlayState(**base, enemies=enemies, threat_level=2, danger_radius=0.12)
-    return {"card": card, "card_danger": danger, "card_detailed": detailed, "timers": timers, "minimap": mmap}
+    from treeaicoach import item_card as ic
+
+    rec = SimpleNamespace(item_id=6631, item_name="Estropieur", reason="objet 2 du build du moment (55.4 % de victoires)",
+                          meta=True, win_rate=55.4, buy_now_names=(), buy_now=(), completes=True, extras=())
+    item = orr.OverlayState(**base, in_base=True, item_card=ic.build_card(rec, 3400, [3006], shop=True))
+    return {"card": card, "card_danger": danger, "card_detailed": detailed, "timers": timers, "minimap": mmap,
+            "card_item": item}
 
 
 def _toast_view(kind: str) -> Any:
@@ -197,7 +204,8 @@ def place_new(shot: Shot, states: dict[str, Any], cfg: Any = None) -> tuple[dict
     U = L.ui_unit(scr)
     scenes: dict[str, list[Placed]] = {}
     lay = L.layout_for(scr, mm, cfg)
-    for scene, layout_, cards in (("normal", lay, (("compact", states["card"]), ("danger", states["card_danger"]))),
+    for scene, layout_, cards in (("normal", lay, (("compact", states["card"]), ("danger", states["card_danger"]),
+                                                    ("item", states["card_item"]))),
                                   ("F6", L.layout_for(scr, mm, cfg, detailed=True),
                                    (("detailed_F6", states["card_detailed"]),))):
         out: list[Placed] = []
