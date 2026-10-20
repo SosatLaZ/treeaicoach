@@ -1,6 +1,6 @@
 {
-  "version": "2.10.0",
-  "sha256": "249793065cd2187f6443a3f735b1cb4edb7f641456e580272f05341f70eae09e",
-  "size": 98890716,
-  "notes": "2.10 : voix naturelle réparée (bot Discord et voix du coach), volume du bot réglable et nouvelles options, objet suivant mis en avant en jeu avec son icône, build de la méta d'abord."
+  "version": "2.10.1",
+  "sha256": "a42b92b68699e62e85dae87add71284a3e6e441ab8184adf03b4a72a75f86cc4",
+  "size": 98890718,
+  "notes": "2.10.1 : captures de minimap activées par défaut pour améliorer la détection sur tes vraies parties (Réglages → Créer le zip pour me les envoyer)."
 }
