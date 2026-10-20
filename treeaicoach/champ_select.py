@@ -87,6 +87,12 @@ class PregameCard:
     runes: str = ""                         # "Conquérant (Précision + Volonté)"
     core_items: str = ""                    # "Estropieur → Hydre vorace → Plaque du mort"
     meta_source: str = ""                   # "U.GG, patch 16.20, Émeraude+, 2026-10-07"
+    skills: str = ""                        # "E > Q > W" (order to max the abilities)
+    # icons of the card (item_icons.py): start items, core items in buy order (boots at their place),
+    # summoner spell keys, keystone + rune trees
+    core_ids: tuple[int, ...] = ()
+    spell_ids: tuple[int, ...] = ()
+    rune_ids: tuple[int, ...] = ()
 
 
 # ----------------------------------------------------------------------------- parsing (pure)
@@ -317,12 +323,29 @@ def build_card(state: ChampSelectState | None) -> PregameCard | None:
             lines.append("Build : " + meta["core"])
         if meta.get("spells") or meta.get("runes"):
             lines.append(" · ".join(x for x in (meta.get("spells"), meta.get("runes")) if x))
+        if meta.get("skills"):
+            lines.append("Monte tes sorts : " + meta["skills"])
+        core_ids: tuple[int, ...] = ()
+        spell_ids: tuple[int, ...] = ()
+        rune_ids: tuple[int, ...] = ()
+        try:
+            from treeaicoach import itemization as iz
+            from treeaicoach import meta_builds as mbm
+
+            mb = iz.meta_build(me.alias, role or None)
+            if mb is not None:
+                core_ids = tuple(mbm.core_to_buy(mb, iz.load_items())[:4])
+                spell_ids = tuple(mb.spells[:2])
+                rune_ids = tuple(p for p in (mb.runes[:1] + (mb.secondary_style,)) if p)
+        except Exception:
+            log.debug("card icons unavailable", exc_info=True)
         return PregameCard(title=title[:40], my_alias=me.alias, my_name=me.name, role=role,
                            opponent=opp.name if opp else None, opponent_alias=opp.alias if opp else None,
                            opponent_sure=sure, tips=tuple(tips), start_items=items, start_why=why,
                            start_gold=gold, phase=state.phase, lines=tuple(lines),
                            spells=meta.get("spells", ""), runes=meta.get("runes", ""),
-                           core_items=meta.get("core", ""), meta_source=meta.get("source", ""))
+                           core_items=meta.get("core", ""), meta_source=meta.get("source", ""),
+                           skills=meta.get("skills", ""), core_ids=core_ids, spell_ids=spell_ids, rune_ids=rune_ids)
     except Exception:
         log.debug("build_card failed", exc_info=True)
         return None
@@ -372,6 +395,14 @@ class ChampSelectWatcher:
                 except Exception:
                     log.debug("meta build fetch not started", exc_info=True)
             card = build_card(state) if state is not None else None
+            if card is not None:
+                try:     # the card's icons (Data Dragon), downloaded once in a daemon thread
+                    from treeaicoach import item_icons
+
+                    item_icons.prefetch({"item": [i for i, _n, _g in card.start_items] + list(card.core_ids),
+                                         "spell": list(card.spell_ids), "perk": list(card.rune_ids)})
+                except Exception:
+                    log.debug("card icons not fetched", exc_info=True)
             with self._lock:
                 self._card = card
             return card

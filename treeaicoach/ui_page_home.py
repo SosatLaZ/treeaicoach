@@ -61,6 +61,13 @@ class HomePage:
         bl.setContentsMargins(16, 12, 16, 14)
         bl.setSpacing(6)
         bl.addWidget(self.cs_title)
+        # the build at a glance, OP.GG style: start items | core items in order | spells | keystone
+        self.cs_icons = QtWidgets.QWidget()
+        self.cs_icons_lay = QtWidgets.QHBoxLayout(self.cs_icons)
+        self.cs_icons_lay.setContentsMargins(0, 4, 0, 4)
+        self.cs_icons_lay.setSpacing(4)
+        self.cs_icons.hide()
+        bl.addWidget(self.cs_icons)
         bl.addWidget(self.cs_lines)
         self.cs.add(box)
         self.cs.hide()
@@ -235,13 +242,76 @@ class HomePage:
         self.sys_rows[key] = rec
         return rec
 
-    def show_champ_select(self, title: str, lines: tuple[str, ...] | None) -> None:
+    def show_champ_select(self, title: str, lines: tuple[str, ...] | None, card: Any = None) -> None:
         if lines is None:
             self.cs.hide()
             return
         self.cs_title.setText(ui_text(title))
-        self.cs_lines.setText("\n".join(ui_text(x) for x in lines[:6]))
+        self.cs_lines.setText("\n".join(ui_text(x) for x in lines[:8]))
+        self._fill_icons(card)
         self.cs.show()
+
+    ICON_PX = 34
+
+    def _fill_icons(self, card: Any) -> None:
+        """Icon row of the champion select card: start items, core items (arrows between them), the
+        two summoner spells, the keystone + secondary tree. Missing icons are skipped. Never raises."""
+        lay = self.cs_icons_lay
+        try:
+            while lay.count():
+                it = lay.takeAt(0)
+                w = it.widget() if it is not None else None
+                if w is not None:
+                    w.deleteLater()
+            if card is None:
+                self.cs_icons.hide()
+                return
+            groups = [[("item", i, n) for i, n, _g in getattr(card, "start_items", ()) or ()],
+                      [("item", i, "") for i in getattr(card, "core_ids", ()) or ()],
+                      [("spell", i, "") for i in getattr(card, "spell_ids", ()) or ()],
+                      [("perk", i, "") for i in getattr(card, "rune_ids", ()) or ()]]
+            n = 0
+            for gi, group in enumerate(groups):
+                shown = [w for w in (self._icon(k, i, tip) for k, i, tip in group) if w is not None]
+                if not shown:
+                    continue
+                if n:
+                    lay.addSpacing(14)
+                for j, w in enumerate(shown):
+                    if gi == 1 and j:
+                        lay.addWidget(self.app.W.label("›", "secondary"))
+                    lay.addWidget(w)
+                    n += 1
+            lay.addStretch(1)
+            self.cs_icons.setVisible(n > 0)
+        except Exception:
+            log.debug("champion select icons failed", exc_info=True)
+            self.cs_icons.hide()
+
+    def _icon(self, kind: str, key: Any, tip: str = "") -> Any:
+        from treeaicoach import item_icons  # noqa: PLC0415
+
+        data = item_icons.png_bytes(kind, key)
+        if not data:
+            return None
+        QtGui, QtWidgets, Qt = self.app.QtGui, self.app.QtWidgets, self.app.QtCore.Qt
+        pm = QtGui.QPixmap()
+        if not pm.loadFromData(data):
+            return None
+        px = self.ICON_PX if kind != "perk" else self.ICON_PX - 4
+        lab = QtWidgets.QLabel()
+        lab.setPixmap(pm.scaled(px, px, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        lab.setFixedSize(px, px)
+        if not tip and kind == "item":
+            try:
+                from treeaicoach import game_data  # noqa: PLC0415
+
+                tip = game_data.item_name(int(key), "")
+            except Exception:
+                tip = ""
+        if tip:
+            lab.setToolTip(tip)
+        return lab
 
 
 def _capture_why(health: Any) -> str:

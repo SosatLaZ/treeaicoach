@@ -1140,7 +1140,7 @@ class CoachApp:
     def _show_champ_select(self, card: Any) -> None:
         title = str(getattr(card, "title", "") or "") if card is not None else ""
         lines = tuple(str(x) for x in (getattr(card, "lines", ()) or ()) if x) if card is not None else ()
-        sig = (title, lines) if card is not None else None
+        sig = (title, lines, _card_icons_sig(card)) if card is not None else None
         if sig == self._cs_sig:
             return
         was_shown = self._cs_sig is not None
@@ -1149,7 +1149,7 @@ class CoachApp:
             self.show_toast("Sélection des champions : ta carte d'avant-partie est sur l'Accueil.")
         view = self.page_views.get("home")
         if view is not None:
-            view.show_champ_select(title, lines if card is not None else None)
+            view.show_champ_select(title, lines if card is not None else None, card)
 
     # ------------------------------------------------------------------ diagnostic (Ctrl+F8)
     @_guarded
@@ -1687,3 +1687,17 @@ def run_app(cfg: Config, *, demo: bool = False, smoke_seconds: float | None = No
 
 __all__ = ["run_app", "CoachApp", "fmt_clock", "fmt_int_fr", "state_key", "session_stats", "parse_geometry",
            "fit_geometry", "autostart_support", "get_windows_autostart", "set_windows_autostart", "app_icon_path"]
+
+
+def _card_icons_sig(card: Any) -> tuple:
+    """Which icons of the champion select card are on disk (the card is redrawn when a download lands)."""
+    try:
+        from treeaicoach import item_icons  # noqa: PLC0415
+
+        keys = [("item", i) for i, _n, _g in getattr(card, "start_items", ()) or ()]
+        keys += [("item", i) for i in getattr(card, "core_ids", ()) or ()]
+        keys += [("spell", i) for i in getattr(card, "spell_ids", ()) or ()]
+        keys += [("perk", i) for i in getattr(card, "rune_ids", ()) or ()]
+        return tuple((k, i, item_icons.png_path(k, i) is not None) for k, i in keys)
+    except Exception:
+        return ()

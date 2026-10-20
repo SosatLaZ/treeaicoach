@@ -1269,7 +1269,7 @@ def hud_signature(state: Any, now: float) -> tuple:
         fields_ = tuple(getattr(state, k, None) for k in (
             "threat_level", "threat_text", "tip", "tip_tone", "gauge", "gauge_reason", "stance",
             "stance_reason", "insight", "hint", "item_hint", "jungler_line", "role_notice",
-            "phase", "hud_detailed", "in_base", "skill_level", "my_role", "me_dead"))
+            "phase", "hud_detailed", "in_base", "skill_level", "my_role", "me_dead", "item_card"))
         # the clock only matters through the countdowns the card prints (objective rows, "Dragon
         # dans 0:45"): their TEXTS, not the second, so a card without countdown is not re-rendered
         # every second for nothing (~8 ms per render)

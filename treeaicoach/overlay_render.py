@@ -186,6 +186,7 @@ class OverlayState:
     tip_tone: str | None = None               # "danger" | "warning" | "go" | "info": accent colour
     tip_since: float | None = None            # monotonic time the advice line appeared (fade)
     item_hint: str | None = None              # "Achète Zhonya (3 250 or)": chip, in base only
+    item_card: Any = None                     # item_card.ItemCard: the next item highlighted (icon, price)
     in_base: bool = False
     ai_counter: str | None = None             # "IA 3/5": chip when nothing more useful
     # pipeline v2: render-time prediction (engine.predict_positions): callable() ->
@@ -2346,6 +2347,10 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
         # outnumbered next to me (docs/LESSONS.md 6-7), even with the enemies visible on screen
         return {"mode": "careful", "colour": STATE_RGB["careful"], "word": f"{near_e} CONTRE {near_a + 1}",
                 "line": "Recule vers ta tour", "icon": None}
+    card = getattr(state, "item_card", None)
+    if card is not None and getattr(card, "shop", False) and tone not in ("danger", "warning"):
+        # I can shop (dead / in base / just left): the next item of my build, highlighted with its icon
+        return _item_content(card)
     if dead:
         # dead: the game shows the respawn timer; only the lesson / next action, if any
         if not advice:
@@ -2364,12 +2369,39 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
             icon = obj[1]
     elif obj is not None and tone not in ("danger", "warning"):
         line, icon = obj
+    if card is not None and line and icon is None and getattr(card, "name", "") and \
+            str(card.name).lower() in line.lower():
+        icon = _item_icon(card)                       # "Rentre acheter Estropieur : ..." with its icon
+    if not line and card is not None and getattr(card, "affordable", False):
+        return _item_content(card)                    # nothing else to say and the gold buys it: show it
     if not line and step in GAUGE_LINE and _skill(state) in GAUGE_LEVELS and not getattr(state, "tip_curated", False):
         line = GAUGE_LINE[step]
     if not line:
         return None                                   # silence is a feature
     mode = "careful" if careful else "ok"
     return {"mode": mode, "colour": STATE_RGB[mode], "word": "", "line": line, "icon": icon}
+
+
+def _item_icon(card: Any) -> Any:
+    try:
+        from treeaicoach import item_icons
+
+        return item_icons.item_rgba(int(card.item_id))
+    except Exception:
+        return None
+
+
+def _item_content(card: Any) -> dict[str, Any]:
+    """The compact card as the item highlight (``mode`` "item")."""
+    ok = bool(getattr(card, "affordable", False))
+    # verb first (the card is an instruction): "Achète Estropieur" when the gold buys it, else "Vise ..."
+    return {"mode": "item", "colour": TAI_GO if ok else TAI_MUTED, "word": "",
+            "line": f"{'Achète' if ok else 'Vise'} {card.name}", "icon": _item_icon(card), "item": card}
+
+
+#: item card geometry (UI px at the 300 px reference): icon side, rows
+ITEM_ICON = 36.0
+ITEM_ROW_H = 38.0
 
 
 def hud_visible(state: Any, now: float | None = None) -> bool:
@@ -2392,6 +2424,14 @@ def _compact_layout_for(c: dict[str, Any], width: int) -> dict[str, Any]:
     ms, mt, mb = round(3 * k), round(2 * k), round(4 * k)
     cx0, cw = float(ms), float(width - 2 * ms)
     left, right = cx0 + 16 * k, cx0 + cw - 11 * k
+    if c["mode"] == "item":
+        pad = 9 * k
+        ch = pad + ITEM_ROW_H * k + pad
+        return {"k": k, "c": c, "ms": ms, "mt": mt, "cx0": cx0, "cw": cw, "ch": ch, "left": left, "right": right,
+                "f_word": get_font(round(17 * k), "display"), "f_line": get_font(round(15.5 * k), "semibold"),
+                "f_sub": get_font(round(12.5 * k), "regular"), "f_price": get_font(round(13 * k), "semibold"),
+                "lines": [c["line"]], "icon_w": ITEM_ICON * k, "rows": [("item", ITEM_ROW_H * k)], "gap": 0.0,
+                "pad_t": pad, "height": int(math.ceil(mt + ch + mb)), "danger": False}
     icon_w = 20 * k if c["icon"] is not None else 0.0
     f_line = get_font(round(15.5 * k), "semibold")
     avail = right - left - icon_w
@@ -2448,6 +2488,9 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
     if c["mode"] == "danger":
         bg = _mix(TAI_PANEL, accent, 0.32)
         cv_.rrect(x0, y0, cw, ch, rad, bg, 0.97, border=accent, border_alpha=1.0, border_w=max(1.2, 1.4 * k))
+    elif c["mode"] == "item" and getattr(c.get("item"), "affordable", False):
+        # the gold buys it now: green border (the highlight), same dark plate
+        cv_.rrect(x0, y0, cw, ch, rad, (11, 13, 17), 0.96, border=TAI_GO, border_alpha=1.0, border_w=max(1.5, 1.6 * k))
     else:                                              # solid dark plate (contrast first)
         cv_.rrect(x0, y0, cw, ch, rad, (11, 13, 17), 0.96, border=TAI_EDGE, border_alpha=0.9,
                   border_w=max(1.0, 0.9 * k))
@@ -2457,7 +2500,9 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
     fa = _compact_fade(getattr(state, "tip_since", None), now)
     y = y0 + lay["pad_t"]
     for idx, (name, h) in enumerate(lay["rows"]):
-        if name == "word":
+        if name == "item":
+            _draw_item_row(cv_, lay, c, y, h)
+        elif name == "word":
             cv_.text(left, y + h / 2, fit_text(c["word"].upper(), lay["f_word"], lay["right"] - left), lay["f_word"],
                      _mix(accent, WHITE, 0.4), shadow=0.6)
         elif name == "line":
@@ -2469,6 +2514,42 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
                 cv_.text(tx, y + 19 * k * i + 9.5 * k, ln, lay["f_line"], WHITE, fa, shadow=0.0)
         y += h + (lay["gap"] if idx == 0 else 0.0)
     return cv_.to_bgra()
+
+
+def _draw_item_row(cv_: Canvas, lay: dict[str, Any], c: dict[str, Any], y: float, h: float) -> None:
+    """Icon (green frame when affordable) | name + price / why."""
+    from treeaicoach.item_card import fmt_gold
+
+    k, card = lay["k"], c.get("item")
+    left, right = lay["left"], lay["right"]
+    s = ITEM_ICON * k
+    ok = bool(getattr(card, "affordable", False))
+    iy = y + (h - s) / 2
+    if c.get("icon") is not None:
+        cv_.image(left + s / 2, iy + s / 2, sprite_patch(c["icon"], s))
+    else:                                              # no icon yet (download pending): a neutral tile
+        cv_.rrect(left, iy, s, s, 3 * k, (40, 44, 50), 0.95)
+    cv_.rrect(left - 1 * k, iy - 1 * k, s + 2 * k, s + 2 * k, 3 * k, None, 0.0,
+              border=TAI_GO if ok else TAI_EDGE, border_alpha=1.0, border_w=max(1.2, (1.6 if ok else 1.0) * k))
+    tx = left + s + 9 * k
+    # line 1: the item's full name (one size smaller before any cut: "Lame spectre de Youmuu")
+    name, f_name = str(c["line"]), lay["f_line"]
+    if text_width(name, f_name) > right - tx:
+        f_name = get_font(round(13.5 * k), "semibold")
+        if text_width(name, f_name) > right - tx and card is not None:
+            name = str(card.name)                      # a long name: the name alone, never cut
+    cv_.text(tx, y + 10 * k, fit_text(name, f_name, right - tx), f_name, WHITE, 1.0, shadow=0.0)
+    # line 2: the price (green = the gold buys it now) · why / what is missing
+    price = f"{fmt_gold(getattr(card, 'price', 0))} PO"
+    pw = text_width(price + "  ", lay["f_price"])
+    cv_.text(tx, y + 29 * k, price, lay["f_price"], TAI_GO if ok else _mix(TAI_MUTED, WHITE, 0.45), 1.0, shadow=0.0)
+    avail = right - tx - pw
+    sub = str(getattr(card, "sub", "") or "")
+    if sub and text_width("· " + sub, lay["f_sub"]) > avail:
+        sub = str(getattr(card, "sub_short", "") or sub)
+    if sub:
+        cv_.text(tx + pw, y + 29 * k, fit_text("· " + sub, lay["f_sub"], avail), lay["f_sub"],
+                 _mix(TAI_MUTED, WHITE, 0.25), 1.0, shadow=0.0)
 
 
 def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:
@@ -2505,6 +2586,8 @@ def card_max_height(width: int, detailed: bool = False) -> int:
                   for m, w, ln, ic in (("danger", "GANK !", DANGER_LINE, None),
                                        ("careful", "2 CONTRE 1", DANGER_LINE, None),
                                        ("ok", "", _LONG_LINE, icon), ("ok", "", _LONG_LINE, None))]
+            hs.append(_compact_layout_for({"mode": "item", "colour": TAI_GO, "word": "", "line": "Estropieur",
+                                           "icon": icon, "item": None}, width)["height"])
             h = max(hs)
     except Exception:
         log.debug("card_max_height failed", exc_info=True)

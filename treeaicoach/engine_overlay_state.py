@@ -440,6 +440,7 @@ class OverlayStateMixin:
                 names = list(getattr(rec, "buy_now_names", ()) or ())
                 out["item_hint"] = "Achète " + (" + ".join(names[:2]) if names and not rec.completes
                                                 else rec.item_name)
+            out["item_card"] = self._item_card(rec, game, in_base, now)
             out["ai_counter"] = self.ai_budget_text() or None
             res = self._role_resolver      # compact HUD: objective note only for the objectives my role plays
             role = res.my_role() if res is not None and hasattr(res, "my_role") else None
@@ -482,6 +483,28 @@ class OverlayStateMixin:
             return siege_state(game, gt, n)
         except Exception:
             return None, None
+
+    def _item_card(self, rec: Any, game: Any, in_base: bool, now: float) -> Any:
+        """The item highlight of the HUD card (item_card.py): in base / dead / just after, or when the
+        gold buys the whole item. Starts the icon download of the build in a daemon thread. Never raises."""
+        try:
+            if rec is None or game is None or game.me is None:
+                return None
+            from treeaicoach import item_card, item_icons
+
+            st = getattr(self, "_item_card_state", None)
+            if st is None:
+                st = self._item_card_state = item_card.ItemCardState()
+            card = st.update(now, rec, _finite(getattr(game, "current_gold", 0.0)) or 0.0, game.me.items or (),
+                             in_base, bool(getattr(game.me, "is_dead", False)))
+            if card is not None and getattr(self, "_item_icon_asked", None) != card.item_id:
+                self._item_icon_asked = card.item_id
+                item_icons.prefetch({"item": [card.item_id]},
+                                    allow_network=bool(getattr(self._cfg, "allow_network", True)))
+            return card
+        except Exception:
+            log.debug("item card failed", exc_info=True)
+            return None
 
     def _trivial_component_buy(self, rec: Any, game: Any, now: float) -> bool:
         """After 20:00, a lone cheap component (< 500 gold, e.g. "Épée longue" with a near-complete

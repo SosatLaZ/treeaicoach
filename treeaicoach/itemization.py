@@ -302,6 +302,21 @@ def _join(names: list[str]) -> str:
     return " et ".join(names) if names else "l'équipe adverse"
 
 
+#: singular verbs of :data:`REASONS` ("Aatrox se soignent" was printed for one healer)
+_SINGULAR = (("se soignent", "se soigne"), ("font surtout", "fait surtout"), ("misent sur", "mise sur"),
+             ("sont très", "est très"), ("utilisent beaucoup", "utilise beaucoup"))
+
+
+def reason_text(need: str, names: list[str]) -> str:
+    """The counter-item reason with the right verb agreement ("Aatrox se soigne beaucoup")."""
+    names = [n for n in names if n][:2]
+    text = REASONS[need].format(names=_join(names))
+    if len(names) == 1:
+        for a, b in _SINGULAR:
+            text = text.replace(a, b)
+    return text
+
+
 # ----------------------------------------------------------------------------- analysis
 @dataclass
 class EnemyProfile:
@@ -627,9 +642,14 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
             iid in items[o].parts for o in owned if o in items)
 
     choice: tuple[int, str, str] | None = None
-    # support quest done: the free upgrade of the support item first (it costs nothing)
+    mb = meta_build(me.champion_alias, role)
+    meta_core = _meta_builds().core_to_buy(mb, items) if mb is not None and mb.has_items else ()
+    # support quest done: the free upgrade of the support item first (it costs nothing); the one of
+    # the meta build when it names one (Swain support 16.20: Traîneau du solstice, not Zaz'Zak)
     if BOUNTY_OF_WORLDS in owned:
-        up = support_upgrade(me.champion_alias, cls)
+        meta_up = [i for i in (mb.core if mb is not None else ()) if i in SUPPORT_UPGRADE.values() or
+                   (i in items and BOUNTY_OF_WORLDS in items[i].parts)]
+        up = meta_up[0] if meta_up else support_upgrade(me.champion_alias, cls)
         it = items.get(up) if up is not None else None
         if it is not None and it.rift and up not in owned:
             choice = (int(up), "support_upgrade", "ta quête de support est finie : amélioration gratuite")
@@ -637,19 +657,31 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
     # build (no damage / no spike); before the first legendary only cheap counter components
     # (Appel du bourreau, Orbe de l'oubli...) may come before the core item
     first_done = any(o in items and items[o].gold >= LEGENDARY_GOLD and items[o].kind != "boots" for o in owned)
+    # the meta core first (OP.GG behaviour, real records: Garen got "Danse de la mort" instead of his
+    # 2nd core item, Miss Fortune "Gueule de Malmortius" after one item): a counter item only once
+    # two core legendaries are done, or right away against a FED enemy of that need
+    core_legs = [i for i in meta_core if i in items and items[i].kind != "boots"]
+    core_owned = sum(1 for i in core_legs if i in owned or any(i in items[o].parts for o in owned if o in items))
+    meta_first = bool(core_legs) and core_owned < min(2, len(core_legs))
+    opts = {i for i, _w, _n in mb.options} if mb is not None else set()
     for need, sev in sorted(prof.needs.items(), key=lambda kv: -kv[1]):
         if choice is not None:
             break
         if sev < NEED_MIN or _owned_need(need, owned):
             continue
         fed_need = any(n in prof.fed for n in (prof.names.get(need) or []))   # a fed assassin: rushing is right
-        for iid in NEED_ITEMS.get(need, {}).get(cls, ()):
+        if meta_first and not fed_need:
+            continue
+        cands = list(NEED_ITEMS.get(need, {}).get(cls, ()))
+        # among the counters of that need, the meta's own situational items first (win-rate data)
+        cands.sort(key=lambda i: 0 if i in opts else 1)
+        for iid in cands:
             if not first_done and not fed_need and iid in items and items[iid].gold >= LEGENDARY_GOLD \
                     and not any(o in items[iid].parts for o in owned):
                 continue
             if usable(iid):
                 names = prof.names.get(need) or []
-                reason = REASONS[need].format(names=_join(names)) if names or need not in ("magic", "physical") else \
+                reason = reason_text(need, names) if names or need not in ("magic", "physical") else \
                     REASONS[need].format(names="Les ennemis").replace("Les ennemis font", "L'équipe adverse fait")
                 fed = [n for n in names if n in prof.fed]
                 if fed and need in ("magic", "physical"):
@@ -663,7 +695,6 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
     meta_pick: tuple[float, str] | None = None
     if choice is None:
         # the live meta build of my champion / role first (meta_builds.py: win-rate data of the patch)
-        mb = meta_build(me.champion_alias, role)
         if mb is not None and mb.has_items:
             got = _meta_builds().next_item(mb, owned_list, items, usable)
             if got is not None:

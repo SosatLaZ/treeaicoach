@@ -70,7 +70,7 @@ PRIORITY: dict[str, int] = {
 }
 TOAST_TITLE: dict[str, str] = {
     "steal": "VOL !", "first_blood": "PREMIER SANG", "shutdown": "SHUTDOWN", "solo_kill": "SOLO KILL",
-    "escape": "BELLE FUITE", "gank_dodge": "GANK ESQUIVÉ", "objective": "OBJECTIF", "lead": "LANE DOMINÉE",
+    "escape": "BELLE FUITE", "gank_dodge": "GANK ESQUIVÉ", "objective": "OBJECTIF", "lead": "VOIE DOMINÉE",
     "item": "PIC DE PUISSANCE", "kill": "KILL", "cs": "FARM", "back": "RETOUR PROPRE",
     "vision": "VISION",
 }

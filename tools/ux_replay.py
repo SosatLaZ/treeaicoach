@@ -652,6 +652,17 @@ def _scenarios() -> dict[str, Scenario]:
                (930.0, "Caitlyn", "Lux", []), (940.0, "Caitlyn", "Vi", [])],
         items={"Caitlyn": [(0, [1055, 3006, 3031]), (920, [3006, 3031, 3094, 3036])]},
         waves={"top": [(880.0, 0.5)]})
+    S["meta_shop"] = Scenario(
+        "meta_shop", "Retour en base à 7:30 avec 3 400 PO : l'objet du build mis en avant (icône, prix)", 400.0, 560.0,
+        items={"Garen": [(0, [1055, 3006]), (472.0, [1055, 3006, 6631])]},
+        gold=[(400.0, 2900.0), (450.0, 3400.0), (471.99, 3400.0), (472.0, 100.0), (560.0, 400.0)],
+        paths={"Garen": [(400.0, "default"), (430.0, ME_TOP), (436.0, FOUNTAIN["ORDER"]), (480.0, FOUNTAIN["ORDER"]),
+                         (520.0, ME_TOP), (521.0, "default")]},
+        recalls=[(428.0, 436.0)],
+        need=[(440.0, 470.0, "en base avec l'or : l'objet du build (Estropieur)", r"Estropieur",
+               ("debutant", "intermediaire", "avance", "expert")),
+              (474.0, 482.0, "objet acheté : l'objet suivant du build", r"Youmuu",
+               ("debutant", "intermediaire", "avance", "expert"))])
     return S
 
 
@@ -722,7 +733,7 @@ def fmt(gt: float) -> str:
     return f"{int(gt // 60):02d}:{int(gt % 60):02d}"
 
 
-_COLOUR = {"danger": "rouge", "careful": "orange", "ok": "vert"}
+_COLOUR = {"danger": "rouge", "careful": "orange", "ok": "vert", "item": "objet"}
 
 
 def _card_of(state: Any, now: float) -> tuple[tuple[str, str] | None, int, bool]:
