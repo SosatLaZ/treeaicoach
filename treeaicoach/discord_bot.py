@@ -32,6 +32,15 @@ voice, latency, the last things the bot did) and sends :meth:`join` / :meth:`lea
 
 The token is a secret: never logged (``mask_secrets`` filter on the ``discord`` loggers), never in
 a diagnostic (diag.py / fingerprint.py), ``repr=False`` in Config.
+
+2.9.1 (user: "le bot n'arrive pas à parler et le volume est trop haut"): the voice goes through
+:class:`discord_audio.BotVoice` (Edge -> OneCore -> SAPI -> clips recorded at build time, every answer
+verified audible, the source logged and shown: "Voix : naturelle / Windows / enregistrée"); levels
+are normalised and scaled by ``discord_volume`` (default 40 = 35 % of 2.9.0, chime 6 dB under the
+words). Optional calls, all off by default: objectives 30 s before spawn (``discord_objectives``),
+the enemy jungler seen on a lane (``discord_jungler_seen``, lowest priority), the end-of-game line
+(``discord_summary``); ``discord_only`` lets the bot say the calls instead of the PC voice;
+``hotkey_discord_mute`` silences the bot. No summoner spell / cooldown call (Riot policy).
 """
 
 from __future__ import annotations
@@ -46,15 +55,18 @@ import re
 import sys
 import threading
 import time
-import wave
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from treeaicoach import discord_audio as da
+
 log = logging.getLogger(__name__)
 
 #: kinds that are spoken in the voice channel (everything else is dropped)
-SPOKEN_KINDS = frozenset({"gank", "matchup"})
+SPOKEN_KINDS = frozenset({"gank", "matchup", "objective", "jungler_seen", "summary"})
+#: priority when the queue is full / which job goes first (higher = more urgent)
+PRIORITY = {"gank": 4, "test": 3, "objective": 2, "matchup": 1, "jungler_seen": 0, "summary": 0}
 #: lifecycle kinds: join the voice channel / leave it (never spoken)
 CONTROL_KINDS = frozenset({"game_start", "game_end"})
 
@@ -62,6 +74,15 @@ GANK_MIN_GAP_S = 8.0         # two gank calls at least this far apart
 GANK_SAME_S = 30.0           # the same champions on the same lane: once per 30 s
 GANK_MAX_PER_MIN = 4         # and never more than 4 gank calls a minute
 GANK_STALE_S = 5.0           # a gank call that could not start within 5 s is dropped (too late)
+CALLS_MAX_PER_MIN = 6        # every spoken call together (gank first: the others yield)
+OBJECTIVE_STALE_S = 6.0      # "Dragon dans 30 secondes" said later than 6 s is wrong: dropped
+SEEN_STALE_S = 4.0
+SEEN_SAME_LANE_S = 45.0      # the jungler seen on the same lane: once per 45 s
+SEEN_AFTER_GANK_S = 20.0     # and never within 20 s of a gank call (a gank says more)
+SEEN_MAX_PER_MIN = 2
+SUMMARY_STALE_S = 180.0
+OBJECTIVE_KEYS = {"dragon": "Dragon", "baron": "Baron", "grubs": "Larves"}
+OBJECTIVE_LEAD_S = 30
 MATCHUP_STALE_S = 90.0
 TEST_STALE_S = 30.0
 QUEUE_MAX = 3                # pending sentences (the oldest gank goes first when full)
@@ -69,6 +90,7 @@ LOGIN_TIMEOUT_S = 25.0
 JOIN_TIMEOUT_S = 15.0
 BACKOFF_S = (2.0, 5.0, 15.0, 30.0, 60.0)
 SPEECH_TIMEOUT_S = 4.0       # natural voice synthesis of a sentence not cached yet
+CHAIN_TIMEOUT_S = 17.0       # the whole voice chain (Edge 4 s + OneCore 5 s + SAPI 6 s + clip)
 AI_TIMEOUT_S = 6.0           # the matchup AI sentence: slower -> the coach's own sentence
 SNAPSHOT_EVERY_S = 2.0       # the launcher's view of the bot is refreshed this often (and on events)
 EVENTS_MAX = 10              # what the bot did / said, shown in the launcher
@@ -87,6 +109,7 @@ VOICE_PERMS = (("view_channel", "voir le salon"), ("connect", "se connecter"), (
 #: a Discord bot token: base64(user id) . timestamp . hmac
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{18,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{20,}")
 _LANES = ("top", "mid", "bot")
+_GANK_LANES = _LANES + ("jungle",)
 
 
 # ------------------------------------------------------------------------------ pure helpers
@@ -159,9 +182,55 @@ def invite_url(app_id: Any) -> str | None:
 
 def gank_text(lane: Any) -> str:
     """The gank call heard by the friends: ONLY the lane word + "gank" ("Top gank", "Mid gank",
-    "Bot gank"), after the danger chime. ``""`` when the lane is unknown (nothing is said)."""
+    "Bot gank", "Jungle gank"), after the danger chime. ``""`` when the lane is unknown (nothing is said)."""
     ln = str(lane or "").strip().lower()
-    return f"{ln.capitalize()} gank" if ln in _LANES else ""
+    return f"{ln.capitalize()} gank" if ln in _GANK_LANES else ""
+
+
+def objective_text(key: Any) -> str:
+    """"Dragon dans 30 secondes" / "Baron ..." / "Larves ..."; ``""`` for any other objective."""
+    name = OBJECTIVE_KEYS.get(str(key or "").strip().lower())
+    return f"{name} dans {OBJECTIVE_LEAD_S} secondes" if name else ""
+
+
+def seen_text(lane: Any) -> str:
+    """"Jungler ennemi vu top / mid / bot"; ``""`` when the lane is unknown."""
+    ln = str(lane or "").strip().lower()
+    return f"Jungler ennemi vu {ln}" if ln in _LANES else ""
+
+
+def nearest_lane(u: Any, v: Any) -> str | None:
+    """The lane nearest to a minimap position (geometry.py convention: blue base bottom-left, mid
+    lane ``u + v = 1``, top along the left / top edges, bot along the bottom / right edges)."""
+    try:
+        uu, vv = float(u), float(v)
+        if not (0.0 <= uu <= 1.0 and 0.0 <= vv <= 1.0):
+            return None
+        d = {"top": min(uu, vv), "mid": abs(uu + vv - 1.0) / 1.4142, "bot": min(1.0 - uu, 1.0 - vv)}
+        return min(d, key=d.get)
+    except (TypeError, ValueError):
+        return None
+
+
+def summary_line(analysis: Any) -> str:
+    """The one end-of-game line for the friends: "Victoire en 32 minutes, 9 ganks évités sur 10."
+    (the gank part only when a gank was faced). ``""`` when the result is unknown. Never raises."""
+    try:
+        a = analysis if isinstance(analysis, dict) else {}
+        s = a.get("summary") if isinstance(a.get("summary"), dict) else {}
+        res = {"Win": "Victoire", "Lose": "Défaite"}.get(str(s.get("result") or ""))
+        if not res:
+            return ""
+        dur = float(s.get("duration") or 0.0)
+        mins = int(round(dur / 60.0)) if dur == dur and dur > 0 else 0
+        head = f"{res} en {mins} minutes" if mins else res
+        faced = int(a.get("ganks_faced") or 0)
+        if faced >= 1:
+            ok = max(0, min(faced, int(a.get("ganks_survived") or 0)))
+            return f"{head}, {ok} gank{'s' if ok > 1 else ''} évité{'s' if ok > 1 else ''} sur {faced}."
+        return head + "."
+    except Exception:
+        return ""
 
 
 def _until_words(until_s: Any) -> str:
@@ -229,33 +298,10 @@ def clean_ai_line(text: Any, me: Any = "", opp: Any = "") -> str:
 
 
 def wav_to_pcm48(data: bytes) -> bytes:
-    """A 16-bit PCM WAV (any rate, mono or stereo) -> 48 kHz stereo signed 16-bit little-endian,
-    padded to whole 20 ms frames (what discord.PCMAudio sends). ``b""`` if unreadable."""
-    try:
-        import numpy as np  # noqa: PLC0415
-
-        with wave.open(io.BytesIO(data), "rb") as w:
-            ch, width, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
-            raw = w.readframes(n)
-        if width != 2 or ch not in (1, 2) or rate < 4000 or not raw:
-            return b""
-        x = np.frombuffer(raw[: len(raw) // (2 * ch) * 2 * ch], dtype="<i2").reshape(-1, ch).astype(np.float32)
-        if x.shape[0] == 0:
-            return b""
-        if rate != 48000:
-            m = max(1, int(round(x.shape[0] * 48000 / rate)))
-            src = np.arange(x.shape[0], dtype=np.float64)
-            dst = np.linspace(0.0, x.shape[0] - 1, m)
-            x = np.stack([np.interp(dst, src, x[:, c]) for c in range(ch)], axis=1)
-        if x.shape[1] == 1:
-            x = np.repeat(x, 2, axis=1)
-        pcm = np.clip(np.round(x), -32768, 32767).astype("<i2").tobytes()
-        frame = 3840                      # 20 ms of 48 kHz stereo s16
-        pad = (-len(pcm)) % frame
-        return pcm + b"\x00" * pad
-    except Exception:
-        log.debug("wav_to_pcm48 failed", exc_info=True)
-        return b""
+    """A WAV (any rate / width / channels, extensible header too) -> 48 kHz stereo signed 16-bit
+    little-endian, padded to whole 20 ms frames (what discord.PCMAudio sends), level unchanged.
+    ``b""`` if unreadable (discord_audio.to_pcm48)."""
+    return da.to_pcm48(data)
 
 
 def missing_permissions(ch: Any, me: Any) -> list[str] | None:
@@ -360,9 +406,12 @@ def describe_guilds(guilds: Iterable[Any], user_id: str = "", bot_id: Any = None
 
 # ------------------------------------------------------------------------------ the filter
 class CallFilter:
-    """What may be said: only ``gank`` / ``matchup``, the matchup once per game, gank calls deduped
-    (same champions + lane: once per :data:`GANK_SAME_S`), spaced (:data:`GANK_MIN_GAP_S`) and capped
-    (:data:`GANK_MAX_PER_MIN`). Pure (clock injected), not thread-safe (DiscordCaller locks it)."""
+    """What may be said: only :data:`SPOKEN_KINDS`; the matchup and the summary once per game; gank
+    calls deduped (same lane: once per :data:`GANK_SAME_S`), spaced (:data:`GANK_MIN_GAP_S`) and capped
+    (:data:`GANK_MAX_PER_MIN`); an objective once per spawn; "jungler seen" (lowest priority) once
+    per lane per :data:`SEEN_SAME_LANE_S`, never near a gank call, :data:`SEEN_MAX_PER_MIN`; every
+    call together at most :data:`CALLS_MAX_PER_MIN` (a gank call is never refused by that cap: the
+    others yield). Pure (clock injected), not thread-safe (DiscordCaller locks it)."""
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
@@ -370,16 +419,50 @@ class CallFilter:
 
     def reset(self) -> None:
         self._matchup_done = False
+        self._summary_done = False
         self._last_gank = -1e9
         self._gank_times: collections.deque[float] = collections.deque()
         self._seen: dict[str, float] = {}
+        self._objectives: set[str] = set()
+        self._seen_lane: dict[str, float] = {}
+        self._seen_times: collections.deque[float] = collections.deque()
+        self._all_times: collections.deque[float] = collections.deque()
+
+    @staticmethod
+    def _recent(times: collections.deque[float], now: float) -> int:
+        while times and now - times[0] > 60.0:
+            times.popleft()
+        return len(times)
 
     def admit(self, kind: str, key: str = "") -> bool:
         now = float(self._clock())
+        full = self._recent(self._all_times, now) >= CALLS_MAX_PER_MIN
         if kind == "matchup":
             if self._matchup_done:
                 return False
             self._matchup_done = True
+            return True
+        if kind == "summary":
+            if self._summary_done:
+                return False
+            self._summary_done = True
+            return True
+        if kind == "objective":
+            k = key or "?"
+            if k in self._objectives or full:
+                return False
+            self._objectives.add(k)
+            self._all_times.append(now)
+            return True
+        if kind == "jungler_seen":
+            k = key or "?"
+            if full or now - self._last_gank < SEEN_AFTER_GANK_S or now - self._seen_lane.get(k, -1e9) < SEEN_SAME_LANE_S:
+                return False
+            if self._recent(self._seen_times, now) >= SEEN_MAX_PER_MIN:
+                return False
+            self._seen_lane[k] = now
+            self._seen_times.append(now)
+            self._all_times.append(now)
             return True
         if kind != "gank":
             return False
@@ -388,13 +471,12 @@ class CallFilter:
             return False
         if now - self._last_gank < GANK_MIN_GAP_S:
             return False
-        while self._gank_times and now - self._gank_times[0] > 60.0:
-            self._gank_times.popleft()
-        if len(self._gank_times) >= GANK_MAX_PER_MIN:
+        if self._recent(self._gank_times, now) >= GANK_MAX_PER_MIN:
             return False
         self._seen[k] = now
         self._last_gank = now
         self._gank_times.append(now)
+        self._all_times.append(now)
         if len(self._seen) > 64:
             self._seen = {a: b for a, b in self._seen.items() if now - b < GANK_SAME_S}
         return True
@@ -419,6 +501,17 @@ class _Settings:
     user_id: str = ""
     neural_voice: str = ""
     neural_rate: str = ""
+    volume: int = da.DEFAULT_VOLUME
+    only: bool = False              # discord_only: the bot says its calls instead of the PC voice
+    objectives: bool = False
+    jungler_seen: bool = False
+    summary: bool = False
+    mute_hotkey: str = ""
+
+    def wants(self, kind: str) -> bool:
+        """The switch of an optional call kind is on (gank / matchup / test: always)."""
+        return {"objective": self.objectives, "jungler_seen": self.jungler_seen,
+                "summary": self.summary}.get(kind, True)
 
     def key(self) -> tuple:
         """What needs a new gateway session when it changes (the rest is read live)."""
@@ -645,6 +738,12 @@ class DiscordPyBackend:
         if err is not None:
             raise err
 
+    def stop(self) -> None:
+        """Cut the sentence being played (push-to-mute)."""
+        vc = self._vc()
+        if vc is not None and vc.is_playing():
+            vc.stop()
+
     async def leave(self) -> None:
         for vc in list(self.client.voice_clients):
             try:
@@ -671,72 +770,28 @@ def discord_available() -> bool:
         return False
 
 
-# ------------------------------------------------------------------------------ the speech
-class _Speech:
-    """Text -> WAV bytes with the app's natural voice (cached, tts_neural), the Windows OneCore
-    voice as the fallback. Blocking: called in the loop's executor."""
-
-    def __init__(self) -> None:
-        self._tts: Any = None
-        self._params: tuple[str, str] | None = None
-        self._onecore: Any = None
-        self._lock = threading.Lock()
-
-    def _neural(self, voice: str, rate: str) -> Any:
-        with self._lock:
-            if self._params != (voice, rate):
-                self._params = (voice, rate)
-                try:
-                    from treeaicoach import tts_neural  # noqa: PLC0415
-
-                    if tts_neural.neural_available():
-                        self._tts = tts_neural.NeuralTTS(tts_neural.clean_voice_id(voice or tts_neural.DEFAULT_NEURAL_VOICE),
-                                                         rate or tts_neural.DEFAULT_NEURAL_RATE)
-                    else:
-                        self._tts = None
-                except Exception:
-                    log.debug("Discord: natural voice unavailable", exc_info=True)
-                    self._tts = None
-            return self._tts
-
-    def wav(self, text: str, voice: str = "", rate: str = "") -> bytes | None:
-        tts = self._neural(voice, rate)
-        if tts is not None:
-            try:
-                p = tts.get(text, timeout=SPEECH_TIMEOUT_S)
-                if p is not None:
-                    return p.read_bytes()
-            except Exception:
-                log.debug("Discord: natural voice failed", exc_info=True)
-        if sys.platform == "win32":
-            try:
-                if self._onecore is None:
-                    from treeaicoach import tts_neural  # noqa: PLC0415
-
-                    self._onecore = tts_neural.OneCoreSynth()
-                return bytes(self._onecore.wav(text))
-            except Exception:
-                log.debug("Discord: OneCore voice failed", exc_info=True)
-        return None
-
-
 # ------------------------------------------------------------------------------ the caller
 class DiscordCaller:
     """The bot of the app (one per process: :func:`caller`). Thread-safe, never raises.
 
     ``backend_factory()`` builds the Discord layer (``DiscordPyBackend`` by default; tests pass a
-    fake), ``speech(text, voice, rate) -> wav bytes`` the audio (the app's voice by default)."""
+    fake), ``speech(text, voice, rate) -> wav bytes`` replaces the synthesis (Edge -> OneCore -> SAPI
+    by default); the clips recorded at build time stay the last resort either way (``recorded``)."""
 
     def __init__(self, *, backend_factory: Callable[[], Any] | None = None,
                  speech: Callable[[str, str, str], bytes | None] | None = None,
                  beep: Callable[[], bytes] | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic, recorded: bool = True) -> None:
         self._factory = backend_factory or DiscordPyBackend
-        sp = _Speech() if speech is None else None
-        self._speech = speech or (lambda text, v, r: sp.wav(text, v, r))  # type: ignore[union-attr]
+        self.voice = da.BotVoice([("custom", speech)] if speech is not None else None, recorded=recorded)
         self._beep = beep or _danger_chime
-        self._clips: dict[str, bytes] = {}          # lane -> chime + "Top gank" (48 kHz stereo PCM)
+        self._clips: dict[str, tuple[bytes, str]] = {}   # sentence -> (PCM at unity volume, source)
         self._clips_key: tuple[str, str] | None = None
+        self._voice_source = ""             # source of the gank clips ("" = not rendered yet / none)
+        self._voice_checked = False         # the gank clips were rendered once (the page can tell "none")
+        self._muted = False                 # hotkey_discord_mute: the bot says nothing
+        self._hotkeys: Any = None
+        self._hotkey_key = ""
         self._clock = clock
         self._lock = threading.RLock()
         self._filter = CallFilter(clock)
@@ -767,16 +822,31 @@ class DiscordCaller:
         """Apply the Config fields ``discord_enabled`` / ``discord_token`` / ``discord_user_id``
         (+ the natural voice). Starts / restarts / stops the bot. Never raises."""
         try:
+            try:
+                vol = max(0, min(100, int(getattr(cfg, "discord_volume", da.DEFAULT_VOLUME))))
+            except (TypeError, ValueError):
+                vol = da.DEFAULT_VOLUME
             s = _Settings(enabled=bool(getattr(cfg, "discord_enabled", False)),
                           token=clean_token(getattr(cfg, "discord_token", "")),
                           user_id=clean_user_id(getattr(cfg, "discord_user_id", "")),
                           neural_voice=str(getattr(cfg, "neural_voice", "") or ""),
-                          neural_rate=str(getattr(cfg, "neural_rate", "") or ""))
+                          neural_rate=str(getattr(cfg, "neural_rate", "") or ""),
+                          volume=vol, only=getattr(cfg, "discord_only", False) is True,
+                          objectives=getattr(cfg, "discord_objectives", False) is True,
+                          jungler_seen=getattr(cfg, "discord_jungler_seen", False) is True,
+                          summary=getattr(cfg, "discord_summary", False) is True,
+                          mute_hotkey=str(getattr(cfg, "hotkey_discord_mute", "") or "").strip())
             with self._lock:
                 changed = s.key() != self._settings.key()
                 if s.user_id != self._settings.user_id:
                     self._dirty = True
+                more = (s.objectives and not self._settings.objectives) or \
+                    (s.jungler_seen and not self._settings.jungler_seen)
                 self._settings = s
+            self._sync_hotkey(s)
+            if more and self._state == "connected":       # a call kind switched on: render its clips now
+                threading.Thread(target=self.prerender, name="TreeAI-discord-clips", daemon=True).start()
+            with self._lock:
                 if not changed:
                     self._poke()
                     return
@@ -795,11 +865,12 @@ class DiscordCaller:
             log.exception("Discord: configure failed")
 
     def on_call(self, kind: str, text: str = "", info: dict | None = None) -> bool:
-        """THE engine hook. ``kind``: ``gank`` (``info["lane"]``: "top" / "mid" / "bot") and
+        """THE engine hook. ``kind``: ``gank`` (``info["lane"]``: "top" / "mid" / "bot" / "jungle"),
         ``matchup`` (``text``: the heuristic sentence, ``info["ai"]``: optional blocking callable
-        returning the AI sentence) are spoken, filtered; ``game_start`` / ``game_end`` join / leave
-        the voice channel; anything else is ignored. Returns True when something was queued.
-        Non-blocking, never raises."""
+        returning the AI sentence), and when their switch is on ``objective`` (``info["key"]``: dragon /
+        baron / grubs, ``info["spawn"]``), ``jungler_seen`` (``info["lane"]``), ``summary`` (``text``)
+        are spoken, filtered; ``game_start`` / ``game_end`` join / leave the voice channel; anything
+        else is ignored. Returns True when something was queued. Non-blocking, never raises."""
         try:
             info = info if isinstance(info, dict) else {}
             with self._lock:
@@ -813,6 +884,9 @@ class DiscordCaller:
                         self._filter.reset()
                     self._jobs = collections.deque(j for j in self._jobs if j.kind == "test")
                     self._jobs.append(_Job("join" if self._in_game else "leave", t=now))
+                elif kind in SPOKEN_KINDS and (self._muted or not s.wants(kind)):
+                    self.dropped += 1                    # bot muted (hotkey) / this call is switched off
+                    return False
                 elif kind == "gank":
                     lane = str(info.get("lane") or "").strip().lower()
                     say = gank_text(lane)
@@ -828,6 +902,32 @@ class DiscordCaller:
                         return False
                     self._queue_say(_Job("say", say, now, MATCHUP_STALE_S, "matchup", ai=ai,
                                          lane=str(info.get("opp") or "")))
+                elif kind == "objective":
+                    key = str(info.get("key") or "").strip().lower()
+                    say = objective_text(key)
+                    spawn = info.get("spawn")
+                    try:
+                        uid = f"{key}:{int(round(float(spawn)))}"
+                    except (TypeError, ValueError):
+                        uid = key
+                    if not say or not self._filter.admit("objective", uid):
+                        self.dropped += 1
+                        return False
+                    self._queue_say(_Job("say", say, now, OBJECTIVE_STALE_S, "objective"))
+                elif kind == "jungler_seen":
+                    lane = str(info.get("lane") or "").strip().lower()
+                    say = seen_text(lane)
+                    busy = any(j.kind == "say" for j in self._jobs)      # lowest priority: never queued behind
+                    if not say or busy or not self._filter.admit("jungler_seen", lane):
+                        self.dropped += 1
+                        return False
+                    self._queue_say(_Job("say", say, now, SEEN_STALE_S, "jungler_seen", lane=lane))
+                elif kind == "summary":
+                    say = " ".join(str(text or "").split())
+                    if not say or not self._filter.admit("summary"):
+                        self.dropped += 1
+                        return False
+                    self._queue_say(_Job("say", say, now, SUMMARY_STALE_S, "summary"))
                 else:
                     return False
             self._ensure_thread()
@@ -839,10 +939,57 @@ class DiscordCaller:
 
     def _queue_say(self, job: _Job) -> None:
         says = [j for j in self._jobs if j.kind == "say"]
-        if len(says) >= QUEUE_MAX:
-            self._jobs.remove(says[0])
+        if len(says) >= QUEUE_MAX:            # full: the least urgent (then the oldest) goes
+            worst = min(says, key=lambda j: (PRIORITY.get(j.call_kind, 0), j.t))
+            self._jobs.remove(worst)
             self.dropped += 1
         self._jobs.append(job)
+
+    def speaks_for(self, kind: str) -> bool:
+        """``discord_only``: the bot is on, in a voice channel, not muted, and says this kind of call,
+        so the PC voice can stay silent for it (engine). Any thread, cheap."""
+        with self._lock:
+            s = self._settings
+            return (s.enabled and bool(s.token) and s.only and not self._muted and not self._stopping
+                    and self._state == "connected" and bool(self._view.get("channel"))
+                    and kind in SPOKEN_KINDS and s.wants(kind))
+
+    def set_muted(self, muted: bool | None = None) -> bool:
+        """Silence the bot (``None`` toggles: the push-to-mute hotkey). Pending calls are dropped and
+        the sentence being said is cut. Returns the new state. Never raises."""
+        with self._lock:
+            self._muted = (not self._muted) if muted is None else bool(muted)
+            m = self._muted
+            if m:
+                self._jobs = collections.deque(j for j in self._jobs if j.kind != "say")
+                self._jobs.append(_Job("hush", t=float(self._clock())))
+        self._event("Bot coupé (raccourci)" if m else "Bot rétabli (raccourci)")
+        log.info("Discord : bot %s", "coupé" if m else "rétabli")
+        self._poke()
+        return m
+
+    def _sync_hotkey(self, s: _Settings) -> None:
+        """The push-to-mute hotkey (``hotkey_discord_mute``, "" = none): its own RegisterHotKey
+        listener while the bot is on. Never raises."""
+        key = s.mute_hotkey if s.enabled and s.token and not self._stopping else ""
+        if key == self._hotkey_key:
+            return
+        old, self._hotkeys, self._hotkey_key = self._hotkeys, None, key
+        if old is not None:
+            try:
+                old.stop()
+            except Exception:
+                log.debug("Discord: hotkey stop", exc_info=True)
+        if not key or sys.platform != "win32":
+            return
+        try:
+            from treeaicoach.hotkeys import HotkeyListener  # noqa: PLC0415
+
+            hk = HotkeyListener({key: lambda: self.set_muted(None)})
+            hk.start()
+            self._hotkeys = hk
+        except Exception:
+            log.warning("Discord : raccourci %s indisponible", key, exc_info=True)
 
     def test(self, done: Callable[[str, bool], None] | None = None) -> bool:
         """"Faire parler le bot": connect if needed, join the player's channel, say a sentence
@@ -922,7 +1069,9 @@ class DiscordCaller:
                     "user": dict(v.get("user") or {"id": self._settings.user_id, "found": False}),
                     "channel": v.get("channel"), "latency_ms": v.get("latency_ms"),
                     "events": list(reversed(self._events)), "in_game": self._in_game,
-                    "user_id": self._settings.user_id,
+                    "user_id": self._settings.user_id, "muted": self._muted,
+                    "voice_source": self._voice_source, "voice_checked": self._voice_checked,
+                    "voice_failures": dict(self.voice.failures), "volume": self._settings.volume,
                     "age_s": float(self._clock()) - self._view_t if self._view_t else None}
 
     def _event(self, text: str, channel: str = "", ok: bool = True) -> None:
@@ -975,6 +1124,7 @@ class DiscordCaller:
             with self._lock:
                 self._stopping = True
                 th = self._thread
+            self._sync_hotkey(_Settings())
             self._poke()
             if th is not None and th.is_alive() and th is not threading.current_thread():
                 th.join(max(0.05, float(timeout)))
@@ -982,36 +1132,80 @@ class DiscordCaller:
             log.debug("Discord: shutdown failed", exc_info=True)
 
     # -- internals ------------------------------------------------------------------------
-    def _gank_clip(self, lane: str, voice: str, rate: str) -> bytes:
-        """The danger chime then "Top gank" (48 kHz stereo PCM); cached per voice. Blocking."""
+    def _clip(self, text: str, voice: str, rate: str, *, chime: bool = False, fast: bool = False) -> bytes:
+        """``text`` as 48 kHz stereo PCM at unity volume (the danger chime first when ``chime``),
+        cached per voice. Every sentence comes from :class:`discord_audio.BotVoice` (verified audible:
+        an empty synthesis falls through to the next voice, never to the chime alone). ``fast``:
+        not cached yet -> the clip recorded at build time at once if there is one (a gank call cannot
+        wait for the network), the full chain otherwise. Blocking. ``b""`` when no voice at all."""
+        key = ("!" if chime else "") + text
         with self._lock:
             if self._clips_key != (voice, rate):
                 self._clips_key, self._clips = (voice, rate), {}
-            clip = self._clips.get(lane)
-        if clip:
-            return clip
-        beep = wav_to_pcm48(self._beep() or b"")
-        words = wav_to_pcm48(self._speech(gank_text(lane), voice, rate) or b"")
-        if not words:
-            return beep                      # no voice right now: the chime alone, not cached
-        clip = beep + b"\x00" * (3840 * 4) + words if beep else words
+            hit = self._clips.get(key)
+        if hit:
+            return hit[0]
+        wav, src = b"", ""
+        if fast:
+            rec = da.recorded_wav(text)
+            if rec and da.wav_audible(rec):
+                wav, src = rec, "clip"
+        if not wav:
+            wav, src = self.voice.synth(text, voice, rate)
+        words = da.speech_pcm(wav) if wav else b""
+        if not da.is_audible(words):
+            log.warning("Discord : aucune voix pour « %s » (%s)", text,
+                        "; ".join(f"{k} : {v}" for k, v in self.voice.failures.items()) or "?")
+            return b""
+        clip = words
+        if chime:
+            beep = da.chime_pcm(self._beep() or b"")
+            clip = beep + b"\x00" * (da.FRAME_BYTES * 4) + words if beep else words
         with self._lock:
-            if self._clips_key == (voice, rate):
-                self._clips[lane] = clip
+            if self._clips_key == (voice, rate) and not (fast and src == "clip"):
+                self._clips[key] = (clip, src)     # a fast stand-in is not cached: the real voice next time
+            if text == gank_text("bot") or not self._voice_source:
+                self._voice_source = src
         return clip
 
+    def _gank_clip(self, lane: str, voice: str, rate: str, fast: bool = False) -> bytes:
+        """The danger chime then "Top gank" (48 kHz stereo PCM, unity volume). ``b""`` when no voice
+        works (the chime is NOT played alone: friends would hear a beep meaning nothing)."""
+        text = gank_text(lane)
+        return self._clip(text, voice, rate, chime=True, fast=fast) if text else b""
+
     def prerender(self) -> int:
-        """Render the three gank clips now (bot start), so a call plays instantly. Blocking (run on
-        a daemon thread); returns how many clips are ready. Never raises."""
+        """Render the gank clips now (bot start; + objective / jungler-seen sentences when switched on),
+        each VERIFIED audible, so a call plays instantly; logs the voice source and puts it in the
+        launcher's log. Blocking (run on a daemon thread); returns how many clips are ready. Never raises."""
         with self._lock:
             s = self._settings
         n = 0
-        for lane in _LANES:
+        jobs: list[tuple[str, bool]] = [(gank_text(ln), True) for ln in _GANK_LANES]
+        if s.objectives:
+            jobs += [(objective_text(k), False) for k in OBJECTIVE_KEYS]
+        if s.jungler_seen:
+            jobs += [(seen_text(ln), False) for ln in _LANES]
+        for text, chime in jobs:
             try:
-                if len(self._gank_clip(lane, s.neural_voice, s.neural_rate)) > 0:
+                if self._clip(text, s.neural_voice, s.neural_rate, chime=chime):
                     n += 1
             except Exception:
-                log.debug("Discord: clip %s failed", lane, exc_info=True)
+                log.warning("Discord : clip « %s » impossible", text, exc_info=True)
+        with self._lock:
+            first = not self._voice_checked
+            self._voice_checked = True
+            src = self._voice_source if n else ""
+            if not n:
+                self._voice_source = ""
+        label = da.SOURCE_LABELS.get(src, "")
+        log.info("Discord : %d/%d annonces prêtes, voix %s", n, len(jobs), src or "AUCUNE")
+        if first or not n:
+            if n:
+                self._event(f"Voix du bot : {label} ({n}/{len(jobs)} annonces prêtes)")
+            else:
+                why = "; ".join(f"{k} : {v}" for k, v in self.voice.failures.items())
+                self._event(f"Aucune voix pour le bot ({why or 'cause inconnue'})", ok=False)
         return n
 
     async def _blocking(self, fn: Callable[..., Any], *args: Any, timeout: float) -> Any:
@@ -1084,8 +1278,19 @@ class DiscordCaller:
         wake.clear()
 
     def _pop(self) -> _Job | None:
+        """The next job: commands in order; among the sentences, the most urgent first (a gank call
+        never waits behind "Dragon dans 30 secondes")."""
         with self._lock:
-            return self._jobs.popleft() if self._jobs else None
+            if not self._jobs:
+                return None
+            first = self._jobs[0]
+            if first.kind == "say":
+                says = [j for j in self._jobs if j.kind == "say"]
+                best = max(says, key=lambda j: (PRIORITY.get(j.call_kind, 0), -j.t))
+                if PRIORITY.get(best.call_kind, 0) > PRIORITY.get(first.call_kind, 0):
+                    self._jobs.remove(best)
+                    return best
+            return self._jobs.popleft()
 
     def _fail_tests(self, msg: str) -> None:
         with self._lock:
@@ -1350,11 +1555,22 @@ class DiscordCaller:
         if job.kind == "join":
             await self._ensure_voice(backend, s)
             return
+        if job.kind == "hush":                   # push-to-mute: cut the sentence being said
+            stop = getattr(backend, "stop", None)
+            if callable(stop):
+                stop()
+            return
         # "say" / "test"
         if float(self._clock()) - job.t > job.stale_s:
             self.dropped += 1
             return
+        with self._lock:
+            if self._muted and job.kind == "say":
+                self.dropped += 1
+                return
         was_in_voice = self._current(backend) is not None
+        if job.call_kind == "summary" and not was_in_voice:
+            return                               # the end-of-game line never pulls the bot into a channel
         if not await self._ensure_voice(backend, s):
             if job.kind == "test":
                 self._done(job, self.status()[0], False)
@@ -1362,7 +1578,9 @@ class DiscordCaller:
         v, r = s.neural_voice, s.neural_rate
         text = job.text
         if job.call_kind == "gank":
-            pcm = await self._blocking(self._gank_clip, job.lane, v, r, timeout=SPEECH_TIMEOUT_S + 2.0)
+            pcm = await self._blocking(self._gank_clip, job.lane, v, r, True, timeout=CHAIN_TIMEOUT_S)
+        elif job.call_kind in ("objective", "jungler_seen"):
+            pcm = await self._blocking(self._clip, text, v, r, timeout=CHAIN_TIMEOUT_S)
         else:
             if job.ai is not None:                 # matchup: the one AI sentence of the game, else the rules
                 try:
@@ -1374,19 +1592,24 @@ class DiscordCaller:
                              type(exc).__name__)
             if not text:
                 return
-            wav = await self._blocking(self._speech, text, v, r, timeout=SPEECH_TIMEOUT_S + 2.0)
-            pcm = wav_to_pcm48(wav) if wav else b""
-            if pcm and job.kind == "test" and job.call_kind == "test":   # the test ends with a real gank call
-                pcm += b"\x00" * (3840 * 15) + await self._blocking(self._gank_clip, "bot", v, r,
-                                                                    timeout=SPEECH_TIMEOUT_S + 2.0)
+            wav, _src = await self._blocking(self.voice.synth, text, v, r, timeout=CHAIN_TIMEOUT_S)
+            pcm = da.speech_pcm(wav) if wav else b""
+            if not da.is_audible(pcm):
+                pcm = b""
+            if job.kind == "test" and job.call_kind == "test":   # the test ends with a real gank call
+                gank = await self._blocking(self._gank_clip, "bot", v, r, timeout=CHAIN_TIMEOUT_S)
+                pcm = (pcm + b"\x00" * (da.FRAME_BYTES * 15) + gank) if pcm and gank else (pcm or gank)
         if not pcm:
+            why = "; ".join(f"{k} : {v_}" for k, v_ in self.voice.failures.items())
+            self._event(f"Aucune voix pour « {text} »" + (f" ({why})" if why else ""), ok=False)
             if job.kind == "test":
-                self._done(job, "Pas de voix disponible pour le bot (Internet ?).", False)
+                self._done(job, "Aucune voix disponible pour le bot (ni naturelle, ni Windows, ni enregistrée).",
+                           False)
             return
         if job.kind != "test" and float(self._clock()) - job.t > job.stale_s:
             self.dropped += 1
             return
-        await backend.play(pcm)
+        await backend.play(da.apply_volume(pcm, s.volume))
         cur = self._current(backend)
         self._event(f"A dit « {text} »", backend.channel_name(cur) if cur is not None else "")
         with self._lock:
@@ -1450,7 +1673,7 @@ __all__ = ["DiscordCaller", "CallFilter", "DiscordPyBackend", "BadToken", "calle
            "gank_text", "matchup_verdict", "matchup_prompt", "clean_ai_line", "wav_to_pcm48", "mask_secrets", "clean_token", "clean_user_id",
            "application_id_from_token", "invite_url", "discord_available", "SPOKEN_KINDS", "CONTROL_KINDS",
            "describe_guilds", "missing_permissions", "EXAMPLE_MATCHUP",
-           "join_error_text"]
+           "join_error_text", "objective_text", "seen_text", "summary_line", "nearest_lane", "speech_probe"]
 
 
 def probe(token: str = "") -> str:
@@ -1485,4 +1708,44 @@ def probe(token: str = "") -> str:
         lines.append(asyncio.run(_login()))
     except Exception as exc:
         lines.append(f"FAILED: {error_text(exc)}")
+    lines += speech_probe()
     return "\n".join(lines) + "\n"
+
+
+def speech_probe(text: str = "Bot gank") -> list[str]:
+    """The bot's exact voice path for ``text`` (packaging check of 2.9.0's "le bot n'arrive pas à
+    parler"): each voice of the chain alone (bytes, duration, level or the error), then what the bot
+    would play (chime + words at the default volume) and its source. Never raises."""
+    out: list[str] = []
+    try:
+        try:
+            from importlib.metadata import version  # noqa: PLC0415
+
+            out.append(f"edge-tts {version('edge-tts')}")
+        except Exception as exc:
+            out.append(f"edge-tts: {error_text(exc)}")
+        voice = da.BotVoice()
+        for name, fn in voice.chain():
+            t0 = time.monotonic()
+            try:
+                wav = fn(text, "", "")
+                if not wav:
+                    out.append(f"voice {name}: no audio ({voice.failures.get(name) or 'none / not on this OS'}, "
+                               f"{time.monotonic() - t0:.1f} s)")
+                    continue
+                pcm = da.to_pcm48(wav)
+                st = da.pcm_stats(pcm)
+                ok = "ok" if da.is_audible(pcm) else "VIDE"
+                out.append(f"voice {name}: {ok}, {len(wav or b'')} bytes, {st['seconds']:.2f} s, "
+                           f"{st['rms_db']} dBFS RMS ({time.monotonic() - t0:.1f} s)")
+            except Exception as exc:
+                out.append(f"voice {name}: FAILED {error_text(exc)} ({time.monotonic() - t0:.1f} s)")
+        c = DiscordCaller(backend_factory=lambda: None)
+        clip = c._gank_clip("bot", "", "")
+        st = da.pcm_stats(da.apply_volume(clip, da.DEFAULT_VOLUME))
+        out.append(f"bot clip « {text} »: {len(clip)} bytes, {st['seconds']:.2f} s, {st['rms_db']} dBFS RMS, "
+                   f"peak {st['peak_db']} dBFS at volume {da.DEFAULT_VOLUME}, source "
+                   f"{c._voice_source or 'NONE'} ({da.SOURCE_LABELS.get(c._voice_source, 'aucune')})")
+    except Exception as exc:
+        out.append(f"speech FAILED: {error_text(exc)}")
+    return out

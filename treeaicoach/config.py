@@ -166,6 +166,10 @@ HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_diag",)
 BOOL_FIELDS = BOOL_FIELDS + ("discord_enabled",)
 UPDATE_TEXT_FIELDS["discord_token"] = 128
 UPDATE_TEXT_FIELDS["discord_user_id"] = 24
+# bot Discord 2.9.1: volume (default 40 = 35 % of 2.9.0), optional calls (all off), push-to-mute key
+INT_RANGES["discord_volume"] = (0, 100)
+BOOL_FIELDS = BOOL_FIELDS + ("discord_only", "discord_objectives", "discord_jungler_seen", "discord_summary")
+HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_discord_mute",)
 # declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 # self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
@@ -346,6 +350,12 @@ class Config:
     discord_enabled: bool = False
     discord_token: str = field(default="", repr=False)   # secret: never logged, never in a diagnostic
     discord_user_id: str = ""            # my Discord user id: the bot joins MY voice channel
+    discord_volume: int = 40             # 0..100, 40 = 35 % of the 2.9.0 level (discord_audio.volume_gain)
+    discord_only: bool = False           # the bot says its calls INSTEAD of the PC voice (when it is in voice)
+    discord_objectives: bool = False     # "Dragon / Baron / Larves dans 30 secondes"
+    discord_jungler_seen: bool = False   # "Jungler ennemi vu top / mid / bot" (lowest priority)
+    discord_summary: bool = False        # "Victoire en 32 minutes, 9 ganks évités sur 10."
+    hotkey_discord_mute: str = ""        # push-to-mute of the bot ("" = none)
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""

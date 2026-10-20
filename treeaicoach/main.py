@@ -266,7 +266,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.discord_probe:
             from treeaicoach.discord_bot import probe
 
-            Path(args.discord_probe).write_text(probe(), encoding="utf-8")
+            text = probe()
+            if args.discord_probe != "-":
+                Path(args.discord_probe).write_text(text, encoding="utf-8")
+            try:
+                print(text, end="", flush=True)
+            except Exception:              # windowed exe: no console
+                pass
             return 0
         if args.selftest:
             from treeaicoach.selftest import run_selftest

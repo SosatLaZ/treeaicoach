@@ -8,7 +8,7 @@ PySide6-Essentials>=6.7,<6.8     # launcher (Qt Widgets): QtCore / QtGui / QtWid
 pywin32>=306; sys_platform == "win32"
 msvc-runtime>=14.40; sys_platform == "win32"
 # Natural voice (Microsoft Edge neural voices, online) + MP3 decoding without ffmpeg
-edge-tts>=7.0,<8
+edge-tts>=7.3.1,<8   # 7.2.x: Microsoft answers 403 to its handshake since 2026 (Sec-MS-GEC v2)
 miniaudio>=1.59,<2
 # Windows OneCore voices (WinRT) — offline fallback, better than the SAPI desktop voices
 winrt-runtime>=2.3,<4; sys_platform == "win32"

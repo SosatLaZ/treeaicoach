@@ -19,13 +19,18 @@ from treeaicoach.config import Config
 TOKEN = ".".join(["MTIzNDU2Nzg5MDEyMzQ1Njc4OQ", "GabcDE", "abcdefghijklmnopqrstuvwxyz" + "0123456789AB"])
 
 
-def _wav(seconds: float = 0.1, rate: int = 24000) -> bytes:
+def _wav(seconds: float = 0.4, rate: int = 24000, amp: float = 0.2) -> bytes:
+    """A 440 Hz tone (audible: passes discord_audio.is_audible when >= 0.15 s and amp > 0.005)."""
+    import numpy as np
+
+    n = int(seconds * rate)
+    x = (amp * 32767 * np.sin(2 * np.pi * 440.0 * np.arange(n) / rate)).astype("<i2")
     bio = io.BytesIO()
     with wave.open(bio, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(rate)
-        w.writeframes(b"\x10\x00" * int(seconds * rate))
+        w.writeframes(x.tobytes())
     return bio.getvalue()
 
 
@@ -121,7 +126,8 @@ def test_gank_text_is_only_lane_and_gank() -> None:
     assert db.gank_text("top") == "Top gank"
     assert db.gank_text("MID") == "Mid gank"
     assert db.gank_text("bot") == "Bot gank"
-    assert db.gank_text(None) == "" and db.gank_text("jungle") == ""
+    assert db.gank_text("jungle") == "Jungle gank"
+    assert db.gank_text(None) == "" and db.gank_text("river") == ""
 
 
 def test_filter_kinds_dedup_and_rate_limit() -> None:
@@ -216,8 +222,9 @@ def test_lifecycle_join_say_leave_stop(bot) -> None:  # noqa: ANN001
 
 def test_gank_clips_prerendered_at_start(bot) -> None:  # noqa: ANN001
     bot.configure(_cfg())
-    assert _wait(lambda: len(bot._clips) == 3)
-    assert {"Top gank", "Mid gank", "Bot gank"} <= set(bot.tts_texts)
+    assert _wait(lambda: len(bot._clips) == 4)
+    assert {"Top gank", "Mid gank", "Bot gank", "Jungle gank"} <= set(bot.tts_texts)
+    assert _wait(lambda: bot.snapshot()["voice_source"] == "custom" and bot.snapshot()["voice_checked"])
 
 
 def test_matchup_ai_sentence_then_fallback(bot, monkeypatch) -> None:  # noqa: ANN001
