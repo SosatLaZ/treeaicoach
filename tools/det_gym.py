@@ -1598,12 +1598,14 @@ def history_entry(out: dict, note: str = "") -> dict:
     games = {g: {k: v for k, v in m.items() if not isinstance(v, (list, dict))}
              for g, m in out["games"].items()}
     real = {k: v for k, v in out.get("real", {}).items() if not isinstance(v, (list, dict))} or None
+    cases = {c: {k: v for k, v in m.items() if not isinstance(v, (list, dict))}
+             for c, m in (out.get("real_cases") or {}).items()} or None
     return {"time": _time.strftime("%Y-%m-%d %H:%M:%S"), "rev": _git_rev(), "note": note, "gym": GYM_VERSION,
             "deps": deps_versions(),
             "suite": out.get("suite", "main"), "quick": out.get("quick", False),
             "only": out.get("only"), "score": score(out["total"], real),
             "quality": score(out["total"], real, cost=False), "total": tot, "games": games,
-            "real": real}
+            "real": real, "real_cases": cases}
 
 
 def load_history(path: Path = HISTORY_FILE) -> list[dict]:
@@ -1637,6 +1639,18 @@ def regressions(cur: dict, ref: dict) -> list[str]:
             a, b = cur["real"].get(k), ref["real"].get(k)
             if a is not None and b is not None and d * (a - b) < -tol - 1e-9:
                 bad.append(f"real.{k} {b:.4g} -> {a:.4g}")
+    # the truth-labelled real cases (tests/fixtures/real_cases, tools/real_truth_case.py): same
+    # rule per case, on the same labels (gt) only; one frame may flip at a 12-frame static
+    # replay, so one label of tolerance on the ratios
+    for c, m in (cur.get("real_cases") or {}).items():
+        r = (ref.get("real_cases") or {}).get(c)
+        if not r or r.get("gt") != m.get("gt") or not m.get("gt"):
+            continue
+        tol = 1.0 / float(m["gt"]) + 1e-9
+        for k, (d, _t) in REAL_TRACKED.items():
+            a, b = m.get(k), r.get(k)
+            if a is not None and b is not None and d * (a - b) < -tol:
+                bad.append(f"case {c}.{k} {b:.4g} -> {a:.4g}")
     return bad
 
 

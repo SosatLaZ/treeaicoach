@@ -115,11 +115,13 @@ def run_image(name: str, spec: dict, truth: dict, db, backend: str = "auto",
     gts = spec["champions"]
     res = ImageResult(name=name, n_gt=len(gts), n_det=len(dets),
                       ms=float(np.median(times[len(times) // 2:])))
-    # greedy matching by distance
-    pairs = sorted(((math.hypot(d.u - g["u"], d.v - g["v"]), i, j)
+    # greedy matching by distance (a stack: two labels on one icon; the detection with the
+    # label's name takes it, not the first label)
+    pairs = sorted(((round(math.hypot(d.u - g["u"], d.v - g["v"]), 3),
+                     0 if g.get("name") and getattr(d, "alias", None) == g["name"] else 1, i, j)
                     for i, g in enumerate(gts) for j, d in enumerate(dets)))
     used_g, used_d = set(), set()
-    for dist, i, j in pairs:
+    for dist, _named, i, j in pairs:
         if dist > MATCH_DIST or i in used_g or j in used_d:
             continue
         used_g.add(i)
@@ -138,8 +140,22 @@ def run_image(name: str, spec: dict, truth: dict, db, backend: str = "auto",
             else:
                 res.wrong.append(("id", g["name"], getattr(d, "alias", None), round(d.u, 3), round(d.v, 3)))
     res.misses = [(g.get("name"), g["team"], g["u"], g["v"]) for i, g in enumerate(gts) if i not in used_g]
+    # truth-labelled cases (tools/real_truth_case.py): a detection within an "unsure" zone (the
+    # truth says a champion is around, the icon could not be labelled) is neither a hit nor a
+    # false positive, and a side's false positives are judged only when the frame says so
+    unsure = spec.get("unsure") or []
+    judged = spec.get("fp_judged") or {}
+
+    def ignored(d) -> bool:
+        team = "enemy" if d.cls == "enemy" else "ally"
+        if not judged.get(team, True):
+            return True
+        return any(math.hypot(d.u - z["u"], d.v - z["v"]) <= float(z.get("r", MATCH_DIST)) + MATCH_DIST
+                   for z in unsure if z.get("team", team) == team)
+
     res.false_pos = [(getattr(d, "alias", None), d.cls, round(d.u, 3), round(d.v, 3), round(d.score, 2))
-                     for j, d in enumerate(dets) if j not in used_d]
+                     for j, d in enumerate(dets) if j not in used_d and not ignored(d)]
+    res.n_det = res.tp + len(res.false_pos)
     return res
 
 

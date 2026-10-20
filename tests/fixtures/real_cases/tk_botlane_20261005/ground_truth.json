@@ -1,0 +1,1839 @@
+{
+ "about": "Real minimap captures of the user's TahmKench game (x153 every ~10 s, 2.6.0; the overlay is drawn in the capture) labelled from the LCU truth (tools/real_truth_case.py: wall clock -> game time offset 13.4 s, positions from the minute frames / kills snapped to the icon ring of the champion's team, anonymous when another champion of the team could stand there; 'unsure' = on the minimap per the truth but no icon found: ignored by the bench; 'dead' from the kills + respawn timer / my snapshots).",
+ "rosters": {
+  "g1": {
+   "self": "TahmKench",
+   "ally": [
+    "Sett",
+    "Kayn",
+    "Xerath",
+    "Yunara"
+   ],
+   "enemy": [
+    "Singed",
+    "Chogath",
+    "Fizz",
+    "Corki",
+    "Nami"
+   ]
+  }
+ },
+ "images": {
+  "20261005_162927_0222": {
+   "game": "g1",
+   "file": "20261005_162927_0222.png",
+   "time": 333.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.451,
+     "v": 0.5423,
+     "team": "ally",
+     "name": "Xerath"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_162937_0223": {
+   "game": "g1",
+   "file": "20261005_162937_0223.png",
+   "time": 343.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4512,
+     "v": 0.5271,
+     "team": "ally",
+     "name": "Xerath"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_162947_0224": {
+   "game": "g1",
+   "file": "20261005_162947_0224.png",
+   "time": 353.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4833,
+     "v": 0.5371,
+     "team": "ally",
+     "name": "Xerath"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_162957_0225": {
+   "game": "g1",
+   "file": "20261005_162957_0225.png",
+   "time": 363.6,
+   "dead": [
+    "Chogath"
+   ],
+   "champions": [
+    {
+     "u": 0.1734,
+     "v": 0.1278,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.24,
+     "v": 0.5662,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.4426,
+     "v": 0.5578,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.7766,
+     "v": 0.9215,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.7766,
+     "v": 0.9215,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.5031,
+     "v": 0.4949,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.6473,
+     "v": 0.0764,
+     "r": 0.13,
+     "why": "no icon"
+    },
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.9281,
+     "v": 0.6877,
+     "r": 0.13,
+     "why": "no icon"
+    },
+    {
+     "name": "Nami",
+     "team": "enemy",
+     "u": 0.9459,
+     "v": 0.6876,
+     "r": 0.13,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_163017_0227": {
+   "game": "g1",
+   "file": "20261005_163017_0227.png",
+   "time": 383.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4471,
+     "v": 0.5375,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.5128,
+     "v": 0.4941,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.9213,
+     "v": 0.6977,
+     "r": 0.049,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163027_0228": {
+   "game": "g1",
+   "file": "20261005_163027_0228.png",
+   "time": 393.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4614,
+     "v": 0.5152,
+     "team": "ally",
+     "name": null
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Fizz",
+     "team": "enemy",
+     "u": 0.5133,
+     "v": 0.5041,
+     "r": 0.049,
+     "why": "no icon"
+    },
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.9183,
+     "v": 0.7019,
+     "r": 0.049,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163037_0229": {
+   "game": "g1",
+   "file": "20261005_163037_0229.png",
+   "time": 403.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4638,
+     "v": 0.5357,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.5064,
+     "v": 0.5126,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.9154,
+     "v": 0.7062,
+     "r": 0.049,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163057_0231": {
+   "game": "g1",
+   "file": "20261005_163057_0231.png",
+   "time": 423.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.0734,
+     "v": 0.2622,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.433,
+     "v": 0.5389,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.8301,
+     "v": 0.8158,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.8301,
+     "v": 0.8158,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.1116,
+     "v": 0.2166,
+     "team": "enemy",
+     "name": "Singed"
+    },
+    {
+     "u": 0.5025,
+     "v": 0.4927,
+     "team": "enemy",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9175,
+     "v": 0.7613,
+     "team": "enemy",
+     "name": "Corki",
+     "stacked": true
+    },
+    {
+     "u": 0.9175,
+     "v": 0.7613,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Kayn",
+     "team": "ally",
+     "u": 0.4697,
+     "v": 0.6553,
+     "r": 0.127,
+     "why": "2 icons"
+    },
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.8317,
+     "v": 0.5602,
+     "r": 0.127,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_163107_0232": {
+   "game": "g1",
+   "file": "20261005_163107_0232.png",
+   "time": 433.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4381,
+     "v": 0.5423,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.4687,
+     "v": 0.513,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163127_0234": {
+   "game": "g1",
+   "file": "20261005_163127_0234.png",
+   "time": 453.6,
+   "dead": [
+    "Yunara"
+   ],
+   "champions": [
+    {
+     "u": 0.4898,
+     "v": 0.5372,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.8118,
+     "v": 0.8949,
+     "team": "enemy",
+     "name": null
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Fizz",
+     "team": "enemy",
+     "u": 0.5085,
+     "v": 0.4922,
+     "r": 0.054,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163148_0236": {
+   "game": "g1",
+   "file": "20261005_163148_0236.png",
+   "time": 474.6,
+   "dead": [
+    "TahmKench"
+   ],
+   "champions": [
+    {
+     "u": 0.5008,
+     "v": 0.5236,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.5281,
+     "v": 0.4581,
+     "team": "enemy",
+     "name": null
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163158_0237": {
+   "game": "g1",
+   "file": "20261005_163158_0237.png",
+   "time": 484.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4384,
+     "v": 0.5282,
+     "team": "ally",
+     "name": "Xerath"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163218_0239": {
+   "game": "g1",
+   "file": "20261005_163218_0239.png",
+   "time": 504.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4761,
+     "v": 0.5574,
+     "team": "ally",
+     "name": "Xerath"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163258_0243": {
+   "game": "g1",
+   "file": "20261005_163258_0243.png",
+   "time": 544.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4695,
+     "v": 0.5087,
+     "team": "ally",
+     "name": "Xerath"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163318_0245": {
+   "game": "g1",
+   "file": "20261005_163318_0245.png",
+   "time": 564.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.5029,
+     "v": 0.4984,
+     "team": "ally",
+     "name": null
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163348_0248": {
+   "game": "g1",
+   "file": "20261005_163348_0248.png",
+   "time": 594.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.5251,
+     "v": 0.4895,
+     "team": "ally",
+     "name": "Xerath"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163358_0249": {
+   "game": "g1",
+   "file": "20261005_163358_0249.png",
+   "time": 604.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1351,
+     "v": 0.4632,
+     "team": "enemy",
+     "name": "Singed"
+    },
+    {
+     "u": 0.9132,
+     "v": 0.7892,
+     "team": "enemy",
+     "name": null
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Fizz",
+     "team": "enemy",
+     "u": 0.9644,
+     "v": 0.0394,
+     "r": 0.03,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163900_0279": {
+   "game": "g1",
+   "file": "20261005_163900_0279.png",
+   "time": 906.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.806,
+     "v": 0.9064,
+     "team": "ally",
+     "name": null
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.4718,
+     "v": 0.5027,
+     "r": 0.043,
+     "why": "no icon"
+    },
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.9064,
+     "v": 0.7391,
+     "r": 0.048,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_163950_0284": {
+   "game": "g1",
+   "file": "20261005_163950_0284.png",
+   "time": 956.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1603,
+     "v": 0.4381,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.8762,
+     "v": 0.8553,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.8762,
+     "v": 0.8553,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.0898,
+     "v": 0.2902,
+     "team": "enemy",
+     "name": "Singed"
+    },
+    {
+     "u": 0.5956,
+     "v": 0.3911,
+     "team": "enemy",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9395,
+     "v": 0.7361,
+     "team": "enemy",
+     "name": "Corki",
+     "stacked": true
+    },
+    {
+     "u": 0.9395,
+     "v": 0.7361,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Sett",
+     "team": "ally",
+     "u": 0.0689,
+     "v": 0.5977,
+     "r": 0.135,
+     "why": "no icon"
+    },
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.4587,
+     "v": 0.5169,
+     "r": 0.135,
+     "why": "no icon"
+    },
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.3352,
+     "v": 0.324,
+     "r": 0.135,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_164050_0290": {
+   "game": "g1",
+   "file": "20261005_164050_0290.png",
+   "time": 1016.6,
+   "dead": [
+    "Singed"
+   ],
+   "champions": [
+    {
+     "u": 0.9187,
+     "v": 0.782,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.9187,
+     "v": 0.782,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.5604,
+     "v": 0.0868,
+     "team": "enemy",
+     "name": "Chogath"
+    },
+    {
+     "u": 0.497,
+     "v": 0.391,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Sett",
+     "team": "ally",
+     "u": 0.32,
+     "v": 0.1193,
+     "r": 0.135,
+     "why": "2 icons"
+    },
+    {
+     "name": "Kayn",
+     "team": "ally",
+     "u": 0.4223,
+     "v": 0.1745,
+     "r": 0.135,
+     "why": "3 icons"
+    },
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.472,
+     "v": 0.223,
+     "r": 0.135,
+     "why": "2 icons"
+    },
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.9644,
+     "v": 0.0393,
+     "r": 0.135,
+     "why": "no icon"
+    },
+    {
+     "name": "Nami",
+     "team": "enemy",
+     "u": 0.8572,
+     "v": 0.9052,
+     "r": 0.135,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_164131_0294": {
+   "game": "g1",
+   "file": "20261005_164131_0294.png",
+   "time": 1057.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.7411,
+     "v": 0.9263,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_164151_0296": {
+   "game": "g1",
+   "file": "20261005_164151_0296.png",
+   "time": 1077.6,
+   "dead": [
+    "TahmKench"
+   ],
+   "champions": [
+    {
+     "u": 0.5861,
+     "v": 0.8262,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.4439,
+     "v": 0.5851,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.8909,
+     "v": 0.7433,
+     "team": "enemy",
+     "name": "Corki",
+     "stacked": true
+    },
+    {
+     "u": 0.8909,
+     "v": 0.7433,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Sett",
+     "team": "ally",
+     "u": 0.1089,
+     "v": 0.2037,
+     "r": 0.11,
+     "why": "2 icons"
+    },
+    {
+     "name": "Yunara",
+     "team": "ally",
+     "u": 0.3428,
+     "v": 0.9324,
+     "r": 0.11,
+     "why": "no icon"
+    },
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.1866,
+     "v": 0.1874,
+     "r": 0.11,
+     "why": "no icon"
+    },
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.8192,
+     "v": 0.2053,
+     "r": 0.11,
+     "why": "no icon"
+    },
+    {
+     "name": "Fizz",
+     "team": "enemy",
+     "u": 0.5263,
+     "v": 0.5544,
+     "r": 0.11,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_164301_0303": {
+   "game": "g1",
+   "file": "20261005_164301_0303.png",
+   "time": 1147.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.5286,
+     "v": 0.661,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_164341_0307": {
+   "game": "g1",
+   "file": "20261005_164341_0307.png",
+   "time": 1187.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.6066,
+     "v": 0.7587,
+     "team": "enemy",
+     "name": "Corki"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_164451_0314": {
+   "game": "g1",
+   "file": "20261005_164451_0314.png",
+   "time": 1257.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.0443,
+     "v": 0.8325,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.4891,
+     "v": 0.4671,
+     "team": "ally",
+     "name": "Xerath",
+     "stacked": true
+    },
+    {
+     "u": 0.4891,
+     "v": 0.4671,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.4891,
+     "v": 0.4671,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.5904,
+     "v": 0.4064,
+     "team": "enemy",
+     "name": "Chogath",
+     "stacked": true
+    },
+    {
+     "u": 0.5904,
+     "v": 0.4064,
+     "team": "enemy",
+     "name": "Fizz",
+     "stacked": true
+    },
+    {
+     "u": 0.5904,
+     "v": 0.4064,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Kayn",
+     "team": "ally",
+     "u": 0.0265,
+     "v": 0.9692,
+     "r": 0.11,
+     "why": "no icon"
+    },
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.1426,
+     "v": 0.2113,
+     "r": 0.11,
+     "why": "no icon"
+    },
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.6829,
+     "v": 0.5523,
+     "r": 0.11,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_164501_0315": {
+   "game": "g1",
+   "file": "20261005_164501_0315.png",
+   "time": 1267.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.6294,
+     "v": 0.4474,
+     "team": "enemy",
+     "name": null
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_164551_0320": {
+   "game": "g1",
+   "file": "20261005_164551_0320.png",
+   "time": 1317.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1182,
+     "v": 0.2341,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.2605,
+     "v": 0.1518,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.8908,
+     "v": 0.757,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.7116,
+     "v": 0.585,
+     "team": "enemy",
+     "name": "Chogath"
+    },
+    {
+     "u": 0.6383,
+     "v": 0.4187,
+     "team": "enemy",
+     "name": "Corki",
+     "stacked": true
+    },
+    {
+     "u": 0.6383,
+     "v": 0.4187,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Yunara",
+     "team": "ally",
+     "u": 0.5382,
+     "v": 0.552,
+     "r": 0.113,
+     "why": "2 icons"
+    },
+    {
+     "name": "TahmKench",
+     "team": "ally",
+     "u": 0.4976,
+     "v": 0.5778,
+     "r": 0.113,
+     "why": "2 icons"
+    },
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.1422,
+     "v": 0.1095,
+     "r": 0.113,
+     "why": "no icon"
+    },
+    {
+     "name": "Fizz",
+     "team": "enemy",
+     "u": 0.9423,
+     "v": 0.5576,
+     "r": 0.113,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_164612_0322": {
+   "game": "g1",
+   "file": "20261005_164612_0322.png",
+   "time": 1338.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.9154,
+     "v": 0.5083,
+     "team": "enemy",
+     "name": null
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_164652_0326": {
+   "game": "g1",
+   "file": "20261005_164652_0326.png",
+   "time": 1378.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.5206,
+     "v": 0.0918,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.5024,
+     "v": 0.2565,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.945,
+     "v": 0.4032,
+     "team": "ally",
+     "name": "Xerath",
+     "stacked": true
+    },
+    {
+     "u": 0.945,
+     "v": 0.4032,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.945,
+     "v": 0.4032,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.9365,
+     "v": 0.2832,
+     "team": "enemy",
+     "name": "Nami"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.3257,
+     "v": 0.2082,
+     "r": 0.084,
+     "why": "no icon"
+    },
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.9284,
+     "v": 0.1561,
+     "r": 0.084,
+     "why": "no icon"
+    },
+    {
+     "name": "Fizz",
+     "team": "enemy",
+     "u": 0.9338,
+     "v": 0.4863,
+     "r": 0.084,
+     "why": "no icon"
+    },
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.8913,
+     "v": 0.5585,
+     "r": 0.084,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_164742_0331": {
+   "game": "g1",
+   "file": "20261005_164742_0331.png",
+   "time": 1428.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.5672,
+     "v": 0.4482,
+     "team": "ally",
+     "name": null,
+     "self": true
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_164752_0332": {
+   "game": "g1",
+   "file": "20261005_164752_0332.png",
+   "time": 1438.6,
+   "dead": [
+    "TahmKench",
+    "Corki"
+   ],
+   "champions": [
+    {
+     "u": 0.6746,
+     "v": 0.3937,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.9369,
+     "v": 0.4083,
+     "team": "enemy",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.6911,
+     "v": 0.2938,
+     "team": "enemy",
+     "name": "Nami"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Sett",
+     "team": "ally",
+     "u": 0.6071,
+     "v": 0.4043,
+     "r": 0.084,
+     "why": "3 icons"
+    },
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.6996,
+     "v": 0.3983,
+     "r": 0.084,
+     "why": "2 icons"
+    },
+    {
+     "name": "Yunara",
+     "team": "ally",
+     "u": 0.6174,
+     "v": 0.3766,
+     "r": 0.084,
+     "why": "3 icons"
+    },
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.8306,
+     "v": 0.2953,
+     "r": 0.084,
+     "why": "no icon"
+    },
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.4449,
+     "v": 0.1023,
+     "r": 0.084,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_164832_0336": {
+   "game": "g1",
+   "file": "20261005_164832_0336.png",
+   "time": 1478.6,
+   "dead": [
+    "Xerath",
+    "Yunara",
+    "Fizz",
+    "Nami"
+   ],
+   "champions": [
+    {
+     "u": 0.7869,
+     "v": 0.2376,
+     "team": "enemy",
+     "name": null
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Sett",
+     "team": "ally",
+     "u": 0.7831,
+     "v": 0.2738,
+     "r": 0.039,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_164853_0338": {
+   "game": "g1",
+   "file": "20261005_164853_0338.png",
+   "time": 1499.6,
+   "dead": [
+    "Sett",
+    "Yunara",
+    "Singed"
+   ],
+   "champions": [
+    {
+     "u": 0.9569,
+     "v": 0.5244,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.6316,
+     "v": 0.5904,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.7095,
+     "v": 0.3401,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.8874,
+     "v": 0.4788,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Fizz",
+     "team": "enemy",
+     "u": 0.7209,
+     "v": 0.293,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.9026,
+     "v": 0.4204,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Nami",
+     "team": "enemy",
+     "u": 0.7539,
+     "v": 0.2626,
+     "r": 0.056,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_164953_0344": {
+   "game": "g1",
+   "file": "20261005_164953_0344.png",
+   "time": 1559.6,
+   "dead": [
+    "Corki",
+    "Nami"
+   ],
+   "champions": [
+    {
+     "u": 0.581,
+     "v": 0.6776,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.7542,
+     "v": 0.7307,
+     "team": "ally",
+     "name": null,
+     "self": true
+    },
+    {
+     "u": 0.5793,
+     "v": 0.5715,
+     "team": "enemy",
+     "name": "Chogath",
+     "stacked": true
+    },
+    {
+     "u": 0.5793,
+     "v": 0.5715,
+     "team": "enemy",
+     "name": "Fizz",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Kayn",
+     "team": "ally",
+     "u": 0.8381,
+     "v": 0.6966,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.7393,
+     "v": 0.723,
+     "r": 0.056,
+     "why": "2 icons"
+    },
+    {
+     "name": "Yunara",
+     "team": "ally",
+     "u": 0.7307,
+     "v": 0.7067,
+     "r": 0.056,
+     "why": "2 icons"
+    },
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.673,
+     "v": 0.6353,
+     "r": 0.056,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_165053_0350": {
+   "game": "g1",
+   "file": "20261005_165053_0350.png",
+   "time": 1619.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.7247,
+     "v": 0.2993,
+     "team": "ally",
+     "name": "Sett",
+     "stacked": true
+    },
+    {
+     "u": 0.828,
+     "v": 0.4943,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.7247,
+     "v": 0.2993,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.7247,
+     "v": 0.2993,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.9319,
+     "v": 0.4418,
+     "team": "enemy",
+     "name": "Chogath",
+     "stacked": true
+    },
+    {
+     "u": 0.9319,
+     "v": 0.4418,
+     "team": "enemy",
+     "name": "Fizz",
+     "stacked": true
+    },
+    {
+     "u": 0.8155,
+     "v": 0.2446,
+     "team": "enemy",
+     "name": "Corki",
+     "stacked": true
+    },
+    {
+     "u": 0.8155,
+     "v": 0.2446,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.6168,
+     "v": 0.4756,
+     "r": 0.059,
+     "why": "2 icons"
+    },
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.6479,
+     "v": 0.5903,
+     "r": 0.059,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_165103_0351": {
+   "game": "g1",
+   "file": "20261005_165103_0351.png",
+   "time": 1629.6,
+   "dead": [
+    "Corki"
+   ],
+   "champions": [
+    {
+     "u": 0.7251,
+     "v": 0.303,
+     "team": "ally",
+     "name": null,
+     "stacked": true
+    },
+    {
+     "u": 0.7251,
+     "v": 0.303,
+     "team": "ally",
+     "name": null,
+     "self": true,
+     "stacked": true
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261005_165153_0356": {
+   "game": "g1",
+   "file": "20261005_165153_0356.png",
+   "time": 1679.6,
+   "dead": [
+    "Yunara",
+    "Fizz"
+   ],
+   "champions": [
+    {
+     "u": 0.3371,
+     "v": 0.647,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.6397,
+     "v": 0.3279,
+     "team": "ally",
+     "name": "Xerath",
+     "stacked": true
+    },
+    {
+     "u": 0.6397,
+     "v": 0.3279,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.7071,
+     "v": 0.2872,
+     "team": "enemy",
+     "name": "Chogath",
+     "stacked": true
+    },
+    {
+     "u": 0.7071,
+     "v": 0.2872,
+     "team": "enemy",
+     "name": "Corki",
+     "stacked": true
+    },
+    {
+     "u": 0.7071,
+     "v": 0.2872,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Sett",
+     "team": "ally",
+     "u": 0.6999,
+     "v": 0.2992,
+     "r": 0.059,
+     "why": "no icon"
+    },
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.6436,
+     "v": 0.3307,
+     "r": 0.059,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_165254_0362": {
+   "game": "g1",
+   "file": "20261005_165254_0362.png",
+   "time": 1740.6,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.067,
+     "v": 0.9493,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.2562,
+     "v": 0.5627,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.0774,
+     "v": 0.8911,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.4641,
+     "v": 0.5512,
+     "team": "ally",
+     "name": "Yunara"
+    },
+    {
+     "u": 0.2329,
+     "v": 0.7215,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true
+    },
+    {
+     "u": 0.6852,
+     "v": 0.0799,
+     "team": "enemy",
+     "name": "Corki"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Singed",
+     "team": "enemy",
+     "u": 0.9631,
+     "v": 0.1151,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.6265,
+     "v": 0.1043,
+     "r": 0.03,
+     "why": "2 icons"
+    },
+    {
+     "name": "Fizz",
+     "team": "enemy",
+     "u": 0.9206,
+     "v": 0.52,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Nami",
+     "team": "enemy",
+     "u": 0.6853,
+     "v": 0.1387,
+     "r": 0.03,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_165354_0368": {
+   "game": "g1",
+   "file": "20261005_165354_0368.png",
+   "time": 1800.6,
+   "dead": [
+    "Singed",
+    "Chogath",
+    "Corki"
+   ],
+   "champions": [
+    {
+     "u": 0.0319,
+     "v": 0.9667,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.7464,
+     "v": 0.1312,
+     "team": "ally",
+     "name": "Xerath",
+     "stacked": true
+    },
+    {
+     "u": 0.6193,
+     "v": 0.1112,
+     "team": "ally",
+     "name": "Yunara"
+    },
+    {
+     "u": 0.7464,
+     "v": 0.1312,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.487,
+     "v": 0.9077,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Sett",
+     "team": "ally",
+     "u": 0.7338,
+     "v": 0.1,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Nami",
+     "team": "enemy",
+     "u": 0.5576,
+     "v": 0.1781,
+     "r": 0.03,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261005_165424_0371": {
+   "game": "g1",
+   "file": "20261005_165424_0371.png",
+   "time": 1830.6,
+   "dead": [
+    "Nami"
+   ],
+   "champions": [
+    {
+     "u": 0.5575,
+     "v": 0.8358,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  }
+ }
+}
