@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.9.0 · 20 octobre 2026
+
+- **Page Discord dans le launcher :** l'état du bot en direct (avec la vraie raison d'une erreur), les étapes cochées
+  (token, serveurs où le bot est invité, ton salon vocal, droits Se connecter / Parler, test de voix), les salons
+  vocaux de chaque serveur avec qui est dedans, les boutons Rejoindre / Quitter, et le journal du bot.
+- **Le bot te suit :** il rejoint ton salon vocal dès qu'il t'y voit et le quitte avec toi ; chaque échec de connexion
+  au salon dit sa cause exacte.
+
 ## 2.8.1 · 20 octobre 2026
 
 - **Bot Discord :** connexion plus robuste (autre magasin de certificats si celui de Windows refuse Discord,
@@ -10,7 +18,7 @@ Les versions les plus récentes en premier. Les chiffres de détection viennent 
 
 ## 2.8.0 · 20 octobre 2026
 
-- **Bot Discord** (désactivé par défaut, Alertes et voix → Bot Discord) : lancé par l'appli, il rejoint ton salon
+- **Bot Discord** (désactivé par défaut, page Discord) : lancé par l'appli, il rejoint ton salon
   vocal et dit seulement « Top gank », « Mid gank » ou « Bot gank » après un bip, et le matchup au début de la
   partie en une phrase de l'IA (favorable ou pas). Chiffrement vocal Discord (DAVE) pris en charge.
 - **Détection sur tes vraies captures botlane :** Kayn reconnu dans ses formes (aussi Méga Gnar, Valor de Quinn),
