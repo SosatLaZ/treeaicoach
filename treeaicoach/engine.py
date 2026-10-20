@@ -1026,6 +1026,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             if callable(note):
                 note(self._cfg)
         self._discord_matchup_done = False
+        self._discord_obj_done: set = set()
         self._call("game_start")                # the bot joins my voice channel
         self._discord_matchup(game)
 
@@ -1194,6 +1195,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         t_coach = time.perf_counter()
         if self._objectives is not None:
             raw_alerts += list(self._objectives.update(game, t) or [])
+            self._discord_objectives()              # bot Discord: "Dragon dans 30 secondes" (if switched on)
         me = tracker.me()
         me_pos = me.position() if me is not None else None
         if self._reminders is not None and threat < Level.WARNING:

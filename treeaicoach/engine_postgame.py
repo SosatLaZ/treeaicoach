@@ -69,7 +69,9 @@ class PostgameMixin:
     def _say_game_summary(self, record_path: Path) -> None:
         """Speak the short end-of-game summary (analysis.spoken_summary). Never raises."""
         try:
-            if not getattr(self._cfg, "post_game_summary", True):
+            local = getattr(self._cfg, "post_game_summary", True)
+            bot = getattr(self._cfg, "discord_summary", False) is True
+            if not (local or bot):
                 return
             import json
 
@@ -77,7 +79,14 @@ class PostgameMixin:
 
             data = json.loads(Path(record_path).read_text(encoding="utf-8"))
             if isinstance(data, dict) and isinstance(data.get("meta"), dict):
-                text = spoken_summary(analyze_game(data))
+                analysis = analyze_game(data)
+                if bot:                         # bot Discord: one line for the friends (if switched on)
+                    from treeaicoach.discord_bot import summary_line
+
+                    line = summary_line(analysis)
+                    if line:
+                        self._call("summary", line)
+                text = spoken_summary(analysis) if local else ""
                 if text:
                     self._say(text, 0)
         except Exception:

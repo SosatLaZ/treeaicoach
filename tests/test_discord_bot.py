@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import struct
 import threading
 import time
 import wave
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from treeaicoach import discord_bot as db
@@ -40,6 +42,7 @@ class FakeBackend:
     def __init__(self, *, bad: bool = False, channel: str | None = "général", hang: float = 0.0) -> None:
         self.bad, self.channel, self.hang = bad, channel, hang
         self.played: list[int] = []
+        self.pcms: list[bytes] = []
         self.joined: list[str] = []
         self.left = 0
         self.closed = 0
@@ -82,6 +85,7 @@ class FakeBackend:
 
     async def play(self, pcm: bytes) -> None:
         self.played.append(len(pcm))
+        self.pcms.append(pcm)
 
     async def leave(self) -> None:
         self.left += 1
@@ -505,3 +509,241 @@ def test_connection_error_is_in_snapshot(bot) -> None:  # noqa: ANN001
     assert _wait(lambda: bot.snapshot()["state"] == "error")
     snap = bot.snapshot()
     assert "Cannot connect" in snap["error"] and "Cannot connect" in snap["status"]
+
+
+# ------------------------------------------------------------------------------ 2.9.1: voice, volume, options
+from treeaicoach import discord_audio as da  # noqa: E402
+
+
+def _silent_wav(seconds: float = 0.5) -> bytes:
+    bio = io.BytesIO()
+    with wave.open(bio, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(b"\x00\x00" * int(seconds * 24000))
+    return bio.getvalue()
+
+
+def test_recorded_clips_are_bundled_and_audible() -> None:
+    for text in da.RECORDED:
+        wav = da.recorded_wav(text)
+        assert wav, text
+        pcm = da.speech_pcm(wav)
+        st = da.pcm_stats(pcm)
+        assert da.is_audible(pcm) and 0.5 < st["seconds"] < 2.0, (text, st)
+        assert abs(st["rms_db"] - da.TARGET_RMS_DB) < 1.0, (text, st)       # loudness-normalised
+    assert da.recorded_wav("Garen contre Darius") is None
+    assert db.gank_text("jungle") in da.RECORDED and db.objective_text("grubs") in da.RECORDED
+    assert db.seen_text("mid") in da.RECORDED
+
+
+def test_empty_or_silent_speech_falls_back_to_the_recorded_clip() -> None:
+    for bad in (lambda t, v, r: b"", lambda t, v, r: None, lambda t, v, r: _silent_wav(),
+                lambda t, v, r: b"RIFF junk", lambda t, v, r: (_ for _ in ()).throw(RuntimeError("403"))):
+        voice = da.BotVoice([("custom", bad)])
+        wav, src = voice.synth("Bot gank")
+        assert src == "clip" and da.wav_audible(wav) and "custom" in voice.failures
+    # the bot: the gank clip is chime + RECORDED words, never the chime alone
+    c = db.DiscordCaller(backend_factory=FakeBackend, speech=lambda t, v, r: _silent_wav(),
+                         beep=lambda: _wav(0.05, 32000))
+    clip = c._gank_clip("bot", "", "")
+    beep = da.chime_pcm(_wav(0.05, 32000))
+    assert len(clip) > len(beep) + da.FRAME_BYTES * 4 and c._voice_source == "clip"
+    # no voice at all (no recorded clip): nothing, not the chime alone
+    c2 = db.DiscordCaller(backend_factory=FakeBackend, speech=lambda t, v, r: b"", recorded=False,
+                          beep=lambda: _wav(0.05, 32000))
+    assert c2._gank_clip("bot", "", "") == b""
+    assert c2.prerender() == 0 and c2.snapshot()["voice_checked"] and c2.snapshot()["voice_source"] == ""
+    assert any("Aucune voix" in e["text"] and not e["ok"] for e in c2.snapshot()["events"])
+
+
+def test_parse_wav_extensible_float_and_24bit() -> None:
+    import numpy as np
+
+    x = (0.3 * np.sin(np.arange(4800) / 5.0)).astype("<f4")
+    fmt = struct.pack("<HHIIHH", 0xFFFE, 1, 24000, 24000 * 4, 4, 32) + struct.pack("<HHI", 22, 32, 4) \
+        + struct.pack("<H", 3) + b"\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"
+    body = b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", x.nbytes) + x.tobytes()
+    wav = b"RIFF" + struct.pack("<I", len(body)) + body
+    got = da.parse_wav(wav)
+    assert got is not None and got[1] == 24000 and abs(float(got[0].max()) - 0.3) < 0.01
+    i24 = (np.round(x * (1 << 23)).astype(np.int32))
+    raw = b"".join(int(v).to_bytes(4, "little", signed=True)[:3] for v in i24[:100])
+    fmt = struct.pack("<HHIIHH", 1, 1, 24000, 72000, 3, 24)
+    body = b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", len(raw)) + raw
+    got = da.parse_wav(b"RIFF" + struct.pack("<I", len(body)) + body)
+    assert got is not None and np.allclose(got[0][:, 0], x[:100], atol=1e-4)
+    assert da.parse_wav(b"") is None and da.parse_wav(b"RIFF\x00\x00\x00\x00WAVEjunk" * 4) is None
+
+
+def test_volume_scaling_and_limiter() -> None:
+    speech = da.speech_pcm(da.recorded_wav("Bot gank"))
+    base = da.pcm_stats(speech)["rms_db"]
+    at = {v: da.pcm_stats(da.apply_volume(speech, v)) for v in (0, 10, 40, 70, 100)}
+    assert at[0]["peak_db"] == float("-inf")                                   # 0 = silent
+    assert abs(at[40]["rms_db"] - (base + 20 * np.log10(0.35))) < 0.5           # default = 35 %
+    assert at[10]["rms_db"] < at[40]["rms_db"] < at[70]["rms_db"] < at[100]["rms_db"]
+    loud = da.apply_volume(b"".join([(30000).to_bytes(2, "little", signed=True)] * 9600), 100)
+    assert da.pcm_stats(loud)["peak_db"] < -0.05                              # soft limiter: never clips
+    assert da.apply_volume(b"", 40) == b""
+    # the chime sits 6 dB under the words (2.9.0: 7 dB OVER them)
+    chime = da.chime_pcm(db._danger_chime())
+    assert abs(da.pcm_stats(chime)["rms_db"] - (da.TARGET_RMS_DB - da.CHIME_UNDER_DB)) < 1.0
+    assert Config().discord_volume == da.DEFAULT_VOLUME == 40
+
+
+def test_bot_plays_at_the_configured_volume(bot) -> None:  # noqa: ANN001
+    bot.configure(_cfg(discord_volume=40))
+    assert _wait(lambda: bot.status()[1])
+    bot.on_call("game_start")
+    assert bot.on_call("gank", "x", {"lane": "top"})
+    fb = FakeBackend.instances[-1]
+    assert _wait(lambda: fb.pcms)
+    quiet = da.pcm_stats(fb.pcms[-1])
+    bot.configure(_cfg(discord_volume=100))
+    bot._filter.reset()
+    assert bot.on_call("gank", "x", {"lane": "mid"})
+    assert _wait(lambda: len(fb.pcms) == 2)
+    loud = da.pcm_stats(fb.pcms[-1])
+    assert loud["rms_db"] - quiet["rms_db"] > 10.0 and loud["peak_db"] < 0.0
+
+
+def test_new_switches_default_off_and_gate_the_calls(bot) -> None:  # noqa: ANN001
+    cfg = Config()
+    assert not (cfg.discord_only or cfg.discord_objectives or cfg.discord_jungler_seen or cfg.discord_summary)
+    assert cfg.hotkey_discord_mute == ""
+    bot.configure(_cfg())
+    assert not bot.on_call("objective", "", {"key": "dragon", "spawn": 300})
+    assert not bot.on_call("jungler_seen", "", {"lane": "top"})
+    assert not bot.on_call("summary", "Victoire en 30 minutes.")
+    bot.configure(_cfg(discord_objectives=True, discord_jungler_seen=True, discord_summary=True))
+    assert bot.on_call("objective", "", {"key": "dragon", "spawn": 300})
+    assert not bot.on_call("objective", "", {"key": "dragon", "spawn": 300.2})   # once per spawn
+    assert not bot.on_call("objective", "", {"key": "herald", "spawn": 900})     # not a bot call
+    assert bot.on_call("summary", "Victoire en 30 minutes.")
+    assert not bot.on_call("summary", "Victoire en 30 minutes.")                  # once per game
+
+
+def test_jungler_seen_is_lowest_priority() -> None:
+    now = [1000.0]
+    f = db.CallFilter(lambda: now[0])
+    assert f.admit("gank", "bot")
+    now[0] += 10
+    assert not f.admit("jungler_seen", "top")             # 10 s after a gank call: no
+    now[0] += 15
+    assert f.admit("jungler_seen", "top")
+    now[0] += 5
+    assert not f.admit("jungler_seen", "top")             # same lane within 45 s
+    assert f.admit("jungler_seen", "mid")
+    now[0] += 1
+    assert not f.admit("jungler_seen", "bot")             # 2 a minute at most
+    c = db.DiscordCaller(backend_factory=FakeBackend, speech=lambda t, v, r: _wav())
+    c.configure(_cfg(discord_jungler_seen=True, discord_objectives=True))
+    with c._lock:                                          # a call is waiting: "seen" is not queued behind it
+        c._jobs.append(db._Job("say", "Dragon dans 30 secondes", time.monotonic(), 6.0, "objective"))
+    assert not c.on_call("jungler_seen", "", {"lane": "top"})
+    with c._lock:                                          # the gank goes before a waiting objective
+        c._jobs.append(db._Job("say", "Bot gank", time.monotonic(), 5.0, "gank", lane="bot"))
+    assert c._pop().call_kind == "gank"
+    c.shutdown(1.0)
+
+
+def test_push_to_mute_drops_calls(bot) -> None:  # noqa: ANN001
+    bot.configure(_cfg())
+    assert bot.set_muted(None) is True and bot.snapshot()["muted"]
+    assert not bot.on_call("gank", "x", {"lane": "top"})
+    assert bot.set_muted(None) is False
+    assert bot.on_call("gank", "x", {"lane": "top"})
+
+
+def test_texts_summary_and_lanes() -> None:
+    assert db.objective_text("dragon") == "Dragon dans 30 secondes"
+    assert db.objective_text("grubs") == "Larves dans 30 secondes" and db.objective_text("elder") == ""
+    assert db.seen_text("bot") == "Jungler ennemi vu bot" and db.seen_text("jungle") == ""
+    a = {"summary": {"result": "Win", "duration": 1920.0}, "ganks_faced": 10, "ganks_survived": 9}
+    assert db.summary_line(a) == "Victoire en 32 minutes, 9 ganks évités sur 10."
+    assert db.summary_line({"summary": {"result": "Lose", "duration": 1500}, "ganks_faced": 1,
+                            "ganks_survived": 1}) == "Défaite en 25 minutes, 1 gank évité sur 1."
+    assert db.summary_line({"summary": {"result": "Win", "duration": 600}}) == "Victoire en 10 minutes."
+    assert db.summary_line({}) == "" and db.summary_line(None) == ""
+    assert db.nearest_lane(0.07, 0.4) == "top" and db.nearest_lane(0.5, 0.5) == "mid"
+    assert db.nearest_lane(0.6, 0.93) == "bot" and db.nearest_lane(2, 0) is None
+
+
+def _speaker(cfg, takes: bool):  # noqa: ANN001, ANN202
+    import collections as _c
+
+    e = _Eng(cfg)
+    e._gate = e._tactics = e._recorder = None
+    e._muted = False
+    e._lock = threading.Lock()
+    e._recent = _c.deque(maxlen=20)
+    e.said, e.beeps = [], []
+    e._say = lambda text, level: e.said.append(text)
+    e._danger_beep = lambda a: e.beeps.append(a.text)
+    e.on_call = lambda k, t, i: (e.calls.append((k, t, i)), True)[1]
+    e.speaks_for = lambda kind: takes
+    return e
+
+
+def test_discord_only_mutes_the_pc_voice_only_for_bot_calls() -> None:
+    from treeaicoach.alerts import Alert, AlertKind, Level
+
+    gank = Alert(kind=AlertKind.JUNGLER_APPROACH, level=Level.DANGER, text="Lee Sin arrive, recule !",
+                 key="g", t=1.0)
+    tip = Alert(kind=AlertKind.MACRO_TIP, level=Level.INFO, text="Pousse ta vague.", key="m", t=1.0)
+    obj = Alert(kind=AlertKind.OBJECTIVE_SOON, level=Level.INFO, text="Dragon dans 60 secondes.", key="o", t=1.0)
+    on = Config(discord_enabled=True, discord_only=True)
+    e = _speaker(on, True)
+    e._speak_alerts([gank, tip, obj], 1.0, 100.0)
+    assert e.said == ["Pousse ta vague."]                       # gank + objective: said by the bot only
+    assert e.beeps == ["Lee Sin arrive, recule !"]              # the danger beep stays on the PC
+    assert [c[0] for c in e.calls] == ["gank"]
+    e = _speaker(on, False)                                     # bot not in voice: the PC says everything
+    e._speak_alerts([gank, tip], 1.0, 100.0)
+    assert e.said == [gank.text, tip.text]
+    e = _speaker(Config(discord_enabled=True), True)            # discord_only off (default)
+    e._speak_alerts([gank], 1.0, 100.0)
+    assert e.said == [gank.text]
+    e = _speaker(on, True)                                      # the bot refused the call (rate limit): PC says it
+    e.on_call = lambda k, t, i: False
+    e._speak_alerts([gank], 1.0, 100.0)
+    assert e.said == [gank.text]
+
+
+def test_engine_objective_calls_once_per_spawn() -> None:
+    e = _Eng(Config(discord_enabled=True, discord_objectives=True))
+    states = [SimpleNamespace(key="dragon", alive=False, remaining=40.0, next_spawn=300.0),
+              SimpleNamespace(key="herald", alive=False, remaining=30.0, next_spawn=900.0)]
+    e._objectives = SimpleNamespace(states=lambda: states)
+    e._discord_objectives()
+    assert e.calls == []
+    states[0].remaining = 30.0
+    e._discord_objectives()
+    e._discord_objectives()
+    assert e.calls == [("objective", "", {"key": "dragon", "spawn": 300.0})]
+    e2 = _Eng(Config(discord_enabled=True))                     # switch off: nothing
+    e2._objectives = SimpleNamespace(states=lambda: states)
+    e2._discord_objectives()
+    assert e2.calls == []
+
+
+def test_speaks_for_needs_voice_channel_and_switch(bot) -> None:  # noqa: ANN001
+    class Described(FakeBackend):
+        def describe(self, user_id: str) -> dict:
+            return {"guilds": [], "user": {}, "channel": {"name": self.current} if self.current else None}
+
+    bot._factory = lambda: Described(channel=None)
+    bot.configure(_cfg(discord_only=True))
+    assert _wait(lambda: bot.status()[0].startswith("Connecté"))
+    assert not bot.speaks_for("gank")                          # not in a voice channel
+    FakeBackend.instances[-1].channel = "général"              # the player joins voice: the bot follows
+    bot._poke()
+    assert _wait(lambda: bot.speaks_for("gank"), 6.0)
+    assert not bot.speaks_for("objective")                     # that switch is off
+    bot.set_muted(True)
+    assert not bot.speaks_for("gank")                          # muted: the PC speaks again
+    bot.set_muted(False)
+    bot.configure(_cfg(discord_only=False))
+    assert not bot.speaks_for("gank")

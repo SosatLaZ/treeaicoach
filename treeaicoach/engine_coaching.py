@@ -292,32 +292,102 @@ class CoachingMixin:
         for a in said:
             if int(a.level) >= Level.DANGER and not self._muted:
                 self._danger_beep(a)       # beep-first: the tone before any TTS work
-            self._say(a.text, int(a.level))
+            # the bot Discord first: with "discord_only" the PC voice stays silent for what the bot says
+            bot_kind, queued = None, False
+            if a.kind in GANK_KINDS and int(a.level) >= Level.WARNING:
+                bot_kind, queued = "gank", self._call("gank", a.text, {"lane": self._discord_lane()})
+            elif a.kind == AlertKind.JUNGLER_SPOTTED:
+                bot_kind, queued = "jungler_seen", self._call("jungler_seen", a.text,
+                                                              {"lane": self._discord_seen_lane(a)})
+            elif a.kind == AlertKind.OBJECTIVE_SOON:
+                bot_kind, queued = "objective", True     # the bot says its own "... dans 30 secondes"
+            if not (bot_kind and queued and self._discord_only(bot_kind)):
+                self._say(a.text, int(a.level))
             with self._lock:
                 self._last_alert, self._last_alert_t = a, t
                 self._recent.append((gt, a.text, int(a.level), a.kind.value if isinstance(a.kind, AlertKind)
                                      else str(a.kind)))
             if rec is not None:
                 rec.on_alert(a, gt)
-            if a.kind in GANK_KINDS and int(a.level) >= Level.WARNING:
-                self._call("gank", a.text, {"lane": self._discord_lane()})
 
     # ------------------------------------------------------------------ bot Discord (discord_bot.py)
-    def _call(self, kind: str, text: str = "", info: dict | None = None) -> None:
+    def _call(self, kind: str, text: str = "", info: dict | None = None) -> bool:
         """THE outward hook of the calls: ``gank`` (the gank alerts the app speaks), ``matchup``
-        (once, game start), ``game_start`` / ``game_end``. Goes to ``self.on_call`` if set, else to
-        the app's bot Discord when it is on. Never blocks, never raises."""
+        (once, game start), ``objective`` / ``jungler_seen`` / ``summary`` (the bot's optional calls),
+        ``game_start`` / ``game_end``. Goes to ``self.on_call`` if set, else to the app's bot Discord
+        when it is on. True when the call was queued. Never blocks, never raises."""
         try:
             fn = getattr(self, "on_call", None)
             if fn is None:
                 if not getattr(self._cfg, "discord_enabled", False) or self._demo or self._frame_source is not None:
-                    return
+                    return False
                 from treeaicoach import discord_bot
 
                 fn = discord_bot.caller().on_call
-            fn(kind, text, info)
+            return bool(fn(kind, text, info))
         except Exception:
             log.debug("call hook failed", exc_info=True)
+            return False
+
+    def _discord_only(self, kind: str) -> bool:
+        """"Couper la voix du coach sur le PC quand le bot parle" (``discord_only``): True when the
+        bot is in a voice channel and says this kind of call, so the PC voice skips it (the danger
+        beep still plays on the PC). ``self.speaks_for`` (tests) replaces the app's bot. Never raises."""
+        try:
+            if not getattr(self._cfg, "discord_only", False):
+                return False
+            fn = getattr(self, "speaks_for", None)
+            if fn is None:
+                if not getattr(self._cfg, "discord_enabled", False) or self._demo or self._frame_source is not None:
+                    return False
+                if "treeaicoach.discord_bot" not in sys.modules:
+                    return False
+                from treeaicoach import discord_bot
+
+                bot = discord_bot.active()
+                fn = bot.speaks_for if bot is not None else None
+            return bool(fn(kind)) if fn is not None else False
+        except Exception:
+            log.debug("discord_only check failed", exc_info=True)
+            return False
+
+    def _discord_seen_lane(self, alert: Any) -> str | None:
+        """The lane where the enemy jungler of a JUNGLER_SPOTTED alert is (nearest lane to his track)."""
+        try:
+            tracker = self._tracker
+            alias = getattr(alert, "alias", None)
+            if tracker is None or not alias:
+                return None
+            from treeaicoach import discord_bot
+
+            for tr in tracker.enemies(visible_only=False):
+                if getattr(tr, "alias", None) == alias:
+                    pos = tr.position()
+                    return discord_bot.nearest_lane(*pos) if pos is not None else None
+            return None
+        except Exception:
+            return None
+
+    def _discord_objectives(self) -> None:
+        """"Dragon / Baron / Larves dans 30 secondes" from the objective timers (the bot dedupes per
+        spawn, its switch ``discord_objectives`` is checked by the bot). Every tick, cheap."""
+        try:
+            if self._objectives is None or not getattr(self._cfg, "discord_objectives", False):
+                return
+            done = getattr(self, "_discord_obj_done", None)
+            if done is None:
+                done = self._discord_obj_done = set()
+            for o in self._objectives.states():
+                rem = getattr(o, "remaining", None)
+                key = getattr(o, "key", "")
+                if key not in ("dragon", "baron", "grubs") or getattr(o, "alive", False) or rem is None:
+                    continue
+                uid = (key, int(round(float(o.next_spawn or 0.0))))
+                if 26.0 <= float(rem) <= 31.0 and uid not in done:
+                    done.add(uid)
+                    self._call("objective", "", {"key": key, "spawn": o.next_spawn})
+        except Exception:
+            log.debug("discord objectives failed", exc_info=True)
 
     def _discord_sync(self) -> None:
         """Hand the settings to the app's bot (live engine only). Never raises."""
@@ -332,13 +402,22 @@ class CoachingMixin:
             log.debug("discord sync failed", exc_info=True)
 
     def _discord_lane(self) -> str | None:
-        """The lane being ganked = where I am (minimap), else my role's lane; None in the jungle."""
+        """The lane being ganked = where I am (minimap): a lane, or "jungle" (jungle / river), else my
+        role's lane; None in base."""
         try:
             me = self._tracker.me() if self._tracker is not None else None
             pos = me.position() if me is not None else None
-            lane = geometry.lane_of(geometry.classify_zone(*pos)) if pos is not None else None
-            if lane:
-                return lane
+            if pos is not None:
+                zone = geometry.classify_zone(*pos)
+                lane = geometry.lane_of(zone)
+                if lane:
+                    return lane
+                if geometry.is_river(zone):        # river bush next to my lane: still "Top gank"
+                    from treeaicoach import discord_bot
+
+                    return discord_bot.nearest_lane(*pos)
+                if not geometry.is_base(zone):
+                    return "jungle"              # "Jungle gank": caught in the jungle
             game = self._game
             role = str(getattr(getattr(game, "me", None), "position", "") or "").upper()
             return {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}.get(role)

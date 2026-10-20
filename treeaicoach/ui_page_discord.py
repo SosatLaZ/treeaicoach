@@ -39,7 +39,23 @@ def offline_snapshot(cfg: Any) -> dict:
     return {"state": state, "status": status, "ok": False, "error": "", "bot_name": "", "guilds": [],
             "user": {"id": discord_bot.clean_user_id(getattr(cfg, "discord_user_id", "")), "found": False},
             "channel": None, "latency_ms": None, "events": [], "in_game": False,
-            "user_id": discord_bot.clean_user_id(getattr(cfg, "discord_user_id", ""))}
+            "user_id": discord_bot.clean_user_id(getattr(cfg, "discord_user_id", "")),
+            "voice_source": "", "voice_checked": False, "muted": False}
+
+
+VOICE_LABELS = {"edge": "naturelle", "custom": "naturelle", "onecore": "Windows", "sapi": "Windows",
+                "clip": "enregistrée"}
+
+
+def voice_line(snap: dict) -> tuple[str, bool | None]:
+    """("Voix : naturelle" / "Windows" / "enregistrée" / "aucune...", ok) of the bot; ok None = not
+    checked yet (the clips are rendered right after the connection)."""
+    src = str(snap.get("voice_source") or "")
+    if src in VOICE_LABELS:
+        return f"Voix : {VOICE_LABELS[src]}", True
+    if snap.get("voice_checked"):
+        return "Voix : aucune, le bot ne peut pas parler", False
+    return "Voix : vérifiée à la connexion", None
 
 
 def headline(snap: dict) -> tuple[str, str, str]:
@@ -51,7 +67,12 @@ def headline(snap: dict) -> tuple[str, str, str]:
         bits = [f"Dans #{ch['name']} ({ch['guild']})" if ch else "Pas dans un salon vocal"]
         if lat is not None:
             bits.append(f"latence {lat} ms")
-        return f"Connecté en tant que {snap.get('bot_name') or 'bot'}", " · ".join(bits), "ok"
+        voice, ok = voice_line(snap)
+        if ok is not None:
+            bits.append(voice)
+        if snap.get("muted"):
+            bits.append("bot coupé (raccourci)")
+        return f"Connecté en tant que {snap.get('bot_name') or 'bot'}", " · ".join(bits), "ok" if ok is not False else "warning"
     detail = str(snap.get("status") or "")
     if st in ("error", "unavailable") and snap.get("error") and snap["error"] not in detail:
         detail = f"{detail} Raison : {snap['error']}".strip()
@@ -206,6 +227,26 @@ class DiscordPage:
         bh.addWidget(self.say_matchup)
         self.steps["test"] = setup.add(W.Row(self.STEP_TITLES["test"], "", tests))
 
+        # -- what the bot says, how loud
+        says = self.page.section("Annonces du bot", "Par défaut le bot dit seulement les ganks et le matchup. "
+                                                     "Le reste est optionnel.")
+        self.voice_row = says.add(W.Row("Voix du bot", ""))
+        app.slider_row(says, "discord_volume", "Volume du bot", "Ce que tes amis entendent. Le bip est plus "
+                       "doux que la voix.", 0, 100, 5, lambda v: f"{int(v)} %", to_value=lambda v: int(round(v)))
+        app.switch_row(says, "discord_only", "Couper la voix du coach sur le PC quand le bot parle",
+                       "Tu entends l'annonce une seule fois, par Discord. Le bip reste sur le PC.")
+        app.switch_row(says, "discord_objectives", "Objectifs",
+                       "« Dragon dans 30 secondes », « Baron dans 30 secondes », « Larves dans 30 secondes ».")
+        app.switch_row(says, "discord_jungler_seen", "Jungler ennemi vu",
+                       "« Jungler ennemi vu top / mid / bot », jamais pendant un gank.")
+        app.switch_row(says, "discord_summary", "Résumé de fin de partie",
+                       "Une phrase : « Victoire en 32 minutes, 9 ganks évités sur 10 ».")
+        from treeaicoach.ui_page_settings import hotkey_choices  # noqa: PLC0415
+
+        app.choice_row(says, "hotkey_discord_mute", "Touche pour couper le bot",
+                       "Coupe ou rétablit le bot en jeu (il se tait tout de suite).",
+                       hotkey_choices(str(app.cfg.hotkey_discord_mute or "")))
+
         # -- where the bot is
         self.leave_btn = W.button("Quitter le salon", self._leave)
         where = self.page.section("Où est le bot", "Le bot te suit : il rejoint ton salon vocal dès que tu y "
@@ -344,6 +385,20 @@ class DiscordPage:
         for b in (self.say_gank, self.say_matchup):
             b.setEnabled(connected)
         self.leave_btn.setEnabled(bool(snap.get("channel")))
+        voice, ok = voice_line(snap)
+        why = "; ".join(f"{k} : {v}" for k, v in dict(snap.get("voice_failures") or {}).items())
+        if ok:
+            desc = {"Voix : naturelle": "La voix naturelle du coach.",
+                    "Voix : Windows": "La voix de Windows : la voix naturelle ne répond pas (Internet ?).",
+                    "Voix : enregistrée": "Les annonces enregistrées dans TreeAI : aucune autre voix ne répond "
+                                          "(Internet ?). Le matchup ne peut pas être dit."}.get(voice, "")
+        elif ok is False:
+            desc = f"Aucune voix ne marche sur ce PC{f' ({why})' if why else ''}."
+        else:
+            desc = "Testée dès que le bot est connecté."
+        self.voice_row.title.setText(voice)
+        W.set_prop(self.voice_row.title, "tone", "ok" if ok else ("danger" if ok is False else ""))
+        self.voice_row.set_desc(desc)
         self._update_servers(snap)
         self._update_log(snap)
 
@@ -436,7 +491,8 @@ class DiscordPage:
 
     # ------------------------------------------------------------------ config / close
     def on_config(self, diff: set[str]) -> None:
-        if diff & {"discord_enabled", "discord_token", "discord_user_id"}:
+        if diff & {"discord_enabled", "discord_token", "discord_user_id", "discord_volume", "discord_only",
+                   "discord_objectives", "discord_jungler_seen", "discord_summary", "hotkey_discord_mute"}:
             self._sync_bot()
             self.update(self._read())
 
