@@ -12,6 +12,7 @@ Every change to detection or tracking is measured by these tools before it is ke
 | `tools/det_sim2real.py` | Gap between the synthetic and real images (ring colours, sizes, background, blur, JPEG) | ~5 s |
 | `tools/real_minimap_bench.py` | The real labelled crops (`--dir` for any case folder) | ~10 s |
 | `tools/camera_motion_bench.py` | Camera pan / jump / lock, crossings, bot-lane stacks under a sweeping camera (`stackpan`), icons at the rectangle corners (`corner`), camera dragged over stacks (`dragstack`); `arc` = ring colour kept by the line cleaning | ~2 min |
+| `tools/real_truth_case.py` | Real minimap captures of one game (`collect/*.png`, wall-clock file names) + its record + its LCU truth -> a labelled case folder (`tests/fixtures/real_cases/<name>`): wall clock -> game time offset fitted on the record's own sightings, truth positions (minute frames, kills, interpolation when the champion barely moved) snapped to the icon rings, bot-lane duo stacks named, `unsure` zones (truth says a champion is around, no icon labelled: ignored by the bench), `dead` from the kills. Sanitized labels only | ~4 min (detector pass, cached) |
 | `tools/record_vs_truth.py` | Our own game records (`games/*.json`) vs the LCU truth (`games/truth/*.truth.json`): wrong identity, team swap, phantom, stale, drawn while dead, sighting gaps, my position (stacked or not), anonymous tracks; ranked failure modes. Never prints riot ids | seconds |
 
 ## 1. Run, read, compare
@@ -67,6 +68,7 @@ It also writes one contact sheet per cause, `DIR/<cause>.png`. The causes are:
   1. Run `python tools/diag_to_gym.py diag_XXXX.zip`. This creates `tests/fixtures/real_cases/<name>/`.
   2. Review the `needs_check` entries in its `ground_truth.json`. Move the correct ones into `champions`, fix names, delete the wrong ones.
   3. The gym then scores every case folder ("REAL CASE" lines), and `real_minimap_bench.py --dir` runs one case.
+- **Real with LCU truth (the app's own captures):** `python tools/real_truth_case.py collect/ --record games/X.json --truth games/truth/X.truth.json --out tests/fixtures/real_cases/X --keep 40 --out-all /scratch/X_all --preview /scratch/prev`, then LOOK at a few previews (labels on the icons). `--keep` limits the repo to the most useful frames (labels, duo stacks, anchored frames, spread over the game); `--out-all` keeps every frame outside the repo for `real_minimap_bench.py --dir`. The first set: `tk_botlane_20261005` (TahmKench support, 40 frames / 114 labels in the repo, 153 frames / 133 labels in the scratchpad).
 - **Known positions:** `--positions` cross-checks the pseudo-labels against them (for example the League Client match timeline).
 
 ## 5. Tune (validated)
