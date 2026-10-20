@@ -894,6 +894,49 @@ def _scoreboard_section(a: dict) -> str:
     return f'<div class="panel"><h2>Tableau des scores (Tab)</h2>{body}</div>'
 
 
+def _meta_build_section(record: dict) -> str:
+    """My final items vs the meta build of the patch (:mod:`treeaicoach.meta_builds`): core items
+    bought / missing, situational items with their win rate, items outside the meta, the spells and
+    runes of the build. Empty when the champion / role has no meta build (rules only)."""
+    meta = record.get("meta") if isinstance(record, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    alias = str(meta.get("champion") or "")
+    role = str(meta.get("position") or "").upper()
+    snaps = record.get("snapshots") if isinstance(record.get("snapshots"), list) else []
+    final = next((s.get("items") for s in reversed(snaps) if isinstance(s, dict) and s.get("items")), None)
+    if not alias or not final:
+        return ""
+    from treeaicoach import meta_builds
+    from treeaicoach.itemization import load_items, meta_build
+
+    items = load_items()
+    build = meta_build(alias, role or None)
+    if build is None or not build.has_items:
+        return ""
+    c = meta_builds.compare(build, final, items)
+    d = meta_builds.describe(build, items)
+    chips = "".join(f'<span class="chip">{_e(n)}</span>' for n in c["core_done"])
+    chips += "".join(f'<span class="chip" style="opacity:.55">{_e(n)} (manque)</span>' for n in c["core_missing"])
+    chips += "".join(f'<span class="chip">{_e(n)} · {wr:g} %</span>' for n, wr in c["options_bought"])
+    chips += "".join(f'<span class="chip" style="border-style:dashed">{_e(n)} (hors méta)</span>' for n in c["off_meta"])
+    lis = []
+    if c["core_missing"]:
+        lis.append(("warn", "Objets du build jamais achetés : " + ", ".join(c["core_missing"])))
+    elif c["core_done"]:
+        lis.append(("good", "Le build du moment était complet : " + ", ".join(c["core_done"])))
+    if c["off_meta"]:
+        lis.append(("info", "Hors du build du moment : " + ", ".join(c["off_meta"]) +
+                    (f". Les plus gagnants : {d['options']}" if d.get("options") else "")))
+    if d.get("spells") or d.get("runes"):
+        lis.append(("info", "Sorts et runes du build : " + " · ".join(x for x in (d.get("spells"), d.get("runes")) if x)))
+    sym = {"warn": "!", "good": "✓", "info": "i"}
+    ul = "".join(f'<li class="{k}"><span class="i">{sym[k]}</span><span>{_e(t)}</span></li>' for k, t in lis)
+    score = f' · build suivi à {int(c["score"])} %' if c.get("score") is not None else ""
+    head = (f'<p>Build du moment ({_e(d.get("source", ""))}) : <b>{_e(d.get("core", ""))}</b>{_e(score)}</p>'
+            f'<p class="lg" style="flex-wrap:wrap">{chips}</p>')
+    return f'<div class="panel"><h2>Ton build face à la méta</h2>{head}<ul class="tips">{ul}</ul></div>'
+
+
 def _selfcheck_section(record: dict) -> str:
     """"Santé de TreeAI" of the game (selfcheck.py, ``record["selfcheck"]``): what went wrong in our
     own pipeline (capture, minimap, detection, voice, API...) and what was fixed automatically."""
@@ -1249,7 +1292,8 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
                    lambda: _positioning_section(a),
                    lambda: _deaths_section(rec, a), lambda: _ganks_section(rec, a),
                    lambda: _jungler_section(rec, a), lambda: _objectives_section(a),
-                   lambda: _scoreboard_section(a), lambda: _selfcheck_section(rec), lambda: _trends_section(a))
+                   lambda: _scoreboard_section(a), lambda: _meta_build_section(rec),
+                   lambda: _selfcheck_section(rec), lambda: _trends_section(a))
         if a.get("limited_mode"):        # ARAM / Arena: no minimap analysis -> header + honest tips only
             sections = (lambda: _header(rec, a), lambda: _tips_section(a))
         for fn in sections:

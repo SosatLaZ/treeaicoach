@@ -403,6 +403,9 @@ class Recommendation:
     extras: tuple[int, ...] = ()            # cheap situational buys with the gold left (boots, control ward)
     extra_names: tuple[str, ...] = ()
     extra_why: str = ""                     # one line: why the extras
+    meta: bool = False                      # the item comes from the live meta build (meta_builds.py)
+    win_rate: float = 0.0                   # its win rate (%) in that build, 0 when unknown
+    source: str = ""                        # "ugg" / "bundled:ugg" / "" (rules)
 
     @property
     def text(self) -> str:
@@ -410,6 +413,11 @@ class Recommendation:
         if self.reason:
             s += f" — {self.reason}"
         return s + "."
+
+    @property
+    def affordable(self) -> bool:
+        """The whole item can be bought now (the highlighted "achat immédiat")."""
+        return bool(self.completes)
 
     @property
     def buy_text(self) -> str | None:
@@ -652,6 +660,15 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
                 break
         if choice:
             break
+    meta_pick: tuple[float, str] | None = None
+    if choice is None:
+        # the live meta build of my champion / role first (meta_builds.py: win-rate data of the patch)
+        mb = meta_build(me.champion_alias, role)
+        if mb is not None and mb.has_items:
+            got = _meta_builds().next_item(mb, owned_list, items, usable)
+            if got is not None:
+                choice = (got[0], "core", got[1])
+                meta_pick = (got[2], mb.source)
     if choice is None:
         # continue the item already started (owned component of a core item), else first core item
         core = [i for i in core_items(me.champion_alias, cls) if usable(i)]
@@ -680,7 +697,29 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
     extras, why = situational_buys(game, cls, prof, pool, gold - spent, items, objective_soon)
     return Recommendation(iid, items[iid].name, need, reason, tuple(buys),
                           tuple(items[b].name for b in buys if b in items), completes, int(gold),
-                          tuple(extras), tuple(items[e].name for e in extras if e in items), why)
+                          tuple(extras), tuple(items[e].name for e in extras if e in items), why,
+                          meta=meta_pick is not None, win_rate=meta_pick[0] if meta_pick else 0.0,
+                          source=meta_pick[1] if meta_pick else "")
+
+
+def _meta_builds() -> Any:
+    from treeaicoach import meta_builds
+
+    return meta_builds
+
+
+def meta_build(alias: str, role: str | None) -> Any:
+    """The live meta build of a champion / role (:func:`treeaicoach.meta_builds.get`), None when
+    unknown or disabled (``TREEAI_META_BUILDS=0``). Never raises, never blocks."""
+    try:
+        import os
+
+        if os.environ.get("TREEAI_META_BUILDS", "1").strip().lower() in ("0", "false", "off", "no"):
+            return None
+        return _meta_builds().get(str(alias or ""), str(role or "") or None)
+    except Exception:
+        log.debug("meta build unavailable", exc_info=True)
+        return None
 
 
 # ----------------------------------------------------------------------------- advisor
@@ -712,6 +751,7 @@ class ItemAdvisor:
             self._last_emit = -math.inf
             self._shown: dict[tuple, float] = {}
             self._current: Recommendation | None = None
+            self._meta_asked: str = ""
 
     def current(self) -> Recommendation | None:
         """Latest recommendation (for a persistent HUD line)."""
@@ -749,6 +789,13 @@ class ItemAdvisor:
                 moment = "fed"
         self._was_dead, self._level, self._items_owned = dead, level, inv
         self._fed = fed
+        alias = str(getattr(me, "champion_alias", "") or "")
+        if alias and alias != self._meta_asked:        # fetch the meta build of this patch once (daemon thread)
+            self._meta_asked = alias
+            try:
+                _meta_builds().ensure_async(alias, role or getattr(me, "position", None))
+            except Exception:
+                log.debug("meta build fetch not started", exc_info=True)
         rec = recommend(game, role, self._items, objective_soon=getattr(self, "_objective_soon", False))
         self._current = rec or self._current
         if moment is None or rec is None or gt < MIN_GT:

@@ -403,6 +403,7 @@ DERIVED_TABLES: tuple[tuple[str, str], ...] = (
     ("matchups", "matchups.json"),
     ("wards", "ward_spots.json"),
     ("objectives", "objectives.json"),
+    ("meta", "meta_builds.json"),
 )
 
 
@@ -435,6 +436,15 @@ def data_versions() -> dict[str, dict[str, Any]]:
                             "count": len(champs.get("champions") or [])}
         for name, fname in DERIVED_TABLES:
             out[name] = _header(_bundled(fname))
+        try:   # live meta builds: the patch of the cache when it has champions (meta_builds.py)
+            from treeaicoach import meta_builds
+
+            info = meta_builds.data_info()
+            if info.get("cached"):
+                out["meta"] = dict(out.get("meta") or {}, patch=meta_builds.patch_key(data_version()).replace("_", "."),
+                                   source="cache", cached=len(info["cached"]))
+        except Exception:
+            log.debug("meta builds info unavailable", exc_info=True)
     except Exception:
         log.debug("data_versions failed", exc_info=True)
     return out
@@ -445,7 +455,7 @@ def data_versions_text() -> str:
     try:
         v = data_versions()
         names = {"items": "objets", "champions": "champions", "profiles": "profils", "builds": "builds",
-                 "matchups": "duels", "wards": "balises", "objectives": "objectifs"}
+                 "matchups": "duels", "wards": "balises", "objectives": "objectifs", "meta": "méta"}
         parts = []
         for key, label in names.items():
             d = v.get(key) or {}

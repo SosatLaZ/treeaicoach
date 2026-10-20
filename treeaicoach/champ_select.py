@@ -83,6 +83,10 @@ class PregameCard:
     start_gold: int = 0
     phase: str = ""
     lines: tuple[str, ...] = field(default=())   # ready-to-render text lines (title excluded)
+    spells: str = ""                        # "Saut éclair + Téléportation" (meta build / Riot recommendation)
+    runes: str = ""                         # "Conquérant (Précision + Volonté)"
+    core_items: str = ""                    # "Estropieur → Hydre vorace → Plaque du mort"
+    meta_source: str = ""                   # "U.GG, patch 16.20, Émeraude+, 2026-10-07"
 
 
 # ----------------------------------------------------------------------------- parsing (pure)
@@ -237,6 +241,21 @@ def start_items(alias: str, role: str) -> tuple[tuple[tuple[int, str, int], ...]
     return tuple(out), iz.START_WHY.get(kind, "")
 
 
+def meta_lines(alias: str, role: str) -> dict[str, str]:
+    """Spells / runes / core items / starting items of the live meta build (or Riot's own
+    recommendation for the runes and spells): :func:`treeaicoach.meta_builds.describe`. Never
+    raises, never blocks (cache / bundled data only)."""
+    try:
+        from treeaicoach import itemization as iz
+        from treeaicoach import meta_builds
+
+        build = iz.meta_build(alias, role or None)
+        return meta_builds.describe(build, iz.load_items()) if build is not None else {}
+    except Exception:
+        log.debug("meta lines unavailable", exc_info=True)
+        return {}
+
+
 def build_card(state: ChampSelectState | None) -> PregameCard | None:
     """The pre-game card (None without my champion). Pure, never raises."""
     try:
@@ -277,6 +296,15 @@ def build_card(state: ChampSelectState | None) -> PregameCard | None:
                 uniq.append(t)
         tips = uniq[:3]
         items, why = start_items(me.alias, role)
+        meta = meta_lines(me.alias, role)
+        if meta.get("start"):                       # the meta start (win-rate data) beats the class rule
+            from treeaicoach import itemization as iz
+            table = iz.load_items()
+            mb = iz.meta_build(me.alias, role or None)
+            ms = tuple((i, table[i].name, table[i].gold) for i in (mb.start if mb else ()) if i in table and table[i].rift)
+            # potions only (the support item is granted by the role quest): keep the rule's starting items
+            if ms and any(table[i].kind != "consumable" for i, _n, _g in ms):
+                items, why = ms, "le départ le plus joué du moment"
         gold = sum(g for _i, _n, g in items)
         title = f"{me.name.upper()} · {ROLE_FR.get(role, '?').upper()}" if role else me.name.upper()
         lines: list[str] = []
@@ -285,10 +313,16 @@ def build_card(state: ChampSelectState | None) -> PregameCard | None:
         lines += tips
         if items:
             lines.append("Départ : " + " + ".join(n for _i, n, _g in items) + f" ({gold} PO)")
+        if meta.get("core"):
+            lines.append("Build : " + meta["core"])
+        if meta.get("spells") or meta.get("runes"):
+            lines.append(" · ".join(x for x in (meta.get("spells"), meta.get("runes")) if x))
         return PregameCard(title=title[:40], my_alias=me.alias, my_name=me.name, role=role,
                            opponent=opp.name if opp else None, opponent_alias=opp.alias if opp else None,
                            opponent_sure=sure, tips=tuple(tips), start_items=items, start_why=why,
-                           start_gold=gold, phase=state.phase, lines=tuple(lines))
+                           start_gold=gold, phase=state.phase, lines=tuple(lines),
+                           spells=meta.get("spells", ""), runes=meta.get("runes", ""),
+                           core_items=meta.get("core", ""), meta_source=meta.get("source", ""))
     except Exception:
         log.debug("build_card failed", exc_info=True)
         return None
@@ -329,7 +363,15 @@ class ChampSelectWatcher:
                 self._next = now + POLL_S
             client = self._get_client()
             session = client.get(SESSION_PATH) if client is not None else None
-            card = build_card(parse_session(session, self._resolve)) if session is not None else None
+            state = parse_session(session, self._resolve) if session is not None else None
+            if state is not None and state.me is not None and state.me.alias:
+                try:     # the meta build of my pick for this patch, fetched once in a daemon thread
+                    from treeaicoach import meta_builds
+
+                    meta_builds.ensure_async(state.me.alias, state.me.position or None)
+                except Exception:
+                    log.debug("meta build fetch not started", exc_info=True)
+            card = build_card(state) if state is not None else None
             with self._lock:
                 self._card = card
             return card

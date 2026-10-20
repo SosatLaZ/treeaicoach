@@ -65,8 +65,11 @@ def test_plan_purchase_exact_components():
 def test_core_when_nothing_to_counter():
     me = P("Jinx", team="ORDER", pos="BOTTOM")
     r = iz.recommend(G(me, [P("Garen"), P("Malphite"), P("Annie"), P("Caitlyn"), P("Lux")]))
-    assert r is not None and r.item_id in iz.CORE["marksman"] + tuple(
+    meta = iz.meta_build("Jinx", "BOTTOM")          # the live meta build (bundled data) comes first
+    meta_ids = tuple(meta.core) + tuple(i for i, _w, _n in meta.options) if meta is not None else ()
+    assert r is not None and r.item_id in iz.CORE["marksman"] + meta_ids + tuple(
         i for v in iz.NEED_ITEMS.values() for i in v.get("marksman", ()))
+    assert r.meta == (meta is not None and meta.has_items)
 
 
 def test_spectator_and_garbage_never_raise():

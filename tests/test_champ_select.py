@@ -42,7 +42,7 @@ def test_card_mid_matchup_tips_and_start_items():
     assert any("Lee Sin" in t for t in card.tips)                     # enemy jungler line
     ids = [i for i, _n, _g in card.start_items]
     assert ids[0] == 1056 and card.start_items[0][1] == "Anneau de Doran" and card.start_gold >= 450
-    assert card.lines[0] == "Face à Zed (probable)" and card.lines[-1].startswith("Départ : Anneau de Doran")
+    assert card.lines[0] == "Face à Zed (probable)" and any(x.startswith("Départ : Anneau de Doran") for x in card.lines)
 
 
 def test_card_roles_and_assigned_enemy_position():

@@ -565,8 +565,25 @@ class ResourcesCoach:
             return None
         if not self._gap_ok("gold", t, GOLD_REPEAT_S) or (self._gold_said and gold < self._gold_said + GOLD_MORE):
             return None
-        return ResourceNote(f"res:gold:{int(inp.gt)}", f"Rentre dépenser : {_fmt_gold(gold)} or", "resource", 1,
-                            10.0, topic="gold")
+        text = f"Rentre dépenser : {_fmt_gold(gold)} or"
+        item = self._affordable_item(inp)
+        if item:
+            text = f"Rentre acheter {item} : {_fmt_gold(gold)} or"
+        return ResourceNote(f"res:gold:{int(inp.gt)}", text, "resource", 1, 10.0, topic="gold")
+
+    @staticmethod
+    def _affordable_item(inp: ResourceInputs) -> str | None:
+        """The next item of the build (meta build of the patch, else the rules) when the gold held
+        completes it now: the gold line names it ("Rentre acheter Estropieur : 3 100 or")."""
+        try:
+            from treeaicoach.itemization import recommend
+
+            rec = recommend(inp.game)
+            if rec is not None and rec.affordable and rec.item_name and len(rec.item_name) <= 28:
+                return rec.item_name
+        except Exception:
+            log.debug("affordable item unavailable", exc_info=True)
+        return None
 
     def _control_ward_note(self, inp: ResourceInputs, counts: dict[int, int]) -> ResourceNote | None:
         t = float(inp.t)
