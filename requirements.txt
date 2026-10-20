@@ -19,3 +19,8 @@ winrt-Windows.Storage.Streams>=2.3,<4; sys_platform == "win32"
 # discord.py ships libopus for Windows; PyNaCl = transport encryption; davey = DAVE (Rust wheel, cp311 win_amd64)
 discord.py[voice]>=2.7.1,<2.8
 davey>=0.1.7,<0.2
+# Voice assistant « Hey Tree AI » (voice_assistant.py, off by default): offline speech recognition
+# (Vosk/Kaldi, libvosk.dll ~52 MB in the wheel; the French model ~41 MB is downloaded on first use,
+# never bundled) + microphone through PortAudio (sounddevice ships the DLL)
+vosk==0.3.45
+sounddevice>=0.5.1,<0.6

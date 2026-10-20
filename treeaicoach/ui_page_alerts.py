@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from treeaicoach.ui_common import AUTO_VOICE, DANGER_MODES, ENGINE_LABELS, VOICE_LEVELS, _pct_value, fmt_decimal_fr, fmt_int_fr
+from treeaicoach.ui_page_settings import hotkey_choices
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,18 @@ def neural_voices() -> list[tuple[str, str]]:
         return [("fr-FR-DeniseNeural", "Denise (France)")]
 
 
+VA_MODEL_MB = 41
+
+
+def _mics() -> list[tuple[str, str]]:
+    try:
+        from treeaicoach.voice_assistant import list_mics  # noqa: PLC0415
+
+        return list_mics()
+    except Exception:
+        return [("", "Micro par défaut de Windows")]
+
+
 class AlertsPage:
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -55,6 +68,19 @@ class AlertsPage:
         app.switch_row(say, "item_advice_speak", "Lire les conseils d'achat", "Sinon ils restent écrits.")
         app.switch_row(say, "ai_speak", "Lire le conseil IA à voix haute", "Désactivé par défaut : le conseil IA "
                        "reste écrit.")
+
+        va = self.page.section("Assistant vocal", "Dis « Hey Tree AI » puis ta question : le coach répond à voix "
+                                                  "haute en 1 ou 2 phrases (IA requise, compte dans la limite par "
+                                                  "partie). Reconnaissance hors ligne, micro écouté seulement en partie.",
+                               action=W.button("Tester le micro", self.test_assistant))
+        app.switch_row(va, "voice_assistant", "Assistant vocal « Hey Tree AI »", "Désactivé par défaut. La "
+                       f"première activation télécharge le modèle vocal français (~{VA_MODEL_MB} Mo).")
+        self.mic = app.choice_row(va, "voice_assistant_mic", "Micro", "Celui de ton casque de préférence.",
+                                  [("", "Micro par défaut de Windows")])
+        app.run_job(_mics, lambda ms: self.mic.ctl.set_choices(ms, app.cfg.voice_assistant_mic), None,
+                    name="TreeAI-ui-mics")
+        app.choice_row(va, "hotkey_voice_ask", "Touche « parler »", "Sans dire « Hey Tree AI » : appuie, "
+                       "puis pose ta question.", hotkey_choices(str(getattr(app.cfg, "hotkey_voice_ask", "") or "")))
 
         gank = self.page.section("Alertes de gank", "Quand un ennemi menace ta position. Le mode sûr les coupe "
                                                     "toutes.")
@@ -98,6 +124,23 @@ class AlertsPage:
         app.slider_row(v, "voice_volume", "Volume", None, 0, 100, 5, lambda x: f"{x:.0f} %",
                        to_value=lambda x: int(x))
         self._sync_engine_rows()
+
+    def test_assistant(self) -> None:
+        """"Tester le micro": 20 s of listening, even outside a game; says what was heard."""
+        app = self.app
+        try:
+            from treeaicoach import voice_assistant as va  # noqa: PLC0415
+
+            a = va.assistant()
+            a.configure(app.cfg)
+            if not a.test(lambda msg, ok: app.post(lambda: app.show_toast(msg, "info" if ok else "warning"))):
+                app.show_toast("Active l'assistant vocal d'abord.", "warning")
+                return
+            app.show_toast(a.status if not va.model_ready() else
+                           "Dis « Hey Tree AI » puis une question (20 s).", "info")
+        except Exception:
+            log.exception("voice assistant test failed")
+            app.show_toast("Assistant vocal indisponible sur ce PC.", "warning")
 
     def _win_voices(self) -> list[tuple[str, str]]:
         return [("", AUTO_VOICE)] + [(n, n) for n in self.app._voices]

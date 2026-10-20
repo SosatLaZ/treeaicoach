@@ -548,6 +548,19 @@ def check_capture(res: CheckResult, ctx: dict[str, Any]) -> None:
         res.details.append("Desktop Duplication indisponible ici / unavailable here (normal hors Windows 8+)")
 
 
+def check_voice_assistant(res: CheckResult, ctx: dict[str, Any]) -> None:
+    """« Hey Tree AI »: libvosk.dll and the PortAudio DLL load from the bundle (the model is downloaded
+    on first use, not checked here)."""
+    import sounddevice  # noqa: F401, PLC0415
+    import vosk  # noqa: PLC0415
+
+    from treeaicoach import voice_assistant as va  # noqa: PLC0415
+
+    _expect(va.is_wake("hé tri aïe aïe") and not va.is_wake("il est très haut"), "wake phrase matcher")
+    res.details.append(f"vosk {getattr(vosk, '__version__', '?')} + sounddevice {sounddevice.__version__} ; "
+                       f"modèle FR {'présent' if va.model_ready() else 'téléchargé à la 1re activation'}")
+
+
 CHECKS: list[tuple[str, str, Callable[[CheckResult, dict[str, Any]], None], bool]] = [
     ("Ressources embarquées", "Bundled assets", check_assets, True),
     ("Configuration", "Configuration", check_config, True),
@@ -558,6 +571,7 @@ CHECKS: list[tuple[str, str, Callable[[CheckResult, dict[str, Any]], None], bool
     ("Scénario de démo (moteur complet)", "Demo scenario (full engine)", check_demo, True),
     ("Analyse et rapport d'après-partie", "Post-game analysis and report", check_report, True),
     ("Voix", "Voice", check_voice, True),
+    ("Assistant vocal (Vosk)", "Voice assistant (Vosk)", check_voice_assistant, False),
     ("Capture d'écran (DXGI)", "Screen capture (DXGI)", check_capture, False),
 ]
 

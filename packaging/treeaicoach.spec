@@ -111,6 +111,15 @@ try:
 except Exception:
     pass
 
+# Voice assistant (voice_assistant.py): vosk (cffi binding + libvosk.dll and its MinGW runtime DLLs, loaded
+# from the package folder) and sounddevice (+ the PortAudio DLL in _sounddevice_data)
+hiddenimports += ["vosk", "vosk.vosk_cffi", "sounddevice", "_cffi_backend"]
+try:
+    binaries += [(src, "vosk") for src, _dst in collect_dynamic_libs("vosk")]
+    datas += collect_data_files("_sounddevice_data")
+except Exception:
+    pass
+
 excludes = [
     # training / development only
     "torch", "torchvision", "torchaudio", "onnx", "onnxscript", "tensorboard",
