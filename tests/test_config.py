@@ -44,7 +44,7 @@ def test_defaults_match_contract():
     assert c.target_fps == 12.0 and c.detector_backend == "auto" and c.detection_threshold == 0.0
     assert c.minimap_mode == "auto" and c.minimap_side == "auto" and c.manual_minimap_rect is None
     assert c.download_skin_icons is True and c.autostart is True
-    assert c.collect_samples is False and c.collect_interval_s == 2.0
+    assert c.collect_samples is True and c.collect_interval_s == 10.0   # 2.10.1: real captures on by default
 
 
 def test_defaults_are_valid_and_validated_is_a_copy(caplog):

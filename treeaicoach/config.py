@@ -33,7 +33,7 @@ from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
-CONFIG_VERSION = 2                 # written as "config_version"; < 2: one-time migrations in load_config
+CONFIG_VERSION = 3                 # written as "config_version"; < 2 / < 3: one-time migrations in load_config
 MAX_CONFIG_BYTES = 1_000_000       # a bigger config.json is treated as corrupt
 BACKUP_SUFFIX = ".bak"
 
@@ -250,8 +250,8 @@ class Config:
     icon_scale_by_res: dict = field(default_factory=dict)
     # misc
     autostart: bool = True          # start the analysis at launch
-    collect_samples: bool = False   # save minimaps for re-training
-    collect_interval_s: float = 2.0
+    collect_samples: bool = True    # save minimaps (local) -> real test cases with the LCU truth (2.10.1)
+    collect_interval_s: float = 10.0
     # v1.1 helpers (§6.7)
     objective_timers: bool = True
     objective_lead_s: list[int] = field(default_factory=lambda: list(DEFAULT_OBJECTIVE_LEAD_S))
@@ -797,6 +797,9 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             if data.get(old) is True:
                 # 2.3 cleanup: "layer_roles" / "layer_ghosts" were OR-ed with the overlay_show_* toggles
                 data = {**data, new: True}
+    if _version(data) < 3 and data.get("collect_samples") is False:
+        # 2.10.1: minimap captures on by default (every 10 s, local): each game becomes a real test case
+        data = {**data, "collect_samples": True, "collect_interval_s": max(10.0, float(data.get("collect_interval_s") or 10.0))}
     if _version(data) < 2 and data.get("jungle_paths") is False:
         # 2.4 shipped the logical jungler paths as an opt-in trial (False written as the default);
         # the jungle gym shows they beat the fog region -> on once (the switch stays in Overlay)

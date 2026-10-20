@@ -3,6 +3,12 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.10.1 · 20 octobre 2026
+
+- **Captures de minimap activées par défaut** (une toutes les 10 s, 600 par session au plus, sur ton PC) : chaque partie
+  devient un vrai cas de test, recalé sur les vraies positions du client LoL. Envoie-les avec Réglages → Maintenance et
+  support → Créer le zip. Désactivable au même endroit.
+
 ## 2.10.0 · 20 octobre 2026
 
 - **Voix naturelle réparée** (bot Discord ET voix du coach sur le PC) : Microsoft refusait l'ancienne version, tout
