@@ -39,7 +39,12 @@ class FakeBackend:
         self.left = 0
         self.closed = 0
         self.tokens: list[str] = []
+        self.current = None                 # where the bot is
+        self.join_error: BaseException | None = None
         FakeBackend.instances.append(self)
+
+    def current_channel(self):  # noqa: ANN201
+        return self.current
 
     async def start(self, token: str) -> tuple[str, str]:
         self.tokens.append(token)
@@ -65,13 +70,17 @@ class FakeBackend:
         return True
 
     async def join(self, ch) -> None:  # noqa: ANN001
+        if self.join_error is not None:
+            raise self.join_error
         self.joined.append(ch)
+        self.current = ch
 
     async def play(self, pcm: bytes) -> None:
         self.played.append(len(pcm))
 
     async def leave(self) -> None:
         self.left += 1
+        self.current = None
 
     async def close(self) -> None:
         self.closed += 1
@@ -194,6 +203,10 @@ def test_lifecycle_join_say_leave_stop(bot) -> None:  # noqa: ANN001
     # chime + gap + words, 48 kHz stereo frames
     assert fb.played and fb.played[-1] % 3840 == 0 and fb.played[-1] > len(db.wav_to_pcm48(_wav()))
     assert bot.on_call("game_end")
+    time.sleep(0.2)
+    assert fb.left == 0                                             # game over: stays with the player in voice
+    fb.channel = None                                               # the player leaves voice: the bot too
+    bot._poke()
     assert _wait(lambda: fb.left >= 1)
     th = bot._thread
     bot.shutdown(3.0)
@@ -265,7 +278,7 @@ def test_test_button_speaks_and_leaves_outside_game(bot) -> None:  # noqa: ANN00
     bot.configure(_cfg())
     msg, ok = bot.test_blocking(5.0)
     fb = FakeBackend.instances[-1]
-    assert ok and "général" in msg and fb.played and fb.left == 1
+    assert ok and "général" in msg and fb.played and fb.left == 0   # it follows the player: stays
 
 
 def test_hook_never_blocks_while_discord_hangs(bot) -> None:  # noqa: ANN001
@@ -349,3 +362,139 @@ def test_engine_gank_lane_from_role() -> None:
     assert e._discord_lane() == "bot"
     e._game = SimpleNamespace(me=_player("Kayn", "JUNGLE"))
     assert e._discord_lane() is None
+
+
+# ------------------------------------------------------------------------------ launcher view + commands
+UID = 123456789012345678
+
+
+def _perm(view=True, connect=True, speak=True) -> SimpleNamespace:  # noqa: ANN001
+    return SimpleNamespace(view_channel=view, connect=connect, speak=speak)
+
+
+def _member(i: int, name: str) -> SimpleNamespace:
+    return SimpleNamespace(id=i, display_name=name, name=name)
+
+
+def _vchan(i: int, name: str, members: list, perm: SimpleNamespace, pos: int = 0) -> SimpleNamespace:
+    return SimpleNamespace(id=i, name=name, position=pos, members=members,
+                           voice_states={m.id: object() for m in members}, permissions_for=lambda _me: perm)
+
+
+def _guilds() -> list:
+    me_bot = _member(1, "TreeAI")
+    g1 = SimpleNamespace(id=10, name="Les potes", member_count=12, me=me_bot, stage_channels=[],
+                         voice_channels=[_vchan(101, "Général", [_member(UID, "Dexter"), _member(43, "Ami"), me_bot],
+                                                _perm(), 1),
+                                         _vchan(102, "Muet", [], _perm(speak=False), 2)])
+    g1.get_member = lambda i: None
+    g2 = SimpleNamespace(id=20, name="Clan", member_count=5, me=me_bot, stage_channels=[],
+                         voice_channels=[_vchan(201, "Raid", [], _perm())], get_member=lambda i: None)
+    return [g1, g2]
+
+
+def test_describe_guilds_members_and_permissions() -> None:
+    guilds, user = db.describe_guilds(_guilds(), str(UID), bot_id=1, bot_channel_id=101)
+    assert [g["name"] for g in guilds] == ["Les potes", "Clan"] and guilds[0]["members"] == 12
+    gen, muet = guilds[0]["voice_channels"]
+    assert gen["members"] == 2 and gen["people"] == ["Ami", "Dexter"]          # the bot not counted
+    assert gen["me_here"] and gen["bot_here"] and gen["can_speak"]
+    assert not muet["can_speak"] and muet["missing"] == ["parler"] and muet["members"] == 0
+    assert user == {"id": str(UID), "found": True, "name": "Dexter", "channel_id": "101", "channel": "Général",
+                    "guild": "Les potes", "guild_id": "10"}
+    _g, nobody = db.describe_guilds(_guilds(), "99", bot_id=1)
+    assert not nobody["found"] and nobody["channel_id"] is None
+    assert db.missing_permissions(SimpleNamespace(permissions_for=lambda me: 1 / 0), object()) is None
+
+
+def test_join_error_causes_in_french() -> None:
+    closed = type("ConnectionClosed", (Exception,), {})("Shard closed")
+    closed.code = 4017
+    assert "DAVE" in db.join_error_text(closed) and "4017" in db.join_error_text(closed)
+    closed.code = 4014
+    assert "expulsé" in db.join_error_text(closed)
+    assert "pare-feu" in db.join_error_text(asyncio.TimeoutError())
+    assert db.join_error_text(RuntimeError("Already connected to a voice channel.")) == "déjà connecté à un salon vocal"
+    assert "opus" in db.join_error_text(type("OpusNotLoaded", (Exception,), {})())
+
+
+class ViewBackend(FakeBackend):
+    """FakeBackend with servers, voice channels, the player and events (launcher view)."""
+
+    def __init__(self, **kw) -> None:  # noqa: ANN003
+        super().__init__(**kw)
+        self.listener = None
+        self.where = {"101": "général", "201": "raid"}
+
+    def describe(self, user_id: str) -> dict:
+        guilds, user = db.describe_guilds(_guilds(), user_id, bot_id=1)
+        cur = self.current
+        return {"guilds": guilds, "user": user, "latency_ms": 42,
+                "channel": {"id": "x", "name": cur, "guild": "Les potes", "guild_id": "10"} if cur else None}
+
+    def get_voice_channel(self, cid: str):  # noqa: ANN201
+        return self.where.get(cid)
+
+
+def test_snapshot_commands_and_auto_follow(bot) -> None:  # noqa: ANN001
+    bot._factory = ViewBackend
+    assert bot.snapshot()["state"] == "off"
+    bot.configure(_cfg(discord_user_id=str(UID)))
+    assert _wait(lambda: bot.snapshot()["state"] == "connected" and bot.snapshot()["guilds"])
+    fb = FakeBackend.instances[-1]
+    assert _wait(lambda: fb.current == "général")                  # auto-join: the player is in voice
+    snap = bot.snapshot()
+    assert snap["bot_name"] == "TreeAI" and snap["latency_ms"] == 42 and snap["user"]["name"] == "Dexter"
+    assert len(snap["guilds"]) == 2 and snap["channel"]["name"] == "général"
+    assert any(e["text"] == "Connecté en tant que TreeAI" for e in snap["events"])
+    assert any(e["text"] == "A rejoint #général" for e in snap["events"])
+    # manual join: the bot stays there; "Quitter": it does not come straight back
+    assert bot.join("201")
+    assert _wait(lambda: fb.current == "raid")
+    bot._poke()
+    time.sleep(0.2)
+    assert fb.current == "raid"
+    assert bot.leave()
+    assert _wait(lambda: fb.current is None)
+    bot._poke()
+    time.sleep(0.2)
+    assert fb.current is None
+    # tests from the launcher: the bot joins the player's channel and says it
+    assert bot.say_test("gank")
+    assert _wait(lambda: "Bot gank" in bot.spoken)
+    assert bot.say_test("matchup")
+    assert _wait(lambda: db.EXAMPLE_MATCHUP in bot.spoken)
+    ev = bot.snapshot()["events"]
+    assert ev[0]["text"] == f"A dit « {db.EXAMPLE_MATCHUP} »" and len(ev) <= db.EVENTS_MAX
+    # the player leaves voice: the bot follows him out
+    fb.channel = None
+    bot._poke()
+    assert _wait(lambda: fb.current is None)
+
+
+def test_join_failure_shows_the_cause(bot) -> None:  # noqa: ANN001
+    exc = type("ConnectionClosed", (Exception,), {})("closed")
+    exc.code = 4017
+
+    def factory() -> ViewBackend:
+        b = ViewBackend()
+        b.join_error = exc
+        return b
+    bot._factory = factory
+    bot.configure(_cfg(discord_user_id=str(UID)))
+    assert _wait(lambda: "Impossible de rejoindre" in bot.status()[0])
+    assert "DAVE" in bot.status()[0]
+    assert any(not e["ok"] and "DAVE" in e["text"] for e in bot.snapshot()["events"])
+    msg, ok = bot.test_blocking(3.0)                                # no retry loop for 30 s, clear message
+    assert not ok
+
+
+def test_connection_error_is_in_snapshot(bot) -> None:  # noqa: ANN001
+    class Down(FakeBackend):
+        async def start(self, token: str):  # noqa: ANN201
+            raise OSError("Cannot connect to host discord.com:443 ssl:True")
+    bot._factory = Down
+    bot.configure(_cfg())
+    assert _wait(lambda: bot.snapshot()["state"] == "error")
+    snap = bot.snapshot()
+    assert "Cannot connect" in snap["error"] and "Cannot connect" in snap["status"]

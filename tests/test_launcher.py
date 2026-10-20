@@ -269,3 +269,61 @@ def test_export_button_builds_one_zip(home: Path, monkeypatch: pytest.MonkeyPatc
     finally:
         app.close()
         paths._reset_cache()
+
+
+DISCORD_SNAP = {
+    "state": "connected", "status": "Connecté à #Général.", "ok": True, "error": "", "bot_name": "TreeAI",
+    "latency_ms": 48, "in_game": False, "user_id": "123456789012345678",
+    "guilds": [{"id": "10", "name": "Les potes", "members": 12, "voice_channels": [
+        {"id": "101", "name": "Général", "members": 2, "people": ["Ami", "Dexter"], "can_speak": True, "missing": [],
+         "me_here": True, "bot_here": True},
+        {"id": "102", "name": "Muet", "members": 0, "people": [], "can_speak": False, "missing": ["parler"],
+         "me_here": False, "bot_here": False}]},
+        {"id": "20", "name": "Clan", "members": 5, "voice_channels": []}],
+    "user": {"id": "123456789012345678", "found": True, "name": "Dexter", "channel_id": "101", "channel": "Général",
+             "guild": "Les potes", "guild_id": "10"},
+    "channel": {"id": "101", "name": "Général", "guild": "Les potes", "guild_id": "10"},
+    "events": [{"t": "21:04:10", "text": "A dit « Bot gank »", "channel": "Général", "ok": True},
+               {"t": "21:03:58", "text": "A rejoint #Général", "channel": "Général", "ok": True}],
+}
+
+
+def test_discord_page_shows_the_bot(home: Path) -> None:
+    from treeaicoach import ui_page_discord as pd
+
+    app, _v, _e = _build(home)
+    try:
+        app.show()
+        app.show_page("discord")
+        view = app.page_views["discord"]
+        assert view.big.text() == "Bot désactivé"                     # no bot yet: offline card, no crash
+        view.snapshot_fn = lambda: dict(DISCORD_SNAP)                  # before enabling: no real bot in tests
+        app.set_options(discord_enabled=True, discord_token="x" * 30 + ".abcd." + "y" * 27,
+                        discord_user_id="123456789012345678")
+        view.tick()
+        assert view.big.text() == "Connecté en tant que TreeAI"
+        assert "#Général (Les potes)" in view.detail.text() and "48 ms" in view.detail.text()
+        titles = [view.steps[k].title.text() for k in ("token", "guilds", "me", "perms", "test")]
+        assert all(t.startswith(pd.OK_MARK) for t in titles), titles
+        assert "Les potes (12 membres)" in view.steps["guilds"].desc.text()
+        assert "Dexter : dans #Général" in view.steps["me"].desc.text()
+        assert view.server.count() == 2 and view.server.value() == "10"
+        rows = view._chan_group._rows
+        assert len(rows) == 2 and "tu es ici" in rows[0].desc.text() and "il manque : parler" in rows[1].desc.text()
+        assert not rows[1].control.isEnabled() and not rows[0].control.isEnabled()   # bot already there / no right
+        assert len(view._log_group._rows) == 2 and view.leave_btn.isEnabled()
+        view._pick_server("20")
+        assert view._chan_group._rows[0].title.text() == "Aucun salon vocal"
+        # an error: the real reason is on the card, the checklist says what is left
+        err = dict(pd.offline_snapshot(app.cfg), state="error", error="ClientConnectorError : Cannot connect",
+                   status="Discord ne répond pas, nouvel essai dans 5 s.")
+        view.snapshot_fn = lambda: err
+        view.tick()
+        assert view.big.text() == "Erreur de connexion" and "Cannot connect" in view.detail.text()
+        assert view.steps["guilds"].title.text().startswith(pd.WAIT_MARK)
+        assert not view.say_gank.isEnabled()
+        app.show_page("home")
+        view.tick()
+        assert not view.timer.isActive()                               # polls only while shown
+    finally:
+        app.close()

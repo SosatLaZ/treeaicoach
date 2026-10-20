@@ -31,6 +31,31 @@ SAMPLE_GAMES = [
 ]
 
 
+#: the Discord page: a connected bot on two servers, the player in voice with it (fictitious names)
+DISCORD_SNAPSHOT = {
+    "state": "connected", "status": "Connecté à #Général.", "ok": True, "error": "", "bot_name": "TreeAI Coach",
+    "latency_ms": 46, "in_game": False, "user_id": "123456789012345678",
+    "guilds": [{"id": "10", "name": "Les potes du soir", "members": 14, "voice_channels": [
+        {"id": "101", "name": "Général", "members": 3, "people": ["Leo", "Nina", "Toi"], "can_speak": True,
+         "missing": [], "me_here": True, "bot_here": True},
+        {"id": "102", "name": "Flex 5", "members": 2, "people": ["Max", "Sam"], "can_speak": True, "missing": [],
+         "me_here": False, "bot_here": False},
+        {"id": "103", "name": "AFK", "members": 0, "people": [], "can_speak": False, "missing": ["parler"],
+         "me_here": False, "bot_here": False}]},
+        {"id": "20", "name": "Clan Garen", "members": 6, "voice_channels": [
+            {"id": "201", "name": "Ranked", "members": 0, "people": [], "can_speak": True, "missing": [],
+             "me_here": False, "bot_here": False}]}],
+    "user": {"id": "123456789012345678", "found": True, "name": "Toi", "channel_id": "101", "channel": "Général",
+             "guild": "Les potes du soir", "guild_id": "10"},
+    "channel": {"id": "101", "name": "Général", "guild": "Les potes du soir", "guild_id": "10"},
+    "events": [{"t": "21:04:12", "text": "A dit « Garen contre Darius : défavorable, joue safe jusqu'à 8 minutes. »",
+                "channel": "Général", "ok": True},
+               {"t": "21:03:40", "text": "A dit « Bot gank »", "channel": "Général", "ok": True},
+               {"t": "21:03:31", "text": "A rejoint #Général", "channel": "Général", "ok": True},
+               {"t": "21:03:30", "text": "Connecté en tant que TreeAI Coach", "channel": "", "ok": True}],
+}
+
+
 class StubEngine:
     def __init__(self) -> None:
         self.muted = False
@@ -58,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default=str(ROOT / "release" / "shots"))
     ap.add_argument("--sizes", default="1280x720,1920x1080")
     ap.add_argument("--themes", default="light,dark")
+    ap.add_argument("--pages", default="", help="only these pages (comma-separated keys)")
     args = ap.parse_args(argv)
     os.environ.setdefault("TREEAICOACH_HOME", tempfile.mkdtemp(prefix="treeai-shots-"))
     from treeaicoach import ui
@@ -67,7 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     cfg = Config(ui_onboarding_done=True, ui_seen_changelog="9", check_updates_on_start=False,
-                 lcu_enabled=False, download_skin_icons=False)
+                 lcu_enabled=False, download_skin_icons=False, discord_user_id="123456789012345678",
+                 discord_enabled=True, discord_token=".".join(["MTIzNDU2Nzg5MDEyMzQ1Njc4OQ", "Gabc", "x" * 27]))
     for theme in args.themes.split(","):
         for size in args.sizes.split(","):
             w, h = (int(x) for x in size.split("x"))
@@ -86,8 +113,14 @@ def main(argv: list[str] | None = None) -> int:
             app.build_all_pages()
             app.page_views["analysis"].on_games(SAMPLE_GAMES)
             app.page_views["home"].on_games(SAMPLE_GAMES)
+            dc = app.page_views.get("discord")
+            if dc is not None:
+                dc.snapshot_fn = lambda: dict(DISCORD_SNAPSHOT)
+                dc.update(dc._read())
             switches = []
             for key, _l, _i in ui.PAGES:
+                if args.pages and key not in args.pages.split(","):
+                    continue
                 t1 = time.perf_counter()
                 app.show_page(key)
                 app.stack.currentWidget().repaint()

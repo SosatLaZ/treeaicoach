@@ -185,20 +185,28 @@ partie (« Garen contre Darius : défavorable, joue safe jusqu'à 8 minutes. »,
 configurée, sinon par le coach). Rien d'autre. Le bot tourne **dans TreeAI** (pas de serveur) : il n'est
 là que quand l'app est ouverte. Désactivé par défaut.
 
-Une seule fois :
+Tout se passe sur la page **Discord** du lanceur. En haut, l'état du bot en direct (connecté sous quel nom,
+dans quel salon, latence, ou la vraie raison d'une erreur). Puis une liste de mise en place, chaque étape
+cochée en direct :
 
-1. Sur <https://discord.com/developers/applications> : « New Application », donne-lui un nom.
-2. Onglet **Bot** : « Reset Token », copie le token. Aucune « Privileged Gateway Intent » n'est nécessaire.
-3. Dans TreeAI, **Alertes et voix > Bot Discord** : active le bot, colle le token.
-4. Bouton **Ouvrir le lien** : choisis ton serveur (droits demandés : voir le salon, se connecter, parler).
-5. Ton identifiant : Discord > Paramètres > Avancés > Mode développeur, puis clic droit sur ton nom >
-   « Copier l'identifiant », colle-le dans « Ton identifiant Discord ».
-6. Rejoins un salon vocal et clique **Faire parler le bot**.
+1. **Token du bot** : sur <https://discord.com/developers/applications>, « New Application », onglet **Bot**,
+   « Reset Token », puis **Coller**. Aucune « Privileged Gateway Intent » n'est nécessaire.
+2. **Bot invité sur un serveur** : bouton **Inviter sur un serveur** (droits demandés : voir le salon, se
+   connecter, parler). La page liste les serveurs où il est, avec leur nombre de membres.
+3. **Ton identifiant Discord** : Discord > Paramètres > Avancés > Mode développeur, puis clic droit sur ton nom >
+   « Copier l'identifiant ». La page affiche ton nom et le salon vocal où tu es.
+4. **Droit de parler** : vérifié dans ton salon (il manque quoi, sinon).
+5. **Test vocal** : **Dire « Bot gank »** ou **Dire le matchup**.
 
-En partie, le bot rejoint ton salon au début et le quitte à la fin. Il dit au plus un gank toutes les
-8 s, une fois par voie toutes les 30 s, 4 par minute au maximum. Le token reste sur ton PC (jamais dans
-les journaux ni les diagnostics). Chiffrement de bout en bout DAVE de Discord pris en charge
-(discord.py 2.7 + davey).
+**Où est le bot** : choisis un serveur, la page liste ses salons vocaux (qui est dedans, où tu es, où est le
+bot) avec **Rejoindre ce salon**, et **Quitter le salon**. Le bot te suit tout seul : il rejoint ton salon
+vocal dès que tu y entres et le quitte avec toi. Si un salon refuse le bot, la raison exacte s'affiche
+(droit manquant, pare-feu / UDP bloqué, chiffrement DAVE...). Le **journal du bot** montre ses 10 dernières
+actions (connexion, salons, ce qu'il a dit, erreurs).
+
+En partie, il dit au plus un gank toutes les 8 s, une fois par voie toutes les 30 s, 4 par minute au
+maximum. Le token reste sur ton PC (jamais dans les journaux ni les diagnostics). Chiffrement de bout en
+bout DAVE de Discord pris en charge (discord.py 2.7 + davey).
 
 ## Dépannage
 

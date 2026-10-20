@@ -24,7 +24,7 @@ OK_MARK, BAD_MARK, WAIT_MARK = "✓", "✗", "·"
 
 
 def _people(n: int) -> str:
-    return "personne" if n <= 0 else ("1 personne" if n == 1 else f"{n} personnes")
+    return "vide" if n <= 0 else ("1 personne" if n == 1 else f"{n} personnes")
 
 
 def offline_snapshot(cfg: Any) -> dict:
@@ -208,8 +208,8 @@ class DiscordPage:
 
         # -- where the bot is
         self.leave_btn = W.button("Quitter le salon", self._leave)
-        where = self.page.section("Où est le bot", "Le bot suit ton salon vocal pendant la partie (ton identifiant). "
-                                                   "Tu peux aussi le placer à la main.", action=self.leave_btn)
+        where = self.page.section("Où est le bot", "Le bot te suit : il rejoint ton salon vocal dès que tu y "
+                                                   "entres et le quitte avec toi. Tu peux aussi le placer à la main.", action=self.leave_btn)
         self.server = W.Combo([], None)
         self.server.setMinimumWidth(220)
         self.server.activated.connect(lambda _i: self._pick_server(self.server.value()))
@@ -312,7 +312,7 @@ class DiscordPage:
 
     def tick(self) -> None:
         app = self.app
-        if app._closing or (app._current_page != "discord" and self.snapshot_fn is None):
+        if app._closing or app._current_page != "discord":
             self.timer.stop()
             return
         if app._iconic():

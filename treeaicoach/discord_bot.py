@@ -270,6 +270,47 @@ def missing_permissions(ch: Any, me: Any) -> list[str] | None:
         return None
 
 
+#: Discord voice gateway close codes -> the reason shown to the player
+VOICE_CLOSE_CODES = {
+    4004: "authentification vocale refusée",
+    4006: "session vocale invalide (Discord l'a refusée, nouvel essai)",
+    4009: "session vocale expirée",
+    4011: "serveur vocal introuvable",
+    4014: "déconnecté du salon (expulsé, salon supprimé ou bot déplacé)",
+    4015: "le serveur vocal de Discord a planté, nouvel essai",
+    4016: "mode de chiffrement inconnu (mets TreeAI à jour)",
+    4017: "chiffrement de bout en bout DAVE exigé (module davey manquant ?)",
+    4020: "requête vocale refusée par Discord",
+    4021: "connexion vocale limitée par Discord, réessaie plus tard",
+    4022: "appel terminé par Discord",
+}
+
+
+def join_error_text(exc: BaseException) -> str:
+    """Why joining a voice channel failed, in French, with the technical cause (never raises)."""
+    try:
+        name = type(exc).__name__
+        msg = str(exc)
+        low = (name + " " + msg).lower()
+        code = getattr(exc, "code", None)
+        if name == "ConnectionClosed" or isinstance(code, int) and 4000 <= code < 5000:
+            why = VOICE_CLOSE_CODES.get(code) if isinstance(code, int) else None
+            return f"{why or 'connexion vocale fermée par Discord'} (code {code})"
+        if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+            return "le salon vocal ne répond pas : pare-feu ou UDP bloqué ?"
+        if "opus" in low:
+            return "bibliothèque audio opus manquante"
+        if "davey" in low or "dave" in low.split():
+            return "module davey (chiffrement DAVE) manquant"
+        if "nacl" in low:
+            return "module PyNaCl manquant"
+        if "already connected" in low:
+            return "déjà connecté à un salon vocal"
+        return error_text(exc)
+    except Exception:
+        return "erreur inconnue"
+
+
 def _member_name(m: Any) -> str:
     return str(getattr(m, "display_name", "") or getattr(m, "global_name", "") or getattr(m, "name", "") or "")
 
@@ -396,9 +437,12 @@ class DiscordPyBackend:
         import discord  # noqa: PLC0415  (slow import: on the bot thread only)
 
         self._d = discord
-        for name in ("discord", "discord.client", "discord.gateway", "discord.voice_state", "discord.http"):
+        for name in ("discord", "discord.client", "discord.gateway", "discord.voice_state", "discord.http",
+                     "discord.voice_client", "discord.player"):
             lg = logging.getLogger(name)
-            lg.setLevel(logging.WARNING)
+            # the voice connection's own messages go to our log (diagnostic of "never joins"), tokens masked
+            lg.setLevel(logging.INFO if name in ("discord.gateway", "discord.voice_state", "discord.voice_client")
+                        else logging.WARNING)
             if not any(isinstance(f, _RedactFilter) for f in lg.filters):
                 lg.addFilter(_RedactFilter())
         self._intents = discord.Intents.none()
@@ -711,6 +755,9 @@ class DiscordCaller:
         self._dirty = False
         self._events: collections.deque[dict] = collections.deque(maxlen=EVENTS_MAX)
         self._user_names: dict[str, str | None] = {}
+        self._join_failed: dict[str, float] = {}   # channel id -> when joining it failed (no retry for 30 s)
+        self._manual: str | None = None            # channel joined by hand from the launcher (no auto-follow)
+        self._left_from: str | None = None         # "Quitter": the player's channel at that moment (no rejoin)
         self._in_game = False
         self.spoken: list[str] = []         # what was said (tests / diagnostics), last 50
         self.dropped = 0
@@ -1140,6 +1187,10 @@ class DiscordCaller:
         self._event(f"Connecté en tant que {name}")
         self._idle_status(backend, name)
         await self._refresh(backend, name)
+        try:
+            await self._follow(backend, s, name)    # the player is already in voice: join now
+        except Exception as exc:
+            log.warning("Discord : suivi du salon vocal (%s)", error_text(exc))
         threading.Thread(target=self.prerender, name="TreeAI-discord-clips", daemon=True).start()
         while True:
             with self._lock:
@@ -1154,6 +1205,14 @@ class DiscordCaller:
                 return "error"
             if due:
                 await self._refresh(backend, name)
+                try:
+                    await self._follow(backend, s, name)
+                except Exception as exc:
+                    log.warning("Discord : suivi du salon vocal (%s)", error_text(exc))
+                with self._lock:
+                    again = self._dirty
+                if again:                            # joined / left just now: the launcher sees it at once
+                    await self._refresh(backend, name)
             job = self._pop()
             if job is None:
                 await self._wait(SNAPSHOT_EVERY_S)
@@ -1184,9 +1243,12 @@ class DiscordCaller:
             return None
 
     async def _ensure_voice(self, backend: Any, s: _Settings) -> bool:
-        ch = backend.find_channel(s.user_id)
+        cur = self._current(backend)
+        with self._lock:
+            manual = self._manual
+        ch = cur if manual is not None and cur is not None else backend.find_channel(s.user_id)
         if ch is None:
-            ch = self._current(backend)          # joined by hand from the launcher: stay there
+            ch = cur                             # joined by hand from the launcher: stay there
         if ch is None:
             if backend.guild_count() == 0:
                 self._set_status("Le bot n'est sur aucun serveur : invite-le avec le lien.", False)
@@ -1198,21 +1260,78 @@ class DiscordCaller:
         return await self._join(backend, ch)
 
     async def _join(self, backend: Any, ch: Any) -> bool:
+        """Join ``ch`` (no-op if already there). False with the exact cause in the status / log."""
         cname = backend.channel_name(ch)
+        cur = self._current(backend)
+        if cur is not None and _same(cur, ch):
+            self._set_status(f"Connecté à #{cname}.", True)
+            return True
         if not backend.can_speak(ch):
             self._set_status(f"Le bot n'a pas le droit de parler dans #{cname}.", False)
             self._event(f"Pas le droit de parler dans #{cname}", cname, ok=False)
             return False
-        cur = self._current(backend)
-        await asyncio.wait_for(backend.join(ch), JOIN_TIMEOUT_S + 5.0)
-        if cur is None or cur is not ch:
-            self._event(f"A rejoint #{cname}", cname)
+        try:
+            await asyncio.wait_for(backend.join(ch), JOIN_TIMEOUT_S + 5.0)
+        except Exception as exc:
+            why = join_error_text(exc)
+            log.warning("Discord : impossible de rejoindre le salon vocal (%s ; %s)", why, error_text(exc))
+            with self._lock:
+                self._join_failed[str(getattr(ch, "id", ch))] = float(self._clock())
+            self._set_status(f"Impossible de rejoindre #{cname} : {why}.", False)
+            self._event(f"Impossible de rejoindre #{cname} : {why}", cname, ok=False)
+            return False
+        with self._lock:
+            self._join_failed.pop(str(getattr(ch, "id", ch)), None)
+            self._dirty = True
+        self._event(f"A rejoint #{cname}", cname)
         self._set_status(f"Connecté à #{cname}.", True)
         return True
 
+    async def _follow(self, backend: Any, s: _Settings, name: str) -> None:
+        """"Suivre mon salon": as soon as the player is seen in a voice channel (on connect and on
+        every voice event) the bot joins it; it leaves when the player leaves voice. Without a user
+        id: the only occupied voice channel. A channel joined by hand stays until "Quitter"."""
+        try:
+            target = backend.find_channel(s.user_id)
+        except Exception:
+            target = None
+        cur = self._current(backend)
+        now = float(self._clock())
+        with self._lock:
+            manual, left_from = self._manual, self._left_from
+            tid = str(getattr(target, "id", target)) if target is not None else None
+            failed_t = self._join_failed.get(tid or "", -1e9)
+            if left_from is not None and tid != left_from:
+                self._left_from = left_from = None       # the player moved: follow again
+        if manual is not None:
+            if cur is not None and str(getattr(cur, "id", cur)) == manual:
+                return
+            with self._lock:
+                self._manual = None
+        if target is None:
+            if cur is not None and s.user_id and manual is None:
+                await backend.leave()
+                self._event("Tu as quitté le vocal : le bot quitte aussi", backend.channel_name(cur))
+                with self._lock:
+                    self._dirty = True
+                self._idle_status(backend, name)
+            return
+        if tid == left_from or (cur is not None and _same(cur, target)) or now - failed_t < 30.0:
+            return
+        await self._join(backend, target)
+
     async def _handle(self, backend: Any, job: _Job, s: _Settings, name: str) -> None:
+        if job.kind == "leave":                  # game end: the bot stays with the player if he is in voice
+            if backend.find_channel(s.user_id) is not None and s.user_id:
+                self._idle_status(backend, name)
+                return
         if job.kind in ("leave", "leave_now"):
             cur = self._current(backend)
+            if job.kind == "leave_now":
+                u = backend.find_channel(s.user_id)
+                with self._lock:
+                    self._manual = None
+                    self._left_from = str(getattr(u, "id", u)) if u is not None else None
             await backend.leave()
             if cur is not None or job.kind == "leave_now":
                 self._event("A quitté le salon vocal", backend.channel_name(cur) if cur is not None else "")
@@ -1224,7 +1343,9 @@ class DiscordCaller:
             if ch is None:
                 self._event("Ce salon vocal n'existe plus", ok=False)
                 return
-            await self._join(backend, ch)
+            if await self._join(backend, ch):
+                with self._lock:
+                    self._manual, self._left_from = str(getattr(ch, "id", ch)), None
             return
         if job.kind == "join":
             await self._ensure_voice(backend, s)
@@ -1281,6 +1402,13 @@ class DiscordCaller:
                 self._set_status(msg.replace("Connecté à", "Testé dans"), True)
 
 
+def _same(a: Any, b: Any) -> bool:
+    try:
+        return a is b or bool(a == b)          # discord.py channels compare by id
+    except Exception:
+        return False
+
+
 def _danger_chime() -> bytes:
     """The app's soft danger chime (assets/sounds/gank.wav, chimes.py) as WAV bytes."""
     try:
@@ -1321,7 +1449,8 @@ def shutdown(timeout: float = 2.0) -> None:
 __all__ = ["DiscordCaller", "CallFilter", "DiscordPyBackend", "BadToken", "caller", "active", "shutdown",
            "gank_text", "matchup_verdict", "matchup_prompt", "clean_ai_line", "wav_to_pcm48", "mask_secrets", "clean_token", "clean_user_id",
            "application_id_from_token", "invite_url", "discord_available", "SPOKEN_KINDS", "CONTROL_KINDS",
-           "describe_guilds", "missing_permissions", "EXAMPLE_MATCHUP"]
+           "describe_guilds", "missing_permissions", "EXAMPLE_MATCHUP",
+           "join_error_text"]
 
 
 def probe(token: str = "") -> str:

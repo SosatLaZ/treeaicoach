@@ -43,8 +43,8 @@ Qt Widgets (docs/LAUNCHER.md). Esprit « Réglages système » d'Apple : calme, 
 * **Police** : Segoe UI Variable (Text / Display) sous Windows, repli Segoe UI, puis Inter / Noto /
   DejaVu hors Windows (repli seulement, jamais l'identité). Titre de page 26 px semi-gras, corps
   14, secondaire 13, notes 12 ; jamais en dessous de 12.
-* **Barre latérale** : 6 pages, icône au trait + nom, page courante en fond accent. Accueil ·
-  Overlay · Alertes et voix · Analyse · Réglages · À propos (Ctrl+1 … 6). En bas : le point d'état
+* **Barre latérale** : 7 pages, icône au trait + nom, page courante en fond accent. Accueil ·
+  Overlay · Alertes et voix · Discord · Analyse · Réglages · À propos (Ctrl+1 … 7). En bas : le point d'état
   et le bouton « Nouvelle version » quand elle existe.
 * **Page** = grand titre, une phrase, puis des **listes groupées en retrait** : un petit titre de
   section, une cellule arrondie (10 px) dont les lignes sont séparées par un trait d'un pixel
