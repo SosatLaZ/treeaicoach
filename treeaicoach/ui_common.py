@@ -621,21 +621,19 @@ def nav_icon(kind: str, size: int = 18, color: str = MUTED) -> Image.Image:
 
 
 def _fallback_logo(size: int) -> Image.Image:
-    """Gold medallion used when the packaged icon is missing."""
+    """Simplified app mark (packaging/make_icon.py) used when the packaged icon is missing:
+    sap-green tile, near-black tree, the ward's eye open in its crown."""
     ss = 4
     S = size * ss
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.ellipse((ss, ss, S - ss, S - ss), fill=_hex_rgb(PANEL) + (255,), outline=_hex_rgb(GOLD) + (255,),
-              width=ss * 2)
-    c = S / 2
-    d.line((c, S * 0.78, c, S * 0.3), fill=_hex_rgb(GOLD) + (255,), width=ss * 2)
-    for dx in (-1, 1):
-        d.line((c, S * 0.55, c + dx * S * 0.2, S * 0.4, c + dx * S * 0.2, S * 0.3),
-               fill=_hex_rgb(GOLD) + (255,), width=ss * 2)
-        d.ellipse((c + dx * S * 0.2 - ss * 3, S * 0.27 - ss * 3, c + dx * S * 0.2 + ss * 3, S * 0.27 + ss * 3),
-                  fill=_hex_rgb(TEAL) + (255,))
-    d.ellipse((c - ss * 3, S * 0.27 - ss * 3, c + ss * 3, S * 0.27 + ss * 3), fill=_hex_rgb(TEAL) + (255,))
+    green, ink = _hex_rgb(ACCENT) + (255,), _hex_rgb(BG) + (255,)
+    d.rounded_rectangle((0, 0, S - 1, S - 1), radius=S * 0.22, fill=green)
+    d.polygon([(S * 0.445, S * 0.5), (S * 0.555, S * 0.5), (S * 0.575, S * 0.87), (S * 0.425, S * 0.87)], fill=ink)
+    for cx, cy, r in ((0.5, 0.3, 0.22), (0.3, 0.42, 0.18), (0.7, 0.42, 0.18), (0.4, 0.55, 0.15), (0.6, 0.55, 0.15)):
+        d.ellipse((S * (cx - r), S * (cy - r), S * (cx + r), S * (cy + r)), fill=ink)
+    d.ellipse((S * 0.28, S * 0.33, S * 0.72, S * 0.51), fill=green)
+    d.ellipse((S * 0.43, S * 0.35, S * 0.57, S * 0.49), fill=ink)
     return im.resize((size, size), Image.LANCZOS)
 
 

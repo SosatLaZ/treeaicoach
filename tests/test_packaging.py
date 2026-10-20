@@ -300,9 +300,23 @@ def test_icon_png():
     assert rgba.getpixel((0, 0))[3] == 0 and rgba.getpixel((511, 511))[3] == 0, "corners must be transparent"
     assert rgba.getpixel((256, 256))[3] == 255
     colors = rgba.convert("RGB").getcolors(512 * 512) or []
-    gold = sum(n for n, (r, g, b) in colors if abs(r - 200) < 40 and abs(g - 170) < 40 and abs(b - 110) < 45)
-    navy = sum(n for n, (r, g, b) in colors if r < 40 and g < 60 and 15 < b < 100)
-    assert gold > 5000 and navy > 50000
+    # two flat design tokens only (docs/DESIGN.md): sap-green tile (#9BD84A), near-black tree (#0C0E0D)
+    sap = sum(n for n, (r, g, b) in colors if (r, g, b) == (155, 216, 74))
+    ink = sum(n for n, (r, g, b) in colors if (r, g, b) == (12, 14, 13))
+    assert sap > 80000 and ink > 50000
+    assert sap + ink > 0.94 * _opaque(rgba), "flat colours only (anti-aliased edges aside): no gradient"
+    banned = sum(n for n, (r, g, b) in colors if abs(r - 200) < 30 and abs(g - 170) < 30 and abs(b - 110) < 30)
+    assert banned < 50, "no client gold (#C8AA6E) any more"
+    # the tree's eye: the centre of the crown is open (tile colour) with a dark pupil
+    assert rgba.getpixel((256, 215))[:3] == (12, 14, 13)                 # pupil
+    assert rgba.getpixel((256 - 80, 215))[:3] == (155, 216, 74)          # white of the eye
+    assert rgba.getpixel((256, 400))[:3] == (12, 14, 13)                 # trunk
+
+
+def _opaque(rgba) -> int:
+    import numpy as np
+
+    return int((np.asarray(rgba)[..., 3] == 255).sum())
 
 
 def test_icon_ico_has_all_sizes():
