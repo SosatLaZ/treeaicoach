@@ -389,10 +389,16 @@ def sapi_wav(text: str) -> bytes | None:
                         break
             except Exception:
                 log.debug("SAPI voice selection", exc_info=True)
-            fmt = win32com.client.Dispatch("SAPI.SpAudioFormat")
-            fmt.Type = SAPI_FORMAT_22K_16BIT_MONO
             stream = win32com.client.Dispatch("SAPI.SpFileStream")
-            stream.Format = fmt
+            try:                          # 22 kHz 16-bit mono; else SAPI's default (parse_wav reads any PCM)
+                fmt = win32com.client.Dispatch("SAPI.SpAudioFormat")
+                fmt.Type = SAPI_FORMAT_22K_16BIT_MONO
+                stream.Format = fmt
+            except Exception:
+                try:
+                    stream.Format.Type = SAPI_FORMAT_22K_16BIT_MONO
+                except Exception:
+                    log.debug("SAPI format left to its default", exc_info=True)
             stream.Open(path, SAPI_CREATE_FOR_WRITE, False)
             try:
                 voice.AudioOutputStream = stream
