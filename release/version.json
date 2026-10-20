@@ -1,6 +1,6 @@
 {
-  "version": "2.8.0",
-  "sha256": "2f8f0198ca68bb69e845a2349177c3c6b34df141d7be4660cdc44338b0c19e0f",
-  "size": 97218619,
-  "notes": "2.8 : bot Discord (ganks top / mid / bot et matchup IA en vocal, désactivé par défaut), Kayn reconnu dans ses formes et plus de faux cercle dans le coin de la minimap, nouveau logo, 15 appels IA par partie."
+  "version": "2.8.1",
+  "sha256": "07092e9be13133e6bcdbc7dbc8de02d0f1258b7e56e9dd82aef506e4bd6a4c72",
+  "size": 97219541,
+  "notes": "2.8.1 : bot Discord, connexion plus robuste et vraie raison affichée si elle échoue."
 }
