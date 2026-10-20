@@ -1,6 +1,6 @@
 {
-  "version": "2.7.0",
-  "sha256": "a020c43b16611b0fe5ee2aee4abee276ffc0099ee2fd9743cf57f4191482ec55",
-  "size": 94600245,
-  "notes": "2.7 : builds de la méta (objets, sorts, runes du moment pour ton champion et ton rôle, objet suivant en jeu avec son taux de victoire, comparaison dans le rapport) ; capture rapide réparée sur les portables à deux cartes graphiques ; détection vérifiée sur tes vraies captures."
+  "version": "2.8.0",
+  "sha256": "2f8f0198ca68bb69e845a2349177c3c6b34df141d7be4660cdc44338b0c19e0f",
+  "size": 97218619,
+  "notes": "2.8 : bot Discord (ganks top / mid / bot et matchup IA en vocal, désactivé par défaut), Kayn reconnu dans ses formes et plus de faux cercle dans le coin de la minimap, nouveau logo, 15 appels IA par partie."
 }
