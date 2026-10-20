@@ -1,6 +1,6 @@
 {
-  "version": "2.6.2",
-  "sha256": "ed5de781a13d28ebbab1ad75b3b71db20adca6c04928e424235ee3d0cbd20bc8",
-  "size": 94527186,
-  "notes": "2.6.2 : nouveau bouton Réglages → Maintenance et support → « Créer le zip » : tes captures de minimap, tes parties et leur vérité dans un seul fichier à envoyer ; inclut aussi la 2.6.1 (ta position ne saute plus à travers la carte, rapport ARAM honnête)."
+  "version": "2.7.0",
+  "sha256": "a020c43b16611b0fe5ee2aee4abee276ffc0099ee2fd9743cf57f4191482ec55",
+  "size": 94600245,
+  "notes": "2.7 : builds de la méta (objets, sorts, runes du moment pour ton champion et ton rôle, objet suivant en jeu avec son taux de victoire, comparaison dans le rapport) ; capture rapide réparée sur les portables à deux cartes graphiques ; détection vérifiée sur tes vraies captures."
 }
