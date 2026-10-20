@@ -1,6 +1,6 @@
 {
-  "version": "2.8.1",
-  "sha256": "07092e9be13133e6bcdbc7dbc8de02d0f1258b7e56e9dd82aef506e4bd6a4c72",
-  "size": 97219541,
-  "notes": "2.8.1 : bot Discord, connexion plus robuste et vraie raison affichée si elle échoue."
+  "version": "2.9.0",
+  "sha256": "b5fca9b73e9836d8d7e10591543c3a7ac4ae11e7d16f623703f1dc00b711ac81",
+  "size": 97252147,
+  "notes": "2.9 : page Discord (état du bot en direct, serveurs, salons vocaux, droits, Rejoindre / Quitter, journal) ; le bot rejoint ton salon dès qu'il t'y voit et dit la cause exacte s'il n'y arrive pas."
 }
