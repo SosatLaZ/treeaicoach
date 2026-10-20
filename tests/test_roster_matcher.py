@@ -590,3 +590,27 @@ def test_form_switch_keeps_other_champions_and_ignores_learned(db):
     forms = m._form_list(m.entries[1])
     assert [f for f, _ic in forms][:1] == ["base"] and len(forms) == 3
 
+
+def test_ui_glyph_at_the_bottom_right_corner_is_not_an_extra():
+    class _Fb:
+        def detect(self, img):
+            return [Detection(u=0.957, v=0.966, r=0.04, score=0.9, cls="enemy",
+                              cls_probs=(0.0, 1.0, 0.0)),
+                    Detection(u=0.5, v=0.5, r=0.04, score=0.9, cls="enemy",
+                              cls_probs=(0.0, 1.0, 0.0))]
+
+    class _M:
+        has_roster = True
+        entries = [RosterEntry("Garen", "self", np.zeros((8, 8, 3), np.uint8)),
+                   RosterEntry("Darius", "enemy", np.zeros((8, 8, 3), np.uint8)),
+                   RosterEntry("Ahri", "enemy", np.zeros((8, 8, 3), np.uint8))]
+        last_dead: list = []
+        last_changed = True
+
+        def detect(self, img):
+            return []
+
+    hy = HybridDetector(_Fb(), _M())
+    hy._structures, hy._fountains = [], []
+    out = hy.detect(np.zeros((100, 100, 3), np.uint8))
+    assert [(d.u, d.v) for d in out] == [(0.5, 0.5)]

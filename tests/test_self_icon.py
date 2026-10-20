@@ -443,3 +443,9 @@ def test_camera_lock_gives_my_position_when_my_icon_is_hidden():
         lk2.feed_cam((0.5, 0.5), k * 0.1)
         lk2.confirm((0.2, 0.8), (0.5, 0.5), k * 0.1)
     assert not lk2.locked
+
+
+def test_ui_glyph_zone_excluded_from_ring_candidates():
+    from treeaicoach import self_icon as SI
+
+    assert any(abs(u - 0.957) < 0.01 and abs(v - 0.966) < 0.01 for u, v, _r in SI.UI_GLYPHS)

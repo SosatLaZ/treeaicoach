@@ -865,6 +865,11 @@ class HybridDetector(BaseDetector):
     #: is normally recognised by its portrait anyway.
     STRUCTURE_DIST = 0.04
     FOUNTAIN_DIST = 0.12
+    #: Fixed UI glyphs drawn on the minimap frame (u, v, radius): the round red button at
+    #: the bottom-right corner (2026 HUD, real captures 2026-10-05: 10 of the 15 false
+    #: positives of the real truth set, 205 anonymous enemy samples in 4 real games). No
+    #: champion of 20 LCU-truth games (5200 positions) ever stood within 0.08 of it.
+    UI_GLYPHS = ((0.957, 0.966, 0.045),)
 
     def __init__(self, fallback: BaseDetector, matcher: Any) -> None:
         self.fallback = fallback
@@ -965,6 +970,8 @@ class HybridDetector(BaseDetector):
                     continue
                 if any(math.hypot(d.u - u, d.v - v) < self.FOUNTAIN_DIST
                        for u, v in self._fountains):
+                    continue
+                if any(math.hypot(d.u - u, d.v - v) < r for u, v, r in self.UI_GLYPHS):
                     continue
                 keep.append(d)
             ver = getattr(m, "_get_verifier", None)

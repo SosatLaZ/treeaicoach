@@ -76,6 +76,8 @@ _W = np.asarray([0.35, 1.0, 1.0], np.float32)
 STRUCT_DIST = 0.035
 FOUNTAIN_DIST = 0.09
 _FOUNTAINS = ((0.045, 0.955), (0.955, 0.045))
+#: fixed UI glyphs on the minimap frame (u, v, radius): see detector.HybridDetector.UI_GLYPHS
+UI_GLYPHS = ((0.957, 0.966, 0.045),)
 EXPLAINED_FRAC = 0.7        # candidate this close (x icon diameter) to an accepted match: explained
 ISOLATED_FRAC = 1.0         # crops only of icons this far (x diameter) from any other icon
 
@@ -490,6 +492,8 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
                 continue
             if fountains and any(math.hypot(u - eu, v - ev) < FOUNTAIN_DIST
                                  for eu, ev in _FOUNTAINS):
+                continue
+            if any(math.hypot(u - gu, v - gv) < gr for gu, gv, gr in UI_GLYPHS):
                 continue
             out.append(RingCand(u, v, side, float(fm[y, x]), f_self))
     return out
