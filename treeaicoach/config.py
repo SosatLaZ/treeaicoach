@@ -177,6 +177,11 @@ BOOL_FIELDS = BOOL_FIELDS + ("discord_ally_ganks", "discord_say_name")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 # self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
 BOOL_FIELDS = BOOL_FIELDS + ("selfcheck_enabled", "selfcheck_auto_diag")
+# voice assistant « Hey Tree AI » (voice_assistant.py): off by default, mic by name ("" = default),
+# optional push-to-talk key
+BOOL_FIELDS = BOOL_FIELDS + ("voice_assistant",)
+UPDATE_TEXT_FIELDS["voice_assistant_mic"] = 200
+HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_voice_ask",)
 #: Compact overlay defaults, applied ONCE to config files written before the declutter
 #: (no "hotkey_details" key): the detailed HUD / map extras become opt-in again.
 DECLUTTER_RESET: dict[str, Any] = {
@@ -362,6 +367,9 @@ class Config:
     hotkey_discord_mute: str = ""        # push-to-mute of the bot ("" = none)
     discord_ally_ganks: bool = True      # "Bot gank" also for the friends of my voice channel in my team
     discord_say_name: bool = False       # "Paul, bot gank" (the friend's Discord name first)
+    voice_assistant: bool = False        # « Hey Tree AI » + question -> spoken AI answer (offline Vosk)
+    voice_assistant_mic: str = ""        # input device name ("" = Windows default)
+    hotkey_voice_ask: str = ""           # push-to-talk: listen to a question without the wake phrase
     discord_links: dict = field(default_factory=dict)   # {Discord user id: Riot ID / "-"} set by hand
 
     def effective_warn_radius(self) -> float:

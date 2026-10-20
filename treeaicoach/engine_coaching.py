@@ -865,7 +865,12 @@ class CoachingMixin:
         self.ai_answer_seq = getattr(self, "ai_answer_seq", 0) + 1
         self.text_messages.append((t, "ai", adv.text))
         ai.note_shown(adv, gt)
-        if getattr(self._cfg, "ai_speak", False) and threat < Level.WARNING and not adv.error:
+        if adv.moment == "manual" and getattr(self, "_ai_spoken_pending", False):
+            self._ai_spoken_pending = False                 # asked out loud: answered out loud, short
+            from treeaicoach.voice_assistant import short_answer
+
+            self._say(short_answer(adv.text), int(Level.INFO))
+        elif getattr(self._cfg, "ai_speak", False) and threat < Level.WARNING and not adv.error:
             self._say(adv.text, int(Level.INFO))
 
     def _ai_hud_line(self, adv: Any, key: str, t: float) -> bool:
@@ -884,9 +889,34 @@ class CoachingMixin:
         except Exception:
             return False
 
-    def ask_ai(self) -> str:
+    def _voice_assistant_sync(self, stop: bool = False) -> None:
+        """Hand the settings + hooks to the app's voice assistant « Hey Tree AI » (live engine only;
+        imported only once switched on). Never raises."""
+        try:
+            if self._demo or self._frame_source is not None:
+                return
+            if not (getattr(self._cfg, "voice_assistant", False) or "treeaicoach.voice_assistant" in sys.modules):
+                return
+            from treeaicoach import voice_assistant as va
+
+            a = va.assistant()
+            if stop:
+                a.stop()
+                return
+            busy = getattr(self._voice, "is_busy", None)
+            a.set_hooks(should_listen=lambda: bool(self._in_game),
+                        is_speaking=(busy if callable(busy) else (lambda: False)),
+                        on_wake=lambda: self._voice.alert_beep("info") if self._voice is not None else None,
+                        on_question=lambda q: self.ask_ai(question=q, spoken=True))
+            a.configure(self._cfg)
+        except Exception:
+            log.debug("voice assistant sync failed", exc_info=True)
+
+    def ask_ai(self, question: str | None = None, spoken: bool = False) -> str:
         """"Demander à l'IA" (hotkey / button): manual AI request, answer later as toast + HUD line.
 
+        ``question`` / ``spoken``: asked out loud through the voice assistant: the answer (or the
+        refusal) is also read out loud, 1-2 sentences.
         Returns a French acknowledgement (also shown as a toast). Never raises, never blocks."""
         try:
             from treeaicoach.ai_advisor import AIAdvisor, engine_context
@@ -900,8 +930,14 @@ class CoachingMixin:
                 game = self._game if self._in_game else None
             msg = ai.ask(now, game, roles=self._role_resolver, scoreboard=self.scoreboard_summary(),
                          objectives=self._objectives.states() if self._objectives is not None else [],
-                         item_text=self.item_advice_text(), context=lambda: engine_context(self, now))
+                         item_text=self.item_advice_text(), context=lambda: engine_context(self, now),
+                         **({"question": question} if question else {}))
             self.last_ai_ack = msg
+            if spoken:
+                sent = msg.startswith("Question envoyée")
+                self._ai_spoken_pending = sent
+                if not sent:
+                    self._say(msg, int(Level.INFO))          # "Limite de 15 questions…", "Pas de partie…"
             self._toast("insight", "IA", msg, None, f"ai-ask:{now:.0f}", now)
             return msg
         except Exception:

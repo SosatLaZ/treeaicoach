@@ -1503,6 +1503,17 @@ class VoiceEngine:
             elif level >= LEVEL_WARNING and math.isfinite(ms):
                 self._alert_ms.append(float(ms))
 
+    def is_busy(self) -> bool:
+        """True while something is queued / being spoken or a beep plays (the voice assistant drops
+        the microphone then: the app must not hear itself). Never raises."""
+        try:
+            with self._cond:
+                if self._queue or self._busy:
+                    return True
+            return time.perf_counter() < self._beep_end + 0.3
+        except Exception:
+            return False
+
     def wait_ready(self, timeout: float = 3.0) -> bool:
         """Wait until the voice thread has created its backend (tests / selftest)."""
         return self._ready.wait(_finite_nonneg(timeout, 3.0))

@@ -320,6 +320,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                     self._relocate = True
             if self._running:
                 self._discord_sync()
+                self._voice_assistant_sync()
             for comp in (self._gank, self._objectives, self._reminders, self._fog, self._overlay_mgr,
                          self._coach, self._stance, self._tactics, self._ward_guide):
                 fn = getattr(comp, "apply_config", None)
@@ -604,6 +605,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._start_diag_hotkey()
             self._start_overlay()
             self._discord_sync()
+            self._voice_assistant_sync()
             log.info("Engine started (%s)", "demo" if self._demo else
                      ("frame source" if self._frame_source is not None else "live"))
         except Exception:
@@ -634,6 +636,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._hotkeys = None
             self._overlay_mgr = None
             self._diag_hotkeys = None
+            self._voice_assistant_sync(stop=True)
             timer = self._mute_timer
             if timer is not None:
                 timer.cancel()

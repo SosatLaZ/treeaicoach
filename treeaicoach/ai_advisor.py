@@ -1605,7 +1605,17 @@ def snapshot_tokens(snap: dict[str, Any]) -> int:
     return int(math.ceil(_size(snap) / 2.9))
 
 
-def build_prompt(snapshot: dict[str, Any]) -> str:
+def question_rule(question: Any) -> str:
+    """The prompt line of a question asked out loud (voice assistant): answered in 1-2 short sentences."""
+    q = " ".join(str(question or "").split())[:200].replace("«", "").replace("»", "")
+    if not q:
+        return ""
+    return ("Le joueur te pose cette question à voix haute : « " + q + " ». Réponds à SA question, en français, "
+            "dans le champ plan : 1 à 2 phrases courtes (30 mots max en tout), lues à voix haute, fondées sur le "
+            "JSON ; etapes vide. ")
+
+
+def build_prompt(snapshot: dict[str, Any], question: Any = None) -> str:
     moment = snapshot.get("mo") or "point de situation"
     data = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"))
     mode = ""
@@ -1619,7 +1629,8 @@ def build_prompt(snapshot: dict[str, Any]) -> str:
             "si tu n'es pas d'accord, carte=differe et pourquoi = 1 ligne courte fondée sur le JSON. "
             if isinstance(card, dict) and card.get("appel") else "Pas de carte active : carte=aucune. ")
     return (f"Moment : {moment}.\nÉtat de la partie (JSON, API officielle + analyse de la minimap) : {data}\n{mode}"
-            + rule + "Réponds UNIQUEMENT avec un objet JSON strict de cette forme : " + PLAN_SCHEMA_FR + ".")
+            + rule + question_rule(question)
+            + "Réponds UNIQUEMENT avec un objet JSON strict de cette forme : " + PLAN_SCHEMA_FR + ".")
 
 
 # ======================================================================================
@@ -2335,8 +2346,10 @@ class AIAdvisor:
         return True
 
     def ask(self, t: float, game: Any, *, roles: Any = None, scoreboard: Any = None,
-            objectives: Iterable[Any] = (), item_text: str | None = None, context: Any = None) -> str:
+            objectives: Iterable[Any] = (), item_text: str | None = None, context: Any = None,
+            question: str | None = None) -> str:
         """Manual request ("Demander à l'IA"): returns a French acknowledgement for the user.
+        ``question``: what the player asked out loud (voice assistant), answered in 1-2 sentences.
 
         The answer (or the error) arrives later through :meth:`poll` with ``moment == "manual"``."""
         try:
@@ -2370,7 +2383,7 @@ class AIAdvisor:
                 with self._lock:
                     self._inflight = False
                 raise
-            self._start(build_prompt(snap), "manual", t, self._validator(game, snap, item_text), gen=gen)
+            self._start(build_prompt(snap, question), "manual", t, self._validator(game, snap, item_text), gen=gen)
             return "Question envoyée à l'IA…"
         except Exception:
             log.exception("AIAdvisor.ask failed")
