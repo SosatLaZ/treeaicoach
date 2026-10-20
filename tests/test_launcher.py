@@ -283,6 +283,7 @@ DISCORD_SNAP = {
     "user": {"id": "123456789012345678", "found": True, "name": "Dexter", "channel_id": "101", "channel": "Général",
              "guild": "Les potes", "guild_id": "10"},
     "channel": {"id": "101", "name": "Général", "guild": "Les potes", "guild_id": "10"},
+    "voice_source": "edge", "voice_checked": True,
     "events": [{"t": "21:04:10", "text": "A dit « Bot gank »", "channel": "Général", "ok": True},
                {"t": "21:03:58", "text": "A rejoint #Général", "channel": "Général", "ok": True}],
 }
@@ -303,6 +304,13 @@ def test_discord_page_shows_the_bot(home: Path) -> None:
         view.tick()
         assert view.big.text() == "Connecté en tant que TreeAI"
         assert "#Général (Les potes)" in view.detail.text() and "48 ms" in view.detail.text()
+        assert "Voix : naturelle" in view.detail.text() and view.voice_row.title.text() == "Voix : naturelle"
+        view.snapshot_fn = lambda: dict(DISCORD_SNAP, voice_source="", voice_checked=True,
+                                        voice_failures={"edge": "403"})
+        view.tick()
+        assert view.voice_row.title.text().startswith("Voix : aucune") and "403" in view.voice_row.desc.text()
+        view.snapshot_fn = lambda: dict(DISCORD_SNAP)
+        view.tick()
         titles = [view.steps[k].title.text() for k in ("token", "guilds", "me", "perms", "test")]
         assert all(t.startswith(pd.OK_MARK) for t in titles), titles
         assert "Les potes (12 membres)" in view.steps["guilds"].desc.text()

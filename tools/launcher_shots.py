@@ -34,7 +34,7 @@ SAMPLE_GAMES = [
 #: the Discord page: a connected bot on two servers, the player in voice with it (fictitious names)
 DISCORD_SNAPSHOT = {
     "state": "connected", "status": "Connecté à #Général.", "ok": True, "error": "", "bot_name": "TreeAI Coach",
-    "latency_ms": 46, "in_game": False, "user_id": "123456789012345678",
+    "latency_ms": 46, "in_game": False, "user_id": "123456789012345678", "voice_source": "edge", "voice_checked": True,
     "guilds": [{"id": "10", "name": "Les potes du soir", "members": 14, "voice_channels": [
         {"id": "101", "name": "Général", "members": 3, "people": ["Leo", "Nina", "Toi"], "can_speak": True,
          "missing": [], "me_here": True, "bot_here": True},
