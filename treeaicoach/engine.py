@@ -116,6 +116,10 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._cfg = self._validated(cfg)
         self._voice = voice
         self._clock = clock
+        #: the ONE outward hook of the calls (bot Discord): ``on_call(kind, text, info)``; None = the
+        #: app's bot (discord_bot.caller) when ``discord_enabled`` (CoachingMixin._call)
+        self.on_call: Callable[[str, str, dict | None], Any] | None = None
+        self._discord_matchup_done = False
         self._frame_source = frame_source
         self._demo = bool(getattr(frame_source, "is_demo", False))
         self._live_client = live_client
@@ -314,6 +318,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 if (old.minimap_mode, old.minimap_side, old.manual_minimap_rect) != \
                         (new.minimap_mode, new.minimap_side, new.manual_minimap_rect):
                     self._relocate = True
+            if self._running:
+                self._discord_sync()
             for comp in (self._gank, self._objectives, self._reminders, self._fog, self._overlay_mgr,
                          self._coach, self._stance, self._tactics, self._ward_guide):
                 fn = getattr(comp, "apply_config", None)
@@ -597,6 +603,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._start_hotkeys()
             self._start_diag_hotkey()
             self._start_overlay()
+            self._discord_sync()
             log.info("Engine started (%s)", "demo" if self._demo else
                      ("frame source" if self._frame_source is not None else "live"))
         except Exception:
@@ -631,6 +638,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             if timer is not None:
                 timer.cancel()
             if was_running:
+                if self._in_game:
+                    self._call("game_end")          # the bot leaves the voice channel
                 with self._lock:
                     rec, self._recorder = self._recorder, None
                 if rec is not None:
@@ -1016,6 +1025,9 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             note = getattr(self._recorder, "note_settings", None)
             if callable(note):
                 note(self._cfg)
+        self._discord_matchup_done = False
+        self._call("game_start")                # the bot joins my voice channel
+        self._discord_matchup(game)
 
     def _update_roster(self, game: GameInfo) -> None:
         try:

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.7.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="52"></a>
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.8.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="52"></a>
 </p>
 
 <p align="center">
@@ -176,6 +176,29 @@ d'adresse de l'Explorateur de fichiers).
 <p align="center">
   <img src="docs/img/launcher-reglages-clair.png" width="640" alt="Page Réglages, thème clair">
 </p>
+
+## Bot Discord
+
+Tes amis en vocal entendent les calls du coach : un bip puis **« Top gank »**, **« Mid gank »** ou
+**« Bot gank »** quand le jungler ennemi arrive sur ta voie, et **une phrase de matchup** au début de la
+partie (« Garen contre Darius : défavorable, joue safe jusqu'à 8 minutes. », écrite par l'IA si tu l'as
+configurée, sinon par le coach). Rien d'autre. Le bot tourne **dans TreeAI** (pas de serveur) : il n'est
+là que quand l'app est ouverte. Désactivé par défaut.
+
+Une seule fois :
+
+1. Sur <https://discord.com/developers/applications> : « New Application », donne-lui un nom.
+2. Onglet **Bot** : « Reset Token », copie le token. Aucune « Privileged Gateway Intent » n'est nécessaire.
+3. Dans TreeAI, **Alertes et voix > Bot Discord** : active le bot, colle le token.
+4. Bouton **Ouvrir le lien** : choisis ton serveur (droits demandés : voir le salon, se connecter, parler).
+5. Ton identifiant : Discord > Paramètres > Avancés > Mode développeur, puis clic droit sur ton nom >
+   « Copier l'identifiant », colle-le dans « Ton identifiant Discord ».
+6. Rejoins un salon vocal et clique **Faire parler le bot**.
+
+En partie, le bot rejoint ton salon au début et le quitte à la fin. Il dit au plus un gank toutes les
+8 s, une fois par voie toutes les 30 s, 4 par minute au maximum. Le token reste sur ton PC (jamais dans
+les journaux ni les diagnostics). Chiffrement de bout en bout DAVE de Discord pris en charge
+(discord.py 2.7 + davey).
 
 ## Dépannage
 

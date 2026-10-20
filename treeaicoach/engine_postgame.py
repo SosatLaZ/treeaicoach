@@ -28,6 +28,7 @@ class PostgameMixin:
     def _end_game(self, result: str | None, t: float) -> None:
         """Game over: finish the record + report in the background, session statistics."""
         log.info("Game over (result: %s)", result or "inconnu")
+        self._call("game_end")                  # the bot Discord leaves the voice channel
         self._ended = True
         self._in_game = False
         self._game_evt.clear()

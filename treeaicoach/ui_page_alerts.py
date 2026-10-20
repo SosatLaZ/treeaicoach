@@ -10,6 +10,10 @@ from treeaicoach.ui_common import AUTO_VOICE, DANGER_MODES, ENGINE_LABELS, VOICE
 log = logging.getLogger(__name__)
 
 CASTER_STYLES = (("sobre", "Sobre"), ("coach", "Coach"), ("caster", "Annonceur"))
+DISCORD_HELP = ("Une seule fois : sur discord.com/developers/applications, « New Application », onglet Bot, "
+                "« Reset Token » et colle-le ici. Ouvre le lien d'invitation et choisis ton serveur. Ton identifiant : "
+                "Paramètres Discord > Avancés > Mode développeur, puis clic droit sur ton nom > « Copier l'identifiant ». "
+                "Le bot tourne dans TreeAI : il n'est là que quand l'app est ouverte.")
 
 
 def danger_mode(cfg: Any) -> str:
@@ -79,6 +83,8 @@ class AlertsPage:
         app.switch_row(rem, "death_recap", "Récap de mort", "Une phrase sur la cause de ta mort.")
         app.switch_row(rem, "break_reminder", "Conseil de pause", "Après plusieurs parties d'affilée.")
 
+        self._build_discord(app, W)
+
         v = self.page.section("Voix", "La voix neurale (en ligne) est la plus naturelle ; les voix Windows marchent "
                                       "sans Internet.")
         app.choice_row(v, "voice_engine", "Moteur de voix", "« Automatique » utilise la voix neurale si "
@@ -100,6 +106,72 @@ class AlertsPage:
                        to_value=lambda x: int(x))
         self._sync_engine_rows()
 
+    # ------------------------------------------------------------------ bot Discord
+    def _build_discord(self, app: Any, W: Any) -> None:
+        dc = self.page.section(
+            "Bot Discord", DISCORD_HELP)
+        app.switch_row(dc, "discord_enabled", "Bot Discord", "Dans ton salon vocal, il annonce seulement « Top gank », "
+                       "« Mid gank », « Bot gank » et le matchup au début. Rien d'autre.")
+        app.entry_row(dc, "discord_token", "Token du bot", "Portail Discord > ton application > Bot > Reset Token.",
+                      secret=True, placeholder="Colle le token ici")
+        app.entry_row(dc, "discord_user_id", "Ton identifiant Discord", "Le bot rejoint le salon vocal où tu es.",
+                      placeholder="Ex. 123456789012345678", width=220)
+        self.dc_invite = dc.add(W.Row("Inviter le bot", None, W.button("Ouvrir le lien", self._open_invite)))
+        self.dc_test_btn = W.button("Faire parler le bot", self._test_discord)
+        self.dc_test = dc.add(W.Row("Tester", None, self.dc_test_btn))
+        self._sync_discord()
+
+    def _sync_discord(self) -> None:
+        from treeaicoach import discord_bot  # noqa: PLC0415  (light: discord.py is imported by the bot thread)
+
+        cfg = self.app.cfg
+        url = discord_bot.invite_url(discord_bot.application_id_from_token(getattr(cfg, "discord_token", "")))
+        self.dc_invite.control.setEnabled(bool(url))
+        self.dc_invite.set_desc("Ajoute-le à ton serveur (droits : voir le salon, se connecter, parler)." if url
+                                else "Colle d'abord le token : le lien se crée tout seul.")
+        bot = discord_bot.active()
+        if bot is not None:
+            self.dc_test.set_desc(bot.status()[0])
+        elif not getattr(cfg, "discord_enabled", False):
+            self.dc_test.set_desc("Bot désactivé.")
+        else:
+            self.dc_test.set_desc("Il se connecte au démarrage du coach.")
+
+    def _open_invite(self) -> None:
+        from treeaicoach import discord_bot  # noqa: PLC0415
+
+        url = discord_bot.invite_url(discord_bot.application_id_from_token(getattr(self.app.cfg, "discord_token", "")))
+        if url:
+            self.app.QtGui.QDesktopServices.openUrl(self.app.QtCore.QUrl(url))
+
+    def _test_discord(self) -> None:
+        cfg = self.app.cfg
+        self.dc_test_btn.setEnabled(False)
+        self.dc_test.set_desc("Connexion à Discord...")
+
+        def job() -> tuple[str, bool]:
+            from treeaicoach import discord_bot  # noqa: PLC0415
+
+            bot = discord_bot.caller()
+            bot.configure(cfg)
+            return bot.test_blocking(45.0)
+
+        def done(res: tuple[str, bool]) -> None:
+            self.dc_test_btn.setEnabled(True)
+            self.dc_test.set_desc(res[0])
+
+        def failed(_exc: BaseException) -> None:
+            self.dc_test_btn.setEnabled(True)
+            self.dc_test.set_desc("Le test a échoué (voir le journal).")
+        self.app.run_job(job, done, failed, name="TreeAI-ui-discord-test")
+
+    def on_close(self) -> None:
+        import sys  # noqa: PLC0415
+
+        mod = sys.modules.get("treeaicoach.discord_bot")
+        if mod is not None:
+            mod.shutdown(1.5)                 # leave the voice channel now, not at Discord's timeout
+
     def _win_voices(self) -> list[tuple[str, str]]:
         return [("", AUTO_VOICE)] + [(n, n) for n in self.app._voices]
 
@@ -117,6 +189,8 @@ class AlertsPage:
     def on_config(self, diff: set[str]) -> None:
         if "voice_engine" in diff:
             self._sync_engine_rows()
+        if diff & {"discord_enabled", "discord_token", "discord_user_id"}:
+            self._sync_discord()
 
 
 def build(app: Any) -> AlertsPage:

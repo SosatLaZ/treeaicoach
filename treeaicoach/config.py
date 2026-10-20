@@ -162,6 +162,10 @@ FLOAT_RANGES.update({"overlay_fps": (10.0, 60.0), "diag_duration_s": (10.0, 300.
                      "diag_interval_s": (0.5, 10.0)})
 BOOL_FIELDS = BOOL_FIELDS + ("adaptive_rate", "low_priority", "eco_qos_v2", "pause_when_unfocused")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_diag",)
+# bot Discord (discord_bot.py): off by default; the token stays on this PC (never exported / logged)
+BOOL_FIELDS = BOOL_FIELDS + ("discord_enabled",)
+UPDATE_TEXT_FIELDS["discord_token"] = 128
+UPDATE_TEXT_FIELDS["discord_user_id"] = 24
 # declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 # self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
@@ -338,6 +342,10 @@ class Config:
     # API...) and fixes or explains them; weak detection -> one automatic 60 s diagnostic per game
     selfcheck_enabled: bool = True
     selfcheck_auto_diag: bool = True     # opt-out of the automatic diagnostic bundle
+    # bot Discord (discord_bot.py): says ONLY the gank calls + the game-start matchup in my voice channel
+    discord_enabled: bool = False
+    discord_token: str = field(default="", repr=False)   # secret: never logged, never in a diagnostic
+    discord_user_id: str = ""            # my Discord user id: the bot joins MY voice channel
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""

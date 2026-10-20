@@ -654,8 +654,11 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 # ======================================================================================
 # Texts
 # ======================================================================================
-CHANGELOG_VERSION = "2.7"
+CHANGELOG_VERSION = "2.8"
 CHANGELOG: tuple[tuple[str, str], ...] = (
+    ("Bot Discord", "Il rejoint ton salon vocal et dit seulement les ganks (top, mid, bot) et le matchup "
+                    "au début. Alertes et voix → Bot Discord."),
+    ("Détection botlane", "Kayn reconnu dans ses formes, plus de faux cercle sur le bouton du coin."),
     ("Builds de la méta", "Objets, sorts et runes du moment pour ton champion, l'objet suivant en jeu avec son "
                           "taux de victoire, et ton build comparé à la méta dans le rapport."),
     ("Capture rapide", "Réparée sur les portables à deux cartes graphiques ; Accueil → Système dit laquelle "

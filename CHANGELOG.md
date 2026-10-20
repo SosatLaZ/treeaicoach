@@ -3,6 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.8.0 · 20 octobre 2026
+
+- **Bot Discord** (désactivé par défaut, Alertes et voix → Bot Discord) : lancé par l'appli, il rejoint ton salon
+  vocal et dit seulement « Top gank », « Mid gank » ou « Bot gank » après un bip, et le matchup au début de la
+  partie en une phrase de l'IA (favorable ou pas). Chiffrement vocal Discord (DAVE) pris en charge.
+- **Détection sur tes vraies captures botlane :** Kayn reconnu dans ses formes (aussi Méga Gnar, Valor de Quinn),
+  plus de faux cercle sur le bouton rouge du coin de la minimap. Noms justes 89 → 98 %, cercles justes 88 → 96 %.
+- **Nouveau logo** : l'arbre qui voit.
+- **IA : 15 appels par partie** au lieu de 10.
+
 ## 2.7.0 · 20 octobre 2026
 
 - **Builds de la méta :** à la sélection des champions, le build du moment pour ton champion et ton rôle (objets de

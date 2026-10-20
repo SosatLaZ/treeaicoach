@@ -92,9 +92,15 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(_jsonable(data), ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+#: a Discord bot token (bot Discord, discord_bot.py): never in a diagnostic
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{18,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{20,}")
+
+
 def _mask_paths(text: str) -> str:
-    """Hide the user's folder names in log lines (``C:\\Users\\Name`` -> ``%USERPROFILE%``)."""
+    """Hide the user's folder names in log lines (``C:\\Users\\Name`` -> ``%USERPROFILE%``) and any
+    secret token (Discord bot token)."""
     try:
+        text = _TOKEN_RE.sub("[token masqué]", text)
         home = str(Path.home())
         if home and len(home) > 3:
             text = text.replace(home, "%USERPROFILE%")

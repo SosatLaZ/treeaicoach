@@ -15,3 +15,7 @@ winrt-runtime>=2.3,<4; sys_platform == "win32"
 winrt-Windows.Foundation>=2.3,<4; sys_platform == "win32"
 winrt-Windows.Media.SpeechSynthesis>=2.3,<4; sys_platform == "win32"
 winrt-Windows.Storage.Streams>=2.3,<4; sys_platform == "win32"
+# Bot Discord (discord_bot.py, off by default): voice + DAVE end-to-end encryption (mandatory since 2026-03-01)
+# discord.py ships libopus for Windows; PyNaCl = transport encryption; davey = DAVE (Rust wheel, cp311 win_amd64)
+discord.py[voice]>=2.7.1,<2.8
+davey>=0.1.7,<0.2

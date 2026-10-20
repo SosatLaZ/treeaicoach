@@ -100,6 +100,16 @@ try:
     datas += collect_data_files("certifi")          # cacert.pem (edge-tts TLS)
 except Exception:
     pass
+# Bot Discord (discord_bot.py): discord.py (client + voice), PyNaCl, davey (DAVE E2EE, Rust .pyd) and the
+# libopus DLL discord.py ships in discord/bin (loaded from next to discord/opus.py)
+hiddenimports += [m for m in _optional_submodules("discord") if not m.startswith(("discord.ext", "discord.app_commands"))]
+hiddenimports += _optional_submodules("nacl") + ["davey", "davey.davey"]
+try:
+    datas += [d for d in collect_data_files("discord") if os.path.basename(d[0]).lower().startswith("libopus")
+              and "x64" in os.path.basename(d[0]).lower()]
+    binaries += collect_dynamic_libs("davey") + collect_dynamic_libs("nacl")
+except Exception:
+    pass
 
 excludes = [
     # training / development only

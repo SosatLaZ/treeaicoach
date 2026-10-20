@@ -299,6 +299,113 @@ class CoachingMixin:
                                      else str(a.kind)))
             if rec is not None:
                 rec.on_alert(a, gt)
+            if a.kind in GANK_KINDS and int(a.level) >= Level.WARNING:
+                self._call("gank", a.text, {"lane": self._discord_lane()})
+
+    # ------------------------------------------------------------------ bot Discord (discord_bot.py)
+    def _call(self, kind: str, text: str = "", info: dict | None = None) -> None:
+        """THE outward hook of the calls: ``gank`` (the gank alerts the app speaks), ``matchup``
+        (once, game start), ``game_start`` / ``game_end``. Goes to ``self.on_call`` if set, else to
+        the app's bot Discord when it is on. Never blocks, never raises."""
+        try:
+            fn = getattr(self, "on_call", None)
+            if fn is None:
+                if not getattr(self._cfg, "discord_enabled", False) or self._demo or self._frame_source is not None:
+                    return
+                from treeaicoach import discord_bot
+
+                fn = discord_bot.caller().on_call
+            fn(kind, text, info)
+        except Exception:
+            log.debug("call hook failed", exc_info=True)
+
+    def _discord_sync(self) -> None:
+        """Hand the settings to the app's bot (live engine only). Never raises."""
+        try:
+            if self._demo or self._frame_source is not None:
+                return
+            if getattr(self._cfg, "discord_enabled", False) or "treeaicoach.discord_bot" in sys.modules:
+                from treeaicoach import discord_bot
+
+                discord_bot.caller().configure(self._cfg)
+        except Exception:
+            log.debug("discord sync failed", exc_info=True)
+
+    def _discord_lane(self) -> str | None:
+        """The lane being ganked = where I am (minimap), else my role's lane; None in the jungle."""
+        try:
+            me = self._tracker.me() if self._tracker is not None else None
+            pos = me.position() if me is not None else None
+            lane = geometry.lane_of(geometry.classify_zone(*pos)) if pos is not None else None
+            if lane:
+                return lane
+            game = self._game
+            role = str(getattr(getattr(game, "me", None), "position", "") or "").upper()
+            return {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}.get(role)
+        except Exception:
+            return None
+
+    def _discord_matchup(self, game: Any, opp_alias: str | None = None) -> None:
+        """The game-start matchup sentence for the bot (once per game): the heuristic verdict
+        (mastermind lane / team windows) + a callable asking the AI for it (one request, counted in
+        the game's AI budget). From the Live Client positions at game start, else from the lane card's
+        opponent (coach_plus, ~0:30). Never raises."""
+        try:
+            if self._discord_matchup_done or (getattr(self, "on_call", None) is None
+                                              and not getattr(self._cfg, "discord_enabled", False)):
+                return
+            me = getattr(game, "me", None)
+            gt = _finite(getattr(game, "game_time", None)) or 0.0
+            role = str(getattr(me, "position", "") or "").upper()
+            if me is None or gt > 180.0 or role in ("", "JUNGLE"):
+                return
+            enemies = list(getattr(game, "enemies", None) or [])
+            if opp_alias:
+                opp = next((p for p in enemies if str(p.champion_alias).lower() == str(opp_alias).lower()), None)
+            else:
+                opp = next((p for p in enemies if str(getattr(p, "position", "")).upper() == role), None)
+            if opp is None:
+                return
+            from treeaicoach import discord_bot, mastermind
+
+            r = mastermind.analyze(game, role=role, lane_opp=opp.champion_alias)
+            lane = getattr(r, "lane", None)
+            team = getattr(r, "team", None)
+            me_name = me.champion_name or me.champion_alias
+            opp_name = opp.champion_name or opp.champion_alias
+            text = discord_bot.matchup_verdict(me_name, opp_name, getattr(lane, "leader", None),
+                                               getattr(lane, "until", None),
+                                               team.leader if team is not None and team.clear else None)
+            self._discord_matchup_done = True
+            self._call("matchup", text, {"opp": opp_name, "ai": self._matchup_ai(game, me_name, opp_name, role)})
+        except Exception:
+            log.debug("discord matchup failed", exc_info=True)
+
+    def _matchup_ai(self, game: Any, me_name: str, opp_name: str, role: str) -> Any:
+        """A blocking callable (run by the bot, off the engine thread) asking the AI for the matchup
+        sentence, or None when the AI is not configured. Counts in the game's AI budget."""
+        cfg = self._cfg
+        prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
+        key, model = str(getattr(cfg, "ai_api_key", "") or "").strip(), str(getattr(cfg, "ai_model", "") or "")
+        if prov == "off" or (prov != "ollama" and not key):
+            return None
+        allies = [p.champion_name or p.champion_alias for p in [game.me] + list(game.allies or [])]
+        enemies = [p.champion_name or p.champion_alias for p in list(game.enemies or [])]
+
+        def ask() -> str | None:
+            from treeaicoach import ai_advisor, discord_bot
+
+            adv = getattr(self, "_ai", None)
+            lock, budget = getattr(adv, "_lock", None), getattr(adv, "budget", None)
+            if lock is not None and budget is not None:
+                with lock:
+                    if budget.exhausted:
+                        return None
+                    budget.sent += 1                    # one real request (GAME_HARD_CAP)
+            return ai_advisor.call_llm(prov, key, model, discord_bot.AI_SYSTEM,
+                                       discord_bot.matchup_prompt(me_name, opp_name, role.lower(), allies, enemies),
+                                       timeout=discord_bot.AI_TIMEOUT_S)
+        return ask
 
     def _say_gank_now(self, gank: list[Alert], t: float, gt: float, frame: Any = None) -> list[Alert]:
         """Gank alerts go to the voice right after the gank check (throttled, routed), before
@@ -1018,6 +1125,8 @@ class CoachingMixin:
             gt = _finite(facts.get("gt")) or _finite(getattr(game, "game_time", None)) or 0.0
             notes = plus.update(t, gt, game, facts, tac.map_state() if tac is not None else None,
                                 busy=busy, min_prio=skill.tip_min_prio(self._cfg))
+            if not self._discord_matchup_done and str(getattr(plus.card, "title", "")).startswith("PLAN DE VOIE"):
+                self._discord_matchup(game, plus._opp_alias(facts, game))   # positions unknown at start
             for n in notes:
                 if n.kind == "praise" and not getattr(self._cfg, "praise_enabled", True):
                     continue
