@@ -297,3 +297,13 @@ def test_prefetch_chroma_uses_its_parent_skin_icon(tmp_path, cdragon_server, mon
     assert (tmp_path / "Kindred_9.png").is_file()
     assert "/characters/kindred/hud/kindred_circle_3.png" in _CDragonHandler.requests
     assert tuple(local.load_icon("Kindred", 9)[32, 32]) == (0, 255, 0, 255)
+
+
+def test_form_icons_of_transforming_champions():
+    from treeaicoach.champions import get_default_db
+
+    db = get_default_db()
+    forms = dict(db.load_form_icons("Kayn"))
+    assert set(forms) == {"assassin", "rhaast"}
+    assert all(ic.ndim == 3 and ic.shape[2] == 4 for ic in forms.values())
+    assert db.load_form_icons("Garen") == [] and db.load_form_icons("NotAChampion") == []

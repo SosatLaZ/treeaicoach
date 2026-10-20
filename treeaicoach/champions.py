@@ -436,6 +436,33 @@ class ChampionDB:
             log.exception("load_icon(%r, %r) failed", alias, skin_id)
             return None
 
+    def load_form_icons(self, alias: str) -> list[tuple[str, np.ndarray]]:
+        """Extra minimap portraits of a champion whose portrait changes with his form
+        (``assets/icons/champions/forms/<Alias>_<form>.png``: Kayn assassin / Rhaast, Mega
+        Gnar, Quinn's Valor), as ``[(form, RGBA)]``; ``[]`` for the others. Never raises."""
+        try:
+            entry = self.get(alias)
+            if entry is None:
+                return []
+            with self._lock:
+                cache = self.__dict__.setdefault("_forms_cache", {})
+                got = cache.get(entry.alias)
+            if got is None:
+                got = []
+                d = self._icons_dir / "forms"
+                if d.is_dir():
+                    for p in sorted(d.glob(f"{entry.alias}_*.png")):
+                        img = read_rgba(p)
+                        if img is not None:
+                            img.setflags(write=False)
+                            got.append((p.stem[len(entry.alias) + 1:], img))
+                with self._lock:
+                    cache[entry.alias] = got
+            return [(f, img.copy()) for f, img in got]
+        except Exception:
+            log.debug("load_form_icons(%r) failed", alias, exc_info=True)
+            return []
+
     def clear_icon_cache(self) -> None:
         """Forget the in-memory icons (files are kept)."""
         with self._lock:

@@ -68,6 +68,17 @@ FOG_RE = re.compile(r"^fogofwaroverlay(_srx_[a-z]+)?\.png$")
 
 RUNTIME_ICON_SIZE = 64  # champion circle icons bundled in the exe are downscaled to 64x64
 
+#: Champions whose minimap portrait changes with their form (checked on CommunityDragon,
+#: 2026-10: only these have extra circle icons; Elise, Nidalee, Jayce, Shyvana, Udyr keep
+#: their portrait). Saved as ``icons/champions/forms/<Alias>_<form>.png``: extra templates
+#: of the same champion for the roster matcher (real game: allied Kayn left anonymous for
+#: the whole second half of the game once he turned into the Shadow Assassin).
+FORM_ICONS = {
+    "Kayn": {"assassin": "kayn/hud/kayn_ass_circle.png", "rhaast": "kayn/hud/kayn_slay_circle.png"},
+    "Gnar": {"mega": "gnarbig/hud/gnarbig_circle.png"},
+    "Quinn": {"valor": "quinn/hud/quinnvalor_circle.png"},
+}
+
 
 def http_get(url: str, retries: int = 4, timeout: float = 30.0) -> bytes:
     delay = 1.0
@@ -203,6 +214,21 @@ def fetch_champion(champ: dict, version: str, with_skins: bool) -> dict:
     return out
 
 
+def fetch_form_icons(dest_dir: Path | None = None) -> list[str]:
+    """Form portraits (FORM_ICONS) -> ``<dest>/<Alias>_<form>.png`` (64 px)."""
+    dest_dir = dest_dir or RUNTIME_DIR / "icons" / "champions" / "forms"
+    got = []
+    for alias, forms in FORM_ICONS.items():
+        for form, path in forms.items():
+            try:
+                save_png(http_get(f"{CDRAGON}/game/assets/characters/{path}"),
+                         dest_dir / f"{alias}_{form}.png", RUNTIME_ICON_SIZE)
+                got.append(f"{alias}_{form}")
+            except Exception as e:  # keep going
+                print(f"  skip form {alias}/{form}: {e}")
+    return got
+
+
 def fetch_simple(names: list[str], base_url: str, dest_dir: Path, required: bool = False) -> list[str]:
     got = []
     for n in names:
@@ -224,7 +250,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runtime", action="store_true", help="only runtime assets (no skins)")
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--forms", action="store_true", help="only the form portraits (FORM_ICONS)")
     args = ap.parse_args()
+    if args.forms:
+        got = fetch_form_icons()
+        print(f"Form portraits: {', '.join(got)}")
+        return 0 if len(got) == sum(len(f) for f in FORM_ICONS.values()) else 1
     with_skins = not args.runtime
 
     print("Champion catalog ...")
@@ -244,6 +275,8 @@ def main() -> int:
     icons = fetch_simple(MINIMAP_ICONS, f"{CDRAGON}/game/assets/ux/minimap/icons", RUNTIME_DIR / "icons" / "minimap")
     pings = fetch_simple(PINGS, f"{CDRAGON}/game/assets/ux/minimap/pings", RUNTIME_DIR / "icons" / "pings")
     print(f"  {len(icons)} icons, {len(pings)} pings")
+
+    print(f"Form portraits: {', '.join(fetch_form_icons())}")
 
     print(f"Champion circle icons ({'with' if with_skins else 'without'} skins) ...")
     results = []

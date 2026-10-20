@@ -324,6 +324,15 @@ STACK_NCC_AREA = 0.15               # portrait visible this much: its NCC must a
 STACK_NCC_MIN = (0.2, 0.35, 0.5)    # ... at least a + b x min(1, (area - AREA) / c)
 STACK_NCC_STRONG = 0.62             # ... or a strong partial-portrait match alone is enough
 STACK_NCC_STRONG_AREA = 0.38
+#: Champions whose minimap portrait changes with their form (Kayn assassin / Rhaast, Mega
+#: Gnar, Quinn's Valor: ChampionDB.load_form_icons). In a whole-map search of such a champion
+#: not tracked for FORM_TRACKED_S, every form is searched too; a form whose best peak reaches
+#: the detection threshold and beats the current form's by FORM_GAP becomes his template
+#: (real game 2026-10-05: allied Kayn in Shadow Assassin form left anonymous 7 times).
+FORM_SWITCH = True
+FORM_TRACKED_S = 1.0
+FORM_GAP = 0.08
+FORM_MIN_OWN = 0.4                  # own-team ring colour fraction at the new form's peak
 #: Tracked mode, champions not tracked: whole-map search at a lower resolution (matched
 #: disc COARSE_INNER_PX wide); its peaks above COARSE_VERIFY_MIN are verified at full res.
 COARSE_INNER_PX = 9.0
@@ -1085,6 +1094,13 @@ class RosterMatcher:
         self._under: tuple = (None, 0)
         #: (u, v, t) of my last position inferred under an ally icon (see SELF_REACH_*)
         self._self_anchor: tuple | None = None
+        #: form portraits (see FORM_*): alias -> [(form, RGBA)] incl. ("base", official);
+        #: alias -> current form; (alias, skin, inner key) -> bank of the forms
+        self._forms: dict[str, list] = {}
+        self._form_cur: dict[str, str] = {}
+        self._form_banks: dict[tuple, _Bank] = {}
+        #: Diagnostics: (alias, old form, new form, scores) of the last form switch.
+        self.last_form_switch: tuple | None = None
         try:
             from treeaicoach.self_icon import IconLearner
 
@@ -1139,6 +1155,7 @@ class RosterMatcher:
                 self.camlock.reset()
                 self._self_anchor = None
                 self._under = (None, 0)
+                self._forms, self._form_cur, self._form_banks = {}, {}, {}
                 if self.learner is not None:
                     self.learner.on_roster(ents)
 
@@ -1220,7 +1237,8 @@ class RosterMatcher:
         out = []
         for e in ents:
             ov = self._overrides.get(e.alias)
-            out.append(dataclasses.replace(e, icon=ov[0], exact=True, learned=ov[1] != "skin")
+            out.append(dataclasses.replace(e, icon=ov[0], exact=True,
+                                           learned=ov[1] not in ("skin", "form"))
                        if ov is not None else e)
         return out
 
@@ -1235,7 +1253,8 @@ class RosterMatcher:
                 if not 0 <= i < len(self._entries) or not isinstance(icon, np.ndarray):
                     return False
                 e = self._entries[i]
-                ne = dataclasses.replace(e, icon=icon, exact=True, learned=source != "skin")
+                ne = dataclasses.replace(e, icon=icon, exact=True,
+                                         learned=source not in ("skin", "form"))
                 ents = list(self._entries)
                 ents[i] = ne
                 self._overrides[e.alias] = (icon, source)
@@ -1275,7 +1294,7 @@ class RosterMatcher:
             return False
 
     def learned_aliases(self) -> dict[str, str]:
-        """alias -> source ("learned" / "cached" / "skin") of the non-official templates."""
+        """alias -> source ("learned" / "cached" / "skin" / "form") of the non-official templates."""
         with self._lock:
             return {a: src for a, (_ic, src) in self._overrides.items()}
 
@@ -1470,6 +1489,7 @@ class RosterMatcher:
         b = self._banks.get(key)
         if b is None:
             b = _make_bank(self._entries, key / 4.0)
+            b.inner_key = key                   # (form banks: same geometry, FORM_*)
             if len(self._banks) > 48:
                 self._banks.clear()
             self._banks[key] = b
@@ -1826,6 +1846,86 @@ class RosterMatcher:
                 if j > 0:
                     bg.append(v)
         return cands, bg
+
+    def _form_list(self, e: RosterEntry) -> list:
+        """[(form, RGBA)] of a champion with form portraits, the official one first ("base");
+        [] for the others or a learned / custom icon."""
+        got = self._forms.get(e.alias)
+        if got is None:
+            got = []
+            db = self.db
+            try:
+                extra = db.load_form_icons(e.alias) if db is not None and \
+                    callable(getattr(db, "load_form_icons", None)) else []
+                if extra and self._form_cur.get(e.alias, "base") == "base" and not e.learned:
+                    got = [("base", e.icon)] + list(extra)
+            except Exception:
+                got = []
+            self._forms[e.alias] = got
+        return got
+
+    def _check_forms(self, feat: np.ndarray, bank: _Bank, idx: list[int], now: float,
+                     bgr: np.ndarray, kx: float, ky: float, R_px: float) -> None:
+        """Champions with form portraits not tracked lately: every form is searched; a
+        clearly better one (FORM_*) becomes the template (next frame, full search)."""
+        for i in idx:
+            e = self._entries[i]
+            if e.learned:
+                continue
+            forms = self._form_list(e)
+            if len(forms) < 2:
+                continue
+            tr = self._tracks.get(i)
+            if tr is not None and 0.0 <= now - tr.t < FORM_TRACKED_S:
+                continue
+            key = (e.alias, e.skin_id,
+                   getattr(bank, "inner_key", int(round(self._bank_inner(bank) * 4))))
+            fb = self._form_banks.get(key)
+            if fb is None or fb.size != bank.size:
+                fb = _make_bank([RosterEntry(e.alias, e.relation, ic) for _f, ic in forms],
+                                key[2] / 4.0)
+                if fb.size != bank.size:
+                    continue
+                if len(self._form_banks) > 24:
+                    self._form_banks.clear()
+                self._form_banks[key] = fb
+            maps, std = ncc_maps(feat, fb, wl=self._wl)
+            if maps.shape[1] < 2 or maps.shape[2] < 2:
+                continue
+            rad = max(2, int(round(0.4 * bank.size)))
+            best = []
+            for k in range(len(forms)):
+                pk = [(x, y, v) for x, y, v in self._peaks(maps[k], rad, 2, PEAK_FLOOR)
+                      if CONTRAST_RANGE[0] < float(std[y, x]) / float(fb.stds[k])
+                      < CONTRAST_RANGE[1]]
+                best.append(max(pk, key=lambda q: q[2]) if pk else (0, 0, PEAK_FLOOR))
+            cur = self._form_cur.get(e.alias, "base")
+            ci = next((k for k, (f, _ic) in enumerate(forms) if f == cur), 0)
+            bi = max(range(len(forms)), key=lambda k: best[k][2])
+            if bi == ci:
+                continue
+            v_b, v_c = float(best[bi][2]), float(best[ci][2])
+            if v_b < self.last_threshold or v_b < v_c + FORM_GAP:
+                continue
+            # the new form's peak must sit on a ring of his team
+            half = (bank.size - 1) / 2.0
+            u = (best[bi][0] + half + 0.5) / kx
+            v = (best[bi][1] + half + 0.5) / ky
+            H, W = bgr.shape[:2]
+            f_en, f_al = self.rings.classify(self._ring_pixels(bgr, u * W, v * H, R_px))
+            own, opp = (f_en, f_al) if e.relation == "enemy" else (f_al, f_en)
+            if own < FORM_MIN_OWN or opp > own:
+                continue
+            new = forms[bi][0]
+            self.last_form_switch = (e.alias, cur, new, round(v_c, 3), round(v_b, 3))
+            log.info("Roster matcher: %s portrait -> form %s (%.2f vs %.2f)", e.alias, new,
+                     v_b, v_c)
+            self._form_cur[e.alias] = new
+            if new == "base":
+                self.revert_icon(i)
+            else:
+                self.register_icon(i, np.asarray(forms[bi][1]), "form")
+            return                      # (the bank is rebuilt: one switch per frame)
 
     def _coarse_search(self, feat: np.ndarray, bank: _Bank, idx: list[int]
                        ) -> list[_Cand]:
@@ -2810,6 +2910,8 @@ class RosterMatcher:
         if full_set:
             gc, bg_scores = self._global_search(feat, bank, sorted(full_set))
             cands.extend(gc)
+            if FORM_SWITCH and not self.grey:
+                self._check_forms(feat, bank, sorted(full_set), now, bgr, kx, ky, R_px)
         if glob:
             cands.extend(self._coarse_search(feat, bank, glob))
         thr = self._threshold(bg_scores)

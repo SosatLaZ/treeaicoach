@@ -547,3 +547,46 @@ def test_self_position_from_camera_must_be_reachable():
     m2 = RosterMatcher(db=None)
     m2._entries = list(m._entries)
     assert m2._self_reachable(0, (0.2, 0.25), 5.0)                # nothing known: no constraint
+
+
+# ======================================================================================
+# Form portraits (Kayn assassin / Rhaast, Mega Gnar, Quinn's Valor) and UI glyphs
+# ======================================================================================
+
+REAL_CASE = Path(__file__).parent / "fixtures" / "real_cases" / "tk_botlane_20261005"
+
+
+def test_kayn_form_portrait_is_matched_on_a_real_capture(db):
+    """Real game 2026-10-05, 16:31: allied Kayn in Shadow Assassin form (blue portrait) was
+    left anonymous by the official portrait; the form portrait identifies him."""
+    import json
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    from real_minimap_bench import roster_entries
+
+    if not db.load_form_icons("Kayn"):
+        pytest.skip("form portraits missing")
+    truth = json.loads((REAL_CASE / "ground_truth.json").read_text(encoding="utf-8"))
+    spec = truth["images"]["20261005_164652_0326"]
+    kayn = next(c for c in spec["champions"] if c.get("name") == "Kayn")
+    img = cv2.imread(str(REAL_CASE / spec["file"]))
+    m = RosterMatcher(db=db)
+    m.set_entries(roster_entries(truth["rosters"][spec["game"]], db))
+    dets = []
+    for f in range(12):
+        dets = m.detect(img, t=f / 8.0)
+    k = [d for d in dets if d.alias == "Kayn"]
+    assert k and math.hypot(k[0].u - kayn["u"], k[0].v - kayn["v"]) < 0.03
+    assert m.last_form_switch[:3] == ("Kayn", "base", "assassin")
+    assert m.learned_aliases().get("Kayn") == "form"
+    assert not m.entries[m.aliases.index("Kayn")].learned
+
+
+def test_form_switch_keeps_other_champions_and_ignores_learned(db):
+    m = RosterMatcher(db=db)
+    m.set_entries(_entries(db, [("Garen", "self"), ("Kayn", "ally")]))
+    assert m._form_list(m.entries[0]) == []
+    forms = m._form_list(m.entries[1])
+    assert [f for f, _ic in forms][:1] == ["base"] and len(forms) == 3
+
