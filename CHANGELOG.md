@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.11.0 · 20 octobre 2026
+
+- **Le bot Discord annonce aussi les ganks de tes amis :** il reconnaît qui, dans le vocal, joue quel champion de ton
+  équipe (pseudo Discord comparé au Riot ID, corrigeable à la main sur la page Discord, section « Dans le vocal »),
+  et dit « Bot gank » / « Top gank »… pour la voie de l'ami visé (un seul appel pour le duo bot). Option « Dire le
+  pseudo » (« Paul, bot gank »). Ta voix sur le PC n'annonce que tes propres ganks.
+
 ## 2.10.1 · 20 octobre 2026
 
 - **Captures de minimap activées par défaut** (une toutes les 10 s, 600 par session au plus, sur ton PC) : chaque partie
