@@ -99,6 +99,16 @@ class _RedactFilter(logging.Filter):
         return True
 
 
+def error_text(exc: BaseException) -> str:
+    """Short, secret-free reason shown to the player: exception name + message (120 chars)."""
+    try:
+        msg = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+    except Exception:
+        msg = ""
+    text = type(exc).__name__ + (f" : {msg}" if msg else "")
+    return mask_secrets(text)[:120]
+
+
 def clean_token(value: Any) -> str:
     """The token as pasted (spaces, quotes, a "Bot " prefix removed)."""
     s = "".join(ch for ch in str(value or "") if ch.isprintable()).strip().strip("\"'").strip()
@@ -318,17 +328,56 @@ class DiscordPyBackend:
             lg.setLevel(logging.WARNING)
             if not any(isinstance(f, _RedactFilter) for f in lg.filters):
                 lg.addFilter(_RedactFilter())
-        intents = discord.Intents.none()
-        intents.guilds = True
-        intents.voice_states = True
-        self.client = discord.Client(intents=intents, max_messages=None, chunk_guilds_at_startup=False)
+        self._intents = discord.Intents.none()
+        self._intents.guilds = True
+        self._intents.voice_states = True
         self._task: asyncio.Task | None = None
+        self.tls = "système"
+        self.client = self._make_client(certifi_ca=False)
+
+    def _make_client(self, certifi_ca: bool) -> Any:
+        """discord.Client with an explicit TLS context (Windows store, or certifi's bundle when the
+        store fails: frozen exe / outdated roots) and the system proxy if one is set."""
+        import ssl  # noqa: PLC0415
+        import urllib.request  # noqa: PLC0415
+
+        kw: dict[str, Any] = {}
+        try:
+            ctx = ssl.create_default_context()
+            if certifi_ca:
+                import certifi  # noqa: PLC0415
+
+                ctx = ssl.create_default_context(cafile=certifi.where())
+                self.tls = "certifi"
+            import aiohttp  # noqa: PLC0415
+
+            kw["connector"] = aiohttp.TCPConnector(ssl=ctx)
+        except Exception:
+            log.debug("Discord: TLS context", exc_info=True)
+        try:
+            proxy = urllib.request.getproxies().get("https") or urllib.request.getproxies().get("http")
+            if proxy:
+                kw["proxy"] = proxy if "://" in proxy else "http://" + proxy
+        except Exception:
+            pass
+        return self._d.Client(intents=self._intents, max_messages=None, chunk_guilds_at_startup=False, **kw)
 
     async def start(self, token: str) -> tuple[str, str | None]:
         """Log in + open the gateway; ``(bot name, application id)``. BadToken if refused."""
         d = self._d
         try:
-            await self.client.login(token)
+            try:
+                await self.client.login(token)
+            except Exception as exc:          # certificate refused by the Windows store: certifi
+                if "certificate" not in (type(exc).__name__ + str(exc)).lower() or self.tls == "certifi":
+                    raise
+                log.warning("Discord: TLS refused with the Windows store, retry with certifi")
+                try:
+                    await self.client.close()
+                except Exception:
+                    pass
+                self.client = self._make_client(certifi_ca=True)
+                await self.client.login(token)
         except d.LoginFailure as exc:
             raise BadToken() from exc
         self._task = asyncio.get_running_loop().create_task(self.client.connect(reconnect=True))
@@ -787,7 +836,7 @@ class DiscordCaller:
             try:
                 backend = self._factory()
             except Exception as exc:
-                log.warning("Discord : module indisponible (%s)", type(exc).__name__)
+                log.warning("Discord : module indisponible (%s)", error_text(exc))
                 self._set_status("Voix Discord indisponible dans cette version (module manquant).", False)
                 self._fail_tests(self.status()[0])
                 await self._wait(3600.0)
@@ -810,7 +859,10 @@ class DiscordCaller:
                 continue
             delay = BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)]
             attempt += 1
-            self._set_status(f"Discord ne répond pas, nouvel essai dans {int(delay)} s.", False)
+            with self._lock:
+                why = getattr(self, "_last_error", "") or ""
+            self._set_status(f"Discord ne répond pas ({why}), nouvel essai dans {int(delay)} s." if why
+                             else f"Discord ne répond pas, nouvel essai dans {int(delay)} s.", False)
             self._fail_tests(self.status()[0])
             t_end = time.monotonic() + delay
             while time.monotonic() < t_end:
@@ -828,7 +880,10 @@ class DiscordCaller:
             self._set_status("Token invalide : recopie-le depuis le portail Discord (onglet Bot).", False)
             return "bad_token"
         except Exception as exc:
-            log.warning("Discord : connexion impossible (%s)", mask_secrets(type(exc).__name__))
+            why = error_text(exc)
+            log.warning("Discord : connexion impossible (%s)", why)
+            with self._lock:
+                self._last_error = why
             return "error"
         self._idle_status(backend, name)
         threading.Thread(target=self.prerender, name="TreeAI-discord-clips", daemon=True).start()
@@ -845,9 +900,10 @@ class DiscordCaller:
             try:
                 await self._handle(backend, job, s, name)
             except Exception as exc:
-                log.warning("Discord : %s a échoué (%s)", job.kind, mask_secrets(type(exc).__name__))
+                why = error_text(exc)
+                log.warning("Discord : %s a échoué (%s)", job.kind, why)
                 if job.kind == "test":
-                    self._done(job, "Le bot n'a pas pu parler (voir le journal).", False)
+                    self._done(job, f"Le bot n'a pas pu parler ({why}).", False)
 
     def _idle_status(self, backend: Any, name: str) -> None:
         if backend.guild_count() == 0:
@@ -970,3 +1026,38 @@ def shutdown(timeout: float = 2.0) -> None:
 __all__ = ["DiscordCaller", "CallFilter", "DiscordPyBackend", "BadToken", "caller", "active", "shutdown",
            "gank_text", "matchup_verdict", "matchup_prompt", "clean_ai_line", "wav_to_pcm48", "mask_secrets", "clean_token", "clean_user_id",
            "application_id_from_token", "invite_url", "discord_available", "SPOKEN_KINDS", "CONTROL_KINDS"]
+
+
+def probe(token: str = "") -> str:
+    """Packaging check (``TreeAICoach.exe --discord-probe out.txt``): imports, opus, DAVE, client
+    creation and one login attempt (a fake token by default: "LoginFailure" = Discord reached)."""
+    lines: list[str] = []
+    try:
+        import discord  # noqa: PLC0415
+
+        lines.append(f"discord.py {discord.__version__}")
+        import nacl  # noqa: PLC0415, F401
+        import davey  # noqa: PLC0415, F401
+
+        lines.append("nacl + davey: ok")
+        try:
+            if not discord.opus.is_loaded():
+                discord.opus._load_default()
+            lines.append(f"opus: {discord.opus.is_loaded()}")
+        except Exception as exc:
+            lines.append(f"opus: {error_text(exc)}")
+
+        async def _login() -> str:
+            b = DiscordPyBackend()
+            try:
+                await asyncio.wait_for(b.client.login(token or ".".join(["MTIzNDU2Nzg5MDEyMzQ1Njc4OQ", "Gabc",
+                                                                           "x" * 27])), 20.0)
+                return "login: ok"
+            except Exception as exc:
+                return f"login: {error_text(exc)} (tls {b.tls})"
+            finally:
+                await b.client.close()
+        lines.append(asyncio.run(_login()))
+    except Exception as exc:
+        lines.append(f"FAILED: {error_text(exc)}")
+    return "\n".join(lines) + "\n"

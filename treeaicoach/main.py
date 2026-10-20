@@ -164,6 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ui-smoke", action="store_true", help="ouvre l'interface puis la ferme après 4 s")
     p.add_argument("--duration", type=float, default=None, help=argparse.SUPPRESS)  # --nogui auto-stop (tests)
     p.add_argument("--version", action="store_true", help="affiche la version")
+    p.add_argument("--discord-probe", metavar="FICHIER", default=None, help=argparse.SUPPRESS)
     return p
 
 
@@ -262,6 +263,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     install_excepthooks()
     log.info("%s %s starting (args: %s)", APP_NAME, __version__, " ".join(sys.argv[1:] if argv is None else argv))
     try:
+        if args.discord_probe:
+            from treeaicoach.discord_bot import probe
+
+            Path(args.discord_probe).write_text(probe(), encoding="utf-8")
+            return 0
         if args.selftest:
             from treeaicoach.selftest import run_selftest
 

@@ -3,6 +3,11 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.8.1 · 20 octobre 2026
+
+- **Bot Discord :** connexion plus robuste (autre magasin de certificats si celui de Windows refuse Discord,
+  proxy de Windows utilisé), et le statut affiche maintenant la vraie raison quand la connexion échoue.
+
 ## 2.8.0 · 20 octobre 2026
 
 - **Bot Discord** (désactivé par défaut, Alertes et voix → Bot Discord) : lancé par l'appli, il rejoint ton salon
