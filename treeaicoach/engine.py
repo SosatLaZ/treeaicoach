@@ -1027,6 +1027,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 note(self._cfg)
         self._discord_matchup_done = False
         self._discord_obj_done: set = set()
+        self._ally_gank = None                  # ally_gank.AllyGankWatcher: new game, new watcher
+        self._discord_roster_sig = None
         self._call("game_start")                # the bot joins my voice channel
         self._discord_matchup(game)
 
@@ -1178,6 +1180,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             except Exception:
                 self._errors += 1
                 self._err.exception("GankAnalyzer.update failed")
+        self._discord_ally_ganks(t, game, tracker)   # bot Discord: the ganks of my friends in voice
         threat = self._update_threat(t, gank_alerts)
         danger_now = self._personal_danger(t, gt, game, tracker, threat)
         pd = getattr(self, "_danger", None)

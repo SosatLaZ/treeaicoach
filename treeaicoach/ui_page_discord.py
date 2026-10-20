@@ -40,7 +40,47 @@ def offline_snapshot(cfg: Any) -> dict:
             "user": {"id": discord_bot.clean_user_id(getattr(cfg, "discord_user_id", "")), "found": False},
             "channel": None, "latency_ms": None, "events": [], "in_game": False,
             "user_id": discord_bot.clean_user_id(getattr(cfg, "discord_user_id", "")),
-            "voice_source": "", "voice_checked": False, "muted": False}
+            "voice_source": "", "voice_checked": False, "muted": False, "voice_map": [], "roster": []}
+
+
+SOURCE_TEXT = {"toi": "C'est toi : tes ganks passent déjà par le coach.",
+               "auto": "Reconnu par son pseudo. Le bot annonce ses ganks.",
+               "manuel": "Choisi à la main. Le bot annonce ses ganks."}
+
+
+def friend_rows(snap: dict, links: dict | None = None) -> list[dict]:
+    """The "Dans le vocal" rows: ``{id, title, desc, tone, choices, value, editable}`` per voice member.
+    ``choices``: (Riot ID / "" auto / "-" absent, label) for the hand-made fix (only during a game,
+    when my team is known). Pure (no Qt)."""
+    from treeaicoach import discord_friends as df  # noqa: PLC0415
+
+    links = dict(links or {})
+    roster = [p for p in snap.get("roster") or [] if isinstance(p, dict)]
+    in_game = bool(roster)
+    friends = [p for p in roster if not p.get("me") and p.get("riot")]
+    rows = []
+    for e in snap.get("voice_map") or []:
+        p = e.get("player")
+        src = str(e.get("source") or "")
+        name = str(e.get("name") or "?")
+        if p:
+            title = f"{name} → {df.player_label(p)}"
+            desc = SOURCE_TEXT.get(src, "")
+        else:
+            title = f"{name} : {df.describe(e, in_game)}"
+            desc = ("Pas reconnu parmi tes alliés. Choisis son champion s'il joue avec toi." if in_game and src != "absent"
+                    else ("Le bot n'annonce pas ses ganks." if in_game else
+                          "Associé à son champion au début de la partie."))
+        editable = in_game and src != "toi"
+        choices = [("", "Auto"), (df.NOT_PLAYING, "Pas dans la partie")] + \
+            [(str(x["riot"]), df.player_label(x)) for x in friends]
+        value = links.get(str(e.get("id")), "")
+        if value not in (c[0] for c in choices):
+            value = ""
+        rows.append({"id": str(e.get("id")), "title": title, "desc": desc,
+                     "tone": "accent" if p and src in ("auto", "manuel") else "", "choices": choices,
+                     "value": value, "editable": editable})
+    return rows
 
 
 VOICE_LABELS = {"edge": "naturelle", "custom": "naturelle", "onecore": "Windows", "sapi": "Windows",
@@ -163,7 +203,8 @@ class DiscordPage:
         self._sig_events: Any = None
         self.snap: dict = {}
         self.page = W.Page("Discord", "Le bot annonce « Top gank », « Mid gank », « Bot gank » et le matchup dans "
-                                      "ton salon vocal. Ici tu vois où il est et ce qu'il fait.")
+                                      "ton salon vocal, pour toi et pour tes amis du salon. Ici tu vois où il est "
+                                      "et ce qu'il fait.")
 
         # -- state card
         top = self.page.section("État")
@@ -233,6 +274,11 @@ class DiscordPage:
         self.voice_row = says.add(W.Row("Voix du bot", ""))
         app.slider_row(says, "discord_volume", "Volume du bot", "Ce que tes amis entendent. Le bip est plus "
                        "doux que la voix.", 0, 100, 5, lambda v: f"{int(v)} %", to_value=lambda v: int(round(v)))
+        app.switch_row(says, "discord_ally_ganks", "Ganks de tes amis",
+                       "« Bot gank », « Top gank »... aussi quand un ami du salon vocal qui joue avec toi se fait "
+                       "gank. Seul le salon l'entend, pas ton PC.")
+        app.switch_row(says, "discord_say_name", "Dire le pseudo",
+                       "« Paul, bot gank » au lieu de « Bot gank » pour les ganks de tes amis.")
         app.switch_row(says, "discord_only", "Couper la voix du coach sur le PC quand le bot parle",
                        "Tu entends l'annonce une seule fois, par Discord. Le bip reste sur le PC.")
         app.switch_row(says, "discord_objectives", "Objectifs",
@@ -246,6 +292,18 @@ class DiscordPage:
         app.choice_row(says, "hotkey_discord_mute", "Touche pour couper le bot",
                        "Coupe ou rétablit le bot en jeu (il se tait tout de suite).",
                        hotkey_choices(str(app.cfg.hotkey_discord_mute or "")))
+
+        # -- who is who in the voice channel
+        self._sig_friends: Any = None
+        friends = self.page.section("Dans le vocal", "Le bot reconnaît tes amis du salon parmi tes alliés "
+                                                     "(pseudo Discord et Riot). Corrige avec le menu si besoin.")
+        friends.group.hide()
+        self._friends_holder = QtWidgets.QWidget()
+        self._friends_lay = QtWidgets.QVBoxLayout(self._friends_holder)
+        self._friends_lay.setContentsMargins(0, 0, 0, 0)
+        self._friends_group: Any = None
+        friends.layout().insertWidget(2, self._friends_holder)
+        app.bind("discord_links", lambda: self._update_friends(self.snap or {}, force=True))
 
         # -- where the bot is
         self.leave_btn = W.button("Quitter le salon", self._leave)
@@ -400,6 +458,7 @@ class DiscordPage:
         W.set_prop(self.voice_row.title, "tone", "ok" if ok else ("danger" if ok is False else ""))
         self.voice_row.set_desc(desc)
         self._update_servers(snap)
+        self._update_friends(snap)
         self._update_log(snap)
 
     def _paint_avatar(self, snap: dict) -> None:
@@ -463,6 +522,38 @@ class DiscordPage:
                           "Connecte le bot pour voir ses serveurs."))
         self._swap(self._chan_lay, "_chan_group", grp)
 
+    def _update_friends(self, snap: dict, force: bool = False) -> None:
+        links = dict(getattr(self.app.cfg, "discord_links", None) or {})
+        rows = friend_rows(snap, links)
+        sig = tuple((r["id"], r["title"], r["desc"], tuple(r["choices"]), r["value"], r["editable"]) for r in rows)
+        if sig == self._sig_friends and not force:
+            return
+        self._sig_friends = sig
+        W = self.W
+        grp = W.Group()
+        for r in rows:
+            ctl = None
+            if r["editable"]:
+                ctl = W.Combo(r["choices"], r["value"])
+                ctl.setMinimumWidth(180)
+                ctl.activated.connect(lambda _i, uid=r["id"], c=ctl: self._link(uid, c.value()))
+            row = grp.add(W.Row(r["title"], r["desc"], ctl))
+            if r["tone"]:
+                W.set_prop(row.title, "tone", r["tone"])
+        if not rows:
+            grp.add(W.Row("Personne", "Les membres de ton salon vocal s'affichent ici quand le bot est connecté."))
+        self._swap(self._friends_lay, "_friends_group", grp)
+
+    def _link(self, uid: str, value: Any) -> None:
+        """The hand-made fix of one voice member, kept by Discord id <-> Riot ID in the settings."""
+        links = dict(getattr(self.app.cfg, "discord_links", None) or {})
+        if value:
+            links[str(uid)] = str(value)
+        else:
+            links.pop(str(uid), None)
+        self.app.set_option("discord_links", links)
+        self.app.later(300, self.tick)
+
     def _update_log(self, snap: dict) -> None:
         events = list(snap.get("events") or [])[:10]
         sig = tuple((e.get("t"), e.get("text"), e.get("channel"), e.get("ok")) for e in events)
@@ -492,7 +583,8 @@ class DiscordPage:
     # ------------------------------------------------------------------ config / close
     def on_config(self, diff: set[str]) -> None:
         if diff & {"discord_enabled", "discord_token", "discord_user_id", "discord_volume", "discord_only",
-                   "discord_objectives", "discord_jungler_seen", "discord_summary", "hotkey_discord_mute"}:
+                   "discord_objectives", "discord_jungler_seen", "discord_summary", "hotkey_discord_mute",
+                   "discord_ally_ganks", "discord_say_name", "discord_links"}:
             self._sync_bot()
             self.update(self._read())
 

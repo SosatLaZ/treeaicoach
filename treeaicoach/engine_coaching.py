@@ -389,6 +389,64 @@ class CoachingMixin:
         except Exception:
             log.debug("discord objectives failed", exc_info=True)
 
+    def _discord_ally_ganks(self, t: float, game: Any, tracker: Any) -> None:
+        """The ganks of the FRIENDS of my voice channel (bot Discord, ``discord_ally_ganks``): sends my
+        team's roster to the bot when it changes (the bot matches its voice members to it), then runs
+        ally_gank.AllyGankWatcher from each matched friend's position and hands every new call to the
+        bot ("Bot gank" with THAT friend's lane). Never spoken on the PC (the user hears only his own
+        ganks). ``self.ally_targets`` (tests) replaces the bot. Every tick; nothing to do (no friend
+        matched, bot off) costs a dict lookup. Never raises."""
+        try:
+            fn = getattr(self, "ally_targets", None)
+            if fn is None:
+                if not getattr(self._cfg, "discord_enabled", False) or self._demo or self._frame_source is not None:
+                    return
+                if not getattr(self._cfg, "discord_ally_ganks", True):
+                    return
+            if game is None or tracker is None:
+                return
+            self._discord_roster(game)
+            if fn is None:
+                from treeaicoach import discord_bot
+
+                bot = discord_bot.active()
+                fn = bot.ally_targets if bot is not None else None
+            targets = dict(fn() or {}) if fn is not None else {}
+            if not targets:
+                return
+            watcher = getattr(self, "_ally_gank", None)
+            if watcher is None:
+                from treeaicoach.ally_gank import AllyGankWatcher
+
+                watcher = self._ally_gank = AllyGankWatcher(self._cfg)
+            watcher.apply_config(self._cfg)
+            roles = getattr(getattr(self, "_gank", None), "role_resolver", None)
+            for c in watcher.update(t, tracker, game, list(targets), roles=roles):
+                queued = self._call("ally_gank", "", {"lane": c.lane, "ally": c.alias, "name": targets.get(c.alias, ""),
+                                                      "level": int(c.level), "threats": list(c.threats)})
+                log.info("Gank sur un ami : %s (%s) par %s, %s", c.alias, c.lane, "+".join(c.threats),
+                         "annoncé" if queued else "filtré")
+        except Exception:
+            log.debug("discord ally ganks failed", exc_info=True)
+
+    def _discord_roster(self, game: Any) -> None:
+        """My team (Riot ID, champion, role) to the bot when it changes: it matches its voice members."""
+        try:
+            me = getattr(game, "me", None)
+            players = [(p, p is me) for p in ([me] if me is not None else []) + list(getattr(game, "allies", None) or [])]
+            sig = tuple((str(getattr(p, "riot_id", "") or getattr(p, "summoner_name", "")),
+                         str(getattr(p, "champion_alias", "")), str(getattr(p, "position", ""))) for p, _m in players)
+            if sig == getattr(self, "_discord_roster_sig", None):
+                return
+            self._discord_roster_sig = sig
+            self._call("roster", "", {"players": [
+                {"riot": str(getattr(p, "riot_id", "") or getattr(p, "summoner_name", "") or ""),
+                 "champion": str(getattr(p, "champion_name", "") or getattr(p, "champion_alias", "")),
+                 "alias": str(getattr(p, "champion_alias", "") or ""), "position": str(getattr(p, "position", "") or ""),
+                 "me": bool(is_me)} for p, is_me in players]})
+        except Exception:
+            log.debug("discord roster failed", exc_info=True)
+
     def _discord_sync(self) -> None:
         """Hand the settings to the app's bot (live engine only). Never raises."""
         try:

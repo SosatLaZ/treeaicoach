@@ -40,7 +40,8 @@ log = logging.getLogger(__name__)
 
 HEADER = "Empreinte TreeAI"
 #: Settings never put in a fingerprint (secrets, window geometry, purely cosmetic UI memory).
-PRIVATE_SETTINGS = frozenset({"ai_api_key", "github_token", "discord_token", "discord_user_id", "ui_geometry",
+PRIVATE_SETTINGS = frozenset({"ai_api_key", "github_token", "discord_token", "discord_user_id", "discord_links",
+                              "ui_geometry",
                               "update_channel_url",
                               "ui_seen_changelog", "ui_onboarding_done"})
 #: Key settings always listed (even at their default value), in this order.

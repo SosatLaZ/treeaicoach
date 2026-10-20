@@ -868,16 +868,18 @@ class GankAnalyzer:
         se = math.sqrt(rss / max(1, n - 2) / stt)
         return slope, max(se, TREND_SE_FLOOR)
 
-    def _update_approach(self, tr: Track, st: _TrackState, me_pos: tuple[float, float],
+    @classmethod
+    def _update_approach(cls, tr: Track, st: _TrackState, me_pos: tuple[float, float],
                          my_vel: tuple[float, float], pos: tuple[float, float], now: float) -> bool:
-        """Radial velocity test + significance of the distance trend, with hysteresis."""
+        """Radial velocity test + significance of the distance trend, with hysteresis (also used
+        from an ally's position by ally_gank.py)."""
         rx, ry = pos[0] - me_pos[0], pos[1] - me_pos[1]
         norm = math.hypot(rx, ry)
         ev = tr.velocity()
         vx, vy = ev[0] - my_vel[0], ev[1] - my_vel[1]
         radial = (rx * vx + ry * vy) / norm if norm > 1e-6 else 0.0
-        trend = self._trend(st)
-        fast = self._trend(st, FAST_TREND_WINDOW_S)
+        trend = cls._trend(st)
+        fast = cls._trend(st, FAST_TREND_WINDOW_S)
         def sig(tr_: tuple[float, float] | None, t_stat: float) -> bool:
             return tr_ is not None and tr_[0] < TREND_MIN_SLOPE and tr_[0] / tr_[1] < t_stat
 

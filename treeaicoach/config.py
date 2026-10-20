@@ -170,6 +170,9 @@ UPDATE_TEXT_FIELDS["discord_user_id"] = 24
 INT_RANGES["discord_volume"] = (0, 100)
 BOOL_FIELDS = BOOL_FIELDS + ("discord_only", "discord_objectives", "discord_jungler_seen", "discord_summary")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_discord_mute",)
+# bot Discord 2.11: the ganks of the friends in the voice channel (on), their name said (off),
+# the voice members <-> Riot IDs fixed by hand ({Discord user id: Riot ID or "-"}, discord_friends.py)
+BOOL_FIELDS = BOOL_FIELDS + ("discord_ally_ganks", "discord_say_name")
 # declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 # self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
@@ -356,6 +359,9 @@ class Config:
     discord_jungler_seen: bool = False   # "Jungler ennemi vu top / mid / bot" (lowest priority)
     discord_summary: bool = False        # "Victoire en 32 minutes, 9 ganks évités sur 10."
     hotkey_discord_mute: str = ""        # push-to-mute of the bot ("" = none)
+    discord_ally_ganks: bool = True      # "Bot gank" also for the friends of my voice channel in my team
+    discord_say_name: bool = False       # "Paul, bot gank" (the friend's Discord name first)
+    discord_links: dict = field(default_factory=dict)   # {Discord user id: Riot ID / "-"} set by hand
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""
@@ -630,6 +636,13 @@ def _validate_field(name: str, value: Any, default: Any) -> Any:
         res = _as_lead_list(value)
     elif name == "ui_geometry":
         res = _as_geometry(value)
+    elif name == "discord_links":
+        if isinstance(value, dict):
+            from treeaicoach.discord_friends import clean_links  # noqa: PLC0415
+
+            res = clean_links(value)
+        else:
+            res = _INVALID
     elif name in UPDATE_TEXT_FIELDS:
         res = _as_voice_name(value)
         if res is not _INVALID:

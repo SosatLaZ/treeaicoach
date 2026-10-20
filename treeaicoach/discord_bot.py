@@ -60,18 +60,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from treeaicoach import discord_audio as da
+from treeaicoach import discord_friends as df
 
 log = logging.getLogger(__name__)
 
-#: kinds that are spoken in the voice channel (everything else is dropped)
-SPOKEN_KINDS = frozenset({"gank", "matchup", "objective", "jungler_seen", "summary"})
+#: kinds that are spoken in the voice channel (everything else is dropped); ``ally_gank`` = a gank on a
+#: friend of the voice channel (ally_gank.py), said like mine ("Bot gank")
+SPOKEN_KINDS = frozenset({"gank", "ally_gank", "matchup", "objective", "jungler_seen", "summary"})
 #: priority when the queue is full / which job goes first (higher = more urgent)
 PRIORITY = {"gank": 4, "test": 3, "objective": 2, "matchup": 1, "jungler_seen": 0, "summary": 0}
-#: lifecycle kinds: join the voice channel / leave it (never spoken)
-CONTROL_KINDS = frozenset({"game_start", "game_end"})
+#: lifecycle kinds: join the voice channel / leave it (never spoken); ``roster``: my team's players
+#: (Live Client) to match the voice members against (discord_friends.py)
+CONTROL_KINDS = frozenset({"game_start", "game_end", "roster"})
 
-GANK_MIN_GAP_S = 8.0         # two gank calls at least this far apart
-GANK_SAME_S = 30.0           # the same champions on the same lane: once per 30 s
+GANK_MIN_GAP_S = 8.0         # two gank calls about the same person (me / one friend) at least this far apart
+GANK_ANY_GAP_S = 3.0         # any two gank calls (two friends), and a gank call and an objective call
+GANK_SAME_S = 30.0           # the same lane: once per 30 s (bot duo ganked: ONE "Bot gank")
+ALLY_SAME_S = 30.0           # the same friend: once per 30 s
 GANK_MAX_PER_MIN = 4         # and never more than 4 gank calls a minute
 GANK_STALE_S = 5.0           # a gank call that could not start within 5 s is dropped (too late)
 CALLS_MAX_PER_MIN = 6        # every spoken call together (gank first: the others yield)
@@ -361,6 +366,12 @@ def _member_name(m: Any) -> str:
     return str(getattr(m, "display_name", "") or getattr(m, "global_name", "") or getattr(m, "name", "") or "")
 
 
+def _occupant(m: Any) -> dict:
+    """A voice member as plain data for the name matching (discord_friends.py): every name he has."""
+    return {"id": str(getattr(m, "id", "") or ""), "display": str(getattr(m, "display_name", "") or ""),
+            "global": str(getattr(m, "global_name", "") or ""), "name": str(getattr(m, "name", "") or "")}
+
+
 def describe_guilds(guilds: Iterable[Any], user_id: str = "", bot_id: Any = None,
                     bot_channel_id: Any = None) -> tuple[list[dict], dict]:
     """The servers of the bot as plain data for the launcher (from discord.py's cache, no network):
@@ -382,13 +393,16 @@ def describe_guilds(guilds: Iterable[Any], user_id: str = "", bot_id: Any = None
                 ids = set(getattr(ch, "voice_states", None) or {})
                 members = {getattr(m, "id", None): m for m in list(getattr(ch, "members", None) or [])}
                 people = [_member_name(members[i]) for i in ids if i != bot_id and i in members]
+                occupants = sorted((_occupant(members[i]) for i in ids if i != bot_id and i in members),
+                                   key=lambda o: (o["display"] or o["name"]).casefold())
                 missing = missing_permissions(ch, me)
                 cid = str(getattr(ch, "id", ""))
                 here = uid is not None and uid in ids
                 chans.append({"id": cid, "name": str(getattr(ch, "name", "") or "salon vocal"),
                               "members": len(ids - {bot_id}), "people": sorted(p for p in people if p),
                               "can_speak": missing is None or not missing, "missing": missing or [],
-                              "me_here": here, "bot_here": str(bot_channel_id or "") == cid or (bot_id in ids)})
+                              "me_here": here, "bot_here": str(bot_channel_id or "") == cid or (bot_id in ids),
+                              "occupants": occupants})
                 if here:
                     m = members.get(uid)
                     user.update(found=True, channel_id=cid, channel=chans[-1]["name"], guild=str(g.name),
@@ -421,6 +435,7 @@ class CallFilter:
         self._matchup_done = False
         self._summary_done = False
         self._last_gank = -1e9
+        self._target_t: dict[str, float] = {}
         self._gank_times: collections.deque[float] = collections.deque()
         self._seen: dict[str, float] = {}
         self._objectives: set[str] = set()
@@ -434,7 +449,11 @@ class CallFilter:
             times.popleft()
         return len(times)
 
-    def admit(self, kind: str, key: str = "") -> bool:
+    def admit(self, kind: str, key: str = "", target: str = "") -> bool:
+        """``key``: the lane of a gank call; ``target``: who is ganked ("" = me, else the friend's
+        champion): the same person at most every :data:`GANK_MIN_GAP_S` (me) / :data:`ALLY_SAME_S` (a
+        friend), any two gank calls :data:`GANK_ANY_GAP_S` apart, one call per lane per
+        :data:`GANK_SAME_S` (two friends of the bot lane: one call)."""
         now = float(self._clock())
         full = self._recent(self._all_times, now) >= CALLS_MAX_PER_MIN
         if kind == "matchup":
@@ -449,7 +468,7 @@ class CallFilter:
             return True
         if kind == "objective":
             k = key or "?"
-            if k in self._objectives or full:
+            if k in self._objectives or full or now - self._last_gank < GANK_ANY_GAP_S:
                 return False
             self._objectives.add(k)
             self._all_times.append(now)
@@ -467,13 +486,17 @@ class CallFilter:
         if kind != "gank":
             return False
         k = key or "?"
+        who = str(target or "")
         if now - self._seen.get(k, -1e9) < GANK_SAME_S:
             return False
-        if now - self._last_gank < GANK_MIN_GAP_S:
+        if now - self._target_t.get(who, -1e9) < (ALLY_SAME_S if who else GANK_MIN_GAP_S):
+            return False
+        if now - self._last_gank < GANK_ANY_GAP_S:
             return False
         if self._recent(self._gank_times, now) >= GANK_MAX_PER_MIN:
             return False
         self._seen[k] = now
+        self._target_t[who] = now
         self._last_gank = now
         self._gank_times.append(now)
         self._all_times.append(now)
@@ -492,6 +515,7 @@ class _Job:
     done: Callable[[str, bool], None] | None = None
     lane: str = ""
     ai: Callable[[], Any] | None = None     # matchup: the one AI request (blocking, run off the loop)
+    who: str = ""                           # ally_gank: the friend's champion (diagnostics)
 
 
 @dataclass
@@ -507,11 +531,14 @@ class _Settings:
     jungler_seen: bool = False
     summary: bool = False
     mute_hotkey: str = ""
+    ally_ganks: bool = True         # discord_ally_ganks: the ganks of the friends in the voice channel
+    say_name: bool = False          # discord_say_name: "Paul, bot gank"
+    links: tuple = ()               # discord_links as sorted (user id, Riot ID) pairs
 
     def wants(self, kind: str) -> bool:
         """The switch of an optional call kind is on (gank / matchup / test: always)."""
         return {"objective": self.objectives, "jungler_seen": self.jungler_seen,
-                "summary": self.summary}.get(kind, True)
+                "summary": self.summary, "ally_gank": self.ally_ganks}.get(kind, True)
 
     def key(self) -> tuple:
         """What needs a new gateway session when it changes (the rest is read live)."""
@@ -814,6 +841,9 @@ class DiscordCaller:
         self._manual: str | None = None            # channel joined by hand from the launcher (no auto-follow)
         self._left_from: str | None = None         # "Quitter": the player's channel at that moment (no rejoin)
         self._in_game = False
+        self._roster: list[dict] = []       # my team in the game (engine, "roster" call): riot, champion, alias...
+        self._map_sig: Any = None           # signature of the last voice <-> players matching
+        self._map: list[dict] = []          # discord_friends.match() of the voice members
         self.spoken: list[str] = []         # what was said (tests / diagnostics), last 50
         self.dropped = 0
 
@@ -835,13 +865,17 @@ class DiscordCaller:
                           objectives=getattr(cfg, "discord_objectives", False) is True,
                           jungler_seen=getattr(cfg, "discord_jungler_seen", False) is True,
                           summary=getattr(cfg, "discord_summary", False) is True,
-                          mute_hotkey=str(getattr(cfg, "hotkey_discord_mute", "") or "").strip())
+                          mute_hotkey=str(getattr(cfg, "hotkey_discord_mute", "") or "").strip(),
+                          ally_ganks=getattr(cfg, "discord_ally_ganks", True) is not False,
+                          say_name=getattr(cfg, "discord_say_name", False) is True,
+                          links=tuple(sorted(df.clean_links(getattr(cfg, "discord_links", None) or {}).items())))
             with self._lock:
                 changed = s.key() != self._settings.key()
                 if s.user_id != self._settings.user_id:
                     self._dirty = True
                 more = (s.objectives and not self._settings.objectives) or \
-                    (s.jungler_seen and not self._settings.jungler_seen)
+                    (s.jungler_seen and not self._settings.jungler_seen) or \
+                    (s.say_name and not self._settings.say_name)
                 self._settings = s
             self._sync_hotkey(s)
             if more and self._state == "connected":       # a call kind switched on: render its clips now
@@ -873,6 +907,14 @@ class DiscordCaller:
         else is ignored. Returns True when something was queued. Non-blocking, never raises."""
         try:
             info = info if isinstance(info, dict) else {}
+            if kind == "roster":                         # kept even while the bot is off (the page shows it)
+                with self._lock:
+                    self._roster = [dict(p) for p in (info.get("players") or []) if isinstance(p, dict)][:10]
+                    self._map_sig = None
+                    names = self._settings.say_name and self._state == "connected"
+                if names:                                # "Paul, bot gank" ready before the first gank
+                    threading.Thread(target=self.render_names, name="TreeAI-discord-names", daemon=True).start()
+                return True
             with self._lock:
                 s = self._settings
                 if not (s.enabled and s.token) or self._stopping:
@@ -882,18 +924,26 @@ class DiscordCaller:
                     self._in_game = kind == "game_start"
                     if self._in_game:
                         self._filter.reset()
+                    else:
+                        self._roster, self._map_sig = [], None
                     self._jobs = collections.deque(j for j in self._jobs if j.kind == "test")
                     self._jobs.append(_Job("join" if self._in_game else "leave", t=now))
                 elif kind in SPOKEN_KINDS and (self._muted or not s.wants(kind)):
                     self.dropped += 1                    # bot muted (hotkey) / this call is switched off
                     return False
-                elif kind == "gank":
+                elif kind in ("gank", "ally_gank"):
                     lane = str(info.get("lane") or "").strip().lower()
+                    who = str(info.get("ally") or "") if kind == "ally_gank" else ""
                     say = gank_text(lane)
-                    if not say or not self._filter.admit("gank", lane):
+                    if kind == "ally_gank" and not who:
+                        say = ""
+                    if not say or not self._filter.admit("gank", lane, target=who):
                         self.dropped += 1
                         return False
-                    self._queue_say(_Job("say", say, now, GANK_STALE_S, "gank", lane=lane))
+                    name = df.spoken_name(info.get("name")) if who and s.say_name else ""
+                    if name:
+                        say = f"{name}, {say[0].lower()}{say[1:]}"
+                    self._queue_say(_Job("say", say, now, GANK_STALE_S, "gank", lane=lane, who=who))
                 elif kind == "matchup":
                     say = " ".join(str(text or "").split())
                     ai = info.get("ai") if callable(info.get("ai")) else None
@@ -1051,6 +1101,54 @@ class DiscordCaller:
         self._poke()
         return True
 
+    # -- who is who in the voice channel (discord_friends.py) ----------------------------------
+    def _voice_members_locked(self) -> list[dict]:
+        """The people of the voice channel that matters: the bot's, else the player's (cache)."""
+        v = self._view
+        cid = (v.get("channel") or {}).get("id") or (v.get("user") or {}).get("channel_id")
+        if not cid:
+            return []
+        for g in v.get("guilds") or []:
+            for ch in g.get("voice_channels") or []:
+                if str(ch.get("id")) == str(cid):
+                    return [dict(o) for o in ch.get("occupants") or []]
+        return []
+
+    def _mapping_locked(self) -> list[dict]:
+        members = self._voice_members_locked()
+        s = self._settings
+        sig = (tuple(tuple(sorted(m.items())) for m in members),
+               tuple(tuple(sorted((k, str(x)) for k, x in p.items())) for p in self._roster), s.links, s.user_id)
+        if sig != self._map_sig:
+            self._map_sig = sig
+            self._map = df.match(members, self._roster, dict(s.links), s.user_id)
+        return self._map
+
+    def voice_map(self) -> list[dict]:
+        """Who plays what among the voice members (discord_friends.match entries). Any thread."""
+        with self._lock:
+            return [dict(e) for e in self._mapping_locked()]
+
+    def ally_targets(self) -> dict[str, str]:
+        """``{champion alias: Discord name}`` of the friends of the voice channel who play in my team
+        (me excluded): the engine watches their ganks (ally_gank.py). ``{}`` when the bot is off,
+        muted or the friends' calls are switched off. Any thread, cheap (cached matching)."""
+        try:
+            with self._lock:
+                s = self._settings
+                if not (s.enabled and s.token and s.ally_ganks) or self._muted or self._stopping \
+                        or not self._roster:
+                    return {}
+                out: dict[str, str] = {}
+                for e in self._mapping_locked():
+                    p = e.get("player")
+                    if p and not p.get("me") and e.get("source") in ("auto", "manuel") and p.get("alias"):
+                        out[str(p["alias"])] = str(e.get("spoken") or e.get("name") or "")
+                return out
+        except Exception:
+            log.debug("Discord: ally targets failed", exc_info=True)
+            return {}
+
     def in_voice(self) -> bool:
         """The bot is in a voice channel right now (last refresh)."""
         with self._lock:
@@ -1072,6 +1170,8 @@ class DiscordCaller:
                     "user_id": self._settings.user_id, "muted": self._muted,
                     "voice_source": self._voice_source, "voice_checked": self._voice_checked,
                     "voice_failures": dict(self.voice.failures), "volume": self._settings.volume,
+                    "voice_map": [dict(e) for e in self._mapping_locked()],
+                    "roster": [dict(p) for p in self._roster],
                     "age_s": float(self._clock()) - self._view_t if self._view_t else None}
 
     def _event(self, text: str, channel: str = "", ok: bool = True) -> None:
@@ -1168,6 +1268,47 @@ class DiscordCaller:
                 self._voice_source = src
         return clip
 
+    def _cached_clip(self, text: str, voice: str, rate: str) -> bytes:
+        """A gank sentence with the chime already rendered (``b""`` if not yet)."""
+        with self._lock:
+            hit = self._clips.get("!" + text) if self._clips_key == (voice, rate) else None
+        return hit[0] if hit else b""
+
+    def _render_quiet(self, text: str, voice: str, rate: str) -> None:
+        try:
+            self._clip(text, voice, rate, chime=True)
+        except Exception:
+            log.debug("Discord: name clip failed", exc_info=True)
+
+    def render_names(self) -> int:
+        """Render the named gank sentences not cached yet (blocking, daemon thread). Never raises."""
+        n = 0
+        with self._lock:
+            s = self._settings
+        for text in self.named_texts():
+            if self._cached_clip(text, s.neural_voice, s.neural_rate):
+                continue
+            try:
+                if self._clip(text, s.neural_voice, s.neural_rate, chime=True):
+                    n += 1
+            except Exception:
+                log.debug("Discord: name clip failed", exc_info=True)
+        return n
+
+    def named_texts(self) -> list[str]:
+        """"Paul, bot gank"... for every friend of the voice channel and lane (``discord_say_name``)."""
+        with self._lock:
+            s = self._settings
+            if not s.say_name:
+                return []
+            names = [df.spoken_name(e.get("spoken") or e.get("name")) for e in self._mapping_locked()
+                     if e.get("player") and not e["player"].get("me")]
+        out = []
+        for n in names:
+            if n:
+                out += [f"{n}, {ln} gank" for ln in _GANK_LANES]
+        return out[:24]
+
     def _gank_clip(self, lane: str, voice: str, rate: str, fast: bool = False) -> bytes:
         """The danger chime then "Top gank" (48 kHz stereo PCM, unity volume). ``b""`` when no voice
         works (the chime is NOT played alone: friends would hear a beep meaning nothing)."""
@@ -1186,6 +1327,7 @@ class DiscordCaller:
             jobs += [(objective_text(k), False) for k in OBJECTIVE_KEYS]
         if s.jungler_seen:
             jobs += [(seen_text(ln), False) for ln in _LANES]
+        jobs += [(t, True) for t in self.named_texts()]
         for text, chime in jobs:
             try:
                 if self._clip(text, s.neural_voice, s.neural_rate, chime=chime):
@@ -1577,7 +1719,14 @@ class DiscordCaller:
             return
         v, r = s.neural_voice, s.neural_rate
         text = job.text
-        if job.call_kind == "gank":
+        if job.call_kind == "gank" and text != gank_text(job.lane):
+            pcm = self._cached_clip(text, v, r)     # "Paul, bot gank": rendered beforehand, else plain
+            if not pcm:
+                pcm = await self._blocking(self._gank_clip, job.lane, v, r, True, timeout=CHAIN_TIMEOUT_S)
+                threading.Thread(target=self._render_quiet, args=(text, v, r), name="TreeAI-discord-name",
+                                 daemon=True).start()
+                text = gank_text(job.lane)
+        elif job.call_kind == "gank":
             pcm = await self._blocking(self._gank_clip, job.lane, v, r, True, timeout=CHAIN_TIMEOUT_S)
         elif job.call_kind in ("objective", "jungler_seen"):
             pcm = await self._blocking(self._clip, text, v, r, timeout=CHAIN_TIMEOUT_S)
