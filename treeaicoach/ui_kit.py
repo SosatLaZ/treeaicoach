@@ -654,13 +654,13 @@ def diagnostic_text(*, version: str, cfg: Any, status: Any = None, engine: Any =
 # ======================================================================================
 # Texts
 # ======================================================================================
-CHANGELOG_VERSION = "2.6"
+CHANGELOG_VERSION = "2.7"
 CHANGELOG: tuple[tuple[str, str], ...] = (
-    ("Nouveau launcher", "Refait de zéro : pages prêtes en 1 s, plus de bug de chargement, design épuré."),
-    ("Voix naturelle", "La voix naturelle d'abord, prononciation des champions corrigée, sons doux."),
-    ("Overlay compact", "Environ 25 % plus petit, adapté à ta résolution et à l'échelle de l'interface du jeu."),
-    ("Détection", "Duo empilé et caméra mieux suivis, capture rapide qui ne se coupe plus, minimap "
-                  "moins souvent recherchée, alertes en double supprimées."),
+    ("Builds de la méta", "Objets, sorts et runes du moment pour ton champion, l'objet suivant en jeu avec son "
+                          "taux de victoire, et ton build comparé à la méta dans le rapport."),
+    ("Capture rapide", "Réparée sur les portables à deux cartes graphiques ; Accueil → Système dit laquelle "
+                       "est utilisée."),
+    ("Détection", "Vérifiée sur tes vraies captures de minimap."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl + 1 … 6", "Aller à une page (Accueil, Overlay, Alertes et voix, Analyse, Réglages, À propos)"),

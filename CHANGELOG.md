@@ -3,6 +3,19 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.7.0 · 20 octobre 2026
+
+- **Builds de la méta :** à la sélection des champions, le build du moment pour ton champion et ton rôle (objets de
+  départ, objets principaux dans l'ordre, sorts d'invocateur, runes, ordre des sorts), d'après les taux de victoire
+  des parties classées (U.GG, rafraîchi une fois par jour et par patch ; runes et sorts officiels de Riot si U.GG ne
+  répond pas). En jeu, l'objet suivant avec son taux de victoire, et « Rentre acheter … » quand tu as l'or. Nouvelle
+  section du rapport : « Ton build face à la méta ».
+- **Capture rapide réparée sur les portables à deux cartes graphiques :** l'appli essaie chaque carte et chaque
+  écran, en commençant par celui qui affiche le jeu ; une image noire fait passer au suivant au lieu de revenir à la
+  capture lente pour toute la partie. Nouvelle ligne « Capture d'écran » dans Accueil → Système.
+- **Banc de test sur tes vraies parties :** 40 vraies captures de minimap de ta partie en Tahm Kench, recalées sur
+  les vraies positions du client LoL. Chaque changement de détection est maintenant vérifié dessus.
+
 ## 2.6.2 · 9 octobre 2026
 
 - **Tout envoyer en un seul fichier :** **Réglages → Maintenance et support → Créer le zip** rassemble tes
