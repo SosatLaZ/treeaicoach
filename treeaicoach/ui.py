@@ -318,7 +318,7 @@ class CoachApp:
     def _page_builder(self, key: str) -> Callable[[CoachApp], Any] | None:
         import importlib  # noqa: PLC0415
 
-        mod = {"home": "ui_page_home", "overlay": "ui_page_overlay", "alerts": "ui_page_alerts",
+        mod = {"home": "ui_page_home", "overlay": "ui_page_overlay", "alerts": "ui_page_alerts", "discord": "ui_page_discord",
                "analysis": "ui_page_analysis", "settings": "ui_page_settings", "about": "ui_page_about"}.get(key)
         if mod is None:
             return None

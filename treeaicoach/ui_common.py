@@ -116,7 +116,7 @@ TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
 
-PREBUILD_ORDER = ("alerts", "overlay", "settings", "analysis", "about")   # built after the first paint
+PREBUILD_ORDER = ("alerts", "overlay", "settings", "discord", "analysis", "about")   # built after the first paint
 GAMES_PAGE = 15                  # rows of the Analyses table drawn at once ("Afficher plus")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -128,6 +128,7 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("home", "Accueil", "home"),
     ("overlay", "Overlay", "overlay"),
     ("alerts", "Alertes et voix", "alerts"),
+    ("discord", "Discord", "discord"),
     ("analysis", "Analyse", "analysis"),
     ("settings", "Réglages", "settings"),
     ("about", "À propos", "about"),
@@ -135,7 +136,8 @@ PAGES: tuple[tuple[str, str, str], ...] = (
 #: Old page / tab names (tools, fixes, saved links) -> new page.
 PAGE_ALIASES: dict[str, str] = {"dashboard": "home", "help": "about", "updates": "about", "Mises à jour": "about",
                                 "Affichage": "overlay", "Voix": "alerts", "Général": "settings",
-                                "Détection": "settings", "IA": "settings", "Avancé": "settings"}
+                                "Détection": "settings", "IA": "settings", "Avancé": "settings",
+                                "Bot Discord": "discord"}
 #: Status of the launcher.
 STATE_INFO: dict[str, tuple[str, str]] = {
     "STOPPED": ("Analyse arrêtée", DIM),

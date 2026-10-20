@@ -1,7 +1,7 @@
 """Bot Discord : le coach annonce les ganks et le matchup dans le salon vocal de tes amis.
 
 The bot runs INSIDE the app (no server): the player creates his own Discord application, pastes
-its token in the launcher ("Alertes et voix" > "Bot Discord") and invites it to his server. While
+its token in the launcher (page "Discord") and invites it to his server. While
 the app is open and the option is on, :class:`DiscordCaller` keeps a gateway connection on its own
 asyncio loop in a daemon thread; at game start it joins the voice channel where the player is,
 says only two kinds of things, then leaves at the end of the game:
@@ -23,6 +23,12 @@ mandatory for every voice connection since 1 March 2026; discord.py 2.7.0 added 
 libopus DLL that discord.py ships for Windows. Gateway intents: ``guilds`` + ``voice_states``
 only (no privileged intent, no message content). Audio: the app's natural voice (tts_neural,
 24 kHz mono WAV, OneCore voice as the fallback on Windows) resampled to 48 kHz stereo PCM.
+
+The launcher page "Discord" (ui_page_discord.py) polls :meth:`DiscordCaller.snapshot` (a copy of the
+bot's state refreshed on the bot loop every :data:`SNAPSHOT_EVERY_S` and on Discord's voice / guild
+events: servers, voice channels with their occupants and the bot's permissions, the player found in
+voice, latency, the last things the bot did) and sends :meth:`join` / :meth:`leave` /
+:meth:`say_test`, queued to the bot loop like every other job (never blocking the window).
 
 The token is a secret: never logged (``mask_secrets`` filter on the ``discord`` loggers), never in
 a diagnostic (diag.py / fingerprint.py), ``repr=False`` in Config.
@@ -64,12 +70,19 @@ JOIN_TIMEOUT_S = 15.0
 BACKOFF_S = (2.0, 5.0, 15.0, 30.0, 60.0)
 SPEECH_TIMEOUT_S = 4.0       # natural voice synthesis of a sentence not cached yet
 AI_TIMEOUT_S = 6.0           # the matchup AI sentence: slower -> the coach's own sentence
+SNAPSHOT_EVERY_S = 2.0       # the launcher's view of the bot is refreshed this often (and on events)
+EVENTS_MAX = 10              # what the bot did / said, shown in the launcher
+USER_LOOKUP_TIMEOUT_S = 5.0
 
 #: View Channel (1 << 10) + Connect (1 << 20) + Speak (1 << 21)
 INVITE_PERMISSIONS = (1 << 10) | (1 << 20) | (1 << 21)
 DEVELOPER_PORTAL = "https://discord.com/developers/applications"
 
 TEST_TEXT = "TreeAI est prêt. Exemple d'annonce :"
+#: "Dire le matchup" in the launcher: an example of the game-start sentence
+EXAMPLE_MATCHUP = "Garen contre Darius : défavorable, joue safe jusqu'à 8 minutes."
+#: the permissions the bot needs in a voice channel (discord.Permissions attribute, French label)
+VOICE_PERMS = (("view_channel", "voir le salon"), ("connect", "se connecter"), ("speak", "parler"))
 
 #: a Discord bot token: base64(user id) . timestamp . hmac
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{18,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{20,}")
@@ -245,6 +258,65 @@ def wav_to_pcm48(data: bytes) -> bytes:
         return b""
 
 
+def missing_permissions(ch: Any, me: Any) -> list[str] | None:
+    """The voice permissions the bot lacks in ``ch`` (French labels, :data:`VOICE_PERMS`); ``[]`` = all
+    granted, ``None`` = unknown (no cached member / no permission data). Never raises."""
+    try:
+        if me is None:
+            return None
+        p = ch.permissions_for(me)
+        return [lbl for attr, lbl in VOICE_PERMS if not bool(getattr(p, attr, False))]
+    except Exception:
+        return None
+
+
+def _member_name(m: Any) -> str:
+    return str(getattr(m, "display_name", "") or getattr(m, "global_name", "") or getattr(m, "name", "") or "")
+
+
+def describe_guilds(guilds: Iterable[Any], user_id: str = "", bot_id: Any = None,
+                    bot_channel_id: Any = None) -> tuple[list[dict], dict]:
+    """The servers of the bot as plain data for the launcher (from discord.py's cache, no network):
+    ``([{id, name, members, voice_channels: [{id, name, members, people, can_speak, missing, me_here,
+    bot_here}]}], user)`` with ``user = {id, found, name, channel_id, channel, guild, guild_id}`` (the
+    player in voice). Voice occupants come from ``channel.voice_states`` (the ``voice_states`` intent,
+    no privileged intent needed); names from ``channel.members`` when cached. Duck-typed, never raises."""
+    uid = int(user_id) if str(user_id or "").isdigit() else None
+    user: dict[str, Any] = {"id": str(user_id or ""), "found": False, "name": "", "channel_id": None,
+                            "channel": "", "guild": "", "guild_id": None}
+    out: list[dict] = []
+    for g in list(guilds or []):
+        try:
+            me = getattr(g, "me", None)
+            chans: list[dict] = []
+            raw = list(getattr(g, "voice_channels", None) or []) + list(getattr(g, "stage_channels", None) or [])
+            raw.sort(key=lambda c: (int(getattr(c, "position", 0) or 0), int(getattr(c, "id", 0) or 0)))
+            for ch in raw:
+                ids = set(getattr(ch, "voice_states", None) or {})
+                members = {getattr(m, "id", None): m for m in list(getattr(ch, "members", None) or [])}
+                people = [_member_name(members[i]) for i in ids if i != bot_id and i in members]
+                missing = missing_permissions(ch, me)
+                cid = str(getattr(ch, "id", ""))
+                here = uid is not None and uid in ids
+                chans.append({"id": cid, "name": str(getattr(ch, "name", "") or "salon vocal"),
+                              "members": len(ids - {bot_id}), "people": sorted(p for p in people if p),
+                              "can_speak": missing is None or not missing, "missing": missing or [],
+                              "me_here": here, "bot_here": str(bot_channel_id or "") == cid or (bot_id in ids)})
+                if here:
+                    m = members.get(uid)
+                    user.update(found=True, channel_id=cid, channel=chans[-1]["name"], guild=str(g.name),
+                                guild_id=str(g.id), name=_member_name(m) if m is not None else user["name"])
+            if uid is not None and not user["name"]:
+                m = g.get_member(uid) if callable(getattr(g, "get_member", None)) else None
+                if m is not None:
+                    user.update(found=True, name=_member_name(m))
+            out.append({"id": str(getattr(g, "id", "")), "name": str(getattr(g, "name", "") or "serveur"),
+                        "members": int(getattr(g, "member_count", 0) or 0), "voice_channels": chans})
+        except Exception:
+            log.debug("Discord: describe guild failed", exc_info=True)
+    return out, user
+
+
 # ------------------------------------------------------------------------------ the filter
 class CallFilter:
     """What may be said: only ``gank`` / ``matchup``, the matchup once per game, gank calls deduped
@@ -308,7 +380,8 @@ class _Settings:
     neural_rate: str = ""
 
     def key(self) -> tuple:
-        return (self.enabled, self.token, self.user_id)
+        """What needs a new gateway session when it changes (the rest is read live)."""
+        return (self.enabled, self.token)
 
 
 class BadToken(Exception):
@@ -333,6 +406,7 @@ class DiscordPyBackend:
         self._intents.voice_states = True
         self._task: asyncio.Task | None = None
         self.tls = "système"
+        self.listener: Callable[[], None] | None = None     # voice / guild change -> the caller refreshes
         self.client = self._make_client(certifi_ca=False)
 
     def _make_client(self, certifi_ca: bool) -> Any:
@@ -360,7 +434,37 @@ class DiscordPyBackend:
                 kw["proxy"] = proxy if "://" in proxy else "http://" + proxy
         except Exception:
             pass
-        return self._d.Client(intents=self._intents, max_messages=None, chunk_guilds_at_startup=False, **kw)
+        client = self._d.Client(intents=self._intents, max_messages=None, chunk_guilds_at_startup=False, **kw)
+        self._hook(client)
+        return client
+
+    def _hook(self, client: Any) -> None:
+        """Voice and guild events: the launcher's view refreshes at once (no member intent needed)."""
+        def changed() -> None:
+            fn = self.listener
+            if fn is not None:
+                try:
+                    fn()
+                except Exception:
+                    pass
+
+        async def on_voice_state_update(_m: Any, _b: Any, _a: Any) -> None:
+            changed()
+
+        async def on_guild_join(_g: Any) -> None:
+            changed()
+
+        async def on_guild_remove(_g: Any) -> None:
+            changed()
+
+        async def on_guild_update(_b: Any, _a: Any) -> None:
+            changed()
+
+        async def on_guild_channel_update(_b: Any, _a: Any) -> None:
+            changed()
+
+        for fn in (on_voice_state_update, on_guild_join, on_guild_remove, on_guild_update, on_guild_channel_update):
+            client.event(fn)
 
     async def start(self, token: str) -> tuple[str, str | None]:
         """Log in + open the gateway; ``(bot name, application id)``. BadToken if refused."""
@@ -398,6 +502,42 @@ class DiscordPyBackend:
     def guild_count(self) -> int:
         return len(self.client.guilds)
 
+    def describe(self, user_id: str) -> dict:
+        """Servers, voice channels, the player in voice, the bot's channel and latency (cache only)."""
+        cur = self.current_channel()
+        bot_id = getattr(self.client.user, "id", None)
+        guilds, user = describe_guilds(self.client.guilds, user_id, bot_id, getattr(cur, "id", None))
+        try:
+            lat = float(self.client.latency)
+            lat_ms = int(round(lat * 1000)) if lat == lat and 0 <= lat < 60 else None
+        except Exception:
+            lat_ms = None
+        chan = None
+        if cur is not None:
+            chan = {"id": str(cur.id), "name": self.channel_name(cur), "guild": str(getattr(cur.guild, "name", "")),
+                    "guild_id": str(getattr(cur.guild, "id", ""))}
+        return {"guilds": guilds, "user": user, "channel": chan, "latency_ms": lat_ms,
+                "bot_id": str(bot_id or "")}
+
+    async def user_name(self, user_id: str) -> str | None:
+        """The name of a Discord user (one REST call): ``""`` if this id does not exist, None if
+        Discord did not answer."""
+        try:
+            u = await asyncio.wait_for(self.client.fetch_user(int(user_id)), USER_LOOKUP_TIMEOUT_S)
+            return _member_name(u) or str(getattr(u, "name", "") or "")
+        except self._d.NotFound:
+            return ""
+        except Exception:
+            return None
+
+    def get_voice_channel(self, channel_id: str) -> Any:
+        """A voice channel of the bot's servers by id (cache), None if gone."""
+        try:
+            ch = self.client.get_channel(int(channel_id))
+        except (TypeError, ValueError):
+            return None
+        return ch if ch is not None and hasattr(ch, "voice_states") else None
+
     def find_channel(self, user_id: str) -> Any:
         """The voice channel where ``user_id`` is (cache only, no network); without an id, the only
         voice channel with people in it. None if not found."""
@@ -420,11 +560,8 @@ class DiscordPyBackend:
         return str(getattr(ch, "name", "") or "salon vocal")
 
     def can_speak(self, ch: Any) -> bool:
-        try:
-            p = ch.permissions_for(ch.guild.me)
-            return bool(p.view_channel and p.connect and p.speak)
-        except Exception:
-            return True
+        missing = missing_permissions(ch, getattr(getattr(ch, "guild", None), "me", None))
+        return missing is None or not missing
 
     def _vc(self) -> Any:
         for vc in list(self.client.voice_clients):
@@ -567,6 +704,13 @@ class DiscordCaller:
         self._thread: threading.Thread | None = None
         self._stopping = False
         self._status = ("Bot Discord désactivé.", False)
+        self._state = "off"                 # off | no_token | connecting | connected | bad_token | error | unavailable
+        self._last_error = ""
+        self._view: dict[str, Any] = {}     # backend.describe() + bot name (refreshed on the bot loop)
+        self._view_t = 0.0
+        self._dirty = False
+        self._events: collections.deque[dict] = collections.deque(maxlen=EVENTS_MAX)
+        self._user_names: dict[str, str | None] = {}
         self._in_game = False
         self.spoken: list[str] = []         # what was said (tests / diagnostics), last 50
         self.dropped = 0
@@ -583,16 +727,20 @@ class DiscordCaller:
                           neural_rate=str(getattr(cfg, "neural_rate", "") or ""))
             with self._lock:
                 changed = s.key() != self._settings.key()
+                if s.user_id != self._settings.user_id:
+                    self._dirty = True
                 self._settings = s
                 if not changed:
+                    self._poke()
                     return
                 self._gen += 1
                 if not s.enabled:
-                    self._status = ("Bot Discord désactivé.", False)
+                    self._status, self._state = ("Bot Discord désactivé.", False), "off"
                 elif not s.token:
-                    self._status = ("Colle le token du bot.", False)
+                    self._status, self._state = ("Colle le token du bot.", False), "no_token"
                 else:
-                    self._status = ("Connexion à Discord...", False)
+                    self._status, self._state = ("Connexion à Discord...", False), "connecting"
+                self._view = {}
             if s.enabled and s.token:
                 self._ensure_thread()
             self._poke()
@@ -681,6 +829,93 @@ class DiscordCaller:
         if not evt.wait(timeout):
             return ("Discord ne répond pas.", False)
         return box[0]
+
+    def join(self, channel_id: Any) -> bool:
+        """"Rejoindre ce salon" (launcher): the bot joins this voice channel now. Non-blocking."""
+        return self._command(_Job("join_ch", str(channel_id or ""), t=float(self._clock())))
+
+    def leave(self) -> bool:
+        """"Quitter le salon" (launcher). Non-blocking."""
+        return self._command(_Job("leave_now", t=float(self._clock())))
+
+    def say_test(self, kind: str) -> bool:
+        """"Dire « Bot gank »" (``kind="gank"``) / "Dire le matchup" (``"matchup"``, an example sentence):
+        joins the player's channel if needed and says it (outside the game filter). Non-blocking."""
+        if kind == "gank":
+            job = _Job("test", "Bot gank", float(self._clock()), TEST_STALE_S, "gank", lane="bot")
+        else:
+            job = _Job("test", EXAMPLE_MATCHUP, float(self._clock()), TEST_STALE_S, "matchup")
+        return self._command(job)
+
+    def _command(self, job: _Job) -> bool:
+        with self._lock:
+            s = self._settings
+            if not (s.enabled and s.token) or self._stopping:
+                return False
+            self._jobs.append(job)
+        self._ensure_thread()
+        self._poke()
+        return True
+
+    def in_voice(self) -> bool:
+        """The bot is in a voice channel right now (last refresh)."""
+        with self._lock:
+            return bool(self._view.get("channel"))
+
+    def snapshot(self) -> dict:
+        """The bot as the launcher shows it (any thread, cheap: a copy under the lock). Keys:
+        ``state`` (off / no_token / connecting / connected / bad_token / error / unavailable),
+        ``status``, ``ok``, ``error``, ``bot_name``, ``guilds``, ``user``, ``channel`` (where the bot is),
+        ``latency_ms``, ``events`` (newest first), ``in_game``, ``age_s``."""
+        with self._lock:
+            v = dict(self._view)
+            return {"state": self._state, "status": self._status[0], "ok": self._status[1],
+                    "error": self._last_error if self._state in ("error", "unavailable") else "",
+                    "bot_name": str(v.get("bot_name", "")), "guilds": list(v.get("guilds", [])),
+                    "user": dict(v.get("user") or {"id": self._settings.user_id, "found": False}),
+                    "channel": v.get("channel"), "latency_ms": v.get("latency_ms"),
+                    "events": list(reversed(self._events)), "in_game": self._in_game,
+                    "user_id": self._settings.user_id,
+                    "age_s": float(self._clock()) - self._view_t if self._view_t else None}
+
+    def _event(self, text: str, channel: str = "", ok: bool = True) -> None:
+        with self._lock:
+            self._events.append({"t": time.strftime("%H:%M:%S"), "text": mask_secrets(text)[:140],
+                                 "channel": channel, "ok": bool(ok)})
+
+    async def _refresh(self, backend: Any, name: str) -> None:
+        """Re-read the bot's servers / channels / the player (cache) for :meth:`snapshot`."""
+        describe = getattr(backend, "describe", None)
+        if describe is None:
+            return
+        with self._lock:
+            uid = self._settings.user_id
+        try:
+            v = dict(describe(uid))
+        except Exception:
+            log.debug("Discord: describe failed", exc_info=True)
+            return
+        user = dict(v.get("user") or {})
+        if uid and not user.get("name"):                 # not in voice: one REST lookup of the name
+            with self._lock:
+                known = uid in self._user_names
+            if not known and callable(getattr(backend, "user_name", None)):
+                with self._lock:
+                    self._user_names[uid] = None
+                try:
+                    nm = await backend.user_name(uid)
+                except Exception:
+                    nm = None
+                with self._lock:
+                    self._user_names[uid] = nm
+            with self._lock:
+                nm = self._user_names.get(uid)
+            if nm is not None:
+                user.update(name=nm, exists=bool(nm))
+        v["user"] = user
+        v["bot_name"] = name
+        with self._lock:
+            self._view, self._view_t, self._dirty = v, float(self._clock()), False
 
     def status(self) -> tuple[str, bool]:
         """``(message in French, ok)`` for the launcher."""
@@ -838,6 +1073,8 @@ class DiscordCaller:
             except Exception as exc:
                 log.warning("Discord : module indisponible (%s)", error_text(exc))
                 self._set_status("Voix Discord indisponible dans cette version (module manquant).", False)
+                with self._lock:
+                    self._state, self._last_error = "unavailable", error_text(exc)
                 self._fail_tests(self.status()[0])
                 await self._wait(3600.0)
                 continue
@@ -860,9 +1097,11 @@ class DiscordCaller:
             delay = BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)]
             attempt += 1
             with self._lock:
-                why = getattr(self, "_last_error", "") or ""
+                why = self._last_error or ""
+                self._state = "error"
             self._set_status(f"Discord ne répond pas ({why}), nouvel essai dans {int(delay)} s." if why
                              else f"Discord ne répond pas, nouvel essai dans {int(delay)} s.", False)
+            self._event(f"Erreur : {why or 'Discord ne répond pas'}", ok=False)
             self._fail_tests(self.status()[0])
             t_end = time.monotonic() + delay
             while time.monotonic() < t_end:
@@ -874,10 +1113,21 @@ class DiscordCaller:
     async def _session(self, backend: Any, s: _Settings, gen: int) -> str:
         """One gateway session: "ok" (reconfigured / stopping), "bad_token" or "error"."""
         self._set_status("Connexion à Discord...", False)
+        with self._lock:
+            self._state = "connecting"
+        if hasattr(backend, "listener"):
+            def changed() -> None:
+                with self._lock:
+                    self._dirty = True
+                self._poke()
+            backend.listener = changed
         try:
             name, _app_id = await backend.start(s.token)
         except BadToken:
             self._set_status("Token invalide : recopie-le depuis le portail Discord (onglet Bot).", False)
+            with self._lock:
+                self._state = "bad_token"
+            self._event("Token refusé par Discord", ok=False)
             return "bad_token"
         except Exception as exc:
             why = error_text(exc)
@@ -885,25 +1135,39 @@ class DiscordCaller:
             with self._lock:
                 self._last_error = why
             return "error"
+        with self._lock:
+            self._state, self._last_error = "connected", ""
+        self._event(f"Connecté en tant que {name}")
         self._idle_status(backend, name)
+        await self._refresh(backend, name)
         threading.Thread(target=self.prerender, name="TreeAI-discord-clips", daemon=True).start()
         while True:
             with self._lock:
                 if self._stopping or self._gen != gen:
                     return "ok"
+                s = self._settings
+                due = self._dirty or float(self._clock()) - self._view_t >= SNAPSHOT_EVERY_S
             if not backend.alive():
+                with self._lock:
+                    self._last_error = "connexion perdue"
+                self._event("Connexion à Discord perdue", ok=False)
                 return "error"
+            if due:
+                await self._refresh(backend, name)
             job = self._pop()
             if job is None:
-                await self._wait(5.0)
+                await self._wait(SNAPSHOT_EVERY_S)
                 continue
             try:
                 await self._handle(backend, job, s, name)
             except Exception as exc:
                 why = error_text(exc)
                 log.warning("Discord : %s a échoué (%s)", job.kind, why)
+                self._event(f"Erreur ({job.kind}) : {why}", ok=False)
                 if job.kind == "test":
                     self._done(job, f"Le bot n'a pas pu parler ({why}).", False)
+            with self._lock:
+                self._dirty = True
 
     def _idle_status(self, backend: Any, name: str) -> None:
         if backend.guild_count() == 0:
@@ -911,8 +1175,18 @@ class DiscordCaller:
         else:
             self._set_status(f"Connecté ({name}). Il rejoindra ton salon vocal au début de la partie.", True)
 
+    @staticmethod
+    def _current(backend: Any) -> Any:
+        fn = getattr(backend, "current_channel", None)
+        try:
+            return fn() if callable(fn) else None
+        except Exception:
+            return None
+
     async def _ensure_voice(self, backend: Any, s: _Settings) -> bool:
         ch = backend.find_channel(s.user_id)
+        if ch is None:
+            ch = self._current(backend)          # joined by hand from the launcher: stay there
         if ch is None:
             if backend.guild_count() == 0:
                 self._set_status("Le bot n'est sur aucun serveur : invite-le avec le lien.", False)
@@ -921,18 +1195,36 @@ class DiscordCaller:
             else:
                 self._set_status("Rejoins un salon vocal, ou indique ton identifiant Discord.", False)
             return False
+        return await self._join(backend, ch)
+
+    async def _join(self, backend: Any, ch: Any) -> bool:
         cname = backend.channel_name(ch)
         if not backend.can_speak(ch):
             self._set_status(f"Le bot n'a pas le droit de parler dans #{cname}.", False)
+            self._event(f"Pas le droit de parler dans #{cname}", cname, ok=False)
             return False
+        cur = self._current(backend)
         await asyncio.wait_for(backend.join(ch), JOIN_TIMEOUT_S + 5.0)
+        if cur is None or cur is not ch:
+            self._event(f"A rejoint #{cname}", cname)
         self._set_status(f"Connecté à #{cname}.", True)
         return True
 
     async def _handle(self, backend: Any, job: _Job, s: _Settings, name: str) -> None:
-        if job.kind == "leave":
+        if job.kind in ("leave", "leave_now"):
+            cur = self._current(backend)
             await backend.leave()
+            if cur is not None or job.kind == "leave_now":
+                self._event("A quitté le salon vocal", backend.channel_name(cur) if cur is not None else "")
             self._idle_status(backend, name)
+            return
+        if job.kind == "join_ch":
+            getter = getattr(backend, "get_voice_channel", None)
+            ch = getter(job.text) if callable(getter) else None
+            if ch is None:
+                self._event("Ce salon vocal n'existe plus", ok=False)
+                return
+            await self._join(backend, ch)
             return
         if job.kind == "join":
             await self._ensure_voice(backend, s)
@@ -941,6 +1233,7 @@ class DiscordCaller:
         if float(self._clock()) - job.t > job.stale_s:
             self.dropped += 1
             return
+        was_in_voice = self._current(backend) is not None
         if not await self._ensure_voice(backend, s):
             if job.kind == "test":
                 self._done(job, self.status()[0], False)
@@ -962,7 +1255,7 @@ class DiscordCaller:
                 return
             wav = await self._blocking(self._speech, text, v, r, timeout=SPEECH_TIMEOUT_S + 2.0)
             pcm = wav_to_pcm48(wav) if wav else b""
-            if pcm and job.kind == "test":           # the test ends with a real gank call
+            if pcm and job.kind == "test" and job.call_kind == "test":   # the test ends with a real gank call
                 pcm += b"\x00" * (3840 * 15) + await self._blocking(self._gank_clip, "bot", v, r,
                                                                     timeout=SPEECH_TIMEOUT_S + 2.0)
         if not pcm:
@@ -973,6 +1266,8 @@ class DiscordCaller:
             self.dropped += 1
             return
         await backend.play(pcm)
+        cur = self._current(backend)
+        self._event(f"A dit « {text} »", backend.channel_name(cur) if cur is not None else "")
         with self._lock:
             self.spoken.append(text)
             del self.spoken[:-50]
@@ -981,7 +1276,7 @@ class DiscordCaller:
             self._done(job, f"{msg} Le bot vient de parler.", True)
             with self._lock:
                 in_game = self._in_game
-            if not in_game:
+            if not in_game and not was_in_voice:
                 await backend.leave()
                 self._set_status(msg.replace("Connecté à", "Testé dans"), True)
 
@@ -1025,7 +1320,8 @@ def shutdown(timeout: float = 2.0) -> None:
 
 __all__ = ["DiscordCaller", "CallFilter", "DiscordPyBackend", "BadToken", "caller", "active", "shutdown",
            "gank_text", "matchup_verdict", "matchup_prompt", "clean_ai_line", "wav_to_pcm48", "mask_secrets", "clean_token", "clean_user_id",
-           "application_id_from_token", "invite_url", "discord_available", "SPOKEN_KINDS", "CONTROL_KINDS"]
+           "application_id_from_token", "invite_url", "discord_available", "SPOKEN_KINDS", "CONTROL_KINDS",
+           "describe_guilds", "missing_permissions", "EXAMPLE_MATCHUP"]
 
 
 def probe(token: str = "") -> str:

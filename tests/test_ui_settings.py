@@ -24,10 +24,11 @@ home = tu.home
 # Pure
 # ======================================================================================
 def test_navigation() -> None:
-    assert [k for k, _l, _i in ui.PAGES] == ["home", "overlay", "alerts", "analysis", "settings", "about"]
+    assert [k for k, _l, _i in ui.PAGES] == ["home", "overlay", "alerts", "discord", "analysis", "settings",
+                                                 "about"]
     for old, page in ui.PAGE_ALIASES.items():
         assert page in {k for k, _l, _i in ui.PAGES}, old
-    assert ui_kit.SHORTCUTS[0][0] == "Ctrl + 1 … 6"
+    assert ui_kit.SHORTCUTS[0][0] == "Ctrl + 1 … 7"
 
 def test_status_line() -> None:
     sl = ui_kit.status_line

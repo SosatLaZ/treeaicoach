@@ -250,6 +250,11 @@ def _glyph_path(kind: str, s: float) -> QtGui.QPainterPath:
         p.lineTo(7 * u, 12 * u); p.lineTo(4 * u, 12 * u); p.closeSubpath()
         p.moveTo(13.5 * u, 7.5 * u); p.quadTo(15.5 * u, 10 * u, 13.5 * u, 12.5 * u)
         p.moveTo(15.5 * u, 5.5 * u); p.quadTo(18.8 * u, 10 * u, 15.5 * u, 14.5 * u)
+    elif kind == "discord":          # a headset (the voice channel)
+        p.moveTo(4 * u, 12 * u); p.lineTo(4 * u, 10 * u)
+        p.cubicTo(4 * u, 2.5 * u, 16 * u, 2.5 * u, 16 * u, 10 * u); p.lineTo(16 * u, 12 * u)
+        rr(3, 11, 3.5, 5.5, 1.2)
+        rr(13.5, 11, 3.5, 5.5, 1.2)
     elif kind == "analysis":
         rr(3, 10, 3, 6.5, 1)
         rr(8.5, 6, 3, 10.5, 1)

@@ -666,7 +666,8 @@ CHANGELOG: tuple[tuple[str, str], ...] = (
     ("Détection", "Vérifiée sur tes vraies captures de minimap."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
-    ("Ctrl + 1 … 6", "Aller à une page (Accueil, Overlay, Alertes et voix, Analyse, Réglages, À propos)"),
+    ("Ctrl + 1 … 7", "Aller à une page (Accueil, Overlay, Alertes et voix, Discord, Analyse, Réglages, "
+                     "À propos)"),
     ("Ctrl + M", "Couper / rétablir la voix"),
     ("Ctrl + Maj + S", "Activer / désactiver le mode sûr"),
     ("Ctrl + D", "Copier le diagnostic"),
