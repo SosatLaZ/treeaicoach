@@ -301,13 +301,17 @@ def test_item_card_purchase_means_shop_and_toggle():
         extras = ()
 
     st = ic.ItemCardState()
-    assert st.update(200.0, R(), 100, [1055], in_base=False, dead=False, game_time=600.0) is None
-    card = st.update(201.0, R(), 100, [1055, 3006], in_base=False, dead=False, game_time=601.0)
+    assert st.update(200.0, R(), 100, [1055], in_base=False, dead=False, game_time=600.0, me_seen=False) is None
+    card = st.update(201.0, R(), 100, [1055, 3006], in_base=False, dead=False, game_time=601.0, me_seen=False)
     assert card is not None and card.shop
     # a support quest upgrade happens out of base: not a shop proof
     st2 = ic.ItemCardState()
-    st2.update(200.0, R(), 100, [3866], in_base=False, dead=False, game_time=600.0)
-    assert st2.update(201.0, R(), 100, [3867], in_base=False, dead=False, game_time=601.0) is None
+    st2.update(200.0, R(), 100, [3866], in_base=False, dead=False, game_time=600.0, me_seen=False)
+    assert st2.update(201.0, R(), 100, [3867], in_base=False, dead=False, game_time=601.0, me_seen=False) is None
+    # placed out of base by the tracker: an inventory change alone does not open the shop card
+    st3 = ic.ItemCardState()
+    st3.update(200.0, R(), 100, [1055], in_base=False, dead=False, game_time=600.0, me_seen=True)
+    assert st3.update(201.0, R(), 100, [1055, 3006], in_base=False, dead=False, game_time=601.0, me_seen=True) is None
 
 
 def test_item_card_shown_in_detailed_hud_and_larger():

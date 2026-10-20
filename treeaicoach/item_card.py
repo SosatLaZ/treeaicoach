@@ -21,7 +21,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 #: seconds the card stays after leaving the base (the shop closes, the card follows)
-LINGER_S = 6.0
+LINGER_S = 4.0
 #: after a respawn I stand in my fountain, but the tracker needs a few seconds to see me there
 RESPAWN_LINGER_S = 8.0
 #: after the card is gone, a "Achète X : tu as l'or" line of the shop (tips.py, 12 s) is stale: hidden
@@ -160,14 +160,16 @@ class ItemCardState:
         return last is not None and LINGER_S < float(now) - last <= LINGER_S + TAIL_S
 
     def update(self, now: float, rec: Any, gold: float, owned: Any, in_base: bool, dead: bool,
-               items: dict | None = None, game_time: float | None = None) -> ItemCard | None:
+               items: dict | None = None, game_time: float | None = None,
+               me_seen: bool | None = None) -> ItemCard | None:
+        """``me_seen=False``: the tracker has no position for me (then a purchase proves the shop)."""
         try:
             if game_time is not None and game_time < MIN_GT and not dead:
                 return None              # the start in the fountain: the starting items are the client's
             own = frozenset(int(i) for i in owned or () if int(i or 0) > 0)
-            if self._owned is not None and any(i not in _NOT_SHOP for i in own - self._owned):
+            if me_seen is False and self._owned is not None and any(i not in _NOT_SHOP for i in own - self._owned):
                 in_base = True           # a new item in my inventory (Live Client): I am at the shop,
-                #                          even when the minimap tracker does not see me in my fountain
+                #                          while the minimap tracker does not see me (fountain missed)
             self._owned = own
             if in_base or dead:
                 self._last_shop = float(now)

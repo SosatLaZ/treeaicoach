@@ -440,7 +440,7 @@ class OverlayStateMixin:
                 names = list(getattr(rec, "buy_now_names", ()) or ())
                 out["item_hint"] = "Achète " + (" + ".join(names[:2]) if names and not rec.completes
                                                 else rec.item_name)
-            out["item_card"] = self._item_card(rec, game, in_base, now)
+            out["item_card"] = self._item_card(rec, game, in_base, now, me_seen=me_uv is not None)
             st_ic = getattr(self, "_item_card_state", None)
             out["buy_tail"] = bool(st_ic is not None and out["item_card"] is None and not in_base and st_ic.tail(now))
             out["ai_counter"] = self.ai_budget_text() or None
@@ -486,7 +486,7 @@ class OverlayStateMixin:
         except Exception:
             return None, None
 
-    def _item_card(self, rec: Any, game: Any, in_base: bool, now: float) -> Any:
+    def _item_card(self, rec: Any, game: Any, in_base: bool, now: float, me_seen: bool = True) -> Any:
         """The item highlight of the HUD card (item_card.py): in base / dead / just after, or when the
         gold buys the whole item. Starts the icon download of the build in a daemon thread. Never raises."""
         try:
@@ -499,7 +499,7 @@ class OverlayStateMixin:
                 st = self._item_card_state = item_card.ItemCardState()
             card = st.update(now, rec, _finite(getattr(game, "current_gold", 0.0)) or 0.0, game.me.items or (),
                              in_base, bool(getattr(game.me, "is_dead", False)),
-                             game_time=_finite(getattr(game, "game_time", None)))
+                             game_time=_finite(getattr(game, "game_time", None)), me_seen=bool(me_seen))
             if card is not None and getattr(self, "_item_icon_asked", None) != card.item_id:
                 self._item_icon_asked = card.item_id
                 item_icons.prefetch({"item": [card.item_id, *card.buy_ids]},
