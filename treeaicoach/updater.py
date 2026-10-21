@@ -594,6 +594,7 @@ def apply_update(new_exe: Path, info: UpdateInfo | None = None, *, target: Path 
     """Start the detached swap batch. On success the caller must close the app. Never raises."""
     try:
         new_exe = Path(new_exe)
+        launcher_mode = target is None and running_under_launcher()
         if target is None:
             if not paths.is_frozen():
                 return ApplyResult(False, "Lancé depuis les sources : la mise à jour automatique ne concerne "
@@ -606,6 +607,8 @@ def apply_update(new_exe: Path, info: UpdateInfo | None = None, *, target: Path 
         if not new_exe.is_file():
             return ApplyResult(False, "Fichier de mise à jour introuvable : télécharge-le à nouveau.")
         target = Path(target).resolve()
+        if launcher_mode:
+            return _apply_with_launcher(new_exe, target, info, pid, popen)
         if not _dir_writable(target.parent):
             return ApplyResult(False, f"Impossible de remplacer {target.name} : le dossier « {target.parent} » "
                                       "est protégé. Déplace TreeAI Coach dans un dossier personnel "
@@ -656,6 +659,43 @@ def apply_update(new_exe: Path, info: UpdateInfo | None = None, *, target: Path 
 
 
 # --------------------------------------------------------------------------- after the restart
+
+
+def running_under_launcher() -> bool:
+    """True when the app was started by the launcher (release/TreeAICoach.exe, packaging/bootstrap.py)."""
+    return paths.is_frozen() and paths.launcher_exe() != Path(sys.executable)
+
+
+def _apply_with_launcher(new_exe: Path, target: Path, info: UpdateInfo | None, pid: int | None,
+                         popen: Callable[..., Any] | None) -> ApplyResult:
+    """One-button update with the launcher: start the NEW launcher (just downloaded and verified) with
+    ``--tac-install-self <current launcher> --tac-wait-pid <this pid>``; once the app has closed it
+    replaces the launcher, downloads + installs the new app version and starts it."""
+    status = new_exe.parent / STATUS_NAME
+    try:
+        status.unlink()
+    except OSError:
+        pass
+    if info is not None:
+        _write_pending(new_exe.parent, info.version, target)
+    cmd = [str(new_exe), "--tac-install-self", str(target), "--tac-wait-pid",
+           str(int(pid if pid is not None else os.getpid())), "--tac-status", str(status)]
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("_PYI", "_MEI", "TREEAICOACH_LAUN"))}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    runner = popen or subprocess.Popen
+    group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+    last: Exception | None = None
+    for flags in (group | breakaway, group):
+        try:
+            runner(cmd, creationflags=flags, env=env, cwd=str(new_exe.parent), close_fds=True,
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            log.info("Launcher update started: %s -> %s", new_exe, target)
+            ver = f" {info.version}" if info is not None else ""
+            return ApplyResult(True, f"Installation de la version{ver} : TreeAI Coach va redémarrer.")
+        except OSError as exc:
+            last = exc
+    return ApplyResult(False, f"Impossible de lancer la mise à jour : {last}")
 
 
 def _write_pending(folder: Path, version: str, target: Path) -> None:
@@ -711,6 +751,9 @@ def startup_report(current: str | None = None, folder: Path | None = None) -> St
         elif "locked" in status:
             why = ("le fichier était encore utilisé (ancienne fenêtre de TreeAI Coach ouverte, antivirus ou "
                    "synchronisation OneDrive). Ferme TreeAI Coach complètement puis réessaie.")
+        elif "download" in status:
+            why = ("le téléchargement de la nouvelle version a échoué (connexion Internet coupée ?). "
+                   "Réessaie depuis « Mettre à jour ».")
         else:
             why = "le remplacement du fichier n'a pas eu lieu (redémarrage interrompu ou bloqué par l'antivirus)."
         return StartupReport(False, f"La mise à jour vers la version {want or '?'} n'a pas été appliquée : {why} "

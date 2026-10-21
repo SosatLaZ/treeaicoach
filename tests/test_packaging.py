@@ -189,7 +189,7 @@ def test_spec_builds_one_dir_windowed_app(monkeypatch):
     assert "collect" in calls, "one-dir build: COLLECT step (bundled into the bootstrapper)"
     a: _FakeAnalysis = calls["analysis"]
     args, kw = calls["exe"]
-    assert kw["name"] == "TreeAICoach"
+    assert kw["name"] == "TreeAICoach-app"
     assert kw["console"] is False
     assert kw["upx"] is False
     assert kw.get("debug", False) is False
@@ -198,7 +198,7 @@ def test_spec_builds_one_dir_windowed_app(monkeypatch):
     assert Path(kw["version"]).resolve() == VERSION_FILE.resolve()
     assert a.scripts in args and kw.get("exclude_binaries") is True
     cargs, ckw = calls["collect"]
-    assert a.binaries in cargs and a.datas in cargs and ckw["name"] == "TreeAICoach"
+    assert a.binaries in cargs and a.datas in cargs and ckw["name"] == "TreeAICoach-app"
     assert ckw.get("upx") is False
 
 

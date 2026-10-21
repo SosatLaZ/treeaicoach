@@ -5,11 +5,10 @@ Run from the repository root:
 
     pyinstaller packaging/treeaicoach.spec --noconfirm --clean
 
-Output: dist/TreeAICoach/TreeAICoach.exe (+ _internal/). The release exe is NOT this folder: it is the
-bootstrapper (packaging/bootstrap.spec) with this folder zipped inside (packaging/make_bundle.py); at
-the first launch it unpacks it once to %LOCALAPPDATA%\\TreeAICoach\\app\\<version> and starts it from
-there (a one-file exe re-extracted ~250 MB to %TEMP% at every launch, scanned by the antivirus). Every path below is absolute (built from SPECPATH, the folder of
-this file), so the build does not depend on the current directory.
+Output: dist/TreeAICoach-app/TreeAICoach-app.exe (+ _internal/). The exe users download
+(release/TreeAICoach.exe) is the small launcher of packaging/bootstrap.spec: it downloads this folder
+(zipped in chunks by packaging/make_release.py) once to %LOCALAPPDATA%\\TreeAICoach\\app\\<version>
+and starts it from there (the former one-file exe re-extracted ~250 MB to %TEMP% at every launch).
 """
 
 import os
@@ -25,7 +24,7 @@ ENTRY_SCRIPT = os.path.join(PACKAGING, "launcher.py")       # imports treeaicoac
 ICON_ICO = os.path.join(PACKAGING, "icon.ico")
 ICON_PNG = os.path.join(PACKAGING, "icon.png")
 VERSION_FILE = os.path.join(PACKAGING, "version_info.txt")
-APP_NAME = "TreeAICoach"
+APP_NAME = "TreeAICoach-app"  # one-dir folder + exe; release/TreeAICoach.exe is the launcher
 
 for _required in (PKG_DIR, ASSETS_DIR, ENTRY_SCRIPT, ICON_ICO, VERSION_FILE):
     if not os.path.exists(_required):
