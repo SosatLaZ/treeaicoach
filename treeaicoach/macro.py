@@ -532,6 +532,24 @@ def pit_crowd(ctx: MacroCtx, pit: tuple[float, float], r: float = 0.22) -> int:
     return sum(1 for e in _fresh_enemies(ctx) if geometry.dist(_uv(e.uv), pit) < r)  # type: ignore[arg-type]
 
 
+#: alive enemies seen this close to a pit (uv) ...
+PIT_GUARD_R = 0.30
+#: ... this many or more: the pit is guarded, no "their jungler is dead: take it now" at 4 against 5
+#: (NOT for fight_won: after a won fight the survivors near the pit are outnumbered - truth replay
+#: tools/team_calls_truth.py: that guard removed 2 post-fight dragons the team then took)
+PIT_GUARD_N = 2
+
+
+def pit_guarded(ctx: MacroCtx, pit: tuple[float, float]) -> bool:
+    """:data:`PIT_GUARD_N`+ ALIVE enemies seen (fresh) around ``pit``. Re-validation: never."""
+    if ctx.keep:
+        return False
+    dead = {a for a, _n, _r in _dead_list(ctx, "enemies")}
+    n = sum(1 for e in _fresh_enemies(ctx, 8.0) if str(getattr(e, "alias", "") or "").lower() not in dead
+            and geometry.dist(_uv(e.uv), pit) < PIT_GUARD_R)  # type: ignore[arg-type]
+    return n >= PIT_GUARD_N
+
+
 def team_edge(ctx: MacroCtx) -> tuple[float, list[str]]:
     """-1..1 advantage of my team (gold diff, numbers alive), with the reasons."""
     why: list[str] = []
@@ -765,7 +783,7 @@ def _rule_jungler_dead(ctx: MacroCtx) -> GeniusCall | None:
         # a laner without his jungler takes a dragon far too slowly (and no smite on our side)
         if role != "JUNGLE" and not _ally_jungler_alive(ctx):
             continue
-        if not _window_ok(ctx, jl.respawn, PIT_UV.get(key), key):
+        if not _window_ok(ctx, jl.respawn, PIT_UV.get(key), key) or pit_guarded(ctx, PIT_UV[key]):
             continue
         what = OBJ_LE[key]
         return _call("jungler_dead", ident, OBJ_TITLE[key], f"Prends {what} maintenant : {name} est mort ({w} s)",

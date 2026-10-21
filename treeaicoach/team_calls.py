@@ -35,7 +35,9 @@ NEAR_R = 0.30                # any enemy seen this close: no call (they sit on i
 SEEN_S = 10.0                # "seen" = visible or last seen at most this long ago
 SEEN_KEEP_S = 20.0
 MIN_FAR = 3                  # at least this many enemies SEEN far
-ENEMY_SPEED_K = 1.10         # their walk at 110 % of our speed (floor of their window)
+PATH_K = 1.25                # a real path (lane -> river -> pit) is ~25 % longer than the straight line
+ENEMY_SPEED_K = 1.10         # ... and they may walk 10 % faster than our reference speed (floor of their window)
+TEAM_N = 3                   # the call needs this many of us at the pit: the 3rd closest of us sets our walk
 TAKE_FRAC = 0.70             # they must arrive after we did 70 % of the take (no smite: no steal)
 PREP_LEAD_S = (55.0, 65.0)   # the "objective in 60 s" team line, said once per spawn in this window
 
@@ -54,7 +56,18 @@ def _uv(p: Any) -> tuple[float, float] | None:
 
 
 def _eta(uv: tuple[float, float], pit: tuple[float, float]) -> float:
-    return geometry.dist(uv, pit) * geometry.MAP_GAME_UNITS / (M.MOVE_SPEED * ENEMY_SPEED_K)
+    return geometry.dist(uv, pit) * PATH_K * geometry.MAP_GAME_UNITS / (M.MOVE_SPEED * ENEMY_SPEED_K)
+
+
+def team_walk_s(ctx: M.MacroCtx, pit: tuple[float, float]) -> float:
+    """Seconds until :data:`TEAM_N` of us (me + the allies seen on the minimap) reach ``pit``
+    (path-corrected walk of the 3rd closest; me alone when the allies are unknown)."""
+    pts = [ctx.me_uv] if ctx.me_uv is not None and ctx.me_alive else []
+    pts += [u for u in (_uv(getattr(a, "uv", None)) for a in (ctx.allies or [])) if u is not None]
+    ts = sorted(geometry.dist(p, pit) * PATH_K * geometry.MAP_GAME_UNITS / M.MOVE_SPEED for p in pts)
+    if not ts:
+        return 0.0
+    return ts[min(TEAM_N, len(ts)) - 1]
 
 
 def _take_s(key: str, gt: float) -> float:
@@ -112,7 +125,7 @@ def rule_cross_objective(ctx: M.MacroCtx) -> M.GeniusCall | None:
             continue
         n, side, eta = cw
         pit = M.PIT_UV[key]
-        need = M.travel_s(ctx, pit) * 0.8 + _take_s(key, ctx.gt) * TAKE_FRAC
+        need = team_walk_s(ctx, pit) + _take_s(key, ctx.gt) * TAKE_FRAC
         if not ctx.keep and eta < need:
             continue
         side_fr = M.SIDE_FR.get(side, "loin")
