@@ -218,6 +218,40 @@ def remaining_cost(item_id: int, owned: Iterable[int], items: dict[int, Item] | 
     return _remaining(int(item_id), [int(x) for x in owned or ()], items)
 
 
+#: lane minion gold (patch 25.x): melee 21, caster 14, siege ~60+ every other wave early ->
+#: about 19 PO per minion last-hit on average; a wave = 6 minions (3 melee + 3 casters)
+MINION_GOLD_AVG = 19.0
+WAVE_MINIONS = 6
+
+
+def minions_for_gold(missing: Any) -> tuple[int, int]:
+    """``(minions, waves)`` of last hits that bring ``missing`` gold (0, 0 when nothing is missing). Pure."""
+    try:
+        m = float(missing)
+    except (TypeError, ValueError):
+        return 0, 0
+    if not math.isfinite(m) or m <= 0:
+        return 0, 0
+    n = int(math.ceil(m / MINION_GOLD_AVG))
+    return n, int(math.ceil(n / WAVE_MINIONS))
+
+
+def gold_gap_text(item_name: str, missing: Any, max_len: int = 60) -> str | None:
+    """"Il te manque 137 PO pour Estropieur : 8 sbires (2 vagues)", None when nothing is missing.
+    Exact gold from the Live Client, the minion count rounded up; shortened to ``max_len``. Pure."""
+    n, w = minions_for_gold(missing)
+    if n <= 0 or not item_name:
+        return None
+    gold = int(math.ceil(float(missing)))
+    sb = "1 sbire" if n == 1 else f"{n} sbires"
+    for s in ((f"Il te manque {gold} PO pour {item_name} : {sb} ({w} vagues)" if w >= 2 else ""),
+              f"Il te manque {gold} PO pour {item_name} : {sb}",
+              f"Encore {gold} PO pour {item_name} : {sb}"):
+        if s and len(s) <= max_len:
+            return s
+    return None
+
+
 def plan_purchase(item_id: int, owned: Iterable[int], gold: float,
                   items: dict[int, Item] | None = None) -> tuple[list[int], bool]:
     """Items to buy now towards ``item_id`` with ``gold``: ``(ids, completes)``. Greedy, exact prices."""

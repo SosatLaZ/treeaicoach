@@ -235,3 +235,36 @@ def test_engine_tick_never_raises_on_a_bare_engine():
     c = eng._res_glue.coach
     assert c.history and c.history[-1][1] == "Monte ton R : tu es niveau 6"     # confirmed only when on the card
     assert engine_tick(object(), 0.0, None) is None and engine_tick(object(), 0.0, g) is None
+
+
+# ----------------------------------------------------------------------------- gold gap (exact gold)
+def test_gold_gap_text_exact_minions_and_waves():
+    from treeaicoach.itemization import gold_gap_text, minions_for_gold
+
+    assert minions_for_gold(137) == (8, 2) and minions_for_gold(0) == (0, 0) and minions_for_gold("x") == (0, 0)
+    assert gold_gap_text("Estropieur", 137) == "Il te manque 137 PO pour Estropieur : 8 sbires (2 vagues)"
+    assert gold_gap_text("Estropieur", 15) == "Il te manque 15 PO pour Estropieur : 1 sbire"
+    assert gold_gap_text("Estropieur", -3) is None
+    assert all(len(gold_gap_text("Un objet au nom vraiment très très long", g) or "") <= 60 for g in (1, 137, 300))
+
+
+def _gap_patch(monkeypatch, item_cost=1100):
+    from treeaicoach import itemization as it
+
+    rec = SimpleNamespace(item_id=3071, item_name="Estropieur")
+    monkeypatch.setattr(it, "recommend", lambda game, *a, **k: rec)
+    monkeypatch.setattr(it, "remaining_cost", lambda iid, owned, items=None: item_cost)
+
+
+def test_gold_gap_once_per_item_laners_only(monkeypatch):
+    _gap_patch(monkeypatch)
+    c = ResourcesCoach()
+    notes = _run(c, [(float(i), _game(gold=963.0, gt=400.0 + i), None) for i in range(0, 200, 2)])
+    gap = [n for _, n in notes if n.topic == "gold_gap"]
+    assert [n.text for n in gap] == ["Il te manque 137 PO pour Estropieur : 8 sbires (2 vagues)"]
+    # too far (> 300 PO), in base, support item: nothing
+    for game, kw in ((_game(gold=500.0), {}), (_game(gold=963.0), {"in_base": True}),
+                     (_game(me=_me(items=[3865]), gold=963.0), {})):
+        c = ResourcesCoach()
+        assert not [n for _, n in _run(c, [(float(i), game, None) for i in range(0, 20, 2)], **kw)
+                    if n.topic == "gold_gap"]

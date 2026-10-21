@@ -21,6 +21,8 @@ LESSONS 11, none of them is a danger that cannot wait)::
     teleport      Teleport ready (HUD), my team fights far from me           "Téléporte-toi en bas : 3 contre 3"              no
     gold          >= 1500 gold for 60 s out of base, no recall line said     "Rentre dépenser : 1 700 or"                     no
                   in the last 2 min by the other systems (coordinated)
+    gold gap      next build item <= 300 gold away (exact prices), laners    "Il te manque 137 PO pour Estropieur : 8 sbires    no
+                  only, once per item                                       (2 vagues)"
     control ward  a control ward in the bag for 3 min out of base            "Pose ta balise de contrôle dans la rivière"     no
     trinket       2 trinket charges (HUD) for 45 s out of base               "Pose ta balise dans la rivière : 2 charges"     no
     red trinket   support quest finished, still the yellow trinket, in base  "Échange ta balise contre le Brouilleur..."      no
@@ -82,6 +84,12 @@ GOLD_MIN = 1500
 GOLD_HELD_S = 60.0
 GOLD_REPEAT_S = 120.0
 GOLD_MORE = 300                  # a repeat needs this much more gold
+GAP_MAX = 300                    # "Il te manque 137 PO pour Estropieur" only this close to the item
+GAP_MIN_GT = 150.0
+GAP_REPEAT_S = 90.0
+GAP_EVERY_S = 5.0                # the build is re-read at most this often
+#: support quest items: the gold does not come from last hits (no "N sbires" line)
+SUPPORT_ITEMS = frozenset({3865, 3866, 3867, 3869, 3870, 3871, 3876, 3877})
 CONTROL_HELD_S = 180.0
 CONTROL_REPEAT_S = 180.0
 TRINKET_FULL_S = 45.0
@@ -251,6 +259,9 @@ class ResourcesCoach:
         self._red_shown = 0
         self._red_visit: bool = False
         self._gold_now = 0.0
+        self._gap_items: set[int] = set()                 # items whose gold gap was said
+        self._gap_read_t: float | None = None
+        self._gap_rec: Any = None
         self.history: list[tuple[float, str]] = []
 
     # ------------------------------------------------------------------ public
@@ -270,6 +281,8 @@ class ResourcesCoach:
                     self._death.done = True
             if note.topic == "gold":
                 self._gold_said = self._gold_now
+            if note.topic == "gold_gap" and note.key.startswith("res:gap:"):
+                self._gap_items.add(int(note.key.split(":")[2]))
             if note.topic == "red_trinket":
                 self._red_shown += 1
                 self._red_visit = True                      # once per base visit
@@ -357,6 +370,9 @@ class ResourcesCoach:
             n = self._gold_note(inp)
             if n is not None:
                 cands.append((50, n))
+            n = self._gold_gap_note(inp, me, counts)
+            if n is not None:
+                cands.append((45, n))
             n = self._control_ward_note(inp, counts)
             if n is not None:
                 cands.append((40, n))
@@ -570,6 +586,39 @@ class ResourcesCoach:
         if item:
             text = f"Rentre acheter {item} : {_fmt_gold(gold)} or"
         return ResourceNote(f"res:gold:{int(inp.gt)}", text, "resource", 1, 10.0, topic="gold")
+
+    def _gold_gap_note(self, inp: ResourceInputs, me: Any, counts: dict[int, int]) -> ResourceNote | None:
+        """"Il te manque 137 PO pour Estropieur : 8 sbires (2 vagues)": the next item of the build
+        is <= GAP_MAX gold away (exact Live Client gold, exact item prices), once per item.
+        Laners only (a support / jungler does not earn it in last hits)."""
+        t = float(inp.t)
+        if inp.in_base or float(inp.gt) < GAP_MIN_GT or inp.macro_busy or inp.objective_soon:
+            return None
+        if inp.my_lane == "jungle" or any(i in SUPPORT_ITEMS for i in counts):
+            return None
+        if self._gap_read_t is None or not 0.0 <= t - self._gap_read_t < GAP_EVERY_S:
+            self._gap_read_t = t
+            try:
+                from treeaicoach.itemization import recommend, remaining_cost
+
+                rec = recommend(inp.game)
+                need = remaining_cost(rec.item_id, getattr(me, "items", None) or ()) if rec is not None else 0
+                self._gap_rec = (rec.item_id, rec.item_name, need) if rec is not None and rec.item_name else None
+            except Exception:
+                log.debug("gold gap unavailable", exc_info=True)
+                self._gap_rec = None
+        if self._gap_rec is None:
+            return None
+        iid, name, need = self._gap_rec
+        missing = float(need) - self._gold_now
+        if iid in self._gap_items or not 0.0 < missing <= GAP_MAX or not self._gap_ok("gold_gap", t, GAP_REPEAT_S):
+            return None
+        from treeaicoach.itemization import gold_gap_text
+
+        text = gold_gap_text(name, missing)
+        if text is None:
+            return None
+        return ResourceNote(f"res:gap:{int(iid)}:{int(inp.gt)}", text, "resource", 1, 10.0, topic="gold_gap")
 
     @staticmethod
     def _affordable_item(inp: ResourceInputs) -> str | None:

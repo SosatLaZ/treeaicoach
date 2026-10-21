@@ -18,7 +18,7 @@ THE LIBRARY (rank = priority + score; voice: who hears it, see :func:`voice_for`
     jungler_dead (macro) their jungler dead >= 15 s, objective up for my role     "Prends le dragon maintenant : Lee Sin..."   "Leur jungler est mort : dragon !" (big)
     plates (macro)       lane opponent dead / in his base, my lane, tower up       "Plaque la tour (25 s) : Darius est mort"    "Il est mort : prends la plaque !" (lane)
     cross_trade (macro)  enemy jungler / 3+ enemies committed on the other side    "Frappe leur tour du haut maintenant : ..."  "Jungler en bas : frappe la tour !" (lane)
-    gc_level             I reach 2 / 3 / 6 first in lane (window until he catches up) "Frappe Darius maintenant : tu es niveau 2, pas lui" "Niveau d'avance : frappe-le !" (lane)
+    gc_level             I reach 2 / 3 / 6 first in lane (window until he catches up) "Frappe Darius maintenant : niveau 2 contre 1"        "Niveau d'avance : frappe-le !" (lane)
     gc_level             HE reaches 2 / 3 / 6 first                                 "Recule vers ta tour : Darius est niveau 6, pas toi" "Il a son ultime : recule !" (lane)
     gc_jungler_far       enemy jungler SEEN on the other half (<= 10 s), laning    "Joue agressif : Lee Sin est en bas"         "Leur jungler est en bas : avance !" (lane)
     gc_jungler_unseen    jungler invisible >= 30 s + my wave pushed / me forward   "Recule vers ta tour : vague poussée, ..."   "Jungler invisible : recule !" (lane)
@@ -256,8 +256,10 @@ def rule_level_race(ctx: M.MacroCtx) -> M.GeniusCall | None:
             if not _stance_ok(ctx) and not ctx.keep:
                 return None
             ult = ult_line(getattr(me, "champion_alias", None), opp) if lvl == 6 else None
-            text = f"Frappe {opp} maintenant : tu as ton ultime, pas lui" if lvl == 6 \
-                else f"Frappe {opp} maintenant : tu es niveau {lvl}, pas lui"
+            # exact levels from the Live Client ("niveau 6 contre 5"), the generic line when too long
+            text = _fit(f"Frappe {opp} maintenant : niveau {mine} contre {theirs}",
+                        f"Frappe {opp} maintenant : tu as ton ultime, pas lui" if lvl == 6
+                        else f"Frappe {opp} maintenant : tu es niveau {lvl}, pas lui")
             why = ult[1] if ult else (f"Un sort de plus que {opp} pendant ~20 s : un échange maintenant est gagné."
                                       if lvl != 6 else f"{opp} n'a pas encore son ultime : c'est ta fenêtre.")
             voice = "Ton ultime est prêt : frappe-le !" if lvl == 6 else "Niveau d'avance : frappe-le !"
