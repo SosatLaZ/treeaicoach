@@ -839,6 +839,23 @@ class Tracker:
             tr = self._tracks.get(key) if isinstance(key, str) else None
             return tr.copy() if tr is not None else None
 
+    def get_side(self, alias: str, relation: str) -> Track | None:
+        """Track of the champion ``alias`` ON THE SIDE of ``relation`` ("enemy" / "ally" / "self").
+
+        Mirror match (the same champion in both teams): the second side's track is keyed
+        ``alias~side`` and the plain ``alias`` key belongs to the other team, so a plain
+        :meth:`get` could hand the enemy's view MY track (or the reverse). Never crosses sides."""
+        if not isinstance(alias, str) or not alias:
+            return None
+        side = side_of_relation(relation)
+        with self._lock:
+            tr = self._tracks.get(f"{alias}~{side}")
+            if tr is None:
+                tr = self._tracks.get(alias)
+                if tr is not None and side_of_relation(tr.relation) != side:
+                    tr = None
+            return tr.copy() if tr is not None else None
+
     def reset(self) -> None:
         """Forget everything (new game)."""
         with self._lock:

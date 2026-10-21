@@ -196,6 +196,17 @@ def _camps(team: str) -> list[np.ndarray]:
 # Champions and scenarios
 # ======================================================================================
 
+def _mirror_aliases(aliases: Any) -> set:
+    return {a for a in aliases if a}
+
+
+def _tid(alias: str | None, rel: str, mirrored: set) -> str | None:
+    """Truth id of a champion: its alias; ``alias~enemy`` / ``alias~ally`` in a mirror match."""
+    if not alias or alias not in mirrored:
+        return alias
+    return f"{alias}~{'enemy' if rel == 'enemy' else 'ally'}"
+
+
 @dataclass
 class Champ:
     alias: str
@@ -215,6 +226,7 @@ class Champ:
     lane_dir: float = 1.0
     stick: str | None = None  # alias to walk next to (bot duo)
     stick_off: tuple = (0.02, 0.012)
+    tid: str = ""             # truth id: the alias, ``alias~side`` in a mirror match
 
     @property
     def alive(self) -> bool:
@@ -251,6 +263,8 @@ class Scenario:
     #                                            kills -> fights / deaths from the real game)
     start: str = ""                            # "fountain": game start, everybody home at 0:00
     scale_prior: float = 0.0                   # stored icon scale of a previous game (0: none)
+    #: mirror match: (ally index, enemy index) pairs playing the SAME champion (0 = me)
+    mirror: tuple = ()
 
 
 @dataclass
@@ -290,6 +304,8 @@ class Sim:
         self.lanes = _lanes()
         names = sorted(e.alias for e in db.all() if db.load_icon(e.alias) is not None)
         pick = list(rng.choice(names, 11, replace=False))
+        for ka, ke in sc.mirror:                      # same champion in both teams
+            pick[ke] = pick[ka]
         self.truth = _load_truth(sc.truth) if sc.truth else None
         truth_roles: list = []
         if self.truth is not None:
@@ -330,6 +346,9 @@ class Sim:
                 k_d = 1.0 - sc.ring_dark * float(rng.uniform(0.3, 1.0))
                 c.ring = tuple(int(x * k_d) for x in c.ring)
             self.champs.append(c)
+        mirrored = _mirror_aliases(c.alias for c in self.champs[:5]) & {c.alias for c in self.champs[5:]}
+        for c in self.champs:
+            c.tid = _tid(c.alias, c.rel, mirrored)
         # roles of allies: the four that are not mine
         roles_left = [r for r in ROLES if r != self.champs[0].role]
         if not truth_roles:
@@ -337,7 +356,7 @@ class Sim:
                 c.role = r
         if sc.custom_me:                              # custom skin: a portrait not in the roster
             self.champs[0].portrait = db.load_icon(pick[10])
-        self.by_alias = {c.alias: c for c in self.champs}
+        self.by_alias = {c.tid: c for c in self.champs}
         for c in self.champs:
             self._init_place(c)
         # bot duos walk together
@@ -346,7 +365,7 @@ class Sim:
             sup = next((c for c in self.champs if c.team == team and c.role == "UTILITY"), None)
             if adc is None or sup is None:
                 continue
-            sup.stick = adc.alias
+            sup.stick = adc.tid
             sup.stick_off = self._duo_offset()
         # art: one real background per game at the native size, static glyphs
         n = sc.size
@@ -436,7 +455,7 @@ class Sim:
             sup = next((c for c in self.champs if c.team == team and c.role == "UTILITY"), None)
             if adc is not None and sup is not None and float(np.hypot(*(adc.pos - sup.pos))) < 0.15:
                 sup.plan = []
-                sup.stick = adc.alias
+                sup.stick = adc.tid
                 sup.stick_off = self._duo_offset()
         pid_alias = {pid: c.alias for pid, c in by_pid.items()}
         for k in T.get("kills", []):
@@ -610,7 +629,7 @@ class Sim:
                 if a["to"] == "adc" else self._sel(a["to"])[0]
             for c in self._sel(a["who"]):
                 c.plan = []
-                c.stick = to.alias
+                c.stick = to.tid
                 c.stick_off = self._duo_offset()
 
     # ------------------------------------------------------------------ vision / camera
@@ -697,7 +716,7 @@ class Sim:
             if not c.alive:
                 continue
             if not self._visible_to_me(vis, c):
-                fogged.append(c.alias)
+                fogged.append(c.tid)
                 continue
             x, y, rp = c.pos[0] * n, c.pos[1] * n, r * n
             R.draw_champion_icon(img, x, y, rp, c.portrait, c.ring, ring_frac=0.12,
@@ -718,7 +737,7 @@ class Sim:
             cov = np.zeros(len(P), bool)
             for o in drawn[i + 1:]:
                 cov |= np.hypot(*(P - o.pos[None]).T) < r * 1.02
-            truth.append((c.alias, c.rel, c.team, float(c.pos[0]), float(c.pos[1]), float(1.0 - cov.mean())))
+            truth.append((c.tid, c.rel, c.team, float(c.pos[0]), float(c.pos[1]), float(1.0 - cov.mean())))
         # pings (red / yellow / cyan rings, often on champions)
         if rng.random() < sc.pings * dt:
             if drawn and rng.random() < 0.5:
@@ -737,7 +756,7 @@ class Sim:
         # our own overlay labels captured with the map ("ADC 3 s")
         if drawn and rng.random() < sc.labels * dt * len(drawn) / 5.0:
             o = drawn[int(rng.integers(len(drawn)))]
-            self.labels.append((o.alias, self.t + float(rng.uniform(1.0, 3.0)), int(rng.integers(1 << 30)),
+            self.labels.append((o.tid, self.t + float(rng.uniform(1.0, 3.0)), int(rng.integers(1 << 30)),
                                 float(rng.uniform(-0.1, 0.0)), float(rng.uniform(-0.04, 0.07))))
         self.labels = [lb for lb in self.labels if lb[1] > self.t]
         for alias, _te, seed, dx, dy in self.labels:
@@ -756,7 +775,7 @@ class Sim:
             img = cv2.GaussianBlur(img, (0, 0), sc.blur)
         if sc.jpeg > 0:          # (0: lossless capture, as the app's own screen grab)
             img = cv2.imdecode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, int(sc.jpeg)])[1], 1)
-        dead = [c.alias for c in self.champs if not c.alive]
+        dead = [c.tid for c in self.champs if not c.alive]
         return img, truth, dead, fogged
 
     # ------------------------------------------------------------------ Live Client data
@@ -765,18 +784,18 @@ class Sim:
 
         players = {}
         for c in self.champs:
-            rid = "Moi#GYM" if c.rel == "self" else f"{c.alias}#GYM"
+            rid = "Moi#GYM" if c.rel == "self" else f"{c.tid}#GYM"
             dead = not c.alive
-            players[c.alias] = PlayerInfo(
+            players[c.tid] = PlayerInfo(
                 riot_id=rid, summoner_name=rid, champion_alias=c.alias, champion_name=c.alias, team=c.team,
                 position=c.role, is_dead=dead, respawn_timer=max(0.0, c.dead_until - t) if dead else 0.0,
                 level=6, has_smite=c.role == "JUNGLE")
-        me = players[self.champs[0].alias]
+        me = players[self.champs[0].tid]
         gt0 = float(self.sc.truth_t) if self.truth is not None else (0.0 if self.sc.start == "fountain" else 600.0)
         return GameInfo(game_time=gt0 + t, game_mode="CLASSIC", map_number=11, map_terrain="Default",
                         team_relative_colors=True, me=me,
-                        allies=[players[c.alias] for c in self.champs if c.rel == "ally"],
-                        enemies=[players[c.alias] for c in self.champs if c.rel == "enemy"],
+                        allies=[players[c.tid] for c in self.champs if c.rel == "ally"],
+                        enemies=[players[c.tid] for c in self.champs if c.rel == "enemy"],
                         events=[], fetched_at=float(t), current_gold=500.0)
 
 
@@ -827,9 +846,33 @@ def scenarios(quick: bool = False) -> list[Scenario]:
     return S
 
 
+def mirror_scenarios(quick: bool = False) -> list[Scenario]:
+    """Mirror matches (Swiftplay / normal: the same champion in both teams): identity is
+    (champion, team), the team from the ring colour; the enemy copy must never be drawn as me
+    nor as my team-mate, and mine never as the enemy."""
+    S = [
+        # me top vs the SAME champion top: lane trades, both on the same spot, camera locked
+        Scenario("mirror_lane", 61, 6.0, 26.0, 280, "ORDER", "locked", me_role="TOP", mirror=((0, 5),),
+                 jpeg=0, blur=0.4, suite="mirror",
+                 events=[(4.0, "goto", {"who": ["me", 5], "uv": (0.11, 0.22), "spread": 0.015}),
+                         (9.0, "mill", {"who": ["me", 5], "n": 8, "spread": 0.02}),
+                         (18.0, "goto", {"who": [5], "uv": (0.2, 0.08), "spread": 0.01})]),
+        # bot 2v2 where BOTH duos are mirrored (me support + my ADC vs the same two), panning
+        Scenario("mirror_bot", 67, 8.0, 18.0, 260, "CHAOS", "pan", me_role="UTILITY",
+                 mirror=((0, 9), (4, 8)), jpeg=80, blur=0.45, suite="mirror",
+                 events=[(0.0, "goto", {"who": [0, 4, 8, 9], "uv": (0.86, 0.86), "spread": 0.025}),
+                         (5.0, "mill", {"who": [0, 4, 8, 9], "n": 10, "spread": 0.03}),
+                         (12.0, "die", {"who": [8], "respawn": 30.0})]),
+    ]
+    if quick:
+        for sc in S:
+            sc.seconds = min(sc.seconds, 12.0)
+    return S
+
+
 HARD_FILE = ROOT / "tools" / "det_gym_hard.json"
 HISTORY_FILE = ROOT / "tools" / "det_gym_history.jsonl"
-SUITES = ("main", "holdout", "hard", "botlane", "start")
+SUITES = ("main", "holdout", "hard", "botlane", "start", "mirror")
 
 
 def start_scenarios(quick: bool = False) -> list[Scenario]:
@@ -964,6 +1007,8 @@ def suite_scenarios(suite: str = "main", quick: bool = False) -> list[Scenario]:
         return botlane_scenarios(quick)
     if suite == "start":
         return start_scenarios(quick)
+    if suite == "mirror":
+        return mirror_scenarios(quick)
     raise ValueError(f"unknown suite {suite!r}")
 
 
@@ -1041,20 +1086,25 @@ class Pipeline:
         me_uv = me.position() if me is not None else None
         live, ghost = [], []
         seen = set()
-        dead = {p.champion_alias for p in game.all_players() if p.is_dead}
+        mirrored = _mirror_aliases(p.champion_alias for p in [game.me] + list(game.allies)) & \
+            {p.champion_alias for p in game.enemies}
+        dead = {_tid(p.champion_alias, "enemy" if p in game.enemies else "ally", mirrored)
+                for p in game.all_players() if p.is_dead}
         players = [(p, "enemy") for p in game.enemies] + [(p, "ally") for p in game.allies]
         views = []
         for p, rel in players:
-            tr = trk.get(p.champion_alias)
-            v = eng._enemy_view(EnemyView, p.champion_alias, p.champion_alias, 0, tr, me_uv, t, False)
-            v.dead = p.champion_alias in dead
+            tr = trk.get_side(p.champion_alias, rel)
+            tid = _tid(p.champion_alias, rel, mirrored)
+            v = eng._enemy_view(EnemyView, tid, tid, 0, tr, me_uv, t, False)
+            v.dead = tid in dead
             views.append((tr, v, rel))
             if tr is not None:
                 seen.add(tr.key)
         for tr in trk.enemies(visible_only=True) + trk.allies(visible_only=True):
             if tr.key in seen or (me is not None and tr.key == me.key):
                 continue
-            v = eng._enemy_view(EnemyView, tr.alias, tr.alias or "?", 0, tr, me_uv, t, False)
+            ta = _tid(tr.alias, tr.relation, mirrored) if tr.alias else None
+            v = eng._enemy_view(EnemyView, ta, ta or "?", 0, tr, me_uv, t, False)
             views.append((tr, v, tr.relation))
         from treeaicoach import overlay_render as OR
 
@@ -1077,7 +1127,7 @@ class Pipeline:
                 hidden.append((tr, v))
         if me is not None and me.visible:
             uv = pred.get(me.key, (me.position(), 0.0))[0]
-            live.append((me.key, me.alias, "self", uv))
+            live.append((me.key, _tid(me.alias, "self", mirrored) if me.alias else me.alias, "self", uv))
         # last-seen marks of hidden enemies (overlay_render: show_last_seen, compact mode)
         lsmax = OR.LAST_SEEN_MAX_S / 2
         delay = float(getattr(OR, "LAST_SEEN_DELAY_S", 0.0))
@@ -1229,7 +1279,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
         for key, alias, rel, uv in live:
             g = tmap.get(alias) if alias else None
             if g is None and rel == "self":
-                g = tmap.get(sim.champs[0].alias)
+                g = tmap.get(sim.champs[0].tid)
             if g is not None and (math.hypot(uv[0] - g[2], uv[1] - g[3]) < TOL or (
                     g[4] < VISIBLE_FRAC and math.hypot(uv[0] - g[2], uv[1] - g[3]) < 2 * TOL)):
                 M.live_ok += 1           # (an icon mostly hidden under another: its place)
@@ -1295,7 +1345,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
                             ex, ey = u - uv[0], v - uv[1]
                             M.lag.append((ex * vel[0] + ey * vel[1]) / step / step)
                 else:
-                    why = _miss_cause(a, rel, u, v, ids, sim.champs[0].alias)
+                    why = _miss_cause(a, rel, u, v, ids, sim.champs[0].tid)
                     M.fails.append((sc.name, round(t, 2), "miss", f"{a} ({rel}) at ({u:.3f},{v:.3f}) "
                                     f"frac {fr:.2f} [{why}]"))
                     M.miss_cause[why.split(":")[0]] = M.miss_cause.get(why.split(":")[0], 0) + 1

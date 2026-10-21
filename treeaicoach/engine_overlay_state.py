@@ -37,6 +37,15 @@ from treeaicoach.live_client import GameInfo, PlayerInfo
 log = logging.getLogger("treeaicoach.engine")   # same logger as before the split
 
 
+def _side_track(tracker: Any, alias: str | None, relation: str) -> Any:
+    """Track of ``alias`` on ``relation``'s side: in a mirror match (same champion in both
+    teams) the enemy's view never gets my / an ally's track, nor the reverse."""
+    if tracker is None or not alias:
+        return None
+    get_side = getattr(tracker, "get_side", None)
+    return get_side(alias, relation) if callable(get_side) else tracker.get(alias)
+
+
 def overlay_cache_fresh(cache: tuple, now: float, frame_id: int) -> bool:
     """Is the cached overlay state ``(built_at, state, frame_id)`` still good at ``now``?
 
@@ -219,7 +228,7 @@ class OverlayStateMixin:
         roster: list[PlayerInfo] = list(game.enemies) if game is not None else []
         seen_keys: set[str] = set()
         for p in roster[:5]:
-            tr = tracker.get(p.champion_alias) if (tracker is not None and p.champion_alias) else None
+            tr = _side_track(tracker, p.champion_alias, "enemy") if (tracker is not None and p.champion_alias) else None
             enemies.append(self._enemy_view(EnemyView, p.champion_alias, p.champion_name, p.skin_id, tr,
                                             me_uv, now, p.champion_alias == jungler_alias))
             if tr is not None:
@@ -595,7 +604,7 @@ class OverlayStateMixin:
                     roles[p.champion_alias] = str(p.position)
             seen: set[str] = set()
             for p in (list(game.allies) if game is not None else [])[:4]:
-                tr = tracker.get(p.champion_alias) if (tracker is not None and p.champion_alias) else None
+                tr = _side_track(tracker, p.champion_alias, "ally") if (tracker is not None and p.champion_alias) else None
                 v = self._enemy_view(cls, p.champion_alias, p.champion_name, p.skin_id, tr, None, now, False)
                 v.relation, v.role = "ally", roles.get(p.champion_alias)
                 allies.append(v)
@@ -653,7 +662,7 @@ class OverlayStateMixin:
             rt = _finite(getattr(jungler, "respawn_timer", None))
             left = None if rt is None else max(0.0, rt - max(0.0, now - self._game_t))
             return f"Jungler : {name} — mort ({int(math.ceil(left))} s)" if left else f"Jungler : {name} — mort"
-        tr = self._tracker.get(jungler.champion_alias) if self._tracker is not None else None
+        tr = _side_track(self._tracker, jungler.champion_alias, "enemy") if self._tracker is not None else None
         if tr is None or tr.position() is None:
             return f"Jungler : {name} — pas encore vu"
         zone = geometry.zone_name_fr(geometry.classify_zone(*tr.position()), game.my_team)
@@ -685,7 +694,7 @@ class OverlayStateMixin:
             if jungler is None:
                 return "Jungler ennemi inconnu."
             name = jungler.champion_name or jungler.champion_alias or "Le jungler ennemi"
-            tr = self._tracker.get(jungler.champion_alias) if self._tracker is not None else None
+            tr = _side_track(self._tracker, jungler.champion_alias, "enemy") if self._tracker is not None else None
             pos = tr.position() if tr is not None else None
             if pos is None:
                 return "Jungler ennemi pas encore vu."

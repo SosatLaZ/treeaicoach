@@ -439,12 +439,24 @@ class ChampionIdentifier:
 
     @staticmethod
     def _trust_aliases(dets: list[Detection], roster: _Roster, out: list[Identified]) -> None:
-        """Detections already recognised by the detector (roster matcher): trusted as is."""
-        by_alias = {m.alias: m for m in roster.members}
+        """Detections already recognised by the detector (roster matcher): trusted as is.
+
+        Identity is (champion, team): in a mirror match (the same champion in both teams) the
+        member is the one on the detection's side (``cls``: the roster entry's relation, or
+        the ring colour), never the other team's copy."""
+        by_alias: dict[str, list[_Member]] = {}
+        for m in roster.members:
+            by_alias.setdefault(m.alias, []).append(m)
         for i, d in enumerate(dets):
-            mem = by_alias.get(getattr(d, "alias", None) or "")
-            if mem is None:
+            mems = by_alias.get(getattr(d, "alias", None) or "")
+            if not mems:
                 continue
+            mem = mems[0]
+            if len(mems) > 1:
+                side = _side_of("enemy" if getattr(d, "cls", "") == "enemy" else "ally")
+                mem = next((m for m in mems if _side_of(m.relation) == side), None)
+                if mem is None:
+                    continue
             team = mem.team or (roster.my_team if mem.relation != "enemy"
                                 else _other_team(roster.my_team))
             out[i] = Identified(det=d, alias=mem.alias, relation=mem.relation, team=team,
