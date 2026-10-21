@@ -33,7 +33,7 @@ from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
-CONFIG_VERSION = 3                 # written as "config_version"; < 2 / < 3: one-time migrations in load_config
+CONFIG_VERSION = 4                 # written as "config_version"; < 2 / < 3 / < 4: one-time migrations in load_config
 MAX_CONFIG_BYTES = 1_000_000       # a bigger config.json is treated as corrupt
 BACKUP_SUFFIX = ".bak"
 
@@ -826,6 +826,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             if data.get(old) is True:
                 # 2.3 cleanup: "layer_roles" / "layer_ghosts" were OR-ed with the overlay_show_* toggles
                 data = {**data, new: True}
+    if _version(data) < 4 and str(data.get("overlay_mode") or "").strip().lower() == "radar":
+        # 2.12.1: "une minimap au-dessus de ma minimap" - the user never wants the radar copy;
+        # moved back to the marks on the real minimap once (the value itself is still accepted)
+        data = {**data, "overlay_mode": "minimap"}
     if _version(data) < 3 and data.get("collect_samples") is False:
         # 2.10.1: minimap captures on by default (every 10 s, local): each game becomes a real test case
         data = {**data, "collect_samples": True, "collect_interval_s": max(10.0, float(data.get("collect_interval_s") or 10.0))}

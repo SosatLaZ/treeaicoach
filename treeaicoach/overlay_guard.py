@@ -11,8 +11,8 @@ engine's capture stage through the module singleton :data:`GUARD`:
 2. self-verification: every :data:`PROBE_PERIOD_S` the minimap layer carries a tiny checker
    (:func:`marker_pattern`, :data:`MARKER_PX` px, magenta / teal) at :data:`MARKER_XY` for one
    short moment; the next captured frame is searched for it (:func:`marker_visible`). Seen =
-   exclusion failed -> :meth:`CaptureGuard.safe_mode`: nothing is drawn over the minimap any more
-   (the overlay switches to the radar beside it, the card / timers strip stay), "L'overlay
+   exclusion failed -> :meth:`CaptureGuard.safe_mode`: the marks stay on the real minimap (never
+   a radar copy, 2.12.1) and layer 3 keeps them out of the detector, "L'overlay
    apparaît dans la capture" in the self-check. ``overlay_hide_from_capture=False`` (streamers)
    puts the overlay in the same safe mode right away;
 3. the overlay publishes the mask of the pixels it drew (minimap coordinates); while the
@@ -198,8 +198,8 @@ class CaptureGuard:
         st = self.status()
         if st in ("failed", "refused"):
             return (f"{PROBLEM_TEXT} : ses repères étaient vus par la détection "
-                    f"({self.last_reason or st}). Mode sûr : plus rien n'est dessiné sur la minimap "
-                    "(radar à côté).")
+                    f"({self.last_reason or st}). Mode sûr : nos repères sont effacés des images "
+                    "avant la détection.")
         return None
 
     def want_probe(self, now: float | None = None) -> bool:

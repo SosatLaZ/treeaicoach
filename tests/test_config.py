@@ -738,7 +738,26 @@ def test_old_config_hud_position_migrates_to_above_minimap(tmp_path):
     assert c.hud_position == "left_of_minimap" and c.overlay_mode == "minimap"
     p.write_text(json.dumps({"hud_position": "top_left", "overlay_mode": "radar"}), encoding="utf-8")
     c = load_config(p)
-    assert c.hud_position == "top_left" and c.overlay_mode == "radar"
+    # 2.12.1: the radar copy is moved back to the real minimap once (config_version < 4)
+    assert c.hud_position == "top_left" and c.overlay_mode == "minimap"
+
+
+def test_radar_mode_migrates_once_then_is_kept(tmp_path):
+    import json
+
+    from treeaicoach.config import CONFIG_VERSION, load_config
+
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"config_version": 3, "overlay_mode": "radar"}), encoding="utf-8")
+    assert load_config(p).overlay_mode == "minimap"
+    p.write_text(json.dumps({"config_version": CONFIG_VERSION, "overlay_mode": "radar"}), encoding="utf-8")
+    assert load_config(p).overlay_mode == "radar"          # picked explicitly after the migration
+
+
+def test_overlay_mode_choices_offer_no_radar():
+    from treeaicoach.ui_common import OVERLAY_MODES
+
+    assert "radar" not in [k for k, _ in OVERLAY_MODES]
 
 
 def test_pipeline_v2_migration_and_defaults(tmp_path):

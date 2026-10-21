@@ -48,7 +48,7 @@ class OverlayPage:
         app.switch_row(main, "overlay_enabled", "Afficher l'overlay",
                        f"Touche en jeu : {self._key('hotkey_overlay')}.")
         app.choice_row(main, "overlay_mode", "Où dessiner", "Sur la minimap : marques posées sur la vraie "
-                       "minimap. Radar : une copie agrandie à côté.", OVERLAY_MODES)
+                       "minimap. Aucun : rien sur la carte (le panneau et les alertes restent).", OVERLAY_MODES)
         app.switch_row(main, "overlay_hide_from_capture", "Cacher des captures et du stream",
                        "Discord, OBS et les captures d'écran ne voient pas l'overlay.")
 

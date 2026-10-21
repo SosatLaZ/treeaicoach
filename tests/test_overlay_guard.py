@@ -202,18 +202,22 @@ def test_every_window_excluded_and_reapplied(monkeypatch):
     assert g.safe_mode()
 
 
-def test_safe_mode_draws_nothing_over_the_minimap(monkeypatch):
+def test_safe_mode_keeps_marks_on_the_real_minimap_and_no_radar(monkeypatch):
     clk = Clock()
     g = og.CaptureGuard(clock=clk)
     m, wins, api = setup(monkeypatch, g)
     cfg = Config(overlay_hide_from_capture=False, overlay_mode="minimap")
     m._sync_capture_exclusion(wins, cfg, now=0.0)
     m._refresh(api, wins, state(), cfg, False, {}, None, now=clk.t)
-    assert not wins["minimap"].visible and m.effective_mode == "radar"
-    assert wins["radar"].visible                                        # the marks moved beside it
+    # the marks stay ON the real minimap, never a radar copy; the engine masks what we drew
+    assert wins["minimap"].visible and m.effective_mode == "minimap"
+    assert not wins["radar"].visible
+    layer = wins["minimap"].last
+    frame = composite(background(), layer)
+    assert g.safe_mode() and not np.array_equal(g.clean_frame(frame, MM, now=clk.t), frame)
 
 
-def test_probe_drawn_then_leak_switches_to_radar(monkeypatch):
+def test_probe_drawn_then_leak_keeps_minimap_marks_never_radar(monkeypatch):
     clk = Clock()
     g = og.CaptureGuard(clock=clk)
     m, wins, api = setup(monkeypatch, g)
@@ -228,13 +232,13 @@ def test_probe_drawn_then_leak_switches_to_radar(monkeypatch):
     clk.t += og.PROBE_SETTLE_S + 0.01
     assert g.check_frame(composite(background(), layer), MM) == "seen"   # the capture saw it
     m._refresh(api, wins, state(), cfg, False, {}, None, now=clk.t)
-    assert not wins["minimap"].visible and wins["radar"].visible and m.effective_mode == "radar"
-    # retry: the marker alone on an otherwise empty layer
+    assert wins["minimap"].visible and not wins["radar"].visible and m.effective_mode == "minimap"
+    assert g.safe_mode()
+    # retry: the marker again, on the marks
     clk.t += og.PROBE_RETRY_S
     m._refresh(api, wins, state(), cfg, False, {}, None, now=clk.t)
     layer = wins["minimap"].last
     assert wins["minimap"].visible and og.marker_visible(layer[..., :3])
-    assert int((layer[..., 3] > 0).sum()) == og.MARKER_PX ** 2
     clk.t += og.PROBE_SETTLE_S + 0.01
     assert g.check_frame(background(), MM) == "clean"
     m._refresh(api, wins, state(), cfg, False, {}, None, now=clk.t)

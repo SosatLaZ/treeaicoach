@@ -36,7 +36,7 @@ separate popup windows of the TreeAI Coach process:
   Windows 10 2004+, checked with ``GetWindowDisplayAffinity``, re-applied after a re-creation)
   and :mod:`treeaicoach.overlay_guard` proves it with a tiny probe marker; when the setting is
   off, Windows refuses it or the probe is seen in a captured frame, nothing is drawn over the
-  minimap any more ("minimap" mode shown as "radar", beside it) and the engine inpaints the
+  the marks stay on the real minimap (never a radar copy) and the engine inpaints the
   pixels we drew until a probe proves the exclusion. "radar" mode shows an enlarged copy placed *above* the
   minimap (shrunk rather than moved towards the centre), never over it. Every window is
   clamped inside the screen, and the screen used for the layout always contains the minimap
@@ -1490,12 +1490,11 @@ class OverlayManager:
         return self._mode(cfg)
 
     def _mode(self, cfg: Any) -> str:
-        """Configured mode, "minimap" -> "radar" while the capture guard is in safe mode (our marks
-        would be in the detector's frames: nothing is drawn over the minimap)."""
-        mode = resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
-        if mode == "minimap" and self._guard.safe_mode():
-            return "radar"
-        return mode
+        """Configured mode, unchanged by the capture guard's safe mode: the marks stay ON the real
+        minimap (the user wants them there) and the engine inpaints every pixel we drew
+        (:meth:`CaptureGuard.clean_frame`) so detection never reads them. NEVER a radar copy
+        unless the user chose "radar" himself ("une minimap au-dessus de ma minimap", 2.12)."""
+        return resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
 
     # ------------------------------------------------------------------ thread
     def _fail(self, what: str) -> None:
