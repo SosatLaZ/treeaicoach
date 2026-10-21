@@ -617,15 +617,27 @@ def _default_backend_factories() -> dict[str, Callable[[], Any]]:
             raise OSError("Desktop Duplication unavailable")
         return DxgiCapture()
 
-    return {"mss": ScreenCapture, "dxgi": dxgi}
+    def wgc() -> Any:
+        from treeaicoach.wgc_capture import WgcCapture, available
+
+        if not available():
+            raise OSError("Windows.Graphics.Capture unavailable")
+        return WgcCapture()
+
+    return {"mss": ScreenCapture, "dxgi": dxgi, "wgc": wgc}
+
+
+#: Backends whose first image (and the first after each suspension) is cross-checked against mss.
+CROSSCHECKED_BACKENDS = ("wgc", "dxgi")
 
 
 class SmartCapture:
     """Drop-in replacement of :class:`ScreenCapture` choosing the capture backend.
 
-    ``backend``: ``"auto"`` (DXGI Desktop Duplication first on Windows 8+, ``mss`` otherwise
-    and as the fallback), ``"dxgi"`` or ``"mss"`` (preferred, the other one still used if it
-    fails). The first DXGI image is cross-checked against ``mss`` (DXGI disabled for the session
+    ``backend``: ``"auto"`` (Windows.Graphics.Capture of the game window first on Windows 10
+    1903+, then DXGI Desktop Duplication, ``mss`` otherwise and as the last fallback),
+    ``"wgc"``, ``"dxgi"`` or ``"mss"`` (preferred, the others still used if it fails). WGC sees
+    the game window only (never our overlay / Discord above it): :attr:`window_only`. The first DXGI image is cross-checked against ``mss`` (DXGI disabled for the session
     when they disagree). A grab the current backend cannot do (rectangle across two monitors...)
     is served by the next one. :meth:`check` (called by the engine on every minimap frame)
     switches backend on black / frozen frames when the other backend sees a live image.
@@ -641,8 +653,12 @@ class SmartCapture:
         pref = str(backend or "auto").lower()
         if pref == "mss":
             order = ["mss", "dxgi"]
-        else:   # "auto" / "dxgi": duplication first where it exists
-            order = ["dxgi", "mss"] if plat == "win32" else ["mss"]
+        elif plat != "win32":
+            order = ["mss"]
+        elif pref == "dxgi":
+            order = ["dxgi", "wgc", "mss"]
+        else:   # "auto" / "wgc": game-window capture first, then duplication, then GDI
+            order = ["wgc", "dxgi", "mss"]
         self.order = [n for n in order if n in self._factories]
         self._impl: dict[str, Any] = {}
         self._disabled: dict[str, str] = {}
@@ -650,7 +666,7 @@ class SmartCapture:
         self._crosschecked: set[str] = set()
         #: backends suspended after a failed cross-check: name -> clock time of the next try
         self._suspended: dict[str, float] = {}
-        self._xc_fails = 0
+        self._xc_fails: dict[str, int] = {}
         self.health = FrameHealth()
         self.errors = 0
         self._ms: deque[float] = deque(maxlen=120)
@@ -703,12 +719,12 @@ class SmartCapture:
     def _suspend(self, name: str, reason: str) -> None:
         """Failed / invalid cross-check: stop using ``name`` for a while (backoff), then try again;
         disabled for the session after the last backoff step."""
-        self._xc_fails += 1
+        n = self._xc_fails[name] = self._xc_fails.get(name, 0) + 1
         self._crosschecked.discard(name)
-        if self._xc_fails > len(CROSSCHECK_RETRY_S):
-            self.disable(name, f"{reason}; {self._xc_fails} cross-checks failed")
+        if n > len(CROSSCHECK_RETRY_S):
+            self.disable(name, f"{reason}; {n} cross-checks failed")
             return
-        wait = CROSSCHECK_RETRY_S[self._xc_fails - 1]
+        wait = CROSSCHECK_RETRY_S[n - 1]
         self._suspended[name] = self._clock() + wait
         impl = self._impl.get(name)
         self.disable(name, f"suspended {wait:.0f} s: {reason}")
@@ -744,6 +760,13 @@ class SmartCapture:
         log.warning("Capture: %s -> %s (%s)", old, self.current, reason)
         return True
 
+    @property
+    def window_only(self) -> bool:
+        """True while frames come from the game window only (WGC window capture, cross-checked):
+        nothing drawn above the game (our overlay, Discord...) can appear in the images, so the
+        overlay needs no capture exclusion / masking."""
+        return self.current == "wgc" and "wgc" in self._crosschecked and "wgc" not in self._disabled
+
     def other(self) -> str | None:
         """Name of the fallback backend (None if there is none)."""
         for n in self.order:
@@ -774,12 +797,16 @@ class SmartCapture:
             self._resume_due()
         name = self.current
         img = self._grab_with(name, rect, pad)
-        if img is not None and name == "dxgi" and "dxgi" not in self._crosschecked:
-            self._crosscheck(rect, img)
-            if "dxgi" in self._disabled:
+        if img is not None and name in CROSSCHECKED_BACKENDS and name not in self._crosschecked:
+            self._crosscheck(rect, img, name)
+            if name in self._disabled:
                 img = None
         if img is None:
-            self._fails += 1
+            # no game window (lobby, loading) / rect outside it: not a failure of the backend
+            idle = bool(getattr(self._impl.get(name), "idle", False)) or \
+                bool(getattr(self._impl.get(name), "outside", False))
+            if not idle:
+                self._fails += 1
             # (the backend may just have been disabled -> already switched: use the new one)
             alt = self.current if self.current != name else self.other()
             if alt is not None:
@@ -797,12 +824,39 @@ class SmartCapture:
         self.stats["backend"] = self.current
         return img
 
-    def _crosscheck(self, rect: Rect, img: np.ndarray) -> None:
-        """First DXGI image (and the first after each suspension) against mss. A skipped check
-        (mss black / other size) is retried on a later grab; an invalid DXGI image (black first
-        frame) or a mismatch suspends DXGI with a backoff instead of disabling it for the game."""
+    def _crosscheck(self, rect: Rect, img: np.ndarray, name: str = "dxgi") -> None:
+        """First DXGI / WGC image (and the first after each suspension) against mss. A skipped
+        check (mss black / other size) is retried on a later grab; an invalid image (black first
+        frame) or a mismatch suspends the backend with a backoff instead of disabling it for the
+        game. WGC sees the game under any window: a mismatch while another window covers the
+        rectangle (mss sees that window) is not judged."""
         ref = self._grab_with("mss", rect, True)
         verdict, info = crosscheck_verdict(ref, img)
+        if verdict == "mismatch" and name == "wgc":
+            try:
+                covered = rect_occluded(rect)
+            except Exception:
+                covered = None
+            if covered:
+                verdict = "skipped"
+        if name != "dxgi":
+            self.stats[f"{name}_crosscheck"] = info.get("diff", info.get("mean", verdict)) \
+                if verdict == "ok" else verdict
+            if verdict == "skipped":
+                n = self.stats.get(f"{name}_crosscheck_skips", 0) + 1
+                self.stats[f"{name}_crosscheck_skips"] = n
+                if n >= 20:
+                    self._crosschecked.add(name)
+                return
+            self._event(f"{name} crosscheck {verdict} {info}")
+            if verdict == "ok":
+                self._crosschecked.add(name)
+                self._xc_fails[name] = 0
+                return
+            what = f"black / partial {name.upper()} frame" if verdict == "invalid" else "image differs from mss"
+            detail = ", ".join(f"{k} {v}" for k, v in info.items())
+            self._suspend(name, f"{what} ({detail})")
+            return
         self.stats["crosscheck"] = info.get("diff", info.get("mean", verdict)) if verdict == "ok" else verdict
         self.stats["crosscheck_info"] = dict(info, verdict=verdict, rect=f"{rect.w}x{rect.h}")
         if verdict == "skipped":
@@ -814,7 +868,7 @@ class SmartCapture:
         self._event(f"crosscheck {verdict} {info}")
         if verdict == "ok":
             self._crosschecked.add("dxgi")
-            self._xc_fails = 0
+            self._xc_fails["dxgi"] = 0
             return
         what = "black / partial DXGI frame" if verdict == "invalid" else "image differs from mss"
         detail = ", ".join(f"{k} {v}" for k, v in info.items())
@@ -884,6 +938,7 @@ class SmartCapture:
         ms = sorted(self._ms)
         out = dict(self.stats)
         out["backend"] = self.current
+        out["window_only"] = self.window_only
         if ms:
             out["grab_ms_p50"] = round(ms[len(ms) // 2], 2)
             out["grab_ms_p95"] = round(ms[min(len(ms) - 1, int(len(ms) * 0.95))], 2)
@@ -914,7 +969,8 @@ class SmartCapture:
         self.close()
 
 
-BACKEND_LABELS = {"dxgi": "rapide (Desktop Duplication)", "mss": "classique (GDI)"}
+BACKEND_LABELS = {"wgc": "rapide (fenêtre du jeu)", "dxgi": "rapide (Desktop Duplication)",
+                  "mss": "classique (GDI)"}
 
 
 def capture_why(timings: Any) -> str:
@@ -930,7 +986,11 @@ def capture_why(timings: Any) -> str:
         label = BACKEND_LABELS.get(backend, backend)
         bits = [f"{label}"]
         dx = timings.get("dxgi_stats") if isinstance(timings.get("dxgi_stats"), dict) else {}
-        if backend == "dxgi":
+        if backend == "wgc":
+            fps = timings.get("fps")
+            if isinstance(fps, (int, float)) and fps > 0:
+                bits.append(f"{fps:.0f} img/s")
+        elif backend == "dxgi":
             where = [str(dx.get("output") or "").split(" ")[0], str(dx.get("adapter") or "")]
             where = [w for w in where if w]
             if where:
