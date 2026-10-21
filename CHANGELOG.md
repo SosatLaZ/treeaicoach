@@ -3,6 +3,17 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.14.0 · 21 octobre 2026
+
+- **Lancement rapide :** TreeAICoach.exe devient un petit lanceur (7,5 Mo) qui installe l'appli une fois sur ton PC
+  et la démarre directement ; mises à jour en un clic, seulement ce qui a changé ; plus de limite de taille.
+- **« Hey Tree AI » dans le vocal Discord :** le bot entend n'importe quel membre, joue un petit son, puis répond dans
+  le salon. Bouton pour faire passer tout le son par Discord, tout sur ton PC, ou les deux.
+- **Matchup de chaque ami** du vocal au début de la partie ; bot plus stable en fin de partie.
+- **Barre de build** : 6 icônes (achetés cochés, prochain entouré de vert avec l'or qui manque), à la base / mort /
+  touche détails. Couleurs de l'overlay plus douces.
+- **IA : 1000 requêtes par jour** (au lieu de 15 par partie).
+
 ## 2.13.0 · 21 octobre 2026
 
 - **Plus de minimap en double :** le radar est supprimé ; les repères restent sur ta vraie minimap.
