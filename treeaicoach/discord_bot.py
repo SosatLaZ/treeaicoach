@@ -67,8 +67,16 @@ log = logging.getLogger(__name__)
 #: kinds that are spoken in the voice channel (everything else is dropped); ``ally_gank`` = a gank on a
 #: friend of the voice channel (ally_gank.py), said like mine ("Bot gank")
 SPOKEN_KINDS = frozenset({"gank", "ally_gank", "matchup", "objective", "jungler_seen", "summary", "team_call"})
+#: route "discord" (Tout par Discord): every sentence / beep of the app goes through the bot too
+ROUTED_KINDS = frozenset({"coach", "beep"})
+ROUTES = ("both", "discord", "pc")
+#: every kind that makes the bot speak (dropped while muted / switched off / route "pc")
+SPEAKING_KINDS = SPOKEN_KINDS | ROUTED_KINDS | frozenset({"matchups", "ai_answer"})
+#: jobs asked from the launcher: a game start / end never drops them
+USER_JOBS = frozenset({"test", "join_ch", "leave_now", "hush"})
 #: priority when the queue is full / which job goes first (higher = more urgent)
-PRIORITY = {"gank": 4, "team_call": 3, "test": 3, "objective": 2, "matchup": 1, "jungler_seen": 0, "summary": 0}
+PRIORITY = {"gank": 4, "beep": 4, "chime": 5, "team_call": 3, "test": 3, "ai_answer": 3, "coach": 2,
+            "objective": 2, "matchup": 1, "matchups": 1, "jungler_seen": 0, "summary": 0}
 #: lifecycle kinds: join the voice channel / leave it (never spoken); ``roster``: my team's players
 #: (Live Client) to match the voice members against (discord_friends.py)
 CONTROL_KINDS = frozenset({"game_start", "game_end", "roster"})
@@ -93,6 +101,13 @@ OBJECTIVE_KEYS = {"dragon": "Dragon", "baron": "Baron", "grubs": "Larves"}
 OBJECTIVE_LEAD_S = 30
 MATCHUP_STALE_S = 90.0
 TEST_STALE_S = 30.0
+COACH_STALE_S = 6.0          # a coach sentence (route "discord") later than 6 s is about another moment
+BEEP_STALE_S = 1.5           # a danger beep later than 1.5 s means nothing
+CHIME_STALE_S = 1.0          # the "je t'écoute" chime of « Hey Tree AI »
+AI_ANSWER_STALE_S = 40.0     # the AI answer to a question asked in the voice channel
+FRIENDS_STALE_S = 150.0      # the friends' matchups (game start)
+FRIENDS_GAP_FRAMES = 40      # 0.8 s of silence between two friends' matchups
+FRIENDS_MAX = 4
 QUEUE_MAX = 3                # pending sentences (the oldest gank goes first when full)
 LOGIN_TIMEOUT_S = 25.0
 JOIN_TIMEOUT_S = 15.0
@@ -186,6 +201,39 @@ def invite_url(app_id: Any) -> str | None:
         return None
     return (f"https://discord.com/oauth2/authorize?client_id={s}&scope=bot"
             f"&permissions={INVITE_PERMISSIONS}")
+
+
+def route_of(cfg: Any) -> str:
+    """Where the app's sound goes: ``discord_route`` (both / discord / pc); the legacy switch
+    ``discord_only`` (« Couper la voix du coach sur le PC ») means "discord"."""
+    r = str(getattr(cfg, "discord_route", "both") or "both").lower()
+    if r not in ROUTES:
+        r = "both"
+    if r == "both" and getattr(cfg, "discord_only", False) is True:
+        r = "discord"
+    return r
+
+
+def friends_prompt(pairs: Iterable[dict]) -> str:
+    """ONE AI request for every friend's matchup: one line per lane, « champion: phrase »."""
+    rows = [f"- {p.get('champion')} ({p.get('role') or '?'}) contre {p.get('opp')}" for p in pairs]
+    return ("Pour chaque duel de lane ci-dessous, donne UNE phrase française de 14 mots au plus pour le "
+            "joueur débutant qui joue le premier champion : favorable / défavorable et jusqu'à quand. "
+            "Réponds exactement une ligne par duel, au format « Champion : phrase ».\n" + "\n".join(rows))
+
+
+def parse_friends_answer(text: Any, champions: Iterable[str]) -> dict[str, str]:
+    """``{champion: sentence}`` from the AI answer of :func:`friends_prompt` (unknown lines dropped)."""
+    out: dict[str, str] = {}
+    names = {df.norm_name(c): str(c) for c in champions if c}
+    for line in str(text or "").splitlines():
+        head, sep, tail = line.strip().lstrip("-*• ").partition(":")
+        key = df.norm_name(head)
+        if sep and key in names and names[key] not in out:
+            said = clean_ai_line(tail)
+            if said:
+                out[names[key]] = said
+    return out
 
 
 def gank_text(lane: Any) -> str:
@@ -435,6 +483,7 @@ class CallFilter:
         self.reset()
 
     def reset(self) -> None:
+        self._friends_done = False
         self._matchup_done = False
         self._summary_done = False
         self._last_gank = -1e9
@@ -465,6 +514,11 @@ class CallFilter:
             if self._matchup_done:
                 return False
             self._matchup_done = True
+            return True
+        if kind == "matchups":
+            if getattr(self, "_friends_done", False):
+                return False
+            self._friends_done = True
             return True
         if kind == "summary":
             if self._summary_done:
@@ -529,6 +583,7 @@ class _Job:
     lane: str = ""
     ai: Callable[[], Any] | None = None     # matchup: the one AI request (blocking, run off the loop)
     who: str = ""                           # ally_gank: the friend's champion (diagnostics)
+    data: Any = None                        # matchups: the lines of my team's lanes
 
 
 @dataclass
@@ -548,11 +603,20 @@ class _Settings:
     say_name: bool = False          # discord_say_name: "Paul, bot gank"
     team_calls: bool = False        # discord_team_calls: "Ils sont 4 bot : Baron maintenant" (team_calls.py)
     links: tuple = ()               # discord_links as sorted (user id, Riot ID) pairs
+    route: str = "both"             # discord_route (+ legacy discord_only): both | discord | pc
+    listen: bool = False            # discord_listen: « Hey Tree AI » heard in the voice channel
+    friends_matchup: bool = True    # discord_friends_matchup
+    own_assistant: bool = False     # voice_assistant: the player's own « Hey Tree AI » is heard by his PC
 
     def wants(self, kind: str) -> bool:
         """The switch of an optional call kind is on (gank / matchup / test: always)."""
+        if self.route == "pc" and kind not in ("test", "chime", "ai_answer"):
+            return False                   # "Tout sur mon PC": the bot says nothing (but answers its askers)
+        if kind in ROUTED_KINDS:
+            return self.route == "discord"
         return {"objective": self.objectives, "jungler_seen": self.jungler_seen,
-                "summary": self.summary, "ally_gank": self.ally_ganks, "team_call": self.team_calls}.get(kind, True)
+                "summary": self.summary, "ally_gank": self.ally_ganks, "team_call": self.team_calls,
+                "matchups": self.friends_matchup, "chime": self.listen, "ai_answer": self.listen}.get(kind, True)
 
     def key(self) -> tuple:
         """What needs a new gateway session when it changes (the rest is read live)."""
@@ -585,6 +649,9 @@ class DiscordPyBackend:
         self._task: asyncio.Task | None = None
         self.tls = "système"
         self.listener: Callable[[], None] | None = None     # voice / guild change -> the caller refreshes
+        self.receiver: Any = None           # discord_listen.Receiver: the voice websocket messages go to it
+        self._deaf = True                   # self-deafened (nothing received) unless « Hey Tree AI » listens
+        self._vc_cls: Any = None
         self.client = self._make_client(certifi_ca=False)
 
     def _make_client(self, certifi_ca: bool) -> Any:
@@ -760,7 +827,48 @@ class DiscordPyBackend:
         if vc is not None:
             await vc.move_to(ch, timeout=JOIN_TIMEOUT_S)
         else:
-            await ch.connect(timeout=JOIN_TIMEOUT_S, reconnect=True, self_deaf=True)
+            await ch.connect(timeout=JOIN_TIMEOUT_S, reconnect=True, self_deaf=self._deaf, cls=self._vc_class())
+
+    def _vc_class(self) -> Any:
+        """discord.VoiceClient whose voice websocket messages also go to :attr:`receiver` (SPEAKING:
+        which SSRC is which member; discord.py has no receive API of its own)."""
+        if self._vc_cls is None:
+            from discord.voice_state import VoiceConnectionState  # noqa: PLC0415
+
+            backend = self
+
+            async def hook(_ws: Any, msg: Any) -> None:
+                r = backend.receiver
+                if r is not None:
+                    r.on_ws(msg)
+
+            class ListeningVoiceClient(self._d.VoiceClient):  # type: ignore[name-defined,misc]
+                def create_connection_state(self) -> Any:
+                    return VoiceConnectionState(self, hook=hook)
+
+            self._vc_cls = ListeningVoiceClient
+        return self._vc_cls
+
+    async def set_listen(self, on: bool, receiver: Any) -> None:
+        """« Hey Tree AI » in the channel: undeafen + read the voice socket (or deafen + stop)."""
+        if receiver is not None:
+            self.receiver = receiver
+            receiver.listener.bot_user_id = str(getattr(self.client.user, "id", "") or "")
+        vc = self._vc()
+        want_deaf = not on
+        if vc is None or not vc.is_connected():
+            self._deaf = want_deaf
+            if receiver is not None:
+                receiver.detach()
+            return
+        if want_deaf != self._deaf:
+            await vc.guild.change_voice_state(channel=vc.channel, self_deaf=want_deaf)
+            self._deaf = want_deaf
+        if receiver is not None:
+            if on:
+                receiver.attach(vc)
+            else:
+                receiver.detach()
 
     async def play(self, pcm: bytes) -> None:
         vc = self._vc()
@@ -859,6 +967,11 @@ class DiscordCaller:
         self._map_sig: Any = None           # signature of the last voice <-> players matching
         self._map: list[dict] = []          # discord_friends.match() of the voice members
         self.spoken: list[str] = []         # what was said (tests / diagnostics), last 50
+        self._playing = False               # the bot is playing a sound in the channel
+        self._listener: Any = None          # discord_listen.VoiceListener (« Hey Tree AI » in the channel)
+        self._receiver: Any = None          # discord_listen.Receiver (the voice socket reader)
+        #: engine hook: ``(who, question)`` asked out loud in the voice channel -> ask the AI
+        self.on_voice_question: Callable[[str, str], Any] | None = None
         self.dropped = 0
 
     # -- public, any thread ---------------------------------------------------------------
@@ -883,7 +996,10 @@ class DiscordCaller:
                           ally_ganks=getattr(cfg, "discord_ally_ganks", True) is not False,
                           say_name=getattr(cfg, "discord_say_name", False) is True,
                           team_calls=getattr(cfg, "discord_team_calls", False) is True,
-                          links=tuple(sorted(df.clean_links(getattr(cfg, "discord_links", None) or {}).items())))
+                          links=tuple(sorted(df.clean_links(getattr(cfg, "discord_links", None) or {}).items())),
+                          route=route_of(cfg), listen=getattr(cfg, "discord_listen", False) is True,
+                          friends_matchup=getattr(cfg, "discord_friends_matchup", True) is not False,
+                          own_assistant=getattr(cfg, "voice_assistant", False) is True)
             with self._lock:
                 changed = s.key() != self._settings.key()
                 if s.user_id != self._settings.user_id:
@@ -941,9 +1057,11 @@ class DiscordCaller:
                         self._filter.reset()
                     else:
                         self._roster, self._map_sig = [], None
-                    self._jobs = collections.deque(j for j in self._jobs if j.kind == "test")
+                    # what the player asked from the launcher (test, join / leave a channel) is kept;
+                    # one join / leave at a time (game_end twice = one leave)
+                    self._jobs = collections.deque(j for j in self._jobs if j.kind in USER_JOBS)
                     self._jobs.append(_Job("join" if self._in_game else "leave", t=now))
-                elif kind in SPOKEN_KINDS and (self._muted or not s.wants(kind)):
+                elif kind in SPEAKING_KINDS and (self._muted or not s.wants(kind)):
                     self.dropped += 1                    # bot muted (hotkey) / this call is switched off
                     return False
                 elif kind in ("gank", "ally_gank"):
@@ -999,6 +1117,22 @@ class DiscordCaller:
                         self.dropped += 1
                         return False
                     self._queue_say(_Job("say", say, now, SUMMARY_STALE_S, "summary"))
+                elif kind in ("coach", "ai_answer"):
+                    say = " ".join(str(text or "").split())[:240]
+                    if not say:
+                        return False
+                    self._queue_say(_Job("say", say, now, COACH_STALE_S if kind == "coach" else AI_ANSWER_STALE_S,
+                                         kind))
+                elif kind == "beep":
+                    tone = str(info.get("tone") or "gank")
+                    self._queue_say(_Job("say", "", now, BEEP_STALE_S, "beep", lane=tone))
+                elif kind == "matchups":
+                    lines = [dict(x) for x in (info.get("lines") or []) if isinstance(x, dict)][:5]
+                    ai = info.get("ai") if callable(info.get("ai")) else None
+                    if not lines or not self._filter.admit("matchups"):
+                        self.dropped += 1
+                        return False
+                    self._queue_say(_Job("say", "", now, FRIENDS_STALE_S, "matchups", ai=ai, data=lines))
                 else:
                     return False
             self._ensure_thread()
@@ -1017,13 +1151,14 @@ class DiscordCaller:
         self._jobs.append(job)
 
     def speaks_for(self, kind: str) -> bool:
-        """``discord_only``: the bot is on, in a voice channel, not muted, and says this kind of call,
-        so the PC voice can stay silent for it (engine). Any thread, cheap."""
+        """Route "discord" (« Tout par Discord », or the legacy ``discord_only``): the bot is on, in a
+        voice channel, not muted, and says this kind of call (``coach`` = any coach sentence, ``beep``
+        = a danger tone), so the PC stays silent for it (engine). Any thread, cheap."""
         with self._lock:
             s = self._settings
-            return (s.enabled and bool(s.token) and s.only and not self._muted and not self._stopping
-                    and self._state == "connected" and bool(self._view.get("channel"))
-                    and kind in SPOKEN_KINDS and s.wants(kind))
+            return (s.enabled and bool(s.token) and s.route == "discord" and not self._muted
+                    and not self._stopping and self._state == "connected" and bool(self._view.get("channel"))
+                    and kind in (SPOKEN_KINDS | ROUTED_KINDS) and s.wants(kind))
 
     def set_muted(self, muted: bool | None = None) -> bool:
         """Silence the bot (``None`` toggles: the push-to-mute hotkey). Pending calls are dropped and
@@ -1246,6 +1381,8 @@ class DiscordCaller:
                 self._stopping = True
                 th = self._thread
             self._sync_hotkey(_Settings())
+            if self._listener is not None:
+                self._listener.stop()
             self._poke()
             if th is not None and th.is_alive() and th is not threading.current_thread():
                 th.join(max(0.05, float(timeout)))
@@ -1572,15 +1709,21 @@ class DiscordCaller:
                 self._event("Connexion à Discord perdue", ok=False)
                 return "error"
             if due:
-                await self._refresh(backend, name)
-                try:
-                    await self._follow(backend, s, name)
-                except Exception as exc:
-                    log.warning("Discord : suivi du salon vocal (%s)", error_text(exc))
-                with self._lock:
-                    again = self._dirty
-                if again:                            # joined / left just now: the launcher sees it at once
-                    await self._refresh(backend, name)
+                try:                                 # never ends the session (end of game: members leave,
+                    await self._refresh(backend, name)   # channels change, the cache moves under us)
+                    try:
+                        await self._follow(backend, s, name)
+                    except Exception as exc:
+                        log.warning("Discord : suivi du salon vocal (%s)", error_text(exc))
+                    with self._lock:
+                        again = self._dirty
+                    if again:                        # joined / left just now: the launcher sees it at once
+                        await self._refresh(backend, name)
+                    await self._sync_listen(backend, s)
+                except Exception:
+                    log.warning("Discord : rafraîchissement échoué", exc_info=True)
+                    with self._lock:
+                        self._view_t, self._dirty = float(self._clock()), False
             job = self._pop()
             if job is None:
                 await self._wait(SNAPSHOT_EVERY_S)
@@ -1593,8 +1736,73 @@ class DiscordCaller:
                 self._event(f"Erreur ({job.kind}) : {why}", ok=False)
                 if job.kind == "test":
                     self._done(job, f"Le bot n'a pas pu parler ({why}).", False)
+            finally:
+                if job.call_kind == "ai_answer":
+                    self._listen_answered()
             with self._lock:
                 self._dirty = True
+
+    # -- « Hey Tree AI » said in the voice channel (discord_listen.py) ---------------------------
+    def _listen_parts(self) -> tuple[Any, Any]:
+        if self._listener is None:
+            from treeaicoach import discord_listen as dl  # noqa: PLC0415
+
+            lst = dl.VoiceListener()
+            lst.should_listen = self._should_listen
+            lst.bot_speaking = lambda: self._playing
+            lst.on_wake = self._on_wake
+            lst.on_question = self._on_question
+            self._listener, self._receiver = lst, dl.Receiver(lst)
+        return self._listener, self._receiver
+
+    def _should_listen(self) -> bool:
+        with self._lock:
+            s = self._settings
+            return (s.enabled and s.listen and self._in_game and not self._muted and not self._stopping
+                    and self._state == "connected")
+
+    def _on_wake(self, _uid: str) -> None:
+        """Wake phrase heard: the soft « je t'écoute » chime in the channel, at once."""
+        with self._lock:
+            self._queue_say(_Job("say", "", float(self._clock()), CHIME_STALE_S, "chime"))
+        self._poke()
+
+    def asker(self, uid: Any) -> str:
+        """Who asked, for the AI: « Paul (Darius) », « toi (Garen) », else the Discord name."""
+        with self._lock:
+            e = next((e for e in self._mapping_locked() if str(e.get("id")) == str(uid)), None)
+        if e is None:
+            return ""
+        p = e.get("player") or {}
+        name = "toi" if p.get("me") else (df.spoken_name(e.get("spoken") or e.get("name")) or str(e.get("name") or ""))
+        champ = str(p.get("champion") or "")
+        return f"{name} ({champ})" if champ else name
+
+    def _on_question(self, uid: str, text: str) -> None:
+        fn = self.on_voice_question
+        if fn is None:
+            self._listen_answered()
+            return
+        fn(self.asker(uid), text)
+
+    def _listen_answered(self) -> None:
+        lst = self._listener
+        if lst is not None:
+            lst.answered()
+
+    async def _sync_listen(self, backend: Any, s: _Settings) -> None:
+        fn = getattr(backend, "set_listen", None)
+        if not callable(fn):
+            return
+        on = bool(s.listen) and self._current(backend) is not None
+        if not on and self._receiver is None:
+            return
+        if on:                                   # the PC assistant already hears the player: no double answer
+            self._listen_parts()[0].ignore_ids = frozenset({s.user_id} if s.own_assistant and s.user_id else ())
+        try:
+            await fn(on, self._listen_parts()[1] if on else self._receiver)
+        except Exception as exc:
+            log.warning("Discord : écoute du salon (%s)", error_text(exc))
 
     def _idle_status(self, backend: Any, name: str) -> None:
         if backend.guild_count() == 0:
@@ -1688,10 +1896,78 @@ class DiscordCaller:
             return
         await self._join(backend, target)
 
+    async def _play(self, backend: Any, pcm: bytes, s: _Settings) -> None:
+        """Play at the bot's volume; ``_playing`` meanwhile (the listener ignores the channel: the
+        bot never wakes itself through a friend's speakers)."""
+        self._playing = True
+        try:
+            await backend.play(da.apply_volume(pcm, s.volume))
+        finally:
+            self._playing = False
+
+    def _friends_lines(self, job: _Job) -> list[tuple[str, dict]]:
+        """(spoken name, lane line) of every friend of the voice channel playing in my team (me
+        excluded: my matchup is said apart), in the lines' order, at most FRIENDS_MAX."""
+        lines = list(job.data or [])
+        with self._lock:
+            mapping = [e for e in self._mapping_locked() if e.get("player") and not e["player"].get("me")
+                       and e.get("source") in ("auto", "manuel")]
+        out = []
+        for ln in lines:
+            alias = str(ln.get("alias") or "").lower()
+            e = next((e for e in mapping if str(e["player"].get("alias") or "").lower() == alias), None)
+            if e is not None and ln.get("opp"):
+                out.append((df.spoken_name(e.get("spoken") or e.get("name")) or str(e.get("name") or ""), ln))
+        return out[:FRIENDS_MAX]
+
+    async def _say_friends(self, backend: Any, job: _Job, s: _Settings) -> None:
+        """Game start: « Paul, Darius contre Garen : favorable jusqu'au 6 » for each friend, ONE AI
+        request for all of them (the coach's sentences otherwise), one after the other with a short
+        gap; a gank call waiting cuts the rest (it is more urgent)."""
+        friends = self._friends_lines(job)
+        if not friends or self._current(backend) is None:
+            return
+        said_ai: dict[str, str] = {}
+        if job.ai is not None:
+            try:
+                ans = await self._blocking(job.ai, [ln for _n, ln in friends], timeout=AI_TIMEOUT_S + 4.0)
+                said_ai = parse_friends_answer(ans, [ln.get("champion") for _n, ln in friends])
+            except Exception as exc:
+                log.info("Discord : phrases IA des matchups indisponibles (%s)", type(exc).__name__)
+        v, r = s.neural_voice, s.neural_rate
+        for i, (who, ln) in enumerate(friends):
+            if float(self._clock()) - job.t > job.stale_s:
+                return
+            with self._lock:
+                urgent = self._muted or any(PRIORITY.get(j.call_kind, 0) >= PRIORITY["team_call"]
+                                            for j in self._jobs if j.kind == "say")
+            if urgent:
+                self.dropped += len(friends) - i
+                return
+            body = said_ai.get(str(ln.get("champion"))) or str(ln.get("text") or "")
+            if not body:
+                continue
+            text = f"{who}, {body}" if who else body
+            wav, _src = await self._blocking(self.voice.synth, text, v, r, timeout=CHAIN_TIMEOUT_S)
+            pcm = da.speech_pcm(wav) if wav else b""
+            if not da.is_audible(pcm):
+                continue
+            if i:
+                await asyncio.sleep(FRIENDS_GAP_FRAMES * 0.02)
+            await self._play(backend, pcm, s)
+            self._event(f"A dit « {text} »", backend.channel_name(self._current(backend) or ""))
+            with self._lock:
+                self.spoken.append(text)
+                del self.spoken[:-50]
+
     async def _handle(self, backend: Any, job: _Job, s: _Settings, name: str) -> None:
         if job.kind == "leave":                  # game end: the bot stays with the player if he is in voice
-            if backend.find_channel(s.user_id) is not None and s.user_id:
-                self._idle_status(backend, name)
+            try:
+                with_player = backend.find_channel(s.user_id) is not None
+            except Exception:
+                with_player = False
+            if with_player:                      # (without a user id too: leaving then re-following
+                self._idle_status(backend, name)  # 2 s later flapped, and lost the summary)
                 return
         if job.kind in ("leave", "leave_now"):
             cur = self._current(backend)
@@ -1731,6 +2007,15 @@ class DiscordCaller:
             if self._muted and job.kind == "say":
                 self.dropped += 1
                 return
+        if job.call_kind in ("beep", "chime"):   # a tone only where the bot already is
+            if self._current(backend) is not None:
+                pcm = da.chime_pcm(_tone_wav("info" if job.call_kind == "chime" else (job.lane or "gank")))
+                if pcm:
+                    await self._play(backend, pcm, s)
+            return
+        if job.call_kind == "matchups":
+            await self._say_friends(backend, job, s)
+            return
         was_in_voice = self._current(backend) is not None
         if job.call_kind == "summary" and not was_in_voice:
             return                               # the end-of-game line never pulls the bot into a channel
@@ -1779,7 +2064,7 @@ class DiscordCaller:
         if job.kind != "test" and float(self._clock()) - job.t > job.stale_s:
             self.dropped += 1
             return
-        await backend.play(da.apply_volume(pcm, s.volume))
+        await self._play(backend, pcm, s)
         cur = self._current(backend)
         self._event(f"A dit « {text} »", backend.channel_name(cur) if cur is not None else "")
         with self._lock:
@@ -1793,6 +2078,16 @@ class DiscordCaller:
             if not in_game and not was_in_voice:
                 await backend.leave()
                 self._set_status(msg.replace("Connecté à", "Testé dans"), True)
+
+
+def _tone_wav(name: str) -> bytes:
+    """One of the app's chimes (gank / recule / siege / info) as WAV bytes."""
+    try:
+        from treeaicoach import chimes  # noqa: PLC0415
+
+        return chimes.wav_bytes(name if name in ("gank", "recule", "siege", "info") else "gank", 100)
+    except Exception:
+        return b""
 
 
 def _same(a: Any, b: Any) -> bool:

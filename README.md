@@ -208,6 +208,17 @@ En partie, il dit au plus un gank toutes les 8 s, une fois par voie toutes les 3
 maximum. Le token reste sur ton PC (jamais dans les journaux ni les diagnostics). Chiffrement de bout en
 bout DAVE de Discord pris en charge (discord.py 2.7 + davey).
 
+**Où passe le son** : « Tout par Discord (bot) » (alertes, bips, voix du coach et réponses de l'IA passent
+par le bot, ton PC reste muet tant que le bot est dans le vocal), « Tout sur mon PC » (le bot ne dit rien)
+ou « Les deux ». **Matchup de chaque ami** (activé) : au début de la partie, une phrase par ami du salon
+qui joue avec toi (« Paul, Darius contre Garen : favorable jusqu'au 6 »), une seule requête IA pour tous.
+
+**Écouter « Hey Tree AI » dans le vocal** (désactivé par défaut) : n'importe qui du salon dit « Hey Tree AI »
+puis sa question ; petit son, puis le bot répond dans le salon en une ou deux phrases (l'IA sait qui a
+demandé et quel champion il joue). La reconnaissance tourne sur ton PC (Vosk hors ligne, modèle français
+téléchargé une fois), seulement en partie ; jamais sur la voix du bot lui-même ; une question par
+personne toutes les 20 s, 10 toutes les 10 minutes au plus.
+
 ## Dépannage
 
 | Problème | Solution |

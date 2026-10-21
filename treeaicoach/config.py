@@ -137,7 +137,8 @@ CHOICES.update({
 })
 BOOL_FIELDS = BOOL_FIELDS + ("ui_onboarding_done", "ui_confirm_quit")
 UPDATE_TEXT_FIELDS["ui_seen_changelog"] = 32
-BOOL_FIELDS = BOOL_FIELDS + ("item_advice", "item_advice_toasts", "item_advice_speak", "hud_item_card")
+BOOL_FIELDS = BOOL_FIELDS + ("item_advice", "item_advice_toasts", "item_advice_speak", "hud_item_card",
+                                "hud_build_strip")
 # optional LLM advice (ai_advisor.py) + "mode annonceur" / win probability (hype.py)
 CHOICES.update({
     "ai_provider": ("off", "gemini", "groq", "openrouter", "ollama", "anthropic"),
@@ -177,6 +178,11 @@ HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_discord_mute",)
 BOOL_FIELDS = BOOL_FIELDS + ("discord_ally_ganks", "discord_say_name")
 # bot Discord: the decisive team calls ("Ils sont 4 bot : Baron maintenant", team_calls.py), off
 BOOL_FIELDS = BOOL_FIELDS + ("discord_team_calls",)
+# bot Discord: where the app's sound goes ("both" / "discord" = everything by the bot, PC silent /
+# "pc" = the bot says nothing; the legacy discord_only=True means "discord"), « Hey Tree AI » heard in
+# the voice channel (discord_listen.py, off), the friends' matchups at game start (on)
+CHOICES["discord_route"] = ("both", "discord", "pc")
+BOOL_FIELDS = BOOL_FIELDS + ("discord_listen", "discord_friends_matchup")
 # declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 # self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
@@ -319,6 +325,7 @@ class Config:
     ui_scaling: str = "auto"         # "auto" | "90" | "100" | "110" | "125" | "150" (% of the system scale)
     # build advice (itemization.py): written by default (HUD line + toast), spoken only if item_advice_speak
     item_advice: bool = True
+    hud_build_strip: bool = True         # "Barre de build": the meta build as 6 small icons next to the card (base / dead / details key)
     hud_item_card: bool = True           # "Achats": the item card (icon + price) in base / dead / when affordable
     item_advice_toasts: bool = True
     item_advice_speak: bool = False
@@ -374,6 +381,9 @@ class Config:
     discord_ally_ganks: bool = True      # "Bot gank" also for the friends of my voice channel in my team
     discord_say_name: bool = False       # "Paul, bot gank" (the friend's Discord name first)
     discord_team_calls: bool = False     # "Ils sont 4 bot : Baron maintenant" in the voice channel
+    discord_route: str = "both"          # both | discord (all the app's sound by the bot) | pc (bot silent)
+    discord_listen: bool = False         # « Hey Tree AI » said by anyone in the voice channel (discord_listen.py)
+    discord_friends_matchup: bool = True  # game start: one matchup sentence per friend of the voice channel
     voice_assistant: bool = False        # « Hey Tree AI » + question -> spoken AI answer (offline Vosk)
     voice_assistant_mic: str = ""        # input device name ("" = Windows default)
     hotkey_voice_ask: str = ""           # push-to-talk: listen to a question without the wake phrase
@@ -698,6 +708,10 @@ def _validate(cfg: Config) -> Config:
             fixes.append(f"{f.name}={_short_repr(raw)} -> {new!r}")
 
     # cross-field rules
+    if out["discord_only"] and out["discord_route"] == "both":   # legacy switch -> « Tout par Discord »
+        out["discord_route"] = "discord"
+    if out["discord_route"] != "discord":
+        out["discord_only"] = False
     if out["danger_radius"] > out["warn_radius"]:
         fixes.append(f"danger_radius {out['danger_radius']!r} > warn_radius -> {out['warn_radius']!r}")
         out["danger_radius"] = out["warn_radius"]

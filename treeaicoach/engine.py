@@ -822,12 +822,19 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                     z = geometry.classify_zone(*pos)
                     if geometry.is_base(z) and geometry.zone_owner(z) == game.my_team:
                         tone = "siege"
+            if self._discord_only("beep"):          # « Tout par Discord »: the tone in the channel, not here
+                if not (a.kind in GANK_KINDS and int(a.level) >= Level.WARNING and self._discord_only("gank")):
+                    self._call("beep", "", {"tone": tone})
+                return                              # (a gank call of the bot starts with its own chime)
             beep(tone)
         except Exception:
             self._err.exception("Danger beep failed")
 
     def _say(self, text: str, level: int, force: bool = False) -> None:
         if not text or (self._muted and not force):
+            return
+        # « Tout par Discord »: the bot says it in the voice channel, the PC stays silent
+        if self._discord_only("coach") and self._call("coach", text, {"level": int(level)}):
             return
         try:
             self._voice.say(text, int(level))
@@ -1029,6 +1036,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             if callable(note):
                 note(self._cfg)
         self._discord_matchup_done = False
+        self._discord_friends_done = False
+        self._ai_discord_pending = False
         self._discord_obj_done: set = set()
         self._ally_gank = None                  # ally_gank.AllyGankWatcher: new game, new watcher
         self._discord_roster_sig = None

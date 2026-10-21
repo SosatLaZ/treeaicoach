@@ -279,8 +279,21 @@ class DiscordPage:
                        "gank. Seul le salon l'entend, pas ton PC.")
         app.switch_row(says, "discord_say_name", "Dire le pseudo",
                        "« Paul, bot gank » au lieu de « Bot gank » pour les ganks de tes amis.")
-        app.switch_row(says, "discord_only", "Couper la voix du coach sur le PC quand le bot parle",
-                       "Tu entends l'annonce une seule fois, par Discord. Le bip reste sur le PC.")
+        app.choice_row(says, "discord_route", "Où passe le son de l'app",
+                       "« Tout par Discord » : alertes, bips, voix du coach et réponses de l'IA passent par le "
+                       "bot, ton PC reste muet (tant que le bot est dans le vocal). « Tout sur mon PC » : le bot "
+                       "ne dit rien.",
+                       [("discord", "Tout par Discord (bot)"), ("pc", "Tout sur mon PC"), ("both", "Les deux")],
+                       segmented=True,
+                       on_change=lambda v: (app.set_option("discord_only", v == "discord"),
+                                            app.set_option("discord_route", v)))
+        app.switch_row(says, "discord_friends_matchup", "Matchup de chaque ami",
+                       "Au début de la partie, une phrase par ami du salon : « Paul, Darius contre Garen : "
+                       "favorable jusqu'au 6 ».")
+        app.switch_row(says, "discord_listen", "Écouter « Hey Tree AI » dans le vocal",
+                       "N'importe qui du salon dit « Hey Tree AI » puis sa question : petit son, et le bot "
+                       "répond dans le salon en une ou deux phrases. Reconnaissance sur ton PC (modèle "
+                       "français téléchargé une fois, ~41 Mo), seulement en partie.")
         app.switch_row(says, "discord_objectives", "Objectifs",
                        "« Dragon dans 30 secondes », « Baron dans 30 secondes », « Larves dans 30 secondes ».")
         app.switch_row(says, "discord_team_calls", "Calls d'équipe",
@@ -587,7 +600,8 @@ class DiscordPage:
     def on_config(self, diff: set[str]) -> None:
         if diff & {"discord_enabled", "discord_token", "discord_user_id", "discord_volume", "discord_only",
                    "discord_objectives", "discord_jungler_seen", "discord_summary", "hotkey_discord_mute",
-                   "discord_ally_ganks", "discord_say_name", "discord_links", "discord_team_calls"}:
+                   "discord_ally_ganks", "discord_say_name", "discord_links", "discord_team_calls",
+                   "discord_route", "discord_listen", "discord_friends_matchup"}:
             self._sync_bot()
             self.update(self._read())
 

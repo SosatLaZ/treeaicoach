@@ -355,6 +355,10 @@ def test_engine_matchup_hook_once_with_fallback_and_ai() -> None:
                            enemies=[_player("Darius", "TOP"), _player("Ahri", "MIDDLE")])
     e._discord_matchup(game)
     e._discord_matchup(game)
+    friends = [c for c in e.calls if c[0] == "matchups"]       # the friends' lanes: once too
+    assert len(friends) == 1 and friends[0][2]["lines"][0]["champion"] == "Lux"
+    assert friends[0][2]["lines"][0]["text"].startswith("Lux contre Ahri : ") and callable(friends[0][2]["ai"])
+    e.calls = [c for c in e.calls if c[0] != "matchups"]
     assert len(e.calls) == 1
     kind, text, info = e.calls[0]
     assert kind == "matchup" and text.startswith("Garen contre Darius : ") and info["opp"] == "Darius"
@@ -747,3 +751,159 @@ def test_speaks_for_needs_voice_channel_and_switch(bot) -> None:  # noqa: ANN001
     bot.set_muted(False)
     bot.configure(_cfg(discord_only=False))
     assert not bot.speaks_for("gank")
+
+
+# ------------------------------------------------------------------------------ route, end of game, friends, listen
+def test_route_of_and_switches() -> None:
+    assert db.route_of(Config()) == "both"
+    assert db.route_of(Config(discord_only=True)) == "discord"               # legacy switch
+    assert db.route_of(Config(discord_route="pc", discord_only=True)) == "pc"
+    assert db.route_of(SimpleNamespace(discord_route="nope")) == "both"
+    s = db._Settings(route="pc")
+    assert not s.wants("gank") and not s.wants("matchup") and s.wants("test")
+    s = db._Settings(route="both")
+    assert not s.wants("coach") and not s.wants("beep") and s.wants("gank")
+    s = db._Settings(route="discord", listen=True)
+    assert s.wants("coach") and s.wants("beep") and s.wants("chime") and s.wants("ai_answer")
+
+
+def test_route_pc_bot_silent_route_discord_says_everything(bot) -> None:  # noqa: ANN001
+    class Described(FakeBackend):
+        def describe(self, user_id: str) -> dict:
+            return {"guilds": [], "user": {}, "channel": {"name": self.current} if self.current else None}
+
+    bot._factory = Described
+    bot.configure(_cfg(discord_route="pc"))
+    assert _wait(lambda: bot.status()[0].startswith("Connecté"))
+    assert bot.on_call("game_start")
+    assert not bot.on_call("gank", "x", {"lane": "top"})                  # « Tout sur mon PC »
+    assert not bot.on_call("coach", "Pousse ta vague.")
+    bot.configure(_cfg(discord_route="discord"))
+    assert _wait(lambda: bot.speaks_for("coach"), 6.0) and bot.speaks_for("beep")
+    fb = FakeBackend.instances[-1]
+    n = len(fb.played)
+    assert bot.on_call("beep", "", {"tone": "recule"})
+    assert bot.on_call("coach", "Pousse ta vague.")
+    assert _wait(lambda: "Pousse ta vague." in bot.spoken)
+    assert len(fb.played) >= n + 2                                        # the tone, then the sentence
+    bot.configure(_cfg(discord_route="both"))
+    assert not bot.speaks_for("coach") and not bot.on_call("coach", "Autre phrase.")
+
+
+def test_game_end_without_user_id_stays_and_says_the_summary(bot) -> None:  # noqa: ANN001
+    bot.configure(_cfg(discord_user_id="", discord_summary=True))
+    assert _wait(lambda: bot.status()[1])
+    fb = FakeBackend.instances[-1]
+    assert bot.on_call("game_start")
+    assert _wait(lambda: fb.joined == ["général"])
+    assert bot.on_call("game_end") and bot.on_call("game_end")            # twice: one leave at most
+    assert bot.on_call("summary", "Victoire en 30 minutes.")
+    assert _wait(lambda: "Victoire en 30 minutes." in bot.spoken)
+    assert fb.left == 0 and fb.joined == ["général"]                      # no leave / rejoin flapping
+    with bot._lock:
+        assert sum(j.kind == "leave" for j in bot._jobs) <= 1
+
+
+def test_game_end_keeps_the_players_commands(bot) -> None:  # noqa: ANN001
+    with bot._lock:
+        bot._settings = db._Settings(enabled=True, token=TOKEN)
+        bot._jobs.append(db._Job("leave_now"))
+        bot._jobs.append(db._Job("say", "x", 0.0, 5.0, "coach"))
+    bot._ensure_thread = lambda: None  # type: ignore[method-assign]
+    assert bot.on_call("game_end")
+    with bot._lock:
+        assert [j.kind for j in bot._jobs] == ["leave_now", "leave"]
+
+
+def test_refresh_errors_never_end_the_session(bot) -> None:  # noqa: ANN001
+    class Broken(FakeBackend):
+        def describe(self, user_id: str) -> dict:
+            raise RuntimeError("cache moved")
+
+        def find_channel(self, user_id: str):  # noqa: ANN201
+            if getattr(self, "boom", False):
+                raise RuntimeError("guild gone")
+            return self.channel
+
+    bot._factory = Broken
+    bot.configure(_cfg())
+    assert _wait(lambda: bot.status()[1])
+    fb = FakeBackend.instances[-1]
+    assert bot.on_call("game_start")
+    assert _wait(lambda: fb.joined == ["général"])
+    fb.boom = True
+    assert bot.on_call("game_end")
+    time.sleep(0.3)
+    assert bot._state == "connected" and fb.closed == 0 and bot._thread.is_alive()
+
+
+def test_friends_matchups_one_ai_request_and_names(bot) -> None:  # noqa: ANN001
+    bot.configure(_cfg())
+    assert _wait(lambda: bot.status()[1])
+    me = {"riot": "Moi#EUW", "champion": "Garen", "alias": "Garen", "position": "TOP", "me": True}
+    paul = {"riot": "Paul#EUW", "champion": "Lux", "alias": "Lux", "position": "MIDDLE", "me": False}
+    bot._mapping_locked = lambda: [{"id": "1", "name": "Paul", "spoken": "Paul", "player": paul, "source": "auto"},
+                                   {"id": "2", "name": "Moi", "spoken": "Moi", "player": me, "source": "toi"}]
+    asked = []
+
+    def ai(lines):  # noqa: ANN001, ANN202
+        asked.append([ln["champion"] for ln in lines])
+        return "Lux : favorable, pousse et poke Ahri jusqu'au niveau 6."
+    lines = [{"alias": "Lux", "champion": "Lux", "opp": "Ahri", "role": "middle", "text": "Lux contre Ahri : équilibré."},
+             {"alias": "Jinx", "champion": "Jinx", "opp": "Kaisa", "role": "bottom", "text": "Jinx contre Kaisa : x."}]
+    assert bot.on_call("game_start")
+    assert bot.on_call("matchups", "", {"lines": lines, "ai": ai})
+    assert not bot.on_call("matchups", "", {"lines": lines, "ai": ai})     # once per game
+    assert _wait(lambda: any(t.startswith("Paul, ") for t in bot.spoken))
+    assert asked == [["Lux"]]                                              # one request, friends only
+    assert "Paul, favorable, pousse et poke Ahri jusqu'au niveau 6." in bot.spoken
+    assert db.parse_friends_answer("- Lux : bien.\nZed: phrase en trop ici.", ["Lux"]) == {}   # too short
+    assert db.parse_friends_answer("Lux : tu gagnes ce duel jusqu'au 6.", ["Lux"]) == {
+        "Lux": "tu gagnes ce duel jusqu'au 6."}
+
+
+def test_listen_chime_question_answer_in_the_channel(bot) -> None:  # noqa: ANN001
+    bot.configure(_cfg(discord_listen=True))
+    assert _wait(lambda: bot.status()[1])
+    assert bot.on_call("game_start")
+    fb = FakeBackend.instances[-1]
+    assert _wait(lambda: fb.joined == ["général"])
+    assert bot._should_listen()
+    paul = {"riot": "Paul#EUW", "champion": "Lux", "alias": "Lux", "position": "MIDDLE", "me": False}
+    bot._mapping_locked = lambda: [{"id": "1", "name": "Paul", "spoken": "Paul", "player": paul, "source": "auto"}]
+    lst, _rx = bot._listen_parts()
+    asked = []
+    bot.on_voice_question = lambda who, q: asked.append((who, q))
+    n = len(fb.played)
+    lst.on_wake("1")
+    assert _wait(lambda: len(fb.played) > n)                              # the chime, in the channel
+    lst._busy_until = time.monotonic() + 99
+    lst.on_question("1", "quel item")
+    assert asked == [("Paul (Lux)", "quel item")]
+    assert bot.on_call("ai_answer", "Achète une Ceinture de Titan.")
+    assert _wait(lambda: "Achète une Ceinture de Titan." in bot.spoken)
+    assert _wait(lambda: lst._busy_until < 0)                             # answered: next question allowed
+    bot.set_muted(True)
+    assert not bot._should_listen()
+
+
+def test_engine_routes_coach_voice_and_discord_questions() -> None:
+    from treeaicoach.engine import CoachEngine as Engine
+
+    e = _Eng(Config(discord_enabled=True, discord_route="discord"))
+    e._muted = False
+    e._voice = SimpleNamespace(said=[], say=lambda t, lv: e._voice.said.append(t))
+    e.speaks_for = lambda kind: True
+    e.on_call = lambda k, t, i: (e.calls.append((k, t, i)), True)[1]
+    Engine._say(e, "Pousse ta vague.", 1)
+    assert e.calls[-1][:2] == ("coach", "Pousse ta vague.") and e._voice.said == []
+    e.speaks_for = lambda kind: False                                     # bot not in voice: the PC
+    Engine._say(e, "Recule.", 1)
+    assert e._voice.said == ["Recule."]
+    e.ask_ai = lambda question=None, spoken=False: "Pas de partie en cours : l'IA a besoin d'une partie pour conseiller."
+    e._discord_voice_question("Paul (Lux)", "quel item")
+    assert e.calls[-1][0] == "ai_answer" and e.calls[-1][1].startswith("Pas de partie")
+    seen = []
+    e.ask_ai = lambda question=None, spoken=False: (seen.append(question), "Question envoyée à l'IA…")[1]
+    e._discord_voice_question("Paul (Lux)", "quel item")
+    assert seen == ["Question posée par Paul (Lux) : quel item"] and e._ai_discord_pending

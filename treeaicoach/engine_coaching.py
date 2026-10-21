@@ -339,7 +339,11 @@ class CoachingMixin:
         bot is in a voice channel and says this kind of call, so the PC voice skips it (the danger
         beep still plays on the PC). ``self.speaks_for`` (tests) replaces the app's bot. Never raises."""
         try:
-            if not getattr(self._cfg, "discord_only", False):
+            if getattr(self, "speaks_for", None) is None and "treeaicoach.discord_bot" not in sys.modules:
+                return False                             # bot never started: nothing to route (cheap path)
+            from treeaicoach.discord_bot import route_of
+
+            if route_of(self._cfg) != "discord":         # « Tout par Discord » (or the legacy discord_only)
                 return False
             fn = getattr(self, "speaks_for", None)
             if fn is None:
@@ -502,7 +506,9 @@ class CoachingMixin:
             if getattr(self._cfg, "discord_enabled", False) or "treeaicoach.discord_bot" in sys.modules:
                 from treeaicoach import discord_bot
 
-                discord_bot.caller().configure(self._cfg)
+                bot = discord_bot.caller()
+                bot.on_voice_question = self._discord_voice_question
+                bot.configure(self._cfg)
         except Exception:
             log.debug("discord sync failed", exc_info=True)
 
@@ -529,11 +535,97 @@ class CoachingMixin:
         except Exception:
             return None
 
+    def _discord_friends_matchups(self, game: Any) -> None:
+        """Game start: every ally lane (me and the jungler excluded) with its opponent and the coach's
+        verdict FROM THAT ALLY's side, + one blocking AI callable for all of them (one request,
+        counted in the daily AI budget). The bot says the lines of the friends in its voice channel
+        (discord_bot._say_friends). Once per game. Never raises."""
+        try:
+            if getattr(self, "_discord_friends_done", False) or not getattr(self._cfg, "discord_friends_matchup", True):
+                return
+            if getattr(self, "on_call", None) is None and not getattr(self._cfg, "discord_enabled", False):
+                return
+            me = getattr(game, "me", None)
+            gt = _finite(getattr(game, "game_time", None)) or 0.0
+            if me is None or gt > 180.0:
+                return
+            import dataclasses
+
+            from treeaicoach import discord_bot, mastermind
+
+            enemies = list(getattr(game, "enemies", None) or [])
+            us, them = mastermind.units_of(game)
+            lines = []
+            for p in list(getattr(game, "allies", None) or []):
+                role = str(getattr(p, "position", "") or "").upper()
+                if role in ("", "JUNGLE"):
+                    continue
+                opp = next((e for e in enemies if str(getattr(e, "position", "")).upper() == role), None)
+                if opp is None:
+                    continue
+                name, opp_name = p.champion_name or p.champion_alias, opp.champion_name or opp.champion_alias
+                leader = until = None
+                try:
+                    us2 = [dataclasses.replace(u, is_me=(u.alias == p.champion_alias)) for u in us]
+                    r = mastermind.read_units(us2, them, gt, role=role, lane_opp=opp.champion_alias, game=game)
+                    lane = getattr(r, "lane", None)
+                    leader, until = getattr(lane, "leader", None), getattr(lane, "until", None)
+                except Exception:
+                    pass
+                lines.append({"alias": p.champion_alias, "champion": name, "opp": opp_name, "role": role.lower(),
+                              "text": discord_bot.matchup_verdict(name, opp_name, leader, until)})
+            if not lines:
+                return                                   # positions not known yet: retried (≤ 3:00)
+            self._discord_friends_done = True
+            self._call("matchups", "", {"lines": lines, "ai": self._friends_ai()})
+        except Exception:
+            log.debug("discord friends matchups failed", exc_info=True)
+
+    def _friends_ai(self) -> Any:
+        """Blocking callable ``(lines) -> AI text`` for every friend's matchup (one request), or None."""
+        cfg = self._cfg
+        prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
+        key, model = str(getattr(cfg, "ai_api_key", "") or "").strip(), str(getattr(cfg, "ai_model", "") or "")
+        if prov == "off" or (prov != "ollama" and not key):
+            return None
+
+        def ask(lines: list[dict]) -> str | None:
+            from treeaicoach import ai_advisor, discord_bot
+
+            adv = getattr(self, "_ai", None)
+            lock, budget = getattr(adv, "_lock", None), getattr(adv, "budget", None)
+            if lock is not None and budget is not None:
+                with lock:
+                    if budget.exhausted:
+                        return None
+                    budget.sent += 1                    # one real request (DAILY_HARD_CAP)
+            elif ai_advisor.DAILY_QUOTA.exhausted:
+                return None
+            else:
+                ai_advisor.DAILY_QUOTA.add(1)
+            return ai_advisor.call_llm(prov, key, model, discord_bot.AI_SYSTEM.replace("UNE seule phrase", "une phrase par duel"),
+                                       discord_bot.friends_prompt(lines), timeout=discord_bot.AI_TIMEOUT_S + 3.0)
+        return ask
+
+    def _discord_voice_question(self, who: str, text: str) -> None:
+        """« Hey Tree AI » said in the Discord voice channel (discord_listen): ask the AI with the game
+        snapshot + who asked; the answer is said IN THE CHANNEL (1-2 sentences). Never raises."""
+        try:
+            q = f"Question posée par {who} : {text}" if who else text
+            msg = self.ask_ai(question=q)
+            if msg.startswith("Question envoyée"):
+                self._ai_discord_pending = True
+            else:
+                self._call("ai_answer", msg)             # "Pas de partie…", "Limite … aujourd'hui"
+        except Exception:
+            log.debug("discord voice question failed", exc_info=True)
+
     def _discord_matchup(self, game: Any, opp_alias: str | None = None) -> None:
         """The game-start matchup sentence for the bot (once per game): the heuristic verdict
         (mastermind lane / team windows) + a callable asking the AI for it (one request, counted in
         the game's AI budget). From the Live Client positions at game start, else from the lane card's
         opponent (coach_plus, ~0:30). Never raises."""
+        self._discord_friends_matchups(game)
         try:
             if self._discord_matchup_done or (getattr(self, "on_call", None) is None
                                               and not getattr(self._cfg, "discord_enabled", False)):
@@ -912,7 +1004,12 @@ class CoachingMixin:
         self.ai_answer_seq = getattr(self, "ai_answer_seq", 0) + 1
         self.text_messages.append((t, "ai", adv.text))
         ai.note_shown(adv, gt)
-        if adv.moment == "manual" and getattr(self, "_ai_spoken_pending", False):
+        if adv.moment == "manual" and getattr(self, "_ai_discord_pending", False):
+            self._ai_discord_pending = False                # asked in the Discord voice channel: said there
+            from treeaicoach.voice_assistant import short_answer
+
+            self._call("ai_answer", short_answer(adv.text))
+        elif adv.moment == "manual" and getattr(self, "_ai_spoken_pending", False):
             self._ai_spoken_pending = False                 # asked out loud: answered out loud, short
             from treeaicoach.voice_assistant import short_answer
 
