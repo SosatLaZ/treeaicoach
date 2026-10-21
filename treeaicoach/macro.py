@@ -125,7 +125,10 @@ KIND_COOLDOWN_S: dict[str, float] = {
     "gc_cross_obj": 90.0,           # team_calls.py: "Ils sont 4 en bas : Baron maintenant"
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
-URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level", "gc_cross_obj"})
+URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level", "gc_cross_obj",
+                          # the jungler SHOWN on the other side is a ~20-40 s window: the objective trade
+                          # must not wait behind a lane call ("Joue agressif : Lee Sin est en haut")
+                          "free_dragon", "cross_trade"})
 #: soft calls (mastermind power windows, game_changers.rule_power_window): no hold against other
 #: calls, any other call replaces them, and they do not start the gap between two calls
 SOFT_KINDS = frozenset({"gc_window"})
