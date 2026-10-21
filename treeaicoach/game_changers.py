@@ -296,6 +296,8 @@ def rule_jungler_far(ctx: M.MacroCtx) -> M.GeniusCall | None:
         return None
     if jl.age > (25.0 if ctx.keep else JG_SEEN_MAX_AGE_S) or jl.side != _opposite_side(lane):
         return None
+    if lane == "bot" and (M._obj_up(ctx, "dragon") or M._obj_up(ctx, "elder")) and not ctx.keep:
+        return None                                      # jungler top + dragon up: the dragon is the call (free_dragon)
     if not any(not bool(getattr(p, "is_dead", False)) for p in _alive_lane_opps(ctx)):
         return None                                      # the opponent is dead: plates (macro) say it
     where = M.SIDE_FR.get(jl.side, "loin")

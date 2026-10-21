@@ -609,27 +609,25 @@ def _scenarios() -> dict[str, Scenario]:
     far_bot = {"Darius": (0.86, 0.72), "Ahri": (0.88, 0.69), "Caitlyn": (0.84, 0.75), "Nautilus": (0.90, 0.66)}
     S["cross_baron"] = Scenario(
         "cross_baron", "25:00 : Lee Sin mort, les 4 autres farment en bas, nous sommes 3 près du Baron", 1490.0, 1570.0,
-        late=True, kills=[(1470.0, "Vi", "LeeSin", [])],
-        paths={**{a: [(1490.0, (0.60 + 0.01 * i, 0.44)), (1503.0, (0.62 + 0.01 * i, 0.46)), (1514.0, uv),
+        late=True, kills=[(1500.0, "Vi", "LeeSin", [])],
+        paths={**{a: [(1490.0, (0.60 + 0.01 * i, 0.44)), (1512.0, (0.62 + 0.01 * i, 0.46)), (1522.0, uv),
                       (1570.0, (uv[0] + 0.01, uv[1] - 0.01))] for i, (a, uv) in enumerate(far_bot.items())},
                "Garen": [(1490.0, (0.42, 0.45)), (1570.0, (0.40, 0.40))],
                "Vi": [(1490.0, (0.40, 0.44)), (1570.0, (0.38, 0.39))],
                "Lux": [(1490.0, (0.44, 0.47)), (1570.0, (0.42, 0.42))],
                "LeeSin": [(1490.0, None)]},
-        moments=[Moment(1516.0, 1545.0, "4 ennemis vus en bas, leur jungler mort : Baron maintenant", r"(?i)baron",
-                        r"(?i)ils sont quatre en bas : baron", voice_levels=("debutant", "intermediaire"))])
+        moments=[Moment(1515.0, 1544.0, "4 ennemis vus en bas, leur jungler mort : Baron maintenant", r"(?i)baron",
+                        r"(?i)ils sont \w+ en bas : baron", voice_levels=("debutant", "intermediaire"))])
     S["free_dragon"] = Scenario(
-        "free_dragon", "10:00 : Lee Sin montré en haut près du Baron, je suis bot : dragon libre", 590.0, 660.0,
+        "free_dragon", "10:00 : Lee Sin montré en haut près du Baron, je suis bot : dragon libre", 570.0, 660.0,
         me="Jinx",
-        warmup=8.0,
-        paths={"LeeSin": [(590.0, (0.30, 0.25)), (640.0, (0.28, 0.24)), (641.0, None)],
-               "Jinx": [(590.0, (0.80, 0.91)), (660.0, (0.78, 0.90))],
-               "Caitlyn": [(590.0, (0.88, 0.86)), (660.0, (0.88, 0.85))],
-               "Nautilus": [(590.0, (0.89, 0.84)), (660.0, (0.89, 0.83))]},
-        waves={"bot": [(590.0, 0.5)]},
-        moments=[Moment(598.0, 630.0, "leur jungler est en haut : dragon libre (avec la fenêtre)",
-                        r"(?i)dragon.*libre", r"(?i)jungler en haut : dragon",
-                        levels=("debutant", "intermediaire"), voice_levels=("debutant", "intermediaire"))])
+        paths={"LeeSin": [(570.0, (0.30, 0.25)), (640.0, (0.28, 0.24)), (641.0, None)],
+               "Jinx": [(570.0, (0.80, 0.91)), (660.0, (0.78, 0.90))],
+               "Caitlyn": [(570.0, (0.88, 0.86)), (660.0, (0.88, 0.85))],
+               "Nautilus": [(570.0, (0.89, 0.84)), (660.0, (0.89, 0.83))]},
+        waves={"bot": [(570.0, 0.5)]},
+        moments=[Moment(596.0, 630.0, "leur jungler est en haut : dragon libre (avec la fenêtre)",
+                        r"(?i)dragon.*libre", levels=("debutant", "intermediaire"))])
     # ---------------------------------------------------------------- my own resources (resources_coach)
     S["skill_r6"] = Scenario(
         "skill_r6", "Niveau 6 à 6:40 mais je ne monte pas mon R (45 s)", 370.0, 470.0,

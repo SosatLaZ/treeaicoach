@@ -3,7 +3,8 @@
 Two halves:
 
 * :func:`rule_cross_objective` (planner rule, kind ``gc_cross_obj``, registered in
-  :data:`treeaicoach.game_changers.RULES`): 3+ enemies SEEN far from an epic pit (the rest dead or at
+  :data:`treeaicoach.game_changers.RULES`): 3+ enemies SEEN far from an epic pit, on the OTHER half
+  of the map (bot for the Baron, top for the dragon; mid / their base does not count) (the rest dead or at
   most one unaccounted, never their jungler: no smite steal), nobody of theirs near it, at most one of
   us dead, and their walk to the pit covers ours + most of the take time ->
   "Prends le Baron maintenant : ils sont 4 en bas (31 s)" (team line "Ils sont 4 bot : Baron
@@ -84,7 +85,13 @@ def cross_window(ctx: M.MacroCtx, key: str) -> tuple[int, str, float] | None:
     fresh = M._fresh_enemies(ctx, SEEN_KEEP_S if ctx.keep else SEEN_S)
     if any(geometry.dist(_uv(e.uv), pit) < NEAR_R for e in fresh):  # type: ignore[arg-type]
         return None
-    far = [e for e in fresh if geometry.dist(_uv(e.uv), pit) >= FAR_R]  # type: ignore[arg-type]
+    theirs = ctx.enemy_team
+    # far = busy on the other side of the map; just respawned in their fountain does not count (the
+    # call after a won fight is fight_won's: a second "Baron maintenant" 30 s later is noise)
+    other = "bot" if key in ("baron", "herald", "grubs") else "top"
+    far = [e for e in fresh if geometry.dist(_uv(e.uv), pit) >= FAR_R  # type: ignore[arg-type]
+           and M.side_of(_uv(e.uv)) == other                             # type: ignore[arg-type]
+           and not (theirs and geometry.in_fountain(_uv(e.uv)[0], _uv(e.uv)[1], theirs))]  # type: ignore[index]
     if len(far) < (MIN_FAR - (1 if ctx.keep else 0)):
         return None
     far_a = {str(getattr(e, "alias", "") or "").lower() for e in far}
