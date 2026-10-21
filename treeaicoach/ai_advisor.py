@@ -41,6 +41,7 @@ import dataclasses
 import json
 import logging
 import math
+import os
 import re
 import socket
 import threading
@@ -51,6 +52,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -115,9 +117,12 @@ LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 SLOTS = ("base", "objective", "comeback", "mid", "late")
 AUTO_BUDGET = len(SLOTS)
 URGENT_BUDGET = 1
-#: hard ceiling of AI requests per game, all kinds together (automatic + urgence + manual).
-#: Everything else is the rule-based engine (rule_plan), which costs nothing.
-GAME_HARD_CAP = 15
+#: hard ceiling of AI requests PER DAY (local calendar day, reset at local midnight), all kinds
+#: together (automatic + urgence + manual + Discord), persisted in the user data folder so a restart
+#: does not reset it. The anti-spam spacing (MIN_INTERVAL_S, MANUAL_MIN_INTERVAL_S, per-game slots)
+#: still applies. Everything else is the rule-based engine (rule_plan), which costs nothing.
+DAILY_HARD_CAP = 1000
+QUOTA_FILE_NAME = "ai_quota.json"
 URGENT_REASONS = frozenset({"gold", "death_streak", "teamfight"})
 URGENT_MIN_INTERVAL_S = 30.0
 MID_GAME_S = 14 * 60.0
@@ -2029,18 +2034,111 @@ def _goal(name: Any) -> str | None:
     return None
 
 
+class DailyQuota:
+    """Count of AI requests sent today (local day), persisted as ``{"day": "YYYY-MM-DD", "count": n}``.
+
+    ``path=None`` resolves ``user_data_dir()/ai_quota.json`` lazily; ``path=""`` keeps it in memory
+    (tests). Thread-safe, never raises (an unreadable / unwritable file only loses the persistence)."""
+
+    def __init__(self, path: Any = None, *, cap: int = DAILY_HARD_CAP,
+                 today: Callable[[], str] | None = None) -> None:
+        self._path = path
+        self.cap = int(cap)
+        self._today = today or (lambda: time.strftime("%Y-%m-%d", time.localtime()))
+        self._lock = threading.Lock()
+        self._day: str | None = None
+        self._count = 0
+
+    def _file(self) -> Any:
+        if self._path is None:
+            try:
+                from treeaicoach.paths import user_data_dir
+                self._path = user_data_dir() / QUOTA_FILE_NAME
+            except Exception:
+                self._path = ""
+        return self._path or None
+
+    def _sync(self) -> None:                          # under the lock
+        day = self._today()
+        if self._day == day:
+            return
+        self._day, self._count = day, 0
+        f = self._file()
+        if f is None:
+            return
+        try:
+            data = json.loads(Path(f).read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("day") == day:
+                self._count = max(0, int(data.get("count", 0)))
+        except Exception:
+            pass
+
+    def _save(self) -> None:                          # under the lock
+        f = self._file()
+        if f is None:
+            return
+        try:
+            f = Path(f)
+            tmp = f.with_name(f.name + ".tmp")
+            tmp.write_text(json.dumps({"day": self._day, "count": self._count}), encoding="utf-8")
+            os.replace(tmp, f)
+        except Exception:
+            log.debug("AI quota not saved", exc_info=True)
+
+    @property
+    def count(self) -> int:
+        with self._lock:
+            self._sync()
+            return self._count
+
+    @property
+    def exhausted(self) -> bool:
+        return self.count >= self.cap
+
+    def add(self, n: int = 1) -> None:
+        if n <= 0:
+            return
+        with self._lock:
+            self._sync()
+            self._count += int(n)
+            self._save()
+
+
+#: the process-wide daily counter (shared by every AIBudget: in-game advisor, Discord, voice)
+DAILY_QUOTA = DailyQuota()
+
+
+def quota_text(q: DailyQuota | None = None) -> str:
+    """French message when today's AI requests are used up."""
+    q = q or DAILY_QUOTA
+    return f"Limite de {q.cap} questions IA atteinte pour aujourd'hui : le coach continue sans IA jusqu'à minuit."
+
+
 class AIBudget:
     """Per-game budget of AI calls: :data:`AUTO_BUDGET` automatic calls (one per slot of
     :data:`SLOTS`), :data:`URGENT_BUDGET` bonus "urgence" call, manual calls counted apart."""
 
-    def __init__(self) -> None:
+    def __init__(self, quota: DailyQuota | None = None) -> None:
+        self.quota = quota if quota is not None else DAILY_QUOTA
         self.reset()
 
     def reset(self) -> None:
         self.used: list[str] = []         # automatic slots consumed, in order
         self.urgent_used = 0
         self.manual = 0
-        self.sent = 0                     # requests really sent this game (never refunded: the hard cap)
+        self._sent = 0                    # requests really sent this game (never refunded)
+
+    @property
+    def sent(self) -> int:
+        return self._sent
+
+    @sent.setter
+    def sent(self, value: int) -> None:
+        # every real request also counts in the persisted daily quota (DAILY_HARD_CAP)
+        delta = int(value) - self._sent
+        self._sent = int(value)
+        if delta > 0:
+            self.quota.add(delta)
 
     @property
     def auto_used(self) -> int:
@@ -2052,8 +2150,8 @@ class AIBudget:
 
     @property
     def exhausted(self) -> bool:
-        # refunds give a slot back, never a request: failed / unusable answers still count here
-        return max(self.total, self.sent) >= GAME_HARD_CAP
+        # refunds give a slot back, never a request: failed / unusable answers still count today
+        return self.quota.exhausted
 
     def pick(self, moment: str, game_time: float, objective: str = "") -> str | None:
         """The slot this moment would consume (``"urgent"`` for the bonus), or None (skip it)."""
@@ -2095,7 +2193,8 @@ class AIBudget:
     def snapshot(self) -> dict[str, Any]:
         return {"auto_used": self.auto_used, "auto_max": AUTO_BUDGET, "urgent_used": self.urgent_used,
                 "urgent_max": URGENT_BUDGET, "manual": self.manual, "slots": list(self.used),
-                "total": self.total, "sent": self.sent, "cap": GAME_HARD_CAP}
+                "total": self.total, "sent": self.sent, "cap": self.quota.cap,
+                "today": self.quota.count}
 
 
 def budget_text(b: dict[str, Any] | None) -> str:
@@ -2115,7 +2214,7 @@ class AIAdvisor:
     F8 hotkey / UI thread can never start two); an answer from a previous game is discarded
     (generation counter); a key moment during a fight / gank is deferred, not lost (retried up
     to :data:`DEFER_S` after); a failed or unusable answer gives its budget slot back but still
-    counts towards :data:`GAME_HARD_CAP`. The advisor also keeps the game's timeline (team gold
+    counts towards :data:`DAILY_HARD_CAP`. The advisor also keeps the game's timeline (team gold
     trend, one line every 2 min, the plans given) for the snapshot and the post-game review."""
 
     def __init__(self, cfg: Any = None, *, clock: Callable[[], float] = time.monotonic,
@@ -2368,7 +2467,7 @@ class AIAdvisor:
                 if t < self._blocked_until and self._status:
                     return f"{self._status} ({int(math.ceil(self._blocked_until - t))} s)"
                 if self.budget.exhausted:
-                    return f"Limite de {GAME_HARD_CAP} questions IA atteinte pour cette partie : le coach continue sans IA."
+                    return quota_text(self.budget.quota)
                 self._last_call = t
                 self.budget.manual += 1
                 self.budget.sent += 1

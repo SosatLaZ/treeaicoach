@@ -267,20 +267,21 @@ def test_bug_answer_of_the_previous_game_is_never_shown():
 
 def test_bug_hard_cap_counts_failed_requests():
     """Bug: a failed request refunded its slot AND left the hard cap untouched: an AI that keeps
-    failing could be called far more than GAME_HARD_CAP times in a game."""
+    failing could be called far more than the hard cap (now DAILY_HARD_CAP per day)."""
     def caller(*a, **k):
         raise ai.AIError("server", "HTTP 500")
 
     adv = ai.AIAdvisor(CFG, caller=caller, clock=lambda: 0.0)
-    for i in range(ai.GAME_HARD_CAP):
+    adv.budget.quota = ai.DailyQuota("", cap=4)
+    for i in range(4):
         adv._blocked_until = -math.inf
         adv._last_call = -math.inf
         assert adv.ask(1000.0 * (i + 1), G(600.0)) == "Question envoyée à l'IA…"
         adv.wait()
         adv.poll()
-    assert adv.budget.sent == ai.GAME_HARD_CAP and adv.budget.exhausted
+    assert adv.budget.sent == 4 and adv.budget.exhausted
     adv._blocked_until = -math.inf
-    assert f"Limite de {ai.GAME_HARD_CAP}" in adv.ask(99999.0, G(600.0))
+    assert "Limite de 4 questions IA atteinte pour aujourd'hui" in adv.ask(99999.0, G(600.0))
 
 
 def test_bug_unusable_answer_gives_the_slot_back():

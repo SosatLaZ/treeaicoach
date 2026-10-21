@@ -95,7 +95,7 @@ l'**Accueil**.
 **Facultatif**
 
 - **Conseils IA** avec ta propre clé (Gemini, Groq, OpenRouter, Anthropic ou Ollama en local) : **F8** pose une
-  question. Au plus 15 appels par partie ; désactivé par défaut.
+  question. Au plus 1000 appels par jour (remis à zéro à minuit) ; désactivé par défaut.
 
 <p align="center">
   <img src="docs/img/launcher-alertes-clair.png" width="410" alt="Page Alertes et voix, thème clair">

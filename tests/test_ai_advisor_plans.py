@@ -221,13 +221,24 @@ def test_jungle_intel_tracker_state_in_context():
     assert ctx["jgl"] == {"c": "Vi", "txt": "Vi farme côté bas", "farm": "bot", "lv": 7}
 
 
-def test_hard_cap_of_ten_requests_per_game():
-    from treeaicoach.ai_advisor import AIBudget, GAME_HARD_CAP
-    b = AIBudget()
-    b.manual = GAME_HARD_CAP - 1
+def test_daily_cap_of_1000_requests_persisted_and_reset_at_midnight(tmp_path):
+    from treeaicoach.ai_advisor import AIBudget, DAILY_HARD_CAP, DailyQuota
+    assert DAILY_HARD_CAP == 1000
+    day = ["2026-10-21"]
+    f = tmp_path / "ai_quota.json"
+    b = AIBudget(DailyQuota(f, today=lambda: day[0]))
+    b.sent += DAILY_HARD_CAP - 1
     assert not b.exhausted
-    b.manual += 1
-    assert b.exhausted
+    b.reset()                                    # a new game does NOT reset the day's counter
+    b.sent += 1
+    assert b.exhausted and b.sent == 1
     assert b.pick("comeback:gold_swing", 1500.0) is None
     assert b.pick("base", 300.0) is None
-    assert b.snapshot()["cap"] == GAME_HARD_CAP == 15
+    assert b.snapshot()["cap"] == 1000 and b.snapshot()["today"] == 1000
+    # persisted: a restart (new quota object on the same file) is still exhausted
+    assert AIBudget(DailyQuota(f, today=lambda: day[0])).exhausted
+    day[0] = "2026-10-22"                        # local midnight passed
+    assert not b.exhausted and b.quota.count == 0
+    # broken file: no crash, counter starts at 0
+    f.write_text("{oops", encoding="utf-8")
+    assert DailyQuota(f, today=lambda: day[0]).count == 0

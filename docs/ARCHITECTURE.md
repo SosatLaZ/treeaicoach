@@ -1058,7 +1058,7 @@ dans ma base pendant le siège, revue IA avec des objets anglais hors méta.
 * **Politique** : une seule requête en vol (drapeau réservé sous verrou : moteur + touche F8 ne lancent jamais
   deux requêtes), génération par partie (une réponse de la partie précédente est jetée), moment clé pendant un
   combat **différé** (`DEFER_S` = 30 s), fenêtres décisives (ace, carrys morts, surnombre, avance) sur le créneau
-  « objective » ; une réponse inutilisable rend son créneau ; `GAME_HARD_CAP` compte les requêtes **envoyées**
+  « objective » ; une réponse inutilisable rend son créneau ; `DAILY_HARD_CAP` (1000 par jour local, compteur `ai_quota.json` dans le dossier utilisateur, remis à zéro à minuit) compte les requêtes **envoyées**
   (`budget.sent`, jamais remboursé).
 * **Fournisseurs** : 429 séparé en `rate` (limite par minute : attente donnée par le fournisseur, 1 nouvel essai
   si ≤ 3 s, recul 15–120 s, jamais bloquant pour l'auto-diagnostic) et `quota` (jour / compte) ; erreur dans un

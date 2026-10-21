@@ -585,7 +585,7 @@ class CoachingMixin:
                 with lock:
                     if budget.exhausted:
                         return None
-                    budget.sent += 1                    # one real request (GAME_HARD_CAP)
+                    budget.sent += 1                    # one real request (DAILY_HARD_CAP)
             return ai_advisor.call_llm(prov, key, model, discord_bot.AI_SYSTEM,
                                        discord_bot.matchup_prompt(me_name, opp_name, role.lower(), allies, enemies),
                                        timeout=discord_bot.AI_TIMEOUT_S)
@@ -984,7 +984,7 @@ class CoachingMixin:
                 sent = msg.startswith("Question envoyée")
                 self._ai_spoken_pending = sent
                 if not sent:
-                    self._say(msg, int(Level.INFO))          # "Limite de 15 questions…", "Pas de partie…"
+                    self._say(msg, int(Level.INFO))          # "Limite de 1000 questions IA … aujourd'hui", "Pas de partie…"
             self._toast("insight", "IA", msg, None, f"ai-ask:{now:.0f}", now)
             return msg
         except Exception:
