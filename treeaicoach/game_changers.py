@@ -762,8 +762,15 @@ def rule_power_window(ctx: M.MacroCtx) -> M.GeniusCall | None:
     return None
 
 
+def rule_cross_objective(ctx: M.MacroCtx) -> M.GeniusCall | None:
+    """team_calls.rule_cross_objective (3+ enemies seen far from a pit: "Baron maintenant")."""
+    from treeaicoach.team_calls import rule_cross_objective as _r
+
+    return _r(ctx)
+
+
 RULES = (rule_level_race, rule_jungler_far, rule_jungler_unseen, rule_baron_setup, rule_fed_defense,
-         rule_facecheck, rule_enemy_buys, rule_power_window)
+         rule_facecheck, rule_enemy_buys, rule_power_window, rule_cross_objective)
 
 
 # ----------------------------------------------------------------------------- voice
@@ -780,7 +787,7 @@ def _obj_word(call: Any) -> str | None:
 
 def voice_class(kind: str) -> str | None:
     """"big" / "lane" voice class of a call kind, None when the kind is never spoken."""
-    if kind in ("fight_won", "jungler_dead", "gc_baron_setup"):
+    if kind in ("fight_won", "jungler_dead", "gc_baron_setup", "gc_cross_obj"):
         return "big"
     if kind in ("plates", "cross_trade", "free_dragon", "wave_recall", "gc_level", "gc_jungler_far",
                 "gc_jungler_unseen", "gc_facecheck", "gc_enemy_buy", "gc_window"):
@@ -851,6 +858,7 @@ def voice_for(call: Any, ctx: Any = None, level: Any = "intermediaire") -> tuple
 def topic_of(kind: str) -> str:
     """Voice topic of a call kind (one topic is never spoken twice within :data:`VOICE_TOPIC_S`)."""
     return {"fight_won": "objective_now", "jungler_dead": "objective_now", "gc_baron_setup": "objective_now",
+            "gc_cross_obj": "objective_now",
             "plates": "opp_gone", "cross_trade": "objective_trade", "free_dragon": "objective_trade",
             "gc_jungler_far": "jungler_side", "gc_jungler_unseen": "jungler_unseen",
             "wave_recall": "recall", "gc_level": "level", "gc_facecheck": "facecheck",
@@ -877,6 +885,12 @@ def voice_phrases() -> list[str]:
             "Jungler invisible : recule !", "Vous êtes devant : balises au Baron.",
             "Pas de buisson sans balise !", "Il a son objet : recule.",
             VOICE_WINDOW_NOW, VOICE_WINDOW_TEAM, VOICE_WINDOW_SCALE]
+    try:
+        from treeaicoach.team_calls import voice_phrases as _team_phrases
+
+        out += _team_phrases()
+    except Exception:
+        log.debug("team call phrases unavailable", exc_info=True)
     return [x for x in dict.fromkeys(out) if len(x) <= VOICE_MAX_CHARS]
 
 

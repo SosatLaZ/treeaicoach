@@ -122,9 +122,10 @@ KIND_COOLDOWN_S: dict[str, float] = {
     # game changers (game_changers.py)
     "gc_level": 20.0, "gc_jungler_far": 150.0, "gc_jungler_unseen": 150.0, "gc_baron_setup": 240.0,
     "gc_fed_defense": 240.0, "gc_facecheck": 180.0, "gc_enemy_buy": 45.0,
+    "gc_cross_obj": 90.0,           # team_calls.py: "Ils sont 4 en bas : Baron maintenant"
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
-URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level"})
+URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level", "gc_cross_obj"})
 #: soft calls (mastermind power windows, game_changers.rule_power_window): no hold against other
 #: calls, any other call replaces them, and they do not start the gap between two calls
 SOFT_KINDS = frozenset({"gc_window"})
@@ -152,6 +153,7 @@ OVERLAPS: dict[str, frozenset[str]] = {
     "gc_fed_defense": frozenset(),
     "gc_facecheck": frozenset({"missing", "deep"}),
     "gc_enemy_buy": frozenset({"item_spike"}),
+    "gc_cross_obj": frozenset({"objective_trade", "pressure", "baron_pick", "objective_window", "jungler_side"}),
 }
 OVERLAP_S = 90.0
 #: a new call waits until the card line has been still this long (no card flicker), unless it is
@@ -908,8 +910,15 @@ def _rule_cross_map(ctx: MacroCtx) -> GeniusCall | None:
         if role != "JUNGLE" and not _ally_jungler_alive(ctx):
             return None
         key = "elder" if _obj_up(ctx, "elder") else "dragon"
+        # their walk back to the pit (the jungler seen / the crowd): the window the team plays with
+        far_uv = [_uv(e.uv) for e in _fresh_enemies(ctx) if geometry.dist(_uv(e.uv), BARON_UV) < 0.22]  # type: ignore[arg-type]
+        if jl.uv is not None and jl.side == "top":
+            far_uv.append(jl.uv)
+        eta = min((geometry.dist(p_, DRAGON_UV) * geometry.MAP_GAME_UNITS / (MOVE_SPEED * 1.1)
+                   for p_ in far_uv if p_ is not None), default=0.0)
+        free_s = f" ({_secs(eta)} s)" if eta >= 10.0 else ""
         return _call("free_dragon", f"free:{key}:{int(ctx.gt // 60)}", OBJ_TITLE[key],
-                     f"Pousse ta vague puis va au {('dragon ancestral' if key == 'elder' else 'dragon')} : il est libre",
+                     f"Pousse ta vague puis va au {('dragon ancestral' if key == 'elder' else 'dragon')} : il est libre{free_s}",
                      f"{who[0].upper() + who[1:]} {where} : ils ne peuvent pas le contester à temps.",
                      DRAGON_UV, tier="high", score=_clamp(0.55 + 0.35 * conf + 0.1 * edge), priority=86,
                      color="safe", genius=True, life=18.0, label="DRAGON",
