@@ -283,6 +283,9 @@ class DiscordPage:
                        "Tu entends l'annonce une seule fois, par Discord. Le bip reste sur le PC.")
         app.switch_row(says, "discord_objectives", "Objectifs",
                        "« Dragon dans 30 secondes », « Baron dans 30 secondes », « Larves dans 30 secondes ».")
+        app.switch_row(says, "discord_team_calls", "Calls d'équipe",
+                       "Les décisions qui gagnent : « Ils sont 4 bot : Baron maintenant », « 3 morts : "
+                       "Baron maintenant », « Dragon dans une minute : vision rivière du bas ».")
         app.switch_row(says, "discord_jungler_seen", "Jungler ennemi vu",
                        "« Jungler ennemi vu top / mid / bot », jamais pendant un gank.")
         app.switch_row(says, "discord_summary", "Résumé de fin de partie",
@@ -584,7 +587,7 @@ class DiscordPage:
     def on_config(self, diff: set[str]) -> None:
         if diff & {"discord_enabled", "discord_token", "discord_user_id", "discord_volume", "discord_only",
                    "discord_objectives", "discord_jungler_seen", "discord_summary", "hotkey_discord_mute",
-                   "discord_ally_ganks", "discord_say_name", "discord_links"}:
+                   "discord_ally_ganks", "discord_say_name", "discord_links", "discord_team_calls"}:
             self._sync_bot()
             self.update(self._read())
 

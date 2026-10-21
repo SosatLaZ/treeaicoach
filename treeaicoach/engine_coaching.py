@@ -95,6 +95,10 @@ class CoachingMixin:
             for kind, title, sub, key in out.toasts:
                 self._toast(kind, title, sub, None, key, t)
             self._macro_show(out, t, gt)
+            for a in out.alerts:                      # end-game calls (ace, carries dead...): team line
+                k = str(a.key)
+                if k.startswith(("urgent:", "macro:")) and not k.startswith("macro:genie"):
+                    self._team_call(None, key=k, text=a.text)
             calls = [a for a in out.alerts if str(a.key).startswith("call:")]
             keep, written = tac.triage_ganks(gank, game, self.scoreboard_summary())
             for a in written:
@@ -164,6 +168,7 @@ class CoachingMixin:
                                         key=f"macro:genie:{c.kind}"), gt)
             except Exception:
                 log.debug("macro call record failed", exc_info=True)
+        self._team_call(c)
         if c.genius:
             self._push_fx(SimpleNamespace(cls="brilliant", rule=f"genie:{c.kind}", reason=c.text, t=t, gt=gt,
                                           key=f"genie:{c.ident}", alias=None, size="big", title="COUP DE GÉNIE"))
@@ -368,11 +373,53 @@ class CoachingMixin:
         except Exception:
             return None
 
+    def _team_call(self, call: Any, key: str = "", text: str = "") -> bool:
+        """"Calls d'équipe" (``discord_team_calls``, off by default): the team sentence of a decisive
+        planner call (``call``, team_calls.team_line) or end-game call (``key`` / ``text``,
+        team_calls.director_line) goes to the bot Discord as kind ``team_call``. Never raises."""
+        try:
+            if not getattr(self._cfg, "discord_team_calls", False):
+                return False
+            from treeaicoach import team_calls
+
+            if call is not None:
+                line, uid = team_calls.team_line(call, None), str(getattr(call, "ident", "") or "")
+            else:
+                line, uid = team_calls.director_line(key, text), key
+            if not line:
+                return False
+            self.team_calls_sent = (getattr(self, "team_calls_sent", []) + [line])[-50:]
+            return self._call("team_call", line, {"key": uid})
+        except Exception:
+            log.debug("team call failed", exc_info=True)
+            return False
+
     def _discord_objectives(self) -> None:
         """"Dragon / Baron / Larves dans 30 secondes" from the objective timers (the bot dedupes per
-        spawn, its switch ``discord_objectives`` is checked by the bot). Every tick, cheap."""
+        spawn, its switch ``discord_objectives`` is checked by the bot), and with the "Calls d'équipe"
+        switch "Dragon dans une minute : vision rivière du bas, soyez là" (team_calls.prep_line).
+        Every tick, cheap."""
         try:
-            if self._objectives is None or not getattr(self._cfg, "discord_objectives", False):
+            if self._objectives is None:
+                return
+            if getattr(self._cfg, "discord_team_calls", False):
+                from treeaicoach import team_calls
+
+                prep = getattr(self, "_discord_obj_done", None)       # reset by the engine each game
+                if prep is None:
+                    prep = self._discord_obj_done = set()
+                for o in self._objectives.states():
+                    rem = getattr(o, "remaining", None)
+                    key = str(getattr(o, "key", "") or "")
+                    if getattr(o, "alive", False) or rem is None:
+                        continue
+                    line = team_calls.prep_line(key, float(rem))
+                    uid = ("prep", key, int(round(float(getattr(o, "next_spawn", 0.0) or 0.0))))
+                    if line and uid not in prep:
+                        prep.add(uid)
+                        self.team_calls_sent = (getattr(self, "team_calls_sent", []) + [line])[-50:]
+                        self._call("team_call", line, {"key": f"prep:{uid[1]}:{uid[2]}"})
+            if not getattr(self._cfg, "discord_objectives", False):
                 return
             done = getattr(self, "_discord_obj_done", None)
             if done is None:

@@ -66,9 +66,9 @@ log = logging.getLogger(__name__)
 
 #: kinds that are spoken in the voice channel (everything else is dropped); ``ally_gank`` = a gank on a
 #: friend of the voice channel (ally_gank.py), said like mine ("Bot gank")
-SPOKEN_KINDS = frozenset({"gank", "ally_gank", "matchup", "objective", "jungler_seen", "summary"})
+SPOKEN_KINDS = frozenset({"gank", "ally_gank", "matchup", "objective", "jungler_seen", "summary", "team_call"})
 #: priority when the queue is full / which job goes first (higher = more urgent)
-PRIORITY = {"gank": 4, "test": 3, "objective": 2, "matchup": 1, "jungler_seen": 0, "summary": 0}
+PRIORITY = {"gank": 4, "team_call": 3, "test": 3, "objective": 2, "matchup": 1, "jungler_seen": 0, "summary": 0}
 #: lifecycle kinds: join the voice channel / leave it (never spoken); ``roster``: my team's players
 #: (Live Client) to match the voice members against (discord_friends.py)
 CONTROL_KINDS = frozenset({"game_start", "game_end", "roster"})
@@ -86,6 +86,9 @@ SEEN_SAME_LANE_S = 45.0      # the jungler seen on the same lane: once per 45 s
 SEEN_AFTER_GANK_S = 20.0     # and never within 20 s of a gank call (a gank says more)
 SEEN_MAX_PER_MIN = 2
 SUMMARY_STALE_S = 180.0
+TEAM_STALE_S = 5.0           # "Ils sont 4 bot : Baron maintenant" later than 5 s is a different map: dropped
+TEAM_GAP_S = 20.0            # two team calls at least this far apart (a team acts on one at a time)
+TEAM_MAX_CHARS = 90
 OBJECTIVE_KEYS = {"dragon": "Dragon", "baron": "Baron", "grubs": "Larves"}
 OBJECTIVE_LEAD_S = 30
 MATCHUP_STALE_S = 90.0
@@ -442,6 +445,8 @@ class CallFilter:
         self._seen_lane: dict[str, float] = {}
         self._seen_times: collections.deque[float] = collections.deque()
         self._all_times: collections.deque[float] = collections.deque()
+        self._team: set[str] = set()
+        self._last_team = -1e9
 
     @staticmethod
     def _recent(times: collections.deque[float], now: float) -> int:
@@ -471,6 +476,14 @@ class CallFilter:
             if k in self._objectives or full or now - self._last_gank < GANK_ANY_GAP_S:
                 return False
             self._objectives.add(k)
+            self._all_times.append(now)
+            return True
+        if kind == "team_call":
+            k = key or "?"
+            if k in self._team or full or now - self._last_gank < GANK_ANY_GAP_S or now - self._last_team < TEAM_GAP_S:
+                return False
+            self._team.add(k)
+            self._last_team = now
             self._all_times.append(now)
             return True
         if kind == "jungler_seen":
@@ -533,12 +546,13 @@ class _Settings:
     mute_hotkey: str = ""
     ally_ganks: bool = True         # discord_ally_ganks: the ganks of the friends in the voice channel
     say_name: bool = False          # discord_say_name: "Paul, bot gank"
+    team_calls: bool = False        # discord_team_calls: "Ils sont 4 bot : Baron maintenant" (team_calls.py)
     links: tuple = ()               # discord_links as sorted (user id, Riot ID) pairs
 
     def wants(self, kind: str) -> bool:
         """The switch of an optional call kind is on (gank / matchup / test: always)."""
         return {"objective": self.objectives, "jungler_seen": self.jungler_seen,
-                "summary": self.summary, "ally_gank": self.ally_ganks}.get(kind, True)
+                "summary": self.summary, "ally_gank": self.ally_ganks, "team_call": self.team_calls}.get(kind, True)
 
     def key(self) -> tuple:
         """What needs a new gateway session when it changes (the rest is read live)."""
@@ -868,6 +882,7 @@ class DiscordCaller:
                           mute_hotkey=str(getattr(cfg, "hotkey_discord_mute", "") or "").strip(),
                           ally_ganks=getattr(cfg, "discord_ally_ganks", True) is not False,
                           say_name=getattr(cfg, "discord_say_name", False) is True,
+                          team_calls=getattr(cfg, "discord_team_calls", False) is True,
                           links=tuple(sorted(df.clean_links(getattr(cfg, "discord_links", None) or {}).items())))
             with self._lock:
                 changed = s.key() != self._settings.key()
@@ -972,6 +987,12 @@ class DiscordCaller:
                         self.dropped += 1
                         return False
                     self._queue_say(_Job("say", say, now, SEEN_STALE_S, "jungler_seen", lane=lane))
+                elif kind == "team_call":
+                    say = " ".join(str(text or "").split())[:TEAM_MAX_CHARS]
+                    if not say or not self._filter.admit("team_call", str(info.get("key") or say)):
+                        self.dropped += 1
+                        return False
+                    self._queue_say(_Job("say", say, now, TEAM_STALE_S, "team_call"))
                 elif kind == "summary":
                     say = " ".join(str(text or "").split())
                     if not say or not self._filter.admit("summary"):

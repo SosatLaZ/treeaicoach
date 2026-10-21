@@ -173,6 +173,8 @@ HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_discord_mute",)
 # bot Discord 2.11: the ganks of the friends in the voice channel (on), their name said (off),
 # the voice members <-> Riot IDs fixed by hand ({Discord user id: Riot ID or "-"}, discord_friends.py)
 BOOL_FIELDS = BOOL_FIELDS + ("discord_ally_ganks", "discord_say_name")
+# bot Discord: the decisive team calls ("Ils sont 4 bot : Baron maintenant", team_calls.py), off
+BOOL_FIELDS = BOOL_FIELDS + ("discord_team_calls",)
 # declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 # self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
@@ -367,6 +369,7 @@ class Config:
     hotkey_discord_mute: str = ""        # push-to-mute of the bot ("" = none)
     discord_ally_ganks: bool = True      # "Bot gank" also for the friends of my voice channel in my team
     discord_say_name: bool = False       # "Paul, bot gank" (the friend's Discord name first)
+    discord_team_calls: bool = False     # "Ils sont 4 bot : Baron maintenant" in the voice channel
     voice_assistant: bool = False        # « Hey Tree AI » + question -> spoken AI answer (offline Vosk)
     voice_assistant_mic: str = ""        # input device name ("" = Windows default)
     hotkey_voice_ask: str = ""           # push-to-talk: listen to a question without the wake phrase
