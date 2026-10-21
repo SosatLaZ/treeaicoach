@@ -1,6 +1,6 @@
 {
-  "version": "2.13.0",
-  "sha256": "cb3a26f89b08fdbca178dd557bbfd8d59aac5872db987d5f6a5551260a282cbd",
-  "size": 100055337,
-  "notes": "2.13 : plus de minimap en double, capture de la fenêtre du jeu seule (Windows 11), parties miroir sans confusion, conseils à la pièce d'or."
+  "version": "2.13.1",
+  "sha256": "2b45376474d0d8e488e45a111e86d578dd52e915c79e565bf342cdf3aca909ed",
+  "size": 95373899,
+  "notes": "2.13.1 : exe allégé (modules inutilisés retirés)."
 }
