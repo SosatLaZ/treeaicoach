@@ -282,6 +282,12 @@ class DiagRecorder:
             meta["capture_why"] = capture_why((meta["health"] or {}).get("capture"))
         except Exception:
             pass
+        try:   # our own overlay marks kept out of the frames? (exclusion per window, probe, cleaning)
+            from treeaicoach.overlay_guard import GUARD
+
+            meta["overlay_capture_guard"] = GUARD.snapshot()
+        except Exception:
+            pass
         _write_json(self.folder / "meta.json", meta)
         try:   # "Empreinte de config": what makes this PC analyse differently (fingerprint.py)
             fp = getattr(eng, "config_fingerprint", None)

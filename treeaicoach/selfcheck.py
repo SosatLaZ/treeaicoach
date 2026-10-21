@@ -175,6 +175,7 @@ MSG: dict[str, str] = {
     "unfocused": "Overlay masqué : le jeu n'est pas au premier plan",
     "occluded": "Une fenêtre couvre la minimap : overlay et analyse en pause",
     "overlay_dead": "Overlay arrêté : redémarre TreeAI",
+    "overlay_captured": "L'overlay apparaît dans la capture : repères déplacés à côté de la minimap",
     "voice_dead": "Voix indisponible : bips seulement pour les dangers",
     "voice_slow": "Voix lente : bips seulement pour les dangers",
     "ai": "IA indisponible ({why}) : plans par règles pour cette partie",
@@ -243,6 +244,7 @@ class Snapshot:
     # 6 overlay
     overlay_wanted: bool = False          # overlay enabled + visible + Windows
     overlay_frames: int | None = None     # overlay thread frame counter (None: no overlay thread)
+    overlay_capture: str | None = None    # overlay_guard status: ok | unknown | off | refused | failed
     # 7 voice
     voice_backend: str | None = None
     voice_expected: bool = False          # a real speech backend is expected (Windows)
@@ -800,12 +802,17 @@ class SelfCheck:
             dead = st.frames_t is not None and t - st.frames_t >= OVERLAY_STALL_S
         else:
             st.frames = st.frames_t = None
-        key = "dead" if dead else ("occluded" if occ else ("unfocused" if unf else None))
+        # our own marks seen in the detector's frames (probe marker found / exclusion refused):
+        # the overlay is already in safe mode (nothing over the minimap); explained once
+        leak = bool(live and s.overlay_wanted and s.overlay_capture in ("failed", "refused"))
+        key = "dead" if dead else ("captured" if leak else
+                                   ("occluded" if occ else ("unfocused" if unf else None)))
         if key is not None:
             # explained ONCE per game (event log, report); the status stays while it lasts
             quiet = key in st.explained
             st.explained.add(key)
             text, level = {"dead": (MSG["overlay_dead"], 2), "occluded": (MSG["occluded"], 1),
+                           "captured": (MSG["overlay_captured"], 1),
                            "unfocused": (MSG["unfocused"], 0)}[key]
             self._raise(t, "overlay", text, level, quiet=quiet, record=key != "unfocused")
         elif "overlay" in self._problems:
@@ -1320,6 +1327,12 @@ def snapshot_from_engine(eng: Any, t: float) -> Snapshot:
                 s.overlay_frames = None if not st else int(st.get("frames") or 0)
             except Exception:
                 s.overlay_frames = None
+            try:
+                from treeaicoach.overlay_guard import GUARD
+
+                s.overlay_capture = GUARD.status()
+            except Exception:
+                s.overlay_capture = None
         # 7 voice
         voice = eng._voice
         s.voice_backend = str(getattr(voice, "backend", "") or "") or None

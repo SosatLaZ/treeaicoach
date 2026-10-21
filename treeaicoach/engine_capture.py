@@ -256,6 +256,11 @@ class CaptureMixin:
                 return None
             elif st == "stale":
                 self._capture_note = MSG_FROZEN
+        guard = self._overlay_guard()
+        rect_t = (rect.x, rect.y, rect.w, rect.h)
+        if guard is not None:
+            # self-verification: our probe marker found in this frame = the overlay is captured
+            guard.check_frame(frame, rect_t)
         if self._locate_method == "fallback" and early:
             # game start: analyse the default square only when it looks like the minimap
             try:
@@ -307,7 +312,23 @@ class CaptureMixin:
                 return None
         self._set_state(EngineState.RUNNING,
                         MSG_FALLBACK if self._locate_method == "fallback" else MSG_RUNNING)
+        if guard is not None:
+            # defence in depth: while no probe proved the exclusion, the pixels our overlay drew
+            # over the minimap are inpainted before detection (never read as champions)
+            frame = guard.clean_frame(frame, rect_t)
         return frame
+
+    def _overlay_guard(self) -> Any:
+        """The overlay capture guard (``self.capture_guard`` for tests, else the shared one)."""
+        g = getattr(self, "capture_guard", None)
+        if g is not None:
+            return g
+        try:
+            from treeaicoach.overlay_guard import GUARD
+
+            return GUARD
+        except Exception:
+            return None
 
     def _occlusion(self, rect: Rect) -> bool | None:
         """Is the minimap covered by another window? (``occlusion_probe`` for tests; live

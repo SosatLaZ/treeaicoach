@@ -145,6 +145,8 @@ OVERLAY_MODES = ("minimap", "radar", "off")
 #: SetWindowDisplayAffinity values (WDA_EXCLUDEFROMCAPTURE: Windows 10 2004 / build 19041+).
 WDA_NONE = 0x00
 WDA_EXCLUDEFROMCAPTURE = 0x11
+#: the capture affinity of every overlay window is re-read this often (re-applied when lost)
+EXCLUSION_RECHECK_S = 10.0
 EXCLUDE_MIN_BUILD = 19041
 
 
@@ -799,6 +801,19 @@ class LayeredWindow:
             log.debug("SetWindowDisplayAffinity failed", exc_info=True)
             return False
 
+    def capture_affinity(self) -> int | None:
+        """Current ``GetWindowDisplayAffinity`` value (None: unknown). Never raises."""
+        try:
+            api = self._api
+            if api.GetWindowDisplayAffinity is None or not self.hwnd:
+                return None
+            cur = api.wt.DWORD(0)
+            if api.GetWindowDisplayAffinity(self.hwnd, api.ctypes.byref(cur)):
+                return int(cur.value)
+        except Exception:
+            log.debug("GetWindowDisplayAffinity failed", exc_info=True)
+        return None
+
     def include_in_capture(self) -> None:
         """Undo :meth:`exclude_from_capture` (``WDA_NONE``). Never raises."""
         try:
@@ -1351,8 +1366,19 @@ class OverlayManager:
 
     def __init__(self, cfg: Any, state_provider: Callable[[], Any],
                  on_moved: Callable[[str, int, int], None] | None = None, *,
-                 window_factory: Callable[[str], Any] | None = None) -> None:
+                 window_factory: Callable[[str], Any] | None = None,
+                 capture_guard: Any = None) -> None:
         self._lock = threading.Lock()
+        from treeaicoach import overlay_guard
+
+        #: keeps our marks out of the detector's frames (shared with the engine on Windows; a
+        #: private non-enforcing one for fake windows / tests unless one is passed)
+        if capture_guard is None:
+            capture_guard = overlay_guard.GUARD if (sys.platform == "win32" and window_factory is None) \
+                else overlay_guard.CaptureGuard(enforce=False)
+        self._guard = capture_guard
+        self._excl_done: dict[str, Any] = {}
+        self._excl_checked = -1e9
         #: ``(name) -> window`` with the :class:`LayeredWindow` interface (benchmarks / tests off
         #: Windows: the real loop runs with fake windows); None = real layered windows
         self._window_factory = window_factory
@@ -1456,7 +1482,15 @@ class OverlayManager:
         """Map mode really used ("minimap" | "radar" | "off"), see :func:`resolve_overlay_mode`."""
         with self._lock:
             cfg = self._cfg
-        return resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
+        return self._mode(cfg)
+
+    def _mode(self, cfg: Any) -> str:
+        """Configured mode, "minimap" -> "radar" while the capture guard is in safe mode (our marks
+        would be in the detector's frames: nothing is drawn over the minimap)."""
+        mode = resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
+        if mode == "minimap" and self._guard.safe_mode():
+            return "radar"
+        return mode
 
     # ------------------------------------------------------------------ thread
     def _fail(self, what: str) -> None:
@@ -1483,12 +1517,11 @@ class OverlayManager:
             for name in FLASH_WINDOWS + ("radar", "minimap", "timers", "hud", "toasts") + WORLD_WINDOWS:
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved) \
                     if self._window_factory is None else self._window_factory(name)
-            # The minimap layer is captured by default (visible in the user's screenshots):
-            # it never draws portraits, so the detector does not re-detect it. Optional
-            # exclusion: cfg.overlay_hide_from_capture (applied in _sync_capture_exclusion).
+            # every window that can cover the minimap is hidden from capture (overlay_guard):
+            # otherwise the detector reads our own rings / tags / timers
             with self._lock:
                 cfg0 = self._cfg
-            self._sync_capture_exclusion(windows["minimap"], cfg0, force_log=True)
+            self._sync_capture_exclusion(windows, cfg0, force_log=True)
         except Exception:
             self._fail("window creation")
             for w in windows.values():
@@ -1502,19 +1535,53 @@ class OverlayManager:
         except Exception:  # pragma: no cover
             pass
 
-    def _sync_capture_exclusion(self, mm_win: "LayeredWindow", cfg: Any, force_log: bool = False) -> None:
-        """Apply ``cfg.overlay_hide_from_capture`` to the minimap window (only calls
-        SetWindowDisplayAffinity when exclusion is wanted, or to undo a previous one)."""
+    def _sync_capture_exclusion(self, windows: Any, cfg: Any, force_log: bool = False,
+                                now: float | None = None) -> None:
+        """Apply ``cfg.overlay_hide_from_capture`` to EVERY overlay window (a single window =
+        the minimap one): ``WDA_EXCLUDEFROMCAPTURE`` checked with ``GetWindowDisplayAffinity``,
+        re-applied when a window was re-created (new hwnd) and re-verified every
+        :data:`EXCLUSION_RECHECK_S`; undone when the setting is turned off. The result feeds the
+        capture guard (:mod:`treeaicoach.overlay_guard`: safe mode when it is off / refused)."""
+        if not isinstance(windows, dict):
+            windows = {"minimap": windows}
+        now = time.monotonic() if now is None else float(now)
         want = bool(getattr(cfg, "overlay_hide_from_capture", False))
-        if want and not self.capture_excluded:
-            self.capture_excluded = mm_win.exclude_from_capture()
-            log.info("Overlay: minimap layer hidden from capture: %s",
-                     "OK" if self.capture_excluded else "indisponible")
-        elif not want and self.capture_excluded:
-            mm_win.include_in_capture()
-            self.capture_excluded = False
+        guard = self._guard
+        guard.set_wanted(want)
+        done: dict[str, Any] = self._excl_done
+        recheck = now - self._excl_checked >= EXCLUSION_RECHECK_S
+        if recheck:
+            self._excl_checked = now
+        changed = False
+        for name, w in windows.items():
+            key = getattr(w, "hwnd", id(w))
+            if want:
+                if done.get(name) in (key, ("refused", key)) and not recheck:
+                    continue
+                if done.get(name) == key and recheck:
+                    aff = w.capture_affinity() if hasattr(w, "capture_affinity") else None
+                    if aff is None or aff == WDA_EXCLUDEFROMCAPTURE:
+                        continue
+                    log.warning("Overlay %s: capture exclusion lost (affinity %s): re-applied", name, aff)
+                ok = bool(w.exclude_from_capture()) if hasattr(w, "exclude_from_capture") else False
+                done[name] = key if ok else ("refused", key)
+                guard.note_exclusion(name, ok)
+                changed = True
+            elif name in done:
+                if not isinstance(done.pop(name), tuple) and hasattr(w, "include_in_capture"):
+                    w.include_in_capture()
+                changed = True
+        mm_win = windows.get("minimap")
+        mm_ok = bool(want and mm_win is not None and done.get("minimap") == getattr(mm_win, "hwnd", id(mm_win)))
+        if changed and mm_ok != self.capture_excluded:
+            log.info("Overlay: windows hidden from capture: %s",
+                     ", ".join(n for n, k in done.items() if not isinstance(k, tuple)) or "aucune")
+        if changed and want and not mm_ok:
+            log.info("Overlay: minimap layer hidden from capture: indisponible")
+        elif changed and not want and self.capture_excluded:
             log.info("Overlay: minimap layer visible in captures again")
-        elif force_log:
+        self.capture_excluded = mm_ok
+        if force_log:
             log.info("Overlay: mode %s, minimap layer %s", self.effective_mode,
                      "hidden from capture" if self.capture_excluded else "visible in captures")
 
@@ -1557,7 +1624,7 @@ class OverlayManager:
                     cfg, move, visible = self._cfg, self._move_mode, self._visible
                     custom = dict(self._custom)
                 fps = self._target_fps(cfg)
-                self._sync_capture_exclusion(windows["minimap"], cfg)
+                self._sync_capture_exclusion(windows, cfg, now=t0)
                 if click_through == move:     # move mode changed
                     for name in ("radar", "hud"):
                         windows[name].set_click_through(not move)
@@ -1827,12 +1894,16 @@ class OverlayManager:
 
     def _refresh(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any, move: bool,
                  custom: dict[str, tuple[int, int]], flash_key: Any, now: float | None = None) -> Any:
+        from treeaicoach import overlay_guard
         from treeaicoach import overlay_render as orr
 
         now = time.monotonic() if now is None else float(now)
         self._tier = 0
         scr, mm = self._screen_for(api, state)
-        mode = resolve_overlay_mode(getattr(cfg, "overlay_mode", "minimap"), self.capture_excluded)
+        mode = self._mode(cfg)
+        guard = self._guard
+        demo0 = move and state is self._demo_state
+        probe = mm is not None and not demo0 and guard.want_probe(now)
         # ---- marks drawn exactly over the real minimap (transparent window, same physical rect),
         #      at the positions predicted for NOW (they follow the icons between two detections)
         mm_win = windows["minimap"]
@@ -1842,22 +1913,42 @@ class OverlayManager:
         if mode == "minimap" and mm is not None and not demo:
             st = orr.with_predicted(state)
             # calm: 2 px position steps at <= 4 uploads / s; something matters: 1 px at <= 10 / s
-            sig = minimap_signature(st, mm, now, 1.0 if fast else MM_CALM_QUANT_PX, self._mm_anchors,
-                                    MM_DEAD_PX_FAST if fast else MM_DEAD_PX_CALM)
-            if self._due("minimap", sig, now, 1.0 / (MM_FAST_HZ if fast else MM_CALM_HZ)) \
+            sig = (minimap_signature(st, mm, now, 1.0 if fast else MM_CALM_QUANT_PX, self._mm_anchors,
+                                     MM_DEAD_PX_FAST if fast else MM_DEAD_PX_CALM), probe)
+            old_sig = self._sig.get("minimap")
+            if (probe and not (isinstance(old_sig, tuple) and len(old_sig) == 2 and old_sig[1] is True)) \
+                    or self._due("minimap", sig, now, 1.0 / (MM_FAST_HZ if fast else MM_CALM_HZ)) \
                     or not (mm_win.visible or self._mm_blank):
+                self._sig["minimap"], self._sig_t["minimap"] = sig, now
                 # no "TreeAI" mark: at the minimap corner it covered my own portrait (red side)
                 img = self._render("minimap", orr.render_minimap, st, mm[2], mm[3], now=now, show_frame=False)
+                if probe:      # self-verification marker (overlay_guard): seen in the capture = leak
+                    img = overlay_guard.stamp_marker(img)
                 if img.ndim == 3 and img.shape[2] == 4 and not img[..., 3].any():
                     # nothing to draw: no window at all over the game (not an empty transparent one)
                     mm_win.hide()
+                    guard.note_hidden(now)
                     self._mm_blank = True
                     self._last_img.pop("minimap", None)
                 else:
                     self._mm_blank = False
                     self._show(mm_win, "minimap", img, mm[0], mm[1], dedupe=True)
+                    guard.note_drawn(mm, img, now)
+                    if probe:
+                        guard.probe_shown(mm, (img.shape[1], img.shape[0]), now)
                     self._note_mm_update(state, mm, img)
+        elif probe:
+            # safe mode (nothing drawn over the minimap): the marker alone, to notice when the
+            # exclusion works again
+            if self._sig.get("minimap") != "probe" or not mm_win.visible:
+                img = overlay_guard.stamp_marker(np.zeros((mm[3], mm[2], 4), np.uint8))
+                self._sig["minimap"] = "probe"
+                self._show(mm_win, "minimap", img, mm[0], mm[1], dedupe=True)
+                guard.note_drawn(mm, img, now)
+                guard.probe_shown(mm, (img.shape[1], img.shape[0]), now)
         else:
+            if mm_win.visible:
+                guard.note_hidden(now)
             mm_win.hide()
             self._mm_blank = False
             self._sig.pop("minimap", None)
