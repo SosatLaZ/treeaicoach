@@ -74,17 +74,18 @@ ALLY_BLUE = (78, 152, 218)
 # TreeAI in-game identity (HUD card, toasts): graphite panels, sky/cyan accents, our own
 # warning / danger colours -- deliberately NOT Riot's gold / navy client look (third-party policy:
 # an overlay must not mimic the game UI) and branded "TreeAI".
-TAI_PANEL = (15, 18, 24)        # #0F1218 graphite
-TAI_PANEL_TOP = (30, 35, 45)    # #1E232D
-TAI_EDGE = (71, 85, 105)        # #475569 slate hairline
-TAI_TEXT = (241, 245, 249)      # #F1F5F9
-TAI_MUTED = (148, 163, 184)     # #94A3B8
+TAI_PANEL = (14, 17, 15)        # #0E110F graphite tinted green (docs/DESIGN.md SURFACE)
+TAI_PANEL_TOP = (28, 33, 30)    # #1C211E
+TAI_EDGE = (62, 71, 66)         # #3E4742 hairline (DESIGN.md LINE_STRONG, lifted for the game)
+TAI_TEXT = (228, 232, 229)      # #E4E8E5 (DESIGN.md TEXT)
+TAI_MUTED = (164, 173, 168)     # #A4ADA8 (DESIGN.md MUTED)
 TAI_INFO = (56, 189, 248)       # #38BDF8 sky (calm accent)
-TAI_GO = (52, 211, 153)         # #34D399 emerald
-TAI_GO_SOFT = (134, 239, 172)   # #86EFAC
-TAI_WARN = (251, 191, 36)       # #FBBF24 amber
-TAI_DANGER = (248, 81, 73)      # #F85149
+TAI_GO = (155, 216, 74)         # #9BD84A sap green: the one accent (DESIGN.md ACCENT)
+TAI_GO_SOFT = (190, 232, 130)   # #BEE882
+TAI_WARN = (232, 162, 58)        # #E8A23A (DESIGN.md WARNING)
+TAI_DANGER = (229, 72, 77)       # #E5484D (DESIGN.md DANGER)
 TAI_BRAND = (132, 225, 100)     # #84E164 TreeAI leaf
+TAI_PLATE = (12, 14, 13)        # #0C0E0D solid plate behind text (DESIGN.md BG)
 TAI_THREAT = {0: TAI_GO, 1: TAI_WARN, 2: TAI_DANGER}
 BORDER_ALPHA = 0.85
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
@@ -207,6 +208,8 @@ class OverlayState:
     show_timers: bool = True
     buffs: list = field(default_factory=list)          # (kind "baron"|"elder", killer team|None, end game time)
     enemy_respawns: list = field(default_factory=list)  # game time each dead enemy respawns (Live Client)
+    # build strip (build_strip.BuildStrip): the meta build as 6 small icons next to the card, config ``hud_build_strip``
+    build_strip: Any = None
 
 
 #: A visible champion whose data is older than this (s) - or stacked under another icon, or not
@@ -1766,7 +1769,7 @@ def render_timers(state: Any, screen: Any = None, max_w: int | None = None) -> n
             W = int(min(W, max(40, int(max_w))))
         H = int(math.ceil(row_h * len(rows) + 2 * pad * 0.6 + 2))
         cv_ = Canvas(W, H)
-        cv_.rrect(1, 1, W - 2, H - 2, max(3.0, 4 * m["k"]), (11, 13, 17), 0.9, border=TAI_EDGE, border_alpha=0.8,
+        cv_.rrect(1, 1, W - 2, H - 2, max(3.0, 4 * m["k"]), TAI_PLATE, 0.9, border=TAI_EDGE, border_alpha=0.8,
                   border_w=max(1.0, 0.9 * m["k"]))
         y0 = 1 + pad * 0.6
         for i, (text, rgb) in enumerate(rows):
@@ -1776,6 +1779,110 @@ def render_timers(state: Any, screen: Any = None, max_w: int | None = None) -> n
         return cv_.to_bgra()
     except Exception:
         log.debug("timers strip failed", exc_info=True)
+        return None
+
+
+# ======================================================================================
+# Build strip: the meta build as one row of small icons next to the card (build_strip.py)
+# ======================================================================================
+#: Strip font (px at scale 1, docs/DESIGN.md: never below 12 px) and icon side (px at scale 1).
+STRIP_FONT_PX = 13.0
+STRIP_ICON_PX = 26.0
+STRIP_SLOTS = 6
+
+
+def strip_visible(state: Any, now: float | None = None) -> bool:
+    """The build strip shows in base, just after the shop (item card lingering), while dead and
+    while the details key is held (``hud_detailed``); never in a fight (danger, outnumbered)."""
+    try:
+        strip = getattr(state, "build_strip", None)
+        if strip is None or not getattr(strip, "items", None):
+            return False
+        dead = bool(getattr(state, "me_dead", False))
+        gt = state.game_time if state.game_time is not None and _finite(state.game_time) else None
+        if gt is not None and gt < 150.0 and not dead:
+            return False                              # the start in the fountain is the client's shop
+        if dead:
+            return True
+        if _finite(state.threat_level or 0) and int(state.threat_level or 0) >= 1:
+            return False
+        near_e, near_a = _near_counts(state)
+        if near_e >= 2 and near_e > near_a + 1:
+            return False
+        card = getattr(state, "item_card", None)
+        return bool(getattr(state, "in_base", False) or getattr(state, "hud_detailed", False)
+                    or (card is not None and getattr(card, "shop", False)))
+    except Exception:
+        return False
+
+
+def _strip_metrics(screen: Any) -> dict[str, Any]:
+    try:
+        from treeaicoach import layout as _lay
+
+        k = _lay.overlay_scale(_rect_tuple(screen) or (0, 0, 1920, 1080), "build")
+    except Exception:
+        k = 1.0
+    f = get_font(max(12, int(round(STRIP_FONT_PX * k))), "semibold")
+    side = max(18, int(round(STRIP_ICON_PX * k)))
+    gap, pad = max(3, int(round(4 * k))), max(4, int(round(5 * k)))
+    txt = int(math.ceil(_cap_height(f))) + max(4, int(round(4 * k)))
+    return {"k": k, "font": f, "side": side, "gap": gap, "pad": pad, "txt": txt}
+
+
+def build_strip_size(screen: Any) -> tuple[int, int]:
+    """Window size of the strip (layout slot): :data:`STRIP_SLOTS` icons and the gold line under them."""
+    m = _strip_metrics(screen)
+    w = 2 * m["pad"] + STRIP_SLOTS * m["side"] + (STRIP_SLOTS - 1) * m["gap"]
+    h = 2 * m["pad"] + m["side"] + m["txt"]
+    return int(w), int(h)
+
+
+def render_build_strip(state: Any, screen: Any = None, max_w: int | None = None) -> np.ndarray | None:
+    """The build strip (premultiplied BGRA): bought items dimmed with a check, the next one with a
+    green outline and the gold still missing under it. None when there is nothing to show."""
+    try:
+        strip = getattr(state, "build_strip", None)
+        if strip is None or not getattr(strip, "items", None):
+            return None
+        from treeaicoach.item_card import fmt_gold
+
+        scr = _rect_tuple(screen) or _rect_tuple(getattr(state, "screen_rect", None)) or (0, 0, 1920, 1080)
+        m = _strip_metrics(scr)
+        k, f, side, gap, pad = m["k"], m["font"], m["side"], m["gap"], m["pad"]
+        items = list(strip.items)[:STRIP_SLOTS]
+        W = 2 * pad + len(items) * side + (len(items) - 1) * gap
+        H = 2 * pad + side + m["txt"]
+        cv_ = Canvas(W, H)
+        cv_.rrect(0.5, 0.5, W - 1, H - 1, max(3.0, 4 * k), TAI_PLATE, 0.92, border=TAI_EDGE, border_alpha=0.85,
+                  border_w=max(1.0, 0.9 * k))
+        for i, it in enumerate(items):
+            x, y = pad + i * (side + gap), float(pad)
+            cx, cy = x + side / 2, y + side / 2
+            icon = _item_icon(None, it.item_id)
+            owned, nxt = it.status == "owned", it.status == "next"
+            if icon is not None:
+                patch = sprite_patch(icon, side, 0.5 if owned else 1.0 if nxt else 0.78, grey=owned)
+                cv_.image(cx, cy, patch)
+            else:
+                cv_.rrect(x, y, side, side, 2.5 * k, (40, 46, 42), 0.95)
+            cv_.rrect(x - 0.5, y - 0.5, side + 1, side + 1, 2.5 * k, None, 0.0,
+                      border=TAI_GO if nxt else TAI_EDGE, border_alpha=1.0 if nxt else 0.7,
+                      border_w=max(1.6, 1.8 * k) if nxt else max(1.0, 0.9 * k))
+            if owned:                                  # a check: bought
+                pts = ((cx - 0.24 * side, cy + 0.02 * side), (cx - 0.07 * side, cy + 0.21 * side),
+                       (cx + 0.27 * side, cy - 0.21 * side))
+                for w_, rgb, a in ((max(3.0, 0.20 * side), TAI_PLATE, 0.7), (max(1.8, 0.11 * side), TAI_GO, 1.0)):
+                    cv_.capsule(*pts[0], *pts[1], w_, rgb, a)
+                    cv_.capsule(*pts[1], *pts[2], w_, rgb, a)
+            if nxt:                                    # the gold still missing, under the icon
+                text, rgb = (f"{fmt_gold(it.missing)} PO", TAI_TEXT) if it.missing > 0 else ("achète", TAI_GO)
+                tw = text_width(text, f)
+                tx = min(max(cx - tw / 2, pad * 0.6), W - pad * 0.6 - tw)
+                cv_.text(tx, y + side + m["txt"] / 2 + 1, text, f, rgb, 1.0, shadow=0.0)
+        return cv_.to_bgra()
+    except Exception:
+        log.debug("build strip failed", exc_info=True)
         return None
 
 
@@ -2470,7 +2577,7 @@ def _compact_layout_for(c: dict[str, Any], width: int) -> dict[str, Any]:
         ch = pad + ITEM_ROW_H * k * z + pad
         return {"k": k, "c": c, "ms": ms, "mt": mt, "cx0": cx0, "cw": cw, "ch": ch, "left": left, "right": right,
                 "f_word": get_font(round(17 * k), "display"), "f_line": get_font(round(15.5 * k), "semibold"),
-                "f_sub": get_font(round(12.5 * k), "regular"), "f_price": get_font(round(13 * k), "semibold"),
+                "f_sub": get_font(round(13 * k), "regular"), "f_price": get_font(round(13 * k), "semibold"),
                 "lines": [c["line"]], "icon_w": ITEM_ICON * k * z, "rows": [("item", ITEM_ROW_H * k * z)], "gap": 0.0,
                 "z": z,
                 "pad_t": pad, "height": int(math.ceil(mt + ch + mb)), "danger": False}
@@ -2531,14 +2638,10 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
         bg = _mix(TAI_PANEL, accent, 0.32)
         cv_.rrect(x0, y0, cw, ch, rad, bg, 0.97, border=accent, border_alpha=1.0, border_w=max(1.2, 1.4 * k))
     elif c["mode"] == "item" and getattr(c.get("item"), "buy_now", False):
-        # the gold buys it now: green glow + green border (the highlight), same dark plate
-        for i, a in enumerate((0.30, 0.16, 0.07)):
-            g = (i + 1) * 1.3 * k
-            cv_.rrect(x0 - g, y0 - g, cw + 2 * g, ch + 2 * g, rad + g, None, 0.0, border=TAI_GO, border_alpha=a,
-                      border_w=max(1.0, 1.3 * k))
-        cv_.rrect(x0, y0, cw, ch, rad, (11, 13, 17), 0.96, border=TAI_GO, border_alpha=1.0, border_w=max(1.5, 1.6 * k))
+        # the gold buys it now: green border (the highlight), same dark plate, no halo (docs/DESIGN.md)
+        cv_.rrect(x0, y0, cw, ch, rad, TAI_PLATE, 0.96, border=TAI_GO, border_alpha=1.0, border_w=max(1.5, 1.6 * k))
     else:                                              # solid dark plate (contrast first)
-        cv_.rrect(x0, y0, cw, ch, rad, (11, 13, 17), 0.96, border=TAI_EDGE, border_alpha=0.9,
+        cv_.rrect(x0, y0, cw, ch, rad, TAI_PLATE, 0.96, border=TAI_EDGE, border_alpha=0.9,
                   border_w=max(1.0, 0.9 * k))
     phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
     a_acc = 1.0 if c["mode"] != "danger" else 0.8 + 0.2 * math.sin(phase * 2 * math.pi)
@@ -2557,7 +2660,7 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
                 cv_.image(left + 8 * k, y + 9.5 * k, sprite_patch(c["icon"], 17 * k))
                 tx = left + lay["icon_w"]
             for i, ln in enumerate(lay["lines"]):
-                cv_.text(tx, y + 19 * k * i + 9.5 * k, ln, lay["f_line"], WHITE, fa, shadow=0.0)
+                cv_.text(tx, y + 19 * k * i + 9.5 * k, ln, lay["f_line"], TAI_TEXT, fa, shadow=0.0)
         y += h + (lay["gap"] if idx == 0 else 0.0)
     return cv_.to_bgra()
 
@@ -2585,18 +2688,22 @@ def _draw_item_row(cv_: Canvas, lay: dict[str, Any], c: dict[str, Any], y: float
         f_name = get_font(round(13.5 * k), "semibold")
         if text_width(name, f_name) > right - tx and card is not None and not getattr(card, "buy_ids", ()):
             name = str(card.name)                      # a long name: the name alone, never cut
-    cv_.text(tx, y + h / 2 - 9 * k, fit_text(name, f_name, right - tx), f_name, WHITE, 1.0, shadow=0.0)
+    row = 9.5 * k * z
+    cv_.text(tx, y + h / 2 - row, fit_text(name, f_name, right - tx), f_name, TAI_TEXT, 1.0, shadow=0.0)
     # line 2: the price (green = the gold buys it now) · why / what is missing
     price = f"{fmt_gold(getattr(card, 'shown_price', getattr(card, 'price', 0)))} PO"
     pw = text_width(price + "  ", lay["f_price"])
-    cv_.text(tx, y + h / 2 + 10 * k, price, lay["f_price"], TAI_GO if ok else _mix(TAI_MUTED, WHITE, 0.45), 1.0, shadow=0.0)
+    cv_.text(tx, y + h / 2 + row, price, lay["f_price"], TAI_GO if ok else TAI_MUTED, 1.0, shadow=0.0)
     avail = right - tx - pw
     sub = str(getattr(card, "sub", "") or "")
-    if sub and text_width("· " + sub, lay["f_sub"]) > avail:
-        sub = str(getattr(card, "sub_short", "") or sub)
+    # the longest reason that fits whole: full, short, then without its win rate (never a cut "(55…")
+    for cand in (sub, str(getattr(card, "sub_short", "") or ""), sub.split(" (", 1)[0].split(" · ", 1)[0]):
+        if cand and text_width("· " + cand, lay["f_sub"]) <= avail:
+            sub = cand
+            break
     if sub:
-        cv_.text(tx + pw, y + h / 2 + 10 * k, fit_text("· " + sub, lay["f_sub"], avail), lay["f_sub"],
-                 _mix(TAI_MUTED, WHITE, 0.25), 1.0, shadow=0.0)
+        cv_.text(tx + pw, y + h / 2 + row, fit_text("· " + sub, lay["f_sub"], avail), lay["f_sub"],
+                 TAI_MUTED, 1.0, shadow=0.0)
 
 
 def hud_size(state: OverlayState, width: int = 280) -> tuple[int, int]:

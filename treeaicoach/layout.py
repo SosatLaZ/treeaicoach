@@ -78,7 +78,7 @@ CONDITIONAL = frozenset({"votes", "death_recap", "respawn", "stats_panel"})
 SOFT = frozenset({"shop"})
 
 #: Element names (priority order) and the rails of the named card positions.
-ELEMENTS = ("card", "toasts", "timers", "badge_big", "badge_small")
+ELEMENTS = ("card", "build", "toasts", "timers", "badge_big", "badge_small")
 CARD_POSITIONS = ("left_of_minimap", "above_minimap", "top_left", "top_right", "left_middle", "custom")
 
 
@@ -150,11 +150,11 @@ def ui_unit(screen: Sequence[int]) -> float:
 #: renderers are written for). Compact by default (user feedback 2.5.0: "les trucs sont trop
 #: gros"): the card, banners and badges are clearly smaller than League's own panels, the
 #: timers keep League's small-text size. Text never goes below :data:`MIN_FONT_PX`.
-SIZE: dict[str, float] = {"card": 0.86, "timers": 0.92, "toasts": 0.76, "badge": 0.66}
+SIZE: dict[str, float] = {"card": 0.86, "timers": 0.92, "toasts": 0.76, "badge": 0.66, "build": 0.9}
 #: Smallest text we draw in game (px, docs/DESIGN.md: never below 12 px).
 MIN_FONT_PX = 12.0
 #: Base font (px at scale 1) of each element's main text line, for the legibility floor.
-BASE_FONT_PX: dict[str, float] = {"card": 15.5, "timers": 13.0, "toasts": 14.0, "badge": 17.0}
+BASE_FONT_PX: dict[str, float] = {"card": 15.5, "timers": 13.0, "toasts": 14.0, "badge": 17.0, "build": 13.0}
 #: League's ``GlobalScale`` (HUD scale slider, 0..1) is mapped to a HUD size factor ONLY upwards
 #: (unverified mapping: 0.5 = the measured captures, 1.0 = +25 %); a smaller HUD keeps the
 #: measured zones (never a risk of drawing over a bigger real HUD).
@@ -433,6 +433,7 @@ class Prefs:
     hud_xy: tuple[int, int] | None = None
     plays_position: str = "top_center"
     timers: bool = True
+    build: bool = True               # the build strip next to the card (config ``hud_build_strip``)
     toasts: bool = True
     badges: bool = True
     detailed: bool = False
@@ -469,6 +470,7 @@ class Prefs:
                        hud_position=pos, hud_xy=xy_t,
                        plays_position=str(getattr(cfg, "plays_position", "top_center") or "top_center"),
                        timers=bool(getattr(cfg, "overlay_timers", True)),
+                       build=bool(getattr(cfg, "hud_build_strip", True)),
                        toasts=bool(getattr(cfg, "toasts_enabled", True)),
                        badges=bool(getattr(cfg, "plays_enabled", True)),
                        detailed=det, hud_scale=hs, flip=None if flip is None else bool(flip),
@@ -607,6 +609,28 @@ def _toast_rails(c: _Ctx, spec: ElementSpec) -> list[tuple[_Rail, str, int]]:
     return [(_Rail("below_announcer", (x, below), (x, below + 0.10 * c.U)), "top", 1),
             (_Rail("top_band", (x, top_band), (x, top_band)), "top", 1),
             (_Rail("below_announcer_far", (x, below), (x, sy + 0.42 * sh - ey - eh)), "top", 1)]
+
+
+def _build_rails(c: _Ctx, spec: ElementSpec, card: Slot | None) -> list[tuple[_Rail, str, int]]:
+    """The build strip: beside the card (its bottom edge, on the side away from the minimap), else
+    right above the card's slot, else in the minimap's column."""
+    sx, sy, sw, sh = c.scr
+    x_in = c.inner_x(spec.w)
+    rails: list[tuple[_Rail, str, int]] = []
+    if card is not None:
+        cx_, cy_ = card.content[0], card.content[1] + card.content[3]
+        x_s = cx_ - c.g - spec.w if c.side != "left" else card.content[0] + card.content[2] + c.g
+        rails.append((_Rail("beside_card", (x_s, cy_ - spec.h), (x_s, cy_ - spec.h - 0.06 * c.U)), "bottom", 1))
+        x_a = card.content[0] + card.content[2] - spec.w if c.side != "left" else card.content[0]
+        y_a = card.content[1] - c.g - spec.h
+        rails.append((_Rail("above_card", (x_a, y_a), (x_a, y_a - 0.12 * c.U)), "bottom", 1))
+        # the tall F6 card: along the card's whole side, then sliding away from it
+        rails.append((_Rail("beside_card_far", (x_s, cy_ - spec.h), (x_s, cy_ - spec.h - 0.45 * c.U), "far"), "bottom", 1))
+        x_b = x_s - 0.25 * c.U if c.side != "left" else x_s + 0.25 * c.U
+        rails.append((_Rail("beside_card_wide", (x_s, cy_ - spec.h), (x_b, cy_ - spec.h), "far", 0.02 * c.U),
+                      "bottom", 1))
+    rails.append((_Rail("minimap_column", (x_in, c.ybot - spec.h), (x_in, sy + c.m)), "bottom", 1))
+    return rails
 
 
 def _timers_rails(c: _Ctx, spec: ElementSpec, card: Slot | None) -> list[tuple[_Rail, str, int]]:
@@ -798,6 +822,10 @@ def solve(screen: Any, minimap: Any, specs: dict[str, ElementSpec], prefs: Prefs
                 rails = _card_rails(c, spec.w, spec.h, prefs.hud_position)
                 halign = halign_in if prefs.hud_position in ("left_of_minimap", "above_minimap") else "left"
                 placed["card"] = _place("card", spec, rails, c, placed, halign)
+        # ---- build strip (one row of item icons next to the card; shown in base / dead / details key)
+        spec = specs.get("build")
+        if spec is not None and prefs.build and prefs.hud_enabled:
+            placed["build"] = _place("build", spec, _build_rails(c, spec, placed.get("card")), c, placed, halign_in)
         # ---- timers strip (hangs outside the minimap frame, inner side, top)
         spec = specs.get("timers")
         if spec is not None and prefs.timers:
@@ -842,6 +870,9 @@ def element_specs(screen: Any, minimap: Any = None, detailed: bool = False,
             w = ov.hud_width(scr)
             h = orr.card_max_height(w, detailed)
             out["card"] = ElementSpec(w, h, orr.card_envelope(w, h, detailed))
+        if "build" in want:
+            bw, bh = orr.build_strip_size(scr)
+            out["build"] = ElementSpec(bw, bh)
         if "timers" in want:
             tw, th = orr.timers_strip_size(scr, detailed)
             out["timers"] = ElementSpec(tw, th)

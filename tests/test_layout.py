@@ -172,7 +172,8 @@ def test_user_positions_are_respected():
         lay = L.layout_for(scr, mm, replace(Config(), hud_position=pos))
         others += [p for p in _check_layout(pos, lay, []) if "card" not in p.split(":")[1].split(" ")[1]]
     assert others == []                                                # the rest still avoids the card
-    off = L.layout_for(scr, mm, NS(overlay_timers=False, toasts_enabled=False, plays_enabled=False))
+    off = L.layout_for(scr, mm, NS(overlay_timers=False, toasts_enabled=False, plays_enabled=False,
+                                   hud_build_strip=False))
     assert set(off.slots) == {"card"}
 
 

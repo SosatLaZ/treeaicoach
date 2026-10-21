@@ -94,7 +94,7 @@ def run(out: Path, zoom: bool = True) -> dict[str, Any]:
                     sizes[p.group] = bb
             row = {"format": name, "scale_card": round(L.overlay_scale(shot.screen, "card"), 3),
                    "card_w": ov.hud_width(shot.screen),
-                   "fonts": {g: round(_font_px(placed, g), 1) for g in ("card", "toasts", "timers", "badge_big")},
+                   "fonts": {g: round(_font_px(placed, g), 1) for g in ("card", "build", "toasts", "timers", "badge_big")},
                    "sizes": {g: (bb[2], bb[3], round(100.0 * bb[2] * bb[3] / area, 2)) for g, bb in sizes.items()},
                    "game_overlaps": len(res["game"]), "our_overlaps": len(res["ours"]),
                    "details": [f"{o['element']} x {o['with']} ({o['area']})" for o in res["game"] + res["ours"]],

@@ -1518,7 +1518,7 @@ class OverlayManager:
             # "toasts": banners at the top-centre (praise / Tab insights), captured like the HUD
             # "world0" / "world1": small click-through windows of the ward guide in the game view
             # "timers": the timers strip hanging outside the minimap frame (layout slot)
-            for name in FLASH_WINDOWS + ("radar", "minimap", "timers", "hud", "toasts") + WORLD_WINDOWS:
+            for name in FLASH_WINDOWS + ("radar", "minimap", "timers", "build", "hud", "toasts") + WORLD_WINDOWS:
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved) \
                     if self._window_factory is None else self._window_factory(name)
             # every window that can cover the minimap is hidden from capture (overlay_guard):
@@ -1810,6 +1810,28 @@ class OverlayManager:
             x, y = slot.place(img.shape[1], img.shape[0])
             self._show(win, "timers", img, x, y, dedupe=True)
 
+    def _refresh_build(self, win: "LayeredWindow | None", state: Any, cfg: Any, scr: RectT, lay: Any,
+                       move: bool, now: float) -> None:
+        """Build strip (the meta build as 6 small icons next to the HUD card): its own small window
+        in the layout slot "build", shown in base / dead / with the details key, hidden in fights."""
+        if win is None:
+            return
+        from treeaicoach import overlay_render as orr
+
+        slot = lay.slot("build") if lay is not None else None
+        if move or slot is None or not getattr(cfg, "hud_build_strip", True) or not getattr(cfg, "hud_enabled", True) \
+                or not orr.strip_visible(state, now):
+            win.hide()
+            self._sig.pop("build", None)
+            return
+        if self._due("build", (getattr(state, "build_strip", None), slot.rect), now) or not win.visible:
+            img = self._render("build", orr.render_build_strip, state, scr, slot.rect[2])
+            if img is None:
+                win.hide()
+                return
+            x, y = slot.place(img.shape[1], img.shape[0])
+            self._show(win, "build", img, x, y, dedupe=True)
+
     def _refresh_world(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any,
                        move: bool) -> None:
         """Ward guide markers in the game view (``state.world``): one small window per marker, hidden
@@ -2015,6 +2037,8 @@ class OverlayManager:
             hud_win.hide()
         # ---- timers strip (outside the minimap frame; never over the map's bases / buttons)
         self._refresh_timers(windows.get("timers"), state, cfg, scr, lay, move, now)
+        # ---- build strip (beside the card; its own slot in the same layout)
+        self._refresh_build(windows.get("build"), state, cfg, scr, lay, move, now)
         # ---- toasts (top-centre, right under League's kill announcer; one at a time): 20 Hz while
         #      sliding in / fading out, 8 Hz while held (remaining-time line), identical images not re-sent
         tanim = toasts_animating(state)

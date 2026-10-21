@@ -452,6 +452,7 @@ class OverlayStateMixin:
             out["item_card"] = self._item_card(rec, game, in_base, now, me_seen=me_uv is not None)
             st_ic = getattr(self, "_item_card_state", None)
             out["buy_tail"] = bool(st_ic is not None and out["item_card"] is None and not in_base and st_ic.tail(now))
+            out["build_strip"] = self._build_strip(rec, game, now)
             out["ai_counter"] = self.ai_budget_text() or None
             res = self._role_resolver      # compact HUD: objective note only for the objectives my role plays
             role = res.my_role() if res is not None and hasattr(res, "my_role") else None
@@ -516,6 +517,37 @@ class OverlayStateMixin:
             return card
         except Exception:
             log.debug("item card failed", exc_info=True)
+            return None
+
+    def _build_strip(self, rec: Any, game: Any, now: float) -> Any:
+        """The meta build as a strip of icons (build_strip.py), None when off / no meta build. The
+        build is looked up at most every 10 s per champion and role. Starts the icons' download."""
+        try:
+            if game is None or game.me is None or not getattr(self._cfg, "hud_build_strip", True):
+                return None
+            from treeaicoach import build_strip, item_icons
+            from treeaicoach import itemization as iz
+
+            me = game.me
+            role = getattr(me, "position", None) or None
+            key = (str(me.champion_alias or ""), str(role or ""))
+            memo = getattr(self, "_strip_build", None)
+            if memo is None or memo[0] != key or now - memo[1] > 10.0:
+                memo = self._strip_build = (key, now, iz.meta_build(key[0], role))
+            build = memo[2]
+            if build is None:
+                return None
+            items = iz.load_items()
+            gold = _finite(getattr(game, "current_gold", 0.0)) or 0.0
+            nxt = int(getattr(rec, "item_id", 0) or 0) or None
+            strip = build_strip.make_strip(build, me.items or (), gold, items, nxt)
+            if strip is not None and getattr(self, "_strip_icons_asked", None) != strip.ids:
+                self._strip_icons_asked = strip.ids
+                item_icons.prefetch({"item": list(strip.ids)},
+                                    allow_network=bool(getattr(self._cfg, "allow_network", True)))
+            return strip
+        except Exception:
+            log.debug("build strip failed", exc_info=True)
             return None
 
     def _trivial_component_buy(self, rec: Any, game: Any, now: float) -> bool:

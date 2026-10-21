@@ -74,6 +74,8 @@ class OverlayPage:
         app.switch_row(hud, "item_advice", "Prochain objet", "L'objet à acheter au prochain retour.")
         app.switch_row(hud, "hud_item_card", "Achats",
                        "En base, mort ou avec l'or : l'objet à acheter, avec son icône et son prix.")
+        app.switch_row(hud, "hud_build_strip", "Barre de build",
+                       f"Le build du moment en 6 petites icônes, en base ou en maintenant {self._key('hotkey_details')}.")
         app.switch_row(hud, "win_prob_hud", "Probabilité de victoire", "Dans le panneau et sur l'Accueil.")
 
         scr = self.page.section("À l'écran")

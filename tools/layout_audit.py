@@ -54,7 +54,7 @@ DEFAULT_BEFORE = "e321a1f"           # TreeAI Coach 2.2.0 (placement before the 
 RectT = tuple[int, int, int, int]
 
 #: Elements that can be on screen at the same time (variants of one slot are alternatives).
-GROUPS = ("card", "toasts", "timers", "badge_big", "badge_small", "world_ground", "world_edge")
+GROUPS = ("card", "build", "toasts", "timers", "badge_big", "badge_small", "world_ground", "world_edge")
 ZONE_RGB = {"minimap": (90, 200, 255), "minimap_buttons": (90, 200, 255), "ally_row": (255, 200, 60),
             "votes": (255, 140, 40), "kill_feed": (255, 90, 90), "scoreboard": (200, 200, 200),
             "announcer": (255, 120, 220), "bottom_bar": (120, 255, 140), "stats_panel": (120, 220, 140),
@@ -146,8 +146,13 @@ def sample_states(shot: Shot) -> dict[str, Any]:
     rec = SimpleNamespace(item_id=6631, item_name="Estropieur", reason="objet 2 du build du moment (55.4 % de victoires)",
                           meta=True, win_rate=55.4, buy_now_names=(), buy_now=(), completes=True, extras=())
     item = orr.OverlayState(**base, in_base=True, item_card=ic.build_card(rec, 3400, [3006], shop=True))
+    from treeaicoach.build_strip import BuildStrip, StripItem
+
+    strip = BuildStrip((StripItem(3006, "owned"), StripItem(6631, "next", 2450), StripItem(3142, "todo"),
+                        StripItem(3071, "todo"), StripItem(3053, "todo"), StripItem(3156, "todo")))
+    build = replace(item, build_strip=strip)
     return {"card": card, "card_danger": danger, "card_detailed": detailed, "timers": timers, "minimap": mmap,
-            "card_item": item}
+            "card_item": item, "build": build}
 
 
 def _toast_view(kind: str) -> Any:
@@ -215,6 +220,11 @@ def place_new(shot: Shot, states: dict[str, Any], cfg: Any = None) -> tuple[dict
             if slot is not None:
                 x, y = slot.place(img.shape[1], img.shape[0])
                 out.append(Placed("card", variant, img, x, y, 15.5 * ov.hud_width(scr) / 300.0))
+        slot = layout_.slot("build")
+        strip = orr.render_build_strip(states["build"], scr, slot.rect[2]) if slot is not None else None
+        if strip is not None and slot is not None:
+            x, y = slot.place(strip.shape[1], strip.shape[0])
+            out.append(Placed("build", "icons", strip, x, y, orr._strip_metrics(scr)["font"].size))
         for variant, kind in (("toast", "toast"), ("banner", "banner")):
             img = tst.render_toast_layer([_toast_view(kind)], tst.scale_for_screen(scr))
             slot = layout_.slot("toasts")
