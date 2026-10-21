@@ -123,6 +123,8 @@ except Exception:
     pass
 
 excludes = excludes_extra + [
+    # unused heavy modules (exe < 100 MB: GitHub file limit): Pillow AVIF codec, MFC bindings
+    "PIL._avif", "PIL.AvifImagePlugin", "win32ui", "pythonwin", "win32uiole", "dde",
     # training / development only
     "torch", "torchvision", "torchaudio", "onnx", "onnxscript", "tensorboard",
     "matplotlib", "scipy", "pandas", "sympy",
