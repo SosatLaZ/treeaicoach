@@ -211,6 +211,7 @@ ENGINE_RESTART_FIELDS = frozenset({"hotkey_diag"})
 #: Settings deliberately NOT shown in Réglages, with the reason (tests/test_ui_settings.py checks that
 #: every other Config field has a control: no setting is dead or unreachable).
 HIDDEN_SETTINGS: dict[str, str] = {
+    "discord_only": "remplacé par « Où passe le son de l'app » (discord_route)",
     "manual_minimap_rect": "écrit par « Calibrer la minimap »",
     "icon_scale_by_res": "appris pendant les parties",
     "objective_lead_s": "annonces des objectifs : réglées par le niveau de voix",
