@@ -1108,6 +1108,11 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 self._selfcheck_tick(float(t))         # watchdog (~1 Hz): our own problems -> actions
             except Exception:
                 pass
+            if float(t) - getattr(self, "_player_intel_t", -1e18) >= 1.0:     # players' rank / streaks (off)
+                self._player_intel_t = float(t)
+                from treeaicoach import player_intel  # noqa: PLC0415
+
+                player_intel.engine_tick(self, float(t))                       # never raises, never blocks
             return out
 
     def _step(self, t: float) -> list[Alert]:

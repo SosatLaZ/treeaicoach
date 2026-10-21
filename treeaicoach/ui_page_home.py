@@ -73,6 +73,23 @@ class HomePage:
         self.cs.hide()
         self.page.add(self.cs)
 
+        # --- players of the game in progress (player_intel.py, off by default): by champion, no names
+        self.pl = W.Section("Joueurs", "Infos publiques du client LoL, pour cette partie seulement.")
+        pbox = QtWidgets.QWidget()
+        pl = QtWidgets.QVBoxLayout(pbox)
+        pl.setContentsMargins(16, 12, 16, 14)
+        pl.setSpacing(4)
+        self.pl_enemies = W.label("", "secondary", wrap=True)
+        self.pl_allies = W.label("", "secondary", wrap=True)
+        pl.addWidget(W.label("Ennemis", "headline"))
+        pl.addWidget(self.pl_enemies)
+        pl.addWidget(W.label("Alliés", "headline"))
+        pl.addWidget(self.pl_allies)
+        self.pl.add(pbox)
+        self.pl.hide()
+        self._pl_sig: Any = None
+        self.page.add(self.pl)
+
         # --- level
         from treeaicoach.skill import SKILL_HELP, SKILL_LEVELS, normalize  # noqa: PLC0415
 
@@ -93,6 +110,9 @@ class HomePage:
         app.switch_row(quick, "overlay_enabled", "Overlay", "Marques sur la minimap et panneau de consignes.")
         app.switch_row(quick, "safe_mode", "Mode sûr", "Plus d'alertes de gank ni de suivi du jungler "
                                                        "(Ctrl+Maj+S). Pour une partie tranquille.")
+        app.switch_row(quick, "player_intel", "Infos des joueurs (rang, séries)",
+                       "Rang, LP et séries des joueurs de ta partie, lus dans le client LoL. Gardé le temps "
+                       "de la partie, jamais enregistré.")
 
         # --- try it
         tri = self.page.section("Essayer sans jouer")
@@ -181,7 +201,30 @@ class HomePage:
             W.set_prop(self.start_btn, "kind", "secondary" if running else "primary")
             self.demo_btn.setText("Arrêter" if app.demo else "Lancer")
         self.sync_quick()
+        self._update_players(snap)
         self._update_system(snap)
+
+    def _update_players(self, snap: dict[str, Any]) -> None:
+        """The "Joueurs" card during a game when "Infos des joueurs" is on (lock-only read, no I/O)."""
+        lines: Any = None
+        try:
+            from treeaicoach import player_intel  # noqa: PLC0415
+
+            if snap.get("key") == "RUNNING" and not self.app.demo and player_intel.enabled(self.app.cfg):
+                players = player_intel.get_default_watcher().snapshot()
+                lines = player_intel.card(players) if players else (("Lecture du client LoL…",), ())
+        except Exception:
+            log.debug("players card failed", exc_info=True)
+        if lines == self._pl_sig:
+            return
+        self._pl_sig = lines
+        if lines is None:
+            self.pl.hide()
+            return
+        enemies, allies = lines
+        self.pl_enemies.setText("\n".join(ui_text(x) for x in enemies) or "Aucune info")
+        self.pl_allies.setText("\n".join(ui_text(x) for x in allies) or "Aucune info")
+        self.pl.show()
 
     def _update_system(self, snap: dict[str, Any]) -> None:
         app, W = self.app, self.app.W

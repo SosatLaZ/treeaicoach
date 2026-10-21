@@ -1,0 +1,238 @@
+{
+ "accountId": 0,
+ "games": {
+  "gameCount": 10,
+  "games": [
+   {
+    "gameId": 6000000000,
+    "gameCreation": 1790000000000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "stats": {
+       "win": true
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000001,
+    "gameCreation": 1789996400000,
+    "gameDuration": 200,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "stats": {
+       "win": true
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000002,
+    "gameCreation": 1789992800000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "stats": {
+       "win": true
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000003,
+    "gameCreation": 1789989200000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "stats": {
+       "win": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000004,
+    "gameCreation": 1789985600000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 7,
+      "stats": {
+       "win": true
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000005,
+    "gameCreation": 1789982000000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 7,
+      "stats": {
+       "win": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000006,
+    "gameCreation": 1789978400000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "stats": {
+       "win": true
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000007,
+    "gameCreation": 1789974800000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "stats": {
+       "win": true
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000008,
+    "gameCreation": 1789971200000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "stats": {
+       "win": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6000000009,
+    "gameCreation": 1789967600000,
+    "gameDuration": 1700,
+    "queueId": 420,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "stats": {
+       "win": true
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-x"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

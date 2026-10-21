@@ -1,0 +1,13 @@
+{
+ "queueMap": {
+  "RANKED_SOLO_5x5": {
+   "queueType": "RANKED_SOLO_5x5",
+   "tier": "NONE",
+   "division": "NA",
+   "leaguePoints": 0,
+   "wins": 0,
+   "losses": 0
+  }
+ },
+ "queues": []
+}

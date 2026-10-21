@@ -1,0 +1,11 @@
+{
+ "phase": "ChampSelect",
+ "gameData": {
+  "gameId": 0,
+  "queue": {
+   "id": 420
+  },
+  "teamOne": [],
+  "teamTwo": []
+ }
+}

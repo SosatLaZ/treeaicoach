@@ -335,3 +335,36 @@ def test_discord_page_shows_the_bot(home: Path) -> None:
         assert not view.timer.isActive()                               # polls only while shown
     finally:
         app.close()
+
+
+def test_players_card_on_home_only_when_on(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accueil "Joueurs" card (player_intel.py): hidden while the switch is off, by champion when on."""
+    from treeaicoach import player_intel as pi
+
+    w = pi.PlayerIntelWatcher(client=None, resolve=lambda c: None)
+    with w._lock:
+        w._players = {"k1": pi.PlayerIntel("LeeSin", "Lee Sin", False, "JUNGLE", ranked_loaded=True, tier="PLATINUM",
+                                           division=2, lp=45, wins=30, losses=28, history_loaded=True, games=10,
+                                           streak=-3, champ_games=2),
+                      "k2": pi.PlayerIntel("Lulu", "Lulu", True, "UTILITY")}
+    monkeypatch.setattr(pi, "get_default_watcher", lambda: w)
+    app, _v, _e = _build(home)
+    try:
+        app.show()
+        _pump(app, 0.5)
+        app.show_page("home")
+        view = app.page_views["home"]
+        app._refresh_status()
+        assert view.pl.isHidden()                          # off by default
+        app.cfg.player_intel = True
+        app.cfg.lcu_enabled = True
+        app._refresh_status()
+        assert not view.pl.isHidden()
+        txt = view.pl_enemies.text()
+        assert txt.startswith("Lee Sin (jungler) · Platine 2 · 45 LP") and "3 défaites d'affilée" in txt
+        assert "Lulu (support)" in view.pl_allies.text()
+        app.cfg.player_intel = False
+        app._refresh_status()
+        assert view.pl.isHidden()
+    finally:
+        app.close()

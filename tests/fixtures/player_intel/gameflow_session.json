@@ -1,0 +1,121 @@
+{
+ "phase": "InProgress",
+ "gameClient": {
+  "running": true
+ },
+ "gameData": {
+  "gameId": 7000000001,
+  "isCustomGame": false,
+  "queue": {
+   "id": 420,
+   "type": "RANKED_SOLO_5x5",
+   "isRanked": true
+  },
+  "teamOne": [
+   {
+    "puuid": "puuid-me",
+    "championId": 86,
+    "selectedPosition": "TOP",
+    "summonerId": 0
+   },
+   {
+    "puuid": "puuid-a2",
+    "championId": 64,
+    "selectedPosition": "JUNGLE",
+    "summonerId": 0
+   },
+   {
+    "puuid": "puuid-a3",
+    "championId": 103,
+    "selectedPosition": "MIDDLE",
+    "summonerId": 0
+   },
+   {
+    "puuid": "puuid-a4",
+    "championId": 222,
+    "selectedPosition": "BOTTOM",
+    "summonerId": 0
+   },
+   {
+    "puuid": "puuid-a5",
+    "championId": 117,
+    "selectedPosition": "UTILITY",
+    "summonerId": 0
+   }
+  ],
+  "teamTwo": [
+   {
+    "puuid": "puuid-e1",
+    "championId": 122,
+    "selectedPosition": "",
+    "summonerId": 0
+   },
+   {
+    "puuid": "puuid-e2",
+    "championId": 11,
+    "selectedPosition": "",
+    "summonerId": 0
+   },
+   {
+    "puuid": "puuid-e3",
+    "championId": 7,
+    "selectedPosition": "",
+    "summonerId": 0
+   },
+   {
+    "puuid": "puuid-e4",
+    "championId": 51,
+    "selectedPosition": "",
+    "summonerId": 0
+   },
+   {
+    "puuid": "puuid-e5",
+    "championId": 412,
+    "selectedPosition": "",
+    "summonerId": 0
+   }
+  ],
+  "playerChampionSelections": [
+   {
+    "puuid": "puuid-me",
+    "championId": 86
+   },
+   {
+    "puuid": "puuid-a2",
+    "championId": 64
+   },
+   {
+    "puuid": "puuid-a3",
+    "championId": 103
+   },
+   {
+    "puuid": "puuid-a4",
+    "championId": 222
+   },
+   {
+    "puuid": "puuid-a5",
+    "championId": 117
+   },
+   {
+    "puuid": "puuid-e1",
+    "championId": 122
+   },
+   {
+    "puuid": "puuid-e2",
+    "championId": 11
+   },
+   {
+    "puuid": "puuid-e3",
+    "championId": 7
+   },
+   {
+    "puuid": "puuid-e4",
+    "championId": 51
+   },
+   {
+    "puuid": "puuid-e5",
+    "championId": 412
+   }
+  ]
+ }
+}

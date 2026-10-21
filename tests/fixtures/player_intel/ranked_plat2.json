@@ -1,0 +1,30 @@
+{
+ "queueMap": {
+  "RANKED_SOLO_5x5": {
+   "queueType": "RANKED_SOLO_5x5",
+   "tier": "PLATINUM",
+   "division": "II",
+   "leaguePoints": 45,
+   "wins": 30,
+   "losses": 28
+  },
+  "RANKED_FLEX_SR": {
+   "queueType": "RANKED_FLEX_SR",
+   "tier": "GOLD",
+   "division": "I",
+   "leaguePoints": 10,
+   "wins": 5,
+   "losses": 7
+  }
+ },
+ "queues": [
+  {
+   "queueType": "RANKED_SOLO_5x5",
+   "tier": "PLATINUM",
+   "division": "II",
+   "leaguePoints": 45,
+   "wins": 30,
+   "losses": 28
+  }
+ ]
+}
