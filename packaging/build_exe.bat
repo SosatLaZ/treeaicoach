@@ -91,15 +91,10 @@ if errorlevel 1 (
     set "ERRMSG=PyInstaller a échoué. Regarde les messages ci-dessus."
     goto fail
 )
-rem one-dir app above, zipped into the small bootstrapper exe (unpacked once, not at every launch)
+rem dist\TreeAICoach.exe = small launcher; the app is dist\TreeAICoach-app (packaging\make_release.py publishes it)
 "%VPY%" -m PyInstaller packaging\bootstrap.spec --noconfirm --clean
 if errorlevel 1 (
     set "ERRMSG=PyInstaller (lanceur) a échoué. Regarde les messages ci-dessus."
-    goto fail
-)
-"%VPY%" packaging\make_bundle.py --stub dist\TreeAICoachBoot.exe --app dist\TreeAICoach --out dist\TreeAICoach.exe
-if errorlevel 1 (
-    set "ERRMSG=PyInstaller a échoué. Regarde les messages ci-dessus."
     goto fail
 )
 if not exist "dist\TreeAICoach.exe" (
@@ -112,7 +107,7 @@ echo.
 echo [5/5] Autotest de l'exécutable...
 set "SELFTEST=%CD%\build\selftest.txt"
 if exist "%SELFTEST%" del /q "%SELFTEST%"
-start "TreeAICoach selftest" /wait "dist\TreeAICoach.exe" --selftest --selftest-out "%SELFTEST%"
+start "TreeAICoach selftest" /wait "dist\TreeAICoach-app\TreeAICoach-app.exe" --selftest --selftest-out "%SELFTEST%"
 set "SELFTEST_RC=%ERRORLEVEL%"
 if exist "%SELFTEST%" type "%SELFTEST%"
 echo.

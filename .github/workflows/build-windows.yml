@@ -63,7 +63,6 @@ jobs:
         run: |
           pyinstaller packaging/treeaicoach.spec --noconfirm --clean
           pyinstaller packaging/bootstrap.spec --noconfirm --clean
-          python packaging/make_bundle.py --stub dist/TreeAICoachBoot.exe --app dist/TreeAICoach --out dist/TreeAICoach.exe
 
       - name: Autotest de l'exe et test de l'interface
         env:
@@ -72,7 +71,7 @@ jobs:
           # Runs the windowed exe (Start-Process -Wait also waits for the one-file child process),
           # kills it after the timeout, returns its exit code.
           function Invoke-Exe([string[]] $ExeArgs, [int] $TimeoutSec) {
-            $exe = (Resolve-Path 'dist\TreeAICoach.exe').Path
+            $exe = (Resolve-Path 'dist\TreeAICoach-app\TreeAICoach-app.exe').Path
             $job = Start-Job -ScriptBlock {
               param($exe, $exeArgs, $wd)
               $p = Start-Process -FilePath $exe -ArgumentList $exeArgs -WorkingDirectory $wd -Wait -PassThru
