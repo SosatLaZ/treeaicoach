@@ -3,6 +3,15 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.13.0 · 21 octobre 2026
+
+- **Plus de minimap en double :** le radar est supprimé ; les repères restent sur ta vraie minimap.
+- **Capture de la fenêtre du jeu seule** (Windows 11) : rien de ce qui est affiché par-dessus n'est analysé.
+- **Partie miroir** (toi Yone contre Yone) : l'équipe vient de la couleur du contour, le Yone d'en face ne peut plus
+  être pris pour toi.
+- **Conseils à la pièce d'or :** « Il te manque 137 PO pour Estropieur : 8 sbires (2 vagues) », course aux niveaux
+  exacte (« niveau 6 contre 5 »).
+
 ## 2.12.0 · 21 octobre 2026
 
 - **Détection : l'overlay ne se voit plus lui-même.** Sur tes captures, 59 % des images analysées contenaient nos propres
