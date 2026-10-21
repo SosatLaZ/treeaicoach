@@ -598,7 +598,7 @@ def apply_update(new_exe: Path, info: UpdateInfo | None = None, *, target: Path 
             if not paths.is_frozen():
                 return ApplyResult(False, "Lancé depuis les sources : la mise à jour automatique ne concerne "
                                           "que la version .exe (utilise git pull).")
-            target = Path(sys.executable)
+            target = paths.launcher_exe()       # the bootstrapper exe, not the extracted app
         if os.name != "nt" and popen is None:
             return ApplyResult(False, "La mise à jour automatique ne fonctionne que sous Windows.")
         if info is not None and not verify_file(new_exe, info.sha256, info.size):

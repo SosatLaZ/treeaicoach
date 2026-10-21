@@ -1475,7 +1475,14 @@ class CoachApp:
 
     def run(self, smoke_seconds: float | None = None) -> int:
         self._no_dialogs = self._no_dialogs or smoke_seconds is not None
+        try:
+            from treeaicoach import startup  # noqa: PLC0415
+
+            startup.mark("window_built")
+        except Exception:
+            pass
         self.show()
+        self.QtCore.QTimer.singleShot(0, self.win, _log_first_paint)
         if smoke_seconds is not None:
             try:
                 delay = max(0, int(float(smoke_seconds) * 1000))
@@ -1662,6 +1669,16 @@ def _default_demo_source() -> Any:
     from treeaicoach.demo import DemoSource  # noqa: PLC0415
 
     return DemoSource()
+
+
+def _log_first_paint() -> None:
+    """First event-loop turn after show(): the window is on screen; logs the startup timeline."""
+    try:
+        from treeaicoach import startup  # noqa: PLC0415
+
+        startup.log_summary("first_paint")
+    except Exception:
+        pass
 
 
 def run_app(cfg: Config, *, demo: bool = False, smoke_seconds: float | None = None,

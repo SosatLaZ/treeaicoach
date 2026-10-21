@@ -91,6 +91,17 @@ if errorlevel 1 (
     set "ERRMSG=PyInstaller a échoué. Regarde les messages ci-dessus."
     goto fail
 )
+rem one-dir app above, zipped into the small bootstrapper exe (unpacked once, not at every launch)
+"%VPY%" -m PyInstaller packaging\bootstrap.spec --noconfirm --clean
+if errorlevel 1 (
+    set "ERRMSG=PyInstaller (lanceur) a échoué. Regarde les messages ci-dessus."
+    goto fail
+)
+"%VPY%" packaging\make_bundle.py --stub dist\TreeAICoachBoot.exe --app dist\TreeAICoach --out dist\TreeAICoach.exe
+if errorlevel 1 (
+    set "ERRMSG=PyInstaller a échoué. Regarde les messages ci-dessus."
+    goto fail
+)
 if not exist "dist\TreeAICoach.exe" (
     set "ERRMSG=dist\TreeAICoach.exe est introuvable après la construction."
     goto fail

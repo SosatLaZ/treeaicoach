@@ -86,7 +86,7 @@ def _exec_spec(monkeypatch: pytest.MonkeyPatch, fake_hooks: bool = True) -> dict
         calls["exe"] = (args, kwargs)
         return "EXE"
 
-    def collect(*args: Any, **kwargs: Any) -> str:  # must NOT be used: one-file build
+    def collect(*args: Any, **kwargs: Any) -> str:  # one-dir app (zipped into the bootstrapper exe)
         calls["collect"] = (args, kwargs)
         return "COLLECT"
 
@@ -184,9 +184,9 @@ def test_spec_is_valid_python():
     ast.parse((PACKAGING / "launcher.py").read_text(encoding="utf-8"))
 
 
-def test_spec_builds_one_file_windowed_exe(monkeypatch):
+def test_spec_builds_one_dir_windowed_app(monkeypatch):
     calls = _exec_spec(monkeypatch)
-    assert "collect" not in calls, "one-file build: no COLLECT step"
+    assert "collect" in calls, "one-dir build: COLLECT step (bundled into the bootstrapper)"
     a: _FakeAnalysis = calls["analysis"]
     args, kw = calls["exe"]
     assert kw["name"] == "TreeAICoach"
@@ -196,9 +196,10 @@ def test_spec_builds_one_file_windowed_exe(monkeypatch):
     icon = kw["icon"] if isinstance(kw["icon"], str) else kw["icon"][0]
     assert Path(icon).resolve() == ICON_ICO.resolve()
     assert Path(kw["version"]).resolve() == VERSION_FILE.resolve()
-    # one-file: binaries and datas are passed to EXE itself
-    assert a.binaries in args and a.datas in args and a.scripts in args
-    assert not kw.get("exclude_binaries", False)
+    assert a.scripts in args and kw.get("exclude_binaries") is True
+    cargs, ckw = calls["collect"]
+    assert a.binaries in cargs and a.datas in cargs and ckw["name"] == "TreeAICoach"
+    assert ckw.get("upx") is False
 
 
 def test_spec_paths_are_absolute_and_exist(monkeypatch):

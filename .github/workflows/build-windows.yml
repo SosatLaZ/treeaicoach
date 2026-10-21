@@ -60,7 +60,10 @@ jobs:
         run: python -m pytest -q
 
       - name: Construire TreeAICoach.exe (PyInstaller)
-        run: pyinstaller packaging/treeaicoach.spec --noconfirm --clean
+        run: |
+          pyinstaller packaging/treeaicoach.spec --noconfirm --clean
+          pyinstaller packaging/bootstrap.spec --noconfirm --clean
+          python packaging/make_bundle.py --stub dist/TreeAICoachBoot.exe --app dist/TreeAICoach --out dist/TreeAICoach.exe
 
       - name: Autotest de l'exe et test de l'interface
         env:

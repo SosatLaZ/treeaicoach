@@ -305,7 +305,7 @@ def autostart_support() -> tuple[bool, str]:
 
 def autostart_command() -> str:
     """Value written in the Run key: the quoted executable path."""
-    return f'"{sys.executable}"'
+    return f'"{paths.launcher_exe()}"'
 
 
 def get_windows_autostart() -> bool:

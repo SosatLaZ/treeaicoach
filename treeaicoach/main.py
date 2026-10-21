@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from treeaicoach import APP_NAME, __version__
+from treeaicoach import startup as _startup
 
 log = logging.getLogger(__name__)
 
@@ -211,6 +212,8 @@ def run_gui(cfg: Any, demo: bool = False, smoke_seconds: float | None = None) ->
     """Launch the CustomTkinter interface (``ui.run_app``)."""
     try:
         from treeaicoach import ui
+
+        _startup.mark("ui_import")
     except Exception as exc:
         log.exception("User interface unavailable")
         message_box(f"L'interface de {APP_NAME} n'a pas pu démarrer :\n{exc}\n\n"
@@ -245,6 +248,7 @@ def _start_game_data_refresh(cfg: Any) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point; returns the process exit code. ``argv`` defaults to ``sys.argv[1:]``."""
+    _startup.mark("main")
     try:
         args = build_parser().parse_args(list(sys.argv[1:] if argv is None else argv))
     except _ParserExit as exc:
@@ -289,6 +293,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         from treeaicoach.config import load_config
 
         cfg = load_config(Path(args.config) if args.config else None)
+        _startup.mark("config")
         if not args.ui_smoke and not acquire_single_instance():
             log.info("Another instance is already running")
             message_box(ALREADY_RUNNING_TEXT)
@@ -296,6 +301,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         apply_process_policy(cfg)
         if not args.ui_smoke and not args.demo:
             _start_game_data_refresh(cfg)
+        _startup.mark("policy")
         if args.nogui:
             return run_console(cfg, demo=args.demo, duration=args.duration)
         return run_gui(cfg, demo=args.demo, smoke_seconds=UI_SMOKE_SECONDS if args.ui_smoke else None)

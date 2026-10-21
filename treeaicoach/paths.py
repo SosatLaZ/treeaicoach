@@ -41,6 +41,27 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+#: Set by the bootstrapper (packaging/bootstrap.py): path of the TreeAICoach.exe the user launched.
+LAUNCHER_ENV = "TREEAICOACH_LAUNCHER"
+
+
+def launcher_exe() -> Path:
+    """The executable the user starts (and the updater replaces / autostart launches).
+
+    With the bootstrapper the app runs from ``%LOCALAPPDATA%\\TreeAICoach\\app\\<version>``; the
+    downloaded TreeAICoach.exe (the stub) passes its own path in ``TREEAICOACH_LAUNCHER``. Without it
+    (plain one-file / one-dir build, sources): ``sys.executable``."""
+    env = os.environ.get(LAUNCHER_ENV, "").strip()
+    if env and is_frozen():
+        p = Path(env)
+        try:
+            if p.is_file():
+                return p
+        except OSError:
+            pass
+    return Path(sys.executable)
+
+
 def _source_package_dir() -> Path:
     """Directory containing this file (the ``treeaicoach`` package in a checkout)."""
     here = globals().get("__file__") or ""

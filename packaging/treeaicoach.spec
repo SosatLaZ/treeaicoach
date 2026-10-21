@@ -1,11 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec of TreeAICoach.exe (one-file, windowed). Requires PyInstaller >= 6.
+"""PyInstaller spec of the TreeAI Coach app (one-DIR, windowed). Requires PyInstaller >= 6.
 
 Run from the repository root:
 
     pyinstaller packaging/treeaicoach.spec --noconfirm --clean
 
-Output: dist/TreeAICoach.exe. Every path below is absolute (built from SPECPATH, the folder of
+Output: dist/TreeAICoach/TreeAICoach.exe (+ _internal/). The release exe is NOT this folder: it is the
+bootstrapper (packaging/bootstrap.spec) with this folder zipped inside (packaging/make_bundle.py); at
+the first launch it unpacks it once to %LOCALAPPDATA%\\TreeAICoach\\app\\<version> and starts it from
+there (a one-file exe re-extracted ~250 MB to %TEMP% at every launch, scanned by the antivirus). Every path below is absolute (built from SPECPATH, the folder of
 this file), so the build does not depend on the current directory.
 """
 
@@ -176,16 +179,14 @@ pyz = PYZ(a.pure)  # noqa: F821
 exe = EXE(  # noqa: F821
     pyz,
     a.scripts,
-    a.binaries,        # one-file: binaries and data go inside the exe (no COLLECT step)
-    a.datas,
     [],
+    exclude_binaries=True,   # one-dir: binaries / data go next to the exe (COLLECT)
     name=APP_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,         # UPX-packed exes trigger antivirus false positives
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,     # windowed app (sys.stdout is None)
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -194,4 +195,14 @@ exe = EXE(  # noqa: F821
     entitlements_file=None,
     icon=ICON_ICO,
     version=VERSION_FILE,
+)
+
+coll = COLLECT(  # noqa: F821
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name=APP_NAME,
 )
