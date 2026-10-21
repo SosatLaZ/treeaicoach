@@ -3,6 +3,22 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.12.0 · 21 octobre 2026
+
+- **Détection : l'overlay ne se voit plus lui-même.** Sur tes captures, 59 % des images analysées contenaient nos propres
+  anneaux et étiquettes « JGL » (faux ennemis, mauvais jungler). Toutes les fenêtres sont cachées des captures et
+  vérifiées en continu ; si Windows ne le permet pas, rien n'est dessiné sur la minimap (repères à côté) et nos
+  dessins sont effacés avant l'analyse.
+- **Jungler ennemi = celui qui a Châtiment**, toujours ; personne en ARAM / Arène.
+- **Assistant vocal « Hey Tree AI »** (désactivé par défaut, Alertes et voix) : pose ta question à voix haute, l'IA
+  répond en 1-2 phrases. Reconnaissance sur ton PC ; modèle téléchargé une fois (42 Mo).
+- **Calls d'équipe :** « Ils sont 4 bot : Baron maintenant », dragon libre avec sa fenêtre (« libre 22 s »),
+  « 3 morts : Baron maintenant », « 5 morts : poussez mid ». Envoyables au vocal Discord (option « Calls d'équipe »).
+- **Carte d'achat visible :** aussi en mode détaillé et après un achat vu dans ton inventaire, plus grande à la
+  boutique avec un halo vert ; interrupteur « Achats ».
+- **Infos des joueurs** (désactivé par défaut) : rang, LP, série, parties sur leur champion, par champion, une fois la
+  partie lancée ; lu dans ton client LoL, gardé en mémoire pendant la partie seulement.
+
 ## 2.11.0 · 20 octobre 2026
 
 - **Le bot Discord annonce aussi les ganks de tes amis :** il reconnaît qui, dans le vocal, joue quel champion de ton
