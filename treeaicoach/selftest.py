@@ -546,6 +546,11 @@ def check_capture(res: CheckResult, ctx: dict[str, Any]) -> None:
                 "copie D3D11 incorrecte / D3D11 copy mismatch")
     else:
         res.details.append("Desktop Duplication indisponible ici / unavailable here (normal hors Windows 8+)")
+    from treeaicoach import wgc_capture as wgc   # noqa: PLC0415
+
+    ok = wgc.available()      # WinRT activation through ctypes (never raises; needs Windows 10 1903+)
+    res.details.append(f"Capture fenêtre du jeu (WGC) / window capture: {'disponible' if ok else 'indisponible'}"
+                       f" (build {wgc.windows_build()})")
 
 
 def check_voice_assistant(res: CheckResult, ctx: dict[str, Any]) -> None:

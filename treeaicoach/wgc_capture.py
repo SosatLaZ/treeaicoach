@@ -227,7 +227,9 @@ class _ComWgc:
         if dxgi_dev is None:
             raise OSError("QueryInterface(IDXGIDevice) failed")
         try:
-            fn = self.d3d11.CreateDirect3D11DeviceFromDXGIDevice
+            fn = getattr(self.d3d11, "CreateDirect3D11DeviceFromDXGIDevice", None)
+            if fn is None:
+                raise WgcUnsupported("d3d11.CreateDirect3D11DeviceFromDXGIDevice missing")
             fn.argtypes = [c.c_void_p, c.POINTER(c.c_void_p)]
             fn.restype = c.c_long
             insp = c.c_void_p()
