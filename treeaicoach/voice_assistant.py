@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import sys
@@ -44,6 +45,11 @@ TEST_WINDOW_S = 20.0            # "Tester": listen this long even outside a game
 IDLE_POLL_S = 0.5               # paused: how often the gate is re-checked (mic closed)
 MIN_QUESTION_WORDS = 2
 
+#: The Vosk engine (libvosk.dll, ~17 MB compressed) is NOT bundled in the exe (GitHub's 100 MB file limit):
+#: its official Windows wheel is downloaded once next to the model and checked by SHA-256.
+VOSK_WHEEL_URL = ("https://files.pythonhosted.org/packages/c0/4c/deb0861f7da9696f8a255f1731bb73e9412cca29c4b3888a3fcb2a930a59/"
+                  "vosk-0.3.45-py3-none-win_amd64.whl")
+VOSK_WHEEL_SHA256 = "6994ddc68556c7e5730c3b6f6bad13320e3519b13ce3ed2aa25a86724e7c10ac"
 MODEL_NAME = "vosk-model-small-fr-0.22"
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
 MODEL_SIZE_MB = 41
@@ -112,7 +118,7 @@ class VoskRecognizer:
     """Thin wrapper over ``vosk.KaldiRecognizer`` (text out of its JSON)."""
 
     def __init__(self, model: Any, grammar: Sequence[str] | None) -> None:
-        import vosk  # noqa: PLC0415
+        vosk = import_vosk()
 
         if grammar:
             self._r = vosk.KaldiRecognizer(model, SAMPLE_RATE, json.dumps(list(grammar), ensure_ascii=False))
@@ -439,8 +445,10 @@ class VoiceAssistant:
                 if not ok:
                     self.status = "Modèle vocal non téléchargé (Internet ?) : nouvel essai plus tard."
                     return None
-            import vosk  # noqa: PLC0415
-
+            vosk = import_vosk()
+            if vosk is None:
+                self.status = "Moteur vocal non téléchargé (Internet ?) : nouvel essai plus tard."
+                return None
             try:
                 vosk.SetLogLevel(-1)
             except Exception:
@@ -622,3 +630,50 @@ def assistant() -> VoiceAssistant:
         if _SINGLETON is None:
             _SINGLETON = VoiceAssistant()
         return _SINGLETON
+
+
+def import_vosk(dest: Path | None = None) -> Any:
+    """The ``vosk`` module: installed / bundled, else its official Windows wheel downloaded once into
+    ``cache_dir()/voice/vosk-0.3.45`` (SHA-256 checked) and imported from there. None on failure."""
+    try:
+        import vosk  # noqa: PLC0415
+
+        return vosk
+    except Exception:
+        pass
+    if sys.platform != "win32":
+        return None
+    try:
+        import hashlib  # noqa: PLC0415
+        import io  # noqa: PLC0415
+        import urllib.request  # noqa: PLC0415
+        import zipfile  # noqa: PLC0415
+
+        from treeaicoach.paths import cache_dir  # noqa: PLC0415
+
+        root = Path(dest) if dest is not None else Path(cache_dir()) / "voice" / "vosk-0.3.45"
+        if not (root / "vosk" / "__init__.py").exists():
+            with urllib.request.urlopen(VOSK_WHEEL_URL, timeout=60) as r:  # noqa: S310 (fixed https URL)
+                data = r.read(80 * 1024 * 1024)
+            if hashlib.sha256(data).hexdigest() != VOSK_WHEEL_SHA256:
+                log.warning("Voice assistant: vosk wheel checksum mismatch")
+                return None
+            tmp = root.with_name(root.name + ".part")
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                members = [m for m in zf.namelist() if m.startswith("vosk/")]
+                zf.extractall(tmp, members)
+            if root.exists():
+                import shutil  # noqa: PLC0415
+
+                shutil.rmtree(root, ignore_errors=True)
+            tmp.replace(root)
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        if hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(str(root / "vosk"))
+        import vosk  # noqa: PLC0415
+
+        return vosk
+    except Exception:
+        log.warning("Voice assistant: vosk engine unavailable", exc_info=True)
+        return None

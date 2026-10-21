@@ -552,12 +552,16 @@ def check_voice_assistant(res: CheckResult, ctx: dict[str, Any]) -> None:
     """« Hey Tree AI »: libvosk.dll and the PortAudio DLL load from the bundle (the model is downloaded
     on first use, not checked here)."""
     import sounddevice  # noqa: F401, PLC0415
-    import vosk  # noqa: PLC0415
 
     from treeaicoach import voice_assistant as va  # noqa: PLC0415
 
     _expect(va.is_wake("hé tri aïe aïe") and not va.is_wake("il est très haut"), "wake phrase matcher")
-    res.details.append(f"vosk {getattr(vosk, '__version__', '?')} + sounddevice {sounddevice.__version__} ; "
+    try:
+        import vosk  # noqa: PLC0415
+        eng = f"vosk {getattr(vosk, '__version__', '?')}"
+    except Exception:
+        eng = "moteur vosk téléchargé à la 1re activation"
+    res.details.append(f"{eng} + sounddevice {sounddevice.__version__} ; "
                        f"modèle FR {'présent' if va.model_ready() else 'téléchargé à la 1re activation'}")
 
 

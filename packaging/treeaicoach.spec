@@ -113,14 +113,16 @@ except Exception:
 
 # Voice assistant (voice_assistant.py): vosk (cffi binding + libvosk.dll and its MinGW runtime DLLs, loaded
 # from the package folder) and sounddevice (+ the PortAudio DLL in _sounddevice_data)
-hiddenimports += ["vosk", "vosk.vosk_cffi", "sounddevice", "_cffi_backend"]
+# vosk itself (libvosk.dll ~17 MB compressed) is downloaded on first use (voice_assistant.import_vosk: GitHub's
+# 100 MB file limit); its pure-Python dependencies stay bundled
+hiddenimports += ["sounddevice", "_cffi_backend", "srt", "requests", "tqdm"]
+excludes_extra = ["vosk"]
 try:
-    binaries += [(src, "vosk") for src, _dst in collect_dynamic_libs("vosk")]
     datas += collect_data_files("_sounddevice_data")
 except Exception:
     pass
 
-excludes = [
+excludes = excludes_extra + [
     # training / development only
     "torch", "torchvision", "torchaudio", "onnx", "onnxscript", "tensorboard",
     "matplotlib", "scipy", "pandas", "sympy",
