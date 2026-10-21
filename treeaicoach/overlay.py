@@ -32,8 +32,12 @@ separate popup windows of the TreeAI Coach process:
   portraits - only thin rings drawn *outside* the real icons, role tags, arrows, dashed
   last-seen circles with timers and fog outlines. ``cfg.overlay_hide_from_capture`` (default
   True since pipeline v2: otherwise our own rings / labels end up in the frames the detector
-  reads) excludes it from capture (``SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)``,
-  Windows 10 2004+); the mode works the same with or without it. "radar" mode shows an enlarged copy placed *above* the
+  reads) excludes EVERY overlay window from capture (``SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)``,
+  Windows 10 2004+, checked with ``GetWindowDisplayAffinity``, re-applied after a re-creation)
+  and :mod:`treeaicoach.overlay_guard` proves it with a tiny probe marker; when the setting is
+  off, Windows refuses it or the probe is seen in a captured frame, nothing is drawn over the
+  minimap any more ("minimap" mode shown as "radar", beside it) and the engine inpaints the
+  pixels we drew until a probe proves the exclusion. "radar" mode shows an enlarged copy placed *above* the
   minimap (shrunk rather than moved towards the centre), never over it. Every window is
   clamped inside the screen, and the screen used for the layout always contains the minimap
   (see :func:`effective_screen`).
@@ -794,7 +798,7 @@ class LayeredWindow:
                 if api.GetWindowDisplayAffinity(self.hwnd, api.ctypes.byref(cur)):
                     ok = int(cur.value) == WDA_EXCLUDEFROMCAPTURE
             if not ok:
-                log.info("Overlay %s: capture exclusion unavailable (error %s)", self.name, api.last_error())
+                log.debug("Overlay %s: capture exclusion unavailable (error %s)", self.name, api.last_error())
                 api.SetWindowDisplayAffinity(self.hwnd, WDA_NONE)
             return ok
         except Exception:
@@ -1379,6 +1383,7 @@ class OverlayManager:
         self._guard = capture_guard
         self._excl_done: dict[str, Any] = {}
         self._excl_checked = -1e9
+        self._excl_refused_logged: tuple = ()
         #: ``(name) -> window`` with the :class:`LayeredWindow` interface (benchmarks / tests off
         #: Windows: the real loop runs with fake windows); None = real layered windows
         self._window_factory = window_factory
@@ -1576,7 +1581,11 @@ class OverlayManager:
         if changed and mm_ok != self.capture_excluded:
             log.info("Overlay: windows hidden from capture: %s",
                      ", ".join(n for n, k in done.items() if not isinstance(k, tuple)) or "aucune")
-        if changed and want and not mm_ok:
+        refused = tuple(sorted(n for n, k in done.items() if isinstance(k, tuple)))
+        if want and refused and refused != self._excl_refused_logged:
+            log.info("Overlay: capture exclusion refused by Windows for %s", ", ".join(refused))
+        self._excl_refused_logged = refused if want else ()
+        if changed and want and not mm_ok and self.capture_excluded:
             log.info("Overlay: minimap layer hidden from capture: indisponible")
         elif changed and not want and self.capture_excluded:
             log.info("Overlay: minimap layer visible in captures again")
