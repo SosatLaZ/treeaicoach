@@ -525,7 +525,7 @@ def test_budget_five_auto_plus_one_urgent_and_manual_apart():
 
 def test_expert_level_only_urgent_auto_calls():
     cfg = SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="", skill_level="expert")
-    adv = ai.AIAdvisor(cfg, caller=lambda *a, **k: "Joue avec ton équipe.")
+    adv = ai.AIAdvisor(cfg, caller=lambda *a, **k: "Joue avec ton équipe au dragon.")
     adv.update(100.0, G(gt=300.0))
     assert not adv.update(200.0, G(gt=300.0, gold=1200), in_base=True)      # 1st base: skipped (expert)
     assert adv.budget_info()["auto_used"] == 0
@@ -574,3 +574,39 @@ def test_postgame_review_is_grounded_in_the_real_build_and_french_items():
     # an English answer never reaches the report
     english = "You should build the Titanic Hydra first and then you should buy Sterak's Gage with your gold before the next fight."
     assert ai.postgame_review(cfg, analysis, caller=lambda *a, **k: english) is None
+
+
+def test_fallback_model_on_rate_or_server(monkeypatch):
+    calls = []
+
+    def once(provider, key, model, *a, **k):
+        calls.append(model)
+        if model in ("", "openai/gpt-oss-120b"):
+            raise ai.AIError("rate", "HTTP 429", retry_after=40.0)
+        return '{"plan": "Va bot."}'
+    monkeypatch.setattr(ai, "_call_once", once)
+    assert "Va bot" in ai.call_llm("groq", "k", "", "s", "p")
+    assert calls == ["", "openai/gpt-oss-20b"]
+    assert ai.fallback_model("groq", "openai/gpt-oss-20b") == "qwen/qwen3.8-27b"
+
+    def bad_key(provider, key, model, *a, **k):
+        raise ai.AIError("key", "HTTP 401")
+    monkeypatch.setattr(ai, "_call_once", bad_key)
+    with pytest.raises(ai.AIError):
+        ai.call_llm("groq", "k", "", "s", "p")
+
+
+def test_candidate_items_say_missing_gold_and_singular():
+    assert ai._singular("Lee Sin font surtout des dégâts physiques") == "Lee Sin fait surtout des dégâts physiques"
+    assert ai._singular("K'Santé sont très résistants") == "K'Santé est très résistant"
+    assert ai._singular("Darius et Lee Sin font surtout des dégâts physiques").startswith("Darius et Lee Sin font")
+
+
+def test_generic_ai_line_is_not_grounded():
+    snap = {"en": ["Lee Sin jungle 9 4/1/2 3.4k", "Nunu et Willump support 7 0/2/6 0.4k"], "voie": {"vs": "Darius"}}
+    assert not ai.grounded("Farme bien et pose des balises.", snap)
+    assert not ai.grounded("Joue prudent et reste groupé avec ton équipe.", snap)
+    assert ai.grounded("Recule : Lee Sin arrive par la rivière.", snap)
+    assert ai.grounded("Prends le dragon avec ton équipe.", snap)
+    assert ai.grounded("Frappe Darius quand il rate son E.", snap)
+    assert ai.grounded("Achète Gage de Sterak : il te manque 300 PO.", snap)

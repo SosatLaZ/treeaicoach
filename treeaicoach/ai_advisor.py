@@ -68,7 +68,7 @@ MAX_OUTPUT_TOKENS = 200
 PLAN_MAX_TOKENS = 320            # strict JSON plan (plan + 3 steps)
 MAX_PLAN_CHARS = 170
 MAX_STEP_CHARS = 95
-MAX_STEPS = 3
+MAX_STEPS = 1                    # 1-2 decisive sentences (2.15 feedback: no lecture)
 RULES_MIN_INTERVAL_S = 90.0      # offline rule-based plans: at most one every 90 s
 MAX_ADVICE_CHARS = 260
 MAX_REVIEW_CHARS = 2500
@@ -171,18 +171,29 @@ ERROR_FR: dict[str, str] = {
 OLLAMA_OFFLINE = "Conseil IA : Ollama ne répond pas (lance « ollama serve »)."
 
 SYSTEM_PROMPT = (
-    "Tu es le coach d'un joueur de League of Legends pendant sa partie. Tu reçois l'état complet de la "
-    "partie en JSON (API officielle du jeu + analyse de TreeAI). Règles : "
-    "1) Français uniquement, tutoiement, aucun mot anglais (balise, vague, sbires, objet, jungler). "
-    "2) Chaque phrase commence par un verbe à l'impératif (Rentre, Pousse, Pose, Prends, Recule, Achète...). "
-    "3) Un plan pour les 30 à 90 prochaines secondes, concret : quel lieu, quel temps (obj), quel objet exact. "
-    "4) Seulement les faits du JSON : ne cite jamais les clés du JSON, n'invente aucun chiffre, aucune "
+    "Tu es le coach d'un joueur DÉBUTANT de League of Legends, en direct pendant sa partie. Tu reçois "
+    "l'état de la partie en JSON (API officielle du jeu + analyse de TreeAI). Tu donnes LA décision qui "
+    "change les 30 prochaines secondes, pas un cours. Règles : "
+    "1) Français uniquement, tutoiement, aucun mot anglais (balise, vague, sbires, objet, jungler, plaques). "
+    "2) plan = 1 phrase de 18 mots max qui commence par un verbe à l'impératif (Rentre, Pousse, Prends, "
+    "Recule, Achète, Va...) ; etapes = 0 ou 1 précision. Pas de troisième idée. "
+    "3) Chaque réponse cite AU MOINS un fait exact du JSON : un nom de champion, un temps (obj, rs, mort Xs, "
+    "vu il y a), un écart de niveau, une somme d'or (g, po) ou un nom d'objet. Une phrase vraie dans "
+    "toutes les parties (farme bien, pose des balises, joue prudent, fais attention, reste groupé, "
+    "communique) est INTERDITE. "
+    "4) Ordre de décision : a) danger réel (jungler vu près de moi il y a moins de 20 s, adversaire bien plus "
+    "fort : niv/po très négatifs, pv bas) -> où reculer ; b) objectif dans 90 s ou moins (obj) -> qui y va "
+    "et quand ; c) adversaire direct ou jungler mort (mort Xs) -> profite : plaques / tour / objectif "
+    "pendant ces secondes ; d) avance de niveau ou d'or sur mon adversaire -> échange précis ; e) or "
+    "suffisant -> objet exact. "
+    "5) Seulement les faits du JSON : ne cite jamais les clés du JSON, n'invente aucun chiffre, aucune "
     "spéculation sur les temps de recharge, sorts d'invocateur ou ultimes ennemis. "
-    "5) carte = l'appel actif affiché par le coach : ton plan le suit et le prolonge ; si le JSON montre "
+    "6) carte = l'appel actif affiché par le coach : ton plan le suit et le prolonge ; si le JSON montre "
     "clairement mieux, carte=differe et pourquoi = 1 ligne courte. "
-    "6) Objets : seulement ceux de objets_possibles ou de achat, noms exacts, jamais un objet déjà dans me.it ; "
-    "tiens compte de effets (anti-soin, stase, armure ennemie), de compo, du jungler (jgl) et de mes morts. "
-    "7) Réponds uniquement avec l'objet JSON demandé, sans markdown ni introduction."
+    "7) Objets : seulement ceux de objets_possibles ou de achat, noms exacts, jamais un objet déjà dans me.it ; "
+    "dis le prix ou ce qui manque (manque) ; tiens compte de effets (anti-soin, stase, armure ennemie), de "
+    "compo, du jungler (jgl) et de mes morts. "
+    "8) Réponds uniquement avec l'objet JSON demandé, sans markdown ni introduction."
 )
 MOMENT_FR = {
     "base": "retour en base avec de l'or à dépenser",
@@ -499,6 +510,17 @@ def call_llm(provider: str, api_key: str, model: str, system: str, prompt: str,
     try:
         return _call_rate_retry(provider, api_key, model, system, prompt, timeout, url, max_tokens, long, json_mode)
     except AIError as exc:
+        if exc.code in FALLBACK_CODES and provider in MODEL_PREFERENCE and not url:
+            alt = fallback_model(provider, model)
+            if alt:
+                # per-model limits (Groq: a 429 on gpt-oss-120b while 20b still answers) / an
+                # overloaded or empty model: ONE try on the next model of the preference list
+                log.info("AI %s on %r: one try with %r", exc.code, model or "default", alt)
+                try:
+                    return _call_once(provider, api_key, alt, system, prompt, timeout, url, max_tokens, long,
+                                      json_mode)
+                except AIError:
+                    raise exc from None
         if exc.code != "model" or provider not in ("groq", "openrouter", "gemini"):
             raise
         best = pick_model(provider, list_models(provider, api_key, url, timeout))
@@ -507,6 +529,21 @@ def call_llm(provider: str, api_key: str, model: str, system: str, prompt: str,
         log.info("AI model %r unavailable, using %r", model or "default", best)
         _auto_model[(provider, want)] = best
         return _call_rate_retry(provider, api_key, best, system, prompt, timeout, url, max_tokens, long, json_mode)
+
+
+#: errors worth one try on another model of the same provider (not key / quota / offline)
+FALLBACK_CODES = frozenset({"rate", "server", "empty"})
+
+
+def fallback_model(provider: str, model: str) -> str | None:
+    """The next model of :data:`MODEL_PREFERENCE` after ``model`` (default model when empty)."""
+    prefs = MODEL_PREFERENCE.get(provider, ())
+    spec = provider_spec(provider)
+    cur = (model or (spec.default_model if spec else "")).strip()
+    if cur in prefs:
+        i = prefs.index(cur)
+        return prefs[i + 1] if i + 1 < len(prefs) else None
+    return prefs[0] if prefs and prefs[0] != cur else None
 
 
 def _call_rate_retry(provider: str, api_key: str, model: str, system: str, prompt: str, timeout: float,
@@ -557,9 +594,8 @@ PLAN_GOALS = ("dragon", "baron", "heraut", "larves", "tour", "farm", "vision", "
 PLAN_URGENCY = ("haute", "moyenne", "basse")
 CARD_STANCES = ("suit", "differe", "aucune")      # the plan vs the live game-changer card ("carte")
 MAX_WHY_CHARS = 90
-PLAN_SCHEMA_FR = ('{"plan": "1 phrase courte (20 mots max) qui commence par un verbe à l\'impératif", '
-                  '"etapes": ["un détail NOUVEAU (lieu, temps, objet), verbe à l\'impératif, 15 mots max", '
-                  '"... (0 à 3)"], '
+PLAN_SCHEMA_FR = ('{"plan": "1 phrase (18 mots max), verbe à l\'impératif, avec un fait exact du JSON", '
+                  '"etapes": ["0 ou 1 précision NOUVELLE (lieu, temps, objet), verbe à l\'impératif, 12 mots max"], '
                   '"objectif": "' + "|".join(PLAN_GOALS) + '", "urgence": "haute|moyenne|basse", '
                   '"carte": "suit|differe|aucune", "pourquoi": "si differe : 1 ligne, sinon vide"}')
 
@@ -1359,10 +1395,59 @@ def candidate_items(game: Any, role: str | None = None, limit: int = 8) -> list[
             if usable(iid) and iid not in seen:
                 seen.add(iid)
                 out.append({"n": items[iid].name, "po": items[iid].gold, "pourquoi": "objet de base de ta classe"})
+        gold = int(float(getattr(game, "current_gold", 0.0) or 0.0))
+        for c in out:
+            c["pourquoi"] = _singular(c["pourquoi"])
+            if gold > 0:                       # exact gold the player still needs (0 = buy it now)
+                c["manque"] = max(0, int(c["po"]) - gold)
         return out[:limit]
     except Exception:
         log.debug("candidate items unavailable", exc_info=True)
         return []
+
+
+_GROUND_WORDS = re.compile(r"(?i)\b(dragon|baron|nashor|héraut|heraut|larves|ancestral|plaques?|tour|"
+                           r"inhibiteur|niveau|PO|or|top|mid|bot|base|nexus)\b|\d")
+
+
+def grounded(text: Any, snap: dict[str, Any]) -> bool:
+    """True when an AI line cites at least one fact of the snapshot (a number, a champion of the
+    game, an objective, an item of the lists): "Farme bien et pose des balises" is not. Never raises."""
+    try:
+        t = str(text or "")
+        if not t.strip():
+            return False
+        if _GROUND_WORDS.search(t) or items_mentioned(t):
+            return True
+        names: list[str] = []
+        for line in list(snap.get("al") or []) + list(snap.get("en") or []):
+            head = str(line).split(" ")
+            # "Nunu et Willump support 7 ..." / "Lee Sin jungle 9 ...": the name is before the role
+            for i, w in enumerate(head):
+                if w in ("top", "jungle", "mid", "adc", "support", "?"):
+                    names.append(" ".join(head[:i]))
+                    break
+        for d in (snap.get("voie") or {}, snap.get("jgl") or {}):
+            if isinstance(d, dict):
+                names += [str(d.get(k)) for k in ("vs", "c") if d.get(k)]
+        names += [str(c.get("n")) for c in snap.get("objets_possibles") or [] if isinstance(c, dict) and c.get("n")]
+        if snap.get("achat"):
+            names.append(str(snap["achat"]))
+        low = _fold(t)
+        return any(n and _fold(n.split(" ")[0]) in low for n in names if len(n) >= 3)
+    except Exception:
+        return True
+
+
+def _singular(why: str) -> str:
+    """"Lee Sin font surtout..." -> "Lee Sin fait surtout..." (one champion named)."""
+    m = re.match(r"^(.+?) (font|sont|misent|utilisent|se soignent) (.*)$", why)
+    if m is None or " et " in m.group(1) or m.group(1).lower().startswith(("les ", "l'")):
+        return why
+    verb = {"font": "fait", "sont": "est", "misent": "mise", "utilisent": "utilise",
+            "se soignent": "se soigne"}[m.group(2)]
+    rest = m.group(3).replace("très résistants", "très résistant")
+    return f"{m.group(1)} {verb} {rest}"
 
 
 def _norm_item(s: str) -> str:
@@ -2519,6 +2604,8 @@ class AIAdvisor:
         cands = list(snap.get("objets_possibles") or [])
 
         def check(text: str) -> str | None:
+            if not grounded(text, snap):
+                return str(item_text) if item_text else None  # generic line: dropped (2.15 "à chier")
             if validate_item_advice(text, game, cands):
                 return text
             return str(item_text) if item_text else None      # hallucinated item: itemization fallback
