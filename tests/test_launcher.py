@@ -257,7 +257,7 @@ def test_export_button_builds_one_zip(home: Path, monkeypatch: pytest.MonkeyPatc
     (base / "games" / "2026-10-09_2006_Swain.json").write_text("{}", encoding="utf-8")
     app, _v, _e = _build(home)
     try:
-        app.show_page("settings")
+        app.show_page("advanced")
         _pump(app, 0.3)
         texts = [b.text() for b in app.win.findChildren(app.QtWidgets.QPushButton)]
         assert "Créer le zip" in texts
