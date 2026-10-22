@@ -880,10 +880,19 @@ class CoachingMixin:
             from treeaicoach.ai_advisor import engine_context
 
             in_fight = self._ai_in_fight()
+            from treeaicoach.ai_calm import CalmGate
+
+            gate = getattr(self, "_ai_calm", None)
+            if gate is None:
+                gate = self._ai_calm = CalmGate()
+            tr = getattr(self, "_tracker", None)
+            calm = gate.update(t, game, me_pos, tr.tracks() if tr is not None else (), threat, in_fight)
+            # automatic requests only when calm (dead / just after my kill, nobody near): any other
+            # moment is "busy" for the advisor (deferred, dropped if no calm moment comes in time)
             ai.update(t, game, in_base=in_base, roles=self._role_resolver, scoreboard=summary,
                       objectives=self._objectives.states() if self._objectives is not None else [],
                       item_text=self.item_advice_text(), threat=threat, context=lambda: engine_context(self, t),
-                      win_prob=hc.win_probability(), in_fight=in_fight)
+                      win_prob=hc.win_probability(), in_fight=in_fight or not calm)
             self._ai_publish(t, gt, ai, threat, in_fight)
         except Exception:
             self._errors += 1
