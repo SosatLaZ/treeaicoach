@@ -66,6 +66,8 @@ class AlertsPage:
         app.choice_row(say, "caster_style", "Mode annonceur", "Sobre : rien n'est lu. Coach : la probabilité de "
                        "victoire aux moments clés. Annonceur : plus vivant.", CASTER_STYLES, segmented=True)
         app.switch_row(say, "item_advice_speak", "Lire les conseils d'achat", "Sinon ils restent écrits.")
+        app.switch_row(say, "ai_auto", "Conseils IA automatiques", "Désactivé par défaut : l'IA répond seulement "
+                       "quand tu lui poses une question (« Hey coach » ou F8).")
         app.switch_row(say, "ai_speak", "Lire le conseil IA à voix haute", "Désactivé par défaut : le conseil IA "
                        "reste écrit.")
 

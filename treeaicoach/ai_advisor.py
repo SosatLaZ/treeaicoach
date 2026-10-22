@@ -2344,6 +2344,9 @@ class AIAdvisor:
             model = str(getattr(cfg, "ai_model", "") or "").strip()
             # Expert players: no automatic AI tip, only the bonus "urgence" call (and F8)
             self._urgent_only = str(getattr(cfg, "skill_level", "") or "").strip().lower() == "expert"
+            # automatic plans only when enabled (Config default off: "trop de requêtes", 2.15);
+            # the question (Hey coach / F8) never depends on it
+            self._auto = bool(getattr(cfg, "ai_auto", True))
             with self._lock:
                 if (prov, key, model) != (self._provider, self._key, self._model):
                     self._blocked_until = -math.inf     # new settings: retry right away
@@ -2461,7 +2464,7 @@ class AIAdvisor:
                 moment = f"comeback:{reason}"
             if moment is None and self._blunder_moment(t):
                 moment = "comeback:blunders"
-            if not self.enabled:
+            if not self.enabled or not getattr(self, "_auto", True):
                 return False
             busy_now = threat >= 1 or in_fight
             if moment is None:

@@ -144,7 +144,7 @@ CHOICES.update({
     "ai_provider": ("off", "gemini", "groq", "openrouter", "ollama", "anthropic"),
     "caster_style": ("sobre", "coach", "caster"),
 })
-BOOL_FIELDS = BOOL_FIELDS + ("ai_speak", "win_prob_hud")
+BOOL_FIELDS = BOOL_FIELDS + ("ai_speak", "win_prob_hud", "ai_auto")
 UPDATE_TEXT_FIELDS["ai_api_key"] = 512
 UPDATE_TEXT_FIELDS["ai_model"] = 128
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ai",)     # "Demander à l'IA" (lowest priority on a clash)
@@ -334,6 +334,7 @@ class Config:
     ai_api_key: str = ""
     ai_model: str = ""               # "" = default model of the provider
     ai_speak: bool = False           # written only (toast + HUD) unless enabled
+    ai_auto: bool = False            # automatic AI plans (key moments): off, the AI answers when asked (2.15)
     hotkey_ai: str = "F8"            # "Demander à l'IA" (manual request), "" = disabled
     # "mode annonceur" (hype.py): sobre = nothing spoken, coach = win-probability swings, caster = + hype lines
     caster_style: str = "coach"

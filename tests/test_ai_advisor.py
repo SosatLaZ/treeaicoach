@@ -610,3 +610,12 @@ def test_generic_ai_line_is_not_grounded():
     assert ai.grounded("Prends le dragon avec ton équipe.", snap)
     assert ai.grounded("Frappe Darius quand il rate son E.", snap)
     assert ai.grounded("Achète Gage de Sterak : il te manque 300 PO.", snap)
+
+
+def test_auto_plans_off_by_default():
+    from treeaicoach.config import Config
+    assert Config().ai_auto is False
+    adv = ai.AIAdvisor(SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="", ai_auto=False),
+                       caller=lambda *a, **k: "Va bot.")
+    adv.update(100.0, G(gt=300.0))
+    assert not adv.update(200.0, G(gt=300.0, gold=1200), in_base=True)

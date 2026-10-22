@@ -159,7 +159,7 @@ def test_engine_wiring(monkeypatch, tmp_path):
         calls.append(prompt)
         return "Achète une Zhonya. Joue le dragon."
 
-    cfg = Config(ai_provider="groq", ai_api_key="k", caster_style="caster")
+    cfg = Config(ai_provider="groq", ai_api_key="k", ai_auto=True, caster_style="caster")
     state = {"g": G(900.0)}
     voice = _Voice()
     eng = CoachEngine(cfg, voice, frame_source=_Source(lambda t: state["g"]), clock=lambda: 0.0,
@@ -196,7 +196,7 @@ def test_engine_ask_ai_and_postgame_review(monkeypatch, tmp_path):
         prompts.append((prompt, kw))
         return "Revue : bonne vision. Axe : farm." if kw.get("long") else "Achète une Zhonya."
 
-    cfg = Config(ai_provider="groq", ai_api_key="k")
+    cfg = Config(ai_provider="groq", ai_api_key="k", ai_auto=True)
     state = {"g": G(900.0)}
     eng = CoachEngine(cfg, _Voice(), frame_source=_Source(lambda t: state["g"]), clock=lambda: 50.0,
                       enable_hotkeys=False, manage_overlay=False)
