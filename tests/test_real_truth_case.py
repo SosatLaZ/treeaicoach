@@ -134,3 +134,32 @@ def test_bench_ignores_unsure_zones_and_breaks_stack_ties(monkeypatch):
     spec["fp_judged"]["enemy"] = False
     r = RB.run_image("x", spec, truth, db=None, detector=Det(), frames=1, fix=Path("."))
     assert r.false_pos == [] and r.n_det == 1
+
+
+GAREN_CASE = ROOT / "tests" / "fixtures" / "real_cases" / "garen_top_20261023"
+
+
+def test_second_real_case_single_icons_found_and_named():
+    """Real Garen game 2026-10-23 (2.15.0, 40 truth-labelled frames): every champion standing
+    alone (not stacked) is found and named; no false positive (measured 0.97 / 0.99)."""
+    import real_minimap_bench as B
+
+    from treeaicoach.champions import get_default_db
+
+    if not (GAREN_CASE / "ground_truth.json").is_file():
+        pytest.skip("case missing")
+    db = get_default_db()
+    truth = B.load_truth(GAREN_CASE)
+    names = sorted(truth["images"])[::5]                      # 8 frames spread over the game
+    gt = hit = named = fp = 0
+    for n in names:
+        spec = truth["images"][n]
+        r = B.run_image(n, spec, truth, db, fix=GAREN_CASE)
+        single = [c for c in spec["champions"] if not c.get("stacked")]
+        missed = {(m[2], m[3]) for m in r.misses}
+        gt += len(single)
+        hit += sum(1 for c in single if (c["u"], c["v"]) not in missed)
+        fp += len(r.false_pos)
+        named += sum(1 for w in r.wrong if w[0] == "id")
+    assert gt >= 15
+    assert hit / gt >= 0.9 and fp <= 1 and named <= 1

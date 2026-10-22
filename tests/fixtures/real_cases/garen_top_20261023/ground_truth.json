@@ -1,0 +1,1852 @@
+{
+ "about": "Real minimap captures of the user's Garen game (x108 every ~10 s, 2.15.0; the overlay is drawn in the capture) labelled from the LCU truth (tools/real_truth_case.py: wall clock -> game time offset 25.5 s, positions from the minute frames / kills snapped to the icon ring of the champion's team, anonymous when another champion of the team could stand there; 'unsure' = on the minimap per the truth but no icon found: ignored by the bench; 'dead' from the kills + respawn timer / my snapshots).",
+ "rosters": {
+  "g1": {
+   "self": "Garen",
+   "ally": [
+    "Darius",
+    "Fizz",
+    "Yuumi",
+    "Lux"
+   ],
+   "enemy": [
+    "Vayne",
+    "Zyra",
+    "Ziggs",
+    "Seraphine",
+    "Caitlyn"
+   ]
+  }
+ },
+ "images": {
+  "20261023_003500_0164": {
+   "game": "g1",
+   "file": "20261023_003500_0164.png",
+   "time": 1807.9,
+   "dead": [
+    "Zyra",
+    "Caitlyn",
+    "Fizz"
+   ],
+   "champions": [
+    {
+     "u": 0.9655,
+     "v": 0.0368,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_003521_0166": {
+   "game": "g1",
+   "file": "20261023_003521_0166.png",
+   "time": 1828.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.9652,
+     "v": 0.0371,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_003551_0169": {
+   "game": "g1",
+   "file": "20261023_003551_0169.png",
+   "time": 1858.9,
+   "dead": [
+    "Lux"
+   ],
+   "champions": [
+    {
+     "u": 0.7384,
+     "v": 0.7648,
+     "team": "enemy",
+     "name": "Zyra"
+    },
+    {
+     "u": 0.4794,
+     "v": 0.5085,
+     "team": "enemy",
+     "name": "Caitlyn"
+    },
+    {
+     "u": 0.5406,
+     "v": 0.4597,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.5468,
+     "v": 0.2943,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0371,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.1293,
+     "v": 0.4724,
+     "r": 0.081,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.9079,
+     "v": 0.7834,
+     "r": 0.081,
+     "why": "2 icons"
+    },
+    {
+     "name": "Seraphine",
+     "team": "enemy",
+     "u": 0.8922,
+     "v": 0.7507,
+     "r": 0.081,
+     "why": "2 icons"
+    },
+    {
+     "name": "Fizz",
+     "team": "ally",
+     "u": 0.528,
+     "v": 0.3403,
+     "r": 0.081,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_003611_0171": {
+   "game": "g1",
+   "file": "20261023_003611_0171.png",
+   "time": 1878.9,
+   "dead": [
+    "Lux"
+   ],
+   "champions": [
+    {
+     "u": 0.9653,
+     "v": 0.0371,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_003651_0175": {
+   "game": "g1",
+   "file": "20261023_003651_0175.png",
+   "time": 1918.9,
+   "dead": [
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.1481,
+     "v": 0.1446,
+     "team": "enemy",
+     "name": "Vayne"
+    },
+    {
+     "u": 0.8363,
+     "v": 0.2117,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    },
+    {
+     "u": 0.9316,
+     "v": 0.0774,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.8363,
+     "v": 0.2117,
+     "team": "ally",
+     "name": "Lux",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.5741,
+     "v": 0.33,
+     "r": 0.081,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.7037,
+     "v": 0.3187,
+     "r": 0.081,
+     "why": "no icon"
+    },
+    {
+     "name": "Seraphine",
+     "team": "enemy",
+     "u": 0.0265,
+     "v": 0.9692,
+     "r": 0.081,
+     "why": "no icon"
+    },
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.1829,
+     "v": 0.8593,
+     "r": 0.081,
+     "why": "no icon"
+    },
+    {
+     "name": "Yuumi",
+     "team": "ally",
+     "u": 0.9644,
+     "v": 0.0393,
+     "r": 0.081,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_003711_0177": {
+   "game": "g1",
+   "file": "20261023_003711_0177.png",
+   "time": 1938.9,
+   "dead": [
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.6439,
+     "v": 0.5854,
+     "team": "enemy",
+     "name": "Zyra"
+    },
+    {
+     "u": 0.9653,
+     "v": 0.0371,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_003751_0181": {
+   "game": "g1",
+   "file": "20261023_003751_0181.png",
+   "time": 1978.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.6217,
+     "v": 0.5717,
+     "team": "enemy",
+     "name": "Zyra",
+     "stacked": true
+    },
+    {
+     "u": 0.6217,
+     "v": 0.5717,
+     "team": "enemy",
+     "name": "Seraphine",
+     "stacked": true
+    },
+    {
+     "u": 0.3415,
+     "v": 0.1168,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.5054,
+     "v": 0.7536,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0372,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.5728,
+     "v": 0.679,
+     "r": 0.081,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.589,
+     "v": 0.6736,
+     "r": 0.081,
+     "why": "no icon"
+    },
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.58,
+     "v": 0.6696,
+     "r": 0.081,
+     "why": "no icon"
+    },
+    {
+     "name": "Darius",
+     "team": "ally",
+     "u": 0.6939,
+     "v": 0.65,
+     "r": 0.081,
+     "why": "3 icons"
+    },
+    {
+     "name": "Lux",
+     "team": "ally",
+     "u": 0.7505,
+     "v": 0.6544,
+     "r": 0.081,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_003812_0183": {
+   "game": "g1",
+   "file": "20261023_003812_0183.png",
+   "time": 1999.9,
+   "dead": [
+    "Ziggs"
+   ],
+   "champions": [
+    {
+     "u": 0.6446,
+     "v": 0.6252,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.9652,
+     "v": 0.0372,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.6472,
+     "v": 0.6306,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Fizz",
+     "team": "ally",
+     "u": 0.6474,
+     "v": 0.5706,
+     "r": 0.061,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_003852_0187": {
+   "game": "g1",
+   "file": "20261023_003852_0187.png",
+   "time": 2039.9,
+   "dead": [
+    "Caitlyn",
+    "Lux"
+   ],
+   "champions": [
+    {
+     "u": 0.0796,
+     "v": 0.477,
+     "team": "enemy",
+     "name": "Zyra"
+    },
+    {
+     "u": 0.8282,
+     "v": 0.1707,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.9654,
+     "v": 0.0365,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.6472,
+     "v": 0.6306,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.6014,
+     "v": 0.5839,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Seraphine",
+     "team": "enemy",
+     "u": 0.247,
+     "v": 0.9529,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Darius",
+     "team": "ally",
+     "u": 0.6628,
+     "v": 0.6236,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Fizz",
+     "team": "ally",
+     "u": 0.6474,
+     "v": 0.5706,
+     "r": 0.053,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_003902_0188": {
+   "game": "g1",
+   "file": "20261023_003902_0188.png",
+   "time": 2049.9,
+   "dead": [
+    "Lux"
+   ],
+   "champions": [
+    {
+     "u": 0.9651,
+     "v": 0.0372,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_003942_0192": {
+   "game": "g1",
+   "file": "20261023_003942_0192.png",
+   "time": 2089.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.318,
+     "v": 0.5153,
+     "team": "ally",
+     "name": "Garen",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.318,
+     "v": 0.5153,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004012_0195": {
+   "game": "g1",
+   "file": "20261023_004012_0195.png",
+   "time": 2119.9,
+   "dead": [
+    "Zyra",
+    "Caitlyn",
+    "Garen",
+    "Darius",
+    "Lux"
+   ],
+   "champions": [
+    {
+     "u": 0.265,
+     "v": 0.2937,
+     "team": "enemy",
+     "name": "Vayne"
+    },
+    {
+     "u": 0.965,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004022_0196": {
+   "game": "g1",
+   "file": "20261023_004022_0196.png",
+   "time": 2129.9,
+   "dead": [
+    "Vayne",
+    "Zyra",
+    "Caitlyn",
+    "Garen",
+    "Lux"
+   ],
+   "champions": [
+    {
+     "u": 0.9649,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004102_0200": {
+   "game": "g1",
+   "file": "20261023_004102_0200.png",
+   "time": 2169.9,
+   "dead": [
+    "Seraphine"
+   ],
+   "champions": [
+    {
+     "u": 0.9675,
+     "v": 0.0392,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004122_0202": {
+   "game": "g1",
+   "file": "20261023_004122_0202.png",
+   "time": 2189.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.965,
+     "v": 0.0375,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004152_0205": {
+   "game": "g1",
+   "file": "20261023_004152_0205.png",
+   "time": 2219.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.3206,
+     "v": 0.5795,
+     "team": "enemy",
+     "name": "Seraphine"
+    },
+    {
+     "u": 0.0968,
+     "v": 0.4546,
+     "team": "enemy",
+     "name": "Caitlyn"
+    },
+    {
+     "u": 0.3287,
+     "v": 0.4344,
+     "team": "ally",
+     "name": "Garen",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.3287,
+     "v": 0.4344,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.9179,
+     "v": 0.738,
+     "team": "ally",
+     "name": null
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.2511,
+     "v": 0.4418,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.2638,
+     "v": 0.4706,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.9117,
+     "v": 0.814,
+     "r": 0.044,
+     "why": "no icon"
+    },
+    {
+     "name": "Fizz",
+     "team": "ally",
+     "u": 0.9212,
+     "v": 0.7696,
+     "r": 0.056,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_004222_0208": {
+   "game": "g1",
+   "file": "20261023_004222_0208.png",
+   "time": 2249.9,
+   "dead": [
+    "Ziggs",
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.4843,
+     "v": 0.5388,
+     "team": "enemy",
+     "name": null
+    },
+    {
+     "u": 0.965,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004252_0211": {
+   "game": "g1",
+   "file": "20261023_004252_0211.png",
+   "time": 2279.9,
+   "dead": [
+    "Vayne",
+    "Caitlyn",
+    "Garen",
+    "Fizz"
+   ],
+   "champions": [
+    {
+     "u": 0.8375,
+     "v": 0.596,
+     "team": "ally",
+     "name": "Darius"
+    },
+    {
+     "u": 0.965,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.6426,
+     "v": 0.4515,
+     "team": "ally",
+     "name": "Lux"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.4812,
+     "v": 0.4786,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.0414,
+     "v": 0.9607,
+     "r": 0.056,
+     "why": "no icon"
+    },
+    {
+     "name": "Seraphine",
+     "team": "enemy",
+     "u": 0.4514,
+     "v": 0.4806,
+     "r": 0.056,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_004303_0212": {
+   "game": "g1",
+   "file": "20261023_004303_0212.png",
+   "time": 2290.9,
+   "dead": [
+    "Fizz"
+   ],
+   "champions": [
+    {
+     "u": 0.9629,
+     "v": 0.04,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004353_0217": {
+   "game": "g1",
+   "file": "20261023_004353_0217.png",
+   "time": 2340.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.212,
+     "v": 0.3452,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.6794,
+     "v": 0.614,
+     "team": "ally",
+     "name": "Darius"
+    },
+    {
+     "u": 0.5967,
+     "v": 0.5837,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.965,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.6156,
+     "v": 0.5416,
+     "team": "ally",
+     "name": "Lux"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.5193,
+     "v": 0.6268,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.5787,
+     "v": 0.6823,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.5123,
+     "v": 0.6052,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Seraphine",
+     "team": "enemy",
+     "u": 0.4888,
+     "v": 0.5667,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.5479,
+     "v": 0.7653,
+     "r": 0.033,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_004403_0218": {
+   "game": "g1",
+   "file": "20261023_004403_0218.png",
+   "time": 2350.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.9651,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004423_0220": {
+   "game": "g1",
+   "file": "20261023_004423_0220.png",
+   "time": 2370.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.965,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004453_0223": {
+   "game": "g1",
+   "file": "20261023_004453_0223.png",
+   "time": 2400.9,
+   "dead": [
+    "Lux"
+   ],
+   "champions": [
+    {
+     "u": 0.6775,
+     "v": 0.6359,
+     "team": "enemy",
+     "name": "Zyra",
+     "stacked": true
+    },
+    {
+     "u": 0.6775,
+     "v": 0.6359,
+     "team": "enemy",
+     "name": "Ziggs",
+     "stacked": true
+    },
+    {
+     "u": 0.6775,
+     "v": 0.6359,
+     "team": "enemy",
+     "name": "Caitlyn",
+     "stacked": true
+    },
+    {
+     "u": 0.083,
+     "v": 0.8124,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.7577,
+     "v": 0.7053,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    },
+    {
+     "u": 0.7577,
+     "v": 0.7053,
+     "team": "ally",
+     "name": "Fizz",
+     "stacked": true
+    },
+    {
+     "u": 0.965,
+     "v": 0.0375,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.0964,
+     "v": 0.8332,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Seraphine",
+     "team": "enemy",
+     "u": 0.6453,
+     "v": 0.6146,
+     "r": 0.033,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_004523_0226": {
+   "game": "g1",
+   "file": "20261023_004523_0226.png",
+   "time": 2430.9,
+   "dead": [
+    "Vayne",
+    "Zyra",
+    "Caitlyn"
+   ],
+   "champions": [
+    {
+     "u": 0.1541,
+     "v": 0.8533,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.965,
+     "v": 0.0375,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004553_0229": {
+   "game": "g1",
+   "file": "20261023_004553_0229.png",
+   "time": 2460.9,
+   "dead": [
+    "Ziggs",
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.1374,
+     "v": 0.8589,
+     "team": "enemy",
+     "name": "Seraphine"
+    },
+    {
+     "u": 0.0851,
+     "v": 0.7921,
+     "team": "ally",
+     "name": "Darius"
+    },
+    {
+     "u": 0.1066,
+     "v": 0.7488,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9652,
+     "v": 0.0371,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.7932,
+     "v": 0.2837,
+     "team": "ally",
+     "name": "Lux"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.0874,
+     "v": 0.8493,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.5952,
+     "v": 0.7233,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.6206,
+     "v": 0.5767,
+     "r": 0.03,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_004613_0231": {
+   "game": "g1",
+   "file": "20261023_004613_0231.png",
+   "time": 2480.9,
+   "dead": [
+    "Ziggs",
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.9651,
+     "v": 0.0372,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004653_0235": {
+   "game": "g1",
+   "file": "20261023_004653_0235.png",
+   "time": 2520.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1069,
+     "v": 0.7452,
+     "team": "enemy",
+     "name": "Ziggs"
+    },
+    {
+     "u": 0.1711,
+     "v": 0.7207,
+     "team": "enemy",
+     "name": "Seraphine"
+    },
+    {
+     "u": 0.227,
+     "v": 0.5526,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.9386,
+     "v": 0.0699,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.2775,
+     "v": 0.519,
+     "team": "ally",
+     "name": "Lux"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.0877,
+     "v": 0.7147,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.1436,
+     "v": 0.6952,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.1907,
+     "v": 0.6645,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Darius",
+     "team": "ally",
+     "u": 0.0797,
+     "v": 0.6863,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Yuumi",
+     "team": "ally",
+     "u": 0.9644,
+     "v": 0.0393,
+     "r": 0.03,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_004724_0238": {
+   "game": "g1",
+   "file": "20261023_004724_0238.png",
+   "time": 2551.9,
+   "dead": [
+    "Vayne"
+   ],
+   "champions": [
+    {
+     "u": 0.3091,
+     "v": 0.7084,
+     "team": "enemy",
+     "name": null
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004734_0239": {
+   "game": "g1",
+   "file": "20261023_004734_0239.png",
+   "time": 2561.9,
+   "dead": [
+    "Vayne",
+    "Zyra"
+   ],
+   "champions": [
+    {
+     "u": 0.9652,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004754_0241": {
+   "game": "g1",
+   "file": "20261023_004754_0241.png",
+   "time": 2581.9,
+   "dead": [
+    "Zyra"
+   ],
+   "champions": [
+    {
+     "u": 0.1132,
+     "v": 0.6294,
+     "team": "enemy",
+     "name": "Vayne",
+     "stacked": true
+    },
+    {
+     "u": 0.3947,
+     "v": 0.5945,
+     "team": "enemy",
+     "name": "Ziggs",
+     "stacked": true
+    },
+    {
+     "u": 0.3947,
+     "v": 0.5945,
+     "team": "enemy",
+     "name": "Seraphine",
+     "stacked": true
+    },
+    {
+     "u": 0.1132,
+     "v": 0.6294,
+     "team": "enemy",
+     "name": "Caitlyn",
+     "stacked": true
+    },
+    {
+     "u": 0.2572,
+     "v": 0.2998,
+     "team": "ally",
+     "name": "Garen",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.2572,
+     "v": 0.2998,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    },
+    {
+     "u": 0.7068,
+     "v": 0.2993,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.4524,
+     "v": 0.5625,
+     "team": "ally",
+     "name": "Lux"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_004844_0246": {
+   "game": "g1",
+   "file": "20261023_004844_0246.png",
+   "time": 2631.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1402,
+     "v": 0.7971,
+     "team": "enemy",
+     "name": null
+    },
+    {
+     "u": 0.1298,
+     "v": 0.7706,
+     "team": "ally",
+     "name": "Garen",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.1298,
+     "v": 0.7706,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    },
+    {
+     "u": 0.965,
+     "v": 0.0375,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.4474,
+     "v": 0.5401,
+     "team": "ally",
+     "name": null
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004854_0247": {
+   "game": "g1",
+   "file": "20261023_004854_0247.png",
+   "time": 2641.9,
+   "dead": [
+    "Zyra",
+    "Garen",
+    "Darius"
+   ],
+   "champions": [
+    {
+     "u": 0.1278,
+     "v": 0.7344,
+     "team": "enemy",
+     "name": "Vayne"
+    },
+    {
+     "u": 0.3063,
+     "v": 0.6856,
+     "team": "enemy",
+     "name": "Ziggs",
+     "stacked": true
+    },
+    {
+     "u": 0.3063,
+     "v": 0.6856,
+     "team": "enemy",
+     "name": "Seraphine",
+     "stacked": true
+    },
+    {
+     "u": 0.2974,
+     "v": 0.6523,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.2057,
+     "v": 0.7473,
+     "r": 0.059,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "ally",
+     "u": 0.4591,
+     "v": 0.571,
+     "r": 0.059,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_004924_0250": {
+   "game": "g1",
+   "file": "20261023_004924_0250.png",
+   "time": 2671.9,
+   "dead": [
+    "Caitlyn",
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.9651,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_004954_0253": {
+   "game": "g1",
+   "file": "20261023_004954_0253.png",
+   "time": 2701.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.7576,
+     "v": 0.2841,
+     "team": "ally",
+     "name": "Darius"
+    },
+    {
+     "u": 0.3378,
+     "v": 0.6301,
+     "team": "ally",
+     "name": "Fizz",
+     "stacked": true
+    },
+    {
+     "u": 0.9652,
+     "v": 0.0357,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.3378,
+     "v": 0.6301,
+     "team": "ally",
+     "name": "Lux",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.0751,
+     "v": 0.5935,
+     "r": 0.059,
+     "why": "no icon"
+    },
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.0978,
+     "v": 0.8627,
+     "r": 0.059,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.0909,
+     "v": 0.9412,
+     "r": 0.059,
+     "why": "no icon"
+    },
+    {
+     "name": "Seraphine",
+     "team": "enemy",
+     "u": 0.4065,
+     "v": 0.9196,
+     "r": 0.059,
+     "why": "no icon"
+    },
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.4498,
+     "v": 0.6879,
+     "r": 0.059,
+     "why": "no icon"
+    },
+    {
+     "name": "Garen",
+     "team": "ally",
+     "u": 0.9318,
+     "v": 0.0599,
+     "r": 0.059,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_005024_0256": {
+   "game": "g1",
+   "file": "20261023_005024_0256.png",
+   "time": 2731.9,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.9649,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_005054_0259": {
+   "game": "g1",
+   "file": "20261023_005054_0259.png",
+   "time": 2761.9,
+   "dead": [
+    "Lux"
+   ],
+   "champions": [
+    {
+     "u": 0.64,
+     "v": 0.6093,
+     "team": "enemy",
+     "name": null
+    },
+    {
+     "u": 0.6473,
+     "v": 0.7775,
+     "team": "enemy",
+     "name": "Caitlyn"
+    },
+    {
+     "u": 0.7044,
+     "v": 0.9215,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.7815,
+     "v": 0.7344,
+     "team": "ally",
+     "name": "Darius"
+    },
+    {
+     "u": 0.6632,
+     "v": 0.5136,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.6278,
+     "v": 0.6269,
+     "r": 0.059,
+     "why": "2 icons"
+    },
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.6504,
+     "v": 0.6298,
+     "r": 0.059,
+     "why": "2 icons"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.581,
+     "v": 0.7525,
+     "r": 0.059,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_005115_0261": {
+   "game": "g1",
+   "file": "20261023_005115_0261.png",
+   "time": 2782.9,
+   "dead": [
+    "Garen"
+   ],
+   "champions": [
+    {
+     "u": 0.9651,
+     "v": 0.0374,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_005155_0265": {
+   "game": "g1",
+   "file": "20261023_005155_0265.png",
+   "time": 2822.9,
+   "dead": [
+    "Vayne",
+    "Garen",
+    "Fizz"
+   ],
+   "champions": [
+    {
+     "u": 0.9075,
+     "v": 0.488,
+     "team": "enemy",
+     "name": "Seraphine"
+    },
+    {
+     "u": 0.7289,
+     "v": 0.266,
+     "team": "ally",
+     "name": "Darius"
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0371,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.6818,
+     "v": 0.122,
+     "team": "ally",
+     "name": "Lux"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.6804,
+     "v": 0.4373,
+     "r": 0.084,
+     "why": "no icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.8118,
+     "v": 0.6865,
+     "r": 0.084,
+     "why": "no icon"
+    },
+    {
+     "name": "Caitlyn",
+     "team": "enemy",
+     "u": 0.7369,
+     "v": 0.4004,
+     "r": 0.084,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261023_005205_0266": {
+   "game": "g1",
+   "file": "20261023_005205_0266.png",
+   "time": 2832.9,
+   "dead": [
+    "Garen",
+    "Darius"
+   ],
+   "champions": [
+    {
+     "u": 0.9652,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    }
+   ],
+   "unsure": [],
+   "fp_judged": {
+    "ally": false,
+    "enemy": false
+   }
+  },
+  "20261023_005255_0271": {
+   "game": "g1",
+   "file": "20261023_005255_0271.png",
+   "time": 2882.9,
+   "dead": [
+    "Vayne",
+    "Zyra",
+    "Caitlyn",
+    "Fizz"
+   ],
+   "champions": [
+    {
+     "u": 0.8215,
+     "v": 0.1866,
+     "team": "enemy",
+     "name": "Ziggs",
+     "stacked": true
+    },
+    {
+     "u": 0.8215,
+     "v": 0.1866,
+     "team": "enemy",
+     "name": "Seraphine",
+     "stacked": true
+    },
+    {
+     "u": 0.8634,
+     "v": 0.1402,
+     "team": "ally",
+     "name": "Garen",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.9646,
+     "v": 0.0368,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.8634,
+     "v": 0.1402,
+     "team": "ally",
+     "name": "Lux",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Darius",
+     "team": "ally",
+     "u": 0.7495,
+     "v": 0.2325,
+     "r": 0.084,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  }
+ }
+}
