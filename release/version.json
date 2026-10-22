@@ -1,6 +1,6 @@
 {
-  "version": "2.14.0",
-  "sha256": "1a6011c12f6882aff7c36f613b26b2911fbef7820c62ef0a88a87efb5a5f5705",
-  "size": 7531875,
-  "notes": "2.14 : lancement rapide (petit lanceur, appli installée une fois), Hey Tree AI dans le vocal Discord, matchup des amis, barre de build, 1000 requêtes IA par jour."
+  "version": "2.15.0",
+  "sha256": "9290ac7aabb56d62384d15c893d504eff146f260d719d09622e576f212cea78f",
+  "size": 7529433,
+  "notes": "2.15 : Hey coach (reconnaissance fiable), voix québécoise, analyse ARAM."
 }

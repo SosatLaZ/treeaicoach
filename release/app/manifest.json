@@ -1,25 +1,25 @@
 {
- "version": "2.14.0",
+ "version": "2.15.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "68e2d03e7479ee9f21e21c233de39ba2572652446c9ddb9303493cd4f42bb243",
+ "sha256": "dda0df2d35fcd362224317fc00631193f3404f96fa04f6887788b2471eadbde3",
  "chunks": [
   {
-   "name": "2.14.0/part-01.zip",
-   "size": 88158493,
-   "sha256": "66dd96254f561334b16945059758aaeba7443c16e8cf3e8c94995344eb0ac754",
-   "files": 300
+   "name": "2.15.0/part-01.zip",
+   "size": 88156736,
+   "sha256": "28429fb787ec92f86390c80c047d99e17174c7e72f7c053a26530cac3626c5ff",
+   "files": 298
   },
   {
-   "name": "2.14.0/part-02.zip",
-   "size": 7036189,
-   "sha256": "49ccf726bd4880f7cae3ca1e2ed6feac149fded0724095124269bf23ce959087",
-   "files": 405
+   "name": "2.15.0/part-02.zip",
+   "size": 7053864,
+   "sha256": "5da58d29326df6f9d9f67f6d0cf9d01b4cea8df6924aa06c0290f3ed52d509af",
+   "files": 407
   }
  ],
- "total_size": 95194682,
+ "total_size": 95210600,
  "launcher": {
-  "sha256": "1a6011c12f6882aff7c36f613b26b2911fbef7820c62ef0a88a87efb5a5f5705",
-  "size": 7531875
+  "sha256": "9290ac7aabb56d62384d15c893d504eff146f260d719d09622e576f212cea78f",
+  "size": 7529433
  },
- "notes": "2.14 : lancement rapide (petit lanceur, appli install\u00e9e une fois), Hey Tree AI dans le vocal Discord, matchup des amis, barre de build, 1000 requ\u00eates IA par jour."
+ "notes": "2.15 : Hey coach (reconnaissance fiable), voix qu\u00e9b\u00e9coise, analyse ARAM."
 }
