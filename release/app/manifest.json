@@ -1,25 +1,25 @@
 {
- "version": "2.15.0",
+ "version": "2.16.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "dda0df2d35fcd362224317fc00631193f3404f96fa04f6887788b2471eadbde3",
+ "sha256": "d76b01fb50c741e54f0fdfcb619623ef4391f033e06590fd907e78bd4c24c125",
  "chunks": [
   {
-   "name": "2.15.0/part-01.zip",
-   "size": 88156736,
-   "sha256": "28429fb787ec92f86390c80c047d99e17174c7e72f7c053a26530cac3626c5ff",
-   "files": 298
+   "name": "2.16.0/part-01.zip",
+   "size": 88161758,
+   "sha256": "df7cc2d3af053e73fca5ca0c919d558be0093e48b5393e2078e8d20327500e7b",
+   "files": 295
   },
   {
-   "name": "2.15.0/part-02.zip",
-   "size": 7053864,
-   "sha256": "5da58d29326df6f9d9f67f6d0cf9d01b4cea8df6924aa06c0290f3ed52d509af",
-   "files": 407
+   "name": "2.16.0/part-02.zip",
+   "size": 7082155,
+   "sha256": "002c4451944a02e101c9b47b6076c9672f8d67fd31614b98c55b5d63426ae5fb",
+   "files": 410
   }
  ],
- "total_size": 95210600,
+ "total_size": 95243913,
  "launcher": {
-  "sha256": "9290ac7aabb56d62384d15c893d504eff146f260d719d09622e576f212cea78f",
-  "size": 7529433
+  "sha256": "5c20eab01126546ab3766dbde4ade8bfb210eecb1d08785b5884b3df0f558e7f",
+  "size": 7532117
  },
- "notes": "2.15 : Hey coach (reconnaissance fiable), voix qu\u00e9b\u00e9coise, analyse ARAM."
+ "notes": "2.16 : jungler suivi (derni\u00e8re position, pr\u00e9vision du 1er gank), IA seulement quand tu demandes ou au calme, build m\u00e9ta dans la boutique du jeu, runes et sorts importables."
 }

@@ -1,6 +1,6 @@
 {
-  "version": "2.15.0",
-  "sha256": "9290ac7aabb56d62384d15c893d504eff146f260d719d09622e576f212cea78f",
-  "size": 7529433,
-  "notes": "2.15 : Hey coach (reconnaissance fiable), voix québécoise, analyse ARAM."
+  "version": "2.16.0",
+  "sha256": "5c20eab01126546ab3766dbde4ade8bfb210eecb1d08785b5884b3df0f558e7f",
+  "size": 7532117,
+  "notes": "2.16 : jungler suivi (dernière position, prévision du 1er gank), IA seulement quand tu demandes ou au calme, build méta dans la boutique du jeu, runes et sorts importables."
 }
