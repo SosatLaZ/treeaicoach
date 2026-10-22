@@ -122,6 +122,7 @@ KIND_COOLDOWN_S: dict[str, float] = {
     # game changers (game_changers.py)
     "gc_level": 20.0, "gc_jungler_far": 150.0, "gc_jungler_unseen": 150.0, "gc_baron_setup": 240.0,
     "gc_fed_defense": 240.0, "gc_facecheck": 180.0, "gc_enemy_buy": 45.0,
+    "gc_first_gank": 600.0,         # first_gank.py: once per game
     "gc_cross_obj": 90.0,           # team_calls.py: "Ils sont 4 en bas : Baron maintenant"
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
@@ -152,6 +153,7 @@ OVERLAPS: dict[str, frozenset[str]] = {
     "gc_level": frozenset({"level2", "level_diff", "level6"}),
     "gc_jungler_far": frozenset({"jungler_side", "pressure"}),
     "gc_jungler_unseen": frozenset({"jungler_unseen", "missing", "wave_push"}),
+    "gc_first_gank": frozenset({"jungler_unseen", "missing", "wave_push"}),
     "gc_baron_setup": frozenset({"objective_window", "baron_pick", "objective_setup"}),
     "gc_fed_defense": frozenset(),
     "gc_facecheck": frozenset({"missing", "deep"}),
@@ -1230,9 +1232,10 @@ def _all_rules() -> tuple:
     """:data:`RULES` + the game-changer library (:mod:`treeaicoach.game_changers`, imported lazily:
     it builds on this module's helpers)."""
     try:
+        from treeaicoach.first_gank import RULES as FG_RULES
         from treeaicoach.game_changers import RULES as GC_RULES
 
-        return RULES + tuple(GC_RULES)
+        return RULES + tuple(GC_RULES) + tuple(FG_RULES)
     except Exception:
         log.debug("game changers unavailable", exc_info=True)
         return RULES
