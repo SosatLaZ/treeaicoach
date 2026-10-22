@@ -3,6 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.16.0 · 23 octobre 2026
+
+- **Jungler ennemi suivi :** sa dernière position + « JGL 35 s » restent sur la minimap 150 s ; ligne « Lee Sin · vu
+  il y a 25 s, rivière du bas » sur la carte ; prévision du premier gank (fin de son premier tour de jungle).
+- **IA :** plus de plans automatiques ; elle répond quand tu demandes, et d'elle-même seulement quand tu es mort ou
+  juste après ton kill sans ennemi proche. Réponses en 1 phrase avec un fait exact.
+- **Boutique :** le build de la méta est écrit dans l'onglet « Recommandés » du jeu ; boutons pour importer les runes
+  et mettre les sorts ; méta adaptée à ton rang.
+- **Conseils de balise plus courts**, le jungler nommé.
+
 ## 2.15.0 · 22 octobre 2026
 
 - **« Hey coach »** remplace « Hey Tree AI » : reconnaissance bien plus fiable (23 sur 24, aucun faux déclenchement
