@@ -136,6 +136,9 @@ LANER_GHOST_MAX_HIDDEN_S = 8.0
 # simultaneous arrivals: an enemy coming in within this factor of the warn radius joins the
 # alert of another threat ("Gank bot : Lee Sin et Ahri !")
 COMPANION_RADIUS_FACTOR = 1.25
+# ... a laner (roam) only inside the warn radius itself: 31 real games vs LCU truth, the roam
+# calls between warn and 1.25 x warn were 6 % of the gank calls, warned no gank death, often false
+ROAM_COMPANION_RADIUS_FACTOR = 1.0
 # direction of arrival
 DIRECTION_LOOKBACK_S = 2.0
 # jungler spotted
@@ -547,7 +550,8 @@ class GankAnalyzer:
                 if spotted is not None:
                     alerts.append(spotted)
                 self._jg_last_side = side_of(pos[0], pos[1])
-            if lane_opp or d >= warn * COMPANION_RADIUS_FACTOR:
+            if lane_opp or d >= warn * (COMPANION_RADIUS_FACTOR if is_jungler
+                                         else ROAM_COMPANION_RADIUS_FACTOR):
                 continue
             if relation == "enemy" and not is_jungler and self._in_own_lane(tr, roster, pos, my_lane):
                 continue                           # a laner farming his own lane is not a roam
