@@ -18,14 +18,14 @@ PLAN = {"plan": "Dragon dans 1:20, ta voie a la prio : rentre maintenant.",
 
 def test_parse_plan_strict():
     p = ai.parse_plan("```json\n" + json.dumps(PLAN, ensure_ascii=False) + "\n```")
-    assert p["plan"].startswith("Dragon dans 1:20") and len(p["etapes"]) == 2 and p["objectif"] == "dragon"
+    assert p["plan"].startswith("Dragon dans 1:20") and len(p["etapes"]) == ai.MAX_STEPS == 1 and p["objectif"] == "dragon"
     assert ai.parse_plan('<think>x</think>{"plan": "Va bot.", "etapes": [], "objectif": "Héraut"}')["objectif"] \
         == "heraut"
     bad = ['{"plan": 3}', '{"etapes": ["a"]}', "pas du json", '{"plan": "Va", "etapes": "a"}', "[1, 2]",
            '{"plan": "Rentre.", "etapes": [1]}', "{plan: 'x'}", ""]
     assert all(ai.parse_plan(b) is None for b in bad)
     long = ai.parse_plan(json.dumps({"plan": "mot " * 100, "etapes": ["x " * 80] * 5, "urgence": "max"}))
-    assert len(long["plan"]) <= ai.MAX_PLAN_CHARS + 1 and len(long["etapes"]) == 3 and long["urgence"] is None
+    assert len(long["plan"]) <= ai.MAX_PLAN_CHARS + 1 and len(long["etapes"]) == ai.MAX_STEPS and long["urgence"] is None
     assert all(len(x) <= ai.MAX_STEP_CHARS + 1 for x in long["etapes"])
     txt = ai.plan_text(PLAN)
     assert txt.startswith("Dragon dans 1:20") and "Pose 2 balises" in txt and len(txt) <= ai.MAX_ADVICE_CHARS + 1
