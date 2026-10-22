@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.15.0 · 22 octobre 2026
+
+- **« Hey coach »** remplace « Hey Tree AI » : reconnaissance bien plus fiable (23 sur 24, aucun faux déclenchement
+  sur 80 phrases de test).
+- **Voix québécoise** par défaut (Sylvie ; Antoine, Jean, Thierry au choix).
+- **Analyse ARAM :** KDA, participation, morts trop tôt ou isolées, objets face à leur compo (anti-soin, résistances),
+  3 conseils ; en jeu : achat à la mort, « rejoins ton équipe », « recule » quand deux alliés tombent.
+
 ## 2.14.0 · 21 octobre 2026
 
 - **Lancement rapide :** TreeAICoach.exe devient un petit lanceur (7,5 Mo) qui installe l'appli une fois sur ton PC
