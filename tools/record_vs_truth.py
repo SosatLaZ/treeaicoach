@@ -338,6 +338,8 @@ def report(results: dict[str, dict], verbose: bool = False) -> str:
                  + f"  {f(r['me_err50'])} {f(r['me_err_stacked50'])}({r['me_stacked_n']})")
     L.append(f"{'TOTAL':24s} {'':6s} {'':>12s} " + " ".join(f"{tot[c]:>9d}" for c in cols))
     L.append("")
+    L.extend(group_report(results))
+    L.append("")
     L.append("Failure modes ranked: " + ", ".join(f"{c} {n}" for c, n in sorted(tot.items(), key=lambda kv: -kv[1]) if n))
     for name, r in results.items():
         if r["health"]:
@@ -349,6 +351,43 @@ def report(results: dict[str, dict], verbose: bool = False) -> str:
                 for e in exs:
                     L.append(f"  {m:14s} {e}")
     return "\n".join(L)
+
+
+def _vkey(v: Any) -> tuple:
+    try:
+        return tuple(int(x) for x in str(v).split(".")[:3])
+    except ValueError:
+        return (0,)
+
+
+def group_report(results: dict[str, dict], split: str = "2.13.0") -> list[str]:
+    """Error RATES per 100 checked samples, per app-version group (``>= split`` vs older) and
+    per role (the truth's position of me): wrong_id/team_swap/phantom/anon per enemy sample,
+    gap_ally per ally sample, me_far(+stacked) per me sample."""
+    groups: dict[str, list[dict]] = {}
+    for r in results.values():
+        ver = f">={split}" if _vkey(r["app_version"]) >= _vkey(split) else f"<{split}"
+        groups.setdefault(f"ver {ver}", []).append(r)
+        groups.setdefault(f"role {r.get('role') or '?'}", []).append(r)
+    L = [f"{'group':16s} {'games':>5s} {'enemy':>6s} {'wrongid%':>8s} {'swap%':>6s} {'phant%':>6s} "
+         f"{'anonL%':>6s} {'anonP%':>6s} {'gapE/g':>6s} {'gapA%':>6s} {'meFar%':>6s}"]
+    for g in sorted(groups):
+        rs = groups[g]
+        ce = sum(r["checked"]["enemy"] for r in rs) or 1
+        ca = sum(r["checked"]["ally"] for r in rs) or 1
+        cm = sum(r["checked"]["me"] for r in rs) or 1
+        c = lambda k: sum(r["counts"][k] for r in rs)  # noqa: E731
+        L.append(f"{g:16s} {len(rs):>5d} {ce:>6d} {100 * c('wrong_id') / ce:>8.2f} {100 * c('team_swap') / ce:>6.2f} "
+                 f"{100 * c('phantom') / ce:>6.2f} {100 * c('anon_lost') / ce:>6.2f} {100 * c('anon_phantom') / ce:>6.2f} "
+                 f"{c('gap_enemy') / len(rs):>6.1f} {100 * c('gap_ally') / ca:>6.2f} "
+                 f"{100 * (c('me_far') + c('me_far_stacked')) / cm:>6.2f}")
+    return L
+
+
+def _summoners_rift(record: dict) -> bool:
+    """Only Summoner's Rift games are scored (ARAM / Arena have another map: no minimap analysis)."""
+    m = record.get("meta") or {}
+    return m.get("map_number") in (None, 11)
 
 
 def main() -> None:
@@ -371,6 +410,9 @@ def main() -> None:
             truth = json.loads(tp.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             print(f"{rec.name}: unreadable ({exc})")
+            continue
+        if not _summoners_rift(record):
+            print(f"{rec.stem}: skipped (map {(record.get('meta') or {}).get('map_number')}, not Summoner's Rift)")
             continue
         results[rec.stem] = analyse(record, truth, a.v)
     print(report(results, a.v))
