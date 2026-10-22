@@ -1,4 +1,4 @@
-"""Voice assistant « Hey Tree AI » (off by default): the player says the wake phrase, then a question;
+"""Voice assistant « Hey coach » (off by default): the player says the wake phrase, then a question;
 the coach answers out loud through the existing AI (manual question path, counted in the per-game cap).
 
 Offline and light:
@@ -13,8 +13,9 @@ Offline and light:
 * blocks heard while the app's own voice is speaking are dropped (no self-trigger);
 * push-to-talk: a hotkey (``hotkey_voice_ask``) skips the wake phrase and listens to the question.
 
-The French model hears "Hey Tree AI" as « hé tri aïe (aïe) », « et tri aïe », « hey tri ail »…:
-:func:`is_wake` accepts these variants. Everything is injectable (mic, recognizer) for the tests.
+The French model hears "Hey coach" as « hé coach », « et coach », « hey coche »…: :func:`is_wake` accepts
+these variants (accents and case ignored), the grammar carries decoys (« le coach »…) and :class:`WakeDetector`
+confirms a wake heard in partial results over 2 blocks. Everything is injectable (mic, recognizer) for the tests.
 Nothing here ever raises into the caller."""
 
 from __future__ import annotations
@@ -54,14 +55,16 @@ MODEL_NAME = "vosk-model-small-fr-0.22"
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
 MODEL_SIZE_MB = 41
 
-#: grammar of the always-on recognizer: what the French model may hear for "Hey Tree AI" ("[unk]"
+#: grammar of the always-on recognizer: what the French model may hear for "Hey coach" ("[unk]"
 #: absorbs everything else, so ordinary talk costs nothing and never matches)
 WAKE_GRAMMAR: tuple[str, ...] = (
-    "hé tri aïe", "hé tri aïe aïe", "et tri aïe", "et tri aïe aïe", "hey tri aïe", "hey tri aïe aïe",
-    "eh tri aïe", "hé tri ail", "et tri ail", "hé tri ai", "et tri ai", "tri aïe aïe", "hé tri haie",
-    "et tri haie", "hey tree ai", "[unk]",
+    "hey coach", "hé coach", "et coach", "eh coach", "hey coche", "hé coche", "et coche", "eh coche",
+    "hey coq", "hé coq",
+    # decoys (never a wake): ordinary sentences about "le coach" must not be forced into « hé coach »
+    "le coach", "ce coach", "du coach", "mon coach", "ton coach", "au coach", "de coach",
+    "le coche", "les coachs", "et toi", "et tu", "et si", "et on", "et les", "et le", "et là", "[unk]",
 )
-_WAKE_RE = re.compile(r"\b(?:tri|tree|trie|tris|trié)\s+(?:aie|ai|ail|aille|haie|aye|eye|hey|eh)\b")
+_WAKE_RE = re.compile(r"\b(?:hey|hei|he|eh|et|ey|hay|ai)\s+(?:coach|coache|coaches|coche|coatch|cotch|couche|cauche|koch|coq)\b")
 
 
 def normalize(text: Any) -> str:
@@ -72,12 +75,42 @@ def normalize(text: Any) -> str:
 
 
 def is_wake(text: Any) -> bool:
-    """True when ``text`` (recognizer output) is a variant of « Hey Tree AI »."""
+    """True when ``text`` (recognizer output) is a variant of « Hey coach »."""
     return bool(_WAKE_RE.search(normalize(text)))
 
 
+class WakeDetector:
+    """Wake decision over a stream of recognizer outputs (shared by the PC mic and the Discord listener).
+
+    A *final* result containing the wake phrase fires at once; a *partial* one must stay in the partials
+    for ``PARTIAL_CONFIRM`` consecutive blocks (the grammar-limited decoder flips between « hé coach » and
+    ``[unk]`` while ordinary words go by: those flips are the false triggers)."""
+
+    PARTIAL_CONFIRM = 2
+
+    def __init__(self, confirm: int | None = None) -> None:
+        self.confirm = int(confirm or self.PARTIAL_CONFIRM)
+        self._run = 0
+
+    def reset(self) -> None:
+        self._run = 0
+
+    def feed(self, rec: Any, block: bytes) -> bool:
+        try:
+            if rec.accept(block):
+                self._run = 0
+                return is_wake(rec.result())
+            if is_wake(rec.partial()):
+                self._run += 1
+                return self._run >= self.confirm
+            self._run = 0
+        except Exception:
+            self._run = 0
+        return False
+
+
 def strip_wake(text: Any) -> str:
-    """The question without a leading wake phrase (« hé tri aïe aïe quel item » -> « quel item »)."""
+    """The question without a leading wake phrase (« hé coach quel item » -> « quel item »)."""
     s = str(text or "").strip()
     m = _WAKE_RE.search(normalize(s))
     if m is None:
@@ -387,7 +420,7 @@ class VoiceAssistant:
                 return False
             self._test_until = self._clock() + TEST_WINDOW_S
             self._test_done = done
-        self.status = "Test : dis « Hey Tree AI » puis une question…"
+        self.status = "Test : dis « Hey coach » puis une question…"
         self.start()
         self._wake_evt.set()
         return True
@@ -453,6 +486,7 @@ class VoiceAssistant:
                 vosk.SetLogLevel(-1)
             except Exception:
                 pass
+            _tune_model_conf(path)
             self._model = vosk.Model(str(path))
         return VoskRecognizer(self._model, grammar)
 
@@ -469,6 +503,7 @@ class VoiceAssistant:
     def _run(self) -> None:
         mic: Mic | None = None
         wake_rec: Recognizer | None = None
+        detector = WakeDetector()
         retry_at = -1.0
         try:
             while not self._stop.is_set():
@@ -504,7 +539,7 @@ class VoiceAssistant:
                         continue
                     self.listening = True
                     if not self._testing():
-                        self.status = "J'écoute « Hey Tree AI »."
+                        self.status = "J'écoute « Hey coach »."
                 if self._ptt:
                     with self._lock:
                         self._ptt = False
@@ -522,10 +557,10 @@ class VoiceAssistant:
                     self.dropped_self += 1
                     wake_rec.reset()
                     continue
-                heard = wake_rec.result() if wake_rec.accept(block) else wake_rec.partial()
-                if heard and is_wake(heard):
+                if detector.feed(wake_rec, block):
                     self.wakes += 1
                     wake_rec.reset()
+                    detector.reset()
                     self._question(mic)
         except Exception:
             log.exception("Voice assistant loop failed")
@@ -591,7 +626,7 @@ class VoiceAssistant:
             done, self._test_done = self._test_done, None
             self._test_until = -1.0
             msg = (f"Entendu : « {question} ». L'assistant marche." if ok else
-                   "« Hey Tree AI » entendu, mais pas de question comprise : parle juste après le petit son.")
+                   "« Hey coach » entendu, mais pas de question comprise : parle juste après le petit son.")
             self.status = msg
             if done is not None:
                 try:
@@ -630,6 +665,21 @@ def assistant() -> VoiceAssistant:
         if _SINGLETON is None:
             _SINGLETON = VoiceAssistant()
         return _SINGLETON
+
+
+def _tune_model_conf(path: Path) -> None:
+    """Wider beam than the small model's default (13 / 7000 active): a bit slower, noticeably better on
+    the free-form question (the full 1.5 GB model is not an option to download). Idempotent, never raises."""
+    try:
+        conf = Path(path) / "conf" / "model.conf"
+        txt = conf.read_text(encoding="utf-8")
+        new = re.sub(r"--beam=[\d.]+", "--beam=16.0", txt)
+        new = re.sub(r"--max-active=\d+", "--max-active=10000", new)
+        new = re.sub(r"--lattice-beam=[\d.]+", "--lattice-beam=6.0", new)
+        if new != txt:
+            conf.write_text(new, encoding="utf-8")
+    except Exception:
+        log.debug("Voice assistant: model.conf not tuned", exc_info=True)
 
 
 def import_vosk(dest: Path | None = None) -> Any:

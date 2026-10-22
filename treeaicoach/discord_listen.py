@@ -1,4 +1,4 @@
-"""« Hey Tree AI » heard in the Discord voice channel (off by default: ``discord_listen``).
+"""« Hey coach » heard in the Discord voice channel (off by default: ``discord_listen``).
 
 discord.py 2.7 has no voice *receive* API, but everything needed is there without a new
 dependency: the voice UDP socket can be read (``VoiceConnectionState.add_socket_listener``), the voice
@@ -105,7 +105,7 @@ def to_16k_mono(pcm48: bytes) -> bytes:
 
 # ------------------------------------------------------------------------------ one speaker
 class Speaker:
-    """« Hey Tree AI » then the question, for ONE member of the channel (fed 16 kHz mono blocks)."""
+    """« Hey coach » then the question, for ONE member of the channel (fed 16 kHz mono blocks)."""
 
     def __init__(self, uid: str, make_rec: Callable[[Any], Any], clock: Callable[[], float]) -> None:
         self.uid = uid
@@ -113,6 +113,7 @@ class Speaker:
         self._clock = clock
         self._buf = bytearray()
         self.wake_rec: Any = None
+        self.detector = va.WakeDetector()
         self.q_rec: Any = None              # set while a question is being recorded
         self.q_start = 0.0
         self.q_change = 0.0
@@ -151,9 +152,9 @@ class Speaker:
             self.wake_rec = self._make_rec(va.WAKE_GRAMMAR)
             if self.wake_rec is None:
                 return []
-        heard = self.wake_rec.result() if self.wake_rec.accept(block) else self.wake_rec.partial()
-        if heard and va.is_wake(heard):
+        if self.detector.feed(self.wake_rec, block):
             self.wake_rec.reset()
+            self.detector.reset()
             return [("wake", "")]
         return []
 
@@ -171,6 +172,7 @@ class Speaker:
         if self.q_rec is None:
             if self.wake_rec is not None and now - self.last_audio >= WAKE_RESET_SILENCE_S and self.last_audio > 0:
                 self.wake_rec.reset()
+                self.detector.reset()
                 self.last_audio = 0.0
             return []
         if (now - self.q_start >= va.QUESTION_MAX_S
@@ -191,6 +193,7 @@ class Speaker:
         q = va.strip_wake(" ".join(self.q_parts)).strip()
         if self.wake_rec is not None:
             self.wake_rec.reset()
+            self.detector.reset()
         return [("question", q)]
 
 

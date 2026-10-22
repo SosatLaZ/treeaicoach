@@ -213,7 +213,7 @@ par le bot, ton PC reste muet tant que le bot est dans le vocal), « Tout sur mo
 ou « Les deux ». **Matchup de chaque ami** (activé) : au début de la partie, une phrase par ami du salon
 qui joue avec toi (« Paul, Darius contre Garen : favorable jusqu'au 6 »), une seule requête IA pour tous.
 
-**Écouter « Hey Tree AI » dans le vocal** (désactivé par défaut) : n'importe qui du salon dit « Hey Tree AI »
+**Écouter « Hey coach » dans le vocal** (désactivé par défaut) : n'importe qui du salon dit « Hey coach »
 puis sa question ; petit son, puis le bot répond dans le salon en une ou deux phrases (l'IA sait qui a
 demandé et quel champion il joue). La reconnaissance tourne sur ton PC (Vosk hors ligne, modèle français
 téléchargé une fois), seulement en partie ; jamais sur la voix du bot lui-même ; une question par

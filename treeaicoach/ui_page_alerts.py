@@ -69,17 +69,17 @@ class AlertsPage:
         app.switch_row(say, "ai_speak", "Lire le conseil IA à voix haute", "Désactivé par défaut : le conseil IA "
                        "reste écrit.")
 
-        va = self.page.section("Assistant vocal", "Dis « Hey Tree AI » puis ta question : le coach répond à voix "
+        va = self.page.section("Assistant vocal", "Dis « Hey coach » puis ta question : le coach répond à voix "
                                                   "haute en 1 ou 2 phrases (IA requise, compte dans la limite par "
                                                   "partie). Reconnaissance hors ligne, micro écouté seulement en partie.",
                                action=W.button("Tester le micro", self.test_assistant))
-        app.switch_row(va, "voice_assistant", "Assistant vocal « Hey Tree AI »", "Désactivé par défaut. La "
+        app.switch_row(va, "voice_assistant", "Assistant vocal « Hey coach »", "Désactivé par défaut. La "
                        f"première activation télécharge le modèle vocal français (~{VA_MODEL_MB} Mo).")
         self.mic = app.choice_row(va, "voice_assistant_mic", "Micro", "Celui de ton casque de préférence.",
                                   [("", "Micro par défaut de Windows")])
         app.run_job(_mics, lambda ms: self.mic.ctl.set_choices(ms, app.cfg.voice_assistant_mic), None,
                     name="TreeAI-ui-mics")
-        app.choice_row(va, "hotkey_voice_ask", "Touche « parler »", "Sans dire « Hey Tree AI » : appuie, "
+        app.choice_row(va, "hotkey_voice_ask", "Touche « parler »", "Sans dire « Hey coach » : appuie, "
                        "puis pose ta question.", hotkey_choices(str(getattr(app.cfg, "hotkey_voice_ask", "") or "")))
 
         gank = self.page.section("Alertes de gank", "Quand un ennemi menace ta position. Le mode sûr les coupe "
@@ -137,7 +137,7 @@ class AlertsPage:
                 app.show_toast("Active l'assistant vocal d'abord.", "warning")
                 return
             app.show_toast(a.status if not va.model_ready() else
-                           "Dis « Hey Tree AI » puis une question (20 s).", "info")
+                           "Dis « Hey coach » puis une question (20 s).", "info")
         except Exception:
             log.exception("voice assistant test failed")
             app.show_toast("Assistant vocal indisponible sur ce PC.", "warning")

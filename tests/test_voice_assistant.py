@@ -1,4 +1,4 @@
-"""Voice assistant « Hey Tree AI »: wake variants, question capture, no self-trigger, pause outside a
+"""Voice assistant « Hey coach »: wake variants, question capture, no self-trigger, pause outside a
 game, push-to-talk, test mode, model download, AI prompt, spoken short answer (fake mic / recognizer)."""
 
 from __future__ import annotations
@@ -19,20 +19,60 @@ from treeaicoach.ai_advisor import build_prompt, question_rule
 SILENCE = b"\0\0" * va.BLOCK_FRAMES
 
 
-@pytest.mark.parametrize("text", ["hé tri aïe", "et tri aïe aïe", "hey tri ail", "Hey Tree AI", "eh tri haie",
-                                  "bon hé tri aïe aïe", "et trie aille", "hey tri aïe"])
+@pytest.mark.parametrize("text", ["hé coach", "hey coach", "Hey coach", "et coach", "eh coach", "hey coche", "Hé Coach !",
+                                  "bon hé coach", "hey coach quel item", "HÉ COACH"])
 def test_wake_variants(text: str) -> None:
     assert va.is_wake(text)
 
 
-@pytest.mark.parametrize("text", ["", "trier les items", "il est très haut", "aïe aïe aïe", "tri", "le tri aléatoire",
-                                  "hé tri", "aïe aïe aïe j'ai encore perdu", "et i try"])
+@pytest.mark.parametrize("text", ["", "le coach est là", "coach", "ce coach est nul", "hey toi", "il est très haut",
+                                  "tri aïe", "et toi", "un coach de plus", "coachons-nous"])
 def test_not_wake(text: str) -> None:
     assert not va.is_wake(text)
 
 
+class _Seq:
+    def __init__(self, items):
+        self.items, self.i = list(items), 0
+
+    def accept(self, _b):
+        return self.items[self.i][0] == "F"
+
+    def result(self):
+        return self.items[self.i][1:]
+
+    def partial(self):
+        return self.items[self.i][1:]
+
+    def step(self, det):
+        r = det.feed(self, b"")
+        self.i += 1
+        return r
+
+
+def test_wake_detector_needs_stable_partials_but_not_finals() -> None:
+    seq = _Seq(["Phé coach", "Pbla", "Phé coach", "Phé coach", "Fhé coach"])
+    det = va.WakeDetector()
+    assert [seq.step(det) for _ in range(4)] == [False, False, False, True]    # flipping partial: no; 2 in a row: yes
+    assert va.WakeDetector().feed(_Seq(["Fhey coach"]), b"") is True            # a final result fires at once
+
+
+def test_grammar_has_decoys_and_unk() -> None:
+    assert "[unk]" in va.WAKE_GRAMMAR and "le coach" in va.WAKE_GRAMMAR and "hé coach" in va.WAKE_GRAMMAR
+    assert not any(va.is_wake(g) for g in va.WAKE_GRAMMAR if g.startswith(("le ", "ce ", "du ")))
+
+
+def test_tune_model_conf(tmp_path) -> None:
+    (tmp_path / "conf").mkdir()
+    (tmp_path / "conf" / "model.conf").write_text("--max-active=7000\n--beam=13.0\n--lattice-beam=4.0\n")
+    va._tune_model_conf(tmp_path)
+    va._tune_model_conf(tmp_path)
+    assert (tmp_path / "conf" / "model.conf").read_text() == "--max-active=10000\n--beam=16.0\n--lattice-beam=6.0\n"
+    va._tune_model_conf(tmp_path / "missing")
+
+
 def test_strip_wake_and_short_answer() -> None:
-    assert va.strip_wake("hé tri aïe aïe quel objet acheter") == "quel objet acheter"
+    assert va.strip_wake("hé coach quel objet acheter") == "quel objet acheter"
     assert va.strip_wake("quel objet") == "quel objet"
     assert va.short_answer("Achète Botte. Puis Sunfire. Ensuite Thornmail.") == "Achète Botte. Puis Sunfire."
     assert len(va.short_answer("mot " * 200)) <= 221
@@ -118,7 +158,7 @@ def wait(cond: Any, timeout: float = 3.0) -> bool:
 
 
 def test_wake_then_question_goes_to_the_ai() -> None:
-    a, asked, _c, _m = make([SILENCE, "P:hé tri", "F:hé tri aïe aïe", "P:quel", "P:quel objet",
+    a, asked, _c, _m = make([SILENCE, "P:hé", "F:hé coach", "P:quel", "P:quel objet",
                              "F:quel objet acheter"])
     wakes: list[int] = []
     a.set_hooks(on_wake=lambda: wakes.append(1))
@@ -131,7 +171,7 @@ def test_wake_then_question_goes_to_the_ai() -> None:
 
 
 def test_question_ends_on_silence_from_partials() -> None:
-    a, asked, _c, _m = make(["F:et tri aïe", "P:je fais quoi", "P:je fais quoi maintenant"])
+    a, asked, _c, _m = make(["F:et coach", "P:je fais quoi", "P:je fais quoi maintenant"])
     a.configure(NS(voice_assistant=True))
     try:
         assert wait(lambda: asked)
@@ -151,7 +191,7 @@ def test_ordinary_talk_never_asks() -> None:
 
 
 def test_own_voice_never_triggers() -> None:
-    a, asked, _c, mics = make(["F:hé tri aïe aïe", "F:quel objet acheter"] + [SILENCE] * 10,
+    a, asked, _c, mics = make(["F:hé coach", "F:quel objet acheter"] + [SILENCE] * 10,
                               speaking=lambda: True)
     a.configure(NS(voice_assistant=True))
     try:
@@ -162,7 +202,7 @@ def test_own_voice_never_triggers() -> None:
 
 
 def test_mic_closed_outside_a_game() -> None:
-    a, asked, _c, mics = make(["F:hé tri aïe aïe", "F:quel objet acheter"], in_game=False)
+    a, asked, _c, mics = make(["F:hé coach", "F:quel objet acheter"], in_game=False)
     a.configure(NS(voice_assistant=True))
     try:
         time.sleep(0.2)
@@ -172,7 +212,7 @@ def test_mic_closed_outside_a_game() -> None:
 
 
 def test_disabled_by_default_does_nothing() -> None:
-    a, asked, _c, mics = make(["F:hé tri aïe aïe"])
+    a, asked, _c, mics = make(["F:hé coach"])
     a.configure(NS())
     a.push_to_talk()
     time.sleep(0.1)
@@ -194,7 +234,7 @@ def test_push_to_talk_skips_the_wake_phrase() -> None:
 
 
 def test_test_mode_reports_and_does_not_ask(tmp_path: Path) -> None:
-    a, asked, _c, _m = make(["F:hé tri aïe aïe", "F:est-ce que tu m'entends"], in_game=False)
+    a, asked, _c, _m = make(["F:hé coach", "F:est-ce que tu m'entends"], in_game=False)
     a.configure(NS(voice_assistant=True))
     got: list[tuple[str, bool]] = []
     ev = threading.Event()

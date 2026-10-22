@@ -608,7 +608,7 @@ class CoachingMixin:
         return ask
 
     def _discord_voice_question(self, who: str, text: str) -> None:
-        """« Hey Tree AI » said in the Discord voice channel (discord_listen): ask the AI with the game
+        """« Hey coach » said in the Discord voice channel (discord_listen): ask the AI with the game
         snapshot + who asked; the answer is said IN THE CHANNEL (1-2 sentences). Never raises."""
         try:
             q = f"Question posée par {who} : {text}" if who else text
@@ -1034,7 +1034,7 @@ class CoachingMixin:
             return False
 
     def _voice_assistant_sync(self, stop: bool = False) -> None:
-        """Hand the settings + hooks to the app's voice assistant « Hey Tree AI » (live engine only;
+        """Hand the settings + hooks to the app's voice assistant « Hey coach » (live engine only;
         imported only once switched on). Never raises."""
         try:
             if self._demo or self._frame_source is not None:

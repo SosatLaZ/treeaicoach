@@ -1,4 +1,4 @@
-"""« Hey Tree AI » heard in the Discord voice channel (discord_listen.py): packets, DAVE, resampling,
+"""« Hey coach » heard in the Discord voice channel (discord_listen.py): packets, DAVE, resampling,
 per-speaker wake / question, rate limits, never the bot's own audio. Fakes only (no network)."""
 from __future__ import annotations
 
@@ -84,8 +84,8 @@ class FakeRec:
     def accept(self, pcm: bytes) -> bool:
         v = int(np.frombuffer(pcm, dtype="<i2")[0])
         if self.wake:
-            self._p = "hé tri aïe" if v == WAKE else ""
-            return False
+            self._r = "hé coach" if v == WAKE else ""
+            return v == WAKE
         if v == WORDS:
             self._r = "quel item acheter"
             return True

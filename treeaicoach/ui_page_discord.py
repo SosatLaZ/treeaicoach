@@ -290,8 +290,8 @@ class DiscordPage:
         app.switch_row(says, "discord_friends_matchup", "Matchup de chaque ami",
                        "Au début de la partie, une phrase par ami du salon : « Paul, Darius contre Garen : "
                        "favorable jusqu'au 6 ».")
-        app.switch_row(says, "discord_listen", "Écouter « Hey Tree AI » dans le vocal",
-                       "N'importe qui du salon dit « Hey Tree AI » puis sa question : petit son, et le bot "
+        app.switch_row(says, "discord_listen", "Écouter « Hey coach » dans le vocal",
+                       "N'importe qui du salon dit « Hey coach » puis sa question : petit son, et le bot "
                        "répond dans le salon en une ou deux phrases. Reconnaissance sur ton PC (modèle "
                        "français téléchargé une fois, ~41 Mo), seulement en partie.")
         app.switch_row(says, "discord_objectives", "Objectifs",

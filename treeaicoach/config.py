@@ -179,7 +179,7 @@ BOOL_FIELDS = BOOL_FIELDS + ("discord_ally_ganks", "discord_say_name")
 # bot Discord: the decisive team calls ("Ils sont 4 bot : Baron maintenant", team_calls.py), off
 BOOL_FIELDS = BOOL_FIELDS + ("discord_team_calls",)
 # bot Discord: where the app's sound goes ("both" / "discord" = everything by the bot, PC silent /
-# "pc" = the bot says nothing; the legacy discord_only=True means "discord"), « Hey Tree AI » heard in
+# "pc" = the bot says nothing; the legacy discord_only=True means "discord"), « Hey coach » heard in
 # the voice channel (discord_listen.py, off), the friends' matchups at game start (on)
 CHOICES["discord_route"] = ("both", "discord", "pc")
 BOOL_FIELDS = BOOL_FIELDS + ("discord_listen", "discord_friends_matchup")
@@ -187,7 +187,7 @@ BOOL_FIELDS = BOOL_FIELDS + ("discord_listen", "discord_friends_matchup")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 # self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
 BOOL_FIELDS = BOOL_FIELDS + ("selfcheck_enabled", "selfcheck_auto_diag")
-# voice assistant « Hey Tree AI » (voice_assistant.py): off by default, mic by name ("" = default),
+# voice assistant « Hey coach » (voice_assistant.py): off by default, mic by name ("" = default),
 # optional push-to-talk key
 BOOL_FIELDS = BOOL_FIELDS + ("voice_assistant",)
 UPDATE_TEXT_FIELDS["voice_assistant_mic"] = 200
@@ -382,9 +382,9 @@ class Config:
     discord_say_name: bool = False       # "Paul, bot gank" (the friend's Discord name first)
     discord_team_calls: bool = False     # "Ils sont 4 bot : Baron maintenant" in the voice channel
     discord_route: str = "both"          # both | discord (all the app's sound by the bot) | pc (bot silent)
-    discord_listen: bool = False         # « Hey Tree AI » said by anyone in the voice channel (discord_listen.py)
+    discord_listen: bool = False         # « Hey coach » said by anyone in the voice channel (discord_listen.py)
     discord_friends_matchup: bool = True  # game start: one matchup sentence per friend of the voice channel
-    voice_assistant: bool = False        # « Hey Tree AI » + question -> spoken AI answer (offline Vosk)
+    voice_assistant: bool = False        # « Hey coach » + question -> spoken AI answer (offline Vosk)
     voice_assistant_mic: str = ""        # input device name ("" = Windows default)
     hotkey_voice_ask: str = ""           # push-to-talk: listen to a question without the wake phrase
     discord_links: dict = field(default_factory=dict)   # {Discord user id: Riot ID / "-"} set by hand

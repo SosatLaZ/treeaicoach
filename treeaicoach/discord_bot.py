@@ -103,7 +103,7 @@ MATCHUP_STALE_S = 90.0
 TEST_STALE_S = 30.0
 COACH_STALE_S = 6.0          # a coach sentence (route "discord") later than 6 s is about another moment
 BEEP_STALE_S = 1.5           # a danger beep later than 1.5 s means nothing
-CHIME_STALE_S = 1.0          # the "je t'écoute" chime of « Hey Tree AI »
+CHIME_STALE_S = 1.0          # the "je t'écoute" chime of « Hey coach »
 AI_ANSWER_STALE_S = 40.0     # the AI answer to a question asked in the voice channel
 FRIENDS_STALE_S = 150.0      # the friends' matchups (game start)
 FRIENDS_GAP_FRAMES = 40      # 0.8 s of silence between two friends' matchups
@@ -604,9 +604,9 @@ class _Settings:
     team_calls: bool = False        # discord_team_calls: "Ils sont 4 bot : Baron maintenant" (team_calls.py)
     links: tuple = ()               # discord_links as sorted (user id, Riot ID) pairs
     route: str = "both"             # discord_route (+ legacy discord_only): both | discord | pc
-    listen: bool = False            # discord_listen: « Hey Tree AI » heard in the voice channel
+    listen: bool = False            # discord_listen: « Hey coach » heard in the voice channel
     friends_matchup: bool = True    # discord_friends_matchup
-    own_assistant: bool = False     # voice_assistant: the player's own « Hey Tree AI » is heard by his PC
+    own_assistant: bool = False     # voice_assistant: the player's own « Hey coach » is heard by his PC
 
     def wants(self, kind: str) -> bool:
         """The switch of an optional call kind is on (gank / matchup / test: always)."""
@@ -650,7 +650,7 @@ class DiscordPyBackend:
         self.tls = "système"
         self.listener: Callable[[], None] | None = None     # voice / guild change -> the caller refreshes
         self.receiver: Any = None           # discord_listen.Receiver: the voice websocket messages go to it
-        self._deaf = True                   # self-deafened (nothing received) unless « Hey Tree AI » listens
+        self._deaf = True                   # self-deafened (nothing received) unless « Hey coach » listens
         self._vc_cls: Any = None
         self.client = self._make_client(certifi_ca=False)
 
@@ -850,7 +850,7 @@ class DiscordPyBackend:
         return self._vc_cls
 
     async def set_listen(self, on: bool, receiver: Any) -> None:
-        """« Hey Tree AI » in the channel: undeafen + read the voice socket (or deafen + stop)."""
+        """« Hey coach » in the channel: undeafen + read the voice socket (or deafen + stop)."""
         if receiver is not None:
             self.receiver = receiver
             receiver.listener.bot_user_id = str(getattr(self.client.user, "id", "") or "")
@@ -968,7 +968,7 @@ class DiscordCaller:
         self._map: list[dict] = []          # discord_friends.match() of the voice members
         self.spoken: list[str] = []         # what was said (tests / diagnostics), last 50
         self._playing = False               # the bot is playing a sound in the channel
-        self._listener: Any = None          # discord_listen.VoiceListener (« Hey Tree AI » in the channel)
+        self._listener: Any = None          # discord_listen.VoiceListener (« Hey coach » in the channel)
         self._receiver: Any = None          # discord_listen.Receiver (the voice socket reader)
         #: engine hook: ``(who, question)`` asked out loud in the voice channel -> ask the AI
         self.on_voice_question: Callable[[str, str], Any] | None = None
@@ -1742,7 +1742,7 @@ class DiscordCaller:
             with self._lock:
                 self._dirty = True
 
-    # -- « Hey Tree AI » said in the voice channel (discord_listen.py) ---------------------------
+    # -- « Hey coach » said in the voice channel (discord_listen.py) ---------------------------
     def _listen_parts(self) -> tuple[Any, Any]:
         if self._listener is None:
             from treeaicoach import discord_listen as dl  # noqa: PLC0415

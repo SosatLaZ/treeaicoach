@@ -554,13 +554,13 @@ def check_capture(res: CheckResult, ctx: dict[str, Any]) -> None:
 
 
 def check_voice_assistant(res: CheckResult, ctx: dict[str, Any]) -> None:
-    """« Hey Tree AI »: libvosk.dll and the PortAudio DLL load from the bundle (the model is downloaded
+    """« Hey coach »: libvosk.dll and the PortAudio DLL load from the bundle (the model is downloaded
     on first use, not checked here)."""
     import sounddevice  # noqa: F401, PLC0415
 
     from treeaicoach import voice_assistant as va  # noqa: PLC0415
 
-    _expect(va.is_wake("hé tri aïe aïe") and not va.is_wake("il est très haut"), "wake phrase matcher")
+    _expect(va.is_wake("hé coach") and not va.is_wake("le coach est là"), "wake phrase matcher")
     try:
         import vosk  # noqa: PLC0415
         eng = f"vosk {getattr(vosk, '__version__', '?')}"
