@@ -50,18 +50,26 @@ class Theme:
     ok: str
 
 
-LIGHT = Theme(
-    name="light", window="#F2F2F4", sidebar="#E8E8EA", group="#FFFFFF", group_hover="#F7F7F8",
-    separator="#E3E3E6", text="#1D1D1F", secondary="#5E5E63", tertiary="#6B6B70",
-    accent="#2A721B", accent_hover="#236316", on_accent="#FFFFFF", accent_soft="#DCEBD3",
-    control="#FFFFFF", control_hover="#F1F1F3", control_border="#D2D2D7", track_off="#E1E1E5", knob="#FFFFFF",
-    danger="#C8001A", warning="#A34A00", ok="#2A721B")
-DARK = Theme(
-    name="dark", window="#1C1D1C", sidebar="#242524", group="#2B2C2B", group_hover="#323332",
-    separator="#3A3B3A", text="#F2F3F2", secondary="#B4B7B4", tertiary="#9A9E9A",
-    accent="#9BD84A", accent_hover="#AEE36A", on_accent="#0C0E0D", accent_soft="#34452A",
-    control="#3A3B3A", control_hover="#444544", control_border="#4A4B4A", track_off="#48494A", knob="#FFFFFF",
-    danger="#FF6961", warning="#FFB340", ok="#9BD84A")
+#: « trou noir » (docs/DESIGN.md): deep space, glass panels over a black hole, ONE warm accent taken
+#: from the accretion disk. ``group`` / ``sidebar`` are the panels' worst-case colours (glass over the
+#: brightest backdrop pixel, tests/test_design_rules.py) ; the style sheet paints them translucent.
+SPACE = Theme(
+    name="dark", window="#06060B", sidebar="#0B0A11", group="#312D30", group_hover="#3A363A",
+    separator="#2A2732", text="#F2EEE8", secondary="#BDB6AE", tertiary="#A09990",
+    accent="#F5A25A", accent_hover="#FFB878", on_accent="#1A0D03", accent_soft="#3B2716",
+    control="#25222C", control_hover="#2F2B37", control_border="#3B3743", track_off="#3B3743", knob="#FFFFFF",
+    danger="#FF6F6A", warning="#F2CF55", ok="#72D6A0")
+DARK = SPACE
+THEMES: tuple[Theme, ...] = (SPACE,)
+#: glass (rgba over the backdrop): page panels, sidebar, hairlines
+GLASS_GROUP = "rgba(17, 16, 23, 0.84)"
+GLASS_GROUP_HOVER = "rgba(30, 27, 37, 0.88)"
+GLASS_SIDEBAR = "rgba(6, 6, 10, 0.80)"
+GLASS_EDGE = "rgba(255, 255, 255, 0.07)"
+GLASS_SEPARATOR = "rgba(255, 255, 255, 0.075)"
+#: alpha of GLASS_GROUP (the contrast test composes it over the backdrop's brightest pixel)
+GLASS_GROUP_ALPHA = 0.84
+GLASS_GROUP_RGB = (17, 16, 23)
 
 # sizes (px at 100 %, Qt applies the monitor's DPI factor on top)
 SIDEBAR_W = 248
@@ -124,9 +132,14 @@ def style_sheet(t: Theme, body: str, display: str) -> str:
     """The ONE application style sheet (selectors by object name / dynamic property only)."""
     return f"""
 * {{ font-family: "{body}"; font-size: {BODY_PX}px; color: {t.text}; }}
-QMainWindow, QDialog, #Page, #PageBody, QStackedWidget {{ background: {t.window}; }}
+QMainWindow, QDialog {{ background: {t.window}; }}
+QDialog {{ background: {t.sidebar}; }}
+#Backdrop {{ background: {t.window}; }}
+#Page, #PageBody, QStackedWidget, #Page > QWidget {{ background: transparent; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
-#Sidebar {{ background: {t.sidebar}; border: none; border-right: 1px solid {t.separator}; }}
+#Sidebar {{ background: {GLASS_SIDEBAR}; border: none; border-right: 1px solid {GLASS_EDGE}; }}
+QLabel[role="brand"] {{ font-family: "{display}"; font-size: 17px; font-weight: 600; }}
+QLabel[role="navgroup"] {{ font-size: {CAPTION_PX}px; font-weight: 600; color: {t.tertiary}; }}
 QLabel {{ background: transparent; }}
 QLabel[role="title"] {{ font-family: "{display}"; font-size: {TITLE_PX}px; font-weight: 600; }}
 QLabel[role="headline"] {{ font-family: "{display}"; font-size: 20px; font-weight: 600; }}
@@ -140,8 +153,9 @@ QLabel[tone="warning"] {{ color: {t.warning}; }}
 QLabel[tone="ok"] {{ color: {t.ok}; }}
 QLabel[tone="accent"] {{ color: {t.accent}; }}
 QLabel a {{ color: {t.accent}; }}
-#Group {{ background: {t.group}; border-radius: {GROUP_RADIUS}px; }}
-#Separator {{ background: {t.separator}; border: none; }}
+#Group {{ background: {GLASS_GROUP}; border: 1px solid {GLASS_EDGE}; border-radius: {GROUP_RADIUS}px; }}
+#Group[tone="accent"] {{ border: 1px solid {t.accent_soft}; }}
+#Separator {{ background: {GLASS_SEPARATOR}; border: none; }}
 QPushButton {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: 7px;
   padding: 6px 14px; min-height: 20px; font-weight: 500; }}
 QPushButton:hover {{ background: {t.control_hover}; }}
@@ -159,8 +173,8 @@ QPushButton[kind="link"]:hover {{ text-decoration: underline; }}
 QPushButton[kind="large"] {{ padding: 9px 22px; font-size: 15px; }}
 QPushButton#NavItem {{ background: transparent; border: none; border-radius: 7px; text-align: left;
   padding: 7px 10px; font-size: {BODY_PX}px; font-weight: 500; }}
-QPushButton#NavItem:hover {{ background: {t.control_hover if t.name == "dark" else "#DCDCDF"}; }}
-QPushButton#NavItem:checked {{ background: {t.accent}; color: {t.on_accent}; }}
+QPushButton#NavItem:hover {{ background: {GLASS_GROUP_HOVER}; }}
+QPushButton#NavItem:checked {{ background: {t.accent_soft}; color: {t.text}; font-weight: 600; }}
 QComboBox {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: 7px;
   padding: 5px 30px 5px 10px; min-height: 20px; min-width: 140px; }}
 QComboBox:hover {{ background: {t.control_hover}; }}
@@ -186,15 +200,16 @@ QToolTip {{ background: {t.group}; color: {t.text}; border: 1px solid {t.control
 #Segmented {{ background: {t.track_off}; border-radius: 8px; }}
 QPushButton#Segment {{ background: transparent; border: none; border-radius: 6px; padding: 4px 12px;
   font-size: {SMALL_PX}px; font-weight: 500; min-height: 18px; }}
-QPushButton#Segment:checked {{ background: {t.group if t.name == "light" else "#5A5B5A"}; }}
-#Toast {{ background: {"#2C2C2E" if t.name == "light" else "#F2F3F2"}; border-radius: 10px; }}
-#Toast QLabel {{ color: {"#FFFFFF" if t.name == "light" else "#1D1D1F"}; font-weight: 500; }}
+QPushButton#Segment:checked {{ background: {t.accent_soft}; color: {t.text}; }}
+#Toast {{ background: {t.text}; border-radius: 10px; }}
+#Toast QLabel {{ color: {t.window}; font-weight: 500; }}
 #Toast[level="error"] QLabel, #Toast[level="warning"] QLabel {{ font-weight: 600; }}
 """
 
 
-def apply_theme(app: QtWidgets.QApplication, dark: bool) -> Theme:
-    t = DARK if dark else LIGHT
+def apply_theme(app: QtWidgets.QApplication, dark: bool = True) -> Theme:
+    """The one theme (the black hole is dark by nature; ``dark`` is kept for old callers)."""
+    t = SPACE
     _theme[0] = t
     body, display = pick_family(FONT_FAMILIES), pick_family(DISPLAY_FAMILIES)
     f = QtGui.QFont(body)
@@ -267,6 +282,10 @@ def _glyph_path(kind: str, s: float) -> QtGui.QPainterPath:
             p.lineTo(c + QtCore.QPointF(math.cos(a) * 7.6 * u, math.sin(a) * 7.6 * u))
         p.addEllipse(c, 5.3 * u, 5.3 * u)
         p.addEllipse(c, 2.2 * u, 2.2 * u)
+    elif kind == "advanced":         # three sliders
+        for y, x in ((5.5, 12.5), (10, 7), (14.5, 11)):
+            p.moveTo(3 * u, y * u); p.lineTo(17 * u, y * u)
+            p.addEllipse(QtCore.QPointF(x * u, y * u), 1.9 * u, 1.9 * u)
     elif kind == "about":
         p.addEllipse(QtCore.QPointF(10 * u, 10 * u), 7.5 * u, 7.5 * u)
         p.moveTo(10 * u, 9 * u); p.lineTo(10 * u, 14 * u)
@@ -697,38 +716,64 @@ class Page(QtWidgets.QScrollArea):
 
 
 class Sidebar(QtWidgets.QFrame):
-    """Navigation (icon + label rows, accent fill on the current page) + a status line at the bottom."""
+    """Navigation (icon + label rows, soft accent fill on the current page) in groups (a small
+    caption above each group but the first; the last group sits at the bottom) + a status line."""
 
     selected = QtCore.Signal(str)
 
-    def __init__(self, pages: Sequence[tuple[str, str, str]], parent: QtWidgets.QWidget | None = None) -> None:
+    def __init__(self, pages: Sequence[tuple[str, str, str]],
+                 groups: Sequence[tuple[str, Sequence[str]]] | None = None,
+                 parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Sidebar")
         self.setFixedWidth(SIDEBAR_W)
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(12, 18, 12, 14)
+        lay.setContentsMargins(12, 20, 12, 14)
         lay.setSpacing(2)
+        top = QtWidgets.QHBoxLayout()
+        top.setContentsMargins(10, 0, 0, 16)
+        top.setSpacing(10)
+        self.mark = QtWidgets.QLabel()
+        self.mark.setFixedSize(26, 26)
+        top.addWidget(self.mark)
         self.brand = QtWidgets.QLabel()
-        self.brand.setProperty("role", "headline")
-        self.brand.setContentsMargins(10, 0, 0, 12)
-        lay.addWidget(self.brand)
+        self.brand.setProperty("role", "brand")
+        top.addWidget(self.brand, 1)
+        lay.addLayout(top)
         self._group = QtWidgets.QButtonGroup(self)
         self._group.setExclusive(True)
         self.buttons: dict[str, QtWidgets.QPushButton] = {}
         self._kinds: dict[str, str] = {}
-        for key, text, kind in pages:
-            b = QtWidgets.QPushButton(text)
-            b.setObjectName("NavItem")
-            b.setCheckable(True)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setIconSize(QtCore.QSize(20, 20))
-            b.setMinimumHeight(36)
-            self._group.addButton(b)
-            self.buttons[key] = b
-            self._kinds[key] = kind
-            b.clicked.connect(lambda _c=False, k=key: self.selected.emit(k))
-            lay.addWidget(b)
-        lay.addStretch(1)
+        by_key = {k: (k, text, kind) for k, text, kind in pages}
+        if not groups:
+            groups = (("", [k for k, _t, _k in pages]),)
+        for gi, (caption, keys) in enumerate(groups):
+            if gi == len(groups) - 1 and gi > 0:
+                lay.addStretch(1)
+            elif gi > 0:
+                lay.addSpacing(14)
+            if caption:
+                cap = label(caption, "navgroup")
+                cap.setContentsMargins(10, 0, 0, 4)
+                lay.addWidget(cap)
+            for key in keys:
+                if key not in by_key:
+                    continue
+                _k, text, kind = by_key[key]
+                b = QtWidgets.QPushButton(text)
+                b.setObjectName("NavItem")
+                b.setCheckable(True)
+                b.setCursor(Qt.PointingHandCursor)
+                b.setIconSize(QtCore.QSize(20, 20))
+                b.setMinimumHeight(36)
+                self._group.addButton(b)
+                self.buttons[key] = b
+                self._kinds[key] = kind
+                b.clicked.connect(lambda _c=False, k=key: self.selected.emit(k))
+                lay.addWidget(b)
+        if len(groups) < 2:
+            lay.addStretch(1)
+        lay.addSpacing(10)
         self.update_btn = button("", None, "primary")
         self.update_btn.hide()
         lay.addWidget(self.update_btn)
@@ -745,12 +790,55 @@ class Sidebar(QtWidgets.QFrame):
     def recolor(self) -> None:
         t = theme()
         for key, b in self.buttons.items():
-            b.setIcon(glyph_icon(self._kinds[key], t.accent, 20, t.on_accent))
+            b.setIcon(glyph_icon(self._kinds[key], t.secondary, 20, t.accent))
 
     def set_current(self, key: str) -> None:
         b = self.buttons.get(key)
         if b is not None and not b.isChecked():
             b.setChecked(True)
+
+
+class Backdrop(QtWidgets.QWidget):
+    """Central widget painting the black hole (ui_backdrop): rendered once on a worker, then one
+    cached pixmap per window size; a resize drag uses a fast scaled copy, the smooth one (with its
+    stars) comes 120 ms after the last resize. No timer while idle."""
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        from treeaicoach.ui_backdrop import BackdropCache  # noqa: PLC0415
+
+        self.setObjectName("Backdrop")
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+        self.cache = BackdropCache()
+        self._settle = QtCore.QTimer(self, singleShot=True, interval=120)
+        self._settle.timeout.connect(self._smooth)
+        self._fast = False
+
+    def set_glow(self, rgb: Any) -> None:
+        self.cache.set_glow(rgb)
+        self.update()
+
+    def resizeEvent(self, e: Any) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        if self.cache.glow is not None and self.isVisible():
+            self._fast = True
+            self._settle.start()
+
+    def _smooth(self) -> None:
+        self._fast = False
+        self.update()
+
+    def paintEvent(self, e: Any) -> None:  # noqa: N802
+        qp = QtGui.QPainter(self)
+        pm = self.cache.compose(self.width(), self.height(), self.devicePixelRatioF(), smooth=not self._fast)
+        if pm is None:
+            qp.fillRect(e.rect(), QtGui.QColor(theme().window))
+        else:
+            r = e.rect()
+            dpr = pm.devicePixelRatio()
+            qp.drawPixmap(r, pm, QtCore.QRect(int(r.x() * dpr), int(r.y() * dpr), int(r.width() * dpr),
+                                              int(r.height() * dpr)))
+        qp.end()
 
 
 class Toast(QtWidgets.QFrame):
@@ -790,6 +878,6 @@ class Toast(QtWidgets.QFrame):
         self.move((par.width() - w) // 2 + SIDEBAR_W // 2, par.height() - self.height() - 24)
 
 
-__all__ = ["Theme", "LIGHT", "DARK", "theme", "apply_theme", "system_is_dark", "style_sheet", "Switch", "Dot",
+__all__ = ["Theme", "SPACE", "DARK", "THEMES", "Backdrop", "theme", "apply_theme", "system_is_dark", "style_sheet", "Switch", "Dot",
            "Segmented", "Combo", "Slider", "Row", "Group", "Section", "Page", "Sidebar", "Toast", "label",
            "button", "glyph_icon", "set_prop", "repolish"]

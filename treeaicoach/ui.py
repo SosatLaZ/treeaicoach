@@ -43,6 +43,7 @@ from treeaicoach.ui_common import (  # noqa: F401 - re-exported for tools / test
     ENGINE_RESTART_FIELDS,
     HIDDEN_SETTINGS,
     HOTKEY_FIELDS,
+    NAV_GROUPS,
     PAGE_ALIASES,
     PAGES,
     PREBUILD_ORDER,
@@ -217,12 +218,23 @@ class CoachApp:
         icon = app_icon_path("ico") or app_icon_path("png")
         if icon:
             self.win.setWindowIcon(QtGui.QIcon(str(icon)))
-        central = QtWidgets.QWidget()
+        central = W.Backdrop()
+        self.backdrop = central
+        from treeaicoach.ui_backdrop import load_glow  # noqa: PLC0415
+
+        self.run_job(load_glow, central.set_glow, None, name="TreeAI-ui-backdrop")    # bundled PNG, once
         h = QtWidgets.QHBoxLayout(central)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(0)
-        self.sidebar = W.Sidebar(PAGES)
+        self.sidebar = W.Sidebar(PAGES, NAV_GROUPS)
         self.sidebar.brand.setText(APP_NAME)
+        png = app_icon_path("png")
+        if png:
+            dpr = self.qapp.devicePixelRatio() or 1.0
+            mark = QtGui.QPixmap(str(png)).scaled(int(26 * dpr), int(26 * dpr), QtCore.Qt.KeepAspectRatio,
+                                                  QtCore.Qt.SmoothTransformation)
+            mark.setDevicePixelRatio(dpr)
+            self.sidebar.mark.setPixmap(mark)
         self.sidebar.selected.connect(lambda k: self.show_page(k))
         self.sidebar.update_btn.clicked.connect(lambda: self.show_page("about"))
         self.stack = QtWidgets.QStackedWidget()
@@ -319,7 +331,8 @@ class CoachApp:
         import importlib  # noqa: PLC0415
 
         mod = {"home": "ui_page_home", "overlay": "ui_page_overlay", "alerts": "ui_page_alerts", "discord": "ui_page_discord",
-               "analysis": "ui_page_analysis", "settings": "ui_page_settings", "about": "ui_page_about"}.get(key)
+               "analysis": "ui_page_analysis", "settings": "ui_page_settings", "advanced": "ui_page_advanced",
+               "about": "ui_page_about"}.get(key)
         if mod is None:
             return None
         return getattr(importlib.import_module(f"treeaicoach.{mod}"), "build")
@@ -1194,7 +1207,7 @@ class CoachApp:
             msg = f"Diagnostic interrompu : {ds['error']}"
         else:
             msg = "Diagnostic prêt : " + str(ds.get("zip") or ds.get("folder") or "")
-        view = self.page_views.get("settings")
+        view = self.page_views.get("advanced")
         if view is not None and callable(getattr(view, "set_diag_text", None)):
             view.set_diag_text(msg, running)
         if not running:

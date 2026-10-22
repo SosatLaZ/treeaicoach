@@ -116,14 +116,13 @@ TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
 
-PREBUILD_ORDER = ("alerts", "overlay", "settings", "discord", "analysis", "about")   # built after the first paint
+PREBUILD_ORDER = ("overlay", "alerts", "discord", "analysis", "settings", "advanced", "about")   # built after the first paint
 GAMES_PAGE = 15                  # rows of the Analyses table drawn at once ("Afficher plus")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE = "TreeAICoach"
 
-#: Sidebar navigation: 4 pages. Everything the player can set lives in ONE page (Réglages), in tabs
-#: named after what they change (docs/DESIGN.md, "Navigation").
+#: Sidebar navigation: one purpose per page, ordered by how often the player needs it (docs/DESIGN.md).
 PAGES: tuple[tuple[str, str, str], ...] = (
     ("home", "Accueil", "home"),
     ("overlay", "Overlay", "overlay"),
@@ -131,13 +130,19 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("discord", "Discord", "discord"),
     ("analysis", "Analyse", "analysis"),
     ("settings", "Réglages", "settings"),
+    ("advanced", "Avancé", "advanced"),
     ("about", "À propos", "about"),
+)
+#: Sidebar groups, in order of use: playing (every game), then setting up (rarely), at the bottom.
+NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("", ("home", "overlay", "alerts", "discord", "analysis")),
+    ("Configuration", ("settings", "advanced", "about")),
 )
 #: Old page / tab names (tools, fixes, saved links) -> new page.
 PAGE_ALIASES: dict[str, str] = {"dashboard": "home", "help": "about", "updates": "about", "Mises à jour": "about",
                                 "Affichage": "overlay", "Voix": "alerts", "Général": "settings",
-                                "Détection": "settings", "IA": "settings", "Avancé": "settings",
-                                "Bot Discord": "discord"}
+                                "Détection": "advanced", "IA": "settings", "Avancé": "advanced",
+                                "Performance": "advanced", "Bot Discord": "discord"}
 #: Status of the launcher.
 STATE_INFO: dict[str, tuple[str, str]] = {
     "STOPPED": ("Analyse arrêtée", DIM),
