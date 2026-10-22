@@ -677,7 +677,7 @@ def test_config_voice_engine_fields() -> None:
     from treeaicoach.config import Config, _validate_field
 
     c = Config()
-    assert c.voice_engine == "auto" and c.neural_voice == "fr-FR-DeniseNeural"
+    assert c.voice_engine == "auto" and c.neural_voice == "fr-CA-SylvieNeural"
     assert _validate_field("voice_engine", "Neural", "auto") == "neural"
     assert _validate_field("voice_engine", "x", "auto") == "auto"
     assert _validate_field("neural_voice", "fr-FR-HenriNeural", "d") == "fr-FR-HenriNeural"
@@ -711,7 +711,7 @@ def test_neural_rate_prewarm_and_lists(monkeypatch) -> None:
     engines = VoiceEngine.list_engines()
     assert [k for k, _ in engines] == ["auto", "neural", "onecore", "sapi"] and all(lbl for _, lbl in engines)
     voices = VoiceEngine.list_neural_voices()
-    assert voices[0][0] == "fr-FR-DeniseNeural" and len(voices) >= 4
+    assert voices[0][0] == "fr-CA-SylvieNeural" and len(voices) >= 4
 
 
 def test_neural_backend_rate_and_prewarm(tmp_path: Path) -> None:

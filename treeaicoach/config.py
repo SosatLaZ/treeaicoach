@@ -33,7 +33,7 @@ from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
-CONFIG_VERSION = 4                 # written as "config_version"; < 2 / < 3 / < 4: one-time migrations in load_config
+CONFIG_VERSION = 5                 # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
 MAX_CONFIG_BYTES = 1_000_000       # a bigger config.json is treated as corrupt
 BACKUP_SUFFIX = ".bak"
 
@@ -240,7 +240,7 @@ class Config:
     voice_rate: int = 2             # -10..10 (SAPI)
     voice_volume: int = 100         # 0..100
     voice_engine: str = "auto"      # auto (= neural) | neural | onecore | sapi (see voice.py)
-    neural_voice: str = "fr-FR-DeniseNeural"   # Microsoft Edge neural voice id (online)
+    neural_voice: str = "fr-CA-SylvieNeural"   # Microsoft Edge neural voice id (online)
     neural_rate: str = "+15%"       # neural voice speed, "-50%".."+100%" (independent of voice_rate)
     beep_on_danger: bool = True
     danger_voice: str = "bip_voix"  # Voix pour les dangers : "bip_voix" (bip + voix si prête) | "bip" (bip seul)
@@ -840,6 +840,9 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
             if data.get(old) is True:
                 # 2.3 cleanup: "layer_roles" / "layer_ghosts" were OR-ed with the overlay_show_* toggles
                 data = {**data, new: True}
+    if _version(data) < 5 and str(data.get("neural_voice") or "fr-FR-DeniseNeural") == "fr-FR-DeniseNeural":
+        # 2.13: Québécois voice by default; the old default (Denise) moves once, any other pick is kept
+        data = {**data, "neural_voice": "fr-CA-SylvieNeural"}
     if _version(data) < 4 and str(data.get("overlay_mode") or "").strip().lower() == "radar":
         # 2.12.1: "une minimap au-dessus de ma minimap" - the user never wants the radar copy;
         # moved back to the marks on the real minimap once (the value itself is still accepted)

@@ -37,16 +37,18 @@ from treeaicoach.tts_lexicon import speakable
 
 log = logging.getLogger(__name__)
 
-DEFAULT_NEURAL_VOICE = "fr-FR-DeniseNeural"
+DEFAULT_NEURAL_VOICE = "fr-CA-SylvieNeural"   # Québécois accent by default (the player is from Québec)
 #: (voice id, label shown in the UI)
 NEURAL_VOICES: tuple[tuple[str, str], ...] = (
+    ("fr-CA-SylvieNeural", "Sylvie (femme, Québec)"),
+    ("fr-CA-AntoineNeural", "Antoine (homme, Québec)"),
+    ("fr-CA-JeanNeural", "Jean (homme, Québec)"),
+    ("fr-CA-ThierryNeural", "Thierry (homme, Québec)"),
     ("fr-FR-DeniseNeural", "Denise (femme, France)"),
     ("fr-FR-HenriNeural", "Henri (homme, France)"),
     ("fr-FR-VivienneMultilingualNeural", "Vivienne (femme, France)"),
     ("fr-FR-RemyMultilingualNeural", "Rémy (homme, France)"),
     ("fr-FR-EloiseNeural", "Éloïse (jeune femme, France)"),
-    ("fr-CA-SylvieNeural", "Sylvie (femme, Québec)"),
-    ("fr-CA-JeanNeural", "Jean (homme, Québec)"),
     ("fr-BE-CharlineNeural", "Charline (femme, Belgique)"),
     ("fr-CH-ArianeNeural", "Ariane (femme, Suisse)"),
 )

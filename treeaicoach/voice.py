@@ -1302,7 +1302,7 @@ class VoiceEngine:
 
             return list_neural_voices()
         except Exception:
-            return [("fr-FR-DeniseNeural", "Denise (femme, France)")]
+            return [("fr-CA-SylvieNeural", "Sylvie (femme, Québec)")]
 
     def start(self) -> None:
         """Start the voice thread (idempotent, returns immediately)."""

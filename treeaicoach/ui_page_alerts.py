@@ -32,7 +32,7 @@ def neural_voices() -> list[tuple[str, str]]:
 
         return [(v, lbl) for v, lbl in NEURAL_VOICES]
     except Exception:
-        return [("fr-FR-DeniseNeural", "Denise (France)")]
+        return [("fr-CA-SylvieNeural", "Sylvie (Québec)")]
 
 
 VA_MODEL_MB = 41
@@ -108,9 +108,9 @@ class AlertsPage:
                                       "sans Internet.")
         app.choice_row(v, "voice_engine", "Moteur de voix", "« Automatique » utilise la voix neurale si "
                        "Internet répond.", ENGINE_LABELS)
-        cur = str(app.cfg.neural_voice or "fr-FR-DeniseNeural")
+        cur = str(app.cfg.neural_voice or "fr-CA-SylvieNeural")
         self.neural = app.choice_row(v, "neural_voice", "Voix neurale", "Voix Microsoft en ligne (française).",
-                                     [(cur, cur.replace("fr-FR-", "").replace("Neural", ""))])
+                                     [(cur, cur.replace("fr-FR-", "").replace("fr-CA-", "").replace("Neural", ""))])
         # the full list needs tts_neural (edge-tts, aiohttp: a slow import): read on a worker
         app.run_job(neural_voices, lambda vs: self.neural.ctl.set_choices(vs, app.cfg.neural_voice), None,
                     name="TreeAI-ui-neural-voices")

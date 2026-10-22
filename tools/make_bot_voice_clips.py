@@ -1,9 +1,9 @@
 """Record the bot Discord's fixed sentences (discord_audio.RECORDED) with the natural voice (Edge,
-Denise, the app's default rate) into ``treeaicoach/assets/sounds/voice/<clip_name>.wav``: 24 kHz mono
+Sylvie fr-CA, the app's default rate) into ``treeaicoach/assets/sounds/voice/<clip_name>.wav``: 24 kHz mono
 16-bit, loudness-normalised (discord_audio.TARGET_RMS_DB). They are the bot's last resort when no
 voice engine works on the player's PC (offline, Edge refused, no Windows voice).
 
-    python tools/make_bot_voice_clips.py [--voice fr-FR-DeniseNeural] [--rate +15%]
+    python tools/make_bot_voice_clips.py [--voice fr-CA-SylvieNeural] [--rate +15%]
 
 Needs edge-tts >= 7.3.1 (Microsoft refuses the 7.2.x handshake with HTTP 403 since 2026) and miniaudio.
 Prints each clip's duration and the level of the raw voice (the 2.9.0 bot played it unscaled).
