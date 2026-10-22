@@ -1583,6 +1583,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     for fog in fogs:
         if fog.key in ghost_drawn or not bool(getattr(fog, "is_jungler", False)):
             continue
+        if len(getattr(fog, "seeds", None) or ()) > 1:
+            continue        # centroid of a multi-point fact (map centre): not where he was seen
         uv = _uv_ok(fog.last_uv)
         if uv is None:
             continue
@@ -2550,19 +2552,58 @@ def _item_takeover(state: Any, now: float) -> bool:
         return False
 
 
+#: compact jungler tracker row: shown while the enemy jungler is hidden and was seen at most this
+#: long ago (or is dead, with his respawn timer). Real feedback 2.15 "pas de tracker".
+TRACKER_MAX_S = 180
+
+
+def compact_jungler(state: Any) -> str:
+    """The compact card's tracker row ("Lee Sin · vu il y a 25 s, rivière du bas", "Lee Sin ·
+    mort (12 s)"), or "" (visible on the minimap, never seen, too old, item card)."""
+    try:
+        text = _jungler_text(state)
+        if not text or " · " not in text:
+            return ""
+        what = text.split(" · ", 1)[1]
+        if what.startswith("mort") or what.startswith("vu à l'instant"):
+            return text
+        m = re.match(r"vu il y a (?:(\d+) s|(\d+):(\d\d))", what)
+        if m is None:
+            return ""
+        ago = int(m.group(1)) if m.group(1) else int(m.group(2)) * 60 + int(m.group(3))
+        return text if ago <= TRACKER_MAX_S else ""
+    except Exception:
+        return ""
+
+
 def hud_visible(state: Any, now: float | None = None) -> bool:
     """False when the HUD card has nothing to show (compact mode): the window is hidden."""
     try:
         if bool(getattr(state, "hud_detailed", False)):
             return True
-        return compact_content(state, now) is not None
+        return compact_content(state, now) is not None or bool(compact_jungler(state))
     except Exception:
         return True
 
 
 def _compact_layout(state: Any, width: int, now: float) -> dict[str, Any]:
-    c = compact_content(state, now) or {"mode": "ok", "colour": TAI_GO, "word": "", "line": "", "icon": None}
-    return _compact_layout_for(c, width)
+    c = compact_content(state, now)
+    jgl = compact_jungler(state)
+    if c is None:
+        c = {"mode": "ok", "colour": TAI_MUTED if jgl else TAI_GO, "word": "", "line": "", "icon": None}
+    lay = _compact_layout_for(c, width)
+    if jgl and c["mode"] != "item":
+        k = lay["k"]
+        lay["jgl"] = jgl
+        lay["f_jgl"] = get_font(round(12.5 * k), "semibold")
+        add = 17 * k + (3 * k if lay["rows"] else 0.0)
+        lay["rows"].append(("jgl", 17 * k))
+        if len(lay["rows"]) == 1:
+            lay["pad_t"] = 6 * k
+            add = 17 * k + 12 * k - (lay["ch"])          # the whole card is the tracker row
+        lay["ch"] += add
+        lay["height"] = int(math.ceil(lay["mt"] + lay["ch"] + round(4 * k)))
+    return lay
 
 
 def _compact_layout_for(c: dict[str, Any], width: int) -> dict[str, Any]:
@@ -2654,6 +2695,12 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
         elif name == "word":
             cv_.text(left, y + h / 2, fit_text(c["word"].upper(), lay["f_word"], lay["right"] - left), lay["f_word"],
                      _mix(accent, WHITE, 0.4), shadow=0.6)
+        elif name == "jgl":
+            # tracker row: red dot + "Lee Sin · vu il y a 25 s, rivière du bas" (muted, never the instruction)
+            yy = y + h / 2 + (2 * k if idx else 0.0)
+            cv_.disc(left + 3.5 * k, yy, 3.2 * k, TAI_DANGER, 0.95)
+            cv_.text(left + 11 * k, yy, fit_text(lay["jgl"], lay["f_jgl"], lay["right"] - left - 11 * k),
+                     lay["f_jgl"], _mix(TAI_TEXT, TAI_MUTED, 0.35), 1.0, shadow=0.0)
         elif name == "line":
             tx = left
             if c["icon"] is not None:

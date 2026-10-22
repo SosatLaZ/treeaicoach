@@ -159,7 +159,10 @@ def test_hud_is_light_by_default_with_gauge_and_one_advice_line(states):
     g, r = _accent(up), _accent(down)
     assert g[1] > g[2] and r[2] > r[0] + 30                  # ATTAQUE green bar, SAFE amber (careful) bar
     # PRUDENT (from the stance) with nothing to say: no card (silence is a feature)
-    assert not orr.hud_visible(orr.OverlayState(**{**calm.__dict__, "stance": "prudent"}), now=0.0)
+    assert not orr.hud_visible(orr.OverlayState(**{**calm.__dict__, "stance": "prudent", "jungler_line": None}),
+                               now=0.0)
+    # ... except the jungler tracker row (hidden jungler seen recently, 2.15 "pas de tracker")
+    assert orr.hud_visible(orr.OverlayState(**{**calm.__dict__, "stance": "prudent"}), now=0.0)
     assert orr._gauge_step(orr.OverlayState(stance="agressif")) == 1
     assert orr._gauge_step(orr.OverlayState(gauge=9)) == 2 and orr._gauge_step(orr.OverlayState()) is None
     # danger: the danger word only (one thing), the advice line waits

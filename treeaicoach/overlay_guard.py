@@ -172,8 +172,9 @@ class CaptureGuard:
         return bool(keys) and all(ex.get(k, False) for k in keys)
 
     def safe_mode(self) -> bool:
-        """True = nothing may be drawn over the minimap (exclusion off, refused, or the probe saw
-        our marker in the capture)."""
+        """True = our marks may be in the captured frames (exclusion off, refused, or the probe saw
+        our marker in the capture). The marks stay drawn ON the real minimap (2.12.1, real
+        feedback 2.15 "pas de tracker"); :meth:`clean_frame` keeps them out of the detection."""
         with self._lock:
             if not self.enforce:
                 return False
@@ -371,7 +372,7 @@ class CaptureGuard:
             safe = self.safe_mode()
             (log.warning if safe and st in ("failed", "refused") else log.info)(
                 "Overlay capture guard: %s -> %s", msg,
-                "mode sûr (rien dessiné sur la minimap)" if safe else "marques sur la minimap")
+                "marques sur la minimap, effacées des images avant la détection" if safe else "marques sur la minimap")
 
 
 #: the one guard shared by the overlay thread and the engine
