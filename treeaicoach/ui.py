@@ -1140,7 +1140,13 @@ class CoachApp:
     def _show_champ_select(self, card: Any) -> None:
         title = str(getattr(card, "title", "") or "") if card is not None else ""
         lines = tuple(str(x) for x in (getattr(card, "lines", ()) or ()) if x) if card is not None else ()
-        sig = (title, lines, _card_icons_sig(card)) if card is not None else None
+        try:
+            from treeaicoach import client_sync  # noqa: PLC0415
+
+            sync_text = client_sync.get_default().status_text()
+        except Exception:
+            sync_text = ""
+        sig = (title, lines, _card_icons_sig(card), sync_text) if card is not None else None
         if sig == self._cs_sig:
             return
         was_shown = self._cs_sig is not None

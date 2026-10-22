@@ -152,7 +152,7 @@ HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ai",)     # "Demander à l'IA" (lowest 
 BOOL_FIELDS = BOOL_FIELDS + ("ward_guide", "ward_world", "ward_sound")
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ward",)
 # League Client (lcu.py): post-game match timeline (ground truth for the report and the alert scoring)
-BOOL_FIELDS = BOOL_FIELDS + ("lcu_enabled",)
+BOOL_FIELDS = BOOL_FIELDS + ("lcu_enabled", "cs_import_items", "cs_auto_runes", "cs_auto_spells")
 # player info (player_intel.py): public rank / LP / streaks of the players of the game in progress, off
 BOOL_FIELDS = BOOL_FIELDS + ("player_intel",)
 # play ratings (plays.py / fx_overlay.py): chess.com-style "coup de maître / gaffe" badges, visual only
@@ -346,6 +346,10 @@ class Config:
     hotkey_ward: str = "F7"          # "Où poser une balise ?" (show the best spots now), "" = disabled
     # League Client local API (lcu.py), read-only, after the game only: true positions / gold for the report
     lcu_enabled: bool = True
+    # champion select (client_sync.py): meta build written to the client, all opt-in switches of the home card
+    cs_import_items: bool = True     # "TreeAI" item set -> shop "Recommended" tab, when the champion is locked in
+    cs_auto_runes: bool = False      # rune page "TreeAI" created / replaced automatically (off: button)
+    cs_auto_spells: bool = False     # summoner spells set automatically, Flash kept on its key (off: button)
     # public rank, LP, streaks of the current game's players (LCU, memory only, shown by champion)
     player_intel: bool = False
     # play ratings (plays.py): animated badge "COUP DE MAÎTRE !!" / "GAFFE ??" + post-game précision

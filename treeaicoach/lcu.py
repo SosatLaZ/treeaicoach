@@ -5,7 +5,8 @@ protected by HTTP basic auth (``riot:<password>``). Riot allows third-party apps
 TreeAI Coach uses it for one thing: once a game is over, fetch the match and its timeline
 (true per-minute positions of the 10 players, kill positions, objectives, gold / XP) to
 enrich the post-game report and to score its own alerts (``ground_truth.py``). Nothing here
-is used for live decisions, nothing is ever written to the client (GET requests only).
+is used for live decisions. The reads are GET; the only writes (:meth:`LcuClient.send`) are the ones
+the user opts into on the home page: item set, rune page, summoner spells (``client_sync.py``).
 
 Discovery (:func:`discover`), cheapest first, all optional:
 
@@ -70,6 +71,7 @@ ENV_DIR = "TREEAI_LCU_DIR"
 SUMMONER_PATH = "/lol-summoner/v1/current-summoner"
 MATCHES_PATH = "/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=1"
 GAME_PATH = "/lol-match-history/v1/games/{game_id}"
+RANKED_PATH = "/lol-ranked/v1/current-ranked-stats"
 TIMELINE_PATH = "/lol-match-history/v1/game-timelines/{game_id}"
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -385,6 +387,19 @@ class LcuClient:
     # ------------------------------------------------------------------ HTTP
     def get(self, path: str, timeout: float | None = None) -> Any:
         """GET ``path`` and decode the JSON; ``None`` on any error (404 included). Never raises."""
+        return self._request("GET", path, None, timeout)
+
+    def send(self, method: str, path: str, body: Any = None, timeout: float | None = None) -> Any:
+        """PUT / POST / PATCH / DELETE ``path`` with a JSON ``body`` (the same endpoints a user
+        triggers by hand in the client: item sets, rune pages, summoner spells). Returns the decoded
+        JSON (``{}`` for an empty answer, 204 included) or ``None`` on any error. Never raises."""
+        method = str(method or "").upper()
+        if method not in ("PUT", "POST", "PATCH", "DELETE"):
+            self.last_error = "bad method"
+            return None
+        return self._request(method, path, body, timeout)
+
+    def _request(self, method: str, path: str, body: Any, timeout: float | None) -> Any:
         creds = self.credentials()
         if creds is None:
             return None
@@ -396,8 +411,14 @@ class LcuClient:
             if urllib.parse.urlsplit(url).hostname != HOST:      # never anything but the loopback
                 self.last_error = "bad host"
                 return None
-            req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "TreeAICoach",
-                                                       "Authorization": creds.auth_header()})
+            headers = {"Accept": "application/json", "User-Agent": "TreeAICoach",
+                       "Authorization": creds.auth_header()}
+            data_out = None
+            if method != "GET":
+                headers["Content-Type"] = "application/json"
+                if body is not None:
+                    data_out = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            req = urllib.request.Request(url, data=data_out, headers=headers, method=method)
             chunks: list[bytes] = []
             total = 0
             with self._opener.open(req, timeout=timeout or self.timeout) as resp:
@@ -410,7 +431,8 @@ class LcuClient:
                         self.last_error = "response too large"
                         return None
                     chunks.append(chunk)
-            data = json.loads(b"".join(chunks).decode("utf-8-sig", errors="replace"))
+            raw = b"".join(chunks).decode("utf-8-sig", errors="replace")
+            data = json.loads(raw) if raw.strip() or method == "GET" else {}
             self.last_error = ""
             self._status = STATUS_CONNECTED
             return data
@@ -459,6 +481,24 @@ class LcuClient:
     def current_summoner(self) -> dict | None:
         d = self.get(SUMMONER_PATH)
         return d if isinstance(d, dict) else None
+
+    def ranked_tier(self) -> str:
+        """My own solo-queue tier ("GOLD"...), "" when unranked / unknown. Never raises."""
+        try:
+            d = self.get(RANKED_PATH)
+            if not isinstance(d, dict):
+                return ""
+            qm = d.get("queueMap") if isinstance(d.get("queueMap"), dict) else {}
+            q = qm.get("RANKED_SOLO_5x5")
+            if not isinstance(q, dict):
+                qs = d.get("queues") if isinstance(d.get("queues"), list) else []
+                q = next((x for x in qs if isinstance(x, dict) and x.get("queueType") == "RANKED_SOLO_5x5"), {})
+            tier = str(q.get("tier") or "").upper()
+            if tier in ("", "NONE", "UNRANKED"):       # not placed this season: last season's end tier
+                tier = str(q.get("previousSeasonEndTier") or q.get("highestPreviousSeasonEndTier") or "").upper()
+            return "" if tier in ("NONE", "UNRANKED") else tier
+        except Exception:
+            return ""
 
     def last_game(self) -> dict | None:
         """The current summoner's most recent game (match-history list entry), or None."""

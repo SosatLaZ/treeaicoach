@@ -69,7 +69,30 @@ class HomePage:
         self.cs_icons.hide()
         bl.addWidget(self.cs_icons)
         bl.addWidget(self.cs_lines)
+        # build written INTO the client (client_sync.py): opt-in switches + one-click buttons
+        self.cs_sync = W.label("", "secondary", wrap=True)
+        bl.addWidget(self.cs_sync)
+        brow = QtWidgets.QHBoxLayout()
+        brow.setSpacing(8)
+        brow.addWidget(W.button("Importer les runes", lambda: self._sync_now("runes"), None,
+                                "Crée ou remplace la page de runes « TreeAI » dans le client"))
+        brow.addWidget(W.button("Mettre les sorts", lambda: self._sync_now("spells"), None,
+                                "Choisit les sorts conseillés, Saut éclair reste sur ta touche"))
+        brow.addStretch(1)
+        bl.addLayout(brow)
+        try:
+            from treeaicoach import client_sync  # noqa: PLC0415
+
+            client_sync.get_default().set_config_source(lambda: app.cfg)
+        except Exception:
+            log.debug("client sync not wired", exc_info=True)
         self.cs.add(box)
+        app.switch_row(self.cs, "cs_import_items", "Importer automatiquement le set d'objets",
+                       "Les objets du moment apparaissent surlignés dans l'onglet Recommandés de la boutique.")
+        app.switch_row(self.cs, "cs_auto_runes", "Appliquer les runes automatiquement",
+                       "Crée ou remplace la page « TreeAI » (jamais tes autres pages sans ton clic).")
+        app.switch_row(self.cs, "cs_auto_spells", "Mettre les sorts automatiquement",
+                       "Saut éclair reste sur ta touche D ou F habituelle.")
         self.cs.hide()
         self.page.add(self.cs)
 
@@ -292,7 +315,30 @@ class HomePage:
         self.cs_title.setText(ui_text(title))
         self.cs_lines.setText("\n".join(ui_text(x) for x in lines[:8]))
         self._fill_icons(card)
+        try:
+            from treeaicoach import client_sync  # noqa: PLC0415
+
+            self.cs_sync.setText(ui_text(client_sync.get_default().status_text()))
+        except Exception:
+            pass
         self.cs.show()
+
+    def _sync_now(self, what: str) -> None:
+        """Button: write the runes / spells of the meta build into the client (a click is the consent)."""
+        app = self.app
+
+        def job() -> Any:
+            from treeaicoach import client_sync  # noqa: PLC0415
+
+            return client_sync.get_default().manual(what)
+
+        def done(res: Any) -> None:
+            ok = bool(getattr(res, "ok", False))
+            msg = str(getattr(res, "msg", "") or "")
+            self.cs_sync.setText(ui_text(msg))
+            app.show_toast(msg, "info" if ok else "warning")
+
+        app.run_job(job, done, None, name="TreeAI-ui-clientsync")
 
     ICON_PX = 34
 

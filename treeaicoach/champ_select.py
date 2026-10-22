@@ -5,7 +5,8 @@ Data: ONE read-only endpoint of the League Client local API (:mod:`treeaicoach.l
 loopback only): ``/lol-champ-select/v1/session`` - the champions shown in the champion select
 screen (my team's picks / hovers with the assigned positions, the enemy picks once they are
 locked). No summoner names / PUUIDs are read or kept (Riot policy: no de-anonymization in champion
-select), nothing is ever written to the client, no automation (no auto pick / ban / runes).
+select), the only writes are the opt-in imports of :mod:`treeaicoach.client_sync` (item set, rune page,
+summoner spells), no automation (no auto pick / ban).
 
 * :func:`parse_session` - pure: the session JSON -> :class:`ChampSelectState`.
 * :func:`build_card` - pure: the state -> :class:`PregameCard` (title, opponent, 3 tips in plain
@@ -393,6 +394,15 @@ class ChampSelectWatcher:
                     meta_builds.ensure_async(state.me.alias, state.me.position or None)
                 except Exception:
                     log.debug("meta build fetch not started", exc_info=True)
+            try:     # opt-in: elo bracket, item set / runes / spells written to the client (client_sync)
+                from treeaicoach import client_sync
+
+                if state is not None:
+                    client_sync.get_default().tick(state, session, client)
+                else:
+                    client_sync.get_default().reset()
+            except Exception:
+                log.debug("client sync not run", exc_info=True)
             card = build_card(state) if state is not None else None
             if card is not None:
                 try:     # the card's icons (Data Dragon), downloaded once in a daemon thread

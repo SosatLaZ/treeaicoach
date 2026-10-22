@@ -69,6 +69,10 @@ STAMP_FILE = "stamps.json"
 UGG_REGION = "12"                                       # world
 UGG_TIERS = ("14", "10", "8")                           # emerald_plus, platinum_plus, all ranks
 UGG_TIER_NAMES = {"14": "Émeraude+", "10": "Platine+", "8": "tous rangs"}
+#: the build adapts to the player's own elo: the U.GG rank filters tried per bracket (only the three
+#: verified filters; the first one with enough games wins). "" = Emerald+ (default / unranked fallback).
+BRACKET_TIERS: dict[str, tuple[str, ...]] = {"": UGG_TIERS, "mid": ("10", "8"), "low": ("8",)}
+TIER_BRACKET = {"IRON": "low", "BRONZE": "low", "SILVER": "low", "GOLD": "mid", "PLATINUM": "mid"}
 UGG_ROLES = {"JUNGLE": "1", "UTILITY": "2", "BOTTOM": "3", "TOP": "4", "MIDDLE": "5"}
 ROLES = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
 MIN_MATCHES = 200                                       # a role with fewer games: next tier / unknown
@@ -227,7 +231,31 @@ def _block(x: Any, n: int = 3) -> tuple[int, int, list]:
     return 0, 0, []
 
 
-def parse_ugg(data: Any, role: str, items: dict[int, Any] | None = None) -> dict[str, Any] | None:
+def bracket_of_tier(tier: Any) -> str:
+    """The cache bracket of a ranked tier name ("GOLD" -> "mid"; unranked / Emerald and up -> "")."""
+    return TIER_BRACKET.get(str(tier or "").strip().upper(), "")
+
+
+_user_bracket = ""
+
+
+def set_bracket(bracket: Any) -> None:
+    """The player's own elo bracket: the default of :func:`get` / :func:`ensure_async` from now on."""
+    global _user_bracket
+    b = str(bracket or "")
+    _user_bracket = b if b in BRACKET_TIERS else ""
+
+
+def get_bracket() -> str:
+    return _user_bracket
+
+
+def _fname(alias: str, bracket: str = "") -> str:
+    return f"{alias}~{bracket}.json" if bracket else f"{alias}.json"
+
+
+def parse_ugg(data: Any, role: str, items: dict[int, Any] | None = None,
+              tiers: tuple[str, ...] = UGG_TIERS) -> dict[str, Any] | None:
     """One role of a U.GG overview JSON -> cache row (:meth:`MetaBuild.to_row` format), or None.
 
     Layout (``data[region][tier][role] = [row, timestamp]``; verified on patch 16.19 / 16.20):
@@ -243,7 +271,7 @@ def parse_ugg(data: Any, role: str, items: dict[int, Any] | None = None) -> dict
         region = data.get(UGG_REGION)
         if not isinstance(region, dict):
             return None
-        for tier in UGG_TIERS:
+        for tier in tiers:
             cell = (region.get(tier) or {}).get(rid) if isinstance(region.get(tier), dict) else None
             if not isinstance(cell, list) or not cell or not isinstance(cell[0], list) or len(cell[0]) < 7:
                 continue
@@ -478,21 +506,22 @@ def _champion_key(alias: str) -> int:
         return 0
 
 
-def _cached_row(patch: str, alias: str) -> dict | None:
+def _cached_row(patch: str, alias: str, bracket: str = "") -> dict | None:
     """The champion's cache file of ``patch`` (memoized, misses too)."""
-    key = (patch, alias)
+    key = (patch, alias) if not bracket else (patch, f"{alias}~{bracket}")
     with _lock:
         if key in _mem:
             return _mem[key]
     folder = cache_folder(patch)
-    data = _read_json(folder / f"{alias}.json") if folder is not None and alias else None
+    data = _read_json(folder / _fname(alias, bracket)) if folder is not None and alias else None
     row = data if isinstance(data, dict) and isinstance(data.get("roles"), dict) else None
     with _lock:
         _mem[key] = row
     return row
 
 
-def get(alias: str, role: str | None = None, patch: str | None = None) -> MetaBuild | None:
+def get(alias: str, role: str | None = None, patch: str | None = None, bracket: str | None = None
+        ) -> MetaBuild | None:
     """The meta build of ``alias`` in ``role`` (``None``: its most played role): the cache of the
     current patch, else the bundled data (any patch), else None. Never blocks, never raises."""
     try:
@@ -501,11 +530,15 @@ def get(alias: str, role: str | None = None, patch: str | None = None) -> MetaBu
         if not alias:
             return None
         patch = patch if patch is not None else _patch()
-        row = _cached_row(patch, alias) if patch else None
+        bracket = _user_bracket if bracket is None else str(bracket)
+        row = None
+        if patch:       # the player's elo bracket first, then Emerald+ (default)
+            row = (_cached_row(patch, alias, bracket) if bracket else None) or _cached_row(patch, alias)
         if row is None and patch:
             # patch day: U.GG has no data for the new patch yet; the last patch's cache beats the bundle
             prev = previous_patch(patch)
-            row = _cached_row(prev, alias) if prev else None
+            if prev:
+                row = (_cached_row(prev, alias, bracket) if bracket else None) or _cached_row(prev, alias)
         src_prefix = ""
         if row is None:
             champs = bundled().get("champions") or {}
@@ -639,7 +672,7 @@ def _stamp(folder: Path, key: str, now: float) -> None:
 
 
 def refresh(alias: str, patch: str | None = None, force: bool = False, fetch: Callable[[str], Any] | None = None,
-            now: float | None = None) -> str:
+            now: float | None = None, bracket: str = "") -> str:
     """Blocking fetch of one champion (all roles) for ``patch`` into the cache: "ugg", "riot" (only
     the official recommendations could be fetched), "skipped" (tried less than a day ago) or
     "error: ...". Never raises; call it from a daemon thread (:func:`ensure_async`)."""
@@ -647,11 +680,14 @@ def refresh(alias: str, patch: str | None = None, force: bool = False, fetch: Ca
     alias = str(alias or "")
     patch = patch if patch is not None else _patch()
     now = time.time() if now is None else float(now)
+    bracket = bracket if bracket in BRACKET_TIERS else ""
+    tiers = BRACKET_TIERS[bracket]
+    skey = f"{alias}~{bracket}" if bracket else alias
     folder = cache_folder(patch) if patch else None
     if folder is None or not alias:
         last_status[alias] = "error: no patch / cache folder"
         return last_status[alias]
-    if not force and not _due(folder, alias, now):
+    if not force and not _due(folder, skey, now):
         last_status[alias] = "skipped"
         return "skipped"
     getter = fetch or _get_json
@@ -677,7 +713,7 @@ def refresh(alias: str, patch: str | None = None, force: bool = False, fetch: Ca
                 log.info("Meta builds (U.GG) patch %s unavailable for %s (%s): patch %s", patch, alias, exc, prev)
                 data = getter(UGG_URL.format(patch=prev, key=key))
             for role in ROLES:
-                row = parse_ugg(data, role, items)
+                row = parse_ugg(data, role, items, tiers)
                 if row:
                     roles[role] = row
             roles = keep_roles(roles)
@@ -713,11 +749,11 @@ def refresh(alias: str, patch: str | None = None, force: bool = False, fetch: Ca
                 log.info("Rune / spell names unavailable: %s", exc)
         if roles:
             fetched = max((str(r.get("fetched") or "") for r in roles.values()), default="")
-            _write_json(folder / f"{alias}.json", {"schema": SCHEMA, "patch": patch, "source": SOURCE_UGG,
+            _write_json(folder / _fname(alias, bracket), {"schema": SCHEMA, "patch": patch, "source": SOURCE_UGG,
                                                     "fetched": fetched or time.strftime("%Y-%m-%d"),
                                                     "roles": roles})
             with _lock:
-                _mem.pop((patch, alias), None)
+                _mem.pop((patch, skey), None)
             log.info("Meta build of %s (patch %s) from %s, data of %s: roles %s", alias, patch, SOURCE_UGG,
                      fetched, ",".join(roles))
         elif status == SOURCE_RIOT:
@@ -727,21 +763,22 @@ def refresh(alias: str, patch: str | None = None, force: bool = False, fetch: Ca
     except Exception as exc:
         log.info("Meta build refresh failed for %s (%s)", alias, exc)
         status = f"error: {type(exc).__name__}"
-    _stamp(folder, alias, now)
+    _stamp(folder, skey, now)
     last_status[alias] = status
     return status
 
 
-def _stale(folder: Path | None, alias: str, now: float | None = None) -> bool:
+def _stale(folder: Path | None, alias: str, now: float | None = None, bracket: str = "") -> bool:
     """The champion's cache file is older than :data:`STALE_S` (U.GG data moves during a patch)."""
     try:
-        p = folder / f"{alias}.json" if folder is not None else None
+        p = folder / _fname(alias, bracket) if folder is not None else None
         return p is not None and p.is_file() and (time.time() if now is None else now) - p.stat().st_mtime > STALE_S
     except OSError:
         return False
 
 
-def ensure_async(alias: str, role: str | None = None, allow_network: bool = True) -> threading.Thread | None:
+def ensure_async(alias: str, role: str | None = None, allow_network: bool = True,
+                 bracket: str | None = None) -> threading.Thread | None:
     """Fetch the champion's meta build for the current patch in a daemon thread when the cache has
     none (at most one attempt per day). Returns the thread (tests join it) or None. Never raises."""
     try:
@@ -751,24 +788,26 @@ def ensure_async(alias: str, role: str | None = None, allow_network: bool = True
         patch = _patch()
         if not patch:
             return None
-        row = _cached_row(patch, alias)
+        bracket = _user_bracket if bracket is None else (bracket if bracket in BRACKET_TIERS else "")
+        skey = f"{alias}~{bracket}" if bracket else alias
+        row = _cached_row(patch, alias, bracket)
         folder = cache_folder(patch)
         if row is not None and (not role or str(role).upper() in (row.get("roles") or {})) \
-                and not _stale(folder, alias):
+                and not _stale(folder, alias, bracket=bracket):
             return None
-        if folder is None or not _due(folder, alias, time.time()):
+        if folder is None or not _due(folder, skey, time.time()):
             return None
         with _lock:
-            if alias in _inflight:
+            if skey in _inflight:
                 return None
-            _inflight.add(alias)
+            _inflight.add(skey)
 
         def run() -> None:
             try:
-                refresh(alias, patch)
+                refresh(alias, patch, bracket=bracket)
             finally:
                 with _lock:
-                    _inflight.discard(alias)
+                    _inflight.discard(skey)
 
         t = threading.Thread(target=run, name=f"meta-build-{alias}", daemon=True)
         t.start()
@@ -977,4 +1016,4 @@ except Exception:  # pragma: no cover - defensive
 
 __all__ = ["MetaBuild", "get", "ensure_async", "refresh", "next_item", "describe", "compare", "names",
            "parse_ugg", "parse_riot", "compact_riot", "names_from_ddragon", "patch_key", "build_from_row",
-           "data_info", "UGG_URL", "RIOT_RUNES_URL", "SOURCE_UGG", "SOURCE_RIOT"]
+           "data_info", "set_bracket", "get_bracket", "bracket_of_tier", "UGG_URL", "RIOT_RUNES_URL", "SOURCE_UGG", "SOURCE_RIOT"]
