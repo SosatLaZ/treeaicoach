@@ -2807,6 +2807,8 @@ def card_max_height(width: int, detailed: bool = False) -> int:
                   for m, w, ln, ic in (("danger", "GANK !", DANGER_LINE, None),
                                        ("careful", "2 CONTRE 1", DANGER_LINE, None),
                                        ("ok", "", _LONG_LINE, icon), ("ok", "", _LONG_LINE, None))]
+            jgl = int(math.ceil(20 * width / COMPACT_REF_W))      # + the jungler tracker row
+            hs = [x + jgl for x in hs]
             hs.append(_compact_layout_for({"mode": "item", "colour": TAI_GO, "word": "", "line": "Estropieur",
                                            "icon": icon, "item": _ShopStandIn()}, width)["height"])
             h = max(hs)

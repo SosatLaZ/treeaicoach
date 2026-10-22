@@ -408,16 +408,17 @@ def test_labels_one_per_champion_capped_and_never_on_live_icons(monkeypatch):
     words = [t.split(" ")[0] for t, _x, _y in texts]
     assert len(texts) <= orr.MM_MAX_LABELS
     assert len(words) == len(set(words))                           # one label per role word
-    assert not any(t.startswith("JGL") for t, _x, _y in texts)     # jungler ghost sits on a live icon
+    # the jungler ghost next to an IDENTIFIED icon (Ahri) is kept (2.15: "plus la dernière position")
+    assert sum(t.startswith("JGL") for t, _x, _y in texts) <= 1
     assert not any(any(ch.isdigit() for ch in t) and not t.startswith("JGL") for t, _x, _y in texts)
 
 
 def test_ghost_rules_dead_fountain_and_old(monkeypatch):
     texts = capture_tags(monkeypatch)
-    st = orr.OverlayState(enemies=[ev("Kindred", (0.4, 0.4), visible=False, ago=50.0, jungler=True)],
+    st = orr.OverlayState(enemies=[ev("Kindred", (0.4, 0.4), visible=False, ago=160.0, jungler=True)],
                           my_team="ORDER")
     orr.render_minimap(st, 300, 300, now=1.0)
-    assert texts == []                                              # > 45 s: faded ghost, no text
+    assert texts == []                                              # > 150 s: no jungler mark
     st = orr.OverlayState(enemies=[ev("Kindred", (0.4, 0.4), visible=False, ago=12.0, jungler=True)],
                           my_team="ORDER")
     orr.render_minimap(st, 300, 300, now=1.0)

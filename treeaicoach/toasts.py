@@ -65,7 +65,7 @@ STYLE.update({
     "retreat": (DS_DANGER, (225, 45, 45), DS_TEXT),
     "call": (DS_ACCENT, (30, 140, 220), DS_TEXT),
 })
-BANNER_H = 84                   # big banner height at 1080p (same width as a toast)
+BANNER_H = 46                   # banner height at 1080p: about the card's, ONE line (2.15 "bien trop gros")
 PULSE_S = 1.2                   # subtle pulse period of the banner glow
 DURATION_S = 4.0                # auto-hide (declutter: never longer than MAX_DURATION_S)
 MAX_DURATION_S = 4.0
@@ -189,31 +189,24 @@ def _render_banner(kind: str, title: str, subtitle: str, scale: float, pct: int 
     cv_.rrect(x0, y0, W, H, rad, DS_SURFACE, 0.95, border=DS_LINE_STRONG, border_alpha=1.0,
               border_w=max(1.0, 1.0 * k))
     cv_.rrect(x0, y0, 4 * k, H, min(rad, 2 * k), accent, 1.0)       # accent: left bar only
-    two = bool(subtitle) and orr.text_width(subtitle, orr.get_font(max(11, int(round(14 * k))), "semibold")) > W - 40 * k
-    cy = y0 + H * (0.36 if two else 0.42 if subtitle else 0.5)
+    # ONE line: "RECULE · Lee Sin arrive" (title in the accent colour, the why after it, cut to fit)
+    cy = y0 + H * 0.5
     if kind in ("engage", "retreat"):
-        d = 1 if kind == "engage" else -1
-        ch = H * 0.46
-        _chevrons(cv_, x0 + 30 * k, cy, ch, d, accent, 0.95)
-        _chevrons(cv_, x0 + W - 30 * k - 0.85 * ch * 0.42, cy, ch, d, accent, 0.95)
+        ch = H * 0.42
+        _chevrons(cv_, x0 + 20 * k, cy, ch, 1 if kind == "engage" else -1, accent, 0.95)
     else:
-        for sx in (x0 + 30 * k, x0 + W - 30 * k):
-            dd = 8 * k
-            cv_.polygon([(sx, cy - dd), (sx + dd, cy), (sx, cy + dd), (sx - dd, cy)], accent, 1.0)
-    max_w = W - 120 * k
-    size = 31 if len(title or "") <= 14 else 25
-    ft = orr.get_font(max(12, int(round(size * k))), "display")
-    cv_.text(x0 + W / 2, cy, orr.fit_text((title or "").upper(), ft, max_w), ft, accent, 1.0, anchor="m",
-             shadow=0.0)
-    if subtitle:
-        fs = orr.get_font(max(11, int(round(14 * k))), "semibold")
-        if orr.text_width(subtitle, fs) <= W - 40 * k:
-            cv_.text(x0 + W / 2, y0 + H * 0.80, orr.fit_text(subtitle, fs, W - 40 * k), fs, orr.TAI_TEXT, 0.95,
-                     anchor="m", shadow=0.6)
-        else:                                       # V2: the WHY on two lines rather than cut
-            f2 = orr.get_font(max(11, int(round(12 * k))), "semibold")
-            for i, ln in enumerate(orr.wrap_text(subtitle, f2, W - 40 * k, 2)):
-                cv_.text(x0 + W / 2, y0 + H * (0.72 + 0.16 * i), ln, f2, orr.TAI_TEXT, 0.95, anchor="m", shadow=0.6)
+        dd = 6 * k
+        sx = x0 + 20 * k
+        cv_.polygon([(sx, cy - dd), (sx + dd, cy), (sx, cy + dd), (sx - dd, cy)], accent, 1.0)
+    left, right = x0 + 38 * k, x0 + W - 12 * k
+    ft = orr.get_font(max(12, int(round(18 * k))), "display")
+    head = orr.fit_text((title or "").upper(), ft, right - left)
+    tw = orr.text_width(head, ft)
+    cv_.text(left, cy, head, ft, accent, 1.0, shadow=0.0)
+    if subtitle and right - (left + tw) > 60 * k:
+        fs = orr.get_font(max(11, int(round(15 * k))), "semibold")
+        sx = left + tw + 8 * k
+        cv_.text(sx, cy, orr.fit_text("· " + subtitle, fs, right - sx), fs, orr.TAI_TEXT, 0.95, shadow=0.0)
     if pct is not None and kind in ("engage", "retreat"):
         f = max(0.0, min(1.0, pct / 100.0))
         yb = y0 + H - 4.0 * k
@@ -529,7 +522,8 @@ class ToastQueue:
 #: Toast kinds allowed per player level outside a fight (danger / retreat always pass).
 #: "insight" toasts mostly repeat the HUD action line: beginners only.
 LEVEL_KINDS: dict[str, frozenset[str]] = {
-    "debutant": frozenset({"danger", "retreat", "warning", "call", "engage", "praise", "insight"}),
+    # praise / insight: low value on a banner (the card already says it, 2.15 feedback)
+    "debutant": frozenset({"danger", "retreat", "warning", "call", "engage"}),
     "intermediaire": frozenset({"danger", "retreat", "warning", "call", "engage", "praise"}),
     "avance": frozenset({"danger", "retreat", "warning", "call"}),
     "expert": frozenset({"danger", "retreat"}),
