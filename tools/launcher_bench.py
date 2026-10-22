@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
             app.qapp.processEvents()
             sw.append(1000 * (time.perf_counter() - t))
     app.show_page("home")
-    t_end = time.monotonic() + 0.5
+    t_end = time.monotonic() + 3.0
     while time.monotonic() < t_end:                  # settle (background render, prebuild)
         app.qapp.processEvents()
         time.sleep(0.005)
