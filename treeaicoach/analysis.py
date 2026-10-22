@@ -1984,6 +1984,14 @@ def analyze_game(record: Any, truth: Any = None) -> dict[str, Any]:
     if limited:                          # ARAM / Arena...: no minimap analysis, no Rift advice (real report 2026-10-03)
         out["limited_mode"] = limited
         out["tips"] = _limited_tips(rec, summary, limited)
+        if limited == "ARAM":            # real ARAM analysis from the Live Client record (aram_analysis.py)
+            def _aram() -> dict[str, Any]:
+                from treeaicoach import aram_analysis
+
+                return aram_analysis.analyze(record)
+            out["aram"] = section("aram", _aram, {"available": False})
+            if out["aram"].get("available") and out["aram"].get("tips"):
+                out["tips"] = list(out["aram"]["tips"])
         out["tip_items"] = [{"text": t, "kind": "mode"} for t in out["tips"]]
     out["spoken_summary"] = spoken_summary(out)
     return out

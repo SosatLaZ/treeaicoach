@@ -1018,6 +1018,27 @@ def _tips_section(a: dict) -> str:
     return f'<div class="panel"><h2>Conseils pour la prochaine partie</h2><ul class="tips">{lis}</ul></div>'
 
 
+def _aram_section(a: dict) -> str:
+    """ARAM analysis (aram_analysis.py): KDA, participation, deaths, items vs comp, team comps."""
+    z = a.get("aram") or {}
+    if not z.get("available"):
+        return ""
+    d = z.get("deaths") or {}
+    rows = [("KDA", f'{z.get("kills", 0)}/{z.get("deaths_total", 0)}/{z.get("assists", 0)} ({z.get("kda")})')]
+    if z.get("kill_participation") is not None:
+        rows.append(("Participation aux éliminations", f'{z["kill_participation"]} % ({z.get("team_kills")} de l\'équipe)'))
+    rows.append(("Morts dans les 2 premières min", str(d.get("early", 0))))
+    rows.append(("Morts en premier de l'équipe", str(d.get("first_in_fight", 0))))
+    rows.append(("Morts seul", str(d.get("isolated", 0))))
+    ca, ce = z.get("comp_ally") or {}, z.get("comp_enemy") or {}
+    rows.append(("Ton équipe", f'engage {ca.get("engage", 0)} · poke {ca.get("poke", 0)} · soin/bouclier {ca.get("sustain", 0)}'))
+    rows.append(("Équipe ennemie", f'engage {ce.get("engage", 0)} · poke {ce.get("poke", 0)} · soin/bouclier {ce.get("sustain", 0)}'))
+    for n in z.get("item_needs") or []:
+        rows.append(("Objet conseillé", f'{n.get("name")} : {n.get("why")}'))
+    trs = "".join(f"<tr><td>{_e(k)}</td><td>{_e(v)}</td></tr>" for k, v in rows)
+    return f'<div class="panel"><h2>Analyse ARAM</h2><table class="kv">{trs}</table></div>'
+
+
 # ======================================================================================
 # rated plays (plays.py, chess.com style) : précision + counts + best / worst badges
 # ======================================================================================
@@ -1329,7 +1350,7 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
                    lambda: _scoreboard_section(a), lambda: _meta_build_section(rec),
                    lambda: _selfcheck_section(rec), lambda: _trends_section(a))
         if a.get("limited_mode"):        # ARAM / Arena: no minimap analysis -> header + honest tips only
-            sections = (lambda: _header(rec, a), lambda: _tips_section(a))
+            sections = (lambda: _header(rec, a), lambda: _tips_section(a), lambda: _aram_section(a))
         for fn in sections:
             try:
                 parts.append(fn())
@@ -1342,6 +1363,9 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
         if a.get("limited_mode"):
             warn += (f'<div class="warnbox">Mode {_e(a["limited_mode"])} : TreeAI analyse en direct seulement la '
                      "Faille de l'invocateur. Ce rapport se limite à tes statistiques.</div>")
+            if a.get("aram", {}).get("available"):
+                warn = warn.replace("Ce rapport se limite à tes statistiques.",
+                                    "Pour l'ARAM, l'analyse vient des données de la partie (pas de minimap).")
         refresh = ""
         if lcu_pending:
             warn += _pending_html()

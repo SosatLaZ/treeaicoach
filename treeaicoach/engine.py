@@ -952,6 +952,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             return
         supported = game.is_summoners_rift and game.me is not None
         if not supported:
+            if game.me is not None and game.map_number == 12 and game.game_result is None:
+                self._aram_tick(game, t, gt)         # ARAM: light coaching from the Live Client only
             self._in_game = False
             self._game_evt.clear()
             self._state = EngineState.UNSUPPORTED_MODE
@@ -967,6 +969,25 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._recorder.on_game_info(game, t)
         self._update_roster(game)
         self._check_death(game, t, gt)
+
+    def _aram_tick(self, game: GameInfo, t: float, gt: float) -> None:
+        """ARAM (map 12): buy advice on death, « rejoins ton équipe », « recule » (aram_analysis.AramCoach)."""
+        try:
+            coach = getattr(self, "_aram_coach", None)
+            if coach is None:
+                from treeaicoach.aram_analysis import AramCoach  # noqa: PLC0415
+
+                coach = self._aram_coach = AramCoach()
+            if gt + 5.0 < getattr(self, "_aram_gt", 0.0):
+                coach.reset()
+            self._aram_gt = gt
+            text = coach.update(gt, game)
+            if text:
+                self.text_messages.append((t, "aram", text))
+                del self.text_messages[:-100]
+                self._say(text, int(Level.INFO))
+        except Exception:
+            self._err.exception("ARAM coaching failed")
 
     def _start_game(self, game: GameInfo, t: float) -> None:
         log.info("New game detected (game time %.0f s, mode %s)", game.game_time, game.game_mode)
