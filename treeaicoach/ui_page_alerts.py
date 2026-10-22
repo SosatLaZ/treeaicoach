@@ -116,6 +116,12 @@ class AlertsPage:
         # the full list needs tts_neural (edge-tts, aiohttp: a slow import): read on a worker
         app.run_job(neural_voices, lambda vs: self.neural.ctl.set_choices(vs, app.cfg.neural_voice), None,
                     name="TreeAI-ui-neural-voices")
+        # optional paid ElevenLabs voice with an African accent (tts_eleven.py): key first, then search, then pick
+        self.eleven_key = app.entry_row(v, "eleven_api_key", "Clé ElevenLabs (option)", "Voix française à accent "
+                                        "africain, offre payante ElevenLabs. Colle la clé, puis « Chercher ».",
+                                        secret=True, placeholder="Colle ta clé ici")
+        self.eleven_find = v.add(W.Row("Voix à accent africain", "Cherche dans la bibliothèque ElevenLabs, puis "
+                                       "choisis-la dans « Voix neurale ».", W.button("Chercher", self._find_eleven)))
         self.neural_rate = app.slider_row(v, "neural_rate", "Vitesse de la voix neurale", "Défaut : +15 %.",
                                           -50, 100, 5, lambda x: f"{x:+.0f} %", to_value=lambda x: f"{int(x):+d}%",
                                           from_value=_pct_value)
@@ -147,13 +153,27 @@ class AlertsPage:
     def _win_voices(self) -> list[tuple[str, str]]:
         return [("", AUTO_VOICE)] + [(n, n) for n in self.app._voices]
 
+    def _find_eleven(self) -> None:
+        app = self.app
+        key = str(getattr(app.cfg, "eleven_api_key", "") or "")
+
+        def done(vs: list[tuple[str, str]]) -> None:
+            if not vs:
+                app.show_error("Aucune voix trouvée : vérifie la clé ElevenLabs (et que l'offre est payante).")
+                return
+            cur = str(app.cfg.neural_voice)
+            self.neural.ctl.set_choices(neural_voices() + vs, cur)
+
+        from treeaicoach.tts_eleven import list_african_voices  # noqa: PLC0415
+        app.run_job(lambda: list_african_voices(key), done, None, name="TreeAI-ui-eleven-voices")
+
     def on_voices(self) -> None:
         self.win_voice.ctl.set_choices(self._win_voices(), self.app.cfg.voice_name)
 
     def _sync_engine_rows(self) -> None:
         eng = str(self.app.cfg.voice_engine)
         neural = eng in ("auto", "neural")
-        for row, vis in ((self.neural, neural), (self.neural_rate, neural), (self.win_voice, not neural or eng == "auto"),
+        for row, vis in ((self.neural, neural), (self.neural_rate, neural), (self.eleven_key, neural), (self.eleven_find, neural), (self.win_voice, not neural or eng == "auto"),
                          (self.voice_rate, eng != "neural")):
             row.setVisible(vis)
         self.neural.parentWidget().sync_separators()

@@ -913,8 +913,7 @@ class NeuralBackend(_WavBackend):
         self._tn = tts_neural
         if _tts is None and not tts_neural.neural_available():
             raise RuntimeError("edge-tts / miniaudio absents")
-        self._tts = _tts if _tts is not None else tts_neural.NeuralTTS(
-            tts_neural.clean_voice_id(neural_voice), neural_rate or tts_neural.DEFAULT_NEURAL_RATE)
+        self._tts = _tts if _tts is not None else self._make_tts(neural_voice, neural_rate)
         self._neural_rate = neural_rate or tts_neural.DEFAULT_NEURAL_RATE
         self._phrases: tuple[str, ...] = ()
         # misses: Windows OneCore voices (offline, far better than the SAPI "Desktop" voices),
@@ -926,6 +925,24 @@ class NeuralBackend(_WavBackend):
         self._roster: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
         self._configured = False
         log.info("Voix naturelle : %s (en ligne, mise en cache)", getattr(self._tts, "voice", neural_voice))
+
+    @staticmethod
+    def _make_tts(neural_voice: str, neural_rate: str) -> Any:
+        """Edge voice, or the optional ElevenLabs one (``neural_voice`` = "eleven:<id>" + the key of the config)."""
+        from treeaicoach import tts_eleven, tts_neural  # noqa: PLC0415
+
+        rate = neural_rate or tts_neural.DEFAULT_NEURAL_RATE
+        if tts_eleven.is_eleven(neural_voice):
+            try:
+                from treeaicoach.config import load_config  # noqa: PLC0415
+                key = str(getattr(load_config(), "eleven_api_key", "") or "").strip()
+            except Exception:
+                key = ""
+            if key:
+                return tts_eleven.ElevenTTS(neural_voice, tts_neural.rate_percent(rate), api_key=key)
+            log.info("Voix ElevenLabs choisie sans clé : voix Microsoft utilisée.")
+            neural_voice = ""
+        return tts_neural.NeuralTTS(tts_neural.clean_voice_id(neural_voice), rate)
 
     def _get_local(self) -> SpeechBackend:
         if self._local is None:

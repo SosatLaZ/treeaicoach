@@ -147,6 +147,7 @@ CHOICES.update({
 BOOL_FIELDS = BOOL_FIELDS + ("ai_speak", "win_prob_hud", "ai_auto")
 UPDATE_TEXT_FIELDS["ai_api_key"] = 512
 UPDATE_TEXT_FIELDS["ai_model"] = 128
+UPDATE_TEXT_FIELDS["eleven_api_key"] = 200
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ai",)     # "Demander à l'IA" (lowest priority on a clash)
 # ward guide (ward_guide.py): minimap ring + game-view marker of the next ward spot, hotkey F7
 BOOL_FIELDS = BOOL_FIELDS + ("ward_guide", "ward_world", "ward_sound")
@@ -332,6 +333,7 @@ class Config:
     # optional LLM advice (ai_advisor.py): off by default, the key stays on this PC (never exported)
     ai_provider: str = "off"         # "off" | "gemini" | "groq" | "openrouter" | "ollama" | "anthropic"
     ai_api_key: str = ""
+    eleven_api_key: str = ""    # optional ElevenLabs key (African-accent French voice, tts_eleven.py); voice = neural_voice "eleven:<id>"
     ai_model: str = ""               # "" = default model of the provider
     ai_speak: bool = False           # written only (toast + HUD) unless enabled
     ai_auto: bool = False            # automatic AI plans (key moments): off, the AI answers when asked (2.15)
@@ -508,7 +510,7 @@ def _as_neural_voice(value: Any) -> Any:
     if not isinstance(value, str):
         return _INVALID
     s = value.strip()
-    return s if _NEURAL_VOICE_RE.fullmatch(s) else _INVALID
+    return s if _NEURAL_VOICE_RE.fullmatch(s) or re.fullmatch(r"eleven:[A-Za-z0-9]{10,40}", s) else _INVALID
 
 
 _NEURAL_RATE_RE = re.compile(r"([+-]?)(\d{1,3})\s*%?")
