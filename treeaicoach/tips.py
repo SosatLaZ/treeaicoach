@@ -487,7 +487,7 @@ TIPS: tuple[Tip, ...] = (
     T("vis_mid_side", "vision", "Balise la rivière {jg_last} : {jg} y était",
       lambda c: c.early and c.jg_last_side in ("top", "bot") and c.jg_hidden_s is not None
       and 10 <= c.jg_hidden_s <= 60, roles=("MIDDLE",), prio=2, conf=MAP),
-    T("vis_top_bush", "vision", "Balise le buisson de la rivière : ganks par derrière",
+    T("vis_top_bush", "vision", "Balise le buisson de ta rivière : {jg} gank top par là",
       lambda c: 150 <= c.gt <= 480, roles=("TOP",), prio=2),
     T("vis_bot_bush", "vision", "Garde le buisson de ta voie : il cache leurs attaques",
       lambda c: 90 <= c.gt <= 480, roles=("BOTTOM", "UTILITY"), prio=2),

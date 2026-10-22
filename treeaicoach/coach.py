@@ -949,8 +949,11 @@ class MapCoach:
             marker = getattr(tr, "last_seen", None) if tr is not None else -1.0
             if marker != self._jg_unseen_done:
                 secs = int(hidden // 5 * 5)
-                out.append(("jungler_unseen", f"Reste près de ta tour : leur jungler caché depuis {secs} s" if tr is not None
-                            else "Reste près de ta tour : leur jungler pas encore vu"))
+                jp = next((p for p in getattr(ctx.game, "enemies", None) or ()
+                           if str(getattr(p, "champion_alias", "")).lower() == str(ctx.jungler_alias).lower()), None)
+                jn = str(getattr(jp, "champion_name", "") or ctx.jungler_alias or "leur jungler")
+                out.append(("jungler_unseen", f"Reste près de ta tour : {jn} caché depuis {secs} s" if tr is not None
+                            else f"Reste près de ta tour : {jn} pas encore vu"))
         return out
 
     def _pressure_info(self, ctx: _Ctx) -> dict[str, Any] | None:

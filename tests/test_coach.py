@@ -145,7 +145,7 @@ def test_jungler_unseen_45s_once_per_disappearance():
     assert len(unseen) == 1
     t, text, _ = unseen[0]
     assert 244 <= t <= 247
-    assert text == "Reste près de ta tour : leur jungler caché depuis 45 s"
+    assert text == "Reste près de ta tour : Lee Sin caché depuis 45 s"
 
 
 # ------------------------------------------------------------------------------ missing
