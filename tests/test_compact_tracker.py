@@ -45,3 +45,14 @@ def test_fog_timer_never_at_a_multi_point_centroid():
     b = orr.render_minimap(st, 256, 256, now=0.0)
     c = (slice(110, 146), slice(100, 156))
     assert not a[c][..., 3].any() and b[c][..., 3].any()
+
+
+def test_jungler_last_position_kept_next_to_an_identified_icon():
+    lee = orr.EnemyView(key="LeeSin", alias="LeeSin", name="Lee Sin", visible=False, uv=(0.80, 0.80),
+                        last_seen_ago=90.0, is_jungler=True)
+    cait = orr.EnemyView(key="Caitlyn", alias="Caitlyn", name="Caitlyn", visible=True, uv=(0.83, 0.82))
+    st = orr.OverlayState(enemies=[lee, cait], my_team="ORDER")
+    a = orr.render_minimap(st, 256, 256, now=0.0)
+    cait.confidence = 0.3                      # anonymous icon there: may be him, no ghost
+    b = orr.render_minimap(st, 256, 256, now=0.0)
+    assert int((a[..., 3] > 0).sum()) > int((b[..., 3] > 0).sum())

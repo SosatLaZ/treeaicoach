@@ -90,6 +90,8 @@ TAI_THREAT = {0: TAI_GO, 1: TAI_WARN, 2: TAI_DANGER}
 BORDER_ALPHA = 0.85
 THREAT_COLORS = {0: SAFE, 1: WARNING, 2: DANGER}
 THREAT_DEFAULT_TEXT = {0: "SÛR", 1: "ATTENTION", 2: "DANGER"}
+JUNGLER_LAST_SEEN_MAX_S = 150.0  # the enemy jungler's last position + "JGL 1:20" (tracker)
+ANON_CONFIDENCE = 0.6           # a live icon below this identity confidence may be anyone
 LAST_SEEN_MAX_S = 60.0          # invisible enemies are drawn at their last position this long
 HALO_PERIOD_S = 1.1             # jungler halo pulse period
 MAX_MAP_ELEMENTS = 6            # minimap layer: at most this many guides + approach arrows
@@ -1150,7 +1152,8 @@ def _render_radar(state: OverlayState, size: int, texture_bgr: np.ndarray | None
             continue
         uv = _uv_ok(e.uv) if e.uv is not None else None
         ago = e.last_seen_ago
-        if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
+        max_s = JUNGLER_LAST_SEEN_MAX_S if e.is_jungler else LAST_SEEN_MAX_S
+        if uv is None or ago is None or not _finite(ago) or ago > max_s:
             continue
         fade = 1.0 - 0.55 * _clamp01(ago / LAST_SEEN_MAX_S)
         x, y = uv[0] * S, uv[1] * S
@@ -1454,6 +1457,15 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
     def near_live(x: float, y: float, d: float = 1.6) -> bool:
         return any(math.hypot(x - lx, y - ly) < d * mr for lx, ly in live)
 
+    # anonymous live icons (identity not sure): the only ones that may BE the hidden jungler
+    anon: list[tuple[float, float]] = [
+        px(_uv_ok(v.uv)) for v in enemies
+        if getattr(v, "visible", False) and v.uv is not None and _uv_ok(v.uv) is not None
+        and float(getattr(v, "confidence", 1.0) or 0.0) < ANON_CONFIDENCE]
+
+    def near_anon(x: float, y: float, d: float = 1.6) -> bool:
+        return any(math.hypot(x - lx, y - ly) < d * mr for lx, ly in anon)
+
     # ---- fog zones: the enemy jungler's only, every one with show_ghosts. One clean style: the
     #      probability heat when the jungle model is informative, else a soft fill + outline
     fogs = [f for f in (state.fogs or []) if f is not None
@@ -1509,7 +1521,8 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
             continue
         uv = _uv_ok(e.uv) if e.uv is not None else None
         ago = e.last_seen_ago
-        if uv is None or ago is None or not _finite(ago) or ago > LAST_SEEN_MAX_S:
+        max_s = JUNGLER_LAST_SEEN_MAX_S if e.is_jungler else LAST_SEEN_MAX_S
+        if uv is None or ago is None or not _finite(ago) or ago > max_s:
             continue
         if bool(getattr(e, "dead", False)):      # dead: in his fountain, the HUD row has the timer
             continue
@@ -1518,14 +1531,16 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
         if not show_ghosts and not e.is_jungler and ago > LAST_SEEN_MAX_S / 2:
             continue
         x, y = px(uv)
-        if near_live(x, y):
+        # the jungler's last position stays even next to an IDENTIFIED icon (2.15 "on n'a plus la
+        # dernière position du jungler"); only an anonymous icon there may be him
+        if (near_anon(x, y) if e.is_jungler else near_live(x, y)):
             continue
         ghost_drawn.add(e.key)
-        fade = 1.0 - 0.6 * _clamp01(ago / LAST_SEEN_MAX_S)
+        fade = 1.0 - 0.6 * _clamp01(ago / max_s)
         cv_.ring(x, y, mr, lw * 0.9, DANGER, (0.6 if e.is_jungler else 0.35) * fade,
                  dash=(3.0 * k + 1, 2.5 * k + 1))
         cv_.disc(x, y, max(1.5, 1.6 * k), DANGER, 0.6 * fade)
-        if e.is_jungler and ago <= GHOST_TEXT_MAX_S:
+        if e.is_jungler and ago <= JUNGLER_LAST_SEEN_MAX_S:
             labels.append((1, x, y, mr * 1.05, f"JGL {fmt_seconds(ago)}", f_time, GOLD_LIGHT, max(0.7, fade),
                            e.key))
 
