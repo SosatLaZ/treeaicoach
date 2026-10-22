@@ -1,7 +1,7 @@
 """Generate the TreeAI Coach application icon.
 
-Design (v2.7, « l'arbre-balise ») : a flat sap-green rounded tile (#9BD84A, the app's only
-accent) carrying a near-black (#0C0E0D) broad-leaf tree silhouette with a ward's open eye cut into
+Design (v2.7, « l'arbre-balise », recoloured in v2.17) : a flat amber rounded tile (#F5A25A, the app's only
+accent) carrying a near-black (#0A080E) broad-leaf tree silhouette with a ward's open eye cut into
 its crown. Tree = TreeAI, ward eye = vision, the coach that watches the minimap.
 Two colours, no gradient, no glow, no shadow, no text (docs/DESIGN.md). The silhouette is
 bold enough for the 16 px taskbar entry; every size is drawn separately at supersampling and
@@ -32,8 +32,8 @@ ICO_SIZES: tuple[int, ...] = (16, 24, 32, 48, 64, 128, 256)
 PNG_SIZE = 512
 SUPERSAMPLE = 8
 
-SAP = (155, 216, 74, 255)        # #9BD84A  ACCENT (tile)
-INK = (12, 14, 13, 255)          # #0C0E0D  BG (tree)
+SAP = (245, 162, 90, 255)        # #F5A25A  ACCENT (tile): the accretion disk's amber (v2.17, « trou noir »)
+INK = (10, 8, 14, 255)           # #0A080E  deep space (tree)
 
 # geometry in unit coordinates (y down)
 TILE_RADIUS = 0.22               # rounded-square tile, like the minimap frame

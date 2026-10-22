@@ -25,10 +25,12 @@ home = tu.home
 # ======================================================================================
 def test_navigation() -> None:
     assert [k for k, _l, _i in ui.PAGES] == ["home", "overlay", "alerts", "discord", "analysis", "settings",
-                                                 "about"]
+                                                 "advanced", "about"]
+    grouped = [k for _c, keys in ui.NAV_GROUPS for k in keys]
+    assert sorted(grouped) == sorted(k for k, _l, _i in ui.PAGES) and len(grouped) == len(set(grouped))
     for old, page in ui.PAGE_ALIASES.items():
         assert page in {k for k, _l, _i in ui.PAGES}, old
-    assert ui_kit.SHORTCUTS[0][0] == "Ctrl + 1 … 7"
+    assert ui_kit.SHORTCUTS[0][0] == "Ctrl + 1 … 8"
 
 def test_status_line() -> None:
     sl = ui_kit.status_line
@@ -84,7 +86,7 @@ def test_ui_text_never_names_a_removed_setting() -> None:
     root = Path(ui.__file__).parent
     src = "\n".join((root / f).read_text(encoding="utf-8") for f in (
         "ui.py", "ui_common.py", "ui_dialogs.py", "ui_kit.py", "ui_widgets.py", "ui_page_home.py", "ui_page_alerts.py",
-        "ui_page_analysis.py", "ui_page_overlay.py", "ui_page_settings.py", "ui_page_about.py", "ui_preview.py"))
+        "ui_page_analysis.py", "ui_page_overlay.py", "ui_page_settings.py", "ui_page_advanced.py", "ui_page_about.py", "ui_preview.py"))
     for name in REMOVED_KEYS:
         assert f'"{name}"' not in src, name
     assert "apply_preset" not in src and "PRESET_LABELS" not in src

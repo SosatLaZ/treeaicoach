@@ -301,17 +301,17 @@ def test_icon_png():
     assert rgba.getpixel((0, 0))[3] == 0 and rgba.getpixel((511, 511))[3] == 0, "corners must be transparent"
     assert rgba.getpixel((256, 256))[3] == 255
     colors = rgba.convert("RGB").getcolors(512 * 512) or []
-    # two flat design tokens only (docs/DESIGN.md): sap-green tile (#9BD84A), near-black tree (#0C0E0D)
-    sap = sum(n for n, (r, g, b) in colors if (r, g, b) == (155, 216, 74))
-    ink = sum(n for n, (r, g, b) in colors if (r, g, b) == (12, 14, 13))
+    # two flat design tokens only (docs/DESIGN.md): amber tile (#F5A25A), deep-space tree (#0A080E)
+    sap = sum(n for n, (r, g, b) in colors if (r, g, b) == (245, 162, 90))
+    ink = sum(n for n, (r, g, b) in colors if (r, g, b) == (10, 8, 14))
     assert sap > 80000 and ink > 50000
     assert sap + ink > 0.94 * _opaque(rgba), "flat colours only (anti-aliased edges aside): no gradient"
-    banned = sum(n for n, (r, g, b) in colors if abs(r - 200) < 30 and abs(g - 170) < 30 and abs(b - 110) < 30)
+    banned = sum(n for n, (r, g, b) in colors if abs(r - 200) < 12 and abs(g - 170) < 12 and abs(b - 110) < 12)
     assert banned < 50, "no client gold (#C8AA6E) any more"
     # the tree's eye: the centre of the crown is open (tile colour) with a dark pupil
-    assert rgba.getpixel((256, 215))[:3] == (12, 14, 13)                 # pupil
-    assert rgba.getpixel((256 - 80, 215))[:3] == (155, 216, 74)          # white of the eye
-    assert rgba.getpixel((256, 400))[:3] == (12, 14, 13)                 # trunk
+    assert rgba.getpixel((256, 215))[:3] == (10, 8, 14)                 # pupil
+    assert rgba.getpixel((256 - 80, 215))[:3] == (245, 162, 90)          # white of the eye
+    assert rgba.getpixel((256, 400))[:3] == (10, 8, 14)                 # trunk
 
 
 def _opaque(rgba) -> int:

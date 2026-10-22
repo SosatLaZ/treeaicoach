@@ -1,4 +1,4 @@
-"""Screenshots of every launcher page, light and dark, at 1280 x 720 and 1920 x 1080 (docs/LAUNCHER.md).
+"""Screenshots of every launcher page (one theme: the black hole) at 1280 x 720 and 1920 x 1080 (docs/LAUNCHER.md).
 
     python tools/launcher_shots.py [--out DIR] [--sizes 1280x720,1920x1080] [--themes light,dark]
 
@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "release" / "shots"))
     ap.add_argument("--sizes", default="1280x720,1920x1080")
-    ap.add_argument("--themes", default="light,dark")
+    ap.add_argument("--themes", default="dark")
     ap.add_argument("--pages", default="", help="only these pages (comma-separated keys)")
     args = ap.parse_args(argv)
     os.environ.setdefault("TREEAICOACH_HOME", tempfile.mkdtemp(prefix="treeai-shots-"))

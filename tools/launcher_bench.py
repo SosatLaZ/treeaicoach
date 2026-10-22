@@ -95,7 +95,17 @@ def main(argv: list[str] | None = None) -> int:
             app.stack.currentWidget().repaint()
             app.qapp.processEvents()
             sw.append(1000 * (time.perf_counter() - t))
-    rss = f", memory {_rss_mb():.0f} MB"
+    app.show_page("home")
+    t_end = time.monotonic() + 0.5
+    while time.monotonic() < t_end:                  # settle (background render, prebuild)
+        app.qapp.processEvents()
+        time.sleep(0.005)
+    c0, w0 = time.process_time(), time.monotonic()
+    loop = app.QtCore.QEventLoop()                  # idle: the real event loop for 3 s, nothing happening
+    app.QtCore.QTimer.singleShot(3000, loop.quit)
+    loop.exec()
+    idle = 100 * (time.process_time() - c0) / (time.monotonic() - w0)
+    rss = f", idle CPU {idle:.1f} %, memory {_rss_mb():.0f} MB"
     print(f"import {1000 * t_import:.0f} ms, window+home {1000 * t_init:.0f} ms, first paint {1000 * t_paint:.0f} ms, "
           f"page builds {', '.join(f'{k} {v:.0f}' for k, v in builds.items())} ms, switches (incl. paint) max "
           f"{max(sw):.1f} mean {sum(sw) / len(sw):.1f} ms{rss}")
