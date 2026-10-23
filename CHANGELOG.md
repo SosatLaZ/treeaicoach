@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.17.1 · 23 octobre 2026
+
+- **Windows 10 : nos dessins sont retirés exactement de l'image analysée** quand Windows refuse de cacher l'overlay
+  (sur ta partie Garen avec nos marques : détection 0,83 → 0,85, comme sans marques).
+- **Option « Capture de la fenêtre du jeu (cadre jaune Windows 10) »** dans Avancé.
+- Plus d'erreur répétée dans le journal.
+
 ## 2.17.0 · 23 octobre 2026
 
 - **Nouvelle interface saphir :** arbre de vie discret en fond, bleus saphir, police Inter, style épuré ; 8 pages
