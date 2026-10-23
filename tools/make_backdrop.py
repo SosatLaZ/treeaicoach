@@ -1,9 +1,9 @@
-"""Write the launcher's black-hole background (docs/DESIGN.md, "Lanceur").
+"""Write the launcher's sapphire tree-of-life background (docs/DESIGN.md, "Lanceur").
 
     python tools/make_backdrop.py [--out treeaicoach/assets/ui/backdrop.png]
 
-Renders :func:`treeaicoach.ui_backdrop.render_rgb` at 1600 x 1000 (the slow-varying light only:
-the stars are drawn by the window at device resolution) and saves an optimised PNG (~120 KB).
+Renders :func:`treeaicoach.ui_backdrop.render_rgb` at 1600 x 1000 (deep sapphire gradient, line-art
+tree of life) and saves an optimised PNG (~225 KB).
 Run it again after changing the drawing in ``ui_backdrop.py``.
 """
 

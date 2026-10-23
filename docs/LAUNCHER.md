@@ -77,11 +77,11 @@ thread de fond qui remplit ensuite la liste.
 * **Fenêtre** : taille et position mémorisées (`ui_geometry`, format `LxH+X+Y`), remises sur
   l'écran si l'écran a changé, taille minimale 960 × 600 (utilisable en 1280 × 720). DPI par
   écran : Qt 6 (arrondi « PassThrough ») ; `ui_scaling` force un facteur au prochain lancement.
-* **Thème** : un seul, « trou noir » (docs/DESIGN.md) ; le fond est une image en cache (`ui_widgets.Backdrop`), aucun minuteur.
+* **Thème** : un seul, « arbre de vie, saphir » (docs/DESIGN.md), police Inter embarquée ; le fond est une image en cache (`ui_widgets.Backdrop`), aucun minuteur.
 
 ## Outils
 
 * `python tools/launcher_bench.py [--profile]` : temps de création, de chaque page, des changements, processeur au repos (3 s de vraie boucle d'événements).
-* `python tools/make_backdrop.py` : régénère l'image du trou noir (`assets/ui/backdrop.png`).
+* `python tools/make_backdrop.py` : régénère l'image de l'arbre de vie (`assets/ui/backdrop.png`).
 * `python tools/launcher_shots.py [--out DIR]` : captures de chaque page en
   1280 × 720 et 1920 × 1080 (moteur factice « en attente d'une partie », trois parties fictives).

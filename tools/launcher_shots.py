@@ -1,4 +1,4 @@
-"""Screenshots of every launcher page (one theme: the black hole) at 1280 x 720 and 1920 x 1080 (docs/LAUNCHER.md).
+"""Screenshots of every launcher page (one theme: sapphire tree of life) at 1280 x 720 and 1920 x 1080 (docs/LAUNCHER.md).
 
     python tools/launcher_shots.py [--out DIR] [--sizes 1280x720,1920x1080] [--themes light,dark]
 

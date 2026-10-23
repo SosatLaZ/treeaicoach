@@ -234,7 +234,7 @@ def load_fonts() -> int:
 
 
 def apply_theme(app: QtWidgets.QApplication, dark: bool = True) -> Theme:
-    """The one theme (the black hole is dark by nature; ``dark`` is kept for old callers)."""
+    """The one theme (sapphire, dark by design; ``dark`` is kept for old callers)."""
     t = SAPPHIRE
     load_fonts()
     _theme[0] = t
@@ -826,9 +826,9 @@ class Sidebar(QtWidgets.QFrame):
 
 
 class Backdrop(QtWidgets.QWidget):
-    """Central widget painting the black hole (ui_backdrop): rendered once on a worker, then one
-    cached pixmap per window size; a resize drag uses a fast scaled copy, the smooth one (with its
-    stars) comes 120 ms after the last resize. No timer while idle."""
+    """Central widget painting the tree of life (ui_backdrop): rendered once on a worker, then one
+    cached pixmap per window size; a resize drag uses a fast scaled copy, the smooth one comes 120 ms
+    after the last resize. No timer while idle."""
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)

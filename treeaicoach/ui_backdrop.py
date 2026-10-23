@@ -75,7 +75,7 @@ def _tree_layer(w: int, h: int, ss: int = 2) -> Any:
         mx, my = (x + ex) / 2 + bend * math.cos(ang), (y + ey) / 2 + bend * math.sin(ang)
         pts = [((1 - t) ** 2 * x + 2 * (1 - t) * t * mx + t * t * ex,
                 (1 - t) ** 2 * y + 2 * (1 - t) * t * my + t * t * ey) for t in (i / 8 for i in range(9))]
-        alpha = int((150 if not down else 120) * (0.55 + 0.45 * depth / 7))
+        alpha = int((88 if not down else 64) * (0.55 + 0.45 * depth / 7))
         stroke(pts, width, alpha)
         if depth <= 0 or length < 6 * unit or clipped:
             if not clipped:
@@ -92,20 +92,20 @@ def _tree_layer(w: int, h: int, ss: int = 2) -> Any:
     ground = cy + 0.30 * R
     fork = cy - 0.02 * R
     trunk_w = 9 * unit
-    stroke([(cx - 2 * unit, ground), (cx + 1 * unit, (ground + fork) / 2), (cx, fork)], trunk_w, 150)
+    stroke([(cx - 2 * unit, ground), (cx + 1 * unit, (ground + fork) / 2), (cx, fork)], trunk_w, 92)
     for a in (-1.05, -0.45, 0.0, 0.42, 1.0):
         grow(cx, fork, a, 0.25 * R, trunk_w * 0.60, 6, False)
     for a in (-1.15, -0.45, 0.0, 0.5, 1.1):
         grow(cx, ground, a, 0.19 * R, trunk_w * 0.45, 4, True)
     # the ring that holds it, and a ground line
     rw = max(1, int(1.6 * unit))
-    d.ellipse((cx - R, cy - R, cx + R, cy + R), outline=LINE + (110,), width=rw)
+    d.ellipse((cx - R, cy - R, cx + R, cy + R), outline=LINE + (66,), width=rw)
     d.line([(cx - 0.97 * R * math.cos(0.22), ground), (cx + 0.97 * R * math.cos(0.22), ground)],
-           fill=LINE + (70,), width=rw)
+           fill=LINE + (44,), width=rw)
     for x, y, up in tips:                      # leaves (and root ends): small sapphire seeds
         if up and rnd.random() < 0.8:
             r = (2.2 + 2.2 * rnd.random()) * unit
-            d.ellipse((x - r, y - r, x + r, y + r), fill=LEAF + (int(70 + 70 * rnd.random()),))
+            d.ellipse((x - r, y - r, x + r, y + r), fill=LEAF + (int(36 + 40 * rnd.random()),))
     return layer.resize((w, h), Image.LANCZOS)
 
 
