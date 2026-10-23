@@ -118,7 +118,11 @@ except Exception:
 # vosk itself (libvosk.dll ~17 MB compressed) is downloaded on first use (voice_assistant.import_vosk: GitHub's
 # 100 MB file limit); its pure-Python dependencies stay bundled
 hiddenimports += ["sounddevice", "_cffi_backend", "srt", "requests", "tqdm"]
-excludes_extra = ["vosk"]
+# local Whisper (stt_local.py): the CTranslate2 + tokenizers wheels are downloaded on first use (pinned
+# SHA-256, ~21 MB) and imported from the cache: only the stdlib modules they import are bundled here
+hiddenimports += ["asyncio", "argparse", "concurrent.futures", "subprocess", "signal", "socket", "ssl", "queue",
+                  "gettext", "locale", "bz2", "lzma", "heapq", "array", "copy", "string", "traceback", "atexit"]
+excludes_extra = ["vosk", "ctranslate2", "tokenizers", "faster_whisper"]
 try:
     datas += collect_data_files("_sounddevice_data")
 except Exception:

@@ -3,6 +3,15 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.21.0 · 23 octobre 2026
+
+- **Reconnaissance vocale refaite :** Whisper en local (gratuit, aucune requête), téléchargé au 1er usage ;
+  découpage des phrases par Silero VAD ; « Hey coach » plus tolérant.
+- **Micro :** choix automatique du micro qui capte, alerte claire si Windows bloque le micro.
+- **Nouveau design sobre** « graphite » : plus de dorures ni d'effets, une couleur d'accent, lancement < 0,8 s.
+- **Options rangées :** une seule place par réglage, sous-options cachées si inutiles, libellés clairs.
+- **Rangs sur Discord :** au début de la partie, message avec les rangs et séries + 3 annonces vocales.
+
 ## 2.20.0 · 23 octobre 2026
 
 - **L'essentiel en haut de l'écran :** une petite barre (victoire %, or vs ton adversaire, CS/min, prochain

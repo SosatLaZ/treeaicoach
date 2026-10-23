@@ -47,6 +47,9 @@ FLUSH_AFTER_S = 0.3                      # packets stopped this long: comfort no
 BOT_SPEAKING_MAX_S = 30.0                # the bot « playing » longer than this: the gate is stuck, ignored
 QUEUE_MAX = 400                          # 16 kHz blocks waiting for the recognizers (~8 s of 1 speaker)
 MAX_SPEAKERS = 8
+RING_BLOCKS = 24                         # 6 s of a member's audio kept while waiting for the wake
+WAKE_AUDIO_BLOCKS = 16                   # the last 4 s go to Whisper with the question
+RING_QUESTION_MIN = WAKE_AUDIO_BLOCKS + 2
 
 
 # ------------------------------------------------------------------------------ packets
@@ -112,8 +115,15 @@ def to_16k_mono(pcm48: bytes) -> bytes:
 class Speaker:
     """« Hey coach » then the question, for ONE member of the channel (fed 16 kHz mono blocks)."""
 
-    def __init__(self, uid: str, make_rec: Callable[[Any], Any], clock: Callable[[], float]) -> None:
+    def __init__(self, uid: str, make_rec: Callable[[Any], Any], clock: Callable[[], float],
+                 stt: Callable[[], Any] | None = None) -> None:
         self.uid = uid
+        self._stt = stt or (lambda: None)     # local Whisper when loaded (re-reads the question audio)
+        self.ring: collections.deque[bytes] = collections.deque(maxlen=RING_BLOCKS)   # real audio, wake phase
+        self.q_audio: list[bytes] = []
+        self.seg: Any = None                  # Silero VAD of this member (question end)
+        self.q_spoke = False
+        self.whisper_text = ""
         self._make_rec = make_rec
         self._clock = clock
         self._buf = bytearray()
@@ -157,6 +167,12 @@ class Speaker:
     def _block(self, block: bytes) -> list[tuple[str, str]]:
         self.blocks += 1
         if self.q_rec is not None:
+            self.q_audio.append(block)
+            if self.seg is not None:
+                closed = self.seg.feed(block)
+                self.q_spoke = self.q_spoke or self.seg.in_speech or bool(closed)
+                if closed and len(self.q_audio) > RING_QUESTION_MIN:
+                    return self._end()           # the VAD heard the question end
             rec = self.q_rec
             self.level = va.level_of(va.block_rms(block))
             if rec.accept(block):
@@ -166,8 +182,8 @@ class Speaker:
                     self.heard = " ".join(self.q_parts)[-60:]
                     if va.question_text(self.q_parts):
                         self.q_heard, self.q_change = True, self._clock()
-                    if len(va.question_text(self.q_parts).split()) >= va.MIN_QUESTION_WORDS:
-                        return self._end()
+                    if self.seg is None and len(va.question_text(self.q_parts).split()) >= va.MIN_QUESTION_WORDS:
+                        return self._end()           # (with Whisper, the VAD / silence ends it: whole question)
                 self.q_partial = ""
             else:
                 p = rec.partial()
@@ -185,6 +201,7 @@ class Speaker:
         if not ok:
             self.stage = "modèle indisponible"
             return []
+        self.ring.append(block)
         return self._wake_block(block)
 
     def _wake_block(self, block: bytes, noise: bool = False) -> list[tuple[str, str]]:
@@ -221,6 +238,16 @@ class Speaker:
         self.q_parts, self.q_partial = list(parts), partial
         self.q_change, self.q_heard = self.q_start, bool(va.question_text(self.q_parts, partial))
         self.stage = "question"
+        self.q_audio = list(self.ring)[-WAKE_AUDIO_BLOCKS:]     # « hey coach … » itself (Whisper strips it)
+        self.ring.clear()
+        self.q_spoke = False
+        if self._stt() is not None:
+            try:
+                from treeaicoach.vad import Segmenter  # noqa: PLC0415
+
+                self.seg = Segmenter()
+            except Exception:
+                self.seg = None
         return True
 
     def tick(self) -> list[tuple[str, str]]:
@@ -244,6 +271,8 @@ class Speaker:
                 self.engine.reset()
                 self.last_audio = 0.0
             return []
+        if self.seg is not None and self.q_spoke and now - self.last_audio >= FLUSH_AFTER_S + 0.3:
+            return self._end()                   # Discord stopped sending: the question is over
         if (now - self.q_start >= va.QUESTION_MAX_S
                 or (not self.q_heard and now - self.q_start >= va.QUESTION_START_S)
                 or (self.q_heard and now - self.q_change >= va.QUESTION_SILENCE_S)):
@@ -260,6 +289,15 @@ class Speaker:
             if tail:
                 self.q_parts.append(tail)
         q = va.strip_wake(" ".join(self.q_parts)).strip()
+        stt = self._stt()
+        audio, self.q_audio, self.seg = b"".join(self.q_audio), [], None
+        if stt is not None and audio:
+            text = stt.transcribe(audio)
+            self.whisper_text = text
+            woke, rest = va.whisper_wake(text)
+            wq = (rest if woke else va.strip_wake(text)).strip()
+            if len(wq.split()) >= va.MIN_QUESTION_WORDS:
+                q = wq
         if q:
             self.heard = q[-60:]
         self.stage = "écoute"
@@ -276,8 +314,9 @@ class VoiceListener:
     dropped), ``on_wake(uid)`` (chime in the channel), ``on_question(uid, text)`` (ask the AI)."""
 
     def __init__(self, *, make_rec: Callable[[Any], Any] | None = None,
-                 clock: Callable[[], float] = time.monotonic, threaded: bool = True) -> None:
+                 clock: Callable[[], float] = time.monotonic, threaded: bool = True, stt: Any = None) -> None:
         self._make_rec_fn = make_rec
+        self._stt = stt
         self._clock = clock
         self._q: queue.Queue = queue.Queue(QUEUE_MAX)
         self._speakers: dict[str, Speaker] = {}
@@ -369,6 +408,18 @@ class VoiceListener:
             if idle > 240 and not self._speakers:     # a minute of nothing: the thread ends (restarts on push)
                 return
 
+    def _whisper(self) -> Any:
+        """Local Whisper (zero request) once loaded; only the audio of a wake + its question reaches it."""
+        if self._stt is not None:
+            return self._stt
+        if self._make_rec_fn is not None:
+            return None
+        try:
+            a = va.assistant()
+            return a._stt() if a.whisper_ready() else None
+        except Exception:
+            return None
+
     def _make_rec(self, grammar: Any) -> Any:
         try:
             if self._make_rec_fn is not None:
@@ -398,7 +449,7 @@ class VoiceListener:
                     if len(self._speakers) >= MAX_SPEAKERS:
                         oldest = min(self._speakers.values(), key=lambda s: s.last_audio)
                         self._speakers.pop(oldest.uid, None)
-                    sp = self._speakers[uid] = Speaker(uid, self._make_rec, self._clock)
+                    sp = self._speakers[uid] = Speaker(uid, self._make_rec, self._clock, self._whisper)
                 events += [(uid, k, t) for k, t in sp.feed(pcm)]
         for sp in list(self._speakers.values()):
             events += [(sp.uid, k, t) for k, t in sp.tick()]
