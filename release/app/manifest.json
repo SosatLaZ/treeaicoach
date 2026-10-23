@@ -1,25 +1,25 @@
 {
- "version": "2.17.1",
+ "version": "2.18.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "5c10cf3c7bc03d11288c36f150455fdf53f4658531829b210099e7084d2a16af",
+ "sha256": "32d87397bbff9d616ccfc4aadde4be5568811d3d26724744e5da9d8fa36101aa",
  "chunks": [
   {
-   "name": "2.17.1/part-01.zip",
-   "size": 88155855,
-   "sha256": "e6a0861b47857dd8df417e0e0f9604109740b373351aa60e07c4d972dc9decfb",
-   "files": 281
+   "name": "2.18.0/part-01.zip",
+   "size": 88163670,
+   "sha256": "87d3499a928d5403094c5522638900371e925530eba4b0fe8f138a176c19b909",
+   "files": 280
   },
   {
-   "name": "2.17.1/part-02.zip",
-   "size": 7490437,
-   "sha256": "57f203195f7bcf85ce0b2d4fe4cd3a60da9b46b15595545ae764324a552fb191",
-   "files": 430
+   "name": "2.18.0/part-02.zip",
+   "size": 7500887,
+   "sha256": "a3d15dcac1d2d1d729972df5039fc413de1275b4370e408068d53d6240f90aeb",
+   "files": 431
   }
  ],
- "total_size": 95646292,
+ "total_size": 95664557,
  "launcher": {
-  "sha256": "d4b5f13687804705f084471a6757403a189872a911f0d43fe76598f68e998fe8",
-  "size": 7531889
+  "sha256": "49fa56af21b87f91aef213a7a59164089813b031fb73ad0e805640130db08bc4",
+  "size": 7531313
  },
- "notes": "2.17.1 : Windows 10, nos dessins retir\u00e9s exactement de l'image analys\u00e9e ; option capture de la fen\u00eatre du jeu (cadre jaune)."
+ "notes": "2.18 : s\u00e9quence de lancement, Accueil avec ton champion fa\u00e7on LoL, proportions revues."
 }
