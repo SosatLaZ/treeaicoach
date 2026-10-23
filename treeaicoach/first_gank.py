@@ -11,8 +11,9 @@ his red side, he was on my half of the map at 3:00 or 4:00 in 6 / 7 games (86 %)
 (55 %) for a lane on his blue side, so only the red side lane gets the call. Live minimap sightings
 of his start were checked too and are too rare / wrong (4 right out of 9 seen) to refine it: unused.
 
-ONE card line (no voice: it is a forecast, the danger beep / gc_jungler_unseen speak when he really
-comes), once per game, only while laning in my lane, never when he is dead or SEEN on the other
+ONE card line, beginner level only (its score is under the intermediate minimum: at that level it
+shifted other lines into 3 card flickers in tools/ux_replay), no voice (a forecast: the danger beep /
+gc_jungler_unseen speak when he really comes), once per game, only while laning in my lane, never when he is dead or SEEN on the other
 half. Riot policy: map knowledge + public Live Client roles only. Pure; never raises.
 """
 
@@ -65,7 +66,7 @@ def rule_first_gank(ctx: M.MacroCtx) -> M.GeniusCall | None:
             text = "Reste près de ta tour : leur jungler arrive de ton côté"
         return M._call(KIND, f"{KIND}:{lane}", "PREMIER GANK", text,
                        "Leur jungler finit le plus souvent son premier tour de ton côté, entre 3:00 et 3:45.",
-                       M._safe_uv(ctx), tier="basic", score=0.45, priority=70, color="gold", life=20.0,
+                       M._safe_uv(ctx), tier="basic", score=0.25, priority=70, color="gold", life=20.0,
                        label="TA TOUR", factors=("premier tour du jungler ennemi", f"côté {lane}"))
     except Exception:
         log.debug("first gank rule failed", exc_info=True)
