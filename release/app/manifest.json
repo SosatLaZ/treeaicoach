@@ -1,25 +1,25 @@
 {
- "version": "2.17.0",
+ "version": "2.17.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "bcee13899272e3fcfb059ca01af43acf4f7183b7b81a47291f3ed8440cb065e9",
+ "sha256": "5c10cf3c7bc03d11288c36f150455fdf53f4658531829b210099e7084d2a16af",
  "chunks": [
   {
-   "name": "2.17.0/part-01.zip",
-   "size": 88160378,
-   "sha256": "c22edb5b7ff5d2a6507be7aeec0eb19f025d2006e3b7377419bd6cbf65bc9277",
-   "files": 282
+   "name": "2.17.1/part-01.zip",
+   "size": 88155855,
+   "sha256": "e6a0861b47857dd8df417e0e0f9604109740b373351aa60e07c4d972dc9decfb",
+   "files": 281
   },
   {
-   "name": "2.17.0/part-02.zip",
-   "size": 7481224,
-   "sha256": "bde34d8cd2529d1e8ce2edcc52de7b4aaaccd8b019bd46652925840d9a2c7b23",
-   "files": 429
+   "name": "2.17.1/part-02.zip",
+   "size": 7490437,
+   "sha256": "57f203195f7bcf85ce0b2d4fe4cd3a60da9b46b15595545ae764324a552fb191",
+   "files": 430
   }
  ],
- "total_size": 95641602,
+ "total_size": 95646292,
  "launcher": {
-  "sha256": "692741c56194a588cfa48719b4c403486e49817e444c16d98675a01d7d5563b8",
-  "size": 7531513
+  "sha256": "d4b5f13687804705f084471a6757403a189872a911f0d43fe76598f68e998fe8",
+  "size": 7531889
  },
- "notes": "2.17 : interface saphir (arbre de vie, police Inter), Hey coach plus fiable avec test et niveau du micro, qui joue dans le vocal, bandeau r\u00e9duit, voix ElevenLabs, captures moins fr\u00e9quentes."
+ "notes": "2.17.1 : Windows 10, nos dessins retir\u00e9s exactement de l'image analys\u00e9e ; option capture de la fen\u00eatre du jeu (cadre jaune)."
 }

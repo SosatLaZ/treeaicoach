@@ -1,6 +1,6 @@
 {
-  "version": "2.17.0",
-  "sha256": "692741c56194a588cfa48719b4c403486e49817e444c16d98675a01d7d5563b8",
-  "size": 7531513,
-  "notes": "2.17 : interface saphir (arbre de vie, police Inter), Hey coach plus fiable avec test et niveau du micro, qui joue dans le vocal, bandeau réduit, voix ElevenLabs, captures moins fréquentes."
+  "version": "2.17.1",
+  "sha256": "d4b5f13687804705f084471a6757403a189872a911f0d43fe76598f68e998fe8",
+  "size": 7531889,
+  "notes": "2.17.1 : Windows 10, nos dessins retirés exactement de l'image analysée ; option capture de la fenêtre du jeu (cadre jaune)."
 }
