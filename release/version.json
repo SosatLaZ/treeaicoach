@@ -1,6 +1,6 @@
 {
-  "version": "2.21.0",
-  "sha256": "fbcbed591aa410c9ab0622486d0aad86d7bde9366555d7aedf4931dc1ad5b601",
-  "size": 7530100,
-  "notes": "2.21 : Whisper local gratuit, micro auto, design sobre, options rangées, rangs sur Discord."
+  "version": "2.21.1",
+  "sha256": "a7cfee118fe16981c674774f1e5a5be023fc628e42a86db072c268d83407516d",
+  "size": 7531483,
+  "notes": "2.21.1 : Discord t'entend enfin (ta voix était ignorée)."
 }

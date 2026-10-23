@@ -1,25 +1,25 @@
 {
- "version": "2.21.0",
+ "version": "2.21.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "4b1236bdf6704d5fcba3aa994fddb081a52c7be7511081919c9b61464817b785",
+ "sha256": "05b717b59e1fd1dd9d9e9089b6d12321f26d2868cc2d703cb6d56600c86281de",
  "chunks": [
   {
-   "name": "2.21.0/part-01.zip",
-   "size": 88160637,
-   "sha256": "822c61827e0b3da3406c8ee696151714473639874ab5472a812396f91d45dae9",
+   "name": "2.21.1/part-01.zip",
+   "size": 88161184,
+   "sha256": "54e16be4c43aff960d3edf8f04845e772b32632a939bdf4172f833c95d0dbc05",
    "files": 261
   },
   {
-   "name": "2.21.0/part-02.zip",
+   "name": "2.21.1/part-02.zip",
    "size": 9395694,
    "sha256": "29947c060aaf681ac9866888fd68ebb6abf663fe8cbf0357fdc9bcff1603e0f2",
    "files": 450
   }
  ],
- "total_size": 97556331,
+ "total_size": 97556878,
  "launcher": {
-  "sha256": "fbcbed591aa410c9ab0622486d0aad86d7bde9366555d7aedf4931dc1ad5b601",
-  "size": 7530100
+  "sha256": "a7cfee118fe16981c674774f1e5a5be023fc628e42a86db072c268d83407516d",
+  "size": 7531483
  },
- "notes": "2.21 : Whisper local gratuit, micro auto, design sobre, options rang\u00e9es, rangs sur Discord."
+ "notes": "2.21.1 : Discord t'entend enfin (ta voix \u00e9tait ignor\u00e9e)."
 }
