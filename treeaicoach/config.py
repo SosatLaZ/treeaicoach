@@ -156,6 +156,8 @@ HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ward",)
 BOOL_FIELDS = BOOL_FIELDS + ("lcu_enabled", "cs_import_items", "cs_auto_runes", "cs_auto_spells")
 # player info (player_intel.py): public rank / LP / streaks of the players of the game in progress, off
 BOOL_FIELDS = BOOL_FIELDS + ("player_intel",)
+# session / tilt guard (draft_edge.py): my own last games (League Client), a calm pause suggestion, on
+BOOL_FIELDS = BOOL_FIELDS + ("tilt_guard",)
 # play ratings (plays.py / fx_overlay.py): chess.com-style "coup de maître / gaffe" badges, visual only
 BOOL_FIELDS = BOOL_FIELDS + ("plays_enabled", "plays_sound", "plays_sound_negative")
 CHOICES["plays_position"] = ("top_center", "minimap")
@@ -354,6 +356,8 @@ class Config:
     cs_auto_spells: bool = False     # summoner spells set automatically, Flash kept on its key (off: button)
     # public rank, LP, streaks of the current game's players (LCU, memory only, shown by champion)
     player_intel: bool = False
+    # champion select: "2 défaites d'affilée : pause 10 min ?" from MY match history (memory only)
+    tilt_guard: bool = True
     # play ratings (plays.py): animated badge "COUP DE MAÎTRE !!" / "GAFFE ??" + post-game précision
     plays_enabled: bool = True
     plays_position: str = "top_center"   # "top_center" | "minimap" (small badges always near the minimap)

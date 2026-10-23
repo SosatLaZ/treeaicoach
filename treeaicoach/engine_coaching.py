@@ -560,6 +560,12 @@ class CoachingMixin:
             enemies = list(getattr(game, "enemies", None) or [])
             us, them = mastermind.units_of(game)
             lines = []
+            try:     # lane by lane (draft_edge.py): the lane the team plays around
+                from treeaicoach import draft_edge
+
+                edges = draft_edge.lane_edges([me] + list(getattr(game, "allies", None) or []), enemies)
+            except Exception:
+                draft_edge, edges = None, {}
             for p in list(getattr(game, "allies", None) or []):
                 role = str(getattr(p, "position", "") or "").upper()
                 if role in ("", "JUNGLE"):
@@ -577,11 +583,16 @@ class CoachingMixin:
                 except Exception:
                     pass
                 lines.append({"alias": p.champion_alias, "champion": name, "opp": opp_name, "role": role.lower(),
-                              "text": discord_bot.matchup_verdict(name, opp_name, leader, until)})
+                              "text": discord_bot.matchup_verdict(name, opp_name, leader, until)
+                              + (draft_edge.friend_suffix(role, edges) if draft_edge is not None else "")})
             if not lines:
                 return                                   # positions not known yet: retried (≤ 3:00)
             self._discord_friends_done = True
             self._call("matchups", "", {"lines": lines, "ai": self._friends_ai()})
+            around = draft_edge.play_around(edges, [me] + list(getattr(game, "allies", None) or [])) \
+                if draft_edge is not None and len(edges) >= 2 else ""
+            if around and getattr(self._cfg, "discord_team_calls", False):    # "Jouez bot : 2v2 gagnant."
+                self._call("team_call", around + ".", {"key": "draft:lanes"})
         except Exception:
             log.debug("discord friends matchups failed", exc_info=True)
 

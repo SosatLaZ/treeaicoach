@@ -70,6 +70,8 @@ ENV_DIR = "TREEAI_LCU_DIR"
 # endpoints (League Akari's catalogue)
 SUMMONER_PATH = "/lol-summoner/v1/current-summoner"
 MATCHES_PATH = "/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex=1"
+#: my own recent games (session / tilt guard, draft_edge.py): read-only, numbers only are kept
+RECENT_PATH = "/lol-match-history/v1/products/lol/current-summoner/matches?begIndex=0&endIndex={n}"
 GAME_PATH = "/lol-match-history/v1/games/{game_id}"
 RANKED_PATH = "/lol-ranked/v1/current-ranked-stats"
 TIMELINE_PATH = "/lol-match-history/v1/game-timelines/{game_id}"
@@ -513,6 +515,18 @@ class LcuClient:
         if not games:
             return None
         return max(games, key=lambda x: _num(x.get("gameCreation")) or 0.0)
+
+    def recent_games(self, n: int = 10) -> list[dict]:
+        """The current summoner's last ``n`` games (match-history list entries, newest first; [] when
+        unavailable). Only MY account: the caller keeps the numbers (win / K / D / A / time)."""
+        n = max(1, min(20, int(n)))
+        d = self.get(RECENT_PATH.format(n=n))
+        g = d.get("games") if isinstance(d, dict) else None
+        games = g.get("games") if isinstance(g, dict) else g
+        if not isinstance(games, list):
+            return []
+        games = [x for x in games if isinstance(x, dict)]
+        return sorted(games, key=lambda x: -(_num(x.get("gameCreation")) or 0.0))[:n]
 
     def game(self, game_id: Any) -> dict | None:
         gid = _game_id(game_id)

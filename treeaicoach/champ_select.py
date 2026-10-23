@@ -67,6 +67,7 @@ class ChampSelectState:
     allies: tuple[Pick, ...] = ()
     enemies: tuple[Pick, ...] = ()
     phase: str = ""               # LCU timer phase ("PLANNING", "BAN_PICK", "FINALIZATION"...)
+    my_team: str = ""             # "ORDER" (blue side) | "CHAOS" (red side) | "" (unknown)
 
 
 @dataclass(frozen=True)
@@ -94,8 +95,19 @@ class PregameCard:
     core_ids: tuple[int, ...] = ()
     spell_ids: tuple[int, ...] = ()
     rune_ids: tuple[int, ...] = ()
+    # draft edge (draft_edge.py): "" when the draft does not say it yet
+    win_condition: str = ""                 # "On scale mieux : joue safe jusqu'à 25 min, puis Baron"
+    comp_detail: str = ""                   # "Nous 60 % AD, eux 75 % AP · plus d'engage"
+    spikes: str = ""                        # "Tu gagnes niv 1-3, il gagne au 6, toi après 2 objets"
+    counter: str = ""                       # "Contre eux : Sandales de Mercure tôt (4 dégâts magiques)"
+    lanes: str = ""                         # "Voies : top favorable, mid égal, bot difficile"
+    play_around: str = ""                   # "Jouez bot : 2v2 gagnant"
+    jungle: str = ""                        # "Lee Sin : départ en bas, 1er gank top vers 2:45"
+    tilt: str = ""                          # "2 défaites d'affilée : pause 10 min ?"
 
 
+#: lines the home card shows at most (ui_page_home), and their priority (lower first) when cut
+MAX_LINES = 11
 # ----------------------------------------------------------------------------- parsing (pure)
 def _int(x: Any) -> int:
     try:
@@ -155,7 +167,10 @@ def parse_session(session: Any, resolve: Callable[[int], tuple[str, str] | None]
                 allies.append(p)
         enemies = tuple(p for p in (_pick(c, resolve) for c in their) if p is not None and p.locked)
         timer = session.get("timer") if isinstance(session.get("timer"), dict) else {}
-        return ChampSelectState(me=me, allies=tuple(allies), enemies=enemies, phase=str(timer.get("phase") or ""))
+        mine = next((c for c in my_team if isinstance(c, dict) and _int(c.get("cellId")) == local), {})
+        side = {1: "ORDER", 2: "CHAOS"}.get(_int(mine.get("team")), "")
+        return ChampSelectState(me=me, allies=tuple(allies), enemies=enemies, phase=str(timer.get("phase") or ""),
+                                my_team=side)
     except Exception:
         log.debug("parse_session failed", exc_info=True)
         return None
@@ -263,8 +278,50 @@ def meta_lines(alias: str, role: str) -> dict[str, str]:
         return {}
 
 
-def build_card(state: ChampSelectState | None) -> PregameCard | None:
-    """The pre-game card (None without my champion). Pure, never raises."""
+def draft_lines(state: ChampSelectState, role: str, opp: Pick | None) -> dict[str, str]:
+    """The draft edge of the card (:mod:`treeaicoach.draft_edge`): win condition, comp detail,
+    power spikes vs my lane opponent, counter tweak, lanes, play-around lane, enemy jungler
+    forecast. Missing parts are absent. Pure, never raises."""
+    out: dict[str, str] = {}
+    try:
+        from treeaicoach import draft_edge as de
+
+        me = state.me
+        if me is None or not me.alias:
+            return out
+        allies = [me] + list(state.allies)
+        enemies = list(state.enemies)
+        if len(enemies) >= 3:
+            enemies = [Pick(e.alias, e.name, r, e.locked) for r, (e, _s) in assign_roles(state.enemies).items()]
+        cr = de.comp_read(allies, enemies, me.alias)
+        if cr is not None:
+            out["win_condition"], out["comp_detail"] = cr.sentence, cr.detail
+        if opp is not None:
+            out["spikes"] = de.spike_timeline(me.alias, opp.alias)
+        tw = de.counter_tweak(me.alias, role, enemies)
+        if tw is not None:
+            out["counter"] = tw.text
+        edges = de.lane_edges(allies, enemies)
+        if len(edges) >= 2:
+            out["lanes"], out["play_around"] = de.lanes_line(edges), de.play_around(edges, allies)
+        if len(enemies) >= 3:
+            jf = de.jungle_forecast(allies, enemies, state.my_team, edges)
+            if jf is not None and role:
+                out["jungle"] = jf.text(role)
+    except Exception:
+        log.debug("draft lines failed", exc_info=True)
+    return {k: v for k, v in out.items() if v}
+
+
+def _compose(cands: list[tuple[int, str]], n: int = MAX_LINES) -> tuple[str, ...]:
+    """At most ``n`` lines: the ``n`` most important (priority, lower first), in their card order."""
+    keep = sorted(range(len(cands)), key=lambda i: (cands[i][0], i))[:n]
+    return tuple(cands[i][1] for i in sorted(keep))
+
+
+def build_card(state: ChampSelectState | None, tilt: str = "") -> PregameCard | None:
+    """The pre-game card (None without my champion); ``tilt``: the session guard line
+    (:func:`treeaicoach.draft_edge.tilt_line`, "" when off / nothing to say). Pure, never raises."""
     try:
         if state is None or state.me is None or not state.me.alias:
             return None
@@ -314,17 +371,40 @@ def build_card(state: ChampSelectState | None) -> PregameCard | None:
                 items, why = ms, "le départ le plus joué du moment"
         gold = sum(g for _i, _n, g in items)
         title = f"{me.name.upper()} · {ROLE_FR.get(role, '?').upper()}" if role else me.name.upper()
-        lines: list[str] = []
+        edge = draft_lines(state, role, opp)
+        cands: list[tuple[int, str]] = []          # (priority, line) in card order
+        if tilt:
+            cands.append((0, tilt))
         if opp is not None:
-            lines.append(f"Face à {opp.name}" + ("" if sure else " (probable)"))
-        lines += tips
+            cands.append((1, f"Face à {opp.name}" + ("" if sure else " (probable)")))
+        if edge.get("spikes"):
+            cands.append((2, edge["spikes"]))
+        jg_line = edge.get("jungle", "")
+        for i, t in enumerate(tips):
+            # the jungle forecast says more than the generic jungler tip (same champion): it replaces it
+            if jg_line and enemy_jg is not None and enemy_jg.name in t and enemy_jg.name in jg_line:
+                continue
+            cands.append(((3, 8, 10)[min(i, 2)], t))
+        if jg_line:
+            cands.append((5, jg_line))
+        if edge.get("win_condition"):
+            cands.append((2, edge["win_condition"]))
+        if edge.get("play_around"):
+            cands.append((6, edge["play_around"]))
+        if edge.get("lanes"):
+            cands.append((9, edge["lanes"]))
+        if edge.get("comp_detail"):
+            cands.append((9, edge["comp_detail"]))
         if items:
-            lines.append("Départ : " + " + ".join(n for _i, n, _g in items) + f" ({gold} PO)")
+            cands.append((4, "Départ : " + " + ".join(n for _i, n, _g in items) + f" ({gold} PO)"))
         if meta.get("core"):
-            lines.append("Build : " + meta["core"])
+            cands.append((4, "Build : " + meta["core"]))
+        if edge.get("counter"):
+            cands.append((5, edge["counter"]))
         skills = f"monte {meta['skills']}" if meta.get("skills") else ""
         if meta.get("spells") or meta.get("runes") or skills:
-            lines.append(" · ".join(x for x in (meta.get("spells"), meta.get("runes"), skills) if x))
+            cands.append((7, " · ".join(x for x in (meta.get("spells"), meta.get("runes"), skills) if x)))
+        lines = list(_compose(cands))
         core_ids: tuple[int, ...] = ()
         spell_ids: tuple[int, ...] = ()
         rune_ids: tuple[int, ...] = ()
@@ -345,13 +425,30 @@ def build_card(state: ChampSelectState | None) -> PregameCard | None:
                            start_gold=gold, phase=state.phase, lines=tuple(lines),
                            spells=meta.get("spells", ""), runes=meta.get("runes", ""),
                            core_items=meta.get("core", ""), meta_source=meta.get("source", ""),
-                           skills=meta.get("skills", ""), core_ids=core_ids, spell_ids=spell_ids, rune_ids=rune_ids)
+                           skills=meta.get("skills", ""), core_ids=core_ids, spell_ids=spell_ids, rune_ids=rune_ids,
+                           win_condition=edge.get("win_condition", ""), comp_detail=edge.get("comp_detail", ""),
+                           spikes=edge.get("spikes", ""), counter=edge.get("counter", ""), lanes=edge.get("lanes", ""),
+                           play_around=edge.get("play_around", ""), jungle=jg_line, tilt=tilt)
     except Exception:
         log.debug("build_card failed", exc_info=True)
         return None
 
 
 # ----------------------------------------------------------------------------- watcher
+def _cfg_flag(name: str, default: bool) -> bool:
+    """A switch of the app config (the source the home page gave client_sync; LCU switch included)."""
+    try:
+        from treeaicoach import client_sync
+
+        src = getattr(client_sync.get_default(), "_cfg_source", None)
+        cfg = src() if callable(src) else None
+        if cfg is None:
+            return default
+        return bool(getattr(cfg, name, default)) and bool(getattr(cfg, "lcu_enabled", True))
+    except Exception:
+        return default
+
+
 class ChampSelectWatcher:
     """Polls the champion select session (read-only) and keeps the current card. Thread-safe.
 
@@ -369,6 +466,24 @@ class ChampSelectWatcher:
         self._next = -1e18
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._tilt: str | None = None            # session guard line of this champion select (None: not read)
+
+    def _tilt_line(self, client: Any) -> str:
+        """Session / tilt guard (config ``tilt_guard``, on by default): MY last games from the
+        client's match history (read-only, numbers only, memory only), read once per champion
+        select. Never raises."""
+        if self._tilt is not None:
+            return self._tilt
+        self._tilt = ""
+        try:
+            if not _cfg_flag("tilt_guard", True) or not callable(getattr(client, "recent_games", None)):
+                return ""
+            from treeaicoach import draft_edge
+
+            self._tilt = draft_edge.tilt_line(draft_edge.parse_history(client.recent_games(10)), time.time())
+        except Exception:
+            log.debug("tilt guard unavailable", exc_info=True)
+        return self._tilt
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -403,7 +518,10 @@ class ChampSelectWatcher:
                     client_sync.get_default().reset()
             except Exception:
                 log.debug("client sync not run", exc_info=True)
-            card = build_card(state) if state is not None else None
+            if state is None:
+                self._tilt = None                # next champion select: read the history again
+            tilt = self._tilt_line(client) if state is not None and state.me is not None else ""
+            card = build_card(state, tilt) if state is not None else None
             if card is not None:
                 try:     # the card's icons (Data Dragon), downloaded once in a daemon thread
                     from treeaicoach import item_icons

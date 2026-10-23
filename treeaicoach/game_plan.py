@@ -281,6 +281,15 @@ def team_card(reading: Any) -> MatchupCard | None:
         if reading is None:
             return None
         lines = [x for x in reading.team_plan() if x]
+        try:     # the draft's win condition first ("Joue safe jusqu'à 25 min, puis Baron : on scale mieux")
+            from treeaicoach import draft_edge, presenter
+
+            wc = presenter.card_line(draft_edge.reading_win_condition(reading))
+            if wc and len(wc) <= 60:
+                tempo = ("Force les objectifs", "Joue le temps", "Défends", "Force tôt")
+                lines = [wc] + [x for x in lines if not x.startswith(tempo)]   # the sentence says the tempo
+        except Exception:
+            log.debug("draft win condition unavailable", exc_info=True)
         if not lines:
             return None
         first = fit(lines[0]) or lines[0]

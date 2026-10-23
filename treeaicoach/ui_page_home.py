@@ -107,6 +107,8 @@ class HomePage:
                        "Crée ou remplace la page « TreeAI » (jamais tes autres pages sans ton clic).")
         app.switch_row(self.cs, "cs_auto_spells", "Mettre les sorts automatiquement",
                        "Saut éclair reste sur ta touche D ou F habituelle.")
+        app.switch_row(self.cs, "tilt_guard", "Conseiller une pause après une série de défaites",
+                       "Lit seulement tes dernières parties dans le client, rien n'est enregistré.")
         self.cs.hide()
         self.page.add(self.cs)
 
@@ -352,7 +354,7 @@ class HomePage:
             self.cs.hide()
             return
         self.cs_title.setText(ui_text(title))
-        self.cs_lines.setText("\n".join(ui_text(x) for x in lines[:8]))
+        self.cs_lines.setText("\n".join(ui_text(x) for x in lines[:11]))   # champ_select.MAX_LINES
         self._fill_icons(card)
         try:
             from treeaicoach import client_sync  # noqa: PLC0415
