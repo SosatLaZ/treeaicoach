@@ -110,6 +110,9 @@ FPS_MIN, FPS_MAX = 5.0, 60.0
 #: a safety net for a field the signature does not cover; identical images are never re-sent.
 FORCE_REDRAW_S = 2.0
 FORCE_REDRAW_LAYER_S = {"hud": 3.0}
+#: Essentials strip: its text is re-checked at most this often (s); re-rendered / uploaded only when
+#: the text changed (no forced redraw: the image is cached by its text in essentials.render).
+ESSENTIALS_PERIOD_S = 1.0
 #: HUD card re-render rate while animated / calm (Hz) - and never re-sent when identical.
 HUD_FAST_HZ, HUD_CALM_HZ = 10.0, 4.0
 #: Toast banners: slide-in / fade-out rate, and the hold phase (remaining-time line, banner pulse).
@@ -1539,7 +1542,10 @@ class OverlayManager:
             # "toasts": banners at the top-centre (praise / Tab insights), captured like the HUD
             # "world0" / "world1": small click-through windows of the ward guide in the game view
             # "timers": the timers strip hanging outside the minimap frame (layout slot)
-            for name in FLASH_WINDOWS + ("radar", "minimap", "timers", "build", "hud", "toasts") + WORLD_WINDOWS:
+            # "essentials": the small top-centre strip (essentials.py); like every window here it is
+            # in ``windows``, so _sync_capture_exclusion hides it from capture with the others
+            for name in FLASH_WINDOWS + ("radar", "minimap", "timers", "build", "essentials", "hud", "toasts") \
+                    + WORLD_WINDOWS:
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved) \
                     if self._window_factory is None else self._window_factory(name)
             # every window that can cover the minimap is hidden from capture (overlay_guard):
@@ -1853,6 +1859,43 @@ class OverlayManager:
             x, y = slot.place(img.shape[1], img.shape[0])
             self._show(win, "build", img, x, y, dedupe=True)
 
+    def _refresh_essentials(self, win: "LayeredWindow | None", state: Any, cfg: Any, scr: RectT, lay: Any,
+                            move: bool, now: float) -> None:
+        """Essentials strip (essentials.py, layout slot "essentials", top centre): its text is
+        rebuilt at most every :data:`ESSENTIALS_PERIOD_S` (no timer, no thread: the overlay loop
+        already runs), the pill is re-rendered and uploaded ONLY when that text (or the slot)
+        changed; hidden in move mode, when off or with nothing to show."""
+        if win is None:
+            return
+        slot = lay.slot("essentials") if lay is not None else None
+        if move or slot is None or not getattr(cfg, "essentials_strip", True) \
+                or not getattr(state, "show_essentials", True):
+            win.hide()
+            self._sig.pop("essentials", None)
+            return
+        if win.visible and now - self._sig_t.get("essentials", -1e9) < ESSENTIALS_PERIOD_S:
+            self._perf.skip("essentials")
+            return
+        from treeaicoach import essentials as ess
+
+        self._sig_t["essentials"] = now
+        lines = ess.build_lines(state)
+        if not lines:
+            win.hide()
+            self._sig.pop("essentials", None)
+            return
+        sig = (lines, slot.rect)
+        if win.visible and self._sig.get("essentials") == sig:
+            self._perf.skip("essentials")
+            return
+        self._sig["essentials"] = sig
+        img = self._render("essentials", ess.render, lines, scr)
+        if img is None:
+            win.hide()
+            return
+        x, y = slot.place(img.shape[1], img.shape[0])
+        self._show(win, "essentials", img, x, y)
+
     def _refresh_world(self, api: _Api, windows: dict[str, LayeredWindow], state: Any, cfg: Any,
                        move: bool) -> None:
         """Ward guide markers in the game view (``state.world``): one small window per marker, hidden
@@ -2063,6 +2106,8 @@ class OverlayManager:
         self._refresh_timers(windows.get("timers"), state, cfg, scr, lay, move, now)
         # ---- build strip (beside the card; its own slot in the same layout)
         self._refresh_build(windows.get("build"), state, cfg, scr, lay, move, now)
+        # ---- essentials strip (top centre; <= 1 text check / s, uploaded only when the text changed)
+        self._refresh_essentials(windows.get("essentials"), state, cfg, scr, lay, move, now)
         # ---- toasts (top-centre, right under League's kill announcer; one at a time): 20 Hz while
         #      sliding in / fading out, 8 Hz while held (remaining-time line), identical images not re-sent
         tanim = toasts_animating(state)

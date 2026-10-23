@@ -315,10 +315,20 @@ class OverlayStateMixin:
             phase=tac.phase() if tac is not None else None,
             role_notice=self._role_notice(now),
             tip_curated=True,               # _hud_line: the final card line (gauge line, no contradiction)
+            edge_stats=self._edge_stats(),
+            show_essentials=bool(getattr(cfg, "essentials_strip", True)),
             **self._timer_fields(game, cfg),
             **self._hud_card_fields(game, me_uv, tip, now),
             **self._prediction_fields(me, game, game_t, now),
         )
+
+    def _edge_stats(self) -> Any:
+        """live_edge.EdgeStats of the live line (essentials strip), None outside a game / unknown."""
+        try:
+            edge = getattr(self, "_live_edge", None)
+            return edge.stats() if edge is not None and self._in_game and hasattr(edge, "stats") else None
+        except Exception:
+            return None
 
     def _timer_fields(self, game: Any, cfg: Any) -> dict[str, Any]:
         """Timers column of the minimap layer (overlay_render.timer_rows): the toggle, the Baron /

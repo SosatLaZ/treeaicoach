@@ -78,7 +78,7 @@ CONDITIONAL = frozenset({"votes", "death_recap", "respawn", "stats_panel"})
 SOFT = frozenset({"shop"})
 
 #: Element names (priority order) and the rails of the named card positions.
-ELEMENTS = ("card", "build", "toasts", "timers", "badge_big", "badge_small")
+ELEMENTS = ("card", "build", "toasts", "essentials", "timers", "badge_big", "badge_small")
 CARD_POSITIONS = ("left_of_minimap", "above_minimap", "top_left", "top_right", "left_middle", "custom")
 
 
@@ -150,11 +150,13 @@ def ui_unit(screen: Sequence[int]) -> float:
 #: renderers are written for). Compact by default (user feedback 2.5.0: "les trucs sont trop
 #: gros"): the card, banners and badges are clearly smaller than League's own panels, the
 #: timers keep League's small-text size. Text never goes below :data:`MIN_FONT_PX`.
-SIZE: dict[str, float] = {"card": 0.86, "timers": 0.92, "toasts": 0.76, "badge": 0.66, "build": 0.9}
+SIZE: dict[str, float] = {"card": 0.86, "timers": 0.92, "toasts": 0.76, "badge": 0.66, "build": 0.9,
+                          "essentials": 0.92}
 #: Smallest text we draw in game (px, docs/DESIGN.md: never below 12 px).
 MIN_FONT_PX = 12.0
 #: Base font (px at scale 1) of each element's main text line, for the legibility floor.
-BASE_FONT_PX: dict[str, float] = {"card": 15.5, "timers": 13.0, "toasts": 14.0, "badge": 17.0, "build": 13.0}
+BASE_FONT_PX: dict[str, float] = {"card": 15.5, "timers": 13.0, "toasts": 14.0, "badge": 17.0, "build": 13.0,
+                                  "essentials": 13.0}
 #: League's ``GlobalScale`` (HUD scale slider, 0..1) is mapped to a HUD size factor ONLY upwards
 #: (unverified mapping: 0.5 = the measured captures, 1.0 = +25 %); a smaller HUD keeps the
 #: measured zones (never a risk of drawing over a bigger real HUD).
@@ -435,6 +437,7 @@ class Prefs:
     timers: bool = True
     build: bool = True               # the build strip next to the card (config ``hud_build_strip``)
     toasts: bool = True
+    essentials: bool = True          # the essentials strip at the top centre (config ``essentials_strip``)
     badges: bool = True
     detailed: bool = False
     hud_scale: float = 1.0
@@ -472,6 +475,7 @@ class Prefs:
                        timers=bool(getattr(cfg, "overlay_timers", True)),
                        build=bool(getattr(cfg, "hud_build_strip", True)),
                        toasts=bool(getattr(cfg, "toasts_enabled", True)),
+                       essentials=bool(getattr(cfg, "essentials_strip", True)),
                        badges=bool(getattr(cfg, "plays_enabled", True)),
                        detailed=det, hud_scale=hs, flip=None if flip is None else bool(flip),
                        radar=as_rect(radar))
@@ -609,6 +613,22 @@ def _toast_rails(c: _Ctx, spec: ElementSpec) -> list[tuple[_Rail, str, int]]:
     return [(_Rail("below_announcer", (x, below), (x, below + 0.10 * c.U)), "top", 1),
             (_Rail("top_band", (x, top_band), (x, top_band)), "top", 1),
             (_Rail("below_announcer_far", (x, below), (x, sy + 0.42 * sh - ey - eh)), "top", 1)]
+
+
+def _essentials_rails(c: _Ctx, spec: ElementSpec) -> list[tuple[_Rail, str, int]]:
+    """The essentials strip (essentials.py): top centre, in the band between the screen's top edge
+    and League's kill announcer - the one strip of League's HUD that is empty at every resolution
+    and aspect (scoreboard / clock anchored top RIGHT, portraits / votes on the minimap frame, chat
+    and kill feed on the sides, announcer + our toasts below; see essentials.py). It slides down
+    only as far as the announcer; a screen too small for it: the minimap column on the user's HUD
+    side (above the timers / card, which come after it in this tier)."""
+    sx, sy, sw, sh = c.scr
+    x = sx + (sw - spec.w) / 2.0
+    y0 = sy + max(4, c.g // 2)
+    y1 = max(y0, c.ann_top - c.g - spec.h)
+    x_in = c.inner_x(spec.w)
+    return [(_Rail("top_center", (x, y0), (x, y1)), "top", 1),
+            (_Rail("minimap_column", (x_in, c.ftop - c.g - spec.h), (x_in, sy + c.m)), "bottom", 1)]
 
 
 def _build_rails(c: _Ctx, spec: ElementSpec, card: Slot | None) -> list[tuple[_Rail, str, int]]:
@@ -806,6 +826,10 @@ def solve(screen: Any, minimap: Any, specs: dict[str, ElementSpec], prefs: Prefs
         spec = specs.get("toasts")
         if spec is not None and prefs.toasts:
             placed["toasts"] = _place("toasts", spec, _toast_rails(c, spec), c, placed, "center")
+        # ---- essentials strip (top centre, above the announcer: never over League's UI)
+        spec = specs.get("essentials")
+        if spec is not None and prefs.essentials:
+            placed["essentials"] = _place("essentials", spec, _essentials_rails(c, spec), c, placed, "center")
         # ---- the HUD card (the main channel): its named position first
         spec = specs.get("card")
         if spec is not None and prefs.hud_enabled:
@@ -876,6 +900,11 @@ def element_specs(screen: Any, minimap: Any = None, detailed: bool = False,
         if "timers" in want:
             tw, th = orr.timers_strip_size(scr, detailed)
             out["timers"] = ElementSpec(tw, th)
+        if "essentials" in want:
+            from treeaicoach import essentials as ess
+
+            ew, eh = ess.strip_size(scr)
+            out["essentials"] = ElementSpec(ew, eh)
     except Exception:
         log.debug("card / timers specs failed", exc_info=True)
     try:

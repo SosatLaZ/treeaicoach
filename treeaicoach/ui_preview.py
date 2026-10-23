@@ -158,6 +158,8 @@ def compose(cfg: Any, state: Any = None, now: float = 0.3,
             if len(xs):
                 out.rects["hud"] = (hx - sx + int(xs.min()), hy - sy + int(ys.min()),
                                     int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1))
+        if bool(getattr(cfg, "essentials_strip", True)):
+            _compose_essentials(out, img, st, cfg, scr, mm, radar, live)
         if play is not None and bool(getattr(cfg, "plays_enabled", True)):
             try:
                 from treeaicoach import fx_render as fx  # noqa: PLC0415
@@ -185,6 +187,37 @@ def compose(cfg: Any, state: Any = None, now: float = 0.3,
         return Composition(bg, {"screen": (0, 0, SCREEN[2], SCREEN[3])}, live)
 
 
+def _sample_edge() -> Any:
+    """Numbers of the sample game for the essentials strip (outside a game)."""
+    from treeaicoach.live_edge import EdgeStats  # noqa: PLC0415
+
+    return EdgeStats(gold_diff=850, opponent="Darius", cs_min=6.8, cs_target=7.5, gold_min=402, win=0.62,
+                     win_delta=8.0, win_reason="Baron")
+
+
+def _compose_essentials(out: Composition, img: np.ndarray, st: Any, cfg: Any, scr: tuple, mm: tuple,
+                        radar: Any, live: bool) -> None:
+    """The essentials strip at its in-game slot (layout "essentials", top centre). Never raises."""
+    try:
+        from treeaicoach import essentials as ess  # noqa: PLC0415
+        from treeaicoach import layout as layout_mod  # noqa: PLC0415
+
+        if not live and getattr(st, "edge_stats", None) is None:
+            st = dataclasses.replace(st, edge_stats=_sample_edge())
+        slot = layout_mod.layout_for(scr, mm, cfg, detailed=bool(getattr(st, "hud_detailed", False)),
+                                     radar=radar).slot("essentials")
+        strip = ess.render(ess.build_lines(st), scr)
+        if slot is None or strip is None:
+            return
+        from treeaicoach import overlay_render as orr  # noqa: PLC0415
+
+        x, y = slot.place(strip.shape[1], strip.shape[0])
+        orr.composite_over(img, strip, x - scr[0], y - scr[1])
+        out.rects["essentials"] = (x - scr[0], y - scr[1], strip.shape[1], strip.shape[0])
+    except Exception:
+        log.debug("essentials preview failed", exc_info=True)
+
+
 def _crop(img: np.ndarray, r: tuple[int, int, int, int], pad: int) -> np.ndarray:
     H, W = img.shape[:2]
     x, y, w, h = r
@@ -207,7 +240,7 @@ def preview_images(comp: Composition, screen_w: int = 420, zoom: float = 0.62) -
     try:
         out["screen"] = Image.fromarray(np.ascontiguousarray(_resize(comp.screen, screen_w)), "RGB")
         img = comp.layers if comp.layers is not None else comp.screen    # tiles: without the edge flash
-        for key, pad in (("hud", 6), ("minimap", 6), ("radar", 6), ("badge", 4)):
+        for key, pad in (("hud", 6), ("minimap", 6), ("radar", 6), ("badge", 4), ("essentials", 8)):
             r = comp.rects.get(key)
             if r is None:
                 continue

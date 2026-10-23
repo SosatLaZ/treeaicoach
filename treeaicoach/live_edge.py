@@ -86,6 +86,23 @@ class EdgeNote:
     ident: str = ""
 
 
+@dataclass(frozen=True)
+class EdgeStats:
+    """The live line's numbers, structured (the in-game essentials strip, essentials.py): lane
+    gold diff vs my opponent, CS / min vs the target of my rank (gold / min for the support), win
+    probability with its swing over ~90 s and the term that moved it. None = unknown."""
+
+    gold_diff: int | None = None
+    opponent: str = ""
+    cs_min: float | None = None
+    cs_target: float | None = None
+    gold_min: int | None = None
+    support: bool = False
+    win: float | None = None             # 0..1
+    win_delta: float | None = None       # points over WIN_REF_S (None: not enough history)
+    win_reason: str | None = None        # REASON_LABEL of the term that moved it (swing >= WIN_SWING_POINTS)
+
+
 # ----------------------------------------------------------------------------- helpers
 def _f(x: Any, d: float = 0.0) -> float:
     try:
@@ -477,12 +494,18 @@ class LiveEdge:
         self._kill_open = False
         self._win_hist: deque = deque(maxlen=120)        # (t, p, factors)
         self._line: str | None = None
+        self._stats: EdgeStats | None = None
+        self._win: tuple[float, float | None, str | None] | None = None
         self._gt = 0.0
         self._first_t: float | None = None
         self.notes: list[tuple[float, str]] = []         # (gt, text) for the record / report
 
     def line(self) -> str | None:
         return self._line
+
+    def stats(self) -> EdgeStats | None:
+        """The numbers of :meth:`line` (immutable snapshot), None before the first update."""
+        return self._stats
 
     # ------------------------------------------------------------------ helpers
     def _due(self, feature: str, ident: str, t: float) -> bool:
@@ -517,7 +540,7 @@ class LiveEdge:
                 busy: bool, recall_ok: bool, item_text: str | None, bracket: str) -> list[EdgeNote]:
         me = getattr(game, "me", None) if game is not None else None
         if me is None:
-            self._line = None
+            self._line = self._stats = None
             return []
         gt = _f(getattr(game, "game_time", 0.0))
         if gt + 5.0 < self._gt:                      # a new game
@@ -540,10 +563,18 @@ class LiveEdge:
         cs_t, _gold_t = farm_targets(role, bracket)
         if rates is not None:
             parts.append(farm_text(rates[0], cs_t) if role != "UTILITY" else f"{int(rates[1])} or/min")
+        self._win = None
         wt = self._win_line(t, game, summary) if win_on else None
         if wt:
             parts.append(wt)
         self._line = " · ".join(parts) if parts else None
+        w = self._win
+        self._stats = EdgeStats(gold_diff=int(gd) if gd is not None else None,
+                                opponent=_name(opp) if opp is not None else "",
+                                cs_min=rates[0] if rates is not None and rates[0] > 0 else None,
+                                cs_target=cs_t, gold_min=int(rates[1]) if rates is not None else None,
+                                support=role == "UTILITY", win=w[0] if w else None,
+                                win_delta=w[1] if w else None, win_reason=w[2] if w else None)
         # ---- one note at most
         if busy or not calls_on or 0.0 <= t - self._last_note_t < GLOBAL_GAP_S or t - self._first_t < WATCH_S:
             return []
@@ -614,14 +645,17 @@ class LiveEdge:
             ref = next((h for h in hist if t - h[0] <= WIN_REF_S), None)
             if ref is not None and t - ref[0] >= 10.0:
                 delta = 100.0 * (p - ref[1])
-                return win_text(p, delta, swing_reason(ref[2], f) if abs(delta) >= WIN_SWING_POINTS else None)
+                reason = swing_reason(ref[2], f) if abs(delta) >= WIN_SWING_POINTS else None
+                self._win = (float(p), float(delta), reason)
+                return win_text(p, delta, reason)
+            self._win = (float(p), None, None)
             return win_text(p, 0.0, None)
         except Exception:
             log.debug("win line failed", exc_info=True)
             return None
 
 
-__all__ = ["EdgeNote", "LiveEdge", "lane_opponent", "lane_gold_diff", "gold_diff_text", "kill_window",
+__all__ = ["EdgeNote", "EdgeStats", "LiveEdge", "lane_opponent", "lane_gold_diff", "gold_diff_text", "kill_window",
            "kill_window_text", "next_build_item", "recall_target", "recall_text", "damage_profile",
            "defense_call", "win_terms", "swing_reason", "main_reason", "win_text", "number_advantage",
            "farm_rates", "farm_targets", "farm_text", "farm_nudge", "fmt_or", "fmt_num"]

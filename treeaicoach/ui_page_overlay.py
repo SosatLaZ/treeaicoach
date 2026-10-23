@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 PREVIEW_FIELDS = frozenset({"overlay_enabled", "overlay_mode", "hud_enabled", "hud_position", "hud_detailed",
                             "radar_position", "radar_scale", "fog_mode", "overlay_timers", "jungle_paths",
                             "plays_enabled", "plays_position", "danger_flash", "text_tips", "item_advice",
-                            "win_prob_hud", "skill_level"})
+                            "win_prob_hud", "skill_level", "essentials_strip"})
 
 
 def position_choices(cfg: Any, which: str) -> list[tuple[str, str]]:
@@ -79,6 +79,9 @@ class OverlayPage:
         app.switch_row(hud, "win_prob_hud", "Probabilité de victoire", "Dans le panneau et sur l'Accueil.")
 
         scr = self.page.section("À l'écran")
+        app.switch_row(scr, "essentials_strip", "L'essentiel en haut de l'écran",
+                       "Une petite barre : victoire, or contre ton adversaire, CS par minute, prochain objectif, "
+                       "jungler ennemi.")
         app.switch_row(scr, "danger_flash", "Flash de danger", "Cadre rouge sur les bords de l'écran en cas de gank.")
         app.switch_row(scr, "tip_toasts", "Conseils en bandeau", "Les conseils écrits aussi en petit bandeau.")
         app.switch_row(scr, "item_advice_toasts", "Conseil d'achat en bandeau", "Quand tu as l'or pour un objet.")
