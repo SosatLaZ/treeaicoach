@@ -21,6 +21,7 @@ from treeaicoach.alerts import Alert, AlertKind, Level, make_alert
 from treeaicoach.capture import Rect, is_black_frame
 from treeaicoach.engine_base import (
     CAMERA_SELF_MAX_DIST,
+    COLLECT_FULL_EVERY,
     COLLECT_MAX_FILES,
     DUP_DIST,
     DUP_KEEP_ID_SCORE,
@@ -490,8 +491,27 @@ class VisionMixin:
         try:
             from treeaicoach.paths import collect_dir
 
-            name = time.strftime("%Y%m%d_%H%M%S") + f"_{self._collect_count:04d}.png"
-            if cv2.imwrite(str(collect_dir() / name), frame):
+            stamp = time.strftime("%Y%m%d_%H%M%S") + f"_{self._collect_count:04d}"
+            if cv2.imwrite(str(collect_dir() / (stamp + ".png")), frame):
                 self._collect_count += 1
+            if self._collect_count % COLLECT_FULL_EVERY == 1:
+                self._collect_full(collect_dir() / (stamp + "_full.jpg"))
         except Exception:
             self._err.exception("Sample collection failed")
+
+    def _collect_full(self, path: Any) -> None:
+        """The whole game window, half size, JPEG (HUD, shop, scoreboard, our overlay): for the
+        layout / HUD / overlay checks. Never raises."""
+        try:
+            from treeaicoach.capture import find_game_window
+
+            cap, rect = self._capture, find_game_window()
+            if cap is None or rect is None:
+                return
+            img = cap.grab(rect)
+            if img is None or img.size == 0:
+                return
+            img = cv2.resize(img, (img.shape[1] // 2, img.shape[0] // 2), interpolation=cv2.INTER_AREA)
+            cv2.imwrite(str(path), img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        except Exception:
+            log.debug("Full-window sample failed", exc_info=True)

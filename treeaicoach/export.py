@@ -42,7 +42,7 @@ def collect_sources(base: Path) -> dict[str, list[tuple[Path, str]]]:
     games = base / "games"
     diags = sorted(_files(base / "diagnostics", "*.zip"), key=lambda p: p.stat().st_mtime)[-MAX_DIAGNOSTICS:]
     return {
-        "captures": [(p, f"collect/{p.name}") for p in _files(base / "collect", "*.png")],
+        "captures": [(p, f"collect/{p.name}") for p in _files(base / "collect", "*.png") + _files(base / "collect", "*.jpg")],
         "games": [(p, f"games/{p.name}") for p in _files(games, "*.json")],
         "truth": [(p, f"games/truth/{p.name}") for p in _files(games / "truth", "*.json")],
         "diagnostics": [(p, f"diagnostics/{p.name}") for p in diags],
