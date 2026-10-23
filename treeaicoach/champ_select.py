@@ -96,7 +96,7 @@ class PregameCard:
     spell_ids: tuple[int, ...] = ()
     rune_ids: tuple[int, ...] = ()
     # draft edge (draft_edge.py): "" when the draft does not say it yet
-    win_condition: str = ""                 # "On scale mieux : joue safe jusqu'à 25 min, puis Baron"
+    win_condition: str = ""                 # "On scale mieux : joue le temps jusqu'à 25 min, puis Baron"
     comp_detail: str = ""                   # "Nous 60 % AD, eux 75 % AP · plus d'engage"
     spikes: str = ""                        # "Tu gagnes niv 1-3, il gagne au 6, toi après 2 objets"
     counter: str = ""                       # "Contre eux : Sandales de Mercure tôt (4 dégâts magiques)"

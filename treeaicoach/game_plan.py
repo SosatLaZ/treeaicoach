@@ -281,7 +281,7 @@ def team_card(reading: Any) -> MatchupCard | None:
         if reading is None:
             return None
         lines = [x for x in reading.team_plan() if x]
-        try:     # the draft's win condition first ("Joue safe jusqu'à 25 min, puis Baron : on scale mieux")
+        try:     # the draft's win condition first ("Joue le temps jusqu'à 25 min, puis Baron : on scale mieux")
             from treeaicoach import draft_edge, presenter
 
             wc = presenter.card_line(draft_edge.reading_win_condition(reading))

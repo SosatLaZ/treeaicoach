@@ -24,8 +24,8 @@ def team(aliases):
 # ----------------------------------------------------------------------------- 8. comp reading
 def test_scaling_comp_win_condition_is_one_card_sentence():
     cr = de.comp_read(team(SCALING), team(EARLY), "Nasus")
-    assert cr is not None and cr.sentence.startswith("On scale mieux : joue safe jusqu'à ")
-    assert len(cr.sentence) <= de.CARD_MAX and presenter.card_line(cr.sentence).startswith("Joue safe")
+    assert cr is not None and cr.sentence.startswith("On scale mieux : joue le temps jusqu'à ")
+    assert len(cr.sentence) <= de.CARD_MAX and presenter.card_line(cr.sentence).startswith("Joue le temps")
     assert "% AP" in cr.detail and "% AD" in cr.detail and "on scale" in cr.detail
     rev = de.comp_read(team(EARLY), team(SCALING), "Renekton")
     assert rev is not None and rev.sentence.startswith("On est plus forts tôt : force")
@@ -38,9 +38,9 @@ def test_team_card_starts_with_the_win_condition():
     from treeaicoach import game_plan, mastermind  # noqa: PLC0415
 
     card = game_plan.team_card(mastermind.analyze(game(SCALING, EARLY, 100.0)))
-    assert card is not None and card.subtitle.startswith("Joue safe jusqu'à") and len(card.subtitle) <= 60
+    assert card is not None and card.subtitle.startswith("Joue le temps jusqu'à") and len(card.subtitle) <= 60
     assert presenter.card_line(card.subtitle) == card.subtitle
-    assert not any(x.startswith("Joue le temps") for x in card.lines)               # tempo said once
+    assert not any(x.startswith("Joue le temps :") for x in card.lines)             # tempo said once
 
 
 # ----------------------------------------------------------------------------- 9. power spikes

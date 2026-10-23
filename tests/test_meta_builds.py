@@ -192,7 +192,7 @@ def test_champ_select_card_shows_spells_runes_and_build(monkeypatch):
     assert card.core_items.startswith("Jambières du berzerker → Estropieur") and card.meta_source.startswith("U.GG")
     assert card.start_items[0][0] == 1055 and card.start_why == "le départ le plus joué du moment"
     assert any(x.startswith("Build : ") for x in card.lines) and card.lines[-1].startswith("Saut éclair + Embrasement · ")
-    assert len(card.lines) <= 7 and all(len(x) <= 110 for x in card.lines)
+    assert len(card.lines) <= cs.MAX_LINES and all(len(x) <= 110 for x in card.lines)
 
 
 def test_resources_gold_line_names_the_affordable_item(monkeypatch):

@@ -12,7 +12,7 @@ Built ON the existing reads, never beside them:
 
 The features (all pure, never raise, None / "" when the data is missing):
 
-* :func:`win_condition` - team comp reading -> ONE sentence ("On scale mieux : joue safe jusqu'à
+* :func:`win_condition` - team comp reading -> ONE sentence ("On scale mieux : joue le temps jusqu'à
   25 min, puis Baron"), :func:`comp_detail` - AD / AP split, engage, peel, waveclear, scaling of
   both teams in one line;
 * :func:`spike_timeline` - who wins levels 1-3, level 6, first item, two items in my matchup
@@ -152,7 +152,7 @@ def _sentence(us: Any, them: Any, e10: float, e30: float, flip: float | None) ->
         m = int(flip) if flip else 25
         plan = _late_plan(us, them)
         if e10 <= -EVEN and e30 >= EVEN:
-            s = f"On scale mieux : joue safe jusqu'à {m} min, {plan}"
+            s = f"On scale mieux : joue le temps jusqu'à {m} min, {plan}"
         elif e10 >= EVEN and e30 <= -EVEN:
             s = f"On est plus forts tôt : force dragons et Héraut avant {m} min"
         elif e10 >= EVEN and e30 >= EVEN:
