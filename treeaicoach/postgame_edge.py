@@ -71,7 +71,7 @@ AXES: tuple[tuple[str, str], ...] = (("farm", "Farm"), ("vision", "Vision"), ("f
 EV_KILL = 300.0
 EV_KILL_PER_MIN = 10.0           # a late death costs more (death timer)
 EV_VALUE = {"TurretKilled": 700.0, "InhibKilled": 1500.0, "DragonKill": 600.0, "BaronKill": 2500.0,
-            "HeraldKill": 500.0, "HordeKill": 150.0, "AtakhanKill": 1200.0}
+            "HeraldKill": 500.0, "HordeKill": 150.0}
 EV_ELDER = 2500.0
 CLUSTER_GAP_S = 30.0           # a fight and the objective taken right after it = one moment
 
@@ -401,7 +401,7 @@ def _swings(record: Any) -> list[dict]:
 _OBJ_FR = {"TurretKilled": ("une tour", "tour"), "InhibKilled": ("un inhibiteur", "inhibiteur"),
            "DragonKill": ("le dragon", "dragon"), "ElderKill": ("le dragon ancestral", "dragon ancestral"),
            "BaronKill": ("le Baron", "Baron"), "HeraldKill": ("le Héraut", "Héraut"),
-           "HordeKill": ("les larves", "larves"), "AtakhanKill": ("Atakhan", "Atakhan")}
+           "HordeKill": ("les larves", "larves")}
 
 
 def turning_point(record: Any) -> dict[str, Any] | None:
