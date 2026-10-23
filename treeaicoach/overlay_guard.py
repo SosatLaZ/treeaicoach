@@ -378,8 +378,7 @@ class CaptureGuard:
         sx, sy = W / fw, H / fh
         exact = abs(sx - 1.0) < 1e-6 and abs(sy - 1.0) < 1e-6
         tol = 8.0 if exact else 28.0
-        seen = f.astype(np.float32)
-        out = seen.copy()
+        out = None                                # frame copy, made on the first change
         done = np.zeros((H, W), bool)
         inpaint = np.zeros((H, W), bool)
         order = sorted(masks, key=lambda e: float("inf") if e[0] is None else e[0], reverse=True)
@@ -391,12 +390,17 @@ class CaptureGuard:
             if (tw, th) != (lay.shape[1], lay.shape[0]):
                 lay = cv2.resize(lay, (tw, th), interpolation=cv2.INTER_AREA)
             ox, oy = int(round((x - fx) * sx)), int(round((y - fy) * sy))
-            x0, y0, x1, y1 = max(0, ox), max(0, oy), min(W, ox + tw), min(H, oy + th)
+            # only the drawn part (marks cover a few % of the minimap: ~1 ms instead of ~15)
+            rows, cols = np.flatnonzero(lay[..., 3].any(1)), np.flatnonzero(lay[..., 3].any(0))
+            if not rows.size:
+                continue
+            x0, y0 = max(0, ox + int(cols[0])), max(0, oy + int(rows[0]))
+            x1, y1 = min(W, ox + int(cols[-1]) + 1), min(H, oy + int(rows[-1]) + 1)
             if x1 <= x0 or y1 <= y0:
                 continue
             L = lay[y0 - oy:y1 - oy, x0 - ox:x1 - ox].astype(np.float32)
             a = L[..., 3] / 255.0
-            S = seen[y0:y1, x0:x1]
+            S = f[y0:y1, x0:x1].astype(np.float32)
             r = S - L[..., :3]
             room = (255.0 * (1.0 - a))[..., None]
             ok = (a > 0.02) & ~done[y0:y1, x0:x1] & ((r >= -tol) & (r <= room + tol)).all(-1)
@@ -405,14 +409,16 @@ class CaptureGuard:
             low = ok & (a <= UNMIX_MAX_A)
             if low.any():
                 den = (1.0 - a)[..., None]
-                rec = np.clip(r / np.maximum(den, 1e-3), 0.0, 255.0)
+                rec = np.clip(r / np.maximum(den, 1e-3), 0.0, 255.0).round().astype(np.uint8)
+                if out is None:
+                    out = np.array(f, np.uint8, copy=True)
                 blk = out[y0:y1, x0:x1]
                 blk[low] = rec[low]
             inpaint[y0:y1, x0:x1] |= ok & (a > UNMIX_MAX_A)
             done[y0:y1, x0:x1] |= ok
         if not done.any():
             return None, None
-        res = out.round().clip(0, 255).astype(np.uint8)
+        res = np.array(f, np.uint8, copy=True) if out is None else out
         if inpaint.any():
             inpaint = cv2.dilate(inpaint.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
             return res, inpaint
