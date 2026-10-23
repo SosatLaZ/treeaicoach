@@ -80,6 +80,8 @@ PRIORITY = {"gank": 4, "beep": 4, "chime": 5, "team_call": 3, "test": 3, "ai_ans
 #: lifecycle kinds: join the voice channel / leave it (never spoken); ``roster``: my team's players
 #: (Live Client) to match the voice members against (discord_friends.py)
 CONTROL_KINDS = frozenset({"game_start", "game_end", "roster"})
+TEXT_MAX_CHARS = 1900          # a Discord message is 2000 characters at most
+TEXT_STALE_S = 600.0           # the post-game recap waits for the LCU / report at most this long
 
 GANK_MIN_GAP_S = 8.0         # two gank calls about the same person (me / one friend) at least this far apart
 GANK_ANY_GAP_S = 3.0         # any two gank calls (two friends), and a gank call and an objective call
@@ -904,6 +906,10 @@ class DiscordPyBackend:
         if vc is not None and vc.is_playing():
             vc.stop()
 
+    async def post(self, ch: Any, text: str) -> None:
+        """Write ``text`` in the text chat of a voice channel (no mention can ping anyone)."""
+        await ch.send(text, allowed_mentions=self._d.AllowedMentions.none())
+
     async def leave(self) -> None:
         for vc in list(self.client.voice_clients):
             try:
@@ -1316,6 +1322,39 @@ class DiscordCaller:
         except Exception:
             log.debug("Discord: ally targets failed", exc_info=True)
             return {}
+
+    def teammates(self) -> dict[str, str]:
+        """``{champion alias: Discord display name}`` of the friends of the voice channel who play in my
+        team (me excluded), whatever the call switches; ``{}`` when the bot is off or no one matched.
+        In memory only (the post-game recap, ``discord_team_recap``): read it BEFORE ``game_end``,
+        which forgets the roster. Any thread, never raises."""
+        try:
+            with self._lock:
+                s = self._settings
+                if not (s.enabled and s.token) or self._stopping or not self._roster:
+                    return {}
+                out: dict[str, str] = {}
+                for e in self._mapping_locked():
+                    p = e.get("player")
+                    if p and not p.get("me") and not p.get("enemy") and e.get("source") in ("auto", "manuel") \
+                            and p.get("alias"):
+                        out[str(p["alias"])] = str(e.get("name") or e.get("spoken") or "")
+                return out
+        except Exception:
+            log.debug("Discord: teammates failed", exc_info=True)
+            return {}
+
+    def post_text(self, text: str) -> bool:
+        """Queue a message for the text chat of the voice channel (the bot's, else the player's).
+        True when queued. Non-blocking, never raises."""
+        try:
+            text = str(text or "").strip()[:TEXT_MAX_CHARS]
+            if not text:
+                return False
+            return self._command(_Job("post", text, float(self._clock()), TEXT_STALE_S))
+        except Exception:
+            log.debug("Discord: post_text failed", exc_info=True)
+            return False
 
     def in_voice(self) -> bool:
         """The bot is in a voice channel right now (last refresh)."""
@@ -2050,6 +2089,20 @@ class DiscordCaller:
             return
         if job.kind == "join":
             await self._ensure_voice(backend, s)
+            return
+        if job.kind == "post":                   # post-game recap in the voice channel's text chat
+            ch = self._current(backend)
+            if ch is None:
+                try:
+                    ch = backend.find_channel(s.user_id)
+                except Exception:
+                    ch = None
+            poster = getattr(backend, "post", None)
+            if ch is None or not callable(poster) or float(self._clock()) - job.t > job.stale_s:
+                self._event("Bilan d'équipe non envoyé : aucun salon vocal", ok=False)
+                return
+            await poster(ch, job.text)
+            self._event("Bilan d'équipe envoyé", backend.channel_name(ch))
             return
         if job.kind == "hush":                   # push-to-mute: cut the sentence being said
             stop = getattr(backend, "stop", None)

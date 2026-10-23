@@ -323,6 +323,9 @@ class DiscordPage:
                        "« Jungler ennemi vu top / mid / bot », jamais pendant un gank.")
         app.switch_row(says, "discord_summary", "Résumé de fin de partie",
                        "Une phrase : « Victoire en 32 minutes, 9 ganks évités sur 10 ».")
+        app.switch_row(says, "discord_team_recap", "Bilan d'équipe écrit",
+                       "Après la partie, un message dans le chat du salon vocal : pour chaque ami de ton "
+                       "équipe, sa meilleure stat et une chose à corriger. Aucun pseudo n'est enregistré.")
         from treeaicoach.ui_page_settings import hotkey_choices  # noqa: PLC0415
 
         app.choice_row(says, "hotkey_discord_mute", "Touche pour couper le bot",
@@ -644,7 +647,7 @@ class DiscordPage:
         if diff & {"discord_enabled", "discord_token", "discord_user_id", "discord_volume", "discord_only",
                    "discord_objectives", "discord_jungler_seen", "discord_summary", "hotkey_discord_mute",
                    "discord_ally_ganks", "discord_say_name", "discord_links", "discord_team_calls",
-                   "discord_route", "discord_listen", "discord_friends_matchup"}:
+                   "discord_route", "discord_listen", "discord_friends_matchup", "discord_team_recap"}:
             self._sync_bot()
             self.update(self._read())
 

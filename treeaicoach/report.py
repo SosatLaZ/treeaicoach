@@ -1340,7 +1340,7 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
         title = f'{s.get("champion_name") or "Partie"} · {s.get("result_label") or ""}'.strip(" ·")
         parts = []
         sections = (lambda: _header(rec, a), lambda: _cards(a), lambda: _tips_section(a),
-                   lambda: _plays_section(rec), lambda: _understanding_section(rec),
+                   lambda: _edge_section(rec, a), lambda: _plays_section(rec), lambda: _understanding_section(rec),
                    lambda: _moments_section(rec, a), lambda: _voice_box(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _truth_section(rec, a),
                    lambda: _presence_section(rec, a),
@@ -1348,7 +1348,8 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
                    lambda: _deaths_section(rec, a), lambda: _ganks_section(rec, a),
                    lambda: _jungler_section(rec, a), lambda: _objectives_section(a),
                    lambda: _scoreboard_section(a), lambda: _meta_build_section(rec),
-                   lambda: _selfcheck_section(rec), lambda: _trends_section(a))
+                   lambda: _selfcheck_section(rec), lambda: _trends_section(a),
+                   lambda: _history_edge_section(rec, a))
         if a.get("limited_mode"):        # ARAM / Arena: no minimap analysis -> header + honest tips only
             sections = (lambda: _header(rec, a), lambda: _tips_section(a), lambda: _aram_section(a))
         for fn in sections:
@@ -1833,6 +1834,101 @@ def _pathing_html(record: dict, a: dict) -> str:
 
 
 # ======================================================================================
+# post-game edge (postgame_edge.py): this game + all recorded games
+# ======================================================================================
+def render_death_heat_png(record: dict, points: list, size: int = 360) -> bytes | None:
+    """Every recorded death of every game on one map (blurred heat, one unit per death)."""
+    try:
+        from PIL import Image
+
+        pts = [(float(i), float(u), float(v)) for i, (u, v) in enumerate(points)
+               if 0.0 <= float(u) <= 1.0 and 0.0 <= float(v) <= 1.0]
+        if not pts:
+            return None
+        img = _base_image(record, size, darken=0.45)
+        heat = _heat_layer(pts, size)
+        if heat is not None:
+            img.alpha_composite(heat)
+        return _png(img.convert("RGB")) if isinstance(img, Image.Image) else None
+    except Exception:
+        log.exception("render_death_heat_png failed")
+        return None
+
+
+def _signed_html(v: Any, unit: str = "") -> str:
+    f = _f(v)
+    if f is None:
+        return "-"
+    cls = "pos" if f > 0 else "neg" if f < 0 else ""
+    return f'<span class="{cls}">{"+" if f > 0 else ""}{_num(f, 0)}{unit}</span>'
+
+
+def _edge_section(record: dict, a: dict) -> str:
+    """"Ta partie en chiffres": lane diffs at 10 / 15 min, item timing, turning point."""
+    e = a.get("edge")
+    if not isinstance(e, dict):
+        from treeaicoach import postgame_edge
+
+        e = postgame_edge.game_edge(record)
+    lane, items, tp = e.get("lane") or {}, e.get("items") or {}, e.get("turning_point")
+    blocks = []
+    if tp:
+        blocks.append(f'<p style="margin:0 0 12px">{_e(tp.get("text"))}</p>')
+    rows = lane.get("rows") or []
+    if rows:
+        src = "chiffres exacts du client" if lane.get("source") == "client" else "estimé depuis le tableau des scores"
+        vs = f' face à {_e(lane.get("opponent"))}' if lane.get("opponent") else ""
+        trs = "".join(f'<tr><td class="t">{r["minute"]} min</td><td>{_signed_html(r.get("gold_diff"), " PO")}</td>'
+                      f'<td>{_signed_html(r.get("xp_diff"), " XP")}</td><td>{_signed_html(r.get("cs_diff"))}</td>'
+                      f'<td>{_signed_html(r.get("level_diff"))}</td></tr>' for r in rows)
+        blocks.append(f'<h3 style="margin:6px 0 8px;font-size:15px">Écarts de voie{vs} <span class="small">({src})</span>'
+                      '</h3><div class="tw"><table><thead><tr><th>Minute</th><th>Or</th><th>XP</th><th>Sbires</th>'
+                      f'<th>Niveaux</th></tr></thead><tbody>{trs}</tbody></table></div>'
+                      + (f'<p class="small">{_e(lane.get("verdict"))}</p>' if lane.get("verdict") else ""))
+    lines = items.get("lines") or []
+    if lines:
+        lis = "".join(f'<li class="info"><span class="i">i</span><span>{_e(t)}</span></li>' for t in lines)
+        blocks.append(f'<h3 style="margin:14px 0 8px;font-size:15px">Objets et or</h3><ul class="tips">{lis}</ul>')
+    if not blocks:
+        return ""
+    return f'<div class="panel"><h2>Ta partie en chiffres</h2>{"".join(blocks)}</div>'
+
+
+def _history_edge_section(record: dict, a: dict) -> str:
+    """"Ta progression": six-axis profile, recurring death zone (map), champion pool. Only when the
+    report was written with the games folder (write_report)."""
+    h = a.get("edge_history")
+    if not isinstance(h, dict) or not h.get("games"):
+        return ""
+    prof, deaths, pool = h.get("profile") or {}, h.get("deaths") or {}, h.get("pool") or {}
+    parts = []
+    axes = [x for x in prof.get("axes") or [] if x.get("value") is not None]
+    if axes:
+        bars = "".join(
+            f'<div class="bar"><span>{_e(x["label"])}</span><div class="track"><div class="fill" '
+            f'style="width:{max(2.0, float(x["value"])):.0f}%"></div></div><span class="pct">{int(x["value"])}'
+            + (f' <span class="{"pos" if x["trend"] > 0 else "neg"}">{"+" if x["trend"] > 0 else ""}{x["trend"]}</span>'
+               if x.get("trend") and abs(x["trend"]) >= 5 else "") + '</span></div>' for x in axes)
+        parts.append(f'<h3 style="margin:6px 0 8px;font-size:15px">Profil sur tes {prof.get("games")} dernières parties '
+                     f'(0 à 100)</h3><div class="bars">{bars}</div><p class="small">{_e(prof.get("sentence"))}</p>')
+    if deaths.get("total"):
+        uri = _data_uri_png(render_death_heat_png(record, deaths.get("points") or []))
+        img = f'<img src="{uri}" alt="Toutes mes morts" style="max-width:360px;width:100%">' if uri else ""
+        parts.append(f'<h3 style="margin:16px 0 8px;font-size:15px">Où tu meurs (toutes tes parties, ta base en bas à '
+                     f'gauche)</h3>{img}'
+                     f'<p class="small">{_e(deaths.get("sentence") or "Pas encore assez de morts pour un motif.")}</p>')
+    champs = pool.get("champions") or []
+    if champs:
+        lis = "".join(f'<li class="info"><span class="i">i</span><span>{_e(c.get("line"))}</span></li>'
+                      for c in champs[:6])
+        adv = f'<p class="small">{_e(pool.get("advice"))}</p>' if pool.get("advice") else ""
+        parts.append(f'<h3 style="margin:16px 0 8px;font-size:15px">Tes champions</h3><ul class="tips">{lis}</ul>{adv}')
+    if not parts:
+        return ""
+    return f'<div class="panel"><h2>Ta progression</h2>{"".join(parts)}</div>'
+
+
+# ======================================================================================
 # files
 # ======================================================================================
 def _games_dir(games_dir: Path | None) -> Path:
@@ -1882,6 +1978,13 @@ def write_report(record_path: Path, lcu_pending: bool = False) -> Path | None:
                     ground_truth.truth_path_for(p).parent)
             except Exception:
                 log.exception("Cannot aggregate the alert scores")
+        try:   # postgame_edge.py: this game (lane diffs, items, turning point) + all recorded games
+            from treeaicoach import postgame_edge
+
+            analysis["edge"] = postgame_edge.game_edge(record, truth)
+            analysis["edge_history"] = postgame_edge.load_history(p.parent, until=p.name)
+        except Exception:
+            log.exception("Cannot compute the post-game edge sections")
         text = render_report_html(record, analysis, lcu_pending=bool(lcu_pending) and truth is None)
         out = report_path_for(p)
         return out if atomic_write_text(out, text) else None

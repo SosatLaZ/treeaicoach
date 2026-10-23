@@ -28,6 +28,7 @@ class PostgameMixin:
     def _end_game(self, result: str | None, t: float) -> None:
         """Game over: finish the record + report in the background, session statistics."""
         log.info("Game over (result: %s)", result or "inconnu")
+        friends = self._recap_friends()         # before game_end: the bot forgets the roster then
         self._call("game_end")                  # the bot Discord leaves the voice channel
         self._ended = True
         self._in_game = False
@@ -61,7 +62,7 @@ class PostgameMixin:
                 log.debug("mastermind summary failed", exc_info=True)
         self._mastermind = None                # never carried into the next game (ARAM record had the previous game's plan)
         if rec is not None:
-            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary, health, mm_block),
+            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary, health, mm_block, friends),
                                   name="TreeAICoach-report", daemon=True)
             self._bg_threads = [b for b in self._bg_threads if b.is_alive()] + [th]
             th.start()
@@ -92,8 +93,52 @@ class PostgameMixin:
         except Exception:
             log.debug("End-of-game summary unavailable", exc_info=True)
 
+    # ------------------------------------------------------------------ team recap (bot Discord)
+    def _recap_friends(self) -> dict[str, str]:
+        """``{champion alias: Discord name}`` of the friends of the voice channel in my team when the
+        written team recap is on (``discord_team_recap``), else ``{}``. In memory only. Never raises."""
+        try:
+            if not getattr(self._cfg, "discord_team_recap", False) or self._demo:
+                return {}
+            fn = getattr(self, "recap_friends", None)          # tests replace the bot
+            if fn is None:
+                if not getattr(self._cfg, "discord_enabled", False):
+                    return {}
+                from treeaicoach import discord_bot
+
+                bot = discord_bot.active()
+                fn = bot.teammates if bot is not None else None
+            return dict(fn() or {}) if fn is not None else {}
+        except Exception:
+            log.debug("team recap friends unavailable", exc_info=True)
+            return {}
+
+    def _post_team_recap(self, record_path: Path, friends: dict[str, str]) -> None:
+        """Write the team recap (postgame_edge.team_recap) in the voice channel's text chat. Never raises."""
+        if not friends:
+            return
+        try:
+            import json
+
+            from treeaicoach.postgame_edge import team_recap
+
+            data = json.loads(Path(record_path).read_text(encoding="utf-8"))
+            text = team_recap(data, friends)
+            if not text:
+                return
+            fn = getattr(self, "post_text", None)              # tests replace the bot
+            if fn is None:
+                from treeaicoach import discord_bot
+
+                bot = discord_bot.active()
+                fn = bot.post_text if bot is not None else None
+            if fn is not None:
+                fn(text)
+        except Exception:
+            log.debug("team recap failed", exc_info=True)
+
     def _finish_job(self, rec: Any, plays_summary: dict | None = None, health: dict | None = None,
-                    mm_block: dict | None = None) -> None:
+                    mm_block: dict | None = None, friends: dict[str, str] | None = None) -> None:
         try:
             path = rec.finish()
             if path is None:
@@ -113,6 +158,7 @@ class PostgameMixin:
             self.last_record_path = Path(path)
             cfg = self._cfg
             self._say_game_summary(Path(path))
+            self._post_team_recap(Path(path), friends or {})
             lcu = self._postgame_lcu()          # League Client found: its timeline comes after the report
             if not cfg.post_game_report:
                 if lcu is not None:

@@ -10,7 +10,8 @@ Metrics (None when unknown): ``cs_per_min``, ``deaths``, ``precision`` (rated pl
 ``gold_diff10`` / ``gold_diff15``
 (vs the lane opponent, League Client only), ``vision_per_min``, ``ganks`` /
 ``ganks_survived``, ``deaths_after_alert``, ``reliability`` (TreeAI's own score 0-100,
-League Client only). Never raises.
+League Client only), plus the compact features of :func:`treeaicoach.postgame_edge.game_features`
+(deaths positions, kill participation, lane opponent, item timing...: champion aliases only). Never raises.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from treeaicoach.fmtutil import finite_loose as _f
 log = logging.getLogger(__name__)
 
 CACHE_NAME = "progress_cache.json"
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 # docs/DESIGN.md (RGB)
 BG = (12, 14, 13)
@@ -99,6 +100,7 @@ def game_metrics(record: Any, truth: Any = None) -> dict[str, Any] | None:
                 out["precision"] = _f(ps.get("precision"))
         except Exception:
             log.debug("no rated plays in this record", exc_info=True)
+        t: dict[str, Any] = {}
         if isinstance(truth, dict) and truth:
             from treeaicoach import ground_truth  # noqa: PLC0415
 
@@ -109,6 +111,12 @@ def game_metrics(record: Any, truth: Any = None) -> dict[str, Any] | None:
                 out["gold_diff15"] = _f(lane.get("gold_diff15"))
                 rel = t.get("reliability") or {}
                 out["reliability"] = _f(rel.get("grade"))
+        try:   # multi-game views (postgame_edge.py): deaths map, six-axis profile, champion pool
+            from treeaicoach import postgame_edge  # noqa: PLC0415
+
+            out.update(postgame_edge.game_features(record, dict(a, truth=t) if t else a))
+        except Exception:
+            log.debug("postgame features unavailable", exc_info=True)
         return out
     except Exception:
         log.exception("progress.game_metrics failed")
