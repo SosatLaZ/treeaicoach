@@ -907,3 +907,25 @@ def test_engine_routes_coach_voice_and_discord_questions() -> None:
     e.ask_ai = lambda question=None, spoken=False: (seen.append(question), "Question envoyée à l'IA…")[1]
     e._discord_voice_question("Paul (Lux)", "quel item")
     assert seen == ["Question posée par Paul (Lux) : quel item"] and e._ai_discord_pending
+
+
+def test_game_start_ranks_post_once_and_speak_highlights(bot) -> None:  # noqa: ANN001
+    posted: list[str] = []
+
+    async def post(ch, text: str) -> None:  # noqa: ANN001
+        posted.append(text)
+    bot.configure(_cfg())
+    assert _wait(lambda: bot.status()[1])
+    fb = FakeBackend.instances[-1]
+    fb.post = post
+    assert bot.on_call("game_start")
+    assert _wait(lambda: fb.joined == ["général"])
+    msg = "Rangs de la partie\nEnnemis : Lee Sin Platine 2, 4 défaites d'affilée"
+    assert bot.on_call("ranks", msg, {"lines": ["Leur jungler Lee Sin : Platine 2, 4 défaites d'affilée"]})
+    assert not bot.on_call("ranks", msg, {"lines": ["encore"]})            # once per game
+    assert _wait(lambda: posted == [msg])
+    assert _wait(lambda: "Leur jungler Lee Sin : Platine 2, 4 défaites d'affilée" in bot.spoken)
+    bot.configure(_cfg(discord_ranks=False))                               # the switch is honoured
+    bot.on_call("game_end")
+    bot.on_call("game_start")
+    assert not bot.on_call("ranks", msg, {"lines": []})

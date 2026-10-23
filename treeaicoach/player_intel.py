@@ -55,6 +55,11 @@ NEW_CHAMP_MIN_GAMES = 8     # "pas joué sur ses 10 dernières" only when the hi
 COACH_FROM_S = 20.0         # coach lines from this game time ...
 COACH_UNTIL_S = 240.0       # ... until this one (early game info, useless later)
 COACH_RETRY_S = 10.0
+#: Discord rank announcement (``discord_ranks``): sent once per game, as soon as the data is read, until this
+#: game time; at most this many spoken lines (lane highlights), a streak from this length
+RANKS_UNTIL_S = 180.0
+RANKS_MAX_VOICE = 3
+RANKS_STREAK_MIN = 3
 
 TIER_FR = {"IRON": "Fer", "BRONZE": "Bronze", "SILVER": "Argent", "GOLD": "Or", "PLATINUM": "Platine",
            "EMERALD": "Émeraude", "DIAMOND": "Diamant", "MASTER": "Maître", "GRANDMASTER": "Grand maître",
@@ -495,6 +500,88 @@ def enabled(cfg: Any) -> bool:
     return bool(getattr(cfg, "player_intel", False)) and bool(getattr(cfg, "lcu_enabled", True))
 
 
+def _short_rank(p: PlayerIntel) -> str:
+    """"Platine 2" / "Maître 120 LP" / "non classé" / "" (unknown)."""
+    if not p.ranked_loaded:
+        return ""
+    if not p.tier:
+        return "non classé"
+    if p.tier in APEX:
+        return f"{TIER_FR[p.tier]} {p.lp} LP"
+    return TIER_FR[p.tier] + (f" {p.division}" if p.division else "")
+
+
+def _highlight(p: PlayerIntel) -> str:
+    """The one notable fact of a player for the announcement ("" = nothing notable)."""
+    if not p.history_loaded:
+        return ""
+    if p.streak <= -RANKS_STREAK_MIN:
+        return f"{-p.streak} défaites d'affilée"
+    if p.streak >= RANKS_STREAK_MIN:
+        return f"{p.streak} victoires d'affilée"
+    if p.games >= NEW_CHAMP_MIN_GAMES and p.champ_games == 0:
+        return f"pas joué {p.name} récemment"
+    return ""
+
+
+def discord_ranks(players: list[PlayerIntel] | tuple[PlayerIntel, ...],
+                  my_role: str = "") -> tuple[str, list[str]]:
+    """``(text message, voice lines)`` of the game-start rank announcement on Discord, BY CHAMPION (never
+    a name or an id). The message: one line per team, sorted top -> support. The voice: at most
+    :data:`RANKS_MAX_VOICE` short lines, only the enemies with a notable fact (streak, new champion),
+    my lane opponent and the jungler first: "Leur jungler Lee Sin : Platine 2, 4 défaites d'affilée".
+    ``("", [])`` while nothing is known. Pure, never raises."""
+    try:
+        def order(p: PlayerIntel) -> int:
+            return ROLE_ORDER.index(p.role) if p.role in ROLE_ORDER else len(ROLE_ORDER)
+
+        def entry(p: PlayerIntel) -> str:
+            bits = [b for b in (_short_rank(p), _highlight(p)) if b]
+            return f"{p.name} " + (", ".join(bits) if bits else "?")
+
+        if not any(p.ranked_loaded or p.history_loaded for p in players):
+            return "", []
+        lines = ["Rangs de la partie"]
+        for title, ally in (("Ennemis", False), ("Alliés", True)):
+            team = sorted((p for p in players if p.ally is ally), key=order)
+            if team:
+                lines.append(f"{title} : " + " · ".join(entry(p) for p in team))
+        voice: list[tuple[float, str]] = []
+        for p in players:
+            hl = _highlight(p)
+            if p.ally or not hl:
+                continue
+            prio = 2.0 if my_role and p.role == my_role else 1.0 if p.role == "JUNGLE" else 0.0
+            role = ROLE_FR.get(p.role, "")
+            head = f"Leur {role} {p.name}" if role else f"{p.name} ennemi"
+            said = ", ".join(b for b in (_short_rank(p), hl) if b)
+            voice.append((prio + min(abs(p.streak), 9) / 10.0, f"{head} : {said}"))
+        voice.sort(key=lambda v: -v[0])
+        return "\n".join(lines), [v[1] for v in voice[:RANKS_MAX_VOICE]]
+    except Exception:
+        log.debug("discord ranks failed", exc_info=True)
+        return "", []
+
+
+def ranks_tick(engine: Any, gt: float, w: Any, my_role: str, state: dict) -> None:
+    """Once per game, as soon as every player is read: the rank announcement to the Discord bot (kind
+    ``ranks``) when ``discord_ranks`` is on; given up after :data:`RANKS_UNTIL_S`. Never raises."""
+    try:
+        if state.get("ranks_sent") or not getattr(getattr(engine, "_cfg", None), "discord_ranks", True):
+            return
+        if not w.ready():
+            if gt >= RANKS_UNTIL_S:
+                state["ranks_sent"] = True           # too late for a game-start announcement
+            return
+        state["ranks_sent"] = True
+        text, voice = discord_ranks(w.snapshot(), my_role)
+        call = getattr(engine, "_call", None)
+        if text and callable(call):
+            call("ranks", text, {"lines": voice})
+    except Exception:
+        log.debug("ranks tick failed", exc_info=True)
+
+
 # ----------------------------------------------------------------------------- engine hook
 def engine_tick(engine: Any, t: float, watcher: PlayerIntelWatcher | None = None) -> None:
     """Called by the engine about once a second during a game: keeps the watcher alive, gives it
@@ -523,11 +610,12 @@ def engine_tick(engine: Any, t: float, watcher: PlayerIntelWatcher | None = None
             state = {"done": set(), "next": 0.0, "gt": float(gt)}
             engine._player_intel_state = state
         state["gt"] = float(gt)
+        my_role = str(getattr(me, "position", "") or "")
+        ranks_tick(engine, float(gt), w, my_role, state)
         if not (COACH_FROM_S <= float(gt) <= COACH_UNTIL_S) or float(gt) < state["next"]:
             return
         if len(state["done"]) >= MAX_COACH_LINES or not w.ready():
             return
-        my_role = str(getattr(me, "position", "") or "")
         toast = getattr(engine, "_toast", None)
         lines = decisive_lines(w.snapshot(), my_role)
         if not lines:
@@ -549,5 +637,6 @@ def engine_tick(engine: Any, t: float, watcher: PlayerIntelWatcher | None = None
 
 
 __all__ = ["PlayerIntel", "PlayerIntelWatcher", "parse_session", "parse_ranked", "parse_history", "card",
-           "card_line", "decisive_lines", "rank_text", "streak_text", "who", "engine_tick", "enabled",
+           "card_line", "decisive_lines", "discord_ranks", "ranks_tick", "rank_text", "streak_text", "who",
+           "engine_tick", "enabled",
            "get_default_watcher"]

@@ -182,3 +182,41 @@ def test_fixtures_have_no_real_ids():
         t = f.read_text(encoding="utf-8")
         assert "#" not in t and "gameName" not in t and "summonerName" not in t
         assert set(re.findall(r'"puuid": "([^"]+)"', t)) <= {"puuid-me", "puuid-x"} | {f"puuid-{s}{i}" for s in "ae" for i in range(1, 6)}
+
+
+def test_discord_ranks_message_and_voice_by_champion():
+    P = pi.PlayerIntel
+    ps = [P("LeeSin", "Lee Sin", False, "JUNGLE", True, "PLATINUM", 2, 40, 30, 28, True, 10, -4, 3),
+          P("Darius", "Darius", False, "TOP", True, "GOLD", 1, 10, 5, 5, True, 10, 1, 0),
+          P("Ahri", "Ahri", False, "MIDDLE", True, "", 0, 0, 0, 0, True, 10, 3, 4),
+          P("Lulu", "Lulu", True, "UTILITY", True, "MASTER", 0, 120, 50, 40, True, 10, 0, 2)]
+    text, voice = pi.discord_ranks(ps, "TOP")
+    assert text.splitlines() == [
+        "Rangs de la partie",
+        "Ennemis : Darius Or 1, pas joué Darius récemment · Lee Sin Platine 2, 4 défaites d'affilée · "
+        "Ahri non classé, 3 victoires d'affilée",
+        "Alliés : Lulu Maître 120 LP"]
+    assert voice == ["Leur top Darius : Or 1, pas joué Darius récemment",
+                     "Leur jungler Lee Sin : Platine 2, 4 défaites d'affilée",
+                     "Leur mid Ahri : non classé, 3 victoires d'affilée"]
+    assert pi.discord_ranks([P("X", "X", False)]) == ("", [])
+
+
+def test_ranks_tick_once_when_ready_only_with_the_switch():
+    w, _c = watcher()
+    w.want = lambda: None
+    run_all(w)
+    calls = []
+    eng, _t = _engine(5.0)
+    eng._call = lambda *a: calls.append(a) or True
+    eng._cfg.discord_ranks = True
+    for gt in (5.0, 6.0, 30.0):
+        eng._game.game_time = gt
+        pi.engine_tick(eng, gt, w)
+    assert len(calls) == 1 and calls[0][0] == "ranks" and calls[0][1].startswith("Rangs de la partie")
+    assert "puuid" not in json.dumps(calls[0][1:])
+    eng2, _t = _engine(5.0)
+    eng2._call = lambda *a: calls.append(a) or True
+    eng2._cfg.discord_ranks = False
+    pi.engine_tick(eng2, 5.0, w)
+    assert len(calls) == 1

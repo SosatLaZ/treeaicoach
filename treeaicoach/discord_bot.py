@@ -66,7 +66,8 @@ log = logging.getLogger(__name__)
 
 #: kinds that are spoken in the voice channel (everything else is dropped); ``ally_gank`` = a gank on a
 #: friend of the voice channel (ally_gank.py), said like mine ("Bot gank")
-SPOKEN_KINDS = frozenset({"gank", "ally_gank", "matchup", "objective", "jungler_seen", "summary", "team_call"})
+SPOKEN_KINDS = frozenset({"gank", "ally_gank", "matchup", "objective", "jungler_seen", "summary", "team_call",
+                          "ranks"})
 #: route "discord" (Tout par Discord): every sentence / beep of the app goes through the bot too
 ROUTED_KINDS = frozenset({"coach", "beep"})
 ROUTES = ("both", "discord", "pc")
@@ -76,7 +77,7 @@ SPEAKING_KINDS = SPOKEN_KINDS | ROUTED_KINDS | frozenset({"matchups", "ai_answer
 USER_JOBS = frozenset({"test", "join_ch", "leave_now", "hush"})
 #: priority when the queue is full / which job goes first (higher = more urgent)
 PRIORITY = {"gank": 4, "beep": 4, "chime": 5, "team_call": 3, "test": 3, "ai_answer": 3, "coach": 2,
-            "objective": 2, "matchup": 1, "matchups": 1, "jungler_seen": 0, "summary": 0}
+            "objective": 2, "matchup": 1, "matchups": 1, "ranks": 1, "jungler_seen": 0, "summary": 0}
 #: lifecycle kinds: join the voice channel / leave it (never spoken); ``roster``: my team's players
 #: (Live Client) to match the voice members against (discord_friends.py)
 CONTROL_KINDS = frozenset({"game_start", "game_end", "roster"})
@@ -96,6 +97,7 @@ SEEN_SAME_LANE_S = 45.0      # the jungler seen on the same lane: once per 45 s
 SEEN_AFTER_GANK_S = 20.0     # and never within 20 s of a gank call (a gank says more)
 SEEN_MAX_PER_MIN = 2
 SUMMARY_STALE_S = 180.0
+RANKS_STALE_S = 90.0          # the game-start ranks: still useful in the first minutes (loading screen, lanes)
 TEAM_STALE_S = 5.0           # "Ils sont 4 bot : Baron maintenant" later than 5 s is a different map: dropped
 TEAM_GAP_S = 20.0            # two team calls at least this far apart (a team acts on one at a time)
 TEAM_MAX_CHARS = 90
@@ -488,6 +490,7 @@ class CallFilter:
         self._friends_done = False
         self._matchup_done = False
         self._summary_done = False
+        self._ranks_done = False
         self._last_gank = -1e9
         self._target_t: dict[str, float] = {}
         self._gank_times: collections.deque[float] = collections.deque()
@@ -521,6 +524,11 @@ class CallFilter:
             if getattr(self, "_friends_done", False):
                 return False
             self._friends_done = True
+            return True
+        if kind == "ranks":
+            if getattr(self, "_ranks_done", False):
+                return False
+            self._ranks_done = True
             return True
         if kind == "summary":
             if self._summary_done:
@@ -609,6 +617,7 @@ class _Settings:
     listen: bool = False            # discord_listen: « Hey coach » heard in the voice channel
     friends_matchup: bool = True    # discord_friends_matchup
     own_assistant: bool = False     # voice_assistant: the player's own « Hey coach » is heard by his PC
+    ranks: bool = True              # discord_ranks: game-start ranks (player_intel.discord_ranks), by champion
 
     def wants(self, kind: str) -> bool:
         """The switch of an optional call kind is on (gank / matchup / test: always)."""
@@ -618,7 +627,8 @@ class _Settings:
             return self.route == "discord"
         return {"objective": self.objectives, "jungler_seen": self.jungler_seen,
                 "summary": self.summary, "ally_gank": self.ally_ganks, "team_call": self.team_calls,
-                "matchups": self.friends_matchup, "chime": self.listen, "ai_answer": self.listen}.get(kind, True)
+                "matchups": self.friends_matchup, "chime": self.listen, "ai_answer": self.listen,
+                "ranks": self.ranks}.get(kind, True)
 
     def key(self) -> tuple:
         """What needs a new gateway session when it changes (the rest is read live)."""
@@ -1013,6 +1023,7 @@ class DiscordCaller:
                           ally_ganks=getattr(cfg, "discord_ally_ganks", True) is not False,
                           say_name=getattr(cfg, "discord_say_name", False) is True,
                           team_calls=getattr(cfg, "discord_team_calls", False) is True,
+                          ranks=getattr(cfg, "discord_ranks", True) is not False,
                           links=tuple(sorted(df.clean_links(getattr(cfg, "discord_links", None) or {}).items())),
                           route=route_of(cfg), listen=getattr(cfg, "discord_listen", False) is True,
                           friends_matchup=getattr(cfg, "discord_friends_matchup", True) is not False,
@@ -1128,6 +1139,17 @@ class DiscordCaller:
                         self.dropped += 1
                         return False
                     self._queue_say(_Job("say", say, now, TEAM_STALE_S, "team_call"))
+                elif kind == "ranks":
+                    # once per game: the message in the voice channel's text chat + a few short lines.
+                    # By champion only (player_intel.discord_ranks): nothing of it is ever logged.
+                    msg = str(text or "").strip()[:TEXT_MAX_CHARS]
+                    lines = [" ".join(str(x).split())[:TEAM_MAX_CHARS] for x in (info.get("lines") or [])][:3]
+                    if not msg or not self._filter.admit("ranks"):
+                        self.dropped += 1
+                        return False
+                    self._jobs.append(_Job("post", msg, now, RANKS_STALE_S, "ranks"))
+                    for line in (x for x in lines if x):
+                        self._queue_say(_Job("say", line, now, RANKS_STALE_S, "ranks"))
                 elif kind == "summary":
                     say = " ".join(str(text or "").split())
                     if not say or not self._filter.admit("summary"):
@@ -2090,7 +2112,8 @@ class DiscordCaller:
         if job.kind == "join":
             await self._ensure_voice(backend, s)
             return
-        if job.kind == "post":                   # post-game recap in the voice channel's text chat
+        if job.kind == "post":                   # post-game recap / game-start ranks in the voice channel's text chat
+            what = "Rangs de la partie" if job.call_kind == "ranks" else "Bilan d'équipe"
             ch = self._current(backend)
             if ch is None:
                 try:
@@ -2099,10 +2122,10 @@ class DiscordCaller:
                     ch = None
             poster = getattr(backend, "post", None)
             if ch is None or not callable(poster) or float(self._clock()) - job.t > job.stale_s:
-                self._event("Bilan d'équipe non envoyé : aucun salon vocal", ok=False)
+                self._event(f"{what} non envoyé : aucun salon vocal", ok=False)
                 return
             await poster(ch, job.text)
-            self._event("Bilan d'équipe envoyé", backend.channel_name(ch))
+            self._event(f"{what} envoyé", backend.channel_name(ch))
             return
         if job.kind == "hush":                   # push-to-mute: cut the sentence being said
             stop = getattr(backend, "stop", None)
