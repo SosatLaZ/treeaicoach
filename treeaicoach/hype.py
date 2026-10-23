@@ -54,6 +54,7 @@ W_GOLD, W_KILL, W_TOWER = 0.30, 0.035, 0.12
 W_DRAKE, W_SOUL, W_BARON, W_BUFF, W_ELDER, W_INHIB = 0.08, 0.55, 0.15, 0.65, 0.90, 0.35
 P_MIN, P_MAX = 0.03, 0.97
 BARON_BUFF_S, ELDER_BUFF_S, INHIB_RESPAWN_S = 180.0, 150.0, 300.0
+W_LEVEL = 0.20               # per level of team-average lead (partly counted in the gold already)
 
 SWING_POINTS = 15.0          # spoken when the probability moved by more than this (points)
 SWING_GAP_S = 180.0          # ... at most once every 3 minutes
@@ -80,6 +81,7 @@ class WinFactors:
     baron_buff: int = 0
     elder_buff: int = 0
     inhib_diff: int = 0
+    level_diff: float = 0.0      # my team's average level - theirs
 
 
 def _gold_scale(gt: float) -> float:
@@ -91,7 +93,7 @@ def win_logit(f: WinFactors) -> float:
     g = (f.gold_diff or 0.0) / 1000.0
     return (W_GOLD * g * _gold_scale(f.game_time) + W_KILL * f.kill_diff + W_TOWER * f.tower_diff
             + W_DRAKE * f.dragon_diff + W_SOUL * f.soul + W_BARON * f.baron_diff + W_BUFF * f.baron_buff
-            + W_ELDER * f.elder_buff + W_INHIB * f.inhib_diff)
+            + W_ELDER * f.elder_buff + W_INHIB * f.inhib_diff + W_LEVEL * (f.level_diff or 0.0))
 
 
 def win_probability(f: WinFactors) -> float:
@@ -212,10 +214,19 @@ def factors_from_game(game: Any, scoreboard: Any = None) -> WinFactors | None:
     if gold is None:
         gold = 300.0 * (kills[mine] - kills[other]) + 500.0 * (towers[mine] - towers[other])
     soul = 1 if drakes[mine] >= 4 else -1 if drakes[other] >= 4 else 0
+    level_diff = 0.0
+    try:
+        ours = [int(p.level) for p in [me, *(getattr(game, "allies", None) or [])]]
+        theirs = [int(p.level) for p in (getattr(game, "enemies", None) or [])]
+        if ours and theirs:
+            level_diff = round(sum(ours) / len(ours) - sum(theirs) / len(theirs), 2)
+    except Exception:
+        level_diff = 0.0
     return WinFactors(game_time=gt, gold_diff=gold, kill_diff=kills[mine] - kills[other],
                       tower_diff=towers[mine] - towers[other], dragon_diff=drakes[mine] - drakes[other],
                       soul=soul, baron_diff=barons[mine] - barons[other], baron_buff=baron_buff,
-                      elder_buff=elder_buff, inhib_diff=inhib_down[other] - inhib_down[mine])
+                      elder_buff=elder_buff, inhib_diff=inhib_down[other] - inhib_down[mine],
+                      level_diff=level_diff if math.isfinite(level_diff) else 0.0)
 
 
 def fmt_pct(p: float | None) -> str:
