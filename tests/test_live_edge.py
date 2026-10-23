@@ -185,7 +185,7 @@ def test_never_raises_on_garbage():
 
 
 def test_no_call_right_after_app_start():
-    me = P("Garen", "ORDER", "TOP", level=9, items=[3044], cs=0)
+    me = P("Garen", "ORDER", "TOP", level=9, items=[3044], cs=10)
     edge = LE.LiveEdge()
     assert edge.update(0.0, G(600.0, me=me)) == [] and edge.line()
     assert edge.update(LE.WATCH_S + 1, G(631.0, me=me))[0].feature == "farm"

@@ -3,6 +3,17 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.19.0 · 23 octobre 2026
+
+- **En partie (données du jeu) :** écart d'or exact sur ton adversaire, fenêtre de kill, back au bon moment
+  (« Rentre acheter Phage : 1312 or »), défense adaptée (« 70 % AP : Mercure »), victoire % en direct avec la
+  raison, Baron/Dragon quand ils sont morts, CS/min vs objectif de ton rang.
+- **Sélection :** condition de victoire de la compo, qui gagne la lane et quand, 1er objet ajusté à la compo
+  ennemie, verdict des 5 voies (aussi pour tes potes sur Discord), départ et 1er gank du jungler ennemi, anti-tilt.
+- **Après-partie :** écarts à 10/15 min, timing d'objets vs méta et or qui dort, carte de toutes tes morts,
+  profil 6 axes sur 10 parties, conseils de pool de champions, tournant de la partie, récap d'équipe Discord
+  (désactivé par défaut).
+
 ## 2.18.0 · 23 octobre 2026
 
 - **Séquence de lancement** courte (≈ 1 s, passable) avec les vraies vérifications : minimap, client LoL, voix, overlay.

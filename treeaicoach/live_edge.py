@@ -451,6 +451,8 @@ def farm_text(cs: float, cs_target: float | None) -> str:
 
 def farm_nudge(cs: float, cs_target: float | None) -> str | None:
     """"Farme mieux ta vague : 4,1 CS/min, objectif 6,5" when far below, else None."""
+    if cs <= 0.0:                    # no CS read (missing scores) is not a farming fact
+        return None
     if not cs_target or cs >= FARM_FAR_BELOW * cs_target:
         return None
     return f"Farme mieux ta vague : {fmt_num(cs)} CS/min, objectif {fmt_num(cs_target)}"
