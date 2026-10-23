@@ -1,6 +1,6 @@
 {
-  "version": "2.20.0",
-  "sha256": "a9390bd56e82d0b43909a564226df468e7f2dc731a10e55a0025c77e37d3b9c4",
-  "size": 7531374,
-  "notes": "2.20 : barre de l'essentiel, Hey coach réparé sur Discord, Test micro."
+  "version": "2.21.0",
+  "sha256": "fbcbed591aa410c9ab0622486d0aad86d7bde9366555d7aedf4931dc1ad5b601",
+  "size": 7530100,
+  "notes": "2.21 : Whisper local gratuit, micro auto, design sobre, options rangées, rangs sur Discord."
 }
