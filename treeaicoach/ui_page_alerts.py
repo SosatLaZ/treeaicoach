@@ -57,6 +57,10 @@ def listen_line(snap: dict | None) -> str:
         bits.append(f"niveau {snap.get('bar') or ''}")
     heard = str(snap.get("heard") or "")
     bits.append(f"dernier mot entendu « {heard} »" if heard else "rien entendu pour l'instant")
+    if snap.get("listening") and snap.get("mic_label"):
+        bits.append(f"micro « {snap['mic_label']} »")
+    bits.append("Whisper local" if snap.get("whisper") else
+                (f"Vosk ({snap['whisper_status']})" if snap.get("whisper_status") else ""))
     line = " · ".join(b for b in bits if b)
     if snap.get("stage") == "error" or snap.get("silent_mic"):
         line += f"\n{snap.get('status') or ''}"
@@ -199,7 +203,18 @@ class AlertsPage:
 
             a = va.assistant()
             a.configure(app.cfg)
-            if not a.mic_check(lambda msg, ok: app.post(lambda: app.show_toast(msg, "info" if ok else "warning"))):
+            def _done(msg: str, ok: bool) -> None:
+                def _ui() -> None:
+                    best = a.suggested_mic
+                    if best and best != app.cfg.voice_assistant_mic:
+                        app.set_option("voice_assistant_mic", best)       # the input that HAS the voice
+                        app.run_job(_mics, lambda ms: self.mic.ctl.set_choices(ms, best), None,
+                                    name="TreeAI-ui-mics")
+                        a.configure(app.cfg)
+                    app.show_toast(msg, "info" if ok else "warning")
+                app.post(_ui)
+
+            if not a.mic_check(_done):
                 app.show_toast("Test micro déjà en cours.", "info")
                 return
             app.show_toast("Parle pendant 5 s…" if va.model_ready() else

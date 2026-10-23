@@ -449,6 +449,45 @@ class WakeEngine:
         return False
 
 
+_WW_LEADS = frozenset({"hey", "hei", "he", "eh", "et", "ey", "hay", "ai", "e", "hi", "oh", "ho", "a", "ok", "okay"})
+_WW_TARGETS = ("coach", "coatch", "tree", "tri")
+#: what Vosk wrote that MAY be « coach » / « tree » said with another accent: only such utterances are
+#: re-checked by Whisper (CPU), ordinary talk is not
+_WAKEISH = re.compile(r"\b(?:co|ko|qo|cau|cao|tri|tree|tchi)\w*")
+WHISPER_WAKE_PER_MIN = 6
+
+
+def whisper_wake(text: Any) -> tuple[bool, str]:
+    """``(wake, question)`` for a Whisper transcript: it starts with a fuzzy « hey / hé / et coach | tree »
+    (« Hé, coach ! », « Et Coatch quel objet », « Hey Tree, … »). ``question`` = what follows."""
+    import difflib  # noqa: PLC0415
+
+    words = str(text or "").split()
+    norm = [normalize(w) for w in words]
+    for lead_n in (1, 0):                            # « hey coach » / leading words dropped by Whisper
+        if len(norm) <= lead_n:
+            continue
+        if lead_n and norm[0] not in _WW_LEADS:
+            continue
+        w = norm[lead_n]
+        if not w:
+            continue
+        best = max(difflib.SequenceMatcher(None, w, t).ratio() for t in _WW_TARGETS)
+        if best >= 0.75 or w in WAKE_STRONG or w in WAKE_WEAK or (lead_n and w in TREE_WORDS):
+            if not lead_n and w not in WAKE_STRONG and best < 0.9:
+                continue                             # a bare word must really be « coach »
+            if not lead_n and len(norm) > 1 and not words[0].endswith((",", "!", "?")) \
+                    and norm[1] in ("est", "il", "a", "de", "du", "va", "dit"):
+                continue                             # « Coach est nul » / « coach du… »: talk ABOUT the coach
+            rest = " ".join(words[lead_n + 1:]).lstrip(" ,.!?;:-")
+            return True, rest
+    return False, ""
+
+
+def wakeish(text: Any) -> bool:
+    return bool(_WAKEISH.search(normalize(text)))
+
+
 def question_text(parts: Sequence[str], partial: str = "") -> str:
     """The question so far: what was heard, without the wake phrase."""
     return strip_wake(" ".join([p for p in parts if p] + ([partial] if partial else []))).strip()
@@ -785,8 +824,22 @@ class VoiceAssistant:
 
     def __init__(self, *, mic_factory: Callable[[str], Mic] | None = None,
                  recognizer_factory: Callable[[Sequence[str] | None], Recognizer] | None = None,
-                 clock: Callable[[], float] = time.monotonic, model_path: Path | None = None) -> None:
+                 clock: Callable[[], float] = time.monotonic, model_path: Path | None = None,
+                 stt: Any = None, probe: Callable[..., list] | None = None) -> None:
         self._mic_factory = mic_factory
+        #: local Whisper (stt_local.WhisperSTT): the real app uses the process-wide one, tests inject a fake;
+        #: with injected recognizers and no ``stt`` the assistant stays Vosk-only (deterministic tests)
+        self._stt_obj = stt
+        self._stt_default = stt is None and recognizer_factory is None
+        self._stt_loading = False
+        self._probe = probe
+        self.mic_label = ""              # the device really opened (« Casque (HyperX) »)
+        self.mic_db = -96.0
+        self.suggested_mic = ""          # « Test micro »: the input that HAS signal when the chosen one is silent
+        self.whisper_text = ""
+        self._ww_times: list[float] = []
+        self._last_utt: tuple[float, bytes] = (-1e9, b"")
+        self._zero_blocks = 0
         self._rec_factory = recognizer_factory
         self._clock = clock
         self._model_path = model_path
@@ -913,31 +966,49 @@ class VoiceAssistant:
         return True
 
     def _mic_check_run(self, done: Callable[[str, bool], None] | None, seconds: float) -> None:
+        """Records ``seconds``: device name, peak dB, all-zero (Windows privacy) / exclusive-mode diagnosis,
+        auto-probe of the other inputs when this one is silent (``suggested_mic``), and the transcript
+        (Whisper when loaded, else Vosk)."""
+        import math  # noqa: PLC0415
+
         msg, ok, mic = "Test micro impossible.", False, None
+        self.suggested_mic = ""
         try:
-            try:
-                rec = self._make_rec(None)
-            except Exception as exc:
-                global ENGINE_ERROR
-                ENGINE_ERROR = mask_error(exc)
-                rec = None
-            if rec is None:
-                msg = "Test micro : reconnaissance vocale indisponible" + (f" ({ENGINE_ERROR})." if ENGINE_ERROR else ".")
-                return
+            whisper = self.whisper_ready()               # starts the download in the background if needed
+            rec = None
+            if not whisper:
+                try:
+                    rec = self._make_rec(None)
+                except Exception as exc:
+                    global ENGINE_ERROR
+                    ENGINE_ERROR = mask_error(exc)
+                    rec = None
+                if rec is None:
+                    msg = "Test micro : reconnaissance vocale indisponible" + (f" ({ENGINE_ERROR})." if ENGINE_ERROR else ".")
+                    return
             mic = self._open_mic()
             if mic is None:
-                msg = "Test micro : micro introuvable, choisis-en un autre."
+                msg = "Test micro : " + self.status
                 return
+            label = self.mic_label or "micro par défaut"
             self.mic_checking = True
             self.heard = ""
-            agc, peak, parts, partial = Agc(), 0.0, [], ""
+            agc, peak, parts, partial, chunks = Agc(), 0.0, [], "", []
             for _ in range(max(1, int(seconds / BLOCK_S))):
                 block = mic.read()
                 if block is None:
                     break
+                chunks.append(block)
                 r = block_rms(block)
-                peak = max(peak, r)
+                try:
+                    import numpy as np  # noqa: PLC0415
+
+                    peak = max(peak, float(np.abs(np.frombuffer(block, "<i2").astype(np.int32)).max()))
+                except Exception:
+                    peak = max(peak, r * 1.4)
                 self.level = level_of(r)
+                if rec is None:
+                    continue
                 b = agc.process(block)
                 if rec.accept(b):
                     t = rec.result()
@@ -947,24 +1018,49 @@ class VoiceAssistant:
                 else:
                     partial = rec.partial() or ""
                 self.heard = " ".join(parts + ([partial] if partial else []))[-60:]
-            tail = rec.final()
-            if tail:
-                parts.append(tail)
-            text = " ".join(parts).strip()
-            import math  # noqa: PLC0415
-
+            mic.close()
+            mic = None
+            if rec is not None:
+                tail = rec.final()
+                if tail:
+                    parts.append(tail)
+                text, engine = " ".join(parts).strip(), "Vosk"
+            else:
+                pcm = b"".join(chunks)
+                seg = self._segmenter()
+                speech = b"".join(seg.feed(pcm) + [seg.flush() or b""]) if seg is not None else pcm
+                text, engine = (self._stt().transcribe(speech) if speech else ""), "Whisper"
+                self.whisper_text = text
             db = 20 * math.log10(max(peak, 1.0) / 32768.0)
-            if peak < SILENT_MIC_RMS:
-                msg = ("Test micro : aucun son reçu. Micro coupé, pas le bon, ou bloqué par Windows "
-                       "(Confidentialité > Microphone).")
+            self.mic_db = db
+            zero = peak <= 0.0
+            log.info("Test micro : « %s » %d Hz, pic %.0f dB%s, %s : « %s »", label, self.mic_rate, db,
+                     " (tout à zéro)" if zero else "", engine, text[:80])
+            head = f"Micro « {label} » ({self.mic_rate} Hz), niveau max {db:.0f} dB. "
+            if zero or db < -60.0:
+                found = self._probe_others()
+                if zero:
+                    msg = ("Test micro : aucun son reçu, tout est à zéro. Windows bloque probablement le micro : "
+                           "Paramètres > Confidentialité > Microphone, autorise l'accès ET les applications de "
+                           "bureau. " + head)
+                else:
+                    msg = ("Test micro : aucun son reçu (micro coupé, volume à 0, ou pas le bon ; vérifie aussi "
+                           "Paramètres > Confidentialité > Microphone). " + head)
+                if found:
+                    self.suggested_mic = found["name"]
+                    msg += f"Le micro « {found['name']} » capte ta voix ({found['db']:.0f} dB) : je le choisis."
             elif text:
                 ok = True
                 self.heard = text[-60:]
-                wake = " « Hey coach » reconnu." if wake_kind(text) in ("strong", "bare") or is_wake(text) else ""
-                msg = f"Test micro : entendu « {text[:120]} » (niveau max {db:.0f} dB).{wake}"
+                wake = " « Hey coach » reconnu." if (wake_kind(text) in ("strong", "bare") or is_wake(text)
+                                                    or whisper_wake(text)[0]) else ""
+                msg = f"Test micro : entendu « {text[:120]} » ({engine}). {head}{wake}".strip()
             else:
-                msg = f"Test micro : du son (niveau max {db:.0f} dB) mais aucun mot compris."
-            if peak >= SILENT_MIC_RMS and db < -40:
+                msg = f"Test micro : du son ({head.strip()}) mais aucun mot compris."
+            if not whisper and self._stt() is not None:
+                st = getattr(self._stt(), "status", "")
+                msg += f" (Whisper pas encore prêt : {st})" if st else ""
+            if not zero and -60.0 <= db < -40:
                 msg += " Micro très faible : monte son volume dans Windows (Son > Enregistrement)."
         except Exception:
             log.warning("Assistant vocal : test micro échoué", exc_info=True)
@@ -981,6 +1077,25 @@ class VoiceAssistant:
                 except Exception:
                     pass
 
+    def _probe_others(self) -> dict | None:
+        """The chosen mic is silent: every other input is measured 1 s (the player keeps talking)."""
+        try:
+            from treeaicoach import audio_devices as ad  # noqa: PLC0415
+
+            if self._probe is not None:
+                results = self._probe()
+            elif self._mic_factory is not None:
+                return None
+            else:
+                results = ad.probe_all(skip=ad.resolve(self.mic_name)[0])
+            best = ad.pick_best([r for r in results if r.get("name") != self.mic_label])
+            if best:
+                log.info("Test micro : « %s » a du signal (%.0f dB)", best["name"], best["db"])
+            return best
+        except Exception:
+            log.debug("mic probe failed", exc_info=True)
+            return None
+
     def snapshot(self) -> dict:
         """The live « Écoute » panel: ``stage`` (+ French ``stage_label``), mic ``level`` 0..1 and its
         ``bar``, ``heard`` (last words the recognizer wrote), ``status``, counters. Any thread, cheap."""
@@ -990,7 +1105,9 @@ class VoiceAssistant:
                 "listening": self.listening or self.mic_checking, "mic_checking": self.mic_checking,
                 "testing": self._testing(), "wakes": self.wakes, "questions": self.questions,
                 "dropped_self": self.dropped_self, "mic_rate": self.mic_rate, "engine_error": ENGINE_ERROR,
-                "silent_mic": self.silent_mic}
+                "silent_mic": self.silent_mic, "mic_label": self.mic_label, "suggested_mic": self.suggested_mic,
+                "whisper": bool(self._stt_obj is not None and self._stt_obj.ready()),
+                "whisper_status": str(getattr(self._stt_obj, "status", "") or ""), "whisper_text": self.whisper_text}
 
     def _set_stage(self, stage: str) -> None:
         if stage != self.stage:
@@ -1093,14 +1210,26 @@ class VoiceAssistant:
         try:
             if self._mic_factory is not None:
                 mic = self._mic_factory(self.mic_name)
+                self.mic_label = self.mic_name or "micro par défaut"
             else:
-                mic = SoundDeviceMic(_device_index(self.mic_name))
+                from treeaicoach import audio_devices as ad  # noqa: PLC0415
+
+                idx, self.mic_label = ad.resolve(self.mic_name)
+                mic = SoundDeviceMic(idx)
             self.mic_rate = int(getattr(mic, "rate", SAMPLE_RATE) or SAMPLE_RATE)
+            log.info("Assistant vocal : micro « %s » ouvert (%d Hz)", self.mic_label, self.mic_rate)
             return mic
-        except Exception:
+        except Exception as exc:
             log.warning("Voice assistant: microphone unavailable", exc_info=True)
             self._set_stage("error")
-            self.status = "Micro introuvable : choisis-en un autre dans Alertes et voix."
+            try:
+                from treeaicoach import audio_devices as ad  # noqa: PLC0415
+
+                why = ad.explain({"error": f"{type(exc).__name__}: {exc}"})
+            except Exception:
+                why = ""
+            self.status = why if why and "exclusif" in why else \
+                "Micro introuvable : choisis-en un autre dans Alertes et voix."
             return None
 
     def _observe(self, eng: Any) -> None:
@@ -1119,17 +1248,25 @@ class VoiceAssistant:
                      " (micro très faible : monte son volume dans Windows)" if db < -40 else "")
             self._lvl_blocks, self.peak_rms = 0, 0.0
         self._quiet_blocks = self._quiet_blocks + 1 if eng.rms < SILENT_MIC_RMS else 0
+        self._zero_blocks = self._zero_blocks + 1 if eng.rms <= 0.0 else 0
         silent = self._quiet_blocks >= SILENT_MIC_BLOCKS
         if silent != self.silent_mic:
             self.silent_mic = silent
             if silent:
-                log.warning("Assistant vocal : le micro n'envoie aucun son depuis 10 s")
-                self.status = ("Le micro n'envoie aucun son : coupé, pas le bon, ou bloqué par Windows "
-                               "(Paramètres > Confidentialité > Microphone : autoriser les applications de bureau).")
+                zero = self._zero_blocks >= SILENT_MIC_BLOCKS
+                log.warning("Assistant vocal : le micro « %s » n'envoie aucun son depuis 10 s%s", self.mic_label,
+                            " (tout à zéro : blocage Windows probable)" if zero else "")
+                self.status = ("Le micro n'envoie aucun son (tout est à zéro) : Windows le bloque sûrement. "
+                               "Paramètres > Confidentialité > Microphone : autorise l'accès ET les applications "
+                               "de bureau. Puis « Test micro 5 s »." if zero else
+                               "Le micro n'envoie aucun son : coupé, pas le bon, ou bloqué par Windows "
+                               "(Paramètres > Confidentialité > Microphone : autoriser les applications de bureau). "
+                               "« Test micro 5 s » cherche celui qui marche.")
 
     def _run(self) -> None:
         mic: Mic | None = None
         wake_rec: WakeEngine | None = None
+        seg: Any = None
         retry_at = -1.0
         try:
             while not self._stop.is_set():
@@ -1173,6 +1310,7 @@ class VoiceAssistant:
                         continue
                     self.listening = True
                     self._set_stage("listening")
+                    seg = self._segmenter()
                     if not self._testing():
                         self.status = "J'écoute « Hey coach »."
                 if self._ptt:
@@ -1180,6 +1318,8 @@ class VoiceAssistant:
                         self._ptt = False
                     self._question(mic)
                     wake_rec.reset()
+                    if seg is not None:
+                        seg.reset()
                     continue
                 block = mic.read()
                 if block is None:
@@ -1195,12 +1335,29 @@ class VoiceAssistant:
                 self._set_stage("listening")
                 woke = wake_rec.feed(block)
                 self._observe(wake_rec)
+                utts = seg.feed(block) if seg is not None else []
+                if utts:
+                    self._last_utt = (self._clock(), utts[-1])
                 if woke:
                     self.wakes += 1
                     log.info("Assistant vocal : mot-clé entendu (%s, %s) dans « %s »", wake_rec.last_kind,
                              wake_rec.last_source, wake_rec.last_text)
-                    self._question(mic, wake_rec.take_question())
+                    prefix = seg.open_audio() if seg is not None else b""
+                    if not prefix and self._clock() - self._last_utt[0] <= 2.0:
+                        prefix = self._last_utt[1]          # VAD closed the « hey coach » just before Vosk
+                    self._question(mic, wake_rec.take_question(), prefix=prefix)
                     wake_rec.reset()
+                    if seg is not None:
+                        seg.reset()
+                    self._last_utt = (-1e9, b"")
+                    continue
+                for u in utts:
+                    if self._whisper_wake_check(mic, u, wake_rec.last_text):
+                        wake_rec.reset()
+                        if seg is not None:
+                            seg.reset()
+                        self._last_utt = (-1e9, b"")
+                        break
         except Exception:
             log.exception("Voice assistant loop failed")
             self._set_stage("error")
@@ -1210,7 +1367,129 @@ class VoiceAssistant:
                 mic.close()
             self.listening = False
 
-    def _question(self, mic: Mic, handover: tuple[Any, list[str], str] | None = None) -> None:
+    # -- local Whisper (zero request) -------------------------------------------------------------
+    def _stt(self) -> Any:
+        if self._stt_obj is None and self._stt_default:
+            try:
+                from treeaicoach import stt_local  # noqa: PLC0415
+
+                self._stt_obj = stt_local.transcriber()
+            except Exception:
+                self._stt_default = False
+        return self._stt_obj
+
+    def whisper_ready(self, load: bool = True) -> bool:
+        """Whisper loaded; else (``load``) its download / loading starts in the background (once)."""
+        w = self._stt()
+        if w is None:
+            return False
+        try:
+            if w.ready():
+                return True
+            if load and not self._stt_loading and w.available_soon():
+                self._stt_loading = True
+
+                def _go() -> None:
+                    try:
+                        w.load()
+                    finally:
+                        self._stt_loading = False
+                threading.Thread(target=_go, name="TreeAI-whisper-load", daemon=True).start()
+        except Exception:
+            log.debug("whisper_ready failed", exc_info=True)
+        return False
+
+    def _segmenter(self) -> Any:
+        try:
+            from treeaicoach.vad import Segmenter  # noqa: PLC0415
+
+            return Segmenter()
+        except Exception:
+            log.debug("VAD unavailable", exc_info=True)
+            return None
+
+    def _whisper_wake_check(self, mic: Mic, utt: bytes, vosk_text: str) -> bool:
+        """A VAD utterance Vosk did NOT wake on but whose words look like « coach » / « tree » (another
+        accent): Whisper reads it (<= :data:`WHISPER_WAKE_PER_MIN` a minute, CPU). True = woke + handled."""
+        if not wakeish(vosk_text) or len(utt) > 8 * SAMPLE_RATE * 2 or not self.whisper_ready():
+            return False
+        now = self._clock()
+        self._ww_times = [t for t in self._ww_times if now - t < 60.0]
+        if len(self._ww_times) >= WHISPER_WAKE_PER_MIN:
+            return False
+        self._ww_times.append(now)
+        text = self._stt().transcribe(utt)
+        ok, rest = whisper_wake(text)
+        if not ok:
+            return False
+        self.wakes += 1
+        self.whisper_text = text
+        log.info("Assistant vocal : mot-clé entendu par Whisper dans « %s »", text[:80])
+        if len(rest.split()) >= MIN_QUESTION_WORDS:
+            self._set_stage("wake")
+            try:
+                self.on_wake()
+            except Exception:
+                pass
+            self.heard = rest[-60:]
+            self._deliver(rest)
+        else:
+            self._question(mic)
+        return True
+
+    def _question_whisper(self, mic: Mic, carry: str, prefix: bytes) -> None:
+        """After the wake (chime already played): the next VAD utterance (or what was said in the same
+        breath, ``prefix``) is read by Whisper. ``carry`` = Vosk's words, the fallback."""
+        seg = self._segmenter()
+        self._set_stage("question")
+        start = self._clock()
+        chime_until = start + CHIME_S
+        wait = 1.0 if len(carry.split()) >= MIN_QUESTION_WORDS else QUESTION_START_S
+        got, started = b"", False
+        while not self._stop.is_set() and seg is not None:
+            now = self._clock()
+            if now - start >= QUESTION_MAX_S + 4.0:
+                got = seg.flush() or b""
+                break
+            if not started and now - start >= wait:
+                break
+            block = mic.read()
+            if block is None:
+                break
+            if self._clock() >= chime_until and self._speaking():
+                self.dropped_self += 1
+                continue
+            self.level = level_of(block_rms(block))
+            us = seg.feed(block)
+            started = started or seg.in_speech or bool(us)
+            if us:
+                got = us[0]
+                break
+        pcm = prefix + got
+        text = self._stt().transcribe(pcm) if pcm else ""
+        self.whisper_text = text
+        ok, rest = whisper_wake(text)
+        q = (rest if ok else strip_wake(text)).strip()
+        if len(q.split()) < MIN_QUESTION_WORDS and len(carry.split()) > len(q.split()):
+            q = carry
+        if q:
+            self.heard = q[-60:]
+        self._deliver(q)
+
+    def _question(self, mic: Mic, handover: tuple[Any, list[str], str] | None = None,
+                  prefix: bytes = b"") -> None:
+        if self.whisper_ready():
+            self._set_stage("wake")
+            try:
+                self.on_wake()
+            except Exception:
+                pass
+            rec, parts, partial = handover if handover is not None else (None, [], "")
+            self._question_whisper(mic, question_text(parts, partial), prefix)
+            return
+        self._question_vosk(mic, handover)
+
+    def _question_vosk(self, mic: Mic, handover: tuple[Any, list[str], str] | None = None) -> None:
         """Wake heard (or push-to-talk): chime, then free recognition until silence / the time limit.
         ``handover`` = what the wake engine already heard after the wake phrase (« hey coach quel objet »
         said in one breath): its recognizer goes on, its words count."""
