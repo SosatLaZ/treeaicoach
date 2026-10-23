@@ -51,9 +51,10 @@ RECALL_MIN_VALUE = 700          # a component worth a trip (BF Glaive 1300, Pioc
 DEFENSE_SHARE = 0.68            # "ennemis 70 % AP": one damage type this dominant
 ANTIHEAL_SEVERITY = 1.2         # itemization.enemy_profile need severity for anti-heal
 FARM_MIN_GT = 8 * 60.0
-FARM_FAR_BELOW = 0.70           # nudge under 70 % of the target only
+FARM_FAR_BELOW = 0.60           # nudge under 60 % of the target only (a statistic is no instruction)
 WIN_REF_S = 90.0                # the swing reason compares with the factors this old
 WIN_SWING_POINTS = 5.0          # a reason is shown when the probability moved this much
+WATCH_S = 30.0                  # no call before the module watched the game this long (app start)
 
 #: CS / min and estimated gold / min targets by elo bracket (meta_builds.get_bracket(): "low" =
 #: Iron-Silver, "mid" = Gold-Platinum, "" = Emerald+ / unknown) and role. Public averages, rounded.
@@ -202,8 +203,9 @@ def next_build_item(build: Any, owned: Iterable[int], items: dict | None = None)
 
 def recall_target(target: int | None, owned: Iterable[int], gold: float,
                   items: dict | None = None) -> tuple[str, int, tuple[int, ...]] | None:
-    """``(names, value, ids)`` my gold buys NOW towards ``target`` (exact component prices,
-    itemization.plan_purchase), None when it is worth less than :data:`RECALL_MIN_VALUE`."""
+    """``(name, value, ids)`` my gold buys NOW towards ``target`` (exact component prices,
+    itemization.plan_purchase): the whole item, else its most expensive affordable component;
+    None when that piece is worth less than :data:`RECALL_MIN_VALUE` (no trip for small change)."""
     if target is None:
         return None
     try:
@@ -218,10 +220,15 @@ def recall_target(target: int | None, owned: Iterable[int], gold: float,
             from treeaicoach.itemization import remaining_cost
 
             value = max(value, int(remaining_cost(int(target), list(owned or ()), table)))
-        if value < RECALL_MIN_VALUE:
-            return None
-        names = table[int(target)].name if done and int(target) in table else \
-            " + ".join(table[i].name for i in buys[:2] if i in table)
+        biggest = max((int(table[i].gold) for i in buys if i in table), default=0)
+        if value < RECALL_MIN_VALUE or (not done and biggest < RECALL_MIN_VALUE):
+            return None                  # "Bottes + Dague" is no reason to walk back: one real piece
+        if done and int(target) in table:
+            names = table[int(target)].name
+        else:
+            big = max((i for i in buys if i in table), key=lambda i: int(table[i].gold))
+            names = table[big].name
+            value = int(table[big].gold)
         return (names, int(value), tuple(int(i) for i in buys)) if names else None
     except Exception:
         log.debug("recall target failed", exc_info=True)
@@ -465,6 +472,7 @@ class LiveEdge:
         self._win_hist: deque = deque(maxlen=120)        # (t, p, factors)
         self._line: str | None = None
         self._gt = 0.0
+        self._first_t: float | None = None
         self.notes: list[tuple[float, str]] = []         # (gt, text) for the record / report
 
     def line(self) -> str | None:
@@ -509,6 +517,8 @@ class LiveEdge:
         if gt + 5.0 < self._gt:                      # a new game
             self.reset()
         self._gt = gt
+        if self._first_t is None:
+            self._first_t = t
         role = str(role or getattr(me, "position", "") or "").upper() or None
         opp = lane_opponent(game, summary, role)
         # ---- live line: gold vs my opponent · farm · win probability (+ reason)
@@ -526,7 +536,7 @@ class LiveEdge:
             parts.append(wt)
         self._line = " · ".join(parts) if parts else None
         # ---- one note at most
-        if busy or 0.0 <= t - self._last_note_t < GLOBAL_GAP_S:
+        if busy or 0.0 <= t - self._last_note_t < GLOBAL_GAP_S or t - self._first_t < WATCH_S:
             return []
         alive = not bool(getattr(me, "is_dead", False))
         # 6) objective with the number advantage (fallback of the macro planner: busy covers it)

@@ -22,6 +22,13 @@ def G(gt=600.0, me=None, allies=(), enemies=(), gold=0.0, hp=(500.0, 600.0)):
                     map_number=11, champion_stats={"currentHealth": hp[0], "maxHealth": hp[1]})
 
 
+def fresh():
+    """A LiveEdge that already watched the game (no call in the first WATCH_S seconds)."""
+    e = LE.LiveEdge()
+    e._first_t = -1000.0
+    return e
+
+
 def Obj(key, alive=True):
     return SimpleNamespace(key=key, alive=alive, remaining=0.0)
 
@@ -53,7 +60,7 @@ def test_kill_window_verdict():
 def test_kill_window_called_once_when_it_opens():
     opp = P("Darius", "CHAOS", "TOP", level=5, items=[1055])
     me = P("Garen", "ORDER", "TOP", level=6, items=[3044], cs=80)
-    edge = LE.LiveEdge()
+    edge = fresh()
     notes = edge.update(100.0, G(600.0, me=me, enemies=[opp]), role="TOP")
     assert [n.feature for n in notes] == ["kill"] and notes[0].text.startswith("Attaque Darius")
     assert notes[0].voice == ""                                     # written only
@@ -77,11 +84,11 @@ def test_recall_note_uses_meta_build(monkeypatch):
     build = SimpleNamespace(core=(3071, 3078), boots=None, options=(), has_items=True)
     monkeypatch.setattr(itemization, "meta_build", lambda alias, role: build)
     me = P("Garen", "ORDER", "TOP", level=6, items=[1055], cs=90)
-    edge = LE.LiveEdge()
+    edge = fresh()
     notes = edge.update(10.0, G(700.0, me=me, gold=1300.0), role="TOP")
     assert notes and notes[0].feature == "recall" and notes[0].key.startswith("comp_ready:")
     assert "1300 or" in notes[0].text
-    assert LE.LiveEdge().update(10.0, G(700.0, me=me, gold=1300.0), role="TOP", recall_ok=False) == []
+    assert fresh().update(10.0, G(700.0, me=me, gold=1300.0), role="TOP", recall_ok=False) == []
 
 
 # ------------------------------------------------------------------ 4. adaptive defense
@@ -99,8 +106,8 @@ def test_defense_against_ap_team():
 def test_defense_only_in_shop_or_dead():
     enemies = [P(a, "CHAOS") for a in ("Lux", "Syndra", "Ahri", "Vladimir", "Zed")]
     me = P("Garen", "ORDER", "TOP", level=9, items=[3044])
-    assert all(n.feature != "defense" for n in LE.LiveEdge().update(1.0, G(900.0, me=me, enemies=enemies)))
-    notes = LE.LiveEdge().update(1.0, G(900.0, me=me, enemies=enemies), in_base=True)
+    assert all(n.feature != "defense" for n in fresh().update(1.0, G(900.0, me=me, enemies=enemies)))
+    notes = fresh().update(1.0, G(900.0, me=me, enemies=enemies), in_base=True)
     assert notes and notes[0].feature == "defense"
 
 
@@ -140,7 +147,7 @@ def test_number_advantage_baron():
 def test_objective_note_has_voice_and_is_not_repeated():
     enemies = [P("Darius", "CHAOS", dead=True, respawn=30.0), P("Lux", "CHAOS", dead=True, respawn=30.0),
                P("Zed", "CHAOS", dead=True, respawn=30.0)]
-    edge = LE.LiveEdge()
+    edge = fresh()
     n = edge.update(5.0, G(1500.0, enemies=enemies), objectives=[Obj("baron")], role="MIDDLE")
     assert n and n[0].feature == "objective" and n[0].voice
     assert edge.update(40.0, G(1501.0, enemies=enemies), objectives=[Obj("baron")], role="MIDDLE") == []
@@ -153,24 +160,32 @@ def test_farm_rates_targets_and_nudge():
     assert cs == 6.0 and gpm == round((1100 + 400 - 500) / 10.0)
     assert LE.farm_targets("TOP", "low")[0] == 5.5 and LE.farm_targets("UTILITY", "")[0] is None
     assert LE.farm_nudge(6.0, 7.5) is None
-    assert LE.farm_nudge(4.1, 6.5) == "Farme mieux ta vague : 4,1 CS/min, objectif 6,5"
+    assert LE.farm_nudge(3.8, 6.5) == "Farme mieux ta vague : 3,8 CS/min, objectif 6,5"
+    assert LE.farm_nudge(4.1, 6.5) is None
     assert LE.farm_text(6.8, 7.0) == "6,8 CS/min (obj 7)"
 
 
 def test_live_line_and_global_gap():
     opp = P("Darius", "CHAOS", "TOP", level=9, items=[1055])
     me = P("Garen", "ORDER", "TOP", level=9, items=[3044], cs=40)          # 4 CS/min at 10:00: far below
-    edge = LE.LiveEdge()
+    edge = fresh()
     notes = edge.update(0.0, G(600.0, me=me, enemies=[opp]), role="TOP")
     line = edge.line()
     assert line.startswith("+650 or sur Darius · 4 CS/min (obj 7,5) · victoire")
     assert notes and notes[0].feature == "farm" and notes[0].text.startswith("Farme")
     assert edge.update(5.0, G(605.0, me=me, enemies=[opp]), role="TOP") == []         # global gap
-    assert LE.LiveEdge().update(0.0, GameInfo()) == []                                 # spectating: nothing
+    assert fresh().update(0.0, GameInfo()) == []                                 # spectating: nothing
 
 
 def test_never_raises_on_garbage():
-    edge = LE.LiveEdge()
+    edge = fresh()
     assert edge.update(0.0, SimpleNamespace(me=object(), game_time="x")) == []
     assert LE.damage_profile([object()]) == (0.0, 0.0, 0.0)
     assert LE.defense_call([], "", None, [None]) is None or True
+
+
+def test_no_call_right_after_app_start():
+    me = P("Garen", "ORDER", "TOP", level=9, items=[3044], cs=0)
+    edge = LE.LiveEdge()
+    assert edge.update(0.0, G(600.0, me=me)) == [] and edge.line()
+    assert edge.update(LE.WATCH_S + 1, G(631.0, me=me))[0].feature == "farm"

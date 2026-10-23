@@ -607,6 +607,9 @@ class OverlayStateMixin:
 
     def _scoreboard_hud_line(self) -> str | None:
         try:
+            edge = self.live_edge_line() if hasattr(self, "live_edge_line") else None
+            if edge:          # live_edge.py: gold vs my opponent · CS/min · win % (+ the swing reason)
+                return edge if getattr(self._cfg, "win_prob_hud", True) else edge.split(" · victoire")[0]
             s = self.scoreboard_summary()
             line = s.hud_line() if s is not None else None
             wp = self.win_probability() if getattr(self._cfg, "win_prob_hud", True) else None

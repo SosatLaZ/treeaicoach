@@ -823,6 +823,69 @@ class CoachingMixin:
         return out
 
     def _item_advice(self, t: float, game: GameInfo, me_pos: Any, gt: float) -> list[Alert]:
+        """Build advice (itemization.ItemAdvisor) + the live edge calls (live_edge.py). Never raises."""
+        return self._item_advice_only(t, game, me_pos, gt) + self._live_edge_tick(t, game, me_pos, gt)
+
+    EDGE_CARD_FREE_S = 15.0        # a live edge call waits until the card (line or empty) is this stable
+
+    def _live_edge_tick(self, t: float, game: GameInfo, me_pos: Any, gt: float) -> list[Alert]:
+        """live_edge.LiveEdge: the small live line (lane gold diff, CS/min, win % + reason) and at
+        most one gold-exact call, WRITTEN (HUD line + toast, never spoken, even in "bavard"); only
+        the objective call is also offered to the voice gate as a static game-changer line. Held while a macro call / fight is
+        on (the planner owns the card); a recall call follows the one-recall-per-trip rule. Never raises."""
+        try:
+            edge = getattr(self, "_live_edge", None)
+            if edge is None:
+                from treeaicoach.live_edge import LiveEdge
+
+                edge = self._live_edge = LiveEdge()
+            tac = self._tactics
+            busy = bool(tac is not None and (tac.macro_active() is not None or tac.in_fight()))
+            # the card is not taken from a fresh written message / a line still being read / a warning
+            msg, shown = self._text_msg, getattr(self, "_hud_shown", None)
+            if (msg is not None and 0.0 <= t - msg[0] < TEXT_MSG_S) or (
+                    shown is not None and (0.0 <= t - shown[1] < self.EDGE_CARD_FREE_S
+                                           or (shown[0] and self._tip_tone(shown[0]) in ("danger", "warning")))):
+                busy = True
+            in_base = False
+            if me_pos is not None:
+                z = geometry.classify_zone(*me_pos)
+                in_base = geometry.is_base(z) and geometry.zone_owner(z) == game.my_team
+            rot = self._tip_rotator
+            last = getattr(self, "_recall_topic_t", None)
+            recall_ok = not ((last is not None and 0.0 <= t - last < self.RECALL_TOPIC_S) or self._base_recent(t)
+                             or (rot is not None and rot.current_id() in self.RECALL_TIP_IDS))
+            roles = self._role_resolver
+            role = roles.my_role() if roles is not None and hasattr(roles, "my_role") else None
+            try:
+                from treeaicoach.meta_builds import get_bracket
+
+                bracket = get_bracket()
+            except Exception:
+                bracket = ""
+            notes = edge.update(t, game, self.scoreboard_summary(),
+                                self._objectives.states() if self._objectives is not None else [],
+                                role=role, in_base=in_base, busy=busy, recall_ok=recall_ok,
+                                item_text=self.item_advice_text(), bracket=bracket)
+            out: list[Alert] = []
+            for n in notes:
+                if n.feature == "recall":
+                    self._recall_topic_t = t
+                self._write_text(make_alert(AlertKind.MACRO_TIP, Level.INFO, t, text=n.text, key=n.key), t, gt)
+                if n.voice:
+                    out.append(make_alert(AlertKind.MACRO_TIP, Level.INFO, t, text=n.voice,
+                                          key=f"gc:big:edge_obj:{n.ident}"))
+            return out
+        except Exception:
+            self._err.exception("Live edge failed")
+            return []
+
+    def live_edge_line(self) -> str | None:
+        """The small live line ("+850 or sur Darius · 6,8 CS/min (obj 7) · victoire 62 % (+8 : Baron)")."""
+        edge = getattr(self, "_live_edge", None)
+        return edge.line() if edge is not None and self._in_game else None
+
+    def _item_advice_only(self, t: float, game: GameInfo, me_pos: Any, gt: float) -> list[Alert]:
         """Build advice (itemization.ItemAdvisor): toast + HUD line, spoken only if enabled. Never raises."""
         cfg = self._cfg
         if not getattr(cfg, "item_advice", True):
