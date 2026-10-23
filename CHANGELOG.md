@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.20.0 · 23 octobre 2026
+
+- **L'essentiel en haut de l'écran :** une petite barre (victoire %, or vs ton adversaire, CS/min, prochain
+  objectif, dernier jungler vu), au seul endroit toujours vide du HUD. Redessinée seulement quand elle change.
+- **« Hey coach » réparé sur Discord** (fins de phrase perdues quand quelqu'un se tait) et plus tolérant
+  (« et coach », « coach »…). Micros faibles amplifiés, son plus propre.
+- **Test micro 5 s :** montre ce que l'appli entend et le niveau du micro. Compteurs audio sur la page Discord.
+
 ## 2.19.0 · 23 octobre 2026
 
 - **En partie (données du jeu) :** écart d'or exact sur ton adversaire, fenêtre de kill, back au bon moment
