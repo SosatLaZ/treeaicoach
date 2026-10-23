@@ -55,6 +55,10 @@ FARM_FAR_BELOW = 0.60           # nudge under 60 % of the target only (a statist
 WIN_REF_S = 90.0                # the swing reason compares with the factors this old
 WIN_SWING_POINTS = 5.0          # a reason is shown when the probability moved this much
 WATCH_S = 30.0                  # no call before the module watched the game this long (app start)
+#: game modes with the normal rift economy (the calls' numbers: CS targets, recall prices, objectives);
+#: elsewhere (URF, One for All, practice tool...) only the live line is kept
+NORMAL_MODES = frozenset({"", "CLASSIC", "SWIFTPLAY"})
+NO_WIN_MODES = frozenset({"PRACTICETOOL"})      # (+ TUTORIAL*): no real opponent, no win probability
 
 #: CS / min and estimated gold / min targets by elo bracket (meta_builds.get_bracket(): "low" =
 #: Iron-Silver, "mid" = Gold-Platinum, "" = Emerald+ / unknown) and role. Public averages, rounded.
@@ -522,6 +526,9 @@ class LiveEdge:
         if self._first_t is None:
             self._first_t = t
         role = str(role or getattr(me, "position", "") or "").upper() or None
+        mode = str(getattr(game, "game_mode", "") or "").upper()
+        calls_on = mode in NORMAL_MODES            # URF / One for All / practice tool: other economy
+        win_on = not (mode in NO_WIN_MODES or mode.startswith("TUTORIAL")) and bool(getattr(game, "enemies", None))
         opp = lane_opponent(game, summary, role)
         # ---- live line: gold vs my opponent · farm · win probability (+ reason)
         parts: list[str] = []
@@ -533,12 +540,12 @@ class LiveEdge:
         cs_t, _gold_t = farm_targets(role, bracket)
         if rates is not None:
             parts.append(farm_text(rates[0], cs_t) if role != "UTILITY" else f"{int(rates[1])} or/min")
-        wt = self._win_line(t, game, summary)
+        wt = self._win_line(t, game, summary) if win_on else None
         if wt:
             parts.append(wt)
         self._line = " · ".join(parts) if parts else None
         # ---- one note at most
-        if busy or 0.0 <= t - self._last_note_t < GLOBAL_GAP_S or t - self._first_t < WATCH_S:
+        if busy or not calls_on or 0.0 <= t - self._last_note_t < GLOBAL_GAP_S or t - self._first_t < WATCH_S:
             return []
         alive = not bool(getattr(me, "is_dead", False))
         # 6) objective with the number advantage (fallback of the macro planner: busy covers it)

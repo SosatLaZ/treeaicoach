@@ -189,3 +189,19 @@ def test_no_call_right_after_app_start():
     edge = LE.LiveEdge()
     assert edge.update(0.0, G(600.0, me=me)) == [] and edge.line()
     assert edge.update(LE.WATCH_S + 1, G(631.0, me=me))[0].feature == "farm"
+
+
+def test_calls_only_in_normal_rift_modes():
+    me = P("Garen", "ORDER", "TOP", level=9, items=[3044], cs=40)
+    opp = P("Darius", "CHAOS", "TOP", level=9, items=[1055])
+    for mode, calls, win in (("CLASSIC", True, True), ("SWIFTPLAY", True, True), ("URF", False, True),
+                             ("PRACTICETOOL", False, False)):
+        g = G(600.0, me=me, enemies=[opp])
+        g.game_mode = mode
+        edge = fresh()
+        notes = edge.update(0.0, g, role="TOP")
+        assert bool(notes) == calls, mode
+        assert ("victoire" in (edge.line() or "")) == win, mode
+    edge = fresh()                                              # practice tool alone: no win %
+    edge.update(0.0, G(600.0, me=me), role="TOP")
+    assert "victoire" not in (edge.line() or "")
