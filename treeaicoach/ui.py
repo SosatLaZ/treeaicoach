@@ -203,6 +203,7 @@ class CoachApp:
         self._post_game_watch: str | None = None
         self._overlay_test: Any = None
         self._current_page = ""
+        self._splash: Any = None
         self.pages: dict[str, Any] = {}
         self._failed_pages: set[str] = set()
         self.page_views: dict[str, Any] = {}        # page key -> its controller object (pages/*.py)
@@ -1095,14 +1096,15 @@ class CoachApp:
             if self._busy:
                 key = "STARTING"
             msg = str(getattr(st, "message", "") or "") if st is not None and running else ""
-        champ, role = "", None
+        champ, role, alias = "", None, ""
         if key == "RUNNING" and ov is not None:
             me, role, _opp = ui_kit.lane_opponent(ov)
+            alias = me if me and me != "me" else ""
             champ = champion_name(me) if me and me != "me" else ""
             role = role or getattr(ov, "my_role", None)
         title, msg, fix, action = ui_kit.status_line(key, msg, champion=champ, role=role)
         return {"key": key, "title": title, "message": msg, "fix": fix, "action": action, "status": st,
-                "overlay": ov, "running": running}
+                "overlay": ov, "running": running, "champ_alias": alias, "role": role}
 
     def _refresh_status(self) -> None:
         snap = self.status_snapshot()
@@ -1487,6 +1489,22 @@ class CoachApp:
         ui_dialogs.first_run(self)
 
     # ------------------------------------------------------------------ run / close
+    def _boot_splash(self) -> None:
+        """The 1.2 s launch sequence over the (already built) window: real checks, skippable, once."""
+        if self._splash is not None or self._closing:
+            return
+        try:
+            from treeaicoach import __version__  # noqa: PLC0415
+            from treeaicoach import ui_flair  # noqa: PLC0415
+
+            sp = ui_flair.BootSplash(self.win.centralWidget(), f"v{__version__}", ui_flair.boot_checks(self.cfg))
+            sp.finished.connect(lambda: setattr(self, "_splash", None))
+            self._splash = sp
+            sp.start()
+        except Exception:
+            self._splash = None
+            log.debug("boot splash failed", exc_info=True)
+
     def show(self) -> None:
         self.win.show()
         self.win.raise_()
@@ -1500,6 +1518,8 @@ class CoachApp:
             startup.mark("window_built")
         except Exception:
             pass
+        if not os.environ.get("TREEAICOACH_NO_SPLASH"):
+            self._boot_splash()          # before show(): the first frame is already the splash
         self.show()
         self.QtCore.QTimer.singleShot(0, self.win, _log_first_paint)
         if smoke_seconds is not None:
@@ -1537,6 +1557,11 @@ class CoachApp:
         except Exception:
             pass
         self._closing = True
+        try:
+            if self._splash is not None:
+                self._splash.abort()
+        except Exception:
+            pass
         try:     # a modal dialog open (nested loop): close it first
             modal = self.qapp.activeModalWidget()
             if modal is not None:

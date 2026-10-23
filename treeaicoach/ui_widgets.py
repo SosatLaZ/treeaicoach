@@ -78,17 +78,24 @@ GLASS_GROUP_RGB = (18, 38, 74)
 
 # sizes (px at 100 %, Qt applies the monitor's DPI factor on top)
 SIDEBAR_W = 248
-CONTENT_MAX = 760        # centred column of a page (System Settings uses ~680-760)
+# 8-pt grid: every gap, padding and radius below is a multiple of 8 (or of 4 for the small ones)
+CONTENT_MAX = 880        # centred column of a page, multiple of 8 (a wide screen gets air, not stretched rows)
 PAGE_PAD_X = 40
-PAGE_PAD_TOP = 28
-GROUP_RADIUS = 10
+PAGE_PAD_TOP = 40
+GROUP_RADIUS = 12
+CONTROL_RADIUS = 8
 ROW_MIN_H = 48
-SECTION_GAP = 28
-TITLE_PX = 26
+ROW_PAD_X = 16
+ROW_PAD_Y = 12
+SECTION_GAP = 32
+TITLE_PX = 32
 BODY_PX = 14
 SMALL_PX = 13
 CAPTION_PX = 12
 HEADLINE_PX = 15
+SECTION_PX = 15
+MONO_FAMILIES = ("Cascadia Mono", "Consolas", "SF Mono", "DejaVu Sans Mono", "Liberation Mono", "Courier New")
+GOLD = "#D8C48E"          # thin ornaments only (never text, never a fill); not the game client's gold
 
 _theme: list[Theme] = [DARK]
 
@@ -133,7 +140,19 @@ def pick_family(candidates: Sequence[str] = FONT_FAMILIES) -> str:
     return QtWidgets.QApplication.font().family()
 
 
-def style_sheet(t: Theme, body: str, display: str) -> str:
+def pick_mono() -> str:
+    """Monospace family for numerals and kickers (Cascadia / Consolas on Windows), else the system fixed font."""
+    try:
+        have = set(QtGui.QFontDatabase.families())
+        for f in MONO_FAMILIES:
+            if f in have:
+                return f
+        return QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont).family()
+    except Exception:
+        return "Consolas"
+
+
+def style_sheet(t: Theme, body: str, display: str, mono: str = "Consolas") -> str:
     """The ONE application style sheet (selectors by object name / dynamic property only)."""
     return f"""
 * {{ font-family: "{body}"; font-size: {BODY_PX}px; color: {t.text}; }}
@@ -148,11 +167,15 @@ QLabel[role="navgroup"] {{ font-size: {CAPTION_PX}px; font-weight: 600; color: {
 QLabel {{ background: transparent; }}
 QLabel[role="title"] {{ font-family: "{display}"; font-size: {TITLE_PX}px; font-weight: 600; }}
 QLabel[role="headline"] {{ font-family: "{display}"; font-size: 20px; font-weight: 600; }}
-QLabel[role="section"] {{ font-size: {SMALL_PX}px; font-weight: 600; color: {t.secondary}; }}
+QLabel[role="section"] {{ font-family: "{display}"; font-size: {SECTION_PX}px; font-weight: 600; color: {t.text}; }}
+QLabel[role="kicker"] {{ font-family: "{mono}"; font-size: {CAPTION_PX}px; font-weight: 600; color: {t.accent}; }}
+QLabel[role="mono"] {{ font-family: "{mono}"; font-size: {SMALL_PX}px; color: {t.secondary}; }}
+QLabel[role="monofoot"] {{ font-family: "{mono}"; font-size: {CAPTION_PX}px; color: {t.tertiary}; }}
+#Scanline {{ background: {GLASS_SEPARATOR}; border: none; }}
 QLabel[role="secondary"] {{ font-size: {SMALL_PX}px; color: {t.secondary}; }}
 QLabel[role="footnote"] {{ font-size: {CAPTION_PX}px; color: {t.tertiary}; }}
 QLabel[role="value"] {{ color: {t.secondary}; }}
-QLabel[role="big"] {{ font-family: "{display}"; font-size: 28px; font-weight: 600; }}
+QLabel[role="big"] {{ font-family: "{mono}"; font-size: 28px; font-weight: 600; }}
 QLabel[tone="danger"] {{ color: {t.danger}; }}
 QLabel[tone="warning"] {{ color: {t.warning}; }}
 QLabel[tone="ok"] {{ color: {t.ok}; }}
@@ -161,8 +184,8 @@ QLabel a {{ color: {t.accent}; }}
 #Group {{ background: {GLASS_GROUP}; border: 1px solid {GLASS_EDGE}; border-radius: {GROUP_RADIUS}px; }}
 #Group[tone="accent"] {{ border: 1px solid {t.accent_soft}; }}
 #Separator {{ background: {GLASS_SEPARATOR}; border: none; }}
-QPushButton {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: 7px;
-  padding: 6px 14px; min-height: 20px; font-weight: 500; }}
+QPushButton {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: {CONTROL_RADIUS}px;
+  padding: 8px 16px; min-height: 20px; font-weight: 500; }}
 QPushButton:hover {{ background: {t.control_hover}; }}
 QPushButton:pressed {{ background: {t.separator}; }}
 QPushButton:disabled {{ color: {t.tertiary}; }}
@@ -176,18 +199,18 @@ QPushButton[kind="link"] {{ background: transparent; border: none; color: {t.acc
   font-weight: 500; }}
 QPushButton[kind="link"]:hover {{ text-decoration: underline; }}
 QPushButton[kind="large"] {{ padding: 9px 22px; font-size: 15px; }}
-QPushButton#NavItem {{ background: transparent; border: none; border-radius: 7px; text-align: left;
+QPushButton#NavItem {{ background: transparent; border: none; border-radius: {CONTROL_RADIUS}px; text-align: left;
   padding: 7px 10px; font-size: {BODY_PX}px; font-weight: 500; }}
 QPushButton#NavItem:hover {{ background: {GLASS_GROUP_HOVER}; }}
 QPushButton#NavItem:checked {{ background: {t.accent_soft}; color: {t.text}; font-weight: 600; }}
-QComboBox {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: 7px;
+QComboBox {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: {CONTROL_RADIUS}px;
   padding: 5px 30px 5px 10px; min-height: 20px; min-width: 140px; }}
 QComboBox:hover {{ background: {t.control_hover}; }}
 QComboBox::drop-down {{ border: none; width: 26px; }}
 QComboBox::down-arrow {{ image: none; width: 0; height: 0; }}
 QComboBox QAbstractItemView {{ background: {t.group}; border: 1px solid {t.control_border};
   selection-background-color: {t.accent}; selection-color: {t.on_accent}; padding: 4px; outline: none; }}
-QLineEdit {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: 7px;
+QLineEdit {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: {CONTROL_RADIUS}px;
   padding: 6px 10px; selection-background-color: {t.accent}; selection-color: {t.on_accent}; }}
 QLineEdit:focus {{ border: 2px solid {t.accent}; padding: 5px 9px; }}
 QSlider::groove:horizontal {{ height: 4px; background: {t.track_off}; border-radius: 2px; }}
@@ -252,7 +275,7 @@ def apply_theme(app: QtWidgets.QApplication, dark: bool = True) -> Theme:
                       (QtGui.QPalette.ToolTipText, t.text), (QtGui.QPalette.PlaceholderText, t.tertiary)):
         pal.setColor(role, QtGui.QColor(col))
     app.setPalette(pal)
-    app.setStyleSheet(style_sheet(t, body, display))
+    app.setStyleSheet(style_sheet(t, body, display, pick_mono()))
     return t
 
 
@@ -603,7 +626,7 @@ class Row(QtWidgets.QWidget):
         super().__init__(parent)
         self.setMinimumHeight(ROW_MIN_H)
         self._grid = QtWidgets.QGridLayout(self)
-        self._grid.setContentsMargins(16, 10, 16, 10)
+        self._grid.setContentsMargins(ROW_PAD_X, ROW_PAD_Y, ROW_PAD_X, ROW_PAD_Y)
         self._grid.setHorizontalSpacing(24)
         self._grid.setVerticalSpacing(2)
         self.title = label(title)
@@ -648,7 +671,7 @@ class Group(QtWidgets.QFrame):
         if self._rows:
             holder = QtWidgets.QWidget()
             hl = QtWidgets.QHBoxLayout(holder)
-            hl.setContentsMargins(16, 0, 0, 0)
+            hl.setContentsMargins(ROW_PAD_X, 0, 0, 0)
             sep = QtWidgets.QFrame()
             sep.setObjectName("Separator")
             sep.setFixedHeight(1)
@@ -677,19 +700,24 @@ class Section(QtWidgets.QWidget):
         super().__init__(parent)
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
+        lay.setSpacing(12)
         if title or action is not None:
             head = QtWidgets.QHBoxLayout()
-            head.setContentsMargins(16, 0, 4, 0)
+            head.setContentsMargins(ROW_PAD_X, 0, 4, 0)
+            head.setSpacing(16)
             self.header = label(title, "section")
-            head.addWidget(self.header, 1)
+            head.addWidget(self.header, 0)
+            rule = QtWidgets.QFrame()           # thin "scanline" after the title, static
+            rule.setObjectName("Scanline")
+            rule.setFixedHeight(1)
+            head.addWidget(rule, 1, Qt.AlignVCenter)
             if action is not None:
                 head.addWidget(action, 0, Qt.AlignRight)
             lay.addLayout(head)
         self.group = Group()
         lay.addWidget(self.group)
         self.footnote = label(footnote, "footnote", wrap=True)
-        self.footnote.setContentsMargins(16, 0, 16, 0)
+        self.footnote.setContentsMargins(ROW_PAD_X, 0, ROW_PAD_X, 0)
         lay.addWidget(self.footnote)          # parented first: setVisible(True) on an orphan makes a window
         if not footnote:
             self.footnote.hide()
@@ -721,7 +749,7 @@ class Page(QtWidgets.QScrollArea):
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(SECTION_GAP)
         head = QtWidgets.QVBoxLayout()
-        head.setSpacing(4)
+        head.setSpacing(8)
         self.title = label(title, "title")
         head.addWidget(self.title)
         self.subtitle = label(subtitle, "secondary", wrap=True)

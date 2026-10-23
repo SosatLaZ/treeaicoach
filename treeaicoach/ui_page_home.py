@@ -21,36 +21,50 @@ class HomePage:
         self._sys_sig: dict[str, Any] = {}
         self._fix_action = ""
 
-        # --- status hero: title, message, start / stop + fix
-        hero = W.card()
-        hl = QtWidgets.QGridLayout(hero)
-        hl.setContentsMargins(22, 20, 22, 20)
-        hl.setHorizontalSpacing(20)
-        hl.setVerticalSpacing(4)
+        # --- hero: the champion of the game (or of the last one) on a glass card, status, Démarrer / Arrêter
+        from treeaicoach import ui_flair  # noqa: PLC0415
+
+        self._flair = ui_flair
+        self._last_game: tuple[str, str, str] = ("", "", "")       # alias, role, result of the newest record
+        self._live_champ: tuple[str, str] = ("", "")               # alias, role of the game in progress
+        self.hero = ui_flair.HeroCard()
+        self.hero.setMinimumHeight(184)
+        hl = QtWidgets.QHBoxLayout(self.hero)
+        hl.setContentsMargins(32, 24, 24, 24)
+        left = QtWidgets.QWidget()
+        left.setMaximumWidth(520)
+        ll = QtWidgets.QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(8)
+        self.kicker = W.label("TREEAI COACH", "kicker")
+        ll.addWidget(self.kicker)
         row = QtWidgets.QHBoxLayout()
-        row.setSpacing(10)
+        row.setSpacing(12)
         self.dot = W.Dot()
         row.addWidget(self.dot, 0, Qt.AlignVCenter)
         self.title = W.label("Démarrage…", "headline")
         row.addWidget(self.title, 1)
-        hl.addLayout(row, 0, 0)
+        ll.addLayout(row)
         self.message = W.label("", "secondary", wrap=True)
-        hl.addWidget(self.message, 1, 0)
-        self.live = W.label("", "footnote")
+        ll.addWidget(self.message)
+        self.live = W.label("", "mono")
         self.live.hide()
-        hl.addWidget(self.live, 2, 0)
+        ll.addWidget(self.live)
+        ll.addStretch(1)
         btns = QtWidgets.QHBoxLayout()
         btns.setSpacing(8)
+        self.start_btn = W.button("Démarrer", app.toggle_engine, "primary")
+        self.start_btn.setProperty("kind", "primary")
+        self.start_btn.setMinimumWidth(128)
+        btns.addWidget(self.start_btn)
         self.fix_btn = W.button("", self._run_fix)
         self.fix_btn.hide()
         btns.addWidget(self.fix_btn)
-        self.start_btn = W.button("Démarrer", app.toggle_engine, "primary")
-        self.start_btn.setProperty("kind", "primary")
-        self.start_btn.setMinimumWidth(120)
-        btns.addWidget(self.start_btn)
-        hl.addLayout(btns, 0, 1, 2, 1, Qt.AlignRight | Qt.AlignVCenter)
-        hl.setColumnStretch(0, 1)
-        self.page.add(hero)
+        btns.addStretch(1)
+        ll.addLayout(btns)
+        hl.addWidget(left, 0)
+        hl.addStretch(1)
+        self.page.add(self.hero)
 
         # --- champion select (only while it happens)
         self.cs = W.Section("Sélection des champions")
@@ -166,6 +180,24 @@ class HomePage:
         self.level.set_value(lv)
         self.level_row.set_desc(self._skill_help.get(lv, ""))
 
+    def _refresh_hero(self) -> None:
+        """Art + kicker of the hero: the game in progress, else the last record, else the brand."""
+        fl = self._flair
+        alias, role = self._live_champ
+        if alias:
+            kick = " · ".join(x for x in (fl.role_fr(role), champion_name(alias).upper(), "EN PARTIE") if x)
+        elif self._last_game[0]:
+            alias, role, res = self._last_game
+            kick = " · ".join(x for x in ("DERNIÈRE PARTIE", champion_name(alias).upper(), fl.role_fr(role),
+                                          res.upper()) if x)
+        else:
+            kick = "TREEAI COACH"
+        if kick != self.kicker.text():
+            self.kicker.setText(ui_text(kick))
+        self.hero.set_champion(alias)
+        if alias and not fl.has_full_art(alias):
+            fl.ensure_art(self.app, alias, lambda a=alias: self.hero.set_champion(a))
+
     def sync_quick(self) -> None:
         self.voice_sw.set_quiet(not self.app._is_muted())
 
@@ -183,8 +215,11 @@ class HomePage:
             r.control.setEnabled(False)
             return
         g = games[0]
-        champ = champion_name(game_field(g, "champion", "alias", default="")) or "Partie"
+        alias = str(game_field(g, "champion", "alias", default="") or "")
+        champ = champion_name(alias) or "Partie"
         res = {"win": "Victoire", "lose": "Défaite"}.get(game_result(g) or "", "")
+        self._last_game = (alias, str(game_field(g, "role", "my_role", default="") or ""), res)
+        self._refresh_hero()
         r.title.setText(f"{champ}" + (f" · {res}" if res else ""))
         r.set_desc(fmt_game_date(game_datetime(g)))
         r.control.setEnabled(True)
@@ -206,8 +241,12 @@ class HomePage:
             alert = str(getattr(st, "last_alert", "") or "")
             if alert:
                 parts.append(f"Dernière alerte : {ui_text(alert)}")
-            live = " · ".join(p for p in parts if p)
+            live = "  ·  ".join(p for p in parts if p)
         start_text = ("Arrêt…" if running else "Démarrage…") if app._busy else ("Arrêter" if running else "Démarrer")
+        champ = (str(snap.get("champ_alias") or ""), str(snap.get("role") or ""))
+        if champ != self._live_champ:
+            self._live_champ = champ
+            self._refresh_hero()
         sig = (snap["title"], snap["message"], snap["fix"], level, live, start_text, app.demo)
         if sig != self._sig:
             self._sig = sig

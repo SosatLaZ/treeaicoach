@@ -110,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
             app.qapp.processEvents()
             build_ms = 1000 * (time.perf_counter() - t0)
             app._games = SAMPLE_GAMES
+            if os.environ.get("SHOT_ART"):
+                from treeaicoach import ui_flair
+                for _a in ("Garen",):
+                    ui_flair.fetch_art(_a)
             app.build_all_pages()
             app.page_views["analysis"].on_games(SAMPLE_GAMES)
             app.page_views["home"].on_games(SAMPLE_GAMES)
@@ -117,6 +121,19 @@ def main(argv: list[str] | None = None) -> int:
             if dc is not None:
                 dc.snapshot_fn = lambda: dict(DISCORD_SNAPSHOT)
                 dc.update(dc._read())
+            if not args.pages or "splash" in args.pages.split(","):
+                app.win.resize(w, h)
+                from treeaicoach import ui_flair
+                sp = ui_flair.BootSplash(app.win.centralWidget(), "v2.17.1", ui_flair.boot_checks(app.cfg))
+                sp.start()
+                t_end = time.monotonic() + 0.75
+                while time.monotonic() < t_end:
+                    app.qapp.processEvents()
+                    time.sleep(0.01)
+                sp._effect.setOpacity(1.0)
+                sp.grab().save(str(out / f"splash_{theme}_{w}x{h}.png"))
+                sp.abort()
+                app.qapp.processEvents()
             switches = []
             for key, _l, _i in ui.PAGES:
                 if args.pages and key not in args.pages.split(","):

@@ -82,6 +82,7 @@ thread de fond qui remplit ensuite la liste.
 ## Outils
 
 * `python tools/launcher_bench.py [--profile]` : temps de création, de chaque page, des changements, processeur au repos (3 s de vraie boucle d'événements).
+* `python tools/launcher_shots.py --pages splash,home` : inclut la séquence de lancement (`splash_*.png`).
 * `python tools/make_backdrop.py` : régénère l'image de l'arbre de vie (`assets/ui/backdrop.png`).
 * `python tools/launcher_shots.py [--out DIR]` : captures de chaque page en
   1280 × 720 et 1920 × 1080 (moteur factice « en attente d'une partie », trois parties fictives).

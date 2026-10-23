@@ -71,6 +71,23 @@ néon. (Le « trou noir » de la première version a été refusé : « ça fait
 * **Accueil** commence par **une** ligne d'état (`ui_kit.status_line`) et le bouton Démarrer / Arrêter.
 * Chaque champ de `Config` a un contrôle, ou figure dans `ui_common.HIDDEN_SETTINGS` avec sa raison
   (`tests/test_launcher.py`) ; un réglage n'existe qu'à un seul endroit.
+* **Grille de 8 pt** (v2.18) : colonne centrée de 880 px, marges de page 40, écart entre sections 32,
+  rayon 12 (cellules, carte héros), 8 (contrôles), lignes 16 / 12 de marge, 48 de haut au minimum.
+  Titre de page 32, titre de section 15 semi-gras en couleur du texte suivi d'un **filet** d'un pixel
+  (« scanline », fixe) qui court jusqu'au bord de la colonne.
+* **Touche LoL, discrète** : la carte héros de l'Accueil (`ui_flair.HeroCard`) montre le champion de la
+  partie en cours, sinon de la dernière (art de chargement Data Dragon, 308 × 560, ~40 Ko, téléchargé
+  une fois dans le cache par un thread de fond ; sans réseau : le portrait de 64 px déjà embarqué),
+  assombri et fondu dans le verre. Au-dessus du titre, une ligne **monospace** : « TOP · GAREN · EN
+  PARTIE » ou « DERNIÈRE PARTIE · GAREN · TOP · VICTOIRE ». Cadre : un filet saphir, deux petits angles
+  champagne (`GOLD` `#D8C48E`, 1 px, jamais du texte ni un aplat) avec un losange. Aucun logo, aucune
+  marque ni image de l'interface du jeu. Les chiffres de statistiques (`role="big"`, ligne en direct)
+  sont en monospace (Cascadia / Consolas, sinon la fixe du système).
+* **Séquence de lancement** (`ui_flair.BootSplash`, 1,2 s au plus, une fois par démarrage, un clic ou
+  une touche la passe) : lignes monospace pour de VRAIS contrôles (détecteur : modèle + onnxruntime ;
+  capture : mss ; client LoL : fichier lockfile ; voix ; overlay), un trait de progression fin, puis
+  fondu de 200 ms. Pas de faux texte « hacker », pas de pluie de code. Une seule animation, arrêtée
+  et supprimée à la fin : 0 % de processeur ensuite. `TREEAICOACH_NO_SPLASH=1` la désactive.
 * **Interdits** en plus de la liste ci-dessus : néon, bordures lumineuses, halos de couleur autour
   des contrôles, verre dépoli (flou), animations décoratives (le fond est fixe), icônes colorées
   multiples, cartes dans des cartes. L'arbre est **le seul** élément décoratif, et il reste derrière.
