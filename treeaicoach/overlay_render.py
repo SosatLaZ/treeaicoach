@@ -2445,6 +2445,16 @@ def _near_counts(state: Any) -> tuple[int, int]:
     return out[0], out[1]
 
 
+def display_word(word: Any) -> str:
+    """The card's headline as drawn: sentence case, never shouted ("JINX APPROCHE" -> "Jinx approche",
+    "GANK !" -> "Gank !"). The content keeps its upper-case key for the logic."""
+    w = str(word or "").strip()
+    if not w or w != w.upper():
+        return w
+    out = w[:1] + w[1:].lower()
+    return out.replace(" ace", " ACE").replace("Ace", "ACE").replace(" cs", " CS")
+
+
 def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | None:
     """What the compact card shows, or None when there is nothing worth a card (the overlay then
     hides the HUD window). Keys: ``mode`` ("danger" | "careful" | "ok"), ``colour`` (left bar),
@@ -2469,7 +2479,8 @@ def compact_content(state: Any, now: float | None = None) -> dict[str, Any] | No
         line = danger_line(raw, BASE_LINE if base_danger else None) if raw else (BASE_LINE if base_danger else FIGHT_LINE if word == "COMBAT"
                                              else DANGER_LINE)
         mode = "danger" if lvl >= 2 else "careful"
-        return {"mode": mode, "colour": STATE_RGB[mode], "word": word, "line": line, "icon": None}
+        return {"mode": mode, "colour": STATE_RGB[mode], "word": word, "line": line, "icon": None,
+                "label": _danger_word(state)}
     near_e, near_a = _near_counts(state)
     if near_e >= 2 and near_e > near_a + 1 and not dead:
         # outnumbered next to me (docs/LESSONS.md 6-7), even with the enemies visible on screen
@@ -2702,8 +2713,7 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
     else:                                              # solid dark plate (contrast first)
         cv_.rrect(x0, y0, cw, ch, rad, TAI_PLATE, 0.96, border=TAI_EDGE, border_alpha=0.9,
                   border_w=max(1.0, 0.9 * k))
-    phase = (now % HALO_PERIOD_S) / HALO_PERIOD_S
-    a_acc = 1.0 if c["mode"] != "danger" else 0.8 + 0.2 * math.sin(phase * 2 * math.pi)
+    a_acc = 1.0                                        # steady accent bar (no pulse: calm, and no re-upload)
     cv_.rrect(x0 + 5 * k, y0 + 6 * k, 4 * k, ch - 12 * k, 2 * k, accent, a_acc)
     fa = _compact_fade(getattr(state, "tip_since", None), now)
     y = y0 + lay["pad_t"]
@@ -2711,7 +2721,7 @@ def _render_compact(state: Any, width: int, now: float) -> np.ndarray:
         if name == "item":
             _draw_item_row(cv_, lay, c, y, h)
         elif name == "word":
-            cv_.text(left, y + h / 2, fit_text(c["word"].upper(), lay["f_word"], lay["right"] - left), lay["f_word"],
+            cv_.text(left, y + h / 2, fit_text(display_word(c.get("label") or c["word"]), lay["f_word"], lay["right"] - left), lay["f_word"],
                      _mix(accent, WHITE, 0.4), shadow=0.6)
         elif name == "jgl":
             # tracker row: red dot + "Lee Sin · vu il y a 25 s, rivière du bas" (muted, never the instruction)

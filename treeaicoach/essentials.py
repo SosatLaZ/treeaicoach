@@ -251,6 +251,16 @@ def lines_text(lines: Lines) -> str:
 
 # ----------------------------------------------------------------------------- rendering
 #: Widest content per cell kind (the strip is sized for it: a changing number never moves anything).
+#: labels as drawn: quiet sentence case (the keys stay upper case for the logic); abbreviations stay
+_SHOWN = {"CS": "CS", "JGL": "JGL", "OR/MIN": "Or/min"}
+
+
+def shown_label(label: str) -> str:
+    """"VICTOIRE" -> "Victoire", "ANCESTRAL" -> "Ancestral"; "CS" / "JGL" unchanged."""
+    lab = str(label or "")
+    return _SHOWN.get(lab, lab[:1] + lab[1:].lower() if lab.isupper() else lab)
+
+
 _TEMPLATES: dict[str, str] = {"VICTOIRE": "100 %", "OR": "-8 888", "CS": "88,8/8,8", "OR/MIN": "888",
                               "JGL": "haut 88 s", "BARON": "8:88", "ANCESTRAL": "8:88", "DRAGON": "8:88",
                               "HÉRAUT": "8:88", "LARVES": "8:88"}
@@ -288,7 +298,7 @@ def _cell_width(c: Cell, m: dict[str, Any], fixed: bool = True) -> float:
     w_val = _mono_width(c.value, m)
     if fixed and c.label in _TEMPLATES:
         w_val = max(w_val, _mono_width(_TEMPLATES[c.label], m))
-    w = orr.text_width(c.label, m["fl"]) + m["gap_lv"] + w_val
+    w = orr.text_width(shown_label(c.label), m["fl"]) + m["gap_lv"] + w_val
     if c.arrow:
         w += m["gap_lv"] + 2 * m["arrow"]
         if c.extra:
@@ -361,7 +371,7 @@ def render(lines: Lines, screen: Any = None) -> np.ndarray | None:
             x = (W - _line_width(line, m)) / 2.0
             for c in line:
                 x0 = x
-                x += cv_.text(x, cy, c.label, m["fl"], LABEL, 1.0, shadow=0.0) + m["gap_lv"]
+                x += cv_.text(x, cy, shown_label(c.label), m["fl"], LABEL, 1.0, shadow=0.0) + m["gap_lv"]
                 xe = _draw_mono(cv_, x, cy, c.value, m, _TONES.get(c.tone, TEXT))
                 if c.arrow:
                     a = m["arrow"]

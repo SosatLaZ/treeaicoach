@@ -178,7 +178,7 @@ HUD_POSITIONS: tuple[tuple[str, str], ...] = (
 FOG_MODES: tuple[tuple[str, str], ...] = (("jungler", "Jungler"), ("all", "Tous"), ("off", "Aucun"))
 #: no "radar" entry: the user never wants a copy of the minimap (a "radar" already in a config
 #: file still works; load_config moves it back to "minimap" once, config_version 4)
-OVERLAY_MODES: tuple[tuple[str, str], ...] = (("minimap", "Sur la minimap"), ("off", "Aucun"))
+OVERLAY_MODES: tuple[tuple[str, str], ...] = (("minimap", "Activées"), ("off", "Aucune"))
 #: cfg.voice_level (voice_policy.py): how much the coach says out loud (the rest is written).
 VOICE_LEVELS: tuple[tuple[str, str], ...] = (("minimal", "Minimal"), ("normal", "Normal"), ("bavard", "Bavard"))
 #: One control for (cfg.beep_on_danger, cfg.danger_voice): "voix" = no beep, the sentence only.

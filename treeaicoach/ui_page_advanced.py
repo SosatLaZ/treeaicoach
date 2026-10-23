@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from treeaicoach.ui_common import CAPTURE_BACKENDS, DETECTORS, MINIMAP_MODES, MINIMAP_SIDES, PERF_MODES, fmt_decimal_fr
+from treeaicoach.ui_common import CAPTURE_BACKENDS, DETECTORS, MINIMAP_MODES, MINIMAP_SIDES, PERF_MODES
 
 
 class AdvancedPage:
@@ -61,8 +61,8 @@ class AdvancedPage:
                        "quand TreeAI détecte un problème.")
         app.switch_row(mnt, "collect_samples", "Collecter des captures de minimap", "Pour améliorer la détection "
                        "(reste sur ton PC).")
-        app.slider_row(mnt, "collect_interval_s", "Intervalle de collecte", None, 0.5, 10, 0.5,
-                       lambda v: f"{fmt_decimal_fr(v, 1)} s", to_value=float)
+        app.depends(app.slider_row(mnt, "collect_interval_s", "Une capture toutes les", None, 5, 60, 5,
+                                   lambda v: f"{v:.0f} s", to_value=float), "collect_samples")
 
     def _rect_text(self) -> str:
         r = self.app.cfg.manual_minimap_rect
