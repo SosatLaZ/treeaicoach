@@ -27,6 +27,19 @@ With these weights a 3 000 gold lead is ~71 % at 15:00 and ~65 % at 30:00, an ac
 buff is worth ~+15 points and the Elder buff ~+20 points at even gold, close to public
 pro-play estimates. It only uses the official Live Client API (event feed, Tab items).
 
+Calibration (2026-10, the user's 25 recorded rift games with a known result, 17 with the League
+Client timeline; Brier score, 0.24 = always say the base rate; accuracy of p >= 50 %)::
+
+    inputs                                   10 min          15 min          20 min
+    exact (client timeline, n = 17/17/15)    0.152  88 %     0.128  82 %     0.153  80 %
+    live, before (Tab gold only, no towers)  0.212  71 %     0.124  79 %     0.101  94 %
+    live, now    (gold blend + towers)       0.170  83 %     0.111  83 %     0.114  89 %   (n = 24/24/18)
+
+A single scale factor on the logit (0.7 .. 1.4) or other W_GOLD / W_KILL values moved the log loss
+by < 0.02 (noise at this sample size): the weights are kept. What was wrong was the INPUT: the live
+game names its structures "Turret_TChaos_L1_P3_..." (towers and inhibitors were never counted) and
+the Tab item-gold diff misses everyone's unspent gold (see :func:`estimated_gold_diff`).
+
 The probability is spoken (style != "sobre") when it moved by more than
 :data:`SWING_POINTS` since the last spoken value, at most once every :data:`SWING_GAP_S`.
 
@@ -55,6 +68,8 @@ W_DRAKE, W_SOUL, W_BARON, W_BUFF, W_ELDER, W_INHIB = 0.08, 0.55, 0.15, 0.65, 0.9
 P_MIN, P_MAX = 0.03, 0.97
 BARON_BUFF_S, ELDER_BUFF_S, INHIB_RESPAWN_S = 180.0, 150.0, 300.0
 W_LEVEL = 0.20               # per level of team-average lead (partly counted in the gold already)
+#: team gold-lead estimate (see :func:`estimated_gold_diff`, least squares on real games, rounded)
+GOLD_CS, GOLD_KILL, GOLD_TOWER, GOLD_TAB_W = 10.0, 340.0, 600.0, 0.3
 
 SWING_POINTS = 15.0          # spoken when the probability moved by more than this (points)
 SWING_GAP_S = 180.0          # ... at most once every 3 minutes
@@ -130,12 +145,11 @@ def team_lookup(game: Any) -> dict[str, str]:
 
 
 def _structure_owner(name: Any) -> str | None:
-    s = str(name or "")
-    if "_T1_" in s or s.endswith("_T1"):
-        return "ORDER"
-    if "_T2_" in s or s.endswith("_T2"):
-        return "CHAOS"
-    return None
+    """Owner team of a structure: the live game sends "Turret_TChaos_L1_P3_..." (not only the old
+    documented "Turret_T2_..."), phase.structure_owner reads both."""
+    from treeaicoach.phase import structure_owner
+
+    return structure_owner(name)
 
 
 def _killer_team(ev: dict, lookup: dict[str, str]) -> str | None:
@@ -152,6 +166,38 @@ def _ftime(ev: dict) -> float:
         return v if math.isfinite(v) else 0.0
     except (TypeError, ValueError):
         return 0.0
+
+
+def _team_cs_diff(game: Any) -> float | None:
+    """My team's creep score - theirs (Live Client ``scores.creepScore``, steps of 10 in game)."""
+    try:
+        ours = [p for p in [game.me, *(getattr(game, "allies", None) or [])] if p is not None]
+        theirs = list(getattr(game, "enemies", None) or [])
+        if not ours or not theirs:
+            return None
+        cs = lambda ps: sum(_num((getattr(p, "scores", None) or {}).get("creepScore")) or 0.0 for p in ps)  # noqa: E731
+        return cs(ours) - cs(theirs)
+    except Exception:
+        return None
+
+
+def estimated_gold_diff(game: Any, kill_diff: int, tower_diff: int, scoreboard: Any = None) -> float:
+    """Team gold lead estimate from what the Live Client exposes (gold of the other players is
+    hidden). Calibrated on 197 frames of 17 real games against the League Client timeline (exact
+    total gold): the Tab item-gold diff alone (``scoreboard.team_gold_diff``: unspent gold
+    invisible, a fresh purchase swings it by 3 000) is off by 2 650 RMS; the earned-gold estimate
+    ``GOLD_CS * cs + GOLD_KILL * kills + GOLD_TOWER * towers`` by 1 700, and the blend
+    ``GOLD_TAB_W * Tab + (1 - GOLD_TAB_W) * earned`` by ~1 600 (correlation 0.95)."""
+    earned = GOLD_KILL * kill_diff + GOLD_TOWER * tower_diff + GOLD_CS * (_team_cs_diff(game) or 0.0)
+    tab = None
+    if scoreboard is not None and getattr(scoreboard, "players", None):
+        try:
+            tab = float(scoreboard.team_gold_diff)
+        except Exception:
+            tab = None
+    if tab is None or not math.isfinite(tab):
+        return earned
+    return GOLD_TAB_W * tab + (1.0 - GOLD_TAB_W) * earned
 
 
 def factors_from_game(game: Any, scoreboard: Any = None) -> WinFactors | None:
@@ -205,14 +251,7 @@ def factors_from_game(game: Any, scoreboard: Any = None) -> WinFactors | None:
             if gt - et < BARON_BUFF_S:
                 baron_buff = 1 if t == mine else -1
     other = "CHAOS" if mine == "ORDER" else "ORDER"
-    gold = None
-    if scoreboard is not None and getattr(scoreboard, "players", None):
-        try:
-            gold = float(scoreboard.team_gold_diff)
-        except Exception:
-            gold = None
-    if gold is None:
-        gold = 300.0 * (kills[mine] - kills[other]) + 500.0 * (towers[mine] - towers[other])
+    gold = estimated_gold_diff(game, kills[mine] - kills[other], towers[mine] - towers[other], scoreboard)
     soul = 1 if drakes[mine] >= 4 else -1 if drakes[other] >= 4 else 0
     level_diff = 0.0
     try:

@@ -48,8 +48,37 @@ def test_factors_from_events():
     f = hype.factors_from_game(G(1800.0, ev))
     assert (f.kill_diff, f.tower_diff, f.dragon_diff, f.baron_diff, f.baron_buff, f.inhib_diff) == (1, 1, -1, 1, 1, 1)
     sb = SimpleNamespace(players=(1,), team_gold_diff=-2500)
-    assert hype.factors_from_game(G(1800.0, ev), sb).gold_diff == -2500
+    # Tab item gold blended with the earned-gold estimate (1 kill, 1 tower, CS even here)
+    earned = hype.GOLD_KILL * 1 + hype.GOLD_TOWER * 1
+    expect = hype.GOLD_TAB_W * -2500 + (1 - hype.GOLD_TAB_W) * earned
+    assert abs(hype.factors_from_game(G(1800.0, ev), sb).gold_diff - expect) < 1e-6
+    assert hype.factors_from_game(G(1800.0, ev)).gold_diff == earned       # no Tab summary
     assert hype.factors_from_game(GameInfo()) is None
+
+
+def test_factors_read_the_live_structure_names():
+    """The live game sends "Turret_TChaos_L1_P3_<id>_0" / "Inhib_TOrder_L2_P1_<id>_0" (20 real
+    games); the old "_T1_ / _T2_" check counted 0 towers and 0 inhibitors all game."""
+    ev = [{"EventID": 1, "EventName": "TurretKilled", "EventTime": 800.0,
+           "TurretKilled": "Turret_TChaos_L1_P3_2254202041_0", "KillerName": "A1"},
+          {"EventID": 2, "EventName": "TurretKilled", "EventTime": 900.0,
+           "TurretKilled": "Turret_TChaos_L0_P3_511845594_0", "KillerName": "A1"},
+          {"EventID": 3, "EventName": "TurretKilled", "EventTime": 980.0,
+           "TurretKilled": "Turret_TOrder_L2_P3_1509986696_0", "KillerName": "E1"},
+          {"EventID": 4, "EventName": "InhibKilled", "EventTime": 1700.0,
+           "InhibKilled": "Inhib_TChaos_L1_P1_1931666598_0", "KillerName": "A2"}]
+    f = hype.factors_from_game(G(1800.0, ev))
+    assert (f.tower_diff, f.inhib_diff) == (1, 1)
+    f2 = hype.factors_from_game(G(2100.0, ev))            # the inhibitor respawned (5 min)
+    assert f2.inhib_diff == 0
+
+
+def test_gold_estimate_uses_the_creep_scores():
+    g = G(900.0)
+    g.me.scores = {"creepScore": 100}
+    g.enemies[0].scores = {"creepScore": 60}
+    assert hype.estimated_gold_diff(g, 0, 0) == hype.GOLD_CS * 40
+    assert hype.estimated_gold_diff(g, 0, 0, SimpleNamespace(players=(), team_gold_diff=9999)) == hype.GOLD_CS * 40
 
 
 def test_caster_lines_only_big_moments_and_new_events():
@@ -88,16 +117,16 @@ def test_win_prob_swing_policy():
     c = hype.HypeCaster(SimpleNamespace(caster_style="coach"))
     sb = SimpleNamespace(players=(1,), team_gold_diff=0)
     assert c.update(0.0, G(900.0), sb) == []
-    sb.team_gold_diff = 6000
+    sb.team_gold_diff = 20000            # Tab item gold: 30 % of the gold estimate
     out = c.update(10.0, G(910.0), sb)
     assert len(out) == 1 and "Victoire" in out[0] and "%" in out[0]
-    sb.team_gold_diff = -6000
+    sb.team_gold_diff = -20000
     assert c.update(60.0, G(960.0), sb) == []                        # < 3 min since the last one
     assert c.update(400.0, G(1300.0), sb)
     assert c.hud_text().startswith("Victoire ")
     sobre = hype.HypeCaster(SimpleNamespace(caster_style="sobre"))
     sobre.update(0.0, G(900.0), SimpleNamespace(players=(1,), team_gold_diff=0))
-    assert sobre.update(10.0, G(910.0), SimpleNamespace(players=(1,), team_gold_diff=9000)) == []
+    assert sobre.update(10.0, G(910.0), SimpleNamespace(players=(1,), team_gold_diff=30000)) == []
     assert sobre.win_probability() > 0.8
     assert c.update(0.0, None) == [] and c.update(0.0, object()) == []
 
