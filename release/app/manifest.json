@@ -1,25 +1,25 @@
 {
- "version": "2.19.0",
+ "version": "2.20.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "92e66db7bb029f4bd96ad172b09fbd2ec7ea80c5d85a41e23e2285b133827c61",
+ "sha256": "c40aa8be53ae2c62e5f56aaa8cf7d3eb5fa680122d2ba206438792264dc61310",
  "chunks": [
   {
-   "name": "2.19.0/part-01.zip",
-   "size": 88157389,
-   "sha256": "24e6b83aa7eae4ca36174dbbe6fe8cb4ffc762f76abf636c6a411f28a735a3b7",
-   "files": 269
+   "name": "2.20.0/part-01.zip",
+   "size": 88156996,
+   "sha256": "1ce22209970ba73f772f668c08b735986a04658dc8cc75832f27330af6b655de",
+   "files": 264
   },
   {
-   "name": "2.19.0/part-02.zip",
-   "size": 7604990,
-   "sha256": "9fe70c25ee44bd77563cf422935e758a5c783a2f61242687b1b77342e4c63466",
-   "files": 442
+   "name": "2.20.0/part-02.zip",
+   "size": 7653520,
+   "sha256": "5fb59540a762f51a4b1a8f0a5e4329020f168a8674ea9ec17c8d2653c0f0a7e1",
+   "files": 447
   }
  ],
- "total_size": 95762379,
+ "total_size": 95810516,
  "launcher": {
-  "sha256": "85dc0e9a26786ca3ae9178e4ddce810a7359734ff6bd9d8eadc9e5e9f98bca96",
-  "size": 7532537
+  "sha256": "a9390bd56e82d0b43909a564226df468e7f2dc731a10e55a0025c77e37d3b9c4",
+  "size": 7531374
  },
- "notes": "2.19 : 20 nouveaut\u00e9s (or exact, fen\u00eatre de kill, back, d\u00e9fense adapt\u00e9e, victoire %, compo, anti-tilt, profil, carte des morts\u2026)"
+ "notes": "2.20 : barre de l'essentiel, Hey coach r\u00e9par\u00e9 sur Discord, Test micro."
 }
