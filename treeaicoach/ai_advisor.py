@@ -57,6 +57,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from treeaicoach.fmtutil import clock
+from treeaicoach.phase import structure_owner as _structure_owner
 
 log = logging.getLogger(__name__)
 
@@ -979,7 +980,7 @@ def recent_events(game: Any, limit: int = 10) -> list[str]:
         elif name in ("TurretKilled", "InhibKilled"):
             struct = str(ev.get("TurretKilled") or ev.get("InhibKilled") or "")
             mine = game.my_team
-            owner = "ORDER" if "_T1_" in struct else "CHAOS" if "_T2_" in struct else None
+            owner = _structure_owner(struct)
             whose = "" if owner is None else (" (la nôtre)" if owner == mine else " (la leur)")
             out.append(f"{t} {'tour' if name == 'TurretKilled' else 'inhibiteur'} détruit{whose}")
         elif name in ("Ace", "Multikill", "FirstBlood"):
@@ -1940,7 +1941,7 @@ class ComebackDetector:
             elif name in _OBJ_EVENTS:
                 if name in ("TurretKilled", "InhibKilled"):
                     struct = str(ev.get("TurretKilled") or ev.get("InhibKilled") or "")
-                    owner = "ORDER" if "_T1_" in struct else "CHAOS" if "_T2_" in struct else None
+                    owner = _structure_owner(struct)
                     if owner is not None:
                         (theirs if owner == mine else ours).append(et)
                 else:

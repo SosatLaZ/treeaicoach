@@ -35,7 +35,6 @@ from __future__ import annotations
 import bisect
 import logging
 import math
-import re
 import unicodedata
 from typing import Any
 
@@ -1028,10 +1027,9 @@ _DRAGON_FR = {"fire": "infernal", "water": "de l'océan", "earth": "des montagne
 
 
 def _structure_owner(name: str) -> str | None:
-    m = re.search(r"_T([12])_", name or "")
-    if not m:
-        return None
-    return "ORDER" if m.group(1) == "1" else "CHAOS"
+    from treeaicoach.phase import structure_owner   # both name formats (old / live 2025+)
+
+    return structure_owner(name)
 
 
 def _objectives(rec: _Rec) -> dict[str, Any]:

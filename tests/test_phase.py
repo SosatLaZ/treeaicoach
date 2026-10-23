@@ -135,3 +135,34 @@ def test_positioning_praise_when_present_for_our_dragon():
     assert pr and "dragon" in pr[0][1]
     sc = pc.scores()["mid"]
     assert sc.moments == 1 and sc.present == 1
+
+
+def test_parse_structures_live_format_and_owner():
+    """The live game's names (checked against the League Client timeline of 20 real games): L0 bot,
+    L1 mid, L2 top; P3 outer, P2 inner, P1 inhibitor turret / inhibitor, P4 / P5 nexus."""
+    assert ph.parse_turret("Turret_TChaos_L1_P3_2254202041_0") == ("CHAOS", "mid", 1)
+    assert ph.parse_turret("Turret_TOrder_L2_P2_1509986696_0") == ("ORDER", "top", 2)
+    assert ph.parse_turret("Turret_TOrder_L0_P1_3795288474_0") == ("ORDER", "bot", 3)
+    assert ph.parse_turret("Turret_TChaos_L1_P5_342097928_0") == ("CHAOS", "mid", 4)
+    assert ph.parse_turret("Inhib_TChaos_L1_P1_1931666598_0") is None
+    assert ph.parse_inhib("Inhib_TChaos_L2_P1_2351107073_0") == ("CHAOS", "top")
+    assert ph.parse_inhib("Turret_TChaos_L2_P1_1_0") is None
+    for name, owner in (("Turret_TOrder_L1_P2_1_0", "ORDER"), ("Inhib_TChaos_L0_P1_1_0", "CHAOS"),
+                        ("Turret_T1_C_05_A", "ORDER"), ("Barracks_T2_L1", "CHAOS"), ("Minion_T200", None),
+                        (None, None)):
+        assert ph.structure_owner(name) == owner
+
+
+def test_engine_base_siege_reads_live_names():
+    from types import SimpleNamespace
+
+    from treeaicoach import engine_base
+
+    assert engine_base.structure_owner("Turret_TOrder_L1_P2_1_0") == "ORDER"
+    ev = [{"EventName": "TurretKilled", "EventTime": 1500.0, "TurretKilled": "Turret_TOrder_L1_P1_1_0"}]
+    g = SimpleNamespace(my_team="ORDER", events=ev, all_players=lambda: [])
+    assert engine_base.siege_state(g, 1510.0)[0] == "siege"
+    g2 = SimpleNamespace(my_team="ORDER", all_players=lambda: [],
+                         events=[{"EventName": "TurretKilled", "EventTime": 1500.0,
+                                  "TurretKilled": "Turret_TOrder_L1_P3_1_0"}])      # an outer turret: no siege
+    assert engine_base.siege_state(g2, 1510.0)[0] is None

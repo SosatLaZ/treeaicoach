@@ -290,10 +290,19 @@ ACE_TEXT = "Défends ta base à ta réapparition, avec ton équipe"
 ACE_TEXT_FAR = "Attends ton équipe en base : ne sors pas seul"
 
 
+def _is_base_turret(name: Any) -> bool:
+    """Inhibitor / nexus turret (tier >= 3), any name format."""
+    from treeaicoach.phase import parse_turret
+
+    tur = parse_turret(name)
+    return tur is not None and tur[2] >= 3
+
+
 def structure_owner(name: Any) -> str | None:
     """"Turret_T1_C_05_A" / "Barracks_T2_L1" -> "ORDER" / "CHAOS" (None if unknown)."""
-    n = str(name or "")
-    return "ORDER" if "_T1_" in n or n.endswith("_T1") else "CHAOS" if "_T2_" in n or n.endswith("_T2") else None
+    from treeaicoach.phase import structure_owner as _owner   # both name formats (old / live 2025+)
+
+    return _owner(name)
 
 
 def siege_state(game: Any, gt: float, enemies_in_base: int = 0) -> tuple[str | None, str | None]:
@@ -318,7 +327,7 @@ def siege_state(game: Any, gt: float, enemies_in_base: int = 0) -> tuple[str | N
                 struct = e.get("TurretKilled") or e.get("InhibKilled")
                 if structure_owner(struct) != my:
                     continue
-                base = name == "InhibKilled" or bool(_BASE_TURRET_RE.search(str(struct)))
+                base = name == "InhibKilled" or bool(_BASE_TURRET_RE.search(str(struct))) or _is_base_turret(struct)
                 base_open = base_open or base
                 if base and 0 <= age <= SIEGE_EVENT_S:
                     recent = True

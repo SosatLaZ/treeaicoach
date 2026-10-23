@@ -65,9 +65,40 @@ PHASE_FR = {"laning": "phase de voie", "mid": "milieu de partie", "late": "fin d
 OTHER = {"ORDER": "CHAOS", "CHAOS": "ORDER"}
 
 
+#: Live Client structure names come in two formats. The old documented one
+#: ("Turret_T2_L_03_A", "Barracks_T1_C1") and the one the live game actually sends since 2025
+#: ("Turret_TChaos_L1_P3_2254202041_0", "Inhib_TOrder_L2_P1_..."), checked against the League
+#: Client timeline of 20 real games: L0 = bot, L1 = mid, L2 = top; P3 = outer, P2 = inner,
+#: P1 = inhibitor turret / inhibitor, P4 / P5 = nexus turrets.
+_NEW_RE = re.compile(r"(Turret|Inhib|Barracks)_T(Order|Chaos)_L(\d)_P(\d)", re.I)
+_NEW_LANE = {"0": "bot", "1": "mid", "2": "top"}
+_NEW_TIER = {"3": 1, "2": 2, "1": 3, "4": 4, "5": 4}
+
+
+def structure_owner(name: Any) -> str | None:
+    """Owner team of a destroyed structure name (both formats): "ORDER" / "CHAOS" / None."""
+    n = str(name or "")
+    m = _NEW_RE.search(n)
+    if m:
+        return "ORDER" if m.group(2).lower() == "order" else "CHAOS"
+    if "_T1_" in n or n.endswith("_T1") or re.search(r"_T1[LCR]\b", n):
+        return "ORDER"
+    if "_T2_" in n or n.endswith("_T2") or re.search(r"_T2[LCR]\b", n):
+        return "CHAOS"
+    return None
+
+
 def parse_turret(name: Any) -> tuple[str, str, int] | None:
-    """``"Turret_T2_L_03_A"`` -> ``("CHAOS", "top", 1)`` (owner team, lane, tier; 4 = nexus)."""
-    m = re.search(r"Turret_T([12])_([LCR])_(\d\d)", str(name or ""))
+    """``"Turret_T2_L_03_A"`` / ``"Turret_TChaos_L2_P3_..."`` -> ``("CHAOS", "top", 1)`` (owner
+    team, lane, tier; 4 = nexus)."""
+    s = str(name or "")
+    m = _NEW_RE.search(s)
+    if m:
+        lane, tier = _NEW_LANE.get(m.group(3)), _NEW_TIER.get(m.group(4))
+        if m.group(1).lower() != "turret" or lane is None or tier is None:
+            return None
+        return ("ORDER" if m.group(2).lower() == "order" else "CHAOS", lane, tier)
+    m = re.search(r"Turret_T([12])_([LCR])_(\d\d)", s)
     if not m:
         return None
     tier = _TIER.get((m.group(2), m.group(3)))
@@ -77,8 +108,15 @@ def parse_turret(name: Any) -> tuple[str, str, int] | None:
 
 
 def parse_inhib(name: Any) -> tuple[str, str] | None:
-    """``"Barracks_T2_L1"`` -> ``("CHAOS", "top")``."""
-    m = re.search(r"Barracks_T([12])_([LCR])", str(name or ""))
+    """``"Barracks_T2_L1"`` / ``"Inhib_TChaos_L2_P1_..."`` -> ``("CHAOS", "top")``."""
+    s = str(name or "")
+    m = _NEW_RE.search(s)
+    if m:
+        lane = _NEW_LANE.get(m.group(3))
+        if m.group(1).lower() == "turret" or lane is None:
+            return None
+        return ("ORDER" if m.group(2).lower() == "order" else "CHAOS", lane)
+    m = re.search(r"Barracks_T([12])_([LCR])", s)
     if not m:
         return None
     return ("ORDER" if m.group(1) == "1" else "CHAOS", _LANE_CODE[m.group(2)])
@@ -441,5 +479,5 @@ class EndGameCaller:
         return []
 
 
-__all__ = ["MapState", "map_state", "parse_turret", "parse_inhib", "TURRET_UV", "NEXUS_UV", "FOUNTAIN_UV",
+__all__ = ["MapState", "map_state", "parse_turret", "parse_inhib", "structure_owner", "TURRET_UV", "NEXUS_UV", "FOUNTAIN_UV",
            "EndGameCaller", "MacroCall", "PHASE_FR", "DeadPlayer"]

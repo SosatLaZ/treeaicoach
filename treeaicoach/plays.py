@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from treeaicoach.fmtutil import finite_loose
+from treeaicoach.phase import structure_owner as _structure_owner
 
 log = logging.getLogger(__name__)
 
@@ -447,12 +448,12 @@ class PlayClassifier:
                                 is_me(e.get("KillerName")) or any(is_me(a) for a in assisters), eid)
             elif name == "TurretKilled" and self._tower is not None:
                 struct = str(e.get("TurretKilled") or "")
-                owner = "ORDER" if "_T1_" in struct else "CHAOS" if "_T2_" in struct else None
+                owner = _structure_owner(struct)
                 if owner is not None and owner != my_team:
                     self._tower["taken"] = True
             if name in ("TurretKilled", "InhibKilled"):
                 struct = str(e.get("TurretKilled") or e.get("InhibKilled") or "")
-                owner = "ORDER" if "_T1_" in struct else "CHAOS" if "_T2_" in struct else None
+                owner = _structure_owner(struct)
                 if owner is not None and owner != my_team:
                     self._struct_t = float(ctx.t)
 
