@@ -10,9 +10,11 @@ end-to-end layer (the bot is a member of the channel's MLS group, so it holds ev
 (discord-ext-voice-recv, the usual add-on, was last released in June 2025 and knows nothing of DAVE,
 mandatory since March 2026: it would hand DAVE ciphertext to the Opus decoder.)
 
-Per speaker: 48 kHz stereo -> 16 kHz mono, then the SAME logic as the PC assistant
-(voice_assistant: Vosk wake grammar + ``is_wake``, then a free recognizer for the question, ≤ 6 s,
-ends on 1.2 s of silence). Packets stop while someone is silent, so a ticker ends questions on time.
+Per speaker: 48 kHz stereo -> 16 kHz mono (per-SSRC streaming low-pass resampler), then the SAME logic as
+the PC assistant (voice_assistant.WakeEngine: grammar + free recognizers, then the question, ≤ 6 s, ends on
+1.2 s of silence). Packets STOP while someone is silent (Discord's voice activity): the recognizers would
+never see the end of « Hey coach », so a ticker feeds them 0.75 s of comfort noise 0.3 s after the last
+packet (measured on 48 edge-tts wake clips through Opus: 31/48 woke before, see tests/test_wake_realworld).
 
 Never on the bot's own audio (own SSRC / user id dropped; blocks dropped while the bot plays, so a
 friend's speakers can't wake it); rate limits per speaker and overall. Never raises."""
@@ -40,6 +42,7 @@ QUESTIONS_WINDOW_S = 600.0
 QUESTIONS_MAX = 10                       # and at most 10 questions in 10 minutes, everyone together
 BUSY_MAX_S = 25.0                        # a question being answered blocks the next one this long at most
 WAKE_RESET_SILENCE_S = 1.5               # a speaker silent this long: his wake recognizer starts afresh
+PREROLL_S = 0.25                         # comfort noise in front of a talk spurt
 FLUSH_AFTER_S = 0.3                      # packets stopped this long: comfort noise ends the utterance (see tick)
 BOT_SPEAKING_MAX_S = 30.0                # the bot « playing » longer than this: the gate is stuck, ignored
 QUEUE_MAX = 400                          # 16 kHz blocks waiting for the recognizers (~8 s of 1 speaker)
@@ -139,6 +142,10 @@ class Speaker:
     def feed(self, pcm16: bytes) -> list[tuple[str, str]]:
         """Events: ``("wake", "")`` / ``("question", text)``."""
         self.last_audio = self._clock()
+        if self.flushed and self.q_rec is None and not self._buf:
+            # a talk spurt starts (Discord sent nothing before): a short silence in front, as a mic would
+            # give, so the recognizers start from silence and « Hé… » is not glued to nothing
+            self._buf += va.comfort_noise(PREROLL_S)
         self.flushed = False
         self._buf += pcm16
         out: list[tuple[str, str]] = []

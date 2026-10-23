@@ -7,8 +7,11 @@ Offline and light:
   (``vosk-model-small-fr-0.22``, ~41 MB zip) downloaded ONCE into ``paths.cache_dir()/voice`` the first
   time the assistant is switched on (never bundled in the exe);
 * microphone = ``sounddevice`` (PortAudio wheel), 16 kHz mono int16, 0.25 s blocks;
-* only a grammar-limited recognizer runs continuously (the wake phrase variants: cheap); the free
-  recognizer runs only for the question (<= :data:`QUESTION_MAX_S`, ends on silence);
+* while listening, :class:`WakeEngine` runs a grammar-limited recognizer (the wake phrase variants) AND a
+  free one (any French word: « et coach », « Coach, … », « tri coach ») side by side; the free one goes on
+  with the question when it was said in the same breath (<= :data:`QUESTION_MAX_S`, ends on silence);
+* other device rates (44.1 / 48 kHz, stereo) go through a streaming anti-aliased :class:`Resampler`; a very
+  quiet mic (< -40 dBFS speech) gets a slow gain (:class:`Agc`, x8 at most);
 * the microphone is CLOSED when not in game (unless a test is running): zero CPU between games;
 * blocks heard while the app's own voice is speaking are dropped (no self-trigger);
 * push-to-talk: a hotkey (``hotkey_voice_ask``) skips the wake phrase and listens to the question.
@@ -254,6 +257,7 @@ class WakeDetector:
 
 
 FREE_WAKE = True                # a free (any French word) recognizer runs next to the grammar one
+FREE_TAIL_BLOCKS = 4            # the free recognizer is fed speech + 0.75 s after it (its utterance can end)
 FLUSH_S = 0.75                  # comfort noise fed when the audio stops (Discord sends nothing in silences)
 AGC_ENGAGE_RMS = 330.0          # speech peaks below -40 dBFS: a very quiet mic, brought up…
 AGC_TARGET_RMS = 1500.0         # … to about -27 dBFS…
@@ -338,6 +342,7 @@ class WakeEngine:
         self._carry: list[str] = []
         self._last_logged = ""
         self._log_at = -1e9
+        self._free_tail = 0
 
     def ready(self) -> bool:
         """Recognizers built (lazily). The grammar one is required (its errors propagate); the free one
@@ -362,7 +367,12 @@ class WakeEngine:
             self.rms = block_rms(block)
             blk = self.agc.process(block) if self.agc is not None else block
             woke = self.det.feed(self.grammar_rec, blk)
-            woke_f = self.det_free.feed(self.free_rec, blk) if self.free_rec is not None else False
+            if self.det._quiet == 0:                 # speech: the free recognizer runs, and 0.75 s after
+                self._free_tail = FREE_TAIL_BLOCKS
+            woke_f = False
+            if self.free_rec is not None and self._free_tail > 0 and not woke:
+                self._free_tail -= 1                 # (silence costs nothing: ~16 % of a core while fed)
+                woke_f = self.det_free.feed(self.free_rec, blk)
             self.det_free.rms = self.det.rms
             text = self.det_free.last_text if self.free_rec is not None and self.det_free.last_text \
                 else self.det.last_text

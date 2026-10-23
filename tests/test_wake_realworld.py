@@ -156,7 +156,7 @@ QUIET = bytes(BLOCK * 2)
 
 def test_free_recognizer_wakes_when_the_grammar_one_does_not() -> None:
     gram = Scripted([("P", "[unk]", None)] * 6)                      # the grammar one hears nothing useful
-    free = Scripted([("P", "", None)] * 2 + [("P", "et coach", None), ("P", "et coach quel", None)])
+    free = Scripted([("P", "et coach", None), ("P", "et coach quel", None)])     # fed speech blocks only
     eng = va.WakeEngine(lambda g: gram if g else free)
     got = [eng.feed(b) for b in [QUIET, QUIET, LOUD, LOUD]]
     assert got == [False, False, False, True] and eng.last_source == "libre"
@@ -169,7 +169,7 @@ def test_free_recognizer_wakes_when_the_grammar_one_does_not() -> None:
 
 def test_wake_and_question_in_one_final_result_is_carried() -> None:
     gram = Scripted([("P", "", None)] * 3)
-    free = Scripted([("P", "", None)] * 2 + [("F", "hé coach quel objet j'achète", [0.9] * 5)])
+    free = Scripted([("F", "hé coach quel objet j'achète", [0.9] * 5)])
     eng = va.WakeEngine(lambda g: gram if g else free)
     assert [eng.feed(b) for b in [QUIET, QUIET, LOUD]] == [False, False, True]
     assert eng.take_question() == (None, ["hé coach quel objet j'achète"], "")
@@ -254,7 +254,7 @@ def test_discord_stuck_bot_voice_gate_does_not_deafen() -> None:
 
 def test_discord_question_said_in_the_same_breath_is_kept() -> None:
     clock = [0.0]
-    free_items = [("P", "", None)] + [("P", "et coach", None), ("P", "et coach quel objet", None)]
+    free_items = [("P", "et coach", None), ("P", "et coach quel objet", None)]
 
     def make(g):  # noqa: ANN001, ANN202
         return Scripted([("P", "[unk]", None)] * 20) if g else Scripted(free_items + [("F", "et coach quel objet acheter", [1] * 5)])
@@ -386,3 +386,16 @@ def test_assistant_uses_the_engine_end_to_end() -> None:
         assert asked == ["quel objet acheter"] and a.wakes == 1
     finally:
         a.stop()
+
+
+def test_free_recognizer_idles_in_silence() -> None:
+    """CPU: the free recognizer (~16 % of a core when fed) only hears speech and the 1 s after it."""
+    free = Scripted([])
+    eng = va.WakeEngine(lambda g: Scripted([]) if g else free)
+    for _ in range(20):
+        eng.feed(QUIET)
+    assert free.i == -1
+    eng.feed(LOUD)
+    for _ in range(10):
+        eng.feed(QUIET)
+    assert free.i + 1 == va.FREE_TAIL_BLOCKS                       # the loud block + 0.75 s after it
