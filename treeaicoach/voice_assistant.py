@@ -71,7 +71,8 @@ WAKE_GRAMMAR: tuple[str, ...] = (
     "le coach", "ce coach", "du coach", "mon coach", "ton coach", "au coach", "de coach",
     "le coche", "les coachs", "et toi", "et tu", "et si", "et on", "et les", "et le", "et là", "[unk]",
 )
-_WAKE_RE = re.compile(r"\b(?:hey|hei|he|eh|et|ey|hay|ai)\s+(?:coach|coache|coaches|coche|coatch|cotch|couche|cauche|koch|coq)\b")
+_WAKE_RE = re.compile(r"\b(?:hey|hei|he|eh|et|ey|hay|ai|oh|ho|tree|tri|trie|tris)\s+"
+                      r"(?:coach|coache|coaches|coachs|coche|coatch|cotch|kotch|couche|cauche|koch|coq)\b")
 
 
 def normalize(text: Any) -> str:
@@ -90,9 +91,24 @@ def is_wake(text: Any) -> bool:
 #: model writes for the real phrase); WEAK = what it writes for other accents (« hé coche ») but also hears
 #: in ordinary talk (« il faut cocher ») -> accepted only when said alone (final result, nothing after).
 #: « coq » is never a wake (« Hé, quelqu'un… » is heard « hé coq ») : it stays in the grammar as a decoy.
-WAKE_LEADS = frozenset({"hey", "hei", "he", "eh", "et", "ey", "hay", "ai", "e"})
-WAKE_STRONG = frozenset({"coach", "coache", "coaches", "coatch", "cotch"})
-WAKE_WEAK = frozenset({"coche", "couche", "cauche", "koch"})
+WAKE_LEADS = frozenset({"hey", "hei", "he", "eh", "et", "ey", "hay", "ai", "e", "oh", "ho", "o",
+                        # « Tree coach » / « Hey Tree » (the app's name): what the French model writes for « tree »
+                        "tree", "tri", "trie", "tris"})
+WAKE_STRONG = frozenset({"coach", "coache", "coaches", "coachs", "coatch", "cotch", "kotch"})
+WAKE_WEAK = frozenset({"coche", "couche", "cauche", "koch", "coches", "cocher", "caouche"})
+TREE_WORDS = frozenset({"tree", "tri", "trie", "tris"})
+_HEY = frozenset({"hey", "hei", "he", "eh", "ey", "hay"})     # « Hey Tree » alone (never « et tri »)
+#: any other spelling of /kotʃ/ the free recognizer may write (« kaoche », « coachent »…): weak
+_COACH_LIKE = re.compile(r"^(?:c|k|q)(?:o|oa|au|ao|ô)t?(?:ch|sh)(?:e|es|s|ent)?$")
+
+
+def _coach_class(w: str) -> str:
+    """``"strong"`` / ``"weak"`` / ``""`` for one normalized word."""
+    if w in WAKE_STRONG:
+        return "strong"
+    if w in WAKE_WEAK or _COACH_LIKE.match(w):
+        return "weak"
+    return ""
 WEAK_MIN_CONF = 0.6             # « hé coche » alone: both words at least this sure
 BARE_MIN_CONF = 0.7             # « Coach, … » alone at the start: the word's confidence in a final result
 QUIET_BLOCKS = 2                # « Coach » alone counts only after this many quiet blocks (0.5 s of silence)
@@ -108,9 +124,10 @@ def wake_kind(text: Any, confs: Sequence[float] | None = None, final: bool = Fal
             if t[i] in WAKE_STRONG and t[i - 1] in WAKE_LEADS:
                 return "strong"
         real = [w for w in t if w != "unk"]
-        if final and len(real) == 2 and t[:2] == real and real[0] in WAKE_LEADS and real[1] in WAKE_WEAK \
+        if final and len(real) == 2 and t[:2] == real and real[0] in WAKE_LEADS \
+                and (_coach_class(real[1]) or (real[1] in TREE_WORDS and real[0] in _HEY)) \
                 and (not confs or min(float(c) for c in confs[:2]) >= WEAK_MIN_CONF):
-            return "weak"
+            return "weak"                   # « hé coche » / « hey tri » said alone
         if t and t[0] in WAKE_STRONG:
             c = confs[0] if confs else None
             if not final or c is None or float(c) >= BARE_MIN_CONF:
@@ -174,10 +191,13 @@ class WakeDetector:
         self._floor: float | None = None     # background level (slow-tracked minimum)
         self.last_text = ""
         self.last_kind = ""
+        self.last_final = ""                # the last final result (``[unk]`` removed)
+        self.partial_text = ""              # the utterance in progress ("" between utterances)
         self.rms = 0.0
 
     def reset(self) -> None:
         self._run = 0
+        self.partial_text = ""
         self._after_quiet = self._quiet >= QUIET_BLOCKS
 
     def _energy(self, block: bytes) -> None:
@@ -205,11 +225,14 @@ class WakeDetector:
                 text, confs = self._out(rec, True)
                 kind = wake_kind(text, confs, final=True)
                 self._run = 0
+                self.partial_text = ""
+                self.last_final = " ".join(str(text).replace("[unk]", " ").split())
                 ok = bool(kind) and (kind != "bare" or self._after_quiet)
                 self._after_quiet = self._quiet >= QUIET_BLOCKS
                 self._note(text, kind if ok else "")
                 return ok
             text, _ = self._out(rec, False)
+            self.partial_text = " ".join(str(text).replace("[unk]", " ").split())
             kind = wake_kind(text)
             if kind == "bare" and (not self._after_quiet or self._quiet >= QUIET_BLOCKS):
                 kind = ""                   # not after a silence / « heard » in the silence itself
@@ -230,13 +253,206 @@ class WakeDetector:
             self.last_text, self.last_kind = t[:60], kind
 
 
+FREE_WAKE = True                # a free (any French word) recognizer runs next to the grammar one
+FLUSH_S = 0.75                  # comfort noise fed when the audio stops (Discord sends nothing in silences)
+AGC_ENGAGE_RMS = 330.0          # speech peaks below -40 dBFS: a very quiet mic, brought up…
+AGC_TARGET_RMS = 1500.0         # … to about -27 dBFS…
+AGC_MAX_GAIN = 8.0              # … by at most x8 (+18 dB). Louder mics are never touched.
+
+_NOISE: bytes | None = None
+
+
+def comfort_noise(seconds: float) -> bytes:
+    """``seconds`` of very low noise (rms ~3), int16 16 kHz: what Vosk needs to see an utterance END
+    when the audio itself stops. Deterministic. Never raises."""
+    global _NOISE
+    try:
+        if _NOISE is None:
+            import numpy as np  # noqa: PLC0415
+
+            _NOISE = np.random.default_rng(7).normal(0.0, 3.0, SAMPLE_RATE * 2).astype("<i2").tobytes()
+        n = max(0, int(SAMPLE_RATE * float(seconds))) * 2
+        return (_NOISE * (n // len(_NOISE) + 1))[:n]
+    except Exception:
+        return bytes(max(0, int(SAMPLE_RATE * float(seconds or 0))) * 2)
+
+
+class Agc:
+    """Slow automatic gain for quiet microphones (headset mics set to 10 % in Windows): the speech peak
+    level is tracked and brought up to :data:`AGC_TARGET_RMS`, x1..x:data:`AGC_MAX_GAIN`. Gain falls at
+    once on loud speech, rises slowly. Loud enough mics are untouched (gain 1). Never raises."""
+
+    def __init__(self) -> None:
+        self.env: float | None = None
+        self.gain = 1.0
+        self._floor: float | None = None
+
+    def process(self, block: bytes) -> bytes:
+        try:
+            import numpy as np  # noqa: PLC0415
+
+            a = np.frombuffer(block[: len(block) // 2 * 2], dtype="<i2").astype(np.float32)
+            if not a.size:
+                return block
+            r = float(np.sqrt(np.mean(a * a)))
+            self._floor = r if self._floor is None else min(r, self._floor * 1.02 + 1.0)
+            if r > max(40.0, 3.0 * self._floor):                     # speech-like block
+                self.env = r if self.env is None else max(r, self.env * 0.97)
+            if self.env:
+                want = 1.0 if self.env >= AGC_ENGAGE_RMS else \
+                    max(1.0, min(AGC_MAX_GAIN, AGC_TARGET_RMS / max(self.env, 1.0)))
+                self.gain = want if want < self.gain else min(want, self.gain * 1.15)
+            if self.gain <= 1.01:
+                return block
+            return np.clip(a * self.gain, -32768, 32767).astype("<i2").tobytes()
+        except Exception:
+            return block
+
+
+class WakeEngine:
+    """The always-on « Hey coach » listener of ONE audio stream (the PC mic, or one Discord member):
+
+    * the grammar recognizer (:data:`WAKE_GRAMMAR` + ``[unk]``: forced to choose between the wake variants
+      and « something else ») AND a free recognizer (any French word: « et coach », « coach il est où »,
+      « hey tri coach ») side by side, each with its :class:`WakeDetector`; either one wakes;
+    * a slow :class:`Agc` in front of both (quiet mics), the meter shows the RAW level;
+    * :meth:`flush` feeds comfort noise so an utterance whose audio just STOPPED (Discord) still ends;
+    * after a wake, :meth:`take_question` hands over what was already said after the wake phrase (« Hey
+      coach quel objet » in one breath): the free recognizer itself when mid-utterance, else the words.
+
+    ``make_rec(grammar | None)`` builds recognizers (raises / None when the engine is missing)."""
+
+    def __init__(self, make_rec: Callable[[Any], Any], *, free: bool | None = None, agc: bool = True) -> None:
+        self._make_rec = make_rec
+        self.free = FREE_WAKE if free is None else bool(free)
+        self.grammar_rec: Any = None
+        self.free_rec: Any = None
+        self.det = WakeDetector()
+        self.det_free = WakeDetector()
+        self.agc = Agc() if agc else None
+        self.rms = 0.0
+        self.last_text = ""
+        self.last_kind = ""
+        self.last_source = ""            # "grammaire" / "libre"
+        self._handover: Any = None
+        self._carry: list[str] = []
+        self._last_logged = ""
+        self._log_at = -1e9
+
+    def ready(self) -> bool:
+        """Recognizers built (lazily). The grammar one is required (its errors propagate); the free one
+        is optional."""
+        if self.grammar_rec is None:
+            self.grammar_rec = self._make_rec(WAKE_GRAMMAR)
+            if self.grammar_rec is None:
+                return False
+        if self.free and self.free_rec is None:
+            try:
+                self.free_rec = self._make_rec(None)
+            except Exception:
+                log.debug("free wake recognizer unavailable", exc_info=True)
+                self.free = False
+        return True
+
+    def feed(self, block: bytes) -> bool:
+        """One 16 kHz mono block; True = wake phrase heard. Never raises (False)."""
+        try:
+            if not self.ready():
+                return False
+            self.rms = block_rms(block)
+            blk = self.agc.process(block) if self.agc is not None else block
+            woke = self.det.feed(self.grammar_rec, blk)
+            woke_f = self.det_free.feed(self.free_rec, blk) if self.free_rec is not None else False
+            self.det_free.rms = self.det.rms
+            text = self.det_free.last_text if self.free_rec is not None and self.det_free.last_text \
+                else self.det.last_text
+            if text:
+                self.last_text = text
+            if self.det_free.last_final and self.det_free.last_final != self._last_logged \
+                    and time.monotonic() - self._log_at >= 3.0:
+                self._last_logged, self._log_at = self.det_free.last_final, time.monotonic()
+                log.info("Écoute : entendu « %s »", self._last_logged[:60])
+            if not (woke or woke_f):
+                return False
+            src = self.det_free if woke_f else self.det
+            self.last_kind, self.last_source = src.last_kind or "?", "libre" if woke_f else "grammaire"
+            self._prepare_handover(woke_f)
+            return True
+        except Exception:
+            log.debug("wake engine: block failed", exc_info=True)
+            return False
+
+    def _prepare_handover(self, woke_free: bool) -> None:
+        self._handover, self._carry = None, []
+        fd = self.det_free
+        if self.free_rec is not None:
+            if fd.partial_text:                      # mid-utterance: the question goes on in this recognizer
+                self._handover, self._carry = self.free_rec, []
+                self.free_rec = None                 # a fresh one is built for the next wake
+            elif woke_free and fd.last_final:        # « hé coach quel objet » ended in one final result
+                if strip_wake(fd.last_final).strip():
+                    self._carry = [fd.last_final]
+        try:
+            self.grammar_rec.reset()
+        except Exception:
+            pass
+        if self.free_rec is not None:
+            try:
+                self.free_rec.reset()
+            except Exception:
+                pass
+        self.det.reset()
+        fd.reset()
+
+    def take_question(self) -> tuple[Any, list[str], str]:
+        """``(recognizer to go on with or None, words already heard, the partial in progress)`` for the
+        question after a wake. One shot."""
+        rec, carry, self._handover, self._carry = self._handover, self._carry, None, []
+        partial = ""
+        if rec is not None:
+            try:
+                partial = str(rec.partial() or "")
+            except Exception:
+                partial = ""
+        return rec, carry, partial
+
+    def reset(self) -> None:
+        for r in (self.grammar_rec, self.free_rec):
+            if r is not None:
+                try:
+                    r.reset()
+                except Exception:
+                    pass
+        self.det.reset()
+        self.det_free.reset()
+
+    def flush(self, seconds: float = FLUSH_S) -> bool:
+        """Comfort noise after the audio stopped, so the recognizers end the utterance (a wake said just
+        before a silence fires here). True = woke."""
+        if self.grammar_rec is None:
+            return False
+        noise = comfort_noise(seconds)
+        n = BLOCK_FRAMES * 2
+        for i in range(0, len(noise) - n + 1, n):
+            if self.feed(noise[i:i + n]):
+                return True
+        return False
+
+
+def question_text(parts: Sequence[str], partial: str = "") -> str:
+    """The question so far: what was heard, without the wake phrase."""
+    return strip_wake(" ".join([p for p in parts if p] + ([partial] if partial else []))).strip()
+
+
 def strip_wake(text: Any) -> str:
     """The question without a leading wake phrase (« hé coach quel item » -> « quel item »)."""
     s = str(text or "").strip()
     m = _WAKE_RE.search(normalize(s))
-    if m is None:
-        return s
     words = s.split()
+    if m is None:
+        if words and normalize(words[0]) in WAKE_STRONG:      # « Coach, il est où le jungler ? »
+            return " ".join(words[1:])
+        return s
     n = len(normalize(s)[:m.end()].split())
     while n < len(words) and normalize(words[n]) in ("aie", "ai", "ail"):
         n += 1
@@ -278,12 +494,12 @@ class VoskRecognizer:
 
         if grammar:
             self._r = vosk.KaldiRecognizer(model, SAMPLE_RATE, json.dumps(list(grammar), ensure_ascii=False))
-            try:
-                self._r.SetWords(True)
-            except Exception:
-                pass
         else:
             self._r = vosk.KaldiRecognizer(model, SAMPLE_RATE)
+        try:
+            self._r.SetWords(True)          # word confidences (« Coach » alone must be a sure word)
+        except Exception:
+            pass
         self.last_raw = ""
         self.last_confs: list[float] | None = None
 
@@ -337,6 +553,60 @@ def resample_to_16k(pcm: bytes, rate: int, channels: int) -> bytes:
         return b""
 
 
+class Resampler:
+    """Streaming int16 interleaved ``channels`` at ``rate`` -> int16 mono 16 kHz, for a stream cut in
+    blocks (0.25 s mic reads, 20 ms Discord packets): channel mean, a 63-tap windowed-sinc low-pass at
+    7.2 kHz (no aliasing of the 8-24 kHz band into speech) whose history crosses block borders, then
+    decimation (48 kHz: 1 sample in 3) or linear interpolation with the fractional position carried over
+    (44.1 kHz). Blocks join without a click. Never raises (b"" on bad input)."""
+
+    TAPS = 63
+
+    def __init__(self, rate: int, channels: int = 1) -> None:
+        import numpy as np  # noqa: PLC0415
+
+        self.rate, self.channels = int(rate), max(1, int(channels))
+        self.step = self.rate / SAMPLE_RATE
+        n = np.arange(self.TAPS) - (self.TAPS - 1) / 2
+        fc = 7200.0 / self.rate
+        h = 2 * fc * np.sinc(2 * fc * n) * np.blackman(self.TAPS)
+        self._h = (h / h.sum()).astype(np.float64)
+        self._hist = np.zeros(self.TAPS - 1, np.float64)
+        self._pos = 0.0            # position of the next output sample, in filtered input samples
+        self._ylast = 0.0
+
+    def process(self, pcm: bytes) -> bytes:
+        try:
+            import numpy as np  # noqa: PLC0415
+
+            ch = self.channels
+            a = np.frombuffer(pcm[: len(pcm) // (2 * ch) * 2 * ch], dtype="<i2").astype(np.float64)
+            a = a.reshape(-1, ch).mean(axis=1)
+            if self.rate == SAMPLE_RATE:
+                return np.clip(np.round(a), -32768, 32767).astype("<i2").tobytes()
+            if a.size == 0:
+                return b""
+            x = np.concatenate([self._hist, a])
+            y = np.convolve(x, self._h, mode="valid")          # len == a.size, aligned to a
+            self._hist = x[-(self.TAPS - 1):]
+            if self.step == int(self.step):                    # 48 kHz, 32 kHz: plain decimation
+                k = int(self.step)
+                start = int(self._pos)
+                out = y[start::k]
+                self._pos = (start - y.size) % k
+            else:                                              # 44.1 kHz: interpolation, phase carried
+                ye = np.concatenate([[self._ylast], y])        # ye[i + 1] == y[i]; ye[0] = last of before
+                idx = np.arange(self._pos, y.size - 1, self.step)
+                i0 = np.floor(idx).astype(np.int64)
+                f = idx - i0
+                out = ye[i0 + 1] * (1 - f) + ye[i0 + 2] * f
+                self._pos = (idx[-1] + self.step - y.size) if idx.size else self._pos - y.size
+                self._ylast = float(y[-1])
+            return np.clip(np.round(out), -32768, 32767).astype("<i2").tobytes()
+        except Exception:
+            return b""
+
+
 class SoundDeviceMic:
     """sounddevice RawInputStream -> int16 mono 16 kHz blocks. Tries 16 kHz mono first (PortAudio /
     MME resample), then the device's own rate and channel count (44.1 / 48 kHz, stereo headsets) with
@@ -368,6 +638,7 @@ class SoundDeviceMic:
                 last = exc
         if self._s is None:
             raise last or OSError("no input stream")
+        self._rs = Resampler(self.rate, self.channels) if (self.rate, self.channels) != (SAMPLE_RATE, 1) else None
         log.info("Assistant vocal : micro ouvert (%d Hz, %d canal%s)", self.rate, self.channels,
                  "" if self.channels == 1 else "aux")
 
@@ -375,8 +646,8 @@ class SoundDeviceMic:
         try:
             data, _overflow = self._s.read(int(self.rate * BLOCK_S))
             data = bytes(data)
-            if self.rate != SAMPLE_RATE or self.channels != 1:
-                data = resample_to_16k(data, self.rate, self.channels)
+            if self._rs is not None:
+                data = self._rs.process(data)
             return data
         except Exception:
             log.debug("mic read failed", exc_info=True)
@@ -511,6 +782,9 @@ class VoiceAssistant:
         self._model_path = model_path
         self._model: Any = None
         self._lock = threading.Lock()
+        self._model_lock = threading.Lock()
+        self._checking = False
+        self.mic_checking = False        # « Test micro 5 s » running
         self._wake_evt = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -535,6 +809,8 @@ class VoiceAssistant:
         self.level = 0.0                 # mic level 0..1 (last block)
         self.heard = ""                  # last words the recognizer wrote (the « Écoute » panel)
         self.mic_rate = 0
+        self.peak_rms = 0.0
+        self._lvl_blocks = 0
         self.silent_mic = False
         self._quiet_blocks = 0
         self._speak_since = -1.0
@@ -614,12 +890,94 @@ class VoiceAssistant:
         self._wake_evt.set()
         return True
 
+    def mic_check(self, done: Callable[[str, bool], None] | None = None, seconds: float = 5.0) -> bool:
+        """« Test micro 5 s »: records ``seconds`` from the chosen mic (even with the switch off, outside a
+        game) with the free recognizer and reports the transcript and the max level through
+        ``done(message, ok)``; the « Écoute » row shows the level live. False when one already runs."""
+        with self._lock:
+            if self._checking:
+                return False
+            self._checking = True
+        threading.Thread(target=self._mic_check_run, args=(done, float(seconds)), name="TreeAI-mic-check",
+                         daemon=True).start()
+        return True
+
+    def _mic_check_run(self, done: Callable[[str, bool], None] | None, seconds: float) -> None:
+        msg, ok, mic = "Test micro impossible.", False, None
+        try:
+            try:
+                rec = self._make_rec(None)
+            except Exception as exc:
+                global ENGINE_ERROR
+                ENGINE_ERROR = mask_error(exc)
+                rec = None
+            if rec is None:
+                msg = "Test micro : reconnaissance vocale indisponible" + (f" ({ENGINE_ERROR})." if ENGINE_ERROR else ".")
+                return
+            mic = self._open_mic()
+            if mic is None:
+                msg = "Test micro : micro introuvable, choisis-en un autre."
+                return
+            self.mic_checking = True
+            self.heard = ""
+            agc, peak, parts, partial = Agc(), 0.0, [], ""
+            for _ in range(max(1, int(seconds / BLOCK_S))):
+                block = mic.read()
+                if block is None:
+                    break
+                r = block_rms(block)
+                peak = max(peak, r)
+                self.level = level_of(r)
+                b = agc.process(block)
+                if rec.accept(b):
+                    t = rec.result()
+                    if t:
+                        parts.append(t)
+                    partial = ""
+                else:
+                    partial = rec.partial() or ""
+                self.heard = " ".join(parts + ([partial] if partial else []))[-60:]
+            tail = rec.final()
+            if tail:
+                parts.append(tail)
+            text = " ".join(parts).strip()
+            import math  # noqa: PLC0415
+
+            db = 20 * math.log10(max(peak, 1.0) / 32768.0)
+            if peak < SILENT_MIC_RMS:
+                msg = ("Test micro : aucun son reçu. Micro coupé, pas le bon, ou bloqué par Windows "
+                       "(Confidentialité > Microphone).")
+            elif text:
+                ok = True
+                self.heard = text[-60:]
+                wake = " « Hey coach » reconnu." if wake_kind(text) in ("strong", "bare") or is_wake(text) else ""
+                msg = f"Test micro : entendu « {text[:120]} » (niveau max {db:.0f} dB).{wake}"
+            else:
+                msg = f"Test micro : du son (niveau max {db:.0f} dB) mais aucun mot compris."
+            if peak >= SILENT_MIC_RMS and db < -40:
+                msg += " Micro très faible : monte son volume dans Windows (Son > Enregistrement)."
+        except Exception:
+            log.warning("Assistant vocal : test micro échoué", exc_info=True)
+        finally:
+            if mic is not None:
+                mic.close()
+            self.mic_checking = False
+            with self._lock:
+                self._checking = False
+            log.info("Assistant vocal : %s", msg)
+            if done is not None:
+                try:
+                    done(msg, ok)
+                except Exception:
+                    pass
+
     def snapshot(self) -> dict:
         """The live « Écoute » panel: ``stage`` (+ French ``stage_label``), mic ``level`` 0..1 and its
         ``bar``, ``heard`` (last words the recognizer wrote), ``status``, counters. Any thread, cheap."""
-        lvl = float(self.level) if self.listening else 0.0
+        lvl = float(self.level) if self.listening or self.mic_checking else 0.0
         return {"stage": self.stage, "stage_label": STAGE_LABELS.get(self.stage, self.stage), "level": lvl,
-                "bar": level_bar(lvl), "heard": self.heard, "status": self.status, "listening": self.listening,
+                "bar": level_bar(lvl), "heard": self.heard, "status": self.status,
+                "listening": self.listening or self.mic_checking, "mic_checking": self.mic_checking,
                 "testing": self._testing(), "wakes": self.wakes, "questions": self.questions,
                 "dropped_self": self.dropped_self, "mic_rate": self.mic_rate, "engine_error": ENGINE_ERROR,
                 "silent_mic": self.silent_mic}
@@ -686,6 +1044,10 @@ class VoiceAssistant:
     def _make_rec(self, grammar: Sequence[str] | None) -> Recognizer | None:
         if self._rec_factory is not None:
             return self._rec_factory(grammar)
+        with self._model_lock:                  # the wake loop, the mic test and Discord share one model
+            return self._make_rec_locked(grammar)
+
+    def _make_rec_locked(self, grammar: Sequence[str] | None) -> Recognizer | None:
         if self._model is None:
             path = self._model_path or model_dir()
             if not model_ready(path):
@@ -713,7 +1075,7 @@ class VoiceAssistant:
             except Exception:
                 pass
             _tune_model_conf(path)
-            self._model = vosk.Model(str(path))
+            self._model = vosk.Model(model_path_for_engine(path))
             log.info("Assistant vocal : modèle prêt")
         return VoskRecognizer(self._model, grammar)
 
@@ -731,23 +1093,33 @@ class VoiceAssistant:
             self.status = "Micro introuvable : choisis-en un autre dans Alertes et voix."
             return None
 
-    def _observe(self, det: WakeDetector) -> None:
-        """Level + last words for the « Écoute » panel; a mic sending only zeros for 10 s is reported."""
-        self.level = level_of(det.rms)
-        if det.last_text:
-            self.heard = det.last_text
-        self._quiet_blocks = self._quiet_blocks + 1 if det.rms < SILENT_MIC_RMS else 0
+    def _observe(self, eng: Any) -> None:
+        """Level + last words for the « Écoute » panel; a mic sending only zeros for 10 s is reported;
+        the level is logged every 30 s while listening (« niveau max -38 dB ») so a log tells a quiet mic."""
+        self.level = level_of(eng.rms)
+        if eng.last_text:
+            self.heard = eng.last_text
+        self.peak_rms = max(self.peak_rms, float(eng.rms))
+        self._lvl_blocks += 1
+        if self._lvl_blocks >= int(30 / BLOCK_S):
+            import math  # noqa: PLC0415
+
+            db = 20 * math.log10(max(self.peak_rms, 1.0) / 32768.0)
+            log.info("Assistant vocal : niveau max %.0f dB sur 30 s%s", db,
+                     " (micro très faible : monte son volume dans Windows)" if db < -40 else "")
+            self._lvl_blocks, self.peak_rms = 0, 0.0
+        self._quiet_blocks = self._quiet_blocks + 1 if eng.rms < SILENT_MIC_RMS else 0
         silent = self._quiet_blocks >= SILENT_MIC_BLOCKS
         if silent != self.silent_mic:
             self.silent_mic = silent
             if silent:
                 log.warning("Assistant vocal : le micro n'envoie aucun son depuis 10 s")
-                self.status = "Le micro n'envoie aucun son : coupé, ou ce n'est pas le bon ? (Alertes et voix > Micro)"
+                self.status = ("Le micro n'envoie aucun son : coupé, pas le bon, ou bloqué par Windows "
+                               "(Paramètres > Confidentialité > Microphone : autoriser les applications de bureau).")
 
     def _run(self) -> None:
         mic: Mic | None = None
-        wake_rec: Recognizer | None = None
-        detector = WakeDetector()
+        wake_rec: WakeEngine | None = None
         retry_at = -1.0
         try:
             while not self._stop.is_set():
@@ -767,7 +1139,8 @@ class VoiceAssistant:
                     continue
                 if wake_rec is None:
                     try:
-                        wake_rec = self._make_rec(WAKE_GRAMMAR)
+                        eng = WakeEngine(self._make_rec)
+                        wake_rec = eng if eng.ready() else None
                     except Exception as exc:
                         log.warning("Voice assistant: recognizer unavailable", exc_info=True)
                         global ENGINE_ERROR
@@ -810,14 +1183,14 @@ class VoiceAssistant:
                     wake_rec.reset()
                     continue
                 self._set_stage("listening")
-                woke = detector.feed(wake_rec, block)
-                self._observe(detector)
+                woke = wake_rec.feed(block)
+                self._observe(wake_rec)
                 if woke:
                     self.wakes += 1
-                    log.info("Assistant vocal : mot-clé entendu (%s)", detector.last_kind or "?")
+                    log.info("Assistant vocal : mot-clé entendu (%s, %s) dans « %s »", wake_rec.last_kind,
+                             wake_rec.last_source, wake_rec.last_text)
+                    self._question(mic, wake_rec.take_question())
                     wake_rec.reset()
-                    detector.reset()
-                    self._question(mic)
         except Exception:
             log.exception("Voice assistant loop failed")
             self._set_stage("error")
@@ -827,23 +1200,26 @@ class VoiceAssistant:
                 mic.close()
             self.listening = False
 
-    def _question(self, mic: Mic) -> None:
-        """Wake heard (or push-to-talk): chime, then free recognition until silence / the time limit."""
+    def _question(self, mic: Mic, handover: tuple[Any, list[str], str] | None = None) -> None:
+        """Wake heard (or push-to-talk): chime, then free recognition until silence / the time limit.
+        ``handover`` = what the wake engine already heard after the wake phrase (« hey coach quel objet »
+        said in one breath): its recognizer goes on, its words count."""
         self._set_stage("wake")
         try:
             self.on_wake()
         except Exception:
             pass
-        rec = self._make_rec(None)
+        rec, parts, last_partial = handover if handover is not None else (None, [], "")
+        parts = list(parts)
+        if rec is None:
+            rec = self._make_rec(None)
         if rec is None:
             return
         self._set_stage("question")
         start = self._clock()
         chime_until = start + CHIME_S            # the chime itself does not cut the player's question
         last_change = start
-        last_partial = ""
-        parts: list[str] = []
-        heard_any = False
+        heard_any = bool(question_text(parts, last_partial))
         while not self._stop.is_set():
             now = self._clock()
             if now - start >= QUESTION_MAX_S:
@@ -864,9 +1240,10 @@ class VoiceAssistant:
                 if txt:
                     parts.append(txt)
                     self.heard = " ".join(parts)[-60:]
-                    heard_any = True
-                    last_change = self._clock()
-                    if len(" ".join(parts).split()) >= MIN_QUESTION_WORDS:
+                    if question_text(parts):
+                        heard_any = True
+                        last_change = self._clock()
+                    if len(question_text(parts).split()) >= MIN_QUESTION_WORDS:
                         break
                 last_partial = ""
             else:
@@ -874,8 +1251,9 @@ class VoiceAssistant:
                 if p and p != last_partial:
                     last_partial = p
                     self.heard = (" ".join(parts + [p]))[-60:]
-                    heard_any = True
-                    last_change = self._clock()
+                    if question_text(parts, p):
+                        heard_any = True
+                        last_change = self._clock()
         if last_partial or not parts:
             tail = rec.final()
             if tail:
@@ -938,6 +1316,35 @@ def assistant() -> VoiceAssistant:
         if _SINGLETON is None:
             _SINGLETON = VoiceAssistant()
         return _SINGLETON
+
+
+def model_path_for_engine(path: Path) -> str:
+    """The model path as libvosk can open it. On Windows libvosk opens files with ANSI (narrow) paths:
+    a cache under a user name with accents (« C:\\Users\\Clément\\… ») cannot be opened -> the 8.3 short
+    path, else a copy under ``%ProgramData%\\TreeAICoach\\voice``. Never raises."""
+    p = str(path)
+    if sys.platform != "win32" or p.isascii():
+        return p
+    try:
+        import ctypes  # noqa: PLC0415
+
+        buf = ctypes.create_unicode_buffer(1024)
+        if ctypes.windll.kernel32.GetShortPathNameW(p, buf, 1024) and buf.value.isascii():  # type: ignore[attr-defined]
+            log.info("Assistant vocal : chemin du modèle raccourci (accents)")
+            return buf.value
+    except Exception:
+        pass
+    try:
+        dest = Path(os.environ.get("ProgramData") or "C:\\ProgramData") / "TreeAICoach" / "voice" / Path(p).name
+        if str(dest).isascii():
+            if not model_ready(dest):
+                shutil.rmtree(dest, ignore_errors=True)
+                shutil.copytree(p, dest)
+            log.info("Assistant vocal : modèle copié vers un chemin sans accents")
+            return str(dest)
+    except Exception:
+        log.warning("Assistant vocal : copie du modèle impossible", exc_info=True)
+    return p
 
 
 def _tune_model_conf(path: Path) -> None:

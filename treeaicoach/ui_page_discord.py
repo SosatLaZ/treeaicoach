@@ -63,6 +63,32 @@ def listen_text(view: dict | None) -> str:
     return " · ".join(bits)
 
 
+LISTEN_TEST_DESC = ("30 s, même hors partie : chacun dit « Hey coach » puis une question. Son niveau et son "
+                    "dernier mot entendu s'affichent sous son nom.")
+
+
+def listen_chain_text(listen: dict | None) -> str:
+    """Every stage of the voice receive chain in one line, so « ça ne marche pas » can be located:
+    « Audio reçu : 1 234 paquets, 1 200 décodés · 30 chiffrés (DAVE) illisibles ». "" before the bot
+    listens. Pure (no Qt)."""
+    st = dict((listen or {}).get("stats") or {})
+    if not st.get("attached"):
+        return ""
+    n, dec = int(st.get("packets") or 0), int(st.get("decoded") or 0)
+    if n == 0:
+        return "Audio reçu : aucun paquet pour l'instant (personne n'a parlé, ou le bot n'entend pas le salon)."
+    def fr(x: int) -> str:
+        return f"{x:,}".replace(",", "\u202f")
+    bits = [f"Audio reçu : {fr(n)} paquets, {fr(dec)} décodés"]
+    for key, label in (("undecryptable", "chiffrés (DAVE) illisibles"), ("unmapped", "sans membre associé"),
+                       ("opus_errors", "erreurs de décodage"), ("bad_rtp", "illisibles (transport)")):
+        k = int(st.get(key) or 0)
+        if k:
+            bits.append(f"{fr(k)} {label}")
+    status = str((listen or {}).get("status") or "")
+    return " · ".join(bits) + (f"\n{status}" if status else "")
+
+
 def friend_rows(snap: dict, links: dict | None = None) -> list[dict]:
     """The "Dans le vocal" rows: ``{id, title, desc, listen, tone, choices, value, editable}`` per voice
     member: who plays (either team: « joue Lux (support) », « joue en face : Darius (top) ») and who does
@@ -311,9 +337,9 @@ class DiscordPage:
                        "N'importe qui du salon dit « Hey coach » puis sa question : petit son, et le bot "
                        "répond dans le salon en une ou deux phrases. Reconnaissance sur ton PC (modèle "
                        "français téléchargé une fois, ~41 Mo), seulement en partie.")
-        says.add(self.W.Row("Tester l'écoute", "30 s, même hors partie : chacun dit « Hey coach » puis une "
-                            "question. Son niveau et son dernier mot entendu s'affichent sous son nom.",
-                            self.W.button("Tester : dis « Hey coach »", self._listen_test)))
+        self._listen_row = says.add(self.W.Row("Tester l'écoute", LISTEN_TEST_DESC,
+                                               self.W.button("Tester : dis « Hey coach »", self._listen_test)))
+        self._listen_chain = ""
         app.switch_row(says, "discord_objectives", "Objectifs",
                        "« Dragon dans 30 secondes », « Baron dans 30 secondes », « Larves dans 30 secondes ».")
         app.switch_row(says, "discord_team_calls", "Calls d'équipe",
@@ -562,6 +588,11 @@ class DiscordPage:
         self._swap(self._chan_lay, "_chan_group", grp)
 
     def _update_friends(self, snap: dict, force: bool = False) -> None:
+        chain = listen_chain_text(snap.get("listen"))
+        row = getattr(self, "_listen_row", None)
+        if row is not None and chain != getattr(self, "_listen_chain", ""):
+            self._listen_chain = chain
+            row.set_desc(LISTEN_TEST_DESC + ("\n" + chain if chain else ""))
         links = dict(getattr(self.app.cfg, "discord_links", None) or {})
         rows = friend_rows(snap, links)
         sig = tuple((r["id"], r["title"], r["desc"], tuple(r["choices"]), r["value"], r["editable"]) for r in rows)

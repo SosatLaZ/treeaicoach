@@ -40,6 +40,8 @@ QUESTIONS_WINDOW_S = 600.0
 QUESTIONS_MAX = 10                       # and at most 10 questions in 10 minutes, everyone together
 BUSY_MAX_S = 25.0                        # a question being answered blocks the next one this long at most
 WAKE_RESET_SILENCE_S = 1.5               # a speaker silent this long: his wake recognizer starts afresh
+FLUSH_AFTER_S = 0.3                      # packets stopped this long: comfort noise ends the utterance (see tick)
+BOT_SPEAKING_MAX_S = 30.0                # the bot « playing » longer than this: the gate is stuck, ignored
 QUEUE_MAX = 400                          # 16 kHz blocks waiting for the recognizers (~8 s of 1 speaker)
 MAX_SPEAKERS = 8
 
@@ -112,8 +114,8 @@ class Speaker:
         self._make_rec = make_rec
         self._clock = clock
         self._buf = bytearray()
-        self.wake_rec: Any = None
-        self.detector = va.WakeDetector()
+        self.engine = va.WakeEngine(make_rec)
+        self.flushed = True                 # comfort noise already fed since the last packet
         self.q_rec: Any = None              # set while a question is being recorded
         self.q_start = 0.0
         self.q_change = 0.0
@@ -126,9 +128,18 @@ class Speaker:
         self.stage = "écoute"
         self.blocks = 0
 
+    @property
+    def wake_rec(self) -> Any:
+        return self.engine.grammar_rec
+
+    @property
+    def detector(self) -> va.WakeDetector:
+        return self.engine.det
+
     def feed(self, pcm16: bytes) -> list[tuple[str, str]]:
         """Events: ``("wake", "")`` / ``("question", text)``."""
         self.last_audio = self._clock()
+        self.flushed = False
         self._buf += pcm16
         out: list[tuple[str, str]] = []
         while len(self._buf) >= BLOCK_BYTES:
@@ -146,30 +157,40 @@ class Speaker:
                 if txt:
                     self.q_parts.append(txt)
                     self.heard = " ".join(self.q_parts)[-60:]
-                    self.q_heard, self.q_change = True, self._clock()
-                    if len(" ".join(self.q_parts).split()) >= va.MIN_QUESTION_WORDS:
+                    if va.question_text(self.q_parts):
+                        self.q_heard, self.q_change = True, self._clock()
+                    if len(va.question_text(self.q_parts).split()) >= va.MIN_QUESTION_WORDS:
                         return self._end()
                 self.q_partial = ""
             else:
                 p = rec.partial()
                 if p and p != self.q_partial:
-                    self.q_partial, self.q_heard, self.q_change = p, True, self._clock()
+                    self.q_partial = p
                     self.heard = " ".join(self.q_parts + [p])[-60:]
+                    if va.question_text(self.q_parts, p):
+                        self.q_heard, self.q_change = True, self._clock()
             return self.tick()
-        if self.wake_rec is None:
-            self.wake_rec = self._make_rec(va.WAKE_GRAMMAR)
-            if self.wake_rec is None:
-                self.stage = "modèle indisponible"
-                return []
-        woke = self.detector.feed(self.wake_rec, block)
-        self.level = va.level_of(self.detector.rms)
-        if self.detector.last_text:
-            self.heard = self.detector.last_text
+        try:
+            ok = self.engine.ready()
+        except Exception:
+            log.debug("Discord listen: recognizer unavailable", exc_info=True)
+            ok = False
+        if not ok:
+            self.stage = "modèle indisponible"
+            return []
+        return self._wake_block(block)
+
+    def _wake_block(self, block: bytes, noise: bool = False) -> list[tuple[str, str]]:
+        eng = self.engine
+        woke = eng.feed(block)
+        if not noise:
+            self.level = va.level_of(eng.rms)
+        if eng.last_text:
+            self.heard = eng.last_text
         if woke:
-            self.wake_rec.reset()
-            self.detector.reset()
             self.stage = "mot-clé entendu"
-            log.info("Discord écoute : mot-clé entendu (%s)", self.detector.last_kind or "?")
+            log.info("Discord écoute : mot-clé entendu (%s, %s) dans « %s »", eng.last_kind, eng.last_source,
+                     eng.last_text)
             return [("wake", "")]
         if self.stage != "écoute" and self.q_rec is None:
             self.stage = "écoute"
@@ -184,21 +205,36 @@ class Speaker:
                 "age_s": round(max(0.0, now - self.last_audio), 1) if self.last_audio > 0 else None}
 
     def start_question(self) -> bool:
-        rec = self._make_rec(None)
+        rec, parts, partial = self.engine.take_question()     # « hey coach quel objet » in one breath
+        if rec is None:
+            rec = self._make_rec(None)
         if rec is None:
             return False
         self.q_rec, self.q_start = rec, self._clock()
-        self.q_change, self.q_heard, self.q_parts, self.q_partial = self.q_start, False, [], ""
+        self.q_parts, self.q_partial = list(parts), partial
+        self.q_change, self.q_heard = self.q_start, bool(va.question_text(self.q_parts, partial))
         self.stage = "question"
-        self._buf.clear()                   # what was said with the wake phrase is not the question
         return True
 
     def tick(self) -> list[tuple[str, str]]:
         now = self._clock()
         if self.q_rec is None:
-            if self.wake_rec is not None and now - self.last_audio >= WAKE_RESET_SILENCE_S and self.last_audio > 0:
-                self.wake_rec.reset()
-                self.detector.reset()
+            if self.engine.grammar_rec is None or self.last_audio <= 0:
+                return []
+            gap = now - self.last_audio
+            if gap >= FLUSH_AFTER_S and not self.flushed:
+                # Discord sends NO packet while someone is silent: without this the recognizers never see
+                # the end of « Hey coach » (no final result) and the next words glue to it
+                self.flushed = True
+                self._buf.clear()
+                n = va.BLOCK_FRAMES * 2
+                noise = va.comfort_noise(va.FLUSH_S)
+                for i in range(0, len(noise) - n + 1, n):
+                    ev = self._wake_block(noise[i:i + n], noise=True)
+                    if ev:
+                        return ev
+            if gap >= WAKE_RESET_SILENCE_S:
+                self.engine.reset()
                 self.last_audio = 0.0
             return []
         if (now - self.q_start >= va.QUESTION_MAX_S
@@ -220,9 +256,7 @@ class Speaker:
         if q:
             self.heard = q[-60:]
         self.stage = "écoute"
-        if self.wake_rec is not None:
-            self.wake_rec.reset()
-            self.detector.reset()
+        self.engine.reset()
         return [("question", q)]
 
 
@@ -261,6 +295,8 @@ class VoiceListener:
         self.test_until = -1.0              # « Tester » on the Discord page: listen even outside a game
         self.on_test: Callable[[str, str], None] = lambda _u, _t: None
         self.views: dict[str, dict] = {}    # uid -> the member's « Écoute » line (worker thread writes)
+        self._speak_since = -1.0
+        self._speak_stuck_logged = False
 
     # -- any thread ---------------------------------------------------------------------------
     def testing(self) -> bool:
@@ -344,15 +380,11 @@ class VoiceListener:
             return
         if item is not None:
             uid, pcm = item
-            try:
-                speaking = bool(self.bot_speaking())
-            except Exception:
-                speaking = False
-            if speaking:
+            if self._bot_speaking():
                 self.dropped_self += 1
                 sp = self._speakers.get(uid)
-                if sp is not None and sp.q_rec is None and sp.wake_rec is not None:
-                    sp.wake_rec.reset()
+                if sp is not None and sp.q_rec is None:
+                    sp.engine.reset()
             else:
                 sp = self._speakers.get(uid)
                 if sp is None:
@@ -367,6 +399,26 @@ class VoiceListener:
             self._event(uid, kind, text)
         now = self._clock()
         self.views = {sp.uid: sp.view(now) for sp in self._speakers.values()}
+
+    def _bot_speaking(self) -> bool:
+        """The bot plays (friends' blocks dropped: its voice in their headsets must not wake it). A gate
+        stuck on for more than :data:`BOT_SPEAKING_MAX_S` is ignored: it must not deafen the listener."""
+        try:
+            busy = bool(self.bot_speaking())
+        except Exception:
+            busy = False
+        now = self._clock()
+        if not busy:
+            self._speak_since = -1.0
+            return False
+        if self._speak_since < 0:
+            self._speak_since = now
+        if now - self._speak_since > BOT_SPEAKING_MAX_S:
+            if not self._speak_stuck_logged:
+                self._speak_stuck_logged = True
+                log.warning("Discord écoute : le bot semble parler depuis %.0f s, écoute reprise", now - self._speak_since)
+            return False
+        return True
 
     def _admit(self, uid: str) -> bool:
         now = self._clock()
@@ -440,6 +492,7 @@ class Receiver:
         self.listener = listener
         self._ssrc_user: dict[int, int] = {}
         self._decoders: dict[int, Any] = {}
+        self._resamplers: dict[int, Any] = {}     # per SSRC: 48 kHz stereo -> 16 kHz mono, low-passed
         self._vc: Any = None
         self._guess_left: dict[int, int] = {}
         self.users: set[int] = set()     # members the voice server says are connected (CLIENTS_CONNECT)
@@ -477,6 +530,7 @@ class Receiver:
                 for s in [s for s, u in self._ssrc_user.items() if u == uid]:
                     self._ssrc_user.pop(s, None)
                     self._decoders.pop(s, None)
+                    self._resamplers.pop(s, None)
         except Exception:
             pass
 
@@ -502,6 +556,7 @@ class Receiver:
             except Exception:
                 pass
         self._decoders.clear()
+        self._resamplers.clear()
 
     def _guess(self, ssrc: int, frame: bytes, conn: Any) -> int | None:
         """The sender of an SSRC whose SPEAKING message was missed (joined while he talked, message
@@ -577,6 +632,9 @@ class Receiver:
                     log.warning("Discord écoute : décodage Opus impossible (%s)", type(exc).__name__)
                 return
             self.decoded += 1
-            self.listener.push(uid, to_16k_mono(pcm48))
+            rs = self._resamplers.get(ssrc)
+            if rs is None:
+                rs = self._resamplers[ssrc] = va.Resampler(48000, 2)
+            self.listener.push(uid, rs.process(pcm48))
         except Exception:
             log.debug("Discord listen: packet dropped", exc_info=True)

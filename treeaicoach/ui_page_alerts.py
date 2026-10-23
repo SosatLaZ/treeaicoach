@@ -52,7 +52,7 @@ def listen_line(snap: dict | None) -> str:
     status when something is wrong). Pure (no Qt)."""
     if not snap:
         return "Pas encore lancée : active l'assistant ou appuie sur « Tester »."
-    bits = [str(snap.get("stage_label") or "")]
+    bits = ["test micro" if snap.get("mic_checking") else str(snap.get("stage_label") or "")]
     if snap.get("listening"):
         bits.append(f"niveau {snap.get('bar') or ''}")
     heard = str(snap.get("heard") or "")
@@ -101,6 +101,8 @@ class AlertsPage:
                     name="TreeAI-ui-mics")
         app.choice_row(va, "hotkey_voice_ask", "Touche « parler »", "Sans dire « Hey coach » : appuie, "
                        "puis pose ta question.", hotkey_choices(str(getattr(app.cfg, "hotkey_voice_ask", "") or "")))
+        va.add(W.Row("Test micro", "5 s, même assistant éteint : parle normalement, le coach écrit ce qu'il a "
+                     "compris et le niveau de ton micro.", W.button("Test micro 5 s", self.mic_check)))
         # live « Écoute » panel: every stage of the chain is visible (mic level, last words, state)
         self.listen_row = va.add(W.Row("Écoute", listen_line(None)))
         self._listen_shown = ""
@@ -187,6 +189,24 @@ class AlertsPage:
         except Exception:
             log.exception("voice assistant test failed")
             app.show_toast("Assistant vocal indisponible sur ce PC.", "warning")
+
+    def mic_check(self) -> None:
+        """« Test micro 5 s »: what the recognizer understood + the max level, in a toast (the « Écoute »
+        row shows the level and the words live)."""
+        app = self.app
+        try:
+            from treeaicoach import voice_assistant as va  # noqa: PLC0415
+
+            a = va.assistant()
+            a.configure(app.cfg)
+            if not a.mic_check(lambda msg, ok: app.post(lambda: app.show_toast(msg, "info" if ok else "warning"))):
+                app.show_toast("Test micro déjà en cours.", "info")
+                return
+            app.show_toast("Parle pendant 5 s…" if va.model_ready() else
+                           f"Téléchargement du modèle vocal (~{VA_MODEL_MB} Mo), puis parle 5 s…", "info")
+        except Exception:
+            log.exception("mic check failed")
+            app.show_toast("Test micro impossible sur ce PC.", "warning")
 
     def _win_voices(self) -> list[tuple[str, str]]:
         return [("", AUTO_VOICE)] + [(n, n) for n in self.app._voices]
