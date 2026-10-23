@@ -47,6 +47,24 @@ def _mics() -> list[tuple[str, str]]:
         return [("", "Micro par défaut de Windows")]
 
 
+def listen_line(snap: dict | None) -> str:
+    """The « Écoute » row: « modèle prêt · niveau ▮▮▮▯▯▯▯▯ · dernier mot entendu « hé coach » » (+ the
+    status when something is wrong). Pure (no Qt)."""
+    if not snap:
+        return "Pas encore lancée : active l'assistant ou appuie sur « Tester »."
+    bits = [str(snap.get("stage_label") or "")]
+    if snap.get("listening"):
+        bits.append(f"niveau {snap.get('bar') or ''}")
+    heard = str(snap.get("heard") or "")
+    bits.append(f"dernier mot entendu « {heard} »" if heard else "rien entendu pour l'instant")
+    line = " · ".join(b for b in bits if b)
+    if snap.get("stage") == "error" or snap.get("silent_mic"):
+        line += f"\n{snap.get('status') or ''}"
+        if snap.get("engine_error"):
+            line += f" ({snap['engine_error']})"
+    return line
+
+
 class AlertsPage:
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -74,7 +92,7 @@ class AlertsPage:
         va = self.page.section("Assistant vocal", "Dis « Hey coach » puis ta question : le coach répond à voix "
                                                   "haute en 1 ou 2 phrases (IA requise, compte dans la limite par "
                                                   "partie). Reconnaissance hors ligne, micro écouté seulement en partie.",
-                               action=W.button("Tester le micro", self.test_assistant))
+                               action=W.button("Tester : dis « Hey coach »", self.test_assistant))
         app.switch_row(va, "voice_assistant", "Assistant vocal « Hey coach »", "Désactivé par défaut. La "
                        f"première activation télécharge le modèle vocal français (~{VA_MODEL_MB} Mo).")
         self.mic = app.choice_row(va, "voice_assistant_mic", "Micro", "Celui de ton casque de préférence.",
@@ -83,6 +101,12 @@ class AlertsPage:
                     name="TreeAI-ui-mics")
         app.choice_row(va, "hotkey_voice_ask", "Touche « parler »", "Sans dire « Hey coach » : appuie, "
                        "puis pose ta question.", hotkey_choices(str(getattr(app.cfg, "hotkey_voice_ask", "") or "")))
+        # live « Écoute » panel: every stage of the chain is visible (mic level, last words, state)
+        self.listen_row = va.add(W.Row("Écoute", listen_line(None)))
+        self._listen_shown = ""
+        self._listen_timer = app.QtCore.QTimer(self.page)
+        self._listen_timer.timeout.connect(self._tick_listen)
+        self._listen_timer.start(400)
 
         gank = self.page.section("Alertes de gank", "Quand un ennemi menace ta position. Le mode sûr les coupe "
                                                     "toutes.")
@@ -133,17 +157,31 @@ class AlertsPage:
                        to_value=lambda x: int(x))
         self._sync_engine_rows()
 
+    def _tick_listen(self) -> None:
+        """Refresh the « Écoute » row while the page is shown (cheap: a dict copy)."""
+        try:
+            if getattr(self.app, "_closing", False) or not self.page.isVisible():
+                return
+            import sys  # noqa: PLC0415
+
+            mod = sys.modules.get("treeaicoach.voice_assistant")
+            text = listen_line(mod.assistant().snapshot() if mod is not None else None)
+            if text != self._listen_shown:
+                self._listen_shown = text
+                self.listen_row.set_desc(text)
+        except Exception:
+            log.debug("listen panel refresh failed", exc_info=True)
+
     def test_assistant(self) -> None:
-        """"Tester le micro": 20 s of listening, even outside a game; says what was heard."""
+        """"Tester : dis « Hey coach »": 20 s of listening, even outside a game and with the switch
+        off; the « Écoute » row shows the level and what is heard, a toast says the result."""
         app = self.app
         try:
             from treeaicoach import voice_assistant as va  # noqa: PLC0415
 
             a = va.assistant()
             a.configure(app.cfg)
-            if not a.test(lambda msg, ok: app.post(lambda: app.show_toast(msg, "info" if ok else "warning"))):
-                app.show_toast("Active l'assistant vocal d'abord.", "warning")
-                return
+            a.test(lambda msg, ok: app.post(lambda: app.show_toast(msg, "info" if ok else "warning")))
             app.show_toast(a.status if not va.model_ready() else
                            "Dis « Hey coach » puis une question (20 s).", "info")
         except Exception:

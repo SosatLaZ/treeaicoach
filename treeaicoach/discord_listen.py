@@ -121,6 +121,10 @@ class Speaker:
         self.q_parts: list[str] = []
         self.q_partial = ""
         self.last_audio = -1e9
+        self.level = 0.0                    # the « Écoute » row: level 0..1, last words, stage
+        self.heard = ""
+        self.stage = "écoute"
+        self.blocks = 0
 
     def feed(self, pcm16: bytes) -> list[tuple[str, str]]:
         """Events: ``("wake", "")`` / ``("question", text)``."""
@@ -133,12 +137,15 @@ class Speaker:
         return out
 
     def _block(self, block: bytes) -> list[tuple[str, str]]:
+        self.blocks += 1
         if self.q_rec is not None:
             rec = self.q_rec
+            self.level = va.level_of(va.block_rms(block))
             if rec.accept(block):
                 txt = rec.result()
                 if txt:
                     self.q_parts.append(txt)
+                    self.heard = " ".join(self.q_parts)[-60:]
                     self.q_heard, self.q_change = True, self._clock()
                     if len(" ".join(self.q_parts).split()) >= va.MIN_QUESTION_WORDS:
                         return self._end()
@@ -147,16 +154,34 @@ class Speaker:
                 p = rec.partial()
                 if p and p != self.q_partial:
                     self.q_partial, self.q_heard, self.q_change = p, True, self._clock()
+                    self.heard = " ".join(self.q_parts + [p])[-60:]
             return self.tick()
         if self.wake_rec is None:
             self.wake_rec = self._make_rec(va.WAKE_GRAMMAR)
             if self.wake_rec is None:
+                self.stage = "modèle indisponible"
                 return []
-        if self.detector.feed(self.wake_rec, block):
+        woke = self.detector.feed(self.wake_rec, block)
+        self.level = va.level_of(self.detector.rms)
+        if self.detector.last_text:
+            self.heard = self.detector.last_text
+        if woke:
             self.wake_rec.reset()
             self.detector.reset()
+            self.stage = "mot-clé entendu"
+            log.info("Discord écoute : mot-clé entendu (%s)", self.detector.last_kind or "?")
             return [("wake", "")]
+        if self.stage != "écoute" and self.q_rec is None:
+            self.stage = "écoute"
         return []
+
+    def view(self, now: float) -> dict:
+        """The member's « Écoute » line: level (0 once silent for 1 s), last words, stage."""
+        live = now - self.last_audio < 1.0
+        lvl = self.level if live else 0.0
+        return {"level": lvl, "bar": va.level_bar(lvl), "heard": self.heard,
+                "stage": "question" if self.q_rec is not None else self.stage,
+                "age_s": round(max(0.0, now - self.last_audio), 1) if self.last_audio > 0 else None}
 
     def start_question(self) -> bool:
         rec = self._make_rec(None)
@@ -164,6 +189,7 @@ class Speaker:
             return False
         self.q_rec, self.q_start = rec, self._clock()
         self.q_change, self.q_heard, self.q_parts, self.q_partial = self.q_start, False, [], ""
+        self.stage = "question"
         self._buf.clear()                   # what was said with the wake phrase is not the question
         return True
 
@@ -191,6 +217,9 @@ class Speaker:
             if tail:
                 self.q_parts.append(tail)
         q = va.strip_wake(" ".join(self.q_parts)).strip()
+        if q:
+            self.heard = q[-60:]
+        self.stage = "écoute"
         if self.wake_rec is not None:
             self.wake_rec.reset()
             self.detector.reset()
@@ -229,13 +258,30 @@ class VoiceListener:
         self.refused = 0
         self.dropped_self = 0
         self.status = ""
+        self.test_until = -1.0              # « Tester » on the Discord page: listen even outside a game
+        self.on_test: Callable[[str, str], None] = lambda _u, _t: None
+        self.views: dict[str, dict] = {}    # uid -> the member's « Écoute » line (worker thread writes)
 
     # -- any thread ---------------------------------------------------------------------------
+    def testing(self) -> bool:
+        return self._clock() < self.test_until
+
+    def test(self, seconds: float = va.TEST_WINDOW_S * 1.5) -> None:
+        """Listen for ``seconds`` even outside a game (the question is NOT sent to the AI)."""
+        self.test_until = self._clock() + float(seconds)
+        log.info("Discord écoute : test lancé (%.0f s)", seconds)
+
     def active(self) -> bool:
+        if self.testing():
+            return True
         try:
             return bool(self.should_listen())
         except Exception:
             return False
+
+    def member_views(self) -> dict[str, dict]:
+        """``{uid: {level, bar, heard, stage, age_s}}`` of the members heard so far. Any thread."""
+        return {k: dict(v) for k, v in dict(self.views).items()}
 
     def push(self, uid: Any, pcm16: bytes) -> None:
         uid = str(uid or "")
@@ -294,6 +340,7 @@ class VoiceListener:
         events: list[tuple[str, str, str]] = []
         if not self.active():
             self._speakers.clear()
+            self.views = {}
             return
         if item is not None:
             uid, pcm = item
@@ -318,6 +365,8 @@ class VoiceListener:
             events += [(sp.uid, k, t) for k, t in sp.tick()]
         for uid, kind, text in events:
             self._event(uid, kind, text)
+        now = self._clock()
+        self.views = {sp.uid: sp.view(now) for sp in self._speakers.values()}
 
     def _admit(self, uid: str) -> bool:
         now = self._clock()
@@ -335,6 +384,14 @@ class VoiceListener:
     def _event(self, uid: str, kind: str, text: str) -> None:
         sp = self._speakers.get(uid)
         if kind == "wake":
+            if sp is not None and self.testing():           # the test: no rate limit, no AI
+                if sp.start_question():
+                    self.wakes += 1
+                    try:
+                        self.on_wake(uid)
+                    except Exception:
+                        log.debug("Discord listen: on_wake failed", exc_info=True)
+                return
             if sp is None or not self._admit(uid):
                 self.refused += 1
                 return
@@ -348,6 +405,14 @@ class VoiceListener:
                 log.debug("Discord listen: on_wake failed", exc_info=True)
             return
         if kind == "question":
+            log.info("Discord écoute : question de %d mot(s)", len(text.split()))
+            if self.testing():
+                self.status = f"Test : entendu « {text} »" if text else "Test : « Hey coach » entendu, question vide."
+                try:
+                    self.on_test(uid, text)
+                except Exception:
+                    log.debug("Discord listen: on_test failed", exc_info=True)
+                return
             if len(text.split()) < va.MIN_QUESTION_WORDS:
                 self.status = "Question non comprise."
                 self.answered()
@@ -369,23 +434,46 @@ class Receiver:
     The socket callback runs on discord.py's reader thread: cheap work only, never raises."""
 
     SPEAKING, CLIENTS_CONNECT, CLIENT_DISCONNECT = 5, 11, 13
+    GUESS_TRIES = 50                    # packets of an unknown SSRC tried against the DAVE senders
 
     def __init__(self, listener: VoiceListener) -> None:
         self.listener = listener
         self._ssrc_user: dict[int, int] = {}
         self._decoders: dict[int, Any] = {}
         self._vc: Any = None
+        self._guess_left: dict[int, int] = {}
+        self.users: set[int] = set()     # members the voice server says are connected (CLIENTS_CONNECT)
+        #: other members of the channel (the bot sets it): an unknown SSRC with ONE unmapped candidate is his
+        self.candidates: Callable[[], Any] = lambda: ()
         self.packets = 0
         self.decoded = 0
         self.undecryptable = 0
+        self.unmapped = 0                # audio of an SSRC nobody claimed (SPEAKING not seen)
+        self.bad_rtp = 0                 # transport decryption failed / not RTP
+        self.opus_errors = 0
+        self.guessed = 0
+        self.last_error = ""
+
+    def stats(self) -> dict:
+        """Every stage of the chain, for the page and the diagnostics (no names, no ids)."""
+        return {"packets": self.packets, "bad_rtp": self.bad_rtp, "unmapped": self.unmapped,
+                "undecryptable": self.undecryptable, "opus_errors": self.opus_errors, "decoded": self.decoded,
+                "mapped": len(self._ssrc_user), "guessed": self.guessed, "attached": self._vc is not None,
+                "last_error": self.last_error}
 
     def on_ws(self, msg: Any) -> None:
         try:
             op, d = msg.get("op"), msg.get("d") or {}
             if op == self.SPEAKING and "ssrc" in d and "user_id" in d:
+                if int(d["ssrc"]) not in self._ssrc_user:
+                    log.info("Discord écoute : un membre associé à son flux audio")
                 self._ssrc_user[int(d["ssrc"])] = int(d["user_id"])
+            elif op == self.CLIENTS_CONNECT:
+                for u in d.get("user_ids") or []:
+                    self.users.add(int(u))
             elif op == self.CLIENT_DISCONNECT and "user_id" in d:
                 uid = int(d["user_id"])
+                self.users.discard(uid)
                 for s in [s for s, u in self._ssrc_user.items() if u == uid]:
                     self._ssrc_user.pop(s, None)
                     self._decoders.pop(s, None)
@@ -399,9 +487,11 @@ class Receiver:
             self.detach()
             vc._connection.add_socket_listener(self._on_packet)
             self._vc = vc
+            log.info("Discord écoute : lecture du salon branchée")
             return True
-        except Exception:
-            log.debug("Discord listen: attach failed", exc_info=True)
+        except Exception as exc:
+            self.last_error = f"attach: {type(exc).__name__}"
+            log.warning("Discord listen: attach failed", exc_info=True)
             return False
 
     def detach(self) -> None:
@@ -412,6 +502,37 @@ class Receiver:
             except Exception:
                 pass
         self._decoders.clear()
+
+    def _guess(self, ssrc: int, frame: bytes, conn: Any) -> int | None:
+        """The sender of an SSRC whose SPEAKING message was missed (joined while he talked, message
+        before the reader was ready): with DAVE only the right sender's key decrypts the frame; without
+        DAVE, the one member of the channel not yet mapped. Bounded tries per SSRC. Never raises."""
+        try:
+            left = self._guess_left.get(ssrc, self.GUESS_TRIES)
+            if left <= 0:
+                return None
+            self._guess_left[ssrc] = left - 1
+            own = int(getattr(getattr(conn, "user", None), "id", 0) or 0)
+            mapped = set(self._ssrc_user.values())
+            session = conn.dave_session if getattr(conn, "dave_protocol_version", 0) else None
+            if session is not None and getattr(session, "ready", False) and frame.endswith(DAVE_MAGIC):
+                ids: set[int] = set(self.users)
+                try:
+                    ids |= {int(u) for u in session.get_user_ids()}
+                except Exception:
+                    pass
+                for uid in sorted(ids - mapped - {own}):
+                    if dave_decrypt(session, uid, frame) is not None:
+                        return uid
+                return None
+            cands = {int(c) for c in (self.candidates() or ()) if str(c).isdigit()} - mapped - {own}
+            try:
+                cands -= {int(self.listener.bot_user_id)} if self.listener.bot_user_id else set()
+            except Exception:
+                pass
+            return next(iter(cands)) if len(cands) == 1 else None
+        except Exception:
+            return None
 
     def _on_packet(self, packet: bytes) -> None:
         try:
@@ -424,21 +545,37 @@ class Receiver:
             conn = vc._connection
             got = rtp_payload(packet, conn.secret_key, conn.mode)
             if got is None:
+                self.bad_rtp += 1
                 return
             ssrc, _seq, frame = got
-            uid = self._ssrc_user.get(ssrc)
-            if uid is None or ssrc == conn.ssrc:
+            if ssrc == conn.ssrc:
                 return
+            uid = self._ssrc_user.get(ssrc)
+            if uid is None:
+                uid = self._guess(ssrc, frame, conn)
+                if uid is None:
+                    self.unmapped += 1
+                    return
+                self._ssrc_user[ssrc] = uid
+                self.guessed += 1
+                log.info("Discord écoute : flux audio associé sans message SPEAKING")
             frame = dave_decrypt(conn.dave_session if conn.dave_protocol_version else None, uid, frame)
             if frame is None:
                 self.undecryptable += 1
                 return
             dec = self._decoders.get(ssrc)
-            if dec is None:
-                from discord.opus import Decoder  # noqa: PLC0415
+            try:
+                if dec is None:
+                    from discord.opus import Decoder  # noqa: PLC0415
 
-                dec = self._decoders[ssrc] = Decoder()
-            pcm48 = dec.decode(None if frame == OPUS_SILENCE else frame, fec=False)
+                    dec = self._decoders[ssrc] = Decoder()
+                pcm48 = dec.decode(None if frame == OPUS_SILENCE else frame, fec=False)
+            except Exception as exc:
+                self.opus_errors += 1
+                self.last_error = f"opus: {type(exc).__name__}"
+                if self.opus_errors in (1, 100):
+                    log.warning("Discord écoute : décodage Opus impossible (%s)", type(exc).__name__)
+                return
             self.decoded += 1
             self.listener.push(uid, to_16k_mono(pcm48))
         except Exception:

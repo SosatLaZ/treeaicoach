@@ -63,7 +63,7 @@ def test_match_auto_one_to_one_me_and_absent() -> None:
     assert m[PAUL_ID]["source"] == "auto" and m[PAUL_ID]["player"]["alias"] == "Jinx"
     assert m[LEO_ID]["source"] == "auto" and m[LEO_ID]["player"]["alias"] == "Lux"
     assert m[BOB_ID]["player"] is None and m[BOB_ID]["source"] == "inconnu"   # not in the game
-    assert df.describe(m[BOB_ID], True) == "pas dans la partie"
+    assert df.describe(m[BOB_ID], True) == "ne joue pas"
     assert df.describe(m[BOB_ID], False) == "en attente de la partie"
     # two members who look like the same player: only the best one gets him
     twins = [{"id": PAUL_ID, "display": "Paul"}, {"id": LEO_ID, "display": "Paul2"}]
@@ -341,12 +341,12 @@ def test_page_rows_show_mapping_and_dropdown() -> None:
 
     snap = {"voice_map": df.match(_members(), _players(), {}, ME_ID), "roster": _players()}
     rows = {r["id"]: r for r in friend_rows(snap, {})}
-    assert rows[PAUL_ID]["title"] == "xX_P4ul_Xx → Jinx (ADC)" and rows[PAUL_ID]["editable"]
-    assert rows[LEO_ID]["title"] == "Léo → Lux (support)"
-    assert rows[BOB_ID]["title"] == "Bobby : pas dans la partie"
+    assert rows[PAUL_ID]["title"] == "xX_P4ul_Xx : joue Jinx (ADC)" and rows[PAUL_ID]["editable"]
+    assert rows[LEO_ID]["title"] == "Léo : joue Lux (support)"
+    assert rows[BOB_ID]["title"] == "Bobby : ne joue pas"
     assert not rows[ME_ID]["editable"]
     labels = [lbl for _v, lbl in rows[BOB_ID]["choices"]]
-    assert labels[:2] == ["Auto", "Pas dans la partie"] and "Ahri (mid)" in labels and "Garen (top)" not in labels
+    assert labels[:2] == ["Auto", "Ne joue pas"] and "Ahri (mid)" in labels and "Garen (top)" not in labels
     idle = friend_rows({"voice_map": df.match(_members(), [], {}, ME_ID), "roster": []}, {})
     assert all(not r["editable"] for r in idle) and "en attente de la partie" in idle[1]["title"]
     assert all("—" not in r["title"] + r["desc"] for r in friend_rows(snap, {}) + idle)

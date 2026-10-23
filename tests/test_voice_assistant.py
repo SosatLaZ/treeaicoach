@@ -246,11 +246,18 @@ def test_test_mode_reports_and_does_not_ask(tmp_path: Path) -> None:
         a.stop()
 
 
-def test_test_needs_the_switch() -> None:
-    a, _asked, _c, _m = make([])
-    got: list[bool] = []
-    assert not a.test(lambda _m, ok: got.append(ok))
-    assert got == [False]
+def test_test_works_without_the_switch_and_outside_a_game() -> None:
+    a, asked, _c, mics = make(["P:bla", "F:hé coach", "F:tu m'entends bien"], in_game=False)
+    got: list[tuple[str, bool]] = []
+    ev = threading.Event()
+    assert a.test(lambda m, ok: (got.append((m, ok)), ev.set()))      # switch off: still tested
+    try:
+        assert ev.wait(3.0)
+        assert got[0][1] and "tu m'entends bien" in got[0][0] and asked == []
+        assert wait(lambda: mics[0].closed)                            # the test over: mic closed again
+        assert wait(lambda: a.snapshot()["stage"] == "off")
+    finally:
+        a.stop()
 
 
 def test_model_download_unzips_atomically(tmp_path: Path) -> None:

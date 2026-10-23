@@ -484,9 +484,13 @@ class CoachingMixin:
         """My team (Riot ID, champion, role) to the bot when it changes: it matches its voice members."""
         try:
             me = getattr(game, "me", None)
-            players = [(p, p is me) for p in ([me] if me is not None else []) + list(getattr(game, "allies", None) or [])]
+            # both teams: a friend of the voice channel can play in front (custom game); the bot keeps the
+            # gank / matchup calls for my team ("enemy" flag), the page shows who plays where
+            players = [(p, p is me, False) for p in ([me] if me is not None else []) + list(getattr(game, "allies", None) or [])]
+            players += [(p, False, True) for p in list(getattr(game, "enemies", None) or [])]
             sig = tuple((str(getattr(p, "riot_id", "") or getattr(p, "summoner_name", "")),
-                         str(getattr(p, "champion_alias", "")), str(getattr(p, "position", ""))) for p, _m in players)
+                         str(getattr(p, "champion_alias", "")), str(getattr(p, "position", "")), en)
+                        for p, _m, en in players)
             if sig == getattr(self, "_discord_roster_sig", None):
                 return
             self._discord_roster_sig = sig
@@ -494,7 +498,7 @@ class CoachingMixin:
                 {"riot": str(getattr(p, "riot_id", "") or getattr(p, "summoner_name", "") or ""),
                  "champion": str(getattr(p, "champion_name", "") or getattr(p, "champion_alias", "")),
                  "alias": str(getattr(p, "champion_alias", "") or ""), "position": str(getattr(p, "position", "") or ""),
-                 "me": bool(is_me)} for p, is_me in players]})
+                 "me": bool(is_me), "enemy": bool(en)} for p, is_me, en in players]})
         except Exception:
             log.debug("discord roster failed", exc_info=True)
 

@@ -46,40 +46,57 @@ def offline_snapshot(cfg: Any) -> dict:
 SOURCE_TEXT = {"toi": "C'est toi : tes ganks passent déjà par le coach.",
                "auto": "Reconnu par son pseudo. Le bot annonce ses ganks.",
                "manuel": "Choisi à la main. Le bot annonce ses ganks."}
+ENEMY_TEXT = "Il joue dans l'équipe d'en face : pas d'annonce de gank pour lui. Il peut dire « Hey coach »."
+NOT_PLAYING_TEXT = "Ne joue pas : pas d'annonce de gank pour lui. Il peut quand même dire « Hey coach »."
+
+
+def listen_text(view: dict | None) -> str:
+    """« Écoute : ▮▮▮▯▯▯▯▯ · dernier mot entendu « hé coach » » for one member ("" when not heard yet)."""
+    if not view:
+        return ""
+    heard = str(view.get("heard") or "")
+    bits = [f"Écoute : niveau {view.get('bar') or ''}".strip()]
+    stage = str(view.get("stage") or "")
+    if stage and stage != "écoute":
+        bits.append(stage)
+    bits.append(f"dernier mot entendu « {heard} »" if heard else "aucun mot reconnu")
+    return " · ".join(bits)
 
 
 def friend_rows(snap: dict, links: dict | None = None) -> list[dict]:
-    """The "Dans le vocal" rows: ``{id, title, desc, tone, choices, value, editable}`` per voice member.
-    ``choices``: (Riot ID / "" auto / "-" absent, label) for the hand-made fix (only during a game,
-    when my team is known). Pure (no Qt)."""
+    """The "Dans le vocal" rows: ``{id, title, desc, listen, tone, choices, value, editable}`` per voice
+    member: who plays (either team: « joue Lux (support) », « joue en face : Darius (top) ») and who does
+    not. ``listen``: his live « Écoute » line (level, last words) while the bot listens. ``choices``:
+    (Riot ID / "" auto / "-" absent, label) for the hand-made fix (only during a game). Pure (no Qt)."""
     from treeaicoach import discord_friends as df  # noqa: PLC0415
 
     links = dict(links or {})
     roster = [p for p in snap.get("roster") or [] if isinstance(p, dict)]
     in_game = bool(roster)
-    friends = [p for p in roster if not p.get("me") and p.get("riot")]
+    others = [p for p in roster if not p.get("me") and p.get("riot")]
+    views = dict((snap.get("listen") or {}).get("members") or {})
     rows = []
     for e in snap.get("voice_map") or []:
         p = e.get("player")
         src = str(e.get("source") or "")
         name = str(e.get("name") or "?")
+        title = f"{name} : {df.describe(e, in_game)}"
         if p:
-            title = f"{name} → {df.player_label(p)}"
-            desc = SOURCE_TEXT.get(src, "")
+            desc = ENEMY_TEXT if p.get("enemy") else SOURCE_TEXT.get(src, "")
         else:
-            title = f"{name} : {df.describe(e, in_game)}"
-            desc = ("Pas reconnu parmi tes alliés. Choisis son champion s'il joue avec toi." if in_game and src != "absent"
-                    else ("Le bot n'annonce pas ses ganks." if in_game else
-                          "Associé à son champion au début de la partie."))
+            desc = ("Pseudo pas reconnu parmi les 10 joueurs. Il peut quand même dire « Hey coach » ; s'il joue, "
+                    "choisis son champion." if in_game and src != "absent"
+                    else (NOT_PLAYING_TEXT if in_game else "Associé à son champion au début de la partie."))
         editable = in_game and src != "toi"
-        choices = [("", "Auto"), (df.NOT_PLAYING, "Pas dans la partie")] + \
-            [(str(x["riot"]), df.player_label(x)) for x in friends]
+        choices = [("", "Auto"), (df.NOT_PLAYING, "Ne joue pas")] + \
+            [(str(x["riot"]), df.player_label(x) + (", en face" if x.get("enemy") else "")) for x in others]
         value = links.get(str(e.get("id")), "")
         if value not in (c[0] for c in choices):
             value = ""
         rows.append({"id": str(e.get("id")), "title": title, "desc": desc,
-                     "tone": "accent" if p and src in ("auto", "manuel") else "", "choices": choices,
-                     "value": value, "editable": editable})
+                     "listen": listen_text(views.get(str(e.get("id")))),
+                     "tone": "accent" if p and not p.get("enemy") and src in ("auto", "manuel") else "",
+                     "choices": choices, "value": value, "editable": editable})
     return rows
 
 
@@ -294,6 +311,9 @@ class DiscordPage:
                        "N'importe qui du salon dit « Hey coach » puis sa question : petit son, et le bot "
                        "répond dans le salon en une ou deux phrases. Reconnaissance sur ton PC (modèle "
                        "français téléchargé une fois, ~41 Mo), seulement en partie.")
+        says.add(self.W.Row("Tester l'écoute", "30 s, même hors partie : chacun dit « Hey coach » puis une "
+                            "question. Son niveau et son dernier mot entendu s'affichent sous son nom.",
+                            self.W.button("Tester : dis « Hey coach »", self._listen_test)))
         app.switch_row(says, "discord_objectives", "Objectifs",
                        "« Dragon dans 30 secondes », « Baron dans 30 secondes », « Larves dans 30 secondes ».")
         app.switch_row(says, "discord_team_calls", "Calls d'équipe",
@@ -543,10 +563,12 @@ class DiscordPage:
         rows = friend_rows(snap, links)
         sig = tuple((r["id"], r["title"], r["desc"], tuple(r["choices"]), r["value"], r["editable"]) for r in rows)
         if sig == self._sig_friends and not force:
+            self._update_listen(rows)               # live levels: only the description changes
             return
         self._sig_friends = sig
         W = self.W
         grp = W.Group()
+        self._friend_widgets: dict[str, Any] = {}
         for r in rows:
             ctl = None
             if r["editable"]:
@@ -554,11 +576,32 @@ class DiscordPage:
                 ctl.setMinimumWidth(180)
                 ctl.activated.connect(lambda _i, uid=r["id"], c=ctl: self._link(uid, c.value()))
             row = grp.add(W.Row(r["title"], r["desc"], ctl))
+            self._friend_widgets[r["id"]] = (row, "")
             if r["tone"]:
                 W.set_prop(row.title, "tone", r["tone"])
+        self._update_listen(rows)
         if not rows:
             grp.add(W.Row("Personne", "Les membres de ton salon vocal s'affichent ici quand le bot est connecté."))
         self._swap(self._friends_lay, "_friends_group", grp)
+
+    def _update_listen(self, rows: list[dict]) -> None:
+        widgets = getattr(self, "_friend_widgets", {})
+        for r in rows:
+            row, shown = widgets.get(r["id"], (None, ""))
+            if row is None or r["listen"] == shown:
+                continue
+            row.set_desc(r["desc"] + ("\n" + r["listen"] if r["listen"] else ""))
+            widgets[r["id"]] = (row, r["listen"])
+
+    def _listen_test(self) -> None:
+        """« Tester : dis « Hey coach » » for the voice channel: 30 s, even outside a game."""
+        bot = self._bot()
+        if bot is None or not hasattr(bot, "listen_test"):
+            self.app.show_toast("Active le bot et colle son token d'abord.", "warning")
+            return
+        ok, msg = bot.listen_test()
+        self.app.show_toast(msg, "info" if ok else "warning")
+        self.app.later(300, self.tick)
 
     def _link(self, uid: str, value: Any) -> None:
         """The hand-made fix of one voice member, kept by Discord id <-> Riot ID in the settings."""

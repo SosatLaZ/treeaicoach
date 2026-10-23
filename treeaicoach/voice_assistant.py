@@ -45,6 +45,13 @@ QUESTION_START_S = 3.0          # nothing said within this after the wake chime:
 TEST_WINDOW_S = 20.0            # "Tester": listen this long even outside a game
 IDLE_POLL_S = 0.5               # paused: how often the gate is re-checked (mic closed)
 MIN_QUESTION_WORDS = 2
+SPEAKING_MAX_S = 15.0           # the app's voice "busy" longer than this: the gate is stuck, ignored
+CHIME_S = 0.8                   # the wake chime: the question's first words are not dropped for it
+SILENT_MIC_RMS = 4.0            # a block this quiet is digital silence (muted / wrong device)
+SILENT_MIC_BLOCKS = 40          # ... for 10 s: reported in the panel
+STAGE_LABELS = {"off": "désactivé", "loading": "chargement du modèle", "ready": "modèle prêt",
+                "listening": "écoute", "wake": "mot-clé entendu", "question": "question",
+                "answer": "réponse", "error": "erreur"}
 
 #: The Vosk engine (libvosk.dll, ~17 MB compressed) is NOT bundled in the exe (GitHub's 100 MB file limit):
 #: its official Windows wheel is downloaded once next to the model and checked by SHA-256.
@@ -79,34 +86,148 @@ def is_wake(text: Any) -> bool:
     return bool(_WAKE_RE.search(normalize(text)))
 
 
+#: wake words: a lead (« hé », « hey », « et »…) then a coach word. STRONG = « coach » itself (what the
+#: model writes for the real phrase); WEAK = what it writes for other accents (« hé coche ») but also hears
+#: in ordinary talk (« il faut cocher ») -> accepted only when said alone (final result, nothing after).
+#: « coq » is never a wake (« Hé, quelqu'un… » is heard « hé coq ») : it stays in the grammar as a decoy.
+WAKE_LEADS = frozenset({"hey", "hei", "he", "eh", "et", "ey", "hay", "ai", "e"})
+WAKE_STRONG = frozenset({"coach", "coache", "coaches", "coatch", "cotch"})
+WAKE_WEAK = frozenset({"coche", "couche", "cauche", "koch"})
+WEAK_MIN_CONF = 0.6             # « hé coche » alone: both words at least this sure
+BARE_MIN_CONF = 0.7             # « Coach, … » alone at the start: the word's confidence in a final result
+QUIET_BLOCKS = 2                # « Coach » alone counts only after this many quiet blocks (0.5 s of silence)
+
+
+def wake_kind(text: Any, confs: Sequence[float] | None = None, final: bool = False) -> str:
+    """How ``text`` (recognizer output, ``[unk]`` kept or not) calls the coach: ``"strong"`` (« hé coach »
+    anywhere), ``"weak"`` (« hé coche » said alone, final only), ``"bare"`` (« coach » as the FIRST word;
+    in a final result its confidence must reach :data:`BARE_MIN_CONF`) or ``""``. Never raises."""
+    try:
+        t = normalize(text).split()
+        for i in range(1, len(t)):
+            if t[i] in WAKE_STRONG and t[i - 1] in WAKE_LEADS:
+                return "strong"
+        real = [w for w in t if w != "unk"]
+        if final and len(real) == 2 and t[:2] == real and real[0] in WAKE_LEADS and real[1] in WAKE_WEAK \
+                and (not confs or min(float(c) for c in confs[:2]) >= WEAK_MIN_CONF):
+            return "weak"
+        if t and t[0] in WAKE_STRONG:
+            c = confs[0] if confs else None
+            if not final or c is None or float(c) >= BARE_MIN_CONF:
+                return "bare"
+    except Exception:
+        pass
+    return ""
+
+
+def block_rms(pcm: bytes) -> float:
+    """RMS of an int16 block (0..32768). Never raises (0 on bad input)."""
+    try:
+        import numpy as np  # noqa: PLC0415
+
+        a = np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype="<i2").astype(np.float32)
+        return float(np.sqrt(np.mean(a * a))) if a.size else 0.0
+    except Exception:
+        return 0.0
+
+
+def level_of(rms: float) -> float:
+    """Mic level for a meter, 0..1 (-60 dBFS -> 0, -6 dBFS -> 1)."""
+    try:
+        import math  # noqa: PLC0415
+
+        db = 20.0 * math.log10(max(float(rms), 1.0) / 32768.0)
+        return max(0.0, min(1.0, (db + 60.0) / 54.0))
+    except Exception:
+        return 0.0
+
+
+def level_bar(level: float, n: int = 8) -> str:
+    """``"▮▮▮▯▯▯▯▯"`` for a 0..1 level."""
+    k = max(0, min(n, int(round(float(level or 0.0) * n))))
+    return "▮" * k + "▯" * (n - k)
+
+
 class WakeDetector:
     """Wake decision over a stream of recognizer outputs (shared by the PC mic and the Discord listener).
 
-    A *final* result containing the wake phrase fires at once; a *partial* one must stay in the partials
-    for ``PARTIAL_CONFIRM`` consecutive blocks (the grammar-limited decoder flips between « hé coach » and
-    ``[unk]`` while ordinary words go by: those flips are the false triggers)."""
+    * « hé coach » (strong) in a FINAL result fires at once; in PARTIAL results it must stay
+      ``confirm`` (2) consecutive blocks (the grammar-limited decoder flips between « hé coach » and
+      ``[unk]`` while ordinary words go by: « Et quoi, on… » shows « eh coach » for one block);
+    * « Coach, … » (bare, first word of the utterance) only after :data:`QUIET_BLOCKS` quiet blocks
+      (the player starts talking to the coach; a « coach » glued to « ce coach est… » is ignored),
+      same 2-block confirmation in partials, confidence >= :data:`BARE_MIN_CONF` in a final;
+    * « hé coche » said alone (final result only).
+
+    Measured on 156 edge-tts clips (6 French voices, 8 wake / 18 decoy sentences, real Vosk model):
+    47/48 wakes, 0/108 false wakes (1/108 with noise at 5 dB SNR); the old « 2 partials, hé + coach/coche/coq »
+    rule: 36/48 (every « Coach, … » missed) and 7/108 false (« Hé, quelqu'un… », « il faut cocher… »).
+    ``last_text`` = the last thing heard (for the « Écoute » panel)."""
 
     PARTIAL_CONFIRM = 2
 
     def __init__(self, confirm: int | None = None) -> None:
         self.confirm = int(confirm or self.PARTIAL_CONFIRM)
         self._run = 0
+        self._quiet = QUIET_BLOCKS          # quiet blocks in a row (starts "after a silence")
+        self._after_quiet = True            # this utterance started after a silence
+        self._floor: float | None = None     # background level (slow-tracked minimum)
+        self.last_text = ""
+        self.last_kind = ""
+        self.rms = 0.0
 
     def reset(self) -> None:
         self._run = 0
+        self._after_quiet = self._quiet >= QUIET_BLOCKS
+
+    def _energy(self, block: bytes) -> None:
+        r = self.rms = block_rms(block)
+        self._floor = r if self._floor is None else min(r, self._floor * 1.02 + 1.0)
+        if r < max(150.0, 2.5 * self._floor):
+            self._quiet += 1
+        else:
+            if self._quiet >= QUIET_BLOCKS:
+                self._after_quiet = True
+            self._quiet = 0
+
+    @staticmethod
+    def _out(rec: Any, final: bool) -> tuple[str, list[float] | None]:
+        """(text with ``[unk]`` when the recognizer keeps it, word confidences of a final result)."""
+        txt = rec.result() if final else rec.partial()
+        raw = getattr(rec, "last_raw", None)
+        confs = getattr(rec, "last_confs", None) if final else None
+        return (raw if isinstance(raw, str) and raw.strip() else str(txt or "")), confs
 
     def feed(self, rec: Any, block: bytes) -> bool:
         try:
+            self._energy(block)
             if rec.accept(block):
+                text, confs = self._out(rec, True)
+                kind = wake_kind(text, confs, final=True)
                 self._run = 0
-                return is_wake(rec.result())
-            if is_wake(rec.partial()):
+                ok = bool(kind) and (kind != "bare" or self._after_quiet)
+                self._after_quiet = self._quiet >= QUIET_BLOCKS
+                self._note(text, kind if ok else "")
+                return ok
+            text, _ = self._out(rec, False)
+            kind = wake_kind(text)
+            if kind == "bare" and (not self._after_quiet or self._quiet >= QUIET_BLOCKS):
+                kind = ""                   # not after a silence / « heard » in the silence itself
+            if kind:
                 self._run += 1
+                self._note(text, kind)
                 return self._run >= self.confirm
+            if text:
+                self._note(text, "")
             self._run = 0
         except Exception:
             self._run = 0
         return False
+
+    def _note(self, text: str, kind: str) -> None:
+        t = " ".join(str(text).replace("[unk]", "…").split())
+        if t and t != "…":
+            self.last_text, self.last_kind = t[:60], kind
 
 
 def strip_wake(text: Any) -> str:
@@ -148,21 +269,34 @@ class Mic(Protocol):
 
 
 class VoskRecognizer:
-    """Thin wrapper over ``vosk.KaldiRecognizer`` (text out of its JSON)."""
+    """Thin wrapper over ``vosk.KaldiRecognizer`` (text out of its JSON). ``last_raw`` keeps the text
+    WITH ``[unk]`` (where ordinary words were: « Coach » must be the FIRST word) and ``last_confs`` the
+    word confidences of the last final result."""
 
     def __init__(self, model: Any, grammar: Sequence[str] | None) -> None:
         vosk = import_vosk()
 
         if grammar:
             self._r = vosk.KaldiRecognizer(model, SAMPLE_RATE, json.dumps(list(grammar), ensure_ascii=False))
+            try:
+                self._r.SetWords(True)
+            except Exception:
+                pass
         else:
             self._r = vosk.KaldiRecognizer(model, SAMPLE_RATE)
+        self.last_raw = ""
+        self.last_confs: list[float] | None = None
 
-    @staticmethod
-    def _text(js: str, key: str) -> str:
+    def _text(self, js: str, key: str) -> str:
         try:
-            return str(json.loads(js).get(key) or "").replace("[unk]", "").strip()
+            d = json.loads(js)
+            raw = str(d.get(key) or "")
+            self.last_raw = raw
+            if key == "text":
+                self.last_confs = [float(w.get("conf", 1.0)) for w in d.get("result") or []] or None
+            return raw.replace("[unk]", " ").strip() and " ".join(raw.replace("[unk]", " ").split())
         except Exception:
+            self.last_raw = ""
             return ""
 
     def accept(self, pcm: bytes) -> bool:
@@ -181,20 +315,69 @@ class VoskRecognizer:
         self._r.Reset()
 
 
+def resample_to_16k(pcm: bytes, rate: int, channels: int) -> bytes:
+    """int16 interleaved ``channels`` at ``rate`` -> int16 mono 16 kHz (channel mean, linear
+    interpolation after a box low-pass). Never raises (b"" on bad input)."""
+    try:
+        import numpy as np  # noqa: PLC0415
+
+        ch = max(1, int(channels))
+        a = np.frombuffer(pcm[: len(pcm) // (2 * ch) * 2 * ch], dtype="<i2").astype(np.float32)
+        a = a.reshape(-1, ch).mean(axis=1)
+        rate = int(rate)
+        if rate == SAMPLE_RATE or a.size == 0:
+            return a.astype("<i2").tobytes()
+        k = max(1, int(round(rate / SAMPLE_RATE)))
+        if k > 1:
+            a = np.convolve(a, np.ones(k, np.float32) / k, mode="same")
+        n = int(round(a.size * SAMPLE_RATE / rate))
+        x = np.linspace(0.0, a.size - 1, num=max(n, 1), dtype=np.float64)
+        return np.clip(np.interp(x, np.arange(a.size), a), -32768, 32767).astype("<i2").tobytes()
+    except Exception:
+        return b""
+
+
 class SoundDeviceMic:
-    """sounddevice RawInputStream, int16 mono 16 kHz (PortAudio resamples on MME)."""
+    """sounddevice RawInputStream -> int16 mono 16 kHz blocks. Tries 16 kHz mono first (PortAudio /
+    MME resample), then the device's own rate and channel count (44.1 / 48 kHz, stereo headsets) with
+    our resampling: a device refusing 16 kHz no longer means « micro introuvable »."""
 
     def __init__(self, device: Any = None) -> None:
         import sounddevice as sd  # noqa: PLC0415
 
-        self._s = sd.RawInputStream(samplerate=SAMPLE_RATE, blocksize=BLOCK_FRAMES, device=device,
-                                    channels=1, dtype="int16")
-        self._s.start()
+        self.rate, self.channels = SAMPLE_RATE, 1
+        tries: list[tuple[int, int]] = [(SAMPLE_RATE, 1)]
+        try:
+            info = sd.query_devices(device, "input")
+            dr, dc = int(float(info.get("default_samplerate") or 48000)), int(info.get("max_input_channels") or 1)
+            for t in ((dr, 1), (dr, min(2, max(1, dc))), (48000, 1), (44100, 1), (48000, 2)):
+                if t not in tries and t[1] >= 1:
+                    tries.append(t)
+        except Exception:
+            tries += [(48000, 1), (44100, 1), (48000, 2)]
+        last: Exception | None = None
+        self._s = None
+        for rate, ch in tries:
+            try:
+                st = sd.RawInputStream(samplerate=rate, blocksize=int(rate * BLOCK_S), device=device,
+                                       channels=ch, dtype="int16")
+                st.start()
+                self._s, self.rate, self.channels = st, rate, ch
+                break
+            except Exception as exc:
+                last = exc
+        if self._s is None:
+            raise last or OSError("no input stream")
+        log.info("Assistant vocal : micro ouvert (%d Hz, %d canal%s)", self.rate, self.channels,
+                 "" if self.channels == 1 else "aux")
 
     def read(self) -> bytes | None:
         try:
-            data, _overflow = self._s.read(BLOCK_FRAMES)
-            return bytes(data)
+            data, _overflow = self._s.read(int(self.rate * BLOCK_S))
+            data = bytes(data)
+            if self.rate != SAMPLE_RATE or self.channels != 1:
+                data = resample_to_16k(data, self.rate, self.channels)
+            return data
         except Exception:
             log.debug("mic read failed", exc_info=True)
             return None
@@ -348,6 +531,14 @@ class VoiceAssistant:
         self.questions = 0
         self.dropped_self = 0            # blocks dropped while the app was speaking
         self._downloading = False
+        self.stage = "off"               # off / loading / ready / listening / wake / question / answer / error
+        self.level = 0.0                 # mic level 0..1 (last block)
+        self.heard = ""                  # last words the recognizer wrote (the « Écoute » panel)
+        self.mic_rate = 0
+        self.silent_mic = False
+        self._quiet_blocks = 0
+        self._speak_since = -1.0
+        self._speak_stuck_logged = False
 
     # -- configuration -------------------------------------------------------------------
     def set_hooks(self, *, should_listen: Callable[[], bool] | None = None,
@@ -411,19 +602,32 @@ class VoiceAssistant:
         self._wake_evt.set()
 
     def test(self, done: Callable[[str, bool], None] | None = None) -> bool:
-        """"Tester": listen for :data:`TEST_WINDOW_S` even outside a game; ``done(status, ok)`` reports
-        what was heard (the question is NOT sent to the AI). Downloads the model first if needed."""
+        """"Tester : dis « Hey coach »": listen for :data:`TEST_WINDOW_S` even outside a game and even
+        with the switch off; ``done(status, ok)`` reports what was heard (the question is NOT sent to
+        the AI). Downloads the engine / model first if needed. Never raises."""
         with self._lock:
-            if not self.enabled:
-                if done is not None:
-                    done("Active l'assistant vocal d'abord.", False)
-                return False
             self._test_until = self._clock() + TEST_WINDOW_S
             self._test_done = done
         self.status = "Test : dis « Hey coach » puis une question…"
+        log.info("Assistant vocal : test lancé (%.0f s)", TEST_WINDOW_S)
         self.start()
         self._wake_evt.set()
         return True
+
+    def snapshot(self) -> dict:
+        """The live « Écoute » panel: ``stage`` (+ French ``stage_label``), mic ``level`` 0..1 and its
+        ``bar``, ``heard`` (last words the recognizer wrote), ``status``, counters. Any thread, cheap."""
+        lvl = float(self.level) if self.listening else 0.0
+        return {"stage": self.stage, "stage_label": STAGE_LABELS.get(self.stage, self.stage), "level": lvl,
+                "bar": level_bar(lvl), "heard": self.heard, "status": self.status, "listening": self.listening,
+                "testing": self._testing(), "wakes": self.wakes, "questions": self.questions,
+                "dropped_self": self.dropped_self, "mic_rate": self.mic_rate, "engine_error": ENGINE_ERROR,
+                "silent_mic": self.silent_mic}
+
+    def _set_stage(self, stage: str) -> None:
+        if stage != self.stage:
+            log.info("Assistant vocal : %s -> %s", self.stage, stage)
+            self.stage = stage
 
     def start(self) -> None:
         with self._lock:
@@ -447,9 +651,11 @@ class VoiceAssistant:
         return self._clock() < self._test_until
 
     def _active(self) -> bool:
+        if self._testing():
+            return True
         if not self.enabled:
             return False
-        if self._ptt or self._testing():
+        if self._ptt:
             return True
         try:
             return bool(self.should_listen())
@@ -457,10 +663,25 @@ class VoiceAssistant:
             return False
 
     def _speaking(self) -> bool:
+        """The app's own voice is busy (mic blocks dropped). A gate stuck on for more than
+        :data:`SPEAKING_MAX_S` (a queue that never drains) is ignored: it must not deafen the assistant."""
         try:
-            return bool(self.is_speaking())
+            busy = bool(self.is_speaking())
         except Exception:
+            busy = False
+        now = self._clock()
+        if not busy:
+            self._speak_since = -1.0
             return False
+        if self._speak_since < 0:
+            self._speak_since = now
+        if now - self._speak_since > SPEAKING_MAX_S:
+            if not self._speak_stuck_logged:
+                self._speak_stuck_logged = True
+                log.warning("Assistant vocal : la voix de l'app semble occupée depuis %.0f s, micro réécouté",
+                            now - self._speak_since)
+            return False
+        return True
 
     def _make_rec(self, grammar: Sequence[str] | None) -> Recognizer | None:
         if self._rec_factory is not None:
@@ -471,15 +692,20 @@ class VoiceAssistant:
                 if self._downloading:
                     return None
                 self._downloading = True
+                self._set_stage("loading")
                 self.status = f"Téléchargement du modèle vocal français (~{MODEL_SIZE_MB} Mo)…"
+                log.info("Assistant vocal : téléchargement du modèle")
                 ok = download_model(path, progress=lambda p: setattr(
                     self, "status", f"Téléchargement du modèle vocal… {p} %"))
                 self._downloading = False
                 if not ok:
+                    self._set_stage("error")
                     self.status = "Modèle vocal non téléchargé (Internet ?) : nouvel essai plus tard."
                     return None
+            self._set_stage("loading")
             vosk = import_vosk()
             if vosk is None:
+                self._set_stage("error")
                 self.status = "Moteur vocal non téléchargé (Internet ?) : nouvel essai plus tard."
                 return None
             try:
@@ -488,17 +714,35 @@ class VoiceAssistant:
                 pass
             _tune_model_conf(path)
             self._model = vosk.Model(str(path))
+            log.info("Assistant vocal : modèle prêt")
         return VoskRecognizer(self._model, grammar)
 
     def _open_mic(self) -> Mic | None:
         try:
             if self._mic_factory is not None:
-                return self._mic_factory(self.mic_name)
-            return SoundDeviceMic(_device_index(self.mic_name))
+                mic = self._mic_factory(self.mic_name)
+            else:
+                mic = SoundDeviceMic(_device_index(self.mic_name))
+            self.mic_rate = int(getattr(mic, "rate", SAMPLE_RATE) or SAMPLE_RATE)
+            return mic
         except Exception:
             log.warning("Voice assistant: microphone unavailable", exc_info=True)
+            self._set_stage("error")
             self.status = "Micro introuvable : choisis-en un autre dans Alertes et voix."
             return None
+
+    def _observe(self, det: WakeDetector) -> None:
+        """Level + last words for the « Écoute » panel; a mic sending only zeros for 10 s is reported."""
+        self.level = level_of(det.rms)
+        if det.last_text:
+            self.heard = det.last_text
+        self._quiet_blocks = self._quiet_blocks + 1 if det.rms < SILENT_MIC_RMS else 0
+        silent = self._quiet_blocks >= SILENT_MIC_BLOCKS
+        if silent != self.silent_mic:
+            self.silent_mic = silent
+            if silent:
+                log.warning("Assistant vocal : le micro n'envoie aucun son depuis 10 s")
+                self.status = "Le micro n'envoie aucun son : coupé, ou ce n'est pas le bon ? (Alertes et voix > Micro)"
 
     def _run(self) -> None:
         mic: Mic | None = None
@@ -513,21 +757,28 @@ class VoiceAssistant:
                         mic = None
                         self.listening = False
                     self._finish_test_if_over()
-                    if not self.enabled:
+                    if not self.enabled and not self._testing():
+                        self._set_stage("off")
                         return
+                    if self.stage in ("listening", "wake", "question", "answer"):
+                        self._set_stage("ready")
                     self._wake_evt.wait(IDLE_POLL_S)
                     self._wake_evt.clear()
                     continue
                 if wake_rec is None:
                     try:
                         wake_rec = self._make_rec(WAKE_GRAMMAR)
-                    except Exception:
+                    except Exception as exc:
                         log.warning("Voice assistant: recognizer unavailable", exc_info=True)
+                        global ENGINE_ERROR
+                        ENGINE_ERROR = mask_error(exc)
+                        self._set_stage("error")
                         self.status = "Reconnaissance vocale indisponible sur ce PC."
                         wake_rec = None
                     if wake_rec is None:
                         retry_at = self._clock() + 60.0
                         continue
+                    self._set_stage("ready")
                 if mic is not None and self._wake_evt.is_set() and not self._ptt:
                     mic.close()                       # device changed
                     mic = None
@@ -538,6 +789,7 @@ class VoiceAssistant:
                         retry_at = self._clock() + 10.0
                         continue
                     self.listening = True
+                    self._set_stage("listening")
                     if not self._testing():
                         self.status = "J'écoute « Hey coach »."
                 if self._ptt:
@@ -557,13 +809,18 @@ class VoiceAssistant:
                     self.dropped_self += 1
                     wake_rec.reset()
                     continue
-                if detector.feed(wake_rec, block):
+                self._set_stage("listening")
+                woke = detector.feed(wake_rec, block)
+                self._observe(detector)
+                if woke:
                     self.wakes += 1
+                    log.info("Assistant vocal : mot-clé entendu (%s)", detector.last_kind or "?")
                     wake_rec.reset()
                     detector.reset()
                     self._question(mic)
         except Exception:
             log.exception("Voice assistant loop failed")
+            self._set_stage("error")
             self.status = "Assistant vocal arrêté après une erreur."
         finally:
             if mic is not None:
@@ -572,6 +829,7 @@ class VoiceAssistant:
 
     def _question(self, mic: Mic) -> None:
         """Wake heard (or push-to-talk): chime, then free recognition until silence / the time limit."""
+        self._set_stage("wake")
         try:
             self.on_wake()
         except Exception:
@@ -579,7 +837,9 @@ class VoiceAssistant:
         rec = self._make_rec(None)
         if rec is None:
             return
+        self._set_stage("question")
         start = self._clock()
+        chime_until = start + CHIME_S            # the chime itself does not cut the player's question
         last_change = start
         last_partial = ""
         parts: list[str] = []
@@ -595,13 +855,15 @@ class VoiceAssistant:
             block = mic.read()
             if block is None:
                 break
-            if self._speaking():                     # our own chime / voice: not the player
+            if self._clock() >= chime_until and self._speaking():   # our own voice: not the player
                 self.dropped_self += 1
                 continue
+            self.level = level_of(block_rms(block))
             if rec.accept(block):
                 txt = rec.result()
                 if txt:
                     parts.append(txt)
+                    self.heard = " ".join(parts)[-60:]
                     heard_any = True
                     last_change = self._clock()
                     if len(" ".join(parts).split()) >= MIN_QUESTION_WORDS:
@@ -611,6 +873,7 @@ class VoiceAssistant:
                 p = rec.partial()
                 if p and p != last_partial:
                     last_partial = p
+                    self.heard = (" ".join(parts + [p]))[-60:]
                     heard_any = True
                     last_change = self._clock()
         if last_partial or not parts:
@@ -618,16 +881,20 @@ class VoiceAssistant:
             if tail:
                 parts.append(tail)
         question = strip_wake(" ".join(parts)).strip()
+        if question:
+            self.heard = question[-60:]
         self._deliver(question)
 
     def _deliver(self, question: str) -> None:
         ok = len(question.split()) >= MIN_QUESTION_WORDS
+        log.info("Assistant vocal : question de %d mot(s)%s", len(question.split()), "" if ok else " (trop courte)")
         if self._testing():
             done, self._test_done = self._test_done, None
             self._test_until = -1.0
             msg = (f"Entendu : « {question} ». L'assistant marche." if ok else
                    "« Hey coach » entendu, mais pas de question comprise : parle juste après le petit son.")
             self.status = msg
+            self._set_stage("ready")
             if done is not None:
                 try:
                     done(msg, ok)
@@ -636,9 +903,11 @@ class VoiceAssistant:
             return
         if not ok:
             self.status = "Question non comprise."
+            self._set_stage("listening")
             return
         self.questions += 1
         self.status = f"Question : « {question} »"
+        self._set_stage("answer")
         try:
             self.on_question(question)
         except Exception:
@@ -647,7 +916,11 @@ class VoiceAssistant:
     def _finish_test_if_over(self) -> None:
         if self._test_done is not None and not self._testing():
             done, self._test_done = self._test_done, None
-            self.status = "Test terminé : rien entendu. Vérifie le micro choisi."
+            self.status = ("Test terminé : rien entendu. Le micro n'envoie aucun son : vérifie lequel est choisi."
+                           if self.silent_mic else
+                           f"Test terminé : « Hey coach » pas reconnu (dernier mot entendu : « {self.heard} »)."
+                           if self.heard else "Test terminé : rien entendu. Vérifie le micro choisi.")
+            log.info("Assistant vocal : test terminé sans mot-clé")
             try:
                 done(self.status, False)
             except Exception:
@@ -721,9 +994,41 @@ def import_vosk(dest: Path | None = None) -> Any:
             sys.path.insert(0, str(root))
         if hasattr(os, "add_dll_directory"):
             os.add_dll_directory(str(root / "vosk"))
+        _stub_vosk_deps()
         import vosk  # noqa: PLC0415
 
+        log.info("Assistant vocal : moteur Vosk chargé depuis le cache")
         return vosk
-    except Exception:
+    except Exception as exc:
+        global ENGINE_ERROR
+        ENGINE_ERROR = mask_error(exc)
         log.warning("Voice assistant: vosk engine unavailable", exc_info=True)
         return None
+
+
+ENGINE_ERROR = ""      # why the engine could not be loaded (the « Écoute » panel / diagnostics)
+
+
+def mask_error(exc: BaseException) -> str:
+    """``"OSError: cannot load library <chemin>"``: the error without file paths (user name), bounded."""
+    txt = re.sub(r"(?:[A-Za-z]:)?[\\/][^\s'\"]+", "<chemin>", f"{type(exc).__name__}: {exc}")
+    return txt[:160]
+
+
+def _stub_vosk_deps() -> None:
+    """vosk/__init__.py imports ``srt``, ``requests`` and ``tqdm`` at the top but only uses them for its
+    own model downloader / subtitles: when the exe lacks one, an empty stand-in lets the engine load."""
+    import importlib.util  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    for name in ("srt", "requests", "tqdm"):
+        try:
+            if name in sys.modules or importlib.util.find_spec(name) is not None:
+                continue
+        except Exception:
+            pass
+        mod = types.ModuleType(name)
+        if name == "tqdm":
+            mod.tqdm = object  # type: ignore[attr-defined]
+        sys.modules[name] = mod
+        log.info("Assistant vocal : module %s absent, remplacé (inutile au moteur)", name)

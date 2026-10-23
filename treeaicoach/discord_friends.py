@@ -165,7 +165,8 @@ def member_names(m: dict) -> list[str]:
 def match(members: Iterable[dict], players: Iterable[dict], links: dict[str, str] | None = None,
           me_id: Any = "") -> list[dict]:
     """Who plays what. ``members``: the voice channel's people ``{id, display, global, name}``
-    (the bot excluded); ``players``: my team in the game ``{riot, champion, alias, position, me}``;
+    (the bot excluded); ``players``: the 10 players of the game ``{riot, champion, alias, position, me,
+    enemy}`` (both teams: a friend can be in front in a custom game);
     ``links``: manual pairs ``{user id: Riot ID or "-"}``; ``me_id``: my own Discord id (I am the
     ``me`` player whatever my names say).
 
@@ -232,16 +233,28 @@ def match(members: Iterable[dict], players: Iterable[dict], links: dict[str, str
         return []
 
 
+def plays(entry: dict) -> bool:
+    """The member plays in this game (either team)."""
+    return bool(entry.get("player")) and entry.get("source") in ("toi", "manuel", "auto")
+
+
+def is_teammate(entry: dict) -> bool:
+    """The member plays in MY team: only those get the gank / matchup calls (an enemy friend in a custom
+    game is matched, shown, may ask « Hey coach », but never hears our ganks)."""
+    return plays(entry) and not (entry.get("player") or {}).get("enemy")
+
+
 def describe(entry: dict, in_game: bool) -> str:
-    """The page's line for one member: "Lux (support)" / "pas dans la partie" / "en attente de la partie"."""
+    """The page's line for one member: "joue Lux (support)" / "joue en face : Darius (top)" /
+    "ne joue pas" / "en attente de la partie"."""
     p = entry.get("player")
     if p:
-        return player_label(p)
+        return f"joue en face : {player_label(p)}" if p.get("enemy") else f"joue {player_label(p)}"
     if entry.get("source") == "absent":
-        return "pas dans la partie (choisi à la main)"
-    return "pas dans la partie" if in_game else "en attente de la partie"
+        return "ne joue pas (choisi à la main)"
+    return "ne joue pas" if in_game else "en attente de la partie"
 
 
 __all__ = ["norm_name", "name_score", "match", "same_riot_id", "clean_links", "spoken_name", "best_spoken",
-           "player_label",
+           "player_label", "plays", "is_teammate",
            "role_fr", "game_name", "describe", "NOT_PLAYING", "MATCH_MIN"]

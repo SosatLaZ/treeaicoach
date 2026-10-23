@@ -650,6 +650,7 @@ class DiscordPyBackend:
         self.tls = "système"
         self.listener: Callable[[], None] | None = None     # voice / guild change -> the caller refreshes
         self.receiver: Any = None           # discord_listen.Receiver: the voice websocket messages go to it
+        self._early_ws: collections.deque = collections.deque(maxlen=64)   # ... kept until it exists
         self._deaf = True                   # self-deafened (nothing received) unless « Hey coach » listens
         self._vc_cls: Any = None
         self.client = self._make_client(certifi_ca=False)
@@ -841,6 +842,12 @@ class DiscordPyBackend:
                 r = backend.receiver
                 if r is not None:
                     r.on_ws(msg)
+                else:                        # SPEAKING before « Hey coach » listens: kept for the receiver
+                    try:
+                        if isinstance(msg, dict) and msg.get("op") in (5, 11, 13):
+                            backend._early_ws.append(msg)
+                    except Exception:
+                        pass
 
             class ListeningVoiceClient(self._d.VoiceClient):  # type: ignore[name-defined,misc]
                 def create_connection_state(self) -> Any:
@@ -852,6 +859,10 @@ class DiscordPyBackend:
     async def set_listen(self, on: bool, receiver: Any) -> None:
         """« Hey coach » in the channel: undeafen + read the voice socket (or deafen + stop)."""
         if receiver is not None:
+            if self.receiver is not receiver:
+                for msg in list(self._early_ws):     # SSRC -> member seen before the receiver existed
+                    receiver.on_ws(msg)
+                self._early_ws.clear()
             self.receiver = receiver
             receiver.listener.bot_user_id = str(getattr(self.client.user, "id", "") or "")
         vc = self._vc()
@@ -1298,7 +1309,8 @@ class DiscordCaller:
                 out: dict[str, str] = {}
                 for e in self._mapping_locked():
                     p = e.get("player")
-                    if p and not p.get("me") and e.get("source") in ("auto", "manuel") and p.get("alias"):
+                    if p and not p.get("me") and not p.get("enemy") and e.get("source") in ("auto", "manuel") \
+                            and p.get("alias"):
                         out[str(p["alias"])] = str(e.get("spoken") or e.get("name") or "")
                 return out
         except Exception:
@@ -1328,6 +1340,7 @@ class DiscordCaller:
                     "voice_failures": dict(self.voice.failures), "volume": self._settings.volume,
                     "voice_map": [dict(e) for e in self._mapping_locked()],
                     "roster": [dict(p) for p in self._roster],
+                    "listen": self.listen_view(),
                     "age_s": float(self._clock()) - self._view_t if self._view_t else None}
 
     def _event(self, text: str, channel: str = "", ok: bool = True) -> None:
@@ -1460,7 +1473,7 @@ class DiscordCaller:
             if not s.say_name:
                 return []
             names = [df.spoken_name(e.get("spoken") or e.get("name")) for e in self._mapping_locked()
-                     if e.get("player") and not e["player"].get("me")]
+                     if e.get("player") and not e["player"].get("me") and not e["player"].get("enemy")]
         out = []
         for n in names:
             if n:
@@ -1752,14 +1765,57 @@ class DiscordCaller:
             lst.bot_speaking = lambda: self._playing
             lst.on_wake = self._on_wake
             lst.on_question = self._on_question
-            self._listener, self._receiver = lst, dl.Receiver(lst)
+            lst.on_test = self._on_listen_test
+            rec = dl.Receiver(lst)
+            rec.candidates = self._voice_member_ids
+            self._listener, self._receiver = lst, rec
         return self._listener, self._receiver
+
+    def _voice_member_ids(self) -> list[str]:
+        with self._lock:
+            return [str(m.get("id") or "") for m in self._voice_members_locked()]
 
     def _should_listen(self) -> bool:
         with self._lock:
             s = self._settings
             return (s.enabled and s.listen and self._in_game and not self._muted and not self._stopping
                     and self._state == "connected")
+
+    def listen_test(self) -> tuple[bool, str]:
+        """« Tester : dis « Hey coach » » on the Discord page: the bot hears the channel for 30 s even
+        outside a game (switch « Écouter » not needed); each member's line shows his level and last
+        words; a question heard is written in the log, never sent to the AI. Never raises."""
+        try:
+            with self._lock:
+                connected = self._state == "connected" and not self._stopping
+                in_voice = bool(self._view.get("channel"))
+            if not connected:
+                return False, "Le bot n'est pas connecté."
+            if not in_voice:
+                return False, "Fais d'abord venir le bot dans ton salon vocal (« Rejoindre ce salon »)."
+            lst, _rec = self._listen_parts()
+            lst.test()
+            with self._lock:
+                self._dirty = True
+            self._poke()
+            return True, "Test : dites « Hey coach » puis une question dans le vocal (30 s)."
+        except Exception:
+            log.warning("Discord : test d'écoute impossible", exc_info=True)
+            return False, "Test d'écoute impossible."
+
+    def _on_listen_test(self, uid: str, text: str) -> None:
+        who = self.asker(uid) or "quelqu'un"
+        self._event(f"Test écoute : {who} a dit « {text} »" if text else
+                    f"Test écoute : « Hey coach » de {who} entendu, question vide", ok=bool(text))
+
+    def listen_view(self) -> dict:
+        """The « Écoute » part of the page: per member ``{uid: {level, bar, heard, stage}}``, the chain's
+        counters (packets, unmapped, undecryptable…), whether a test runs. Any thread, cheap."""
+        lst, rec = self._listener, self._receiver
+        if lst is None:
+            return {"members": {}, "stats": {}, "testing": False, "status": ""}
+        return {"members": lst.member_views(), "stats": rec.stats() if rec is not None else {},
+                "testing": lst.testing(), "status": lst.status}       # (no should_listen: under the lock)
 
     def _on_wake(self, _uid: str) -> None:
         """Wake phrase heard: the soft « je t'écoute » chime in the channel, at once."""
@@ -1794,7 +1850,8 @@ class DiscordCaller:
         fn = getattr(backend, "set_listen", None)
         if not callable(fn):
             return
-        on = bool(s.listen) and self._current(backend) is not None
+        testing = self._listener is not None and self._listener.testing()
+        on = (bool(s.listen) or testing) and self._current(backend) is not None
         if not on and self._receiver is None:
             return
         if on:                                   # the PC assistant already hears the player: no double answer
@@ -1911,7 +1968,7 @@ class DiscordCaller:
         lines = list(job.data or [])
         with self._lock:
             mapping = [e for e in self._mapping_locked() if e.get("player") and not e["player"].get("me")
-                       and e.get("source") in ("auto", "manuel")]
+                       and not e["player"].get("enemy") and e.get("source") in ("auto", "manuel")]
         out = []
         for ln in lines:
             alias = str(ln.get("alias") or "").lower()
