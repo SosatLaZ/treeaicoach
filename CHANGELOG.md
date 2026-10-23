@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.18.0 · 23 octobre 2026
+
+- **Séquence de lancement** courte (≈ 1 s, passable) avec les vraies vérifications : minimap, client LoL, voix, overlay.
+- **Accueil façon LoL :** image du champion de ta partie (ou de la dernière), ligne « TOP · GAREN · EN PARTIE », fins
+  coins dorés.
+- **Proportions revues** (grille régulière, titres plus grands, chiffres en police à chasse fixe).
+
 ## 2.17.1 · 23 octobre 2026
 
 - **Windows 10 : nos dessins sont retirés exactement de l'image analysée** quand Windows refuse de cacher l'overlay
