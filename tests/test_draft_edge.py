@@ -194,3 +194,11 @@ def test_watcher_reads_the_tilt_once_per_champ_select():
     t[0] += cs.POLL_S
     w.poll()
     assert reads == [10, 10]                                              # read again next champ select
+
+
+def test_tilt_guard_ignores_custom_and_practice_games():
+    games = hist((False, 0, 9, 0, 0.2, 1800), (False, 0, 9, 0, 0.8, 1800), (True, 5, 2, 5, 1.4, 1800))
+    games[0]["gameType"] = "CUSTOM_GAME"
+    games[1]["gameMode"] = "PRACTICETOOL"
+    res = de.parse_history(games)
+    assert len(res) == 1 and res[0].win and de.tilt_line(res, NOW) == ""

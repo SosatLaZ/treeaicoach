@@ -295,3 +295,85 @@ def test_report_renders_edge_sections(tmp_path: Path) -> None:
     p.write_text(json.dumps(rec), encoding="utf-8")
     out = report.write_report(p)
     assert out is not None and "Ta progression" in out.read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------------------ 21 farm gap / time dead / levels
+def _snap_record(role: str = "TOP", dur: float = 1500.0, cs_per_min: float = 4.0, dead=(), start: float = 0.0,
+                 **meta) -> dict:
+    snaps = []
+    t = start
+    while t <= dur:
+        snaps.append({"game_time": t, "cs": int(cs_per_min * t / 60.0), "level": min(18, 1 + int(t // 90)),
+                      "gold": 300, "items": [], "deaths": len(dead), "is_dead": any(a <= t < b for a, b in dead)})
+        t += 10.0
+    return {"meta": dict({"position": role, "team": "ORDER", "game_mode": "CLASSIC"}, **meta), "duration": dur,
+            "snapshots": snaps}
+
+
+def test_farm_gap_in_gold_with_the_live_targets() -> None:
+    d = pe.farm_gap(_snap_record(cs_per_min=4.0), "debutant")
+    assert d["target"] == 5.5 and d["cs_per_min"] == 4.0 and d["missed_cs"] == 38   # 25 min x 1,5
+    assert d["missed_gold"] == 750 and d["cs10"] == 40 and d["cs10_target"] == 47
+    assert d["line"].startswith("Farm : 4,0 CS/min pour une cible de 5,5 : environ 38 sbires, soit 800 PO")
+    assert "À 10 min : 40 sbires (cible 47)" in d["line"] and EM not in d["line"]
+    assert pe.farm_gap(_snap_record(cs_per_min=6.0))["line"] == ""                  # on target: nothing
+    assert pe.farm_gap(_snap_record("UTILITY")) == {}                               # no farm target
+    assert pe.farm_gap(_snap_record(start=600.0))["cs10"] is None                    # app started mid-game
+    assert pe.farm_gap({}) == {} and pe.farm_gap(None) == {}
+
+
+def test_time_dead_and_farm_lost() -> None:
+    d = pe.time_dead(_snap_record(dead=((300, 330), (600, 640), (900, 950), (1200, 1260))))
+    assert d["dead_s"] == 180 and d["deaths"] == 4 and d["farm_lost_cs"] == 14    # 100 CS in 22 min alive
+    assert d["line"].startswith("Temps mort : 3:00 au total (12 % de la partie, 4 morts)") and "14 sbires" in d["line"]
+    assert pe.time_dead(_snap_record(dead=((300, 330),)))["line"] == ""              # one short death
+    assert "sbires" not in pe.time_dead(_snap_record("UTILITY", dead=((300, 400), (600, 700))))["line"]
+    assert pe.time_dead({}) == {}
+
+
+def test_level_race_truth_and_tab() -> None:
+    def row(lvl: int) -> list:
+        return [0.2, 0.2, 0, 0, 0, lvl]
+    frames = [[60.0 * m, {"1": row(min(m, 9)), "6": row(min(m + 1, 10))}] for m in range(1, 16)]
+    truth = {"me": 1, "lane_opponent": 6, "frames": frames,
+             "participants": [{"id": 1, "name": "Garen"}, {"id": 6, "name": "Darius"}]}
+    d = pe.level_race(_snap_record(), truth)
+    assert d["behind"] == (1, 15) and d["line"].startswith("Niveaux : en retard sur Darius de 1 à 15 min.")
+    rec = _snap_record()
+    rec["roster"] = [{"team": "CHAOS", "position": "TOP", "name": "Darius"}]
+    rec["scoreboard"] = {"timeline": [[60.0 * m, 0, {"TOP": [0, 0, 1 if 3 <= m <= 8 else 0]}] for m in range(1, 16)]}
+    d2 = pe.level_race(rec)
+    assert d2["ahead"] == (3, 8) and "en avance sur Darius de 3 à 8 min" in d2["line"]
+    assert pe.level_race(_snap_record("JUNGLE"), truth) == {} and pe.level_race({}) == {}
+
+
+def test_game_edge_off_for_remakes_and_other_modes() -> None:
+    remake = _snap_record(dur=200.0)
+    e = pe.game_edge(remake)
+    assert e["lines"] == [] and e["items"]["lines"] == [] and e["turning_point"] is None
+    assert pe.game_edge(_snap_record(game_mode="ARAM"))["lines"] == []
+    assert pe.game_edge(_snap_record(game_mode="SWIFTPLAY"))["farm"]["target"] == 5.5
+    # a surrender at 13 min: no "Aucun objet légendaire terminé" (the target is 14 min)
+    assert not any("Aucun objet" in x for x in pe.game_edge(_snap_record(dur=780.0))["items"]["lines"])
+    assert any("Aucun objet" in x for x in pe.game_edge(_snap_record(dur=1500.0))["items"]["lines"])
+
+
+def test_item_timing_unknown_when_the_app_started_late() -> None:
+    legend = {3078}
+    rec = _snap_record(start=900.0)
+    for s in rec["snapshots"]:
+        s["items"] = [3078]
+    d = pe.item_timing(rec, is_legendary=lambda i: i in legend)
+    assert d["first_min"] is None and not any("1er objet" in x or "Aucun objet" in x for x in d["lines"])
+
+
+def test_profile_counts_swiftplay_games() -> None:
+    rows = [_row(i, game_mode="SWIFTPLAY") for i in range(4)] + [_row(9, game_mode="ARAM")]
+    assert pe.profile(rows)["games"] == 4
+
+
+def test_report_shows_farm_dead_levels_block() -> None:
+    rec = _snap_record(dead=((300, 360), (600, 660), (900, 960), (1200, 1260)))
+    html = report.render_report_html(rec, {"edge": pe.game_edge(rec)})
+    assert "Farm, morts et niveaux" in html and "Temps mort : 4:00" in html
+    assert "Farm, morts et niveaux" not in report.render_report_html(_snap_record(dur=200.0))

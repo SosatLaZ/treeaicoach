@@ -57,6 +57,7 @@ DEFAULT_BRACKET = "debutant"
 LEGENDARY_GOLD = 2200            # fallback when the item table is unavailable
 IDLE_GOLD = 1300                 # enough for a component: carrying more while alive = gold that sleeps
 UNSPENT_SKIP_S = 90.0            # the starting gold is not "unspent"
+LATE_START_S = 120.0             # first snapshot later than this: the app started mid-game
 
 CS_TARGET = {"TOP": 7.0, "MIDDLE": 7.0, "BOTTOM": 7.5, "JUNGLE": 5.5}
 VISION_TARGET = {"UTILITY": 2.0, "JUNGLE": 1.0}
@@ -172,7 +173,10 @@ def lane_diffs(record: Any, truth: Any = None) -> dict[str, Any]:
             me, opp = t.get("me"), t.get("lane_opponent")
             parts = {p.get("id"): p for p in _list(t.get("participants")) if isinstance(p, dict)}
             out["opponent"] = _str(_dict(parts.get(opp)).get("name") or _dict(parts.get(opp)).get("alias")) or None
+            dur = _duration(record) or _f(t.get("duration")) or 0.0
             for m in LANE_MINUTES:
+                if dur and m * 60.0 > dur + 5.0:
+                    continue
                 a, b = _truth_row(t, m, me), _truth_row(t, m, opp)
                 if a is None or b is None:
                     continue
@@ -182,7 +186,10 @@ def lane_diffs(record: Any, truth: Any = None) -> dict[str, Any]:
                 out["source"] = "client"
         if not out["rows"] and role:
             tl = _list(_dict(_dict(record).get("scoreboard")).get("timeline"))
+            dur = _duration(record)
             for m in LANE_MINUTES:
+                if dur and m * 60.0 > dur + 5.0:
+                    continue
                 best, best_dt = None, FRAME_TOL_S + 1
                 for s in tl:
                     if not isinstance(s, list) or len(s) < 3 or not isinstance(s[2], dict):
@@ -265,10 +272,14 @@ def item_timing(record: Any, bracket: str = DEFAULT_BRACKET, is_legendary: Any =
         out["first_target"], out["second_target"] = tgt
         unspent, alive_s, idle_s = 0.0, 0.0, 0.0
         peak = (0.0, 0.0)
+        late_start = float(snaps[0]["game_time"]) > LATE_START_S     # app started mid-game
         for i, s in enumerate(snaps):
             gt = float(s["game_time"])
             items = [int(x) for x in _list(s.get("items")) if isinstance(x, (int, float)) and int(x) > 0]
             n_leg = sum(1 for x in items if legend(x))
+            if i == 0 and late_start:          # already bought before the recording: timing unknown
+                out["first_min"] = "?" if n_leg >= 1 else None
+                out["second_min"] = "?" if n_leg >= 2 else None
             if n_leg >= 1 and out["first_min"] is None:
                 out["first_min"] = round(gt / 60.0, 1)
             if n_leg >= 2 and out["second_min"] is None:
@@ -289,16 +300,21 @@ def item_timing(record: Any, bracket: str = DEFAULT_BRACKET, is_legendary: Any =
             out["idle_min"] = round(idle_s / 60.0, 1)
         if peak[0] > 0:
             out["peak_gold"], out["peak_time"] = int(peak[0]), clock(peak[1], "?", rounded=True)
-        out["lines"] = _item_lines(out)
+        for k in ("first_min", "second_min"):
+            if out[k] == "?":
+                out[k] = None
+                out["unknown_" + k] = True
+        out["lines"] = _item_lines(out, _duration(record) or float(snaps[-1]["game_time"]))
     except Exception:
         log.exception("item_timing failed")
     return out
 
 
-def _item_lines(d: dict) -> list[str]:
+def _item_lines(d: dict, duration_s: float | None = None) -> list[str]:
     lines = []
     f1, t1, f2, t2 = d.get("first_min"), d.get("first_target"), d.get("second_min"), d.get("second_target")
     br = d.get("bracket")
+    mins = (duration_s or 0.0) / 60.0
     if f1 is not None and t1 is not None:
         late = f1 - t1
         if late > 1.0:
@@ -306,7 +322,8 @@ def _item_lines(d: dict) -> list[str]:
                          f"{br} ({_num(t1, 0)} min). Plus de sbires et des retours plus tôt.")
         else:
             lines.append(f"1er objet légendaire à {_num(f1, 1)} min : dans le rythme (cible {br} {_num(t1, 0)} min).")
-    elif t1 is not None:
+    elif t1 is not None and not d.get("unknown_first_min") and mins >= t1 + 1.0:
+        # (a game over before the target - a remake, a surrender at 15 - is not "no item")
         lines.append(f"Aucun objet légendaire terminé (cible {br} : {_num(t1, 0)} min).")
     if f2 is not None and t2 is not None and f2 - t2 > 1.5:
         lines.append(f"2e objet à {_num(f2, 1)} min (cible {_num(t2, 0)} min).")
@@ -337,12 +354,9 @@ def _name_teams(record: Any) -> dict[str, str]:
 
 
 def _structure_owner(name: Any) -> str | None:
-    s = _str(name)
-    if "TOrder" in s or "_T1_" in s:
-        return "ORDER"
-    if "TChaos" in s or "_T2_" in s:
-        return "CHAOS"
-    return None
+    from treeaicoach.phase import structure_owner  # noqa: PLC0415
+
+    return structure_owner(_str(name))
 
 
 def _my_keys(record: Any) -> set[str]:
@@ -647,8 +661,12 @@ def axis_scores(r: Mapping[str, Any]) -> dict[str, float | None]:
     return out
 
 
+#: Summoner's Rift modes with the normal economy (Swiftplay is a normal draft-less SR game)
+RIFT_MODES = ("", "CLASSIC", "SWIFTPLAY")
+
+
 def _classic(rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    return [r for r in rows if isinstance(r, Mapping) and _str(r.get("game_mode")).upper() in ("", "CLASSIC")
+    return [r for r in rows if isinstance(r, Mapping) and _str(r.get("game_mode")).upper() in RIFT_MODES
             and (_f(r.get("duration")) or 0) >= MIN_GAME_S]
 
 
@@ -829,12 +847,207 @@ def team_recap(record: Any, friends: Mapping[str, str], max_len: int = 1900) -> 
 
 
 # ======================================================================================
+# 21. farm gap, time dead, level race (own data: snapshots, Tab timeline, client truth)
+# ======================================================================================
+GOLD_PER_CS = 20.0               # average wave minion (3 melee 21, 3 casters 14, a siege every 3 waves)
+FARM_LINE_GOLD = 600.0           # below this the farm gap is not worth a line
+CS10_FACTOR = 8.5                # 10-min CS target = CS/min target x 8.5 (minions from 1:05, slow first waves)
+#: post-game bracket -> live_edge.CS_TARGETS bracket (the live line and the report use the same targets)
+_LIVE_BRACKET = {"debutant": "low", "argent-or": "mid", "platine+": ""}
+LANE_ROLES = ("TOP", "MIDDLE", "BOTTOM", "UTILITY")
+
+
+def _snaps(record: Any) -> list[dict]:
+    snaps = [s for s in _list(_dict(record).get("snapshots")) if isinstance(s, dict) and _f(s.get("game_time")) is not None]
+    return sorted(snaps, key=lambda s: float(s["game_time"]))
+
+
+def _gold_fr(x: float) -> str:
+    return f"{int(round(x / 100.0) * 100):,}".replace(",", " ")
+
+
+def farm_gap(record: Any, bracket: str = DEFAULT_BRACKET, truth: Any = None) -> dict[str, Any]:
+    """``{"cs", "cs_per_min", "target", "missed_cs", "missed_gold", "cs10", "cs10_target", "line"}``: the
+    minions left on the map against the CS/min target of the bracket (the live line's target), in
+    gold. Not for the support (no farm target). ``{}`` without data. Never raises."""
+    try:
+        role = _position(record)
+        if role in ("", "UTILITY"):
+            return {}
+        from treeaicoach.live_edge import CS_TARGETS  # noqa: PLC0415
+
+        target = CS_TARGETS.get(_LIVE_BRACKET.get(bracket, "low"), CS_TARGETS["low"]).get(role)
+        snaps = _snaps(record)
+        dur = _duration(record)
+        if target is None or not snaps or dur < MIN_GAME_S:
+            return {}
+        cs = _f(snaps[-1].get("cs"))
+        if cs is None:
+            cs = _f(_dict(_dict(record).get("summary")).get("cs"))
+        if cs is None:
+            return {}
+        mins = dur / 60.0
+        missed = max(0.0, target * mins - cs)
+        out: dict[str, Any] = {"cs": int(cs), "cs_per_min": round(cs / mins, 1), "target": target,
+                               "missed_cs": int(round(missed)), "missed_gold": int(round(missed * GOLD_PER_CS)),
+                               "cs10": None, "cs10_target": int(round(target * CS10_FACTOR)), "line": ""}
+        if float(snaps[0]["game_time"]) <= LATE_START_S:
+            s10 = min(snaps, key=lambda s: abs(float(s["game_time"]) - 600.0))
+            if abs(float(s10["game_time"]) - 600.0) <= 30.0 and _f(s10.get("cs")) is not None:
+                out["cs10"] = int(_f(s10.get("cs")) or 0)
+        if out["missed_gold"] >= FARM_LINE_GOLD:
+            what = " (un objet entier)" if out["missed_gold"] >= 2600 else ""
+            line = (f"Farm : {_num(out['cs_per_min'], 1)} CS/min pour une cible de {_num(target, 1)} : environ "
+                    f"{out['missed_cs']} sbires, soit {_gold_fr(out['missed_gold'])} PO, laissés sur la carte{what}.")
+            if out["cs10"] is not None and out["cs10"] < out["cs10_target"]:
+                line += f" À 10 min : {out['cs10']} sbires (cible {out['cs10_target']})."
+            out["line"] = line
+        return out
+    except Exception:
+        log.exception("farm_gap failed")
+        return {}
+
+
+def time_dead(record: Any) -> dict[str, Any]:
+    """``{"dead_s", "share", "deaths", "farm_lost_cs", "line"}``: the time spent dead (recorded
+    snapshots, ``is_dead``) and the farm it cost (my own alive CS rate). ``{}`` without data."""
+    try:
+        snaps = _snaps(record)
+        if len(snaps) < 3:
+            return {}
+        span = float(snaps[-1]["game_time"]) - float(snaps[0]["game_time"])
+        if span < MIN_GAME_S:
+            return {}
+        dead_s = 0.0
+        for i, s in enumerate(snaps[:-1]):
+            if s.get("is_dead"):
+                dead_s += min(15.0, max(0.0, float(snaps[i + 1]["game_time"]) - float(s["game_time"])))
+        deaths = int(_f(snaps[-1].get("deaths")) or _f(_dict(_dict(record).get("summary")).get("deaths")) or 0)
+        share = dead_s / span
+        role = _position(record)
+        cs0, cs1 = _f(snaps[0].get("cs")) or 0.0, _f(snaps[-1].get("cs")) or 0.0
+        alive_min = max(1.0, (span - dead_s) / 60.0)
+        lost = 0 if role in ("", "UTILITY") else int(round(max(0.0, cs1 - cs0) / alive_min * dead_s / 60.0))
+        out = {"dead_s": round(dead_s), "share": round(share, 3), "deaths": deaths, "farm_lost_cs": lost, "line": ""}
+        if dead_s >= 60.0 and (share >= 0.06 or deaths >= 4):
+            tail = (f" : environ {lost} sbires ({_gold_fr(lost * GOLD_PER_CS)} PO) de farm perdus pendant ce temps"
+                    if lost >= 10 else "")
+            out["line"] = (f"Temps mort : {clock(dead_s, '?', rounded=True)} au total ({round(100 * share)} % de la "
+                           f"partie, {deaths} mort{'s' if deaths > 1 else ''}){tail}.")
+        return out
+    except Exception:
+        log.exception("time_dead failed")
+        return {}
+
+
+def _level_rows(record: Any, truth: Any) -> tuple[list[tuple[float, int, int]], str | None]:
+    """``[(game time, my level, his level)]`` up to 15:00 and the opponent name: the client truth
+    (exact, per minute) else the Tab timeline (exact level diff, ~1 min) + my snapshots."""
+    t = truth if isinstance(truth, dict) else {}
+    rows: list[tuple[float, int, int]] = []
+    if t.get("frames") and t.get("me") is not None and t.get("lane_opponent") is not None:
+        me, opp = str(t["me"]), str(t["lane_opponent"])
+        for fr in _list(t.get("frames")):
+            if not isinstance(fr, list) or len(fr) < 2 or not isinstance(fr[1], dict) or _f(fr[0]) is None:
+                continue
+            a, b = fr[1].get(me), fr[1].get(opp)
+            if float(fr[0]) <= 15 * 60 + 5 and isinstance(a, list) and isinstance(b, list) and len(a) >= 6 and len(b) >= 6:
+                rows.append((float(fr[0]), int(_f(a[5]) or 1), int(_f(b[5]) or 1)))
+        parts = {_str(p.get("id")): p for p in _list(t.get("participants")) if isinstance(p, dict)}
+        if rows:
+            return rows, _str(_dict(parts.get(opp)).get("name") or _dict(parts.get(opp)).get("alias")) or None
+    role = _position(record)
+    snaps = _snaps(record)
+    if not snaps:
+        return [], None
+    for row in _list(_dict(_dict(record).get("scoreboard")).get("timeline")):
+        if not isinstance(row, list) or len(row) < 3 or not isinstance(row[2], dict) or _f(row[0]) is None:
+            continue
+        gt = float(row[0])
+        v = row[2].get(role)
+        if gt > 15 * 60 + 5 or not isinstance(v, list) or len(v) < 3 or _f(v[2]) is None:
+            continue
+        s = min(snaps, key=lambda x: abs(float(x["game_time"]) - gt))
+        if abs(float(s["game_time"]) - gt) > 15.0 or _f(s.get("level")) is None:
+            continue
+        mine = int(_f(s.get("level")) or 1)
+        rows.append((gt, mine, mine - int(_f(v[2]) or 0)))
+    opp = next((p for p in _list(_dict(record).get("roster")) if isinstance(p, dict)
+                and _str(p.get("team")).upper() not in ("", _my_team(record))
+                and _str(p.get("position")).upper() == role), None)
+    return rows, (_str(_dict(opp).get("name") or _dict(opp).get("alias")) or None)
+
+
+def level_race(record: Any, truth: Any = None) -> dict[str, Any]:
+    """``{"behind": (from_min, to_min) | None, "ahead": ..., "six": (my min, his min), "line"}``: the
+    level race against my lane opponent during the laning phase (levels are public: exact). One
+    line: a level deficit held 3+ minutes, else him reaching level 6 a minute+ before me, else my
+    own lead (the window I had). ``{}`` without data. Never raises."""
+    try:
+        if _position(record) not in LANE_ROLES:
+            return {}
+        rows, opp = _level_rows(record, truth)
+        rows = sorted(r for r in rows if r[0] >= 60.0)
+        if len(rows) < 4:
+            return {}
+        opp = opp or "ton adversaire"
+
+        def longest(pred: Any) -> tuple[float, float] | None:
+            best, start, prev = None, None, None
+            for gt, a, b in rows + [(1e9, 0, 0)]:
+                if gt < 1e9 and pred(a - b):
+                    start = gt if start is None else start
+                    prev = gt
+                elif start is not None:
+                    if best is None or prev - start > best[1] - best[0]:
+                        best = (start, prev)
+                    start = None
+            return best
+
+        behind, ahead = longest(lambda d: d <= -1), longest(lambda d: d >= 1)
+        six_me = next((gt for gt, a, _b in rows if a >= 6), None)
+        six_him = next((gt for gt, _a, b in rows if b >= 6), None)
+        out: dict[str, Any] = {"behind": None, "ahead": None, "six": (six_me, six_him), "line": ""}
+        m = lambda x: int(round(x / 60.0))  # noqa: E731
+        support = _position(record) == "UTILITY"
+        if behind and behind[1] - behind[0] >= 170.0:
+            out["behind"] = (m(behind[0]), m(behind[1]))
+            fix = ("L'XP se perd en mourant et loin de ta voie : reste près de ton tireur tant que la voie dure."
+                   if support else "L'XP se perd en mourant et en rentrant avec une vague devant toi : pousse ta "
+                   "vague avant de rentrer.")
+            out["line"] = f"Niveaux : en retard sur {opp} de {m(behind[0])} à {m(behind[1])} min. {fix}"
+        elif six_him is not None and (six_me is None or six_me - six_him >= 55.0):
+            out["line"] = (f"Niveau 6 : {opp} l'a eu avant toi (vers {m(six_him)} min). Recule à ce moment-là : "
+                           "son ultime change le combat.")
+        elif ahead and ahead[1] - ahead[0] >= 170.0:
+            out["ahead"] = (m(ahead[0]), m(ahead[1]))
+            out["line"] = (f"Niveaux : en avance sur {opp} de {m(ahead[0])} à {m(ahead[1])} min. C'était ta fenêtre "
+                           + ("pour engager avec ton tireur." if support else "pour attaquer et prendre ses plaques."))
+        return out
+    except Exception:
+        log.exception("level_race failed")
+        return {}
+
+
+# ======================================================================================
 # bundles used by report.py / the Analyse page
 # ======================================================================================
 def game_edge(record: Any, truth: Any = None, bracket: str = DEFAULT_BRACKET) -> dict[str, Any]:
-    """Everything about the game just played (lane diffs, item timing, turning point)."""
+    """Everything about the game just played (lane diffs, item timing, turning point, farm gap,
+    time dead, level race). A remake (< :data:`MIN_GAME_S`) or another mode (ARAM, Arena, URF...)
+    gets nothing: its numbers would only be noise next to the rift targets."""
+    empty = {"lane": {"source": None, "opponent": None, "rows": [], "verdict": ""}, "items": {"lines": []},
+             "turning_point": None, "farm": {}, "dead": {}, "levels": {}, "lines": []}
+    try:
+        mode = _str(_meta(record).get("game_mode") or _dict(_dict(record).get("summary")).get("game_mode")).upper()
+        if _duration(record) < MIN_GAME_S or mode not in RIFT_MODES:
+            return empty
+    except Exception:
+        return empty
+    farm, dead, levels = farm_gap(record, bracket, truth), time_dead(record), level_race(record, truth)
     return {"lane": lane_diffs(record, truth), "items": item_timing(record, bracket),
-            "turning_point": turning_point(record)}
+            "turning_point": turning_point(record), "farm": farm, "dead": dead, "levels": levels,
+            "lines": [x for x in (farm.get("line"), dead.get("line"), levels.get("line")) if x]}
 
 
 def history_edge(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -859,6 +1072,6 @@ def load_history(games_dir: Any = None, last: int = 200, until: str | None = Non
         return history_edge([])
 
 
-__all__ = ["lane_diffs", "item_timing", "turning_point", "win_prob", "game_features", "death_zones", "profile",
+__all__ = ["lane_diffs", "item_timing", "turning_point", "win_prob", "farm_gap", "time_dead", "level_race", "game_features", "death_zones", "profile",
            "axis_scores", "champion_pool", "team_recap", "game_edge", "history_edge", "load_history", "AXES",
            "ITEM_TARGETS"]

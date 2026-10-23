@@ -523,6 +523,9 @@ def jungle_forecast(allies: Iterable[Any], enemies: Iterable[Any], my_team: str 
 REMAKE_S = 300.0                  # games shorter than this are remakes: ignored
 SESSION_GAP_S = 75 * 60.0         # two games further apart than this are not the same session
 FRESH_S = 2 * 3600.0              # the last game must have ended within this to talk about "now"
+SKIP_GAME_TYPES = frozenset({"CUSTOM_GAME", "TUTORIAL_GAME"})
+SKIP_GAME_MODES = frozenset({"PRACTICETOOL", "TUTORIAL", "TUTORIAL_MODULE_1", "TUTORIAL_MODULE_2",
+                             "TUTORIAL_MODULE_3"})
 
 
 @dataclass(frozen=True)
@@ -552,6 +555,9 @@ def parse_history(games: Any) -> list[GameResult]:
         for g in games if isinstance(games, list) else []:
             if not isinstance(g, dict):
                 continue
+            if (str(g.get("gameType") or "").upper() in SKIP_GAME_TYPES
+                    or str(g.get("gameMode") or "").upper() in SKIP_GAME_MODES):
+                continue                                  # custom / practice tool / tutorial: not a real result
             parts = g.get("participants")
             p = parts[0] if isinstance(parts, list) and parts and isinstance(parts[0], dict) else None
             st = p.get("stats") if p is not None and isinstance(p.get("stats"), dict) else None

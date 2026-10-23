@@ -1889,6 +1889,10 @@ def _edge_section(record: dict, a: dict) -> str:
     if lines:
         lis = "".join(f'<li class="info"><span class="i">i</span><span>{_e(t)}</span></li>' for t in lines)
         blocks.append(f'<h3 style="margin:14px 0 8px;font-size:15px">Objets et or</h3><ul class="tips">{lis}</ul>')
+    extra = [t for t in (e.get("lines") or []) if isinstance(t, str) and t]     # farm gap, time dead, level race
+    if extra:
+        lis = "".join(f'<li class="info"><span class="i">i</span><span>{_e(t)}</span></li>' for t in extra)
+        blocks.append(f'<h3 style="margin:14px 0 8px;font-size:15px">Farm, morts et niveaux</h3><ul class="tips">{lis}</ul>')
     if not blocks:
         return ""
     return f'<div class="panel"><h2>Ta partie en chiffres</h2>{"".join(blocks)}</div>'
