@@ -1,4 +1,5 @@
-"""Réglages: what a player sets once (start-up, after the game, window, AI advice, in-game keys).
+"""Réglages: what a player sets once (start-up, League client, after the game, AI advice, in-game keys,
+window).
 The technical settings (detection, performance, maintenance) are on the Avancé page."""
 
 from __future__ import annotations
@@ -47,10 +48,10 @@ class SettingsPage:
     def __init__(self, app: Any) -> None:
         self.app = app
         W = app.W
-        self.page = W.Page("Réglages", "Ce que tu règles une fois. La détection et la performance sont dans Avancé.")
+        self.page = W.Page("Réglages", "Ce que tu règles une fois.")
 
         gen = self.page.section("Démarrage")
-        app.switch_row(gen, "autostart", "Démarrer l'analyse au lancement", "Sinon, clique sur « Démarrer » à "
+        app.switch_row(gen, "autostart", "Démarrer le coach à l'ouverture", "Sinon, clique sur « Démarrer » à "
                        "l'Accueil.")
         ok, why = autostart_support()
         if ok:
@@ -60,16 +61,29 @@ class SettingsPage:
             sw.toggled.connect(lambda on: app.run_job(lambda: set_windows_autostart(bool(on)), None, None,
                                                       name="TreeAI-ui-autostart-set"))
 
+        lol = self.page.section("Client League of Legends", "Lecture seule, sauf les runes, sorts et objets que "
+                                                            "tu autorises ici.")
+        app.switch_row(lol, "lcu_enabled", "Utiliser le client", "Tes vraies stats après la partie, la sélection "
+                       "des champions et les joueurs.")
+        dep = (lambda row: app.depends(row, "lcu_enabled"))
+        dep(app.switch_row(lol, "cs_import_items", "Set d'objets dans la boutique", "Les objets du build, "
+                           "surlignés dans l'onglet Recommandés."))
+        dep(app.switch_row(lol, "cs_auto_runes", "Runes automatiques", "Crée ou remplace la page « TreeAI », "
+                           "jamais tes autres pages."))
+        dep(app.switch_row(lol, "cs_auto_spells", "Sorts automatiques", "Saut éclair reste sur ta touche."))
+        dep(app.switch_row(lol, "tilt_guard", "Pause après une série de défaites", "Un conseil à la sélection "
+                           "des champions."))
+        dep(app.switch_row(lol, "player_intel", "Rangs des joueurs", "Rang, LP et séries de chaque champion de ta "
+                           "partie, gardés le temps de la partie."))
+        app.depends(app.switch_row(lol, "discord_ranks", "Annoncer les rangs sur Discord", "Au début de la partie, "
+                                   "le bot les écrit dans le salon et dit les plus utiles."), "lcu_enabled",
+                    "player_intel")
+
         after = self.page.section("Après la partie")
         app.switch_row(after, "post_game_report", "Rapport d'après-partie", "Morts, ganks, jungler adverse et "
                        "conseils, dans le navigateur.")
-        app.switch_row(after, "open_report_automatically", "Ouvrir le rapport tout seul", "À la fin de chaque partie.")
-        app.switch_row(after, "lcu_enabled", "Lire le client League of Legends", "Tes vraies stats après la partie "
-                       "(lecture seule).")
-
-        win = self.page.section("Fenêtre")
-        app.choice_row(win, "ui_scaling", "Taille de l'interface", "Appliquée au prochain lancement.", UI_SCALINGS)
-        app.switch_row(win, "ui_confirm_quit", "Confirmer avant de quitter en partie", None)
+        app.depends(app.switch_row(after, "open_report_automatically", "Ouvrir le rapport tout seul", None),
+                    "post_game_report")
 
         ai = self.page.section("Conseils IA (facultatif)", "Gemini, Groq et OpenRouter ont une offre gratuite. La clé "
                                                           "reste sur ton PC.")
@@ -88,6 +102,9 @@ class SettingsPage:
         for field, title, desc in HOTKEYS:
             app.choice_row(keys, field, title, desc, hotkey_choices(str(getattr(app.cfg, field) or "")))
 
+        win = self.page.section("Fenêtre")
+        app.choice_row(win, "ui_scaling", "Taille de l'interface", "Appliquée au prochain lancement.", UI_SCALINGS)
+        app.switch_row(win, "ui_confirm_quit", "Confirmer avant de quitter en partie", None)
 
     def on_ai_test(self, ok: bool, short: str) -> None:
         self.ai_test.set_desc(("Clé valide : " if ok else "Échec : ") + short)

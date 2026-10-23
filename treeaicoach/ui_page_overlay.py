@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from treeaicoach.ui_common import FOG_MODES, HUD_POSITIONS, OVERLAY_MODES, PLAYS_POSITIONS, RADAR_POSITIONS, fmt_decimal_fr
+from treeaicoach.ui_common import FOG_MODES, HUD_POSITIONS, OVERLAY_MODES, PLAYS_POSITIONS, RADAR_POSITIONS
 
 log = logging.getLogger(__name__)
 
@@ -25,14 +25,14 @@ class OverlayPage:
     def __init__(self, app: Any) -> None:
         self.app = app
         W, QtWidgets, Qt = app.W, app.QtWidgets, app.QtCore.Qt
-        self.page = W.Page("Overlay", "Fenêtres transparentes posées sur le jeu (mode Sans bordure ou Fenêtré). "
-                                      "Elles ne touchent jamais au jeu et se cachent hors de la partie.")
+        self.page = W.Page("Overlay", "Ce qui s'affiche par-dessus le jeu (mode Sans bordure ou Fenêtré). "
+                                      "Rien ne touche au jeu.")
         self._preview_busy = False
         self._preview_again = False
 
         # preview
         self.move_btn = W.button("Déplacer", app.toggle_move_mode,
-                                 tip="Fais glisser le radar et le panneau à la souris.")
+                                 tip="Fais glisser le panneau à la souris.")
         pv = self.page.section("Aperçu", "Exemple sur une partie fictive, avec tes réglages.", self.move_btn)
         holder = QtWidgets.QWidget()
         hl = QtWidgets.QVBoxLayout(holder)
@@ -46,55 +46,56 @@ class OverlayPage:
 
         main = self.page.section("Général")
         app.switch_row(main, "overlay_enabled", "Afficher l'overlay",
-                       f"Touche en jeu : {self._key('hotkey_overlay')}.")
-        app.choice_row(main, "overlay_mode", "Où dessiner", "Sur la minimap : marques posées sur la vraie "
-                       "minimap. Aucun : rien sur la carte (le panneau et les alertes restent).", OVERLAY_MODES)
-        app.switch_row(main, "overlay_hide_from_capture", "Cacher des captures et du stream",
+                       f"Tout ce qui suit. Touche en jeu : {self._key('hotkey_overlay')}.")
+        app.switch_row(main, "overlay_hide_from_capture", "Invisible en stream et en capture",
                        "Discord, OBS et les captures d'écran ne voient pas l'overlay.")
 
-        mm = self.page.section("Sur la minimap")
-        app.switch_row(mm, "overlay_timers", "Minuteurs", "Buff Baron / Ancien restant, ennemis morts, objectifs.")
+        mm = self.page.section("Minimap")
+        app.choice_row(mm, "overlay_mode", "Marques sur la minimap", "Ennemis suivis, zones et minuteurs.",
+                       OVERLAY_MODES, segmented=True)
+        app.switch_row(mm, "overlay_timers", "Minuteurs", "Objectifs, buffs Baron et Ancien, ennemis morts.")
         app.choice_row(mm, "fog_mode", "Zone des ennemis cachés", "Cercle qui grandit là où un ennemi caché peut "
                        "être.", FOG_MODES, segmented=True)
-        self.fog_row = app.slider_row(mm, "fog_max_s", "Durée de la zone", "Au-delà, la zone est trop grande : "
-                                      "elle s'efface.", 10, 180, 5, lambda v: f"{v:.0f} s", to_value=float)
+        self.fog_row = app.slider_row(mm, "fog_max_s", "Durée de la zone", "Ensuite elle s'efface (trop grande "
+                                      "pour servir).", 10, 180, 5, lambda v: f"{v:.0f} s", to_value=float)
         app.switch_row(mm, "jungle_paths", "Trajets probables du jungler", "Un ou deux chemins en pointillés.")
-        app.switch_row(mm, "ward_guide", "Guide de balise", f"Où poser une balise ({self._key('hotkey_ward')} en jeu).")
-        app.switch_row(mm, "ward_world", "Repère dans le jeu", "Marque au sol ou flèche au bord de l'écran.")
-        app.switch_row(mm, "ward_sound", "Son du guide de balise", "Un son court quand un guide apparaît.")
+        app.switch_row(mm, "ward_guide", "Où poser une balise", f"Sur la minimap, quand tu appuies sur "
+                       f"{self._key('hotkey_ward')}.")
+        app.depends(app.switch_row(mm, "ward_world", "Repère dans le jeu",
+                                   "Marque au sol, ou flèche au bord de l'écran."), "ward_guide")
+        app.depends(app.switch_row(mm, "ward_sound", "Son du repère", "Un son court quand il apparaît."),
+                    "ward_guide")
 
-        hud = self.page.section("Panneau en jeu", "Une consigne à la fois, en rouge en cas de danger.")
-        app.switch_row(hud, "hud_enabled", "Afficher le panneau", "Jauge de menace, consigne du moment, "
-                       "prochain objectif.")
-        self.hud_pos = app.choice_row(hud, "hud_position", "Position du panneau", None,
-                                      position_choices(app.cfg, "hud"))
-        app.switch_row(hud, "hud_detailed", "Toujours en mode détaillé",
-                       f"Sinon, maintiens {self._key('hotkey_details')} en jeu pour le voir.")
-        app.switch_row(hud, "text_tips", "Conseils écrits", "Un conseil court dans le panneau, jamais lu.")
-        app.switch_row(hud, "item_advice", "Prochain objet", "L'objet à acheter au prochain retour.")
-        app.switch_row(hud, "hud_item_card", "Achats",
-                       "En base, mort ou avec l'or : l'objet à acheter, avec son icône et son prix.")
-        app.switch_row(hud, "hud_build_strip", "Barre de build",
-                       f"Le build du moment en 6 petites icônes, en base ou en maintenant {self._key('hotkey_details')}.")
-        app.switch_row(hud, "win_prob_hud", "Probabilité de victoire", "Dans le panneau et sur l'Accueil.")
+        hud = self.page.section("Panneau de consignes", "Une consigne à la fois, en rouge en cas de danger.")
+        app.switch_row(hud, "hud_enabled", "Afficher le panneau", "Menace, consigne du moment, prochain objectif.")
+        self.hud_pos = app.depends(app.choice_row(hud, "hud_position", "Position", None,
+                                                  position_choices(app.cfg, "hud")), "hud_enabled")
+        app.depends(app.switch_row(hud, "hud_detailed", "Toujours détaillé",
+                                   f"Sinon, maintiens {self._key('hotkey_details')} en jeu."), "hud_enabled")
+        app.depends(app.switch_row(hud, "win_prob_hud", "Chances de victoire", "Un pourcentage dans le panneau."),
+                    "hud_enabled")
+        app.switch_row(hud, "text_tips", "Conseils écrits", "Un conseil court, jamais lu à voix haute.")
+        app.depends(app.switch_row(hud, "tip_toasts", "Aussi en bandeau", "Le conseil s'affiche aussi en haut."),
+                    "text_tips")
 
-        scr = self.page.section("À l'écran")
-        app.switch_row(scr, "essentials_strip", "L'essentiel en haut de l'écran",
-                       "Une petite barre : victoire, or contre ton adversaire, CS par minute, prochain objectif, "
-                       "jungler ennemi.")
-        app.switch_row(scr, "danger_flash", "Flash de danger", "Cadre rouge sur les bords de l'écran en cas de gank.")
-        app.switch_row(scr, "tip_toasts", "Conseils en bandeau", "Les conseils écrits aussi en petit bandeau.")
-        app.switch_row(scr, "item_advice_toasts", "Conseil d'achat en bandeau", "Quand tu as l'or pour un objet.")
-        app.switch_row(scr, "plays_enabled", "Coups notés", "Badge « coup de maître », « erreur »… après une action.")
-        app.choice_row(scr, "plays_position", "Position du badge", None, PLAYS_POSITIONS, segmented=True)
-        app.switch_row(scr, "plays_sound", "Son des bons coups", "Un son court.")
-        app.switch_row(scr, "plays_sound_negative", "Son aussi pour les erreurs", "Désactivé par défaut.")
+        buy = self.page.section("Achats")
+        app.switch_row(buy, "item_advice", "Conseils d'achat", "L'objet à acheter au prochain retour.")
+        app.depends(app.switch_row(buy, "hud_item_card", "Carte d'achat", "En base, mort ou avec l'or : l'objet, "
+                                   "son icône et son prix."), "item_advice")
+        app.depends(app.switch_row(buy, "item_advice_toasts", "Bandeau quand tu as l'or", None), "item_advice")
+        app.switch_row(buy, "hud_build_strip", "Barre de build", f"Les 6 objets du build, en base ou en "
+                       f"maintenant {self._key('hotkey_details')}.")
 
-        self.radar = self.page.section("Radar", "Copie agrandie de la minimap, à côté d'elle.")
-        self.radar_pos = app.choice_row(self.radar, "radar_position", "Position du radar", None,
-                                        position_choices(app.cfg, "radar"))
-        app.slider_row(self.radar, "radar_scale", "Taille du radar", "1,0 = même taille que la minimap.",
-                       0.5, 2.0, 0.05, lambda v: fmt_decimal_fr(v, 2), to_value=float)
+        scr = self.page.section("Écran")
+        app.switch_row(scr, "essentials_strip", "Barre de l'essentiel", "En haut de l'écran : or contre ton "
+                       "adversaire, CS par minute, prochain objectif, jungler ennemi.")
+        app.switch_row(scr, "danger_flash", "Bords rouges en cas de gank", None)
+        app.switch_row(scr, "plays_enabled", "Coups notés", "Un badge après un bon coup ou une erreur.")
+        app.depends(app.choice_row(scr, "plays_position", "Position du badge", None, PLAYS_POSITIONS,
+                                   segmented=True), "plays_enabled")
+        app.depends(app.switch_row(scr, "plays_sound", "Son des bons coups", None), "plays_enabled")
+        app.depends(app.switch_row(scr, "plays_sound_negative", "Son des erreurs", None), "plays_enabled",
+                    "plays_sound")
         self._sync_visibility()
 
     def _key(self, field: str) -> str:
@@ -102,7 +103,6 @@ class OverlayPage:
 
     def _sync_visibility(self) -> None:
         cfg = self.app.cfg
-        self.radar.setVisible(cfg.overlay_mode == "radar")
         self.fog_row.setVisible(cfg.fog_mode != "off")
         self.fog_row.parentWidget().sync_separators()
 
@@ -112,7 +112,6 @@ class OverlayPage:
             self._sync_visibility()
         if diff & {"hud_xy", "hud_position", "radar_xy", "radar_position"}:
             self.hud_pos.ctl.set_choices(position_choices(cfg, "hud"), cfg.hud_position)
-            self.radar_pos.ctl.set_choices(position_choices(cfg, "radar"), cfg.radar_position)
         if diff & PREVIEW_FIELDS and self.app._current_page == "overlay":
             self.render_preview()
 

@@ -117,28 +117,16 @@ def test_text_is_legible() -> None:
     assert sizes and min(sizes) >= 12, sizes
 
 
-def test_glass_panels_stay_legible_over_the_black_hole() -> None:
-    """The panels are translucent over the backdrop: composed over its BRIGHTEST pixel, every text
-    colour keeps 4.5:1, and the theme's ``group`` token is no lighter than that worst case."""
+def test_flat_window_no_decoration() -> None:
+    """v2.21 « graphite »: flat opaque panels, no backdrop image, no gold ornament, no monospace."""
     pytest.importorskip("PySide6.QtWidgets")
-    import numpy as np
-
-    from treeaicoach import ui_backdrop as B
     from treeaicoach import ui_widgets as W
 
-    rgb = B.render_rgb(320, 200)
-    lum = rgb.astype(np.float64) @ np.array([0.2126, 0.7152, 0.0722])
-    peak = rgb.reshape(-1, 3)[int(lum.argmax())].astype(np.float64)
-    a = W.GLASS_GROUP_ALPHA
-    worst = a * np.array(W.GLASS_GROUP_RGB) + (1 - a) * peak
-    worst_hex = "#" + "".join(f"{int(round(c)):02X}" for c in worst)
-    t = W.SAPPHIRE
-    for fg in (t.text, t.secondary, t.tertiary, t.accent, t.danger, t.warning, t.ok):
-        assert _contrast(fg, worst_hex) >= 4.5, (fg, worst_hex, round(_contrast(fg, worst_hex), 2))
-    assert _contrast("#FFFFFF", t.group) <= _contrast("#FFFFFF", worst_hex) + 0.01, (t.group, worst_hex)
-    assert "rgba(" in W.style_sheet(t, "Segoe UI", "Segoe UI")      # the panels really are glass
-    asset = Path(B.__file__).parent / "assets" / Path(*B.ASSET)
-    assert asset.is_file() and asset.stat().st_size <= 300_000       # bundled, small
+    assert not (PKG / "ui_backdrop.py").exists() and not (PKG / "assets" / "ui" / "backdrop.png").exists()
+    qss = W.style_sheet(W.DARK, "Segoe UI", "Segoe UI", "Consolas")
+    assert "Consolas" not in qss and "Scanline" not in qss
+    flair = (PKG / "ui_flair.py").read_text(encoding="utf-8")
+    assert "GOLD" not in flair and "mono_font(" not in flair.split("def mono_font")[0]
 
 
 def test_bundled_font_loads() -> None:

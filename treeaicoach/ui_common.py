@@ -225,6 +225,8 @@ HIDDEN_SETTINGS: dict[str, str] = {
     "detection_threshold": "0 = valeur du modèle (réglage de développeur)",
     "radar_enabled": "remplacé par « Où dessiner » (overlay_mode)",
     "radar_xy": "écrit par « Déplacer les fenêtres »",
+    "radar_position": "radar retiré de l'interface (overlay_mode n'offre plus « radar »)",
+    "radar_scale": "radar retiré de l'interface (overlay_mode n'offre plus « radar »)",
     "hud_xy": "écrit par « Déplacer les fenêtres »",
     "overlay_show_allies": "suivi du niveau du joueur (skill.py) et du mode détaillé",
     "overlay_show_roles": "suivi du niveau du joueur (skill.py) et du mode détaillé",

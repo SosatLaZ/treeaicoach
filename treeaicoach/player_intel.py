@@ -11,7 +11,7 @@ losses, current win / loss streak, games on the champion played. Mandatory scope
   player ids (PUUIDs) are used for the requests only and never logged, written to a record, a report
   or a test. Names / Riot IDs are never read. Everything is shown BY CHAMPION
   ("Leur jungler (Lee Sin) : Platine 2, 3 défaites d'affilée");
-* off by default (``Config.player_intel``, switch "Infos des joueurs (rang, séries)").
+* off by default (``Config.player_intel``, switch Réglages > "Rangs des joueurs").
 
 Endpoints (all GET):
 

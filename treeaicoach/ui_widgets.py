@@ -53,33 +53,31 @@ class Theme:
     ok: str
 
 
-#: « arbre de vie, saphir » (docs/DESIGN.md): deep sapphire, a fine line-art tree of life behind the
-#: content, glass panels, ONE sapphire accent. ``group`` / ``sidebar`` are the panels' worst-case
-#: colours (glass over the brightest backdrop pixel, tests/test_design_rules.py); the style sheet
-#: paints them translucent.
-SAPPHIRE = Theme(
-    name="dark", window="#071430", sidebar="#0A1934", group="#1A3361", group_hover="#203C6E",
-    separator="#24406E", text="#F5F8FF", secondary="#BFCBE3", tertiary="#9DAFD0",
-    accent="#74A8FA", accent_hover="#8DB8FC", on_accent="#04102A", accent_soft="#1F4F9C",
-    control="#17325F", control_hover="#1E3C6E", control_border="#2B4B80", track_off="#2B4B80", knob="#FFFFFF",
-    danger="#FF7D75", warning="#F3D065", ok="#72D9A6")
-SPACE = SAPPHIRE     # older name
-DARK = SAPPHIRE
-THEMES: tuple[Theme, ...] = (SAPPHIRE,)
-#: glass (rgba over the backdrop): page panels, sidebar, hairlines
-GLASS_GROUP = "rgba(18, 38, 74, 0.80)"
-GLASS_GROUP_HOVER = "rgba(31, 79, 156, 0.45)"
-GLASS_SIDEBAR = "rgba(5, 14, 32, 0.72)"
-GLASS_EDGE = "rgba(150, 190, 255, 0.10)"
-GLASS_SEPARATOR = "rgba(150, 190, 255, 0.10)"
-#: alpha of GLASS_GROUP (the contrast test composes it over the backdrop's brightest pixel)
-GLASS_GROUP_ALPHA = 0.80
-GLASS_GROUP_RGB = (18, 38, 74)
+#: « graphite » (docs/DESIGN.md, v2.21): a flat neutral graphite window, opaque grouped cells, hairline
+#: separators, ONE blue accent (switches, primary button, links). No backdrop image, no glass, no glow.
+GRAPHITE = Theme(
+    name="dark", window="#101113", sidebar="#151619", group="#1B1C20", group_hover="#23252A",
+    separator="#2A2C31", text="#ECEDEF", secondary="#A3A7AE", tertiary="#8A8E97",
+    accent="#7AA7FF", accent_hover="#93B8FF", on_accent="#0A0F1C", accent_soft="#2C2F36",
+    control="#232529", control_hover="#2A2D32", control_border="#34373D", track_off="#3A3D44", knob="#FFFFFF",
+    danger="#FF6B63", warning="#EBBE4D", ok="#5FD08F")
+SAPPHIRE = GRAPHITE  # older names
+SPACE = GRAPHITE
+DARK = GRAPHITE
+THEMES: tuple[Theme, ...] = (GRAPHITE,)
+#: panels are opaque now (the names stay for the callers); hairlines are a faint white
+GLASS_GROUP = GRAPHITE.group
+GLASS_GROUP_HOVER = "rgba(255, 255, 255, 0.05)"
+GLASS_SIDEBAR = GRAPHITE.sidebar
+GLASS_EDGE = "rgba(255, 255, 255, 0.06)"
+GLASS_SEPARATOR = "rgba(255, 255, 255, 0.07)"
+GLASS_GROUP_ALPHA = 1.0
+GLASS_GROUP_RGB = (27, 28, 32)
 
 # sizes (px at 100 %, Qt applies the monitor's DPI factor on top)
 SIDEBAR_W = 248
 # 8-pt grid: every gap, padding and radius below is a multiple of 8 (or of 4 for the small ones)
-CONTENT_MAX = 880        # centred column of a page, multiple of 8 (a wide screen gets air, not stretched rows)
+CONTENT_MAX = 760        # centred column of a page, multiple of 8 (a wide screen gets air, not stretched rows)
 PAGE_PAD_X = 40
 PAGE_PAD_TOP = 40
 GROUP_RADIUS = 12
@@ -88,14 +86,13 @@ ROW_MIN_H = 48
 ROW_PAD_X = 16
 ROW_PAD_Y = 12
 SECTION_GAP = 32
-TITLE_PX = 32
+TITLE_PX = 26
 BODY_PX = 14
 SMALL_PX = 13
 CAPTION_PX = 12
 HEADLINE_PX = 15
-SECTION_PX = 15
+SECTION_PX = 13
 MONO_FAMILIES = ("Cascadia Mono", "Consolas", "SF Mono", "DejaVu Sans Mono", "Liberation Mono", "Courier New")
-GOLD = "#D8C48E"          # thin ornaments only (never text, never a fill); not the game client's gold
 
 _theme: list[Theme] = [DARK]
 
@@ -167,15 +164,14 @@ QLabel[role="navgroup"] {{ font-size: {CAPTION_PX}px; font-weight: 600; color: {
 QLabel {{ background: transparent; }}
 QLabel[role="title"] {{ font-family: "{display}"; font-size: {TITLE_PX}px; font-weight: 600; }}
 QLabel[role="headline"] {{ font-family: "{display}"; font-size: 20px; font-weight: 600; }}
-QLabel[role="section"] {{ font-family: "{display}"; font-size: {SECTION_PX}px; font-weight: 600; color: {t.text}; }}
-QLabel[role="kicker"] {{ font-family: "{mono}"; font-size: {CAPTION_PX}px; font-weight: 600; color: {t.accent}; }}
-QLabel[role="mono"] {{ font-family: "{mono}"; font-size: {SMALL_PX}px; color: {t.secondary}; }}
-QLabel[role="monofoot"] {{ font-family: "{mono}"; font-size: {CAPTION_PX}px; color: {t.tertiary}; }}
-#Scanline {{ background: {GLASS_SEPARATOR}; border: none; }}
+QLabel[role="section"] {{ font-size: {SECTION_PX}px; font-weight: 600; color: {t.secondary}; }}
+QLabel[role="kicker"] {{ font-size: {SMALL_PX}px; font-weight: 500; color: {t.secondary}; }}
+QLabel[role="mono"] {{ font-size: {SMALL_PX}px; color: {t.secondary}; }}
+QLabel[role="monofoot"] {{ font-size: {CAPTION_PX}px; color: {t.tertiary}; }}
 QLabel[role="secondary"] {{ font-size: {SMALL_PX}px; color: {t.secondary}; }}
 QLabel[role="footnote"] {{ font-size: {CAPTION_PX}px; color: {t.tertiary}; }}
 QLabel[role="value"] {{ color: {t.secondary}; }}
-QLabel[role="big"] {{ font-family: "{mono}"; font-size: 28px; font-weight: 600; }}
+QLabel[role="big"] {{ font-family: "{display}"; font-size: 24px; font-weight: 600; }}
 QLabel[tone="danger"] {{ color: {t.danger}; }}
 QLabel[tone="warning"] {{ color: {t.warning}; }}
 QLabel[tone="ok"] {{ color: {t.ok}; }}
@@ -700,17 +696,14 @@ class Section(QtWidgets.QWidget):
         super().__init__(parent)
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(8)
         if title or action is not None:
             head = QtWidgets.QHBoxLayout()
             head.setContentsMargins(ROW_PAD_X, 0, 4, 0)
             head.setSpacing(16)
             self.header = label(title, "section")
             head.addWidget(self.header, 0)
-            rule = QtWidgets.QFrame()           # thin "scanline" after the title, static
-            rule.setObjectName("Scanline")
-            rule.setFixedHeight(1)
-            head.addWidget(rule, 1, Qt.AlignVCenter)
+            head.addStretch(1)
             if action is not None:
                 head.addWidget(action, 0, Qt.AlignRight)
             lay.addLayout(head)
@@ -854,46 +847,12 @@ class Sidebar(QtWidgets.QFrame):
 
 
 class Backdrop(QtWidgets.QWidget):
-    """Central widget painting the tree of life (ui_backdrop): rendered once on a worker, then one
-    cached pixmap per window size; a resize drag uses a fast scaled copy, the smooth one comes 120 ms
-    after the last resize. No timer while idle."""
+    """Central widget: a flat window colour (v2.21: no backdrop image, nothing to decode or scale)."""
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        from treeaicoach.ui_backdrop import BackdropCache  # noqa: PLC0415
-
         self.setObjectName("Backdrop")
-        self.setAttribute(Qt.WA_OpaquePaintEvent, True)
-        self.cache = BackdropCache()
-        self._settle = QtCore.QTimer(self, singleShot=True, interval=120)
-        self._settle.timeout.connect(self._smooth)
-        self._fast = False
-
-    def set_glow(self, rgb: Any) -> None:
-        self.cache.set_glow(rgb)
-        self.update()
-
-    def resizeEvent(self, e: Any) -> None:  # noqa: N802
-        super().resizeEvent(e)
-        if self.cache.glow is not None and self.isVisible():
-            self._fast = True
-            self._settle.start()
-
-    def _smooth(self) -> None:
-        self._fast = False
-        self.update()
-
-    def paintEvent(self, e: Any) -> None:  # noqa: N802
-        qp = QtGui.QPainter(self)
-        pm = self.cache.compose(self.width(), self.height(), self.devicePixelRatioF(), smooth=not self._fast)
-        if pm is None:
-            qp.fillRect(e.rect(), QtGui.QColor(theme().window))
-        else:
-            r = e.rect()
-            dpr = pm.devicePixelRatio()
-            qp.drawPixmap(r, pm, QtCore.QRect(int(r.x() * dpr), int(r.y() * dpr), int(r.width() * dpr),
-                                              int(r.height() * dpr)))
-        qp.end()
+        self.setAttribute(Qt.WA_StyledBackground, True)
 
 
 class Toast(QtWidgets.QFrame):

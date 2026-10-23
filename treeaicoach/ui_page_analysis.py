@@ -57,8 +57,7 @@ class AnalysisPage:
     def __init__(self, app: Any) -> None:
         self.app = app
         W, QtWidgets = app.W, app.QtWidgets
-        self.page = W.Page("Analyse", "Après chaque partie : rapport (morts, ganks, jungler adverse, conseils) "
-                                      "et tes vraies stats lues dans le client LoL.")
+        self.page = W.Page("Analyse", "Tes parties enregistrées et leur rapport.")
         self._sig: Any = None
         self._limit = GAMES_PAGE
         self._games: list[dict] = []

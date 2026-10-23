@@ -155,7 +155,7 @@ HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_ward",)
 # League Client (lcu.py): post-game match timeline (ground truth for the report and the alert scoring)
 BOOL_FIELDS = BOOL_FIELDS + ("lcu_enabled", "cs_import_items", "cs_auto_runes", "cs_auto_spells")
 # player info (player_intel.py): public rank / LP / streaks of the players of the game in progress, off
-BOOL_FIELDS = BOOL_FIELDS + ("player_intel",)
+BOOL_FIELDS = BOOL_FIELDS + ("player_intel", "discord_ranks")
 # session / tilt guard (draft_edge.py): my own last games (League Client), a calm pause suggestion, on
 BOOL_FIELDS = BOOL_FIELDS + ("tilt_guard",)
 # play ratings (plays.py / fx_overlay.py): chess.com-style "coup de maître / gaffe" badges, visual only
@@ -359,6 +359,9 @@ class Config:
     cs_auto_spells: bool = False     # summoner spells set automatically, Flash kept on its key (off: button)
     # public rank, LP, streaks of the current game's players (LCU, memory only, shown by champion)
     player_intel: bool = False
+    # at game start the Discord bot posts the players' ranks (by champion, never names) + one voice line per
+    # notable lane; only while player_intel is on and the bot is connected
+    discord_ranks: bool = True
     # champion select: "2 défaites d'affilée : pause 10 min ?" from MY match history (memory only)
     tilt_guard: bool = True
     # play ratings (plays.py): animated badge "COUP DE MAÎTRE !!" / "GAFFE ??" + post-game précision

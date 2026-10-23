@@ -172,8 +172,12 @@ def test_setting_change_applies_live_and_saves(home: Path) -> None:
         app.build_all_pages()
         app.set_option("voice_volume", 40)
         assert voice.params.get("volume") == 40
-        app.set_option("overlay_mode", "radar")
-        assert app.page_views["overlay"].radar.isVisibleTo(app.page_views["overlay"].page)
+        ov = app.page_views["overlay"]
+        assert ov.hud_pos.isVisibleTo(ov.page)
+        app.set_option("hud_enabled", False)              # a sub-option of a master switch hides with it
+        assert not ov.hud_pos.isVisibleTo(ov.page)
+        app.set_option("hud_enabled", True)
+        assert ov.hud_pos.isVisibleTo(ov.page)
         _pump(app, 0.7)                           # debounced save
         assert load_config(home / "config.json").voice_volume == 40
         app.test_voice()                          # the real chosen voice (voice.preview), never say()
@@ -366,5 +370,39 @@ def test_players_card_on_home_only_when_on(home: Path, monkeypatch: pytest.Monke
         app.cfg.player_intel = False
         app._refresh_status()
         assert view.pl.isHidden()
+    finally:
+        app.close()
+
+
+def test_every_switch_is_wired_saved_and_applied_live(home: Path) -> None:
+    """Each switch of every page: one Config field, toggled by a click, sent to the running engine at once,
+    saved to disk, and the switch follows a change made elsewhere (hotkey, level preset)."""
+    from treeaicoach import ui_widgets as W
+
+    app, _voice, engines = _build(home)
+    try:
+        _pump(app, 0.3)
+        app.build_all_pages()
+        app.toggle_engine()
+        _pump(app, 0.5)
+        switches = [s for v in app.page_views.values() for s in v.page.findChildren(W.Switch)
+                    if getattr(s, "field", "")]
+        fields = [s.field for s in switches]
+        assert len(fields) == len(set(fields)), "a setting must exist in one place only"
+        assert len(fields) >= 40
+        for sw in switches:
+            before = bool(getattr(app.cfg, sw.field))
+            applied = engines[-1].applied if engines else 0
+            sw.click()
+            assert bool(getattr(app.cfg, sw.field)) is (not before), sw.field
+            if engines and engines[-1].running:
+                assert engines[-1].applied > applied, sw.field
+            app.set_option(sw.field, before)
+            assert sw.isChecked() is before, sw.field
+        flip = {s.field: not bool(getattr(app.cfg, s.field)) for s in switches[:8]}
+        app.set_options(**flip)
+        _pump(app, 0.8)
+        saved = load_config(home / "config.json")
+        assert all(getattr(saved, f) is v for f, v in flip.items()), flip
     finally:
         app.close()

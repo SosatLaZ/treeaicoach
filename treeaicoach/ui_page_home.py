@@ -1,5 +1,5 @@
-"""Accueil: the ONE status line + Démarrer, champion select card, level, quick switches, last game,
-"Système" rows. Updated by ``CoachApp._refresh_status`` (snapshots only, never blocking)."""
+"""Accueil: the ONE status card + Démarrer, champion select / players cards (only while they happen),
+the three switches used between games (level, voice, safe mode), try it, last game, "Système" rows. Updated by ``CoachApp._refresh_status`` (snapshots only, never blocking)."""
 
 from __future__ import annotations
 
@@ -32,11 +32,13 @@ class HomePage:
         hl = QtWidgets.QHBoxLayout(self.hero)
         hl.setContentsMargins(32, 24, 24, 24)
         left = QtWidgets.QWidget()
-        left.setMaximumWidth(520)
+        left.setMinimumWidth(360)
+        left.setMaximumWidth(480)
         ll = QtWidgets.QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(8)
-        self.kicker = W.label("TREEAI COACH", "kicker")
+        self.kicker = W.label("", "kicker")
+        self.kicker.hide()
         ll.addWidget(self.kicker)
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(12)
@@ -47,7 +49,7 @@ class HomePage:
         ll.addLayout(row)
         self.message = W.label("", "secondary", wrap=True)
         ll.addWidget(self.message)
-        self.live = W.label("", "mono")
+        self.live = W.label("", "secondary")
         self.live.hide()
         ll.addWidget(self.live)
         ll.addStretch(1)
@@ -101,19 +103,11 @@ class HomePage:
         except Exception:
             log.debug("client sync not wired", exc_info=True)
         self.cs.add(box)
-        app.switch_row(self.cs, "cs_import_items", "Importer automatiquement le set d'objets",
-                       "Les objets du moment apparaissent surlignés dans l'onglet Recommandés de la boutique.")
-        app.switch_row(self.cs, "cs_auto_runes", "Appliquer les runes automatiquement",
-                       "Crée ou remplace la page « TreeAI » (jamais tes autres pages sans ton clic).")
-        app.switch_row(self.cs, "cs_auto_spells", "Mettre les sorts automatiquement",
-                       "Saut éclair reste sur ta touche D ou F habituelle.")
-        app.switch_row(self.cs, "tilt_guard", "Conseiller une pause après une série de défaites",
-                       "Lit seulement tes dernières parties dans le client, rien n'est enregistré.")
         self.cs.hide()
         self.page.add(self.cs)
 
         # --- players of the game in progress (player_intel.py, off by default): by champion, no names
-        self.pl = W.Section("Joueurs", "Infos publiques du client LoL, pour cette partie seulement.")
+        self.pl = W.Section("Joueurs de la partie", "Infos publiques du client LoL, gardées le temps de la partie.")
         pbox = QtWidgets.QWidget()
         pl = QtWidgets.QVBoxLayout(pbox)
         pl.setContentsMargins(16, 12, 16, 14)
@@ -129,38 +123,28 @@ class HomePage:
         self._pl_sig: Any = None
         self.page.add(self.pl)
 
-        # --- level
+        # --- the three switches used between games
         from treeaicoach.skill import SKILL_HELP, SKILL_LEVELS, normalize  # noqa: PLC0415
 
         self._skill_help, self._normalize = SKILL_HELP, normalize
-        lvl = self.page.section("Ton niveau", "Plus tu es débutant, plus le coach explique, une chose à la fois.")
+        coach = self.page.section("Coach")
         self.level = W.Segmented(SKILL_LEVELS, normalize(app.cfg.skill_level))
         self.level.changed.connect(app.apply_skill_level)
-        self.level_row = lvl.add(W.Row("Niveau d'aide", SKILL_HELP.get(normalize(app.cfg.skill_level), ""),
-                                       self.level))
+        self.level_row = coach.add(W.Row("Ton niveau", SKILL_HELP.get(normalize(app.cfg.skill_level), ""),
+                                         self.level))
         app.bind("skill_level", self._sync_level)
-
-        # --- quick switches
-        quick = self.page.section("En jeu")
         self.voice_sw = W.Switch(True)
         self.voice_sw.toggled.connect(lambda on: app.set_muted(not on))
-        quick.add(W.Row("Voix du coach", f"Coupe ou rétablis la voix ({self._key('hotkey_mute')} en jeu).",
-                        self.voice_sw))
-        app.switch_row(quick, "overlay_enabled", "Overlay", "Marques sur la minimap et panneau de consignes.")
-        app.switch_row(quick, "safe_mode", "Mode sûr", "Plus d'alertes de gank ni de suivi du jungler "
-                                                       "(Ctrl+Maj+S). Pour une partie tranquille.")
-        app.switch_row(quick, "player_intel", "Infos des joueurs (rang, séries)",
-                       "Rang, LP et séries des joueurs de ta partie, lus dans le client LoL. Gardé le temps "
-                       "de la partie, jamais enregistré.")
+        coach.add(W.Row("Voix", f"{self._key('hotkey_mute')} en jeu.", self.voice_sw))
+        app.switch_row(coach, "safe_mode", "Mode sûr", "Coupe les alertes de gank et le suivi du jungler "
+                                                       "(Ctrl + Maj + S).")
 
         # --- try it
         tri = self.page.section("Essayer sans jouer")
-        tri.add(W.Row("Tester la voix", "Le coach dit une phrase d'exemple.", W.button("Écouter", app.test_voice)))
         tri.add(W.Row("Tester l'overlay", "Un exemple de gank s'affiche 10 s sur ton écran.",
                       W.button("Afficher", app.test_overlay)))
         self.demo_btn = W.button("Lancer", app.toggle_demo)
-        tri.add(W.Row("Partie de démonstration", "Partie simulée : le jungler ennemi vient te ganker vers 40 s.",
-                      self.demo_btn))
+        tri.add(W.Row("Partie de démonstration", "Le jungler ennemi vient te ganker vers 40 s.", self.demo_btn))
 
         # --- last game
         last = self.page.section("Dernière partie")
@@ -170,7 +154,7 @@ class HomePage:
         self.last_row.control.setEnabled(False)
 
         # --- system
-        self.sys = self.page.section("Système", "Chaque ligne dit ce qui marche ; un lien corrige ce qui ne marche pas.")
+        self.sys = self.page.section("Système")
         self.sys_rows: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ helpers
@@ -187,13 +171,10 @@ class HomePage:
         fl = self._flair
         alias, role = self._live_champ
         if alias:
-            kick = " · ".join(x for x in (fl.role_fr(role), champion_name(alias).upper(), "EN PARTIE") if x)
-        elif self._last_game[0]:
-            alias, role, res = self._last_game
-            kick = " · ".join(x for x in ("DERNIÈRE PARTIE", champion_name(alias).upper(), fl.role_fr(role),
-                                          res.upper()) if x)
+            kick = " · ".join(x for x in (champion_name(alias), fl.role_fr(role)) if x)
         else:
-            kick = "TREEAI COACH"
+            alias, kick = self._last_game[0], ""      # last champion's art, no text (the row below says it)
+        self.kicker.setVisible(bool(kick))
         if kick != self.kicker.text():
             self.kicker.setText(ui_text(kick))
         self.hero.set_champion(alias)

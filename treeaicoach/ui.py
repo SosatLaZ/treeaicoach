@@ -221,9 +221,6 @@ class CoachApp:
             self.win.setWindowIcon(QtGui.QIcon(str(icon)))
         central = W.Backdrop()
         self.backdrop = central
-        from treeaicoach.ui_backdrop import load_glow  # noqa: PLC0415
-
-        self.run_job(load_glow, central.set_glow, None, name="TreeAI-ui-backdrop")    # bundled PNG, once
         h = QtWidgets.QHBoxLayout(central)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(0)
@@ -414,6 +411,25 @@ class CoachApp:
     def bind(self, field: str, refresh: Callable[[], None]) -> None:
         self._refreshers[field] = refresh
 
+    def depends(self, row: Any, *fields: str) -> Any:
+        """Show ``row`` only while every boolean ``fields`` is on (a sub-option of a master switch:
+        a switch that does nothing in the current state is not shown)."""
+        deps = getattr(self, "_deps", None)
+        if deps is None:
+            deps = self._deps = []
+        deps.append((row, tuple(fields)))
+        self._sync_deps(set(fields))
+        return row
+
+    def _sync_deps(self, diff: set[str]) -> None:
+        for row, fields in getattr(self, "_deps", ()):
+            if not diff & set(fields):
+                continue
+            row.setVisible(all(bool(getattr(self.cfg, f, True)) for f in fields))
+            grp = row.parentWidget()
+            if grp is not None and hasattr(grp, "sync_separators"):
+                grp.sync_separators()
+
     def refresh_controls(self, fields: Sequence[str] | None = None) -> None:
         for f in (fields if fields is not None else list(self._refreshers)):
             fn = self._refreshers.get(f)
@@ -426,6 +442,7 @@ class CoachApp:
     def switch_row(self, section: Any, field: str, title: str, desc: str | None = None,
                    on_change: Callable[[bool], None] | None = None) -> Any:
         sw = self.W.Switch(bool(getattr(self.cfg, field)))
+        sw.field = field                      # tests: every switch -> its Config field
         row = section.add(self.W.Row(title, desc, sw))
 
         def changed(on: bool) -> None:
@@ -502,6 +519,7 @@ class CoachApp:
             return
         self._apply_live(diff)
         self.refresh_controls([f for f in diff if f in self._refreshers])
+        self._sync_deps(diff)
         for view in list(self.page_views.values()):
             fn = getattr(view, "on_config", None)
             if callable(fn):

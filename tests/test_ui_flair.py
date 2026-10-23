@@ -83,7 +83,7 @@ def test_splash_runs_once_skips_and_cleans_up(qapp) -> None:
     while not fired and not end.hasExpired():
         qapp.processEvents()
     assert fired == [1]
-    assert F.BootSplash.FILL_MS + F.BootSplash.FADE_MS <= 1250        # spec: 1.2 s at most
+    assert F.BootSplash.FILL_MS + F.BootSplash.FADE_MS <= 800         # quiet: under 0.8 s
     host.close()
 
 
@@ -108,12 +108,12 @@ def test_eight_point_grid() -> None:
     for v in (W.CONTENT_MAX, W.PAGE_PAD_X, W.PAGE_PAD_TOP, W.SECTION_GAP, W.ROW_MIN_H, W.ROW_PAD_X):
         assert v % 8 == 0, v
     assert W.GROUP_RADIUS == F.HeroCard.RADIUS and W.ROW_PAD_Y % 4 == 0
-    assert W.SECTION_PX > W.BODY_PX and W.TITLE_PX >= 32
+    assert W.SECTION_PX < W.BODY_PX < W.TITLE_PX      # quiet section captions, one big title
 
 
-def test_sections_have_a_scanline(qapp) -> None:
+def test_sections_have_no_ornament(qapp) -> None:
     s = W.Section("Titre")
-    assert s.findChild(object, "Scanline") is not None
+    assert s.findChild(object, "Scanline") is None
 
 
 def test_app_shows_splash_once_and_closes_cleanly(qapp, tmp_path, monkeypatch) -> None:

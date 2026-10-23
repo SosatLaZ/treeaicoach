@@ -1,13 +1,13 @@
 """League flavour and launch sequence of the launcher (docs/DESIGN.md, "Hextech discret").
 
 * :class:`HeroCard`: the Accueil hero. The current (or last played) champion's loading art, darkened
-  and faded into the glass, thin sapphire frame with two small champagne corner brackets, role and
-  champion in a monospace kicker. Painted once per size (cached pixmap), no timer, no animation.
+  and faded into the card on its right side, one hairline frame. Painted once per size (cached
+  pixmap), no timer, no animation.
 * :func:`ensure_art`: Data Dragon loading art of a champion (308 x 560 JPEG, about 40 Ko), cached in
   ``paths.cache_dir()/splash``; downloaded on a worker thread (never on the window thread); without
   network the bundled 64 px portrait is used. Nothing from the game client's own UI or logos.
-* :class:`BootSplash`: the 1.2 s launch sequence. Monospace lines for REAL checks (detector, screen
-  capture, game client, voice, overlay), a thin progress line, then a fade into the window. Any click
+* :class:`BootSplash`: a quiet launch screen (under 0.8 s): the name, one thin progress line and ONE
+  status line (the first REAL check that is not ready, else « Prêt »), then a short fade. Any click
   or key skips it. One animation, stopped and deleted at the end: nothing runs when idle.
 """
 
@@ -30,8 +30,8 @@ log = logging.getLogger(__name__)
 
 ART_URL = "https://ddragon.leagueoflegends.com/cdn/img/champion/loading/{key}_0.jpg"
 ART_MAX_BYTES = 160 * 1024
-ROLE_FR = {"top": "TOP", "jungle": "JUNGLE", "mid": "MID", "middle": "MID", "adc": "ADC", "bottom": "ADC",
-           "support": "SUPPORT", "utility": "SUPPORT"}
+ROLE_FR = {"top": "Top", "jungle": "Jungle", "mid": "Mid", "middle": "Mid", "adc": "ADC", "bottom": "ADC",
+           "support": "Support", "utility": "Support"}
 
 _art_lock = threading.Lock()
 _art_failed: set[str] = set()
@@ -132,17 +132,6 @@ def ensure_art(app: Any, alias: Any, done: Callable[[], None]) -> None:
     app.run_job(job, lambda ok: done() if ok else None, None, name="TreeAI-ui-art")
 
 
-def mono_font(px: int, bold: bool = False, spacing: float = 0.0) -> QtGui.QFont:
-    f = QtGui.QFont(W.pick_mono())
-    f.setPixelSize(px)
-    f.setStyleHint(QtGui.QFont.Monospace)
-    if bold:
-        f.setWeight(QtGui.QFont.DemiBold)
-    if spacing:
-        f.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, spacing)
-    return f
-
-
 # ======================================================================================
 # Hero card
 # ======================================================================================
@@ -206,7 +195,7 @@ class HeroCard(QtWidgets.QFrame):
             qp.drawPixmap(QtCore.QRectF((zw - dw) / 2, dy, dw, dh), self._src, QtCore.QRectF(0, 0, sw, sh))
         # darken, then fade the left edge into the glass (painter gradient, not a style sheet one)
         qp.setCompositionMode(QtGui.QPainter.CompositionMode_SourceAtop)
-        qp.fillRect(QtCore.QRectF(0, 0, zw, h), QtGui.QColor(4, 12, 30, 120))
+        qp.fillRect(QtCore.QRectF(0, 0, zw, h), QtGui.QColor(16, 17, 19, 140))
         grad = QtGui.QLinearGradient(0, 0, zw, 0)
         grad.setColorAt(0.0, QtGui.QColor(0, 0, 0, 0))
         grad.setColorAt(0.55, QtGui.QColor(0, 0, 0, 255))
@@ -223,37 +212,22 @@ class HeroCard(QtWidgets.QFrame):
         rect = QtCore.QRectF(0.5, 0.5, w - 1, h - 1)
         path = QtGui.QPainterPath()
         path.addRoundedRect(rect, self.RADIUS, self.RADIUS)
-        qp.fillPath(path, QtGui.QColor(18, 38, 74, int(W.GLASS_GROUP_ALPHA * 255)))
+        qp.fillPath(path, QtGui.QColor(W.theme().group))
         art = self._art_pixmap()
         if art is not None:
             qp.save()
             qp.setClipPath(path)
-            qp.setOpacity(0.9)
+            qp.setOpacity(0.55)
             qp.drawPixmap(w - int(w * self.ART_FRAC), 0, art)
             qp.restore()
-        # frame: one sapphire hairline, two champagne corner brackets with a small diamond
         qp.setBrush(Qt.NoBrush)
-        qp.setPen(QtGui.QPen(QtGui.QColor(116, 168, 250, 70), 1))
+        qp.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 16), 1))
         qp.drawPath(path)
-        gold = QtGui.QColor(W.GOLD)
-        gold.setAlpha(190)
-        pen = QtGui.QPen(gold, 1)
-        pen.setCapStyle(Qt.FlatCap)
-        qp.setPen(pen)
-        inset, arm = 9.5, 16
-        qp.drawPolyline([QtCore.QPointF(inset, inset + arm), QtCore.QPointF(inset, inset),
-                         QtCore.QPointF(inset + arm, inset)])
-        qp.drawPolyline([QtCore.QPointF(w - inset, h - inset - arm), QtCore.QPointF(w - inset, h - inset),
-                         QtCore.QPointF(w - inset - arm, h - inset)])
-        qp.setBrush(gold)
-        for cx, cy in ((inset, inset), (w - inset, h - inset)):
-            qp.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(cx, cy - 2.5), QtCore.QPointF(cx + 2.5, cy),
-                                            QtCore.QPointF(cx, cy + 2.5), QtCore.QPointF(cx - 2.5, cy)]))
         qp.end()
 
 
 def role_fr(role: Any) -> str:
-    return ROLE_FR.get(str(role or "").strip().lower(), str(role or "").strip().upper())
+    return ROLE_FR.get(str(role or "").strip().lower(), str(role or "").strip().capitalize())
 
 
 # ======================================================================================
@@ -305,9 +279,8 @@ class BootSplash(QtWidgets.QWidget):
     ``finished`` is emitted once, whatever ends it (end, click, key, parent closing)."""
 
     finished = QtCore.Signal()
-    LINE_MS = 130
-    FILL_MS = 1000
-    FADE_MS = 200
+    FILL_MS = 520
+    FADE_MS = 160
 
     def __init__(self, parent: QtWidgets.QWidget, version: str, checks: list[tuple[str, bool | None, str]]) -> None:
         super().__init__(parent)
@@ -320,7 +293,14 @@ class BootSplash(QtWidgets.QWidget):
         self._t = 0.0                       # 0..1 progress of the fill
         self._fade = 0.0
         self._done = False
-        self._fonts = (mono_font(15, True, 1.5), mono_font(13), mono_font(12))
+        title_f = QtGui.QFont(W.pick_family(W.DISPLAY_FAMILIES))
+        title_f.setPixelSize(17)
+        title_f.setWeight(QtGui.QFont.DemiBold)
+        small_f = QtGui.QFont(W.pick_family())
+        small_f.setPixelSize(W.SMALL_PX)
+        self._fonts = (title_f, small_f)
+        pending = [f"{label.capitalize()} : {detail}" for label, ok, detail in self._checks if ok is False]
+        self._line = pending[0] if pending else "Prêt"
         self._effect = QtWidgets.QGraphicsOpacityEffect(self)
         self._effect.setOpacity(1.0)
         self.setGraphicsEffect(self._effect)
@@ -399,59 +379,18 @@ class BootSplash(QtWidgets.QWidget):
         qp = QtGui.QPainter(self)
         qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
         qp.fillRect(self.rect(), QtGui.QColor(t.window))
-        try:      # the tree of the window, already cached: shown faintly behind the lines
-            pm = self.parent().cache.compose(self.width(), self.height(), self.devicePixelRatioF(), smooth=False)
-            if pm is not None:
-                qp.setOpacity(0.4)
-                qp.drawPixmap(self.rect(), pm, QtCore.QRect(0, 0, pm.width(), pm.height()))
-                qp.setOpacity(1.0)
-        except Exception:
-            pass
-        title_f, line_f, small_f = self._fonts
-        block_w = 360
-        x0 = (self.width() - block_w) // 2
-        n = len(self._checks)
-        block_h = 24 + 24 + n * 28 + 40
-        y = (self.height() - block_h) // 2
-        text = QtGui.QColor(t.text)
-        dim = QtGui.QColor(t.tertiary)
-        acc = QtGui.QColor(t.accent)
-        qp.setPen(text)
+        title_f, small_f = self._fonts
+        bw = 220
+        x0 = (self.width() - bw) / 2
+        y = self.height() / 2 - 28
         qp.setFont(title_f)
-        qp.drawText(QtCore.QPointF(x0, y + 16), "TREEAI COACH")
+        qp.setPen(QtGui.QColor(t.text))
+        qp.drawText(QtCore.QRectF(x0 - 100, y, bw + 200, 24), Qt.AlignCenter, "TreeAI Coach")
+        py = y + 40
+        qp.fillRect(QtCore.QRectF(x0, py, bw, 2), QtGui.QColor(t.separator))
+        qp.fillRect(QtCore.QRectF(x0, py, bw * self._t, 2), QtGui.QColor(t.accent))
         qp.setFont(small_f)
-        qp.setPen(dim)
-        qp.drawText(QtCore.QRectF(x0, y, block_w, 20), Qt.AlignRight | Qt.AlignVCenter, self._version)
-        rule = QtGui.QColor(150, 190, 255, 38)
-        qp.fillRect(QtCore.QRectF(x0, y + 28, block_w, 1), rule)
-        elapsed = self._t * (self.FILL_MS + 40)
-        ly = y + 28 + 24
-        for i, (label, ok, detail) in enumerate(self._checks):
-            if elapsed < 90 + i * self.LINE_MS:
-                break
-            cy = ly + i * 28
-            qp.setFont(line_f)
-            qp.setPen(text if ok else dim)
-            qp.drawText(QtCore.QRectF(x0, cy, 150, 20), Qt.AlignLeft | Qt.AlignVCenter, label)
-            qp.setPen(dim)
-            qp.setFont(small_f)
-            qp.drawText(QtCore.QRectF(x0 + 150, cy, block_w - 150 - 28, 20), Qt.AlignLeft | Qt.AlignVCenter, detail)
-            mx, my = x0 + block_w - 10, cy + 10
-            if ok:
-                pen = QtGui.QPen(acc, 1.8)
-                pen.setCapStyle(Qt.RoundCap)
-                pen.setJoinStyle(Qt.RoundJoin)
-                qp.setPen(pen)
-                qp.drawPolyline([QtCore.QPointF(mx - 6, my), QtCore.QPointF(mx - 2, my + 4), QtCore.QPointF(mx + 5, my - 4)])
-            else:
-                qp.setPen(QtGui.QPen(QtGui.QColor(t.danger if ok is False else t.tertiary), 1.8))
-                qp.drawLine(QtCore.QPointF(mx - 5, my), QtCore.QPointF(mx + 5, my))
-        # progress: one thin line under the block
-        py = ly + n * 28 + 12
-        qp.fillRect(QtCore.QRectF(x0, py, block_w, 1), rule)
-        qp.fillRect(QtCore.QRectF(x0, py - 0.5, block_w * self._t, 2), acc)
-        if elapsed > 350 and not self._done:
-            qp.setFont(small_f)
-            qp.setPen(dim)
-            qp.drawText(QtCore.QRectF(x0, py + 10, block_w, 20), Qt.AlignLeft | Qt.AlignVCenter, "clic pour passer")
+        qp.setPen(QtGui.QColor(t.tertiary))
+        qp.drawText(QtCore.QRectF(x0 - 100, py + 14, bw + 200, 20), Qt.AlignCenter,
+                    self._line if self._t >= 0.5 else self._version)
         qp.end()

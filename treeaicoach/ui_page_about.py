@@ -68,17 +68,9 @@ class AboutPage:
         for i, (title, text) in enumerate(ui_kit.onboarding_steps(), start=1):
             helpsec.add(W.Row(f"{i}. {title}", text))
 
-        self.keys = self.page.section("Touches en jeu", "Réglables dans Réglages > Touches en jeu.")
-        self._key_rows: list[Any] = []
-        self._fill_keys()
-
         sc = self.page.section("Raccourcis de la fenêtre")
         for keys, what in ui_kit.SHORTCUTS:
             sc.add(W.Row(what, None, W.label(keys, "value")))
-
-        new = self.page.section(f"Nouveautés de la version {ui_kit.CHANGELOG_VERSION}")
-        for title, text in ui_kit.CHANGELOG:
-            new.add(W.Row(title, text))
 
         legal = self.page.section("Mentions")
         box2 = QtWidgets.QWidget()
@@ -86,19 +78,6 @@ class AboutPage:
         l2.setContentsMargins(16, 12, 16, 14)
         l2.addWidget(W.label(ui_kit.ABOUT_TEXT, "secondary", wrap=True))
         legal.add(box2)
-
-    def _fill_keys(self) -> None:
-        W = self.app.W
-        for r in self._key_rows:
-            r.hide()
-        self._key_rows = []
-        for key, what in ui_kit.game_keys(self.app.cfg):
-            self._key_rows.append(self.keys.add(W.Row(what, None, W.label(key, "value"))))
-        self.keys.group.sync_separators()
-
-    def on_config(self, diff: set[str]) -> None:
-        if any(f.startswith("hotkey_") for f in diff):
-            self._fill_keys()
 
     def set_update_status(self, text: str, tone: str = "", manual: bool = False) -> None:
         self.status_row.set_desc(text)
