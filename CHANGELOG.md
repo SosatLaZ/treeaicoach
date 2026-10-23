@@ -3,6 +3,18 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.17.0 · 23 octobre 2026
+
+- **Nouvelle interface saphir :** arbre de vie discret en fond, bleus saphir, police Inter, style épuré ; 8 pages
+  (nouvelle page Avancé) ; icône saphir.
+- **« Hey coach » plus fiable :** 47 sur 48 détectés, 0 faux déclenchement ; « Coach, … » marche aussi. Ligne
+  « Écoute » (niveau du micro, derniers mots entendus) et bouton de test hors partie ; même chose par membre sur la
+  page Discord.
+- **Vocal Discord :** chaque membre marqué « joue … », « joue en face … » ou « ne joue pas ».
+- **Bandeau** réduit à une ligne ; ligne du jungler sur la carte.
+- **Voix ElevenLabs** (accent africain possible, avec ta clé).
+- **Captures** toutes les 30 s + une capture de toute la fenêtre toutes les 2 min environ.
+
 ## 2.16.0 · 23 octobre 2026
 
 - **Jungler ennemi suivi :** sa dernière position + « JGL 35 s » restent sur la minimap 150 s ; ligne « Lee Sin · vu
