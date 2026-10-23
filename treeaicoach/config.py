@@ -361,6 +361,9 @@ class Config:
     plays_sound_negative: bool = False   # also for inaccuracy / mistake / blunder / missed chance
     # pipeline v2 (systems)
     capture_backend: str = "auto"        # "auto" (DXGI Desktop Duplication, mss fallback) | "dxgi" | "mss"
+    # Windows 10: game-window capture (WGC) despite the yellow frame Windows draws around it
+    # (it cannot be removed before Windows 11); our overlay is then never in the analysed frames
+    capture_wgc_border: bool = False
     perf_mode: str = "auto"              # "auto" (low-end on weak PCs, measured) | "normal" | "low_end"
     adaptive_rate: bool = True           # detection 4-6 img/s when calm, target_fps on threat
     overlay_fps: float = 30.0            # minimap layer frame rate (predicted positions), 10..60

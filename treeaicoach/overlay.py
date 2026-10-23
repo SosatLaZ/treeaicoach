@@ -798,7 +798,11 @@ class LayeredWindow:
                 if api.GetWindowDisplayAffinity(self.hwnd, api.ctypes.byref(cur)):
                     ok = int(cur.value) == WDA_EXCLUDEFROMCAPTURE
             if not ok:
-                log.debug("Overlay %s: capture exclusion unavailable (error %s)", self.name, api.last_error())
+                err = api.last_error()
+                # once per window and error code (real Windows 10 log: error 8 ~10 times / s)
+                if _excl_fail_first(self.name, err):
+                    log.info("Overlay %s: capture exclusion unavailable (error %s); "
+                             "our marks are removed from the captured frames instead", self.name, err)
                 api.SetWindowDisplayAffinity(self.hwnd, WDA_NONE)
             return ok
         except Exception:
@@ -1014,6 +1018,23 @@ class LayeredWindow:
             log.debug("destroy failed", exc_info=True)
         self.hwnd = None
         self.visible = False
+
+
+_excl_fail_seen: set[tuple[str, int]] = set()
+_excl_fail_lock = threading.Lock()
+
+
+def _excl_fail_first(name: Any, err: Any) -> bool:
+    """True the first time this (window, error code) exclusion failure is seen (log once)."""
+    try:
+        key = (str(name), int(err))
+    except (TypeError, ValueError):
+        key = (str(name), -1)
+    with _excl_fail_lock:
+        if key in _excl_fail_seen:
+            return False
+        _excl_fail_seen.add(key)
+        return True
 
 
 def windows_build() -> int:
@@ -1952,6 +1973,9 @@ class OverlayManager:
                 self._sig["minimap"], self._sig_t["minimap"] = sig, now
                 # no "TreeAI" mark: at the minimap corner it covered my own portrait (red side)
                 img = self._render("minimap", orr.render_minimap, st, mm[2], mm[3], now=now, show_frame=False)
+                if guard.safe_mode():
+                    # our marks may be captured: alpha capped so the engine removes them exactly
+                    img = overlay_guard.cap_alpha(img)
                 if probe:      # self-verification marker (overlay_guard): seen in the capture = leak
                     img = overlay_guard.stamp_marker(img)
                 if img.ndim == 3 and img.shape[2] == 4 and not img[..., 3].any():

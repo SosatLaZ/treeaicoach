@@ -115,11 +115,47 @@ def test_clean_frame_inpaints_our_ring_until_proven():
     g.note_drawn(MM, layer)
     assert g.check_frame(bg, MM) == "clean"
     assert g.clean_frame(seen, MM) is seen
-    # masks expire
+    # the layer on screen stays cleaned however long it is not re-uploaded (calm minimap: one
+    # upload every 2 s; before 2.16.1 its mask expired after MASK_KEEP_S)
     g2 = og.CaptureGuard(clock=clk)
     g2.note_drawn(MM, layer)
+    clk.t += 5.0
+    assert red(g2.clean_frame(seen, MM)) == 0
+    # hidden: kept MASK_KEEP_S more (capture lag), then forgotten
+    g2.note_hidden()
+    assert red(g2.clean_frame(seen, MM)) == 0
     clk.t += og.MASK_KEEP_S + 0.1
     assert g2.clean_frame(seen, MM) is seen
+
+
+def test_translucent_layer_removed_exactly_and_lag_safe():
+    """Safe mode caps the layer's alpha: the game pixels under our marks come back exactly (no
+    inpainting smear on the game's own icon rings); a newer layer not captured yet, or a pixel
+    that does not match our layer, is left alone."""
+    clk = Clock()
+    g = og.CaptureGuard(clock=clk)
+    bg = background()
+    cv2.circle(bg, (140, 140), 20, (40, 40, 220), 2)        # a game ring under ours
+    layer = np.zeros((280, 280, 4), np.uint8)
+    cv2.circle(layer, (146, 143), 24, (73, 81, 248, 255), 3, cv2.LINE_AA)
+    cv2.putText(layer, "JGL 12 s", (100, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255, 255), 1, cv2.LINE_AA)
+    capped = og.cap_alpha(layer)
+    assert int(capped[..., 3].max()) <= round(255 * og.SAFE_LAYER_ALPHA)
+    assert og.cap_alpha(capped) is capped
+    seen = composite(bg, capped)
+    g.note_drawn(MM, capped)
+    out = g.clean_frame(seen, MM)
+    drawn = capped[..., 3] > 0
+    assert np.abs(out.astype(int) - bg.astype(int))[drawn].max() <= 4
+    # lag: a moved layer was uploaded after this frame was captured -> the older one is removed
+    moved = og.cap_alpha(np.roll(layer, 9, axis=1))
+    g.note_drawn(MM, moved)
+    out = g.clean_frame(seen, MM)
+    err = np.abs(out.astype(int) - bg.astype(int))[drawn].mean()
+    assert err < 10 and err < np.abs(seen.astype(int) - bg.astype(int))[drawn].mean() / 8
+    # a frame without our marks: (almost) untouched
+    clean = g.clean_frame(bg, MM)
+    assert np.abs(clean.astype(int) - bg.astype(int)).mean() < 0.5
 
 
 def test_probe_marker_itself_is_masked_while_unproven():
@@ -270,3 +306,10 @@ def test_engine_grab_cleans_frame_with_guard():
     assert e._overlay_guard() is g
     del e.capture_guard
     assert e._overlay_guard() is og.GUARD
+
+
+def test_exclusion_failure_logged_once_per_window_and_error():
+    ov._excl_fail_seen.clear()
+    assert ov._excl_fail_first("minimap", 8) is True
+    assert all(ov._excl_fail_first("minimap", 8) is False for _ in range(50))
+    assert ov._excl_fail_first("hud", 8) is True and ov._excl_fail_first("minimap", 5) is True

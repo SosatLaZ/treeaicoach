@@ -15,9 +15,12 @@ engine's capture stage through the module singleton :data:`GUARD`:
    a radar copy, 2.12.1) and layer 3 keeps them out of the detector, "L'overlay
    apparaît dans la capture" in the self-check. ``overlay_hide_from_capture=False`` (streamers)
    puts the overlay in the same safe mode right away;
-3. the overlay publishes the mask of the pixels it drew (minimap coordinates); while the
-   exclusion is not proven by a probe, :meth:`CaptureGuard.clean_frame` inpaints those pixels in
-   the captured frame before detection.
+3. the overlay publishes the premultiplied image it shows over the minimap; while the exclusion
+   is not proven by a probe, :meth:`CaptureGuard.clean_frame` removes it from the captured frame
+   before detection: exactly (bg = (seen - P) / (1 - a)) where it is translucent - in safe mode the
+   layer's alpha is capped (:func:`cap_alpha`) so every mark is - inpainted where opaque; a pixel is
+   touched only when it is consistent with that layer (capture lag: an image not captured yet or
+   no longer on screen changes nothing).
 
 Every public method is thread-safe and never raises.
 """
@@ -55,6 +58,17 @@ PROBE_MAX_S = 1.5
 #: the union of the recent masks is cleaned)
 MASK_KEEP_S = 0.6
 MASK_DILATE_PX = 2
+#: exact removal (2.16.1): the layer is premultiplied BGRA composited by DWM, so where our alpha is
+#: <= UNMIX_MAX_A the game pixel is recovered exactly: bg = (seen - P) / (1 - a) (the TELEA
+#: inpainting of a dilated mask smeared the game's own icon rings: simulated on the real Garen
+#: 2.15 captures, recall 0.83 marks left in -> 0.77 inpainted). Opaque pixels are inpainted.
+UNMIX_MAX_A = 0.86
+#: in safe mode the minimap layer's alpha is capped at SAFE_LAYER_ALPHA (cap_alpha): every mark
+#: stays invertible, nothing has to be inpainted
+SAFE_LAYER_ALPHA = 0.8
+#: a pixel of an OLDER layer (capture lag) is ours when it shows that layer's own colour within
+#: PALETTE_TOL per channel where that layer was at least half opaque (our exact palette)
+PALETTE_TOL = 26
 
 PROBLEM_TEXT = "L'overlay apparaît dans la capture"
 
@@ -104,6 +118,24 @@ def marker_visible(frame: Any, scale: tuple[float, float] = (1.0, 1.0)) -> bool:
         return False
 
 
+def cap_alpha(img: Any, max_a: float = SAFE_LAYER_ALPHA) -> Any:
+    """Premultiplied BGRA ``img`` with every pixel's alpha capped at ``max_a`` (colour scaled by
+    the same factor): what we draw then stays exactly removable from a captured frame
+    (:meth:`CaptureGuard.clean_frame`). Returns ``img`` itself when nothing exceeds it."""
+    try:
+        a = np.asarray(img)
+        if a.ndim != 3 or a.shape[2] != 4:
+            return img
+        lim = int(round(255 * float(max_a)))
+        al = a[..., 3]
+        if not (al > lim).any():
+            return img
+        k = np.minimum(1.0, lim / np.maximum(al.astype(np.float32), 1.0))[..., None]
+        return (a.astype(np.float32) * k).round().clip(0, 255).astype(np.uint8)
+    except Exception:
+        return img
+
+
 def drawn_mask(img: Any) -> np.ndarray | None:
     """Boolean mask of the pixels a BGRA layer image draws (alpha > 0), dilated a little."""
     try:
@@ -143,7 +175,8 @@ class CaptureGuard:
             self._probe_rect: tuple | None = None
             self._probe_size: tuple[int, int] | None = None
             self._next_probe: float | None = None
-            self._masks: list[tuple[float, tuple, np.ndarray]] = []
+            #: (time replaced / hidden or None while on screen, rect, mask, layer BGRA premultiplied)
+            self._masks: list[tuple[float | None, tuple, np.ndarray, Any]] = []
             self.cleaned_frames = 0
             self._logged: str | None = None
 
@@ -233,28 +266,39 @@ class CaptureGuard:
             return self._probe_shown is not None
 
     def note_drawn(self, rect: Any, img: Any, now: float | None = None) -> None:
-        """Overlay: the minimap window now shows ``img`` (BGRA) at ``rect``; empty = hidden."""
+        """Overlay: the minimap window now shows ``img`` (BGRA) at ``rect``; empty = hidden.
+
+        The shown image stays in force until it is replaced or hidden (a calm minimap is
+        re-uploaded only every couple of seconds: before 2.16.1 its mask expired after
+        MASK_KEEP_S while it was still on screen); a replaced one is kept MASK_KEEP_S more
+        (capture lag)."""
         now = self._clock() if now is None else float(now)
         m = drawn_mask(img) if img is not None else None
         with self._lock:
-            self._masks = [e for e in self._masks if now - e[0] <= MASK_KEEP_S]
+            self._retire(now)
             if m is not None and m.any():
-                self._masks.append((now, tuple(int(v) for v in rect), m))
+                self._masks.append((None, tuple(int(v) for v in rect), m, np.array(img, np.uint8, copy=True)))
+
+    def _retire(self, now: float) -> None:
+        """(lock held) the layer on screen is replaced / hidden now; forget the expired ones."""
+        self._masks = [((now if e[0] is None else e[0]),) + tuple(e[1:]) for e in self._masks
+                       if e[0] is None or now - e[0] <= MASK_KEEP_S]
 
     def note_hidden(self, now: float | None = None) -> None:
         """Overlay: the minimap window was hidden (its last image may still be in a frame)."""
         now = self._clock() if now is None else float(now)
         with self._lock:
-            if self._masks:
-                t, r, m = self._masks[-1]
-                self._masks = [e for e in self._masks if now - e[0] <= MASK_KEEP_S] or [(now, r, m)]
+            self._retire(now)
+
+    def _recent(self, now: float) -> list:
+        with self._lock:
+            self._masks = [e for e in self._masks if e[0] is None or now - e[0] <= MASK_KEEP_S]
+            return list(self._masks)
 
     def mask_for(self, rect: Any, shape: tuple[int, int], now: float | None = None) -> np.ndarray | None:
         """Union of the recent drawn masks mapped onto a captured frame of ``rect`` / ``shape``."""
         now = self._clock() if now is None else float(now)
-        with self._lock:
-            masks = [e for e in self._masks if now - e[0] <= MASK_KEEP_S]
-            self._masks = masks
+        masks = self._recent(now)
         if not masks:
             return None
         try:
@@ -263,7 +307,7 @@ class CaptureGuard:
             H, W = int(shape[0]), int(shape[1])
             fx, fy, fw, fh = (int(v) for v in rect)
             out = np.zeros((H, W), np.uint8)
-            for _t, (x, y, w, h), m in masks:
+            for _t, (x, y, w, h), m, _img in masks:
                 if w <= 0 or h <= 0 or fw <= 0 or fh <= 0:
                     continue
                 sx, sy = W / fw, H / fh          # frame px per screen px
@@ -315,9 +359,69 @@ class CaptureGuard:
         self._log_mode()
         return "seen" if seen else "clean"
 
+    def _remove_layers(self, f: np.ndarray, rect: tuple, now: float | None) -> tuple[Any, Any]:
+        """Undo our recent layers in frame ``f`` of screen ``rect``: (frame or None, inpaint mask
+        or None). Newest layer first; a pixel counts as ours only when the frame is consistent
+        with that layer composited over SOME game pixel (seen - P within [0, 255 (1 - a)]), so a
+        layer not captured yet (lag) or an older one no longer on screen touches nothing. Where
+        a <= UNMIX_MAX_A the game pixel is recovered exactly, the more opaque ones are inpainted."""
+        now = self._clock() if now is None else float(now)
+        masks = self._recent(now)
+        if not masks:
+            return None, None
+        import cv2
+
+        H, W = int(f.shape[0]), int(f.shape[1])
+        fx, fy, fw, fh = rect
+        if fw <= 0 or fh <= 0:
+            return None, None
+        sx, sy = W / fw, H / fh
+        exact = abs(sx - 1.0) < 1e-6 and abs(sy - 1.0) < 1e-6
+        tol = 8.0 if exact else 28.0
+        seen = f.astype(np.float32)
+        out = seen.copy()
+        done = np.zeros((H, W), bool)
+        inpaint = np.zeros((H, W), bool)
+        order = sorted(masks, key=lambda e: float("inf") if e[0] is None else e[0], reverse=True)
+        for _t, (x, y, w, h), _m, img in order:
+            if w <= 0 or h <= 0 or img is None:
+                continue
+            lay = np.asarray(img)
+            tw, th = max(1, int(round(w * sx))), max(1, int(round(h * sy)))
+            if (tw, th) != (lay.shape[1], lay.shape[0]):
+                lay = cv2.resize(lay, (tw, th), interpolation=cv2.INTER_AREA)
+            ox, oy = int(round((x - fx) * sx)), int(round((y - fy) * sy))
+            x0, y0, x1, y1 = max(0, ox), max(0, oy), min(W, ox + tw), min(H, oy + th)
+            if x1 <= x0 or y1 <= y0:
+                continue
+            L = lay[y0 - oy:y1 - oy, x0 - ox:x1 - ox].astype(np.float32)
+            a = L[..., 3] / 255.0
+            S = seen[y0:y1, x0:x1]
+            r = S - L[..., :3]
+            room = (255.0 * (1.0 - a))[..., None]
+            ok = (a > 0.02) & ~done[y0:y1, x0:x1] & ((r >= -tol) & (r <= room + tol)).all(-1)
+            if not ok.any():
+                continue
+            low = ok & (a <= UNMIX_MAX_A)
+            if low.any():
+                den = (1.0 - a)[..., None]
+                rec = np.clip(r / np.maximum(den, 1e-3), 0.0, 255.0)
+                blk = out[y0:y1, x0:x1]
+                blk[low] = rec[low]
+            inpaint[y0:y1, x0:x1] |= ok & (a > UNMIX_MAX_A)
+            done[y0:y1, x0:x1] |= ok
+        if not done.any():
+            return None, None
+        res = out.round().clip(0, 255).astype(np.uint8)
+        if inpaint.any():
+            inpaint = cv2.dilate(inpaint.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+            return res, inpaint
+        return res, None
+
     def clean_frame(self, frame: Any, rect: Any, now: float | None = None) -> Any:
-        """Engine: ``frame`` with the pixels our overlay drew inpainted, unless a probe proved the
-        exclusion works. Returns the frame unchanged when there is nothing to clean."""
+        """Engine: ``frame`` with what our overlay drew removed (exactly where it was translucent,
+        inpainted where opaque: :meth:`_remove_layers`), unless a probe proved the exclusion
+        works. Returns the frame unchanged when there is nothing to clean."""
         try:
             with self._lock:
                 proven = self.wanted and self.probe_state == "ok" and self.excluded.get("minimap") is True
@@ -327,11 +431,11 @@ class CaptureGuard:
             f = np.asarray(frame)
             if f.ndim != 3 or f.shape[2] != 3:
                 return frame
-            mask = self.mask_for(rect, f.shape[:2], now)
+            fx, fy, fw, fh = (int(v) for v in rect)
+            out, mask = self._remove_layers(f, (fx, fy, fw, fh), now)
             if probing and not proven:
                 # the probe marker itself never reaches the detector
                 mk = np.zeros(f.shape[:2], bool)
-                fx, fy, fw, fh = (int(v) for v in rect)
                 with self._lock:
                     prect = self._probe_rect
                 if prect is not None and fw > 0 and fh > 0:
@@ -341,11 +445,13 @@ class CaptureGuard:
                     n = int(MARKER_PX * max(sx, sy)) + 3
                     mk[max(0, y):max(0, y + n), max(0, x):max(0, x + n)] = True
                 mask = mk if mask is None else (mask | mk)
-            if mask is None or not mask.any():
+            if out is None and (mask is None or not mask.any()):
                 return frame
             import cv2
 
-            out = cv2.inpaint(np.ascontiguousarray(f, np.uint8), mask.astype(np.uint8), 3, cv2.INPAINT_TELEA)
+            out = np.ascontiguousarray(f if out is None else out, np.uint8)
+            if mask is not None and mask.any():
+                out = cv2.inpaint(out, mask.astype(np.uint8), 3, cv2.INPAINT_TELEA)
             with self._lock:
                 self.cleaned_frames += 1
             return out

@@ -452,3 +452,22 @@ def test_smart_capture_dead_wgc_is_disabled():
     assert s.grab(Rect(0, 0, 64, 64)) is not None
     assert "wgc" in s.stats["disabled"] and s.current == "dxgi"
     assert capture_why(s.timings()).startswith("rapide (Desktop Duplication)")
+
+
+def test_border_option_passed_to_session():
+    """Option capture_wgc_border (Windows 10): the session is opened accepting the yellow frame;
+    off by default (the session then refuses it and DXGI is used)."""
+    seen = []
+
+    class Com:
+        border = True
+        pool_size = (10, 10)
+
+        def open(self, hwnd, allow_border=False):
+            seen.append(allow_border)
+
+    c = wgc.WgcCapture(com_factory=Com, find_hwnd=lambda: 7)
+    assert c.allow_border is False
+    assert c._open(7) and seen == [False]     # default call: open(hwnd), border refused inside
+    c2 = wgc.WgcCapture(com_factory=Com, find_hwnd=lambda: 7, allow_border=True)
+    assert c2._open(7) and seen == [False, True]

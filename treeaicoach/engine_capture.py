@@ -111,7 +111,8 @@ class CaptureMixin:
         if self._capture is None:
             from treeaicoach.capture import SmartCapture
 
-            self._capture = SmartCapture(str(getattr(self._cfg, "capture_backend", "auto") or "auto"))
+            self._capture = SmartCapture(str(getattr(self._cfg, "capture_backend", "auto") or "auto"),
+                                         wgc_border=bool(getattr(self._cfg, "capture_wgc_border", False)))
         return self._capture
 
     def _manual_rect(self, win: Rect) -> Rect | None:

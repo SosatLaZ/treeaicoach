@@ -609,7 +609,7 @@ class FrameHealth:
         return "ok"
 
 
-def _default_backend_factories() -> dict[str, Callable[[], Any]]:
+def _default_backend_factories(wgc_border: bool = False) -> dict[str, Callable[[], Any]]:
     def dxgi() -> Any:
         from treeaicoach.dxgi_capture import DxgiCapture, available
 
@@ -622,7 +622,7 @@ def _default_backend_factories() -> dict[str, Callable[[], Any]]:
 
         if not available():
             raise OSError("Windows.Graphics.Capture unavailable")
-        return WgcCapture()
+        return WgcCapture(allow_border=wgc_border)
 
     return {"mss": ScreenCapture, "dxgi": dxgi, "wgc": wgc}
 
@@ -646,8 +646,11 @@ class SmartCapture:
     """
 
     def __init__(self, backend: str = "auto", factories: dict[str, Callable[[], Any]] | None = None,
-                 clock: Callable[[], float] = time.monotonic, platform: str | None = None) -> None:
-        self._factories = factories if factories is not None else _default_backend_factories()
+                 clock: Callable[[], float] = time.monotonic, platform: str | None = None,
+                 wgc_border: bool = False) -> None:
+        # wgc_border: Windows 10 cannot hide the yellow frame of a window capture; the user may
+        # accept it (option "Capture de la fenêtre du jeu"): the game window alone is analysed
+        self._factories = factories if factories is not None else _default_backend_factories(bool(wgc_border))
         self._clock = clock
         plat = platform or sys.platform
         pref = str(backend or "auto").lower()

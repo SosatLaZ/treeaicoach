@@ -43,6 +43,8 @@ class AdvancedPage:
                        "désactivé par défaut.")
         app.choice_row(perf, "capture_backend", "Capture d'écran", "« Compatible » si la capture reste noire.",
                        CAPTURE_BACKENDS, segmented=True)
+        app.switch_row(perf, "capture_wgc_border", "Capture de la fenêtre du jeu (cadre jaune Windows 10)",
+                       "Windows 10 entoure alors le jeu d'un cadre jaune ; nos repères ne gênent plus la détection.")
 
         mnt = self.page.section("Maintenance et support")
         self.diag_btn = W.button("Lancer", app.start_diagnostic)

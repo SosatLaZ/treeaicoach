@@ -470,8 +470,11 @@ class WgcCapture:
                  com_factory: Callable[[], Any] | None = None,
                  find_hwnd: Callable[[], int] = find_game_hwnd,
                  bounds: Callable[[int], tuple[int, int, int, int] | None] = window_bounds,
-                 sleep: Callable[[float], None] = time.sleep) -> None:
+                 sleep: Callable[[float], None] = time.sleep, allow_border: bool = ALLOW_BORDER) -> None:
         self._clock = clock
+        #: accept the yellow border Windows 10 draws around a captured window (user option
+        #: ``capture_wgc_border``): our overlay is then never in the frames
+        self.allow_border = bool(allow_border)
         self._com_factory = com_factory or _ComWgc
         self._find_hwnd = find_hwnd
         self._bounds = bounds
@@ -528,7 +531,10 @@ class WgcCapture:
         com = None
         try:
             com = self._com_factory()
-            com.open(hwnd)
+            if self.allow_border:
+                com.open(hwnd, allow_border=True)
+            else:
+                com.open(hwnd)
         except WgcUnsupported as exc:
             self._fail(exc, permanent=True, com=com)
             return False
