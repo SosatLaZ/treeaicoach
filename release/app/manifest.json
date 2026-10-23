@@ -1,25 +1,25 @@
 {
- "version": "2.16.0",
+ "version": "2.17.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "d76b01fb50c741e54f0fdfcb619623ef4391f033e06590fd907e78bd4c24c125",
+ "sha256": "bcee13899272e3fcfb059ca01af43acf4f7183b7b81a47291f3ed8440cb065e9",
  "chunks": [
   {
-   "name": "2.16.0/part-01.zip",
-   "size": 88161758,
-   "sha256": "df7cc2d3af053e73fca5ca0c919d558be0093e48b5393e2078e8d20327500e7b",
-   "files": 295
+   "name": "2.17.0/part-01.zip",
+   "size": 88160378,
+   "sha256": "c22edb5b7ff5d2a6507be7aeec0eb19f025d2006e3b7377419bd6cbf65bc9277",
+   "files": 282
   },
   {
-   "name": "2.16.0/part-02.zip",
-   "size": 7082155,
-   "sha256": "002c4451944a02e101c9b47b6076c9672f8d67fd31614b98c55b5d63426ae5fb",
-   "files": 410
+   "name": "2.17.0/part-02.zip",
+   "size": 7481224,
+   "sha256": "bde34d8cd2529d1e8ce2edcc52de7b4aaaccd8b019bd46652925840d9a2c7b23",
+   "files": 429
   }
  ],
- "total_size": 95243913,
+ "total_size": 95641602,
  "launcher": {
-  "sha256": "5c20eab01126546ab3766dbde4ade8bfb210eecb1d08785b5884b3df0f558e7f",
-  "size": 7532117
+  "sha256": "692741c56194a588cfa48719b4c403486e49817e444c16d98675a01d7d5563b8",
+  "size": 7531513
  },
- "notes": "2.16 : jungler suivi (derni\u00e8re position, pr\u00e9vision du 1er gank), IA seulement quand tu demandes ou au calme, build m\u00e9ta dans la boutique du jeu, runes et sorts importables."
+ "notes": "2.17 : interface saphir (arbre de vie, police Inter), Hey coach plus fiable avec test et niveau du micro, qui joue dans le vocal, bandeau r\u00e9duit, voix ElevenLabs, captures moins fr\u00e9quentes."
 }
