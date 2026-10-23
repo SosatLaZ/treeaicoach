@@ -1,12 +1,11 @@
-"""The launcher's background: a black hole in deep space (docs/DESIGN.md, "Lanceur").
+"""The launcher's background: a tree of life in sapphire (docs/DESIGN.md, "Lanceur").
 
-The slow-varying light is rendered ONCE, offline (``python tools/make_backdrop.py`` writes
-``assets/ui/backdrop.png``, 1600 x 1000, ~120 KB; a worker thread decodes it in a few ms; if the
-file is missing, :func:`render_rgb` draws a smaller one, ~0.2 s, on that worker): the
-light: accretion disk seen almost edge-on, its lensed far side arching over the shadow,
-the thin photon ring, a faint warm glow, a dark violet sky. On each window size the image is scaled
-("cover", the hole stays round) and a seeded star field is drawn at device resolution, crisp; the
-result is ONE cached pixmap that ``paintEvent`` only blits. No timer, no animation: zero idle CPU.
+A fine line-art tree (trunk, branches that fill a circle, roots that mirror them) inside a thin ring,
+on a deep sapphire gradient, low contrast so it stays behind the content. It is drawn ONCE, offline
+(``python tools/make_backdrop.py`` writes ``assets/ui/backdrop.png``, 1600 x 1000); the window
+decodes it on a worker thread, scales it once per window size ("cover": the circle stays round) and
+``paintEvent`` only copies that cached pixmap. No timer, no animation: zero idle CPU. If the file is
+missing, :func:`render_rgb` draws it on that worker (~0.3 s).
 """
 
 from __future__ import annotations
@@ -17,79 +16,106 @@ from typing import Any
 
 import numpy as np
 
-#: reference frame of the glow image (aspect 1.6; drawn "cover" on any window)
-REF_W, REF_H = 960, 600
-#: black hole centre and shadow radius in reference-frame fractions (upper right, partly behind
-#: the content column so the cards float over it; the page titles stay on dark sky)
-HOLE_X, HOLE_Y, HOLE_R = 0.79, 0.33, 0.115
-#: disk tilt (ellipse height / width as seen from the camera)
-TILT = 0.17
-STAR_SEED = 7
-STARS_PER_MPX = 150
-SKY_TOP = np.array([5, 5, 10], dtype=np.float32) / 255.0
-SKY_BOTTOM = np.array([9, 7, 15], dtype=np.float32) / 255.0
+#: reference frame (aspect 1.6; drawn "cover" on any window)
+REF_W, REF_H = 1600, 1000
+#: emblem centre and radius in reference-frame fractions (right of the content column's centre)
+TREE_X, TREE_Y, TREE_R = 0.73, 0.52, 0.40
+SEED = 11
+BG_TOP = (6, 17, 44)          # #06112C
+BG_BOTTOM = (10, 29, 64)      # #0A1D40
+LIFT = (18, 58, 115)          # #123A73: a soft lift behind the tree (depth, not a glow)
+LINE = (31, 95, 191)          # #1F5FBF
+LEAF = (79, 142, 247)         # #4F8EF7
+ASSET = ("ui", "backdrop.png")
+ASSET_SIZE = (REF_W, REF_H)
 
 
-def _smooth(e0: float, e1: float, x: np.ndarray) -> np.ndarray:
-    t = np.clip((x - e0) / (e1 - e0), 0.0, 1.0)
-    return t * t * (3.0 - 2.0 * t)
+def _background(w: int, h: int) -> np.ndarray:
+    ys = (np.arange(h, dtype=np.float32) / max(1, h - 1))[:, None, None]
+    top, bot = np.array(BG_TOP, np.float32), np.array(BG_BOTTOM, np.float32)
+    img = np.broadcast_to(top + (bot - top) * ys, (h, w, 3)).copy()
+    cx, cy, r = TREE_X * w, TREE_Y * h, TREE_R * h
+    gx = np.exp(-(((np.arange(w, dtype=np.float32) - cx) / (1.25 * r)) ** 2))
+    gy = np.exp(-(((np.arange(h, dtype=np.float32) - cy) / (1.25 * r)) ** 2))
+    lift = np.outer(gy, gx)[..., None] * 0.30
+    img = img * (1 - lift) + np.array(LIFT, np.float32) * lift
+    return img
+
+
+def _tree_layer(w: int, h: int, ss: int = 2) -> Any:
+    """RGBA PIL image of the tree, ring, roots and leaves (supersampled ``ss`` times)."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    W, H = w * ss, h * ss
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    rnd = random.Random(SEED)
+    cx, cy, R = TREE_X * W, TREE_Y * H, TREE_R * H
+    unit = H / 1000.0
+
+    def stroke(pts: list[tuple[float, float]], width: float, alpha: int) -> None:
+        d.line(pts, fill=LINE + (alpha,), width=max(1, int(round(width))), joint="curve")
+
+    def inside(x: float, y: float, lim: float) -> tuple[float, float]:
+        dx, dy = x - cx, y - cy
+        dist = math.hypot(dx, dy)
+        if dist <= lim:
+            return x, y
+        return cx + dx * lim / dist, cy + dy * lim / dist
+
+    tips: list[tuple[float, float, float]] = []
+
+    def grow(x: float, y: float, ang: float, length: float, width: float, depth: int, down: bool) -> None:
+        ex, ey = x + length * math.sin(ang), y + (length if down else -length) * math.cos(ang)
+        lim = R * (0.80 if down else 0.86)
+        clipped = math.hypot(ex - cx, ey - cy) > lim
+        ex, ey = inside(ex, ey, lim)
+        # a gentle curve: quadratic through a bent midpoint
+        bend = length * 0.10 * (rnd.random() - 0.5)
+        mx, my = (x + ex) / 2 + bend * math.cos(ang), (y + ey) / 2 + bend * math.sin(ang)
+        pts = [((1 - t) ** 2 * x + 2 * (1 - t) * t * mx + t * t * ex,
+                (1 - t) ** 2 * y + 2 * (1 - t) * t * my + t * t * ey) for t in (i / 8 for i in range(9))]
+        alpha = int((150 if not down else 120) * (0.55 + 0.45 * depth / 7))
+        stroke(pts, width, alpha)
+        if depth <= 0 or length < 6 * unit or clipped:
+            if not clipped:
+                tips.append((ex, ey, 0.0 if down else 1.0))
+            return
+        n = 3 if (depth >= 5 and rnd.random() < 0.35) else 2
+        spread = (0.36 if not down else 0.46) + 0.10 * rnd.random()
+        for i in range(n):
+            f = -1 + 2 * i / (n - 1)
+            child = ang + f * spread + 0.12 * (rnd.random() - 0.5)
+            grow(ex, ey, child, length * (0.72 + 0.08 * rnd.random()), max(1.0 * ss, width * 0.68), depth - 1,
+                 down)
+
+    ground = cy + 0.30 * R
+    fork = cy - 0.02 * R
+    trunk_w = 9 * unit
+    stroke([(cx - 2 * unit, ground), (cx + 1 * unit, (ground + fork) / 2), (cx, fork)], trunk_w, 150)
+    for a in (-1.05, -0.45, 0.0, 0.42, 1.0):
+        grow(cx, fork, a, 0.25 * R, trunk_w * 0.60, 6, False)
+    for a in (-1.15, -0.45, 0.0, 0.5, 1.1):
+        grow(cx, ground, a, 0.19 * R, trunk_w * 0.45, 4, True)
+    # the ring that holds it, and a ground line
+    rw = max(1, int(1.6 * unit))
+    d.ellipse((cx - R, cy - R, cx + R, cy + R), outline=LINE + (110,), width=rw)
+    d.line([(cx - 0.97 * R * math.cos(0.22), ground), (cx + 0.97 * R * math.cos(0.22), ground)],
+           fill=LINE + (70,), width=rw)
+    for x, y, up in tips:                      # leaves (and root ends): small sapphire seeds
+        if up and rnd.random() < 0.8:
+            r = (2.2 + 2.2 * rnd.random()) * unit
+            d.ellipse((x - r, y - r, x + r, y + r), fill=LEAF + (int(70 + 70 * rnd.random()),))
+    return layer.resize((w, h), Image.LANCZOS)
 
 
 def render_rgb(w: int = REF_W, h: int = REF_H) -> np.ndarray:
-    """``h x w x 3`` uint8 image of the black hole (no stars). Pure numpy, thread-safe."""
-    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
-    R = HOLE_R * h
-    dx = (xs - HOLE_X * w) / R
-    dy = (ys - HOLE_Y * h) / R
-    rr = np.sqrt(dx * dx + dy * dy) + 1e-6
-    # Doppler beaming: the side of the disk that comes towards us (left) is brighter
-    beam = 1.0 + 0.55 * np.clip(-dx / np.maximum(rr, 1.0), -1.0, 1.0)
-
-    # near side of the disk: a flat ellipse in front of the hole
-    de = np.sqrt(dx * dx + (dy / TILT) ** 2)
-    disk = np.exp(-(de - 1.45) * 0.95) * _smooth(1.25, 1.55, de) * (1.0 - _smooth(2.8, 4.4, de))
-    disk *= np.exp(-((dy / (0.42 + 0.06 * de)) ** 2))        # thin: fades fast off the plane
-    behind = (dy < 0) & (rr < 1.0)                              # the far half is hidden by the shadow
-    disk = np.where(behind, 0.0, disk) * beam
-
-    # far side of the disk, lensed into an arch over the shadow (and a fainter one under it)
-    arch_w = np.where(dy < 0, 0.17, 0.10)
-    arch = np.exp(-(((rr - 1.30) / arch_w) ** 2)) * np.where(dy < 0, 0.62, 0.22)
-    arch *= 0.65 + 0.35 * beam
-
-    ring = np.exp(-(((rr - 1.04) / 0.022) ** 2)) * 0.85 * beam   # photon ring (sharp, thin)
-    r2 = rr * rr
-    glow = np.exp(r2 * (-1.0 / 3.4 ** 2)) * 0.10 + np.exp(r2 * (-1.0 / 1.6 ** 2)) * 0.06
-
-    light = disk * 1.25 + arch + ring + glow
-    shadow = _smooth(0.96, 1.02, rr)                            # the event horizon's shadow: black
-    inside = 1.0 - _smooth(0.975, 1.005, rr)                    # soft edge: no stair steps when scaled
-    light = light * (1.0 - inside) + disk * 1.25 * inside
-
-    # tone map + colour ramp: deep ember (faint) -> amber -> warm cream (hottest)
-    v = 1.0 - np.exp(-light * 1.15)
-    ember = np.array([0.42, 0.11, 0.03], dtype=np.float32)
-    amber = np.array([0.96, 0.58, 0.24], dtype=np.float32)
-    cream = np.array([1.00, 0.92, 0.80], dtype=np.float32)
-    a = _smooth(0.0, 0.55, v)[..., None]
-    b = _smooth(0.55, 0.95, v)[..., None]
-    col = ember + (amber - ember) * a
-    col = col + (cream - col) * b
-    col = col * v[..., None] * 0.92
-
-    sky = SKY_TOP + (SKY_BOTTOM - SKY_TOP) * (ys / h)[..., None]
-    # a very faint cold haze, low left: depth, not a colour halo
-    hx = np.exp(-(((np.arange(w, dtype=np.float32) / w - 0.12) / 0.35) ** 2))
-    hy = np.exp(-(((np.arange(h, dtype=np.float32) / h - 0.92) / 0.35) ** 2))
-    haze = np.outer(hy, hx) * 0.035
-    sky = sky + haze[..., None] * np.array([0.35, 0.30, 0.60], dtype=np.float32)
-    sky = sky * shadow[..., None]
-    img = sky + col
-    # vignette: edges fall off so the sidebar and the corners stay quiet
-    vx = (xs / w - 0.5) * 2.0
-    vy = (ys / h - 0.5) * 2.0
-    img *= (1.0 - 0.28 * np.clip(vx * vx * 0.6 + vy * vy * 0.7, 0.0, 1.0))[..., None]
-    return np.clip(img * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    """``h x w x 3`` uint8 image of the backdrop. PIL + numpy, thread-safe."""
+    bg = _background(w, h)
+    tree = np.asarray(_tree_layer(w, h), dtype=np.float32)
+    a = tree[..., 3:4] / 255.0
+    img = bg * (1 - a) + tree[..., :3] * a
+    return np.clip(img + 0.5, 0, 255).astype(np.uint8)
 
 
 def peak_luminance(rgb: np.ndarray) -> float:
@@ -106,31 +132,8 @@ def cover_rect(src_w: int, src_h: int, dst_w: int, dst_h: int) -> tuple[float, f
     return ((src_w - cw) / 2.0, (src_h - ch) / 2.0, cw, ch)
 
 
-def star_field(w: int, h: int, seed: int = STAR_SEED) -> list[tuple[float, float, float, float, int]]:
-    """Stars (x, y, radius, alpha, tint) for a ``w x h`` window: seeded, density per pixel, none
-    inside the shadow. Tint 0 = cool white, 1 = warm."""
-    rnd = random.Random(seed)
-    sx, sy, sw, sh = cover_rect(REF_W, REF_H, w, h)
-    scale = w / sw
-    hx, hy = (HOLE_X * REF_W - sx) * scale, (HOLE_Y * REF_H - sy) * scale
-    hr = HOLE_R * REF_H * scale * 1.15
-    out = []
-    for _ in range(int(STARS_PER_MPX * w * h / 1e6)):
-        x, y = rnd.random() * w, rnd.random() * h
-        m = rnd.random() ** 3                        # most stars faint, a few bright
-        if math.hypot(x - hx, y - hy) < hr:
-            continue
-        out.append((x, y, 0.45 + 1.0 * m, 0.25 + 0.65 * m, 1 if rnd.random() < 0.25 else 0))
-    return out
-
-
-#: the bundled image (tools/make_backdrop.py)
-ASSET = ("ui", "backdrop.png")
-ASSET_SIZE = (1600, 1000)
-
-
 def load_glow() -> Any:
-    """Worker thread: the glow as a QImage (the bundled PNG, else rendered now, smaller)."""
+    """Worker thread: the backdrop as a QImage (the bundled PNG, else drawn now)."""
     try:
         from PySide6 import QtGui  # noqa: PLC0415
 
@@ -141,11 +144,11 @@ def load_glow() -> Any:
             return img
     except Exception:
         pass
-    return render_rgb(800, 500)
+    return render_rgb(960, 600)
 
 
 class BackdropCache:
-    """Glow image (rendered once) + the pixmap for the current size (scaled + stars)."""
+    """Backdrop image (decoded once) + the pixmap for the current size."""
 
     def __init__(self) -> None:
         self.glow: Any = None          # QImage, reference frame
@@ -176,19 +179,7 @@ class BackdropCache:
         sx, sy, sw, sh = cover_rect(self.glow.width(), self.glow.height(), pw, ph)
         part = self.glow.copy(QtCore.QRect(int(sx), int(sy), max(1, int(sw)), max(1, int(sh))))
         img = part.scaled(pw, ph, Qt.IgnoreAspectRatio, Qt.SmoothTransformation if smooth else Qt.FastTransformation)
-        img = img.convertToFormat(QtGui.QImage.Format_RGB32)
-        if smooth:
-            qp = QtGui.QPainter(img)
-            qp.setRenderHint(QtGui.QPainter.Antialiasing)
-            qp.setPen(Qt.NoPen)
-            cool, warm = QtGui.QColor(225, 230, 255), QtGui.QColor(255, 222, 190)
-            for x, y, r, a, tint in star_field(pw, ph):
-                c = QtGui.QColor(warm if tint else cool)
-                c.setAlphaF(a)
-                qp.setBrush(c)
-                qp.drawEllipse(QtCore.QPointF(x, y), r * dpr, r * dpr)
-            qp.end()
-        pm = QtGui.QPixmap.fromImage(img)
+        pm = QtGui.QPixmap.fromImage(img.convertToFormat(QtGui.QImage.Format_RGB32))
         pm.setDevicePixelRatio(dpr)
         self.pixmap, self.size = pm, ((w, h, dpr) if smooth else (0, 0, 0.0))
         return pm

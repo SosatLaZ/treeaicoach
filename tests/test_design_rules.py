@@ -69,8 +69,10 @@ def test_no_template_fonts() -> None:
     pytest.importorskip("PySide6.QtWidgets")
     from treeaicoach import ui_widgets as W
 
+    # v2.17: Inter (OFL) is bundled and is the identity; Segoe UI Variable is the fallback
+    assert W.FONT_FAMILIES[0] == "Inter" and W.DISPLAY_FAMILIES[0] == "Inter Display"
     for fams in (W.FONT_FAMILIES, W.DISPLAY_FAMILIES):
-        assert fams[0].startswith("Segoe UI"), fams
+        assert any(f.startswith("Segoe UI") for f in fams), fams
         assert not any(f.startswith(("Poppins", "Space Grotesk", "Geist")) for f in fams), fams
     css = (PKG / "report.py").read_text(encoding="utf-8")
     for fam in BANNED_FONTS:
@@ -130,13 +132,29 @@ def test_glass_panels_stay_legible_over_the_black_hole() -> None:
     a = W.GLASS_GROUP_ALPHA
     worst = a * np.array(W.GLASS_GROUP_RGB) + (1 - a) * peak
     worst_hex = "#" + "".join(f"{int(round(c)):02X}" for c in worst)
-    t = W.SPACE
+    t = W.SAPPHIRE
     for fg in (t.text, t.secondary, t.tertiary, t.accent, t.danger, t.warning, t.ok):
         assert _contrast(fg, worst_hex) >= 4.5, (fg, worst_hex, round(_contrast(fg, worst_hex), 2))
     assert _contrast("#FFFFFF", t.group) <= _contrast("#FFFFFF", worst_hex) + 0.01, (t.group, worst_hex)
     assert "rgba(" in W.style_sheet(t, "Segoe UI", "Segoe UI")      # the panels really are glass
     asset = Path(B.__file__).parent / "assets" / Path(*B.ASSET)
     assert asset.is_file() and asset.stat().st_size <= 300_000       # bundled, small
+
+
+def test_bundled_font_loads() -> None:
+    """The Inter files load and give the three weights the style sheet uses (400 / 500 / 600)."""
+    pytest.importorskip("PySide6.QtWidgets")
+    from PySide6 import QtGui, QtWidgets
+
+    from treeaicoach import ui_widgets as W
+
+    _app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    assert W.load_fonts() == len(W.FONT_FILES)
+    assert {"Regular", "Medium", "SemiBold"} <= set(QtGui.QFontDatabase.styles("Inter"))
+    assert "Inter Display" in QtGui.QFontDatabase.families()
+    folder = Path(W.__file__).parent / "assets" / "fonts"
+    assert (folder / "Inter-LICENSE.txt").is_file()
+    assert sum((folder / f).stat().st_size for f in W.FONT_FILES) < 400_000      # Latin subset
 
 
 def test_report_html_follows_the_rules() -> None:

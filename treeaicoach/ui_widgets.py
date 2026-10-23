@@ -20,8 +20,11 @@ Qt = QtCore.Qt
 # ======================================================================================
 # Theme
 # ======================================================================================
-FONT_FAMILIES = ("Segoe UI Variable Text", "Segoe UI", "Inter", "Noto Sans", "DejaVu Sans", "Liberation Sans")
-DISPLAY_FAMILIES = ("Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", "Inter", "Noto Sans",
+#: Inter (OFL, bundled in assets/fonts, Latin subset ~60 KB per weight) is the identity; Segoe UI
+#: Variable is the fallback if the files cannot be loaded.
+FONT_FILES = ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf", "InterDisplay-SemiBold.ttf")
+FONT_FAMILIES = ("Inter", "Segoe UI Variable Text", "Segoe UI", "Noto Sans", "DejaVu Sans", "Liberation Sans")
+DISPLAY_FAMILIES = ("Inter Display", "Inter", "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", "Noto Sans",
                     "DejaVu Sans")
 
 
@@ -50,26 +53,28 @@ class Theme:
     ok: str
 
 
-#: « trou noir » (docs/DESIGN.md): deep space, glass panels over a black hole, ONE warm accent taken
-#: from the accretion disk. ``group`` / ``sidebar`` are the panels' worst-case colours (glass over the
-#: brightest backdrop pixel, tests/test_design_rules.py) ; the style sheet paints them translucent.
-SPACE = Theme(
-    name="dark", window="#06060B", sidebar="#0B0A11", group="#312D30", group_hover="#3A363A",
-    separator="#2A2732", text="#F2EEE8", secondary="#BDB6AE", tertiary="#A09990",
-    accent="#F5A25A", accent_hover="#FFB878", on_accent="#1A0D03", accent_soft="#3B2716",
-    control="#25222C", control_hover="#2F2B37", control_border="#3B3743", track_off="#3B3743", knob="#FFFFFF",
-    danger="#FF6F6A", warning="#F2CF55", ok="#72D6A0")
-DARK = SPACE
-THEMES: tuple[Theme, ...] = (SPACE,)
+#: « arbre de vie, saphir » (docs/DESIGN.md): deep sapphire, a fine line-art tree of life behind the
+#: content, glass panels, ONE sapphire accent. ``group`` / ``sidebar`` are the panels' worst-case
+#: colours (glass over the brightest backdrop pixel, tests/test_design_rules.py); the style sheet
+#: paints them translucent.
+SAPPHIRE = Theme(
+    name="dark", window="#071430", sidebar="#0A1934", group="#1A3361", group_hover="#203C6E",
+    separator="#24406E", text="#F5F8FF", secondary="#BFCBE3", tertiary="#9DAFD0",
+    accent="#74A8FA", accent_hover="#8DB8FC", on_accent="#04102A", accent_soft="#1F4F9C",
+    control="#17325F", control_hover="#1E3C6E", control_border="#2B4B80", track_off="#2B4B80", knob="#FFFFFF",
+    danger="#FF7D75", warning="#F3D065", ok="#72D9A6")
+SPACE = SAPPHIRE     # older name
+DARK = SAPPHIRE
+THEMES: tuple[Theme, ...] = (SAPPHIRE,)
 #: glass (rgba over the backdrop): page panels, sidebar, hairlines
-GLASS_GROUP = "rgba(17, 16, 23, 0.84)"
-GLASS_GROUP_HOVER = "rgba(30, 27, 37, 0.88)"
-GLASS_SIDEBAR = "rgba(6, 6, 10, 0.80)"
-GLASS_EDGE = "rgba(255, 255, 255, 0.07)"
-GLASS_SEPARATOR = "rgba(255, 255, 255, 0.075)"
+GLASS_GROUP = "rgba(18, 38, 74, 0.80)"
+GLASS_GROUP_HOVER = "rgba(31, 79, 156, 0.45)"
+GLASS_SIDEBAR = "rgba(5, 14, 32, 0.72)"
+GLASS_EDGE = "rgba(150, 190, 255, 0.10)"
+GLASS_SEPARATOR = "rgba(150, 190, 255, 0.10)"
 #: alpha of GLASS_GROUP (the contrast test composes it over the backdrop's brightest pixel)
-GLASS_GROUP_ALPHA = 0.84
-GLASS_GROUP_RGB = (17, 16, 23)
+GLASS_GROUP_ALPHA = 0.80
+GLASS_GROUP_RGB = (18, 38, 74)
 
 # sizes (px at 100 %, Qt applies the monitor's DPI factor on top)
 SIDEBAR_W = 248
@@ -207,9 +212,31 @@ QPushButton#Segment:checked {{ background: {t.accent_soft}; color: {t.text}; }}
 """
 
 
+_fonts_loaded: list[bool] = []
+
+
+def load_fonts() -> int:
+    """Register the bundled Inter files once (a few ms); returns how many loaded."""
+    if _fonts_loaded:
+        return int(_fonts_loaded[0])
+    n = 0
+    try:
+        from treeaicoach.paths import asset_path  # noqa: PLC0415
+
+        for name in FONT_FILES:
+            if QtGui.QFontDatabase.addApplicationFont(str(asset_path("fonts", name))) >= 0:
+                n += 1
+    except Exception:
+        pass
+    _fonts_loaded.append(bool(n))
+    _fonts_loaded[0] = n
+    return n
+
+
 def apply_theme(app: QtWidgets.QApplication, dark: bool = True) -> Theme:
     """The one theme (the black hole is dark by nature; ``dark`` is kept for old callers)."""
-    t = SPACE
+    t = SAPPHIRE
+    load_fonts()
     _theme[0] = t
     body, display = pick_family(FONT_FAMILIES), pick_family(DISPLAY_FAMILIES)
     f = QtGui.QFont(body)
@@ -790,7 +817,7 @@ class Sidebar(QtWidgets.QFrame):
     def recolor(self) -> None:
         t = theme()
         for key, b in self.buttons.items():
-            b.setIcon(glyph_icon(self._kinds[key], t.secondary, 20, t.accent))
+            b.setIcon(glyph_icon(self._kinds[key], t.secondary, 20, t.text))
 
     def set_current(self, key: str) -> None:
         b = self.buttons.get(key)
@@ -878,6 +905,6 @@ class Toast(QtWidgets.QFrame):
         self.move((par.width() - w) // 2 + SIDEBAR_W // 2, par.height() - self.height() - 24)
 
 
-__all__ = ["Theme", "SPACE", "DARK", "THEMES", "Backdrop", "theme", "apply_theme", "system_is_dark", "style_sheet", "Switch", "Dot",
+__all__ = ["Theme", "SAPPHIRE", "SPACE", "DARK", "THEMES", "Backdrop", "theme", "apply_theme", "system_is_dark", "style_sheet", "Switch", "Dot",
            "Segmented", "Combo", "Slider", "Row", "Group", "Section", "Page", "Sidebar", "Toast", "label",
            "button", "glyph_icon", "set_prop", "repolish"]
