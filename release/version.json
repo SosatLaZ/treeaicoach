@@ -1,6 +1,6 @@
 {
-  "version": "2.18.0",
-  "sha256": "49fa56af21b87f91aef213a7a59164089813b031fb73ad0e805640130db08bc4",
-  "size": 7531313,
-  "notes": "2.18 : séquence de lancement, Accueil avec ton champion façon LoL, proportions revues."
+  "version": "2.19.0",
+  "sha256": "85dc0e9a26786ca3ae9178e4ddce810a7359734ff6bd9d8eadc9e5e9f98bca96",
+  "size": 7532537,
+  "notes": "2.19 : 20 nouveautés (or exact, fenêtre de kill, back, défense adaptée, victoire %, compo, anti-tilt, profil, carte des morts…)"
 }

@@ -1,25 +1,25 @@
 {
- "version": "2.18.0",
+ "version": "2.19.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "32d87397bbff9d616ccfc4aadde4be5568811d3d26724744e5da9d8fa36101aa",
+ "sha256": "92e66db7bb029f4bd96ad172b09fbd2ec7ea80c5d85a41e23e2285b133827c61",
  "chunks": [
   {
-   "name": "2.18.0/part-01.zip",
-   "size": 88163670,
-   "sha256": "87d3499a928d5403094c5522638900371e925530eba4b0fe8f138a176c19b909",
-   "files": 280
+   "name": "2.19.0/part-01.zip",
+   "size": 88157389,
+   "sha256": "24e6b83aa7eae4ca36174dbbe6fe8cb4ffc762f76abf636c6a411f28a735a3b7",
+   "files": 269
   },
   {
-   "name": "2.18.0/part-02.zip",
-   "size": 7500887,
-   "sha256": "a3d15dcac1d2d1d729972df5039fc413de1275b4370e408068d53d6240f90aeb",
-   "files": 431
+   "name": "2.19.0/part-02.zip",
+   "size": 7604990,
+   "sha256": "9fe70c25ee44bd77563cf422935e758a5c783a2f61242687b1b77342e4c63466",
+   "files": 442
   }
  ],
- "total_size": 95664557,
+ "total_size": 95762379,
  "launcher": {
-  "sha256": "49fa56af21b87f91aef213a7a59164089813b031fb73ad0e805640130db08bc4",
-  "size": 7531313
+  "sha256": "85dc0e9a26786ca3ae9178e4ddce810a7359734ff6bd9d8eadc9e5e9f98bca96",
+  "size": 7532537
  },
- "notes": "2.18 : s\u00e9quence de lancement, Accueil avec ton champion fa\u00e7on LoL, proportions revues."
+ "notes": "2.19 : 20 nouveaut\u00e9s (or exact, fen\u00eatre de kill, back, d\u00e9fense adapt\u00e9e, victoire %, compo, anti-tilt, profil, carte des morts\u2026)"
 }
