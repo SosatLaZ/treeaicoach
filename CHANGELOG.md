@@ -3,6 +3,12 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.21.1 · 23 octobre 2026
+
+- **Discord t'entend enfin :** le bot ignorait ta voix quand l'assistant du PC était activé (pour ne pas
+  répondre deux fois). Maintenant il t'écoute toujours ; si le PC et Discord entendent le même « Hey coach »,
+  une seule réponse.
+
 ## 2.21.0 · 23 octobre 2026
 
 - **Reconnaissance vocale refaite :** Whisper en local (gratuit, aucune requête), téléchargé au 1er usage ;

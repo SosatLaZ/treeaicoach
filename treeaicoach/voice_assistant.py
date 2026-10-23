@@ -85,6 +85,25 @@ def normalize(text: Any) -> str:
     return " ".join(re.sub(r"[^a-z0-9' ]+", " ", s).split())
 
 
+#: Last « Hey coach » heard by the PC mic or by Discord for the player himself (monotonic s): both
+#: listen to him, the first one answers and the other stays quiet for WAKE_DEDUP_S.
+WAKE_DEDUP_S = 4.0
+_last_wake = {"pc": -1e9, "discord": -1e9}
+
+
+def claim_wake(source: str, now: float | None = None) -> bool:
+    """True when ``source`` ("pc" / "discord") may answer: the other source did not wake in the last
+    :data:`WAKE_DEDUP_S` seconds. Records the wake when granted."""
+    import time as _t
+
+    t = _t.monotonic() if now is None else now
+    other = "discord" if source == "pc" else "pc"
+    if t - _last_wake.get(other, -1e9) < WAKE_DEDUP_S:
+        return False
+    _last_wake[source] = t
+    return True
+
+
 def is_wake(text: Any) -> bool:
     """True when ``text`` (recognizer output) is a variant of « Hey coach »."""
     return bool(_WAKE_RE.search(normalize(text)))
@@ -1426,6 +1445,8 @@ class VoiceAssistant:
         self.whisper_text = text
         log.info("Assistant vocal : mot-clé entendu par Whisper dans « %s »", text[:80])
         if len(rest.split()) >= MIN_QUESTION_WORDS:
+            if not claim_wake("pc"):          # Discord already answered him
+                return True
             self._set_stage("wake")
             try:
                 self.on_wake()
@@ -1479,6 +1500,8 @@ class VoiceAssistant:
     def _question(self, mic: Mic, handover: tuple[Any, list[str], str] | None = None,
                   prefix: bytes = b"") -> None:
         if self.whisper_ready():
+            if not claim_wake("pc"):          # Discord already answered him
+                return
             self._set_stage("wake")
             try:
                 self.on_wake()
@@ -1493,6 +1516,8 @@ class VoiceAssistant:
         """Wake heard (or push-to-talk): chime, then free recognition until silence / the time limit.
         ``handover`` = what the wake engine already heard after the wake phrase (« hey coach quel objet »
         said in one breath): its recognizer goes on, its words count."""
+        if not claim_wake("pc"):          # Discord already answered him
+            return
         self._set_stage("wake")
         try:
             self.on_wake()

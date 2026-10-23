@@ -1916,7 +1916,10 @@ class DiscordCaller:
         if not on and self._receiver is None:
             return
         if on:                                   # the PC assistant already hears the player: no double answer
-            self._listen_parts()[0].ignore_ids = frozenset({s.user_id} if s.own_assistant and s.user_id else ())
+            # the player is always heard on Discord too (his PC mic may be silent); a « Hey coach » heard
+            # by both is answered once (voice_assistant.claim_wake)
+            self._listen_parts()[0].ignore_ids = frozenset()
+            self._listen_parts()[0].owner_id = s.user_id if s.own_assistant else ""
         try:
             await fn(on, self._listen_parts()[1] if on else self._receiver)
         except Exception as exc:

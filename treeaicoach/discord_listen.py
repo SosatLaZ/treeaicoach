@@ -333,6 +333,7 @@ class VoiceListener:
         self.on_question: Callable[[str, str], None] = lambda _u, _q: None
         self.bot_user_id = ""
         self.ignore_ids: frozenset[str] = frozenset()   # the player himself when his PC assistant listens
+        self.owner_id: str = ""   # the player, also heard by his PC assistant: one answer (claim_wake)
         self.wakes = 0
         self.questions = 0
         self.refused = 0
@@ -505,6 +506,11 @@ class VoiceListener:
             if sp is None or not self._admit(uid):
                 self.refused += 1
                 return
+            if uid and uid == self.owner_id:
+                from treeaicoach.voice_assistant import claim_wake
+
+                if not claim_wake("discord"):            # his PC mic already answered this one
+                    return
             if not sp.start_question():
                 self.answered()
                 return

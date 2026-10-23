@@ -325,3 +325,13 @@ def test_engine_reads_the_voice_answer_short() -> None:
     q = _Queue(aia.Advice("Achète Sunfire.", "manual", 200.0))           # F8 (not spoken): written only
     eng._ai_publish(200.5, 700.0, q, 0, False)
     assert said == ["Achète Sunfire. Puis Thornmail."]
+
+
+def test_claim_wake_answers_once_across_pc_and_discord():
+    from treeaicoach import voice_assistant as VA
+
+    VA._last_wake.update(pc=-1e9, discord=-1e9)
+    assert VA.claim_wake("discord", now=100.0)
+    assert not VA.claim_wake("pc", now=102.0)          # same « Hey coach » heard by both: one answer
+    assert VA.claim_wake("pc", now=100.0 + VA.WAKE_DEDUP_S + 0.1)
+    VA._last_wake.update(pc=-1e9, discord=-1e9)
