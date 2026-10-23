@@ -32,65 +32,37 @@ bordures lumineuses, halos de couleur en fond (hors l'arbre du lanceur), verre d
 frameworks (`#3B82F6`, `#6366F1`, `#8B5CF6`), gris shadcn / slate `#0F172A` comme identité,
 or / marine du client du jeu (`#C8AA6E`, `#0A1428`, `#010A13`).
 
-## Lanceur (fenêtre principale) : « arbre de vie, saphir » (v2.17)
+## Lanceur (fenêtre principale) : « graphite » (v2.21)
 
-Qt Widgets (docs/LAUNCHER.md). Esprit Apple : calme, aéré, typographie nette, profondeur discrète.
-Tout en saphir : un dégradé bleu nuit, derrière le contenu **un arbre de vie au trait** (tronc,
-branches qui remplissent un cercle, racines en miroir, un anneau fin : le lien avec le logo TreeAI),
-à faible contraste. Des panneaux de verre posés dessus, un seul accent saphir. Pas de lueur, pas de
-néon. (Le « trou noir » de la première version a été refusé : « ça fait trop IA ».)
+Qt Widgets (docs/LAUNCHER.md). Référence : Réglages système d'Apple, Linear, Raycast. Calme, plat, une
+seule couleur d'accent, typographie nette. (Le « trou noir » puis l'« arbre de vie saphir » ont été
+refusés : « trop kitsch ».)
 
-* **Fond** (`ui_backdrop.py`) : dessiné une fois hors ligne (`python tools/make_backdrop.py` ->
-  `assets/ui/backdrop.png`, 1600 × 1000, ~225 Ko), décodé sur un thread de fond, mis à la taille
-  de la fenêtre en mode « cover » (le cercle reste rond), une seule image en cache par taille que
-  `paintEvent` recopie. **Aucune animation, aucun minuteur : 0 % de processeur au repos.**
-* **Jetons** (`ui_widgets.SAPPHIRE`, un seul thème) : fond `#071430`, texte `#F5F8FF`, secondaire
-  `#BFCBE3`, tertiaire `#9DAFD0`, accent `#74A8FA` (texte `#04102A` dessus), sélection `#1F4F9C`,
-  sens : danger `#FF7D75`, attention `#F3D065`, sûr `#72D9A6`. Arbre `#1F5FBF`, graines `#4F8EF7`.
-* **Verre** : cellules `rgba(18,38,74,0,80)` avec un filet `rgba(150,190,255,0,10)`, barre
-  latérale `rgba(5,14,32,0,72)`. Pas de flou, pas d'ombre, pas de dégradé dans la feuille de style.
-  `tests/test_design_rules.py` compose le verre sur le pixel le plus clair du fond : chaque couleur
-  de texte y garde ≥ 4,5:1.
-* **Police** : **Inter** (licence OFL, `assets/fonts`, sous-ensemble latin, 4 fichiers de ~60 Ko :
-  Regular, Medium, SemiBold, Display SemiBold), chargée par `QFontDatabase` ; repli Segoe UI
-  Variable. Titre de page 26 px semi-gras (Inter Display), corps 14, secondaire 13, notes 12 ;
-  jamais en dessous de 12.
-* **Navigation** : une page = un but, rangées par fréquence d'usage. En haut, ce qui sert à chaque
-  partie : Accueil · Overlay · Alertes et voix · Discord · Analyse. En bas, sous « Configuration »,
-  ce qu'on règle une fois : Réglages (démarrage, après la partie, fenêtre, IA, touches) · Avancé
-  (minimap, analyse, performance, maintenance) · À propos (Ctrl+1 … 8). Page courante : fond
-  `#1F4F9C`, icône blanche ; les autres icônes en secondaire. Logo (tuile saphir, arbre blanc) à
-  côté du nom.
-* **Page** = grand titre, une phrase, puis des **listes groupées** : petit titre de section, une
-  cellule de verre arrondie (10 px), lignes séparées par un filet décalé de 16 px, une note sous la
-  cellule si besoin. Colonne centrée de 760 px au plus.
-* **Ligne** : titre (14) + description (13, secondaire) à gauche, contrôle à droite ; 48 px minimum.
-* **Contrôles** : interrupteur 42 × 24 (saphir allumé), contrôle segmenté (segment choisi en
-  `#1F4F9C`), menu à double chevron, curseur avec sa valeur, boutons arrondis 7 px ; un seul bouton
-  accent par zone.
-* **Accueil** commence par **une** ligne d'état (`ui_kit.status_line`) et le bouton Démarrer / Arrêter.
-* Chaque champ de `Config` a un contrôle, ou figure dans `ui_common.HIDDEN_SETTINGS` avec sa raison
-  (`tests/test_launcher.py`) ; un réglage n'existe qu'à un seul endroit.
-* **Grille de 8 pt** (v2.18) : colonne centrée de 880 px, marges de page 40, écart entre sections 32,
-  rayon 12 (cellules, carte héros), 8 (contrôles), lignes 16 / 12 de marge, 48 de haut au minimum.
-  Titre de page 32, titre de section 15 semi-gras en couleur du texte suivi d'un **filet** d'un pixel
-  (« scanline », fixe) qui court jusqu'au bord de la colonne.
-* **Touche LoL, discrète** : la carte héros de l'Accueil (`ui_flair.HeroCard`) montre le champion de la
-  partie en cours, sinon de la dernière (art de chargement Data Dragon, 308 × 560, ~40 Ko, téléchargé
-  une fois dans le cache par un thread de fond ; sans réseau : le portrait de 64 px déjà embarqué),
-  assombri et fondu dans le verre. Au-dessus du titre, une ligne **monospace** : « TOP · GAREN · EN
-  PARTIE » ou « DERNIÈRE PARTIE · GAREN · TOP · VICTOIRE ». Cadre : un filet saphir, deux petits angles
-  champagne (`GOLD` `#D8C48E`, 1 px, jamais du texte ni un aplat) avec un losange. Aucun logo, aucune
-  marque ni image de l'interface du jeu. Les chiffres de statistiques (`role="big"`, ligne en direct)
-  sont en monospace (Cascadia / Consolas, sinon la fixe du système).
-* **Séquence de lancement** (`ui_flair.BootSplash`, 1,2 s au plus, une fois par démarrage, un clic ou
-  une touche la passe) : lignes monospace pour de VRAIS contrôles (détecteur : modèle + onnxruntime ;
-  capture : mss ; client LoL : fichier lockfile ; voix ; overlay), un trait de progression fin, puis
-  fondu de 200 ms. Pas de faux texte « hacker », pas de pluie de code. Une seule animation, arrêtée
-  et supprimée à la fin : 0 % de processeur ensuite. `TREEAICOACH_NO_SPLASH=1` la désactive.
-* **Interdits** en plus de la liste ci-dessus : néon, bordures lumineuses, halos de couleur autour
-  des contrôles, verre dépoli (flou), animations décoratives (le fond est fixe), icônes colorées
-  multiples, cartes dans des cartes. L'arbre est **le seul** élément décoratif, et il reste derrière.
+* **Fond** : une couleur plate (`ui_widgets.Backdrop`), aucune image, aucun dégradé, aucune animation.
+* **Jetons** (`ui_widgets.GRAPHITE`, un seul thème) : fenêtre `#101113`, barre latérale `#151619`,
+  cellules opaques `#1B1C20`, filets blancs à 6-7 %, texte `#ECEDEF`, secondaire `#A3A7AE`, tertiaire
+  `#8A8E97`, **accent unique** `#7AA7FF` (interrupteurs, bouton principal, liens), sélection neutre
+  `#2C2F36` ; sens : danger `#FF6B63`, attention `#EBBE4D`, sûr `#5FD08F`. Contraste ≥ 4,5:1 vérifié
+  par `tests/test_design_rules.py`.
+* **Police** : **Inter** (OFL, `assets/fonts`), repli Segoe UI Variable. Titre de page 26 px, corps 14,
+  secondaire 13, légende de section 13 semi-gras en secondaire, notes 12 ; jamais en dessous de 12.
+  Pas de monospace.
+* **Grille de 8 pt** : colonne centrée de 760 px, marges 40, 32 entre sections, 8 entre la légende et sa
+  cellule, rayon 12 (cellules) / 8 (contrôles), lignes de 48 px au moins.
+* **Navigation** : Accueil · Overlay · Alertes et voix · Discord · Analyse ; en bas, « Configuration » :
+  Réglages · Avancé · À propos (Ctrl+1 … 8).
+* **Page** = titre, une phrase courte, puis des listes groupées (légende, cellule, filet entre lignes).
+  **Ligne** : titre + description courte à gauche, contrôle à droite.
+* **Un réglage = un seul endroit** (`tests/test_launcher.py` vérifie chaque interrupteur : un champ de
+  `Config`, appliqué tout de suite, sauvegardé). Un sous-réglage n'est affiché que si son interrupteur
+  maître est allumé (`CoachApp.depends`).
+* **Accueil** : la carte d'état (Démarrer / Arrêter) avec l'art du champion à droite, discret (assombri,
+  fondu, opacité 55 %, aucun cadre décoratif) ; les cartes de sélection des champions et des joueurs
+  seulement quand elles servent ; « Coach » (niveau, voix, mode sûr) ; essayer ; dernière partie ; système.
+* **Lancement** (`ui_flair.BootSplash`, < 0,8 s) : le nom, un trait de progression fin et UNE ligne
+  d'état (le premier contrôle réel qui échoue, sinon « Prêt »). `TREEAICOACH_NO_SPLASH=1` la désactive.
+* **Interdits** : images de fond, lueurs, néon, verre, ornements (angles dorés, filets « scanline »),
+  texte en capitales qui crie, monospace décoratif, emoji, animations décoratives, cartes dans des cartes.
 
 ## Textes
 
