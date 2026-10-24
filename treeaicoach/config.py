@@ -33,7 +33,7 @@ from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
-CONFIG_VERSION = 6                 # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
+CONFIG_VERSION = 7                 # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
 MAX_CONFIG_BYTES = 1_000_000       # a bigger config.json is treated as corrupt
 BACKUP_SUFFIX = ".bak"
 
@@ -402,7 +402,7 @@ class Config:
     discord_say_name: bool = False       # "Paul, bot gank" (the friend's Discord name first)
     discord_team_calls: bool = False     # "Ils sont 4 bot : Baron maintenant" in the voice channel
     discord_route: str = "both"          # both | discord (all the app's sound by the bot) | pc (bot silent)
-    discord_listen: bool = False         # « Hey coach » said by anyone in the voice channel (discord_listen.py)
+    discord_listen: bool = True          # « Hey coach » said by anyone in the voice channel (discord_listen.py)
     discord_friends_matchup: bool = True  # game start: one matchup sentence per friend of the voice channel
     discord_team_recap: bool = False     # game end: text recap per friend of the voice channel (postgame_edge.py)
     voice_assistant: bool = False        # « Hey coach » + question -> spoken AI answer (offline Vosk)
@@ -868,6 +868,8 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         # 2.12.1: "une minimap au-dessus de ma minimap" - the user never wants the radar copy;
         # moved back to the marks on the real minimap once (the value itself is still accepted)
         data = {**data, "overlay_mode": "minimap"}
+    if _version(data) < 7:                 # the coach AI listens through Discord only (owner's choice)
+        data = {**data, "voice_assistant": False, "discord_listen": True}
     if _version(data) < 6 and float(data.get("collect_interval_s") or 0) < 30.0:
         data = {**data, "collect_interval_s": 30.0}       # 2.17: captures much less often
     if _version(data) < 3 and data.get("collect_samples") is False:

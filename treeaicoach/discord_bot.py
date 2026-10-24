@@ -597,6 +597,15 @@ class _Job:
 
 
 @dataclass
+def _pc_mic_on() -> bool:
+    try:
+        from treeaicoach.voice_assistant import PC_MIC_ENABLED
+
+        return bool(PC_MIC_ENABLED)
+    except Exception:
+        return False
+
+
 class _Settings:
     enabled: bool = False
     token: str = field(default="", repr=False)
@@ -1027,7 +1036,7 @@ class DiscordCaller:
                           links=tuple(sorted(df.clean_links(getattr(cfg, "discord_links", None) or {}).items())),
                           route=route_of(cfg), listen=getattr(cfg, "discord_listen", False) is True,
                           friends_matchup=getattr(cfg, "discord_friends_matchup", True) is not False,
-                          own_assistant=getattr(cfg, "voice_assistant", False) is True)
+                          own_assistant=getattr(cfg, "voice_assistant", False) is True and _pc_mic_on())
             with self._lock:
                 changed = s.key() != self._settings.key()
                 if s.user_id != self._settings.user_id:

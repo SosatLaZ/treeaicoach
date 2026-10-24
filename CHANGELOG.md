@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.24.0 · 24 octobre 2026
+
+- **Coach IA par Discord uniquement :** le micro du PC n'est plus jamais ouvert. « Hey coach » est écouté
+  dans le salon vocal Discord (toi compris), transcrit par Whisper en local, réponse par l'IA (Groq).
+- **Où est le jungler :** « JGL 70 % bas » dans la barre du haut et zones probables légèrement teintées sur
+  ta minimap quand il est caché (vérifié sur 20 parties : bonne moitié de carte 81 % du temps, 77 % avant).
+- **« Après Phage tu gagnes l'échange : back à 1 100 or »** quand ton prochain objet te fait passer devant.
+
 ## 2.23.0 · 24 octobre 2026
 
 - **Builds corrigés :** on lisait les stats Master+ au lieu d'Émeraude+ (Garen recevait Youmuu au lieu de

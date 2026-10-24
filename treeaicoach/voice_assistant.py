@@ -88,6 +88,8 @@ def normalize(text: Any) -> str:
 #: Last « Hey coach » heard by the PC mic or by Discord for the player himself (monotonic s): both
 #: listen to him, the first one answers and the other stays quiet for WAKE_DEDUP_S.
 WAKE_DEDUP_S = 4.0
+#: The PC-microphone assistant is switched off for now: « Hey coach » is heard through Discord only.
+PC_MIC_ENABLED = False
 _last_wake = {"pc": -1e9, "discord": -1e9}
 
 
@@ -1144,6 +1146,9 @@ class VoiceAssistant:
             self.stage = stage
 
     def start(self) -> None:
+        if not PC_MIC_ENABLED:                 # Discord only for now: the PC microphone is never opened
+            log.info("Assistant vocal : micro du PC désactivé (écoute par Discord uniquement)")
+            return
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return

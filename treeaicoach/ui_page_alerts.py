@@ -87,12 +87,18 @@ class AlertsPage:
         app.switch_row(say, "ai_auto", "Conseils IA automatiques", "Sinon l'IA répond seulement à tes questions.")
         app.switch_row(say, "ai_speak", "Lire le conseil IA", "Sinon il reste écrit.")
 
-        va = self.page.section("Assistant vocal", "Reconnaissance sur ton PC (Whisper, gratuit, hors ligne). "
-                               "Le micro est écouté seulement en partie.",
+        from treeaicoach.voice_assistant import PC_MIC_ENABLED
+
+        va = self.page.section("Assistant vocal", ("Reconnaissance sur ton PC (Whisper, gratuit, hors ligne). "
+                               "Le micro est écouté seulement en partie.") if PC_MIC_ENABLED else
+                               ("Micro du PC désactivé : le coach t'écoute par Discord (page Discord, "
+                                "« Écoute « Hey coach » »)."),
                                action=W.button("Tester", self.test_assistant,
                                                tip="Dis « Hey coach » puis une question (20 s)."))
-        app.switch_row(va, "voice_assistant", "Assistant « Hey coach »", "Dis « Hey coach » puis ta question : "
+        va_row = app.switch_row(va, "voice_assistant", "Assistant « Hey coach » (micro du PC)", "Dis « Hey coach » puis ta question : "
                        "réponse à voix haute en une ou deux phrases.")
+        if not PC_MIC_ENABLED and va_row is not None:
+            va_row.setEnabled(False)
         self.mic = app.depends(app.choice_row(va, "voice_assistant_mic", "Micro", "Celui de ton casque.",
                                               [("", "Micro par défaut de Windows")]), "voice_assistant")
         app.run_job(_mics, lambda ms: self.mic.ctl.set_choices(ms, app.cfg.voice_assistant_mic), None,
