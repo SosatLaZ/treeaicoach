@@ -50,15 +50,14 @@ ALONE_R = 0.15                 # no ally this close at the death frame: "seul"
 LIMIT = 3
 EV_KILL, EV_KILL_PER_MIN = 300.0, 10.0
 EV_VALUE = {"tower": 700.0, "inhib": 1500.0, "dragon": 600.0, "elder": 2500.0, "baron": 2500.0, "herald": 500.0,
-            "grubs": 150.0, "atakhan": 800.0}
-EPIC = ("dragon", "elder", "baron", "herald", "grubs", "atakhan")
+            "grubs": 150.0}
+EPIC = ("dragon", "elder", "baron", "herald", "grubs")
 OBJ_FR = {"tower": "une tour", "inhib": "un inhibiteur", "dragon": "le dragon", "elder": "le dragon ancestral",
-          "baron": "le Baron", "herald": "le Héraut", "grubs": "les larves", "atakhan": "Atakhan"}
+          "baron": "le Baron", "herald": "le Héraut", "grubs": "les larves"}
 OBJ_DE = {"tower": "d'une tour", "inhib": "d'un inhibiteur", "dragon": "du dragon", "elder": "de l'ancestral",
-          "baron": "du Baron", "herald": "du Héraut", "grubs": "des larves", "atakhan": "d'Atakhan"}
-_MONSTER = {"DRAGON": "dragon", "BARON_NASHOR": "baron", "RIFTHERALD": "herald", "HORDE": "grubs", "ATAKHAN": "atakhan"}
-_EVENT = {"DragonKill": "dragon", "BaronKill": "baron", "HeraldKill": "herald", "HordeKill": "grubs",
-          "AtakhanKill": "atakhan", "TurretKilled": "tower", "InhibKilled": "inhib"}
+          "baron": "du Baron", "herald": "du Héraut", "grubs": "des larves"}
+_MONSTER = {"DRAGON": "dragon", "BARON_NASHOR": "baron", "RIFTHERALD": "herald", "HORDE": "grubs"}
+_EVENT = {"DragonKill": "dragon", "BaronKill": "baron", "HeraldKill": "herald", "HordeKill": "grubs", "TurretKilled": "tower", "InhibKilled": "inhib"}
 #: first spawn / respawn after a kill (s) of the objectives a "missed" window looks at
 SPAWN = {"dragon": (300.0, 300.0), "baron": (1200.0, 360.0)}
 

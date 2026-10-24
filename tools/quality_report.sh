@@ -7,7 +7,7 @@ GAMES="${1:?games dir}"
 OUT="${2:-/tmp/treeai_quality}"
 cd "$(dirname "$0")/.." || exit 1
 rm -rf "$OUT"; mkdir -p "$OUT/logs"
-export QT_QPA_PLATFORM=offscreen TREEAICOACH_NO_SPLASH=1
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}" QT_QPA_PLATFORM=offscreen TREEAICOACH_NO_SPLASH=1
 
 run() {  # name, lines kept in the summary, command...
   local name="$1" keep="$2"; shift 2
