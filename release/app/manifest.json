@@ -1,25 +1,25 @@
 {
- "version": "2.28.0",
+ "version": "2.29.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "cce0e8f524b8801d7092380ee41f21a70ab915b0ad4dc0448806f0d3ca5ea665",
+ "sha256": "35a9835cb9f08729767faad7437c08910465d48fb4eb402538c00fb29767565f",
  "chunks": [
   {
-   "name": "2.28.0/part-01.zip",
-   "size": 88160502,
-   "sha256": "3a43ddb03bd0edd2a33571e8ce628839653e6e1ed4ac20641c0076efc61be0e3",
+   "name": "2.29.0/part-01.zip",
+   "size": 88160189,
+   "sha256": "e6949832e412130b107b561c366bf19e7a870ef3b777fc199e3107f4c8185266",
    "files": 242
   },
   {
-   "name": "2.28.0/part-02.zip",
+   "name": "2.29.0/part-02.zip",
    "size": 9592536,
    "sha256": "b1ee4532a2fdad975c8db1a97bb5d55f11ed84c964f8bcc38b1bd826205ea55d",
    "files": 472
   }
  ],
- "total_size": 97753038,
+ "total_size": 97752725,
  "launcher": {
-  "sha256": "d38dbb15516f66c4f8fedb18ce9d801e283dd12ef827f6cfb0e9d1e46d0393f8",
-  "size": 7531446
+  "sha256": "fff6c85d29d00c268f7dbae697b46cc7bbc60550d365a32a3f592225e8c818f6",
+  "size": 7530213
  },
- "notes": "2.28 : ganks mieux annonc\u00e9s, moins de faux recule, miroirs corrig\u00e9s, conseils mieux ordonn\u00e9s."
+ "notes": "2.29 : F12 pour parler \u00e0 l'IA, elle n'\u00e9coute que toi."
 }

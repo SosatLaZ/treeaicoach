@@ -1,6 +1,6 @@
 {
-  "version": "2.28.0",
-  "sha256": "d38dbb15516f66c4f8fedb18ce9d801e283dd12ef827f6cfb0e9d1e46d0393f8",
-  "size": 7531446,
-  "notes": "2.28 : ganks mieux annoncés, moins de faux recule, miroirs corrigés, conseils mieux ordonnés."
+  "version": "2.29.0",
+  "sha256": "fff6c85d29d00c268f7dbae697b46cc7bbc60550d365a32a3f592225e8c818f6",
+  "size": 7530213,
+  "notes": "2.29 : F12 pour parler à l'IA, elle n'écoute que toi."
 }
