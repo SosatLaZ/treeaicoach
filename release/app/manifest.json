@@ -1,25 +1,25 @@
 {
- "version": "2.27.0",
+ "version": "2.28.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "d89111d4ea5da8eba35cafccd1bb169c7c9e73b533f5674538a66c6760ac6acb",
+ "sha256": "cce0e8f524b8801d7092380ee41f21a70ab915b0ad4dc0448806f0d3ca5ea665",
  "chunks": [
   {
-   "name": "2.27.0/part-01.zip",
-   "size": 88163975,
-   "sha256": "283320745edccfdc6ec04bcf037c65b073ef1ccbaf9e01959c1319df6144361c",
-   "files": 243
+   "name": "2.28.0/part-01.zip",
+   "size": 88160502,
+   "sha256": "3a43ddb03bd0edd2a33571e8ce628839653e6e1ed4ac20641c0076efc61be0e3",
+   "files": 242
   },
   {
-   "name": "2.27.0/part-02.zip",
-   "size": 9583043,
-   "sha256": "0275706ad6dc48ae0c0c99d75744069f2afb9e056c69438685f589c854d579ff",
-   "files": 471
+   "name": "2.28.0/part-02.zip",
+   "size": 9592536,
+   "sha256": "b1ee4532a2fdad975c8db1a97bb5d55f11ed84c964f8bcc38b1bd826205ea55d",
+   "files": 472
   }
  ],
- "total_size": 97747018,
+ "total_size": 97753038,
  "launcher": {
-  "sha256": "33c87fb8a68c6742db1d4aecbb5c0a81c82bcd88634968a1bc0aac1b0381bdc4",
-  "size": 7532318
+  "sha256": "d38dbb15516f66c4f8fedb18ce9d801e283dd12ef827f6cfb0e9d1e46d0393f8",
+  "size": 7531446
  },
- "notes": "2.27 : cerveau d'\u00e9quipe sur Discord, 3 moments d\u00e9cisifs apr\u00e8s la partie."
+ "notes": "2.28 : ganks mieux annonc\u00e9s, moins de faux recule, miroirs corrig\u00e9s, conseils mieux ordonn\u00e9s."
 }
