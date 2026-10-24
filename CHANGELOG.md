@@ -3,6 +3,11 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.29.1 · 24 octobre 2026
+
+- **Plus de « l'IA a besoin d'une partie » :** hors partie, F12 / « Hey coach » répond comme une IA normale
+  (toujours experte LoL), à voix haute sur ton PC.
+
 ## 2.29.0 · 24 octobre 2026
 
 - **L'IA t'écoute, toi :** touche **F12** = parler (appuie, pose ta question, réponse aussitôt), micro du PC

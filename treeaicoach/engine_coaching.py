@@ -679,14 +679,15 @@ class CoachingMixin:
         except Exception:
             log.debug("discord voice question failed", exc_info=True)
 
-    def _general_question(self, text: str) -> None:
+    def _general_question(self, text: str, local: bool = False) -> None:
         """Outside a game: the question goes to the AI as to an ordinary assistant (still LoL-expert);
         the answer is said in the channel. One worker thread per question, never raises."""
         cfg = self._cfg
         prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
         key, model = str(getattr(cfg, "ai_api_key", "") or "").strip(), str(getattr(cfg, "ai_model", "") or "")
         if prov == "off" or (prov != "ollama" and not key):
-            self._call("ai_answer", "Conseil IA désactivé : choisis un fournisseur dans Réglages.")
+            m = "Conseil IA désactivé : choisis un fournisseur dans Réglages."
+            self._say(m, int(Level.INFO)) if local else self._call("ai_answer", m)
             return
 
         def run() -> None:
@@ -694,11 +695,15 @@ class CoachingMixin:
             from treeaicoach.voice_assistant import short_answer
 
             try:
-                ans = ai_advisor.general_answer(prov, key, model, text)
-                self._call("ai_answer", short_answer(ans, sentences=3, max_chars=320))
+                ans = short_answer(ai_advisor.general_answer(prov, key, model, text), sentences=3, max_chars=320)
             except Exception as exc:
                 log.info("IA (question générale) : %s", exc)
-                self._call("ai_answer", "L'IA ne répond pas pour l'instant.")
+                ans = "L'IA ne répond pas pour l'instant."
+            if local:                                    # PC mic / F12: said here, shown as a toast
+                self._say(ans, int(Level.INFO))
+                self._toast("insight", "IA", ans, None, f"ai-gen:{self._clock():.0f}", self._clock())
+            else:
+                self._call("ai_answer", ans)
 
         threading.Thread(target=run, name="TreeAI-ai-general", daemon=True).start()
 
@@ -1230,6 +1235,11 @@ class CoachingMixin:
                          objectives=self._objectives.states() if self._objectives is not None else [],
                          item_text=self.item_advice_text(), context=lambda: engine_context(self, now),
                          **({"question": question} if question else {}))
+            if msg.startswith("Pas de partie") and question:   # no game: an ordinary (LoL-expert) assistant
+                self._general_question(question, local=True)
+                self.last_ai_ack = msg = "Question envoyée à l'IA…"
+                self._toast("insight", "IA", msg, None, f"ai-ask:{now:.0f}", now)
+                return msg
             self.last_ai_ack = msg
             if spoken:
                 sent = msg.startswith("Question envoyée")
