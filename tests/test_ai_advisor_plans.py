@@ -223,11 +223,12 @@ def test_jungle_intel_tracker_state_in_context():
 
 def test_daily_cap_of_1000_requests_persisted_and_reset_at_midnight(tmp_path):
     from treeaicoach.ai_advisor import AIBudget, DAILY_HARD_CAP, DailyQuota
-    assert DAILY_HARD_CAP == 1000
+    assert DAILY_HARD_CAP == 0 and not DailyQuota("").exhausted   # shipped: no limit, count shown
+    CAP = 1000
     day = ["2026-10-21"]
     f = tmp_path / "ai_quota.json"
-    b = AIBudget(DailyQuota(f, today=lambda: day[0]))
-    b.sent += DAILY_HARD_CAP - 1
+    b = AIBudget(DailyQuota(f, cap=CAP, today=lambda: day[0]))
+    b.sent += CAP - 1
     assert not b.exhausted
     b.reset()                                    # a new game does NOT reset the day's counter
     b.sent += 1
@@ -236,9 +237,9 @@ def test_daily_cap_of_1000_requests_persisted_and_reset_at_midnight(tmp_path):
     assert b.pick("base", 300.0) is None
     assert b.snapshot()["cap"] == 1000 and b.snapshot()["today"] == 1000
     # persisted: a restart (new quota object on the same file) is still exhausted
-    assert AIBudget(DailyQuota(f, today=lambda: day[0])).exhausted
+    assert AIBudget(DailyQuota(f, cap=CAP, today=lambda: day[0])).exhausted
     day[0] = "2026-10-22"                        # local midnight passed
     assert not b.exhausted and b.quota.count == 0
     # broken file: no crash, counter starts at 0
     f.write_text("{oops", encoding="utf-8")
-    assert DailyQuota(f, today=lambda: day[0]).count == 0
+    assert DailyQuota(f, cap=CAP, today=lambda: day[0]).count == 0

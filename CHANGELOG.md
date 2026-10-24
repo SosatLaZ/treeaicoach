@@ -3,6 +3,12 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.25.0 · 24 octobre 2026
+
+- **Plus de limite de requêtes IA :** le nombre de requêtes du jour est seulement affiché (Réglages → Conseils IA).
+- **Coach IA aussi assistant normal :** hors partie, « Hey coach » répond à toute question simple (toujours
+  expert LoL : champions, objets, runes, matchups). En partie, il reste centré sur la décision du moment.
+
 ## 2.24.1 · 24 octobre 2026
 
 - **Correctif urgent :** le bot Discord ne démarrait plus en 2.24.0 (erreur de chargement). Réparé, et chaque

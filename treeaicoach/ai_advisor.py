@@ -122,7 +122,7 @@ URGENT_BUDGET = 1
 #: together (automatic + urgence + manual + Discord), persisted in the user data folder so a restart
 #: does not reset it. The anti-spam spacing (MIN_INTERVAL_S, MANUAL_MIN_INTERVAL_S, per-game slots)
 #: still applies. Everything else is the rule-based engine (rule_plan), which costs nothing.
-DAILY_HARD_CAP = 1000
+DAILY_HARD_CAP = 0                  # 0 = no daily limit (the count is only shown, owner's choice)
 QUOTA_FILE_NAME = "ai_quota.json"
 URGENT_REASONS = frozenset({"gold", "death_streak", "teamfight"})
 URGENT_MIN_INTERVAL_S = 30.0
@@ -170,6 +170,24 @@ ERROR_FR: dict[str, str] = {
     "bad": "Conseil IA : réponse illisible.",
 }
 OLLAMA_OFFLINE = "Conseil IA : Ollama ne répond pas (lance « ollama serve »)."
+
+#: Outside a game (or a question that is not about the game): an ordinary assistant, still LoL-expert.
+GENERAL_PROMPT = (
+    "Tu es TreeAI, l'assistant vocal d'un joueur de League of Legends, dans un salon vocal Discord. "
+    "Tu es un expert de LoL (champions, objets, runes, matchups, macro, méta de la saison) et aussi un "
+    "assistant normal pour toute question simple (culture, calcul, conseils, actualité générale que tu "
+    "connais). Réponds en français, tutoiement, en 1 à 3 phrases courtes faites pour être dites à voix "
+    "haute : pas de liste, pas de markdown, pas d'emoji. Si tu ne sais pas, dis-le en une phrase. "
+    "N'invente jamais de chiffres de patch précis."
+)
+
+
+def general_answer(provider: str, api_key: str, model: str, question: str) -> str:
+    """Blocking ordinary answer (no game snapshot). Counted in the daily request count. Raises AIError."""
+    DAILY_QUOTA.add(1)
+    return call_llm(provider, api_key, model, GENERAL_PROMPT, str(question or "").strip()[:500],
+                    max_tokens=220)
+
 
 SYSTEM_PROMPT = (
     "Tu es le coach d'un joueur DÉBUTANT de League of Legends, en direct pendant sa partie. Tu reçois "
@@ -2179,7 +2197,7 @@ class DailyQuota:
 
     @property
     def exhausted(self) -> bool:
-        return self.count >= self.cap
+        return self.cap > 0 and self.count >= self.cap
 
     def add(self, n: int = 1) -> None:
         if n <= 0:

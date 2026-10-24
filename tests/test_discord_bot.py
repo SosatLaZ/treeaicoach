@@ -912,7 +912,8 @@ def test_engine_routes_coach_voice_and_discord_questions() -> None:
     assert e._voice.said == ["Recule."]
     e.ask_ai = lambda question=None, spoken=False: "Pas de partie en cours : l'IA a besoin d'une partie pour conseiller."
     e._discord_voice_question("Paul (Lux)", "quel item")
-    assert e.calls[-1][0] == "ai_answer" and e.calls[-1][1].startswith("Pas de partie")
+    # no game: an ordinary assistant answers; without an AI provider it says so
+    assert e.calls[-1][0] == "ai_answer" and e.calls[-1][1].startswith("Conseil IA désactivé")
     seen = []
     e.ask_ai = lambda question=None, spoken=False: (seen.append(question), "Question envoyée à l'IA…")[1]
     e._discord_voice_question("Paul (Lux)", "quel item")

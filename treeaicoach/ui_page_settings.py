@@ -35,6 +35,17 @@ def hotkey_choices(current: str) -> list[tuple[str, str]]:
     return out
 
 
+def ai_count_text() -> str:
+    """« 42 requêtes IA aujourd'hui · aucune limite » (the daily count, shown only)."""
+    try:
+        from treeaicoach.ai_advisor import DAILY_QUOTA
+
+        n = int(DAILY_QUOTA.count)
+    except Exception:
+        n = 0
+    return f"{n} requête{'s' if n > 1 else ''} IA aujourd'hui · aucune limite"
+
+
 def ai_providers() -> list[tuple[str, str]]:
     try:
         from treeaicoach.ai_advisor import PROVIDER_CHOICES  # noqa: PLC0415
@@ -87,6 +98,7 @@ class SettingsPage:
 
         ai = self.page.section("Conseils IA (facultatif)", "Gemini, Groq et OpenRouter ont une offre gratuite. La clé "
                                                           "reste sur ton PC.")
+        self.ai_count = ai.add(W.Row("Requêtes aujourd'hui", ai_count_text()))
         prov = app.choice_row(ai, "ai_provider", "Fournisseur", None,
                               [(app.cfg.ai_provider, "Désactivé" if app.cfg.ai_provider == "off" else
                                 str(app.cfg.ai_provider).capitalize())])

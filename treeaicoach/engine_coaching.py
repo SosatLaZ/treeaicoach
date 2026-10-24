@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import threading
 import math
 import sys
 from pathlib import Path
@@ -630,10 +631,35 @@ class CoachingMixin:
             msg = self.ask_ai(question=q)
             if msg.startswith("Question envoyée"):
                 self._ai_discord_pending = True
+            elif msg.startswith("Pas de partie"):         # no game: an ordinary (LoL-expert) assistant
+                self._general_question(text)
             else:
-                self._call("ai_answer", msg)             # "Pas de partie…", "Limite … aujourd'hui"
+                self._call("ai_answer", msg)             # "L'IA réfléchit déjà…", "Patiente…"
         except Exception:
             log.debug("discord voice question failed", exc_info=True)
+
+    def _general_question(self, text: str) -> None:
+        """Outside a game: the question goes to the AI as to an ordinary assistant (still LoL-expert);
+        the answer is said in the channel. One worker thread per question, never raises."""
+        cfg = self._cfg
+        prov = str(getattr(cfg, "ai_provider", "off") or "off").lower()
+        key, model = str(getattr(cfg, "ai_api_key", "") or "").strip(), str(getattr(cfg, "ai_model", "") or "")
+        if prov == "off" or (prov != "ollama" and not key):
+            self._call("ai_answer", "Conseil IA désactivé : choisis un fournisseur dans Réglages.")
+            return
+
+        def run() -> None:
+            from treeaicoach import ai_advisor
+            from treeaicoach.voice_assistant import short_answer
+
+            try:
+                ans = ai_advisor.general_answer(prov, key, model, text)
+                self._call("ai_answer", short_answer(ans, sentences=3, max_chars=320))
+            except Exception as exc:
+                log.info("IA (question générale) : %s", exc)
+                self._call("ai_answer", "L'IA ne répond pas pour l'instant.")
+
+        threading.Thread(target=run, name="TreeAI-ai-general", daemon=True).start()
 
     def _discord_matchup(self, game: Any, opp_alias: str | None = None) -> None:
         """The game-start matchup sentence for the bot (once per game): the heuristic verdict
