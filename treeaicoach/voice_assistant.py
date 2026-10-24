@@ -907,6 +907,7 @@ class VoiceAssistant:
             self._sync_hotkey(str(getattr(cfg, "hotkey_voice_ask", "") or "").strip() if enabled else "")
             if enabled:
                 self.start()
+                self.whisper_ready()          # Whisper downloads / loads in the background before the game
             else:
                 self.status = "Assistant vocal désactivé."
                 self._wake_evt.set()

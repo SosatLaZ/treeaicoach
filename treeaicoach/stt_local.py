@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
 MAX_UTTERANCE_S = 15.0
-CPU_THREADS = 4
+CPU_THREADS = 2
 
 #: official Windows wheels (cp311), fetched once, checked by SHA-256 (``import_vosk`` pattern)
 WHEELS: tuple[tuple[str, str, str], ...] = (
@@ -65,13 +65,23 @@ LOL_VOCAB = ("Hey coach, gank, Baron Nashor, drake, dragon, Héraut, larves, war
              "ADC, support, flash, ulti, teleport, ignite, tower, inhib, back, push, farm, roam, Garen, Swain")
 
 
+#: Measured 2026-10-24 (4-core Xeon 2.1 GHz, int8, 48 French League questions of ~3 s, 4 voices, clean and
+#: with noise at 15 dB SNR; WER = word error rate):
+#:   30 s window : base 1.5-1.7 s / small 3.6-4.1 s per question (too slow)
+#:   trimmed     : base beam 3 0.37 s, WER 20 % clean / 26 % noisy (too many wrong words)
+#:                 small beam 1 4 threads 0.76 s, WER 7 / 11 % ; small beam 3 4 threads 1.09 s, WER 5 / 8 %
+#:                 small beam 3 2 threads 0.72 s (p90 0.86 s), WER 5 / 8 %  <- chosen
+#:   3 s clip     : small 0.67-0.70 s, base 0.19-0.24 s (target < 1.5 s on a mid 4-core CPU: small fits)
+#: 2 threads beat 4 (less contention, and the game keeps two cores).
+LATENCY_NOTE = "small, trimmed input, beam 3, 2 threads: ~0.7 s for a 3 s question"
+
 #: the encoder reads the utterance + PAD_S of silence, not Whisper's fixed 30 s window (CTranslate2 >= 4
 #: accepts shorter inputs): x3 to x5 faster on a short question, same transcript (measured, see
 #: :data:`LATENCY_NOTE`). ``TRIM_INPUT = False`` restores the 30 s window.
 TRIM_INPUT = True
 PAD_S = 1.0
 MIN_FRAMES = 300
-BEAM_SIZE = 1
+BEAM_SIZE = 3
 
 
 def input_frames(samples: int) -> int:
