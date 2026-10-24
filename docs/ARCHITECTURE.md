@@ -821,6 +821,14 @@ paresseuses (`PAGE_METHODS`, `_page_attr_index` lit le bytecode des constructeur
   vrai parcours du jungler ennemi + côté de départ, écarts d'or/XP/CS à 10 et 15 min contre l'adversaire de voie,
   **fiabilité de TreeAI** : précision des alertes de gank, ganks manqués, cercle du brouillard contenant le vrai jungler,
   identifications minimap correctes, suggestion de sensibilité), `aggregate_scores` (calibration sur les dernières parties).
+* **Journal des prédictions** (`recorder.on_prediction`, clé `predictions` du record) : probabilité de victoire en direct
+  toutes les 30 s, score de danger « le jungler peut arriver » de `danger.py` (masse du brouillard) toutes les 5 s avec son
+  seuil, sous le seuil aussi. `ground_truth._predictions` donne à chaque échantillon le verdict d'une alerte de gank (vrai
+  jungler près de moi dans les 20 s) et compare la victoire estimée à 15 min au résultat → une ligne du rapport.
+  `calibrate_fog_threshold` (pur, borné [0,25 ; 0,50], au plus un pas de 0,05 par partie vérifiée, ≥ 30 alertes
+  vérifiables, relevé sous 55 % de justes, abaissé au-dessus de 85 % si 75 % restent justes un pas plus bas) →
+  `games/truth/calibration.json` après la récupération LCU, relu une fois par partie (`PersonalDanger.fog_min_mass`).
+  Rejoué sur les 20 parties vérifiées de l'utilisateur : 0,35 gardé 18 parties puis 0,40 (43 / 62 justes, 0,35 fixe : 42 / 61).
 * `recorder.py` ajoute `fog` (cercle du jungler, 1 Hz), `allies` (alliés visibles, 0,5 Hz, pour le replay) et `settings` (sensibilité…) au record ; `analysis.analyze_game(record,
   truth=None)` ; `report.write_report(path, lcu_pending=False)` lit la vérité si elle existe (section « Vérité terrain »).
 * `engine._finish_job` : rapport écrit tout de suite (bannière « récupération en cours » + rechargement automatique quand le
@@ -1395,6 +1403,14 @@ chevauchements avec l'UI du jeu sur les captures réelles, 50 → 0 entre nos é
 Retour réel (« les conseils sont nuls ») : la carte affichait des généralités (balise ×4 en 3 min,
 « 4,5 sbires/min », « Achète Couperet noir » avec 900 PO). Désormais :
 
+* **Le draft dans les appels en jeu** (`draft_edge.lane_prior` / `live_prior`, `MacroCtx.lane_prior`) : score de mon
+  duel dans la phase ACTUELLE (niv 1-5 / 6 / 1 objet / 2 objets, `phase_scores`) + écart de rang (≥ 2 paliers au-dessus de
+  moi, `player_intel` si activé, mon palier lu par `client_sync`) et série de l'adversaire → un ajout borné [-0,25 ; +1] au
+  seuil de la fenêtre de kill de `live_edge` ; « Joue agressif » de `gc_jungler_far` devient « Farme sans risque » quand le
+  draft dit que l'adversaire gagne nettement la phase (Garen contre Darius avant le 6). Mesuré et NON branché (aucun gain sur
+  les 20 parties vérifiées) : seuil de brouillard abaissé quand le jungler ennemi a de l'avance en niveaux / or (morts
+  prévenues 9 / 64 dans tous les cas, précision 0,69 → 0,67) et alerte « zone de mort habituelle » (37 entrées sans
+  vision tôt dans la partie, 2 suivies d'une mort sur place).
 * **Bibliothèque** (`game_changers.RULES`, branchée dans `macro.evaluate` : même planificateur, donc
   carte = bannière = flèche) : `gc_level` (niveau 2/3/6 atteint avant / après l'adversaire de voie,
   fenêtre jusqu'à ce qu'il rattrape ; ligne d'ultime par champion `ULT`), `gc_jungler_far` (jungler vu
