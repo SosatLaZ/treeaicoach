@@ -399,6 +399,9 @@ class OverlayStateMixin:
             reason = str(getattr(st, "reason", "") or "")
             if getattr(st, "rule", None) == "recall":
                 return lvl, "RAPPEL EN DANGER"      # card line: "Annule ton rappel : Lux peut l'interrompre"
+            vanished = getattr(st, "vanished", None)
+            if vanished and lvl < 2:
+                return lvl, f"{str(vanished).upper()} DISPARU"     # "Recule vers ta tour : Lee Sin a disparu près de toi"
             if "contre" in reason:
                 return lvl, reason.upper()
             foes = list(getattr(st, "foes", ()) or ())

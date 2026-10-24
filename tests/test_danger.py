@@ -204,6 +204,31 @@ def test_fog_threshold_is_per_player_and_logged() -> None:
     assert [x for _t, x in texts(out)] == ["Recule vers ta tour : Lee Sin peut arriver"]
 
 
+def _jmap(center: tuple[float, float], since: float, gt: float = 601.0, visible: bool = False):
+    from treeaicoach.jungler_map import GRID, JunglerMapState
+
+    g = np.full((GRID, GRID), 1e-6, np.float32)
+    g[min(GRID - 1, int(center[1] * GRID)), min(GRID - 1, int(center[0] * GRID))] = 1.0
+    g /= g.sum()
+    return JunglerMapState(gt=gt, visible=visible, since_fact=since, grid=g)
+
+
+def test_jungler_just_vanished_next_to_me_is_written_wherever_i_stand() -> None:
+    """Truth-measured rule (tools/jungler_map_truth.py ``vanish75``): he left the minimap a few
+    seconds ago and the jungler map puts him within ~7 s of me -> written warning, even on my side."""
+    near = (0.13, 0.30)                              # ~0.05 from ME_TOP (my half of the top lane)
+    out = run(3.0, lambda t: {}, lambda t: 1.0, jmap=_jmap(near, 3.0))
+    assert [x for _t, x in texts(out)] == ["Recule vers ta tour : Lee Sin a disparu près de toi"]
+    assert all(a.level == Level.WARNING for _t, a in out)
+    # far away, long gone, still visible, or a stale map: nothing
+    assert run(3.0, lambda t: {}, lambda t: 1.0, jmap=_jmap((0.8, 0.8), 3.0)) == []
+    assert run(3.0, lambda t: {}, lambda t: 1.0, jmap=_jmap(near, 25.0)) == []
+    assert run(3.0, lambda t: {}, lambda t: 1.0, jmap=_jmap(near, 3.0, visible=True)) == []
+    assert run(3.0, lambda t: {}, lambda t: 1.0, jmap=_jmap(near, 3.0, gt=500.0)) == []
+    # a gank alert already up (threat WARNING): the gank analyser speaks, not this rule
+    assert run(3.0, lambda t: {}, lambda t: 1.0, jmap=_jmap(near, 3.0), threat=1) == []
+
+
 def test_fog_mass_near_bounds() -> None:
     est = _fog((0.25, 0.16), 15.0)
     near = fog_mass_near(est, (0.22, 0.15), 7.0)

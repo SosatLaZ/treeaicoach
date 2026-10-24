@@ -30,6 +30,13 @@ rule                    level     condition (``hp`` = my health share)
                                   his probable position within ~7 s of walking from me, and I
                                   stand past the middle of the map (my lane pushed / enemy half):
                                   "Kindred peut arriver : recule vers ta tour."
+``jungler_vanished``    WARNING   written: the enemy jungler left the minimap <= 10 s ago and the
+                                  jungler map (jungler_map.py: walk model + vision) puts >= 75 %
+                                  of his probable position within ~7 s of walking from me,
+                                  wherever I stand: "Recule vers ta tour : Kindred a
+                                  disparu près de toi". Measured on 31 real games with the LCU
+                                  truth (tools/jungler_map_truth.py): my deaths with him warned
+                                  3-25 s before 6 -> 31 / 111, confirmed share 0.28 -> 0.55.
 =====================  ========  ==============================================================
 
 With "Recule !" comes its written reason ("Recule : 2 contre 1.", HUD line + DANGER toast), and
@@ -83,7 +90,8 @@ LANE_FAR_BEHIND_RATIO = 1.5  # this far behind: warned even at full HP
 # anti-spam
 RECULE_REPEAT_S = 20.0
 SAME_TEXT_S = 20.0
-RULE_COOLDOWN_S = {"lane": 90.0, "low": 25.0, "outnumbered": 25.0, "jungler_fog": 45.0, "recall": 15.0}
+RULE_COOLDOWN_S = {"lane": 90.0, "low": 25.0, "outnumbered": 25.0, "jungler_fog": 45.0, "jungler_vanished": 45.0,
+                   "recall": 15.0}
 WRITTEN_GAP_S = 8.0         # two written danger lines at least this far apart
 AFTER_RECULE_S = 10.0       # no written "low HP" / "outnumbered" echo right after "Recule !"
 AFTER_GANK_DANGER_S = 4.0   # a gank DANGER ("..., recule !") was raised this recently: no "Recule !"
@@ -95,6 +103,11 @@ FOG_MIN_MASS = 0.35
 FOG_EVAL_S = 0.5            # the fog question is re-evaluated at most twice a second
 FOG_SPEED = 390.0 / 14870.0  # boots speed (normalized / s), as gank.ETA_REF_SPEED
 FOG_FLASH = 0.027
+# jungler just gone from the minimap next to me (jungler_map state)
+VANISH_MAX_S = 10.0         # he left the minimap at most this long ago
+VANISH_ETA_S = 7.0
+VANISH_MIN_MASS = 0.75      # share of his map mass within VANISH_ETA_S of walking from me
+VANISH_MAX_AGE_S = 3.0      # map state older than this (game time) is not used
 PAST_MID_MARGIN = 0.05      # past the river diagonal (u - v) by this much = "past mid-lane"
 
 
@@ -173,6 +186,8 @@ class DangerState:
     level: int = 0
     reason: str | None = None           # "2 contre 1", "peu de vie, Darius sur toi"
     fog_eval_t: float | None = None     # engine time the jungler fog mass was computed (prediction log)
+    #: the enemy jungler's name while the ``jungler_vanished`` condition holds (HUD "ATTENTION")
+    vanished: str | None = None
 
 
 @dataclass
@@ -209,13 +224,15 @@ class PersonalDanger:
     # ------------------------------------------------------------------ public
     def update(self, t: float, gt: float, game: Any, tracker: Any, *, lane_opponents: Iterable[str] = (),
                jungler: str | None = None, threat: int = 0, gank_danger_t: float | None = None,
-               in_fight: bool = False, fog: Iterable[Any] = (), recalling: bool = False) -> list[Alert]:
+               in_fight: bool = False, fog: Iterable[Any] = (), recalling: bool = False,
+               jmap: Any = None) -> list[Alert]:
         """At most one alert for time ``t`` (engine clock), ``gt`` = game time. Never raises.
 
         ``lane_opponents``: aliases of my lane opponent(s) (roles); ``jungler``: alias of the
         enemy jungler; ``threat``: current gank threat level (0 / 1 / 2); ``gank_danger_t``: engine
         time of the last gank DANGER alert; ``fog``: :class:`treeaicoach.fog_tracker.FogEstimate`
-        list of the last tick; ``recalling``: my recall is channelling (engine.note_recall).
+        list of the last tick; ``recalling``: my recall is channelling (engine.note_recall);
+        ``jmap``: :class:`treeaicoach.jungler_map.JunglerMapState` of the last tick (``jungler_vanished``).
 
         Recalling (real case "Rappel 6.1" with Lux next to me, the card said "Recule vers ta tour :
         Lux sur toi"): an enemy within interrupt reach -> "Annule ton rappel : Lux peut
@@ -224,6 +241,7 @@ class PersonalDanger:
         "Recule vers ta tour"."""
         try:
             self._recalling = bool(recalling)
+            self._jmap = jmap
             return self._update(float(t), float(gt or 0.0), game, tracker, lane_opponents, jungler,
                                 int(threat or 0), gank_danger_t, bool(in_fight), fog)
         except Exception:
@@ -314,6 +332,7 @@ class PersonalDanger:
         theirs = sum(f.power for f in near) or 0.0
         recent_gank = gank_danger_t is not None and 0.0 <= t - gank_danger_t < AFTER_GANK_DANGER_S
         fog_mass = None
+        vanished: str | None = None
 
         out: Alert | None = None
         rule: str | None = None
@@ -358,6 +377,9 @@ class PersonalDanger:
                 fog_mass, jg = self._fog_cache
                 if jg is not None:
                     cands.append(("jungler_fog", f"Recule vers ta tour : {jg} peut arriver", None))
+                vj = vanished = self._jungler_vanished(gt, me_pos, jungler, getattr(self, "_jmap", None))
+                if vj is not None:
+                    cands.insert(0, ("jungler_vanished", f"{retreat} : {vj} a disparu près de toi", jungler))
             for r, text, alias in cands:
                 if self._written_ok(r, text, t):
                     out = Alert(kind=AlertKind.PERSONAL_DANGER, level=Level.WARNING, text=text,
@@ -372,11 +394,11 @@ class PersonalDanger:
                 self._m.written_t = t
                 self._m.rule_t[rule or ""] = t
             self._m.text_t[out.text] = t
-        if level == 0 and (out is not None or (hp is not None and near and (hp < LOW_HP or outnumbered))):
+        if level == 0 and (out is not None or vanished is not None or (hp is not None and near and (hp < LOW_HP or outnumbered))):
             level = 1
         self._state = DangerState(t=t, hp=hp, foes=tuple(foes), allies_near=allies_near, rule=rule,
                                   jungler_fog_mass=fog_mass, level=level, reason=reason,
-                                  fog_eval_t=self._fog_t if fog_mass is not None else None)
+                                  fog_eval_t=self._fog_t if fog_mass is not None else None, vanished=vanished)
         if out is None:
             return []
         return [out, companion] if companion is not None else [out]
@@ -449,6 +471,26 @@ class PersonalDanger:
         return None
 
     # ------------------------------------------------------------------ jungler in the fog
+    @staticmethod
+    def _jungler_vanished(gt: float, me_pos: tuple[float, float], jungler: str | None, jmap: Any) -> str | None:
+        """The jungler's name when he left the minimap <= :data:`VANISH_MAX_S` ago and the jungler
+        map puts >= :data:`VANISH_MIN_MASS` of him within :data:`VANISH_ETA_S` of walking from me."""
+        if jmap is None or not jungler or bool(getattr(jmap, "visible", True)) or bool(getattr(jmap, "dead", False)):
+            return None
+        since = _f(getattr(jmap, "since_fact", None))
+        grid = getattr(jmap, "grid", None)
+        mgt = _f(getattr(jmap, "gt", None))
+        if since is None or grid is None or mgt is None or since > VANISH_MAX_S or abs(gt - mgt) > VANISH_MAX_AGE_S:
+            return None
+        try:
+            from treeaicoach.jungler_map import JunglerMap  # noqa: PLC0415
+
+            mass = float(grid[JunglerMap.near_mask(me_pos, gt, VANISH_ETA_S)].sum())
+        except Exception:
+            log.debug("jungler map mass failed", exc_info=True)
+            return None
+        return _jungler_name(jungler) if mass >= VANISH_MIN_MASS else None
+
     def _get_reach(self) -> Any:
         if self._reach is None and not self._reach_failed:
             try:
@@ -481,6 +523,15 @@ class PersonalDanger:
             return mass, None
         name = str(getattr(est, "name", "") or getattr(est, "alias", "") or "Le jungler ennemi")
         return mass, name
+
+
+def _jungler_name(alias: str | None) -> str:
+    try:
+        from treeaicoach.game_data import champion_name  # noqa: PLC0415
+
+        return str(champion_name(alias, str(alias)) or alias)
+    except Exception:
+        return str(alias)
 
 
 def fog_mass_near(est: Any, me_pos: tuple[float, float], eta_s: float, reach: Any = None) -> float | None:

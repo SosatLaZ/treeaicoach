@@ -11,6 +11,9 @@ epic monsters he takes -> the pit). At each truth frame (one per minute, true po
   accuracy of the argmax, for the minutes the jungler is alive and NOT visible on the minimap;
 * **near**: P(he can be on me within 20 s) vs the truth (geodesic distance on the walkable mask
   between the two true positions <= 20 s of walking + Flash): Brier score and log-loss.
+* **danger rule variants** (:data:`MAP_RULES`): alert episodes (45 s cooldown), how many the
+  truth confirms / proves false, and my deaths with the jungler warned 3-25 s before by the rule,
+  by the alerts the app really showed (``app``, the record) and by either (``app+``).
 
 Models: ``fog`` = today's fog_tracker estimate (walk model from the last fact for 70 s, then
 nothing = uniform over the walkable map, no game-start fact); ``prior`` = minute prior only;
@@ -21,6 +24,7 @@ jungler_map.ZONE_PRIOR. Development tool only (aggregated numbers, never ids).
 
 from __future__ import annotations
 
+import bisect
 import glob
 import json
 import math
@@ -45,6 +49,39 @@ DANGER_ETA_S = 7.0
 WARN_COOLDOWN_S = 45.0
 WARN_BEFORE_S = (3.0, 25.0)
 MINUTES = 30
+#: walking horizons (s) of the near-me mass kept per tick (the danger variants read them)
+HORIZONS = (7.0, 10.0, 14.0)
+ALLY_NEAR_R = 0.12
+
+
+#: alert kinds of the record that warn me of a gank / of a danger (the "app" column)
+APP_DANGER_KINDS = ("jungler_approach", "roam_approach", "collapse", "personal_danger")
+
+
+def _vanish(th: float, horizon: float = 7.0, max_since: float = 10.0, pm: bool = False):
+    """danger.py ``jungler_vanished``: he left the minimap <= ``max_since`` s ago and >= ``th`` of
+    the map mass can be on me within ``horizon`` s (+ past the middle with ``pm``)."""
+    return lambda x: (x["since"] is not None and x["since"] <= max_since and x["ms"][horizon] >= th
+                      and (x["pm"] or not pm))
+
+
+#: variants of the jungler-map danger rule (tick dict -> alert?); "vanish75" is danger.py's
+MAP_RULES = {
+    "fog60:p35": lambda x: x["since"] is not None and 8.0 <= x["since"] <= 60.0 and x["m7"] >= 0.35 and x["pm"],
+    "p35": lambda x: x["since"] is not None and x["since"] >= 8.0 and x["m7"] >= 0.35 and x["pm"],
+    "p55": lambda x: x["since"] is not None and x["since"] >= 8.0 and x["m7"] >= 0.55 and x["pm"],
+    "vanish55pm": _vanish(0.55, pm=True),
+    "vanish65": _vanish(0.65),
+    "vanish75": _vanish(0.75),
+    "vanish75h10": _vanish(0.75, 10.0),
+    "vanish75+exp": lambda x: _vanish(0.75)(x) or (x["ms"][14.0] >= 0.3 and x["pm"] and x["ally"] == 0
+                                                   and x["opp_age"] >= 15.0 and (x["since"] or 1e9) >= 60.0),
+}
+
+
+def _in_lane(uv) -> bool:
+    z = geometry.lane_of(geometry.classify_zone(*uv))
+    return z in ("top", "mid", "bot")
 
 
 def _norm(s) -> str:
@@ -123,6 +160,9 @@ def replay(d: dict, rec: dict, model: JM.JunglerMap, reach, ticks: list | None =
     keys = {_norm(jp.get("alias")), _norm(jp.get("name"))} - {""}
     sight = sorted((float(p[0]), float(p[1]), float(p[2])) for k, pts in (rec.get("sightings") or {}).items()
                    if _norm(k) in keys for p in pts)
+    op = parts.get(tr.opp, {}) if tr.opp is not None else {}
+    okeys = {_norm(op.get("alias")), _norm(op.get("name"))} - {""}
+    opp_sight = sorted(float(p[0]) for k, pts in (rec.get("sightings") or {}).items() if _norm(k) in okeys for p in pts)
     mine = GT._series(rec.get("my_positions"))
     allies = [GT._series(v) for v in (rec.get("allies") or {}).values()]
     deadw = dead_windows(tr, jg, d)
@@ -168,8 +208,12 @@ def replay(d: dict, rec: dict, model: JM.JunglerMap, reach, ticks: list | None =
         true_me = row.get(str(me)) if row else None
         st = model.step(float(gt), true_me[:2] if true_me else me_uv, viewers)
         if ticks is not None and me_uv is not None and not st.visible and not st.dead and st.grid is not None:
-            m7 = float(st.grid[JM.JunglerMap.near_mask(me_uv, gt, DANGER_ETA_S)].sum())
-            ticks.append((float(gt), st.since_fact, m7, me_uv))
+            ms = {h: float(st.grid[JM.JunglerMap.near_mask(me_uv, gt, h)].sum()) for h in HORIZONS}
+            ally = sum(1 for p in viewers[1:] if math.hypot(p[0] - me_uv[0], p[1] - me_uv[1]) < ALLY_NEAR_R)
+            oi = bisect.bisect_right(opp_sight, gt)
+            opp_age = gt - opp_sight[oi - 1] if oi else 1e9
+            ticks.append({"gt": float(gt), "since": st.since_fact, "m7": ms[DANGER_ETA_S], "ms": ms, "me": me_uv,
+                          "ally": ally, "opp_age": opp_age, "in_lane": _in_lane(me_uv)})
         if row is None or gt < 60:
             continue
         j = row.get(str(jg))
@@ -207,23 +251,36 @@ def score(rows: list[dict]) -> dict:
             "near_brier": round(brier, 3), "near_ll": round(nll, 3), "near_rate": round(sum(r["near"] for r in nr) / max(1, len(nr)), 3)}
 
 
+def _app_alerts(rec: dict) -> list[float]:
+    """Game times of the danger / gank alerts the app really showed in that game (the record)."""
+    return [float(a[0]) for a in rec.get("alerts") or []
+            if isinstance(a, list) and len(a) >= 3 and str(a[1]).lower() in APP_DANGER_KINDS and a[0] is not None]
+
+
 def warnings(d: dict, rec: dict, ticks: list, rule) -> dict:
-    """danger.py-style episodes (past mid, cooldown) of ``rule(since, mass)`` scored on the truth."""
+    """danger.py-style episodes (cooldown) of ``rule(tick)`` scored on the truth. ``tick``: the
+    dict of :func:`replay` (+ ``pm``: I stand past the middle of the map). ``app+``: my deaths warned
+    by the rule OR by an alert the app really showed (gank.py / danger.py, the record)."""
     from treeaicoach.danger import past_mid
 
     tr = GT._Truth(d)
     my_pos = GT._my_pos_fn(rec, tr)
     anchors = tr.anchors(tr.jungler)
     alerts, last = [], -1e9
-    for gt, since, m7, me in ticks:
-        if gt - last >= WARN_COOLDOWN_S and past_mid(me, tr.my_team) and rule(since, m7):
-            alerts.append(gt)
-            last = gt
+    for x in ticks:
+        x["pm"] = past_mid(x["me"], tr.my_team)
+        if x["gt"] - last >= WARN_COOLDOWN_S and rule(x):
+            alerts.append(x["gt"])
+            last = x["gt"]
     verdicts = [GT._classify(t, my_pos(t), anchors, my_pos) for t in alerts]
     deaths = [t for t, k, v, a, _uv in tr.kills if v == tr.me and (k == tr.jungler or tr.jungler in a)]
-    warned = sum(any(t - WARN_BEFORE_S[1] <= w <= t - WARN_BEFORE_S[0] for w in alerts) for t in deaths)
+    lo, hi = WARN_BEFORE_S
+    warned = sum(any(t - hi <= w <= t - lo for w in alerts) for t in deaths)
+    app = _app_alerts(rec)
     return {"alerts": len(alerts), "confirmed": verdicts.count("confirmed"),
-            "false": verdicts.count("false") + verdicts.count("probable_false"), "deaths": len(deaths), "warned": warned}
+            "false": verdicts.count("false") + verdicts.count("probable_false"), "deaths": len(deaths), "warned": warned,
+            "app": sum(any(t - hi <= w <= t - lo for w in app) for t in deaths),
+            "app+": sum(any(t - hi <= w <= t - lo for w in alerts + app) for t in deaths)}
 
 
 def main(argv: list[str]) -> int:
@@ -252,11 +309,10 @@ def main(argv: list[str]) -> int:
         for name, m in models.items():
             ticks: list = []
             res.setdefault(name, []).extend(replay(d, rec, m, reach, ticks))
-            if name == "prior":
+            if name == "prior" or not name.startswith(("fog", "map")):
                 continue
-            rules = {"fog": {"prod": lambda s, m: s is not None and 8.0 <= s <= 60.0 and m >= 0.35}}.get(
-                name, {f"p{int(th * 100)}": (lambda th: lambda s, m: s is not None and s >= 8.0 and m >= th)(th)
-                       for th in (0.25, 0.35, 0.45, 0.55)})
+            rules = {"fog": {"prod": lambda x: x["since"] is not None and 8.0 <= x["since"] <= 60.0
+                             and x["m7"] >= 0.35 and x["pm"]}}.get(name, MAP_RULES)
             for rn, rule in rules.items():
                 w = warnings(d, rec, ticks, rule)
                 acc = warn.setdefault(f"{name}:{rn}", {})
@@ -266,6 +322,7 @@ def main(argv: list[str]) -> int:
     for name, rows in res.items():
         print(f"  {name:8s} {score(rows)}")
     print("alerte 'jungler peut arriver' (danger.py) : épisodes, vérité, mes morts avec lui prévenues 3-25 s avant")
+    print("  (app = prévenues par une alerte que l'appli a vraiment montrée, app+ = app ou la règle)")
     for name, w in warn.items():
         print(f"  {name:12s} {w}")
     return 0
