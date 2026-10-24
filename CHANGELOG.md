@@ -3,6 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.23.0 · 24 octobre 2026
+
+- **Builds corrigés :** on lisait les stats Master+ au lieu d'Émeraude+ (Garen recevait Youmuu au lieu de
+  Danse fantôme, Swain Embrasement au lieu d'Épuisement, Seraphine montait W au lieu de A). Vérifié contre
+  U.GG et OP.GG sur 6 champions. Objets situationnels dans l'ordre le plus joué ; pas de build Faille en ARAM.
+- **Prochain objet façon OP.GG :** icône + barre d'or + « 450 PO » (ou « Achetable ») dans la barre du haut.
+- **Brouillard décodé :** « Lee Sin est à la base, 25 s sans gank », « Darius est en base : pousse et plaque »,
+  calcul du combat avant un objectif (« Force le dragon : 5v4, +3,2k or » / « Laisse le dragon »).
+- **Victoire % plus juste** (niveaux d'équipe ajoutés), aperçu Overlay au nouveau design, tests stabilisés.
+
 ## 2.22.0 · 24 octobre 2026
 
 - **Discord transcrit avec Whisper** (local, gratuit) pour toi et chaque pote, avec les champions de la partie
