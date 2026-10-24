@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.23.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="52"></a>
+  <a href="https://github.com/SosatLaZ/treeaicoach/raw/claude-team/brave-mendel-j8fqkf/release/TreeAICoach.exe"><img src="https://img.shields.io/badge/T%C3%89L%C3%89CHARGER-TreeAICoach.exe%20v2.24.0-9BD84A?style=for-the-badge&labelColor=0C0E0D" alt="Télécharger TreeAICoach.exe" height="52"></a>
 </p>
 
 <p align="center">

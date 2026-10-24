@@ -1,6 +1,6 @@
 {
-  "version": "2.23.0",
-  "sha256": "9ac18df7bbee49c15f1b49b8fcff3ca97282daefbe6532641f0aa745163f34c2",
-  "size": 7532769,
-  "notes": "2.23 : builds corrigés (bon rang), prochain objet façon OP.GG, brouillard décodé, combat avant objectif."
+  "version": "2.24.0",
+  "sha256": "1595bd14220f9093e6e06ee6c7e60c69f4cf67f4465d2665398914d34e3bb468",
+  "size": 7531874,
+  "notes": "2.24 : coach IA par Discord uniquement (micro du PC coupé), position probable du jungler, planificateur d'objets."
 }
