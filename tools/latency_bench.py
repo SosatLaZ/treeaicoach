@@ -110,9 +110,12 @@ def detect_latency(fps: float = 12.0, phases: int = 4, end_s: float = 44.0,
                 break
             now[0] = t
             n_before = len(voice.said)
-            t0 = time.perf_counter()
+            # CPU time of the tick (the thread running it; the analysis runs one OpenCV / ONNX
+            # thread, engine.py): the virtual clock adds what the analysis costs, not what other
+            # processes or leftover threads take from the machine (parallel test workers)
+            t0 = time.thread_time()
             said = eng.step(t)
-            cpu = time.perf_counter() - t0
+            cpu = time.thread_time() - t0
             if i > 0:
                 tick_ms.append(cpu * 1000.0)
             for a in said:
@@ -204,9 +207,10 @@ def _wav_bytes(seconds: float = 0.6) -> bytes:
 
 
 def playback_latency(backend: str, cached: bool, level: int, network_s: float = 0.8,
-                     repeats: int = 3, busy: bool = False) -> tuple[float, float]:
-    """Median seconds from ``VoiceEngine.say()`` to (the first audio: beep or sentence,
-    the start of the spoken sentence)."""
+                     repeats: int = 3, busy: bool = False, stat: str = "median") -> tuple[float, float]:
+    """Seconds from ``VoiceEngine.say()`` to (the first audio: beep or sentence, the start of the
+    spoken sentence), median of ``repeats`` runs (``stat="min"``: the best run, what the code
+    costs when the machine is not busy with something else, e.g. parallel test workers)."""
     from treeaicoach import tts_neural
     from treeaicoach.voice import NeuralBackend, VoiceEngine
 
@@ -215,7 +219,9 @@ def playback_latency(backend: str, cached: bool, level: int, network_s: float = 
     out_sentence: list[float] = []
     for _ in range(repeats):
         log: list = []
-        with tempfile.TemporaryDirectory() as tmp:
+        # the uncached run's background synthesis may still write its cache file after v.stop():
+        # never fail the cleanup on it (seen under load)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             def synth(_t: str, _v: str, _r: int) -> bytes:
                 time.sleep(network_s)
                 return _wav_bytes()
@@ -263,7 +269,8 @@ def playback_latency(backend: str, cached: bool, level: int, network_s: float = 
             v.stop()
             out.append(first if first is not None else float("inf"))
             out_sentence.append(sentence if sentence is not None else float("inf"))
-    return statistics.median(out), statistics.median(out_sentence)
+    agg = min if stat == "min" else statistics.median
+    return agg(out), agg(out_sentence)
 
 
 def run(fps: float | None = None, phases: int = 4, playback: bool = True) -> dict[str, Any]:

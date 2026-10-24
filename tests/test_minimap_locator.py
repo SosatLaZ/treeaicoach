@@ -343,9 +343,16 @@ def test_locate_random_screenshots(locator: MinimapLocator) -> None:
         side = "left" if i % 3 == 2 else "right"
         img, truth = make_screenshot(rng, W, H, side=side)
         origin = Rect(int(rng.integers(-1920, 1920)), int(rng.integers(0, 400)), W, H)
-        t0 = time.perf_counter()
-        loc = locator.locate(img, origin, side="auto")
-        dt = time.perf_counter() - t0
+        # CPU time on one OpenCV thread (the app's setting, engine.py): the other test workers
+        # stretch the wall clock, and the thread count is process-global (left by earlier tests)
+        prev = cv2.getNumThreads()
+        cv2.setNumThreads(1)
+        try:
+            t0 = time.process_time()
+            loc = locator.locate(img, origin, side="auto")
+            dt = time.process_time() - t0
+        finally:
+            cv2.setNumThreads(prev)
         if (W, H) == (1920, 1080):
             times_1080.append(dt)
         err = _check_located(loc, truth, origin, H)

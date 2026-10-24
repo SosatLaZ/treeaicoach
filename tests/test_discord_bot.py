@@ -201,6 +201,9 @@ def test_disabled_by_default_and_hook_never_raises(bot) -> None:  # noqa: ANN001
 def test_lifecycle_join_say_leave_stop(bot) -> None:  # noqa: ANN001
     bot.configure(_cfg())
     assert _wait(lambda: bot.status()[1])
+    # the 4 gank clips are pre-rendered in the background at start; under load a call can come
+    # before "Bot gank" is rendered (the bundled recorded clip is used then): wait for them
+    assert _wait(lambda: len(bot._clips) == 4)
     fb = FakeBackend.instances[-1]
     assert fb.tokens == [TOKEN]
     assert bot.on_call("game_start")
@@ -458,6 +461,10 @@ def test_snapshot_commands_and_auto_follow(bot) -> None:  # noqa: ANN001
     assert _wait(lambda: bot.snapshot()["state"] == "connected" and bot.snapshot()["guilds"])
     fb = FakeBackend.instances[-1]
     assert _wait(lambda: fb.current == "général")                  # auto-join: the player is in voice
+    # the snapshot's servers / channel come from the bot's cached refresh (its own loop, a moment
+    # after the join): wait for it instead of reading it at once (a race under load)
+    assert _wait(lambda: (bot.snapshot().get("channel") or {}).get("name") == "général"
+                 and bot.snapshot().get("user"))
     snap = bot.snapshot()
     assert snap["bot_name"] == "TreeAI" and snap["latency_ms"] == 42 and snap["user"]["name"] == "Dexter"
     assert len(snap["guilds"]) == 2 and snap["channel"]["name"] == "général"
@@ -480,7 +487,10 @@ def test_snapshot_commands_and_auto_follow(bot) -> None:  # noqa: ANN001
     assert bot.say_test("matchup")
     assert _wait(lambda: db.EXAMPLE_MATCHUP in bot.spoken)
     ev = bot.snapshot()["events"]
-    assert ev[0]["text"] == f"A dit « {db.EXAMPLE_MATCHUP} »" and len(ev) <= db.EVENTS_MAX
+    # newest first; "A quitté le salon vocal" may already follow the test (outside a game the bot
+    # leaves after it): under load the snapshot comes after it, so look at the newest "A dit"
+    said = [e["text"] for e in ev if e["text"].startswith("A dit")]
+    assert said and said[0] == f"A dit « {db.EXAMPLE_MATCHUP} »" and len(ev) <= db.EVENTS_MAX
     # the player leaves voice: the bot follows him out
     fb.channel = None
     bot._poke()
