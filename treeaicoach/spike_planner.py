@@ -204,8 +204,9 @@ def rule_spike(ctx: M.MacroCtx) -> M.GeniusCall | None:
             text = _fit(f"Rentre acheter {name} : après, {win}" if name else "",
                         f"Rentre : avec {_fmt(gold_needed)} or {win}",
                         f"Rentre acheter : après, {win}")
-            why = (f"Ton or ({int(ctx.gold)}) suffit pour passer devant {oname} en or d'objets. "
-                   "Pousse ta vague d'abord si tu peux. " + stat)
+            why = (f"Ton or ({int(ctx.gold)}) te fait passer devant {oname}. Tes parties, avec cette avance : "
+                   f"{v['ahead']['won']} kills pour {v['ahead']['lost']} morts (derrière : {v['behind']['won']}/"
+                   f"{v['behind']['lost']}).")
             return M._call("wave_recall", f"wave_recall:spike:{my_ig}", "RENTRE ACHETER", text, why,
                            M.FOUNTAIN.get(ctx.my_team or ""), tier="basic", score=0.56, priority=59,
                            color="gold", life=15.0, label="BASE", factors=factors)

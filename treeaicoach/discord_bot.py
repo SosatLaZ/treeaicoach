@@ -596,7 +596,6 @@ class _Job:
     data: Any = None                        # matchups: the lines of my team's lanes
 
 
-@dataclass
 def _pc_mic_on() -> bool:
     try:
         from treeaicoach.voice_assistant import PC_MIC_ENABLED
@@ -606,6 +605,7 @@ def _pc_mic_on() -> bool:
         return False
 
 
+@dataclass
 class _Settings:
     enabled: bool = False
     token: str = field(default="", repr=False)

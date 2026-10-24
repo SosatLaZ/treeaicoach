@@ -127,6 +127,8 @@ KIND_COOLDOWN_S: dict[str, float] = {
     "gc_jg_based": 240.0,           # fog_intel.py: "Joue fort : Lee Sin est à la base"
     "gc_obj_fight": 120.0,          # fog_intel.py: "Force le dragon : combat 5v4"
     "gc_spike": 150.0,              # spike_planner.py: "Après Phage tu gagnes l'échange : back à 1100 or"
+    "gc_obj_stay": 240.0,           # objective_planner.py: "Ne rentre pas : Dragon dans 0:40"
+    "gc_obj_safe": 180.0,           # objective_planner.py: "Joue safe : mourir = Dragon perdu"
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
 URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level", "gc_cross_obj",
@@ -135,7 +137,9 @@ URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "
                           "free_dragon", "cross_trade"})
 #: soft calls (mastermind power windows, game_changers.rule_power_window): no hold against other
 #: calls, any other call replaces them, and they do not start the gap between two calls
-SOFT_KINDS = frozenset({"gc_window", "gc_spike"})
+SOFT_KINDS = frozenset({"gc_window", "gc_spike", "gc_obj_safe"})
+#: reminders shown only when no call is active (objective_planner: "Ne prends aucun risque")
+QUIET_ONLY_KINDS = frozenset({"gc_obj_safe"})
 #: "go" calls that stay valid whatever my own gauge says (the numbers decide, not my lane)
 POST_FIGHT_KINDS = frozenset({"fight_won"})
 #: coach.MapCoach rules saying the same thing in words (suppressed around a call of the kind)
@@ -164,6 +168,8 @@ OVERLAPS: dict[str, frozenset[str]] = {
     "gc_cross_obj": frozenset({"objective_trade", "pressure", "baron_pick", "objective_window", "jungler_side"}),
     "gc_jg_based": frozenset({"jungler_unseen", "missing", "jungler_side"}),
     "gc_obj_fight": frozenset({"objective_window", "objective_setup", "objective_trade", "baron_pick"}),
+    "gc_obj_stay": frozenset({"recall_item"}),
+    "gc_obj_safe": frozenset(),
 }
 OVERLAP_S = 90.0
 #: a new call waits until the card line has been still this long (no card flicker), unless it is
@@ -1277,7 +1283,12 @@ def _all_rules() -> tuple:
         except Exception:
             log.debug("spike planner unavailable", exc_info=True)
             SP_RULES = ()
-        return RULES + tuple(GC_RULES) + tuple(FG_RULES) + tuple(FI_RULES) + tuple(SP_RULES)
+        try:
+            from treeaicoach.objective_planner import RULES as OP_RULES
+        except Exception:
+            log.debug("objective planner unavailable", exc_info=True)
+            OP_RULES = ()
+        return RULES + tuple(GC_RULES) + tuple(FG_RULES) + tuple(FI_RULES) + tuple(SP_RULES) + tuple(OP_RULES)
     except Exception:
         log.debug("game changers unavailable", exc_info=True)
         return RULES
@@ -1294,6 +1305,14 @@ def evaluate(ctx: MacroCtx) -> list[GeniusCall]:
             c = None
         if c is not None:
             out.append(replace(c, t=ctx.t))
+    if any(c.kind == "wave_recall" for c in out):
+        try:
+            from treeaicoach.objective_planner import recall_blocked
+
+            if recall_blocked(ctx):                      # a back now misses the objective: "Ne rentre pas"
+                out = [c for c in out if c.kind != "wave_recall"]
+        except Exception:
+            log.debug("objective planner unavailable", exc_info=True)
     out.sort(key=lambda c: (-(c.priority / 100.0 + c.score), c.kind))
     return out
 
@@ -1413,6 +1432,8 @@ class MacroPlanner:
                     (ctx.stance_score is not None and ctx.stance_score <= STANCE_SAFE_BLOCK)
                     or (ctx.hp is not None and ctx.hp < LOW_HP)):
                 continue                                   # the gauge says SAFE / I am low: no "go" call
+            if c.kind in QUIET_ONLY_KINDS and self._active is not None:
+                continue                                   # a reminder: only on a free card, never replaces a call
             if c.kind == "wave_recall" and not self._recall_armed:
                 continue                                   # once per trip: wait for a base visit
             if self._active is not None:

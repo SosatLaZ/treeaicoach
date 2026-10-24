@@ -627,6 +627,7 @@ CALL_OVERLAPS: dict[str, frozenset[str]] = {
     "gc_fed_defense": frozenset({"fed_enemy", "defensive", "buy_item", "gold_spend"}),
     "gc_facecheck": frozenset({"late_vision", "side_late", "missing_3"}),
     "cross_trade": frozenset({"jg_far", "drag_top", "split_top"}),
+    "gc_obj_stay": frozenset({"obj_stay", "gold_back", "first_back", "wave_push_back", "comp_ready"}),
 }
 
 

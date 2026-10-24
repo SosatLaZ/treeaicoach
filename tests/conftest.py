@@ -18,3 +18,11 @@ def _no_published_layout_between_tests():
     layout.publish(None)
     yield
     layout.publish(None)
+
+
+@pytest.fixture(autouse=True)
+def _pc_mic_engine_on_for_tests(monkeypatch):
+    """The product ships with the PC-mic assistant off (Discord only); the engine itself stays tested."""
+    import treeaicoach.voice_assistant as _va
+
+    monkeypatch.setattr(_va, "PC_MIC_ENABLED", True)

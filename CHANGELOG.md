@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.24.1 · 24 octobre 2026
+
+- **Correctif urgent :** le bot Discord ne démarrait plus en 2.24.0 (erreur de chargement). Réparé, et chaque
+  version vérifie maintenant que tous les modules se chargent avant d'être publiée.
+- **Objectifs préparés :** « Rentre maintenant : Phage et retour pour le Dragon (1:30) », « Ne rentre pas :
+  Dragon dans 0:35 », « Ne prends aucun risque : mourir = Dragon perdu » (sur tes parties : mort juste avant
+  = objectif perdu 4 fois sur 6).
+
 ## 2.24.0 · 24 octobre 2026
 
 - **Coach IA par Discord uniquement :** le micro du PC n'est plus jamais ouvert. « Hey coach » est écouté

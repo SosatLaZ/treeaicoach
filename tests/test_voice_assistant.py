@@ -342,3 +342,16 @@ def test_claim_wake_answers_once_across_pc_and_discord():
     assert not VA.claim_wake("pc", now=102.0)          # same « Hey coach » heard by both: one answer
     assert VA.claim_wake("pc", now=100.0 + VA.WAKE_DEDUP_S + 0.1)
     VA._last_wake.update(pc=-1e9, discord=-1e9)
+
+
+def test_pc_mic_is_off_in_the_product(monkeypatch):
+    import importlib
+
+    import treeaicoach.voice_assistant as VA
+
+    src = importlib.util.find_spec("treeaicoach.voice_assistant").origin
+    assert "PC_MIC_ENABLED = False" in open(src, encoding="utf-8").read()
+    monkeypatch.setattr(VA, "PC_MIC_ENABLED", False)
+    a = VA.VoiceAssistant()
+    a.start()
+    assert a._thread is None                       # the PC microphone is never opened
