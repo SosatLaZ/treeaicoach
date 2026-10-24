@@ -1448,6 +1448,17 @@ Retour réel (« les conseils sont nuls ») : la carte affichait des généralit
   le dragon, prends les larves : combat perdu (4v5) ». Mesures sur 20 parties vérifiées : `tools/fog_intel_truth.py`
   (`fog_intel.VALIDATION`). Non construits faute de preuve : « full clear fini : gank probable » et le compte à
   rebours des plaques (2026 : elles ne tombent plus à 14:00). Tests : `tests/test_fog_intel.py`.
+* **Planificateur de pic** (`spike_planner.py`, règle du même planificateur, Tab + mon or) : avance de voie =
+  écart d'or d'objets / 1000 + 0,35 × écart de niveaux avec l'adversaire de mon rôle (`lead_score`) ; à +0,4 je gagne
+  la voie sur mes 10 parties vérifiées (2 min suivantes : 7 kills / 2 morts ; derrière : 3 / 37 ; après un retour qui
+  fait passer devant 2 morts / 10 retours, sinon 14 / 26 ; le score de phase du draft ne sépare RIEN). L'or qui comble
+  l'écart (`flip_purchase` : prochain achat de `itemization.recommend`, or dépensé = valeur ajoutée, ≥ 800) →
+  `gc_spike` (appel souple, `SOFT_KINDS`) « Après Phage tu gagnes l'échange : back à 1 100 or » quand il manque
+  ≤ 300 or, puis `wave_recall` « Rentre acheter Phage : après, tu gagnes l'échange » ; « tu passes devant » si le
+  draft dit qu'il gagne la phase. Pas en support, ni PV < 35 %, ni adversaire mort / en base. NON construit faute de
+  preuve : prédire le prochain retour de l'adversaire (même avec son or réel, ±30 s dans 20-33 % de 40 retours ;
+  il rentre pour ses PV et sa vague, pas à un montant). `tools/spike_truth.py` (`spike_planner.VALIDATION`) ;
+  tests : `tests/test_spike_planner.py`.
 
 ## 24. Ressources oubliées (`resources_coach.py` + `hud_abilities.py`)
 

@@ -126,6 +126,7 @@ KIND_COOLDOWN_S: dict[str, float] = {
     "gc_cross_obj": 90.0,           # team_calls.py: "Ils sont 4 en bas : Baron maintenant"
     "gc_jg_based": 240.0,           # fog_intel.py: "Joue fort : Lee Sin est à la base"
     "gc_obj_fight": 120.0,          # fog_intel.py: "Force le dragon : combat 5v4"
+    "gc_spike": 150.0,              # spike_planner.py: "Après Phage tu gagnes l'échange : back à 1100 or"
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
 URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level", "gc_cross_obj",
@@ -134,7 +135,7 @@ URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "
                           "free_dragon", "cross_trade"})
 #: soft calls (mastermind power windows, game_changers.rule_power_window): no hold against other
 #: calls, any other call replaces them, and they do not start the gap between two calls
-SOFT_KINDS = frozenset({"gc_window"})
+SOFT_KINDS = frozenset({"gc_window", "gc_spike"})
 #: "go" calls that stay valid whatever my own gauge says (the numbers decide, not my lane)
 POST_FIGHT_KINDS = frozenset({"fight_won"})
 #: coach.MapCoach rules saying the same thing in words (suppressed around a call of the kind)
@@ -1271,7 +1272,12 @@ def _all_rules() -> tuple:
         except Exception:
             log.debug("fog intel unavailable", exc_info=True)
             FI_RULES = ()
-        return RULES + tuple(GC_RULES) + tuple(FG_RULES) + tuple(FI_RULES)
+        try:
+            from treeaicoach.spike_planner import RULES as SP_RULES
+        except Exception:
+            log.debug("spike planner unavailable", exc_info=True)
+            SP_RULES = ()
+        return RULES + tuple(GC_RULES) + tuple(FG_RULES) + tuple(FI_RULES) + tuple(SP_RULES)
     except Exception:
         log.debug("game changers unavailable", exc_info=True)
         return RULES
