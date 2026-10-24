@@ -1,25 +1,25 @@
 {
- "version": "2.29.0",
+ "version": "2.29.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "35a9835cb9f08729767faad7437c08910465d48fb4eb402538c00fb29767565f",
+ "sha256": "67d60e877dc36a01b0345f5d05e411d9470cebf04a8a75d3e39e774980793d23",
  "chunks": [
   {
-   "name": "2.29.0/part-01.zip",
-   "size": 88160189,
-   "sha256": "e6949832e412130b107b561c366bf19e7a870ef3b777fc199e3107f4c8185266",
+   "name": "2.29.1/part-01.zip",
+   "size": 88160245,
+   "sha256": "6f288bbf6c41cb057e5e6350d0f94283799aa9aafa1b904cf774f4d90ecb7d23",
    "files": 242
   },
   {
-   "name": "2.29.0/part-02.zip",
+   "name": "2.29.1/part-02.zip",
    "size": 9592536,
    "sha256": "b1ee4532a2fdad975c8db1a97bb5d55f11ed84c964f8bcc38b1bd826205ea55d",
    "files": 472
   }
  ],
- "total_size": 97752725,
+ "total_size": 97752781,
  "launcher": {
-  "sha256": "fff6c85d29d00c268f7dbae697b46cc7bbc60550d365a32a3f592225e8c818f6",
-  "size": 7530213
+  "sha256": "9f15a9b79bbeec0b972b3f3827598087603d2cba23bae29490e2d86003843930",
+  "size": 7532148
  },
- "notes": "2.29 : F12 pour parler \u00e0 l'IA, elle n'\u00e9coute que toi."
+ "notes": "2.29.1 : l'IA r\u00e9pond aussi hors partie."
 }

@@ -1,6 +1,6 @@
 {
-  "version": "2.29.0",
-  "sha256": "fff6c85d29d00c268f7dbae697b46cc7bbc60550d365a32a3f592225e8c818f6",
-  "size": 7530213,
-  "notes": "2.29 : F12 pour parler à l'IA, elle n'écoute que toi."
+  "version": "2.29.1",
+  "sha256": "9f15a9b79bbeec0b972b3f3827598087603d2cba23bae29490e2d86003843930",
+  "size": 7532148,
+  "notes": "2.29.1 : l'IA répond aussi hors partie."
 }
