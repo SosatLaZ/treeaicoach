@@ -3,6 +3,15 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.26.0 · 24 octobre 2026
+
+- **Focus du soir :** d'après tes parties, la condition qui sépare le plus tes victoires de tes défaites
+  (ex. présent à ≥ 40 % des objectifs : 9/13 gagnées contre 2/12). Une seule par partie, suivie en direct
+  dans la barre du haut quand elle est en danger, bilan dans le rapport.
+- **Bilan des conseils :** chaque conseil est vérifié après la partie (suivi ? et ensuite ?) ;
+  « Conseils utiles : x/y » dans le rapport ; ceux que tu ignores toujours se font plus rares (jamais les
+  alertes de danger). Remise à zéro dans Avancé → Analyse.
+
 ## 2.25.0 · 24 octobre 2026
 
 - **Plus de limite de requêtes IA :** le nombre de requêtes du jour est seulement affiché (Réglages → Conseils IA).
