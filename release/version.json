@@ -1,6 +1,6 @@
 {
-  "version": "2.25.0",
-  "sha256": "31b0d1131adf624b1d7bac5b7786fe027e9e6c0c3c07f54011cfccd64e3ffd9a",
-  "size": 7532314,
-  "notes": "2.25 : plus de limite de requêtes IA (compteur affiché), coach IA aussi assistant normal hors partie."
+  "version": "2.26.0",
+  "sha256": "5ae01f981137f68a3e7f7e8060686ae83d8052ddf00f6f04c61a63206f389542",
+  "size": 7532411,
+  "notes": "2.26 : focus du soir d'après tes parties, bilan des conseils."
 }
