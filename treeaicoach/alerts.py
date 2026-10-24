@@ -520,15 +520,23 @@ BACKWARD_RESET_S = 1.0     # clock going back more than this -> new timeline, st
 PRUNE_EVERY_S = 10.0       # housekeeping period of the per-key memory
 
 _PRIORITY_RANK = {k: i for i, k in enumerate(KIND_PRIORITY)}
-_KEEP_S = max(max(COOLDOWN_S.values()), max(KIND_COOLDOWN_S.values(), default=0.0)) + 1.0
+_KEEP_S = 3.0 * max(max(COOLDOWN_S.values()), max(KIND_COOLDOWN_S.values(), default=0.0)) + 1.0   # x call_eval.MAX_SCALE
 
 
 def cooldown_for(alert: Alert) -> float:
-    """Per-key cooldown (s) applying to ``alert``."""
+    """Per-key cooldown (s) applying to ``alert``, x the player's call-evaluation scale
+    (call_eval.cooldown_scale: kinds he ignores, bounded, danger x1.5 at most)."""
     kind = alert.kind
     if isinstance(kind, AlertKind) and kind in KIND_COOLDOWN_S:
-        return KIND_COOLDOWN_S[kind]
-    return COOLDOWN_S[Level.coerce(alert.level)]
+        base = KIND_COOLDOWN_S[kind]
+    else:
+        base = COOLDOWN_S[Level.coerce(alert.level)]
+    try:
+        from treeaicoach.call_eval import cooldown_scale
+
+        return base * cooldown_scale(kind, getattr(alert, "text", "") or "")
+    except Exception:
+        return base
 
 
 def _finite_or(value: Any, default: float) -> float:

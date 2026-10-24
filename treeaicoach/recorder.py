@@ -73,6 +73,7 @@ MAX_SIGHTINGS_PER_KEY = 8000    # ~66 min of continuous visibility at 2 Hz, then
 MAX_SIGHTING_KEYS = 16          # 5 enemies + anonymous tracks; overflow goes to "enemy?"
 OVERFLOW_KEY = "enemy?"
 MAX_ALERTS = 3000
+MAX_CALLS = 600               # shown coach calls (call_eval.py): [gt, kind, text, u, v]
 #: The same alert (kind + text) recorded again within this many game seconds is a duplicate.
 ALERT_DEDUP_S = 3.0
 MAX_EVENTS = 3000
@@ -292,6 +293,7 @@ class GameRecorder:
         self._sightings: dict[str, list[list[float]]] = {}
         self._last_sight_gt: dict[str, float] = {}
         self._alerts: list[list[Any]] = []
+        self._calls: list[list[Any]] = []
         self._events: list[dict[str, Any]] = []
         self._event_keys: set[Any] = set()
         self._result: str | None = None
@@ -740,6 +742,23 @@ class GameRecorder:
         except Exception:
             log.exception("GameRecorder.on_alert failed")
 
+    def on_call(self, kind: Any, game_time: float | None, text: Any, target: Any = None) -> None:
+        """Log one SHOWN coach call (macro planner) for the post-game call evaluation (call_eval.py):
+        ``[gt, kind, text, u, v]`` (target uv or null). Never raises."""
+        try:
+            with self._lock:
+                if not self.active or len(self._calls) >= MAX_CALLS:
+                    return
+                gt = _finite(game_time, None)
+                if gt is None:
+                    return
+                uv = _uv(target)
+                self._calls.append([round(gt, 1), _text(kind, 32), _text(text),
+                                    round(uv[0], 3) if uv else None, round(uv[1], 3) if uv else None])
+                self._dirty = True
+        except Exception:
+            log.exception("GameRecorder.on_call failed")
+
     # ------------------------------------------------------------------ record building
     def _duration(self) -> float:
         d = self._max_gt
@@ -792,6 +811,7 @@ class GameRecorder:
             "my_positions": list(self._my_positions),
             "sightings": {k: list(v) for k, v in self._sightings.items()},
             "alerts": list(self._alerts),
+            "calls": list(self._calls),
             "events": list(self._events),
             "scoreboard": {"final": self._scoreboard, "timeline": list(self._scoreboard_timeline)},
             "fog": list(self._fog),

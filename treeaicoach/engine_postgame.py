@@ -61,8 +61,14 @@ class PostgameMixin:
             except Exception:
                 log.debug("mastermind summary failed", exc_info=True)
         self._mastermind = None                # never carried into the next game (ARAM record had the previous game's plan)
+        focus = None
+        try:                                   # the evening focus of this game (win_conditions.py)
+            plus = getattr(self, "_coach_plus", None)
+            focus = plus.focus_block() if plus is not None else None
+        except Exception:
+            log.debug("focus block failed", exc_info=True)
         if rec is not None:
-            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary, health, mm_block, friends),
+            th = threading.Thread(target=self._finish_job, args=(rec, plays_summary, health, mm_block, friends, focus),
                                   name="TreeAICoach-report", daemon=True)
             self._bg_threads = [b for b in self._bg_threads if b.is_alive()] + [th]
             th.start()
@@ -138,7 +144,8 @@ class PostgameMixin:
             log.debug("team recap failed", exc_info=True)
 
     def _finish_job(self, rec: Any, plays_summary: dict | None = None, health: dict | None = None,
-                    mm_block: dict | None = None, friends: dict[str, str] | None = None) -> None:
+                    mm_block: dict | None = None, friends: dict[str, str] | None = None,
+                    focus: dict | None = None) -> None:
         try:
             path = rec.finish()
             if path is None:
@@ -155,6 +162,7 @@ class PostgameMixin:
                 from treeaicoach.mastermind import attach_to_record as attach_mm
 
                 attach_mm(path, mm_block)
+            self._coach_eval(Path(path), focus)
             self.last_record_path = Path(path)
             cfg = self._cfg
             self._say_game_summary(Path(path))
@@ -184,6 +192,36 @@ class PostgameMixin:
                 self._lcu_truth_job(lcu, Path(path), Path(html), review if review is not prev_review else None)
         except Exception:
             log.exception("Post-game record / report failed")
+
+    def _coach_eval(self, path: Path, focus: dict | None) -> None:
+        """Post-game: the evening focus held or not (win_conditions.py) + every shown call followed
+        or not (call_eval.py) -> ``record["coach_eval"]``, and the per-kind stats across games
+        (``games/truth/call_stats.json``, not in demo). Never raises."""
+        try:
+            import json
+            import os
+
+            from treeaicoach import call_eval, ground_truth, win_conditions
+
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return
+            evals = call_eval.evaluate_record(data)
+            block: dict = {"schema": 1, "calls": evals}
+            f = win_conditions.focus_from_block(focus)
+            if f is not None:
+                res = win_conditions.evaluate(f, win_conditions.game_features(data))
+                block["focus"] = dict(focus or {}, held=res[0] if res else None, line=res[1] if res else "")
+            if not self._demo and evals:
+                st = call_eval.update_stats(path.parent / ground_truth.TRUTH_DIR_NAME, path.name, evals)
+                block["quieted"] = [[k, v, (st.get("why") or {}).get(k, "")] for k, v in (st.get("scale") or {}).items()]
+            data["coach_eval"] = block
+            tmp = path.with_name(path.name + f".{os.getpid()}.ce.tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            os.replace(tmp, path)
+            win_conditions.clear_cache()           # the next game's focus sees this one
+        except Exception:
+            log.exception("Post-game call evaluation failed")
 
     # ------------------------------------------------------------------ League Client (lcu.py)
     def _postgame_lcu(self) -> Any:

@@ -1529,3 +1529,35 @@ d'objets `itemization` :
 * **Juge** : scénarios `scaling_lane`, `scaling_team`, `engage_dragon`, `fed_carry` (`Scenario.cast` : autres
   champions dans les mêmes rôles) ; tests `tests/test_mastermind.py` (dont la vraie partie Garen contre
   Vladimir / Kindred / Ekko / Séraphine / Thresh).
+
+## 26. Conditions de victoire personnelles + évaluation des conseils (`win_conditions.py`, `call_eval.py`)
+
+* **Conditions** (`win_conditions.game_features`, ajoutées aux lignes de `progress.collect`, cache v5) : morts
+  avant 10:00, sbires à 10:00, premier achat après le départ (baisse d'or ≥ 250 entre deux instantanés), score
+  de vision à 15:00, écart d'or de voie à 10 / 15 min (`postgame_edge.lane_diffs`), part des monstres épiques où
+  j'étais présent. `effects` : chaque condition sur une petite grille fixe de seuils (`CONDITIONS`), victoires
+  quand tenue / pas tenue avec les comptes, écart lissé (w + 1) / (n + 2), ≥ 3 parties de chaque côté.
+* **Focus du soir** (`pick_focus`, ≥ 8 parties Faille ≥ 10 min, même rôle d'abord) : AU PLUS un, parmi les
+  conditions suivables en direct (morts / sbires / vision / premier retour), plus grand écart × part des
+  parties ratées. Carte de sélection des champions (`champ_select.build_card(focus=)`), Accueil (« Dernière
+  partie »), toast « FOCUS DU SOIR » qui remplace l'objectif de partie (`coach_plus`), ligne discrète du bandeau
+  essentiel à la place de la ligne 1 tant qu'il est en danger (`FocusTracker.line`, 60 s après une mort, fenêtres
+  de 40 s pour les sbires / la vision : « Focus : 0 mort avant 10:00 — 1 mort »), verdict d'après-partie
+  (`record["coach_eval"]["focus"]`, section « Focus du soir et conseils » du rapport).
+* **Appels** : chaque appel macro montré est journalisé (`recorder.on_call` → `record["calls"]` =
+  `[gt, kind, texte, u, v]`), les alertes de danger / gank et les conseils écrits sont déjà dans `alerts`.
+  `call_eval.evaluate_record` : intention (recule / va à / rentre / ne rentre pas / balise), suivi ou non d'après
+  mes positions (12 / 45 / 50 / 40 / 60 s), puis mort (45 s), objectif de mon équipe, écart d'or (60 s, Tab).
+  « Conseils utiles : 7/9 » = suivis sans mourir. Statistiques par type sur les 40 dernières parties dans
+  `games/truth/call_stats.json` (une fois par partie). **Mise en sourdine** lente et bornée : ignoré ≥ 80 % sur
+  ≥ 15 fois, ou suivi suivi de nettement plus de morts (+20 points, ≥ 5 de chaque côté) → délai × 1,5 par partie,
+  × 3 au plus (danger / gank × 1,5 au plus, jamais coupés), redescend de la même façon ; lu par
+  `macro.MacroPlanner` (`KIND_COOLDOWN_S`) et `alerts.cooldown_for`. Bouton « Réinitialiser » (Avancé → Analyse).
+* **Mesure** (`python tools/win_conditions_truth.py games/`, `python tools/call_eval_truth.py games/`) sur les
+  vraies parties de l'utilisateur (25 parties utilisables, 11 victoires) : présence aux objectifs ≥ 40 %
+  9 V / 13 contre 2 / 12 ; or à 10 min ≥ −300 6 / 10 contre 4 / 14 ; pas de retour avant 4:00 4 / 6 contre 6 / 17 ;
+  ≤ 1 mort avant 10:00 5 / 8 contre 5 / 15 ; vision à 15:00 sans effet. Validation croisée (sans la partie) :
+  le focus tenu / raté prédit le résultat 14 fois sur 23 — un signal faible, d'où un seul focus et un seuil lissé.
+  Appels : 2 035 vérifiables, 741 utiles ; « recule » suivis 60-75 %, « va en bas / en haut » 38 %, balises 39 % ;
+  après un danger suivi on meurt plus souvent qu'ignoré (116 / 274 contre 36 / 96 : biais, le danger suivi est le
+  vrai) → la règle « pire issue » ne touche aucun type ; aucun type n'atteint 80 % d'ignorés : rien en sourdine.

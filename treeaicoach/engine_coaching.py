@@ -167,6 +167,7 @@ class CoachingMixin:
             try:
                 rec.on_alert(make_alert(AlertKind.MACRO_TIP, Level.INFO, t, text=c.text,
                                         key=f"macro:genie:{c.kind}"), gt)
+                rec.on_call(c.kind, gt, c.text, c.target)     # post-game: followed or not (call_eval.py)
             except Exception:
                 log.debug("macro call record failed", exc_info=True)
         self._team_call(c)

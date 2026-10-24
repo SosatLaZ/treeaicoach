@@ -28,7 +28,7 @@ from treeaicoach.fmtutil import finite_loose as _f
 log = logging.getLogger(__name__)
 
 CACHE_NAME = "progress_cache.json"
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 
 # docs/DESIGN.md (RGB)
 BG = (12, 14, 13)
@@ -117,6 +117,12 @@ def game_metrics(record: Any, truth: Any = None) -> dict[str, Any] | None:
             out.update(postgame_edge.game_features(record, dict(a, truth=t) if t else a))
         except Exception:
             log.debug("postgame features unavailable", exc_info=True)
+        try:   # personal win conditions (win_conditions.py): deaths before 10, CS@10, first back...
+            from treeaicoach import win_conditions  # noqa: PLC0415
+
+            out.update(win_conditions.game_features(record, a, truth))
+        except Exception:
+            log.debug("win condition features unavailable", exc_info=True)
         return out
     except Exception:
         log.exception("progress.game_metrics failed")

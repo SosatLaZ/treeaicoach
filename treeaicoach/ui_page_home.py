@@ -152,6 +152,9 @@ class HomePage:
                                        "Joue une partie avec l'analyse active : le rapport apparaît ici.",
                                        W.button("Rapport", app.open_last_report)))
         self.last_row.control.setEnabled(False)
+        # the evening focus of the next game (win_conditions.py: >= 8 recorded games, else hidden)
+        self.focus_row = last.add(W.Row("Focus du soir", ""))
+        self.focus_row.hide()
 
         # --- system
         self.sys = self.page.section("Système")
@@ -203,9 +206,31 @@ class HomePage:
         res = {"win": "Victoire", "lose": "Défaite"}.get(game_result(g) or "", "")
         self._last_game = (alias, str(game_field(g, "role", "my_role", default="") or ""), res)
         self._refresh_hero()
+        self._refresh_focus(self._last_game[1])
         r.title.setText(f"{champ}" + (f" · {res}" if res else ""))
         r.set_desc(fmt_game_date(game_datetime(g)))
         r.control.setEnabled(True)
+
+    def _refresh_focus(self, role: str) -> None:
+        """Focus row: computed off the UI thread (history cache), hidden when there is none."""
+        def job() -> Any:
+            from treeaicoach import win_conditions  # noqa: PLC0415
+
+            win_conditions.clear_cache()               # a new game may change it
+            return win_conditions.focus_for(role or None)
+
+        def done(f: Any) -> None:
+            if f is None:
+                self.focus_row.hide()
+                return
+            self.focus_row.title.setText(f"Focus du soir : {f.label}")
+            self.focus_row.set_desc(f"Dans tes parties : {f.why}.")
+            self.focus_row.show()
+
+        try:
+            self.app.run_job(job, done, None, name="TreeAI-ui-focus")
+        except Exception:
+            log.debug("focus row not refreshed", exc_info=True)
 
     # ------------------------------------------------------------------ status
     def update_status(self, snap: dict[str, Any]) -> None:

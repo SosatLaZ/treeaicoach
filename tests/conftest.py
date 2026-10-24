@@ -26,3 +26,15 @@ def _pc_mic_engine_on_for_tests(monkeypatch):
     import treeaicoach.voice_assistant as _va
 
     monkeypatch.setattr(_va, "PC_MIC_ENABLED", True)
+
+
+@pytest.fixture(autouse=True)
+def _no_personal_history(monkeypatch):
+    """The evening focus (win_conditions) and the call cooldown scales (call_eval) read the user's
+    own games folder: tests never see the developer's records."""
+    from treeaicoach import call_eval, win_conditions
+    monkeypatch.setattr(win_conditions, "load_rows", lambda last=30: [])
+    win_conditions.clear_cache()
+    monkeypatch.setattr(call_eval, "ENABLED", False)
+    yield
+    win_conditions.clear_cache()

@@ -9,7 +9,10 @@
   HUD tips, soul / Baron / Elder power-play facts;
 * :mod:`treeaicoach.goals` - one personal goal per game (toast at start, HUD tip when at risk,
   praise toast when met);
-* :mod:`treeaicoach.death_cause` - one written line on the likely cause of each death.
+* :mod:`treeaicoach.death_cause` - one written line on the likely cause of each death;
+* :mod:`treeaicoach.win_conditions` - the evening focus (my history, >= 8 games): it REPLACES the
+  session goal toast ("FOCUS DU SOIR"), tracked live (:meth:`CoachPlus.focus_line`: the quiet line
+  of the essentials strip while it is at risk) and judged post-game (:meth:`CoachPlus.focus_block`).
 
 Output: :class:`Note` toasts (each with a skill priority: the engine drops those under the
 player's level, see :mod:`treeaicoach.skill`), gauge factors and :class:`treeaicoach.tips.TipContext`
@@ -28,6 +31,7 @@ from treeaicoach.death_cause import DeathCoach
 from treeaicoach.game_plan import map_fields, matchup_card
 from treeaicoach.goals import GoalTracker
 from treeaicoach.spikes import SpikeTracker
+from treeaicoach.win_conditions import FocusTracker
 
 log = logging.getLogger(__name__)
 
@@ -50,9 +54,11 @@ class Note:
 class CoachPlus:
     """See the module docstring."""
 
-    def __init__(self, history_loader: Callable[[], list[dict]] | None = None) -> None:
+    def __init__(self, history_loader: Callable[[], list[dict]] | None = None,
+                 focus_loader: Callable[[str | None], Any] | None = None) -> None:
         self._lock = threading.Lock()
         self._loader = history_loader
+        self._focus_loader = focus_loader          # role -> win_conditions.Focus | None (sync); None: history, async
         self.reset()
 
     def reset(self) -> None:
@@ -63,6 +69,9 @@ class CoachPlus:
         self.spikes = SpikeTracker()
         self.goals = GoalTracker(self._loader)
         self.deaths = DeathCoach()
+        self.focus = FocusTracker(None)
+        self._focus_state = ""                       # "" | "loading" | "done"
+        self._focus_shown = False
         self.card: Any = None
         self._card_done = False
         self._queue: list[Note] = []
@@ -107,9 +116,19 @@ class CoachPlus:
                 new.append(Note("insight", card.title, card.subtitle, "plan:card", 2, t=t))
         elif gt > CARD_GT[1] + 60.0:
             self._plan = {}
+        # -- evening focus (win_conditions.py): replaces the session goal when my history has one
+        self._resolve_focus(role)
+        f = self.focus.focus
+        if f is not None:
+            me = game.me
+            self.focus.update(gt, dict(getattr(me, "scores", None) or {}), getattr(me, "current_gold", None))
+            if not self._focus_shown and 30.0 <= gt <= 150.0 and not self.goals._shown:
+                self._focus_shown = True
+                new.append(Note("insight", "FOCUS DU SOIR", f"{f.label} ({f.why})", "focus:show", 3, t=t))
         # -- session goal
-        for g in self.goals.update(gt, game, role):
-            new.append(Note(g.kind, g.title, g.text, g.key, 3, t=t))
+        if f is None or self.goals._shown:
+            for g in self.goals.update(gt, game, role):
+                new.append(Note(g.kind, g.title, g.text, g.key, 3, t=t))
         # -- death cause
         res = self.deaths.update(gt, facts, game)
         if res is not None:
@@ -129,6 +148,49 @@ class CoachPlus:
         note = self._queue.pop(0)
         self._last_note = t
         return [note]
+
+    def _resolve_focus(self, role: str | None) -> None:
+        """Pick the focus once per game (history I/O off the coaching thread unless a loader is given)."""
+        if self._focus_state or not role:
+            return
+        if self._focus_loader is not None:
+            self._focus_state = "done"
+            try:
+                self.focus.focus = self._focus_loader(role)
+            except Exception:
+                log.debug("focus loader failed", exc_info=True)
+            return
+        self._focus_state = "loading"
+        tracker = self.focus
+
+        def job() -> None:
+            try:
+                from treeaicoach import win_conditions
+
+                tracker.focus = win_conditions.focus_for(role)
+            except Exception:
+                log.debug("focus unavailable", exc_info=True)
+
+        threading.Thread(target=job, name="TreeAI-focus", daemon=True).start()
+
+    def focus_line(self) -> str | None:
+        """The quiet essentials-strip line while the focus is at risk ("Focus : 0 mort avant 10:00 — 1 mort")."""
+        try:
+            return self.focus.line if self.focus.focus is not None else None
+        except Exception:
+            return None
+
+    def focus_block(self) -> dict | None:
+        """The focus of this game for the record (post-game verdict), None without one."""
+        try:
+            from treeaicoach.win_conditions import focus_block
+
+            b = focus_block(self.focus.focus)
+            if b is not None:
+                b["live_status"] = self.focus.status
+            return b
+        except Exception:
+            return None
 
     @staticmethod
     def _opp_alias(facts: dict, game: Any) -> str | None:

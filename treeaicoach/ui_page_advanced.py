@@ -29,6 +29,9 @@ class AdvancedPage:
                        "dépanne.", DETECTORS)
         app.switch_row(ana, "download_skin_icons", "Télécharger les icônes de skins", "Icônes publiques "
                        "(Data Dragon), pour reconnaître les skins.")
+        # call evaluation (call_eval.py): the kinds of advice this player ignores come less often
+        self.calls_row = ana.add(W.Row("Conseils espacés", self._calls_text(),
+                                       W.button("Réinitialiser", self._reset_calls)))
 
         perf = self.page.section("Performance")
         app.choice_row(perf, "perf_mode", "Mode", "« Auto » mesure ton PC ; « PC modeste » analyse moins souvent.",
@@ -63,6 +66,34 @@ class AdvancedPage:
                        "(reste sur ton PC).")
         app.depends(app.slider_row(mnt, "collect_interval_s", "Une capture toutes les", None, 5, 60, 5,
                                    lambda v: f"{v:.0f} s", to_value=float), "collect_samples")
+
+    @staticmethod
+    def _calls_text() -> str:
+        try:
+            from treeaicoach import call_eval  # noqa: PLC0415
+
+            q = call_eval.quieted()
+        except Exception:
+            q = []
+        if not q:
+            return ("Après chaque partie, TreeAI vérifie si tu as suivi ses conseils. Ceux que tu ignores presque "
+                    "toujours reviennent moins souvent (jamais coupés pour les ganks). Aucun pour l'instant.")
+        names = ", ".join(f"{call_eval.kind_label(k)} (×{v:.1f})" for k, v, _w in q[:4])
+        return f"Moins fréquents car rarement suivis : {names}. Réinitialiser remet tout à la normale."
+
+    def _reset_calls(self) -> None:
+        try:
+            from treeaicoach import call_eval  # noqa: PLC0415
+
+            ok = call_eval.reset_stats()
+        except Exception:
+            ok = False
+        self.calls_row.set_desc(self._calls_text())
+        try:
+            (self.app.show_toast if ok else self.app.show_error)(
+                "Conseils remis à la normale." if ok else "Impossible de réinitialiser les conseils.")
+        except Exception:
+            pass
 
     def _rect_text(self) -> str:
         r = self.app.cfg.manual_minimap_rect

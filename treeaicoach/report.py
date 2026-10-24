@@ -1123,6 +1123,39 @@ def _plays_section(record: dict) -> str:
 
 
 # ======================================================================================
+# evening focus (win_conditions.py) + were the calls followed (call_eval.py)
+# ======================================================================================
+def _coach_eval_section(record: dict) -> str:
+    """"Focus du soir et conseils": the focus held or not, "Conseils utiles : 7/9" and the least
+    useful kind of call, the kinds TreeAI now says less often. Empty when there is nothing."""
+    from treeaicoach import call_eval
+
+    block = record.get("coach_eval") if isinstance(record.get("coach_eval"), dict) else {}
+    evals = block.get("calls") if isinstance(block.get("calls"), list) else call_eval.evaluate_record(record)
+    lis = []
+    fo = block.get("focus") if isinstance(block.get("focus"), dict) else None
+    if fo and fo.get("line"):
+        ok = fo.get("held")
+        lis.append(f'<li class="{"good" if ok else "warn"}"><span class="i">{"✓" if ok else "!"}</span>'
+                   f'<span>{_e(fo["line"])}</span></li>')
+        if fo.get("why"):
+            lis.append(f'<li class="info"><span class="i">i</span><span>Pourquoi ce focus : dans tes parties, '
+                       f'{_e(fo["why"])}.</span></li>')
+    sl = call_eval.summary_line(evals or [])
+    if sl:
+        lis.append(f'<li class="info"><span class="i">i</span><span><b>{_e(sl[0])}</b> (suivis sans mourir dans les '
+                   f'{int(call_eval.OUTCOME_S)} s)</span></li>')
+        if sl[1]:
+            lis.append(f'<li class="warn"><span class="i">!</span><span>{_e(sl[1])}</span></li>')
+    for k, v, why in [q for q in block.get("quieted") or [] if isinstance(q, list) and len(q) >= 3][:3]:
+        lis.append(f'<li class="info"><span class="i">i</span><span>Désormais moins souvent : '
+                   f'{_e(call_eval.kind_label(k))} ({_e(why)})</span></li>')
+    if not lis:
+        return ""
+    return f'<div class="panel"><h2>Focus du soir et conseils</h2><ul class="tips">{"".join(lis)}</ul></div>'
+
+
+# ======================================================================================
 # game understanding (mastermind.py): comps, power windows, plan vs what happened
 # ======================================================================================
 def _understanding_section(record: dict) -> str:
@@ -1340,7 +1373,8 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
         title = f'{s.get("champion_name") or "Partie"} · {s.get("result_label") or ""}'.strip(" ·")
         parts = []
         sections = (lambda: _header(rec, a), lambda: _cards(a), lambda: _tips_section(a),
-                   lambda: _edge_section(rec, a), lambda: _plays_section(rec), lambda: _understanding_section(rec),
+                   lambda: _edge_section(rec, a), lambda: _coach_eval_section(rec), lambda: _plays_section(rec),
+                   lambda: _understanding_section(rec),
                    lambda: _moments_section(rec, a), lambda: _voice_box(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _truth_section(rec, a),
                    lambda: _presence_section(rec, a),

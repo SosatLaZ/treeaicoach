@@ -1266,6 +1266,16 @@ RULES = (_rule_fight_lost, _rule_fight_won, _rule_jungler_dead, _rule_cross_map,
          _rule_rotate_mid, _rule_split_safe, _rule_side_wave, _rule_waves)
 
 
+def _quiet_scale(kind: str) -> float:
+    """Cooldown factor of a call kind this player keeps ignoring (call_eval.py, bounded, 1.0 = normal)."""
+    try:
+        from treeaicoach.call_eval import cooldown_scale
+
+        return cooldown_scale(kind)
+    except Exception:
+        return 1.0
+
+
 def _all_rules() -> tuple:
     """:data:`RULES` + the game-changer library (:mod:`treeaicoach.game_changers`, imported lazily:
     it builds on this module's helpers)."""
@@ -1441,7 +1451,7 @@ class MacroPlanner:
                                                    and self._active.kind not in SOFT_KINDS):
                     continue
             last_k = self._kind_t.get(c.kind)
-            if last_k is not None and t - last_k < KIND_COOLDOWN_S.get(c.kind, 60.0):
+            if last_k is not None and t - last_k < KIND_COOLDOWN_S.get(c.kind, 60.0) * _quiet_scale(c.kind):
                 continue
             if c.kind not in URGENT_KINDS and self._last_start is not None and t - self._last_start < cfg["gap"]:
                 continue

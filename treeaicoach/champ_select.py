@@ -104,6 +104,7 @@ class PregameCard:
     play_around: str = ""                   # "Jouez bot : 2v2 gagnant"
     jungle: str = ""                        # "Lee Sin : départ en bas, 1er gank top vers 2:45"
     tilt: str = ""                          # "2 défaites d'affilée : pause 10 min ?"
+    focus: str = ""                         # "Focus du soir : 0 mort avant 10:00 (4 V / 5 quand tenu, 1 V / 6 sinon)"
 
 
 #: lines the home card shows at most (ui_page_home), and their priority (lower first) when cut
@@ -319,9 +320,10 @@ def _compose(cands: list[tuple[int, str]], n: int = MAX_LINES) -> tuple[str, ...
     return tuple(cands[i][1] for i in sorted(keep))
 
 
-def build_card(state: ChampSelectState | None, tilt: str = "") -> PregameCard | None:
+def build_card(state: ChampSelectState | None, tilt: str = "", focus: str = "") -> PregameCard | None:
     """The pre-game card (None without my champion); ``tilt``: the session guard line
-    (:func:`treeaicoach.draft_edge.tilt_line`, "" when off / nothing to say). Pure, never raises."""
+    (:func:`treeaicoach.draft_edge.tilt_line`, "" when off / nothing to say); ``focus``: the evening
+    focus line (:mod:`treeaicoach.win_conditions`, "" under 8 games). Pure, never raises."""
     try:
         if state is None or state.me is None or not state.me.alias:
             return None
@@ -375,6 +377,8 @@ def build_card(state: ChampSelectState | None, tilt: str = "") -> PregameCard | 
         cands: list[tuple[int, str]] = []          # (priority, line) in card order
         if tilt:
             cands.append((0, tilt))
+        if focus:
+            cands.append((1, focus))
         if opp is not None:
             cands.append((1, f"Face à {opp.name}" + ("" if sure else " (probable)")))
         if edge.get("spikes"):
@@ -428,7 +432,7 @@ def build_card(state: ChampSelectState | None, tilt: str = "") -> PregameCard | 
                            skills=meta.get("skills", ""), core_ids=core_ids, spell_ids=spell_ids, rune_ids=rune_ids,
                            win_condition=edge.get("win_condition", ""), comp_detail=edge.get("comp_detail", ""),
                            spikes=edge.get("spikes", ""), counter=edge.get("counter", ""), lanes=edge.get("lanes", ""),
-                           play_around=edge.get("play_around", ""), jungle=jg_line, tilt=tilt)
+                           play_around=edge.get("play_around", ""), jungle=jg_line, tilt=tilt, focus=focus)
     except Exception:
         log.debug("build_card failed", exc_info=True)
         return None
@@ -467,6 +471,7 @@ class ChampSelectWatcher:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._tilt: str | None = None            # session guard line of this champion select (None: not read)
+        self._focus: dict[str, str] = {}         # role -> evening focus line of this champion select
 
     def _tilt_line(self, client: Any) -> str:
         """Session / tilt guard (config ``tilt_guard``, on by default): MY last games from the
@@ -484,6 +489,22 @@ class ChampSelectWatcher:
         except Exception:
             log.debug("tilt guard unavailable", exc_info=True)
         return self._tilt
+
+    def _focus_line(self, role: str) -> str:
+        """The evening focus for my assigned role (win_conditions.py, my own records), read once per
+        role per champion select. Never raises."""
+        if role in self._focus:
+            return self._focus[role]
+        self._focus[role] = ""
+        try:
+            from treeaicoach import win_conditions
+
+            f = win_conditions.focus_for(role or None)
+            if f is not None:
+                self._focus[role] = f"Focus du soir : {f.label} ({f.why})"
+        except Exception:
+            log.debug("focus line unavailable", exc_info=True)
+        return self._focus[role]
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -520,8 +541,10 @@ class ChampSelectWatcher:
                 log.debug("client sync not run", exc_info=True)
             if state is None:
                 self._tilt = None                # next champion select: read the history again
+                self._focus = {}
             tilt = self._tilt_line(client) if state is not None and state.me is not None else ""
-            card = build_card(state, tilt) if state is not None else None
+            focus = self._focus_line(state.me.position or "") if state is not None and state.me is not None else ""
+            card = build_card(state, tilt, focus) if state is not None else None
             if card is not None:
                 try:     # the card's icons (Data Dragon), downloaded once in a daemon thread
                     from treeaicoach import item_icons

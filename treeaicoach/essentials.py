@@ -307,6 +307,38 @@ def item_cell(state: Any) -> Cell | None:
         return None
 
 
+#: longest focus value drawn (the strip is sized for its sample lines; longer text is cut)
+FOCUS_MAX_CHARS = 40
+
+
+def focus_cell(line: Any) -> Cell | None:
+    """"Focus : 0 mort avant 10:00 — 1 mort" -> Cell("FOCUS", "0 mort avant 10:00 — 1 mort", "warn")."""
+    try:
+        s = str(line or "").strip()
+        if not s:
+            return None
+        if s.lower().startswith("focus"):
+            s = s.split(":", 1)[1].strip() if ":" in s else s[5:].strip()
+        if len(s) > FOCUS_MAX_CHARS:
+            s = s[:FOCUS_MAX_CHARS - 1].rstrip() + "…"
+        return Cell("FOCUS", s, "warn")
+    except Exception:
+        return None
+
+
+def _fit_cell(c: Cell, screen: Any = None) -> Cell:
+    """Cut a text cell so that it fits the strip width (sized for its sample lines)."""
+    try:
+        m = _metrics(screen)
+        room = strip_size(screen)[0] - 2 * m["padx"] - 2
+        v = c.value
+        while len(v) > 4 and _cell_width(Cell(c.label, v, c.tone), m) > room:
+            v = v[:-2].rstrip() + "…"
+        return Cell(c.label, v, c.tone) if v != c.value else c
+    except Exception:
+        return c
+
+
 def build_lines(state: Any) -> Lines:
     """The strip's content for an ``OverlayState``-like object: at most two lines of cells (empty
     lines dropped; ``()`` = nothing to show). Pure, never raises."""
@@ -318,6 +350,9 @@ def build_lines(state: Any) -> Lines:
                                jungler_cell(getattr(state, "enemies", None) or (), getattr(state, "jungler_map", None)),
                                item_cell(state))
                    if c is not None)
+        fl = focus_cell(getattr(state, "focus_line", None))
+        if fl is not None:                 # the evening focus at risk: one quiet line instead of line 1
+            l1 = (_fit_cell(fl, getattr(state, "screen", None)),)
         return tuple(line for line in (l1, l2) if line)
     except Exception:
         log.debug("essentials lines failed", exc_info=True)
@@ -516,5 +551,5 @@ def render(lines: Lines, screen: Any = None) -> np.ndarray | None:
         return None
 
 
-__all__ = ["Cell", "Lines", "build_lines", "item_cell", "fmt_missing", "lines_text", "render", "strip_size", "win_cell", "gold_cell",
+__all__ = ["Cell", "Lines", "build_lines", "focus_cell", "item_cell", "fmt_missing", "lines_text", "render", "strip_size", "win_cell", "gold_cell",
            "farm_cell", "objective_cell", "jungler_cell", "fmt_gold", "fmt_ago", "fmt_clock", "fmt_dec"]

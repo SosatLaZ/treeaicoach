@@ -217,6 +217,8 @@ class OverlayState:
     show_essentials: bool = True
     # enemy jungler probability map (jungler_map.JunglerMapState): soft side shading + essentials "70 % bas"
     jungler_map: Any = None
+    # evening focus at risk (win_conditions.FocusTracker): ONE quiet line replacing line 1 of the strip
+    focus_line: str | None = None
 
 
 #: A visible champion whose data is older than this (s) - or stacked under another icon, or not

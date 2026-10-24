@@ -317,6 +317,7 @@ class OverlayStateMixin:
             tip_curated=True,               # _hud_line: the final card line (gauge line, no contradiction)
             edge_stats=self._edge_stats(),
             jungler_map=self._jungler_map_state(),
+            focus_line=self._focus_line(),
             show_essentials=bool(getattr(cfg, "essentials_strip", True)),
             **self._timer_fields(game, cfg),
             **self._hud_card_fields(game, me_uv, tip, now),
@@ -330,6 +331,14 @@ class OverlayStateMixin:
             if jm is None or getattr(self._cfg, "safe_mode", False) or not self._in_game:
                 return None
             return jm.state()
+        except Exception:
+            return None
+
+    def _focus_line(self) -> str | None:
+        """The evening focus line while it is at risk (coach_plus / win_conditions.py), else None."""
+        try:
+            plus = getattr(self, "_coach_plus", None)
+            return plus.focus_line() if plus is not None and self._in_game else None
         except Exception:
             return None
 
