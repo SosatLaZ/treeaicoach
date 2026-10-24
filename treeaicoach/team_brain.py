@@ -32,9 +32,9 @@ for every friend, every call together under ``CALLS_MAX_PER_MIN``. This module r
 rules on top (per friend, per lane, per pair, per spawn) and retries a refused line for a few
 seconds only. Replayed on 17 real games (``python tools/team_brain_truth.py <games dir>``: LCU truth
 positions + the app's recorded sightings, the 4 allies as friends = worst case), numbers in
-:data:`VALIDATION`: 0.48 line / min, never 2 brain lines to one friend within 30 s, never one within
+:data:`VALIDATION`: 0.55 line / min, never 2 brain lines to one friend within 30 s, never one within
 30 s after his gank call, at most 5 calls a minute with the ganks. "Jungler chez toi" came true (he
-came within 0.15 in 25 s) 12 / 34 against a 15 % base rate: P(near) alone (>= 0.55) was 23 %, so the
+came within 0.15 in 25 s) 11 / 31 against a 15 % base rate: P(near) alone (>= 0.55) was 23 %, so the
 call also needs the map to LOCALISE him (every ally on another lane <= 0.25: 44 % on all ticks).
 
 Pure (no Qt / Discord), analysis thread only, never raises from :meth:`TeamBrain.update`.
@@ -87,9 +87,9 @@ OTHER_SIDE = {"dragon": "jouez les larves ou le haut", "grubs": "jouez le dragon
               "herald": "jouez le dragon ou le bas", "baron": "défendez et farmez en sécurité",
               "elder": "défendez sous vos tours"}
 VALIDATION: dict = {
-    "games": 17, "minutes": 478, "lines": 227, "per_min": 0.48,
-    "jungler": {"n": 34, "came": 12, "base_rate": 0.15}, "opp": {"n": 40, "safe_15s": 32},
-    "sync": {"n": 68, "both_1000_unspent": 60}, "objective": 85,
+    "games": 17, "minutes": 478, "lines": 263, "per_min": 0.55,
+    "jungler": {"n": 31, "came": 11, "base_rate": 0.15}, "opp": {"n": 83, "safe_15s": 66},
+    "sync": {"n": 65, "both_1000_unspent": 57}, "objective": 84,
     "max_brain_per_friend_30s": 1, "after_own_gank_30s": 0, "max_calls_per_min": 5,
 }
 
