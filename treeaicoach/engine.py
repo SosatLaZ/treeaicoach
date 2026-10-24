@@ -167,6 +167,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._coach: Any = None                # coach.MapCoach (live macro tips + HUD insight)
         self._fog: Any = None
         self._jungle_intel: Any = None      # jungle_intel.JungleIntelTracker (Tab data)
+        self._jungler_map: Any = None       # jungler_map.LiveJunglerMap (where he probably is, all game)
         self._scoreboard: Any = None           # scoreboard.ScoreboardAnalyzer (Tab analysis)
         self._praise: Any = None               # praise.PraiseCoach (compliments)
         self._toasts: Any = None               # toasts.ToastQueue (top-centre banners)
@@ -438,6 +439,12 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._jungle_intel = JungleIntelTracker()
         except Exception:
             log.exception("Jungle intel unavailable")
+        try:
+            from treeaicoach.jungler_map import LiveJunglerMap
+
+            self._jungler_map = LiveJunglerMap()
+        except Exception:
+            log.exception("Jungler map unavailable")
         try:
             from treeaicoach.praise import PraiseCoach
             from treeaicoach.scoreboard import ScoreboardAnalyzer
@@ -1012,7 +1019,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         log.info("New game detected (game time %.0f s, mode %s)", game.game_time, game.game_mode)
         self._sb_recorded = None
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
-                     self._jungle_intel,
+                     self._jungle_intel, self._jungler_map,
                      self._throttler, self._coach, self._scoreboard, self._praise, self._toasts,
                      self._stance, self._tip_rotator, self._gate, self._tactics, self._gauge,
                      getattr(self, "_ai", None), self._ward_guide, getattr(self, "_plays", None),
@@ -1283,6 +1290,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._jungle_intel.update(t, game, tracker, self._fog)
         if self._fog is not None and not getattr(self._cfg, "safe_mode", False):
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
+            if self._jungler_map is not None:    # after the fog: reads its anchors (kills, pits, purchases)
+                self._jungler_map.update(t, gt, tracker, self._fog, game, self.jungle_intel())
         rec = self._recorder
         if rec is not None:
             rec.on_tracks(tracker, t, gt)

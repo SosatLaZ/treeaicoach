@@ -218,8 +218,14 @@ def _side(uv: Any) -> str:
         return ""
 
 
-def jungler_cell(enemies: Sequence[Any]) -> Cell | None:
-    """Enemy jungler: "haut 23 s" (last seen side + how long ago), "haut · visible", "mort", "?"."""
+#: Hidden this long (s), the probability map (jungler_map.py) replaces the last seen side: "70 % bas".
+JMAP_AFTER_S = 15.0
+
+
+def jungler_cell(enemies: Sequence[Any], jmap: Any = None) -> Cell | None:
+    """Enemy jungler: "haut 23 s" (last seen side + how long ago), "haut · visible", "mort", "?";
+    hidden for more than :data:`JMAP_AFTER_S` with a probability map that leans one way (>= 60 %):
+    "70 % bas" (jungler_map.JunglerMapState.side_text, validated on the LCU timelines)."""
     jg = next((e for e in enemies or () if bool(getattr(e, "is_jungler", False))), None)
     if jg is None:
         return None
@@ -227,11 +233,19 @@ def jungler_cell(enemies: Sequence[Any]) -> Cell | None:
         return Cell("JGL", "mort")
     uv = getattr(jg, "uv", None)
     side = _side(uv) if uv is not None else ""
-    if not side:
-        return Cell("JGL", "?")
-    if bool(getattr(jg, "visible", False)):
+    visible = bool(getattr(jg, "visible", False))
+    if side and visible:
         return Cell("JGL", f"{side} · visible", "warn")
     ago = _f(getattr(jg, "last_seen_ago", None))
+    if jmap is not None and not visible and (ago is None or ago > JMAP_AFTER_S):
+        try:
+            txt = jmap.side_text()
+        except Exception:
+            txt = None
+        if txt:
+            return Cell("JGL", txt)
+    if not side:
+        return Cell("JGL", "?")
     if ago is None or ago > JUNGLER_MAX_S:
         return Cell("JGL", "?")
     return Cell("JGL", f"{side} {fmt_ago(ago)}", "warn" if ago < 15 else "")
@@ -301,7 +315,8 @@ def build_lines(state: Any) -> Lines:
         l1 = tuple(c for c in (win_cell(stats), gold_cell(stats), farm_cell(stats)) if c is not None) \
             if stats is not None else ()
         l2 = tuple(c for c in (objective_cell(getattr(state, "objectives", None) or (), getattr(state, "game_time", None)),
-                               jungler_cell(getattr(state, "enemies", None) or ()), item_cell(state))
+                               jungler_cell(getattr(state, "enemies", None) or (), getattr(state, "jungler_map", None)),
+                               item_cell(state))
                    if c is not None)
         return tuple(line for line in (l1, l2) if line)
     except Exception:

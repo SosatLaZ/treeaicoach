@@ -215,6 +215,8 @@ class OverlayState:
     # essentials strip (essentials.py, top centre): live_edge.EdgeStats numbers, config ``essentials_strip``
     edge_stats: Any = None
     show_essentials: bool = True
+    # enemy jungler probability map (jungler_map.JunglerMapState): soft side shading + essentials "70 % bas"
+    jungler_map: Any = None
 
 
 #: A visible champion whose data is older than this (s) - or stacked under another icon, or not
@@ -1063,6 +1065,46 @@ def _heat_layer(heat: Any, W: int, H: int) -> np.ndarray | None:
     return up
 
 
+#: Jungler probability map shading: peak opacity, smallest map-part probability shaded (map parts
+#: under it stay clear; probabilities rounded to 10 % so the layer only changes by visible steps).
+JMAP_SHADE_ALPHA = 0.10
+JMAP_MIN_P = 0.3
+
+
+def _jungler_map_layer(jm: Any, W: int, H: int, my_team: Any) -> np.ndarray | None:
+    """Coverage 0..1 (``W x H``) of the likely map parts of the hidden enemy jungler (cached)."""
+    try:
+        if bool(getattr(jm, "visible", False)) or bool(getattr(jm, "dead", False)):
+            return None
+        zones = getattr(jm, "zones", None) or {}
+        q = tuple(sorted((k, round(float(p) * 10.0) / 10.0) for k, p in zones.items()
+                         if k != "base" and float(p) >= JMAP_MIN_P))
+        if not q:
+            return None
+        key = ("jmap", q, W, H, str(my_team))
+        hit = _region_cache.get(key)
+        if hit is not None:
+            return hit[1]
+        from treeaicoach.jungler_map import zone_masks
+
+        masks = zone_masks(my_team)
+        acc = None
+        for k, p in q:
+            m = masks.get(k)
+            if m is not None:
+                layer = m.astype(np.float32) * np.float32(p)
+                acc = layer if acc is None else np.maximum(acc, layer)
+        if acc is None:
+            return None
+        up = cv2.resize(acc, (W, H), interpolation=cv2.INTER_LINEAR)
+        up = cv2.GaussianBlur(up, (0, 0), max(1.0, W / 40.0))
+        _region_cache.put(key, (None, up))
+        return up
+    except Exception:
+        log.debug("jungler map layer failed", exc_info=True)
+        return None
+
+
 def _label_pill(cv_: Canvas, cx: float, cy: float, text: str, font: Any, fg: Any, border: Any,
                 alpha: float = 1.0, bg_alpha: float = 0.88) -> tuple[float, float]:
     """Small rounded label centred on (cx, cy); returns its (w, h)."""
@@ -1468,6 +1510,16 @@ def _render_minimap(state: OverlayState, W: int, H: int, now: float) -> np.ndarr
 
     def near_anon(x: float, y: float, d: float = 1.6) -> bool:
         return any(math.hypot(x - lx, y - ly) < d * mr for lx, ly in anon)
+
+    # ---- enemy jungler probability map (jungler_map.py): once his fog estimate is gone and he is
+    #      neither visible nor dead, a very soft shading of the map parts where he probably is
+    jm = getattr(state, "jungler_map", None)
+    if jm is not None and not any(bool(getattr(f, "is_jungler", False)) for f in (state.fogs or []) if f is not None):
+        jv = next((e for e in enemies if e.is_jungler), None)
+        if jv is not None and not jv.visible and not bool(getattr(jv, "dead", False)):
+            shade = _jungler_map_layer(jm, W, H, getattr(state, "my_team", None))
+            if shade is not None:
+                cv_.paint(0, 0, shade, DANGER, JMAP_SHADE_ALPHA)
 
     # ---- fog zones: the enemy jungler's only, every one with show_ghosts. One clean style: the
     #      probability heat when the jungle model is informative, else a soft fill + outline

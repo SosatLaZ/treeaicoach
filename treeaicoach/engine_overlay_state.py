@@ -316,11 +316,22 @@ class OverlayStateMixin:
             role_notice=self._role_notice(now),
             tip_curated=True,               # _hud_line: the final card line (gauge line, no contradiction)
             edge_stats=self._edge_stats(),
+            jungler_map=self._jungler_map_state(),
             show_essentials=bool(getattr(cfg, "essentials_strip", True)),
             **self._timer_fields(game, cfg),
             **self._hud_card_fields(game, me_uv, tip, now),
             **self._prediction_fields(me, game, game_t, now),
         )
+
+    def _jungler_map_state(self) -> Any:
+        """jungler_map.JunglerMapState (essentials "70 % bas", minimap side shading) or None."""
+        try:
+            jm = getattr(self, "_jungler_map", None)
+            if jm is None or getattr(self._cfg, "safe_mode", False) or not self._in_game:
+                return None
+            return jm.state()
+        except Exception:
+            return None
 
     def _edge_stats(self) -> Any:
         """live_edge.EdgeStats of the live line (essentials strip), None outside a game / unknown."""
