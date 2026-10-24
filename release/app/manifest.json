@@ -1,25 +1,25 @@
 {
- "version": "2.21.1",
+ "version": "2.22.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "05b717b59e1fd1dd9d9e9089b6d12321f26d2868cc2d703cb6d56600c86281de",
+ "sha256": "f719809500979e0f2e6dd4c54aa52c188a5da27ea57ee7feaf8f4006cb4f643f",
  "chunks": [
   {
-   "name": "2.21.1/part-01.zip",
-   "size": 88161184,
-   "sha256": "54e16be4c43aff960d3edf8f04845e772b32632a939bdf4172f833c95d0dbc05",
-   "files": 261
+   "name": "2.22.0/part-01.zip",
+   "size": 88165628,
+   "sha256": "6d056f7e9038a034e9bce8e9265f685346730f13f7e9460866ddaa4504229b93",
+   "files": 259
   },
   {
-   "name": "2.21.1/part-02.zip",
-   "size": 9395694,
-   "sha256": "29947c060aaf681ac9866888fd68ebb6abf663fe8cbf0357fdc9bcff1603e0f2",
-   "files": 450
+   "name": "2.22.0/part-02.zip",
+   "size": 9415646,
+   "sha256": "db64ec75ab6fa575cbc7ab0fd508867136c67da77b03309552d1e768016fb233",
+   "files": 452
   }
  ],
- "total_size": 97556878,
+ "total_size": 97581274,
  "launcher": {
-  "sha256": "a7cfee118fe16981c674774f1e5a5be023fc628e42a86db072c268d83407516d",
-  "size": 7531483
+  "sha256": "c6dc23464055122a02925ec9f0e5f0303e0f58c7d467f6309581d1b425a7f3b3",
+  "size": 7532597
  },
- "notes": "2.21.1 : Discord t'entend enfin (ta voix \u00e9tait ignor\u00e9e)."
+ "notes": "2.22 : Whisper sur Discord, micro auto en partie, conseils crois\u00e9s, le coach apprend de ses alertes."
 }

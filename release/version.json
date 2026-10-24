@@ -1,6 +1,6 @@
 {
-  "version": "2.21.1",
-  "sha256": "a7cfee118fe16981c674774f1e5a5be023fc628e42a86db072c268d83407516d",
-  "size": 7531483,
-  "notes": "2.21.1 : Discord t'entend enfin (ta voix était ignorée)."
+  "version": "2.22.0",
+  "sha256": "c6dc23464055122a02925ec9f0e5f0303e0f58c7d467f6309581d1b425a7f3b3",
+  "size": 7532597,
+  "notes": "2.22 : Whisper sur Discord, micro auto en partie, conseils croisés, le coach apprend de ses alertes."
 }
