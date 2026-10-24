@@ -100,6 +100,8 @@ class JungleIntel:
     speed: float = 0.0                    # normalized units / s used for the ETAs
     fact_t: float | None = None           # time of the last fact (farm / recall)
     fact_points: tuple[tuple[float, float], ...] = ()
+    #: ``(alias lower, engine time)`` of the last purchase of EVERY enemy in the last 60 s (fog_intel.py)
+    recalls: tuple[tuple[str, float], ...] = ()
 
     def earliest_eta(self, uv: tuple[float, float] | None, now: float) -> float | None:
         """Earliest time (s from ``now``) he can stand on ``uv`` given the last Tab fact
@@ -319,8 +321,9 @@ class JungleIntelTracker:
         return path.heat(_gt_now(game, t), region, grid=int(region.shape[0]))
 
     def _make_state(self, t: float, jg: Any, speed: float) -> JungleIntel:
+        recalls = tuple((a.lower(), tt) for a, tt in self._recall.items() if 0.0 <= t - tt <= 60.0)
         if jg is None:
-            return JungleIntel()
+            return JungleIntel(recalls=recalls)
         alias = str(getattr(jg, "champion_alias", "") or "") or None
         name = str(getattr(jg, "champion_name", "") or "") or alias
         rec = self._recall.get(alias or "")
@@ -347,7 +350,7 @@ class JungleIntelTracker:
             last_farm_t=farm[0] if farm is not None else None,
             farm_side=farm[2] if farming else None, farm_owner=farm[3] if farming else None,
             farm_points=farm[1] if farming else (), recalled=recalled, recalled_t=rec,
-            dead=dead, text=text, speed=speed, fact_t=fact_t, fact_points=tuple(fact_pts))
+            dead=dead, text=text, speed=speed, fact_t=fact_t, fact_points=tuple(fact_pts), recalls=recalls)
 
 
 # ---------------------------------------------------------------------- helpers

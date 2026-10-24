@@ -78,7 +78,7 @@ treeaicoach/                    package Python (runtime, embarqué dans le .exe)
   detector.py  roster_matcher.py  patch_classifier.py  identifier.py  det_params.py   détection
   self_icon.py  hud_reader.py  camera_proj.py      mon icône (skins perso), HUD du bas, rectangle caméra
   hud_abilities.py              MA barre de sorts (Q W E R, D F, objets, balise) : recharge, prêt, charges
-  tracker.py  fog_tracker.py  jungle_intel.py  jungle_path.py   suivi, brouillard, jungler ennemi
+  tracker.py  fog_tracker.py  jungle_intel.py  jungle_path.py  fog_intel.py   suivi, brouillard, jungler ennemi, appels du Tab
   live_client.py  champions.py  game_data.py  meta.py  lcu.py  champ_select.py   données de partie
   render.py  demo.py            rendu de minimaps (entraînement, démo, autotest), partie simulée
 
@@ -1438,6 +1438,16 @@ Retour réel (« les conseils sont nuls ») : la carte affichait des généralit
   `voix:longue`, `incohérence:carte-bandeau`, `état:objectif-périmé`, `valeur:leçon-mort`,
   `état:recule-pendant-rappel` ; scénarios `jungler_bot`, `laner_recall`, `baron_3v0`, `fed_enemy`,
   `recall_tower`, `enemy_buys`. Tests : `tests/test_game_changers.py`.
+* **Renseignement du brouillard** (`fog_intel.py`, règles du même planificateur, données du Tab seulement) : un achat
+  vu pendant qu'un ennemi est invisible = il est dans sa fontaine (`JungleIntel.recalls`, tous les ennemis) →
+  `gc_jg_based` « Joue fort : Lee Sin est à la base, 25 s sans gank » (fenêtre = marche géodésique fontaine → moi à
+  560 unités/s, un plancher ; source `"base"` de `macro.jungler_location`, qui fait taire « jungler invisible » et
+  le premier gank) ; adversaire de voie qui achète invisible → `plates` « Pousse et plaque la tour : Darius est en
+  base » ou, PV < 50 % / ≥ 1 300 PO, « Rentre aussi : Darius est en base » ; `gc_obj_fight` (calculateur de combat
+  près d'un objectif épique : vivants, or des objets, niveaux) « Force le dragon : combat 5v4, +3,2k or » / « Laisse
+  le dragon, prends les larves : combat perdu (4v5) ». Mesures sur 20 parties vérifiées : `tools/fog_intel_truth.py`
+  (`fog_intel.VALIDATION`). Non construits faute de preuve : « full clear fini : gank probable » et le compte à
+  rebours des plaques (2026 : elles ne tombent plus à 14:00). Tests : `tests/test_fog_intel.py`.
 
 ## 24. Ressources oubliées (`resources_coach.py` + `hud_abilities.py`)
 

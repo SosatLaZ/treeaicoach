@@ -812,10 +812,10 @@ def _obj_word(call: Any) -> str | None:
 
 def voice_class(kind: str) -> str | None:
     """"big" / "lane" voice class of a call kind, None when the kind is never spoken."""
-    if kind in ("fight_won", "jungler_dead", "gc_baron_setup", "gc_cross_obj"):
+    if kind in ("fight_won", "jungler_dead", "gc_baron_setup", "gc_cross_obj", "gc_obj_fight"):
         return "big"
     if kind in ("plates", "cross_trade", "free_dragon", "wave_recall", "gc_level", "gc_jungler_far",
-                "gc_jungler_unseen", "gc_facecheck", "gc_enemy_buy", "gc_window"):
+                "gc_jungler_unseen", "gc_facecheck", "gc_enemy_buy", "gc_window", "gc_jg_based"):
         return "lane"
     return None
 
@@ -883,7 +883,7 @@ def voice_for(call: Any, ctx: Any = None, level: Any = "intermediaire") -> tuple
 def topic_of(kind: str) -> str:
     """Voice topic of a call kind (one topic is never spoken twice within :data:`VOICE_TOPIC_S`)."""
     return {"fight_won": "objective_now", "jungler_dead": "objective_now", "gc_baron_setup": "objective_now",
-            "gc_cross_obj": "objective_now",
+            "gc_cross_obj": "objective_now", "gc_obj_fight": "objective_now", "gc_jg_based": "jungler_base",
             "plates": "opp_gone", "cross_trade": "objective_trade", "free_dragon": "objective_trade",
             "gc_jungler_far": "jungler_side", "gc_jungler_unseen": "jungler_unseen",
             "wave_recall": "recall", "gc_level": "level", "gc_facecheck": "facecheck",
@@ -917,6 +917,12 @@ def voice_phrases() -> list[str]:
         out += _team_phrases()
     except Exception:
         log.debug("team call phrases unavailable", exc_info=True)
+    try:
+        from treeaicoach.fog_intel import VOICE_PHRASES as _fog_phrases
+
+        out += list(_fog_phrases)
+    except Exception:
+        log.debug("fog intel phrases unavailable", exc_info=True)
     return [x for x in dict.fromkeys(out) if len(x) <= VOICE_MAX_CHARS]
 
 

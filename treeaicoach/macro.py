@@ -124,6 +124,8 @@ KIND_COOLDOWN_S: dict[str, float] = {
     "gc_fed_defense": 240.0, "gc_facecheck": 180.0, "gc_enemy_buy": 45.0,
     "gc_first_gank": 600.0,         # first_gank.py: once per game
     "gc_cross_obj": 90.0,           # team_calls.py: "Ils sont 4 en bas : Baron maintenant"
+    "gc_jg_based": 240.0,           # fog_intel.py: "Joue fort : Lee Sin est à la base"
+    "gc_obj_fight": 120.0,          # fog_intel.py: "Force le dragon : combat 5v4"
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
 URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level", "gc_cross_obj",
@@ -159,6 +161,8 @@ OVERLAPS: dict[str, frozenset[str]] = {
     "gc_facecheck": frozenset({"missing", "deep"}),
     "gc_enemy_buy": frozenset({"item_spike"}),
     "gc_cross_obj": frozenset({"objective_trade", "pressure", "baron_pick", "objective_window", "jungler_side"}),
+    "gc_jg_based": frozenset({"jungler_unseen", "missing", "jungler_side"}),
+    "gc_obj_fight": frozenset({"objective_window", "objective_setup", "objective_trade", "baron_pick"}),
 }
 OVERLAP_S = 90.0
 #: a new call waits until the card line has been still this long (no card flicker), unless it is
@@ -314,7 +318,7 @@ class JunglerLoc:
     uv: tuple[float, float] | None = None
     conf: float = 0.0              # 0..1
     age: float = math.inf          # seconds since the information
-    source: str = ""               # "seen" | "tab" | "pit" | ""
+    source: str = ""               # "seen" | "tab" | "base" | "pit" | ""
     name: str = ""
 
 
@@ -537,6 +541,14 @@ def jungler_location(ctx: MacroCtx) -> JunglerLoc:
                     cv = sum(p_[1] for p_ in pts) / len(pts) if pts else None
                     loc.side, loc.conf, loc.age, loc.source = fside, conf, age, "tab"
                     loc.uv = (cu, cv) if cu is not None else None
+        try:                                          # bought while unseen: at his base (fog_intel.py)
+            from treeaicoach.fog_intel import base_confidence
+
+            bc = base_confidence(ctx)
+        except Exception:
+            bc = None
+        if bc is not None and bc[0] > loc.conf and ctx.enemy_team in FOUNTAIN:
+            loc.side, loc.uv, loc.conf, loc.age, loc.source = "base", FOUNTAIN[ctx.enemy_team], bc[0], bc[1], "base"
     except Exception:
         log.debug("jungler_location failed", exc_info=True)
     return loc
@@ -853,6 +865,15 @@ def _rule_plates(ctx: MacroCtx) -> GeniusCall | None:
         if uv is not None and theirs is not None and geometry.in_fountain(uv[0], uv[1], theirs) \
                 and (_f(getattr(tr, "hidden_s", None), 99.0) or 0.0) <= 6.0:
             absent.append((nm, 20.0, "base"))
+            continue
+        try:                                          # bought while unseen = he recalled (fog_intel.py)
+            from treeaicoach import fog_intel as FI
+
+            w_base = None if FI.sync_wanted(ctx) and not ctx.keep else FI.opp_base_window(ctx, a, stand[0][1])
+        except Exception:
+            w_base = None
+        if w_base is not None:
+            absent.append((nm, w_base, "base"))
     present = len(ctx.lane_opps) - len(absent)
     if not absent or present > 0:                         # bot lane: one of two away is not enough
         return None
@@ -1245,7 +1266,12 @@ def _all_rules() -> tuple:
         from treeaicoach.first_gank import RULES as FG_RULES
         from treeaicoach.game_changers import RULES as GC_RULES
 
-        return RULES + tuple(GC_RULES) + tuple(FG_RULES)
+        try:
+            from treeaicoach.fog_intel import RULES as FI_RULES
+        except Exception:
+            log.debug("fog intel unavailable", exc_info=True)
+            FI_RULES = ()
+        return RULES + tuple(GC_RULES) + tuple(FG_RULES) + tuple(FI_RULES)
     except Exception:
         log.debug("game changers unavailable", exc_info=True)
         return RULES
