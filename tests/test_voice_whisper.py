@@ -18,6 +18,13 @@ from treeaicoach import vad
 from treeaicoach import voice_assistant as va
 from treeaicoach.paths import asset_path
 
+
+@pytest.fixture(autouse=True)
+def _fresh_wake_claims() -> None:
+    """claim_wake() is process-wide: a Discord wake of another test must not mute this one."""
+    va._last_wake.update(pc=-1e9, discord=-1e9)
+
+
 BLOCK = va.BLOCK_FRAMES
 
 
@@ -335,3 +342,151 @@ def test_discord_question_text_from_whisper() -> None:
     clock[0] += 3.0
     lst.step(None)
     assert got == [("11", "quel item acheter ?")] and len(stt.calls) == 1
+
+
+# ------------------------------------------------------------------ Discord: the player AND a friend, via Whisper
+class _NamedSTT(_STT):
+    name = "base"
+
+    def __init__(self, texts: dict[int, str]) -> None:
+        super().__init__("")
+        self.texts = texts
+
+    def transcribe(self, pcm: bytes, prompt=None) -> str:  # noqa: ANN001
+        self.calls.append(len(pcm))
+        return self.texts.get(len(self.calls), "")
+
+
+def test_discord_player_and_friend_both_transcribed_by_whisper_answered_once() -> None:
+    """2.21 field report: on Discord the bot heard the others but transcribed badly, and ignored the player
+    while his PC assistant ran. Both now go to (mocked) Whisper, each question answered exactly once."""
+    clock = [100.0]
+    stt = _NamedSTT({1: "Hey coach, quel objet contre Darius ?", 2: "Hé coach, on fait le Baron ?"})
+    lst = dl.VoiceListener(make_rec=_Rec, clock=lambda: clock[0], threaded=False, stt=stt)
+    lst.should_listen = lambda: True
+    lst.owner_id, lst.bot_user_id = "11", "999"
+    got: list[tuple[str, str]] = []
+    lst.on_question = lambda u, q: got.append((u, q))
+    for uid in ("11", "22"):                               # the player (owner_id), then a friend
+        lst.step((uid, np.full(BLOCK, WAKE, "<i2").tobytes()))
+        clock[0] += 0.5
+        lst.step((uid, np.full(BLOCK, WORDS, "<i2").tobytes()))
+        clock[0] += 3.0
+        lst.step(None)
+        clock[0] += 1.0
+        lst.step(None)                                     # nothing more: answered once, not twice
+        lst.answered()
+        clock[0] += 1.0
+    assert got == [("11", "quel objet contre Darius ?"), ("22", "on fait le Baron ?")]
+    assert len(stt.calls) == 2 and lst.last_engine == "Whisper" and lst.whisper_jobs == 2
+    assert va._last_wake["discord"] > -1e9                  # the player's wake was claimed (PC stays quiet)
+    assert "Whisper base" in lst.whisper_status()
+
+
+def test_discord_whisper_dropped_keeps_vosk_words() -> None:
+    clock = [100.0]
+    lst = dl.VoiceListener(make_rec=_Rec, clock=lambda: clock[0], threaded=False, stt=_STT("x"))
+    lst.should_listen = lambda: True
+    got: list[tuple[str, str]] = []
+    lst.on_question = lambda u, q: got.append((u, q))
+    lst._submit = lambda uid, pcm, fb: (lst._results.append((uid, None, fb)), True)[1]   # stale: dropped
+    for sp in list(lst._speakers.values()):
+        sp._submit = lst._submit
+    lst.step(("11", np.full(BLOCK, WAKE, "<i2").tobytes()))
+    lst._speakers["11"]._submit = lst._submit
+    clock[0] += 0.5
+    lst.step(("11", np.full(BLOCK, WORDS, "<i2").tobytes()))
+    clock[0] += 3.0
+    lst.step(None)
+    assert got == [("11", "quelle ité")] and lst.whisper_dropped == 1 and lst.last_engine == "Vosk"
+
+
+# ------------------------------------------------------------------ the single Whisper thread
+class _SlowSTT:
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+        self.seen: list[bytes] = []
+        self.lock = threading.Lock()
+
+    def transcribe(self, pcm: bytes, prompt=None) -> str:  # noqa: ANN001
+        with self.lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        import time as _t
+        _t.sleep(0.05)
+        with self.lock:
+            self.active -= 1
+            self.seen.append(pcm)
+        return pcm.decode()
+
+
+def test_worker_one_thread_one_at_a_time_drops_stale_and_replaced() -> None:
+    stt = _SlowSTT()
+    w = stt_local.WhisperWorker(stt)
+    out: dict[str, list] = {}
+    ev = threading.Event()
+    jobs = [w.submit(f"q{i}".encode(), key=f"spk{i}", done=lambda t, i=i: out.setdefault(f"spk{i}", []).append(t))
+            for i in range(3)]
+    old = w.submit(b"old", key="spk9", done=lambda t: out.setdefault("old", []).append(t))
+    new = w.submit(b"new", key="spk9", done=lambda t: (out.setdefault("new", []).append(t), ev.set()))
+    assert ev.wait(5.0) and all(j.ev.wait(5.0) for j in jobs)
+    assert stt.max_active == 1                                     # never two transcriptions at once
+    assert out["old"] == [None] and old.dropped and out["new"] == ["new"] and not new.dropped
+    assert [out[f"spk{i}"] for i in range(3)] == [["q0"], ["q1"], ["q2"]]
+    names = [t.name for t in threading.enumerate() if t.name == "TreeAI-whisper"]
+    assert len(names) <= 1
+    clock = [0.0]
+    w2 = stt_local.WhisperWorker(stt, clock=lambda: clock[0])
+    gate = threading.Event()
+    stt2 = w2._stt_obj
+    first = w2.submit(b"a", max_age=10.0, done=lambda t: gate.wait(2.0))
+    late = w2.submit(b"b", max_age=1.0)
+    clock[0] = 5.0                                                  # « b » waited 5 s > its 1 s: dropped
+    gate.set()
+    assert late.ev.wait(5.0) and late.dropped and late.text is None and first.text == "a"
+    assert stt2 is stt and w2.transcribe(b"zz", timeout=5.0) == "zz"
+
+
+def test_input_trimmed_and_prompt_names_first() -> None:
+    assert stt_local.input_frames(3 * 16000) == 400 and stt_local.input_frames(100) == stt_local.MIN_FRAMES
+    assert stt_local.input_frames(40 * 16000) == 3000
+    p = stt_local.build_prompt(["Malphite", "Kha'Zix", "Garen"])
+    assert p.startswith("Malphite, Kha'Zix, Garen, Hey coach") and p.count("Garen") == 1 and p.endswith(".")
+    assert len(stt_local.build_prompt(["X" * 50] * 30, max_chars=100)) <= 101
+    w = stt_local.WhisperSTT(backend=lambda pcm, prompt: prompt)
+    va._NAMES_AT[0] = -1e9
+    game = SimpleNamespace(me=SimpleNamespace(champion_name="Garen"),
+                           allies=[SimpleNamespace(champion_name="Lux")], enemies=[SimpleNamespace(champion_name="Darius")])
+    va.refresh_game_names(w, fetch=lambda: game, now=1000.0)
+    assert w.names == ["Garen", "Lux", "Darius"] and w.transcribe(b"\1\0" * 10).startswith("Garen, Lux, Darius")
+    va.refresh_game_names(w, fetch=lambda: None, now=1010.0)         # re-read at most every 90 s
+    assert w.names == ["Garen", "Lux", "Darius"] and va.game_champions(lambda: None) == []
+
+
+def test_speech_only_and_last_speech_start() -> None:
+    speech = _clip()
+    pcm = _noise(1.5, sd=2.0) + speech + _noise(2.0, sd=2.0)
+    cut = vad.speech_only(pcm)
+    assert len(speech) * 0.8 < len(cut) < len(pcm) * 0.75          # long silences dropped, words kept
+    blocks = _blocks(speech + _noise(1.0, sd=2.0) + speech)
+    i = vad.last_speech_start(blocks)
+    assert len(_blocks(speech)) - 1 <= i <= len(_blocks(speech)) + 5   # the second utterance, not the first
+
+
+def test_silent_mic_in_game_is_replaced_live_and_kept_by_the_settings() -> None:
+    probe = lambda: [{"name": "Webcam", "db": -22.0, "all_zero": False, "error": ""}]  # noqa: E731
+    a = va.VoiceAssistant(mic_factory=lambda n: _FakeMic([]), recognizer_factory=lambda g: None, probe=probe)
+    a.mic_name = a.mic_label = "Casque"
+    eng = SimpleNamespace(rms=0.0, last_text="")
+    for _ in range(va.SILENT_MIC_BLOCKS):
+        a._observe(eng)
+    deadline = threading.Event()
+    for _ in range(100):
+        if a.mic_name == "Webcam":
+            break
+        deadline.wait(0.02)
+    assert a.mic_name == "Webcam" and a.snapshot()["auto_mic"] == "Webcam" and "Webcam" in a.status
+    a.configure(SimpleNamespace(voice_assistant=False, voice_assistant_mic="Casque", hotkey_voice_ask=""))
+    assert a.mic_name == "Webcam"                                  # a config refresh does not bring the dead one back
+    assert a.take_auto_mic() == "Webcam" and a.take_auto_mic() == ""

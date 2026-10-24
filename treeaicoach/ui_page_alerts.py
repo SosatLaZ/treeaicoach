@@ -35,9 +35,6 @@ def neural_voices() -> list[tuple[str, str]]:
         return [("fr-CA-SylvieNeural", "Sylvie (Québec)")]
 
 
-VA_MODEL_MB = 41
-
-
 def _mics() -> list[tuple[str, str]]:
     try:
         from treeaicoach.voice_assistant import list_mics  # noqa: PLC0415
@@ -73,40 +70,38 @@ class AlertsPage:
     def __init__(self, app: Any) -> None:
         self.app = app
         W = app.W
-        self.page = W.Page("Alertes et voix", "Le coach ne parle que pour ce qui ne peut pas attendre ; le reste est "
-                                              "écrit dans le panneau.")
-        say = self.page.section("Ce que le coach dit", action=W.button("Tester la voix", app.test_voice))
-        app.choice_row(say, "voice_level", "Quantité", "Minimal : ganks, « Recule », objectifs. Normal : en plus "
-                       "les rappels. Bavard : presque tout.", VOICE_LEVELS, segmented=True)
+        self.page = W.Page("Alertes et voix", "Le coach parle seulement pour ce qui ne peut pas attendre.")
+        say = self.page.section("Ce que le coach dit", action=W.button("Tester", app.test_voice,
+                                                                        tip="Le coach dit une phrase."))
+        app.choice_row(say, "voice_level", "Quantité", "Minimal : ganks, « Recule », objectifs. Bavard : "
+                       "presque tout.", VOICE_LEVELS, segmented=True)
         self.danger = W.Segmented(DANGER_MODES, danger_mode(app.cfg))
         self.danger.changed.connect(lambda m: app.set_options(**danger_mode_fields(m)))
-        say.add(W.Row("Annonce d'un danger", "Le bip part tout de suite ; la voix suit si elle est prête.",
-                      self.danger))
+        say.add(W.Row("Annonce d'un danger", "Le bip part tout de suite, la voix suit.", self.danger))
         app.bind("beep_on_danger", lambda: self.danger.set_value(danger_mode(app.cfg)))
         app.bind("danger_voice", lambda: self.danger.set_value(danger_mode(app.cfg)))
         app.switch_row(say, "stance_voice", "Annoncer la posture", "« Prudent » ou « Attaque » quand elle change.")
-        app.choice_row(say, "caster_style", "Mode annonceur", "Sobre : rien n'est lu. Coach : la probabilité de "
-                       "victoire aux moments clés. Annonceur : plus vivant.", CASTER_STYLES, segmented=True)
+        app.choice_row(say, "caster_style", "Mode annonceur", "Coach : tes chances de victoire aux moments clés.",
+                       CASTER_STYLES, segmented=True)
         app.switch_row(say, "item_advice_speak", "Lire les conseils d'achat", "Sinon ils restent écrits.")
-        app.switch_row(say, "ai_auto", "Conseils IA automatiques", "Désactivé par défaut : l'IA répond seulement "
-                       "quand tu lui poses une question (« Hey coach » ou F8).")
-        app.switch_row(say, "ai_speak", "Lire le conseil IA à voix haute", "Désactivé par défaut : le conseil IA "
-                       "reste écrit.")
+        app.switch_row(say, "ai_auto", "Conseils IA automatiques", "Sinon l'IA répond seulement à tes questions.")
+        app.switch_row(say, "ai_speak", "Lire le conseil IA", "Sinon il reste écrit.")
 
-        va = self.page.section("Assistant vocal", "Dis « Hey coach » puis ta question : le coach répond à voix "
-                                                  "haute en 1 ou 2 phrases (IA requise, compte dans la limite par "
-                                                  "partie). Reconnaissance hors ligne, micro écouté seulement en partie.",
-                               action=W.button("Tester : dis « Hey coach »", self.test_assistant))
-        app.switch_row(va, "voice_assistant", "Assistant vocal « Hey coach »", "Désactivé par défaut. La "
-                       f"première activation télécharge le modèle vocal français (~{VA_MODEL_MB} Mo).")
-        self.mic = app.choice_row(va, "voice_assistant_mic", "Micro", "Celui de ton casque de préférence.",
-                                  [("", "Micro par défaut de Windows")])
+        va = self.page.section("Assistant vocal", "Reconnaissance sur ton PC (Whisper, gratuit, hors ligne). "
+                               "Le micro est écouté seulement en partie.",
+                               action=W.button("Tester", self.test_assistant,
+                                               tip="Dis « Hey coach » puis une question (20 s)."))
+        app.switch_row(va, "voice_assistant", "Assistant « Hey coach »", "Dis « Hey coach » puis ta question : "
+                       "réponse à voix haute en une ou deux phrases.")
+        self.mic = app.depends(app.choice_row(va, "voice_assistant_mic", "Micro", "Celui de ton casque.",
+                                              [("", "Micro par défaut de Windows")]), "voice_assistant")
         app.run_job(_mics, lambda ms: self.mic.ctl.set_choices(ms, app.cfg.voice_assistant_mic), None,
                     name="TreeAI-ui-mics")
-        app.choice_row(va, "hotkey_voice_ask", "Touche « parler »", "Sans dire « Hey coach » : appuie, "
-                       "puis pose ta question.", hotkey_choices(str(getattr(app.cfg, "hotkey_voice_ask", "") or "")))
-        va.add(W.Row("Test micro", "5 s, même assistant éteint : parle normalement, le coach écrit ce qu'il a "
-                     "compris et le niveau de ton micro.", W.button("Test micro 5 s", self.mic_check)))
+        app.depends(app.choice_row(va, "hotkey_voice_ask", "Touche « parler »", "Appuie, puis pose ta question.",
+                                   hotkey_choices(str(getattr(app.cfg, "hotkey_voice_ask", "") or ""))),
+                    "voice_assistant")
+        self.check_row = app.depends(va.add(W.Row("Test micro", "5 s : micro utilisé, niveau et phrase comprise.",
+                                                  W.button("Test micro", self.mic_check))), "voice_assistant")
         # live « Écoute » panel: every stage of the chain is visible (mic level, last words, state)
         self.listen_row = va.add(W.Row("Écoute", listen_line(None)))
         self._listen_shown = ""
@@ -114,51 +109,45 @@ class AlertsPage:
         self._listen_timer.timeout.connect(self._tick_listen)
         self._listen_timer.start(400)
 
-        gank = self.page.section("Alertes de gank", "Quand un ennemi menace ta position. Le mode sûr les coupe "
-                                                    "toutes.")
+        gank = self.page.section("Alertes de gank", "Le mode sûr les coupe toutes.")
         app.switch_row(gank, "alert_jungler_approach", "Jungler ennemi qui approche", "L'alerte la plus utile.")
-        app.switch_row(gank, "gank_pre_alert", "Nom du jungler dès qu'il sort du brouillard",
-                       "« Lee Sin ! » quand il apparaît près de toi.")
+        app.switch_row(gank, "gank_pre_alert", "Nom du jungler qui sort du brouillard", "« Lee Sin ! » près de toi.")
         app.switch_row(gank, "alert_jungler_spotted", "Jungler repéré", "Où il vient d'être vu.")
         app.switch_row(gank, "alert_roam", "Ennemi en balade", "Un laner adverse quitte sa voie vers toi.")
         app.switch_row(gank, "alert_collapse", "Plusieurs ennemis arrivent", "Deux ennemis ou plus convergent.")
-        app.switch_row(gank, "alert_laner_mia", "Adversaire de voie disparu", "« Manquant » quand ton adversaire "
-                       "n'est plus visible.")
+        app.switch_row(gank, "alert_laner_mia", "Adversaire de voie disparu", "« Manquant » quand tu ne le vois plus.")
         app.slider_row(gank, "sensitivity", "Sensibilité", "Plus haut : alertes plus tôt, de plus loin.",
                        0.6, 1.6, 0.05, lambda v: fmt_decimal_fr(v, 2), to_value=float)
 
-        rem = self.page.section("Rappels", "Écrits dans le panneau ; lus à voix haute selon la quantité choisie.")
+        rem = self.page.section("Rappels", "Écrits dans le panneau, lus selon la quantité choisie.")
         app.switch_row(rem, "objective_timers", "Annonce des objectifs", "Dragon, Héraut, Baron avant leur apparition.")
         app.switch_row(rem, "recall_reminder", "Rappel pour dépenser ton or", "Quand un retour à la base vaut le coup.")
-        app.slider_row(rem, "recall_gold_threshold", "Seuil d'or du rappel", "Or à partir duquel le coach propose "
-                       "un retour.", 500, 3000, 50, lambda v: f"{fmt_int_fr(v)} or", to_value=lambda v: int(v))
+        app.depends(app.slider_row(rem, "recall_gold_threshold", "Seuil d'or du rappel", None, 500, 3000, 50,
+                                   lambda v: f"{fmt_int_fr(v)} or", to_value=lambda v: int(v)), "recall_reminder")
         app.switch_row(rem, "control_ward_reminder", "Balise de contrôle", "Penser à en acheter une.")
         app.switch_row(rem, "death_recap", "Récap de mort", "Une phrase sur la cause de ta mort.")
         app.switch_row(rem, "break_reminder", "Conseil de pause", "Après plusieurs parties d'affilée.")
 
-        v = self.page.section("Voix", "La voix neurale (en ligne) est la plus naturelle ; les voix Windows marchent "
-                                      "sans Internet.")
-        app.choice_row(v, "voice_engine", "Moteur de voix", "« Automatique » utilise la voix neurale si "
-                       "Internet répond.", ENGINE_LABELS)
+        v = self.page.section("Voix", "La voix neurale demande Internet ; les voix Windows marchent sans.")
+        app.choice_row(v, "voice_engine", "Moteur de voix", "« Automatique » : la voix neurale si Internet répond.",
+                       ENGINE_LABELS)
         cur = str(app.cfg.neural_voice or "fr-CA-SylvieNeural")
-        self.neural = app.choice_row(v, "neural_voice", "Voix neurale", "Voix Microsoft en ligne (française).",
+        self.neural = app.choice_row(v, "neural_voice", "Voix neurale", "Voix Microsoft en ligne.",
                                      [(cur, cur.replace("fr-FR-", "").replace("fr-CA-", "").replace("Neural", ""))])
         # the full list needs tts_neural (edge-tts, aiohttp: a slow import): read on a worker
         app.run_job(neural_voices, lambda vs: self.neural.ctl.set_choices(vs, app.cfg.neural_voice), None,
                     name="TreeAI-ui-neural-voices")
         # optional paid ElevenLabs voice with an African accent (tts_eleven.py): key first, then search, then pick
-        self.eleven_key = app.entry_row(v, "eleven_api_key", "Clé ElevenLabs (option)", "Voix française à accent "
-                                        "africain, offre payante ElevenLabs. Colle la clé, puis « Chercher ».",
-                                        secret=True, placeholder="Colle ta clé ici")
-        self.eleven_find = v.add(W.Row("Voix à accent africain", "Cherche dans la bibliothèque ElevenLabs, puis "
-                                       "choisis-la dans « Voix neurale ».", W.button("Chercher", self._find_eleven)))
+        self.eleven_key = app.entry_row(v, "eleven_api_key", "Clé ElevenLabs", "Option payante : voix française "
+                                        "à accent africain.", secret=True, placeholder="Colle ta clé ici")
+        self.eleven_find = v.add(W.Row("Voix à accent africain", "Puis choisis-la dans « Voix neurale ».",
+                                       W.button("Chercher", self._find_eleven)))
         self.neural_rate = app.slider_row(v, "neural_rate", "Vitesse de la voix neurale", "Défaut : +15 %.",
                                           -50, 100, 5, lambda x: f"{x:+.0f} %", to_value=lambda x: f"{int(x):+d}%",
                                           from_value=_pct_value)
         self.win_voice = app.choice_row(v, "voice_name", "Voix Windows", None, self._win_voices())
-        self.voice_rate = app.slider_row(v, "voice_rate", "Vitesse de la voix Windows", "De -10 (lent) à 10 "
-                                         "(rapide). Défaut : 2.", -10, 10, 1, lambda x: f"{x:+.0f}",
-                                         to_value=lambda x: int(x))
+        self.voice_rate = app.slider_row(v, "voice_rate", "Vitesse de la voix Windows", "Défaut : 2.", -10, 10, 1,
+                                         lambda x: f"{x:+.0f}", to_value=lambda x: int(x))
         app.slider_row(v, "voice_volume", "Volume", None, 0, 100, 5, lambda x: f"{x:.0f} %",
                        to_value=lambda x: int(x))
         self._sync_engine_rows()
@@ -171,12 +160,22 @@ class AlertsPage:
             import sys  # noqa: PLC0415
 
             mod = sys.modules.get("treeaicoach.voice_assistant")
+            if mod is not None:
+                self._keep_auto_mic(mod.assistant())
             text = listen_line(mod.assistant().snapshot() if mod is not None else None)
             if text != self._listen_shown:
                 self._listen_shown = text
                 self.listen_row.set_desc(text)
         except Exception:
             log.debug("listen panel refresh failed", exc_info=True)
+
+    def _keep_auto_mic(self, a: Any) -> None:
+        """The assistant replaced a silent mic during a game: the setting follows (saved, dropdown)."""
+        name = a.take_auto_mic()
+        if name and name != self.app.cfg.voice_assistant_mic:
+            self.app.set_option("voice_assistant_mic", name)
+            self.app.run_job(_mics, lambda ms: self.mic.ctl.set_choices(ms, name), None, name="TreeAI-ui-mics")
+            self.app.show_toast(f"Micro « {name} » gardé : l'autre n'envoyait aucun son.", "info")
 
     def test_assistant(self) -> None:
         """"Tester : dis « Hey coach »": 20 s of listening, even outside a game and with the switch
@@ -217,8 +216,7 @@ class AlertsPage:
             if not a.mic_check(_done):
                 app.show_toast("Test micro déjà en cours.", "info")
                 return
-            app.show_toast("Parle pendant 5 s…" if va.model_ready() else
-                           f"Téléchargement du modèle vocal (~{VA_MODEL_MB} Mo), puis parle 5 s…", "info")
+            app.show_toast("Parle pendant 5 s…", "info")
         except Exception:
             log.exception("mic check failed")
             app.show_toast("Test micro impossible sur ce PC.", "warning")

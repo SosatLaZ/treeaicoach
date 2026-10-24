@@ -16,6 +16,13 @@ import pytest
 from treeaicoach import voice_assistant as va
 from treeaicoach.ai_advisor import build_prompt, question_rule
 
+
+@pytest.fixture(autouse=True)
+def _fresh_wake_claims() -> None:
+    """claim_wake() is process-wide: a Discord wake of another test must not mute this one."""
+    va._last_wake.update(pc=-1e9, discord=-1e9)
+
+
 SILENCE = b"\0\0" * va.BLOCK_FRAMES
 
 

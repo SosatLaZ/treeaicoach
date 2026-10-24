@@ -50,6 +50,7 @@ MAX_SPEAKERS = 8
 RING_BLOCKS = 24                         # 6 s of a member's audio kept while waiting for the wake
 WAKE_AUDIO_BLOCKS = 16                   # the last 4 s go to Whisper with the question
 RING_QUESTION_MIN = WAKE_AUDIO_BLOCKS + 2
+WHISPER_MAX_WAIT_S = 6.0                 # a question waiting longer for the Whisper thread: Vosk's text instead
 
 
 # ------------------------------------------------------------------------------ packets
@@ -119,6 +120,8 @@ class Speaker:
                  stt: Callable[[], Any] | None = None) -> None:
         self.uid = uid
         self._stt = stt or (lambda: None)     # local Whisper when loaded (re-reads the question audio)
+        #: ``submit(uid, pcm, vosk_text) -> bool``: hands the question audio to the Whisper thread
+        self._submit: Callable[[str, bytes, str], bool] | None = None
         self.ring: collections.deque[bytes] = collections.deque(maxlen=RING_BLOCKS)   # real audio, wake phase
         self.q_audio: list[bytes] = []
         self.seg: Any = None                  # Silero VAD of this member (question end)
@@ -243,8 +246,9 @@ class Speaker:
         self.q_spoke = False
         if self._stt() is not None:
             try:
-                from treeaicoach.vad import Segmenter  # noqa: PLC0415
+                from treeaicoach.vad import Segmenter, last_speech_start  # noqa: PLC0415
 
+                self.q_audio = self.q_audio[last_speech_start(self.q_audio):]   # not the talk before the wake
                 self.seg = Segmenter()
             except Exception:
                 self.seg = None
@@ -289,20 +293,39 @@ class Speaker:
             if tail:
                 self.q_parts.append(tail)
         q = va.strip_wake(" ".join(self.q_parts)).strip()
-        stt = self._stt()
-        audio, self.q_audio, self.seg = b"".join(self.q_audio), [], None
-        if stt is not None and audio:
-            text = stt.transcribe(audio)
-            self.whisper_text = text
-            woke, rest = va.whisper_wake(text)
-            wq = (rest if woke else va.strip_wake(text)).strip()
-            if len(wq.split()) >= va.MIN_QUESTION_WORDS:
-                q = wq
+        audio, self.q_audio, seg, self.seg = b"".join(self.q_audio), [], self.seg, None
+        self.engine.reset()
+        if seg is not None and audio and self._submit is not None and self._stt() is not None:
+            # local Whisper re-reads the wake + question (Silero keeps the speech only) on THE Whisper
+            # thread; its text comes back as the « question » event (Vosk's words if it is dropped)
+            try:
+                from treeaicoach.vad import speech_only  # noqa: PLC0415
+
+                audio = speech_only(audio)
+            except Exception:
+                pass
+            self.stage = "transcription"
+            if self._submit(self.uid, audio, q):
+                return []
         if q:
             self.heard = q[-60:]
         self.stage = "écoute"
-        self.engine.reset()
         return [("question", q)]
+
+    def whisper_done(self, text: str | None, fallback: str) -> str:
+        """The question from Whisper's transcript (``None``: dropped / failed -> Vosk's ``fallback``)."""
+        q = fallback
+        if text is not None:
+            self.whisper_text = text
+            woke, rest = va.whisper_wake(text)
+            wq = (rest if woke else va.strip_wake(text)).strip()
+            if len(wq.split()) >= va.MIN_QUESTION_WORDS or not q:
+                q = wq
+        if q:
+            self.heard = q[-60:]
+        if self.stage == "transcription":
+            self.stage = "écoute"
+        return q
 
 
 # ------------------------------------------------------------------------------ the channel
@@ -317,6 +340,11 @@ class VoiceListener:
                  clock: Callable[[], float] = time.monotonic, threaded: bool = True, stt: Any = None) -> None:
         self._make_rec_fn = make_rec
         self._stt = stt
+        self._worker: Any = None            # stt_local.WhisperWorker: THE app's Whisper thread (lazy)
+        self._results: collections.deque[tuple[str, str | None, str]] = collections.deque()
+        self.whisper_jobs = 0
+        self.whisper_dropped = 0
+        self.last_engine = ""               # « Whisper » / « Vosk »: who wrote the last question
         self._clock = clock
         self._q: queue.Queue = queue.Queue(QUEUE_MAX)
         self._speakers: dict[str, Speaker] = {}
@@ -421,6 +449,63 @@ class VoiceListener:
         except Exception:
             return None
 
+    def whisper_status(self) -> str:
+        """« Whisper base local » / « Vosk (Whisper : téléchargement… 40 %) » for the Discord page."""
+        if self._stt is not None:
+            return f"Whisper {getattr(self._stt, 'name', '')} local".replace("  ", " ")
+        if self._make_rec_fn is None:
+            try:
+                a = va.assistant()
+                if a.whisper_ready(load=False):
+                    return f"Whisper {getattr(a._stt(), 'name', '')} local".replace("  ", " ")
+                st = str(getattr(a._stt(), "status", "") or "")
+            except Exception:
+                st = ""
+            return f"Vosk (Whisper : {st[:1].lower() + st[1:].rstrip('.')})" if st else "Vosk"
+        return "Vosk"
+
+    def _get_worker(self) -> Any:
+        if self._worker is None:
+            from treeaicoach import stt_local  # noqa: PLC0415
+
+            if self._stt is not None:            # tests: their own worker (inline when not threaded)
+                self._worker = stt_local.WhisperWorker(self._stt, threaded=self._threaded, clock=self._clock)
+            else:
+                self._worker = stt_local.worker()
+        return self._worker
+
+    def _submit(self, uid: str, pcm: bytes, fallback: str) -> bool:
+        """One question's audio to the Whisper thread; the result comes back through ``_results``."""
+        try:
+            def done(text: str | None, uid: str = uid, fallback: str = fallback) -> None:
+                self._results.append((uid, text, fallback))
+                if self._threaded:
+                    try:
+                        self._q.put_nowait(None)     # wake the listener thread now (not in 0.25 s)
+                    except queue.Full:
+                        pass
+            self.whisper_jobs += 1
+            if self._stt is None:
+                va.refresh_game_names(self._get_worker().stt())     # the game's champions in the prompt
+            self._get_worker().submit(pcm, key=f"discord:{uid}", done=done, max_age=WHISPER_MAX_WAIT_S)
+            return True
+        except Exception:
+            log.debug("Discord listen: whisper submit failed", exc_info=True)
+            return False
+
+    def _drain_results(self) -> list[tuple[str, str, str]]:
+        out = []
+        while self._results:
+            uid, text, fallback = self._results.popleft()
+            sp = self._speakers.get(uid)
+            if text is None:
+                self.whisper_dropped += 1
+            self.last_engine = "Vosk" if text is None else "Whisper"
+            q = sp.whisper_done(text, fallback) if sp is not None else (fallback if text is None else text)
+            log.info("Discord écoute : question lue par %s", self.last_engine)
+            out.append((uid, "question", q))
+        return out
+
     def _make_rec(self, grammar: Any) -> Any:
         try:
             if self._make_rec_fn is not None:
@@ -435,6 +520,7 @@ class VoiceListener:
         events: list[tuple[str, str, str]] = []
         if not self.active():
             self._speakers.clear()
+            self._results.clear()
             self.views = {}
             return
         if item is not None:
@@ -451,10 +537,15 @@ class VoiceListener:
                         oldest = min(self._speakers.values(), key=lambda s: s.last_audio)
                         self._speakers.pop(oldest.uid, None)
                     sp = self._speakers[uid] = Speaker(uid, self._make_rec, self._clock, self._whisper)
+                    sp._submit = self._submit
                 events += [(uid, k, t) for k, t in sp.feed(pcm)]
         for sp in list(self._speakers.values()):
             events += [(sp.uid, k, t) for k, t in sp.tick()]
         for uid, kind, text in events:
+            if kind == "question" and text and self._whisper() is None:
+                self.last_engine = "Vosk"
+            self._event(uid, kind, text)
+        for uid, kind, text in self._drain_results():     # Whisper finished (any thread) / inline (tests)
             self._event(uid, kind, text)
         now = self._clock()
         self.views = {sp.uid: sp.view(now) for sp in self._speakers.values()}

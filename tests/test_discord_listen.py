@@ -7,8 +7,17 @@ from types import SimpleNamespace
 
 import nacl.secret
 import numpy as np
+import pytest
 
 from treeaicoach import discord_listen as dl
+from treeaicoach import voice_assistant as va
+
+
+@pytest.fixture(autouse=True)
+def _fresh_wake_claims() -> None:
+    """claim_wake() is process-wide: a Discord wake of another test must not mute this one."""
+    va._last_wake.update(pc=-1e9, discord=-1e9)
+
 
 KEY = bytes(range(32))
 

@@ -1071,6 +1071,14 @@ class DiscordCaller:
                     self._roster = [dict(p) for p in (info.get("players") or []) if isinstance(p, dict)][:10]
                     self._map_sig = None
                     names = self._settings.say_name and self._state == "connected"
+                    champs = [str(p.get("champion") or "") for p in sorted(
+                        self._roster, key=lambda p: (not p.get("me"), bool(p.get("enemy"))))]
+                stt_mod = sys.modules.get("treeaicoach.stt_local")
+                if stt_mod is not None and any(champs):  # Whisper's prompt: this game's champions first
+                    try:
+                        stt_mod.transcriber().set_names([c for c in champs if c])
+                    except Exception:
+                        log.debug("whisper names failed", exc_info=True)
                 if names:                                # "Paul, bot gank" ready before the first gank
                     threading.Thread(target=self.render_names, name="TreeAI-discord-names", daemon=True).start()
                 return True
@@ -1876,7 +1884,8 @@ class DiscordCaller:
         if lst is None:
             return {"members": {}, "stats": {}, "testing": False, "status": ""}
         return {"members": lst.member_views(), "stats": rec.stats() if rec is not None else {},
-                "testing": lst.testing(), "status": lst.status}       # (no should_listen: under the lock)
+                "testing": lst.testing(), "status": lst.status,       # (no should_listen: under the lock)
+                "engine": lst.whisper_status(), "last_engine": lst.last_engine}
 
     def _on_wake(self, _uid: str) -> None:
         """Wake phrase heard: the soft « je t'écoute » chime in the channel, at once."""

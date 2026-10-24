@@ -65,6 +65,23 @@ LOL_VOCAB = ("Hey coach, gank, Baron Nashor, drake, dragon, Héraut, larves, war
              "ADC, support, flash, ulti, teleport, ignite, tower, inhib, back, push, farm, roam, Garen, Swain")
 
 
+#: the encoder reads the utterance + PAD_S of silence, not Whisper's fixed 30 s window (CTranslate2 >= 4
+#: accepts shorter inputs): x3 to x5 faster on a short question, same transcript (measured, see
+#: :data:`LATENCY_NOTE`). ``TRIM_INPUT = False`` restores the 30 s window.
+TRIM_INPUT = True
+PAD_S = 1.0
+MIN_FRAMES = 300
+BEAM_SIZE = 1
+
+
+def input_frames(samples: int) -> int:
+    """Mel frames (10 ms each) given to the encoder for ``samples`` of 16 kHz audio: rounded up to 1 s."""
+    if not TRIM_INPUT:
+        return 3000
+    n = int(samples / 160 + PAD_S * 100)
+    return max(MIN_FRAMES, min(3000, -(-n // 100) * 100))
+
+
 # ------------------------------------------------------------------ features (numpy only)
 def mel_filters(sr: int = SAMPLE_RATE, n_fft: int = 400, n_mels: int = 80) -> Any:
     """Slaney-scale mel filterbank, identical to Whisper's (librosa ``filters.mel`` defaults)."""
@@ -113,14 +130,23 @@ def pcm_to_float(pcm: bytes) -> Any:
 
 
 def build_prompt(names: Iterable[str] = (), vocab: str = LOL_VOCAB, max_chars: int = 600) -> str:
-    """The Whisper ``initial_prompt``: League vocabulary + the game's champion names (deduplicated)."""
+    """The Whisper ``initial_prompt``: the champions of the current game FIRST (the words a question names
+    most), then the League vocabulary (deduplicated, cut at ``max_chars`` on a word boundary)."""
     seen: list[str] = []
     for n in names:
         n = str(n or "").strip()
-        if n and n not in seen and n not in vocab:
+        if n and n.lower() not in (s.lower() for s in seen):
             seen.append(n)
-    txt = vocab + (", " + ", ".join(seen) if seen else "") + "."
-    return txt[:max_chars]
+    vocab_words = [w.strip() for w in vocab.split(",") if w.strip() and w.strip().lower() not in
+                   (s.lower() for s in seen)]
+    words = seen + vocab_words
+    txt = ""
+    for w in words:
+        nxt = (txt + ", " + w) if txt else w
+        if len(nxt) + 1 > max_chars:
+            break
+        txt = nxt
+    return txt + "."
 
 
 # ------------------------------------------------------------------ download (once, pinned)
@@ -276,6 +302,7 @@ class WhisperSTT:
         self._tok: Any = None
         self._ids: dict[str, int] = {}
         self._lock = threading.Lock()
+        self._run_lock = threading.Lock()
         self._loading = False
         self._failed_at = -1e9
         self.status = "Whisper pas encore chargé."
@@ -353,12 +380,13 @@ class WhisperSTT:
         prompt = self.prompt() if prompt is None else prompt
         t0 = time.monotonic()
         try:
-            if self._backend is not None:
-                text = str(self._backend(pcm, prompt) or "")
-            elif self._model is None:
-                return ""
-            else:
-                text = self._run(pcm, prompt)
+            with self._run_lock:                  # one decode at a time, whoever calls
+                if self._backend is not None:
+                    text = str(self._backend(pcm, prompt) or "")
+                elif self._model is None:
+                    return ""
+                else:
+                    text = self._run(pcm, prompt)
         except Exception:
             log.warning("Whisper : transcription échouée", exc_info=True)
             return ""
@@ -372,12 +400,12 @@ class WhisperSTT:
         import ctranslate2  # noqa: PLC0415
 
         n_mels = int(getattr(self._model, "n_mels", 80) or 80)
-        feats = log_mel(pcm_to_float(pcm), n_mels=n_mels)[None]
+        feats = log_mel(pcm_to_float(pcm), n_mels=n_mels, frames=input_frames(len(pcm) // 2))[None]
         ids = self._ids
         prev = self._tok.encode(" " + prompt.strip(), add_special_tokens=False).ids[-223:] if prompt else []
         seq = ([ids["<|startofprev|>"]] + prev if prev else []) + [
             ids["<|startoftranscript|>"], ids["<|fr|>"], ids["<|transcribe|>"], ids["<|notimestamps|>"]]
-        res = self._model.generate(ctranslate2.StorageView.from_array(feats), [seq], beam_size=3,
+        res = self._model.generate(ctranslate2.StorageView.from_array(feats), [seq], beam_size=BEAM_SIZE,
                                    max_length=160, suppress_blank=True, return_no_speech_prob=True,
                                    repetition_penalty=1.1, no_repeat_ngram_size=4)
         r = res[0]
@@ -400,7 +428,121 @@ def clean_text(text: str) -> str:
     return t
 
 
+# ------------------------------------------------------------------ one worker for the whole app
+class Job:
+    """One utterance waiting for Whisper. ``text`` is None until done (or dropped: stale / replaced)."""
+
+    __slots__ = ("pcm", "prompt", "key", "done", "t", "max_age", "text", "dropped", "ev")
+
+    def __init__(self, pcm: bytes, prompt: str | None, key: str, done: Callable[[str | None], None] | None,
+                 t: float, max_age: float) -> None:
+        self.pcm, self.prompt, self.key, self.done, self.t, self.max_age = pcm, prompt, key, done, t, max_age
+        self.text: str | None = None
+        self.dropped = False
+        self.ev = threading.Event()
+
+
+class WhisperWorker:
+    """ONE thread runs every Whisper transcription of the app (PC mic, each Discord speaker): a queue, at
+    most one transcription at a time (the CPU is the game's), stale items dropped (waited longer than their
+    ``max_age``: the player moved on), a newer item for the same ``key`` (speaker) replaces the waiting one.
+    ``done(text | None)`` runs on the worker thread (None = dropped / failed: the caller keeps Vosk's text).
+    ``threaded=False`` (tests): :meth:`submit` transcribes at once in the caller's thread."""
+
+    MAX_WAITING = 4
+
+    def __init__(self, stt: Any = None, *, threaded: bool = True, clock: Callable[[], float] = time.monotonic) -> None:
+        self._stt_obj = stt
+        self._threaded = threaded
+        self._clock = clock
+        self._jobs: list[Job] = []
+        self._cv = threading.Condition()
+        self._thread: threading.Thread | None = None
+        self.busy = False
+        self.done_n = 0
+        self.dropped = 0
+        self.last_wait_ms = 0.0
+
+    def stt(self) -> Any:
+        return self._stt_obj if self._stt_obj is not None else transcriber()
+
+    def pending(self) -> int:
+        with self._cv:
+            return len(self._jobs) + (1 if self.busy else 0)
+
+    def submit(self, pcm: bytes, *, key: str = "", done: Callable[[str | None], None] | None = None,
+               prompt: str | None = None, max_age: float = 8.0) -> Job:
+        job = Job(pcm, prompt, key, done, self._clock(), max_age)
+        if not self._threaded:
+            self._execute(job)
+            return job
+        drop: list[Job] = []
+        with self._cv:
+            if key:
+                drop = [j for j in self._jobs if j.key == key]
+                self._jobs = [j for j in self._jobs if j.key != key]
+            self._jobs.append(job)
+            while len(self._jobs) > self.MAX_WAITING:
+                drop.append(self._jobs.pop(0))
+            self._cv.notify()
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, name="TreeAI-whisper", daemon=True)
+                self._thread.start()
+        for j in drop:
+            self._finish(j, None, dropped=True)
+        return job
+
+    def transcribe(self, pcm: bytes, *, key: str = "", prompt: str | None = None, timeout: float = 20.0) -> str:
+        """Blocking helper (the PC assistant's own thread): queued like the others, waits for its turn."""
+        job = self.submit(pcm, key=key, prompt=prompt, max_age=timeout)
+        job.ev.wait(timeout)
+        return job.text or ""
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                if not self._jobs:
+                    self._cv.wait(60.0)
+                    if not self._jobs:
+                        self._thread = None
+                        return
+                job = self._jobs.pop(0)
+                self.busy = True
+            try:
+                if self._clock() - job.t > job.max_age:
+                    log.info("Whisper : phrase abandonnée (attendait depuis %.1f s)", self._clock() - job.t)
+                    self._finish(job, None, dropped=True)
+                else:
+                    self._execute(job)
+            finally:
+                with self._cv:
+                    self.busy = False
+
+    def _execute(self, job: Job) -> None:
+        self.last_wait_ms = (self._clock() - job.t) * 1000
+        try:
+            text = self.stt().transcribe(job.pcm, job.prompt)
+        except Exception:
+            log.warning("Whisper : transcription échouée", exc_info=True)
+            text = None
+        self._finish(job, text)
+
+    def _finish(self, job: Job, text: str | None, dropped: bool = False) -> None:
+        job.text, job.dropped = text, dropped
+        if dropped:
+            self.dropped += 1
+        else:
+            self.done_n += 1
+        job.ev.set()
+        if job.done is not None:
+            try:
+                job.done(text)
+            except Exception:
+                log.debug("Whisper job callback failed", exc_info=True)
+
+
 _SINGLETON: WhisperSTT | None = None
+_WORKER: WhisperWorker | None = None
 _SINGLETON_LOCK = threading.Lock()
 
 
@@ -410,6 +552,15 @@ def transcriber() -> WhisperSTT:
         if _SINGLETON is None:
             _SINGLETON = WhisperSTT()
         return _SINGLETON
+
+
+def worker() -> WhisperWorker:
+    """The app's single Whisper thread (PC mic + every Discord speaker)."""
+    global _WORKER
+    with _SINGLETON_LOCK:
+        if _WORKER is None:
+            _WORKER = WhisperWorker()
+        return _WORKER
 
 
 def wav_bytes(pcm: bytes, rate: int = SAMPLE_RATE) -> bytes:

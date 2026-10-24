@@ -183,3 +183,38 @@ class Segmenter:
     def open_audio(self) -> bytes:
         """The utterance in progress so far (pre-roll included), b"" when none."""
         return b"".join(self._cur) if self.in_speech else b""
+
+
+def speech_only(pcm: bytes, vad: Any = None, gap_s: float = 0.2) -> bytes:
+    """The speech of ``pcm`` (16 kHz mono int16): every VAD utterance (pre-roll included) joined by
+    ``gap_s`` of silence; long silences, comfort noise and the stream's empty tail are dropped, so Whisper
+    reads only words (and less audio: faster). ``pcm`` itself when the VAD finds nothing. Never raises."""
+    try:
+        seg = Segmenter(vad, end_silence_s=0.5)
+        parts = seg.feed(pcm)
+        tail = seg.flush()
+        if tail:
+            parts.append(tail)
+        if not parts:
+            return pcm
+        gap = b"\0\0" * int(gap_s * SAMPLE_RATE)
+        return gap.join(parts)
+    except Exception:
+        log.debug("speech_only failed", exc_info=True)
+        return pcm
+
+
+def last_speech_start(blocks: list[bytes], vad: Any = None) -> int:
+    """Index of the block where the LAST utterance of ``blocks`` starts (the « Hey coach » just heard,
+    not what was said before it), minus one block of pre-roll; 0 when unknown. Never raises."""
+    try:
+        seg = Segmenter(vad, end_silence_s=0.4)
+        start, was = 0, False
+        for i, b in enumerate(blocks):
+            seg.feed(b)
+            if seg.in_speech and not was:
+                start = max(0, i - 1)
+            was = seg.in_speech
+        return start
+    except Exception:
+        return 0

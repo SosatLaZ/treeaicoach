@@ -730,42 +730,19 @@ class SoundDeviceMic:
 
 
 def list_mics() -> list[tuple[str, str]]:
-    """``[(value, label)]`` of the input devices ("" = Windows default), MME names (one per device)."""
+    """``[(value, label)]`` for the « Micro » dropdown: "" = the Windows default recording device (its name
+    shown), then every input (MME names, one per device: :func:`audio_devices.list_inputs`)."""
     out: list[tuple[str, str]] = [("", "Micro par défaut de Windows")]
     try:
-        import sounddevice as sd  # noqa: PLC0415
+        from treeaicoach import audio_devices as ad  # noqa: PLC0415
 
-        apis = sd.query_hostapis()
-        seen: set[str] = set()
-        for d in sd.query_devices():
-            if int(d.get("max_input_channels", 0) or 0) <= 0:
-                continue
-            api = str(apis[d["hostapi"]]["name"]) if 0 <= d.get("hostapi", -1) < len(apis) else ""
-            name = str(d.get("name") or "").strip()
-            if sys.platform == "win32" and api != "MME":
-                continue
-            if name and name not in seen and "mappeur" not in name.lower() and "mapper" not in name.lower():
-                seen.add(name)
-                out.append((name, name))
+        dn = ad.default_input_name()
+        if dn:
+            out[0] = ("", f"Par défaut de Windows ({dn})")
+        out += [(d["name"], d["name"]) for d in ad.list_inputs()]
     except Exception:
         log.debug("list_mics failed", exc_info=True)
     return out
-
-
-def _device_index(name: str) -> Any:
-    if not name:
-        return None
-    try:
-        import sounddevice as sd  # noqa: PLC0415
-
-        apis = sd.query_hostapis()
-        for i, d in enumerate(sd.query_devices()):
-            if int(d.get("max_input_channels", 0) or 0) > 0 and str(d.get("name") or "").strip() == name:
-                if sys.platform != "win32" or str(apis[d["hostapi"]]["name"]) == "MME":
-                    return i
-    except Exception:
-        pass
-    return None
 
 
 # ------------------------------------------------------------------ model (downloaded once)
@@ -849,12 +826,16 @@ class VoiceAssistant:
         #: local Whisper (stt_local.WhisperSTT): the real app uses the process-wide one, tests inject a fake;
         #: with injected recognizers and no ``stt`` the assistant stays Vosk-only (deterministic tests)
         self._stt_obj = stt
+        self._stt_injected = stt is not None
         self._stt_default = stt is None and recognizer_factory is None
         self._stt_loading = False
         self._probe = probe
         self.mic_label = ""              # the device really opened (« Casque (HyperX) »)
         self.mic_db = -96.0
         self.suggested_mic = ""          # « Test micro »: the input that HAS signal when the chosen one is silent
+        self._auto_from = ""             # live auto-probe: the configured mic that sent only zeros…
+        self._auto_to = ""               # … and the one that hears the player (the Alerts page saves it)
+        self._auto_probed = False
         self.whisper_text = ""
         self._ww_times: list[float] = []
         self._last_utt: tuple[float, bytes] = (-1e9, b"")
@@ -916,6 +897,8 @@ class VoiceAssistant:
         try:
             enabled = bool(getattr(cfg, "voice_assistant", False))
             mic = str(getattr(cfg, "voice_assistant_mic", "") or "")
+            if self._auto_to and mic == self._auto_from:
+                mic = self._auto_to                  # the silent mic was replaced live (not saved yet)
             with self._lock:
                 changed_mic = mic != self.mic_name
                 self.enabled, self.mic_name = enabled, mic
@@ -1048,7 +1031,7 @@ class VoiceAssistant:
                 pcm = b"".join(chunks)
                 seg = self._segmenter()
                 speech = b"".join(seg.feed(pcm) + [seg.flush() or b""]) if seg is not None else pcm
-                text, engine = (self._stt().transcribe(speech) if speech else ""), "Whisper"
+                text, engine = (self._transcribe(speech) if speech else ""), "Whisper"
                 self.whisper_text = text
             db = 20 * math.log10(max(peak, 1.0) / 32768.0)
             self.mic_db = db
@@ -1096,6 +1079,31 @@ class VoiceAssistant:
                 except Exception:
                     pass
 
+    def _auto_probe(self) -> None:
+        """The chosen mic sends only zeros in a game (Windows privacy / a dead input): every other input is
+        measured 1 s; the one that has signal replaces it NOW (the « Micro » setting is saved when the
+        Alerts page is shown). Never raises."""
+        try:
+            found = self._probe_others()
+            if not found or found["name"] == self.mic_name:
+                return
+            log.warning("Assistant vocal : micro « %s » muet, « %s » capte du son (%.0f dB) : je l'utilise",
+                        self.mic_label, found["name"], found["db"])
+            with self._lock:
+                self._auto_from, self._auto_to = self.mic_name, found["name"]
+                self.suggested_mic = self.mic_name = found["name"]
+            self.status = (f"Le micro choisi n'envoyait aucun son : j'écoute « {found['name']} » à la place "
+                           "(gardé dans Alertes et voix).")
+            self._wake_evt.set()                     # reopen the stream on it
+        except Exception:
+            log.debug("auto probe failed", exc_info=True)
+
+    def take_auto_mic(self) -> str:
+        """The live replacement mic to save in the settings ("" when none). One shot (UI thread)."""
+        with self._lock:
+            name, self._auto_from, self._auto_to = self._auto_to, "", ""
+        return name
+
     def _probe_others(self) -> dict | None:
         """The chosen mic is silent: every other input is measured 1 s (the player keeps talking)."""
         try:
@@ -1125,6 +1133,7 @@ class VoiceAssistant:
                 "testing": self._testing(), "wakes": self.wakes, "questions": self.questions,
                 "dropped_self": self.dropped_self, "mic_rate": self.mic_rate, "engine_error": ENGINE_ERROR,
                 "silent_mic": self.silent_mic, "mic_label": self.mic_label, "suggested_mic": self.suggested_mic,
+                "auto_mic": self._auto_to, "mic_db": round(self.mic_db, 1),
                 "whisper": bool(self._stt_obj is not None and self._stt_obj.ready()),
                 "whisper_status": str(getattr(self._stt_obj, "status", "") or ""), "whisper_text": self.whisper_text}
 
@@ -1277,10 +1286,13 @@ class VoiceAssistant:
                             " (tout à zéro : blocage Windows probable)" if zero else "")
                 self.status = ("Le micro n'envoie aucun son (tout est à zéro) : Windows le bloque sûrement. "
                                "Paramètres > Confidentialité > Microphone : autorise l'accès ET les applications "
-                               "de bureau. Puis « Test micro 5 s »." if zero else
+                               "de bureau. Puis « Test micro » dans Alertes et voix." if zero else
                                "Le micro n'envoie aucun son : coupé, pas le bon, ou bloqué par Windows "
                                "(Paramètres > Confidentialité > Microphone : autoriser les applications de bureau). "
-                               "« Test micro 5 s » cherche celui qui marche.")
+                               "« Test micro » (Alertes et voix) cherche celui qui marche.")
+                if zero and not self._auto_probed and (self._probe is not None or self._mic_factory is None):
+                    self._auto_probed = True             # once per session: find the input that has signal
+                    threading.Thread(target=self._auto_probe, name="TreeAI-mic-probe", daemon=True).start()
 
     def _run(self) -> None:
         mic: Mic | None = None
@@ -1397,6 +1409,23 @@ class VoiceAssistant:
                 self._stt_default = False
         return self._stt_obj
 
+    def _transcribe(self, pcm: bytes) -> str:
+        """Whisper text of one utterance. The app's own Whisper goes through THE Whisper thread (one
+        transcription at a time with Discord's speakers); the champions of the game bias the prompt."""
+        w = self._stt()
+        if w is None or not pcm:
+            return ""
+        if self._stt_obj is not None and self._stt_injected:
+            return str(w.transcribe(pcm) or "")
+        try:
+            from treeaicoach import stt_local  # noqa: PLC0415
+
+            refresh_game_names(w)
+            return stt_local.worker().transcribe(pcm, key="pc", timeout=20.0)
+        except Exception:
+            log.debug("whisper worker failed", exc_info=True)
+            return ""
+
     def whisper_ready(self, load: bool = True) -> bool:
         """Whisper loaded; else (``load``) its download / loading starts in the background (once)."""
         w = self._stt()
@@ -1437,7 +1466,7 @@ class VoiceAssistant:
         if len(self._ww_times) >= WHISPER_WAKE_PER_MIN:
             return False
         self._ww_times.append(now)
-        text = self._stt().transcribe(utt)
+        text = self._transcribe(utt)
         ok, rest = whisper_wake(text)
         if not ok:
             return False
@@ -1487,7 +1516,7 @@ class VoiceAssistant:
                 got = us[0]
                 break
         pcm = prefix + got
-        text = self._stt().transcribe(pcm) if pcm else ""
+        text = self._transcribe(pcm) if pcm else ""
         self.whisper_text = text
         ok, rest = whisper_wake(text)
         q = (rest if ok else strip_wake(text)).strip()
@@ -1617,6 +1646,46 @@ class VoiceAssistant:
                 done(self.status, False)
             except Exception:
                 pass
+
+
+_NAMES_AT = [-1e9]
+NAMES_TTL_S = 90.0
+
+
+def game_champions(fetch: Callable[[], Any] | None = None) -> list[str]:
+    """The champions of the current game (mine, my team, then the enemies) from the official Live Client
+    API on this PC (127.0.0.1:2999, read-only), [] outside a game. Never raises."""
+    try:
+        if fetch is None:
+            from treeaicoach.live_client import LiveClient  # noqa: PLC0415
+
+            fetch = LiveClient(timeout=0.5).fetch
+        game = fetch()
+        if game is None:
+            return []
+        me = getattr(game, "me", None)
+        players = ([me] if me is not None else []) + list(getattr(game, "allies", None) or []) + \
+            list(getattr(game, "enemies", None) or [])
+        return [str(getattr(p, "champion_name", "") or getattr(p, "champion_alias", "")) for p in players
+                if p is not None and (getattr(p, "champion_name", "") or getattr(p, "champion_alias", ""))]
+    except Exception:
+        log.debug("game champions unavailable", exc_info=True)
+        return []
+
+
+def refresh_game_names(stt: Any, fetch: Callable[[], Any] | None = None, now: float | None = None) -> None:
+    """Whisper's prompt gets the game's champions (« Malphite », « Kha'Zix »…), re-read every
+    :data:`NAMES_TTL_S` at most (on a question only). Never raises."""
+    try:
+        t = time.monotonic() if now is None else now
+        if t - _NAMES_AT[0] < NAMES_TTL_S or not hasattr(stt, "set_names"):
+            return
+        _NAMES_AT[0] = t
+        names = game_champions(fetch)
+        if names:
+            stt.set_names(names)
+    except Exception:
+        log.debug("refresh_game_names failed", exc_info=True)
 
 
 _SINGLETON: VoiceAssistant | None = None

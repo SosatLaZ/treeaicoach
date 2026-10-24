@@ -14,10 +14,10 @@ from typing import Any, Callable
 log = logging.getLogger(__name__)
 
 POLL_MS = 1000
-DISCORD_HELP = ("Une seule fois : sur discord.com/developers/applications, « New Application », onglet Bot, "
-                "« Reset Token », puis colle-le ici. Invite le bot sur ton serveur avec le bouton. Ton identifiant : "
-                "Paramètres Discord > Avancés > Mode développeur, puis clic droit sur ton nom > « Copier "
-                "l'identifiant ». Le bot tourne dans TreeAI : il n'est là que quand l'app est ouverte.")
+DISCORD_HELP = ("Une seule fois : discord.com/developers/applications > « New Application » > Bot > « Reset "
+                "Token », colle-le ici, puis « Inviter ». Ton identifiant : Discord > Paramètres > Avancés > Mode "
+                "développeur, clic droit sur ton nom > « Copier l'identifiant ». Le bot n'est là que quand TreeAI "
+                "est ouvert.")
 STATE_TITLES = {"off": "Bot désactivé", "no_token": "Token manquant", "connecting": "Connexion…",
                 "bad_token": "Token refusé", "error": "Erreur de connexion", "unavailable": "Indisponible"}
 OK_MARK, BAD_MARK, WAIT_MARK = "✓", "✗", "·"
@@ -63,8 +63,7 @@ def listen_text(view: dict | None) -> str:
     return " · ".join(bits)
 
 
-LISTEN_TEST_DESC = ("30 s, même hors partie : chacun dit « Hey coach » puis une question. Son niveau et son "
-                    "dernier mot entendu s'affichent sous son nom.")
+LISTEN_TEST_DESC = "30 s, même hors partie : chacun dit « Hey coach » puis une question."
 
 
 def listen_chain_text(listen: dict | None) -> str:
@@ -86,6 +85,9 @@ def listen_chain_text(listen: dict | None) -> str:
         if k:
             bits.append(f"{fr(k)} {label}")
     status = str((listen or {}).get("status") or "")
+    engine = str((listen or {}).get("engine") or "")
+    if engine:
+        bits.append(f"transcription : {engine}")
     return " · ".join(bits) + (f"\n{status}" if status else "")
 
 
@@ -245,9 +247,8 @@ class DiscordPage:
         self._sig_channels: Any = None
         self._sig_events: Any = None
         self.snap: dict = {}
-        self.page = W.Page("Discord", "Le bot annonce « Top gank », « Mid gank », « Bot gank » et le matchup dans "
-                                      "ton salon vocal, pour toi et pour tes amis du salon. Ici tu vois où il est "
-                                      "et ce qu'il fait.")
+        self.page = W.Page("Discord", "Le bot annonce les ganks et le matchup dans ton salon vocal, pour toi "
+                                      "et tes amis.")
 
         # -- state card
         top = self.page.section("État")
@@ -289,7 +290,7 @@ class DiscordPage:
         app.bind("discord_token", lambda: None if self.token.hasFocus() else self.token.setText(
             str(app.cfg.discord_token or "")))
         self.steps["token"] = setup.add(W.Row(self.STEP_TITLES["token"], "", tok))
-        self.invite_btn = W.button("Inviter sur un serveur", self._open_invite)
+        self.invite_btn = W.button("Inviter", self._open_invite, tip="Ouvre la page d'invitation du bot.")
         self.steps["guilds"] = setup.add(W.Row(self.STEP_TITLES["guilds"], "", self.invite_btn))
         self.user_id = QtWidgets.QLineEdit(str(app.cfg.discord_user_id or ""))
         self.user_id.setPlaceholderText("Ex. 123456789012345678")
@@ -305,63 +306,58 @@ class DiscordPage:
         bh = QtWidgets.QHBoxLayout(tests)
         bh.setContentsMargins(0, 0, 0, 0)
         bh.setSpacing(8)
-        self.say_gank = W.button("Dire « Bot gank »", lambda: self._say("gank"))
-        self.say_matchup = W.button("Dire le matchup", lambda: self._say("matchup"))
+        self.say_gank = W.button("Gank", lambda: self._say("gank"), tip="Le bot dit « Bot gank ».")
+        self.say_matchup = W.button("Matchup", lambda: self._say("matchup"), tip="Le bot dit le matchup.")
         bh.addWidget(self.say_gank)
         bh.addWidget(self.say_matchup)
         self.steps["test"] = setup.add(W.Row(self.STEP_TITLES["test"], "", tests))
 
         # -- what the bot says, how loud
-        says = self.page.section("Annonces du bot", "Par défaut le bot dit seulement les ganks et le matchup. "
-                                                     "Le reste est optionnel.")
+        on = ("discord_enabled",)
+        says = self.page.section("Annonces du bot", "Par défaut : les ganks et le matchup. Le reste est en option.")
+        self._says = says
         self.voice_row = says.add(W.Row("Voix du bot", ""))
-        app.slider_row(says, "discord_volume", "Volume du bot", "Ce que tes amis entendent. Le bip est plus "
-                       "doux que la voix.", 0, 100, 5, lambda v: f"{int(v)} %", to_value=lambda v: int(round(v)))
-        app.switch_row(says, "discord_ally_ganks", "Ganks de tes amis",
-                       "« Bot gank », « Top gank »... aussi quand un ami du salon vocal qui joue avec toi se fait "
-                       "gank. Seul le salon l'entend, pas ton PC.")
-        app.switch_row(says, "discord_say_name", "Dire le pseudo",
-                       "« Paul, bot gank » au lieu de « Bot gank » pour les ganks de tes amis.")
-        app.choice_row(says, "discord_route", "Où passe le son de l'app",
-                       "« Tout par Discord » : alertes, bips, voix du coach et réponses de l'IA passent par le "
-                       "bot, ton PC reste muet (tant que le bot est dans le vocal). « Tout sur mon PC » : le bot "
-                       "ne dit rien.",
-                       [("discord", "Tout par Discord (bot)"), ("pc", "Tout sur mon PC"), ("both", "Les deux")],
-                       segmented=True,
-                       on_change=lambda v: (app.set_option("discord_only", v == "discord"),
-                                            app.set_option("discord_route", v)))
-        app.switch_row(says, "discord_friends_matchup", "Matchup de chaque ami",
-                       "Au début de la partie, une phrase par ami du salon : « Paul, Darius contre Garen : "
-                       "favorable jusqu'au 6 ».")
-        app.switch_row(says, "discord_listen", "Écouter « Hey coach » dans le vocal",
-                       "N'importe qui du salon dit « Hey coach » puis sa question : petit son, et le bot "
-                       "répond dans le salon en une ou deux phrases. Reconnaissance sur ton PC (modèle "
-                       "français téléchargé une fois, ~41 Mo), seulement en partie.")
-        self._listen_row = says.add(self.W.Row("Tester l'écoute", LISTEN_TEST_DESC,
-                                               self.W.button("Tester : dis « Hey coach »", self._listen_test)))
-        self._listen_chain = ""
-        app.switch_row(says, "discord_objectives", "Objectifs",
-                       "« Dragon dans 30 secondes », « Baron dans 30 secondes », « Larves dans 30 secondes ».")
-        app.switch_row(says, "discord_team_calls", "Calls d'équipe",
-                       "Les décisions qui gagnent : « Ils sont 4 bot : Baron maintenant », « 3 morts : "
-                       "Baron maintenant », « Dragon dans une minute : vision rivière du bas ».")
-        app.switch_row(says, "discord_jungler_seen", "Jungler ennemi vu",
-                       "« Jungler ennemi vu top / mid / bot », jamais pendant un gank.")
-        app.switch_row(says, "discord_summary", "Résumé de fin de partie",
-                       "Une phrase : « Victoire en 32 minutes, 9 ganks évités sur 10 ».")
-        app.switch_row(says, "discord_team_recap", "Bilan d'équipe écrit",
-                       "Après la partie, un message dans le chat du salon vocal : pour chaque ami de ton "
-                       "équipe, sa meilleure stat et une chose à corriger. Aucun pseudo n'est enregistré.")
+        app.slider_row(says, "discord_volume", "Volume du bot", "Ce que tes amis entendent.", 0, 100, 5,
+                       lambda v: f"{int(v)} %", to_value=lambda v: int(round(v)))
+        app.choice_row(says, "discord_route", "Où passe le son de l'app", "Par Discord : ton PC reste muet tant "
+                       "que le bot est dans le vocal.",
+                       [("discord", "Par Discord"), ("pc", "Sur mon PC"), ("both", "Les deux")], segmented=True,
+                       on_change=lambda v: app.set_options(discord_only=v == "discord", discord_route=v))
+        app.switch_row(says, "discord_ally_ganks", "Ganks de tes amis", "Quand un ami du salon qui joue avec toi "
+                       "se fait gank. Seul le salon l'entend.")
+        app.depends(app.switch_row(says, "discord_say_name", "Dire le pseudo", "« Paul, bot gank »."),
+                    "discord_ally_ganks")
+        app.switch_row(says, "discord_friends_matchup", "Matchup de chaque ami", "Au début : « Paul, Darius contre "
+                       "Garen : favorable jusqu'au 6 ».")
+        app.switch_row(says, "discord_objectives", "Objectifs", "« Dragon dans 30 secondes », Baron, larves.")
+        app.switch_row(says, "discord_team_calls", "Calls d'équipe", "« Ils sont 4 bot : Baron maintenant ».")
+        app.switch_row(says, "discord_jungler_seen", "Jungler ennemi vu", "« Jungler ennemi vu top », jamais "
+                       "pendant un gank.")
+        app.switch_row(says, "discord_summary", "Résumé de fin de partie", "« Victoire en 32 minutes, 9 ganks "
+                       "évités sur 10 ».")
+        app.switch_row(says, "discord_team_recap", "Bilan d'équipe écrit", "Dans le chat du salon après la partie : "
+                       "une force et une chose à corriger par ami. Aucun pseudo enregistré.")
         from treeaicoach.ui_page_settings import hotkey_choices  # noqa: PLC0415
 
-        app.choice_row(says, "hotkey_discord_mute", "Touche pour couper le bot",
-                       "Coupe ou rétablit le bot en jeu (il se tait tout de suite).",
+        app.choice_row(says, "hotkey_discord_mute", "Touche pour couper le bot", "Il se tait tout de suite.",
                        hotkey_choices(str(app.cfg.hotkey_discord_mute or "")))
+
+        # -- « Hey coach » heard in the voice channel
+        ear = self.page.section("Écoute « Hey coach »", "Reconnaissance sur ton PC (Whisper, gratuit), "
+                                "seulement en partie.")
+        self._ear = ear
+        app.switch_row(ear, "discord_listen", "Écouter le salon vocal", "Toi ou un ami dit « Hey coach » puis sa "
+                       "question : le bot répond dans le salon.")
+        self._listen_row = app.depends(ear.add(W.Row("Tester l'écoute", LISTEN_TEST_DESC,
+                                                     W.button("Tester", self._listen_test))), "discord_listen")
+        self._listen_chain = ""
+        for sec in (says, ear):
+            app.depends(sec, *on)
 
         # -- who is who in the voice channel
         self._sig_friends: Any = None
-        friends = self.page.section("Dans le vocal", "Le bot reconnaît tes amis du salon parmi tes alliés "
-                                                     "(pseudo Discord et Riot). Corrige avec le menu si besoin.")
+        friends = self.page.section("Dans le vocal", "Tes amis du salon, reconnus par leur pseudo. Corrige avec "
+                                                     "le menu si besoin.")
         friends.group.hide()
         self._friends_holder = QtWidgets.QWidget()
         self._friends_lay = QtWidgets.QVBoxLayout(self._friends_holder)
@@ -371,9 +367,9 @@ class DiscordPage:
         app.bind("discord_links", lambda: self._update_friends(self.snap or {}, force=True))
 
         # -- where the bot is
-        self.leave_btn = W.button("Quitter le salon", self._leave)
-        where = self.page.section("Où est le bot", "Le bot te suit : il rejoint ton salon vocal dès que tu y "
-                                                   "entres et le quitte avec toi. Tu peux aussi le placer à la main.", action=self.leave_btn)
+        self.leave_btn = W.button("Quitter", self._leave, tip="Le bot quitte le salon vocal.")
+        where = self.page.section("Où est le bot", "Il te suit dans ton salon vocal. Tu peux aussi le placer à la "
+                                                   "main.", action=self.leave_btn)
         self.server = W.Combo([], None)
         self.server.setMinimumWidth(220)
         self.server.activated.connect(lambda _i: self._pick_server(self.server.value()))
@@ -385,7 +381,7 @@ class DiscordPage:
         where.layout().insertWidget(2, self._chan_holder)      # voice channels: under the server row
 
         # -- log
-        logs = self.page.section("Journal du bot", "Les 10 dernières choses que le bot a faites ou dites.")
+        logs = self.page.section("Journal du bot", "Les 10 dernières actions du bot.")
         logs.group.hide()
         self._log_holder = QtWidgets.QWidget()
         self._log_lay = QtWidgets.QVBoxLayout(self._log_holder)
@@ -576,10 +572,10 @@ class DiscordPage:
                 bits.append("le bot est ici")
             if not c["can_speak"]:
                 bits.append("il manque : " + ", ".join(c.get("missing") or []))
-            btn = W.button("Rejoindre ce salon", lambda cid=c["id"]: self._join(cid),
+            btn = W.button("Rejoindre", lambda cid=c["id"]: self._join(cid),
                            "primary" if c["me_here"] and not c["bot_here"] else None)
             btn.setEnabled(bool(c["can_speak"]) and not c["bot_here"])
-            row = grp.add(W.Row(("●  " if c["me_here"] else "") + "#" + c["name"], " · ".join(bits), btn))
+            row = grp.add(W.Row("#" + c["name"], " · ".join(bits), btn))
             if c["me_here"]:
                 W.set_prop(row.title, "tone", "accent")
         if not chans:
