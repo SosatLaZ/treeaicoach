@@ -1,25 +1,25 @@
 {
- "version": "2.24.1",
+ "version": "2.25.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "f12c57788eb482c0829cae0472e4e405afea9e91ee8af8293c8e2d0d4e2f37df",
+ "sha256": "5b8dd9299757b6cb502b90eced445a567ce6839ca615cb7379beed5e5220f4f0",
  "chunks": [
   {
-   "name": "2.24.1/part-01.zip",
-   "size": 88160712,
-   "sha256": "fca2f5d099a3e2bca1e4cee6cb0c412c5909e61199b9275f397dbd9e08d9cbb1",
+   "name": "2.25.0/part-01.zip",
+   "size": 88163125,
+   "sha256": "238701d0816706ef06e623a820f27fcbdecb530a745e25337e1d640c131ef2a4",
    "files": 252
   },
   {
-   "name": "2.24.1/part-02.zip",
+   "name": "2.25.0/part-02.zip",
    "size": 9498530,
    "sha256": "80900b31bccff4d8e047dfc28ec79aec8464c1eec1c457bbbf408e9ccaf07e21",
    "files": 462
   }
  ],
- "total_size": 97659242,
+ "total_size": 97661655,
  "launcher": {
-  "sha256": "df49e0f1e2516aa799eec12591cac16d6630d2132508927b033dd39718b231b8",
-  "size": 7532856
+  "sha256": "31b0d1131adf624b1d7bac5b7786fe027e9e6c0c3c07f54011cfccd64e3ffd9a",
+  "size": 7532314
  },
- "notes": "2.24.1 : correctif bot Discord + objectifs pr\u00e9par\u00e9s."
+ "notes": "2.25 : plus de limite de requ\u00eates IA (compteur affich\u00e9), coach IA aussi assistant normal hors partie."
 }
