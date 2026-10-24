@@ -3,6 +3,15 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.27.0 · 24 octobre 2026
+
+- **Discord, cerveau d'équipe :** annonces pour chaque pote, par son champion : « Ahri, ton adversaire est en
+  base : plaque », « Jinx, jungler probablement chez toi », « Jinx et Thresh, rentrez ensemble », et une ligne
+  d'équipe avant l'objectif (« Dragon dans 1:00 : bot et jungle, rentrez maintenant »). Au plus une phrase par
+  pote toutes les 30 s, les ganks passent toujours en premier.
+- **Les 3 moments décisifs** de la partie dans le rapport (et le récap Discord) : ce qui s'est passé et quoi
+  faire à la place, avec la minute.
+
 ## 2.26.0 · 24 octobre 2026
 
 - **Focus du soir :** d'après tes parties, la condition qui sépare le plus tes victoires de tes défaites
