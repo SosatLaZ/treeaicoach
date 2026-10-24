@@ -9,7 +9,9 @@ Two short lines, tabular figures, nothing else::
   moved it by >= 5 points over ~90 s), lane gold difference vs my opponent (Data Dragon value of
   both inventories), CS / min vs the target of my rank (gold / min for the support);
 * line 2 (map): the next epic objective (countdown, or "dispo"), the enemy jungler's last seen
-  side and how long ago (tracker; "mort" while dead, "?" when unknown / too old).
+  side and how long ago (tracker; "mort" while dead, "?" when unknown / too old), then the NEXT
+  ITEM of the meta build (:func:`item_cell`: its icon, a thin bar of my gold against its cost,
+  "450 PO" missing or "Achetable" in the accent; hidden while the build strip shows it).
 
 Placement (layout.py element "essentials", rail "top_center"): the band between the top edge of
 the screen and League's kill announcer, horizontally centred. Why there, from League's HUD layout
@@ -24,7 +26,7 @@ objective announcements. "Just above the minimap" looks free on paper but holds 
 portraits row and the vote panels in the current HUD. When that band is taken (tiny / odd
 screens) the solver falls back to the minimap column on the user's HUD side.
 
-Rendering (:func:`render`): sapphire glass pill (docs/DESIGN.md « arbre de vie, saphir »), small
+Rendering (:func:`render`): sapphire pill (the in-game overlay tokens), small
 muted labels, white values with tabular (monospace) digits so numbers never wobble, ONE accent
 (the swing arrow / an objective up). The image is cached by its text: identical lines are never
 re-rendered (and :class:`treeaicoach.overlay.OverlayManager` re-checks the text at most once per
@@ -79,8 +81,14 @@ class Cell:
     tone: str = ""
     arrow: int = 0
     extra: str = ""
+    icon: int = 0             # item id: the cell is the next item (icon, gold bar, value; no label)
+    progress: float = -1.0    # 0..1 gold / cost of that item, quantized (:data:`ITEM_STEPS`)
+    name: str = ""            # the item's name (text only: tests / logs)
+    icon_ok: bool = False     # its icon is loaded (part of the value: the overlay redraws once it arrives)
 
     def text(self) -> str:
+        if self.icon:
+            return f"{self.name or self.icon} {self.value}".strip()
         arrow = " ↑" if self.arrow > 0 else " ↓" if self.arrow < 0 else ""
         tail = f"{arrow} {self.extra}" if (arrow and self.extra) else arrow
         return f"{self.label} {self.value}{tail}".strip()
@@ -229,6 +237,62 @@ def jungler_cell(enemies: Sequence[Any]) -> Cell | None:
     return Cell("JGL", f"{side} {fmt_ago(ago)}", "warn" if ago < 15 else "")
 
 
+#: progress bar of the next item: this many steps (a redraw only when a step or the shown gold changes)
+ITEM_STEPS = 16
+
+
+def fmt_missing(n: float) -> str:
+    """Gold still missing, rounded UP (never "achetable" too early): to 10 below 1 000, to 50 above,
+    "450 PO", "1 250 PO". Coarse on purpose: passive gold would change a finer value every second."""
+    v = max(0, int(math.ceil(float(n))))
+    step = 10 if v < 1000 else 50
+    v = int(math.ceil(v / step) * step)
+    return f"{v:,}".replace(",", " ") + " PO"
+
+
+def item_cell(state: Any) -> Cell | None:
+    """The next item of the build (build_strip.BuildStrip "next"): its icon, a thin bar of my gold
+    against what it still costs, and "450 PO" missing, or "Achetable" in the accent once I can buy
+    it. None before 2:30 (the fountain start is the client's shop), without a meta build, and while
+    the build strip itself is on screen (in base / dead / details key: it already shows that item)."""
+    try:
+        strip = getattr(state, "build_strip", None)
+        nxt = next((i for i in getattr(strip, "items", None) or () if getattr(i, "status", "") == "next"), None)
+        gt = _f(getattr(state, "game_time", None))
+        if nxt is None or gt is None or gt < 150.0:
+            return None
+        cost = int(getattr(nxt, "cost", 0) or 0)
+        miss = int(getattr(nxt, "missing", 0) or 0)
+        if cost <= 0:
+            return None
+        from treeaicoach import overlay_render as orr
+
+        if orr.strip_visible(state):
+            return None
+        name = ""
+        try:
+            from treeaicoach.itemization import load_items
+
+            it = load_items().get(int(nxt.item_id))
+            name = it.name if it is not None else ""
+        except Exception:
+            name = ""
+        try:
+            from treeaicoach import item_icons
+
+            icon_ok = item_icons.item_rgba(int(nxt.item_id)) is not None
+        except Exception:
+            icon_ok = False
+        if miss <= 0:
+            return Cell("", "Achetable", "accent", icon=int(nxt.item_id), progress=1.0, name=name, icon_ok=icon_ok)
+        prog = math.floor(ITEM_STEPS * max(0.0, min(1.0, 1.0 - miss / cost))) / ITEM_STEPS
+        return Cell("", fmt_missing(miss), "", icon=int(nxt.item_id), progress=min(prog, 1.0 - 1.0 / ITEM_STEPS),
+                    name=name, icon_ok=icon_ok)
+    except Exception:
+        log.debug("next item cell failed", exc_info=True)
+        return None
+
+
 def build_lines(state: Any) -> Lines:
     """The strip's content for an ``OverlayState``-like object: at most two lines of cells (empty
     lines dropped; ``()`` = nothing to show). Pure, never raises."""
@@ -237,7 +301,8 @@ def build_lines(state: Any) -> Lines:
         l1 = tuple(c for c in (win_cell(stats), gold_cell(stats), farm_cell(stats)) if c is not None) \
             if stats is not None else ()
         l2 = tuple(c for c in (objective_cell(getattr(state, "objectives", None) or (), getattr(state, "game_time", None)),
-                               jungler_cell(getattr(state, "enemies", None) or ())) if c is not None)
+                               jungler_cell(getattr(state, "enemies", None) or ()), item_cell(state))
+                   if c is not None)
         return tuple(line for line in (l1, l2) if line)
     except Exception:
         log.debug("essentials lines failed", exc_info=True)
@@ -264,8 +329,10 @@ def shown_label(label: str) -> str:
 _TEMPLATES: dict[str, str] = {"VICTOIRE": "100 %", "OR": "-8 888", "CS": "88,8/8,8", "OR/MIN": "888",
                               "JGL": "haut 88 s", "BARON": "8:88", "ANCESTRAL": "8:88", "DRAGON": "8:88",
                               "HÉRAUT": "8:88", "LARVES": "8:88"}
+#: the next item's value, sized for its widest form
+_ITEM_TEMPLATE = ("8 850 PO", "Achetable")
 _SAMPLE_LINES: Lines = ((Cell("VICTOIRE", "100 %", "", 1, "ancestral"), Cell("OR", "-8 888"), Cell("CS", "88,8/8,8")),
-                        (Cell("ANCESTRAL", "8:88"), Cell("JGL", "haut · visible")))
+                        (Cell("ANCESTRAL", "8:88"), Cell("JGL", "haut · visible"), Cell("", "8 850 PO", icon=1, progress=0.5)))
 
 
 def _metrics(screen: Any) -> dict[str, Any]:
@@ -281,9 +348,12 @@ def _metrics(screen: Any) -> dict[str, Any]:
     fl = orr.get_font(max(10, int(round(LABEL_PX * k))), "semibold")
     digit = max(orr.text_width(d, fv) for d in "0123456789")
     cap = orr._cap_height(fv)
+    row = cap + max(7.0, 8 * k)
     return {"k": k, "fv": fv, "fl": fl, "digit": digit, "cap": cap,
-            "padx": max(8.0, 11 * k), "pady": max(4.0, 5 * k), "row": cap + max(7.0, 8 * k),
-            "gap_lv": max(3.0, 4 * k), "gap_cell": max(10.0, 14 * k), "arrow": max(4.0, 4.5 * k)}
+            "padx": max(8.0, 11 * k), "pady": max(4.0, 5 * k), "row": row,
+            "gap_lv": max(3.0, 4 * k), "gap_cell": max(10.0, 14 * k), "arrow": max(4.0, 4.5 * k),
+            "icon": float(max(12, int(round(row - 1)))), "bar_w": float(max(28, int(round(36 * k)))),
+            "bar_h": max(2.0, round(3 * k))}
 
 
 def _mono_width(text: str, m: dict[str, Any]) -> float:
@@ -295,6 +365,9 @@ def _mono_width(text: str, m: dict[str, Any]) -> float:
 def _cell_width(c: Cell, m: dict[str, Any], fixed: bool = True) -> float:
     from treeaicoach import overlay_render as orr
 
+    if c.icon:                                  # icon, bar, value: sized for the widest value
+        w_val = max([_mono_width(c.value, m)] + ([_mono_width(t, m) for t in _ITEM_TEMPLATE] if fixed else []))
+        return m["icon"] + 2 * m["gap_lv"] + m["bar_w"] + w_val
     w_val = _mono_width(c.value, m)
     if fixed and c.label in _TEMPLATES:
         w_val = max(w_val, _mono_width(_TEMPLATES[c.label], m))
@@ -339,6 +412,25 @@ def _draw_mono(cv_: Any, x: float, y: float, text: str, m: dict[str, Any], rgb: 
 
 
 _TONES = {"accent": ACCENT, "down": DOWN, "warn": WARN}
+
+
+def _draw_item(cv_: Any, x: float, cy: float, c: Cell, m: dict[str, Any], icon: Any) -> None:
+    """The next item: its icon (a plain square until the icon is downloaded), a thin gold bar (the
+    accent only once affordable: one accent), then the value."""
+    from treeaicoach import overlay_render as orr
+
+    side = m["icon"]
+    if icon is not None:
+        cv_.image(x + side / 2, cy, orr.sprite_patch(icon, side, 1.0))
+    else:
+        cv_.rrect(x, cy - side / 2, side, side, 2.0, EDGE, 0.9)
+    bx = x + side + m["gap_lv"]
+    bh, bw = m["bar_h"], m["bar_w"]
+    ready = c.progress >= 1.0
+    cv_.rrect(bx, cy - bh / 2, bw, bh, bh / 2, EDGE, 0.95)
+    if c.progress > 0:
+        cv_.rrect(bx, cy - bh / 2, max(bh, bw * min(1.0, c.progress)), bh, bh / 2, ACCENT if ready else LABEL, 1.0)
+    _draw_mono(cv_, bx + bw + m["gap_lv"], cy, c.value, m, ACCENT if ready else TEXT)
 _cache_lock = threading.Lock()
 _cache: dict[str, Any] = {"key": None, "img": None}
 #: renders done (tests / perf: a redraw happens only when the text changed)
@@ -355,7 +447,18 @@ def render(lines: Lines, screen: Any = None) -> np.ndarray | None:
         from treeaicoach import overlay_render as orr
 
         m = _metrics(screen)
-        key = (lines, round(m["k"], 4))
+        icons = {}
+        for line in lines:
+            for c in line:
+                if c.icon:
+                    try:
+                        from treeaicoach import item_icons
+
+                        icons[c.icon] = item_icons.item_rgba(c.icon)
+                    except Exception:
+                        icons[c.icon] = None
+        # an icon arriving after its download redraws once
+        key = (lines, round(m["k"], 4), tuple(sorted(k for k, v in icons.items() if v is not None)))
         with _cache_lock:
             if _cache["key"] == key:
                 return _cache["img"]
@@ -371,6 +474,10 @@ def render(lines: Lines, screen: Any = None) -> np.ndarray | None:
             x = (W - _line_width(line, m)) / 2.0
             for c in line:
                 x0 = x
+                if c.icon:
+                    _draw_item(cv_, x, cy, c, m, icons.get(c.icon))
+                    x = x0 + _cell_width(c, m) + m["gap_cell"]
+                    continue
                 x += cv_.text(x, cy, shown_label(c.label), m["fl"], LABEL, 1.0, shadow=0.0) + m["gap_lv"]
                 xe = _draw_mono(cv_, x, cy, c.value, m, _TONES.get(c.tone, TEXT))
                 if c.arrow:
@@ -394,5 +501,5 @@ def render(lines: Lines, screen: Any = None) -> np.ndarray | None:
         return None
 
 
-__all__ = ["Cell", "Lines", "build_lines", "lines_text", "render", "strip_size", "win_cell", "gold_cell",
+__all__ = ["Cell", "Lines", "build_lines", "item_cell", "fmt_missing", "lines_text", "render", "strip_size", "win_cell", "gold_cell",
            "farm_cell", "objective_cell", "jungler_cell", "fmt_gold", "fmt_ago", "fmt_clock", "fmt_dec"]

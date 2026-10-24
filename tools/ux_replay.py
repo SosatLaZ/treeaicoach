@@ -684,7 +684,8 @@ def _scenarios() -> dict[str, Scenario]:
         recalls=[(428.0, 436.0)],
         need=[(440.0, 470.0, "en base avec l'or : l'objet du build (Estropieur)", r"Estropieur",
                ("debutant", "intermediaire", "avance")),
-              (474.0, 482.0, "objet acheté : l'objet suivant du build", r"Youmuu",
+              # the bundled Garen top build (U.GG Emerald+ 16.21): Stridebreaker then Phantom Dancer
+              (474.0, 482.0, "objet acheté : l'objet suivant du build", r"Danseur fantôme",
                ("debutant", "intermediaire", "avance"))])
     return S
 

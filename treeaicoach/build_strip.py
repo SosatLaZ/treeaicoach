@@ -28,6 +28,7 @@ class StripItem:
     item_id: int
     status: str          # "owned" | "next" | "todo"
     missing: int = 0     # gold still missing for the next item (0 for the others)
+    cost: int = 0        # what the next item still costs with my components (0 for the others)
 
 
 @dataclass(frozen=True)
@@ -79,13 +80,14 @@ def make_strip(build: Any, owned: Any, gold: float, items: dict | None = None,
 
         todo = [i for i in ids if not have(i)]
         nxt = next_id if next_id in todo else (todo[0] if todo else None)
-        miss = 0
+        miss = cost = 0
         if nxt is not None and items is not None and nxt in items:
             from treeaicoach import itemization as iz
 
-            miss = max(0, int(iz.remaining_cost(nxt, own, items)) - int(max(0.0, float(gold or 0.0))))
-        out = tuple(StripItem(i, "owned" if have(i) else "next" if i == nxt else "todo", miss if i == nxt else 0)
-                    for i in ids)
+            cost = max(0, int(iz.remaining_cost(nxt, own, items)))
+            miss = max(0, cost - int(max(0.0, float(gold or 0.0))))
+        out = tuple(StripItem(i, "owned" if have(i) else "next" if i == nxt else "todo", miss if i == nxt else 0,
+                              cost if i == nxt else 0) for i in ids)
         return BuildStrip(out)
     except Exception:
         log.debug("build strip failed", exc_info=True)

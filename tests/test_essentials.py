@@ -194,3 +194,33 @@ def test_placement_top_centre_on_both_hud_sides_and_off_without_the_setting():
         assert s.content[1] + s.content[3] <= z["announcer"][1]       # above League's kill announcer
         assert not L.overlap(s.content, z["scoreboard"])
     assert "essentials" not in L.layout_for(SCR, MM, Config(essentials_strip=False)).slots
+
+
+# ------------------------------------------------------------------ next item of the build
+def _with_item(missing, cost=3300, **kw):
+    from treeaicoach.build_strip import BuildStrip, StripItem
+    strip = BuildStrip((StripItem(3006, "owned"), StripItem(6631, "next", missing, cost), StripItem(3046, "todo")))
+    return state(build_strip=strip, **kw)
+
+
+def test_next_item_cell_gold_bar_and_achetable():
+    c = E.item_cell(_with_item(450))
+    assert c is not None and c.icon == 6631 and c.value == "450 PO" and c.tone == "" and 0.75 <= c.progress < 1.0
+    ok = E.item_cell(_with_item(0))
+    assert ok.value == "Achetable" and ok.tone == "accent" and ok.progress == 1.0
+    assert E.fmt_missing(451) == "460 PO" and E.fmt_missing(1201) == "1 250 PO"     # rounded up, never early
+    assert "Estropieur 450 PO" in E.lines_text(E.build_lines(_with_item(450)))
+    # not in the fountain start, not without a build, not while the build strip shows it (in base)
+    assert E.item_cell(_with_item(450, game_time=60.0)) is None
+    assert E.item_cell(state()) is None
+    assert E.item_cell(_with_item(450, in_base=True, me_dead=False, threat_level=0)) is None
+
+
+def test_next_item_redraws_only_when_the_shown_gold_changes():
+    a, b = E.build_lines(_with_item(452)), E.build_lines(_with_item(455))
+    assert a == b                                  # same 460 PO, same bar step: same lines, no upload
+    img = E.render(a)
+    n = E.render_count
+    assert E.render(b) is img and E.render_count == n
+    assert E.build_lines(_with_item(300)) != a
+    assert img.shape[1] <= E.strip_size()[0]
