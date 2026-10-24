@@ -3,6 +3,17 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.28.0 · 24 octobre 2026
+
+- **Ganks mieux annoncés :** nouvelle alerte « Recule vers ta tour : Lee Sin a disparu près de toi » quand
+  le jungler sort de la carte tout près de toi. Sur 31 parties : 102 alertes justes au lieu de 25.
+- **Moins de « Recule » pour rien :** « jungler invisible » seulement s'il peut vraiment arriver
+  (46 → 13 conseils, faux 30 → 4) ; « Recule ! » en combat seulement avec au moins 2 ennemis visibles.
+- **Même champion dans les deux équipes :** l'adversaire qui joue ton champion n'est plus pris pour toi,
+  chaque copie a sa propre mort (détection 0,82 → 0,89 sur ces parties).
+- **Conseils mieux ordonnés :** « Plaque la tour : Darius est mort » passe avant « rentre » ; deux rappels
+  discrets ne se remplacent plus en quelques secondes.
+
 ## 2.27.0 · 24 octobre 2026
 
 - **Discord, cerveau d'équipe :** annonces pour chaque pote, par son champion : « Ahri, ton adversaire est en

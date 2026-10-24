@@ -218,7 +218,9 @@ def rule_spike(ctx: M.MacroCtx) -> M.GeniusCall | None:
                     f"Back à {g} or : après, {win}")
         why = (f"Il te manque {int(gold_needed - ctx.gold)} or. "
                + (f"Avec {name}, " if name else "Avec cet achat, ")
-               + f"tu as plus d'or d'objets que {oname}. Ne rentre pas avant, ne meurs pas d'ici là. " + stat)
+               + f"tu passes devant {oname}. Ne meurs pas d'ici là "
+               + f"(tes parties : {v['ahead']['won']} kills pour {v['ahead']['lost']} morts).")
+        why = why if len(why) <= 140 else why[:139].rstrip() + "…"
         return M._call(KIND, f"{KIND}:{my_ig}:{gold_needed // 100}", "TON PROCHAIN ACHAT", text, why, None,
                        tier="basic", score=0.42, priority=50, color="gold", life=25.0, label="ACHAT",
                        factors=factors)

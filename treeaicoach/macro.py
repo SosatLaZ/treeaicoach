@@ -138,6 +138,9 @@ URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "
 #: soft calls (mastermind power windows, game_changers.rule_power_window): no hold against other
 #: calls, any other call replaces them, and they do not start the gap between two calls
 SOFT_KINDS = frozenset({"gc_window", "gc_spike", "gc_obj_safe"})
+#: A short window beats a slow call whatever the score margin: the lane opponent is dead / in base for a
+#: few seconds (plates), the back or the freeze can wait.
+ALWAYS_PREEMPTS: dict[str, frozenset[str]] = {"plates": frozenset({"wave_recall", "wave_freeze", "gc_obj_stay"})}
 #: reminders shown only when no call is active (objective_planner: "Ne prends aucun risque")
 QUIET_ONLY_KINDS = frozenset({"gc_obj_safe"})
 #: "go" calls that stay valid whatever my own gauge says (the numbers decide, not my lane)
@@ -1448,18 +1451,24 @@ class MacroPlanner:
                 continue                                   # once per trip: wait for a base visit
             if self._active is not None:
                 if c.kind == self._active.kind or (c.score < self._active.score + PREEMPT_MARGIN
-                                                   and self._active.kind not in SOFT_KINDS):
+                                                   and self._active.kind not in SOFT_KINDS
+                                                   and self._active.kind not in ALWAYS_PREEMPTS.get(c.kind, ())):
                     continue
+            if c.kind in SOFT_KINDS and t - getattr(self, "_soft_start", -1e9) < HOLD_S - 0.5:
+                continue                                   # a soft line is not swapped for another soft line
+            if c.kind in ("wave_recall", "wave_freeze") and any(o.kind == "plates" for o in cands):
+                continue                                   # his laner is dead / in base: plates first, then back
             last_k = self._kind_t.get(c.kind)
             if last_k is not None and t - last_k < KIND_COOLDOWN_S.get(c.kind, 60.0) * _quiet_scale(c.kind):
                 continue
-            if c.kind not in URGENT_KINDS and self._last_start is not None and t - self._last_start < cfg["gap"]:
-                continue
+            if c.kind not in URGENT_KINDS and self._last_start is not None \
+                    and t - self._last_start < max(cfg["gap"], HOLD_S - 0.5):
+                continue                                   # never two starts closer than the hold
             if ctx.card_age is not None and ctx.card_age < CARD_SETTLE_S and not c.genius \
                     and c.kind not in SETTLE_EXEMPT and c.kind not in ("fight_won", "fight_lost", "jungler_dead"):
                 continue                                   # the card just changed: let it be read first
-            if ctx.recent_stances and c.kind not in POST_FIGHT_KINDS and c.kind != "fight_lost" \
-                    and _opposite_stance(c.text, ctx.recent_stances):
+            if ctx.recent_stances and c.kind not in POST_FIGHT_KINDS and c.kind not in ("fight_lost", "plates") \
+                    and _opposite_stance(c.text, ctx.recent_stances):    # plates checks the jungler itself
                 continue                                   # "pousse" 5 s after "recule" (LESSONS 6): wait
             if self._active is not None:
                 self._cancel(up, ctx, "remplacé")
@@ -1474,6 +1483,8 @@ class MacroPlanner:
                 self._recall_armed = False
             if c.kind not in SOFT_KINDS:
                 self._last_start = t
+            else:
+                self._soft_start = t
             self._kind_t[c.kind] = t
             self._done.add(c.ident)
             self.history.append((ctx.gt, c))

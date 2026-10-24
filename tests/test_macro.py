@@ -358,8 +358,10 @@ def test_simulated_game_macro_calls_per_level():
     for _gt, c in deb.extras["genie"]:                  # every call: imperative line + one-line why + target
         assert c.text and c.why and len(c.text) <= 110 and len(c.why) <= 140 and "—" not in c.text + c.why
     # one call at a time, held >= 10 s: two starts are never closer than the hold
-    starts = [gt for gt, _c in deb.extras["genie"]]
-    assert all(b - a >= macro.HOLD_S - 0.6 for a, b in zip(starts, starts[1:]))
+    # (a soft reminder - SOFT_KINDS - gives way to any real call at once: that pair is exempt)
+    starts = [(gt, c.kind) for gt, c in deb.extras["genie"]]
+    assert all(b - a >= macro.HOLD_S - 0.6 for (a, ka), (b, _kb) in zip(starts, starts[1:])
+               if ka not in macro.SOFT_KINDS)
     assert deb.extras["badges"] and len(deb.extras["badges"]) <= len(deb.extras["genie"])
 
 

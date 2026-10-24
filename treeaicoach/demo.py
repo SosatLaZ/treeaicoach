@@ -98,7 +98,7 @@ CHAMPIONS: tuple[DemoChampion, ...] = (
                 (36.5, 0.200, 0.250), (39.5, 0.130, 0.215), (42.5, 0.095, 0.270),
                 (44, 0.100, 0.270), (47, 0.160, 0.252), (49, 0.200, 0.262),
                 (55, 0.300, 0.320), (65, 0.420, 0.240), (75, 0.475, 0.285)),
-        visible=((0.0, 6.5), (33.0, 47.0)),
+        visible=((0.0, 6.5), (33.0, 55.0)),     # seen walking away: no "vanished near me"
     ),
     DemoChampion(
         "Vi", "Vi", MY_TEAM, "JUNGLE", "ally", smite=True, summoner="Poings d'Acier",
