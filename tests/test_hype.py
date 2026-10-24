@@ -237,3 +237,32 @@ def test_engine_ask_ai_and_postgame_review(monkeypatch, tmp_path):
     finally:
         eng.stop()
         paths._reset_cache()
+
+
+def test_gold_estimate_counts_the_level_lead():
+    assert hype.gold_lead_estimate(0, 0, 0, 1.0) == hype.GOLD_LEVEL
+    assert hype.gold_lead_estimate(0, 0, 0, 1.0, 1000.0) == hype.GOLD_TAB_W * 1000 + (1 - hype.GOLD_TAB_W) * hype.GOLD_LEVEL
+    assert hype.gold_lead_estimate(1, 0, 0, 0.0, float("nan")) == hype.GOLD_KILL
+
+
+def test_winprob_fit_tool_rebuilds_inputs_from_a_truth_timeline():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("winprob_fit", Path(__file__).resolve().parents[1] / "tools" / "winprob_fit.py")
+    W = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(W)
+    parts = [{"id": i, "team": "ORDER" if i <= 5 else "CHAOS"} for i in range(1, 11)]
+    frame = {str(i): [0.5, 0.5, 4000 if i <= 5 else 3500, 0, 60, 8 if i <= 5 else 7] for i in range(1, 11)}
+    truth = {"queue_id": 420, "my_team": "ORDER", "duration": 1300.0, "participants": parts,
+             "frames": [[600.0, frame], [900.0, frame], [1200.0, frame]],
+             "kills": [[300.0, 1, 7, [], 0.5, 0.5]],
+             "buildings": [[800.0, 2, "CHAOS", "TOWER_BUILDING", "MID_LANE", "OUTER_TURRET", 0.6, 0.4]],
+             "monsters": [[500.0, 9, "CHAOS", "DRAGON", "FIRE", 0.6, 0.7]]}
+    record = {"result": "Win", "scoreboard": {"timeline": [[595.0, 1500, {"TOP": [0, 20, 1]}]]}}
+    s = W.game_samples(record, truth)
+    assert [x["t"] for x in s] == [600.0, 900.0, 1200.0]
+    ex = s[1]["exact"]
+    assert (ex.gold_diff, ex.kill_diff, ex.tower_diff, ex.dragon_diff, ex.level_diff) == (2500.0, 1, 1, -1, 1.0)
+    assert s[0]["live"].gold_diff == hype.gold_lead_estimate(1, 0, 20, 0.2, 1500.0)
+    assert s[1]["live"] is None                      # no Tab row within 90 s
+    assert W.game_samples({"result": "Remake"}, truth) == []

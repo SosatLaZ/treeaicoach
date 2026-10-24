@@ -123,7 +123,9 @@ def test_win_reason_names_the_swing():
 
 def test_level_term_in_win_model():
     up = hype.win_probability(hype.WinFactors(game_time=900.0, gold_diff=0, level_diff=1.0))
-    assert 0.53 < up < 0.57
+    assert 0.52 < up < 0.53              # the rest of a level lead is in the gold estimate (GOLD_LEVEL)
+    gold = hype.gold_lead_estimate(0, 0, 0, 1.0)
+    assert 2000 < gold < 2700
 
 
 # ------------------------------------------------------------------ 6. objective with numbers

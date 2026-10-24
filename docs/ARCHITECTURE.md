@@ -825,6 +825,8 @@ paresseuses (`PAGE_METHODS`, `_page_attr_index` lit le bytecode des constructeur
   toutes les 30 s, score de danger « le jungler peut arriver » de `danger.py` (masse du brouillard) toutes les 5 s avec son
   seuil, sous le seuil aussi. `ground_truth._predictions` donne à chaque échantillon le verdict d'une alerte de gank (vrai
   jungler près de moi dans les 20 s) et compare la victoire estimée à 15 min au résultat → une ligne du rapport.
+  Le modèle (`hype.py`) se vérifie hors ligne avec `python tools/winprob_fit.py <dossier games>` : entrées exactes
+  (timeline du client) contre entrées live, Brier / précision à 10, 15, 20 min, variantes bornées en leave-one-game-out.
   `calibrate_fog_threshold` (pur, borné [0,25 ; 0,50], au plus un pas de 0,05 par partie vérifiée, ≥ 30 alertes
   vérifiables, relevé sous 55 % de justes, abaissé au-dessus de 85 % si 75 % restent justes un pas plus bas) →
   `games/truth/calibration.json` après la récupération LCU, relu une fois par partie (`PersonalDanger.fog_min_mass`).

@@ -27,18 +27,21 @@ With these weights a 3 000 gold lead is ~71 % at 15:00 and ~65 % at 30:00, an ac
 buff is worth ~+15 points and the Elder buff ~+20 points at even gold, close to public
 pro-play estimates. It only uses the official Live Client API (event feed, Tab items).
 
-Calibration (2026-10, the user's 25 recorded rift games with a known result, 17 with the League
-Client timeline; Brier score, 0.24 = always say the base rate; accuracy of p >= 50 %)::
+Calibration (2026-10-24, ``tools/winprob_fit.py``: the user's 16 rift games of 10 min or more with
+a League Client timeline and a known result; Brier score, 0.25 = a coin; right = p >= 50 % on the
+winner)::
 
-    inputs                                   10 min          15 min          20 min
-    exact (client timeline, n = 17/17/15)    0.152  88 %     0.128  82 %     0.153  80 %
-    live, before (Tab gold only, no towers)  0.212  71 %     0.124  79 %     0.101  94 %
-    live, now    (gold blend + towers)       0.170  83 %     0.111  83 %     0.114  89 %   (n = 24/24/18)
+    inputs                                     10 min        15 min        20 min   (n = 16/15/14)
+    exact gold + levels (client timeline)      0.151 14      0.144 12      0.164 11
+    live, Tab item gold + kills only (< 2.21)  0.190 11      0.126 12      0.144 11
+    live, 2.21 blend (Tab, CS, kills, towers)  0.157 13      0.133 12      0.140 12
+    live, now (+ levels in the gold estimate)  0.151 13      0.131 12      0.139 12
 
-A single scale factor on the logit (0.7 .. 1.4) or other W_GOLD / W_KILL values moved the log loss
-by < 0.02 (noise at this sample size): the weights are kept. What was wrong was the INPUT: the live
-game names its structures "Turret_TChaos_L1_P3_..." (towers and inhibitors were never counted) and
-the Tab item-gold diff misses everyone's unspent gold (see :func:`estimated_gold_diff`).
+Leave-one-game-out re-fits of a scale on the whole logit (0.6 .. 2.0), of W_GOLD (0.15 .. 0.70) or
+of W_GOLD + W_LEVEL were all WORSE than these weights on the left-out game (Brier +0.01 .. +0.02):
+with 16 games the logit weights are kept and only the gold INPUT was improved (see
+:func:`gold_lead_estimate`). The 3 games still wrong at 15 min are also wrong with the exact gold:
+they were comebacks that no game-state model sees coming.
 
 The probability is spoken (style != "sobre") when it moved by more than
 :data:`SWING_POINTS` since the last spoken value, at most once every :data:`SWING_GAP_S`.
@@ -67,9 +70,10 @@ W_GOLD, W_KILL, W_TOWER = 0.30, 0.035, 0.12
 W_DRAKE, W_SOUL, W_BARON, W_BUFF, W_ELDER, W_INHIB = 0.08, 0.55, 0.15, 0.65, 0.90, 0.35
 P_MIN, P_MAX = 0.03, 0.97
 BARON_BUFF_S, ELDER_BUFF_S, INHIB_RESPAWN_S = 180.0, 150.0, 300.0
-W_LEVEL = 0.20               # per level of team-average lead (partly counted in the gold already)
-#: team gold-lead estimate (see :func:`estimated_gold_diff`, least squares on real games, rounded)
-GOLD_CS, GOLD_KILL, GOLD_TOWER, GOLD_TAB_W = 10.0, 340.0, 600.0, 0.3
+W_LEVEL = 0.10               # per level of team-average lead (also counted in the gold estimate, GOLD_LEVEL)
+#: team gold-lead estimate (see :func:`estimated_gold_diff`: least squares on 387 frames of 16 real
+#: games against the League Client timeline, validated leave-one-game-out, rounded)
+GOLD_CS, GOLD_KILL, GOLD_TOWER, GOLD_LEVEL, GOLD_TAB_W = 5.0, 290.0, 390.0, 2600.0, 0.2
 
 SWING_POINTS = 15.0          # spoken when the probability moved by more than this (points)
 SWING_GAP_S = 180.0          # ... at most once every 3 minutes
@@ -181,23 +185,35 @@ def _team_cs_diff(game: Any) -> float | None:
         return None
 
 
-def estimated_gold_diff(game: Any, kill_diff: int, tower_diff: int, scoreboard: Any = None) -> float:
-    """Team gold lead estimate from what the Live Client exposes (gold of the other players is
-    hidden). Calibrated on 197 frames of 17 real games against the League Client timeline (exact
-    total gold): the Tab item-gold diff alone (``scoreboard.team_gold_diff``: unspent gold
-    invisible, a fresh purchase swings it by 3 000) is off by 2 650 RMS; the earned-gold estimate
-    ``GOLD_CS * cs + GOLD_KILL * kills + GOLD_TOWER * towers`` by 1 700, and the blend
-    ``GOLD_TAB_W * Tab + (1 - GOLD_TAB_W) * earned`` by ~1 600 (correlation 0.95)."""
-    earned = GOLD_KILL * kill_diff + GOLD_TOWER * tower_diff + GOLD_CS * (_team_cs_diff(game) or 0.0)
+def gold_lead_estimate(kill_diff: float, tower_diff: float, cs_diff: float, level_diff: float,
+                       tab_diff: float | None = None) -> float:
+    """Team gold lead from what the Live Client exposes (the other players' gold is hidden).
+
+    ``earned = GOLD_KILL * kills + GOLD_TOWER * towers + GOLD_CS * cs + GOLD_LEVEL * level``
+    (``level`` = team-average level lead: xp tracks the gold of kills, assists and jungle camps
+    that CS and kills miss), blended with the Tab item-gold diff (unspent gold invisible, a fresh
+    purchase swings it by 3 000): ``GOLD_TAB_W * tab + (1 - GOLD_TAB_W) * earned``.
+
+    Against the exact total gold of the League Client timeline (387 frames, 16 games, 4..35 min):
+    Tab alone 2 650 RMS; the 2.21 blend without levels 1 608 RMS; this one 1 286 RMS (1 482 when
+    every game is predicted by coefficients fitted without it; the level term was the only extra
+    input that also helped there)."""
+    earned = GOLD_KILL * kill_diff + GOLD_TOWER * tower_diff + GOLD_CS * cs_diff + GOLD_LEVEL * level_diff
+    if tab_diff is None or not math.isfinite(tab_diff):
+        return earned
+    return GOLD_TAB_W * tab_diff + (1.0 - GOLD_TAB_W) * earned
+
+
+def estimated_gold_diff(game: Any, kill_diff: int, tower_diff: int, scoreboard: Any = None,
+                        level_diff: float = 0.0) -> float:
+    """:func:`gold_lead_estimate` from a Live Client snapshot (+ Tab summary)."""
     tab = None
     if scoreboard is not None and getattr(scoreboard, "players", None):
         try:
             tab = float(scoreboard.team_gold_diff)
         except Exception:
             tab = None
-    if tab is None or not math.isfinite(tab):
-        return earned
-    return GOLD_TAB_W * tab + (1.0 - GOLD_TAB_W) * earned
+    return gold_lead_estimate(kill_diff, tower_diff, _team_cs_diff(game) or 0.0, level_diff or 0.0, tab)
 
 
 def factors_from_game(game: Any, scoreboard: Any = None) -> WinFactors | None:
@@ -251,7 +267,6 @@ def factors_from_game(game: Any, scoreboard: Any = None) -> WinFactors | None:
             if gt - et < BARON_BUFF_S:
                 baron_buff = 1 if t == mine else -1
     other = "CHAOS" if mine == "ORDER" else "ORDER"
-    gold = estimated_gold_diff(game, kills[mine] - kills[other], towers[mine] - towers[other], scoreboard)
     soul = 1 if drakes[mine] >= 4 else -1 if drakes[other] >= 4 else 0
     level_diff = 0.0
     try:
@@ -261,11 +276,13 @@ def factors_from_game(game: Any, scoreboard: Any = None) -> WinFactors | None:
             level_diff = round(sum(ours) / len(ours) - sum(theirs) / len(theirs), 2)
     except Exception:
         level_diff = 0.0
+    level_diff = level_diff if math.isfinite(level_diff) else 0.0
+    gold = estimated_gold_diff(game, kills[mine] - kills[other], towers[mine] - towers[other], scoreboard, level_diff)
     return WinFactors(game_time=gt, gold_diff=gold, kill_diff=kills[mine] - kills[other],
                       tower_diff=towers[mine] - towers[other], dragon_diff=drakes[mine] - drakes[other],
                       soul=soul, baron_diff=barons[mine] - barons[other], baron_buff=baron_buff,
                       elder_buff=elder_buff, inhib_diff=inhib_down[other] - inhib_down[mine],
-                      level_diff=level_diff if math.isfinite(level_diff) else 0.0)
+                      level_diff=level_diff)
 
 
 def fmt_pct(p: float | None) -> str:
