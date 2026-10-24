@@ -468,6 +468,46 @@ class JunglerMap:
 
 
 # ---------------------------------------------------------------------------------- live adapter
+#: last state of the live map (LiveJunglerMap.update): read by the coaching rules through
+#: :func:`live_near_share` (one engine per process)
+_LIVE: list = [None]
+#: horizon / share of the "real danger" gate of the "jungler unseen: stay near your tower" tips
+#: (coach.py, game_changers.py). Truth-measured (31 games, tools/jungler_map_truth.py data): of
+#: 46 such tips 30 were proven false (he was far) and 4 confirmed; the 13 the gate keeps: 4 false,
+#: 4 confirmed.
+GATE_HORIZON_S = 14.0
+GATE_SHARE = 0.3
+#: laning phase only: past 14:00 the 3 tips the gate would drop were 2 confirmed / 1 false
+GATE_MAX_GT = 840.0
+LIVE_MAX_AGE_S = 3.0
+
+
+def live_near_share(me: Sequence[float] | None, gt: float | None, horizon_s: float = GATE_HORIZON_S) -> float | None:
+    """Share of the live jungler map within ``horizon_s`` s of walking from ``me`` (0 while he is
+    dead, 1 while visible within that reach); None when no fresh map (the caller keeps its own rule)."""
+    try:
+        st = _LIVE[0]
+        if st is None or me is None or gt is None or abs(float(gt) - float(st.gt)) > LIVE_MAX_AGE_S:
+            return None
+        if st.dead:
+            return 0.0
+        if st.grid is None:
+            return None
+        return float(st.grid[JunglerMap.near_mask(me, float(gt), horizon_s)].sum())
+    except Exception:
+        log.debug("live_near_share failed", exc_info=True)
+        return None
+
+
+def jungler_threat_real(me: Sequence[float] | None, gt: float | None) -> bool:
+    """False only when, before :data:`GATE_MAX_GT`, a fresh live map says the jungler can hardly reach
+    ``me`` soon (< GATE_SHARE within GATE_HORIZON_S): a "jungler unseen, stay near your tower" tip is
+    then noise."""
+    if gt is None or float(gt) >= GATE_MAX_GT:
+        return True
+    sh = live_near_share(me, gt)
+    return sh is None or sh >= GATE_SHARE
+
 def _norm(alias: Any) -> str:
     return "".join(ch for ch in str(alias or "").lower() if ch.isalnum())
 
@@ -489,6 +529,7 @@ class LiveJunglerMap:
         self.map.reset()
         self._anchor_t = self._farm_t = None
         self._team = None
+        _LIVE[0] = None
 
     def update(self, t: float, gt: float | None, tracker: Any, fog: Any, game: Any,
                intel: Any = None) -> JunglerMapState | None:
@@ -544,7 +585,9 @@ class LiveJunglerMap:
                         viewers.append(q)
             except Exception:
                 pass
-            return self.map.step(gt, me, viewers)
+            st = self.map.step(gt, me, viewers)
+            _LIVE[0] = st
+            return st
         except Exception:
             log.debug("LiveJunglerMap.update failed", exc_info=True)
             return None
@@ -553,5 +596,5 @@ class LiveJunglerMap:
         return self.map.state()
 
 
-__all__ = ["GRID", "JunglerMap", "JunglerMapState", "LiveJunglerMap", "ZONE_KEYS", "ZONE_FR", "ZONE_PRIOR",
+__all__ = ["GRID", "JunglerMap", "jungler_threat_real", "live_near_share", "JunglerMapState", "LiveJunglerMap", "ZONE_KEYS", "ZONE_FR", "ZONE_PRIOR",
            "FINE_KEYS", "canonical", "fine_zone_of", "prior_zones", "zone_masks", "zone_of"]

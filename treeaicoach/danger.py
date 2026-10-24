@@ -467,7 +467,7 @@ class PersonalDanger:
             spike = spike or ratio >= LANE_POWER_RATIO
             hurt = hp is not None and hp < LANE_HURT_HP
             if spike and (hurt or ratio >= LANE_FAR_BEHIND_RATIO):
-                return ("lane", f"Farme sous ta tour : {f.name} est plus fort", f.alias)
+                return ("lane", f"Joue prudemment sous ta tour : {f.name} est plus fort", f.alias)
         return None
 
     # ------------------------------------------------------------------ jungler in the fog

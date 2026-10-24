@@ -86,6 +86,32 @@ def test_jungler_unseen_with_pushed_wave_backs_off_but_not_with_recall_money():
     assert gc.rule_jungler_unseen(ctx_for(game(300.0, gold=1400.0), waves=push)) is None   # the recall call wins
 
 
+def test_jungler_unseen_back_off_is_dropped_when_the_jungler_map_puts_him_far() -> None:
+    """Truth-measured gate (jungler_map.jungler_threat_real): a live map saying he can hardly reach
+    me within 14 s silences the "recule" (30 of 46 such real tips were proven false)."""
+    import numpy as np
+
+    from treeaicoach import jungler_map as JM
+    from treeaicoach.waves import LaneWave
+
+    push = {"top": LaneWave("top", ally=5, enemy=2, meet=0.7, state="pushing")}
+    c = ctx_for(game(300.0, gold=400.0), waves=push)
+    g = np.zeros((JM.GRID, JM.GRID), np.float32)
+    try:
+        g[int(0.85 * JM.GRID), int(0.85 * JM.GRID)] = 1.0          # bot side, far from me
+        JM._LIVE[0] = JM.JunglerMapState(gt=c.gt, since_fact=50.0, grid=g)
+        assert gc.rule_jungler_unseen(c) is None
+        g2 = np.zeros_like(g)
+        me = c.me_uv
+        g2[min(JM.GRID - 1, int(me[1] * JM.GRID)), min(JM.GRID - 1, int(me[0] * JM.GRID))] = 1.0
+        JM._LIVE[0] = JM.JunglerMapState(gt=c.gt, since_fact=50.0, grid=g2)
+        assert gc.rule_jungler_unseen(c) is not None               # close: the call stays
+        JM._LIVE[0] = JM.JunglerMapState(gt=c.gt - 30.0, since_fact=50.0, grid=g)
+        assert gc.rule_jungler_unseen(c) is not None               # stale map: old behaviour
+    finally:
+        JM._LIVE[0] = None
+
+
 def test_fed_defense_only_in_the_shop():
     g = game(700.0, kills={"Darius": (5, 0)}, gold=1000.0)
     shop = ctx_for(g, me_uv=(0.04, 0.96), in_base=True)

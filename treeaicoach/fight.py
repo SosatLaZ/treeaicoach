@@ -20,7 +20,8 @@ icons and the public Live Client data:
   since (the longer hidden, the less likely); dead players count 0. Summoner spells / ultimates
   are NOT known and never guessed. ``win = 1 / (1 + ratio^-K)``.
 * **Decision** - FIGHT when the win chance reaches :data:`FIGHT_ON` (60 %), RECULE when it
-  drops to :data:`RETREAT_ON` (40 %) or when I am below 25 % HP; hysteresis (a decision holds
+  drops to :data:`RETREAT_ON` (40 %) with >= :data:`RETREAT_MIN_ENEMIES` visible enemies in the
+  area, or when I am below 25 % HP; hysteresis (a decision holds
   until the chance crosses back 52 / 48 %) and at most one flip every :data:`CALL_GAP_S`.
 * **Summary** - when the fight ends: kills / deaths of each side during the fight (event feed)
   -> one written line ("Combat gagné 3 pour 1 !").
@@ -53,6 +54,10 @@ HIDDEN_MAX_S = 20.0            # hidden longer than this: position unknown, igno
 K_WIN = 3.5                    # win = 1 / (1 + ratio^-K)
 FIGHT_ON, FIGHT_OFF = 0.60, 0.52
 RETREAT_ON, RETREAT_OFF = 0.40, 0.48
+#: a "Recule !" from the win chance alone (HP fine) needs this many visible enemies in the area:
+#: measured on 31 recorded games (tools/call_eval_truth.py data), with 0-1 enemy near me following
+#: it changed nothing (died 14/41 followed vs 6/16 ignored), with 2-3 it did (75/165 vs 44/80)
+RETREAT_MIN_ENEMIES = 2
 LOW_HP = 0.25
 FIGHT_MIN_HP = 0.35
 WORN_HP = 0.85                 # unknown HP of a champion fighting for WORN_AFTER_S
@@ -430,18 +435,20 @@ class FightTracker:
         ev = evaluate(game, me_uv, vis_al, enemies, scoreboard=scoreboard, worn=worn, gt=gt)
         hp = my_hp(game)
         want = self._call
+        # a new "Recule !" from the win chance needs RETREAT_MIN_ENEMIES enemies really on me
+        real = int(ev.enemies_in) >= RETREAT_MIN_ENEMIES
         if hp is not None and hp < LOW_HP:
             want = "retreat"
         elif self._call == "engage":
             if ev.win < FIGHT_OFF:
-                want = "retreat" if ev.win <= RETREAT_ON else None
+                want = "retreat" if ev.win <= RETREAT_ON and real else None
         elif self._call == "retreat":
             if ev.win > RETREAT_OFF:
                 want = "engage" if ev.win >= FIGHT_ON and (hp is None or hp >= FIGHT_MIN_HP) else None
         else:
             if ev.win >= FIGHT_ON and (hp is None or hp >= FIGHT_MIN_HP):
                 want = "engage"
-            elif ev.win <= RETREAT_ON:
+            elif ev.win <= RETREAT_ON and real:
                 want = "retreat"
         new_call = None
         if want != self._call and (self._call_t is None or t - self._call_t >= CALL_GAP_S):

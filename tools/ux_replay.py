@@ -551,7 +551,7 @@ def _scenarios() -> dict[str, Scenario]:
                           (565.0, FOUNTAIN["CHAOS"]), (592.0, FOUNTAIN["CHAOS"]), (593.0, None)],
                "Garen": [(540.0, ME_TOP), (558.0, (0.09, 0.21)), (620.0, (0.09, 0.21))]},
         waves={"top": [(540.0, 0.66)]},
-        moments=[Moment(566.0, 590.0, "Darius est rentré et ma vague pousse : prends les plaques",
+        moments=[Moment(565.0, 590.0, "Darius est rentré et ma vague pousse : prends les plaques",
                         r"(?i)plaque|frappe (la|leur) tour", r"(?i)plaque|frappe la tour")])
     fight3 = {a: [(1470.0, "default"), (1482.0, (0.50 + 0.012 * (i - 5), 0.50 + 0.01 * ((i * 3) % 5 - 2))),
                   (1493.0, (0.50 + 0.012 * (i - 5), 0.50 + 0.01 * ((i * 3) % 5 - 2))),

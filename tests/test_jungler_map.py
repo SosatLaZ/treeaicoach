@@ -151,3 +151,23 @@ def test_overlay_shading_layer() -> None:
     plain = orr.render_minimap(orr.OverlayState(me_uv=(0.85, 0.9), my_team="ORDER", enemies=[view],
                                                 game_time=330.0), 200)
     assert img.shape == plain.shape and int(np.abs(img.astype(int) - plain.astype(int)).sum()) > 0
+
+
+def test_live_near_share_gate_fresh_far_close_dead() -> None:
+    import numpy as np
+
+    from treeaicoach import jungler_map as JM
+
+    g = np.zeros((JM.GRID, JM.GRID), np.float32)
+    g[int(0.85 * JM.GRID), int(0.85 * JM.GRID)] = 1.0
+    try:
+        JM._LIVE[0] = None
+        assert JM.live_near_share((0.2, 0.2), 600.0) is None and JM.jungler_threat_real((0.2, 0.2), 600.0)
+        JM._LIVE[0] = JM.JunglerMapState(gt=600.0, grid=g)
+        assert JM.live_near_share((0.2, 0.2), 601.0) == 0.0 and not JM.jungler_threat_real((0.2, 0.2), 601.0)
+        assert JM.live_near_share((0.84, 0.84), 601.0) > 0.99 and JM.jungler_threat_real((0.84, 0.84), 601.0)
+        assert JM.live_near_share((0.2, 0.2), 620.0) is None            # stale map: no opinion
+        JM._LIVE[0] = JM.JunglerMapState(gt=600.0, dead=True)
+        assert JM.live_near_share((0.84, 0.84), 600.0) == 0.0
+    finally:
+        JM._LIVE[0] = None

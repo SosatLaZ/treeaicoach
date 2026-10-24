@@ -67,6 +67,27 @@ def test_low_hp_me_retreats_and_hysteresis():
     assert up.state.call == "retreat" and up.new_call is None
 
 
+def test_no_retreat_call_from_the_win_chance_with_one_enemy_near():
+    """Measured: with 0-1 enemy near me a "Recule !" changed nothing; low HP still calls it."""
+    al = [P("Thresh", "ORDER", level=3), P("Vi", "ORDER", level=3)]
+    fed = P("Ezreal", "CHAOS", level=18, items=[3031, 3508, 3006, 3036, 3094, 3072])
+    en = [fed, P("Leona", "CHAOS")]
+    allies = [fg.Seen("Thresh", (0.62, 0.86)), fg.Seen("Vi", (0.58, 0.83))]
+    one = [fg.Seen("Ezreal", (0.66, 0.82))]
+    two = one + [fg.Seen("Leona", (0.65, 0.84))]
+    assert fg.evaluate(game(me_hp=0.6, allies=al, enemies=en), ME, allies, one).win <= fg.RETREAT_ON
+
+    def calls(hp, seen):
+        tr = fg.FightTracker()
+        ups = [tr.update(i * 0.25, game(me_hp=hp, allies=al, enemies=en), ME, allies, seen) for i in range(8)]
+        assert any(u.state.active for u in ups)
+        return [u.new_call for u in ups if u.new_call]
+    assert calls(0.6, one) == []                       # 1 fed enemy, HP fine: no "Recule !"
+    assert calls(0.15, one) == ["retreat"]             # low HP: always
+    assert fg.evaluate(game(me_hp=0.6, allies=al, enemies=en), ME, allies, two).win <= fg.RETREAT_ON
+    assert calls(0.6, two) == ["retreat"]              # 2 enemies on me: the call stays
+
+
 def test_enemy_jungler_missing_close_lowers_the_chance():
     al = [P("Thresh", "ORDER")]
     en = [P("Ezreal", "CHAOS"), P("Leona", "CHAOS"), P("LeeSin", "CHAOS", pos="JUNGLE")]

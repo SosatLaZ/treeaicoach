@@ -1035,6 +1035,21 @@ dans ma base pendant le siège, revue IA avec des objets anglais hors méta.
   rien dans la fontaine / mort / en combat / juste après un gank DANGER. Branché dans `engine._personal_danger` et la
   voie rapide des ganks (`_say_gank_now`).
 * `voice_policy` : `PERSONAL_DANGER` DANGER = voix critique (hors budget), WARNING = écrit (toast « DANGER »).
+* `jungler_vanished` (WARNING écrit, 2026-10-24) : le jungler ennemi a quitté la minimap il y a ≤ 10 s et la carte
+  du jungler (`jungler_map.py`, état passé par `engine_vision._personal_danger(jmap=…)`) met ≥ 75 % de sa position
+  probable à ≤ 7 s de marche de moi, où que je sois : « Recule vers ta tour : Lee Sin a disparu près de toi » ; tant
+  que la condition tient, `DangerState.vanished` → bandeau « ATTENTION — LEE SIN DISPARU » (carte orange d'alarme).
+  Mesuré (`tools/jungler_map_truth.py`, 31 parties avec vérité LCU, règle `vanish75`) : mes morts avec le jungler
+  prévenues 3–25 s avant 6 → 31 / 111, part confirmée 0,28 → 0,55, fausses 8 → 13 (alertes 90 → 186, dont ~110 à
+  ≤ 8 s d'une alerte gank déjà montrée et donc coupées en direct par `threat < WARNING`). Les alertes réellement
+  montrées par l'appli (colonne `app`) préviennent déjà 74 / 111 morts ; avec la règle 80 / 111. Les 31 restantes :
+  12 jungler visible sans alerte gank, 17 jungler perdu depuis ≥ 60 s (surtout combats à 3+ ennemis dans ma moitié).
+* Portes « danger réel » (`jungler_map.jungler_threat_real`, carte vivante `_LIVE`) : les conseils « jungler
+  invisible : reste près de ta tour / recule » (`coach._rule_jungler`, `game_changers.rule_jungler_unseen`) ne
+  sortent plus avant 14:00 quand la carte fraîche met < 30 % du jungler à ≤ 14 s de moi (jungler déjà vu ; vérité :
+  30 de ces 46 conseils étaient faux, 4 confirmés ; il en reste 13, 4 faux, 4 confirmés ; après 14:00 la porte
+  aurait coupé 2 confirmés pour 1 faux, d'où la limite). `fight.py` : un « Recule ! » tiré de la seule chance de
+  victoire demande ≥ 2 ennemis visibles dans la zone (PV < 25 % : toujours).
 * `ground_truth` : `alert_lead_s` par mort, `lead_mean` / `lead_late` dans la fiabilité (carte « Avance des alertes »).
 * `ai_advisor.postgame_review` : 1 requête ; le prompt porte le build final et la liste des objets autorisés
   (`review_item_candidates` : build + objets de base de la classe + contres, noms français) ; `ground_review` retire
@@ -1561,3 +1576,11 @@ d'objets `itemization` :
   Appels : 2 035 vérifiables, 741 utiles ; « recule » suivis 60-75 %, « va en bas / en haut » 38 %, balises 39 % ;
   après un danger suivi on meurt plus souvent qu'ignoré (116 / 274 contre 36 / 96 : biais, le danger suivi est le
   vrai) → la règle « pire issue » ne touche aucun type ; aucun type n'atteint 80 % d'ignorés : rien en sourdine.
+* **Or vrai** (2026-10-24) : l'écart d'or du Tab (`gold|f` / `gold|i`) est une estimation par prix d'objets, à
+  1,5–3 k près sur ces parties (corrélation 0,78 avec la vérité LCU, négative sur 4 parties) : son écart sur 60 s
+  est surtout du bruit. `call_eval_truth.py` donne aussi `tg|f` / `tg|i` (vrai écart d'or d'équipe sur 120 s,
+  images LCU) et `cs|f` / `cs|i`. « Va en bas / en haut » (`tip:goto`, 31 parties) : Tab −851 suivi / +787 ignoré
+  mais vérité +231 / +358 (écart dans le bruit, ±250), sbires +6 / +8, morts 24 % suivi contre 35 % ignoré →
+  conseil gardé, pas nuisible. « Recule » (`tip:retreat`) : 613 → 523 appels avec les portes ci-dessus (§ 17),
+  morts suivi / ignoré 37,4 / 37,2 % → 38,5 / 39,7 % (le « Recule ! » de combat : 2-3 ennemis près de moi, suivi
+  45 % contre 55 % ignoré ; 4+ ennemis : trop tard, 62 % contre 44 %).

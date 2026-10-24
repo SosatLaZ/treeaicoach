@@ -351,6 +351,13 @@ def rule_jungler_unseen(ctx: M.MacroCtx) -> M.GeniusCall | None:
     pushed = (meet is not None and meet >= (0.55 if ctx.keep else 0.6) and state == "pushing") or M._forward(ctx)
     if not pushed:
         return None
+    try:                                                 # the jungler map says he can hardly reach me: no "recule"
+        from treeaicoach.jungler_map import jungler_threat_real  # noqa: PLC0415
+
+        if not jungler_threat_real(ctx.me_uv, ctx.gt):
+            return None
+    except Exception:
+        pass
     name = jl.name or "leur jungler"
     return replace(M._call("gc_jungler_unseen", f"gc_jg_unseen:{int(ctx.gt // 120)}", "JUNGLER INVISIBLE",
                            f"Recule vers ta tour : vague poussée, {name} invisible",

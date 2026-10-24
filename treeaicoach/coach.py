@@ -947,7 +947,8 @@ class MapCoach:
         if hidden is not None and hidden >= JUNGLER_UNSEEN_S and ctx.my_lane is not None and not jg_dead \
                 and not getattr(self, "_beginner", False):
             marker = getattr(tr, "last_seen", None) if tr is not None else -1.0
-            if marker != self._jg_unseen_done:
+            # (never seen yet: no map fact to judge by, the tip stays)
+            if marker != self._jg_unseen_done and (tr is None or _jungler_threat_real(ctx.me_pos, ctx.gt)):
                 secs = int(hidden // 5 * 5)
                 jp = next((p for p in getattr(ctx.game, "enemies", None) or ()
                            if str(getattr(p, "champion_alias", "")).lower() == str(ctx.jungler_alias).lower()), None)
@@ -1971,3 +1972,13 @@ class PlayGauge:
 __all__ = ["MapCoach", "map_side", "fmt_dec", "PITS", "TURRETS", "GLOBAL_GAP_S", "ENEMY_RULES",
            "Stance", "StanceAdvisor", "stance_factors", "stance_from_factors", "STANCE_LABEL",
            "Gauge", "PlayGauge", "gauge_target", "GAUGE_STEPS"]
+
+
+def _jungler_threat_real(me: Any, gt: Any) -> bool:
+    """jungler_map gate of the "jungler unseen: stay near your tower" tip (True without a live map)."""
+    try:
+        from treeaicoach.jungler_map import jungler_threat_real  # noqa: PLC0415
+
+        return jungler_threat_real(me, gt)
+    except Exception:
+        return True

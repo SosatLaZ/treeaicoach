@@ -80,7 +80,7 @@ def test_lane_duel_written_warning_then_recule_before_the_death() -> None:
     out = run(26.0, darius, hp, game_kw=kw)
     written = texts(out, Level.WARNING)
     spoken = texts(out, Level.DANGER)
-    assert written and written[0][1] == "Farme sous ta tour : Darius est plus fort"
+    assert written and written[0][1] == "Joue prudemment sous ta tour : Darius est plus fort"
     assert written[0][0] < 9.0                         # while HP is still > 60 %
     assert [x for _t, x in spoken] == ["Recule !"]      # once (20 s cooldown)
     death_t = 24.0 * (1 - 0.05)
