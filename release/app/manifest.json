@@ -1,25 +1,25 @@
 {
- "version": "2.26.0",
+ "version": "2.27.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "90aa44e988dd59cb8ed593f6b9a55d629e58cee3dc646a75bb3abff767b3d846",
+ "sha256": "d89111d4ea5da8eba35cafccd1bb169c7c9e73b533f5674538a66c6760ac6acb",
  "chunks": [
   {
-   "name": "2.26.0/part-01.zip",
-   "size": 88166824,
-   "sha256": "76bac3500a85336c7cd8dbdcf9e3a357906536a69161908f486cc2556c8a49d4",
-   "files": 248
+   "name": "2.27.0/part-01.zip",
+   "size": 88163975,
+   "sha256": "283320745edccfdc6ec04bcf037c65b073ef1ccbaf9e01959c1319df6144361c",
+   "files": 243
   },
   {
-   "name": "2.26.0/part-02.zip",
-   "size": 9537228,
-   "sha256": "f9ad2643766b4f2c3de1c064777444cc4026d4c5aabe710347733c9ccfd0500c",
-   "files": 466
+   "name": "2.27.0/part-02.zip",
+   "size": 9583043,
+   "sha256": "0275706ad6dc48ae0c0c99d75744069f2afb9e056c69438685f589c854d579ff",
+   "files": 471
   }
  ],
- "total_size": 97704052,
+ "total_size": 97747018,
  "launcher": {
-  "sha256": "5ae01f981137f68a3e7f7e8060686ae83d8052ddf00f6f04c61a63206f389542",
-  "size": 7532411
+  "sha256": "33c87fb8a68c6742db1d4aecbb5c0a81c82bcd88634968a1bc0aac1b0381bdc4",
+  "size": 7532318
  },
- "notes": "2.26 : focus du soir d'apr\u00e8s tes parties, bilan des conseils."
+ "notes": "2.27 : cerveau d'\u00e9quipe sur Discord, 3 moments d\u00e9cisifs apr\u00e8s la partie."
 }
