@@ -118,3 +118,8 @@ def test_fetch_items_build_table():
     e = t["items"]["3123"]
     assert e["n"] == "Marque du bourreau" and e["en"] == "Executioner's Calling" and e["f"] == [1036]
     assert e["k"] == "component" and e["p"] == 1 and t["items"]["9999"]["p"] == 0
+
+
+def test_no_ranked_rift_build_in_aram_or_arena():
+    assert iz.meta_build("Garen", "TOP", "ARAM") is None and iz.meta_build("Garen", "TOP", "CHERRY") is None
+    assert iz.meta_build("Garen", "TOP", "CLASSIC") == iz.meta_build("Garen", "TOP")

@@ -39,8 +39,8 @@ def test_strip_statuses_and_missing_gold():
     st = _strip()
     assert st is not None and 2 <= len(st.items) <= bs.MAX_ITEMS
     by = {i.item_id: i for i in st.items}
-    assert by[3006].status == "owned" and by[6631].status == "next" and by[3142].status == "todo"
-    assert by[6631].missing > 0 and by[3006].missing == 0 and by[3142].missing == 0
+    assert by[3006].status == "owned" and by[6631].status == "next" and by[3046].status == "todo"
+    assert by[6631].missing > 0 and by[3006].missing == 0 and by[3046].missing == 0
     assert _strip(gold=9999).items[1].missing == 0
     assert st.done == 1
     # no meta build / no item: nothing, never an exception

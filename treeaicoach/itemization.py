@@ -676,7 +676,7 @@ def _recommend(game: Any, role: str | None, items: dict[int, Item] | None, gold:
             iid in items[o].parts for o in owned if o in items)
 
     choice: tuple[int, str, str] | None = None
-    mb = meta_build(me.champion_alias, role)
+    mb = meta_build(me.champion_alias, role, getattr(game, "game_mode", ""))
     meta_core = _meta_builds().core_to_buy(mb, items) if mb is not None and mb.has_items else ()
     # support quest done: the free upgrade of the support item first (it costs nothing); the one of
     # the meta build when it names one (Swain support 16.20: Traîneau du solstice, not Zaz'Zak)
@@ -776,12 +776,19 @@ def _meta_builds() -> Any:
     return meta_builds
 
 
-def meta_build(alias: str, role: str | None) -> Any:
+#: game modes the ranked Summoner's Rift builds are valid for (ARAM / Arena builds differ)
+RIFT_MODES = frozenset({"", "CLASSIC", "SWIFTPLAY"})
+
+
+def meta_build(alias: str, role: str | None, game_mode: Any = "") -> Any:
     """The live meta build of a champion / role (:func:`treeaicoach.meta_builds.get`), None when
-    unknown or disabled (``TREEAI_META_BUILDS=0``). Never raises, never blocks."""
+    unknown, disabled (``TREEAI_META_BUILDS=0``) or outside the Rift modes (ranked solo builds in
+    ARAM / Arena are wrong builds). Never raises, never blocks."""
     try:
         import os
 
+        if str(game_mode or "").upper() not in RIFT_MODES:
+            return None
         if os.environ.get("TREEAI_META_BUILDS", "1").strip().lower() in ("0", "false", "off", "no"):
             return None
         return _meta_builds().get(str(alias or ""), str(role or "") or None)

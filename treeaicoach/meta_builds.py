@@ -60,15 +60,15 @@ USER_AGENT = f"TreeAICoach/{_APP_VERSION} (LoL coach; meta builds, one request p
 TIMEOUT_S = 5.0
 MAX_BYTES = 4 * 1024 * 1024          # a U.GG overview ~ 0.5 MB, the Riot recommendations ~ 0.5 MB
 RETRY_S = 24 * 3600.0                # a failed / done fetch is not retried within a day (same patch)
-CACHE_SUBDIR = "meta"
+CACHE_SUBDIR = "meta2"                # "meta" held Master+ builds labelled Emerald+ (tier 14, < 2.23)
 BUNDLED_FILE = "meta_builds.json"
 NAMES_FILE = "names.json"
 RIOT_FILE = "riot_runes.json"
 STAMP_FILE = "stamps.json"
 
 UGG_REGION = "12"                                       # world
-UGG_TIERS = ("14", "10", "8")                           # emerald_plus, platinum_plus, all ranks
-UGG_TIER_NAMES = {"14": "Émeraude+", "10": "Platine+", "8": "tous rangs"}
+UGG_TIERS = ("17", "10", "8")                           # emerald_plus, platinum_plus, all ranks (U.GG ids)
+UGG_TIER_NAMES = {"17": "Émeraude+", "10": "Platine+", "8": "tous rangs"}
 #: the build adapts to the player's own elo: the U.GG rank filters tried per bracket (only the three
 #: verified filters; the first one with enough games wins). "" = Emerald+ (default / unranked fallback).
 BRACKET_TIERS: dict[str, tuple[str, ...]] = {"": UGG_TIERS, "mid": ("10", "8"), "low": ("8",)}
@@ -135,15 +135,18 @@ class MetaBuild:
 
     @property
     def options(self) -> tuple[tuple[int, float, int], ...]:
-        """Situational items of every slot, best win rate first, without duplicates."""
+        """Situational items in the order U.GG / OP.GG list them: the 4th item's options first, then
+        the 5th, then the 6th, the most played first within a slot (a win rate on a few hundred games
+        is noise: the best-win-rate-first order once sent a 6th-item pick as the 4th item), without
+        duplicates and without options under :data:`MIN_OPTION_GAMES` games."""
         seen: set[int] = set()
         out = []
         for slot in self.slots:
-            for iid, wr, n in slot:
+            for iid, wr, n in sorted(slot, key=lambda x: (-x[2], -x[1])):
                 if iid not in seen and n >= MIN_OPTION_GAMES:
                     seen.add(iid)
                     out.append((iid, wr, n))
-        return tuple(sorted(out, key=lambda x: (-x[1], -x[2])))
+        return tuple(out)
 
     def to_row(self) -> dict[str, Any]:
         return {"start": list(self.start), "core": list(self.core), "boots": self.boots,
@@ -270,7 +273,9 @@ def parse_ugg(data: Any, role: str, items: dict[int, Any] | None = None,
               tiers: tuple[str, ...] = UGG_TIERS) -> dict[str, Any] | None:
     """One role of a U.GG overview JSON -> cache row (:meth:`MetaBuild.to_row` format), or None.
 
-    Layout (``data[region][tier][role] = [row, timestamp]``; verified on patch 16.19 / 16.20):
+    Layout (``data[region][tier][role] = [row, timestamp]``; verified on patch 16.19 .. 16.21; tier ids:
+    17 Emerald+, 10 Platinum+, 8 all ranks, 14 = MASTER+ (checked by summing the per-rank game counts:
+    14 was used as "Emerald+" until 2.22 and gave Master+ builds to everyone)):
     ``row[0]`` runes ``[games, wins, primary style, secondary style, [6 perks]]``, ``row[1]`` spells,
     ``row[2]`` starting items, ``row[3]`` core items (``[games, wins, [ids]]``), ``row[4]`` skills
     ``[games, wins, [order], "EQW"]``, ``row[5]`` the options of the 4th / 5th / 6th item and the
@@ -318,7 +323,7 @@ def parse_ugg(data: Any, role: str, items: dict[int, Any] | None = None,
                     if iid <= 0 or n <= 0 or (tot and n < OPTION_SHARE * tot):
                         continue
                     opts.append([iid, round(100.0 * w / n, 1), n])
-                slots.append(sorted(opts, key=lambda x: (-x[1], -x[2])))
+                slots.append(sorted(opts, key=lambda x: (-x[2], -x[1])))   # most played first (U.GG order)
             _hg, _hw, hp = _block(row[8]) if len(row) > 8 else (0, 0, [])
             ts = str(cell[1]) if len(cell) > 1 else ""
             return {"start": list(_ints(st[0]) if st else ()), "core": list(core), "boots": boots, "slots": slots,
@@ -833,7 +838,7 @@ def ensure_async(alias: str, role: str | None = None, allow_network: bool = True
 def next_item(build: MetaBuild, owned: Iterable[int], items: dict[int, Any] | None = None,
               usable: Callable[[int], bool] | None = None) -> tuple[int, str, float] | None:
     """``(item id, why, win rate %)`` : the first core item of the meta build not owned, then the
-    best situational option by win rate. Boots are skipped (their timing is the boots rule of
+    most played situational option (4th item first). Boots are skipped (their timing is the boots rule of
     :mod:`treeaicoach.itemization`). ``usable(id)`` filters (sold on the Rift, not owned, not a
     component of an owned item). Pure, never raises."""
     try:
@@ -857,7 +862,7 @@ def next_item(build: MetaBuild, owned: Iterable[int], items: dict[int, Any] | No
                 return iid, why, float(build.core_wr_ok)
         for iid, wr, _n in build.options:
             if ok(iid):
-                return iid, f"objet situationnel le plus gagnant ({wr:g} % de victoires)", float(wr)
+                return iid, f"objet situationnel le plus joué ({wr:g} % de victoires)", float(wr)
         return None
     except Exception:
         log.debug("next_item failed", exc_info=True)

@@ -82,7 +82,7 @@ def test_recall_note_uses_meta_build(monkeypatch):
     from treeaicoach import itemization
 
     build = SimpleNamespace(core=(3071, 3078), boots=None, options=(), has_items=True)
-    monkeypatch.setattr(itemization, "meta_build", lambda alias, role: build)
+    monkeypatch.setattr(itemization, "meta_build", lambda alias, role, *_mode: build)
     me = P("Garen", "ORDER", "TOP", level=6, items=[1055], cs=90)
     edge = fresh()
     notes = edge.update(10.0, G(700.0, me=me, gold=1300.0), role="TOP")

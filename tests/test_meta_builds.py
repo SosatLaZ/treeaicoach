@@ -13,7 +13,7 @@ from treeaicoach.itemization import load_items
 ITEMS = load_items()
 
 
-def ugg_payload(role_id="4", games=5000, core=(3006, 6631, 3142), opts=None, tier="14"):
+def ugg_payload(role_id="4", games=5000, core=(3006, 6631, 3142), opts=None, tier="17"):
     """A U.GG overview JSON of the verified layout (patch 16.19 / 16.20), one role."""
     wins = int(games * 0.52)
     row = [
@@ -99,7 +99,8 @@ def test_refresh_caches_and_get_never_blocks(tmp_path):
     b = mb.get("Garen", "TOP", patch="16_19")
     assert b is not None and b.source == "ugg" and b.core == (3006, 6631, 3142) and b.boots == 3006
     assert b.fetched == "2026-10-07" and b.tier == "Émeraude+" and b.has_items and 51 <= b.win_rate <= 53
-    assert b.options[0] == (3046, 60.0, 1000) and b.options[1] == (3742, 58.0, 2000)
+    # U.GG / OP.GG order: the 4th item's options first, the most played first
+    assert b.options == ((3742, 58.0, 2000), (3033, 55.0, 2000), (3046, 60.0, 1000), (4401, 50.0, 200))
     # a role U.GG has no data for: Riot's recommendation of that role (runes / spells, no items)
     r = mb.get("Garen", "UTILITY", patch="16_19")
     assert r is not None and r.source == "riot" and not r.has_items and r.spells == (4, 14)
@@ -223,3 +224,23 @@ def test_bundled_file_schema():
             b = mb.build_from_row(alias, role, row)
             assert b is not None and b.core and all(i in ITEMS for i in b.core)
     assert os.path.getsize(p) < 1_500_000
+
+
+def test_real_ugg_overview_uses_emerald_plus_not_master_plus():
+    """Regression (16.21, real U.GG rows): tier id 14 is MASTER+ (its games = master + GM +
+    challenger), 17 is Emerald+. Using 14 gave Garen Youmuu's + Doran's Helm and Swain Ignite, which
+    neither U.GG's nor OP.GG's Emerald+ page shows."""
+    import json
+    from pathlib import Path
+    data = json.loads((Path(__file__).parent / "fixtures" / "ugg_16_21_overview.json").read_text(encoding="utf-8"))
+    g = mb.parse_ugg(data["Garen"], "TOP", ITEMS)
+    assert g["tier"] == "Émeraude+" and g["matches"] == 29418
+    assert g["core"] == [3006, 6631, 3046] and g["start"] == [1055, 2003] and g["max"] == "EQW"
+    master = mb.parse_ugg(data["Garen"], "TOP", ITEMS, ("14",))
+    assert master["matches"] < g["matches"] / 5 and 3142 in master["core"]
+    s = mb.parse_ugg(data["Swain"], "UTILITY", ITEMS)
+    assert s["spells"] == [3, 4] and s["matches"] > 10000
+    assert mb.parse_ugg(data["Seraphine"], "UTILITY", ITEMS)["max"] == "QWE"
+    # options in U.GG order: the 4th item's most played option first
+    b = mb.build_from_row("Garen", "TOP", g)
+    assert b.options[0][0] == 3033 and b.options[0][2] == max(o[2] for o in b.slots[0])

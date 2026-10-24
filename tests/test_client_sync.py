@@ -213,7 +213,7 @@ def test_bracket_of_tier_and_tier_filters():
         == ["low", "low", "mid", "mid", "", "", "", ""]
     row = lambda g: [[[g, g // 2, 8000, 8100, [8010, 9111, 9104, 8014, 8139, 8135]], [10, 5, [4, 12]], [10, 5, [1054]],
                       [10, 5, [6630]], [10, 5, [["Q"], "Q"]], [], [g // 2, g], [], [10, 5, [5008, 5008, 5001]]], "2026-10-20"]
-    data = {"12": {"14": {"4": row(1000)}, "10": {"4": row(2000)}, "8": {"4": row(3000)}}}
+    data = {"12": {"17": {"4": row(1000)}, "10": {"4": row(2000)}, "8": {"4": row(3000)}}}
     assert mb.parse_ugg(data, "TOP")["matches"] == 1000                        # default Emerald+
     assert mb.parse_ugg(data, "TOP", tiers=mb.BRACKET_TIERS["mid"])["tier"] == "Platine+"
     assert mb.parse_ugg(data, "TOP", tiers=mb.BRACKET_TIERS["low"])["tier"] == "tous rangs"
@@ -225,7 +225,7 @@ def test_refresh_per_bracket_and_get_follows_user_elo(tmp_path, monkeypatch):
     monkeypatch.setattr(mb, "_champion_key", lambda a: 86)
     row = lambda g: [[[g, g // 2, 8000, 8100, [8010, 9111, 9104, 8014, 8139, 8135]], [10, 5, [4, 12]], [10, 5, [1054]],
                       [10, 5, [6630, 3047]], [10, 5, [["Q"], "Q"]], [], [g // 2, g], [], [10, 5, [5008, 5008, 5001]]], "2026-10-20"]
-    data = {"12": {"14": {"4": row(1000)}, "10": {"4": row(2000)}, "8": {"4": row(3000)}}}
+    data = {"12": {"17": {"4": row(1000)}, "10": {"4": row(2000)}, "8": {"4": row(3000)}}}
     fetch = lambda url: data if "u.gg" in url else {}
     assert mb.refresh("Garen", "16_20", fetch=fetch, now=1.0) == "ugg"
     assert mb.refresh("Garen", "16_20", fetch=fetch, now=2.0, bracket="mid") == "ugg"

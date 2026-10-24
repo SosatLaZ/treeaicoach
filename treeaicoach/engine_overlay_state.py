@@ -543,7 +543,7 @@ class OverlayStateMixin:
             key = (str(me.champion_alias or ""), str(role or ""))
             memo = getattr(self, "_strip_build", None)
             if memo is None or memo[0] != key or now - memo[1] > 10.0:
-                memo = self._strip_build = (key, now, iz.meta_build(key[0], role))
+                memo = self._strip_build = (key, now, iz.meta_build(key[0], role, getattr(game, "game_mode", "")))
             build = memo[2]
             if build is None:
                 return None

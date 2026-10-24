@@ -604,7 +604,7 @@ class LiveEdge:
 
                 table = load_items()
                 owned = _items(me)
-                build = meta_build(str(getattr(me, "champion_alias", "") or ""), role)
+                build = meta_build(str(getattr(me, "champion_alias", "") or ""), role, getattr(game, "game_mode", ""))
                 rt = recall_target(next_build_item(build, owned, table), owned, gold, table)
             except Exception:
                 rt = None
