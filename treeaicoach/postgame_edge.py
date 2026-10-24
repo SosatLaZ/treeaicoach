@@ -839,7 +839,16 @@ def team_recap(record: Any, friends: Mapping[str, str], max_len: int = 1900) -> 
         res = {"Win": "Victoire", "Lose": "Défaite"}.get(_str(rec.get("result")), "Partie terminée")
         head = f"**TreeAI Coach · {res} en {round(minutes)} min**"
         tp = turning_point(rec)
-        body = "\n".join([head, *lines] + ([f"_{tp['text']}_"] if tp else []))
+        moment = ""
+        try:     # replay_coach.py: the most decisive moment with what to do instead (one short line)
+            from treeaicoach.replay_coach import decisive_moments, recap_line  # noqa: PLC0415
+
+            moment = recap_line(decisive_moments(rec), _str(_meta(rec).get("champion_name")
+                                                           or _dict(rec.get("summary")).get("champion_name")))
+        except Exception:
+            log.debug("recap moment failed", exc_info=True)
+        extra = [f"_{moment}_"] if moment else ([f"_{tp['text']}_"] if tp else [])
+        body = "\n".join([head, *lines] + extra)
         return body[:max_len]
     except Exception:
         log.exception("team_recap failed")

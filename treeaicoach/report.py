@@ -1008,6 +1008,27 @@ def _selfcheck_section(record: dict) -> str:
     return head + f'<ul class="tips">{"".join(lis)}</ul>{extra}</div>'
 
 
+def _replay_section(record: dict, a: dict) -> str:
+    """"Les 3 moments décisifs" (replay_coach.py): what happened, what to do instead, the timestamp."""
+    ms = a.get("replay")
+    if not isinstance(ms, list):
+        from treeaicoach import replay_coach
+
+        ms = replay_coach.decisive_moments(record)
+    if not ms:
+        return ""
+    lis = "".join(
+        f'<li class="{"good" if (_f(m.get("swing")) or 0.0) > 0 else "warn"}"><span class="i">'
+        f'{"✓" if (_f(m.get("swing")) or 0.0) > 0 else "!"}</span><span><b>{_e(m.get("time"))}</b> · '
+        f'{_e(m.get("what"))}.<br><span class="small">À faire : {_e(m.get("instead"))}. Chances de victoire '
+        f'{_e(_pct(m.get("before")))} → {_e(_pct(m.get("after")))}.</span></span></li>' for m in ms if isinstance(m, dict))
+    src = ("positions et événements du client" if a.get("replay_source") == "client"
+           else "événements de la partie")
+    return (f'<div class="panel"><h2>Les {len(ms)} moments décisifs</h2><ul class="tips">{lis}</ul>'
+            f'<p class="small">Plus gros écarts de chances de victoire estimées, morts qui ont donné un objectif et '
+            f'objectifs laissés après un combat gagné ({src}).</p></div>')
+
+
 def _tips_section(a: dict) -> str:
     items = a.get("tip_items") or [{"text": t, "kind": "info"} for t in a.get("tips") or []]
     if not items:
@@ -1373,7 +1394,7 @@ def render_report_html(record: dict, analysis: dict | None = None, *, lcu_pendin
         title = f'{s.get("champion_name") or "Partie"} · {s.get("result_label") or ""}'.strip(" ·")
         parts = []
         sections = (lambda: _header(rec, a), lambda: _cards(a), lambda: _tips_section(a),
-                   lambda: _edge_section(rec, a), lambda: _coach_eval_section(rec), lambda: _plays_section(rec),
+                   lambda: _replay_section(rec, a), lambda: _edge_section(rec, a), lambda: _coach_eval_section(rec), lambda: _plays_section(rec),
                    lambda: _understanding_section(rec),
                    lambda: _moments_section(rec, a), lambda: _voice_box(a),
                    lambda: _phases_section(a), lambda: _map_section(rec, a), lambda: _truth_section(rec, a),
@@ -2023,6 +2044,13 @@ def write_report(record_path: Path, lcu_pending: bool = False) -> Path | None:
             analysis["edge_history"] = postgame_edge.load_history(p.parent, until=p.name)
         except Exception:
             log.exception("Cannot compute the post-game edge sections")
+        try:   # replay_coach.py: the 3 decisive moments (client positions + events when present)
+            from treeaicoach import replay_coach
+
+            analysis["replay"] = replay_coach.decisive_moments(record, truth)
+            analysis["replay_source"] = "client" if truth else "record"
+        except Exception:
+            log.exception("Cannot compute the decisive moments")
         text = render_report_html(record, analysis, lcu_pending=bool(lcu_pending) and truth is None)
         out = report_path_for(p)
         return out if atomic_write_text(out, text) else None
