@@ -59,6 +59,19 @@ MAX_SPEED = 425.0 / geometry.MAP_GAME_UNITS
 FLASH = 0.027
 PATH_END_S = 900.0          # jungler path: first 15 minutes
 SENS_MIN, SENS_MAX, SENS_STEP = 0.6, 1.6, 0.1
+# prediction log (recorder.on_prediction) -> calibration of the jungler-fog danger threshold (danger.py)
+FOG_DEFAULT_THRESHOLD = 0.35          # danger.FOG_MIN_MASS
+FOG_THR_MIN, FOG_THR_MAX, FOG_THR_STEP = 0.25, 0.50, 0.05
+FOG_BIN_EDGES = (0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.8)   # score bins of the samples
+# Replayed on the user's 20 verified games (prediction log rebuilt from the records): the default 0.35
+# gave 42 / 61 right alerts; these settings keep it at 0.35 for 18 games, then 0.40 (43 / 62 right),
+# where a 10-sample / 0.5 / 0.8 / 0.65 variant ran down to 0.25 after 3 lucky games (52 / 83 right).
+CAL_MIN_SCORED = 30                   # verifiable samples above the threshold needed before any change
+CAL_LOW_PRECISION = 0.55              # fewer right than this: raise the threshold one step
+CAL_HIGH_PRECISION = 0.85             # this many right ...
+CAL_LOWER_OK = 0.75                   # ... and still this many one step lower: lower it one step
+CAL_LAST_GAMES = 10
+CALIBRATION_FILE = "calibration.json"
 
 
 # ---------------------------------------------------------------------------------- helpers
@@ -542,9 +555,64 @@ def _reliability(record: dict, tr: _Truth, my_pos: Callable) -> dict[str, Any]:
         "sightings_checked": sight_n, "sightings_ok": sight_ok,
         "sighting_error_median": round(errors[len(errors) // 2], 4) if errors else None,
     }
+    out["predictions"] = _predictions(record, tr, my_pos)
     sens = _f(((record.get("settings") or {}) if isinstance(record.get("settings"), dict) else {}).get("sensitivity"))
     out["suggestion"] = suggest_sensitivity(out, sens)
     out["grade"], out["grade_label"] = _grade(out)
+    return out
+
+
+def _bin(x: float) -> int:
+    """Index of the :data:`FOG_BIN_EDGES` bin of a score (last edge and above = last bin)."""
+    return max(0, bisect.bisect_right(FOG_BIN_EDGES, x) - 1)
+
+
+def _predictions(record: dict, tr: _Truth, my_pos: Callable) -> dict[str, Any]:
+    """The prediction log of the record against the truth: every jungler-fog danger score sample
+    (above AND below its threshold) gets the verdict of a gank alert (the true enemy jungler near me
+    within the next 20 s = confirmed); the alerts are the samples at or above their threshold. The
+    live win probability samples are compared with the result."""
+    pred = record.get("predictions") if isinstance(record.get("predictions"), dict) else {}
+    bins = [[0, 0] for _ in FOG_BIN_EDGES]          # [confirmed, false] per score bin
+    hits = false = samples = alerts = 0
+    thr_used = None
+    anchors = tr.anchors(tr.jungler)
+    for row in pred.get("gank") or []:
+        if not isinstance(row, list) or len(row) < 2:
+            continue
+        t, m = _f(row[0]), _f(row[1])
+        thr = _f(row[2]) if len(row) > 2 else None
+        if t is None or m is None or not anchors:
+            continue
+        thr = FOG_DEFAULT_THRESHOLD if thr is None else thr
+        thr_used = thr
+        samples += 1
+        v = _classify(t, my_pos(t), anchors, my_pos)
+        if v == "unknown":
+            continue
+        ok = v == "confirmed"
+        bins[_bin(m)][0 if ok else 1] += 1
+        if m >= thr - 1e-9:
+            alerts += 1
+            hits += int(ok)
+            false += int(not ok)
+    out: dict[str, Any] = {"gank_samples": samples, "gank_alerts": alerts, "gank_hits": hits, "gank_false": false,
+                           "gank_hit_rate": round(hits / (hits + false), 3) if hits + false else None,
+                           "fog_threshold": thr_used, "bins": bins}
+    wins = []
+    for row in pred.get("win") or []:
+        if isinstance(row, list) and len(row) >= 2 and _f(row[0]) is not None and _f(row[1]) is not None:
+            wins.append((float(row[0]), float(row[1])))
+    res = str(record.get("result") or "")
+    won = True if res == "Win" else False if res == "Lose" else None
+    if wins and won is not None:
+        y = 1.0 if won else 0.0
+        out["win_brier"] = round(sum((p - y) ** 2 for _t, p in wins) / len(wins), 3)
+        near = min(wins, key=lambda w: abs(w[0] - 900.0))
+        if abs(near[0] - 900.0) <= 90.0:
+            out["win15"] = round(near[1], 3)
+            out["win15_right"] = (near[1] >= 0.5) == won if abs(near[1] - 0.5) >= 0.02 else None
+        out["won"] = won
     return out
 
 
@@ -731,6 +799,10 @@ def compact_score(reliability: Any, record: Any = None) -> dict[str, Any]:
     out = {k: int(rel.get(k) or 0) for k in SCORE_KEYS}
     for k in ("precision", "fog_coverage", "sighting_error_median", "grade"):
         out[k] = rel.get(k)
+    pr = rel.get("predictions")
+    if isinstance(pr, dict):
+        out["pred"] = {k: pr.get(k) for k in ("gank_alerts", "gank_hits", "gank_false", "fog_threshold", "bins",
+                                              "win15", "win15_right", "win_brier", "won") if pr.get(k) is not None}
     settings = (record or {}).get("settings") if isinstance(record, dict) else None
     if isinstance(settings, dict):
         out["settings"] = {k: settings[k] for k in list(settings)[:12]
@@ -807,6 +879,108 @@ def aggregate_scores(truth_dir: Path | str, last: int = 10) -> dict[str, Any]:
                 sens = _f(s.get("sensitivity"))
                 break
         out["suggestion"] = suggest_sensitivity(out, sens, games=len(rows))
+        out["pred"] = pool_predictions([r[2].get("pred") for r in rows])
     except Exception:
         log.exception("aggregate_scores failed")
     return out
+
+
+def pool_predictions(preds: Iterable[Any]) -> dict[str, Any]:
+    """Sum of the per-game prediction numbers (newest first): gank alerts right / wrong, score bins,
+    the threshold of the newest game, live win probability right at 15 min."""
+    bins = [[0, 0] for _ in FOG_BIN_EDGES]
+    out: dict[str, Any] = {"games": 0, "gank_hits": 0, "gank_false": 0, "win_games": 0, "win_right": 0,
+                           "fog_threshold": None}
+    for p in preds:
+        if not isinstance(p, dict):
+            continue
+        out["games"] += 1
+        out["gank_hits"] += int(_f(p.get("gank_hits"), 0) or 0)
+        out["gank_false"] += int(_f(p.get("gank_false"), 0) or 0)
+        b = p.get("bins")
+        if isinstance(b, list) and len(b) == len(bins):
+            for i, cf in enumerate(b):
+                if isinstance(cf, list) and len(cf) == 2:
+                    bins[i][0] += int(_f(cf[0], 0) or 0)
+                    bins[i][1] += int(_f(cf[1], 0) or 0)
+        if out["fog_threshold"] is None and _f(p.get("fog_threshold")) is not None:
+            out["fog_threshold"] = _f(p.get("fog_threshold"))
+        if p.get("win15_right") is not None:
+            out["win_games"] += 1
+            out["win_right"] += int(bool(p.get("win15_right")))
+    n = out["gank_hits"] + out["gank_false"]
+    out["gank_hit_rate"] = round(out["gank_hits"] / n, 3) if n else None
+    out["bins"] = bins
+    return out
+
+
+def _precision_at(bins: list, thr: float) -> tuple[float | None, int]:
+    """(share confirmed, verifiable count) of the pooled samples scoring >= ``thr``."""
+    c = f = 0
+    for i, edge in enumerate(FOG_BIN_EDGES):
+        if edge >= thr - 1e-9:
+            c += bins[i][0]
+            f += bins[i][1]
+    return (c / (c + f) if c + f else None), c + f
+
+
+def calibrate_fog_threshold(pooled: Any, current: float | None = None) -> dict[str, Any]:
+    """The player's jungler-fog danger threshold for the next game, from the pooled prediction log
+    of his last verified games (:func:`pool_predictions`): bounded to [:data:`FOG_THR_MIN`,
+    :data:`FOG_THR_MAX`] and slow - at most ONE step of :data:`FOG_THR_STEP` from the threshold of
+    the newest verified game, and only with :data:`CAL_MIN_SCORED` verifiable samples. Raised when
+    fewer than 55 % of the alerts it gave were right, lowered when >= 85 % were right AND >= 75 %
+    would still be one step lower. Pure, never raises."""
+    try:
+        p = pooled if isinstance(pooled, dict) else {}
+        cur = _f(current)
+        if cur is None:
+            cur = _f(p.get("fog_threshold"))
+        cur = FOG_DEFAULT_THRESHOLD if cur is None else cur
+        cur = round(min(FOG_THR_MAX, max(FOG_THR_MIN, cur)), 3)
+        bins = p.get("bins") if isinstance(p.get("bins"), list) else [[0, 0] for _ in FOG_BIN_EDGES]
+        prec, n = _precision_at(bins, cur)
+        new, why = cur, "pas assez d'alertes vérifiées"
+        if prec is not None and n >= CAL_MIN_SCORED:
+            lower_prec, lower_n = _precision_at(bins, cur - FOG_THR_STEP)
+            if prec < CAL_LOW_PRECISION:
+                new, why = cur + FOG_THR_STEP, "trop d'alertes fausses : seuil relevé"
+            elif prec >= CAL_HIGH_PRECISION and lower_prec is not None and lower_prec >= CAL_LOWER_OK:
+                new, why = cur - FOG_THR_STEP, "alertes très fiables : seuil abaissé pour prévenir plus tôt"
+            else:
+                why = "alertes fiables : seuil gardé"
+        new = round(min(FOG_THR_MAX, max(FOG_THR_MIN, new)), 3)
+        return {"threshold": new, "previous": cur, "precision": None if prec is None else round(prec, 3),
+                "verified": n, "games": int(_f(p.get("games"), 0) or 0), "text": why}
+    except Exception:
+        log.exception("calibrate_fog_threshold failed")
+        return {"threshold": FOG_DEFAULT_THRESHOLD, "previous": None, "precision": None, "verified": 0,
+                "games": 0, "text": ""}
+
+
+def save_calibration(truth_dir: Path | str, last: int = CAL_LAST_GAMES) -> dict[str, Any] | None:
+    """Recompute the calibration from the truth files and write ``truth/calibration.json`` (atomic).
+    Called after each verified game (post-game job, background thread). Never raises."""
+    try:
+        agg = aggregate_scores(truth_dir, last=last)
+        cal = calibrate_fog_threshold(agg.get("pred"))
+        from treeaicoach.recorder import atomic_write_text
+
+        path = Path(truth_dir) / CALIBRATION_FILE
+        return cal if atomic_write_text(path, json.dumps({"schema": 1, "fog": cal}, ensure_ascii=False)) else None
+    except Exception:
+        log.exception("save_calibration failed")
+        return None
+
+
+def load_fog_threshold(truth_dir: Path | str) -> float:
+    """The calibrated jungler-fog danger threshold (danger.PersonalDanger.fog_min_mass), the
+    default when none yet. Tiny file, read once per game. Never raises."""
+    try:
+        data = json.loads((Path(truth_dir) / CALIBRATION_FILE).read_text(encoding="utf-8"))
+        v = _f(((data or {}).get("fog") or {}).get("threshold"))
+        if v is not None:
+            return round(min(FOG_THR_MAX, max(FOG_THR_MIN, v)), 3)
+    except Exception:
+        pass
+    return FOG_DEFAULT_THRESHOLD

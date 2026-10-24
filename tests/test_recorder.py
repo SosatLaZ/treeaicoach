@@ -546,3 +546,25 @@ def test_same_alert_rerouted_within_seconds_is_recorded_once(tmp_path: Path) -> 
     snap = r.snapshot()
     assert snap is not None
     assert [a[3] for a in snap["alerts"]] == ["Recule !", "Autre", "Recule !"]
+
+
+def test_prediction_log_throttled_and_bounded(tmp_path: Path) -> None:
+    """recorder.on_prediction: win probability every 30 s, jungler-fog score every 5 s (with the
+    threshold in use, below it too), nothing outside a game, garbage ignored."""
+    r = GameRecorder(tmp_path)
+    r.on_prediction("win", 100.0, 0.6)                 # no game yet
+    r.on_game_info(make_game(100.0), 0.0)
+    for i in range(130):
+        gt = 100.0 + i
+        r.on_prediction("win", gt, 0.5 + i / 1000.0)
+        r.on_prediction("gank", gt, 0.2 if i % 2 else 0.05, 0.35)
+    r.on_prediction("gank", 300.0, float("nan"), 0.35)
+    r.on_prediction("other", 300.0, 0.5)
+    r.on_prediction("win", None, 0.5)
+    r.on_prediction("win", 400.0, 7.0)                 # clamped to 0..1
+    pred = r.snapshot()["predictions"]
+    assert [row[0] for row in pred["win"]] == [100.0, 130.0, 160.0, 190.0, 220.0, 400.0]
+    assert pred["win"][-1][1] == 1.0
+    gank = pred["gank"]
+    assert gank and all(row[1] >= 0.1 and row[2] == 0.35 for row in gank)
+    assert all(b[0] - a[0] >= 5.0 for a, b in zip(gank, gank[1:]))

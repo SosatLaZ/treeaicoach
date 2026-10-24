@@ -427,6 +427,61 @@ def test_truth_files_and_aggregate(tmp_path: Path, record: dict, truth: dict) ->
     assert gt.aggregate_scores(tmp_path / "nothing") == {"games": 0}
 
 
+def test_prediction_log_checked_against_the_truth(tmp_path: Path, record: dict, truth: dict) -> None:
+    rec = copy.deepcopy(record)
+    # danger.py fog score samples: 4:05 just before the 4:10 death to Lee Sin (right), 12:00 while
+    # Lee Sin is bot and I am top (wrong), 4:10 under the threshold (logged, not an alert)
+    rec["predictions"] = {"gank": [[245.0, 0.6, 0.35], [720.0, 0.5, 0.35], [250.0, 0.2, 0.35]],
+                          "win": [[600.0, 0.55], [900.0, 0.62], [1200.0, 0.7]]}
+    rec["my_positions"] = [p for p in rec["my_positions"] if not 700 <= p[0] <= 740] + [[720.0, 0.1, 0.12]]
+    rel = analyze_game(rec, truth=truth)["truth"]["reliability"]
+    pr = rel["predictions"]
+    assert pr["gank_samples"] == 3 and pr["gank_alerts"] == 2
+    assert pr["gank_hits"] == 1 and pr["gank_false"] == 1 and pr["gank_hit_rate"] == 0.5
+    assert sum(c + f for c, f in pr["bins"]) == 3 and pr["bins"][gt._bin(0.2)] == [1, 0]
+    assert pr["won"] is True and pr["win15"] == 0.62 and pr["win15_right"] is True and 0 < pr["win_brier"] < 0.25
+    sc = gt.compact_score(rel, rec)
+    assert sc["pred"]["gank_hits"] == 1 and sc["pred"]["fog_threshold"] == 0.35
+    # no prediction log (older records): nothing invented
+    assert analyze_game(record, truth=truth)["truth"]["reliability"]["predictions"]["gank_alerts"] == 0
+    # pooled over the verified games + the calibration file read at the next game start
+    d = tmp_path / "truth"
+    d.mkdir()
+    (d / "a.truth.json").write_text(json.dumps(dict(truth, score=sc)), encoding="utf-8")
+    agg = gt.aggregate_scores(d)
+    assert agg["pred"]["games"] == 1 and agg["pred"]["gank_hit_rate"] == 0.5 and agg["pred"]["win_right"] == 1
+    assert gt.load_fog_threshold(d) == gt.FOG_DEFAULT_THRESHOLD           # no file yet
+    cal = gt.save_calibration(d)
+    assert cal["threshold"] == 0.35 and cal["verified"] == 2 and "pas assez" in cal["text"]
+    assert gt.load_fog_threshold(d) == 0.35
+    (d / gt.CALIBRATION_FILE).write_text('{"fog": {"threshold": 9}}', encoding="utf-8")
+    assert gt.load_fog_threshold(d) == gt.FOG_THR_MAX                       # bounded
+    (d / gt.CALIBRATION_FILE).write_text("{", encoding="utf-8")
+    assert gt.load_fog_threshold(d) == gt.FOG_DEFAULT_THRESHOLD
+
+
+def test_calibrate_fog_threshold_is_bounded_and_slow() -> None:
+    def pooled(per_bin: dict[float, tuple[int, int]], thr: float = 0.35) -> dict:
+        bins = [[0, 0] for _ in gt.FOG_BIN_EDGES]
+        for edge, cf in per_bin.items():
+            bins[gt.FOG_BIN_EDGES.index(edge)] = list(cf)
+        return {"games": 10, "bins": bins, "fog_threshold": thr}
+
+    noisy = pooled({0.35: (10, 15), 0.45: (5, 5)})                         # 15 / 35 right
+    up = gt.calibrate_fog_threshold(noisy)
+    assert up["threshold"] == 0.4 and up["previous"] == 0.35 and "relevé" in up["text"]
+    assert gt.calibrate_fog_threshold(noisy, current=0.5)["threshold"] == gt.FOG_THR_MAX     # never above
+    sharp = pooled({0.3: (16, 4), 0.35: (20, 2), 0.5: (14, 1)})            # 34 / 37 right, 50 / 57 one step lower
+    down = gt.calibrate_fog_threshold(sharp)
+    assert down["threshold"] == 0.3 and "abaissé" in down["text"]          # ONE step per verified game
+    assert gt.calibrate_fog_threshold(sharp, current=0.25)["threshold"] == gt.FOG_THR_MIN    # never below
+    few = pooled({0.35: (2, 8)})                                           # 10 verifiable: not enough
+    assert gt.calibrate_fog_threshold(few)["threshold"] == 0.35
+    good = pooled({0.35: (25, 10)})                                        # 71 %: kept
+    assert gt.calibrate_fog_threshold(good)["threshold"] == 0.35 and "gardé" in gt.calibrate_fog_threshold(good)["text"]
+    assert gt.calibrate_fog_threshold(None)["threshold"] == gt.FOG_DEFAULT_THRESHOLD
+
+
 # ---------------------------------------------------------------------------------- report
 def test_report_with_truth_and_pending(tmp_path: Path, record: dict, truth: dict) -> None:
     rp = tmp_path / "2026-09-12_2031_Garen.json"
@@ -440,6 +495,10 @@ def test_report_with_truth_and_pending(tmp_path: Path, record: dict, truth: dict
     for text in ("Vérité terrain (client LoL)", "Fiabilité de TreeAI cette partie", "Vrai parcours de Lee Sin",
                  "côté haut", "face à Darius", "Ganks manqués", "Cercle du brouillard", "14:30"):
         assert report.html.escape(text, quote=True) in page or text in page, text
+    rec = dict(record, predictions={"gank": [[245.0, 0.6, 0.35]], "win": [[900.0, 0.62]]})
+    rp.write_text(json.dumps(rec), encoding="utf-8")
+    page = report.write_report(rp).read_text(encoding="utf-8")
+    assert "juste 1 fois sur 1 (seuil 0,35)" in page and "prévision juste" in page
     assert page.count("data:image/png;base64,") >= 4
 
 

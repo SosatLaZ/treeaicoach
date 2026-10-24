@@ -12,6 +12,7 @@ import dataclasses
 import logging
 import math
 import time
+from pathlib import Path
 from typing import Any
 
 import cv2
@@ -434,6 +435,9 @@ class VisionMixin:
                 from treeaicoach.danger import PersonalDanger
 
                 pd = self._danger = PersonalDanger()
+            if not getattr(self, "_fog_cal_done", False):     # once per game (engine._start_game clears it)
+                self._fog_cal_done = True
+                pd.fog_min_mass = self._calibrated_fog_threshold()
             roles = self._role_resolver
             lane = list(roles.lane_opponents() or ()) if roles is not None else []
             jg = roles.enemy_jungler() if roles is not None else None
@@ -448,6 +452,21 @@ class VisionMixin:
         except Exception:
             self._err.exception("Personal danger failed")
             return []
+
+    def _calibrated_fog_threshold(self) -> float:
+        """The player's jungler-fog danger threshold (ground_truth.calibrate_fog_threshold, written
+        after each game verified against the client timeline), the default without one. Never raises."""
+        from treeaicoach import ground_truth
+
+        try:
+            rec = getattr(self, "_recorder", None)
+            out = getattr(rec, "out_dir", None)
+            if out is None:
+                return ground_truth.FOG_DEFAULT_THRESHOLD
+            return ground_truth.load_fog_threshold(Path(out) / ground_truth.TRUTH_DIR_NAME)
+        except Exception:
+            log.debug("calibrated fog threshold unavailable", exc_info=True)
+            return ground_truth.FOG_DEFAULT_THRESHOLD
 
     RECALL_HOLD_S = 1.5             # a recall reading this old still counts (detector cadence)
 

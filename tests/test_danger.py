@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from treeaicoach.alerts import AlertKind, AlertThrottler, Level
-from treeaicoach.danger import RECULE_REPEAT_S, PersonalDanger, fog_mass_near, past_mid
+from treeaicoach.danger import FOG_MIN_MASS, RECULE_REPEAT_S, PersonalDanger, fog_mass_near, past_mid
 from treeaicoach.fog_tracker import FogEstimate
 from treeaicoach.live_client import GameInfo, PlayerInfo
 from treeaicoach.tracker import Tracker
@@ -49,7 +49,7 @@ def run(duration: float, enemies: Callable[[float], dict], hp: Callable[[float],
         me: Callable[[float], tuple] = lambda t: ME_TOP, allies: Callable[[float], dict] = lambda t: {},
         game_kw: Callable[[float], dict] = lambda t: {}, lane=("Darius",), fog=lambda t: (), **kw) -> list:
     tracker = Tracker()
-    pd = PersonalDanger()
+    pd = kw.pop("pd", None) or PersonalDanger()
     out = []
     for i in range(int(round(duration * FPS))):
         t = i * DT
@@ -180,6 +180,28 @@ def test_unseen_jungler_probably_close_while_pushed_is_written_early() -> None:
     assert run(3.0, lambda t: {}, lambda t: 1.0, me=lambda t: ME_TOP, fog=fog) == []
     # just disappeared (< 8 s): the gank analyser / the last sighting speak
     assert run(3.0, lambda t: {}, lambda t: 1.0, me=lambda t: pushed, fog=lambda t: [_fog((0.25, 0.16), 3.0)]) == []
+
+
+def test_fog_threshold_is_per_player_and_logged() -> None:
+    """The jungler-fog rule uses the player's calibrated threshold (ground_truth.calibrate_fog_threshold),
+    kept across games, and exposes its score + evaluation time for the prediction log."""
+    pushed = (0.12, 0.08)
+    fog = lambda t: [_fog((0.25, 0.16), 15.0, spread=0.12)]      # noqa: E731 - a wide area: partial mass
+    pd = PersonalDanger()
+    assert pd.fog_min_mass == FOG_MIN_MASS
+    run(1.0, lambda t: {}, lambda t: 1.0, me=lambda t: pushed, fog=fog, pd=pd)
+    st = pd.state()
+    mass = st.jungler_fog_mass
+    assert mass is not None and 0.0 < mass < 1.0 and st.fog_eval_t is not None
+    strict = PersonalDanger()
+    strict.fog_min_mass = mass + 0.05
+    assert run(3.0, lambda t: {}, lambda t: 1.0, me=lambda t: pushed, fog=fog, pd=strict) == []
+    strict.reset()
+    assert strict.fog_min_mass == mass + 0.05                      # a new game keeps the calibration
+    loose = PersonalDanger()
+    loose.fog_min_mass = max(0.01, mass - 0.05)
+    out = run(3.0, lambda t: {}, lambda t: 1.0, me=lambda t: pushed, fog=fog, pd=loose)
+    assert [x for _t, x in texts(out)] == ["Recule vers ta tour : Lee Sin peut arriver"]
 
 
 def test_fog_mass_near_bounds() -> None:
@@ -353,3 +375,29 @@ def test_two_v_one_engine_says_recule_writes_reason_and_gauge_safe(tmp_path, mon
         assert g is None or g.step <= -1
     finally:
         paths._reset_cache()
+
+
+def test_engine_logs_predictions_and_loads_the_calibration(tmp_path) -> None:
+    """engine._log_predictions -> recorder.on_prediction (fog score with its threshold, win %), and
+    the per-game threshold read from games/truth/calibration.json (engine_vision)."""
+    import json
+    from types import SimpleNamespace
+
+    from treeaicoach.engine import CoachEngine
+
+    calls = []
+    rec = SimpleNamespace(on_prediction=lambda *a: calls.append(a), out_dir=tmp_path)
+    pd = PersonalDanger()
+    pd.fog_min_mass = 0.4
+    pd._state = pd._state.__class__(t=10.0, jungler_fog_mass=0.3, fog_eval_t=9.8)
+    eng = SimpleNamespace(_danger=pd, win_probability=lambda: 0.61, _recorder=rec)
+    CoachEngine._log_predictions(eng, rec, 10.0, 600.0)
+    assert calls == [("gank", 600.0, 0.3, 0.4), ("win", 600.0, 0.61)]
+    calls.clear()
+    pd._state = pd._state.__class__(t=10.0, jungler_fog_mass=0.3, fog_eval_t=2.0)      # stale score: not logged
+    CoachEngine._log_predictions(eng, rec, 10.0, 600.0)
+    assert calls == [("win", 600.0, 0.61)]
+    assert CoachEngine._calibrated_fog_threshold(eng) == FOG_MIN_MASS
+    (tmp_path / "truth").mkdir()
+    (tmp_path / "truth" / "calibration.json").write_text(json.dumps({"fog": {"threshold": 0.4}}), encoding="utf-8")
+    assert CoachEngine._calibrated_fog_threshold(eng) == 0.4

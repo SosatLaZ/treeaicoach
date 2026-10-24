@@ -82,6 +82,11 @@ MAX_ALLY_POINTS = 4000          # per ally, then decimated
 MAX_FOG = 4 * 3600              # then decimated
 SETTINGS_KEYS = ("sensitivity", "warn_radius", "danger_radius", "fog_max_s", "fog_mode", "safe_mode")
 MAX_TEXT_LEN = 160
+#: prediction log (calibration against the client timeline, ground_truth.py)
+PRED_WIN_EVERY_S = 30.0         # one live win probability sample every 30 s of game time
+PRED_GANK_EVERY_S = 5.0         # one jungler-fog danger score sample every 5 s (below the threshold too)
+PRED_GANK_MIN = 0.1             # scores below this are not worth keeping
+MAX_PREDICTIONS = 1500
 MAX_ITEMS = 8
 
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_-]+")
@@ -301,6 +306,8 @@ class GameRecorder:
         self._last_fog_gt: float = -math.inf
         self._allies: dict[str, list[list[float]]] = {}
         self._last_ally_gt: dict[str, float] = {}
+        self._pred: dict[str, Any] = {"win": [], "gank": []}
+        self._last_pred_gt: dict[str, float] = {}
 
     def _warn_once(self, key: str, msg: str, *args: Any) -> None:
         if key not in self._warned:
@@ -651,6 +658,36 @@ class GameRecorder:
         except Exception:
             log.exception("GameRecorder.note_settings failed")
 
+    def on_prediction(self, kind: str, game_time: float | None, value: Any, threshold: Any = None) -> None:
+        """Prediction log: ``"win"`` = live win probability (0..1); ``"gank"`` = jungler-fog danger
+        score (danger.py fog mass, 0..1) with the ``threshold`` in use - kept below the threshold too,
+        so that the post-game check (ground_truth) can calibrate it. Throttled. Never raises."""
+        try:
+            k = str(kind or "")
+            v = _finite(value)
+            if k not in ("win", "gank") or v is None or game_time is None:
+                return
+            with self._lock:
+                if not self.active:
+                    return
+                gt = _finite(game_time)
+                if gt is None:
+                    return
+                every = PRED_WIN_EVERY_S if k == "win" else PRED_GANK_EVERY_S
+                if k == "gank" and v < PRED_GANK_MIN:
+                    return
+                if gt - self._last_pred_gt.get(k, -math.inf) < every or len(self._pred[k]) >= MAX_PREDICTIONS:
+                    return
+                self._last_pred_gt[k] = gt
+                row: list[Any] = [round(gt, 1), round(max(0.0, min(1.0, v)), 3)]
+                thr = _finite(threshold)
+                if k == "gank" and thr is not None:
+                    row.append(round(thr, 3))
+                self._pred[k].append(row)
+                self._dirty = True
+        except Exception:
+            log.exception("GameRecorder.on_prediction failed")
+
     # ------------------------------------------------------------------ alerts
     def on_scoreboard(self, summary: Any, game_time: float | None) -> None:
         """Tab scoreboard summary (``ScoreboardSummary.to_dict()``): kept as the latest value +
@@ -759,6 +796,7 @@ class GameRecorder:
             "scoreboard": {"final": self._scoreboard, "timeline": list(self._scoreboard_timeline)},
             "fog": list(self._fog),
             "allies": {k: list(v) for k, v in self._allies.items()},
+            "predictions": {k: list(v) for k, v in self._pred.items()},
             "settings": dict(self._settings),
         }
 

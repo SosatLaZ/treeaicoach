@@ -225,6 +225,11 @@ class PostgameMixin:
                 except Exception:
                     log.exception("Cannot score the alerts against the client timeline")
                 self.last_truth_path = ground_truth.save_truth(record_path, truth)
+                if self.last_truth_path is not None:      # prediction log -> the player's danger threshold
+                    cal = ground_truth.save_calibration(Path(self.last_truth_path).parent)
+                    if cal:
+                        log.info("Jungler fog danger threshold %.2f -> %.2f (%s, %d verified alerts)",
+                                 cal["previous"] or 0.0, cal["threshold"], cal["text"], cal["verified"])
         except Exception:
             log.exception("League Client post-game data failed")
         if html is None:

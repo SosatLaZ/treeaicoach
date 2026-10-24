@@ -2273,8 +2273,40 @@ def _reliability_html(t: dict, history: dict | None) -> str:
     table = (f'<details style="margin-top:10px"><summary class="small" style="cursor:pointer">Détail des '
              f'{len(eps)} alertes</summary><div class="tw"><table><thead><tr><th>Heure</th><th>Ennemi annoncé</th>'
              f'<th>Verdict</th></tr></thead><tbody>{rows}</tbody></table></div></details>') if eps else ""
+    pred = _predictions_html(rel.get("predictions") or {}, history)
     return (f'<h2 style="margin-top:6px">Fiabilité de TreeAI cette partie</h2>{head}<div class="cards">{cards_html}</div>'
-            f'<p style="margin:0 0 6px">{_e(sug_txt)}</p>{hist}{table}')
+            f'<p style="margin:0 0 6px">{_e(sug_txt)}</p>{pred}{hist}{table}')
+
+
+def _predictions_html(pr: dict, history: dict | None) -> str:
+    """The prediction log checked against the client timeline (ground_truth._predictions): hit rate
+    of the "le jungler peut arriver" alerts, the live win probability at 15 min, and the player's
+    calibrated threshold over his last verified games."""
+    from treeaicoach import ground_truth
+
+    parts = []
+    n = int(_f(pr.get("gank_hits")) or 0) + int(_f(pr.get("gank_false")) or 0)
+    thr = _f(pr.get("fog_threshold"))
+    if n:
+        parts.append(f"Alerte « le jungler peut arriver » juste {int(_f(pr.get('gank_hits')) or 0)} fois sur {n}"
+                     + (f" (seuil {_num(thr, 2)})" if thr is not None else ""))
+    if pr.get("win15") is not None and pr.get("won") is not None:
+        verdict = {True: "juste", False: "fausse"}.get(pr.get("win15_right"), "indécise")
+        parts.append(f"victoire estimée à 15 min : {_pct(pr.get('win15'))}, "
+                     f"{'victoire' if pr.get('won') else 'défaite'} au bout : prévision {verdict}")
+    hp = (history or {}).get("pred") if isinstance(history, dict) else None
+    if isinstance(hp, dict) and (hp.get("games") or 0) >= 2:
+        cal = ground_truth.calibrate_fog_threshold(hp)
+        sub = []
+        if hp.get("gank_hit_rate") is not None:
+            sub.append(f"alertes « peut arriver » justes {_pct(hp.get('gank_hit_rate'))}")
+        if hp.get("win_games"):
+            sub.append(f"victoire à 15 min bien prévue {hp.get('win_right', 0)} fois sur {hp['win_games']}")
+        sub.append(f"seuil pour la prochaine partie {_num(cal['threshold'], 2)} ({cal['text']})")
+        parts.append(f"Sur tes {hp['games']} dernières parties vérifiées : " + ", ".join(sub))
+    if not parts:
+        return ""
+    return '<p class="small">' + "<br>".join(_e(x) + "." for x in parts) + '</p>'
 
 
 def _lane_html(t: dict) -> str:

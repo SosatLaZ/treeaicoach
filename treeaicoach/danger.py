@@ -172,6 +172,7 @@ class DangerState:
     #: the engine raises its threat with it (gauge SAFE, no "vas-y" advice while 2 v 1)
     level: int = 0
     reason: str | None = None           # "2 contre 1", "peu de vie, Darius sur toi"
+    fog_eval_t: float | None = None     # engine time the jungler fog mass was computed (prediction log)
 
 
 @dataclass
@@ -188,6 +189,9 @@ class PersonalDanger:
     """See the module docstring. One instance per game (``reset()`` on a new game)."""
 
     def __init__(self) -> None:
+        #: fog mass threshold of the ``jungler_fog`` rule: :data:`FOG_MIN_MASS`, or the player's
+        #: calibrated value (ground_truth.calibrate_fog_threshold, set by the engine at game start)
+        self.fog_min_mass = FOG_MIN_MASS
         self.reset()
 
     def reset(self) -> None:
@@ -371,7 +375,8 @@ class PersonalDanger:
         if level == 0 and (out is not None or (hp is not None and near and (hp < LOW_HP or outnumbered))):
             level = 1
         self._state = DangerState(t=t, hp=hp, foes=tuple(foes), allies_near=allies_near, rule=rule,
-                                  jungler_fog_mass=fog_mass, level=level, reason=reason)
+                                  jungler_fog_mass=fog_mass, level=level, reason=reason,
+                                  fog_eval_t=self._fog_t if fog_mass is not None else None)
         if out is None:
             return []
         return [out, companion] if companion is not None else [out]
@@ -472,7 +477,7 @@ class PersonalDanger:
         if elapsed is None or not (FOG_MIN_HIDDEN_S <= elapsed <= FOG_MAX_HIDDEN_S):
             return None, None
         mass = fog_mass_near(est, me_pos, FOG_ETA_S, self._get_reach())
-        if mass is None or mass < FOG_MIN_MASS:
+        if mass is None or mass < self.fog_min_mass:
             return mass, None
         name = str(getattr(est, "name", "") or getattr(est, "alias", "") or "Le jungler ennemi")
         return mass, name

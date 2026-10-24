@@ -561,6 +561,25 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                  prof.name, self._budget.reason or "auto", prof.load, prof.calm_fps, prof.burst_fps,
                  prof.overlay_fps)
 
+    def _log_predictions(self, rec: Any, t: float, gt: float) -> None:
+        """Prediction log of the game record (recorder.on_prediction): the live win probability and
+        the jungler-fog danger score of danger.py with its threshold, checked after the game against
+        the client timeline (ground_truth.py). Never raises."""
+        try:
+            on_pred = getattr(rec, "on_prediction", None)
+            if not callable(on_pred):
+                return
+            pd = getattr(self, "_danger", None)
+            st = pd.state() if pd is not None else None
+            ft = getattr(st, "fog_eval_t", None)
+            if ft is not None and 0.0 <= t - ft <= 1.0:
+                on_pred("gank", gt, getattr(st, "jungler_fog_mass", None), getattr(pd, "fog_min_mass", None))
+            wp = getattr(self, "win_probability", None)
+            if callable(wp):
+                on_pred("win", gt, wp())
+        except Exception:
+            log.debug("prediction log failed", exc_info=True)
+
     def _store_icon_scale(self, key: str, ratio: float) -> None:
         """Calibrated icon scale (roster matcher) -> config, prior of the next games."""
         try:
@@ -1033,6 +1052,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._death_due = None
         self._threat_hist.clear()
         self._last_danger_t = None
+        self._fog_cal_done = False       # the calibrated danger threshold is re-read for this game
         self._last_alert = None
         self._last_alert_t = None
         self._recent.clear()
@@ -1269,6 +1289,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             on_fog = getattr(rec, "on_fog", None)
             if callable(on_fog) and self._fog is not None and not getattr(self._cfg, "safe_mode", False):
                 on_fog(self._fog.estimates(), gt)
+            self._log_predictions(rec, t, gt)
         raw_alerts += self._death_recap_alerts(t)
         self._stats["coach"].add((time.perf_counter() - t_coach) * 1000.0)
         if threat >= Level.WARNING:     # gank first: no macro tip / praise / Tab insight now
