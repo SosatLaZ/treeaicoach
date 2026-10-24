@@ -3,6 +3,17 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.22.0 · 24 octobre 2026
+
+- **Discord transcrit avec Whisper** (local, gratuit) pour toi et chaque pote, avec les champions de la partie
+  en vocabulaire. Un seul moteur pour tout le monde : ~0,7 s par question, ~5 % d'erreurs de mots.
+- **Micro muet en partie :** l'appli essaie les autres micros et prend celui qui t'entend.
+- **Conseils croisés :** ton matchup (draft) et le rang de ton adversaire ajustent la fenêtre de kill ;
+  « Farme sans risque » quand il gagne cette phase.
+- **Le coach apprend :** chaque alerte de gank est vérifiée après la partie avec le vrai trajet du jungler ;
+  le rapport donne le taux de réussite et le seuil s'ajuste tout seul, lentement.
+- **Pages Alertes et Discord** au nouveau design ; code mort supprimé.
+
 ## 2.21.1 · 23 octobre 2026
 
 - **Discord t'entend enfin :** le bot ignorait ta voix quand l'assistant du PC était activé (pour ne pas
