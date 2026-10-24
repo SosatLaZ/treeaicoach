@@ -57,8 +57,8 @@ CLASSES: tuple[str, ...] = ("brilliant", "great", "best", "good", "inaccuracy", 
 POSITIVE = frozenset({"brilliant", "great", "best", "good"})
 NEGATIVE = frozenset({"inaccuracy", "mistake", "blunder", "miss"})
 TITLE_FR: dict[str, str] = {
-    "brilliant": "COUP DE MAÎTRE", "great": "EXCELLENT", "best": "MEILLEUR COUP", "good": "BON COUP",
-    "inaccuracy": "IMPRÉCISION", "mistake": "ERREUR", "blunder": "GAFFE", "miss": "OCCASION RATÉE",
+    "brilliant": "Coup de maître", "great": "Excellent", "best": "Meilleur coup", "good": "Bon coup",
+    "inaccuracy": "Imprécision", "mistake": "Erreur", "blunder": "Gaffe", "miss": "Occasion ratée",
 }
 #: chess-style mark drawn in the badge icon ("" = a drawn glyph: star, check, cross)
 SYMBOL: dict[str, str] = {

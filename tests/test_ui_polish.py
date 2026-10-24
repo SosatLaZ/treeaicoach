@@ -104,3 +104,18 @@ def test_overlay_preview_composition() -> None:
     assert "radar" in radar.rects
 
 
+
+
+def test_overlay_preview_is_flat_and_never_shouts() -> None:
+    """docs/DESIGN.md: one flat colour under the layers (no fake blurred terrain), no capitals."""
+    import numpy as np
+    from treeaicoach import plays
+    off = ui_preview.compose(Config(overlay_enabled=False))
+    scr = off.screen
+    mx, my, _mw, _mh = off.rects["minimap"]
+    area = scr[300:500, 200:600]                            # mid screen: nothing but the flat screen
+    assert (area == np.array(ui_preview.SCREEN_RGB, np.uint8)).all()
+    assert len(np.unique(scr[: my - 10, : mx - 10].reshape(-1, 3), axis=0)) <= 3   # screen + HUD panels
+    assert ui_preview.SAMPLE_PLAY[1] == "Coup de maître"
+    for title in plays.TITLE_FR.values():
+        assert title != title.upper() and title[0].isupper()

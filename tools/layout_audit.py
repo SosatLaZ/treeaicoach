@@ -184,7 +184,7 @@ class Placed:
 
 
 def _badge(size: str, scale: float) -> np.ndarray:
-    img = fx.render_frame("brilliant", "COUP DE MAÎTRE", "Baron volé sous le nez du jungler", 1.2, size=size,
+    img = fx.render_frame("brilliant", "Coup de maître", "Baron volé sous le nez du jungler", 1.2, size=size,
                           scale=scale)
     return img if img is not None else np.zeros((2, 2, 4), np.uint8)
 

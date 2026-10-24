@@ -8,8 +8,11 @@ rectangle of every layer. :func:`preview_images` turns that into what the Overla
 
 * ``screen``: the whole screen, small (where each element sits);
 * ``minimap`` (or ``radar``) and ``hud``: the layers cut out of that same screen at a readable
-  scale, over what is really under them (the game's minimap, the terrain);
-* ``badge``: the rated-play badge ("COUP DE MAÎTRE") when rated plays are on.
+  scale, over what is really under them (the game's minimap);
+* ``badge``: the rated-play badge ("Coup de maître") when rated plays are on.
+
+The screen under the layers is flat (:func:`_background`): graphite, League's permanent HUD panels
+as flat blocks and the real minimap texture, no fake terrain, no blur (docs/DESIGN.md).
 
 Nothing here is mocked up: when the engine runs, the page passes the live ``OverlayState``;
 outside a game it uses ``overlay_render.sample_states()["danger"]`` (a gank in progress).
@@ -30,7 +33,7 @@ from PIL import Image
 log = logging.getLogger(__name__)
 
 SCREEN = (0, 0, 1920, 1080)
-SAMPLE_PLAY = ("brilliant", "COUP DE MAÎTRE", "Baron volé sous le nez du jungler")
+SAMPLE_PLAY = ("brilliant", "Coup de maître", "Baron volé sous le nez du jungler")
 _sample_cache: dict[Any, Any] = {}
 
 
@@ -56,11 +59,49 @@ def sample_state() -> Any:
     return st
 
 
-def _background(w: int, h: int, minimap: tuple[int, int, int, int]) -> np.ndarray:
-    """``overlay_render.game_background`` (deterministic, cached there): a fresh copy."""
-    from treeaicoach import overlay_render as orr  # noqa: PLC0415
+#: the flat preview screen (docs/DESIGN.md: one flat colour, no picture, no blur, no gradient):
+#: the screen, League's permanent HUD panels as flat blocks, the real minimap texture (sharp)
+SCREEN_RGB = (27, 28, 32)          # ui_widgets.GRAPHITE.group  #1B1C20
+PANEL_RGB = (35, 37, 41)           # GRAPHITE.control           #232529
+PANEL_ZONES = ("bottom_bar", "scoreboard")
+_bg_cache: dict[Any, np.ndarray] = {}
 
-    return orr.game_background(w, h, minimap)
+
+def _background(w: int, h: int, minimap: tuple[int, int, int, int]) -> np.ndarray:
+    """The preview screen (RGB, a fresh copy): a flat graphite screen, League's always-visible HUD
+    panels (ability bar, scoreboard: ``layout.game_zones``, measured on real captures) as flat
+    blocks, and the official minimap texture, sharp, where the minimap is. Not a fake game
+    picture: the overlay layers drawn over it are the only detail."""
+    key = (int(w), int(h), tuple(int(v) for v in minimap))
+    hit = _bg_cache.get(key)
+    if hit is None:
+        img = np.empty((h, w, 3), np.uint8)
+        img[:] = SCREEN_RGB
+        mx, my, mw, mh = (int(v) for v in minimap)
+        try:
+            from treeaicoach import layout as layout_mod  # noqa: PLC0415
+
+            for z in layout_mod.game_zones((0, 0, w, h), (mx, my, mw, mh)):
+                if z.key in PANEL_ZONES:
+                    x, y, zw, zh = z.rect
+                    img[max(0, y):y + zh, max(0, x):x + zw] = PANEL_RGB
+        except Exception:
+            log.debug("preview HUD zones unavailable", exc_info=True)
+        try:
+            from treeaicoach import overlay_render as orr  # noqa: PLC0415
+
+            x0, y0 = max(0, mx), max(0, my)
+            x1, y1 = min(w, mx + mw), min(h, my + mh)
+            if x1 > x0 and y1 > y0 and mw > 4 and mh > 4:
+                tex = cv2.resize(orr.default_radar_texture(), (mw, mh), interpolation=cv2.INTER_AREA)[..., ::-1]
+                img[y0:y1, x0:x1] = (tex[y0 - my:y1 - my, x0 - mx:x1 - mx].astype(np.float32) * 0.8).astype(np.uint8)
+        except Exception:
+            log.debug("preview minimap texture unavailable", exc_info=True)
+        if len(_bg_cache) > 4:
+            _bg_cache.clear()
+        img.setflags(write=False)
+        _bg_cache[key] = hit = img
+    return hit.copy()
 
 
 def _with_cfg(state: Any, cfg: Any, live: bool) -> Any:

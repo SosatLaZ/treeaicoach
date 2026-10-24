@@ -88,7 +88,7 @@ class OverlayPage:
 
         scr = self.page.section("Écran")
         app.switch_row(scr, "essentials_strip", "Barre de l'essentiel", "En haut de l'écran : or contre ton "
-                       "adversaire, CS par minute, prochain objectif, jungler ennemi.")
+                       "adversaire, CS par minute, prochain objectif, jungler ennemi, prochain objet.")
         app.switch_row(scr, "danger_flash", "Bords rouges en cas de gank", None)
         app.switch_row(scr, "plays_enabled", "Coups notés", "Un badge après un bon coup ou une erreur.")
         app.depends(app.choice_row(scr, "plays_position", "Position du badge", None, PLAYS_POSITIONS,
@@ -131,12 +131,16 @@ class OverlayPage:
         self._preview_busy = True
         cfg = self.app.cfg
         width = max(360, min(680, self.page.column.width() - 32))
+        try:            # sharp on a HiDPI screen: the 1080p composition scaled to the real pixels
+            dpr = max(1.0, min(3.0, float(self.preview.devicePixelRatioF())))
+        except Exception:
+            dpr = 1.0
 
         def job() -> Any:
             from treeaicoach import ui_preview  # noqa: PLC0415
 
             comp = ui_preview.compose(cfg)
-            return ui_preview.preview_images(comp, screen_w=width).get("screen")
+            return ui_preview.preview_images(comp, screen_w=int(round(width * dpr))).get("screen")
 
         def done(img: Any) -> None:
             self._preview_busy = False
@@ -145,8 +149,9 @@ class OverlayPage:
                 rgb = img.convert("RGB")
                 data = rgb.tobytes("raw", "RGB")
                 qimg = QtGui.QImage(data, rgb.width, rgb.height, 3 * rgb.width, QtGui.QImage.Format_RGB888).copy()
-                pm = QtGui.QPixmap.fromImage(qimg)
-                self.preview.setPixmap(_rounded(QtGui, self.app.QtCore, pm, 8))
+                pm = _rounded(QtGui, self.app.QtCore, QtGui.QPixmap.fromImage(qimg), int(round(8 * dpr)))
+                pm.setDevicePixelRatio(dpr)
+                self.preview.setPixmap(pm)
             if self._preview_again:
                 self._preview_again = False
                 self.render_preview()

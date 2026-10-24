@@ -129,10 +129,10 @@ def plate_size(size: str = "big", scale: float = 1.0, title: str = "", reason: s
     if size == "small":
         h = SMALL_H * k
         f = get_font(int(round(20 * k)), "bold")
-        w = h + 14 * k + orr.text_width(title.upper(), f) + 14 * k
+        w = h + 14 * k + orr.text_width(title, f) + 14 * k
         return int(round(w)), int(round(h))
     h = BASE_H * k
-    need = h + 14 * k + 12 * k + max(orr.text_width((title or "").upper(), get_font(int(round(25 * k)), "bold")),
+    need = h + 14 * k + 12 * k + max(orr.text_width((title or ""), get_font(int(round(25 * k)), "bold")),
                                      orr.text_width(reason or "", get_font(int(round(17 * k)), "semibold")))
     need += 2.0 * k            # rounding slack: the text must not be cut by fit_text at exactly its width
     return int(round(min(max(need, BASE_W * k), MAX_W * k))), int(round(h))
@@ -312,7 +312,7 @@ def _render_plate(cls: str, title: str, reason: str, size: str, scale: float) ->
     _glyph(cv_, cls, s / 2, H / 2, s)
     tx = s + 14 * k
     max_w = W - tx - 12 * k
-    title_u = (title or "").upper()
+    title_u = (title or "")  # sentence case (DESIGN.md: no shouting capitals)
     if size == "small":
         ft = get_font(int(round(20 * k)), "bold")
         cv_.text(tx, H / 2, orr.fit_text(title_u, ft, max_w), ft, rgb, 1.0, shadow=0)
