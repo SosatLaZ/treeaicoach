@@ -351,6 +351,8 @@ class DiscordPage:
         self._ear = ear
         app.switch_row(ear, "discord_listen", "Écouter le salon vocal", "Toi ou un ami dit « Hey coach » puis sa "
                        "question : le bot répond dans le salon.")
+        app.depends(app.switch_row(ear, "discord_listen_owner_only", "Seulement moi",
+                                   "Le bot n'écoute que ta voix, pas celle de tes amis."), "discord_listen")
         self._listen_row = app.depends(ear.add(W.Row("Tester l'écoute", LISTEN_TEST_DESC,
                                                      W.button("Tester", self._listen_test))), "discord_listen")
         self._listen_chain = ""

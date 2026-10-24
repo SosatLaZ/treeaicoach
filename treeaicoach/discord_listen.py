@@ -361,6 +361,7 @@ class VoiceListener:
         self.on_question: Callable[[str, str], None] = lambda _u, _q: None
         self.bot_user_id = ""
         self.ignore_ids: frozenset[str] = frozenset()   # the player himself when his PC assistant listens
+        self.only_id: str = ""    # set: every other speaker is ignored (discord_listen_owner_only)
         self.owner_id: str = ""   # the player, also heard by his PC assistant: one answer (claim_wake)
         self.wakes = 0
         self.questions = 0
@@ -396,6 +397,8 @@ class VoiceListener:
 
     def push(self, uid: Any, pcm16: bytes) -> None:
         uid = str(uid or "")
+        if self.only_id and uid != self.only_id:          # « m'écoute à moi » : the player only
+            return
         if not uid or not pcm16 or uid == self.bot_user_id or uid in self.ignore_ids:
             return
         try:

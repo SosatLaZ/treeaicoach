@@ -344,14 +344,12 @@ def test_claim_wake_answers_once_across_pc_and_discord():
     VA._last_wake.update(pc=-1e9, discord=-1e9)
 
 
-def test_pc_mic_is_off_in_the_product(monkeypatch):
+def test_pc_mic_is_on_with_push_to_talk_by_default():
     import importlib
 
-    import treeaicoach.voice_assistant as VA
+    from treeaicoach.config import Config
 
     src = importlib.util.find_spec("treeaicoach.voice_assistant").origin
-    assert "PC_MIC_ENABLED = False" in open(src, encoding="utf-8").read()
-    monkeypatch.setattr(VA, "PC_MIC_ENABLED", False)
-    a = VA.VoiceAssistant()
-    a.start()
-    assert a._thread is None                       # the PC microphone is never opened
+    assert "PC_MIC_ENABLED = True" in open(src, encoding="utf-8").read()
+    c = Config()
+    assert c.voice_assistant and c.hotkey_voice_ask == "F12" and c.discord_listen_owner_only

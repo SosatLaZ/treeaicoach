@@ -33,7 +33,7 @@ from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
-CONFIG_VERSION = 7                 # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
+CONFIG_VERSION = 8                 # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
 MAX_CONFIG_BYTES = 1_000_000       # a bigger config.json is treated as corrupt
 BACKUP_SUFFIX = ".bak"
 
@@ -196,7 +196,7 @@ HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 BOOL_FIELDS = BOOL_FIELDS + ("selfcheck_enabled", "selfcheck_auto_diag")
 # voice assistant « Hey coach » (voice_assistant.py): off by default, mic by name ("" = default),
 # optional push-to-talk key
-BOOL_FIELDS = BOOL_FIELDS + ("voice_assistant",)
+BOOL_FIELDS = BOOL_FIELDS + ("voice_assistant", "discord_listen_owner_only")
 UPDATE_TEXT_FIELDS["voice_assistant_mic"] = 200
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_voice_ask",)
 #: Compact overlay defaults, applied ONCE to config files written before the declutter
@@ -408,9 +408,10 @@ class Config:
     discord_friends_matchup: bool = True  # game start: one matchup sentence per friend of the voice channel
     discord_team_recap: bool = False     # game end: text recap per friend of the voice channel (postgame_edge.py)
     discord_team_brain: bool = True      # "Jinx, jungler probablement chez toi": per-friend calls (team_brain.py)
-    voice_assistant: bool = False        # « Hey coach » + question -> spoken AI answer (offline Vosk)
+    voice_assistant: bool = True         # « Hey coach » + question -> spoken AI answer (offline Vosk)
+    discord_listen_owner_only: bool = True   # Discord « Hey coach »: only the player himself
     voice_assistant_mic: str = ""        # input device name ("" = Windows default)
-    hotkey_voice_ask: str = ""           # push-to-talk: listen to a question without the wake phrase
+    hotkey_voice_ask: str = "F12"    # push-to-talk: listen to a question without the wake phrase
     discord_links: dict = field(default_factory=dict)   # {Discord user id: Riot ID / "-"} set by hand
 
     def effective_warn_radius(self) -> float:
@@ -871,8 +872,11 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         # 2.12.1: "une minimap au-dessus de ma minimap" - the user never wants the radar copy;
         # moved back to the marks on the real minimap once (the value itself is still accepted)
         data = {**data, "overlay_mode": "minimap"}
-    if _version(data) < 7:                 # the coach AI listens through Discord only (owner's choice)
-        data = {**data, "voice_assistant": False, "discord_listen": True}
+    if _version(data) < 8:                 # 2.29: the PC mic + push-to-talk, the player's voice only
+        data = {**data, "voice_assistant": True, "discord_listen_owner_only": True,
+                "hotkey_voice_ask": str(data.get("hotkey_voice_ask") or "") or "F12"}
+    if _version(data) < 7:                 # 2.24: Discord listening on
+        data = {**data, "discord_listen": True}
     if _version(data) < 6 and float(data.get("collect_interval_s") or 0) < 30.0:
         data = {**data, "collect_interval_s": 30.0}       # 2.17: captures much less often
     if _version(data) < 3 and data.get("collect_samples") is False:

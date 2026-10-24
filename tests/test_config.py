@@ -318,7 +318,7 @@ def test_new_fields_roundtrip_and_old_files(tmp_path):
                  death_recap=False, post_game_report=False, open_report_automatically=False,
                  overlay_enabled=False, radar_enabled=False, radar_position="custom", radar_scale=1.5,
                  radar_xy=[1500, 600], hud_enabled=False, hud_position="left_middle", hud_xy=[10, 10],
-                 danger_flash=False, fog_mode="all", fog_max_s=45.0, hotkey_mute="", hotkey_overlay="F12",
+                 danger_flash=False, fog_mode="all", fog_max_s=45.0, hotkey_mute="", hotkey_overlay="F12", hotkey_voice_ask="",
                  break_reminder=False, ui_geometry="1200x800+10+10")
     assert cfg.validated() == cfg
     assert save_config(cfg, p) is True

@@ -88,8 +88,8 @@ def normalize(text: Any) -> str:
 #: Last « Hey coach » heard by the PC mic or by Discord for the player himself (monotonic s): both
 #: listen to him, the first one answers and the other stays quiet for WAKE_DEDUP_S.
 WAKE_DEDUP_S = 4.0
-#: The PC-microphone assistant is switched off for now: « Hey coach » is heard through Discord only.
-PC_MIC_ENABLED = False
+#: The PC-microphone assistant (push-to-talk key + « Hey coach »): only the player's own voice.
+PC_MIC_ENABLED = True
 _last_wake = {"pc": -1e9, "discord": -1e9}
 
 

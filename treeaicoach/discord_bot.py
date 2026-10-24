@@ -655,6 +655,7 @@ class _Settings:
     route: str = "both"             # discord_route (+ legacy discord_only): both | discord | pc
     listen: bool = False            # discord_listen: « Hey coach » heard in the voice channel
     friends_matchup: bool = True    # discord_friends_matchup
+    owner_only: bool = True        # discord_listen_owner_only
     own_assistant: bool = False     # voice_assistant: the player's own « Hey coach » is heard by his PC
     ranks: bool = True              # discord_ranks: game-start ranks (player_intel.discord_ranks), by champion
     brain: bool = True              # discord_team_brain: personal calls per friend (team_brain.py)
@@ -1068,7 +1069,8 @@ class DiscordCaller:
                           links=tuple(sorted(df.clean_links(getattr(cfg, "discord_links", None) or {}).items())),
                           route=route_of(cfg), listen=getattr(cfg, "discord_listen", False) is True,
                           friends_matchup=getattr(cfg, "discord_friends_matchup", True) is not False,
-                          own_assistant=getattr(cfg, "voice_assistant", False) is True and _pc_mic_on())
+                          own_assistant=getattr(cfg, "voice_assistant", False) is True and _pc_mic_on(),
+                          owner_only=getattr(cfg, "discord_listen_owner_only", True) is not False)
             with self._lock:
                 changed = s.key() != self._settings.key()
                 if s.user_id != self._settings.user_id:
@@ -1981,6 +1983,7 @@ class DiscordCaller:
             # by both is answered once (voice_assistant.claim_wake)
             self._listen_parts()[0].ignore_ids = frozenset()
             self._listen_parts()[0].owner_id = s.user_id if s.own_assistant else ""
+            self._listen_parts()[0].only_id = s.user_id if s.owner_only else ""
         try:
             await fn(on, self._listen_parts()[1] if on else self._receiver)
         except Exception as exc:

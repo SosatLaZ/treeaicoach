@@ -3,6 +3,11 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.29.0 · 24 octobre 2026
+
+- **L'IA t'écoute, toi :** touche **F12** = parler (appuie, pose ta question, réponse aussitôt), micro du PC
+  rallumé, sans attendre « Hey coach ». Sur Discord, le bot n'écoute plus que ta voix (« Seulement moi »).
+
 ## 2.28.0 · 24 octobre 2026
 
 - **Ganks mieux annoncés :** nouvelle alerte « Recule vers ta tour : Lee Sin a disparu près de toi » quand
