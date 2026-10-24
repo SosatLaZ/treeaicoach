@@ -93,6 +93,11 @@ PEAKS_PER_CHAMP = 3
 #: its other peaks, while a portrait matching the terrain by chance matches it in many places.
 UNIQUE_WEIGHT = 0.8
 UNIQUE_CAP = 0.15
+#: Mirror match (the same champion in both teams, Swiftplay / normal): the portrait is on the
+#: map up to twice, so a twin's next best peak is its twin's icon, not terrain; its
+#: uniqueness is measured against the peak after that one (the ring colour then decides
+#: which twin is which).
+TWIN_UNIQUE = True
 #: Adaptive acceptance threshold (evidence units) = high percentile of the background
 #: peaks (the champions' secondary peaks, recent frames) + THR_MARGIN, within bounds.
 THR_MIN = 0.64
@@ -296,6 +301,11 @@ STACKV_MAX = 4
 STACKV_ID_MIN = 0.6
 STACKV_ID_GAP = 0.2
 STACKV_SEARCH = 3
+#: Mirror match: a stack proposal is only given to a twin who can be there (his last matched
+#: position + walking speed): his portrait is also his twin's, the identity gap does not
+#: protect him (det_gym mirror_lane: the enemy copy of my champion "found" across the map;
+#: for every champion it costs the hard siege, measured).
+STACKV_REACH = True
 RING_PROP_EVERY = 2                 # (cost) every N frames; the tracker holds them between
 RING_PROP_SEARCH = 1                # re-scoring window (+- working px): the ring peak is precise
 RING_PROP_ID_MIN = 0.55
@@ -1176,10 +1186,11 @@ class RosterMatcher:
 
                 db = self.db = get_default_db()
             ents: list[RosterEntry] = []
-            seen: set[str] = set()
+            seen: set[tuple[str, bool]] = set()
             for p, rel in players:
                 alias = str(getattr(p, "champion_alias", "") or "")
-                if not alias or alias in seen:
+                # (a mirror match: the same champion once per team, two entries)
+                if not alias or (alias, rel == "enemy") in seen:
                     continue
                 try:
                     skin = int(getattr(p, "skin_id", 0) or 0)
@@ -1198,7 +1209,7 @@ class RosterMatcher:
                 if icon is None:
                     log.warning("Roster matcher: no portrait for %r", alias)
                     continue
-                seen.add(alias)
+                seen.add((alias, rel == "enemy"))
                 ents.append(RosterEntry(alias=alias, relation=rel, icon=icon, skin_id=skin,
                                         team=str(getattr(p, "team", "") or "") or None,
                                         exact=exact))
@@ -1209,8 +1220,8 @@ class RosterMatcher:
             if old == [(e.alias, e.skin_id, e.relation, e.exact, e.learned) for e in ents]:
                 return
             self.set_entries(ents)
-            for i, e in enumerate(self._entries):
-                ov = self._overrides.get(e.alias)
+            for i, (e, k) in enumerate(zip(self._entries, self.entry_keys(self._entries))):
+                ov = self._overrides.get(k)
                 if ov is not None and ov[1] == "cached" and self.learner is not None and \
                         i not in self.learner.learned:
                     self.learner.adopt(i, e.alias, ov[0], time.monotonic(), "cached")
@@ -1219,6 +1230,19 @@ class RosterMatcher:
             self._errors.exception("Roster matcher set_roster failed")
 
     # ------------------------------------------------------------------ learned icons
+    @staticmethod
+    def entry_keys(ents: Sequence[RosterEntry]) -> list[str]:
+        """Per-player key of each entry: the alias; ``alias~enemy`` / ``alias~ally`` for a
+        champion played in both teams (mirror match)."""
+        from collections import Counter
+
+        n = Counter(e.alias for e in ents)
+        return [e.alias if n[e.alias] < 2 else
+                f"{e.alias}~{'enemy' if e.relation == 'enemy' else 'ally'}" for e in ents]
+
+    def _ekey(self, i: int) -> str:
+        return self.entry_keys(self._entries)[i]
+
     def _apply_overrides(self, ents: list[RosterEntry]) -> list[RosterEntry]:
         """Learned icons on the official roster; a new game drops them and loads my
         persisted icon (same champion + skin) from the learner's cache."""
@@ -1227,16 +1251,16 @@ class RosterMatcher:
         cur = [(e.alias, e.skin_id, e.relation) for e in self._entries]
         if cur != [(e.alias, e.skin_id, e.relation) for e in ents]:
             self._overrides = {}
-            for e in ents:
+            for e, k in zip(ents, self.entry_keys(ents)):
                 if e.relation == "self" and self.learner is not None:
                     icon = self.learner.load_cached(e.alias, e.skin_id)
                     if icon is not None:
-                        self._overrides[e.alias] = (icon, "cached")
+                        self._overrides[k] = (icon, "cached")
                         log.info("Roster matcher: learned icon of %s (skin %d) from the cache",
                                  e.alias, e.skin_id)
         out = []
-        for e in ents:
-            ov = self._overrides.get(e.alias)
+        for e, k in zip(ents, self.entry_keys(ents)):
+            ov = self._overrides.get(k)
             out.append(dataclasses.replace(e, icon=ov[0], exact=True,
                                            learned=ov[1] not in ("skin", "form"))
                        if ov is not None else e)
@@ -1257,7 +1281,7 @@ class RosterMatcher:
                                          learned=source not in ("skin", "form"))
                 ents = list(self._entries)
                 ents[i] = ne
-                self._overrides[e.alias] = (icon, source)
+                self._overrides[self._ekey(i)] = (icon, source)
                 self.set_entries(ents)
                 # the old track may sit next to the icon (lookalike): search it everywhere
                 self._tracks.pop(i, None)
@@ -1276,7 +1300,7 @@ class RosterMatcher:
                 if not 0 <= i < len(self._entries):
                     return False
                 e = self._entries[i]
-                self._overrides.pop(e.alias, None)
+                self._overrides.pop(self._ekey(i), None)
                 db = self.db
                 icon = None
                 if db is not None:
@@ -1296,7 +1320,7 @@ class RosterMatcher:
     def learned_aliases(self) -> dict[str, str]:
         """alias -> source ("learned" / "cached" / "skin" / "form") of the non-official templates."""
         with self._lock:
-            return {a: src for a, (_ic, src) in self._overrides.items()}
+            return {a.split("~")[0]: src for a, (_ic, src) in self._overrides.items()}
 
     def set_status(self, game: Any = None, me_dead: bool | None = None,
                    game_time: float | None = None) -> None:
@@ -1362,11 +1386,16 @@ class RosterMatcher:
             except (TypeError, ValueError):
                 age = 0.0
             dead: dict[str, float] = {}
-            for p in [getattr(game, "me", None)] + list(getattr(game, "allies", None) or []) + \
-                    list(getattr(game, "enemies", None) or []):
+            enemies = list(getattr(game, "enemies", None) or [])
+            friends = [getattr(game, "me", None)] + list(getattr(game, "allies", None) or [])
+            twin = {str(getattr(p, "champion_alias", "") or "") for p in friends if p is not None} & \
+                {str(getattr(p, "champion_alias", "") or "") for p in enemies}
+            for p in friends + enemies:
                 if p is None or not bool(getattr(p, "is_dead", False)):
                     continue
                 alias = str(getattr(p, "champion_alias", "") or "")
+                if alias and alias in twin:        # mirror match: only that team's copy
+                    alias = f"{alias}~{'enemy' if any(p is q for q in enemies) else 'ally'}"
                 try:
                     timer = float(getattr(p, "respawn_timer", 0.0) or 0.0)
                 except (TypeError, ValueError):
@@ -1388,8 +1417,9 @@ class RosterMatcher:
         if not self._dead and not self._dead_idx:
             return set()
         mono = time.monotonic()
-        dead = {i for i, e in enumerate(self._entries)
-                if mono < self._dead.get(e.alias, -math.inf) - RESPAWN_LEAD_S}
+        keys = self.entry_keys(self._entries)
+        dead = {i for i, (e, k) in enumerate(zip(self._entries, keys))
+                if mono < self._dead.get(k, self._dead.get(e.alias, -math.inf)) - RESPAWN_LEAD_S}
         for i in self._dead_idx - dead:
             if i >= len(self._entries):
                 continue
@@ -1400,7 +1430,7 @@ class RosterMatcher:
         for i in dead:
             self._tracks.pop(i, None)
         self._dead_idx = dead
-        self.last_dead = [self._entries[i].alias for i in sorted(dead)]
+        self.last_dead = [keys[i] for i in sorted(dead)]      # (mirror: alias~team)
         return dead
 
     def _camera_rect_now(self, bgr: np.ndarray) -> Any:
@@ -1822,6 +1852,25 @@ class RosterMatcher:
         return sx, sy
 
     # ------------------------------------------------------------------ search stages
+    def _twins(self) -> frozenset:
+        """Indices of the entries whose champion is also played in the other team."""
+        key = self._roster_key
+        if getattr(self, "_twin_key", None) is not key:
+            from collections import Counter
+
+            n = Counter(e.alias for e in self._entries)
+            self._twin_set = frozenset(i for i, e in enumerate(self._entries)
+                                       if TWIN_UNIQUE and n[e.alias] > 1)
+            self._twin_key = key
+        return self._twin_set
+
+    @staticmethod
+    def _other_peak(pk: list, j: int, twin: bool) -> float:
+        """Next best peak of a champion (uniqueness reference); a twin skips its twin's."""
+        vals = sorted((q[2] for kk, q in enumerate(pk) if kk != j), reverse=True)
+        k = 1 if twin else 0
+        return vals[k] if len(vals) > k else PEAK_FLOOR
+
     def _global_search(self, feat: np.ndarray, bank: _Bank, idx: list[int]
                        ) -> tuple[list[_Cand], list[float]]:
         """Whole-map search (Fourier NCC) of the champions ``idx``: candidates + background."""
@@ -1832,13 +1881,15 @@ class RosterMatcher:
         rad = max(2, int(round(0.4 * bank.size)))
         cands: list[_Cand] = []
         bg: list[float] = []
+        twins = self._twins()
         for k, i in enumerate(idx):
             m = maps[k]
-            pk = [(x, y, v) for x, y, v in self._peaks(m, rad, PEAKS_PER_CHAMP + 1, PEAK_FLOOR)
+            tw = i in twins
+            pk = [(x, y, v) for x, y, v in self._peaks(m, rad, PEAKS_PER_CHAMP + 1 + tw, PEAK_FLOOR)
                   if CONTRAST_RANGE[0] < float(std[y, x]) / float(bank.stds[i])
                   < CONTRAST_RANGE[1]]
             for j, (x, y, v) in enumerate(pk[:PEAKS_PER_CHAMP]):
-                other = max((q[2] for kk, q in enumerate(pk) if kk != j), default=PEAK_FLOOR)
+                other = self._other_peak(pk, j, tw)
                 ev = v + UNIQUE_WEIGHT * min(v - other, UNIQUE_CAP)
                 sx, sy = self._subpixel(m, x, y)
                 cands.append(_Cand(i, sx + half + 0.5, sy + half + 0.5, v, ev,
@@ -1949,17 +2000,19 @@ class RosterMatcher:
         rad = max(2, int(round(0.4 * bank_c.size)))
         r_ver = int(math.ceil(0.5 / kc)) + 1
         out: list[_Cand] = []
+        twins = self._twins()
         for j, i in enumerate(idx):
             m = maps[j]
-            pk = [(x, y, v) for x, y, v in self._peaks(m, rad, PEAKS_PER_CHAMP + 1, PEAK_FLOOR)
+            tw = i in twins
+            pk = [(x, y, v) for x, y, v in self._peaks(m, rad, PEAKS_PER_CHAMP + 1 + tw, PEAK_FLOOR)
                   if CONTRAST_RANGE[0] < float(std[y, x]) / float(bank_c.stds[i])
                   < CONTRAST_RANGE[1]]
             for q, (x, y, v) in enumerate(pk[:PEAKS_PER_CHAMP]):
                 # the true icon is the champion's best low-res peak (measured): verify it
-                # and only the peaks almost as good
-                if v < COARSE_VERIFY_MIN or v < pk[0][2] - COARSE_VERIFY_GAP:
+                # and only the peaks almost as good (a twin: its twin's icon too)
+                if v < COARSE_VERIFY_MIN or v < pk[min(q, int(tw))][2] - COARSE_VERIFY_GAP:
                     break
-                other = max((p[2] for kk, p in enumerate(pk) if kk != q), default=PEAK_FLOOR)
+                other = self._other_peak(pk, q, tw)
                 margin = v - other
                 cx = (x + half_c + 0.5) / kc - half - 0.5        # full-res map index
                 cy = (y + half_c + 0.5) / kc - half - 0.5
@@ -2498,7 +2551,7 @@ class RosterMatcher:
 
     def _stack_proposals(self, bgr: np.ndarray, feat: np.ndarray, bank: _Bank, accepted: list,
                          used: set, dead: set, kx: float, ky: float, r_norm: float,
-                         D_work: float) -> list[_Cand]:
+                         D_work: float, now: float | None = None) -> list[_Cand]:
         """Stage 5d (see _detect): verifier probes around the accepted icons -> proposals of
         partly covered icons -> identity among the proposal team's missing alive champions."""
         ver = self._get_verifier()
@@ -2561,6 +2614,8 @@ class RosterMatcher:
                 continue
             scored.sort(key=lambda z: -z[0])
             best, j, pos = scored[0]
+            if STACKV_REACH and j in self._twins() and not self._reachable(j, u, v, now):
+                continue                    # (a twin's portrait is its twin's: where it can be)
             second = scored[1][0] if len(scored) > 1 else STACKV_ID_MIN - STACKV_ID_GAP
             if best < STACKV_ID_MIN or best - second < STACKV_ID_GAP:
                 continue
@@ -2568,6 +2623,17 @@ class RosterMatcher:
             taken.add(j)
             out.append(c)
         return out
+
+    def _reachable(self, i: int, u: float, v: float, now: float | None) -> bool:
+        """Champion ``i`` can be at ``(u, v)`` now given its last matched position (walking
+        speed + a Flash; no recent track: anywhere)."""
+        tr = self._tracks.get(i)
+        if now is None or tr is None:
+            return True
+        age = now - tr.t
+        if not 0.0 <= age <= JUMP_MEMORY_S:
+            return True
+        return math.hypot(u - tr.u, v - tr.v) <= JUMP_SLACK + MAX_SPEED * age
 
     def _best_identity(self, i: int, score: float, px: float, py: float, feat: np.ndarray,
                        bank: _Bank, near: list, D_work: float, caps: bool, dead: set) -> bool:
@@ -3098,7 +3164,7 @@ class RosterMatcher:
                 st.frames % STACKV_EVERY == (1 % STACKV_EVERY):
             try:
                 for c in self._stack_proposals(raw_bgr, feat, bank, accepted, used, dead, kx, ky,
-                                               r_norm, D_work):
+                                               r_norm, D_work, now):
                     self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0,
                                      exclude=[(a.x / kx * W, a.y / ky * H) for a in accepted])
                     used.add(c.i)

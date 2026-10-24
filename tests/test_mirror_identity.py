@@ -65,3 +65,45 @@ def test_gym_mirror_lane_me_and_enemy_copy_kept_apart() -> None:
         G._unpatch_clock()
     assert M.team_wrong == 0
     assert M.me_n > 20 and M.me_bad <= 0.1 * M.me_n
+
+
+def test_roster_matcher_keeps_both_copies_and_their_own_death() -> None:
+    """Before: the enemy copy of a mirrored champion had no portrait entry (deduplicated by
+    alias), so it was never matched; a death marked both copies dead."""
+    import time
+
+    from treeaicoach.champions import get_default_db
+    from treeaicoach.live_client import GameInfo, PlayerInfo
+    from treeaicoach.roster_matcher import RosterMatcher
+
+    db = get_default_db()
+    me = PlayerInfo(champion_alias="Garen", team="ORDER")
+    foe = PlayerInfo(champion_alias="Garen", team="CHAOS", is_dead=True, respawn_timer=20.0)
+    game = GameInfo(me=me, allies=[PlayerInfo(champion_alias="Lux", team="ORDER")],
+                    enemies=[foe, PlayerInfo(champion_alias="Zed", team="CHAOS")])
+    m = RosterMatcher(db=db)
+    m.set_roster(game)
+    assert [(e.alias, e.relation) for e in m.entries] == \
+        [("Garen", "self"), ("Lux", "ally"), ("Garen", "enemy"), ("Zed", "enemy")]
+    assert m.entry_keys(m.entries) == ["Garen~ally", "Lux", "Garen~enemy", "Zed"]
+    assert m._twins() == frozenset({0, 2})
+    m.set_game_status(game)
+    assert m._dead_now(time.monotonic()) == {2}
+    assert m.last_dead == ["Garen~enemy"]
+
+
+def test_tracker_mirror_enemy_copy_is_no_claim_of_mine_and_dies_alone() -> None:
+    tr = Tracker()
+    tr.set_roster({"Yone": "self", "Lux": "ally"})
+    me = Identified(det=_det(0.1, 0.2, "ally", "Yone"), alias="Yone", relation="self", team="ORDER", id_score=0.9)
+    foe = Identified(det=_det(0.6, 0.6, "enemy", "Yone"), alias="Yone", relation="enemy", team="CHAOS",
+                     id_score=0.9)
+    for k in range(8):
+        tr.update(k * 0.125, [me, foe])
+    theirs = tr.get_side("Yone", "enemy")
+    assert theirs is not None and theirs.visible and abs(theirs.position()[0] - 0.6) < 0.02
+    tr.set_dead({"Yone~enemy"})
+    tr.update(1.0, [me])
+    assert tr.get_side("Yone", "self") is not None and tr.get_side("Yone", "self").visible
+    gone = tr.get_side("Yone", "enemy")
+    assert gone is None or not gone.visible

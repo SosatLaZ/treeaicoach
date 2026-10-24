@@ -1213,8 +1213,26 @@ class GameMetrics:
         }
 
 
-def _miss_cause(alias: str, rel: str, u: float, v: float, ids: list, my_alias: str) -> str:
+def _raw_tid(x: Any, mirrored: set) -> str | None:
+    """Truth id of a raw identified detection (mirror match: alias~team from its relation)."""
+    return _tid(getattr(x, "alias", None), str(getattr(x, "relation", "") or ""), mirrored)
+
+
+@dataclass
+class _Raw:
+    """A raw detection seen through its truth id (``alias``)."""
+    x: Any
+    alias: str | None
+
+    @property
+    def det(self) -> Any:
+        return getattr(self.x, "det", self.x)
+
+
+def _miss_cause(alias: str, rel: str, u: float, v: float, ids: list, my_alias: str,
+                mirrored: set = frozenset()) -> str:
     """Why a visible champion is not drawn live at its place (raw detections of the frame)."""
+    ids = [_Raw(x, _raw_tid(x, mirrored)) for x in ids]
     here = []
     for x in ids:
         d = getattr(x, "det", x)
@@ -1244,6 +1262,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
     was_ok: dict[str, bool] = {}
     vis_run: dict[str, int] = {}
     last_me: tuple | None = None            # (t, u, v) of my last drawn position (mjmp)
+    mirrored = {c.alias for c in sim.champs if c.tid != c.alias}
     for f in range(n_frames):
         t = f * dt
         sim.step(t, dt)
@@ -1269,7 +1288,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
         # --- raw detections (diagnostic)
         for x in ids:
             d = getattr(x, "det", x)
-            a = getattr(x, "alias", None)
+            a = _raw_tid(x, mirrored)
             M.det_n += 1
             g = tmap.get(a)
             if g is not None and math.hypot(d.u - g[2], d.v - g[3]) < TOL:
@@ -1345,7 +1364,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
                             ex, ey = u - uv[0], v - uv[1]
                             M.lag.append((ex * vel[0] + ey * vel[1]) / step / step)
                 else:
-                    why = _miss_cause(a, rel, u, v, ids, sim.champs[0].tid)
+                    why = _miss_cause(a, rel, u, v, ids, sim.champs[0].tid, mirrored)
                     M.fails.append((sc.name, round(t, 2), "miss", f"{a} ({rel}) at ({u:.3f},{v:.3f}) "
                                     f"frac {fr:.2f} [{why}]"))
                     M.miss_cause[why.split(":")[0]] = M.miss_cause.get(why.split(":")[0], 0) + 1

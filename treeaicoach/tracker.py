@@ -910,7 +910,8 @@ class Tracker:
         dead = self._dead
         if dead:
             for e in entries:
-                if e.alias and e.alias in dead:
+                # (mirror match: ``alias~ally`` / ``alias~enemy`` = only that team's copy)
+                if e.alias and (e.alias in dead or f"{e.alias}~{e.side}" in dead):
                     e.alias = None        # a dead champion has no icon: wrong identity
         # I am dead (Live Client): no icon of mine on the map, no "self" claim (an icon next
         # to where I died would otherwise carry my position around until the respawn)
@@ -993,7 +994,9 @@ class Tracker:
             if tr.relation == "self" and key != self._self_key:
                 tr.relation = "ally"
             tr.refresh(now, self.hide_after)
-            if (dead and tr.alias in dead) or (me_dead and key == self._self_key):
+            if (dead and (tr.alias in dead or
+                          f"{tr.alias}~{side_of_relation(tr.relation)}" in dead)) or \
+                    (me_dead and key == self._self_key):
                 # dead: hidden at once (a stacked hold or the hide timeout would keep
                 # drawing him where he died)
                 tr.stacked_with = tr.stacked_since = None
@@ -1047,14 +1050,15 @@ class Tracker:
         out: list[_Entry] = []
         near_conf = False
         for e in entries:
-            claim = e.relation == "self" or (my_alias is not None and e.alias == my_alias)
+            # (mirror match: the enemy copy of my champion is not a claim of mine)
+            mine = my_alias is not None and e.alias == my_alias and e.relation != "enemy"
+            claim = e.relation == "self" or mine
             if not claim or math.hypot(e.u - anchor[1], e.v - anchor[2]) <= reach or \
                     in_fountain(e.u, e.v, team):
-                near_conf = near_conf or (claim and bool(e.alias) and e.alias == my_alias
-                                          and e.score >= SELF_GUARD_CONF_SCORE)
+                near_conf = near_conf or (claim and mine and e.score >= SELF_GUARD_CONF_SCORE)
                 out.append(e)
                 continue
-            confident = bool(e.alias) and e.alias == my_alias and e.score >= SELF_GUARD_CONF_SCORE
+            confident = mine and e.score >= SELF_GUARD_CONF_SCORE
             if confident and self._self_anchor_weak:
                 out.append(e)               # my portrait beats a camera guess (det_gym h_slow3)
                 continue
@@ -1069,7 +1073,8 @@ class Tracker:
                 log.debug("Tracker: my position confirmed at (%.3f, %.3f)", e.u, e.v)
                 self.self_confirmed += 1
                 for tr in self._tracks.values():
-                    if tr.relation == "self" or (my_alias and tr.alias == my_alias):
+                    if tr.relation == "self" or (my_alias and tr.alias == my_alias
+                                                 and tr.relation != "enemy"):
                         tr.clear_history()
                 self._self_anchor = (now, e.u, e.v)
                 self._self_cand = None
