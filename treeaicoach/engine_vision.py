@@ -218,7 +218,9 @@ class VisionMixin:
                 best, best_d = None, math.inf
                 for i, x in enumerate(out):
                     det = getattr(x, "det", x)
-                    if getattr(x, "alias", None) is None or getattr(x, "alias", None) == me.alias:
+                    al = getattr(x, "alias", None)
+                    # (mirror match: the enemy copy of my champion is not me)
+                    if al is None or (al == me.alias and getattr(x, "relation", None) != "enemy"):
                         d = math.hypot(float(det.u) - pos[0], float(det.v) - pos[1])
                         if d < best_d:
                             best, best_d = i, d
@@ -445,10 +447,11 @@ class VisionMixin:
                 jg = game.enemy_jungler().champion_alias
             tac = self._tactics
             fog = self._fog.estimates() if self._fog is not None else []
+            jm = getattr(self, "_jungler_map", None)
             return pd.update(t, gt, game, tracker, lane_opponents=lane, jungler=jg, threat=threat,
                              gank_danger_t=self._last_danger_t,
                              in_fight=bool(tac is not None and tac.in_fight()), fog=fog,
-                             recalling=self.recalling(t))
+                             recalling=self.recalling(t), jmap=jm.state() if jm is not None else None)
         except Exception:
             self._err.exception("Personal danger failed")
             return []
