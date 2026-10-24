@@ -329,6 +329,9 @@ class DiscordPage:
                     "discord_ally_ganks")
         app.switch_row(says, "discord_friends_matchup", "Matchup de chaque ami", "Au début : « Paul, Darius contre "
                        "Garen : favorable jusqu'au 6 ».")
+        app.switch_row(says, "discord_team_brain", "Conseils perso à tes amis", "« Jinx, jungler probablement "
+                       "chez toi », « Ahri, ton adversaire est en base : plaque ». Une phrase par ami toutes les "
+                       "30 s au plus, les ganks d'abord.")
         app.switch_row(says, "discord_objectives", "Objectifs", "« Dragon dans 30 secondes », Baron, larves.")
         app.switch_row(says, "discord_team_calls", "Calls d'équipe", "« Ils sont 4 bot : Baron maintenant ».")
         app.switch_row(says, "discord_jungler_seen", "Jungler ennemi vu", "« Jungler ennemi vu top », jamais "
@@ -674,7 +677,8 @@ class DiscordPage:
         if diff & {"discord_enabled", "discord_token", "discord_user_id", "discord_volume", "discord_only",
                    "discord_objectives", "discord_jungler_seen", "discord_summary", "hotkey_discord_mute",
                    "discord_ally_ganks", "discord_say_name", "discord_links", "discord_team_calls",
-                   "discord_route", "discord_listen", "discord_friends_matchup", "discord_team_recap"}:
+                   "discord_route", "discord_listen", "discord_friends_matchup", "discord_team_recap",
+                   "discord_team_brain"}:
             self._sync_bot()
             self.update(self._read())
 

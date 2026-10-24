@@ -1088,6 +1088,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._ai_discord_pending = False
         self._discord_obj_done: set = set()
         self._ally_gank = None                  # ally_gank.AllyGankWatcher: new game, new watcher
+        self._team_brain = None                 # team_brain.TeamBrain: per-friend calls (bot Discord)
         self._discord_roster_sig = None
         self._call("game_start")                # the bot joins my voice channel
         self._discord_matchup(game)
@@ -1292,6 +1293,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._fog.update(t, tracker, game, mode=self._cfg.fog_mode)
             if self._jungler_map is not None:    # after the fog: reads its anchors (kills, pits, purchases)
                 self._jungler_map.update(t, gt, tracker, self._fog, game, self.jungle_intel())
+        self._discord_team_brain(t, gt, game, tracker)   # bot Discord: "Jinx, jungler probablement chez toi"
         rec = self._recorder
         if rec is not None:
             rec.on_tracks(tracker, t, gt)

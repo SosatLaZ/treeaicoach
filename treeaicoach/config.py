@@ -188,6 +188,8 @@ CHOICES["discord_route"] = ("both", "discord", "pc")
 BOOL_FIELDS = BOOL_FIELDS + ("discord_listen", "discord_friends_matchup")
 # bot Discord: after the game, a recap in the voice channel's text chat (one stat + one fix per friend), off
 BOOL_FIELDS = BOOL_FIELDS + ("discord_team_recap",)
+# bot Discord: personal calls per friend of the voice channel, by champion (team_brain.py), on
+BOOL_FIELDS = BOOL_FIELDS + ("discord_team_brain",)
 # declutter: hold this key in game to see the detailed overlay (polled, not registered: F6 is free in LoL)
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_details",)
 # self-check (selfcheck.py): watchdog of our own pipeline (automatic fixes + "Santé TreeAI")
@@ -405,6 +407,7 @@ class Config:
     discord_listen: bool = True          # « Hey coach » said by anyone in the voice channel (discord_listen.py)
     discord_friends_matchup: bool = True  # game start: one matchup sentence per friend of the voice channel
     discord_team_recap: bool = False     # game end: text recap per friend of the voice channel (postgame_edge.py)
+    discord_team_brain: bool = True      # "Jinx, jungler probablement chez toi": per-friend calls (team_brain.py)
     voice_assistant: bool = False        # « Hey coach » + question -> spoken AI answer (offline Vosk)
     voice_assistant_mic: str = ""        # input device name ("" = Windows default)
     hotkey_voice_ask: str = ""           # push-to-talk: listen to a question without the wake phrase

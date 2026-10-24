@@ -482,6 +482,46 @@ class CoachingMixin:
         except Exception:
             log.debug("discord ally ganks failed", exc_info=True)
 
+    def _discord_team_brain(self, t: float, gt: Any, game: Any, tracker: Any) -> None:
+        """Personal calls for each friend of the voice channel (team_brain.py, ``discord_team_brain``,
+        on by default): his opponent based, the enemy jungler probably on him, back sync, the
+        objective plan. The bot's filter keeps one line per friend per 30 s, gank calls first.
+        ``self.brain_friends`` (tests) replaces the bot. Every tick, cheap. Never raises."""
+        try:
+            fn = getattr(self, "brain_friends", None)
+            if fn is None:
+                if not getattr(self._cfg, "discord_enabled", False) or self._demo or self._frame_source is not None:
+                    return
+                if getattr(self._cfg, "discord_team_brain", True) is False:
+                    return
+                from treeaicoach import discord_bot
+
+                bot = discord_bot.active()
+                fn = bot.teammates if bot is not None else None
+            if fn is None or game is None or tracker is None or gt is None:
+                return
+            friends = list(dict(fn() or {}))
+            if not friends:
+                return
+            brain = getattr(self, "_team_brain", None)
+            if brain is None:
+                from treeaicoach.team_brain import TeamBrain
+
+                brain = self._team_brain = TeamBrain()
+            ji = getattr(self, "_jungle_intel", None)
+            recalls = tuple(getattr(ji.state(), "recalls", ()) or ()) if ji is not None else ()
+            jm = getattr(self, "_jungler_map", None)
+            objs = self._objectives.states() if getattr(self, "_objectives", None) is not None else []
+            for line in brain.update(t, gt, game, tracker, friends, recalls=recalls,
+                                     jmap=jm.state() if jm is not None else None, objectives=objs):
+                queued = bool(self._call("team_brain", line.text, {"key": line.key, "rule": line.rule,
+                                                                   "targets": list(line.targets)}))
+                brain.ack(line, queued)
+                if queued:
+                    log.info("Conseil d'équipe (%s) : %s", line.rule, line.text)
+        except Exception:
+            log.debug("discord team brain failed", exc_info=True)
+
     def _discord_roster(self, game: Any) -> None:
         """My team (Riot ID, champion, role) to the bot when it changes: it matches its voice members."""
         try:

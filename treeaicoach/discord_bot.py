@@ -67,7 +67,7 @@ log = logging.getLogger(__name__)
 #: kinds that are spoken in the voice channel (everything else is dropped); ``ally_gank`` = a gank on a
 #: friend of the voice channel (ally_gank.py), said like mine ("Bot gank")
 SPOKEN_KINDS = frozenset({"gank", "ally_gank", "matchup", "objective", "jungler_seen", "summary", "team_call",
-                          "ranks"})
+                          "ranks", "team_brain"})
 #: route "discord" (Tout par Discord): every sentence / beep of the app goes through the bot too
 ROUTED_KINDS = frozenset({"coach", "beep"})
 ROUTES = ("both", "discord", "pc")
@@ -77,7 +77,7 @@ SPEAKING_KINDS = SPOKEN_KINDS | ROUTED_KINDS | frozenset({"matchups", "ai_answer
 USER_JOBS = frozenset({"test", "join_ch", "leave_now", "hush"})
 #: priority when the queue is full / which job goes first (higher = more urgent)
 PRIORITY = {"gank": 4, "beep": 4, "chime": 5, "team_call": 3, "test": 3, "ai_answer": 3, "coach": 2,
-            "objective": 2, "matchup": 1, "matchups": 1, "ranks": 1, "jungler_seen": 0, "summary": 0}
+            "objective": 2, "team_brain": 1, "matchup": 1, "matchups": 1, "ranks": 1, "jungler_seen": 0, "summary": 0}
 #: lifecycle kinds: join the voice channel / leave it (never spoken); ``roster``: my team's players
 #: (Live Client) to match the voice members against (discord_friends.py)
 CONTROL_KINDS = frozenset({"game_start", "game_end", "roster"})
@@ -101,6 +101,9 @@ RANKS_STALE_S = 90.0          # the game-start ranks: still useful in the first 
 TEAM_STALE_S = 5.0           # "Ils sont 4 bot : Baron maintenant" later than 5 s is a different map: dropped
 TEAM_GAP_S = 20.0            # two team calls at least this far apart (a team acts on one at a time)
 TEAM_MAX_CHARS = 90
+BRAIN_FRIEND_S = 30.0        # team_brain.py: at most ONE voice line per friend per 30 s (his gank calls count)
+BRAIN_STALE_S = 5.0
+BRAIN_AFTER_GANK_S = 20.0    # "jungler probablement chez toi" never within 20 s of a gank call (a gank says more)
 OBJECTIVE_KEYS = {"dragon": "Dragon", "baron": "Baron", "grubs": "Larves"}
 OBJECTIVE_LEAD_S = 30
 MATCHUP_STALE_S = 90.0
@@ -501,6 +504,7 @@ class CallFilter:
         self._all_times: collections.deque[float] = collections.deque()
         self._team: set[str] = set()
         self._last_team = -1e9
+        self._friend_t: dict[str, float] = {}       # friend (champion alias key) -> last line said to him
 
     @staticmethod
     def _recent(times: collections.deque[float], now: float) -> int:
@@ -508,7 +512,7 @@ class CallFilter:
             times.popleft()
         return len(times)
 
-    def admit(self, kind: str, key: str = "", target: str = "") -> bool:
+    def admit(self, kind: str, key: str = "", target: str = "", targets: tuple = (), rule: str = "") -> bool:
         """``key``: the lane of a gank call; ``target``: who is ganked ("" = me, else the friend's
         champion): the same person at most every :data:`GANK_MIN_GAP_S` (me) / :data:`ALLY_SAME_S` (a
         friend), any two gank calls :data:`GANK_ANY_GAP_S` apart, one call per lane per
@@ -550,6 +554,26 @@ class CallFilter:
             self._last_team = now
             self._all_times.append(now)
             return True
+        if kind == "team_brain":
+            # team_brain.py: one line per friend per BRAIN_FRIEND_S (gank calls on him count and go
+            # first), a team line counts for every friend and keeps the team-call spacing
+            k = key or "?"
+            who = [_fkey(x) for x in targets if _fkey(x)]
+            if not who or full or k in self._team or now - self._last_gank < GANK_ANY_GAP_S:
+                return False
+            if rule == "jungler" and now - self._last_gank < BRAIN_AFTER_GANK_S:
+                return False
+            if rule == "objective" and now - self._last_team < TEAM_GAP_S:
+                return False
+            if any(now - self._friend_t.get(w, -1e9) < BRAIN_FRIEND_S for w in who):
+                return False
+            for w in who:
+                self._friend_t[w] = now
+            if rule == "objective":
+                self._team.add(k)
+                self._last_team = now
+            self._all_times.append(now)
+            return True
         if kind == "jungler_seen":
             k = key or "?"
             if full or now - self._last_gank < SEEN_AFTER_GANK_S or now - self._seen_lane.get(k, -1e9) < SEEN_SAME_LANE_S:
@@ -574,12 +598,18 @@ class CallFilter:
             return False
         self._seen[k] = now
         self._target_t[who] = now
+        if who:
+            self._friend_t[_fkey(who)] = now
         self._last_gank = now
         self._gank_times.append(now)
         self._all_times.append(now)
         if len(self._seen) > 64:
             self._seen = {a: b for a, b in self._seen.items() if now - b < GANK_SAME_S}
         return True
+
+
+def _fkey(x: Any) -> str:
+    return "".join(ch for ch in str(x or "").lower() if ch.isalnum())
 
 
 @dataclass
@@ -627,6 +657,7 @@ class _Settings:
     friends_matchup: bool = True    # discord_friends_matchup
     own_assistant: bool = False     # voice_assistant: the player's own « Hey coach » is heard by his PC
     ranks: bool = True              # discord_ranks: game-start ranks (player_intel.discord_ranks), by champion
+    brain: bool = True              # discord_team_brain: personal calls per friend (team_brain.py)
 
     def wants(self, kind: str) -> bool:
         """The switch of an optional call kind is on (gank / matchup / test: always)."""
@@ -637,7 +668,7 @@ class _Settings:
         return {"objective": self.objectives, "jungler_seen": self.jungler_seen,
                 "summary": self.summary, "ally_gank": self.ally_ganks, "team_call": self.team_calls,
                 "matchups": self.friends_matchup, "chime": self.listen, "ai_answer": self.listen,
-                "ranks": self.ranks}.get(kind, True)
+                "ranks": self.ranks, "team_brain": self.brain}.get(kind, True)
 
     def key(self) -> tuple:
         """What needs a new gateway session when it changes (the rest is read live)."""
@@ -1033,6 +1064,7 @@ class DiscordCaller:
                           say_name=getattr(cfg, "discord_say_name", False) is True,
                           team_calls=getattr(cfg, "discord_team_calls", False) is True,
                           ranks=getattr(cfg, "discord_ranks", True) is not False,
+                          brain=getattr(cfg, "discord_team_brain", True) is not False,
                           links=tuple(sorted(df.clean_links(getattr(cfg, "discord_links", None) or {}).items())),
                           route=route_of(cfg), listen=getattr(cfg, "discord_listen", False) is True,
                           friends_matchup=getattr(cfg, "discord_friends_matchup", True) is not False,
@@ -1156,6 +1188,17 @@ class DiscordCaller:
                         self.dropped += 1
                         return False
                     self._queue_say(_Job("say", say, now, TEAM_STALE_S, "team_call"))
+                elif kind == "team_brain":
+                    say = " ".join(str(text or "").split())[:TEAM_MAX_CHARS]
+                    rule = str(info.get("rule") or "")
+                    targets = tuple(str(x) for x in (info.get("targets") or ()))
+                    busy = rule != "objective" and any(j.kind == "say" for j in self._jobs)
+                    if not say or busy or not self._filter.admit("team_brain", str(info.get("key") or say),
+                                                                 targets=targets, rule=rule):
+                        self.dropped += 1
+                        return False
+                    self._queue_say(_Job("say", say, now, BRAIN_STALE_S, "team_brain",
+                                         who=",".join(targets[:2])))
                 elif kind == "ranks":
                     # once per game: the message in the voice channel's text chat + a few short lines.
                     # By champion only (player_intel.discord_ranks): nothing of it is ever logged.
