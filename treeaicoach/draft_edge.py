@@ -298,6 +298,104 @@ def spike_timeline(me_alias: str, opp_alias: str) -> str:
         return ""
 
 
+# ----------------------------------------------------------------------------- 9 bis. in-game prior
+#: tiers in order (player_intel tier names) - the rank gap is counted in whole tiers
+TIER_ORDER = ("IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER",
+              "CHALLENGER")
+PRIOR_PHASE_K = 1.0               # kill-window score asked more per point of phase score against me
+PRIOR_RANK_GAP = 2                # opponent this many tiers above me: stricter
+PRIOR_RANK_EXTRA = 0.5
+PRIOR_STREAK = 4                  # loss / win streak of the opponent (player_intel) worth a nudge
+PRIOR_STREAK_EXTRA = 0.25
+PRIOR_MIN, PRIOR_MAX = -0.25, 1.0
+#: "he wins this phase" strongly enough to hold the aggressive lane calls (level race, jungler far)
+HARD_LOSING = -0.5
+_PRIOR_CACHE: dict[tuple, Any] = {}
+
+
+def phase_index(level: Any, item_gold: Any) -> int:
+    """The spike phase I am in now (index in :data:`PHASES`): levels 1-5, level 6 without a
+    legendary item (< 2 600 gold of items), one item (< 5 500), two items and more."""
+    lv, g = int(_f(level, 1.0)), _f(item_gold)
+    if lv < 6:
+        return 0
+    return 1 if g < 2600.0 else 2 if g < 5500.0 else 3
+
+
+@dataclass(frozen=True)
+class LanePrior:
+    """What the draft and the public ranks say about my lane RIGHT NOW (live phase)."""
+
+    phase: int = 0
+    score: float | None = None     # my phase score vs my lane opponent (> 0 mine), None = unknown profiles
+    kill_extra: float = 0.0        # added to the kill-window score threshold (live_edge.kill_window)
+    reasons: tuple[str, ...] = ()
+
+    @property
+    def hard_losing(self) -> bool:
+        return self.score is not None and self.score <= HARD_LOSING
+
+
+def lane_prior(me_alias: str, opp_alias: str, level: Any = 1, item_gold: Any = 0, *,
+               opp_intel: Any = None, my_tier: str = "") -> LanePrior:
+    """The draft verdict of my matchup in the CURRENT phase (:func:`phase_scores`) + the opponent's
+    public rank gap / streak (:class:`treeaicoach.player_intel.PlayerIntel`, optional), as one bounded
+    kill-window adjustment: a call that tells a beginner to attack must be stricter against an
+    opponent the draft (or his rank) favours; only a long loss streak of his (tilt) relaxes it a
+    little (:data:`PRIOR_MIN`). Pure, cached per (matchup, phase), never raises."""
+    try:
+        ph = phase_index(level, item_gold)
+        key = (str(me_alias), str(opp_alias), ph)
+        sc = _PRIOR_CACHE.get(key)
+        if sc is None and key not in _PRIOR_CACHE:
+            me, op = _meta(me_alias), _meta(opp_alias)
+            known = bool(getattr(me, "known", False) and getattr(op, "known", False))
+            sc = phase_scores(me_alias, opp_alias)[ph] if known else None
+            if len(_PRIOR_CACHE) > 256:
+                _PRIOR_CACHE.clear()
+            _PRIOR_CACHE[key] = sc
+        extra, why = 0.0, []
+        if sc is not None and sc <= -SPIKE_EVEN:
+            extra += PRIOR_PHASE_K * -sc
+            why.append(f"il gagne {PHASES[ph]}")
+        if opp_intel is not None and bool(getattr(opp_intel, "ranked_loaded", False)):
+            t_op, t_me = str(getattr(opp_intel, "tier", "") or ""), str(my_tier or "").upper()
+            if t_op in TIER_ORDER and t_me in TIER_ORDER and \
+                    TIER_ORDER.index(t_op) - TIER_ORDER.index(t_me) >= PRIOR_RANK_GAP:
+                extra += PRIOR_RANK_EXTRA
+                why.append("rang plus haut")
+        if opp_intel is not None and bool(getattr(opp_intel, "history_loaded", False)):
+            st = int(_f(getattr(opp_intel, "streak", 0)))
+            if st >= PRIOR_STREAK:
+                extra += PRIOR_STREAK_EXTRA
+                why.append(f"{st} victoires d'affilée")
+            elif st <= -PRIOR_STREAK:
+                extra -= PRIOR_STREAK_EXTRA
+                why.append(f"{-st} défaites d'affilée")
+        return LanePrior(ph, sc, round(max(PRIOR_MIN, min(PRIOR_MAX, extra)), 3), tuple(why))
+    except Exception:
+        log.debug("lane prior failed", exc_info=True)
+        return LanePrior()
+
+
+def live_prior(me: Any, opp: Any) -> LanePrior:
+    """:func:`lane_prior` from the Live Client players (me, my lane opponent): my level and item
+    gold, the opponent's public rank / streak when Réglages > "Rangs des joueurs" is on. Never raises."""
+    try:
+        if me is None or opp is None:
+            return LanePrior()
+        from treeaicoach import meta_builds, player_intel
+        from treeaicoach.live_edge import _items, item_gold
+
+        oa = str(getattr(opp, "champion_alias", "") or "")
+        return lane_prior(str(getattr(me, "champion_alias", "") or ""), oa, getattr(me, "level", 1),
+                          item_gold(_items(me)), opp_intel=player_intel.enemy_intel(oa),
+                          my_tier=meta_builds.get_user_tier())
+    except Exception:
+        log.debug("live prior failed", exc_info=True)
+        return LanePrior()
+
+
 # ----------------------------------------------------------------------------- 10. counter tweak
 #: the cheap anti-heal component per class (bought early, before the meta first item is done)
 ANTIHEAL_EARLY = {"marksman": 3123, "assassin_ad": 3123, "fighter": 3123, "mage": 3916, "assassin_ap": 3916,
@@ -621,4 +719,5 @@ def tilt_line(results: Sequence[GameResult], now_s: float) -> str:
 
 __all__ = ["CompRead", "CounterTweak", "GameResult", "JungleForecast", "comp_detail", "comp_read",
            "counter_tweak", "friend_suffix", "jungle_forecast", "lane_edges", "lanes_line", "parse_history",
-           "phase_scores", "play_around", "session_games", "spike_timeline", "tilt_line", "units", "win_condition"]
+           "phase_scores", "phase_index", "lane_prior", "live_prior", "LanePrior", "play_around", "session_games", "spike_timeline",
+           "tilt_line", "units", "win_condition"]

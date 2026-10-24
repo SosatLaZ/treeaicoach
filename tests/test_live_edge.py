@@ -204,3 +204,23 @@ def test_calls_only_in_normal_rift_modes():
     edge = fresh()                                              # practice tool alone: no win %
     edge.update(0.0, G(600.0, me=me), role="TOP")
     assert "victoire" not in (edge.line() or "")
+
+
+def test_kill_window_stricter_against_a_favoured_opponent():
+    # the draft / rank prior (draft_edge.lane_prior) raises the score asked
+    assert LE.kill_window(7, 7, 1000, 1.0)[0]
+    assert not LE.kill_window(7, 7, 1000, 1.0, extra=0.675)[0]      # Garen vs Darius levels 1-5
+    assert LE.kill_window(8, 7, 1000, 1.0, extra=0.675)[0]          # a level more: open again
+
+
+def test_kill_window_uses_the_live_prior(monkeypatch):
+    from treeaicoach import draft_edge
+
+    opp = P("Darius", "CHAOS", "TOP", level=7, items=[1055])
+    me = P("Garen", "ORDER", "TOP", level=7, items=[3044, 1036, 1036], cs=80)
+    edge = fresh()
+    monkeypatch.setattr(draft_edge, "live_prior", lambda a, b: draft_edge.LanePrior(score=-1.0, kill_extra=1.0))
+    assert edge.update(100.0, G(600.0, me=me, enemies=[opp]), role="TOP") == []
+    monkeypatch.setattr(draft_edge, "live_prior", lambda a, b: draft_edge.LanePrior())
+    notes = fresh().update(100.0, G(600.0, me=me, enemies=[opp]), role="TOP")
+    assert [n.feature for n in notes] == ["kill"]

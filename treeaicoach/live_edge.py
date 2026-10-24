@@ -183,17 +183,19 @@ def gold_diff_text(diff: float, opp_name: str) -> str:
 
 
 # ----------------------------------------------------------------------------- 2. kill window
-def kill_window(my_level: int, opp_level: int, gold_diff: float, hp_frac: float | None) -> tuple[bool, float]:
+def kill_window(my_level: int, opp_level: int, gold_diff: float, hp_frac: float | None,
+                extra: float = 0.0) -> tuple[bool, float]:
     """``(open, score)``: the lane kill window from what the API exposes (levels, item gold, MY
     HP; the enemy HP / cooldowns are not public). score = level diff + gold diff / 600, +0.5 when
-    I have my ultimate (level 6) and he does not. Open when score >= :data:`KILL_SCORE`, I am not
-    behind in levels and my HP >= :data:`KILL_MIN_HP`."""
+    I have my ultimate (level 6) and he does not. Open when score >= :data:`KILL_SCORE` + ``extra``
+    (draft_edge.lane_prior: stricter against an opponent the draft / his rank favours now), I am
+    not behind in levels and my HP >= :data:`KILL_MIN_HP`."""
     lv = int(my_level) - int(opp_level)
     score = lv + _f(gold_diff) / KILL_GOLD_UNIT
     if int(my_level) >= 6 > int(opp_level):
         score += 0.5
     hp_ok = hp_frac is None or _f(hp_frac, 0.0) >= KILL_MIN_HP
-    return (score >= KILL_SCORE and lv >= 0 and _f(gold_diff) > -300 and hp_ok), round(score, 2)
+    return (score >= KILL_SCORE + _f(extra) and lv >= 0 and _f(gold_diff) > -300 and hp_ok), round(score, 2)
 
 
 def kill_window_text(opp_name: str, my_level: int, opp_level: int, gold_diff: float) -> str:
@@ -578,7 +580,13 @@ class LiveEdge:
             st = getattr(game, "champion_stats", None) or {}
             mx = _f(st.get("maxHealth"))
             hp = _f(st.get("currentHealth")) / mx if mx > 0 else None
-            ok, _score = kill_window(int(getattr(me, "level", 1)), int(getattr(opp, "level", 1)), gd, hp)
+            try:
+                from treeaicoach.draft_edge import live_prior
+
+                extra = live_prior(me, opp).kill_extra
+            except Exception:
+                extra = 0.0
+            ok, _score = kill_window(int(getattr(me, "level", 1)), int(getattr(opp, "level", 1)), gd, hp, extra)
             opened = ok and not self._kill_open
             self._kill_open = ok
             ident = f"{getattr(me, 'level', 1)}:{getattr(opp, 'level', 1)}:{int(gd // 300)}"

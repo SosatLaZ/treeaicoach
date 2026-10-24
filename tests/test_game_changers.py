@@ -63,6 +63,12 @@ def test_level_race_window_both_ways():
 def test_jungler_far_needs_a_fresh_sighting_on_the_other_side():
     lee = SimpleNamespace(alias="LeeSin", uv=(0.78, 0.86), visible=True, hidden_s=0.0)
     c = ctx_for(game(300.0), enemies=[lee])
+    # Garen vs Darius before level 6: the draft says Darius wins this phase -> farm, no trade
+    assert c.lane_prior is not None and c.lane_prior.hard_losing
+    call = gc.rule_jungler_far(c)
+    assert call is not None and call.text == "Farme sans risque : Lee Sin est en bas"
+    assert call.voice == "Leur jungler est en bas : farme !"
+    c.lane_prior = None                                        # matchup unknown / even: play aggressive
     call = gc.rule_jungler_far(c)
     assert call is not None and call.text == "Joue agressif : Lee Sin est en bas"
     assert call.voice == "Leur jungler est en bas : avance !"

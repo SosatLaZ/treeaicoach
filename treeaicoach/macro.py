@@ -353,6 +353,7 @@ class MacroCtx:
     card_age: float | None = None                    # seconds since the HUD card line last changed (engine)
     recent_stances: frozenset = frozenset()          # "push" / "retreat" lines shown in the last ~10 s
     buys: Any = None                                 # game_changers.EnemyBuys (enemy purchases), None = unknown
+    lane_prior: Any = None                           # draft_edge.LanePrior of my matchup now, None = unknown
 
     @property
     def enemy_team(self) -> str | None:
@@ -417,6 +418,15 @@ def build_ctx(t: float, gt: float, game: Any, st: Any, *, role: str | None, me_u
             want = ("BOTTOM", "UTILITY") if ctx.role in ("BOTTOM", "UTILITY") else (ctx.role,)
             lane_opps = tuple(a for a, r in ctx.enemy_roles.items() if r in want)
         ctx.lane_opps = lane_opps
+        if me is not None and lane_opps and ctx.role in ROLE_LANE:     # the draft verdict of my matchup now
+            facing = [p for p in getattr(game, "enemies", None) or []
+                      if str(getattr(p, "champion_alias", "") or "").lower() in lane_opps]
+            opp = next((p for p in facing if ctx.enemy_roles.get(str(p.champion_alias).lower()) == ctx.role),
+                       facing[0] if facing else None)
+            if opp is not None:
+                from treeaicoach.draft_edge import live_prior
+
+                ctx.lane_prior = live_prior(me, opp)
         jg = None
         try:
             jg = roles.enemy_jungler() if roles is not None and hasattr(roles, "enemy_jungler") else None

@@ -237,6 +237,7 @@ class ClientSync:
             with self._lock:
                 self.tier = tier
             meta_builds.set_bracket(meta_builds.bracket_of_tier(tier))
+            meta_builds.set_user_tier(tier)
             return tier
         except Exception:
             log.debug("rank refresh failed", exc_info=True)

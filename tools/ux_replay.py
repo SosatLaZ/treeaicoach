@@ -461,7 +461,7 @@ def _scenarios() -> dict[str, Scenario]:
         need=[(263.0, 280.0, "leur jungler est en bas : jeu côté top", r"(?i)(pousse|tour|plaque|frappe|farm|pression|attaque|joue agressif)",
                ("debutant",))],
         moments=[Moment(262.0, 285.0, "leur jungler est vu en bas : joue agressif en haut",
-                        r"(?i)joue agressif|frappe|plaque|mets la pression", r"(?i)jungler est en bas",
+                        r"(?i)joue agressif|farme sans risque|frappe|plaque|mets la pression", r"(?i)jungler est en bas",
                         levels=("debutant", "intermediaire"))])
     S["dragon_jg"] = Scenario(
         "dragon_jg", "Dragon à 5:00 vu par mon jungler (Vi)", 220.0, 340.0, me="Vi",
@@ -543,7 +543,7 @@ def _scenarios() -> dict[str, Scenario]:
         paths={"LeeSin": [(420.0, None), (452.0, (0.78, 0.86)), (466.0, (0.82, 0.84)), (470.0, None)]},
         waves={"top": [(420.0, 0.5)]},
         moments=[Moment(451.0, 472.0, "leur jungler est vu en bas : joue agressif en haut",
-                        r"(?i)joue agressif|frappe|plaque|mets la pression", r"(?i)jungler est en bas",
+                        r"(?i)joue agressif|farme sans risque|frappe|plaque|mets la pression", r"(?i)jungler est en bas",
                         levels=("debutant", "intermediaire"))])
     S["laner_recall"] = Scenario(
         "laner_recall", "Darius rentre en base pendant que ma vague pousse : plaques", 540.0, 620.0,

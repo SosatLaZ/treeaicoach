@@ -29,6 +29,11 @@ THE LIBRARY (rank = priority + score; voice: who hears it, see :func:`voice_for`
 
     (+ phase.EndGameCaller: ace -> "Va au Baron maintenant : 5 ennemis morts", spoken ("urgent:ace:"))
 
+    The draft crosses in (``MacroCtx.lane_prior``, :func:`treeaicoach.draft_edge.lane_prior`): the
+    "Joue agressif" of gc_jungler_far becomes "Farme sans risque" while the draft says my lane
+    opponent wins the CURRENT phase by far (Garen vs Darius before level 6): no gank coming, but no
+    trade either.
+
 THE VOICE (:func:`voice_for`, keys ``gc:big:<kind>:<ident>`` / ``gc:lane:<kind>:<ident>``): a short
 line (<= :data:`VOICE_MAX_CHARS` characters, < 2.5 s spoken), static wording (no champion name, no
 live number but the count of dead enemies) so every line is pre-generated (:func:`voice_phrases`,
@@ -225,6 +230,14 @@ def _stance_ok(ctx: M.MacroCtx) -> bool:
     return ctx.stance_score is None or ctx.stance_score > M.STANCE_PRUDENT
 
 
+def _draft_says_no(ctx: M.MacroCtx) -> bool:
+    """The draft says my lane opponent wins the CURRENT phase by far (draft_edge.lane_prior: Garen
+    vs Darius levels 1-5): an aggressive lane call would send a beginner into his counter. A call
+    already on the card is kept (``keep``)."""
+    lp = ctx.lane_prior
+    return not ctx.keep and lp is not None and bool(getattr(lp, "hard_losing", False))
+
+
 # ----------------------------------------------------------------------------- rules
 def rule_level_race(ctx: M.MacroCtx) -> M.GeniusCall | None:
     """I reach 2 / 3 / 6 before my lane opponent (attack window) - or he does (step back)."""
@@ -304,6 +317,14 @@ def rule_jungler_far(ctx: M.MacroCtx) -> M.GeniusCall | None:
         return None                                      # the opponent is dead: plates (macro) say it
     where = M.SIDE_FR.get(jl.side, "loin")
     name = jl.name or "Leur jungler"
+    if _draft_says_no(ctx):                              # no gank, but his lane: farm, do not trade
+        return replace(M._call("gc_jungler_far", f"gc_jg_far:{jl.side}:{int(ctx.gt // 90)}", "FARME TRANQUILLE",
+                               f"Farme sans risque : {name} est {where}",
+                               "Pas de gank avant ~20 s, mais ton adversaire gagne cette phase : prends les "
+                               "sbires, pas l'échange.",
+                               None, tier="basic", score=0.62, priority=77, color="safe", life=14.0,
+                               factors=(f"jungler vu {where} il y a {jl.age:.0f} s", "adversaire favori")),
+                       voice=f"Leur jungler est {where} : farme !")
     return replace(M._call("gc_jungler_far", f"gc_jg_far:{jl.side}:{int(ctx.gt // 90)}", "JOUE AGRESSIF",
                            f"Joue agressif : {name} est {where}",
                            f"Il ne peut pas venir te ganker avant ~20 s : échange ou prends des sbires d'avance.",
@@ -886,6 +907,7 @@ def voice_phrases() -> list[str]:
             "Niveau d'avance : frappe-le !", "Ton ultime est prêt : frappe-le !",
             "Il a un niveau d'avance : recule.", "Il a son ultime : recule !",
             "Leur jungler est en bas : avance !", "Leur jungler est en haut : avance !",
+            "Leur jungler est en bas : farme !", "Leur jungler est en haut : farme !",
             "Jungler invisible : recule !", "Vous êtes devant : balises au Baron.",
             "Pas de buisson sans balise !", "Il a son objet : recule.",
             VOICE_WINDOW_NOW, VOICE_WINDOW_TEAM, VOICE_WINDOW_SCALE]

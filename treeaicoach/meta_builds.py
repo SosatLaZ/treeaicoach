@@ -237,6 +237,18 @@ def bracket_of_tier(tier: Any) -> str:
 
 
 _user_bracket = ""
+_user_tier = ""
+
+
+def set_user_tier(tier: Any) -> None:
+    """My own ranked tier ("GOLD", "" = unranked / unknown), read by client_sync: the rank gap of
+    the in-game advice (draft_edge.lane_prior)."""
+    global _user_tier
+    _user_tier = str(tier or "").strip().upper()
+
+
+def get_user_tier() -> str:
+    return _user_tier
 
 
 def set_bracket(bracket: Any) -> None:
@@ -1016,4 +1028,4 @@ except Exception:  # pragma: no cover - defensive
 
 __all__ = ["MetaBuild", "get", "ensure_async", "refresh", "next_item", "describe", "compare", "names",
            "parse_ugg", "parse_riot", "compact_riot", "names_from_ddragon", "patch_key", "build_from_row",
-           "data_info", "set_bracket", "get_bracket", "bracket_of_tier", "UGG_URL", "RIOT_RUNES_URL", "SOURCE_UGG", "SOURCE_RIOT"]
+           "data_info", "set_bracket", "get_bracket", "set_user_tier", "get_user_tier", "bracket_of_tier", "UGG_URL", "RIOT_RUNES_URL", "SOURCE_UGG", "SOURCE_RIOT"]

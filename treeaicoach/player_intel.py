@@ -496,6 +496,19 @@ def get_default_watcher() -> PlayerIntelWatcher:
         return _default
 
 
+def enemy_intel(alias: Any) -> PlayerIntel | None:
+    """The enemy ``alias``'s info from the running watcher (never starts one, never fetches): what
+    the in-game advice reads (draft_edge.lane_prior). None when off / not read yet. Never raises."""
+    try:
+        w = _default
+        a = str(alias or "").lower()
+        if w is None or not a:
+            return None
+        return next((p for p in w.snapshot() if not p.ally and p.alias.lower() == a), None)
+    except Exception:
+        return None
+
+
 def enabled(cfg: Any) -> bool:
     return bool(getattr(cfg, "player_intel", False)) and bool(getattr(cfg, "lcu_enabled", True))
 
@@ -637,6 +650,6 @@ def engine_tick(engine: Any, t: float, watcher: PlayerIntelWatcher | None = None
 
 
 __all__ = ["PlayerIntel", "PlayerIntelWatcher", "parse_session", "parse_ranked", "parse_history", "card",
-           "card_line", "decisive_lines", "discord_ranks", "ranks_tick", "rank_text", "streak_text", "who",
+           "card_line", "decisive_lines", "enemy_intel", "discord_ranks", "ranks_tick", "rank_text", "streak_text", "who",
            "engine_tick", "enabled",
            "get_default_watcher"]

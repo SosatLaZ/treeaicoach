@@ -202,3 +202,37 @@ def test_tilt_guard_ignores_custom_and_practice_games():
     games[1]["gameMode"] = "PRACTICETOOL"
     res = de.parse_history(games)
     assert len(res) == 1 and res[0].win and de.tilt_line(res, NOW) == ""
+
+
+def test_lane_prior_phase_rank_and_streak():
+    from types import SimpleNamespace as N
+
+    assert de.phase_index(3, 0) == 0 and de.phase_index(6, 1000) == 1 and de.phase_index(9, 3000) == 2
+    assert de.phase_index(14, 7000) == 3
+    lp = de.lane_prior("Garen", "Darius", 3, 0)                    # Darius wins levels 1-5
+    assert lp.hard_losing and lp.kill_extra > 0.5 and lp.reasons
+    assert de.lane_prior("Garen", "Vladimir", 3, 0).kill_extra == 0.0   # my phase: never looser
+    assert de.lane_prior("Garen", "NoSuchChamp", 3, 0) == de.LanePrior(phase=0)
+    gold = N(ranked_loaded=True, tier="GOLD", history_loaded=True, streak=0)
+    assert de.lane_prior("Garen", "Malphite", 3, 0, opp_intel=gold, my_tier="IRON").kill_extra == de.PRIOR_RANK_EXTRA
+    assert de.lane_prior("Garen", "Malphite", 3, 0, opp_intel=gold, my_tier="SILVER").kill_extra == 0.0
+    tilt = N(ranked_loaded=False, history_loaded=True, streak=-5)
+    assert de.lane_prior("Garen", "Malphite", 3, 0, opp_intel=tilt).kill_extra == -de.PRIOR_STREAK_EXTRA
+    hot = N(ranked_loaded=True, tier="DIAMOND", history_loaded=True, streak=8)
+    assert de.lane_prior("Garen", "Darius", 3, 0, opp_intel=hot, my_tier="IRON").kill_extra == de.PRIOR_MAX
+
+
+def test_live_prior_reads_the_running_intel_watcher(monkeypatch):
+    from types import SimpleNamespace as N
+
+    from treeaicoach import meta_builds, player_intel
+
+    me, opp = N(champion_alias="Garen", level=3, items=[]), N(champion_alias="Malphite", level=3, items=[])
+    assert de.live_prior(me, opp).kill_extra == 0.0
+    w = N(snapshot=lambda: (player_intel.PlayerIntel("Malphite", "Malphite", False, "TOP", ranked_loaded=True,
+                                                     tier="PLATINUM"),))
+    monkeypatch.setattr(player_intel, "_default", w)
+    monkeypatch.setattr(meta_builds, "_user_tier", "BRONZE")
+    assert de.live_prior(me, opp).kill_extra == de.PRIOR_RANK_EXTRA
+    assert player_intel.enemy_intel("malphite").tier == "PLATINUM" and player_intel.enemy_intel("Garen") is None
+    assert de.live_prior(None, opp) == de.LanePrior()
