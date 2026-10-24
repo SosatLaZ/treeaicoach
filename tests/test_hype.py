@@ -1,7 +1,6 @@
-"""hype.py: win probability model, caster lines policy, shareable summary."""
+"""hype.py: win probability model, caster lines policy."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -123,7 +122,7 @@ def test_win_prob_swing_policy():
     sb.team_gold_diff = -20000
     assert c.update(60.0, G(960.0), sb) == []                        # < 3 min since the last one
     assert c.update(400.0, G(1300.0), sb)
-    assert c.hud_text().startswith("Victoire ")
+    assert c.win_probability() is not None
     sobre = hype.HypeCaster(SimpleNamespace(caster_style="sobre"))
     sobre.update(0.0, G(900.0), SimpleNamespace(players=(1,), team_gold_diff=0))
     assert sobre.update(10.0, G(910.0), SimpleNamespace(players=(1,), team_gold_diff=30000)) == []
@@ -136,19 +135,6 @@ def test_restyle_praise():
     out = hype.restyle_praise("multi:12", "Triple kill !", "caster")
     assert out.endswith("Triple kill !") and out != "Triple kill !"
     assert hype.restyle_praise("cs:900", "Propre.", "caster") == "Propre."
-
-
-def test_share_summary_from_fixture():
-    from treeaicoach.analysis import analyze_game
-
-    rec = json.loads((Path(__file__).parent / "fixtures" / "game_record_sample.json").read_text(encoding="utf-8"))
-    text = hype.share_summary(analyze_game(rec), {"win_prob_min": 0.3, "win_prob_max": 0.8, "comeback": True})
-    assert text.startswith("TreeAI Coach — ") and "KDA" in text and "remontée" in text
-    assert len(text.splitlines()) <= 6
-    assert hype.share_summary(None) .startswith("TreeAI Coach")
-    c = hype.HypeCaster(SimpleNamespace(caster_style="coach"))
-    c.update(0.0, G(900.0))
-    assert "win_prob_min" in c.stats()
 
 
 # ------------------------------------------------------------------------------ engine wiring
@@ -202,7 +188,6 @@ def test_engine_wiring(monkeypatch, tmp_path):
         eng.step(2.0)
         assert calls and getattr(eng, "last_ai_advice", "").startswith("Achète")
         assert eng.win_probability() is not None
-        assert "win_prob_min" in eng.hype_stats()
         assert eng.ai_status() == (0, None)
         assert all("Zhonya" not in s for s in voice.said)            # ai_speak off by default
     finally:

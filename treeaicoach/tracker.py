@@ -419,13 +419,6 @@ class Track:
             vx, vy = vx * VEL_MAX / sp, vy * VEL_MAX / sp
         return (vx, vy)
 
-    def kf_speed_std(self) -> float:
-        """Standard deviation of the Kalman speed estimate (large = not trusted yet)."""
-        kf = self._kf
-        if kf is None:
-            return KF_INIT_VEL_STD
-        return math.sqrt(max(0.0, 0.5 * (kf[5] + kf[10])))
-
     def predict(self, t: float, horizon: float = PREDICT_MAX_S) -> tuple[float, float] | None:
         """Expected position at ``t``: Kalman position + damped velocity over at most
         ``horizon`` s (short detection misses). Stacked: the occluder's position."""
@@ -444,32 +437,15 @@ class Track:
         recorded while the champion locker was deciding (for consumers that confirm threats)."""
         return [s for _f, s in self._lock_obs]
 
-    def last_known(self) -> tuple[float, tuple[float, float]] | None:
-        """``(time, position)`` of the last reliable knowledge of where the champion was
-        (a real sighting, or the end of a stacked hold)."""
-        pos = self.position()
-        return (self.last_seen, pos) if pos is not None else None
-
     def zone(self) -> Zone | None:
         """Map zone of the smoothed position (``None`` if never seen)."""
         pos = self.position()
         return classify_zone(pos[0], pos[1]) if pos is not None else None
 
-    def hidden_for(self, now: float) -> float:
-        """Seconds since the last sighting (0 while visible)."""
-        if self.visible:
-            return 0.0
-        return max(0.0, float(now) - self.last_seen)
-
     def observed_time(self, window_s: float, now: float) -> float:
         """Visible time (s) recorded in the zone history during ``[now - window_s, now]``."""
         total, _hit = self._zone_time(None, window_s, now)
         return total
-
-    def zone_time(self, lane: str | Zone, window_s: float, now: float) -> float:
-        """Visible time (s) spent in ``lane`` (lane name or :class:`Zone`) during the window."""
-        _total, hit = self._zone_time(_zone_matcher(lane), window_s, now)
-        return hit
 
     def zone_fraction(self, lane: str | Zone, window_s: float, now: float) -> float:
         """Share (0..1) of the visible time of the last ``window_s`` seconds spent in ``lane``.

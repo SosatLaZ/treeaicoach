@@ -1200,11 +1200,6 @@ class CoachingMixin:
         hc = getattr(self, "_hype", None)
         return hc.win_probability() if hc is not None and self._in_game else None
 
-    def hype_stats(self) -> dict:
-        """Win-probability statistics of the current / last game (shareable summary)."""
-        hc = getattr(self, "_hype", None)
-        return hc.stats() if hc is not None else {}
-
     def ai_status(self) -> tuple[int, str | None]:
         """``(sequence, French error)`` of the optional AI advisor (the sequence changes per new error)."""
         ai = getattr(self, "_ai", None)

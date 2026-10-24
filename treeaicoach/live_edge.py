@@ -373,15 +373,6 @@ def swing_reason(prev: Any, cur: Any) -> str | None:
     return REASON_LABEL.get(k) if abs(b[k] - a.get(k, 0.0)) >= 0.05 else None
 
 
-def main_reason(cur: Any) -> str | None:
-    """The biggest term of the current logit (what the probability rests on)."""
-    b = win_terms(cur)
-    if not b:
-        return None
-    k = max(b, key=lambda x: abs(b[x]))
-    return REASON_LABEL.get(k) if abs(b[k]) >= 0.05 else None
-
-
 def win_text(p: float, delta_points: float | None, reason: str | None) -> str:
     """"victoire 62 %" / "victoire 62 % (+8 : Baron)"."""
     s = f"victoire {int(round(100 * _f(p, 0.5)))} %"
@@ -498,7 +489,6 @@ class LiveEdge:
         self._win: tuple[float, float | None, str | None] | None = None
         self._gt = 0.0
         self._first_t: float | None = None
-        self.notes: list[tuple[float, str]] = []         # (gt, text) for the record / report
 
     def line(self) -> str | None:
         return self._line
@@ -518,7 +508,6 @@ class LiveEdge:
         self._feat_t[note.feature] = t
         self._idents[note.feature] = note.ident
         self._last_note_t = t
-        self.notes = (self.notes + [(gt, note.text)])[-50:]
         return note
 
     # ------------------------------------------------------------------ main
@@ -657,5 +646,5 @@ class LiveEdge:
 
 __all__ = ["EdgeNote", "EdgeStats", "LiveEdge", "lane_opponent", "lane_gold_diff", "gold_diff_text", "kill_window",
            "kill_window_text", "next_build_item", "recall_target", "recall_text", "damage_profile",
-           "defense_call", "win_terms", "swing_reason", "main_reason", "win_text", "number_advantage",
+           "defense_call", "win_terms", "swing_reason", "win_text", "number_advantage",
            "farm_rates", "farm_targets", "farm_text", "farm_nudge", "fmt_or", "fmt_num"]

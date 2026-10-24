@@ -116,7 +116,6 @@ def test_win_reason_names_the_swing():
     a = hype.WinFactors(game_time=1500.0, gold_diff=0)
     b = hype.WinFactors(game_time=1530.0, gold_diff=300, baron_diff=1, baron_buff=1)
     assert LE.swing_reason(a, b) == "Baron"
-    assert LE.main_reason(hype.WinFactors(game_time=900.0, tower_diff=3)) == "tours"
     assert LE.win_text(0.62, 8.0, "Baron") == "victoire 62 % (+8 : Baron)"
     assert LE.win_text(0.62, 1.0, "Baron") == "victoire 62 %"
     assert abs(sum(LE.win_terms(b).values()) - hype.win_logit(b)) < 1e-9     # transparent split

@@ -1,4 +1,4 @@
-""""Mode annonceur": live win probability, esport caster lines and a shareable game summary.
+""""Mode annonceur": live win probability and esport caster lines.
 
 ``cfg.caster_style``:
 
@@ -357,7 +357,6 @@ class HypeCaster:
         with self._lock:
             self._p: float | None = None
             self._factors: WinFactors | None = None
-            self.history: list[tuple[float, float]] = []      # (game time, p)
             self._ref = 0.5
             self._last_swing = -math.inf
             self._last_hype = -math.inf
@@ -365,7 +364,6 @@ class HypeCaster:
             self._primed = False
             self._streaks: dict[str, int] = {}
             self._last_phrase: dict[str, str] = {}
-            self.big_moments = 0
 
     # ------------------------------------------------------------------ queries
     def win_probability(self) -> float | None:
@@ -373,22 +371,6 @@ class HypeCaster:
 
     def factors(self) -> WinFactors | None:
         return self._factors
-
-    def hud_text(self) -> str | None:
-        p = self._p
-        return None if p is None else f"Victoire {fmt_pct(p)}"
-
-    def stats(self) -> dict[str, Any]:
-        """Per-game numbers for the shareable summary."""
-        with self._lock:
-            ps = [p for _t, p in self.history]
-            if not ps:
-                return {"big_moments": self.big_moments}
-            lo, hi = min(ps), max(ps)
-            i_lo = ps.index(lo)
-            comeback = lo <= 0.35 and max(ps[i_lo:]) >= 0.6
-            return {"win_prob_min": lo, "win_prob_max": hi, "win_prob_last": ps[-1], "comeback": comeback,
-                    "big_moments": self.big_moments}
 
     # ------------------------------------------------------------------ live
     def update(self, t: float, game: Any, scoreboard: Any = None, threat: int = 0) -> list[str]:
@@ -407,9 +389,6 @@ class HypeCaster:
         p = win_probability(f)
         self._p = p
         gt = f.game_time
-        if not self.history or gt - self.history[-1][0] >= 15.0:
-            self.history.append((gt, p))
-            del self.history[:-400]
         out: list[str] = []
         lines = self._events(game, gt)
         if self._style == "caster" and lines and threat < 1 and t - self._last_hype >= HYPE_GAP_S:
@@ -489,56 +468,5 @@ class HypeCaster:
                     line = self._pick("shutdown_ally", name=champ.get(killer, "notre équipe"),
                                       victim=champ.get(victim, "l'adversaire"))
             if line:
-                self.big_moments += 1
                 out.append(line)
         return out
-
-
-# ======================================================================================
-# Shareable end-of-game summary
-# ======================================================================================
-ROLE_FR = {"TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "ADC", "UTILITY": "support"}
-
-
-def _dec(x: float, n: int = 1) -> str:
-    return f"{x:.{n}f}".replace(".", ",")
-
-
-def share_summary(analysis: Any, stats: dict[str, Any] | None = None) -> str:
-    """A few lines to paste on Discord / social networks (French, no player name). Never raises."""
-    try:
-        a = analysis if isinstance(analysis, dict) else {}
-        s = a.get("summary") if isinstance(a.get("summary"), dict) else {}
-        res = {"Win": "Victoire", "Lose": "Défaite"}.get(s.get("result") or "", "Partie")
-        dur = _num(s.get("duration")) or 0.0
-        champ = s.get("champion_name") or s.get("champion") or "?"
-        role = ROLE_FR.get(str(s.get("position") or "").upper())
-        head = f"{res} en {int(round(dur / 60))} min avec {champ}" if dur >= 60 else f"{res} avec {champ}"
-        lines = [f"TreeAI Coach — {head}{f' ({role})' if role else ''}"]
-        parts = [f"KDA {int(s.get('kills') or 0)}/{int(s.get('deaths') or 0)}/{int(s.get('assists') or 0)}"]
-        cspm = _num(s.get("cs_per_min"))
-        if cspm is not None:
-            parts.append(f"{_dec(cspm)} CS/min")
-        vis = _num(s.get("vision_score"))
-        if vis is not None:
-            parts.append(f"vision {int(vis)}")
-        kp = _num(s.get("kill_participation"))
-        if kp is not None:
-            parts.append(f"participation {int(round(kp * 100))} %")
-        lines.append(" · ".join(parts))
-        st = stats or {}
-        lo, hi = _num(st.get("win_prob_min")), _num(st.get("win_prob_max"))
-        if lo is not None and hi is not None:
-            extra = " — belle remontée !" if st.get("comeback") else ""
-            lines.append(f"Probabilité de victoire : de {fmt_pct(lo)} à {fmt_pct(hi)}{extra}")
-        faced = int(a.get("ganks_faced") or 0)
-        if faced:
-            lines.append(f"Ganks : {int(a.get('ganks_survived') or 0)} survécus sur {faced}")
-        tips = a.get("tip_items") or []
-        warn = next((t for t in tips if isinstance(t, dict) and t.get("kind") == "warn"), None)
-        if warn is not None and warn.get("text"):
-            lines.append(f"À travailler : {str(warn['text']).strip()[:140]}")
-        return "\n".join(lines)
-    except Exception:
-        log.exception("share_summary failed")
-        return "TreeAI Coach — partie terminée."
