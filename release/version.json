@@ -1,6 +1,6 @@
 {
-  "version": "2.24.0",
-  "sha256": "1595bd14220f9093e6e06ee6c7e60c69f4cf67f4465d2665398914d34e3bb468",
-  "size": 7531874,
-  "notes": "2.24 : coach IA par Discord uniquement (micro du PC coupé), position probable du jungler, planificateur d'objets."
+  "version": "2.24.1",
+  "sha256": "df49e0f1e2516aa799eec12591cac16d6630d2132508927b033dd39718b231b8",
+  "size": 7532856,
+  "notes": "2.24.1 : correctif bot Discord + objectifs préparés."
 }

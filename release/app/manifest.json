@@ -1,25 +1,25 @@
 {
- "version": "2.24.0",
+ "version": "2.24.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "5adb9434586bc3a1e7717852ba1f4463ead9c7f1a5bf45c4b7cba6c56b909020",
+ "sha256": "f12c57788eb482c0829cae0472e4e405afea9e91ee8af8293c8e2d0d4e2f37df",
  "chunks": [
   {
-   "name": "2.24.0/part-01.zip",
-   "size": 88162681,
-   "sha256": "76ceb55e738a14277faf526b16655fdaeb66a5a8adc6f3b9911256bd18e51bc7",
-   "files": 253
+   "name": "2.24.1/part-01.zip",
+   "size": 88160712,
+   "sha256": "fca2f5d099a3e2bca1e4cee6cb0c412c5909e61199b9275f397dbd9e08d9cbb1",
+   "files": 252
   },
   {
-   "name": "2.24.0/part-02.zip",
-   "size": 9488571,
-   "sha256": "540df280313fc6d081214d043dba6da09c5d79e7fad49c9ba05b8e958bd1ba64",
-   "files": 461
+   "name": "2.24.1/part-02.zip",
+   "size": 9498530,
+   "sha256": "80900b31bccff4d8e047dfc28ec79aec8464c1eec1c457bbbf408e9ccaf07e21",
+   "files": 462
   }
  ],
- "total_size": 97651252,
+ "total_size": 97659242,
  "launcher": {
-  "sha256": "1595bd14220f9093e6e06ee6c7e60c69f4cf67f4465d2665398914d34e3bb468",
-  "size": 7531874
+  "sha256": "df49e0f1e2516aa799eec12591cac16d6630d2132508927b033dd39718b231b8",
+  "size": 7532856
  },
- "notes": "2.24 : coach IA par Discord uniquement (micro du PC coup\u00e9), position probable du jungler, planificateur d'objets."
+ "notes": "2.24.1 : correctif bot Discord + objectifs pr\u00e9par\u00e9s."
 }
