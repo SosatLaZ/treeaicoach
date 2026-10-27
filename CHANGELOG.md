@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 2.29.2 · 27 octobre 2026
+
+- **Le bot Discord marche hors des parties :** il reste dans ton salon vocal et t'écoute tout le temps (il
+  n'écoutait que pendant une partie et quittait le salon à la fin).
+- **Phrases moins coupées :** une pause d'une seconde ne coupe plus ta phrase, les questions peuvent durer
+  12 s (au lieu de 6 s).
+
 ## 2.29.1 · 24 octobre 2026
 
 - **Plus de « l'IA a besoin d'une partie » :** hors partie, F12 / « Hey coach » répond comme une IA normale

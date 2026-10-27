@@ -148,7 +148,7 @@ def test_question_ends_on_silence_and_short_ones_are_dropped() -> None:
     lst, ev = _listener(clock)
     lst.step(("11", _block(WAKE)))
     assert ev.wakes == ["11"]
-    clock[0] += 3.1                     # nothing said after the chime (no packets at all): given up
+    clock[0] += va.QUESTION_START_S + 0.1   # nothing said after the chime (no packets at all): given up
     lst.step(None)
     assert ev.questions == [] and lst.status == "Question non comprise."
 

@@ -18,7 +18,7 @@ CONTEXT = 64
 START_P = 0.5
 END_P = 0.35
 MIN_SPEECH_S = 0.25
-END_SILENCE_S = 0.6
+END_SILENCE_S = 1.0     # a short breath inside a sentence must not cut it
 PRE_ROLL_S = 0.3
 MAX_UTTERANCE_S = 15.0
 

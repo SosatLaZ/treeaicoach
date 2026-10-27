@@ -1139,7 +1139,8 @@ class DiscordCaller:
                     # what the player asked from the launcher (test, join / leave a channel) is kept;
                     # one join / leave at a time (game_end twice = one leave)
                     self._jobs = collections.deque(j for j in self._jobs if j.kind in USER_JOBS)
-                    self._jobs.append(_Job("join" if self._in_game else "leave", t=now))
+                    if self._in_game or not s.listen:     # listening: the bot stays in voice after the game
+                        self._jobs.append(_Job("join" if self._in_game else "leave", t=now))
                 elif kind in SPEAKING_KINDS and (self._muted or not s.wants(kind)):
                     self.dropped += 1                    # bot muted (hotkey) / this call is switched off
                     return False
@@ -1901,7 +1902,7 @@ class DiscordCaller:
     def _should_listen(self) -> bool:
         with self._lock:
             s = self._settings
-            return (s.enabled and s.listen and self._in_game and not self._muted and not self._stopping
+            return (s.enabled and s.listen and not self._muted and not self._stopping     # in and out of games
                     and self._state == "connected")
 
     def listen_test(self) -> tuple[bool, str]:

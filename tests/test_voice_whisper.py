@@ -146,8 +146,9 @@ class _Scripted:
 
 def test_segmenter_logic_min_max_and_flush() -> None:
     frame = b"\1\0" * vad.FRAME
-    seg = vad.Segmenter(_Scripted([0.0] * 5 + [0.9] * 20 + [0.0] * 30))
-    outs = [u for _ in range(55) for u in seg.feed(frame)]
+    tail = int(vad.END_SILENCE_S * 16000 / vad.FRAME) + 6          # silence long enough to end the utterance
+    seg = vad.Segmenter(_Scripted([0.0] * 5 + [0.9] * 20 + [0.0] * tail))
+    outs = [u for _ in range(25 + tail) for u in seg.feed(frame)]
     assert len(outs) == 1 and not seg.in_speech
     seg = vad.Segmenter(_Scripted([0.9] * 3 + [0.0] * 30))             # a click: too short
     assert [u for _ in range(33) for u in seg.feed(frame)] == []
