@@ -27,6 +27,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from treeaicoach import objectives as _objectives
 from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
@@ -366,6 +367,16 @@ TIPS: tuple[Tip, ...] = (
     T("drag_buy", "objectives", "Rentre acheter une balise de contrôle : dragon dans {drag_s} s",
       lambda c: c.soon_within("dragon", 50, 100) and not c.has_control_ward and not c.in_base,
       roles=BOTSIDE, prio=4, tone="warning", ttl=15.0),
+    # control wards around an objective (the recorded games: a control ward in 1 game out of 59,
+    # none held at any dragon / Baron spawn): place the one in the bag, or buy one in the shop
+    T("drag_vision_cw", "objectives", "Pose ta balise de contrôle au dragon : apparition dans {drag_s} s",
+      lambda c: (c.soon_within("dragon", 20, 75) or c.soon_within("elder", 20, 75)) and c.has_control_ward
+      and not c.in_base, roles=BOTSIDE, prio=4, ttl=15.0),
+    T("baron_soon_cw", "objectives", "Pose ta balise de contrôle au Baron : apparition dans {baron_s} s",
+      lambda c: c.soon_within("baron", 20, 75) and c.has_control_ward and not c.in_base, prio=4, ttl=15.0),
+    T("drag_buy_base", "objectives", "Achète une balise de contrôle (75 or) : dragon dans {drag_s} s",
+      lambda c: c.in_base and c.soon_within("dragon", 40, 120) and not c.has_control_ward and c.gold >= 75,
+      roles=BOTSIDE, prio=4, ttl=12.0),
     T("drag_prio", "objectives", "Pousse ta vague puis va au dragon : apparition dans {drag_s} s",
       lambda c: c.soon_within("dragon", 25, 75) and c.lane_ok, roles=("MIDDLE", "BOTTOM", "UTILITY"), prio=3,
       tone="info", ttl=15.0),
@@ -390,7 +401,7 @@ TIPS: tuple[Tip, ...] = (
       tone="warning", conf=MAP),
     # 2 dead is not a Baron window unless their timers cover the walk + the kill
     T("baron_window", "objectives", "Va au Baron avec ton équipe : {n_dead} ennemis morts",
-      lambda c: "baron" in c.alive and len(c.dead_names) >= 2 and c.gt >= 1200
+      lambda c: "baron" in c.alive and len(c.dead_names) >= 2 and c.gt >= _objectives.baron_first_s()
       and c.dead_respawn >= (25 if len(c.dead_names) >= 3 else 40), prio=4, tone="go", ttl=10.0),
     T("herald_soon", "objectives", "Pousse ta vague puis aide au Héraut : {herald_s} s",
       lambda c: c.soon_within("herald", 20, 90) and c.lane_ok, roles=TOPSIDE, prio=3, ttl=15.0),

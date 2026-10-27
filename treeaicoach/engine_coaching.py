@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from treeaicoach import arbiter as _arbiter
 from treeaicoach import geometry
 from treeaicoach.alerts import Alert, AlertKind, Level, make_alert
 from treeaicoach.engine_base import (
@@ -1755,6 +1756,8 @@ class CoachingMixin:
             pass
         if not early and siege is None:
             valid = self._with_objective_line(valid, now, mc.text if mc is not None else None)
+        valid = _arbiter.order_lines(valid, macro_text=getattr(mc, "text", None),     # engines disagree:
+                                     macro_kind=getattr(mc, "kind", None), tone=self._tip_tone)  # arbiter.py
         valid = self._no_contradiction(valid, now, siege is not None or me_dead)
         # the gauge's two extremes ARE the instruction when nothing else is said (beginner levels)
         try:

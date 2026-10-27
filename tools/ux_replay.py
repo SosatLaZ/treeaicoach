@@ -861,6 +861,9 @@ def run(scenario: str | Scenario, level: str = "debutant", hz: float = 2.0) -> R
     finally:
         waves_mod.WaveTracker.update, waves_mod.WaveTracker.waves = patched   # type: ignore[method-assign]
         logging.disable(logging.NOTSET)
+        import shutil
+
+        shutil.rmtree(home, ignore_errors=True)   # ~0.5 MB per replay: 7 444 leaked dirs filled the disk
     return Replay(sc, level, frames, time.perf_counter() - t_start)
 
 

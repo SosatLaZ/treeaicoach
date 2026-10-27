@@ -44,7 +44,7 @@ log = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------- tunables
 GLOBAL_GAP_S = 20.0             # min engine time between two notes of this module
-GAPS = {"kill": 90.0, "recall": 120.0, "defense": 240.0, "objective": 30.0, "farm": 300.0}
+GAPS = {"kill": 90.0, "recall": 120.0, "defense": 240.0, "objective": 30.0, "farm": 300.0, "bounty": 180.0}
 LANING_END_GT = 14 * 60.0       # kill window: laning phase only
 KILL_MIN_HP = 0.55              # my HP fraction needed to call a kill window
 KILL_SCORE = 1.5                # level diff + gold diff / KILL_GOLD_UNIT
@@ -598,6 +598,13 @@ class LiveEdge:
                                    t, gt)]
         else:
             self._kill_open = False
+        # 2b) bounties (kill streaks, bounty.py): I am the shutdown target / focus their streaking carry
+        if alive and not in_base and gt >= 300.0:
+            from treeaicoach.bounty import bounty_call
+
+            bc = bounty_call(game)
+            if bc is not None and (recall_ok or "rentre" not in bc[0].lower()) and self._due("bounty", bc[1], t):
+                return [self._emit(EdgeNote("bounty", f"edge:bounty:{bc[1]}", "PRIME", bc[0], "", bc[1]), t, gt)]
         # 3) optimal recall: my gold reaches a real piece of the meta build
         gold = _f(getattr(game, "current_gold", 0.0))
         if alive and not in_base and recall_ok and gold >= RECALL_MIN_VALUE:

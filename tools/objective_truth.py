@@ -42,8 +42,11 @@ FRESH_GOLD = 500
 EVEN_GOLD = 3000
 
 
-def instances(monsters: list, duration: float) -> list[dict]:
-    """``{key, spawn, take, team}`` of every spawn (team "" = not taken)."""
+def instances(monsters: list, duration: float, mode: str = "CLASSIC") -> list[dict]:
+    """``{key, spawn, take, team}`` of every spawn (team "" = not taken). Swiftplay
+    (objectives.MODE_SCHEDULES): no grubs / Herald, 2 dragons, Elder 15:00 (+6:00), Baron 12:00 (+5:00)."""
+    if str(mode).upper() == "SWIFTPLAY":
+        return _swift_instances(monsters, duration)
     out = []
     drag = sorted((m for m in monsters if m[3] in ("DRAGON", "ELDER_DRAGON")), key=lambda m: m[0])
     s, souls = 300.0, {}
@@ -72,6 +75,26 @@ def instances(monsters: list, duration: float) -> list[dict]:
         s = m[0] + 360.0
     if s < duration:
         out.append({"key": "baron", "spawn": s, "take": None, "team": ""})
+    return [o for o in out if o["spawn"] + 30 < duration]
+
+
+def _swift_instances(monsters: list, duration: float) -> list[dict]:
+    out = []
+    drag = sorted((m for m in monsters if m[3] == "DRAGON" and "ELDER" not in str(m[4])), key=lambda m: m[0])
+    s = 300.0
+    for m in drag[:2]:
+        out.append({"key": "dragon", "spawn": s, "take": m[0], "team": m[2] or ""})
+        s = m[0] + 300.0
+    if len(drag) < 2 and s < 900.0:
+        out.append({"key": "dragon", "spawn": s, "take": None, "team": ""})
+    for key, first, resp, sel in (("elder", 900.0, 360.0, lambda m: m[3] == "DRAGON" and "ELDER" in str(m[4])),
+                                  ("baron", 720.0, 300.0, lambda m: m[3] == "BARON_NASHOR")):
+        s = first
+        for m in sorted((m for m in monsters if sel(m)), key=lambda m: m[0]):
+            out.append({"key": key, "spawn": s, "take": m[0], "team": m[2] or ""})
+            s = m[0] + resp
+        if s < duration:
+            out.append({"key": key, "spawn": s, "take": None, "team": ""})
     return [o for o in out if o["spawn"] + 30 < duration]
 
 
@@ -114,7 +137,8 @@ def rows_of(rec: dict, truth: dict) -> list[dict]:
         return series[max(0, i)] if series else 0.0
 
     out = []
-    for o in instances(truth.get("monsters") or [], float(truth.get("duration") or 0)):
+    for o in instances(truth.get("monsters") or [], float(truth.get("duration") or 0),
+                       str(truth.get("game_mode") or "CLASSIC")):
         key, s = o["key"], o["spawn"]
         if role not in OP.ROLE_PLAYS.get(key, ()):
             continue

@@ -1584,3 +1584,30 @@ d'objets `itemization` :
   conseil gardé, pas nuisible. « Recule » (`tip:retreat`) : 613 → 523 appels avec les portes ci-dessus (§ 17),
   morts suivi / ignoré 37,4 / 37,2 % → 38,5 / 39,7 % (le « Recule ! » de combat : 2-3 ennemis près de moi, suivi
   45 % contre 55 % ignoré ; 4+ ennemis : trop tard, 62 % contre 44 %).
+
+## 27. Arbitre des contradictions (`arbiter.py`) + modes de jeu + primes
+
+* **Un seul endroit décide** quand les moteurs se contredisent (pousse / recule, rentre / reste) :
+  `arbiter.order_lines` (appelé par `engine_coaching._hud_line` avant `_no_contradiction`).
+  Priorité : **danger > fight > objective > plates > macro > tip** (`arbiter.PRIORITY`). La source
+  d'une ligne : ton « danger » ou mots d'alarme → danger ; l'appel macro actif → fight / plates /
+  objective / macro selon son `kind` ; sinon mots-clés (engage, Dragon / Baron, plaques) ; le reste
+  = tip. La ligne la plus forte passe en tête, les plus faibles de posture opposée sont retirées ;
+  sans conflit l'ordre des moteurs est gardé. Tests : `tests/test_arbiter.py` (dont 3 scénarios
+  `tools/ux_replay.py` : aucune sortie ne garde deux postures opposées). Mesure ux_replay
+  (27 scénarios, débutant) : 1 680 arbitrages, 0 conflit arrivé jusqu'à l'arbitre (les filtres
+  amont — `MacroCtx.threat`, jauge, mémoire de posture — tiennent) : c'est le filet de sécurité.
+* **Modes** : `objectives.MODE_SCHEDULES["SWIFTPLAY"]` (partie rapide, file 480 et parties contre
+  bots 890) : ni larves ni Héraut, 2 dragons élémentaires au plus (fosse vidée à 15:00), ancestral
+  à 15:00 puis +6:00, Baron à 12:00 puis +5:00 ; `objectives.baron_first_s()` remplace les
+  `gt >= 1200` codés en dur (macro, fog_intel, live_edge, coach, tips). Vérité LCU (31 parties, 7
+  rapides) : morts d'objectif avant l'apparition prévue 9/181 → 0/181, minuteurs fantômes larves /
+  Héraut 17 → 2. Hors économie de la Faille (URF, Un pour tous, outil d'entraînement) :
+  `macro.MACRO_MODES` coupe le planificateur macro.
+* **Primes** (`bounty.py`, note `live_edge` « bounty », écrite, 180 s) : série de kills rebâtie des
+  `ChampionKill` publics (accord avec la vérité LCU 236/247 joueurs) ; moi en série ≥ 3 : « Rentre
+  dépenser tes 1 400 PO : ta tête vaut une prime (série de 3) » ; leur meilleure série ≥ 3 :
+  « Vise Caitlyn en premier : grosse prime (série de 4) » ; ~2,5 notes / partie.
+* **Balises de contrôle aux objectifs** (`tips` `drag_vision_cw`, `baron_soon_cw`, `drag_buy_base`) :
+  dans les 59 parties enregistrées, une balise de contrôle achetée dans 1 seule ; aucune portée à
+  une apparition de dragon / Baron.
