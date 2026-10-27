@@ -54,6 +54,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
 
 from treeaicoach import geometry
+from treeaicoach import objectives as _objectives
 from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
@@ -131,6 +132,9 @@ KIND_COOLDOWN_S: dict[str, float] = {
     "gc_obj_safe": 180.0,           # objective_planner.py: "Joue safe : mourir = Dragon perdu"
 }
 #: short windows: they skip the global gap (they still respect the hold of the active call)
+#: game modes with the Summoner's Rift economy (macro calls on); elsewhere (URF, One for All,
+#: Ultimate Spellbook, practice tool) the windows / plates / respawn rules are wrong: silent
+MACRO_MODES = frozenset({"", "CLASSIC", "SWIFTPLAY"})
 URGENT_KINDS = frozenset({"fight_won", "fight_lost", "jungler_dead", "plates", "gc_level", "gc_cross_obj",
                           # the jungler SHOWN on the other side is a ~20-40 s window: the objective trade
                           # must not wait behind a lane call ("Joue agressif : Lee Sin est en haut")
@@ -729,7 +733,7 @@ def _rule_fight_won(ctx: MacroCtx) -> GeniusCall | None:
     opts: list[tuple[float, str, str, Any, str]] = []      # (value, what, title, target, short)
     # Baron: 3 dead, or 2 dead with their jungler (no smite to steal it), 4+ of us alive, and the
     # respawn window covers the walk + the kill (a Baron started with 20 s of window is a throw)
-    if _obj_up(ctx, "baron") and ctx.gt >= 1200 and n_al <= 1 and (n >= 3 or jg_dead) \
+    if _obj_up(ctx, "baron") and ctx.gt >= _objectives.baron_first_s() and n_al <= 1 and (n >= 3 or jg_dead) \
             and _window_ok(ctx, window, BARON_UV, "baron"):
         opts.append((1.0, "le Baron", "BARON !", BARON_UV, "le Baron"))
     if _obj_up(ctx, "elder") and n_al <= 1 and _window_ok(ctx, window, DRAGON_UV, "elder"):
@@ -813,7 +817,7 @@ def _rule_jungler_dead(ctx: MacroCtx) -> GeniusCall | None:
                           ("herald", ("JUNGLE", "TOP", "MIDDLE")), ("grubs", ("JUNGLE", "TOP", "MIDDLE"))):
         # Baron / Elder: their jungler alone dead is not enough (4 against 5 on a 50-50 objective)
         if key in ("baron", "elder") and (len(_dead_list(ctx, "enemies", 15.0)) < 2
-                                          or (key == "baron" and ctx.gt < 1200)):
+                                          or (key == "baron" and ctx.gt < _objectives.baron_first_s())):
             continue
         if not _obj_up(ctx, key, within=5.0) or (roles_ok is not None and role not in roles_ok):
             continue
@@ -1413,6 +1417,11 @@ class MacroPlanner:
             self._active, self._last_start, self._kind_t, self._done, self._badge_t = None, None, {}, set(), {}
         self._last_t = t
         cfg = LEVELS.get(level, LEVELS["intermediaire"])
+        # another economy (URF, One for All, practice tool...): the Rift macro rules do not apply
+        if str(getattr(ctx.game, "game_mode", "") or "").strip().upper() not in MACRO_MODES:
+            if self._active is not None:
+                self._cancel(up, ctx, "mode")
+            return up
         # never during a fight / gank / while dead: an active call is no longer the plan
         if ctx.in_fight or ctx.threat >= 1 or not ctx.me_alive:
             if self._active is not None:

@@ -38,6 +38,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from treeaicoach import objectives as _objectives
+
 log = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------- tunables
@@ -421,7 +423,7 @@ def number_advantage(game: Any, objectives: Iterable[Any], role: str | None = No
         window = min(r for _a, r in dead)
         up = {str(getattr(o, "key", "")) for o in objectives or () if bool(getattr(o, "alive", False))}
         for key, need, min_w, label, word, min_gt in OBJ_RULES:
-            if key not in up or n < need or window < min_w or gt < min_gt:
+            if key not in up or n < need or window < min_w or gt < min_gt * _objectives.baron_first_s() / 1200.0:
                 continue
             if key == "dragon" and str(role or "").upper() == "TOP":
                 continue

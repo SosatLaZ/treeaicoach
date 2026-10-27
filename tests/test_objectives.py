@@ -408,3 +408,47 @@ def test_grubs_second_wave_when_respawn_configured():
     assert st.next_spawn == 642.0 and not st.alive
     timers.update(make_game(700.0, events), 700.0)
     assert by_key(timers.states())["grubs"].alive
+
+
+# --------------------------------------------------------------------------- Swiftplay (2026-10 truth)
+def _swift(game_time: float, events=()) -> GameInfo:
+    g = make_game(game_time, events)
+    g.game_mode = "SWIFTPLAY"
+    return g
+
+
+def test_swiftplay_schedule_has_no_grubs_herald_and_baron_at_12() -> None:
+    t = ObjectiveTimers(Config(), schedule={})
+    t.update(_swift(100.0), 100.0)
+    keys = {s.key: s for s in t.states()}
+    assert "grubs" not in keys and "herald" not in keys
+    assert keys["baron"].next_spawn == 720.0 and keys["elder"].next_spawn == 900.0
+    assert obj_mod.baron_first_s() == 720.0
+    # two elemental dragons at most, then only the Elder (15:00, +6:00 after a kill)
+    evs = [ev(1, "DragonKill", 364.0, DragonType="Water", KillerName="Moi#EUW"),
+           ev(2, "DragonKill", 712.0, DragonType="Chemtech", KillerName="Ennemi1#EUW")]
+    t.update(_swift(800.0, evs), 800.0)
+    keys = {s.key: s for s in t.states()}
+    assert "dragon" not in keys and keys["elder"].next_spawn == 900.0
+    evs.append(ev(3, "DragonKill", 938.0, DragonType="Elder", KillerName="Moi#EUW"))
+    evs.append(ev(4, "BaronKill", 1087.0, KillerName="Moi#EUW"))
+    t.update(_swift(1100.0, evs), 1100.0)
+    keys = {s.key: s for s in t.states()}
+    assert keys["elder"].next_spawn == 938.0 + 360.0 and keys["baron"].next_spawn == 1087.0 + 300.0
+    # back to a Rift game: the 2026 schedule again
+    t.update(make_game(10.0, [], roster_suffix="b"), 200.0)
+    keys = {s.key: s for s in t.states()}
+    assert keys["baron"].next_spawn == 1200.0 and "grubs" in keys and "elder" not in keys
+    assert obj_mod.baron_first_s() == 1200.0
+
+
+def test_swiftplay_dragon_pit_emptied_at_15_for_the_elder() -> None:
+    t = ObjectiveTimers(Config(), schedule={})
+    evs = [ev(1, "DragonKill", 500.0, DragonType="Water", KillerName="Moi#EUW")]
+    t.update(_swift(890.0, evs), 890.0)
+    assert {s.key for s in t.states()} >= {"dragon", "elder"}
+    t.update(_swift(905.0, evs), 905.0)
+    keys = {s.key: s for s in t.states()}
+    assert "dragon" not in keys and keys["elder"].alive
+    t.reset()
+    assert obj_mod.baron_first_s() == 1200.0

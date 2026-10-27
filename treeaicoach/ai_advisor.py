@@ -2757,7 +2757,8 @@ SEASON_RULES = (
     "d'inhibiteur), celles des tours extérieures valent moins de 11:00 à 15:00 ; quêtes de rôle : top = "
     "Téléportation gratuite (ou débridée), mid = bottes de niveau 3 et rappel en 4 s, bot = bottes dans un "
     "7e emplacement, support = balises de contrôle moins chères ; lampes féeriques : une balise posée "
-    "dessus voit 25 % plus loin et révèle une zone 45 s."
+    "dessus voit 25 % plus loin et révèle une zone 45 s. En partie rapide (Swiftplay) : ni larves ni Héraut, "
+    "deux dragons élémentaires au plus, dragon ancestral à 15:00, Baron à 12:00."
 )
 
 

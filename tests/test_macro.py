@@ -394,3 +394,15 @@ def test_situational_buys_boots_and_control_ward():
     me = P("Thresh", "ORDER", [3876, 1001, iz.CONTROL_WARD], "UTILITY")
     r = iz.recommend(GameInfo(game_time=600.0, me=me, enemies=ap_team, current_gold=80.0), objective_soon=True)
     assert iz.CONTROL_WARD not in r.extras                        # already one in the inventory
+
+
+def test_planner_silent_outside_rift_economy_modes():
+    pl = macro.MacroPlanner()
+    assert pl.update(_plates_ctx(100.0), "debutant").new is not None
+    c = _plates_ctx(101.0)
+    c.game.game_mode = "URF"                     # URF / One for All: no Rift macro (other economy)
+    up = pl.update(c, "debutant")
+    assert up.new is None and up.cancel_reason == "mode" and pl.active() is None
+    c = _plates_ctx(140.0)
+    c.game.game_mode = "SWIFTPLAY"               # Swiftplay keeps the Rift rules
+    assert macro.MacroPlanner().update(c, "debutant").new is not None

@@ -43,6 +43,7 @@ from typing import Any
 
 from treeaicoach import geometry
 from treeaicoach import macro as M
+from treeaicoach import objectives as _objectives
 from treeaicoach.fmtutil import finite as _f
 
 log = logging.getLogger(__name__)
@@ -365,7 +366,7 @@ def _topic_objective(ctx: M.MacroCtx) -> str | None:
         alive, rem = o
         if not (alive or (rem is not None and 0.0 <= rem <= FIGHT_SOON_S)):
             continue
-        if key == "baron" and ctx.gt < 1200.0:
+        if key == "baron" and ctx.gt < _objectives.baron_first_s():
             continue
         pit = M.PIT_UV.get(key)
         if pit is None or not M._role_plays(ctx, key):

@@ -70,6 +70,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from treeaicoach import geometry
+from treeaicoach import objectives as _objectives
 from treeaicoach.alerts import Alert, AlertKind, Level
 from treeaicoach.fmtutil import finite as _finite
 
@@ -1400,7 +1401,7 @@ class MapCoach:
         # -- picks -> Baron (2-3 enemies dead for long; an ace is handled by phase.EndGameCaller)
         states = {str(getattr(o, "key", "") or ""): o for o in ctx.objectives}
         baron = states.get("baron")
-        if baron is not None and getattr(baron, "alive", False) and ctx.gt >= 1200:
+        if baron is not None and getattr(baron, "alive", False) and ctx.gt >= _objectives.baron_first_s():
             # V2 audit: 20 s was a throw (walk + kill); 35 s, and never while we are as many down
             long_dead = [p for p in getattr(ctx.game, "enemies", None) or []
                          if bool(getattr(p, "is_dead", False)) and (_finite(getattr(p, "respawn_timer", 0)) or 0) >= 35]

@@ -58,10 +58,24 @@ OBJECTIVE_SCHEDULE: dict[str, dict[str, float | None]] = {
     "herald": {"first": 900, "despawn": 1185},
     "baron": {"first": 1200, "respawn": 360},
 }
+#: Swiftplay (queue 480, also the 890 bot games: ``gameMode == "SWIFTPLAY"``), Riot "a swifter
+#: Swiftplay" + the LCU truth of 7 such games (2026-10): no Voidgrubs, no Herald, 2 elemental dragons
+#: at most (5:00, +5:00; the pit is emptied at 15:00 for the Elder), Elder at 15:00 then +6:00 after
+#: a kill (truth: first Elder kills 15:27-19:06, gaps 391 / 484 s), Baron at 12:00 (truth: first
+#: kills 18:07-19:37 < 20:00) and back 5:00 after a kill (truth gap 325 s < the 6:00 of the Rift).
+MODE_SCHEDULES: dict[str, dict[str, dict[str, float | None] | None]] = {
+    "SWIFTPLAY": {
+        "dragon": {"first": 300, "respawn": 300, "soul": 2, "max": 2, "despawn": 900},
+        "elder": {"first": 900, "respawn": 360},
+        "grubs": None,
+        "herald": None,
+        "baron": {"first": 720, "respawn": 300},
+    },
+}
 SCHEDULE_FILE_NAME = "objectives.json"
 SCHEDULE_KEYS: dict[str, tuple[str, ...]] = {
-    "dragon": ("first", "respawn", "soul"),
-    "elder": ("respawn",),
+    "dragon": ("first", "respawn", "soul", "max", "despawn"),
+    "elder": ("first", "respawn"),
     "grubs": ("first", "respawn", "despawn", "count"),
     "herald": ("first", "respawn", "despawn"),
     "baron": ("first", "respawn", "despawn"),
@@ -79,8 +93,9 @@ NAMES_FR: dict[str, str] = {
     "herald": "Héraut",
     "baron": "Baron",
 }
-#: Order of the objective slots (the dragon slot turns into "elder" after the soul).
-SLOT_ORDER: tuple[str, ...] = ("dragon", "grubs", "herald", "baron")
+#: Order of the objective slots (the dragon slot turns into "elder" after the soul). "elder" is its
+#: own slot only when the schedule gives it a fixed ``first`` spawn (Swiftplay).
+SLOT_ORDER: tuple[str, ...] = ("dragon", "elder", "grubs", "herald", "baron")
 KILL_EVENTS: dict[str, str] = {
     "DragonKill": "dragon",
     "BaronKill": "baron",
@@ -130,7 +145,7 @@ def _clean_value(key: str, value: Any) -> tuple[bool, float | None]:
     f = float(value)
     if not math.isfinite(f) or f < 0 or f > MAX_SCHEDULE_TIME_S:
         return False, None
-    if key in ("count", "soul"):
+    if key in ("count", "soul", "max"):
         return (1 <= f <= 20), float(int(round(f)))
     return True, f
 
@@ -204,6 +219,28 @@ def load_schedule(files: Iterable[Path | str] | None = None) -> dict[str, dict[s
         log.exception("Cannot load the objective schedule overrides; using defaults")
         return copy.deepcopy(OBJECTIVE_SCHEDULE)
     return sched
+
+
+def schedule_for_mode(base: Mapping[str, Any], mode: Any) -> dict[str, dict[str, float | None]]:
+    """``base`` with the objectives of game mode ``mode`` (``MODE_SCHEDULES``; unknown mode = base).
+    Override files still apply to the Summoner's Rift entries they name."""
+    out = copy.deepcopy(dict(base))
+    for obj, entry in (MODE_SCHEDULES.get(str(mode or "").strip().upper()) or {}).items():
+        if entry is None:
+            out.pop(obj, None)
+        else:
+            out[obj] = dict(entry)
+    return out
+
+
+#: first Baron spawn of the game being played (set by :class:`ObjectiveTimers` from the game mode)
+#: for the engines that gate Baron calls on the clock (macro, fog_intel, live_edge, coach, tips).
+_ACTIVE_BARON_FIRST = [1200.0]
+
+
+def baron_first_s() -> float:
+    """Game time of the first Baron spawn in the game being played (1200 on the Rift, 720 in Swiftplay)."""
+    return _ACTIVE_BARON_FIRST[0]
 
 
 # --------------------------------------------------------------------------- phrases
@@ -363,9 +400,10 @@ def build_slots(schedule: Mapping[str, Mapping[str, Any]], events: Iterable[_Kil
     slots: dict[str, _Slot] = {}
     for key in SLOT_ORDER:
         entry = schedule.get(key)
-        if entry is None:
+        if entry is None or (key == "elder" and _num(entry, "first") is None):
             continue
         slots[key] = _Slot(key=key, kind=key, next_spawn=_num(entry, "first"))
+    max_dragons = _num(schedule.get("dragon"), "max")
     dragon_sched = schedule.get("dragon") or {}
     elder_sched = schedule.get("elder") or {}
     soul = int(_num(dragon_sched, "soul") or 4)
@@ -375,6 +413,12 @@ def build_slots(schedule: Mapping[str, Mapping[str, Any]], events: Iterable[_Kil
         slot = slots.get(ev.slot)
         if slot is None:
             continue
+        if ev.slot == "dragon" and ev.elder and "elder" in slots:
+            slot = slots["elder"]                  # fixed-time Elder slot (Swiftplay)
+            respawn = _num(elder_sched, "respawn")
+            slot.next_spawn = ev.time + respawn if respawn is not None else None
+            slot.source = "event"
+            continue
         if ev.slot == "dragon":
             if ev.elder:
                 slot.kind = "elder"
@@ -383,6 +427,15 @@ def build_slots(schedule: Mapping[str, Mapping[str, Any]], events: Iterable[_Kil
                 team_dragons[ev.team] = team_dragons.get(ev.team, 0) + 1
                 total_dragons += 1
                 known = max((n for team, n in team_dragons.items() if team is not None), default=0)
+                if max_dragons is not None and total_dragons >= max_dragons:
+                    slot.next_spawn = None         # no more elemental dragons (Swiftplay)
+                    slot.source = "event"
+                    continue
+                if "elder" in slots:
+                    respawn = _num(dragon_sched, "respawn")
+                    slot.next_spawn = ev.time + respawn if respawn is not None else None
+                    slot.source = "event"
+                    continue
                 if known >= soul or total_dragons >= 2 * soul - 1:
                     slot.kind = "elder"
                     respawn = _num(elder_sched, "respawn")
@@ -443,6 +496,8 @@ class ObjectiveTimers:
             self.schedule = load_schedule()
         else:
             self.schedule = merge_schedule(OBJECTIVE_SCHEDULE, schedule, "argument")
+        self._rift_schedule = self.schedule          # Summoner's Rift schedule (mode overlays apply on it)
+        self._mode = ""
         self._enabled = True
         self._leads: tuple[int, ...] = DEFAULT_LEADS_S
         self._error_logged_at = -math.inf
@@ -507,6 +562,9 @@ class ObjectiveTimers:
     def reset(self) -> None:
         """Forget everything (new game)."""
         with self._lock:
+            self._mode = ""
+            self.schedule = self._rift_schedule
+            _ACTIVE_BARON_FIRST[0] = _num(self.schedule.get("baron"), "first") or 1200.0
             self._clear()
 
     @property
@@ -558,6 +616,17 @@ class ObjectiveTimers:
         if roster:
             self._roster = roster
 
+    def _apply_mode(self, game: Any) -> None:
+        """Switch the schedule when the game mode changes (Swiftplay has its own objectives)."""
+        mode = str(getattr(game, "game_mode", "") or "").strip().upper()
+        if mode == self._mode:
+            return
+        self._mode = mode
+        self.schedule = schedule_for_mode(self._rift_schedule, mode)
+        self._slots = build_slots(self.schedule, self._events.values())
+        _ACTIVE_BARON_FIRST[0] = _num(self.schedule.get("baron"), "first") or 1200.0
+        log.info("Objective timers: game mode %s", mode or "?")
+
     def _ingest_events(self, game: Any) -> None:
         events = getattr(game, "events", None)
         if not isinstance(events, list):
@@ -603,6 +672,7 @@ class ObjectiveTimers:
         if g is None:
             return []
         self._new_game_check(game)
+        self._apply_mode(game)
         self._ingest_events(game)
         self._game_time = g
         rift = _is_rift(game)
