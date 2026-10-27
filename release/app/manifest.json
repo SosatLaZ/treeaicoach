@@ -1,25 +1,25 @@
 {
- "version": "2.29.2",
+ "version": "3.0.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "bd70d8a622c3e502c0181ef62801b166c94c5c74a54d25d666281533729c3848",
+ "sha256": "13ca0a71733cba5f4c7f8dffa6809ed50cac2e3e8db2112bd7fc9ae37d17f2d6",
  "chunks": [
   {
-   "name": "2.29.2/part-01.zip",
-   "size": 88160633,
-   "sha256": "f7b1de0ab193fac71ae127a93a326d64a368854731470a856b51f0ccdde22507",
-   "files": 242
+   "name": "3.0.0/part-01.zip",
+   "size": 88161309,
+   "sha256": "e6fd615643dc1e486f3654207707195a2b601781e1aaa645b54bb05f63bf831c",
+   "files": 239
   },
   {
-   "name": "2.29.2/part-02.zip",
-   "size": 9592536,
-   "sha256": "b1ee4532a2fdad975c8db1a97bb5d55f11ed84c964f8bcc38b1bd826205ea55d",
-   "files": 472
+   "name": "3.0.0/part-02.zip",
+   "size": 9620310,
+   "sha256": "66cc08be2bd67e0281e5cb6d52dc683f0cda695960221b64153f023814a019bd",
+   "files": 475
   }
  ],
- "total_size": 97753169,
+ "total_size": 97781619,
  "launcher": {
-  "sha256": "95576a60fb41de0900cf197bbd7c5668d25cb6bf61af99bea1b3d0262ca4a23f",
-  "size": 7530499
+  "sha256": "1b1a5ac7e14b6b213026c7244d3b724012cacc46ab841716fe866785e43c4a6e",
+  "size": 7532018
  },
- "notes": "2.29.2 : bot Discord utilisable hors partie, phrases moins coup\u00e9es."
+ "notes": "3.0 : plus de chiffres p\u00e9rim\u00e9s, mode rapide corrig\u00e9, arbitre des conseils, primes."
 }
