@@ -1,6 +1,6 @@
 {
-  "version": "2.29.1",
-  "sha256": "9f15a9b79bbeec0b972b3f3827598087603d2cba23bae29490e2d86003843930",
-  "size": 7532148,
-  "notes": "2.29.1 : l'IA répond aussi hors partie."
+  "version": "2.29.2",
+  "sha256": "95576a60fb41de0900cf197bbd7c5668d25cb6bf61af99bea1b3d0262ca4a23f",
+  "size": 7530499,
+  "notes": "2.29.2 : bot Discord utilisable hors partie, phrases moins coupées."
 }

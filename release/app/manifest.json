@@ -1,25 +1,25 @@
 {
- "version": "2.29.1",
+ "version": "2.29.2",
  "exe": "TreeAICoach-app.exe",
- "sha256": "67d60e877dc36a01b0345f5d05e411d9470cebf04a8a75d3e39e774980793d23",
+ "sha256": "bd70d8a622c3e502c0181ef62801b166c94c5c74a54d25d666281533729c3848",
  "chunks": [
   {
-   "name": "2.29.1/part-01.zip",
-   "size": 88160245,
-   "sha256": "6f288bbf6c41cb057e5e6350d0f94283799aa9aafa1b904cf774f4d90ecb7d23",
+   "name": "2.29.2/part-01.zip",
+   "size": 88160633,
+   "sha256": "f7b1de0ab193fac71ae127a93a326d64a368854731470a856b51f0ccdde22507",
    "files": 242
   },
   {
-   "name": "2.29.1/part-02.zip",
+   "name": "2.29.2/part-02.zip",
    "size": 9592536,
    "sha256": "b1ee4532a2fdad975c8db1a97bb5d55f11ed84c964f8bcc38b1bd826205ea55d",
    "files": 472
   }
  ],
- "total_size": 97752781,
+ "total_size": 97753169,
  "launcher": {
-  "sha256": "9f15a9b79bbeec0b972b3f3827598087603d2cba23bae29490e2d86003843930",
-  "size": 7532148
+  "sha256": "95576a60fb41de0900cf197bbd7c5668d25cb6bf61af99bea1b3d0262ca4a23f",
+  "size": 7530499
  },
- "notes": "2.29.1 : l'IA r\u00e9pond aussi hors partie."
+ "notes": "2.29.2 : bot Discord utilisable hors partie, phrases moins coup\u00e9es."
 }
