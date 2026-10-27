@@ -216,6 +216,8 @@ class ScoreInsight:
     toast_kind: str              # "warning" | "insight" | "danger"
     alias: str | None = None
     t: float = 0.0
+    #: the numbers the sentence states ((kills, deaths, assists) of ``alias``): re-checked at emit
+    fact: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -455,17 +457,23 @@ class ScoreboardAnalyzer:
     def _push(self, ins: ScoreInsight) -> None:
         self._queue = [q for q in self._queue if q.key != ins.key] + [ins]
 
-    def _queue_fed(self, ln: PlayerLine, lead: float, tier: int, t: float) -> None:
+    @staticmethod
+    def _fed_insight(ln: PlayerLine, lead: float, tier: int, t: float) -> ScoreInsight:
         kda = f"{ln.kills}/{ln.deaths}"
         gold = f", {fmt_gold(lead)}" if lead >= 500 else ""
         if tier >= 2:
             text = f"{ln.name} est de plus en plus avancé : {kda}{gold}. Évite-le seul."
         else:
             text = f"Attention, {ln.name} est très avancé : {kda}{gold}."
-        self._push(ScoreInsight("fed", f"fed:{ln.alias}:{tier}", text, "ENNEMI AVANCÉ",
-                                 f"{ln.name} {ln.kda}{gold}", "warning", ln.alias, t))
+        return ScoreInsight("fed", f"fed:{ln.alias}:{tier}", text, "ENNEMI AVANCÉ",
+                            f"{ln.name} {ln.kda}{gold}", "warning", ln.alias, t,
+                            (ln.kills, ln.deaths, ln.assists))
 
-    def _queue_struggle(self, ln: PlayerLine, st: _PState, gt: float, t: float) -> None:
+    def _queue_fed(self, ln: PlayerLine, lead: float, tier: int, t: float) -> None:
+        self._push(self._fed_insight(ln, lead, tier, t))
+
+    @staticmethod
+    def _struggle_insight(ln: PlayerLine, st: _PState, t: float) -> ScoreInsight:
         if st.deep_deaths >= DEEP_DEATHS:
             why = "meurt seul en territoire ennemi"
         elif ln.deaths >= STRUGGLE_MIN_DEATHS:
@@ -473,8 +481,38 @@ class ScoreboardAnalyzer:
         else:
             why = "meurt souvent"
         text = f"{ln.name} {why} : ne joue pas autour de lui, protège-toi."
-        self._push(ScoreInsight("struggle", f"struggle:{ln.alias}", text, "ALLIÉ EN DIFFICULTÉ",
-                                 f"{ln.name} {ln.kda} — en difficulté", "insight", ln.alias, t))
+        return ScoreInsight("struggle", f"struggle:{ln.alias}", text, "ALLIÉ EN DIFFICULTÉ",
+                            f"{ln.name} {ln.kda} — en difficulté", "insight", ln.alias, t,
+                            (ln.kills, ln.deaths, ln.assists))
+
+    def _queue_struggle(self, ln: PlayerLine, st: _PState, gt: float, t: float) -> None:
+        self._push(self._struggle_insight(ln, st, t))
+
+    def _revalidate(self, q: ScoreInsight) -> ScoreInsight | None:
+        """A queued insight (said up to INSIGHT_TTL_S later) rebuilt from the CURRENT Tab numbers,
+        or None when it is no longer true ("Darius est niveau 6 avant toi" once I am 6 too)."""
+        try:
+            lines = self._summary.players
+            if q.key.startswith("level:"):
+                lv = int(q.key.rsplit(":", 1)[1])
+                me = next((ln for ln in lines if ln.side == "self"), None)
+                return None if me is not None and me.level >= lv else q
+            if not q.fact or q.kind not in ("fed", "struggle"):
+                return q
+            enemy = q.kind == "fed"
+            ln = next((x for x in lines if x.alias == q.alias and (x.side == "enemy") == enemy), None)
+            if ln is None or (ln.kills, ln.deaths, ln.assists) == q.fact:
+                return q
+            if enemy:
+                m = next((m for m in self._summary.matchups if m.enemy_alias == ln.alias), None)
+                lead = -m.gold_diff if m is not None else \
+                    ln.item_gold - sum(x.item_gold for x in lines) / max(1, len(lines))
+                return self._fed_insight(ln, lead, int(q.key.rsplit(":", 1)[1]), q.t)
+            st = self._st.get((ln.alias, "ally"))
+            return self._struggle_insight(ln, st, q.t) if st is not None else q
+        except Exception:
+            log.debug("insight revalidation failed", exc_info=True)
+            return q
 
     def _spike_check(self, ln: PlayerLine, st: _PState, p: Any, my_m: MatchupDiff | None, roles: Any,
                      game: Any, first: bool, t: float) -> None:
@@ -543,6 +581,9 @@ class ScoreboardAnalyzer:
             return []
         order = {"fed": 0, "spike": 1, "struggle": 2}
         self._queue.sort(key=lambda q: (order.get(q.kind, 9), -q.t))
-        ins = self._queue.pop(0)
-        self._last_emit = t
-        return [ins]
+        while self._queue:
+            ins = self._revalidate(self._queue.pop(0))
+            if ins is not None:
+                self._last_emit = t
+                return [ins]
+        return []

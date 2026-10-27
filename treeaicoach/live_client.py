@@ -72,6 +72,10 @@ class PlayerInfo:
     item_counts: dict[int, int] = field(default_factory=dict)  # itemID -> stack count (potions, wards)
     scores: dict[str, float] = field(default_factory=lambda: dict(ZERO_SCORES))
     current_gold: float = 0.0      # only known for me (activePlayer.currentGold)
+    #: the API level as received (``level`` may be raised by freshness.LevelWatch for an enemy
+    #: unseen for a while: the Live Client gives the level his team showed when last seen)
+    level_api: int = 0
+    level_estimated: bool = False
 
     @property
     def kills(self) -> int:
@@ -330,6 +334,7 @@ def _parse_player(d: dict) -> PlayerInfo | None:
         is_dead=_bool(d.get("isDead"), False),
         respawn_timer=max(0.0, _float(d.get("respawnTimer"), 0.0)),
         level=max(1, _int(d.get("level"), 1)),
+        level_api=max(1, _int(d.get("level"), 1)),
         skin_id=max(0, _int(d.get("skinID"), 0)),
         has_smite=any(_spell_is_smite(s) for s in spell_list),
         is_bot=_bool(d.get("isBot"), False),

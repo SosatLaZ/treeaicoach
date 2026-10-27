@@ -66,6 +66,7 @@ from treeaicoach.engine_base import (
     MUTE_DELAY_S,
     POLL_IDLE_S,
     POLL_IN_GAME_S,
+    POLL_MIN_WAIT_S,
     RECENT_ALERTS_MAX,
     SIEGE_TEXT,
     STATS_EVERY_S,
@@ -724,9 +725,13 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
     def _poll_loop(self) -> None:
         while not self._stop_evt.is_set():
             t = self._clock()
+            t0 = time.monotonic()
             self._poll_once(t)
             period = POLL_IN_GAME_S if self._in_game or self._game is not None else POLL_IDLE_S
-            self._stop_evt.wait(self._poll_backoff(period))      # (slower while the API is silent: rule 9)
+            # steady rate: the fetch + parse time is part of the period (a 300 ms answer late in
+            # the game no longer stretches the 1 s poll to 1.3 s); slower while the API is silent (rule 9)
+            spent = max(0.0, time.monotonic() - t0)
+            self._stop_evt.wait(max(POLL_MIN_WAIT_S, self._poll_backoff(period) - spent))
 
     def _poll_once(self, t: float) -> None:
         client = self._live_client
@@ -856,14 +861,29 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         except Exception:
             self._err.exception("Danger beep failed")
 
-    def _say(self, text: str, level: int, force: bool = False) -> None:
+    def _say(self, text: str, level: int, force: bool = False, alert: Any = None) -> None:
         if not text or (self._muted and not force):
             return
+        check = None
+        if alert is None:
+            alert = getattr(self, "_saying", None)
+            if alert is not None and getattr(alert, "text", None) != text:
+                alert = None
+        if alert is not None:     # freshness guard: re-checked right before the sentence starts
+            from treeaicoach.freshness import checker
+
+            check = checker(alert, self._clock, lambda: self._game)
         # « Tout par Discord »: the bot says it in the voice channel, the PC stays silent
-        if self._discord_only("coach") and self._call("coach", text, {"level": int(level)}):
+        info: dict[str, Any] = {"level": int(level)}
+        if check is not None:
+            info["check"] = check
+        if self._discord_only("coach") and self._call("coach", text, info):
             return
         try:
-            self._voice.say(text, int(level))
+            if check is not None and getattr(self._voice, "accepts_check", False):
+                self._voice.say(text, int(level), check=check)
+            else:
+                self._voice.say(text, int(level))
         except Exception:
             self._err.exception("voice.say failed")
 
@@ -967,6 +987,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._start_game(game, t)
         self._last_game_seen = t
         self._last_gt = gt
+        self._watch_levels(game, t)          # enemy levels: the API one is old while he is unseen
         self._game = game
         self._game_t = t
         if self._ended:
@@ -996,6 +1017,33 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._update_roster(game)
         self._check_death(game, t, gt)
 
+    def _watch_levels(self, game: GameInfo, t: float) -> None:
+        """freshness.LevelWatch: the Live Client level of an enemy is the one his team showed when
+        he was last seen; unseen for a while, it is raised to a conservative estimate. Never raises."""
+        if getattr(self, "level_watch_on", None) is False or (
+                getattr(self, "level_watch_on", None) is None and self._frame_source is not None):
+            return                           # demo / replay sources: synthetic levels, nothing to fix
+        try:
+            lw = getattr(self, "_level_watch", None)
+            if lw is None:
+                from treeaicoach.freshness import LevelWatch
+
+                lw = self._level_watch = LevelWatch()
+            tracker = self._tracker
+
+            def last_seen(alias: str) -> float | None:
+                tr = tracker.get(alias) if tracker is not None and hasattr(tracker, "get") else None
+                if tr is None:
+                    return None
+                if bool(getattr(tr, "visible", False)):
+                    return t
+                ls = getattr(tr, "last_seen", None)
+                return float(ls) if isinstance(ls, (int, float)) else None
+
+            lw.update(game, t, last_seen)
+        except Exception:
+            log.debug("level watch failed", exc_info=True)
+
     def _aram_tick(self, game: GameInfo, t: float, gt: float) -> None:
         """ARAM (map 12): buy advice on death, « rejoins ton équipe », « recule » (aram_analysis.AramCoach)."""
         try:
@@ -1018,6 +1066,9 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
     def _start_game(self, game: GameInfo, t: float) -> None:
         log.info("New game detected (game time %.0f s, mode %s)", game.game_time, game.game_mode)
         self._sb_recorded = None
+        lw = getattr(self, "_level_watch", None)
+        if lw is not None:
+            lw.reset()
         for comp in (self._tracker, self._gank, self._objectives, self._reminders, self._fog,
                      self._jungle_intel, self._jungler_map,
                      self._throttler, self._coach, self._scoreboard, self._praise, self._toasts,

@@ -63,6 +63,8 @@ def _ticking(a: str, b: str) -> bool:
 
 #: a statistic ("5,5 par minute, vise 7", "4,6 sbires/min"): never the card's instruction
 STAT_LINE_RE = __import__("re").compile(r"(?i)(\d+([,.]\d+)? (sbires/min|par minute)|score de vision|/min, vise)")
+#: a line stating numbers (levels, gold, timers...): kept on the card only while still true
+_HAS_DIGIT = __import__("re").compile(r"\d").search
 #: a line with a live countdown ("Dragon dans 0:45", "Baron dans 20 s")
 COUNTDOWN_RE = __import__("re").compile(r"(?i)\bdans (\d+:\d\d|\d+ s)\b")
 #: a card line about wards (one ward call at a time: CoachingMixin.WARD_TOPIC_S)
@@ -289,8 +291,31 @@ class CoachingMixin:
             self._err.exception("Speech budget failed")
             return said
 
+    def _fresh_only(self, said: list[Alert], t: float) -> list[Alert]:
+        """Freshness guard (freshness.stale_reason): a line held back by the throttler / the voice
+        gate is dropped when it got too old for its kind or when its facts changed since (my death,
+        a level up, its champion died). Never raises."""
+        if not said:
+            return said
+        try:
+            from treeaicoach import freshness
+
+            game = self._game
+            out = []
+            for a in said:
+                why = freshness.stale_reason(a, t, game)
+                if why is None:
+                    out.append(a)
+                else:
+                    self._stale_dropped = int(getattr(self, "_stale_dropped", 0) or 0) + 1
+                    log.debug("Stale line dropped (%s): %s", why, a.text)
+            return out
+        except Exception:
+            return said
+
     def _speak_alerts(self, said: list[Alert], t: float, gt: float) -> None:
         rec = self._recorder
+        said = self._fresh_only(said, t)
         if self._gate is not None:
             for a in said:
                 self._gate.record(a, t)
@@ -310,7 +335,11 @@ class CoachingMixin:
             elif a.kind == AlertKind.OBJECTIVE_SOON:
                 bot_kind, queued = "objective", True     # the bot says its own "... dans 30 secondes"
             if not (bot_kind and queued and self._discord_only(bot_kind)):
-                self._say(a.text, int(a.level))
+                self._saying = a             # (engine._say: the freshness guard of this line)
+                try:
+                    self._say(a.text, int(a.level))
+                finally:
+                    self._saying = None
             with self._lock:
                 self._last_alert, self._last_alert_t = a, t
                 self._recent.append((gt, a.text, int(a.level), a.kind.value if isinstance(a.kind, AlertKind)
@@ -1631,6 +1660,14 @@ class CoachingMixin:
         tac = self._tactics
         ctx = tac.speech_context() if tac is not None else None
         voice: list[Alert] = []
+        try:
+            from treeaicoach import freshness
+
+            game = self._game
+            for a in alerts:                 # the facts each line depends on, re-checked before speech
+                freshness.stamp(a, game)
+        except Exception:
+            log.debug("freshness stamp failed", exc_info=True)
         for a in alerts:
             try:
                 if a.kind == AlertKind.CONTROL_WARD and self._ward_recent(t):
@@ -1656,6 +1693,7 @@ class CoachingMixin:
         kind = vp.kind_name(a)
         if not self._keeps_death_lesson(kind):
             self._text_msg, self._text_kind = (t, a.text), kind
+            self._text_alert = a             # its facts: re-checked while it is on the card
         self.text_messages.append((t, kind, a.text))
         del self.text_messages[:-100]
         toast = vp.TEXT_TOAST.get(kind)
@@ -1687,6 +1725,15 @@ class CoachingMixin:
         if msg is not None and not me_dead and msg[0] < getattr(self, "_hud_alarm_t", -1e9) \
                 and getattr(self, "_text_kind", None) not in DEAD_TEXT_KINDS:
             msg = self._text_msg = None  # written before a gank / fight alarm: the situation changed
+        ta = getattr(self, "_text_alert", None)
+        if msg is not None and ta is not None and getattr(ta, "text", None) == msg[1]:
+            try:
+                from treeaicoach import freshness
+
+                if freshness.stale_reason(ta, msg[0], game) is not None:
+                    msg = self._text_msg = None  # its facts changed (level up, death): not shown stale
+            except Exception:
+                pass
         if msg is not None and (0.0 <= now - msg[0] < TEXT_MSG_S
                                 or (me_dead and getattr(self, "_text_kind", None) == "death_cause")):
             valid.append(msg[1])         # (the death lesson stays the whole death)
@@ -1871,6 +1918,12 @@ class CoachingMixin:
             if shown is None or siege or prev_dead is None or prev_dead != dead:
                 return cand
             line, since = shown
+            if line is not None and line not in valid:
+                # freshness: the same line with its CURRENT numbers ("niveau 9" -> "niveau 10")
+                fresh = next((v for v in valid if _ticking(v, line)), None)
+                if fresh is not None:
+                    line = fresh
+                    self._hud_shown = (line, since)
             if self._alarm_now(now):
                 # the red / orange alarm card covers the line: its dwell starts when it is seen again
                 self._hud_alarm_t = now
@@ -1898,8 +1951,9 @@ class CoachingMixin:
             if cand is not None and line is not None and _ticking(cand, line):
                 return cand                  # same line, live numbers (a countdown never freezes)
             if cand is not None and line is not None and cand.split(" : ", 1)[0] == line.split(" : ", 1)[0]:
-                if not COUNTDOWN_RE.search(line):
+                if not COUNTDOWN_RE.search(line) and (line in valid or not _HAS_DIGIT(line)):
                     return line              # same instruction (a call repeating a tip): keep the card still
+                #                              (not with numbers that are no longer true: the new line)
             rank = {"danger": 3, "warning": 2}
             r_new = rank.get(self._tip_tone(cand), 1) if cand is not None else 0
             r_old = rank.get(self._tip_tone(line), 1) if line is not None else 0

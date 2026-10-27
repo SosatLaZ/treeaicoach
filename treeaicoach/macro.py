@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import threading
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable
@@ -1442,6 +1443,11 @@ class MacroPlanner:
                     self._cancel(up, ctx, "invalide")
             else:
                 self._invalid_since = None
+                if same.ident == a.ident and same.text != a.text \
+                        and re.sub(r"\d+", "#", same.text) == re.sub(r"\d+", "#", a.text):
+                    # freshness: the kept call states the CURRENT numbers ("niveau 6 contre 5" ->
+                    # "contre 6" would invalidate it; "+800 or" -> "+950 or" updates the card)
+                    self._active = replace(a, text=same.text, factors=same.factors)
             if self._active is not None and t - self._active_since >= self._active.life_s:
                 self._active, self._invalid_since = None, None                # done (expired)
         if self._active is not None and t - self._active_since < HOLD_S and self._active.kind not in SOFT_KINDS:

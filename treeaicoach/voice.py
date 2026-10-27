@@ -1177,6 +1177,20 @@ class _Item:
     seq: int
     beep_end: float | None = None   # perf_counter end of the beep already played for it (beep-first)
     patient: bool = False           # not urgent: wait longer for the natural voice (AI line, voice test)
+    #: freshness guard (freshness.checker): called right before the sentence starts; False = its
+    #: facts changed while it waited (level up, death...): dropped
+    check: Callable[[], bool] | None = None
+
+
+def _still_valid(item: _Item) -> bool:
+    """The item's freshness guard (True without one / when it fails)."""
+    chk = item.check
+    if chk is None:
+        return True
+    try:
+        return bool(chk())
+    except Exception:
+        return True
 
 
 class VoiceEngine:
@@ -1378,7 +1392,11 @@ class VoiceEngine:
             log.debug("alert_beep failed", exc_info=True)
             return False
 
-    def say(self, text: str, level: int = LEVEL_WARNING, patient: bool | None = None) -> None:
+    #: ``say(..., check=)`` is supported (engine._say passes the freshness guard)
+    accepts_check = True
+
+    def say(self, text: str, level: int = LEVEL_WARNING, patient: bool | None = None,
+            check: Callable[[], bool] | None = None) -> None:
         """Queue ``text`` (never blocks, never raises). Level 2 (DANGER) cuts the current sentence;
         it is beep-first: the tone starts here at once (unless :meth:`alert_beep` just played it).
         The synthesisers respell it for a French voice (:func:`tts_lexicon.speakable`). ``patient``
@@ -1409,7 +1427,8 @@ class VoiceEngine:
                 if self._muted:
                     return
                 self._seq += 1
-                item = _Item(s, lvl, float(self._clock()), self._seq, beep_end, bool(patient))
+                item = _Item(s, lvl, float(self._clock()), self._seq, beep_end, bool(patient),
+                             check if callable(check) else None)
                 if lvl >= LEVEL_DANGER:
                     self.dropped_count += len(self._queue)
                     self._queue.clear()
@@ -1824,7 +1843,7 @@ class _Worker:
             self._apply_params()
         if self.token.is_set():
             return
-        if e._is_stale(item):
+        if e._is_stale(item) or not _still_valid(item):
             e._count_drop()
             log.debug("Voice: stale message dropped: %s", item.text)
             return
@@ -1876,6 +1895,10 @@ class _Worker:
         self._speak(item, purge=True)
 
     def _speak(self, item: _Item, purge: bool) -> None:
+        if not _still_valid(item):
+            self.e._count_drop()
+            log.debug("Voice: line no longer true, dropped: %s", item.text)
+            return
         self.item_level = item.level
         for attempt in range(2):
             t_call = time.perf_counter()

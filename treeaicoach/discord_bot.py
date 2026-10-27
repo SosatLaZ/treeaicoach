@@ -624,6 +624,7 @@ class _Job:
     ai: Callable[[], Any] | None = None     # matchup: the one AI request (blocking, run off the loop)
     who: str = ""                           # ally_gank: the friend's champion (diagnostics)
     data: Any = None                        # matchups: the lines of my team's lanes
+    check: Callable[[], bool] | None = None  # coach: freshness guard (False = its facts changed: dropped)
 
 
 def _pc_mic_on() -> bool:
@@ -1223,8 +1224,9 @@ class DiscordCaller:
                     say = " ".join(str(text or "").split())[:240]
                     if not say:
                         return False
+                    chk = info.get("check") if kind == "coach" and callable(info.get("check")) else None
                     self._queue_say(_Job("say", say, now, COACH_STALE_S if kind == "coach" else AI_ANSWER_STALE_S,
-                                         kind))
+                                         kind, check=chk))
                 elif kind == "beep":
                     tone = str(info.get("tone") or "gank")
                     self._queue_say(_Job("say", "", now, BEEP_STALE_S, "beep", lane=tone))
@@ -2262,7 +2264,7 @@ class DiscordCaller:
                 self._done(job, "Aucune voix disponible pour le bot (ni naturelle, ni Windows, ni enregistrée).",
                            False)
             return
-        if job.kind != "test" and float(self._clock()) - job.t > job.stale_s:
+        if job.kind != "test" and (float(self._clock()) - job.t > job.stale_s or not _job_valid(job)):
             self.dropped += 1
             return
         await self._play(backend, pcm, s)
@@ -2279,6 +2281,17 @@ class DiscordCaller:
             if not in_game and not was_in_voice:
                 await backend.leave()
                 self._set_status(msg.replace("Connecté à", "Testé dans"), True)
+
+
+def _job_valid(job: _Job) -> bool:
+    """The job's freshness guard (True without one / when it fails)."""
+    chk = job.check
+    if chk is None:
+        return True
+    try:
+        return bool(chk())
+    except Exception:
+        return True
 
 
 def _tone_wav(name: str) -> bytes:
