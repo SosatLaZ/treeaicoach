@@ -3,6 +3,18 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.0.0 · 27 octobre 2026
+
+- **Plus de chiffres périmés :** le jeu donne le niveau d'un ennemi tel qu'il était quand on l'a vu pour
+  la dernière fois ; le coach l'estime maintenant quand il est caché depuis 30 s. Chaque phrase est
+  revérifiée juste avant d'être dite ou affichée, et jetée si un fait a changé (niveau, mort, timer).
+- **Mode rapide (Swiftplay) corrigé :** plus de larves ni de Héraut, Baron à 12:00, Ancien à 15:00
+  (avant : objectifs annoncés après qu'ils soient déjà pris, 9 fois sur 181 → 0).
+- **Un seul conseil quand les moteurs se contredisent** (danger > combat > objectif > plaques > macro).
+- **Primes :** « Vise Caitlyn en premier : grosse prime (série de 4) », « Rentre dépenser tes 1 400 PO :
+  ta tête vaut une prime ».
+- **Balise de contrôle avant Dragon / Baron**, pas de conseils macro en URF / Un pour tous / entraînement.
+
 ## 2.29.2 · 27 octobre 2026
 
 - **Le bot Discord marche hors des parties :** il reste dans ton salon vocal et t'écoute tout le temps (il
