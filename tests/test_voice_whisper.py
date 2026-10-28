@@ -313,6 +313,9 @@ class _Rec:
         if v == WORDS:
             self._r = "quelle ité"
             return True
+        if v == WAKE:                      # the free recognizer confirms the wake
+            self._r = "hé coach"
+            return True
         return False
 
     def result(self) -> str:

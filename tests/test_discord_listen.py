@@ -98,6 +98,9 @@ class FakeRec:
         if v == WORDS:
             self._r = "quel item acheter"
             return True
+        if v == WAKE:                      # the free recognizer hears « hé coach » too (it confirms the wake)
+            self._r = "hé coach"
+            return True
         return False
 
     def result(self) -> str:

@@ -280,6 +280,14 @@ class WakeDetector:
 
 
 FREE_WAKE = True                # a free (any French word) recognizer runs next to the grammar one
+#: A wake of the grammar recognizer alone is NEVER trusted (3.1 field report: it forces any speech / noise
+#: onto its few phrases: « printemps », « hum tu », « un coach » all woke it). It is a CANDIDATE that the
+#: free recognizer (its own words for the same utterance: « hé coach », « et coche ») or Whisper (the last
+#: :data:`CONFIRM_AUDIO_S` of audio) must confirm within :data:`CONFIRM_WAIT_BLOCKS` blocks; « Coach, … »
+#: alone (bare) needs a silence before it AND Whisper (or, Whisper not loaded, the free recognizer's
+#: « coach » followed by a question, not by « est / il / dit… »). Measured by tools/wake_bench.py.
+CONFIRM_WAIT_BLOCKS = 4         # 1 s for the free recognizer to write the words the grammar one heard
+CONFIRM_AUDIO_S = 2.0           # audio Whisper re-reads to confirm a candidate
 FREE_TAIL_BLOCKS = 4            # the free recognizer is fed speech + 0.75 s after it (its utterance can end)
 FLUSH_S = 0.75                  # comfort noise fed when the audio stops (Discord sends nothing in silences)
 AGC_ENGAGE_RMS = 330.0          # speech peaks below -40 dBFS: a very quiet mic, brought up…
@@ -366,6 +374,15 @@ class WakeEngine:
         self._last_logged = ""
         self._log_at = -1e9
         self._free_tail = 0
+        #: ``confirm(pcm) -> True / False / None`` = Whisper's verdict on the last audio (None: not loaded)
+        self.confirm: Callable[[bytes], bool | None] | None = None
+        self._ring: list[bytes] = []
+        self._pending = 0                # blocks left for the free recognizer to confirm a grammar wake
+        self._pending_kind = ""
+        self._quiet_before = True        # the utterance of the candidate started after a silence
+        self.confirmed_by = ""           # "libre" / "whisper" (the « Écoute » log)
+        self.dropped = 0                 # candidates that were not confirmed
+        self.last_dropped = ""
 
     def ready(self) -> bool:
         """Recognizers built (lazily). The grammar one is required (its errors propagate); the free one
@@ -383,18 +400,26 @@ class WakeEngine:
         return True
 
     def feed(self, block: bytes) -> bool:
-        """One 16 kHz mono block; True = wake phrase heard. Never raises (False)."""
+        """One 16 kHz mono block; True = wake phrase heard AND confirmed. Never raises (False)."""
         try:
             if not self.ready():
                 return False
             self.rms = block_rms(block)
             blk = self.agc.process(block) if self.agc is not None else block
+            self._ring.append(blk)
+            ring_n = int(CONFIRM_AUDIO_S / BLOCK_S)
+            if len(self._ring) > ring_n:
+                del self._ring[:-ring_n]
             woke = self.det.feed(self.grammar_rec, blk)
+            if woke and not self._pending and self.free_rec is not None:    # a candidate: to be confirmed
+                self._pending, self._pending_kind = CONFIRM_WAIT_BLOCKS + 1, self.det.last_kind or "?"
+                self._quiet_before = self.det._after_quiet or self.det_free._after_quiet
             if self.det._quiet == 0:                 # speech: the free recognizer runs, and 0.75 s after
                 self._free_tail = FREE_TAIL_BLOCKS
             woke_f = False
-            if self.free_rec is not None and self._free_tail > 0 and not woke:
-                self._free_tail -= 1                 # (silence costs nothing: ~16 % of a core while fed)
+            if self.free_rec is not None and (self._free_tail > 0 or self._pending):
+                self._free_tail = max(0, self._free_tail - 1)    # (silence costs nothing: ~16 % of a core)
+                self.det_free._floor = self.det._floor           # it sees speech only: the real background level
                 woke_f = self.det_free.feed(self.free_rec, blk)
             self.det_free.rms = self.det.rms
             text = self.det_free.last_text if self.free_rec is not None and self.det_free.last_text \
@@ -405,15 +430,78 @@ class WakeEngine:
                     and time.monotonic() - self._log_at >= 3.0:
                 self._last_logged, self._log_at = self.det_free.last_final, time.monotonic()
                 log.info("Écoute : entendu « %s »", self._last_logged[:60])
-            if not (woke or woke_f):
-                return False
-            src = self.det_free if woke_f else self.det
-            self.last_kind, self.last_source = src.last_kind or "?", "libre" if woke_f else "grammaire"
-            self._prepare_handover(woke_f)
-            return True
+            return self._decide(woke, woke_f)
         except Exception:
             log.debug("wake engine: block failed", exc_info=True)
             return False
+
+    def _free_words(self) -> str:
+        fd = self.det_free
+        return fd.partial_text or fd.last_final
+
+    def _decide(self, woke: bool, woke_f: bool) -> bool:
+        """Grammar / free candidates -> a confirmed wake (see :data:`CONFIRM_WAIT_BLOCKS`)."""
+        if woke_f:
+            kind = self.det_free.last_kind or "?"
+            if kind == "bare" and not self._bare_ok(self._free_words() or self.det_free.last_text):
+                return self._drop("bare", self.det_free.last_text)
+            return self._accept(kind, "libre")
+        if self.free_rec is None:                    # no free recognizer on this PC: Whisper, else the old rule
+            if woke:
+                v = self._whisper()
+                if v is False or (v is None and self.det.last_kind == "bare"):
+                    return self._drop(self.det.last_kind, self.det.last_text)
+                return self._accept(self.det.last_kind or "?", "whisper" if v else "grammaire")
+            return False
+        if not self._pending:
+            return False
+        self._pending -= 1
+        if free_confirms(self._free_words()):
+            return self._accept(self._pending_kind, "libre")
+        if self._pending > 0:
+            return False
+        v = self._whisper()                          # the free recognizer did not write it: Whisper decides
+        if v and (self._pending_kind != "bare" or self._quiet_before):
+            return self._accept(self._pending_kind, "whisper")
+        return self._drop(self._pending_kind, self.det.last_text)
+
+    def _bare_ok(self, words: str) -> bool:
+        """« Coach, … » alone: after a silence, and Whisper agrees (Whisper not loaded: the free
+        recognizer's « coach » is followed by a question, not by « est / il / dit… »)."""
+        v = self._whisper()
+        if v is not None:
+            return bool(v)
+        t = normalize(words).split()
+        return len(t) >= 2 and t[0] in WAKE_STRONG and t[1] not in _ABOUT_COACH
+
+    def _whisper(self) -> bool | None:
+        if self.confirm is None or not self._ring:
+            return None
+        try:
+            v = self.confirm(b"".join(self._ring))
+            return None if v is None else bool(v)
+        except Exception:
+            log.debug("wake confirmation failed", exc_info=True)
+            return None
+
+    def _accept(self, kind: str, source: str) -> bool:
+        self._pending = 0
+        self.last_kind, self.last_source = kind, source
+        self.confirmed_by = source
+        self._prepare_handover(source == "libre")
+        return True
+
+    def _drop(self, kind: str, text: str) -> bool:
+        self._pending = 0
+        self.dropped += 1
+        self.last_dropped = text
+        log.info("Écoute : « %s » ressemble à « Hey coach » (%s) mais n'est pas confirmé, ignoré", text[:60], kind)
+        try:
+            self.grammar_rec.reset()
+        except Exception:
+            pass
+        self.det.reset()
+        return False
 
     def _prepare_handover(self, woke_free: bool) -> None:
         self._handover, self._carry = None, []
@@ -450,6 +538,8 @@ class WakeEngine:
         return rec, carry, partial
 
     def reset(self) -> None:
+        self._pending = 0
+        self._ring = []
         for r in (self.grammar_rec, self.free_rec):
             if r is not None:
                 try:
@@ -505,6 +595,56 @@ def whisper_wake(text: Any) -> tuple[bool, str]:
             rest = " ".join(words[lead_n + 1:]).lstrip(" ,.!?;:-")
             return True, rest
     return False, ""
+
+
+_ABOUT_COACH = frozenset({"est", "il", "a", "de", "du", "va", "dit", "ou", "c'est", "ca", "sert", "m'a", "t'a",
+                          "et", "qui", "que", "elle", "vocal", "sportif"})
+
+
+def whisper_confirms(text: Any) -> bool:
+    """Whisper's transcript of the last ~2 s confirms a wake: « hé / hey / et coach | tree » at its start or
+    after other words (« … bon, hé coach »), or « Coach, … » as its first word (not « coach est nul »)."""
+    try:
+        words = str(text or "").split()
+        if whisper_wake(" ".join(words))[0]:
+            return True
+        for i in range(1, len(words) - 1):
+            if normalize(words[i]) in _WW_LEADS and whisper_wake(" ".join(words[i:]))[0] \
+                    and normalize(words[i + 1]) not in ("", *_WW_LEADS):
+                rest = normalize(words[i + 1])
+                if rest in WAKE_STRONG or rest in WAKE_WEAK or rest in TREE_WORDS or rest.startswith(("coa", "co", "ko")):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def whisper_confirm(stt: Any, pcm: bytes) -> bool | None:
+    """Whisper (``stt``, loaded) re-reads the last ~2 s of a wake candidate, without the League prompt (it
+    would push noise towards « Hey coach ») and with beam 1 (fast). None = no Whisper. Never raises."""
+    if stt is None or not pcm:
+        return None
+    try:
+        try:
+            text = stt.transcribe(pcm, "", beam=1)
+        except TypeError:
+            text = stt.transcribe(pcm)
+        ok = whisper_confirms(text)
+        log.info("Écoute : Whisper confirme %s « Hey coach » (« %s »)", "" if ok else "PAS", str(text)[:60])
+        return ok
+    except Exception:
+        log.debug("whisper wake confirmation failed", exc_info=True)
+        return None
+
+
+def free_confirms(text: Any) -> bool:
+    """The FREE recognizer's words confirm a wake: a lead (« hé », « et »…) right before a coach word
+    (« coach », « coche », « kotch »…), or « hey tree ». « un coach », « mon coach », « printemps » do not."""
+    t = normalize(text).split()
+    for i in range(1, len(t)):
+        if t[i - 1] in WAKE_LEADS and (_coach_class(t[i]) or (t[i] in TREE_WORDS and t[i - 1] in _HEY)):
+            return True
+    return False
 
 
 def wakeish(text: Any) -> bool:
@@ -1345,6 +1485,7 @@ class VoiceAssistant:
                 if wake_rec is None:
                     try:
                         eng = WakeEngine(self._make_rec)
+                        eng.confirm = self._confirm_wake
                         wake_rec = eng if eng.ready() else None
                     except Exception as exc:
                         log.warning("Voice assistant: recognizer unavailable", exc_info=True)
@@ -1473,6 +1614,12 @@ class VoiceAssistant:
         except Exception:
             log.debug("whisper_ready failed", exc_info=True)
         return False
+
+    def _confirm_wake(self, pcm: bytes) -> bool | None:
+        """Whisper's verdict on a « Hey coach » candidate (None: Whisper not loaded)."""
+        if not self.whisper_ready(load=False):
+            return None
+        return whisper_confirm(self._stt(), pcm)
 
     def _segmenter(self) -> Any:
         try:

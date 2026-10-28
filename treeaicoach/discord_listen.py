@@ -131,6 +131,7 @@ class Speaker:
         self._clock = clock
         self._buf = bytearray()
         self.engine = va.WakeEngine(make_rec)
+        self.engine.confirm = self._confirm_wake
         self.flushed = True                 # comfort noise already fed since the last packet
         self.q_rec: Any = None              # set while a question is being recorded
         self.q_start = 0.0
@@ -143,6 +144,13 @@ class Speaker:
         self.heard = ""
         self.stage = "écoute"
         self.blocks = 0
+
+    def _confirm_wake(self, pcm: bytes) -> bool | None:
+        """Whisper's verdict on a « Hey coach » candidate of this member (None: Whisper not loaded)."""
+        try:
+            return va.whisper_confirm(self._stt(), pcm)
+        except Exception:
+            return None
 
     @property
     def wake_rec(self) -> Any:

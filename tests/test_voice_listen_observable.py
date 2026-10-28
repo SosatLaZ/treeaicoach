@@ -259,6 +259,9 @@ class _DRec:
         if v == WORDS:
             self._r = "tu m'entends"
             return True
+        if v == WAKE:                      # the free recognizer confirms the wake
+            self._r = "hé coach"
+            return True
         return False
 
     def result(self) -> str:

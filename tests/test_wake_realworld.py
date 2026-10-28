@@ -202,8 +202,8 @@ def _vad_listener(clock, final_text: str = "hé coach"):  # noqa: ANN001, ANN202
     made: list[Scripted] = []
 
     def make(g):  # noqa: ANN001, ANN202
-        if g is None:
-            return Scripted([("P", "", None)] * 50)
+        if g is None:                     # the free recognizer writes the same words (it confirms the wake)
+            return Scripted(endpoint=3, final_text=final_text)
         r = Scripted(endpoint=3, final_text=final_text)
         made.append(r)
         return r

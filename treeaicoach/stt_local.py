@@ -444,8 +444,9 @@ class WhisperSTT:
         log.info("Whisper : modèle %s chargé en %.1f s (%d threads)", self.name, time.monotonic() - t0, threads)
         return True
 
-    def transcribe(self, pcm: bytes, prompt: str | None = None) -> str:
-        """French text of one utterance (16 kHz mono int16). "" when not ready / nothing said."""
+    def transcribe(self, pcm: bytes, prompt: str | None = None, beam: int | None = None) -> str:
+        """French text of one utterance (16 kHz mono int16). "" when not ready / nothing said. ``beam``:
+        another beam size for this call (1 = the fast wake confirmation)."""
         if not pcm:
             return ""
         pcm = pcm[: int(MAX_UTTERANCE_S * SAMPLE_RATE) * 2]
@@ -458,7 +459,7 @@ class WhisperSTT:
                 elif self._model is None:
                     return ""
                 else:
-                    text = self._run(pcm, prompt)
+                    text = self._run(pcm, prompt, beam)
         except Exception:
             log.warning("Whisper : transcription échouée", exc_info=True)
             return ""
@@ -468,18 +469,18 @@ class WhisperSTT:
         log.info("Whisper : %.1f s d'audio en %.0f ms -> « %s »", len(pcm) / 2 / SAMPLE_RATE, self.last_ms, text[:80])
         return text
 
-    def _run(self, pcm: bytes, prompt: str) -> str:
-        o = self.opts
+    def _run(self, pcm: bytes, prompt: str, beam: int | None = None) -> str:
+        o = dict(self.opts, beam=beam) if beam else self.opts
         audio = preprocess(pcm_to_float(pcm), o)
-        text = self._decode(audio, prompt if o.get("prompt", True) else "")
+        text = self._decode(audio, prompt if o.get("prompt", True) else "", o)
         if o.get("fix_terms"):
             text = fix_terms(text, self.names)
         return text
 
-    def _decode(self, audio: Any, prompt: str) -> str:
+    def _decode(self, audio: Any, prompt: str, o: dict[str, Any] | None = None) -> str:
         import ctranslate2  # noqa: PLC0415
 
-        o = self.opts
+        o = self.opts if o is None else o
         n_mels = int(getattr(self._model, "n_mels", 80) or 80)
         feats = log_mel(audio, n_mels=n_mels, frames=input_frames(int(audio.size)))[None]
         ids = self._ids
@@ -740,11 +741,12 @@ def clean_text(text: str) -> str:
 class Job:
     """One utterance waiting for Whisper. ``text`` is None until done (or dropped: stale / replaced)."""
 
-    __slots__ = ("pcm", "prompt", "key", "done", "t", "max_age", "text", "dropped", "ev")
+    __slots__ = ("pcm", "prompt", "key", "done", "t", "max_age", "text", "dropped", "ev", "beam")
 
     def __init__(self, pcm: bytes, prompt: str | None, key: str, done: Callable[[str | None], None] | None,
                  t: float, max_age: float) -> None:
         self.pcm, self.prompt, self.key, self.done, self.t, self.max_age = pcm, prompt, key, done, t, max_age
+        self.beam: int | None = None
         self.text: str | None = None
         self.dropped = False
         self.ev = threading.Event()
@@ -780,7 +782,10 @@ class WhisperWorker:
 
     def submit(self, pcm: bytes, *, key: str = "", done: Callable[[str | None], None] | None = None,
                prompt: str | None = None, max_age: float = 8.0) -> Job:
-        job = Job(pcm, prompt, key, done, self._clock(), max_age)
+        return self._submit_job(Job(pcm, prompt, key, done, self._clock(), max_age))
+
+    def _submit_job(self, job: Job) -> Job:
+        key = job.key
         if not self._threaded:
             self._execute(job)
             return job
@@ -800,9 +805,12 @@ class WhisperWorker:
             self._finish(j, None, dropped=True)
         return job
 
-    def transcribe(self, pcm: bytes, *, key: str = "", prompt: str | None = None, timeout: float = 20.0) -> str:
+    def transcribe(self, pcm: bytes, *, key: str = "", prompt: str | None = None, timeout: float = 20.0,
+                   beam: int | None = None) -> str:
         """Blocking helper (the PC assistant's own thread): queued like the others, waits for its turn."""
-        job = self.submit(pcm, key=key, prompt=prompt, max_age=timeout)
+        job = Job(pcm, prompt, key, None, self._clock(), timeout)
+        job.beam = beam
+        job = self._submit_job(job)
         job.ev.wait(timeout)
         return job.text or ""
 
@@ -829,7 +837,8 @@ class WhisperWorker:
     def _execute(self, job: Job) -> None:
         self.last_wait_ms = (self._clock() - job.t) * 1000
         try:
-            text = self.stt().transcribe(job.pcm, job.prompt)
+            stt = self.stt()
+            text = stt.transcribe(job.pcm, job.prompt, beam=job.beam) if job.beam else stt.transcribe(job.pcm, job.prompt)
         except Exception:
             log.warning("Whisper : transcription échouée", exc_info=True)
             text = None
