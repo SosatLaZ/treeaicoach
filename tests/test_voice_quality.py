@@ -152,6 +152,7 @@ def test_onecore_and_natural_voices_preferred() -> None:
 
 
 def test_neural_misses_go_to_onecore_not_sapi(monkeypatch) -> None:
+    monkeypatch.setattr(voice, "LOCAL_VOICE_FALLBACK", True)   # the (now off) stand-in path
     asked: list[str] = []
     monkeypatch.setattr(voice, "_local_backend", lambda engine="onecore": asked.append(engine) or voice.PrintBackend())
 

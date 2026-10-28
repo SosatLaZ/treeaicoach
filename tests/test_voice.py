@@ -528,7 +528,8 @@ class FakeTTS:
         self.prefetched.append(list(texts))
 
 
-def test_neural_backend_plays_cache_and_falls_back(tmp_path: Path) -> None:
+def test_neural_backend_plays_cache_and_falls_back(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(voice, "LOCAL_VOICE_FALLBACK", True)   # the (now off) stand-in path still works
     wav = tmp_path / "a.wav"
     wav.write_bytes(_wav_bytes())
     tts, player, local = FakeTTS({"Gank ! Lee Sin, recule !": wav}), FakePlayer(), FakeBackend()
@@ -737,3 +738,12 @@ def test_config_neural_rate_field() -> None:
     assert _validate_field("neural_rate", "+900%", "+15%") == "+100%"
     assert _validate_field("neural_rate", "rapide", "+15%") == "+15%"
     assert _validate_field("neural_rate", True, "+15%") == "+15%"
+
+
+def test_windows_voice_is_never_used_by_default(monkeypatch) -> None:
+    assert voice.LOCAL_VOICE_FALLBACK is False
+    used = []
+    b = voice.NeuralBackend.__new__(voice.NeuralBackend)
+    b._get_local = lambda: used.append(1) or voice.PrintBackend()
+    b._speak_local("Recule !", False)
+    assert used == [] and b.last_source == "skipped"

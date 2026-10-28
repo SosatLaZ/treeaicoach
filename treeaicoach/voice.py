@@ -895,6 +895,13 @@ class OneCoreBackend(_WavBackend):
             raise RuntimeError("OneCore: playback failed")
 
 
+#: The Windows (SAPI) voice is never used as a stand-in for the neural one (owner's choice, 3.4): a
+#: sentence the neural voice can't deliver in time is skipped (the screen / beep still show it).
+LOCAL_VOICE_FALLBACK = False
+NEURAL_WAIT_S = 4.0            # a normal sentence waits this long for the neural synthesis
+NEURAL_URGENT_WAIT_S = 1.2     # a danger sentence (the beep already went off)
+
+
 class NeuralBackend(_WavBackend):
     """Microsoft Edge neural voice (online, cached) with a local backend for the misses.
 
@@ -1033,8 +1040,8 @@ class NeuralBackend(_WavBackend):
     def speak(self, text: str, purge: bool, timeout: float | None = None) -> None:
         if purge:
             self.purge()
-        if timeout is None:
-            timeout = 0.9 if purge else self._tn.LIVE_TIMEOUT_S
+        if timeout is None:                   # no Windows voice any more: wait a bit longer for the real one
+            timeout = NEURAL_URGENT_WAIT_S if purge else NEURAL_WAIT_S
         path = None
         try:
             path = self._tts.get(text, timeout, abort=self.abort_check)
@@ -1050,6 +1057,10 @@ class NeuralBackend(_WavBackend):
         self._speak_local(text, purge)
 
     def _speak_local(self, text: str, purge: bool) -> None:
+        if not LOCAL_VOICE_FALLBACK:          # owner's choice (3.4): never the Windows voice
+            self.last_source = "skipped"
+            log.info("Voix naturelle pas prête : phrase non dite (pas de voix Windows) « %s »", text)
+            return
         local = self._get_local()
         self.last_source = str(getattr(local, "name", "print") or "print")
         log.info("Voix naturelle pas prête : voix Windows (%s) pour « %s »", self.last_source, text)
@@ -1068,8 +1079,8 @@ class NeuralBackend(_WavBackend):
         if purge:
             self.purge()
         path = None
-        try:
-            path = self._tts.get(text, 0.0)
+        try:                                   # cached: instant; else a short wait for the real voice
+            path = self._tts.get(text, 0.0 if LOCAL_VOICE_FALLBACK else NEURAL_URGENT_WAIT_S)
         except Exception as exc:
             log.debug("Neural cache lookup failed: %s", exc)
         if path is not None and self._play(Path(path)):
