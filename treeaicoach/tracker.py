@@ -123,12 +123,7 @@ TP_CONFIRM_DIST = 0.04      # ...by an observation this close to it (+ walking)
 # stacked icons (DeepestLeague "occlusion-aware hold", MIT)
 STACK_RADII = 1.2           # disappeared within this many icon radii of a visible icon
 STACK_DEFAULT_R = 0.045     # icon radius when unknown (normalized)
-#: longest stacked hold (enemies); 5 -> 15 s with STACK_JUMP_FROM_SEEN (det_gym botlane: enemy
-#: support glued under his ADC, stk 0.680 -> 0.703, identity errors 13 -> 11)
-STACK_HOLD_S = 15.0
-#: a held icon seen again elsewhere: reachable on foot from its last real sighting is enough
-#: (the hold is an inference, not a sighting: he may have left the pile in the fog)
-STACK_JUMP_FROM_SEEN = True
+STACK_HOLD_S = 5.0          # longest stacked hold (enemies)
 #: my team (me + allies) is never in the fog: an allied icon that disappeared under another
 #: visible icon is still under it (support glued on his ADC for minutes, LCU truth of real
 #: games: median 0.5 icon diameter apart during the laning phase) -> much longer hold
@@ -505,21 +500,12 @@ class Track:
         if ref_t is None or not self._obs:
             return False
         ref = self._obs[-1][1:]
-
-        def far(ref_t: float, ref: tuple) -> bool:
-            gap = max(0.0, t - ref_t)
-            jump = math.hypot(u - ref[0], v - ref[1])
-            limit = TELEPORT_DIST if gap < TELEPORT_DT else \
-                max(TELEPORT_DIST, MAX_WALK_SPEED * gap + JUMP_SLACK)
-            return jump > limit
-
         if self._stack_pos is not None and self._stack_t is not None and self._stack_t >= ref_t:
-            # a stacked hold is an inference: reachable from the last REAL sighting is enough
-            # (he left the pile into the fog), ideas 5 / 41
-            if STACK_JUMP_FROM_SEEN and not far(ref_t, ref):
-                return False
-            return far(self._stack_t, self._stack_pos)
-        return far(ref_t, ref)
+            ref_t, ref = self._stack_t, self._stack_pos
+        gap = max(0.0, t - ref_t)
+        jump = math.hypot(u - ref[0], v - ref[1])
+        limit = TELEPORT_DIST if gap < TELEPORT_DT else max(TELEPORT_DIST, MAX_WALK_SPEED * gap + JUMP_SLACK)
+        return jump > limit
 
     def observe(self, t: float, u: float, v: float, r: float = 0.0, score: float = 0.0,
                 id_score: float | None = None) -> bool:
