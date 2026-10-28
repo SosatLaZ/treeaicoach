@@ -182,6 +182,15 @@ GENERAL_PROMPT = (
 )
 
 
+#: A question asked during a game: answered FREELY (any topic), the game state is only context.
+FREE_GAME_PROMPT = (
+    GENERAL_PROMPT + " Une partie est en cours : tu reçois son état en JSON (API officielle). Si la question "
+    "porte sur la partie, réponds précisément avec ces faits (noms, niveaux, or, timers) ; sinon réponds "
+    "simplement à la question, sans parler de la partie et sans faire de bilan. Réponds d'abord à la "
+    "question posée, en 1 à 3 phrases."
+)
+
+
 def general_answer(provider: str, api_key: str, model: str, question: str) -> str:
     """Blocking ordinary answer (no game snapshot). Counted in the daily request count. Raises AIError."""
     DAILY_QUOTA.add(1)
@@ -825,7 +834,8 @@ LEGEND = ("Clés : t=temps de jeu, ph=phase, mo=moment, carte=appel ACTIF de la 
           "pourquoi), me=moi (c champion, r rôle, lv niveau, k K/D/A, cs, g or dispo, pv %, it objets, "
           "ig valeur des objets, rs réapparition s), voie=mon duel (vs adversaire, niv/po/cs écarts + = pour "
           "moi, conseils du matchup), eq=écarts d'équipe (po or, tend évolution sur 2 min, kills, niv), "
-          "al/en=alliés/ennemis \"champion rôle niveau K/D/A or-en-objets [objets] [mort Xs]\", compo=profils "
+          "al/en=alliés/ennemis \"champion rôle niveau K/D/A or-en-objets [objets] [mort Xs]\" (niveau 9+ = au "
+          "moins 9, pas revu depuis 30 s : ne donne pas son niveau exact), compo=profils "
           "des compos (dégâts P/M, styles, courbe de puissance, contrôle) + plan de victoire, effets=objets "
           "ennemis qui changent ton jeu (anti-soin, stase, armure...), jgl=jungler ennemi (vu = où et il y a "
           "combien de s, farm, côté probable), obj=[objectif, s avant apparition, 0=dispo], carto=dragons, "
@@ -923,11 +933,23 @@ def _kgold(g: Any) -> str:
     return f"{float(g) / 1000.0:.1f}k"
 
 
+def _level_exact(p: Any) -> bool:
+    try:
+        from treeaicoach.freshness import level_exact
+
+        return level_exact(p)
+    except Exception:
+        return True
+
+
 def _pline(p: Any, side: str, roles: Any) -> str:
     """One player as a short line: "Zed mid 9 3/1/2 6.2k [Couperet noir] mort 23s"."""
     name = str(p.champion_name or p.champion_alias)
     names, gold = _item_list(p.items, big_only=True)
-    parts = [name, _role(p, side, roles) or "?", str(int(p.level)), f"{p.kills}/{p.deaths}/{p.assists}",
+    lvl = str(int(p.level))
+    if side == "enemy" and not _level_exact(p):
+        lvl += "+"                          # floor: unseen > 30 s (freshness.level_exact), "au moins"
+    parts = [name, _role(p, side, roles) or "?", lvl, f"{p.kills}/{p.deaths}/{p.assists}",
              _kgold(gold)]
     if names and side == "enemy":
         parts.append("[" + ", ".join(names[:3]) + "]")
@@ -2589,7 +2611,12 @@ class AIAdvisor:
                 with self._lock:
                     self._inflight = False
                 raise
-            self._start(build_prompt(snap, question), "manual", t, self._validator(game, snap, item_text), gen=gen)
+            if question and str(question).strip():
+                data = json.dumps(snap, ensure_ascii=False, separators=(",", ":"))
+                self._start(f"Question du joueur : {str(question).strip()[:500]}\nÉtat de la partie : {data}",
+                            "manual", t, None, gen=gen, free=True)
+            else:
+                self._start(build_prompt(snap, question), "manual", t, self._validator(game, snap, item_text), gen=gen)
             return "Question envoyée à l'IA…"
         except Exception:
             log.exception("AIAdvisor.ask failed")
@@ -2635,11 +2662,14 @@ class AIAdvisor:
 
     def _start(self, prompt: str, moment: str, t: float,
                validate: Callable[[str], str | None] | None = None, slot: str | None = None,
-               fallback: dict[str, Any] | None = None, gen: int | None = None) -> None:
+               fallback: dict[str, Any] | None = None, gen: int | None = None, free: bool = False) -> None:
         prov, key, model = self._provider, self._key, self._model
         url = self._urls.get(prov)
         kw: dict[str, Any] = {"timeout": TIMEOUT_S, "url": url}
-        if _accepts(self._caller, "json_mode") and _accepts(self._caller, "max_tokens"):   # (may be swapped)
+        if free:                                     # a player's question: plain text, any topic
+            if _accepts(self._caller, "max_tokens"):
+                kw.update(max_tokens=260)
+        elif _accepts(self._caller, "json_mode") and _accepts(self._caller, "max_tokens"):   # (may be swapped)
             kw.update(json_mode=True, max_tokens=PLAN_MAX_TOKENS)
         gen = self._gen if gen is None else gen
         with self._lock:
@@ -2647,21 +2677,21 @@ class AIAdvisor:
 
         def job() -> None:
             try:
-                raw = self._caller(prov, key, model, system_prompt(), prompt, **kw)
-                plan = parse_plan(raw) if "{" in str(raw or "") else None
+                raw = self._caller(prov, key, model, FREE_GAME_PROMPT if free else system_prompt(), prompt, **kw)
+                plan = None if free else (parse_plan(raw) if "{" in str(raw or "") else None)
                 steps: tuple[str, ...] = ()
                 goal = card = why = None
                 if plan is not None:
                     text: str | None = plan_text(plan)
                     steps, goal = tuple(plan["etapes"]), plan.get("objectif")
                     card, why = plan.get("carte"), plan.get("pourquoi")
-                elif "{" in str(raw or ""):
+                elif "{" in str(raw or "") and not free:
                     text = None                      # broken JSON: not shown as is
                     with self._lock:
                         self.json_errors += 1
                 else:
                     text = clean_advice(raw)         # a plain answer (model ignored the format)
-                if text and validate is not None:
+                if text and validate is not None and not free:
                     checked = validate(text)
                     if checked != text:
                         steps, goal, card, why = (), None, None, None

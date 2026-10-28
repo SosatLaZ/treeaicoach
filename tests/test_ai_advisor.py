@@ -308,7 +308,7 @@ def test_manual_ask():
     res = adv.poll()
     assert res.moment == "manual" and res.text == "Va mid." and not res.error
     assert '"wp":40' in calls[0] and "demande un conseil" in calls[0]
-    assert "Patiente" in adv.ask(5.0, G())
+    assert "Patiente" in adv.ask(1.0, G())                     # 2 s guard against double presses only
     adv.ask(30.0, G())
     adv.wait()
     res = adv.poll()
@@ -619,3 +619,19 @@ def test_auto_plans_off_by_default():
                        caller=lambda *a, **k: "Va bot.")
     adv.update(100.0, G(gt=300.0))
     assert not adv.update(200.0, G(gt=300.0, gold=1200), in_base=True)
+
+
+def test_question_in_game_is_answered_freely():
+    seen = {}
+
+    def caller(prov, key, model, system, prompt, timeout=None, url=None, max_tokens=None):
+        seen["system"], seen["prompt"] = system, prompt
+        return "La capitale du Canada est Ottawa."
+
+    adv = ai.AIAdvisor(SimpleNamespace(ai_provider="ollama", ai_api_key="", ai_model=""), caller=caller,
+                       clock=lambda: 0.0)
+    assert adv.ask(0.0, G(gt=300.0), question="c'est quoi la capitale du Canada") == "Question envoyée à l'IA…"
+    adv.wait()
+    res = adv.poll()
+    assert res.text.startswith("La capitale du Canada est Ottawa") and not res.error
+    assert seen["system"] == ai.FREE_GAME_PROMPT and "capitale du Canada" in seen["prompt"]
