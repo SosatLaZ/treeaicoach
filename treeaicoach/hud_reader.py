@@ -33,6 +33,9 @@ BAND_X = (0.20, 0.70)    # ... between 20 % and 70 % of its width
 R_MIN, R_MAX = 0.02, 0.05  # portrait frame radius / window height
 INNER = 0.80             # cropped disc radius / detected frame radius
 PORTRAIT_PX = 64
+#: saturation measured on the ring SAT_IN..SAT_OUT x the frame radius. Real 2000 x 1125 captures
+#: (5 alive / 5 dead, Garen): dead / alive saturation <= 0.18 (whole disc: up to 0.40, threshold 0.45)
+SAT_IN, SAT_OUT = 0.35, 0.65
 DEAD_SAT_FRAC = 0.45     # saturation below this fraction of the alive reference -> dead
 MIN_ALIVE_SAT = 40.0     # minimum reference saturation (a naturally grey portrait: no verdict)
 REF_RATE = 0.1
@@ -160,7 +163,10 @@ class HudReader:
         if self._mask is None:
             yy, xx = np.mgrid[0:PORTRAIT_PX, 0:PORTRAIT_PX]
             c = (PORTRAIT_PX - 1) / 2.0
-            self._mask = ((xx - c) ** 2 + (yy - c) ** 2) <= (0.95 * c) ** 2
+            d2 = (xx - c) ** 2 + (yy - c) ** 2
+            # ring of the portrait: not its centre (the red death timer digits) nor its rim (the
+            # Hough circle can be 30 % too big -> gold frame / XP arc in the crop)
+            self._mask = (d2 <= (SAT_OUT / INNER * c) ** 2) & (d2 >= (SAT_IN / INNER * c) ** 2)
         sat = float(cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 1][self._mask].mean())
         if alive_hint is not False and (alive_hint or self._ref_sat is None
                                         or sat >= DEAD_SAT_FRAC * self._ref_sat):
