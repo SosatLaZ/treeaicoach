@@ -956,6 +956,13 @@
      "v": 0.9267,
      "team": "enemy",
      "name": "Malzahar"
+    },
+    {
+     "u": 0.031,
+     "v": 0.965,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true
     }
    ],
    "unsure": [
@@ -1004,7 +1011,7 @@
     "ally": true,
     "enemy": true
    },
-   "reviewed": "one ring each"
+   "reviewed": "one ring each; Seraphine (me) back in the fountain (recall after the minute frame; camera on the fountain, icon cut by the corner)"
   },
   "20261028_161541_0025": {
    "game": "g1",
@@ -1423,8 +1430,8 @@
      "name": "Zaahen"
     },
     {
-     "u": 0.0323,
-     "v": 0.9657,
+     "u": 0.107,
+     "v": 0.921,
      "team": "ally",
      "name": "Zoe"
     },
@@ -1445,6 +1452,13 @@
      "v": 0.5202,
      "team": "enemy",
      "name": "Sylas"
+    },
+    {
+     "u": 0.0323,
+     "v": 0.9657,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true
     }
    ],
    "unsure": [
@@ -1477,7 +1491,7 @@
     "ally": true,
     "enemy": true
    },
-   "reviewed": "one ring (Malphite)"
+   "reviewed": "one ring (Malphite); corner icon = Seraphine (me, camera on the fountain), Zoe beside it"
   },
   "20261028_162742_0037": {
    "game": "g1",

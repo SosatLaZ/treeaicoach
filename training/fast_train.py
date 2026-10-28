@@ -148,7 +148,7 @@ def build_cache(n_synth: int, n_real: int, size: int, seed: int = 0, procs: int 
         clean = [[{**l, "cls": "ally" if l.get("cls") == "self" else l.get("cls", "enemy")}
                   for l in ls] for ls in labels]
         tmp = path.with_suffix(".tmp.npz")
-        np.savez(tmp, images=imgs, labels=_labels_to_array(clean))
+        np.savez_compressed(tmp, images=imgs, labels=_labels_to_array(clean))   # ~3x smaller
         os.replace(tmp, path)
     except Exception as exc:
         log.warning("Cannot write the dataset cache: %s", exc)

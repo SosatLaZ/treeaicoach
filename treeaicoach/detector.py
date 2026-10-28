@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -299,7 +300,11 @@ def decode_outputs(heatmap: Any, cls: Any, offset: Any, radius: Any, threshold: 
 
 
 def default_model_path() -> Path:
-    """Bundled model: ``assets/model/minimap_detector.onnx``."""
+    """Bundled model: ``assets/model/minimap_detector.onnx`` (``TREEAI_DET_MODEL`` = another .onnx
+    file, for the benches of tools/det_train_fast.py; ignored when it is not a file)."""
+    alt = os.environ.get("TREEAI_DET_MODEL", "")
+    if alt and Path(alt).is_file():
+        return Path(alt)
     try:
         from treeaicoach.paths import asset_path
 
@@ -907,6 +912,13 @@ class HybridDetector(BaseDetector):
     #: is normally recognised by its portrait anyway.
     STRUCTURE_DIST = 0.04
     FOUNTAIN_DIST = 0.12
+    #: ... except a strong generic detection (ONNX score): a champion icon cut by the map
+    #: corner in its fountain is often not recognised by its portrait (real cases: Kayn,
+    #: Seraphine, Zoe at u/v ~0.03 / 0.97 scored 0.58-0.72; the empty fountain glyph <= 0.38).
+    FOUNTAIN_EXTRA_MIN = 0.55
+    #: ... within this distance of the fountain point (real corner icons 0.003-0.008 from it;
+    #: wider, the 0:00 fountain stacks of det_gym "start" lost 0.006 precision)
+    CORNER_DIST = 0.015
     #: Fixed UI glyphs drawn on the minimap frame (u, v, radius): the round red button at
     #: the bottom-right corner (2026 HUD, real captures 2026-10-05: 10 of the 15 false
     #: positives of the real truth set, 205 anonymous enemy samples in 4 real games). No
@@ -1011,7 +1023,7 @@ class HybridDetector(BaseDetector):
                        for u, v, t in structs):
                     continue
                 if any(math.hypot(d.u - u, d.v - v) < self.FOUNTAIN_DIST
-                       for u, v in self._fountains):
+                       for u, v in self._fountains) and not self._corner_icon(d):
                     continue
                 if any(math.hypot(d.u - u, d.v - v) < r for u, v, r in self.UI_GLYPHS):
                     continue
@@ -1059,10 +1071,35 @@ class HybridDetector(BaseDetector):
             if any(math.hypot(d.u - k.u, d.v - k.v) < self.EXTRA_OVERLAP * (d.r + k.r)
                    for k in dets + out):
                 continue
+            alias = None
+            if any(math.hypot(d.u - u, d.v - v) < self.FOUNTAIN_DIST for u, v in self._fountains):
+                # (a corner icon kept by _corner_icon) only when it can be named: an anonymous
+                # one cost identity on the real cases (tk_botlane Kayn) for no gain to the user
+                alias = self._fountain_alias(d, dets, ents, dead)
+                if alias is None:
+                    continue
             free[side] -= 1
             out.append(Detection(u=d.u, v=d.v, r=d.r, score=d.score, cls=d.cls,
-                                 cls_probs=d.cls_probs, alias=None))
+                                 cls_probs=d.cls_probs, alias=alias))
         return out
+
+    def _corner_icon(self, d: Detection) -> bool:
+        """A strong ONNX detection right on a fountain point (icon cut by the map corner)."""
+        return (isinstance(self.fallback, OnnxDetector) and d.score >= self.FOUNTAIN_EXTRA_MIN
+                and any(math.hypot(d.u - u, d.v - v) < self.CORNER_DIST for u, v in self._fountains))
+
+    def _fountain_alias(self, d: Detection, dets: list[Detection], ents: Any, dead: set) -> str | None:
+        """An ally icon cut by the corner in our fountain whose portrait was not recognised: allies
+        are never in the fog, so when exactly one living ally is unmatched, it is that one."""
+        try:
+            if d.cls == "enemy" or not self._corner_icon(d):
+                return None
+            seen = {k.alias for k in dets if k.alias}
+            left = [e.alias for e in ents if getattr(e, "relation", "") != "enemy"
+                    and e.alias not in dead and e.alias not in seen]
+            return left[0] if len(left) == 1 else None
+        except Exception:
+            return None
 
     def detect(self, minimap_bgr: np.ndarray) -> list[Detection]:
         """Roster matches (+ unexplained generic detections); [] on error. Never raises."""

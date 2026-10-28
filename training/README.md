@@ -52,6 +52,37 @@ Measured 2026-10-01 (shared 4-core VM; runtime path, best-F1 / operating thresho
 | app selftest set (needs >= 0.8) | P 0.83 R 0.81 | P 0.85 R 0.96 |
 | inference per frame | ~20-30 ms | ~3-6 ms |
 
+## 0b. Fast fine-tune + automatic gate (`tools/det_train_fast.py`, one command)
+
+```bash
+python tools/det_train_fast.py --minutes 8            # fine-tune the app model, gate, report
+python tools/det_train_fast.py --minutes 8 --install  # ... install it only when the gate passes
+```
+
+- **Data**: the synthetic + real-art cache of the fast recipe (compressed `.npz`, 6000 images at
+  160 px = 329 MB, rendered once in 58 s by 4 processes, then loaded in ~20 s) + the REAL
+  labelled frames of `tests/fixtures/real_cases/*` (134 frames: 91 train / 43 held out, one in
+  three per case), 25 % of every batch (`--real-frac`). `unsure` zones get heatmap target
+  0.999: the focal loss ignores them (1.0 would make them positives).
+- **Warm start** from `assets/model/minimap_detector.onnx` (BN folded at export: convs get the
+  folded kernels, BN layers become identity + bias with frozen statistics; reproduces the ONNX
+  outputs to < 1e-4, `tests/test_det_train_fast.py`). `--from scratch` for a new model.
+- **Early stopping** on the held-out real frames (raw CNN F1, patience 4 evals of 45 s), EMA,
+  best state exported; then `det_gym.py --quick` (main + real crops + real cases, full engine
+  path) with the candidate (`TREEAI_DET_MODEL`) vs the current model: kept only when the quality
+  score rises, synthetic precision drops <= 0.005 and no real case / the real crops lose
+  recall + precision. `<out>/report.json` keeps every number.
+- **Speed** (2026-10-28, this 4-core container shared with other jobs, torch 2.14 CPU, 2
+  threads, batch 64 of 96 px crops): 407 ms / step (batch preparation 32 ms, forward + backward
+  362 ms) = **39 s per epoch** (6091 images). A GTX 1650 with CUDA torch (`--device auto`) runs
+  the 97 k-parameter model in ~10-15 ms per step, so a step is bound by the 32 ms batch
+  preparation: **~45 ms / step, ~4-5 s per epoch (8-9x faster)**; the gate (`det_gym --quick`,
+  ~4 min, CPU) then dominates.
+- **Result of the first runs**: lr 1.5e-3 (and 2e-4 with the unsure bug) lost real precision
+  quickly; fixed + lr 2e-4: held-out real F1 0.778 -> 0.760-0.770 over 300 steps, early stop,
+  nothing exported over the app model. The 2026-10-01 model stays: the raw-CNN errors on real
+  frames are mostly overlay drawings / glyphs the hybrid detector already filters.
+
 ## 1. Quick run (~2 minutes)
 
 ```bash
