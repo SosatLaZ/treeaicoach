@@ -2628,6 +2628,16 @@ class RosterMatcher:
             idx = [i for i, e in enumerate(self._entries) if e.alias in set(aliases)]
             if not idx or len(bank.raw) != len(self._entries):
                 return None, 0.0, 0.0
+            # (champion, template) pairs: the current portrait + the other forms (Kayn...)
+            tmpls = [(i, bank.raw[i]) for i in idx]
+            for i in idx:
+                e = self._entries[i]
+                forms = self._form_list(e) if FORM_SWITCH and not e.learned else []
+                if len(forms) > 1:
+                    fb = _make_bank([RosterEntry(e.alias, e.relation, ic) for _f, ic in forms[1:]],
+                                    inner_full * fx)
+                    if fb.size == s:
+                        tmpls += [(i, r) for r in fb.raw]
             pad = s + 2 * search + 2
             fp = np.zeros((Hf + 2 * pad, Wf + 2 * pad, 3), np.float32)
             fp[pad:pad + Hf, pad:pad + Wf] = feat
@@ -2645,8 +2655,8 @@ class RosterMatcher:
                     if float(mk.sum()) < CORNER_ID_AREA * max(bank.n, 1e-6):
                         continue
                     P = fp[ty:ty + s, tx:tx + s]
-                    for i in idx:
-                        sc = float(masked_ncc(P[None], bank.raw[i], mk[None], wl=self._wl)[0, 0])
+                    for i, raw in tmpls:
+                        sc = float(masked_ncc(P[None], raw, mk[None], wl=self._wl)[0, 0])
                         if sc > scores.get(i, -9.0):
                             scores[i] = sc
             if not scores:
