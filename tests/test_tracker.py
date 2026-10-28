@@ -241,3 +241,25 @@ def test_track_is_dataclass_with_contract_fields() -> None:
         assert hasattr(t, name)
     assert t.position() is None and t.velocity() == (0.0, 0.0) and t.zone() is None
     assert math.isclose(t.zone_fraction("top", 90, 0), 0.0)
+
+
+def test_cross_team_identity_swap_relabels_misread_icon():
+    """Ideas 12 / 83: an enemy identity popping up on a visible ally's spot (ally missing from
+    the frame, unconfident portrait) is that ally misread, not an enemy standing on him."""
+    tr = Tracker()
+    t = 0.0
+    for _ in range(8):
+        tr.update(t, [ident(0.5, 0.5, "ally", "Mel", "ORDER")])
+        t += DT
+    bad = ident(0.505, 0.5, "enemy", "Milio", "CHAOS")
+    bad.id_score = 0.6
+    tr.update(t, [bad])
+    assert tr.get("Milio") is None
+    mel = tr.get("Mel")
+    assert mel is not None and mel.relation == "ally" and mel.last_seen == t
+    # a confident portrait match is trusted (a real enemy on top of my ally)
+    t += DT
+    good = ident(0.5, 0.5, "enemy", "Zed", "CHAOS")
+    good.id_score = 0.95
+    tr.update(t, [good])
+    assert tr.get("Zed") is not None

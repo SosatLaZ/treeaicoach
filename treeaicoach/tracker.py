@@ -180,6 +180,17 @@ SELF_GUARD_CAND_GAP_S = 1.0         # a candidate not claimed for this long is d
 #: seconds; real records: enemy?N frozen at one spot for 3 s). <= 0 disables.
 ANON_STATIC_S = 2.5
 ANON_STATIC_D = 0.006
+#: Identity swap across teams (ideas 12 / 83): an identity of one team popping up right on the
+#: spot of a visible champion of the OTHER team seen in the previous frames (and missing from
+#: this one), while its own track has been hidden for a while, is that champion with a misread
+#: ring + portrait (det_gym laning: Mel read "Milio / enemy" for one frame, then Milio held
+#: under Mel for 1 s, drawn as an enemy on my ally). A real enemy coming out of the fog never
+#: appears exactly on an allied icon (vision edge), and a confident portrait match is trusted.
+SWAP_X = True
+SWAP_X_DIST = 0.025
+SWAP_X_RECENT_S = 0.4         # (or 2.5 frames at the measured rate)
+SWAP_X_HIDDEN_S = 1.5
+SWAP_X_KEEP_ID = 0.8
 
 RELATIONS = ("self", "ally", "enemy")
 _CLASSES = ("enemy", "ally", "self")   # detector class order (ARCHITECTURE.md §3)
@@ -937,6 +948,8 @@ class Tracker:
                     e.relation = "ally"
         entries = self._dedupe(entries)
         entries = self._self_guard(now, entries, my_alias, me_dead)
+        if SWAP_X:
+            self._cross_team_swap(now, entries)
         # An identity-based "self" seen recently outranks the identifier's camera fallback.
         cur_self = self._tracks.get(self._self_key) if self._self_key else None
         if cur_self is not None and cur_self.alias and now - cur_self.last_seen <= SELF_STICKY_S:
@@ -1100,6 +1113,40 @@ class Tracker:
         if near_conf and self._self_cand is not None and now - self._self_cand[1] > 0.0:
             self._self_cand = None          # I am seen where I was: the far claim was not me
         return out
+
+    def _cross_team_swap(self, now: float, entries: list[_Entry]) -> None:
+        """Relabel an identity popping up on the spot of the other team's champion (SWAP_X_*)."""
+        recent = max(SWAP_X_RECENT_S, 2.5 * (self._dt_ema or 0.0))
+        present = {(e.alias, e.side) for e in entries if e.alias}
+        cands = [tr for tr in self._tracks.values()
+                 if tr.alias and tr.confirmed and tr.visible and tr.stacked_with is None
+                 and tr.relation in ("ally", "enemy") and tr._obs
+                 and 0.0 < now - tr.last_seen <= recent]
+        if not cands:
+            return
+        for e in entries:
+            if not e.alias or e.relation not in ("ally", "enemy") or e.id_score >= SWAP_X_KEEP_ID:
+                continue
+            own = self._tracks.get(f"{e.alias}~{e.side}") or self._tracks.get(e.alias)
+            if own is not None and side_of_relation(own.relation) == e.side and \
+                    now - own.last_seen < SWAP_X_HIDDEN_S:
+                continue
+            best, best_d = None, SWAP_X_DIST
+            for tr in cands:
+                side = side_of_relation(tr.relation)
+                if side == e.side or (tr.alias, side) in present:
+                    continue
+                p = tr._obs[-1]
+                d = math.hypot(e.u - p[1], e.v - p[2])
+                if d <= best_d:
+                    best, best_d = tr, d
+            if best is not None:
+                log.debug("Tracker: %s (%s) on %s's spot -> %s", e.alias, e.relation, best.key,
+                          best.alias)
+                present.discard((e.alias, e.side))
+                e.alias, e.relation = best.alias, best.relation
+                e.team = best.team or e.team
+                present.add((e.alias, e.side))
 
     @staticmethod
     def _dedupe(entries: list[_Entry]) -> list[_Entry]:
