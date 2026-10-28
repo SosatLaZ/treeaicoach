@@ -328,6 +328,10 @@ RING_PROP_SEARCH = 1                # re-scoring window (+- working px): the rin
 RING_PROP_ID_MIN = 0.55
 RING_PROP_ID_GAP = 0.1
 RING_PROP_ID_W = 0.5                # accepted when ring + w x (identity - ID_MIN) >= ACCEPT
+#: one living champion of my team not matched anywhere: a ring / probe of my team's colour
+#: needs only this portrait score (elimination, ideas 29 / 69: my team is never in the fog)
+ELIM_ALLY = True
+ELIM_ALLY_ID_MIN = 0.5
 RING_PROP_ACCEPT = 0.19             # (measured: no proposal on an empty spot accepted)
 RING_DEBUG: list | None = None
 TRIM_RING_OWN = 0.65
@@ -2469,11 +2473,16 @@ class RosterMatcher:
                 continue
             scored.sort(key=lambda z: -z[0])
             best, j, pos = scored[0]
-            second = scored[1][0] if len(scored) > 1 else RING_PROP_ID_MIN - RING_PROP_ID_GAP
+            id_min = RING_PROP_ID_MIN
+            if ELIM_ALLY and side != "enemy" and len(pool) == 1 and ents[pool[0]].relation == "ally":
+                # (idea 29/69) my team is never in the fog: its ONE missing living champion
+                # is drawn somewhere, an unexplained ring of my team's colour is him
+                id_min = ELIM_ALLY_ID_MIN
+            second = scored[1][0] if len(scored) > 1 else id_min - RING_PROP_ID_GAP
             if RING_DEBUG is not None:
                 RING_DEBUG.append((ents[j].alias, side, cx / kx, cy / ky, score, best, second))
-            if best < RING_PROP_ID_MIN or best - second < RING_PROP_ID_GAP or \
-                    score + RING_PROP_ID_W * (best - RING_PROP_ID_MIN) < RING_PROP_ACCEPT:
+            if best < id_min or best - second < RING_PROP_ID_GAP or \
+                    score + RING_PROP_ID_W * (best - id_min) < RING_PROP_ACCEPT:
                 continue
             c = _Cand(j, pos[0], pos[1], best, best, note="ring")
             taken.add(j)
@@ -2674,6 +2683,8 @@ class RosterMatcher:
             if STACKV_REACH and j in self._twins() and not self._reachable(j, u, v, now):
                 continue                    # (a twin's portrait is its twin's: where it can be)
             id_min = HINT_ID_MIN if icon > 1.0 else STACKV_ID_MIN
+            if ELIM_ALLY and side != "enemy" and len(pool) == 1 and ents[pool[0]].relation == "ally":
+                id_min = min(id_min, ELIM_ALLY_ID_MIN)      # (see _ring_proposals)
             second = scored[1][0] if len(scored) > 1 else id_min - STACKV_ID_GAP
             if best < id_min or best - second < STACKV_ID_GAP:
                 continue

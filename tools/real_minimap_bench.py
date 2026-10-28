@@ -94,7 +94,7 @@ def roster_entries(game: dict, db, seed: int = 0):
 
 
 def run_image(name: str, spec: dict, truth: dict, db, backend: str = "auto",
-              frames: int = FRAMES, detector=None, fix: Path = FIX) -> ImageResult:
+              frames: int = FRAMES, detector=None, fix: Path = FIX, t0: float = 0.0) -> ImageResult:
     import cv2
 
     from treeaicoach.detector import create_detector
@@ -102,16 +102,19 @@ def run_image(name: str, spec: dict, truth: dict, db, backend: str = "auto",
     img = cv2.imread(str(Path(fix) / spec["file"]))
     game = truth["rosters"][spec["game"]]
     det = detector or create_detector(backend, db=db, learn_cache=None)
-    det.matcher.set_entries(roster_entries(game, db))
+    if detector is None or not getattr(det.matcher, "has_roster", False):
+        # (sequence: the roster once per game; again would drop the per-game icon overrides:
+        # forms, learned skins, as the engine's set_roster keeps them)
+        det.matcher.set_entries(roster_entries(game, db))
     dead = list(spec.get("dead", []))
     dets = []
     times = []
     for f in range(frames):
         if dead:
-            det.matcher.set_dead(dead, now=f / FPS)
-        t0 = time.perf_counter()
-        dets = _detect(det, img, f / FPS)
-        times.append((time.perf_counter() - t0) * 1000.0)
+            det.matcher.set_dead(dead, now=t0 + f / FPS)
+        c0 = time.perf_counter()
+        dets = _detect(det, img, t0 + f / FPS)
+        times.append((time.perf_counter() - c0) * 1000.0)
     gts = spec["champions"]
     res = ImageResult(name=name, n_gt=len(gts), n_det=len(dets),
                       ms=float(np.median(times[len(times) // 2:])))
@@ -171,16 +174,28 @@ def _detect(det, img, t):
 
 
 def run_all(backend: str = "auto", names=None, verbose: bool = False,
-            fix: Path = FIX) -> dict[str, ImageResult]:
+            fix: Path = FIX, sequence: bool = False) -> dict[str, ImageResult]:
+    """``sequence``: the frames of a game replayed in time order through ONE detector (its
+    per-game memory: calibration, learned icons, tracks, ring colours), the clock advanced by
+    the real gap between captures (truth-labelled cases: ``time`` = game time)."""
     from treeaicoach.champions import get_default_db
+    from treeaicoach.detector import create_detector
 
     db = get_default_db()
     truth = load_truth(fix)
     out = {}
-    for name, spec in truth["images"].items():
-        if names and name not in names:
-            continue
-        out[name] = run_image(name, spec, truth, db, backend, fix=fix)
+    items = [(n, s) for n, s in truth["images"].items() if not names or n in names]
+    if sequence:
+        items.sort(key=lambda it: (str(it[1].get("game")), float(it[1].get("time") or 0.0), it[0]))
+    dets: dict = {}
+    for name, spec in items:
+        det, t0 = None, 0.0
+        if sequence:
+            g = str(spec.get("game"))
+            if g not in dets:
+                dets[g] = create_detector(backend, db=db, learn_cache=None)
+            det, t0 = dets[g], 100.0 + float(spec.get("time") or 0.0)
+        out[name] = run_image(name, spec, truth, db, backend, detector=det, fix=fix, t0=t0)
     return out
 
 
@@ -214,9 +229,12 @@ def main() -> None:
     ap.add_argument("-v", action="store_true")
     ap.add_argument("--backend", default="auto")
     ap.add_argument("--dir", default=str(FIX), help="case folder (ground_truth.json + images)")
+    ap.add_argument("--sequence", action="store_true",
+                    help="replay each game's frames in time order through one detector")
     ap.add_argument("images", nargs="*")
     a = ap.parse_args()
-    print(report(run_all(a.backend, a.images or None, fix=Path(a.dir)), verbose=a.v))
+    print(report(run_all(a.backend, a.images or None, fix=Path(a.dir), sequence=a.sequence),
+                 verbose=a.v))
 
 
 if __name__ == "__main__":
