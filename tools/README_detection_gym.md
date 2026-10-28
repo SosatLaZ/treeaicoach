@@ -55,7 +55,7 @@ It also writes one contact sheet per cause, `DIR/<cause>.png`. The causes are:
 
 | Suite | What it contains | How to use it |
 |---|---|---|
-| `main` | 5 games: laning, bot fight, base siege, 3 img/s, custom-skin me | The stable comparison base. Tune here, never edit it lightly. If the renderer changes, bump `GYM_VERSION`. |
+| `main` | (renderer v3: our overlay labels only on their first frame, as overlay_guard leaves them) 5 games: laning, bot fight, base siege, 3 img/s, custom-skin me | The stable comparison base. Tune here, never edit it lightly. If the renderer changes, bump `GYM_VERSION`. |
 | `holdout` | The same kinds of games with other seeds, rosters, sizes and the other side | A change must also improve here; `det_tune.py` enforces it. |
 | `hard` | Worst cases mined by `tools/det_mine.py`; `--merge` keeps the old ones (max 10) | Never tune on it alone. It shows where the system breaks. |
 | `botlane` | Me = support glued on my ADC (0.1-0.7 icon diameter, measured on the LCU truth of real support games), enemy duo glued, camera locked / free / panning / jumping; two games replayed from the real Swain game (`tests/fixtures/lcu_truth`: roster, positions, the kills as fights + deaths) | Columns `stk` (champions mostly under another icon still reported at the stack), `rst` (self-check "X vu à deux endroits" resets), `meDd` (my position drawn while dead). |
@@ -69,6 +69,7 @@ It also writes one contact sheet per cause, `DIR/<cause>.png`. The causes are:
   2. Review the `needs_check` entries in its `ground_truth.json`. Move the correct ones into `champions`, fix names, delete the wrong ones.
   3. The gym then scores every case folder ("REAL CASE" lines), and `real_minimap_bench.py --dir` runs one case.
 - **Real with LCU truth (the app's own captures):** `python tools/real_truth_case.py collect/ --record games/X.json --truth games/truth/X.truth.json --out tests/fixtures/real_cases/X --keep 40 --out-all /scratch/X_all --preview /scratch/prev`, then LOOK at a few previews (labels on the icons). `--keep` limits the repo to the most useful frames (labels, duo stacks, anchored frames, spread over the game); `--out-all` keeps every frame outside the repo for `real_minimap_bench.py --dir`. The first set: `tk_botlane_20261005` (TahmKench support, 40 frames / 114 labels in the repo, 153 frames / 133 labels in the scratchpad).
+- **Review the snapped labels:** the LCU truth gives one position per minute, so two or three champions near one icon are all snapped onto it as `stacked`. Look at the stacked / missed frames (one ring or two?) and write the corrections in `<case>/review.json` (`{"frames": {name: {"why", "champions", "unsure_add"}}}`); `python tools/real_truth_case.py --apply-review <case>` applies it, and a rebuild re-applies it. Both committed cases are reviewed (16 frames).
 - **Known positions:** `--positions` cross-checks the pseudo-labels against them (for example the League Client match timeline).
 
 ## 5. Tune (validated)
