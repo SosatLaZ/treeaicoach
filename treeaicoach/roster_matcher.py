@@ -306,6 +306,18 @@ STACKV_SEARCH = 3
 #: protect him (det_gym mirror_lane: the enemy copy of my champion "found" across the map;
 #: for every champion it costs the hard siege, measured).
 STACKV_REACH = True
+#: Generic-detector hints (HybridDetector -> :meth:`RosterMatcher.set_partial_hints`): the ONNX
+#: model often finds a partly covered icon next to a roster match (real captures: the
+#: champion half under its duo / a fight pile) that the hybrid then drops as "the same icon".
+#: Such a detection between STACKV_MIN_SEP and HINT_MAX_SEP diameters from an accepted icon,
+#: with ONNX score >= HINT_MIN, becomes a stack proposal (same identity test as the probes)
+#: for HINT_FRAMES matcher frames.
+HINT_MIN = 0.5
+HINT_MAX_SEP = 0.95
+HINT_FRAMES = 2
+HINT_VERIFY = 0.5                   # patch-verifier icon probability needed at a hint
+HINT_SHIFT = 0.25                   # (x icon diameter) extra identity starts around a hint
+HINT_ID_MIN = 0.65                  # identity NCC needed by a hint proposal (probes: STACKV_ID_MIN)
 RING_PROP_EVERY = 2                 # (cost) every N frames; the tracker holds them between
 RING_PROP_SEARCH = 1                # re-scoring window (+- working px): the ring peak is precise
 RING_PROP_ID_MIN = 0.55
@@ -2551,16 +2563,19 @@ class RosterMatcher:
 
     def _stack_proposals(self, bgr: np.ndarray, feat: np.ndarray, bank: _Bank, accepted: list,
                          used: set, dead: set, kx: float, ky: float, r_norm: float,
-                         D_work: float, now: float | None = None) -> list[_Cand]:
-        """Stage 5d (see _detect): verifier probes around the accepted icons -> proposals of
-        partly covered icons -> identity among the proposal team's missing alive champions."""
+                         D_work: float, now: float | None = None, probes: bool = True
+                         ) -> list[_Cand]:
+        """Stage 5d (see _detect): verifier probes around the accepted icons (``probes``) and
+        the generic-detector hints -> proposals of partly covered icons -> identity among the
+        proposal team's missing alive champions."""
         ver = self._get_verifier()
         if ver is None:
             return []
         ents = self._entries
         D = D_work / kx                                   # icon diameter (normalized)
+        hints = self._hint_props(accepted, kx, ky, D)
         pts = []
-        for a in accepted:
+        for a in (accepted if probes else ()):
             au, av = a.x / kx, a.y / ky
             for d in STACKV_DIST:
                 for k in range(STACKV_ANGLES):
@@ -2571,15 +2586,17 @@ class RosterMatcher:
                     if any(math.hypot(u - b.x / kx, v - b.y / ky) < STACKV_MIN_SEP * D for b in accepted):
                         continue
                     pts.append((u, v))
-        if not pts:
-            return []
         structs = self._structures()
         pts = [p for p in pts if not any(math.hypot(p[0] - su, p[1] - sv) < STRUCT_DIST for su, sv, _t in structs)
                and not any(math.hypot(p[0] - fu, p[1] - fv) < FOUNTAIN_DIST for fu, fv in _FOUNTAINS.values())]
-        if not pts:
+        if not pts and not hints:
             return []
-        P = ver.verify_candidates(bgr, [(u, v, r_norm) for u, v in pts])
-        props = []
+        if hints:
+            Ph = ver.verify_candidates(bgr, [(h[2], h[3], r_norm) for h in hints])
+            hints = [h for h, p in zip(hints, Ph) if 1.0 - float(p[0]) >= HINT_VERIFY
+                     and (p[1] >= p[2]) == (h[1] == "enemy")]
+        P = ver.verify_candidates(bgr, [(u, v, r_norm) for u, v in pts]) if pts else []
+        props = list(hints)
         for (u, v), p in zip(pts, P):
             icon = 1.0 - float(p[0])
             if icon < STACKV_MIN:
@@ -2605,23 +2622,59 @@ class RosterMatcher:
                 continue
             near = [(a.x, a.y) for a in accepted + out if math.hypot(cx - a.x, cy - a.y) < 1.05 * D_work]
             scored = []
+            starts = [(cx, cy)]
+            if icon > 1.0:
+                # (a hint) the ONNX centre is less precise than a probe: every champion is
+                # scored from a few starts around it and keeps its best (a fair identity gap)
+                h = HINT_SHIFT * D_work
+                starts += [(cx + dx, cy + dy) for dx, dy in ((h, 0), (-h, 0), (0, h), (0, -h))]
             for j in pool:
-                sj = self._rescue(_Cand(j, cx, cy, 0.0, 0.0), feat, bank, near, D_work, caps=True,
-                                  search=STACKV_SEARCH)
-                if sj is not None:
-                    scored.append((sj, j, self.last_rescue_pos))
+                best_j = None
+                for sx, sy in starts:
+                    sj = self._rescue(_Cand(j, sx, sy, 0.0, 0.0), feat, bank, near, D_work,
+                                      caps=True, search=STACKV_SEARCH)
+                    if sj is not None and (best_j is None or sj > best_j[0]):
+                        best_j = (sj, j, self.last_rescue_pos)
+                if best_j is not None:
+                    scored.append(best_j)
             if not scored:
                 continue
             scored.sort(key=lambda z: -z[0])
             best, j, pos = scored[0]
             if STACKV_REACH and j in self._twins() and not self._reachable(j, u, v, now):
                 continue                    # (a twin's portrait is its twin's: where it can be)
-            second = scored[1][0] if len(scored) > 1 else STACKV_ID_MIN - STACKV_ID_GAP
-            if best < STACKV_ID_MIN or best - second < STACKV_ID_GAP:
+            id_min = HINT_ID_MIN if icon > 1.0 else STACKV_ID_MIN
+            second = scored[1][0] if len(scored) > 1 else id_min - STACKV_ID_GAP
+            if best < id_min or best - second < STACKV_ID_GAP:
                 continue
             c = _Cand(j, pos[0], pos[1], best, best, note="stacked")
             taken.add(j)
             out.append(c)
+        return out
+
+    def set_partial_hints(self, hints: Sequence[tuple[float, float, str, float]]) -> None:
+        """Generic detections ``(u, v, side, score)`` of the last frame (HybridDetector):
+        candidates for partly covered icons, used by the next stack-proposal stage (see
+        HINT_MIN). Never raises."""
+        try:
+            self._hints = (self._state.frames, [(float(u), float(v), str(sd), float(sc))
+                                                for u, v, sd, sc in hints or ()])
+        except Exception:
+            self._hints = (0, [])
+
+    def _hint_props(self, accepted: list, kx: float, ky: float, D: float) -> list:
+        """Stack proposals ``(icon, side, u, v)`` from the generic-detector hints."""
+        frame, hints = getattr(self, "_hints", (0, []))
+        if not hints or self._state.frames - frame > HINT_FRAMES:
+            return []
+        out = []
+        for u, v, side, sc in hints:
+            if sc < HINT_MIN:
+                continue
+            d = [math.hypot(u - a.x / kx, v - a.y / ky) for a in accepted]
+            if not d or min(d) < STACKV_MIN_SEP * D or min(d) > HINT_MAX_SEP * D:
+                continue
+            out.append((1.0 + sc, side, u, v))         # (before the probes: ONNX saw an icon)
         return out
 
     def _reachable(self, i: int, u: float, v: float, now: float | None) -> bool:
@@ -3160,11 +3213,12 @@ class RosterMatcher:
         # 5d. stack proposals: the patch verifier looks around every accepted icon for an
         #     icon partly drawn under it (bot duo, fights, sieges); each proposal is given to
         #     the best of ITS team's missing alive champions (occlusion-tolerant score)
-        if STACKV_EVERY > 0 and accepted and not self.grey and len(used) + len(dead) < n_e and \
-                st.frames % STACKV_EVERY == (1 % STACKV_EVERY):
+        probes = STACKV_EVERY > 0 and st.frames % STACKV_EVERY == (1 % STACKV_EVERY)
+        hinted = STACKV_EVERY > 0 and bool(getattr(self, "_hints", (0, []))[1])
+        if (probes or hinted) and accepted and not self.grey and len(used) + len(dead) < n_e:
             try:
                 for c in self._stack_proposals(raw_bgr, feat, bank, accepted, used, dead, kx, ky,
-                                               r_norm, D_work, now):
+                                               r_norm, D_work, now, probes=probes):
                     self._score_cand(c, bgr, kx, ky, R_px, W, H, now, -10.0,
                                      exclude=[(a.x / kx * W, a.y / ky * H) for a in accepted])
                     used.add(c.i)

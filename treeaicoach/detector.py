@@ -974,6 +974,16 @@ class HybridDetector(BaseDetector):
                 if any(math.hypot(d.u - u, d.v - v) < r for u, v, r in self.UI_GLYPHS):
                     continue
                 keep.append(d)
+            hint = getattr(m, "set_partial_hints", None)
+            if callable(hint):
+                # (a generic detection next to a roster match may be an icon partly under it:
+                # the matcher tries to name it on its next frame, see roster_matcher.HINT_MIN)
+                hint([(d.u, d.v, "enemy" if d.cls == "enemy" else "ally", d.score) for d in raw
+                      if not any(math.hypot(d.u - u, d.v - v) < self.FOUNTAIN_DIST
+                                 for u, v in self._fountains)
+                      and not any(math.hypot(d.u - u, d.v - v) < r for u, v, r in self.UI_GLYPHS)
+                      and any(math.hypot(d.u - k.u, d.v - k.v) < self.EXTRA_OVERLAP * (d.r + k.r)
+                             for k in dets)])
             ver = getattr(m, "_get_verifier", None)
             ver = ver() if callable(ver) and self.EXTRA_VERIFY > 0 else None
             if ver is not None and keep:
