@@ -121,7 +121,9 @@ hiddenimports += ["sounddevice", "_cffi_backend", "srt", "requests", "tqdm"]
 # local Whisper (stt_local.py): the CTranslate2 + tokenizers wheels are downloaded on first use (pinned
 # SHA-256, ~21 MB) and imported from the cache: only the stdlib modules they import are bundled here
 hiddenimports += ["asyncio", "argparse", "concurrent.futures", "subprocess", "signal", "socket", "ssl", "queue",
-                  "gettext", "locale", "bz2", "lzma", "heapq", "array", "copy", "string", "traceback", "atexit"]
+                  "gettext", "locale", "bz2", "lzma", "heapq", "array", "copy", "string", "traceback", "atexit",
+                  "glob", "ctypes", "importlib.util"]
+# ctranslate2 4.x imports pkg_resources on Windows (setuptools, not bundled): stt_local._shim_pkg_resources
 excludes_extra = ["vosk", "ctranslate2", "tokenizers", "faster_whisper"]
 try:
     datas += collect_data_files("_sounddevice_data")

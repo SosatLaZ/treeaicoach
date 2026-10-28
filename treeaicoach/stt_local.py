@@ -249,18 +249,56 @@ def _stub_missing(names: Sequence[str]) -> None:
         sys.modules[name] = mod
 
 
+def _shim_pkg_resources() -> None:
+    """ctranslate2 4.x on Windows runs ``import pkg_resources; pkg_resources.resource_filename(__name__, "")``
+    at import (to find its DLLs). The frozen exe has no setuptools: without this stand-in the import failed
+    with ``ModuleNotFoundError: pkg_resources`` and Whisper NEVER loaded on the user's PC (Vosk only).
+    The stand-in answers ``resource_filename`` from the package's own folder (importlib)."""
+    try:
+        import pkg_resources  # noqa: F401, PLC0415
+
+        return
+    except Exception:
+        pass
+    import importlib.util  # noqa: PLC0415
+    import types  # noqa: PLC0415
+
+    def resource_filename(package: str, resource: str = "") -> str:
+        spec = importlib.util.find_spec(str(package))
+        if spec is None:
+            raise ImportError(f"no package {package!r}")
+        locs = list(spec.submodule_search_locations or [])
+        base = locs[0] if locs else os.path.dirname(str(spec.origin or ""))
+        return os.path.join(base, resource) if resource else base
+
+    mod = types.ModuleType("pkg_resources")
+    mod.resource_filename = resource_filename  # type: ignore[attr-defined]
+    mod.__treeai_shim__ = True  # type: ignore[attr-defined]
+    sys.modules["pkg_resources"] = mod
+
+
+def _engine_error(exc: BaseException) -> str:
+    """« ModuleNotFoundError: No module named 'x' » (short, no user path) for the UI and the logs."""
+    msg = str(exc).replace(str(Path.home()), "~")
+    return f"{type(exc).__name__}: {msg}"[:160] if msg else type(exc).__name__
+
+
 def import_engine(root: Path | None = None, opener: Callable[[str], Any] | None = None) -> tuple[Any, Any] | None:
-    """``(ctranslate2, tokenizers)``: installed, else the pinned Windows wheels downloaded once. None on failure."""
+    """``(ctranslate2, tokenizers)``: installed, else the pinned Windows wheels downloaded once. None on failure
+    (:data:`ENGINE_ERROR` then tells why)."""
+    global ENGINE_ERROR
     _stub_missing(("yaml", "tqdm"))
+    _shim_pkg_resources()
     try:
         import ctranslate2  # noqa: PLC0415
         import tokenizers  # noqa: PLC0415
 
+        ENGINE_ERROR = ""
         return ctranslate2, tokenizers
-    except Exception:
-        pass
-    if sys.platform != "win32" and opener is None:
-        return None
+    except Exception as exc:
+        if sys.platform != "win32" and opener is None:
+            ENGINE_ERROR = _engine_error(exc)
+            return None
     try:
         base = (root or voice_cache()) / ENGINE_DIR_NAME
         if not all((base / pkg / "__init__.py").exists() for pkg, _u, _s in WHEELS):
@@ -269,6 +307,7 @@ def import_engine(root: Path | None = None, opener: Callable[[str], Any] | None 
             for pkg, url, sha in WHEELS:
                 whl = tmp.parent / url.rsplit("/", 1)[-1]
                 if not _fetch(url, sha, whl, opener):
+                    ENGINE_ERROR = ""             # a download problem, not a broken engine
                     return None
                 with zipfile.ZipFile(whl) as zf:
                     members = [m for m in zf.namelist() if m.startswith(pkg + "/") and ".." not in m]
@@ -287,15 +326,32 @@ def import_engine(root: Path | None = None, opener: Callable[[str], Any] | None 
         import tokenizers  # noqa: PLC0415
 
         log.info("Whisper : moteur CTranslate2 %s chargé depuis le cache", getattr(ctranslate2, "__version__", "?"))
+        ENGINE_ERROR = ""
         return ctranslate2, tokenizers
     except Exception as exc:
-        global ENGINE_ERROR
-        ENGINE_ERROR = f"{type(exc).__name__}"
+        ENGINE_ERROR = _engine_error(exc)
         log.warning("Whisper : moteur indisponible", exc_info=True)
         return None
 
 
 ENGINE_ERROR = ""
+
+
+def diagnose(root: Path | None = None, load: bool = True) -> dict[str, Any]:
+    """Self-check of the local speech engine (diagnostic / « Écoute » panel): ``engine`` True when
+    CTranslate2 + tokenizers import (``load``: downloading the wheels if needed), ``error`` = why not,
+    ``version``, ``model`` = the model files are present. Never raises."""
+    out: dict[str, Any] = {"engine": False, "error": "", "version": "", "model": False}
+    try:
+        eng = import_engine(root) if load else None
+        if eng is not None:
+            out["engine"] = True
+            out["version"] = str(getattr(eng[0], "__version__", "") or "")
+        out["error"] = ENGINE_ERROR
+        out["model"] = model_ready(DEFAULT_MODEL, root)
+    except Exception as exc:
+        out["error"] = _engine_error(exc)
+    return out
 
 
 # ------------------------------------------------------------------ transcriber
@@ -345,9 +401,9 @@ class WhisperSTT:
             self._loading = True
             try:
                 return self._load_locked()
-            except Exception:
+            except Exception as exc:
                 log.warning("Whisper : chargement échoué", exc_info=True)
-                self.status = "Whisper indisponible sur ce PC : reconnaissance Vosk utilisée."
+                self.status = f"Whisper indisponible sur ce PC ({_engine_error(exc)}) : reconnaissance Vosk utilisée."
                 self._failed_at = time.monotonic()
                 return False
             finally:
@@ -356,7 +412,9 @@ class WhisperSTT:
     def _load_locked(self) -> bool:
         eng = import_engine(self._root)
         if eng is None:
-            self.status = "Moteur Whisper non téléchargé (Internet ?) : reconnaissance Vosk en attendant."
+            self.status = (f"Moteur Whisper indisponible ({ENGINE_ERROR}) : reconnaissance Vosk en attendant."
+                           if ENGINE_ERROR else
+                           "Moteur Whisper non téléchargé (Internet ?) : reconnaissance Vosk en attendant.")
             self._failed_at = time.monotonic()
             return False
         ct2, tokenizers = eng
