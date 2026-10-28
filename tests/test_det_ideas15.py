@@ -95,3 +95,15 @@ def test_sequence_replay_keeps_one_detector_and_the_clock(monkeypatch, tmp_path)
     assert list(res) == ["early", "late"]                  # time order
     assert len(made) == 1 and len(rosters) == 1           # one detector, roster set once
     assert seen[0] < seen[B.FRAMES - 1] < seen[B.FRAMES] and seen[B.FRAMES] - seen[0] >= 60.0
+
+
+def test_held_icon_seen_again_elsewhere_is_not_an_impossible_jump():
+    import treeaicoach.tracker as T
+
+    t = T.Track(key="Zed", alias="Zed", relation="enemy", team=None, first_seen=0.0, last_seen=0.0)
+    assert t.observe(0.0, 0.5, 0.5)
+    t._stack_pos, t._stack_t = (0.5, 0.5), 10.0           # held under an ally icon until t=10
+    # 0.25 from the pile right now, but on foot from his last sighting (10 s ago): accepted
+    assert not t._impossible(10.1, 0.75, 0.5)
+    # farther than he can have walked from both: held back
+    assert t._impossible(10.1, 0.5 + T.MAX_WALK_SPEED * 10.1 + T.JUMP_SLACK + 0.05, 0.5)
