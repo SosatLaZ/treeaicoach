@@ -203,9 +203,9 @@ def report(results: dict[str, ImageResult], verbose: bool = False) -> str:
         T["team"] += r.team_ok
         T["idn"] += r.id_n
         T["idok"] += r.id_ok
-    lines.append(f"{'TOTAL':8s} {T['gt']:3d} {T['det']:3d} {T['tp'] / max(1, T['gt']):6.2f} "
-                 f"{T['tp'] / max(1, T['det']):6.2f} {T['team'] / max(1, T['tp']):6.2f} "
-                 f"{T['idok'] / max(1, T['idn']):6.2f}")
+    lines.append(f"{'TOTAL':8s} {T['gt']:3d} {T['det']:3d} {T['tp'] / max(1, T['gt']):6.3f} "
+                 f"{T['tp'] / max(1, T['det']):6.3f} {T['team'] / max(1, T['tp']):6.3f} "
+                 f"{T['idok'] / max(1, T['idn']):6.3f}")
     return "\n".join(lines)
 
 

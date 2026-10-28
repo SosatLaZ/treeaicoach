@@ -1,0 +1,358 @@
+{
+ "about": "Human review of the LCU-snapped labels (tools/real_truth_case.py apply_review): frames where the image contradicts the stacked snapping. Each entry says why.",
+ "frames": {
+  "20261005_163950_0284": {
+   "why": "Nami is the visible icon; Corki is the partly covered icon on its left (second red ring), not under Nami's centre",
+   "champions": [
+    {
+     "u": 0.1603,
+     "v": 0.4381,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.8762,
+     "v": 0.8553,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.8762,
+     "v": 0.8553,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.0898,
+     "v": 0.2902,
+     "team": "enemy",
+     "name": "Singed"
+    },
+    {
+     "u": 0.5956,
+     "v": 0.3911,
+     "team": "enemy",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.926,
+     "v": 0.733,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    },
+    {
+     "u": 0.893,
+     "v": 0.735,
+     "team": "enemy",
+     "name": "Corki",
+     "stacked": true
+    }
+   ],
+   "unsure_add": []
+  },
+  "20261005_164131_0294": {
+   "why": "the visible icon is Yunara (my ADC), not me; no second ring: TahmKench is under her or nearby",
+   "champions": [
+    {
+     "u": 0.734,
+     "v": 0.926,
+     "team": "ally",
+     "name": "Yunara"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "TahmKench",
+     "team": "ally",
+     "u": 0.734,
+     "v": 0.926,
+     "r": 0.03,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261005_164151_0296": {
+   "why": "one icon (Corki) inside the ring; no second enemy ring: Nami is not drawn there",
+   "champions": [
+    {
+     "u": 0.5861,
+     "v": 0.8262,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.4439,
+     "v": 0.5851,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.8909,
+     "v": 0.7433,
+     "team": "enemy",
+     "name": "Corki"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Nami",
+     "team": "enemy",
+     "u": 0.8909,
+     "v": 0.7433,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261005_164341_0307": {
+   "why": "the visible icon is Nami; Corki is the sliver behind its top (position not measurable)",
+   "champions": [
+    {
+     "u": 0.611,
+     "v": 0.768,
+     "team": "enemy",
+     "name": "Nami"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Corki",
+     "team": "enemy",
+     "u": 0.62,
+     "v": 0.73,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261005_164451_0314": {
+   "why": "allies: Yunara visible, the icons behind her (TahmKench, Xerath) cannot be placed; enemies: Fizz on top, the rings left of it (Chogath, Nami) cannot be placed; Kayn is clearly visible at the bottom (the truth puts him in the fountain)",
+   "champions": [
+    {
+     "u": 0.0443,
+     "v": 0.8325,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.489,
+     "v": 0.47,
+     "team": "ally",
+     "name": "Yunara"
+    },
+    {
+     "u": 0.597,
+     "v": 0.408,
+     "team": "enemy",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.534,
+     "v": 0.843,
+     "team": "ally",
+     "name": "Kayn"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "TahmKench",
+     "team": "ally",
+     "u": 0.525,
+     "v": 0.45,
+     "r": 0.08,
+     "why": "review: behind Yunara, not placeable"
+    },
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.525,
+     "v": 0.45,
+     "r": 0.08,
+     "why": "review: behind Yunara, not placeable"
+    },
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.575,
+     "v": 0.41,
+     "r": 0.04,
+     "why": "review: rings left of Fizz, not placeable"
+    },
+    {
+     "name": "Nami",
+     "team": "enemy",
+     "u": 0.575,
+     "v": 0.41,
+     "r": 0.04,
+     "why": "review: rings left of Fizz, not placeable"
+    }
+   ]
+  },
+  "20261005_164953_0344": {
+   "why": "one enemy icon (Fizz), one ring: Chogath is not drawn there",
+   "champions": [
+    {
+     "u": 0.581,
+     "v": 0.6776,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.7542,
+     "v": 0.7307,
+     "team": "ally",
+     "name": null,
+     "self": true
+    },
+    {
+     "u": 0.5793,
+     "v": 0.5715,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.5793,
+     "v": 0.5715,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261005_165053_0350": {
+   "why": "three ally icons at their own centres (Sett, Yunara, TahmKench partly covered); Fizz alone in its ring (no Chogath); Corki alone (no Nami)",
+   "champions": [
+    {
+     "u": 0.828,
+     "v": 0.4943,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.727,
+     "v": 0.296,
+     "team": "ally",
+     "name": "Sett",
+     "stacked": true
+    },
+    {
+     "u": 0.767,
+     "v": 0.316,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.703,
+     "v": 0.312,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.9319,
+     "v": 0.4418,
+     "team": "enemy",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.822,
+     "v": 0.262,
+     "team": "enemy",
+     "name": "Corki"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.9319,
+     "v": 0.4418,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    },
+    {
+     "name": "Nami",
+     "team": "enemy",
+     "u": 0.8155,
+     "v": 0.2446,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261005_165153_0356": {
+   "why": "fight pile at their own centres: Singed (left), Corki (top), Nami (right); one ally ring under Singed (TahmKench or Xerath); Chogath and the other ally not placeable",
+   "champions": [
+    {
+     "u": 0.3371,
+     "v": 0.647,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.662,
+     "v": 0.305,
+     "team": "enemy",
+     "name": "Singed",
+     "stacked": true
+    },
+    {
+     "u": 0.712,
+     "v": 0.268,
+     "team": "enemy",
+     "name": "Corki",
+     "stacked": true
+    },
+    {
+     "u": 0.748,
+     "v": 0.322,
+     "team": "enemy",
+     "name": "Nami",
+     "stacked": true
+    },
+    {
+     "u": 0.638,
+     "v": 0.335,
+     "team": "ally",
+     "name": null,
+     "stacked": true
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Chogath",
+     "team": "enemy",
+     "u": 0.7,
+     "v": 0.3,
+     "r": 0.06,
+     "why": "review: in the pile, not placeable"
+    },
+    {
+     "name": "Xerath",
+     "team": "ally",
+     "u": 0.64,
+     "v": 0.33,
+     "r": 0.04,
+     "why": "review: under the pile"
+    },
+    {
+     "name": "TahmKench",
+     "team": "ally",
+     "u": 0.64,
+     "v": 0.33,
+     "r": 0.04,
+     "why": "review: under the pile"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,348 @@
+{
+ "about": "Human review of the LCU-snapped labels (tools/real_truth_case.py apply_review): frames where the image contradicts the stacked snapping. Each entry says why.",
+ "frames": {
+  "20261023_003651_0175": {
+   "why": "Lux is the visible icon; Darius is the partly covered icon behind its top right",
+   "champions": [
+    {
+     "u": 0.1481,
+     "v": 0.1446,
+     "team": "enemy",
+     "name": "Vayne"
+    },
+    {
+     "u": 0.9316,
+     "v": 0.0774,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.837,
+     "v": 0.206,
+     "team": "ally",
+     "name": "Lux",
+     "stacked": true
+    },
+    {
+     "u": 0.85,
+     "v": 0.188,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    }
+   ],
+   "unsure_add": []
+  },
+  "20261023_003751_0181": {
+   "why": "one enemy icon (Seraphine), one ring: Zyra is not drawn there",
+   "champions": [
+    {
+     "u": 0.3415,
+     "v": 0.1168,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.5054,
+     "v": 0.7536,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0372,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.6217,
+     "v": 0.5717,
+     "team": "enemy",
+     "name": "Seraphine"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.6217,
+     "v": 0.5717,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261023_004012_0195": {
+   "why": "the front enemy icon is Ziggs; Vayne is the ring behind its top",
+   "champions": [
+    {
+     "u": 0.965,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.271,
+     "v": 0.321,
+     "team": "enemy",
+     "name": "Ziggs",
+     "stacked": true
+    },
+    {
+     "u": 0.265,
+     "v": 0.2937,
+     "team": "enemy",
+     "name": "Vayne",
+     "stacked": true
+    }
+   ],
+   "unsure_add": []
+  },
+  "20261023_004453_0223": {
+   "why": "one enemy icon (Caitlyn), one ring: Zyra and Ziggs are not drawn there",
+   "champions": [
+    {
+     "u": 0.083,
+     "v": 0.8124,
+     "team": "ally",
+     "name": "Garen",
+     "self": true
+    },
+    {
+     "u": 0.7577,
+     "v": 0.7053,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    },
+    {
+     "u": 0.7577,
+     "v": 0.7053,
+     "team": "ally",
+     "name": "Fizz",
+     "stacked": true
+    },
+    {
+     "u": 0.965,
+     "v": 0.0375,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.6775,
+     "v": 0.6359,
+     "team": "enemy",
+     "name": "Caitlyn"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.6775,
+     "v": 0.6359,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.6775,
+     "v": 0.6359,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261023_004754_0241": {
+   "why": "single rings: Caitlyn alone (no Vayne), Seraphine alone (no Ziggs)",
+   "champions": [
+    {
+     "u": 0.2572,
+     "v": 0.2998,
+     "team": "ally",
+     "name": "Garen",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.2572,
+     "v": 0.2998,
+     "team": "ally",
+     "name": "Darius",
+     "stacked": true
+    },
+    {
+     "u": 0.7068,
+     "v": 0.2993,
+     "team": "ally",
+     "name": "Fizz"
+    },
+    {
+     "u": 0.9651,
+     "v": 0.0373,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.4524,
+     "v": 0.5625,
+     "team": "ally",
+     "name": "Lux"
+    },
+    {
+     "u": 0.1132,
+     "v": 0.6294,
+     "team": "enemy",
+     "name": "Caitlyn"
+    },
+    {
+     "u": 0.3947,
+     "v": 0.5945,
+     "team": "enemy",
+     "name": "Seraphine"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.1132,
+     "v": 0.6294,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.3947,
+     "v": 0.5945,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261023_004954_0253": {
+   "why": "Lux is the front icon at its own centre; Fizz is the partly covered icon behind it",
+   "champions": [
+    {
+     "u": 0.7576,
+     "v": 0.2841,
+     "team": "ally",
+     "name": "Darius"
+    },
+    {
+     "u": 0.9652,
+     "v": 0.0357,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.374,
+     "v": 0.649,
+     "team": "ally",
+     "name": "Lux",
+     "stacked": true
+    },
+    {
+     "u": 0.3378,
+     "v": 0.6301,
+     "team": "ally",
+     "name": "Fizz",
+     "stacked": true
+    }
+   ],
+   "unsure_add": []
+  },
+  "20261023_005255_0271": {
+   "why": "Seraphine front, Ziggs the partly covered ring on its left; Lux alone in her ring (no second ally ring: Garen not drawn there)",
+   "champions": [
+    {
+     "u": 0.9646,
+     "v": 0.0368,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.827,
+     "v": 0.182,
+     "team": "enemy",
+     "name": "Seraphine",
+     "stacked": true
+    },
+    {
+     "u": 0.798,
+     "v": 0.183,
+     "team": "enemy",
+     "name": "Ziggs",
+     "stacked": true
+    },
+    {
+     "u": 0.857,
+     "v": 0.139,
+     "team": "ally",
+     "name": "Lux"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Garen",
+     "team": "ally",
+     "u": 0.8634,
+     "v": 0.1402,
+     "r": 0.03,
+     "why": "review: no visible icon"
+    }
+   ]
+  },
+  "20261023_004844_0246": {
+   "why": "one ally ring behind Caitlyn (Garen or Darius, not both)",
+   "champions": [
+    {
+     "u": 0.1402,
+     "v": 0.7971,
+     "team": "enemy",
+     "name": null
+    },
+    {
+     "u": 0.965,
+     "v": 0.0375,
+     "team": "ally",
+     "name": "Yuumi"
+    },
+    {
+     "u": 0.4474,
+     "v": 0.5401,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.13,
+     "v": 0.775,
+     "team": "ally",
+     "name": null,
+     "stacked": true
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Garen",
+     "team": "ally",
+     "u": 0.13,
+     "v": 0.775,
+     "r": 0.04,
+     "why": "review: one of two"
+    },
+    {
+     "name": "Darius",
+     "team": "ally",
+     "u": 0.13,
+     "v": 0.775,
+     "r": 0.04,
+     "why": "review: one of two"
+    }
+   ]
+  }
+ }
+}

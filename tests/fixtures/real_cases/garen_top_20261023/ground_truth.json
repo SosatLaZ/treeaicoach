@@ -176,23 +176,23 @@
      "name": "Vayne"
     },
     {
-     "u": 0.8363,
-     "v": 0.2117,
-     "team": "ally",
-     "name": "Darius",
-     "stacked": true
-    },
-    {
      "u": 0.9316,
      "v": 0.0774,
      "team": "ally",
      "name": null
     },
     {
-     "u": 0.8363,
-     "v": 0.2117,
+     "u": 0.837,
+     "v": 0.206,
      "team": "ally",
      "name": "Lux",
+     "stacked": true
+    },
+    {
+     "u": 0.85,
+     "v": 0.188,
+     "team": "ally",
+     "name": "Darius",
      "stacked": true
     }
    ],
@@ -241,7 +241,8 @@
    "fp_judged": {
     "ally": true,
     "enemy": true
-   }
+   },
+   "reviewed": "Lux is the visible icon; Darius is the partly covered icon behind its top right"
   },
   "20261023_003711_0177": {
    "game": "g1",
@@ -277,20 +278,6 @@
    "dead": [],
    "champions": [
     {
-     "u": 0.6217,
-     "v": 0.5717,
-     "team": "enemy",
-     "name": "Zyra",
-     "stacked": true
-    },
-    {
-     "u": 0.6217,
-     "v": 0.5717,
-     "team": "enemy",
-     "name": "Seraphine",
-     "stacked": true
-    },
-    {
      "u": 0.3415,
      "v": 0.1168,
      "team": "ally",
@@ -308,6 +295,12 @@
      "v": 0.0372,
      "team": "ally",
      "name": "Yuumi"
+    },
+    {
+     "u": 0.6217,
+     "v": 0.5717,
+     "team": "enemy",
+     "name": "Seraphine"
     }
    ],
    "unsure": [
@@ -350,12 +343,21 @@
      "v": 0.6544,
      "r": 0.081,
      "why": "2 icons"
+    },
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.6217,
+     "v": 0.5717,
+     "r": 0.05,
+     "why": "review: no visible icon"
     }
    ],
    "fp_judged": {
     "ally": true,
     "enemy": true
-   }
+   },
+   "reviewed": "one enemy icon (Seraphine), one ring: Zyra is not drawn there"
   },
   "20261023_003812_0183": {
    "game": "g1",
@@ -545,23 +547,32 @@
    ],
    "champions": [
     {
-     "u": 0.265,
-     "v": 0.2937,
-     "team": "enemy",
-     "name": "Vayne"
-    },
-    {
      "u": 0.965,
      "v": 0.0373,
      "team": "ally",
      "name": "Yuumi"
+    },
+    {
+     "u": 0.271,
+     "v": 0.321,
+     "team": "enemy",
+     "name": "Ziggs",
+     "stacked": true
+    },
+    {
+     "u": 0.265,
+     "v": 0.2937,
+     "team": "enemy",
+     "name": "Vayne",
+     "stacked": true
     }
    ],
    "unsure": [],
    "fp_judged": {
     "ally": false,
     "enemy": false
-   }
+   },
+   "reviewed": "the front enemy icon is Ziggs; Vayne is the ring behind its top"
   },
   "20261023_004022_0196": {
    "game": "g1",
@@ -955,27 +966,6 @@
    ],
    "champions": [
     {
-     "u": 0.6775,
-     "v": 0.6359,
-     "team": "enemy",
-     "name": "Zyra",
-     "stacked": true
-    },
-    {
-     "u": 0.6775,
-     "v": 0.6359,
-     "team": "enemy",
-     "name": "Ziggs",
-     "stacked": true
-    },
-    {
-     "u": 0.6775,
-     "v": 0.6359,
-     "team": "enemy",
-     "name": "Caitlyn",
-     "stacked": true
-    },
-    {
      "u": 0.083,
      "v": 0.8124,
      "team": "ally",
@@ -1001,6 +991,12 @@
      "v": 0.0375,
      "team": "ally",
      "name": "Yuumi"
+    },
+    {
+     "u": 0.6775,
+     "v": 0.6359,
+     "team": "enemy",
+     "name": "Caitlyn"
     }
    ],
    "unsure": [
@@ -1019,12 +1015,29 @@
      "v": 0.6146,
      "r": 0.033,
      "why": "no icon"
+    },
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.6775,
+     "v": 0.6359,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.6775,
+     "v": 0.6359,
+     "r": 0.05,
+     "why": "review: no visible icon"
     }
    ],
    "fp_judged": {
     "ally": true,
     "enemy": true
-   }
+   },
+   "reviewed": "one enemy icon (Caitlyn), one ring: Zyra and Ziggs are not drawn there"
   },
   "20261023_004523_0226": {
    "game": "g1",
@@ -1292,34 +1305,6 @@
    ],
    "champions": [
     {
-     "u": 0.1132,
-     "v": 0.6294,
-     "team": "enemy",
-     "name": "Vayne",
-     "stacked": true
-    },
-    {
-     "u": 0.3947,
-     "v": 0.5945,
-     "team": "enemy",
-     "name": "Ziggs",
-     "stacked": true
-    },
-    {
-     "u": 0.3947,
-     "v": 0.5945,
-     "team": "enemy",
-     "name": "Seraphine",
-     "stacked": true
-    },
-    {
-     "u": 0.1132,
-     "v": 0.6294,
-     "team": "enemy",
-     "name": "Caitlyn",
-     "stacked": true
-    },
-    {
      "u": 0.2572,
      "v": 0.2998,
      "team": "ally",
@@ -1351,13 +1336,43 @@
      "v": 0.5625,
      "team": "ally",
      "name": "Lux"
+    },
+    {
+     "u": 0.1132,
+     "v": 0.6294,
+     "team": "enemy",
+     "name": "Caitlyn"
+    },
+    {
+     "u": 0.3947,
+     "v": 0.5945,
+     "team": "enemy",
+     "name": "Seraphine"
     }
    ],
-   "unsure": [],
+   "unsure": [
+    {
+     "name": "Vayne",
+     "team": "enemy",
+     "u": 0.1132,
+     "v": 0.6294,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    },
+    {
+     "name": "Ziggs",
+     "team": "enemy",
+     "u": 0.3947,
+     "v": 0.5945,
+     "r": 0.05,
+     "why": "review: no visible icon"
+    }
+   ],
    "fp_judged": {
     "ally": true,
     "enemy": true
-   }
+   },
+   "reviewed": "single rings: Caitlyn alone (no Vayne), Seraphine alone (no Ziggs)"
   },
   "20261023_004844_0246": {
    "game": "g1",
@@ -1372,21 +1387,6 @@
      "name": null
     },
     {
-     "u": 0.1298,
-     "v": 0.7706,
-     "team": "ally",
-     "name": "Garen",
-     "self": true,
-     "stacked": true
-    },
-    {
-     "u": 0.1298,
-     "v": 0.7706,
-     "team": "ally",
-     "name": "Darius",
-     "stacked": true
-    },
-    {
      "u": 0.965,
      "v": 0.0375,
      "team": "ally",
@@ -1397,13 +1397,38 @@
      "v": 0.5401,
      "team": "ally",
      "name": null
+    },
+    {
+     "u": 0.13,
+     "v": 0.775,
+     "team": "ally",
+     "name": null,
+     "stacked": true
     }
    ],
-   "unsure": [],
+   "unsure": [
+    {
+     "name": "Garen",
+     "team": "ally",
+     "u": 0.13,
+     "v": 0.775,
+     "r": 0.04,
+     "why": "review: one of two"
+    },
+    {
+     "name": "Darius",
+     "team": "ally",
+     "u": 0.13,
+     "v": 0.775,
+     "r": 0.04,
+     "why": "review: one of two"
+    }
+   ],
    "fp_judged": {
     "ally": false,
     "enemy": false
-   }
+   },
+   "reviewed": "one ally ring behind Caitlyn (Garen or Darius, not both)"
   },
   "20261023_004854_0247": {
    "game": "g1",
@@ -1506,23 +1531,23 @@
      "name": "Darius"
     },
     {
-     "u": 0.3378,
-     "v": 0.6301,
-     "team": "ally",
-     "name": "Fizz",
-     "stacked": true
-    },
-    {
      "u": 0.9652,
      "v": 0.0357,
      "team": "ally",
      "name": null
     },
     {
+     "u": 0.374,
+     "v": 0.649,
+     "team": "ally",
+     "name": "Lux",
+     "stacked": true
+    },
+    {
      "u": 0.3378,
      "v": 0.6301,
      "team": "ally",
-     "name": "Lux",
+     "name": "Fizz",
      "stacked": true
     }
    ],
@@ -1579,7 +1604,8 @@
    "fp_judged": {
     "ally": true,
     "enemy": true
-   }
+   },
+   "reviewed": "Lux is the front icon at its own centre; Fizz is the partly covered icon behind it"
   },
   "20261023_005024_0256": {
    "game": "g1",
@@ -1798,39 +1824,30 @@
    ],
    "champions": [
     {
-     "u": 0.8215,
-     "v": 0.1866,
-     "team": "enemy",
-     "name": "Ziggs",
-     "stacked": true
-    },
-    {
-     "u": 0.8215,
-     "v": 0.1866,
-     "team": "enemy",
-     "name": "Seraphine",
-     "stacked": true
-    },
-    {
-     "u": 0.8634,
-     "v": 0.1402,
-     "team": "ally",
-     "name": "Garen",
-     "self": true,
-     "stacked": true
-    },
-    {
      "u": 0.9646,
      "v": 0.0368,
      "team": "ally",
      "name": "Yuumi"
     },
     {
-     "u": 0.8634,
-     "v": 0.1402,
-     "team": "ally",
-     "name": "Lux",
+     "u": 0.827,
+     "v": 0.182,
+     "team": "enemy",
+     "name": "Seraphine",
      "stacked": true
+    },
+    {
+     "u": 0.798,
+     "v": 0.183,
+     "team": "enemy",
+     "name": "Ziggs",
+     "stacked": true
+    },
+    {
+     "u": 0.857,
+     "v": 0.139,
+     "team": "ally",
+     "name": "Lux"
     }
    ],
    "unsure": [
@@ -1841,12 +1858,21 @@
      "v": 0.2325,
      "r": 0.084,
      "why": "no icon"
+    },
+    {
+     "name": "Garen",
+     "team": "ally",
+     "u": 0.8634,
+     "v": 0.1402,
+     "r": 0.03,
+     "why": "review: no visible icon"
     }
    ],
    "fp_judged": {
     "ally": true,
     "enemy": true
-   }
+   },
+   "reviewed": "Seraphine front, Ziggs the partly covered ring on its left; Lux alone in her ring (no second ally ring: Garen not drawn there)"
   }
  }
 }

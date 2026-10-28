@@ -476,6 +476,7 @@ def build(captures: Path, record: dict, truth: dict, out: Path, out_all: Path | 
         (folder / "ground_truth.json").write_text(json.dumps(gt, indent=1), encoding="utf-8")
 
     write(out, kept)
+    apply_review(out)
     if out_all is not None:
         write(out_all, names)
     if preview_dir is not None:
@@ -492,7 +493,46 @@ def build(captures: Path, record: dict, truth: dict, out: Path, out_all: Path | 
     return stats
 
 
+def apply_review(folder: Path) -> int:
+    """Applies the human review of a case (``<folder>/review.json``) to its
+    ``ground_truth.json``; returns the number of frames changed.
+
+    The LCU truth gives a position per minute (plus kills); when two or three champions of a
+    team are near one icon, :func:`label_frame` snaps all of them onto it as ``stacked``.
+    Looking at the frames shows that this is often wrong: a single ring is visible (the
+    other champion is a few hundred units away, not drawn there), or the hidden champion is a
+    partly covered icon whose centre is elsewhere, or the visible champion is not the named
+    one. ``review.json`` = ``{"frames": {name: {"why": str, "champions": [...],
+    "unsure_add": [...]}}}``: ``champions`` replaces the frame's labels, ``unsure_add`` is
+    appended to its ``unsure`` zones (champions the truth puts there with no visible icon).
+    Kept in the case folder, so a rebuild (:func:`build`) re-applies it. Never raises on a
+    missing file."""
+    rp, gp = Path(folder) / "review.json", Path(folder) / "ground_truth.json"
+    if not rp.is_file() or not gp.is_file():
+        return 0
+    review = json.loads(rp.read_text(encoding="utf-8")).get("frames") or {}
+    gt = json.loads(gp.read_text(encoding="utf-8"))
+    n = 0
+    for name, fix in review.items():
+        spec = gt["images"].get(name)
+        if spec is None:
+            continue
+        if "champions" in fix:
+            spec["champions"] = fix["champions"]
+        have = {(z["name"], z["team"]) for z in spec.get("unsure") or []}
+        for z in fix.get("unsure_add") or []:
+            if (z["name"], z["team"]) not in have:
+                spec.setdefault("unsure", []).append(z)
+        spec["reviewed"] = fix.get("why", True)
+        n += 1
+    gp.write_text(json.dumps(gt, indent=1), encoding="utf-8")
+    return n
+
+
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--apply-review":
+        print(json.dumps({"reviewed_frames": apply_review(Path(sys.argv[2]))}))
+        return
     ap = argparse.ArgumentParser()
     ap.add_argument("captures")
     ap.add_argument("--record", required=True)

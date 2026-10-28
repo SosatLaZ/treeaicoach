@@ -163,3 +163,38 @@ def test_second_real_case_single_icons_found_and_named():
         named += sum(1 for w in r.wrong if w[0] == "id")
     assert gt >= 15
     assert hit / gt >= 0.9 and fp <= 1 and named <= 1
+
+
+def test_apply_review_replaces_labels_and_adds_unsure(tmp_path):
+    import json
+
+    apply_review = RT.apply_review
+
+    gt = {"about": "", "rosters": {}, "images": {"f1": {"champions": [
+        {"u": 0.5, "v": 0.5, "team": "enemy", "name": "A", "stacked": True},
+        {"u": 0.5, "v": 0.5, "team": "enemy", "name": "B", "stacked": True}],
+        "unsure": [], "dead": []}, "f2": {"champions": [], "unsure": []}}}
+    (tmp_path / "ground_truth.json").write_text(json.dumps(gt))
+    assert apply_review(tmp_path) == 0                      # no review file: unchanged
+    (tmp_path / "review.json").write_text(json.dumps({"frames": {"f1": {
+        "why": "one ring", "champions": [{"u": 0.5, "v": 0.5, "team": "enemy", "name": "A"}],
+        "unsure_add": [{"name": "B", "team": "enemy", "u": 0.5, "v": 0.5, "r": 0.05}]}, "zz": {}}}))
+    assert apply_review(tmp_path) == 1
+    assert apply_review(tmp_path) == 1                      # idempotent
+    out = json.loads((tmp_path / "ground_truth.json").read_text())["images"]
+    assert [c["name"] for c in out["f1"]["champions"]] == ["A"]
+    assert [z["name"] for z in out["f1"]["unsure"]] == ["B"] and out["f1"]["reviewed"] == "one ring"
+    assert out["f2"] == {"champions": [], "unsure": []}
+
+
+def test_committed_reviews_are_applied():
+    import json
+    from pathlib import Path
+
+    for case in Path(__file__).parent.joinpath("fixtures", "real_cases").iterdir():
+        rv = case / "review.json"
+        if not rv.is_file():
+            continue
+        imgs = json.loads((case / "ground_truth.json").read_text(encoding="utf-8"))["images"]
+        for name in json.loads(rv.read_text(encoding="utf-8"))["frames"]:
+            assert "reviewed" in imgs[name], (case.name, name)
