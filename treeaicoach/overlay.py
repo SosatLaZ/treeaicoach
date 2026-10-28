@@ -1544,8 +1544,9 @@ class OverlayManager:
             # "timers": the timers strip hanging outside the minimap frame (layout slot)
             # "essentials": the small top-centre strip (essentials.py); like every window here it is
             # in ``windows``, so _sync_capture_exclusion hides it from capture with the others
+            # "shop": the ring around the next item in the open shop (shop_view.py), click-through
             for name in FLASH_WINDOWS + ("radar", "minimap", "timers", "build", "essentials", "hud", "toasts") \
-                    + WORLD_WINDOWS:
+                    + WORLD_WINDOWS + ("shop",):
                 windows[name] = LayeredWindow(name, click_through=True, on_moved=self._window_moved) \
                     if self._window_factory is None else self._window_factory(name)
             # every window that can cover the minimap is hidden from capture (overlay_guard):
@@ -1684,6 +1685,7 @@ class OverlayManager:
                     if t0 - last_world >= 1.0 / WORLD_HZ - 1e-3:
                         last_world = t0
                         self._refresh_world(api, windows, state, cfg, move)
+                        self._refresh_shop(windows, state, move)
                     if any(windows[n].visible for n in WORLD_WINDOWS if n in windows):
                         self._tier = max(self._tier, 1)
                     fps = loop_fps(fps, self._tier)
@@ -1926,6 +1928,29 @@ class OverlayManager:
                 self._show(w, w.name if hasattr(w, "name") else f"world{i}", img, x, y, dedupe=True)
             else:
                 w.hide()
+
+    def _refresh_shop(self, windows: dict[str, LayeredWindow], state: Any, move: bool) -> None:
+        """The ring around the next item in the open shop (``state.shop_highlight``): shown only
+        while the shop is seen open with the item's icon in it, hidden otherwise. Never raises."""
+        win = windows.get("shop")
+        if win is None:
+            return
+        try:
+            hl = getattr(state, "shop_highlight", None)
+            if hl is None or move:
+                win.hide()
+                return
+            from treeaicoach import shop_view
+
+            got = shop_view.ring_patch(hl.rect)
+            if got is None:
+                win.hide()
+                return
+            img, x, y = got
+            self._show(win, "shop", img, x, y, dedupe=True)
+        except Exception:
+            log.debug("shop ring failed", exc_info=True)
+            win.hide()
 
     def _layout(self, scr: RectT, mm: RectT | None, cfg: Any, state: Any, radar: RectT | None,
                 custom: dict[str, tuple[int, int]]) -> Any:

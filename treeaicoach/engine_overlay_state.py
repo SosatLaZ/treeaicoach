@@ -486,6 +486,7 @@ class OverlayStateMixin:
             st_ic = getattr(self, "_item_card_state", None)
             out["buy_tail"] = bool(st_ic is not None and out["item_card"] is None and not in_base and st_ic.tail(now))
             out["build_strip"] = self._build_strip(rec, game, now)
+            out["shop_highlight"] = self._shop_highlight(out["item_card"], now)
             out["ai_counter"] = self.ai_budget_text() or None
             res = self._role_resolver      # compact HUD: objective note only for the objectives my role plays
             role = res.my_role() if res is not None and hasattr(res, "my_role") else None
@@ -550,6 +551,25 @@ class OverlayStateMixin:
             return card
         except Exception:
             log.debug("item card failed", exc_info=True)
+            return None
+
+    def _shop_highlight(self, card: Any, now: float) -> Any:
+        """Ring around the next item in the open shop (shop_view.py): only while the item card says
+        I can shop, only when the shop is seen open and the item's icon is found in it; else None
+        (the item card alone guides). The capture runs in the watcher's own thread. Never raises."""
+        try:
+            if self._frame_source is not None or not getattr(self._cfg, "hud_shop_ring", True):
+                return None
+            from treeaicoach import shop_view
+
+            w = getattr(self, "_shop_watcher", None)
+            if w is None:
+                w = self._shop_watcher = shop_view.ShopWatcher()
+            can = card is not None and bool(getattr(card, "shop", False))
+            ids = [getattr(card, "item_id", 0), *list(getattr(card, "buy_ids", ()) or ())[:1]] if can else []
+            return w.update(ids, can, now)
+        except Exception:
+            log.debug("shop highlight failed", exc_info=True)
             return None
 
     def _build_strip(self, rec: Any, game: Any, now: float) -> Any:

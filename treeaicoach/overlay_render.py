@@ -212,6 +212,7 @@ class OverlayState:
     enemy_respawns: list = field(default_factory=list)  # game time each dead enemy respawns (Live Client)
     # build strip (build_strip.BuildStrip): the meta build as 6 small icons next to the card, config ``hud_build_strip``
     build_strip: Any = None
+    shop_highlight: Any = None                # shop_view.ShopHighlight: ring around the next item in the open shop
     # essentials strip (essentials.py, top centre): live_edge.EdgeStats numbers, config ``essentials_strip``
     edge_stats: Any = None
     show_essentials: bool = True
