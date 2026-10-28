@@ -3,6 +3,19 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.4.0 · 29 octobre 2026
+
+- **Le bot ne se réveille plus tout seul :** un « Hey coach » n'est accepté que s'il est confirmé (deuxième
+  moteur ou Whisper) ; un réveil sans question est ignoré, sans bip.
+- **Plus jamais la voix Windows :** la voix naturelle ou rien (le message reste à l'écran).
+- **Écran de chargement :** rang, mains, « 1re partie / OTP », 5 dernières parties de chaque ennemi, « son main
+  a été banni », les 5 matchups et le plan (avec « Rangs des joueurs »).
+- **Lanceur plus simple et plus rapide :** 6 pages au lieu de 8, options rares repliées, fenêtre ~2× plus vite.
+- **Ménage :** bouton « Faire le ménage » (Réglages → Avancé → Stockage), beaucoup moins de captures,
+  zip d'envoi ~4 Mo au lieu de ~30 Mo.
+- **Détection :** allié manquant retrouvé par élimination, icône au coin de la fontaine, clones (Shaco,
+  LeBlanc, Wukong, Neeko), captures HDR délavées, identités qui ne s'échangent plus entre équipes.
+
 ## 3.3.0 · 28 octobre 2026
 
 - **Beaucoup moins de bruit :** sur une vraie partie de 40 min, 127 messages au lieu de 228 et 42 bips au lieu

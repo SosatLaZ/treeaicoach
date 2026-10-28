@@ -154,7 +154,9 @@ class _Local:
         pass
 
 
-def test_uncached_gank_phrase_uses_local_voice_at_once_and_caches_it(tmp_path: Path) -> None:
+def test_uncached_gank_phrase_uses_local_voice_at_once_and_caches_it(tmp_path: Path, monkeypatch) -> None:
+    from treeaicoach import voice as _v
+    monkeypatch.setattr(_v, "LOCAL_VOICE_FALLBACK", True)   # the stand-in path (off by default since 3.4)
     def slow(text: str, v: str, r: int) -> bytes:
         time.sleep(0.5)
         return _wav()
@@ -178,7 +180,9 @@ def test_uncached_gank_phrase_uses_local_voice_at_once_and_caches_it(tmp_path: P
     assert tts.cached("Lee Sin arrive par le haut !") is not None     # next time: neural voice
 
 
-def test_bench_playback_and_interrupt() -> None:
+def test_bench_playback_and_interrupt(monkeypatch) -> None:
+    from treeaicoach import voice as _v
+    monkeypatch.setattr(_v, "LOCAL_VOICE_FALLBACK", True)   # instant stand-in measured here
     lb = _bench()
     # best of 3 runs: a structural wait (network, TTS) makes every run slow; one slow run out of
     # three is the scheduler of a machine loaded by the other test workers
