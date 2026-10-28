@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.1.1 · 28 octobre 2026
+
+- **Whisper démarre enfin sur Windows :** il plantait à chaque lancement (module manquant), toute la voix
+  passait par l'ancien moteur. La raison d'un échec est maintenant affichée dans « Écoute ».
+- **Plus de « Patiente » :** tu peux reposer une question à l'IA tout de suite.
+- **Détection :** 3 nouvelles parties réelles en test ; ta position sous ton ADC mieux trouvée.
+- **Alerte « jungler disparu »** un peu plus tôt (35 morts prévenues au lieu de 32 sur 36 parties).
+
 ## 3.1.0 · 28 octobre 2026
 
 - **Surbrillance dans la boutique :** un anneau vert autour du prochain objet à acheter quand la boutique
