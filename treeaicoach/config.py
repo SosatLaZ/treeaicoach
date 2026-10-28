@@ -69,6 +69,8 @@ CHOICES: dict[str, tuple[str, ...]] = {
     # v2 voice policy (voice_policy.py): minimal = ganks, objectives at 60 s, stance, big plays only
     "voice_level": ("minimal", "normal", "bavard"),
     "skill_level": ("debutant", "intermediaire", "avance", "expert"),
+    # comfort.py: the red screen-edge flash, thin and short by default
+    "danger_flash_style": ("subtle", "full"),
 }
 BOOL_FIELDS: tuple[str, ...] = (
     "beep_on_danger",
@@ -94,6 +96,7 @@ BOOL_FIELDS: tuple[str, ...] = (
     "radar_enabled",
     "hud_enabled",
     "danger_flash",
+    "voice_ducking",
     "overlay_hide_from_capture",
     "overlay_show_allies",
     "overlay_show_roles",
@@ -298,6 +301,8 @@ class Config:
     overlay_mode: str = "minimap"   # "minimap" (marks on the real minimap) | "radar" | "off"
     hud_xy: list[int] | None = None
     danger_flash: bool = True
+    danger_flash_style: str = "subtle"   # comfort.py: "subtle" (thin, one 1.2 s pulse) | "full" (old frame, 2 s)
+    voice_ducking: bool = True           # comfort.py: less urgent lines spoken quieter than danger
     # minimap overlay: hide it from screen capture (False = visible in screenshots / streams)
     overlay_hide_from_capture: bool = True   # keeps our own marks out of the detector's captures
     # v2 decluttered minimap layer: only enemies / jungler fog / approach arrows / danger ring by default

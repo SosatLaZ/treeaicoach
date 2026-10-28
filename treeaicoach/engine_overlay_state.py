@@ -21,7 +21,6 @@ from treeaicoach import geometry
 from treeaicoach.alerts import AlertKind, Level
 from treeaicoach.capture import Rect
 from treeaicoach.engine_base import (
-    FLASH_DECAY_S,
     HOTKEY_DEBOUNCE_S,
     OVERLAY_MAX_AGE_S,
     OVERLAY_MIN_PERIOD_S,
@@ -280,8 +279,17 @@ class OverlayStateMixin:
         flash = 0.0
         tac = self._tactics
         fighting = tac is not None and tac.in_fight()
-        if cfg.danger_flash and last_danger is not None and 0.0 <= now - last_danger < FLASH_DECAY_S and not fighting:
-            flash = float(1.0 - (now - last_danger) / FLASH_DECAY_S)
+        if cfg.danger_flash:
+            # comfort.py: one short pulse per danger, thin by default, never while dead / in base /
+            # the shop open / in a fight (the banner says it)
+            from treeaicoach import comfort
+
+            pulse = getattr(self, "_flash_pulse", None)
+            if pulse is None:
+                pulse = self._flash_pulse = comfort.FlashPulse()
+            q = comfort.engine_quiet(self)
+            flash = pulse.intensity(now, last_danger, getattr(cfg, "danger_flash_style", "subtle"),
+                                    suppressed=fighting or q.dead or q.in_base or q.shop_open)
         la = None
         if last_alert is not None and last_alert_t is not None:
             la = (last_alert.text, int(last_alert.level), max(0.0, now - last_alert_t))

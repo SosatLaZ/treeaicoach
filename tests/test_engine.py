@@ -601,9 +601,17 @@ def test_locate_fallback_and_retry():
     for i in range(1, 12 * 8):
         clock.t = i * 0.125
         eng.step(clock.t)
-    assert loc.locates == 2          # retried after 10 s
+    assert loc.locates == 6          # waiting for the locator: retried every 2 s for 30 s
+    while clock.t < 40.0:
+        clock.t += 0.125
+        eng.step(clock.t)
+    n = loc.locates
+    while clock.t < 50.0:
+        clock.t += 0.125
+        eng.step(clock.t)
+    assert loc.locates == n + 1      # then every 10 s
     loc.found = True
-    while clock.t < 22.0:
+    while clock.t < 62.0:
         clock.t += 0.125
         eng.step(clock.t)
     assert eng.get_status().locate_method == "auto"

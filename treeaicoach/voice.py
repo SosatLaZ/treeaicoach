@@ -342,6 +342,7 @@ PREVIEW_TEXT = "Test de la voix. Attention, Lee Sin arrive par la rivière !"
 PREVIEW_TIMEOUT_S = 6.0
 #: after the beep, the sentence is said only if the situation is this fresh (s since the alert)
 DANGER_SPEAK_MAX_AGE_S = 1.2
+CHIME_GAP_S = 20.0             # a warning chime at most once per 20 s (any tone counts)
 BEEP_RECENT_S = 0.6            # a DANGER sentence queued this soon after alert_beep(): no 2nd beep
 
 
@@ -1229,6 +1230,8 @@ class VoiceEngine:
         self._closed = False
         self._muted = False
         self._busy = False
+        #: comfort.py: less urgent lines quieter than danger (info 70 %, warning 85 %)
+        self.ducking = True
         self._ready = threading.Event()
         self._backend_name: str | None = None
         self._warm: Callable[[str], None] | None = None      # backend.warm (neural): set by the worker
@@ -1376,6 +1379,11 @@ class VoiceEngine:
     def set_danger_voice(self, mode: str) -> None:
         """``"bip_voix"`` (beep, then the sentence only if it is already cached) or ``"bip"``."""
         self.danger_voice = mode if mode in DANGER_VOICE_CHOICES else "bip_voix"
+
+    def skip_beep(self) -> None:
+        """The next DANGER sentence (queued within :data:`BEEP_RECENT_S`) gets no automatic beep: the
+        engine's beep gate (comfort.BeepGate) said no (same threat, dead, shop...)."""
+        self._beep_end = time.perf_counter()
 
     def alert_beep(self, tone: str = "gank") -> bool:
         """BEEP-FIRST: play the danger tone NOW from the caller thread (non-blocking, pre-loaded
@@ -1757,6 +1765,7 @@ class _Worker:
                     log.debug("Neural rate not applied: %s", exc)
             try:
                 self.backend.configure(params.voice_name, params.rate, params.volume)
+                self.spoken_volume = params.volume
             except Exception as exc:
                 log.warning("Réglages de la voix non appliqués : %s", exc)
             try:
@@ -1814,10 +1823,13 @@ class _Worker:
         try:
             if not e.chime_before_voice or e._muted or not e.beeper.available:
                 return
-            if e._beep_end - time.perf_counter() > -BEEP_RECENT_S:
-                return
+            if item.level < LEVEL_WARNING or not e._params.beep_on_danger:
+                return              # comfort: no tone before an info line; « bip » off = no tone at all
+            if e._beep_end - time.perf_counter() > -CHIME_GAP_S:
+                return              # a tone (beep or chime) played recently: the words alone
             tone = chime_for(item.text, item.level)
             if e.beeper.play(tone, e._params.volume):
+                e._beep_end = time.perf_counter() + tone_duration_s(tone)
                 self._wait(tone_duration_s(tone) + 0.01)
         except Exception:
             log.debug("chime failed", exc_info=True)
@@ -1849,6 +1861,19 @@ class _Worker:
             return
         self._chime(item)
         self._speak(item, purge=False)
+
+    def _duck(self, level: int) -> None:
+        """Volume of this sentence (comfort.ducked_volume): reconfigured only when it changes."""
+        try:
+            from treeaicoach.comfort import ducked_volume
+
+            p = self.e._params
+            vol = ducked_volume(p.volume, level, bool(getattr(self.e, "ducking", True)))
+            if vol != getattr(self, "spoken_volume", None):
+                self.backend.configure(p.voice_name, p.rate, vol)
+                self.spoken_volume = vol
+        except Exception:
+            log.debug("voice ducking failed", exc_info=True)
 
     def _say_danger(self, item: _Item, params: _Params) -> None:
         if item.beep_end is not None:
@@ -1900,6 +1925,7 @@ class _Worker:
             log.debug("Voice: line no longer true, dropped: %s", item.text)
             return
         self.item_level = item.level
+        self._duck(item.level)
         for attempt in range(2):
             t_call = time.perf_counter()
             try:

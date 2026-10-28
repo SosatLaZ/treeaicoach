@@ -3661,7 +3661,8 @@ def _render_preview(state: OverlayState, width: int, texture_bgr: np.ndarray | N
     if _clamp01(state.flash) > 0 and (cfg is None or getattr(cfg, "danger_flash", True)):
         excl = [(r[0] - sx, r[1] - sy, r[2], r[3]) for r in lay.flash_exclusions()] + [
             (mm[0] - sx, mm[1] - sy, mm[2], mm[3])]
-        fl = render_flash(sw, sh, state.flash, excl, thickness=_ov.flash_thickness(scr))
+        fl = render_flash(sw, sh, state.flash, excl, thickness=_ov.flash_thickness(
+            scr, str(getattr(cfg, "danger_flash_style", "subtle") or "subtle")))
         composite_over(bg, fl, 0, 0)
     width = int(min(max(int(width), 64), 4096))
     out = cv2.resize(bg, (width, max(1, int(round(sh * width / sw)))), interpolation=cv2.INTER_AREA)

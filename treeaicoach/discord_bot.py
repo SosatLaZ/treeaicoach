@@ -660,6 +660,7 @@ class _Settings:
     own_assistant: bool = False     # voice_assistant: the player's own « Hey coach » is heard by his PC
     ranks: bool = True              # discord_ranks: game-start ranks (player_intel.discord_ranks), by champion
     brain: bool = True              # discord_team_brain: personal calls per friend (team_brain.py)
+    beeps: bool = True              # beep_on_danger: the danger chime in the channel too (off = words only)
 
     def wants(self, kind: str) -> bool:
         """The switch of an optional call kind is on (gank / matchup / test: always)."""
@@ -1071,7 +1072,8 @@ class DiscordCaller:
                           route=route_of(cfg), listen=getattr(cfg, "discord_listen", False) is True,
                           friends_matchup=getattr(cfg, "discord_friends_matchup", True) is not False,
                           own_assistant=getattr(cfg, "voice_assistant", False) is True and _pc_mic_on(),
-                          owner_only=getattr(cfg, "discord_listen_owner_only", True) is not False)
+                          owner_only=getattr(cfg, "discord_listen_owner_only", True) is not False,
+                          beeps=getattr(cfg, "beep_on_danger", True) is not False)
             with self._lock:
                 changed = s.key() != self._settings.key()
                 if s.user_id != self._settings.user_id:
@@ -1535,6 +1537,8 @@ class DiscordCaller:
         an empty synthesis falls through to the next voice, never to the chime alone). ``fast``:
         not cached yet -> the clip recorded at build time at once if there is one (a gank call cannot
         wait for the network), the full chain otherwise. Blocking. ``b""`` when no voice at all."""
+        with self._lock:
+            chime = bool(chime and self._settings.beeps)      # « bip » off: the words only, here too
         key = ("!" if chime else "") + text
         with self._lock:
             if self._clips_key != (voice, rate):
@@ -1568,7 +1572,8 @@ class DiscordCaller:
     def _cached_clip(self, text: str, voice: str, rate: str) -> bytes:
         """A gank sentence with the chime already rendered (``b""`` if not yet)."""
         with self._lock:
-            hit = self._clips.get("!" + text) if self._clips_key == (voice, rate) else None
+            key = ("!" if self._settings.beeps else "") + text
+            hit = self._clips.get(key) if self._clips_key == (voice, rate) else None
         return hit[0] if hit else b""
 
     def _render_quiet(self, text: str, voice: str, rate: str) -> None:
@@ -2211,6 +2216,8 @@ class DiscordCaller:
                 self.dropped += 1
                 return
         if job.call_kind in ("beep", "chime"):   # a tone only where the bot already is
+            if job.call_kind == "beep" and not s.beeps:
+                return                           # « bip » off (beep_on_danger): no tone in the channel
             if self._current(backend) is not None:
                 pcm = da.chime_pcm(_tone_wav("info" if job.call_kind == "chime" else (job.lane or "gank")))
                 if pcm:

@@ -61,6 +61,9 @@ MATCH_FRAME_H = 450.0
 STALE_S = 2.5
 #: seconds between two shop looks while the shop may be open (in base / dead)
 LOOK_EVERY_S = 1.0
+#: ... while the last look saw it closed (a full-window grab + ~80 ms of search per look: in base or
+#: dead most of the time the shop is closed; the ring shows up to 2.5 s after it opens)
+LOOK_CLOSED_S = 2.5
 
 
 @dataclass(frozen=True)
@@ -299,7 +302,7 @@ class ShopWatcher:
                 if not self._want:
                     self._last, self.shop_open = None, False
                     return None
-                due = now - self._at >= LOOK_EVERY_S
+                due = now - self._at >= (LOOK_EVERY_S if self.shop_open or self._at < -1e17 else LOOK_CLOSED_S)
                 if due:
                     self._at = now
                 last, last_t = self._last, self._last_t

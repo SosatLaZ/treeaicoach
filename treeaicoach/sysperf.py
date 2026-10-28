@@ -78,6 +78,27 @@ def lower_process_priority(eco_qos: bool = True) -> dict[str, Any]:
     return out
 
 
+
+THREAD_PRIORITY_BELOW_NORMAL = -1
+
+
+def lower_thread_priority() -> bool:
+    """The CALLING thread at below-normal priority (Windows; the analysis loop: the game's own threads
+    win any contention on a mid-range CPU). True when applied. Never raises."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentThread.restype = wintypes.HANDLE
+        k32.SetThreadPriority.argtypes = [wintypes.HANDLE, ctypes.c_int]
+        return bool(k32.SetThreadPriority(k32.GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL))
+    except Exception:
+        log.debug("SetThreadPriority failed", exc_info=True)
+        return False
+
 def cpu_count() -> int:
     try:
         return max(1, int(os.cpu_count() or 1))

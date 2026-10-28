@@ -344,6 +344,8 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                     sdv(self._voice_override or getattr(new, "danger_voice", "bip_voix"))
                 except Exception:
                     log.debug("voice.set_danger_voice failed", exc_info=True)
+            if hasattr(self._voice, "ducking"):
+                self._voice.ducking = bool(getattr(new, "voice_ducking", True))     # comfort.py
             set_params = getattr(self._voice, "set_params", None)
             if callable(set_params):
                 try:
@@ -753,6 +755,10 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
 
     def _analysis_loop(self) -> None:
         next_t = self._clock()
+        if self._frame_source is None:
+            from treeaicoach.sysperf import lower_thread_priority
+
+            lower_thread_priority()          # the game's threads first (Windows: below normal)
         while not self._stop_evt.is_set():
             if self._frame_source is None and not self._in_game:
                 # no game: no capture, no CPU; wake up when the poller sees a game
@@ -836,6 +842,13 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         if not callable(beep):
             return
         try:
+            from treeaicoach import comfort
+
+            if not comfort.engine_beep_allowed(self, a):
+                skip = getattr(self._voice, "skip_beep", None)
+                if callable(skip):
+                    skip()                          # the sentence (if any) without its automatic beep
+                return
             sdv = getattr(self._voice, "set_danger_voice", None)
             want = self._danger_voice_mode()        # (the self-check may force beep-only: rule 7)
             if callable(sdv) and getattr(self._voice, "danger_voice", None) != want:
@@ -1110,6 +1123,13 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._death_due = None
         self._threat_hist.clear()
         self._last_danger_t = None
+        self._scene_static = False
+        try:
+            from treeaicoach import comfort
+
+            comfort.engine_reset(self)       # fresh noise budgets for this game
+        except Exception:
+            pass
         self._fog_cal_done = False       # the calibrated danger threshold is re-read for this game
         self._last_alert = None
         self._last_alert_t = None
@@ -1288,6 +1308,13 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 t_vis = time.perf_counter()
                 identified = self._stabilize(t, self._vision(frame))
                 self._stats["vision"].add((time.perf_counter() - t_vis) * 1000.0)
+                if self._frame_source is None:     # comfort.py: nothing moves -> slower analysis
+                    sm = getattr(self, "_scene_motion", None)
+                    if sm is None:
+                        from treeaicoach.comfort import SceneMotion
+
+                        sm = self._scene_motion = SceneMotion()
+                    self._scene_static = sm.update(frame)
                 self._selfcheck.on_frame(t)          # effective detection rate (self-check rule 3)
                 self._last_frame_t = t
             self._self_icon_tick(t, gt, game)
@@ -1405,7 +1432,24 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         if not self._adaptive:
             return 1.0 / max(1.0, min(30.0, float(self._cfg.target_fps)))
         unfocused = self._unfocused_since is not None and t - self._unfocused_since >= 3.0
-        return self._governor.period(t, None, unfocused)
+        return self._comfort_period(t, self._governor.period(t, None, unfocused))
+
+    def _comfort_period(self, t: float, base: float) -> float:
+        """comfort.py: slower analysis while it cannot matter (dead, shop open in base, loading) or
+        while the minimap does not move at all. Never raises."""
+        try:
+            from treeaicoach import comfort
+
+            game = self._game
+            q = comfort.engine_quiet(self)
+            threat = max((lvl for _t, lvl, _a in list(self._threat_hist)), default=0)
+            why = comfort.low_value_reason(q.dead, q.in_base, q.shop_open,
+                                           _finite(getattr(game, "game_time", None)), threat)
+            static = bool(getattr(self, "_scene_static", False)) and threat < 1
+            self._slow_reason = why or ("static" if static else None)
+            return comfort.calm_period(base, why, static)
+        except Exception:
+            return base
 
     def _observe_tick_cost(self, t: float, ms: float) -> None:
         self._stats["tick"].add(ms)
@@ -1482,7 +1526,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             fps = self._governor.fps(now, self._paused, self._unfocused_since is not None)
             out["detect_rate"] = {"target_fps": round(fps, 1), "measured_fps": round(self._fps, 1),
                                   "burst": self._governor.bursting(now), "why": self._governor.reason,
-                                  "adaptive": self._adaptive}
+                                  "adaptive": self._adaptive, "slow": getattr(self, "_slow_reason", None)}
             out["budget"] = self._budget.describe()
             out["heavy_runs"] = dict(self._heavy.runs)
             out["cpu_percent"] = self._cpu.percent

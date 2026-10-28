@@ -219,7 +219,8 @@ def compose(cfg: Any, state: Any = None, now: float = 0.3,
                 log.debug("play badge preview failed", exc_info=True)
         out.layers = img.copy()
         if getattr(st, "flash", 0.0) and getattr(cfg, "danger_flash", True):
-            th = ov.flash_thickness(scr) if ov is not None else 10
+            th = ov.flash_thickness(scr, str(getattr(cfg, "danger_flash_style", "subtle") or "subtle")) \
+                if ov is not None else 4
             orr.composite_over(img, orr.render_flash(sw, sh, float(st.flash), loc, thickness=th), 0, 0)
         return out
     except Exception:

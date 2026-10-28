@@ -157,6 +157,14 @@ class CoachingMixin:
         c = getattr(out, "macro_new", None)
         if c is None:
             return
+        try:
+            from treeaicoach import comfort
+
+            if not comfort.engine_allow(self, make_alert(AlertKind.MACRO_TIP, Level.INFO, t, text=c.text,
+                                                         key=f"macro:genie:{c.kind}"), t, gt, "text"):
+                return                       # noise budget (comfort.py): quiet moment / cap / repeat
+        except Exception:
+            log.debug("macro noise budget failed", exc_info=True)
         self._text_msg, self._text_kind = (t, c.text), "genie"
         self._topic_seen(f"genie:{c.kind}", t)          # the call owns its topic: no toast repeats it
         self.text_messages.append((t, "genie", f"{c.text} ({c.why})"))
@@ -316,6 +324,10 @@ class CoachingMixin:
     def _speak_alerts(self, said: list[Alert], t: float, gt: float) -> None:
         rec = self._recorder
         said = self._fresh_only(said, t)
+        if said:
+            from treeaicoach import comfort
+
+            said = [a for a in said if comfort.engine_allow(self, a, t, gt, "voice")]   # noise budget
         if self._gate is not None:
             for a in said:
                 self._gate.record(a, t)
@@ -361,6 +373,10 @@ class CoachingMixin:
                 from treeaicoach import discord_bot
 
                 fn = discord_bot.caller().on_call
+            from treeaicoach import comfort
+
+            if not comfort.bot_allow(self, kind, text, info):
+                return False                 # the bot's calls under the same caps (comfort.py)
             return bool(fn(kind, text, info))
         except Exception:
             log.debug("call hook failed", exc_info=True)
@@ -1688,8 +1704,11 @@ class CoachingMixin:
 
     def _write_text(self, a: Alert, t: float, gt: float) -> None:
         """A written-only message: HUD line + toast (by kind) + record."""
+        from treeaicoach import comfort
         from treeaicoach import voice_policy as vp
 
+        if not comfort.engine_allow(self, a, t, gt, "text"):
+            return                           # noise budget (comfort.py): quiet moment / cap / repeat
         kind = vp.kind_name(a)
         if not self._keeps_death_lesson(kind):
             self._text_msg, self._text_kind = (t, a.text), kind

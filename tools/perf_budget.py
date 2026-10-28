@@ -22,7 +22,7 @@ toasts: the overlay's busy case); the cost of rendering the synthetic minimap is
 analysis thread.
 
     python tools/perf_budget.py [--seconds 60] [--warmup 15] [--scenario real|demo] [--json out.json]
-                                [--ui-hz 1] [--real-windows] [--perf-mode auto|normal|low_end]
+                                [--ui-hz 1] [--real-windows] [--perf-mode auto|normal|low_end] [--me-dead]
 
 Targets (steady state, calm): total <= ~10 % of one core, overlay uploads <= 5 / s.
 """
@@ -202,7 +202,7 @@ class CountingCapture:
 class FakeLiveClient:
     """The real allgamedata sample with the screenshot's roster; the game clock runs."""
 
-    def __init__(self) -> None:
+    def __init__(self, me_dead: bool = False) -> None:
         d = json.loads((FIX / "allgamedata_sample.json").read_text(encoding="utf-8"))
         cnt = {"ORDER": 0, "CHAOS": 0}
         for p in d["allPlayers"]:
@@ -214,6 +214,9 @@ class FakeLiveClient:
             p["skinID"] = 0
             p["isDead"] = False
         me = [p for p in d["allPlayers"] if p["team"] == "ORDER"][0]
+        me["isDead"] = bool(me_dead)          # --me-dead: the "I am dead" case (low-value analysis)
+        if me_dead:
+            me["respawnTimer"] = 30.0
         d["activePlayer"]["riotId"] = me["riotId"]
         d["activePlayer"]["summonerName"] = me.get("summonerName", "")
         self.data = d
@@ -305,7 +308,8 @@ def _pct(vals: list[float], q: float) -> float | None:
 
 def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_hz: float = 1.0,
         real_windows: bool = False, perf_mode: str = "auto", cfg_changes: dict | None = None,
-        quiet: bool = False, real_voice: bool = True) -> dict[str, Any]:
+        quiet: bool = False, real_voice: bool = True, me_dead: bool = False,
+        static_ok: bool = False) -> dict[str, Any]:
     """Run the pipeline for ``warmup + seconds`` (wall clock) and return the measurements."""
     import dataclasses
     import logging
@@ -353,9 +357,15 @@ def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_
         if img is None:
             raise SystemExit(f"missing fixture {SCREEN}")
         cap = CountingCapture(img)
-        eng = CoachEngine(cfg, voice, live_client=FakeLiveClient(),
+        eng = CoachEngine(cfg, voice, live_client=FakeLiveClient(me_dead),
                           window_finder=lambda: Rect(0, 0, img.shape[1], img.shape[0]),
                           screen_capture=cap, enable_hotkeys=False, manage_overlay=False)
+        if not static_ok:
+            # the screenshot never moves: comfort.SceneMotion would slow the analysis down as in a
+            # paused game; a real minimap always moves (minions, camera), so it is off here
+            from types import SimpleNamespace
+
+            eng._scene_motion = SimpleNamespace(update=lambda f: False)
 
     ticks: list[tuple[float, float]] = []
     orig_step = eng.step
@@ -529,9 +539,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ui-hz", type=float, default=1.0, help="simulated launcher status polls / s (0 = none)")
     ap.add_argument("--real-windows", action="store_true", help="real layered windows (Windows / Wine)")
     ap.add_argument("--perf-mode", choices=("auto", "normal", "low_end"), default="auto")
+    ap.add_argument("--static-ok", action="store_true", help="let the still screenshot count as a paused game")
+    ap.add_argument("--me-dead", action="store_true", help="the player is dead (respawn timer running)")
     ap.add_argument("--json", default=None, help="write the measurements to this file")
     a = ap.parse_args(argv)
-    res = run(a.seconds, a.warmup, a.scenario, a.ui_hz, a.real_windows, a.perf_mode)
+    res = run(a.seconds, a.warmup, a.scenario, a.ui_hz, a.real_windows, a.perf_mode, me_dead=a.me_dead, static_ok=a.static_ok)
     if a.json:
         Path(a.json).write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
     return 0

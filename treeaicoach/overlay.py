@@ -357,9 +357,12 @@ def hud_width(screen: Any) -> int:
     return int(min(max(round(w), HUD_MIN_WIDTH), HUD_MAX_WIDTH))
 
 
-def flash_thickness(screen: Any) -> int:
-    """Danger-flash frame thickness (px): 10 px at 1080p."""
-    return int(max(6, round(10 * _scale_of(as_rect(screen)))))
+def flash_thickness(screen: Any, style: str = "full") -> int:
+    """Danger-flash frame thickness (px): 10 px at 1080p (``full``), 4 px (``subtle``, comfort.py)."""
+    from treeaicoach.comfort import flash_thickness_scale
+
+    k = flash_thickness_scale(style)
+    return int(max(6 if k >= 1.0 else 3, round(10 * k * _scale_of(as_rect(screen)))))
 
 
 def minimap_clearance(minimap: Any) -> int:
@@ -2160,10 +2163,11 @@ class OverlayManager:
         excl = [(r[0] - scr[0], r[1] - scr[1], r[2], r[3]) for r in (lay.flash_exclusions() if lay is not None else [])]
         if rel is not None:
             excl.append(rel)
-        key = (scr, rel, tuple(excl))
+        style = str(getattr(cfg, "danger_flash_style", "subtle") or "subtle")
+        key = (scr, rel, tuple(excl), style)
         alpha = int(round(255 * intensity))
         if key != flash_key or not any(w.visible for w in flash_wins):
-            strips = self._flash_strips(key, scr, excl)
+            strips = self._flash_strips(key, scr, excl, style)
             for w, strip in zip(flash_wins, strips):
                 if strip is None:
                     w.hide()
@@ -2178,7 +2182,7 @@ class OverlayManager:
             self._perf.add("ulw_flash_alpha", (time.perf_counter() - t) * 1000.0)
         return key
 
-    def _flash_strips(self, key: Any, scr: RectT, excl: list) -> list:
+    def _flash_strips(self, key: Any, scr: RectT, excl: list, style: str = "subtle") -> list:
         """The flash frame cut into its four edge strips ``(img, x, y)`` (top, bottom, left, right;
         None when empty), cached per geometry: rendered once, uploaded once per flash."""
         cache = getattr(self, "_flash_cache", None)
@@ -2186,7 +2190,7 @@ class OverlayManager:
             return cache[1]
         from treeaicoach import overlay_render as orr
 
-        th = flash_thickness(scr)
+        th = flash_thickness(scr, style)
         img = self._render("flash", orr.render_flash, scr[2], scr[3], 1.0, excl, thickness=th)
         strips = flash_strip_rects(scr[2], scr[3], len(orr.flash_profile(th)))
         out: list = []

@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 PREVIEW_FIELDS = frozenset({"overlay_enabled", "overlay_mode", "hud_enabled", "hud_position", "hud_detailed",
                             "radar_position", "radar_scale", "fog_mode", "overlay_timers", "jungle_paths",
-                            "plays_enabled", "plays_position", "danger_flash", "text_tips", "item_advice",
+                            "plays_enabled", "plays_position", "danger_flash", "danger_flash_style", "text_tips", "item_advice",
                             "win_prob_hud", "skill_level", "essentials_strip"})
 
 
@@ -90,6 +90,9 @@ class OverlayPage:
         app.switch_row(scr, "essentials_strip", "Barre de l'essentiel", "En haut de l'écran : or contre ton "
                        "adversaire, CS par minute, prochain objectif, jungler ennemi, prochain objet.")
         app.switch_row(scr, "danger_flash", "Bords rouges en cas de gank", None)
+        app.depends(app.choice_row(scr, "danger_flash_style", "Style des bords", "Discret : un trait fin, "
+                                   "une seule pulsation, jamais boutique ouverte, en base ou mort.",
+                                   (("subtle", "Discret"), ("full", "Marqué")), segmented=True), "danger_flash")
         app.switch_row(scr, "plays_enabled", "Coups notés", "Un badge après un bon coup ou une erreur.")
         app.depends(app.choice_row(scr, "plays_position", "Position du badge", None, PLAYS_POSITIONS,
                                    segmented=True), "plays_enabled")

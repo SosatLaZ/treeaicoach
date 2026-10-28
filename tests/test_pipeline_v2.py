@@ -46,6 +46,8 @@ def test_adaptive_detection_rate():
     loc = TE.FakeLocator(cap)
     eng, clock, _ = TE.live_engine(cap, loc, cfg=replace(Config(), perf_mode="normal"))
     run(eng, clock, 8)
+    eng._scene_static = False                       # (the fake minimap never moves: comfort.SceneMotion)
+    eng._scene_motion = NS(update=lambda f: False)
     prof = eng._budget.profile
     eng._governor.burst_until = -math.inf          # (the demo minimap has enemies near me)
     assert eng.detect_period(clock.t) == pytest.approx(1.0 / prof.calm_fps)

@@ -53,6 +53,10 @@ LOCATE_RETRY_START_S = 2.0
 #: 24, 48 s) - the frames are still skipped while the score is low - and the backoff is
 #: forgotten after OCCLUSION_FORGET_S of good scores. Real 2.5.0 game: 103 relocations in 32 min.
 SAME_RECT_TOL = 0.03
+#: Any game time (the app started mid-game, the first capture before the HUD is drawn...): an
+#: unverified fallback crop is analysed only after the locator failed for this long (real logs:
+#: the first crop of every session came from the fallback rectangle = phantom detections).
+FALLBACK_WAIT_S = 30.0
 OCCLUSION_FORGET_S = 60.0
 
 
@@ -190,6 +194,7 @@ class CaptureMixin:
             elif reason == "verify":
                 self._occl_n = 0
             self._minimap_rect, self._locate_method = loc.rect, "auto"
+            self._fallback_since = None
             self._locate_score = float(loc.score)
             self._last_good = (loc.rect, win, float(loc.score))
             self._loc_fails = 0
@@ -213,7 +218,11 @@ class CaptureMixin:
 
         fb_side = "left" if side == "left" else "right"
         self._minimap_rect, self._locate_method = fallback_rect(win, fb_side), "fallback"
-        self._next_locate = t + (LOCATE_RETRY_START_S if getattr(self, "_loc_early", False) else LOCATE_RETRY_S)
+        if getattr(self, "_fallback_since", None) is None:
+            self._fallback_since = t
+        waiting = t - float(self._fallback_since) < FALLBACK_WAIT_S
+        self._next_locate = t + (LOCATE_RETRY_START_S if getattr(self, "_loc_early", False) or waiting
+                                 else LOCATE_RETRY_S)
         log.info("Minimap not found: fallback rectangle %s", self._minimap_rect)
 
     def _grab_minimap(self, t: float, gt: float | None = None) -> np.ndarray | None:
@@ -262,8 +271,10 @@ class CaptureMixin:
         if guard is not None:
             # self-verification: our probe marker found in this frame = the overlay is captured
             guard.check_frame(frame, rect_t)
-        if self._locate_method == "fallback" and early:
-            # game start: analyse the default square only when it looks like the minimap
+        since = getattr(self, "_fallback_since", None)
+        if self._locate_method == "fallback" and (early or since is None or t - since < FALLBACK_WAIT_S):
+            # game start / first frames: analyse the default square only when it looks like the
+            # minimap (wait for the locator: retried every LOCATE_RETRY_START_S meanwhile)
             try:
                 from treeaicoach.minimap_locator import VERIFY_MIN_SCORE
 
