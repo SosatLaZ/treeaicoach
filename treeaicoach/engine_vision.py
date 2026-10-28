@@ -425,6 +425,43 @@ class VisionMixin:
             self._threat_hist.popleft()
         return max((lvl for _t, lvl, _a in self._threat_hist), default=0)
 
+    def _gate_threats(self, t: float, tracker: Any, gank: list[Alert],
+                      danger: list[Alert]) -> tuple[list[Alert], list[Alert]]:
+        """threat_gate.py: one threat = one alert across gank.py and danger.py (episode per
+        enemy, same tick merged, early warnings held until the enemy keeps closing in). Only
+        what is said / written is gated: the threat level (overlay) was taken before. Never raises."""
+        try:
+            gate = getattr(self, "_threat_gate", None)
+            if gate is None:
+                from treeaicoach.threat_gate import ThreatGate
+
+                gate = self._threat_gate = ThreatGate()
+            me = tracker.me() if tracker is not None else None
+            me_pos = me.position() if me is not None else None
+
+            def dist_of(key: str) -> float | None:
+                tr = tracker.get(key) if tracker is not None else None
+                if tr is None or not tr.visible or me_pos is None:
+                    return None
+                p = tr.position()
+                return None if p is None else math.hypot(p[0] - me_pos[0], p[1] - me_pos[1])
+
+            def members_dist(a: Alert) -> tuple[tuple[str, ...], float | None]:
+                mem = tuple(a.members) or ((a.alias,) if a.alias else ())
+                ds = [d for d in (dist_of(m) for m in mem) if d is not None]
+                return mem, (min(ds) if ds else None)
+
+            ids_d = {id(a) for a in danger}
+            out = gate.filter_tick(t, list(gank) + list(danger), members_dist, dist_of)
+            # a held early warning confirmed now is news of now (freshness guard, throttler)
+            g_out, d_out = [a for a in out if id(a) not in ids_d], [a for a in out if id(a) in ids_d]
+            g_out = [dataclasses.replace(a, t=t) if isinstance(a.t, (int, float)) and a.t < t - 0.5 else a
+                     for a in g_out]
+            return g_out, d_out
+        except Exception:
+            self._err.exception("Threat gate failed")
+            return gank, danger
+
     def _personal_danger(self, t: float, gt: float, game: GameInfo, tracker: Any, threat: int) -> list[Alert]:
         """Personal danger (danger.py): my HP / level / items vs the visible enemies on me, lane
         opponent and on-screen enemies included (written warning, spoken "Recule !" when low).

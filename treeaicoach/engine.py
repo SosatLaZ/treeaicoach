@@ -1139,6 +1139,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._ai_discord_pending = False
         self._discord_obj_done: set = set()
         self._ally_gank = None                  # ally_gank.AllyGankWatcher: new game, new watcher
+        self._threat_gate = None                # threat_gate.ThreatGate: one threat = one alert (per game)
         self._team_brain = None                 # team_brain.TeamBrain: per-friend calls (bot Discord)
         self._discord_roster_sig = None
         self._call("game_start")                # the bot joins my voice channel
@@ -1300,6 +1301,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         self._discord_ally_ganks(t, game, tracker)   # bot Discord: the ganks of my friends in voice
         threat = self._update_threat(t, gank_alerts)
         danger_now = self._personal_danger(t, gt, game, tracker, threat)
+        gank_alerts, danger_now = self._gate_threats(t, tracker, gank_alerts, danger_now)
         pd = getattr(self, "_danger", None)
         if pd is not None:          # 2 v 1 at low HP: gauge SAFE, no "go" advice (not a gank: no flash)
             threat = max(threat, int(getattr(pd.state(), "level", 0) or 0))

@@ -1055,6 +1055,15 @@ dans ma base pendant le siège, revue IA avec des objets anglais hors méta.
   (`review_item_candidates` : build + objets de base de la classe + contres, noms français) ; `ground_review` retire
   toute phrase qui nomme un autre objet (FR ou anglais) et francise les noms anglais autorisés ; réponse anglaise rejetée.
 
+* `threat_gate.py` (2026-10-28, `engine_vision._gate_threats`, après le calcul de la menace) : une menace = une
+  alerte. Épisode par ennemi sur 10 s toutes sortes confondues (gank, roam, collapse, danger perso, ne repasse
+  que si le niveau monte, s'il est 0,04 plus près, ou DANGER encore là 15 s après), même tick = plus haut niveau
+  d'abord (la raison écrite d'un « Recule ! » passe avec lui), « X a disparu » 1 fois / 5 min par ennemi,
+  alerte précoce (WARNING, ennemi à > 0,10) retenue 2,5–5 s et dite seulement s'il continue d'approcher.
+  Mesuré (`tools/gank_alerts_truth.py --gate`, « venu à ≤ 0,08 de moi en 20 s ») : 28 parties avec vérité
+  62,1 → 43,3 alertes / partie, précision 0,76 → 0,79, morts prévenues 3–25 s 177 → 174 (jungler 76 → 75) ;
+  22 sans vérité 38,6 → 28,2, 0,79 → 0,84, 88 → 88 ; Séraphine 3.1.0 (40 min) 72 → 53, 0,75 → 0,83.
+
 ### 17 bis. IA v3 « mastermind » (audit en direct sur Groq, 2026-10)
 
 * **Un seul instantané** (`build_snapshot`, ordre fixe `SNAP_ORDER`, < 1,5 k jetons, mesuré 600–1 000) :
