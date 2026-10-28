@@ -141,22 +141,25 @@ def synth(cache: Path) -> None:
 
 
 def corpus(cache: Path, stt_cache: Path) -> tuple[list[dict], list[dict]]:
-    """``(non-wake clips, wake clips)``: dicts with the raw 48 kHz int16 samples (``x``)."""
+    """``(non-wake clips, wake clips)``: dicts with the path of the raw 48 kHz int16 samples (``npy``)."""
     talk, wake = [], []
     for it in json.loads((cache / "corpus.json").read_text(encoding="utf-8")):
-        d = dict(it, x=np.load(cache / f"{it['id']}.npy"))
+        d = dict(it, npy=cache / f"{it['id']}.npy")
         (wake if it["wake"] else talk).append(d)
     for it in json.loads((stt_cache / "corpus.json").read_text(encoding="utf-8")):
-        d = dict(it, x=np.load(stt_cache / f"{it['id']}.npy"))
+        d = dict(it, npy=stt_cache / f"{it['id']}.npy")
         (wake if it["wake"] else talk).append(d)
     return talk, wake
 
 
-def _deg16(x: np.ndarray, cond: str, seed: int, cache: Path, key: str) -> bytes:
+def _deg16(npy: Path, cond: str, seed: int, cache: Path, key: str) -> bytes:
     f = cache / "deg" / f"{key}_{cond}.pcm"
     if not f.is_file():
         f.parent.mkdir(exist_ok=True)
-        f.write_bytes(sb.to16k(sb.degrade(x.astype(np.float32) / 32768.0, cond, seed)))
+        x = np.load(npy)
+        tmp = f.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_bytes(sb.to16k(sb.degrade(x.astype(np.float32) / 32768.0, cond, seed)))
+        tmp.replace(f)
     return f.read_bytes()
 
 
@@ -311,8 +314,10 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
     t0 = time.perf_counter()
     for r in range(reps):
         for k, it in enumerate(talk):
+            if k % args.shards != args.shard:
+                continue
             c = conds[(k + r) % len(conds)]
-            pcm = _deg16(it["x"], c, k + 1000 * r, cache, it["id"])
+            pcm = _deg16(it["npy"], c, k + 1000 * r, cache, it["id"])
             gap = float(rng.uniform(0.1, 1.5))
             if path == "pc":
                 sim.feed(pcm + _hiss(gap, k))
@@ -322,7 +327,7 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
                 sim.talk(sp)
                 sim.silence(gap + 0.3)
                 dur += len(sp) / 32000 + gap + 0.3
-            if k % 25 == 0:                          # music / game sounds without speech (PC: the mic hears
+            if k % 25 == args.shard:                          # music / game sounds without speech (PC: the mic hears
                 kind = ("music", "game")[(k // 25) % 2]   # the speakers; Discord: a friend's open mic)
                 lvl = float(rng.uniform(0.05, 0.3))
                 pcm = _noise16(8.0, kind, k + r, lvl)
@@ -339,8 +344,10 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
     hits, n, missed = 0, 0, []
     for r in range(reps):
         for k, it in enumerate(wake):
+            if k % args.shards != args.shard:
+                continue
             c = conds[(k + 2 * r) % len(conds)]
-            pcm = _deg16(it["x"], c, k + 7, cache, it["id"])
+            pcm = _deg16(it["npy"], c, k + 7, cache, it["id"])
             if path == "pc":
                 sim.events = []
                 sim.skip = 0
@@ -359,17 +366,40 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
                 e = sim.eng if path == "pc" else sim.sp.engine
                 missed.append(f"{it['id']}_{c}: {it['text']}  | heard « {e.last_text} »")
     h = dur / 3600.0
-    res = {"path": path, "chatter_h": round(h, 3), "chatter_clips": len(talk) * reps, "false_wakes": len(false),
+    res = {"path": path, "chatter_h": round(h, 3), "chatter_clips": -(-len(talk) // args.shards) * reps,
+           "false_wakes": len(false), "hits": hits,
            "false_per_h": round(len(false) / h, 2), "recall": round(hits / max(1, n), 3), "wake_clips": n,
            "false": [f"{t:.0f}s {w}" for t, w in false], "missed": missed,
            "run_s": round(time.perf_counter() - t0, 1)}
     return res
 
 
+def sum_shards(files: list[str]) -> None:
+    """One line per path: the shards' results added up."""
+    tot: dict[str, dict] = {}
+    for f in files:
+        for r in json.loads(Path(f).read_text(encoding="utf-8")):
+            t = tot.setdefault(r["path"], {"chatter_h": 0.0, "chatter_clips": 0, "false_wakes": 0, "hits": 0,
+                                           "wake_clips": 0, "false": [], "missed": []})
+            for k in ("chatter_h", "chatter_clips", "false_wakes", "hits", "wake_clips", "false", "missed"):
+                t[k] += r[k]
+    for p, t in tot.items():
+        print(f"{p}: {t['chatter_h']:.2f} h of chatter ({t['chatter_clips']} clips), {t['false_wakes']} false wakes "
+              f"= {t['false_wakes'] / max(t['chatter_h'], 1e-9):.2f}/h; recall {t['hits']}/{t['wake_clips']} "
+              f"= {t['hits'] / max(1, t['wake_clips']):.1%}")
+        for x in t["false"]:
+            print("  FALSE", x)
+        for x in t["missed"]:
+            print("  MISS ", x)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("synth", "run"))
-    ap.add_argument("--cache", required=True)
+    ap.add_argument("cmd", choices=("synth", "run", "sum"))
+    ap.add_argument("files", nargs="*", help="sum: the --out files of the shards")
+    ap.add_argument("--shard", type=int, default=0)
+    ap.add_argument("--shards", type=int, default=1, help="run 1/N of the clips (N processes in parallel)")
+    ap.add_argument("--cache", default="")
     ap.add_argument("--stt-cache", default="")
     ap.add_argument("--vosk-model", default="")
     ap.add_argument("--whisper", default="")
@@ -382,6 +412,9 @@ def main() -> None:
     args = ap.parse_args()
     if args.pylib:
         sys.path.insert(0, args.pylib)
+    if args.cmd == "sum":
+        sum_shards(args.files)
+        return
     cache = Path(args.cache)
     if args.cmd == "synth":
         synth(cache)
