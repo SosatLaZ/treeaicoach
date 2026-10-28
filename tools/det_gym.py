@@ -80,7 +80,9 @@ FOUNTAIN = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
 #: Renderer version (stored in the history: runs of different versions are not compared).
 #: v2 (tools/det_sim2real.py calibration): lighter fog, ring colours of the real crops
 #: (enemy chroma ~25, warm), lossless capture / light blur in most main games.
-GYM_VERSION = 2
+#: v3: our overlay labels ("SUP 9 s") are in the frame only on their first frame (overlay_guard
+#: removes every published layer, so only the not-yet-published one survives: capture lag).
+GYM_VERSION = 3
 MJMP_SLACK, MJMP_SPEED = 0.06, 0.035   # mjmp: "impossible self jump" = farther than this + speed * dt
 #: Library versions of the exe (requirements pins): the REFERENCE environment of the gym.
 #: Other versions give other numbers for the same code (OpenCV 5: other putText glyphs, exact
@@ -757,11 +759,16 @@ class Sim:
         if drawn and rng.random() < sc.labels * dt * len(drawn) / 5.0:
             o = drawn[int(rng.integers(len(drawn)))]
             self.labels.append((o.tid, self.t + float(rng.uniform(1.0, 3.0)), int(rng.integers(1 << 30)),
-                                float(rng.uniform(-0.1, 0.0)), float(rng.uniform(-0.04, 0.07))))
+                                float(rng.uniform(-0.1, 0.0)), float(rng.uniform(-0.04, 0.07)), self.t))
         self.labels = [lb for lb in self.labels if lb[1] > self.t]
-        for alias, _te, seed, dx, dy in self.labels:
+        for alias, _te, seed, dx, dy, t0 in self.labels:
             o = self.by_alias[alias]
             if not o.alive:
+                continue
+            if self.t > t0 + 1e-9:
+                # (v3) overlay_guard removes every layer the overlay has published: only a
+                # label's first frame (capture lag: its layer not published yet) reaches the
+                # detector
                 continue
             RA._text(img, np.random.default_rng(seed), (o.pos[0] + dx) * n, (o.pos[1] + dy) * n,
                      n / 300.0 * 0.4)
