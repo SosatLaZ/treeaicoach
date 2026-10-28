@@ -107,3 +107,35 @@ def test_held_icon_seen_again_elsewhere_is_not_an_impossible_jump():
     assert not t._impossible(10.1, 0.75, 0.5)
     # farther than he can have walked from both: held back
     assert t._impossible(10.1, 0.5 + T.MAX_WALK_SPEED * 10.1 + T.JUMP_SLACK + 0.05, 0.5)
+
+
+def test_icon_cut_by_the_corner_named_by_its_visible_part():
+    """Idea 28: a portrait cut by the map corner (fountain) is scored on its part inside."""
+    import pytest
+
+    from treeaicoach.champions import ChampionDB
+    from treeaicoach.render import ChampionSprite, MinimapRenderer, Scene
+    from treeaicoach.roster_matcher import RosterEntry, RosterMatcher
+
+    db = ChampionDB(cache_dir=Path("/nonexistent-treeaicoach-cache"))
+    r = MinimapRenderer()
+    if len(db) < 20 or not r.textures():
+        pytest.skip("icons / textures missing")
+    names = ["Garen", "Lux", "Ashe", "Zed", "Ahri"]
+    icons = {a: db.load_icon(a) for a in names}
+    if any(v is None for v in icons.values()):
+        pytest.skip("icons missing")
+    ents = [RosterEntry(a, rel, icons[a]) for a, rel in
+            zip(names, ["self", "ally", "ally", "enemy", "enemy"])]
+    m = RosterMatcher(db=None)
+    m.set_entries(ents)
+    rad, size = 0.047, 300
+    sc = Scene(texture=str(r.textures()[0]), size=size, camera=(0.5, 0.1, 0.775, 0.255),
+               champions=[ChampionSprite(u=0.03, v=0.968, r=rad, relation="ally", icon=icons["Lux"]),
+                          ChampionSprite(u=0.5, v=0.5, r=rad, relation="self", icon=icons["Garen"])])
+    img = r.render(sc)
+    m._state.scale = 2 * rad
+    alias, best, second = m.name_partial(img, 0.03, 0.968, ["Lux", "Ashe"])
+    assert alias == "Lux" and best >= 0.6 and best - second >= 0.15
+    assert m.name_partial(img, 0.03, 0.968, []) == (None, 0.0, 0.0)
+    assert m.name_partial(None, 0.03, 0.968, ["Lux"]) == (None, 0.0, 0.0)     # never raises

@@ -1075,7 +1075,7 @@ class HybridDetector(BaseDetector):
             if any(math.hypot(d.u - u, d.v - v) < self.FOUNTAIN_DIST for u, v in self._fountains):
                 # (a corner icon kept by _corner_icon) only when it can be named: an anonymous
                 # one cost identity on the real cases (tk_botlane Kayn) for no gain to the user
-                alias = self._fountain_alias(d, dets, ents, dead)
+                alias = self._fountain_alias(d, dets, ents, dead, img)
                 if alias is None:
                     continue
             free[side] -= 1
@@ -1088,7 +1088,8 @@ class HybridDetector(BaseDetector):
         return (isinstance(self.fallback, OnnxDetector) and d.score >= self.FOUNTAIN_EXTRA_MIN
                 and any(math.hypot(d.u - u, d.v - v) < self.CORNER_DIST for u, v in self._fountains))
 
-    def _fountain_alias(self, d: Detection, dets: list[Detection], ents: Any, dead: set) -> str | None:
+    def _fountain_alias(self, d: Detection, dets: list[Detection], ents: Any, dead: set,
+                        img: np.ndarray | None = None) -> str | None:
         """An ally icon cut by the corner in our fountain whose portrait was not recognised: allies
         are never in the fog, so when exactly one living ally is unmatched, it is that one."""
         try:
@@ -1097,7 +1098,17 @@ class HybridDetector(BaseDetector):
             seen = {k.alias for k in dets if k.alias}
             left = [e.alias for e in ents if getattr(e, "relation", "") != "enemy"
                     and e.alias not in dead and e.alias not in seen]
-            return left[0] if len(left) == 1 else None
+            if len(left) == 1:
+                return left[0]
+            name = getattr(self.matcher, "name_partial", None)
+            if len(left) > 1 and img is not None and callable(name):
+                # several allies unmatched: the visible part of the portrait names it (idea 28)
+                from treeaicoach import roster_matcher as _rm
+                alias, best, second = name(img, d.u, d.v, left)
+                if alias is not None and best >= _rm.CORNER_ID_MIN and \
+                        best - second >= _rm.CORNER_ID_GAP:
+                    return alias
+            return None
         except Exception:
             return None
 

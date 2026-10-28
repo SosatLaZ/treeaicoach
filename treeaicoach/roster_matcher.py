@@ -304,6 +304,11 @@ STACKV_MIN = 0.7
 STACKV_TEAM = 0.8
 STACKV_MAX = 4
 STACKV_ID_MIN = 0.6
+#: an icon cut by the map border (fountain corner): portrait score on its visible part
+#: (HybridDetector._fountain_alias, idea 28), visible area at least CORNER_ID_AREA
+CORNER_ID_MIN = 0.6
+CORNER_ID_GAP = 0.15
+CORNER_ID_AREA = 0.4
 STACKV_ID_GAP = 0.2
 STACKV_SEARCH = 3
 #: Mirror match: a stack proposal is only given to a twin who can be there (his last matched
@@ -2599,6 +2604,59 @@ class RosterMatcher:
                     (best is None or icon > best[0]):
                 best = (icon, q)
         return best[1] if best is not None else None
+
+    def name_partial(self, bgr: np.ndarray, u: float, v: float, aliases: Sequence[str],
+                     search: int = 2) -> tuple[str | None, float, float]:
+        """Portrait identity of an icon cut by the map border at ``(u, v)`` (idea 28: a
+        partial template anchored to the border): masked NCC of each of ``aliases`` on the
+        part of the icon inside the image, best over +-``search`` working px. Returns
+        ``(alias, best, second)``; alias None when nothing scored. Never raises."""
+        try:
+            st = self._state
+            if st.scale is None or not aliases:
+                return None, 0.0, 0.0
+            H, W = bgr.shape[:2]
+            inner_full = INNER_RATIO * st.scale * W
+            factor = min(1.0, WORK_INNER_PX / max(inner_full, 1e-6))
+            work = self._work(bgr, factor)
+            fx, fy = work.shape[1] / float(W), work.shape[0] / float(H)
+            bank = self._bank(inner_full * fx)
+            feat = _features(work)
+            s = bank.size
+            Hf, Wf = feat.shape[:2]
+            half = (s - 1) / 2.0
+            idx = [i for i, e in enumerate(self._entries) if e.alias in set(aliases)]
+            if not idx or len(bank.raw) != len(self._entries):
+                return None, 0.0, 0.0
+            pad = s + 2 * search + 2
+            fp = np.zeros((Hf + 2 * pad, Wf + 2 * pad, 3), np.float32)
+            fp[pad:pad + Hf, pad:pad + Wf] = feat
+            inside = np.zeros(fp.shape[:2], np.float32)
+            inside[pad:pad + Hf, pad:pad + Wf] = 1.0
+            cx, cy = u * W * fx, v * H * fy
+            scores = {}
+            for dx in range(-search, search + 1):
+                for dy in range(-search, search + 1):
+                    tx = int(round(cx - half - 0.5)) + dx + pad
+                    ty = int(round(cy - half - 0.5)) + dy + pad
+                    if tx < 0 or ty < 0 or tx + s > fp.shape[1] or ty + s > fp.shape[0]:
+                        continue
+                    mk = bank.mask * inside[ty:ty + s, tx:tx + s]
+                    if float(mk.sum()) < CORNER_ID_AREA * max(bank.n, 1e-6):
+                        continue
+                    P = fp[ty:ty + s, tx:tx + s]
+                    for i in idx:
+                        sc = float(masked_ncc(P[None], bank.raw[i], mk[None], wl=self._wl)[0, 0])
+                        if sc > scores.get(i, -9.0):
+                            scores[i] = sc
+            if not scores:
+                return None, 0.0, 0.0
+            ranked = sorted(scores.items(), key=lambda z: -z[1])
+            second = ranked[1][1] if len(ranked) > 1 else 0.0
+            return self._entries[ranked[0][0]].alias, ranked[0][1], second
+        except Exception:
+            self._errors.exception("Roster matcher: border identity failed")
+            return None, 0.0, 0.0
 
     def _stack_proposals(self, bgr: np.ndarray, feat: np.ndarray, bank: _Bank, accepted: list,
                          used: set, dead: set, kx: float, ky: float, r_norm: float,
