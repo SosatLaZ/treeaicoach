@@ -49,6 +49,8 @@ CHECK_HZ = 2.0                 # ward-placed detection rate
 PLACE_R = 0.045                # a ward within this map distance of the spot counts as placed
 AVOID_R = 0.055                # ... but not inside a champion icon (ring colours look like wards)
 BLOB_MAX = 0.016               # ward glyph (~5 px star) bbox <= this fraction of the width + 1 px (minion dots: 0.018-0.026)
+RING_MARGIN = 0.06             # margin (x width) searched around the patch for icon rings
+RING_SPAN = (0.04, 0.14)       # a blue component this wide AND tall (x width) is a champion icon ring
 BLOB_TOL = 0.008               # a blob "did not move" between two checks (fraction of the width)
 BASELINE_CHECKS = 2            # the blobs seen in the first checks are the baseline (not new)
 PLACE_HITS = 3                 # consecutive checks with the same new static blob
@@ -94,9 +96,22 @@ class WardPlacedDetector:
             x1, y1 = min(W, int(u * W + r) + 1), min(H, int(v * H + r) + 1)
             if x1 - x0 < 4 or y1 - y0 < 4:
                 return []
-            mask = ward_mask(minimap_bgr[y0:y1, x0:x1])
+            # the patch plus an icon-sized margin: the blue ring of an ally icon reaching into
+            # the patch tells that a blob is part of that icon (real captures: blue portrait
+            # pixels inside an ally icon were "wards" when the icon centre was a bit off)
+            mg = int(round(RING_MARGIN * W))
+            X0, Y0 = max(0, x0 - mg), max(0, y0 - mg)
+            X1, Y1 = min(W, x1 + mg), min(H, y1 + mg)
+            full = ward_mask(minimap_bgr[Y0:Y1, X0:X1])
+            mask = full[y0 - Y0:y1 - Y0, x0 - X0:x1 - X0]
             if not mask.any():
                 return []
+            rings: list[tuple[int, int, int, int]] = []
+            nf, _lf, sf, _cf = cv2.connectedComponentsWithStats(full, connectivity=8)
+            for i in range(1, nf):
+                fx, fy, fw, fh, _a = (int(c) for c in sf[i])
+                if RING_SPAN[0] * W <= min(fw, fh) and max(fw, fh) <= RING_SPAN[1] * W:   # icon ring
+                    rings.append((X0 + fx, Y0 + fy, X0 + fx + fw, Y0 + fy + fh))
             n, _lab, st, cen = cv2.connectedComponentsWithStats(mask, connectivity=8)
             big = max(3.0, BLOB_MAX * W + 1.0)
             av = [(float(a[0]), float(a[1])) for a in (avoid or ()) if a is not None]
@@ -108,6 +123,10 @@ class WardPlacedDetector:
                 if x == 0 or y == 0 or x + w >= x1 - x0 or y + h >= y1 - y0:
                     if w > 2 or h > 2:            # cut by the patch border: part of something bigger
                         continue
+                bx, by = x0 + float(cen[i][0]), y0 + float(cen[i][1])
+                if any(math.hypot(bx - 0.5 * (a + c), by - 0.5 * (b + d)) <= 0.5 * max(c - a, d - b) + 1
+                       for a, b, c, d in rings):
+                    continue                      # inside an icon ring: portrait pixels
                 cu, cv_ = (x0 + float(cen[i][0]) + 0.5) / W, (y0 + float(cen[i][1]) + 0.5) / H
                 if math.hypot(cu - u, cv_ - v) > radius:
                     continue

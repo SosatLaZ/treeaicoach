@@ -510,3 +510,24 @@ def test_engine_wiring_hotkey_and_overlay():
     eng.apply_config(_cfg(ward_guide=False))
     guides, world = eng._ward_overlay(0.6, eng._tactics, MINIMAP, SCREEN, None)
     assert world == [] and not any(isinstance(g, wg.GuideView) for g in guides)
+
+
+def test_blue_portrait_pixels_inside_an_ally_ring_are_no_ward():
+    """Real captures: blue pixels of an ally portrait (icon centre a bit off the avoid point)
+    were taken for a fresh ward; a lone ward glyph beside the icon is still found."""
+    import cv2
+    import numpy as np
+
+    from treeaicoach.ward_guide import WardPlacedDetector
+
+    W = 300
+    img = np.full((W, W, 3), (60, 90, 100), np.uint8)
+    c = (150, 150)
+    cv2.circle(img, c, 13, (40, 60, 70), -1)                       # portrait
+    cv2.circle(img, c, 13, (225, 150, 75), 2)                      # blue ally ring
+    cv2.circle(img, (146, 147), 2, (235, 170, 70), -1)             # blue pixels in the portrait
+    det = WardPlacedDetector()
+    assert det.blobs(img, (146 / W, 147 / W), 0.045) == []
+    cv2.circle(img, (178, 160), 2, (235, 170, 70), -1)             # a ward glyph beside it
+    b = det.blobs(img, (176 / W, 158 / W), 0.045)
+    assert b and abs(b[0][0] - 178.5 / W) < 0.01
