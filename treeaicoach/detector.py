@@ -139,6 +139,32 @@ def _as_bgr(img: Any) -> np.ndarray | None:
     return None
 
 
+#: Lifted black point (washed-out capture: Windows HDR desktop / SDR tone mapping, colour
+#: profile): the official minimap always shows pure-black margins and walls (1st percentile
+#: of the darkest channel = 0 on every real capture), so a darkest-channel 1st percentile at
+#: or above BLACK_LIFT_MIN is a lift, removed by a linear stretch of every channel (idea
+#: 26/79). Real-case HDR simulation (lift 31 + 0.8 contrast): seraphine recall 0.879 -> 0.905,
+#: precision 0.953 -> 0.972; garen 0.892 -> 0.901. A normal capture is left untouched.
+BLACK_LIFT_MIN = 12.0
+BLACK_LIFT_MAX = 128.0          # brighter than this: not a minimap (a loading screen, a menu)
+_BLACK_PROBE = 64
+
+
+def unlift_black(img: np.ndarray) -> np.ndarray:
+    """``img`` (BGR uint8) with a lifted black point stretched back to 0; ``img`` itself when
+    the black point is normal (the common case: ~0.05 ms) or on any error. Never raises."""
+    try:
+        small = cv2.resize(img, (_BLACK_PROBE, _BLACK_PROBE), interpolation=cv2.INTER_NEAREST)
+        b = float(np.percentile(small.min(axis=2), 1))
+        if not BLACK_LIFT_MIN <= b <= BLACK_LIFT_MAX:
+            return img
+        lut = np.clip((np.arange(256, dtype=np.float32) - b) * (255.0 / (255.0 - b)) + 0.5,
+                      0, 255).astype(np.uint8)
+        return cv2.LUT(img, lut)
+    except Exception:
+        return img
+
+
 def _resize_to(img: np.ndarray, size: int) -> np.ndarray:
     """Square resize, INTER_AREA (the filter used for training, see :func:`preprocess`)."""
     h, w = img.shape[:2]
@@ -1120,10 +1146,12 @@ class HybridDetector(BaseDetector):
     def detect(self, minimap_bgr: np.ndarray) -> list[Detection]:
         """Roster matches (+ unexplained generic detections); [] on error. Never raises."""
         try:
+            img = _as_bgr(minimap_bgr)
+            if img is not None:
+                minimap_bgr = img = unlift_black(img)
             if not self._has_roster():
                 return list(self.fallback.detect(minimap_bgr) or [])
             dets = list(self.matcher.detect(minimap_bgr) or [])
-            img = _as_bgr(minimap_bgr)
             if img is None:
                 return dets
             try:

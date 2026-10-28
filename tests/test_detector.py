@@ -368,3 +368,18 @@ def test_classic_detector_blank_and_invalid_inputs():
 def test_classic_detector_invalid_radii_use_defaults():
     det = ClassicDetector(r_min=0.5, r_max=0.1)
     assert (det.r_min, det.r_max) == (0.025, 0.075)
+
+
+def test_unlift_black_restores_washed_out_capture_and_keeps_normal_one():
+    rng = np.random.default_rng(3)
+    img = rng.integers(0, 256, (120, 120, 3), dtype=np.uint8)
+    img[:30] = 0                                    # the minimap's black margins
+    assert D.unlift_black(img) is img               # normal black point: untouched
+    lifted = (31 + img.astype(np.float32) * (224 / 255)).astype(np.uint8)   # HDR-like lift
+    out = D.unlift_black(lifted)
+    assert out is not lifted and out.dtype == np.uint8 and out.shape == img.shape
+    assert int(out[:30].max()) == 0
+    assert float(np.abs(out.astype(np.int16) - img).mean()) < 2.0
+    grey = np.full((60, 60, 3), 200, np.uint8)      # not a minimap (menu, loading screen)
+    assert D.unlift_black(grey) is grey
+    assert D.unlift_black(np.zeros((0, 0, 3), np.uint8)).size == 0    # never raises
