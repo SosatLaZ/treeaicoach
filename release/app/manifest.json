@@ -1,25 +1,25 @@
 {
- "version": "3.0.0",
+ "version": "3.1.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "13ca0a71733cba5f4c7f8dffa6809ed50cac2e3e8db2112bd7fc9ae37d17f2d6",
+ "sha256": "01d60481418ebf7377731d50ff2f3e4453462d5aaf7d4f356b16797980adfb80",
  "chunks": [
   {
-   "name": "3.0.0/part-01.zip",
-   "size": 88161309,
-   "sha256": "e6fd615643dc1e486f3654207707195a2b601781e1aaa645b54bb05f63bf831c",
-   "files": 239
+   "name": "3.1.0/part-01.zip",
+   "size": 88166888,
+   "sha256": "ecfef67b5b4090e118ee6eb78621b57f28f9661c3c5b38927d4bef450013b2d9",
+   "files": 237
   },
   {
-   "name": "3.0.0/part-02.zip",
-   "size": 9620310,
-   "sha256": "66cc08be2bd67e0281e5cb6d52dc683f0cda695960221b64153f023814a019bd",
-   "files": 475
+   "name": "3.1.0/part-02.zip",
+   "size": 9639714,
+   "sha256": "052cebeac43c87b0fc5be2e4d1d43142ef4048a438da2921132dfe9613e7dad0",
+   "files": 477
   }
  ],
- "total_size": 97781619,
+ "total_size": 97806602,
  "launcher": {
-  "sha256": "1b1a5ac7e14b6b213026c7244d3b724012cacc46ab841716fe866785e43c4a6e",
-  "size": 7532018
+  "sha256": "61be9860681b223831791bfeb6f74f2e44aa0ec785a26423c73476f4953973e5",
+  "size": 7532785
  },
- "notes": "3.0 : plus de chiffres p\u00e9rim\u00e9s, mode rapide corrig\u00e9, arbitre des conseils, primes."
+ "notes": "3.1 : surbrillance boutique, d\u00e9tection des champions et de ta position am\u00e9lior\u00e9es."
 }

@@ -1,6 +1,6 @@
 {
-  "version": "3.0.0",
-  "sha256": "1b1a5ac7e14b6b213026c7244d3b724012cacc46ab841716fe866785e43c4a6e",
-  "size": 7532018,
-  "notes": "3.0 : plus de chiffres périmés, mode rapide corrigé, arbitre des conseils, primes."
+  "version": "3.1.0",
+  "sha256": "61be9860681b223831791bfeb6f74f2e44aa0ec785a26423c73476f4953973e5",
+  "size": 7532785,
+  "notes": "3.1 : surbrillance boutique, détection des champions et de ta position améliorées."
 }
