@@ -106,7 +106,7 @@ FOG_FLASH = 0.027
 # jungler just gone from the minimap next to me (jungler_map state)
 VANISH_MAX_S = 10.0         # he left the minimap at most this long ago
 VANISH_ETA_S = 7.0
-VANISH_MIN_MASS = 0.75      # share of his map mass within VANISH_ETA_S of walking from me
+VANISH_MIN_MASS = 0.65      # (36 truth games: 35 deaths warned vs 32 at 0.75, false 14 vs 13) share of his map mass within VANISH_ETA_S of walking from me
 VANISH_MAX_AGE_S = 3.0      # map state older than this (game time) is not used
 PAST_MID_MARGIN = 0.05      # past the river diagonal (u - v) by this much = "past mid-lane"
 

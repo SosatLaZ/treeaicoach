@@ -31,7 +31,7 @@ from treeaicoach.fmtutil import finite_loose as _f
 log = logging.getLogger(__name__)
 
 MIN_GAMES = 8
-MIN_SIDE = 3                     # games on each side of a threshold
+MIN_SIDE = 6                     # games on each side of a threshold (3 picked flukes: "3 wins on 3")
 MIN_GAP = 0.12                   # smoothed win-rate gap below this is noise on a dozen games
 MIN_GAME_S = 600.0
 BACK_MIN_S = 90.0                # purchases before this are the starting items
