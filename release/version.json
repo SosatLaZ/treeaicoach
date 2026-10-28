@@ -1,6 +1,6 @@
 {
-  "version": "3.3.0",
-  "sha256": "87f2936d1b310ae3b069182da28bf5efdbf00af402fc4a8490c538d095c93747",
-  "size": 7531465,
-  "notes": "3.3 : moins de bruit, IA libre, rangs justes, rapport d'analyse, voix Rémy, moins de charge PC."
+  "version": "3.4.0",
+  "sha256": "314c7911b72109714fd78bf805e4b7e1c01a959da133b377647a72585737c846",
+  "size": 7531530,
+  "notes": "3.4 : bot qui ne se réveille plus seul, écran de chargement, lanceur plus simple et rapide, ménage."
 }
