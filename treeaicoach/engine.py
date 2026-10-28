@@ -1474,6 +1474,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             out["champions_seen"], out["champions_expected"] = seen, expected
             out["minimap_score"] = None if self._minimap_score is None else round(self._minimap_score, 3)
             out["locate_method"] = self._locate_method
+            out["detector_provider"] = getattr(self._detector, "provider", None)   # "CPU" / "DirectML"
             out["minimap_rect"] = self._minimap_rect.to_dict() if self._minimap_rect is not None else None
             fps = self._governor.fps(now, self._paused, self._unfocused_since is not None)
             out["detect_rate"] = {"target_fps": round(fps, 1), "measured_fps": round(self._fps, 1),

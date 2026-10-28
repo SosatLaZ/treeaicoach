@@ -335,12 +335,18 @@ def load_model_meta(meta_path: Path | None) -> dict:
 
 
 class OnnxDetector(BaseDetector):
-    """CNN detector (onnxruntime, CPU). Initialization errors raise; ``detect`` never raises."""
+    """CNN detector (onnxruntime; CPU, or DirectML when gpu_runtime enabled it). Initialization errors raise; ``detect`` never raises."""
 
     name = "onnx"
 
     def __init__(self, model_path: Path | None = None, meta_path: Path | None = None,
                  threshold: float = 0.0, threads: int = 2) -> None:
+        try:
+            from treeaicoach import gpu_runtime  # noqa: PLC0415
+
+            gpu_runtime.activate()     # opt-in DirectML build, before the first onnxruntime import
+        except Exception:
+            log.debug("GPU runtime check failed", exc_info=True)
         try:
             import onnxruntime as ort
         except Exception as exc:  # ImportError, DLL load failure on Windows...
@@ -399,11 +405,31 @@ class OnnxDetector(BaseDetector):
             available = ort.get_available_providers()
             if "CPUExecutionProvider" not in available:
                 raise RuntimeError(f"CPUExecutionProvider unavailable ({available})")
+            from treeaicoach.gpu_runtime import detector_providers  # noqa: PLC0415
+
+            providers = detector_providers(available)
         except AttributeError:  # pragma: no cover - very old onnxruntime
             pass
         # bytes rather than a path: works with any (non-ASCII) Windows path
         model_bytes = self.model_path.read_bytes()
-        self._sess = ort.InferenceSession(model_bytes, sess_options=so, providers=providers)
+        self._ort, self._so, self._model_bytes = ort, so, model_bytes
+        self._gpu_errors = 0
+        if len(providers) > 1:
+            try:
+                so.enable_mem_pattern = False          # DirectML requirements
+                self._sess = ort.InferenceSession(model_bytes, sess_options=so, providers=providers)
+            except Exception as exc:
+                log.warning("GPU detector unavailable (%s): CPU", exc)
+                providers = ["CPUExecutionProvider"]
+                so.enable_mem_pattern = True
+        if len(providers) == 1:
+            self._sess = ort.InferenceSession(model_bytes, sess_options=so, providers=providers)
+        try:
+            first = str(self._sess.get_providers()[0])
+        except Exception:
+            first = "CPUExecutionProvider"
+        #: execution provider actually used ("CPU" / "DirectML"), for the logs and the health line
+        self.provider = "DirectML" if first.startswith("Dml") else "CPU"
 
         # ---- input ---------------------------------------------------------------
         inputs = self._sess.get_inputs()
@@ -449,8 +475,20 @@ class OnnxDetector(BaseDetector):
             if tuple(np.shape(arr)) != exp:
                 raise ValueError(f"ONNX output {name!r} has shape {np.shape(arr)}, expected {exp}")
         self._errors = _RateLimitedLog()
-        log.info("ONNX detector ready: %s (input %d, stride %d, threshold %.2f, %d thread(s))",
-                 self.model_path.name, size, self.stride, self.threshold, so.intra_op_num_threads)
+        log.info("ONNX detector ready: %s (input %d, stride %d, threshold %.2f, %d thread(s), %s)",
+                 self.model_path.name, size, self.stride, self.threshold, so.intra_op_num_threads,
+                 self.provider)
+
+    def _to_cpu(self) -> None:
+        """GPU errors (driver reset, device removed...): rebuild the session on the CPU."""
+        try:
+            self._so.enable_mem_pattern = True
+            self._sess = self._ort.InferenceSession(self._model_bytes, sess_options=self._so,
+                                                    providers=["CPUExecutionProvider"])
+            self.provider = "CPU"
+            log.warning("ONNX detector: GPU errors, back on the CPU")
+        except Exception:
+            log.exception("ONNX detector: CPU session rebuild failed")
 
     def detect(self, minimap_bgr: np.ndarray) -> list[Detection]:
         """Run the CNN on a BGR minimap; [] on invalid input or error. Never raises."""
@@ -464,6 +502,10 @@ class OnnxDetector(BaseDetector):
                                   input_size=self.input_size, max_det=self.max_det)
         except Exception:
             self._errors.exception("ONNX detection failed")
+            if getattr(self, "provider", "CPU") != "CPU":
+                self._gpu_errors += 1
+                if self._gpu_errors >= 3:
+                    self._to_cpu()
             return []
 
 
@@ -1055,7 +1097,7 @@ def _generic_detector(b: str, threshold: float) -> BaseDetector:
                 log.info("No ONNX model at %s: using the classic detector", model)
             else:
                 det = OnnxDetector(model, threshold=threshold, threads=ONNX_THREADS)
-                log.info("Detector: ONNX (%s)", model.name)
+                log.info("Detector: ONNX (%s, %s)", model.name, getattr(det, "provider", "CPU"))
                 return det
         except Exception as exc:
             log.warning("ONNX detector unavailable (%s): using the classic detector", exc,

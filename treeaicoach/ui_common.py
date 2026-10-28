@@ -846,7 +846,8 @@ def health_text(h: Any) -> tuple[str, int]:
         det = h.get("detect_ms") if isinstance(h.get("detect_ms"), dict) else {}
         p50, p95 = _p(det, "p50"), _p(det, "p95")
         if p50 is not None:
-            bits.append(f"détection {p50:.0f}/{p95:.0f} ms" if p95 is not None else f"détection {p50:.0f} ms")
+            gpu = " (carte graphique)" if h.get("detector_provider") == "DirectML" else ""
+            bits.append((f"détection {p50:.0f}/{p95:.0f} ms" if p95 is not None else f"détection {p50:.0f} ms") + gpu)
             if p95 is not None and p95 > 120:
                 level = max(level, 1)
         ov = h.get("overlay") if isinstance(h.get("overlay"), dict) else {}
