@@ -197,7 +197,11 @@ def test_bench_demo_detection_latency() -> None:
     lb = _bench()
     res = lb.detect_latency(fps=Config().target_fps, phases=1)
     assert res["danger"] and res["danger"][0] < 0.6 - 0.05, res     # + ~0.001 s beep start
-    assert res["warn"] and res["warn"][0] < 1.0, res
+    # the early « X vient vers toi » is held threat_gate.HOLD_S (2.5 s) and said only if X keeps
+    # closing in (measured on 28 truth games: precision 0.32 -> 0.66); the DANGER above is never held
+    from treeaicoach import threat_gate
+
+    assert res["warn"] and res["warn"][0] < threat_gate.HOLD_S + 0.5, res
     assert res["tick_ms_mean"] < 1000.0 / Config().target_fps
 
 
