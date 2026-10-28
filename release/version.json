@@ -1,6 +1,6 @@
 {
-  "version": "3.2.0",
-  "sha256": "4f486fac64df1825303ae4683371552bf26c489ef30d2c5d3c9615cc1955b105",
-  "size": 7531299,
-  "notes": "3.2 : moins de fausses alertes de gank, noms LoL mieux compris, F12 maintenu."
+  "version": "3.3.0",
+  "sha256": "87f2936d1b310ae3b069182da28bf5efdbf00af402fc4a8490c538d095c93747",
+  "size": 7531465,
+  "notes": "3.3 : moins de bruit, IA libre, rangs justes, rapport d'analyse, voix Rémy, moins de charge PC."
 }

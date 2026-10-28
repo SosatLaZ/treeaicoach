@@ -1,25 +1,25 @@
 {
- "version": "3.2.0",
+ "version": "3.3.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "e26f0a8d628ceede64011ca79a5c61ae127ea4a602c411c05d1155b70bec9b20",
+ "sha256": "08592b63bf3813a5e71bcef470b68458260e6bdc92b4e736c1a359ca910cf214",
  "chunks": [
   {
-   "name": "3.2.0/part-01.zip",
-   "size": 88177688,
-   "sha256": "7f2b1198ffdfcdecce01fea70f6679f51b3bd3d5c39540325be273a25c7d9f45",
-   "files": 160
+   "name": "3.3.0/part-01.zip",
+   "size": 88174059,
+   "sha256": "3dcc362a5a500265486862168c21e3e4032088170dbaa035b9b5b7ae3dc1a94c",
+   "files": 153
   },
   {
-   "name": "3.2.0/part-02.zip",
-   "size": 10560711,
-   "sha256": "fc5f906dd54346290cd8dadcbb2b691509b05bb13427cc5d677a2680e9259f2d",
-   "files": 555
+   "name": "3.3.0/part-02.zip",
+   "size": 10626316,
+   "sha256": "55587e085ca64f369a33e2af47d868b3c7836949dd39f3c90577b5a4e2e02faa",
+   "files": 562
   }
  ],
- "total_size": 98738399,
+ "total_size": 98800375,
  "launcher": {
-  "sha256": "4f486fac64df1825303ae4683371552bf26c489ef30d2c5d3c9615cc1955b105",
-  "size": 7531299
+  "sha256": "87f2936d1b310ae3b069182da28bf5efdbf00af402fc4a8490c538d095c93747",
+  "size": 7531465
  },
- "notes": "3.2 : moins de fausses alertes de gank, noms LoL mieux compris, F12 maintenu."
+ "notes": "3.3 : moins de bruit, IA libre, rangs justes, rapport d'analyse, voix R\u00e9my, moins de charge PC."
 }
