@@ -156,6 +156,8 @@ class AlertsPage:
                                          lambda x: f"{x:+.0f}", to_value=lambda x: int(x))
         app.slider_row(v, "voice_volume", "Volume", None, 0, 100, 5, lambda x: f"{x:.0f} %",
                        to_value=lambda x: int(x))
+        app.switch_row(v, "voice_ducking", "Voix plus douce hors danger",
+                       "Les conseils calmes sont dits un peu moins fort que « Recule » et les ganks.")
         self._sync_engine_rows()
 
     def _tick_listen(self) -> None:
