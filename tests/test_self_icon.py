@@ -97,10 +97,13 @@ class _Game:
             < 0.5 * self.rad
 
 
-def _run(game, m, n, k=0, dt=0.2):
+def _run(game, m, n, k=0, dt=0.2, wrong=None):
     ok = tot = 0
     for f in range(n):
         dets = m.detect(game.frame(f * dt, dt), t=f * dt)
+        if wrong is not None:      # champion k reported away from its icon
+            wrong[0] += sum(1 for x in dets if x.alias == game.roster[k] and math.hypot(
+                x.u - game.pos[k, 0], x.v - game.pos[k, 1]) >= 1.5 * game.rad)
         if f >= 3 and game.isolated(k):
             tot += 1
             ok += game.at(dets, k)
@@ -173,8 +176,12 @@ def test_custom_skin_self_is_tracked(db, renderer, seed, locked):
     g = _Game(db, renderer, seed=seed, locked=locked)
     m = RosterMatcher(db=db)
     m.set_entries(g.entries())
-    ok, tot = _run(g, m, 60)
-    assert tot >= 30 and ok >= 0.9 * tot, (ok, tot)
+    wrong = [0]
+    ok, tot = _run(g, m, 60, wrong=wrong)
+    # free camera: the teal outline (synthetic: the real client has none) needs the icon to walk
+    # 0.06 first (a static recall halo is not me) -> ~2 s later than with the camera lock
+    assert tot >= 30 and ok >= (0.9 if locked else 0.8) * tot, (ok, tot)
+    assert wrong[0] == 0
     assert m.learned_aliases() == {g.roster[0]: "learned"}
     e = m.entries[0]
     assert e.learned and e.icon.shape[:2] == (SI.LEARN_PX, SI.LEARN_PX)
@@ -212,8 +219,10 @@ def test_custom_cyan_portrait_self_is_tracked(db, renderer, seed, locked):
     g = _Game(db, renderer, seed=seed, locked=locked, my_icon=_stick_figure())
     m = RosterMatcher(db=db)
     m.set_entries(g.entries())
-    ok, tot = _run(g, m, 60)
-    assert tot >= 30 and ok >= 0.85 * tot, (ok, tot)
+    wrong = [0]
+    ok, tot = _run(g, m, 60, wrong=wrong)
+    assert tot >= 30 and ok >= (0.85 if locked else 0.75) * tot, (ok, tot)
+    assert wrong[0] == 0
     assert m.learned_aliases() == {g.roster[0]: "learned"}
 
 
@@ -460,3 +469,18 @@ def test_ui_glyph_zone_excluded_from_ring_candidates():
     from treeaicoach import self_icon as SI
 
     assert any(abs(u - 0.957) < 0.01 and abs(v - 0.966) < 0.01 for u, v, _r in SI.UI_GLYPHS)
+
+
+def test_capture_gap_drops_stale_tracks(db, renderer):
+    """A capture gap (alt-tab, shop, death screen) must not glue the icons of the next frame onto
+    the tracks of before: "max speed x 20 s" reaches any icon (real TahmKench game: an ally bound
+    as me with 10 fake hits and a fake 0.69 move -> my position on the wrong icon for minutes)."""
+    g = _Game(db, renderer, seed=3, locked=False)
+    m = RosterMatcher(db=db)
+    m.set_entries(g.entries())
+    for f in range(8):
+        m.detect(g.frame(f * 0.2), t=f * 0.2)
+    assert any(tr.hits >= 5 for tr in m.learner._tracks)
+    g.pos[:] = np.random.default_rng(9).uniform(0.15, 0.85, (10, 2))   # 20 s later: all moved
+    m.detect(g.frame(21.6), t=21.6)
+    assert m.learner._tracks and all(tr.hits == 1 and tr.moved == 0.0 for tr in m.learner._tracks)

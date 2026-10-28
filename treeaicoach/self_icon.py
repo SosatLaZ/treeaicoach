@@ -805,6 +805,10 @@ class IconLearner:
                 unmatched["enemy" if rel == "enemy" else "ally"].add(i)
         # a track now explained by an accepted match was that champion: forget it
         self._tracks = [tr for tr in self._tracks if not explained(tr.u, tr.v, tr.side)]
+        # tracks lost for a while (capture gap: alt-tab, shop, death screen) are dropped BEFORE
+        # the association: "max speed x 20 s" would glue any icon onto them (fake moves, fake
+        # continuity -> a teammate bound as me)
+        self._expire(now)
         self._associate(cands, now, D, unmatched, cam, bgr, R_px, acc_pts)
         self._expire(now)
         # --- decisions ---------------------------------------------------------------
@@ -813,11 +817,18 @@ class IconLearner:
         mine = [tr for tr in self._tracks if not tr.dead and tr.t == now and tr.inter
                 and me is not None and me in tr.inter and tr.side == "ally"]
         for tr in mine:
-            strong = tr.cam_frac() >= CAM_FRAC or tr.self_frac() >= SELF_RING_FRAC
             single = len(tr.inter) == 1 and len(mine) == 1 and tr.moved >= MOVED_MIN_ALONE
             prev = self._self_seen
             cont = prev is not None and now - prev[2] <= 1.0 and \
                 math.hypot(tr.u - prev[0], tr.v - prev[1]) <= JUMP_SLACK + MAX_SPEED * (now - prev[2])
+            # a teal outline is weak evidence: the real client draws MY ring like an ally's
+            # (frac_self <= 0.08 on the 12 real self icons of tests/fixtures/real*), while a
+            # recall halo (static) or the teal portrait of a matched icon next to it (Fizz under
+            # the ring, real TahmKench game) reach 0.3-0.4 -> "me" drawn on another icon
+            teal = tr.self_frac() >= SELF_RING_FRAC and (cont or (
+                tr.moved >= MOVED_MIN_ALONE and
+                all(math.hypot(tr.u - a, tr.v - b) >= EXPLAINED_FRAC * D for a, b in acc_pts)))
+            strong = tr.cam_frac() >= CAM_FRAC or teal
             cue = 1.5 * (tr.cam_frac() >= CAM_FRAC) + (tr.self_frac() >= SELF_RING_FRAC) + \
                 0.5 * single + 0.7 * cont
             if (strong or single) and tr.hits >= SELF_HINT_HITS * (1 if strong else 2):
