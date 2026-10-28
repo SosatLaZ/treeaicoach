@@ -105,18 +105,38 @@ def release_single_instance() -> None:
 
 
 # ------------------------------------------------------------------------------ resources
-def apply_process_policy(cfg: Any) -> dict[str, Any]:
-    """The game always wins: below-normal process priority (+ EcoQoS hint) when
-    ``cfg.low_priority`` (default), and at most 2 OpenCV worker threads. Never raises."""
-    out: dict[str, Any] = {}
+def _set_dpi_awareness() -> None:
+    """Per-monitor DPI awareness before any window, WITHOUT importing capture (numpy): plain ctypes.
+    ``capture.set_dpi_awareness`` repeats it later; "already set" is harmless."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        if not ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass
+
+
+def limit_cv_threads() -> dict[str, Any]:
+    """At most 2 OpenCV worker threads. Imports cv2 (~70-300 ms): the GUI calls it on the backend
+    worker after the window is up, never before. Never raises."""
     try:
         import cv2
 
         if cv2.getNumThreads() > 2:
             cv2.setNumThreads(2)
-        out["cv_threads"] = cv2.getNumThreads()
+        return {"cv_threads": cv2.getNumThreads()}
     except Exception:
-        pass
+        return {}
+
+
+def apply_process_policy(cfg: Any, cv: bool = True) -> dict[str, Any]:
+    """The game always wins: below-normal process priority (+ EcoQoS hint) when
+    ``cfg.low_priority`` (default), and at most 2 OpenCV worker threads (``cv``; the GUI defers
+    that to its backend worker so cv2 is not imported before the window). Never raises."""
+    out: dict[str, Any] = limit_cv_threads() if cv else {}
     try:   # numpy imported before the package (BLAS env not applied): one BLAS thread anyway
         from treeaicoach.sysperf import limit_blas_threads
 
@@ -256,12 +276,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.version:
         _out(f"{APP_NAME} {__version__}")
         return 0
-    try:
-        from treeaicoach.capture import set_dpi_awareness
-
-        set_dpi_awareness()
-    except Exception:
-        pass
+    _set_dpi_awareness()
     from treeaicoach.logging_setup import install_excepthooks, setup_logging
 
     log_file = setup_logging(debug=args.debug)
@@ -298,7 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             log.info("Another instance is already running")
             message_box(ALREADY_RUNNING_TEXT)
             return 0
-        apply_process_policy(cfg)
+        apply_process_policy(cfg, cv=bool(args.nogui))
         if not args.ui_smoke and not args.demo:
             _start_game_data_refresh(cfg)
         _startup.mark("policy")

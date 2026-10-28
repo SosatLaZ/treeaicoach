@@ -19,13 +19,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
-import numpy as np
-from PIL import Image, ImageDraw
-
 from treeaicoach import paths, ui_kit
 from treeaicoach.fmtutil import clock
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    import numpy as np
+    from PIL import Image
     from treeaicoach.ui import CoachApp
 
 log = logging.getLogger("treeaicoach.ui")   # same logger as before the split
@@ -483,6 +482,8 @@ def _hex_rgb(color: str) -> tuple[int, int, int]:
 
 
 def _rgba_array_to_pil(rgba: np.ndarray) -> Image.Image | None:
+    import numpy as np  # noqa: PLC0415 - lazy: no numpy / PIL before the first window
+    from PIL import Image  # noqa: PLC0415
     try:
         a = np.asarray(rgba)
         if a.ndim != 3 or a.shape[2] not in (3, 4) or a.dtype != np.uint8:
@@ -495,6 +496,7 @@ def _rgba_array_to_pil(rgba: np.ndarray) -> Image.Image | None:
 def circle_icon(icon_rgba: np.ndarray | None, size: int, ring: str | None, grey: bool = False,
                 bg: str = PANEL, ring_w: float = 0.075) -> Image.Image:
     """Round champion portrait with a coloured ring, on ``bg`` (RGB), 4x supersampled."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415, F401
     ss = 4
     big = size * ss
     out = Image.new("RGBA", (big, big), _hex_rgb(bg) + (255,))
@@ -533,6 +535,7 @@ def circle_icon(icon_rgba: np.ndarray | None, size: int, ring: str | None, grey:
 
 def square_icon(icon_rgba: np.ndarray | None, size: int, bg: str = PANEL, radius: int = 3) -> Image.Image:
     """Champion portrait as a square with slightly rounded corners (tables), RGB on ``bg``."""
+    from PIL import Image  # noqa: PLC0415
     pil = _rgba_array_to_pil(icon_rgba) if icon_rgba is not None else None
     if pil is None:
         img = Image.new("RGBA", (size, size), _hex_rgb(PANEL_HI) + (255,))
@@ -548,6 +551,7 @@ def square_icon(icon_rgba: np.ndarray | None, size: int, bg: str = PANEL, radius
 
 def nav_icon(kind: str, size: int = 18, color: str = MUTED) -> Image.Image:
     """Small line icons of the sidebar (drawn with PIL, 4x supersampled)."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415, F401
     ss = 4
     S = size * ss
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -634,6 +638,7 @@ def nav_icon(kind: str, size: int = 18, color: str = MUTED) -> Image.Image:
 def _fallback_logo(size: int) -> Image.Image:
     """Simplified app mark (packaging/make_icon.py) used when the packaged icon is missing:
     sap-green tile, near-black tree, the ward's eye open in its crown."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415, F401
     ss = 4
     S = size * ss
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -650,6 +655,7 @@ def _fallback_logo(size: int) -> Image.Image:
 
 def load_logo(size: int) -> Image.Image:
     """App logo (``packaging/icon.png``), or a drawn fallback."""
+    from PIL import Image  # noqa: PLC0415
     p = app_icon_path("png")
     if p is not None:
         try:
@@ -662,6 +668,8 @@ def load_logo(size: int) -> Image.Image:
 
 def rounded_on_bg(img: Image.Image, radius: int, bg: str = PANEL) -> Image.Image:
     """Composite an RGBA image on ``bg`` with rounded corners (RGB result)."""
+    import numpy as np  # noqa: PLC0415 - lazy: no numpy / PIL before the first window
+    from PIL import Image, ImageDraw  # noqa: PLC0415, F401
     w, h = img.size
     base = Image.new("RGB", (w, h), _hex_rgb(bg))
     mask = Image.new("L", (w * 3, h * 3), 0)
@@ -676,11 +684,14 @@ def rounded_on_bg(img: Image.Image, radius: int, bg: str = PANEL) -> Image.Image
 
 def flat_placeholder(size: int) -> Image.Image:
     """Plain rounded square (instant) shown until :func:`radar_placeholder` is ready."""
+    from PIL import Image  # noqa: PLC0415
     return rounded_on_bg(Image.new("RGBA", (size, size), _hex_rgb(PANEL_LO) + (255,)), 14, PANEL)
 
 
 def radar_placeholder(size: int) -> Image.Image:
     """Dimmed minimap texture shown while no game is analysed."""
+    import numpy as np  # noqa: PLC0415 - lazy: no numpy / PIL before the first window
+    from PIL import Image  # noqa: PLC0415
     try:
         from treeaicoach.overlay_render import default_radar_texture  # noqa: PLC0415
 

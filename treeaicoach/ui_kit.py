@@ -20,9 +20,10 @@ import platform
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
-from PIL import Image, ImageDraw
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from PIL import Image
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ EXTRA_ICONS: frozenset[str] = frozenset({
 
 def extra_icon(kind: str, size: int = 18, color: str = "#8B948F") -> Image.Image:
     """Additional line icons (same style as ``ui.nav_icon``), RGBA, 4x supersampled."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415 - lazy: no PIL before the first window
     ss = 4
     S = size * ss
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -196,6 +198,7 @@ def extra_icon(kind: str, size: int = 18, color: str = "#8B948F") -> Image.Image
 
 def role_glyph(role: str | None, size: int, color: str = GOLD) -> Image.Image:
     """Position icon in the spirit of the game's own ones (RGBA, ``size`` px)."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415 - lazy: no PIL before the first window
     ss = 4
     S = size * ss
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
@@ -237,6 +240,7 @@ def decorate_portrait(img: Image.Image, role: str | None = None, mia_frac: float
                       arc_color: str = "#E8A23A", badge_bg: str = BADGE_BG, badge_ring: str = "#2F3532",
                       star: bool = False) -> Image.Image:
     """Add a role badge (bottom-right), an MIA progress arc and a jungler star to a portrait (RGB)."""
+    from PIL import Image, ImageDraw  # noqa: PLC0415 - lazy: no PIL before the first window
     try:
         base = img.convert("RGBA")
         size = base.size[0]
@@ -277,6 +281,7 @@ def hero_background(w: int, h: int, glow: str, bg: str = "#0C0E0D", panel: str =
     No gradient, no glow (docs/DESIGN.md): the state colour ``glow`` only tints the left bar.
     ``gold`` is accepted for compatibility and unused.
     """
+    from PIL import Image, ImageDraw  # noqa: PLC0415 - lazy: no PIL before the first window
     w, h = max(8, int(w)), max(8, int(h))
     out = Image.new("RGB", (w, h), hex_rgb(bg))
     d = ImageDraw.Draw(out)

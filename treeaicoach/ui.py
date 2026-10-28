@@ -71,6 +71,8 @@ from treeaicoach.ui_common import (  # noqa: F401 - re-exported for tools / test
 log = logging.getLogger(__name__)
 
 DISPATCH_MS = 30
+BACKEND_DELAY_MS = 40        # engine / voice / detector start, once the window is painted
+PREBUILD_DELAY_MS = 700      # other pages built after the backend import burst (one per idle turn)
 MIN_W, MIN_H = 960, 600          # usable down to 1280 x 720 (and a bit below)
 DEFAULT_W, DEFAULT_H = 1180, 760
 EngineFactory = Callable[[Config, Any, Any, Any], Any]
@@ -254,8 +256,8 @@ class CoachApp:
 
         self.show_page("home")
         self._prebuild_queue = [k for k in PREBUILD_ORDER if k not in self.pages]
-        if start_backend:
-            self._start_backend()
+        if start_backend:     # after the first paint: no engine / model / voice import competes with it
+            self.later(BACKEND_DELAY_MS, self._start_backend)
         self._status_timer.start(STATUS_MS)
         self.later(1500, self._first_run_dialogs)
         if paths.is_frozen() and self.cfg.check_updates_on_start:
@@ -579,6 +581,12 @@ class CoachApp:
 
         def job() -> dict[str, Any]:
             out: dict[str, Any] = {}
+            try:
+                from treeaicoach.main import limit_cv_threads  # noqa: PLC0415
+
+                limit_cv_threads()
+            except Exception:
+                pass
             voice = self.voice
             if voice is None:
                 try:
@@ -1508,7 +1516,7 @@ class CoachApp:
 
     # ------------------------------------------------------------------ run / close
     def _boot_splash(self) -> None:
-        """The 1.2 s launch sequence over the (already built) window: real checks, skippable, once."""
+        """The < 0.5 s launch sequence over the (already built) window: real checks, skippable, once."""
         if self._splash is not None or self._closing:
             return
         try:
@@ -1526,7 +1534,7 @@ class CoachApp:
     def show(self) -> None:
         self.win.show()
         self.win.raise_()
-        self.QtCore.QTimer.singleShot(60, self.win, self._prebuild)
+        self.QtCore.QTimer.singleShot(PREBUILD_DELAY_MS, self.win, self._prebuild)
 
     def run(self, smoke_seconds: float | None = None) -> int:
         self._no_dialogs = self._no_dialogs or smoke_seconds is not None

@@ -59,7 +59,7 @@ refusés : « trop kitsch ».)
 * **Accueil** : la carte d'état (Démarrer / Arrêter) avec l'art du champion à droite, discret (assombri,
   fondu, opacité 55 %, aucun cadre décoratif) ; les cartes de sélection des champions et des joueurs
   seulement quand elles servent ; « Coach » (niveau, voix, mode sûr) ; essayer ; dernière partie ; système.
-* **Lancement** (`ui_flair.BootSplash`, < 0,8 s) : le nom, un trait de progression fin et UNE ligne
+* **Lancement** (`ui_flair.BootSplash`, < 0,5 s) : le nom, un trait de progression fin et UNE ligne
   d'état (le premier contrôle réel qui échoue, sinon « Prêt »). `TREEAICOACH_NO_SPLASH=1` la désactive.
 * **Interdits** : images de fond, lueurs, néon, verre, ornements (angles dorés, filets « scanline »),
   texte en capitales qui crie, monospace décoratif, emoji, animations décoratives, cartes dans des cartes.

@@ -253,9 +253,10 @@ def boot_checks(cfg: Any = None) -> list[tuple[str, bool | None, str]]:
     out.append(("détecteur", bool(models) and have("onnxruntime"), "modèle chargé" if models else "modèle absent"))
     out.append(("capture", have("mss"), "écran" if have("mss") else "indisponible"))
     lcu_ok: bool | None = None
-    try:
-        from treeaicoach import lcu  # noqa: PLC0415
-
+    try:     # only if lcu is already loaded: importing it (http.client, ssl) costs ~50 ms before the first
+        lcu = sys.modules.get("treeaicoach.lcu")     # paint, and a waiting client is never shown anyway
+        if lcu is None:
+            raise LookupError
         for d in lcu.candidate_dirs():
             if lcu.read_lockfile(d) is not None:
                 lcu_ok = True
@@ -275,12 +276,12 @@ def boot_checks(cfg: Any = None) -> list[tuple[str, bool | None, str]]:
 # Boot splash
 # ======================================================================================
 class BootSplash(QtWidgets.QWidget):
-    """Covers its parent for about 1.2 s: lines appear, a thin line fills, then a 200 ms fade.
+    """Covers its parent for under 0.5 s: a thin line fills (300 ms), then a 120 ms fade.
     ``finished`` is emitted once, whatever ends it (end, click, key, parent closing)."""
 
     finished = QtCore.Signal()
-    FILL_MS = 520
-    FADE_MS = 160
+    FILL_MS = 300
+    FADE_MS = 120
 
     def __init__(self, parent: QtWidgets.QWidget, version: str, checks: list[tuple[str, bool | None, str]]) -> None:
         super().__init__(parent)
