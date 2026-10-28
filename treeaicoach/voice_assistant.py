@@ -120,7 +120,8 @@ def is_wake(text: Any) -> bool:
 WAKE_LEADS = frozenset({"hey", "hei", "he", "eh", "et", "ey", "hay", "ai", "e", "oh", "ho", "o",
                         # « Tree coach » / « Hey Tree » (the app's name): what the French model writes for « tree »
                         "tree", "tri", "trie", "tris"})
-WAKE_STRONG = frozenset({"coach", "coache", "coaches", "coachs", "coatch", "cotch", "kotch"})
+WAKE_STRONG = frozenset({"coach", "coache", "coaches", "coachs", "coatch", "cotch", "kotch",
+                         "coque", "coques", "coq", "coke", "cock", "cok"})   # Whisper often writes « hé coque »
 WAKE_WEAK = frozenset({"coche", "couche", "cauche", "koch", "coches", "cocher", "caouche"})
 TREE_WORDS = frozenset({"tree", "tri", "trie", "tris"})
 _HEY = frozenset({"hey", "hei", "he", "eh", "ey", "hay"})     # « Hey Tree » alone (never « et tri »)
