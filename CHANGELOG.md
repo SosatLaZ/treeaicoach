@@ -3,6 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.1.0 · 28 octobre 2026
+
+- **Surbrillance dans la boutique :** un anneau vert autour du prochain objet à acheter quand la boutique
+  est ouverte (à toute résolution). Le set TreeAI arrive en premier dans l'onglet « Sets d'objets ».
+- **Détection des champions :** les icônes à moitié cachées sous une autre sont reconnues ; sur tes parties
+  réelles, 0 fausse détection et 0 erreur de nom (bot lane : 89 % des icônes trouvées).
+- **Ta position :** plus fiable après une coupure de capture (erreurs 10 → 4 sur 32 cas réels).
+- **Minimap trouvée sur les écrans gris** (mort, HDR) : 14/30 → 30/30 ; moins de fausses balises.
+- **Mort / vivant lu sur le portrait** sans se tromper avec le compteur de mort rouge.
+
 ## 3.0.0 · 27 octobre 2026
 
 - **Plus de chiffres périmés :** le jeu donne le niveau d'un ennemi tel qu'il était quand on l'a vu pour
