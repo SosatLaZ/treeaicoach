@@ -18,8 +18,14 @@ Endpoints (all GET):
 * ``/lol-gameflow/v1/session`` - phase, game id, queue, teamOne / teamTwo (puuid, championId);
 * ``/lol-summoner/v1/current-summoner`` - my puuid (to know which team is mine; I am skipped);
 * ``/lol-ranked/v1/ranked-stats/{puuid}`` - tier, division, LP, wins / losses of the queue;
-* ``/lol-match-history/v1/products/lol/{puuid}/matches?begIndex=0&endIndex=9`` - the last 10 games
-  -> current streak, games (and wins) on the champion played now.
+* ``/lol-match-history/v1/products/lol/{puuid}/matches?begIndex=0&endIndex=19`` - the last 20 games,
+  only those of the current game's queue kept -> current streak, games (and wins) on the champion.
+
+What is shown (2.7 audit, the user saw "245 V" on an enemy): the rank of the CURRENT game's ranked queue
+(flex for a flex game, solo otherwise; never TFT / previous season / a sum of queues), as "Platine 2 ·
+54 % (37 parties)" (season win rate + games, not raw wins), "Non classé" when unranked / in placements
+(no stale numbers). The teams come from the Live Client roster when the engine knows it (my puuid may
+be unknown), bots and duplicate entries are skipped, and a game is recognised by its id AND its players.
 
 :class:`PlayerIntelWatcher` fetches in its own daemon thread, at most :data:`MAX_RPS` requests per
 second, each answer cached for the game; the engine / UI only read :meth:`snapshot` (a lock, no
@@ -42,7 +48,8 @@ log = logging.getLogger(__name__)
 SESSION_PATH = "/lol-gameflow/v1/session"
 ME_PATH = "/lol-summoner/v1/current-summoner"
 RANKED_PATH = "/lol-ranked/v1/ranked-stats/{puuid}"
-HISTORY_PATH = "/lol-match-history/v1/products/lol/{puuid}/matches?begIndex=0&endIndex=9"
+#: the last 20 games of any queue (the LCU's maximum for another player); only the current game's queue is kept
+HISTORY_PATH = "/lol-match-history/v1/products/lol/{puuid}/matches?begIndex=0&endIndex=19"
 
 MAX_RPS = 3.0               # at most 3 requests per second to the client
 SESSION_RECHECK_S = 15.0    # the gameflow phase is re-read this often once the game is known
@@ -71,6 +78,13 @@ ROLE_ORDER = ("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY", "")
 _POS = {"top": "TOP", "jungle": "JUNGLE", "middle": "MIDDLE", "mid": "MIDDLE", "bottom": "BOTTOM",
         "bot": "BOTTOM", "adc": "BOTTOM", "utility": "UTILITY", "support": "UTILITY"}
 FLEX_QUEUES = (440,)
+RETRIES = 2                 # an unanswered ranked / history request is retried this many times
+
+
+def ranked_queue_type(queue_id: int) -> str:
+    """The ranked queue whose rank describes a player of the game ``queue_id``: flex for a flex game, solo
+    for everything else (solo, normals, ARAM...)."""
+    return "RANKED_FLEX_SR" if _int(queue_id) in FLEX_QUEUES else "RANKED_SOLO_5x5"
 
 
 def _int(x: Any, default: int = 0) -> int:
@@ -98,6 +112,7 @@ class PlayerIntel:
     streak: int = 0             # +n wins in a row, -n losses in a row (most recent first)
     champ_games: int = 0        # recent games on the champion played now
     champ_wins: int = 0
+    provisional: bool = False   # placements in progress (shown "Non classé")
 
 
 # ----------------------------------------------------------------------------- parsing (pure)
@@ -116,13 +131,17 @@ def parse_session(session: Any) -> dict | None:
             if isinstance(sel, dict) and sel.get("puuid"):
                 picks[str(sel["puuid"])] = _int(sel.get("championId"))
         players = []
+        seen: set[str] = set()
         for team_no, key in ((1, "teamOne"), (2, "teamTwo")):
             for p in gd.get(key) or ():
                 if not isinstance(p, dict):
                     continue
-                puuid = str(p.get("puuid") or "")
-                if not puuid:
+                puuid = str(p.get("puuid") or "").strip()
+                if not puuid or puuid in seen or set(puuid) <= set("0-"):
+                    continue                         # hidden / duplicated / bot (all-zero) entry
+                if str(p.get("botDifficulty") or "NONE").upper() not in ("NONE", "") or p.get("isBot") is True:
                     continue
+                seen.add(puuid)
                 cid = _int(p.get("championId")) or picks.get(puuid, 0)
                 pos = _POS.get(str(p.get("selectedPosition") or "").strip().lower(), "")
                 players.append((puuid, cid, team_no, pos))
@@ -140,7 +159,9 @@ def parse_ranked(data: Any, queue_id: int = 420) -> dict | None:
     try:
         if not isinstance(data, dict):
             return None
-        want = "RANKED_FLEX_SR" if queue_id in FLEX_QUEUES else "RANKED_SOLO_5x5"
+        if "queueMap" not in data and "queues" not in data:
+            return None                               # not a ranked-stats answer (error body...): retried
+        want = ranked_queue_type(queue_id)
         entry = None
         qm = data.get("queueMap")
         if isinstance(qm, dict) and isinstance(qm.get(want), dict):
@@ -150,14 +171,19 @@ def parse_ranked(data: Any, queue_id: int = 420) -> dict | None:
                 if isinstance(q, dict) and q.get("queueType") == want:
                     entry = q
                     break
+        unranked = {"tier": "", "division": 0, "lp": 0, "wins": 0, "losses": 0, "provisional": False}
         if entry is None:
-            return {"tier": "", "division": 0, "lp": 0, "wins": 0, "losses": 0}
-        tier = str(entry.get("tier") or "").upper()
-        if tier not in TIER_FR:
-            tier = ""
-        return {"tier": tier, "division": 0 if tier in APEX or not tier else DIVISION.get(str(entry.get("division")), 0),
+            return unranked
+        tier = str(entry.get("tier") or "").upper()            # "NONE" / "NA" / "" -> unranked
+        if tier not in TIER_FR or entry.get("isProvisional") is True:
+            # unranked or in placements: no tier, no numbers (never the previous season's ones)
+            return dict(unranked, provisional=entry.get("isProvisional") is True)
+        div = DIVISION.get(str(entry.get("division") or "").upper(), 0)
+        if tier not in APEX and not div:
+            return unranked
+        return {"tier": tier, "division": 0 if tier in APEX else div,
                 "lp": max(0, _int(entry.get("leaguePoints"))), "wins": max(0, _int(entry.get("wins"))),
-                "losses": max(0, _int(entry.get("losses")))}
+                "losses": max(0, _int(entry.get("losses"))), "provisional": False}
     except Exception:
         log.debug("ranked stats not parsed", exc_info=True)
         return None
@@ -186,9 +212,10 @@ def _own_participant(game: dict, puuid: str) -> dict | None:
     return None
 
 
-def parse_history(data: Any, puuid: str, champion_id: int) -> dict | None:
+def parse_history(data: Any, puuid: str, champion_id: int, queue_id: int = 0) -> dict | None:
     """Match history -> ``{games, streak, champ_games, champ_wins}`` (most recent game first;
-    remakes skipped). None when unusable. Never raises."""
+    remakes skipped; only the games of ``queue_id`` when it is given, so the streak is the one of THIS
+    queue). None when unusable. Never raises."""
     try:
         games = _games_list(data)
         if games is None:
@@ -199,6 +226,8 @@ def parse_history(data: Any, puuid: str, champion_id: int) -> dict | None:
                 continue
             if 0 < _int(g.get("gameDuration")) < REMAKE_S:
                 continue
+            if queue_id and _int(g.get("queueId"), -1) != _int(queue_id):
+                continue                              # another queue (ARAM, normals, flex...)
             p = _own_participant(g, puuid)
             st = p.get("stats") if isinstance(p, dict) and isinstance(p.get("stats"), dict) else None
             if st is None or not isinstance(st.get("win"), bool) or st.get("gameEndedInEarlySurrender") is True:
@@ -222,13 +251,17 @@ def parse_history(data: Any, puuid: str, champion_id: int) -> dict | None:
 
 # ----------------------------------------------------------------------------- wording (pure)
 def rank_text(p: PlayerIntel) -> str:
-    """"Platine 2 · 45 LP" / "Maître · 120 LP" / "Non classé" ("" while unknown)."""
+    """"Platine 2 · 54 % (37 parties)" / "Maître 120 LP · 54 % (37 parties)" / "Non classé" ("" while
+    unknown): the rank of the current game's queue, its season win rate and games (never raw wins)."""
     if not p.ranked_loaded:
         return ""
     if not p.tier:
         return "Non classé"
-    name = TIER_FR[p.tier] + (f" {p.division}" if p.division else "")
-    return f"{name} · {p.lp} LP"
+    name = TIER_FR[p.tier] + (f" {p.lp} LP" if p.tier in APEX else f" {p.division}" if p.division else "")
+    n = p.wins + p.losses
+    if n <= 0:
+        return name
+    return f"{name} · {round(100 * p.wins / n)} % ({n} partie{'s' if n > 1 else ''})"
 
 
 def streak_text(streak: int) -> str:
@@ -253,9 +286,6 @@ def card_line(p: PlayerIntel) -> str:
     r = rank_text(p)
     if r:
         parts.append(r)
-    if p.ranked_loaded and p.wins + p.losses > 0:
-        n = p.wins + p.losses
-        parts.append(f"{p.wins} V {p.losses} D ({round(100 * p.wins / n)} %)")
     if p.history_loaded:
         s = streak_text(p.streak)
         if s:
@@ -349,6 +379,11 @@ class PlayerIntelWatcher:
             self._players: dict[str, PlayerIntel] = {}       # puuid -> info (memory only)
             self._champ: dict[str, int] = {}
             self._roles: dict[str, str] = {}                 # alias -> position (live client)
+            self._live_team: dict[str, bool] = {}            # alias (lower) -> ally? (live client roster)
+            self._live_me = ""                               # my champion alias (lower, live client)
+            self._game_key: frozenset = frozenset()          # the game's puuids (a game id can be 0)
+            self._tries: dict[tuple[str, str], int] = {}
+            self._me_tries = 0
             self._next_session = -1e18
 
     def forget(self) -> None:
@@ -358,10 +393,19 @@ class PlayerIntelWatcher:
     def snapshot(self) -> tuple[PlayerIntel, ...]:
         with self._lock:
             roles = dict(self._roles)
+            team, me = dict(self._live_team), self._live_me
             out = []
             for p in self._players.values():
+                key = p.alias.lower()
+                if me and key == me:
+                    continue                                 # that is me (my puuid was not known)
                 r = roles.get(p.alias)
-                out.append(replace(p, role=r) if r is not None and r != p.role else p)
+                if r is not None and r != p.role:
+                    p = replace(p, role=r)
+                ally = team.get(key)
+                if ally is not None and ally != p.ally:      # the Live Client roster is the truth for teams
+                    p = replace(p, ally=ally)
+                out.append(p)
             return tuple(out)
 
     def ready(self) -> bool:
@@ -369,10 +413,18 @@ class PlayerIntelWatcher:
         with self._lock:
             return bool(self._players) and not self._todo
 
-    def set_roles(self, roles: dict[str, str]) -> None:
-        """Champion alias -> position from the Live Client (beats the session's selectedPosition)."""
+    def set_roles(self, roles: dict[str, str], allies: Any = None, enemies: Any = None, me: str = "") -> None:
+        """Champion alias -> position from the Live Client (beats the session's selectedPosition); optional
+        Live Client roster (ally / enemy aliases, my alias): beats the session's team guess."""
         with self._lock:
             self._roles = {str(k): str(v) for k, v in (roles or {}).items() if v in ROLE_FR}
+            if allies is not None or enemies is not None:
+                team = {str(a).lower(): False for a in (enemies or ()) if a}
+                team.update({str(a).lower(): True for a in (allies or ()) if a})
+                both = {str(a).lower() for a in (enemies or ())} & {str(a).lower() for a in (allies or ())}
+                self._live_team = {k: v for k, v in team.items() if k not in both}   # mirror picks: unknown
+            if me:
+                self._live_me = str(me).lower()
 
     # -------------------------------------------------------------- fetching
     def _get_client(self) -> Any:
@@ -409,10 +461,13 @@ class PlayerIntelWatcher:
             if kind == "ranked":
                 parsed = parse_ranked(self._get(RANKED_PATH.format(puuid=puuid)), qid)
             else:
-                parsed = parse_history(self._get(HISTORY_PATH.format(puuid=puuid)), puuid, cid)
+                parsed = parse_history(self._get(HISTORY_PATH.format(puuid=puuid)), puuid, cid, qid)
             with self._lock:
                 if self._todo and self._todo[0] == job:
                     self._todo.pop(0)
+                    if parsed is None and self._tries.get(job, 0) < RETRIES:
+                        self._tries[job] = self._tries.get(job, 0) + 1
+                        self._todo.append(job)               # no answer: asked again after the others
                 p = self._players.get(puuid)
                 if p is not None and parsed is not None:
                     if kind == "ranked":
@@ -430,11 +485,19 @@ class PlayerIntelWatcher:
             if self._game_id is not None:
                 self._reset_game()                       # the game ended: forget it
             return
-        if info["game_id"] == self._game_id and self._players:
+        key = frozenset(pu for pu, _c, _t, _p in info["players"])
+        if info["game_id"] == self._game_id and key == self._game_key and self._players:
             return
-        self._reset_game()
         me = self._get(ME_PATH)
         my = str(me.get("puuid") or "") if isinstance(me, dict) else ""
+        if my not in key and self._me_tries < RETRIES:
+            # my puuid unknown (client busy) or not in the game: never guess the teams from nothing
+            self._me_tries += 1
+            self._next_session = self._clock() + 2.0
+            return
+        tries = self._me_tries
+        self._reset_game()
+        self._me_tries = tries
         my_team = next((t for pu, _c, t, _p in info["players"] if pu == my), 0)
         players: dict[str, PlayerIntel] = {}
         champ: dict[str, int] = {}
@@ -449,6 +512,7 @@ class PlayerIntelWatcher:
             champ[puuid] = cid
         with self._lock:
             self._game_id = info["game_id"]
+            self._game_key = key
             self._queue_id = info["queue_id"]
             self._my_puuid = my
             self._players = players
@@ -549,7 +613,8 @@ def discord_ranks(players: list[PlayerIntel] | tuple[PlayerIntel, ...],
             return ROLE_ORDER.index(p.role) if p.role in ROLE_ORDER else len(ROLE_ORDER)
 
         def entry(p: PlayerIntel) -> str:
-            bits = [b for b in (_short_rank(p), _highlight(p)) if b]
+            full = rank_text(p)
+            bits = [b for b in (full[:1].lower() + full[1:] if full == "Non classé" else full, _highlight(p)) if b]
             return f"{p.name} " + (", ".join(bits) if bits else "?")
 
         if not any(p.ranked_loaded or p.history_loaded for p in players):
@@ -612,12 +677,15 @@ def engine_tick(engine: Any, t: float, watcher: PlayerIntelWatcher | None = None
         w.want()
         roles = {}
         me = getattr(game, "me", None)
+        allies = [str(getattr(p, "champion_alias", "") or "") for p in getattr(game, "allies", None) or ()]
+        enemies = [str(getattr(p, "champion_alias", "") or "") for p in getattr(game, "enemies", None) or ()]
         for p in [me] + list(getattr(game, "allies", None) or ()) + list(getattr(game, "enemies", None) or ()):
             alias, pos = str(getattr(p, "champion_alias", "") or ""), str(getattr(p, "position", "") or "")
             if alias and pos:
                 roles[alias] = pos
-        if roles:
-            w.set_roles(roles)
+        if roles or allies or enemies:
+            w.set_roles(roles, allies if any(allies) else None, enemies if any(enemies) else None,
+                        str(getattr(me, "champion_alias", "") or ""))
         state = getattr(engine, "_player_intel_state", None)
         if not isinstance(state, dict) or float(gt) < state.get("gt", 0.0) - 5.0:     # new game
             state = {"done": set(), "next": 0.0, "gt": float(gt)}

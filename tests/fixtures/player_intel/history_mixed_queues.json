@@ -1,0 +1,633 @@
+{
+ "accountId": 0,
+ "games": {
+  "gameBeginDate": "",
+  "gameCount": 20,
+  "gameEndDate": "",
+  "gameIndexBegin": 0,
+  "gameIndexEnd": 19,
+  "games": [
+   {
+    "gameCreation": 1790000000000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000000,
+    "gameMode": "ARAM",
+    "gameType": "MATCHED_GAME",
+    "mapId": 12,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 450,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789996400000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000001,
+    "gameMode": "ARAM",
+    "gameType": "MATCHED_GAME",
+    "mapId": 12,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 450,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789992800000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000002,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 400,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789989200000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000003,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": false,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789985600000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000004,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": false,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789982000000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000005,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "stats": {
+       "win": false,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789978400000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000006,
+    "gameMode": "ARAM",
+    "gameType": "MATCHED_GAME",
+    "mapId": 12,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 450,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789974800000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000007,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789971200000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000008,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789967600000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000009,
+    "gameMode": "CHERRY",
+    "gameType": "MATCHED_GAME",
+    "mapId": 30,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 1700,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789964000000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000010,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": false,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789960400000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000011,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 440,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789956800000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000012,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789953200000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000013,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": false,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789949600000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000014,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789946000000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000015,
+    "gameMode": "ARAM",
+    "gameType": "MATCHED_GAME",
+    "mapId": 12,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 1,
+      "teamId": 100,
+      "stats": {
+       "win": false,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 450,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789942400000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000016,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789938800000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000017,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": false,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789935200000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000018,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   },
+   {
+    "gameCreation": 1789931600000,
+    "gameCreationDate": "2026-10-01T10:00:00.000Z",
+    "gameDuration": 1500,
+    "gameId": 6100000019,
+    "gameMode": "CLASSIC",
+    "gameType": "MATCHED_GAME",
+    "mapId": 11,
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e3",
+       "platformId": "EUW1"
+      }
+     }
+    ],
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 64,
+      "teamId": 100,
+      "stats": {
+       "win": true,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "queueId": 420,
+    "seasonId": 0
+   }
+  ]
+ },
+ "platformId": "EUW1"
+}

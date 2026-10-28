@@ -1,0 +1,44 @@
+{
+ "queueMap": {
+  "RANKED_SOLO_5x5": {
+   "division": "IV",
+   "isProvisional": true,
+   "leaguePoints": 0,
+   "losses": 1,
+   "miniSeriesProgress": "",
+   "previousSeasonAchievedDivision": "NA",
+   "previousSeasonAchievedTier": "NONE",
+   "previousSeasonEndDivision": "NA",
+   "previousSeasonEndTier": "NONE",
+   "provisionalGameThreshold": 5,
+   "provisionalGamesRemaining": 3,
+   "queueType": "RANKED_SOLO_5x5",
+   "ratedRating": 0,
+   "ratedTier": "NONE",
+   "tier": "SILVER",
+   "warnings": null,
+   "wins": 2
+  }
+ },
+ "queues": [
+  {
+   "division": "IV",
+   "isProvisional": true,
+   "leaguePoints": 0,
+   "losses": 1,
+   "miniSeriesProgress": "",
+   "previousSeasonAchievedDivision": "NA",
+   "previousSeasonAchievedTier": "NONE",
+   "previousSeasonEndDivision": "NA",
+   "previousSeasonEndTier": "NONE",
+   "provisionalGameThreshold": 5,
+   "provisionalGamesRemaining": 3,
+   "queueType": "RANKED_SOLO_5x5",
+   "ratedRating": 0,
+   "ratedTier": "NONE",
+   "tier": "SILVER",
+   "warnings": null,
+   "wins": 2
+  }
+ ]
+}

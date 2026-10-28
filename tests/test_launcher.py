@@ -365,7 +365,7 @@ def test_players_card_on_home_only_when_on(home: Path, monkeypatch: pytest.Monke
         app._refresh_status()
         assert not view.pl.isHidden()
         txt = view.pl_enemies.text()
-        assert txt.startswith("Lee Sin (jungler) · Platine 2 · 45 LP") and "3 défaites d'affilée" in txt
+        assert txt.startswith("Lee Sin (jungler) · Platine 2 · 52 % (58 parties)") and "3 défaites d'affilée" in txt
         assert "Lulu (support)" in view.pl_allies.text()
         app.cfg.player_intel = False
         app._refresh_status()

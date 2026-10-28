@@ -69,7 +69,8 @@ def test_parse_session_only_in_progress():
 
 def test_parse_ranked_and_history():
     r = pi.parse_ranked(load("ranked_plat2.json"))
-    assert r == {"tier": "PLATINUM", "division": 2, "lp": 45, "wins": 30, "losses": 28}
+    assert r == {"tier": "PLATINUM", "division": 2, "lp": 45, "wins": 30, "losses": 28,
+                 "provisional": False}
     assert pi.parse_ranked(load("ranked_plat2.json"), 440)["tier"] == "GOLD"       # flex game -> flex rank
     assert pi.parse_ranked(load("ranked_unranked.json"))["tier"] == ""
     h = pi.parse_history(load("history_loss4_other_champ.json"), "puuid-x", 11)
@@ -112,7 +113,7 @@ def test_card_and_lines_by_champion_never_names():
     w.set_roles({"Darius": "TOP", "MasterYi": "JUNGLE", "Leblanc": "MIDDLE", "Caitlyn": "BOTTOM", "Thresh": "UTILITY",
                  "LeeSin": "JUNGLE"})
     enemies, allies = pi.card(w.snapshot())
-    assert enemies[0].startswith("Darius (top) · Platine 2 · 45 LP · 30 V 28 D (52 %) · 2 victoires d'affilée")
+    assert enemies[0].startswith("Darius (top) · Platine 2 · 52 % (58 parties) · 2 victoires d'affilée")
     assert "Maître Yi (jungler)" in enemies[1] and "4 défaites d'affilée" in enemies[1]
     assert "0 sur Maître Yi (10 dernières)" in enemies[1]
     assert allies[0].startswith("Lee Sin (jungler) · Non classé")
@@ -193,9 +194,9 @@ def test_discord_ranks_message_and_voice_by_champion():
     text, voice = pi.discord_ranks(ps, "TOP")
     assert text.splitlines() == [
         "Rangs de la partie",
-        "Ennemis : Darius Or 1, pas joué Darius récemment · Lee Sin Platine 2, 4 défaites d'affilée · "
-        "Ahri non classé, 3 victoires d'affilée",
-        "Alliés : Lulu Maître 120 LP"]
+        "Ennemis : Darius Or 1 · 50 % (10 parties), pas joué Darius récemment · "
+        "Lee Sin Platine 2 · 52 % (58 parties), 4 défaites d'affilée · Ahri non classé, 3 victoires d'affilée",
+        "Alliés : Lulu Maître 120 LP · 56 % (90 parties)"]
     assert voice == ["Leur top Darius : Or 1, pas joué Darius récemment",
                      "Leur jungler Lee Sin : Platine 2, 4 défaites d'affilée",
                      "Leur mid Ahri : non classé, 3 victoires d'affilée"]
@@ -220,3 +221,111 @@ def test_ranks_tick_once_when_ready_only_with_the_switch():
     eng2._cfg.discord_ranks = False
     pi.engine_tick(eng2, 5.0, w)
     assert len(calls) == 1
+
+
+# ----------------------------------------------------------------------------- 2.7 rank audit (real LCU schema)
+def test_rank_is_the_current_queue_never_tft_or_highest_entry():
+    full = load("ranked_full_schema.json")          # TFT Diamant 245 V / 231 D is also the "highestRankedEntry"
+    solo = pi.parse_ranked(full, 420)
+    assert (solo["tier"], solo["division"], solo["wins"], solo["losses"]) == ("PLATINUM", 2, 20, 17)
+    assert pi.parse_ranked(full, 440)["tier"] == "GOLD"                       # flex game -> flex rank
+    for normal in (400, 430, 450, 490, 0):                                      # normals / ARAM -> solo rank
+        assert pi.parse_ranked(full, normal)["wins"] == 20
+    p = pi.PlayerIntel("Darius", "Darius", False, ranked_loaded=True, **solo)
+    assert pi.rank_text(p) == "Platine 2 · 54 % (37 parties)"
+    # queues[] only (no queueMap): same answer, TFT listed first is ignored
+    assert pi.parse_ranked({"queues": full["queues"]}, 420)["wins"] == 20
+
+
+def test_unranked_placements_and_previous_season_show_non_classe():
+    un = pi.parse_ranked(load("ranked_unranked_tft_high.json"), 420)          # NONE/NA, previous season Gold
+    assert un["tier"] == "" and un["wins"] == un["losses"] == 0
+    assert pi.parse_ranked(load("ranked_unranked_tft_high.json"), 440)["tier"] == ""   # tier ""
+    prov = pi.parse_ranked(load("ranked_provisional.json"), 420)
+    assert prov["tier"] == "" and prov["provisional"] and prov["wins"] == 0
+    for r in (un, prov):
+        assert pi.rank_text(pi.PlayerIntel("A", "A", False, ranked_loaded=True, **r)) == "Non classé"
+    assert pi.rank_text(pi.PlayerIntel("A", "A", False, ranked_loaded=True, tier="MASTER", lp=120, wins=1)) == \
+        "Maître 120 LP · 100 % (1 partie)"
+    assert pi.parse_ranked({"errorCode": "RPC_ERROR", "httpStatus": 404}) is None    # unusable: retried
+
+
+def test_streak_counts_only_this_queue():
+    data = load("history_mixed_queues.json")        # 3 ARAM / normal wins on top of 3 solo losses
+    h = pi.parse_history(data, "puuid-e3", 64, 420)
+    assert h == {"games": 13, "streak": -3, "champ_games": 11, "champ_wins": 6}
+    assert pi.parse_history(data, "puuid-e3", 64)["streak"] == 3           # unfiltered (the old bug): +3
+    assert pi.parse_history(data, "puuid-e3", 122, 450)["games"] == 4
+
+
+class RosterClient(FakeClient):
+    """Real-shaped session: a bot entry, a duplicate, and an optional failing current-summoner."""
+    def __init__(self, me_ok=True):
+        super().__init__()
+        self.me_ok = me_ok
+
+    def get(self, path):
+        if path == pi.SESSION_PATH:
+            s = load("gameflow_session.json")
+            s["gameData"]["teamTwo"].append({"puuid": "00000000-0000-0000-0000-000000000000", "championId": 1,
+                                             "botDifficulty": "EASY"})
+            s["gameData"]["teamTwo"].append(dict(s["gameData"]["teamTwo"][0]))
+            self.paths.append(path)
+            return s
+        if path == pi.ME_PATH and not self.me_ok:
+            self.paths.append(path)
+            return None
+        return super().get(path)
+
+
+def test_bots_duplicates_skipped_and_unknown_me_never_flips_teams():
+    client = RosterClient()
+    w, clock = watcher(client)
+    run_all(w)
+    assert len(w.snapshot()) == 9 and not any("0000" in p for p in client.paths)
+    assert sum(1 for p in client.paths if p.startswith("/lol-ranked/")) == 9
+    w, clock = watcher(RosterClient(me_ok=False))
+    for _ in range(4):
+        run_all(w)
+        clock.t += 3.0
+    snap = w.snapshot()
+    assert not any(p.ally for p in snap)              # session alone cannot tell the teams (my puuid unknown)
+    # the Live Client roster gives the truth: my champion is hidden, allies are allies
+    w.set_roles({}, allies=["LeeSin", "Ahri", "Jinx", "Lulu"], enemies=["Darius", "MasterYi", "Leblanc", "Caitlyn",
+                                                                          "Thresh"], me="Garen")
+    snap = w.snapshot()
+    assert len(snap) == 9 and sum(p.ally for p in snap) == 4 and all(p.alias != "Garen" for p in snap)
+
+
+def test_new_game_with_same_id_is_not_served_from_cache():
+    client = FakeClient()
+    w, clock = watcher(client)
+    run_all(w)
+    before = {p.alias for p in w.snapshot()}
+    orig = client.get
+
+    def get(path):
+        r = orig(path)
+        if path == pi.SESSION_PATH:
+            r["gameData"]["gameId"] = 7000000001
+            r["gameData"]["teamTwo"][0] = dict(r["gameData"]["teamTwo"][0], puuid="puuid-x", championId=51)
+        return r
+    client.get = get
+    clock.t += pi.SESSION_RECHECK_S + 1
+    run_all(w)
+    assert {p.alias for p in w.snapshot()} != before
+
+
+def test_unanswered_request_is_retried():
+    class Flaky(FakeClient):
+        n = 0
+
+        def get(self, path):
+            if path.startswith("/lol-ranked/") and Flaky.n < 3:
+                Flaky.n += 1
+                self.paths.append(path)
+                return None
+            return super().get(path)
+    w, _c = watcher(Flaky())
+    run_all(w, 200)
+    assert w.ready() and all(p.ranked_loaded for p in w.snapshot())
