@@ -1823,11 +1823,13 @@ class _Worker:
         try:
             if not e.chime_before_voice or e._muted or not e.beeper.available:
                 return
-            if item.level < LEVEL_WARNING or not e._params.beep_on_danger:
-                return              # comfort: no tone before an info line; « bip » off = no tone at all
+            if not e._params.beep_on_danger:
+                return              # « bip » off = no tone at all
+            tone = chime_for(item.text, item.level)
+            if item.level < LEVEL_WARNING and tone != "objective":
+                return              # comfort: no tone before an info line (an objective timer keeps its own)
             if e._beep_end - time.perf_counter() > -CHIME_GAP_S:
                 return              # a tone (beep or chime) played recently: the words alone
-            tone = chime_for(item.text, item.level)
             if e.beeper.play(tone, e._params.volume):
                 e._beep_end = time.perf_counter() + tone_duration_s(tone)
                 self._wait(tone_duration_s(tone) + 0.01)

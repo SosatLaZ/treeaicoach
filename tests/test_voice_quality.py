@@ -254,9 +254,19 @@ def test_chime_then_voice_never_overlapping() -> None:
         assert eng.wait_idle(3.0)
         eng.say("Lee Sin arrive !", 1)
         assert eng.wait_idle(3.0)
+        eng.say("Pense à rentrer.", 0)
+        assert eng.wait_idle(3.0)
+        # comfort.py: one tone per 20 s (the warning right after is said alone), no tone before a plain
+        # info line; an objective timer keeps its chime
         assert [(k, t) for k, t, _ in log] == [("chime", "objective"), ("voice", "Dragon dans 20 secondes."),
-                                               ("chime", "warning"), ("voice", "Lee Sin arrive !")]
+                                               ("voice", "Lee Sin arrive !"), ("voice", "Pense à rentrer.")]
         assert log[1][2] - log[0][2] >= voice.tone_duration_s("objective") - 0.01     # voice after the chime
+        eng._beep_end = time.perf_counter() - voice.CHIME_GAP_S - 1.0                # 20 s later
+        del log[:]
+        eng.say("Lee Sin arrive !", 1)
+        assert eng.wait_idle(3.0)
+        assert [(k, t) for k, t, _ in log] == [("chime", "warning"), ("voice", "Lee Sin arrive !")]
+        assert log[1][2] - log[0][2] >= voice.tone_duration_s("warning") - 0.01
         eng.chime_before_voice = False
         eng.say("Recule vers ta tour.", 0)
         assert eng.wait_idle(3.0)
