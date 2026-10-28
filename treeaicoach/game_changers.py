@@ -225,6 +225,16 @@ def _name(ctx: M.MacroCtx, p: Any) -> str:
     return ctx.enemy_names.get(a) or str(getattr(p, "champion_name", "") or getattr(p, "champion_alias", "") or "")
 
 
+def _level_exact(p: Any) -> bool:
+    """freshness.level_exact: an enemy level that is not a floor (seen in the last 30 s)."""
+    try:
+        from treeaicoach.freshness import level_exact
+
+        return level_exact(p)
+    except Exception:
+        return True
+
+
 def _stance_ok(ctx: M.MacroCtx) -> bool:
     """The play gauge is not PRUDENT / SAFE (a "go" call under a cautious gauge would contradict it)."""
     return ctx.stance_score is None or ctx.stance_score > M.STANCE_PRUDENT
@@ -261,6 +271,8 @@ def rule_level_race(ctx: M.MacroCtx) -> M.GeniusCall | None:
         if ctx.gt > until:
             continue
         if mine >= lvl > theirs and (ctx.keep or mine == lvl):
+            if not all(_level_exact(p) for p in opps):
+                return None                              # his level may be old (unseen > 30 s): "contre 5" unsure
             if ctx.hp is not None and ctx.hp < 0.5:
                 return None                              # a lead with half HP is not a window
             jl = M.jungler_location(ctx)

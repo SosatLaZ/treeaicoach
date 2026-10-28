@@ -334,10 +334,11 @@ def defense_call(enemies: list[Any], my_alias: str, role: str | None, owned: Ite
         sev = prof.needs.get("antiheal", 0.0)
         if sev >= ANTIHEAL_SEVERITY and not any(i in SAME_NEED.get("antiheal", frozenset()) for i in own):
             cand = next((i for i in NEED_ITEMS.get("antiheal", {}).get(cls, ()) if i in table), None)
-            names = [n for n in prof.names.get("antiheal", []) if n][:2]
+            names = list(dict.fromkeys(n for n in prof.names.get("antiheal", []) if n))[:2]
             if cand is not None and names:
                 who = " et ".join(names)
-                for s in (f"Achète {table[cand].name} : {who} se soignent", f"Achète {table[cand].name} : anti-soin"):
+                verb = "se soignent" if len(names) > 1 else "se soigne"
+                for s in (f"Achète {table[cand].name} : {who} {verb}", f"Achète {table[cand].name} : anti-soin"):
                     if len(s) <= 60:
                         return s, "antiheal"
     except Exception:

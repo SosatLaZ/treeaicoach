@@ -277,12 +277,37 @@ class LevelWatch:
                 st.est = est
                 _set(p, "level_api", api)
                 _set(p, "level_estimated", est > api)
+                _set(p, "level_age_s", max(0.0, t - anchor))
                 if est > api:
                     _set(p, "level", est)
                     raised += 1
             self.raised = raised
         except Exception:
             log.debug("LevelWatch.update failed", exc_info=True)
+
+
+def level_exact(p: Any) -> bool:
+    """False when ``p.level`` may be OLD: an enemy raised by :class:`LevelWatch` or unseen (and his
+    level unchanged) for more than :data:`UNSEEN_MIN_S`. Such a level is a FLOOR: "Darius est niveau
+    6" stays true, "niveau 6 contre 5" / "tu as 2 niveaux d'avance sur lui" / "pas lui" may be false.
+    Players never annotated (me, allies, demo / replay sources) are exact. Never raises."""
+    try:
+        if bool(getattr(p, "level_estimated", False)):
+            return False
+        age = getattr(p, "level_age_s", None)
+        return not (isinstance(age, (int, float)) and math.isfinite(age) and age > UNSEEN_MIN_S)
+    except Exception:
+        return True
+
+
+def enemy_level_exact(game: Any, alias: Any) -> bool:
+    """:func:`level_exact` of the enemy ``alias`` of ``game`` (True when unknown). Never raises."""
+    try:
+        a = _norm(alias)
+        p = next((e for e in _enemies(game) if _norm(getattr(e, "champion_alias", "")) == a), None)
+        return True if p is None else level_exact(p)
+    except Exception:
+        return True
 
 
 def _enemies(game: Any) -> Iterable[Any]:
@@ -297,4 +322,5 @@ def _set(obj: Any, name: str, value: Any) -> None:
 
 
 __all__ = ["MAX_AGE_S", "DEFAULT_MAX_AGE_S", "Facts", "snapshot", "stamp", "stale_reason", "checker",
-           "max_age", "LevelWatch", "estimate_level", "level_floor", "level_after", "UNSEEN_MIN_S", "MAX_RAISE"]
+           "max_age", "LevelWatch", "estimate_level", "level_exact", "enemy_level_exact", "level_floor",
+           "level_after", "UNSEEN_MIN_S", "MAX_RAISE"]

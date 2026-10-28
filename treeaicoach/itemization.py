@@ -433,7 +433,8 @@ def enemy_profile(enemies: Iterable[Any], items: dict[int, Item] | None = None) 
             acc.setdefault("physical", []).append((1.0 + 2 * (prof.physical - 0.6), ""))
     for need, lst in acc.items():
         prof.needs[need] = round(sum(s for s, _ in lst), 3)
-        prof.names[need] = [n for s, n in sorted(lst, key=lambda x: -x[0]) if n and s > 0]
+        # one name once ("Trundle et Trundle se soignent": healer AND a life-steal item)
+        prof.names[need] = list(dict.fromkeys(n for s, n in sorted(lst, key=lambda x: -x[0]) if n and s > 0))
     if "magic" in acc and not prof.names.get("magic"):
         prof.names["magic"] = []
     return prof

@@ -241,6 +241,25 @@ ROLE_LANE = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}
 
 
 # -------------------------------------------------------------------------- helpers
+def _level_exact(p: Any) -> bool:
+    """freshness.level_exact (an enemy level seen in the last 30 s, not a floor)."""
+    try:
+        from treeaicoach.freshness import level_exact
+
+        return level_exact(p)
+    except Exception:
+        return True
+
+
+def _enemy_level_exact(game: Any, alias: Any) -> bool:
+    try:
+        from treeaicoach.freshness import enemy_level_exact
+
+        return enemy_level_exact(game, alias) if alias else True
+    except Exception:
+        return True
+
+
 def _uv(pos: Any) -> tuple[float, float] | None:
     try:
         u, v = _finite(pos[0]), _finite(pos[1])
@@ -1164,6 +1183,8 @@ class MapCoach:
         lvl = _finite(getattr(opp[2], "level", None)) if opp[2] is not None else None
         if lvl is None:
             return 0, None
+        if my_lvl > lvl and not _level_exact(opp[2]):
+            return 0, None          # his level is a floor (unseen > 30 s): "Tu as 2 niveaux d'avance" unsure
         return int(my_lvl - lvl), opp[1]
 
     def _kill_mark(self, ctx: _Ctx) -> float | None:
@@ -1183,8 +1204,12 @@ class MapCoach:
         out: list[tuple[str, str]] = []
         if not self._scoreboard_on:      # cfg.coach_scoreboard_tips = False (another analyser speaks them)
             return out
-        for _t, _alias, name, item in (self._item_news[:1] if self._item_tips else []):
-            out.append(("item_spike", f"{name} vient de finir {ITEM_NAMES_FR[item]} : il devient plus fort, attention."))
+        for _t, alias, name, item in (self._item_news[:1] if self._item_tips else []):
+            from treeaicoach.scoreboard import _female
+
+            she = _female(alias)
+            out.append(("item_spike", f"{name} vient de finir {ITEM_NAMES_FR[item]} : "
+                                      f"{'elle' if she else 'il'} devient plus {'forte' if she else 'fort'}, attention."))
         diff, name = self._level_diff(ctx)
         if name and abs(diff) >= LEVEL_DIFF_MIN and diff != self._level_diff_said and ctx.gt >= 180:
             n = abs(diff)
@@ -1642,12 +1667,18 @@ def stance_factors(facts: dict[str, Any], game: Any, scoreboard: Any = None, thr
         lvl_diff = gold_diff = None
         if m is not None:
             opp_name, lvl_diff, gold_diff = m.enemy, int(m.level_diff), int(m.gold_diff)
+            if not _enemy_level_exact(game, getattr(m, "enemy_alias", None)):
+                # his Tab line is the one seen last (unseen > 30 s): my lead may be gone
+                lvl_diff = None if lvl_diff > 0 else lvl_diff
+                gold_diff = None if gold_diff > 0 else gold_diff
         else:
             opps = [o for o in f.get("opponents") or [] if o.get("level")]
             my_lvl = _finite(getattr(getattr(game, "me", None), "level", None))
             if opps and my_lvl is not None:
                 o = opps[0]
                 opp_name, lvl_diff = o.get("name"), int(my_lvl - o["level"])
+                if lvl_diff > 0 and not _enemy_level_exact(game, o.get("alias")):
+                    lvl_diff = None
         if opp_name and lvl_diff:
             n = abs(lvl_diff)
             word = "niveau" if n == 1 else "niveaux"

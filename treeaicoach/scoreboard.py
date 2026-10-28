@@ -163,6 +163,16 @@ def player_names(p: Any) -> set[str]:
 
 
 # -------------------------------------------------------------------------- data
+def _female(alias: Any) -> bool:
+    """French grammatical gender of a champion's name ("Ahri ... elle devient plus forte")."""
+    try:
+        from treeaicoach import meta
+
+        return bool(meta.profile(alias).female)
+    except Exception:
+        return False
+
+
 @dataclass(frozen=True)
 class PlayerLine:
     alias: str
@@ -461,10 +471,12 @@ class ScoreboardAnalyzer:
     def _fed_insight(ln: PlayerLine, lead: float, tier: int, t: float) -> ScoreInsight:
         kda = f"{ln.kills}/{ln.deaths}"
         gold = f", {fmt_gold(lead)}" if lead >= 500 else ""
+        fem = _female(ln.alias)
+        e = "e" if fem else ""
         if tier >= 2:
-            text = f"{ln.name} est de plus en plus avancé : {kda}{gold}. Évite-le seul."
+            text = f"{ln.name} est de plus en plus avancé{e} : {kda}{gold}. Évite-{'la' if fem else 'le'} seul."
         else:
-            text = f"Attention, {ln.name} est très avancé : {kda}{gold}."
+            text = f"Attention, {ln.name} est très avancé{e} : {kda}{gold}."
         return ScoreInsight("fed", f"fed:{ln.alias}:{tier}", text, "ENNEMI AVANCÉ",
                             f"{ln.name} {ln.kda}{gold}", "warning", ln.alias, t,
                             (ln.kills, ln.deaths, ln.assists))
@@ -480,7 +492,8 @@ class ScoreboardAnalyzer:
             why = f"est à {ln.kda}"
         else:
             why = "meurt souvent"
-        text = f"{ln.name} {why} : ne joue pas autour de lui, protège-toi."
+        around = "d'elle" if _female(ln.alias) else "de lui"
+        text = f"{ln.name} {why} : ne joue pas autour {around}, protège-toi."
         return ScoreInsight("struggle", f"struggle:{ln.alias}", text, "ALLIÉ EN DIFFICULTÉ",
                             f"{ln.name} {ln.kda} — en difficulté", "insight", ln.alias, t,
                             (ln.kills, ln.deaths, ln.assists))
@@ -533,7 +546,8 @@ class ScoreboardAnalyzer:
                 nth = "premier" if n == 1 else f"{n}e"
                 self._push(ScoreInsight(
                     "spike", f"spike:{ln.alias}:{new[-1]}",
-                    f"{ln.name} a terminé {iname} : il devient plus fort.", "ENNEMI PLUS FORT",
+                    f"{ln.name} a terminé {iname} : {'elle' if _female(ln.alias) else 'il'} devient plus "
+                    f"{'forte' if _female(ln.alias) else 'fort'}.", "ENNEMI PLUS FORT",
                     f"{ln.name} — {iname} ({nth} objet)", "warning", ln.alias, t))
         if is_opp and not first and ln.level > st.level:
             me = game.me

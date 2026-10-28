@@ -342,8 +342,14 @@ def fight_odds(ctx: M.MacroCtx, gold_of: Any = None) -> dict[str, Any] | None:
             verdict = "win"
         elif n_us == n_them and gd <= -FIGHT_EVEN_GOLD and lv <= 0.0:
             verdict = "lose"
+        try:
+            from treeaicoach.freshness import level_exact
+
+            fresh = all(level_exact(p) for p in them)     # Tab lines (items) seen in the last 30 s
+        except Exception:
+            fresh = True
         return {"us": n_us, "them": n_them, "gold": int(gd), "level": round(lv, 2), "verdict": verdict,
-                "us_dead": us_dead, "them_dead": them_dead}
+                "us_dead": us_dead, "them_dead": them_dead, "fresh": fresh}
     except Exception:
         log.debug("fight odds failed", exc_info=True)
         return None
@@ -402,10 +408,12 @@ def rule_objective_fight(ctx: M.MacroCtx, gold_of: Any = None) -> M.GeniusCall |
         dead = odds["them_dead"] if odds["verdict"] == "win" else odds["us_dead"]
         dead_txt = ", ".join(f"{n} mort {int(r)} s" for n, r in sorted(dead, key=lambda x: -x[1])[:2])
         if odds["verdict"] == "win":
-            gtxt = f", {_k(gold)} or" if abs(gold) >= 1000 else ""
+            # their inventories are the ones seen last: an exact "+12,3k or" only on fresh Tab lines
+            gtxt = f", {_k(gold)} or" if abs(gold) >= 1000 and odds.get("fresh", True) else ""
             text = f"Force {what} : combat {numbers}{gtxt}"
             why = (f"Vous êtes {n_us} contre {n_them}" + (f" ({dead_txt})" if dead_txt else "")
-                   + (f" avec {_k(gold)} d'or d'objets" if gold >= 1000 else "") + " : le combat est pour vous.")
+                   + ((f" avec {_k(gold)} d'or d'objets" if odds.get("fresh", True) else " avec plus d'objets")
+                      if gold >= 1000 else "") + " : le combat est pour vous.")
             call = M._call(KIND_FIGHT, f"{KIND_FIGHT}:{key}:win:{numbers}:{int(ctx.gt // 90)}",
                            M.OBJ_TITLE.get(key, "OBJECTIF"), text, why, pit, tier="mid", score=0.66, priority=86,
                            color="safe", life=20.0, label=M.OBJ_TITLE.get(key, "OBJECTIF").rstrip(" !"),
