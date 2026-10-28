@@ -45,6 +45,8 @@ BLOCK_FRAMES = int(SAMPLE_RATE * BLOCK_S)
 QUESTION_MAX_S = 12.0           # the question is cut after this
 QUESTION_SILENCE_S = 1.8        # ... or ends after this much silence once speech was heard
 QUESTION_START_S = 4.0          # nothing said within this after the wake chime: give up
+PTT_TAIL_S = 1.8                # push-to-talk: after the key is released, the question ends after this silence
+PTT_MAX_S = 20.0                # push-to-talk: hard cap of one recording
 TEST_WINDOW_S = 20.0            # "Tester": listen this long even outside a game
 IDLE_POLL_S = 0.5               # paused: how often the gate is re-checked (mic closed)
 MIN_QUESTION_WORDS = 2
@@ -864,6 +866,9 @@ class VoiceAssistant:
         self.is_speaking: Callable[[], bool] = lambda: False
         self.on_wake: Callable[[], None] = lambda: None
         self.on_question: Callable[[str], None] = lambda _q: None
+        self.on_ptt_end: Callable[[], None] | None = None   # end bip of push-to-talk (default: on_wake's bip)
+        self.key_down: Callable[[], bool | None] = self._hotkey_down   # None = key state unknown
+        self.ptt_seconds = 0.0           # last push-to-talk recording length (diagnostics / tests)
         self.status = "Assistant vocal désactivé."
         self.listening = False           # the mic is open (for the UI / tests)
         self.wakes = 0
@@ -937,6 +942,22 @@ class VoiceAssistant:
             log.warning("Assistant vocal : raccourci %s indisponible", key, exc_info=True)
 
     # -- public actions --------------------------------------------------------------------
+    def _hotkey_down(self) -> bool | None:
+        """Is the push-to-talk key still held? (Windows ``GetAsyncKeyState``; None elsewhere / unknown)."""
+        if sys.platform != "win32" or not self._hotkey_key:
+            return None
+        try:
+            import ctypes  # noqa: PLC0415
+
+            from treeaicoach.hotkeys import parse_hotkey  # noqa: PLC0415
+
+            hk = parse_hotkey(self._hotkey_key)
+            if hk is None:
+                return None
+            return bool(ctypes.windll.user32.GetAsyncKeyState(int(hk.vk)) & 0x8000)
+        except Exception:
+            return None
+
     def push_to_talk(self) -> None:
         """Hotkey: listen to a question now (no wake phrase)."""
         with self._lock:
@@ -1353,7 +1374,7 @@ class VoiceAssistant:
                 if self._ptt:
                     with self._lock:
                         self._ptt = False
-                    self._question(mic)
+                    self._question_ptt(mic)
                     wake_rec.reset()
                     if seg is not None:
                         seg.reset()
@@ -1528,6 +1549,79 @@ class VoiceAssistant:
         q = (rest if ok else strip_wake(text)).strip()
         if len(q.split()) < MIN_QUESTION_WORDS and len(carry.split()) > len(q.split()):
             q = carry
+        if q:
+            self.heard = q[-60:]
+        self._deliver(q)
+
+    def _question_ptt(self, mic: Mic) -> None:
+        """Push-to-talk: bip at once, record EVERYTHING while the key is held (no VAD cut mid-sentence),
+        then until :data:`PTT_TAIL_S` of silence after the release (or after the last word when the key
+        state cannot be read); end bip; the whole recording goes to Whisper (Vosk when not ready)."""
+        if not claim_wake("pc"):
+            return
+        self._set_stage("wake")
+        try:
+            self.on_wake()                       # instant bip: « je t'écoute »
+        except Exception:
+            pass
+        self._set_stage("question")
+        whisper = self.whisper_ready()
+        rec = None if whisper else self._make_rec(None)
+        seg = self._segmenter()
+        start = self._clock()
+        released_at: float | None = None
+        last_voice = start
+        heard = False
+        chunks: list[bytes] = []
+        parts: list[str] = []
+        while not self._stop.is_set():
+            now = self._clock()
+            if now - start >= PTT_MAX_S:
+                break
+            down = self.key_down()
+            if down is False and released_at is None:
+                released_at = now
+            if down is None or released_at is not None:
+                since = max(released_at if released_at is not None else start, last_voice)
+                if now - since >= PTT_TAIL_S or (not heard and now - start >= QUESTION_START_S + 2.0):
+                    break
+            block = mic.read()
+            if block is None:
+                break
+            chunks.append(block)
+            rms = block_rms(block)
+            self.level = level_of(rms)
+            if seg is not None:
+                seg.feed(block)
+                voiced = bool(seg.in_speech)
+            else:
+                voiced = rms > 300.0
+            if voiced:
+                heard = True
+                last_voice = self._clock()
+            if rec is not None and rec.accept(block):
+                txt = rec.result()
+                if txt:
+                    parts.append(txt)
+                    self.heard = " ".join(parts)[-60:]
+        pcm = b"".join(chunks)
+        self.ptt_seconds = len(pcm) / 2 / SAMPLE_RATE
+        try:
+            (self.on_ptt_end or self.on_wake)()  # end bip: recording over
+        except Exception:
+            pass
+        if whisper:
+            text = self._transcribe(pcm[-int(15.0 * SAMPLE_RATE) * 2:]) if heard else ""
+            self.whisper_text = text
+            ok, rest = whisper_wake(text)
+            q = (rest if ok else strip_wake(text)).strip()
+        else:
+            if rec is not None:
+                tail = rec.final()
+                if tail:
+                    parts.append(tail)
+            q = strip_wake(" ".join(parts)).strip()
+        log.info("Assistant vocal : push-to-talk %.1f s -> « %s »", self.ptt_seconds, q[:80])
         if q:
             self.heard = q[-60:]
         self._deliver(q)

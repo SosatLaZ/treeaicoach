@@ -360,9 +360,13 @@ class WhisperSTT:
     ``backend`` may be injected for the tests: ``backend(pcm, prompt) -> str``."""
 
     def __init__(self, name: str = DEFAULT_MODEL, *, root: Path | None = None,
-                 backend: Callable[[bytes, str], str] | None = None) -> None:
+                 backend: Callable[[bytes, str], str] | None = None, model_dir: Path | None = None,
+                 threads: int | None = None) -> None:
         self.name = name
         self._root = root
+        self._model_dir = model_dir           # tools/stt_bench.py: any CTranslate2 Whisper folder
+        self._threads = threads
+        self.opts: dict[str, Any] = dict(DECODE)
         self._backend = backend
         self._model: Any = None
         self._tok: Any = None
@@ -418,7 +422,7 @@ class WhisperSTT:
             self._failed_at = time.monotonic()
             return False
         ct2, tokenizers = eng
-        if not model_ready(self.name, self._root):
+        if self._model_dir is None and not model_ready(self.name, self._root):
             mb = MODELS[self.name][1]
             self.status = f"Téléchargement du modèle Whisper ({mb} Mo, une seule fois)…"
             log.info("Whisper : téléchargement du modèle %s", self.name)
@@ -428,9 +432,9 @@ class WhisperSTT:
                 self.status = "Modèle Whisper non téléchargé (Internet ?) : reconnaissance Vosk en attendant."
                 self._failed_at = time.monotonic()
                 return False
-        path = model_path(self.name, self._root)
+        path = self._model_dir or model_path(self.name, self._root)
         t0 = time.monotonic()
-        threads = max(1, min(CPU_THREADS, (os.cpu_count() or 4)))
+        threads = self._threads or max(1, min(CPU_THREADS, (os.cpu_count() or 4)))
         self._model = ct2.models.Whisper(str(path), device="cpu", compute_type="int8", intra_threads=threads)
         self._tok = tokenizers.Tokenizer.from_file(str(path / "tokenizer.json"))
         for t in ("<|startoftranscript|>", "<|fr|>", "<|transcribe|>", "<|notimestamps|>", "<|startofprev|>",
@@ -465,22 +469,258 @@ class WhisperSTT:
         return text
 
     def _run(self, pcm: bytes, prompt: str) -> str:
+        o = self.opts
+        audio = preprocess(pcm_to_float(pcm), o)
+        text = self._decode(audio, prompt if o.get("prompt", True) else "")
+        if o.get("fix_terms"):
+            text = fix_terms(text, self.names)
+        return text
+
+    def _decode(self, audio: Any, prompt: str) -> str:
         import ctranslate2  # noqa: PLC0415
 
+        o = self.opts
         n_mels = int(getattr(self._model, "n_mels", 80) or 80)
-        feats = log_mel(pcm_to_float(pcm), n_mels=n_mels, frames=input_frames(len(pcm) // 2))[None]
+        feats = log_mel(audio, n_mels=n_mels, frames=input_frames(int(audio.size)))[None]
         ids = self._ids
         prev = self._tok.encode(" " + prompt.strip(), add_special_tokens=False).ids[-223:] if prompt else []
         seq = ([ids["<|startofprev|>"]] + prev if prev else []) + [
             ids["<|startoftranscript|>"], ids["<|fr|>"], ids["<|transcribe|>"], ids["<|notimestamps|>"]]
-        res = self._model.generate(ctranslate2.StorageView.from_array(feats), [seq], beam_size=BEAM_SIZE,
-                                   max_length=160, suppress_blank=True, return_no_speech_prob=True,
-                                   repetition_penalty=1.1, no_repeat_ngram_size=4)
-        r = res[0]
-        if float(getattr(r, "no_speech_prob", 0.0) or 0.0) > 0.7:
-            return ""
-        out = [t for t in r.sequences_ids[0] if t < ids["<|endoftext|>"]]
-        return self._tok.decode(out)
+        sv = ctranslate2.StorageView.from_array(feats)
+        if o.get("fallback"):
+            sv = self._model.encode(sv)       # encoded once, decoded again only when the first try is bad
+        temps = (0.0, 0.4) if o.get("fallback") else (0.0,)
+        best = ""
+        for t in temps:
+            kw: dict[str, Any] = {"beam_size": int(o.get("beam", BEAM_SIZE))} if t == 0.0 else \
+                {"beam_size": 1, "sampling_temperature": t, "sampling_topk": 0, "num_hypotheses": 1}
+            res = self._model.generate(sv, [seq], max_length=160, suppress_blank=True,
+                                       return_no_speech_prob=True, return_scores=True,
+                                       repetition_penalty=float(o.get("repetition_penalty", 1.1)),
+                                       no_repeat_ngram_size=int(o.get("no_repeat", 4)), **kw)
+            r = res[0]
+            if float(getattr(r, "no_speech_prob", 0.0) or 0.0) > float(o.get("no_speech", 0.7)):
+                return ""
+            out = [tk for tk in r.sequences_ids[0] if tk < ids["<|endoftext|>"]]
+            text = self._tok.decode(out)
+            score = float((r.scores or [0.0])[0])
+            if t == 0.0:
+                best = text
+            if score >= -1.0 and _compression_ok(text):
+                return text
+            if t != 0.0 and score >= -1.0:
+                return text
+        return best
+
+
+#: decoding / pre / post-processing options (tools/stt_bench.py measures each of them)
+DECODE: dict[str, Any] = {"beam": BEAM_SIZE, "fallback": False, "no_speech": 0.7, "repetition_penalty": 1.1,
+                          "no_repeat": 4, "prompt": True, "highpass": False, "norm": False, "gate": False,
+                          "fix_terms": True}
+
+
+def _compression_ok(text: str) -> bool:
+    """Whisper's repetition-loop test: gzip ratio of the text <= 2.4."""
+    import zlib  # noqa: PLC0415
+
+    b = text.encode("utf-8")
+    return len(b) < 24 or len(b) / max(1, len(zlib.compress(b))) <= 2.4
+
+
+def preprocess(audio: Any, o: dict[str, Any]) -> Any:
+    """Optional clean-up of float32 16 kHz audio: ``highpass`` (rumble / desk knocks < 100 Hz),
+    ``gate`` (spectral noise gate: the stationary background — fans, game music bed — estimated on the
+    quietest 10 % frames is subtracted), ``norm`` (speech brought to -20 dBFS RMS, peaks <= -1 dBFS)."""
+    import numpy as np  # noqa: PLC0415
+
+    x = np.asarray(audio, dtype=np.float32)
+    if x.size < 400:
+        return x
+    if o.get("highpass"):
+        f = np.fft.rfft(x)
+        fr = np.fft.rfftfreq(x.size, 1.0 / SAMPLE_RATE)
+        f *= 1.0 / np.sqrt(1.0 + (100.0 / np.maximum(fr, 1.0)) ** 4)     # 2nd-order Butterworth magnitude
+        x = np.fft.irfft(f, n=x.size).astype(np.float32)
+    if o.get("gate"):
+        x = spectral_gate(x)
+    if o.get("norm"):
+        fr = x[: x.size // 320 * 320].reshape(-1, 320)
+        rms = np.sqrt(np.mean(fr * fr, axis=1)) if fr.size else np.zeros(1)
+        loud = np.sort(rms)[int(len(rms) * 0.7):] if len(rms) else rms
+        level = float(np.mean(loud)) if loud.size else 0.0
+        if level > 1e-4:
+            g = min(30.0, 0.1 / level)
+            peak = float(np.max(np.abs(x))) or 1.0
+            g = min(g, 0.89 / peak) if g * peak > 0.89 else g
+            x = (x * g).astype(np.float32)
+    return x
+
+
+def spectral_gate(x: Any, n_fft: int = 512, hop: int = 128, strength: float = 1.5, floor: float = 0.15) -> Any:
+    """Stationary-noise spectral subtraction (overlap-add, Hann): noise profile = mean spectrum of the
+    10 % quietest frames; each bin keeps max(floor, 1 - strength * noise / magnitude)."""
+    import numpy as np  # noqa: PLC0415
+
+    if x.size < n_fft * 4:
+        return x
+    win = np.hanning(n_fft).astype(np.float32)
+    pad = np.concatenate([np.zeros(n_fft, np.float32), x, np.zeros(n_fft, np.float32)])
+    idx = np.arange(n_fft)[None, :] + hop * np.arange((pad.size - n_fft) // hop + 1)[:, None]
+    spec = np.fft.rfft(pad[idx] * win, axis=1)
+    mag = np.abs(spec)
+    energy = mag.sum(axis=1)
+    quiet = mag[energy <= np.quantile(energy, 0.1)]
+    noise = quiet.mean(axis=0) if quiet.size else np.zeros(mag.shape[1])
+    gain = np.maximum(floor, 1.0 - strength * noise[None, :] / np.maximum(mag, 1e-9))
+    frames = np.fft.irfft(spec * gain, n=n_fft, axis=1) * win
+    out = np.zeros(pad.size, np.float32)
+    norm = np.zeros(pad.size, np.float32)
+    for k in range(frames.shape[0]):
+        out[k * hop:k * hop + n_fft] += frames[k]
+        norm[k * hop:k * hop + n_fft] += win * win
+    out = out / np.maximum(norm, 1e-6)
+    return out[n_fft:n_fft + x.size].astype(np.float32)
+
+
+# ------------------------------------------------------------------ League names (post-processing)
+#: summoner spells, keystones, objectives and the short names players give items (French client)
+EXTRA_TERMS = (
+    "Flash", "Saut éclair", "Embrasement", "Ignite", "Téléportation", "Fantôme", "Châtiment", "Soins",
+    "Barrière", "Purge", "Fatigue", "Clarté", "Conquérant", "Électrocution", "Moisson noire", "Comète arcanique",
+    "Poigne de l'immortel", "Invocation d'Aery", "Rythme mortel", "Premier coup", "Après-coup", "Gardien",
+    "Frappe létale", "Baron", "Nashor", "Héraut", "Atakhan", "Infernal", "Larves", "Trinité", "Zhonya",
+    "Sterak", "Mercure", "Rabadon", "Shojin", "Jak'Sho", "Hullbreaker", "Botrk", "Ancien",
+)
+#: frequent French words a League name must never replace (« c'est » is not « Zed », « vie » not « Vi »)
+COMMON_WORDS = frozenset("""
+a ai as au aux avec ce ces cet cette c'est ça dans de des du elle elles en est et eu il ils je j'ai la le les
+leur lui ma mais me mes moi mon ne ni nous on ou où par pas peu plus pour qu que quel quelle qui sa se ses si
+son sur ta te tes toi ton tu un une vous vu y va vais vas faire fait fais faut bien bon tour tours vie mort
+rien tout tous quoi comme quand comment combien contre avant après maintenant encore jamais toujours ulti
+objet objets item items build lane mid top bot jungle jungler support ward wards gank ganks push back farm
+dragon drake fight team roam reset level niveau coach hey hé où est sont avoir être prendre prends fait
+power spike stuff full kill kills tank dps carry mana vision camp camps buff très trop carte grave quant
+temps fois vois voir peux peut veux faut dois rentre reste rester joue jouer gagne perdu équipe partie
+""".split())
+
+
+_VOCAB: list[tuple[str, str]] | None = None
+
+
+def phonetic(word: str) -> str:
+    """A rough French phonetic key: accents off, letters only, k/c/q/qu -> k, ph -> f, y -> i,
+    é/è/ai/ei -> e, silent h, doubled letters single."""
+    import re  # noqa: PLC0415
+    import unicodedata  # noqa: PLC0415
+
+    w = unicodedata.normalize("NFD", str(word).lower())
+    w = "".join(c for c in w if unicodedata.category(c) != "Mn")
+    w = re.sub(r"[^a-z]", "", w)
+    for a, b in (("ph", "f"), ("qu", "k"), ("ck", "k"), ("q", "k"), ("ch", "$"), ("c", "k"), ("$", "ch"),
+                 ("y", "i"), ("ai", "e"), ("ei", "e"), ("au", "o"), ("eau", "o"), ("w", "v"), ("z", "s")):
+        w = w.replace(a, b)
+    w = re.sub(r"(?<![cs])h", "", w)
+    return re.sub(r"(.)\1+", r"\1", w)
+
+
+def lol_vocab() -> list[tuple[str, str]]:
+    """``(phonetic key, canonical name)`` of every champion (French + English), item, summoner spell,
+    keystone: the names a fuzzy match may restore. Read once from the bundled assets. Never raises."""
+    global _VOCAB
+    if _VOCAB is not None:
+        return _VOCAB
+    names: set[str] = set(EXTRA_TERMS)
+    try:
+        import json  # noqa: PLC0415
+
+        from treeaicoach.paths import asset_path  # noqa: PLC0415
+
+        idx = json.loads(asset_path("icons", "champions", "index.json").read_text(encoding="utf-8"))
+        for c in idx.get("champions") or []:
+            fr = str(c.get("name_fr") or c.get("name_en") or "")
+            names.add(fr)
+            en = str(c.get("name_en") or "")
+            if en and phonetic(en) != phonetic(fr):
+                names.add(en)
+        items = json.loads(asset_path("items.json").read_text(encoding="utf-8")).get("items") or {}
+        for it in items.values():
+            n = str(it.get("n") or "")
+            if n and len(n.split()) <= 4 and not it.get("k") == "consumable":
+                names.add(n)
+    except Exception:
+        log.debug("League vocabulary unavailable", exc_info=True)
+    _VOCAB = sorted({(phonetic(n), n) for n in names if len(phonetic(n)) >= 3})
+    return _VOCAB
+
+
+def fix_terms(text: str, game_names: Iterable[str] = (), threshold: float = 0.84) -> str:
+    """Restore League names Whisper misspelled (« Kaïssa » -> « Kai'Sa », « Belvette » -> « Bel'Veth »):
+    every 1-3 word window whose phonetic key is close to a name (difflib ratio >= ``threshold``; the
+    champions of the current game at ``threshold - 0.06``) is replaced, longest windows first. Frequent
+    French words are never replaced, names shorter than 4 letters need an exact phonetic match.
+    Never raises (the text unchanged)."""
+    import difflib  # noqa: PLC0415
+
+    try:
+        words = str(text or "").split()
+        if not words:
+            return text
+        vocab = lol_vocab()
+        game = {phonetic(n) for n in game_names if n}
+        exact = {k for k, _n in vocab}
+        by_len: dict[int, list[tuple[str, str]]] = {}
+        for k, n in vocab:
+            by_len.setdefault(len(k), []).append((k, n))
+        out: list[str] = []
+        i = 0
+        while i < len(words):
+            done = False
+            for n_w in (3, 2, 1):
+                if i + n_w > len(words):
+                    continue
+                win = words[i:i + n_w]
+                core = [w.strip(",.!?;:«»\"()") for w in win]
+                low = [c.lower().replace("’", "'") for c in core]
+                if not all(core):
+                    continue
+                if all(w in COMMON_WORDS or len(w) <= 2 for w in low):
+                    continue
+                if n_w > 1 and (low[0] in COMMON_WORDS or low[-1] in COMMON_WORDS or len(low[0]) < 3
+                                or len(low[-1]) < 3 or "'" in low[0][:3]):
+                    continue                         # a name window never starts / ends on « le », « à », « t'ai »…
+                if n_w > 1 and any(phonetic(c) in exact for c in core):
+                    continue                         # « Blitzcrank à » : the name is already one word
+                key = phonetic("".join(core))
+                if len(key) < 3:
+                    continue
+                best, best_r = "", 0.0
+                for ln in range(max(3, int(len(key) * 0.75)), int(len(key) * 1.3) + 2):
+                    for k, name in by_len.get(ln, ()):
+                        if len(k) < 5 and k != key and k not in game:
+                            continue                 # short names (Zed, Vi, Pyke…): exact only, unless in game
+                        sm = difflib.SequenceMatcher(None, key, k)
+                        if sm.real_quick_ratio() < threshold - 0.06 or sm.quick_ratio() < threshold - 0.06:
+                            continue
+                        r = sm.ratio() + (0.06 if k in game else 0.0)
+                        if r > best_r or (r == best_r and len(name) < len(best)):
+                            best, best_r = name, r
+                if best and best_r >= threshold:
+                    if " ".join(core).lower() != best.lower():
+                        trail = win[-1][len(win[-1].rstrip(",.!?;:»\")")):]
+                        out.append(best + trail)
+                        log.debug("Whisper : « %s » -> « %s » (%.2f)", " ".join(core), best, best_r)
+                    else:
+                        out.extend(win)
+                    i += n_w
+                    done = True
+                    break
+            if not done:
+                out.append(words[i])
+                i += 1
+        return " ".join(out)
+    except Exception:
+        log.debug("fix_terms failed", exc_info=True)
+        return text
 
 
 #: Whisper's classic hallucinations on noise / silence (French YouTube credits)
