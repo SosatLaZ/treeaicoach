@@ -588,7 +588,7 @@ EXTRA_TERMS = (
     "Flash", "Saut éclair", "Embrasement", "Ignite", "Téléportation", "Fantôme", "Châtiment", "Soins",
     "Barrière", "Purge", "Fatigue", "Clarté", "Conquérant", "Électrocution", "Moisson noire", "Comète arcanique",
     "Poigne de l'immortel", "Invocation d'Aery", "Rythme mortel", "Premier coup", "Après-coup", "Gardien",
-    "Frappe létale", "Baron", "Nashor", "Héraut", "Atakhan", "Infernal", "Larves", "Trinité", "Zhonya",
+    "Frappe létale", "Baron", "Nashor", "Héraut", "Infernal", "Larves", "Trinité", "Zhonya",
     "Sterak", "Mercure", "Rabadon", "Shojin", "Jak'Sho", "Hullbreaker", "Botrk", "Ancien",
 )
 #: frequent French words a League name must never replace (« c'est » is not « Zed », « vie » not « Vi »)
