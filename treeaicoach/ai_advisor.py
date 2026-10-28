@@ -77,7 +77,7 @@ REVIEW_TIMEOUT_S = 20.0
 REVIEW_MAX_TOKENS = 700
 REVIEW_RATE_WAIT_S = 30.0       # post-game review: a per-minute 429 asking <= this is waited out once
 MAX_ANALYSIS_BYTES = 12000
-MANUAL_MIN_INTERVAL_S = 20.0
+MANUAL_MIN_INTERVAL_S = 2.0     # a question is never refused for "patiente" (was 20 s)
 PLAN_MAX_AGE_S = 25.0           # an automatic plan not shown within this (fight, card) is dropped
 MANUAL_MAX_AGE_S = 60.0         # the answer to F8 waits longer (the player asked for it)
 DEFER_S = 30.0                  # a key moment during a fight / gank is retried this long after it
