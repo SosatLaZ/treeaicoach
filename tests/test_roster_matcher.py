@@ -614,3 +614,42 @@ def test_ui_glyph_at_the_bottom_right_corner_is_not_an_extra():
     hy._structures, hy._fountains = [], []
     out = hy.detect(np.zeros((100, 100, 3), np.uint8))
     assert [(d.u, d.v) for d in out] == [(0.5, 0.5)]
+
+
+SERA_CASE = Path(__file__).parent / "fixtures" / "real_cases" / "seraphine_support_20261028"
+
+
+@pytest.mark.parametrize("refine", [True, False])
+def test_me_under_my_adc_is_placed_on_my_own_partly_covered_icon(db, monkeypatch, refine):
+    """Real game 2026-10-28 (Seraphine support, 16:08:41): my icon is drawn under my ADC's,
+    0.04 from its centre; the camera-confirmed 'under' position is refined to my own icon
+    (visible ring arc + portrait) instead of the ADC's centre."""
+    import json
+    import sys
+
+    import treeaicoach.roster_matcher as RMod
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    from real_minimap_bench import roster_entries
+
+    if not (SERA_CASE / "ground_truth.json").is_file():
+        pytest.skip("case missing")
+    monkeypatch.setattr(RMod, "UNDER_REFINE", refine)
+    truth = json.loads((SERA_CASE / "ground_truth.json").read_text(encoding="utf-8"))
+    spec = truth["images"]["20261028_160841_0018"]
+    me = next(c for c in spec["champions"] if c.get("self"))
+    adc = next(c for c in spec["champions"] if c.get("name") == "Ashe")
+    img = cv2.imread(str(SERA_CASE / spec["file"]))
+    m = RosterMatcher(db=db)
+    m.set_entries(roster_entries(truth["rosters"][spec["game"]], db))
+    dets = []
+    for f in range(12):
+        dets = m.detect(img, t=f / 8.0)
+    s = [d for d in dets if d.alias == "Seraphine"]
+    assert s
+    d_me = math.hypot(s[0].u - me["u"], s[0].v - me["v"])
+    d_adc = math.hypot(s[0].u - adc["u"], s[0].v - adc["v"])
+    if refine:
+        assert d_me < 0.02 and d_adc > 0.03
+    else:
+        assert d_adc < 0.01                                   # (the old answer: the ADC's centre)

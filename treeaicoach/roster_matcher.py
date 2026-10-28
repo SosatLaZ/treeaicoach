@@ -236,6 +236,11 @@ UNDER_CONFIRM = 6
 UNDER_SCORE = 0.3
 UNDER_STABLE = 0.012                # ... at a stable offset from the camera point
 UNDER_VERIFY = 0.8                  # ... or the verifier's icon probability at the camera point
+#: Refine that position: my icon's visible ring arc / portrait next to the covering icon
+#: (``_under_refine``: ``_stack_search`` as if I had been tracked there UNDER_REFINE_AGE s ago;
+#: measured: the arc alone, or a camera-point check, move me wrongly in the other real games).
+UNDER_REFINE = True
+UNDER_REFINE_AGE = 0.4
 SELF_COAST_UNDER = True             # no coasting while an accepted icon covers my track
 SELF_CAM_DIST = 0.06
 #: A position of mine inferred from the camera (icon under an ally at the camera point, my
@@ -2516,6 +2521,31 @@ class RosterMatcher:
         self._self_anchor = (pos[0], pos[1], now)
         return pos
 
+    def _under_refine(self, bgr: np.ndarray, feat: np.ndarray, bank: _Bank, accepted: list,
+                      used: set, dead: set, now: float, kx: float, ky: float, R_px: float,
+                      D_work: float, thr: float, me: int, pos: tuple) -> tuple[float, float]:
+        """My icon is under the ally icon at ``pos`` (``_me_under``) but usually not entirely:
+        the visible arc of my ring + the visible part of my portrait (``_stack_search``, as if
+        I had been tracked at ``pos`` UNDER_REFINE_AGE s ago) give its own centre (real 2026-10-28
+        Seraphine game: my icon 0.035-0.045 from my ADC's, drawn there). ``pos`` when not
+        found."""
+        saved = self._tracks
+        last = self.last_stack
+        try:
+            self._tracks = {me: _Track(pos[0], pos[1], now - UNDER_REFINE_AGE, hits=2)}
+            found = self._stack_search(bgr, feat, bank, accepted, used, dead, now, kx, ky,
+                                       R_px, D_work, thr)
+        except Exception:
+            self._errors.exception("Roster matcher: refinement under an ally icon failed")
+            found = []
+        finally:
+            self._tracks = saved
+            self.last_stack = last
+        for c in found:
+            if c.i == me:
+                return (c.x / kx, c.y / ky)
+        return pos
+
     def _self_reachable(self, me: int, pos: tuple, now: float) -> bool:
         """Can I be at ``pos`` now, given my last known position? (see SELF_REACH_*)"""
         try:
@@ -3291,6 +3321,9 @@ class RosterMatcher:
                 continue
             me_dead = getattr(self.learner, "_me_dead", None) is True
             under = None if me_dead else self._me_under(accepted, cam_pt, kx, ky, i, now, raw_bgr, r_norm)
+            if under is not None and UNDER_REFINE and not self.grey:
+                under = self._under_refine(bgr, feat, bank, accepted, used, dead, now, kx, ky,
+                                           R_px, D_work, thr, i, under)
             if under is not None:
                 # my icon is under an ally icon the camera has followed for a while (my
                 # support on me, camera locked): I am there (a position, not a match)
