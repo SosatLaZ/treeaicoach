@@ -37,9 +37,10 @@ from treeaicoach.tts_lexicon import speakable
 
 log = logging.getLogger(__name__)
 
-DEFAULT_NEURAL_VOICE = "fr-CA-SylvieNeural"   # Québécois accent by default (the player is from Québec)
+DEFAULT_NEURAL_VOICE = "fr-FR-RemyMultilingualNeural"   # most natural male voice (owner's choice, 3.3)
 #: (voice id, label shown in the UI)
 NEURAL_VOICES: tuple[tuple[str, str], ...] = (
+    ("fr-FR-RemyMultilingualNeural", "Rémy (homme, France, le plus naturel)"),
     ("fr-CA-SylvieNeural", "Sylvie (femme, Québec)"),
     ("fr-CA-AntoineNeural", "Antoine (homme, Québec)"),
     ("fr-CA-JeanNeural", "Jean (homme, Québec)"),
@@ -47,12 +48,11 @@ NEURAL_VOICES: tuple[tuple[str, str], ...] = (
     ("fr-FR-DeniseNeural", "Denise (femme, France)"),
     ("fr-FR-HenriNeural", "Henri (homme, France)"),
     ("fr-FR-VivienneMultilingualNeural", "Vivienne (femme, France)"),
-    ("fr-FR-RemyMultilingualNeural", "Rémy (homme, France)"),
     ("fr-FR-EloiseNeural", "Éloïse (jeune femme, France)"),
     ("fr-BE-CharlineNeural", "Charline (femme, Belgique)"),
     ("fr-CH-ArianeNeural", "Ariane (femme, Suisse)"),
 )
-DEFAULT_NEURAL_RATE = "+15%"
+DEFAULT_NEURAL_RATE = "+5%"     # less rushed: sounds more human
 LIVE_TIMEOUT_S = 1.5          # a non-cached sentence waits at most this long for the service
 PATIENT_TIMEOUT_S = 4.0       # an information line (AI, reminder) / the voice test: not urgent, wait longer
 CACHE_MAX_MB = 250            # the WAV cache is pruned (oldest first) above this size

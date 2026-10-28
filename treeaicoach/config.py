@@ -33,7 +33,7 @@ from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
-CONFIG_VERSION = 8                 # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
+CONFIG_VERSION = 9                 # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
 MAX_CONFIG_BYTES = 1_000_000       # a bigger config.json is treated as corrupt
 BACKUP_SUFFIX = ".bak"
 
@@ -247,8 +247,8 @@ class Config:
     voice_rate: int = 2             # -10..10 (SAPI)
     voice_volume: int = 100         # 0..100
     voice_engine: str = "auto"      # auto (= neural) | neural | onecore | sapi (see voice.py)
-    neural_voice: str = "fr-CA-SylvieNeural"   # Microsoft Edge neural voice id (online)
-    neural_rate: str = "+15%"       # neural voice speed, "-50%".."+100%" (independent of voice_rate)
+    neural_voice: str = "fr-FR-RemyMultilingualNeural"   # Microsoft Edge neural voice id (online)
+    neural_rate: str = "+5%"        # neural voice speed, "-50%".."+100%" (independent of voice_rate)
     beep_on_danger: bool = True
     danger_voice: str = "bip_voix"  # Voix pour les dangers : "bip_voix" (bip + voix si prête) | "bip" (bip seul)
     # alerts
@@ -872,6 +872,10 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         # 2.12.1: "une minimap au-dessus de ma minimap" - the user never wants the radar copy;
         # moved back to the marks on the real minimap once (the value itself is still accepted)
         data = {**data, "overlay_mode": "minimap"}
+    if _version(data) < 9 and str(data.get("neural_voice") or "fr-CA-SylvieNeural") == "fr-CA-SylvieNeural":
+        data = {**data, "neural_voice": "fr-FR-RemyMultilingualNeural"}   # 3.3: natural male voice
+        if str(data.get("neural_rate") or "+15%") == "+15%":
+            data = {**data, "neural_rate": "+5%"}
     if _version(data) < 8:                 # 2.29: the PC mic + push-to-talk, the player's voice only
         data = {**data, "voice_assistant": True, "discord_listen_owner_only": True,
                 "hotkey_voice_ask": str(data.get("hotkey_voice_ask") or "") or "F12"}

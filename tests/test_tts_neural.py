@@ -31,7 +31,7 @@ def test_rate_percent_accepts_strings_and_legacy_numbers() -> None:
 
 def test_list_neural_voices() -> None:
     voices = tts_neural.list_neural_voices()
-    assert voices[0] == ("fr-CA-SylvieNeural", "Sylvie (femme, Québec)")
+    assert voices[0] == ("fr-FR-RemyMultilingualNeural", "Rémy (homme, France, le plus naturel)")
     assert all(tts_neural.clean_voice_id(v) == v for v, _ in voices)
     assert tts_neural.clean_voice_id("../../evil") == tts_neural.DEFAULT_NEURAL_VOICE
 

@@ -1333,7 +1333,7 @@ class VoiceEngine:
 
             return list_neural_voices()
         except Exception:
-            return [("fr-CA-SylvieNeural", "Sylvie (femme, Québec)")]
+            return [("fr-FR-RemyMultilingualNeural", "Rémy (homme, France)")]
 
     def start(self) -> None:
         """Start the voice thread (idempotent, returns immediately)."""

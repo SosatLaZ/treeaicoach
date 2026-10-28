@@ -32,7 +32,7 @@ def neural_voices() -> list[tuple[str, str]]:
 
         return [(v, lbl) for v, lbl in NEURAL_VOICES]
     except Exception:
-        return [("fr-CA-SylvieNeural", "Sylvie (Québec)")]
+        return [("fr-FR-RemyMultilingualNeural", "Rémy (France)")]
 
 
 def _mics() -> list[tuple[str, str]]:
@@ -137,7 +137,7 @@ class AlertsPage:
         v = self.page.section("Voix", "La voix neurale demande Internet ; les voix Windows marchent sans.")
         app.choice_row(v, "voice_engine", "Moteur de voix", "« Automatique » : la voix neurale si Internet répond.",
                        ENGINE_LABELS)
-        cur = str(app.cfg.neural_voice or "fr-CA-SylvieNeural")
+        cur = str(app.cfg.neural_voice or "fr-FR-RemyMultilingualNeural")
         self.neural = app.choice_row(v, "neural_voice", "Voix neurale", "Voix Microsoft en ligne.",
                                      [(cur, cur.replace("fr-FR-", "").replace("fr-CA-", "").replace("Neural", ""))])
         # the full list needs tts_neural (edge-tts, aiohttp: a slow import): read on a worker
