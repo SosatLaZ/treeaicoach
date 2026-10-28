@@ -3,6 +3,7 @@ Rarely touched: the defaults suit almost every PC (docs/DESIGN.md, "Navigation")
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from treeaicoach.ui_common import CAPTURE_BACKENDS, DETECTORS, MINIMAP_MODES, MINIMAP_SIDES, PERF_MODES
@@ -55,6 +56,9 @@ class AdvancedPage:
         self.diag_row = mnt.add(W.Row("Diagnostic complet", f"Une minute de partie enregistrée pour signaler un "
                                       f"problème ({hk} en jeu)." if hk else "Une minute de partie enregistrée.",
                                       self.diag_btn))
+        mnt.add(W.Row("Rapport d'analyse", "Les 60 dernières secondes de partie (minimap, détection, voix, "
+                      f"conseils) dans un petit zip à m'envoyer{f' ({hk} en jeu)' if hk else ''}.",
+                      W.button("Créer", lambda: make_analysis_report(app))))
         mnt.add(W.Row("Copier le diagnostic", "Un résumé texte à coller dans ton message (Ctrl+D).",
                       W.button("Copier", app.copy_diagnostic)))
         mnt.add(W.Row("Journaux", "Fichiers de journal de TreeAI.", W.button("Ouvrir", app.open_logs)))
@@ -113,3 +117,30 @@ class AdvancedPage:
 
 def build(app: Any) -> AdvancedPage:
     return AdvancedPage(app)
+
+
+def make_analysis_report(app: Any) -> None:
+    """Button « Rapport d'analyse »: the last 60 s (analysis_report.py) zipped into <données>/reports,
+    then the folder is opened. Never raises."""
+    try:
+        from treeaicoach import analysis_report  # noqa: PLC0415
+
+        eng = getattr(app, "engine", None)
+
+        def done(path: Any) -> None:
+            if not path:
+                app.show_toast("Rapport d'analyse impossible pour l'instant.", "warning")
+                return
+            app.show_toast(f"Rapport d'analyse créé : {Path(path).name}")
+            try:
+                from treeaicoach.ui_common import open_path  # noqa: PLC0415
+
+                open_path(Path(path).parent)
+            except Exception:
+                pass
+
+        app.run_job(lambda: analysis_report.request(eng, block=True), done,
+                    lambda e: app.show_toast(f"Rapport d'analyse impossible : {e}", "warning"),
+                    name="TreeAI-ui-report")
+    except Exception:
+        pass

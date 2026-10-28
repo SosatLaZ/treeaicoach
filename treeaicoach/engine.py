@@ -1223,6 +1223,9 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 from treeaicoach import player_intel  # noqa: PLC0415
 
                 player_intel.engine_tick(self, float(t))                       # never raises, never blocks
+                from treeaicoach import analysis_report  # noqa: PLC0415
+
+                analysis_report.engine_tick(self, float(t))     # last 60 s for the "Rapport d'analyse"
             return out
 
     def _step(self, t: float) -> list[Alert]:

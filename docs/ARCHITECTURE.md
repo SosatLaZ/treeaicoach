@@ -1163,6 +1163,14 @@ client / le navigateur après un alt-tab ; carte HUD posée sur les portraits al
   `meta.json` (système, réglages en liste blanche, réglages du jeu, écrans, DPI), fin du journal
   (chemins masqués) → `%APPDATA%\TreeAICoach\diagnostics\diag_AAAAMMJJ_HHMMSS.zip`, dossier ouvert.
   `diagnostic_status()` pour l'UI.
+* **Rapport d'analyse** (`analysis_report.py`) : le PASSÉ (60 s) au lieu du futur. `engine_tick` (~1 Hz,
+  fil d'analyse) garde en mémoire 60 crops minimap JPEG + détections / pistes, un échantillon perf / 5 s, et
+  écoute (lecture seule) la porte des menaces et le fil Whisper. `Ctrl+F8` (avec le diagnostic) ou Avancé >
+  « Rapport d'analyse » → `<données>\reports\rapport_AAAAMMJJ_HHMMSS.zip` (≤ 15 Mo : crops espacés si besoin) :
+  `frames/`, `frames.json`, `screen.jpg` (fenêtre entière : boutique), `state.json` (roster Live Client, rangs
+  affichés, boutique / carte d'objet / set, voix, décisions de la porte, 30 dernières lignes + règle, CPU par
+  fil, version, réglages sans clé). `scrub()` retire puuid / Riot ID / noms / jetons.
+  `python tools/analyze_report.py rapport.zip` → diagnostic ≤ 40 lignes.
 
 ### 18 bis. Le jeu d'abord : budget de performance (`tools/perf_budget.py`)
 

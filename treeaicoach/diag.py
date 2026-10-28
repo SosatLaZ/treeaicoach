@@ -148,8 +148,12 @@ class DiagRecorder:
 
     def __init__(self, engine: Any, duration_s: float = 60.0, interval_s: float = 2.0,
                  out_root: Path | None = None, opener: Callable[[Path], None] | None = None,
-                 clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], Any] | None = None) -> None:
+                 clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], Any] | None = None,
+                 report: bool | None = None) -> None:
         self.engine = engine
+        #: also write the "Rapport d'analyse" of the LAST 60 s (analysis_report.py); None = when the user
+        #: asked (Ctrl+F8 / button: the default opener), not for the self-check's automatic bundle
+        self._report = (opener is None) if report is None else bool(report)
         self.duration_s = float(min(max(duration_s, 1.0), 600.0))
         self.interval_s = float(min(max(interval_s, 0.2), 30.0))
         self._out_root = out_root
@@ -196,6 +200,13 @@ class DiagRecorder:
                 req(full_screen=True)
             self._thread = threading.Thread(target=self._run, name="TreeAICoach-diag", daemon=True)
             self._thread.start()
+            if self._report:
+                try:
+                    from treeaicoach import analysis_report
+
+                    analysis_report.request(self.engine, out_dir=root.parent / analysis_report.REPORT_DIR)  # own thread
+                except Exception:
+                    log.debug("Analysis report not started", exc_info=True)
             log.info("Diagnostic recording started: %s (%.0f s, every %.1f s)", folder, self.duration_s,
                      self.interval_s)
             return folder

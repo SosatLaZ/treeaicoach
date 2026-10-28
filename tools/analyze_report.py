@@ -1,0 +1,267 @@
+"""Short diagnosis (<= 40 lines) of a « Rapport d'analyse » zip (treeaicoach/analysis_report.py).
+
+    python tools/analyze_report.py rapport_20261028_181500.zip
+
+Reads frames.json + state.json only (images are not decoded): detection anomalies against the Live
+Client roster (allies never / rarely seen, duplicates, jumps, unknown ids, champions not in the game),
+shop / item card state, rank sanity checks, voice engine state, spam rates (coach lines, threat gate)
+and slow threads. Everything is a heuristic flag for a human: "!" = worth a look.
+"""
+
+from __future__ import annotations
+
+import json
+import statistics
+import sys
+import zipfile
+from collections import Counter
+from pathlib import Path
+from typing import Any
+
+MAX_LINES = 40
+JUMP = 0.25                 # a champion moving more than this (minimap units) between two samples <= 2 s apart
+ALLY_SEEN_MIN = 0.7         # allies are always on our minimap: seen in fewer frames than this is a problem
+TIERS = {"IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"}
+
+
+def _num(x: Any) -> float | None:
+    try:
+        v = float(x)
+        return v if v == v else None
+    except (TypeError, ValueError):
+        return None
+
+
+def load(path: str | Path) -> tuple[list[dict], dict, dict]:
+    """(frames, state, meta {size, names})."""
+    p = Path(path)
+    with zipfile.ZipFile(p) as zf:
+        names = zf.namelist()
+        frames = json.loads(zf.read("frames.json")) if "frames.json" in names else []
+        state = json.loads(zf.read("state.json")) if "state.json" in names else {}
+    return frames, state, {"size": p.stat().st_size, "names": names}
+
+
+def _seen(fr: dict) -> list[tuple[str, str, Any]]:
+    """(alias, relation, pos) of the champions shown in a frame: visible tracks, else identified detections."""
+    out = [(t.get("alias"), t.get("relation"), t.get("pos")) for t in fr.get("tracks") or ()
+           if t.get("visible") and t.get("alias")]
+    if not out:
+        out = [(d.get("alias"), d.get("relation"), [d.get("u"), d.get("v")]) for d in fr.get("detections") or ()
+               if d.get("alias")]
+    return out
+
+
+def detection(frames: list[dict], state: dict) -> list[str]:
+    live = state.get("live_client") or {}
+    players = live.get("players") or []
+    me = (live.get("me") or {}).get("champion")
+    my_team = live.get("my_team")
+    roster = {p.get("champion"): p for p in players if p.get("champion")}
+    allies = {a for a, p in roster.items() if my_team is not None and p.get("team") == my_team}
+    enemies = set(roster) - allies
+    n = len(frames)
+    out = [f"DÉTECTION ({n} images, roster Live Client : {len(roster)} champions)"]
+    if not n:
+        return out + ["! aucune image dans le tampon (partie pas en cours ?)"]
+    if not roster:
+        out.append("! pas de roster Live Client : comparaisons impossibles")
+    counts: Counter = Counter()
+    dup_frames: Counter = Counter()
+    foreign: Counter = Counter()
+    unknown = 0
+    scores = []
+    last: dict[str, tuple[float, Any]] = {}
+    jumps: Counter = Counter()
+    for fr in frames:
+        seen = _seen(fr)
+        c = Counter(a for a, _r, _p in seen)
+        for a, k in c.items():
+            counts[a] += 1
+            if k > 1:
+                dup_frames[a] += 1
+            if roster and a not in roster:
+                foreign[a] += 1
+        unknown += sum(1 for d in fr.get("detections") or () if not d.get("alias"))
+        scores += [s for s in (_num(d.get("score")) for d in fr.get("detections") or ()) if s is not None]
+        t = _num(fr.get("game_time")) if fr.get("game_time") is not None else _num(fr.get("t"))
+        for a, _r, pos in seen:
+            if not pos or pos[0] is None or t is None or c[a] > 1:
+                continue
+            prev = last.get(a)
+            if prev is not None and 0 < t - prev[0] <= 2.0:
+                d = ((pos[0] - prev[1][0]) ** 2 + (pos[1] - prev[1][1]) ** 2) ** 0.5
+                if d > JUMP:
+                    jumps[a] += 1
+            last[a] = (t, pos)
+    low = sorted(a for a in allies | ({me} if me else set()) if counts[a] / n < ALLY_SEEN_MIN)
+    if low:
+        out.append("! alliés / moi peu vus : " + ", ".join(f"{a} {100 * counts[a] // n} %" for a in low))
+    if allies:
+        out.append(f"  alliés vus en moyenne {round(100 * sum(counts[a] for a in allies) / (n * len(allies)))} % "
+                   f"des images ; ennemis {', '.join(f'{a} {100 * counts[a] // n} %' for a in sorted(enemies)) or '-'}")
+    if dup_frames:
+        out.append("! doublons (même champion 2 fois) : " + ", ".join(f"{a} ×{k}" for a, k in dup_frames.most_common(4)))
+    if foreign:
+        out.append("! champions hors partie détectés : " + ", ".join(f"{a} ×{k}" for a, k in foreign.most_common(4)))
+    if jumps:
+        out.append(f"! sauts > {JUMP} carte en <= 2 s : " + ", ".join(f"{a} ×{k}" for a, k in jumps.most_common(4)))
+    fps = [f for f in (_num(fr.get("fps")) for fr in frames) if f is not None]
+    out.append(f"  détections sans identité : {unknown / n:.1f} / image ; score moyen "
+               f"{statistics.mean(scores):.2f}" if scores else f"  détections sans identité : {unknown / n:.1f} / image")
+    if fps:
+        out[-1] += f" ; analyse {statistics.median(fps):.0f} img/s"
+    return out
+
+
+def shop(state: dict) -> list[str]:
+    s = state.get("shop") or {}
+    sw, card, iset = s.get("shop_watcher"), s.get("item_card"), s.get("item_set")
+    bits = []
+    if sw:
+        bits.append(f"boutique {'ouverte' if sw.get('shop_open') else 'fermée'} (vues {sw.get('looks')})")
+    else:
+        bits.append("boutique jamais analysée")
+    if card:
+        bits.append("carte d'objet : " + ", ".join(f"{k}={v}" for k, v in card.items() if k != "type")[:80])
+    if iset:
+        bits.append("set d'objets : " + ", ".join(f"{k}={v}" for k, v in iset.items() if k != "type")[:60])
+    screen = (state.get("report") or {}).get("screen")
+    return ["BOUTIQUE : " + " ; ".join(bits) + ("" if screen else " ; ! pas de capture plein écran")]
+
+
+def ranks(state: dict) -> list[str]:
+    r = state.get("ranks") or {}
+    ps = r.get("players") or []
+    if not r.get("enabled"):
+        return ["RANGS : désactivés"]
+    if not ps:
+        return ["RANGS : activés, rien lu (client LoL ? partie pas commencée ?)"]
+    live = {p.get("champion") for p in (state.get("live_client") or {}).get("players") or ()}
+    issues = []
+    allies = sum(1 for p in ps if p.get("ally"))
+    if len(ps) > 9 or allies > 4 or len(ps) - allies > 5:
+        issues.append(f"{len(ps)} joueurs dont {allies} alliés (attendu 9 : 4 + 5)")
+    for p in ps:
+        a, tier = p.get("alias"), str(p.get("tier") or "")
+        n = int(p.get("wins") or 0) + int(p.get("losses") or 0)
+        if live and a not in live:
+            issues.append(f"{a} n'est pas dans la partie")
+        if tier and tier not in TIERS:
+            issues.append(f"{a} palier inconnu {tier}")
+        if not tier and n:
+            issues.append(f"{a} non classé mais {n} parties")
+        if n > 1500:
+            issues.append(f"{a} {n} parties classées (invraisemblable ?)")
+        if p.get("history_loaded") and int(p.get("games") or 0) > 20:
+            issues.append(f"{a} historique {p.get('games')} > 20")
+    head = f"RANGS (file {r.get('queue_id')}) : {len(ps)} joueurs, {sum(1 for p in ps if p.get('ranked_loaded'))} lus"
+    out = [head] + [f"! {i}" for i in issues[:4]]
+    out += [f"  {p.get('shown')}" for p in ps if not p.get("ally")][:5]
+    return out
+
+
+def voice(state: dict) -> list[str]:
+    v = state.get("voice") or {}
+    w = v.get("whisper") or {}
+    tr = v.get("transcripts") or []
+    empty = sum(1 for t in tr if not str(t.get("text") or "").strip())
+    head = (f"VOIX : Whisper {'prêt' if w.get('ready') else 'NON chargé' if w.get('created') else 'jamais démarré'}"
+            f" ({w.get('model') or '?'}{', ' + str(w.get('device')) if w.get('device') else ''})")
+    out = [head]
+    if w.get("engine_error"):
+        out.append(f"! moteur : {str(w['engine_error'])[:90]}")
+    if w.get("status"):
+        out.append(f"  état : {str(w['status'])[:90]}")
+    if tr:
+        ms = [t.get("ms") for t in tr if isinstance(t.get("ms"), (int, float))]
+        srcs = Counter(t.get("source") for t in tr)
+        out.append(f"  {len(tr)} transcriptions ({empty} vides ; " + ", ".join(f"{k} {c}" for k, c in srcs.items())
+                   + (f" ; {statistics.median(ms):.0f} ms" if ms else "") + f") ; dernière : « {str(tr[-1].get('text'))[:50]} »")
+    return out
+
+
+def spam(state: dict) -> list[str]:
+    lines = state.get("coach_lines") or []
+    gate = state.get("threat_gate") or []
+    out = []
+    gts = [g for g in (_num(x.get("game_time")) for x in lines) if g is not None]
+    span = (max(gts) - min(gts)) / 60.0 if len(gts) >= 2 else 0.0
+    rate = len(lines) / span if span > 0.5 else None
+    rules = Counter(x.get("rule") for x in lines)
+    rep = Counter(x.get("text") for x in lines)
+    out.append(f"CONSEILS : {len(lines)} lignes" + (f" en {span:.1f} min ({rate:.1f}/min)" if rate else "")
+               + " ; règles " + ", ".join(f"{k} {c}" for k, c in rules.most_common(4)))
+    if rate and rate > 6:
+        out.append(f"! débit élevé : {rate:.1f} lignes/min")
+    reps = [(t, c) for t, c in rep.most_common(3) if c >= 3]
+    for t, c in reps:
+        out.append(f"! répété ×{c} : « {str(t)[:60]} »")
+    if gate:
+        ok = sum(1 for g in gate if g.get("ok"))
+        why = Counter(g.get("why") for g in gate if not g.get("ok"))
+        out.append(f"  porte des menaces : {ok}/{len(gate)} dites ; " + ", ".join(f"{k} {c}" for k, c in why.most_common(2)))
+    return out
+
+
+def perf(state: dict) -> list[str]:
+    p = state.get("perf") or {}
+    samples = p.get("samples") or []
+    out = []
+    fps = [f for f in (_num(s.get("fps")) for s in samples) if f is not None]
+    tick = [f for f in (_num(s.get("tick_ms")) for s in samples) if f is not None]
+    threads: dict[str, list[float]] = {}
+    for s in samples:
+        for k, v in (s.get("threads") or {}).items():
+            if _num(v) is not None:
+                threads.setdefault(k, []).append(float(v))
+    head = "PERF :"
+    if fps:
+        head += f" analyse {statistics.median(fps):.1f} img/s (min {min(fps):.1f})"
+    if tick:
+        head += f" ; tick {statistics.median(tick):.0f} ms (max {max(tick):.0f})"
+    perf_s = p.get("performance") or {}
+    if perf_s.get("text"):
+        head += f" ; {perf_s['text']}"[:100]
+    out.append(head)
+    slow = sorted(((statistics.mean(v), k) for k, v in threads.items() if statistics.mean(v) >= 25.0), reverse=True)
+    if slow:
+        out.append("! threads lourds : " + ", ".join(f"{k} {m:.0f} %" for m, k in slow[:4]))
+    if tick and max(tick) > 80:
+        out.append(f"! tick lent : {max(tick):.0f} ms")
+    return out
+
+
+def analyze(path: str | Path) -> list[str]:
+    frames, state, meta = load(path)
+    app = state.get("app") or {}
+    rep = state.get("report") or {}
+    live = state.get("live_client") or {}
+    me = live.get("me") or {}
+    gts = [g for g in (_num(f.get("game_time")) for f in frames) if g is not None]
+    span = f"{int(min(gts)) // 60}:{int(min(gts)) % 60:02d}-{int(max(gts)) // 60}:{int(max(gts)) % 60:02d}" if gts else "?"
+    out = [f"Rapport TreeAI {app.get('version', '?')} · {state.get('created', '?')} · {meta['size'] / 1e6:.1f} Mo · "
+           f"{rep.get('frames', len(frames))} images (pas {rep.get('frame_step', 1)}) · temps de jeu {span}",
+           f"Partie : {live.get('mode', '?')} · moi {me.get('champion', '?')} ({me.get('position') or '?'})"]
+    for part in (detection(frames, state), shop(state), ranks(state), voice(state), spam(state), perf(state)):
+        out += part
+    if len(out) > MAX_LINES:
+        out = out[:MAX_LINES - 1] + [f"… ({len(out) - MAX_LINES + 1} lignes coupées)"]
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if not args:
+        print(__doc__.strip().splitlines()[2].strip())
+        return 2
+    for a in args:
+        try:
+            print("\n".join(analyze(a)))
+        except Exception as exc:  # a broken zip: say it, keep going
+            print(f"{a} : illisible ({type(exc).__name__}: {exc})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
