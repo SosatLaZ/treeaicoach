@@ -149,13 +149,22 @@ def _features(img: np.ndarray, sigma: float = BLUR_SIGMA) -> Feat:
 
 
 def _ncc(feat: Feat, tpl: Feat) -> np.ndarray:
-    """Mean over the two channels of the normalized cross-correlation maps."""
+    """Mean over the two channels of the normalized cross-correlation maps (lightness only
+    when the capture has no colour at all: death greyscale filter, colour-blind / HDR tools)."""
     r = cv2.matchTemplate(feat[0], tpl[0], cv2.TM_CCOEFF_NORMED)
+    if _colourless(feat):
+        np.nan_to_num(r, copy=False, nan=-1.0, posinf=-1.0, neginf=-1.0)
+        return r
     r += cv2.matchTemplate(feat[1], tpl[1], cv2.TM_CCOEFF_NORMED)
     r *= 0.5
     # flat regions give NaN / inf (zero variance): count them as "no match"
     np.nan_to_num(r, copy=False, nan=-1.0, posinf=-1.0, neginf=-1.0)
     return r
+
+
+def _colourless(feat: Feat) -> bool:
+    """The chroma channel is flat (greyscale capture): it carries no evidence."""
+    return float(np.ptp(feat[1])) < 1e-3
 
 
 def _to_bgr_u8(img: Any) -> np.ndarray | None:

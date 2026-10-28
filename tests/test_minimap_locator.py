@@ -440,3 +440,28 @@ def test_verify_greyscale_minimap():
     assert loc.verify(grey) > VERIFY_MIN_SCORE + 0.2
     noise = np.random.default_rng(0).integers(0, 255, (300, 300), np.uint8)
     assert loc.verify(cv2.cvtColor(noise, cv2.COLOR_GRAY2BGR)) < VERIFY_MIN_SCORE
+
+
+
+@pytest.mark.parametrize("H,frac", [(900, 0.30), (1080, 0.356), (1440, 0.30), (1600, 0.356)])
+def test_locate_greyscale_screen(H, frac):
+    """Death greyscale filter on the whole screen: the coarse search used to average in the flat
+    chroma channel (true minimap ~0.42, at COARSE_MIN_SCORE) -> no minimap while dead (real
+    minimap crops pasted on grey screens: 14 / 30 found before, 30 / 30 now)."""
+    import cv2
+    from pathlib import Path
+
+    from treeaicoach.minimap_locator import MinimapLocator
+
+    fx = Path(__file__).parent / "fixtures"
+    mm, shot = cv2.imread(str(fx / "ingame5_minimap.png")), cv2.imread(str(fx / "ingame3_2000x1125.jpg"))
+    if mm is None or shot is None:
+        pytest.skip("fixtures missing")
+    W, s, m = int(H * 16 / 9), int(frac * H), int(0.012 * H)
+    bg = cv2.resize(shot[0:700, 0:1500], (W, H))           # game view, no HUD
+    bg[H - m - s:H - m, W - m - s:W - m] = cv2.resize(mm, (s, s), interpolation=cv2.INTER_AREA)
+    grey = cv2.cvtColor(cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    r = MinimapLocator().locate(grey)
+    assert r is not None
+    assert abs(r.rect.x - (W - m - s)) <= 3 and abs(r.rect.y - (H - m - s)) <= 3
+    assert abs(r.rect.w - s) <= 4
