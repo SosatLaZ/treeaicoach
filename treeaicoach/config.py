@@ -41,6 +41,8 @@ INT_RANGES: dict[str, tuple[int, int]] = {
     "voice_rate": (-10, 10),       # SAPI rate
     "voice_volume": (0, 100),
     "recall_gold_threshold": (300, 5000),
+    "storage_keep_games": (3, 200),   # Réglages > Stockage: complete games kept by the cleanup
+    "storage_keep_days": (1, 90),     # captures / reports / diagnostics kept this many days
 }
 FLOAT_RANGES: dict[str, tuple[float, float]] = {
     "sensitivity": (0.6, 1.6),
@@ -49,7 +51,7 @@ FLOAT_RANGES: dict[str, tuple[float, float]] = {
     "danger_radius": (0.03, 0.35),
     "target_fps": (2.0, 20.0),
     "detection_threshold": (0.0, 0.95),   # 0 = use model_meta.json
-    "collect_interval_s": (0.5, 60.0),
+    "collect_interval_s": (0.5, 900.0),   # effective gap >= engine_base.COLLECT_MIN_GAP_S (180 s)
     "radar_scale": (0.5, 2.0),     # 1.0 = same size as the minimap
     "fog_max_s": (10.0, 180.0),
 }
@@ -84,6 +86,7 @@ BOOL_FIELDS: tuple[str, ...] = (
     "download_skin_icons",
     "autostart",
     "collect_samples",
+    "storage_auto_clean",
     # v1.1 (§6.7)
     "objective_timers",
     "recall_reminder",
@@ -279,7 +282,11 @@ class Config:
     # misc
     autostart: bool = True          # start the analysis at launch
     collect_samples: bool = True    # save minimaps (local) -> real test cases with the LCU truth (2.10.1)
-    collect_interval_s: float = 30.0
+    collect_interval_s: float = 180.0   # min gap between two useful minimap crops (collect_policy)
+    # storage (storage.py, Réglages > Stockage): cleanup at start-up with the same rules as the button
+    storage_auto_clean: bool = True
+    storage_keep_games: int = 10
+    storage_keep_days: int = 7
     # v1.1 helpers (§6.7)
     objective_timers: bool = True
     objective_lead_s: list[int] = field(default_factory=lambda: list(DEFAULT_OBJECTIVE_LEAD_S))

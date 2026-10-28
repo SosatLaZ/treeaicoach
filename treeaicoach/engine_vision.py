@@ -22,8 +22,9 @@ from treeaicoach.alerts import Alert, AlertKind, Level, make_alert
 from treeaicoach.capture import Rect, is_black_frame
 from treeaicoach.engine_base import (
     CAMERA_SELF_MAX_DIST,
-    COLLECT_FULL_EVERY,
+    COLLECT_FULL_MAX_W,
     COLLECT_MAX_FILES,
+    COLLECT_MIN_GAP_S,
     DUP_DIST,
     DUP_KEEP_ID_SCORE,
     GANK_KINDS,
@@ -542,35 +543,68 @@ class VisionMixin:
         return [make_alert(AlertKind.DEATH_RECAP, Level.INFO, t, text=text, key="death_recap")]
 
     def _collect(self, frame: np.ndarray, t: float) -> None:
-        if t - self._last_collect < max(0.5, float(self._cfg.collect_interval_s)):
+        """Training samples (collect_policy.py): a JPEG crop only at moments that teach something
+        (roster disagreement, low confidence, stack, fight), at most every 3 min and 25 files / 4 Mo
+        per game; the full window once per game while the shop is open."""
+        from treeaicoach import collect_policy as cp
+
+        bud = self.__dict__.get("_collect_budget")
+        if bud is None:
+            bud = self.__dict__["_collect_budget"] = cp.GameBudget()
+        game = self._game
+        bud.new_game(id(self._recorder) if self._recorder is not None else None,
+                     getattr(game, "game_time", None) if game is not None else None)
+        if bud.full() or self._collect_count >= COLLECT_MAX_FILES:
             return
-        if self._collect_count >= COLLECT_MAX_FILES:
-            return
-        self._last_collect = t
         try:
             from treeaicoach.paths import collect_dir
 
             stamp = time.strftime("%Y%m%d_%H%M%S") + f"_{self._collect_count:04d}"
-            if cv2.imwrite(str(collect_dir() / (stamp + ".png")), frame):
+            w = self.__dict__.get("_shop_watcher")
+            if not bud.shop_done and getattr(w, "shop_open", False):
+                bud.shop_done = True
+                n = self._collect_full(collect_dir() / (stamp + "_shop.jpg"))
+                if n:
+                    bud.add(n)
+                    self._collect_count += 1
+            if not bud.crop_due(t, max(COLLECT_MIN_GAP_S, float(self._cfg.collect_interval_s))):
+                return
+            players = list(game.all_players()) if game is not None and hasattr(game, "all_players") else []
+            tr = self._tracker
+            why = cp.frame_reason(self._identified or (), tr.tracks() if tr is not None else (),
+                                  [p.champion_alias for p in players],
+                                  [p.champion_alias for p in players if getattr(p, "is_dead", False)])
+            if why is None:
+                return
+            ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), cp.JPEG_Q])
+            if ok:
+                (collect_dir() / f"{stamp}_{why}.jpg").write_bytes(buf.tobytes())
+                bud.add(len(buf), t)
                 self._collect_count += 1
-            if self._collect_count % COLLECT_FULL_EVERY == 1:
-                self._collect_full(collect_dir() / (stamp + "_full.jpg"))
+            self._last_collect = t
         except Exception:
             self._err.exception("Sample collection failed")
 
-    def _collect_full(self, path: Any) -> None:
-        """The whole game window, half size, JPEG (HUD, shop, scoreboard, our overlay): for the
-        layout / HUD / overlay checks. Never raises."""
+    def _collect_full(self, path: Any) -> int:
+        """The whole game window, at most 1280 px wide, JPEG q80 (HUD, shop, scoreboard, our overlay):
+        for the layout / HUD / overlay checks. Returns the bytes written (0 = none). Never raises."""
         try:
             from treeaicoach.capture import find_game_window
 
             cap, rect = self._capture, find_game_window()
             if cap is None or rect is None:
-                return
+                return 0
             img = cap.grab(rect)
             if img is None or img.size == 0:
-                return
-            img = cv2.resize(img, (img.shape[1] // 2, img.shape[0] // 2), interpolation=cv2.INTER_AREA)
-            cv2.imwrite(str(path), img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                return 0
+            if img.shape[1] > COLLECT_FULL_MAX_W:
+                h = max(1, img.shape[0] * COLLECT_FULL_MAX_W // img.shape[1])
+                img = cv2.resize(img, (COLLECT_FULL_MAX_W, h), interpolation=cv2.INTER_AREA)
+            ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if not ok:
+                return 0
+            Path(path).write_bytes(buf.tobytes())
+            return len(buf)
         except Exception:
             log.debug("Full-window sample failed", exc_info=True)
+            return 0

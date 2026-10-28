@@ -118,6 +118,63 @@ class SettingsPage:
         app.choice_row(win, "ui_scaling", "Taille de l'interface", "Appliquée au prochain lancement.", UI_SCALINGS)
         app.switch_row(win, "ui_confirm_quit", "Confirmer avant de quitter en partie", None)
 
+        sto = self.page.section("Stockage", "Captures, parties, rapports et journaux gardés sur ton PC.")
+        self.storage_row = sto.add(W.Row("Place utilisée", "Calcul…",
+                                         W.button("Faire le ménage", self.clean_storage)))
+        app.switch_row(sto, "storage_auto_clean", "Ménage automatique au démarrage", "Mêmes règles que le "
+                       "bouton (réglages ci-dessous). Jamais les modèles de voix téléchargés.")
+        app.slider_row(sto, "storage_keep_games", "Parties gardées complètes", "Les plus anciennes perdent leur "
+                       "rapport HTML et leur vérité ; tes statistiques restent.", 3, 50, 1, lambda v: f"{v:.0f}",
+                       to_value=int)
+        app.slider_row(sto, "storage_keep_days", "Captures et rapports gardés", None, 1, 30, 1,
+                       lambda v: f"{v:.0f} j", to_value=int)
+        self.refresh_storage()
+        app.run_job(self._auto_clean, lambda _r: self.refresh_storage(), None, name="TreeAI-ui-storage-auto")
+
+    def _auto_clean(self) -> Any:
+        from treeaicoach import storage  # noqa: PLC0415
+
+        return storage.auto_cleanup(self.app.cfg)
+
+    def refresh_storage(self) -> None:
+        """« Place utilisée » row: sizes per kind, computed on a worker."""
+        def job() -> str:
+            from treeaicoach import storage  # noqa: PLC0415
+
+            return storage.usage_text(storage.usage())
+        try:
+            self.app.run_job(job, lambda txt: self.storage_row.set_desc(txt), None, name="TreeAI-ui-storage")
+        except Exception:
+            log.debug("storage refresh failed", exc_info=True)
+
+    def clean_storage(self) -> None:
+        """« Faire le ménage »: plan on a worker, confirmation listing what goes and the space freed, then
+        deletion on a worker. Never raises."""
+        app = self.app
+        from treeaicoach import storage  # noqa: PLC0415
+
+        rules = storage.cfg_rules(app.cfg)
+
+        def planned(plan: Any) -> None:
+            from treeaicoach.ui_dialogs import message  # noqa: PLC0415
+
+            text = storage.describe_plan(plan, rules["keep_games"])
+            if not plan.items:
+                message(app, "Faire le ménage", text, [("OK", "ok")])
+                return
+            if message(app, "Faire le ménage ?", text, [("Annuler", "no"), ("Supprimer", "yes")]) != "yes":
+                return
+            app.run_job(lambda: storage.run_cleanup(plan), cleaned, None, name="TreeAI-ui-storage-clean")
+
+        def cleaned(res: Any) -> None:
+            n, freed = res
+            app.show_toast(f"Ménage fait : {n} fichier{'s' if n > 1 else ''} supprimé{'s' if n > 1 else ''}, "
+                           f"{storage.size_label(freed)} libérés.")
+            self.refresh_storage()
+
+        app.run_job(lambda: storage.plan_cleanup(**rules), planned,
+                    lambda e: app.show_error(f"Ménage impossible : {e}"), name="TreeAI-ui-storage-plan")
+
     def on_ai_test(self, ok: bool, short: str) -> None:
         self.ai_test.set_desc(("Clé valide : " if ok else "Échec : ") + short)
 

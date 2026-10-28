@@ -170,3 +170,31 @@ def test_analyze_report_short_diagnosis(tmp_path, monkeypatch):
     assert "threads lourds : TreeAI-analysis 34 %" in text
     assert "pas de capture plein écran" in text
     assert tool.main([str(path)]) == 0
+
+
+def test_report_outside_a_game_keeps_last_game(tmp_path, monkeypatch):
+    """Ctrl+F8 after the game: the buffer of the previous game + the last record's summary, said clearly."""
+    home = tmp_path / "home"
+    rec = {"meta": {"riot_id": "Joueur#EUW", "app_version": "3.3.0"}, "duration": 1200,
+           "summary": {"champion": "Garen", "result": "Lose", "duration": 1200},
+           "roster": [{"alias": "Garen", "team": "ORDER", "summoner_name": "Quelqu'un"}],
+           "alerts": [[10.0, "jungler_approach", 2, "Gank !"], [20.0, "jungler_approach", 2, "Gank !"]]}
+    (home / "games").mkdir(parents=True)
+    (home / "games" / "2026-10-28_2000_Garen.json").write_text(json.dumps(rec), encoding="utf-8")
+    monkeypatch.setenv("TREEAICOACH_HOME", str(home))
+    eng, buf = Engine(), ar.ReportBuffer()
+    tick_game(eng, buf, n=10)
+    eng._game = None                                                          # the game is over
+    path = ar.write_report(eng, tmp_path, buf)
+    with zipfile.ZipFile(path) as zf:
+        st = json.loads(zf.read("state.json"))
+        readme = zf.read("LISEZMOI.txt").decode("utf-8")
+        last = json.loads(zf.read("last_game.json"))
+        blob = zf.read("last_game.json").decode("utf-8")
+    assert st["no_game"] is True and st["report"]["frames_from"] == "partie précédente"
+    assert "AUCUNE PARTIE EN COURS" in readme and "10 images" in readme
+    assert last["summary"]["result"] == "Lose" and last["alerts_by_rule"] == {"jungler_approach": 2}
+    assert "Joueur" not in blob and "Quelqu'un" not in blob
+    assert st["perf_summary"]["threads"]["TreeAI-analysis"]["mean"] == 34.0
+    text = "\n".join(tool.analyze(path))
+    assert "DÉTECTION (10 images" in text

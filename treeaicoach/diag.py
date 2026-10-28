@@ -143,6 +143,71 @@ def system_info() -> dict[str, Any]:
     return out
 
 
+def pc_info() -> dict[str, Any]:
+    """PC facts for the support zip: RAM, GPU name(s), screen size and Windows scale, LoL window size
+    (+ :func:`system_info`). No user / machine name. Each part may be None. Never raises."""
+    out: dict[str, Any] = dict(system_info())
+    out.pop("game_data", None)
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class _MEM(ctypes.Structure):
+                _fields_ = [("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            m = _MEM()
+            m.dwLength = ctypes.sizeof(_MEM)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+                out["ram_gb"] = round(m.ullTotalPhys / 1024 ** 3, 1)
+                out["ram_free_gb"] = round(m.ullAvailPhys / 1024 ** 3, 1)
+        else:
+            with open("/proc/meminfo", encoding="ascii") as fh:
+                kv = dict(line.split(":", 1) for line in fh if ":" in line)
+            out["ram_gb"] = round(int(kv["MemTotal"].split()[0]) / 1024 ** 2, 1)
+            out["ram_free_gb"] = round(int(kv["MemAvailable"].split()[0]) / 1024 ** 2, 1)
+    except Exception:
+        log.debug("RAM info failed", exc_info=True)
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class _DD(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("DeviceName", wintypes.WCHAR * 32),
+                            ("DeviceString", wintypes.WCHAR * 128), ("StateFlags", wintypes.DWORD),
+                            ("DeviceID", wintypes.WCHAR * 128), ("DeviceKey", wintypes.WCHAR * 128)]
+            gpus: list[str] = []
+            for i in range(16):
+                d = _DD()
+                d.cb = ctypes.sizeof(_DD)
+                if not ctypes.windll.user32.EnumDisplayDevicesW(None, i, ctypes.byref(d), 0):
+                    break
+                if d.DeviceString and d.DeviceString not in gpus:
+                    gpus.append(d.DeviceString)
+            out["gpu"] = gpus
+            u32 = ctypes.windll.user32
+            out["screen"] = [int(u32.GetSystemMetrics(0)), int(u32.GetSystemMetrics(1))]
+            try:
+                out["scale_percent"] = round(int(u32.GetDpiForSystem()) * 100 / 96)
+            except Exception:
+                pass
+    except Exception:
+        log.debug("GPU / screen info failed", exc_info=True)
+    try:
+        from treeaicoach.capture import find_game_window
+
+        r = find_game_window()
+        out["lol_window"] = None if r is None else [int(getattr(r, "w", 0) or getattr(r, "width", 0)),
+                                                    int(getattr(r, "h", 0) or getattr(r, "height", 0))]
+    except Exception:
+        out["lol_window"] = None
+    return out
+
+
 class DiagRecorder:
     """Records one diagnostic bundle for ``engine`` (a :class:`~treeaicoach.engine.CoachEngine`)."""
 

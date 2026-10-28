@@ -44,7 +44,7 @@ def test_defaults_match_contract():
     assert c.target_fps == 12.0 and c.detector_backend == "auto" and c.detection_threshold == 0.0
     assert c.minimap_mode == "auto" and c.minimap_side == "auto" and c.manual_minimap_rect is None
     assert c.download_skin_icons is True and c.autostart is True
-    assert c.collect_samples is True and c.collect_interval_s == 30.0   # 2.17: captures every 30 s
+    assert c.collect_samples is True and c.collect_interval_s == 180.0  # useful crops only, at most every 3 min
 
 
 def test_defaults_are_valid_and_validated_is_a_copy(caplog):
@@ -95,7 +95,7 @@ def test_effective_radii():
         ("detection_threshold", 0.4, 0.4),
         ("detection_threshold", 1.5, 0.95),
         ("collect_interval_s", 0.0, 0.5),
-        ("collect_interval_s", 1e9, 60.0),
+        ("collect_interval_s", 1e9, 900.0),
         ("detector_backend", " ONNX ", "onnx"),
         ("detector_backend", "tensorflow", "auto"),
         ("detector_backend", 3, "auto"),

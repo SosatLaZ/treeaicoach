@@ -1,6 +1,14 @@
-"""Short diagnosis (<= 40 lines) of a « Rapport d'analyse » zip (treeaicoach/analysis_report.py).
+"""Short diagnosis (<= 40 lines) of a « Rapport d'analyse » zip (treeaicoach/analysis_report.py) or of an
+« Envoyer à TreeAI » zip (treeaicoach/export.py, recognised by its ``info.json``).
 
     python tools/analyze_report.py rapport_20261028_181500.zip
+    python tools/analyze_report.py TreeAI_envoi_20261028_181500.zip
+
+Export zip: per game, detection health against the LCU truth (tools/record_vs_truth.py: samples checked,
+errors per 100), gank precision (tools/gank_alerts_truth.py: came / stayed), claims audit
+(tools/claims_audit.py: wrong / checked), spam (alerts per minute, repeats); voice (wakes, false wakes,
+transcripts from the filtered logs), performance per thread, errors (top messages), and one line per
+analysis report inside.
 
 Reads frames.json + state.json only (images are not decoded): detection anomalies against the Live
 Client roster (allies never / rarely seen, duplicates, jumps, unknown ids, champions not in the game),
@@ -11,6 +19,7 @@ and slow threads. Everything is a heuristic flag for a human: "!" = worth a look
 from __future__ import annotations
 
 import json
+import re
 import statistics
 import sys
 import zipfile
@@ -232,7 +241,137 @@ def perf(state: dict) -> list[str]:
     return out
 
 
+def _tool(name: str) -> Any:
+    import importlib.util
+    root = Path(__file__).resolve().parent
+    if str(root.parent) not in sys.path:
+        sys.path.insert(0, str(root.parent))
+    spec = importlib.util.spec_from_file_location(f"_ar_{name}", root / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _game_lines(stem: str, rec: dict, truth: dict | None) -> list[str]:
+    summ = rec.get("summary") or {}
+    dur = float(rec.get("duration") or summ.get("duration") or 0)
+    alerts = [a for a in rec.get("alerts") or [] if isinstance(a, list) and len(a) >= 4]
+    head = (f"PARTIE {stem[:16]} {summ.get('champion', '?')} {summ.get('position') or ''} {summ.get('result') or '?'} "
+            f"{int(dur) // 60} min · v{(rec.get('meta') or {}).get('app_version', '?')} · "
+            f"{len(alerts)} alertes ({len(alerts) * 60 / dur:.1f}/min)" if dur else f"PARTIE {stem[:16]}")
+    out = [head]
+    rep = Counter(str(a[3]) for a in alerts)
+    reps = [(t, c) for t, c in rep.most_common(2) if c >= 5]
+    if reps:
+        out.append("  ! répétés : " + " ; ".join(f"×{c} « {t[:40]} »" for t, c in reps))
+    if truth is None:
+        out.append("  (pas de vérité LCU : détection / ganks / affirmations non vérifiables)")
+        return out
+    try:
+        r = _tool("record_vs_truth").analyse(rec, truth)
+        ck, cn = r["checked"], r["counts"]
+        n = max(1, sum(ck.values()))
+        top = sorted(((v, k) for k, v in cn.items() if v), reverse=True)[:4]
+        gaps = cn.get("gap_enemy", 0)
+        out.append(f"  détection : {ck.get('enemy', 0)} ennemis / {ck.get('ally', 0)} alliés vérifiés ; "
+                   f"erreurs {100 * sum(cn.values()) / n:.0f}/100 ({', '.join(f'{k} {v}' for v, k in top) or 'aucune'})"
+                   + f" ; ennemis visibles manqués {gaps}" + (f" ; moi {r['me_err50']:.3f}" if r.get("me_err50") else ""))
+    except Exception as exc:
+        out.append(f"  détection : vérification impossible ({type(exc).__name__})")
+    try:
+        g = _tool("gank_alerts_truth")
+        res = g.score([(stem, g.Game(rec, truth), g.alerts_of(rec))])
+        c, de = res["per"].get("ALL") or Counter(), res["deaths"]
+        sc = c["came"] + c["stayed"]
+        out.append(f"  ganks : {sum(c.values())} alertes, précision {c['came'] / sc:.0%} ({c['came']}/{sc})" if sc else
+                   f"  ganks : {sum(c.values())} alertes, aucune vérifiable")
+        out[-1] += f" ; morts prévenues {de['warned']}/{de['deaths']}"
+    except Exception as exc:
+        out.append(f"  ganks : calcul impossible ({type(exc).__name__})")
+    try:
+        rows = _tool("claims_audit").audit(rec, truth)
+        v = Counter(r["verdict"] for r in rows)
+        bad = Counter(r["rule"] for r in rows if r["verdict"] == "wrong")
+        out.append(f"  affirmations : {v['wrong']} fausses / {v['ok'] + v['wrong']} vérifiées"
+                   + (" (" + ", ".join(f"{k} {n}" for k, n in bad.most_common(3)) + ")" if bad else ""))
+    except Exception as exc:
+        out.append(f"  affirmations : audit impossible ({type(exc).__name__})")
+    return out
+
+
+def _log_lines(logs: dict[str, str]) -> list[str]:
+    text = "\n".join(logs.values())
+    wakes = text.count("mot-clé entendu")
+    near = text.count("n'est pas confirmé, ignoré")
+    short = len(re.findall(r"question de 0 mot|\(trop courte\)", text))
+    heard = text.count("Écoute : entendu")
+    dq = text.count("Discord écoute : question")
+    out = [f"VOIX (journaux) : {wakes} réveils, {short} sans question (faux réveils probables), {near} quasi-réveils "
+           f"ignorés, {heard} phrases entendues, {dq} questions Discord"]
+    if wakes and short / wakes > 0.3:
+        out.append(f"! faux réveils : {short}/{wakes}")
+    errs = [ln for ln in text.splitlines() if re.search(r"\b(ERROR|CRITICAL)\b", ln)]
+    warns = sum(1 for ln in text.splitlines() if re.search(r"\bWARNING\b", ln))
+    msgs = Counter(re.sub(r"\d+", "N", ln.split(":", 3)[-1].strip())[:70] for ln in errs)
+    out.append(f"ERREURS : {len(errs)} erreurs, {warns} avertissements")
+    out += [f"! ×{c} {m}" for m, c in msgs.most_common(3)]
+    return out
+
+
+def analyze_export(path: str | Path) -> list[str]:
+    p = Path(path)
+    with zipfile.ZipFile(p) as zf:
+        names = zf.namelist()
+        info = json.loads(zf.read("info.json"))
+        recs = {n: json.loads(zf.read(n)) for n in names if n.startswith("games/") and n.count("/") == 1
+                and n.endswith(".json")}
+        truths = {n: json.loads(zf.read(n)) for n in names if n.startswith("games/truth/")}
+        logs = {n: zf.read(n).decode("utf-8", "replace") for n in names if n.startswith("logs/")}
+        reports = [(n, zf.read(n)) for n in names if n.startswith("reports/") and n.endswith(".zip")]
+    caps = Counter((n.rsplit("_", 1)[-1].split(".")[0] if n.endswith(".jpg") else "png") for n in names
+                   if n.startswith("collect/"))
+    pc, game, app = info.get("pc") or {}, info.get("game") or {}, info.get("app") or {}
+    out = [f"Envoi TreeAI {app.get('version', '?')} · {info.get('created', '?')} · {p.stat().st_size / 1e6:.1f} Mo · "
+           + ("partie EN COURS" if game.get("running") else "aucune partie en cours"),
+           f"PC : {pc.get('cpu', '?')} ({pc.get('cores', '?')} cœurs) · {pc.get('ram_gb', '?')} Go · "
+           f"GPU {', '.join(pc.get('gpu') or []) or '?'} · Windows {pc.get('windows_build', '?')} · écran "
+           f"{'x'.join(map(str, pc.get('screen') or [])) or '?'} {pc.get('scale_percent', '?')} % · LoL "
+           f"{'x'.join(map(str, pc.get('lol_window') or [])) or 'fermé'}",
+           f"CAPTURES : {sum(caps.values())} (" + ", ".join(f"{k} {v}" for k, v in caps.most_common()) + ")"]
+    for n, rec in sorted(recs.items()):
+        stem = Path(n).name[:-len(".json")]
+        truth = next((t for tn, t in truths.items() if tn.endswith(stem + ".truth.json")), None)
+        out += _game_lines(stem, rec, truth) if isinstance(rec, dict) else []
+    v = info.get("voice") or {}
+    w = v.get("whisper") or {}
+    out.append(f"MOTEUR VOIX : Whisper {'prêt' if w.get('ready') else 'non chargé'} ({w.get('model') or '?'}) ; "
+               f"assistant {((v.get('assistant') or {}).get('stage')) or '?'}")
+    out += _log_lines(logs)
+    pf = info.get("perf") or {}
+    th = sorted(((d.get("mean", 0), k) for k, d in (pf.get("threads") or {}).items() if d), reverse=True)[:4]
+    out.append(f"PERF ({pf.get('samples', 0)} mesures) : " + (", ".join(f"{k} {m:.0f} %" for m, k in th) or "aucune")
+               + (f" ; {pf['fps'].get('mean')} img/s" if (pf.get("fps") or {}).get("mean") else ""))
+    for n, data in reports[:3]:
+        try:
+            import io
+            with zipfile.ZipFile(io.BytesIO(data)) as rz:
+                st = json.loads(rz.read("state.json"))
+                fr = json.loads(rz.read("frames.json")) if "frames.json" in rz.namelist() else []
+            det = detection(fr, st)
+            flags = [x for x in det if x.startswith("!")]
+            out.append(f"RAPPORT {Path(n).stem[-15:]} : {len(fr)} images"
+                       + (" (hors partie)" if st.get("no_game") else "") + (f" ; {flags[0][2:70]}" if flags else ""))
+        except Exception as exc:
+            out.append(f"RAPPORT {n} illisible ({type(exc).__name__})")
+    if len(out) > MAX_LINES:
+        out = out[:MAX_LINES - 1] + [f"… ({len(out) - MAX_LINES + 1} lignes coupées)"]
+    return out
+
+
 def analyze(path: str | Path) -> list[str]:
+    with zipfile.ZipFile(path) as zf:
+        if "info.json" in zf.namelist():
+            return analyze_export(path)
     frames, state, meta = load(path)
     app = state.get("app") or {}
     rep = state.get("report") or {}

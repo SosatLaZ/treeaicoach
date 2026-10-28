@@ -62,14 +62,18 @@ class AdvancedPage:
         mnt.add(W.Row("Copier le diagnostic", "Un résumé texte à coller dans ton message (Ctrl+D).",
                       W.button("Copier", app.copy_diagnostic)))
         mnt.add(W.Row("Journaux", "Fichiers de journal de TreeAI.", W.button("Ouvrir", app.open_logs)))
-        mnt.add(W.Row("Tout envoyer en un fichier", "Un seul .zip avec tes captures de minimap, tes parties et "
-                      "leur vérité, prêt à envoyer.", W.button("Créer le zip", app.export_for_treeai)))
+        mnt.add(W.Row("Envoyer à TreeAI", "Un seul petit .zip (~10 Mo) : tes 3 dernières parties et leur vérité, "
+                      "les captures utiles, les rapports, les journaux filtrés et la config du PC. Sans pseudo ni clé.",
+                      W.button("Créer le zip", lambda: make_export(app))))
         app.switch_row(mnt, "selfcheck_auto_diag", "Diagnostic automatique", "Un diagnostic est enregistré tout seul "
                        "quand TreeAI détecte un problème.")
-        app.switch_row(mnt, "collect_samples", "Collecter des captures de minimap", "Pour améliorer la détection "
-                       "(reste sur ton PC).")
-        app.depends(app.slider_row(mnt, "collect_interval_s", "Une capture toutes les", None, 5, 60, 5,
-                                   lambda v: f"{v:.0f} s", to_value=float), "collect_samples")
+        app.switch_row(mnt, "collect_samples", "Collecter des captures de minimap", "Seulement les moments utiles "
+                       "pour améliorer la détection (doutes, combats, champions empilés), 25 par partie au plus. "
+                       "Reste sur ton PC.")
+        app.depends(app.slider_row(mnt, "collect_interval_s", "Au plus une capture toutes les", None, 3, 10, 1,
+                                   lambda v: f"{v:.0f} min", to_value=lambda m: float(m) * 60.0,
+                                   from_value=lambda s: min(10.0, max(3.0, float(s or 0) / 60.0))),
+                    "collect_samples")
 
     @staticmethod
     def _calls_text() -> str:
@@ -117,6 +121,35 @@ class AdvancedPage:
 
 def build(app: Any) -> AdvancedPage:
     return AdvancedPage(app)
+
+
+def make_export(app: Any) -> None:
+    """Button « Envoyer à TreeAI »: export.build_export on a worker (with the running engine: settings,
+    game running, perf), then the zip is shown in the file manager. Never raises."""
+    try:
+        from treeaicoach import export  # noqa: PLC0415
+
+        eng = getattr(app, "engine", None)
+
+        def done(res: Any) -> None:
+            path, st = res
+            if path is None:
+                app.show_error(f"Zip impossible : {st.get('error') or 'rien à envoyer'}.")
+                return
+            app.show_toast(f"Zip prêt : {st['games']} parties, {st['captures']} captures, {st['reports']} rapports "
+                           f"({export.size_label(int(st['bytes']))}). Glisse-le dans ton message.")
+            try:
+                from treeaicoach.ui_common import open_path  # noqa: PLC0415
+
+                open_path(path, select=True)
+            except Exception:
+                pass
+
+        app.show_toast("Création du zip en cours…")
+        app.run_job(lambda: export.build_export(engine=eng), done,
+                    lambda e: app.show_error(f"Zip impossible : {e}"), name="TreeAI-ui-export")
+    except Exception:
+        pass
 
 
 def make_analysis_report(app: Any) -> None:

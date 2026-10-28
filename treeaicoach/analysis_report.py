@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 BUFFER_S = 60                    # seconds of minimap kept (1 fps)
 SAMPLE_EVERY_S = 1.0
 PERF_EVERY_S = 5.0
-MAX_BYTES = 15 * 1024 * 1024     # the zip stays below this (crops thinned out if needed)
+MAX_BYTES = 6 * 1024 * 1024      # the zip stays below this (crops thinned out if needed)
 CROP_JPEG_Q = 90
 SCREEN_JPEG_Q = 85
 SCREEN_MAX_W = 2560
@@ -364,6 +364,62 @@ def grab_screen(engine: Any) -> bytes | None:
 
 
 # ----------------------------------------------------------------------------- state
+def settings_dict(cfg: Any) -> dict:
+    """The settings worth reading (bool / number / short text), never a key, token, name, path or device."""
+    out: dict[str, Any] = {}
+    for f in dataclasses.fields(cfg) if dataclasses.is_dataclass(cfg) else ():
+        v = getattr(cfg, f.name, None)
+        if _SECRET_KEY.search(f.name) or re.search(r"(?i)key$|_dir$|path|folder|url|name$|device|hotword|wake_?word|"
+                                                     r"nick|friend", f.name):
+            continue
+        if isinstance(v, (bool, int, float)) or (isinstance(v, str) and len(v) <= 40):
+            out[f.name] = v
+    return out
+
+
+def voice_status(engine: Any = None, buf: ReportBuffer | None = None) -> dict:
+    """Whisper / wake word / TTS state and the last transcripts. Never raises."""
+    buf = buf or _BUF
+    out: dict[str, Any] = {}
+    try:
+        from treeaicoach import stt_local
+        s = getattr(stt_local, "_SINGLETON", None)
+        w = getattr(stt_local, "_WORKER", None)
+        out["whisper"] = {"created": s is not None, "ready": bool(s.ready()) if s is not None else False,
+                          "status": getattr(s, "status", None), "model": getattr(s, "name", None),
+                          "device": getattr(s, "device", None) or getattr(s, "compute", None),
+                          "engine_error": getattr(stt_local, "ENGINE_ERROR", "")}
+        out["worker"] = public_state(w)
+    except Exception:
+        out["whisper"] = None
+    try:
+        from treeaicoach import voice_assistant
+        a = getattr(voice_assistant, "_SINGLETON", None)
+        out["assistant"] = public_state(a, 25)
+    except Exception:
+        pass
+    v = getattr(engine, "_voice", None)
+    out["tts"] = {"backend": str(getattr(v, "backend", "") or type(v).__name__) if v is not None else None}
+    out["transcripts"] = buf.copy()["transcripts"]
+    return out
+
+
+def perf_summary(buf: ReportBuffer | None = None) -> dict:
+    """Mean / max CPU % per thread, fps and tick over the buffered perf samples (last ~2 min of game)."""
+    buf = buf or _BUF
+    samples = buf.copy()["perf"]
+    per: dict[str, list[float]] = {}
+    for smp in samples:
+        for k, v in (smp.get("threads") or {}).items():
+            if v is not None:
+                per.setdefault(k, []).append(float(v))
+    def stats(xs: list) -> dict:
+        xs = [float(x) for x in xs if x is not None]
+        return {"mean": round(sum(xs) / len(xs), 1), "max": round(max(xs), 1)} if xs else {}
+    return {"samples": len(samples), "threads": {k: stats(v) for k, v in sorted(per.items())},
+            "fps": stats([smp.get("fps") for smp in samples]), "tick_ms": stats([smp.get("tick_ms") for smp in samples])}
+
+
 def _player(p: Any) -> dict:
     return {"champion": getattr(p, "champion_alias", None), "name": getattr(p, "champion_name", None),
             "team": getattr(p, "team", None), "position": getattr(p, "position", None),
@@ -394,17 +450,7 @@ def collect_state(engine: Any, buf: ReportBuffer | None = None) -> dict:
         return out
     part("app", app)
 
-    def settings() -> dict:
-        cfg = getattr(engine, "_cfg", None) or getattr(engine, "cfg", None)
-        out = {}
-        for f in dataclasses.fields(cfg) if dataclasses.is_dataclass(cfg) else ():
-            v = getattr(cfg, f.name, None)
-            if _SECRET_KEY.search(f.name) or re.search(r"(?i)key$|_dir$|path|folder|url|name$|device", f.name):
-                continue
-            if isinstance(v, (bool, int, float)) or (isinstance(v, str) and len(v) <= 40):
-                out[f.name] = v
-        return out
-    part("settings", settings)
+    part("settings", lambda: settings_dict(getattr(engine, "_cfg", None) or getattr(engine, "cfg", None)))
 
     def live() -> dict | None:
         game = getattr(engine, "_game", None)
@@ -437,30 +483,7 @@ def collect_state(engine: Any, buf: ReportBuffer | None = None) -> dict:
         return out
     part("shop", shop)
 
-    def voice() -> dict:
-        out: dict[str, Any] = {}
-        try:
-            from treeaicoach import stt_local
-            s = getattr(stt_local, "_SINGLETON", None)
-            w = getattr(stt_local, "_WORKER", None)
-            out["whisper"] = {"created": s is not None, "ready": bool(s.ready()) if s is not None else False,
-                              "status": getattr(s, "status", None), "model": getattr(s, "name", None),
-                              "device": getattr(s, "device", None) or getattr(s, "compute", None),
-                              "engine_error": getattr(stt_local, "ENGINE_ERROR", "")}
-            out["worker"] = public_state(w)
-        except Exception:
-            out["whisper"] = None
-        try:
-            from treeaicoach import voice_assistant
-            a = getattr(voice_assistant, "_SINGLETON", None)
-            out["assistant"] = public_state(a, 25)
-        except Exception:
-            pass
-        v = getattr(engine, "_voice", None)
-        out["tts"] = {"backend": str(getattr(v, "backend", "") or type(v).__name__) if v is not None else None}
-        out["transcripts"] = buf.copy()["transcripts"]
-        return out
-    part("voice", voice)
+    part("voice", lambda: voice_status(engine, buf))
 
     def coach() -> list:
         rec = list(getattr(engine, "_recent", None) or ())[-COACH_LINES:]
@@ -481,6 +504,56 @@ def collect_state(engine: Any, buf: ReportBuffer | None = None) -> dict:
     return st
 
 
+# ----------------------------------------------------------------------------- last game
+def game_summary(rec: dict, name: str = "") -> dict:
+    """Short, id-free summary of a game record (result, KDA, alerts per rule, self-check problems...)."""
+    alerts = rec.get("alerts") or []
+    rules = collections.Counter(str(a[1]) for a in alerts if isinstance(a, (list, tuple)) and len(a) > 1)
+    dur = float(rec.get("duration") or 0) or None
+    sc = rec.get("selfcheck") or {}
+    return scrub({"file": name, "summary": rec.get("summary"), "app_version": (rec.get("meta") or {}).get("app_version"),
+                  "roster": [{k: p.get(k) for k in ("alias", "team", "position", "is_me")} for p in rec.get("roster") or ()
+                             if isinstance(p, dict)],
+                  "alerts": len(alerts), "alerts_per_min": round(len(alerts) * 60 / dur, 2) if dur else None,
+                  "alerts_by_rule": dict(rules.most_common(15)),
+                  "sightings": {k: len(v) for k, v in (rec.get("sightings") or {}).items() if isinstance(v, list)},
+                  "selfcheck": {k: sc.get(k) for k in ("ok", "problems", "profile_max", "overhead_ms")},
+                  "incomplete": rec.get("incomplete")})
+
+
+def last_game_summary(games_dir: Path | None = None) -> dict | None:
+    """Summary of the newest finished game record (``games/*.json``), None when there is none."""
+    try:
+        from treeaicoach import storage  # noqa: PLC0415
+
+        if games_dir is None:
+            from treeaicoach.paths import user_data_dir  # noqa: PLC0415
+            games_dir = Path(user_data_dir()) / "games"
+        recs = storage.game_records(Path(games_dir))
+        if not recs:
+            return None
+        rec = json.loads(recs[-1].read_text(encoding="utf-8"))
+        return game_summary(rec, recs[-1].name) if isinstance(rec, dict) else None
+    except Exception:
+        log.debug("last game summary failed", exc_info=True)
+        return None
+
+
+def _readme(state: dict, n_frames: int) -> str:
+    lines = ["Rapport d'analyse TreeAI Coach", ""]
+    if state.get("no_game"):
+        lines += ["AUCUNE PARTIE EN COURS au moment du rapport.",
+                  f"Les {n_frames} images du tampon sont les dernières secondes de la partie précédente"
+                  if n_frames else "Le tampon est vide (pas de partie depuis le lancement de TreeAI).",
+                  "last_game.json : le résumé de la dernière partie enregistrée." if state.get("last_game")
+                  else "Aucune partie enregistrée pour l'instant.", ""]
+    else:
+        lines += [f"Partie en cours : {n_frames} images des 60 dernières secondes.", ""]
+    lines += ["frames.json + frames/ : minimap et détections ; state.json : roster, voix, conseils, perfs ;",
+              "screen.jpg : la fenêtre du jeu. Lecture : python tools/analyze_report.py <ce zip>"]
+    return "\n".join(lines) + "\n"
+
+
 # ----------------------------------------------------------------------------- writing
 def reports_dir() -> Path:
     from treeaicoach.paths import user_data_dir
@@ -495,6 +568,11 @@ def write_report(engine: Any, out_dir: Path | None = None, buf: ReportBuffer | N
         data = buf.copy()
         state = scrub(collect_state(engine, buf))
         frames = data["frames"]
+        state["no_game"] = getattr(engine, "_game", None) is None
+        state["perf_summary"] = perf_summary(buf)
+        last_game = last_game_summary() if state["no_game"] else None
+        if last_game:
+            state["last_game"] = {"file": last_game.get("file"), "summary": last_game.get("summary")}
         root = Path(out_dir) if out_dir is not None else reports_dir()
         root.mkdir(parents=True, exist_ok=True)
         name = time.strftime("rapport_%Y%m%d_%H%M%S")
@@ -517,8 +595,13 @@ def write_report(engine: Any, out_dir: Path | None = None, buf: ReportBuffer | N
                 if screen:
                     zf.writestr("screen.jpg", screen, compress_type=zipfile.ZIP_STORED)
                 state["report"] = {"frames": len(kept), "frame_step": step, "buffer_s": BUFFER_S,
-                                   "screen": bool(screen), "format": 1}
+                                   "screen": bool(screen), "format": 2,
+                                   "frames_from": "partie précédente" if state["no_game"] and kept else
+                                   ("partie en cours" if kept else None)}
                 zf.writestr("state.json", json.dumps(state, ensure_ascii=False, indent=1))
+                zf.writestr("LISEZMOI.txt", _readme(state, len(kept)))
+                if last_game:
+                    zf.writestr("last_game.json", json.dumps(last_game, ensure_ascii=False, indent=1))
             if raw.tell() <= max_bytes or len(kept) <= 1:
                 break
             step *= 2
@@ -569,5 +652,6 @@ def last_report() -> dict:
     return dict(_last)
 
 
-__all__ = ["ReportBuffer", "buffer", "engine_tick", "request", "write_report", "collect_state", "scrub",
+__all__ = ["settings_dict", "voice_status", "perf_summary", "game_summary", "last_game_summary",
+           "ReportBuffer", "buffer", "engine_tick", "request", "write_report", "collect_state", "scrub",
            "public_state", "reports_dir", "last_report", "MAX_BYTES"]
