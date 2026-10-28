@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.2.0 · 28 octobre 2026
+
+- **Moins de fausses alertes de gank :** une seule alerte par menace (plus de doublons « arrive » + « recule »
+  + « collapse »), « X vient vers toi » seulement s'il continue d'approcher. Environ 30 % d'alertes en moins,
+  et les annonces sont justes 8 fois sur 10 (au lieu de 3 sur 4).
+- **Noms LoL mieux compris à la voix :** Kai'Sa, Lame d'infini… corrigés (74 % → 84 % justes en test).
+- **F12 :** l'enregistrement dure tant que tu tiens la touche, bip au début et à la fin.
+
 ## 3.1.1 · 28 octobre 2026
 
 - **Whisper démarre enfin sur Windows :** il plantait à chaque lancement (module manquant), toute la voix
