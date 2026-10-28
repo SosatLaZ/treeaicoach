@@ -123,6 +123,11 @@ class HomePage:
         self.pl.hide()
         self._pl_sig: Any = None
         self._loading: Any = None                 # loading_card.LoadingController (created on first game)
+        # the app window is usually minimised while playing (update_status is then skipped): the loading
+        # window keeps its own 1 s tick
+        self._loading_timer = app.QtCore.QTimer(self.page)
+        self._loading_timer.timeout.connect(self._loading_tick)
+        self._loading_timer.start(1000)
         self.page.add(self.pl)
 
         # --- the three switches used between games
@@ -314,6 +319,13 @@ class HomePage:
         self.pl_enemies.setText("\n".join(ui_text(x) for x in enemies) or "Aucune info")
         self.pl_allies.setText("\n".join(ui_text(x) for x in allies) or "Aucune info")
         self.pl.show()
+
+    def _loading_tick(self) -> None:
+        try:
+            if self.app._iconic():
+                self._update_players(self.app.status_snapshot())
+        except Exception:
+            log.debug("loading tick failed", exc_info=True)
 
     def _update_system(self, snap: dict[str, Any]) -> None:
         app, W = self.app, self.app.W
