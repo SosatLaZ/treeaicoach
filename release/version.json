@@ -1,6 +1,6 @@
 {
-  "version": "3.1.0",
-  "sha256": "61be9860681b223831791bfeb6f74f2e44aa0ec785a26423c73476f4953973e5",
-  "size": 7532785,
-  "notes": "3.1 : surbrillance boutique, détection des champions et de ta position améliorées."
+  "version": "3.1.1",
+  "sha256": "8eeeca119daf699ca25290296aaf6131dd75b4b5b28179b7119faa6449ef528d",
+  "size": 7531754,
+  "notes": "3.1.1 : Whisper démarre enfin sur Windows, plus de Patiente."
 }

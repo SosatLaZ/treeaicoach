@@ -1,25 +1,25 @@
 {
- "version": "3.1.0",
+ "version": "3.1.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "01d60481418ebf7377731d50ff2f3e4453462d5aaf7d4f356b16797980adfb80",
+ "sha256": "629bf219f0e06bb6c25529bda1b7e952a4312a18c36627ac0278bacb8edee35f",
  "chunks": [
   {
-   "name": "3.1.0/part-01.zip",
-   "size": 88166888,
-   "sha256": "ecfef67b5b4090e118ee6eb78621b57f28f9661c3c5b38927d4bef450013b2d9",
-   "files": 237
+   "name": "3.1.1/part-01.zip",
+   "size": 88175543,
+   "sha256": "32231329ed8172d7915760077fb846215b81342e263c1296f417f8ec46b40f76",
+   "files": 162
   },
   {
-   "name": "3.1.0/part-02.zip",
-   "size": 9639714,
-   "sha256": "052cebeac43c87b0fc5be2e4d1d43142ef4048a438da2921132dfe9613e7dad0",
-   "files": 477
+   "name": "3.1.1/part-02.zip",
+   "size": 10541109,
+   "sha256": "8903475a1ee2189e06e70f3d7f082ced8deff9612c86a0cf3211457f5eb91b41",
+   "files": 553
   }
  ],
- "total_size": 97806602,
+ "total_size": 98716652,
  "launcher": {
-  "sha256": "61be9860681b223831791bfeb6f74f2e44aa0ec785a26423c73476f4953973e5",
-  "size": 7532785
+  "sha256": "8eeeca119daf699ca25290296aaf6131dd75b4b5b28179b7119faa6449ef528d",
+  "size": 7531754
  },
- "notes": "3.1 : surbrillance boutique, d\u00e9tection des champions et de ta position am\u00e9lior\u00e9es."
+ "notes": "3.1.1 : Whisper d\u00e9marre enfin sur Windows, plus de Patiente."
 }
