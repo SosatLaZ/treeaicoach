@@ -28,9 +28,9 @@ class HomePage:
         self._last_game: tuple[str, str, str] = ("", "", "")       # alias, role, result of the newest record
         self._live_champ: tuple[str, str] = ("", "")               # alias, role of the game in progress
         self.hero = ui_flair.HeroCard()
-        self.hero.setMinimumHeight(184)
+        self.hero.setMinimumHeight(152)        # compact status header (v3.4)
         hl = QtWidgets.QHBoxLayout(self.hero)
-        hl.setContentsMargins(32, 24, 24, 24)
+        hl.setContentsMargins(24, 16, 24, 16)
         left = QtWidgets.QWidget()
         left.setMinimumWidth(360)
         left.setMaximumWidth(480)

@@ -59,9 +59,9 @@ class SettingsPage:
     def __init__(self, app: Any) -> None:
         self.app = app
         W = app.W
-        self.page = W.Page("Réglages", "Ce que tu règles une fois.")
+        self.page = W.Page("Réglages", "Ce que tu règles une fois. Le reste est rangé dans « Avancé ».")
 
-        gen = self.page.section("Démarrage")
+        gen = self.page.section("Général")
         app.switch_row(gen, "autostart", "Démarrer le coach à l'ouverture", "Sinon, clique sur « Démarrer » à "
                        "l'Accueil.")
         ok, why = autostart_support()
@@ -71,6 +71,9 @@ class SettingsPage:
             app.run_job(get_windows_autostart, lambda on: sw.set_quiet(bool(on)), None, name="TreeAI-ui-autostart")
             sw.toggled.connect(lambda on: app.run_job(lambda: set_windows_autostart(bool(on)), None, None,
                                                       name="TreeAI-ui-autostart-set"))
+
+        app.choice_row(gen, "ui_scaling", "Taille de l'interface", "Appliquée au prochain lancement.", UI_SCALINGS)
+        app.switch_row(gen, "ui_confirm_quit", "Confirmer avant de quitter en partie", None)
 
         lol = self.page.section("Client League of Legends", "Lecture seule, sauf les runes, sorts et objets que "
                                                             "tu autorises ici.")
@@ -96,9 +99,11 @@ class SettingsPage:
         app.depends(app.switch_row(after, "open_report_automatically", "Ouvrir le rapport tout seul", None),
                     "post_game_report")
 
-        ai = self.page.section("Conseils IA (facultatif)", "Gemini, Groq et OpenRouter ont une offre gratuite. La clé "
+        ai = self.page.section("Conseils IA", "Facultatif. Gemini, Groq et OpenRouter ont une offre gratuite. La clé "
                                                           "reste sur ton PC.")
-        self.ai_count = ai.add(W.Row("Requêtes aujourd'hui", ai_count_text()))
+        self.ai_count = ai.add(W.Row("Requêtes aujourd'hui", "…"))
+        # ai_advisor imports numpy (~0.5 s): read on a worker, never while the page is built
+        app.run_job(ai_count_text, lambda t: self.ai_count.set_desc(t), None, name="TreeAI-ui-ai-count")
         prov = app.choice_row(ai, "ai_provider", "Fournisseur", None,
                               [(app.cfg.ai_provider, "Désactivé" if app.cfg.ai_provider == "off" else
                                 str(app.cfg.ai_provider).capitalize())])
@@ -108,17 +113,34 @@ class SettingsPage:
         app.entry_row(ai, "ai_model", "Modèle", "Vide = modèle conseillé du fournisseur.", placeholder="Par défaut")
         self.ai_test = ai.add(W.Row("Tester la clé", "Une toute petite requête au fournisseur.",
                                     W.button("Tester", app.test_ai_key)))
+        app.switch_row(ai, "ai_auto", "Conseils IA automatiques", "Sinon l'IA répond seulement à tes questions.")
+        app.switch_row(ai, "ai_speak", "Lire le conseil IA", "Sinon il reste écrit.")
 
         keys = self.page.section("Touches en jeu", "Touches globales (comme Discord ou OBS) : elles marchent pendant "
                                                    "la partie, sans quitter le jeu.")
         for field, title, desc in HOTKEYS:
             app.choice_row(keys, field, title, desc, hotkey_choices(str(getattr(app.cfg, field) or "")))
 
-        win = self.page.section("Fenêtre")
-        app.choice_row(win, "ui_scaling", "Taille de l'interface", "Appliquée au prochain lancement.", UI_SCALINGS)
-        app.switch_row(win, "ui_confirm_quit", "Confirmer avant de quitter en partie", None)
+        # the update block of « À propos », then the two closed folds (docs/DESIGN.md, "Navigation")
+        from treeaicoach.ui_page_about import AboutPage  # noqa: PLC0415
+        self.about = AboutPage(app, page=self.page)
+        self.more = self.page.fold("Avancé", "stockage, détection, performance, support")
+        self.help = self.page.fold("Aide et mentions", "premiers pas, raccourcis")
+        self.storage_row: Any = None
+        self.advanced: Any = None
+        #: the controllers of the former « Avancé » / « À propos » pages (app.page_views keeps their keys);
+        #: « advanced » joins when its fold is built (first open, or an idle turn after start-up)
+        self.sub_views: dict[str, Any] = {"about": self.about}
+        self.more.defer(self._build_more)
+        self.help.defer(self.about.build_help)
+        app.run_job(self._auto_clean, lambda _r: self.refresh_storage(), None, name="TreeAI-ui-storage-auto")
 
-        sto = self.page.section("Stockage", "Captures, parties, rapports et journaux gardés sur ton PC.")
+    def _build_more(self, fold: Any) -> None:
+        """Stockage + the former « Avancé » page, built on the fold's first opening (~0.3 s of rows)."""
+        app, W = self.app, self.app.W
+        from treeaicoach.ui_page_advanced import AdvancedPage  # noqa: PLC0415
+
+        sto = fold.section("Stockage", "Captures, parties, rapports et journaux gardés sur ton PC.")
         self.storage_row = sto.add(W.Row("Place utilisée", "Calcul…",
                                          W.button("Faire le ménage", self.clean_storage)))
         app.switch_row(sto, "storage_auto_clean", "Ménage automatique au démarrage", "Mêmes règles que le "
@@ -129,7 +151,9 @@ class SettingsPage:
         app.slider_row(sto, "storage_keep_days", "Captures et rapports gardés", None, 1, 30, 1,
                        lambda v: f"{v:.0f} j", to_value=int)
         self.refresh_storage()
-        app.run_job(self._auto_clean, lambda _r: self.refresh_storage(), None, name="TreeAI-ui-storage-auto")
+        self.advanced = AdvancedPage(app, host=fold)
+        self.sub_views["advanced"] = self.advanced
+        app.page_views.setdefault("advanced", self.advanced)
 
     def _auto_clean(self) -> Any:
         from treeaicoach import storage  # noqa: PLC0415
@@ -137,6 +161,8 @@ class SettingsPage:
         return storage.auto_cleanup(self.app.cfg)
 
     def refresh_storage(self) -> None:
+        if self.storage_row is None:          # « Avancé » not built yet
+            return
         """« Place utilisée » row: sizes per kind, computed on a worker."""
         def job() -> str:
             from treeaicoach import storage  # noqa: PLC0415

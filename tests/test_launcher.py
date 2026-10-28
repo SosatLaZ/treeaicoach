@@ -145,7 +145,9 @@ def test_pages_switch_fast_and_status_updates(home: Path) -> None:
         app.show()
         _pump(app, 0.5)                           # backend started on a worker, pages prebuilt
         assert engines and app.engine is engines[0] and engines[0].running
-        _pump(app, 1.0)
+        end = time.monotonic() + 8.0      # pages are prebuilt in idle turns after the backend burst (v3.4)
+        while set(app.pages) != {k for k, _l, _i in ui.PAGES} and time.monotonic() < end:
+            _pump(app, 0.1)
         assert set(app.pages) == {k for k, _l, _i in ui.PAGES}
         app._switch_ms.clear()
         for _ in range(3):
@@ -385,7 +387,7 @@ def test_every_switch_is_wired_saved_and_applied_live(home: Path) -> None:
         app.build_all_pages()
         app.toggle_engine()
         _pump(app, 0.5)
-        switches = [s for v in app.page_views.values() for s in v.page.findChildren(W.Switch)
+        switches = [s for p in app.pages.values() for s in p.findChildren(W.Switch)
                     if getattr(s, "field", "")]
         fields = [s.field for s in switches]
         assert len(fields) == len(set(fields)), "a setting must exist in one place only"

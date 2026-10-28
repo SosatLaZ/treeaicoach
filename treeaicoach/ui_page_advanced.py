@@ -10,11 +10,14 @@ from treeaicoach.ui_common import CAPTURE_BACKENDS, DETECTORS, MINIMAP_MODES, MI
 
 
 class AdvancedPage:
-    def __init__(self, app: Any) -> None:
+    """Since v3.4 built into the « Avancé » fold of the Réglages page (``host``); alone it is its own page."""
+
+    def __init__(self, app: Any, host: Any = None) -> None:
         self.app = app
         W = app.W
-        self.page = W.Page("Avancé", "Les valeurs par défaut conviennent à presque tous les PC. Utile si les "
-                                     "marques tombent à côté ou si le jeu ralentit.")
+        self.page = host if host is not None else W.Page("Avancé", "Les valeurs par défaut conviennent à presque "
+                                                                   "tous les PC. Utile si les marques tombent à "
+                                                                   "côté ou si le jeu ralentit.")
 
         det = self.page.section("Minimap", "Trouvée toute seule au début de la partie. Calibre-la à la main si les "
                                            "marques tombent à côté.", W.button("Calibrer", app.calibrate))
@@ -31,8 +34,10 @@ class AdvancedPage:
         app.switch_row(ana, "download_skin_icons", "Télécharger les icônes de skins", "Icônes publiques "
                        "(Data Dragon), pour reconnaître les skins.")
         # call evaluation (call_eval.py): the kinds of advice this player ignores come less often
-        self.calls_row = ana.add(W.Row("Conseils espacés", self._calls_text(),
+        self.calls_row = ana.add(W.Row("Conseils espacés", "…",
                                        W.button("Réinitialiser", self._reset_calls)))
+        # call_eval imports numpy (~0.5 s): read on a worker, never while the page is built
+        app.run_job(self._calls_text, lambda t: self.calls_row.set_desc(t), None, name="TreeAI-ui-calls")
 
         perf = self.page.section("Performance")
         app.choice_row(perf, "perf_mode", "Mode", "« Auto » mesure ton PC ; « PC modeste » analyse moins souvent.",

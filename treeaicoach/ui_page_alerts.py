@@ -80,12 +80,25 @@ class AlertsPage:
         say.add(W.Row("Annonce d'un danger", "Le bip part tout de suite, la voix suit.", self.danger))
         app.bind("beep_on_danger", lambda: self.danger.set_value(danger_mode(app.cfg)))
         app.bind("danger_voice", lambda: self.danger.set_value(danger_mode(app.cfg)))
-        app.switch_row(say, "stance_voice", "Annoncer la posture", "« Prudent » ou « Attaque » quand elle change.")
-        app.choice_row(say, "caster_style", "Mode annonceur", "Coach : tes chances de victoire aux moments clés.",
-                       CASTER_STYLES, segmented=True)
-        app.switch_row(say, "item_advice_speak", "Lire les conseils d'achat", "Sinon ils restent écrits.")
-        app.switch_row(say, "ai_auto", "Conseils IA automatiques", "Sinon l'IA répond seulement à tes questions.")
-        app.switch_row(say, "ai_speak", "Lire le conseil IA", "Sinon il reste écrit.")
+        app.slider_row(say, "voice_volume", "Volume", None, 0, 100, 5, lambda x: f"{x:.0f} %",
+                       to_value=lambda x: int(x))
+
+        gank = self.page.section("Alertes de gank", "Le mode sûr les coupe toutes.")
+        app.switch_row(gank, "alert_jungler_approach", "Jungler ennemi qui approche", "L'alerte la plus utile.")
+        app.switch_row(gank, "gank_pre_alert", "Nom du jungler qui sort du brouillard", "« Lee Sin ! » près de toi.")
+        app.switch_row(gank, "alert_jungler_spotted", "Jungler repéré", "Où il vient d'être vu.")
+        app.switch_row(gank, "alert_roam", "Ennemi en balade", "Un laner adverse quitte sa voie vers toi.")
+        app.switch_row(gank, "alert_collapse", "Plusieurs ennemis arrivent", "Deux ennemis ou plus convergent.")
+        app.switch_row(gank, "alert_laner_mia", "Adversaire de voie disparu", "« Manquant » quand tu ne le vois plus.")
+
+        rem = self.page.section("Rappels", "Écrits dans le panneau, lus selon la quantité choisie.")
+        app.switch_row(rem, "objective_timers", "Annonce des objectifs", "Dragon, Héraut, Baron avant leur apparition.")
+        app.switch_row(rem, "recall_reminder", "Rappel pour dépenser ton or", "Quand un retour à la base vaut le coup.")
+        app.depends(app.slider_row(rem, "recall_gold_threshold", "Seuil d'or du rappel", None, 500, 3000, 50,
+                                   lambda v: f"{fmt_int_fr(v)} or", to_value=lambda v: int(v)), "recall_reminder")
+        app.switch_row(rem, "control_ward_reminder", "Balise de contrôle", "Penser à en acheter une.")
+        app.switch_row(rem, "death_recap", "Récap de mort", "Une phrase sur la cause de ta mort.")
+        app.switch_row(rem, "break_reminder", "Conseil de pause", "Après plusieurs parties d'affilée.")
 
         from treeaicoach.voice_assistant import PC_MIC_ENABLED
 
@@ -115,26 +128,22 @@ class AlertsPage:
         self._listen_timer.timeout.connect(self._tick_listen)
         self._listen_timer.start(400)
 
-        gank = self.page.section("Alertes de gank", "Le mode sûr les coupe toutes.")
-        app.switch_row(gank, "alert_jungler_approach", "Jungler ennemi qui approche", "L'alerte la plus utile.")
-        app.switch_row(gank, "gank_pre_alert", "Nom du jungler qui sort du brouillard", "« Lee Sin ! » près de toi.")
-        app.switch_row(gank, "alert_jungler_spotted", "Jungler repéré", "Où il vient d'être vu.")
-        app.switch_row(gank, "alert_roam", "Ennemi en balade", "Un laner adverse quitte sa voie vers toi.")
-        app.switch_row(gank, "alert_collapse", "Plusieurs ennemis arrivent", "Deux ennemis ou plus convergent.")
-        app.switch_row(gank, "alert_laner_mia", "Adversaire de voie disparu", "« Manquant » quand tu ne le vois plus.")
-        app.slider_row(gank, "sensitivity", "Sensibilité", "Plus haut : alertes plus tôt, de plus loin.",
+        # rarely touched: one closed « Avancé » block (docs/DESIGN.md, "Navigation")
+        self.more = self.page.fold("Avancé", "annonces, sensibilité, moteur de voix")
+        self.neural: Any = None          # the voice rows: built with the fold (first opening or idle turn)
+        self.more.defer(self._build_more)
+
+    def _build_more(self, fold: Any) -> None:
+        app, W = self.app, self.app.W
+        ann = fold.section("Annonces")
+        app.switch_row(ann, "stance_voice", "Annoncer la posture", "« Prudent » ou « Attaque » quand elle change.")
+        app.choice_row(ann, "caster_style", "Mode annonceur", "Coach : tes chances de victoire aux moments clés.",
+                       CASTER_STYLES, segmented=True)
+        app.switch_row(ann, "item_advice_speak", "Lire les conseils d'achat", "Sinon ils restent écrits.")
+        sens = fold.section("Alertes de gank")
+        app.slider_row(sens, "sensitivity", "Sensibilité", "Plus haut : alertes plus tôt, de plus loin.",
                        0.6, 1.6, 0.05, lambda v: fmt_decimal_fr(v, 2), to_value=float)
-
-        rem = self.page.section("Rappels", "Écrits dans le panneau, lus selon la quantité choisie.")
-        app.switch_row(rem, "objective_timers", "Annonce des objectifs", "Dragon, Héraut, Baron avant leur apparition.")
-        app.switch_row(rem, "recall_reminder", "Rappel pour dépenser ton or", "Quand un retour à la base vaut le coup.")
-        app.depends(app.slider_row(rem, "recall_gold_threshold", "Seuil d'or du rappel", None, 500, 3000, 50,
-                                   lambda v: f"{fmt_int_fr(v)} or", to_value=lambda v: int(v)), "recall_reminder")
-        app.switch_row(rem, "control_ward_reminder", "Balise de contrôle", "Penser à en acheter une.")
-        app.switch_row(rem, "death_recap", "Récap de mort", "Une phrase sur la cause de ta mort.")
-        app.switch_row(rem, "break_reminder", "Conseil de pause", "Après plusieurs parties d'affilée.")
-
-        v = self.page.section("Voix", "La voix neurale demande Internet ; les voix Windows marchent sans.")
+        v = fold.section("Voix", "La voix neurale demande Internet ; les voix Windows marchent sans.")
         app.choice_row(v, "voice_engine", "Moteur de voix", "« Automatique » : la voix neurale si Internet répond.",
                        ENGINE_LABELS)
         cur = str(app.cfg.neural_voice or "fr-FR-RemyMultilingualNeural")
@@ -154,8 +163,6 @@ class AlertsPage:
         self.win_voice = app.choice_row(v, "voice_name", "Voix Windows", None, self._win_voices())
         self.voice_rate = app.slider_row(v, "voice_rate", "Vitesse de la voix Windows", "Défaut : 2.", -10, 10, 1,
                                          lambda x: f"{x:+.0f}", to_value=lambda x: int(x))
-        app.slider_row(v, "voice_volume", "Volume", None, 0, 100, 5, lambda x: f"{x:.0f} %",
-                       to_value=lambda x: int(x))
         app.switch_row(v, "voice_ducking", "Voix plus douce hors danger",
                        "Les conseils calmes sont dits un peu moins fort que « Recule » et les ganks.")
         self._sync_engine_rows()
@@ -247,9 +254,13 @@ class AlertsPage:
         app.run_job(lambda: list_african_voices(key), done, None, name="TreeAI-ui-eleven-voices")
 
     def on_voices(self) -> None:
+        if self.neural is None:
+            return
         self.win_voice.ctl.set_choices(self._win_voices(), self.app.cfg.voice_name)
 
     def _sync_engine_rows(self) -> None:
+        if self.neural is None:
+            return
         eng = str(self.app.cfg.voice_engine)
         neural = eng in ("auto", "neural")
         for row, vis in ((self.neural, neural), (self.neural_rate, neural), (self.eleven_key, neural), (self.eleven_find, neural), (self.win_voice, not neural or eng == "auto"),

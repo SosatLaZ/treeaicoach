@@ -671,8 +671,7 @@ CHANGELOG: tuple[tuple[str, str], ...] = (
     ("Détection", "Vérifiée sur tes vraies captures de minimap."),
 )
 SHORTCUTS: tuple[tuple[str, str], ...] = (
-    ("Ctrl + 1 … 8", "Aller à une page (Accueil, Overlay, Alertes et voix, Discord, Analyse, Réglages, "
-                     "Avancé, À propos)"),
+    ("Ctrl + 1 … 6", "Aller à une page (Accueil, Overlay, Alertes et voix, Discord, Analyse, Réglages)"),
     ("Ctrl + M", "Couper / rétablir la voix"),
     ("Ctrl + Maj + S", "Activer / désactiver le mode sûr"),
     ("Ctrl + D", "Copier le diagnostic"),
@@ -701,7 +700,7 @@ def onboarding_steps() -> list[tuple[str, str]]:
          "noire et rien ne s'affiche sur ta minimap."),
         ("Teste l'overlay et la voix",
          "Un exemple de gank s'affiche 10 s sur ton écran et le coach parle. Si tu ne vois ou n'entends "
-         "rien, ouvre la page À propos."),
+         "rien, ouvre Réglages > Aide et mentions."),
     ]
 
 

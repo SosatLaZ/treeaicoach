@@ -12,10 +12,24 @@ log = logging.getLogger(__name__)
 
 
 class AboutPage:
-    def __init__(self, app: Any) -> None:
+    """Update, first steps, shortcuts and credits. Since v3.4 it lives on the Réglages page (``page`` = that
+    page: the update section there, :meth:`build_help` into its « Aide et mentions » fold)."""
+
+    def __init__(self, app: Any, page: Any = None) -> None:
         self.app = app
         W, QtWidgets, Qt = app.W, app.QtWidgets, app.QtCore.Qt
-        self.page = W.Page("À propos")
+        self.page = page if page is not None else W.Page("À propos")
+        hosted = page is not None
+        self._build_update(app, W, QtWidgets, Qt, head=not hosted)
+        if not hosted:
+            self.build_help(self.page)
+
+    def _build_update(self, app: Any, W: Any, QtWidgets: Any, Qt: Any, head: bool) -> None:
+        if head:
+            self._build_head(app, W, QtWidgets, Qt)
+        self._build_update_section(app, W, QtWidgets)
+
+    def _build_head(self, app: Any, W: Any, QtWidgets: Any, Qt: Any) -> None:
 
         head = W.card()
         hl = QtWidgets.QHBoxLayout(head)
@@ -37,6 +51,7 @@ class AboutPage:
         hl.addLayout(col, 1)
         self.page.add(head)
 
+    def _build_update_section(self, app: Any, W: Any, QtWidgets: Any) -> None:
         up = self.page.section("Mise à jour", "Les nouvelles versions sont publiées sur GitHub ; le fichier est "
                                               "vérifié avant d'être installé.")
         self.check_btn = W.button("Rechercher", lambda: app.check_updates(quiet=False))
@@ -64,15 +79,20 @@ class AboutPage:
         app.entry_row(up, "github_token", "Jeton GitHub", "Seulement pour un dépôt privé. Vide sinon.", secret=True,
                       placeholder="Aucun")
 
-        helpsec = self.page.section("Avant ta première partie")
+        self.update_section = up
+
+    def build_help(self, host: Any) -> None:
+        """First steps, window shortcuts and credits, into ``host`` (a page or a fold)."""
+        W, QtWidgets = self.app.W, self.app.QtWidgets
+        helpsec = host.section("Avant ta première partie")
         for i, (title, text) in enumerate(ui_kit.onboarding_steps(), start=1):
             helpsec.add(W.Row(f"{i}. {title}", text))
 
-        sc = self.page.section("Raccourcis de la fenêtre")
+        sc = host.section("Raccourcis de la fenêtre")
         for keys, what in ui_kit.SHORTCUTS:
             sc.add(W.Row(what, None, W.label(keys, "value")))
 
-        legal = self.page.section("Mentions")
+        legal = host.section("Mentions")
         box2 = QtWidgets.QWidget()
         l2 = QtWidgets.QVBoxLayout(box2)
         l2.setContentsMargins(16, 12, 16, 14)

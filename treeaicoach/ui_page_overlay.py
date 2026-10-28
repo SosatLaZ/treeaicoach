@@ -47,58 +47,69 @@ class OverlayPage:
         main = self.page.section("Général")
         app.switch_row(main, "overlay_enabled", "Afficher l'overlay",
                        f"Tout ce qui suit. Touche en jeu : {self._key('hotkey_overlay')}.")
-        app.switch_row(main, "overlay_hide_from_capture", "Invisible en stream et en capture",
-                       "Discord, OBS et les captures d'écran ne voient pas l'overlay.")
+        app.switch_row(main, "essentials_strip", "Barre de l'essentiel", "En haut de l'écran : or contre ton "
+                       "adversaire, CS par minute, prochain objectif, jungler ennemi, prochain objet.")
+        app.switch_row(main, "danger_flash", "Bords rouges en cas de gank", None)
 
         mm = self.page.section("Minimap")
-        app.choice_row(mm, "overlay_mode", "Marques sur la minimap", "Ennemis suivis, zones et minuteurs.",
+        app.choice_row(mm, "overlay_mode", "Marques", "Ennemis suivis, zones et minuteurs.",
                        OVERLAY_MODES, segmented=True)
         app.switch_row(mm, "overlay_timers", "Minuteurs", "Objectifs, buffs Baron et Ancien, ennemis morts.")
-        app.choice_row(mm, "fog_mode", "Zone des ennemis cachés", "Cercle qui grandit là où un ennemi caché peut "
+        app.choice_row(mm, "fog_mode", "Ennemis cachés", "Cercle qui grandit là où un ennemi caché peut "
                        "être.", FOG_MODES, segmented=True)
-        self.fog_row = app.slider_row(mm, "fog_max_s", "Durée de la zone", "Ensuite elle s'efface (trop grande "
-                                      "pour servir).", 10, 180, 5, lambda v: f"{v:.0f} s", to_value=float)
-        app.switch_row(mm, "jungle_paths", "Trajets probables du jungler", "Un ou deux chemins en pointillés.")
+        app.switch_row(mm, "jungle_paths", "Trajets du jungler", "Un ou deux chemins en pointillés.")
         app.switch_row(mm, "ward_guide", "Où poser une balise", f"Sur la minimap, quand tu appuies sur "
                        f"{self._key('hotkey_ward')}.")
-        app.depends(app.switch_row(mm, "ward_world", "Repère dans le jeu",
-                                   "Marque au sol, ou flèche au bord de l'écran."), "ward_guide")
-        app.depends(app.switch_row(mm, "ward_sound", "Son du repère", "Un son court quand il apparaît."),
-                    "ward_guide")
 
         hud = self.page.section("Panneau de consignes", "Une consigne à la fois, en rouge en cas de danger.")
         app.switch_row(hud, "hud_enabled", "Afficher le panneau", "Menace, consigne du moment, prochain objectif.")
         self.hud_pos = app.depends(app.choice_row(hud, "hud_position", "Position", None,
                                                   position_choices(app.cfg, "hud")), "hud_enabled")
-        app.depends(app.switch_row(hud, "hud_detailed", "Toujours détaillé",
-                                   f"Sinon, maintiens {self._key('hotkey_details')} en jeu."), "hud_enabled")
-        app.depends(app.switch_row(hud, "win_prob_hud", "Chances de victoire", "Un pourcentage dans le panneau."),
-                    "hud_enabled")
         app.switch_row(hud, "text_tips", "Conseils écrits", "Un conseil court, jamais lu à voix haute.")
-        app.depends(app.switch_row(hud, "tip_toasts", "Aussi en bandeau", "Le conseil s'affiche aussi en haut."),
-                    "text_tips")
 
         buy = self.page.section("Achats")
         app.switch_row(buy, "item_advice", "Conseils d'achat", "L'objet à acheter au prochain retour.")
         app.depends(app.switch_row(buy, "hud_item_card", "Carte d'achat", "En base, mort ou avec l'or : l'objet, "
                                    "son icône et son prix."), "item_advice")
-        app.depends(app.switch_row(buy, "item_advice_toasts", "Bandeau quand tu as l'or", None), "item_advice")
         app.switch_row(buy, "hud_build_strip", "Barre de build", f"Les 6 objets du build, en base ou en "
                        f"maintenant {self._key('hotkey_details')}.")
 
-        scr = self.page.section("Écran")
-        app.switch_row(scr, "essentials_strip", "Barre de l'essentiel", "En haut de l'écran : or contre ton "
-                       "adversaire, CS par minute, prochain objectif, jungler ennemi, prochain objet.")
-        app.switch_row(scr, "danger_flash", "Bords rouges en cas de gank", None)
-        app.depends(app.choice_row(scr, "danger_flash_style", "Style des bords", "Discret : un trait fin, "
+        # rarely touched: one closed « Avancé » block (docs/DESIGN.md, "Navigation")
+        self.more = self.page.fold("Avancé", "détails, sons, stream")
+        self.fog_row: Any = None         # built with the fold (first opening or an idle turn)
+        self.more.defer(self._build_more)
+
+    def _build_more(self, fold: Any) -> None:
+        app = self.app
+        mm2 = fold.section("Minimap")
+        self.fog_row = app.slider_row(mm2, "fog_max_s", "Durée de la zone des ennemis cachés", "Ensuite elle "
+                                      "s'efface (trop grande pour servir).", 10, 180, 5, lambda v: f"{v:.0f} s",
+                                      to_value=float)
+        app.depends(app.switch_row(mm2, "ward_world", "Repère de balise dans le jeu",
+                                   "Marque au sol, ou flèche au bord de l'écran."), "ward_guide")
+        app.depends(app.switch_row(mm2, "ward_sound", "Son du repère", "Un son court quand il apparaît."),
+                    "ward_guide")
+        hud2 = fold.section("Panneau et bandeaux")
+        app.depends(app.switch_row(hud2, "hud_detailed", "Panneau toujours détaillé",
+                                   f"Sinon, maintiens {self._key('hotkey_details')} en jeu."), "hud_enabled")
+        app.depends(app.switch_row(hud2, "win_prob_hud", "Chances de victoire", "Un pourcentage dans le panneau."),
+                    "hud_enabled")
+        app.depends(app.switch_row(hud2, "tip_toasts", "Conseil aussi en bandeau", "Le conseil s'affiche aussi "
+                                   "en haut."), "text_tips")
+        app.depends(app.switch_row(hud2, "item_advice_toasts", "Bandeau quand tu as l'or", None), "item_advice")
+        app.depends(app.choice_row(hud2, "danger_flash_style", "Style des bords rouges", "Discret : un trait fin, "
                                    "une seule pulsation, jamais boutique ouverte, en base ou mort.",
                                    (("subtle", "Discret"), ("full", "Marqué")), segmented=True), "danger_flash")
-        app.switch_row(scr, "plays_enabled", "Coups notés", "Un badge après un bon coup ou une erreur.")
-        app.depends(app.choice_row(scr, "plays_position", "Position du badge", None, PLAYS_POSITIONS,
+        plays = fold.section("Coups notés")
+        app.switch_row(plays, "plays_enabled", "Coups notés", "Un badge après un bon coup ou une erreur.")
+        app.depends(app.choice_row(plays, "plays_position", "Position du badge", None, PLAYS_POSITIONS,
                                    segmented=True), "plays_enabled")
-        app.depends(app.switch_row(scr, "plays_sound", "Son des bons coups", None), "plays_enabled")
-        app.depends(app.switch_row(scr, "plays_sound_negative", "Son des erreurs", None), "plays_enabled",
+        app.depends(app.switch_row(plays, "plays_sound", "Son des bons coups", None), "plays_enabled")
+        app.depends(app.switch_row(plays, "plays_sound_negative", "Son des erreurs", None), "plays_enabled",
                     "plays_sound")
+        cap = fold.section("Stream")
+        app.switch_row(cap, "overlay_hide_from_capture", "Invisible en stream et en capture",
+                       "Discord, OBS et les captures d'écran ne voient pas l'overlay.")
         self._sync_visibility()
 
     def _key(self, field: str) -> str:
@@ -106,6 +117,8 @@ class OverlayPage:
 
     def _sync_visibility(self) -> None:
         cfg = self.app.cfg
+        if self.fog_row is None:
+            return
         self.fog_row.setVisible(cfg.fog_mode != "off")
         self.fog_row.parentWidget().sync_separators()
 

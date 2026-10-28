@@ -48,6 +48,7 @@ from treeaicoach.ui_common import (  # noqa: F401 - re-exported for tools / test
     PAGES,
     PREBUILD_ORDER,
     SAVE_DEBOUNCE_MS,
+    SETTINGS_ANCHORS,
     STATUS_ICONIC_MS,
     STATUS_IDLE_MS,
     STATUS_MS,
@@ -322,7 +323,7 @@ class CoachApp:
             sc = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{i}"), self.win)
             sc.activated.connect(lambda k=key: self.show_page(k))
         for seq, fn in (("Ctrl+M", self.toggle_mute), ("Ctrl+Shift+S", lambda: self.set_safe_mode(not self.cfg.safe_mode)),
-                        ("Ctrl+D", self.copy_diagnostic), ("F1", lambda: self.show_page("about"))):
+                        ("Ctrl+D", self.copy_diagnostic), ("F1", lambda: self.show_page("help"))):
             sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self.win)
             sc.activated.connect(fn)
 
@@ -331,8 +332,7 @@ class CoachApp:
         import importlib  # noqa: PLC0415
 
         mod = {"home": "ui_page_home", "overlay": "ui_page_overlay", "alerts": "ui_page_alerts", "discord": "ui_page_discord",
-               "analysis": "ui_page_analysis", "settings": "ui_page_settings", "advanced": "ui_page_advanced",
-               "about": "ui_page_about"}.get(key)
+               "analysis": "ui_page_analysis", "settings": "ui_page_settings"}.get(key)
         if mod is None:
             return None
         return getattr(importlib.import_module(f"treeaicoach.{mod}"), "build")
@@ -347,11 +347,13 @@ class CoachApp:
             view = self._page_builder(key)(self)
             page = view.page
             self.page_views[key] = view
+            for sub, sub_view in (getattr(view, "sub_views", None) or {}).items():
+                self.page_views.setdefault(sub, sub_view)     # « advanced » / « about » live on Réglages
         except Exception:
             log.exception("Cannot build page %s", key)
             self._failed_pages.add(key)
             page = self.W.Page("Page indisponible", "Cette page n'a pas pu s'afficher. Le journal contient le détail "
-                                                    "(À propos > Ouvrir les journaux).")
+                                                    "(Réglages > Avancé > Journaux).")
         self.pages[key] = page
         self.stack.addWidget(page)
         log.debug("page %s built in %.0f ms", key, 1000 * (time.perf_counter() - t0))
@@ -360,6 +362,17 @@ class CoachApp:
     def build_all_pages(self) -> None:
         for key, _l, _i in PAGES:
             self.ensure_page(key)
+        for fold in self._pending_folds():
+            fold.materialize()
+
+    def _pending_folds(self) -> list[Any]:
+        """Closed « Avancé » blocks whose rows are not built yet (built on first opening or when idle)."""
+        out = []
+        for page in list(self.pages.values()):
+            for fold in page.findChildren(self.W.Fold):
+                if getattr(fold, "_builders", None):
+                    out.append(fold)
+        return out
 
     def _prebuild(self) -> None:
         """One page per event-loop turn after the first paint (the window stays responsive)."""
@@ -368,6 +381,11 @@ class CoachApp:
         while self._prebuild_queue and self._prebuild_queue[0] in self.pages:
             self._prebuild_queue.pop(0)
         if not self._prebuild_queue:
+            folds = self._pending_folds()
+            if folds:                      # then the closed folds, one per idle turn: opening one is instant
+                folds[0].materialize()
+                self.QtCore.QTimer.singleShot(15, self.win, self._prebuild)
+                return
             log.info("all pages built %.0f ms after start", 1000 * (time.perf_counter() - self._t0))
             return
         key = self._prebuild_queue.pop(0)
@@ -387,6 +405,7 @@ class CoachApp:
     def show_page(self, key: str, tab: str | None = None) -> None:
         if self._closing:
             return
+        anchor = SETTINGS_ANCHORS.get(tab or "") or SETTINGS_ANCHORS.get(key)
         key = PAGE_ALIASES.get(key, key)
         if tab:
             key = PAGE_ALIASES.get(tab, key)
@@ -405,6 +424,21 @@ class CoachApp:
                 log.exception("on_show of %s failed", key)
         self._switch_ms.append(1000 * (time.perf_counter() - t0))
         del self._switch_ms[:-50]
+        if anchor and key == "settings" and view is not None:
+            self._reveal_anchor(view, anchor)
+
+    def _reveal_anchor(self, view: Any, anchor: str) -> None:
+        """An old page name (« Avancé », « À propos ») opens its block on Réglages and scrolls to it."""
+        try:
+            target = {"update": getattr(getattr(view, "about", None), "update_section", None),
+                      "advanced": getattr(view, "more", None), "help": getattr(view, "help", None)}.get(anchor)
+            if target is None:
+                return
+            if anchor in ("advanced", "help"):
+                target.set_open(True)
+            view.page.reveal(target)
+        except Exception:
+            log.debug("cannot reveal %s", anchor, exc_info=True)
 
     def open_settings(self, tab: str) -> None:
         self.show_page(tab if tab in PAGE_ALIASES else "settings")

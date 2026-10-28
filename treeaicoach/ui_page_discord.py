@@ -329,21 +329,9 @@ class DiscordPage:
                     "discord_ally_ganks")
         app.switch_row(says, "discord_friends_matchup", "Matchup de chaque ami", "Au début : « Paul, Darius contre "
                        "Garen : favorable jusqu'au 6 ».")
-        app.switch_row(says, "discord_team_brain", "Conseils perso à tes amis", "« Jinx, jungler probablement "
-                       "chez toi », « Ahri, ton adversaire est en base : plaque ». Une phrase par ami toutes les "
-                       "30 s au plus, les ganks d'abord.")
         app.switch_row(says, "discord_objectives", "Objectifs", "« Dragon dans 30 secondes », Baron, larves.")
-        app.switch_row(says, "discord_team_calls", "Calls d'équipe", "« Ils sont 4 bot : Baron maintenant ».")
-        app.switch_row(says, "discord_jungler_seen", "Jungler ennemi vu", "« Jungler ennemi vu top », jamais "
-                       "pendant un gank.")
         app.switch_row(says, "discord_summary", "Résumé de fin de partie", "« Victoire en 32 minutes, 9 ganks "
                        "évités sur 10 ».")
-        app.switch_row(says, "discord_team_recap", "Bilan d'équipe écrit", "Dans le chat du salon après la partie : "
-                       "une force et une chose à corriger par ami. Aucun pseudo enregistré.")
-        from treeaicoach.ui_page_settings import hotkey_choices  # noqa: PLC0415
-
-        app.choice_row(says, "hotkey_discord_mute", "Touche pour couper le bot", "Il se tait tout de suite.",
-                       hotkey_choices(str(app.cfg.hotkey_discord_mute or "")))
 
         # -- « Hey coach » heard in the voice channel
         ear = self.page.section("Écoute « Hey coach »", "Reconnaissance sur ton PC (Whisper, gratuit), "
@@ -371,9 +359,26 @@ class DiscordPage:
         friends.layout().insertWidget(2, self._friends_holder)
         app.bind("discord_links", lambda: self._update_friends(self.snap or {}, force=True))
 
+        # -- rarely touched: one closed « Avancé » block (docs/DESIGN.md, "Navigation")
+        self.more = self.page.fold("Avancé", "annonces en plus, salon, journal")
+        extra = self.more.section("Annonces en plus")
+        app.switch_row(extra, "discord_team_brain", "Conseils perso à tes amis", "« Jinx, jungler probablement "
+                       "chez toi », « Ahri, ton adversaire est en base : plaque ». Une phrase par ami toutes les "
+                       "30 s au plus, les ganks d'abord.")
+        app.switch_row(extra, "discord_team_calls", "Calls d'équipe", "« Ils sont 4 bot : Baron maintenant ».")
+        app.switch_row(extra, "discord_jungler_seen", "Jungler ennemi vu", "« Jungler ennemi vu top », jamais "
+                       "pendant un gank.")
+        app.switch_row(extra, "discord_team_recap", "Bilan d'équipe écrit", "Dans le chat du salon après la partie : "
+                       "une force et une chose à corriger par ami. Aucun pseudo enregistré.")
+        from treeaicoach.ui_page_settings import hotkey_choices  # noqa: PLC0415
+
+        app.choice_row(extra, "hotkey_discord_mute", "Touche pour couper le bot", "Il se tait tout de suite.",
+                       hotkey_choices(str(app.cfg.hotkey_discord_mute or "")))
+        app.depends(extra, *on)
+
         # -- where the bot is
         self.leave_btn = W.button("Quitter", self._leave, tip="Le bot quitte le salon vocal.")
-        where = self.page.section("Où est le bot", "Il te suit dans ton salon vocal. Tu peux aussi le placer à la "
+        where = self.more.section("Où est le bot", "Il te suit dans ton salon vocal. Tu peux aussi le placer à la "
                                                    "main.", action=self.leave_btn)
         self.server = W.Combo([], None)
         self.server.setMinimumWidth(220)
@@ -386,7 +391,7 @@ class DiscordPage:
         where.layout().insertWidget(2, self._chan_holder)      # voice channels: under the server row
 
         # -- log
-        logs = self.page.section("Journal du bot", "Les 10 dernières actions du bot.")
+        logs = self.more.section("Journal du bot", "Les 10 dernières actions du bot.")
         logs.group.hide()
         self._log_holder = QtWidgets.QWidget()
         self._log_lay = QtWidgets.QVBoxLayout(self._log_holder)

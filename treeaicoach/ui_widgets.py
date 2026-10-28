@@ -85,13 +85,13 @@ CONTROL_RADIUS = 8
 ROW_MIN_H = 48
 ROW_PAD_X = 16
 ROW_PAD_Y = 12
-SECTION_GAP = 32
+SECTION_GAP = 40        # air between sections (v3.4: 32 -> 40)
 TITLE_PX = 26
 BODY_PX = 14
 SMALL_PX = 13
 CAPTION_PX = 12
 HEADLINE_PX = 15
-SECTION_PX = 13
+SECTION_PX = 16        # section titles read as titles (v3.4: 13 secondary -> 16 primary)
 MONO_FAMILIES = ("Cascadia Mono", "Consolas", "SF Mono", "DejaVu Sans Mono", "Liberation Mono", "Courier New")
 
 _theme: list[Theme] = [DARK]
@@ -164,7 +164,7 @@ QLabel[role="navgroup"] {{ font-size: {CAPTION_PX}px; font-weight: 600; color: {
 QLabel {{ background: transparent; }}
 QLabel[role="title"] {{ font-family: "{display}"; font-size: {TITLE_PX}px; font-weight: 600; }}
 QLabel[role="headline"] {{ font-family: "{display}"; font-size: 20px; font-weight: 600; }}
-QLabel[role="section"] {{ font-size: {SECTION_PX}px; font-weight: 600; color: {t.secondary}; }}
+QLabel[role="section"] {{ font-family: "{display}"; font-size: {SECTION_PX}px; font-weight: 600; color: {t.text}; }}
 QLabel[role="kicker"] {{ font-size: {SMALL_PX}px; font-weight: 500; color: {t.secondary}; }}
 QLabel[role="mono"] {{ font-size: {SMALL_PX}px; color: {t.secondary}; }}
 QLabel[role="monofoot"] {{ font-size: {CAPTION_PX}px; color: {t.tertiary}; }}
@@ -177,9 +177,13 @@ QLabel[tone="warning"] {{ color: {t.warning}; }}
 QLabel[tone="ok"] {{ color: {t.ok}; }}
 QLabel[tone="accent"] {{ color: {t.accent}; }}
 QLabel a {{ color: {t.accent}; }}
-#Group {{ background: {GLASS_GROUP}; border: 1px solid {GLASS_EDGE}; border-radius: {GROUP_RADIUS}px; }}
+#Group {{ background: {GLASS_GROUP}; border: none; border-radius: {GROUP_RADIUS}px; }}
 #Group[tone="accent"] {{ border: 1px solid {t.accent_soft}; }}
 #Separator {{ background: {GLASS_SEPARATOR}; border: none; }}
+QPushButton#FoldHead {{ background: transparent; border: none; border-top: 1px solid {GLASS_SEPARATOR};
+  border-radius: 0; text-align: left; padding: 16px 4px 4px 4px; font-family: "{display}";
+  font-size: {SECTION_PX}px; font-weight: 600; color: {t.secondary}; }}
+QPushButton#FoldHead:hover, QPushButton#FoldHead:checked {{ color: {t.text}; }}
 QPushButton {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: {CONTROL_RADIUS}px;
   padding: 8px 16px; min-height: 20px; font-weight: 500; }}
 QPushButton:hover {{ background: {t.control_hover}; }}
@@ -699,7 +703,7 @@ class Section(QtWidgets.QWidget):
         lay.setSpacing(8)
         if title or action is not None:
             head = QtWidgets.QHBoxLayout()
-            head.setContentsMargins(ROW_PAD_X, 0, 4, 0)
+            head.setContentsMargins(4, 0, 4, 4)
             head.setSpacing(16)
             self.header = label(title, "section")
             head.addWidget(self.header, 0)
@@ -755,6 +759,102 @@ class Page(QtWidgets.QScrollArea):
 
     def add(self, w: QtWidgets.QWidget) -> QtWidgets.QWidget:
         self.lay.insertWidget(self.lay.count() - 1, w)
+        return w
+
+    def section(self, title: str = "", footnote: str = "", action: QtWidgets.QWidget | None = None) -> Section:
+        s = Section(title, footnote, action)
+        self.add(s)
+        return s
+
+    def fold(self, title: str = "Avancé", hint: str = "") -> "Fold":
+        """The page's collapsible block of rarely used settings (closed)."""
+        return self.add(Fold(title, hint))
+
+    def reveal(self, w: QtWidgets.QWidget) -> None:
+        """Open the fold holding ``w`` (if any) and scroll it into view."""
+        p = w.parentWidget()
+        while p is not None and p is not self:
+            if isinstance(p, Fold):
+                p.set_open(True)
+            p = p.parentWidget()
+        self.widget().layout().activate()
+        self.column.layout().activate()
+
+        def scroll() -> None:
+            try:
+                self.verticalScrollBar().setValue(max(0, w.mapTo(self.widget(), QtCore.QPoint(0, 0)).y() - 24))
+            except RuntimeError:          # deleted meanwhile
+                pass
+        scroll()
+        QtCore.QTimer.singleShot(0, self, scroll)
+
+
+class Fold(QtWidgets.QWidget):
+    """One collapsible block at the bottom of a page (« Avancé »): the rarely touched sections stay
+    built (every setting reachable, tests) but out of sight until the player opens it."""
+
+    def __init__(self, title: str = "Avancé", hint: str = "", parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Fold")
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(SECTION_GAP)
+        self.head = QtWidgets.QPushButton(title)
+        self.head.setObjectName("FoldHead")
+        self.head.setCheckable(True)
+        self.head.setCursor(Qt.PointingHandCursor)
+        hl = QtWidgets.QHBoxLayout(self.head)
+        hl.setContentsMargins(0, 16, 4, 4)
+        hl.addStretch(1)
+        self.state = label("", "secondary")
+        hl.addWidget(self.state, 0, Qt.AlignRight | Qt.AlignVCenter)
+        self.hint = hint
+        lay.addWidget(self.head)
+        self.body = QtWidgets.QWidget()
+        self.body_lay = QtWidgets.QVBoxLayout(self.body)
+        self.body_lay.setContentsMargins(0, 0, 0, 0)
+        self.body_lay.setSpacing(SECTION_GAP)
+        lay.addWidget(self.body)
+        self.body.hide()
+        self.head.toggled.connect(self.set_open)
+        self._builders: list[Callable[["Fold"], Any]] = []
+        self._sync()
+
+    def defer(self, build: Callable[["Fold"], Any]) -> None:
+        """Build the content with ``build(self)`` only on the first opening (or :meth:`materialize`):
+        the rows of a closed fold cost nothing at start-up."""
+        self._builders.append(build)
+
+    def materialize(self) -> bool:
+        """Run the deferred builders now (idle turn, tests, a jump to a setting). True if it built something."""
+        todo, self._builders = self._builders, []
+        for build in todo:
+            try:
+                build(self)
+            except Exception:       # a broken block never takes the page down
+                import logging  # noqa: PLC0415
+
+                logging.getLogger(__name__).exception("Cannot build the « %s » block", self.head.text())
+        return bool(todo)
+
+    def _sync(self) -> None:
+        self.state.setText("Masquer" if self.is_open() else (f"{self.hint} · Afficher" if self.hint else "Afficher"))
+
+    def is_open(self) -> bool:
+        return not self.body.isHidden()
+
+    def set_open(self, on: bool) -> None:
+        on = bool(on)
+        if on:
+            self.materialize()
+        if self.head.isChecked() != on:
+            self.head.setChecked(on)          # re-enters once through toggled
+            return
+        self.body.setVisible(on)
+        self._sync()
+
+    def add(self, w: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        self.body_lay.addWidget(w)
         return w
 
     def section(self, title: str = "", footnote: str = "", action: QtWidgets.QWidget | None = None) -> Section:

@@ -44,13 +44,20 @@ refusés : « trop kitsch ».)
   `#8A8E97`, **accent unique** `#7AA7FF` (interrupteurs, bouton principal, liens), sélection neutre
   `#2C2F36` ; sens : danger `#FF6B63`, attention `#EBBE4D`, sûr `#5FD08F`. Contraste ≥ 4,5:1 vérifié
   par `tests/test_design_rules.py`.
-* **Police** : **Inter** (OFL, `assets/fonts`), repli Segoe UI Variable. Titre de page 26 px, corps 14,
-  secondaire 13, légende de section 13 semi-gras en secondaire, notes 12 ; jamais en dessous de 12.
+* **Police** : **Inter** (OFL, `assets/fonts`), repli Segoe UI Variable. Titre de page 26 px, titre de
+  section 16 semi-gras (Inter Display, couleur du texte), corps 14, secondaire 13, notes 12 ; jamais en
+  dessous de 12.
   Pas de monospace.
-* **Grille de 8 pt** : colonne centrée de 760 px, marges 40, 32 entre sections, 8 entre la légende et sa
-  cellule, rayon 12 (cellules) / 8 (contrôles), lignes de 48 px au moins.
-* **Navigation** : Accueil · Overlay · Alertes et voix · Discord · Analyse ; en bas, « Configuration » :
-  Réglages · Avancé · À propos (Ctrl+1 … 8).
+* **Grille de 8 pt** : colonne centrée de 760 px, marges 40, **40 entre sections**, 8-12 entre le titre et
+  sa cellule, rayon 12 (cellules) / 8 (contrôles), lignes de 48 px au moins. Cellules **sans bord** (le fond
+  `#1B1C20` suffit) ; seuls les filets entre lignes restent.
+* **Navigation (v3.4, 6 pages au plus)** : Accueil (jouer) · Overlay (affichage en jeu) · Alertes et voix ·
+  Discord · Analyse ; en bas : Réglages (Ctrl+1 … 6). Les anciennes pages « Avancé » et « À propos » vivent
+  dans Réglages (Mise à jour, puis les blocs repliés « Avancé » et « Aide et mentions ») ; leurs anciens noms
+  y mènent encore (`PAGE_ALIASES`, `SETTINGS_ANCHORS`).
+* **Un seul bloc replié « Avancé » par page** (`ui_widgets.Fold`), en bas, fermé : les réglages rares
+  (détails, sons, moteur de voix, stockage, détection, performance, support). Ses lignes ne sont construites
+  qu'à la première ouverture ou pendant un temps mort après le démarrage (`Fold.defer`).
 * **Page** = titre, une phrase courte, puis des listes groupées (légende, cellule, filet entre lignes).
   **Ligne** : titre + description courte à gauche, contrôle à droite.
 * **Un réglage = un seul endroit** (`tests/test_launcher.py` vérifie chaque interrupteur : un champ de
@@ -77,7 +84,9 @@ refusés : « trop kitsch ».)
 
 Seulement quand il a un sens : interrupteur qui glisse, flash de danger en jeu. Rien ne se
 rafraîchit quand la fenêtre est réduite (2 s) ; l'Accueil se met à jour 4 fois par seconde
-seulement pendant une partie et quand il est affiché. Chargement des pages : voir
+seulement pendant une partie et quand il est affiché. Démarrage : rien de lourd avant la première image
+(ni numpy, PIL, cv2, onnxruntime, discord, edge_tts, torch : `tests/test_ui_layout34.py`), le moteur, la
+voix et le détecteur démarrent 40 ms après, les autres pages 0,7 s après. Chargement des pages : voir
 docs/LAUNCHER.md (rien de bloquant sur le thread de la fenêtre, une page n'est jamais reconstruite).
 
 `tests/test_design_rules.py` vérifie automatiquement les interdits (tiret cadratin dans les

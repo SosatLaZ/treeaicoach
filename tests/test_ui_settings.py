@@ -24,13 +24,13 @@ home = tu.home
 # Pure
 # ======================================================================================
 def test_navigation() -> None:
-    assert [k for k, _l, _i in ui.PAGES] == ["home", "overlay", "alerts", "discord", "analysis", "settings",
-                                                 "advanced", "about"]
+    assert [k for k, _l, _i in ui.PAGES] == ["home", "overlay", "alerts", "discord", "analysis", "settings"]
+    assert len(ui.PAGES) <= 6                       # v3.4: Avancé and À propos live on Réglages
     grouped = [k for _c, keys in ui.NAV_GROUPS for k in keys]
     assert sorted(grouped) == sorted(k for k, _l, _i in ui.PAGES) and len(grouped) == len(set(grouped))
     for old, page in ui.PAGE_ALIASES.items():
         assert page in {k for k, _l, _i in ui.PAGES}, old
-    assert ui_kit.SHORTCUTS[0][0] == "Ctrl + 1 … 8"
+    assert ui_kit.SHORTCUTS[0][0] == "Ctrl + 1 … 6"
 
 def test_status_line() -> None:
     sl = ui_kit.status_line

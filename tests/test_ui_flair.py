@@ -108,7 +108,7 @@ def test_eight_point_grid() -> None:
     for v in (W.CONTENT_MAX, W.PAGE_PAD_X, W.PAGE_PAD_TOP, W.SECTION_GAP, W.ROW_MIN_H, W.ROW_PAD_X):
         assert v % 8 == 0, v
     assert W.GROUP_RADIUS == F.HeroCard.RADIUS and W.ROW_PAD_Y % 4 == 0
-    assert W.SECTION_PX < W.BODY_PX < W.TITLE_PX      # quiet section captions, one big title
+    assert W.BODY_PX < W.SECTION_PX < W.TITLE_PX      # section titles read as titles, one big page title
 
 
 def test_sections_have_no_ornament(qapp) -> None:

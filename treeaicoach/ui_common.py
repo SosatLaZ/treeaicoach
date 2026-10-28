@@ -115,7 +115,7 @@ TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
 
-PREBUILD_ORDER = ("overlay", "alerts", "discord", "analysis", "settings", "advanced", "about")   # built after the first paint
+PREBUILD_ORDER = ("overlay", "alerts", "settings", "discord", "analysis")   # built after the first paint
 GAMES_PAGE = 15                  # rows of the Analyses table drawn at once ("Afficher plus")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -129,19 +129,22 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("discord", "Discord", "discord"),
     ("analysis", "Analyse", "analysis"),
     ("settings", "Réglages", "settings"),
-    ("advanced", "Avancé", "advanced"),
-    ("about", "À propos", "about"),
 )
 #: Sidebar groups, in order of use: playing (every game), then setting up (rarely), at the bottom.
 NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("", ("home", "overlay", "alerts", "discord", "analysis")),
-    ("Configuration", ("settings", "advanced", "about")),
+    ("Configuration", ("settings",)),
 )
 #: Old page / tab names (tools, fixes, saved links) -> new page.
-PAGE_ALIASES: dict[str, str] = {"dashboard": "home", "help": "about", "updates": "about", "Mises à jour": "about",
+PAGE_ALIASES: dict[str, str] = {"dashboard": "home", "help": "settings", "updates": "settings",
+                                "Mises à jour": "settings", "about": "settings", "advanced": "settings",
                                 "Affichage": "overlay", "Voix": "alerts", "Général": "settings",
-                                "Détection": "advanced", "IA": "settings", "Avancé": "advanced",
-                                "Performance": "advanced", "Bot Discord": "discord"}
+                                "Détection": "settings", "IA": "settings", "Avancé": "settings",
+                                "Performance": "settings", "Bot Discord": "discord", "play": "home"}
+#: Old page names that now are a part of the Réglages page: what to scroll to (and open) there.
+SETTINGS_ANCHORS: dict[str, str] = {"about": "update", "updates": "update", "Mises à jour": "update",
+                                    "help": "help", "advanced": "advanced", "Avancé": "advanced",
+                                    "Détection": "advanced", "Performance": "advanced"}
 #: Status of the launcher.
 STATE_INFO: dict[str, tuple[str, str]] = {
     "STOPPED": ("Analyse arrêtée", DIM),
