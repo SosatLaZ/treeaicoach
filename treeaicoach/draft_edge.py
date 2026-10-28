@@ -298,6 +298,37 @@ def spike_timeline(me_alias: str, opp_alias: str) -> str:
         return ""
 
 
+def duel_line(a_alias: str, a_name: str, b_alias: str, b_name: str) -> str:
+    """Third-person :func:`spike_timeline` for any lane of the loading-screen card: "Darius gagne niv 1-3,
+    Garen dès le 6" / "Égal niv 1-6, Jinx après 2 objets". "" when a profile is unknown. Pure, never raises."""
+    try:
+        a, b = _meta(a_alias), _meta(b_alias)
+        if not (getattr(a, "known", False) and getattr(b, "known", False)):
+            return ""
+        won = [_who(x) for x in phase_scores(a_alias, b_alias)]
+        for i in range(1, len(won) - 1):
+            if won[i] == "even" and won[i - 1] == won[i + 1] != "even":
+                won[i] = won[i - 1]
+        segs: list[tuple[str, int, int]] = []
+        for i, w in enumerate(won):
+            if segs and segs[-1][0] == w:
+                segs[-1] = (w, segs[-1][1], i)
+            else:
+                segs.append((w, i, i))
+        names = {"me": a_name or a_alias, "opp": b_name or b_alias}
+        parts = []
+        for k, (w, i, j) in enumerate(segs):
+            lab = PHASES[i] if i == j else _RANGE_LABEL[(i, j)]
+            if w == "even":
+                parts.append(f"{'Égal' if k == 0 else 'égal'} {lab}")
+            else:
+                parts.append(f"{names[w]} gagne {lab}" if k == 0 else f"{names[w]} {lab}")
+        return ", ".join(parts)
+    except Exception:
+        log.debug("duel_line failed", exc_info=True)
+        return ""
+
+
 # ----------------------------------------------------------------------------- 9 bis. in-game prior
 #: tiers in order (player_intel tier names) - the rank gap is counted in whole tiers
 TIER_ORDER = ("IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER",

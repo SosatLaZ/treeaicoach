@@ -107,7 +107,8 @@ class HomePage:
         self.page.add(self.cs)
 
         # --- players of the game in progress (player_intel.py, off by default): by champion, no names
-        self.pl = W.Section("Joueurs de la partie", "Infos publiques du client LoL, gardées le temps de la partie.")
+        self.pl = W.Section("Écran de chargement", "Infos publiques du client LoL, par champion, gardées le temps "
+                            "de la partie (aussi en fenêtre pendant le chargement et les 90 premières secondes).")
         pbox = QtWidgets.QWidget()
         pl = QtWidgets.QVBoxLayout(pbox)
         pl.setContentsMargins(16, 12, 16, 14)
@@ -121,6 +122,7 @@ class HomePage:
         self.pl.add(pbox)
         self.pl.hide()
         self._pl_sig: Any = None
+        self._loading: Any = None                 # loading_card.LoadingController (created on first game)
         self.page.add(self.pl)
 
         # --- the three switches used between games
@@ -275,14 +277,31 @@ class HomePage:
         self._update_system(snap)
 
     def _update_players(self, snap: dict[str, Any]) -> None:
-        """The "Joueurs" card during a game when "Infos des joueurs" is on (lock-only read, no I/O)."""
+        """The « Écran de chargement » card (loading_card.py) from the loading screen on, when "Infos des
+        joueurs" is on: on this page and in a top-most window until 1:30 of game (lock-only reads, no I/O)."""
         lines: Any = None
         try:
-            from treeaicoach import player_intel  # noqa: PLC0415
+            from treeaicoach import loading_card, player_intel  # noqa: PLC0415
 
-            if snap.get("key") == "RUNNING" and not self.app.demo and player_intel.enabled(self.app.cfg):
-                players = player_intel.get_default_watcher().snapshot()
-                lines = player_intel.card(players) if players else (("Lecture du client LoL…",), ())
+            key = snap.get("key")
+            if key in ("RUNNING", "WAITING_GAME", "LOCATING") and not self.app.demo \
+                    and player_intel.enabled(self.app.cfg):
+                w = player_intel.get_default_watcher()
+                w.want()                          # reads the gameflow phase: catches the loading screen
+                if self._loading is None:
+                    self._loading = loading_card.LoadingController()
+                gt = getattr(snap.get("status"), "game_time", None) if key == "RUNNING" else None
+                card = self._loading.tick(w, gt)
+                if card is not None:
+                    ens = [b.head + "".join("\n   " + x for x in b.lines) + (f"\n   ⚠ {b.alert}" if b.alert else "")
+                           for b in card.enemies]
+                    ens += ([""] + list(card.matchups) if card.matchups else [])
+                    ens += [f"Plan : {card.win_condition}"] if card.win_condition else []
+                    lines = (tuple(ens), card.allies)
+                elif key == "RUNNING":
+                    lines = (("Lecture du client LoL…",), ())
+            elif self._loading is not None:
+                self._loading.hide()
         except Exception:
             log.debug("players card failed", exc_info=True)
         if lines == self._pl_sig:

@@ -1,0 +1,74 @@
+{
+ "isSpectating": false,
+ "localPlayerCellId": 0,
+ "myTeam": [
+  {
+   "cellId": 0,
+   "championId": 86,
+   "assignedPosition": "top",
+   "team": 1,
+   "puuid": "",
+   "summonerId": 0
+  }
+ ],
+ "theirTeam": [
+  {
+   "cellId": 5,
+   "championId": 0,
+   "team": 2,
+   "puuid": "",
+   "summonerId": 0
+  }
+ ],
+ "bans": {
+  "myTeamBans": [
+   875,
+   238
+  ],
+  "theirTeamBans": [
+   157
+  ],
+  "numBans": 10
+ },
+ "actions": [
+  [
+   {
+    "id": 1,
+    "actorCellId": 0,
+    "championId": 875,
+    "completed": true,
+    "isAllyAction": true,
+    "type": "ban"
+   },
+   {
+    "id": 2,
+    "actorCellId": 5,
+    "championId": 157,
+    "completed": true,
+    "isAllyAction": false,
+    "type": "ban"
+   },
+   {
+    "id": 3,
+    "actorCellId": 6,
+    "championId": 555,
+    "completed": false,
+    "isAllyAction": false,
+    "type": "ban"
+   }
+  ],
+  [
+   {
+    "id": 11,
+    "actorCellId": 0,
+    "championId": 86,
+    "completed": true,
+    "isAllyAction": true,
+    "type": "pick"
+   }
+  ]
+ ],
+ "timer": {
+  "phase": "BAN_PICK"
+ }
+}

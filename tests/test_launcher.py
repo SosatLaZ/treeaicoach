@@ -342,7 +342,7 @@ def test_discord_page_shows_the_bot(home: Path) -> None:
 
 
 def test_players_card_on_home_only_when_on(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Accueil "Joueurs" card (player_intel.py): hidden while the switch is off, by champion when on."""
+    """Accueil « Écran de chargement » card (loading_card.py): hidden while the switch is off, by champion when on."""
     from treeaicoach import player_intel as pi
 
     w = pi.PlayerIntelWatcher(client=None, resolve=lambda c: None)
@@ -365,7 +365,7 @@ def test_players_card_on_home_only_when_on(home: Path, monkeypatch: pytest.Monke
         app._refresh_status()
         assert not view.pl.isHidden()
         txt = view.pl_enemies.text()
-        assert txt.startswith("Lee Sin (jungler) · Platine 2 · 52 % (58 parties)") and "3 défaites d'affilée" in txt
+        assert txt.startswith("Lee Sin · jungle · Platine 2 · 52 % (58 parties)") and "3 défaites d'affilée" in txt
         assert "Lulu (support)" in view.pl_allies.text()
         app.cfg.player_intel = False
         app._refresh_status()

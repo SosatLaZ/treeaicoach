@@ -12,6 +12,9 @@ summoner spells), no automation (no auto pick / ban).
 * :func:`build_card` - pure: the state -> :class:`PregameCard` (title, opponent, 3 tips in plain
   French "action : raison" from :mod:`treeaicoach.game_plan` + :mod:`treeaicoach.meta`, starting
   items with their names and prices from the live item data :mod:`treeaicoach.game_data`).
+* :func:`parse_bans` / :func:`last_bans` - the champions banned in this champion select (champion ids
+  only, memory only, kept :data:`BANS_KEEP_S`): the loading-screen card (:mod:`treeaicoach.loading_card`)
+  says "Son main Sett a été banni" (the bans are in no endpoint once the game loads).
 * :class:`ChampSelectWatcher` - polls the endpoint (at most every :data:`POLL_S`) from the
   caller's thread or its own daemon thread; :meth:`ChampSelectWatcher.card` is what the UI renders
   (``None`` outside champion select). Never raises.
@@ -175,6 +178,45 @@ def parse_session(session: Any, resolve: Callable[[int], tuple[str, str] | None]
     except Exception:
         log.debug("parse_session failed", exc_info=True)
         return None
+
+
+def parse_bans(session: Any) -> frozenset[int]:
+    """The champion ids banned in this champion select (both teams: ``bans.myTeamBans`` /
+    ``theirTeamBans`` and the completed ``ban`` actions). Champions only, nobody's data. Never raises."""
+    out: set[int] = set()
+    try:
+        if not isinstance(session, dict):
+            return frozenset()
+        bans = session.get("bans") if isinstance(session.get("bans"), dict) else {}
+        for k in ("myTeamBans", "theirTeamBans"):
+            out.update(_int(c) for c in (bans.get(k) or ()) if not isinstance(c, (dict, list)))
+        for turn in session.get("actions") or ():
+            for a in (turn if isinstance(turn, list) else (turn,)):
+                if isinstance(a, dict) and a.get("type") == "ban" and a.get("completed") is True:
+                    out.add(_int(a.get("championId")))
+    except Exception:
+        log.debug("bans not parsed", exc_info=True)
+    return frozenset(c for c in out if 0 < c < CLASSIC_ID_MIN)
+
+
+#: the bans of the last champion select, in memory only (loading_card: "Son main X a été banni")
+BANS_KEEP_S = 900.0
+_bans: tuple[float, frozenset[int]] = (-1e18, frozenset())
+_bans_lock = threading.Lock()
+
+
+def remember_bans(bans: frozenset[int], now: float | None = None) -> None:
+    global _bans
+    if bans:
+        with _bans_lock:
+            _bans = (time.monotonic() if now is None else now, frozenset(bans))
+
+
+def last_bans(now: float | None = None) -> frozenset[int]:
+    """The champion ids banned in the last champion select (empty after :data:`BANS_KEEP_S`)."""
+    with _bans_lock:
+        t, b = _bans
+    return b if (time.monotonic() if now is None else now) - t <= BANS_KEEP_S else frozenset()
 
 
 # ----------------------------------------------------------------------------- card (pure)
@@ -523,6 +565,8 @@ class ChampSelectWatcher:
             client = self._get_client()
             session = client.get(SESSION_PATH) if client is not None else None
             state = parse_session(session, self._resolve) if session is not None else None
+            if state is not None:
+                remember_bans(parse_bans(session))
             if state is not None and state.me is not None and state.me.alias:
                 try:     # the meta build of my pick for this patch, fetched once in a daemon thread
                     from treeaicoach import meta_builds
@@ -600,4 +644,4 @@ def pregame_card() -> PregameCard | None:
 
 
 __all__ = ["ChampSelectState", "Pick", "PregameCard", "parse_session", "build_card", "lane_opponent",
-           "start_items", "ChampSelectWatcher", "get_default_watcher", "pregame_card", "SESSION_PATH"]
+           "start_items", "parse_bans", "last_bans", "ChampSelectWatcher", "get_default_watcher", "pregame_card", "SESSION_PATH"]

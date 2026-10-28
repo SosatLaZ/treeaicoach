@@ -5,13 +5,16 @@ losses, current win / loss streak, games on the champion played. Mandatory scope
 
 * only PUBLIC ranked data the League Client already exposes locally (:mod:`treeaicoach.lcu`, GET
   only, loopback only): no Riot API key, no third-party site;
-* only once the game is IN PROGRESS (gameflow phase ``InProgress``, after loading). Nothing is read
-  during champion select: hidden names of ranked champion select are never de-anonymised;
+* only once champion select is OVER (gameflow phase ``GameStart`` / ``InProgress``: the loading screen,
+  where the client shows every player publicly). Nothing is read during champion select: hidden names of
+  ranked champion select are never de-anonymised;
 * kept in memory for the current game only (cleared when the game ends / the coach stops); the
   player ids (PUUIDs) are used for the requests only and never logged, written to a record, a report
   or a test. Names / Riot IDs are never read. Everything is shown BY CHAMPION
   ("Leur jungler (Lee Sin) : Platine 2, 3 défaites d'affilée");
 * off by default (``Config.player_intel``, switch Réglages > "Rangs des joueurs").
+
+The loading-screen card (:mod:`treeaicoach.loading_card`) is built from :meth:`PlayerIntelWatcher.snapshot`.
 
 Endpoints (all GET):
 
@@ -19,7 +22,16 @@ Endpoints (all GET):
 * ``/lol-summoner/v1/current-summoner`` - my puuid (to know which team is mine; I am skipped);
 * ``/lol-ranked/v1/ranked-stats/{puuid}`` - tier, division, LP, wins / losses of the queue;
 * ``/lol-match-history/v1/products/lol/{puuid}/matches?begIndex=0&endIndex=19`` - the last 20 games,
-  only those of the current game's queue kept -> current streak, games (and wins) on the champion.
+  only those of the current game's queue kept -> current streak, games (and wins) on the champion; all
+  queues -> his last 5 games (champion + V / D), his mains (top 3 by games), OTP share;
+* ``/lol-collections/v1/inventories/{summonerId}/champion-mastery`` - his champion masteries (enemies only,
+  when the session gives a summoner id): lifetime mains, "1re partie sur ce champion" (0 point on it).
+  All paths checked against the LCU schema (mingweisamuel.com/lcu-schema, 2026-10); the mastery one takes a
+  summoner id (not a puuid), optional: without it the mains come from the history.
+
+The bans are NOT in the gameflow session (schema: ``gameData`` has no bans) nor in the Live Client: they are
+the champion ids :mod:`treeaicoach.champ_select` kept in memory from the champion select screen (champions
+only, nobody's data), matched at loading: "Son main Sett a été banni".
 
 What is shown (2.7 audit, the user saw "245 V" on an enemy): the rank of the CURRENT game's ranked queue
 (flex for a flex game, solo otherwise; never TFT / previous season / a sum of queues), as "Platine 2 ·
@@ -27,8 +39,9 @@ What is shown (2.7 audit, the user saw "245 V" on an enemy): the rank of the CUR
 (no stale numbers). The teams come from the Live Client roster when the engine knows it (my puuid may
 be unknown), bots and duplicate entries are skipped, and a game is recognised by its id AND its players.
 
-:class:`PlayerIntelWatcher` fetches in its own daemon thread, at most :data:`MAX_RPS` requests per
-second, each answer cached for the game; the engine / UI only read :meth:`snapshot` (a lock, no
+:class:`PlayerIntelWatcher` fetches in its own daemon thread with at most :data:`WORKERS` requests in
+parallel (at most :data:`MAX_RPS` per second), each answer cached per player for the game (the card is ready in
+about 1-2 s at loading, enemies first, shown as it fills); the engine / UI only read :meth:`snapshot` (a lock, no
 I/O): nothing ever blocks. The thread stops by itself when nobody asked for it for
 :data:`IDLE_STOP_S` and then forgets everything. :func:`decisive_lines` picks at most
 :data:`MAX_COACH_LINES` coach lines ("Leur jungler (Lee Sin) est en série de 4 défaites"), sent
@@ -50,9 +63,17 @@ ME_PATH = "/lol-summoner/v1/current-summoner"
 RANKED_PATH = "/lol-ranked/v1/ranked-stats/{puuid}"
 #: the last 20 games of any queue (the LCU's maximum for another player); only the current game's queue is kept
 HISTORY_PATH = "/lol-match-history/v1/products/lol/{puuid}/matches?begIndex=0&endIndex=19"
+#: champion masteries of a summoner id (LCU schema: summonerId int64 path parameter); enemies only
+MASTERY_PATH = "/lol-collections/v1/inventories/{sid}/champion-mastery"
+#: gameflow phases where the players are public (loading screen and game); never "ChampSelect"
+PUBLIC_PHASES = ("GameStart", "InProgress")
 
-MAX_RPS = 3.0               # at most 3 requests per second to the client
+MAX_RPS = 25.0              # at most 25 requests per second to the local client (loopback)
+WORKERS = 4                 # requests in parallel
 SESSION_RECHECK_S = 15.0    # the gameflow phase is re-read this often once the game is known
+SESSION_IDLE_S = 2.0        # ... and this often while no game is known (catch the loading screen early)
+OTP_SHARE = 0.6             # "OTP (80 % de ses parties)" from this share of his recent games (>= 5 games)
+MAIN_MIN_GAMES = 2          # a history main needs this many recent games
 IDLE_STOP_S = 30.0          # the thread stops (and forgets) when nobody polled it for this long
 REMAKE_S = 300.0            # games shorter than this are remakes: not a win nor a loss
 MAX_COACH_LINES = 2
@@ -113,14 +134,24 @@ class PlayerIntel:
     champ_games: int = 0        # recent games on the champion played now
     champ_wins: int = 0
     provisional: bool = False   # placements in progress (shown "Non classé")
+    champion_id: int = 0
+    # all queues, from the same history (most recent first)
+    recent_all: int = 0         # recent games read, all queues (remakes excluded)
+    champ_all: int = 0          # of which on the champion played now
+    last5: tuple = ()           # ((champion_id, win), ...) his last 5 games
+    mains: tuple = ()           # ((champion_id, games), ...) top 3 by recent games
+    mastery_loaded: bool = False
+    mastery_mains: tuple = ()   # ((champion_id, points), ...) top 3 by mastery points
+    champ_points: int = -1      # mastery points on the champion played now (-1 unknown)
 
 
 # ----------------------------------------------------------------------------- parsing (pure)
 def parse_session(session: Any) -> dict | None:
     """Gameflow session -> ``{game_id, queue_id, players: [(puuid, champion_id, team 1|2, position)]}``.
-    None unless the phase is ``InProgress`` (never during champion select). Never raises."""
+    None unless the phase is ``GameStart`` / ``InProgress`` (loading screen / game; never during champion
+    select). ``summoner_ids``: puuid -> summoner id (> 0 only; memory only). Never raises."""
     try:
-        if not isinstance(session, dict) or str(session.get("phase") or "") != "InProgress":
+        if not isinstance(session, dict) or str(session.get("phase") or "") not in PUBLIC_PHASES:
             return None
         gd = session.get("gameData") if isinstance(session.get("gameData"), dict) else {}
         if gd.get("isCustomGame") is True:
@@ -131,6 +162,7 @@ def parse_session(session: Any) -> dict | None:
             if isinstance(sel, dict) and sel.get("puuid"):
                 picks[str(sel["puuid"])] = _int(sel.get("championId"))
         players = []
+        sids: dict[str, int] = {}
         seen: set[str] = set()
         for team_no, key in ((1, "teamOne"), (2, "teamTwo")):
             for p in gd.get(key) or ():
@@ -145,9 +177,12 @@ def parse_session(session: Any) -> dict | None:
                 cid = _int(p.get("championId")) or picks.get(puuid, 0)
                 pos = _POS.get(str(p.get("selectedPosition") or "").strip().lower(), "")
                 players.append((puuid, cid, team_no, pos))
+                if _int(p.get("summonerId")) > 0:
+                    sids[puuid] = _int(p.get("summonerId"))
         if not players:
             return None
-        return {"game_id": _int(gd.get("gameId")), "queue_id": _int(queue.get("id")), "players": players}
+        return {"game_id": _int(gd.get("gameId")), "queue_id": _int(queue.get("id")), "players": players,
+                "summoner_ids": sids}
     except Exception:
         log.debug("gameflow session not parsed", exc_info=True)
         return None
@@ -246,6 +281,58 @@ def parse_history(data: Any, puuid: str, champion_id: int, queue_id: int = 0) ->
         return {"games": len(rows), "streak": streak, "champ_games": len(on), "champ_wins": sum(1 for r in on if r[1])}
     except Exception:
         log.debug("match history not parsed", exc_info=True)
+        return None
+
+
+def parse_recent(data: Any, puuid: str, champion_id: int) -> dict | None:
+    """Match history, ALL queues -> ``{recent_all, champ_all, last5, mains}``: his last 5 games
+    ((champion id, win), most recent first), his top 3 champions by games (at least
+    :data:`MAIN_MIN_GAMES`), the games on ``champion_id``. Remakes skipped. None when unusable. Never raises."""
+    try:
+        games = _games_list(data)
+        if games is None:
+            return None
+        rows = []
+        for g in games:
+            if not isinstance(g, dict) or 0 < _int(g.get("gameDuration")) < REMAKE_S:
+                continue
+            p = _own_participant(g, puuid)
+            st = p.get("stats") if isinstance(p, dict) and isinstance(p.get("stats"), dict) else None
+            cid = _int(p.get("championId")) if isinstance(p, dict) else 0
+            if st is None or not isinstance(st.get("win"), bool) or cid <= 0 or st.get("gameEndedInEarlySurrender") is True:
+                continue
+            rows.append((_int(g.get("gameCreation")), bool(st["win"]), cid))
+        rows.sort(key=lambda r: r[0], reverse=True)
+        count: dict[int, int] = {}
+        for _c, _w, cid in rows:
+            count[cid] = count.get(cid, 0) + 1
+        first = {cid: i for i, (_c, _w, cid) in reversed(list(enumerate(rows)))}
+        mains = sorted((kv for kv in count.items() if kv[1] >= MAIN_MIN_GAMES), key=lambda kv: (-kv[1], first[kv[0]]))
+        return {"recent_all": len(rows), "champ_all": count.get(_int(champion_id), 0) if champion_id else 0,
+                "last5": tuple((cid, win) for _c, win, cid in rows[:5]), "mains": tuple(mains[:3])}
+    except Exception:
+        log.debug("recent games not parsed", exc_info=True)
+        return None
+
+
+def parse_mastery(data: Any, champion_id: int) -> dict | None:
+    """Champion masteries (a list, or ``{"masteries": [...]}``) -> ``{mastery_mains, champ_points}``: top 3
+    by points, the points on ``champion_id`` (0 = never played it); ``{}`` for an empty list (unknown). None
+    when unusable. Never raises."""
+    try:
+        rows = data.get("masteries") if isinstance(data, dict) else data
+        if not isinstance(rows, list):
+            return None
+        pts: dict[int, int] = {}
+        for m in rows:
+            if isinstance(m, dict) and _int(m.get("championId")) > 0:
+                pts[_int(m["championId"])] = max(0, _int(m.get("championPoints")))
+        if not pts:
+            return {}                                  # empty / hidden: answered, unknown (never "1re partie")
+        top = sorted(pts.items(), key=lambda kv: -kv[1])[:3]
+        return {"mastery_mains": tuple(top), "champ_points": pts.get(_int(champion_id), 0)}
+    except Exception:
+        log.debug("masteries not parsed", exc_info=True)
         return None
 
 
@@ -366,6 +453,7 @@ class PlayerIntelWatcher:
         self._thread: threading.Thread | None = None
         self._last_wanted = -1e18
         self._last_req = -1e18
+        self._req_lock = threading.Lock()
         self.requests = 0
         self._reset_game()
 
@@ -378,6 +466,9 @@ class PlayerIntelWatcher:
             self._todo: list[tuple[str, str]] = []           # (kind, puuid) still to fetch
             self._players: dict[str, PlayerIntel] = {}       # puuid -> info (memory only)
             self._champ: dict[str, int] = {}
+            self._sids: dict[str, int] = {}                  # puuid -> summoner id (mastery request only)
+            self._me_pick: tuple[int, str] = (0, "")         # my champion id, my position (no id of mine kept)
+            self._since: float | None = None                 # clock time the game was detected
             self._roles: dict[str, str] = {}                 # alias -> position (live client)
             self._live_team: dict[str, bool] = {}            # alias (lower) -> ally? (live client roster)
             self._live_me = ""                               # my champion alias (lower, live client)
@@ -408,6 +499,16 @@ class PlayerIntelWatcher:
                 out.append(p)
             return tuple(out)
 
+    def game_since(self) -> float | None:
+        """Clock time (``clock``) the current game was detected at, None without a game."""
+        with self._lock:
+            return self._since if self._players else None
+
+    def me_pick(self) -> tuple[int, str]:
+        """(my champion id, my position) of the current game ((0, "") unknown)."""
+        with self._lock:
+            return self._me_pick
+
     def ready(self) -> bool:
         """True once every request of the game was answered (or given up)."""
         with self._lock:
@@ -434,50 +535,70 @@ class PlayerIntelWatcher:
         return self._client
 
     def _get(self, path: str) -> Any:
-        """One request, spaced by at least 1 / MAX_RPS seconds."""
-        wait = self._last_req + 1.0 / MAX_RPS - self._clock()
-        if wait > 0:
-            self._sleep(wait)
-        self._last_req = self._clock()
-        self.requests += 1
+        """One request, spaced by at least 1 / MAX_RPS seconds (thread-safe: the workers share the slots)."""
+        with self._req_lock:
+            now = self._clock()
+            slot = max(now, self._last_req + 1.0 / MAX_RPS)
+            self._last_req = slot
+            self.requests += 1
+        if slot > now:
+            self._sleep(slot - now)
         client = self._get_client()
         return client.get(path) if client is not None else None
 
     def step(self) -> bool:
         """One unit of work (at most one request). False when there is nothing to do now."""
         try:
-            now = self._clock()
-            if now >= self._next_session:
-                self._next_session = now + SESSION_RECHECK_S
-                self._check_session()
+            if self._session_due():
                 return True
             with self._lock:
                 job = self._todo[0] if self._todo else None
             if job is None:
                 return False
-            kind, puuid = job
-            with self._lock:
-                qid, cid = self._queue_id, self._champ.get(puuid, 0)
-            if kind == "ranked":
-                parsed = parse_ranked(self._get(RANKED_PATH.format(puuid=puuid)), qid)
-            else:
-                parsed = parse_history(self._get(HISTORY_PATH.format(puuid=puuid)), puuid, cid, qid)
-            with self._lock:
-                if self._todo and self._todo[0] == job:
-                    self._todo.pop(0)
-                    if parsed is None and self._tries.get(job, 0) < RETRIES:
-                        self._tries[job] = self._tries.get(job, 0) + 1
-                        self._todo.append(job)               # no answer: asked again after the others
-                p = self._players.get(puuid)
-                if p is not None and parsed is not None:
-                    if kind == "ranked":
-                        self._players[puuid] = replace(p, ranked_loaded=True, **parsed)
-                    else:
-                        self._players[puuid] = replace(p, history_loaded=True, **parsed)
+            self._do_job(job)
             return True
         except Exception:
             log.debug("player intel step failed", exc_info=True)
             return False
+
+    def _session_due(self) -> bool:
+        now = self._clock()
+        if now < self._next_session:
+            return False
+        self._next_session = now + (SESSION_RECHECK_S if self._game_id is not None else SESSION_IDLE_S)
+        self._check_session()
+        return True
+
+    def _do_job(self, job: tuple[str, str]) -> None:
+        """One request of the game (ranked / history / mastery of one player), its answer stored. Called by
+        :meth:`step` or by a worker of :meth:`_run` (several at once). Never raises."""
+        try:
+            kind, puuid = job
+            with self._lock:
+                qid, cid, sid, key = self._queue_id, self._champ.get(puuid, 0), self._sids.get(puuid, 0), self._game_key
+            if kind == "ranked":
+                parsed = parse_ranked(self._get(RANKED_PATH.format(puuid=puuid)), qid)
+            elif kind == "mastery":
+                parsed = parse_mastery(self._get(MASTERY_PATH.format(sid=sid)), cid) if sid > 0 else {}
+            else:
+                data = self._get(HISTORY_PATH.format(puuid=puuid))
+                parsed = parse_history(data, puuid, cid, qid)
+                recent = parse_recent(data, puuid, cid)
+                if parsed is not None and recent is not None:
+                    parsed = {**parsed, **recent}
+            with self._lock:
+                if key != self._game_key or job not in self._todo:
+                    return                                   # another game meanwhile / done by another worker
+                self._todo.remove(job)
+                if parsed is None and self._tries.get(job, 0) < RETRIES:
+                    self._tries[job] = self._tries.get(job, 0) + 1
+                    self._todo.append(job)                   # no answer: asked again after the others
+                p = self._players.get(puuid)
+                if p is not None and parsed is not None:
+                    flag = {"ranked": "ranked_loaded", "mastery": "mastery_loaded"}.get(kind, "history_loaded")
+                    self._players[puuid] = replace(p, **{flag: bool(parsed) or kind != "mastery"}, **parsed)
+        except Exception:
+            log.debug("player intel job failed", exc_info=True)
 
     def _check_session(self) -> None:
         info = parse_session(self._get(SESSION_PATH))
@@ -499,6 +620,7 @@ class PlayerIntelWatcher:
         self._reset_game()
         self._me_tries = tries
         my_team = next((t for pu, _c, t, _p in info["players"] if pu == my), 0)
+        me_pick = next(((c, p) for pu, c, _t, p in info["players"] if pu == my), (0, ""))
         players: dict[str, PlayerIntel] = {}
         champ: dict[str, int] = {}
         for puuid, cid, team, pos in info["players"]:
@@ -508,7 +630,7 @@ class PlayerIntelWatcher:
             if r is None:
                 continue
             players[puuid] = PlayerIntel(alias=r[0], name=r[1] or r[0], ally=bool(my_team) and team == my_team,
-                                         role=pos)
+                                         role=pos, champion_id=cid)
             champ[puuid] = cid
         with self._lock:
             self._game_id = info["game_id"]
@@ -517,9 +639,13 @@ class PlayerIntelWatcher:
             self._my_puuid = my
             self._players = players
             self._champ = champ
-            # enemies first (what the player wants), ranked then history
+            self._sids = {k: v for k, v in (info.get("summoner_ids") or {}).items() if k in players}
+            self._me_pick = me_pick
+            self._since = self._clock()
+            # enemies first (what the player wants), ranked then history then masteries (enemies only)
             order = sorted(players, key=lambda k: players[k].ally)
-            self._todo = [("ranked", k) for k in order] + [("history", k) for k in order]
+            self._todo = ([("ranked", k) for k in order] + [("history", k) for k in order]
+                          + [("mastery", k) for k in order if not players[k].ally and k in self._sids])
             self._next_session = self._clock() + SESSION_RECHECK_S
         log.info("Player info: game in progress, %d players to read", len(players))
 
@@ -538,13 +664,26 @@ class PlayerIntelWatcher:
         self._stop.set()
 
     def _run(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        pool = ThreadPoolExecutor(max_workers=WORKERS, thread_name_prefix="TreeAI-player-intel")
         try:
             while not self._stop.is_set():
                 if self._clock() - self._last_wanted > IDLE_STOP_S:
                     break
-                if not self.step():
-                    self._stop.wait(1.0)
+                try:
+                    if self._session_due():
+                        continue
+                except Exception:
+                    log.debug("player intel session failed", exc_info=True)
+                with self._lock:
+                    jobs = list(self._todo)
+                if not jobs:
+                    self._stop.wait(0.5)
+                    continue
+                list(pool.map(self._do_job, jobs))      # <= WORKERS at once; retries come back in _todo
         finally:
+            pool.shutdown(wait=False)
             self.forget()
 
 
@@ -653,6 +792,14 @@ def ranks_tick(engine: Any, gt: float, w: Any, my_role: str, state: dict) -> Non
             return
         state["ranks_sent"] = True
         text, voice = discord_ranks(w.snapshot(), my_role)
+        try:     # the loading-screen card's extras: banned mains, OTP, the 5 lanes, the plan (by champion)
+            from treeaicoach import loading_card
+
+            extra = loading_card.discord_extra(loading_card.from_watcher(w)) if text else ""
+            if extra:
+                text = text + "\n" + extra
+        except Exception:
+            log.debug("loading card extras not added", exc_info=True)
         call = getattr(engine, "_call", None)
         if text and callable(call):
             call("ranks", text, {"lines": voice})

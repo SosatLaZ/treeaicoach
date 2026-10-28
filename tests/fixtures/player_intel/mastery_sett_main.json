@@ -1,0 +1,30 @@
+[
+ {
+  "championId": 875,
+  "championLevel": 32,
+  "championPoints": 412000,
+  "lastPlayTime": 1789000000000,
+  "puuid": "puuid-e1"
+ },
+ {
+  "championId": 122,
+  "championLevel": 20,
+  "championPoints": 233000,
+  "lastPlayTime": 1790000000000,
+  "puuid": "puuid-e1"
+ },
+ {
+  "championId": 86,
+  "championLevel": 7,
+  "championPoints": 41000,
+  "lastPlayTime": 1780000000000,
+  "puuid": "puuid-e1"
+ },
+ {
+  "championId": 11,
+  "championLevel": 2,
+  "championPoints": 3100,
+  "lastPlayTime": 1700000000000,
+  "puuid": "puuid-e1"
+ }
+]

@@ -1,0 +1,653 @@
+{
+ "accountId": 0,
+ "platformId": "EUW1",
+ "games": {
+  "gameBeginDate": "",
+  "gameCount": 20,
+  "gameEndDate": "",
+  "gameIndexBegin": 0,
+  "gameIndexEnd": 19,
+  "games": [
+   {
+    "gameId": 6100000000,
+    "gameCreation": 1790000000000,
+    "gameDuration": 1500,
+    "queueId": 400,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000001,
+    "gameCreation": 1789996400000,
+    "gameDuration": 1510,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000002,
+    "gameCreation": 1789992800000,
+    "gameDuration": 1520,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": false,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000003,
+    "gameCreation": 1789989200000,
+    "gameDuration": 1530,
+    "queueId": 400,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000004,
+    "gameCreation": 1789985600000,
+    "gameDuration": 1540,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": false,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000005,
+    "gameCreation": 1789982000000,
+    "gameDuration": 1550,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000006,
+    "gameCreation": 1789978400000,
+    "gameDuration": 1560,
+    "queueId": 400,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000007,
+    "gameCreation": 1789974800000,
+    "gameDuration": 1570,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": false,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000008,
+    "gameCreation": 1789971200000,
+    "gameDuration": 1580,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000009,
+    "gameCreation": 1789967600000,
+    "gameDuration": 1590,
+    "queueId": 400,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000010,
+    "gameCreation": 1789964000000,
+    "gameDuration": 1600,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": false,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000011,
+    "gameCreation": 1789960400000,
+    "gameDuration": 1610,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": false,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000012,
+    "gameCreation": 1789956800000,
+    "gameDuration": 1620,
+    "queueId": 400,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000013,
+    "gameCreation": 1789953200000,
+    "gameDuration": 1630,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 122,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000014,
+    "gameCreation": 1789949600000,
+    "gameDuration": 1640,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 875,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": false,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000015,
+    "gameCreation": 1789946000000,
+    "gameDuration": 1650,
+    "queueId": 400,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 875,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000016,
+    "gameCreation": 1789942400000,
+    "gameDuration": 1660,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 875,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000017,
+    "gameCreation": 1789938800000,
+    "gameDuration": 1670,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 875,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": false,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000018,
+    "gameCreation": 1789935200000,
+    "gameDuration": 1680,
+    "queueId": 400,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 86,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": true,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   },
+   {
+    "gameId": 6100000019,
+    "gameCreation": 1789931600000,
+    "gameDuration": 1690,
+    "queueId": 420,
+    "gameMode": "CLASSIC",
+    "mapId": 11,
+    "participants": [
+     {
+      "participantId": 1,
+      "championId": 86,
+      "teamId": 100,
+      "spell1Id": 4,
+      "spell2Id": 12,
+      "stats": {
+       "win": false,
+       "kills": 5,
+       "deaths": 4,
+       "assists": 6,
+       "gameEndedInEarlySurrender": false
+      }
+     }
+    ],
+    "participantIdentities": [
+     {
+      "participantId": 1,
+      "player": {
+       "puuid": "puuid-e1"
+      }
+     }
+    ]
+   }
+  ]
+ }
+}
