@@ -111,6 +111,7 @@ class NoiseBudget:
     def __init__(self, level: Any = "intermediaire") -> None:
         self._lock = threading.Lock()
         self.level = normalize_level(level)
+        self.uncapped = False           # the demo (engine._demo): no per-minute caps
         self.reset()
 
     def reset(self) -> None:
@@ -174,6 +175,16 @@ class NoiseBudget:
             return "repeat"
         if kind == "objective_soon":
             return None                      # my objective (checked above): rare, timed, never starved
+        if kind.startswith("bot_") and str(getattr(alert, "key", "") or "").startswith("prep:"):
+            return None                      # the bot's « Dragon dans une minute » (objective prep): same rule
+        if str(getattr(alert, "key", "") or "").startswith("macro_tip:objective_"):
+            return None                      # the setup of the next objective (« Balise la rivière : Héraut
+            #                                  dans 40 s »): one per spawn, timed -> never starved either
+        if str(getattr(alert, "key", "") or "").startswith("macro:genie:"):
+            return None                      # a « coup de génie »: rare (macro.py spaces them), its arrow
+            #                                  and banner are drawn anyway -> the line must match them
+        if getattr(self, "uncapped", False):
+            return None                      # the demo: minutes of a game in 60 s, per-minute caps meaningless
         sent = self._sent.get(channel if channel in self._sent else "text")
         while sent and now - sent[0] >= WINDOW_S:
             sent.popleft()
@@ -433,6 +444,7 @@ def _engine_budget(eng: Any, attr: str = "_noise_budget") -> NoiseBudget:
         setattr(eng, attr, nb)
     else:
         nb.set_level(level)
+    nb.uncapped = bool(getattr(eng, "_demo", False) is True)
     return nb
 
 

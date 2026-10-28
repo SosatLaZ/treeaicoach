@@ -99,3 +99,28 @@ def test_bot_caps():
     assert not comfort.bot_allow(eng, "team_call", "Baron !", {"key": "b"}, t=20.0)       # repeat
     assert comfort.bot_allow(eng, "gank", "Top gank", None, t=21.0)
     assert comfort.bot_allow(eng, "game_start", "", None, t=21.0)
+
+
+def test_timed_calls_never_starved_by_the_cap():
+    """A « coup de génie » (its arrow / banner are drawn anyway), the setup of the next objective and
+    the bot's objective prep are rare and timed: past the per-minute cap (still no repeat)."""
+    nb = comfort.NoiseBudget("expert")
+    assert nb.allow(A(AlertKind.MACRO_TIP, text="tip"), 10.0, "text")
+    assert not nb.allow(A(AlertKind.MACRO_TIP, text="tip 2"), 11.0, "text")                  # capped
+    genie = A(AlertKind.MACRO_TIP, text="Aide ton jungler", key="macro:genie:cross_trade")
+    assert nb.allow(genie, 12.0, "text") and not nb.allow(genie, 13.0, "text")              # repeat
+    assert nb.allow(A(AlertKind.MACRO_TIP, text="Balise", key="macro_tip:objective_setup"), 14.0, "text")
+    assert not nb.allow(genie, 15.0, "text", comfort.Quiet(dead=True))                       # quiet: no
+    eng = NS(_cfg=NS(skill_level="expert"), _clock=lambda: 0.0)
+    assert comfort.bot_allow(eng, "team_call", "a", {"key": "a"}, t=1.0)
+    assert not comfort.bot_allow(eng, "team_call", "b", {"key": "b"}, t=2.0)                 # capped
+    assert comfort.bot_allow(eng, "team_call", "Dragon dans une minute", {"key": "prep:dragon:900"}, t=3.0)
+
+
+def test_demo_has_no_per_minute_cap():
+    eng = NS(_cfg=NS(skill_level="expert"), _demo=True, _game=None, _tactics=None)
+    assert all(comfort.engine_allow(eng, A(AlertKind.MACRO_TIP, text=f"t{i}"), 30.0 + i, 30.0 + i)
+               for i in range(5))
+    real = NS(_cfg=NS(skill_level="expert"), _demo=False, _game=None, _tactics=None)
+    assert [comfort.engine_allow(real, A(AlertKind.MACRO_TIP, text=f"t{i}"), 30.0 + i, 30.0 + i)
+            for i in range(3)] == [True, False, False]
