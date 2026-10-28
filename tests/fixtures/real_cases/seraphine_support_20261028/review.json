@@ -1,0 +1,783 @@
+{
+ "frames": {
+  "20261028_155140_0001": {
+   "why": "Seraphine partly covered left of Ashe; one red ring (Zyra)",
+   "champions": [
+    {
+     "u": 0.1356,
+     "v": 0.2122,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.2401,
+     "v": 0.4615,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.4551,
+     "v": 0.5162,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.8406,
+     "v": 0.8915,
+     "team": "ally",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.809,
+     "v": 0.874,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.1844,
+     "v": 0.1418,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.5415,
+     "v": 0.4918,
+     "team": "enemy",
+     "name": "Malzahar"
+    },
+    {
+     "u": 0.8772,
+     "v": 0.8296,
+     "team": "enemy",
+     "name": "Zyra"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "MissFortune",
+     "team": "enemy",
+     "u": 0.8772,
+     "v": 0.8296,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_155340_0003": {
+   "why": "one red ring, face unclear",
+   "champions": [
+    {
+     "u": 0.192,
+     "v": 0.1037,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.8427,
+     "v": 0.6855,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.4635,
+     "v": 0.5057,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.8293,
+     "v": 0.8027,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.9139,
+     "v": 0.8353,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true
+    },
+    {
+     "u": 0.5378,
+     "v": 0.4948,
+     "team": "enemy",
+     "name": "Malzahar"
+    },
+    {
+     "u": 0.9043,
+     "v": 0.7576,
+     "team": "enemy",
+     "name": null,
+     "stacked": true
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.9043,
+     "v": 0.7576,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_155840_0008": {
+   "why": "one ring (Zoe); MissFortune partly visible right of Zyra",
+   "champions": [
+    {
+     "u": 0.0553,
+     "v": 0.8218,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.4603,
+     "v": 0.3892,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.7962,
+     "v": 0.8979,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.1028,
+     "v": 0.2448,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.913,
+     "v": 0.824,
+     "team": "enemy",
+     "name": "MissFortune",
+     "stacked": true
+    },
+    {
+     "u": 0.8782,
+     "v": 0.8141,
+     "team": "enemy",
+     "name": "Zyra",
+     "stacked": true
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Naafiri",
+     "team": "ally",
+     "u": 0.4603,
+     "v": 0.3892,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_155940_0009": {
+   "why": "two rings: Seraphine right of Ashe; Zaahen icon is below-right of the truth point",
+   "champions": [
+    {
+     "u": 0.239,
+     "v": 0.265,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.3672,
+     "v": 0.3993,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.37,
+     "v": 0.5762,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.7392,
+     "v": 0.9152,
+     "team": "ally",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.7686,
+     "v": 0.9031,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.192,
+     "v": 0.1282,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.8459,
+     "v": 0.863,
+     "team": "enemy",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.4697,
+     "v": 0.5298,
+     "team": "enemy",
+     "name": "Malzahar"
+    }
+   ],
+   "unsure_add": []
+  },
+  "20261028_160540_0015": {
+   "why": "Seraphine / MissFortune barely visible",
+   "champions": [
+    {
+     "u": 0.1026,
+     "v": 0.2562,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.0752,
+     "v": 0.9446,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.8931,
+     "v": 0.8598,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.1298,
+     "v": 0.1967,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.3934,
+     "v": 0.6332,
+     "team": "enemy",
+     "name": "Malzahar"
+    },
+    {
+     "u": 0.8794,
+     "v": 0.8076,
+     "team": "enemy",
+     "name": "Zyra"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Seraphine",
+     "team": "ally",
+     "u": 0.8931,
+     "v": 0.8598,
+     "r": 0.05,
+     "why": "review: not visible"
+    },
+    {
+     "name": "MissFortune",
+     "team": "enemy",
+     "u": 0.8794,
+     "v": 0.8076,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_160841_0018": {
+   "why": "Seraphine partly covered left of Ashe; one red ring (Zyra)",
+   "champions": [
+    {
+     "u": 0.0459,
+     "v": 0.4699,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.5419,
+     "v": 0.8324,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.5704,
+     "v": 0.4512,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.773,
+     "v": 0.912,
+     "team": "ally",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.733,
+     "v": 0.902,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.1151,
+     "v": 0.3691,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.822,
+     "v": 0.8445,
+     "team": "enemy",
+     "name": "Zyra"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Malzahar",
+     "team": "enemy",
+     "u": 0.822,
+     "v": 0.8445,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_161141_0021": {
+   "why": "Zyra is the separate icon right",
+   "champions": [
+    {
+     "u": 0.1699,
+     "v": 0.1609,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.9338,
+     "v": 0.7049,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.3704,
+     "v": 0.6467,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.4682,
+     "v": 0.5144,
+     "team": "enemy",
+     "name": "MissFortune",
+     "stacked": true
+    },
+    {
+     "u": 0.535,
+     "v": 0.53,
+     "team": "enemy",
+     "name": "Zyra",
+     "stacked": true
+    }
+   ],
+   "unsure_add": []
+  },
+  "20261028_161441_0024": {
+   "why": "one ring each",
+   "champions": [
+    {
+     "u": 0.3907,
+     "v": 0.1681,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.4126,
+     "v": 0.3273,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.4976,
+     "v": 0.8314,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.5298,
+     "v": 0.4531,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.5718,
+     "v": 0.9267,
+     "team": "enemy",
+     "name": "Malzahar"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Zaahen",
+     "team": "ally",
+     "u": 0.4976,
+     "v": 0.8314,
+     "r": 0.05,
+     "why": "review: not visible"
+    },
+    {
+     "name": "Sylas",
+     "team": "enemy",
+     "u": 0.5298,
+     "v": 0.4531,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_161541_0025": {
+   "why": "one ring (Seraphine)",
+   "champions": [
+    {
+     "u": 0.6048,
+     "v": 0.7194,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.1994,
+     "v": 0.8947,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.7807,
+     "v": 0.754,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true
+    },
+    {
+     "u": 0.7355,
+     "v": 0.6873,
+     "team": "enemy",
+     "name": null,
+     "stacked": true
+    },
+    {
+     "u": 0.7355,
+     "v": 0.6873,
+     "team": "enemy",
+     "name": null,
+     "stacked": true
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Naafiri",
+     "team": "ally",
+     "u": 0.7807,
+     "v": 0.754,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_161841_0028": {
+   "why": "one ring (Ashe)",
+   "champions": [
+    {
+     "u": 0.0323,
+     "v": 0.9658,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.5177,
+     "v": 0.5113,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.5536,
+     "v": 0.4471,
+     "team": "enemy",
+     "name": "Malzahar"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Zoe",
+     "team": "ally",
+     "u": 0.5177,
+     "v": 0.5113,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_161941_0029": {
+   "why": "one ally ring",
+   "champions": [
+    {
+     "u": 0.3609,
+     "v": 0.4437,
+     "team": "ally",
+     "name": "Naafiri"
+    },
+    {
+     "u": 0.8014,
+     "v": 0.7719,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.1652,
+     "v": 0.7954,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.3469,
+     "v": 0.395,
+     "team": "enemy",
+     "name": null,
+     "stacked": true
+    },
+    {
+     "u": 0.3469,
+     "v": 0.395,
+     "team": "enemy",
+     "name": null,
+     "stacked": true
+    },
+    {
+     "u": 0.4436,
+     "v": 0.3947,
+     "team": "enemy",
+     "name": null
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Zaahen",
+     "team": "ally",
+     "u": 0.3609,
+     "v": 0.4437,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_162141_0031": {
+   "why": "Seraphine partly visible up-left of Zoe; Malzahar separate icon; Sylas not visible",
+   "champions": [
+    {
+     "u": 0.3133,
+     "v": 0.3195,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.5102,
+     "v": 0.6144,
+     "team": "ally",
+     "name": "Zoe",
+     "stacked": true
+    },
+    {
+     "u": 0.2474,
+     "v": 0.7309,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.472,
+     "v": 0.597,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.2228,
+     "v": 0.0876,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.552,
+     "v": 0.54,
+     "team": "enemy",
+     "name": "Malzahar",
+     "stacked": true
+    },
+    {
+     "u": 0.5076,
+     "v": 0.5109,
+     "team": "enemy",
+     "name": "Zyra",
+     "stacked": true
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Sylas",
+     "team": "enemy",
+     "u": 0.5076,
+     "v": 0.5109,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_162441_0034": {
+   "why": "one ring (MissFortune)",
+   "champions": [
+    {
+     "u": 0.2614,
+     "v": 0.7669,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.4357,
+     "v": 0.5769,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.7088,
+     "v": 0.8948,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.2537,
+     "v": 0.1028,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.6124,
+     "v": 0.3804,
+     "team": "enemy",
+     "name": "MissFortune"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.6124,
+     "v": 0.3804,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_162641_0036": {
+   "why": "one ring (Malphite)",
+   "champions": [
+    {
+     "u": 0.0969,
+     "v": 0.6777,
+     "team": "ally",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.0323,
+     "v": 0.9657,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.3323,
+     "v": 0.4173,
+     "team": "ally",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.6247,
+     "v": 0.3765,
+     "team": "enemy",
+     "name": "Malphite"
+    },
+    {
+     "u": 0.9401,
+     "v": 0.5202,
+     "team": "enemy",
+     "name": "Sylas"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Zyra",
+     "team": "enemy",
+     "u": 0.6247,
+     "v": 0.3765,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261028_162742_0037": {
+   "why": "one ring (Zoe); Seraphine partly covered left of Ashe",
+   "champions": [
+    {
+     "u": 0.5837,
+     "v": 0.5873,
+     "team": "ally",
+     "name": "Zoe"
+    },
+    {
+     "u": 0.3961,
+     "v": 0.6356,
+     "team": "ally",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.361,
+     "v": 0.626,
+     "team": "ally",
+     "name": "Seraphine",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.3655,
+     "v": 0.094,
+     "team": "enemy",
+     "name": "Malzahar"
+    },
+    {
+     "u": 0.4657,
+     "v": 0.4915,
+     "team": "enemy",
+     "name": null
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Naafiri",
+     "team": "ally",
+     "u": 0.5837,
+     "v": 0.5873,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  }
+ }
+}

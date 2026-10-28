@@ -353,6 +353,50 @@
      "why": "review: under the pile"
     }
    ]
+  },
+  "20261005_162957_0225": {
+   "why": "two rings: Tahm Kench partly covered up-right of Yunara",
+   "champions": [
+    {
+     "u": 0.1734,
+     "v": 0.1278,
+     "team": "ally",
+     "name": "Sett"
+    },
+    {
+     "u": 0.24,
+     "v": 0.5662,
+     "team": "ally",
+     "name": "Kayn"
+    },
+    {
+     "u": 0.4426,
+     "v": 0.5578,
+     "team": "ally",
+     "name": "Xerath"
+    },
+    {
+     "u": 0.7766,
+     "v": 0.9215,
+     "team": "ally",
+     "name": "Yunara",
+     "stacked": true
+    },
+    {
+     "u": 0.818,
+     "v": 0.907,
+     "team": "ally",
+     "name": "TahmKench",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.5031,
+     "v": 0.4949,
+     "team": "enemy",
+     "name": "Fizz"
+    }
+   ]
   }
  }
 }

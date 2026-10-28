@@ -79,6 +79,24 @@ def test_label_frame_snaps_unique_icons_and_flags_the_rest(monkeypatch):
                for c in spec["champions"])
 
 
+def test_label_frame_attached_yuumi_is_unsure_not_stacked(monkeypatch):
+    """Yuumi attached to a teammate has no icon of her own: snapped onto his icon she becomes
+    an unsure zone, and the teammate is no longer a stack (real Nocturne game 2026-10-24)."""
+    t = _truth()
+    t["participants"][3]["alias"] = "Yuumi"                 # C4 (ally) -> Yuumi, on C5's icon
+    T = RT.Truth(t)
+    from treeaicoach.self_icon import RingCand
+
+    cands = [RingCand(0.102, 0.503, "ally", 0.8), RingCand(0.45, 0.5, "ally", 0.8)]
+    monkeypatch.setattr(RT, "icon_candidates", lambda img: cands)
+    spec = RT.label_frame(np.zeros((8, 8, 3), np.uint8), T, 62.0)
+    names = [c["name"] for c in spec["champions"]]
+    assert "Yuumi" not in names
+    assert any(z["name"] == "Yuumi" and z["why"] == "attached" for z in spec["unsure"])
+    me = [c for c in spec["champions"] if c.get("self")]
+    assert me and me[0]["name"] == "C5" and not me[0].get("stacked")
+
+
 @pytest.mark.skipif(not CASE.is_dir(), reason="case not committed")
 def test_committed_case_is_sanitized_and_consistent():
     gt = json.loads((CASE / "ground_truth.json").read_text(encoding="utf-8"))
@@ -198,3 +216,40 @@ def test_committed_reviews_are_applied():
         imgs = json.loads((case / "ground_truth.json").read_text(encoding="utf-8"))["images"]
         for name in json.loads(rv.read_text(encoding="utf-8"))["frames"]:
             assert "reviewed" in imgs[name], (case.name, name)
+
+
+NEW_CASES = ("seraphine_support_20261028", "nocturne_jungle_20261024", "teemo_top_20261024")
+
+
+@pytest.mark.parametrize("name", NEW_CASES)
+def test_new_cases_are_small_sanitized_and_reviewed(name):
+    case = ROOT / "tests" / "fixtures" / "real_cases" / name
+    if not (case / "ground_truth.json").is_file():
+        pytest.skip("case missing")
+    gt = json.loads((case / "ground_truth.json").read_text(encoding="utf-8"))
+    txt = json.dumps(gt)
+    assert "#" not in txt and "riot" not in txt.lower() and "summoner" not in txt.lower()
+    assert sum(f.stat().st_size for f in case.iterdir()) <= 3_000_000
+    names = {gt["rosters"]["g1"]["self"], *gt["rosters"]["g1"]["ally"], *gt["rosters"]["g1"]["enemy"]}
+    assert "Yuumi" not in {c.get("name") for s in gt["images"].values() for c in s["champions"]
+                           if c.get("stacked")}
+    for spec in gt["images"].values():
+        assert (case / spec["file"]).is_file()
+        assert all(c.get("name") is None or c["name"] in names for c in spec["champions"])
+    assert any("reviewed" in s for s in gt["images"].values())
+
+
+def test_cli_without_record_uses_the_clock_start(tmp_path, monkeypatch):
+    """No game record (the app did not record that game): ``--start`` (screenshot clock)."""
+    seen = {}
+
+    def fake_build(captures, record, truth, out, out_all, keep, offset, *a):
+        seen.update(record=record, offset=offset)
+        return {}
+
+    monkeypatch.setattr(RT, "build", fake_build)
+    (tmp_path / "t.json").write_text(json.dumps(_truth()))
+    monkeypatch.setattr(sys, "argv", ["x", str(tmp_path), "--truth", str(tmp_path / "t.json"),
+                                      "--out", str(tmp_path / "o"), "--start", "2026-10-24T21:43:58+02:00"])
+    RT.main()
+    assert seen["record"]["meta"]["start"] == "2026-10-24T21:43:58+02:00" and seen["offset"] == 0.5

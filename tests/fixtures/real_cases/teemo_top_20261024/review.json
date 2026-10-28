@@ -1,0 +1,462 @@
+{
+ "frames": {
+  "20261024_224311_0034": {
+   "why": "one red ring (Lux); Lucian partly visible above Nautilus",
+   "champions": [
+    {
+     "u": 0.0895,
+     "v": 0.2261,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.8216,
+     "v": 0.8204,
+     "team": "enemy",
+     "name": "Lux"
+    },
+    {
+     "u": 0.1297,
+     "v": 0.1909,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.505,
+     "v": 0.2018,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.577,
+     "v": 0.4335,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.903,
+     "v": 0.782,
+     "team": "ally",
+     "name": "Lucian",
+     "stacked": true
+    },
+    {
+     "u": 0.9043,
+     "v": 0.8304,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.8216,
+     "v": 0.8204,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261024_224511_0036": {
+   "why": "Lucian partly visible above-left of Nautilus",
+   "champions": [
+    {
+     "u": 0.1148,
+     "v": 0.1763,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.7531,
+     "v": 0.8929,
+     "team": "enemy",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.7531,
+     "v": 0.8929,
+     "team": "enemy",
+     "name": "Lux",
+     "stacked": true
+    },
+    {
+     "u": 0.1652,
+     "v": 0.1581,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.4758,
+     "v": 0.4075,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.5431,
+     "v": 0.4723,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.794,
+     "v": 0.87,
+     "team": "ally",
+     "name": "Lucian",
+     "stacked": true
+    },
+    {
+     "u": 0.8249,
+     "v": 0.9157,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure_add": []
+  },
+  "20261024_225011_0041": {
+   "why": "Lux partly visible right of Ashe",
+   "champions": [
+    {
+     "u": 0.1421,
+     "v": 0.1866,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.4562,
+     "v": 0.561,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.8063,
+     "v": 0.8631,
+     "team": "enemy",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.836,
+     "v": 0.851,
+     "team": "enemy",
+     "name": "Lux",
+     "stacked": true
+    },
+    {
+     "u": 0.1683,
+     "v": 0.1222,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.3413,
+     "v": 0.2953,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.9035,
+     "v": 0.8306,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.8606,
+     "v": 0.8789,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure_add": []
+  },
+  "20261024_225211_0043": {
+   "why": "one ring (Ashe)",
+   "champions": [
+    {
+     "u": 0.0929,
+     "v": 0.2328,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.4307,
+     "v": 0.3884,
+     "team": "enemy",
+     "name": "Zed"
+    },
+    {
+     "u": 0.5998,
+     "v": 0.4376,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.8785,
+     "v": 0.7824,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.1275,
+     "v": 0.1662,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.4115,
+     "v": 0.3089,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.8785,
+     "v": 0.7824,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261024_225311_0044": {
+   "why": "one ring (Lux); Ekko hidden under Sylas",
+   "champions": [
+    {
+     "u": 0.0657,
+     "v": 0.2628,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.2117,
+     "v": 0.2956,
+     "team": "enemy",
+     "name": "Zed"
+    },
+    {
+     "u": 0.7258,
+     "v": 0.9215,
+     "team": "enemy",
+     "name": "Lux"
+    },
+    {
+     "u": 0.1169,
+     "v": 0.2262,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.4804,
+     "v": 0.4713,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.7921,
+     "v": 0.8885,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.1169,
+     "v": 0.2262,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.7258,
+     "v": 0.9215,
+     "r": 0.05,
+     "why": "review: not visible"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.4834,
+     "v": 0.484,
+     "r": 0.05,
+     "why": "review: under Sylas"
+    }
+   ]
+  },
+  "20261024_225511_0046": {
+   "why": "one ring (Lux)",
+   "champions": [
+    {
+     "u": 0.4278,
+     "v": 0.5585,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.7586,
+     "v": 0.8928,
+     "team": "enemy",
+     "name": "Lux"
+    },
+    {
+     "u": 0.7108,
+     "v": 0.8202,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.9427,
+     "v": 0.0819,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.8541,
+     "v": 0.8577,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.7967,
+     "v": 0.8052,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.7586,
+     "v": 0.8928,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261024_225611_0047": {
+   "why": "one ring (Ashe)",
+   "champions": [
+    {
+     "u": 0.5464,
+     "v": 0.4337,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.8057,
+     "v": 0.8528,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.3414,
+     "v": 0.1517,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.641,
+     "v": 0.3708,
+     "team": "ally",
+     "name": "Nidalee"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.8057,
+     "v": 0.8528,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261024_225812_0049": {
+   "why": "one ring (Nautilus)",
+   "champions": [
+    {
+     "u": 0.1128,
+     "v": 0.2408,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.7855,
+     "v": 0.8667,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.5688,
+     "v": 0.5175,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.7196,
+     "v": 0.5673,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.673,
+     "v": 0.6068,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure_add": [
+    {
+     "name": "Nidalee",
+     "team": "ally",
+     "u": 0.673,
+     "v": 0.6068,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ]
+  },
+  "20261024_230512_0056": {
+   "why": "two rings: Nidalee left of Nautilus",
+   "champions": [
+    {
+     "u": 0.704,
+     "v": 0.58,
+     "team": "ally",
+     "name": "Nidalee",
+     "stacked": true
+    },
+    {
+     "u": 0.7675,
+     "v": 0.255,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.744,
+     "v": 0.5615,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure_add": []
+  }
+ }
+}

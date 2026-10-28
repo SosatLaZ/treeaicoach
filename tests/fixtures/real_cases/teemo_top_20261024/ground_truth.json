@@ -1,0 +1,1669 @@
+{
+ "about": "Real minimap captures of the user's Teemo game (x26 every ~60 s, app version unknown; the overlay is drawn in the capture) labelled from the LCU truth (tools/real_truth_case.py: wall clock -> game time offset 0.5 s, positions from the minute frames / kills snapped to the icon ring of the champion's team, anonymous when another champion of the team could stand there; 'unsure' = on the minimap per the truth but no icon found: ignored by the bench; 'dead' from the kills + respawn timer / my snapshots).",
+ "rosters": {
+  "g1": {
+   "self": "Teemo",
+   "ally": [
+    "Nidalee",
+    "Sylas",
+    "Lucian",
+    "Nautilus"
+   ],
+   "enemy": [
+    "Zaahen",
+    "Zed",
+    "Ekko",
+    "Ashe",
+    "Lux"
+   ]
+  }
+ },
+ "images": {
+  "20261024_224211_0033": {
+   "game": "g1",
+   "file": "20261024_224211_0033.png",
+   "time": 59.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1292,
+     "v": 0.2172,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.443,
+     "v": 0.541,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.8166,
+     "v": 0.8744,
+     "team": "enemy",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.8166,
+     "v": 0.8744,
+     "team": "enemy",
+     "name": "Lux",
+     "stacked": true
+    },
+    {
+     "u": 0.1136,
+     "v": 0.1445,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.5085,
+     "v": 0.2435,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.5183,
+     "v": 0.5198,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.8724,
+     "v": 0.7932,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.9122,
+     "v": 0.8265,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.2182,
+     "v": 0.4622,
+     "r": 0.044,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_224311_0034": {
+   "game": "g1",
+   "file": "20261024_224311_0034.png",
+   "time": 119.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.0895,
+     "v": 0.2261,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.8216,
+     "v": 0.8204,
+     "team": "enemy",
+     "name": "Lux"
+    },
+    {
+     "u": 0.1297,
+     "v": 0.1909,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.505,
+     "v": 0.2018,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.577,
+     "v": 0.4335,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.903,
+     "v": 0.782,
+     "team": "ally",
+     "name": "Lucian",
+     "stacked": true
+    },
+    {
+     "u": 0.9043,
+     "v": 0.8304,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.3687,
+     "v": 0.6407,
+     "r": 0.044,
+     "why": "no icon"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.5345,
+     "v": 0.4715,
+     "r": 0.044,
+     "why": "no icon"
+    },
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.8216,
+     "v": 0.8204,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "one red ring (Lux); Lucian partly visible above Nautilus"
+  },
+  "20261024_224411_0035": {
+   "game": "g1",
+   "file": "20261024_224411_0035.png",
+   "time": 179.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.7467,
+     "v": 0.9168,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.5763,
+     "v": 0.0779,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.8273,
+     "v": 0.5466,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.797,
+     "v": 0.869,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.8964,
+     "v": 0.694,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zaahen",
+     "team": "enemy",
+     "u": 0.0265,
+     "v": 0.9692,
+     "r": 0.047,
+     "why": "no icon"
+    },
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.4814,
+     "v": 0.6585,
+     "r": 0.047,
+     "why": "no icon"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.1857,
+     "v": 0.8526,
+     "r": 0.047,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.7154,
+     "v": 0.8162,
+     "r": 0.047,
+     "why": "no icon"
+    },
+    {
+     "name": "Sylas",
+     "team": "ally",
+     "u": 0.5156,
+     "v": 0.4975,
+     "r": 0.047,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_224511_0036": {
+   "game": "g1",
+   "file": "20261024_224511_0036.png",
+   "time": 239.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1148,
+     "v": 0.1763,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.7531,
+     "v": 0.8929,
+     "team": "enemy",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.7531,
+     "v": 0.8929,
+     "team": "enemy",
+     "name": "Lux",
+     "stacked": true
+    },
+    {
+     "u": 0.1652,
+     "v": 0.1581,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.4758,
+     "v": 0.4075,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.5431,
+     "v": 0.4723,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.794,
+     "v": 0.87,
+     "team": "ally",
+     "name": "Lucian",
+     "stacked": true
+    },
+    {
+     "u": 0.8249,
+     "v": 0.9157,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.4328,
+     "v": 0.5152,
+     "r": 0.047,
+     "why": "no icon"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.4494,
+     "v": 0.5521,
+     "r": 0.047,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "Lucian partly visible above-left of Nautilus"
+  },
+  "20261024_224711_0038": {
+   "game": "g1",
+   "file": "20261024_224711_0038.png",
+   "time": 359.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.2791,
+     "v": 0.0834,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.7666,
+     "v": 0.4196,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.4619,
+     "v": 0.5102,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.8355,
+     "v": 0.8485,
+     "team": "ally",
+     "name": "Lucian",
+     "stacked": true
+    },
+    {
+     "u": 0.8355,
+     "v": 0.8485,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zaahen",
+     "team": "enemy",
+     "u": 0.0792,
+     "v": 0.1089,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.4835,
+     "v": 0.7664,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.3876,
+     "v": 0.6468,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.6509,
+     "v": 0.9281,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.6175,
+     "v": 0.8803,
+     "r": 0.05,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_224811_0039": {
+   "game": "g1",
+   "file": "20261024_224811_0039.png",
+   "time": 419.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.0795,
+     "v": 0.2332,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.8148,
+     "v": 0.8531,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.5312,
+     "v": 0.4695,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.8866,
+     "v": 0.7816,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.8101,
+     "v": 0.4811,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.1495,
+     "v": 0.419,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.5318,
+     "v": 0.5031,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.8397,
+     "v": 0.9049,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Teemo",
+     "team": "ally",
+     "u": 0.125,
+     "v": 0.2117,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Nidalee",
+     "team": "ally",
+     "u": 0.4919,
+     "v": 0.5549,
+     "r": 0.05,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_225011_0041": {
+   "game": "g1",
+   "file": "20261024_225011_0041.png",
+   "time": 539.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1421,
+     "v": 0.1866,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.4562,
+     "v": 0.561,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.8063,
+     "v": 0.8631,
+     "team": "enemy",
+     "name": "Ashe",
+     "stacked": true
+    },
+    {
+     "u": 0.836,
+     "v": 0.851,
+     "team": "enemy",
+     "name": "Lux",
+     "stacked": true
+    },
+    {
+     "u": 0.1683,
+     "v": 0.1222,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.3413,
+     "v": 0.2953,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.9035,
+     "v": 0.8306,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.8606,
+     "v": 0.8789,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.7516,
+     "v": 0.9353,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Sylas",
+     "team": "ally",
+     "u": 0.5038,
+     "v": 0.5133,
+     "r": 0.05,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "Lux partly visible right of Ashe"
+  },
+  "20261024_225111_0042": {
+   "game": "g1",
+   "file": "20261024_225111_0042.png",
+   "time": 599.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4147,
+     "v": 0.5727,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.6429,
+     "v": 0.0641,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.4957,
+     "v": 0.1808,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.7843,
+     "v": 0.236,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.9037,
+     "v": 0.6277,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.9701,
+     "v": 0.036,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zaahen",
+     "team": "enemy",
+     "u": 0.0265,
+     "v": 0.9692,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.4907,
+     "v": 0.7712,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.5917,
+     "v": 0.9135,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.5547,
+     "v": 0.8874,
+     "r": 0.05,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_225211_0043": {
+   "game": "g1",
+   "file": "20261024_225211_0043.png",
+   "time": 659.5,
+   "dead": [
+    "Lucian"
+   ],
+   "champions": [
+    {
+     "u": 0.0929,
+     "v": 0.2328,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.4307,
+     "v": 0.3884,
+     "team": "enemy",
+     "name": "Zed"
+    },
+    {
+     "u": 0.5998,
+     "v": 0.4376,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.8785,
+     "v": 0.7824,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.1275,
+     "v": 0.1662,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.4115,
+     "v": 0.3089,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Nidalee",
+     "team": "ally",
+     "u": 0.5983,
+     "v": 0.4204,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Sylas",
+     "team": "ally",
+     "u": 0.5325,
+     "v": 0.5502,
+     "r": 0.05,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.8785,
+     "v": 0.7824,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "one ring (Ashe)"
+  },
+  "20261024_225311_0044": {
+   "game": "g1",
+   "file": "20261024_225311_0044.png",
+   "time": 719.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.0657,
+     "v": 0.2628,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.2117,
+     "v": 0.2956,
+     "team": "enemy",
+     "name": "Zed"
+    },
+    {
+     "u": 0.7258,
+     "v": 0.9215,
+     "team": "enemy",
+     "name": "Lux"
+    },
+    {
+     "u": 0.1169,
+     "v": 0.2262,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.4804,
+     "v": 0.4713,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.7921,
+     "v": 0.8885,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.1169,
+     "v": 0.2262,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Nidalee",
+     "team": "ally",
+     "u": 0.8077,
+     "v": 0.8502,
+     "r": 0.053,
+     "why": "2 icons"
+    },
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.7258,
+     "v": 0.9215,
+     "r": 0.05,
+     "why": "review: not visible"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.4834,
+     "v": 0.484,
+     "r": 0.05,
+     "why": "review: under Sylas"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "one ring (Lux); Ekko hidden under Sylas"
+  },
+  "20261024_225511_0046": {
+   "game": "g1",
+   "file": "20261024_225511_0046.png",
+   "time": 839.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4278,
+     "v": 0.5585,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.7586,
+     "v": 0.8928,
+     "team": "enemy",
+     "name": "Lux"
+    },
+    {
+     "u": 0.7108,
+     "v": 0.8202,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.9427,
+     "v": 0.0819,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.8541,
+     "v": 0.8577,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.7967,
+     "v": 0.8052,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zaahen",
+     "team": "enemy",
+     "u": 0.1257,
+     "v": 0.2188,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.46,
+     "v": 0.9123,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Teemo",
+     "team": "ally",
+     "u": 0.0824,
+     "v": 0.2125,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.7586,
+     "v": 0.8928,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "one ring (Lux)"
+  },
+  "20261024_225611_0047": {
+   "game": "g1",
+   "file": "20261024_225611_0047.png",
+   "time": 899.5,
+   "dead": [
+    "Sylas"
+   ],
+   "champions": [
+    {
+     "u": 0.5464,
+     "v": 0.4337,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.8057,
+     "v": 0.8528,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.3414,
+     "v": 0.1517,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.641,
+     "v": 0.3708,
+     "team": "ally",
+     "name": "Nidalee"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zaahen",
+     "team": "enemy",
+     "u": 0.4055,
+     "v": 0.3685,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.4952,
+     "v": 0.2648,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Lucian",
+     "team": "ally",
+     "u": 0.8777,
+     "v": 0.8294,
+     "r": 0.053,
+     "why": "2 icons"
+    },
+    {
+     "name": "Nautilus",
+     "team": "ally",
+     "u": 0.9007,
+     "v": 0.8314,
+     "r": 0.053,
+     "why": "2 icons"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.8057,
+     "v": 0.8528,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "one ring (Ashe)"
+  },
+  "20261024_225711_0048": {
+   "game": "g1",
+   "file": "20261024_225711_0048.png",
+   "time": 959.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.4464,
+     "v": 0.0922,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.4215,
+     "v": 0.5679,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.8937,
+     "v": 0.695,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.9356,
+     "v": 0.7472,
+     "team": "enemy",
+     "name": "Lux"
+    },
+    {
+     "u": 0.9614,
+     "v": 0.0314,
+     "team": "ally",
+     "name": null
+    },
+    {
+     "u": 0.4871,
+     "v": 0.4777,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.869,
+     "v": 0.6057,
+     "team": "ally",
+     "name": "Lucian"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.3299,
+     "v": 0.9116,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Teemo",
+     "team": "ally",
+     "u": 0.29,
+     "v": 0.1119,
+     "r": 0.053,
+     "why": "no icon"
+    },
+    {
+     "name": "Nautilus",
+     "team": "ally",
+     "u": 0.9494,
+     "v": 0.0626,
+     "r": 0.053,
+     "why": "2 icons"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_225812_0049": {
+   "game": "g1",
+   "file": "20261024_225812_0049.png",
+   "time": 1020.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.1128,
+     "v": 0.2408,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.7855,
+     "v": 0.8667,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.5688,
+     "v": 0.5175,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.7196,
+     "v": 0.5673,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.673,
+     "v": 0.6068,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.6755,
+     "v": 0.6935,
+     "r": 0.036,
+     "why": "no icon"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.3567,
+     "v": 0.6001,
+     "r": 0.036,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.4093,
+     "v": 0.671,
+     "r": 0.036,
+     "why": "no icon"
+    },
+    {
+     "name": "Teemo",
+     "team": "ally",
+     "u": 0.1147,
+     "v": 0.2206,
+     "r": 0.036,
+     "why": "no icon"
+    },
+    {
+     "name": "Nidalee",
+     "team": "ally",
+     "u": 0.673,
+     "v": 0.6068,
+     "r": 0.05,
+     "why": "review: not visible"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "one ring (Nautilus)"
+  },
+  "20261024_230012_0051": {
+   "game": "g1",
+   "file": "20261024_230012_0051.png",
+   "time": 1140.5,
+   "dead": [
+    "Ekko"
+   ],
+   "champions": [
+    {
+     "u": 0.2967,
+     "v": 0.0855,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.3667,
+     "v": 0.0946,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.7006,
+     "v": 0.6344,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.7867,
+     "v": 0.6343,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.6588,
+     "v": 0.3804,
+     "team": "ally",
+     "name": "Lucian"
+    },
+    {
+     "u": 0.5869,
+     "v": 0.5951,
+     "team": "ally",
+     "name": "Nautilus"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.6083,
+     "v": 0.7261,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.7521,
+     "v": 0.7331,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.7427,
+     "v": 0.7362,
+     "r": 0.033,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_230112_0052": {
+   "game": "g1",
+   "file": "20261024_230112_0052.png",
+   "time": 1200.5,
+   "dead": [
+    "Teemo",
+    "Nidalee"
+   ],
+   "champions": [
+    {
+     "u": 0.391,
+     "v": 0.0611,
+     "team": "enemy",
+     "name": "Zaahen"
+    },
+    {
+     "u": 0.6225,
+     "v": 0.3767,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.882,
+     "v": 0.2507,
+     "team": "ally",
+     "name": "Sylas"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.8183,
+     "v": 0.5085,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.6038,
+     "v": 0.4117,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.7614,
+     "v": 0.564,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Lucian",
+     "team": "ally",
+     "u": 0.4207,
+     "v": 0.1544,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Nautilus",
+     "team": "ally",
+     "u": 0.6686,
+     "v": 0.6925,
+     "r": 0.033,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_230312_0054": {
+   "game": "g1",
+   "file": "20261024_230312_0054.png",
+   "time": 1320.5,
+   "dead": [
+    "Ekko",
+    "Teemo"
+   ],
+   "champions": [
+    {
+     "u": 0.4307,
+     "v": 0.5774,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.2119,
+     "v": 0.1523,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.1998,
+     "v": 0.2297,
+     "team": "ally",
+     "name": "Lucian"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zaahen",
+     "team": "enemy",
+     "u": 0.1116,
+     "v": 0.1955,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.3223,
+     "v": 0.4955,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.1111,
+     "v": 0.2019,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Sylas",
+     "team": "ally",
+     "u": 0.1685,
+     "v": 0.1401,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Nautilus",
+     "team": "ally",
+     "u": 0.173,
+     "v": 0.1718,
+     "r": 0.033,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_230412_0055": {
+   "game": "g1",
+   "file": "20261024_230412_0055.png",
+   "time": 1380.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.6619,
+     "v": 0.3397,
+     "team": "enemy",
+     "name": "Ekko"
+    },
+    {
+     "u": 0.4557,
+     "v": 0.0877,
+     "team": "enemy",
+     "name": "Ashe"
+    },
+    {
+     "u": 0.581,
+     "v": 0.1016,
+     "team": "enemy",
+     "name": "Lux"
+    },
+    {
+     "u": 0.5157,
+     "v": 0.0779,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true,
+     "stacked": true
+    },
+    {
+     "u": 0.7388,
+     "v": 0.0468,
+     "team": "ally",
+     "name": "Nidalee"
+    },
+    {
+     "u": 0.5157,
+     "v": 0.0779,
+     "team": "ally",
+     "name": "Sylas",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zaahen",
+     "team": "enemy",
+     "u": 0.5315,
+     "v": 0.0839,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.6461,
+     "v": 0.0712,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Lucian",
+     "team": "ally",
+     "u": 0.1954,
+     "v": 0.0798,
+     "r": 0.033,
+     "why": "no icon"
+    },
+    {
+     "name": "Nautilus",
+     "team": "ally",
+     "u": 0.2254,
+     "v": 0.0966,
+     "r": 0.033,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  },
+  "20261024_230512_0056": {
+   "game": "g1",
+   "file": "20261024_230512_0056.png",
+   "time": 1440.5,
+   "dead": [],
+   "champions": [
+    {
+     "u": 0.704,
+     "v": 0.58,
+     "team": "ally",
+     "name": "Nidalee",
+     "stacked": true
+    },
+    {
+     "u": 0.7675,
+     "v": 0.255,
+     "team": "ally",
+     "name": "Sylas"
+    },
+    {
+     "u": 0.744,
+     "v": 0.5615,
+     "team": "ally",
+     "name": "Nautilus",
+     "stacked": true
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Zaahen",
+     "team": "enemy",
+     "u": 0.0265,
+     "v": 0.9692,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Zed",
+     "team": "enemy",
+     "u": 0.2476,
+     "v": 0.449,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.6699,
+     "v": 0.6055,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.5208,
+     "v": 0.5075,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.144,
+     "v": 0.9142,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Teemo",
+     "team": "ally",
+     "u": 0.6473,
+     "v": 0.0997,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Lucian",
+     "team": "ally",
+     "u": 0.8161,
+     "v": 0.6715,
+     "r": 0.03,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   },
+   "reviewed": "two rings: Nidalee left of Nautilus"
+  },
+  "20261024_230712_0058": {
+   "game": "g1",
+   "file": "20261024_230712_0058.png",
+   "time": 1560.5,
+   "dead": [
+    "Zaahen"
+   ],
+   "champions": [
+    {
+     "u": 0.8433,
+     "v": 0.0875,
+     "team": "enemy",
+     "name": "Zed"
+    },
+    {
+     "u": 0.6213,
+     "v": 0.0773,
+     "team": "ally",
+     "name": "Teemo",
+     "self": true
+    },
+    {
+     "u": 0.8206,
+     "v": 0.1659,
+     "team": "ally",
+     "name": "Sylas"
+    }
+   ],
+   "unsure": [
+    {
+     "name": "Ekko",
+     "team": "enemy",
+     "u": 0.8154,
+     "v": 0.1967,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Ashe",
+     "team": "enemy",
+     "u": 0.8381,
+     "v": 0.176,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Lux",
+     "team": "enemy",
+     "u": 0.8691,
+     "v": 0.1979,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Nidalee",
+     "team": "ally",
+     "u": 0.9551,
+     "v": 0.07,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Lucian",
+     "team": "ally",
+     "u": 0.8407,
+     "v": 0.0988,
+     "r": 0.03,
+     "why": "no icon"
+    },
+    {
+     "name": "Nautilus",
+     "team": "ally",
+     "u": 0.8994,
+     "v": 0.2868,
+     "r": 0.03,
+     "why": "no icon"
+    }
+   ],
+   "fp_judged": {
+    "ally": true,
+    "enemy": true
+   }
+  }
+ }
+}

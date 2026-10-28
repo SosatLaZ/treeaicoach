@@ -110,8 +110,8 @@
      "stacked": true
     },
     {
-     "u": 0.7766,
-     "v": 0.9215,
+     "u": 0.818,
+     "v": 0.907,
      "team": "ally",
      "name": "TahmKench",
      "self": true,
@@ -153,7 +153,8 @@
    "fp_judged": {
     "ally": true,
     "enemy": true
-   }
+   },
+   "reviewed": "two rings: Tahm Kench partly covered up-right of Yunara"
   },
   "20261005_163017_0227": {
    "game": "g1",

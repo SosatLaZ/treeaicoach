@@ -30,6 +30,9 @@ per-minute positions of the 10 champions, kills with positions).
    annotated frames for a visual check. Labels are sanitized: champion alias, team,
    position, dead list, self flag. Never a riot id or a summoner name.
 
+    (no record: ``--start 2026-10-24T21:43:58+02:00`` = file time - in-game clock of a full
+    screenshot ``*_full.jpg`` taken with a capture)
+
     python tools/real_truth_case.py up/collect --record up/games/X.json --truth up/games/truth/X.truth.json \\
         --out tests/fixtures/real_cases/X --out-all /scratch/X_all --keep 40 --preview /scratch/X_prev
 """
@@ -70,6 +73,7 @@ DEAD_IN_S = 1.5
 DEAD_OUT_FRAC = 0.7
 ICON_SCALE = 0.086                     # icon diameter / minimap side (recalibrated in the record)
 STACK_D = 0.05                         # two champions this close: a stack (frame selection)
+ATTACHED = {"Yuumi"}                   # drawn on no icon while attached to a teammate
 FOUNTAIN = {"ORDER": (0.045, 0.955), "CHAOS": (0.955, 0.045)}
 
 
@@ -362,6 +366,21 @@ def label_frame(img: np.ndarray, T: Truth, t: float) -> dict:
                 cb = champs[k].get("could_be")
                 if cb and set(cb) <= names:
                     champs[k]["name"] = cb[-1]
+    # a champion attached to a teammate (Yuumi) is not drawn on the minimap: snapped onto
+    # the teammate's icon, it is not a stack but an unsure zone
+    drop = set()
+    for idxs in taken.values():
+        if len(idxs) > 1:
+            for k in idxs:
+                c = champs[k]
+                if (c.get("name") or (c.get("could_be") or [None])[-1]) in ATTACHED:
+                    drop.add(k)
+                    unsure.append({"name": c.get("name") or c["could_be"][-1], "team": c["team"],
+                                   "u": c["u"], "v": c["v"], "r": 0.03, "why": "attached"})
+            rest = [k for k in idxs if k not in drop]
+            if len(rest) == 1 and len(rest) < len(idxs):
+                champs[rest[0]].pop("stacked", None)
+    champs = [c for k, c in enumerate(champs) if k not in drop]
     # false positives of a side are judged only when every alive champion of that side has a
     # truth estimate (else an unknown champion may stand anywhere)
     judged = {side: all(est[p] is not None for p in alive if T.side(p) == side) for side in ("ally", "enemy")}
@@ -455,8 +474,10 @@ def build(captures: Path, record: dict, truth: dict, out: Path, out_all: Path | 
     names = sorted(specs)
     kept = choose(names, specs, keep)
     gkey = "g1"
-    about = (f"Real minimap captures of the user's {game['self']} game (x{len(names)} every ~10 s, "
-             f"{meta.get('app_version')}; the overlay is drawn in the capture) labelled from the LCU truth "
+    gaps = sorted((walls[b + ".png"] - walls[a + ".png"]).total_seconds() for a, b in zip(names, names[1:]))
+    every = f"~{gaps[len(gaps) // 2]:.0f} s" if gaps else "-"
+    about = (f"Real minimap captures of the user's {game['self']} game (x{len(names)} every {every}, "
+             f"{meta.get('app_version') or 'app version unknown'}; the overlay is drawn in the capture) labelled from the LCU truth "
              f"(tools/real_truth_case.py: wall clock -> game time offset {offset} s, positions from the "
              f"minute frames / kills snapped to the icon ring of the champion's team, anonymous when "
              f"another champion of the team could stand there; 'unsure' = on the minimap per the truth but "
@@ -469,7 +490,10 @@ def build(captures: Path, record: dict, truth: dict, out: Path, out_all: Path | 
             sp = specs[n]
             fn = f"{n}.png"
             if not (folder / fn).is_file():
-                shutil.copy(captures / fn, folder / fn)
+                # same pixels, smaller file (the repo keeps these)
+                px = cv2.imread(str(captures / fn), cv2.IMREAD_UNCHANGED)
+                if px is None or not cv2.imwrite(str(folder / fn), px, [cv2.IMWRITE_PNG_COMPRESSION, 9]):
+                    shutil.copy(captures / fn, folder / fn)
             champs = [{k: v for k, v in c.items() if k not in ("how", "could_be")} for c in sp["champions"]]
             gt["images"][n] = {"game": gkey, "file": fn, "time": sp["time"], "dead": sp["dead"],
                                "champions": champs, "unsure": sp["unsure"], "fp_judged": sp["fp_judged"]}
@@ -535,7 +559,10 @@ def main() -> None:
         return
     ap = argparse.ArgumentParser()
     ap.add_argument("captures")
-    ap.add_argument("--record", required=True)
+    ap.add_argument("--record", help="game record (meta.start, sightings for the offset fit); "
+                    "without one, --start is required")
+    ap.add_argument("--start", help="wall-clock time of the game's 0:00 (ISO, with the UTC offset), "
+                    "e.g. read from the in-game clock on a full screenshot: file time - clock")
     ap.add_argument("--truth", required=True)
     ap.add_argument("--out", required=True, help="case folder (the kept frames)")
     ap.add_argument("--out-all", help="case folder with every frame (outside the repo)")
@@ -546,7 +573,16 @@ def main() -> None:
     ap.add_argument("--preview", help="folder for x2 annotated frames")
     ap.add_argument("-v", action="store_true")
     a = ap.parse_args()
-    record = json.loads(Path(a.record).read_text(encoding="utf-8"))
+    if a.record:
+        record = json.loads(Path(a.record).read_text(encoding="utf-8"))
+    elif a.start:
+        # no record (the app was not recording): the game clock read on a screenshot gives
+        # 0:00 to the second (both the file name and the clock are truncated: +0.5 s)
+        record = {"meta": {"start": a.start, "start_game_time": 0.0}}
+        if a.offset is None:
+            a.offset = 0.5
+    else:
+        ap.error("--record or --start is required")
     truth = json.loads(Path(a.truth).read_text(encoding="utf-8"))
     st = build(Path(a.captures), record, truth, Path(a.out), Path(a.out_all) if a.out_all else None,
                a.keep, a.offset, Path(a.cache) if a.cache else None,
