@@ -3,9 +3,14 @@ Client API, :mod:`treeaicoach.lcu`): the same three things a player does by hand
 
 * **Item set** - a "TreeAI · <champion> <role>" item set (start / core in order / boots / situational
   items with their win rate in the block titles) written with ``PUT /lol-item-sets/v1/item-sets/<id>/sets``
-  once the champion is locked in: the client shows it in the in-game shop "Recommended" tab, so the
-  meta items are highlighted in the shop. The user's own sets are kept (GET, then PUT the whole list;
-  never a PUT when the GET failed); our previous "TreeAI" sets are replaced.
+  once the champion is locked in. In the shop of the game (10.23+ shop, unchanged through 2026) a custom
+  set is NOT in the "Recommended" tab (that one is Riot's own dynamic build): it is in the third tab
+  "Item Sets", which only appears when a set exists for that champion on that map; the game keeps the
+  last tab chosen across games, so the player opens it once. Body (LCU schema ``LolItemSetsItemSets``):
+  ``{accountId, itemSets, timestamp}``, the path id is the ``summonerId`` (the ``accountId`` is tried
+  when that GET fails); sets are listed by ``sortrank`` descending, so ours gets the highest rank and
+  comes first. The user's own sets are kept (GET, then PUT the whole list; never a PUT when the GET
+  failed); our previous "TreeAI" sets are replaced, and the write is read back.
 * **Runes** - one rune page "TreeAI <champion>" created or replaced and made current. The page limit is
   respected: ours is replaced, a free slot is used, and the page the user is currently editing is only
   overwritten on an explicit click (``consent``).
@@ -25,6 +30,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -40,6 +46,8 @@ INVENTORY_PATH = "/lol-perks/v1/inventory"
 
 SET_PREFIX = "TreeAI"
 SET_UID_PREFIX = "treeai-"
+SET_UID_NS = uuid.UUID("6b1d6f0e-3c1a-5d2e-9a57-74726565616a")     # uuid5 namespace of our set uids
+TOP_SORTRANK = 9000                 # sets are sorted by sortrank, descending (Riot item set format)
 PAGE_PREFIX = "TreeAI"
 FLASH = 4
 SR_MAP = 11
@@ -98,8 +106,8 @@ def build_item_set(build: Any, alias: str, champion_id: int, role: str = "",
                 block(title[:90], [i for i, _w, _g in opts])
         role_fr = ROLE_FR.get(str(role or "").upper(), "")
         title = f"{SET_PREFIX} · {alias}" + (f" {role_fr}" if role_fr else "")
-        return {"title": title, "type": "custom", "map": "any", "mode": "any", "sortrank": 0,
-                "uid": f"{SET_UID_PREFIX}{alias}-{str(role or 'any').lower()}",
+        return {"title": title[:75], "type": "custom", "map": "any", "mode": "any", "sortrank": TOP_SORTRANK,
+                "uid": set_uid(alias, role),
                 "associatedChampions": [int(champion_id)] if champion_id else [],
                 "associatedMaps": [SR_MAP], "preferredItemSlots": [], "startedFrom": "blank", "blocks": blocks}
     except Exception:
@@ -107,19 +115,44 @@ def build_item_set(build: Any, alias: str, champion_id: int, role: str = "",
         return None
 
 
+def set_uid(alias: str, role: str = "") -> str:
+    """A UUID like the client's own sets, stable per (champion, role) (uuid5). Pure."""
+    return str(uuid.uuid5(SET_UID_NS, f"{alias}|{str(role or 'any').lower()}"))
+
+
 def is_ours(item_set: Any) -> bool:
+    """Our set: "TreeAI" title (any version) or the old "treeai-" uid. Pure."""
     return isinstance(item_set, dict) and (str(item_set.get("title") or "").startswith(SET_PREFIX)
                                            or str(item_set.get("uid") or "").startswith(SET_UID_PREFIX))
 
 
-def merge_item_sets(payload: Any, new_set: dict) -> dict | None:
-    """The GET payload with our old sets removed and ``new_set`` added (the user's sets kept). None if
-    the payload is not what the client returns (then nothing is written). Pure."""
+def _int(x: Any) -> int:
+    try:
+        v = int(x)
+        return v if v > 0 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def merge_item_sets(payload: Any, new_set: dict, account_id: Any = None, now_ms: int | None = None) -> dict | None:
+    """The GET payload with our old sets removed and ``new_set`` put FIRST with the highest sortrank
+    (the user's sets kept, in their order). ``accountId`` is the payload's, else ``account_id`` (the
+    client answers 0 / nothing for an account without sets); ``timestamp`` is now (ms). None if the
+    payload is not what the client returns (then nothing is written). Pure."""
     if not isinstance(payload, dict) or not isinstance(payload.get("itemSets"), list):
         return None
     kept = [s for s in payload["itemSets"] if not is_ours(s)]
+    top = 0
+    for s in kept:
+        if isinstance(s, dict):
+            top = max(top, _int(s.get("sortrank")))
+    new_set = dict(new_set, sortrank=max(int(new_set.get("sortrank") or 0), top + 1))
     out = dict(payload)
-    out["itemSets"] = kept + [new_set]
+    out["itemSets"] = [new_set] + kept
+    acc = _int(payload.get("accountId")) or _int(account_id)
+    if acc:
+        out["accountId"] = acc
+    out["timestamp"] = int(now_ms if now_ms is not None else time.time() * 1000)
     return out
 
 
@@ -257,16 +290,27 @@ class ClientSync:
                 return Result(False, "Build incomplet.")
             c = self._c()
             me = c.current_summoner()
-            sid = me.get("summonerId") if isinstance(me, dict) else None
-            if not sid:
+            me = me if isinstance(me, dict) else {}
+            sid, acc = _int(me.get("summonerId")), _int(me.get("accountId"))
+            if not sid and not acc:
                 return Result(False, "Client LoL introuvable.")
-            path = ITEM_SETS_PATH.format(sid=int(sid))
-            merged = merge_item_sets(c.get(path), new)
+            path, payload = "", None
+            for pid in dict.fromkeys(i for i in (sid, acc) if i):     # summonerId first (LCU schema)
+                path = ITEM_SETS_PATH.format(sid=pid)
+                payload = c.get(path)
+                if isinstance(payload, dict) and isinstance(payload.get("itemSets"), list):
+                    break
+            merged = merge_item_sets(payload, new, acc)
             if merged is None:                       # never write blind: that would wipe the user's sets
                 return Result(False, "Impossible de lire tes sets d'objets, rien n'a été modifié.")
             if c.send("PUT", path, merged) is None:
                 return Result(False, "Le client a refusé le set d'objets.")
-            return Result(True, f"Set d'objets « {new['title']} » ajouté : onglet Recommandés de la boutique.")
+            back = c.get(path)                       # read back: the client may drop a set it rejects
+            if isinstance(back, dict) and isinstance(back.get("itemSets"), list) \
+                    and not any(isinstance(s, dict) and s.get("uid") == new["uid"] for s in back["itemSets"]):
+                return Result(False, "Le client n'a pas gardé le set d'objets.")
+            return Result(True, f"Set d'objets « {new['title']} » ajouté : en partie, boutique (P) → "
+                                "3e onglet « Sets d'objets » (le jeu retient l'onglet).")
         except Exception:
             log.debug("apply_items failed", exc_info=True)
             return Result(False, "Set d'objets non importé.")
@@ -430,5 +474,5 @@ def get_default() -> ClientSync:
         return _default
 
 
-__all__ = ["ClientSync", "Result", "build_item_set", "merge_item_sets", "rune_page", "choose_spells",
+__all__ = ["ClientSync", "Result", "build_item_set", "merge_item_sets", "set_uid", "is_ours", "rune_page", "choose_spells",
            "is_locked", "get_default"]

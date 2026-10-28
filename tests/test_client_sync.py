@@ -93,7 +93,7 @@ def test_item_set_shape_and_keeps_user_sets():
     user = {"title": "Mon set", "uid": "x", "blocks": []}
     old = {"title": "TreeAI · Garen top", "uid": "treeai-Garen-top", "blocks": []}
     merged = cs.merge_item_sets({"accountId": 7, "itemSets": [user, old]}, s)
-    assert merged["itemSets"] == [user, s] and merged["accountId"] == 7
+    assert merged["itemSets"] == [s, user] and merged["accountId"] == 7      # ours first, user's kept
     assert cs.merge_item_sets(None, s) is None and cs.merge_item_sets({"itemSets": "x"}, s) is None
     assert cs.build_item_set(None, "Garen", 86) is None
 
@@ -102,9 +102,9 @@ def test_apply_items_puts_full_list_and_never_writes_blind():
     user = {"title": "Mon set", "uid": "x", "blocks": []}
     c = FakeClient(sets={"accountId": 7, "itemSets": [user], "timestamp": 1})
     r = cs.ClientSync(c).apply_items("Garen", "TOP")
-    assert r.ok and "Recommandés" in r.msg
+    assert r.ok and "Sets d'objets" in r.msg and "Recommandés" not in r.msg
     put = [x for x in c.calls if x[0] == "PUT"][0]
-    assert put[1] == "/lol-item-sets/v1/item-sets/99/sets" and put[2]["itemSets"][0] == user
+    assert put[1] == "/lol-item-sets/v1/item-sets/99/sets" and put[2]["itemSets"][1] == user
     assert len(put[2]["itemSets"]) == 2
     cs.ClientSync(c).apply_items("Garen", "TOP")                      # second time: ours replaced, not doubled
     assert len(c.sets["itemSets"]) == 2
@@ -283,3 +283,45 @@ def test_ranked_tier_parsing():
     assert C({"queueMap": {"RANKED_SOLO_5x5": {"tier": "", "previousSeasonEndTier": "PLATINUM"}}}).ranked_tier() == "PLATINUM"
     assert C({"queueMap": {"RANKED_SOLO_5x5": {"tier": "NONE"}}}).ranked_tier() == ""
     assert C(None).ranked_tier() == "" and C([]).ranked_tier() == ""
+
+
+def test_item_set_matches_lcu_schema_and_comes_first():
+    """LCU schema LolItemSetsItemSets {accountId int64, itemSets, timestamp int64}; item ids are strings,
+    associatedMaps / associatedChampions ints; sets sorted by sortrank descending -> ours above the user's."""
+    import uuid
+
+    s = cs.build_item_set(build(), "Garen", 86, "TOP", name_of=lambda i: f"I{i}")
+    uuid.UUID(s["uid"])                                                   # a UUID like the client's
+    assert s["uid"] == cs.set_uid("Garen", "TOP") != cs.set_uid("Garen", "MIDDLE")
+    assert s["associatedMaps"] == [11] and s["associatedChampions"] == [86] and len(s["title"]) <= 75
+    assert all(isinstance(i["id"], str) and i["count"] == 1 for b in s["blocks"] for i in b["items"])
+    user = {"title": "Mon set", "uid": "u", "sortrank": 12000, "blocks": []}
+    m = cs.merge_item_sets({"accountId": 0, "itemSets": [user], "timestamp": 1}, s, account_id=555, now_ms=42)
+    assert m["accountId"] == 555 and m["timestamp"] == 42                # 0 from the client -> mine
+    assert m["itemSets"][0]["uid"] == s["uid"] and m["itemSets"][0]["sortrank"] > 12000
+    assert cs.merge_item_sets({"accountId": 9, "itemSets": []}, s, account_id=555)["accountId"] == 9
+    assert cs.is_ours({"title": "TreeAI · Swain support", "uid": "abc"}) and not cs.is_ours(user)
+
+
+def test_apply_items_account_id_fallback_and_read_back():
+    class AccountPath(FakeClient):
+        def current_summoner(self):
+            return {"summonerId": 99, "accountId": 1234}
+
+        def get(self, path, timeout=None):
+            self.calls.append(("GET", path))
+            if path == "/lol-item-sets/v1/item-sets/1234/sets":
+                return self.sets
+            return None
+
+    c = AccountPath(sets={"accountId": 1234, "itemSets": [], "timestamp": 1})
+    r = cs.ClientSync(c).apply_items("Garen", "TOP")
+    put = [x for x in c.calls if x[0] == "PUT"][0]
+    assert r.ok and put[1].endswith("/1234/sets") and put[2]["accountId"] == 1234
+
+    class Drops(FakeClient):
+        def send(self, method, path, body=None, timeout=None):
+            self.calls.append((method, path, body))
+            return {}                                                     # accepted, but not kept
+
+    assert not cs.ClientSync(Drops()).apply_items("Garen", "TOP").ok

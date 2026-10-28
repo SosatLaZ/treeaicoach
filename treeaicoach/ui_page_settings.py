@@ -78,7 +78,7 @@ class SettingsPage:
                        "des champions et les joueurs.")
         dep = (lambda row: app.depends(row, "lcu_enabled"))
         dep(app.switch_row(lol, "cs_import_items", "Set d'objets dans la boutique", "Les objets du build, "
-                           "surlignés dans l'onglet Recommandés."))
+                           "dans l'onglet « Sets d'objets » de la boutique."))
         dep(app.switch_row(lol, "cs_auto_runes", "Runes automatiques", "Crée ou remplace la page « TreeAI », "
                            "jamais tes autres pages."))
         dep(app.switch_row(lol, "cs_auto_spells", "Sorts automatiques", "Saut éclair reste sur ta touche."))
