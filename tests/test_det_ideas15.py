@@ -78,6 +78,9 @@ def test_sequence_replay_keeps_one_detector_and_the_clock(monkeypatch, tmp_path)
             seen.append(t)
             return []
 
+        def set_dead(self, aliases, now=None):
+            pass
+
     class Det:
         def __init__(self):
             self.matcher = M()

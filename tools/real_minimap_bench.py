@@ -110,8 +110,9 @@ def run_image(name: str, spec: dict, truth: dict, db, backend: str = "auto",
     dets = []
     times = []
     for f in range(frames):
-        if dead:
-            det.matcher.set_dead(dead, now=t0 + f / FPS)
+        # (every frame, an empty list too: "dead until the next call", as the engine's
+        # set_game_status does each frame; a sequence would keep a respawned champion dead)
+        det.matcher.set_dead(dead, now=t0 + f / FPS)
         c0 = time.perf_counter()
         dets = _detect(det, img, t0 + f / FPS)
         times.append((time.perf_counter() - c0) * 1000.0)
