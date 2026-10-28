@@ -87,9 +87,18 @@ def _radius_hints(img: np.ndarray, labels: list[dict]) -> list[float]:
 
 def load_real_cases(size: int, cases_dir: Path = CASES_DIR, val_mod: int = 3
                     ) -> tuple[list[tuple[np.ndarray, list[dict], list[dict]]], list[tuple[np.ndarray, list[dict], list[dict]]]]:
-    """(train, val) lists of (image size x size BGR, labels, unsure zones)."""
+    """(train, val) lists of (image size x size BGR, labels, unsure zones).
+
+    ``cases_dir``: a folder of case folders, or ONE case folder (``ground_truth.json`` inside,
+    e.g. a ``treeaicoach.det_collect`` export). Frames flagged ``needs_review`` (collected
+    uncertain / disputed frames not reviewed yet) are skipped. A frame with ``focus`` discs
+    (collected hard negatives) is trained only inside them (zones with ``"focus": True``, see
+    :func:`_ignore_mask`) and never used for validation."""
     train, val = [], []
-    for gt_path in sorted(cases_dir.glob("*/ground_truth.json")):
+    cases_dir = Path(cases_dir)
+    paths = [cases_dir / "ground_truth.json"] if (cases_dir / "ground_truth.json").is_file() \
+        else sorted(cases_dir.glob("*/ground_truth.json"))
+    for gt_path in paths:
         try:
             data = json.loads(gt_path.read_text(encoding="utf-8"))
         except Exception:
@@ -97,6 +106,8 @@ def load_real_cases(size: int, cases_dir: Path = CASES_DIR, val_mod: int = 3
         images = data.get("images") or {}
         items = sorted(images.values(), key=lambda e: str(e.get("file", ""))) if isinstance(images, dict) else images
         for k, e in enumerate(items):
+            if e.get("needs_review"):
+                continue
             img = cv2.imread(str(gt_path.parent / str(e.get("file", ""))))
             if img is None:
                 continue
@@ -107,16 +118,32 @@ def load_real_cases(size: int, cases_dir: Path = CASES_DIR, val_mod: int = 3
                 lab["r"] = r
             uns = [{"u": float(z["u"]), "v": float(z["v"]), "r": float(z.get("r", 0.05))}
                    for z in e.get("unsure") or [] if "u" in z and "v" in z]
+            focus = [{"u": float(z["u"]), "v": float(z["v"]), "r": float(z.get("r", 0.06)), "focus": True}
+                     for z in e.get("focus") or [] if "u" in z and "v" in z]
             small = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+            if focus:
+                train.append((small, labs, uns + focus))
+                continue
             (val if k % val_mod == val_mod - 1 else train).append((small, labs, uns))
     return train, val
 
 
 def _ignore_mask(hm: np.ndarray, zones: list[dict], x0: float, y0: float, crop: float, full: float) -> None:
-    """Raise the heatmap target to IGNORE inside the unsure discs (crop coordinates)."""
+    """Raise the heatmap target to IGNORE inside the unsure discs (crop coordinates); with
+    ``focus`` zones (collected hard negatives) everything OUTSIDE them is ignored too."""
     hs = hm.shape[-1]
     yy, xx = np.mgrid[0:hs, 0:hs].astype(np.float32) + 0.5
+    foc = [z for z in zones if z.get("focus")]
+    if foc:
+        keep = np.zeros(hm.shape[-2:], bool)
+        for z in foc:
+            cu, cv = (z["u"] * full - x0) / crop * hs, (z["v"] * full - y0) / crop * hs
+            rr = z["r"] * full / crop * hs
+            keep |= (xx - cu) ** 2 + (yy - cv) ** 2 <= rr * rr
+        hm[0][~keep] = np.maximum(hm[0][~keep], IGNORE)
     for z in zones:
+        if z.get("focus"):
+            continue
         cu, cv = (z["u"] * full - x0) / crop * hs, (z["v"] * full - y0) / crop * hs
         rr = z["r"] * full / crop * hs
         m = (xx - cu) ** 2 + (yy - cv) ** 2 <= rr * rr
@@ -143,8 +170,9 @@ def real_batch(real: list, idx: np.ndarray, rng: np.random.Generator, size: int,
                 l["u"] = 1.0 - l["u"]
         if rng.random() < 0.6:
             img = cv2.convertScaleAbs(np.ascontiguousarray(img), alpha=rng.uniform(0.8, 1.2), beta=rng.uniform(-15, 15))
-        if labs and rng.random() < 0.7:
-            l = labs[int(rng.integers(len(labs)))]
+        anchors = [z for z in uns if z.get("focus")] or labs   # hard negatives: crop on them
+        if anchors and (rng.random() < 0.7 or anchors is not labs):
+            l = anchors[int(rng.integers(len(anchors)))]
             cx, cy = l["u"] * size + rng.uniform(-0.4, 0.4) * c, l["v"] * size + rng.uniform(-0.4, 0.4) * c
             x0, y0 = int(np.clip(cx - c / 2, 0, size - c)), int(np.clip(cy - c / 2, 0, size - c))
         else:
@@ -328,6 +356,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default="training/runs/fast_ft")
     p.add_argument("--no-gate", action="store_true", help="train + export only")
     p.add_argument("--install", action="store_true", help="install the model when the gate passes")
+    p.add_argument("--extra-cases", action="append", default=[],
+                   help="more case folders (e.g. det_collect exports of the user's games), repeatable")
     p.add_argument("--max-steps", type=int, default=0, help="(tests) stop after this many steps")
     return p
 
@@ -356,6 +386,10 @@ def main(argv: list[str] | None = None) -> int:
     t = time.perf_counter()
     imgs, labels, gst = fast_train.build_cache(args.n_synth, args.n_real, args.size, 0, 0, ())
     real_tr, real_val = load_real_cases(args.size)
+    for extra in args.extra_cases or []:   # user-collected frames (treeaicoach.det_collect exports)
+        tr_x, val_x = load_real_cases(args.size, Path(extra))
+        real_tr += tr_x
+        real_val += val_x
     rep["data_s"] = round(time.perf_counter() - t, 1)
     rep["data"] = {"synthetic": len(imgs), "real_train": len(real_tr), "real_val": len(real_val),
                    "rendered": not gst.get("cached")}
