@@ -1,6 +1,6 @@
 {
-  "version": "3.1.1",
-  "sha256": "8eeeca119daf699ca25290296aaf6131dd75b4b5b28179b7119faa6449ef528d",
-  "size": 7531754,
-  "notes": "3.1.1 : Whisper démarre enfin sur Windows, plus de Patiente."
+  "version": "3.2.0",
+  "sha256": "4f486fac64df1825303ae4683371552bf26c489ef30d2c5d3c9615cc1955b105",
+  "size": 7531299,
+  "notes": "3.2 : moins de fausses alertes de gank, noms LoL mieux compris, F12 maintenu."
 }
