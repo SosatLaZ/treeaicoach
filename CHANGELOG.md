@@ -3,6 +3,19 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.3.0 · 28 octobre 2026
+
+- **Beaucoup moins de bruit :** sur une vraie partie de 40 min, 127 messages au lieu de 228 et 42 bips au lieu
+  de 67. Mort, en base, en boutique ou en combat : seuls les dangers passent. Félicitations max 1 / 5 min.
+- **Bordure rouge discrète** (fine, une pulsation, jamais en boutique ni mort) ; l'ancienne reste au choix.
+- **L'IA répond librement à tes questions en partie** (n'importe quel sujet), sans faire de bilan.
+- **Rangs justes :** « Platine 2 · 54 % (37 parties) » sur la file de ta partie, « Non classé » sinon.
+- **Rapport d'analyse :** Ctrl+F8 ou Avancé → Maintenance, un petit zip à m'envoyer pendant une partie.
+- **Niveaux :** plus aucune affirmation basée sur un niveau ennemi périmé ; textes au bon genre (« elle »).
+- **Voix d'homme naturelle (Rémy)** par défaut, voix plus douce hors danger.
+- **Moins de charge PC** quand tu es mort, en base ou en chargement (environ moitié moins).
+- **Détection :** icônes coupées par le coin de la carte à la fontaine ; carte graphique (DirectML) prête en option.
+
 ## 3.2.0 · 28 octobre 2026
 
 - **Moins de fausses alertes de gank :** une seule alerte par menace (plus de doublons « arrive » + « recule »
