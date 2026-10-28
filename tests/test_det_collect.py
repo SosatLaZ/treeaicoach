@@ -73,3 +73,19 @@ def test_trainer_loads_collected_frames_focus_only(tmp_path):
     hm = np.zeros((1, 16, 16), np.float32)
     dtf._ignore_mask(hm, zones, 0.0, 0.0, 64.0, 64.0)
     assert hm[0, 8, 8] == 0.0 and abs(hm[0, 1, 14] - dtf.IGNORE) < 1e-6                # trained only at the FP
+
+
+def test_case_backgrounds_paint_out_labels_and_unsure_zones():
+    """Idea 36: the real cases become training backgrounds (icons + unsure zones painted out)."""
+    from training import real_art
+
+    case = ROOT / "tests" / "fixtures" / "real_cases" / "teemo_top_20261024"
+    if not (case / "ground_truth.json").is_file():
+        import pytest
+        pytest.skip("case missing")
+    bgs = real_art.case_backgrounds(case.name, size=120)
+    gt = json.loads((case / "ground_truth.json").read_text())
+    assert len(bgs) == len(gt["images"]) and bgs[0].shape == (120, 120, 3)
+    art = real_art.RealArt(real_art.load_real(names=["shot3", "shot4", "shot6"]), cases=[case.name])
+    assert len(art.backgrounds) == 4 + len(bgs)
+    assert real_art.case_backgrounds("no_such_case") == []

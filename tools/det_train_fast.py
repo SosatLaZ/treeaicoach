@@ -356,6 +356,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default="training/runs/fast_ft")
     p.add_argument("--no-gate", action="store_true", help="train + export only")
     p.add_argument("--install", action="store_true", help="install the model when the gate passes")
+    p.add_argument("--case-backgrounds", action="store_true",
+                   help="also composite on the real cases' backgrounds (icons + unsure zones painted out)")
     p.add_argument("--extra-cases", action="append", default=[],
                    help="more case folders (e.g. det_collect exports of the user's games), repeatable")
     p.add_argument("--max-steps", type=int, default=0, help="(tests) stop after this many steps")
@@ -384,7 +386,12 @@ def main(argv: list[str] | None = None) -> int:
     rep: dict[str, Any] = {"device": dev, "args": vars(args)}
 
     t = time.perf_counter()
-    imgs, labels, gst = fast_train.build_cache(args.n_synth, args.n_real, args.size, 0, 0, ())
+    bgs: tuple = ()
+    if args.case_backgrounds:   # idea 36: the real cases' backgrounds for the real-art composites
+        from training import real_art
+        bgs = tuple(real_art.BACKGROUND_SHOTS) + tuple(
+            f"case:{p.parent.name}" for p in sorted(CASES_DIR.glob("*/ground_truth.json")))
+    imgs, labels, gst = fast_train.build_cache(args.n_synth, args.n_real, args.size, 0, 0, bgs)
     real_tr, real_val = load_real_cases(args.size)
     for extra in args.extra_cases or []:   # user-collected frames (treeaicoach.det_collect exports)
         tr_x, val_x = load_real_cases(args.size, Path(extra))

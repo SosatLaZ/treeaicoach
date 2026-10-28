@@ -116,6 +116,31 @@ def build_backgrounds(reals: Sequence[RealImage], size: int = 300) -> list[np.nd
     return bgs
 
 
+CASES_DIR = _REPO_ROOT / "tests" / "fixtures" / "real_cases"
+
+
+def case_backgrounds(case: str, size: int = 300, cases_dir: Path = CASES_DIR) -> list[np.ndarray]:
+    """Idea 36: backgrounds from a truth-labelled real case (``tests/fixtures/real_cases/<case>``,
+    or a ``treeaicoach.det_collect`` export): the case's own median + each frame with its
+    labelled champions AND its ``unsure`` zones (champions the truth could not place exactly)
+    painted over with it. Other clients / resolutions / patches than the hand-labelled crops."""
+    d = Path(case) if Path(case).is_dir() else Path(cases_dir) / case
+    try:
+        gt = json.loads((d / "ground_truth.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    reals = []
+    for name, rec in (gt.get("images") or {}).items():
+        img = cv2.imread(str(d / rec.get("file", name + ".png")), cv2.IMREAD_COLOR)
+        if img is None or rec.get("needs_review"):
+            continue
+        pts = [(float(c["u"]), float(c["v"]), str(c.get("team", "ally")))
+               for c in list(rec.get("champions") or []) + list(rec.get("unsure") or [])
+               + list(rec.get("detections") or []) if "u" in c and "v" in c]
+        reals.append(RealImage(name, img, pts))
+    return build_backgrounds(reals, size)[1:] if len(reals) >= 3 else []
+
+
 def distractor_sprites(bg: np.ndarray, max_n: int = 40) -> list[np.ndarray]:
     """Saturated glyphs of a clean background as BGRA sprites (towers, camps, markers)."""
     hsv = cv2.cvtColor(bg, cv2.COLOR_BGR2HSV)
@@ -178,10 +203,13 @@ def _text(img: np.ndarray, rng: np.random.Generator, x: float, y: float, scale: 
 class RealArt:
     """Backgrounds, distractors and portraits for :meth:`sample` (one per process)."""
 
-    def __init__(self, reals: Sequence[RealImage] | None = None) -> None:
+    def __init__(self, reals: Sequence[RealImage] | None = None,
+                 cases: Sequence[str] = ()) -> None:
         if reals is None:
             reals = load_real(names=BACKGROUND_SHOTS)
         self.backgrounds = build_backgrounds(reals)
+        for c in cases:                     # (the median of the crops stays backgrounds[0])
+            self.backgrounds += case_backgrounds(c)
         self.sprites = distractor_sprites(self.backgrounds[0]) if self.backgrounds else []
         self.assets = synth.get_assets()
 

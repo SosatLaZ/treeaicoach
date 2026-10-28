@@ -74,8 +74,10 @@ def _worker_init(bg_names: Sequence[str] | None) -> None:
     from training import real_art, synth  # noqa: PLC0415
 
     _W["synth"] = synth
-    reals = real_art.load_real(names=list(bg_names) if bg_names else real_art.BACKGROUND_SHOTS)
-    _W["art"] = real_art.RealArt(reals)
+    names = [n for n in bg_names or () if not str(n).startswith("case:")]
+    cases = [str(n)[5:] for n in bg_names or () if str(n).startswith("case:")]   # idea 36
+    reals = real_art.load_real(names=names or real_art.BACKGROUND_SHOTS)
+    _W["art"] = real_art.RealArt(reals, cases=cases)
 
 
 def _render_one(job: tuple[int, int, str, int]) -> tuple[int, np.ndarray, list[dict]]:
