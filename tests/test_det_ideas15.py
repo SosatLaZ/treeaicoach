@@ -142,3 +142,17 @@ def test_icon_cut_by_the_corner_named_by_its_visible_part():
     assert alias == "Lux" and best >= 0.6 and best - second >= 0.15
     assert m.name_partial(img, 0.03, 0.968, []) == (None, 0.0, 0.0)
     assert m.name_partial(None, 0.03, 0.968, ["Lux"]) == (None, 0.0, 0.0)     # never raises
+
+
+def test_unexplained_icon_next_to_a_clone_champion_is_his_copy():
+    from treeaicoach.detector import CLONE_DIST, Detection, is_clone_copy
+
+    shaco = Detection(u=0.5, v=0.5, r=0.04, score=0.9, cls="enemy", cls_probs=(0.0, 1.0, 0.0), alias="Shaco")
+    zed = Detection(u=0.2, v=0.2, r=0.04, score=0.9, cls="enemy", cls_probs=(0.0, 1.0, 0.0), alias="Zed")
+    near = Detection(u=0.5 + 0.5 * CLONE_DIST, v=0.5, r=0.04, score=0.7, cls="enemy", cls_probs=(0.0, 1.0, 0.0))
+    far = Detection(u=0.5 + 2 * CLONE_DIST, v=0.5, r=0.04, score=0.7, cls="enemy", cls_probs=(0.0, 1.0, 0.0))
+    ally_near = Detection(u=0.52, v=0.5, r=0.04, score=0.7, cls="ally", cls_probs=(0.0, 0.0, 1.0))
+    assert is_clone_copy(near, [shaco, zed])
+    assert not is_clone_copy(far, [shaco, zed])
+    assert not is_clone_copy(ally_near, [shaco])                 # other side: not his copy
+    assert not is_clone_copy(Detection(u=0.21, v=0.2, r=0.04, score=0.7, cls="enemy", cls_probs=(0.0, 1.0, 0.0)), [zed])

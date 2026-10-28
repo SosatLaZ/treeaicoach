@@ -1064,9 +1064,14 @@ class HybridDetector(BaseDetector):
         free = {"enemy": n_enemy - sum(1 for k in dets if k.cls == "enemy"),
                 "ally": n_ally - sum(1 for k in dets if k.cls != "enemy")}
         out = []
+        # (idea 15) champions that put a copy of their icon on the map (Shaco R, LeBlanc
+        # passive / R, Wukong W, Neeko passive, Fiddlesticks effigy...): an unexplained icon of
+        # their side next to them is the copy, not another champion
         for d in sorted(self._last_extra, key=lambda x: -x.score):
             side = "enemy" if d.cls == "enemy" else "ally"
             if free[side] <= 0:
+                continue
+            if is_clone_copy(d, dets):
                 continue
             if any(math.hypot(d.u - k.u, d.v - k.v) < self.EXTRA_OVERLAP * (d.r + k.r)
                    for k in dets + out):
@@ -1135,6 +1140,21 @@ class HybridDetector(BaseDetector):
             self.fallback.close()
         except Exception:
             pass
+
+
+#: Champions whose ability draws a second icon of them on the minimap (idea 15).
+CLONE_CHAMPIONS = frozenset({"Shaco", "Leblanc", "MonkeyKing", "Neeko", "Fiddlesticks"})
+#: ... an anonymous icon of their side within this distance (normalized) is that copy.
+CLONE_DIST = 0.12
+
+
+def is_clone_copy(d: Any, dets: list) -> bool:
+    """An unexplained icon ``d`` within CLONE_DIST of a matched champion of its side who
+    makes copies of his icon (CLONE_CHAMPIONS): the copy (idea 15)."""
+    side = d.cls == "enemy"
+    return any(getattr(k, "alias", None) and str(k.alias).split("~")[0] in CLONE_CHAMPIONS
+               and (k.cls == "enemy") == side and math.hypot(d.u - k.u, d.v - k.v) < CLONE_DIST
+               for k in dets)
 
 
 def _generic_detector(b: str, threshold: float) -> BaseDetector:
