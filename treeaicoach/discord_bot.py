@@ -2098,6 +2098,57 @@ class DiscordCaller:
         finally:
             self._playing = False
 
+    async def _say_answer(self, backend: Any, job: _Job, text: str, s: _Settings) -> None:
+        """The AI answer to a « Hey coach » of the channel: its first sentence is synthesised and played
+        at once while the rest is synthesised (3.4.1: the whole answer was synthesised first)."""
+        import re  # noqa: PLC0415
+
+        v, r = s.neural_voice, s.neural_rate
+        parts = [p for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p]
+        first, rest = (parts[0], " ".join(parts[1:])) if len(parts) > 1 else (text, "")
+        rest_task = asyncio.ensure_future(self._blocking(self.voice.synth, rest, v, r, timeout=CHAIN_TIMEOUT_S)) \
+            if rest else None
+        said = []
+        try:
+            for i, sentence in enumerate((first, rest)):
+                if not sentence:
+                    break
+                if i == 0:
+                    wav, _src = await self._blocking(self.voice.synth, sentence, v, r, timeout=CHAIN_TIMEOUT_S)
+                else:
+                    task, rest_task = rest_task, None
+                    try:
+                        wav, _src = await task       # type: ignore[misc]
+                    except Exception as exc:
+                        log.info("Discord : fin de la réponse IA non synthétisée (%s)", type(exc).__name__)
+                        break
+                pcm = da.speech_pcm(wav) if wav else b""
+                if not da.is_audible(pcm):
+                    why = "; ".join(f"{k} : {v_}" for k, v_ in self.voice.failures.items())
+                    self._event(f"Aucune voix pour « {sentence} »" + (f" ({why})" if why else ""), ok=False)
+                    break
+                if float(self._clock()) - job.t > job.stale_s or not _job_valid(job):
+                    self.dropped += 1
+                    break
+                if i == 0:
+                    try:
+                        from treeaicoach import voice_latency  # noqa: PLC0415
+
+                        voice_latency.playing(text)
+                    except Exception:
+                        pass
+                await self._play(backend, pcm, s)
+                said.append(sentence)
+        finally:
+            if rest_task is not None:
+                rest_task.cancel()
+        if said:
+            cur = self._current(backend)
+            self._event(f"A dit « {' '.join(said)} »", backend.channel_name(cur) if cur is not None else "")
+            with self._lock:
+                self.spoken.append(" ".join(said))
+                del self.spoken[:-50]
+
     def _friends_lines(self, job: _Job) -> list[tuple[str, dict]]:
         """(spoken name, lane line) of every friend of the voice channel playing in my team (me
         excluded: my matchup is said apart), in the lines' order, at most FRIENDS_MAX."""
@@ -2256,6 +2307,9 @@ class DiscordCaller:
                     log.info("Discord : phrase IA du matchup indisponible (%s), phrase du coach utilisée",
                              type(exc).__name__)
             if not text:
+                return
+            if job.call_kind == "ai_answer" and job.kind != "test":
+                await self._say_answer(backend, job, text, s)
                 return
             wav, _src = await self._blocking(self.voice.synth, text, v, r, timeout=CHAIN_TIMEOUT_S)
             pcm = da.speech_pcm(wav) if wav else b""

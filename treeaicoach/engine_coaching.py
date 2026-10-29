@@ -745,6 +745,12 @@ class CoachingMixin:
             except Exception as exc:
                 log.info("IA (question générale) : %s", exc)
                 ans = "L'IA ne répond pas pour l'instant."
+            try:
+                from treeaicoach import voice_latency
+
+                voice_latency.answered(ans)
+            except Exception:
+                pass
             if local:                                    # PC mic / F12: said here, shown as a toast
                 self._say(ans, int(Level.INFO))
                 self._toast("insight", "IA", ans, None, f"ai-gen:{self._clock():.0f}", self._clock())
@@ -1177,6 +1183,13 @@ class CoachingMixin:
             self._ai_held = None
             ai.note_dropped(adv, "stale")
             return
+        if adv.moment == "manual" and (getattr(self, "_ai_discord_pending", False)
+                                       or getattr(self, "_ai_spoken_pending", False)):
+            # a question asked OUT LOUD is answered at once, fight or not (3.4.1: it was held while a
+            # fight / threat / card lasted, up to MANUAL_MAX_AGE_S = 60 s, before being said)
+            self._ai_held = None
+            self._ai_say_answer(ai, adv, t, gt)
+            return
         if not adv.error and (in_fight or threat >= int(Level.WARNING)):
             return                                          # after the fight, if still fresh
         tac = getattr(self, "_tactics", None)
@@ -1221,6 +1234,51 @@ class CoachingMixin:
             self._say(short_answer(adv.text), int(Level.INFO))
         elif getattr(self._cfg, "ai_speak", False) and threat < Level.WARNING and not adv.error:
             self._say(adv.text, int(Level.INFO))
+
+    def _ai_say_answer(self, ai: Any, adv: Any, t: float, gt: float) -> None:
+        """The answer to a spoken question (PC mic / Discord channel): said now, shown as a toast when
+        the presenter lets it (never waits for it). Never raises."""
+        try:
+            from treeaicoach import voice_latency
+            from treeaicoach.voice_assistant import short_answer
+
+            said = short_answer(adv.text)
+            voice_latency.answered(said)
+            if getattr(self, "_ai_discord_pending", False):
+                self._ai_discord_pending = False
+                self._call("ai_answer", said)
+            else:
+                self._ai_spoken_pending = False
+                self._say_answer(said)
+            self.last_ai_advice = adv.text
+            self.ai_answer_seq = getattr(self, "ai_answer_seq", 0) + 1
+            self.text_messages.append((t, "ai", adv.text))
+            if not adv.error:
+                ai.note_shown(adv, gt)
+            if self._toasts is not None and getattr(self._cfg, "toasts_enabled", True):
+                self._toast("warning" if adv.error else "insight", adv.title, adv.text, None, f"ai:{adv.t:.0f}", t,
+                            urgency=adv.urgency)
+        except Exception:
+            log.debug("spoken AI answer failed", exc_info=True)
+
+    def _say_answer(self, text: str) -> None:
+        """An AI answer on the PC voice: its first sentence alone (its synthesis starts at once, the
+        answer is heard ~1 s sooner), then the rest (synthesised meanwhile)."""
+        import re
+
+        parts = [p for p in re.split(r"(?<=[.!?])\s+", str(text or "").strip()) if p]
+        if len(parts) <= 1 or getattr(self, "_muted", False) or getattr(self, "_voice", None) is None \
+                or self._discord_only("coach"):
+            self._say(text, int(Level.INFO))
+            return
+        self._say(parts[0], int(Level.INFO))
+        try:                                   # the rest waits for the first sentence to be said
+            try:
+                self._voice.say(" ".join(parts[1:]), int(Level.INFO), max_age=30.0)
+            except TypeError:
+                self._voice.say(" ".join(parts[1:]), int(Level.INFO))
+        except Exception:
+            log.debug("voice.say (answer rest) failed", exc_info=True)
 
     def _ai_hud_line(self, adv: Any, key: str, t: float) -> bool:
         """The AI line on the HUD card when toasts are off, through the presenter. Never raises."""

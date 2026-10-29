@@ -322,16 +322,19 @@ def test_engine_reads_the_voice_answer_short() -> None:
     from tests.test_ai_mastermind import _publisher, _Queue
     from treeaicoach import ai_advisor as aia
 
-    eng, _shown = _publisher()
+    eng, _shown = _publisher(fight=True)
     said: list[str] = []
     eng._say = lambda text, level: said.append(text)
+    eng._discord_only = lambda kind: False
+    eng._voice = NS(say=lambda text, level, max_age=None: said.append(f"{text}|{max_age}"))
     eng._ai_spoken_pending = True
     q = _Queue(aia.Advice("Achète Sunfire. Puis Thornmail. Ensuite Force de la nature.", "manual", 100.0))
-    eng._ai_publish(100.5, 600.0, q, 0, False)
-    assert said == ["Achète Sunfire. Puis Thornmail."] and not eng._ai_spoken_pending
+    eng._ai_publish(100.5, 600.0, q, 2, True)          # in a fight: a spoken question is answered at once
+    assert said == ["Achète Sunfire.", "Puis Thornmail.|30.0"] and not eng._ai_spoken_pending
+    said.clear()
     q = _Queue(aia.Advice("Achète Sunfire.", "manual", 200.0))           # F8 (not spoken): written only
     eng._ai_publish(200.5, 700.0, q, 0, False)
-    assert said == ["Achète Sunfire. Puis Thornmail."]
+    assert said == []
 
 
 def test_claim_wake_answers_once_across_pc_and_discord():

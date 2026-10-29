@@ -1051,9 +1051,11 @@ class NeuralBackend(_WavBackend):
             log.debug("Neural synthesis failed: %s", exc)
         if path is None and self.abort_check is not None and self.abort_check():
             return                            # superseded by an urgent message: not said
-        if path is not None and self._play(Path(path)):
-            self.last_source = "neural"
-            return
+        if path is not None:
+            _latency_playing(text)
+            if self._play(Path(path)):
+                self.last_source = "neural"
+                return
         self._speak_local(text, purge)
 
     def _speak_local(self, text: str, purge: bool) -> None:
@@ -1064,6 +1066,7 @@ class NeuralBackend(_WavBackend):
         local = self._get_local()
         self.last_source = str(getattr(local, "name", "print") or "print")
         log.info("Voix naturelle pas prête : voix Windows (%s) pour « %s »", self.last_source, text)
+        _latency_playing(text)
         local.speak(text, purge)
 
     def ready(self, text: str) -> bool:
@@ -1083,9 +1086,11 @@ class NeuralBackend(_WavBackend):
             path = self._tts.get(text, 0.0 if LOCAL_VOICE_FALLBACK else NEURAL_URGENT_WAIT_S)
         except Exception as exc:
             log.debug("Neural cache lookup failed: %s", exc)
-        if path is not None and self._play(Path(path)):
-            self.last_source = "neural"
-            return
+        if path is not None:
+            _latency_playing(text)
+            if self._play(Path(path)):
+                self.last_source = "neural"
+                return
         self._speak_local(text, purge)
 
     def is_speaking(self) -> bool:
@@ -1192,6 +1197,17 @@ class _Item:
     #: freshness guard (freshness.checker): called right before the sentence starts; False = its
     #: facts changed while it waited (level up, death...): dropped
     check: Callable[[], bool] | None = None
+    max_age: float | None = None    # waits this long in the queue at most (None: the engine's MAX_AGE_S)
+
+
+def _latency_playing(text: str) -> None:
+    """The first sound of ``text`` starts (voice_latency closes a spoken question's record). Never raises."""
+    try:
+        from treeaicoach import voice_latency  # noqa: PLC0415
+
+        voice_latency.playing(text)
+    except Exception:
+        pass
 
 
 def _still_valid(item: _Item) -> bool:
@@ -1415,7 +1431,7 @@ class VoiceEngine:
     accepts_check = True
 
     def say(self, text: str, level: int = LEVEL_WARNING, patient: bool | None = None,
-            check: Callable[[], bool] | None = None) -> None:
+            check: Callable[[], bool] | None = None, max_age: float | None = None) -> None:
         """Queue ``text`` (never blocks, never raises). Level 2 (DANGER) cuts the current sentence;
         it is beep-first: the tone starts here at once (unless :meth:`alert_beep` just played it).
         The synthesisers respell it for a French voice (:func:`tts_lexicon.speakable`). ``patient``
@@ -1447,7 +1463,7 @@ class VoiceEngine:
                     return
                 self._seq += 1
                 item = _Item(s, lvl, float(self._clock()), self._seq, beep_end, bool(patient),
-                             check if callable(check) else None)
+                             check if callable(check) else None, None if max_age is None else float(max_age))
                 if lvl >= LEVEL_DANGER:
                     self.dropped_count += len(self._queue)
                     self._queue.clear()
@@ -1599,7 +1615,8 @@ class VoiceEngine:
         self.dropped_count += 1
 
     def _is_stale(self, item: _Item) -> bool:
-        return float(self._clock()) - item.t > self._max_age_s
+        limit = self._max_age_s if item.max_age is None else max(self._max_age_s, item.max_age)
+        return float(self._clock()) - item.t > limit
 
     def _pop_locked(self) -> _Item | None:
         while self._queue:
@@ -1939,6 +1956,8 @@ class _Worker:
             return
         self.item_level = item.level
         self._duck(item.level)
+        if getattr(self.backend, "warm", None) is None:     # (the neural backend marks it after synthesis)
+            _latency_playing(item.text)
         for attempt in range(2):
             t_call = time.perf_counter()
             try:

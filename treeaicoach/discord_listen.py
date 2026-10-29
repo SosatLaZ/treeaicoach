@@ -50,7 +50,7 @@ MAX_SPEAKERS = 8
 RING_BLOCKS = 24                         # 6 s of a member's audio kept while waiting for the wake
 WAKE_AUDIO_BLOCKS = 16                   # the last 4 s go to Whisper with the question
 RING_QUESTION_MIN = WAKE_AUDIO_BLOCKS + 2
-WHISPER_MAX_WAIT_S = 6.0                 # a question waiting longer for the Whisper thread: Vosk's text instead
+WHISPER_MAX_WAIT_S = 3.0                 # a question waiting longer for the Whisper thread: Vosk's text instead
 
 
 # ------------------------------------------------------------------------------ packets
@@ -126,6 +126,7 @@ class Speaker:
         self.q_audio: list[bytes] = []
         self.seg: Any = None                  # Silero VAD of this member (question end)
         self.q_spoke = False
+        self.q_voice_t = 0.0                  # last block the VAD heard speech in (latency log)
         self.whisper_text = ""
         self._make_rec = make_rec
         self._clock = clock
@@ -181,6 +182,8 @@ class Speaker:
             self.q_audio.append(block)
             if self.seg is not None:
                 closed = self.seg.feed(block)
+                if self.seg.in_speech:
+                    self.q_voice_t = self._clock()
                 self.q_spoke = self.q_spoke or self.seg.in_speech or bool(closed)
                 if closed and len(self.q_audio) > RING_QUESTION_MIN:
                     return self._end()           # the VAD heard the question end
@@ -301,6 +304,14 @@ class Speaker:
             if tail:
                 self.q_parts.append(tail)
         q = va.strip_wake(" ".join(self.q_parts)).strip()
+        try:
+            from treeaicoach import voice_latency  # noqa: PLC0415
+
+            last = self.q_voice_t if self.q_voice_t > 0 else self.last_audio
+            voice_latency.begin("discord", vad_ms=max(0.0, self._clock() - last) * 1000)
+        except Exception:
+            pass
+        self.q_voice_t = 0.0
         audio, self.q_audio, seg, self.seg = b"".join(self.q_audio), [], self.seg, None
         self.engine.reset()
         if seg is not None and audio and self._submit is not None and self._stt() is not None:
@@ -489,6 +500,15 @@ class VoiceListener:
         """One question's audio to the Whisper thread; the result comes back through ``_results``."""
         try:
             def done(text: str | None, uid: str = uid, fallback: str = fallback) -> None:
+                try:
+                    from treeaicoach import voice_latency  # noqa: PLC0415
+
+                    w = self._get_worker()
+                    voice_latency.add("file", w.last_wait_ms)
+                    if text is not None:
+                        voice_latency.add("whisper", w.last_compute_ms)
+                except Exception:
+                    pass
                 self._results.append((uid, text, fallback))
                 if self._threaded:
                     try:
@@ -498,7 +518,11 @@ class VoiceListener:
             self.whisper_jobs += 1
             if self._stt is None:
                 va.refresh_game_names(self._get_worker().stt())     # the game's champions in the prompt
-            self._get_worker().submit(pcm, key=f"discord:{uid}", done=done, max_age=WHISPER_MAX_WAIT_S)
+            from treeaicoach import stt_local  # noqa: PLC0415
+
+            # the question of a confirmed wake: before every waiting wake confirmation, 3 s in the queue at most
+            self._get_worker().submit(pcm, key=f"discord:{uid}", done=done, max_age=WHISPER_MAX_WAIT_S,
+                                      prio=stt_local.PRIO_QUESTION)
             return True
         except Exception:
             log.debug("Discord listen: whisper submit failed", exc_info=True)
@@ -638,6 +662,9 @@ class VoiceListener:
             self.questions += 1
             self.status = f"Question : « {text} »"
             try:
+                from treeaicoach import voice_latency  # noqa: PLC0415
+
+                voice_latency.asked()
                 self.on_question(uid, text)
             except Exception:
                 log.debug("Discord listen: on_question failed", exc_info=True)

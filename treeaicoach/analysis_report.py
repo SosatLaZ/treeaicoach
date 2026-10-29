@@ -393,6 +393,11 @@ def voice_status(engine: Any = None, buf: ReportBuffer | None = None) -> dict:
     except Exception:
         out["whisper"] = None
     try:
+        from treeaicoach import voice_latency     # « Latence question : vad … · total … » per question
+        out["latency"] = voice_latency.snapshot()
+    except Exception:
+        pass
+    try:
         from treeaicoach import voice_assistant
         a = getattr(voice_assistant, "_SINGLETON", None)
         out["assistant"] = public_state(a, 25)

@@ -122,6 +122,10 @@ WAKE_LEADS = frozenset({"hey", "hei", "he", "eh", "et", "ey", "hay", "ai", "e", 
                         "tree", "tri", "trie", "tris"})
 WAKE_STRONG = frozenset({"coach", "coache", "coaches", "coachs", "coatch", "cotch", "kotch",
                          "coque", "coques", "coq", "coke", "cock", "cok"})   # Whisper often writes « hé coque »
+#: Whisper's spellings of « coach » (strong in a Whisper transcript); Vosk writes « coq » for « quelqu'un »,
+#: so for the Vosk recognizers they are weak (« hé coq » said alone, or confirmed)
+WAKE_WHISPER_SPELLINGS = frozenset({"coque", "coques", "coq", "coke", "cock", "cok"})
+VOSK_STRONG = WAKE_STRONG - WAKE_WHISPER_SPELLINGS
 WAKE_WEAK = frozenset({"coche", "couche", "cauche", "koch", "coches", "cocher", "caouche"})
 TREE_WORDS = frozenset({"tree", "tri", "trie", "tris"})
 _HEY = frozenset({"hey", "hei", "he", "eh", "ey", "hay"})     # « Hey Tree » alone (never « et tri »)
@@ -131,9 +135,9 @@ _COACH_LIKE = re.compile(r"^(?:c|k|q)(?:o|oa|au|ao|ô)t?(?:ch|sh)(?:e|es|s|ent)?
 
 def _coach_class(w: str) -> str:
     """``"strong"`` / ``"weak"`` / ``""`` for one normalized word."""
-    if w in WAKE_STRONG:
+    if w in VOSK_STRONG:
         return "strong"
-    if w in WAKE_WEAK or _COACH_LIKE.match(w):
+    if w in WAKE_WEAK or w in WAKE_WHISPER_SPELLINGS or _COACH_LIKE.match(w):
         return "weak"
     return ""
 WEAK_MIN_CONF = 0.6             # « hé coche » alone: both words at least this sure
@@ -148,14 +152,14 @@ def wake_kind(text: Any, confs: Sequence[float] | None = None, final: bool = Fal
     try:
         t = normalize(text).split()
         for i in range(1, len(t)):
-            if t[i] in WAKE_STRONG and t[i - 1] in WAKE_LEADS:
+            if t[i] in VOSK_STRONG and t[i - 1] in WAKE_LEADS:
                 return "strong"
         real = [w for w in t if w != "unk"]
         if final and len(real) == 2 and t[:2] == real and real[0] in WAKE_LEADS \
                 and (_coach_class(real[1]) or (real[1] in TREE_WORDS and real[0] in _HEY)) \
                 and (not confs or min(float(c) for c in confs[:2]) >= WEAK_MIN_CONF):
             return "weak"                   # « hé coche » / « hey tri » said alone
-        if t and t[0] in WAKE_STRONG:
+        if t and t[0] in VOSK_STRONG:
             c = confs[0] if confs else None
             if not final or c is None or float(c) >= BARE_MIN_CONF:
                 return "bare"
@@ -288,7 +292,8 @@ FREE_WAKE = True                # a free (any French word) recognizer runs next 
 #: alone (bare) needs a silence before it AND Whisper (or, Whisper not loaded, the free recognizer's
 #: « coach » followed by a question, not by « est / il / dit… »). Measured by tools/wake_bench.py.
 CONFIRM_WAIT_BLOCKS = 4         # 1 s for the free recognizer to write the words the grammar one heard
-CONFIRM_AUDIO_S = 2.0           # audio Whisper re-reads to confirm a candidate
+CONFIRM_AUDIO_S = 1.5           # audio Whisper re-reads to confirm a candidate (3.4.1: short = fast)
+CONFIRM_BEFORE_S = 1.0          # a free-recognizer-pending candidate: 1 s before it + 0.5 s after it
 FREE_TAIL_BLOCKS = 4            # the free recognizer is fed speech + 0.75 s after it (its utterance can end)
 FLUSH_S = 0.75                  # comfort noise fed when the audio stops (Discord sends nothing in silences)
 AGC_ENGAGE_RMS = 330.0          # speech peaks below -40 dBFS: a very quiet mic, brought up…
@@ -378,6 +383,7 @@ class WakeEngine:
         #: ``confirm(pcm) -> True / False / None`` = Whisper's verdict on the last audio (None: not loaded)
         self.confirm: Callable[[bytes], bool | None] | None = None
         self._ring: list[bytes] = []
+        self._cand: list[bytes] = []     # the audio around the pending candidate (Whisper's clip)
         self._pending = 0                # blocks left for the free recognizer to confirm a grammar wake
         self._pending_kind = ""
         self._quiet_before = True        # the utterance of the candidate started after a silence
@@ -411,10 +417,13 @@ class WakeEngine:
             ring_n = int(CONFIRM_AUDIO_S / BLOCK_S)
             if len(self._ring) > ring_n:
                 del self._ring[:-ring_n]
+            if self._pending and len(self._cand) < ring_n:
+                self._cand.append(blk)
             woke = self.det.feed(self.grammar_rec, blk)
             if woke and not self._pending and self.free_rec is not None:    # a candidate: to be confirmed
                 self._pending, self._pending_kind = CONFIRM_WAIT_BLOCKS + 1, self.det.last_kind or "?"
                 self._quiet_before = self.det._after_quiet or self.det_free._after_quiet
+                self._cand = self._ring[-max(1, int(CONFIRM_BEFORE_S / BLOCK_S)):]
             if self.det._quiet == 0:                 # speech: the free recognizer runs, and 0.75 s after
                 self._free_tail = FREE_TAIL_BLOCKS
             woke_f = False
@@ -461,7 +470,7 @@ class WakeEngine:
             return self._accept(self._pending_kind, "libre")
         if self._pending > 0:
             return False
-        v = self._whisper()                          # the free recognizer did not write it: Whisper decides
+        v = self._whisper(self._cand)                # the free recognizer did not write it: Whisper decides
         if v and (self._pending_kind != "bare" or self._quiet_before):
             return self._accept(self._pending_kind, "whisper")
         return self._drop(self._pending_kind, self.det.last_text)
@@ -473,13 +482,14 @@ class WakeEngine:
         if v is not None:
             return bool(v)
         t = normalize(words).split()
-        return len(t) >= 2 and t[0] in WAKE_STRONG and t[1] not in _ABOUT_COACH
+        return len(t) >= 2 and t[0] in VOSK_STRONG and t[1] not in _ABOUT_COACH
 
-    def _whisper(self) -> bool | None:
-        if self.confirm is None or not self._ring:
+    def _whisper(self, clip: list[bytes] | None = None) -> bool | None:
+        clip = clip or self._ring
+        if self.confirm is None or not clip:
             return None
         try:
-            v = self.confirm(b"".join(self._ring))
+            v = self.confirm(b"".join(clip[-int(CONFIRM_AUDIO_S / BLOCK_S):]))
             return None if v is None else bool(v)
         except Exception:
             log.debug("wake confirmation failed", exc_info=True)
@@ -541,6 +551,7 @@ class WakeEngine:
     def reset(self) -> None:
         self._pending = 0
         self._ring = []
+        self._cand = []
         for r in (self.grammar_rec, self.free_rec):
             if r is not None:
                 try:
@@ -626,10 +637,29 @@ def whisper_confirm(stt: Any, pcm: bytes) -> bool | None:
     if stt is None or not pcm:
         return None
     try:
-        try:
-            text = stt.transcribe(pcm, "", beam=1)
-        except TypeError:
-            text = stt.transcribe(pcm)
+        pcm = pcm[-int(CONFIRM_AUDIO_S * SAMPLE_RATE) * 2:]
+        t0 = time.monotonic()
+        from treeaicoach import stt_local  # noqa: PLC0415
+
+        if stt_local.is_app_transcriber(stt):
+            # THE Whisper thread, wake priority (the question of a confirmed wake still goes first), the
+            # small « base » model once downloaded; too late (busy with a question) = no verdict
+            job = stt_local.worker().transcribe_job(
+                pcm, key="", prompt="", beam=1, prio=stt_local.PRIO_WAKE, max_age=stt_local.WAKE_MAX_AGE_S,
+                timeout=stt_local.WAKE_TIMEOUT_S, stt=stt_local.wake_transcriber())
+            if job.text is None:
+                log.info("Écoute : Whisper trop occupé pour confirmer « Hey coach » (%.0f ms)",
+                         (time.monotonic() - t0) * 1000)
+                return None
+            text = job.text
+        else:
+            try:
+                text = stt.transcribe(pcm, "", beam=1)
+            except TypeError:
+                text = stt.transcribe(pcm)
+        from treeaicoach import voice_latency  # noqa: PLC0415
+
+        voice_latency.wake((time.monotonic() - t0) * 1000)
         ok = whisper_confirms(text)
         log.info("Écoute : Whisper confirme %s « Hey coach » (« %s »)", "" if ok else "PAS", str(text)[:60])
         return ok
@@ -1584,13 +1614,24 @@ class VoiceAssistant:
         w = self._stt()
         if w is None or not pcm:
             return ""
+        from treeaicoach import voice_latency  # noqa: PLC0415
+
         if self._stt_obj is not None and self._stt_injected:
-            return str(w.transcribe(pcm) or "")
+            t0 = time.monotonic()
+            text = str(w.transcribe(pcm) or "")
+            voice_latency.add("whisper", (time.monotonic() - t0) * 1000)
+            return text
         try:
             from treeaicoach import stt_local  # noqa: PLC0415
 
             refresh_game_names(w)
-            return stt_local.worker().transcribe(pcm, key="pc", timeout=20.0)
+            # the question pre-empts every waiting wake confirmation; 3 s in the queue at most, then Vosk
+            job = stt_local.worker().transcribe_job(pcm, key="pc", prio=stt_local.PRIO_QUESTION,
+                                                    max_age=stt_local.QUEUE_MAX_AGE_S,
+                                                    timeout=stt_local.QUESTION_TIMEOUT_S)
+            voice_latency.add("file", job.wait_ms)
+            voice_latency.add("whisper", job.compute_ms)
+            return job.text or ""
         except Exception:
             log.debug("whisper worker failed", exc_info=True)
             return ""
@@ -1634,13 +1675,20 @@ class VoiceAssistant:
     def _whisper_wake_check(self, mic: Mic, utt: bytes, vosk_text: str) -> bool:
         """A VAD utterance Vosk did NOT wake on but whose words look like « coach » / « tree » (another
         accent): Whisper reads it (<= :data:`WHISPER_WAKE_PER_MIN` a minute, CPU). True = woke + handled."""
-        if not wakeish(vosk_text) or len(utt) > 8 * SAMPLE_RATE * 2 or not self.whisper_ready():
-            return False
+        if not wakeish(" ".join(normalize(vosk_text).split()[:2])) or len(utt) > 8 * SAMPLE_RATE * 2 \
+                or not self.whisper_ready():
+            return False                      # ordinary talk (« comment », « contre »…) never reaches Whisper
         now = self._clock()
         self._ww_times = [t for t in self._ww_times if now - t < 60.0]
         if len(self._ww_times) >= WHISPER_WAKE_PER_MIN:
             return False
         self._ww_times.append(now)
+        head = utt[: int(CONFIRM_AUDIO_S * SAMPLE_RATE) * 2]
+        if len(utt) > len(head) and not whisper_confirm(self._stt(), head):
+            return False                      # the first 1.5 s (a wake confirmation) is not « hé coach »
+        from treeaicoach import voice_latency  # noqa: PLC0415
+
+        voice_latency.begin("pc")
         text = self._transcribe(utt)
         ok, rest = whisper_wake(text)
         if not ok:
@@ -1671,6 +1719,7 @@ class VoiceAssistant:
         chime_until = start + CHIME_S
         wait = 1.0 if len(carry.split()) >= MIN_QUESTION_WORDS else QUESTION_START_S
         got, started = b"", False
+        last_voice = self._clock()
         while not self._stop.is_set() and seg is not None:
             now = self._clock()
             if now - start >= QUESTION_MAX_S + 4.0:
@@ -1686,10 +1735,15 @@ class VoiceAssistant:
                 continue
             self.level = level_of(block_rms(block))
             us = seg.feed(block)
+            if seg.in_speech:
+                last_voice = self._clock()
             started = started or seg.in_speech or bool(us)
             if us:
                 got = us[0]
                 break
+        from treeaicoach import voice_latency  # noqa: PLC0415
+
+        voice_latency.begin("pc", vad_ms=(self._clock() - last_voice) * 1000 if got else 0.0)
         pcm = prefix + got
         text = self._transcribe(pcm) if pcm else ""
         self.whisper_text = text
@@ -1878,6 +1932,9 @@ class VoiceAssistant:
         self.status = f"Question : « {question} »"
         self._set_stage("answer")
         try:
+            from treeaicoach import voice_latency  # noqa: PLC0415
+
+            voice_latency.asked()
             self.on_question(question)
         except Exception:
             log.exception("Voice assistant: on_question failed")

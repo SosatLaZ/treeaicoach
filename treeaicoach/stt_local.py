@@ -654,6 +654,25 @@ def lol_vocab() -> list[tuple[str, str]]:
     return _VOCAB
 
 
+_WAKE_SPELLING = None
+
+
+def fix_wake_word(text: str) -> str:
+    """« Hé coque, … » / « coq » / « coke » at the START of a transcript -> « coach » (Whisper's frequent
+    spelling of the wake word; nowhere else: « une coque » stays). Never raises."""
+    global _WAKE_SPELLING
+    try:
+        if _WAKE_SPELLING is None:
+            import re  # noqa: PLC0415
+
+            _WAKE_SPELLING = re.compile(r"^(\s*(?:(?:h[ée]|hey|eh|et|ok)\b[\s,!.]*)?)(coques?|coqs?|cokes?|cocks?|cok)\b",
+                                        re.IGNORECASE)
+        return _WAKE_SPELLING.sub(lambda m: m.group(1) + ("Coach" if m.group(2)[0].isupper() else "coach"),
+                                  str(text or ""), count=1)
+    except Exception:
+        return text
+
+
 def fix_terms(text: str, game_names: Iterable[str] = (), threshold: float = 0.84) -> str:
     """Restore League names Whisper misspelled (« Kaïssa » -> « Kai'Sa », « Belvette » -> « Bel'Veth »):
     every 1-3 word window whose phonetic key is close to a name (difflib ratio >= ``threshold``; the
@@ -663,6 +682,7 @@ def fix_terms(text: str, game_names: Iterable[str] = (), threshold: float = 0.84
     import difflib  # noqa: PLC0415
 
     try:
+        text = fix_wake_word(text)
         words = str(text or "").split()
         if not words:
             return text
@@ -738,40 +758,81 @@ def clean_text(text: str) -> str:
 
 
 # ------------------------------------------------------------------ one worker for the whole app
-class Job:
-    """One utterance waiting for Whisper. ``text`` is None until done (or dropped: stale / replaced)."""
+#: job priorities (lower first): the question of a confirmed wake pre-empts everything waiting, then the
+#: wake confirmations; FIFO within a priority
+PRIO_QUESTION, PRIO_WAKE = 0, 1
+#: an item that waited longer than this for the Whisper thread is dropped (the caller keeps Vosk's text /
+#: the grammar's verdict): a late transcription only delays the answer (3.4.1: « 2 minutes » report)
+QUEUE_MAX_AGE_S = 3.0
+WAKE_MAX_AGE_S = 1.5             # a wake confirmation is only worth it right away
+WAKE_TIMEOUT_S = 2.5             # the caller (wake engine) waits this long at most, then decides alone
+QUESTION_TIMEOUT_S = 8.0         # the PC assistant waits this long at most for its question's text
+#: the wake confirmation runs on this smaller model once it is downloaded (x3 faster, enough to read
+#: « hé coach »); the question keeps :data:`DEFAULT_MODEL`
+WAKE_MODEL = "base"
 
-    __slots__ = ("pcm", "prompt", "key", "done", "t", "max_age", "text", "dropped", "ev", "beam")
+
+class Job:
+    """One utterance waiting for Whisper. ``text`` is None until done (or dropped: stale / replaced).
+    ``wait_ms`` / ``compute_ms``: queue wait and transcription time (latency log)."""
+
+    __slots__ = ("pcm", "prompt", "key", "done", "t", "max_age", "text", "dropped", "ev", "beam", "prio",
+                 "stt", "wait_ms", "compute_ms", "seq")
 
     def __init__(self, pcm: bytes, prompt: str | None, key: str, done: Callable[[str | None], None] | None,
-                 t: float, max_age: float) -> None:
+                 t: float, max_age: float, prio: int = PRIO_QUESTION) -> None:
         self.pcm, self.prompt, self.key, self.done, self.t, self.max_age = pcm, prompt, key, done, t, max_age
         self.beam: int | None = None
+        self.prio = int(prio)
+        self.stt: Any = None                 # another transcriber for this job (the wake model)
         self.text: str | None = None
         self.dropped = False
+        self.wait_ms = 0.0
+        self.compute_ms = 0.0
+        self.seq = 0
         self.ev = threading.Event()
 
 
+def _below_normal_priority() -> None:
+    """The Whisper thread yields to the game (Windows: THREAD_PRIORITY_BELOW_NORMAL). Never raises."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes  # noqa: PLC0415
+
+        k = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        k.SetThreadPriority(k.GetCurrentThread(), -1)
+    except Exception:
+        log.debug("thread priority not set", exc_info=True)
+
+
 class WhisperWorker:
-    """ONE thread runs every Whisper transcription of the app (PC mic, each Discord speaker): a queue, at
-    most one transcription at a time (the CPU is the game's), stale items dropped (waited longer than their
-    ``max_age``: the player moved on), a newer item for the same ``key`` (speaker) replaces the waiting one.
+    """ONE thread runs every Whisper transcription of the app (PC mic, each Discord speaker, the wake
+    confirmations): a priority queue (the question of a confirmed wake first, then wake confirmations),
+    at most one transcription at a time (the CPU is the game's; the thread runs below normal priority),
+    stale items dropped (waited longer than their ``max_age``, :data:`QUEUE_MAX_AGE_S` by default: the
+    player moved on), a newer item for the same ``key`` (speaker) replaces the waiting one.
     ``done(text | None)`` runs on the worker thread (None = dropped / failed: the caller keeps Vosk's text).
-    ``threaded=False`` (tests): :meth:`submit` transcribes at once in the caller's thread."""
+    ``threaded=False`` (tests): :meth:`submit` transcribes at once in the caller's thread; ``autostart=False``
+    (simulation tests): jobs wait until :meth:`step` is called."""
 
     MAX_WAITING = 4
 
-    def __init__(self, stt: Any = None, *, threaded: bool = True, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(self, stt: Any = None, *, threaded: bool = True, clock: Callable[[], float] = time.monotonic,
+                 autostart: bool = True) -> None:
         self._stt_obj = stt
         self._threaded = threaded
+        self._autostart = autostart
         self._clock = clock
         self._jobs: list[Job] = []
         self._cv = threading.Condition()
         self._thread: threading.Thread | None = None
+        self._seq = 0
         self.busy = False
         self.done_n = 0
         self.dropped = 0
         self.last_wait_ms = 0.0
+        self.last_compute_ms = 0.0
 
     def stt(self) -> Any:
         return self._stt_obj if self._stt_obj is not None else transcriber()
@@ -781,8 +842,11 @@ class WhisperWorker:
             return len(self._jobs) + (1 if self.busy else 0)
 
     def submit(self, pcm: bytes, *, key: str = "", done: Callable[[str | None], None] | None = None,
-               prompt: str | None = None, max_age: float = 8.0) -> Job:
-        return self._submit_job(Job(pcm, prompt, key, done, self._clock(), max_age))
+               prompt: str | None = None, max_age: float = QUEUE_MAX_AGE_S, prio: int = PRIO_QUESTION,
+               beam: int | None = None, stt: Any = None) -> Job:
+        job = Job(pcm, prompt, key, done, self._clock(), max_age, prio)
+        job.beam, job.stt = beam, stt
+        return self._submit_job(job)
 
     def _submit_job(self, job: Job) -> Job:
         key = job.key
@@ -791,57 +855,86 @@ class WhisperWorker:
             return job
         drop: list[Job] = []
         with self._cv:
+            self._seq += 1
+            job.seq = self._seq
             if key:
                 drop = [j for j in self._jobs if j.key == key]
                 self._jobs = [j for j in self._jobs if j.key != key]
             self._jobs.append(job)
+            self._jobs.sort(key=lambda j: (j.prio, j.seq))
             while len(self._jobs) > self.MAX_WAITING:
-                drop.append(self._jobs.pop(0))
+                drop.append(self._jobs.pop())             # the least urgent, newest
             self._cv.notify()
-            if self._thread is None or not self._thread.is_alive():
+            if self._autostart and (self._thread is None or not self._thread.is_alive()):
                 self._thread = threading.Thread(target=self._run, name="TreeAI-whisper", daemon=True)
                 self._thread.start()
         for j in drop:
             self._finish(j, None, dropped=True)
         return job
 
-    def transcribe(self, pcm: bytes, *, key: str = "", prompt: str | None = None, timeout: float = 20.0,
-                   beam: int | None = None) -> str:
-        """Blocking helper (the PC assistant's own thread): queued like the others, waits for its turn."""
-        job = Job(pcm, prompt, key, None, self._clock(), timeout)
-        job.beam = beam
+    def transcribe_job(self, pcm: bytes, *, key: str = "", prompt: str | None = None,
+                       timeout: float = QUESTION_TIMEOUT_S, beam: int | None = None, prio: int = PRIO_QUESTION,
+                       max_age: float = QUEUE_MAX_AGE_S, stt: Any = None) -> Job:
+        """Blocking helper (the PC assistant's own thread): queued like the others, waits for its turn
+        (``timeout`` at most: then the job is abandoned, ``text`` None)."""
+        job = Job(pcm, prompt, key, None, self._clock(), max_age, prio)
+        job.beam, job.stt = beam, stt
         job = self._submit_job(job)
-        job.ev.wait(timeout)
-        return job.text or ""
+        if not job.ev.wait(timeout):
+            with self._cv:
+                if job in self._jobs:                     # not started: never run it for nobody
+                    self._jobs.remove(job)
+        return job
+
+    def transcribe(self, pcm: bytes, *, key: str = "", prompt: str | None = None,
+                   timeout: float = QUESTION_TIMEOUT_S, beam: int | None = None, prio: int = PRIO_QUESTION,
+                   max_age: float = QUEUE_MAX_AGE_S) -> str:
+        return self.transcribe_job(pcm, key=key, prompt=prompt, timeout=timeout, beam=beam, prio=prio,
+                                   max_age=max_age).text or ""
+
+    def step(self, wait: float = 0.0) -> bool:
+        """Run (or drop) the most urgent waiting job. False when none waited."""
+        with self._cv:
+            if not self._jobs and wait > 0:
+                self._cv.wait(wait)
+            if not self._jobs:
+                return False
+            job = self._jobs.pop(0)
+            self.busy = True
+        try:
+            age = self._clock() - job.t
+            if age > job.max_age:
+                log.info("Whisper : %s abandonnée (attendait depuis %.1f s)",
+                         "confirmation" if job.prio == PRIO_WAKE else "phrase", age)
+                job.wait_ms = self.last_wait_ms = age * 1000
+                job.compute_ms = self.last_compute_ms = 0.0
+                self._finish(job, None, dropped=True)
+            else:
+                self._execute(job)
+        finally:
+            with self._cv:
+                self.busy = False
+        return True
 
     def _run(self) -> None:
+        _below_normal_priority()
         while True:
-            with self._cv:
-                if not self._jobs:
-                    self._cv.wait(60.0)
+            if not self.step(60.0):
+                with self._cv:
                     if not self._jobs:
                         self._thread = None
                         return
-                job = self._jobs.pop(0)
-                self.busy = True
-            try:
-                if self._clock() - job.t > job.max_age:
-                    log.info("Whisper : phrase abandonnée (attendait depuis %.1f s)", self._clock() - job.t)
-                    self._finish(job, None, dropped=True)
-                else:
-                    self._execute(job)
-            finally:
-                with self._cv:
-                    self.busy = False
 
     def _execute(self, job: Job) -> None:
-        self.last_wait_ms = (self._clock() - job.t) * 1000
+        t0 = self._clock()
+        job.wait_ms = self.last_wait_ms = (t0 - job.t) * 1000
         try:
-            stt = self.stt()
+            stt = job.stt if job.stt is not None else self.stt()
             text = stt.transcribe(job.pcm, job.prompt, beam=job.beam) if job.beam else stt.transcribe(job.pcm, job.prompt)
         except Exception:
             log.warning("Whisper : transcription échouée", exc_info=True)
             text = None
+        job.compute_ms = self.last_compute_ms = (self._clock() - t0) * 1000
         self._finish(job, text)
 
     def _finish(self, job: Job, text: str | None, dropped: bool = False) -> None:
@@ -859,8 +952,10 @@ class WhisperWorker:
 
 
 _SINGLETON: WhisperSTT | None = None
+_WAKE: WhisperSTT | None = None
 _WORKER: WhisperWorker | None = None
 _SINGLETON_LOCK = threading.Lock()
+_wake_loading = False
 
 
 def transcriber() -> WhisperSTT:
@@ -871,8 +966,44 @@ def transcriber() -> WhisperSTT:
         return _SINGLETON
 
 
+def is_app_transcriber(stt: Any) -> bool:
+    return stt is not None and stt is _SINGLETON
+
+
+def wake_transcriber() -> WhisperSTT | None:
+    """The wake-confirmation model (:data:`WAKE_MODEL`, ~150 MB once) when loaded; its download / load
+    starts in the background the first time (once the main model works). None meanwhile: the main model
+    confirms. Never raises."""
+    global _WAKE, _wake_loading
+    try:
+        main = _SINGLETON
+        if WAKE_MODEL == getattr(main, "name", WAKE_MODEL):
+            return None
+        with _SINGLETON_LOCK:
+            if _WAKE is None:
+                _WAKE = WhisperSTT(WAKE_MODEL)
+            w = _WAKE
+            if w.ready():
+                w.names = list(getattr(main, "names", []) or [])
+                return w
+            if _wake_loading or main is None or not main.ready() or not w.available_soon():
+                return None
+            _wake_loading = True
+
+        def _go() -> None:
+            global _wake_loading
+            try:
+                w.load()
+            finally:
+                _wake_loading = False
+        threading.Thread(target=_go, name="TreeAI-whisper-wake-load", daemon=True).start()
+    except Exception:
+        log.debug("wake transcriber unavailable", exc_info=True)
+    return None
+
+
 def worker() -> WhisperWorker:
-    """The app's single Whisper thread (PC mic + every Discord speaker)."""
+    """The app's single Whisper thread (PC mic + every Discord speaker + the wake confirmations)."""
     global _WORKER
     with _SINGLETON_LOCK:
         if _WORKER is None:
