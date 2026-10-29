@@ -1,6 +1,7 @@
 """« Écran de chargement » card: what is worth knowing about the ten players while the game loads.
 
-Shown in a small top-most overlay window ONLY during the loading screen (rule below), on the Accueil
+Shown as small badges ON the players' cards of the League loading screen, ONLY during the loading screen
+(rule below; no panel at all in game), in full on the Accueil
 page (loading screen and game), and in the Discord rank announcement
 (:func:`treeaicoach.player_intel.ranks_tick`). By champion, never a name or an id.
 
@@ -14,9 +15,12 @@ Overlay window (:class:`LoadingController`, :func:`overlay_verdict`):
   :data:`STARTED_GRACE_S` after it; at the latest :data:`SHOW_MAX_S` after detection; as soon as the
   overlay hotkey hides the visual indicators; and when the game ends (no game: nothing shown).
 
-Layout (:func:`make_window`, DESIGN.md graphite, one accent): two columns Alliés | Ennemis, one row per
-player (round champion icon, champion, lane, rank badge, one short tag: OTP / 1re partie / série /
-main banni), then the 5 matchups as 5 short lines. 420 x 300 px at 1080p, scaled with the screen height.
+Badges (:func:`make_window`, :func:`build_badges`, DESIGN.md graphite pill, one accent, no caps): a
+full-screen transparent click-through window draws, at the top of each of the 10 splash cards (two rows
+of 5: the gameflow session's ``teamOne`` on top, each team in its list order, :func:`card_rects`), the
+short rank and win rate ("P2 · 54 %"), one tag (OTP / 1re partie / série de N / main banni) and, on my
+lane opponent's card, the lane verdict ("Darius gagne niv 1-3"). Any doubt about the order (missing
+slot, two players on one card, an ally on the enemy row): no badge at all, never a wrong one.
 
 Privacy (same rules as :mod:`treeaicoach.player_intel`, whose data this only formats): the data exists only
 after champion select, in memory, shown by champion; nothing of it is logged or written. Pure functions +
@@ -47,7 +51,6 @@ NO_INFO = "pas d'info du client"
 LOADING = "chargement…"
 
 #: base size of the overlay at 1080p (logical px) and the scale bounds (screen height / 1080)
-BASE_W, BASE_H = 420, 300
 SCALE_MIN, SCALE_MAX = 0.8, 1.6
 
 
@@ -71,6 +74,20 @@ class Row:
 
 
 @dataclass(frozen=True)
+class Badge:
+    """What is drawn on one player's card of the loading screen."""
+    team: int                   # 1 = top row (session teamOne), 2 = bottom row
+    slot: int                   # 0..4, left to right
+    alias: str
+    rank: str = ""              # "P2 · 54 %" / "non classé" / "" (unknown)
+    tag: str = ""               # "OTP" / "1re partie" / "série de 3 défaites" / "main banni"
+    tone: str = ""              # "good" / "warn" / ""
+    verdict: str = ""           # my lane opponent only: "Darius gagne niv 1-3"
+    verdict_tone: str = ""
+    state: str = "ok"           # "ok" / "loading" / "none"
+
+
+@dataclass(frozen=True)
 class LoadingCard:
     enemies: tuple[EnemyBlock, ...] = ()
     allies: tuple[str, ...] = ()
@@ -81,6 +98,7 @@ class LoadingCard:
     enemy_rows: tuple[Row, ...] = ()
     duels: tuple[tuple[str, str], ...] = ()   # ("Top", "Garen vs Darius · Darius gagne niv 1-3"), 5 at most
     teams_known: bool = True    # False: my team is unknown (the card says so, the overlay stays hidden)
+    badges: tuple[Badge, ...] = ()   # one per known card of the loading screen (empty: order uncertain)
 
     def lines(self) -> list[str]:
         """Plain text lines (Accueil card / tests)."""
@@ -249,6 +267,88 @@ def player_row(p: Any, bans: Any = frozenset(), resolve: Callable[[int], tuple[s
     return Row(p.alias, p.name, LANE_FR.get(p.role, ""), rank, tag, tone, _state(p, complete))
 
 
+TIER_SHORT = {"IRON": "F", "BRONZE": "B", "SILVER": "A", "GOLD": "O", "PLATINUM": "P", "EMERALD": "E",
+              "DIAMOND": "D", "MASTER": "M", "GRANDMASTER": "GM", "CHALLENGER": "C"}
+
+
+def badge_rank(p: Any) -> str:
+    """"P2 · 54 %" / "M 120 LP · 61 %" / "non classé" / "" (not read yet)."""
+    if not getattr(p, "ranked_loaded", False):
+        return ""
+    if not p.tier or p.tier not in TIER_SHORT:
+        return "non classé"
+    head = TIER_SHORT[p.tier] + (f" {p.lp} LP" if p.tier in ("MASTER", "GRANDMASTER", "CHALLENGER")
+                                 else (str(p.division) if p.division else ""))
+    n = int(p.wins or 0) + int(p.losses or 0)
+    return head + (f" · {round(100 * p.wins / n)} %" if n else "")
+
+
+def _badge_tag(p: Any, ally: bool, banned: str) -> tuple[str, str]:
+    """The single tag of a card, lower case: otp / 1re partie / série de N / main banni."""
+    good, warn = ("", "") if ally else ("good", "warn")
+    if banned:
+        return "main banni", good
+    if p.mastery_loaded and p.champ_points == 0:
+        return "1re partie", good
+    if p.history_loaded and p.recent_all >= 5 and p.champ_all / p.recent_all >= 0.6:
+        return "OTP", warn
+    if p.history_loaded and p.streak <= -2:
+        return f"série de {-p.streak} défaites", good
+    if p.history_loaded and p.streak >= 3:
+        return f"série de {p.streak} victoires", warn
+    return "", ""
+
+
+def _verdict(me: tuple[str, str, str] | None, opp: Any) -> tuple[str, str]:
+    """(first clause of my lane's duel, tone) for my lane opponent's card."""
+    try:
+        from treeaicoach import draft_edge
+
+        if not me or not me[0]:
+            return "", ""
+        line = draft_edge.duel_line(me[0], me[1], opp.alias, opp.name).split(", ")[0]
+        if not line:
+            return "", ""
+        if line.startswith(me[1] or me[0]):
+            return line, "good"
+        return line, ("warn" if line.startswith(opp.name) else "")
+    except Exception:
+        return "", ""
+
+
+def build_badges(ps: Iterable[Any], bans: Any, me: tuple[str, str, str] | None, me_slot: tuple[int, int],
+                 complete: bool, resolve: Callable[[int], tuple[str, str] | None]) -> tuple[Badge, ...]:
+    """One badge per card. Cards are placed by the gameflow session's team order (teamOne = top row,
+    list index = card from the left). Any doubt (a player without slot, two players on one card, an ally
+    on the enemy row...) gives NO badge at all rather than a badge on the wrong player."""
+    ps = list(ps)
+    if not ps:
+        return ()
+    my_team = me_slot[0] if me_slot and me_slot[0] in (1, 2) else 0
+    ally_teams = {p.team for p in ps if p.ally}
+    enemy_teams = {p.team for p in ps if not p.ally}
+    if not my_team:
+        my_team = next(iter(ally_teams)) if len(ally_teams) == 1 else (3 - next(iter(enemy_teams))
+                                                                       if len(enemy_teams) == 1 else 0)
+    if my_team not in (1, 2) or ally_teams - {my_team} or enemy_teams - {3 - my_team}:
+        return ()
+    taken: set[tuple[int, int]] = set()
+    if me_slot and me_slot[0] in (1, 2) and 0 <= me_slot[1] < TEAM_SIZE:
+        taken.add(tuple(me_slot))
+    my_role = me[2] if me else ""
+    out = []
+    for p in ps:
+        k = (p.team, p.slot)
+        if p.team not in (1, 2) or not 0 <= p.slot < TEAM_SIZE or k in taken:
+            return ()
+        taken.add(k)
+        banned = "" if p.ally else _banned_main(p, bans, resolve)
+        tag, tone = _badge_tag(p, p.ally, banned)
+        v, vt = _verdict(me, p) if (not p.ally and my_role and p.role == my_role) else ("", "")
+        out.append(Badge(p.team, p.slot, p.alias, badge_rank(p), tag, tone, v, vt, _state(p, complete)))
+    return tuple(sorted(out, key=lambda b: (b.team, b.slot)))
+
+
 def _duels(allies: Iterable[Any], enemies: Iterable[Any], my_role: str = "",
            with_tip: bool = True) -> list[tuple[str, str, str]]:
     """(role, lane label, text) per lane with both sides known, in lane order."""
@@ -299,7 +399,8 @@ def _dedupe(players: Iterable[Any], skip_alias: str = "") -> list[Any]:
 
 def build(players: Iterable[Any], bans: frozenset[int] | set[int] = frozenset(),
           me: tuple[str, str, str] | None = None, complete: bool = False,
-          resolve: Callable[[int], tuple[str, str] | None] | None = None) -> LoadingCard | None:
+          resolve: Callable[[int], tuple[str, str] | None] | None = None,
+          me_slot: tuple[int, int] = (0, -1)) -> LoadingCard | None:
     """The card from :meth:`PlayerIntelWatcher.snapshot` (+ the bans, + my (alias, name, role)). None
     without players. Pure, never raises."""
     try:
@@ -334,9 +435,14 @@ def build(players: Iterable[Any], bans: frozenset[int] | set[int] = frozenset(),
             wc = cr.sentence if cr is not None else ""
         except Exception:
             log.debug("win condition failed", exc_info=True)
+        try:
+            badges = build_badges(enemies + allies, bans, me, me_slot, complete, resolve)
+        except Exception:
+            log.debug("badges failed", exc_info=True)
+            badges = ()
         return LoadingCard(blocks, tuple(ally_line(p, complete) for p in allies), matchups, wc, complete,
                            tuple(ally_rows), tuple(player_row(p, bans, resolve, complete) for p in enemies),
-                           duels)
+                           duels, badges=badges)
     except Exception:
         log.debug("loading card failed", exc_info=True)
         return None
@@ -373,7 +479,11 @@ def from_watcher(w: Any, bans: frozenset[int] | None = None) -> LoadingCard | No
             r = _default_resolver()(cid)
             if r:
                 me = (r[0], r[1] or r[0], role)
-        return build(players, bans, me, complete=w.ready())
+        try:
+            ms = tuple(w.me_slot())
+        except Exception:
+            ms = (0, -1)
+        return build(players, bans, me, complete=w.ready(), me_slot=ms)
     except Exception:
         log.debug("loading card from watcher failed", exc_info=True)
         return None
@@ -454,9 +564,6 @@ C_MUTED = "#A4ADA8"
 C_DIM = "#7E8782"
 C_ACCENT = "#9BD84A"
 C_WARN = "#E8A23A"
-C_RAISED = "#191D1B"
-C_ALLY = "#4A90D9"
-C_ENEMY = "#E5484D"
 
 
 def scale_for(height: float) -> float:
@@ -467,32 +574,58 @@ def scale_for(height: float) -> float:
         return 1.0
 
 
-def _icon_image(alias: str) -> Any:
-    """Round champion portrait as a QImage (bundled / cached icon), None when absent."""
-    try:
-        from PySide6 import QtGui
+#: Loading-screen card grid, in units of the screen height of a 16:9 screen (measured on the 2019+
+#: loading screen: 10 splash cards of 308 x 560 art, two rows of 5, team one on top, centred). The UI
+#: scales with the height and stays centred, so 16:10 / 21:9 / pillar-boxed screens use the same numbers
+#: around the centre (``unit`` = min(height, width / GRID_MIN_ASPECT)).
+CARD_W = 0.245
+CARD_H = 0.445
+CARD_PITCH = 0.26
+ROW_Y = (0.022, 0.528)          # top of each row, from the top of a 16:9 screen
+GRID_MIN_ASPECT = 1.33
+BADGE_TOP = 0.06                # badge top, from the card's top, in card heights (below the frame's crest)
+BADGE_W = 0.88                  # badge width, in card widths
 
-        from treeaicoach import champions
 
-        img = champions.get_default_db().load_icon(alias)
-        if img is None:
-            return None
-        h, w = img.shape[:2]
-        buf = bytes(img.tobytes())
-        return QtGui.QImage(buf, w, h, 4 * w, QtGui.QImage.Format.Format_RGBA8888).copy()
-    except Exception:
-        return None
+def card_rects(width: float, height: float) -> dict[tuple[int, int], tuple[float, float, float, float]]:
+    """(team 1|2, slot 0..4) -> (x, y, w, h) of that card on a ``width`` x ``height`` screen."""
+    u = min(float(height), float(width) / GRID_MIN_ASPECT)
+    grid_w = (4 * CARD_PITCH + CARD_W) * u
+    x0 = (float(width) - grid_w) / 2
+    y_mid = float(height) / 2
+    out = {}
+    for team, ry in ((1, ROW_Y[0]), (2, ROW_Y[1])):
+        y = y_mid + (ry - 0.5) * u
+        for slot in range(TEAM_SIZE):
+            out[(team, slot)] = (x0 + slot * CARD_PITCH * u, y, CARD_W * u, CARD_H * u)
+    return out
+
+
+def badge_lines(b: Badge) -> list[tuple[str, str, bool]]:
+    """(text, colour, bold) lines of one badge, top to bottom (nothing: no badge)."""
+    tone = {"good": C_ACCENT, "warn": C_WARN}
+    out = []
+    if b.rank:
+        out.append((b.rank, C_TEXT, True))
+    elif b.state == "loading":
+        out.append(("lecture…", C_DIM, False))
+    if b.tag:
+        out.append((b.tag, tone.get(b.tone, C_MUTED), False))
+    if b.verdict:
+        out.append((b.verdict, tone.get(b.verdict_tone, C_MUTED), True))
+    return out
 
 
 def make_window(parent: Any = None) -> Any:
-    """A top-most, click-through, never-activated translucent window (PySide6); None without Qt."""
+    """A full-screen, top-most, click-through, never-activated transparent window that draws one small
+    badge on each player's card of the loading screen (PySide6); None without Qt."""
     try:
         from PySide6 import QtCore, QtGui, QtWidgets
     except Exception:
         return None
     Qt = QtCore.Qt
 
-    class LoadingWindow(QtWidgets.QWidget):
+    class BadgeWindow(QtWidgets.QWidget):
         def __init__(self) -> None:
             super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
                              | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowTransparentForInput
@@ -504,18 +637,16 @@ def make_window(parent: Any = None) -> Any:
             self.setWindowTitle("TreeAI · Écran de chargement")
             self.card: LoadingCard | None = None
             self.s = 1.0
-            self._icons: dict[str, Any] = {}
             self._geo: Any = None
             self._pinned: Any = None
             self.place()
 
-        # ---------------------------------------------------------- geometry
         def place(self, geo: Any = None) -> None:
-            """Size from the screen height, top-left corner of the screen (the loading screen's cards
-            are centred). Only moves when the screen changed (no jump on updates)."""
+            """Covers the whole screen (the game's, full screen or borderless). Only moves when the screen
+            changed."""
             try:
                 if geo is not None:
-                    self._pinned = geo                   # a given screen (tests, the game's monitor) stays
+                    self._pinned = geo
                 geo = geo if geo is not None else self._pinned
                 if geo is None:
                     scr = self.screen() or QtWidgets.QApplication.primaryScreen()
@@ -524,12 +655,10 @@ def make_window(parent: Any = None) -> Any:
                 if key == self._geo:
                     return
                 self._geo = key
-                self.s = scale_for(geo.height())
-                self.setFixedSize(round(BASE_W * self.s), round(BASE_H * self.s))
-                m = round(16 * self.s)
-                self.move(geo.x() + m, geo.y() + m)
+                self.s = scale_for(min(geo.height(), geo.width() / GRID_MIN_ASPECT))
+                self.setGeometry(geo.x(), geo.y(), geo.width(), geo.height())
             except Exception:
-                log.debug("loading window place failed", exc_info=True)
+                log.debug("badge window place failed", exc_info=True)
 
         def set_card(self, card: LoadingCard) -> None:
             self.place()
@@ -542,7 +671,6 @@ def make_window(parent: Any = None) -> Any:
             super().showEvent(ev)
             _no_activate(self)
 
-        # ---------------------------------------------------------- painting
         def _font(self, px: float, bold: bool = False) -> Any:
             f = QtGui.QFont(self.font())
             for fam in ("Inter", "Segoe UI Variable", "Segoe UI"):
@@ -553,133 +681,68 @@ def make_window(parent: Any = None) -> Any:
             f.setWeight(QtGui.QFont.Weight.DemiBold if bold else QtGui.QFont.Weight.Normal)
             return f
 
-        def _text(self, p: Any, x: float, y: float, w: float, h: float, text: str, color: str, font: Any,
-                  align: Any = None) -> float:
-            """Draws ``text`` elided to ``w``; returns the width used."""
-            p.setFont(font)
-            p.setPen(QtGui.QColor(color))
-            fm = QtGui.QFontMetrics(font)
-            t = text if fm.horizontalAdvance(text) <= w + 1 else \
-                fm.elidedText(text, Qt.TextElideMode.ElideRight, max(0, int(w)))
-            al = align if align is not None else (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            p.drawText(QtCore.QRectF(x, y, w, h), int(al), t)
-            return float(fm.horizontalAdvance(t))
-
-        def _icon(self, alias: str) -> Any:
-            if alias not in self._icons:
-                self._icons[alias] = _icon_image(alias)
-            return self._icons[alias]
-
         def paintEvent(self, _ev: Any) -> None:  # noqa: N802
             p = QtGui.QPainter(self)
             try:
                 p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
                 p.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing, True)
-                p.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
-                self._paint(p)
+                card = self.card
+                if card is None or not card.badges:
+                    return
+                rects = card_rects(self.width(), self.height())
+                for b in card.badges:
+                    r = rects.get((b.team, b.slot))
+                    if r is not None:
+                        self._badge(p, r, b)
             except Exception:
-                log.debug("loading window paint failed", exc_info=True)
+                log.debug("badge window paint failed", exc_info=True)
             finally:
                 p.end()
 
-        def _paint(self, p: Any) -> None:
-            s, W, H = self.s, float(self.width()), float(self.height())
+        def _badge(self, p: Any, r: tuple[float, float, float, float], b: Badge) -> None:
+            lines = badge_lines(b)
+            if not lines:
+                return
+            s = self.s
+            x, y, w, h = r
+            bw = w * BADGE_W
+            pad_x, pad_y, lh = 8 * s, 5 * s, 17 * s
+            fonts = [self._font(13 if bold and i == 0 else 12, bold) for i, (_t, _c, bold) in enumerate(lines)]
+            tw = bw - 2 * pad_x
+            wrapped: list[tuple[str, str, Any]] = []
+            for f, (t, c, _b) in zip(fonts, lines):
+                fm = QtGui.QFontMetrics(f)
+                if fm.horizontalAdvance(t) > tw and " " in t:       # too long: two lines, cut at a space
+                    words, first = t.split(" "), ""
+                    for i in range(len(words) - 1, 0, -1):
+                        if fm.horizontalAdvance(" ".join(words[:i])) <= tw:
+                            first = " ".join(words[:i])
+                            wrapped += [(first, c, f), (" ".join(words[i:]), c, f)]
+                            break
+                    if first:
+                        continue
+                wrapped.append((t, c, f))
+            need = max(QtGui.QFontMetrics(f).horizontalAdvance(t) for t, _c, f in wrapped)
+            bw = min(bw, need + 2 * pad_x + 2)
+            bh = len(wrapped) * lh + 2 * pad_y
+            box = QtCore.QRectF(round(x + (w - bw) / 2) + 0.5, round(y + h * BADGE_TOP) + 0.5, round(bw), round(bh))
             path = QtGui.QPainterPath()
-            path.addRoundedRect(QtCore.QRectF(0.5, 0.5, W - 1, H - 1), 12 * s, 12 * s)
+            path.addRoundedRect(box, 6 * s, 6 * s)
             p.fillPath(path, QtGui.QColor(*C_BG))
             p.setPen(QtGui.QPen(QtGui.QColor(C_LINE), 1))
             p.drawPath(path)
-            card = self.card
-            if card is None:
-                return
-            pad, gap = 12 * s, 12 * s
-            colw = (W - 2 * pad - gap) / 2
-            y = pad
-            head = self._font(12, True)
-            for i, (title, dot) in enumerate((("Alliés", C_ALLY), ("Ennemis", C_ENEMY))):
-                x = pad + i * (colw + gap)
-                p.setPen(Qt.PenStyle.NoPen)
-                p.setBrush(QtGui.QColor(dot))
-                p.drawEllipse(QtCore.QRectF(x, y + 7 * s, 6 * s, 6 * s))
-                used = self._text(p, x + 11 * s, y, colw - 11 * s, 20 * s, title, C_TEXT, head)
-                if i == 1 and not card.complete:
-                    self._text(p, x + 11 * s + used, y, colw - used - 11 * s, 20 * s, "  · lecture",
-                               C_DIM, self._font(12))
-            y += 22 * s
-            rh = 32 * s
-            for i, rows in enumerate((card.ally_rows, card.enemy_rows)):
-                x = pad + i * (colw + gap)
-                for j, r in enumerate(rows[:TEAM_SIZE]):
-                    self._row(p, x, y + j * rh, colw, rh, r)
-            y += TEAM_SIZE * rh + 4 * s
-            p.setPen(QtGui.QPen(QtGui.QColor(C_LINE), 1))
-            p.drawLine(QtCore.QPointF(pad, y), QtCore.QPointF(W - pad, y))
-            y += 6 * s
-            lh = 15.5 * s
-            small, lane_f = self._font(12), self._font(12, True)
-            lfm = QtGui.QFontMetrics(lane_f)
-            lane_w = max([lfm.horizontalAdvance(lane) for lane, _t in card.duels] + [0]) + 8 * s
-            for lane, text in card.duels[:TEAM_SIZE]:
-                self._text(p, pad, y, lane_w, lh, lane, C_DIM, lane_f)
-                self._text(p, pad + lane_w, y, W - 2 * pad - lane_w, lh, text, C_MUTED, small)
-                y += lh
-            if not card.duels:
-                self._text(p, pad, y, W - 2 * pad, lh, "Voies : en attente des postes", C_DIM, small)
+            ty = box.y() + pad_y
+            for t, c, f in wrapped:
+                fm = QtGui.QFontMetrics(f)
+                tw = box.width() - 2 * pad_x
+                if fm.horizontalAdvance(t) > tw:
+                    t = fm.elidedText(t, Qt.TextElideMode.ElideRight, max(0, int(tw)))
+                p.setFont(f)
+                p.setPen(QtGui.QColor(c))
+                p.drawText(QtCore.QRectF(box.x() + pad_x, ty, tw, lh), int(Qt.AlignmentFlag.AlignCenter), t)
+                ty += lh
 
-        def _row(self, p: Any, x: float, y: float, w: float, h: float, r: Row) -> None:
-            s = self.s
-            d = 24 * s
-            iy = y + (h - d) / 2
-            img = self._icon(r.alias)
-            clip = QtGui.QPainterPath()
-            clip.addEllipse(QtCore.QRectF(x, iy, d, d))
-            if img is not None:
-                p.save()
-                p.setClipPath(clip)
-                p.drawImage(QtCore.QRectF(x, iy, d, d), img)
-                p.restore()
-            else:
-                p.fillPath(clip, QtGui.QColor(C_RAISED))
-            if r.tone == "me":
-                p.setPen(QtGui.QPen(QtGui.QColor(C_ACCENT), max(1.0, 1.5 * s)))
-                p.setBrush(Qt.BrushStyle.NoBrush)
-                p.drawEllipse(QtCore.QRectF(x, iy, d, d))
-            tx = x + d + 7 * s
-            tw = w - d - 7 * s
-            l1, l2 = y + 1 * s, y + h / 2
-            lh = h / 2 - 1 * s
-            tag_f = self._font(12, True)
-            tag_c = {"good": C_ACCENT, "warn": C_WARN, "me": C_ACCENT}.get(r.tone, C_MUTED)
-            tag_w = 0.0
-            name_f = self._font(13, True)
-            if r.tag:
-                fm = QtGui.QFontMetrics(tag_f)
-                name_w = min(tw * 0.45, float(QtGui.QFontMetrics(name_f).horizontalAdvance(r.name)))
-                tag_w = min(tw - name_w - 6 * s, float(fm.horizontalAdvance(r.tag)) + 1)
-                self._text(p, tx + tw - tag_w, l1, tag_w, lh, r.tag, tag_c, tag_f,
-                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            self._text(p, tx, l1, tw - tag_w - (6 * s if tag_w else 0), lh, r.name, C_TEXT, name_f)
-            sub = self._font(12)
-            used = 0.0
-            if r.lane:
-                used = self._text(p, tx, l2, tw, lh, r.lane, C_DIM, sub) + 6 * s
-            if r.state == "loading":
-                rank, rc = LOADING, C_DIM
-            elif r.state == "none" and not r.rank:
-                rank, rc = "inconnu", C_DIM
-            else:
-                rank, rc = r.rank, C_MUTED
-            if rank and r.tone != "me":
-                fm = QtGui.QFontMetrics(sub)
-                bw = min(tw - used, fm.horizontalAdvance(rank) + 12 * s)
-                if bw > 12 * s:
-                    br = QtCore.QRectF(tx + used, l2 + 1 * s, bw, lh - 2 * s)
-                    p.setPen(Qt.PenStyle.NoPen)
-                    p.setBrush(QtGui.QColor(C_RAISED))
-                    p.drawRoundedRect(br, 4 * s, 4 * s)
-                    self._text(p, br.x() + 5 * s, l2, bw - 10 * s, lh, rank, rc, sub)
-
-    return LoadingWindow()
+    return BadgeWindow()
 
 
 def _no_activate(win: Any) -> None:
@@ -736,7 +799,7 @@ class LoadingController:
                 self.hide()
                 return card
             shown = self._last
-            has = shown is not None and shown.teams_known and bool(shown.enemy_rows)
+            has = shown is not None and shown.teams_known and bool(shown.badges)
             focus = None
             try:
                 focus = self._focus()
@@ -784,4 +847,5 @@ class LoadingController:
 
 __all__ = ["LoadingCard", "EnemyBlock", "Row", "build", "from_watcher", "enemy_block", "ally_line",
            "player_row", "matchup_lines", "discord_extra", "should_show", "overlay_verdict", "game_bans",
-           "scale_for", "make_window", "LoadingController"]
+           "scale_for", "make_window", "LoadingController", "Badge", "build_badges", "badge_rank", "card_rects",
+           "badge_lines"]

@@ -283,7 +283,8 @@ class HomePage:
 
     def _update_players(self, snap: dict[str, Any]) -> None:
         """The « Écran de chargement » card (loading_card.py) from the loading screen on, when "Infos des
-        joueurs" is on: on this page, and in a top-most window during the loading screen only (the lifetime rule
+        joueurs" is on: in full on this page, and as small badges on the players' cards of the loading screen only
+        (no panel in game; the lifetime rule
         of loading_card.LoadingController: gone for good once the game starts, the overlay hotkey hides it,
         hidden while the game is not in front). Lock-only reads, no I/O."""
         lines: Any = None

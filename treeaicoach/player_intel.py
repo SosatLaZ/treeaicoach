@@ -143,6 +143,8 @@ class PlayerIntel:
     mastery_loaded: bool = False
     mastery_mains: tuple = ()   # ((champion_id, points), ...) top 3 by mastery points
     champ_points: int = -1      # mastery points on the champion played now (-1 unknown)
+    team: int = 0               # 1 = the session's teamOne (top row of the loading screen), 2 = teamTwo
+    slot: int = -1              # index in that team's list = card position on the loading screen (-1 unknown)
 
 
 # ----------------------------------------------------------------------------- parsing (pure)
@@ -163,9 +165,10 @@ def parse_session(session: Any) -> dict | None:
                 picks[str(sel["puuid"])] = _int(sel.get("championId"))
         players = []
         sids: dict[str, int] = {}
+        slots: dict[str, tuple[int, int]] = {}
         seen: set[str] = set()
         for team_no, key in ((1, "teamOne"), (2, "teamTwo")):
-            for p in gd.get(key) or ():
+            for idx, p in enumerate(gd.get(key) or ()):
                 if not isinstance(p, dict):
                     continue
                 puuid = str(p.get("puuid") or "").strip()
@@ -174,6 +177,7 @@ def parse_session(session: Any) -> dict | None:
                 if str(p.get("botDifficulty") or "NONE").upper() not in ("NONE", "") or p.get("isBot") is True:
                     continue
                 seen.add(puuid)
+                slots[puuid] = (team_no, idx)            # the loading screen draws each team in this order
                 cid = _int(p.get("championId")) or picks.get(puuid, 0)
                 pos = _POS.get(str(p.get("selectedPosition") or "").strip().lower(), "")
                 players.append((puuid, cid, team_no, pos))
@@ -182,7 +186,7 @@ def parse_session(session: Any) -> dict | None:
         if not players:
             return None
         return {"game_id": _int(gd.get("gameId")), "queue_id": _int(queue.get("id")), "players": players,
-                "summoner_ids": sids}
+                "summoner_ids": sids, "slots": slots}
     except Exception:
         log.debug("gameflow session not parsed", exc_info=True)
         return None
@@ -468,6 +472,7 @@ class PlayerIntelWatcher:
             self._champ: dict[str, int] = {}
             self._sids: dict[str, int] = {}                  # puuid -> summoner id (mastery request only)
             self._me_pick: tuple[int, str] = (0, "")         # my champion id, my position (no id of mine kept)
+            self._me_slot: tuple[int, int] = (0, -1)         # my (team, card index) on the loading screen
             self._since: float | None = None                 # clock time the game was detected
             self._roles: dict[str, str] = {}                 # alias -> position (live client)
             self._live_team: dict[str, bool] = {}            # alias (lower) -> ally? (live client roster)
@@ -508,6 +513,11 @@ class PlayerIntelWatcher:
         """(my champion id, my position) of the current game ((0, "") unknown)."""
         with self._lock:
             return self._me_pick
+
+    def me_slot(self) -> tuple[int, int]:
+        """(my team 1|2, my card index) on the loading screen ((0, -1) unknown)."""
+        with self._lock:
+            return self._me_slot
 
     def ready(self) -> bool:
         """True once every request of the game was answered (or given up)."""
@@ -623,6 +633,7 @@ class PlayerIntelWatcher:
         me_pick = next(((c, p) for pu, c, _t, p in info["players"] if pu == my), (0, ""))
         players: dict[str, PlayerIntel] = {}
         champ: dict[str, int] = {}
+        slots = info.get("slots") or {}
         for puuid, cid, team, pos in info["players"]:
             if puuid == my or cid <= 0:
                 continue
@@ -630,7 +641,8 @@ class PlayerIntelWatcher:
             if r is None:
                 continue
             players[puuid] = PlayerIntel(alias=r[0], name=r[1] or r[0], ally=bool(my_team) and team == my_team,
-                                         role=pos, champion_id=cid)
+                                         role=pos, champion_id=cid, team=slots.get(puuid, (0, -1))[0],
+                                         slot=slots.get(puuid, (0, -1))[1])
             champ[puuid] = cid
         with self._lock:
             self._game_id = info["game_id"]
@@ -641,6 +653,7 @@ class PlayerIntelWatcher:
             self._champ = champ
             self._sids = {k: v for k, v in (info.get("summoner_ids") or {}).items() if k in players}
             self._me_pick = me_pick
+            self._me_slot = slots.get(my, (0, -1))
             self._since = self._clock()
             # enemies first (what the player wants), ranked then history then masteries (enemies only)
             order = sorted(players, key=lambda k: players[k].ally)

@@ -180,12 +180,24 @@ P = pi.PlayerIntel
 def _ten(**darius):
     d = dict(champion_id=122, ranked_loaded=True, tier="PLATINUM", division=2, wins=30, losses=28)
     d.update(darius)
-    return [P("Darius", "Darius", False, "", **d),
-            P("MasterYi", "Maître Yi", False, "", champion_id=11),
-            P("Leblanc", "LeBlanc", False, "", champion_id=7), P("Caitlyn", "Caitlyn", False, "", champion_id=51),
-            P("Thresh", "Thresh", False, "", champion_id=412),
-            P("LeeSin", "Lee Sin", True, "JUNGLE"), P("Ahri", "Ahri", True, "MIDDLE"),
-            P("Jinx", "Jinx", True, "BOTTOM"), P("Lulu", "Lulu", True, "UTILITY")]
+    ps = [P("Darius", "Darius", False, "", **d),
+          P("MasterYi", "Maître Yi", False, "", champion_id=11),
+          P("Leblanc", "LeBlanc", False, "", champion_id=7), P("Caitlyn", "Caitlyn", False, "", champion_id=51),
+          P("Thresh", "Thresh", False, "", champion_id=412),
+          P("LeeSin", "Lee Sin", True, "JUNGLE"), P("Ahri", "Ahri", True, "MIDDLE"),
+          P("Jinx", "Jinx", True, "BOTTOM"), P("Lulu", "Lulu", True, "UTILITY")]
+    return _slotted(ps)
+
+
+def _slotted(ps):
+    """Loading-screen order: my team (team 1, me on card 0) on top, the enemies (team 2) below."""
+    from dataclasses import replace
+
+    out, n = [], {True: 1, False: 0}
+    for p in ps:
+        out.append(replace(p, team=1 if p.ally else 2, slot=n[p.ally]))
+        n[p.ally] += 1
+    return out
 
 
 class FakeW:
@@ -200,6 +212,9 @@ class FakeW:
 
     def me_pick(self):
         return self.me
+
+    def me_slot(self):
+        return (1, 0)
 
     def game_since(self):
         return self.since if self.players else None
@@ -369,34 +384,106 @@ def _full_card():
             history_loaded=True, streak=-3, recent_all=10, champ_all=2),
           P("Jinx", "Jinx", True, "BOTTOM", True, "PLATINUM", 4, 0, 5, 9, champion_id=222),
           P("Lulu", "Lulu", True, "UTILITY", champion_id=117)]
-    return lc.build(ps, frozenset({875}), ("Garen", "Garen", "TOP"), False, resolve=NAMES.get)
+    return lc.build(_slotted(ps), frozenset({875}), ("Garen", "Garen", "TOP"), False, resolve=NAMES.get,
+                    me_slot=(1, 0))
 
 
-def test_window_scaled_flags_and_no_flicker(qapp):
+def test_badges_by_session_order_and_never_a_wrong_card():
+    card = _full_card()
+    keys = [(b.team, b.slot) for b in card.badges]
+    assert keys == [(1, 1), (1, 2), (1, 3), (1, 4), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4)]   # me (1, 0): none
+    d = next(b for b in card.badges if b.alias == "Darius")
+    assert d.rank == "P2 · 52 %" and d.tag == "main banni" and d.verdict.startswith("Darius gagne")
+    yi = next(b for b in card.badges if b.alias == "MasterYi")
+    assert yi.rank.startswith("GM 412 LP") and yi.tag == "série de 4 victoires" and not yi.verdict
+    assert next(b for b in card.badges if b.alias == "Leblanc").tag == "1re partie"
+    assert next(b for b in card.badges if b.alias == "Leblanc").rank == "non classé"
+    for b in card.badges:                                          # DESIGN.md: no caps, no emoji
+        assert b.tag in ("", "OTP") or b.tag == b.tag.lower()
+    from dataclasses import replace
+
+    ps = _ten()
+    assert lc.build(ps, me=("Garen", "Garen", "TOP"), resolve=NAMES.get, me_slot=(1, 0)).badges
+    bad = [replace(p, slot=1) if p.alias == "Ahri" else p for p in ps]          # two players on one card
+    assert lc.build(bad, me=("Garen", "Garen", "TOP"), resolve=NAMES.get, me_slot=(1, 0)).badges == ()
+    bad = [replace(p, team=2) if p.alias == "Ahri" else p for p in ps]          # an ally on the enemy row
+    assert lc.build(bad, me=("Garen", "Garen", "TOP"), resolve=NAMES.get, me_slot=(1, 0)).badges == ()
+    bad = [replace(p, slot=-1) if p.alias == "Thresh" else p for p in ps]       # unknown card
+    assert lc.build(bad, me=("Garen", "Garen", "TOP"), resolve=NAMES.get, me_slot=(1, 0)).badges == ()
+    assert lc.build(ps, me=("Garen", "Garen", "TOP"), resolve=NAMES.get, me_slot=(1, 1)).badges == ()
+
+
+def test_session_slots_follow_team_lists():
+    s = {"phase": "GameStart", "gameData": {"gameId": 5, "queue": {"id": 420}, "teamOne": [
+        {"puuid": "a", "championId": 86}, {"puuid": "0-0", "championId": 1}, {"puuid": "b", "championId": 64}],
+        "teamTwo": [{"puuid": "c", "championId": 122}]}}
+    info = pi.parse_session(s)
+    assert info["slots"] == {"a": (1, 0), "b": (1, 2), "c": (2, 0)}       # a hidden entry keeps its card
+
+
+def test_card_rects_scale_and_centre():
+    for w, h in ((1920, 1080), (1280, 720), (2000, 1125), (1920, 1200), (3440, 1440), (2560, 1080)):
+        r = lc.card_rects(w, h)
+        xs = [r[(1, i)][0] for i in range(5)]
+        left, right = xs[0], xs[4] + r[(1, 4)][2]
+        assert abs((left + right) / 2 - w / 2) < 1 and left > 0 and right < w
+        assert r[(2, 0)][1] > r[(1, 0)][1] + r[(1, 0)][3] and r[(2, 0)][1] + r[(2, 0)][3] <= h
+        assert r[(1, 0)][1] >= 0
+    a, b = lc.card_rects(1920, 1080)[(1, 2)], lc.card_rects(1280, 720)[(1, 2)]
+    assert abs(a[0] * 720 / 1080 - b[0]) < 1 and abs(a[2] * 720 / 1080 - b[2]) < 1
+
+
+def test_window_flags_full_screen_and_no_flicker(qapp):
     from PySide6 import QtCore
 
     card = _full_card()
     win = lc.make_window()
     Qt = QtCore.Qt
-    for h, w_exp in ((720, 336), (1080, 420), (1125, 438)):
-        win.place(QtCore.QRect(0, 0, round(h * 16 / 9), h))
-        assert win.width() == w_exp and win.width() <= 420 * max(1.0, h / 1080) + 1
-        assert win.height() <= 300 * max(lc.SCALE_MIN, h / 1080) + 1
+    win.place(QtCore.QRect(0, 0, 1280, 720))
+    assert (win.width(), win.height()) == (1280, 720)
     f = win.windowFlags()
     for flag in (Qt.WindowType.WindowTransparentForInput, Qt.WindowType.WindowDoesNotAcceptFocus,
                  Qt.WindowType.WindowStaysOnTopHint, Qt.WindowType.Tool):
         assert f & flag
     assert win.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    assert win.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
     win.set_card(card)
     win.show()
     qapp.processEvents()
-    pos = win.pos()
     assert win.card is card
-    win.set_card(_full_card())                            # equal data: no repaint, no move
-    assert win.card is card and win.pos() == pos
+    win.set_card(_full_card())                            # equal data: no repaint
+    assert win.card is card
     img = win.grab().toImage()
-    assert img.width() == win.width()
+    corner = img.pixelColor(2, 2)
+    assert corner.alpha() == 0                            # nothing but the badges is drawn
     win.close()
+
+
+def _mock_loading_screen(w, h):
+    """A stand-in loading screen: dark map backdrop + the 10 card frames where League draws them."""
+    from PySide6 import QtCore, QtGui
+
+    img = QtGui.QImage(w, h, QtGui.QImage.Format.Format_ARGB32)
+    img.fill(QtGui.QColor("#10161c"))
+    p = QtGui.QPainter(img)
+    p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    hues = [20, 200, 120, 280, 40, 340, 180, 60, 240, 300]
+    for i, ((team, slot), (x, y, cw, ch)) in enumerate(sorted(lc.card_rects(w, h).items())):
+        g = QtGui.QLinearGradient(x, y, x, y + ch)
+        g.setColorAt(0, QtGui.QColor.fromHsv(hues[i], 90, 150))
+        g.setColorAt(1, QtGui.QColor.fromHsv(hues[i], 120, 60))
+        p.fillRect(QtCore.QRectF(x, y, cw, ch), g)
+        p.fillRect(QtCore.QRectF(x, y + ch * 0.80, cw, ch * 0.20), QtGui.QColor("#0b0f14"))
+        p.setPen(QtGui.QPen(QtGui.QColor("#a08850" if team == 1 else "#8a3a3a"), max(2, h / 400)))
+        p.drawRect(QtCore.QRectF(x, y, cw, ch))
+        p.setPen(QtGui.QColor("#d8d0b0"))
+        f = p.font()
+        f.setPixelSize(max(9, round(h / 70)))
+        p.setFont(f)
+        p.drawText(QtCore.QRectF(x, y + ch * 0.81, cw, ch * 0.08), int(QtCore.Qt.AlignmentFlag.AlignCenter),
+                   f"carte {team}-{slot + 1}")
+    p.end()
+    return img
 
 
 def test_offscreen_screenshots(qapp, tmp_path):
@@ -405,19 +492,17 @@ def test_offscreen_screenshots(qapp, tmp_path):
     from PySide6 import QtCore, QtGui
 
     card = _full_card()
-    assert card.enemy_rows and all(not any(ch.isupper() for ch in r.tag[1:]) for r in card.enemy_rows)
     out = Path(os.environ.get("TREEAI_LC_SHOTS", "") or tmp_path)
     out.mkdir(parents=True, exist_ok=True)
-    for w, h in ((1280, 720), (1920, 1080), (2000, 1125)):
+    for w, h in ((1280, 720), (1920, 1080), (2000, 1125), (1920, 1200)):
         win = lc.make_window()
         win.place(QtCore.QRect(0, 0, w, h))
         win.set_card(card)
         win.show()
         qapp.processEvents()
-        shot = QtGui.QImage(w, h, QtGui.QImage.Format.Format_ARGB32)
-        shot.fill(QtGui.QColor("#3a4a3f"))
+        shot = _mock_loading_screen(w, h)
         p = QtGui.QPainter(shot)
-        p.drawImage(round(16 * win.s), round(16 * win.s), win.grab().toImage())
+        p.drawImage(0, 0, win.grab().toImage())
         p.end()
-        assert shot.save(str(out / f"loading_card_{w}x{h}.png"))
+        assert shot.save(str(out / f"loading_badges_{w}x{h}.png"))
         win.close()
