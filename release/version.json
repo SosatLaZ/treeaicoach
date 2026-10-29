@@ -1,6 +1,6 @@
 {
-  "version": "3.5.0",
-  "sha256": "1545a4a5f1c5835abcf09e80d2df83c5cadfbf62e54c5d3845ec15a6e51ee999",
-  "size": 7531438,
-  "notes": "3.5 : IA qui ne refuse plus, Hey coach bien mieux reconnu, Whisper qui ne ralentit plus le jeu, position sous l'ADC."
+  "version": "3.6.0",
+  "sha256": "ab0e1c1dbddf705d5b9209823df861ff44bb6f1f0418b13b3ec55686b949d42b",
+  "size": 7531682,
+  "notes": "3.6 : Hey coach 94 % sans faux réveil, moins de charge PC."
 }
