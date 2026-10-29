@@ -153,9 +153,9 @@ def test_wake_confirmation_clip_short() -> None:
 
 @pytest.mark.parametrize("text,want", [
     ("Hé coque, quel objet ?", "Hé coach, quel objet ?"),
-    ("coq quel objet", "coach quel objet"),
+    ("coq, quel objet", "coach, quel objet"),     # (bare: Whisper puts the comma; 3.5.x)
     ("Et coke je fais quoi", "Et coach je fais quoi"),
-    ("Coque quel build", "Coach quel build"),
+    ("Coque, quel build", "Coach, quel build"),
     ("une coque de noix", "une coque de noix"),
 ])
 def test_coque_becomes_coach_at_the_start(text: str, want: str) -> None:
