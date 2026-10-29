@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.6.0 · 29 octobre 2026
+
+- **« Hey coach » au micro :** 94 % des « hey coach » reconnus et 0 faux réveil en ~1 h de discussion (test
+  complet ; avant : 91 % et 3 faux réveils). « Quel coach tu utilises » ne réveille plus le bot.
+- **Moins de charge PC en lane :** environ 15 % de calcul en moins par image, détection identique ;
+  lanceur au repos 2× moins gourmand.
+
 ## 3.5.0 · 29 octobre 2026
 
 - **L'IA ne refuse plus jamais ta question :** plus de « L'IA réfléchit déjà », ta question passe avant tout.
