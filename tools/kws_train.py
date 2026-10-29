@@ -89,6 +89,40 @@ OPENERS = ("Écoute", "Écoutez", "Et écoute", "Hé, écoute", "Eh, écoute", "
            "Attends", "Regarde", "Et tiens", "Hé Kevin", "Eh Thomas", "Et Corki", "Hé Teemo", "Et très bien",
            "Hé, trop fort", "Et trois", "Hé, tric", "Et Trist", "Hey Paul", "Hey toi", "Hey, attends",
            "Eh cou", "Et co", "Hé, comment", "Et comment", "Et combien", "Hé, combien", "Ok, coach")
+#: v4 hard negatives (prefix « h »): phonetic neighbours of the bench's last false wakes (« Eh, cochon ! »,
+#: « Écoute, c'est quoi… », « On split push. ») — never those exact sentences (the bench stays unseen):
+#: « Eh / Hé / Et » + a « co- / -oche / -ouch » word, « écoute, c'est… », « … push / … pouche »
+HARD = (
+    "Eh, sale cochon !", "Hé, gros cochon !", "Eh, cochonne !", "Et cochonnerie !", "Eh, petit cochon.",
+    "Ah, le cochon !", "Oh, cochon va !", "Eh, cocon.", "Hé, coquine !", "Eh, coco !", "Hé, coq !", "Eh, cocorico !",
+    "Eh, coussin.", "Hé, couchant.", "Eh, coche-la.", "Et coche ça.", "Hé, cogne !", "Eh, costaud !", "Eh, cool !",
+    "Hé, coquillage.", "Eh, cocasse.", "Hé, cocker !", "Eh, coucou !", "Et coucher là.", "Eh, couché !",
+    "Hé, coche !", "Eh, côte !", "Eh, colle !", "Hé, cops !", "Eh, corde !", "Et cocotier.", "Eh, Kochi !",
+    "Eh, touche !", "Hé, la mouche !", "Eh, louche !", "Et la poche ?", "Hé, proche !", "Eh, moche !",
+    "Hé, la cloche.", "Eh, pioche !", "Et la roche.", "Hé, approche !", "Eh, bouge !", "Et douche-toi.",
+    "Écoute, c'est quand le baron ?", "Écoute, c'est qui le jungler ?", "Écoute, c'est quoi ce build ?",
+    "Écoute, c'est où le héraut ?", "Écoute, c'est combien les golds ?", "Écoute, c'est bon pour dive ?",
+    "Écoute, c'est quoi la rune ?", "Écoute, c'est quand le drake ?", "Écoute, c'est quoi son sort ?",
+    "Écoute, t'as vu le timer ?", "Écoute, le timer du baron ?", "Écoute, quoi le dragon ?",
+    "Écoute, c'est chaud.", "Écoute, c'est mort.", "Écoute, ça passe.", "Écoutez, c'est quoi le plan ?",
+    "On split.", "On split bot.", "Je split push top.", "Il split push en bas.", "On fait du split push ?",
+    "Split push, les gars.", "On push.", "On push bot.", "Push top.", "On fast push.", "On freeze.",
+    "On rush.", "On splitte.", "Ils split push.", "Split et push.", "Je push et je back.", "On pousse.",
+    "Pouche.", "On stack.", "On crush.", "On flash.", "Smash.", "On switch.", "On touche.", "Ils couchent.",
+)
+#: v5 (prefix « k »): « Et le coach, … » / « Et ton coach, … » (an article between « et » and « coach »: not the
+#: wake) — v4's only false wake on the bench was such a sentence (not this list's)
+HARD_LE = (
+    "Et le coach, il en pense quoi ?", "Et le coach, il est où ?", "Et le coach, il a dit ça ?", "Et le coach alors ?",
+    "Et le coach, tu l'as vu ?", "Hé le coach, il parle trop.", "Et le coach, quoi ?", "Et le coach, il raconte quoi ?",
+    "Et ton coach, il dit rien ?", "Et mon coach me dit de farmer.", "Et leur coach, il est fort ?",
+    "Et ce coach, il sert à quoi ?", "Et la coach, elle en pense quoi ?", "Et les coachs, ils pensent quoi ?",
+    "Et le coaching, ça donne quoi ?", "Et le coach adverse ?", "Et le coach de l'équipe ?", "Eh le coach, il veut quoi ?",
+    "Et le coach, il veut qu'on push ?", "Et le coach, il a raison.", "Et le coach, il te dit quoi de faire ?",
+    "Et un coach, ça coûte combien ?", "Et notre coach, il est parti ?", "Et le coach du top ?",
+    "Et le coach, il a vu le drake ?", "Hé, le coach, il pense quoi ?", "Et le coach, on l'écoute ?",
+    "Et le coach, il dit rien ?", "Et le coach, il dort ?", "Et ton coach, il pense quoi du build ?",
+)
 _WAKE_RE = re.compile(r"\b(hey|hé|he|eh|et|ey)\W*(coach|tree)\b", re.I)
 
 
@@ -151,6 +185,16 @@ def items() -> list[dict]:
             f = rnd.choice([x for x in FOLLOW if len(x) > 2] + [x for x in TRAPS if not x.startswith("É")])
             out.append({"id": f"v{k:05d}", "text": f"{rnd.choice(ecoute)}, {f[0].lower() + f[1:]}", "voice": v,
                         "kind": "neg", "rate": f"{rnd.randint(-20, 20):+d}%", "pitch": f"{rnd.randint(-8, 8):+d}Hz"})
+            k += 1
+    for v in VOICES:                          # (last: the ids above stay)
+        for t in HARD:
+            out.append({"id": f"h{k:05d}", "text": t, "voice": v, "kind": "neg",
+                        "rate": f"{rnd.randint(-20, 20):+d}%", "pitch": f"{rnd.randint(-8, 8):+d}Hz"})
+            k += 1
+    for v in VOICES:
+        for t in HARD_LE:
+            out.append({"id": f"k{k:05d}", "text": t, "voice": v, "kind": "neg",
+                        "rate": f"{rnd.randint(-20, 20):+d}%", "pitch": f"{rnd.randint(-8, 8):+d}Hz"})
             k += 1
     return out
 
@@ -521,7 +565,7 @@ def latency(work: Path, features: Path, head: Path, n: int = 150) -> None:
     metas = [p for p in sorted((work / "tts").glob("p*.json"))]
     metas = [p for k, p in enumerate(metas) if k % 10 == 3][:n]
     for path, blk in (("pc", 4000), ("discord", 320)):
-        d, miss = [], 0
+        d, miss, unsure = [], 0, 0
         for k, mp in enumerate(metas):
             meta = json.loads(mp.read_text(encoding="utf-8"))
             we = _wake_end(meta)
@@ -534,6 +578,7 @@ def latency(work: Path, features: Path, head: Path, n: int = 150) -> None:
                 t0 = time.perf_counter()
                 if sp.feed(pcm[i:i + blk].tobytes()):
                     fired = (i + blk) / SR + (time.perf_counter() - t0)
+                    unsure += sp.last_score < kws.SURE[path]
                     break
             if fired is None:
                 miss += 1
@@ -541,7 +586,8 @@ def latency(work: Path, features: Path, head: Path, n: int = 150) -> None:
             d.append(fired - (we + pre / SR))
         d = np.array(d) * 1000
         print(f"{path}: {len(d)} wakes, {miss} missed; wake->earcon median {np.median(d):.0f} ms, "
-              f"p90 {np.percentile(d, 90):.0f} ms, mean {d.mean():.0f} ms")
+              f"p90 {np.percentile(d, 90):.0f} ms, mean {d.mean():.0f} ms; uncertain (Whisper check, + its "
+              f"time) {unsure}/{len(d)}")
 
 
 def main() -> None:
@@ -560,7 +606,7 @@ def main() -> None:
     work = Path(a.work)
     if a.cmd == "count":
         its = items()
-        print(len(its), {k: sum(1 for i in its if i["id"][0] == k) for k in "ptauv"})
+        print(len(its), {k: sum(1 for i in its if i["id"][0] == k) for k in "ptauvhk"})
     elif a.cmd == "synth":
         synth(work)
     elif a.cmd == "latency":

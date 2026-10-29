@@ -35,9 +35,18 @@ EMB_WINDOW = 16                 # embeddings seen by the head (1.28 s)
 GATE_RMS = 40.0                 # int16 RMS: below this for a whole embedding window = silence (no compute)
 CONFIRM_FRAMES = 2              # consecutive frames at/above the threshold
 REFRACTORY_S = 1.5              # no second wake from the same « Hey coach »
-#: per path thresholds, from the ``tools/wake_bench.py`` sweep (2026-10-29, head v3): PC 0.4 = 1 false wake in
-#: 0.93 h of chatter, recall 98.3 %; Discord 0.5 = 3 in 0.71 h, recall 99.4 % (higher costs recall fast)
+#: per path thresholds, from the ``tools/wake_bench.py`` sweep (2026-10-29, head v4 = v3 + hard negatives):
+#: PC 0.4 = 1 false wake in 0.93 h of chatter, recall 99.4 %; Discord 0.5 = 2 in 0.71 h, recall 100 %
+#: (higher costs recall fast on Discord: 0.6 -> 89 %)
 THRESHOLDS = {"pc": 0.4, "discord": 0.5}
+#: optional second stage: a wake scored below SURE is « uncertain » and Whisper (base, once loaded) re-reads its
+#: last :data:`CHECK_AUDIO_S` before it counts (voice_assistant.KwsWakeEngine). OFF (0.0): measured with head v3
+#: and SURE 0.9 (wake_bench --whisper-confirm base --sure 0.9, 2026-10-29), it cost far too much recall — PC
+#: 0 false wakes but recall 85.6 % (base reads a cut « Hey coach » as « écoute », « il coach », « 1 coach »…),
+#: Discord still 2.8 FA/h (the false wakes scored 0.93 / 0.97: above any useful band), recall 86.2 %. The
+#: hard negatives of head v4/v5 (tools/kws_train.py HARD / HARD_LE) did the job instead.
+SURE = {"pc": 0.0, "discord": 0.0}
+CHECK_AUDIO_S = 1.5
 
 _REL = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/"
 #: name -> (url, sha256, bytes). Apache-2.0 (openWakeWord code; the embedding weights are Google's

@@ -23,6 +23,7 @@ Nothing here ever raises into the caller."""
 
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import os
@@ -310,8 +311,10 @@ _NOISE: bytes | None = None
 class KwsWakeEngine:
     """The Siri-like wake listener (3.7): the neural keyword spotter of :mod:`treeaicoach.kws` on ONE stream,
     with the surface the callers know from :class:`WakeEngine` (``feed`` / ``reset`` / ``ready`` / ``rms`` /
-    ``last_text``…). No speech recognizer and no Whisper ever runs to decide a wake: the question that
-    follows is recorded (VAD) and read by Whisper afterwards. ``path`` = "pc" / "discord" (its threshold)."""
+    ``last_text``…). Most wakes are instant (score >= :data:`kws.SURE`); an « uncertain » one (between the
+    path's threshold and SURE) is re-read by Whisper (``confirm``: the base model on the app's Whisper thread,
+    last :data:`kws.CHECK_AUDIO_S`) and dropped when Whisper hears no wake phrase (« Eh, cochon ! »); no
+    verdict (Whisper not loaded / busy) = accepted, as before. ``path`` = "pc" / "discord" (its threshold)."""
 
     kind = "kws"
 
@@ -321,9 +324,14 @@ class KwsWakeEngine:
         th = kws.THRESHOLDS.get(path, 0.5) if threshold is None else float(threshold)
         self.spot = kws.Spotter(model, th)
         self.path = path
+        self.sure = float(kws.SURE.get(path, 0.9))
+        self._ring: collections.deque[bytes] = collections.deque()
+        self._ring_n = 0
+        self._ring_max = int(kws.CHECK_AUDIO_S * SAMPLE_RATE) * 2
+        self.checked = 0                    # uncertain wakes sent to Whisper (logs / bench)
         self.grammar_rec: Any = self        # (non-None: « the wake engine is loaded », Discord's ticker)
         self.det = None
-        self.confirm: Callable[[bytes], bool | None] | None = None   # (unused: no Whisper on the wake)
+        self.confirm: Callable[[bytes], bool | None] | None = None   # Whisper's verdict (uncertain wakes only)
         self.rms = 0.0
         self.last_text = ""
         self.last_kind = ""
@@ -340,8 +348,21 @@ class KwsWakeEngine:
     def feed(self, block: bytes) -> bool:
         try:
             self.rms = block_rms(block)
+            self._ring.append(block)
+            self._ring_n += len(block)
+            while self._ring_n - len(self._ring[0]) >= self._ring_max:
+                self._ring_n -= len(self._ring.popleft())
             woke = self.spot.feed(block)
             self.last_score = self.spot.peak
+            if woke and self.spot.last_score < self.sure and self.confirm is not None:
+                self.checked += 1
+                v = self.confirm(b"".join(self._ring)[-self._ring_max:])
+                if v is False:
+                    self.dropped += 1
+                    self.last_dropped = f"kws {self.spot.last_score:.2f}"
+                    log.info("Écoute : « Hey coach » incertain (%.2f), Whisper ne l'entend pas : ignoré",
+                             self.spot.last_score)
+                    return False
             if woke:
                 self.fired_at = time.monotonic()
                 self.last_kind = f"kws {self.spot.last_score:.2f}"
@@ -359,6 +380,8 @@ class KwsWakeEngine:
 
     def reset(self) -> None:
         self.spot.reset()
+        self._ring.clear()
+        self._ring_n = 0
         self.last_text = ""
 
 

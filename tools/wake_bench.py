@@ -40,7 +40,22 @@ End-to-end results (app config: ``--whisper faster-whisper-small --whisper-confi
   Discord. False wakes left: « Eh, cochon ! » (both paths), « Écoute, c'est quoi le timer du dragon ? » and
   « On split push. » (Discord). No Whisper / Vosk on the wake: 2.8 ms per 80 ms frame while someone talks
   (3.5 % of one loaded core here), 0.3 ms in silence (0.4 %) — ``wake_bench.py cpu``. Wake -> earcon
-  (``kws_train.py latency``): PC median 244 ms (0.25 s mic blocks), Discord 114 ms (20 ms packets)."""
+  (``kws_train.py latency``): PC median 244 ms (0.25 s mic blocks), Discord 114 ms (20 ms packets).
+* second stage, 2026-10-29 (same runs, ``--reps 2``):
+  - (b) Whisper base re-reading the last 1.5 s of « uncertain » wakes (head v3, score < 0.9:
+    ``--whisper-confirm faster-whisper-base --sure 0.9``): PC 0 false wakes in 0.93 h but recall 85.6 %
+    (base hears a cut « Hey coach » as « écoute », « il coach », « 1 coach »…); Discord 2 in 0.71 h = 2.8/h
+    (« Eh, cochon ! » 0.93 and « Écoute, c'est quoi le timer du dragon ? » 0.97: above the band), recall
+    86.2 %. Rejected (``kws.SURE`` = 0: off), and it would add Whisper's time to ~30 % of the wakes.
+  - (a) head v4 = v3's recipe + 1105 hard negatives (``kws_train.py`` HARD: « Eh / Hé / Et » + co- / -oche
+    words, « Écoute, c'est … », « … split / push », 13 voices x 3 augmentations), SHIPPED: PC (th 0.4)
+    1 false wake in 0.93 h = 1.1/h, recall 173/174 named = 99.4 %; Discord (th 0.5) 2 in 0.71 h =
+    2.8/h, recall 174/174 = 100 %. « Eh, cochon ! », « Écoute, c'est quoi le timer… » and « On split
+    push. » no longer wake; the one sentence left on both paths: « Et le coach, il dit quoi ? » (PC 0.93, Discord 0.81 / 0.70).
+    Wake -> earcon: PC median 236 ms (p90 391), Discord 135 ms (p90 245).
+  - head v5 (v4 + 390 « Et le coach, … » negatives, HARD_LE, 16 epochs; the trainer's validation pick
+    took epoch 3): PC 8.7 FA/h at 0.4 — worse, not shipped. Target (<= 0.3/h, i.e. 0 on this bench) NOT
+    reached: the next step is a better epoch pick (a held-out chatter set, not the frame validation)."""
 
 from __future__ import annotations
 
@@ -273,7 +288,10 @@ class PcSim:
 
     def _engine(self) -> va.WakeEngine:
         if self.kws_model is not None:
-            return va.KwsWakeEngine(self.kws_model, "pc")
+            eng = va.KwsWakeEngine(self.kws_model, "pc")
+            if self.confirm is not None:             # the uncertain-band Whisper check (base)
+                eng.confirm = lambda pcm: va.whisper_confirm(self.confirm, pcm)
+            return eng
         eng = va.WakeEngine(self.make_rec)
         if self.whisper is not None and hasattr(eng, "confirm"):
             eng.confirm = lambda pcm: va.whisper_confirm(self.confirm, pcm)
@@ -333,8 +351,9 @@ class DiscordSim:
         self.peaks = Peaks()
         self.sp = dl.Speaker("1", make_rec, lambda: self.t, lambda: whisper,
                              **({"kws_model": kws_model} if kws_model is not None else {}))
-        if whisper is not None and hasattr(self.sp.engine, "confirm"):
-            self.sp.engine.confirm = lambda pcm: va.whisper_confirm(confirm, pcm)
+        if (whisper is not None or (confirm is not None and kws_model is not None)) \
+                and hasattr(self.sp.engine, "confirm"):
+            self.sp.engine.confirm = lambda pcm: va.whisper_confirm(confirm or whisper, pcm)
         self.events: list[tuple[float, str]] = []
 
     def _ev(self, evs) -> None:  # noqa: ANN001
@@ -524,6 +543,8 @@ def main() -> None:
     ap.add_argument("--whisper", default="")
     ap.add_argument("--whisper-confirm", default="",
                     help="Whisper folder for the 1.5 s wake confirmation (the app: base once downloaded)")
+    ap.add_argument("--sure", type=float, default=-1.0,
+                    help="KWS: wakes scored below this are re-read by --whisper-confirm first (kws.SURE)")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--path", choices=("pc", "discord", "both"), default="both")
     ap.add_argument("--quick", action="store_true")
@@ -551,6 +572,8 @@ def main() -> None:
 
         kws_model = kws.KwsModel(folder=Path(args.features) if args.features else None,
                                  head=Path(args.head) if args.head else None)
+        if args.sure >= 0:
+            kws.SURE.update(pc=args.sure, discord=args.sure)
     whisper = Whisper(args.whisper, args.threads) if args.whisper else None
     confirm = Whisper(args.whisper_confirm, args.threads) if args.whisper_confirm else None
     out = []
@@ -563,7 +586,7 @@ def main() -> None:
             print("  MISS ", m)
         out.append(r)
     for name, ms in (("whisper check", whisper.ms if whisper else []),
-                     ("whisper wake confirmation", (confirm or whisper).ms_confirm if whisper else [])):
+                     ("whisper wake confirmation", (confirm or whisper).ms_confirm if (confirm or whisper) else [])):
         if ms:
             ms = sorted(ms)
             print(f"{name}: {len(ms)} calls, median {ms[len(ms) // 2]:.0f} ms, p90 {ms[int(len(ms) * 0.9)]:.0f} ms")

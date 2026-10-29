@@ -113,7 +113,7 @@ def test_discord_speaker_wakes_on_kws_and_never_asks_whisper_for_the_wake():
             asked.append(1)
             return "hey coach"
 
-    sp = dl.Speaker("1", lambda g: None, lambda: t[0], lambda: Stt(), kws_model=FakeModel([0.0] * 6 + [0.9] * 10))
+    sp = dl.Speaker("1", lambda g: None, lambda: t[0], lambda: Stt(), kws_model=FakeModel([0.0] * 6 + [0.95] * 10))
     assert sp.kws
     evs = []
     pcm = loud(1.2)
@@ -212,3 +212,39 @@ def test_pc_assistant_uses_kws_and_follow_up_needs_no_wake(monkeypatch):
     assert qs == ["quel objet je fais ?", "Et contre Zed alors ?"]
     assert ("listening", "") in events and ("transcript", "quel objet je fais ?") in events
     assert ("listening", "suite") in events
+
+
+def test_uncertain_wake_is_checked_by_whisper_sure_one_is_instant():
+    asked = []
+
+    def verdict(v):
+        def confirm(pcm):
+            asked.append(len(pcm))
+            return v
+        return confirm
+
+    # uncertain (0.6 < SURE): Whisper says no -> dropped; says yes / no verdict -> wake
+    for v, want in ((False, False), (True, True), (None, True)):
+        eng = va.KwsWakeEngine(FakeModel([0.0] * 6 + [0.6] * 10), "pc", threshold=0.5)
+        eng.sure = 0.9
+        eng.confirm = verdict(v)
+        pcm = loud(2.0)
+        woke = any(eng.feed(pcm[k:k + 640]) for k in range(0, len(pcm), 640))
+        assert woke is want
+        assert asked[-1] <= int(kws.CHECK_AUDIO_S * 16000) * 2 and asked[-1] > 16000   # the last ~1.5 s
+        assert eng.checked == 1 and eng.dropped == (0 if want else 1)
+    n = len(asked)
+    eng = va.KwsWakeEngine(FakeModel([0.0] * 6 + [0.95] * 10), "pc", threshold=0.5)
+    eng.sure = 0.9
+    eng.confirm = verdict(False)
+    pcm = loud(2.0)
+    assert any(eng.feed(pcm[k:k + 640]) for k in range(0, len(pcm), 640))   # sure: no Whisper
+    assert len(asked) == n and eng.checked == 0
+
+
+def test_whisper_second_stage_is_off_by_default():
+    assert all(v == 0.0 for v in kws.SURE.values())
+    eng = va.KwsWakeEngine(FakeModel([0.0] * 6 + [0.6] * 10), "discord", threshold=0.5)
+    eng.confirm = lambda pcm: False
+    pcm = loud(2.0)
+    assert any(eng.feed(pcm[k:k + 640]) for k in range(0, len(pcm), 640)) and eng.checked == 0
