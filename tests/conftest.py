@@ -38,3 +38,11 @@ def _no_personal_history(monkeypatch):
     monkeypatch.setattr(call_eval, "ENABLED", False)
     yield
     win_conditions.clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def _no_kws_download(monkeypatch):
+    """The keyword spotter's feature models are downloaded on first use: tests never reach the network
+    (the assistant then falls back to the Vosk wake engine, as on a PC without Internet)."""
+    from treeaicoach import kws
+    monkeypatch.setattr(kws, "shared_model", lambda *a, **k: None)

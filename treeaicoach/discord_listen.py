@@ -118,7 +118,7 @@ class Speaker:
     """« Hey coach » then the question, for ONE member of the channel (fed 16 kHz mono blocks)."""
 
     def __init__(self, uid: str, make_rec: Callable[[Any], Any], clock: Callable[[], float],
-                 stt: Callable[[], Any] | None = None) -> None:
+                 stt: Callable[[], Any] | None = None, kws_model: Any = None, use_kws: bool | None = None) -> None:
         self.uid = uid
         self._stt = stt or (lambda: None)     # local Whisper when loaded (re-reads the question audio)
         #: ``submit(uid, pcm, vosk_text) -> bool``: hands the question audio to the Whisper thread
@@ -132,8 +132,11 @@ class Speaker:
         self._make_rec = make_rec
         self._clock = clock
         self._buf = bytearray()
-        self.engine = va.WakeEngine(make_rec)
+        # the keyword spotter (3.7, Siri-like); the Vosk engine only when its model cannot load
+        self.engine = va.make_wake_engine(make_rec, "discord", kws_model,
+                                          use_kws=kws_model is not None if use_kws is None else use_kws)
         self.engine.confirm = self._confirm_wake
+        self.kws = isinstance(self.engine, va.KwsWakeEngine)
         self.flushed = True                 # comfort noise already fed since the last packet
         self.q_rec: Any = None              # set while a question is being recorded
         self.q_start = 0.0
@@ -174,10 +177,23 @@ class Speaker:
             self.spurt = []
             # a talk spurt starts (Discord sent nothing before): a short silence in front, as a mic would
             # give, so the recognizers start from silence and « Hé… » is not glued to nothing
-            self._buf += va.comfort_noise(PREROLL_S)
+            pre = va.comfort_noise(PREROLL_S)
+            self._buf += pre
+            if self.kws:
+                self.engine.feed(pre)
         self.flushed = False
-        self._buf += pcm16
         out: list[tuple[str, str]] = []
+        if self.kws and self.q_rec is None and self.engine.feed(pcm16):
+            # the spotter hears every 20 ms packet at once (80 ms frames), not 0.25 s blocks: the chime
+            # starts ~0.2 s after « coach » instead of up to 0.45 s. The audio not yet in a block stays in
+            # _buf and becomes the first block of the question.
+            self._buf += pcm16
+            self.level = va.level_of(va.block_rms(pcm16))
+            self.spurt = []
+            self.stage = "mot-clé entendu"
+            log.info("Discord écoute : mot-clé entendu (%s)", self.engine.last_kind)
+            return [("wake", "")]
+        self._buf += pcm16
         while len(self._buf) >= BLOCK_BYTES:
             block, self._buf = bytes(self._buf[:BLOCK_BYTES]), self._buf[BLOCK_BYTES:]
             out += self._block(block)
@@ -229,7 +245,11 @@ class Speaker:
 
     def _wake_block(self, block: bytes, noise: bool = False) -> list[tuple[str, str]]:
         eng = self.engine
-        woke = eng.feed(block)
+        if self.kws and not noise:                   # (already fed packet by packet in feed)
+            woke = False
+            eng.rms = va.block_rms(block)
+        else:
+            woke = eng.feed(block)
         if not noise:
             self.level = va.level_of(eng.rms)
         if eng.last_text:
@@ -262,6 +282,8 @@ class Speaker:
             self.ring.clear()
             return True
         rec, parts, partial = self.engine.take_question()     # « hey coach quel objet » in one breath
+        if rec is None and self.kws and self._stt() is not None:
+            rec = va.NullRecognizer()          # Whisper reads the question: no Vosk needed at all
         if rec is None:
             rec = self._make_rec(None)
         if rec is None:
@@ -289,6 +311,8 @@ class Speaker:
         PC. A question said in the same breath is kept (no second recording). Never raises."""
         try:
             spurt, self.spurt = self.spurt, []
+            if self.kws:                               # the keyword spotter decides alone: never Whisper
+                return []
             if not spurt or len(spurt) >= SPURT_MAX_BLOCKS or not va.wakeish_start(self.engine.last_text):
                 return []
             stt = self._stt()
@@ -345,8 +369,8 @@ class Speaker:
             return []
         if self.seg is not None and self.q_spoke and now - self.last_audio >= FLUSH_AFTER_S + 0.3:
             return self._end()                   # Discord stopped sending: the question is over
-        if (now - self.q_start >= va.QUESTION_MAX_S
-                or (not self.q_heard and now - self.q_start >= va.QUESTION_START_S)
+        if (now - self.q_start >= (va.CAPTURE_MAX_S if self.kws else va.QUESTION_MAX_S)
+                or (not (self.q_heard or (self.kws and self.q_spoke)) and now - self.q_start >= va.QUESTION_START_S)
                 or (self.q_heard and now - self.q_change >= va.QUESTION_SILENCE_S)):
             return self._end()
         return []
@@ -413,8 +437,11 @@ class VoiceListener:
     dropped), ``on_wake(uid)`` (chime in the channel), ``on_question(uid, text)`` (ask the AI)."""
 
     def __init__(self, *, make_rec: Callable[[Any], Any] | None = None,
-                 clock: Callable[[], float] = time.monotonic, threaded: bool = True, stt: Any = None) -> None:
+                 clock: Callable[[], float] = time.monotonic, threaded: bool = True, stt: Any = None,
+                 kws_model: Any = None) -> None:
         self._make_rec_fn = make_rec
+        self._kws_model = kws_model
+        self._use_kws = kws_model is not None or make_rec is None   # (tests with fake recognizers: Vosk path)
         self._stt = stt
         self._worker: Any = None            # stt_local.WhisperWorker: THE app's Whisper thread (lazy)
         self._results: collections.deque[tuple[str, str | None, str]] = collections.deque()
@@ -628,7 +655,9 @@ class VoiceListener:
                     if len(self._speakers) >= MAX_SPEAKERS:
                         oldest = min(self._speakers.values(), key=lambda s: s.last_audio)
                         self._speakers.pop(oldest.uid, None)
-                    sp = self._speakers[uid] = Speaker(uid, self._make_rec, self._clock, self._whisper)
+                    sp = self._speakers[uid] = Speaker(
+                        uid, self._make_rec, self._clock, self._whisper, kws_model=self._kws_model,
+                        use_kws=self._use_kws)
                     sp._submit = self._submit
                 events += [(uid, k, t) for k, t in sp.feed(pcm)]
         for sp in list(self._speakers.values()):

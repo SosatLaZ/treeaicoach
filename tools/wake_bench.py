@@ -175,58 +175,28 @@ def corpus(cache: Path, stt_cache: Path) -> tuple[list[dict], list[dict]]:
 
 
 def _deg16(npy: Path, cond: str, seed: int, cache: Path, key: str) -> bytes:
-    f = cache / "deg" / f"{key}_{cond}.pcm"
-    if not f.is_file():
-        f.parent.mkdir(exist_ok=True)
-        x = np.load(npy)
-        tmp = f.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_bytes(sb.to16k(sb.degrade(x.astype(np.float32) / 32768.0, cond, seed)))
-        tmp.replace(f)
-    return f.read_bytes()
+    """The degraded clip (computed each time: no disk cache, ~1 GB for 6 reps)."""
+    x = np.load(npy)
+    return sb.to16k(sb.degrade(x.astype(np.float32) / 32768.0, cond, seed))
 
 
-def _noise16(seconds: float, kind: str, seed: int, level: float) -> bytes:
-    n = int(seconds * SR)
-    y = sb.game_noise(n, kind, seed) * level
-    return sb.to16k(y)
+class Peaks:
+    """KWS engines only: per clip, the best score held 2 frames in a row (the app's confirmation), so one
+    run gives false wakes / recall for every threshold (``sweep``)."""
 
+    def __init__(self) -> None:
+        self.cur = 0.0
+        self.prev = 0.0
 
-def _hiss(seconds: float, seed: int) -> bytes:
-    n = int(seconds * va.SAMPLE_RATE)
-    return np.random.default_rng(seed).normal(0, 12.0, n).astype("<i2").tobytes()
+    def see(self, eng) -> None:  # noqa: ANN001
+        sp = getattr(eng, "spot", None)
+        if sp is not None:
+            self.cur = max(self.cur, sp.best2)
+            sp.best2 = 0.0
 
-
-def _trim(pcm: bytes) -> bytes:
-    """What Discord sends: the talk spurt only (its voice activity cuts the silences)."""
-    a = np.frombuffer(pcm, "<i2").astype(np.float32)
-    fr = a[: a.size // 320 * 320].reshape(-1, 320)
-    r = np.sqrt(np.mean(fr * fr, axis=1))
-    on = np.where(r > max(200.0, 0.05 * r.max()))[0]
-    if not on.size:
-        return b""
-    s, e = max(0, on[0] - 5), min(len(r), on[-1] + 10)
-    return a[s * 320:e * 320].astype("<i2").tobytes()
-
-
-class Whisper:
-    """The Whisper check, timed."""
-
-    def __init__(self, model: str, threads: int) -> None:
-        from treeaicoach import stt_local  # noqa: PLC0415
-
-        self.w = stt_local.WhisperSTT(model_dir=Path(model), threads=threads)
-        if not self.w.load():
-            raise SystemExit(self.w.status)
-        self.ms: list[float] = []
-        self.ms_confirm: list[float] = []
-        self.texts: list[str] = []                  # every transcript (per-clip log of the misses)
-
-    def transcribe(self, pcm: bytes, prompt: str | None = None, beam: int | None = None) -> str:
-        t0 = time.perf_counter()
-        text = self.w.transcribe(pcm, prompt, beam=beam)
-        (self.ms_confirm if beam else self.ms).append((time.perf_counter() - t0) * 1000)
-        self.texts.append(("confirm: " if beam else "read: ") + str(text))
-        return text
+    def take(self) -> float:
+        v, self.cur = self.cur, 0.0
+        return v
 
 
 # ------------------------------------------------------------------ PC path
@@ -234,8 +204,11 @@ class PcSim:
     """The PC assistant's wake loop (VoiceAssistant._run) on a stream: WakeEngine on every block, the VAD
     and the Whisper check of « coach-like » utterances (when Whisper is loaded)."""
 
-    def __init__(self, make_rec, whisper: Whisper | None, confirm: Whisper | None = None) -> None:  # noqa: ANN001
+    def __init__(self, make_rec, whisper: Whisper | None, confirm: Whisper | None = None,  # noqa: ANN001
+                 kws_model=None) -> None:  # noqa: ANN001
         self.make_rec, self.whisper, self.confirm = make_rec, whisper, confirm or whisper
+        self.kws_model = kws_model
+        self.peaks = Peaks()
         self.eng = self._engine()
         self.seg = None
         if whisper is not None:
@@ -248,6 +221,8 @@ class PcSim:
         self.skip = 0
 
     def _engine(self) -> va.WakeEngine:
+        if self.kws_model is not None:
+            return va.KwsWakeEngine(self.kws_model, "pc")
         eng = va.WakeEngine(self.make_rec)
         if self.whisper is not None and hasattr(eng, "confirm"):
             eng.confirm = lambda pcm: va.whisper_confirm(self.confirm, pcm)
@@ -262,7 +237,9 @@ class PcSim:
             if self.skip > 0:                        # the question being recorded after a wake
                 self.skip -= 1
                 continue
-            if self.eng.feed(blk):
+            woke = self.eng.feed(blk)
+            self.peaks.see(self.eng)
+            if woke:
                 self._woke(f"{self.eng.last_kind},{self.eng.last_source}: {self.eng.last_text}")
                 continue
             if self.seg is None:
@@ -297,11 +274,14 @@ class DiscordSim:
     """One friend in the voice channel (discord_listen.Speaker): 20 ms packets while he talks, nothing in
     the silences (the ticker feeds comfort noise), fake clock."""
 
-    def __init__(self, make_rec, whisper: Whisper | None, confirm: Whisper | None = None) -> None:  # noqa: ANN001
+    def __init__(self, make_rec, whisper: Whisper | None, confirm: Whisper | None = None,  # noqa: ANN001
+                 kws_model=None) -> None:  # noqa: ANN001
         self.t = 0.0
         confirm = confirm or whisper
         self.whisper = whisper
-        self.sp = dl.Speaker("1", make_rec, lambda: self.t, lambda: whisper)
+        self.peaks = Peaks()
+        self.sp = dl.Speaker("1", make_rec, lambda: self.t, lambda: whisper,
+                             **({"kws_model": kws_model} if kws_model is not None else {}))
         if whisper is not None and hasattr(self.sp.engine, "confirm"):
             self.sp.engine.confirm = lambda pcm: va.whisper_confirm(confirm, pcm)
         self.events: list[tuple[float, str]] = []
@@ -320,23 +300,33 @@ class DiscordSim:
         for k in range(0, len(pcm) - n + 1, n):
             self.t += 0.02
             self._ev(self.sp.feed(pcm[k:k + n]))
+            self.peaks.see(self.sp.engine)
             if int(self.t / 0.02) % 12 == 0:
                 self._ev(self.sp.tick())
+                self.peaks.see(self.sp.engine)
 
     def silence(self, seconds: float) -> None:
         end = self.t + seconds
         while self.t < end:
             self.t += 0.25
             self._ev(self.sp.tick())
+            self.peaks.see(self.sp.engine)
 
 
-def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whisper, confirm=None) -> dict:  # noqa: ANN001
+SWEEP = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.97, 0.99)
+
+
+def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whisper, confirm=None,  # noqa: ANN001
+             kws_model=None) -> dict:  # noqa: ANN001
     cache = Path(args.cache)
     rng = np.random.default_rng(1)
     conds = PC_CONDS if path == "pc" else DISCORD_CONDS
     reps = 1 if args.quick else args.reps
     # -- chatter session
-    sim = PcSim(make_rec, whisper, confirm) if path == "pc" else DiscordSim(make_rec, whisper, confirm)
+    sim = (PcSim(make_rec, whisper, confirm, kws_model) if path == "pc"
+           else DiscordSim(make_rec, whisper, confirm, kws_model))
+    talk_peaks: list[float] = []
+    wake_peaks: list[float] = []
     logs = [w for w in {id(x): x for x in (whisper, confirm) if x is not None}.values()]
     dur = 0.0
     t0 = time.perf_counter()
@@ -347,6 +337,7 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
             c = conds[(k + r) % len(conds)]
             pcm = _deg16(it["npy"], c, k + 1000 * r, cache, it["id"])
             gap = float(rng.uniform(0.1, 1.5))
+            n_ev = len(sim.events)
             if path == "pc":
                 sim.feed(pcm + _hiss(gap, k))
                 dur += len(pcm) / 32000 + gap
@@ -355,6 +346,9 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
                 sim.talk(sp)
                 sim.silence(gap + 0.3)
                 dur += len(sp) / 32000 + gap + 0.3
+            talk_peaks.append(sim.peaks.take())
+            if len(sim.events) > n_ev:
+                sim.events[-1] = (sim.events[-1][0], f"{sim.events[-1][1]}  <- « {it['text']} » ({c})")
             if k % 25 == args.shard:                          # music / game sounds without speech (PC: the mic hears
                 kind = ("music", "game")[(k // 25) % 2]   # the speakers; Discord: a friend's open mic)
                 lvl = float(rng.uniform(0.05, 0.3))
@@ -365,18 +359,21 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
                     sim.talk(pcm)
                     sim.silence(0.5)
                 dur += 8.0
+                talk_peaks.append(sim.peaks.take())
         if path == "pc":
             sim.end()
     false = list(sim.events)
     # -- wake clips
     hits, n, missed = 0, 0, []
+    bare_n = bare_hits = 0
     for r in range(reps):
         for k, it in enumerate(wake):
             if k % args.shards != args.shard:
                 continue
             c = conds[(k + 2 * r) % len(conds)]
-            pcm = _deg16(it["npy"], c, k + 7, cache, it["id"])
+            pcm = _deg16(it["npy"], c, k + 7 + 31 * r, cache, it["id"])
             marks = [len(w.texts) for w in logs]
+            sim.peaks.take()
             if path == "pc":
                 sim.events = []
                 sim.skip = 0
@@ -391,6 +388,11 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
                 sim.talk(_trim(pcm))
                 sim.silence(1.5)
             n += 1
+            bare = not va.normalize(it["text"]).startswith(("hey", "he ", "eh", "et "))
+            wake_peaks.append((sim.peaks.take(), bare))
+            if bare:
+                bare_n += 1
+                bare_hits += bool(sim.events)
             if sim.events:
                 hits += 1
             else:
@@ -403,7 +405,14 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
            "false_wakes": len(false), "hits": hits,
            "false_per_h": round(len(false) / h, 2), "recall": round(hits / max(1, n), 3), "wake_clips": n,
            "false": [f"{t:.0f}s {w}" for t, w in false], "missed": missed,
-           "run_s": round(time.perf_counter() - t0, 1)}
+           "run_s": round(time.perf_counter() - t0, 1),
+           "bare_coach": f"{bare_hits}/{bare_n}",
+           "recall_named": round((hits - bare_hits) / max(1, n - bare_n), 3)}
+    if kws_model is not None:                  # every threshold from the same run (2-frame confirmation)
+        res["sweep"] = {f"{th}": {"fa_h": round(sum(p >= th for p in talk_peaks) / h, 2),
+                                  "recall_named": round(sum(p >= th for p, b in wake_peaks if not b)
+                                                        / max(1, sum(not b for _p, b in wake_peaks)), 3)}
+                        for th in SWEEP}
     return res
 
 
@@ -426,15 +435,41 @@ def sum_shards(files: list[str]) -> None:
             print("  MISS ", x)
 
 
+def cpu(args) -> None:  # noqa: ANN001
+    """CPU of ONE always-on spotter: % of one core for continuous speech (gate always open) and for a
+    quiet mic (gate closed), 80 ms chunks fed as the app does (0.25 s blocks)."""
+    from treeaicoach import kws  # noqa: PLC0415
+
+    m = kws.KwsModel(folder=Path(args.features) if args.features else None,
+                     head=Path(args.head) if args.head else None)
+    talk, _ = corpus(Path(args.cache), Path(args.stt_cache))
+    speech = b"".join(_deg16(it["npy"], "headset_music15", 1, Path(args.cache), it["id"]) for it in talk[:40])
+    quiet = np.random.default_rng(0).normal(0, 8, len(speech) // 2).astype("<i2").tobytes()
+    for name, pcm in (("speech", speech), ("quiet mic", quiet)):
+        sp = kws.Spotter(m)
+        n = va.BLOCK_FRAMES * 2
+        t0 = time.process_time()
+        for k in range(0, len(pcm) - n + 1, n):
+            sp.feed(pcm[k:k + n])
+        cpu_s = time.process_time() - t0
+        audio_s = len(pcm) / 32000
+        print(f"{name}: {audio_s:.0f} s of audio, {cpu_s:.2f} s CPU = {100 * cpu_s / audio_s:.2f} % of one core, "
+              f"{1000 * cpu_s / max(1, sp.frames):.2f} ms per 80 ms frame")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("synth", "run", "sum"))
+    ap.add_argument("cmd", choices=("synth", "run", "sum", "cpu"))
     ap.add_argument("files", nargs="*", help="sum: the --out files of the shards")
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--shards", type=int, default=1, help="run 1/N of the clips (N processes in parallel)")
     ap.add_argument("--cache", default="")
     ap.add_argument("--stt-cache", default="")
     ap.add_argument("--vosk-model", default="")
+    ap.add_argument("--engine", choices=("kws", "vosk"), default="kws",
+                    help="kws: the keyword spotter (3.7); vosk: the old grammar + Whisper engine")
+    ap.add_argument("--features", default="", help="folder of the 2 openWakeWord feature ONNX (else the app cache)")
+    ap.add_argument("--head", default="", help="head ONNX (else assets/voice/kws_hey_coach.onnx)")
     ap.add_argument("--whisper", default="")
     ap.add_argument("--whisper-confirm", default="",
                     help="Whisper folder for the 1.5 s wake confirmation (the app: base once downloaded)")
@@ -451,16 +486,25 @@ def main() -> None:
         sum_shards(args.files)
         return
     cache = Path(args.cache)
+    if args.cmd == "cpu":
+        cpu(args)
+        return
     if args.cmd == "synth":
         synth(cache)
         return
     talk, wake = corpus(cache, Path(args.stt_cache))
     a = va.VoiceAssistant(model_path=Path(args.vosk_model))
+    kws_model = None
+    if args.engine == "kws":
+        from treeaicoach import kws  # noqa: PLC0415
+
+        kws_model = kws.KwsModel(folder=Path(args.features) if args.features else None,
+                                 head=Path(args.head) if args.head else None)
     whisper = Whisper(args.whisper, args.threads) if args.whisper else None
     confirm = Whisper(args.whisper_confirm, args.threads) if args.whisper_confirm else None
     out = []
     for p in (("pc", "discord") if args.path == "both" else (args.path,)):
-        r = run_path(p, talk, wake, args, a._make_rec, whisper, confirm)
+        r = run_path(p, talk, wake, args, a._make_rec, whisper, confirm, kws_model)
         print(json.dumps({k: v for k, v in r.items() if k not in ("false", "missed")}))
         for f in r["false"]:
             print("  FALSE", f)

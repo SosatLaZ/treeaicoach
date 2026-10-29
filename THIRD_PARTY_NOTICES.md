@@ -148,3 +148,13 @@ contributors, Meraki Analytics); its header repeats this. Every profile field re
 (`src`: dd = Data Dragon, rc = Riot client data, rr = Riot rune recommendations, mk = Meraki,
 wk = wiki, cu = curation, ru = rule). No site whose terms forbid automated access (op.gg, u.gg,
 Mobalytics...) is scraped.
+
+## « Hey coach » keyword spotter — `treeaicoach/kws.py`, `tools/kws_train.py`
+
+- `melspectrogram.onnx` and `embedding_model.onnx` from openWakeWord v0.5.1
+  (https://github.com/dscripka/openWakeWord, code under the Apache License 2.0). The embedding model is
+  openWakeWord's re-implementation of Google's `speech_embedding` TFHub module (Apache License 2.0).
+  NOT bundled: downloaded once on first use from the openWakeWord GitHub release and checked by SHA-256
+  (`kws.FEATURE_MODELS`). openWakeWord's own pre-trained wake-word models (CC BY-NC-SA 4.0) are not used.
+- `assets/voice/kws_hey_coach.onnx`: our classifier head, trained by `tools/kws_train.py` on speech
+  synthesised with Microsoft Edge neural voices (edge-tts) and on synthetic noise only.

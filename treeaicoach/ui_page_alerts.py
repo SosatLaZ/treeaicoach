@@ -53,7 +53,12 @@ def listen_line(snap: dict | None) -> str:
     if snap.get("listening"):
         bits.append(f"niveau {snap.get('bar') or ''}")
     heard = str(snap.get("heard") or "")
-    bits.append(f"dernier mot entendu « {heard} »" if heard else "rien entendu pour l'instant")
+    if snap.get("wake_engine") == "kws":       # Siri-like spotter: no words while waiting, only questions
+        bits.append(f"dernière question « {heard} »" if heard else "aucune question pour l'instant")
+        if snap.get("listening") and snap.get("wake_score") is not None:
+            bits.append(f"« Hey coach » {int(round(100 * float(snap['wake_score'])))} %")
+    else:
+        bits.append(f"dernier mot entendu « {heard} »" if heard else "rien entendu pour l'instant")
     if snap.get("listening") and snap.get("mic_label"):
         bits.append(f"micro « {snap['mic_label']} »")
     bits.append("Whisper local" if snap.get("whisper") else

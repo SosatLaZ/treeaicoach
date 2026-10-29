@@ -54,8 +54,12 @@ SPEAKING_MAX_S = 15.0           # the app's voice "busy" longer than this: the g
 CHIME_S = 0.8                   # the wake chime: the question's first words are not dropped for it
 SILENT_MIC_RMS = 4.0            # a block this quiet is digital silence (muted / wrong device)
 SILENT_MIC_BLOCKS = 40          # ... for 10 s: reported in the panel
+CAPTURE_MAX_S = 10.0            # Siri flow: the question after the wake is cut after 10 s (VAD ends it on 0.7 s)
+FOLLOWUP_S = 8.0                # after the spoken answer: a question within 8 s needs no wake phrase
+ANSWER_WAIT_S = 25.0            # the answer must start being spoken within this, else no « suite » window
 STAGE_LABELS = {"off": "désactivé", "loading": "chargement du modèle", "ready": "modèle prêt",
-                "listening": "écoute", "wake": "mot-clé entendu", "question": "question",
+                "listening": "écoute", "wake": "mot-clé entendu", "question": "J'écoute…",
+                "followup": "J'écoute la suite…",
                 "answer": "réponse", "error": "erreur"}
 
 #: The Vosk engine (libvosk.dll, ~17 MB compressed) is NOT bundled in the exe (GitHub's 100 MB file limit):
@@ -301,6 +305,79 @@ AGC_TARGET_RMS = 1500.0         # … to about -27 dBFS…
 AGC_MAX_GAIN = 8.0              # … by at most x8 (+18 dB). Louder mics are never touched.
 
 _NOISE: bytes | None = None
+
+
+class KwsWakeEngine:
+    """The Siri-like wake listener (3.7): the neural keyword spotter of :mod:`treeaicoach.kws` on ONE stream,
+    with the surface the callers know from :class:`WakeEngine` (``feed`` / ``reset`` / ``ready`` / ``rms`` /
+    ``last_text``…). No speech recognizer and no Whisper ever runs to decide a wake: the question that
+    follows is recorded (VAD) and read by Whisper afterwards. ``path`` = "pc" / "discord" (its threshold)."""
+
+    kind = "kws"
+
+    def __init__(self, model: Any, path: str = "pc", threshold: float | None = None) -> None:
+        from treeaicoach import kws  # noqa: PLC0415
+
+        th = kws.THRESHOLDS.get(path, 0.5) if threshold is None else float(threshold)
+        self.spot = kws.Spotter(model, th)
+        self.path = path
+        self.grammar_rec: Any = self        # (non-None: « the wake engine is loaded », Discord's ticker)
+        self.det = None
+        self.confirm: Callable[[bytes], bool | None] | None = None   # (unused: no Whisper on the wake)
+        self.rms = 0.0
+        self.last_text = ""
+        self.last_kind = ""
+        self.last_source = path
+        self.last_score = 0.0
+        self.confirmed_by = ""
+        self.dropped = 0
+        self.last_dropped = ""
+        self.fired_at = -1.0                # time.monotonic() of the last wake (latency log)
+
+    def ready(self) -> bool:
+        return True
+
+    def feed(self, block: bytes) -> bool:
+        try:
+            self.rms = block_rms(block)
+            woke = self.spot.feed(block)
+            self.last_score = self.spot.peak
+            if woke:
+                self.fired_at = time.monotonic()
+                self.last_kind = f"kws {self.spot.last_score:.2f}"
+                self.last_text = "hey coach"
+            return woke
+        except Exception:
+            log.debug("KWS wake feed failed", exc_info=True)
+            return False
+
+    def take_question(self) -> tuple[Any, list[str], str]:
+        return None, [], ""
+
+    def flush(self, seconds: float = 0.0) -> bool:
+        return False
+
+    def reset(self) -> None:
+        self.spot.reset()
+        self.last_text = ""
+
+
+def make_wake_engine(make_rec: Callable[[Any], Any], path: str = "pc", kws_model: Any = None,
+                     use_kws: bool = True) -> Any:
+    """The wake listener of one stream: the keyword spotter when its model loads (``kws_model`` or the
+    shared one, downloaded once), else the old Vosk :class:`WakeEngine` (emergency fallback only)."""
+    if use_kws:
+        model = kws_model
+        if model is None:
+            try:
+                from treeaicoach import kws  # noqa: PLC0415
+
+                model = kws.shared_model()
+            except Exception:
+                model = None
+        if model is not None:
+            return KwsWakeEngine(model, path)
+    return WakeEngine(make_rec)
 
 
 def comfort_noise(seconds: float) -> bytes:
@@ -776,6 +853,25 @@ class Mic(Protocol):
     def close(self) -> None: ...
 
 
+class NullRecognizer:
+    """A recognizer that hears nothing: the question is recorded for Whisper only (KWS path, no Vosk)."""
+
+    def accept(self, pcm: bytes) -> bool:
+        return False
+
+    def result(self) -> str:
+        return ""
+
+    def partial(self) -> str:
+        return ""
+
+    def final(self) -> str:
+        return ""
+
+    def reset(self) -> None:
+        pass
+
+
 class VoskRecognizer:
     """Thin wrapper over ``vosk.KaldiRecognizer`` (text out of its JSON). ``last_raw`` keeps the text
     WITH ``[unk]`` (where ordinary words were: « Coach » must be the FIRST word) and ``last_confs`` the
@@ -1045,8 +1141,18 @@ class VoiceAssistant:
     def __init__(self, *, mic_factory: Callable[[str], Mic] | None = None,
                  recognizer_factory: Callable[[Sequence[str] | None], Recognizer] | None = None,
                  clock: Callable[[], float] = time.monotonic, model_path: Path | None = None,
-                 stt: Any = None, probe: Callable[..., list] | None = None) -> None:
+                 stt: Any = None, probe: Callable[..., list] | None = None, kws_model: Any = None) -> None:
         self._mic_factory = mic_factory
+        #: the keyword spotter (kws.py): the real app loads the shared one; tests that inject recognizers
+        #: without a ``kws_model`` keep the old Vosk wake engine (deterministic fakes)
+        self._kws_model = kws_model
+        self._use_kws = kws_model is not None or recognizer_factory is None
+        self._followup_until = -1.0      # « suite » window: a question without the wake phrase until then
+        self._answer_wait_until = -1.0   # waiting for the spoken answer to start / end
+        self._answer_spoke = False
+        self.on_listen: Callable[[str, str], None] | None = None   # ("listening" / "transcript" / "idle", text)
+        self.wake_engine = ""            # "kws" (neural spotter) / "vosk" (fallback), once loaded
+        self.wake_score: float | None = None   # best « Hey coach » score of the last 2 s (KWS, the panel)
         #: local Whisper (stt_local.WhisperSTT): the real app uses the process-wide one, tests inject a fake;
         #: with injected recognizers and no ``stt`` the assistant stays Vosk-only (deterministic tests)
         self._stt_obj = stt
@@ -1379,7 +1485,8 @@ class VoiceAssistant:
                 "silent_mic": self.silent_mic, "mic_label": self.mic_label, "suggested_mic": self.suggested_mic,
                 "auto_mic": self._auto_to, "mic_db": round(self.mic_db, 1),
                 "whisper": bool(self._stt_obj is not None and self._stt_obj.ready()),
-                "whisper_status": str(getattr(self._stt_obj, "status", "") or ""), "whisper_text": self.whisper_text}
+                "whisper_status": str(getattr(self._stt_obj, "status", "") or ""), "whisper_text": self.whisper_text,
+                "wake_engine": self.wake_engine, "wake_score": self.wake_score}
 
     def _set_stage(self, stage: str) -> None:
         if stage != self.stage:
@@ -1564,9 +1671,13 @@ class VoiceAssistant:
                     continue
                 if wake_rec is None:
                     try:
-                        eng = WakeEngine(self._make_rec)
+                        eng = make_wake_engine(self._make_rec, "pc", self._kws_model, use_kws=self._use_kws)
                         eng.confirm = self._confirm_wake
                         wake_rec = eng if eng.ready() else None
+                        if wake_rec is not None:
+                            self.wake_engine = "kws" if isinstance(eng, KwsWakeEngine) else "vosk"
+                            log.info("Assistant vocal : détection du mot-clé par %s",
+                                     "réseau neuronal (KWS)" if isinstance(eng, KwsWakeEngine) else "Vosk (secours)")
                     except Exception as exc:
                         log.warning("Voice assistant: recognizer unavailable", exc_info=True)
                         global ENGINE_ERROR
@@ -1610,13 +1721,27 @@ class VoiceAssistant:
                 if self._speaking():
                     self.dropped_self += 1
                     wake_rec.reset()
+                    if self._answer_wait_until > 0:
+                        self._answer_spoke = True
+                    continue
+                if self._followup_step(mic, wake_rec, seg):
                     continue
                 self._set_stage("listening")
                 woke = wake_rec.feed(block)
                 self._observe(wake_rec)
+                if isinstance(wake_rec, KwsWakeEngine):
+                    sc = list(wake_rec.spot.scores)[-25:]
+                    self.wake_score = max(sc) if sc else 0.0
                 utts = seg.feed(block) if seg is not None else []
                 if utts:
                     self._last_utt = (self._clock(), utts[-1])
+                if utts and not woke and self._followup_until > 0:
+                    self._followup_until = -1.0           # the « suite » question, no wake phrase
+                    self._followup_question(utts[-1])
+                    wake_rec.reset()
+                    if seg is not None:
+                        seg.reset()
+                    continue
                 if woke:
                     self.wakes += 1
                     log.info("Assistant vocal : mot-clé entendu (%s, %s) dans « %s »", wake_rec.last_kind,
@@ -1630,7 +1755,7 @@ class VoiceAssistant:
                         seg.reset()
                     self._last_utt = (-1e9, b"")
                     continue
-                for u in utts:
+                for u in utts if not isinstance(wake_rec, KwsWakeEngine) else ():   # (KWS: never Whisper)
                     if self._whisper_wake_check(mic, u, wake_rec.last_text):
                         wake_rec.reset()
                         if seg is not None:
@@ -1770,7 +1895,7 @@ class VoiceAssistant:
         last_voice = self._clock()
         while not self._stop.is_set() and seg is not None:
             now = self._clock()
-            if now - start >= QUESTION_MAX_S + 4.0:
+            if now - start >= CAPTURE_MAX_S:
                 got = seg.flush() or b""
                 break
             if not started and now - start >= wait:
@@ -1886,6 +2011,7 @@ class VoiceAssistant:
                 self.on_wake()
             except Exception:
                 pass
+            self._listen_event("listening")
             rec, parts, partial = handover if handover is not None else (None, [], "")
             self._question_whisper(mic, question_text(parts, partial), prefix)
             return
@@ -1956,6 +2082,59 @@ class VoiceAssistant:
             self.heard = question[-60:]
         self._deliver(question)
 
+    def _listen_event(self, what: str, text: str = "") -> None:
+        """The visual state for the overlay chip: « J'écoute… », the transcript, back to idle."""
+        cb = self.on_listen
+        if cb is not None:
+            try:
+                cb(what, text)
+            except Exception:
+                log.debug("on_listen failed", exc_info=True)
+
+    def _followup_step(self, mic: Mic, wake_rec: Any, seg: Any) -> bool:
+        """After an answer: once the app's voice has finished it, :data:`FOLLOWUP_S` seconds during which a
+        question needs no wake phrase (Siri's « suite »). True = this block was handled here."""
+        now = self._clock()
+        if self._answer_wait_until > 0:
+            if self._answer_spoke:                     # the answer was spoken and is over: window opens
+                self._answer_wait_until = -1.0
+                self._followup_until = now + FOLLOWUP_S
+                if seg is not None:
+                    seg.reset()
+                self._set_stage("followup")
+                self._listen_event("listening", "suite")
+            elif now > self._answer_wait_until:
+                self._answer_wait_until = -1.0
+                self._listen_event("idle")
+            return False
+        if self._followup_until < 0 or seg is None or not isinstance(wake_rec, KwsWakeEngine):
+            return False
+        if now > self._followup_until and not seg.in_speech:
+            self._followup_until = -1.0
+            self._set_stage("listening")
+            self._listen_event("idle")
+            return False
+        return False
+
+    def _followup_question(self, pcm: bytes) -> None:
+        if not claim_wake("pc"):
+            return
+        self._set_stage("question")
+        from treeaicoach import voice_latency  # noqa: PLC0415
+
+        voice_latency.begin("pc")
+        text = self._transcribe(pcm) if self.whisper_ready() else ""
+        self.whisper_text = text
+        ok, rest = whisper_wake(text)
+        q = (rest if ok else strip_wake(text)).strip()
+        log.info("Assistant vocal : question de suite « %s »", q[:80])
+        if len(q.split()) < MIN_QUESTION_WORDS:
+            self._set_stage("listening")
+            self._listen_event("idle")
+            return
+        self.heard = q[-60:]
+        self._deliver(q)
+
     def _deliver(self, question: str) -> None:
         ok = len(question.split()) >= MIN_QUESTION_WORDS
         log.info("Assistant vocal : question de %d mot(s)%s", len(question.split()), "" if ok else " (trop courte)")
@@ -1979,6 +2158,9 @@ class VoiceAssistant:
         self.questions += 1
         self.status = f"Question : « {question} »"
         self._set_stage("answer")
+        self._listen_event("transcript", question)
+        self._answer_wait_until = self._clock() + ANSWER_WAIT_S     # then the « suite » window (no wake phrase)
+        self._answer_spoke = False
         try:
             from treeaicoach import voice_latency  # noqa: PLC0415
 
