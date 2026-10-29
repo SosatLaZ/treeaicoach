@@ -3,6 +3,17 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.5.0 · 29 octobre 2026
+
+- **L'IA ne refuse plus jamais ta question :** plus de « L'IA réfléchit déjà », ta question passe avant tout.
+- **« Hey coach » beaucoup mieux reconnu :** le premier moteur entendait « écoute » au lieu de « hé coach » ;
+  Whisper relit maintenant ces phrases (en test : 148/180 au lieu de 57/180 au micro, 154/180 au lieu de 54/180
+  sur Discord, sans faux réveil sur ce test).
+- **Whisper ne ralentit plus le jeu :** 2 cœurs max, en priorité basse.
+- **Carte graphique pour la minimap** (option, Réglages → Avancé → Performance).
+- **Ta position quand tu es collé à ton ADC** bien trouvée (Seraphine 91 % → 94 %, 0 fausse détection) ;
+  plus de saut impossible de ta position.
+
 ## 3.4.1 · 29 octobre 2026
 
 - **Le bot répond en quelques secondes au lieu de ~2 minutes :** les délais s'additionnaient (file Whisper,
