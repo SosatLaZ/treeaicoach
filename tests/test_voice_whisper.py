@@ -508,6 +508,19 @@ def test_whisper_wake_spellings_measured_on_the_wake_bench() -> None:
     assert va.wakeish_start("écrit le baron est dispo") and not va.wakeish_start("on fait le drake écoute")
 
 
+def test_whisper_wake_end_to_end_bench_fixes() -> None:
+    """3.5.x end-to-end wake bench: the false wakes (a 1.5 s confirmation cut « coach tu utilises », a bare
+    « Tri des objets ») are refused; Whisper's glued « Hétri » / « Hikooch » / « Egoch » are accepted."""
+    for t in ("coach utilise", "coach-putrise", "coach tu utilises ?", "Tri des objets.", "Trie ça."):
+        assert not va.whisper_wake(t)[0] and not va.whisper_confirms(t), t
+    for t in ("Hétri, le baron est dispo.", "Etri, le Baron est disponible.", "Hikooch, ikooch.", "Egoch.",
+              "Coach !", "Coach.", "Coach, quel objet contre Zed ?"):
+        assert va.whisper_wake(t)[0], t
+    assert va.whisper_wake("Hétri, le baron est dispo.")[1] == "le baron est dispo."
+    for t in ("Ego", "Echo, echo", "Ici", "Écrit, le baron est dispo"):
+        assert not va.whisper_wake(t)[0], t
+
+
 def test_discord_whisper_reads_a_coach_like_spurt_and_keeps_its_question() -> None:
     """3.4.1: on Discord too, a spurt Vosk heard as « écoute quel objet… » is re-read by Whisper; the
     question said in the same breath is answered without a second recording."""

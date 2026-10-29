@@ -587,8 +587,8 @@ def whisper_wake(text: Any) -> tuple[bool, str]:
     (« Hé, coach ! », « Et Coatch quel objet », « Hey Tree, … »). ``question`` = what follows."""
     import difflib  # noqa: PLC0415
 
-    # « E-coach, … » / « Ikotch » (Whisper glues « hé » to « coach »): split into « e coach »
-    words = _GLUED.sub(lambda m: "e " + m.group(2), str(text or "").replace("-", " ")).split()
+    # « E-coach, … » / « Ikotch » / « Hétri » (Whisper glues « hé » to « coach » / « tree »): « e coach »
+    words = _GLUED.sub(lambda m: "e " + (m.group(2) if m.group(2).lower() in TREE_WORDS else "coach"), str(text or "").replace("-", " ")).split()
     norm = [normalize(w) for w in words]
     if len(norm) > 2 and norm[0] in ("et", "e") and norm[1] == "il":
         words, norm = words[1:], norm[1:]           # « Et il coach, … »
@@ -611,8 +611,12 @@ def whisper_wake(text: Any) -> tuple[bool, str]:
             continue                                 # « et coach à cause » (« et cocher la case »)
         best = max(difflib.SequenceMatcher(None, w, t).ratio() for t in _WW_TARGETS)
         if best >= 0.75 or w in WAKE_STRONG or w in WAKE_WEAK or (lead_n and w in TREE_WORDS):
-            if not lead_n and w not in WAKE_STRONG and best < 0.9:
-                continue                             # a bare word must really be « coach »
+            if not lead_n and w not in WAKE_STRONG and max(
+                    difflib.SequenceMatcher(None, w, t).ratio() for t in ("coach", "coatch")) < 0.9:
+                continue                             # a bare word must really be « coach » (« Tri des objets »)
+            if not lead_n and len(norm) > 1 and norm[1] and not words[0].endswith((",", "!", "?", ".")):
+                continue                             # « Coach, … » is a call; « (quel) coach tu utilises » /
+                #                                      « coach-putilise » (a 1.5 s confirmation cut) is not
             if not lead_n and len(norm) > 1 and not words[0].endswith((",", "!", "?")) \
                     and norm[1] in ("est", "il", "a", "de", "du", "va", "dit", "ou"):
                 continue                             # « Coach est nul » / « coach du… »: talk ABOUT the coach
@@ -623,7 +627,7 @@ def whisper_wake(text: Any) -> tuple[bool, str]:
 
 #: leads that are also an article in Whisper's French (« A coach » = « un coach »)
 _WW_WEAK_LEADS = frozenset({"a", "e"})
-_GLUED = re.compile(r"(?i)\b([ie])(k?c?o[at]?t?ch)\b")
+_GLUED = re.compile(r"(?i)\b(h?[ieé])(k?[cg]?o{1,2}[at]?t?ch|tri|tree)\b")   # Ikotch, Hikooch, Egoch, Hétri
 
 _ABOUT_COACH = frozenset({"est", "il", "a", "de", "du", "va", "dit", "ou", "c'est", "ca", "sert", "m'a", "t'a",
                           "et", "qui", "que", "elle", "vocal", "sportif"})

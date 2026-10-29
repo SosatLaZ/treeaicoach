@@ -206,11 +206,13 @@ class Whisper:
             raise SystemExit(self.w.status)
         self.ms: list[float] = []
         self.ms_confirm: list[float] = []
+        self.texts: list[str] = []                  # every transcript (per-clip log of the misses)
 
     def transcribe(self, pcm: bytes, prompt: str | None = None, beam: int | None = None) -> str:
         t0 = time.perf_counter()
         text = self.w.transcribe(pcm, prompt, beam=beam)
         (self.ms_confirm if beam else self.ms).append((time.perf_counter() - t0) * 1000)
+        self.texts.append(("confirm: " if beam else "read: ") + str(text))
         return text
 
 
@@ -219,8 +221,8 @@ class PcSim:
     """The PC assistant's wake loop (VoiceAssistant._run) on a stream: WakeEngine on every block, the VAD
     and the Whisper check of « coach-like » utterances (when Whisper is loaded)."""
 
-    def __init__(self, make_rec, whisper: Whisper | None) -> None:  # noqa: ANN001
-        self.make_rec, self.whisper = make_rec, whisper
+    def __init__(self, make_rec, whisper: Whisper | None, confirm: Whisper | None = None) -> None:  # noqa: ANN001
+        self.make_rec, self.whisper, self.confirm = make_rec, whisper, confirm or whisper
         self.eng = self._engine()
         self.seg = None
         if whisper is not None:
@@ -235,7 +237,7 @@ class PcSim:
     def _engine(self) -> va.WakeEngine:
         eng = va.WakeEngine(self.make_rec)
         if self.whisper is not None and hasattr(eng, "confirm"):
-            eng.confirm = lambda pcm: va.whisper_confirm(self.whisper, pcm)
+            eng.confirm = lambda pcm: va.whisper_confirm(self.confirm, pcm)
         eng.ready()
         return eng
 
@@ -282,12 +284,13 @@ class DiscordSim:
     """One friend in the voice channel (discord_listen.Speaker): 20 ms packets while he talks, nothing in
     the silences (the ticker feeds comfort noise), fake clock."""
 
-    def __init__(self, make_rec, whisper: Whisper | None) -> None:  # noqa: ANN001
+    def __init__(self, make_rec, whisper: Whisper | None, confirm: Whisper | None = None) -> None:  # noqa: ANN001
         self.t = 0.0
+        confirm = confirm or whisper
         self.whisper = whisper
         self.sp = dl.Speaker("1", make_rec, lambda: self.t, lambda: whisper)
         if whisper is not None and hasattr(self.sp.engine, "confirm"):
-            self.sp.engine.confirm = lambda pcm: va.whisper_confirm(whisper, pcm)
+            self.sp.engine.confirm = lambda pcm: va.whisper_confirm(confirm, pcm)
         self.events: list[tuple[float, str]] = []
 
     def _ev(self, evs) -> None:  # noqa: ANN001
@@ -314,13 +317,14 @@ class DiscordSim:
             self._ev(self.sp.tick())
 
 
-def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whisper) -> dict:  # noqa: ANN001
+def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whisper, confirm=None) -> dict:  # noqa: ANN001
     cache = Path(args.cache)
     rng = np.random.default_rng(1)
     conds = PC_CONDS if path == "pc" else DISCORD_CONDS
     reps = 1 if args.quick else args.reps
     # -- chatter session
-    sim = PcSim(make_rec, whisper) if path == "pc" else DiscordSim(make_rec, whisper)
+    sim = PcSim(make_rec, whisper, confirm) if path == "pc" else DiscordSim(make_rec, whisper, confirm)
+    logs = [w for w in {id(x): x for x in (whisper, confirm) if x is not None}.values()]
     dur = 0.0
     t0 = time.perf_counter()
     for r in range(reps):
@@ -359,14 +363,17 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
                 continue
             c = conds[(k + 2 * r) % len(conds)]
             pcm = _deg16(it["npy"], c, k + 7, cache, it["id"])
+            marks = [len(w.texts) for w in logs]
             if path == "pc":
                 sim.events = []
                 sim.skip = 0
+                sim.ww = []          # a « Hey coach » is not preceded by 6 Whisper checks in the same minute
                 sim.eng.reset()
                 sim.feed(_hiss(1.0, k) + pcm + _hiss(1.0, k + 1))
                 sim.end()
             else:
                 sim.events = []
+                sim.sp._ww_times = []   # (the clips come every ~5 s: the per-minute cap is for chatter)
                 sim.silence(3.0)
                 sim.talk(_trim(pcm))
                 sim.silence(1.5)
@@ -375,7 +382,9 @@ def run_path(path: str, talk: list[dict], wake: list[dict], args, make_rec, whis
                 hits += 1
             else:
                 e = sim.eng if path == "pc" else sim.sp.engine
-                missed.append(f"{it['id']}_{c}: {it['text']}  | heard « {e.last_text} »")
+                wt = [t for w, m in zip(logs, marks) for t in w.texts[m:]]
+                missed.append(f"{it['id']}_{c}: {it['text']}  | heard « {e.last_text} »"
+                              + "".join(f" | whisper {t}" for t in wt))
     h = dur / 3600.0
     res = {"path": path, "chatter_h": round(h, 3), "chatter_clips": -(-len(talk) // args.shards) * reps,
            "false_wakes": len(false), "hits": hits,
@@ -414,6 +423,8 @@ def main() -> None:
     ap.add_argument("--stt-cache", default="")
     ap.add_argument("--vosk-model", default="")
     ap.add_argument("--whisper", default="")
+    ap.add_argument("--whisper-confirm", default="",
+                    help="Whisper folder for the 1.5 s wake confirmation (the app: base once downloaded)")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--path", choices=("pc", "discord", "both"), default="both")
     ap.add_argument("--quick", action="store_true")
@@ -433,17 +444,18 @@ def main() -> None:
     talk, wake = corpus(cache, Path(args.stt_cache))
     a = va.VoiceAssistant(model_path=Path(args.vosk_model))
     whisper = Whisper(args.whisper, args.threads) if args.whisper else None
+    confirm = Whisper(args.whisper_confirm, args.threads) if args.whisper_confirm else None
     out = []
     for p in (("pc", "discord") if args.path == "both" else (args.path,)):
-        r = run_path(p, talk, wake, args, a._make_rec, whisper)
+        r = run_path(p, talk, wake, args, a._make_rec, whisper, confirm)
         print(json.dumps({k: v for k, v in r.items() if k not in ("false", "missed")}))
         for f in r["false"]:
             print("  FALSE", f)
-        for m in r["missed"][:40]:
+        for m in r["missed"]:
             print("  MISS ", m)
         out.append(r)
     for name, ms in (("whisper check", whisper.ms if whisper else []),
-                     ("whisper wake confirmation", whisper.ms_confirm if whisper else [])):
+                     ("whisper wake confirmation", (confirm or whisper).ms_confirm if whisper else [])):
         if ms:
             ms = sorted(ms)
             print(f"{name}: {len(ms)} calls, median {ms[len(ms) // 2]:.0f} ms, p90 {ms[int(len(ms) * 0.9)]:.0f} ms")
