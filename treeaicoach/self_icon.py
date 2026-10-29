@@ -289,6 +289,14 @@ _LUT_CALLS = [0]
 
 
 def _lut_index(bgr: np.ndarray) -> np.ndarray:
+    if bgr.dtype == np.uint8 and 3 * _LUT_BITS <= 16:
+        # (cost) the same indices in uint16 (half the memory traffic of int32)
+        q = bgr >> (8 - _LUT_BITS)
+        idx = q[:, :, 0].astype(np.uint16)
+        idx <<= 2 * _LUT_BITS
+        idx |= q[:, :, 1].astype(np.uint16) << _LUT_BITS
+        idx |= q[:, :, 2]
+        return idx
     q = (bgr >> (8 - _LUT_BITS)).astype(np.int32)
     return (q[:, :, 0] << (2 * _LUT_BITS)) | (q[:, :, 1] << _LUT_BITS) | q[:, :, 2]
 
@@ -354,6 +362,13 @@ def _ring_mean(m: np.ndarray, Rw: float, pts: np.ndarray) -> np.ndarray:  # noqa
     off = sorted({(int(round(x * Rw)), int(round(y * Rw))) for x, y in pts})
     p = max(max(abs(a), abs(b)) for a, b in off)
     pad = cv2.copyMakeBorder(m, p, p, p, p, cv2.BORDER_CONSTANT, value=0)
+    if m.dtype == np.uint8 and len(off) * int(m.max(initial=0)) < 256:
+        # (cost) 0/1 masks: the exact integer sums in uint8 (4x less memory traffic), then
+        # the same float32 mean as the float path
+        acc8 = np.zeros_like(m)
+        for dx, dy in off:
+            np.add(acc8, pad[p + dy:p + dy + h, p + dx:p + dx + w], out=acc8)
+        return acc8.astype(np.float32) / float(len(off))
     acc = np.zeros_like(m)
     for dx, dy in off:
         acc += pad[p + dy:p + dy + h, p + dx:p + dx + w]
@@ -412,12 +427,13 @@ def ring_candidates(bgr: np.ndarray, R_px: float, rings: Any = None,
     h, w = work.shape[:2]
     Rw = R_px * w / float(W)
     lbl = _label_lut(rings)[_lut_index(work)]                      # bit 1 E, 2 A, 4 S
-    m3 = np.empty((h, w, 3), np.float32)
-    m3[:, :, 0] = (lbl & 2) > 0                                       # ally side (A)
-    m3[:, :, 1] = (lbl & 1) > 0                                       # enemy (E)
-    m3[:, :, 2] = (lbl & 4) > 0                                       # self teal (S)
+    m3u = np.empty((h, w, 3), np.uint8)
+    np.right_shift(lbl & 2, 1, out=m3u[:, :, 0])                      # ally side (A)
+    np.bitwise_and(lbl, 1, out=m3u[:, :, 1])                          # enemy (E)
+    np.right_shift(lbl & 4, 2, out=m3u[:, :, 2])                      # self teal (S)
+    m3 = m3u.astype(np.float32)
     out: list[RingCand] = []
-    fr = _ring_mean(m3, Rw, _RING_PTS)
+    fr = _ring_mean(m3u, Rw, _RING_PTS)
     fa, fe, fs = fr[:, :, 0], fr[:, :, 1], fr[:, :, 2]
     # interior / outside only at the peaks; outside, my teal glow is expected around my
     # icon (only the plain ally colour counts there)
@@ -1194,16 +1210,25 @@ class SkinGuesser:
             if nums is None:
                 return None
             q = _circle_feats(portrait_bgr.astype(np.float32), 0.92)
+            cache = self.__dict__.setdefault("_skin_feats", {})
             for n in self._available(alias, nums):
-                icon = self.db.load_icon(alias, n)
-                if icon is None:
-                    continue
-                if icon.shape[2] == 4:
-                    a = icon[:, :, 3:4].astype(np.float32) / 255.0
-                    bgr = icon[:, :, 2::-1].astype(np.float32) * a + 40.0 * (1 - a)
-                else:
-                    bgr = icon[:, :, :3].astype(np.float32)
-                s = max(_feat_ncc(q, _circle_feats(bgr, f)) for f in (0.8, 0.9, 1.0))
+                feats = cache.get((alias, n))
+                if feats is None:
+                    # (cost) the official icon's features never change: computed once, not
+                    # 3 resamplings of every skin at every call
+                    icon = self.db.load_icon(alias, n)
+                    if icon is None:
+                        continue
+                    if icon.shape[2] == 4:
+                        a = icon[:, :, 3:4].astype(np.float32) / 255.0
+                        bgr = icon[:, :, 2::-1].astype(np.float32) * a + 40.0 * (1 - a)
+                    else:
+                        bgr = icon[:, :, :3].astype(np.float32)
+                    feats = [_circle_feats(bgr, f) for f in (0.8, 0.9, 1.0)]
+                    if len(cache) > 256:
+                        cache.clear()
+                    cache[(alias, n)] = feats
+                s = max(_feat_ncc(q, fe) for fe in feats)
                 k = (alias, n)
                 old = self._scores.get(k)
                 self._scores[k] = s if old is None else 0.7 * old + 0.3 * s

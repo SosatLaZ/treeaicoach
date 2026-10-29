@@ -116,6 +116,7 @@ def _run(game, m, n, k=0, dt=0.2, wrong=None):
 
 
 def test_ring_candidates_find_rendered_icons(db, renderer):
+    SI._LUT_CACHE.clear()          # (module state: a table left by another test may be reused)
     g = _Game(db, renderer, seed=3, modded=())
     img = g.frame(0.0)
     structs = SI._structure_points()

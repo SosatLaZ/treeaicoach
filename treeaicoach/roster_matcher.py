@@ -448,6 +448,11 @@ GREY_NO_RING = 0.3
 CHANGE_DIFF = 14
 CHANGE_OPEN = 0.3
 LOST_EVERY = 4
+#: a tracked champion found where predicted but under the frame threshold: his whole-map
+#: (coarse) search runs every WEAK_COARSE_EVERY frames while nothing changes on the map
+#: (1 = every frame). Measured: real gate and det_gym --quick unchanged (positions, teams and
+#: identities identical on every real-case frame; 26 / 3336 frames with a smoothed score within 0.07).
+WEAK_COARSE_EVERY = 2
 
 # Initial ring colours (BGR), learned live afterwards.
 _RING_INIT_BGR: dict[str, tuple[int, int, int]] = {
@@ -666,6 +671,27 @@ def _bank_specs(bank: _Bank, shape: tuple[int, int]) -> tuple[np.ndarray, list[l
             bank.specs.clear()
         bank.specs[shape] = got
     return got
+
+
+def _keep_far(pts: list, centres: Sequence[tuple[float, float]], dist: float) -> list:
+    """``[p for p in pts if not any(math.hypot(p[0] - cu, p[1] - cv) < dist for cu, cv in
+    centres)]``, same result: (cost) a vectorized box test first, the exact ``math.hypot`` only
+    for the pairs inside the box (``hypot >= max(|du|, |dv|)``)."""
+    if not pts or not centres:
+        return list(pts)
+    P = np.asarray([(p[0], p[1]) for p in pts], np.float64)
+    C = np.asarray(centres, np.float64)
+    box = (np.abs(P[:, None, 0] - C[None, :, 0]) < dist) & (np.abs(P[:, None, 1] - C[None, :, 1]) < dist)
+    rows = np.flatnonzero(box.any(axis=1)).tolist()
+    if not rows:
+        return list(pts)
+    drop = set()
+    for r in rows:
+        p = pts[r]
+        if any(math.hypot(p[0] - centres[c][0], p[1] - centres[c][1]) < dist
+               for c in np.flatnonzero(box[r]).tolist()):
+            drop.add(r)
+    return [p for k, p in enumerate(pts) if k not in drop]
 
 
 def ncc_maps(feat: np.ndarray, bank: _Bank, idx: Sequence[int] | None = None,
@@ -891,9 +917,9 @@ class RingColorModel:
         P = np.asarray(pe + pa, np.float32) * w                          # [k, 3]
         X = lab_px.astype(np.float32, copy=False) * w                   # [n, 3]
         d2 = (X * X).sum(axis=1)[:, None] - 2.0 * (X @ P.T) + (P * P).sum(axis=1)[None]
-        D = np.sqrt(np.maximum(d2, 0.0))
-        de = D[:, :len(pe)].min(axis=1)
-        da = D[:, len(pe):].min(axis=1)
+        # (cost) min before sqrt (monotonic: the same values, k x fewer square roots)
+        de = np.sqrt(np.maximum(d2[:, :len(pe)].min(axis=1), 0.0))
+        da = np.sqrt(np.maximum(d2[:, len(pe):].min(axis=1), 0.0))
         f_en = float(np.mean((de < self.NEAR) & (de < 0.8 * da)))
         f_al = float(np.mean((da < self.NEAR) & (da < 0.8 * de)))
         return f_en, f_al
@@ -2849,8 +2875,8 @@ class RosterMatcher:
                         continue
                     pts.append((u, v))
         structs = self._structures()
-        pts = [p for p in pts if not any(math.hypot(p[0] - su, p[1] - sv) < STRUCT_DIST for su, sv, _t in structs)
-               and not any(math.hypot(p[0] - fu, p[1] - fv) < FOUNTAIN_DIST for fu, fv in _FOUNTAINS.values())]
+        pts = _keep_far(_keep_far(pts, [(su, sv) for su, sv, _t in structs], STRUCT_DIST),
+                        list(_FOUNTAINS.values()), FOUNTAIN_DIST)
         if not pts and not hints:
             return []
         if hints:
@@ -3017,7 +3043,7 @@ class RosterMatcher:
         for P in (pe, po):
             Pm = np.asarray(P, np.float32) * w
             d2 = (X * X).sum(1)[:, None] - 2.0 * (X @ Pm.T) + (Pm * Pm).sum(1)[None]
-            out.append(np.sqrt(np.maximum(d2, 0.0)).min(axis=1))
+            out.append(np.sqrt(np.maximum(d2.min(axis=1), 0.0)))      # (cost) min before sqrt
         d_own, d_opp = out
         near = RingColorModel.NEAR
         own = (d_own < near) & (d_own < 0.8 * d_opp)
@@ -3271,6 +3297,7 @@ class RosterMatcher:
         cands: list[_Cand] = []
         bg_scores: list[float] = []
         found_local: set[int] = set()
+        weak_local: set[int] = set()
         prev_thr = self.last_threshold
         for i, tr in self._tracks.items():
             if i in full_set or now - tr.t > TRACK_FRESH_S or tr.misses >= 2:
@@ -3279,6 +3306,8 @@ class RosterMatcher:
             cands.extend(lc)
             if any(c.ev >= prev_thr for c in lc):
                 found_local.add(i)
+            elif lc and tr.misses == 0 and WEAK_COARSE_EVERY > 1:
+                weak_local.add(i)
         # 2. the others (lost, in the fog, local miss): whole map. Champions hidden for a
         #    while are only searched when something appeared on the map (change gate) or
         #    every LOST_EVERY frames: a champion coming out of the fog changes the pixels
@@ -3289,6 +3318,13 @@ class RosterMatcher:
         if not changed and st.frames % LOST_EVERY != 0:
             glob = [i for i in glob if i in self._tracks
                     and now - self._tracks[i].t <= TRACK_FRESH_S]
+        if not changed and weak_local:
+            # (cost) a champion matched where he was, under the frame threshold (partly
+            # covered icon...), had his whole-map search EVERY frame: now every
+            # WEAK_COARSE_EVERY frames (all on the same frame: one shared set of whole-map
+            # transforms), and at once when something changed
+            glob = [i for i in glob if i not in weak_local
+                    or st.frames % WEAK_COARSE_EVERY == 0]
         self.last_searched = len(glob) + len(full_set)
         if full_set:
             gc, bg_scores = self._global_search(feat, bank, sorted(full_set))

@@ -309,8 +309,11 @@ def _pct(vals: list[float], q: float) -> float | None:
 def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_hz: float = 1.0,
         real_windows: bool = False, perf_mode: str = "auto", cfg_changes: dict | None = None,
         quiet: bool = False, real_voice: bool = True, me_dead: bool = False,
-        static_ok: bool = False) -> dict[str, Any]:
-    """Run the pipeline for ``warmup + seconds`` (wall clock) and return the measurements."""
+        static_ok: bool = False, profile: str | None = None) -> dict[str, Any]:
+    """Run the pipeline for ``warmup + seconds`` (wall clock) and return the measurements.
+
+    ``profile``: write a cProfile of the analysis ticks of the steady state to this file."""
+    import cProfile
     import dataclasses
     import logging
 
@@ -368,13 +371,23 @@ def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_
             eng._scene_motion = SimpleNamespace(update=lambda f: False)
 
     ticks: list[tuple[float, float]] = []
+    tick_cpu: list[float] = []
     orig_step = eng.step
+    prof = cProfile.Profile() if profile else None
+    steady = threading.Event()
 
     def timed_step(t: float) -> Any:
         c0 = time.perf_counter()
+        k0 = time.thread_time()
+        on = prof is not None and steady.is_set()
+        if on:
+            prof.enable()
         try:
             return orig_step(t)
         finally:
+            if on:
+                prof.disable()
+            tick_cpu.append((time.thread_time() - k0) * 1000.0)
             ticks.append((time.monotonic(), (time.perf_counter() - c0) * 1000.0))
 
     eng.step = timed_step              # type: ignore[method-assign]
@@ -427,8 +440,10 @@ def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_
         cap0 = cap.snapshot() if cap is not None else (Counter(), Counter())
         n_ticks0 = len(ticks)
         gc_n0 = len(gc_pauses)
+        steady.set()
         while time.monotonic() < w0 + seconds:
             time.sleep(0.25)
+        steady.clear()
         s1 = tc.sample()
         p1 = time.process_time()
         w1 = time.monotonic()
@@ -463,6 +478,9 @@ def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_
     threads = {k: round(100.0 * v / wall, 2) for k, v in sorted(per.items(), key=lambda kv: -kv[1]) if v > 0}
     proc = 100.0 * (p1 - p0 - src_cost) / wall
     win_ticks = [ms for (t, ms) in ticks[n_ticks0:]]
+    win_cpu = tick_cpu[n_ticks0:n_ticks0 + len(win_ticks)]
+    if prof is not None:
+        prof.dump_stats(profile)
     calls = {k: round((cap1[0][k] - cap0[0][k]) / wall, 2) for k in set(cap1[0]) | set(cap0[0])}
     kpx = {k: round((cap1[1][k] - cap0[1][k]) / wall / 1000.0, 1) for k in set(cap1[1]) | set(cap0[1])}
     layers = {n: {"per_s": round(v[0] / wall, 2), "kb_per_s": round(v[1] / 1024.0 / wall, 1)}
@@ -475,7 +493,9 @@ def run(seconds: float = 60.0, warmup: float = 15.0, scenario: str = "real", ui_
         "ticks": {"n": len(win_ticks), "per_s": round(len(win_ticks) / wall, 2),
                   "mean_ms": round(sum(win_ticks) / len(win_ticks), 2) if win_ticks else None,
                   "p50_ms": round(_pct(win_ticks, 0.5) or 0, 2), "p95_ms": round(_pct(win_ticks, 0.95) or 0, 2),
-                  "max_ms": round(max(win_ticks), 2) if win_ticks else None},
+                  "max_ms": round(max(win_ticks), 2) if win_ticks else None,
+                  "cpu_mean_ms": round(sum(win_cpu) / len(win_cpu), 2) if win_cpu else None,
+                  "cpu_p50_ms": round(_pct(win_cpu, 0.5) or 0, 2)},
         "overlay": {"loop_fps": round((ov_stats.get("frames", 0) - ov_frames0) / wall, 2),
                     "pushes_per_s": round(pushes.get("pushes", 0) / wall, 2),
                     "kb_per_s": round(pushes.get("bytes", 0) / 1024.0 / wall, 1),
@@ -510,7 +530,8 @@ def print_report(r: dict[str, Any]) -> None:
             print(f"    {k:<28} {v:6.2f} %")
     t = r["ticks"]
     print(f"  analysis ticks       {t['per_s']:.2f} /s, mean {t['mean_ms']} ms, p50 {t['p50_ms']} ms, "
-          f"p95 {t['p95_ms']} ms, max {t['max_ms']} ms")
+          f"p95 {t['p95_ms']} ms, max {t['max_ms']} ms; CPU / tick mean {t.get('cpu_mean_ms')} ms, "
+          f"p50 {t.get('cpu_p50_ms')} ms")
     o = r["overlay"]
     print(f"  overlay              loop {o['loop_fps']} fps, uploads {o['pushes_per_s']} /s "
           f"({o['kb_per_s']} KB/s; target <= {TARGET_PUSHES:.0f} /s), alpha {o['alpha_per_s']} /s, "
@@ -541,9 +562,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--perf-mode", choices=("auto", "normal", "low_end"), default="auto")
     ap.add_argument("--static-ok", action="store_true", help="let the still screenshot count as a paused game")
     ap.add_argument("--me-dead", action="store_true", help="the player is dead (respawn timer running)")
+    ap.add_argument("--profile", default=None, help="cProfile the steady-state analysis ticks into this file")
     ap.add_argument("--json", default=None, help="write the measurements to this file")
     a = ap.parse_args(argv)
-    res = run(a.seconds, a.warmup, a.scenario, a.ui_hz, a.real_windows, a.perf_mode, me_dead=a.me_dead, static_ok=a.static_ok)
+    res = run(a.seconds, a.warmup, a.scenario, a.ui_hz, a.real_windows, a.perf_mode, me_dead=a.me_dead, static_ok=a.static_ok,
+              profile=a.profile)
     if a.json:
         Path(a.json).write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
     return 0

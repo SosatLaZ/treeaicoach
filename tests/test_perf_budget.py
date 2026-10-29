@@ -29,6 +29,7 @@ def test_perf_budget_smoke(monkeypatch, tmp_path):
     pb = _tool()
     r = pb.run(seconds=4.0, warmup=6.0, ui_hz=2.0, perf_mode="normal", quiet=True)
     assert r["ticks"]["n"] > 0 and r["ticks"]["p95_ms"] > 0
+    assert r["ticks"]["cpu_mean_ms"] > 0                              # CPU per analysed frame
     assert r["threads_cpu_pct"].get("TreeAICoach-analysis", 0.0) > 0.0
     assert r["capture"]["calls_per_s"].get("minimap", 0.0) > 0.0
     assert r["capture"]["calls_per_s"].get("full", 0.0) == 0.0       # never the full window in steady state

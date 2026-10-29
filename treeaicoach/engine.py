@@ -537,7 +537,9 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         """Push the budget's knobs (detection rates, coaching rate, generic detector cadence,
         thread counts) to the components; cheap no-op when unchanged."""
         prof = self._budget.profile
-        sig = (prof.name, prof.calm_fps, prof.burst_fps, prof.heavy_hz, prof.load)
+        # (the detector is part of the signature: it is created after the first application, and
+        # its generic-detector cadence was then never pushed: ONNX every frame on low-end machines)
+        sig = (prof.name, prof.calm_fps, prof.burst_fps, prof.heavy_hz, prof.load, id(self._detector))
         if sig == self._applied_profile:
             return
         self._applied_profile = sig

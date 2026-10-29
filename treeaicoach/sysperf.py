@@ -239,11 +239,15 @@ class PerfProfile:
 #: after warm-up: recall, precision, identity, ghosts within noise, position p95 +0.0007), bursts at
 #: ``target_fps`` unchanged; the overlay is paced by what animates (overlay.py), 20 img/s only
 #: while a toast slides.
+#: (2026-10) ``onnx_every`` was never pushed to the detector (created after the first application:
+#: fixed in engine._apply_perf_profile), so low-end ran the extras every frame anyway; measured
+#: then, every 2nd / 4th frame loses real-case recall (static replays: seraphine 0.940 -> 0.922,
+#: tk_botlane 0.896 -> 0.887, garen 0.919 -> 0.910 at 4) for identical det_gym games: kept at 1.
 PROFILES: dict[str, PerfProfile] = {
     "normal": PerfProfile("normal", calm_fps=5.0, burst_fps=12.0, overlay_fps=20.0, heavy_hz=2.0,
                           verify_s=1.0, onnx_every=1, cv_threads=2, onnx_threads=2, lost_every=4),
     "low_end": PerfProfile("low_end", calm_fps=4.0, burst_fps=8.0, overlay_fps=15.0, heavy_hz=1.0,
-                           verify_s=1.5, onnx_every=4, cv_threads=1, onnx_threads=1, lost_every=8),
+                           verify_s=1.5, onnx_every=1, cv_threads=1, onnx_threads=1, lost_every=8),
 }
 
 #: Load levels decided live by the self-check (selfcheck.py, rule "perf": detection starving) on
