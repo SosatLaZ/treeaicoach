@@ -587,27 +587,43 @@ def whisper_wake(text: Any) -> tuple[bool, str]:
     (« Hé, coach ! », « Et Coatch quel objet », « Hey Tree, … »). ``question`` = what follows."""
     import difflib  # noqa: PLC0415
 
-    words = str(text or "").split()
+    # « E-coach, … » / « Ikotch » (Whisper glues « hé » to « coach »): split into « e coach »
+    words = _GLUED.sub(lambda m: "e " + m.group(2), str(text or "").replace("-", " ")).split()
     norm = [normalize(w) for w in words]
+    if len(norm) > 2 and norm[0] in ("et", "e") and norm[1] == "il":
+        words, norm = words[1:], norm[1:]           # « Et il coach, … »
     for lead_n in (1, 0):                            # « hey coach » / leading words dropped by Whisper
         if len(norm) <= lead_n:
             continue
-        if lead_n and norm[0] not in _WW_LEADS:
-            continue
         w = norm[lead_n]
+        if lead_n and norm[0] not in _WW_LEADS and not (
+                norm[0] == "il" and w in ("coach", "cotch", "kotch")
+                and (len(norm) == 2 or words[1].endswith((",", "!", "?", ".")))):
+            continue                                 # (« Il coach. » = « hé coach » said alone)
         if not w:
             continue
+        if w.startswith("coach") and w not in WAKE_STRONG:
+            continue                                 # « coacher », « coaching »: a verb, not « coach »
+        if lead_n and norm[0] in _WW_WEAK_LEADS and len(norm) > lead_n + 1 and norm[lead_n + 1] in _ABOUT_COACH:
+            continue                                 # « A coach, ça sert à rien » (« un coach »)
+        if lead_n and not words[lead_n].endswith((",", "!", "?", ".")) and len(norm) > lead_n + 1 \
+                and norm[lead_n + 1] in ("a", "la", "le", "les", "bien", "ou"):
+            continue                                 # « et coach à cause » (« et cocher la case »)
         best = max(difflib.SequenceMatcher(None, w, t).ratio() for t in _WW_TARGETS)
         if best >= 0.75 or w in WAKE_STRONG or w in WAKE_WEAK or (lead_n and w in TREE_WORDS):
             if not lead_n and w not in WAKE_STRONG and best < 0.9:
                 continue                             # a bare word must really be « coach »
             if not lead_n and len(norm) > 1 and not words[0].endswith((",", "!", "?")) \
-                    and norm[1] in ("est", "il", "a", "de", "du", "va", "dit"):
+                    and norm[1] in ("est", "il", "a", "de", "du", "va", "dit", "ou"):
                 continue                             # « Coach est nul » / « coach du… »: talk ABOUT the coach
             rest = " ".join(words[lead_n + 1:]).lstrip(" ,.!?;:-")
             return True, rest
     return False, ""
 
+
+#: leads that are also an article in Whisper's French (« A coach » = « un coach »)
+_WW_WEAK_LEADS = frozenset({"a", "e"})
+_GLUED = re.compile(r"(?i)\b([ie])(k?c?o[at]?t?ch)\b")
 
 _ABOUT_COACH = frozenset({"est", "il", "a", "de", "du", "va", "dit", "ou", "c'est", "ca", "sert", "m'a", "t'a",
                           "et", "qui", "que", "elle", "vocal", "sportif"})
@@ -668,6 +684,24 @@ def whisper_confirm(stt: Any, pcm: bytes) -> bool | None:
         return None
 
 
+def whisper_read(stt: Any, pcm: bytes, key: str = "") -> str | None:
+    """Whisper (``stt``, loaded) reads a whole « coach-like » utterance with the League prompt, at wake
+    priority on the app's Whisper thread (None: too busy / failed / not loaded). Never raises."""
+    if stt is None or not pcm:
+        return None
+    try:
+        from treeaicoach import stt_local  # noqa: PLC0415
+
+        if stt_local.is_app_transcriber(stt):
+            job = stt_local.worker().transcribe_job(pcm, key=key, prio=stt_local.PRIO_WAKE,
+                                                    max_age=stt_local.WAKE_MAX_AGE_S, timeout=4.0, stt=stt)
+            return job.text
+        return str(stt.transcribe(pcm) or "")
+    except Exception:
+        log.debug("whisper wake read failed", exc_info=True)
+        return None
+
+
 def free_confirms(text: Any) -> bool:
     """The FREE recognizer's words confirm a wake: a lead (« hé », « et »…) right before a coach word
     (« coach », « coche », « kotch »…), or « hey tree ». « un coach », « mon coach », « printemps » do not."""
@@ -680,6 +714,17 @@ def free_confirms(text: Any) -> bool:
 
 def wakeish(text: Any) -> bool:
     return bool(_WAKEISH.search(normalize(text)))
+
+
+#: what Vosk's small French model writes for « Hé coach » at the START of an utterance (measured on the
+#: wake bench: « écoute quel objet… », « écrit le baron… » for « Hey Tree », « école… »)
+_VOSK_HEY_COACH = ("ecout", "ecri", "ecol")
+
+
+def wakeish_start(vosk_text: Any) -> bool:
+    """The utterance may begin with « Hé coach » (Vosk's first two words): Whisper re-reads it."""
+    w = normalize(vosk_text).split()[:2]
+    return bool(w) and (wakeish(" ".join(w)) or w[0].startswith(_VOSK_HEY_COACH))
 
 
 def question_text(parts: Sequence[str], partial: str = "") -> str:
@@ -1675,7 +1720,7 @@ class VoiceAssistant:
     def _whisper_wake_check(self, mic: Mic, utt: bytes, vosk_text: str) -> bool:
         """A VAD utterance Vosk did NOT wake on but whose words look like « coach » / « tree » (another
         accent): Whisper reads it (<= :data:`WHISPER_WAKE_PER_MIN` a minute, CPU). True = woke + handled."""
-        if not wakeish(" ".join(normalize(vosk_text).split()[:2])) or len(utt) > 8 * SAMPLE_RATE * 2 \
+        if not wakeish_start(vosk_text) or len(utt) > 8 * SAMPLE_RATE * 2 \
                 or not self.whisper_ready():
             return False                      # ordinary talk (« comment », « contre »…) never reaches Whisper
         now = self._clock()
@@ -1683,9 +1728,8 @@ class VoiceAssistant:
         if len(self._ww_times) >= WHISPER_WAKE_PER_MIN:
             return False
         self._ww_times.append(now)
-        head = utt[: int(CONFIRM_AUDIO_S * SAMPLE_RATE) * 2]
-        if len(utt) > len(head) and not whisper_confirm(self._stt(), head):
-            return False                      # the first 1.5 s (a wake confirmation) is not « hé coach »
+        # (3.4.1: no 1.5 s beam-1 pre-check any more: it rejected 2 real « Hey coach » out of 3 on the wake
+        # bench, while the whole utterance read with the League prompt finds them; one call, not two)
         from treeaicoach import voice_latency  # noqa: PLC0415
 
         voice_latency.begin("pc")

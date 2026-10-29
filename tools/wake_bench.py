@@ -105,6 +105,15 @@ CHATTER: tuple[str, ...] = (
     "Tu me laisses le kill ?", "Je suis le meilleur.", "On est trop forts.", "C'est fini pour eux.",
     "Allez, on se concentre.", "Pas de bêtise.", "Qui a le flash ?", "Moi j'ai TP.", "Il a ignite.",
     "On attend le spawn.", "Les tourelles tombent.", "On split push.", "Je suis à la base.",
+    # « écoute » / « écris » / « école »: what Vosk writes for « Hé coach » (3.4.1: these utterances are
+    # re-read by Whisper, so they must not wake it)
+    "Écoute, on fait le drake.", "Écoute, je sais pas.", "Écoute, c'est pas grave.", "Écoute-moi bien.",
+    "Écoute, quel objet tu fais ?", "Écoute, il est où le jungler ?", "Écoute, on back maintenant.",
+    "Écoute, je dois farmer un peu.", "Écoutez les gars, on regroupe.", "Écoute ça, c'est drôle.",
+    "Écoute, combien de golds t'as ?", "Écoute, le baron est dispo ?", "Écoute, je prends quelle rune ?",
+    "Écoute, on peut gagner.", "Écoute, c'est quoi le timer du dragon ?", "Écoute, Garen il build quoi ?",
+    "Écris-le dans le chat.", "Écris pas dans le chat.", "Écrivez gg.", "L'école reprend lundi.",
+    "J'ai école demain.", "Écoute, aide-moi.", "Et écoute, on fait quoi ?", "Hé, écoute, il arrive.",
 )
 
 #: other ways to call the coach (recall), said after a silence
@@ -244,7 +253,8 @@ class PcSim:
             if self.seg is None:
                 continue
             for u in self.seg.feed(blk):
-                if not va.wakeish(self.eng.last_text) or len(u) > 8 * va.SAMPLE_RATE * 2:
+                gate = getattr(va, "wakeish_start", None) or va.wakeish
+                if not gate(self.eng.last_text) or len(u) > 8 * va.SAMPLE_RATE * 2:
                     continue
                 self.ww = [x for x in self.ww if self.t - x < 60.0]
                 if len(self.ww) >= va.WHISPER_WAKE_PER_MIN:
@@ -275,7 +285,7 @@ class DiscordSim:
     def __init__(self, make_rec, whisper: Whisper | None) -> None:  # noqa: ANN001
         self.t = 0.0
         self.whisper = whisper
-        self.sp = dl.Speaker("1", make_rec, lambda: self.t, lambda: None)
+        self.sp = dl.Speaker("1", make_rec, lambda: self.t, lambda: whisper)
         if whisper is not None and hasattr(self.sp.engine, "confirm"):
             self.sp.engine.confirm = lambda pcm: va.whisper_confirm(whisper, pcm)
         self.events: list[tuple[float, str]] = []
@@ -284,7 +294,8 @@ class DiscordSim:
         for k, _ in evs:
             if k == "wake":
                 e = self.sp.engine
-                self.events.append((self.t, f"{e.last_kind},{e.last_source}: {e.last_text}"))
+                wt, self.sp.whisper_text = self.sp.whisper_text, ""
+                self.events.append((self.t, f"whisper: {wt}" if wt else f"{e.last_kind},{e.last_source}: {e.last_text}"))
                 self.sp.engine.reset()
                 self.sp.stage = "écoute"
 

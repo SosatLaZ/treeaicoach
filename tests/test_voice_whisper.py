@@ -494,3 +494,31 @@ def test_silent_mic_in_game_is_replaced_live_and_kept_by_the_settings() -> None:
     a.configure(SimpleNamespace(voice_assistant=False, voice_assistant_mic="Casque", hotkey_voice_ask=""))
     assert a.mic_name == "Webcam"                                  # a config refresh does not bring the dead one back
     assert a.take_auto_mic() == "Webcam" and a.take_auto_mic() == ""
+
+
+def test_whisper_wake_spellings_measured_on_the_wake_bench() -> None:
+    """3.4.1 wake bench: Whisper's spellings of « Hé coach » accepted, its readings of chatter refused."""
+    for t in ("E-coach, caise à quoi comme objet ?", "Ikotch", "Il coach.", "Et il coach, on fait les larves ?",
+              "Hey coach, quel objet ?", "Coach, où est le jungler ?"):
+        assert va.whisper_wake(t)[0], t
+    for t in ("Et coacher la cause, c'est bon.", "A coach, ça sert à rien.", "coach ou pas, on a perdu.",
+              "et coach à cause, c'est où.", "Elle coache une équipe.", "Il coache une équipe de basket."):
+        assert not va.whisper_wake(t)[0], t
+    assert va.wakeish_start("écoute quel objet je fais") and va.wakeish_start("les coachs quel objet")
+    assert va.wakeish_start("écrit le baron est dispo") and not va.wakeish_start("on fait le drake écoute")
+
+
+def test_discord_whisper_reads_a_coach_like_spurt_and_keeps_its_question() -> None:
+    """3.4.1: on Discord too, a spurt Vosk heard as « écoute quel objet… » is re-read by Whisper; the
+    question said in the same breath is answered without a second recording."""
+    clock = [100.0]
+    stt = _STT("Hey coach, quel objet je fais ?")
+    sp = dl.Speaker("11", _Rec, lambda: clock[0], lambda: stt)
+    sp.engine.last_text = "écoute quel objet je fais"
+    sp.spurt = [b"\0" * dl.BLOCK_BYTES] * 8
+    assert sp._whisper_wake_check() == [("wake", "")] and len(stt.calls) == 1
+    assert sp.start_question() and sp.q_rec is None
+    assert sp.tick() == [("question", "quel objet je fais ?")]
+    sp.engine.last_text = "on fait le drake"                 # ordinary talk: Whisper never runs
+    sp.spurt = [b"\0" * dl.BLOCK_BYTES] * 8
+    assert sp._whisper_wake_check() == [] and len(stt.calls) == 1

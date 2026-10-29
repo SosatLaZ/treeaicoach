@@ -47,6 +47,7 @@ FLUSH_AFTER_S = 0.3                      # packets stopped this long: comfort no
 BOT_SPEAKING_MAX_S = 30.0                # the bot « playing » longer than this: the gate is stuck, ignored
 QUEUE_MAX = 400                          # 16 kHz blocks waiting for the recognizers (~8 s of 1 speaker)
 MAX_SPEAKERS = 8
+SPURT_MAX_BLOCKS = 32                    # 8 s: a longer talk spurt is not a « Hey coach » (no Whisper check)
 RING_BLOCKS = 24                         # 6 s of a member's audio kept while waiting for the wake
 WAKE_AUDIO_BLOCKS = 16                   # the last 4 s go to Whisper with the question
 RING_QUESTION_MIN = WAKE_AUDIO_BLOCKS + 2
@@ -145,6 +146,11 @@ class Speaker:
         self.heard = ""
         self.stage = "écoute"
         self.blocks = 0
+        self.spurt: list[bytes] = []        # the current talk spurt (wake phase): Whisper's wake check
+        self._ww_times: list[float] = []
+        self._ready_q = ""                  # a question Whisper already read with the wake phrase
+        self._whisper_q = ""
+        self._whisper_q_t = -1e9
 
     def _confirm_wake(self, pcm: bytes) -> bool | None:
         """Whisper's verdict on a « Hey coach » candidate of this member (None: Whisper not loaded)."""
@@ -165,6 +171,7 @@ class Speaker:
         """Events: ``("wake", "")`` / ``("question", text)``."""
         self.last_audio = self._clock()
         if self.flushed and self.q_rec is None and not self._buf:
+            self.spurt = []
             # a talk spurt starts (Discord sent nothing before): a short silence in front, as a mic would
             # give, so the recognizers start from silence and « Hé… » is not glued to nothing
             self._buf += va.comfort_noise(PREROLL_S)
@@ -216,6 +223,8 @@ class Speaker:
             self.stage = "modèle indisponible"
             return []
         self.ring.append(block)
+        if len(self.spurt) < SPURT_MAX_BLOCKS:
+            self.spurt.append(block)
         return self._wake_block(block)
 
     def _wake_block(self, block: bytes, noise: bool = False) -> list[tuple[str, str]]:
@@ -226,6 +235,7 @@ class Speaker:
         if eng.last_text:
             self.heard = eng.last_text
         if woke:
+            self.spurt = []                     # (no second, Whisper, check of the same words)
             self.stage = "mot-clé entendu"
             log.info("Discord écoute : mot-clé entendu (%s, %s) dans « %s »", eng.last_kind, eng.last_source,
                      eng.last_text)
@@ -243,6 +253,14 @@ class Speaker:
                 "age_s": round(max(0.0, now - self.last_audio), 1) if self.last_audio > 0 else None}
 
     def start_question(self) -> bool:
+        self.spurt = []
+        if self._whisper_q and self._clock() - self._whisper_q_t > 2.0:
+            self._whisper_q = ""                  # (a refused wake: never reused by a later one)
+        if self._whisper_q:                   # Whisper read « hey coach » + the question in one spurt
+            self._ready_q, self._whisper_q = self._whisper_q, ""
+            self.stage = "question"
+            self.ring.clear()
+            return True
         rec, parts, partial = self.engine.take_question()     # « hey coach quel objet » in one breath
         if rec is None:
             rec = self._make_rec(None)
@@ -265,8 +283,44 @@ class Speaker:
                 self.seg = None
         return True
 
+    def _whisper_wake_check(self) -> list[tuple[str, str]]:
+        """The spurt just ended without a wake but Vosk's first words look like « Hé coach » (« écoute… »,
+        « les coachs… »): Whisper reads it (<= va.WHISPER_WAKE_PER_MIN a minute for this member), as on the
+        PC. A question said in the same breath is kept (no second recording). Never raises."""
+        try:
+            spurt, self.spurt = self.spurt, []
+            if not spurt or len(spurt) >= SPURT_MAX_BLOCKS or not va.wakeish_start(self.engine.last_text):
+                return []
+            stt = self._stt()
+            if stt is None:
+                return []
+            now = self._clock()
+            self._ww_times = [t for t in self._ww_times if now - t < 60.0]
+            if len(self._ww_times) >= va.WHISPER_WAKE_PER_MIN:
+                return []
+            self._ww_times.append(now)
+            text = va.whisper_read(stt, b"".join(spurt), key=f"discord-wake:{self.uid}")
+            ok, rest = va.whisper_wake(text)
+            if not ok:
+                return []
+            log.info("Discord écoute : mot-clé entendu par Whisper dans « %s »", str(text)[:80])
+            self.whisper_text = str(text)
+            self.engine.reset()
+            self.stage = "mot-clé entendu"
+            self._whisper_q = rest.strip() if len(rest.split()) >= va.MIN_QUESTION_WORDS else ""
+            self._whisper_q_t = now
+            return [("wake", "")]
+        except Exception:
+            log.debug("Discord whisper wake check failed", exc_info=True)
+            return []
+
     def tick(self) -> list[tuple[str, str]]:
         now = self._clock()
+        if self._ready_q:
+            q, self._ready_q = self._ready_q, ""
+            self.heard = q[-60:]
+            self.stage = "écoute"
+            return [("question", q)]
         if self.q_rec is None:
             if self.engine.grammar_rec is None or self.last_audio <= 0:
                 return []
@@ -282,6 +336,9 @@ class Speaker:
                     ev = self._wake_block(noise[i:i + n], noise=True)
                     if ev:
                         return ev
+                ev = self._whisper_wake_check()
+                if ev:
+                    return ev
             if gap >= WAKE_RESET_SILENCE_S:
                 self.engine.reset()
                 self.last_audio = 0.0
