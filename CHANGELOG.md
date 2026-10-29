@@ -3,7 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
-## 3.4.0 · 29 octobre 2026
+## 3.4.1 · 29 octobre 2026
+
+- **Le bot répond en quelques secondes au lieu de ~2 minutes :** les délais s'additionnaient (file Whisper,
+  réponse IA retenue pendant les combats, file Discord). Ta question passe en premier, rien ne reste en file
+  plus de 3 s, la réponse commence par la première phrase. Temps de chaque étape écrit dans le journal.
+- **« Hé coque » compris comme « hé coach ».**
+- **Écran de chargement :** un petit badge sur la carte de chaque joueur (rang, OTP / 1re partie / série /
+  main banni, ton matchup) ; plus aucun panneau en partie.
+
+## 3.4.0 · 28 octobre 2026
 
 - **Le bot ne se réveille plus tout seul :** un « Hey coach » n'est accepté que s'il est confirmé (deuxième
   moteur ou Whisper) ; un réveil sans question est ignoré, sans bip.
