@@ -1,25 +1,25 @@
 {
- "version": "3.4.0",
+ "version": "3.4.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "d209993c562c35c0f9162bc91eb0bf0bb61249caa3a84929009ea1022115db7f",
+ "sha256": "09a96fcd956e46ef4e52eae22118d9501c650dbb628d3d4501745d362faaf3d4",
  "chunks": [
   {
-   "name": "3.4.0/part-01.zip",
-   "size": 88174170,
-   "sha256": "2b92a7d433b3e4d5a06059006155b40f25d67cbcce597696da00a19627756048",
-   "files": 147
+   "name": "3.4.1/part-01.zip",
+   "size": 88172987,
+   "sha256": "3adf2c33c5bbebfbb5229f50185dc3c29ca421ba4bc7a7a08621f0ef94fec42f",
+   "files": 146
   },
   {
-   "name": "3.4.0/part-02.zip",
-   "size": 10703070,
-   "sha256": "e244d14565ff65040b2a0afbf77cf3352e427bfcb9d9a69d9e09cc3c27bc0879",
-   "files": 568
+   "name": "3.4.1/part-02.zip",
+   "size": 10734158,
+   "sha256": "339744b3559cda34dada13391fa21251f4ea0ca1bef967e4491d61230985714c",
+   "files": 569
   }
  ],
- "total_size": 98877240,
+ "total_size": 98907145,
  "launcher": {
-  "sha256": "314c7911b72109714fd78bf805e4b7e1c01a959da133b377647a72585737c846",
-  "size": 7531530
+  "sha256": "d8ef964ea2227f2573c10a278cc3c3d078b3baadcb975166aa99d4b8e3c4f28e",
+  "size": 7532186
  },
- "notes": "3.4 : bot qui ne se r\u00e9veille plus seul, \u00e9cran de chargement, lanceur plus simple et rapide, m\u00e9nage."
+ "notes": "3.4.1 : bot qui r\u00e9pond en quelques secondes, h\u00e9 coque, badges au chargement."
 }

@@ -1,6 +1,6 @@
 {
-  "version": "3.4.0",
-  "sha256": "314c7911b72109714fd78bf805e4b7e1c01a959da133b377647a72585737c846",
-  "size": 7531530,
-  "notes": "3.4 : bot qui ne se réveille plus seul, écran de chargement, lanceur plus simple et rapide, ménage."
+  "version": "3.4.1",
+  "sha256": "d8ef964ea2227f2573c10a278cc3c3d078b3baadcb975166aa99d4b8e3c4f28e",
+  "size": 7532186,
+  "notes": "3.4.1 : bot qui répond en quelques secondes, hé coque, badges au chargement."
 }
