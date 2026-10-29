@@ -280,8 +280,12 @@ def _protos(rings: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 _LUT_BITS = 5
-LUT_REBUILD_S = 5.0
+#: rebuild the colour table at most every LUT_REBUILD_CALLS calls (~5 s at 8 img/s) for a
+#: slight drift: counted in calls, not wall-clock seconds, so that the result never depends
+#: on the machine's speed (real_gate: one identity flipped by +30 ms per frame)
+LUT_REBUILD_CALLS = 40
 _LUT_CACHE: dict = {}
+_LUT_CALLS = [0]
 
 
 def _lut_index(bgr: np.ndarray) -> np.ndarray:
@@ -289,16 +293,18 @@ def _lut_index(bgr: np.ndarray) -> np.ndarray:
     return (q[:, :, 0] << (2 * _LUT_BITS)) | (q[:, :, 1] << _LUT_BITS) | q[:, :, 2]
 
 
-def _label_lut(rings: Any) -> np.ndarray:
+def _label_lut(rings: Any, count: bool = True) -> np.ndarray:
     """Colour class of every quantized BGR colour (bit 1 enemy, 2 ally side, 4 self teal) for
-    the current ring colours (cached; the centroids drift slowly)."""
+    the current ring colours (cached; the centroids drift slowly). ``count``: False for an
+    occasional extra lookup (it must not move the rebuild schedule)."""
     pe, pa, ps = _protos(rings)
     key = tuple(np.round(np.concatenate([pe, pa, ps]).ravel() / 6.0).astype(int).tolist())
+    _LUT_CALLS[0] += 1 if count else 0
     lut = _LUT_CACHE.get(key)
     if lut is not None:
         return lut
     last = _LUT_CACHE.get("last")
-    if last is not None and time.monotonic() - last[0] < LUT_REBUILD_S and len(last) > 2 \
+    if last is not None and 0 <= _LUT_CALLS[0] - last[0] < LUT_REBUILD_CALLS and len(last) > 2 \
             and len(last[2]) == len(key) and max(abs(a - b) for a, b in zip(last[2], key)) <= 2:
         # the colours drift slowly: rebuild at most every few s (only for a slight drift: a
         # different colour set, e.g. a new game / another matcher, gets its own table)
@@ -326,7 +332,7 @@ def _label_lut(rings: Any) -> np.ndarray:
     if len(_LUT_CACHE) > 16:
         _LUT_CACHE.clear()
     _LUT_CACHE[key] = lut
-    _LUT_CACHE["last"] = (time.monotonic(), lut, key)
+    _LUT_CACHE["last"] = (_LUT_CALLS[0], lut, key)
     return lut
 
 

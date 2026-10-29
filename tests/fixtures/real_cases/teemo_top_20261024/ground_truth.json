@@ -790,8 +790,8 @@
      "name": "Lux"
     },
     {
-     "u": 0.1169,
-     "v": 0.2262,
+     "u": 0.089,
+     "v": 0.195,
      "team": "ally",
      "name": "Teemo",
      "self": true,
@@ -847,7 +847,7 @@
     "ally": true,
     "enemy": true
    },
-   "reviewed": "one ring (Lux); Ekko hidden under Sylas"
+   "reviewed": "one ring (Lux); Ekko hidden under Sylas; me (Teemo, brown hat) is the partly covered icon up-left of Nautilus (its visible ring arc), not under Nautilus' centre"
   },
   "20261024_225511_0046": {
    "game": "g1",

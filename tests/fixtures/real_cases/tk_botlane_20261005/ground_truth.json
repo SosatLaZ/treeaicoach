@@ -616,8 +616,8 @@
      "stacked": true
     },
     {
-     "u": 0.8762,
-     "v": 0.8553,
+     "u": 0.887,
+     "v": 0.812,
      "team": "ally",
      "name": "TahmKench",
      "self": true,
@@ -680,7 +680,7 @@
     "ally": true,
     "enemy": true
    },
-   "reviewed": "Nami is the visible icon; Corki is the partly covered icon on its left (second red ring), not under Nami's centre"
+   "reviewed": "Nami is the visible icon; Corki is the partly covered icon on its left (second red ring), not under Nami's centre; me (TahmKench, grey face) is the partly covered icon above Yunara (its visible ring arc), not under her centre"
   },
   "20261005_164050_0290": {
    "game": "g1",

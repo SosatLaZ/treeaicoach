@@ -201,6 +201,9 @@ LOCAL_SLACK = 0.015
 JUMP_PENALTY = 0.15
 #: Tracks older than this are forgotten for the jump test (long fog: anywhere is possible).
 JUMP_MEMORY_S = 6.0
+#: A learner (bootstrap) position of me that jumps away from my track matched within this
+#: (s) is ignored unless the locked camera confirms it (see RosterMatcher._self_jump).
+SELF_JUMP_HOLD_S = 1.5
 #: An impossible jump (teleport) is believed once the far candidate was seen at the same
 #: spot over JUMP_CONFIRM_S in at least JUMP_CONFIRM_N frames (measured, det_gym: a single
 #: confirming frame let a structure glyph matching an occluded champion's portrait steal
@@ -241,6 +244,18 @@ UNDER_VERIFY = 0.8                  # ... or the verifier's icon probability at 
 #: measured: the arc alone, or a camera-point check, move me wrongly in the other real games).
 UNDER_REFINE = True
 UNDER_REFINE_AGE = 0.4
+#: ... then, when still exactly on the covering icon: my visible ring arc (``_under_arc``):
+#: centres UNDER_ARC_MIN-UNDER_ARC_MAX x my icon radius away, ring sampled at UNDER_ARC_RADII
+#: x radius, >= UNDER_ARC_VIS of the circle visible (outside the accepted icons), >=
+#: UNDER_ARC_FRAC of it ally-coloured, no other centre within UNDER_ARC_UNIQUE of that.
+UNDER_ARC = True
+UNDER_ARC_MIN = 0.45
+UNDER_ARC_MAX = 1.3
+UNDER_ARC_RADII = (0.84, 0.92, 1.0)
+UNDER_ARC_VIS = 0.3
+UNDER_ARC_FRAC = 0.75
+UNDER_ARC_UNIQUE = 0.08
+UNDER_ARC_PORTRAIT_AREA = 0.2       # ... and its visible portrait (this x the disc) is mine
 SELF_COAST_UNDER = True             # no coasting while an accepted icon covers my track
 SELF_CAM_DIST = 0.06
 #: A position of mine inferred from the camera (icon under an ally at the camera point, my
@@ -1495,6 +1510,22 @@ class RosterMatcher:
             self._camlock = (f, p)
         return self._camlock[1]
 
+    def _self_jump(self, pos: tuple, now: float, bgr: np.ndarray, me: int) -> bool:
+        """A learner position of me farther from my track (matched within SELF_JUMP_HOLD_S)
+        than I can walk, that the locked camera does not confirm: a teammate / an unknown
+        icon taken for me (det_gym hard: me drawn 0.16 away while stacked) -> ignored."""
+        tr = self._tracks.get(me)
+        if tr is None or not 0.0 <= now - tr.t <= SELF_JUMP_HOLD_S:
+            return False
+        u, v = float(pos[0]), float(pos[1])
+        if math.hypot(u - tr.u, v - tr.v) <= JUMP_SLACK + MAX_SPEED * (now - tr.t):
+            return False
+        try:
+            cp = self.camlock.position(self._cam_point(bgr), now)
+        except Exception:
+            cp = None
+        return cp is None or math.hypot(u - cp[0], v - cp[1]) > CAMLOCK_TOL
+
     def _learn(self, bgr: np.ndarray, now: float, R_px: float, r_norm: float,
                accepted: list, thr: float, kx: float, ky: float, used: set,
                dets_extra: list) -> list[Detection]:
@@ -1516,7 +1547,8 @@ class RosterMatcher:
             tr = self._tracks.get(me)
             if tr is not None:
                 tr.u, tr.v = u, v
-        elif out.self_pos is not None and me is not None:
+        elif out.self_pos is not None and me is not None and \
+                not self._self_jump(out.self_pos, now, bgr, me):
             u, v, sc = out.self_pos
             e = ents[me]
             dets_extra = [d for d in dets_extra if d.alias != e.alias]
@@ -2535,6 +2567,129 @@ class RosterMatcher:
         self._self_anchor = (pos[0], pos[1], now)
         return pos
 
+    def _under_arc(self, bgr: np.ndarray, pos: tuple, cam_pt: tuple | None, r_norm: float,
+                   accepted: list, kx: float, ky: float, me: int, now: float,
+                   feat: np.ndarray | None = None, bank: Any = None, D_work: float = 0.0
+                   ) -> tuple | None:
+        """My icon under my ADC's at ``pos`` but not centred on it: the visible arc of an
+        ally-coloured ring of my icon's radius next to it (UNDER_ARC_*), accepted only when
+        three cues agree: that arc (most of its visible part ally-coloured, enough of it
+        visible, no other arc nearly as good elsewhere), the camera point (the arc's centre is
+        nearer to it than ``pos``: camera locked on me) and continuity (reachable from my last
+        position). Real 2026-10-28 Seraphine game: me drawn on my ADC 0.035-0.04 away."""
+        if cam_pt is None or bgr is None or r_norm <= 0:
+            return None
+        from treeaicoach.self_icon import _label_lut, _lut_index
+
+        H, W = bgr.shape[:2]
+        R = r_norm * W
+        px, py = pos[0] * W, pos[1] * H
+        h = int(math.ceil(2.6 * R)) + 2
+        x0, y0 = max(0, int(px) - h), max(0, int(py) - h)
+        x1, y1 = min(W, int(px) + h + 1), min(H, int(py) + h + 1)
+        if x1 - x0 < 2 * R or y1 - y0 < 2 * R:
+            return None
+        win = bgr[y0:y1, x0:x1]
+        ally = (_label_lut(self.rings, count=False)[_lut_index(win)] & 2) > 0
+        wh, ww = ally.shape
+        # discs of the accepted icons (their own rings / portraits explain those pixels)
+        covered = np.zeros((wh, ww), bool)
+        yy, xx = np.mgrid[0:wh, 0:ww]
+        for c in accepted:
+            if c.i == me:
+                continue
+            cx_, cy_ = c.x / kx * W - x0, c.y / ky * H - y0
+            if abs(cx_ - ww / 2) < 3 * R + h and abs(cy_ - wh / 2) < 3 * R + h:
+                covered |= (xx - cx_) ** 2 + (yy - cy_) ** 2 <= (R + 1.0) ** 2
+        n_ang = 48
+        ang = np.linspace(0, 2 * np.pi, n_ang, endpoint=False)
+        radii = np.asarray(UNDER_ARC_RADII) * R
+        ca, sa = np.cos(ang), np.sin(ang)
+        best: list = []
+        step = max(1.0, 0.1 * R)
+        lim = UNDER_ARC_MAX * R
+        for dy in np.arange(-lim, lim + 0.01, step):
+            for dx in np.arange(-lim, lim + 0.01, step):
+                d = math.hypot(dx, dy)
+                if d < UNDER_ARC_MIN * R or d > lim:
+                    continue
+                cx_, cy_ = px + dx - x0, py + dy - y0
+                X = np.rint(cx_ + radii[:, None] * ca[None]).astype(int)
+                Y = np.rint(cy_ + radii[:, None] * sa[None]).astype(int)
+                inside = (X >= 0) & (X < ww) & (Y >= 0) & (Y < wh)
+                if not inside.all():
+                    continue
+                vis = ~covered[Y[-1], X[-1]] & ~covered[Y[0], X[0]]
+                nv = int(vis.sum())
+                if nv < UNDER_ARC_VIS * n_ang:
+                    continue
+                hit = ally[Y, X].any(axis=0) & vis
+                frac = hit.sum() / float(nv)
+                best.append((frac, nv, dx, dy))
+        if not best:
+            return None
+        best.sort(key=lambda b: -b[0])
+        f, nv, dx, dy = best[0]
+        if f < UNDER_ARC_FRAC:
+            return None
+        # one arc only: a clearly different centre nearly as good = two icons there
+        for f2, _n2, dx2, dy2 in best[1:]:
+            if f2 >= f - UNDER_ARC_UNIQUE and math.hypot(dx2 - dx, dy2 - dy) > 0.5 * R:
+                return None
+        u, v = (px + dx) / W, (py + dy) / H
+        if math.hypot(u - cam_pt[0], v - cam_pt[1]) >= math.hypot(pos[0] - cam_pt[0], pos[1] - cam_pt[1]):
+            return None                    # the camera does not agree
+        if not self._self_reachable(me, (u, v), now):
+            return None
+        if feat is not None and bank is not None and not self._arc_is_mine(feat, bank, u, v, accepted,
+                                                                          kx, ky, D_work, me):
+            return None                    # another ally's icon behind (portrait)
+        return (u, v)
+
+    def _arc_is_mine(self, feat: np.ndarray, bank: _Bank, u: float, v: float, accepted: list,
+                     kx: float, ky: float, D_work: float, me: int) -> bool:
+        """The visible part (outside the accepted icons) of the icon centred at (u, v) looks
+        more like my portrait than like any other alive ally's (masked NCC, +-1 px)."""
+        try:
+            s = bank.size
+            if len(bank.raw) != len(self._entries):
+                return False
+            # every alive ally, the accepted ones too (my icon matched as a teammate's portrait:
+            # the arc behind is that teammate's real icon)
+            dead = set(self._dead_idx)
+            idx = [i for i, e in enumerate(self._entries)
+                   if e.relation != "enemy" and (i == me or i not in dead)]
+            Hf, Wf = feat.shape[:2]
+            half = (s - 1) / 2.0
+            cx, cy = u * kx, v * ky
+            yy, xx = np.mgrid[0:s, 0:s].astype(np.float32)
+            best: dict[int, float] = {}
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    tx = int(round(cx - half - 0.5)) + dx
+                    ty = int(round(cy - half - 0.5)) + dy
+                    if tx < 0 or ty < 0 or tx + s > Wf or ty + s > Hf:
+                        continue
+                    mk = bank.mask.astype(np.float32).copy()
+                    for c in accepted:
+                        if c.i == me:
+                            continue
+                        ox, oy = c.x - tx, c.y - ty
+                        mk[(xx - ox + 0.5) ** 2 + (yy - oy + 0.5) ** 2 <= (0.5 * D_work + 0.5) ** 2] = 0.0
+                    if float(mk.sum()) < UNDER_ARC_PORTRAIT_AREA * float(bank.mask.sum()):
+                        continue
+                    P = feat[ty:ty + s, tx:tx + s]
+                    for i in idx:
+                        sc = float(masked_ncc(P[None], bank.raw[i], mk[None], wl=self._wl)[0, 0])
+                        if sc > best.get(i, -9.0):
+                            best[i] = sc
+            if me not in best:
+                return False
+            return all(best[me] > sc for i, sc in best.items() if i != me)
+        except Exception:
+            self._errors.exception("Roster matcher: arc portrait check failed")
+            return False
+
     def _under_refine(self, bgr: np.ndarray, feat: np.ndarray, bank: _Bank, accepted: list,
                       used: set, dead: set, now: float, kx: float, ky: float, R_px: float,
                       D_work: float, thr: float, me: int, pos: tuple) -> tuple[float, float]:
@@ -3403,6 +3558,14 @@ class RosterMatcher:
             if under is not None and UNDER_REFINE and not self.grey:
                 under = self._under_refine(bgr, feat, bank, accepted, used, dead, now, kx, ky,
                                            R_px, D_work, thr, i, under)
+                if UNDER_ARC and under is not None and \
+                        any(abs(c.x / kx - under[0]) < 1e-6 and abs(c.y / ky - under[1]) < 1e-6
+                            for c in accepted):
+                    # still exactly on the covering icon: my visible ring arc next to it
+                    arc = self._under_arc(raw_bgr, under, cam_pt, r_norm, accepted, kx, ky, i, now,
+                                          feat, bank, D_work)
+                    if arc is not None:
+                        under = arc
             if under is not None:
                 # my icon is under an ally icon the camera has followed for a while (my
                 # support on me, camera locked): I am there (a position, not a match)

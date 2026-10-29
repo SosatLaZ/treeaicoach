@@ -2,7 +2,7 @@
  "about": "Human review of the LCU-snapped labels (tools/real_truth_case.py apply_review): frames where the image contradicts the stacked snapping. Each entry says why.",
  "frames": {
   "20261005_163950_0284": {
-   "why": "Nami is the visible icon; Corki is the partly covered icon on its left (second red ring), not under Nami's centre",
+   "why": "Nami is the visible icon; Corki is the partly covered icon on its left (second red ring), not under Nami's centre; me (TahmKench, grey face) is the partly covered icon above Yunara (its visible ring arc), not under her centre",
    "champions": [
     {
      "u": 0.1603,
@@ -18,8 +18,8 @@
      "stacked": true
     },
     {
-     "u": 0.8762,
-     "v": 0.8553,
+     "u": 0.887,
+     "v": 0.812,
      "team": "ally",
      "name": "TahmKench",
      "self": true,
