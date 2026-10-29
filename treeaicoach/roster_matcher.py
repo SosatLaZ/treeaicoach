@@ -364,7 +364,7 @@ TRIM_ID_GAP = 0.08                 # ... and must beat every other champion of i
 #: arc of his ring (champion's team colour, outside the covering icons' discs +
 #: STACK_EXCL) is fitted with the known icon radius, and the visible part of the portrait
 #: (masked NCC) must not contradict it. STACK_ARC_* bound the arc evidence.
-STACK_HOLD_S = 3.0
+STACK_HOLD_S = 4.0                  # (3.0 -> 4.0, det_fast 2026-10-29: hard q 1.523 -> 1.536, me_bad 0.311 -> 0.298, rest equal)
 STACK_NEAR = 1.15
 STACK_EXCL = 1.14                   # x covering icon radius (ring + dark line + blur)
 STACK_EXCL_SELF = 1.4               # ... my icon has a glowing teal outline

@@ -83,7 +83,9 @@ log = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 # Tunables (normalized minimap units, seconds)
 # --------------------------------------------------------------------------------------
-HIDE_AFTER = 0.6            # a track is visible if seen less than this ago...
+HIDE_AFTER = 0.4            # a track is visible if seen less than this ago...
+#: (0.6 -> 0.4, det_fast sweep 2026-10-29 with ASSOC_DIST 0.08 -> 0.07: hard precision 0.941 -> 0.952,
+#: live ghosts 6 -> 0, every suite + real case equal or better; HIDE_FRAMES keeps slow detection visible)
 HIDE_FRAMES = 3.5           # ...or than this many frames at the measured detection rate
 HIDE_MAX_S = 1.6            # (slow detection: 4 img/s -> 0.875 s, 2 img/s -> 1.6 s)
 RATE_WINDOW = 9             # frame interval = median of the last intervals (a pause is not a rate)
@@ -99,7 +101,7 @@ TELEPORT_DIST = 0.15        # jump > 0.15 in < 0.3 s = recall / teleport -> hist
 TELEPORT_DT = 0.3
 MAX_WALK_SPEED = 0.06       # ~900 units/s: any faster displacement is a jump...
 JUMP_SLACK = 0.05           # ...beyond this slack (detection noise, Flash)
-ASSOC_DIST = 0.08           # nearest-neighbour gate for unidentified icons
+ASSOC_DIST = 0.07           # nearest-neighbour gate for unidentified icons
 IDENTITY_COAST_S = 1.0      # an identity track may take unidentified icons for this long
 MERGE_OVERLAP_S = 0.25      # an anonymous track seen together with an identity track is another champion
 ANON_FORGET_S = 20.0        # anonymous tracks unseen for this long are dropped

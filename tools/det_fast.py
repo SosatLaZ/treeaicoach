@@ -779,9 +779,11 @@ def report(out: dict) -> str:
 HARD_SUBSET = "hard_subset.json"
 
 
-def build_subset(out: dict, seed: int = 0) -> dict:
-    """Windows ``(f0, f1, t_score)`` per game: the frames with a failure (HEAD), plus a fixed
-    5 % random control set; each window starts PRE_ROLL_S earlier (fresh pipeline)."""
+def build_subset(out: dict, seed: int = 0, fail_frac: float = 1.0) -> dict:
+    """Windows ``(f0, f1, t_score)`` per game: the frames with a failure (HEAD; a fixed random
+    ``fail_frac`` of them: HEAD fails on ~half the frames, all of them + the pre-roll cover 90 %
+    of the frames), plus a fixed 5 % random control set; each window starts PRE_ROLL_S earlier
+    (fresh pipeline)."""
     rng = np.random.default_rng(seed)
     sub: dict = {}
     n_all = n_run = n_scored = 0
@@ -791,7 +793,10 @@ def build_subset(out: dict, seed: int = 0) -> dict:
                 continue
             n = int(round(sc.seconds * sc.fps))
             dt = 1.0 / sc.fps
-            bad = {int(round(t / dt)) for _n, t, *_ in so["games"][sc.name]["fails"]}
+            bad = sorted({int(round(t / dt)) for _n, t, *_ in so["games"][sc.name]["fails"]})
+            if fail_frac < 1.0 and bad:
+                bad = rng.choice(bad, max(1, int(round(fail_frac * len(bad)))), replace=False).tolist()
+            bad = {int(f) for f in bad}
             first = int(math.ceil(G.WARMUP_S / dt - 1e-9))
             ctrl = {int(f) for f in rng.choice(np.arange(first, n), max(1, int(round(CONTROL_FRAC * (n - first)))),
                                                replace=False)}
@@ -808,7 +813,7 @@ def build_subset(out: dict, seed: int = 0) -> dict:
             n_all += n
             n_run += sum(b - a + 1 for a, b, _c in wins)
             n_scored += sum(b - c + 1 for _a, b, c in wins)
-    sub["_info"] = {"frames": n_all, "run": n_run, "scored": n_scored, "pre_roll_s": PRE_ROLL_S,
+    sub["_info"] = {"frames": n_all, "run": n_run, "scored": n_scored, "pre_roll_s": PRE_ROLL_S, "fail_frac": fail_frac,
                     "control": CONTROL_FRAC, "seed": seed}
     return sub
 
@@ -876,6 +881,7 @@ def main(argv: list[str] | None = None) -> int:
     p_h = sub.add_parser("hard", help="hard subset")
     common(p_h)
     p_h.add_argument("--build", action="store_true")
+    p_h.add_argument("--fail-frac", type=float, default=1.0, help="keep this random fraction of the failing frames")
     sub.add_parser("info")
     sub.add_parser("clean")
     a = ap.parse_args(argv)
@@ -910,7 +916,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if a.cmd == "hard":
         out = evaluate(suites, False, {}, jobs=a.jobs)
-        sub_ = build_subset(out)
+        sub_ = build_subset(out, fail_frac=a.fail_frac)
         (CACHE / HARD_SUBSET).write_text(json.dumps(sub_, indent=1), encoding="utf-8")
         i = sub_["_info"]
         print(f"hard subset: {i['scored']} scored frames / {i['frames']} ({i['scored'] / i['frames']:.1%}), "
