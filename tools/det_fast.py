@@ -577,11 +577,7 @@ def _unit(kind: str, payload: tuple, mode: str) -> dict:
 
 
 def _task(args: tuple) -> tuple:
-    """A SEQUENCE of units (the games of one suite in det_gym's order, or every real fixture),
-    one sweep point, in one fresh process: the same per-process history as det_gym.py (HEAD's
-    detection keeps some per-process state from one game / image to the next, so the order
-    matters; measured 2026-10-29: one holdout game and one real case differ when each runs
-    alone)."""
+    """Units (one game or one real image), one sweep point, in one fresh process."""
     i_point, units, overrides, mode = args
     _ctx()
     saved = _apply(overrides)
@@ -601,25 +597,25 @@ def real_fixtures() -> list[Path]:
 
 
 def build_tasks(suites: list[str], real: bool, points: list, mode: str, subset: dict | None = None) -> list:
-    """One task per (suite, point) and one per (real bench, point); real first (longest cold)."""
+    """One task per (game, point) and per (real image, point), real first (longest cold): every
+    game / image gives the same numbers alone and in any order since the per-game detection
+    state was fixed (self_icon colour tables, 2026-10-29: ``tools/det_leak.py`` checks it)."""
     tasks = []
     for i, pt in enumerate(points):
         if real:
             import real_minimap_bench as RB
 
-            units = [("real", (str(fix), list(RB.load_truth(fix)["images"]))) for fix in real_fixtures()]
-            tasks.append((i, units, pt, mode))
+            for fix in real_fixtures():
+                for name in RB.load_truth(fix)["images"]:
+                    tasks.append((i, [("real", (str(fix), [name]))], pt, mode))
         for suite in suites:
-            units = []
             for sc in G.suite_scenarios(suite, False):
                 if subset is not None:
                     wins = [tuple(w_) for w_ in subset.get(f"{suite}/{sc.name}", [])]
                     if wins:
-                        units.append(("game", (suite, sc, wins)))
+                        tasks.append((i, [("game", (suite, sc, wins))], pt, mode))
                 else:
-                    units.append(("game", (suite, sc, None)))
-            if units:
-                tasks.append((i, units, pt, mode))
+                    tasks.append((i, [("game", (suite, sc, None))], pt, mode))
     return tasks
 
 

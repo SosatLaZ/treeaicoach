@@ -485,3 +485,19 @@ def test_capture_gap_drops_stale_tracks(db, renderer):
     g.pos[:] = np.random.default_rng(9).uniform(0.15, 0.85, (10, 2))   # 20 s later: all moved
     m.detect(g.frame(21.6), t=21.6)
     assert m.learner._tracks and all(tr.hits == 1 and tr.moved == 0.0 for tr in m.learner._tracks)
+
+
+def test_label_lut_state_is_per_ring_model():
+    """The colour tables and their rebuild schedule live on the ring model (one per game): a
+    game never inherits the previous game's tables (cross-game leak, det_fast 2026-10-29)."""
+    from treeaicoach import self_icon as SI
+    from treeaicoach.roster_matcher import RingColorModel
+
+    a, b = RingColorModel(), RingColorModel()
+    for _ in range(5):
+        SI._label_lut(a)
+    lut_b = SI._label_lut(b)
+    assert a.__dict__["_lut_state"][1][0] == 5
+    assert b.__dict__["_lut_state"][1][0] == 1
+    assert a.__dict__["_lut_state"][0] is not b.__dict__["_lut_state"][0]
+    assert np.array_equal(lut_b, SI._label_lut(RingColorModel()))

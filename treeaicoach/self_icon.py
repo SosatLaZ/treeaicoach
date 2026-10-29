@@ -284,8 +284,27 @@ _LUT_BITS = 5
 #: slight drift: counted in calls, not wall-clock seconds, so that the result never depends
 #: on the machine's speed (real_gate: one identity flipped by +30 ms per frame)
 LUT_REBUILD_CALLS = 40
+#: fallback cache for a ``rings`` object that cannot hold its own (normally unused): the tables
+#: live ON the ring model (one per roster matcher, i.e. per game), never in the module, so a
+#: game / image never inherits the tables or the rebuild schedule of the previous one (the
+#: cross-game leak: det_fast 2026-10-29, one holdout game gave other numbers when run alone)
 _LUT_CACHE: dict = {}
 _LUT_CALLS = [0]
+#: (cost) pure memo of the tables by their EXACT prototypes (a table is a function of them
+#: only, so sharing it between games changes no result): a fresh ring model starts from the
+#: same seed colours in every game / image, its first table is not rebuilt (~5 ms)
+_LUT_MEMO: dict = {}
+
+
+def _lut_state(rings: Any) -> tuple[dict, list]:
+    """(table cache, [call counter]) of this ring colour model (per game)."""
+    try:
+        st = rings.__dict__.get("_lut_state")
+        if st is None:
+            st = rings.__dict__["_lut_state"] = ({}, [0])
+        return st
+    except Exception:
+        return _LUT_CACHE, _LUT_CALLS
 
 
 def _lut_index(bgr: np.ndarray) -> np.ndarray:
@@ -305,18 +324,34 @@ def _label_lut(rings: Any, count: bool = True) -> np.ndarray:
     """Colour class of every quantized BGR colour (bit 1 enemy, 2 ally side, 4 self teal) for
     the current ring colours (cached; the centroids drift slowly). ``count``: False for an
     occasional extra lookup (it must not move the rebuild schedule)."""
+    cache, calls = _lut_state(rings)
     pe, pa, ps = _protos(rings)
     key = tuple(np.round(np.concatenate([pe, pa, ps]).ravel() / 6.0).astype(int).tolist())
-    _LUT_CALLS[0] += 1 if count else 0
-    lut = _LUT_CACHE.get(key)
+    calls[0] += 1 if count else 0
+    lut = cache.get(key)
     if lut is not None:
         return lut
-    last = _LUT_CACHE.get("last")
-    if last is not None and 0 <= _LUT_CALLS[0] - last[0] < LUT_REBUILD_CALLS and len(last) > 2 \
+    last = cache.get("last")
+    if last is not None and 0 <= calls[0] - last[0] < LUT_REBUILD_CALLS and len(last) > 2 \
             and len(last[2]) == len(key) and max(abs(a - b) for a, b in zip(last[2], key)) <= 2:
         # the colours drift slowly: rebuild at most every few s (only for a slight drift: a
         # different colour set, e.g. a new game / another matcher, gets its own table)
         return last[1]
+    exact = np.concatenate([pe, pa, ps]).astype(np.float32).tobytes()
+    lut = _LUT_MEMO.get(exact)
+    if lut is None:
+        lut = _build_lut(pe, pa, ps)
+        if len(_LUT_MEMO) > 32:
+            _LUT_MEMO.clear()
+        _LUT_MEMO[exact] = lut
+    if len(cache) > 16:
+        cache.clear()
+    cache[key] = lut
+    cache["last"] = (calls[0], lut, key)
+    return lut
+
+
+def _build_lut(pe: np.ndarray, pa: np.ndarray, ps: np.ndarray) -> np.ndarray:
     n = 1 << _LUT_BITS
     half = 1 << (7 - _LUT_BITS)
     g = (np.arange(n, dtype=np.int32) << (8 - _LUT_BITS)) + half
@@ -337,10 +372,7 @@ def _label_lut(rings: Any, count: bool = True) -> np.ndarray:
     A = chroma_ok & (dal < _NEAR) & (dal < 0.8 * de)
     S = chroma_ok & (ds < _NEAR) & (ds < 0.8 * da) & (ds < 0.8 * de)
     lut = (E * 1 + A * 2 + S * 4).astype(np.uint8)
-    if len(_LUT_CACHE) > 16:
-        _LUT_CACHE.clear()
-    _LUT_CACHE[key] = lut
-    _LUT_CACHE["last"] = (_LUT_CALLS[0], lut, key)
+    lut.flags.writeable = False
     return lut
 
 
