@@ -140,19 +140,25 @@ class _SimTime:
 SIM = _SimTime()
 
 
+#: Modules whose ``time.monotonic`` is the simulated clock during a gym run (dead deadlines,
+#: detection time, the self-icon LUT, rate-limited error logs): runs are exactly reproducible
+#: and independent of the machine speed (``perf_counter`` stays real: the ``ms`` columns).
+CLOCK_MODULES = ("roster_matcher", "self_icon", "identifier", "detector")
+
+
 def _patch_clock() -> None:
     """The detection modules read the simulated clock (see :func:`_unpatch_clock`)."""
-    from treeaicoach import roster_matcher, self_icon
+    import importlib
 
-    roster_matcher.time = SIM          # type: ignore[assignment]
-    self_icon.time = SIM               # type: ignore[assignment]
+    for m in CLOCK_MODULES:
+        importlib.import_module(f"treeaicoach.{m}").time = SIM     # type: ignore[attr-defined]
 
 
 def _unpatch_clock() -> None:
-    from treeaicoach import roster_matcher, self_icon
+    import importlib
 
-    roster_matcher.time = _time        # type: ignore[assignment]
-    self_icon.time = _time             # type: ignore[assignment]
+    for m in CLOCK_MODULES:
+        importlib.import_module(f"treeaicoach.{m}").time = _time   # type: ignore[attr-defined]
 
 
 # ======================================================================================
@@ -1035,13 +1041,16 @@ class _Voice:
 
 
 class Pipeline:
-    def __init__(self, db, scale_store: dict | None = None) -> None:
+    def __init__(self, db, scale_store: dict | None = None, det: Any = None) -> None:
+        """``det``: a detector built by the caller (tools/det_fast.py: recording / replaying
+        proxy of the stage cache); default = ``create_detector("auto")`` as the engine does."""
         from treeaicoach.config import Config
         from treeaicoach.detector import create_detector
         from treeaicoach.engine import CoachEngine
 
         self.now = 0.0
-        self.det = create_detector("auto", db=db, learn_cache=None, scale_store=scale_store)
+        self.det = det if det is not None else create_detector("auto", db=db, learn_cache=None,
+                                                                scale_store=scale_store)
         self.eng = CoachEngine(Config(), _Voice(), detector=self.det, clock=lambda: self.now,
                                champion_db=db, enable_hotkeys=False, manage_overlay=False)
         self.eng._ensure_components()
@@ -1220,6 +1229,13 @@ class GameMetrics:
         }
 
 
+@dataclass
+class _MeView:
+    pos: tuple
+    alive: bool
+    recall_until: float
+
+
 def _raw_tid(x: Any, mirrored: set) -> str | None:
     """Truth id of a raw identified detection (mirror match: alias~team from its relation)."""
     return _tid(getattr(x, "alias", None), str(getattr(x, "relation", "") or ""), mirrored)
@@ -1258,29 +1274,67 @@ def _miss_cause(alias: str, rel: str, u: float, v: float, ids: list, my_alias: s
     return "nodet"
 
 
-def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) -> GameMetrics:
-    sim = Sim(sc, db, art)
-    pipe = Pipeline(db, {f"{sc.size}x{sc.size}": float(sc.scale_prior)} if sc.scale_prior > 0 else None)
+@dataclass
+class FrameRec:
+    """One rendered frame of a game and what the scoring needs of the simulation state."""
+    f: int
+    t: float
+    img: np.ndarray
+    truth: list
+    dead: list
+    game: Any
+    me_pos: tuple          # my true position, alive flag, recall end (-1: not recalling)
+    me_alive: bool
+    me_recall: float
+
+
+class SimSource:
+    """The frames of a scenario, rendered live (tools/det_fast.py replays them from a cache)."""
+
+    def __init__(self, sc: Scenario, db, art) -> None:
+        self.sc = sc
+        self.sim = Sim(sc, db, art)
+        self.me_tid = self.sim.champs[0].tid
+        self.mirrored = {c.alias for c in self.sim.champs if c.tid != c.alias}
+
+    def frames(self):
+        sc, sim = self.sc, self.sim
+        dt = 1.0 / sc.fps
+        for f in range(int(round(sc.seconds * sc.fps))):
+            t = f * dt
+            sim.step(t, dt)
+            img, truth, dead, _fog = sim.render(dt)
+            game = sim.game_info(t)
+            me = sim.champs[0]
+            yield FrameRec(f, t, img, truth, dead, game, (float(me.pos[0]), float(me.pos[1])),
+                           bool(me.alive), float(me.recall_until))
+
+
+def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None, source: Any = None,
+             det: Any = None, warmup_s: float = WARMUP_S) -> GameMetrics:
+    """``source``: the frames (default: :class:`SimSource`, rendered live); ``det``: the detector
+    (default: built by :class:`Pipeline`); ``warmup_s``: frames before this time are not scored
+    (tools/det_fast.py: cached frames, stage-cache replay, hard-subset windows)."""
+    src = source if source is not None else SimSource(sc, db, art)
+    pipe = Pipeline(db, {f"{sc.size}x{sc.size}": float(sc.scale_prior)} if sc.scale_prior > 0 else None,
+                    det=det)
     M = GameMetrics()
     dt = 1.0 / sc.fps
-    n_frames = int(round(sc.seconds * sc.fps))
     prev_truth: dict[str, tuple] = {}
     prev_key: dict[str, str] = {}
     was_ok: dict[str, bool] = {}
     vis_run: dict[str, int] = {}
     last_me: tuple | None = None            # (t, u, v) of my last drawn position (mjmp)
-    mirrored = {c.alias for c in sim.champs if c.tid != c.alias}
-    for f in range(n_frames):
-        t = f * dt
-        sim.step(t, dt)
-        img, truth, dead, _fog = sim.render(dt)
-        game = sim.game_info(t)
+    mirrored = src.mirrored
+    me_tid = src.me_tid
+    for fr_ in src.frames():
+        t, img, truth, dead, game = fr_.t, fr_.img, fr_.truth, fr_.dead, fr_.game
         ids, ms = pipe.step(t, img, game)
         out = pipe.drawn(t, game)
         scl = getattr(getattr(pipe.eng._detector, "matcher", None), "scale", None)
         if scl:
             M.scale_err.append(abs(math.log(float(scl) / (2 * ICON_R))))
-        if t < WARMUP_S:
+        if t < warmup_s:
             prev_truth = {a: (u, v) for a, _r, _tm, u, v, _f in truth}
             for a, *_ in truth:
                 vis_run[a] = vis_run.get(a, 0) + 1
@@ -1305,7 +1359,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
         for key, alias, rel, uv in live:
             g = tmap.get(alias) if alias else None
             if g is None and rel == "self":
-                g = tmap.get(sim.champs[0].tid)
+                g = tmap.get(me_tid)
             if g is not None and (math.hypot(uv[0] - g[2], uv[1] - g[3]) < TOL or (
                     g[4] < VISIBLE_FRAC and math.hypot(uv[0] - g[2], uv[1] - g[3]) < 2 * TOL)):
                 M.live_ok += 1           # (an icon mostly hidden under another: its place)
@@ -1371,7 +1425,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
                             ex, ey = u - uv[0], v - uv[1]
                             M.lag.append((ex * vel[0] + ey * vel[1]) / step / step)
                 else:
-                    why = _miss_cause(a, rel, u, v, ids, sim.champs[0].tid, mirrored)
+                    why = _miss_cause(a, rel, u, v, ids, me_tid, mirrored)
                     M.fails.append((sc.name, round(t, 2), "miss", f"{a} ({rel}) at ({u:.3f},{v:.3f}) "
                                     f"frac {fr:.2f} [{why}]"))
                     M.miss_cause[why.split(":")[0]] = M.miss_cause.get(why.split(":")[0], 0) + 1
@@ -1409,7 +1463,7 @@ def run_game(sc: Scenario, db, art, verbose: bool = False, gallery: Any = None) 
                 M.fails.append((sc.name, round(t, 2), "stk", f"{a} ({rel}) frac {fr:.2f} at ({u:.3f},{v:.3f})"
                                 + (f" reported ({p[0]:.3f},{p[1]:.3f})" if p is not None else " not reported")))
         # --- me
-        me = sim.champs[0]
+        me = _MeView(fr_.me_pos, fr_.me_alive, fr_.me_recall)
         if out["me"] is not None and my_tr is not None and my_tr.visible:
             p = out["me"]
             if last_me is not None:
@@ -1452,6 +1506,11 @@ def run_real(fix: Path | None = None) -> dict:
     import real_minimap_bench as RB
 
     res = RB.run_all(fix=fix) if fix is not None else RB.run_all()
+    return real_summary(res)
+
+
+def real_summary(res: dict) -> dict:
+    """Totals of ``real_minimap_bench`` results ({image: ImageResult}, in the truth file order)."""
     T = {"gt": 0, "det": 0, "tp": 0, "team": 0, "idn": 0, "idok": 0}
     misses, fps = [], []
     for name, r in res.items():

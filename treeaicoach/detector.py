@@ -325,6 +325,13 @@ def decode_outputs(heatmap: Any, cls: Any, offset: Any, radius: Any, threshold: 
 # ======================================================================================
 
 
+#: Optional stage-output cache (tools/det_fast.py only; None in the app): an object with
+#: ``onnx(detector, input_tensor, run) -> outputs`` that returns the cached raw ONNX outputs of
+#: this input (keyed by the model bytes and the input tensor) or calls ``run()``. The outputs
+#: are the same arrays, so the detections are unchanged.
+STAGE_CACHE: Any = None
+
+
 def default_model_path() -> Path:
     """Bundled model: ``assets/model/minimap_detector.onnx`` (``TREEAI_DET_MODEL`` = another .onnx
     file, for the benches of tools/det_train_fast.py; ignored when it is not a file)."""
@@ -528,7 +535,11 @@ class OnnxDetector(BaseDetector):
             if bgr is None:
                 return []
             x = preprocess(bgr, self.input_size)
-            outs = self._sess.run(self._output_names, {self._input_name: x})
+            cache = STAGE_CACHE
+            if cache is None:
+                outs = self._sess.run(self._output_names, {self._input_name: x})
+            else:   # tools/det_fast.py: raw outputs replayed per (model hash, input hash)
+                outs = cache.onnx(self, x, lambda: self._sess.run(self._output_names, {self._input_name: x}))
             return decode_outputs(*outs, threshold=self.threshold, stride=self.stride,
                                   input_size=self.input_size, max_det=self.max_det)
         except Exception:
