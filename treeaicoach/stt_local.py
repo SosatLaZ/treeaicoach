@@ -434,8 +434,10 @@ class WhisperSTT:
                 return False
         path = self._model_dir or model_path(self.name, self._root)
         t0 = time.monotonic()
-        threads = self._threads or max(1, min(CPU_THREADS, (os.cpu_count() or 4)))
+        threads = max(1, min(CPU_THREADS, self._threads or CPU_THREADS, (os.cpu_count() or 4)))
+        seen = native_threads()
         self._model = ct2.models.Whisper(str(path), device="cpu", compute_type="int8", intra_threads=threads)
+        demote_new_threads(seen)                 # ct2's replica worker (created with the model)
         self._tok = tokenizers.Tokenizer.from_file(str(path / "tokenizer.json"))
         for t in ("<|startoftranscript|>", "<|fr|>", "<|transcribe|>", "<|notimestamps|>", "<|startofprev|>",
                   "<|endoftext|>"):
@@ -793,6 +795,98 @@ class Job:
         self.ev = threading.Event()
 
 
+#: Why not a low-priority subprocess (3.4.1 choice): in the frozen exe a child process means a second
+#: Python + a second copy of the model in RAM (small int8 ~ 250 MB), its own start (~2-3 s) and a pipe
+#: for every utterance (~1 ms per 3 s of audio — negligible); the CPU win is the same as lowering the
+#: priority of the native threads, which costs nothing. CTranslate2 computes on its OWN threads (one replica
+#: worker created with the model, then ``intra_threads`` OpenMP threads created at the first call): the
+#: Python worker's own priority (below normal) does not reach them. So the threads that appear during
+#: the model load and the Whisper calls are lowered too (Toolhelp32 thread snapshot of this process,
+#: diff before / after; Python's own threads excluded). Cost: one snapshot per call, ~1 ms.
+_DEMOTED: set[int] = set()
+_DEMOTE_LOCK = threading.Lock()
+TH32CS_SNAPTHREAD = 0x4
+THREAD_SET_INFORMATION = 0x20
+THREAD_QUERY_INFORMATION = 0x40
+THREAD_PRIORITY_BELOW_NORMAL = -1
+
+
+def native_threads() -> set[int]:
+    """Ids of every thread of this process (Windows; empty elsewhere / on error). Never raises."""
+    if sys.platform != "win32":
+        return set()
+    try:
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        class THREADENTRY32(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                        ("th32ThreadID", wintypes.DWORD), ("th32OwnerProcessID", wintypes.DWORD),
+                        ("tpBasePri", wintypes.LONG), ("tpDeltaPri", wintypes.LONG), ("dwFlags", wintypes.DWORD)]
+
+        k = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        k.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        snap = k.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+        if not snap or snap == wintypes.HANDLE(-1).value:
+            return set()
+        pid, out = os.getpid(), set()
+        try:
+            e = THREADENTRY32()
+            e.dwSize = ctypes.sizeof(THREADENTRY32)
+            ok = k.Thread32First(snap, ctypes.byref(e))
+            while ok:
+                if e.th32OwnerProcessID == pid:
+                    out.add(int(e.th32ThreadID))
+                ok = k.Thread32Next(snap, ctypes.byref(e))
+        finally:
+            k.CloseHandle(snap)
+        return out
+    except Exception:
+        log.debug("thread snapshot failed", exc_info=True)
+        return set()
+
+
+def demote_new_threads(before: set[int], *, snapshot: Callable[[], set[int]] | None = None,
+                       setter: Callable[[int], bool] | None = None) -> int:
+    """Lower to below normal the native threads that appeared since ``before`` (CTranslate2's compute
+    threads), except Python's own threads; each thread once. Returns how many were lowered. Never raises."""
+    try:
+        if not before and snapshot is None:
+            return 0
+        now = (snapshot or native_threads)()
+        py = {getattr(t, "native_id", None) for t in threading.enumerate()}
+        with _DEMOTE_LOCK:
+            new = [tid for tid in now - before if tid not in py and tid not in _DEMOTED]
+            n = 0
+            for tid in new:
+                if (setter or _set_below_normal)(tid):
+                    n += 1
+                _DEMOTED.add(tid)
+        if n:
+            log.info("Whisper : %d threads de calcul en priorité basse", n)
+        return n
+    except Exception:
+        log.debug("demote_new_threads failed", exc_info=True)
+        return 0
+
+
+def _set_below_normal(tid: int) -> bool:
+    try:
+        import ctypes  # noqa: PLC0415
+
+        k = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        k.OpenThread.restype = ctypes.c_void_p
+        h = k.OpenThread(THREAD_SET_INFORMATION | THREAD_QUERY_INFORMATION, False, tid)
+        if not h:
+            return False
+        try:
+            return bool(k.SetThreadPriority(ctypes.c_void_p(h), THREAD_PRIORITY_BELOW_NORMAL))
+        finally:
+            k.CloseHandle(ctypes.c_void_p(h))
+    except Exception:
+        return False
+
+
 def _below_normal_priority() -> None:
     """The Whisper thread yields to the game (Windows: THREAD_PRIORITY_BELOW_NORMAL). Never raises."""
     if sys.platform != "win32":
@@ -930,7 +1024,9 @@ class WhisperWorker:
         job.wait_ms = self.last_wait_ms = (t0 - job.t) * 1000
         try:
             stt = job.stt if job.stt is not None else self.stt()
+            seen = native_threads()
             text = stt.transcribe(job.pcm, job.prompt, beam=job.beam) if job.beam else stt.transcribe(job.pcm, job.prompt)
+            demote_new_threads(seen)             # ct2's OpenMP threads (created at the first calls)
         except Exception:
             log.warning("Whisper : transcription échouée", exc_info=True)
             text = None

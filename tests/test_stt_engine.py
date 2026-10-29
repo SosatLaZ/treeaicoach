@@ -72,3 +72,22 @@ def test_engine_error_is_shown_with_its_reason(tmp_path, monkeypatch) -> None:  
     assert "some_missing_dep_xyz" in w.status and "Vosk" in w.status
     d = stt_local.diagnose(tmp_path / "cache")
     assert d["engine"] is False and "some_missing_dep_xyz" in d["error"]
+
+
+def test_ct2_native_threads_lowered_once_python_threads_kept():
+    """3.4.1: CTranslate2 computes on its own native threads: the ones that appear during a Whisper
+    call are lowered to below normal (once each); Python's own threads are left alone."""
+    import threading as _th
+
+    from treeaicoach import stt_local as sl
+
+    sl._DEMOTED.clear()
+    me = _th.current_thread().native_id
+    lowered = []
+    n = sl.demote_new_threads({1, 2}, snapshot=lambda: {1, 2, 50, 51, me}, setter=lambda t: lowered.append(t) or True)
+    assert n == 2 and sorted(lowered) == [50, 51]
+    assert sl.demote_new_threads({1, 2}, snapshot=lambda: {1, 2, 50, 51}, setter=lambda t: lowered.append(t) or True) == 0
+    assert sl.CPU_THREADS <= 2
+    if sys.platform != "win32":
+        assert sl.native_threads() == set() and sl.demote_new_threads(set()) == 0
+    sl._DEMOTED.clear()
