@@ -3,6 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.7.0 · 29 octobre 2026
+
+- **« Hey coach » comme Siri :** un vrai détecteur de mot-clé (réseau neuronal local, 0 requête) remplace
+  l'ancien. En test : 99,4 % des « hey coach » reconnus au micro (avant 94 %), 100 % sur Discord ; réaction en
+  ~0,2 s au lieu de plusieurs secondes. « Eh cochon », « Écoute… », « On split push » ne le réveillent plus.
+- **Tu vois ce qu'il entend :** « J'écoute… » puis « Tu as dit : … » s'affiche 4 s à l'écran (aussi pour
+  Discord).
+- **Détection minimap plus fiable :** suivi des icônes réglé sur le nouveau simulateur (cas difficiles 94,1 % →
+  95,2 % de précision), et une fuite d'état entre parties corrigée.
+
 ## 3.6.0 · 29 octobre 2026
 
 - **« Hey coach » au micro :** 94 % des « hey coach » reconnus et 0 faux réveil en ~1 h de discussion (test
