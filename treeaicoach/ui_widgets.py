@@ -380,16 +380,23 @@ class Switch(QtWidgets.QAbstractButton):
         self.setFixedSize(42, 24)
         self.setFocusPolicy(Qt.TabFocus)
         self._pos = 1.0 if checked else 0.0
-        self._anim = QtCore.QVariantAnimation(self, duration=120, easingCurve=QtCore.QEasingCurve.OutCubic)
-        self._anim.valueChanged.connect(self._on_anim)
+        self._anim_obj: Any = None            # (cost) created on the first toggle, not per row built
         self.toggled.connect(self._animate)
+
+    @property
+    def _anim(self) -> Any:
+        if self._anim_obj is None:
+            self._anim_obj = QtCore.QVariantAnimation(self, duration=120, easingCurve=QtCore.QEasingCurve.OutCubic)
+            self._anim_obj.valueChanged.connect(self._on_anim)
+        return self._anim_obj
 
     def set_quiet(self, on: bool) -> None:
         """Set without emitting (sync from the configuration)."""
         self.blockSignals(True)
         self.setChecked(bool(on))
         self.blockSignals(False)
-        self._anim.stop()
+        if self._anim_obj is not None:
+            self._anim_obj.stop()
         self._pos = 1.0 if on else 0.0
         self.update()
 

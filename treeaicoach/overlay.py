@@ -106,6 +106,9 @@ MM_CALM_QUANT_PX = 2.0
 MM_DEAD_PX_CALM, MM_DEAD_PX_FAST = 2.5, 1.5
 #: Hard bounds of ``cfg.overlay_fps`` / the engine budget cap.
 FPS_MIN, FPS_MAX = 5.0, 60.0
+#: loop rate while no overlay window is shown (out of game, alt-tab, overlay off): a state poll
+#: every 1/3 s, nothing drawn (was 5 / s)
+IDLE_FPS = 3.0
 #: Every layer is re-rendered at least this often even when its signature did not change (s):
 #: a safety net for a field the signature does not cover; identical images are never re-sent.
 FORCE_REDRAW_S = 2.0
@@ -1682,7 +1685,7 @@ class OverlayManager:
                     self._mm_anchors.clear()
                     if state is None:
                         self._end_mm_session()
-                    fps = min(fps, 5.0)          # nothing shown: poll the state slowly
+                    fps = min(fps, IDLE_FPS)     # nothing shown: poll the state slowly
                 else:
                     flash_key = self._refresh(api, windows, state, cfg, move, custom, flash_key, now=t0)
                     if t0 - last_world >= 1.0 / WORLD_HZ - 1e-3:

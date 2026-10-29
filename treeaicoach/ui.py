@@ -71,7 +71,7 @@ from treeaicoach.ui_common import (  # noqa: F401 - re-exported for tools / test
 
 log = logging.getLogger(__name__)
 
-DISPATCH_MS = 30
+DISPATCH_MS = 250     # safety-net drain of the worker -> UI queue (posts wake the UI thread at once)
 BACKEND_DELAY_MS = 40        # engine / voice / detector start, once the window is painted
 PREBUILD_DELAY_MS = 700      # other pages built after the backend import burst (one per idle turn)
 MIN_W, MIN_H = 960, 600          # usable down to 1280 x 720 (and a bit below)
@@ -249,6 +249,11 @@ class CoachApp:
 
         self._save_timer = QtCore.QTimer(self.win, singleShot=True)
         self._save_timer.timeout.connect(self.save_now)
+        # worker -> UI thread hand-over: a queued signal wakes the UI thread when something is
+        # posted; the timer is only a slow safety net (it used to poll 33 times a second)
+        self._waker = _Waker()
+        self._waker.poke.connect(self._dispatcher.drain, QtCore.Qt.QueuedConnection)
+        self._dispatcher.wake = self._waker.poke.emit
         self._dispatch_timer = QtCore.QTimer(self.win)
         self._dispatch_timer.timeout.connect(self._dispatcher.drain)
         self._dispatch_timer.start(DISPATCH_MS)
@@ -1676,6 +1681,22 @@ class CoachApp:
                 obj.stop()
             except Exception:
                 log.exception("Cannot stop %s", name)
+
+
+_WAKER_CLS: Any = None
+
+
+def _Waker() -> Any:  # noqa: N802 - class factory (PySide6 imported lazily)
+    """QObject with a ``poke`` signal: emitted from any thread, delivered on the UI thread."""
+    global _WAKER_CLS
+    if _WAKER_CLS is None:
+        QtCore = _qt()[0]
+
+        class Waker(QtCore.QObject):
+            poke = QtCore.Signal()
+
+        _WAKER_CLS = Waker
+    return _WAKER_CLS()
 
 
 def _main_window_class() -> Any:

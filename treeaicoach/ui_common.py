@@ -718,11 +718,25 @@ class _Dispatcher:
     def __init__(self) -> None:
         self._q: queue.SimpleQueue[Callable[[], None]] = queue.SimpleQueue()
         self.closed = False
+        #: optional thread-safe "drain soon" request (Qt: a queued signal), so that the UI thread
+        #: is woken by work instead of polling the queue 30 times a second
+        self.wake: Callable[[], None] | None = None
+        self._armed = False
 
     def post(self, fn: Callable[[], None]) -> None:
         """Queue ``fn`` to run on the Tk thread (callable from any thread)."""
         if not self.closed:
             self._q.put(fn)
+            self._poke()
+
+    def _poke(self) -> None:
+        wake = self.wake
+        if wake is not None and not self._armed:
+            self._armed = True
+            try:
+                wake()
+            except Exception:
+                self._armed = False
 
     def run(self, job: Callable[[], Any], on_done: Callable[[Any], None] | None = None,
             on_error: Callable[[BaseException], None] | None = None, name: str = "TreeAI-ui-job") -> None:
@@ -742,6 +756,7 @@ class _Dispatcher:
 
     def drain(self, max_items: int = 50) -> None:
         """Run pending callbacks (Tk thread)."""
+        self._armed = False
         for _ in range(max_items):
             try:
                 fn = self._q.get_nowait()
@@ -751,6 +766,8 @@ class _Dispatcher:
                 fn()
             except Exception:
                 log.exception("UI callback failed")
+        if not self._q.empty():
+            self._poke()                      # more than max_items: the rest on the next turn
 
 
 class _RadarWorker:
