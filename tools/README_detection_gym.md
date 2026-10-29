@@ -5,6 +5,7 @@ Every change to detection or tracking is measured by these tools before it is ke
 | Tool | Purpose | Time |
 |---|---|---|
 | `tools/det_gym.py` | Scoreboard: synthetic games on real 2026 map art, run through the REAL engine path, plus the real crops | ~40 s (`--quick` ~15 s) |
+| `tools/det_fast.py` | The same numbers as `det_gym.py` + the real bench, from caches (rendered frames, detector stage tape, ONNX outputs, real images), 3 processes, exactly reproducible; parameter sweeps and a hard subset | warm: all suites + real in ~13 s (det_gym: ~9 min) |
 | `tools/det_micro.py` | Micro-gyms, one stage at a time: `ring`, `identity`, `stacks`, `tracker` | 1–10 s each |
 | `tools/det_mine.py` | Finds the hard cases (random search of scenario parameters) and writes `det_gym_hard.json` | ~1 min / 20 trials |
 | `tools/det_tune.py` | Auto-tuning of `treeaicoach/det_params.py: TUNABLE`; validated on holdout + real before it writes anything | 10+ min |
@@ -33,6 +34,31 @@ python tools/det_gym.py -v --gallery /tmp/gal                  # failure example
   - `prec`: wrong champions drawn live.
   - `me*`: my position.
   - `rec`: visible icons missed.
+
+## 1b. Fast loop: `det_fast.py` (cached, parallel, reproducible)
+
+```bash
+export DET_FAST_CACHE=/somewhere/simcache        # default <tmp>/det_fast_cache; rebuilt on demand
+python tools/det_fast.py run                      # main+hard+botlane+mirror+holdout + real crops + real cases
+python tools/det_fast.py run --suites main --no-real --set tracker.X=0.5
+python tools/det_fast.py sweep --param roster_matcher.X=a,b,c [--param tracker.Y=1,2]   # cartesian product
+python tools/det_fast.py hard --build             # hard subset from the current run (HEAD)
+python tools/det_fast.py sweep --subset hard --corr --param ...   # quick score + its correlation with the full one
+python tools/det_fast.py verify --gym-json main.json hard.json ...   # equivalence + reproducibility
+python tools/det_fast.py info | clean
+```
+
+- **What is cached** (all under `$DET_FAST_CACHE`, delete it any time, it is rebuilt on demand by the next run; `info` prints the sizes, ~560 MB for every suite + real):
+  - `frames/`: every game rendered once (lossless PNG frames + truth + game info) per scenario, renderer source (`det_gym.py` up to the pipeline, `training/real_art.py`, `render.py`, `champions.py`), `GYM_VERSION` and library versions.
+  - `tape/`: the detector stage of a game: every call the engine makes on the detector / roster matcher / icon learner, with its result, and every attribute it reads, per (frames, detector key). The **detector key** hashes the sources of `det_fast.DET_MODULES` (detector, roster_matcher, self_icon, ...), their current module constants, the model assets and the library versions. So a `tracker` / `engine` / overlay knob or a `tracker.py` edit replays the detector from the tape; a `roster_matcher` knob or a detector-side edit re-runs the detector (and records a new tape).
+  - `onnx/`: raw ONNX outputs per (model hash, input tensor hash) (`detector.STAGE_CACHE` hook): a re-run of the detector skips the CNN.
+  - `real/`: real-bench image results per (image bytes, labels, roster, detector key).
+- **Safety:** the replay checks every call (name + hash of the arguments: the frame, the game info) and every attribute read against the tape. Any difference (e.g. a downstream change makes the engine call the detector differently) raises `Divergence` and that game is re-run for real (counted in the `divergences` line). A tape whose returned results were changed afterwards by the detector is flagged `unsafe`.
+- **Reproducible:** the simulated clock (`det_gym.CLOCK_MODULES`: roster matcher, self icon, identifier, detector), `PYTHONHASHSEED=0` (the tool re-executes itself), one thread per process. Two runs give byte-identical metrics; `ms` / `cpu` / wall times are kept apart (`timing`, `stats`).
+- **Equivalence (HEAD, 2026-10-29):** `verify` against `det_gym.py --json` of main (+ real crops + 5 real cases), hard, botlane, mirror, holdout: every game metric, every `fails` entry and every real number identical; the uncached pool run identical too; two cached runs byte-identical. Note: HEAD's detection keeps some per-process state from one game / image to the next (one holdout game and one real case give other numbers when run alone), so `det_fast` runs each suite as ONE sequence in a fresh process (det_gym's order) and the real bench as one sequence: the parallelism is per suite.
+- **Times (this container, 4 shared cores, 3 processes):** det_gym.py main + real 316 s, hard 27 s, botlane 117 s, mirror 24 s, holdout 52 s = 535 s. det_fast cold (cache build) 256 s (2.1x, bound by the sequential real bench, 267 s alone), warm 11-14 s (~40x), main alone warm 4 s; a sweep point of a downstream knob (tracker / engine / overlay) on everything incl. real: 11.6 s (46x); a detector knob re-runs the detector (cold cost, ONNX skipped).
+- **Hard subset:** windows around every frame where HEAD fails (any `fails` entry) plus a fixed 5 % random control set, each run by a fresh pipeline from `PRE_ROLL_S` = 2 s earlier. Built by `hard --build`; `sweep --subset hard --corr` prints the subset / full Pearson and Spearman over the sweep points (not measured yet on past variants: the history entries are other code revisions, whose tapes do not exist).
+- **Not cached:** a detector-side knob still re-runs the roster matcher (the expensive part, ~65 % of a cold run) on every game: use `--subset hard` for a quick score first, then the full sweep point. `det_gym.py` stays the reference that records the history.
 
 ## 2. Understand failures in seconds: the gallery
 

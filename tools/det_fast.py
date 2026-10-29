@@ -76,6 +76,7 @@ DET_MODULES = ("detector", "roster_matcher", "self_icon", "patch_classifier", "d
                "geometry")
 #: Timing fields (machine-dependent): kept out of the metrics.
 TIMING = ("ms", "ms95", "cpu", "games_s", "real_s")
+TAPE_VERSION = 2          # tape format (frames hashed by their stored PNG bytes)
 PRE_ROLL_S = 2.0          # hard-subset window: fresh pipeline this long before the scored frames
 CONTROL_FRAC = 0.05
 
@@ -194,6 +195,9 @@ class CachedSource:
             _save(path, data, level=0)
         self.me_tid, self.mirrored, self.recs = data["me_tid"], data["mirrored"], data["recs"]
         self.f_range = f_range
+        self.keep = False
+        self._dec: dict = {}
+        self._tok: dict = {}
 
     def __len__(self) -> int:
         return len(self.recs)
@@ -201,8 +205,21 @@ class CachedSource:
     def frames(self):
         lo, hi = self.f_range or (0, len(self.recs) - 1)
         for f, t, png, truth, dead, game, me_pos, me_alive, me_recall in self.recs[lo: hi + 1]:
-            img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_UNCHANGED)
+            img = self._img(f, png)
+            _FRAME_TOKEN.clear()
+            _FRAME_TOKEN[id(img)] = (img, ("frame", self._tok[f]))
             yield G.FrameRec(f, t, img, truth, dead, pickle.loads(game), me_pos, me_alive, me_recall)
+        _FRAME_TOKEN.clear()
+
+    def _img(self, f: int, png: bytes) -> np.ndarray:
+        """Decoded frame (kept for the next sweep point / window of this task)."""
+        img = self._dec.get(f)
+        if img is None:
+            img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_UNCHANGED)
+            self._tok[f] = _sha(png)
+            if self.keep:
+                self._dec[f] = img
+        return img.copy() if self.keep else img
 
 
 # ======================================================================================
@@ -223,7 +240,14 @@ def _proxyable(v: Any) -> bool:
             and str(getattr(type(v), "__module__", "")).startswith("treeaicoach"))
 
 
+#: id(frame array) -> (array, token): cached frames are hashed by their stored bytes, once.
+_FRAME_TOKEN: dict = {}
+
+
 def _arg_sha(a: tuple, k: dict) -> str:
+    if _FRAME_TOKEN:
+        a = tuple(_FRAME_TOKEN[id(x)][1] if isinstance(x, np.ndarray) and id(x) in _FRAME_TOKEN
+                  and _FRAME_TOKEN[id(x)][0] is x else x for x in a)
     try:
         return _sha(pickle.dumps((a, sorted(k.items())), protocol=5))
     except Exception:
@@ -438,7 +462,7 @@ def _restore(saved: dict) -> None:
         setattr(m, name, v)
 
 
-def _run_game_task(sc: Any, mode: str, window: tuple | None) -> dict:
+def _run_game_task(sc: Any, mode: str, window: tuple | None, src: Any = None) -> dict:
     """One game (or one hard-subset window ``(f0, f1, t_score)``) -> GameMetrics + stats."""
     w = _ctx()
     db = w["db"]
@@ -454,12 +478,14 @@ def _run_game_task(sc: Any, mode: str, window: tuple | None) -> dict:
             finally:
                 D.STAGE_CACHE = w["onnx"]
             return {"M": M, "st": st}
-        src = CachedSource(sc, db, _art, f_range=window[:2] if window else None)
+        src = src if src is not None else CachedSource(sc, db, _art)
+        src.f_range = window[:2] if window else None
         st["frames_built"] = src.built
+        src.built = False
         warm = window[2] if window else G.WARMUP_S
         name = f"{sc.name}_{src.key}" + (f"_w{window[0]}-{window[1]}" if window else "")
         dkey = det_key()
-        tpath = CACHE / "tape" / f"{name}_{dkey}.pkl.z"
+        tpath = CACHE / "tape" / f"{name}_{dkey}_v{TAPE_VERSION}.pkl.z"
         data = _load(tpath) if mode == "auto" else None
         if data is not None:
             tape = Tape(data)
@@ -482,7 +508,7 @@ def _run_game_task(sc: Any, mode: str, window: tuple | None) -> dict:
         M = G.run_game(sc, db, None, source=src, det=_P(det, tape, "det"), warmup_s=warm)
         tape.check_last()
         w["onnx"].flush()
-        if mode == "auto" and not st["div"]:
+        if mode == "auto":         # (after a divergence: the new call pattern replaces the old)
             _save(tpath, tape.data())
         st["tape"], st["unsafe"] = "record", tape.unsafe
         return {"M": M, "st": st}
@@ -525,21 +551,44 @@ def _real_task(fix: str, names: list, mode: str) -> dict:
     return {"res": out, "built": built}
 
 
+def _unit(kind: str, payload: tuple, mode: str) -> dict:
+    """One game (all its hard-subset windows) or one real fixture folder."""
+    w = _ctx()
+    t0, c0 = time.perf_counter(), time.process_time()
+    if kind == "game":
+        _suite, sc, windows = payload
+        src = None
+        if mode != "nocache":
+            src = CachedSource(sc, w["db"], _art)
+            src.keep = windows is not None and len(windows) > 1
+        parts = [_run_game_task(sc, mode, win, src) for win in (windows or [None])]
+        r = parts[0]
+        for q in parts[1:]:
+            r["M"].merge(q["M"])
+            for k in ("frames_built", "unsafe"):
+                r["st"][k] = r["st"][k] or q["st"][k]
+            r["st"]["div"] = r["st"]["div"] or q["st"]["div"]
+            if q["st"]["tape"] == "record":
+                r["st"]["tape"] = "record"
+    else:
+        r = _real_task(*payload, mode)
+    r["wall"], r["cpu"] = time.perf_counter() - t0, time.process_time() - c0
+    return r
+
+
 def _task(args: tuple) -> tuple:
-    kind, payload, overrides, mode = args
+    """A SEQUENCE of units (the games of one suite in det_gym's order, or every real fixture),
+    one sweep point, in one fresh process: the same per-process history as det_gym.py (HEAD's
+    detection keeps some per-process state from one game / image to the next, so the order
+    matters; measured 2026-10-29: one holdout game and one real case differ when each runs
+    alone)."""
+    i_point, units, overrides, mode = args
     _ctx()
     saved = _apply(overrides)
-    t0, c0 = time.perf_counter(), time.process_time()
     try:
-        if kind == "game":
-            _suite, sc, window = payload
-            r = _run_game_task(sc, mode, window)
-        else:
-            r = _real_task(*payload, mode)
+        return i_point, [(k, pl, _unit(k, pl, mode)) for k, pl in units]
     finally:
         _restore(saved)
-    r["wall"], r["cpu"] = time.perf_counter() - t0, time.process_time() - c0
-    return kind, payload, r
 
 
 # ======================================================================================
@@ -551,24 +600,26 @@ def real_fixtures() -> list[Path]:
     return [ROOT / "tests" / "fixtures" / "real"] + cases
 
 
-def build_tasks(suites: list[str], real: bool, overrides: dict, mode: str,
-                subset: dict | None = None, chunk: int = 4) -> list:
+def build_tasks(suites: list[str], real: bool, points: list, mode: str, subset: dict | None = None) -> list:
+    """One task per (suite, point) and one per (real bench, point); real first (longest cold)."""
     tasks = []
-    for suite in suites:
-        for sc in G.suite_scenarios(suite, False):
-            if subset is not None:
-                for win in subset.get(f"{suite}/{sc.name}", []):
-                    tasks.append(("game", (suite, sc, tuple(win)), overrides, mode))
-            else:
-                tasks.append(("game", (suite, sc, None), overrides, mode))
-    if real:
-        import real_minimap_bench as RB
+    for i, pt in enumerate(points):
+        if real:
+            import real_minimap_bench as RB
 
-        for fix in real_fixtures():
-            names = list(RB.load_truth(fix)["images"])
-            for i in range(0, len(names), chunk):
-                tasks.append(("real", (str(fix), names[i: i + chunk]), overrides, mode))
-    # longest first (better packing): games before real chunks
+            units = [("real", (str(fix), list(RB.load_truth(fix)["images"]))) for fix in real_fixtures()]
+            tasks.append((i, units, pt, mode))
+        for suite in suites:
+            units = []
+            for sc in G.suite_scenarios(suite, False):
+                if subset is not None:
+                    wins = [tuple(w_) for w_ in subset.get(f"{suite}/{sc.name}", [])]
+                    if wins:
+                        units.append(("game", (suite, sc, wins)))
+                else:
+                    units.append(("game", (suite, sc, None)))
+            if units:
+                tasks.append((i, units, pt, mode))
     return tasks
 
 
@@ -580,15 +631,25 @@ def pool(jobs: int) -> Any:
     if _POOL is None and jobs > 1:
         import multiprocessing as mp
 
-        _POOL = mp.get_context("fork").Pool(jobs, initializer=_worker_init, maxtasksperchild=None)
+        # every task in a fresh fork of this (pristine) process: no state leaks from one game /
+        # image to the next (module caches, learned icons), so any order / split gives the same
+        # numbers; the champion db and the imports are loaded once, here
+        _ctx()
+        _POOL = mp.get_context("fork").Pool(jobs, initializer=_worker_init, maxtasksperchild=1)
     return _POOL
 
 
 def evaluate(suites: list[str], real: bool = True, overrides: dict | None = None, mode: str = "auto",
              jobs: int = 3, subset: dict | None = None) -> dict:
     """Same structure as ``det_gym.run`` (+ "timing", "stats"): one entry per suite."""
-    overrides = dict(overrides or {})
-    tasks = build_tasks(suites, real, overrides, mode, subset)
+    return evaluate_points(suites, real, [dict(overrides or {})], mode, jobs, subset)[0]
+
+
+def evaluate_points(suites: list[str], real: bool, points: list[dict], mode: str = "auto", jobs: int = 3,
+                    subset: dict | None = None) -> list[dict]:
+    """:func:`evaluate` of several override sets (sweep points): each task loads / decodes its
+    game once and runs every point."""
+    tasks = build_tasks(suites, real, points, mode, subset)
     t0 = time.perf_counter()
     p = pool(jobs)
     if p is None:
@@ -596,9 +657,18 @@ def evaluate(suites: list[str], real: bool = True, overrides: dict | None = None
         results = [_task(t) for t in tasks]
     else:
         results = list(p.imap(_task, tasks, chunksize=1))
-    wall = time.perf_counter() - t0
+    wall = (time.perf_counter() - t0) / len(points)
+    per: list = [[] for _ in points]
+    for i, units in results:
+        per[i].extend(units)
+    for i in range(len(points)):      # det_gym order: suites in order, then real
+        per[i].sort(key=lambda u: (u[0] == "real", suites.index(u[1][0]) if u[0] == "game" else 0))
+    return [_assemble(suites, real, per[i], len(tasks) // len(points), wall) for i in range(len(points))]
+
+
+def _assemble(suites: list[str], real: bool, results: list, n_tasks: int, wall: float) -> dict:
     out: dict = {"suites": {}, "timing": {"wall_s": wall}, "stats": {}}
-    stats = {"tasks": len(tasks), "frames_built": 0, "tape_replay": 0, "tape_record": 0, "divergences": [],
+    stats = {"tasks": n_tasks, "frames_built": 0, "tape_replay": 0, "tape_record": 0, "divergences": [],
              "unsafe": 0, "real_built": 0, "task_cpu_s": 0.0}
     by_suite: dict = {}
     real_res: dict = {}
@@ -867,18 +937,23 @@ def sweep(suites: list[str], real: bool, params: list[str], jobs: int, subset: d
         axes.append([(k.strip(), _parse_val(v.strip())) for v in vals.split(",")])
     points = [{}] + [dict(c) for c in itertools.product(*axes)]
     rows = []
-    for pt in points:
-        t0 = time.perf_counter()
-        out = evaluate(suites, real, pt, jobs=jobs, subset=subset)
+    t0 = time.perf_counter()
+    outs = evaluate_points(suites, real, points, jobs=jobs, subset=subset)
+    t1 = time.perf_counter()
+    fulls = evaluate_points(suites, False, points, jobs=jobs) if corr and subset is not None else None
+    t2 = time.perf_counter()
+    print(f"{len(points)} points in {t1 - t0:.1f} s ({(t1 - t0) / len(points):.1f} s / point)"
+          + (f"; full suites for the correlation {t2 - t1:.1f} s ({(t2 - t1) / len(points):.1f} s / point)"
+             if fulls else ""))
+    for i, (pt, out) in enumerate(zip(points, outs)):
         row = summary_row(out)
         row["point"] = ", ".join(f"{k.split('.')[-1]}={v}" for k, v in pt.items()) or "(defaults)"
-        row["s"] = time.perf_counter() - t0
+        row["s"] = out["timing"]["wall_s"]
         row["div"] = len(out["stats"]["divergences"])
         row["rec_det"] = out["stats"]["tape_record"]
-        if corr and subset is not None:
-            t1 = time.perf_counter()
-            row["full_quality"] = summary_row(evaluate(suites, False, pt, jobs=jobs))["quality"]
-            row["full_s"] = time.perf_counter() - t1
+        if fulls:
+            row["full_quality"] = summary_row(fulls[i])["quality"]
+            row["full_s"] = fulls[i]["timing"]["wall_s"]
         rows.append(row)
         print(f"  {row['point']}: quality {row['quality']:.4f} ({row['s']:.1f} s, detector re-run "
               f"{row['rec_det']} games, divergences {row['div']})"

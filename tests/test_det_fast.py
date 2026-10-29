@@ -147,8 +147,8 @@ def test_short_game_cached_equals_det_gym(tmp_path, monkeypatch):
     sc = G.suite_scenarios("main")[0]
     sc.seconds = 2.5
     F._worker_init()
-    runs = {m: F._task(("game", ("main", sc, None), {}, m))[2] for m in ("nocache", "auto")}
-    replay = F._task(("game", ("main", sc, None), {}, "auto"))[2]
+    runs = {m: F._unit("game", ("main", sc, None), m) for m in ("nocache", "auto")}
+    replay = F._unit("game", ("main", sc, None), "auto")
     assert runs["auto"]["st"]["tape"] == "record" and replay["st"]["tape"] == "replay"
     summ = [F.metrics_only(dict(r["M"].summary(), fails=r["M"].fails)) for r in
             (runs["nocache"], runs["auto"], replay)]
