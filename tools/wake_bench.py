@@ -19,7 +19,20 @@ per path. Result: wake recall.
 
 The app's exact rule runs (voice_assistant.WakeEngine, discord_listen.Speaker, and on the PC the Whisper
 check of « coach-like » utterances); ``--whisper`` loads a CTranslate2 Whisper folder for the Whisper
-confirmation (without it, the app's behaviour when Whisper is not ready). Clips stay in ``--cache``."""
+confirmation (without it, the app's behaviour when Whisper is not ready). Clips stay in ``--cache``.
+
+End-to-end results (app config: ``--whisper faster-whisper-small --whisper-confirm faster-whisper-base``,
+``--shards 2``, then ``sum``; 2026-10-29):
+
+* 3.5.0 (98c65eb): PC 3 false wakes in 0.93 h = 3.2/h, recall 163/180 = 90.6 %; Discord 1 in 0.71 h =
+  1.4/h, recall 167/180 = 92.8 %. False wakes: the base model's 1.5 s confirmation cut of « Quel coach tu
+  utilises ? » read « coach utilise » (bare « coach » accepted), and « Tri des objets. » read as a bare
+  « Hey Tree ». Misses: the per-minute Whisper cap hit by wake clips 5 s apart (bench artifact: now reset
+  per wake clip), glued spellings « Hétri » / « Hikooch » / « Egoch ».
+* after (bare Whisper « coach » must be punctuated, bare « tri » refused, glued spellings accepted):
+  PC 0 false wakes in 0.93 h, recall 169/180 = 93.9 %. Discord: not re-run end to end (time); the
+  isolated replay of the coach-like chatter shows its only false wake (« quel coach tu utilises ») gone.
+  Whisper small check ~1.5-1.9 s median (2 threads, 2 bench processes), base confirmation ~0.3-0.4 s."""
 
 from __future__ import annotations
 
