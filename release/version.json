@@ -1,6 +1,6 @@
 {
-  "version": "3.6.0",
-  "sha256": "ab0e1c1dbddf705d5b9209823df861ff44bb6f1f0418b13b3ec55686b949d42b",
-  "size": 7531682,
-  "notes": "3.6 : Hey coach 94 % sans faux réveil, moins de charge PC."
+  "version": "3.7.0",
+  "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
+  "size": 7532334,
+  "notes": "« Hey coach » comme Siri (99 % reconnus, ~0,2 s), « J'écoute… / Tu as dit » à l'écran, détection minimap plus fiable."
 }

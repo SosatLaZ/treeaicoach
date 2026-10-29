@@ -1,25 +1,25 @@
 {
- "version": "3.6.0",
+ "version": "3.7.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "00e89f8e6f33558b86057a5f0baa5ff935fafe88b1f378e14285455bd537db07",
+ "sha256": "e243f26291982961b6d973a2f1e3a2953353b2f8aff9b89eb92e0f6204d21fe3",
  "chunks": [
   {
-   "name": "3.6.0/part-01.zip",
-   "size": 88169834,
-   "sha256": "01949ec6bbd641667a6eb72e9c0aa7ce465bb3d5e860c8b7a3aec8609eac91e6",
-   "files": 145
+   "name": "3.7.0/part-01.zip",
+   "size": 88161454,
+   "sha256": "90cf9902cae2fb0fa3ad34b39d87cd2d8eb121c7f4ff2c7ac19c77695bc5bae6",
+   "files": 144
   },
   {
-   "name": "3.6.0/part-02.zip",
-   "size": 10764992,
-   "sha256": "de47107cc0bfc961786af022e1263b499ed7f0b0acfdc8ec131d141289d95fb6",
-   "files": 570
+   "name": "3.7.0/part-02.zip",
+   "size": 11370842,
+   "sha256": "28a4f5d0fc774207e501f4453ec313ef6741ff450658b13e3a4f10ff01d68034",
+   "files": 572
   }
  ],
- "total_size": 98934826,
+ "total_size": 99532296,
  "launcher": {
-  "sha256": "ab0e1c1dbddf705d5b9209823df861ff44bb6f1f0418b13b3ec55686b949d42b",
-  "size": 7531682
+  "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
+  "size": 7532334
  },
- "notes": "3.6 : Hey coach 94 % sans faux r\u00e9veil, moins de charge PC."
+ "notes": "\u00ab Hey coach \u00bb comme Siri (99 % reconnus, ~0,2 s), \u00ab J'\u00e9coute\u2026 / Tu as dit \u00bb \u00e0 l'\u00e9cran, d\u00e9tection minimap plus fiable."
 }
