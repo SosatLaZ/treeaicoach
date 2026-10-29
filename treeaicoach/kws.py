@@ -35,8 +35,9 @@ EMB_WINDOW = 16                 # embeddings seen by the head (1.28 s)
 GATE_RMS = 40.0                 # int16 RMS: below this for a whole embedding window = silence (no compute)
 CONFIRM_FRAMES = 2              # consecutive frames at/above the threshold
 REFRACTORY_S = 1.5              # no second wake from the same « Hey coach »
-#: per path thresholds (``tools/wake_bench.py`` picks them: false wakes ≤ 0.2 / h on the chatter set)
-THRESHOLDS = {"pc": 0.5, "discord": 0.5}
+#: per path thresholds, from the ``tools/wake_bench.py`` sweep (2026-10-29, head v3): PC 0.4 = 1 false wake in
+#: 0.93 h of chatter, recall 98.3 %; Discord 0.5 = 3 in 0.71 h, recall 99.4 % (higher costs recall fast)
+THRESHOLDS = {"pc": 0.4, "discord": 0.5}
 
 _REL = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/"
 #: name -> (url, sha256, bytes). Apache-2.0 (openWakeWord code; the embedding weights are Google's

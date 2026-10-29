@@ -144,6 +144,14 @@ def items() -> list[dict]:
             out.append({"id": f"u{k:05d}", "text": f"{o}, {f}", "voice": v, "kind": "neg",
                         "rate": f"{rnd.randint(-20, 20):+d}%", "pitch": f"{rnd.randint(-8, 8):+d}Hz"})
             k += 1
+    ecoute = ("Écoute", "Écoute", "Écoute bien", "Écoutez", "Écoute-moi", "Et écoute", "Hé, écoute", "Bon, écoute",
+              "Écoute mec", "Écoute frère", "Mais écoute", "Ah écoute", "Écoutez les gars", "Écoute écoute")
+    for v in VOICES:                          # « écoute » IS « hé coach » for a weak model: many of them
+        for _ in range(26):
+            f = rnd.choice([x for x in FOLLOW if len(x) > 2] + [x for x in TRAPS if not x.startswith("É")])
+            out.append({"id": f"v{k:05d}", "text": f"{rnd.choice(ecoute)}, {f[0].lower() + f[1:]}", "voice": v,
+                        "kind": "neg", "rate": f"{rnd.randint(-20, 20):+d}%", "pitch": f"{rnd.randint(-8, 8):+d}Hz"})
+            k += 1
     return out
 
 
@@ -436,7 +444,8 @@ def train(work: Path, out: Path, features: Path, epochs: int = 30) -> None:
     pos_tr = tr[lab[tr] == 1]
     neg_tr = tr[lab[tr] == 0]
     bs = 1024
-    steps = max(1, len(tr) // bs)
+    steps = max(1, min(600, len(tr) // bs))
+    torch.set_num_threads(2)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=2e-3, total_steps=epochs * steps)
     rng = np.random.default_rng(0)
     hard = neg_tr
@@ -449,8 +458,9 @@ def train(work: Path, out: Path, features: Path, epochs: int = 30) -> None:
     for ep in range(epochs):
         if ep >= 3 and ep % 2 == 1:              # hard-negative mining: the negatives the head likes most
             net.eval()
-            sn = scores(neg_tr)
-            hard = neg_tr[np.argsort(-sn)[: max(2048, len(neg_tr) // 25)]]
+            sub = rng.choice(neg_tr, min(len(neg_tr), 200_000), replace=False)
+            sn = scores(sub)
+            hard = sub[np.argsort(-sn)[: max(2048, len(sub) // 25)]]
         net.train()
         tot = 0.0
         for _ in range(steps):
@@ -499,9 +509,44 @@ def train(work: Path, out: Path, features: Path, epochs: int = 30) -> None:
     print("saved", out, out.stat().st_size, "bytes")
 
 
+def latency(work: Path, features: Path, head: Path, n: int = 150) -> None:
+    """Wake -> earcon delay on positive clips (augmented like training; group % 10 == 3 = validation
+    clips): time from the end of « coach » / « Tree » (edge-tts word boundary) to the wake, audio arriving
+    in 0.25 s mic blocks (PC) or 20 ms packets (Discord), + the measured compute of the frame."""
+    import time  # noqa: PLC0415
+
+    from treeaicoach import kws  # noqa: PLC0415
+
+    m = kws.KwsModel(folder=features, head=head)
+    metas = [p for p in sorted((work / "tts").glob("p*.json"))]
+    metas = [p for k, p in enumerate(metas) if k % 10 == 3][:n]
+    for path, blk in (("pc", 4000), ("discord", 320)):
+        d, miss = [], 0
+        for k, mp in enumerate(metas):
+            meta = json.loads(mp.read_text(encoding="utf-8"))
+            we = _wake_end(meta)
+            rng = np.random.default_rng(k + 5)
+            y, pre = augment(_decode(mp.with_suffix(".mp3")), rng, [])
+            pcm = np.clip(y * 32767, -32768, 32767).astype("<i2")
+            sp = kws.Spotter(m, kws.THRESHOLDS[path])
+            fired = None
+            for i in range(0, pcm.size - blk + 1, blk):
+                t0 = time.perf_counter()
+                if sp.feed(pcm[i:i + blk].tobytes()):
+                    fired = (i + blk) / SR + (time.perf_counter() - t0)
+                    break
+            if fired is None:
+                miss += 1
+                continue
+            d.append(fired - (we + pre / SR))
+        d = np.array(d) * 1000
+        print(f"{path}: {len(d)} wakes, {miss} missed; wake->earcon median {np.median(d):.0f} ms, "
+              f"p90 {np.percentile(d, 90):.0f} ms, mean {d.mean():.0f} ms")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=("synth", "feats", "train", "count"))
+    ap.add_argument("cmd", choices=("synth", "feats", "train", "count", "latency"))
     ap.add_argument("--work", required=True)
     ap.add_argument("--features", default="")
     ap.add_argument("--jobs", type=int, default=1)
@@ -515,9 +560,11 @@ def main() -> None:
     work = Path(a.work)
     if a.cmd == "count":
         its = items()
-        print(len(its), {k: sum(1 for i in its if i["id"][0] == k) for k in "ptau"})
+        print(len(its), {k: sum(1 for i in its if i["id"][0] == k) for k in "ptauv"})
     elif a.cmd == "synth":
         synth(work)
+    elif a.cmd == "latency":
+        latency(work, Path(a.features), Path(a.out))
     elif a.cmd == "feats":
         feats(work, Path(a.features), a.jobs, a.job, a.reps_pos, a.reps_neg, a.prefix)
     else:

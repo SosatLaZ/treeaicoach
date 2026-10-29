@@ -32,7 +32,15 @@ End-to-end results (app config: ``--whisper faster-whisper-small --whisper-confi
 * after (bare Whisper « coach » must be punctuated, bare « tri » refused, glued spellings accepted):
   PC 0 false wakes in 0.93 h, recall 169/180 = 93.9 %. Discord: not re-run end to end (time); the
   isolated replay of the coach-like chatter shows its only false wake (« quel coach tu utilises ») gone.
-  Whisper small check ~1.5-1.9 s median (2 threads, 2 bench processes), base confirmation ~0.3-0.4 s."""
+  Whisper small check ~1.5-1.9 s median (2 threads, 2 bench processes), base confirmation ~0.3-0.4 s.
+* 3.7 keyword spotter (``--engine kws``, the default; head v3 of tools/kws_train.py, ``--reps 2``, one process
+  per path, 2026-10-29), from the threshold sweep: PC (th 0.4) 1 false wake in 0.93 h = 1.1/h, recall of the
+  named wake phrases (« Hey / Hé / Et / Eh coach », « Hey Tree ») 171/174 = 98.3 %; Discord (th 0.5) 3 in
+  0.71 h = 4.2/h, recall 173/174 = 99.4 %. Bare « Coach, … » (not a wake phrase any more): 2/6 PC, 1/6
+  Discord. False wakes left: « Eh, cochon ! » (both paths), « Écoute, c'est quoi le timer du dragon ? » and
+  « On split push. » (Discord). No Whisper / Vosk on the wake: 2.8 ms per 80 ms frame while someone talks
+  (3.5 % of one loaded core here), 0.3 ms in silence (0.4 %) — ``wake_bench.py cpu``. Wake -> earcon
+  (``kws_train.py latency``): PC median 244 ms (0.25 s mic blocks), Discord 114 ms (20 ms packets)."""
 
 from __future__ import annotations
 
@@ -186,7 +194,6 @@ class Peaks:
 
     def __init__(self) -> None:
         self.cur = 0.0
-        self.prev = 0.0
 
     def see(self, eng) -> None:  # noqa: ANN001
         sp = getattr(eng, "spot", None)
@@ -197,6 +204,50 @@ class Peaks:
     def take(self) -> float:
         v, self.cur = self.cur, 0.0
         return v
+
+
+def _noise16(seconds: float, kind: str, seed: int, level: float) -> bytes:
+    n = int(seconds * SR)
+    y = sb.game_noise(n, kind, seed) * level
+    return sb.to16k(y)
+
+
+def _hiss(seconds: float, seed: int) -> bytes:
+    n = int(seconds * va.SAMPLE_RATE)
+    return np.random.default_rng(seed).normal(0, 12.0, n).astype("<i2").tobytes()
+
+
+def _trim(pcm: bytes) -> bytes:
+    """What Discord sends: the talk spurt only (its voice activity cuts the silences)."""
+    a = np.frombuffer(pcm, "<i2").astype(np.float32)
+    fr = a[: a.size // 320 * 320].reshape(-1, 320)
+    r = np.sqrt(np.mean(fr * fr, axis=1))
+    on = np.where(r > max(200.0, 0.05 * r.max()))[0]
+    if not on.size:
+        return b""
+    s, e = max(0, on[0] - 5), min(len(r), on[-1] + 10)
+    return a[s * 320:e * 320].astype("<i2").tobytes()
+
+
+class Whisper:
+    """The Whisper check, timed."""
+
+    def __init__(self, model: str, threads: int) -> None:
+        from treeaicoach import stt_local  # noqa: PLC0415
+
+        self.w = stt_local.WhisperSTT(model_dir=Path(model), threads=threads)
+        if not self.w.load():
+            raise SystemExit(self.w.status)
+        self.ms: list[float] = []
+        self.ms_confirm: list[float] = []
+        self.texts: list[str] = []                  # every transcript (per-clip log of the misses)
+
+    def transcribe(self, pcm: bytes, prompt: str | None = None, beam: int | None = None) -> str:
+        t0 = time.perf_counter()
+        text = self.w.transcribe(pcm, prompt, beam=beam)
+        (self.ms_confirm if beam else self.ms).append((time.perf_counter() - t0) * 1000)
+        self.texts.append(("confirm: " if beam else "read: ") + str(text))
+        return text
 
 
 # ------------------------------------------------------------------ PC path
