@@ -283,7 +283,9 @@ class HomePage:
 
     def _update_players(self, snap: dict[str, Any]) -> None:
         """The « Écran de chargement » card (loading_card.py) from the loading screen on, when "Infos des
-        joueurs" is on: on this page and in a top-most window until 1:30 of game (lock-only reads, no I/O)."""
+        joueurs" is on: on this page, and in a top-most window during the loading screen only (the lifetime rule
+        of loading_card.LoadingController: gone for good once the game starts, the overlay hotkey hides it,
+        hidden while the game is not in front). Lock-only reads, no I/O."""
         lines: Any = None
         try:
             from treeaicoach import loading_card, player_intel  # noqa: PLC0415
@@ -295,10 +297,14 @@ class HomePage:
                 w.want()                          # reads the gameflow phase: catches the loading screen
                 if self._loading is None:
                     self._loading = loading_card.LoadingController()
-                gt = getattr(snap.get("status"), "game_time", None) if key == "RUNNING" else None
-                card = self._loading.tick(w, gt)
-                if card is not None:
-                    ens = [b.head + "".join("\n   " + x for x in b.lines) + (f"\n   ⚠ {b.alert}" if b.alert else "")
+                st = snap.get("status")
+                card = self._loading.tick(w, getattr(st, "game_time", None),
+                                          overlay=bool(getattr(st, "overlay_visible", True)),
+                                          started=key == "RUNNING")
+                if card is not None and not card.teams_known:
+                    lines = (("Équipes pas encore connues (lecture du client LoL)",), ())
+                elif card is not None:
+                    ens = [b.head + "".join("\n   " + x for x in b.lines) + (f"\n   {b.alert}" if b.alert else "")
                            for b in card.enemies]
                     ens += ([""] + list(card.matchups) if card.matchups else [])
                     ens += [f"Plan : {card.win_condition}"] if card.win_condition else []

@@ -153,10 +153,201 @@ def test_first_game_and_not_played():
     assert "pas joué sur ses 12 dernières" in lc.enemy_block(p, resolve=NAMES.get).lines[0]
 
 
-def test_should_show_window():
-    assert lc.should_show(100.0, None, 120.0) and lc.should_show(100.0, 89.0, 200.0)
-    assert not lc.should_show(100.0, 91.0, 200.0) and not lc.should_show(None, None, 0.0)
+def test_should_show_window_loading_screen_only():
+    assert lc.should_show(100.0, None, 120.0) and lc.should_show(100.0, 0.0, 120.0)
+    assert lc.should_show(100.0, 3.0, 120.0)                   # frozen 0:00 extrapolated by the engine
+    assert not lc.should_show(100.0, 5.0, 120.0)               # the game started: gone
+    assert not lc.should_show(None, None, 0.0)
     assert not lc.should_show(100.0, None, 100.0 + lc.SHOW_MAX_S + 1)
+    assert lc.should_show(100.0, None, 120.0, started_at=110.0)
+    assert not lc.should_show(100.0, None, 126.0, started_at=110.0)   # minimap seen: 15 s at most
+
+
+def test_verdict_focus_overlay_and_z_order():
+    v = lc.overlay_verdict
+    assert v(since=0.0, now=1.0, focus=True) == "show"
+    assert v(since=0.0, now=1.0, focus=False) == "hide"        # alt-tab / minimised: not over the client
+    assert v(since=0.0, now=1.0, focus=None, win32=True) == "hide"   # no game window: the LoL client
+    assert v(since=0.0, now=1.0, focus=None, win32=False) == "show"
+    assert v(since=0.0, now=1.0, overlay_on=False) == "done"   # overlay hotkey
+    assert v(since=0.0, now=1.0, has_card=False) == "hide"
+    assert v(since=None, now=1.0) == "hide"
+
+
+P = pi.PlayerIntel
+
+
+def _ten(**darius):
+    d = dict(champion_id=122, ranked_loaded=True, tier="PLATINUM", division=2, wins=30, losses=28)
+    d.update(darius)
+    return [P("Darius", "Darius", False, "", **d),
+            P("MasterYi", "Maître Yi", False, "", champion_id=11),
+            P("Leblanc", "LeBlanc", False, "", champion_id=7), P("Caitlyn", "Caitlyn", False, "", champion_id=51),
+            P("Thresh", "Thresh", False, "", champion_id=412),
+            P("LeeSin", "Lee Sin", True, "JUNGLE"), P("Ahri", "Ahri", True, "MIDDLE"),
+            P("Jinx", "Jinx", True, "BOTTOM"), P("Lulu", "Lulu", True, "UTILITY")]
+
+
+class FakeW:
+    def __init__(self, players, since=0.0, ready=True, me=(86, "TOP")):
+        self.players, self.since, self._ready, self.me = tuple(players), since, ready, me
+
+    def snapshot(self):
+        return self.players
+
+    def ready(self):
+        return self._ready
+
+    def me_pick(self):
+        return self.me
+
+    def game_since(self):
+        return self.since if self.players else None
+
+
+class FakeWin:
+    def __init__(self):
+        self.shown, self.cards = False, []
+
+    def set_card(self, c):
+        self.cards.append(c)
+
+    def show(self):
+        self.shown = True
+
+    def hide(self):
+        self.shown = False
+
+    def isVisible(self):
+        return self.shown
+
+
+def _ctl(clock, focus=lambda: True):
+    win = FakeWin()
+    return lc.LoadingController(window_factory=lambda: win, clock=lambda: clock[0], focus=focus, win32=True), win
+
+
+def test_lifetime_gone_at_game_start_and_never_back():
+    clock = [10.0]
+    ctl, win = _ctl(clock)
+    w = FakeW(_ten(), since=10.0)
+    assert ctl.tick(w, None) is not None and win.shown
+    clock[0] = 40.0
+    ctl.tick(w, 2.5)                         # loading screen: frozen 0:00 + extrapolation
+    assert win.shown
+    ctl.tick(w, 6.0)                         # the game started
+    assert not win.shown and ctl.reason == "done"
+    assert ctl.tick(w, None) is not None and not win.shown    # Live Client gap: never re-appears
+    w.players = ()
+    ctl.tick(w, None)
+    w.players = _ten()                                         # same game read again after a gap
+    ctl.tick(w, None)
+    assert not win.shown
+    w.since = 500.0                                           # the next game: shown again
+    clock[0] = 501.0
+    ctl.tick(w, None)
+    assert win.shown
+
+
+def test_lifetime_minimap_started_15s_max_and_game_end():
+    clock = [0.0]
+    ctl, win = _ctl(clock)
+    w = FakeW(_ten())
+    ctl.tick(w, None, started=True)
+    assert win.shown
+    clock[0] = 16.0
+    ctl.tick(w, None, started=True)
+    assert not win.shown
+    clock[0] = 0.0
+    ctl2, win2 = _ctl(clock)
+    w2 = FakeW(_ten())
+    ctl2.tick(w2, None)
+    assert win2.shown
+    w2.players = ()                                           # the game ended (watcher reset)
+    ctl2.tick(w2, None)
+    assert not win2.shown
+    clock[0] = lc.SHOW_MAX_S + 1                              # endless loading: capped
+    w2.players = _ten()
+    ctl2.tick(w2, None)
+    assert not win2.shown
+
+
+def test_overlay_hotkey_and_focus():
+    clock, front = [0.0], [True]
+    ctl, win = _ctl(clock, focus=lambda: front[0])
+    w = FakeW(_ten())
+    ctl.tick(w, None)
+    assert win.shown
+    front[0] = False                                          # alt-tab / minimised
+    ctl.tick(w, None)
+    assert not win.shown
+    front[0] = True
+    ctl.tick(w, None)
+    assert win.shown                                          # back in front during the loading screen
+    ctl.tick(w, None, overlay=False)                          # overlay hotkey: gone for this game
+    ctl.tick(w, None, overlay=True)
+    assert not win.shown
+    ctl2, win2 = _ctl(clock, focus=lambda: None)              # Windows without a game window (LoL client)
+    ctl2.tick(FakeW(_ten()), None)
+    assert not win2.shown
+
+
+def test_failed_requests_never_stay_loading():
+    ps = _ten(ranked_loaded=False)
+    card = lc.build(ps, frozenset(), ("Garen", "Garen", "TOP"), complete=False, resolve=NAMES.get)
+    yi = next(r for r in card.enemy_rows if r.alias == "MasterYi")
+    assert yi.state == "loading" and "chargement…" in card.enemies[1].lines
+    card = lc.build(ps, frozenset(), ("Garen", "Garen", "TOP"), complete=True, resolve=NAMES.get)
+    yi = next(r for r in card.enemy_rows if r.alias == "MasterYi")
+    assert yi.state == "none" and card.enemies[1].lines == (lc.NO_INFO,)
+    assert all("chargement" not in a for a in card.allies)
+
+
+def test_teams_duplicates_and_lanes():
+    ps = _ten()
+    ps.append(P("Garen", "Garen", True, "TOP"))              # me, my puuid unknown: not twice
+    ps.append(P("Darius", "Darius", False, ""))              # the same enemy twice
+    card = lc.build(ps, frozenset(), ("Garen", "Garen", "TOP"), True, resolve=NAMES.get)
+    assert len(card.enemy_rows) == 5 and len(card.ally_rows) == 5
+    assert [r.alias for r in card.ally_rows] == ["Garen", "LeeSin", "Ahri", "Jinx", "Lulu"]
+    assert card.ally_rows[0].tag == "Toi" and [r.lane for r in card.enemy_rows] == [
+        "Top", "Jungle", "Mid", "Tireur", "Support"]
+    assert len(card.duels) == 5 and sum("Garen vs Darius" in m for m in card.matchups) == 1
+    # my team unknown: nine "enemies" -> no overlay, never nine enemy rows
+    allen = [P(p.alias, p.name, False, p.role, champion_id=p.champion_id) for p in _ten()]
+    card = lc.build(allen, frozenset(), None, True, resolve=NAMES.get)
+    assert not card.teams_known and not card.enemy_rows
+    clock = [0.0]
+    ctl, win = _ctl(clock)
+    w = FakeW(allen, me=(0, ""))
+    import unittest.mock as um
+    with um.patch.object(lc, "_resolver", lambda: NAMES.get):
+        ctl.tick(w, None)
+    assert not win.shown
+    # two enemies on one lane: one only
+    dup = _ten()
+    dup[0] = P("Darius", "Darius", False, "TOP", champion_id=122)
+    dup[1] = P("MasterYi", "Maître Yi", False, "TOP", champion_id=11)
+    card = lc.build(dup, frozenset(), None, True, resolve=NAMES.get)
+    assert [r.lane for r in card.enemy_rows].count("Top") == 1
+
+
+def test_tags_short_and_bans_of_this_game_only(monkeypatch):
+    p = P("Darius", "Darius", False, "TOP", True, "PLATINUM", 2, 0, 30, 28, True, 10, -3, champion_id=122,
+          recent_all=20, champ_all=14, mains=((122, 14), (875, 4)))
+    assert lc.player_row(p, frozenset({875}), NAMES.get).tag == "Main banni"
+    assert lc.player_row(p, frozenset(), NAMES.get).tag == "OTP"
+    q = P("Leblanc", "LeBlanc", False, "MIDDLE", mastery_loaded=True, champ_points=0, champion_id=7)
+    assert lc.player_row(q, resolve=NAMES.get).tag == "1re partie"
+    r = P("Lulu", "Lulu", True, "UTILITY", history_loaded=True, streak=-3, recent_all=10, champ_all=3)
+    row = lc.player_row(r, resolve=NAMES.get)
+    assert row.tag == "3 défaites" and row.tone == ""
+    for row in lc.build(_ten(), frozenset(), ("Garen", "Garen", "TOP"), True, resolve=NAMES.get).enemy_rows:
+        assert len(row.tag) <= 12 and row.tag == row.tag[:1] + row.tag[1:]   # short, not shouting
+    monkeypatch.setattr(champ_select, "_bans", (100.0, frozenset({875})))
+    assert lc.game_bans(130.0) == {875}
+    assert lc.game_bans(100.0 + lc.BANS_MAX_AGE_S + 60) == frozenset()       # previous game's bans
+    assert lc.game_bans(None) == frozenset()
 
 
 @pytest.fixture()
@@ -165,39 +356,68 @@ def qapp():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
-def test_overlay_renders_offscreen(qapp, tmp_path):
-    P = pi.PlayerIntel
+def _full_card():
     ps = [P("Darius", "Darius", False, "TOP", True, "PLATINUM", 2, 0, 30, 28, True, 10, -3, 0, champion_id=122,
             recent_all=20, champ_all=14, last5=((122, True), (875, False)), mains=((122, 14), (875, 4))),
-          P("Lulu", "Lulu", True, "UTILITY")]
-    card = lc.build(ps, frozenset({875}), ("Garen", "Garen", "TOP"), True, resolve=NAMES.get)
+          P("MasterYi", "Maître Yi", False, "JUNGLE", True, "GRANDMASTER", 0, 412, 120, 98, champion_id=11,
+            history_loaded=True, streak=4, recent_all=20, champ_all=5),
+          P("Leblanc", "LeBlanc", False, "MIDDLE", True, "", champion_id=7, mastery_loaded=True, champ_points=0),
+          P("Caitlyn", "Caitlyn", False, "BOTTOM", True, "EMERALD", 4, 10, 12, 10, champion_id=51),
+          P("Thresh", "Thresh", False, "UTILITY", champion_id=412),
+          P("LeeSin", "Lee Sin", True, "JUNGLE", True, "GOLD", 1, 0, 20, 22, champion_id=64),
+          P("Ahri", "Ahri", True, "MIDDLE", True, "SILVER", 3, 0, 8, 6, champion_id=103,
+            history_loaded=True, streak=-3, recent_all=10, champ_all=2),
+          P("Jinx", "Jinx", True, "BOTTOM", True, "PLATINUM", 4, 0, 5, 9, champion_id=222),
+          P("Lulu", "Lulu", True, "UTILITY", champion_id=117)]
+    return lc.build(ps, frozenset({875}), ("Garen", "Garen", "TOP"), False, resolve=NAMES.get)
+
+
+def test_window_scaled_flags_and_no_flicker(qapp):
+    from PySide6 import QtCore
+
+    card = _full_card()
     win = lc.make_window()
+    Qt = QtCore.Qt
+    for h, w_exp in ((720, 336), (1080, 420), (1125, 438)):
+        win.place(QtCore.QRect(0, 0, round(h * 16 / 9), h))
+        assert win.width() == w_exp and win.width() <= 420 * max(1.0, h / 1080) + 1
+        assert win.height() <= 300 * max(lc.SCALE_MIN, h / 1080) + 1
+    f = win.windowFlags()
+    for flag in (Qt.WindowType.WindowTransparentForInput, Qt.WindowType.WindowDoesNotAcceptFocus,
+                 Qt.WindowType.WindowStaysOnTopHint, Qt.WindowType.Tool):
+        assert f & flag
+    assert win.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
     win.set_card(card)
     win.show()
     qapp.processEvents()
+    pos = win.pos()
+    assert win.card is card
+    win.set_card(_full_card())                            # equal data: no repaint, no move
+    assert win.card is card and win.pos() == pos
     img = win.grab().toImage()
-    assert img.width() == 560 and img.height() > 100
-    assert "Son main Sett a été banni" in win.box.text()
+    assert img.width() == win.width()
     win.close()
 
-    class W:
-        def snapshot(self):
-            return tuple(ps)
 
-        def ready(self):
-            return True
+def test_offscreen_screenshots(qapp, tmp_path):
+    import os
 
-        def me_pick(self):
-            return (86, "TOP")
+    from PySide6 import QtCore, QtGui
 
-        def game_since(self):
-            return 0.0
-
-    clock = [10.0]
-    ctl = lc.LoadingController(clock=lambda: clock[0])
-    assert ctl.tick(W(), None) is not None and ctl.visible
-    assert ctl.tick(W(), 95.0) is not None and not ctl.visible        # hidden after 1:30 of game
-    clock[0] = 5.0
-    ctl.tick(W(), 10.0)
-    assert ctl.visible
-    ctl.hide()
+    card = _full_card()
+    assert card.enemy_rows and all(not any(ch.isupper() for ch in r.tag[1:]) for r in card.enemy_rows)
+    out = Path(os.environ.get("TREEAI_LC_SHOTS", "") or tmp_path)
+    out.mkdir(parents=True, exist_ok=True)
+    for w, h in ((1280, 720), (1920, 1080), (2000, 1125)):
+        win = lc.make_window()
+        win.place(QtCore.QRect(0, 0, w, h))
+        win.set_card(card)
+        win.show()
+        qapp.processEvents()
+        shot = QtGui.QImage(w, h, QtGui.QImage.Format.Format_ARGB32)
+        shot.fill(QtGui.QColor("#3a4a3f"))
+        p = QtGui.QPainter(shot)
+        p.drawImage(round(16 * win.s), round(16 * win.s), win.grab().toImage())
+        p.end()
+        assert shot.save(str(out / f"loading_card_{w}x{h}.png"))
+        win.close()
