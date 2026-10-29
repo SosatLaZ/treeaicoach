@@ -106,7 +106,7 @@ def set_enabled(on: bool, root: Path | None = None) -> bool:
 
 
 def _fetch(url: str, sha256: str, dest: Path, opener: Callable[[str], Any] | None,
-           progress: Callable[[int], None] | None) -> bool:
+           progress: Callable[[int], None] | None, cancel: Callable[[], bool] | None = None) -> bool:
     part = dest.with_name(dest.name + ".part")
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -122,6 +122,9 @@ def _fetch(url: str, sha256: str, dest: Path, opener: Callable[[str], Any] | Non
                 total = 0
             got = 0
             while True:
+                if cancel is not None and cancel():
+                    log.info("GPU : téléchargement annulé")
+                    return False
                 chunk = resp.read(1 << 20)
                 if not chunk:
                     break
@@ -152,8 +155,9 @@ def _keep(member: str) -> bool:
 
 
 def install(root: Path | None = None, opener: Callable[[str], Any] | None = None,
-            progress: Callable[[int], None] | None = None) -> bool:
-    """Download (22.5 MB, SHA-256 checked) and unpack the DirectML runtime once. Never raises."""
+            progress: Callable[[int], None] | None = None, cancel: Callable[[], bool] | None = None) -> bool:
+    """Download (22.5 MB, SHA-256 checked) and unpack the DirectML runtime once. ``cancel()`` True
+    stops the download (nothing kept). Never raises."""
     if installed(root):
         return True
     d = runtime_dir(root)
@@ -161,7 +165,7 @@ def install(root: Path | None = None, opener: Callable[[str], Any] | None = None
     whl = gpu_root(root) / ORT_DML_URL.rsplit("/", 1)[-1]
     try:
         shutil.rmtree(tmp, ignore_errors=True)
-        if not _fetch(ORT_DML_URL, ORT_DML_SHA256, whl, opener, progress):
+        if not _fetch(ORT_DML_URL, ORT_DML_SHA256, whl, opener, progress, cancel):
             return False
         with zipfile.ZipFile(whl) as zf:
             zf.extractall(tmp, [m for m in zf.namelist() if _keep(m)])
@@ -258,6 +262,25 @@ def detector_providers(available: list[str] | tuple[str, ...]) -> list[str]:
     return out + [CPU_PROVIDER]
 
 
+def row_text(st: dict[str, Any], *, platform: str | None = None, pct: int | None = None) -> tuple[str, str]:
+    """(description, button text) of the « Utiliser la carte graphique (minimap) » row. ``pct``: download
+    in progress (0-100). Pure."""
+    if (platform or sys.platform) != "win32":
+        return "Seulement sous Windows (DirectX 12). Détection sur le processeur.", ""
+    now = "carte graphique (DirectML)" if st.get("state") == "dml" else "processeur"
+    if pct is not None:
+        return f"Téléchargement du moteur DirectML… {int(pct)} % ({st.get('download_mb', ORT_DML_MB):.0f} Mo).", "Annuler"
+    on, inst = bool(st.get("enabled")), bool(st.get("installed"))
+    if on and inst:
+        when = "" if st.get("state") == "dml" else " Active au prochain démarrage de TreeAI."
+        return f"Actuellement : {now}.{when}", "Désactiver"
+    head = "La minimap est analysée par ta carte graphique (DirectX 12), le processeur reste au jeu."
+    if not on and st.get("state") == "dml":
+        return f"Actuellement : {now}. Repasse sur le processeur au prochain démarrage.", "Activer"
+    size = "" if inst else f" Téléchargement de {st.get('download_mb', ORT_DML_MB):.0f} Mo, une seule fois."
+    return f"{head}{size} Actuellement : {now}.", "Activer"
+
+
 def status(root: Path | None = None) -> dict[str, Any]:
     """For the settings page / diagnostics. Never raises."""
     try:
@@ -267,5 +290,5 @@ def status(root: Path | None = None) -> dict[str, Any]:
         return {"enabled": False, "installed": False, "state": "error"}
 
 
-__all__ = ["activate", "install", "installed", "enabled", "set_enabled", "status", "detector_providers",
+__all__ = ["row_text", "activate", "install", "installed", "enabled", "set_enabled", "status", "detector_providers",
            "DML_PROVIDER", "CPU_PROVIDER", "STATE"]

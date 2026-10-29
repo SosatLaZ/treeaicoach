@@ -177,3 +177,23 @@ def test_activate_real_import_from_front_of_sys_path(tmp_path, monkeypatch):
             sys.path.remove(str(d))
         gr._purge_ort()
         sys.modules.update(saved)
+
+
+def test_install_can_be_cancelled(tmp_path, monkeypatch):
+    data = _fake_wheel()
+    monkeypatch.setattr(gr, "ORT_DML_SHA256", hashlib.sha256(data).hexdigest())
+    assert not gr.install(tmp_path, opener=lambda u: _Resp(data), cancel=lambda: True)
+    assert not gr.installed(tmp_path) and not list(tmp_path.glob("*.part")) and not list(tmp_path.glob("*.whl"))
+
+
+def test_row_text_shows_current_provider_and_action():
+    st = {"enabled": False, "installed": False, "state": "off", "download_mb": 22.5}
+    d, b = gr.row_text(st, platform="win32")
+    assert b == "Activer" and "22 Mo" in d and "processeur" in d
+    d, b = gr.row_text(st, platform="win32", pct=42)
+    assert b == "Annuler" and "42 %" in d
+    d, b = gr.row_text(dict(st, enabled=True, installed=True), platform="win32")
+    assert b == "Désactiver" and "prochain démarrage" in d
+    d, b = gr.row_text(dict(st, enabled=True, installed=True, state="dml"), platform="win32")
+    assert b == "Désactiver" and "carte graphique (DirectML)" in d and "prochain" not in d
+    assert gr.row_text(st, platform="linux")[1] == ""

@@ -50,6 +50,10 @@ class AdvancedPage:
         app.switch_row(perf, "low_priority", "Priorité basse", "Le jeu passe toujours en premier.")
         app.switch_row(perf, "eco_qos_v2", "Économie d'énergie de Windows 11", "Peut saccader le suivi : "
                        "désactivé par défaut.")
+        self.gpu_btn = W.button("Activer", self._gpu_click)
+        self.gpu_row = perf.add(W.Row("Utiliser la carte graphique (minimap)", "…", self.gpu_btn))
+        self._gpu_dl: dict[str, Any] | None = None      # download in progress: {"pct": int, "cancel": bool}
+        self._gpu_refresh()
         app.choice_row(perf, "capture_backend", "Capture d'écran", "« Compatible » si la capture reste noire.",
                        CAPTURE_BACKENDS, segmented=True)
         app.switch_row(perf, "capture_wgc_border", "Capture de la fenêtre du jeu (cadre jaune Windows 10)",
@@ -107,6 +111,61 @@ class AdvancedPage:
                 "Conseils remis à la normale." if ok else "Impossible de réinitialiser les conseils.")
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ GPU (DirectML detector)
+    def _gpu_refresh(self) -> None:
+        from treeaicoach import gpu_runtime  # noqa: PLC0415
+
+        dl = self._gpu_dl
+        desc, btn = gpu_runtime.row_text(gpu_runtime.status(), pct=dl["pct"] if dl else None)
+        self.gpu_row.set_desc(desc)
+        self.gpu_btn.setText(btn or "Activer")
+        self.gpu_btn.setVisible(bool(btn))
+
+    def _gpu_click(self) -> None:
+        """Activer: download on demand (progress, cancel), then on at the next start. Désactiver: off at
+        the next start (the runtime stays on disk). Never raises."""
+        from treeaicoach import gpu_runtime  # noqa: PLC0415
+
+        try:
+            if self._gpu_dl is not None:                # « Annuler »
+                self._gpu_dl["cancel"] = True
+                return
+            st = gpu_runtime.status()
+            if st.get("enabled"):
+                gpu_runtime.set_enabled(False)
+                self._gpu_refresh()
+                return
+            if st.get("installed"):
+                gpu_runtime.set_enabled(True)
+                self._gpu_refresh()
+                return
+            dl = self._gpu_dl = {"pct": 0, "cancel": False}
+            app = self.app
+
+            def progress(p: int) -> None:
+                if p != dl["pct"]:
+                    dl["pct"] = p
+                    app.post(self._gpu_refresh)
+
+            def job() -> bool:
+                return gpu_runtime.install(progress=progress, cancel=lambda: bool(dl["cancel"]))
+
+            def done(ok: Any) -> None:
+                self._gpu_dl = None
+                if ok:
+                    gpu_runtime.set_enabled(True)
+                self._gpu_refresh()
+                if not ok and not dl["cancel"]:
+                    self.gpu_row.set_desc("Téléchargement impossible (Internet ?). Réessaie plus tard ; la "
+                                          "détection reste sur le processeur.")
+
+            def failed(_exc: BaseException) -> None:
+                done(False)
+            self._gpu_refresh()
+            app.run_job(job, done, failed, name="TreeAI-ui-gpu")
+        except Exception:
+            self._gpu_dl = None
 
     def _rect_text(self) -> str:
         r = self.app.cfg.manual_minimap_rect

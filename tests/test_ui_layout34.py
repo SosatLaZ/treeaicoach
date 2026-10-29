@@ -52,3 +52,39 @@ def test_folds_are_lazy_and_old_pages_open_their_block(home: Path) -> None:
             assert app.pages[key].findChildren(W.Fold), key
     finally:
         app.close()
+
+
+def test_gpu_row_downloads_then_enables(home: Path, monkeypatch) -> None:
+    """Réglages > Avancé > Performance « Utiliser la carte graphique (minimap) »: download on demand,
+    then on at the next start; « Désactiver » turns it off."""
+    from treeaicoach import gpu_runtime as gr
+
+    st = {"enabled": False, "installed": False, "state": "off", "download_mb": 22.5}
+    monkeypatch.setattr(gr, "status", lambda root=None: dict(st))
+    monkeypatch.setattr(gr, "set_enabled", lambda on, root=None: st.update(enabled=on) or True)
+
+    def install(root=None, opener=None, progress=None, cancel=None):
+        progress(50)
+        st["installed"] = True
+        return True
+    monkeypatch.setattr(gr, "install", install)
+    real = gr.row_text
+    monkeypatch.setattr(gr, "row_text", lambda st_, pct=None: real(st_, platform="win32", pct=pct))
+    app, _v, _e = tl._build(home, start_backend=False)
+    try:
+        app.show_page("advanced")
+        adv = app.page_views["advanced"]
+        assert adv.gpu_row.title.text() == "Utiliser la carte graphique (minimap)" and adv.gpu_btn.text() == "Activer"
+        adv.gpu_btn.click()
+        for _ in range(100):
+            app.qapp.processEvents()
+            if st["enabled"]:
+                break
+            import time
+            time.sleep(0.02)
+        app.qapp.processEvents()
+        assert st["enabled"] and adv.gpu_btn.text() == "Désactiver" and "prochain démarrage" in adv.gpu_row.desc.text()
+        adv.gpu_btn.click()
+        assert not st["enabled"] and adv.gpu_btn.text() == "Activer"
+    finally:
+        app.close()

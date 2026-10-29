@@ -266,6 +266,17 @@ def _start_game_data_refresh(cfg: Any) -> None:
         log.debug("Data Dragon refresh not started", exc_info=True)
 
 
+def _activate_gpu() -> None:
+    """Opt-in DirectML detector (Réglages > Avancé > Performance): the DML onnxruntime must be the one
+    imported first, before the VAD / detector import the bundled CPU build. Never raises."""
+    try:
+        from treeaicoach import gpu_runtime  # noqa: PLC0415
+
+        gpu_runtime.activate()
+    except Exception:
+        log.debug("GPU activation skipped", exc_info=True)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point; returns the process exit code. ``argv`` defaults to ``sys.argv[1:]``."""
     _startup.mark("main")
@@ -317,6 +328,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.ui_smoke and not args.demo:
             _start_game_data_refresh(cfg)
         _startup.mark("policy")
+        _activate_gpu()
         if args.nogui:
             return run_console(cfg, demo=args.demo, duration=args.duration)
         return run_gui(cfg, demo=args.demo, smoke_seconds=UI_SMOKE_SECONDS if args.ui_smoke else None)
