@@ -65,6 +65,15 @@ STYLE.update({
     "retreat": (DS_DANGER, (225, 45, 45), DS_TEXT),
     "call": (DS_ACCENT, (30, 140, 220), DS_TEXT),
 })
+#: « Hey coach » listening chip (voice_assistant.VoiceAssistant.on_listen): a small pill in the toast slot
+#: (top centre, just under the essentials strip / the announcer): « J'écoute… » while the question is
+#: recorded, then « Tu as dit : … » for LISTEN_TRANSCRIPT_S. It has the slot over ordinary toasts (they wait),
+#: never over a danger toast or the director's banner.
+LISTEN_KIND = "listen"
+STYLE[LISTEN_KIND] = (DS_ACCENT, (70, 190, 90), DS_TEXT)
+LISTEN_MAX_S = 12.0             # « J'écoute… » never stays longer (a lost « idle »)
+LISTEN_TRANSCRIPT_S = 4.0
+LISTEN_H = 32                   # pill height at 1080p
 BANNER_H = 46                   # banner height at 1080p: about the card's, ONE line (2.15 "bien trop gros")
 PULSE_S = 1.2                   # subtle pulse period of the banner glow
 DURATION_S = 4.0                # auto-hide (declutter: never longer than MAX_DURATION_S)
@@ -311,6 +320,50 @@ def _render_base(kind: str, title: str, subtitle: str, icon: np.ndarray | None, 
     return cv_.px
 
 
+def listen_text(state: str, text: str = "") -> str:
+    """The chip's line: « J'écoute… » / « J'écoute la suite… » / « Tu as dit : … » ("" = no chip)."""
+    t = " ".join(str(text or "").split())
+    if state == "listening":
+        return "J'écoute la suite…" if t == "suite" else "J'écoute…"
+    if state == "transcript" and t:
+        return no_em_dash(f"Tu as dit : « {t} »")
+    return ""
+
+
+def render_listen_chip(text: str, scale: float = 1.0) -> np.ndarray:
+    """The listening chip as premultiplied BGRA uint8, same canvas as a toast (:func:`toast_size` + margin)
+    so the toast layer geometry does not change: a flat graphite pill (DESIGN.md SURFACE, 1 px
+    LINE_STRONG, 4 px radius) centred at the top, a small accent dot (the mic) then the text. Never raises."""
+    try:
+        key = (LISTEN_KIND, str(text), round(float(scale), 3))
+        px = _base_cache.get(key)
+        if px is None:
+            W, H = toast_size(scale)
+            k = H / BASE_H
+            pad = int(round(14 * k))
+            cv_ = orr.Canvas(W + 2 * pad, H + 2 * pad)
+            f = orr.get_font(max(12, int(round(15 * k))), "semibold")
+            h = LISTEN_H * k
+            r = 4 * k
+            max_txt = W - 2 * (12 * k) - 2 * r - 10 * k
+            line = orr.fit_text(no_em_dash(str(text or "")), f, max_txt)
+            w = min(float(W), 12 * k + 2 * r + 10 * k + orr.text_width(line, f) + 14 * k)
+            x0, y0 = pad + (W - w) / 2.0, float(pad)
+            cv_.rrect(x0, y0, w, h, 4 * k, DS_SURFACE, 0.95, border=DS_LINE_STRONG, border_alpha=1.0,
+                      border_w=max(1.0, 1.0 * k))
+            cv_.disc(x0 + 12 * k + r, y0 + h / 2, r, DS_ACCENT, 1.0)
+            cv_.text(x0 + 12 * k + 2 * r + 10 * k, y0 + h / 2, line, f, DS_TEXT, 1.0, shadow=0.0)
+            v = np.clip(cv_.px, 0.0, 1.0) * np.float32(255.0) + np.float32(0.5)
+            px = np.empty(cv_.px.shape[:2] + (4,), np.uint8)
+            px[..., 0], px[..., 1], px[..., 2], px[..., 3] = v[..., 2], v[..., 1], v[..., 0], v[..., 3]
+            px.setflags(write=False)
+            _base_cache.put(key, px)
+        return px
+    except Exception:
+        log.exception("render_listen_chip failed")
+        return np.zeros((2, 2, 4), np.uint8)
+
+
 def render_toast(kind: str, title: str, subtitle: str = "", icon: np.ndarray | None = None,
                  scale: float = 1.0, age: float | None = None, duration: float = DURATION_S) -> np.ndarray:
     """One toast as premultiplied BGRA uint8 (size :func:`toast_size` + glow margin).
@@ -422,7 +475,9 @@ def render_toast_layer(views: Sequence[ToastView], scale: float = 1.0) -> np.nda
             op, dy = toast_anim(v.age, v.toast.duration)
             big = v.toast.kind in BANNER_KINDS
             h = banner_size(scale)[1] if big else H
-            if op > 0.0:
+            if op > 0.0 and v.toast.kind == LISTEN_KIND:
+                _blend_premul(out, render_listen_chip(v.toast.subtitle, scale), 0, y0, op)
+            elif op > 0.0:
                 if big:
                     pct = None
                     if v.toast.key.startswith("banner:") and v.toast.key[7:].isdigit():
@@ -461,9 +516,11 @@ class ToastQueue:
         self._waiting: list[Toast] = []
         self._recent: dict[str, float] = {}
         self._last_insight = -1e9
+        self._listen: Toast | None = None
 
     def reset(self) -> None:
         with self._lock:
+            self._listen = None
             self._shown.clear()
             self._waiting.clear()
             self._recent.clear()
@@ -496,6 +553,26 @@ class ToastQueue:
             log.exception("ToastQueue.push failed")
             return False
 
+    def listen(self, state: str, text: str = "", t: float | None = None) -> None:
+        """« Hey coach » chip (VoiceAssistant.on_listen): ``listening`` shows « J'écoute… » (``text``
+        "suite": the follow-up window), ``transcript`` « Tu as dit : … » for :data:`LISTEN_TRANSCRIPT_S`,
+        ``idle`` removes « J'écoute… » (a transcript stays its 4 s). Never raises."""
+        try:
+            now = float(self._clock() if t is None else t)
+            line = listen_text(state, text)
+            with self._lock:
+                cur = self._listen
+                if not line:
+                    if cur is not None and cur.key == "listen:listening":
+                        self._listen = None
+                    return
+                if cur is not None and cur.subtitle == line and now - cur.created < cur.duration:
+                    return                                   # same line: keep its age (no re-slide)
+                dur = LISTEN_TRANSCRIPT_S if state == "transcript" else LISTEN_MAX_S
+                self._listen = Toast(LISTEN_KIND, "", line, None, f"listen:{state}", now, dur)
+        except Exception:
+            log.debug("ToastQueue.listen failed", exc_info=True)
+
     def active(self, now: float | None = None) -> list[ToastView]:
         """Visible toasts (oldest on top) with their age; promotes waiting ones. Never raises."""
         try:
@@ -503,12 +580,19 @@ class ToastQueue:
             with self._lock:
                 self._shown = [s for s in self._shown if t - s.created < s.duration]
                 self._waiting = [w for w in self._waiting if t - w.created <= MAX_WAIT_S]
-                while self._waiting and len(self._shown) < MAX_VISIBLE:
+                chip = self._listen
+                if chip is not None and not (0.0 <= t - chip.created < chip.duration):
+                    chip = self._listen = None
+                while self._waiting and len(self._shown) < MAX_VISIBLE and (
+                        chip is None or self._waiting[0].kind == "danger"):
                     w = self._waiting.pop(0)
                     # its display starts now (it may have waited)
                     self._shown.append(Toast(w.kind, w.title, w.subtitle, w.icon, w.key, max(t, w.created),
                                              w.duration))
-                return [ToastView(s, max(0.0, t - s.created)) for s in self._shown]
+                views = [ToastView(s, max(0.0, t - s.created)) for s in self._shown]
+                if chip is not None and not any(v.toast.kind == "danger" for v in views):
+                    views.insert(0, ToastView(chip, t - chip.created))
+                return views
         except Exception:
             log.exception("ToastQueue.active failed")
             return []

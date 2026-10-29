@@ -714,6 +714,7 @@ class CoachingMixin:
         """« Hey coach » said in the Discord voice channel (discord_listen): ask the AI with the game
         snapshot + who asked; the answer is said IN THE CHANNEL (1-2 sentences). Never raises."""
         try:
+            self._listen_chip("transcript", f"{who} : {text}" if who else text)
             q = f"Question posée par {who} : {text}" if who else text
             msg = self.ask_ai(question=q)
             if msg.startswith("Question envoyée"):
@@ -1315,9 +1316,19 @@ class CoachingMixin:
                         is_speaking=(busy if callable(busy) else (lambda: False)),
                         on_wake=lambda: self._voice.alert_beep("info") if self._voice is not None else None,
                         on_question=lambda q: self.ask_ai(question=q, spoken=True))
+            a.on_listen = self._listen_chip
             a.configure(self._cfg)
         except Exception:
             log.debug("voice assistant sync failed", exc_info=True)
+
+    def _listen_chip(self, state: str, text: str = "") -> None:
+        """« J'écoute… » then « Tu as dit : … » (4 s) in the toast slot (toasts.ToastQueue.listen), from the
+        PC voice assistant (VoiceAssistant.on_listen) and a question heard in the Discord channel. Never raises."""
+        try:
+            if self._toasts is not None and getattr(self._cfg, "toasts_enabled", True):
+                self._toasts.listen(state, text, self._clock())
+        except Exception:
+            log.debug("listen chip failed", exc_info=True)
 
     def ask_ai(self, question: str | None = None, spoken: bool = False) -> str:
         """"Demander à l'IA" (hotkey / button): manual AI request, answer later as toast + HUD line.

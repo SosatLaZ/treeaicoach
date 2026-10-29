@@ -79,3 +79,65 @@ def test_layer_render_and_queue():
 def test_overlay_state_has_toasts_field():
     st = OverlayState()
     assert st.toasts == []
+
+
+# ---- « Hey coach » listening chip (ToastQueue.listen, VoiceAssistant.on_listen)
+def test_listen_text_lines():
+    assert T.listen_text("listening") == "J'écoute…"
+    assert T.listen_text("listening", "suite") == "J'écoute la suite…"
+    assert T.listen_text("transcript", " quel  objet ? ") == "Tu as dit : « quel objet ? »"
+    assert T.listen_text("transcript", "") == "" and T.listen_text("idle") == ""
+
+
+def test_listen_chip_takes_slot_then_toasts_resume():
+    q = T.ToastQueue(clock=lambda: 0.0)
+    q.listen("listening", "", t=0.0)
+    assert q.push("insight", "IA", "Un conseil", t=0.1)
+    v = q.active(0.5)
+    assert [x.toast.kind for x in v] == [T.LISTEN_KIND] and v[0].toast.subtitle == "J'écoute…"
+    q.listen("transcript", "quel objet je fais ?", t=2.0)
+    v = q.active(3.0)
+    assert v[0].toast.subtitle == "Tu as dit : « quel objet je fais ? »"
+    q.listen("idle", "", t=3.5)                       # idle never cuts the transcript short
+    assert q.active(5.0)[0].toast.kind == T.LISTEN_KIND
+    assert [x.toast.kind for x in q.active(6.1)] == ["insight"]     # 4 s later: the waiting toast
+
+
+def test_listen_chip_idle_clears_and_danger_wins():
+    q = T.ToastQueue(clock=lambda: 0.0)
+    q.listen("listening", "", t=0.0)
+    q.listen("idle", "", t=1.0)
+    assert q.active(1.1) == []
+    q.listen("listening", "", t=2.0)
+    q.push("danger", "Danger", "Jungler en haut", t=2.1)
+    assert [x.toast.kind for x in q.active(2.2)] == ["danger"]
+    q2 = T.ToastQueue(clock=lambda: 0.0)
+    q2.listen("listening", "", t=0.0)
+    assert q2.active(T.LISTEN_MAX_S + 0.1) == []      # a lost « idle » never leaves it on screen
+
+
+def test_listen_chip_renders_in_layer():
+    q = T.ToastQueue(clock=lambda: 0.0)
+    q.listen("transcript", "on prend le drake ?", t=0.0)
+    chip = T.render_listen_chip("Tu as dit : « on prend le drake ? »", 1.0)
+    w, h = T.toast_size(1.0)
+    assert chip.dtype == np.uint8 and chip.shape[1] > w and chip.shape[0] > h
+    a = chip[..., 3]
+    assert a.max() > 200 and a[0, 0] == 0 and np.all(chip[..., :3] <= a[..., None])
+    rows = np.where(a.max(axis=1) > 0)[0]
+    assert rows.max() - rows.min() < h                # compact: smaller than a toast
+    layer = T.render_toast_layer(q.active(1.0), 1.0)
+    assert layer.shape[:2] == T.layer_size(1.0)[::-1] and layer[..., 3].max() > 200
+
+
+def test_engine_listen_chip_hook():
+    from types import SimpleNamespace
+
+    from treeaicoach.engine_coaching import CoachingMixin
+
+    q = T.ToastQueue(clock=lambda: 0.0)
+    eng = SimpleNamespace(_toasts=q, _cfg=SimpleNamespace(toasts_enabled=True), _clock=lambda: 5.0)
+    CoachingMixin._listen_chip(eng, "listening", "")
+    assert q.active(5.1)[0].toast.subtitle == "J'écoute…"
+    eng._toasts = None
+    CoachingMixin._listen_chip(eng, "listening", "")       # never raises

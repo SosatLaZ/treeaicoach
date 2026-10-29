@@ -1939,6 +1939,7 @@ class VoiceAssistant:
             self.on_wake()                       # instant bip: « je t'écoute »
         except Exception:
             pass
+        self._listen_event("listening")
         self._set_stage("question")
         whisper = self.whisper_ready()
         rec = None if whisper else self._make_rec(None)
@@ -2028,6 +2029,7 @@ class VoiceAssistant:
             self.on_wake()
         except Exception:
             pass
+        self._listen_event("listening")
         rec, parts, last_partial = handover if handover is not None else (None, [], "")
         parts = list(parts)
         if rec is None:
@@ -2154,6 +2156,7 @@ class VoiceAssistant:
         if not ok:
             self.status = "Question non comprise."
             self._set_stage("listening")
+            self._listen_event("idle")
             return
         self.questions += 1
         self.status = f"Question : « {question} »"
