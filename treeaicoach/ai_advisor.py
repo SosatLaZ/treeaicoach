@@ -2355,6 +2355,10 @@ class AIAdvisor:
         self._thread: threading.Thread | None = None
         self._inflight = False
         self._gen = 0
+        self._job = 0                          # id of the latest request; an older one is dropped
+        self._job_manual = False               # the latest request is a player's question
+        self.cancelled = 0                     # automatic requests dropped for a question (session)
+        self._last_manual = -math.inf
         self._result: Advice | None = None
         self._status: str | None = None
         self._status_seq = 0
@@ -2406,6 +2410,7 @@ class AIAdvisor:
             self._result = None
             self._last_call = -math.inf
             self._last_rules = -math.inf
+            self._last_manual = -math.inf
             self._bad_plays = []
             self._deferred = None
             self._samples = []
@@ -2586,18 +2591,28 @@ class AIAdvisor:
             if getattr(game, "me", None) is None:
                 return "Pas de partie en cours : l'IA a besoin d'une partie pour conseiller."
             with self._lock:
-                if self._inflight or (self._thread is not None and self._thread.is_alive()):
-                    return "L'IA réfléchit déjà…"
-                wait = MANUAL_MIN_INTERVAL_S - (t - self._last_call)
+                busy = self._inflight or (self._thread is not None and self._thread.is_alive())
+                # A question is never refused because the coach is busy (3.4.1): an automatic plan in
+                # flight is cancelled (its answer dropped, its slot refunded), an older question is
+                # superseded by the new one. Only a double trigger (< 2 s) is ignored.
+                wait = MANUAL_MIN_INTERVAL_S - (t - self._last_manual)
                 if wait > 0:
-                    return f"Patiente encore {int(math.ceil(wait))} s avant de redemander."
+                    if busy and self._job_manual:
+                        return "Question déjà envoyée à l'IA…"
+                    if not busy:
+                        return f"Patiente encore {int(math.ceil(wait))} s avant de redemander."
                 if self._blocked_until == math.inf and self._status:
                     return self._status
                 if t < self._blocked_until and self._status:
                     return f"{self._status} ({int(math.ceil(self._blocked_until - t))} s)"
                 if self.budget.exhausted:
                     return quota_text(self.budget.quota)
+                if busy:
+                    if not self._job_manual:
+                        self.cancelled += 1
+                    self._job += 1               # the request in flight is now stale: dropped
                 self._last_call = t
+                self._last_manual = t
                 self.budget.manual += 1
                 self.budget.sent += 1
                 self._inflight = True
@@ -2674,6 +2689,12 @@ class AIAdvisor:
         gen = self._gen if gen is None else gen
         with self._lock:
             self._inflight = True
+            self._job += 1
+            job_id = self._job
+            self._job_manual = moment == "manual"
+
+        def stale() -> bool:                     # (under the lock) superseded by a player's question
+            return job_id != self._job
 
         def job() -> None:
             try:
@@ -2699,6 +2720,10 @@ class AIAdvisor:
                 with self._lock:
                     if gen != self._gen:
                         return                       # a new game started meanwhile: never shown
+                    if stale():
+                        if slot:
+                            self.budget.refund(slot)
+                        return                       # cancelled for a player's question: dropped
                     self.calls += 1
                     if text:
                         self._result = Advice(text, moment, t, steps=steps, goal=goal, card=card, why=why)
@@ -2714,13 +2739,14 @@ class AIAdvisor:
                                               card=fallback.get("carte"))
                         self.rule_plans += 1
             except AIError as exc:
-                self._fail(exc.code, prov, moment, t, slot, fallback, gen=gen, retry_after=exc.retry_after)
+                self._fail(exc.code, prov, moment, t, slot, fallback, gen=gen, retry_after=exc.retry_after,
+                           stale=stale)
             except Exception:
                 log.exception("AI request failed")
-                self._fail("server", prov, moment, t, slot, fallback, gen=gen)
+                self._fail("server", prov, moment, t, slot, fallback, gen=gen, stale=stale)
             finally:
                 with self._lock:
-                    if gen == self._gen or self._thread is threading.current_thread():
+                    if job_id == self._job and (gen == self._gen or self._thread is threading.current_thread()):
                         self._inflight = False
 
         th = threading.Thread(target=job, name="TreeAICoach-ai", daemon=True)
@@ -2730,12 +2756,12 @@ class AIAdvisor:
 
     def _fail(self, code: str, provider: str, moment: str = "", t: float = 0.0,
               slot: str | None = None, fallback: dict[str, Any] | None = None, gen: int | None = None,
-              retry_after: float | None = None) -> None:
+              retry_after: float | None = None, stale: Callable[[], bool] | None = None) -> None:
         log.info("AI advice unavailable (%s, %s)", provider, code)
         with self._lock:
-            same_game = gen is None or gen == self._gen
-            if slot and same_game:
-                self.budget.refund(slot)          # no answer: the slot stays available
+            same_game = (gen is None or gen == self._gen) and not (stale is not None and stale())
+            if slot and (gen is None or gen == self._gen):
+                self.budget.refund(slot)          # no answer (or cancelled): the slot stays available
             text = error_text(code, provider)
             if moment == "manual" and same_game:
                 self._result = Advice(text, moment, t, error=True)

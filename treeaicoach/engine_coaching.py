@@ -721,7 +721,7 @@ class CoachingMixin:
             elif msg.startswith("Pas de partie"):         # no game: an ordinary (LoL-expert) assistant
                 self._general_question(text)
             else:
-                self._call("ai_answer", msg)             # "L'IA réfléchit déjà…", "Patiente…"
+                self._call("ai_answer", msg)             # "Question déjà envoyée…", quota, offline
         except Exception:
             log.debug("discord voice question failed", exc_info=True)
 
@@ -1345,6 +1345,8 @@ class CoachingMixin:
                 self._toast("insight", "IA", msg, None, f"ai-ask:{now:.0f}", now)
                 return msg
             self.last_ai_ack = msg
+            if msg.startswith("Question envoyée"):
+                self._ai_discord_pending = False   # a newer question supersedes one asked on Discord
             if spoken:
                 sent = msg.startswith("Question envoyée")
                 self._ai_spoken_pending = sent

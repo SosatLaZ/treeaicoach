@@ -247,12 +247,43 @@ def test_bug_no_double_request_between_engine_and_hotkey_threads():
     adv = ai.AIAdvisor(CFG, caller=_plan_caller(calls, gate))
     assert adv.ask(0.0, G(600.0)) == "Question envoyée à l'IA…"
     assert adv.busy()
-    assert adv.ask(30.0, G(600.0)) == "L'IA réfléchit déjà…"
+    assert adv.ask(1.0, G(600.0)) == "Question déjà envoyée à l'IA…"   # double trigger: ignored
     adv.detector.update(G(600.0, dead=False))
     assert not adv.update(200.0, G(610.0, dead=True))          # a key moment while a request is in flight
     gate.set()
     adv.wait()
     assert len(calls) == 1 and adv.poll().moment == "manual"
+
+
+def test_question_while_auto_plan_in_flight_cancels_the_plan():
+    """3.4.1: a question asked while an automatic plan is in flight was refused (« L'IA réfléchit
+    déjà… »). Now the plan is cancelled (answer dropped, slot refunded) and the question sent at once."""
+    calls, gates = [], [threading.Event(), threading.Event()]
+
+    def caller(prov, key, model, system, prompt, **kw):
+        n = len(calls)
+        calls.append(prompt)
+        gates[min(n, 1)].wait(5.0)
+        return "Pose une balise." if n else json.dumps(PLAN, ensure_ascii=False)
+    adv = ai.AIAdvisor(CFG, caller=caller)
+    adv.detector.update(G(600.0, dead=False))
+    assert adv.update(200.0, G(610.0, dead=True))
+    assert adv.budget_info()["auto_used"] + adv.budget_info()["urgent_used"] == 1
+    assert adv.ask(201.0, G(611.0), question="je fais quoi ?") == "Question envoyée à l'IA…"
+    assert len(calls) == 2 and adv.cancelled == 1
+    gates[1].set()                                     # the question answers first
+    for _ in range(200):
+        if adv._result is not None:
+            break
+        threading.Event().wait(0.01)
+    gates[0].set()                                     # then the cancelled plan: dropped
+    adv.wait()
+    threading.Event().wait(0.05)
+    res = adv.poll()
+    assert res is not None and res.moment == "manual" and "balise" in res.text
+    assert adv.poll() is None and not adv.busy()
+    info = adv.budget_info()
+    assert info["auto_used"] + info["urgent_used"] == 0 and info["manual"] == 1   # plan slot refunded
 
 
 def test_bug_answer_of_the_previous_game_is_never_shown():
