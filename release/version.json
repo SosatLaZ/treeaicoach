@@ -1,6 +1,6 @@
 {
-  "version": "3.4.1",
-  "sha256": "d8ef964ea2227f2573c10a278cc3c3d078b3baadcb975166aa99d4b8e3c4f28e",
-  "size": 7532186,
-  "notes": "3.4.1 : bot qui répond en quelques secondes, hé coque, badges au chargement."
+  "version": "3.5.0",
+  "sha256": "1545a4a5f1c5835abcf09e80d2df83c5cadfbf62e54c5d3845ec15a6e51ee999",
+  "size": 7531438,
+  "notes": "3.5 : IA qui ne refuse plus, Hey coach bien mieux reconnu, Whisper qui ne ralentit plus le jeu, position sous l'ADC."
 }
