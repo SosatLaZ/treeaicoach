@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.7.1 · 30 octobre 2026
+
+- **Ganks annoncés plus tôt :** « Lee Sin arrive par la rivière » est dit dès qu'il fonce clairement sur toi,
+  ~1,3 s plus tôt (test du gank démo : 2,6 s → 1,3 s après son entrée dans le rayon d'alerte).
+- **Bug corrigé :** l'alerte immédiate « Lee Sin ! » (jungler qui sort du brouillard près de toi) était retenue
+  2,5 s comme les autres ; elle part maintenant tout de suite.
+
 ## 3.7.0 · 29 octobre 2026
 
 - **« Hey coach » comme Siri :** un vrai détecteur de mot-clé (réseau neuronal local, 0 requête) remplace

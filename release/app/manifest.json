@@ -1,25 +1,25 @@
 {
- "version": "3.7.0",
+ "version": "3.7.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "e243f26291982961b6d973a2f1e3a2953353b2f8aff9b89eb92e0f6204d21fe3",
+ "sha256": "244a205328bdd1738d62211d8306b0de1102c0a5bd918f54f99e9f5817970f65",
  "chunks": [
   {
-   "name": "3.7.0/part-01.zip",
-   "size": 88161454,
-   "sha256": "90cf9902cae2fb0fa3ad34b39d87cd2d8eb121c7f4ff2c7ac19c77695bc5bae6",
+   "name": "3.7.1/part-01.zip",
+   "size": 88161955,
+   "sha256": "5a34bcebe2d8c45d850034b4a64c9a1348d9f1cfc4ff0df00ec05ccce96c8384",
    "files": 144
   },
   {
-   "name": "3.7.0/part-02.zip",
+   "name": "3.7.1/part-02.zip",
    "size": 11370842,
    "sha256": "28a4f5d0fc774207e501f4453ec313ef6741ff450658b13e3a4f10ff01d68034",
    "files": 572
   }
  ],
- "total_size": 99532296,
+ "total_size": 99532797,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "\u00ab Hey coach \u00bb comme Siri (99 % reconnus, ~0,2 s), \u00ab J'\u00e9coute\u2026 / Tu as dit \u00bb \u00e0 l'\u00e9cran, d\u00e9tection minimap plus fiable."
+ "notes": "Alertes de gank plus rapides : \u00ab X arrive \u00bb ~1,3 s plus t\u00f4t, \u00ab Lee Sin ! \u00bb \u00e0 la sortie du brouillard dit tout de suite."
 }

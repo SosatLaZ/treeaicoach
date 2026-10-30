@@ -27,8 +27,12 @@ def test_same_tick_highest_level_first_and_companion():
 def test_early_warning_held_until_enemy_closes_in():
     g = ThreatGate()
     assert not g.offer(0.0, "x", "roam_approach", 1, ("Ahri",), 0.24)         # held
-    assert g.due(1.0, lambda m: 0.20) == []                                    # not yet due
-    assert g.due(2.6, lambda m: 0.20) == ["x"]                                 # kept closing: said
+    assert g.due(0.5, lambda m: 0.15) == []                                    # too early even if close
+    assert g.due(1.0, lambda m: 0.22) == []                                    # not yet due
+    assert g.due(2.6, lambda m: 0.22) == ["x"]                                 # kept closing: said
+    g3 = ThreatGate()
+    g3.offer(0.0, "f", "roam_approach", 1, ("Ahri",), 0.24)
+    assert g3.due(1.0, lambda m: 0.20) == ["f"]                                # clearly closing: said at once
     g2 = ThreatGate()
     g2.offer(0.0, "y", "roam_approach", 1, ("Ahri",), 0.24)
     for t in (2.6, 3.6, 4.6, 5.6):
@@ -41,3 +45,16 @@ def test_laner_mia_cooldown_and_never_raises():
     assert not g.offer(60.0, "m", "laner_mia", 0, ("Jhin",), None)
     assert g.offer(1.0, "o", "macro_tip", 1, (), None)                         # not gated
     assert g.offer("bad", "z", "roam_approach", 2, ("X",), None)               # error -> pass
+
+
+def test_pre_alert_never_held():
+    class A:
+        def __init__(self, key):
+            self.kind, self.level, self.key, self.members, self.alias, self.t = \
+                "jungler_approach", 1, key, (), "LeeSin", 0.0
+    g = ThreatGate()
+    pre = A("jungler_approach:pre-LeeSin")
+    assert g.filter_tick(0.0, [pre], lambda a: (("LeeSin",), 0.18), lambda m: 0.18) == [pre]
+    full = A("jungler_approach:LeeSin")
+    assert g.filter_tick(0.1, [full], lambda a: (("LeeSin",), 0.18), lambda m: 0.18) == []   # held
+    assert g.filter_tick(1.0, [], lambda a: ((), None), lambda m: 0.14) == [full]            # closing: said

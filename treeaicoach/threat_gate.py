@@ -57,6 +57,11 @@ HOLD_MAX_S = 5.0
 #: an early warning about an enemy announced in the last L1_MEMORY_S seconds: not again
 L1_MEMORY_S = 10.0
 HOLD_CLOSER = 0.015
+#: (3.7.1) fast release: from HOLD_FAST_S after the offer, an enemy already HOLD_FAST_CLOSER nearer (twice
+#: the confirmation distance: ~1.2 s of straight walking at 0.025 / s) or within HOLD_NEAR is said at once
+#: instead of at HOLD_S (demo gank: warning 2.6 s -> ~1.3 s after the warn radius)
+HOLD_FAST_S = 0.8
+HOLD_FAST_CLOSER = 0.03
 HOLD_NEAR = 0.10
 #: only the early warnings about an enemy at least this far are held (nearer: said at once)
 HOLD_FROM = 0.10
@@ -150,7 +155,19 @@ class ThreatGate:
             for h in self._held:
                 due_t, item, kind, level, mem, d0, t0 = h
                 if t < due_t:
-                    keep.append(h)
+                    fast = None
+                    if t >= t0 + HOLD_FAST_S and mem:
+                        ds = [d for d in (_f(dist_of(m)) for m in mem) if d is not None]
+                        if ds and (min(ds) < d0 - HOLD_FAST_CLOSER or min(ds) <= HOLD_NEAR):
+                            fast = min(ds)
+                    if fast is None:
+                        keep.append(h)
+                        continue
+                    if self._check(t, kind, level, mem, fast, commit=True):
+                        self.passed += 1
+                        out.append(item)
+                    else:
+                        self.dropped += 1
                     continue
                 if t > t0 + HOLD_MAX_S + 2.0:     # (no tick for a while: stale)
                     self.dropped += 1
@@ -240,7 +257,14 @@ class ThreatGate:
                     keep.add(i)
                     continue
                 members, dist = members_dist(a)
-                comp = str(getattr(a, "key", "")).endswith(COMPANION_KEY_SUFFIX)
+                key = str(getattr(a, "key", ""))
+                comp = key.endswith(COMPANION_KEY_SUFFIX)
+                if ":pre-" in key:
+                    # (3.7.1) the « Lee Sin ! » pre-alert (jungler out of the fog close to me) is never
+                    # held: it was waiting HOLD_S like the river warnings, which defeated it
+                    # (once per fog exit, gank.py); no episode: the full sentence that follows is news
+                    keep.add(i)
+                    continue
                 if self.offer(t, a, kind, int(a.level), members, dist, companion=comp):
                     keep.add(i)
             return out + [a for i, a in enumerate(alerts) if i in keep]
