@@ -453,7 +453,25 @@ class VisionMixin:
                 return mem, (min(ds) if ds else None)
 
             ids_d = {id(a) for a in danger}
-            out = gate.filter_tick(t, list(gank) + list(danger), members_dist, dist_of)
+            def pre_of(a: Alert) -> Alert | None:
+                # « Lee Sin ! » right away for the held jungler warning (pre-generated voice line)
+                if not getattr(self._cfg, "gank_pre_alert", True) or not a.alias:
+                    return None
+                from treeaicoach.alerts import alert_key
+                from treeaicoach.gank import pre_alert_text
+
+                game = getattr(self, "_game", None)
+                name = None
+                for p in list(getattr(game, "enemies", None) or ()):
+                    if str(getattr(p, "champion_alias", "") or "").casefold() == str(a.alias).casefold():
+                        name = getattr(p, "champion_name", None)
+                        break
+                if not name:
+                    return None
+                return dataclasses.replace(a, text=pre_alert_text(str(name)), t=t, members=(),
+                                           key=alert_key(a.kind, f"pre-{a.alias}"))
+
+            out = gate.filter_tick(t, list(gank) + list(danger), members_dist, dist_of, pre_of)
             # a held early warning confirmed now is news of now (freshness guard, throttler)
             g_out, d_out = [a for a in out if id(a) not in ids_d], [a for a in out if id(a) in ids_d]
             g_out = [dataclasses.replace(a, t=t) if isinstance(a.t, (int, float)) and a.t < t - 0.5 else a

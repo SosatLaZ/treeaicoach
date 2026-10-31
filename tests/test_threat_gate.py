@@ -58,3 +58,17 @@ def test_pre_alert_never_held():
     full = A("jungler_approach:LeeSin")
     assert g.filter_tick(0.1, [full], lambda a: (("LeeSin",), 0.18), lambda m: 0.18) == []   # held
     assert g.filter_tick(1.0, [], lambda a: ((), None), lambda m: 0.14) == [full]            # closing: said
+
+
+def test_held_jungler_warning_says_short_name_at_once_with_cooldown():
+    class A:
+        def __init__(self, key, text="Lee Sin arrive par la rivière !"):
+            self.kind, self.level, self.key, self.members, self.alias, self.t, self.text = \
+                "jungler_approach", 1, key, (), "LeeSin", 0.0, text
+    g = ThreatGate()
+    pre = A("jungler_approach:pre-LeeSin", "Lee Sin !")
+    full = A("jungler_approach:LeeSin")
+    out = g.filter_tick(0.0, [full], lambda a: (("LeeSin",), 0.18), lambda m: 0.18, lambda a: pre)
+    assert out == [pre]                                                          # name now, sentence held
+    g._held.clear()
+    assert g.filter_tick(5.0, [full], lambda a: (("LeeSin",), 0.18), lambda m: 0.18, lambda a: pre) == []

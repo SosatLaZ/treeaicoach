@@ -1,6 +1,6 @@
 {
-  "version": "3.7.1",
+  "version": "3.7.2",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "Alertes de gank plus rapides : « X arrive » ~1,3 s plus tôt, « Lee Sin ! » à la sortie du brouillard dit tout de suite."
+  "notes": "Ganks : « Lee Sin ! » dit tout de suite quand le jungler fonce sur toi (0,1 s au lieu de 2,6 s), la phrase complète suit."
 }

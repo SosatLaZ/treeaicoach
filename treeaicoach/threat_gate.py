@@ -60,8 +60,11 @@ HOLD_CLOSER = 0.015
 #: (3.7.1) fast release: from HOLD_FAST_S after the offer, an enemy already HOLD_FAST_CLOSER nearer (twice
 #: the confirmation distance: ~1.2 s of straight walking at 0.025 / s) or within HOLD_NEAR is said at once
 #: instead of at HOLD_S (demo gank: warning 2.6 s -> ~1.3 s after the warn radius)
-HOLD_FAST_S = 0.8
-HOLD_FAST_CLOSER = 0.03
+HOLD_FAST_S = 0.6
+HOLD_FAST_CLOSER = 0.025
+#: (3.7.2) the enemy JUNGLER coming at me: his short name (« Lee Sin ! ») is said at once when his warning
+#: is held (no wait), the full sentence follows when confirmed; once per jungler per PRE_COOLDOWN_S
+PRE_COOLDOWN_S = 20.0
 HOLD_NEAR = 0.10
 #: only the early warnings about an enemy at least this far are held (nearer: said at once)
 HOLD_FROM = 0.10
@@ -144,6 +147,22 @@ class ThreatGate:
                                tuple(str(m) for m in members if m), _f(dist), commit=True)
         except Exception:
             return True
+
+    def _pre(self, t: float, a: Any, members: Iterable[str], pre_of: Callable[[Any], Any]) -> Any:
+        """« Lee Sin ! » for a held jungler warning (once per jungler per PRE_COOLDOWN_S). Never raises."""
+        try:
+            k = tuple(members) or (str(getattr(a, "alias", "") or ""),)
+            pre_t = getattr(self, "_pre_t", None)
+            if pre_t is None:
+                pre_t = self._pre_t = {}
+            if t - pre_t.get(k, -1e9) < PRE_COOLDOWN_S:
+                return None
+            p = pre_of(a)
+            if p is not None:
+                pre_t[k] = t
+            return p
+        except Exception:
+            return None
 
     def due(self, t: float, dist_of: Callable[[str], float | None]) -> list[Any]:
         """The held early warnings to say now: their enemy kept closing in during the hold.
@@ -242,7 +261,8 @@ class ThreatGate:
         return ok
 
     def filter_tick(self, t: float, alerts: list, members_dist: Callable[[Any], tuple],
-                    dist_of: Callable[[str], float | None]) -> list:
+                    dist_of: Callable[[str], float | None],
+                    pre_of: Callable[[Any], Any] | None = None) -> list:
         """One tick: the alerts to say / write now = the held early warnings confirmed now +
         this tick's alerts that pass (highest level decided first, order kept).
         ``members_dist(alert) -> (members, distance)``; ``dist_of(alias)`` as :meth:`due`."""
@@ -265,8 +285,13 @@ class ThreatGate:
                     # (once per fog exit, gank.py); no episode: the full sentence that follows is news
                     keep.add(i)
                     continue
+                held0 = self.held
                 if self.offer(t, a, kind, int(a.level), members, dist, companion=comp):
                     keep.add(i)
+                elif self.held > held0 and kind == "jungler_approach" and pre_of is not None:
+                    pre = self._pre(t, a, members, pre_of)
+                    if pre is not None:
+                        out.append(pre)
             return out + [a for i, a in enumerate(alerts) if i in keep]
         except Exception:
             log.debug("ThreatGate.filter_tick failed", exc_info=True)

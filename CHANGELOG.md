@@ -3,6 +3,12 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.7.2 · 31 octobre 2026
+
+- **Ganks quasi instantanés :** dès que le jungler ennemi entre dans le rayon d'alerte en venant vers toi,
+  le coach dit tout de suite « Lee Sin ! » (0,1 s après, contre 2,6 s en 3.7.0) ; la phrase complète « Lee Sin
+  arrive par la rivière » suit dès qu'il continue (~1 s). Une seule fois par jungler toutes les 20 s.
+
 ## 3.7.1 · 30 octobre 2026
 
 - **Ganks annoncés plus tôt :** « Lee Sin arrive par la rivière » est dit dès qu'il fonce clairement sur toi,
