@@ -36,3 +36,4 @@ Modules\Comfort.lua
 Modules\Pro.lua
 Modules\Economy.lua
 Modules\Auction.lua
+Modules\Highlight.lua
