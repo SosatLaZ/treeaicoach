@@ -6,7 +6,8 @@ pet died / pet low, low HP (needs advanced logging), mob on a friend, adds (3+ m
 (elite-like HP), drowning / fatigue / lava, dangerous enemy cast to interrupt, crowd control broken,
 friend died. A noise budget (per-key cooldown + a token bucket for non-danger lines) keeps it calm.
 
-:class:`WowCombatSession` glues the log tail, this coach and the session report (one thread).
+:class:`WowCombatSession` glues the log tail, this coach and the session report (one thread). Its voice
+is OFF by default (user: the voice only answers « Hey coach »): the facts feed the AI answers and the report.
 
 Read-only: only the game's own log file is read; nothing is sent to the game (Blizzard ToS).
 """
@@ -262,7 +263,7 @@ class WowCombatSession:
     """Owns the log watcher, the voice coach and the session report. Thread-safe getters."""
 
     def __init__(self, log_path: str | Path, say: Callable[..., Any] | None = None,
-                 on_fight_end: Callable[[Fight], None] | None = None, *, voice: bool = True,
+                 on_fight_end: Callable[[Fight], None] | None = None, *, voice: bool = False,
                  interval: float = 0.25, **coach_kw: Any) -> None:
         self.coach = WowVoiceCoach(say if voice else None, **coach_kw)
         self.report = SessionReport()
