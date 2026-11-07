@@ -483,7 +483,8 @@ function M.PlanLines(me)
     local tip = { (title and ("Plan « " .. title .. " »")) or "Plan TreeAI" }
     if s.k then tip[#tip + 1] = KIND[s.k] or s.k end
     tip[#tip + 1] = "Clic : boussole · Maj-clic : Aller là"
-    out[#out + 1] = { text = text, prio = i == 1 and 2 or 1, tooltip = tip, plan = true, pin = i == 1 or nil,
+    -- (not pinned: the Planner pins its own « ▶ » step in « Maintenant », the same step twice = noise)
+    out[#out + 1] = { text = text, prio = i == 1 and 2 or 1, tooltip = tip, plan = true,
       onClick = function()
         if not (p and C) then return end
         if C.SetWaypoint then C.SetWaypoint(p.x, p.y, cut(M.StepText(s), 40), p.mapID) end

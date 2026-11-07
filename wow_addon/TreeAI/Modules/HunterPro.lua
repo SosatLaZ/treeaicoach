@@ -418,7 +418,11 @@ function M:EndFight()
   if not rep then return end
   local sess = M.AspectReport(M.char.aspect)
   setLine("aspect", "Aspects (dernier combat) : " .. rep .. (sess and (" — session : " .. sess) or ""), bad >= 30 and 2 or 1)
-  if bad >= 30 then
+  -- the Hunter module's live « Aucun aspect actif » still shown: the post-fight report stays in the tab
+  local live = T._suggestions and T._suggestions["Hunter:aspect"]
+  local tnow = G.GetTime and G.GetTime() or 0
+  live = live and live.prio == 2 and (not live.expires or live.expires > tnow)   -- « Aucun aspect actif »
+  if bad >= 30 and not live then
     M:Suggest("aspect", ("Dernier combat : %d %% sans bon aspect (%s). Faucon pour tirer, Singe au corps à corps."):format(bad, rep),
       2, { ttl = 30, cooldown = 120, tab = TAB })
   end

@@ -877,7 +877,10 @@ function M:CheckReminders()
   if playerClass() == "HUNTER" then
     local ammo = try(G.GetInventoryItemCount, "player", 0) or 0
     local speed = tonumber((try(G.UnitRangedDamage, "player"))) or 0
-    if ammo > 0 and speed > 0 then
+    local hp = T.GetModule and T:GetModule("HunterPro")
+    if hp and (not hp.IsEnabled or hp:IsEnabled()) then
+      self:Clear("ammo30")   -- HunterPro gives the ammo budget (same advice twice = noise)
+    elseif ammo > 0 and speed > 0 then
       local need = math.floor(30 * 60 / speed * 0.5)
       local minutes = math.floor(ammo / (60 / speed * 0.5))
       if ammo < need then

@@ -809,6 +809,9 @@ T:RegisterSlash("way", function(rest)
   end
 end, "point perso pour la boussole : /tai way x y [nom]")
 
+-- toolbar button of the panel (UI.lua toggleCompass): a real toggle, silent (the user clicks, no chat help)
+function M.Toggle() M.Show(not (frame and frame:IsShown())) end
+
 T:RegisterSlash("aller", function() M.GoTo() end, "boussole : « Aller là » (Shortest Path / TomTom / repère de carte)")
 local function cibleSlash() local t = M.Cycle(1) if t then M:Print("Cible : " .. (t.label or t.title or "?")) end end
 T:RegisterSlash("cible", cibleSlash, "boussole : cible suivante")

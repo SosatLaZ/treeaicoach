@@ -501,6 +501,15 @@ local function bit_op(a, b, f)
   return r
 end
 
+-- quest ids: q.id when the test sets one (stable across removals), else 1000 + log index
+local function qid(i) local q = M.quests[i] return q and (q.id or 1000 + i) end
+local function qAt(id)
+  id = tonumber(id)
+  if not id then return nil end
+  for i, q in ipairs(M.quests) do if not q.header and (q.id or 1000 + i) == id then return q, i end end
+  return nil
+end
+
 function M.Install(flavor)
   M.flavor = flavor or "modern"
   local modern = (M.flavor == "modern")
@@ -1033,17 +1042,17 @@ function M.Install(flavor)
     }
     G.C_QuestLog = {
       GetNumQuestLogEntries = function() return #M.quests, #M.quests end,
-      GetQuestIDForLogIndex = function(i) return M.quests[i] and not M.quests[i].header and (1000 + i) or nil end,
+      GetQuestIDForLogIndex = function(i) return M.quests[i] and not M.quests[i].header and qid(i) or nil end,
       GetInfo = function(i)
         local q = M.quests[i]
         if not q then return nil end
         if q.header then return { title = q.header, isHeader = true, questLogIndex = i } end
-        return { title = q.title, level = q.level, questID = 1000 + i, questLogIndex = i, isHeader = false,
+        return { title = q.title, level = q.level, questID = qid(i), questLogIndex = i, isHeader = false,
           suggestedGroup = q.group or 0 }
       end,
-      IsComplete = function(id) local q = M.quests[(id or 0) - 1000] return q and q.complete or false end,
+      IsComplete = function(id) local q = qAt(id) return q and q.complete or false end,
       GetQuestObjectives = function(id)
-        local q = M.quests[(id or 0) - 1000]
+        local q = qAt(id)
         local out = {}
         for _, o in ipairs(q and q.objectives or {}) do
           out[#out + 1] = { text = o.text, finished = o.done, numFulfilled = o.have, numRequired = o.need, type = "monster" }
@@ -1055,7 +1064,7 @@ function M.Install(flavor)
         if w then return w[1], w[2], w[3] end
       end,
       GetQuestTagInfo = function(id)
-        local q = M.quests[(id or 0) - 1000]
+        local q = qAt(id)
         if q and q.elite then return { tagID = 1, tagName = "Élite", isElite = true } end
       end,
     }
@@ -1091,7 +1100,7 @@ function M.Install(flavor)
     local q = M.quests[i]
     if not q then return nil end
     if q.header then return q.header, nil, nil, true, false end
-    return q.title, q.level, q.group, false, false, q.complete and 1 or nil, nil, 1000 + i
+    return q.title, q.level, q.group, false, false, q.complete and 1 or nil, nil, qid(i)
   end
   G.GetNumQuestLeaderBoards = function(i) local q = M.quests[i or M.questSel or 1] return q and #(q.objectives or {}) or 0 end
   G.GetQuestLogLeaderBoard = function(j, i)
@@ -1101,8 +1110,8 @@ function M.Install(flavor)
   end
   G.SelectQuestLogEntry = function(i) M.questSel = i end
   G.GetQuestLogSelection = function() return M.questSel or 0 end
-  G.IsQuestComplete = function(id) local q = M.quests[(id or 0) - 1000] return q and q.complete or false end
-  G.GetQuestLogIndexByID = function(id) return M.quests[(id or 0) - 1000] and (id - 1000) or 0 end
+  G.IsQuestComplete = function(id) local q = qAt(id) return q and q.complete or false end
+  G.GetQuestLogIndexByID = function(id) local _, i = qAt(id) return i or 0 end
   G.GetQuestsCompleted = function() return {} end
   -- quest helper APIs (Quests module): special item, XP reward (modern: by questID; legacy: selection), loot
   G.GetQuestLogSpecialItemInfo = function(i)
@@ -1110,7 +1119,7 @@ function M.Install(flavor)
     if q and q.item then return M.ItemLink(q.item), 134400 + q.item, q.charges or 0, false end
   end
   G.GetQuestLogRewardXP = function(id)
-    local q = id and M.quests[id - 1000] or M.quests[M.questSel or 0]
+    local q = id and qAt(id) or M.quests[M.questSel or 0]
     return q and q.xp or 0
   end
   G.GetNumLootItems = function() return #(M.loot or {}) end
