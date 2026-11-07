@@ -23,6 +23,7 @@ Modules\Classes.lua
 Modules\Leveling.lua
 Modules\Group.lua
 Modules\Squad.lua
+Modules\Missions.lua
 Modules\Quests.lua
 Modules\Compass.lua
 Modules\Tracker.lua

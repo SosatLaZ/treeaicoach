@@ -1057,11 +1057,33 @@ end
 -- Comms (C_ChatInfo.SendAddonMessage, prefix TREEAI)
 ---------------------------------------------------------------------------
 local commHandlers = {}  -- msgType -> { [owner] = fn }
-local sendQueue = {}
-local sending = false
 local seq = 0
 local partial = {}       -- sender..seq -> { n, parts = {} }
 local CHUNK = 220
+-- Envoi : le jeu tolère ~10 messages d'addon par préfixe en rafale puis 1/s ; au-delà, le message est
+-- PERDU sans erreur Lua (code de retour « throttle »). D'où : seau de jetons (8, +1/s), code de retour
+-- vérifié, nouvel essai avec délai croissant, deux files (état > quêtes), message d'un type pas encore
+-- parti remplacé par le plus récent, pause en donjon/raid (les addons n'y parlent plus aux autres).
+local BURST, REFILL = 8, 1
+local LOW_PRIO = { SQQ = true, SQD = true, MSM = true, FQUEST = true }
+local queues = { {}, {} }  -- [1] état / petits messages, [2] journaux de quêtes
+local sending = false
+local tokens, tokenAt = BURST, nil
+local retryAt, backoff = 0, 1
+local msgId, started = 0, {}
+TreeAI.commPaused = nil  -- nil | "donjon" | "bloquée" (verrou du jeu)
+TreeAI.commStats = { sent = 0, throttled = 0, dropped = 0, paused = 0 }
+
+-- résultat de SendAddonMessage : true/0/nil = ok ; 3/8 (ou false) = limité -> réessayer ; 11 = verrou ; autre = abandon
+local RES_THROTTLE, RES_LOCK = { [3] = true, [8] = true }, 11
+local function classify(ok, res)
+  if not ok then return "error" end
+  if res == nil or res == true or res == 0 then return "ok" end
+  if res == false or RES_THROTTLE[res] then return "throttle" end
+  if res == RES_LOCK then return "lock" end
+  return "error"
+end
+TreeAI._ClassifySend = classify
 
 local function sendRaw(msg, channel, target)
   local C_ChatInfo = _G.C_ChatInfo
@@ -1073,11 +1095,88 @@ local function sendRaw(msg, channel, target)
   return false
 end
 
-local function pump()
-  local item = tremove(sendQueue, 1)
-  if not item then sending = false; return end
-  sendRaw(item[1], item[2], item[3])
-  TreeAI:After(0.2, pump)
+local function instancePaused()
+  local inInst, kind = try(_G.IsInInstance)
+  return (inInst and (kind == "party" or kind == "raid" or kind == "pvp" or kind == "arena")) and true or false
+end
+
+local function clearQueues()
+  local n = #queues[1] + #queues[2]
+  queues[1], queues[2] = {}, {}
+  started = {}
+  return n
+end
+
+function TreeAI:_SetCommPaused(reason)
+  if self.commPaused == reason then return end
+  local was = self.commPaused
+  self.commPaused = reason
+  if reason then
+    self.commStats.dropped = self.commStats.dropped + clearQueues()
+    self.commStats.paused = self.commStats.paused + 1
+    self:Print(("Synchro du groupe en pause (%s) : elle reprend à la sortie."):format(
+      reason == "donjon" and "donjon" or "bloquée par le jeu"))
+    self:Fire("COMM_PAUSED", reason)
+  elseif was then
+    self:Print("Synchro du groupe reprise.")
+    self:Fire("COMM_RESUMED")
+  end
+end
+
+function TreeAI:_CheckCommPause()
+  if instancePaused() then self:_SetCommPaused("donjon")
+  elseif self.commPaused then self:_SetCommPaused(nil) end
+end
+
+function TreeAI:CommStatus()
+  return { paused = self.commPaused, queued = #queues[1] + #queues[2], tokens = math.floor(tokens),
+           stats = self.commStats }
+end
+
+local function refill(t)
+  tokenAt = tokenAt or t
+  tokens = math.min(BURST, tokens + (t - tokenAt) * REFILL)
+  tokenAt = t
+end
+
+local pump
+local function schedule(delay)
+  if sending then return end
+  sending = true
+  TreeAI:After(math.max(0.05, delay), function() sending = false; pump() end)
+end
+
+pump = function()
+  local q = (#queues[1] > 0 and queues[1]) or (#queues[2] > 0 and queues[2]) or nil
+  if not q then return end
+  if TreeAI.commPaused then TreeAI.commStats.dropped = TreeAI.commStats.dropped + clearQueues(); return end
+  local t = now()
+  refill(t)
+  if t < retryAt then return schedule(retryAt - t) end
+  if tokens < 1 then return schedule((1 - tokens) / REFILL) end
+  local item = q[1]
+  local status = classify(sendRaw(item[1], item[2], item[3]))
+  if status == "ok" then
+    tremove(q, 1)
+    tokens = tokens - 1
+    started[item.mid] = true
+    backoff = 1
+    TreeAI.commStats.sent = TreeAI.commStats.sent + 1
+  elseif status == "throttle" then
+    TreeAI.commStats.throttled = TreeAI.commStats.throttled + 1
+    item.tries = (item.tries or 0) + 1
+    tokens = 0
+    if item.tries > 6 then tremove(q, 1); TreeAI.commStats.dropped = TreeAI.commStats.dropped + 1 end
+    retryAt = t + backoff
+    backoff = math.min(backoff * 2, 8)
+  elseif status == "lock" then
+    TreeAI:_SetCommPaused(instancePaused() and "donjon" or "bloquée")
+    return
+  else
+    tremove(q, 1)
+    TreeAI.commStats.dropped = TreeAI.commStats.dropped + 1
+  end
+  if #queues[1] + #queues[2] > 0 then schedule(0.05) end
 end
 
 function TreeAI:DefaultChannel()
@@ -1095,13 +1194,22 @@ function TreeAI:Send(msgType, payload, channel, target)
   local data
   if type(payload) == "table" then data = "t" .. self:Serialize(payload)
   else data = "r" .. tostring(payload or "") end
+  if self.commPaused == nil and instancePaused() then self:_SetCommPaused("donjon") end
+  if self.commPaused then return false end
   seq = (seq % 9999) + 1
+  local q = queues[LOW_PRIO[msgType] and 2 or 1]
+  -- même type, même destinataire, pas encore commencé : remplacé par le plus récent
+  for i = #q, 1, -1 do
+    local it = q[i]
+    if it.type == msgType and it[2] == channel and it[3] == target and not started[it.mid] then tremove(q, i) end
+  end
+  msgId = msgId + 1
   local n = mmax(1, math.ceil(#data / CHUNK))
   for i = 1, n do
     local part = strsub(data, (i - 1) * CHUNK + 1, i * CHUNK)
-    sendQueue[#sendQueue + 1] = { strformat("1~%s~%d~%d/%d~%s", msgType, seq, i, n, part), channel, target }
+    q[#q + 1] = { strformat("1~%s~%d~%d/%d~%s", msgType, seq, i, n, part), channel, target, type = msgType, mid = msgId }
   end
-  if not sending then sending = true; pump() end
+  pump()
   return true
 end
 
@@ -1153,7 +1261,7 @@ function TreeAI:_OnAddonMessage(prefix, msg, channel, sender)
   end
   -- garbage collect stale partials
   for k, v in pairs(partial) do
-    if now() - v.at > 60 then partial[k] = nil end
+    if now() - v.at > 30 then partial[k] = nil end
   end
 end
 
@@ -1401,6 +1509,12 @@ TreeAI:RegisterEvent("PLAYER_LOGOUT")
 TreeAI:RegisterEvent("PLAYER_REGEN_DISABLED")
 TreeAI:RegisterEvent("PLAYER_REGEN_ENABLED")
 TreeAI:RegisterEvent("CHAT_MSG_ADDON")
+do  -- pause / reprise des comms selon l'instance (propriétaire distinct : n'écrase pas les autres handlers)
+  local commOwner = {}
+  for _, ev in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA" }) do
+    TreeAI:RegisterEvent(ev, commOwner, function() TreeAI:_CheckCommPause() end)
+  end
+end
 TreeAI:RegisterEvent("GROUP_ROSTER_UPDATE")
 TreeAI:RegisterEvent("PARTY_MEMBERS_CHANGED", TreeAI, "GROUP_ROSTER_UPDATE")
 for _, ev in ipairs({ "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "PLAYER_MONEY", "PLAYER_GUILD_UPDATE" }) do

@@ -344,6 +344,82 @@ def _squad(c: dict[str, Any]) -> dict[str, Any] | None:
     return out
 
 
+def _missions(c: dict[str, Any]) -> dict[str, Any] | None:
+    """Group missions snapshot (addon module Missions, ``summary.missions`` v1) for « Hey coach, on en est
+    où ? »: board, next mission, who does what, session goal/recap. Names → « Classe niveau » labels."""
+    s = _pick(c, "summary")
+    m = _pick(s, "missions") if isinstance(s, dict) else None
+    if not isinstance(m, dict) or _num(m.get("v")) != 1:
+        return None
+    labels: dict[str, str] = {}
+    for mem in (m.get("members") or []) if isinstance(m.get("members"), list) else []:
+        if isinstance(mem, dict) and mem.get("name"):
+            lvl = _num(mem.get("level"))
+            labels[str(mem["name"])] = " ".join(x for x in (str(mem.get("class") or "?"), str(int(lvl)) if lvl else "") if x)
+
+    def anon(text: Any, limit: int = 140) -> str:
+        t = str(text or "")
+        for name in sorted(labels, key=len, reverse=True):
+            t = re.sub(r"(?<!\w)" + re.escape(name) + r"(?!\w)", labels[name], t)
+        return _short(t, limit)
+
+    def texts(v: Any, n: int, limit: int = 140) -> list[str]:
+        return [anon(x, limit) for x in (v if isinstance(v, list) else []) if isinstance(x, (str, int, float))][:n]
+
+    out: dict[str, Any] = {}
+    board = []
+    for b in m.get("board") or []:
+        if not isinstance(b, dict) or not b.get("title"):
+            continue
+        line = f"{_short(b.get('title'), 40)} : {b.get('done', 0)}/{b.get('holders', 0)} prêts, {b.get('pct', 0)} %"
+        if b.get("ready"):
+            line += " (à rendre ensemble)"
+        elif b.get("status"):
+            line += " — " + anon(b["status"], 100)
+        board.append(_short(line, 160))
+    if board:
+        out["missions"] = board[:8]
+    if m.get("next"):
+        out["prochaine"] = anon(m["next"])
+    for key, src, n in (("repartition", "assign", 5), ("voyage", "travel", 5), ("artisans", "crafts", 5)):
+        v = texts(m.get(src), n)
+        if v:
+            out[key] = v
+    claims = [f"{anon(x.get('by'), 30)} : {_short(x.get('quest'), 40)}" for x in m.get("claims") or [] if isinstance(x, dict)]
+    if claims:
+        out["pris_en_charge"] = claims[:5]
+    if _num(m.get("noAddon")):
+        out["membres_sans_treeai"] = int(_num(m.get("noAddon")) or 0)
+    ses = m.get("session")
+    if isinstance(ses, dict):
+        r: dict[str, Any] = {}
+        dur = _num(ses.get("duration"))
+        if dur:
+            r["duree_min"] = int(dur // 60)
+        for key, src in (("quetes_rendues", "turned"), ("missions_terminees", "missions"), ("abandons", "abandoned"),
+                         ("morts", "deaths")):
+            if _num(ses.get(src)) is not None:
+                r[key] = int(_num(ses.get(src)) or 0)
+        lv = [f"{anon(x.get('name'), 30)} {x.get('from')}→{x.get('to')}" for x in ses.get("levels") or []
+              if isinstance(x, dict) and x.get("from") is not None]
+        if lv:
+            r["niveaux"] = lv[:5]
+        g = ses.get("goal")
+        if isinstance(g, dict) and g.get("text"):
+            r["objectif"] = anon(g["text"])
+        lb = [f"{anon(x.get('name'), 30)} +{int(_num(x.get('xp')) or 0)} XP" for x in ses.get("leaderboard") or []
+              if isinstance(x, dict)]
+        if lb:
+            r["classement_xp"] = lb[:5]
+        for key, src, n in (("butin", "loot", 4), ("evenements", "events", 6), ("quetes", "titles", 6)):
+            v = texts(ses.get(src), n, 100)
+            if v:
+                r[key] = v
+        if r:
+            out["session"] = r
+    return out or None
+
+
 def character_context(db: Any) -> dict[str, Any]:
     """Compact, JSON-able facts about the current character from ``TreeAIDB`` ({} when unknown)."""
     try:
@@ -385,6 +461,9 @@ def character_context(db: Any) -> dict[str, Any]:
         sq = _squad(c)
         if sq:
             ctx["groupe_treeai"] = sq
+        mi = _missions(c)
+        if mi:  # « Hey coach, on en est où ? » : missions du groupe + session
+            ctx["missions_groupe"] = mi
         try:  # hôtel des ventes (module Auction : summary.auction) → « quoi revendre ? »
             from treeaicoach.wow import auction
 
