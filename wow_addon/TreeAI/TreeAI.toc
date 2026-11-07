@@ -1,0 +1,22 @@
+## Interface: 16001, 11509, 11508, 11507
+## Title: TreeAI Coach
+## Notes: Conseils en jeu, macros intelligentes et synchro de groupe pour TreeAI Coach.
+## Notes-frFR: Conseils en jeu, macros intelligentes et synchro de groupe pour TreeAI Coach.
+## Author: TreeAI
+## Version: 0.1.0
+## SavedVariables: TreeAIDB
+## IconTexture: Interface\Icons\Ability_Hunter_BeastCall
+
+Core.lua
+Locale_frFR.lua
+UI.lua
+Options.lua
+
+Data\Macros.lua
+
+Modules\Macros.lua
+Modules\Hunter.lua
+Modules\Classes.lua
+Modules\Leveling.lua
+Modules\Group.lua
+Modules\Inventory.lua
