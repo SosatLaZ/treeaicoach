@@ -16,6 +16,7 @@ Options.lua
 Data\Macros.lua
 Data\PetFood.lua
 Data\Consumables.lua
+Data\Recipes.lua
 
 Modules\Macros.lua
 Modules\Binds.lua
@@ -40,4 +41,5 @@ Modules\Pro.lua
 Modules\Economy.lua
 Modules\Abandon.lua
 Modules\Auction.lua
+Modules\Prof.lua
 Modules\Highlight.lua

@@ -6,8 +6,10 @@ French locale. Output:
   treeaicoach/wow/data/{spells,items,zones,meta}.json.gz   (read by treeaicoach/wow/gamedata.py)
   treeaicoach/wow/data/taxi.json.gz   (flight graph + map bounds, read by treeaicoach/wow/planner/data.py)
   wow_addon/TreeAI/Data/PetFood.lua, Data/Consumables.lua  (small Lua tables for the addon)
+  wow_addon/TreeAI/Data/Recipes.lua + treeaicoach/wow/data/recipes.json.gz  (tradeskill recipes: SkillLineAbility
+  colours, SpellReagents, SpellEffect 24 crafted item, recipe items; ``--only recipes``)
 
-Usage:  python tools/wow_build_data.py [--cache DIR] [--build 1.60.1.70862] [--offline] [--only taxi]
+Usage:  python tools/wow_build_data.py [--cache DIR] [--build 1.60.1.70862] [--offline] [--only taxi|recipes]
 CSV files are downloaded once into --cache (default: a temp dir) and reused. Same CSVs -> same bytes out.
 """
 from __future__ import annotations
@@ -31,7 +33,8 @@ ADDON_DATA = os.path.join(ROOT, "wow_addon", "TreeAI", "Data")
 TABLES = ("SpellName", "SpellLevels", "SkillLineAbility", "SkillLine", "ChrClasses", "ItemSparse", "Item",
           "ItemXItemEffect", "ItemEffect", "SpellEffect", "SpellMisc", "SpellDuration", "RandPropPoints",
           "ItemArmorTotal", "ItemArmorQuality", "ItemArmorShield", "ArmorLocation", "ItemDamageOneHand",
-          "ItemDamageTwoHand", "ItemDamageRanged", "ItemDamageThrown", "ItemDamageWand", "AreaTable")
+          "ItemDamageTwoHand", "ItemDamageRanged", "ItemDamageThrown", "ItemDamageWand", "AreaTable",
+          "SpellReagents")
 TAXI_TABLES = ("TaxiNodes", "TaxiPath", "TaxiPathNode", "UiMapAssignment", "UiMap")
 
 # Class skill lines (talent trees) -> class token. ChrClasses ids: 1 war, 2 pal, 3 hunt, 4 rog, 5 pri,
@@ -320,6 +323,176 @@ def build_taxi(T: dict) -> dict:
             "maps_fields": ["name", "continent", "x0", "y0", "x1", "y1"], "maps": dict(sorted(maps.items(), key=lambda kv: int(kv[0])))}
 
 
+# --------------------------------------------------------------------------------------------- recipes
+# Tradeskill lines (SkillLine ids): kind c = primary crafting (Forever: Legacy points at 150/225/300),
+# g = gathering (primary, no Legacy points), s = secondary.
+PROF_LINES = {171: ("c", "Alchimie"), 164: ("c", "Forge"), 333: ("c", "Enchantement"), 202: ("c", "Ingénierie"),
+              165: ("c", "Travail du cuir"), 197: ("c", "Couture"), 182: ("g", "Herboristerie"),
+              186: ("g", "Minage"), 393: ("g", "Dépeçage"), 185: ("s", "Cuisine"), 129: ("s", "Secourisme"),
+              356: ("s", "Pêche")}
+PROF_TABLES = ("SkillLineAbility", "SpellName", "SpellEffect", "SpellReagents", "ItemSparse", "Item",
+               "ItemEffect", "ItemXItemEffect")
+# Reagents sold by ordinary vendors (Classic item ids; thread, vials, flux, dyes, spices, wood…). BuyPrice comes
+# from ItemSparse. Ids missing from the build are dropped.
+VENDOR_MATS = (159, 1179, 1205, 2320, 2321, 2324, 2325, 2596, 2604, 2605, 2665, 2678, 2692, 2880, 2894, 3371,
+               3372, 3466, 3713, 3857, 4289, 4291, 4340, 4341, 4342, 4399, 4400, 4470, 4536, 6217, 6260, 6261,
+               6530, 8343, 8925, 10290, 10647, 10648, 11291, 14341, 17194, 17196, 18256, 18567)
+# Gathering nodes: item gathered, skill needed (Classic values; Forever keeps the 1-300 scale).
+GATHER = {
+    182: ((2447, 1), (765, 1), (2449, 15), (785, 50), (2450, 70), (3820, 85), (2453, 100), (3355, 115),
+          (3369, 120), (3356, 125), (3357, 150), (3818, 160), (3821, 170), (3358, 185), (3819, 195), (4625, 205),
+          (8831, 210), (8836, 220), (8838, 230), (8839, 235), (8845, 245), (8846, 250), (13464, 260),
+          (13463, 270), (13465, 280), (13466, 285), (13467, 290), (13468, 300)),
+    186: ((2770, 1), (2771, 65), (3340, 65), (2775, 75), (4278, 75), (2772, 125), (5833, 150), (2776, 155),
+          (3858, 175), (7911, 230), (11370, 230), (10620, 245)),
+}
+# Best zones per skill band (FR zone names as the client shows them, accent/apostrophe-insensitive match).
+GATHER_ZONES = {
+    182: ((1, 70, ("Forêt d'Elwynn", "Dun Morogh", "Teldrassil", "Durotar", "Mulgore", "Clairières de Tirisfal")),
+          (70, 125, ("Marche de l'Ouest", "Les Tarides", "Forêt des Pins argentés", "Loch Modan", "Sombrivage")),
+          (125, 175, ("Contreforts de Hautebrande", "Les Paluns", "Orneval", "Bois de la Pénombre",
+                      "Les Serres-Rocheuses")),
+          (175, 230, ("Vallée de Strangleronce", "Hautes-terres Arathies", "Désolace", "Marécage d'Âprefange")),
+          (230, 270, ("Feralas", "Les Hinterlands", "Marais des Chagrins", "Tanaris")),
+          (270, 301, ("Cratère d'Un'Goro", "Gangrebois", "Maleterres de l'Ouest", "Maleterres de l'Est",
+                      "Berceau-de-l'Hiver"))),
+    186: ((1, 65, ("Forêt d'Elwynn", "Dun Morogh", "Durotar", "Mulgore", "Clairières de Tirisfal", "Teldrassil")),
+          (65, 125, ("Les Carmines", "Marche de l'Ouest", "Les Tarides", "Forêt des Pins argentés", "Loch Modan",
+                     "Sombrivage")),
+          (125, 175, ("Mille pointes", "Les Paluns", "Hautes-terres Arathies", "Désolace",
+                      "Contreforts de Hautebrande")),
+          (175, 245, ("Terres ingrates", "Tanaris", "Les Hinterlands", "Vallée de Strangleronce",
+                      "Gorge des Vents brûlants")),
+          (245, 301, ("Cratère d'Un'Goro", "Gorge des Vents brûlants", "Steppes ardentes", "Berceau-de-l'Hiver",
+                      "Silithus"))),
+    393: ((1, 75, ("Forêt d'Elwynn", "Dun Morogh", "Durotar", "Mulgore", "Clairières de Tirisfal", "Teldrassil")),
+          (75, 150, ("Marche de l'Ouest", "Les Tarides", "Forêt des Pins argentés", "Les Carmines", "Sombrivage")),
+          (150, 200, ("Contreforts de Hautebrande", "Les Paluns", "Orneval", "Mille pointes",
+                      "Hautes-terres Arathies")),
+          (200, 250, ("Vallée de Strangleronce", "Terres ingrates", "Feralas", "Tanaris")),
+          (250, 301, ("Cratère d'Un'Goro", "Les Hinterlands", "Gangrebois", "Berceau-de-l'Hiver", "Silithus"))),
+}
+
+
+def build_recipes(T: dict) -> dict:
+    """Tradeskill recipes per profession line: [spell, item, count, min, yellow, grey, skillups, recipeItem,
+    name, [reagent, n, …]] + reagent table {id: [name, buyPrice, vendor 0/1, sellPrice]} + gathering nodes.
+    Colours (Classic): orange < yellow (TrivialSkillLineRankLow) ≤ yellow < (yellow+grey)/2 ≤ green < grey
+    (TrivialSkillLineRankHigh)."""
+    names = {r["ID"]: r["Name_lang"] for r in T["SpellName"]}
+    create: dict[str, tuple[int, int]] = {}
+    for r in T["SpellEffect"]:
+        if r["Effect"] == "24" and r["DifficultyID"] == "0" and r["SpellID"] not in create:
+            create[r["SpellID"]] = (i(r["EffectItemType"]), max(1, i(r["EffectBasePointsF"])))
+    reag: dict[str, list[int]] = {}
+    for r in T["SpellReagents"]:
+        flat = []
+        for k in range(8):
+            rid, n = i(r[f"Reagent_{k}"]), i(r[f"ReagentCount_{k}"])
+            if rid > 0 and n > 0:
+                flat += [rid, n]
+        if flat:
+            reag[r["SpellID"]] = flat
+    sparse = {r["ID"]: r for r in T["ItemSparse"]}
+    iclass = {r["ID"]: i(r["ClassID"], -1) for r in T["Item"]}
+    effects = {r["ID"]: r for r in T["ItemEffect"]}
+    teach: dict[str, int] = {}
+    for r in T["ItemXItemEffect"]:
+        e = effects.get(r["ItemEffectID"])
+        if not e or iclass.get(r["ItemID"]) != 9:
+            continue
+        sp = sparse.get(r["ItemID"])
+        if not sp or junk(sp["Display_lang"]):
+            continue
+        cur = teach.get(e["SpellID"])
+        if cur is None or i(r["ItemID"]) < cur:
+            teach[e["SpellID"]] = i(r["ItemID"])
+    per: dict[int, list] = {line: [] for line in PROF_LINES}
+    seen: set[str] = set()
+    mats: set[int] = set()
+    for r in T["SkillLineAbility"]:
+        line, s = i(r["SkillLine"]), r["Spell"]
+        if line not in PROF_LINES or s in seen:
+            continue
+        sid = i(s)
+        if r["AcquireMethod"] == "3" or 400000 <= sid < 1000000:  # Season of Discovery: not in Forever
+            continue
+        name = names.get(s) or ""
+        if junk(name) or (s not in create and s not in reag):
+            continue
+        seen.add(s)
+        item, count = create.get(s, (0, 1))
+        flat = reag.get(s, [])
+        mats.update(flat[0::2])  # crafted items are named by the recipe itself (only reagents are listed)
+        yellow, grey = i(r["TrivialSkillLineRankLow"]), i(r["TrivialSkillLineRankHigh"])
+        per[line].append([sid, item, count, max(1, i(r["MinSkillLineRank"])), yellow, grey,
+                          max(1, i(r["NumSkillUps"])), teach.get(s, 0), name, flat])
+    for rows in per.values():
+        rows.sort(key=lambda x: (x[3], x[4], x[0]))
+    vendor = set(VENDOR_MATS)
+    gather = {}
+    for line, nodes in GATHER.items():
+        gather[line] = [[iid, skill] for iid, skill in nodes if str(iid) in sparse]
+        mats.update(iid for iid, _ in nodes)
+    mat_tab = {}
+    for m in sorted(mats):
+        sp = sparse.get(str(m))
+        if not sp:
+            continue
+        mat_tab[m] = [sp["Display_lang"], i(sp["BuyPrice"]), 1 if m in vendor else 0, i(sp["SellPrice"])]
+    return {"lines": {line: [k, n] for line, (k, n) in PROF_LINES.items()}, "recipes": per, "mats": mat_tab,
+            "gather": gather, "zones": {line: [[a, b, list(z)] for a, b, z in bands]
+                                        for line, bands in GATHER_ZONES.items()}}
+
+
+def _lua_val(v) -> str:
+    if isinstance(v, str):
+        return lua_str(v)
+    if isinstance(v, (list, tuple)):
+        return "{" + ",".join(_lua_val(x) for x in v) + "}"
+    return str(v)
+
+
+def write_recipes_lua(build: str, rec: dict, path: str | None = None) -> int:
+    """Compact Lua table T.Data.Recipes (≤ 300 KB). Returns the byte size."""
+    out = [HEADER.format(build=build),
+           "-- Métiers : recettes { sort, objet créé, quantité, compétence mini (orange), jaune, gris, points,\n"
+           "-- objet-recette (0 = entraîneur/auto), nom FR, { compo, n, … } } ; vert = (jaune + gris) / 2.\n"
+           "-- mats[id] = { nom, prix d'achat, vendu par un marchand (1/0), prix de revente } ; gather = nœuds\n"
+           "-- { objet, compétence } ; zones = { de, à, { zones conseillées } }.\n",
+           "local T = TreeAI\nif type(T) ~= \"table\" then return end\nT.Data = T.Data or {}\n",
+           f"T.Data.Recipes = {{\n  build = {lua_str(build)},\n  lines = {{\n"]
+    for line, (k, n) in sorted(rec["lines"].items()):
+        out.append(f"    [{line}] = {{{lua_str(k)},{lua_str(n)}}},\n")
+    out.append("  },\n  r = {\n")
+    for line, rows in sorted(rec["recipes"].items()):
+        out.append(f"    [{line}] = {{\n")
+        out.extend("{" + ",".join(_lua_val(v) for v in row) + "},\n" for row in rows)
+        out.append("    },\n")
+    out.append("  },\n  mats = {\n")
+    out.extend(f"[{m}]={_lua_val(v)},\n" for m, v in sorted(rec["mats"].items()))
+    out.append("  },\n  gather = {\n")
+    for line, rows in sorted(rec["gather"].items()):
+        out.append(f"    [{line}] = {_lua_val(rows)},\n")
+    out.append("  },\n  zones = {\n")
+    for line, bands in sorted(rec["zones"].items()):
+        out.append(f"    [{line}] = {_lua_val(bands)},\n")
+    out.append("  },\n}\n")
+    data = "".join(out).encode("utf-8")
+    path = path or os.path.join(ADDON_DATA, "Recipes.lua")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    return len(data)
+
+
+def write_recipes_files(build: str, rec: dict) -> dict:
+    lua = write_recipes_lua(build, rec)
+    gz = write_gz(os.path.join(OUT_DIR, "recipes.json.gz"), {"build": build, **rec})
+    return {"recipes_lua": lua, "recipes_gz": gz, "recipes": sum(len(v) for v in rec["recipes"].values()),
+            "mats": len(rec["mats"])}
+
+
 # ----------------------------------------------------------------------------------------------- output
 def write_gz(path: str, obj) -> int:
     data = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -370,10 +543,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache", default=os.path.join(tempfile.gettempdir(), "treeai_wowf_db2"))
     ap.add_argument("--build", default=BUILD)
     ap.add_argument("--offline", action="store_true")
-    ap.add_argument("--only", choices=("taxi",), help="build only this file")
+    ap.add_argument("--only", choices=("taxi", "recipes"), help="build only this file")
     a = ap.parse_args(argv)
     os.makedirs(a.cache, exist_ok=True)
     os.makedirs(OUT_DIR, exist_ok=True)
+    if a.only == "recipes":
+        rec = build_recipes({t: fetch(a.cache, t, a.build, a.offline) for t in PROF_TABLES})
+        print(json.dumps(write_recipes_files(a.build, rec)))
+        return 0
     taxi = build_taxi({t: fetch(a.cache, t, a.build, a.offline) for t in TAXI_TABLES})
     taxi["build"] = a.build
     tsize = write_gz(os.path.join(OUT_DIR, "taxi.json.gz"), taxi)
@@ -400,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
                                          "consumables": {k: len(v) for k, v in cats.items()}}}
     sizes["meta"] = write_gz(os.path.join(OUT_DIR, "meta.json.gz"), meta)
     write_lua(a.build, cats, petfood)
+    sizes.update(write_recipes_files(a.build, build_recipes(T)))
     print(json.dumps({"sizes": sizes, **meta["counts"]}, ensure_ascii=False))
     return 0
 

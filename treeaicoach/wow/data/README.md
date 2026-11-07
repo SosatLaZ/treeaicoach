@@ -14,6 +14,7 @@ only the small subset below is kept, for in-app advice.
 | `items.json.gz` | item id → FR name, quality, ilvl, required level, class/subclass/slot, stats, armour, DPS, speed, sell price, quest starter, class mask | ItemSparse, Item, RandPropPoints, ItemArmor*, ArmorLocation, ItemDamage* |
 | `zones.json.gz` | AreaTable id → FR name, parent, continent | AreaTable |
 | `taxi.json.gz` | flight graph: taxi nodes (FR name, continent, world x/y, faction), directed edges (spline length yd, cost copper), and zone-map world bounds for the route planner (`treeaicoach/wow/planner`) | TaxiNodes, TaxiPath, TaxiPathNode, UiMapAssignment, UiMap |
+| `recipes.json.gz` | tradeskill recipes per profession (colours orange/yellow/grey, skill-ups, crafted item, recipe item, reagents), reagent names/prices, gathering nodes + zones; also `wow_addon/TreeAI/Data/Recipes.lua` (`--only recipes`) | SkillLineAbility, SpellReagents, SpellEffect (24), SpellName, ItemSparse, Item, ItemEffect, ItemXItemEffect |
 | `meta.json.gz` | build, source, counts | — |
 
 Addon side (same run): `wow_addon/TreeAI/Data/PetFood.lua` (Item.ItemPetFoodID diets) and
