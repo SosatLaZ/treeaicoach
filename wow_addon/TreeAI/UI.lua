@@ -376,7 +376,6 @@ local function shortOf(id) return SHORT[id] and L[SHORT[id]] or nil end
 local function layoutTabs(width)
   for i = #tabRects, 1, -1 do tabRects[i] = nil end
   for _, b in pairs(tabButtons) do b:Hide() end
-  for _, b in pairs(actionButtons) do b:Hide() end
   local inner = width - 2 * PAD
   local slot = floor(inner / 4)
   local function place(b, x, row, w, label)
@@ -388,28 +387,170 @@ local function layoutTabs(width)
     tabRects[#tabRects + 1] = { id = b.id or b.action, x = x, w = w, row = row, text = label,
       textW = b.text:GetStringWidth() or 0, textMax = w - TAB_ICON - 6 }
   end
+  -- une seule rangée : Maintenant · Quêtes · Groupe · « Plus » (= l'onglet secondaire actif s'il y en a un)
+  local act = activeTab()
   for i, id in ipairs({ PRIMARY[1], PRIMARY[2], PRIMARY[3], MORE }) do
     local b = tabButton(id)
     local w = slot - 2
-    place(b, PAD + (i - 1) * slot, 0, w, fitLabel(b.text, tabTitle(id), shortOf(id), w - TAB_ICON - 6))
-  end
-  local rowsN = 1
-  if moreOpen or isMoreTab(activeTab()) then
-    local x, row = PAD, 1
-    for _, e in ipairs(moreEntries()) do
-      local b = e.action and actionButton(e.action) or tabButton(e.id)
-      local full = e.action and L[e.action.title] or tabTitle(e.id)
-      b.text:SetText(full)
-      local w = min(inner, floor((b.text:GetStringWidth() or 30) + TAB_ICON + 12))
-      if e.action and e.action.wide then w = inner end
-      if x > PAD and x + w > PAD + inner then x, row = PAD, row + 1 end
-      place(b, x, row, w, fitLabel(b.text, full, shortOf(e.id), w - TAB_ICON - 6))
-      x = x + w + 2
+    local full, short = tabTitle(id), shortOf(id)
+    if id == MORE then
+      if isMoreTab(act) then
+        full, short = tabTitle(act), shortOf(act)
+        b.icon:SetTexture(TAB_ICONS[act] or TAB_ICONS.info)
+      else
+        b.icon:SetTexture(TAB_ICONS[MORE])
+      end
     end
-    rowsN = row + 1
+    place(b, PAD + (i - 1) * slot, 0, w, fitLabel(b.text, full, short, w - TAB_ICON - 6))
   end
-  return rowsN * (TAB_ROW_H + 2)
+  return TAB_ROW_H + 2
 end
+
+-- menu déroulant « Plus » : une liste propre sous l'onglet (onglets secondaires, séparateur, actions) ;
+-- se ferme au clic (dedans ou ailleurs) et à Échap. Cadre à nous, enfant d'UIParent.
+local menu
+local menuEntries = {}
+local MENU_ROW, MENU_MIN_W = 20, 180
+local function closeMenu()
+  moreOpen = false
+  if menu and menu:IsShown() then menu:Hide() end
+end
+local function buildMenu()
+  if menu or not _G.CreateFrame then return menu end
+  local template = _G.BackdropTemplateMixin and "BackdropTemplate" or nil
+  menu = _G.CreateFrame("Frame", "TreeAIMoreMenu", _G.UIParent, template)
+  menu:SetFrameStrata("DIALOG")
+  menu:SetClampedToScreen(true)
+  menu:EnableMouse(true)
+  if menu.SetBackdrop then
+    menu:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+      edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
+    menu:SetBackdropColor(0.05, 0.06, 0.08, 0.96)
+    menu:SetBackdropBorderColor(0.78, 0.62, 0.28, 0.6)
+  end
+  menu.rows, menu.seps = {}, {}
+  menu:SetScript("OnHide", function() moreOpen = false; if panel then TreeAI:RequestRefresh() end end)
+  -- clic ailleurs = fermer (événement du client moderne, gardé)
+  if menu.RegisterEvent and pcall(menu.RegisterEvent, menu, "GLOBAL_MOUSE_DOWN") then
+    menu:SetScript("OnEvent", function(self)
+      if not self:IsShown() then return end
+      local over = (self.IsMouseOver and self:IsMouseOver()) or false
+      local mb = tabButtons[MORE]
+      if not over and not (mb and mb.IsMouseOver and mb:IsMouseOver()) then closeMenu() end
+    end)
+  end
+  local list = rawget(_G, "UISpecialFrames")
+  if type(list) == "table" then list[#list + 1] = "TreeAIMoreMenu" end   -- Échap ferme (notre cadre seulement)
+  menu:Hide()
+  return menu
+end
+local function menuRow(i)
+  local b = menu.rows[i]
+  if b then return b end
+  b = _G.CreateFrame("Button", nil, menu)
+  b:SetHeight(MENU_ROW)
+  b:RegisterForClicks("LeftButtonUp")
+  b.icon = b:CreateTexture(nil, "ARTWORK")
+  b.icon:SetSize(14, 14)
+  b.icon:SetPoint("LEFT", b, "LEFT", 6, 0)
+  b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
+  b.text:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+  b.text:SetJustifyH("LEFT")
+  if b.text.SetWordWrap then b.text:SetWordWrap(false) end
+  b.hl = b:CreateTexture(nil, "HIGHLIGHT")
+  b.hl:SetAllPoints(b)
+  b.hl:SetTexture("Interface\\Buttons\\WHITE8X8")
+  if b.hl.SetVertexColor then b.hl:SetVertexColor(1, 1, 1, 0.10) end
+  b.sel = b:CreateTexture(nil, "BACKGROUND")
+  b.sel:SetAllPoints(b)
+  b.sel:SetTexture("Interface\\Buttons\\WHITE8X8")
+  if b.sel.SetVertexColor then b.sel:SetVertexColor(0.78, 0.62, 0.28, 0.25) end
+  b:SetScript("OnClick", function(self)
+    local e = self.e
+    closeMenu()
+    if not e then return end
+    if e.action then TreeAI.safecall(e.action.fn) else TreeAI:SelectTab(e.id) end
+  end)
+  b:SetScript("OnEnter", function(self)
+    local e = self.e
+    if not e then return end
+    if e.action then showTooltip(self, L[e.action.title], e.action.tip and { { L[e.action.tip], 0.8, 0.8, 0.8 } } or nil)
+    else showTooltip(self, tabTitle(e.id), { { L["Clic : ouvrir l'onglet"], 0.6, 0.6, 0.6 } }) end
+  end)
+  b:SetScript("OnLeave", hideTooltip)
+  menu.rows[i] = b
+  return b
+end
+local function fillMenu()
+  if not buildMenu() then return end
+  for i = #menuEntries, 1, -1 do menuEntries[i] = nil end
+  for _, r in ipairs(menu.rows) do r:Hide(); r.e = nil end
+  for _, t in ipairs(menu.seps) do t:Hide() end
+  local act = activeTab()
+  local entries = moreEntries()
+  -- largeur : le libellé le plus long (mesuré), au moins MENU_MIN_W
+  local probe = menuRow(1)
+  local w = MENU_MIN_W
+  for _, e in ipairs(entries) do
+    probe.text:SetText(e.action and L[e.action.title] or tabTitle(e.id))
+    w = max(w, floor((probe.text:GetStringWidth() or 0) + 14 + 6 + 6 + 12 + 6))
+  end
+  w = min(w, 320)
+  local y, n, seps, prevAction = -4, 0, 0, false
+  for _, e in ipairs(entries) do
+    if e.action and not prevAction and n > 0 then   -- séparateur entre onglets et actions
+      seps = seps + 1
+      local t = menu.seps[seps]
+      if not t then
+        t = menu:CreateTexture(nil, "ARTWORK")
+        t:SetTexture("Interface\\Buttons\\WHITE8X8")
+        if t.SetVertexColor then t:SetVertexColor(0.78, 0.62, 0.28, 0.35) end
+        t:SetHeight(1)
+        menu.seps[seps] = t
+      end
+      t:ClearAllPoints()
+      t:SetPoint("TOPLEFT", menu, "TOPLEFT", 8, y - 3)
+      t:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -8, y - 3)
+      t:Show()
+      menuEntries[#menuEntries + 1] = { kind = "sep", y = y - 3, h = 1 }
+      y = y - 7
+    end
+    prevAction = e.action and true or false
+    n = n + 1
+    local b = menuRow(n)
+    b.e = e
+    b:ClearAllPoints()
+    b:SetPoint("TOPLEFT", menu, "TOPLEFT", 3, y)
+    b:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -3, y)
+    b:SetWidth(w - 6)
+    local label = e.action and L[e.action.title] or tabTitle(e.id)
+    b.text:SetText(label)
+    b.icon:SetTexture(e.action and e.action.icon or TAB_ICONS[e.id] or TAB_ICONS.info)
+    if e.action then b.text:SetTextColor(0.6, 0.85, 1); b.sel:Hide()
+    else
+      local list = TreeAI:GetTabLines(e.id)
+      local urgent = false
+      for _, l in ipairs(list) do if l.prio >= 3 then urgent = true break end end
+      if e.id == act then b.text:SetTextColor(1, 1, 1); b.sel:Show()
+      elseif urgent then b.text:SetTextColor(1, 0.35, 0.3); b.sel:Hide()
+      elseif #list == 0 then b.text:SetTextColor(0.55, 0.55, 0.55); b.sel:Hide()
+      else b.text:SetTextColor(1, 0.82, 0); b.sel:Hide() end
+    end
+    b:Show()
+    menuEntries[#menuEntries + 1] = { kind = e.action and "action" or "tab", id = e.id, y = y, h = MENU_ROW,
+      w = w - 6, text = label, textW = b.text:GetStringWidth() or 0, textMax = w - 6 - 14 - 6 - 6 - 6 }
+    y = y - MENU_ROW
+  end
+  menu:SetSize(w, -y + 4)
+  local mb = tabButtons[MORE]
+  menu:ClearAllPoints()
+  if mb then menu:SetPoint("TOPRIGHT", mb, "BOTTOMRIGHT", 0, -2)
+  else menu:SetPoint("TOP", _G.UIParent, "TOP", 0, -200) end
+  menu:SetScale((acc() and acc().scale) or 1)
+end
+TreeAI._FillMoreMenu = fillMenu
+function TreeAI:GetMoreMenu() return menu, menuEntries end
 
 function TreeAI:GetTabLayout() return tabRects end
 function TreeAI:ToggleMoreMenu(v)
@@ -417,6 +558,12 @@ function TreeAI:ToggleMoreMenu(v)
   moreOpen = v and true or false
   if moreOpen and isMini() then local c = char(); if c then c.mini = false end end
   self:RefreshPanel()
+  if moreOpen and panel and panel:IsShown() then
+    fillMenu()
+    if menu then menu:Show() end
+  else
+    closeMenu()
+  end
   return moreOpen
 end
 function TreeAI:IsMoreMenuOpen() return moreOpen end
@@ -519,7 +666,7 @@ function TreeAI:CreatePanel()
   if panel.thumb.SetVertexColor then panel.thumb:SetVertexColor(0.2, 0.8, 0.4, 0.6) end
   panel.thumb:SetWidth(2)
   panel.more = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  panel.more:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -PAD, 3)
+  panel.more:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -PAD - 14, 3)   -- place pour la poignée de largeur
 
   -- expire old suggestions even without new events
   TreeAI:NewTicker(1, function() if panel:IsShown() then TreeAI:RequestRefresh() end end)
@@ -544,6 +691,63 @@ local function renderMini()
   end
 end
 
+-- barre de commandes d'un onglet : vrais petits boutons (largeur mesurée, 2 rangées max), infobulle = celle
+-- de la ligne, clic = son onClick. Renvoie la hauteur prise (0 sans commande).
+local ctrlButtons = {}
+local ctrlRects = {}
+local CTRL_H = 18
+local function ctrlButton(i)
+  local b = ctrlButtons[i]
+  if b then return b end
+  local template = _G.BackdropTemplateMixin and "BackdropTemplate" or nil
+  b = _G.CreateFrame("Button", nil, panel, template)
+  b:SetHeight(CTRL_H)
+  b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  if b.SetBackdrop then
+    b:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    b:SetBackdropColor(0.14, 0.15, 0.19, 0.95)
+    b:SetBackdropBorderColor(0.78, 0.62, 0.28, 0.45)
+  end
+  b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.text:SetPoint("CENTER", b, "CENTER", 0, 0)
+  if b.text.SetWordWrap then b.text:SetWordWrap(false) end
+  b.hl = b:CreateTexture(nil, "HIGHLIGHT")
+  b.hl:SetAllPoints(b)
+  b.hl:SetTexture("Interface\\Buttons\\WHITE8X8")
+  if b.hl.SetVertexColor then b.hl:SetVertexColor(1, 1, 1, 0.12) end
+  b:SetScript("OnClick", function(self, button) runEntry(self.entry, button) end)
+  b:SetScript("OnEnter", function(self) if self.entry then entryTooltip(self, self.entry) end end)
+  b:SetScript("OnLeave", hideTooltip)
+  ctrlButtons[i] = b
+  return b
+end
+local function layoutControls(list, width, top)
+  for i = #ctrlRects, 1, -1 do ctrlRects[i] = nil end
+  for _, b in ipairs(ctrlButtons) do b:Hide(); b.entry = nil end
+  if #list == 0 then return 0 end
+  local inner = width - 2 * PAD
+  local x, row = PAD, 0
+  for i, e in ipairs(list) do
+    if row > 1 then break end
+    local b = ctrlButton(i)
+    b.entry = e
+    local label = e.label or e.text
+    local w = min(inner, floor((function() b.text:SetText(label); return b.text:GetStringWidth() or 40 end)() + 14))
+    if x > PAD and x + w > PAD + inner then x, row = PAD, row + 1 end
+    if row > 1 then b:Hide(); break end
+    fitLabel(b.text, label, nil, w - 8)
+    b:SetWidth(w)
+    b:ClearAllPoints()
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -top - row * (CTRL_H + 2))
+    b:Show()
+    ctrlRects[#ctrlRects + 1] = { id = e.id, x = x, w = w, row = row, text = b.text:GetText(),
+      textW = b.text:GetStringWidth() or 0, textMax = w - 8 }
+    x = x + w + 3
+  end
+  return (row + 1) * (CTRL_H + 2) + 2
+end
+function TreeAI:GetTabControls() return ctrlRects end
+
 function TreeAI:RefreshPanel()
   if not panel then return end
   local s = acc()
@@ -565,7 +769,8 @@ function TreeAI:RefreshPanel()
     renderMini()
     panel.miniText:Show()
     for _, b in pairs(tabButtons) do b:Hide() end
-    for _, b in pairs(actionButtons) do b:Hide() end
+    closeMenu()
+    for _, b in ipairs(ctrlButtons) do b:Hide() end
     for i = 1, MAX_ROWS do rows[i].entry = nil; rows[i]:Hide() end
     panel.empty:Hide(); panel.thumb:Hide(); panel.more:Hide()
     panel:SetHeight(HEADER_H + 6)
@@ -575,8 +780,7 @@ function TreeAI:RefreshPanel()
   panel.miniEntry = nil
 
   -- en instance, l'onglet « Donjon » apparaît : le sous-menu « Plus » s'ouvre une fois pour le montrer
-  if self.tabs.dungeon and not panel.dungeonSeen then panel.dungeonSeen, moreOpen = true, true
-  elseif not self.tabs.dungeon then panel.dungeonSeen = nil end
+  -- (en instance, « Plus » passe en rouge pour signaler l'onglet « Donjon » ; plus d'ouverture forcée)
   buildTabs()
   local tabsH = layoutTabs(width)
   local tab = activeTab()
@@ -598,11 +802,17 @@ function TreeAI:RefreshPanel()
     if isMoreTab(tab) or moreOpen then mb.text:SetTextColor(1, 1, 1); mb.line:Show()
     elseif secUrgent or self.tabs.dungeon then mb.text:SetTextColor(1, 0.35, 0.3); mb.line:Hide()
     else mb.text:SetTextColor(1, 0.82, 0); mb.line:Hide() end
-    mb.icon:SetTexture(moreOpen and ICONS.mini or TAB_ICONS[MORE])
   end
-  for _, b in pairs(actionButtons) do b.text:SetTextColor(0.6, 0.85, 1) end
+  if moreOpen and menu and menu:IsShown() then fillMenu() end
 
-  current = self:GetTabLines(tab)
+  -- commandes de l'onglet (lignes control = true) : une barre de petits boutons sous les onglets
+  local all = self:GetTabLines(tab)
+  current = {}
+  local ctrls = {}
+  for _, e in ipairs(all) do
+    if e.control then ctrls[#ctrls + 1] = e else current[#current + 1] = e end
+  end
+  tabsH = tabsH + layoutControls(ctrls, width, HEADER_H + tabsH + 2)
   local maxRows = min(MAX_ROWS, max(3, (s and s.maxLines) or 8))
   local n = #current
   local first = scroll[tab] or 1
@@ -697,7 +907,7 @@ function TreeAI:SelectTab(id)
   if not self.tabs[id] then return false end
   local c = char()
   if c then c.tab = id; c.mini = false end
-  if IS_PRIMARY[id] then moreOpen = false end
+  closeMenu()
   if not panel then self:CreatePanel() end
   if panel and not panel:IsShown() then self:ShowPanel() end
   self:RefreshPanel()
@@ -722,6 +932,7 @@ function TreeAI:ShowPanel()
 end
 
 function TreeAI:HidePanel()
+  closeMenu()
   if panel then panel:Hide() end
   local s = acc(); if s then s.shown = false end
 end
@@ -864,8 +1075,11 @@ function TreeAI:ShowAlert(e, force)
   alert:SetHeight(10 + 13 * #alertItems)
   self:ApplyAlertSettings()
   alert.left = (s and s.duration) or 8
+  local wasShown = alert:IsShown()
   alert:SetAlpha((s and s.alpha) or 0.95)
   alert:Show()
+  -- fondu d'entrée (une seule fois à l'ouverture, pas à chaque nouvelle ligne)
+  if not wasShown and self.Theme and self.Theme.Animate then self.Theme:Animate(alert, 0, (s and s.alpha) or 0.95, 0.2) end
 end
 
 function TreeAI:GetAlert() return alert, alertItems end
@@ -1140,6 +1354,57 @@ local function bestBy(g, w, h, score)
   return bl, bb, best
 end
 
+
+-- UI2 : profils d'écran (16:9 / 21:9 / 4:3), zones réservées au jeu (centre + personnage), dispositions
+--- "16:9" | "21:9" | "4:3" selon le rapport largeur / hauteur d'UIParent.
+function TreeAI.ScreenProfile(W, H)
+  local r = (tonumber(W) or 1920) / math.max(1, tonumber(H) or 1080)
+  if r >= 2.0 then return "21:9" elseif r <= 1.45 then return "4:3" end
+  return "16:9"
+end
+--- Retrait des colonnes de HUD : en 21:9 on vise les bords de la bande centrale 16:9 (pas l'extrême bord
+--- qu'on ne regarde jamais), ailleurs le bord de l'écran.
+function TreeAI.ScreenInset(W, H)
+  if TreeAI.ScreenProfile(W, H) ~= "21:9" then return 0 end
+  return math.max(0, math.floor((W - H * 16 / 9) / 2 * 0.75))
+end
+--- Rectangles gardés libres pour le jeu : le centre de l'écran et la zone du personnage (juste dessous).
+function TreeAI.ReservedRects(W, H)
+  local inset = TreeAI.ScreenInset(W, H)
+  local iw = W - 2 * inset
+  return {
+    { name = "centre", l = inset + iw * 0.34, b = H * 0.38, w = iw * 0.32, h = H * 0.32 },
+    { name = "personnage", l = W / 2 - 110, b = H * 0.30, w = 220, h = H * 0.30 },
+  }
+end
+-- dispositions en un clic : tailles + préférence de placement du panneau
+TreeAI.DISPOSITIONS = {
+  compacte = { label = "Compacte", width = 300, lines = 4, scale = 0.9, radar = 140, alertScale = 0.9,
+               widths = { 300 }, lines_ = { 4, 3 } },
+  confort  = { label = "Confort", width = 340, lines = 8, scale = 1, radar = 170, alertScale = 1,
+               widths = { 360, 340, 320, 300 }, lines_ = { 8, 6, 5, 4 } },
+  coins    = { label = "Coins", width = 320, lines = 6, scale = 1, radar = 160, alertScale = 1,
+               widths = { 320, 300 }, lines_ = { 6, 5, 4 } },
+}
+TreeAI.DISPOSITION_ORDER = { "compacte", "confort", "coins" }
+local function dispo()
+  local s = TreeAI.settings
+  local k = s and s.layoutStyle
+  return TreeAI.DISPOSITIONS[k or ""] and k or "confort"
+end
+TreeAI._Dispo = dispo
+-- zone (3×3) d'un rectangle : apprise quand le joueur dépose un cadre
+function TreeAI.ZoneOf(l, b, w, h, W, H)
+  local cx, cy = l + w / 2, b + h / 2
+  local v = (cy > H * 2 / 3) and "TOP" or ((cy < H / 3) and "BOTTOM" or "")
+  local hz = (cx < W / 3) and "LEFT" or ((cx > W * 2 / 3) and "RIGHT" or "")
+  local z = v .. hz
+  return z ~= "" and z or "CENTER"
+end
+local ZONE_CENTER = { TOPLEFT = { 0, 1 }, TOP = { 0.5, 1 }, TOPRIGHT = { 1, 1 }, LEFT = { 0, 0.5 }, CENTER = { 0.5, 0.5 },
+  RIGHT = { 1, 0.5 }, BOTTOMLEFT = { 0, 0 }, BOTTOM = { 0.5, 0 }, BOTTOMRIGHT = { 1, 0 } }
+TreeAI.ZONE_CENTER = ZONE_CENTER
+
 local function gapBetween(a, l, b, w, h)
   local dx = math.max(a.l - (l + w), l - (a.l + a.w), 0)
   local dy = math.max(a.b - (b + h), b - (a.b + a.h), 0)
@@ -1155,10 +1420,15 @@ function TreeAI:AutoLayout(force)
   end
   local st = layoutState()
   if force then st.manual = {} end
+  if self.ResetReflow then self:ResetReflow() end   -- les nouvelles places deviennent « chez lui »
   local scan = self:ScanScreen()
   local W, H = scan.W, scan.H
   local g = newGrid(scan)
+  -- le centre de l'écran et le personnage restent au jeu (UI2) ; en 21:9 la bande centrale 16:9
+  for _, r in ipairs(TreeAI.ReservedRects(W, H)) do g.mark(r, 0) end
   local S = self.settings or {}
+  local D = TreeAI.DISPOSITIONS[dispo()]
+  local inset = TreeAI.ScreenInset(W, H)
   local placed = {}
   local named = scan.named
   local function keep(role) return st.manual[role] and not force end
@@ -1238,10 +1508,22 @@ function TreeAI:AutoLayout(force)
     local fsz, gap = look()
     local rowH = (fsz + 4) * 1.4 + gap
     local function heightFor(lines) return (HEADER_H + TAB_ROW_H + 2 + 12 + rowH * lines) * k end
+    local style = dispo()
     local function score(l, b, w, h)
       local cx, cy = l + w / 2, b + h / 2
-      local sc = math.min(cx, W - cx)                       -- près d'un bord gauche / droit
-      sc = sc + math.abs(cy - H * 0.5) * 0.35               -- à hauteur des yeux de préférence
+      local sc
+      if style == "coins" then                              -- le coin libre le plus proche
+        local dx = math.min(math.abs(l - inset), math.abs(W - inset - (l + w)))
+        local dy = math.min(b, H - (b + h))
+        sc = dx + dy
+      elseif style == "compacte" then                       -- groupé avec la minimap / le radar (haut droite)
+        local tx = mm and (mm.l + mm.w / 2) or (W - inset - w / 2)
+        local ty = mm and (mm.b - h / 2 - 200) or (H * 0.6)
+        sc = math.sqrt((cx - tx) ^ 2 + (cy - ty) ^ 2) * 0.6
+      else                                                  -- confort : colonne du bord, à hauteur des yeux
+        sc = math.min(math.abs(l - inset), math.abs(W - inset - (l + w))) + math.min(cx, W - cx) * 0.15
+        sc = sc + math.abs(cy - H * 0.5) * 0.35
+      end
       for _, p in ipairs(party) do
         local dx, dy = gapBetween(p, l, b, w, h)
         if dx < 160 and dy < 160 then sc = sc + 700 - dx - dy end
@@ -1249,15 +1531,24 @@ function TreeAI:AutoLayout(force)
       return sc
     end
     local bestL, bestB, bestScore, bw, bl
-    for wi, pw in ipairs(PANEL_W) do
-      for li, lines in ipairs(PANEL_L) do
-        local w, h = pw * k, heightFor(lines)
-        local l, b, d = bestBy(g, w, h, function(x, y) return score(x, y, w, h) end)
-        if l then
-          local sc = d + (wi - 1) * 20 + (li - 1) * 45     -- garder la taille si possible
-          if not bestScore or sc < bestScore then bestL, bestB, bestScore, bw, bl = l, b, sc, pw, lines end
+    local function search(grid, widths, linesList)
+      for wi, pw in ipairs(widths) do
+        for li, lines in ipairs(linesList) do
+          local w, h = pw * k, heightFor(lines)
+          local l, b, d = bestBy(grid, w, h, function(x, y) return score(x, y, w, h) end)
+          if l then
+            local sc = d + (wi - 1) * 20 + (li - 1) * 45     -- garder la taille si possible
+            if not bestScore or sc < bestScore then bestL, bestB, bestScore, bw, bl = l, b, sc, pw, lines end
+          end
         end
       end
+    end
+    search(g, D.widths or PANEL_W, D.lines_ or PANEL_L)
+    if not bestL then
+      -- petit écran : sans la réserve du centre (nos cadres déjà placés restent évités)
+      local g2 = newGrid(scan)
+      for _, r in pairs(placed) do g2.mark(r, 6) end
+      search(g2, PANEL_W, PANEL_L)
     end
     if bestL then
       local w, h = bw * k, heightFor(bl)
@@ -1442,6 +1733,10 @@ function TreeAI:CommitMove(id, l, b, scale)
   local f = m.frame
   local W, H = screenSize()
   local _, _, w, h = ourRect(f)
+  if not w then
+    local k0 = scale or call(f, "GetScale") or 1
+    w, h = (call(f, "GetWidth") or 100) * k0, (call(f, "GetHeight") or 20) * k0
+  end
   w, h = w or 100, h or 20
   local others = {}
   for _, oid in ipairs(moverOrder) do
@@ -1452,12 +1747,30 @@ function TreeAI:CommitMove(id, l, b, scale)
     end
   end
   l, b = TreeAI.SnapRect(l, b, w, h, W, H, others)
+  -- déposé SUR un cadre de Blizzard / d'un addon (plus d'un quart caché) : glisse vers la place libre la plus
+  -- proche (≤ 300 px) ; sinon la place du joueur est gardée telle quelle
+  local S = self.settings
+  if S and S.snapFree ~= false and TreeAI._LightRects then
+    local area = 0
+    for _, r in ipairs(TreeAI._LightRects(W, H)) do
+      local ox = math.min(r.l + r.w, l + w) - math.max(r.l, l)
+      local oy = math.min(r.b + r.h, b + h) - math.max(r.b, b)
+      if ox > 0 and oy > 0 then area = area + ox * oy end
+    end
+    if area > 0.25 * w * h then
+      local g = newGrid(self:ScanScreen())
+      for _, o in ipairs(others) do g.mark(o, 2) end
+      local nl, nb = bestSpot(g, w, h, l + w / 2, b + h / 2)
+      if nl and math.abs(nl - l) + math.abs(nb - b) <= 300 then l, b = nl, nb end
+    end
+  end
   local k = scale or call(f, "GetScale") or 1
   local point, x, y = anchorFor(l, b, w, h, W, H, k, id == "panel")
   placeFrame(f, point, x, y, scale)
-  local rec = { point = point, x = x, y = y, scale = k, l = l, b = b }
+  local rec = { point = point, x = x, y = y, scale = k, l = l, b = b, zone = TreeAI.ZoneOf(l, b, w, h, W, H) }
   moverDB()[id] = rec
   layoutState().manual[id] = true
+  if self._AcceptOverlaps then self:_AcceptOverlaps(id, l, b, w, h) end
   if m.opts.onMoved then TreeAI.safecall(m.opts.onMoved, point, x, y, k) end
   return rec
 end
@@ -1619,6 +1932,11 @@ local function buildEditBar()
     TreeAI:Print(L["Glisse un cadre (aimant : grille 10 px, bords, autres cadres), molette = taille, clic droit = place auto."])
   end)
   editBar.done = barButton(editBar, L["Fini"], 112 + 366, function() TreeAI:SetEditMode(false) end)
+  -- Échap = « Fini » (UISpecialFrames cache la barre -> on quitte le mode édition)
+  if TreeAI.Theme and TreeAI.Theme.Window then
+    TreeAI.Theme:Window(editBar, { id = "editbar", header = false })
+  end
+  editBar:SetScript("OnHide", function() if editing then TreeAI:SetEditMode(false) end end)
   function editBar.refresh()
     if editBar.lock then editBar.lock:SetText(TreeAI:FramesLocked() and L["Déverrouiller tout"] or L["Verrouiller tout"]) end
   end
@@ -1716,6 +2034,8 @@ function TreeAI:ResetInterface()
   end
   local db = moverDB()
   for k in pairs(db) do db[k] = nil end
+  if self.ResetReflow then self:ResetReflow() end
+  for k in pairs(self._accepted or {}) do self._accepted[k] = nil end
   local st = layoutState()
   st.manual = {}
   local s, c = acc(), char()
@@ -1745,3 +2065,213 @@ end
 
 TreeAI:RegisterSlash("reinit", function() TreeAI:ResetInterface() end,
   "réinitialiser l'interface TreeAI (places, tailles, onglets par défaut)")
+
+---------------------------------------------------------------------------
+-- UI2 : placement vivant. Quand un cadre de Blizzard / d'un addon apparaît, grandit ou bouge (le suivi de
+-- Questie s'allonge, un cadre de groupe arrive…) et tombe sur un cadre TreeAI, celui-ci glisse vers la place
+-- libre la plus proche ; il revient chez lui dès que la place se libère. Les chevauchements acceptés par le
+-- joueur (il a déposé le cadre là) restent acceptés tant que l'obstacle ne change pas. Lecture seule des
+-- cadres des autres, hors combat, 1 passage léger / 2 s (cadres connus seulement, pas d'EnumerateFrames).
+---------------------------------------------------------------------------
+do
+  local displaced = {}       -- id -> { point, rp, x, y, l, b } : la vraie place (« chez lui »)
+  local accepted = {}        -- id -> { [nom] = signature } : chevauchements voulus par le joueur
+  local lastSig
+  TreeAI._displaced, TreeAI._accepted = displaced, accepted
+
+  -- 1er point d'ancrage (5 valeurs : `call` n'en rend que 4)
+  local function pointOf(f)
+    if type(f) ~= "table" or type(f.GetPoint) ~= "function" then return nil end
+    local ok, pt, rel, rp, x, y = pcall(f.GetPoint, f, 1)
+    if ok then return pt, rel, rp, x, y end
+  end
+  -- rectangle d'un cadre à nous (GetRect, sinon depuis son point d'ancrage sur UIParent)
+  local function frameRect(f, W, H)
+    local l, b, w, h = ourRect(f)
+    if l and w and w > 0 then return l, b, w, h end
+    local k = call(f, "GetScale") or 1
+    w, h = (call(f, "GetWidth") or 0) * k, (call(f, "GetHeight") or 0) * k
+    if w <= 0 or h <= 0 then return nil end
+    local pt, rel, rp, x, y = pointOf(f)
+    if not pt or (rel and rel ~= _G.UIParent) then return nil end
+    rp = rp or pt
+    x, y = (x or 0) * k, (y or 0) * k
+    local ax = (rp:find("LEFT") and 0) or (rp:find("RIGHT") and W) or W / 2
+    local ay = (rp:find("TOP") and H) or (rp:find("BOTTOM") and 0) or H / 2
+    local ox = (pt:find("LEFT") and 0) or (pt:find("RIGHT") and w) or w / 2
+    local oy = (pt:find("TOP") and h) or (pt:find("BOTTOM") and 0) or h / 2
+    return ax + x - ox, ay + y - oy, w, h
+  end
+  TreeAI._FrameRect = frameRect
+
+  local function rsig(r) return ("%d,%d,%d,%d"):format(math.floor(r.l / 16), math.floor(r.b / 16), math.floor(r.w / 16), math.floor(r.h / 16)) end
+  local function overlap(a, l, b, w, h)
+    local ox = math.min(a.l + a.w, l + w) - math.max(a.l, l)
+    local oy = math.min(a.b + a.h, b + h) - math.max(a.b, b)
+    if ox <= 4 or oy <= 4 then return 0 end
+    return ox * oy
+  end
+
+  -- passage léger : cadres connus par leur nom (suivis, groupe, compteurs, minimap, barres…)
+  local function lightRects(W, H)
+    local out = {}
+    for _, n in ipairs(SCAN_NAMES) do
+      local f = _G[n]
+      if type(f) == "table" then
+        local r = rectOf(f, W, H)
+        if r then r.name = r.name or n; out[#out + 1] = r end
+      end
+    end
+    return out
+  end
+  TreeAI._LightRects = lightRects
+
+  --- Obstacles (nouveaux ou changés) sur le cadre `id` placé en l, b, w, h.
+  local function blockers(id, rects, l, b, w, h)
+    local hits, area = {}, 0
+    local acc = accepted[id] or {}
+    for _, r in ipairs(rects) do
+      local a = overlap(r, l, b, w, h)
+      if a > 0 and acc[r.name or "?"] ~= rsig(r) then hits[#hits + 1] = r; area = area + a end
+    end
+    return hits, area
+  end
+
+  --- Le joueur dépose un cadre : ce qu'il recouvre déjà est accepté (sa décision), la zone est apprise.
+  function TreeAI:_AcceptOverlaps(id, l, b, w, h)
+    local W, H = screenSize()
+    local acc = {}
+    for _, r in ipairs(lightRects(W, H)) do
+      if overlap(r, l, b, w, h) > 0 then acc[r.name or "?"] = rsig(r) end
+    end
+    accepted[id] = acc
+    displaced[id] = nil
+  end
+
+  local function shownMovers(skip, W, H)
+    local out = {}
+    for _, oid in ipairs(moverOrder) do
+      local o = movables[oid]
+      if oid ~= skip and o and o.frame and call(o.frame, "IsShown") then
+        local l, b, w, h = frameRect(o.frame, W, H)
+        if l then out[#out + 1] = { id = oid, l = l, b = b, w = w, h = h } end
+      end
+    end
+    return out
+  end
+
+  --- Un passage : renvoie { id = { l, b } | { home = true } } des cadres déplacés (nil = rien à faire).
+  function TreeAI:Reflow(force)
+    local S = self.settings
+    if not S or S.reflow == false or editing then return nil end
+    if self:InCombat() then return nil end
+    local W, H = screenSize()
+    local rects = lightRects(W, H)
+    local parts = {}
+    for _, r in ipairs(rects) do parts[#parts + 1] = tostring(r.name) .. "=" .. rsig(r) end
+    for _, o in ipairs(shownMovers(nil, W, H)) do parts[#parts + 1] = "@" .. o.id .. "=" .. rsig(o) end
+    table.sort(parts)
+    local sig = table.concat(parts, ";")
+    if sig == lastSig and not force then return nil end
+    lastSig = sig
+    local moved, grid = {}, nil
+    for _, id in ipairs(moverOrder) do
+      local m = movables[id]
+      local f = m and m.frame
+      if id ~= "alert" and f and call(f, "IsShown") and not (m.opts and m.opts.noReflow) then
+        local l, b, w, h = frameRect(f, W, H)
+        if l then
+          local home = displaced[id]
+          local hl, hb = l, b
+          if home then hl, hb = home.l, home.b end
+          local hits = blockers(id, rects, hl, hb, w, h)
+          if #hits > 0 then
+            if not grid then
+              grid = newGrid(self:ScanScreen())
+              for _, r in ipairs(TreeAI.ReservedRects(W, H)) do grid.mark(r, 0) end
+            end
+            -- nos autres cadres visibles comptent aussi (on ne glisse pas sur un voisin)
+            local g = grid
+            for _, o in ipairs(shownMovers(id, W, H)) do g.mark(o, 4) end
+            local nl, nb = bestSpot(g, w, h, hl + w / 2, hb + h / 2)
+            if nl and (math.abs(nl - l) > 2 or math.abs(nb - b) > 2) then
+              if not home then
+                local pt, _, rp, x, y = pointOf(f)
+                displaced[id] = { point = pt or "CENTER", rp = rp or pt or "CENTER", x = x or 0, y = y or 0, l = l, b = b }
+              end
+              local k = call(f, "GetScale") or 1
+              local pt, x, y = anchorFor(nl, nb, w, h, W, H, k, id == "panel")
+              placeFrame(f, pt, x, y)
+              moved[id] = { l = nl, b = nb, w = w, h = h }
+            end
+            grid = nil   -- les marques de ce cadre ne doivent pas gêner le suivant
+          elseif home then
+            call(f, "ClearAllPoints")
+            call(f, "SetPoint", home.point, _G.UIParent, home.rp, home.x, home.y)
+            displaced[id] = nil
+            moved[id] = { home = true, l = home.l, b = home.b, w = w, h = h }
+          end
+        end
+      end
+    end
+    if not next(moved) then return nil end
+    self:Fire("LAYOUT_REFLOW", moved)
+    return moved
+  end
+  function TreeAI:IsDisplaced(id) return displaced[id] ~= nil end
+  function TreeAI:ResetReflow() for k in pairs(displaced) do displaced[k] = nil end; lastSig = nil end
+
+  local owner = {}
+  TreeAI:On("READY", owner, function()
+    TreeAI:NewTicker(2, function()
+      local S = TreeAI.settings
+      if S and S.reflow ~= false and not TreeAI:InCombat() then TreeAI.safecall(TreeAI.Reflow, TreeAI) end
+    end)
+  end)
+end
+
+--- Disposition en un clic : "compacte" | "confort" | "coins". Tailles + placement auto refait (hors combat).
+function TreeAI:ApplyDisposition(name)
+  local D = self.DISPOSITIONS[name or ""]
+  if not D then return false end
+  if self:InCombat() then
+    self:RunOutOfCombat("dispo", function() self:ApplyDisposition(name) end)
+    self:Print(L["Disposition après le combat."])
+    return false
+  end
+  local S = self.settings
+  if not S then return false end
+  S.layoutStyle = name
+  local P = S.panel
+  if P then P.width, P.maxLines, P.scale = D.width, D.lines, D.scale end
+  if S.alert then S.alert.scale = D.alertScale end
+  local R = self.modules and self.modules.Radar
+  if R and R.db then R.db.size = D.radar end
+  local db = moverDB()
+  for k in pairs(db) do db[k] = nil end
+  if self.ResetReflow then self:ResetReflow() end
+  for k in pairs(self._accepted or {}) do self._accepted[k] = nil end
+  for _, id in ipairs(moverOrder) do
+    local m = movables[id]
+    if m and m.opts.onReset then self.safecall(m.opts.onReset) end
+  end
+  if panel then applyPosition() end
+  local placed = self:AutoLayout(true)
+  if panel then self:RefreshPanel() end
+  self:Fire("DISPOSITION", name)
+  return placed and true or false, placed
+end
+function TreeAI:GetDisposition() return self._Dispo() end
+
+TreeAI:RegisterSlash("disposition", function(rest)
+  rest = tostring(rest or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+  local map = { compact = "compacte", compacte = "compacte", confort = "confort", coins = "coins", coin = "coins" }
+  local n = map[rest]
+  if not n then
+    TreeAI:Print(L["Disposition"] .. " : " .. L[TreeAI.DISPOSITIONS[TreeAI:GetDisposition()].label]
+      .. "  (/tai disposition compacte|confort|coins)")
+    return
+  end
+  TreeAI:ApplyDisposition(n)
+  TreeAI:Print(L["Disposition"] .. " : " .. L[TreeAI.DISPOSITIONS[n].label])
+end, "disposition des cadres en un clic : compacte, confort ou coins")

@@ -620,6 +620,7 @@ function M.Install(flavor)
   G.ITEM_QUALITY_COLORS = {}
   for q = 0, 5 do G.ITEM_QUALITY_COLORS[q] = { r = 1, g = 1, b = 1, hex = "|cffffffff" } end
   G.SOUNDKIT = setmetatable({}, { __index = function(_, k) return 1 end })
+  G.UISpecialFrames = {}   -- noms des cadres fermés par Échap (FrameXML)
   G.STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
   G.CreateColor = function(r, g, b, a)
     return { r = r, g = g, b = b, a = a, GetRGB = function(c) return c.r, c.g, c.b end,

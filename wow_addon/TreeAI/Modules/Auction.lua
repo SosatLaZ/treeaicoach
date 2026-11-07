@@ -738,7 +738,10 @@ function M.FindDeals(items, j)
   M.Plan()
   local d = M.deals[1]
   if d and cfg("tips", true) and M.Suggest then
-    M:Suggest("deals", ("HV : %d affaire(s), meilleure %s +%s — /tai hv"):format(#M.deals, itemName(d.id), money(d.profit)), 2, { ttl = 300 })
+    local fresh = d.id ~= M._dealSound   -- son « bonne affaire » seulement pour une nouvelle meilleure affaire
+    M._dealSound = d.id
+    M:Suggest("deals", ("HV : %d affaire(s), meilleure %s +%s — /tai hv"):format(#M.deals, itemName(d.id), money(d.profit)), 2,
+      { ttl = 300, sound = fresh or nil, soundKind = "ah" })
   end
   if T and T.SetTabLines then  -- « HV » tab of the panel: best deals, click = deal window (buy there, 1 click = 1 action)
     local lines = {}
@@ -1697,6 +1700,7 @@ function M.CreateWindow()
   if T.Theme then T.Theme:Skin(f, "window"); T.Theme:Font(title, "M", "gold") end  -- thème commun
   local close = _G.CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 0, 0)
+  if T.Theme and T.Theme.Window then T.Theme:Window(f, { id = "auction", header = false }) end  -- Échap, fondu, verre
   local tabs = { { "deals", "Affaires" }, { "sell", "Vendre" }, { "owned", "Mes ventes" }, { "bilan", "Bilan" } }
   for i, tb in ipairs(tabs) do
     local b = mkButton(f, 86, 20, tb[2])

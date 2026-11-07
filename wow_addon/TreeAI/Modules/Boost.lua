@@ -130,7 +130,7 @@ local function scanUnit(unit)
   markGUID = guid
   local label = (cls == "rareelite") and "Rare élite" or (cls == "worldboss" and "Boss" or "Rare")
   M:Suggest("rare", label .. " : " .. name .. lv .. " à proximité ! (clic : crâne)", 2,
-    { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, onClick = markRare })
+    { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, soundKind = "rare", onClick = markRare })
 end
 
 function M:NAME_PLATE_UNIT_ADDED(_, unit) scanUnit(unit) end

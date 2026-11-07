@@ -694,9 +694,13 @@ function M.Lines(plan)
   local lines = {}
   local c = plan.ctx
   local function add(text, prio, tip, click) lines[#lines + 1] = { text = text, prio = prio or 1, tooltip = tip, onClick = click } end
-  add(("↻ Recalculer · objets jusqu'au niv %d (clic ici) · horizon +%d (clic sur la ligne suivante)"):format(c.level + c.horizon, c.horizon),
+  -- commandes = vrais petits boutons dans la barre de l'onglet (control = true), pas des lignes de texte
+  add(("Recalculer (objets jusqu'au niv %d)"):format(c.level + c.horizon),
     1, { "Recalcule tout de suite (hors combat).", "Sinon : automatique à chaque changement d'équipement / de sac / de niveau." }, rescan)
-  add(("Horizon : niveau +%d — clic : +2 (0 à 10)"):format(c.horizon), 1, "Montre aussi les objets que tu pourras porter bientôt.", bumpHorizon)
+  lines[#lines].control, lines[#lines].label = true, "Recalculer"
+  add(("Horizon : niveau +%d"):format(c.horizon), 1,
+    { "Montre aussi les objets que tu pourras porter bientôt.", "Clic : +2 (0 à 10)." }, bumpHorizon)
+  lines[#lines].control, lines[#lines].label = true, ("Horizon +%d"):format(c.horizon)
   add("Priorité des stats : " .. priorityText(c), 1, { "Poids utilisés (points de score par point de stat) : module Boost.",
     "Spé détectée = arbre de talents le plus rempli." })
   local h = plan.hunter

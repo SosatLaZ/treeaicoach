@@ -456,7 +456,7 @@ TreeAIDB = {
   défaut, 4 coins au choix), seulement les conseils **prio 3**, 1–2 lignes, s'efface après `duration` s,
   clic = ouvre le panneau sur l'onglet concerné. `/tai alerte` pour tester.
 * Aucun conseil n'est écrit dans le chat (`settings.chat` = false, et `opts.chat` ne peut pas forcer) ;
-  `Print` = réponses aux commandes et erreurs. Son : prio 3 seulement (`settings.soundTips` pour plus).
+  `Print` = réponses aux commandes et erreurs. Sons : un par genre, voir « Sons, fenêtres, placement vivant ».
 * Taint : cadres simples enfants d'`UIParent`, aucun modèle sécurisé, aucun cadre Blizzard modifié.
 * Options : page principale (Aides PvP, Panneau, Encadré d'alerte, Sons et messages, Général) +
   **une page par module** (sous-catégories `Settings`, ou `.parent` en InterfaceOptions), case
@@ -469,6 +469,8 @@ TreeAI:RegisterTab(id, title, order)              -- ids de base : now, quests, 
 TreeAI:SetTabLines(id, lines, source?)            -- remplace le bloc `source` (défaut "main") de l'onglet
 --   lines = { {text=, prio=1..3, icon=?, onClick=?, tooltip=? (texte ou liste), pin=?}, ... }
 --   pin = true : la ligne concourt aussi pour « Maintenant ».
+--   control = true (+ label court, onClick obligatoire) : un vrai petit bouton dans la barre de l'onglet,
+--   pas une ligne (« Recalculer », « Horizon +3 »…) ; TreeAI:GetTabControls() = géométrie (tests).
 if TreeAI.SetTabLines then TreeAI:SetTabLines("group", lines, "Squad") else --[[ ancien chemin ]] end
 ```
 * « Maintenant » = top 5 (`settings.panel.nowMax`) des suggestions + lignes `pin`, par prio, sans doublon
@@ -539,7 +541,7 @@ Questie_, Details, Recount, CompactRaid/Party, PartyMemberFrame), suivis de quê
 gauche → encadré sous la minimap → boussole en haut au centre → panneau sur un bord (jamais le centre, loin des
 cadres de groupe, largeur ≥ 300). Replacement unique pour les joueurs existants (places manuelles gardées).
 `TreeAI:ResetInterface()` (bouton « Réinitialiser l'interface » des options, page **Apparence** et sous-menu
-« Plus », `/tai reinit`) remet tout par défaut. Panneau SIMPLE : 4 onglets (`now`, `quests`, `group`, « Plus »
+« Plus », `/tai reinit`) remet tout par défaut. Depuis UI2, « Plus » = **menu déroulant** (`TreeAIMoreMenu` sous l'onglet : onglets secondaires avec icône, séparateur, actions Macros / Déplacer / Tout / Réinitialiser ; fermé au clic ou Échap, `TreeAI:GetMoreMenu()`), l'onglet « Plus » affiche l'onglet secondaire actif. Panneau SIMPLE : 4 onglets (`now`, `quests`, `group`, « Plus »
 qui ouvre une 2e rangée : onglets secondaires + actions), libellés mesurés (`GetStringWidth`, court puis « … »),
 géométrie dans `TreeAI:GetTabLayout()` / `TreeAI:GetRowLayout()` (lignes sur 2 lignes). Onglet virtuel
 `talents` = bloc Talents d'« Infos ». Boussole : `hideDup` (une seule flèche si Blizzard / SPF / TomTom guide
@@ -559,6 +561,42 @@ TreeAI:RegisterMovable(frame, "radar", "Radar", {
 `ResetMovable(id)` ; barre *Verrouiller tout* (`SetFramesLocked`) / *Tout remettre auto* / *Fini*.
 `TreeAI:CommitMove(id, l, b, scale)` enregistre par personnage (`chars[key].movers[id]`) et marque le
 manuel prioritaire. Déjà inscrits : panneau, encadré d'alerte, boussole, suivi.
+
+## Sons, fenêtres, placement vivant (agent UI2)
+
+**Sons** (`Core.lua`) : `TreeAI:Sound(kind[, {preview=true}])` → `true` ou `false, raison` (`off` sons coupés ·
+`kind` genre coupé · `combat` en combat seul `danger` sonne · `gap` écart global `settings.sounds.gap` (2,5 s) ·
+`cooldown` même genre trop tôt · `unknown`). Genres `TreeAI.SOUND_KINDS` (ordre `SOUND_ORDER`), sons du jeu
+(clés `SOUNDKIT` essayées puis id de repli, tous distincts) : `danger` (alerte de raid), `alert` (important),
+`quest` (quête terminée / à rendre), `rare` (rare / élite), `group` (groupe / amis), `ah` (bonne affaire HV),
+`levelup` (carte de niveau, 4 s après la fanfare, hors combat), `reminder` (rappel discret, coupé par défaut).
+Réglages `settings.sounds = { channel = "Master"|"SFX"|"Ambience"|"Dialog", gap, kinds = { [genre] = bool } }`,
+`settings.sound` = interrupteur général. `TreeAI:PreviewSound(k)` (bouton « Écouter »), `SoundKindOn/SetSoundKind`,
+`SoundLog()`, `ResetSoundGate()`. `Suggest` : prio 3 → `danger` si `IsDanger` sinon `alert` ; prio < 3 avec
+`opts.sound = true` + `opts.soundKind` → ce genre (Boost rare = `rare`, Missions `SOUND_EVENTS` = `group`, Auction
+nouvelle meilleure affaire = `ah`), sans `soundKind` → `reminder` si `settings.soundTips`. Tracker : fin de quête =
+`T:Sound("quest")`. Page d'options **Sons** (genre on/off + Écouter, canal, écart) ; `/tai son [genre|options]`.
+
+**Fenêtres** (`Modules/Theme.lua`) : `Th:Window(frame, opts)` — en-tête commun (icône, titre sans débordement,
+réduire, fermer ; glisser = déplacer, double-clic = réduire), verre sombre arrondi (kind `window` = `glass`),
+survol, fondu d'ouverture (un seul `OnUpdate` partagé, coupé au repos ; `Th:Animate/FadeIn/FadeOut`),
+`resize = { minW, minH, maxW, maxH, width = "only", onResize }` (poignée, bornes, jamais > 90 % de l'écran,
+`Th:ClampSize`), état `settings.windows[id] = { w, h, collapsed }` (`Th:SetCollapsed`), **Échap** : nom `TreeAI…`
+ajouté à `UISpecialFrames` (cadre sans nom = relais `TreeAIEsc_<id>`) — jamais un cadre Blizzard. Appliqué à :
+assistant + aide (en-tête complet), barre du mode édition (Échap = Fini), À faire, HV, macros (Échap, fondu,
+verre ; leurs en-têtes gardés), panneau (verre, poignée de largeur 300–560, fondu ; **pas** d'Échap : c'est un HUD),
+encadré d'alerte (fondu d'entrée).
+
+**Placement** (`UI.lua`) : `TreeAI.ScreenProfile(W,H)` = `16:9` / `21:9` / `4:3` ; `ScreenInset` (21:9 : colonnes
+du HUD au bord de la bande centrale 16:9) ; `ReservedRects` (centre + personnage) jamais pris par le placement auto
+(repli sans réserve sur un très petit écran). Dispositions `TreeAI:ApplyDisposition("compacte"|"confort"|"coins")`
+(`settings.layoutStyle`, `DISPOSITIONS`, boutons page Apparence, `/tai disposition …`). **Reflow** :
+`TreeAI:Reflow(force)` toutes les 2 s hors combat (`settings.reflow`) — passage léger sur les cadres connus ; un
+cadre TreeAI recouvert par un cadre nouveau / qui a changé (suivi Questie qui grandit, groupe…) glisse vers la
+place libre la plus proche (`IsDisplaced(id)`), puis rentre chez lui quand c'est libre ; les chevauchements que le
+joueur a choisis (cadre déposé là) restent acceptés tant que l'obstacle ne change pas. `CommitMove` : déposé à plus
+d'un quart sur un autre cadre → place libre la plus proche (≤ 300 px, `settings.snapFree`), zone 3×3 apprise
+(`movers[id].zone`, `TreeAI.ZoneOf`).
 
 ## Slash
 

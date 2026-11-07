@@ -566,7 +566,9 @@ function M.CheckCompletions(list)
   end
   for id in pairs(prevDone) do if not seen[id] then prevDone[id] = nil end end
   primed = true
-  if #newly > 0 and cfg("sound") then
+  if #newly > 0 and cfg("sound") and type(T.Sound) == "function" then
+    T:Sound("quest")   -- son « quête terminée » de TreeAI (genre, canal, cooldown, jamais en combat)
+  elseif #newly > 0 and cfg("sound") then
     local SK = rawget(_G, "SOUNDKIT")
     local id = (type(SK) == "table" and SK.IG_QUEST_LIST_COMPLETE) or 878
     try(_G.PlaySound, id)

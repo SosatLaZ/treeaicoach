@@ -104,15 +104,29 @@ return function(M, ctx)
   local ids = {}
   for _, r in ipairs(rows[0]) do ids[#ids + 1] = r.id end
   check(table.concat(ids, ",") == "now,quests,group,__more", "ordre : " .. table.concat(ids, ","))
+  -- (UI2) « Plus » = menu déroulant propre sous l'onglet, plus de rangées de boutons dans le panneau
   T:ToggleMoreMenu(true)
-  local all = T:GetTabLayout()
-  rows = noOverlap(all, "sous-menu « Plus »")
-  local seen = {}
-  for _, r in ipairs(all) do seen[r.id] = r end
-  check(seen.hv and seen.info and seen["act:reset"] and rows[1], "« Plus » : HV, Infos… + « Réinitialiser l'interface »")
-  check(not seen.now or seen.now.row == 0, "onglets principaux pas répétés dans « Plus »")
+  check(#T:GetTabLayout() == 4, "« Plus » ouvert : toujours 4 onglets dans le panneau")
+  local menu, entries = T:GetMoreMenu()
+  check(menu and menu:IsShown(), "« Plus » : menu déroulant affiché")
+  local seen, lastY, okText = {}, 1, true
+  for _, r in ipairs(entries) do
+    seen[r.id or r.kind] = r
+    check(r.y < lastY, "menu : entrées l'une sous l'autre")
+    lastY = r.y
+    if r.textW and r.textW > r.textMax then okText = false end
+  end
+  check(okText, "menu : chaque libellé tient dans sa ligne")
+  check(seen.hv and seen.info and seen["act:reset"] and seen.sep, "« Plus » : HV, Infos… · séparateur · « Réinitialiser l'interface »")
+  check(not seen.now, "onglets principaux pas répétés dans « Plus »")
   T:SelectTab("hv")
-  check(T:GetActiveTab() == "hv" and #T:GetTabLayout() > 4, "onglet secondaire actif : sous-menu visible")
+  check(T:GetActiveTab() == "hv" and #T:GetTabLayout() == 4 and not menu:IsShown(), "onglet choisi : menu fermé, 4 onglets")
+  local plusTab
+  for _, r in ipairs(T:GetTabLayout()) do if r.id == "__more" then plusTab = r end end
+  check(plusTab and plusTab.text ~= "Plus", "l'onglet « Plus » affiche l'onglet secondaire actif (" .. tostring(plusTab and plusTab.text) .. ")")
+  T:ToggleMoreMenu(true)
+  for _, name in ipairs(_G.UISpecialFrames or {}) do if _G[name] and _G[name]:IsShown() and name == "TreeAIMoreMenu" then _G[name]:Hide() end end
+  check(not T:IsMoreMenuOpen(), "Échap ferme le menu « Plus »")
   T:SelectTab("now")
   check(not T:IsMoreMenuOpen() and #T:GetTabLayout() == 4, "retour à « Maintenant » : 4 onglets")
   -- the FitLabel helper never lets a label exceed its width

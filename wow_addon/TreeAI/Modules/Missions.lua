@@ -1013,11 +1013,15 @@ local TOAST_FOR = {
   death = "alerts", alive = "alerts", afk = "alerts", offline = "alerts", online = "alerts", far = "alerts",
   join = "joinLeave", leave = "joinLeave", level = "joinLeave", addon = "joinLeave", noaddon = "noAddon",
 }
+-- événements de groupe qui font un petit son (TreeAI:Sound("group"), cooldown + jamais en combat)
+M.SOUND_EVENTS = { join = true, ready = true, readyok = true, mission = true, death = true, level = true, target = true }
 function M:Toast(key, text, prio, opts)
   if not (self.db and self.db.toasts) then return end
   opts = opts or {}
+  local k0 = tostring(key):match("^[^:]+")
   self:Suggest("ev:" .. key, text, prio or 1, { ttl = opts.ttl or 15, cooldown = opts.cooldown or 60,
-    chat = self.db.chat or nil, onClick = opts.onClick, tab = "group" })
+    chat = self.db.chat or nil, onClick = opts.onClick, tab = "group",
+    sound = M.SOUND_EVENTS[k0] or nil, soundKind = M.SOUND_EVENTS[k0] and "group" or nil })
 end
 
 local INVITE = "[TreeAI] Installe TreeAI Coach (addon WoW gratuit) : on verra tes quêtes, ta progression et les missions du groupe."

@@ -787,6 +787,7 @@ function M:TogglePanel()
   if TreeAI.Theme then TreeAI.Theme:Skin(f, "window"); TreeAI.Theme:Font(title, "M", "gold") end  -- thème commun
   local close = _G.CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 2, 2)
+  if TreeAI.Theme and TreeAI.Theme.Window then TreeAI.Theme:Window(f, { id = "macros", header = false }) end  -- Échap, fondu
 
   f.specBtn = button(f, "Spé", 170); f.specBtn:SetPoint("TOPLEFT", 120, -6)
   f.specBtn:SetScript("OnClick", function() cycleSpec(); M:FillPanel() end)

@@ -1244,6 +1244,8 @@ function M.CreateFrame()
   f.grip = grip
   f:SetScript("OnSizeChanged", function() M.RequestRender(true) end)
   f:SetScript("OnHide", function() M.EndDrag(true) end)
+  -- Échap ferme, fondu d'ouverture (habillage et en-tête du module gardés)
+  if T.Theme and T.Theme.Window then T.Theme:Window(f, { id = "todo", header = false, skin = false }) end
   f:Hide()
   -- mode édition du cœur (POLISH) : enregistrement gardé, jamais requis
   if T.RegisterMovable then pcall(T.RegisterMovable, T, f, "todo", "À faire", { resizable = true, onMoved = function() savePos(f) saveSize(f) end }) end
