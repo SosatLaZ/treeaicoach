@@ -65,8 +65,8 @@ class AnalysisPage:
         self.summary = self.page.section("Résumé")
         box = QtWidgets.QWidget()
         bl = QtWidgets.QHBoxLayout(box)
-        bl.setContentsMargins(20, 16, 20, 16)
-        bl.setSpacing(32)
+        bl.setContentsMargins(W.CARD_PAD, W.SP_4, W.CARD_PAD, W.SP_4)
+        bl.setSpacing(W.SP_6)
         self.stats: dict[str, Any] = {}
         for key, cap in (("games", "Parties"), ("winrate", "Victoires"), ("deaths", "Morts par partie"),
                          ("ganks", "Ganks évités")):
@@ -91,10 +91,15 @@ class AnalysisPage:
         actions = QtWidgets.QWidget()
         al = QtWidgets.QHBoxLayout(actions)
         al.setContentsMargins(0, 0, 0, 0)
-        al.setSpacing(8)
+        al.setSpacing(W.SP_2)
         al.addWidget(W.button("Actualiser", app.refresh_games))
-        al.addWidget(W.button("Dossier", self.open_games_dir))
-        self.list = self.page.section("Parties", "", actions)
+        al.addWidget(W.button("Dossier", self.open_games_dir, tip="Ouvre le dossier des parties enregistrées"))
+        self.page.set_action(actions)
+        self.list = self.page.section("Parties")
+        self.empty = W.EmptyState("analysis", "Aucune partie pour l'instant",
+                                  "Joue une partie avec l'analyse active : son rapport et tes stats arrivent ici.")
+        self.list.layout().insertWidget(self.list.layout().indexOf(self.list.group), self.empty)
+        self.empty.hide()
         self.more = W.button("Afficher plus", self._show_more, "link")
         self.more.hide()
         self.page.add(self.more)
@@ -105,8 +110,8 @@ class AnalysisPage:
 
     def on_show(self) -> None:
         self.app.refresh_lcu(self._set_lcu)
-        if not self._games and self.app._games:
-            self.on_games(self.app._games)
+        if (not self._games and self.app._games) or (self._sig is None and getattr(self.app, "_games_loaded", False)):
+            self.on_games(self.app._games)       # built after the history was read (even an empty one)
 
     def _set_lcu(self, text: str) -> None:
         self.lcu.setText(ui_text(text))
@@ -143,9 +148,12 @@ class AnalysisPage:
         grp.setParent(None)
         grp.deleteLater()
         self.list.group = new
-        if not games:
-            new.add(W.Row("Aucune partie enregistrée", "Joue une partie avec l'analyse active : le rapport "
-                                                      "apparaît ici."))
+        none = not games
+        self.empty.setVisible(none)
+        new.setVisible(not none)
+        self.summary.setVisible(not none)
+        self.edge.setVisible(not none)
+        if none:
             self.more.hide()
             return
         for g in games[: self._limit]:

@@ -9,6 +9,7 @@ from typing import Any
 
 from treeaicoach.ui_common import (
     UI_SCALINGS,
+    UI_THEMES,
     autostart_support,
     get_windows_autostart,
     set_windows_autostart,
@@ -72,6 +73,8 @@ class SettingsPage:
             sw.toggled.connect(lambda on: app.run_job(lambda: set_windows_autostart(bool(on)), None, None,
                                                       name="TreeAI-ui-autostart-set"))
 
+        app.choice_row(gen, "ui_theme", "Thème", "Système : suit le mode clair ou sombre de Windows.", UI_THEMES,
+                       segmented=True)
         app.choice_row(gen, "ui_scaling", "Taille de l'interface", "Appliquée au prochain lancement.", UI_SCALINGS)
         app.switch_row(gen, "ui_confirm_quit", "Confirmer avant de quitter en partie", None)
 

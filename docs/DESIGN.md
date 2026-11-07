@@ -32,25 +32,25 @@ bordures lumineuses, halos de couleur en fond (hors l'arbre du lanceur), verre d
 frameworks (`#3B82F6`, `#6366F1`, `#8B5CF6`), gris shadcn / slate `#0F172A` comme identité,
 or / marine du client du jeu (`#C8AA6E`, `#0A1428`, `#010A13`).
 
-## Lanceur (fenêtre principale) : « graphite » (v2.21)
+## Lanceur (fenêtre principale) : « graphite » (v2.21, système v4)
 
 Qt Widgets (docs/LAUNCHER.md). Référence : Réglages système d'Apple, Linear, Raycast. Calme, plat, une
 seule couleur d'accent, typographie nette. (Le « trou noir » puis l'« arbre de vie saphir » ont été
 refusés : « trop kitsch ».)
 
 * **Fond** : une couleur plate (`ui_widgets.Backdrop`), aucune image, aucun dégradé, aucune animation.
-* **Jetons** (`ui_widgets.GRAPHITE`, un seul thème) : fenêtre `#101113`, barre latérale `#151619`,
-  cellules opaques `#1B1C20`, filets blancs à 6-7 %, texte `#ECEDEF`, secondaire `#A3A7AE`, tertiaire
-  `#8A8E97`, **accent unique** `#7AA7FF` (interrupteurs, bouton principal, liens), sélection neutre
-  `#2C2F36` ; sens : danger `#FF6B63`, attention `#EBBE4D`, sûr `#5FD08F`. Contraste ≥ 4,5:1 vérifié
-  par `tests/test_design_rules.py`.
-* **Police** : **Inter** (OFL, `assets/fonts`), repli Segoe UI Variable. Titre de page 26 px, titre de
-  section 16 semi-gras (Inter Display, couleur du texte), corps 14, secondaire 13, notes 12 ; jamais en
-  dessous de 12.
-  Pas de monospace.
-* **Grille de 8 pt** : colonne centrée de 760 px, marges 40, **40 entre sections**, 8-12 entre le titre et
-  sa cellule, rayon 12 (cellules) / 8 (contrôles), lignes de 48 px au moins. Cellules **sans bord** (le fond
-  `#1B1C20` suffit) ; seuls les filets entre lignes restent.
+* **Jetons v4** (`ui_widgets.GRAPHITE` sombre, par défaut ; `ui_widgets.PORCELAIN` clair ; Réglages > Thème :
+  Sombre / Clair / Système, appliqué tout de suite) : sombre = fenêtre `#0F1012`, barre latérale `#141518`,
+  cartes `#1A1B1F` avec un filet blanc à 6 %, texte `#ECEDEF`, secondaire `#A3A7AE`, tertiaire `#8A8E97`,
+  **accent unique** `#7AA7FF` ; clair = fenêtre `#F4F5F7`, cartes blanches, texte `#15171B`, accent
+  `#2459D6`. Sens : danger / attention / sûr, chacun avec une teinte douce pour les pastilles (`W.badge`).
+  Contraste ≥ 4,5:1 vérifié pour les deux thèmes par `tests/test_design_rules.py`.
+* **Police** : **Inter** (OFL, `assets/fonts`), repli Segoe UI Variable. Échelle unique (`W.TYPE_SCALE`) :
+  titre de page 26, titre de carte 18, titre de section 15 semi-gras, corps 14, secondaire 13, notes 12 ;
+  jamais en dessous de 12. Pas de monospace.
+* **Espacements** (`W.SPACING` = 4, 8, 12, 16, 24, 32, 40) : colonne centrée de 760 px (960 pour
+  l'Accueil), marges 40, 32 entre sections, cartes à 24 de padding, rayon 12 (cartes) / 8 (contrôles) /
+  6 (pastilles), lignes de 48 px au moins.
 * **Navigation (v3.4, 6 pages au plus)** : Accueil (jouer) · Overlay (affichage en jeu) · Alertes et voix ·
   Discord · Analyse ; en bas : Réglages (Ctrl+1 … 6). Les anciennes pages « Avancé » et « À propos » vivent
   dans Réglages (Mise à jour, puis les blocs repliés « Avancé » et « Aide et mentions ») ; leurs anciens noms
@@ -63,9 +63,13 @@ refusés : « trop kitsch ».)
 * **Un réglage = un seul endroit** (`tests/test_launcher.py` vérifie chaque interrupteur : un champ de
   `Config`, appliqué tout de suite, sauvegardé). Un sous-réglage n'est affiché que si son interrupteur
   maître est allumé (`CoachApp.depends`).
-* **Accueil** : la carte d'état (Démarrer / Arrêter) avec l'art du champion à droite, discret (assombri,
-  fondu, opacité 55 %, aucun cadre décoratif) ; les cartes de sélection des champions et des joueurs
-  seulement quand elles servent ; « Coach » (niveau, voix, mode sûr) ; essayer ; dernière partie ; système.
+* **Accueil (v4, tableau de bord)** : « Maintenant » = une carte par jeu (League : état, Démarrer / Arrêter,
+  art du champion discret ; WoW : lancé ou non, addon, personnage), côte à côte dès que la colonne le
+  permet (`W.Columns`), le jeu en cours en premier, une pastille d'état par carte ; puis les cartes de
+  sélection des champions et des joueurs seulement quand elles servent ; « Dernière session » (dernière
+  partie + bilan du jour, personnage WoW) ou un état vide ; « Coach » ; essayer ; « État détaillé » replié.
+* **États vides** (`W.EmptyState`) : une icône discrète, un titre court, une ligne qui dit comment remplir,
+  un bouton au besoin ; contour pointillé, pas de fond.
 * **Lancement** (`ui_flair.BootSplash`, < 0,5 s) : le nom, un trait de progression fin et UNE ligne
   d'état (le premier contrôle réel qui échoue, sinon « Prêt »). `TREEAICOACH_NO_SPLASH=1` la désactive.
 * **Interdits** : images de fond, lueurs, néon, verre, ornements (angles dorés, filets « scanline »),
