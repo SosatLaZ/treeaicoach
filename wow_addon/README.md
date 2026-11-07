@@ -28,8 +28,17 @@ automatiquement). Commandes: `/treeai` ou `/tai` (`/tai aide`).
 Core.lua  Locale_frFR.lua  UI.lua  Options.lua
 Data/Macros.lua
 Modules/Macros.lua  Modules/Hunter.lua  Modules/Classes.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Inventory.lua
+Modules/Leveling.lua  Modules/Group.lua  Modules/Inventory.lua  Modules/Boost.lua
 ```
+
+`Modules/Boost.lua` (informatif / un clic, chaque fonction désactivable dans les options) : rares/élites
+(barres de nom, son 1×/GUID, clic = crâne hors combat), meilleure récompense de quête surlignée (jamais
+choisie), infobulles « Amélioration +X % » / « Pas mieux » (poids de stats par classe/spé documentés dans le
+fichier) + prix vendeur vs HV (Auctionator, lecture seule), menace ≥ seuil en groupe (non-tank), moteur d'XP
+(monstres/quêtes avant le niveau, XP/h), chasseur : aspect de voyage (id partagé `Hunter:aspect`) et conseiller
+d'apprivoisement, rappels foyer/munitions/nourriture, récolte (nœud / dépeçage). `/tai boost`.
+Résumé IA : `summary.boost = {raresSeen, lastRare, bestReward, petAdvice, avgKillXP, avgQuestXP,
+killsToLevel, questsToLevel, xpPerHour, secondsToLevel, threatWarnings, tank}`.
 
 `TreeAI` (global) existe dès `Core.lua`. Un module se déclare au chargement
 de son fichier (top-level) avec `TreeAI:RegisterModule`; il ne doit **rien**

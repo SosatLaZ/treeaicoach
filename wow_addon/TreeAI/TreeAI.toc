@@ -20,3 +20,4 @@ Modules\Classes.lua
 Modules\Leveling.lua
 Modules\Group.lua
 Modules\Inventory.lua
+Modules\Boost.lua
