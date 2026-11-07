@@ -1139,6 +1139,27 @@ function TreeAI:GROUP_ROSTER_UPDATE()
   self:Fire("GROUP_CHANGED")
 end
 
+-- Diagnostic : la fonction exacte que le jeu a bloquée (« TreeAI a été bloqué… »), dite dans le chat et gardée
+-- dans TreeAIDB.diag.blocked (20 dernières) pour la corriger vite.
+local function onBlocked(kind, addon, func)
+  if addon ~= ADDON_NAME and addon ~= "TreeAI" then return end
+  func = tostring(func or "?")
+  local db = TreeAI.db
+  if type(db) == "table" then
+    db.diag = type(db.diag) == "table" and db.diag or {}
+    local list = type(db.diag.blocked) == "table" and db.diag.blocked or {}
+    list[#list + 1] = { kind = kind, func = func, t = (time and time()) or 0,
+                        combat = (InCombatLockdown and InCombatLockdown()) and true or false }
+    while #list > 20 do table.remove(list, 1) end
+    db.diag.blocked = list
+  end
+  TreeAI:Print(("Action bloquée par le jeu : %s (%s). Envoie ce message à TreeAI pour la correction."):format(func, kind))
+end
+function TreeAI:ADDON_ACTION_FORBIDDEN(_, addon, func) onBlocked("interdite", addon, func) end
+function TreeAI:ADDON_ACTION_BLOCKED(_, addon, func) onBlocked("en combat", addon, func) end
+
+TreeAI:RegisterEvent("ADDON_ACTION_FORBIDDEN")
+TreeAI:RegisterEvent("ADDON_ACTION_BLOCKED")
 TreeAI:RegisterEvent("ADDON_LOADED")
 TreeAI:RegisterEvent("PLAYER_LOGIN")
 TreeAI:RegisterEvent("PLAYER_LOGOUT")

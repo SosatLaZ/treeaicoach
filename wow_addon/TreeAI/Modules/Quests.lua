@@ -152,12 +152,10 @@ local function rewardXP(q, modern)
   local x
   if modern then
     x = try(_G.GetQuestLogRewardXP, q.id)
-  elseif _G.GetQuestLogRewardXP and _G.SelectQuestLogEntry and _G.GetQuestLogSelection then
-    -- ancienne API : la récompense dépend de l'entrée sélectionnée (on restaure la sélection)
-    local prev = try(_G.GetQuestLogSelection)
-    try(_G.SelectQuestLogEntry, q.index)
-    x = try(_G.GetQuestLogRewardXP)
-    if prev then try(_G.SelectQuestLogEntry, prev) end
+  elseif _G.GetQuestLogRewardXP then
+    -- (0.2) jamais SelectQuestLogEntry : changer la sélection du journal « contamine » l'interface de
+    -- Blizzard, qui bloque ensuite Abandonner / Partager / Rendre (« TreeAI a été bloqué… »)
+    x = try(_G.GetQuestLogRewardXP, q.id)
   end
   x = tonumber(x)
   xpCache[q.id] = (x and x > 0) and x or false
@@ -691,21 +689,9 @@ end
 -- ------------------------------------------------------------------ ouvrir une quête (pour l'abandon)
 function M.OpenQuest(q)
   if not q then return end
-  if inCombat() then M:Print("Hors combat seulement.") return end
-  local QL = _G.C_QuestLog
-  if _G.QuestMapFrame_OpenToQuestDetails then
-    pcall(_G.QuestMapFrame_OpenToQuestDetails, q.id)
-  else
-    local idx = q.index or try(_G.GetQuestLogIndexByID, q.id)
-    if QL and QL.SetSelectedQuest then try(QL.SetSelectedQuest, q.id) end
-    if _G.QuestLogFrame and _G.ShowUIPanel then pcall(_G.ShowUIPanel, _G.QuestLogFrame)
-    elseif _G.ToggleQuestLog then pcall(_G.ToggleQuestLog) end
-    if idx then
-      if _G.QuestLog_SetSelection then pcall(_G.QuestLog_SetSelection, idx)
-      elseif _G.SelectQuestLogEntry then pcall(_G.SelectQuestLogEntry, idx) end
-    end
-  end
-  M:Print(("« %s » ouverte : clique sur « Abandonner » si tu veux la retirer."):format(q.title or "?"))
+  -- (0.2) on n'ouvre plus le journal nous-mêmes (QuestMapFrame_OpenToQuestDetails / ShowUIPanel /
+  -- SetSelectedQuest depuis un addon contaminent le journal : le jeu bloquait ensuite « Abandonner »)
+  M:Print(("Ouvre ton journal (L) → « %s » → « Abandonner » si tu veux la retirer."):format(q.title or "?"))
 end
 
 -- ------------------------------------------------------------------ infobulles / butin / objets

@@ -1102,19 +1102,12 @@ function S:IsActive() return self._active and self:IsEnabled() and true or false
 
 -- Partage d'une quête : uniquement sur clic du joueur, jamais en combat.
 function S:ShareQuest(id)
-  if T:InCombat() then T:Print("Partage : hors combat seulement."); return false end
-  local idx
-  for _, q in ipairs(myQuests) do if q.id == id then idx = q.idx end end
-  if not idx then T:Print("Quête introuvable dans ton journal."); return false end
-  if C_QuestLog and C_QuestLog.SetSelectedQuest then call(C_QuestLog.SetSelectedQuest, id)
-  elseif type(SelectQuestLogEntry) == "function" then call(SelectQuestLogEntry, idx) end
-  local pushable = true
-  if C_QuestLog and C_QuestLog.IsPushableQuest then pushable = call(C_QuestLog.IsPushableQuest, id) ~= false
-  elseif type(GetQuestLogPushable) == "function" then pushable = call(GetQuestLogPushable) and true or false end
-  if not pushable then T:Print("Cette quête ne peut pas être partagée."); return false end
-  if type(QuestLogPushQuest) ~= "function" then return false end
-  call(QuestLogPushQuest)
-  return true
+  -- (0.2) pas de partage automatique : sélectionner la quête depuis un addon (SetSelectedQuest /
+  -- SelectQuestLogEntry) contamine le journal et le jeu bloque ensuite Abandonner / Partager
+  local title
+  for _, q in ipairs(myQuests) do if q.id == id then title = q.title end end
+  T:Print(("Partage : ouvre ton journal (L) → « %s » → « Partager »."):format(title or "la quête"))
+  return false
 end
 
 -- ------------------------------------------------------------------ instantané pour TreeAI (SavedVariables)

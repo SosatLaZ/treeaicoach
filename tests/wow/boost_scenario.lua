@@ -37,8 +37,11 @@ return function(M, ctx)
   ctx.fire("QUEST_COMPLETE")
   M.Advance(1)
   local glowed = false
-  for _, f in ipairs(M.frames) do if f.__parent == btn and f:IsShown() then glowed = true end end
-  ctx.check(glowed, "best reward button highlighted (glow parented to it)")
+  for _, f in ipairs(M.frames) do
+    local p = f.__points and f.__points[1]
+    if f:IsShown() and f.__parent ~= btn and p and (p[2] == btn or p[2] == btn.Icon or p[2] == btn.icon) then glowed = true end
+  end
+  ctx.check(glowed, "best reward button highlighted (glow anchored to it, never parented: no taint)")
   ctx.check(S["Boost:reward"] and S["Boost:reward"].text:find("Gilet agile"), "reward suggestion: "
     .. tostring(S["Boost:reward"] and S["Boost:reward"].text))
   M.questChoices = { 90004, 90002 } -- no upgrade -> highest vendor price

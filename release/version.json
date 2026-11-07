@@ -1,6 +1,6 @@
 {
-  "version": "3.8.1",
+  "version": "3.8.2",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "WoW : achat-revente à l'hôtel des ventes (/tai hv) qui calcule tout : marché, frais, profit, bonnes affaires."
+  "notes": "WoW : corrigé « TreeAI a été bloqué » (journal de quêtes)."
 }

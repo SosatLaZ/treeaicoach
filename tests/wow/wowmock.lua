@@ -302,6 +302,8 @@ function Widget:GetChildren() return unpack(self.__children) end
 function Widget:GetNumChildren() return #self.__children end
 function Widget:GetFrameLevel() return self.__level or 1 end
 function Widget:SetFrameLevel(l) self.__level = l end
+function Widget:SetFrameStrata(s) self.__strata = s end
+function Widget:GetFrameStrata() return self.__strata or "MEDIUM" end
 function Widget:GetID() return self.__id or 0 end
 function Widget:SetID(i) self.__id = i end
 function Widget:IsMouseOver() return false end

@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.8.2 · 7 novembre 2026
+
+- **WoW : corrigé « TreeAI a été bloqué… »** : l'addon ne touche plus au journal de quêtes ni aux boutons de
+  récompense de Blizzard (c'est ce qui faisait bloquer Abandonner / Partager / Rendre). Les boutons
+  « ouvrir la quête » / « partager » disent maintenant quoi cliquer. Si un blocage revient, l'addon écrit dans
+  le chat la fonction exacte bloquée (à m'envoyer).
+
 ## 3.8.1 · 7 novembre 2026
 
 - **WoW : achat-revente à l'hôtel des ventes** (`/tai hv`) : historique des prix 14 jours, valeur du marché,

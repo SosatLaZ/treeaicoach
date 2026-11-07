@@ -1,25 +1,25 @@
 {
- "version": "3.8.1",
+ "version": "3.8.2",
  "exe": "TreeAICoach-app.exe",
- "sha256": "0415b5ef86dbfa73dd7d3adcb63abea2ede528eb1bc37f70d2ae09bf82afbd97",
+ "sha256": "98bc11ab75dda3fd34b85564debe4c80e2fea078122c0f1851e59efbf883bd80",
  "chunks": [
   {
-   "name": "3.8.1/part-01.zip",
+   "name": "3.8.2/part-01.zip",
    "size": 88152375,
-   "sha256": "652ea5437a63b60b9b56954db0ba89401304067f2b2deddf1056b4c7fec3b8b8",
+   "sha256": "d67dee6706c59b5e1d6a774e6a4da53079b99bf77c5d7f505a5adb48de8c2c7c",
    "files": 134
   },
   {
-   "name": "3.8.1/part-02.zip",
-   "size": 12053964,
-   "sha256": "4ea83fde8497911958aadb51b7a0f57cc561de7dbd7ad005bd6fc74211eb7c31",
+   "name": "3.8.2/part-02.zip",
+   "size": 12054253,
+   "sha256": "217e6840352a241646ed0d8a65199f16a08781e3d7062348d23c704604132744",
    "files": 605
   }
  ],
- "total_size": 100206339,
+ "total_size": 100206628,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : achat-revente \u00e0 l'h\u00f4tel des ventes (/tai hv) qui calcule tout : march\u00e9, frais, profit, bonnes affaires."
+ "notes": "WoW : corrig\u00e9 \u00ab TreeAI a \u00e9t\u00e9 bloqu\u00e9 \u00bb (journal de qu\u00eates)."
 }

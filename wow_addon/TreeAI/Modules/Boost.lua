@@ -316,12 +316,12 @@ local function showGlow(btn)
     glow.label:SetPoint("BOTTOM", glow, "TOP", 0, -4)
     glow.label:SetText("|cff33ff55TreeAI|r")
   end
-  glow:SetParent(btn)
+  -- (0.2) jamais enfant d'un bouton de Blizzard (récompense de quête) : simplement ancré dessus
+  glow:SetFrameStrata("DIALOG")
   glow:ClearAllPoints()
   local icon = btn.Icon or btn.icon or btn
   glow:SetPoint("TOPLEFT", icon, "TOPLEFT", -14, 14)
   glow:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 14, -14)
-  glow:SetFrameLevel((btn.GetFrameLevel and btn:GetFrameLevel() or 1) + 5)
   glow:Show()
 end
 
