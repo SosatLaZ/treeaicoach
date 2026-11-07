@@ -1,5 +1,5 @@
 -- TreeAI — module « Quêtes pro » (agent X1) : 15 aides de quête, INFORMATIVES uniquement.
---  1 quêtes du journal classées par XP/min        2 quêtes à abandonner (pas rentables ; abandon manuel)
+--  1 quêtes du journal classées par XP/min        2 (déplacé : Modules/Abandon.lua, « À retirer » + pourquoi)
 --  3 camp saturé (monstres déjà tagués)            4 PNJ nommé de quête en vue
 --  5 escorte : « prépare-toi avant de lancer »     6 chaînes : ce qui se débloque ensuite et où (Questie)
 --  7 quêtes relais (breadcrumbs, Questie)          8 quêtes à prendre avant un donjon
@@ -19,14 +19,13 @@ local API = T.API or {}
 local M = T:RegisterModule("Pro", {
   title = "Quêtes pro",
   defaults = {
-    enabled = true, xpRank = true, abandon = true, camp = true, named = true, escort = true, chains = true,
+    enabled = true, xpRank = true, camp = true, named = true, escort = true, chains = true,
     breadcrumbs = true, dungeons = true, checklist = true, rested = true, hearth = true, rewards = true,
     eta = true, respawn = true, drops = true, maxLines = 12,
   },
   charDefaults = { rewards = {}, inns = {}, trainerLevel = 0, escort = {}, prog = {} },
   options = {
     { key = "xpRank", type = "toggle", label = "Quêtes classées par XP/min", section = "Journal" },
-    { key = "abandon", type = "toggle", label = "Quêtes à abandonner (pas rentables)", section = "Journal" },
     { key = "rewards", type = "toggle", label = "Meilleure récompense connue", section = "Journal" },
     { key = "eta", type = "toggle", label = "Temps restant par objectif", section = "Objectifs" },
     { key = "drops", type = "toggle", label = "Vrai taux de drop", section = "Objectifs" },
@@ -361,31 +360,6 @@ function M.Rank(list)
   return out
 end
 
-local function greyLevel(pl)
-  local Q = mod("Quests")
-  if Q and Q.GreyLevel then local v = try(Q.GreyLevel, pl) if tonumber(v) then return v end end
-  return pl - (pl <= 5 and 5 or pl <= 39 and (pl / 10 + 5) or pl <= 59 and (pl / 5 + 1) or 9)
-end
-local function groupSize() return tonumber(try(g("GetNumGroupMembers"))) or 0 end
-
-function M.AbandonList(ranked)
-  local out = {}
-  if #ranked == 0 then return out end
-  local med = ranked[floor((#ranked + 1) / 2)].xpm
-  local pl, full = level(), #ranked >= 18
-  for _, r in ipairs(ranked) do
-    local q, why = r.q, nil
-    if not q.complete then
-      if q.level <= greyLevel(pl) then why = "grise (peu d'XP)"
-      elseif (q.elite or q.group >= 3) and groupSize() < 3 and q.level >= pl then why = "élite / groupe, tu es seul"
-      elseif r.xpm < med * 0.25 then why = "trop longue pour l'XP"
-      end
-      if not why and full and r == ranked[#ranked] then why = "journal presque plein" end
-    end
-    if why then out[#out + 1] = { q = q, why = why } end
-  end
-  return out
-end
 
 -- ------------------------------------------------------------------ objectifs → noms de monstres
 local function targets()
@@ -728,20 +702,12 @@ function M.BuildLines()
         local to = tonumber(qq(q.id, "breadcrumbForQuestId"))
         if to and to > 0 then
           if inLog[to] or done[to] then
-            add(quests, ("Relais inutile : « %s » (la suite est déjà prise/faite) → abandonne-la"):format(cut(q.title, 28)), 2)
+            if not mod("Abandon") then add(quests, ("Relais inutile : « %s » (la suite est déjà prise/faite) → abandonne-la"):format(cut(q.title, 28)), 2) end
           else
             add(quests, ("Relais : « %s » mène à « %s »"):format(cut(q.title, 24), cut(qq(to, "name") or ("#" .. to), 24)), 1)
           end
         end
       end
-    end
-  end
-  -- (2) abandon
-  if opt("abandon") then
-    for i, a in ipairs(M.AbandonList(ranked)) do
-      if i > 3 then break end
-      add(quests, ("À abandonner : « %s » — %s"):format(cut(a.q.title, 28), a.why), 1,
-        { tooltip = "L'abandon reste manuel (journal de quêtes → Abandonner)." })
     end
   end
   -- (8) donjons
@@ -837,7 +803,8 @@ function M:WriteSummary()
     if i > 5 then break end
     top[#top + 1] = { title = r.q.title, xp = r.xp, minutes = floor(r.sec / 60), xpm = floor(r.xpm) }
   end
-  s.pro = { top = top, abandon = #M.AbandonList(M.ranked or {}), checklist = M.Checklist(), updated = epoch() }
+  local A = mod("Abandon")
+  s.pro = { top = top, abandon = A and A.Count and A.Count() or 0, checklist = M.Checklist(), updated = epoch() }
 end
 
 function M:OnEnable()
@@ -850,7 +817,7 @@ function M:OnEnable()
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
   M:On("COMBAT_END", function() M.Refresh(1) end)
   if T.RegisterSlash then
-    T:RegisterSlash("pro", function() M.Update(true) end, "quêtes pro : recalcule (XP/min, abandon, ETA…)")
+    T:RegisterSlash("pro", function() M.Update(true) end, "quêtes pro : recalcule (XP/min, ETA, chaînes…)")
   end
   M.Refresh(2)
 end

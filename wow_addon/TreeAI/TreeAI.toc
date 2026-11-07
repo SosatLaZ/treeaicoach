@@ -38,4 +38,5 @@ Modules\HunterPro.lua
 Modules\Comfort.lua
 Modules\Pro.lua
 Modules\Economy.lua
+Modules\Abandon.lua
 Modules\Auction.lua

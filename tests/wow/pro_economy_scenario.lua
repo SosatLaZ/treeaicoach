@@ -45,10 +45,15 @@ return function(M, ctx)
   local q = P.lines and P.lines.quests or {}
   ctx.check(find(q, "XP/min"), "1 XP/min ranking: " .. dump(q))
   ctx.check(find(q, "^1%. Courrier rendu"), "1 completed quest ranked first")
-  ctx.check(find(q, "À abandonner : « Vieille corvée"), "2 grey quest to abandon")
+  ctx.check(not find(q, "À abandonner"), "2 moved to Modules/Abandon.lua")
+  local A = T.modules.Abandon
+  if A then A.Update(true) end
+  ctx.check(A and find(A.lines, "À abandonner : « Vieille corvée"), "2 grey quest to abandon (Abandon module): " .. dump(A and A.lines))
   ctx.check(find(q, "Escorte « Escorter le vieux fermier » : prépare%-toi.*PV"), "5 escort prep")
   ctx.check(find(q, "Chaîne : après « Les loups de la colline » → « La suite des loups » chez Garde Test"), "6 chain via Questie")
-  ctx.check(find(q, "Relais inutile : « Le relais »"), "7 breadcrumb already useless")
+  -- 7 useless breadcrumb: explained by the Abandon module (Pro keeps its line only without it)
+  local rl = A and find(A.lines, "À abandonner : « Le relais »")
+  ctx.check(rl and tostring(rl.tooltip):find("relais inutile"), "7 breadcrumb already useless: " .. dump(A and A.lines))
   ctx.check(find(q, "Loup des forêts 4/10 : ~"), "13 ETA line")
   local info = P.lines.info or {}
   ctx.check(find(info, "Donjons niv 26 : Donjon d'Ombrecroc"), "8 dungeons at level: " .. dump(info))
