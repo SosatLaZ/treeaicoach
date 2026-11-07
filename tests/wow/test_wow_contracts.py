@@ -72,7 +72,13 @@ def test_savedvars_parses_wow_output():
     "",
 ])
 def test_savedvars_hostile_input_never_raises(hostile):
-    _sv_parse(hostile)  # must return (anything) without raising or executing
+    # never executes anything; a clean SavedVarsError (strict parser) is fine, nothing else
+    mod = _module("treeaicoach.wow.savedvars")
+    err = getattr(mod, "SavedVarsError", None)
+    try:
+        _sv_parse(hostile)
+    except Exception as exc:
+        assert err is not None and isinstance(exc, err), repr(exc)
 
 
 # --- combat log parser (agent E) ----------------------------------------------------------------
