@@ -60,6 +60,8 @@ return function(M, ctx)
   ctx.check(#T:GetTabLines("now") == 5, "Maintenant toujours limité à 5")
 
   -- défilement (molette)
+  -- (Pro / Economy also fill « Infos » with their own blocks: switched off so the tab holds only "Test")
+  M.RunSlash("/tai module Pro off"); M.RunSlash("/tai module Economy off")
   local many = {}
   for i = 1, 30 do many[i] = { text = "Ligne " .. i } end
   T:SetTabLines("info", many, "Test")

@@ -31,6 +31,7 @@ Modules/Macros.lua  Modules/Hunter.lua  Modules/Classes.lua
 Data/PetFood.lua  Data/Consumables.lua
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Compass.lua  Modules/Tracker.lua  Modules/Predict.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Missions.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
+Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Pro.lua  Modules/Economy.lua  Modules/Auction.lua
 ```
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
@@ -105,6 +106,21 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
   pickup, available, dropMobs}`, `summary.predict = {sessionMin, rates={ammoPerMin, killsPerHour, xpPerHour,
   goldPerHour, durPerHour, foodPerRest, waterPerRest, restsPerHour, slotsPerKill, kills, loots},
   forecasts={{id,text,prio}}}`. Message interne `QUESTS_UPDATED` (émis par Quests.Update).
+
+`Modules/Pro.lua` (agent X1, quêtes, onglets « Quêtes » + « Infos », bloc `Pro`) : journal classé par XP/min
+(XP réelle en API moderne, sinon estimée ≈), quêtes à abandonner (abandon manuel), camp saturé (barres de nom
+`UnitIsTapDenied`), PNJ nommé en vue, escortes (se préparer), chaînes / relais (Questie, lecture seule), donjons
+du niveau + quêtes à prendre avant, checklist au niveau (entraîneur, talents, améliorations marchand), repos
+(auberges mémorisées), lieu de foyer conseillé, meilleure récompense connue (capturée chez le donneur), temps
+restant par objectif, respawn observé, vrai taux de drop (`TreeAI.Predict` si présent, sinon mesure légère).
+Calculs hors combat (valeurs secrètes de Forever). `TreeAI.ProUtil` : `Money`, `Dur`, `Upgrade(link)`, `Out`.
+`summary.pro = {top, abandon, checklist}`. `/tai pro`.
+`Modules/Economy.lua` (agent X1, onglets « HV » + « Infos », bloc `Economy`) : améliorations chez les marchands
+(mémorisées par PNJ), quoi vendre/jeter d'abord (valeur/case, prix HV via `Auction.Stats`), or/h par activité,
+bouton « Joindre compos » à la boîte aux lettres (1 clic = 1 pièce jointe hors combat, destinataire et Envoyer
+restent au joueur ; `/tai compos <Nom>`), montée de métier la moins chère (fenêtre de métier), mémoire des nœuds
+(clic = boussole), moment pour aller vendre, réparation prévue + coût estimé, durabilité avant donjon, valeur du
+butin de la session. `summary.economy`. `/tai eco`.
 
 `TreeAI` (global) existe dès `Core.lua`. Un module se déclare au chargement
 de son fichier (top-level) avec `TreeAI:RegisterModule`; il ne doit **rien**
