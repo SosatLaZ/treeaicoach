@@ -29,7 +29,7 @@ Core.lua  Locale_frFR.lua  UI.lua  Options.lua
 Data/Macros.lua
 Modules/Macros.lua  Modules/Hunter.lua  Modules/Classes.lua
 Data/PetFood.lua  Data/Consumables.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
+Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Missions.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
 ```
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
@@ -297,3 +297,52 @@ SQ.Engine.Advise(members, ctx)     -- moteur pur (testable) ; SQ.Engine.LootHint
 -- message interne : TreeAI:On("SQUAD_UPDATE", owner, fn(owner, msg, advices))
 ```
 Boost : si `TreeAI.Boost:XPPerHour()` existe, Squad l'utilise pour `xh`.
+
+## Missions du groupe : module `Missions` (`Modules/Missions.lua`, après Squad)
+
+Suivi des missions (quêtes) des amis, à partir des données de Squad (+ son propre protocole v1). Conseils
+et clics du joueur seulement ; aucune sélection dans le journal de quêtes, aucun panneau Blizzard ouvert.
+
+* **Tableau** : par quête, qui l'a, progression de chacun par objectif (barres), prêts à rendre, % du
+  groupe, « Mission terminée » ; trié « finissable ensemble maintenant » (tous prêts > reste = monstres,
+  crédit partagé > nb de porteurs > reste > distance). Ligne « Charlie : 8 Défense restants, Bravo : terminé ».
+* **Répartition** : tuer ensemble (crédit partagé), qui loote d'abord (le plus en retard, réparti), chacun
+  clique, membres éloignés (> 70 m) « de ton côté ». `/tai prends <quête|n°> [objectif]` ou clic sur la ligne
+  = je m'en charge (bascule, partagé, expire après 30 min).
+* **Route** : prochaine mission (rendre ensemble, sinon le plus de porteurs puis la plus proche,
+  `C_QuestLog.GetDistanceSqToQuest`) ; `/tai mission cible` ou clic : le **chef** pose la cible du groupe
+  (`TreeAI.Compass:SetTarget({x, y, mapID, label})` chez tous, si la boussole existe).
+* **Annonces** (`Suggest`, `opts.tab = "group"`) : fini, tous prêts à rendre, rendu, abandon, mission
+  terminée, arrivée/départ, membre **sans TreeAI** (clic = message privé pour l'installer, 1 fois),
+  niveau, mort, AFK, hors ligne, loin ; « Attendez X » à `QUEST_COMPLETE` (urgent si suite connue, Questie).
+* **41 Prêt ?** vérification maison (pas `DoReadyCheck`) : états prêt / pas prêt (raison) / ? / AFK /
+  hors ligne / sans TreeAI, auto-évaluation PV/mana/familier ; `/tai mission pret [oui|non raison]`.
+* **42 Butin** (`CHAT_MSG_LOOT`, formats `LOOT_ITEM*` du client) : objets par membre, verts/bleus/épiques.
+* **43 Où est chacun** : distance + direction relative (`GetPlayerFacing`) ou cardinale (`/tai mission ou`).
+* **44 Marquage** : crâne (élite/rare/+2 niv.), lune (lanceur), croix ; `SetRaidTarget` sur clic, hors combat,
+  une marque par clic.
+* **45 Classement XP** de la session · **46 Plan de voyage** (zone de la prochaine mission ou zone
+  majoritaire, pierre de foyer prête/bind) · **47 Artisans** (métiers partagés `pr` → sacs, bandages,
+  potions, balles, pierres… pour qui en a besoin).
+* **Session** : objectif `/tai mission objectif niveau 30 | quetes 15 | <quête> | off` (partagé, ETA d'après
+  l'XP/h, table XP Classic), `/tai mission recap`, `start`, `fin`. Gardée 3 h sans activité.
+* Comms v1 : `MSM` "1:id,dist/10,mapID,x‰,y‰,obj1/obj2/obj3;…", `MSC` "1:id.j,…" (liste complète de mes
+  prises), `MST` {v,q,m,x,y,l} (chef seulement), `MSG` {v,k,n,l}, `MSR` {v,k=ask|ans,id,r,w}. Membres du
+  groupe seulement, seau de jetons, version ≠ 1 ignorée, tout revalidé. Envoi ≤ 1 message / 2 s.
+* Onglet : `TreeAI:SetTabLines("group", lines, "missions")` (repli : `Suggest` de la prochaine mission).
+* Résumé `summary.missions = {v=1, updated, size, members={{name,class,level}}, board={{id,title,holders,
+  done,pct,ready,status,missing}}, next, assign, claims={{quest,by}}, travel, crafts, noAddon,
+  session={start,duration,turned,missions,abandoned,deaths,titles,levels,events,goal={kind,text,pct,eta,done},
+  leaderboard,loot}}` → `ai_context.py` (`missions_groupe`, noms remplacés par « Classe niveau »).
+
+## Comms : limites de WoW Forever (Core)
+
+~10 messages d'addon par préfixe en rafale puis 1/s, sinon le message est **perdu** (code de retour) ;
+aucun message vers les autres en donjon/raid. Le cœur : seau de jetons (8, +1/s), code de retour vérifié
+(`true`/0 ok, 3/8/`false` → nouvel essai 1-2-4-8 s, 11 → pause), deux files (état > journaux `SQQ/SQD/MSM`),
+un message d'un type pas encore parti est remplacé par le plus récent, pause « Synchro du groupe en pause
+(donjon) » (`TreeAI.commPaused`, messages `COMM_PAUSED`/`COMM_RESUMED`, reprise à `PLAYER_ENTERING_WORLD` /
+`ZONE_CHANGED_NEW_AREA`), morceaux incomplets oubliés après 30 s. `TreeAI:CommStatus()`.
+Squad envoie des **différences** de journal (`SQD "2:base:nouveau:+entrée;-id"`, empreintes des entrées
+triées) et un dump complet toutes les 180 s ou sur demande (`SQR`, base inconnue). « Loin » = > 70 m du
+coéquipier le plus proche (portée du crédit de kill partagé).
