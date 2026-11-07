@@ -156,6 +156,20 @@ restent au joueur ; `/tai compos <Nom>`), montée de métier la moins chère (fe
 (clic = boussole), moment pour aller vendre, réparation prévue + coût estimé, durabilité avant donjon, valeur du
 butin de la session. `summary.economy`. `/tai eco`.
 
+`Modules/Dungeon.lua` + `Data/Dungeons.lua` (agent PVE, informatif / un clic) : onglet « Donjon » présent
+seulement en instance ou quand un donjon est prévu (`/tai donjon <nom>|liste|stop|marque`, ou auto : groupe +
+quête de donjon). Données : id de rencontre, noms FR et carte d'instance tirés des tables client Forever
+(DungeonEncounter, Map, LFGDungeons/ContentTuning pour le niveau min ; 9 donjons propres à Forever inclus) ;
+conseils / minuteurs / butin écrits d'après Classic = **indicatifs**. Avant : niveaux vs tranche, tank /
+soigneur (rôle ou classe), nourriture/eau/munitions/durabilité (états Squad), quêtes à prendre (QuestieDB
+lecture seule, `zoneOrSort` = zone du donjon), butin « amélioration pour toi » (`Boost.UpgradePct`) / « pour
+<pote> ». Pendant : `ENCOUNTER_START/END`, `BOSS_KILL`, cris/émotes lisibles (ignorés s'ils sont secrets),
+ou clic sur un boss → minuteurs au début du combat ; encadré du coin seulement pour les minuteurs prio 3, et
+rétrogradé quand la frise Blizzard (`C_EncounterTimeline`) est active. Après : boss vaincus, liste de reprise
+après wipe, run (pulls, morts, wipes, XP, or), mini-compteur lu dans `C_DamageMeter` hors combat. Pull /
+patrouille = ligne de Fight reprise. Marque conseillée : un clic = un `SetRaidTarget` hors combat.
+`summary.dungeon = {key, name, why, boss, run, meter, runs}`.
+
 `Modules/Fight.lua` (agent X2, PvE, informatif) : compteur de pull (barres de nom), élite en patrouille vers toi,
 fuyards (émotes, mémorisés), récap de mort + conseil (`/tai mort`), PV/mana avant pull, sort à interrompre sur la
 cible (avec ton interruption prête), minuteur des contrôles + rupture (petit cadre), familier qui perd l'aggro,
