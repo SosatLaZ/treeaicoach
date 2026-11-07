@@ -3,6 +3,17 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.1 · 7 novembre 2026
+
+- **WoW : interface remise au propre** (d'après ta capture) : 4 onglets lisibles (Maintenant, Quêtes, Groupe,
+  Plus), lignes sur 2 lignes au lieu de « … », placement qui évite minimap, suivis de quêtes, cadres de groupe,
+  Details et barres (radar à gauche de la minimap), une seule flèche (pas de doublon avec le jeu / SPF / TomTom),
+  bouton « Réinitialiser l'interface », page « Apparence » (taille, opacité, texte… par fenêtre).
+- **Conseils utiles seulement** : rien d'inutile quand tu es mort, fantôme, en vol, sur ta monture ou à l'auberge ;
+  récap de mort « Tué par X » sans faux chiffres ; plus de doublons ni de textes bruts ; **mode simple** par défaut
+  (3 lignes).
+- Radar amélioré (zoom fluide, légende, distances), « Course auto : ² » affiché dans les indications.
+
 ## 3.9.0 · 7 novembre 2026
 
 - **WoW : corrigé les « Action bloquée par le jeu »** : l'addon écoutait le journal de combat (interdit aux addons
