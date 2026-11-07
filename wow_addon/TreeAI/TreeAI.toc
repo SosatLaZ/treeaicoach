@@ -41,3 +41,4 @@ Modules\Economy.lua
 Modules\Abandon.lua
 Modules\Auction.lua
 Modules\Highlight.lua
+Modules\Radar.lua
