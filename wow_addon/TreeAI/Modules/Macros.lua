@@ -421,6 +421,16 @@ end
 -- write a macro; returns "created" | "updated" | "same" | "user" | "full" | "fail"
 function M:Write(def, body, force)
   if inCombat() then return "fail" end
+  -- (0.3) WoW Forever bloque CreateMacro/EditMacro hors d'une action du joueur (« Action bloquée :
+  -- UNKNOWN() ») : sans clic / commande, on prépare et on propose « clique pour mettre à jour ».
+  if T.InUserAction and not T:InUserAction() then
+    M._pending = true
+    if M.Suggest then
+      M:Suggest("pending", "Macros à mettre à jour : clique ici", 1,
+        { ttl = 0, onClick = function() M._pending = false; M:Refresh(false) end })
+    end
+    return "pending"
+  end
   local ch = char()
   local idx = macroIndex(def.n)
   if idx then
@@ -563,7 +573,10 @@ function M:TogglePanel()
   close:SetPoint("TOPRIGHT", 2, 2)
   local inst = _G.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   inst:SetSize(90, 20); inst:SetPoint("BOTTOMRIGHT", -8, 6); inst:SetText("Installer")
-  inst:SetScript("OnClick", function() M:Install(false); after(0.5, function() M:FillPanel() end) end)
+  inst:SetScript("OnClick", function()
+    if T.UserAction then T:UserAction(M.Install, M, false) else M:Install(false) end
+    after(0.5, function() M:FillPanel() end)
+  end)
   f.rows = {}
   self.panel = f
   self:FillPanel()

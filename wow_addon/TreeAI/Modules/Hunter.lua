@@ -278,12 +278,13 @@ end
 -- Suggestions (anti-spam par id)
 ---------------------------------------------------------------------------
 local lastSaid = {}
-local function suggest(id, text, prio, every)
+local function suggest(id, text, prio, every, extra)
   if not opt("enabled") then return end
   local t = now()
   if lastSaid[id] and t - lastSaid[id] < (every or 30) then return end
   lastSaid[id] = t
   local o = { cooldown = every or 30, ttl = math.max(every or 30, 20), module = "Hunter" }
+  if type(extra) == "table" then for k, v in pairs(extra) do o[k] = v end end
   if type(M.Suggest) == "function" then
     pcall(M.Suggest, M, id, text, prio or 1, o)          -- id préfixé "Hunter:" par le cœur
   elseif type(TreeAI.Suggest) == "function" then
@@ -357,6 +358,12 @@ local lastMacroBody
 function M:UpdateFeedMacro(foodID)
   if not opt("feedMacro") or not foodID then return end
   if inCombat() or not (CreateMacro and EditMacro and GetMacroIndexByName) then return end
+  if TreeAI and TreeAI.InUserAction and not TreeAI:InUserAction() then
+    -- (0.3) écrire une macro hors d'un clic est bloqué sur Forever : on propose le clic
+    suggest("macro", "Nourriture du familier changée : clique pour mettre à jour « " .. FEED_MACRO .. " ».", 1, 3600,
+      { onClick = function() M:UpdateFeedMacro(foodID) end })
+    return
+  end
   local feed = spellName(S.FEED)
   if not feed then return end
   local body = "#showtooltip\n/cast " .. feed .. "\n/use item:" .. foodID

@@ -3,6 +3,19 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.8.3 · 7 novembre 2026
+
+- **WoW : corrigé « Action bloquée par le jeu : UNKNOWN() »** : l'addon créait / mettait à jour ses macros tout
+  seul (connexion, nouveau sort, sacs) ; WoW Forever ne le permet que sur un clic. Maintenant : « Macros à
+  mettre à jour : clique ici ». Si un blocage revient, le message dit aussi quel module l'a causé.
+- **Nouvelle interface en jeu** : panneau à onglets (Maintenant, Quêtes, Prévisions, Groupe, HV, Infos),
+  mode mini, encadré d'alerte discret dans un coin, plus aucun conseil dans le chat, actualisation
+  automatique, options rangées par module.
+- **Boussole** (`/tai way x y`, `/tai cible`, `/tai aller`), **suivi des quêtes** trié par trajet, **prévisions**
+  (munitions, sacs, monstres restants, formation, réparation).
+- **Appli TreeAI rangée** : sidebar League of Legends / World of Warcraft / Configuration, page WoW claire
+  (état, gros bouton addon, personnage, dernier combat).
+
 ## 3.8.2 · 7 novembre 2026
 
 - **WoW : corrigé « TreeAI a été bloqué… »** : l'addon ne touche plus au journal de quêtes ni aux boutons de

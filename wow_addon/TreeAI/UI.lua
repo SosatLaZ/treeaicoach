@@ -115,7 +115,7 @@ local function runEntry(e, button)
   if button == "RightButton" then
     if isSuggestion(e) then TreeAI:ClearSuggestion(e.id) end
   elseif e.onClick then
-    TreeAI.safecall(e.onClick, e)
+    TreeAI:UserAction(e.onClick, e)
   end
 end
 

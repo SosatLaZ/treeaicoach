@@ -342,8 +342,12 @@ local function dispatch(event, ...)
   local list = handlers[event]
   if not list then return end
   for owner, fn in pairs(list) do
-    if ownerActive(owner) then safecall(fn, owner, event, ...) end
+    if ownerActive(owner) then
+      TreeAI._ctx = tostring(owner.name or "core") .. ":" .. tostring(event)
+      safecall(fn, owner, event, ...)
+    end
   end
+  TreeAI._ctx = nil
 end
 
 function TreeAI:RegisterEvent(event, owner, fn)
@@ -391,6 +395,18 @@ end
 
 --- Actualisation automatique : toutes les `settings.refresh` s, chaque module actif qui a une méthode
 --- :AutoRefresh() la reçoit (conseils recalculés), les suggestions expirées partent, le panneau se redessine.
+--- Actions faites par le joueur (clic / commande) : certaines fonctions du jeu (créer / modifier une macro…)
+--- ne sont permises que pendant une action du joueur sur WoW Forever. TreeAI:InUserAction() le dit.
+TreeAI._userAction = 0
+function TreeAI:UserAction(fn, ...)
+  self._userAction = (self._userAction or 0) + 1
+  local ok, err = pcall(fn, ...)
+  self._userAction = math.max(0, (self._userAction or 1) - 1)
+  if not ok then self:Debug("action:", err) end
+  return ok
+end
+function TreeAI:InUserAction() return (self._userAction or 0) > 0 end
+
 function TreeAI:StartAutoRefresh()
   if self._refreshTicker or not self.NewTicker then return end
   local n = 0
@@ -1197,7 +1213,7 @@ end
 _G.SLASH_TREEAI1 = "/treeai"
 _G.SLASH_TREEAI2 = "/tai"
 if type(_G.SlashCmdList) == "table" then
-  _G.SlashCmdList["TREEAI"] = function(msg) TreeAI:HandleSlash(msg) end
+  _G.SlashCmdList["TREEAI"] = function(msg) TreeAI:UserAction(TreeAI.HandleSlash, TreeAI, msg) end
 end
 
 local function onoff(v) return v and L["activé"] or L["désactivé"] end
@@ -1369,7 +1385,10 @@ local function onBlocked(kind, addon, func)
     while #list > 20 do table.remove(list, 1) end
     db.diag.blocked = list
   end
-  TreeAI:Print(("Action bloquée par le jeu : %s (%s). Envoie ce message à TreeAI pour la correction."):format(func, kind))
+  local ctx = TreeAI._ctx or TreeAI._lastCtx or "?"
+  if type(db) == "table" and db.diag and db.diag.blocked then db.diag.blocked[#db.diag.blocked].ctx = ctx end
+  TreeAI:Print(("Action bloquée par le jeu : %s (%s) pendant %s. Envoie ce message à TreeAI pour la correction.")
+    :format(func, kind, ctx))
 end
 function TreeAI:ADDON_ACTION_FORBIDDEN(_, addon, func) onBlocked("interdite", addon, func) end
 function TreeAI:ADDON_ACTION_BLOCKED(_, addon, func) onBlocked("en combat", addon, func) end
