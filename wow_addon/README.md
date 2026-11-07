@@ -28,8 +28,14 @@ automatiquement). Commandes: `/treeai` ou `/tai` (`/tai aide`).
 Core.lua  Locale_frFR.lua  UI.lua  Options.lua
 Data/Macros.lua
 Modules/Macros.lua  Modules/Hunter.lua  Modules/Classes.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Inventory.lua
+Modules/Leveling.lua  Modules/Group.lua  Modules/Quests.lua  Modules/Inventory.lua
 ```
+
+`Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
+toasts de progression, quêtes grises (clic = ouvrir, l'abandon reste manuel), « à faire à 4 » (+ Group),
+bouton sécurisé d'objet de quête (créé/modifié hors combat), ligne « Étape : … », `/tai quetes`,
+XP restante, `summary.quests`. Questie détecté: lecture seule de `QuestieLoader._modules.QuestieDB`
+(jamais `ImportModule`, aucun hook), pas d'infobulles en double.
 
 `TreeAI` (global) existe dès `Core.lua`. Un module se déclare au chargement
 de son fichier (top-level) avec `TreeAI:RegisterModule`; il ne doit **rien**
