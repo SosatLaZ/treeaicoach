@@ -127,9 +127,13 @@ def test_watcher_thread(tmp_path):
     w = cl.CombatLogWatcher(p, on, interval=0.05)
     w.start()
     try:
+        import time
+        t0 = time.monotonic()
+        while w.tail._pos is None and time.monotonic() - t0 < 20:   # the tail opened the file
+            time.sleep(0.01)
         with open(p, "a", encoding="utf-8") as fh:
             fh.write("\n".join(_lines()[1:4]) + "\n")
-        assert done.wait(3.0)
+        assert done.wait(20.0)
     finally:
         w.stop()
     assert not w.running and len(got) == 3

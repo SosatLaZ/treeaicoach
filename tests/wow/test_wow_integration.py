@@ -343,3 +343,23 @@ def test_session_coach_and_engine_attrs(tmp_path: Path, monkeypatch: pytest.Monk
     session = engine._wow_coach.session
     m.stop()
     assert not session.running and engine._wow_mode is False and engine._wow_db is None
+
+
+def test_addon_installed_at_start_without_wow_running(monkeypatch):
+    """3.8: the addon is installed when TreeAI starts (a new addon only appears after a WoW restart)."""
+    import types
+    from treeaicoach.wow import mode as M
+
+    calls = []
+    fake = types.SimpleNamespace(find_wow=lambda p: "INST",
+                                 install_addon=lambda inst: calls.append(inst) or types.SimpleNamespace(message="ok"))
+    monkeypatch.setattr(M, "optional", lambda name: fake if name == "install" else None)
+    cfg = types.SimpleNamespace(wow_enabled=True, wow_addon_auto_update=True, wow_path="")
+    m = M.WowMode(lambda: cfg)
+    m._early_install()
+    m._early_install()
+    assert calls == ["INST"] and m.install == "INST"
+    cfg.wow_addon_auto_update = False
+    m2 = M.WowMode(lambda: cfg)
+    m2._early_install()
+    assert calls == ["INST"]

@@ -104,8 +104,12 @@ def test_session_glue_end_to_end(tmp_path):
                          interval=0.05, max_lag=None, wall=lambda: 1e12)
     s.start()
     try:
+        import time
+        t0 = time.monotonic()
+        while s.watcher.tail._pos is None and time.monotonic() - t0 < 20:   # the tail opened the file
+            time.sleep(0.01)
         p.write_text(FIX.read_text(encoding="utf-8"), encoding="utf-8")
-        assert ended.wait(3.0)
+        assert ended.wait(20.0)
     finally:
         s.stop()
     assert "Ton familier est mort !" in said

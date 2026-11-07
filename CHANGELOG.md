@@ -3,6 +3,21 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.8.0 · 7 novembre 2026
+
+- **Nouveau : WoW Forever.** Page **WoW Forever** (Ctrl+7) : TreeAI trouve ton dossier WoW et installe /
+  met à jour l'**addon TreeAI** tout seul au démarrage (relance WoW la première fois). Tuto :
+  `wow_addon/TUTO_FR.md`.
+- **Addon en jeu** (`/tai`) : macros intelligentes des 9 classes (installées hors combat, consommables mis à
+  jour avec le meilleur objet des sacs), chasseur complet (familier, munitions, aspects, tir auto, pièges),
+  **aide à la quête** (à rendre par zone, « finis ici », objet de quête, étape suivante, Questie lu sans le
+  modifier), **synchro de groupe à 4** (quêtes communes, partage, pauses, butin, marchand, donjons),
+  avantages (rares, meilleure récompense surlignée, « Amélioration +X % », menace, XP/h, apprivoisement).
+- **« Hey coach » en WoW** : l'IA répond en experte WoW (classe, niveau, zone, sacs, quêtes, groupe, sorts
+  des prochains niveaux). La voix ne parle jamais toute seule.
+- **Aides PvP désactivées** par défaut (`/tai pvp` ou les options pour les activer).
+- Données du jeu officielles WoW Forever 1.60.1 (objets, sorts, zones) via wago.tools.
+
 ## 3.7.2 · 31 octobre 2026
 
 - **Ganks quasi instantanés :** dès que le jungler ennemi entre dans le rayon d'alerte en venant vers toi,

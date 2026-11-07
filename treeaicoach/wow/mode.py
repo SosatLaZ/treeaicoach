@@ -117,7 +117,31 @@ class WowMode:
         self._thread = None
         self._deactivate()
 
+    def _early_install(self) -> None:
+        """(3.8) Install / update the addon as soon as TreeAI starts, WoW running or not: a NEW addon only
+        appears after a WoW restart, so waiting for WoW to run was too late. Once per session. Never raises."""
+        if self._installed_once:
+            return
+        try:
+            cfg = self._cfg_fn()
+            if cfg is None or not bool(getattr(cfg, "wow_enabled", True)) \
+                    or not bool(getattr(cfg, "wow_addon_auto_update", True)):
+                return
+            install = optional("install")
+            if install is None:
+                return
+            inst = install.find_wow(str(getattr(cfg, "wow_path", "") or ""))
+            if inst is not None:
+                self._installed_once = True
+                self.install = self.install or inst
+                self.install_result = install.install_addon(inst)
+                log.info("WoW addon at start: %s", getattr(self.install_result, "message", self.install_result))
+                self._changed()
+        except Exception:
+            log.debug("wow early install failed", exc_info=True)
+
     def _run(self) -> None:
+        self._early_install()
         while not self._stop.is_set():
             try:
                 self.step()
