@@ -408,6 +408,7 @@ TreeAI._dispatch = dispatch -- for tests
 local DEFAULT_SETTINGS = {
   enabled = true, sound = true, chat = false, comms = true, debug = false,
   minPrio = 1,
+  pvp = false,   -- aides PvP (OFF : l'addon aide à quêter, il se tait contre les joueurs ennemis)
   panel = { shown = true, locked = false, scale = 1, alpha = 0.9,
             point = "CENTER", x = 300, y = 120, maxLines = 6 },
 }
@@ -631,9 +632,30 @@ local function logSuggestion(e)
   while #log > 40 do tremove(log, 1) end
 end
 
+--- PvP context: an enemy player targeted / attacking, or a battleground / arena. Never raises.
+function TreeAI:InPvP()
+  local ok, res = pcall(function()
+    if IsInInstance then
+      local _, kind = IsInInstance()
+      if kind == "pvp" or kind == "arena" then return true end
+    end
+    if UnitExists and UnitExists("target") and UnitIsPlayer and UnitIsPlayer("target")
+        and UnitCanAttack and UnitCanAttack("player", "target") then
+      return true
+    end
+    return false
+  end)
+  return ok and res or false
+end
+
 function TreeAI:Suggest(id, text, prio, opts)
   if type(id) ~= "string" then id = tostring(id) end
   if text == nil or text == "" then self:ClearSuggestion(id); return nil end
+  -- aides PvP désactivées (défaut) : rien contre un joueur ennemi, rien en champ de bataille / arène,
+  -- et jamais une suggestion marquée opts.pvp
+  if not (self.settings and self.settings.pvp) and ((opts and opts.pvp) or self:InPvP()) then
+    return nil
+  end
   text = tostring(text)
   prio = tonumber(prio) or 1
   if prio < 1 then prio = 1 elseif prio > 3 then prio = 3 end
@@ -984,6 +1006,10 @@ end
 
 local function onoff(v) return v and L["activé"] or L["désactivé"] end
 
+TreeAI:RegisterSlash("pvp", function()
+  TreeAI.settings.pvp = not TreeAI.settings.pvp
+  TreeAI:Print("Aides PvP : " .. (TreeAI.settings.pvp and "activées" or "désactivées (aide à quêter seulement)"))
+end, "aides PvP oui/non")
 TreeAI:RegisterSlash("afficher", function() TreeAI:ShowPanel() end, L["afficher le panneau"])
 TreeAI:RegisterSlash("show", function() TreeAI:ShowPanel() end)
 TreeAI:RegisterSlash("cacher", function() TreeAI:HidePanel() end, L["cacher le panneau"])

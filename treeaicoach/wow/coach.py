@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from treeaicoach.wow.combatlog import (CombatEvent, CombatLogWatcher, is_hostile, is_me, is_my_pet, is_party,
-                                       short_name)
+                                       short_name, TYPE_PLAYER)
 from treeaicoach.wow.report import Fight, SessionReport
 
 log = logging.getLogger(__name__)
@@ -62,6 +62,11 @@ _ENV_TEXT = {
 }
 
 
+def _enemy_player(flags: int) -> bool:
+    """A hostile PLAYER (PvP), not a monster."""
+    return bool(flags & TYPE_PLAYER) and is_hostile(flags)
+
+
 def _fold(s: str) -> str:
     tr = str.maketrans("àâäéèêëîïôöùûüç", "aaaeeeeiioouuuc")
     return (s or "").lower().translate(tr)
@@ -80,8 +85,10 @@ class WowVoiceCoach:
 
     def __init__(self, say: Callable[..., Any] | None = None, *, budget: int = 4, budget_window: float = 20.0,
                  min_gap: float = 1.5, max_lag: float | None = 15.0, wall: Callable[[], float] = time.time,
-                 enabled: dict[str, bool] | None = None, tank_name: str = "") -> None:
+                 enabled: dict[str, bool] | None = None, tank_name: str = "", pvp: bool = False) -> None:
         self.say = say
+        #: PvP help OFF (default): nothing is said about enemy PLAYERS (questing helper only)
+        self.pvp = bool(pvp)
         self.budget = max(1, int(budget))
         self.budget_window = float(budget_window)
         self.min_gap = float(min_gap)
@@ -145,6 +152,8 @@ class WowVoiceCoach:
 
     def _one(self, ev: CombatEvent, live: bool) -> None:
         t, sf, df, name = ev.t, ev.src_flags, ev.dst_flags, ev.event
+        if not self.pvp and (_enemy_player(sf) or _enemy_player(df)):
+            return
         for guid, flags in ((ev.src_guid, sf), (ev.dst_guid, df)):
             if guid and is_my_pet(flags, guid) and guid != self._pet_guid:
                 self._pet_guid, self._pet_dead, self._pet_low = guid, False, False

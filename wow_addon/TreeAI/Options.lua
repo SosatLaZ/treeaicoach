@@ -88,6 +88,8 @@ local function build(content)
   add(newCheck(content, L["Son pour les alertes urgentes"], function() return S.sound end, function(v) S.sound = v end))
   add(newCheck(content, L["Écrire les conseils dans le chat"], function() return S.chat end, function(v) S.chat = v end))
   add(newCheck(content, L["Synchro avec le groupe (messages d'addon)"], function() return S.comms end, function(v) S.comms = v end))
+  add(newCheck(content, L["Aides PvP (contre les joueurs, champs de bataille)"], function() return S.pvp end,
+    function(v) S.pvp = v end))
   y = y - 10
   add(newSlider(content, L["Priorité minimale"], 1, 3, 1, function() return S.minPrio end,
     function(v) S.minPrio = v; TreeAI:RefreshPanel() end), 40)
