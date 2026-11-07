@@ -197,10 +197,11 @@ ns.QuestScan = M.ScanQuests
 -- Compétences d'armes : max = 5 x niveau. Renvoie toutes les lignes et celles « en retard ».
 function M.ScanSkills()
   local all, behind = {}, {}
-  if not (GetNumSkillLines and GetSkillLineInfo) then return all, behind end
+  local A = core() and core().API   -- C_SkillInfo sur Forever (GetSkillLineInfo global retiré)
+  if not (A and A.SkillLines) then return all, behind end
   local lvl = level()
-  for i = 1, GetNumSkillLines() or 0 do
-    local name, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
+  for _, line in ipairs(A.SkillLines()) do
+    local name, isHeader, rank, maxRank = line.name, line.isHeader, line.rank, line.maxRank
     if name and not isHeader and rank and maxRank and maxRank > 1 then
       local s = { name = name, rank = rank, max = maxRank }
       all[#all + 1] = s
@@ -239,6 +240,11 @@ function M.CheckRested(context)
 end
 
 local function talentPoints()
+  local CT = _G.C_ClassTalents   -- Forever : arbres de talents modernes
+  if CT and CT.HasUnspentTalentPoints then
+    local ok, has, a, b = pcall(CT.HasUnspentTalentPoints)
+    if ok then return has and math.max(1, (tonumber(a) or 0) + (tonumber(b) or 0)) or 0 end
+  end
   if UnitCharacterPoints then return UnitCharacterPoints("player") or 0 end
   if GetUnspentTalentPoints then return GetUnspentTalentPoints() or 0 end
   return 0

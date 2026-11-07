@@ -88,6 +88,13 @@ local TRAVEL_ASPECTS = { S.CHEETAH, S.PACK }
 local function now() return (GetTime and GetTime()) or 0 end
 -- Wrappers défensifs du cœur (Forever = famille Mainline : globales classiques possiblement absentes).
 local function API() return type(TreeAI.API) == "table" and TreeAI.API or nil end
+-- Forever 1.60.1 : les API du familier sont dans C_PetInfo (globales retirées) ; valeurs secrètes en combat.
+local PetInfo = _G.C_PetInfo or {}
+local GetPetHappiness = PetInfo.GetPetHappiness or _G.GetPetHappiness
+local GetPetLoyalty = PetInfo.GetPetLoyalty or _G.GetPetLoyalty
+local GetPetTrainingPoints = PetInfo.GetPetTrainingPoints or _G.GetPetTrainingPoints
+local GetPetFoodTypes = PetInfo.GetPetFoodTypes or _G.GetPetFoodTypes
+local function pub(v) local A = API() if A and A.Pub then return A.Pub(v) end return v end
 
 local function spellName(id)
   local A = API()
@@ -134,7 +141,7 @@ local function auraAt(unit, i, filter)
   if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
     local ok, d = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, filter)
     if not ok or not d then return nil end
-    return d.name, d.spellId, d.sourceUnit, d.expirationTime
+    return pub(d.name) or "?", pub(d.spellId), pub(d.sourceUnit), pub(d.expirationTime)
   end
   if UnitAura then
     local name, _, _, _, _, exp, source, _, _, sid = UnitAura(unit, i, filter)
@@ -307,6 +314,7 @@ function M:GetDiet()
   local diet = {}
   if not GetPetFoodTypes then return diet end
   local types = { GetPetFoodTypes() }
+  if type(types[1]) == "table" then types = types[1] end   -- C_PetInfo.GetPetFoodTypes() rend une table
   for _, t in ipairs(types) do
     local key = DIET_KEYS[tostring(t):lower()]
     if key then diet[key] = true end
@@ -400,8 +408,8 @@ function M:CheckPet()
     return
   end
   -- Santé
-  local hp, mx = UnitHealth("pet") or 0, UnitHealthMax("pet") or 1
-  local pct = mx > 0 and hp / mx or 1
+  local hp, mx = pub(UnitHealth("pet")) or 0, pub(UnitHealthMax("pet")) or 1
+  local pct = (mx > 0 and hp > 0) and hp / mx or 1
   if inCombat() and pct < 0.35 then
     suggest("pethp", string.format("Familier à %d %% : « %s » ou rappelle-le.", pct * 100,
       spellName(S.MEND) or "Guérison du familier"), 3, 8)
@@ -527,7 +535,7 @@ local markedGUID
 function M:CheckMark()
   if not knows(S.MARK) or not (UnitExists and UnitExists("target")) then return end
   if not (UnitCanAttack and UnitCanAttack("player", "target")) or (UnitIsDead and UnitIsDead("target")) then return end
-  local guid = UnitGUID and UnitGUID("target")
+  local guid = UnitGUID and pub(UnitGUID("target"))
   if guid and guid == markedGUID then return end
   local cls = UnitClassification and UnitClassification("target") or "normal"
   local big = cls == "elite" or cls == "rareelite" or cls == "worldboss" or cls == "rare"
@@ -687,7 +695,7 @@ function M:OnCastStart(spellID)
   local nameAimed, nameMulti = spellName(S.AIMED), spellName(S.MULTI)
   local name, startMS, endMS
   if UnitCastingInfo then
-    local n, _, _, s, e = UnitCastingInfo("player"); name, startMS, endMS = n, s, e
+    local n, _, _, s, e = UnitCastingInfo("player"); name, startMS, endMS = pub(n), pub(s), pub(e)
   elseif CastingInfo then
     local n, _, _, s, e = CastingInfo(); name, startMS, endMS = n, s, e
   end
@@ -815,10 +823,14 @@ function M:Enable()
   self.enabled = true
   settings()
   frame = frame or CreateFrame("Frame")
-  for _, e in ipairs(EVENTS) do pcall(frame.RegisterEvent, frame, e) end
+  for _, e in ipairs(EVENTS) do
+    -- COMBAT_LOG_EVENT_UNFILTERED : interdit sur Forever (ADDON_ACTION_FORBIDDEN dès l'abonnement)
+    if not (TreeAI.EventAllowed and not TreeAI:EventAllowed(e)) then pcall(frame.RegisterEvent, frame, e) end
+  end
   frame:SetScript("OnEvent", function(_, ev, ...)
     local ok, err = pcall(M.OnEvent, M, ev, ...)
     if not ok and TreeAI.Debug then pcall(TreeAI.Debug, TreeAI, "Hunter: " .. tostring(err)) end
+    if not ok and TreeAI._errorHook then pcall(TreeAI._errorHook, err, "Hunter:" .. tostring(ev)) end
   end)
   frame:SetScript("OnUpdate", onUpdate)
   if type(self.On) == "function" and not self.summaryHooked then

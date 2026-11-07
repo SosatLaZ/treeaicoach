@@ -63,7 +63,11 @@ end
 
 local function safecall(fn, ...)
   local ok, err = pcall(fn, ...)
-  if not ok then TreeAI:Debug("erreur:", err) end
+  if not ok then
+    TreeAI:Debug("erreur:", err)
+    local hook = TreeAI._errorHook   -- SelfTest : garde les 30 dernières erreurs (TreeAIDB.diag.errors)
+    if hook then pcall(hook, err, TreeAI._ctx) end
+  end
   return ok, err
 end
 TreeAI.safecall = safecall
@@ -81,6 +85,21 @@ local function try(fn, ...)
   if ok then return a, b, c, d, e, f, g, h, i, j, k, l, m, n end
   return nil
 end
+
+-- Valeurs secrètes (Forever = famille Midnight) : en combat, certaines valeurs (PV d'une autre unité, auras,
+-- GUID / nom d'un monstre…) sont « secrètes » : les comparer, les additionner ou s'en servir de clé lève une
+-- erreur Lua. API.Pub(v) rend nil pour une valeur secrète (et v sinon) : à mettre autour de ces lectures.
+function API.IsSecret(v)
+  local f = _G.issecretvalue
+  if type(f) ~= "function" or v == nil then return false end
+  local ok, r = pcall(f, v)
+  return ok and r and true or false
+end
+function API.Pub(v)
+  if v ~= nil and API.IsSecret(v) then return nil end
+  return v
+end
+local pub = API.Pub
 
 function API.SpellName(id)
   if id == nil then return nil end
@@ -107,6 +126,8 @@ end
 
 function API.IsSpellKnown(id)
   if type(id) ~= "number" then return false end
+  local SB = _G.C_SpellBook   -- Forever : C_SpellBook (IsPlayerSpell / IsSpellKnown globaux = repli déprécié)
+  if SB and SB.IsSpellKnown and try(SB.IsSpellKnown, id) then return true end
   if _G.IsPlayerSpell and try(_G.IsPlayerSpell, id) then return true end
   if _G.IsSpellKnown and try(_G.IsSpellKnown, id) then return true end
   if C_Spell and C_Spell.IsSpellKnown and try(C_Spell.IsSpellKnown, id) then return true end
@@ -215,8 +236,10 @@ end
 
 local function auraFromData(d)
   if type(d) ~= "table" then return nil end
-  return { name = d.name, icon = d.icon, count = d.applications or 0, duration = d.duration or 0,
-           expires = d.expirationTime or 0, spellId = d.spellId, source = d.sourceUnit }
+  local name = pub(d.name)
+  if name == nil and pub(d.spellId) == nil then return { secret = true } end   -- aura masquée (combat)
+  return { name = name, icon = pub(d.icon), count = pub(d.applications) or 0, duration = pub(d.duration) or 0,
+           expires = pub(d.expirationTime) or 0, spellId = pub(d.spellId), source = pub(d.sourceUnit) }
 end
 
 function API.Auras(unit, filter)
@@ -234,7 +257,7 @@ function API.Auras(unit, filter)
       end
     end
     if not a then break end
-    out[#out + 1] = a
+    if not a.secret then out[#out + 1] = a end
   end
   return out
 end
@@ -269,16 +292,138 @@ function API.Distance(unit)
   if _G.UnitPosition then
     local y1, x1, _, m1 = try(_G.UnitPosition, "player")
     local y2, x2, _, m2 = try(_G.UnitPosition, unit)
-    if y1 and y2 and m1 == m2 then
+    y1, x1, y2, x2, m1, m2 = pub(y1), pub(x1), pub(y2), pub(x2), pub(m1), pub(m2)
+    if y1 and y2 and x1 and x2 and m1 == m2 then
       local dx, dy = x2 - x1, y2 - y1
       return (dx * dx + dy * dy) ^ 0.5
     end
   end
   if _G.CheckInteractDistance then
-    if try(_G.CheckInteractDistance, unit, 3) then return 10 end
-    if try(_G.CheckInteractDistance, unit, 4) then return 28 end
+    if pub(try(_G.CheckInteractDistance, unit, 3)) then return 10 end
+    if pub(try(_G.CheckInteractDistance, unit, 4)) then return 28 end
   end
   return nil
+end
+
+-- Compatibilité Forever 1.60.1 (vérifiée sur Blizzard_APIDocumentationGenerated, branche « forever ») :
+-- les globales de Classic Era (GetPetHappiness, GetNumSkillLines, GetNumSpellTabs, GetQuestLogTitle…) n'y
+-- existent plus ; on lit d'abord le C_* puis on se replie sur la globale (Era).
+local function petInfo(name) local P = _G.C_PetInfo return (P and P[name]) or _G[name] end
+function API.PetHappiness() return try(petInfo("GetPetHappiness")) end          -- happiness, damage%, loyaltyRate
+function API.PetLoyalty() return try(petInfo("GetPetLoyalty")) end
+function API.PetTrainingPoints() return try(petInfo("GetPetTrainingPoints")) end  -- total, used
+function API.PetFoodTypes()                                                       -- { "Viande", ... }
+  local r = { try(petInfo("GetPetFoodTypes")) }
+  if type(r[1]) == "table" then return r[1] end
+  return r
+end
+
+--- Lignes de compétence (armes, métiers…) : { {name=, isHeader=, rank=, maxRank=, id=}, ... }
+function API.SkillLines()
+  local out, SI = {}, _G.C_SkillInfo
+  if SI and SI.GetNumSkillLines and SI.GetSkillLineInfo then
+    for i = 1, (tonumber(try(SI.GetNumSkillLines)) or 0) do
+      local d = try(SI.GetSkillLineInfo, i)
+      if type(d) == "table" then
+        out[#out + 1] = { name = d.name, isHeader = d.isHeader, rank = d.rank, maxRank = d.maxRank, id = d.skillID }
+      end
+    end
+    return out
+  end
+  if _G.GetNumSkillLines and _G.GetSkillLineInfo then
+    for i = 1, (tonumber(try(_G.GetNumSkillLines)) or 0) do
+      local name, isHeader, _, rank, _, _, maxRank = try(_G.GetSkillLineInfo, i)
+      if name then out[#out + 1] = { name = name, isHeader = isHeader, rank = rank, maxRank = maxRank } end
+    end
+  end
+  return out
+end
+
+--- Sorts du grimoire : { {name=, sub=, passive=, slot=}, ... } ; pet = true pour le familier.
+function API.SpellBookSpells(pet)
+  local out, SB, E = {}, _G.C_SpellBook, _G.Enum
+  local bankEnum = E and E.SpellBookSpellBank
+  local slots = {}
+  if SB and SB.GetSpellBookItemName and bankEnum then
+    local bank = pet and bankEnum.Pet or bankEnum.Player
+    if pet then
+      for i = 1, (tonumber((try(SB.HasPetSpells))) or 0) do slots[#slots + 1] = i end
+    elseif SB.GetNumSpellBookSkillLines and SB.GetSpellBookSkillLineInfo then
+      for l = 1, (tonumber(try(SB.GetNumSpellBookSkillLines)) or 0) do
+        local info = try(SB.GetSpellBookSkillLineInfo, l)
+        if type(info) == "table" and not info.shouldHide then
+          local off = tonumber(info.itemIndexOffset) or 0
+          for i = off + 1, off + (tonumber(info.numSpellBookItems) or 0) do slots[#slots + 1] = i end
+        end
+      end
+    end
+    for _, i in ipairs(slots) do
+      local name, sub = try(SB.GetSpellBookItemName, i, bank)
+      if name then
+        out[#out + 1] = { name = name, sub = sub, slot = i,
+                          passive = SB.IsSpellBookItemPassive and try(SB.IsSpellBookItemPassive, i, bank) or false }
+      end
+    end
+    return out
+  end
+  local bt = pet and (_G.BOOKTYPE_PET or "pet") or (_G.BOOKTYPE_SPELL or "spell")
+  if pet then
+    for i = 1, (tonumber((try(_G.HasPetSpells))) or 0) do slots[#slots + 1] = i end
+  elseif _G.GetNumSpellTabs and _G.GetSpellTabInfo then
+    for tab = 1, (tonumber(try(_G.GetNumSpellTabs)) or 0) do
+      local _, _, off, num = try(_G.GetSpellTabInfo, tab)
+      for i = (off or 0) + 1, (off or 0) + (num or 0) do slots[#slots + 1] = i end
+    end
+  end
+  for _, i in ipairs(slots) do
+    local name, sub = try(_G.GetSpellBookItemName, i, bt)
+    if name then out[#out + 1] = { name = name, sub = sub, slot = i, passive = try(_G.IsPassiveSpell, i, bt) or false } end
+  end
+  return out
+end
+
+--- Entrées du journal de quêtes (lecture seule, sans toucher à la sélection Blizzard) :
+--- { {title=, level=, isHeader=, isComplete=, questID=, index=}, ... }
+function API.QuestLogEntries()
+  local out, QL = {}, _G.C_QuestLog
+  if QL and QL.GetNumQuestLogEntries and QL.GetInfo then
+    for i = 1, (tonumber((try(QL.GetNumQuestLogEntries))) or 0) do
+      local q = try(QL.GetInfo, i)
+      if type(q) == "table" then
+        local done = q.questID and QL.IsComplete and try(QL.IsComplete, q.questID)
+        out[#out + 1] = { title = q.title, level = q.level, isHeader = q.isHeader, questID = q.questID, index = i,
+                          isComplete = done and 1 or nil }
+      end
+    end
+    return out
+  end
+  if _G.GetNumQuestLogEntries and _G.GetQuestLogTitle then
+    for i = 1, (tonumber((try(_G.GetNumQuestLogEntries))) or 0) do
+      local title, lvl, _, isHeader, _, isComplete, _, qid = try(_G.GetQuestLogTitle, i)
+      if title then
+        out[#out + 1] = { title = title, level = lvl, isHeader = isHeader, isComplete = isComplete, questID = qid, index = i }
+      end
+    end
+  end
+  return out
+end
+
+--- Sort en cours du joueur : name, startMS, endMS (UnitCastingInfo ; CastingInfo = vieux Classic).
+function API.PlayerCasting()
+  if _G.UnitCastingInfo then
+    local n, _, _, s, e = try(_G.UnitCastingInfo, "player")
+    return pub(n), pub(s), pub(e)
+  end
+  if _G.CastingInfo then
+    local n, _, _, s, e = try(_G.CastingInfo)
+    return n, s, e
+  end
+end
+
+function API.HasAction(slot)
+  local AB = _G.C_ActionBar
+  if AB and AB.HasAction then return try(AB.HasAction, slot) and true or false end
+  return try(_G.HasAction, slot) and true or false
 end
 
 ---------------------------------------------------------------------------
@@ -338,20 +483,48 @@ local function ownerActive(owner)
   return true
 end
 
+local profile = _G.debugprofilestop
+TreeAI._stats = TreeAI._stats or {}   -- [module] = { calls, ms } (SelfTest / « /tai test »)
 local function dispatch(event, ...)
   local list = handlers[event]
   if not list then return end
   for owner, fn in pairs(list) do
     if ownerActive(owner) then
-      TreeAI._ctx = tostring(owner.name or "core") .. ":" .. tostring(event)
+      local name = tostring(owner.name or "core")
+      TreeAI._ctx = name .. ":" .. tostring(event)
+      local t0 = profile and profile()
       safecall(fn, owner, event, ...)
+      if t0 then
+        local st = TreeAI._stats[name]
+        if not st then st = { calls = 0, ms = 0 }; TreeAI._stats[name] = st end
+        st.calls = st.calls + 1
+        st.ms = st.ms + ((profile() or t0) - t0)
+      end
     end
   end
   TreeAI._ctx = nil
 end
 
+--- Forever (restrictions Midnight) : s'abonner à COMBAT_LOG_EVENT(_UNFILTERED) déclenche ADDON_ACTION_FORBIDDEN
+--- (« TreeAI a été bloqué »), même dans un pcall. On ne s'y abonne que sur un client sans valeurs secrètes.
+local RESTRICTED_EVENTS = { COMBAT_LOG_EVENT_UNFILTERED = true, COMBAT_LOG_EVENT = true }
+function TreeAI:CombatLogAllowed()
+  if type(_G.issecretvalue) == "function" then return false end
+  local CL = _G.C_CombatLog
+  if CL and CL.IsCombatLogRestricted then
+    local ok, r = pcall(CL.IsCombatLogRestricted)
+    if ok and r then return false end
+  end
+  return true
+end
+function TreeAI:EventAllowed(event)
+  if RESTRICTED_EVENTS[event] then return self:CombatLogAllowed() end
+  return true
+end
+
 function TreeAI:RegisterEvent(event, owner, fn)
   owner = owner or self
+  if not self:EventAllowed(event) then return false end
   if type(fn) ~= "function" then
     local m = owner[fn or event]
     if type(m) ~= "function" then return false end
@@ -402,7 +575,10 @@ function TreeAI:UserAction(fn, ...)
   self._userAction = (self._userAction or 0) + 1
   local ok, err = pcall(fn, ...)
   self._userAction = math.max(0, (self._userAction or 1) - 1)
-  if not ok then self:Debug("action:", err) end
+  if not ok then
+    self:Debug("action:", err)
+    if self._errorHook then pcall(self._errorHook, err, "action") end
+  end
   return ok
 end
 function TreeAI:InUserAction() return (self._userAction or 0) > 0 end
@@ -420,7 +596,9 @@ function TreeAI:StartAutoRefresh()
     for _, name in ipairs(self.moduleOrder or {}) do
       local m = self.modules and self.modules[name]
       if m and type(m.AutoRefresh) == "function" and (not m.IsEnabled or m:IsEnabled()) then
+        self._ctx = name .. ":AutoRefresh"
         safecall(m.AutoRefresh, m)
+        self._ctx = nil
       end
     end
     self:Fire("REFRESH")
@@ -431,9 +609,14 @@ end
 function TreeAI:Fire(message, ...)
   local list = messages[message]
   if not list then return end
+  local prev = TreeAI._ctx
   for owner, fn in pairs(list) do
-    if ownerActive(owner) then safecall(fn, owner, message, ...) end
+    if ownerActive(owner) then
+      TreeAI._ctx = tostring(type(owner) == "table" and owner.name or "core") .. ":" .. tostring(message)
+      safecall(fn, owner, message, ...)
+    end
   end
+  TreeAI._ctx = prev
 end
 
 if frame then

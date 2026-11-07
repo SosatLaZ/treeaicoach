@@ -3,6 +3,12 @@
 -- `WowMock` (test-side only; the harness whitelists it). Two API flavours:
 --   WowMock.Install("modern")  C_Container, C_ChatInfo, C_AddOns, C_Spell, C_UnitAuras…
 --   WowMock.Install("legacy")  GetContainerItemInfo & co, global SendAddonMessage, no C_Container
+--   WowMock.Install("forever") "modern" + what WoW Forever 1.60.1 really changes (checked against
+--     Blizzard_APIDocumentationGenerated, Gethe/wow-ui-source branch « forever », build 70862):
+--     Classic-era globals removed (GetPetHappiness → C_PetInfo, GetSkillLineInfo → C_SkillInfo, spellbook
+--     → C_SpellBook, GetQuestLogTitle, UnitAura, GetSpellInfo…), secret values in combat (issecretvalue;
+--     arithmetic / comparison / table key on them raise), COMBAT_LOG_EVENT_UNFILTERED registration =
+--     ADDON_ACTION_FORBIDDEN, CreateMacro/EditMacro/DeleteMacro only inside a hardware event (click / slash).
 -- so the addon's feature tests (`if C_Container then … else … end`) are exercised both ways.
 -- Unknown methods on mocked widgets are no-ops (recorded in WowMock.unmockedMethods).
 -- ToS guards recorded as violations: CreateMacro/EditMacro/DeleteMacro/PickupMacro/SetBinding*
@@ -237,6 +243,10 @@ function Widget:HookScript(what, fn)
 end
 function Widget:RegisterEvent(ev)
   if type(ev) ~= "string" then error("RegisterEvent: event must be a string", 2) end
+  if M.flavor == "forever" and (ev == "COMBAT_LOG_EVENT_UNFILTERED" or ev == "COMBAT_LOG_EVENT") then
+    M.Violation("forbidden", "RegisterEvent(" .. ev .. ") on Forever (ADDON_ACTION_FORBIDDEN)")
+    return
+  end
   self.__events[ev] = true
 end
 Widget.RegisterUnitEvent = function(self, ev) Widget.RegisterEvent(self, ev) end
@@ -503,7 +513,7 @@ end
 
 function M.Install(flavor)
   M.flavor = flavor or "modern"
-  local modern = (M.flavor == "modern")
+  local modern = (M.flavor == "modern" or M.flavor == "forever")
   local G = _G
 
   -- Lua helpers WoW adds -----------------------------------------------------------------------
@@ -1236,6 +1246,7 @@ function M.Install(flavor)
   G.Ambiguate = function(name) return (tostring(name):gsub("%-.*$", "")) end
   G.ChatFrame_AddMessageEventFilter = function() end
   if M.InstallAH then M.InstallAH(G, modern) end
+  if M.flavor == "forever" and M.ApplyForever then M.ApplyForever(G) end
 end
 
 function M.RegisterPrefix(p)
@@ -1290,7 +1301,10 @@ function M.RunSlash(line)
       local s = rawget(_G, "SLASH_" .. key .. i)
       if s == nil then break end
       if tostring(s):lower() == cmd then
+        local hw = M.hardware
+        M.hardware = true   -- a typed command = one hardware event
         M.SafeCall("slash " .. cmd, fn, rest, DEFAULT_CHAT_FRAME)
+        M.hardware = hw
         return true
       end
     end
@@ -1614,4 +1628,128 @@ function M.SetCompleted(ids)
 end
 
 M.Reset()
+----------------------------------------------------------------------------------------------
+-- "forever" flavour: what the real WoW Forever 1.60.1 client changes on top of "modern"
+----------------------------------------------------------------------------------------------
+local SecretMT = {}
+local function boom(what) return function() error("attempt to " .. what .. " a secret value", 2) end end
+SecretMT.__add, SecretMT.__sub, SecretMT.__mul, SecretMT.__div = boom("perform arithmetic on"), boom("perform arithmetic on"),
+  boom("perform arithmetic on"), boom("perform arithmetic on")
+SecretMT.__mod, SecretMT.__pow, SecretMT.__unm = boom("perform arithmetic on"), boom("perform arithmetic on"), boom("negate")
+SecretMT.__lt, SecretMT.__le, SecretMT.__eq = boom("compare"), boom("compare"), boom("compare")
+SecretMT.__len, SecretMT.__index, SecretMT.__newindex = boom("get length of"), boom("index"), boom("index")
+SecretMT.__call = boom("call")
+SecretMT.__concat = function(a, b)   -- allowed: concatenation gives a (secret) string; we keep it readable
+  local function s(v) return getmetatable(v) == SecretMT and "<secret>" or tostring(v) end
+  return s(a) .. s(b)
+end
+SecretMT.__tostring = function() return "<secret>" end
+M.SecretMT = SecretMT
+function M.Secret() return setmetatable({}, SecretMT) end
+function M.IsSecret(v) return getmetatable(v) == SecretMT end
+
+-- Classic-era globals that do not exist on Forever (no C function, no deprecated shim for "camelot")
+M.FOREVER_REMOVED = {
+  "GetSpellInfo", "GetSpellCooldown", "GetItemInfo", "GetItemCount", "GetItemCooldown", "GetItemSpell", "GetItemStats",
+  "GetItemInfoInstant", "GetContainerItemInfo", "GetContainerNumSlots", "GetContainerNumFreeSlots",
+  "GetContainerItemID", "GetContainerItemLink", "UseContainerItem", "PickupContainerItem", "UnitAura",
+  "IsSpellKnown", "IsPlayerSpell", "GetPetHappiness", "GetPetLoyalty", "GetPetTrainingPoints", "GetPetFoodTypes",
+  "GetNumSkillLines", "GetSkillLineInfo", "GetQuestLogTitle", "GetNumPartyMembers", "GetNumRaidMembers",
+  "InterfaceOptions_AddCategory", "InterfaceOptionsFrame_OpenToCategory", "GetNumSpellTabs", "GetSpellTabInfo",
+  "GetSpellBookItemName", "IsPassiveSpell", "HasPetSpells", "HasAction", "CastingInfo", "UnitCharacterPoints",
+  "GetTalentTabInfo", "GetNumTalentTabs", "GetActiveTalentGroup", "GetAddOnMetadata", "IsAddOnLoaded",
+  "GetAddOnInfo", "GetNumAddOns", "SendAddonMessage", "RegisterAddonMessagePrefix", "GetQuestGreenRange",
+  "GetSpellName", "QueryAuctionItems", "GetAuctionItemInfo", "GetNumAuctionItems", "PlaceAuctionBid",
+  "PostAuction", "CancelAuction", "CanSendAuctionQuery", "ClickAuctionSellItemButton", "GetAuctionSellItemInfo",
+  "CalculateAuctionDeposit", "GetNumTradeSkills", "GetTradeSkillInfo", "GetTradeSkillLine",
+}
+
+function M.ApplyForever(G)
+  local old = {}
+  for _, n in ipairs(M.FOREVER_REMOVED) do old[n] = rawget(G, n); rawset(G, n, nil) end
+  local function oldf(n) return old[n] or function() end end
+  -- C_* tables that forwarded to a removed global keep working (bound to the original function)
+  if G.C_Item then
+    G.C_Item.GetItemStats = function(link) return oldf("GetItemStats")(link) end
+    G.C_Item.GetItemSpell = G.C_Item.GetItemSpell or function(i) return oldf("GetItemSpell")(i) end
+    G.C_Item.GetItemCooldown = G.C_Item.GetItemCooldown or function(i) return oldf("GetItemCooldown")(i) end
+  end
+  G.issecretvalue = function(v) return getmetatable(v) == SecretMT end
+  G.canaccessvalue = function(v) return getmetatable(v) ~= SecretMT end
+  G.WOW_PROJECT_ID = 99   -- unknown project id: the addon must not depend on it
+  -- moved APIs
+  G.C_PetInfo = {
+    GetPetHappiness = oldf("GetPetHappiness"), GetPetLoyalty = oldf("GetPetLoyalty"),
+    GetPetTrainingPoints = oldf("GetPetTrainingPoints"),
+    GetPetFoodTypes = function() return { oldf("GetPetFoodTypes")() } end,   -- a table on Forever
+  }
+  G.C_SkillInfo = {
+    GetNumSkillLines = oldf("GetNumSkillLines"),
+    GetSkillLineInfo = function(i)
+      local name, isHeader, _, rank, _, _, maxRank = oldf("GetSkillLineInfo")(i)
+      if name then return { name = name, isHeader = isHeader and true or false, rank = rank or 0, maxRank = maxRank or 0,
+        skillID = i } end
+    end,
+  }
+  local SB = G.C_SpellBook or {}
+  G.C_SpellBook = SB
+  SB.IsSpellKnown = SB.IsSpellKnown or function(id) local sp = M.spells[id] return sp and sp.known or false end
+  SB.GetNumSpellBookSkillLines = SB.GetNumSpellBookSkillLines or function() return 0 end
+  SB.GetSpellBookSkillLineInfo = SB.GetSpellBookSkillLineInfo or function() return nil end
+  SB.GetSpellBookItemName = SB.GetSpellBookItemName or function() return nil end
+  SB.HasPetSpells = SB.HasPetSpells or function() return nil end
+  G.Enum = G.Enum or {}
+  G.Enum.SpellBookSpellBank = G.Enum.SpellBookSpellBank or { Player = 0, Pet = 1 }
+  G.C_ActionBar = G.C_ActionBar or {}
+  G.C_ActionBar.HasAction = G.C_ActionBar.HasAction or function() return false end
+  G.C_ClassTalents = G.C_ClassTalents or { HasUnspentTalentPoints = function() return false, 0, 0 end }
+  G.C_CombatLog = G.C_CombatLog or { IsCombatLogRestricted = function() return true end }
+  -- secret values: in combat, other units' health / power / identity / casts / auras are secret
+  local function wrapUnit(name, secretFor)
+    local f = rawget(G, name)
+    if type(f) ~= "function" then return end
+    G[name] = function(u, ...)
+      if M.inCombat and secretFor(u) then
+        local r = { f(u, ...) }
+        if r[1] == nil then return nil end
+        for i = 1, #r do if r[i] ~= nil then r[i] = M.Secret() end end
+        return unpack(r)
+      end
+      return f(u, ...)
+    end
+  end
+  local function notMe(u) return u ~= "player" or M.secretPlayer end   -- M.secretPlayer: worst case
+  local function notGroup(u)
+    return not (u == "player" or u == "pet" or tostring(u):match("^party%d$") or tostring(u):match("^raid%d+$"))
+  end
+  for _, n in ipairs({ "UnitHealth", "UnitHealthMax", "UnitPower", "UnitPowerMax", "UnitCastingInfo", "UnitChannelInfo" }) do
+    wrapUnit(n, notMe)
+  end
+  for _, n in ipairs({ "UnitGUID", "UnitName", "UnitCreatureType", "UnitCreatureFamily" }) do wrapUnit(n, notGroup) end
+  wrapUnit("UnitDetailedThreatSituation", function() return true end)
+  if G.C_UnitAuras and G.C_UnitAuras.GetAuraDataByIndex then
+    local f = G.C_UnitAuras.GetAuraDataByIndex
+    G.C_UnitAuras.GetAuraDataByIndex = function(u, ...)
+      local d = f(u, ...)
+      if d and M.inCombat and (u ~= "player" or M.secretPlayer) then
+        for k in pairs(d) do d[k] = M.Secret() end
+      end
+      return d
+    end
+  end
+  -- macro writes: only inside a hardware event (a click / a typed command) — else ADDON_ACTION_FORBIDDEN
+  for _, n in ipairs({ "CreateMacro", "EditMacro", "DeleteMacro" }) do
+    local f = rawget(G, n)
+    if type(f) == "function" then
+      G[n] = function(...)
+        if not M.hardware then
+          M.Violation("forbidden", n .. "() outside a hardware event (ADDON_ACTION_FORBIDDEN « UNKNOWN() »)")
+          error("Interface action failed because of an AddOn", 2)
+        end
+        return f(...)
+      end
+    end
+  end
+end
+
 return M

@@ -508,10 +508,11 @@ function M.MoodLoss(happiness, dps)
   return math.floor(dps / mult * 1.25 - dps + 0.5)
 end
 function M:CheckPetMood()
-  if not opt("petMood") or not isClass("HUNTER") or not exists("pet") or not G.GetPetHappiness then
+  local happiness = API.PetHappiness or G.GetPetHappiness   -- C_PetInfo sur Forever
+  if not opt("petMood") or not isClass("HUNTER") or not exists("pet") or not happiness then
     setLine("mood", nil) M:Clear("mood") return
   end
-  local h = sv(try(G.GetPetHappiness))
+  local h = sv(try(happiness))
   if not h or h >= 3 then setLine("mood", nil) M:Clear("mood") return end
   local gain = M.MoodLoss(h, M.PetDPS())
   local txt = (h == 1 and "Familier mécontent : −25 % de ses dégâts" or "Familier seulement content : heureux = +25 % de dégâts")

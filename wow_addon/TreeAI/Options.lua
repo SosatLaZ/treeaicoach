@@ -235,6 +235,8 @@ local function buildModule(content, name, mod)
         end, function()
           return (o.label or key) .. " : " .. tostring(o.values[tonumber(mod.db and mod.db[key]) or 1] or "?")
         end)
+      elseif o.type == "button" and type(o.onClick) == "function" then   -- action du module (clic = action du joueur)
+        P.button(o.label or key or "?", o.width or 220, function() TreeAI:UserAction(o.onClick, mod) end)
       elseif o.type == "range" then
         P.slider(o.label or key, o.min or 0, o.max or 100, o.step or 1,
           function() return mod.db and mod.db[key] end,

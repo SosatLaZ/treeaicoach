@@ -106,6 +106,8 @@ local function auraAt(unit, i, filter)
   if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
     local ok, d = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, filter)
     if not ok or not d then return nil end
+    local A = API()
+    if A and A.Pub then return A.Pub(d.name) or "?", A.Pub(d.spellId) end   -- auras secrètes en combat
     return d.name, d.spellId
   end
   if UnitAura then

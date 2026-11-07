@@ -922,11 +922,12 @@ function S:CollectState()
   st.m = (C_Map and C_Map.GetBestMapForUnit and call(C_Map.GetBestMapForUnit, "player")) or 0
   local y, x, _, inst = call(UnitPosition, "player")
   if tonumber(y) and tonumber(x) then st.py, st.px, st.pi = floor(y / 5 + 0.5) * 5, floor(x / 5 + 0.5) * 5, inst or -1 end
-  local hp, hpm = call(UnitHealth, "player"), call(UnitHealthMax, "player")
+  local pub = API.Pub or function(v) return v end   -- PV / mana secrets en combat (Forever)
+  local hp, hpm = pub(call(UnitHealth, "player")), pub(call(UnitHealthMax, "player"))
   if hp and hpm and hpm > 0 then st.h = floor(hp * 100 / hpm) end
   local ptype = call(UnitPowerType, "player")
   if ptype == 0 then
-    local p, pm = call(UnitPower, "player", 0), call(UnitPowerMax, "player", 0)
+    local p, pm = pub(call(UnitPower, "player", 0)), pub(call(UnitPowerMax, "player", 0))
     st.p = (p and pm and pm > 0) and floor(p * 100 / pm) or -1
   else
     st.p = -1
@@ -934,7 +935,7 @@ function S:CollectState()
   st.d = call(UnitIsGhost, "player") and 2 or (call(UnitIsDeadOrGhost, "player") and 1 or 0)
   if PET[st.c] then
     st.pt = (call(UnitExists, "pet") and not call(UnitIsDead, "pet")) and 1 or 2
-    st.ph = tonumber((call(GetPetHappiness))) or 0
+    st.ph = tonumber((call(API.PetHappiness or GetPetHappiness))) or 0   -- C_PetInfo sur Forever
   end
   local free, total = call(API.FreeSlots)
   st.b, st.bt = free or 0, total or 0

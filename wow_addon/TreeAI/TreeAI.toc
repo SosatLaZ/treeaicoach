@@ -13,6 +13,7 @@ Locale_frFR.lua
 UI.lua
 Modules\Theme.lua
 Options.lua
+Modules\SelfTest.lua
 
 Data\Macros.lua
 Data\PetFood.lua
