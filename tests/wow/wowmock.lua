@@ -344,6 +344,8 @@ function Widget:Click(button)
   end
 end
 -- mouse wheel / scroll frames (panel tabs)
+function Widget:EnableMouse(v) self.__mouse = v and true or false end
+function Widget:IsMouseEnabled() return self.__mouse or false end
 function Widget:EnableMouseWheel(v) self.__wheel = v and true or false end
 function Widget:IsMouseWheelEnabled() return self.__wheel or false end
 function Widget:SetScrollChild(c) self.__scrollChild = c end
@@ -636,6 +638,10 @@ function M.Install(flavor)
   G.UIParent = newWidget("Frame", "UIParent", nil)
   G.WorldFrame = newWidget("Frame", "WorldFrame", nil)
   G.Minimap = newWidget("Minimap", "Minimap", G.UIParent)
+  G.Minimap.__w, G.Minimap.__h = 140, 140
+  function G.Minimap:GetZoom() return M.minimapZoom or 0 end
+  function G.Minimap:GetZoomLevels() return 6 end
+  G.IsIndoors = function() return M.indoors and true or false end
   local chat = newWidget("ScrollingMessageFrame", "ChatFrame1", G.UIParent)
   function chat:AddMessage(msg) M.output[#M.output + 1] = tostring(msg) end
   G.DEFAULT_CHAT_FRAME, G.ChatFrame1, G.SELECTED_CHAT_FRAME = chat, chat, chat

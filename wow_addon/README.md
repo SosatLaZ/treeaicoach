@@ -735,6 +735,21 @@ hors combat, cache monde 6 s), remises, cible boussole + étapes `Planner`, chem
 clic = cible de la boussole. 20 i/s seulement visible, caché en instance. API pure : `R.Project(dn, dw,
 facing, rotate, zoom, radius)`, `R.WorldToMap`, `R.Cluster`. `RegisterMovable(frame, "radar", "Radar",
 {resizable, square, minSize, maxSize, onResize, onMove})` appelé si présent. `/tai radar [zoom N|tourne|statut|reset|oublier]`.
+**Caché par défaut depuis 3.9.2** (`db.shown = false`, migration unique `db.offByDefault`), réactivable dans
+« Apparence » ; le module reste actif (relevés rares / élites / corps) pour MinimapPins.
+
+## Points sur la minimap : module `MinimapPins` (`Modules/MinimapPins.lua`, après Radar)
+
+Nos points sur la **vraie** minimap de Blizzard, seulement ce que Questie ne montre pas : cible boussole /
+étape 1 du plan (sauf si `Compass.OtherGuide` dit que Blizzard / TomTom / SPF l'affiche), chemin sûr, rares,
+élites près de moi / du chemin (anneau doux ± 40 yd, sans souris), butin de quête (relevé au `LOOT_OPENED`,
+**couche coupée si Questie est chargé**), amis au-delà du rayon de la minimap (flèche au bord + nom), maîtres de
+vol non découverts ≤ 800 yd, marchand / courrier / HV / réparation les plus proches (relevés à l'interaction)
+quand Prévisions dit sacs pleins / réparation. Moteur : `HereBeDragons-Pins-2.0` via `LibStub` si un addon
+l'embarque (`AddMinimapIconMap(MP, pin, uiMapID, x, y, false, floatOnEdge)` / `RemoveMinimapIcon`), sinon le nôtre :
+boutons enfants de `Minimap`, `MP.Offset(dn, dw, facing, rotate, yardsRadius, pxRadius, shape, inset)` avec
+`Minimap:GetZoom()`, `IsIndoors()`, table yards HBD, CVar `rotateMinimap`, `GetMinimapShape` ; ≤ 10 i/s via un cadre
+pilote enfant de Minimap. Minimap jamais modifiée ni hookée. Couches : options + page « Apparence ». `/tai minimap`.
 `Modules/Gear.lua` + `Data/Gear.lua` (agent GEAR) : planificateur d'équipement, onglet « Équipement » (tout au clic :
 « ↻ Recalculer », horizon +2, clic sur un emplacement = toutes les sources et alternatives ; `/tai equipement` en
 secours). Score par emplacement avec les poids du module Boost (exportés : `Boost.Weights`, `ScoreStats`,

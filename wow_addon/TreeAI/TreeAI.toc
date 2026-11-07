@@ -53,6 +53,7 @@ Modules\Highlight.lua
 Modules\PvP.lua
 Modules\Dungeon.lua
 Modules\Radar.lua
+Modules\MinimapPins.lua
 Modules\Gear.lua
 Modules\Talents.lua
 Modules\Session.lua

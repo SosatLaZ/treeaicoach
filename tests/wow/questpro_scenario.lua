@@ -85,6 +85,7 @@ return function(M, ctx)
   check(Q.lastQuestie and Q.lastQuestie.hereCount == 1, "Questie: 1 available quest here")
 
   -- ---------------------------------------------------------------- compass
+  if C.ClearWaypoint then C.ClearWaypoint() end   -- the event storm may have clicked a minimap pin (manual target)
   C.Rebuild("init")
   local t1 = C.Current()
   check(t1 and t1.kind == "turnin" and t1.questID == 1004 and t1.npc == "Fermier", "nearest target = turn-in at the farmer: " .. tostring(t1 and t1.label))
