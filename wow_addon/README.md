@@ -204,6 +204,22 @@ profit = vente × (1 − commission) − achat − dépôt × P(invendu)). Prix 
 valeur), pas de table exportée. Auctionator: lecture seule de `Auctionator.API.v1` en secours.
 `/tai hv [vendre|journal|fenetre|neutre|faction|auto]`.
 
+`Modules/PvP.lua` (agent PVP): aides JcJ **informatives**, actives seulement si `settings.pvp` (`/tai pvp`,
+OFF par défaut) ; onglet `pvp` « JcJ » enregistré / retiré selon ce réglage. Champs de bataille : minuteurs
+d'objectifs (POI `C_AreaPoiInfo` textureIndex « contesté », comme Capping ; messages `CHAT_MSG_BG_SYSTEM_*`
+FR/EN en secours ; Arathi 60 s, Alterac 300 s), porteurs de drapeau (vie % si l'unité est visible : cible,
+survol, barres de nom, raid ; position `C_PvP.GetBattlefieldFlagPosition` / `GetBattlefieldFlagPosition`),
+prédiction de score + chance de victoire (widgets 1893/1894 d'Arathi ou set du haut, taux classiques ou
+mesurés), équipe ennemie (`C_PvP.GetScoreInfo` / `GetBattlefieldScore` : classes, soigneurs estimés),
+file d'attente (`GetBattlefieldStatus`, `GetBattlefieldPortExpiration`). JcJ sauvage : ennemis vus
+(classe, niveau, guilde, danger 0–10 vs ta classe/niveau), liste KOS `TreeAIDB.modules.PvP.kos[nom]`
+(`/tai kos [Nom|liste]`), alerte prio 3 « Danger : 2 ennemis niv 60 près de toi ». Honneur de session
+(`CHAT_MSG_COMBAT_HONOR_GAIN`, `GetPVPSessionStats`), historique par perso
+`chars[k].modules.PvP.history = { {bg, dur, honor, won, at} }` → meilleur BG en honneur/h (`/tai jcj`).
+Cible / duel : conseils par classe, contres du chasseur, auras défensives visibles. Clic sur un ennemi =
+macro « TAI Cible » (`/targetexact Nom`, hors combat, pendant le clic) que le joueur appuie lui-même.
+Jamais de journal de combat, de suivi de recharges ennemies, ni de ciblage automatique.
+
 `TreeAI` (global) existe dès `Core.lua`. Un module se déclare au chargement
 de son fichier (top-level) avec `TreeAI:RegisterModule`; il ne doit **rien**
 faire d'autre au top-level que préparer des tables (pas d'appel d'API de jeu
