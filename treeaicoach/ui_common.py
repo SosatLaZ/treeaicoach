@@ -115,7 +115,7 @@ TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
 
-PREBUILD_ORDER = ("overlay", "alerts", "settings", "discord", "analysis")   # built after the first paint
+PREBUILD_ORDER = ("overlay", "alerts", "settings", "discord", "analysis", "wow")   # built after the first paint
 GAMES_PAGE = 15                  # rows of the Analyses table drawn at once ("Afficher plus")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -129,10 +129,12 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("discord", "Discord", "discord"),
     ("analysis", "Analyse", "analysis"),
     ("settings", "Réglages", "settings"),
+    ("wow", "WoW Forever", "wow"),         # World of Warcraft: Forever helper (wow/, ui_page_wow.py)
 )
 #: Sidebar groups, in order of use: playing (every game), then setting up (rarely), at the bottom.
 NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("", ("home", "overlay", "alerts", "discord", "analysis")),
+    ("Autres jeux", ("wow",)),
     ("Configuration", ("settings",)),
 )
 #: Old page / tab names (tools, fixes, saved links) -> new page.

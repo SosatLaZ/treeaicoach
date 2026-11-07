@@ -323,6 +323,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             if self._running:
                 self._discord_sync()
                 self._voice_assistant_sync()
+                self._wow_sync()
             for comp in (self._gank, self._objectives, self._reminders, self._fog, self._overlay_mgr,
                          self._coach, self._stance, self._tactics, self._ward_guide):
                 fn = getattr(comp, "apply_config", None)
@@ -637,6 +638,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._start_overlay()
             self._discord_sync()
             self._voice_assistant_sync()
+            self._wow_sync()
             log.info("Engine started (%s)", "demo" if self._demo else
                      ("frame source" if self._frame_source is not None else "live"))
         except Exception:
@@ -668,6 +670,7 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
             self._overlay_mgr = None
             self._diag_hotkeys = None
             self._voice_assistant_sync(stop=True)
+            self._wow_sync(stop=True)
             timer = self._mute_timer
             if timer is not None:
                 timer.cancel()
@@ -1705,8 +1708,11 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
                 if self._tracker is not None and self._in_game:
                     visible = len(self._tracker.enemies(visible_only=True))
                 s = self._session
+                message = self._message
+                if self._state == EngineState.WAITING_GAME:
+                    message = self._wow_message() or message
                 return EngineStatus(
-                    state=self._state, message=self._message,
+                    state=self._state, message=message,
                     fps=round(self._fps, 1) if self._in_game else 0.0, game_time=gt,
                     minimap_rect=self._minimap_rect if self._frame_source is None else None,
                     enemies_visible=visible,
@@ -1722,6 +1728,32 @@ class CoachEngine(PostgameMixin, CoachingMixin, VisionMixin, CaptureMixin, Overl
         except Exception:
             log.exception("get_status failed")
             return EngineStatus(EngineState.ERROR, MSG_ERROR, 0.0, None, None, 0, None, "", "")
+
+    # ---------------------------------------------------------------- WoW Forever (wow/mode.py)
+    def _wow_sync(self, stop: bool = False) -> None:
+        """WoW mode (live engine only): on while WoW runs and LoL does not; only process names and the
+        game's own files are read. Never raises."""
+        try:
+            if stop or self._demo or self._frame_source is not None:
+                if "treeaicoach.wow.mode" in sys.modules:
+                    sys.modules["treeaicoach.wow.mode"].detach()
+                return
+            if getattr(self._cfg, "wow_enabled", True) or "treeaicoach.wow.mode" in sys.modules:
+                from treeaicoach.wow import mode as wow_mode
+
+                m = wow_mode.attach(self)
+                if m is not None:
+                    m.apply_config(self._cfg)
+        except Exception:
+            log.debug("wow sync failed", exc_info=True)
+
+    def _wow_message(self) -> str | None:
+        mod = sys.modules.get("treeaicoach.wow.mode")
+        try:
+            m = mod.current() if mod is not None else None
+            return m.message() if m is not None else None
+        except Exception:
+            return None
 
     def session_stats(self) -> dict[str, int]:
         with self._lock:

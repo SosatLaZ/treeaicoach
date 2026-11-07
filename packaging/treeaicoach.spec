@@ -54,6 +54,11 @@ datas = [
     (ICON_ICO, "packaging"),                        # app icon, same relative place as in a checkout:
     (ICON_PNG, "packaging"),                        #   paths.package_dir().parent / "packaging" / "icon.*"
 ]
+_WOW_ADDON = os.path.join(ROOT, "wow_addon")              # WoW Forever addon, copied into Interface/AddOns
+if os.path.isdir(_WOW_ADDON):                              #   by treeaicoach.wow.install (package_dir().parent)
+    datas.append((_WOW_ADDON, "wow_addon"))
+else:
+    print("[treeaicoach.spec] ATTENTION : wow_addon/ absent - la page WoW ne pourra pas installer l'addon.")
 _NOTICES = os.path.join(ROOT, "THIRD_PARTY_NOTICES.md")   # MIT notices of adapted code (lcu.py)
 if os.path.isfile(_NOTICES):
     datas.append((_NOTICES, "."))

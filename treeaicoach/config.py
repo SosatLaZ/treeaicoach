@@ -33,7 +33,7 @@ from treeaicoach.hotkeys import normalize_hotkey
 
 log = logging.getLogger(__name__)
 
-CONFIG_VERSION = 9                 # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
+CONFIG_VERSION = 10               # written as "config_version"; < 2 / < 3 / < 4 / < 5: one-time migrations in load_config
 MAX_CONFIG_BYTES = 1_000_000       # a bigger config.json is treated as corrupt
 BACKUP_SUFFIX = ".bak"
 
@@ -205,6 +205,10 @@ BOOL_FIELDS = BOOL_FIELDS + ("selfcheck_enabled", "selfcheck_auto_diag")
 BOOL_FIELDS = BOOL_FIELDS + ("voice_assistant", "discord_listen_owner_only")
 UPDATE_TEXT_FIELDS["voice_assistant_mic"] = 200
 HOTKEY_FIELDS = HOTKEY_FIELDS + ("hotkey_voice_ask",)
+# World of Warcraft: Forever (wow/): the WoW mode (when WoW runs and LoL does not), the TreeAI addon
+# kept up to date in Interface/AddOns, live callouts read from the game's own WoWCombatLog.txt
+BOOL_FIELDS = BOOL_FIELDS + ("wow_enabled", "wow_addon_auto_update", "wow_voice", "wow_combatlog", "wow_pvp_help")
+UPDATE_TEXT_FIELDS["wow_path"] = 1024
 #: Compact overlay defaults, applied ONCE to config files written before the declutter
 #: (no "hotkey_details" key): the detailed HUD / map extras become opt-in again.
 DECLUTTER_RESET: dict[str, Any] = {
@@ -425,6 +429,13 @@ class Config:
     voice_assistant_mic: str = ""        # input device name ("" = Windows default)
     hotkey_voice_ask: str = "F12"    # push-to-talk: listen to a question without the wake phrase
     discord_links: dict = field(default_factory=dict)   # {Discord user id: Riot ID / "-"} set by hand
+    # World of Warcraft: Forever (wow/): never reads the game's memory or screen, only its own files
+    wow_enabled: bool = True             # WoW mode when WoW runs and LoL does not
+    wow_path: str = ""                   # WoW install folder ("" = found automatically)
+    wow_addon_auto_update: bool = True   # install / update Interface/AddOns/TreeAI at start
+    wow_voice: bool = False              # spontaneous spoken callouts in WoW: OFF (the voice only answers « Hey coach »)
+    wow_combatlog: bool = True           # read Logs/WoWCombatLog.txt (after /combatlog in game): AI context + report
+    wow_pvp_help: bool = False           # PvP hints (the addon has its own /tai pvp switch)
 
     def effective_warn_radius(self) -> float:
         """``warn_radius * sensitivity`` (clamped; defaults if the fields are invalid)."""
@@ -884,6 +895,8 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         # 2.12.1: "une minimap au-dessus de ma minimap" - the user never wants the radar copy;
         # moved back to the marks on the real minimap once (the value itself is still accepted)
         data = {**data, "overlay_mode": "minimap"}
+    if _version(data) < 10:                # 3.8: WoW Forever mode on (idle while WoW is not running)
+        data = {**data, "wow_enabled": data.get("wow_enabled", True) is not False}
     if _version(data) < 9 and str(data.get("neural_voice") or "fr-CA-SylvieNeural") == "fr-CA-SylvieNeural":
         data = {**data, "neural_voice": "fr-FR-RemyMultilingualNeural"}   # 3.3: natural male voice
         if str(data.get("neural_rate") or "+15%") == "+15%":

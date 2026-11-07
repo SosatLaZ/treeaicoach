@@ -344,6 +344,11 @@ def _glyph_path(kind: str, s: float) -> QtGui.QPainterPath:
         p.moveTo(10 * u, 3.5 * u); p.lineTo(10 * u, 12.5 * u)
         p.moveTo(6.5 * u, 9 * u); p.lineTo(10 * u, 12.5 * u); p.lineTo(13.5 * u, 9 * u)
         p.moveTo(4 * u, 14 * u); p.lineTo(4 * u, 16.5 * u); p.lineTo(16 * u, 16.5 * u); p.lineTo(16 * u, 14 * u)
+    elif kind == "wow":              # a sword (World of Warcraft: Forever)
+        p.moveTo(14.5 * u, 3 * u); p.lineTo(17 * u, 3 * u); p.lineTo(17 * u, 5.5 * u); p.lineTo(8.5 * u, 14 * u)
+        p.lineTo(6 * u, 11.5 * u); p.closeSubpath()
+        p.moveTo(4.5 * u, 10 * u); p.lineTo(10 * u, 15.5 * u)
+        p.moveTo(6.5 * u, 13.5 * u); p.lineTo(3.5 * u, 16.5 * u)
     else:
         p.addEllipse(QtCore.QPointF(10 * u, 10 * u), 6 * u, 6 * u)
     return p
