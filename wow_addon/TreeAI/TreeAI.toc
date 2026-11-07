@@ -25,4 +25,7 @@ Modules\Squad.lua
 Modules\Quests.lua
 Modules\Inventory.lua
 Modules\Boost.lua
+Modules\Fight.lua
+Modules\HunterPro.lua
+Modules\Comfort.lua
 Modules\Auction.lua
