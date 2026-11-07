@@ -227,7 +227,15 @@ local function buildModule(content, name, mod)
     for _, o in ipairs(mod.options) do
       local key = o.key
       if o.section then P.header(o.section) end
-      if o.type == "range" then
+      if o.type == "choice" and type(o.values) == "table" and #o.values > 0 then
+        P.button("", 240, function()
+          if not mod.db then return end
+          local n = (tonumber(mod.db[key]) or 1) % #o.values + 1
+          mod.db[key] = n; changed(key, n)
+        end, function()
+          return (o.label or key) .. " : " .. tostring(o.values[tonumber(mod.db and mod.db[key]) or 1] or "?")
+        end)
+      elseif o.type == "range" then
         P.slider(o.label or key, o.min or 0, o.max or 100, o.step or 1,
           function() return mod.db and mod.db[key] end,
           function(v) if mod.db then mod.db[key] = v; changed(key, v) end end)

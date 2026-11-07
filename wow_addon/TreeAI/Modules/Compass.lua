@@ -693,6 +693,10 @@ local function createFrame()
   label:SetWidth(146)
   info = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   info:SetPoint("TOP", label, "BOTTOM", 0, -1)
+  do  -- thème commun (visuel seulement)
+    local Th = T and T.Theme
+    if Th then Th:Skin(frame, "hud", { bg = bg }); Th:Font(label, "S", "gold"); Th:Font(info, "S") end
+  end
   frame:SetScale(tonumber(M.db.scale) or 1)
   local acc = 0
   frame:SetScript("OnUpdate", function(_, dt)

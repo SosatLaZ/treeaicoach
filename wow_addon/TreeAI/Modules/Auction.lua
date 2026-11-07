@@ -1694,6 +1694,7 @@ function M.CreateWindow()
   title:SetPoint("TOPLEFT", 10, -8)
   title:SetText("TreeAI — Hôtel des ventes")
   f.title = title
+  if T.Theme then T.Theme:Skin(f, "window"); T.Theme:Font(title, "M", "gold") end  -- thème commun
   local close = _G.CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 0, 0)
   local tabs = { { "deals", "Affaires" }, { "sell", "Vendre" }, { "owned", "Mes ventes" }, { "bilan", "Bilan" } }

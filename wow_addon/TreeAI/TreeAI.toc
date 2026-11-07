@@ -11,6 +11,7 @@
 Core.lua
 Locale_frFR.lua
 UI.lua
+Modules\Theme.lua
 Options.lua
 
 Data\Macros.lua

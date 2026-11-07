@@ -258,6 +258,7 @@ local function buildBar()
   bar:SetMinMaxValues(0, 60)
   bar.text = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   bar.text:SetPoint("CENTER")
+  if T.Theme then T.Theme:Skin(bar, "bar"); T.Theme:Font(bar.text, "S") end  -- thème commun
   bar:SetMovable(true); bar:EnableMouse(true)
   bar:RegisterForDrag("LeftButton")
   bar:SetScript("OnDragStart", function(s) if G.IsShiftKeyDown and G.IsShiftKeyDown() then s:StartMoving() end end)

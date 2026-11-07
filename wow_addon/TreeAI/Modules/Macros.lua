@@ -569,6 +569,7 @@ function M:TogglePanel()
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   title:SetPoint("TOPLEFT", 10, -8)
   title:SetText("Macros TreeAI — clic : prendre, glisser dans une barre")
+  if TreeAI.Theme then TreeAI.Theme:Skin(f, "window"); TreeAI.Theme:Font(title, "M", "gold") end  -- thème commun
   local close = _G.CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 2, 2)
   local inst = _G.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
@@ -594,6 +595,7 @@ function M:FillPanel()
       row:SetPoint("TOPLEFT", 10, -26 - (i - 1) * 17)
       row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
       row.text:SetAllPoints(); row.text:SetJustifyH("LEFT")
+      if TreeAI.Theme then TreeAI.Theme:Skin(row, "row") end
       row:SetScript("OnClick", function(b)
         if inCombat() then return end
         local idx = b.macroName and macroIndex(b.macroName)

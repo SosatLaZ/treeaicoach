@@ -99,8 +99,9 @@ def test_lua_tables():
         assert f"  {cat} = {{" in cs
     assert "{1251, 1, 66, \"\"}" in cs  # Bandage en lin : 66 PV, secourisme 1
     toc = (ADDON / "TreeAI.toc").read_text(encoding="utf-8")
-    assert toc.index("Data\\PetFood.lua") < toc.index("Modules\\")
-    assert toc.index("Data\\Consumables.lua") < toc.index("Modules\\")
+    first = toc.index("Modules\\Macros.lua")  # Modules\Theme.lua (no data use) loads right after UI.lua
+    assert toc.index("Data\\PetFood.lua") < first
+    assert toc.index("Data\\Consumables.lua") < first
 
 
 @pytest.mark.skipif(not shutil.which("luac5.1"), reason="luac5.1 absent")
