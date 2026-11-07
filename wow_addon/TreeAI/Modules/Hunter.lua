@@ -528,6 +528,8 @@ function M:CheckAspect()
     end
   elseif not combatOn and not travelOn then
     suggest("aspect", "Pense à un aspect avant le prochain pull.", 1, 600)
+  else
+    clear("aspect")   -- out of combat in Cheetah/Pack: fine, drop the stale in-combat warning
   end
 end
 

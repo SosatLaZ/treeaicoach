@@ -404,7 +404,7 @@ function M.Forecasts(r, ctx)
     end
   end
   -- sacs
-  if ctx.free and r.slotsPerKill and r.slotsPerKill > 0.05 then
+  if ctx.free and ctx.free > 0 and r.slotsPerKill and r.slotsPerKill > 0.05 then
     local mobs = floor(ctx.free / r.slotsPerKill)
     local kh = r.killsPerHour
     add("bags", ("Sacs pleins dans ~%d monstres%s"):format(mobs, kh and kh > 0 and (" (≈ " .. M.Minutes(mobs / kh * 60) .. ")") or ""),
@@ -534,7 +534,10 @@ function M.Update()
   -- urgentes (prio ≥ 2) → « Maintenant » ; les autres seulement dans l'onglet
   local keep = {}
   for _, f in ipairs(list) do
-    if f.prio >= 2 then
+    -- bags / repair : Inventory already warns in « Maintenant » (same meaning twice = noise) -> tab only
+    local inv = T.GetModule and T:GetModule("Inventory")
+    local owned = (f.id == "bags" or f.id == "repair") and inv and (not inv.IsEnabled or inv:IsEnabled())
+    if f.prio >= 2 and not owned then
       keep[f.id] = true
       M:Suggest(f.id, f.text, f.prio, { ttl = 120, cooldown = f.prio >= 3 and 120 or 600, sound = f.prio >= 3 })
     end

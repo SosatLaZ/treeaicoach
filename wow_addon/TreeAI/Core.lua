@@ -930,6 +930,7 @@ end
 ---------------------------------------------------------------------------
 local suggestions = {}   -- id -> entry
 local announced = {}     -- id -> { text, at }
+local alerted = {}       -- id -> { sk, at } (corner alert pops)
 TreeAI._suggestions = suggestions
 
 local function playUrgentSound()
@@ -1112,6 +1113,9 @@ function TreeAI:Suggest(id, text, prio, opts)
   if ttl == nil then ttl = 60 end
   local e = suggestions[id] or {}
   local changed = (e.text ~= text) or (e.prio ~= prio)
+  -- first appearance (or new prio): the order inside a prio follows it, so a module re-suggesting the
+  -- same advice every refresh does not reshuffle « Maintenant » (counters in the text do not count)
+  if not e.since or e.prio ~= prio then e.since = t end
   e.id, e.text, e.prio, e.time = id, text, prio, t
   e.expires = (ttl and ttl > 0) and (t + ttl) or nil
   e.module, e.icon, e.onClick, e.macro = opts.module, opts.icon, opts.onClick, opts.macro
@@ -1133,7 +1137,16 @@ function TreeAI:Suggest(id, text, prio, opts)
       doSound = (alertOK and doSound ~= false)
         or (prio < 3 and doSound == true and self.settings and self.settings.soundTips)
       if doSound then playUrgentSound() end
-      if alertOK and self.ShowAlert then safecall(self.ShowAlert, self, e) end
+      -- corner alert: POLISH filter (≤ 1 / 20 s, topic, combat) AND once per id, again only if the meaning
+      -- changed (digits ignored) or after 5 min (QA)
+      if alertOK and self.ShowAlert then
+        local sk = strgsub(text, "%d+", "#")
+        local pa = alerted[id]
+        if not pa or pa.sk ~= sk or (t - pa.at) >= 300 then
+          alerted[id] = { sk = sk, at = t }
+          safecall(self.ShowAlert, self, e)
+        end
+      end
       -- important items go to the corner alert box; the centre error text only if that box is off
       local al = self.settings and self.settings.alert
       if alertOK and al and al.enabled == false and _G.UIErrorsFrame and _G.UIErrorsFrame.AddMessage then
@@ -1182,7 +1195,8 @@ function TreeAI:GetSuggestions()
   end
   tsort(list, function(a, b)
     if a.prio ~= b.prio then return a.prio > b.prio end
-    if a.time ~= b.time then return a.time > b.time end
+    local sa, sb = a.since or a.time, b.since or b.time
+    if sa ~= sb then return sa > sb end
     return a.id < b.id
   end)
   return list
