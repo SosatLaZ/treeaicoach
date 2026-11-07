@@ -93,17 +93,39 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
   `AddWaypoint` → `C_Map.SetUserWaypoint` + `C_SuperTrack.SetSuperTrackedUserWaypoint` (non protégés),
   **uniquement sur clic / commande du joueur**. Géométrie pure : `Compass.Geo` (World, Vector, Relative,
   Dist, ETA). Base Questie : `LibQuestieDB` (addon QuestieDB, contrat 4) sinon `QuestieLoader._modules`.
-* **Suivi** (`T.Tracker`) : onglet « Quêtes » (`SetTabLines`) sinon petit cadre ; ordre = plus proche
-  voisin sur les points d'objectif / remise, barres `[===---]`, distance (+ temps SPF), « Prête à rendre »
-  (+ suite de chaîne), XP ; clic = cible de la boussole, Maj-clic = « Aller là ». Astuces : quêtes faciles à
-  côté, « passe prendre X chez Y en chemin », « tu pars sans prendre… », infobulle « lâche <objet> (taux) ».
-  `/tai suivi`, `/tai itineraire` (→ SPF `NavigateRoute`, ≤ 64 étapes). Planification hors combat seulement.
+* **Suivi** (`T.Tracker`, refait par TRACK-PRO — comparatif AGF / Questie / RestedXP dans
+  `research/agf_vs_treeai.md`) : onglet « Quêtes » (`SetTabLines`) **et** cadre compact optionnel à nous
+  (`standalone` : déplaçable, verrou, réduction par quête au clic droit / tout réduire sur l'en-tête, police,
+  largeur, échelle, opacité du fond ; sans onglets : cadre de secours `frame`).
+  - **Tri par coût** (défaut) : XP/min = XP ÷ (trajet + travail × difficulté + 15 s). Trajet = SPF `Estimate`
+    (8 plus proches, hors combat) sinon distance ÷ vitesse ; travail = objectifs restants × s/monstre mesurés
+    (`Predict.Rates().killsPerHour`, sinon 25 s), objets : ⌈restants ÷ taux⌉ monstres (taux mesuré
+    `Predict.BestSource/DropRate`, sinon 35 %) → « encore ~16 × Lion des collines (50 %) · ≈ 5 min », objets à
+    cliquer 20 s, évènements 90 s ; difficulté = (1 + 0,5·Δniv²) × 2 si seul à +3 × élite max(1,2 ; 3/groupe) ×
+    1,8 si groupe suggéré > groupe × donjon (4 à < 3, sinon 1,5) ; partagée avec un ami ×0,7. Hystérésis : la
+    tête ne change que pour ≥ 10 % de mieux. Autres tris : `route` (plus proche voisin), `distance`, `niveau`,
+    `zone`. Filtres : `tous`, `zone`, `pretes`, `groupe`, `faciles` (clic sur l'en-tête / Maj-clic = tri).
+  - Ligne : barres, ETA, distance (+ temps SPF), XP, XP/min, calque groupe (amis TreeAI via `Squad:MemberList()`
+    avec progression ; membres sans addon via `C_QuestLog.IsUnitOnQuest`), « Prête à rendre » + PNJ + suite
+    de chaîne (« → suite « A » → « B » »). Infobulle : objectifs + estimation, « pourquoi ce rang », chaîne n/N
+    (`Quests.Chain`), groupe, histoire (`Quests.Story` : Questie `objectivesText`, sinon
+    `GetQuestLogQuestText(index)` en API moderne seulement — jamais de sélection du journal).
+  - Clic = boussole ; Maj-clic = « Aller là » (SPF / TomTom / repère) ; Ctrl-clic = itinéraire complet SPF ;
+    Alt-clic = masquer jusqu'au /reload. Son (option `sound`) **uniquement** quand une quête devient finie.
+  - **Plan TreeAI en tête** si `TreeAI.Planner` a un plan actif. Contrat lu (gardé) :
+    `Planner:GetActiveSteps(n) → steps, index, total, titre` (étapes à partir de la courante, format
+    `TreeAI_Plan` : `{k, q, o, map, x, y, label, eta, who}`), repli `Planner.active = {route={title,steps}, idx}`.
+    Affiche « Étape i/N : … — distance · ~eta » + « ensuite » + « puis » ; clic = boussole (point perso).
+  - Astuces conservées : faciles à côté, « passe prendre X chez Y en chemin », « tu pars sans prendre… »,
+    infobulle « lâche <objet> (taux) ». Recalcul hors combat seulement (`:AutoRefresh()`, ≥ 1,5 s) ; en combat
+    la progression est recopiée sans calcul. `/tai suivi [cadre|filtre X|tri X|police N|verrou|masquer id|
+    montrer|reduire|cacher]`, `/tai itineraire` (→ SPF `NavigateRoute`, ≤ 64 étapes).
 * **Prévisions** (`T.Predict`) : taux mesurés (munitions/min, nourriture/boisson par repos, monstres/h via
   `PARTY_KILL` ou message d'XP, butin par monstre et objet de quête — `TreeAIDB.modules.Predict.mobs` —,
   XP/h, or/h, durabilité/h, places de sac par monstre) → onglet « Prévisions » ; urgentes dans « Maintenant ».
   Coûts de formation : table **approximative** `Predict.TRAINING`. `/tai prevoir`.
 * Résumés IA : `summary.compass = {target={kind,questID,title,label,zone,src,dist,distText,eta}, targets,
-  mapID, custom, hidden}`, `summary.tracker = {route={{id,title,ready,dist,xp,zone,done,total}}, easyNearby,
+  mapID, custom, hidden}`, `summary.tracker = {route={{id,title,ready,dist,xp,zone,done,total,xpm,sec,mates}}, sort, filter, totalMin, plan, easyNearby,
   pickup, available, dropMobs}`, `summary.predict = {sessionMin, rates={ammoPerMin, killsPerHour, xpPerHour,
   goldPerHour, durPerHour, foodPerRest, waterPerRest, restsPerHour, slotsPerKill, kills, loots},
   forecasts={{id,text,prio}}}`. Message interne `QUESTS_UPDATED` (émis par Quests.Update).
