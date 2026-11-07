@@ -407,10 +407,12 @@ TreeAI._dispatch = dispatch -- for tests
 ---------------------------------------------------------------------------
 local DEFAULT_SETTINGS = {
   enabled = true, sound = true, chat = false, comms = true, debug = false,
+  soundTips = false,   -- sons aussi pour certains conseils (rares…) ; sinon son = important (prio 3) seulement
   minPrio = 1,
   pvp = false,   -- aides PvP (OFF : l'addon aide à quêter, il se tait contre les joueurs ennemis)
   panel = { shown = true, locked = false, scale = 1, alpha = 0.9,
-            point = "CENTER", x = 300, y = 120, maxLines = 6 },
+            point = "CENTER", x = 300, y = 120, maxLines = 8, nowMax = 5, width = 280 },
+  alert = { enabled = true, corner = "TOPRIGHT", duration = 8, scale = 1, alpha = 0.95 },
 }
 
 local function mergeDefaults(dst, src)
@@ -668,6 +670,7 @@ function TreeAI:Suggest(id, text, prio, opts)
   e.id, e.text, e.prio, e.time = id, text, prio, t
   e.expires = (ttl and ttl > 0) and (t + ttl) or nil
   e.module, e.icon, e.onClick, e.macro = opts.module, opts.icon, opts.onClick, opts.macro
+  e.tab, e.tooltip = opts.tab, opts.tooltip
   suggestions[id] = e
 
   -- announce (sound/chat) at most once per cooldown for same id+text
@@ -679,18 +682,22 @@ function TreeAI:Suggest(id, text, prio, opts)
     local minPrio = (self.settings and self.settings.minPrio) or 1
     if prio >= minPrio then
       local doSound = opts.sound
-      if doSound == nil then doSound = (prio >= 3) end
+      -- sound only for important (prio 3) items, never forced on lower ones
+      doSound = ((prio >= 3) and doSound ~= false) or (doSound == true and self.settings and self.settings.soundTips)
       if doSound then playUrgentSound() end
-      if prio >= 3 and _G.UIErrorsFrame and _G.UIErrorsFrame.AddMessage then
+      if prio >= 3 and self.ShowAlert then safecall(self.ShowAlert, self, e) end
+      -- important items go to the corner alert box; the centre error text only if that box is off
+      local al = self.settings and self.settings.alert
+      if prio >= 3 and al and al.enabled == false and _G.UIErrorsFrame and _G.UIErrorsFrame.AddMessage then
         pcall(_G.UIErrorsFrame.AddMessage, _G.UIErrorsFrame, text, 1, 0.3, 0.2)
       end
-      local doChat = opts.chat
-      if doChat == nil then doChat = self.settings and self.settings.chat end
+      -- advice never goes to the chat unless the player opted in (settings.chat, off by default)
+      local doChat = self.settings and self.settings.chat and opts.chat ~= false
       if doChat then self:Print(text) end
     end
   end
   self:Fire("SUGGESTION", e)
-  if self.RefreshPanel then safecall(self.RefreshPanel, self) end
+  self:RequestRefresh()
   return e
 end
 
@@ -698,7 +705,7 @@ function TreeAI:ClearSuggestion(id)
   if suggestions[id] then
     suggestions[id] = nil
     self:Fire("SUGGESTION_CLEARED", id)
-    if self.RefreshPanel then safecall(self.RefreshPanel, self) end
+    self:RequestRefresh()
   end
 end
 
@@ -711,7 +718,7 @@ function TreeAI:ClearSuggestions(prefix)
       self:Fire("SUGGESTION_CLEARED", id)
     end
   end
-  if any and self.RefreshPanel then safecall(self.RefreshPanel, self) end
+  if any then self:RequestRefresh() end
 end
 
 function TreeAI:GetSuggestions()
@@ -731,6 +738,170 @@ function TreeAI:GetSuggestions()
     return a.id < b.id
   end)
   return list
+end
+
+---------------------------------------------------------------------------
+-- Panel tabs (shared contract: RegisterTab / SetTabLines; Suggest -> « Maintenant »)
+---------------------------------------------------------------------------
+TreeAI.tabs = TreeAI.tabs or {}
+local tabSources = {}   -- tabId -> { order = {source,...}, lines = { [source] = {entries} } }
+local NOW_TAB, DEFAULT_TAB = "now", "info"
+-- where a module's suggestions are listed (besides « Maintenant »); others -> « Infos »
+TreeAI.MODULE_TAB = TreeAI.MODULE_TAB or {
+  Quests = "quests", Leveling = "quests", Tracker = "quests", Compass = "quests", Predict = "quests",
+  Squad = "group", Group = "group", Missions = "group",
+  Auction = "hv",
+}
+
+function TreeAI:RegisterTab(id, title, order)
+  if type(id) ~= "string" or id == "" then return nil end
+  local t = self.tabs[id] or { id = id }
+  t.title = title and tostring(title) or t.title or id
+  t.order = tonumber(order) or t.order or 100
+  self.tabs[id] = t
+  if self.RequestRefresh then self:RequestRefresh() end
+  return t
+end
+
+function TreeAI:GetTabs()
+  local list = {}
+  for _, t in pairs(self.tabs) do list[#list + 1] = t end
+  tsort(list, function(a, b)
+    if a.order ~= b.order then return a.order < b.order end
+    return a.id < b.id
+  end)
+  return list
+end
+
+local function normLine(l, source)
+  if type(l) == "string" then l = { text = l } end
+  if type(l) ~= "table" or l.text == nil or l.text == "" then return nil end
+  local prio = tonumber(l.prio) or 1
+  if prio < 1 then prio = 1 elseif prio > 3 then prio = 3 end
+  return { text = tostring(l.text), prio = prio, icon = l.icon,
+    onClick = type(l.onClick) == "function" and l.onClick or nil,
+    tooltip = l.tooltip, pin = l.pin and true or nil, id = l.id, source = source, data = l.data }
+end
+
+-- lines = { {text=, prio=1..3, icon=?, onClick=?, tooltip=?, pin=?}, ... } replaces the content of
+-- `source` (default "main"): several modules can fill one tab, each with its own block, in call order.
+-- pin = true also offers the line to « Maintenant ».
+function TreeAI:SetTabLines(id, lines, source)
+  if type(id) ~= "string" then return false end
+  if not self.tabs[id] then self:RegisterTab(id, id, 100) end
+  source = source and tostring(source) or "main"
+  local ts = tabSources[id]
+  if not ts then ts = { order = {}, lines = {} }; tabSources[id] = ts end
+  local out = {}
+  if type(lines) == "table" then
+    for i = 1, #lines do
+      local e = normLine(lines[i], source)
+      if e then out[#out + 1] = e end
+      if #out >= 100 then break end
+    end
+  end
+  if ts.lines[source] == nil then ts.order[#ts.order + 1] = source end
+  ts.lines[source] = out
+  self:RequestRefresh()
+  return true
+end
+
+local function plain(text)
+  text = strgsub(tostring(text or ""), "|c%x%x%x%x%x%x%x%x", "")
+  text = strgsub(text, "|r", "")
+  return text
+end
+TreeAI.PlainText = plain
+
+function TreeAI:TabOf(e)
+  if e.tab and self.tabs[e.tab] then return e.tab end
+  return (e.module and self.MODULE_TAB[e.module]) or DEFAULT_TAB
+end
+
+-- Entries shown in a tab. « Maintenant » = top N by prio of suggestions + pinned tab lines, deduped
+-- by visible text. Other tabs = their SetTabLines blocks, then the suggestions routed to them.
+function TreeAI:GetTabLines(id)
+  local out, seen = {}, {}
+  local function push(e)
+    local k = plain(e.text)
+    if seen[k] then return false end
+    seen[k] = true
+    out[#out + 1] = e
+    return true
+  end
+  local sugg = self:GetSuggestions()
+  if id == NOW_TAB then
+    local cand = {}
+    for _, e in ipairs(sugg) do cand[#cand + 1] = e end
+    for _, t in ipairs(self:GetTabs()) do
+      local ts = tabSources[t.id]
+      if ts then
+        for _, src in ipairs(ts.order) do
+          for _, l in ipairs(ts.lines[src] or {}) do if l.pin then cand[#cand + 1] = l end end
+        end
+      end
+    end
+    for i, e in ipairs(cand) do e._rank = i end
+    tsort(cand, function(a, b)
+      if a.prio ~= b.prio then return a.prio > b.prio end
+      return a._rank < b._rank
+    end)
+    local max = tonumber(self.settings and self.settings.panel and self.settings.panel.nowMax) or 5
+    for _, e in ipairs(cand) do
+      if #out >= max then break end
+      push(e)
+    end
+    return out
+  end
+  local ts = tabSources[id]
+  if ts then
+    for _, src in ipairs(ts.order) do
+      for _, l in ipairs(ts.lines[src] or {}) do push(l) end
+    end
+  end
+  for _, e in ipairs(sugg) do
+    if self:TabOf(e) == id then push(e) end
+  end
+  return out
+end
+
+-- coalesced panel refresh: at most 2 per second
+local lastRefresh, refreshPending = -10, false
+function TreeAI:RequestRefresh()
+  if not self.RefreshPanel or refreshPending then return end
+  local wait = 0.5 - (now() - lastRefresh)
+  if wait <= 0 then
+    lastRefresh = now()
+    safecall(self.RefreshPanel, self)
+    return
+  end
+  refreshPending = true
+  self:After(wait, function()
+    refreshPending = false
+    lastRefresh = now()
+    if TreeAI.RefreshPanel then safecall(TreeAI.RefreshPanel, TreeAI) end
+  end)
+end
+
+TreeAI:RegisterTab("now", L["Maintenant"], 1)
+TreeAI:RegisterTab("quests", L["Quêtes"], 2)
+TreeAI:RegisterTab("group", L["Groupe"], 3)
+TreeAI:RegisterTab("hv", L["HV"], 4)
+TreeAI:RegisterTab("info", L["Infos"], 5)
+
+-- per-character panel state (tab, position, mini); lock/scale/alpha stay account-wide
+function TreeAI:PanelChar()
+  local acc = self.settings and self.settings.panel
+  if not acc then return nil end
+  if not self.db or self:CharKey() == "?" then return acc end
+  local c = self:CharDB()
+  if type(c.panel) ~= "table" then
+    c.panel = { point = acc.point or "CENTER", x = acc.x or 300, y = acc.y or 120 }
+  end
+  local p = c.panel
+  if type(p.tab) ~= "string" then p.tab = "now" end
+  if p.mini == nil then p.mini = true end   -- compact by default: one line, expand on demand
+  return p
 end
 
 ---------------------------------------------------------------------------
@@ -1024,6 +1195,25 @@ TreeAI:RegisterSlash("reset", function()
   if TreeAI.ResetPanel then TreeAI:ResetPanel() end
   TreeAI:Print(L["Position du panneau réinitialisée."])
 end, L["remettre le panneau au centre"])
+TreeAI:RegisterSlash("mini", function() if TreeAI.ToggleMini then TreeAI:ToggleMini() end end,
+  L["panneau réduit à une ligne (oui/non)"])
+TreeAI:RegisterSlash("onglet", function(rest)
+  rest = tostring(rest or ""):lower()
+  local ids = {}
+  for _, t in ipairs(TreeAI:GetTabs()) do
+    if t.id == rest or TreeAI.PlainText(t.title):lower() == rest then
+      if TreeAI.SelectTab then TreeAI:SelectTab(t.id) end
+      return
+    end
+    ids[#ids + 1] = t.id
+  end
+  TreeAI:Print("/tai onglet " .. tconcat(ids, " | "))
+end, L["choisir l'onglet du panneau"])
+TreeAI:RegisterSlash("alerte", function()
+  if TreeAI.ShowAlert then
+    TreeAI:ShowAlert({ text = L["Exemple : encadré d'alerte (clic : ouvre le panneau)."], prio = 3, tab = "now" }, true)
+  end
+end, L["tester l'encadré d'alerte"])
 TreeAI:RegisterSlash("options", function() if TreeAI.OpenOptions then TreeAI:OpenOptions() end end, L["ouvrir les options"])
 TreeAI:RegisterSlash("modules", function()
   for name, mod in TreeAI:IterModules() do

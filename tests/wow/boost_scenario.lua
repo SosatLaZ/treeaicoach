@@ -6,6 +6,7 @@ return function(M, ctx)
   if not B then return end
   local S = T._suggestions
   M.LeaveCombat()
+  T.settings.soundTips = true  -- rare sound is a prio-2 tip: needs the « sons aussi pour les conseils » option
 
   -- 1. rare on a nameplate: line + sound, once per GUID; click = skull out of combat
   M.units.nameplate1 = { name = "Croc-test", guid = "Creature-0-0-0-0-99-0001", classification = "rare",

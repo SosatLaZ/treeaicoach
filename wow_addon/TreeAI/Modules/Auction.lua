@@ -501,6 +501,15 @@ function M.FindDeals(items)
   if d and cfg("tips", true) and M.Suggest then
     M:Suggest("deals", ("HV : %d affaire(s), meilleure %s +%s — /tai hv"):format(#M.deals, itemName(d.id), money(d.profit)), 2, { ttl = 300 })
   end
+  if T and T.SetTabLines then  -- « HV » tab of the panel: best deals, click = deal window (buy there, 1 click = 1 action)
+    local lines = {}
+    for i = 1, math.min(#M.deals, 8) do
+      local x = M.deals[i]
+      lines[#lines + 1] = { text = ("%s x%d : +%s"):format(itemName(x.id), x.count or 1, money(x.profit)), prio = i == 1 and 2 or 1,
+        tooltip = "Clic : fenêtre des affaires (l'achat se fait là, un clic par achat).", onClick = function() M.ShowWindow() end }
+    end
+    pcall(T.SetTabLines, T, "hv", lines, "Auction")
+  end
   return M.deals
 end
 
