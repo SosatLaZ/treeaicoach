@@ -1,0 +1,4 @@
+-- TreeAI Plan — fichier de données écrit par TreeAI Coach (« Calculer » sur la page WoW), puis /reload.
+-- Contrat : treeaicoach/wow/planner/SCHEMA.md §3. Données pures, une seule affectation globale :
+--   TreeAIPlan = { v = 1, made = <unix>, char = "Nom-Royaume", zone = <uiMapID>, routes = { ... } }
+-- Ce modèle est vide : pas encore de plan calculé (l'addon TreeAI fait alors un plan automatique en jeu).

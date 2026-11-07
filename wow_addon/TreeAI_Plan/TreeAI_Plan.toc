@@ -1,0 +1,6 @@
+## Interface: 16001, 11509, 11508, 11507
+## Title: TreeAI Plan
+## Notes: Trajet calculé par TreeAI Coach (fichier généré, ne pas modifier)
+## Author: TreeAI Coach
+## Version: 0
+Plan.lua

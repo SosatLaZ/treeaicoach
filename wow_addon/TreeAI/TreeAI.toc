@@ -5,6 +5,7 @@
 ## Author: TreeAI
 ## Version: 0.2.0
 ## SavedVariables: TreeAIDB
+## OptionalDeps: TreeAI_Plan
 ## IconTexture: Interface\Icons\Ability_Hunter_BeastCall
 
 Core.lua
@@ -23,6 +24,8 @@ Modules\Leveling.lua
 Modules\Group.lua
 Modules\Squad.lua
 Modules\Quests.lua
+Modules\Export.lua
+Modules\Planner.lua
 Modules\Inventory.lua
 Modules\Boost.lua
 Modules\Auction.lua

@@ -29,7 +29,7 @@ Core.lua  Locale_frFR.lua  UI.lua  Options.lua
 Data/Macros.lua
 Modules/Macros.lua  Modules/Hunter.lua  Modules/Classes.lua
 Data/PetFood.lua  Data/Consumables.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
+Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Export.lua  Modules/Planner.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
 ```
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
@@ -46,6 +46,22 @@ fichier) + prix vendeur vs HV (Auctionator, lecture seule), menace ≥ seuil en 
 d'apprivoisement, rappels foyer/munitions/nourriture, récolte (nœud / dépeçage). `/tai boost`.
 Résumé IA : `summary.boost = {raresSeen, lastRare, bestReward, petAdvice, avgKillXP, avgQuestXP,
 killsToLevel, questsToLevel, xpPerHour, secondsToLevel, threatWarnings, tank}`.
+`Modules/Export.lua` + `Modules/Planner.lua` (agent PLAN-LUA, contrat `treeaicoach/wow/planner/SCHEMA.md`):
+planificateur de trajet de quêtes. Export : `TreeAIDB.export` (journal + quêtes dispo zone courante + 2 voisines +
+escouade, lu à l'exécution via l'API publique QuestieDB `LibQuestieDB` contrat 4, repli
+`QuestieLoader._modules.QuestieDB`, jamais copié dans le dépôt ; coroutine ≤ 2 ms/image hors combat, ≤ ~300 Ko) +
+statistiques apprises `TreeAIDB.learn` (drops, réapparition, vols, détours, affluence) et `chars[k].learn` (TTK par
+écart de niveau, recherche, pause repas, efficacité, durée des quêtes, XP/h). `T.Geo` = géométrie partagée (uiMapID +
+x, y en %). Planner : lit le global `TreeAIPlan` de l'addon de données séparé `wow_addon/TreeAI_Plan/` (écrit par
+l'appli, `## OptionalDeps: TreeAI_Plan`), sinon plan glouton en jeu ; routes + verdict (OK / On va galérer / Trop long /
+Pas faisable / Changez de zone), carte d'étape + 2 suivantes (onglet « quests », source `plan`, sinon Suggest),
+progression via `C_QuestLog`, réparation insertion + Or-opt sur 20 étapes (hystérésis 10 % et 2 min), synchro groupe
+`PLN` = `"1:<made>:<route>:<étape>:<empreinte>:<n>"` (≤ 1/15 s, jamais en combat ni en raid), « attendez X », rendez-vous,
+guidage sur clic (`TreeAI.Compass:SetTarget{mapID, x, y (0–1), label, source="plan", questID}` → Shortest Path Forever
+`NavigateRoute` → TomTom → `C_Map.SetUserWaypoint` + `C_SuperTrack`). `/tai plan [n°|passer|go|recalc]`,
+`/tai export`. Résumé `summary.plan = {v, src, route, title, step, steps, label, kind, quest, verdict, reason, xph,
+minutes, left, hash, sync={n, synchro, avance, retard, autre}}`.
+
 `Modules/Auction.lua` (agent AH): achat-revente à l'hôtel des ventes. **Aucune automatisation**: chaque
 achat / annulation = un clic du joueur sur « Acheter » / « Annuler » (appel protégé dans le OnClick, une
 seule action par clic, prix revérifié juste avant ; en API moderne: clic 1 vérifie, clic 2 achète ou
