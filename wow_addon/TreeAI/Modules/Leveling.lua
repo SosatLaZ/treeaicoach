@@ -251,6 +251,8 @@ local function talentPoints()
 end
 
 function M.CheckTalents()
+  local TA = core() and core().Talents   -- module Talents actif : il affiche « Prochain point : X (pourquoi) »
+  if TA and TA.IsEnabled and TA:IsEnabled() and TA.db and TA.db.nowLine ~= false then clear("lvl_talents") return end
   local p = talentPoints()
   if p > 0 and not inCombat() then
     suggest("lvl_talents", ("%d point%s de talent à dépenser (touche N)."):format(p, p > 1 and "s" or ""), 2, 900)

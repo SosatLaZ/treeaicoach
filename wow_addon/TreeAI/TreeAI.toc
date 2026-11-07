@@ -20,6 +20,7 @@ Data\PetFood.lua
 Data\Consumables.lua
 Data\Dungeons.lua
 Data\Gear.lua
+Data\Talents.lua
 
 Modules\Macros.lua
 Modules\Binds.lua
@@ -51,3 +52,4 @@ Modules\PvP.lua
 Modules\Dungeon.lua
 Modules\Radar.lua
 Modules\Gear.lua
+Modules\Talents.lua

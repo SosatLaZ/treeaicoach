@@ -6,8 +6,10 @@ French locale. Output:
   treeaicoach/wow/data/{spells,items,zones,meta}.json.gz   (read by treeaicoach/wow/gamedata.py)
   treeaicoach/wow/data/taxi.json.gz   (flight graph + map bounds, read by treeaicoach/wow/planner/data.py)
   wow_addon/TreeAI/Data/PetFood.lua, Data/Consumables.lua  (small Lua tables for the addon)
+  treeaicoach/wow/data/talents.json.gz + wow_addon/TreeAI/Data/Talents.lua  (talent trees + validated
+      levelling builds from treeaicoach/wow/talent_builds.py)
 
-Usage:  python tools/wow_build_data.py [--cache DIR] [--build 1.60.1.70862] [--offline] [--only taxi]
+Usage:  python tools/wow_build_data.py [--cache DIR] [--build 1.60.1.70862] [--offline] [--only taxi|talents]
 CSV files are downloaded once into --cache (default: a temp dir) and reused. Same CSVs -> same bytes out.
 """
 from __future__ import annotations
@@ -33,6 +35,7 @@ TABLES = ("SpellName", "SpellLevels", "SkillLineAbility", "SkillLine", "ChrClass
           "ItemArmorTotal", "ItemArmorQuality", "ItemArmorShield", "ArmorLocation", "ItemDamageOneHand",
           "ItemDamageTwoHand", "ItemDamageRanged", "ItemDamageThrown", "ItemDamageWand", "AreaTable")
 TAXI_TABLES = ("TaxiNodes", "TaxiPath", "TaxiPathNode", "UiMapAssignment", "UiMap")
+TALENT_TABLES = ("Talent", "TalentTab", "SpellName", "Spell", "SpellEffect", "SpellMisc", "SpellDuration")
 
 # Class skill lines (talent trees) -> class token. ChrClasses ids: 1 war, 2 pal, 3 hunt, 4 rog, 5 pri,
 # 7 sham, 8 mage, 9 lock, 11 druid.
@@ -320,6 +323,193 @@ def build_taxi(T: dict) -> dict:
             "maps_fields": ["name", "continent", "x0", "y0", "x1", "y1"], "maps": dict(sorted(maps.items(), key=lambda kv: int(kv[0])))}
 
 
+# ---------------------------------------------------------------------------------------------- talents
+# TalentTab.ClassMask -> class token.
+CLASS_MASK = {1: "WARRIOR", 2: "PALADIN", 4: "HUNTER", 8: "ROGUE", 16: "PRIEST", 64: "SHAMAN", 128: "MAGE",
+              256: "WARLOCK", 1024: "DRUID"}
+# A few talent spells are absent from the 1.60.1 client SpellName/Spell tables (hotfix-only). Fallback FR names
+# from the Classic client (same spell ids); flagged "approx" in the output.
+TALENT_NAME_FALLBACK = {
+    12165: "Spécialisation Arme d'hast", 12300: "Volonté de fer", 12303: "Défi", 13733: "Attaque sournoise améliorée",
+    14911: "Prière de soins améliorée", 16041: "Appel de la foudre", 16952: "Fureur primitive",
+    16857: "Lucioles (farouche)", 18213: "Drain d'âme amélioré", 17864: "Drain de vie amélioré",
+    18220: "Pacte noir", 18748: "Endurance gangrenée", 20234: "Imposition des mains améliorée",
+    20911: "Bénédiction du sanctuaire", 19386: "Piqûre de wyverne", 19491: "Piqûre de scorpide améliorée",
+}
+
+
+def _num(v: float) -> str:
+    v = abs(v)
+    return str(int(round(v))) if abs(v - round(v)) < 1e-6 else f"{v:.1f}".replace(".", ",")
+
+
+def _dur(ms: int) -> str:
+    if ms <= 0:
+        return "X s"
+    s = ms / 1000
+    return f"{_num(s / 60)} min" if s >= 120 and s % 60 == 0 else f"{_num(s)} s"
+
+
+def resolve_desc(text: str, sid: int, eff: dict, dur: dict, period: dict) -> str:
+    """Fill the client tooltip tokens ($s1, $d, $12345s2, $lpoint:points;…) with values; unknown -> 'X'."""
+    import re
+    if not text:
+        return ""
+
+    def val(m):
+        ref = int(m.group(1)) if m.group(1) else sid
+        k = m.group(2).lower()
+        idx = int(m.group(3) or 1) - 1
+        if k in ("s", "m", "o"):
+            v = eff.get((ref, idx))
+            return _num(v) if v is not None else "X"
+        if k == "d":
+            return _dur(dur.get(ref, 0))
+        if k == "t":
+            p = period.get((ref, idx), 0)
+            return _num(p / 1000) if p else "X"
+        return "X"
+
+    t = re.sub(r"\$\?[^\[]*\[([^\]]*)\]\[([^\]]*)\]", r"\2", text)
+    t = re.sub(r"\$\{[^}]*\}", "X", t)
+    t = re.sub(r"\$[lL]([^:;]*):([^;]*);", r"\2", t)
+    t = re.sub(r"\$<[^>]*>", "X", t)
+    t = re.sub(r"\$(\d+)?([sSmMoOdDtT])(\d)?", val, t)
+    t = re.sub(r"\$\w+", "X", t)
+    t = re.sub(r"\s+", " ", t.replace("\r", " ").replace("\n", " ")).strip()
+    return t.replace("X X", "X")
+
+
+def build_talents(T: dict) -> dict:
+    """Talent trees (per class: 3 tabs in client order, talents with tier/column/ranks/prereq/FR name/
+    max-rank description) + the hand-written levelling builds of treeaicoach/wow/talent_builds.py,
+    validated against the trees (tier gating 5 points per row, prerequisites, ≤ 51 points)."""
+    names = {i(r["ID"]): r["Name_lang"] for r in T["SpellName"]}
+    descs = {i(r["ID"]): r["Description_lang"] for r in T["Spell"]}
+    eff: dict = {}
+    period: dict = {}
+    for r in T["SpellEffect"]:
+        if r["DifficultyID"] != "0":
+            continue
+        key = (i(r["SpellID"]), i(r["EffectIndex"]))
+        eff[key] = f(r["EffectBasePointsF"])
+        period[key] = i(r["EffectAuraPeriod"])
+    dlen = {r["ID"]: i(r["Duration"]) for r in T["SpellDuration"]}
+    dur = {i(r["SpellID"]): dlen.get(r["DurationIndex"], 0) for r in T["SpellMisc"] if r["DifficultyID"] == "0"}
+    classes: dict = {}
+    tabs = sorted(T["TalentTab"], key=lambda r: (i(r["ClassMask"]), i(r["OrderIndex"])))
+    for tab in tabs:
+        cls = CLASS_MASK.get(i(tab["ClassMask"]))
+        if not cls:
+            continue
+        rows = []
+        for r in T["Talent"]:
+            if r["TabID"] != tab["ID"]:
+                continue
+            spells = [i(r[f"SpellRank_{k}"]) for k in range(9) if i(r[f"SpellRank_{k}"])]
+            if not spells:
+                continue
+            name = names.get(spells[0]) or TALENT_NAME_FALLBACK.get(spells[0], "")
+            last = spells[-1]
+            desc = resolve_desc(descs.get(last) or descs.get(spells[0], ""), last if descs.get(last) else spells[0],
+                                eff, dur, period)
+            pre = None
+            if i(r["PrereqTalent_0"]):
+                pre = [i(r["PrereqTalent_0"]), max(1, i(r["PrereqRank_0"]) + 1)]
+            t = {"id": i(r["ID"]), "tier": i(r["TierID"]), "col": i(r["ColumnIndex"]), "ranks": len(spells),
+                 "name": name or f"Talent {r['ID']}", "spells": spells, "desc": desc[:400]}
+            if pre:
+                t["prereq"] = pre
+            if spells[0] not in names:
+                t["approx"] = 1
+            rows.append(t)
+        rows.sort(key=lambda t: (t["tier"], t["col"]))
+        classes.setdefault(cls, {"tabs": []})["tabs"].append(
+            {"id": i(tab["ID"]), "name": tab["Name_lang"], "order": i(tab["OrderIndex"]), "talents": rows})
+    for c in classes.values():
+        c["tabs"].sort(key=lambda t: t["order"])
+    builds = [validate_build(b, classes) for b in load_builds()]
+    return {"classes": dict(sorted(classes.items())), "builds": builds,
+            "source": "Talent/TalentTab/Spell* (client DB2 via wago.tools)"}
+
+
+def load_builds() -> list:
+    sys.path.insert(0, ROOT)
+    from treeaicoach.wow import talent_builds  # noqa: PLC0415 - hand-written knowledge, repo-local
+    return talent_builds.BUILDS
+
+
+def validate_build(b: dict, classes: dict) -> dict:
+    """Expand a build's (talent id, target rank, why) steps into the point-by-point order and check it is
+    legal: talent belongs to the class, rank ≤ max, row gating (5 × tier points already in that tree),
+    prerequisite fully learned, ≤ 51 points (levels 10…60). Raises ValueError on a bad build."""
+    cls = b["class"]
+    where = {}
+    for tab in classes[cls]["tabs"]:
+        for t in tab["talents"]:
+            where[t["id"]] = (tab, t)
+    spent = {tab["order"]: 0 for tab in classes[cls]["tabs"]}
+    rank: dict[int, int] = {}
+    steps, order = [], []
+    for tid, target, why in b["steps"]:
+        if tid not in where:
+            raise ValueError(f"{b['id']}: talent {tid} is not a {cls} talent")
+        tab, t = where[tid]
+        if target > t["ranks"] or target <= rank.get(tid, 0):
+            raise ValueError(f"{b['id']}: bad target rank {target} for {t['name']} (max {t['ranks']})")
+        if spent[tab["order"]] < 5 * t["tier"]:
+            raise ValueError(f"{b['id']}: {t['name']} needs {5 * t['tier']} points in {tab['name']}")
+        if "prereq" in t and rank.get(t["prereq"][0], 0) < t["prereq"][1]:
+            raise ValueError(f"{b['id']}: {t['name']} needs its prerequisite first")
+        first = len(order)
+        for _ in range(target - rank.get(tid, 0)):
+            rank[tid] = rank.get(tid, 0) + 1
+            spent[tab["order"]] += 1
+            order.append(tid)
+        steps.append({"talent": tid, "tab": tab["order"] + 1, "tier": t["tier"] + 1, "col": t["col"] + 1,
+                      "name": t["name"], "rank": target, "max": t["ranks"], "why": why,
+                      "level_from": 10 + first, "level_to": 9 + len(order)})
+    if len(order) > 51:
+        raise ValueError(f"{b['id']}: {len(order)} points > 51")
+    out = {k: v for k, v in b.items() if k != "steps"}
+    out["steps"] = steps
+    out["points"] = len(order)
+    out["split"] = "/".join(str(spent[k]) for k in sorted(spent))
+    return out
+
+
+def write_talents(tal: dict, build: str) -> int:
+    size = write_gz(os.path.join(OUT_DIR, "talents.json.gz"), tal)
+    os.makedirs(ADDON_DATA, exist_ok=True)
+    out = [HEADER.format(build=build),
+           "-- Talents : arbres (onglet → { rang, colonne, rangs max, nom }) et parcours de montée validés\n"
+           "-- (étapes { onglet, rang, colonne, rang visé, nom, pourquoi }). Source des parcours :\n"
+           "-- treeaicoach/wow/talent_builds.py.\n",
+           "local T = TreeAI\nif type(T) ~= \"table\" then return end\nT.Data = T.Data or {}\n",
+           "T.Data.Talents = {\n  trees = {\n"]
+    for cls, c in tal["classes"].items():
+        out.append(f"    {cls} = {{\n")
+        for tab in c["tabs"]:
+            rows = ", ".join("{%d,%d,%d,%s}" % (t["tier"] + 1, t["col"] + 1, t["ranks"], lua_str(t["name"]))
+                             for t in tab["talents"])
+            out.append(f"      {{ name = {lua_str(tab['name'])}, t = {{ {rows} }} }},\n")
+        out.append("    },\n")
+    out.append("  },\n  builds = {\n")
+    for b in tal["builds"]:
+        out.append("    { id = %s, class = %s, role = %s, name = %s, spec = %s, split = %s, summary = %s,\n"
+                   % tuple(lua_str(str(b.get(k, ""))) for k in ("id", "class", "role", "name", "spec", "split",
+                                                                "summary")))
+        out.append("      steps = {\n")
+        for s in b["steps"]:
+            out.append("        {%d,%d,%d,%d,%s,%s},\n" % (s["tab"], s["tier"], s["col"], s["rank"],
+                                                          lua_str(s["name"]), lua_str(s["why"])))
+        out.append("      } },\n")
+    out.append("  },\n}\n")
+    with open(os.path.join(ADDON_DATA, "Talents.lua"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("".join(out))
+    return size
+
+
 # ----------------------------------------------------------------------------------------------- output
 def write_gz(path: str, obj) -> int:
     data = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -370,10 +560,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache", default=os.path.join(tempfile.gettempdir(), "treeai_wowf_db2"))
     ap.add_argument("--build", default=BUILD)
     ap.add_argument("--offline", action="store_true")
-    ap.add_argument("--only", choices=("taxi",), help="build only this file")
+    ap.add_argument("--only", choices=("taxi", "talents"), help="build only this file")
     a = ap.parse_args(argv)
     os.makedirs(a.cache, exist_ok=True)
     os.makedirs(OUT_DIR, exist_ok=True)
+    tal = build_talents({t: fetch(a.cache, t, a.build, a.offline) for t in TALENT_TABLES})
+    tal["build"] = a.build
+    talsize = write_talents(tal, a.build)
+    if a.only == "talents":
+        print(json.dumps({"talents": talsize, "classes": {c: sum(len(t["talents"]) for t in v["tabs"])
+                                                          for c, v in tal["classes"].items()},
+                          "builds": len(tal["builds"])}))
+        return 0
     taxi = build_taxi({t: fetch(a.cache, t, a.build, a.offline) for t in TAXI_TABLES})
     taxi["build"] = a.build
     tsize = write_gz(os.path.join(OUT_DIR, "taxi.json.gz"), taxi)
@@ -388,7 +586,7 @@ def main(argv: list[str] | None = None) -> int:
     zones = build_zones(T)
     cats, petfood = build_consumables(raw, T)
     sizes = {
-        "taxi": tsize,
+        "taxi": tsize, "talents": talsize,
         "spells": write_gz(os.path.join(OUT_DIR, "spells.json.gz"), spells),
         "items": write_gz(os.path.join(OUT_DIR, "items.json.gz"), items),
         "zones": write_gz(os.path.join(OUT_DIR, "zones.json.gz"), zones),
