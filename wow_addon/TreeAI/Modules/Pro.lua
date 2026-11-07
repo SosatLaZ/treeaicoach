@@ -631,11 +631,12 @@ function M.BuildLines()
   if opt("escort") then
     for _, q in ipairs(list) do
       if q.escort and not q.complete then
-        local hp = (tonumber(try(g("UnitHealth"), "player")) or 1) / max(1, tonumber(try(g("UnitHealthMax"), "player")) or 1)
+        local function num(v) if v == nil or secret(v) then return nil end return tonumber(v) end  -- secret en combat
+        local hp = (num(try(g("UnitHealth"), "player")) or 1) / max(1, num(try(g("UnitHealthMax"), "player")) or 1)
         local miss = {}
         if hp < 0.95 then miss[#miss + 1] = "PV" end
-        local pm = tonumber(try(g("UnitPowerMax"), "player")) or 0
-        if pm > 0 and (tonumber(try(g("UnitPower"), "player")) or 0) / pm < 0.9 then miss[#miss + 1] = "mana" end
+        local pm = num(try(g("UnitPowerMax"), "player")) or 0
+        if pm > 0 and (num(try(g("UnitPower"), "player")) or 0) / pm < 0.9 then miss[#miss + 1] = "mana" end
         if T:PlayerClass() == "HUNTER" and not try(g("UnitExists"), "pet") then miss[#miss + 1] = "familier" end
         add(quests, ("Escorte « %s » : prépare-toi avant de lancer%s"):format(cut(q.title, 30),
           #miss > 0 and (" (manque : " .. table.concat(miss, ", ") .. ")") or " — prêt"), #miss > 0 and 2 or 1,

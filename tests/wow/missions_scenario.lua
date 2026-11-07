@@ -27,7 +27,8 @@ return function(M, ctx)
   for _, s in ipairs(M.sentAddon) do
     local k = tostring(s.msg):match("^1~(MS%u)~")
     if k then kinds[k] = true end
-    ctx.check(#s.msg <= 255 and (s.channel == "PARTY" or s.channel == "RAID"), "message <= 255 B en PARTY/RAID")
+    ctx.check(#s.msg <= 255 and (s.channel == "PARTY" or s.channel == "RAID" or tostring(s.msg):find("~SELFTEST~", 1, true)),
+      "message <= 255 B en PARTY/RAID (sauf l'autotest /tai test, chuchoté à soi-même)")
   end
   ctx.check(kinds.MSM, "MSM envoyé")
   for _, line in ipairs({ "/tai mission", "/tai mission objectif niveau 30", "/tai prends ours", "/tai mission cible",

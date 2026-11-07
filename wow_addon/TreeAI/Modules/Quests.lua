@@ -800,15 +800,19 @@ local function tipLine(tt, q, o)
   pcall(tt.AddLine, tt, ("TreeAI : « %s » %d/%d"):format(cut(q.title, 30), o.have, o.need), 0.4, 0.8, 0.4)
   if tt.Show then pcall(tt.Show, tt) end
 end
+-- infobulles : en combat, le nom lu dans l'infobulle peut être une valeur secrète (Forever) -> on s'abstient
+local function tipName(v) if v == nil or inCombat() or (API.IsSecret and API.IsSecret(v)) then return nil end return v end
 local function onItemTip(tt)
   if not cfg("tooltip") or others.questie then return end  -- Questie le fait déjà
-  local name = tt and tt.GetItem and try(tt.GetItem, tt)
+  local name = tipName(tt and tt.GetItem and try(tt.GetItem, tt))
+  if not name then return end
   local q, o = objectiveFor(name, false)
   if q then tipLine(tt, q, o) end
 end
 local function onUnitTip(tt)
   if not cfg("tooltip") or others.questie then return end
-  local name = tt and tt.GetUnit and try(tt.GetUnit, tt)
+  local name = tipName(tt and tt.GetUnit and try(tt.GetUnit, tt))
+  if not name then return end
   local q, o = objectiveFor(name, true)
   if q then tipLine(tt, q, o) end
 end
@@ -818,8 +822,9 @@ local function hookTooltips()
   hooked = true
   local TDP, E = _G.TooltipDataProcessor, _G.Enum
   if TDP and TDP.AddTooltipPostCall and E and E.TooltipDataType then
-    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Item, function(tt) if tt == _G.GameTooltip then onItemTip(tt) end end)
-    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) if tt == _G.GameTooltip then onUnitTip(tt) end end)
+    -- pcall : une erreur ici s'afficherait dans l'infobulle de Blizzard (fenêtre d'erreur Lua)
+    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Item, function(tt) if tt == _G.GameTooltip then pcall(onItemTip, tt) end end)
+    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) if tt == _G.GameTooltip then pcall(onUnitTip, tt) end end)
   elseif _G.GameTooltip and _G.GameTooltip.HookScript then
     pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetItem", onItemTip)
     pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetUnit", onUnitTip)

@@ -187,10 +187,11 @@ local BARS = { -- { premier, dernier, libellé, préfixe de raccourci }
 }
 --- Case libre conseillée : texte « barre principale, case 7 (touche 7) » ou nil
 function M.FreeSlot()
-  if not G.HasAction then return nil end
+  local has = API.HasAction or (G.HasAction and function(s) return try(G.HasAction, s) end)  -- C_ActionBar sur Forever
+  if not has then return nil end
   for _, b in ipairs(BARS) do
     for s = b[1], b[2] do
-      if not try(G.HasAction, s) then
+      if not has(s) then
         local idx = s - b[5]
         local key = try(G.GetBindingKey, b[4] .. idx)
         return ("%s, case %d%s"):format(b[3], idx, key and (" (touche " .. key .. ")") or ""), s
@@ -381,6 +382,7 @@ function M:OnEnable()
   end
   self:RegisterEvent("SPELLS_CHANGED", spellsLater)
   self:RegisterEvent("LEARNED_SPELL_IN_TAB", spellsLater)
+  self:RegisterEvent("LEARNED_SPELL_IN_SKILL_LINE", spellsLater)   -- nom Forever / Mainline
   self:RegisterEvent("PLAYER_LOGOUT", function() M:SetSlow(false) M:SaveSnapshot() end)
   self:On("SUMMARY", function() M:WriteSummary() end)
   if M._perfTicker then M._perfTicker:Cancel() end

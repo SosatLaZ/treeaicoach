@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tools/wow_check.sh — every WoW-side check in one go (run from anywhere).
 #   1. luac5.1 -p syntax + global-leak / ToS static checks on every .lua (tests/wow/luacheck.py)
-#   2. Lua harness: the addon TOC loaded on the WoW API mock, event storm, both API flavours
-#      (modern C_Container/C_ChatInfo… and legacy globals), Hunter + Mage; fixtures too
+#   2. Lua harness: the addon TOC loaded on the WoW API mock, event storm, three API flavours
+#      (modern C_Container/C_ChatInfo…, legacy globals, forever = Forever 1.60.1 rules), Hunter + Mage; fixtures too
 #   3. pytest tests/wow (python modules + the above)
 # Needs lua5.1 (apt-get install -y lua5.1); without it the Lua parts are skipped with a note.
 # Override the addon folder with TREEAI_WOW_ADDON=/path/to/TreeAI. Exit != 0 if anything fails.
@@ -38,10 +38,16 @@ if command -v lua5.1 >/dev/null 2>&1; then
     echo "  [leaky] bad fixture correctly rejected"
   fi
   if [ -d "$ADDON" ] && ls "$ADDON"/*.toc >/dev/null 2>&1; then
-    for fl in modern legacy; do
+    for fl in modern legacy forever; do
       for cls in HUNTER MAGE WARRIOR; do
         run_h "TreeAI/$fl/$cls" --flavor "$fl" --class "$cls" "$ADDON" || fail=1
       done
+    done
+    # forever = the real WoW Forever 1.60.1 rules: secret values in combat, Era globals removed,
+    # COMBAT_LOG_EVENT_UNFILTERED forbidden, macro writes only inside a click / command (+ /tai test)
+    for cls in HUNTER WARRIOR; do
+      run_h "TreeAI/forever/selftest/$cls" --flavor forever --class "$cls" \
+        --scenario tests/wow/selftest_scenario.lua "$ADDON" || fail=1
     done
     echo "  (details: lua5.1 tests/wow/harness.lua $ADDON)"
   else

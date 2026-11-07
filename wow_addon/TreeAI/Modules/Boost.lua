@@ -90,13 +90,14 @@ local stats = { rares = 0, lastRare = nil, threatWarn = 0, bestReward = nil, pet
 local seen = {}          -- guid -> time (10 min)
 local markGUID           -- dernier rare, pour le bouton « crâne »
 
+local function pub(v) if API.Pub then return API.Pub(v) end return v end   -- valeur secrète (combat) -> nil
 local function findUnitByGUID(guid)
   for _, u in ipairs({ "target", "mouseover", "focus" }) do
-    if try(G.UnitGUID, u) == guid then return u end
+    if pub(try(G.UnitGUID, u)) == guid then return u end
   end
   for i = 1, 40 do
     local u = "nameplate" .. i
-    if try(G.UnitGUID, u) == guid then return u end
+    if pub(try(G.UnitGUID, u)) == guid then return u end
   end
 end
 
@@ -113,13 +114,13 @@ local function scanUnit(unit)
   if G.UnitCanAttack and not try(G.UnitCanAttack, "player", unit) then return end
   local cls = try(G.UnitClassification, unit)
   if cls ~= "rare" and cls ~= "rareelite" and cls ~= "worldboss" and not (cls == "elite" and opt("elites")) then return end
-  local guid = try(G.UnitGUID, unit)
+  local guid = pub(try(G.UnitGUID, unit))
   if not guid then return end
   local t = now()
   if seen[guid] and t - seen[guid] < 600 then return end
   seen[guid] = t
-  local name = try(G.UnitName, unit) or "?"
-  local lvl = try(G.UnitLevel, unit) or 0
+  local name = pub(try(G.UnitName, unit)) or "?"
+  local lvl = pub(try(G.UnitLevel, unit)) or 0
   local lv = (lvl and lvl > 0) and (" (niv " .. lvl .. ")") or " (niv ??)"
   if cls == "elite" then
     M:Suggest("elite", "Élite : " .. name .. lv .. " — à plusieurs, ou évite.", 1, { ttl = 45, cooldown = 120 })
@@ -455,10 +456,9 @@ local function profSkills()
       end
     end
   end
-  if G.GetNumSkillLines and G.GetSkillLineInfo then
-    for i = 1, (try(G.GetNumSkillLines) or 0) do
-      local name, isHeader, _, rank = try(G.GetSkillLineInfo, i)
-      if name and not isHeader then put(name, rank) end
+  if API.SkillLines then   -- C_SkillInfo sur Forever, GetSkillLineInfo sur Era
+    for _, s in ipairs(API.SkillLines()) do
+      if s.name and not s.isHeader then put(s.name, s.rank) end
     end
   end
   return profCache
@@ -486,9 +486,9 @@ local function decorateUnit(tip, unit)
 end
 
 local function decorateNode(tip)
-  if not opt("gather") or not tip then return end
+  if not opt("gather") or not tip or inCombat() then return end   -- texte d'infobulle secret en combat
   local line = G.GameTooltipTextLeft1
-  local text = line and line.GetText and line:GetText()
+  local text = pub(line and line.GetText and line:GetText())
   local req = text and NODES[text]
   if not req then return end
   local p = profSkills()
@@ -572,7 +572,7 @@ function M:CheckThreat()
   if not opt("threat") or not inGroup() or isTank() then self:Clear("threat") return end
   if not try(G.UnitExists, "target") or not G.UnitDetailedThreatSituation then return end
   local tanking, _, pct = try(G.UnitDetailedThreatSituation, "player", "target")
-  pct = tonumber(pct)
+  tanking, pct = pub(tanking), tonumber(pub(pct))
   if not pct then self:Clear("threat") return end
   local limit = tonumber(opt("threatPct")) or 85
   if tanking or pct >= limit then

@@ -1023,11 +1023,13 @@ end
 local INVITE = "[TreeAI] Installe TreeAI Coach (addon WoW gratuit) : on verra tes quêtes, ta progression et les missions du groupe."
 function M:Invite(name)
   -- message privé envoyé UNIQUEMENT sur clic du joueur
-  if type(SendChatMessage) ~= "function" or not name then return end
+  local CI = _G.C_ChatInfo   -- Forever : C_ChatInfo.SendChatMessage (SendChatMessage global = repli déprécié)
+  local send = (CI and type(CI.SendChatMessage) == "function" and CI.SendChatMessage) or _G.SendChatMessage
+  if type(send) ~= "function" or not name then return end
   self._invited = self._invited or {}
   if self._invited[name] then T:Print(name .. " a déjà été prévenu.") return end
   self._invited[name] = true
-  pcall(SendChatMessage, INVITE, "WHISPER", nil, name)
+  pcall(send, INVITE, "WHISPER", nil, name)
 end
 
 function M:HandleEvents(evs, s)

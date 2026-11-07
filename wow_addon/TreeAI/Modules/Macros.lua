@@ -161,10 +161,11 @@ local DIET = { -- GetPetFoodTypes() renvoie des noms localisés
 }
 
 local function firstAidSkill()
-  local n = try(_G.GetNumSkillLines)
-  if not n then return nil end
-  for i = 1, n do
-    local name, header, _, rank = try(_G.GetSkillLineInfo, i)
+  local A = API()   -- C_SkillInfo sur Forever (GetSkillLineInfo global retiré)
+  local lines = A.SkillLines and A.SkillLines() or {}
+  if #lines == 0 then return nil end
+  for _, s in ipairs(lines) do
+    local name, header, rank = s.name, s.isHeader, s.rank
     if name and not header then
       local l = name:lower()
       if l:find("secourisme", 1, true) or l:find("first aid", 1, true) then return rank end
@@ -185,7 +186,8 @@ local function rangedAmmoType()
 end
 
 local function petDiet()
-  local types = { try(_G.GetPetFoodTypes) }
+  local A = API()   -- C_PetInfo.GetPetFoodTypes() sur Forever (rend une table)
+  local types = A.PetFoodTypes and A.PetFoodTypes() or { try(_G.GetPetFoodTypes) }
   if #types == 0 then return nil end
   local ok = {}
   for _, t in ipairs(types) do
@@ -523,6 +525,12 @@ function M:Refresh(onlyConsumables)
 end
 
 function M:Remove()
+  -- DeleteMacro : seulement pendant l'action du joueur et hors combat (sinon ADDON_ACTION_FORBIDDEN sur
+  -- Forever) : pas de file d'attente « après le combat », qui s'exécuterait hors de la commande.
+  if inCombat() or (T.InUserAction and not T:InUserAction()) then
+    say("Suppression des macros : refais la commande hors combat.")
+    return
+  end
   runOOC("Macros:remove", function()
     local n = 0
     for name in pairs(char().installed) do
@@ -658,6 +666,7 @@ function M:OnEnable()
   self:RegisterEvent("UNIT_PET", scheduleConsumables)
   self:RegisterEvent("SPELLS_CHANGED", scheduleSpells)
   self:RegisterEvent("LEARNED_SPELL_IN_TAB", scheduleSpells)
+  self:RegisterEvent("LEARNED_SPELL_IN_SKILL_LINE", scheduleSpells)   -- nom Forever / Mainline
   if not data() then return end
   if char().setup then
     after(3, function() M:Refresh(false) end)

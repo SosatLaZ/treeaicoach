@@ -12,7 +12,8 @@ return function(M, ctx)
   for _, s in ipairs(M.sentAddon) do
     local k = tostring(s.msg):match("^1~(SQ%u)~")
     if k then kinds[k] = (kinds[k] or 0) + 1 end
-    ctx.check(#s.msg <= 255 and (s.channel == "PARTY" or s.channel == "RAID"), "message <= 255 B en PARTY/RAID")
+    ctx.check(#s.msg <= 255 and (s.channel == "PARTY" or s.channel == "RAID" or tostring(s.msg):find("~SELFTEST~", 1, true)),
+      "message <= 255 B en PARTY/RAID (sauf l'autotest /tai test, chuchoté à soi-même)")
   end
   ctx.check(kinds.SQS and kinds.SQQ and kinds.SQR, "SQS/SQQ/SQR envoyés")
   local friend = TreeAI:Serialize({ v = 2, c = "PRIEST", l = 25, z = "Elwynn", h = 90, p = 15, b = 0, bt = 64 })

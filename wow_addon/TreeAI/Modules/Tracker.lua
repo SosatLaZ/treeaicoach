@@ -724,7 +724,8 @@ local function hookTips()
   local function onUnit(tt)
     if tt ~= _G.GameTooltip then return end
     local name = tt.GetUnit and try(tt.GetUnit, tt)
-    local line = M.DropTip(name)
+    local ok, line = pcall(M.DropTip, name)   -- erreur ici = fenêtre d'erreur Lua dans l'infobulle Blizzard
+    if not ok then line = nil end
     if line and tt.AddLine then pcall(tt.AddLine, tt, line, 1, 0.82, 0.2) end
   end
   local TDP, E = _G.TooltipDataProcessor, _G.Enum
