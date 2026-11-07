@@ -710,3 +710,30 @@ jamais pour un objet lié quand ramassé) ; contrats optionnels lus si présents
 Chasseur : DPS / vitesse de l'arme à distance (lente favorisée ±15 %), munitions assorties, mailles au niv 40.
 Calcul par coroutine hors combat. Résumé IA : `summary.gear = {priority, slots={{slot,item,score,next={id,name,
 gain,need,kind,where,cost,min}}}, shopping, total, hunter}` → `treeaicoach/wow/gear.py` (`gear_context`).
+
+## Ma session + Guichets (agent NEXT10, `Modules/Session.lua`, `Modules/Errands.lua`, après Talents)
+
+Deux petits modules, aucune nouvelle fenêtre : des lignes dans les onglets existants, toutes cliquables,
+silencieux quand il n'y a rien à dire, soumis à `TreeAI:Quiet` (genre « advice ») et au mode simple.
+
+* **Session** (onglet « Infos », bloc `Session`, `T.Session`) : ligne « Ma session : 1 h 05, +1 niveau, 9 quêtes,
+  +2 po 40 pa » (après 5 min ; clic = détail : XP/h, niveaux atteints, meilleure quête, beau butin bleu+, or
+  dépensé, où se déconnecter) · **fin de session** : `chars[k].modules.Session.cur` continue après un /reload
+  ou une coupure < 30 min, sinon il devient `prev` et s'affiche une fois au retour (« Dernière session : … »,
+  clic = ranger ; sujet `changes` partagé avec `Comfort:changes`) · **pourquoi je meurs** : `M.DeathTrend(deaths)`
+  (écart de niveau ≥ 3, même tueur, ≥ 3 monstres, élites, même zone → texte + UN conseil + onglet utile), ligne
+  « Maintenant » prio 2 au 3e décès en 30 min (sujet `death`, avec `Fight:death`) · **pause** après
+  `pauseHours` h (option). Lit `Fight.lastRecap` (tueur, niveau) si présent. `/tai bilan`. Résumé IA :
+  `summary.session = {minutes, xp, quests, levels, money, deaths, trend, tip, best}`.
+* **Errands** (« Guichets », `T.Errands`) : une ligne pendant que la fenêtre du jeu est ouverte, effacée à sa
+  fermeture. Boîte aux lettres (`M.MailDigest`/`MailLines` : lettres de l'HV via `Auction.MailKind`, argent,
+  objets, contre-remboursement avec somme + expéditeur, lettres < 3 jours ; échéance gardée dans
+  `char.mail.expireAt` → rappel au login) · maître de vol (`M.MatchBind` nœud de l'auberge de
+  `GetBindLocation`, `M.HearthLeft` recharge de la pierre 6948 → « garde le prix du vol » / « vole pour X ») ·
+  entraîneur (`M.TrainerPlan` : prix exact lu dans la fenêtre, sinon les sorts les moins chers d'abord, ou le
+  niveau des prochains ; métiers ignorés) · appel « prêt » (`READY_CHECK` : PV / mana < 60 %, sacs pleins,
+  munitions < 200, familier absent, équipement < 20 % ; rien si tout va bien) · limite de 5 instances / heure
+  (`db.inst`, compte ; même instance non recomptée sauf réinitialisation `INSTANCE_RESET_SUCCESS`), bloc
+  `Errands` de l'onglet « Groupe » dès 3 entrées. Résumé : `summary.errands`.
+* Jamais appelés : `TakeTaxiNode`, `BuyTrainerService`, `TakeInbox*`, `AutoLootMailItem`, `OpenAllMail`,
+  `ConfirmReadyCheck`, `ResetInstances` (vérifié par `tests/wow/next10_scenario.lua`).

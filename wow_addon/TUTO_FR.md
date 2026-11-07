@@ -124,6 +124,14 @@ Inventaire (sacs, réparation, gris), Montée (formation, XP reposée, talents),
 amélioration), Macros + Touches, Confort (nouveautés, nouveaux sorts, /tai perf), Pro, Économie, HV.
 Chaque module a sa page d'options et ses actions dans « Tout ».
 
+**Ma session** (onglet Infos, `/tai bilan`) : durée, XP, niveaux, quêtes, or ; clic = le détail et où te
+déconnecter. Le bilan est gardé quand tu quittes et montré au retour. Après plusieurs morts, TreeAI dit
+pourquoi (monstres trop hauts, même monstre, trop de monstres…) et donne UN conseil ; petit rappel de pause
+après 2 h. **Guichets** : à la boîte aux lettres (lettres de l'HV, argent, contre-remboursement, lettres qui
+expirent), chez le maître de vol (« ta pierre de foyer est prête : garde le prix du vol »), chez
+l'entraîneur (prix exact, quoi apprendre d'abord), à l'appel « prêt » (ce qui te manque) et la limite de
+5 instances par heure (onglet Groupe). C'est toujours toi qui cliques.
+
 ## 9. Voix et IA (TreeAI)
 
 - La voix **ne parle jamais toute seule** : dis **« Hey coach »** puis ta question (« on fait quoi ? »,
