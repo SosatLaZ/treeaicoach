@@ -273,13 +273,6 @@ def build_zones(T: dict) -> dict:
     return {"fields": ["name", "parent", "continent"], "zones": z}
 
 
-def f(v: str | None) -> float:
-    try:
-        return float(v)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def build_taxi(T: dict) -> dict:
     """Flight graph (nodes with world pos / faction, directed edges with spline length in yards and cost in
     copper) and uiMap world bounds (UiMapAssignment Region, verified conversion:

@@ -147,6 +147,8 @@ def verdict(pb: DM.Problem, s: S.Solver, res: S.Result, zone_switch: tuple[bool,
     if not res.route:
         if pb.log_count >= pb.log_cap:
             return "impossible", ["Journal de quêtes plein : rends ou abandonne des quêtes."]
+        if s.usable and s.mode == "rate":
+            return "long", ["Trop long : aucune quête ne rapporte plus que farmer ici, change de zone ou farme."]
         return "impossible", ["Aucune quête faisable ici avec les données actuelles."]
     minutes = res.seconds / 60.0
     quests = s.quests_in(res.route)

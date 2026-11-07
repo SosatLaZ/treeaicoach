@@ -323,7 +323,7 @@ def objective_time(o: dict, cls: str, level: int, calib: Calib | None = None, dp
         return ObjTime(corpses * c, corpses80 * c, corpses, corpses)
     if kind == "obj":
         per = 33.0 * calib.k(zone)
-        t = need * per * (1 if int(_num(o.get("plf"), 0)) else 1)   # each member clicks their own, in parallel
+        t = need * per                                  # each member clicks their own objects, in parallel
         return ObjTime(t, t * 1.3, 0.0)
     if kind in ("explore", "talk", "spell"):
         return ObjTime(30.0, 45.0, 0.0)
@@ -381,8 +381,8 @@ def galere(q: dict, members: list[Member], calib: Calib | None = None, zone: int
             terms.append((12 * cv, f"taux de drop {int(round(p * 100))} %"))
             mult = 1 if int(_num(o.get("plf"), 0)) else k
             corpses = mult * need / p
-            if k > 1 and corpses > 60 and p < 0.3:
-                terms.append((30.0, f"{int(corpses)} corps à {int(round(p * 100))} % pour {k}"))
+            if k > 1 and corpses > 60 and p < 0.3:            # report 5 C3: always « galère »
+                terms.append((45.0, f"{int(corpses)} corps à {int(round(p * 100))} % pour {k}"))
     kap = calib.k(zone)
     if kap > 1:
         terms.append((10 * (kap - 1), "camp disputé"))

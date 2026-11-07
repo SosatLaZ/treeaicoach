@@ -334,13 +334,30 @@ class Solver:
         return best
 
     def construct(self, order: list[int] | None = None) -> list[int]:
+        """Cheapest insertion of every quest (a lone quest rarely pays its trip: in ``rate`` mode everything is
+        inserted first, then :meth:`prune` drops the quests that do not pay)."""
         route: list[int] = []
         cur = self.evaluate(route)[0]
         for q in order if order is not None else self.default_order():
-            res = self.insert(route, q, cur, force=self.mode == "clear")
+            res = self.insert(route, q, cur, force=True)
             if res is not None:
                 cur, route = res
-        return route
+        return self.prune(route) if self.mode == "rate" else route
+
+    def prune(self, route: list[int]) -> list[int]:
+        """Drop, one at a time, the quest (with its chain) whose removal raises the score most."""
+        cur = self.evaluate(route)[0]
+        while True:
+            present = self.quests_in(route)
+            best, best_r = cur, None
+            for q in present:
+                r = self.remove(route, self._closure({q}, set(present)))
+                sc = self.evaluate(r)[0]
+                if sc > best + 1e-9:
+                    best, best_r = sc, r
+            if best_r is None:
+                return route
+            route, cur = best_r, best
 
     def topo(self, qs: list[int]) -> list[int]:
         out, seen = [], set()
@@ -458,11 +475,11 @@ class Solver:
         if op == 0:                                             # random
             qs = set(R.sample(present, k))
         elif op == 1:                                           # worst: highest saving per XP lost
-            base, bxp, bt = self.evaluate(route)
+            base = self.evaluate(route)[0]
             scored = []
             for q in present:
                 r = self.remove(route, self._closure({q}, set(present)))
-                sc, xp, t = self.evaluate(r)
+                sc = self.evaluate(r)[0]
                 scored.append(((sc - base) + R.random() * 1e-3, q))
             scored.sort(reverse=True)
             qs = {q for _, q in scored[:k]}

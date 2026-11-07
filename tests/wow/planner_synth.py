@@ -84,7 +84,6 @@ def brute_force(s) -> float:
             prev[ns[-1]] = [x for x in ns[:-1]]
     D, START = s.D, s.START
     full = (1 << len(order)) - 1
-    best = {(0, START): 0.0}
     frontier = {0: {START: 0.0}}
     for _ in range(len(order)):
         nxt = {}
