@@ -500,7 +500,7 @@ function M.Refresh(delay)
 end
 
 function M:OnEnable()
-  if T.RegisterTab then pcall(T.RegisterTab, T, "quests", "Quêtes", 20) end
+  if T.RegisterTab then pcall(T.RegisterTab, T, "quests", "Quêtes") end
   for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN",
     "ZONE_CHANGED_NEW_AREA", "PLAYER_LEVEL_UP" }) do
     self:RegisterEvent(ev, function() M.Refresh(1.2) end)

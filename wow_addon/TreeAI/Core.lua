@@ -780,8 +780,9 @@ TreeAI.MODULE_TAB = TreeAI.MODULE_TAB or {
 function TreeAI:RegisterTab(id, title, order)
   if type(id) ~= "string" or id == "" then return nil end
   local t = self.tabs[id] or { id = id }
+  if t.auto and title ~= nil then t.order, t.title, t.auto = nil, nil, nil end   -- auto-created by SetTabLines
   t.title = title and tostring(title) or t.title or id
-  t.order = tonumber(order) or t.order or 100
+  t.order = t.order or tonumber(order) or 100   -- a tab keeps its first order (core tabs stay in place)
   self.tabs[id] = t
   if self.RequestRefresh then self:RequestRefresh() end
   return t
@@ -812,7 +813,7 @@ end
 -- pin = true also offers the line to « Maintenant ».
 function TreeAI:SetTabLines(id, lines, source)
   if type(id) ~= "string" then return false end
-  if not self.tabs[id] then self:RegisterTab(id, id, 100) end
+  if not self.tabs[id] then self:RegisterTab(id, nil, 100); self.tabs[id].auto = true end
   source = source and tostring(source) or "main"
   local ts = tabSources[id]
   if not ts then ts = { order = {}, lines = {} }; tabSources[id] = ts end

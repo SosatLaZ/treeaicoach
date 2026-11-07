@@ -584,7 +584,7 @@ function M.Refresh(delay)
 end
 
 function M:OnEnable()
-  if T.RegisterTab then pcall(T.RegisterTab, T, "predict", "Prévisions", 25) end
+  if T.RegisterTab then pcall(T.RegisterTab, T, "predict", "Prévisions", 2.5) end
   reset()
   M.SampleXP()
   M.SampleMoney()

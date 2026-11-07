@@ -7,7 +7,9 @@ return function(M, ctx)
   ctx.check(type(T.SetTabLines) == "function" and type(T.RegisterTab) == "function", "contrat onglets présent")
   local ids = {}
   for _, t in ipairs(T:GetTabs()) do ids[#ids + 1] = t.id end
-  ctx.check(table.concat(ids, ",") == "now,quests,group,hv,info", "onglets dans l'ordre : " .. table.concat(ids, ","))
+  local order = table.concat(ids, ",")
+  ctx.check(order == "now,quests,group,hv,info" or order == "now,quests,predict,group,hv,info",
+    "onglets dans l'ordre : " .. order)
   local panel = T:GetPanel() or T:CreatePanel()
   ctx.check(panel ~= nil, "panneau créé")
   ctx.check(panel:GetParent() == UIParent and not panel:IsProtected(), "panneau : enfant d'UIParent, non protégé")
