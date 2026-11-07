@@ -5,6 +5,7 @@
 ## Author: TreeAI
 ## Version: 0.2.0
 ## SavedVariables: TreeAIDB
+## OptionalDeps: QuestieDB, Questie, ShortestPathForever, TomTom
 ## IconTexture: Interface\Icons\Ability_Hunter_BeastCall
 
 Core.lua
@@ -23,6 +24,9 @@ Modules\Leveling.lua
 Modules\Group.lua
 Modules\Squad.lua
 Modules\Quests.lua
+Modules\Compass.lua
+Modules\Tracker.lua
+Modules\Predict.lua
 Modules\Inventory.lua
 Modules\Boost.lua
 Modules\Auction.lua
