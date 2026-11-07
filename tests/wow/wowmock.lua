@@ -33,6 +33,9 @@ function M.Reset()
   M.sounds = {}
   M.macros = { global = {}, char = {} }
   M.bindings = {}
+  M.actions = {}         -- [slot] = { type = "spell"|"macro"|"item", id =, text = } (action bars)
+  M.cursor = nil         -- { type, id } after PickupMacro / PickupSpell
+  M.forbidBindings = false -- true: SetBinding/SaveBindings raise ADDON_ACTION_FORBIDDEN (WoW Forever test)
   M.combatEvent = nil
   M.player = {
     name = "Testeur", realm = "Royaume-Test", class = "HUNTER", classLocal = "Chasseur",
@@ -1177,19 +1180,45 @@ function M.Install(flavor)
     if i > G.MAX_ACCOUNT_MACROS then table.remove(M.macros.char, i - G.MAX_ACCOUNT_MACROS)
     else table.remove(M.macros.global, i) end
   end
-  G.PickupMacro = function() protected("PickupMacro") end
-  G.PickupSpell = function() protected("PickupSpell") end
-  G.PlaceAction = function() protected("PlaceAction") end
-  G.GetActionInfo = function() return nil end
-  G.HasAction = function() return false end
-  G.GetActionTexture = function() return nil end
+  -- action bars: M.actions[slot]; PickupMacro/PickupSpell fill M.cursor, PlaceAction swaps it into the slot
+  local function forbidden(fn)
+    if not M.forbidBindings then return false end
+    M.FireEvent("ADDON_ACTION_FORBIDDEN", "TreeAI", fn .. "()")
+    return true
+  end
+  G.PickupMacro = function(idx)
+    if protected("PickupMacro") then return end
+    if macroAt(idx) then local _, i = macroAt(idx) M.cursor = { type = "macro", id = i } end
+  end
+  G.PickupSpell = function(id) if protected("PickupSpell") then return end M.cursor = { type = "spell", id = id } end
+  G.PlaceAction = function(slot)
+    if protected("PlaceAction") then return end
+    local c = M.cursor
+    if not c then return end
+    local old = M.actions[slot]
+    local m = c.type == "macro" and macroAt(c.id)
+    M.actions[slot] = { type = c.type, id = c.id, text = m and m.name or nil }
+    M.cursor = old and { type = old.type, id = old.id } or nil
+  end
+  G.GetCursorInfo = function() if M.cursor then return M.cursor.type, M.cursor.id end end
+  G.ClearCursor = function() M.cursor = nil end
+  G.GetActionInfo = function(slot) local a = M.actions[slot] if a then return a.type, a.id, a.subType end end
+  G.HasAction = function(slot) return M.actions[slot] ~= nil end
+  G.GetActionText = function(slot) local a = M.actions[slot] return a and a.text end
+  G.GetActionTexture = function(slot) return M.actions[slot] and 134400 or nil end
+  G.GetBonusBarOffset = function() return M.bonusBar or 0 end
   G.GetBindingKey = function(cmd) return M.bindings[cmd] end
   G.GetBindingAction = function(key) for c, k in pairs(M.bindings) do if k == key then return c end end return "" end
-  G.SetBinding = function(key, cmd) if protected("SetBinding") then return false end if cmd then M.bindings[cmd] = key end return true end
+  G.SetBinding = function(key, cmd)
+    if protected("SetBinding") or forbidden("SetBinding") then return false end
+    for c, k in pairs(M.bindings) do if k == key then M.bindings[c] = nil end end
+    if cmd then M.bindings[cmd] = key end
+    return true
+  end
   G.SetBindingMacro = function(key, m) if protected("SetBindingMacro") then return false end M.bindings["MACRO " .. tostring(m)] = key return true end
   G.SetBindingSpell = function(key, s) if protected("SetBindingSpell") then return false end M.bindings["SPELL " .. tostring(s)] = key return true end
   G.SetBindingClick = function(key, b) if protected("SetBindingClick") then return false end M.bindings["CLICK " .. tostring(b)] = key return true end
-  G.SaveBindings = function() protected("SaveBindings") end
+  G.SaveBindings = function(set) if protected("SaveBindings") or forbidden("SaveBindings") then return end M.savedBindings = set end
   G.GetCurrentBindingSet = function() return 1 end
   G.ACCOUNT_BINDINGS, G.CHARACTER_BINDINGS = 1, 2
   -- protected actions an addon must never call (automation): record if called at all

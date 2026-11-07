@@ -18,6 +18,7 @@ Data\PetFood.lua
 Data\Consumables.lua
 
 Modules\Macros.lua
+Modules\Binds.lua
 Modules\Hunter.lua
 Modules\Classes.lua
 Modules\Leveling.lua
