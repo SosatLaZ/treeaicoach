@@ -474,6 +474,14 @@ def character_context(db: Any) -> dict[str, Any]:
                 ctx["hotel_des_ventes"] = hv
         except Exception:
             log.debug("wow auction context failed", exc_info=True)
+        try:  # équipement (module Gear : summary.gear) → « quoi améliorer ? »
+            from treeaicoach.wow import gear
+
+            eq = gear.gear_context(c)
+            if eq:
+                ctx["equipement"] = eq
+        except Exception:
+            log.debug("wow gear context failed", exc_info=True)
         return ctx
     except Exception:
         log.debug("character_context failed", exc_info=True)

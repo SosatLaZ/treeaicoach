@@ -16,6 +16,7 @@ Options.lua
 Data\Macros.lua
 Data\PetFood.lua
 Data\Consumables.lua
+Data\Gear.lua
 
 Modules\Macros.lua
 Modules\Binds.lua
@@ -41,3 +42,4 @@ Modules\Economy.lua
 Modules\Abandon.lua
 Modules\Auction.lua
 Modules\Highlight.lua
+Modules\Gear.lua

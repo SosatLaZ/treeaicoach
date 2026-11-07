@@ -519,3 +519,17 @@ TAI (liste lue via `Macros:ListNames()`/`MacroList()`/`Defs()`, touche conseill�
 Si le jeu bloque (`ADDON_ACTION_FORBIDDEN` pendant l'appel ou nouvelle entrée `diag.blocked`), c'est retenu
 (`db.bindBlocked` / `db.placeBlocked`, `/tai touches reset`) et les lignes donnent les instructions à la main.
 `summary.binds = {ok, plan, conflicts, free, emptyKeyed, addons, bindBlocked, placeBlocked}`.
+
+`Modules/Gear.lua` + `Data/Gear.lua` (agent GEAR) : planificateur d'équipement, onglet « Équipement » (tout au clic :
+« ↻ Recalculer », horizon +2, clic sur un emplacement = toutes les sources et alternatives ; `/tai equipement` en
+secours). Score par emplacement avec les poids du module Boost (exportés : `Boost.Weights`, `ScoreStats`,
+`ScoreLink`, `EQUIP_SLOTS`, `ARMOR_LEVEL`, `WEAPON_TYPES` — aucune duplication) ; candidats = ~5 100 objets du
+client (`tools/wow_build_gear.py`, build 1.60.1.70862 : pas de tables JournalEncounter*) + sacs + récompenses du
+journal (`Pro.char.rewards`, `GetQuestLogItemLink`). Sources : sacs, quête (journal / Questie `questRewards`),
+boss de donjon (Questie `npcDrops` dans une zone de donjon) ou monstre / coffre, marchand (Questie `vendors` +
+prix d'achat client), artisanat (SkillLineAbility/SpellEffect, compétence ≈ seuil jaune − 15), HV (`Auction.Stats`,
+jamais pour un objet lié quand ramassé) ; contrats optionnels lus si présents : `Dungeon.ItemSource(id)`,
+`Prof.CraftInfo(id)` → `{text, min, cost}`. Valeur = gain ÷ √(effort en minutes, or converti via or/h).
+Chasseur : DPS / vitesse de l'arme à distance (lente favorisée ±15 %), munitions assorties, mailles au niv 40.
+Calcul par coroutine hors combat. Résumé IA : `summary.gear = {priority, slots={{slot,item,score,next={id,name,
+gain,need,kind,where,cost,min}}}, shopping, total, hunter}` → `treeaicoach/wow/gear.py` (`gear_context`).
