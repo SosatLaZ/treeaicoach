@@ -716,6 +716,9 @@ class CoachingMixin:
         try:
             self._listen_chip("transcript", f"{who} : {text}" if who else text)
             q = f"Question posée par {who} : {text}" if who else text
+            if self._wow_mode():                          # WoW mode: WoW-expert answer in the channel
+                self._general_question(text, who=who)
+                return
             msg = self.ask_ai(question=q)
             if msg.startswith("Question envoyée"):
                 self._ai_discord_pending = True
@@ -726,7 +729,16 @@ class CoachingMixin:
         except Exception:
             log.debug("discord voice question failed", exc_info=True)
 
-    def _general_question(self, text: str, local: bool = False) -> None:
+    def _wow_mode(self) -> bool:
+        """TreeAI runs in WoW mode (wow/ai_context.wow_mode_active). Never raises."""
+        try:
+            from treeaicoach.wow import ai_context
+
+            return ai_context.wow_mode_active(self)
+        except Exception:
+            return False
+
+    def _general_question(self, text: str, local: bool = False, who: str = "") -> None:
         """Outside a game: the question goes to the AI as to an ordinary assistant (still LoL-expert);
         the answer is said in the channel. One worker thread per question, never raises."""
         cfg = self._cfg
@@ -742,7 +754,13 @@ class CoachingMixin:
             from treeaicoach.voice_assistant import short_answer
 
             try:
-                ans = short_answer(ai_advisor.general_answer(prov, key, model, text), sentences=3, max_chars=320)
+                if self._wow_mode():                     # WoW-expert prompt + SavedVariables / combat-log context
+                    from treeaicoach.wow import ai_context
+
+                    raw = ai_context.wow_answer(prov, key, model, text, engine=self, who=who)
+                else:
+                    raw = ai_advisor.general_answer(prov, key, model, text)
+                ans = short_answer(raw, sentences=3, max_chars=320)
             except Exception as exc:
                 log.info("IA (question générale) : %s", exc)
                 ans = "L'IA ne répond pas pour l'instant."
@@ -1312,7 +1330,7 @@ class CoachingMixin:
                 a.stop()
                 return
             busy = getattr(self._voice, "is_busy", None)
-            a.set_hooks(should_listen=lambda: bool(self._in_game),
+            a.set_hooks(should_listen=lambda: bool(self._in_game) or self._wow_mode(),
                         is_speaking=(busy if callable(busy) else (lambda: False)),
                         on_wake=lambda: self._voice.alert_beep("info") if self._voice is not None else None,
                         on_question=lambda q: self.ask_ai(question=q, spoken=True))
@@ -1337,6 +1355,14 @@ class CoachingMixin:
         refusal) is also read out loud, 1-2 sentences.
         Returns a French acknowledgement (also shown as a toast). Never raises, never blocks."""
         try:
+            if self._wow_mode():                         # WoW mode: WoW-expert assistant (hotkey or « Hey coach »)
+                from treeaicoach.wow import ai_context
+
+                now = self._clock()
+                self._general_question(question or ai_context.DEFAULT_QUESTION, local=True)
+                self.last_ai_ack = msg = "Question envoyée à l'IA…"
+                self._toast("insight", "IA", msg, None, f"ai-ask:{now:.0f}", now)
+                return msg
             from treeaicoach.ai_advisor import AIAdvisor, engine_context
 
             ai = getattr(self, "_ai", None)
