@@ -20,16 +20,19 @@ local LAYERS = { "quests", "turnins", "target", "path", "squad", "rares", "death
 local R = T:RegisterModule("Radar", {
   title = "Radar",
   defaults = { enabled = true, shown = true, size = 170, zoom = 150, opacity = 0.8, rotate = false,
-               hideCombat = false, locked = false, rings = true,
+               hideCombat = false, locked = false, rings = true, compact = false, labels = true, heading = true,
                quests = true, turnins = true, target = true, path = true, squad = true, rares = true,
                death = true, taxi = true, danger = true },
-  charDefaults = { point = "TOPRIGHT", x = -24, y = -250, death = nil, rares = {}, dangers = {} },
+  charDefaults = { point = "TOPRIGHT", x = -210, y = -24, death = nil, rares = {}, dangers = {} },
   options = {
     { key = "shown", type = "toggle", label = "Afficher le radar", section = "Radar" },
     { key = "rotate", type = "toggle", label = "La carte tourne avec moi (sinon nord en haut)", section = "Radar" },
     { key = "rings", type = "toggle", label = "Cercles de distance", section = "Radar" },
     { key = "hideCombat", type = "toggle", label = "Cacher en combat", section = "Radar" },
     { key = "locked", type = "toggle", label = "Verrouiller la position", section = "Radar" },
+    { key = "compact", type = "toggle", label = "Radar compact (petit, 120 px)", section = "Apparence" },
+    { key = "labels", type = "toggle", label = "Distances écrites (cercle, cible)", section = "Apparence" },
+    { key = "heading", type = "toggle", label = "Repère de direction sur le bord", section = "Apparence" },
     { key = "size", type = "range", label = "Taille (pixels)", min = 110, max = 300, step = 10, section = "Apparence" },
     { key = "zoom", type = "range", label = "Portée (yards, molette)", min = 50, max = 400, step = 10, section = "Apparence" },
     { key = "opacity", type = "range", label = "Opacité du fond", min = 0.2, max = 1, step = 0.05, section = "Apparence" },
@@ -528,7 +531,7 @@ function R.SetTarget(pin)
 end
 
 -- ------------------------------------------------------------------ cadre (le nôtre, jamais Blizzard)
-local frame, glass, sheen, arrow, north, zoomText, statusText
+local frame, glass, sheen, arrow, north, zoomText, statusText, ringLabel, headTick
 local ringSegs, pinPool = {}, {}
 R.pinPool = pinPool
 
@@ -545,10 +548,13 @@ local ICON = {
 }
 local SIZE = { quest = 9, turnin = 14, target = 14, path = 6, squad = 10, rare = 13, danger = 12, death = 14, taxi = 13 }
 
-local function radius()
-  local s = R.db and tonumber(R.db.size) or 170
-  return s / 2 - 10
+local COMPACT = 120
+local function size()
+  if R.db and R.db.compact then return COMPACT end
+  return R.db and tonumber(R.db.size) or 170
 end
+R.Size = size
+local function radius() return size() / 2 - 10 end
 
 local function showTip(owner, pin)
   local tt = _G.GameTooltip
@@ -572,7 +578,7 @@ local function newPin()
   b:RegisterForClicks("LeftButtonUp")
   b.outline = b:CreateTexture(nil, "ARTWORK")
   b.outline:SetTexture(CIRCLE)
-  b.outline:SetVertexColor(0, 0, 0, 0.85)
+  b.outline:SetVertexColor(0, 0, 0, 0.95)
   b.outline:SetPoint("CENTER", b, "CENTER", 0, 0)
   b.icon = b:CreateTexture(nil, "OVERLAY")
   b.icon:SetAllPoints(b)
@@ -582,6 +588,9 @@ local function newPin()
   b.edgeArrow:Hide()
   b.count = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   b.count:SetPoint("CENTER", b, "CENTER", 0, 0)
+  b.dist = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.dist:SetPoint("TOP", b, "BOTTOM", 0, -1)
+  b.dist:Hide()
   b:SetScript("OnEnter", function(self) showTip(self, self.pin) end)
   b:SetScript("OnLeave", hideTip)
   b:SetScript("OnClick", function(self)
@@ -607,7 +616,7 @@ local function stylePin(b, p)
   if p.kind == "squad" and p.dead then b.icon:SetVertexColor(0.5, 0.5, 0.5, 1) end
   local round = tex == CIRCLE
   b.outline:SetShown(round)
-  b.outline:SetSize(sz + 3, sz + 3)
+  b.outline:SetSize(sz + 4, sz + 4)
   b.size = sz
   b:SetSize(sz, sz)
   b.count:SetText("")
@@ -651,8 +660,8 @@ end
 
 function R.Layout()
   if not frame then return end
-  local size = R.db and tonumber(R.db.size) or 170
-  frame:SetSize(size, size)
+  local sz = size()
+  frame:SetSize(sz, sz)
   local r = radius()
   glass:SetSize(2 * r + 6, 2 * r + 6)
   glass:SetAlpha(tonumber(opt("opacity")) or 0.8)
@@ -662,8 +671,51 @@ function R.Layout()
   local rings = opt("rings") ~= false
   placeRing(ringSegs.mid, r / 2, #ringSegs.mid, rings and 0.22 or 0)
   placeRing(ringSegs.inner, r / 4, #ringSegs.inner, rings and 0.12 or 0)
+  if ringLabel then
+    ringLabel:ClearAllPoints()
+    ringLabel:SetPoint("BOTTOMLEFT", frame, "CENTER", r * 0.36, r * 0.36)
+  end
   R.lastSig = nil
   if R.controls then R.PlaceControls() end
+end
+
+-- zoom fluide : 35 % du chemin vers le but à chaque image (20 im/s)
+function R.StepZoom()
+  local goal = R.zoomGoal
+  if not goal then return end
+  local z = tonumber(opt("zoom")) or goal
+  if abs(goal - z) < 1 then R.SetZoom(goal, true) R.zoomGoal = nil
+  else R.SetZoom(z + (goal - z) * 0.35, true) end
+  R.lastSig = nil
+end
+
+-- survol du radar : légende (couleur · couche · nombre de points) + portée
+local LEGEND = {
+  { "quest", "quests", "Objectifs de quête" }, { "turnin", "turnins", "PNJ de remise" },
+  { "target", "target", "Cible de la boussole" }, { "path", "path", "Chemin sûr" }, { "squad", "squad", "Amis du groupe" },
+  { "rare", "rares", "Rares vus" }, { "danger", "danger", "Élites (danger)" }, { "death", "death", "Mon corps" },
+  { "taxi", "taxi", "Maîtres de vol" },
+}
+R.LEGEND = LEGEND
+function R.ShowLegend(owner)
+  local tt = _G.GameTooltip
+  if not tt then return nil end
+  local counts = {}
+  for _, p in ipairs(R.pins or {}) do counts[p.kind] = (counts[p.kind] or 0) + 1 end
+  try(tt.SetOwner, tt, owner, "ANCHOR_LEFT")
+  try(tt.AddLine, tt, "Radar — portée " .. R.Dist(R.ClampZoom(opt("zoom"))), 1, 1, 1)
+  local n = 0
+  for _, l in ipairs(LEGEND) do
+    if opt(l[2]) ~= false and (counts[l[1]] or 0) > 0 then
+      local col = (ICON[l[1]] and ICON[l[1]][2]) or GOLD
+      try(tt.AddLine, tt, ("|T%s:12|t %s : %d"):format(ICON[l[1]][1], l[3], counts[l[1]]), col[1], col[2], col[3])
+      n = n + 1
+    end
+  end
+  if n == 0 then try(tt.AddLine, tt, "Aucun point à portée.", 0.6, 0.6, 0.6) end
+  try(tt.AddLine, tt, "Molette : zoom · clic droit : menu · survol d'un point : détail", 0.5, 0.5, 0.5, true)
+  try(tt.Show, tt)
+  return n
 end
 
 local function savePos()
@@ -686,8 +738,8 @@ local function createFrame()
   if frame or type(_G.CreateFrame) ~= "function" then return frame end
   frame = _G.CreateFrame("Frame", "TreeAIRadarFrame", _G.UIParent)
   R.frame = frame
-  local size = R.db and tonumber(R.db.size) or 170
-  frame:SetSize(size, size)
+  local sz0 = size()
+  frame:SetSize(sz0, sz0)
   frame:SetPoint(R.char.point or "TOPRIGHT", _G.UIParent, R.char.point or "TOPRIGHT", R.char.x or -24, R.char.y or -250)
   frame:SetFrameStrata("MEDIUM")
   frame:SetClampedToScreen(true)
@@ -731,19 +783,33 @@ local function createFrame()
   zoomText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 12)
   zoomText:SetTextColor(0.85, 0.85, 0.85)
   zoomText:Hide()
+  ringLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  ringLabel:SetTextColor(GOLD[1], GOLD[2], GOLD[3])
+  ringLabel:SetAlpha(0.75)
+  headTick = frame:CreateTexture(nil, "OVERLAY")
+  headTick:SetTexture("Interface\\Buttons\\WHITE8X8")
+  headTick:SetSize(3, 9)
+  headTick:SetVertexColor(1, 0.95, 0.6, 0.95)
+  R.headTick, R.ringLabel = headTick, ringLabel
   statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   statusText:SetPoint("CENTER", frame, "CENTER", 0, -24)
   statusText:SetText("")
   frame:SetScript("OnMouseWheel", function(_, delta)
-    local z = tonumber(opt("zoom")) or 150
-    R.SetZoom(delta > 0 and z * 0.8 or z * 1.25)
+    local z = R.zoomGoal or tonumber(opt("zoom")) or 150
+    R.zoomGoal = R.ClampZoom(delta > 0 and z * 0.8 or z * 1.25)
+    if zoomText then zoomText:SetText(R.Dist(R.zoomGoal)) zoomText:Show() R.zoomShownAt = now() end
     R.lastSig = nil
   end)
-  frame:SetScript("OnEnter", function() if zoomText then zoomText:Show() R.zoomShownAt = now() end end)
+  frame:SetScript("OnEnter", function(self)
+    if zoomText then zoomText:Show() R.zoomShownAt = now() end
+    R.ShowLegend(self)
+  end)
+  frame:SetScript("OnLeave", function() hideTip() end)
   frame:SetScript("OnUpdate", function(_, elapsed)
     R.acc = (R.acc or 0) + (elapsed or 0)
     if R.acc < FPS then return end
     R.acc = 0
+    R.StepZoom()
     R.Update()
   end)
   -- déplaçable / redimensionnable via le mode édition du cœur (agent POLISH), sinon glisser simple
@@ -872,6 +938,7 @@ function R.ToggleMenu(force)
   local m = R.menu
   if not m then
     m = _G.CreateFrame("Frame", "TreeAIRadarMenu", _G.UIParent)
+    if m.SetClampedToScreen then m:SetClampedToScreen(true) end
     m:SetFrameStrata("DIALOG")
     m:SetClampedToScreen(true)
     m:EnableMouse(true)
@@ -945,6 +1012,21 @@ function R.Update()
     local nx, ny = R.Project(1, 0, facing, rotate, 1, r + 9)
     north:ClearAllPoints()
     north:SetPoint("CENTER", frame, "CENTER", nx, ny)
+    if headTick then
+      if opt("heading") ~= false and facing then
+        local f = rotate and 0 or facing
+        headTick:ClearAllPoints()
+        headTick:SetPoint("CENTER", frame, "CENTER", -(r + 1) * sin(f), (r + 1) * cos(f))
+        if headTick.SetRotation then pcall(headTick.SetRotation, headTick, f) end
+        headTick:Show()
+      else
+        headTick:Hide()
+      end
+    end
+    if ringLabel then
+      if opt("labels") ~= false and opt("rings") ~= false then ringLabel:SetText(R.Dist(zoom / 2)) ringLabel:Show()
+      else ringLabel:Hide() end
+    end
     local used = 0
     for _, p in ipairs(R.pins) do
       if p.c == me.c then
@@ -975,6 +1057,11 @@ function R.Update()
           end
           b:ClearAllPoints()
           b:SetPoint("CENTER", frame, "CENTER", ex, ey)
+          if opt("labels") ~= false and (p.kind == "target" or p.tracked) and dist and dist > 20 then
+            b.dist:SetText(R.Dist(dist)) b.dist:Show()
+          else
+            b.dist:Hide()
+          end
           b:Show()
         end
       end
@@ -1053,7 +1140,7 @@ end
 
 function R:OnOptionChanged(key, value)
   if key == "zoom" then R.SetZoom(value, true) end
-  if key == "size" or key == "opacity" or key == "rings" then R.Layout() end
+  if key == "size" or key == "opacity" or key == "rings" or key == "compact" then R.Layout() end
   if key == "shown" or key == "hideCombat" then R.Visibility() end
   R.slowAt, R.lastSig = 0, nil
 end
@@ -1087,8 +1174,9 @@ T:RegisterSlash("radar", function(rest)
   elseif cmd == "statut" or cmd == "status" then
     R:Print(R.Status())
   elseif cmd == "reset" then
-    R.char.point, R.char.x, R.char.y = "TOPRIGHT", -24, -250
-    if frame then frame:ClearAllPoints() frame:SetPoint("TOPRIGHT", _G.UIParent, "TOPRIGHT", -24, -250) end
+    R.char.point, R.char.x, R.char.y = "TOPRIGHT", -210, -24
+    if frame then frame:ClearAllPoints() frame:SetPoint("TOPRIGHT", _G.UIParent, "TOPRIGHT", -210, -24) end
+    if T.ResetMovable then T:ResetMovable("radar") end   -- place automatique (à côté de la minimap)
     R:Print("Radar replacé.")
   elseif cmd == "oublier" then
     R.char.rares, R.char.dangers, R.char.death = {}, {}, nil

@@ -18,7 +18,7 @@ if not (T and T.RegisterModule) then return end
 local M = T:RegisterModule("Compass", {
   title = "Boussole",
   defaults = { enabled = true, shown = true, units = "m", autoNext = true, announce = true, scale = 1, locked = false,
-               hideCombat = true },
+               hideCombat = true, hideDup = true },
   charDefaults = { point = "TOP", x = 0, y = -120, custom = nil },
   options = {
     { key = "shown", type = "toggle", label = "Afficher la boussole (flèche vers la cible)" },
@@ -26,6 +26,8 @@ local M = T:RegisterModule("Compass", {
     { key = "announce", type = "toggle", label = "Annoncer la nouvelle cible dans « Maintenant »" },
     { key = "locked", type = "toggle", label = "Verrouiller la boussole" },
     { key = "hideCombat", type = "toggle", label = "Cacher la boussole en combat" },
+    { key = "hideDup", type = "toggle",
+      label = "Une seule flèche : cacher la boussole si Blizzard / Shortest Path / TomTom guide déjà vers la même cible" },
     { key = "scale", type = "range", label = "Taille de la boussole", min = 0.5, max = 2, step = 0.1 },
   },
 })
@@ -241,10 +243,49 @@ function M.Pin(t)
   end
   return nil
 end
+-- Une seule flèche à l'écran : un autre guide (repère / quête suivie de Blizzard, Shortest Path, TomTom)
+-- vise-t-il déjà la même cible ? Lecture seule. Renvoie "blizzard" / "spf" / "tomtom" ou nil.
+local function near(a, b) return a and b and math.abs(a - b) < 0.012 end
+function M.OtherGuide(t)
+  if not t then return nil end
+  local ST, CM = _G.C_SuperTrack, _G.C_Map
+  if t.questID and ST and ST.GetSuperTrackedQuestID then
+    local q = try(ST.GetSuperTrackedQuestID)
+    if q and q ~= 0 and q == t.questID then return "blizzard" end
+  end
+  if t.mapID and t.x and CM and CM.HasUserWaypoint and try(CM.HasUserWaypoint) and CM.GetUserWaypoint then
+    local wp = try(CM.GetUserWaypoint)
+    local pos = type(wp) == "table" and wp.position
+    local px, py
+    if type(pos) == "table" then
+      if type(pos.GetXY) == "function" then local ok, a, b = pcall(pos.GetXY, pos) if ok then px, py = a, b end end
+      px, py = px or pos.x, py or pos.y
+    end
+    local onTarget = wp and wp.uiMapID == t.mapID and near(px, t.x) and near(py, t.y)
+    local superUser = not (ST and ST.IsSuperTrackingUserWaypoint) or try(ST.IsSuperTrackingUserWaypoint)
+    if onTarget and superUser then return "blizzard" end
+  end
+  -- nos propres « Aller là » : le guide posé par un clic sur CETTE cible
+  if M.guide and M.guide.key == t.key then
+    if M.guide.how == "tomtom" then
+      local arrow = rawget(_G, "TomTomCrazyArrow")
+      if not (type(arrow) == "table" and arrow.IsVisible) or try(arrow.IsVisible, arrow) then return "tomtom" end
+    elseif M.guide.how == "spf" then
+      local A = M.SPF()
+      local active = A and (type(A.IsNavigating) ~= "function" or spfCall(A, "IsNavigating"))
+      if active then return "spf" end
+    elseif M.guide.how == "blizzard" then
+      if not (CM and CM.HasUserWaypoint) or try(CM.HasUserWaypoint) then return "blizzard" end
+    end
+  end
+  return nil
+end
+
 local PIN_TXT = { spf = "Shortest Path te guide", tomtom = "point TomTom posé", blizzard = "repère posé sur la carte" }
 function M.GoTo(t)
   t = t or M.Current()
   local how = M.Pin(t)
+  M.guide = (how and t) and { key = t.key, how = how } or nil
   if how then M:Print(("Aller là : %s (%s)."):format(cut(t.label or t.title, 40), PIN_TXT[how]))
   elseif t then M:Print("Aller là : suis la flèche de la boussole" .. (inCombat() and " (guidage après le combat)." or "."))
   else M:Print("Aucune cible (/tai cible, /tai way x y).") end
@@ -678,6 +719,7 @@ local function createFrame()
       pcall(tt.AddLine, tt, "Source : " .. (t.src or "zone"), 0.6, 0.6, 0.6)
     end
     pcall(tt.AddLine, tt, "Clic : cible suivante · clic droit : précédente · Maj-clic : Aller là (Shortest Path / TomTom / carte) · molette : taille · glisser : déplacer", 0.6, 0.8, 1, true)
+    if T.AutoRunHint then pcall(tt.AddLine, tt, T.AutoRunHint(), 0.55, 0.55, 0.55, true) end
     pcall(tt.Show, tt)
   end)
   frame:SetScript("OnLeave", function() if _G.GameTooltip then pcall(_G.GameTooltip.Hide, _G.GameTooltip) end end)
@@ -713,14 +755,15 @@ function M.Refresh()
   M.state = st
   if not frame then return st end
   local want = M.db and M.db.shown ~= false and M:IsEnabled()
-  if not want or st.hidden or st.none or (M.db.hideCombat ~= false and inCombat()) then
+  st.dup = (M.db and M.db.hideDup ~= false and not st.none) and M.OtherGuide(st.target) or nil
+  if not want or st.hidden or st.none or st.dup or (M.db.hideCombat ~= false and inCombat()) then
     -- caché : instance / pas de position / pas de cible ; on garde le OnUpdate via un ticker léger
     if frame:IsShown() then frame:Hide() end
     return st
   end
   if not frame:IsShown() then frame:Show() end
   local t = st.target
-  label:SetText(cut(t.label or t.title or "?", 34))
+  label:SetText(cut(t.label or t.title or "Cible", 34))
   if st.rel then
     arrow:Show()
     if arrow.SetRotation then pcall(arrow.SetRotation, arrow, st.rel) end

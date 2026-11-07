@@ -27,7 +27,7 @@ def test_layout_never_moves_foreign_frames():
     # the scan only reads (IsVisible / GetRect…); SetPoint is only called on our own frames (cf, tf, panel…)
     for line in layout.splitlines():
         if "SetPoint" in line and "call(" in line:
-            assert any(v in line for v in ("call(cf,", "call(tf,", "call(f, \"SetPoint\"")), line
+            assert any(v in line for v in ("call(cf,", "call(tf,", "call(rf,", "call(f, \"SetPoint\"")), line
 
 
 def test_readme_documents_new_api():

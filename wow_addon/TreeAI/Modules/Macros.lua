@@ -756,6 +756,7 @@ function M:TogglePanel()
   end
   if not _G.CreateFrame then return end
   local f = _G.CreateFrame("Frame", nil, _G.UIParent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
+  if f.SetClampedToScreen then f:SetClampedToScreen(true) end
   f:SetSize(W, H)
   f:SetPoint("CENTER")
   f:SetFrameStrata("DIALOG")

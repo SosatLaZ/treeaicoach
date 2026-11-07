@@ -13,7 +13,35 @@ local PRIO_COLORS = {
   [3] = { 1.00, 0.30, 0.25 },
 }
 local LINE_H, HEADER_H, TABS_H, PAD = 15, 18, 16, 6
+local TAB_ROW_H, TAB_ICON, ROW_GAP = 18, 12, 3
+local MIN_W, DEFAULT_W = 300, 320
 local MAX_ROWS = 15
+-- interface SIMPLE : 4 onglets visibles (Maintenant · Quêtes · Groupe · Plus) ; « Plus » ouvre une 2e rangée
+local PRIMARY = { "now", "quests", "group" }
+local IS_PRIMARY = { now = true, quests = true, group = true }
+local MORE = "__more"
+local SHORT = { now = "Maint.", quests = "Quêtes", group = "Groupe", [MORE] = "Plus", predict = "Prévis.",
+  gear = "Équip.", prof = "Métiers", talents = "Talents", dungeon = "Donjon", pvp = "JcJ", hv = "HV", info = "Infos" }
+local TAB_ICONS = {
+  now = "Interface\\Icons\\Spell_Nature_TimeStop", quests = "Interface\\Icons\\INV_Misc_Note_02",
+  group = "Interface\\Icons\\Ability_Hunter_Pet_Wolf", [MORE] = "Interface\\Buttons\\UI-PlusButton-Up",
+  predict = "Interface\\Icons\\INV_Misc_PocketWatch_01", hv = "Interface\\Icons\\INV_Misc_Coin_01",
+  prof = "Interface\\Icons\\Trade_BlackSmithing", talents = "Interface\\Icons\\Ability_Marksmanship",
+  gear = "Interface\\Icons\\INV_Chest_Chain", dungeon = "Interface\\Icons\\INV_Misc_Key_03",
+  pvp = "Interface\\Icons\\Ability_DualWield", info = "Interface\\Icons\\INV_Misc_QuestionMark",
+}
+TreeAI.PANEL_MIN_WIDTH = MIN_W
+local moreOpen = false
+local function panelWidth()
+  local s = TreeAI.settings and TreeAI.settings.panel
+  return max(MIN_W, tonumber(s and s.width) or DEFAULT_W)
+end
+-- réglages d'apparence (page « Apparence ») : police, interligne, icônes
+local function look()
+  local s = TreeAI.settings and TreeAI.settings.panel
+  local fs = tonumber(s and s.fontSize) or 11
+  return fs, tonumber(s and s.lineGap) or ROW_GAP, tonumber(s and s.iconSize) or 13
+end
 local EMPTY = {
   now = "Rien à signaler.", quests = "Aucune étape de quête pour l'instant.",
   group = "Pas de groupe avec TreeAI.", hv = "Ouvre l'hôtel des ventes pour chercher des affaires.",
@@ -31,6 +59,8 @@ local ICONS = {
   close = "Interface\\Buttons\\UI-StopButton",
   edit = "Interface\\Icons\\INV_Misc_Wrench_01",
   all = "Interface\\Icons\\INV_Misc_Book_09",
+  reset = "Interface\\Buttons\\UI-RefreshButton",
+  radar = "Interface\\Icons\\INV_Misc_Map_01",
 }
 
 -- icône par défaut d'une ligne sans icône : par sujet, sinon par module (repères visuels constants)
@@ -92,7 +122,7 @@ local function applyPosition()
   panel:SetPoint(c.point or "CENTER", _G.UIParent, c.point or "CENTER", c.x or 0, c.y or 0)
   panel:SetScale(s.scale or 1)
   panel:SetAlpha(s.alpha or 0.9)
-  panel:SetWidth(s.width or 280)
+  panel:SetWidth(panelWidth())
 end
 
 local function startMove()
@@ -171,12 +201,16 @@ local function makeRow(i)
   draggable(b)
   b.icon = b:CreateTexture(nil, "ARTWORK")
   b.icon:SetSize(13, 13)
-  b.icon:SetPoint("LEFT", b, "LEFT", 0, 0)
+  b.icon:SetPoint("TOPLEFT", b, "TOPLEFT", 0, -1)
   b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  b.text:SetPoint("LEFT", b.icon, "RIGHT", 3, 0)
-  b.text:SetPoint("RIGHT", b, "RIGHT", 0, 0)
+  b.text:SetPoint("TOPLEFT", b, "TOPLEFT", 16, 0)
+  b.text:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
   b.text:SetJustifyH("LEFT")
-  if b.text.SetWordWrap then b.text:SetWordWrap(false) end
+  if b.text.SetJustifyV then b.text:SetJustifyV("TOP") end
+  -- 2 lignes au lieu d'une ligne coupée « … » (texte complet dans l'infobulle)
+  if b.text.SetWordWrap then b.text:SetWordWrap(true) end
+  if b.text.SetNonSpaceWrap then b.text:SetNonSpaceWrap(false) end
+  if b.text.SetMaxLines then b.text:SetMaxLines(2) end
   b.hl = b:CreateTexture(nil, "HIGHLIGHT")
   b.hl:SetAllPoints(b)
   b.hl:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -218,64 +252,180 @@ local function toggleMacros()
   if M and type(M.TogglePanel) == "function" then TreeAI.safecall(M.TogglePanel, M) end
 end
 
-local function buildTabs()
-  for _, t in ipairs(TreeAI:GetTabs()) do
-    if not tabButtons[t.id] then
-      local b = _G.CreateFrame("Button", nil, panel)
-      b:SetHeight(TABS_H)
-      draggable(b)
-      b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-      b.text:SetPoint("CENTER", b, "CENTER", 0, 0)
-      b.line = b:CreateTexture(nil, "ARTWORK")
-      b.line:SetHeight(2)
-      b.line:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 2, 0)
-      b.line:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -2, 0)
-      b.line:SetTexture("Interface\\Buttons\\WHITE8X8")
-      if b.line.SetVertexColor then b.line:SetVertexColor(0.2, 0.8, 0.4, 0.9) end
-      b.id = t.id
-      b:SetScript("OnClick", function(self) TreeAI:SelectTab(self.id) end)
-      b:SetScript("OnEnter", function(self)
-        local t2 = TreeAI.tabs[self.id]
-        showTooltip(self, t2 and t2.title or self.id, { { L["Molette : faire défiler"], 0.6, 0.6, 0.6 } })
-      end)
-      b:SetScript("OnLeave", hideTooltip)
-      tabButtons[t.id] = b
-    end
-  end
+local function tabTitle(id)
+  if id == MORE then return L["Plus"] end
+  local t = TreeAI.tabs[id]
+  return L[(t and t.title) or id]
 end
 
-local function layoutTabs()
-  local s = acc()
-  local width = (s and s.width or 280) - 2 * PAD
-  local list = TreeAI:GetTabs()
-  local total = 0
-  for _, t in ipairs(list) do
-    local b = tabButtons[t.id]
-    if b then
-      b.text:SetText(t.title)
-      b.w = (b.text:GetStringWidth() or 30) + 8
-      total = total + b.w
-    end
-  end
-  local k = total > 0 and width / total or 1
-  local x = PAD
-  for _, t in ipairs(list) do
-    local b = tabButtons[t.id]
-    if b then
-      local w = floor(b.w * k)
-      b:ClearAllPoints()
-      b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -HEADER_H)
-      b:SetWidth(w)
-      x = x + w
-    end
-  end
+local function newTabButton(id, icon)
+  local b = _G.CreateFrame("Button", nil, panel)
+  b:SetHeight(TAB_ROW_H)
+  draggable(b)
+  b.icon = b:CreateTexture(nil, "ARTWORK")
+  b.icon:SetSize(TAB_ICON, TAB_ICON)
+  b.icon:SetPoint("LEFT", b, "LEFT", 2, 0)
+  b.icon:SetTexture(icon or TAB_ICONS[id] or TAB_ICONS.info)
+  b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  b.text:SetPoint("LEFT", b.icon, "RIGHT", 2, 0)
+  b.text:SetJustifyH("LEFT")
+  if b.text.SetWordWrap then b.text:SetWordWrap(false) end
+  b.line = b:CreateTexture(nil, "ARTWORK")
+  b.line:SetHeight(2)
+  b.line:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 2, 0)
+  b.line:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -2, 0)
+  b.line:SetTexture("Interface\\Buttons\\WHITE8X8")
+  if b.line.SetVertexColor then b.line:SetVertexColor(0.2, 0.8, 0.4, 0.9) end
+  b.bg = b:CreateTexture(nil, "BACKGROUND")
+  b.bg:SetAllPoints(b)
+  b.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+  if b.bg.SetVertexColor then b.bg:SetVertexColor(1, 1, 1, 0.05) end
+  b:SetScript("OnLeave", hideTooltip)
+  return b
 end
+
+local function tabButton(id)
+  local b = tabButtons[id]
+  if b then return b end
+  b = newTabButton(id)
+  b.id = id
+  if id == MORE then
+    b:SetScript("OnClick", function() TreeAI:ToggleMoreMenu() end)
+    b:SetScript("OnEnter", function(self)
+      showTooltip(self, L["Plus"], { { L["Prévisions, HV, Métiers, Talents, Équipement, Donjon, JcJ, Infos…"], 0.8, 0.8, 0.8 } })
+    end)
+  else
+    b:SetScript("OnClick", function(self) TreeAI:SelectTab(self.id) end)
+    b:SetScript("OnEnter", function(self)
+      showTooltip(self, tabTitle(self.id), { { L["Molette : faire défiler"], 0.6, 0.6, 0.6 } })
+    end)
+  end
+  tabButtons[id] = b
+  return b
+end
+
+-- actions du sous-menu « Plus » (boutons, pas des onglets)
+local actionButtons = {}
+local MORE_ACTIONS = {
+  { key = "act:macros", title = "Macros", icon = ICONS.macros, fn = function() toggleMacros() end,
+    tip = "Clic : prendre une macro" },
+  { key = "act:edit", title = "Déplacer", icon = ICONS.edit, fn = function() TreeAI:SetEditMode(not TreeAI:IsEditMode()) end,
+    tip = "Déplacer les cadres (mode édition)" },
+  { key = "act:all", title = "Tout", icon = ICONS.all, fn = function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end,
+    tip = "Tout : toutes les actions des modules" },
+  { key = "act:reset", title = "Réinitialiser l'interface", icon = ICONS.reset, wide = true,
+    fn = function() TreeAI:ResetInterface() end,
+    tip = "Remet tous les cadres TreeAI à leur place automatique, taille et onglets par défaut" },
+}
+local function actionButton(a)
+  local b = actionButtons[a.key]
+  if b then return b end
+  b = newTabButton(a.key, a.icon)
+  b.action = a.key
+  b:SetScript("OnClick", function() TreeAI.safecall(a.fn) end)
+  b:SetScript("OnEnter", function(self) showTooltip(self, L[a.title], a.tip and { { L[a.tip], 0.8, 0.8, 0.8 } } or nil) end)
+  actionButtons[a.key] = b
+  return b
+end
+
+local function buildTabs()
+  for _, t in ipairs(TreeAI:GetTabs()) do tabButton(t.id) end
+  for _, id in ipairs(PRIMARY) do tabButton(id) end
+  tabButton(MORE)
+end
+
+-- texte qui tient dans maxW : libellé complet, sinon court, sinon coupé + « … » (jamais de chevauchement)
+local function fitLabel(fs, full, short, maxW)
+  fs:SetText(full)
+  if (fs:GetStringWidth() or 0) <= maxW then return full end
+  if short and short ~= full then
+    fs:SetText(short)
+    if (fs:GetStringWidth() or 0) <= maxW then return short end
+  end
+  local s = short or full
+  while #s > 0 do
+    s = s:gsub("[%z\1-\127\192-\253][\128-\191]*$", "")
+    fs:SetText(s .. "…")
+    if (fs:GetStringWidth() or 0) <= maxW then return s .. "…" end
+  end
+  fs:SetText("")
+  return ""
+end
+TreeAI._FitLabel = fitLabel
+
+local function isMoreTab(id) return id ~= nil and not IS_PRIMARY[id] end
+
+-- onglets secondaires (sous-menu « Plus ») + actions, dans l'ordre des onglets
+local function moreEntries()
+  local out = {}
+  for _, t in ipairs(TreeAI:GetTabs()) do
+    if not IS_PRIMARY[t.id] then out[#out + 1] = { id = t.id, order = t.order } end
+  end
+  local tal = TreeAI.tabs.talents
+  if tal and #TreeAI:GetTabLines("talents") > 0 then out[#out + 1] = { id = "talents", order = tal.order } end
+  table.sort(out, function(a, b) if a.order ~= b.order then return a.order < b.order end return a.id < b.id end)
+  for _, a in ipairs(MORE_ACTIONS or {}) do out[#out + 1] = { id = a.key, action = a } end
+  return out
+end
+
+-- rangée 1 = 4 cases égales (Maintenant · Quêtes · Groupe · Plus) ; rangées suivantes (« Plus » ouvert ou
+-- onglet secondaire actif) = boutons à leur largeur mesurée, renvoyés à la ligne. Renvoie la hauteur prise.
+-- tabRects garde la géométrie (tests : aucun chevauchement, texte ≤ case).
+local tabRects = {}
+local function shortOf(id) return SHORT[id] and L[SHORT[id]] or nil end
+local function layoutTabs(width)
+  for i = #tabRects, 1, -1 do tabRects[i] = nil end
+  for _, b in pairs(tabButtons) do b:Hide() end
+  for _, b in pairs(actionButtons) do b:Hide() end
+  local inner = width - 2 * PAD
+  local slot = floor(inner / 4)
+  local function place(b, x, row, w, label)
+    b:ClearAllPoints()
+    b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -HEADER_H - row * (TAB_ROW_H + 2))
+    b:SetWidth(w)
+    b:SetHeight(TAB_ROW_H)
+    b:Show()
+    tabRects[#tabRects + 1] = { id = b.id or b.action, x = x, w = w, row = row, text = label,
+      textW = b.text:GetStringWidth() or 0, textMax = w - TAB_ICON - 6 }
+  end
+  for i, id in ipairs({ PRIMARY[1], PRIMARY[2], PRIMARY[3], MORE }) do
+    local b = tabButton(id)
+    local w = slot - 2
+    place(b, PAD + (i - 1) * slot, 0, w, fitLabel(b.text, tabTitle(id), shortOf(id), w - TAB_ICON - 6))
+  end
+  local rowsN = 1
+  if moreOpen or isMoreTab(activeTab()) then
+    local x, row = PAD, 1
+    for _, e in ipairs(moreEntries()) do
+      local b = e.action and actionButton(e.action) or tabButton(e.id)
+      local full = e.action and L[e.action.title] or tabTitle(e.id)
+      b.text:SetText(full)
+      local w = min(inner, floor((b.text:GetStringWidth() or 30) + TAB_ICON + 12))
+      if e.action and e.action.wide then w = inner end
+      if x > PAD and x + w > PAD + inner then x, row = PAD, row + 1 end
+      place(b, x, row, w, fitLabel(b.text, full, shortOf(e.id), w - TAB_ICON - 6))
+      x = x + w + 2
+    end
+    rowsN = row + 1
+  end
+  return rowsN * (TAB_ROW_H + 2)
+end
+
+function TreeAI:GetTabLayout() return tabRects end
+function TreeAI:ToggleMoreMenu(v)
+  if v == nil then v = not moreOpen end
+  moreOpen = v and true or false
+  if moreOpen and isMini() then local c = char(); if c then c.mini = false end end
+  self:RefreshPanel()
+  return moreOpen
+end
+function TreeAI:IsMoreMenuOpen() return moreOpen end
 
 function TreeAI:CreatePanel()
   if panel or not _G.CreateFrame then return panel end
   local template = _G.BackdropTemplateMixin and "BackdropTemplate" or nil
   panel = _G.CreateFrame("Frame", "TreeAIPanel", _G.UIParent, template)
-  panel:SetSize(280, 40)
+  panel:SetSize(DEFAULT_W, 40)
   panel:SetFrameStrata("MEDIUM")
   panel:SetClampedToScreen(true)
   panel:SetMovable(true)
@@ -341,10 +491,12 @@ function TreeAI:CreatePanel()
       TreeAI:RefreshPanel()
     end)
   toolButton("options", L["Options"], function() if TreeAI.OpenOptions then TreeAI:OpenOptions() end end)
-  toolButton("group", L["Groupe"], function() TreeAI:SelectTab("group") end)
-  toolButton("macros", L["Macros (clic : prendre une macro)"], toggleMacros)
-  toolButton("edit", L["Déplacer les cadres (mode édition)"], function() TreeAI:SetEditMode(not TreeAI:IsEditMode()) end)
-  toolButton("all", L["Tout : toutes les actions des modules"], function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end)
+  -- (Macros, Déplacer, Tout, Réinitialiser : dans le sous-menu « Plus », la barre reste courte)
+  toolButton("radar", L["Radar (afficher / cacher)"], function()
+    local R = TreeAI.GetModule and TreeAI:GetModule("Radar")
+    if R and type(R.Show) == "function" then TreeAI.safecall(R.Show, not (R.db and R.db.shown ~= false))
+    else TreeAI:HandleSlash("radar") end
+  end)
   if TreeAI.Compass or (TreeAI.GetModule and TreeAI:GetModule("Compass")) then
     toolButton("compass", L["Boussole"], toggleCompass)
   end
@@ -395,8 +547,10 @@ end
 function TreeAI:RefreshPanel()
   if not panel then return end
   local s = acc()
-  local width = s and s.width or 280
+  local width = panelWidth()
+  panel:SetWidth(width)
   local mini = isMini()
+  local fsize, gap, isize = look()
   tools.mini.tex:SetTexture(mini and ICONS.maxi or ICONS.mini)
   tools.locked.tex:SetTexture(s and s.locked and ICONS.locked or ICONS.unlocked)
   -- toolbar: only mini/close in mini mode
@@ -411,6 +565,7 @@ function TreeAI:RefreshPanel()
     renderMini()
     panel.miniText:Show()
     for _, b in pairs(tabButtons) do b:Hide() end
+    for _, b in pairs(actionButtons) do b:Hide() end
     for i = 1, MAX_ROWS do rows[i].entry = nil; rows[i]:Hide() end
     panel.empty:Hide(); panel.thumb:Hide(); panel.more:Hide()
     panel:SetHeight(HEADER_H + 6)
@@ -419,19 +574,33 @@ function TreeAI:RefreshPanel()
   panel.miniText:Hide()
   panel.miniEntry = nil
 
+  -- en instance, l'onglet « Donjon » apparaît : le sous-menu « Plus » s'ouvre une fois pour le montrer
+  if self.tabs.dungeon and not panel.dungeonSeen then panel.dungeonSeen, moreOpen = true, true
+  elseif not self.tabs.dungeon then panel.dungeonSeen = nil end
   buildTabs()
-  layoutTabs()
+  local tabsH = layoutTabs(width)
   local tab = activeTab()
+  local secUrgent = false
   for id, b in pairs(tabButtons) do
-    local list = self:GetTabLines(id)
-    local urgent = false
-    for _, e in ipairs(list) do if e.prio >= 3 then urgent = true break end end
-    b:Show()
-    if id == tab then b.text:SetTextColor(1, 1, 1); b.line:Show()
-    elseif urgent then b.text:SetTextColor(1, 0.35, 0.3); b.line:Hide()
-    elseif #list == 0 then b.text:SetTextColor(0.5, 0.5, 0.5); b.line:Hide()
-    else b.text:SetTextColor(1, 0.82, 0); b.line:Hide() end
+    if id ~= MORE then
+      local list = self:GetTabLines(id)
+      local urgent = false
+      for _, e in ipairs(list) do if e.prio >= 3 then urgent = true break end end
+      if urgent and isMoreTab(id) then secUrgent = true end
+      if id == tab then b.text:SetTextColor(1, 1, 1); b.line:Show()
+      elseif urgent then b.text:SetTextColor(1, 0.35, 0.3); b.line:Hide()
+      elseif #list == 0 then b.text:SetTextColor(0.5, 0.5, 0.5); b.line:Hide()
+      else b.text:SetTextColor(1, 0.82, 0); b.line:Hide() end
+    end
   end
+  local mb = tabButtons[MORE]
+  if mb then
+    if isMoreTab(tab) or moreOpen then mb.text:SetTextColor(1, 1, 1); mb.line:Show()
+    elseif secUrgent or self.tabs.dungeon then mb.text:SetTextColor(1, 0.35, 0.3); mb.line:Hide()
+    else mb.text:SetTextColor(1, 0.82, 0); mb.line:Hide() end
+    mb.icon:SetTexture(moreOpen and ICONS.mini or TAB_ICONS[MORE])
+  end
+  for _, b in pairs(actionButtons) do b.text:SetTextColor(0.6, 0.85, 1) end
 
   current = self:GetTabLines(tab)
   local maxRows = min(MAX_ROWS, max(3, (s and s.maxLines) or 8))
@@ -440,7 +609,11 @@ function TreeAI:RefreshPanel()
   if first > n - maxRows + 1 then first = n - maxRows + 1 end
   if first < 1 then first = 1 end
   scroll[tab] = first
-  local top = -(HEADER_H + TABS_H + 2)
+  local top = -(HEADER_H + tabsH + 4)
+  local lineH = fsize + 4
+  -- largeur utile du texte : panneau − marges − barre de défilement − icône
+  local avail = width - 2 * PAD - 4 - (isize + 3)
+  local y = top
   local shown = 0
   for i = 1, MAX_ROWS do
     local b, e = rows[i], current[first + i - 1]
@@ -448,15 +621,28 @@ function TreeAI:RefreshPanel()
       shown = shown + 1
       b.entry = e
       local c = PRIO_COLORS[e.prio] or PRIO_COLORS[1]
-      b:ClearAllPoints()
-      b:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, top - (i - 1) * LINE_H)
-      b:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD - 4, top - (i - 1) * LINE_H)
+      local font, _, flags = b.text:GetFont()
+      if font then b.text:SetFont(font, fsize, flags) end
       b.text:SetText(tostring(e.text))
       b.text:SetTextColor(c[1], c[2], c[3])
+      local tw = (b.text.GetUnboundedStringWidth and b.text:GetUnboundedStringWidth()) or b.text:GetStringWidth() or 0
+      local nl = tw > avail and 2 or 1
+      local h = nl * lineH
+      b.lines = nl
+      b:SetHeight(h)
+      b.text:SetHeight(h)
+      b.text:SetWidth(avail)
+      b:ClearAllPoints()
+      b:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, y)
+      b:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD - 4, y)
       local ic = iconOf(e)
-      if ic then b.icon:SetTexture(ic); b.icon:Show(); b.icon:SetWidth(13)
-      else b.icon:Hide(); b.icon:SetWidth(1) end
+      b.icon:SetSize(isize, isize)
+      if ic then b.icon:SetTexture(ic); b.icon:Show() else b.icon:Hide() end
+      b.text:ClearAllPoints()
+      b.text:SetPoint("TOPLEFT", b, "TOPLEFT", ic and (isize + 3) or 0, 0)
+      b.text:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
       b:Show()
+      y = y - h - gap
     else
       b.entry = nil
       b:Hide()
@@ -467,15 +653,15 @@ function TreeAI:RefreshPanel()
     panel.empty:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, top - 1)
     panel.empty:SetText(L[EMPTY[tab] or "Rien à signaler."])
     panel.empty:Show()
+    y = top - lineH
   else
     panel.empty:Hide()
   end
-  local bodyRows = shown > 0 and shown or 1
-  panel:SetHeight(HEADER_H + TABS_H + 8 + LINE_H * bodyRows)
+  local bodyH = top - y
+  panel:SetHeight(-y + 8 + (n > maxRows and 10 or 0))
   if n > maxRows then
-    local h = LINE_H * bodyRows
-    local th = max(8, floor(h * maxRows / n))
-    local off = floor((h - th) * (first - 1) / max(1, n - maxRows))
+    local th = max(8, floor(bodyH * maxRows / n))
+    local off = floor((bodyH - th) * (first - 1) / max(1, n - maxRows))
     panel.thumb:ClearAllPoints()
     panel.thumb:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD + 2, top - off)
     panel.thumb:SetHeight(th)
@@ -488,6 +674,19 @@ function TreeAI:RefreshPanel()
   end
 end
 
+-- géométrie des lignes visibles (tests) : { {top, h, lines}, ... }
+function TreeAI:GetRowLayout()
+  local out = {}
+  for i = 1, MAX_ROWS do
+    local b = rows[i]
+    if b and b.entry and b:IsShown() then
+      local _, _, _, _, yy = b:GetPoint(1)
+      out[#out + 1] = { top = yy, h = b:GetHeight(), lines = b.lines }
+    end
+  end
+  return out
+end
+
 function TreeAI:ScrollTab(step)
   local tab = activeTab()
   scroll[tab] = (scroll[tab] or 1) + (step or 1)
@@ -498,6 +697,7 @@ function TreeAI:SelectTab(id)
   if not self.tabs[id] then return false end
   local c = char()
   if c then c.tab = id; c.mini = false end
+  if IS_PRIMARY[id] then moreOpen = false end
   if not panel then self:CreatePanel() end
   if panel and not panel:IsShown() then self:ShowPanel() end
   self:RefreshPanel()
@@ -698,8 +898,38 @@ local SCAN_NAMES = {
   "BT4Bar1", "BT4Bar2", "BT4Bar3", "BT4Bar4", "BT4Bar5", "BT4Bar6", "BT4Bar7", "BT4Bar8", "BT4Bar9", "BT4Bar10",
   "BT4BarMicroMenu", "BT4BarBagBar", "BT4BarStanceBar", "BT4BarPetBar",
 }
+for _, n in ipairs({
+  -- boutons autour de la minimap
+  "MiniMapTracking", "MiniMapTrackingFrame", "MinimapZoneTextButton", "MinimapBorderTop", "GameTimeFrame",
+  "TimeManagerClockButton", "MiniMapMailFrame", "MinimapZoomIn", "MinimapZoomOut", "MiniMapWorldMapButton",
+  "MiniMapBattlefieldFrame", "MiniMapLFGFrame", "MinimapToggleButton", "ExpansionLandingPageMinimapButton",
+  -- suivis de quêtes (Questie…), compteurs (Details / Recount / Skada), raid, barres spéciales
+  "Questie_BaseFrame", "QuestieTrackerBaseFrame", "Questie_TrackerBaseFrame", "QuestieTracker_BaseFrame",
+  "Questie_HeaderFrame", "Questie_TrackedQuests", "DetailsBaseFrame3", "Details_BaseFrame2", "Recount_DetailWindow",
+  "CompactRaidFrameManager", "ExtraActionBarFrame", "ZoneAbilityFrame", "ChatFrame1EditBox", "PlayerPowerBarAlt",
+}) do SCAN_NAMES[#SCAN_NAMES + 1] = n end
 for i = 1, 10 do SCAN_NAMES[#SCAN_NAMES + 1] = "ChatFrame" .. i end
 TreeAI.LAYOUT_SCAN_NAMES = SCAN_NAMES
+-- cadres d'autres addons repérés par leur préfixe (enfants de la minimap compris : boutons LibDBIcon)
+local SCAN_PREFIX = { "LibDBIcon10_", "Questie_", "QuestieTracker", "Details", "Recount", "Skada",
+  "CompactRaid", "CompactParty", "PartyMemberFrame" }
+TreeAI.LAYOUT_SCAN_PREFIX = SCAN_PREFIX
+-- suivis de quêtes : ils grandissent avec les quêtes -> on réserve la colonne jusqu'au tiers bas de l'écran
+local GROWS = { ObjectiveTrackerFrame = true, QuestWatchFrame = true, WatchFrame = true, Questie_BaseFrame = true,
+  QuestieTrackerBaseFrame = true, Questie_TrackerBaseFrame = true, QuestieTracker_BaseFrame = true,
+  Questie_TrackedQuests = true }
+-- cadres de groupe : réservés même cachés (le groupe se forme plus tard, ils ne doivent pas tomber sur nous)
+local RESERVE_HIDDEN = { PartyMemberFrame1 = true, PartyMemberFrame2 = true, PartyMemberFrame3 = true,
+  PartyMemberFrame4 = true, CompactPartyFrame = true, PartyFrame = true }
+local PARTY_NAMES = { "PartyMemberFrame1", "PartyMemberFrame2", "PartyMemberFrame3", "PartyMemberFrame4",
+  "CompactPartyFrame", "PartyFrame", "CompactRaidFrameContainer", "ElvUF_Party" }
+local TRACKER_NAMES = { "ObjectiveTrackerFrame", "QuestWatchFrame", "WatchFrame", "Questie_BaseFrame",
+  "QuestieTrackerBaseFrame", "Questie_TrackerBaseFrame", "QuestieTracker_BaseFrame", "Questie_TrackedQuests" }
+local function hasPrefix(n)
+  if type(n) ~= "string" then return false end
+  for _, p in ipairs(SCAN_PREFIX) do if n:sub(1, #p) == p then return true end end
+  return false
+end
 local SKIP_STRATA = { BACKGROUND = true, FULLSCREEN = true, FULLSCREEN_DIALOG = true, TOOLTIP = true }
 
 local function call(f, m, ...)
@@ -736,10 +966,10 @@ local function isOurs(f)
 end
 
 -- rectangle d'un cadre en unités d'UIParent (gauche, bas, largeur, hauteur) ou nil
-local function rectOf(f, W, H)
+local function rectOf(f, W, H, evenHidden)
   if type(f) ~= "table" or isOurs(f) then return nil end
   if call(f, "IsForbidden") then return nil end
-  if not call(f, "IsVisible") then return nil end
+  if not evenHidden and not call(f, "IsVisible") then return nil end
   local l, b, w, h = call(f, "GetRect")
   if not (l and b and w and h) or w < 12 or h < 8 then return nil end
   local k = (call(f, "GetEffectiveScale") or 1) / (call(_G.UIParent, "GetEffectiveScale") or 1)
@@ -747,7 +977,7 @@ local function rectOf(f, W, H)
   if w >= W * 0.9 and h >= H * 0.6 then return nil end      -- plein écran (conteneurs, ElvUIParent…)
   if SKIP_STRATA[call(f, "GetFrameStrata") or ""] then return nil end
   local a = call(f, "GetEffectiveAlpha") or call(f, "GetAlpha") or 1
-  if a < 0.05 then return nil end
+  if a < 0.05 and not evenHidden then return nil end
   if l + w < 0 or b + h < 0 or l > W or b > H then return nil end
   return { l = l, b = b, w = w, h = h, name = call(f, "GetName") }
 end
@@ -756,25 +986,34 @@ end
 function TreeAI:ScanScreen()
   local W, H = screenSize()
   local rects, named, seen = {}, {}, {}
-  local function add(f)
+  local function add(f, name)
     if seen[f] then return end
     seen[f] = true
     local r = rectOf(f, W, H)
+    if not r and name and RESERVE_HIDDEN[name] then r = rectOf(f, W, H, true); if r then r.hidden = true end end
     if r then
+      if r.name and GROWS[r.name] then
+        -- la colonne du suivi jusqu'au tiers bas (au moins 250 de large, côté de l'écran conservé)
+        local top = r.b + r.h
+        local bottom = math.min(r.b, math.max(H * 0.30, top - 560))
+        local w = math.max(r.w, 250)
+        local l = (r.l + r.w / 2 > W / 2) and math.min(r.l, r.l + r.w - w) or r.l
+        r = { l = l, b = bottom, w = w, h = top - bottom, name = r.name, grown = true }
+      end
       rects[#rects + 1] = r
       if r.name then named[r.name] = r end
     end
   end
   for _, n in ipairs(SCAN_NAMES) do
     local f = _G[n]
-    if type(f) == "table" then add(f) end
+    if type(f) == "table" then add(f, n) end
   end
   if type(_G.EnumerateFrames) == "function" then
     local ok = pcall(function()
       local f, guard = _G.EnumerateFrames(), 0
       while f and guard < 20000 do
         guard = guard + 1
-        if call(f, "GetParent") == _G.UIParent then add(f) end
+        if call(f, "GetParent") == _G.UIParent or hasPrefix(call(f, "GetName")) then add(f) end
         f = _G.EnumerateFrames(f)
       end
     end)
@@ -822,7 +1061,7 @@ local function newGrid(scan)
     end
     return n > 0 and f / n or 0
   end
-  for _, r in ipairs(scan.rects) do g.mark(r, 4) end
+  for _, r in ipairs(scan.rects) do g.mark(r, 8) end
   return g
 end
 
@@ -870,8 +1109,42 @@ local function hookManual(f, role)
   pcall(f.HookScript, f, "OnDragStop", function() layoutState().manual[role] = true end)
 end
 
-local PANEL_W = { 300, 280, 260, 240, 220 }
+local PANEL_W = { 360, 340, 320, 300 }
 local PANEL_L = { 8, 6, 5, 4 }
+local LAYOUT_V = 2          -- version du placement : +1 = replacement unique pour les joueurs existants
+TreeAI.LAYOUT_VERSION = LAYOUT_V
+
+-- le rectangle (unités UI) est-il entièrement libre sur la grille ?
+local function fitsAt(g, l, b, w, h)
+  if l < 0 or b < 0 then return false end
+  local c0, r0 = math.floor(l / CELL), math.floor(b / CELL)
+  local c1, r1 = math.ceil((l + w) / CELL), math.ceil((b + h) / CELL)
+  if c1 > g.cols or r1 > g.rows then return false end
+  return g.used(c0, r0, c1 - c0, r1 - r0) == 0
+end
+TreeAI._FitsAt = fitsAt
+
+-- meilleur emplacement libre selon une fonction de score (plus petit = mieux)
+local function bestBy(g, w, h, score)
+  local cw, ch = math.ceil(w / CELL), math.ceil(h / CELL)
+  if cw > g.cols or ch > g.rows then return nil end
+  local best, bl, bb
+  for y = 0, g.rows - ch do
+    for x = 0, g.cols - cw do
+      if g.used(x, y, cw, ch) == 0 then
+        local d = score(x * CELL, y * CELL)
+        if not best or d < best then best, bl, bb = d, x * CELL, y * CELL end
+      end
+    end
+  end
+  return bl, bb, best
+end
+
+local function gapBetween(a, l, b, w, h)
+  local dx = math.max(a.l - (l + w), l - (a.l + a.w), 0)
+  local dy = math.max(a.b - (b + h), b - (a.b + a.h), 0)
+  return dx, dy
+end
 
 --- Place nos cadres. force = oublie les déplacements manuels (bouton « Placer automatiquement »).
 --- Renvoie la table des placements { role = { point, x, y, l, b, w, h } } (aussi gardée pour /tai placer).
@@ -889,9 +1162,41 @@ function TreeAI:AutoLayout(force)
   local placed = {}
   local named = scan.named
   local function keep(role) return st.manual[role] and not force end
-
-  -- 1. encadré d'alerte : juste sous la minimap (sinon coin haut droit)
   local mm = named.MinimapCluster or named.Minimap or named.MMHolder or named.ElvUI_MinimapHolder
+  local party = {}
+  for _, n in ipairs(PARTY_NAMES) do if named[n] then party[#party + 1] = named[n] end end
+
+  -- 1. radar : SOUS la minimap si c'est libre, sinon à sa gauche ; jamais sur un suivi de quêtes
+  local R, rf = moduleFrame("Radar", "TreeAIRadarFrame")
+  hookManual(rf, "radar")
+  if R and R.char and R.db and not keep("radar") then   -- placé même caché : juste quand il réapparaît
+    local k = call(rf, "GetScale") or 1
+    local sz = ((type(R.Size) == "function" and R.Size()) or tonumber(R.db.size) or 170) * k
+    local l, b
+    if mm then
+      local cands = {
+        { mm.l + mm.w - sz, mm.b - 10 - sz },            -- sous la minimap, aligné à droite
+        { mm.l + (mm.w - sz) / 2, mm.b - 10 - sz },      -- sous la minimap, centré
+        { mm.l - 10 - sz, mm.b + mm.h - sz },            -- à gauche, en haut
+        { mm.l - 10 - sz, mm.b + (mm.h - sz) / 2 },      -- à gauche, centré
+      }
+      for _, c in ipairs(cands) do
+        if fitsAt(g, c[1], c[2], sz, sz) then l, b = c[1], c[2]; break end
+      end
+      if not l then l, b = bestSpot(g, sz, sz, mm.l - sz / 2 - 10, mm.b + mm.h / 2) end
+    else
+      l, b = bestSpot(g, sz, sz, W - 300, H - sz / 2 - 20)
+    end
+    if l then
+      local pt, x, y = anchorFor(l, b, sz, sz, W, H, k, true)
+      R.char.point, R.char.x, R.char.y = pt, x, y
+      if rf then call(rf, "ClearAllPoints"); call(rf, "SetPoint", pt, _G.UIParent, pt, x, y) end
+      placed.radar = { point = pt, x = x, y = y, l = l, b = b, w = sz, h = sz }
+      g.mark({ l = l, b = b, w = sz, h = sz }, 6)
+    end
+  end
+
+  -- 2. encadré d'alerte : juste sous la minimap (sinon la place libre la plus proche)
   local al = S.alert
   if al and not keep("alert") then
     local aw, ah = 230 * (al.scale or 1), 40 * (al.scale or 1)
@@ -907,7 +1212,7 @@ function TreeAI:AutoLayout(force)
     end
   end
 
-  -- 2. boussole : en haut au centre, jamais sur le cadre de la cible
+  -- 3. boussole : en haut au centre, jamais sur le cadre de la cible
   local C, cf = moduleFrame("Compass", "TreeAICompassFrame")
   hookManual(cf, "compass")
   if C and C.char and not keep("compass") then
@@ -923,33 +1228,40 @@ function TreeAI:AutoLayout(force)
     end
   end
 
-  -- 3. panneau : le côté le plus libre, taille adaptée (largeur, lignes)
+  -- 4. panneau : la plus grande zone libre d'un BORD de l'écran (le centre reste au jeu), loin des cadres
+  --    de groupe ; taille adaptée (largeur ≥ 300, lignes sur 2 lignes possibles)
   local P = S.panel
   local c = char()
   local side
   if P and c and not keep("panel") then
     local k = P.scale or 1
-    local r0, r1 = math.floor(g.rows * 0.2), math.floor(g.rows * 0.85)
-    local third = math.floor(g.cols / 3)
-    local fl, fr = g.freeIn(0, third, r0, r1), g.freeIn(g.cols - third, g.cols - 1, r0, r1)
-    side = (fr >= fl) and "RIGHT" or "LEFT"
-    local tx = side == "RIGHT" and (W - 160) or 160
-    local ty = H * 0.62
+    local fsz, gap = look()
+    local rowH = (fsz + 4) * 1.4 + gap
+    local function heightFor(lines) return (HEADER_H + TAB_ROW_H + 2 + 12 + rowH * lines) * k end
+    local function score(l, b, w, h)
+      local cx, cy = l + w / 2, b + h / 2
+      local sc = math.min(cx, W - cx)                       -- près d'un bord gauche / droit
+      sc = sc + math.abs(cy - H * 0.5) * 0.35               -- à hauteur des yeux de préférence
+      for _, p in ipairs(party) do
+        local dx, dy = gapBetween(p, l, b, w, h)
+        if dx < 160 and dy < 160 then sc = sc + 700 - dx - dy end
+      end
+      return sc
+    end
     local bestL, bestB, bestScore, bw, bl
     for wi, pw in ipairs(PANEL_W) do
       for li, lines in ipairs(PANEL_L) do
-        if pw <= (P.width or 280) + 20 then
-          local w, h = pw * k, (HEADER_H + TABS_H + 8 + LINE_H * lines) * k
-          local l, b, d = bestSpot(g, w, h, tx, ty)
-          if l then
-            local score = d + (wi - 1) * 25 + (li - 1) * 40     -- garder la taille si possible
-            if not bestScore or score < bestScore then bestL, bestB, bestScore, bw, bl = l, b, score, pw, lines end
-          end
+        local w, h = pw * k, heightFor(lines)
+        local l, b, d = bestBy(g, w, h, function(x, y) return score(x, y, w, h) end)
+        if l then
+          local sc = d + (wi - 1) * 20 + (li - 1) * 45     -- garder la taille si possible
+          if not bestScore or sc < bestScore then bestL, bestB, bestScore, bw, bl = l, b, sc, pw, lines end
         end
       end
     end
     if bestL then
-      local w, h = bw * k, (HEADER_H + TABS_H + 8 + LINE_H * bl) * k
+      local w, h = bw * k, heightFor(bl)
+      side = (bestL + w / 2 > W / 2) and "RIGHT" or "LEFT"
       local pt, x, y = anchorFor(bestL, bestB, w, h, W, H, k, true)
       if pt == "TOP" then pt, x = (side == "RIGHT") and "TOPRIGHT" or "TOPLEFT",
         math.floor(((side == "RIGHT") and (bestL + w - W) or bestL) / k + 0.5) end
@@ -961,7 +1273,7 @@ function TreeAI:AutoLayout(force)
     end
   end
 
-  -- 4. cadre de suivi (s'il existe) : sous le suivi des quêtes, sinon côté opposé au panneau
+  -- 5. cadre de suivi (s'il existe) : sous le suivi des quêtes, sinon côté opposé au panneau
   local TR, tf = moduleFrame("Tracker", "TreeAITrackerFrame")
   hookManual(tf, "tracker")
   if TR and TR.char and not keep("tracker") then
@@ -984,7 +1296,7 @@ function TreeAI:AutoLayout(force)
     end
   end
 
-  -- 5. barres du chasseur (tir auto, pièges) : au-dessus des barres d'action, au centre
+  -- 6. barres du chasseur (tir auto, pièges) : au-dessus des barres d'action, au centre
   local bars = { { "Hunter", "barPos", 160, 10, "map" }, { "HunterPro", "trapPos", 170, 12, "list" } }
   local floorY = 0
   for _, n in ipairs({ "MainMenuBar", "MainActionBar", "MultiBarBottomLeft", "MultiBarBottomRight", "ElvUI_Bar1", "BT4Bar1" }) do
@@ -1021,10 +1333,18 @@ end
 -- premier lancement (rien de placé) ou résolution / échelle changée : placement auto (places manuelles gardées)
 function TreeAI:CheckAutoLayout()
   local st = layoutState()
-  if st.sig == self:LayoutSignature() then return false end
-  self:AutoLayout(false)
+  if st.sig == self:LayoutSignature() and (tonumber(st.v) or 0) >= LAYOUT_V then return false end
+  -- nouvelle version du placement : refait UNE fois (les cadres déplacés à la main gardent leur place)
+  if (tonumber(st.v) or 0) < LAYOUT_V then
+    local P = self.settings and self.settings.panel
+    if P and (tonumber(P.width) or 0) < MIN_W then P.width = DEFAULT_W end
+  end
+  local placed = self:AutoLayout(false)
+  if placed then st.v = LAYOUT_V end
   return true
 end
+
+
 
 do
   local owner = {}
@@ -1083,6 +1403,7 @@ function TreeAI:RegisterMovable(frame, id, label, opts)
   if not m then moverOrder[#moverOrder + 1] = id; m = {}; movables[id] = m end
   m.frame, m.id, m.label, m.opts = frame, id, label or id, opts
   if frame.SetMovable then pcall(frame.SetMovable, frame, true) end
+  if frame.SetClampedToScreen then pcall(frame.SetClampedToScreen, frame, true) end   -- jamais hors écran
   local saved = moverDB()[id]
   if type(saved) == "table" and saved.point and not opts.onMoved then
     placeFrame(frame, saved.point, saved.x or 0, saved.y or 0, saved.scale)
@@ -1261,6 +1582,7 @@ local function buildEditBar()
   if editBar then return editBar end
   local template = _G.BackdropTemplateMixin and "BackdropTemplate" or nil
   editBar = _G.CreateFrame("Frame", "TreeAIEditBar", _G.UIParent, template)
+  editBar:SetClampedToScreen(true)
   editBar:SetSize(112 + 122 * 4, 30)
   editBar:SetPoint("TOP", _G.UIParent, "TOP", 0, -8)
   editBar:SetFrameStrata("DIALOG")
@@ -1365,3 +1687,43 @@ do
   local owner = {}
   TreeAI:On("READY", owner, function() TreeAI:After(1, registerCore) end)
 end
+
+--- « Réinitialiser l'interface » : tous les cadres TreeAI reviennent à leur place automatique, tailles,
+--- onglets et transparence par défaut, panneau affiché sur « Maintenant ». Hors combat.
+function TreeAI:ResetInterface()
+  if self:InCombat() then
+    self:RunOutOfCombat("resetui", function() self:ResetInterface() end)
+    self:Print(L["Réinitialisation après le combat."])
+    return false
+  end
+  local db = moverDB()
+  for k in pairs(db) do db[k] = nil end
+  local st = layoutState()
+  st.manual = {}
+  local s, c = acc(), char()
+  if s then
+    s.scale, s.alpha, s.width, s.maxLines, s.locked, s.shown = 1, 0.9, DEFAULT_W, 8, false, true
+    s.fontSize, s.lineGap, s.iconSize = 11, ROW_GAP, 13
+  end
+  if c then c.tab, c.mini, c.manual = "now", false, nil end
+  local al = alertSettings()
+  if al then al.pos, al.scale, al.corner = nil, 1, "TOPRIGHT" end
+  moreOpen = false
+  for _, id in ipairs(moverOrder) do
+    local m = movables[id]
+    if m and m.opts.onReset then self.safecall(m.opts.onReset) end
+    if m and m.frame then call(m.frame, "SetScale", 1) end
+  end
+  local mods = self.modules or {}
+  if mods.Compass and mods.Compass.db then mods.Compass.db.scale = 1 end
+  if mods.Radar and mods.Radar.db then mods.Radar.db.size, mods.Radar.db.compact = 170, false end
+  if editing then self:SetEditMode(false) end
+  self:ShowPanel()
+  self:AutoLayout(true)
+  st.v = LAYOUT_V
+  self:Print(L["Interface TreeAI réinitialisée : chaque cadre est à sa place automatique."])
+  return true
+end
+
+TreeAI:RegisterSlash("reinit", function() TreeAI:ResetInterface() end,
+  "réinitialiser l'interface TreeAI (places, tailles, onglets par défaut)")

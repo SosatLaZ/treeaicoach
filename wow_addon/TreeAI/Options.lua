@@ -7,7 +7,7 @@ local _G = _G
 local L = TreeAI.L
 local pcall, ipairs, pairs, type, tostring, floor = pcall, ipairs, pairs, type, tostring, math.floor
 
-local category, canvas
+local category, canvas, appearance
 local pages = {}       -- { frame, category }
 local widgets = {}
 
@@ -172,6 +172,12 @@ local function buildMain(content)
   P.button(L["Tout : toutes les actions (/tai aide)"], 260, function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end)
   P.button(L["Déplacer les cadres (mode édition)"], 260, function() if TreeAI.SetEditMode then TreeAI:SetEditMode(true) end end)
   P.button(L["Placer automatiquement"], 260, function() if TreeAI.AutoLayout then TreeAI:AutoLayout(true) end end)
+  local big = P.add(newButton(content, L["Réinitialiser l'interface"], 320, function()
+    if TreeAI.ResetInterface then TreeAI:ResetInterface() end
+    refreshAll()
+  end), 40)
+  if big then big:SetHeight(32) end
+  P.text("|cff999999" .. L["Tous les cadres TreeAI reviennent à leur place automatique (loin de la minimap, des suivis de quêtes et du groupe)."] .. "|r", nil, 16)
 
   P.header(L["Aides PvP"])
   P.check(L["Aides PvP (contre les joueurs, champs de bataille)"], function() return S.pvp end,
@@ -191,7 +197,7 @@ local function buildMain(content)
       if S.panel.nowMax ~= v then S.panel.nowMax = v; S.preset = "perso" end
       TreeAI:RefreshPanel()
     end)
-  P.slider(L["Largeur"], 220, 420, 10, function() return S.panel.width end,
+  P.slider(L["Largeur"], 300, 460, 10, function() return S.panel.width end,
     function(v) S.panel.width = v; TreeAI:ApplyPanelSettings() end)
   P.slider(L["Échelle"], 0.6, 1.6, 0.05, function() return S.panel.scale end,
     function(v) S.panel.scale = v; TreeAI:ApplyPanelSettings() end)
@@ -231,6 +237,85 @@ local function buildMain(content)
   P.header(L["Général"])
   P.check(L["Activer TreeAI"], function() return S.enabled end, function(v) TreeAI:SetEnabled(v) end)
   P.check(L["Synchro avec le groupe (messages d'addon)"], function() return S.comms end, function(v) S.comms = v end)
+  P.finish()
+end
+
+---------------------------------------------------------------------------
+-- page « Apparence » : micro-réglages de chaque cadre (taille, transparence, largeur, police, interligne,
+-- icônes) + afficher / cacher chaque cadre ; défauts réglés sur un écran 2000×1125.
+---------------------------------------------------------------------------
+local function modDB(name)
+  local m = TreeAI.modules and TreeAI.modules[name]
+  return m, m and m.db
+end
+local function modSet(name, key, v)
+  local m, db = modDB(name)
+  if not db then return end
+  db[key] = v
+  if m.OnOptionChanged then TreeAI.safecall(m.OnOptionChanged, m, key, v) end
+  TreeAI:RequestRefresh()
+end
+local function modGet(name, key) local _, db = modDB(name); return db and db[key] end
+
+local function buildAppearance(content)
+  local P = layout(content)
+  local function S() return TreeAI.settings end
+  local function panelSet(k, v) local s = S(); if s and s.panel then s.panel[k] = v; TreeAI:ApplyPanelSettings() end end
+  local function panelGet(k) local s = S(); return s and s.panel and s.panel[k] end
+  P.text(L["Apparence"], "GameFontNormalLarge", 24)
+  P.text("|cff999999" .. L["Chaque cadre TreeAI, réglé au pixel près. Rien ne touche aux cadres de Blizzard."] .. "|r", nil, 16)
+  local big = P.add(newButton(content, L["Réinitialiser l'interface"], 320, function()
+    if TreeAI.ResetInterface then TreeAI:ResetInterface() end
+    refreshAll()
+  end), 40)
+  if big then big:SetHeight(32) end
+  P.button(L["Déplacer les cadres (mode édition)"], 260, function() if TreeAI.SetEditMode then TreeAI:SetEditMode(true) end end)
+
+  P.header(L["Panneau"])
+  P.check(L["Afficher le panneau"], function() return panelGet("shown") end,
+    function(v) if v then TreeAI:ShowPanel() else TreeAI:HidePanel() end end)
+  P.slider(L["Échelle"], 0.6, 1.6, 0.05, function() return panelGet("scale") end, function(v) panelSet("scale", v) end)
+  P.slider(L["Opacité"], 0.2, 1, 0.05, function() return panelGet("alpha") end, function(v) panelSet("alpha", v) end)
+  P.slider(L["Largeur"], 300, 460, 10, function() return panelGet("width") end, function(v) panelSet("width", v) end)
+  P.slider(L["Taille du texte"], 9, 16, 1, function() return panelGet("fontSize") or 11 end, function(v) panelSet("fontSize", v) end)
+  P.slider(L["Espace entre les lignes"], 0, 10, 1, function() return panelGet("lineGap") or 3 end, function(v) panelSet("lineGap", v) end)
+  P.slider(L["Taille des icônes"], 10, 20, 1, function() return panelGet("iconSize") or 13 end, function(v) panelSet("iconSize", v) end)
+  P.slider(L["Lignes visibles (molette pour défiler)"], 3, 15, 1, function() return panelGet("maxLines") end,
+    function(v) panelSet("maxLines", v) end)
+
+  P.header(L["Encadré d'alerte"])
+  local function al() local s = S(); return s and s.alert or {} end
+  P.check(L["Afficher les alertes importantes"], function() return al().enabled end, function(v) al().enabled = v end)
+  P.slider(L["Échelle de l'encadré"], 0.6, 1.6, 0.05, function() return al().scale end,
+    function(v) al().scale = v; if TreeAI.ApplyAlertSettings then TreeAI:ApplyAlertSettings() end end)
+  P.slider(L["Opacité de l'encadré"], 0.3, 1, 0.05, function() return al().alpha end, function(v) al().alpha = v end)
+
+  P.header(L["Radar"])
+  P.check(L["Afficher le radar"], function() return modGet("Radar", "shown") ~= false end,
+    function(v) local m = TreeAI.modules and TreeAI.modules.Radar; if m and m.Show then TreeAI.safecall(m.Show, v) end end)
+  P.check(L["Radar compact (120 px)"], function() return modGet("Radar", "compact") end, function(v) modSet("Radar", "compact", v) end)
+  P.check(L["Cacher le radar en combat"], function() return modGet("Radar", "hideCombat") end, function(v) modSet("Radar", "hideCombat", v) end)
+  P.slider(L["Taille du radar"], 110, 300, 10, function() return modGet("Radar", "size") end, function(v) modSet("Radar", "size", v) end)
+  P.slider(L["Opacité du fond du radar"], 0.2, 1, 0.05, function() return modGet("Radar", "opacity") end, function(v) modSet("Radar", "opacity", v) end)
+
+  P.header(L["Boussole"])
+  P.check(L["Afficher la boussole"], function() return modGet("Compass", "shown") ~= false end,
+    function(v) local m = TreeAI.modules and TreeAI.modules.Compass; if m and m.Show then TreeAI.safecall(m.Show, v) end end)
+  P.check(L["Une seule flèche (cacher si Blizzard / Shortest Path / TomTom guide déjà)"],
+    function() return modGet("Compass", "hideDup") ~= false end, function(v) modSet("Compass", "hideDup", v) end)
+  P.slider(L["Taille de la boussole"], 0.5, 2, 0.1, function() return modGet("Compass", "scale") end, function(v) modSet("Compass", "scale", v) end)
+
+  P.header(L["Suivi des quêtes TreeAI"])
+  P.check(L["Afficher le cadre de suivi"], function() return modGet("Tracker", "frame") end, function(v) modSet("Tracker", "frame", v) end)
+  P.slider(L["Échelle (%)"], 50, 200, 5, function() return modGet("Tracker", "scale") end, function(v) modSet("Tracker", "scale", v) end)
+  P.slider(L["Opacité du fond (%)"], 0, 100, 5, function() return modGet("Tracker", "alpha") end, function(v) modSet("Tracker", "alpha", v) end)
+  P.slider(L["Largeur"], 200, 460, 10, function() return modGet("Tracker", "width") end, function(v) modSet("Tracker", "width", v) end)
+  P.slider(L["Taille du texte"], 8, 16, 1, function() return modGet("Tracker", "fontSize") end, function(v) modSet("Tracker", "fontSize", v) end)
+
+  P.header(L["Fenêtre « À faire »"])
+  P.slider(L["Échelle (%)"], 50, 200, 5, function() return modGet("Todo", "scale") end, function(v) modSet("Todo", "scale", v) end)
+  P.slider(L["Opacité (%)"], 20, 100, 2, function() return modGet("Todo", "alpha") end, function(v) modSet("Todo", "alpha", v) end)
+  P.slider(L["Taille du texte"], 9, 16, 1, function() return modGet("Todo", "fontSize") end, function(v) modSet("Todo", "fontSize", v) end)
   P.finish()
 end
 
@@ -299,6 +384,13 @@ function TreeAI:InitOptions()
   end
   if not modern and _G.InterfaceOptions_AddCategory then pcall(_G.InterfaceOptions_AddCategory, canvas) end
 
+  appearance = newPage(L["Apparence"], canvas.name, buildAppearance)
+  if modern and Settings.RegisterCanvasLayoutSubcategory then
+    pcall(Settings.RegisterCanvasLayoutSubcategory, category, appearance, appearance.name)
+  elseif _G.InterfaceOptions_AddCategory then
+    pcall(_G.InterfaceOptions_AddCategory, appearance)
+  end
+
   for name, mod in self:IterModules() do
     local page = newPage(mod.title or name, canvas.name, function(content) buildModule(content, name, mod) end)
     local sub
@@ -312,7 +404,7 @@ function TreeAI:InitOptions()
   end
 end
 
-function TreeAI:GetOptionPages() return canvas, pages end
+function TreeAI:GetOptionPages() return canvas, pages, appearance end
 
 function TreeAI:OpenOptions()
   if self:InCombat() then self:Print(L["Impossible en combat."]); return end

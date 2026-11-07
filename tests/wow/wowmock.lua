@@ -288,6 +288,8 @@ function Widget:GetPoint(i)
   return "CENTER", UIParent, "CENTER", 0, 0
 end
 function Widget:GetNumPoints() return #self.__points end
+function Widget:SetClampedToScreen(v) self.__clamped = v and true or false end
+function Widget:IsClampedToScreen() return self.__clamped or false end
 function Widget:SetAllPoints() end
 function Widget:GetCenter() return 500, 400 end
 function Widget:GetLeft() return 450 end

@@ -736,8 +736,12 @@ function M.Go(dest)
     M.last = res
     M.route = { mapID = me.mapID, dest = target, waypoints = res.waypoints, idx = 1, savedCustom = savedCustom,
                 text = res.text, at = now() }
-    M:Print(res.text .. (#res.waypoints > 1 and (" — %d points, suis la boussole."):format(#res.waypoints) or "."))
-    if opt("announce") then M:Suggest("route", res.text, 2, { ttl = 30, cooldown = 5, sound = false }) end
+    M:Print(res.text .. (#res.waypoints > 1 and (" — %d points, suis la boussole."):format(#res.waypoints) or ".")
+      .. (T.AutoRunHint and (" " .. T.AutoRunHint() .. ".") or ""))
+    if opt("announce") then
+      M:Suggest("route", res.text, 2, { ttl = 30, cooldown = 5, sound = false,
+        tooltip = T.AutoRunHint and T.AutoRunHint() or nil })
+    end
     M.FeedCurrent()
   end)
 end

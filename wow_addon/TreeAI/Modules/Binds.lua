@@ -524,7 +524,10 @@ function M:Analyze()
   return res
 end
 
-local function label(it) return it.kind == "macro" and ("« " .. it.name .. " »") or ("« " .. it.name .. " » (sort)") end
+local function label(it)
+  if it.kind == "command" then return "« " .. it.name .. " »" end
+  return it.kind == "macro" and ("« " .. it.name .. " »") or ("« " .. it.name .. " » (sort)")
+end
 function M.StepText(tg)
   local k = M.KeyText(tg.key)
   if tg.how == "place" then
@@ -537,6 +540,10 @@ function M.StepText(tg)
 end
 
 local function manualText(tg)
+  if tg.item.kind == "command" then
+    return ("À la main : Échap > Raccourcis > Mouvements > %s : clique la case, puis appuie sur %s."):format(
+      tg.item.name, M.KeyText(tg.key))
+  end
   local src = tg.item.kind == "macro" and "la fenêtre /macro" or "le grimoire (P)"
   if tg.how == "place" then
     return ("À la main : ouvre %s et glisse %s sur %s (touche %s)."):format(src, label(tg.item), where(tg.entry),
@@ -620,7 +627,7 @@ function M:Bind(tg, confirmed)
     return false
   end
   self.confirm = nil
-  local cmd = (tg.item.kind == "macro" and "MACRO " or "SPELL ") .. tg.item.name
+  local cmd = tg.item.cmd or ((tg.item.kind == "macro" and "MACRO " or "SPELL ") .. tg.item.name)
   local res, blocked = guarded(function()
     local r = G.SetBinding(tg.key, cmd)
     if r == false then return false end
@@ -640,6 +647,49 @@ function M:Bind(tg, confirmed)
   self:Refresh()
   return true
 end
+
+---------------------------------------------------------------------------------------------------
+-- Course automatique : un addon ne peut PAS courir tout seul (ToggleAutoRun est protégée, jamais appelée).
+-- On propose de lier la commande du jeu « Course automatique » (TOGGLEAUTORUN) à une touche confortable
+-- libre : un clic sur la ligne + confirmation -> SetBinding (même chemin que les autres raccourcis).
+---------------------------------------------------------------------------------------------------
+local AUTORUN = "TOGGLEAUTORUN"
+local AUTORUN_KEYS = { "BUTTON4", "BUTTON5", "BUTTON3", "ALT-R", "CTRL-R", "ALT-Z", "SHIFT-BUTTON4", "SHIFT-BUTTON5" }
+M.AUTORUN_KEYS = AUTORUN_KEYS
+function M.AutoRunKeys()
+  local out = {}
+  local function add(k) if type(k) == "string" and k ~= "" then out[#out + 1] = k end end
+  local a, b = try(G.GetBindingKey, AUTORUN)
+  add(a); add(b)
+  return out
+end
+-- nom affiché d'une touche de course auto : « ` » = « ² » sur un clavier AZERTY (client frFR)
+function M.AutoRunKeyText(k)
+  if k == "NUMLOCK" then return "Verr Num" end
+  local loc = try(G.GetLocale)
+  if (k == "`" or k == "GRAVE") and (loc == "frFR" or loc == nil) then return "²" end
+  return M.KeyText(k)
+end
+-- on ne propose une touche QUE si la course auto n'en a aucune (celle du joueur est respectée)
+function M.AutoRunStep()
+  if #M.AutoRunKeys() > 0 then return nil end
+  for _, k in ipairs(AUTORUN_KEYS) do
+    if bindingAction(k) == "" then
+      return { id = "autorun", how = "bind", key = k,
+        item = { kind = "command", name = "Course automatique", cmd = AUTORUN } }
+    end
+  end
+  return nil
+end
+--- Ligne d'aide d'une ligne : « Course auto : Verr Num ou Bouton 4 » (Todo, boussole, Chemin sûr).
+function M.AutoRunHint()
+  local keys = M.AutoRunKeys()
+  if #keys == 0 then return "Course auto : pas de touche (Échap > Raccourcis > Mouvements)" end
+  local names = {}
+  for _, k in ipairs(keys) do names[#names + 1] = M.AutoRunKeyText(k) end
+  return "Course auto : " .. tconcat(names, " ou ")
+end
+T.AutoRunHint = function() return M.AutoRunHint() end
 
 function M:DoStep(tg)
   if not tg then return false end
@@ -683,6 +733,13 @@ function M:Lines()
     local tg = c.step
     add(("Confirmer : lier %s à %s ? (clic = oui)"):format(label(tg.item), M.KeyText(tg.key)), 3,
       function() M:Bind(tg, true) end)
+  end
+  local ar = opt("allowBind") ~= false and M.AutoRunStep()
+  if ar then
+    add(("Course automatique : aucune touche — lier à %s ? (clic, confirmation)"):format(M.KeyText(ar.key)), 1,
+      function() M:DoStep(ar) end,
+      { "Un addon ne peut pas courir à ta place : la touche « Course automatique » du jeu le fait.",
+        "Clic : lier la touche (confirmation demandée, hors combat)." })
   end
   if res.missingMacros > 0 then
     add(("%d macro(s) TAI pas encore créée(s) : /tai macros installer"):format(res.missingMacros), 2,

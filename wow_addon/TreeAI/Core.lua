@@ -634,7 +634,8 @@ local DEFAULT_SETTINGS = {
   refresh = 3,   -- actualisation automatique des conseils (s, hors combat ; 2x plus lent en combat)
   pvp = false,   -- aides PvP (OFF : l'addon aide à quêter, il se tait contre les joueurs ennemis)
   panel = { shown = true, locked = false, scale = 1, alpha = 0.9,
-            point = "CENTER", x = 300, y = 120, maxLines = 8, nowMax = 5, width = 280 },
+            point = "CENTER", x = 300, y = 120, maxLines = 8, nowMax = 5, width = 320,
+            fontSize = 11, lineGap = 3, iconSize = 13 },
   alert = { enabled = true, corner = "TOPRIGHT", duration = 8, scale = 1, alpha = 0.95 },
   -- anti-bruit (réglé par le préréglage « calme / normal / tout », chaque valeur reste modifiable)
   preset = "normal",
@@ -1236,7 +1237,7 @@ end
 function TreeAI:GetTabs()
   local list = {}
   for id, t in pairs(self.tabs) do
-    if not (self.IsTabOff and self:IsTabOff(id)) then list[#list + 1] = t end
+    if not t.virtual and not (self.IsTabOff and self:IsTabOff(id)) then list[#list + 1] = t end
   end
   tsort(list, function(a, b)
     if a.order ~= b.order then return a.order < b.order end
@@ -1403,6 +1404,15 @@ function TreeAI:GetTabLines(id)
     end
     return out
   end
+  local vt = self.tabs[id]
+  if vt and vt.virtual and type(vt.from) == "table" then   -- vue d'un bloc d'un autre onglet (Talents ⊂ Infos)
+    local fts = tabSources[vt.from.tab]
+    local src = vt.from.source
+    if fts and fts.lines[src] and sourceActive(vt.from.tab, src) then
+      for _, l in ipairs(fts.lines[src]) do push(l) end
+    end
+    return out
+  end
   local ts = tabSources[id]
   if ts then
     for _, src in ipairs(ts.order) do
@@ -1440,6 +1450,9 @@ TreeAI:RegisterTab("quests", L["Quêtes"], 2)
 TreeAI:RegisterTab("group", L["Groupe"], 3)
 TreeAI:RegisterTab("hv", L["HV"], 4)
 TreeAI:RegisterTab("info", L["Infos"], 5)
+-- « Talents » : vue du bloc Talents d'« Infos », proposée dans le sous-menu « Plus » (pas un onglet de plus)
+TreeAI.tabs.talents = { id = "talents", title = L["Talents"], order = 4.8, virtual = true,
+  from = { tab = "info", source = "Talents" } }
 
 -- per-character panel state (tab, position, mini); lock/scale/alpha stay account-wide
 function TreeAI:PanelChar()

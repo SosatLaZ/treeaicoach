@@ -639,6 +639,7 @@ end
 local function buildBar()
   if bar or not CreateFrame or not opt("bar") then return end
   local f = CreateFrame("StatusBar", nil, UIParent)
+  if f.SetClampedToScreen then f:SetClampedToScreen(true) end
   f:SetSize(160, 10)
   local d = settings()
   local p = d and d.barPos

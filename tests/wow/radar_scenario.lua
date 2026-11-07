@@ -152,12 +152,18 @@ return function(M, ctx)
   check(not R.menu:IsShown(), "menu button closes the menu")
 
   -- mouse wheel
+  -- (smooth zoom: the wheel sets a goal, each frame eases towards it — settle() = a few frames)
+  local function settle() for _ = 1, 40 do R.StepZoom() end end
   R.SetZoom(150)
   M.Wheel(F, 1)
+  check(R.zoomGoal and near(R.zoomGoal, 120), "wheel up: zoom goal 150 → 120")
+  settle()
   check(near(R.db.zoom, 120), "wheel up zooms in (150 → 120): " .. tostring(R.db.zoom))
   for _ = 1, 20 do M.Wheel(F, 1) end
+  settle()
   check(R.db.zoom == 50, "zoom never below 50")
   for _ = 1, 20 do M.Wheel(F, -1) end
+  settle()
   check(R.db.zoom == 400, "zoom never above 400")
 
   -- rares / elites / death

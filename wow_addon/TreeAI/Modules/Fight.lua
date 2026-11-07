@@ -414,6 +414,7 @@ end
 local function ensureCCFrame()
   if ccFrame or not G.CreateFrame then return ccFrame end
   ccFrame = G.CreateFrame("Frame", nil, G.UIParent)
+  if ccFrame.SetClampedToScreen then ccFrame:SetClampedToScreen(true) end
   ccFrame:SetSize(220, 20)
   ccFrame:SetPoint("CENTER", G.UIParent, "CENTER", 0, -140)
   ccFrame.text = ccFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")

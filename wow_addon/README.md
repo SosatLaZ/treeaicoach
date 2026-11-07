@@ -520,6 +520,18 @@ suivi de quêtes (ou côté opposé), barres tir auto / pièges au-dessus des ba
 dans leurs SV). Hors combat (sinon après), au 1er lancement et sur `UI_SCALE_CHANGED` /
 `DISPLAY_SIZE_CHANGED` (`CheckAutoLayout`, signature `LayoutSignature()` dans `chars[key].layout.sig`).
 Cadre déplacé à la main (`layout.manual[role]`) = gardé ; `force` / « réinitialiser » rendent l'auto.
+Depuis 3.9.1 (`TreeAI.LAYOUT_VERSION` = 2, `layout.v`) : préfixes `TreeAI.LAYOUT_SCAN_PREFIX` (LibDBIcon10_,
+Questie_, Details, Recount, CompactRaid/Party, PartyMemberFrame), suivis de quêtes réservés sur toute leur colonne
+(ils grandissent), cadres de groupe réservés même cachés ; ordre : **radar** sous la minimap si libre sinon à sa
+gauche → encadré sous la minimap → boussole en haut au centre → panneau sur un bord (jamais le centre, loin des
+cadres de groupe, largeur ≥ 300). Replacement unique pour les joueurs existants (places manuelles gardées).
+`TreeAI:ResetInterface()` (bouton « Réinitialiser l'interface » des options, page **Apparence** et sous-menu
+« Plus », `/tai reinit`) remet tout par défaut. Panneau SIMPLE : 4 onglets (`now`, `quests`, `group`, « Plus »
+qui ouvre une 2e rangée : onglets secondaires + actions), libellés mesurés (`GetStringWidth`, court puis « … »),
+géométrie dans `TreeAI:GetTabLayout()` / `TreeAI:GetRowLayout()` (lignes sur 2 lignes). Onglet virtuel
+`talents` = bloc Talents d'« Infos ». Boussole : `hideDup` (une seule flèche si Blizzard / SPF / TomTom guide
+déjà la même cible, `Compass.OtherGuide(t)`). Course auto : `Binds.AutoRunHint()` / `AutoRunStep()` (lie la
+commande du jeu TOGGLEAUTORUN, jamais `ToggleAutoRun`).
 
 **Cadres déplaçables + mode édition** :
 ```lua

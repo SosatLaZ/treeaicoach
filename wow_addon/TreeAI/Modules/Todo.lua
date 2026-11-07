@@ -24,7 +24,7 @@ local M = T:RegisterModule("Todo", {
   defaults = { enabled = true, shown = false, tab = true, lock = false, fontSize = 12, scale = 100, alpha = 88,
                width = 380, height = 520, maxTab = 8, steps = true, errands = true, group = true, session = true,
                verdict = true, reward = true, mates = true },
-  charDefaults = { point = "RIGHT", x = -60, y = 40, pins = {}, hidden = {}, order = {}, folded = {}, sections = {},
+  charDefaults = { point = "CENTER", x = 0, y = 40, pins = {}, hidden = {}, order = {}, folded = {}, sections = {},
                    filter = "tous", search = "" },
   options = {
     { key = "shown", type = "toggle", label = "Fenêtre « À faire » affichée (/tai todo)", section = "Fenêtre" },
@@ -573,6 +573,7 @@ function M.CardTooltip(c)
   if c.verdict then tip[#tip + 1] = VERDICT[c.verdict.v][2] .. VERDICT[c.verdict.v][1] .. "|r : " .. tostring(c.verdict.text or c.verdict.short or "") end
   if c.reward then tip[#tip + 1] = "Récompense : " .. tostring(c.reward.item or "objet") .. (c.reward.pct and (" (+" .. c.reward.pct .. " %)") or "") end
   tip[#tip + 1] = "|cff888888Clic : boussole · Maj-clic : Y aller|r"
+  if T.AutoRunHint then tip[#tip + 1] = "|cff888888" .. T.AutoRunHint() .. "|r" end
   return tip
 end
 
@@ -588,7 +589,7 @@ function M.TabLines(model)
       -- the Planner already pins its step in « Maintenant »: don't pin the same thing twice (QA sim)
       prio = a.prio or 2, icon = a.icon, pin = not (T.Planner and T.Planner.GetActiveSteps
         and select(1, pcall(T.Planner.GetActiveSteps, T.Planner, 1)) and T.Planner:GetActiveSteps(1) ~= nil), now = true,
-      tooltip = { a.title, a.why or "", "|cff888888Clic : boussole · Maj-clic : Y aller|r" },
+      tooltip = { a.title, a.why or "", "|cff888888Clic : boussole · Maj-clic : Y aller|r", (T.AutoRunHint and ("|cff888888" .. T.AutoRunHint() .. "|r") or nil) },
       onClick = function() M.Go(a, shift()) end }
   end
   local st = model.steps
@@ -966,7 +967,7 @@ function M.Paint(b, r, w, fs)
     b.right:SetPoint("RIGHT", b, "RIGHT", -8, 0)
     b.right:SetText(s.eta and ("|cffaaaaaa~" .. Time(s.eta) .. "|r") or "")
     if s.point or s.q then r.onClick = function() M.Go({ point = s.point, questID = s.q, title = s.label }, shift()) end end
-    r.tip = { tostring(s.label), r.group and "Prochaine mission du groupe (Missions)" or "Clic : boussole · Maj-clic : Y aller" }
+    r.tip = { tostring(s.label), r.group and "Prochaine mission du groupe (Missions)" or "Clic : boussole · Maj-clic : Y aller", (T.AutoRunHint and ("|cff888888" .. T.AutoRunHint() .. "|r") or nil) }
     if r.group then local Mi = mod("Missions") r.onClick = function() if Mi and Mi.next and Mi.SetGroupTarget then pcall(Mi.SetGroupTarget, Mi, Mi.next.mission) end end end
   elseif r.kind == "zone" then
     local z = r.zone

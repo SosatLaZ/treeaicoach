@@ -249,6 +249,7 @@ local bar
 local function buildBar()
   if bar or not G.CreateFrame then return bar end
   bar = G.CreateFrame("StatusBar", nil, G.UIParent)
+  if bar.SetClampedToScreen then bar:SetClampedToScreen(true) end
   bar:SetSize(170, 12)
   local p = M.db and M.db.trapPos
   if type(p) == "table" and p[1] then bar:SetPoint(p[1], G.UIParent, p[1], p[2] or 0, p[3] or 0)
