@@ -1884,6 +1884,12 @@ function M.WriteSummary()
   end
   local thin = {}
   for i, id in ipairs(M.thinList) do if i > 5 then break end thin[i] = itemName(id) end
+  local owned = {}   -- mes ventes en cours (page HV de TreeAI Coach)
+  for i, o in ipairs(M.owned or {}) do
+    if i > 10 then break end
+    owned[i] = { name = itemName(o.id), id = o.id, count = o.count, unit = o.unit, lowest = o.lowest,
+      undercut = o.undercut or nil, advice = o.advice }
+  end
   local r = M.Realized()
   local top = {}
   for k, v in pairs(r.items) do top[#top + 1] = { item = k, profit = v.profit } end
@@ -1893,7 +1899,7 @@ function M.WriteSummary()
   local rd = M.RealmData()
   s.auction = { updated = now(), neutral = M.IsNeutral(), flavor = M.Flavor(),
     scanAge = M.lastFull and (now() - M.lastFull) or nil, tracked = rd and rd.n or 0,
-    deals = deals, sell = sell, thin = thin, budget = g.cap > 0 and g.cap or nil, budgetLeft = g.budget, spentToday = g.spent,
+    deals = deals, sell = sell, thin = thin, owned = owned, budget = g.cap > 0 and g.cap or nil, budgetLeft = g.budget, spentToday = g.spent,
     gold = { total = g.total, reserve = g.reserve, invested = g.invested, plan = #(M.plan or {}), planGain = M.planGain },
     lastScan = M.lastScan and { src = M.lastScan.src, rows = M.lastScan.rows, speed = M.lastScan.speed } or nil,
     realized = { today = r.today, week = r.week, total = r.total, top = top } }
