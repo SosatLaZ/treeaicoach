@@ -27,6 +27,7 @@ Modules\Squad.lua
 Modules\Missions.lua
 Modules\Quests.lua
 Modules\Compass.lua
+Modules\SafePath.lua
 Modules\Tracker.lua
 Modules\Predict.lua
 Modules\Export.lua
