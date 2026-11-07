@@ -133,6 +133,39 @@ local function scanUnit(unit)
     { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, soundKind = "rare", onClick = markRare })
 end
 
+-- rares / trésors vus par TreeAI.Detect (vignettes du jeu : position exacte) : une ligne, clic = la boussole y
+-- va (+ crâne si le rare est à portée, hors combat). Même id "rare" que les barres de nom : jamais de doublon.
+function M.OnDetectRares(list)
+  if not opt("rares") or type(list) ~= "table" then return end
+  local Dt = T.Detect
+  local t = now()
+  for _, e in ipairs(list) do
+    if type(e) == "table" and e.kind ~= "event" and e.kind ~= "vignette" then
+      if e.guid then
+        if seen[e.guid] and t - seen[e.guid] < 600 then e = nil else seen[e.guid] = t end
+      end
+      if e then
+        local treasure = e.kind == "treasure"
+        local txt = (Dt and Dt.Describe and Dt.Describe(e)) or ((treasure and "Trésor : " or "Rare : ") .. tostring(e.name))
+        local click = function()
+          if e.guid then markGUID = e.guid end
+          local tg = Dt and Dt.Target and Dt.Target(e)
+          if not treasure and not inCombat() and e.guid and findUnitByGUID(e.guid) then markRare() end
+          if not tg then M:Print("Pas de boussole pour ce point (instance ?).") end
+        end
+        if treasure then
+          M:Suggest("treasure", txt .. " (clic : y aller)", 1, { ttl = 90, cooldown = 30, sound = false, onClick = click })
+        else
+          stats.rares, stats.lastRare = stats.rares + 1, e.name
+          if e.guid then markGUID = e.guid end
+          M:Suggest("rare", txt .. " (clic : y aller)", 2,
+            { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, onClick = click })
+        end
+      end
+    end
+  end
+end
+
 function M:NAME_PLATE_UNIT_ADDED(_, unit) scanUnit(unit) end
 function M:PLAYER_TARGET_CHANGED() scanUnit("target") end
 
@@ -937,6 +970,10 @@ function M:OnEnable()
     m:Clear("threat")
   end)
   self:On("SUMMARY", function(m) m:WriteSummary() end)
+  local Dt = T.Detect
+  if not M.detectSub and type(Dt) == "table" and type(Dt.OnChange) == "function" then
+    M.detectSub = Dt:OnChange(function(kind, data) if kind == "rares" and M:IsEnabled() then M.OnDetectRares(data) end end)
+  end
   hookTooltips()
   local n = 0
   if tick then tick:Cancel() end

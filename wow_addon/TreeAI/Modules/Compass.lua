@@ -642,6 +642,21 @@ function M.SetTarget(a, b)
   return r
 end
 
+--- Un clic « y aller » vers ce que voit TreeAI.Detect : kind = "rare" | "treasure" | genre de service
+--- ("vendor", "repair", "flight", "innkeeper", "mailbox"…). Retourne la cible ou nil.
+function M.TargetNearest(kind)
+  local Dt = T.Detect
+  if type(Dt) ~= "table" then return nil end
+  local e
+  if kind == "rare" or kind == "treasure" then
+    e = type(Dt.Rares) == "function" and Dt.Rares(kind)[1]
+  elseif type(Dt.Nearest) == "function" then
+    e = Dt.Nearest(kind)
+  end
+  if type(e) == "table" and type(Dt.Target) == "function" then return Dt.Target(e) end
+  return nil
+end
+
 function M.ClearWaypoint()
   if M.char then M.char.custom = nil end
   M.Rebuild()

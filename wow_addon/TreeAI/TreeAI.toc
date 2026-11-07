@@ -34,6 +34,7 @@ Modules\Missions.lua
 Modules\Quests.lua
 Modules\Compass.lua
 Modules\SafePath.lua
+Modules\Detect.lua
 Modules\Tracker.lua
 Modules\Todo.lua
 Modules\Predict.lua

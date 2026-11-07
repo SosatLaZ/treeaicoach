@@ -199,7 +199,7 @@ end
 
 -- ------------------------------------------------------------------ sources de points
 -- pin = { key, kind, layer, c, n, w, label, lines = {..}, count, color = {r,g,b}, mapID, x, y, questID, far }
-local PRIO = { danger = 1, taxi = 2, quest = 3, turnin = 4, path = 5, rare = 6, death = 7, target = 8, squad = 9 }
+local PRIO = { danger = 1, taxi = 2, quest = 3, turnin = 4, path = 5, treasure = 6, rare = 6, death = 7, target = 8, squad = 9 }
 local CLASS_FR = { HUNTER = "Chasseur", WARRIOR = "Guerrier", MAGE = "Mage", PRIEST = "Prêtre", ROGUE = "Voleur",
   DRUID = "Druide", PALADIN = "Paladin", SHAMAN = "Chaman", WARLOCK = "Démoniste" }
 local CLASS_RGB = { HUNTER = { 0.67, 0.83, 0.45 }, WARRIOR = { 0.78, 0.61, 0.43 }, MAGE = { 0.25, 0.78, 0.92 },
@@ -485,6 +485,22 @@ function R.TaxiPins(me)
   return out
 end
 
+-- rares / trésors des vignettes du jeu (TreeAI.Detect : position exacte, mieux que nos relevés ± 40 m)
+function R.DetectPins(me)
+  local out = {}
+  local Dt = T.Detect
+  if not (me and type(Dt) == "table" and type(Dt.Pins) == "function") then return out end
+  local ok, pins = pcall(Dt.Pins)
+  for _, p in ipairs(ok and type(pins) == "table" and pins or {}) do
+    if #out >= 20 then break end
+    if not p.approx then
+      addMapPin(out, me, { key = "dt:" .. tostring(p.key), kind = p.kind, layer = "rares", mapID = p.mapID, x = p.x, y = p.y,
+        label = p.label, lines = { { "Vu par le jeu (vignette) — clic : y aller", 0.8, 0.6, 1 } } })
+    end
+  end
+  return out
+end
+
 -- toutes les sources (couches activées), triées par priorité d'affichage
 function R.Collect(me)
   local pins = {}
@@ -501,6 +517,7 @@ function R.Collect(me)
   add("path", R.PathPins)
   add("squad", R.SquadPins)
   add("taxi", R.TaxiPins)
+  add("rares", R.DetectPins)
   if opt("rares") ~= false or opt("danger") ~= false or opt("death") ~= false then
     local ok, list = pcall(R.SeenPins, me)
     for _, p in ipairs(ok and list or {}) do if opt(p.layer) ~= false then pins[#pins + 1] = p end end
@@ -542,11 +559,12 @@ local ICON = {
   path = { CIRCLE, { 0.35, 0.85, 1 } },
   squad = { CIRCLE },
   rare = { "Interface\\TargetingFrame\\UI-RaidTargetingIcon_3" },
+  treasure = { "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1" },
   danger = { "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8", { 1, 0.45, 0.4 } },
   death = { "Interface\\WorldStateFrame\\SkullBones", nil, { 0, 0.5, 0, 0.5 } },
   taxi = { "Interface\\TaxiFrame\\UI-Taxi-Icon-Green" },
 }
-local SIZE = { quest = 9, turnin = 14, target = 14, path = 6, squad = 10, rare = 13, danger = 12, death = 14, taxi = 13 }
+local SIZE = { quest = 9, turnin = 14, target = 14, path = 6, squad = 10, rare = 13, treasure = 12, danger = 12, death = 14, taxi = 13 }
 
 local COMPACT = 120
 local function size()
@@ -694,7 +712,7 @@ local LEGEND = {
   { "quest", "quests", "Objectifs de quête" }, { "turnin", "turnins", "PNJ de remise" },
   { "target", "target", "Cible de la boussole" }, { "path", "path", "Chemin sûr" }, { "squad", "squad", "Amis du groupe" },
   { "rare", "rares", "Rares vus" }, { "danger", "danger", "Élites (danger)" }, { "death", "death", "Mon corps" },
-  { "taxi", "taxi", "Maîtres de vol" },
+  { "taxi", "taxi", "Maîtres de vol" }, { "treasure", "rares", "Trésors" },
 }
 R.LEGEND = LEGEND
 function R.ShowLegend(owner)
