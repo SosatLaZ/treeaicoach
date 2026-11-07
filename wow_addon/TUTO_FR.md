@@ -53,7 +53,20 @@ tir automatique, Marque du chasseur, pièges ; rares/élites à proximité, **me
 surlignée**, infobulles **« Amélioration +X % »** / prix marchand vs HV, menace en groupe, XP (monstres /
 quêtes avant le niveau, XP/h), conseiller d'apprivoisement (« loup niv 25 → Morsure rang 4 »).
 
-## 7. Voix et IA (TreeAI)
+## 7. Hôtel des ventes : achat-revente (`/tai hv`)
+
+- Ouvre l'HV et clique **Scanner** : l'addon garde 14 jours de prix (par royaume et faction) et calcule la
+  **valeur du marché**, la **commission** (5 % HV de faction, 15 % HV neutre), le **dépôt**, le **profit
+  net**, le **retour sur investissement** et le **prix d'équilibre**.
+- **Bonnes affaires** : objets sous le marché (profit après frais et risque), objets moins chers que leur
+  prix chez le marchand (profit garanti), alerte marchés trop minces. Bouton **Acheter** = UNE annonce par
+  clic, prix revérifié avant achat.
+- **Vendre** : prix conseillé (sous-cotation raisonnable), dépôt, « mieux au marchand » si c'est plus
+  rentable ; tes enchères sous-cotées sont signalées (bouton **Annuler**).
+- **Suivi** : budget, achats/ventes lus dans les courriers de l'HV, profit réalisé par objet et par jour.
+- `/tai hv neutre` / `/tai hv faction` si l'HV n'est pas reconnu. « Hey coach, quoi revendre ? » marche aussi.
+
+## 8. Voix et IA (TreeAI)
 
 - La voix **ne parle jamais toute seule** : dis **« Hey coach »** puis ta question (« on fait quoi ? »,
   « quoi revendre ? », « quel sort au niveau 28 ? ») — au micro du PC ou sur Discord.
@@ -62,12 +75,12 @@ quêtes avant le niveau, XP/h), conseiller d'apprivoisement (« loup niv 25 → 
   `/console advancedCombatLogging 1` pour avoir la vie). La page WoW de TreeAI indique s'il est actif.
 - Les infos de l'addon arrivent dans TreeAI à chaque `/reload` ou déconnexion.
 
-## 8. PvP
+## 9. PvP
 
 Les aides PvP sont **désactivées** par défaut (l'addon t'aide à quêter). `/tai pvp` ou la case
 « Aides PvP » dans les options pour les activer.
 
-## 9. Règles
+## 10. Règles
 
 Rien n'est automatisé : pas de bot, pas de touche simulée, pas de lecture de la mémoire du jeu. L'addon
 n'utilise que l'API officielle de Blizzard, TreeAI ne lit que les fichiers que le jeu écrit (journal de

@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.8.1 · 7 novembre 2026
+
+- **WoW : achat-revente à l'hôtel des ventes** (`/tai hv`) : historique des prix 14 jours, valeur du marché,
+  commission et dépôt exacts, profit net / retour / prix d'équilibre, bonnes affaires (sous le marché, sous
+  le prix marchand), prix de vente conseillé, enchères sous-cotées, budget et profit réalisé. Chaque achat
+  = ton clic. « Hey coach, quoi revendre ? ».
+
 ## 3.8.0 · 7 novembre 2026
 
 - **Nouveau : WoW Forever.** Page **WoW Forever** (Ctrl+7) : TreeAI trouve ton dossier WoW et installe /

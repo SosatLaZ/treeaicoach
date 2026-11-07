@@ -1,25 +1,25 @@
 {
- "version": "3.8.0",
+ "version": "3.8.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "1c9d77a8eb9514f1989720af88443df52c46780de20f96011578c0a009737ee8",
+ "sha256": "0415b5ef86dbfa73dd7d3adcb63abea2ede528eb1bc37f70d2ae09bf82afbd97",
  "chunks": [
   {
-   "name": "3.8.0/part-01.zip",
-   "size": 88134641,
-   "sha256": "04628eab0e5101eb1eda4c2ad139a7b46bf6147bd29f7b2bd3761dd7f77a5aef",
+   "name": "3.8.1/part-01.zip",
+   "size": 88152375,
+   "sha256": "652ea5437a63b60b9b56954db0ba89401304067f2b2deddf1056b4c7fec3b8b8",
    "files": 134
   },
   {
-   "name": "3.8.0/part-02.zip",
-   "size": 12038713,
-   "sha256": "49f9170547339e2bd9404c6e81c90e92ba1ec30ce2ee70a35ba9c143f575e649",
-   "files": 604
+   "name": "3.8.1/part-02.zip",
+   "size": 12053964,
+   "sha256": "4ea83fde8497911958aadb51b7a0f57cc561de7dbd7ad005bd6fc74211eb7c31",
+   "files": 605
   }
  ],
- "total_size": 100173354,
+ "total_size": 100206339,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "Nouveau : WoW Forever. Page WoW (Ctrl+7), addon TreeAI install\u00e9 tout seul : macros intelligentes, aide \u00e0 la qu\u00eate, synchro \u00e0 4, chasseur, \u00ab Hey coach \u00bb expert WoW."
+ "notes": "WoW : achat-revente \u00e0 l'h\u00f4tel des ventes (/tai hv) qui calcule tout : march\u00e9, frais, profit, bonnes affaires."
 }
