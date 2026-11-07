@@ -941,8 +941,33 @@ function M.Install(flavor)
     }
     G.C_QuestLog = {
       GetNumQuestLogEntries = function() return #M.quests, #M.quests end,
-      GetQuestIDForLogIndex = function(i) return M.quests[i] and (1000 + i) or nil end,
+      GetQuestIDForLogIndex = function(i) return M.quests[i] and not M.quests[i].header and (1000 + i) or nil end,
+      GetInfo = function(i)
+        local q = M.quests[i]
+        if not q then return nil end
+        if q.header then return { title = q.header, isHeader = true, questLogIndex = i } end
+        return { title = q.title, level = q.level, questID = 1000 + i, questLogIndex = i, isHeader = false,
+          suggestedGroup = q.group or 0 }
+      end,
+      IsComplete = function(id) local q = M.quests[(id or 0) - 1000] return q and q.complete or false end,
+      GetQuestObjectives = function(id)
+        local q = M.quests[(id or 0) - 1000]
+        local out = {}
+        for _, o in ipairs(q and q.objectives or {}) do
+          out[#out + 1] = { text = o.text, finished = o.done, numFulfilled = o.have, numRequired = o.need, type = "monster" }
+        end
+        return out
+      end,
+      GetQuestTagInfo = function(id)
+        local q = M.quests[(id or 0) - 1000]
+        if q and q.elite then return { tagID = 1, tagName = "Élite", isElite = true } end
+      end,
     }
+    G.C_Container.GetContainerItemQuestInfo = function(bag, slot)
+      local s = bagSlot(bag, slot)
+      local it = s and M.items[s.id]
+      return { isQuestItem = it and it.questItem or false, questID = it and it.startsQuest, isActive = false }
+    end
   else
     G.GetContainerNumSlots = numSlots
     G.GetContainerNumFreeSlots = numFree
@@ -969,12 +994,13 @@ function M.Install(flavor)
   G.GetQuestLogTitle = function(i)
     local q = M.quests[i]
     if not q then return nil end
-    return q.title, q.level, nil, false, false, q.complete and 1 or nil, nil, 1000 + i
+    if q.header then return q.header, nil, nil, true, false end
+    return q.title, q.level, q.group, false, false, q.complete and 1 or nil, nil, 1000 + i
   end
-  G.GetNumQuestLeaderBoards = function(i) local q = M.quests[i or M.questSel or 1] return q and #q.objectives or 0 end
+  G.GetNumQuestLeaderBoards = function(i) local q = M.quests[i or M.questSel or 1] return q and #(q.objectives or {}) or 0 end
   G.GetQuestLogLeaderBoard = function(j, i)
     local q = M.quests[i or M.questSel or 1]
-    local o = q and q.objectives[j]
+    local o = q and q.objectives and q.objectives[j]
     if o then return o.text, "monster", o.done end
   end
   G.SelectQuestLogEntry = function(i) M.questSel = i end
@@ -982,6 +1008,25 @@ function M.Install(flavor)
   G.IsQuestComplete = function(id) local q = M.quests[(id or 0) - 1000] return q and q.complete or false end
   G.GetQuestLogIndexByID = function(id) return M.quests[(id or 0) - 1000] and (id - 1000) or 0 end
   G.GetQuestsCompleted = function() return {} end
+  -- quest helper APIs (Quests module): special item, XP reward (modern: by questID; legacy: selection), loot
+  G.GetQuestLogSpecialItemInfo = function(i)
+    local q = M.quests[i]
+    if q and q.item then return M.ItemLink(q.item), 134400 + q.item, q.charges or 0, false end
+  end
+  G.GetQuestLogRewardXP = function(id)
+    local q = id and M.quests[id - 1000] or M.quests[M.questSel or 0]
+    return q and q.xp or 0
+  end
+  G.GetNumLootItems = function() return #(M.loot or {}) end
+  G.GetLootSlotInfo = function(i)
+    local l = (M.loot or {})[i]
+    if l then return 134400, l.name, l.count or 1, nil, 1, false, l.questItem or false, l.questID, l.isActive or false end
+  end
+  G.GetContainerItemQuestInfo = function(bag, slot)
+    local s = bagSlot(bag, slot)
+    local it = s and M.items[s.id]
+    return it and it.questItem or false, it and it.startsQuest, false
+  end
 
   -- macros (ToS guard: never in combat) -------------------------------------------------------
   G.MAX_ACCOUNT_MACROS, G.MAX_CHARACTER_MACROS = 120, 18
