@@ -797,6 +797,8 @@ M.ObjectiveFor = objectiveFor
 
 local function tipLine(tt, q, o)
   if not (tt and tt.AddLine) then return end
+  local H = T.Highlight  -- (HIGHLIGHT) la surbrillance écrit déjà sa ligne : pas de doublon
+  if H and H.TooltipActive and H:IsEnabled() and H.TooltipActive() then return end
   pcall(tt.AddLine, tt, ("TreeAI : « %s » %d/%d"):format(cut(q.title, 30), o.have, o.need), 0.4, 0.8, 0.4)
   if tt.Show then pcall(tt.Show, tt) end
 end
