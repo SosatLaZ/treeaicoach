@@ -9,8 +9,8 @@
 --    aperçu de chaîne (→ A → B, « chaîne 2/4 ») ; calque groupe (amis TreeAI via Squad : progression ; autres
 --    via C_QuestLog.IsUnitOnQuest) ; histoire (résumé de la description) au survol ; son à la fin d'une quête.
 --  * plan TreeAI (TreeAI.Planner, s'il a un plan actif) : étape courante + 2 suivantes en tête.
---  * affichage : onglet « Quêtes » (TreeAI:SetTabLines) + cadre compact OPTIONNEL à nous (déplaçable,
---    verrouillable, réduction par quête, police / largeur / échelle / fond réglables).
+--  * affichage : la fenêtre « À faire » (Modules/Todo.lua, agent TODO) lit ce modèle et remplit l'onglet
+--    « Quêtes » en version compacte ; sans Todo : onglet historique + cadre compact OPTIONNEL à nous.
 --  * clic = cible de la boussole ; Maj-clic = « Aller là » (SPF / TomTom / repère) ; Ctrl-clic = itinéraire
 --    complet → SPF ; Alt-clic = masquer jusqu'au /reload ; clic droit (cadre) = réduire / déplier.
 --  * astuces conservées : faciles à côté, « passe prendre … en chemin », « tu pars sans prendre … »,
@@ -1092,6 +1092,19 @@ end
 
 local lastPush, pushPending = 0, false
 function M.Push()
+  -- « À faire » (Modules/Todo.lua) : la page de suivi complète ; l'onglet « Quêtes » en est la version compacte
+  -- et l'ancien cadre compact se retire. Todo absent / désactivé → affichage historique ci-dessous.
+  local Td = T.Todo
+  local todo = T.SetTabLines and Td and Td.Active and Td.Active()
+  if todo then
+    if frame then frame:Hide() end
+    local ok, tl = pcall(Td.FromTracker)
+    if ok and type(tl) == "table" then
+      M.lines = tl
+      pcall(T.SetTabLines, T, "quests", tl)
+      return "todo"
+    end
+  end
   local lines = M.Lines()
   M.lines = lines
   local mode
@@ -1099,7 +1112,7 @@ function M.Push()
     pcall(T.SetTabLines, T, "quests", lines)
     mode = "tab"
   end
-  local wantFrame = cfg("enabled") and (M.db.standalone or (not T.SetTabLines and cfg("frame")))
+  local wantFrame = cfg("enabled") and not todo and (M.db.standalone or (not T.SetTabLines and cfg("frame")))
   if wantFrame then
     if M.RenderFrame() then mode = mode and "tab+frame" or "frame" end
   elseif frame then

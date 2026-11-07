@@ -28,6 +28,7 @@ Modules\Missions.lua
 Modules\Quests.lua
 Modules\Compass.lua
 Modules\Tracker.lua
+Modules\Todo.lua
 Modules\Predict.lua
 Modules\Export.lua
 Modules\Planner.lua
