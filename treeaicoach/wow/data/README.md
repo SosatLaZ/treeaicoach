@@ -14,6 +14,7 @@ only the small subset below is kept, for in-app advice.
 | `items.json.gz` | item id → FR name, quality, ilvl, required level, class/subclass/slot, stats, armour, DPS, speed, sell price, quest starter, class mask | ItemSparse, Item, RandPropPoints, ItemArmor*, ArmorLocation, ItemDamage* |
 | `zones.json.gz` | AreaTable id → FR name, parent, continent | AreaTable |
 | `taxi.json.gz` | flight graph: taxi nodes (FR name, continent, world x/y, faction), directed edges (spline length yd, cost copper), and zone-map world bounds for the route planner (`treeaicoach/wow/planner`) | TaxiNodes, TaxiPath, TaxiPathNode, UiMapAssignment, UiMap |
+| `talents.json.gz` | talent trees per class (3 tabs, tier/column/ranks/prereq, FR name, max-rank description) + 18 levelling builds (solo + groupe per class, from `treeaicoach/wow/talent_builds.py`, validated: row gating, prerequisites, 51 points) | Talent, TalentTab, SpellName, Spell, SpellEffect, SpellMisc, SpellDuration |
 | `meta.json.gz` | build, source, counts | — |
 
 Addon side (same run): `wow_addon/TreeAI/Data/PetFood.lua` (Item.ItemPetFoodID diets) and

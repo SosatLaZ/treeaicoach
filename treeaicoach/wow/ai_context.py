@@ -543,6 +543,18 @@ def build_context(engine: Any = None, db: Any = None, facts: Iterable[str] | Non
                     ctx["donnees_jeu"] = gd
             except Exception:
                 log.debug("wow game data context failed", exc_info=True)
+        if ctx.get("classe") is not None:
+            try:  # talents (module Talents : summary.talents + parcours validés) → « quels talents ? »
+                from treeaicoach.wow import talents
+
+                c = current_character(db) or {}
+                summ = c.get("summary") if isinstance(c.get("summary"), dict) else {}
+                tal = talents.talents_context(ctx["classe"], ctx.get("niveau"), summ.get("talents") or c.get("talents"))
+                if tal:  # right after the identity keys so the 2500-char prompt cut keeps it
+                    head = {k: ctx[k] for k in ("classe", "race", "niveau", "zone", "sous_zone", "trajet") if k in ctx}
+                    ctx = {**head, "talents": tal, **{k: v for k, v in ctx.items() if k not in head}}
+            except Exception:
+                log.debug("wow talents context failed", exc_info=True)
         f = list(facts) if facts is not None else live_facts(engine)
         if f:
             ctx["combat_recent"] = [_short(x, 140) for x in f][-_MAX_FACTS:]
