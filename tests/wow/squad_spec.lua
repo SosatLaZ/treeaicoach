@@ -278,5 +278,54 @@ C.S:SaveSnapshot()
 local g = C.T.summary.group
 ok(g and g.v == 2 and #g.members == 4 and #g.advices > 0 and g.leader == "Alpha" and g.common[1].holders == 4, "summary.group")
 
+-- différences du journal (SQD) au lieu de dumps complets
+local Sq = C.S
+local base = Sq.Entries("100,22,C,A,i10/10;200,22,,B,m3/8")
+local new = Sq.Entries("200,22,,B,m4/8;300,22,,D,e0/1")
+local diff = Sq.DiffEntries(base, new)
+ok(diff == "+200,22,,B,m4/8;+300,22,,D,e0/1;-100", "diff : " .. tostring(diff))
+local applied = Sq.ApplyDiff(base, diff)
+ok(applied and Sq.HashEntries(applied) == Sq.HashEntries(new), "diff appliqué = même empreinte")
+ok(Sq.DiffEntries(new, new) == nil and Sq.ApplyDiff(base, "?x") == nil, "diff vide / invalide")
+local function pumpBus(ticks)
+  for _ = 1, ticks do
+    clock = clock + 1
+    for _, n in ipairs(NAMES) do clients[n].S:Tick() end
+    local snapshot = {}
+    for i, m in ipairs(bus) do snapshot[i] = m end
+    for i = #bus, 1, -1 do bus[i] = nil end
+    for _, m in ipairs(snapshot) do
+      for _, n in ipairs(NAMES) do
+        if n ~= m.from and clients[n].comm[m.kind] then clients[n].comm[m.kind](copy(m.payload), m.from .. "-Royaume") end
+      end
+    end
+  end
+end
+clock = clock + 30
+local kinds = {}
+local mark = #bus
+cfgs.Bravo.quests[2].obj[1].numFulfilled = 7
+local sentBefore = #clients.Bravo.T.sends
+local origSend = clients.Bravo.T.Send
+clients.Bravo.T.Send = function(self, kind, payload) kinds[#kinds + 1] = kind; return origSend(self, kind, payload) end
+pumpBus(12)
+local hasD, hasQ = false, false
+for _, k in ipairs(kinds) do if k == "SQD" then hasD = true elseif k == "SQQ" then hasQ = true end end
+ok(hasD and not hasQ, "changement de quête envoyé en différence (SQD), pas de dump")
+for _, n in ipairs({ "Alpha", "Charlie", "Delta" }) do
+  local qb = clients[n].S:Quests("Bravo")[200]
+  ok(qb and qb.obj[1].have == 7, n .. " a appliqué la différence de Bravo")
+end
+-- base inconnue -> redemande un dump complet (SQR)
+kinds = {}
+local origC = clients.Charlie.T.Send
+clients.Charlie.T.Send = function(self, kind, payload) kinds[#kinds + 1] = kind; return origC(self, kind, payload) end
+clients.Charlie.comm.SQD("2:1:2:+999,1,,X,", "Bravo-Royaume")
+ok(clients.Charlie.S:Quests("Bravo")[999] == nil and clients.Charlie.S:Quests("Bravo")[200], "diff sur base inconnue ignoré")
+pumpBus(3)
+local asked = false
+for _, k in ipairs(kinds) do if k == "SQR" then asked = true end end
+ok(asked, "base inconnue : dump complet redemandé (SQR)")
+
 print(("RESULT %s squad checks=%d fails=%d"):format(fails == 0 and "ok" or "FAIL", checks, fails))
 os.exit(fails == 0 and 0 or 1)

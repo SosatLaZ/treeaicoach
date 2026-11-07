@@ -10,6 +10,8 @@
 --                        fo, wa, am, pr, lm, rd, af, cb, qn, qm, xh }
 --   SQQ  chaîne "2:" .. quêtes "id,niv,drapeaux,titre,objectifs;..." (drapeaux C fini, G groupe,
 --        Dn donjon n ; objectifs "m3/8.i0/5" type m/i/o/e/r/x)
+--   SQD  "2:base:nouveau:+entrée;-id;…" différences du journal depuis le dernier envoi (empreintes des
+--        entrées triées par id) ; empreinte de base inconnue chez le receveur -> SQR (dump complet)
 --   SQR  "2" : « renvoyez-moi vos infos »
 -- Débit : à chaque changement + toutes les 15 s (état) / 60 s (quêtes), ≤ 1 message/s émis,
 -- seau de jetons en réception par membre, uniquement depuis les membres actuels du groupe,
@@ -21,9 +23,9 @@ if type(T) ~= "table" or type(T.RegisterModule) ~= "function" then return end
 
 local PROTO = 2
 local STATE_EVERY = 15
-local QUEST_EVERY = 60
+local QUEST_EVERY = 180   -- dump complet de sécurité ; entre deux : différences (SQD)
 local MAX_QUESTS = 25
-local FAR_YARDS = 250
+local FAR_YARDS = 70      -- au-delà, plus de crédit de kill partagé
 local STALE = 120
 local HEARTHSTONE = 6948
 
@@ -211,6 +213,73 @@ function S.DecodeQuests(payload)
       out[id] = q
     end
   end
+  return out
+end
+
+-- Entrées brutes du journal encodé : [id] = "id,niv,drapeaux,titre,objectifs" (≤ MAX_QUESTS)
+function S.Entries(body)
+  local out, n = {}, 0
+  if type(body) ~= "string" then return out end
+  for entry in body:gmatch("[^;]+") do
+    local id = tonumber(entry:match("^(%d+),"))
+    if id and #entry <= 300 then
+      n = n + 1
+      if n > MAX_QUESTS then break end
+      out[id] = entry
+    end
+  end
+  return out
+end
+local function sortedIds(map)
+  local ids = {}
+  for id in pairs(map) do ids[#ids + 1] = id end
+  tsort(ids)
+  return ids
+end
+function S.HashEntries(map)
+  local h = 5381
+  for _, id in ipairs(sortedIds(map)) do
+    local e = map[id]
+    for i = 1, #e do h = (h * 33 + e:byte(i)) % 16777213 end
+    h = (h * 33 + 59) % 16777213
+  end
+  return h
+end
+function S.JoinEntries(map)
+  local t = {}
+  for _, id in ipairs(sortedIds(map)) do t[#t + 1] = map[id] end
+  return tconcat(t, ";")
+end
+-- différences old -> new : "+entrée;-id" (nil si identiques)
+function S.DiffEntries(old, new)
+  local t = {}
+  for _, id in ipairs(sortedIds(new)) do if old[id] ~= new[id] then t[#t + 1] = "+" .. new[id] end end
+  for _, id in ipairs(sortedIds(old)) do if not new[id] then t[#t + 1] = "-" .. id end end
+  if #t == 0 then return nil end
+  return tconcat(t, ";")
+end
+-- applique "+entrée;-id" sur une copie ; nil si invalide
+function S.ApplyDiff(map, changes)
+  if type(changes) ~= "string" or #changes > 6000 then return nil end
+  local out = {}
+  for k, v in pairs(map) do out[k] = v end
+  for part in changes:gmatch("[^;]+") do
+    local op, rest = part:sub(1, 1), part:sub(2)
+    if op == "+" then
+      local id = tonumber(rest:match("^(%d+),"))
+      if not id or #rest > 300 then return nil end
+      out[id] = rest
+    elseif op == "-" then
+      local id = tonumber(rest)
+      if not id then return nil end
+      out[id] = nil
+    else
+      return nil
+    end
+  end
+  local n = 0
+  for _ in pairs(out) do n = n + 1 end
+  if n > MAX_QUESTS then return nil end
   return out
 end
 
@@ -437,16 +506,19 @@ function E.Advise(members, ctx)
         local insts = {}
         for _, m in ipairs(pts) do insts[m.st.pi] = (insts[m.st.pi] or 0) + 1 end
         for _, m in ipairs(pts) do
-          local cy, cx, n = 0, 0, 0
+          -- distance au coéquipier le plus proche (crédit de kill partagé ~70 m)
+          local d
           for _, o in ipairs(pts) do
-            if o ~= m and o.st.pi == m.st.pi then cy = cy + o.st.py; cx = cx + o.st.px; n = n + 1 end
+            if o ~= m and o.st.pi == m.st.pi then
+              local dy, dx = m.st.py - o.st.py, m.st.px - o.st.px
+              local dd = sqrt(dy * dy + dx * dx)
+              if not d or dd < d then d = dd end
+            end
           end
-          if n > 0 then
-            local dy, dx = m.st.py - cy / n, m.st.px - cx / n
-            local d = sqrt(dy * dy + dx * dx)
+          if d then
             if d > FAR_YARDS then
               add("r_far_" .. m.name, "regroup", 1, 70,
-                fmt("%s est loin (~%d m) : regroupez-vous", m.name, floor(d * 0.9144 / 10 + 0.5) * 10))
+                fmt("%s est loin (~%d m) : hors portée du crédit de kill, regroupez-vous", m.name, floor(d * 0.9144 / 10 + 0.5) * 10))
             end
           end
         end
@@ -953,7 +1025,7 @@ local function mirrorGroup(name, m)
   G.members[name] = g
 end
 
-local pending = { state = false, quests = false, request = false }
+local pending = { state = false, quests = false, request = false, diff = false }
 
 function S:OnComm(msgType, payload, sender)
   local ok, name = self:IsMember(sender)
@@ -968,7 +1040,21 @@ function S:OnComm(msgType, payload, sender)
     if type(payload) ~= "string" then return end
     local ver, body = payload:match("^(%d+):(.*)$")
     if tonumber(ver) ~= PROTO then return end
+    m.qent = S.Entries(body)
     m.quests = S.DecodeQuests(body)
+  elseif msgType == "SQD" then
+    if type(payload) ~= "string" then return end
+    local ver, base, new, changes = payload:match("^(%d+):(%d+):(%d+):(.*)$")
+    if tonumber(ver) ~= PROTO then return end
+    local applied = m.qent and S.HashEntries(m.qent) == tonumber(base) and S.ApplyDiff(m.qent, changes)
+    if not applied or S.HashEntries(applied) ~= tonumber(new) then
+      -- base inconnue (arrivée en cours, message perdu) : on redemande un dump complet (≤ 1 / 20 s)
+      if now() - (m.askedAt or -1e9) >= 20 then m.askedAt = now(); pending.request = true end
+      if not m.st then return end
+    else
+      m.qent = applied
+      m.quests = S.DecodeQuests(S.JoinEntries(applied))
+    end
   elseif msgType == "SQR" then
     if tonumber(payload) ~= PROTO then return end
     pending.state, pending.quests = true, true
@@ -985,6 +1071,7 @@ end
 -- ------------------------------------------------------------------ envoi (≤ 1 message/s)
 local nextSendAt, lastStateSent, lastQuestSent, lastSig = 0, -1e9, -1e9, nil
 local myQuests, myQuestEnc, questsDirty, lastScan = {}, "", true, -1e9
+local sentEntries, lastDiffSent = nil, -1e9  -- ce que les autres connaissent de mon journal
 
 local function chunks(payload)
   local s = type(payload) == "table" and (T.Serialize and T:Serialize(payload) or "") or tostring(payload or "")
@@ -996,7 +1083,24 @@ function S:Pump(t)
   local kind, payload
   if pending.request then kind, payload = "SQR", tostring(PROTO); pending.request = false
   elseif pending.state then kind, payload = "SQS", self._state; pending.state = false; lastStateSent = t
-  elseif pending.quests then kind, payload = "SQQ", PROTO .. ":" .. myQuestEnc; pending.quests = false; lastQuestSent = t
+  elseif pending.quests then
+    kind, payload = "SQQ", PROTO .. ":" .. myQuestEnc
+    pending.quests, pending.diff = false, false
+    lastQuestSent, sentEntries = t, S.Entries(myQuestEnc)
+  elseif pending.diff and t - lastDiffSent >= 5 then
+    pending.diff = false
+    local cur = S.Entries(myQuestEnc)
+    local changes = sentEntries and S.DiffEntries(sentEntries, cur)
+    if not sentEntries then pending.quests = true
+    elseif changes then
+      if #changes >= #myQuestEnc then
+        kind, payload = "SQQ", PROTO .. ":" .. myQuestEnc
+        lastQuestSent = t
+      else
+        kind, payload = "SQD", fmt("%d:%d:%d:%s", PROTO, S.HashEntries(sentEntries), S.HashEntries(cur), changes)
+      end
+      lastDiffSent, sentEntries = t, cur
+    end
   end
   if not kind or payload == nil then return end
   T:Send(kind, payload)
@@ -1060,7 +1164,7 @@ function S:Tick()
       myQuests = qs
       self._questCount = #qs
       local enc = S.EncodeQuests(qs)
-      if enc ~= myQuestEnc and t - lastQuestSent >= 5 then pending.quests = true end
+      if enc ~= myQuestEnc then pending.diff = true end
       if enc ~= myQuestEnc then self._dirty = true end
       myQuestEnc = enc
     end
@@ -1274,7 +1378,7 @@ end
 
 function S:OnEnable()
   if T.RegisterComm then
-    for _, kind in ipairs({ "SQS", "SQQ", "SQR" }) do
+    for _, kind in ipairs({ "SQS", "SQQ", "SQD", "SQR" }) do
       T:RegisterComm(kind, S, function(_, payload, sender) S:OnComm(kind, payload, sender) end)
     end
   end
