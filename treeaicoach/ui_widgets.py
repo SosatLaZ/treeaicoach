@@ -33,7 +33,7 @@ class Theme:
     name: str
     window: str          # page background (grouped background)
     sidebar: str
-    group: str           # inset grouped list cell
+    group: str           # card / inset grouped list cell
     group_hover: str
     separator: str
     text: str
@@ -42,7 +42,7 @@ class Theme:
     accent: str
     accent_hover: str
     on_accent: str
-    accent_soft: str     # selected sidebar row / soft accent fill
+    accent_soft: str     # selected sidebar row / segmented thumb (neutral)
     control: str         # secondary button / segmented track
     control_hover: str
     control_border: str
@@ -51,47 +51,73 @@ class Theme:
     danger: str
     warning: str
     ok: str
+    # v4 design system: the card hairline and the soft tints behind badges (text stays >= 4.5:1 on them)
+    edge: str = "rgba(255, 255, 255, 0.06)"
+    accent_tint: str = "#1E2A44"
+    danger_soft: str = "#3A1E1F"
+    warning_soft: str = "#352C17"
+    ok_soft: str = "#183326"
+    hover: str = "rgba(255, 255, 255, 0.05)"
+    seg_track: str = "#232529"   # segmented control: track and selected thumb
+    thumb: str = "#3A3D45"
 
 
-#: « graphite » (docs/DESIGN.md, v2.21): a flat neutral graphite window, opaque grouped cells, hairline
-#: separators, ONE blue accent (switches, primary button, links). No backdrop image, no glass, no glow.
+#: « graphite » (docs/DESIGN.md, v4): a flat neutral graphite window, opaque cards with a faint hairline,
+#: ONE blue accent (switches, primary button, links, current page icon). No image, no glass, no glow.
 GRAPHITE = Theme(
-    name="dark", window="#101113", sidebar="#151619", group="#1B1C20", group_hover="#23252A",
+    name="dark", window="#0F1012", sidebar="#141518", group="#1A1B1F", group_hover="#222429",
     separator="#2A2C31", text="#ECEDEF", secondary="#A3A7AE", tertiary="#8A8E97",
-    accent="#7AA7FF", accent_hover="#93B8FF", on_accent="#0A0F1C", accent_soft="#2C2F36",
+    accent="#7AA7FF", accent_hover="#93B8FF", on_accent="#0A0F1C", accent_soft="#262930",
     control="#232529", control_hover="#2A2D32", control_border="#34373D", track_off="#3A3D44", knob="#FFFFFF",
     danger="#FF6B63", warning="#EBBE4D", ok="#5FD08F")
+#: « porcelaine »: the same system on light grey (Windows light mode, ``ui_theme``)
+PORCELAIN = Theme(
+    name="light", window="#F4F5F7", sidebar="#EBEDF0", group="#FFFFFF", group_hover="#F3F4F6",
+    separator="#E4E6EA", text="#15171B", secondary="#4F555E", tertiary="#5F6570",
+    accent="#2459D6", accent_hover="#3368E3", on_accent="#FFFFFF", accent_soft="#DDE1E7",
+    control="#FFFFFF", control_hover="#F0F2F5", control_border="#CDD1D8", track_off="#C9CDD4", knob="#FFFFFF",
+    danger="#C22F2A", warning="#8A5800", ok="#18794A", edge="rgba(16, 24, 40, 0.08)", accent_tint="#E3EBFC",
+    danger_soft="#FBE7E6", warning_soft="#F8EED9", ok_soft="#E2F3EA", hover="rgba(16, 24, 40, 0.05)",
+    seg_track="#E6E8EC", thumb="#FFFFFF")
 SAPPHIRE = GRAPHITE  # older names
 SPACE = GRAPHITE
 DARK = GRAPHITE
-THEMES: tuple[Theme, ...] = (GRAPHITE,)
-#: panels are opaque now (the names stay for the callers); hairlines are a faint white
+LIGHT = PORCELAIN
+THEMES: tuple[Theme, ...] = (GRAPHITE, PORCELAIN)
+#: panels are opaque (the names stay for the callers); hairlines are a faint white
 GLASS_GROUP = GRAPHITE.group
 GLASS_GROUP_HOVER = "rgba(255, 255, 255, 0.05)"
 GLASS_SIDEBAR = GRAPHITE.sidebar
 GLASS_EDGE = "rgba(255, 255, 255, 0.06)"
 GLASS_SEPARATOR = "rgba(255, 255, 255, 0.07)"
 GLASS_GROUP_ALPHA = 1.0
-GLASS_GROUP_RGB = (27, 28, 32)
+GLASS_GROUP_RGB = (26, 27, 31)
 
-# sizes (px at 100 %, Qt applies the monitor's DPI factor on top)
-SIDEBAR_W = 248
-# 8-pt grid: every gap, padding and radius below is a multiple of 8 (or of 4 for the small ones)
-CONTENT_MAX = 760        # centred column of a page, multiple of 8 (a wide screen gets air, not stretched rows)
-PAGE_PAD_X = 40
-PAGE_PAD_TOP = 40
+# ---- design tokens (px at 100 %, Qt applies the monitor's DPI factor on top) ----------------------
+#: spacing scale: every gap / padding of the launcher is one of these (4-pt grid)
+SP_1, SP_2, SP_3, SP_4, SP_5, SP_6, SP_7 = 4, 8, 12, 16, 24, 32, 40
+SPACING = (SP_1, SP_2, SP_3, SP_4, SP_5, SP_6, SP_7)
+SIDEBAR_W = 232
+CONTENT_MAX = 760        # centred column of a page (a wide screen gets air, not stretched rows)
+WIDE_MAX = 960           # dashboard pages (Accueil): two cards side by side
+PAGE_PAD_X = SP_7
+PAGE_PAD_TOP = SP_6
 GROUP_RADIUS = 12
 CONTROL_RADIUS = 8
+BADGE_RADIUS = 6
 ROW_MIN_H = 48
-ROW_PAD_X = 16
-ROW_PAD_Y = 12
-SECTION_GAP = 40        # air between sections (v3.4: 32 -> 40)
+ROW_PAD_X = SP_4
+ROW_PAD_Y = SP_3
+CARD_PAD = SP_5          # inner padding of a free card (status, game cards, empty states)
+SECTION_GAP = SP_6       # air between sections
+#: type scale (Inter / Inter Display): page title, card headline, section title, body, small, caption
 TITLE_PX = 26
+HEADLINE_PX = 18
+SECTION_PX = 15
 BODY_PX = 14
 SMALL_PX = 13
 CAPTION_PX = 12
-HEADLINE_PX = 15
-SECTION_PX = 16        # section titles read as titles (v3.4: 13 secondary -> 16 primary)
+TYPE_SCALE = (TITLE_PX, HEADLINE_PX, SECTION_PX, BODY_PX, SMALL_PX, CAPTION_PX)
 MONO_FAMILIES = ("Cascadia Mono", "Consolas", "SF Mono", "DejaVu Sans Mono", "Liberation Mono", "Courier New")
 
 _theme: list[Theme] = [DARK]
@@ -150,7 +176,8 @@ def pick_mono() -> str:
 
 
 def style_sheet(t: Theme, body: str, display: str, mono: str = "Consolas") -> str:
-    """The ONE application style sheet (selectors by object name / dynamic property only)."""
+    """The ONE application style sheet (selectors by object name / dynamic property only), built from the
+    theme's tokens: the same rules give the dark and the light window."""
     return f"""
 * {{ font-family: "{body}"; font-size: {BODY_PX}px; color: {t.text}; }}
 QMainWindow, QDialog {{ background: {t.window}; }}
@@ -158,14 +185,17 @@ QDialog {{ background: {t.sidebar}; }}
 #Backdrop {{ background: {t.window}; }}
 #Page, #PageBody, QStackedWidget, #Page > QWidget {{ background: transparent; }}
 QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
-#Sidebar {{ background: {GLASS_SIDEBAR}; border: none; border-right: 1px solid {GLASS_EDGE}; }}
-QLabel[role="brand"] {{ font-family: "{display}"; font-size: 17px; font-weight: 600; }}
+#Sidebar {{ background: {t.sidebar}; border: none; border-right: 1px solid {t.edge}; }}
+#SideFoot {{ background: {t.group}; border: 1px solid {t.edge}; border-radius: {CONTROL_RADIUS}px; }}
+QLabel[role="brand"] {{ font-family: "{display}"; font-size: 16px; font-weight: 600; }}
+QLabel[role="brandsub"] {{ font-size: {CAPTION_PX}px; color: {t.tertiary}; }}
 QLabel[role="navgroup"] {{ font-size: {CAPTION_PX}px; font-weight: 600; color: {t.tertiary}; }}
 QLabel {{ background: transparent; }}
 QLabel[role="title"] {{ font-family: "{display}"; font-size: {TITLE_PX}px; font-weight: 600; }}
-QLabel[role="headline"] {{ font-family: "{display}"; font-size: 20px; font-weight: 600; }}
+QLabel[role="headline"] {{ font-family: "{display}"; font-size: {HEADLINE_PX}px; font-weight: 600; }}
+QLabel[role="cardtitle"] {{ font-family: "{display}"; font-size: {SECTION_PX}px; font-weight: 600; }}
 QLabel[role="section"] {{ font-family: "{display}"; font-size: {SECTION_PX}px; font-weight: 600; color: {t.text}; }}
-QLabel[role="kicker"] {{ font-size: {SMALL_PX}px; font-weight: 500; color: {t.secondary}; }}
+QLabel[role="kicker"] {{ font-size: {CAPTION_PX}px; font-weight: 600; color: {t.tertiary}; }}
 QLabel[role="mono"] {{ font-size: {SMALL_PX}px; color: {t.secondary}; }}
 QLabel[role="monofoot"] {{ font-size: {CAPTION_PX}px; color: {t.tertiary}; }}
 QLabel[role="secondary"] {{ font-size: {SMALL_PX}px; color: {t.secondary}; }}
@@ -176,22 +206,30 @@ QLabel[tone="danger"] {{ color: {t.danger}; }}
 QLabel[tone="warning"] {{ color: {t.warning}; }}
 QLabel[tone="ok"] {{ color: {t.ok}; }}
 QLabel[tone="accent"] {{ color: {t.accent}; }}
+QLabel[role="badge"] {{ font-size: {CAPTION_PX}px; font-weight: 600; color: {t.secondary}; background: {t.control};
+  border-radius: {BADGE_RADIUS}px; padding: 2px 8px; }}
+QLabel[role="badge"][tone="ok"] {{ color: {t.ok}; background: {t.ok_soft}; }}
+QLabel[role="badge"][tone="warning"] {{ color: {t.warning}; background: {t.warning_soft}; }}
+QLabel[role="badge"][tone="danger"] {{ color: {t.danger}; background: {t.danger_soft}; }}
+QLabel[role="badge"][tone="accent"] {{ color: {t.accent}; background: {t.accent_tint}; }}
 QLabel a {{ color: {t.accent}; }}
-#Group {{ background: {GLASS_GROUP}; border: none; border-radius: {GROUP_RADIUS}px; }}
-#Group[tone="accent"] {{ border: 1px solid {t.accent_soft}; }}
-#Separator {{ background: {GLASS_SEPARATOR}; border: none; }}
-QPushButton#FoldHead {{ background: transparent; border: none; border-top: 1px solid {GLASS_SEPARATOR};
+#Group {{ background: {t.group}; border: 1px solid {t.edge}; border-radius: {GROUP_RADIUS}px; }}
+#Group[tone="accent"] {{ border: 1px solid {t.accent}; }}
+#Group[clickable="true"]:hover {{ background: {t.group_hover}; }}
+#Empty {{ background: transparent; border: 1px dashed {t.control_border}; border-radius: {GROUP_RADIUS}px; }}
+#Separator {{ background: {t.separator}; border: none; }}
+QPushButton#FoldHead {{ background: transparent; border: none; border-top: 1px solid {t.separator};
   border-radius: 0; text-align: left; padding: 16px 4px 4px 4px; font-family: "{display}";
   font-size: {SECTION_PX}px; font-weight: 600; color: {t.secondary}; }}
 QPushButton#FoldHead:hover, QPushButton#FoldHead:checked {{ color: {t.text}; }}
 QPushButton {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: {CONTROL_RADIUS}px;
-  padding: 8px 16px; min-height: 20px; font-weight: 500; }}
+  padding: 7px 16px; min-height: 20px; font-weight: 500; }}
 QPushButton:hover {{ background: {t.control_hover}; }}
 QPushButton:pressed {{ background: {t.separator}; }}
 QPushButton:disabled {{ color: {t.tertiary}; }}
 QPushButton[kind="primary"] {{ background: {t.accent}; color: {t.on_accent}; border: 1px solid {t.accent};
   font-weight: 600; }}
-QPushButton[kind="primary"]:hover {{ background: {t.accent_hover}; }}
+QPushButton[kind="primary"]:hover {{ background: {t.accent_hover}; border-color: {t.accent_hover}; }}
 QPushButton[kind="primary"]:disabled {{ background: {t.track_off}; border-color: {t.track_off};
   color: {t.tertiary}; }}
 QPushButton[kind="danger"] {{ background: {t.control}; color: {t.danger}; }}
@@ -200,10 +238,10 @@ QPushButton[kind="link"] {{ background: transparent; border: none; color: {t.acc
 QPushButton[kind="link"]:hover {{ text-decoration: underline; }}
 QPushButton[kind="large"] {{ padding: 9px 22px; font-size: 15px; }}
 QPushButton#NavItem {{ background: transparent; border: none; border-radius: {CONTROL_RADIUS}px; text-align: left;
-  padding: 7px 10px; font-size: {BODY_PX}px; font-weight: 500; }}
-QPushButton#NavItem:hover {{ background: {GLASS_GROUP_HOVER}; }}
+  padding: 7px 10px; font-size: {BODY_PX}px; font-weight: 500; color: {t.secondary}; }}
+QPushButton#NavItem:hover {{ background: {t.hover}; color: {t.text}; }}
 QPushButton#NavItem:checked {{ background: {t.accent_soft}; color: {t.text}; font-weight: 600; }}
-QPushButton#NavItem[live="true"] {{ color: {t.accent}; font-weight: 600; }}
+QPushButton#NavItem[live="true"] {{ color: {t.text}; font-weight: 600; }}
 QComboBox {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: {CONTROL_RADIUS}px;
   padding: 5px 30px 5px 10px; min-height: 20px; min-width: 140px; }}
 QComboBox:hover {{ background: {t.control_hover}; }}
@@ -226,10 +264,11 @@ QScrollBar::handle:vertical:hover {{ background: {t.tertiary}; }}
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{
   background: none; height: 0; }}
 QToolTip {{ background: {t.group}; color: {t.text}; border: 1px solid {t.control_border}; padding: 4px 8px; }}
-#Segmented {{ background: {t.track_off}; border-radius: 8px; }}
+#Segmented {{ background: {t.seg_track}; border-radius: 8px; }}
 QPushButton#Segment {{ background: transparent; border: none; border-radius: 6px; padding: 4px 12px;
-  font-size: {SMALL_PX}px; font-weight: 500; min-height: 18px; }}
-QPushButton#Segment:checked {{ background: {t.accent_soft}; color: {t.text}; }}
+  font-size: {SMALL_PX}px; font-weight: 500; min-height: 18px; color: {t.secondary}; }}
+QPushButton#Segment:hover {{ color: {t.text}; }}
+QPushButton#Segment:checked {{ background: {t.thumb}; color: {t.text}; font-weight: 600; }}
 #Toast {{ background: {t.text}; border-radius: 10px; }}
 #Toast QLabel {{ color: {t.window}; font-weight: 500; }}
 #Toast[level="error"] QLabel, #Toast[level="warning"] QLabel {{ font-weight: 600; }}
@@ -258,8 +297,8 @@ def load_fonts() -> int:
 
 
 def apply_theme(app: QtWidgets.QApplication, dark: bool = True) -> Theme:
-    """The one theme (sapphire, dark by design; ``dark`` is kept for old callers)."""
-    t = SAPPHIRE
+    """Graphite (dark, the default) or porcelain (light): fonts, palette and the one style sheet."""
+    t = GRAPHITE if dark else PORCELAIN
     load_fonts()
     _theme[0] = t
     body, display = pick_family(FONT_FAMILIES), pick_family(DISPLAY_FAMILIES)
@@ -350,9 +389,66 @@ def _glyph_path(kind: str, s: float) -> QtGui.QPainterPath:
         p.lineTo(6 * u, 11.5 * u); p.closeSubpath()
         p.moveTo(4.5 * u, 10 * u); p.lineTo(10 * u, 15.5 * u)
         p.moveTo(6.5 * u, 13.5 * u); p.lineTo(3.5 * u, 16.5 * u)
+    elif kind == "lol":              # a shield with a crest line (League of Legends)
+        p.moveTo(10 * u, 2.5 * u); p.lineTo(16 * u, 5 * u); p.lineTo(16 * u, 10 * u)
+        p.cubicTo(16 * u, 13.8 * u, 13.4 * u, 16.2 * u, 10 * u, 17.5 * u)
+        p.cubicTo(6.6 * u, 16.2 * u, 4 * u, 13.8 * u, 4 * u, 10 * u); p.lineTo(4 * u, 5 * u); p.closeSubpath()
+        p.moveTo(10 * u, 6 * u); p.lineTo(10 * u, 14 * u)
+    elif kind == "clock":
+        p.addEllipse(QtCore.QPointF(10 * u, 10 * u), 7 * u, 7 * u)
+        p.moveTo(10 * u, 6 * u); p.lineTo(10 * u, 10 * u); p.lineTo(13 * u, 12 * u)
+    elif kind == "play":
+        p.moveTo(7 * u, 5 * u); p.lineTo(15 * u, 10 * u); p.lineTo(7 * u, 15 * u); p.closeSubpath()
+    elif kind == "tray":             # empty states: an open box
+        p.moveTo(3 * u, 11 * u); p.lineTo(5.5 * u, 5 * u); p.lineTo(14.5 * u, 5 * u); p.lineTo(17 * u, 11 * u)
+        p.lineTo(17 * u, 16 * u); p.lineTo(3 * u, 16 * u); p.closeSubpath()
+        p.moveTo(3 * u, 11 * u); p.lineTo(7.5 * u, 11 * u); p.lineTo(8.5 * u, 13 * u); p.lineTo(11.5 * u, 13 * u)
+        p.lineTo(12.5 * u, 11 * u); p.lineTo(17 * u, 11 * u)
+    elif kind == "chevron":
+        p.moveTo(8 * u, 5 * u); p.lineTo(13 * u, 10 * u); p.lineTo(8 * u, 15 * u)
     else:
         p.addEllipse(QtCore.QPointF(10 * u, 10 * u), 6 * u, 6 * u)
     return p
+
+
+def glyph_pixmap(kind: str, color: str, size: int = 20, dpr: float = 2.0) -> QtGui.QPixmap:
+    pm = QtGui.QPixmap(int(size * dpr), int(size * dpr))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(Qt.transparent)
+    qp = QtGui.QPainter(pm)
+    qp.setRenderHint(QtGui.QPainter.Antialiasing)
+    qp.setPen(QtGui.QPen(QtGui.QColor(color), 1.6 * size / 20.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    qp.drawPath(_glyph_path(kind, size))
+    qp.end()
+    return pm
+
+
+class Glyph(QtWidgets.QLabel):
+    """A line icon as a label, in a theme colour (``tone``: secondary / accent / ok / warning / danger);
+    repainted from the current theme on :meth:`recolor` (live theme switch)."""
+
+    def __init__(self, kind: str, size: int = 20, tone: str = "secondary",
+                 parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._kind, self._size, self._tone = kind, size, tone
+        self.setFixedSize(size, size)
+        self.recolor()
+
+    def set_tone(self, tone: str) -> None:
+        if tone != self._tone:
+            self._tone = tone
+            self.recolor()
+
+    def set_kind(self, kind: str) -> None:
+        if kind != self._kind:
+            self._kind = kind
+            self.recolor()
+
+    def recolor(self) -> None:
+        t = theme()
+        col = {"accent": t.accent, "ok": t.ok, "warning": t.warning, "danger": t.danger, "text": t.text,
+               "tertiary": t.tertiary}.get(self._tone, t.secondary)
+        self.setPixmap(glyph_pixmap(self._kind, col, self._size))
 
 
 def glyph_icon(kind: str, color: str, size: int = 20, checked_color: str | None = None) -> QtGui.QIcon:
@@ -668,6 +764,126 @@ def card() -> QtWidgets.QFrame:
     return f
 
 
+def badge(text: str = "", tone: str = "") -> QtWidgets.QLabel:
+    """A small status pill (« En partie », « Prêt », « À installer »): tinted background, tone colour."""
+    b = label(text, "badge")
+    if tone:
+        b.setProperty("tone", tone)
+    b.setAlignment(Qt.AlignCenter)
+    return b
+
+
+def set_badge(b: QtWidgets.QLabel, text: str, tone: str = "") -> None:
+    if b.text() != text:
+        b.setText(text)
+    set_prop(b, "tone", tone)
+    b.setVisible(bool(text))
+
+
+class Card(QtWidgets.QFrame):
+    """A free card (same surface as a group, inner padding ``CARD_PAD``). ``clickable``: the whole card is
+    a target (hover tint, hand cursor, ``clicked``), for the dashboard tiles that lead to a page."""
+
+    clicked = QtCore.Signal()
+
+    def __init__(self, clickable: bool = False, pad: int = CARD_PAD, spacing: int = SP_2,
+                 parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Group")
+        self.lay = QtWidgets.QVBoxLayout(self)
+        self.lay.setContentsMargins(pad, pad - 4, pad, pad - 4)
+        self.lay.setSpacing(spacing)
+        if clickable:
+            self.setProperty("clickable", True)
+            self.setCursor(Qt.PointingHandCursor)
+            self.setAttribute(Qt.WA_Hover, True)
+
+    def mouseReleaseEvent(self, e: Any) -> None:  # noqa: N802
+        if self.property("clickable") and e.button() == Qt.LeftButton and self.rect().contains(e.pos()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(e)
+
+    def add(self, w: Any, stretch: int = 0) -> Any:
+        if isinstance(w, QtWidgets.QLayout):
+            self.lay.addLayout(w, stretch)
+        else:
+            self.lay.addWidget(w, stretch)
+        return w
+
+
+class EmptyState(QtWidgets.QFrame):
+    """What a list shows while it has nothing: a quiet icon, one short title, one line saying how to fill
+    it, an optional button. Dashed outline, no fill (it is a placeholder, not content)."""
+
+    def __init__(self, glyph: str, title: str, text: str = "", action: str = "",
+                 on_action: Callable[[], Any] | None = None, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Empty")
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(SP_5, SP_4, SP_5, SP_4)
+        lay.setSpacing(SP_4)
+        self.icon = Glyph(glyph, 24, "tertiary")
+        lay.addWidget(self.icon, 0, Qt.AlignVCenter)
+        col = QtWidgets.QVBoxLayout()
+        col.setSpacing(2)
+        self.title = label(title, "cardtitle")
+        col.addWidget(self.title)
+        self.text = label(text, "secondary", wrap=True)
+        col.addWidget(self.text)
+        if not text:
+            self.text.hide()
+        lay.addLayout(col, 1)
+        self.button = None
+        if action:
+            self.button = button(action, on_action)
+            lay.addWidget(self.button, 0, Qt.AlignVCenter)
+
+    def set_text(self, title: str, text: str = "") -> None:
+        self.title.setText(title)
+        self.text.setText(text)
+        self.text.setVisible(bool(text))
+
+
+class Columns(QtWidgets.QWidget):
+    """Two (or more) cards side by side when the column is wide enough (``min_each`` px per card), else
+    stacked: the dashboard reads at 980 x 640 as well as full screen. Re-laid only when it crosses."""
+
+    def __init__(self, min_each: int = 320, gap: int = SP_4, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._min_each = min_each
+        self._lay = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.LeftToRight, self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(gap)
+        self._items: list[QtWidgets.QWidget] = []
+
+    def add(self, w: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        self._items.append(w)
+        w.setSizePolicy(QtWidgets.QSizePolicy.Ignored, w.sizePolicy().verticalPolicy())
+        self._lay.addWidget(w, 1)
+        return w
+
+    def set_order(self, widgets: Sequence[QtWidgets.QWidget]) -> None:
+        """Put these widgets first (e.g. the game that runs now), keeping the others after them."""
+        order = [w for w in widgets if w in self._items] + [w for w in self._items if w not in widgets]
+        if order == [self._lay.itemAt(i).widget() for i in range(self._lay.count())]:
+            return
+        for w in order:
+            self._lay.removeWidget(w)
+        for w in order:
+            self._lay.addWidget(w, 1)
+
+    def is_wide(self) -> bool:
+        return self._lay.direction() == QtWidgets.QBoxLayout.LeftToRight
+
+    def resizeEvent(self, e: Any) -> None:  # noqa: N802
+        n = max(1, len([w for w in self._items if not w.isHidden()]))
+        wide = self.width() >= n * self._min_each + (n - 1) * self._lay.spacing()
+        want = QtWidgets.QBoxLayout.LeftToRight if wide else QtWidgets.QBoxLayout.TopToBottom
+        if self._lay.direction() != want:
+            self._lay.setDirection(want)
+        super().resizeEvent(e)
+
+
 class Group(QtWidgets.QFrame):
     """Inset grouped list: rounded cell, rows separated by hairlines inset 16 px."""
 
@@ -749,7 +965,7 @@ class Page(QtWidgets.QScrollArea):
         body = QtWidgets.QWidget()
         body.setObjectName("PageBody")
         outer = QtWidgets.QHBoxLayout(body)
-        outer.setContentsMargins(PAGE_PAD_X, PAGE_PAD_TOP, PAGE_PAD_X, 40)
+        outer.setContentsMargins(PAGE_PAD_X, PAGE_PAD_TOP, PAGE_PAD_X, SP_7)
         self.column = QtWidgets.QWidget()
         self.column.setMaximumWidth(max_width)
         outer.addStretch(1)
@@ -758,17 +974,33 @@ class Page(QtWidgets.QScrollArea):
         self.lay = QtWidgets.QVBoxLayout(self.column)
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(SECTION_GAP)
-        head = QtWidgets.QVBoxLayout()
-        head.setSpacing(8)
+        # header: title + one short sentence on the left, the page's own action (if any) on the right
+        head = QtWidgets.QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(SP_4)
+        texts = QtWidgets.QVBoxLayout()
+        texts.setSpacing(SP_1 + 2)
         self.title = label(title, "title")
-        head.addWidget(self.title)
+        texts.addWidget(self.title)
         self.subtitle = label(subtitle, "secondary", wrap=True)
-        head.addWidget(self.subtitle)
+        texts.addWidget(self.subtitle)
         if not subtitle:
             self.subtitle.hide()
+        head.addLayout(texts, 1)
+        self._head = head
         self.lay.addLayout(head)
         self.lay.addStretch(1)
         self.setWidget(body)
+
+    def set_subtitle(self, text: str) -> None:
+        if self.subtitle.text() != text:
+            self.subtitle.setText(text)
+        self.subtitle.setVisible(bool(text))
+
+    def set_action(self, w: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        """A button (or a badge) at the right of the page title."""
+        self._head.addWidget(w, 0, Qt.AlignRight | Qt.AlignVCenter)
+        return w
 
     def add(self, w: QtWidgets.QWidget) -> QtWidgets.QWidget:
         self.lay.insertWidget(self.lay.count() - 1, w)
@@ -876,9 +1108,25 @@ class Fold(QtWidgets.QWidget):
         return s
 
 
+class NavButton(QtWidgets.QPushButton):
+    """One sidebar row: glyph + label; while its game runs (``live``) a small accent dot on the right."""
+
+    def paintEvent(self, e: Any) -> None:  # noqa: N802
+        super().paintEvent(e)
+        if not self.property("live"):
+            return
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing)
+        qp.setPen(Qt.NoPen)
+        qp.setBrush(QtGui.QColor(theme().ok))
+        r = 3.5
+        qp.drawEllipse(QtCore.QPointF(self.width() - 14, self.height() / 2), r, r)
+        qp.end()
+
+
 class Sidebar(QtWidgets.QFrame):
-    """Navigation (icon + label rows, soft accent fill on the current page) in groups (a small
-    caption above each group but the first; the last group sits at the bottom) + a status line."""
+    """Navigation (icon + label rows, soft fill and accent icon on the current page) in groups (a small
+    caption above each group; the last group sits at the bottom) + a status card at the foot."""
 
     selected = QtCore.Signal(str)
 
@@ -889,17 +1137,22 @@ class Sidebar(QtWidgets.QFrame):
         self.setObjectName("Sidebar")
         self.setFixedWidth(SIDEBAR_W)
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(12, 20, 12, 14)
+        lay.setContentsMargins(SP_3, SP_5, SP_3, SP_3)
         lay.setSpacing(2)
         top = QtWidgets.QHBoxLayout()
-        top.setContentsMargins(10, 0, 0, 16)
-        top.setSpacing(10)
+        top.setContentsMargins(SP_2, 0, 0, SP_5)
+        top.setSpacing(SP_3 - 2)
         self.mark = QtWidgets.QLabel()
-        self.mark.setFixedSize(26, 26)
-        top.addWidget(self.mark)
+        self.mark.setFixedSize(28, 28)
+        top.addWidget(self.mark, 0, Qt.AlignVCenter)
+        names = QtWidgets.QVBoxLayout()
+        names.setSpacing(0)
         self.brand = QtWidgets.QLabel()
         self.brand.setProperty("role", "brand")
-        top.addWidget(self.brand, 1)
+        names.addWidget(self.brand)
+        self.brand_sub = label("League of Legends · WoW", "brandsub")
+        names.addWidget(self.brand_sub)
+        top.addLayout(names, 1)
         lay.addLayout(top)
         self._group = QtWidgets.QButtonGroup(self)
         self._group.setExclusive(True)
@@ -918,21 +1171,21 @@ class Sidebar(QtWidgets.QFrame):
             box = QtWidgets.QWidget()
             box.setObjectName("NavGroup")
             bl = QtWidgets.QVBoxLayout(box)
-            bl.setContentsMargins(0, 14 if gi > 0 and gi != len(groups) - 1 else 0, 0, 0)
+            bl.setContentsMargins(0, SP_4 if gi > 0 and gi != len(groups) - 1 else 0, 0, 0)
             bl.setSpacing(2)
             if caption:
                 cap = label(caption, "navgroup")
-                cap.setContentsMargins(10, 0, 0, 4)
+                cap.setContentsMargins(SP_3 - 2, 0, 0, SP_1)
                 bl.addWidget(cap)
             for key in keys:
                 if key not in by_key:
                     continue
                 _k, text, kind = by_key[key]
-                b = QtWidgets.QPushButton(text)
+                b = NavButton(text)
                 b.setObjectName("NavItem")
                 b.setCheckable(True)
                 b.setCursor(Qt.PointingHandCursor)
-                b.setIconSize(QtCore.QSize(20, 20))
+                b.setIconSize(QtCore.QSize(18, 18))
                 b.setMinimumHeight(36)
                 self._group.addButton(b)
                 self.buttons[key] = b
@@ -945,33 +1198,37 @@ class Sidebar(QtWidgets.QFrame):
         self._order = list(range(len(self.group_boxes)))
         if len(groups) < 2:
             lay.addStretch(1)
-        lay.addSpacing(10)
+        lay.addSpacing(SP_3)
         self.update_btn = button("", None, "primary")
         self.update_btn.hide()
         lay.addWidget(self.update_btn)
-        foot = QtWidgets.QHBoxLayout()
-        foot.setContentsMargins(10, 10, 4, 0)
-        foot.setSpacing(8)
+        lay.addSpacing(SP_2)
+        foot = QtWidgets.QFrame()
+        foot.setObjectName("SideFoot")
+        fl = QtWidgets.QHBoxLayout(foot)
+        fl.setContentsMargins(SP_3, SP_2 + 2, SP_3, SP_2 + 2)
+        fl.setSpacing(SP_2)
         self.dot = Dot()
-        foot.addWidget(self.dot, 0, Qt.AlignVCenter)
+        fl.addWidget(self.dot, 0, Qt.AlignVCenter)
         self.status = label("", "secondary")
-        foot.addWidget(self.status, 1)
-        lay.addLayout(foot)
+        self.status.setMinimumWidth(0)
+        fl.addWidget(self.status, 1)
+        self.foot = foot
+        lay.addWidget(foot)
         self.recolor()
 
     def recolor(self) -> None:
         t = theme()
         for key, b in self.buttons.items():
-            b.setIcon(glyph_icon(self._kinds[key], t.secondary, 20, t.text))
+            b.setIcon(glyph_icon(self._kinds[key], t.secondary, 18, t.accent))
 
     def set_live(self, key: str, on: bool) -> None:
-        """Mark a page as « active now » (accent text + a dot: the game it coaches is running)."""
+        """Mark a page as « active now » (a dot on its row: the game it coaches is running)."""
         b = self.buttons.get(key)
         if b is None or bool(b.property("live")) == bool(on):
             return
         set_prop(b, "live", bool(on))
-        base = b.text().rstrip(" ●")
-        b.setText(f"{base}  ●" if on else base)
+        b.setToolTip("En cours" if on else "")
 
     def promote(self, key: str, on: bool = True) -> None:
         """Put the group holding ``key`` first (``on``) or back at its place; the bottom group stays put."""
@@ -988,7 +1245,7 @@ class Sidebar(QtWidgets.QFrame):
             box = self.group_boxes[gi]
             self._nav_lay.removeWidget(box)
             self._nav_lay.insertWidget(1 + pos, box)          # after the brand row
-            box.layout().setContentsMargins(0, 14 if pos > 0 else 0, 0, 0)
+            box.layout().setContentsMargins(0, SP_4 if pos > 0 else 0, 0, 0)
 
     def group_order(self) -> list[str]:
         """The page keys of the groups, top to bottom (tests)."""
@@ -1046,6 +1303,7 @@ class Toast(QtWidgets.QFrame):
         self.move((par.width() - w) // 2 + SIDEBAR_W // 2, par.height() - self.height() - 24)
 
 
-__all__ = ["Theme", "SAPPHIRE", "SPACE", "DARK", "THEMES", "Backdrop", "theme", "apply_theme", "system_is_dark", "style_sheet", "Switch", "Dot",
+__all__ = ["Theme", "GRAPHITE", "PORCELAIN", "LIGHT", "Card", "EmptyState", "Columns", "Glyph", "badge",
+           "set_badge", "glyph_pixmap", "NavButton", "SAPPHIRE", "SPACE", "DARK", "THEMES", "Backdrop", "theme", "apply_theme", "system_is_dark", "style_sheet", "Switch", "Dot",
            "Segmented", "Combo", "Slider", "Row", "Group", "Section", "Page", "Sidebar", "Toast", "label",
            "button", "glyph_icon", "set_prop", "repolish"]

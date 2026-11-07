@@ -192,6 +192,7 @@ PERF_MODES: tuple[tuple[str, str], ...] = (("auto", "Auto"), ("normal", "Normal"
 CAPTURE_BACKENDS: tuple[tuple[str, str], ...] = (("auto", "Auto"), ("dxgi", "DXGI"), ("mss", "Compatible"))
 UI_SCALINGS: tuple[tuple[str, str], ...] = (("auto", "Auto"), ("90", "90 %"), ("100", "100 %"), ("110", "110 %"),
                                             ("125", "125 %"), ("150", "150 %"))
+UI_THEMES: tuple[tuple[str, str], ...] = (("dark", "Sombre"), ("light", "Clair"), ("auto", "Système"))
 PLAYS_POSITIONS: tuple[tuple[str, str], ...] = (("top_center", "En haut"), ("minimap", "Près de la minimap"))
 DETECTORS: tuple[tuple[str, str], ...] = (
     ("auto", "Automatique"),

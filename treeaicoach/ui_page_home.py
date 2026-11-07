@@ -7,7 +7,16 @@ import logging
 from typing import Any
 
 from treeaicoach import ui_kit
-from treeaicoach.ui_common import champion_name, fmt_clock, fmt_game_date, game_datetime, game_field, game_result, ui_text
+from treeaicoach.ui_common import (
+    champion_name,
+    fmt_clock,
+    fmt_game_date,
+    game_datetime,
+    game_field,
+    game_result,
+    session_stats,
+    ui_text,
+)
 
 log = logging.getLogger(__name__)
 
@@ -16,45 +25,52 @@ class HomePage:
     def __init__(self, app: Any) -> None:
         self.app = app
         W, QtWidgets, Qt = app.W, app.QtWidgets, app.QtCore.Qt
-        self.page = W.Page("Accueil")
+        self.page = W.Page("Accueil", "Ce qui compte maintenant.", max_width=W.WIDE_MAX)
         self._sig: Any = None
         self._sys_sig: dict[str, Any] = {}
         self._fix_action = ""
 
-        # --- hero: the champion of the game (or of the last one) on a glass card, status, Démarrer / Arrêter
+        # --- « Maintenant »: one card per game, side by side when there is room (the running game first).
+        # League: the champion of the game (or of the last one) behind the status, Démarrer / Arrêter.
         from treeaicoach import ui_flair  # noqa: PLC0415
 
         self._flair = ui_flair
         self._last_game: tuple[str, str, str] = ("", "", "")       # alias, role, result of the newest record
         self._live_champ: tuple[str, str] = ("", "")               # alias, role of the game in progress
+        self.now = W.Columns(min_each=300)
         self.hero = ui_flair.HeroCard()
-        self.hero.setMinimumHeight(152)        # compact status header (v3.4)
-        hl = QtWidgets.QHBoxLayout(self.hero)
-        hl.setContentsMargins(24, 16, 24, 16)
+        self.hero.setMinimumHeight(176)
+        outer = QtWidgets.QVBoxLayout(self.hero)
+        outer.setContentsMargins(W.CARD_PAD, W.SP_4 + 2, W.CARD_PAD, W.SP_4 + 2)
+        outer.setSpacing(W.SP_2)
+        outer.addLayout(self._game_head("lol", "League of Legends", "lol_badge"))
+        hl = QtWidgets.QHBoxLayout()
+        hl.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(hl, 1)
         left = QtWidgets.QWidget()
-        left.setMinimumWidth(360)
+        left.setMinimumWidth(260)
         left.setMaximumWidth(480)
         ll = QtWidgets.QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        ll.setSpacing(8)
-        self.kicker = W.label("", "kicker")
-        self.kicker.hide()
-        ll.addWidget(self.kicker)
+        ll.setSpacing(W.SP_2)
         row = QtWidgets.QHBoxLayout()
-        row.setSpacing(12)
+        row.setSpacing(W.SP_3 - 2)
         self.dot = W.Dot()
         row.addWidget(self.dot, 0, Qt.AlignVCenter)
         self.title = W.label("Démarrage…", "headline")
         row.addWidget(self.title, 1)
         ll.addLayout(row)
+        self.kicker = W.label("", "secondary")
+        self.kicker.hide()
+        ll.addWidget(self.kicker)
         self.message = W.label("", "secondary", wrap=True)
         ll.addWidget(self.message)
-        self.live = W.label("", "secondary")
+        self.live = W.label("", "secondary", wrap=True)
         self.live.hide()
         ll.addWidget(self.live)
         ll.addStretch(1)
         btns = QtWidgets.QHBoxLayout()
-        btns.setSpacing(8)
+        btns.setSpacing(W.SP_2)
         self.start_btn = W.button("Démarrer", app.toggle_engine, "primary")
         self.start_btn.setProperty("kind", "primary")
         self.start_btn.setMinimumWidth(128)
@@ -64,9 +80,34 @@ class HomePage:
         btns.addWidget(self.fix_btn)
         btns.addStretch(1)
         ll.addLayout(btns)
-        hl.addWidget(left, 0)
-        hl.addStretch(1)
-        self.page.add(self.hero)
+        hl.addWidget(left, 1, Qt.AlignLeft)
+        self.now.add(self.hero)
+
+        # World of Warcraft: is it running, the addon, the character of the last save (files only, worker)
+        self.wow_card = W.Card(clickable=True)
+        self.wow_card.setMinimumHeight(176)
+        self.wow_card.setToolTip("Ouvrir WoW Forever")
+        self.wow_card.clicked.connect(lambda: app.show_page("wow"))
+        self.wow_card.add(self._game_head("wow", "World of Warcraft", "wow_badge", chevron=True))
+        self.wow_title = W.label("Recherche de WoW…", "headline")
+        self.wow_card.add(self.wow_title)
+        self.wow_char = W.label("", "secondary", wrap=True)
+        self.wow_card.add(self.wow_char)
+        self.wow_hint = W.label("", "secondary", wrap=True)
+        self.wow_card.add(self.wow_hint)
+        self.wow_card.lay.addStretch(1)
+        wb = QtWidgets.QHBoxLayout()
+        self.wow_btn = W.button("Ouvrir WoW Forever", lambda: app.show_page("wow"))
+        wb.addWidget(self.wow_btn)
+        wb.addStretch(1)
+        self.wow_card.add(wb)
+        self.now.add(self.wow_card)
+        self._wow: dict[str, Any] = {}
+        self._wow_sig: Any = None
+        self._wow_busy = False
+        self._wow_polled = 0.0
+        self._wow_full = 0.0
+        self.page.add(self.now)
 
         # --- champion select (only while it happens)
         self.cs = W.Section("Sélection des champions")
@@ -153,21 +194,49 @@ class HomePage:
         self.demo_btn = W.button("Lancer", app.toggle_demo)
         tri.add(W.Row("Partie de démonstration", "Le jungler ennemi vient te ganker vers 40 s.", self.demo_btn))
 
-        # --- last game
-        last = self.page.section("Dernière partie")
+        # --- last session (placed right under « Maintenant »): the last League game + today, the WoW
+        # character of the last save, the evening focus. Nothing yet: one empty state instead.
+        last = W.Section("Dernière session")
+        self.session_empty = W.EmptyState("tray", "Pas encore de session",
+                                          "Joue une partie avec TreeAI ouvert : son résumé arrive ici.",
+                                          "Partie de démo", app.toggle_demo)
+        last.layout().insertWidget(last.layout().indexOf(last.group), self.session_empty)
         self.last_row = last.add(W.Row("Aucune partie enregistrée",
                                        "Joue une partie avec l'analyse active : le rapport apparaît ici.",
                                        W.button("Rapport", app.open_last_report)))
         self.last_row.control.setEnabled(False)
+        self.wow_row = last.add(W.Row("World of Warcraft", "…", W.button("Ouvrir", lambda: app.show_page("wow"))))
+        self.wow_row.hide()
         # the evening focus of the next game (win_conditions.py: >= 8 recorded games, else hidden)
         self.focus_row = last.add(W.Row("Focus du soir", ""))
         self.focus_row.hide()
+        self.session = last
+        self._has_games = False
+        self.page.lay.insertWidget(self.page.lay.indexOf(self.pl) + 1, last)
+        self._sync_session()
 
-        # --- system
-        self.sys = self.page.section("Système")
+        # --- system: every check in one closed block (the status card above already names the problem)
+        self.sys_fold = self.page.fold("État détaillé", "")
+        self.sys = self.sys_fold.section("Système")
         self.sys_rows: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ helpers
+    def _game_head(self, glyph: str, name: str, attr: str, chevron: bool = False) -> Any:
+        """Top line of a game card: its glyph, the game's name (small caps-free caption), a status badge."""
+        W, QtWidgets, Qt = self.app.W, self.app.QtWidgets, self.app.QtCore.Qt
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(W.SP_2)
+        head.addWidget(W.Glyph(glyph, 18, "secondary"), 0, Qt.AlignVCenter)
+        head.addWidget(W.label(name, "kicker"), 0, Qt.AlignVCenter)
+        head.addStretch(1)
+        b = W.badge("")
+        b.hide()
+        setattr(self, attr, b)
+        head.addWidget(b, 0, Qt.AlignVCenter)
+        if chevron:
+            head.addWidget(W.Glyph("chevron", 16, "tertiary"), 0, Qt.AlignVCenter)
+        return head
+
     def _key(self, field: str) -> str:
         return str(getattr(self.app.cfg, field, "") or "").replace("+", " + ") or "touche désactivée"
 
@@ -202,10 +271,12 @@ class HomePage:
 
     def on_games(self, games: list[dict]) -> None:
         r = self.last_row
+        self._has_games = bool(games)
         if not games:
             r.title.setText("Aucune partie enregistrée")
             r.set_desc("Joue une partie avec l'analyse active : le rapport apparaît ici.")
             r.control.setEnabled(False)
+            self._sync_session()
             return
         g = games[0]
         alias = str(game_field(g, "champion", "alias", default="") or "")
@@ -214,9 +285,19 @@ class HomePage:
         self._last_game = (alias, str(game_field(g, "role", "my_role", default="") or ""), res)
         self._refresh_hero()
         self._refresh_focus(self._last_game[1])
-        r.title.setText(f"{champ}" + (f" · {res}" if res else ""))
-        r.set_desc(fmt_game_date(game_datetime(g)))
+        r.title.setText(f"LoL : {champ}" + (f" · {res}" if res else ""))
+        r.set_desc(" · ".join(x for x in (fmt_game_date(game_datetime(g)), session_line(games)) if x))
         r.control.setEnabled(True)
+        self._sync_session()
+
+    def _sync_session(self) -> None:
+        """The session block: its rows when there is something to show, else the empty state."""
+        has_wow = not self.wow_row.isHidden()
+        self.last_row.setVisible(self._has_games or not has_wow)
+        self.session.group.sync_separators()
+        empty = not self._has_games and not has_wow
+        self.session_empty.setVisible(empty)
+        self.session.group.setVisible(not empty)
 
     def _refresh_focus(self, role: str) -> None:
         """Focus row: computed off the UI thread (history cache), hidden when there is none."""
@@ -277,9 +358,77 @@ class HomePage:
             self.start_btn.setEnabled(not app._busy)
             W.set_prop(self.start_btn, "kind", "secondary" if running else "primary")
             self.demo_btn.setText("Arrêter" if app.demo else "Lancer")
+        badge_text, tone = lol_badge(key, app.demo)
+        W.set_badge(self.lol_badge, badge_text, tone)
         self.sync_quick()
         self._update_players(snap)
         self._update_system(snap)
+        self._poll_wow(key)
+
+    # ------------------------------------------------------------------ WoW card
+    WOW_POLL_S = 5.0          # is WoW running (cached process list)
+    WOW_FULL_S = 30.0         # addon + character of the last save (file reads)
+
+    def _poll_wow(self, lol_key: str) -> None:
+        """Refresh the WoW card off the UI thread while the Accueil is on screen (cheap, throttled)."""
+        app = self.app
+        if self._wow_busy or app._current_page != "home" or app._iconic():
+            return
+        import time  # noqa: PLC0415
+
+        now = time.monotonic()
+        if self._wow_polled and now - self._wow_polled < self.WOW_POLL_S:
+            return
+        self._wow_polled = now
+        full = not self._wow or now - self._wow_full >= self.WOW_FULL_S
+        if full:
+            self._wow_full = now
+        self._wow_busy = True
+        cfg, prev = app.cfg, dict(self._wow)
+
+        def job() -> dict:
+            return read_wow(cfg, prev, full)
+
+        def done(st: dict) -> None:
+            self._wow_busy = False
+            if st.get("_changed") and not full:      # WoW just started / stopped: read the files now
+                self._wow_full = 0.0
+                self._wow_polled = 0.0
+            self._wow = st or {}
+            self._render_wow(lol_key)
+
+        def failed(_e: BaseException) -> None:
+            self._wow_busy = False
+
+        app.run_job(job, done, failed, name="TreeAI-ui-home-wow")
+
+    def _render_wow(self, lol_key: str = "") -> None:
+        W = self.app.W
+        card = wow_card(self._wow, bool(getattr(self.app.cfg, "wow_enabled", True)))
+        sig = (tuple(sorted(card.items())), lol_key == "RUNNING")
+        if sig == self._wow_sig:
+            return
+        self._wow_sig = sig
+        self.wow_title.setText(card["title"])
+        self.wow_char.setText(card["char"])
+        self.wow_char.setVisible(bool(card["char"]))
+        self.wow_hint.setText(card["hint"])
+        self.wow_hint.setVisible(bool(card["hint"]))
+        self.wow_btn.setText(card["button"])
+        W.set_prop(self.wow_btn, "kind", "primary" if card["primary"] else "")
+        W.set_badge(self.wow_badge, card["badge"], card["tone"])
+        # the game being played comes first
+        first = self.wow_card if card["running"] and lol_key != "RUNNING" else self.hero
+        self.now.set_order([first])
+        # session: the WoW character of the last save
+        if card["char"]:
+            self.wow_row.title.setText(f"WoW : {card['char_title']}")
+            self.wow_row.set_desc(card["char_desc"])
+            self.wow_row.show()
+        else:
+            self.wow_row.hide()
+        self._sync_session()
+        self.page.set_subtitle(now_line(lol_key, card["running"]))
 
     def _update_players(self, snap: dict[str, Any]) -> None:
         """The « Écran de chargement » card (loading_card.py) from the loading screen on, when "Infos des
@@ -368,6 +517,11 @@ class HomePage:
             row["btn"].setText(fix)
             row["btn"].setVisible(bool(fix and action))
             W.set_prop(row["val"], "tone", {1: "warning", 2: "danger"}.get(level, ""))
+        bad = sum(1 for sig in self._sys_sig.values() if sig[0] == 2)
+        hint = "tout va bien" if not bad else (f"{bad} point à vérifier" if bad == 1 else f"{bad} points à vérifier")
+        if hint != self.sys_fold.hint:
+            self.sys_fold.hint = hint
+            self.sys_fold._sync()
 
     def _add_sys_row(self, key: str, label: str) -> dict[str, Any]:
         app = self.app
@@ -488,6 +642,119 @@ class HomePage:
         if tip:
             lab.setToolTip(tip)
         return lab
+
+
+# ---------------------------------------------------------------------- pure helpers (tests)
+def session_line(games: list[dict]) -> str:
+    """« bilan du jour : 3 parties, 2 victoires » (today only; empty otherwise)."""
+    try:
+        st = session_stats(games)
+    except Exception:
+        return ""
+    if st.get("scope") != "Aujourd'hui" or not st.get("games"):
+        return ""
+    n, w = int(st["games"]), int(st.get("wins") or 0)
+    return f"bilan du jour : {n} partie{'s' if n > 1 else ''}, {w} victoire{'s' if w > 1 else ''}"
+
+
+def lol_badge(key: str, demo: bool = False) -> tuple[str, str]:
+    """The League card's status pill from the engine state key."""
+    if demo and key == "RUNNING":
+        return "Démo", "accent"
+    return {"RUNNING": ("En partie", "ok"), "WAITING_GAME": ("Prêt", "accent"), "LOCATING": ("Prêt", "accent"),
+            "STARTING": ("Démarrage", ""), "STOPPED": ("Arrêté", ""), "CAPTURE_BLACK": ("À corriger", "warning"),
+            "UNSUPPORTED_MODE": ("Mode non géré", "warning")}.get(key, ("À corriger", "danger"))
+
+
+def now_line(lol_key: str, wow_running: bool) -> str:
+    """The Accueil's subtitle: which game TreeAI sees right now."""
+    if lol_key == "RUNNING":
+        return "Partie de League of Legends en cours."
+    if wow_running:
+        return "World of Warcraft est lancé."
+    if lol_key in ("WAITING_GAME", "LOCATING"):
+        return "Prêt : lance une partie, le coach suit."
+    return "Ce qui compte maintenant."
+
+
+def read_wow(cfg: Any, prev: dict | None = None, full: bool = True) -> dict:
+    """WoW state for the Accueil card (worker thread, never raises). ``full``: also the addon and the
+    character (files: :func:`treeaicoach.ui_page_wow.read_state`), else only whether WoW runs."""
+    prev = dict(prev or {})
+    prev.pop("_changed", None)
+    out: dict = dict(prev)
+    try:
+        from treeaicoach.wow import optional  # noqa: PLC0415
+
+        process = optional("process")
+        exe = process.wow_process() if process is not None else None
+        out["wow_exe"] = exe
+        mode_mod = optional("mode")
+        m = mode_mod.current() if mode_mod is not None else None
+        out["mode"] = m.snapshot() if m is not None else None
+        out["_changed"] = bool(prev) and bool(prev.get("wow_exe")) != bool(exe)
+        if full:
+            from treeaicoach import ui_page_wow  # noqa: PLC0415
+
+            st = ui_page_wow.read_state(cfg)
+            if isinstance(st, dict):
+                out.update({k: st.get(k) for k in ("install", "installed", "needs_update", "has_src", "rows",
+                                                    "sv_age", "inst_version")})
+                out["read"] = True
+    except Exception:
+        log.debug("home wow state failed", exc_info=True)
+    return out
+
+
+def _age(age: Any) -> str:
+    if not isinstance(age, (int, float)):
+        return ""
+    if age < 90:
+        return "à l'instant"
+    if age < 3600:
+        return f"il y a {int(age // 60)} min"
+    if age < 86400:
+        return f"il y a {int(age // 3600)} h"
+    return f"il y a {int(age // 86400)} j"
+
+
+def wow_card(st: dict, enabled: bool = True) -> dict:
+    """What the WoW card of the Accueil shows, from :func:`read_wow` (pure, tests)."""
+    st = st or {}
+    running = bool(st.get("wow_exe"))
+    active = bool((st.get("mode") or {}).get("active"))
+    rows = [(str(r[0]), str(r[1])) for r in (st.get("rows") or []) if isinstance(r, (list, tuple)) and len(r) >= 2]
+    vals = dict(rows)
+    char_title = vals.get("Personnage", "")
+    zone = vals.get("Zone", "")
+    saved = _age(st.get("sv_age"))
+    char_desc = " · ".join(x for x in (zone, f"sauvegardé {saved}" if saved else "") if x)
+    char = " · ".join(x for x in (char_title, zone) if x)
+    out = {"running": running and enabled, "char": char, "char_title": char_title or "personnage",
+           "char_desc": char_desc, "button": "Ouvrir WoW Forever", "primary": False, "hint": ""}
+    if not enabled:
+        out.update(title="Mode WoW désactivé", badge="Désactivé", tone="", hint="Réactive-le dans WoW Forever.")
+        return out
+    if not st:
+        out.update(title="Recherche de WoW…", badge="", tone="")
+        return out
+    found = st.get("install") is not None
+    if st.get("read") and not found:
+        out.update(hint="Dossier du jeu introuvable : indique-le dans WoW Forever.", button="Choisir le dossier",
+                   primary=True)
+    elif st.get("read") and st.get("has_src", True) and not st.get("installed"):
+        out.update(hint="L'addon TreeAI n'est pas encore installé.", button="Installer l'addon", primary=True)
+    elif st.get("needs_update"):
+        out.update(hint="Une mise à jour de l'addon est prête.", button="Mettre à jour l'addon", primary=True)
+    if running and active:
+        out.update(title="Coach WoW actif", badge="En jeu", tone="ok")
+    elif running:
+        out.update(title="WoW est lancé", badge="Lancé", tone="accent")
+    else:
+        out.update(title="WoW n'est pas lancé", badge="Hors jeu", tone="")
+        if not out["hint"] and not char:
+            out["hint"] = "Lance le jeu : TreeAI s'active tout seul."
+    return out
 
 
 def _capture_why(health: Any) -> str:

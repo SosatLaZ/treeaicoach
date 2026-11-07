@@ -140,6 +140,7 @@ UPDATE_TEXT_FIELDS: dict[str, int] = {"update_channel_url": 2048, "github_token"
 # v1.5 interface settings (ui.py / ui_kit.py; overlay_* are read by the overlay with getattr)
 CHOICES.update({
     "ui_scaling": ("auto", "90", "100", "110", "125", "150"),
+    "ui_theme": ("dark", "light", "auto"),
 })
 BOOL_FIELDS = BOOL_FIELDS + ("ui_onboarding_done", "ui_confirm_quit")
 UPDATE_TEXT_FIELDS["ui_seen_changelog"] = 32
@@ -346,6 +347,7 @@ class Config:
     ui_seen_changelog: str = ""
     ui_confirm_quit: bool = True
     ui_scaling: str = "auto"         # "auto" | "90" | "100" | "110" | "125" | "150" (% of the system scale)
+    ui_theme: str = "dark"           # launcher colours: "dark" | "light" | "auto" (follows Windows)
     # build advice (itemization.py): written by default (HUD line + toast), spoken only if item_advice_speak
     item_advice: bool = True
     hud_build_strip: bool = True         # "Barre de build": the meta build as 6 small icons next to the card (base / dead / details key)

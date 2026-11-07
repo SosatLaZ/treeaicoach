@@ -214,7 +214,8 @@ class CoachApp:
         self._t0 = time.perf_counter()
         self._no_dialogs = False          # --ui-smoke / tests: no modal first-run dialog
 
-        self.dark = W.system_is_dark(self.qapp) if dark is None else bool(dark)
+        self._dark_forced = dark
+        self.dark = self._wants_dark()
         W.apply_theme(self.qapp, self.dark)
 
         self.win = _MainWindow(self)
@@ -229,10 +230,11 @@ class CoachApp:
         h.setSpacing(0)
         self.sidebar = W.Sidebar(PAGES, NAV_GROUPS)
         self.sidebar.brand.setText(APP_NAME)
+        self.sidebar.brand_sub.setText(f"Version {__version__}")
         png = app_icon_path("png")
         if png:
             dpr = self.qapp.devicePixelRatio() or 1.0
-            mark = QtGui.QPixmap(str(png)).scaled(int(26 * dpr), int(26 * dpr), QtCore.Qt.KeepAspectRatio,
+            mark = QtGui.QPixmap(str(png)).scaled(int(28 * dpr), int(28 * dpr), QtCore.Qt.KeepAspectRatio,
                                                   QtCore.Qt.SmoothTransformation)
             mark.setDevicePixelRatio(dpr)
             self.sidebar.mark.setPixmap(mark)
@@ -270,6 +272,36 @@ class CoachApp:
             self.later(UPDATE_CHECK_DELAY_MS, lambda: self.check_updates(quiet=True))
         self.later(2500, self._check_last_update)
         self.later(1200, self.refresh_games)
+
+    # ------------------------------------------------------------------ theme
+    def _wants_dark(self) -> bool:
+        """Dark or light window: the ``dark`` argument (tests), else ``ui_theme`` (« auto » = Windows)."""
+        if self._dark_forced is not None:
+            return bool(self._dark_forced)
+        mode = str(getattr(self.cfg, "ui_theme", "dark") or "dark")
+        if mode == "auto":
+            return bool(self.W.system_is_dark(self.qapp))
+        return mode != "light"
+
+    def apply_ui_theme(self) -> None:
+        """Re-apply the colours live (one style sheet + the painted glyphs); cheap, no rebuild."""
+        dark = self._wants_dark()
+        if dark == self.dark:
+            return
+        self.dark = dark
+        try:
+            self.W.apply_theme(self.qapp, dark)
+            self.sidebar.recolor()
+            for view in list(self.page_views.values()):
+                fn = getattr(view, "on_theme", None)
+                if callable(fn):
+                    fn()
+            for g in self.win.findChildren(self.W.Glyph):
+                g.recolor()
+            for w in self.win.findChildren(self.QtWidgets.QWidget):
+                w.update()
+        except Exception:
+            log.exception("Cannot apply the theme")
 
     # ------------------------------------------------------------------ infrastructure
     def later(self, ms: int, fn: Callable[[], Any]) -> None:
@@ -597,6 +629,8 @@ class CoachApp:
                     setter(cfg.danger_voice)
                 except Exception:
                     log.debug("set_danger_voice failed", exc_info=True)
+        if "ui_theme" in diff:
+            self.apply_ui_theme()
         if diff & HOTKEY_FIELDS:
             self._rebind_hotkeys()
         if diff & DETECTOR_FIELDS and self.engine is not None:
@@ -1312,6 +1346,7 @@ class CoachApp:
                 self._post_game_watch = None
                 self.show_toast("Rapport de ta dernière partie prêt : page Analyse.")
             self._games = games
+            self._games_loaded = True
             for key in ("analysis", "home"):
                 view = self.page_views.get(key)
                 if view is not None and callable(getattr(view, "on_games", None)):

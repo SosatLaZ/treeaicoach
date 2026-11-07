@@ -173,7 +173,7 @@ class HeroCard(QtWidgets.QFrame):
             return None
         dpr = self.devicePixelRatioF()
         w, h = self.width(), self.height()
-        key = (w, h, dpr)
+        key = (w, h, dpr, W.theme().name)
         if self._scaled is not None and self._scaled[0] == key:
             return self._scaled[1]
         zw = int(w * self.ART_FRAC)
@@ -195,7 +195,9 @@ class HeroCard(QtWidgets.QFrame):
             qp.drawPixmap(QtCore.QRectF((zw - dw) / 2, dy, dw, dh), self._src, QtCore.QRectF(0, 0, sw, sh))
         # darken, then fade the left edge into the glass (painter gradient, not a style sheet one)
         qp.setCompositionMode(QtGui.QPainter.CompositionMode_SourceAtop)
-        qp.fillRect(QtCore.QRectF(0, 0, zw, h), QtGui.QColor(16, 17, 19, 140))
+        scrim = QtGui.QColor(W.theme().group)      # dark: dims the art; light: washes it out
+        scrim.setAlpha(140 if W.theme().name == "dark" else 120)
+        qp.fillRect(QtCore.QRectF(0, 0, zw, h), scrim)
         grad = QtGui.QLinearGradient(0, 0, zw, 0)
         grad.setColorAt(0.0, QtGui.QColor(0, 0, 0, 0))
         grad.setColorAt(0.55, QtGui.QColor(0, 0, 0, 255))
@@ -221,7 +223,8 @@ class HeroCard(QtWidgets.QFrame):
             qp.drawPixmap(w - int(w * self.ART_FRAC), 0, art)
             qp.restore()
         qp.setBrush(Qt.NoBrush)
-        qp.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 16), 1))
+        qp.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 16) if W.theme().name == "dark"
+                             else QtGui.QColor(16, 24, 40, 20), 1))
         qp.drawPath(path)
         qp.end()
 
