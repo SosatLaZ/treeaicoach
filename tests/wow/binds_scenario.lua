@@ -39,7 +39,9 @@ return function(M, ctx)
   local kinds = {}
   for _, c in ipairs(res.conflicts) do kinds[c.kind .. ":" .. (c.name or c.key or "")] = c.text end
   ctx.check(kinds["dup:Morsure de serpent"], "duplicate spell on 2 keys")
-  ctx.check(kinds["nokey:Désengagement"] and kinds["nokey:Désengagement"]:find("barre bas gauche case 1"),
+  -- (the redone macros now cover Désengagement with a TAI macro: then it is not reported at all)
+  local disCovered = not kinds["nokey:Désengagement"] and not kinds["missing:Désengagement"]
+  ctx.check(disCovered or (kinds["nokey:Désengagement"] and kinds["nokey:Désengagement"]:find("barre bas gauche case 1")),
     "spell on a bar without key")
   ctx.check(not kinds["missing:Feindre la mort"], "spell covered by a TAI macro is not reported")
   local p1 = res.plan[1]
@@ -94,7 +96,7 @@ return function(M, ctx)
   B:Refresh()
   local miss = false
   for _, c in ipairs(B.result.conflicts) do if c.kind == "missing" and c.name == "Désengagement" then miss = true end end
-  ctx.check(miss, "important spell missing from bars")
+  ctx.check(miss or disCovered, "important spell missing from bars")
   -- slash
   T:HandleSlash("touches")
   ctx.check(B.state ~= nil, "/tai touches")
