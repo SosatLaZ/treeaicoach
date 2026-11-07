@@ -21,6 +21,7 @@ Data\Consumables.lua
 Data\Dungeons.lua
 Data\Gear.lua
 Data\Talents.lua
+Data\Recipes.lua
 
 Modules\Macros.lua
 Modules\Binds.lua
@@ -47,6 +48,7 @@ Modules\Pro.lua
 Modules\Economy.lua
 Modules\Abandon.lua
 Modules\Auction.lua
+Modules\Prof.lua
 Modules\Highlight.lua
 Modules\PvP.lua
 Modules\Dungeon.lua

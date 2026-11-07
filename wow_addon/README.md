@@ -183,6 +183,16 @@ après wipe, run (pulls, morts, wipes, XP, or), mini-compteur lu dans `C_DamageM
 patrouille = ligne de Fight reprise. Marque conseillée : un clic = un `SetRaidTarget` hors combat.
 `summary.dungeon = {key, name, why, boss, run, meter, runs}`.
 
+`Modules/Prof.lua` (agent PROF, onglet « Métiers » créé seulement si tu as un métier, bloc `Prof`, `/tai metiers
+[cible N [métier]|debug]`) : montée de métier la moins chère (glouton, coût attendu par point ; formule Classic :
+orange 100 %, sinon (gris − compétence) / (gris − jaune), + « Heures sup. » Legacy 4 %/rang), étapes « 112→125 : 14× X
+(orange) », compos en sac/banque utilisées d'abord, liste d'achat + total (prix : vendeur → `Auction.Stats` →
+Auctionator → fabriqué soi-même → revente × 4 ≈), « Fais N× X maintenant » (pin), prochain rang (niveau/compétence),
+points Legacy (6 métiers de fabrication : 150/225/300), récolte (nœuds par couleur, meilleures zones, nœuds vus
+d'Économie, niveau de dépeçage), astuces Cuisine/Secourisme/Pêche + camp, métiers des amis (Squad `pr`). Tout au clic :
+ligne « Heures sup. » (clic = rang +1, Maj-clic = recettes connues seulement), clic sur un métier = cible suivante.
+Données `Data/Recipes.lua` (tables client, `tools/wow_build_data.py --only recipes`, même calcul en Python :
+`treeaicoach/wow/professions.py`). `summary.prof = {profs, legacy, plans, updated}`.
 `Modules/Fight.lua` (agent X2, PvE, informatif) : compteur de pull (barres de nom), élite en patrouille vers toi,
 fuyards (émotes, mémorisés), récap de mort + conseil (`/tai mort`), PV/mana avant pull, sort à interrompre sur la
 cible (avec ton interruption prête), minuteur des contrôles + rupture (petit cadre), familier qui perd l'aggro,
