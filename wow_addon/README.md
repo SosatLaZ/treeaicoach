@@ -566,3 +566,17 @@ Options (module « Thème », section Apparence) : thème Sombre / Clair / Blizz
 - Polices : `Th:Font(fs, "S"|"M"|"L"[, token])`, `Th:Text(parent, size, token)` (suivent l'échelle).
 - Habillage : `Th:Skin(frame, kind[, opts])`, kind = `window panel hud bar badge button row alert tooltip` ; opts `bg=` texture de fond existante, `noBg`, `border=false`. BackdropTemplate si présent, sinon textures. Refuse tout cadre nommé hors « TreeAI… », protégé ou interdit : jamais un cadre Blizzard. Toujours appeler gardé : `if T.Theme then T.Theme:Skin(f, "hud") end`.
 - Widgets : `Th:Frame Button IconButton ProgressBar(:SetProgress(v,max,prio,txt)) Header Separator Checkbox Slider Tab(:SetSelected) Badge(:SetBadge)`, `Th:Tooltip(frame, title, lines)` (GameTooltip rempli, jamais habillé). Message `THEME_CHANGED` après un changement.
+## Radar : module `Radar` (`Modules/Radar.lua`, après Compass/Squad)
+
+Petit radar **rond** à nous (jamais la minimap de Blizzard), `TreeAIRadarFrame` enfant d'`UIParent` : verre
+sombre (masque circulaire si dispo, sinon texture ronde teintée), fin anneau doré, cercles de distance,
+flèche du joueur (nord en haut, ou carte qui tourne : option), zoom 50–400 yd (molette ou boutons −/+).
+Tout à la souris : boutons sur l'anneau (−, +, cadenas, menu ≡) et **clic droit = menu** (couches, rotation,
+cercles, taille, verrou, oublier, cacher). Points : objectifs (amas d'apparitions via `Compass.QuestPoints`,
+hors combat, cache monde 6 s), remises, cible boussole + étapes `Planner`, chemin sûr (`TreeAI.SafePath` :
+`GetWaypoints()`/`.waypoints` si présent), amis (`party/raid` en direct puis état `Squad`), rares / élites vus
+(relevés à notre position, `char.rares` / `char.dangers`), corps (`PLAYER_DEAD`), maîtres de vol
+(`C_TaxiMap.GetTaxiNodesForMap`). Loin = collé au bord (flèche pour amis / cible), survol = infobulle,
+clic = cible de la boussole. 20 i/s seulement visible, caché en instance. API pure : `R.Project(dn, dw,
+facing, rotate, zoom, radius)`, `R.WorldToMap`, `R.Cluster`. `RegisterMovable(frame, "radar", "Radar",
+{resizable, square, minSize, maxSize, onResize, onMove})` appelé si présent. `/tai radar [zoom N|tourne|statut|reset|oublier]`.

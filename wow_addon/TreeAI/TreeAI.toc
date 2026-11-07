@@ -47,3 +47,4 @@ Modules\Auction.lua
 Modules\Highlight.lua
 Modules\PvP.lua
 Modules\Dungeon.lua
+Modules\Radar.lua
