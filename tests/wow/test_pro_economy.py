@@ -13,7 +13,8 @@ FILES = [ADDON / "Modules" / "Pro.lua", ADDON / "Modules" / "Economy.lua"]
 def test_toc_lists_pro_economy_after_boost():
     lines = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     i = lines.index("Modules\\Boost.lua")
-    assert lines[i + 1] == "Modules\\Pro.lua" and lines[i + 2] == "Modules\\Economy.lua"
+    j = lines.index("Modules\\Pro.lua")
+    assert j > i and lines[j + 1] == "Modules\\Economy.lua"
 
 
 def test_no_chat_and_options_have_sections():

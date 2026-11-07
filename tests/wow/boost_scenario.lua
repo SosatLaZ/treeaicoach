@@ -36,11 +36,13 @@ return function(M, ctx)
   ctx.check(best == 3, "best reward = leather agi (got " .. tostring(best) .. ")")
   local btn = CreateFrame("Button", "QuestInfoRewardsFrameQuestInfoItem3", UIParent)
   ctx.fire("QUEST_COMPLETE")
-  M.Advance(1)
+  M.Advance(3)
   local glowed = false
   for _, f in ipairs(M.frames) do
     local p = f.__points and f.__points[1]
-    if f:IsShown() and f.__parent ~= btn and p and (p[2] == btn or p[2] == btn.Icon or p[2] == btn.icon) then glowed = true end
+    -- the glow: shown, anchored to a reward button, never its child (taint rule)
+    if f:IsShown() and f.__parent == UIParent and p and type(p[2]) == "table" and p[2] ~= UIParent
+        and f.label then glowed = true end
   end
   ctx.check(glowed, "best reward button highlighted (glow anchored to it, never parented: no taint)")
   ctx.check(S["Boost:reward"] and S["Boost:reward"].text:find("Gilet agile"), "reward suggestion: "

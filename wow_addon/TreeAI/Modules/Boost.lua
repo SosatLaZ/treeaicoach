@@ -319,7 +319,7 @@ local function showGlow(btn)
   -- (0.2) jamais enfant d'un bouton de Blizzard (récompense de quête) : simplement ancré dessus
   glow:SetFrameStrata("DIALOG")
   glow:ClearAllPoints()
-  local icon = btn.Icon or btn.icon or btn
+  local icon = (type(btn.Icon) == "table" and btn.Icon) or (type(btn.icon) == "table" and btn.icon) or btn
   glow:SetPoint("TOPLEFT", icon, "TOPLEFT", -14, 14)
   glow:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 14, -14)
   glow:Show()
