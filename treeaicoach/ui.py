@@ -337,7 +337,7 @@ class CoachApp:
         import importlib  # noqa: PLC0415
 
         mod = {"home": "ui_page_home", "overlay": "ui_page_overlay", "alerts": "ui_page_alerts", "discord": "ui_page_discord",
-               "analysis": "ui_page_analysis", "settings": "ui_page_settings"}.get(key)
+               "analysis": "ui_page_analysis", "settings": "ui_page_settings", "wow": "ui_page_wow"}.get(key)
         if mod is None:
             return None
         return getattr(importlib.import_module(f"treeaicoach.{mod}"), "build")
