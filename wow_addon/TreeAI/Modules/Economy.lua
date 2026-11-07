@@ -419,12 +419,17 @@ function M.MailClick()
 end
 function M.ShowMailButton(show)
   if not opt("mail") then show = false end
+  -- (3.9.2) only when a recipient was chosen (« compos » friend) — it was floating at the top for everyone
+  if not (M.char and M.char.mailTo and M.char.mailTo ~= "") then show = false end
   if show and not mailBtn then
     local CF, parent = g("CreateFrame"), g("UIParent")
     if not CF or not parent then return end
     mailBtn = CF("Button", nil, parent, "UIPanelButtonTemplate")
     mailBtn:SetSize(170, 24)
-    mailBtn:SetPoint("TOP", parent, "TOP", 0, -120)
+    local mf = g("MailFrame") or g("SendMailFrame")
+    if mf then mailBtn:SetPoint("TOPLEFT", mf, "TOPRIGHT", 6, -70)   -- anchored next to the mail window (not parented)
+    else mailBtn:SetPoint("TOP", parent, "TOP", 0, -120) end
+    mailBtn:SetClampedToScreen(true)
     mailBtn:SetScript("OnClick", function() pcall(M.MailClick) end)
     M.mailButton = mailBtn
   end
