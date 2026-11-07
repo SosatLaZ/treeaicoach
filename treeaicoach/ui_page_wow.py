@@ -726,6 +726,9 @@ class WowPage:
         install = optional("install")
         if install is None:
             return
+        if getattr(self, "_installing", False):
+            return
+        self._installing = True                        # the 3 s refresh must not re-enable the button meanwhile
         self.install_btn.setEnabled(False)
         path = str(getattr(self.app.cfg, "wow_path", "") or "")
 
@@ -733,11 +736,13 @@ class WowPage:
             return install.install_addon(install.find_wow(path), force=True)
 
         def done(res: Any) -> None:
+            self._installing = False
             self.install_btn.setEnabled(True)
             self.app.show_toast(str(getattr(res, "message", "")), "info" if getattr(res, "ok", False) else "error")
             self.refresh()
 
         def failed(_exc: BaseException) -> None:
+            self._installing = False
             self.install_btn.setEnabled(True)
 
         self.app.run_job(job, done, failed, name="TreeAI-wow-install")
@@ -823,7 +828,7 @@ class WowPage:
             row.set_desc(text)
         self.pick_btn.setVisible(bool(st) and not ov["found"])
         self.install_btn.setText(ov["button"])
-        self.install_btn.setEnabled(ov["can_install"])
+        self.install_btn.setEnabled(ov["can_install"] and not getattr(self, "_installing", False))
         self.install_hint.setText("Puis /reload en jeu." if ov["found"] else "Indique d'abord le dossier de WoW.")
         mode = st.get("mode") or {}
         snap = st.get("live") or {}
@@ -844,10 +849,20 @@ class WowPage:
         self.char_section.setVisible(not self._tab_sig.get("direct", "[]").startswith("[{"))
 
     def _render_char(self, rows: list, age: Any) -> None:
-        sig = (tuple(rows), _age_text(age))
+        # ANNOY: the age (« il y a 3 min ») changes every minute; only that label is updated then, the card
+        # is rebuilt only when the character data changes (it used to blink once a minute)
+        age_txt = _age_text(age)
+        sig = (tuple(rows), bool(age_txt))
         if sig == self._char_sig:
+            lbl = getattr(self, "_age_lbl", None)
+            if lbl is not None:
+                try:
+                    lbl.setText(age_txt)
+                except Exception:
+                    log.debug("age label update failed", exc_info=True)
             return
         self._char_sig = sig
+        self._age_lbl = None
         W = self.W
         if self._char_group is not None:
             self._char_group.setParent(None)
@@ -867,8 +882,9 @@ class WowPage:
                 grp.add(W.Row(str(title)))
         if not rows:
             grp.add(W.Row("Rien pour l'instant", "Installe l'addon, connecte-toi puis tape /reload."))
-        elif sig[1]:
-            grp.add(W.Row("Dernière sauvegarde", None, W.label(sig[1], "secondary")))
+        elif age_txt:
+            self._age_lbl = W.label(age_txt, "secondary")
+            grp.add(W.Row("Dernière sauvegarde", None, self._age_lbl))
         self._char_layout.addWidget(grp)
         self._char_group = grp
 

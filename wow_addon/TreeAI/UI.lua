@@ -188,7 +188,7 @@ end
 local function runEntry(e, button)
   if not e then return end
   if button == "RightButton" then
-    if isSuggestion(e) then TreeAI:ClearSuggestion(e.id) end
+    if isSuggestion(e) then if TreeAI.DismissSuggestion then TreeAI:DismissSuggestion(e.id) else TreeAI:ClearSuggestion(e.id) end end
   elseif e.onClick then
     TreeAI:UserAction(e.onClick, e)
   end

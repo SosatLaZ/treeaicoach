@@ -936,6 +936,89 @@ local alerted = {}       -- id -> { sk, at } (corner alert pops)
 TreeAI._alerted = alerted
 TreeAI._suggestions = suggestions
 
+-- ANNOY : « clic droit = masquer » tient vraiment. Le module re-proposait la même ligne au rafraîchissement
+-- suivant (quelques secondes) : elle revenait. Masquée = même sens (chiffres ignorés) caché 2 h, gardé au
+-- /reload (CharDB().dismissed, horloge serveur, ≤ 40 entrées) ; un vrai danger passe toujours.
+TreeAI.DISMISS_S = 2 * 3600
+local function serverNow() local f = _G.time return (type(f) == "function" and f()) or 0 end
+local function skeletonOf(text) return (strgsub(tostring(text or ""), "%d+", "#")) end
+local function dismissStore()
+  local ok, c = pcall(TreeAI.CharDB, TreeAI)
+  if not ok or type(c) ~= "table" then return nil end
+  if type(c.dismissed) ~= "table" then c.dismissed = {} end
+  return c.dismissed
+end
+function TreeAI:DismissSuggestion(id, _sameTopic)
+  local e = suggestions[id]
+  -- une ligne fusionnée (même sujet vu par plusieurs modules) : masquer l'une masque les autres
+  if e and not _sameTopic and self.TopicOf then
+    local okT, topic = pcall(self.TopicOf, self, e)
+    if okT and topic then
+      local others = {}
+      for oid, o in pairs(suggestions) do
+        if oid ~= id and not o.danger then
+          local okO, ot = pcall(self.TopicOf, self, o)
+          if okO and ot == topic then others[#others + 1] = oid end
+        end
+      end
+      for _, oid in ipairs(others) do self:DismissSuggestion(oid, true) end
+    end
+  end
+  local d = e and dismissStore()
+  if d then
+    local n, oldest, oldK = 0, nil, nil
+    for k, v in pairs(d) do
+      n = n + 1
+      if type(v) ~= "table" or not oldest or (tonumber(v.ts) or 0) < oldest then oldest, oldK = type(v) == "table" and (tonumber(v.ts) or 0) or -1, k end
+    end
+    if n >= 40 and oldK then d[oldK] = nil end
+    d[id] = { sk = skeletonOf(e.text), ts = serverNow() }
+  end
+  self:ClearSuggestion(id)
+end
+function TreeAI:IsDismissed(id, text, danger)
+  if danger then return false end
+  local d = self.db and dismissStore()
+  local v = d and d[id]
+  if type(v) ~= "table" then return false end
+  if serverNow() - (tonumber(v.ts) or 0) > self.DISMISS_S or (text and v.sk ~= skeletonOf(text)) then
+    d[id] = nil
+    return false
+  end
+  return true
+end
+function TreeAI:PruneDismissed()
+  local d = dismissStore()
+  if not d then return end
+  local t = serverNow()
+  for k, v in pairs(d) do
+    if type(v) ~= "table" or t - (tonumber(v.ts) or 0) > self.DISMISS_S then d[k] = nil end
+  end
+end
+-- encadrés déjà montrés : gardés au /reload (5 min), sinon chaque /reload rejouait l'alerte + le son
+function TreeAI:_SaveRecentAlerts()
+  local ok, c = pcall(self.CharDB, self)
+  if not ok or type(c) ~= "table" then return end
+  local t, st, out, n = now(), serverNow(), {}, 0
+  for id, a in pairs(alerted) do
+    if n < 20 and type(a) == "table" and t - (a.at or -1e9) < 300 then
+      out[id] = { sk = a.sk, ts = st - math.floor(t - a.at) }
+      n = n + 1
+    end
+  end
+  c.recentAlerts = n > 0 and out or nil
+end
+function TreeAI:_RestoreRecentAlerts()
+  local ok, c = pcall(self.CharDB, self)
+  if not ok or type(c) ~= "table" or type(c.recentAlerts) ~= "table" then return end
+  local t, st = now(), serverNow()
+  for id, a in pairs(c.recentAlerts) do
+    local age = st - (tonumber(type(a) == "table" and a.ts) or 0)
+    if type(a) == "table" and age >= 0 and age < 300 and not alerted[id] then alerted[id] = { sk = a.sk, at = t - age } end
+  end
+  c.recentAlerts = nil
+end
+
 local function playUrgentSound()
   if not (TreeAI.settings and TreeAI.settings.sound) then return end
   if _G.PlaySound then
@@ -1309,6 +1392,7 @@ function TreeAI:Suggest(id, text, prio, opts)
   if quiet and kind == "buff" then self:ClearSuggestion(id); return nil end
   local tip
   text, tip = shortText(safeText(text), opts.tooltip)
+  if self:IsDismissed(id, text, opts.danger) then return nil end   -- masquée par le joueur (clic droit)
   local t = now()
   local ttl = opts.ttl
   if ttl == nil then ttl = 60 end
@@ -1842,11 +1926,21 @@ function TreeAI:_SetCommPaused(reason)
   if reason then
     self.commStats.dropped = self.commStats.dropped + clearQueues()
     self.commStats.paused = self.commStats.paused + 1
-    self:Print(("Synchro du groupe en pause (%s) : elle reprend à la sortie."):format(
-      reason == "donjon" and "donjon" or "bloquée par le jeu"))
+    -- ANNOY : expliqué une fois par compte et par raison (avant : 2 lignes de chat à CHAQUE donjon)
+    local db = self.db
+    local flags = type(db) == "table" and (type(db.flags) == "table" and db.flags or {}) or nil
+    if type(db) == "table" then db.flags = flags end
+    local fk = "commPause_" .. tostring(reason)
+    if not flags or not flags[fk] then
+      if flags then flags[fk] = true end
+      self:Print(("Synchro du groupe en pause (%s) : elle reprend à la sortie."):format(
+        reason == "donjon" and "donjon" or "bloquée par le jeu"))
+    else
+      self:Debug("synchro en pause :", reason)
+    end
     self:Fire("COMM_PAUSED", reason)
   elseif was then
-    self:Print("Synchro du groupe reprise.")
+    self:Debug("synchro reprise")
     self:Fire("COMM_RESUMED")
   end
 end
@@ -2235,13 +2329,30 @@ function TreeAI:PLAYER_LOGIN()
   self:StartAutoRefresh()
   -- premier lancement : petit assistant en 3 étapes (hors combat)
   if self.db and not self.db.onboarded and self.ShowWizard then
-    self:After(4, function() self:RunOutOfCombat("wizard", function() self:ShowWizard(1) end) end)
+    self:After(4, function() self:_MaybeWizard(0) end)
   end
+  safecall(self.PruneDismissed, self)
+  safecall(self._RestoreRecentAlerts, self)
   self:After(5, function() self:SendHello() end)
 end
 
 function TreeAI:PLAYER_LOGOUT()
   if self.db then safecall(self.UpdateSummary, self) end
+  if self.db then safecall(self._SaveRecentAlerts, self) end
+end
+
+-- ANNOY : l'assistant du 1er lancement attend un moment calme (pas mort / fantôme / en vol / en donjon /
+-- en combat), et ne s'ouvre pas si le joueur l'a déjà fini (ou passé) entre-temps. Abandon après ~5 min.
+function TreeAI:_MaybeWizard(tries)
+  if not self.db or self.db.onboarded or not self.ShowWizard then return end
+  local st = self.PlayerState and self:PlayerState(true) or {}
+  if (st.dead or st.ghost or st.taxi or st.inInstance or st.inCombat) and (tries or 0) < 10 then
+    self:After(30, function() self:_MaybeWizard((tries or 0) + 1) end)
+    return
+  end
+  self:RunOutOfCombat("wizard", function()
+    if self.db and not self.db.onboarded then self:ShowWizard(1) end
+  end)
 end
 
 function TreeAI:PLAYER_REGEN_DISABLED()
@@ -2292,6 +2403,10 @@ local function onBlocked(kind, addon, func)
   end
   local ctx = TreeAI._ctx or TreeAI._lastCtx or "?"
   if type(db) == "table" and db.diag and db.diag.blocked then db.diag.blocked[#db.diag.blocked].ctx = ctx end
+  -- ANNOY : une ligne de chat par fonction et par session (tout reste noté dans diag.blocked)
+  TreeAI._blockedSaid = TreeAI._blockedSaid or {}
+  if TreeAI._blockedSaid[func] then return end
+  TreeAI._blockedSaid[func] = true
   TreeAI:Print(("Action bloquée par le jeu : %s (%s) pendant %s. Envoie ce message à TreeAI pour la correction.")
     :format(func, kind, ctx))
 end

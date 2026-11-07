@@ -415,6 +415,7 @@ TreeAIDB = {
     noise = { nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
   },
   onboarded = "0.4.0",          -- assistant de démarrage déjà vu
+  flags = { commPause_donjon = true },  -- explications déjà dites une fois (pause synchro en donjon)
   modules = { ["Hunter"] = { enabled = true, ... }, ... },  -- réglages (compte)
   chars = {
     ["Nom-Royaume"] = {
@@ -430,6 +431,8 @@ TreeAIDB = {
         -- les modules ajoutent leurs propres sous-tables: summary.hunter = {...}, summary.quests = {...}
       },
       suggestions = { {id=, text=, prio=, time=, module=}, ... },  -- 40 dernières
+      dismissed = { [id] = {sk=, ts=} },   -- clic droit « masquer » : même sens caché 2 h (≤ 40, ANNOY)
+      recentAlerts = { [id] = {sk=, ts=} }, -- encadrés des 5 dernières min (pas rejoués au /reload)
       modules = { ["Hunter"] = { ... } },   -- données par perso des modules
       panel = { tab=, mini=, point=, x=, y=, manual= },   -- état du panneau pour ce perso
       profile = "char" | nil,               -- profil perso : settings + moduleSettings ci-dessous
@@ -446,7 +449,9 @@ TreeAIDB = {
 
 * Panneau compact déplaçable (sans icône minimap), **à onglets** : « Maintenant », « Quêtes »,
   « Groupe », « HV », « Infos ». Chaque onglet défile à la molette (barre fine à droite, « 3-10/14 »),
-  lignes colorées par prio, cliquables (`onClick`), infobulles, clic droit = retirer un conseil.
+  lignes colorées par prio, cliquables (`onClick`), infobulles, clic droit = masquer un conseil
+  (`TreeAI:DismissSuggestion(id)` : même sens — chiffres ignorés — et même sujet caché 2 h, gardé au /reload ;
+  un danger passe toujours ; `TreeAI:IsDismissed(id, text, danger)`).
   Barre d'outils : boussole (si `TreeAI.Compass`), macros, groupe, options, cadenas, mini, fermer.
   Mode **mini** (une seule ligne : le plus important, sinon l'étape de quête ; clic droit sur le titre
   ou `/tai mini`) — c'est le mode par défaut d'un nouveau personnage.

@@ -21,7 +21,7 @@ Tes potes : chacun installe l'addon (même zip) pour la **synchro de groupe**.
   Normal / Tout**) + où mettre le panneau (**Auto** = TreeAI scanne ton écran et prend la meilleure place
   libre) → boutons rapides Macros / Touches / Boussole / Aide. Le revoir : options → *Assistant de démarrage*.
 - **Le panneau** : onglets Maintenant · Quêtes · Prévisions · Groupe · HV · Infos. Clic sur une ligne =
-  l'action, clic droit = masquer, molette = défiler. Couleurs : gris = info, or = conseil, rouge = urgent.
+  l'action, clic droit = masquer (pour 2 h, même après /reload ; revient seulement si ça change vraiment), molette = défiler. Couleurs : gris = info, or = conseil, rouge = urgent.
 - **Barre d'outils du panneau** (à droite du titre) : **Tout** (icône livre) (toutes les actions de tous les modules,
   rangées par rubrique, un clic = lancer), **mode édition** (icône clé), boussole, macros, groupe, options, cadenas,
   mini (une ligne), fermer.
