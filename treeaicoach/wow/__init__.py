@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 #: Submodules of the WoW helper (some are written separately and may be absent in a given build).
 SUBMODULES: tuple[str, ...] = ("install", "process", "savedvars", "mode", "combatlog", "coach", "report",
-                               "leveling", "ai_context", "macros", "classes")
+                               "leveling", "ai_context", "macros", "classes", "live", "auction")
 ADDON_NAME = "TreeAI"
 SAVEDVARS_NAME = "TreeAIDB"
 
