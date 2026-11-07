@@ -241,9 +241,10 @@ local function itemStats(link)
   return st
 end
 
-local function score(link, slot, w)
-  local st = itemStats(link)
-  if not st then return nil end
+--- Score d'une table de stats (clés ITEM_MOD_*, comme GetItemStats) pour un emplacement : partagé avec Gear.
+local function scoreStats(st, slot, w)
+  if type(st) ~= "table" then return nil end
+  w = w or weights()
   local s = 0
   for k, v in pairs(st) do
     if k == S.DPS then s = s + (tonumber(v) or 0) * ((slot == 18) and w.RDPS or w.MDPS)
@@ -251,6 +252,7 @@ local function score(link, slot, w)
   end
   return s
 end
+local function score(link, slot, w) return scoreStats(itemStats(link), slot, w) end
 
 local function equippedLink(slot) return try(G.GetInventoryItemLink, "player", slot) end
 
@@ -298,6 +300,9 @@ local function upgradePct(link)
   return (new - old) / old * 100
 end
 M.UpgradePct, M.CanUse = upgradePct, canUse
+-- API partagée (module Gear) : mêmes poids / règles, aucune duplication.
+M.Weights, M.ScoreStats, M.ScoreLink, M.ItemStats, M.SpecTab = weights, scoreStats, score, itemStats, specTab
+M.STAT_KEYS, M.WEIGHTS, M.ARMOR_LEVEL, M.WEAPON_TYPES, M.DUAL_LEVEL, M.EQUIP_SLOTS = S, WEIGHTS, ARMOR, WEAPONS, DUAL, SLOTS
 
 ---------------------------------------------------------------------------------------------------
 -- 2. Meilleure récompense de quête (surlignage, jamais de choix automatique)
