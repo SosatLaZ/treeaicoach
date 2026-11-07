@@ -469,3 +469,19 @@ un message d'un type pas encore parti est remplacé par le plus récent, pause �
 Squad envoie des **différences** de journal (`SQD "2:base:nouveau:+entrée;-id"`, empreintes des entrées
 triées) et un dump complet toutes les 180 s ou sur demande (`SQR`, base inconnue). « Loin » = > 70 m du
 coéquipier le plus proche (portée du crédit de kill partagé).
+
+`Modules/Binds.lua` (agent BINDS, onglet « Infos », bloc `Binds`, `/tai touches [poser|oui|reset]`) : « sur quoi je
+peux bind ». Lit les barres (`GetActionInfo` cases 1–72, barres de forme 73–120 pour guerrier/druide/voleur/prêtre,
+145–180 en Mainline) et les raccourcis (`GetBindingKey` ACTIONBUTTON / MULTIACTIONBAR1..7BUTTON ; Bartender4,
+ElvUI, Dominos : boutons `BT4Button*`, `ElvUI_Bar*Button*`, `DominosActionButton*` + `keyBoundTarget` /
+`CLICK <bouton>:LeftButton`, **lecture seule**). Liste : cases vides avec touche, touches confortables libres
+(1–6, Q E R F A, Z X C V W, Maj/Ctrl/Alt + celles-ci, souris 3–5 ; les touches de déplacement ZQSD sont exclues
+d'office) ou peu utiles (`M.USELESS` : s'asseoir, rengainer, pages de barre…), conflits (même sort sur 2 touches,
+sort clé sur une barre sans touche, sort clé absent, même touche sur 2 cases) et un plan par priorité : macros
+TAI (liste lue via `Macros:ListNames()`/`MacroList()`/`Defs()`, touche conseillée `k`) puis sorts clés
+(`M.KEY_SPELLS`, couverts par une macro TAI = ignorés). Actions **sur clic seulement**, hors combat, une par clic
+(`TreeAI:UserAction`) : poser (`PickupMacro`/`PickupSpell` + `PlaceAction` dans une case vide) ou lier
+(`SetBinding(touche, "MACRO nom")` + `SaveBindings(GetCurrentBindingSet())`, après une ligne « Confirmer »).
+Si le jeu bloque (`ADDON_ACTION_FORBIDDEN` pendant l'appel ou nouvelle entrée `diag.blocked`), c'est retenu
+(`db.bindBlocked` / `db.placeBlocked`, `/tai touches reset`) et les lignes donnent les instructions à la main.
+`summary.binds = {ok, plan, conflicts, free, emptyKeyed, addons, bindBlocked, placeBlocked}`.
