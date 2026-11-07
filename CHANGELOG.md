@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.3 · 8 novembre 2026
+
+- **WoW : sons** distincts et discrets par type (danger, quête finie, rare, groupe, HV…), chacun activable.
+- **Fenêtres plus propres** : placement automatique dans les zones libres, menu « Plus » au lieu des onglets serrés.
+- **Points sur la vraie minimap** (plus de carte ronde à part) : seulement ce que Questie ne montre pas.
+- **Meilleure détection** : rares/élites, dangers, objets de quête, état du joueur (mort, monture, vol).
+- **Astuces avancées** (module Edge) : petits avantages légaux pour aller plus vite.
+
 ## 3.9.2 · 8 novembre 2026
 
 - **WoW : on peut quitter le mode édition** (le bouton « Fini » était caché sous la boussole) : bouton toujours

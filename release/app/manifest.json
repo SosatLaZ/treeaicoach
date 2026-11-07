@@ -1,25 +1,25 @@
 {
- "version": "3.9.2",
+ "version": "3.9.3",
  "exe": "TreeAICoach-app.exe",
- "sha256": "1a879d4cd3dd0cc46cb7adb5a59eb4357641bedc95c9c08ddb424c9206bff116",
+ "sha256": "ca835b23fd286cad442bd5087b3428dfe5b5136ac868a1b24bf13aeba68cc1ab",
  "chunks": [
   {
-   "name": "3.9.2/part-01.zip",
-   "size": 88089592,
-   "sha256": "d6ac09a152afb1afbc01ba37ba9f5d2aa86098251c09fa8addbbc8c2066fff64",
+   "name": "3.9.3/part-01.zip",
+   "size": 88089590,
+   "sha256": "b75783688768226dae153e48c9ac3a479e4d8e7757f1da329490a6a712761942",
    "files": 130
   },
   {
-   "name": "3.9.2/part-02.zip",
-   "size": 13066675,
-   "sha256": "f41d01b8e0767d791fbafdf5d3690f4b6a3c62fba18ff6458a47773c8dc87054",
-   "files": 643
+   "name": "3.9.3/part-02.zip",
+   "size": 13120786,
+   "sha256": "f451399f2cbf6b21faf6a5794dac7d66631844054adbc7150966f90ac4fb7a8c",
+   "files": 646
   }
  ],
- "total_size": 101156267,
+ "total_size": 101210376,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : mode \u00e9dition qu'on peut quitter, plus de carte ronde, bouton compos corrig\u00e9, bilan de session et courrier."
+ "notes": "WoW : sons, fen\u00eatres mieux plac\u00e9es, points sur la vraie minimap, meilleure d\u00e9tection."
 }
