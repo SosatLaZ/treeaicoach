@@ -16,7 +16,7 @@ local TreeAI = _G.TreeAI or {}
 _G.TreeAI = TreeAI
 
 TreeAI.name = ADDON_NAME
-TreeAI.version = "0.1.0"
+TreeAI.version = "0.4.0"
 TreeAI.SCHEMA = 1
 TreeAI.PREFIX = "TREEAI"
 TreeAI.PRIO_INFO, TreeAI.PRIO_TIP, TreeAI.PRIO_URGENT = 1, 2, 3
@@ -453,6 +453,9 @@ local DEFAULT_SETTINGS = {
   panel = { shown = true, locked = false, scale = 1, alpha = 0.9,
             point = "CENTER", x = 300, y = 120, maxLines = 8, nowMax = 5, width = 280 },
   alert = { enabled = true, corner = "TOPRIGHT", duration = 8, scale = 1, alpha = 0.95 },
+  -- anti-bruit (réglé par le préréglage « calme / normal / tout », chaque valeur reste modifiable)
+  preset = "normal",
+  noise = { nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
 }
 
 local function mergeDefaults(dst, src)
@@ -499,6 +502,14 @@ local function initDB()
   TreeAI.settings = db.settings
   return db
 end
+
+local function deepcopy(v)
+  if type(v) ~= "table" then return v end
+  local t = {}
+  for k, x in pairs(v) do t[k] = deepcopy(x) end
+  return t
+end
+TreeAI.DeepCopy = deepcopy
 
 function TreeAI:CharDB()
   local db = self.db or initDB()
@@ -548,12 +559,47 @@ function ModuleMixin:Clear(id) return TreeAI:ClearSuggestion(self.name .. ":" ..
 function ModuleMixin:Print(...) return TreeAI:Print("[" .. (self.title or self.name) .. "]", ...) end
 function ModuleMixin:Debug(...) return TreeAI:Debug("[" .. self.name .. "]", ...) end
 
+-- Profil : réglages du compte (défaut) ou propres à ce personnage (CharDB().profile == "char").
+-- TreeAI.settings et mod.db pointent toujours vers le profil actif.
+function TreeAI:ProfileMode()
+  if not self.db or self:CharKey() == "?" then return "account" end
+  local c = self.db.chars[self:CharKey()]
+  return (type(c) == "table" and c.profile == "char") and "char" or "account"
+end
+
+local function moduleStore()
+  local db = TreeAI.db
+  if TreeAI:ProfileMode() == "char" then
+    local c = TreeAI:CharDB()
+    c.moduleSettings = type(c.moduleSettings) == "table" and c.moduleSettings or {}
+    return c.moduleSettings, db.modules
+  end
+  return db.modules
+end
+
+local function bindSettings()
+  local db = TreeAI.db
+  if not db then return end
+  if TreeAI:ProfileMode() == "char" then
+    local c = TreeAI:CharDB()
+    if type(c.settings) ~= "table" then c.settings = deepcopy(db.settings) end
+    c.settings = mergeDefaults(c.settings, DEFAULT_SETTINGS)
+    TreeAI.settings = c.settings
+  else
+    TreeAI.settings = db.settings
+  end
+end
+
 local function moduleBindDB(mod)
   local db = TreeAI.db
   if not db then return end
   local defaults = mergeDefaults({ enabled = true }, mod.defaults or {})
-  db.modules[mod.name] = mergeDefaults(db.modules[mod.name], defaults)
-  mod.db = db.modules[mod.name]
+  local store, seed = moduleStore()
+  if store[mod.name] == nil and seed and type(seed[mod.name]) == "table" then
+    store[mod.name] = deepcopy(seed[mod.name])   -- profil perso : part des réglages du compte
+  end
+  store[mod.name] = mergeDefaults(store[mod.name], defaults)
+  mod.db = store[mod.name]
   if TreeAI:CharKey() ~= "?" then
     local c = TreeAI:CharDB()
     c.modules[mod.name] = mergeDefaults(c.modules[mod.name], mod.charDefaults or {})
@@ -628,7 +674,51 @@ function TreeAI:SetModuleEnabled(name, enabled)
   local mod = self.modules[name]
   if not mod or not mod.db then return false end
   mod.db.enabled = enabled and true or false
-  if enabled then moduleEnable(mod) else moduleDisable(mod) end
+  if enabled then
+    if self._loggedIn then moduleEnable(mod) end
+  else
+    moduleDisable(mod)
+  end
+  self:RequestRefresh()
+  return true
+end
+
+--- Tout TreeAI on/off, en direct (sans /reload).
+function TreeAI:SetEnabled(v)
+  if not self.settings then return end
+  self.settings.enabled = v and true or false
+  for _, n in ipairs(self.moduleOrder) do
+    local mod = self.modules[n]
+    if v then if self._loggedIn then moduleEnable(mod) end else moduleDisable(mod) end
+  end
+  if not v then
+    self:ClearSuggestions()
+    if self.HidePanel then safecall(self.HidePanel, self) end
+  elseif self.ShowPanel and self.settings.panel and self.settings.panel.shown ~= false then
+    safecall(self.ShowPanel, self)
+  end
+  self:RequestRefresh()
+end
+
+--- Profil "account" (réglages communs à tes persos) ou "char" (propres à ce perso), en direct.
+function TreeAI:SetProfile(mode)
+  mode = (mode == "char") and "char" or "account"
+  if not self.db or self:CharKey() == "?" or mode == self:ProfileMode() then return false end
+  local wasActive = {}
+  for _, n in ipairs(self.moduleOrder) do
+    local mod = self.modules[n]
+    if mod._active then wasActive[n] = true; moduleDisable(mod) end
+  end
+  self:CharDB().profile = (mode == "char") and "char" or nil
+  bindSettings()
+  for _, n in ipairs(self.moduleOrder) do
+    local mod = self.modules[n]
+    moduleBindDB(mod)
+    if self._loggedIn then moduleEnable(mod) end
+  end
+  if self.ApplyPanelSettings then safecall(self.ApplyPanelSettings, self) end
+  self:Fire("PROFILE_CHANGED", mode)
+  self:RequestRefresh()
   return true
 end
 
@@ -690,6 +780,135 @@ function TreeAI:InPvP()
   return ok and res or false
 end
 
+
+---------------------------------------------------------------------------
+-- Anti-bruit : sujets (même sens = une seule ligne), budget « Maintenant », encadré ≤ 1 / 20 s,
+-- rien dans l'encadré en combat sauf danger de mort, préréglages « calme / normal / tout ».
+---------------------------------------------------------------------------
+-- id complet de suggestion -> sujet. Plusieurs modules qui disent la même chose partagent un sujet :
+-- « Maintenant » n'en garde qu'une ligne (la plus prioritaire), l'encadré ne la répète pas.
+TreeAI.TOPIC_IDS = TreeAI.TOPIC_IDS or {
+  ["Hunter:ammo"] = "ammo", ["Predict:ammo"] = "ammo", ["HunterPro:ammo"] = "ammo", ["Boost:ammo30"] = "ammo",
+  ["Inventory:inv_bags"] = "bags", ["Predict:bags"] = "bags", ["Boost:hearth"] = "bags",
+  ["Inventory:inv_repair"] = "repair", ["Predict:repair"] = "repair",
+  ["Predict:food"] = "food", ["Predict:water"] = "food", ["Boost:food"] = "food",
+  ["Leveling:lvl_train"] = "train", ["Predict:train"] = "train",
+  ["Hunter:aspect"] = "aspect", ["HunterPro:aspect"] = "aspect",
+  ["Hunter:fd"] = "fd", ["HunterPro:fd"] = "fd",
+  ["Hunter:hungry"] = "petfood", ["Fight:mood"] = "petfood",
+  ["Leveling:lvl_hub"] = "hub", ["Tracker:hub"] = "hub",
+  ["Hunter:petdead"] = "pet", ["Hunter:pethp"] = "pet", ["Hunter:nopet"] = "pet",
+  ["Quests:grey"] = "abandon",
+  ["Fight:interrupt"] = "interrupt", ["Fight:ccend"] = "cc", ["Fight:ccbreak"] = "cc",
+}
+-- repli par le texte (lignes de groupe, nouveaux modules) : motif en minuscules -> sujet
+TreeAI.TOPIC_PATTERNS = TreeAI.TOPIC_PATTERNS or {
+  { "munitions", "ammo" }, { "plus de flèches", "ammo" }, { "plus de balles", "ammo" },
+  { "sacs pleins", "bags" }, { "sacs presque pleins", "bags" },
+  { "répar", "repair" }, { "durabilité", "repair" }, { "abandonne", "abandon" },
+}
+-- danger de mort : seules alertes permises dans l'encadré pendant un combat
+TreeAI.DANGER_IDS = TreeAI.DANGER_IDS or {
+  ["Fight:ccbreak"] = true, ["Fight:ccend"] = true, ["Fight:interrupt"] = true, ["HunterPro:fd"] = true,
+  ["Boost:threat"] = true, ["Hunter:aspect"] = true, ["Hunter:fd"] = true,
+}
+TreeAI.PRESETS = {
+  calme  = { nowMax = 3, nowMinPrio = 2, perModule = 1, alertGap = 45, topicGap = 600, soundTips = false },
+  normal = { nowMax = 5, nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
+  tout   = { nowMax = 8, nowMinPrio = 1, perModule = 0, alertGap = 20, topicGap = 60 },
+}
+TreeAI.PRESET_ORDER = { "calme", "normal", "tout" }
+TreeAI.PRESET_LABEL = { calme = "Mode calme", normal = "Normal", tout = "Tout", perso = "Perso" }
+TreeAI.PRESET_HELP = {
+  calme = "3 lignes, seulement l'utile, alerte rare (45 s mini)",
+  normal = "5 lignes, une alerte max toutes les 20 s",
+  tout = "8 lignes, tous les conseils (même les petits)",
+}
+
+local function noiseCfg()
+  local s = TreeAI.settings
+  local n = s and s.noise
+  if type(n) ~= "table" then return TreeAI.PRESETS.normal end
+  return n
+end
+
+--- Sujet d'une ligne / suggestion (nil = sans sujet : dédoublonnée seulement au texte exact).
+function TreeAI:TopicOf(e)
+  if type(e) ~= "table" then return nil end
+  if e.topic then return e.topic end
+  local t = e.id and self.TOPIC_IDS[e.id]
+  if t then return t end
+  local txt = string.lower(self.PlainText and self.PlainText(e.text) or tostring(e.text or ""))
+  for _, p in ipairs(self.TOPIC_PATTERNS) do
+    if strfind(txt, p[1], 1, true) then return p[2] end
+  end
+  return nil
+end
+
+function TreeAI:IsDanger(e, opts)
+  if not e or (e.prio or 0) < 3 then return false end
+  return (opts and opts.danger) or e.danger or self.DANGER_IDS[e.id or ""] or false
+end
+
+--- Préréglage : "calme" (peu de lignes, seulement l'utile), "normal", "tout". Appliqué en direct.
+function TreeAI:ApplyPreset(name)
+  local p = self.PRESETS[name]
+  local s = self.settings
+  if not (p and s) then return false end
+  s.preset = name
+  s.noise = type(s.noise) == "table" and s.noise or {}
+  s.noise.nowMinPrio, s.noise.perModule = p.nowMinPrio, p.perModule
+  s.noise.alertGap, s.noise.topicGap = p.alertGap, p.topicGap
+  if s.panel then s.panel.nowMax = p.nowMax end
+  if p.soundTips ~= nil then s.soundTips = p.soundTips end
+  self:Fire("PRESET_CHANGED", name)
+  self:RequestRefresh()
+  return true
+end
+
+-- encadré : 1 alerte max / alertGap s (20 s par défaut), un même sujet pas avant topicGap s,
+-- en combat seulement le danger de mort (le reste attend la fin du combat, s'il est encore vrai)
+local alertState = { last = -1e9, topics = {}, pending = nil, shown = 0, blocked = 0 }
+TreeAI._alertState = alertState
+function TreeAI:ResetAlertGate()
+  alertState.last, alertState.topics, alertState.pending = -1e9, {}, nil
+end
+
+function TreeAI:AlertAllowed(e, opts)
+  local n, t = noiseCfg(), now()
+  local danger = self:IsDanger(e, opts)
+  if self:InCombat() and not danger then
+    alertState.pending, alertState.blocked = e.id, alertState.blocked + 1
+    return false, "combat"
+  end
+  if t - alertState.last < (tonumber(n.alertGap) or 20) then
+    alertState.blocked = alertState.blocked + 1
+    return false, "gap"
+  end
+  local topic = self:TopicOf(e) or e.id
+  local tl = topic and alertState.topics[topic]
+  if tl and t - tl < (tonumber(n.topicGap) or 120) and not danger then
+    alertState.blocked = alertState.blocked + 1
+    return false, "topic"
+  end
+  alertState.last = t
+  if topic then alertState.topics[topic] = t end
+  alertState.shown = alertState.shown + 1
+  return true
+end
+
+-- fin de combat : l'alerte importante retenue pendant le combat, si elle est toujours d'actualité
+function TreeAI:_FlushPendingAlert()
+  local id = alertState.pending
+  alertState.pending = nil
+  local e = id and TreeAI._suggestions[id]
+  if not e or (e.expires and e.expires <= now()) or e.prio < 3 then return end
+  if self:AlertAllowed(e) then
+    playUrgentSound()
+    if self.ShowAlert then safecall(self.ShowAlert, self, e) end
+  end
+end
+
 function TreeAI:Suggest(id, text, prio, opts)
   if type(id) ~= "string" then id = tostring(id) end
   if text == nil or text == "" then self:ClearSuggestion(id); return nil end
@@ -702,6 +921,9 @@ function TreeAI:Suggest(id, text, prio, opts)
   prio = tonumber(prio) or 1
   if prio < 1 then prio = 1 elseif prio > 3 then prio = 3 end
   opts = opts or {}
+  -- module coupé en direct (options, /tai module X off) : ses minuteurs ne doivent plus rien afficher
+  local owner = opts.module and self.modules[opts.module]
+  if owner and owner._active == false then return nil end
   local t = now()
   local ttl = opts.ttl
   if ttl == nil then ttl = 60 end
@@ -711,6 +933,7 @@ function TreeAI:Suggest(id, text, prio, opts)
   e.expires = (ttl and ttl > 0) and (t + ttl) or nil
   e.module, e.icon, e.onClick, e.macro = opts.module, opts.icon, opts.onClick, opts.macro
   e.tab, e.tooltip = opts.tab, opts.tooltip
+  e.topic, e.danger = opts.topic, opts.danger
   suggestions[id] = e
 
   -- announce (sound/chat) at most once per cooldown for same id+text
@@ -721,14 +944,16 @@ function TreeAI:Suggest(id, text, prio, opts)
     if changed or not a then logSuggestion(e) end
     local minPrio = (self.settings and self.settings.minPrio) or 1
     if prio >= minPrio then
+      -- important (prio 3) : encadré + son, passés au filtre anti-bruit (≤ 1 / 20 s, sujet, combat)
+      local alertOK = prio >= 3 and self:AlertAllowed(e, opts)
       local doSound = opts.sound
-      -- sound only for important (prio 3) items, never forced on lower ones
-      doSound = ((prio >= 3) and doSound ~= false) or (doSound == true and self.settings and self.settings.soundTips)
+      doSound = (alertOK and doSound ~= false)
+        or (prio < 3 and doSound == true and self.settings and self.settings.soundTips)
       if doSound then playUrgentSound() end
-      if prio >= 3 and self.ShowAlert then safecall(self.ShowAlert, self, e) end
+      if alertOK and self.ShowAlert then safecall(self.ShowAlert, self, e) end
       -- important items go to the corner alert box; the centre error text only if that box is off
       local al = self.settings and self.settings.alert
-      if prio >= 3 and al and al.enabled == false and _G.UIErrorsFrame and _G.UIErrorsFrame.AddMessage then
+      if alertOK and al and al.enabled == false and _G.UIErrorsFrame and _G.UIErrorsFrame.AddMessage then
         pcall(_G.UIErrorsFrame.AddMessage, _G.UIErrorsFrame, text, 1, 0.3, 0.2)
       end
       -- advice never goes to the chat unless the player opted in (settings.chat, off by default)
@@ -806,7 +1031,9 @@ end
 
 function TreeAI:GetTabs()
   local list = {}
-  for _, t in pairs(self.tabs) do list[#list + 1] = t end
+  for id, t in pairs(self.tabs) do
+    if not (self.IsTabOff and self:IsTabOff(id)) then list[#list + 1] = t end
+  end
   tsort(list, function(a, b)
     if a.order ~= b.order then return a.order < b.order end
     return a.id < b.id
@@ -854,13 +1081,71 @@ local function plain(text)
 end
 TreeAI.PlainText = plain
 
+-- Formats communs (tous les modules peuvent s'en servir) : 1 234 · 12 po 3 pa · 45 s / 12 min / 1 h 05 · 85 %
+TreeAI.Fmt = TreeAI.Fmt or {}
+local Fmt = TreeAI.Fmt
+function Fmt.Num(n)
+  n = tonumber(n) or 0
+  local neg = n < 0
+  local s = tostring(math.floor(math.abs(n) + 0.5)):reverse():gsub("(%d%d%d)", "%1 "):reverse()
+  s = s:gsub("^ ", "")
+  return (neg and "-" or "") .. s
+end
+function Fmt.Money(c)
+  c = math.floor(tonumber(c) or 0)
+  local neg = c < 0
+  c = math.abs(c)
+  local g, s, k = math.floor(c / 10000), math.floor(c / 100) % 100, c % 100
+  local t = {}
+  if g > 0 then t[#t + 1] = Fmt.Num(g) .. " po" end
+  if s > 0 then t[#t + 1] = s .. " pa" end
+  if (k > 0 and g == 0) or #t == 0 then t[#t + 1] = k .. " pc" end
+  return (neg and "-" or "") .. tconcat(t, " ")
+end
+function Fmt.Time(sec)
+  sec = tonumber(sec)
+  if not sec then return "?" end
+  sec = math.max(0, math.floor(sec + 0.5))
+  if sec < 60 then return sec .. " s" end
+  if sec < 3600 then
+    local m, s = math.floor(sec / 60), sec % 60
+    if m < 10 and s > 0 then return strformat("%d min %02d", m, s) end
+    return math.floor(sec / 60 + 0.5) .. " min"
+  end
+  if sec < 86400 then return strformat("%d h %02d", math.floor(sec / 3600), math.floor(sec / 60) % 60) end
+  return strformat("%d j %d h", math.floor(sec / 86400), math.floor(sec / 3600) % 24)
+end
+function Fmt.Pct(x) return math.floor((tonumber(x) or 0) + 0.5) .. " %" end
+
+-- bloc de lignes -> module propriétaire (coupé = bloc masqué tout de suite, sans /reload)
+TreeAI.SOURCE_OWNER = TreeAI.SOURCE_OWNER or { missions = "Missions" }
+TreeAI.MAIN_OWNER = TreeAI.MAIN_OWNER or { predict = "Predict", quests = "Tracker", hv = "Auction" }
+TreeAI.TAB_OWNER = TreeAI.TAB_OWNER or { predict = "Predict" }
+local function moduleOff(name)
+  local m = name and TreeAI.modules[name]
+  return (m and m._active == false) and true or false
+end
+local function sourceActive(tabId, src)
+  if src == "main" then return not moduleOff(TreeAI.MAIN_OWNER[tabId]) end
+  return not moduleOff(TreeAI.SOURCE_OWNER[src] or src)
+end
+TreeAI._SourceActive = sourceActive
+
 function TreeAI:TabOf(e)
   if e.tab and self.tabs[e.tab] then return e.tab end
   return (e.module and self.MODULE_TAB[e.module]) or DEFAULT_TAB
 end
 
+function TreeAI:IsTabOff(id)
+  local owner = self.TAB_OWNER and self.TAB_OWNER[id]
+  local m = owner and self.modules[owner]
+  return (m and m._active == false) and true or false
+end
+
 -- Entries shown in a tab. « Maintenant » = top N by prio of suggestions + pinned tab lines, deduped
--- by visible text. Other tabs = their SetTabLines blocks, then the suggestions routed to them.
+-- by visible text AND by meaning (topic: ammo / bags / repair… from several modules -> one line),
+-- at most `perModule` lines per module, prio >= nowMinPrio (pinned quest step exempt).
+-- Other tabs = their SetTabLines blocks, then the suggestions routed to them.
 function TreeAI:GetTabLines(id)
   local out, seen = {}, {}
   local function push(e)
@@ -878,7 +1163,9 @@ function TreeAI:GetTabLines(id)
       local ts = tabSources[t.id]
       if ts then
         for _, src in ipairs(ts.order) do
-          for _, l in ipairs(ts.lines[src] or {}) do if l.pin then cand[#cand + 1] = l end end
+          if sourceActive(t.id, src) then
+            for _, l in ipairs(ts.lines[src] or {}) do if l.pin then cand[#cand + 1] = l end end
+          end
         end
       end
     end
@@ -888,16 +1175,36 @@ function TreeAI:GetTabLines(id)
       return a._rank < b._rank
     end)
     local max = tonumber(self.settings and self.settings.panel and self.settings.panel.nowMax) or 5
+    local nz = noiseCfg()
+    local minP, perMod = tonumber(nz.nowMinPrio) or 1, tonumber(nz.perModule) or 0
+    local topics, perCount = {}, {}
     for _, e in ipairs(cand) do
       if #out >= max then break end
-      push(e)
+      local topic = self:TopicOf(e)
+      local modName = e.module or e.source
+      if topic and topics[topic] then
+        local kept = topics[topic]
+        if modName and modName ~= (kept.module or kept.source) then
+          kept._also = kept._also or {}
+          kept._also[modName] = true
+        end
+      elseif (e.prio >= minP or e.pin)
+          and not (perMod > 0 and modName and (perCount[modName] or 0) >= perMod) then
+        e._also = nil
+        if push(e) then
+          if topic then topics[topic] = e end
+          if modName then perCount[modName] = (perCount[modName] or 0) + 1 end
+        end
+      end
     end
     return out
   end
   local ts = tabSources[id]
   if ts then
     for _, src in ipairs(ts.order) do
-      for _, l in ipairs(ts.lines[src] or {}) do push(l) end
+      if sourceActive(id, src) then
+        for _, l in ipairs(ts.lines[src] or {}) do push(l) end
+      end
     end
   end
   for _, e in ipairs(sugg) do
@@ -1298,16 +1605,53 @@ function TreeAI:RegisterSlash(cmd, fn, help)
   return true
 end
 
+-- Aide groupée : commande -> rubrique (les commandes des modules sans rubrique vont dans « Autres »)
+TreeAI.SLASH_GROUPS = TreeAI.SLASH_GROUPS or {
+  { "Démarrer", { "aide", "bienvenue", "mode", "profil", "options" } },
+  { "Panneau", { "afficher", "cacher", "basculer", "mini", "onglet", "edit", "placer", "verrou", "reset", "alerte" } },
+  { "Quêtes", { "quetes", "suivi", "itineraire", "prevoir", "pro", "abandon", "surbrillance", "highlight" } },
+  { "Boussole", { "boussole", "aller", "cible", "way" } },
+  { "Groupe", { "groupe", "mission", "prends", "partir", "pret", "sync" } },
+  { "Chasseur et combat", { "familier", "mort", "boost", "pvp" } },
+  { "Macros et touches", { "macros", "binds", "touches", "raccourcis" } },
+  { "Économie et HV", { "hv", "compos", "eco" } },
+  { "Outils", { "modules", "module", "statut", "perf", "nouveau", "selftest", "diag", "debug", "test" } },
+}
+
+--- { { title=, items = { {cmd=, help=}, ... } }, ... } : toutes les commandes documentées, groupées.
+function TreeAI:GetSlashHelp()
+  local out, used = {}, {}
+  for _, g in ipairs(self.SLASH_GROUPS) do
+    local items = {}
+    for _, c in ipairs(g[2]) do
+      local e = slash[c]
+      if e and e.help and not used[c] then used[c] = true; items[#items + 1] = { cmd = c, help = L[e.help] } end
+    end
+    if #items > 0 then out[#out + 1] = { title = L[g[1]], items = items } end
+  end
+  local other = {}
+  for _, c in ipairs(slashOrder) do
+    local e = slash[c]
+    if e.help and not used[c] then other[#other + 1] = { cmd = c, help = L[e.help] } end
+  end
+  if #other > 0 then out[#out + 1] = { title = L["Autres"], items = other } end
+  return out
+end
+
+function TreeAI:PrintHelp()
+  self:Print(L["Commandes"] .. " (/tai, /treeai) :")
+  for _, g in ipairs(self:GetSlashHelp()) do
+    self:Print("|cff33cc66" .. g.title .. "|r")
+    for _, it in ipairs(g.items) do self:Print("  |cffffff00/tai " .. it.cmd .. "|r — " .. it.help) end
+  end
+end
+
 function TreeAI:HandleSlash(input)
   input = tostring(input or "")
   local cmd, rest = input:match("^%s*(%S*)%s*(.-)%s*$")
   cmd = (cmd or ""):lower()
   if cmd == "" or cmd == "aide" or cmd == "help" or cmd == "?" then
-    self:Print(L["Commandes"] .. " (/tai, /treeai):")
-    for _, c in ipairs(slashOrder) do
-      local h = slash[c].help
-      if h then self:Print("  |cffffff00" .. c .. "|r - " .. L[h]) end
-    end
+    if rest == "chat" or not (self.ShowHelp and self:ShowHelp()) then self:PrintHelp() end
     return
   end
   local entry = slash[cmd]
@@ -1326,6 +1670,31 @@ end
 
 local function onoff(v) return v and L["activé"] or L["désactivé"] end
 
+TreeAI:RegisterSlash("aide", function() end, "cette aide (/tai aide chat : dans le chat)")
+TreeAI:RegisterSlash("mode", function(rest)
+  rest = tostring(rest or ""):lower()
+  if rest == "" then
+    local cur = TreeAI.settings.preset or "normal"
+    TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[cur] or cur] .. "  (/tai mode calme | normal | tout)")
+    return
+  end
+  if rest == "calm" then rest = "calme" elseif rest == "all" then rest = "tout" end
+  if TreeAI:ApplyPreset(rest) then
+    TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[rest]] .. " — " .. L[TreeAI.PRESET_HELP[rest]])
+  else
+    TreeAI:Print("/tai mode calme | normal | tout")
+  end
+end, "calme | normal | tout : combien de conseils tu veux voir")
+TreeAI:RegisterSlash("profil", function(rest)
+  rest = tostring(rest or ""):lower()
+  local want = (rest == "perso" or rest == "char" or rest == "personnage") and "char"
+    or ((rest == "compte" or rest == "account") and "account") or nil
+  if want then TreeAI:SetProfile(want) end
+  TreeAI:Print(L["Réglages"] .. " : " .. (TreeAI:ProfileMode() == "char" and L["propres à ce personnage"]
+    or L["communs au compte"]) .. "  (/tai profil perso | compte)")
+end, "perso | compte : réglages propres à ce perso ou communs")
+TreeAI:RegisterSlash("bienvenue", function() if TreeAI.ShowWizard then TreeAI:ShowWizard(1) end end,
+  "relancer l'assistant de démarrage")
 TreeAI:RegisterSlash("pvp", function()
   TreeAI.settings.pvp = not TreeAI.settings.pvp
   TreeAI:Print("Aides PvP : " .. (TreeAI.settings.pvp and "activées" or "désactivées (aide à quêter seulement)"))
@@ -1426,7 +1795,8 @@ function TreeAI:PLAYER_LOGIN()
   if not self._inited then initDB(); self._inited = true end
   self._charKey = nil
   self._loggedIn = true
-  -- rebind char data now that the name is known
+  -- rebind char data now that the name is known (profil du perso éventuel compris)
+  bindSettings()
   for _, n in ipairs(self.moduleOrder) do
     local mod = self.modules[n]
     if not mod._inited then moduleInit(mod) else moduleBindDB(mod) end
@@ -1441,6 +1811,10 @@ function TreeAI:PLAYER_LOGIN()
   for _, n in ipairs(self.moduleOrder) do moduleEnable(self.modules[n]) end
   self:Fire("READY")
   self:StartAutoRefresh()
+  -- premier lancement : petit assistant en 3 étapes (hors combat)
+  if self.db and not self.db.onboarded and self.ShowWizard then
+    self:After(4, function() self:RunOutOfCombat("wizard", function() self:ShowWizard(1) end) end)
+  end
   self:After(5, function() self:SendHello() end)
 end
 
@@ -1461,6 +1835,7 @@ function TreeAI:PLAYER_REGEN_ENABLED()
     if fn then safecall(fn) end
   end
   self:Fire("COMBAT_END")
+  self:After(2, function() if not self:InCombat() then self:_FlushPendingAlert() end end)
 end
 
 function TreeAI:CHAT_MSG_ADDON(_, prefix, msg, channel, sender)

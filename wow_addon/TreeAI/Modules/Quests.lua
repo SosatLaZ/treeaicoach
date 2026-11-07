@@ -665,6 +665,9 @@ end
 
 local function greyHint(a)
   if not cfg("greyHint") then return end
+  -- le module Abandon (verdicts expliqués) parle seul des quêtes à retirer quand il est actif
+  local ab = T.modules and T.modules.Abandon
+  if ab and ab._active then clear("grey") return end
   local q = a.grey[1]
   if not q then clear("grey") return end
   suggest("grey", ("« %s » est grise (niv %d) : presque pas d'XP. Clic = ouvrir pour l'abandonner."):format(

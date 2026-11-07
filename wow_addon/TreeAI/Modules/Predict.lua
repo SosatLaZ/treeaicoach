@@ -56,7 +56,7 @@ local function secret(v) local f = rawget(_G, "issecretvalue") return type(f) ==
 function M.Money(c)
   c = floor(tonumber(c) or 0)
   local g, s, cu = floor(c / 10000), floor((c % 10000) / 100), c % 100
-  if g > 0 then return s > 0 and (g .. " po " .. s) or (g .. " po") end
+  if g > 0 then return s > 0 and (g .. " po " .. s .. " pa") or (g .. " po") end
   if s > 0 then return cu > 0 and (s .. " pa " .. cu) or (s .. " pa") end
   return cu .. " pc"
 end

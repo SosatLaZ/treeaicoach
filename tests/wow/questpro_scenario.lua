@@ -216,11 +216,11 @@ return function(M, ctx)
   for _, f in ipairs(list) do byId[f.id] = f end
   check(byId.ammo and byId.ammo.text == "Munitions : vides dans ~12 min, achète 1000 au prochain vendeur" and byId.ammo.prio == 3, "ammo forecast: " .. tostring(byId.ammo and byId.ammo.text))
   check(byId.bags and byId.bags.text:find("^Sacs pleins dans ~25 monstres"), "bags forecast")
-  check(byId.train and byId.train.text == "Formation niv 28 : ≈ 3 po 20 — il te manque 1 po 40", "training forecast: " .. tostring(byId.train and byId.train.text))
+  check(byId.train and byId.train.text == "Formation niv 28 : ≈ 3 po 20 pa — il te manque 1 po 40 pa", "training forecast: " .. tostring(byId.train and byId.train.text))
   check(byId.hearth and byId.hearth.text == "Pierre de foyer prête dans 6 min", "hearth forecast")
   check(byId.repair and byId.repair.text:find("^Réparation bientôt") and byId.repair.prio == 2, "repair forecast")
   check(list[1].prio == 3, "urgent first")
-  check(P.Money(32000) == "3 po 20" and P.Money(14000) == "1 po 40" and P.Money(250) == "2 pa 50", "money format")
+  check(P.Money(32000) == "3 po 20 pa" and P.Money(14000) == "1 po 40 pa" and P.Money(250) == "2 pa 50", "money format")
   local L, c = P.NextTraining(26)
   check(L == 28 and c == 32000, "next training level")
   -- urgent forecast goes to « Maintenant »

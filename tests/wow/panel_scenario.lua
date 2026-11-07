@@ -14,6 +14,9 @@ return function(M, ctx)
   ctx.check(panel ~= nil, "panneau créé")
   ctx.check(panel:GetParent() == UIParent and not panel:IsProtected(), "panneau : enfant d'UIParent, non protégé")
   T:ShowPanel()
+  -- la tempête du harnais clique tous les boutons (préréglages, verrou…) : on repart du mode normal
+  if T.ApplyPreset then T:ApplyPreset("normal") end
+  if T.SetProfile then T:SetProfile("account") end
 
   -- « Maintenant » : top 5 par priorité, dédoublonné
   T:ClearSuggestions()
@@ -102,6 +105,7 @@ return function(M, ctx)
   -- encadré d'alerte : seulement prio 3, clic = ouvre le panneau sur l'onglet
   local alert, items = T:GetAlert()
   if alert then alert:Hide() end
+  if T.ResetAlertGate then T:ResetAlertGate() end   -- anti-bruit : 1 alerte / 20 s (déjà une plus haut)
   T:Suggest("Squad:far", "Ami loin", 2, { module = "Squad" })
   alert, items = T:GetAlert()
   ctx.check(not (alert and alert:IsShown()), "prio 2 : pas d'encadré")
