@@ -3,6 +3,7 @@
 -- a chain opener, a quest ready to turn in. Checks verdicts, explanations, the « À retirer » block, the click
 -- (instructions only, never abandons / never selects in the quest log), /tai abandon, combat guard, summary.
 return function(M, ctx)
+  M.RunSlash("/tai module Planner off")   -- the planner pins its step in « Maintenant » too
   local T = TreeAI
   local A = T and T.modules and T.modules.Abandon
   ctx.check(A and A.db and A.db.enabled and A.Core, "Abandon registered + enabled")
@@ -95,7 +96,8 @@ return function(M, ctx)
   ctx.check(find(tl, "Journal 19/20 : %d quêtes? à retirer"), "header (nearly full): " .. dump(tl))
   local line = find(tl, "À abandonner : « Vieille corvée » — grise, ", true)
   ctx.check(line and line.onClick and tostring(line.tooltip):find("ouvre ton journal (L)", 1, true), "abandon line + tooltip")
-  ctx.check(find(T.GetTabLines and T:GetTabLines("now") or {}, "Journal 19/20", true), "pinned in « Maintenant »")
+  T.settings.panel.nowMax = 30   -- other modules pin lines too: look past the top 5
+  ctx.check(find(T.GetTabLines and T:GetTabLines("now") or {}, "Journal 19/20", true), "pinned in « Maintenant » " .. dump(T:GetTabLines("now")))
 
   -- click = instructions only
   local n0 = #M.output
