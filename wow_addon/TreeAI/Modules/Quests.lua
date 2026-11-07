@@ -845,6 +845,7 @@ function M.Update()
   M.nextText = text
   M.UpdateButton()
   M.WriteSummary()
+  if T.Fire then pcall(T.Fire, T, "QUESTS_UPDATED", list) end  -- Boussole / Suivi (QUEST-PRO)
   return a
 end
 

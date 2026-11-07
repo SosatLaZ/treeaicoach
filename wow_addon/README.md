@@ -29,7 +29,7 @@ Core.lua  Locale_frFR.lua  UI.lua  Options.lua
 Data/Macros.lua
 Modules/Macros.lua  Modules/Hunter.lua  Modules/Classes.lua
 Data/PetFood.lua  Data/Consumables.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
+Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Compass.lua  Modules/Tracker.lua  Modules/Predict.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
 ```
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
@@ -61,6 +61,32 @@ top}, budget, budgetLeft, spentToday, scanAge, neutral, flavor }`, lu par `treea
 profit = vente × (1 − commission) − achat − dépôt × P(invendu)). Prix marchand: `GetItemInfo` (11e
 valeur), pas de table exportée. Auctionator: lecture seule de `Auctionator.API.v1` en secours.
 `/tai hv [vendre|journal|fenetre|neutre|faction|auto]`.
+
+`Modules/Compass.lua` · `Modules/Tracker.lua` · `Modules/Predict.lua` (agent QUEST-PRO) — en complément de
+Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonction de Blizzard touché :
+* **Boussole** (`T.Compass`) : flèche (cadre à nous, déplaçable, molette = taille) vers la cible courante —
+  point perso (`/tai way x y [nom]`, `/tai way effacer`) → `C_QuestLog.GetNextWaypoint` / `C_SuperTrack`
+  (lecture) → base Questie (apparition la plus proche des PNJ/objets d'objectif ou de remise) → zone seule.
+  Distance m/yd, temps : `ShortestPathForever.API.Estimate` (temps réel, hors combat) sinon vitesse
+  (`GetUnitSpeed`). Passe à la cible suivante quand l'objectif est fini. Cachée en instance (et en combat,
+  option). `/tai cible` (suivante), `/tai aller` ou Maj-clic = « Aller là » : SPF `Navigate` → TomTom
+  `AddWaypoint` → `C_Map.SetUserWaypoint` + `C_SuperTrack.SetSuperTrackedUserWaypoint` (non protégés),
+  **uniquement sur clic / commande du joueur**. Géométrie pure : `Compass.Geo` (World, Vector, Relative,
+  Dist, ETA). Base Questie : `LibQuestieDB` (addon QuestieDB, contrat 4) sinon `QuestieLoader._modules`.
+* **Suivi** (`T.Tracker`) : onglet « Quêtes » (`SetTabLines`) sinon petit cadre ; ordre = plus proche
+  voisin sur les points d'objectif / remise, barres `[===---]`, distance (+ temps SPF), « Prête à rendre »
+  (+ suite de chaîne), XP ; clic = cible de la boussole, Maj-clic = « Aller là ». Astuces : quêtes faciles à
+  côté, « passe prendre X chez Y en chemin », « tu pars sans prendre… », infobulle « lâche <objet> (taux) ».
+  `/tai suivi`, `/tai itineraire` (→ SPF `NavigateRoute`, ≤ 64 étapes). Planification hors combat seulement.
+* **Prévisions** (`T.Predict`) : taux mesurés (munitions/min, nourriture/boisson par repos, monstres/h via
+  `PARTY_KILL` ou message d'XP, butin par monstre et objet de quête — `TreeAIDB.modules.Predict.mobs` —,
+  XP/h, or/h, durabilité/h, places de sac par monstre) → onglet « Prévisions » ; urgentes dans « Maintenant ».
+  Coûts de formation : table **approximative** `Predict.TRAINING`. `/tai prevoir`.
+* Résumés IA : `summary.compass = {target={kind,questID,title,label,zone,src,dist,distText,eta}, targets,
+  mapID, custom, hidden}`, `summary.tracker = {route={{id,title,ready,dist,xp,zone,done,total}}, easyNearby,
+  pickup, available, dropMobs}`, `summary.predict = {sessionMin, rates={ammoPerMin, killsPerHour, xpPerHour,
+  goldPerHour, durPerHour, foodPerRest, waterPerRest, restsPerHour, slotsPerKill, kills, loots},
+  forecasts={{id,text,prio}}}`. Message interne `QUESTS_UPDATED` (émis par Quests.Update).
 
 `TreeAI` (global) existe dès `Core.lua`. Un module se déclare au chargement
 de son fichier (top-level) avec `TreeAI:RegisterModule`; il ne doit **rien**

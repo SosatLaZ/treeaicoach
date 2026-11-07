@@ -64,6 +64,15 @@ function M.Reset()
   M.locale = "frFR"
   M.ammoSlot = 0
   M.cvars = {}
+  M.pos = { mapID = 1424, x = 0.5, y = 0.4 }  -- player map position (C_Map), nil = unknown
+  M.facing = 0                                 -- GetPlayerFacing radians (0 = north, counter-clockwise)
+  M.instance = false                           -- IsInInstance(): positions hidden when true
+  M.speed = 0                                  -- GetUnitSpeed yards/s
+  M.mapRects = { [1424] = { top = 1000, left = 2000, w = 3000, h = 2000, continent = 0 },
+                 [1416] = { top = 3000, left = 2500, w = 2000, h = 1500, continent = 0 } }
+  M.mapNames = { [1424] = "Contreforts de Hautebrande", [1416] = "Montagnes d'Alterac" }
+  M.waypoints = {}                             -- [questID] = { mapID, x, y } (C_QuestLog.GetNextWaypoint, modern)
+  M.superTrack = nil
   M.loggingCombat, M.loggingChat = false, false
   M.SeedDefaults()
 end
@@ -639,7 +648,7 @@ function M.Install(flavor)
   G.GetCVarBool = function(k) return M.cvars[k] == "1" end
   G.LoggingCombat = function(v) if v ~= nil then M.loggingCombat = v and true or false end return M.loggingCombat end
   G.LoggingChat = function(v) if v ~= nil then M.loggingChat = v and true or false end return M.loggingChat end
-  G.IsShiftKeyDown = function() return false end
+  G.IsShiftKeyDown = function() return M.shift and true or false end
   G.IsControlKeyDown = G.IsShiftKeyDown
   G.IsAltKeyDown = G.IsShiftKeyDown
   G.IsModifierKeyDown = G.IsShiftKeyDown
@@ -762,13 +771,39 @@ function M.Install(flavor)
   G.GetSubZoneText = function() return M.player.subzone end
   G.GetMinimapZoneText = G.GetSubZoneText
   G.GetZonePVPInfo = function() return "contested" end
-  G.IsInInstance = function() return false, "none" end
+  G.IsInInstance = function() if M.instance then return true, "party" end return false, "none" end
   G.GetInstanceInfo = function() return M.player.zone, "none", 0, "", 5, 0, false, 0 end
+  -- map / position / facing (Compass, Tracker). World convention as WoW: world X grows north, world Y
+  -- grows west; M.mapRects[uiMapID] = { top = max world X, left = max world Y, w = yards, h = yards }.
+  local function vec(x, y) return { x = x, y = y, GetXY = function(p) return p.x, p.y end } end
+  local function rect(id) return M.mapRects[id] end
   G.C_Map = {
-    GetBestMapForUnit = function() return 1424 end,
-    GetPlayerMapPosition = function() return { x = 0.5, y = 0.4, GetXY = function(p) return p.x, p.y end } end,
-    GetMapInfo = function(id) return { mapID = id, name = M.player.zone, mapType = 3, parentMapID = 1415 } end,
+    GetBestMapForUnit = function(u) if u == "player" and not M.instance and M.pos then return M.pos.mapID end end,
+    GetPlayerMapPosition = function(id, u)
+      if M.instance or not M.pos or (id and id ~= M.pos.mapID) then return nil end
+      return vec(M.pos.x, M.pos.y)
+    end,
+    GetMapInfo = function(id) return { mapID = id, name = M.mapNames[id] or M.player.zone, mapType = 3, parentMapID = 1415 } end,
+    GetWorldPosFromMapPos = function(id, pos)
+      local r = rect(id)
+      if not r or type(pos) ~= "table" then return nil end
+      local x, y = pos.x, pos.y
+      if pos.GetXY then x, y = pos:GetXY() end
+      return r.continent or 0, vec(r.top - y * r.h, r.left - x * r.w)
+    end,
   }
+  if modern then
+    G.C_Map.GetMapWorldSize = function(id) local r = rect(id) if r then return r.w, r.h end return 0, 0 end
+    G.CreateVector2D = vec
+    G.C_SuperTrack = { GetSuperTrackedQuestID = function() return M.superTrack or 0 end,
+      SetSuperTrackedUserWaypoint = function(on) M.superTrackUser = on end }
+    -- user waypoint (Forever 1.60.1, not protected): recorded in M.userWaypoint
+    G.UiMapPoint = { CreateFromCoordinates = function(id, x, y) return { uiMapID = id, position = vec(x, y) } end }
+    G.C_Map.CanSetUserWaypointOnMap = function(id) return M.mapRects[id] ~= nil end
+    G.C_Map.SetUserWaypoint = function(pt) M.userWaypoint = pt end
+    G.C_Map.ClearUserWaypoint = function() M.userWaypoint = nil end
+  end
+  G.GetPlayerFacing = function() if M.instance then return nil end return M.facing end
 
   -- auras --------------------------------------------------------------------------------------
   local function aura(unit, i, filter)
@@ -995,6 +1030,10 @@ function M.Install(flavor)
           out[#out + 1] = { text = o.text, finished = o.done, numFulfilled = o.have, numRequired = o.need, type = "monster" }
         end
         return out
+      end,
+      GetNextWaypoint = function(id)
+        local w = M.waypoints[id]
+        if w then return w[1], w[2], w[3] end
       end,
       GetQuestTagInfo = function(id)
         local q = M.quests[(id or 0) - 1000]
