@@ -382,6 +382,14 @@ def character_context(db: Any) -> dict[str, Any]:
         sq = _squad(c)
         if sq:
             ctx["groupe_treeai"] = sq
+        try:  # hôtel des ventes (module Auction : summary.auction) → « quoi revendre ? »
+            from treeaicoach.wow import auction
+
+            hv = auction.auction_context(c)
+            if hv:
+                ctx["hotel_des_ventes"] = hv
+        except Exception:
+            log.debug("wow auction context failed", exc_info=True)
         return ctx
     except Exception:
         log.debug("character_context failed", exc_info=True)

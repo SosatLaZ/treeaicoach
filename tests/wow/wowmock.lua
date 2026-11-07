@@ -58,6 +58,8 @@ function M.Reset()
   M.items = {}
   M.bags = {}
   M.merchantOpen = false
+  M.ah = { open = false, list = {}, owned = {}, bids = {}, cancels = {}, queries = {}, mail = {} }
+  M.hardware, M.hwCalls = false, 0
   M.talentGroup, M.numTalentGroups = 1, 2
   M.locale = "frFR"
   M.ammoSlot = 0
@@ -309,7 +311,11 @@ function Widget:Disable() self.__enabled = false end
 function Widget:SetEnabled(v) self.__enabled = v and true or false end
 function Widget:Click(button)
   local fn = self.__scripts.OnClick
-  if fn then M.SafeCall("OnClick", fn, self, button or "LeftButton", true) end
+  if fn then
+    M.hardware, M.hwCalls = true, 0  -- a click = one hardware event
+    M.SafeCall("OnClick", fn, self, button or "LeftButton", true)
+    M.hardware = false
+  end
 end
 function Widget:GetTexture() return self.__texture end
 function Widget:SetTexture(t) self.__texture = t end
@@ -1143,6 +1149,7 @@ function M.Install(flavor)
   end
   G.Ambiguate = function(name) return (tostring(name):gsub("%-.*$", "")) end
   G.ChatFrame_AddMessageEventFilter = function() end
+  if M.InstallAH then M.InstallAH(G, modern) end
 end
 
 function M.RegisterPrefix(p)
@@ -1214,6 +1221,172 @@ function M.SlashCommands()
   end
   table.sort(out, function(a, b) return a.cmd < b.cmd end)
   return out
+end
+
+----------------------------------------------------------------------------------------------
+-- auction house (both flavours) + mail invoices. Classic API in "legacy" (QueryAuctionItems,
+-- GetAuctionItemInfo, PlaceAuctionBid…), C_AuctionHouse in "modern" (ReplicateItems, search,
+-- PlaceBid, Start/ConfirmCommoditiesPurchase…). Purchases/cancels must come from a click (hardware
+-- event), with the AH open, ONE per click: anything else is recorded as a violation.
+-- M.ah.list = { {id=, count=, buyout=, minBid=, owner=, auctionID=} }  M.ah.owned = same (mine)
+----------------------------------------------------------------------------------------------
+local function ahProtected(fn)
+  if not M.hardware then M.Violation("automation", fn .. " outside a hardware event (click)") return false end
+  M.hwCalls = M.hwCalls + 1
+  if M.hwCalls > 1 then M.Violation("automation", fn .. ": more than one AH action in one click") return false end
+  if not M.ah.open then M.Violation("api", fn .. " with the auction house closed") return false end
+  return true
+end
+local function ahInfo(a)
+  local it = M.items[a.id] or { name = "?", quality = 1 }
+  return it.name, 134400 + a.id, a.count, it.quality or 1, true, 1, "", a.minBid or a.buyout, 1, a.buyout,
+    0, false, nil, a.owner, a.owner, 0, a.id, true
+end
+function M.SetAuctionHouse(open)
+  M.ah.open = open and true or false
+  M.FireEvent(open and "AUCTION_HOUSE_SHOW" or "AUCTION_HOUSE_CLOSED")
+end
+function M.AddMail(subject, money, invoice, item)
+  M.ah.mail[#M.ah.mail + 1] = { subject = subject, money = money or 0, invoice = invoice, item = item, daysLeft = 29.9 }
+end
+function M.InstallAH(G, modern)
+  G.AUCTION_SOLD_MAIL_SUBJECT = "Vente aux enchères réussie : %s"
+  G.AUCTION_WON_MAIL_SUBJECT = "Objet remporté : %s"
+  G.AUCTION_EXPIRED_MAIL_SUBJECT = "Vente aux enchères expirée : %s"
+  G.AUCTION_REMOVED_MAIL_SUBJECT = "Vente aux enchères annulée : %s"
+  G.AUCTION_OUTBID_MAIL_SUBJECT = "Surenchère : %s"
+  G.GetInboxNumItems = function() return #M.ah.mail, #M.ah.mail end
+  G.GetInboxHeaderInfo = function(i)
+    local m = M.ah.mail[i]
+    if not m then return nil end
+    return nil, nil, "Hôtel des ventes", m.subject, m.money, 0, m.daysLeft, m.item and 1 or 0, false
+  end
+  G.GetInboxInvoiceInfo = function(i)
+    local m = M.ah.mail[i]
+    local v = m and m.invoice
+    if not v then return nil end
+    return v.type, v.item, "Inconnu", v.bid, v.buyout or v.bid, v.deposit or 0, v.cut or 0
+  end
+  G.GetInboxItem = function(i, a)
+    local m = M.ah.mail[i]
+    if not (m and m.item) then return nil end
+    local it = M.items[m.item.id] or {}
+    return it.name, m.item.id, 134400, m.item.count, 1, true
+  end
+  G.UnitFactionGroup = function() return "Alliance", "Alliance" end
+  if not modern then
+    G.CanSendAuctionQuery = function() return M.ah.open, M.ah.open end
+    G.QueryAuctionItems = function(name, lmin, lmax, page, usable, rarity, getAll)
+      if not M.hardware then M.Violation("automation", "QueryAuctionItems outside a click") end
+      M.ah.queries[#M.ah.queries + 1] = { name = name, page = page, getAll = getAll }
+      M.FireEvent("AUCTION_ITEM_LIST_UPDATE")
+    end
+    G.GetNumAuctionItems = function(kind)
+      local l = kind == "owner" and M.ah.owned or kind == "list" and M.ah.list or {}
+      return #l, #l
+    end
+    G.GetAuctionItemInfo = function(kind, i)
+      local l = kind == "owner" and M.ah.owned or M.ah.list
+      local a = l[i]
+      if a then return ahInfo(a) end
+    end
+    G.GetAuctionItemLink = function(kind, i)
+      local l = kind == "owner" and M.ah.owned or M.ah.list
+      return l[i] and M.ItemLink(l[i].id)
+    end
+    G.PlaceAuctionBid = function(kind, i, amount)
+      if not ahProtected("PlaceAuctionBid") then return end
+      local a = M.ah.list[i]
+      if not a then return end
+      M.ah.bids[#M.ah.bids + 1] = { id = a.id, count = a.count, amount = amount, buyout = a.buyout }
+      if amount >= a.buyout then table.remove(M.ah.list, i) end
+      M.player.money = M.player.money - amount
+    end
+    G.CancelAuction = function(i)
+      if not ahProtected("CancelAuction") then return end
+      local a = table.remove(M.ah.owned, i)
+      if a then M.ah.cancels[#M.ah.cancels + 1] = a end
+    end
+    G.GetAuctionSellItemInfo = function() return nil end
+    G.CalculateAuctionDeposit = function() return 0 end
+  else
+    local AH = {}
+    G.C_AuctionHouse = AH
+    G.Enum = G.Enum or {}
+    G.Enum.ItemCommodityStatus = { Unknown = 0, Item = 1, Commodity = 2 }
+    local function byID(id) for _, a in ipairs(M.ah.list) do if a.auctionID == id then return a end end end
+    AH.ReplicateItems = function()
+      if not M.hardware then M.Violation("automation", "ReplicateItems outside a click") end
+      M.ah.queries[#M.ah.queries + 1] = { getAll = true }
+      M.FireEvent("REPLICATE_ITEM_LIST_UPDATE")
+    end
+    AH.GetNumReplicateItems = function() return #M.ah.list end
+    AH.GetReplicateItemInfo = function(i0) local a = M.ah.list[i0 + 1] if a then return ahInfo(a) end end
+    AH.GetReplicateItemLink = function(i0) local a = M.ah.list[i0 + 1] return a and M.ItemLink(a.id) end
+    AH.MakeItemKey = function(id) return { itemID = id, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 } end
+    AH.GetItemCommodityStatus = function(id) local it = M.items[id] return (it and it.stack or 1) > 1 and 2 or 1 end
+    AH.SendSearchQuery = function(key)
+      if not M.hardware then M.Violation("automation", "SendSearchQuery outside a click") end
+      M.ah.queries[#M.ah.queries + 1] = { search = key and key.itemID }
+      local id = key and key.itemID
+      M.FireEvent(AH.GetItemCommodityStatus(id) == 2 and "COMMODITY_SEARCH_RESULTS_UPDATED" or "ITEM_SEARCH_RESULTS_UPDATED", id)
+    end
+    local function results(id)
+      local r = {}
+      for _, a in ipairs(M.ah.list) do if a.id == id then r[#r + 1] = a end end
+      table.sort(r, function(x, y) return x.buyout / x.count < y.buyout / y.count end)
+      return r
+    end
+    AH.GetNumItemSearchResults = function(key) return #results(key.itemID) end
+    AH.GetItemSearchResultInfo = function(key, i)
+      local a = results(key.itemID)[i]
+      if a then return { auctionID = a.auctionID, quantity = a.count, buyoutAmount = a.buyout, owners = { a.owner }, itemKey = key } end
+    end
+    AH.GetNumCommoditySearchResults = function(id) return #results(id) end
+    AH.GetCommoditySearchResultInfo = function(id, i)
+      local a = results(id)[i]
+      if a then return { auctionID = a.auctionID, quantity = a.count, unitPrice = math.floor(a.buyout / a.count), owners = { a.owner }, itemID = id } end
+    end
+    AH.PlaceBid = function(auctionID, amount)
+      if not ahProtected("PlaceBid") then return end
+      local a = byID(auctionID)
+      if not a then return end
+      M.ah.bids[#M.ah.bids + 1] = { id = a.id, count = a.count, amount = amount, buyout = a.buyout }
+      for i, x in ipairs(M.ah.list) do if x == a then table.remove(M.ah.list, i) break end end
+    end
+    AH.StartCommoditiesPurchase = function(id, qty)
+      if not ahProtected("StartCommoditiesPurchase") then return end
+      M.ah.pendingCommodity = { id = id, qty = qty }
+      local r, left, total = results(id), qty, 0
+      for _, a in ipairs(r) do
+        local take = math.min(left, a.count)
+        total = total + math.floor(a.buyout / a.count) * take
+        left = left - take
+        if left <= 0 then break end
+      end
+      M.FireEvent("COMMODITY_PRICE_UPDATED", math.floor(total / qty), total)
+    end
+    AH.ConfirmCommoditiesPurchase = function(id, qty)
+      if not ahProtected("ConfirmCommoditiesPurchase") then return end
+      if not (M.ah.pendingCommodity and M.ah.pendingCommodity.id == id) then M.Violation("api", "Confirm without Start") return end
+      M.ah.bids[#M.ah.bids + 1] = { id = id, count = qty, commodity = true }
+      M.ah.pendingCommodity = nil
+    end
+    AH.CancelCommoditiesPurchase = function() M.ah.pendingCommodity = nil end
+    AH.GetNumOwnedAuctions = function() return #M.ah.owned end
+    AH.GetOwnedAuctionInfo = function(i)
+      local a = M.ah.owned[i]
+      if a then return { auctionID = a.auctionID, itemKey = AH.MakeItemKey(a.id), itemLink = M.ItemLink(a.id),
+        quantity = a.count, buyoutAmount = a.buyout, status = 0, timeLeftSeconds = 3600 } end
+    end
+    AH.QueryOwnedAuctions = function() M.FireEvent("OWNED_AUCTIONS_UPDATED") end
+    AH.CancelAuction = function(auctionID)
+      if not ahProtected("CancelAuction") then return end
+      for i, a in ipairs(M.ah.owned) do
+        if a.auctionID == auctionID then M.ah.cancels[#M.ah.cancels + 1] = table.remove(M.ah.owned, i) return end
+      end
+    end
+  end
 end
 
 M.Reset()
