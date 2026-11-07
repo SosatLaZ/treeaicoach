@@ -28,7 +28,8 @@ automatiquement). Commandes: `/treeai` ou `/tai` (`/tai aide`).
 Core.lua  Locale_frFR.lua  UI.lua  Options.lua
 Data/Macros.lua
 Modules/Macros.lua  Modules/Hunter.lua  Modules/Classes.lua
-Modules/Leveling.lua  Modules/Group.lua  Modules/Quests.lua  Modules/Inventory.lua
+Data/PetFood.lua  Data/Consumables.lua
+Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua
 ```
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
@@ -36,8 +37,6 @@ toasts de progression, quêtes grises (clic = ouvrir, l'abandon reste manuel), �
 bouton sécurisé d'objet de quête (créé/modifié hors combat), ligne « Étape : … », `/tai quetes`,
 XP restante, `summary.quests`. Questie détecté: lecture seule de `QuestieLoader._modules.QuestieDB`
 (jamais `ImportModule`, aucun hook), pas d'infobulles en double.
-Modules/Leveling.lua  Modules/Group.lua  Modules/Inventory.lua  Modules/Boost.lua
-```
 
 `Modules/Boost.lua` (informatif / un clic, chaque fonction désactivable dans les options) : rares/élites
 (barres de nom, son 1×/GUID, clic = crâne hors combat), meilleure récompense de quête surlignée (jamais
@@ -238,3 +237,48 @@ TreeAIDB = {
 `/tai` (aide) · `afficher` / `cacher` / `basculer` · `verrou` · `reset`
 · `options` · `modules` · `module <Nom> on|off` · `sync` (HELLO au groupe)
 · `debug` · `statut` · `test` · + sous-commandes des modules (`RegisterSlash`).
+
+## Groupe à plusieurs : module `Squad` (`Modules/Squad.lua`)
+
+Quand les amis du groupe ont tous TreeAI, chaque client partage un état compact et **tous calculent
+les mêmes conseils** (moteur déterministe ; égalités départagées par le nom le plus petit = « chef »).
+Conseils écrits seulement (section « Groupe » sous le panneau + `/tai groupe`), rien d'automatique ;
+le bouton « Partager » (QuestLogPushQuest) n'agit que sur clic du joueur, jamais en combat. PvE.
+
+* Comms (via `TreeAI:Send`, PARTY/RAID) : `SQS` état `{v=2, c classe, l niveau, x xp%, r repos%, z zone,
+  m mapID, py/px position grossière (UnitPosition, arrondie à 5 m), pi instance, h PV%, p mana% (-1),
+  d 0 vivant/1 mort/2 fantôme, pt familier 1 ok/2 absent, ph bonheur, b/bt sacs libres/total,
+  du durabilité%, hs pierre de foyer (s restantes, -1 sans), hb bind, fo/wa nourriture/eau, am munitions,
+  pr métiers, lm départ dans N min (`/tai partir N`), rd prêt (`/tai pret on|off`), af AFK, cb combat,
+  qn/qm quêtes/max, xh XP/h}` ; `SQQ` `"2:" .. "id,niv,drapeaux(C fini, G groupe, Dn donjon),titre,m3/8.i0/5;…"` ;
+  `SQR` `"2"` (renvoyez vos infos). Envoi au changement + toutes les 15 s (état) / 60 s (quêtes),
+  ≤ 1 message/s ; en réception : membres actuels du groupe seulement, seau de jetons par membre,
+  version ≠ 2 ignorée, tout revalidé (bornes, longueur, pas de `|`).
+* Catégories (options, chacune désactivable) : `quests` (communes, « X n'a pas Q : Y, partage-la »,
+  attendre avant de rendre, quêtes de groupe, ordre conseillé, à faire à part), `xp` (écarts de niveau,
+  repos, XP/h), `regroup` (autre zone, loin, mort/fantôme), `pull` (cible hostile hors combat : mana/PV
+  bas, familier, AFK/pas prêt), `loot` (objets de quête à laisser, conseil Besoin/Cupidité au
+  START_LOOT_ROLL — texte seulement, jamais de jet automatique), `logistics` (marchand, réparation,
+  munitions, nourriture, pierres de foyer, départs), `dungeons` (tranche de niveau + qui a les quêtes).
+* Instantané pour TreeAI Coach : `TreeAIDB.chars[perso].summary.group = {v=2, updated, size, leader,
+  members = {{name, class, level, xp, rested, zone, hp, mana, dead, bags, durability, ammo, leaveMin,
+  ready, afk, professions, me}}, advices = {{cat, prio, text}}, common = {{id, title, holders, done, group}},
+  xph}` (lu par `treeaicoach/wow/ai_context.py`, noms remplacés par « Classe niveau » avant l'IA).
+* Compat : `Group.lua` se tait quand Squad est actif (plus d'envoi FSTAT/FQUEST ni de suggestions),
+  mais `Group.members` reste rempli (même forme) pour les modules qui le lisent (Quests.lua).
+
+API pour les autres modules (Quests, Boost…) :
+
+```lua
+local SQ = TreeAI.Squad            -- nil si le module n'est pas chargé
+SQ:IsActive()                      -- module activé
+SQ:Members()                       -- { "Nom", ... } triés (moi compris), seulement ceux qui ont TreeAI
+SQ:State(name)                     -- état décodé (champs ci-dessus) ; nil = moi
+SQ:Quests(name)                    -- [questID] = {id, level, title, done, group, dungeon, obj={{t,have,need}}}
+SQ:Common()                        -- {{id, title, holders={}, done={}, notDone={}, missing={}, group, dungeon}} trié
+SQ:Advices()                       -- conseils courants {{id, cat, prio, score, text, action}}
+SQ:Leader()  SQ:Size()
+SQ.Engine.Advise(members, ctx)     -- moteur pur (testable) ; SQ.Engine.LootHint(item, members)
+-- message interne : TreeAI:On("SQUAD_UPDATE", owner, fn(owner, msg, advices))
+```
+Boost : si `TreeAI.Boost:XPPerHour()` existe, Squad l'utilise pour `xh`.

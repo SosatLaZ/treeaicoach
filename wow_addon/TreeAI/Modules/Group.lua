@@ -47,6 +47,18 @@ local function clear(id)
   if f then pcall(f, T, id) end
 end
 
+-- Quand le module Squad (cerveau de groupe, protocole v2) est actif, Group se tait : plus d'envoi
+-- FSTAT/FQUEST, plus de suggestions ni d'écriture de summary.group. Il garde ses récepteurs et
+-- M.members (Squad l'alimente aussi, même forme) pour les modules qui le lisent (Quests.lua).
+local function squadActive()
+  local T = core()
+  local sq = T and T.Squad
+  if type(sq) ~= "table" or type(sq.IsActive) ~= "function" then return false end
+  local ok, v = pcall(sq.IsActive, sq)
+  return ok and v or false
+end
+M.SquadActive = squadActive
+
 local function inCombat()
   return (InCombatLockdown and InCombatLockdown()) or (UnitAffectingCombat and UnitAffectingCombat("player")) or false
 end
@@ -216,7 +228,7 @@ end
 local seq = 0
 local lastQuestSend, questQueued = -1e9, false
 function M.SendQuests()
-  if not channel() then return end
+  if not channel() or squadActive() then return end
   local delay = 10 - (now() - lastQuestSend)
   if delay > 0 then
     if not questQueued then questQueued = true later(delay, function() questQueued = false M.SendQuests() end) end
@@ -246,7 +258,7 @@ end
 
 local lastStatus = -1e9
 function M.SendStatus(force)
-  if not channel() then return end
+  if not channel() or squadActive() then return end
   if not force and now() - lastStatus < 5 then return end
   lastStatus = now()
   local y, x, inst = position()
@@ -305,6 +317,7 @@ function M.OnRequest(sender)
 end
 
 local function sendRequest()
+  if squadActive() then return end
   local T = comms()
   if T then pcall(T.Send, T, "FREQ", "1") else send("R1") end
 end
@@ -391,8 +404,13 @@ end
 
 local farWarned = {}
 function M.Analyse()
-  local d = store()
   local list = M.Compare(scan(), members)
+  if squadActive() then
+    clear("grp_quest")
+    for name in pairs(members) do clear("grp_far_" .. name) clear("grp_lvl_" .. name) end
+    return list
+  end
+  local d = store()
   local inInstance = IsInInstance and IsInInstance()
   local mySummary = {}
   for name, m in pairs(members) do
