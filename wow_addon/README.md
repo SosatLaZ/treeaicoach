@@ -131,6 +131,19 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
     infobulle « lâche <objet> (taux) ». Recalcul hors combat seulement (`:AutoRefresh()`, ≥ 1,5 s) ; en combat
     la progression est recopiée sans calcul. `/tai suivi [cadre|filtre X|tri X|police N|verrou|masquer id|
     montrer|reduire|cacher]`, `/tai itineraire` (→ SPF `NavigateRoute`, ≤ 64 étapes).
+* **À faire** (`T.Todo`, `Modules/Todo.lua`, agent TODO) — la page de suivi refaite : une fenêtre (`/tai todo`, ou la
+  dernière ligne de l'onglet « Quêtes ») déplaçable / redimensionnable (`TreeAI:RegisterMovable` si présent) et l'onglet
+  « Quêtes » en version compacte (le Tracker lui passe la main dans `Push`, retour `"todo"` ; Todo désactivé = affichage
+  historique). Sections : **Maintenant** (courses urgentes > carte épinglée > étape du plan > meilleure carte ; pourquoi,
+  temps, boutons « Boussole » / « Y aller »), **Étapes du trajet** (`Tracker.PlanSteps` → `Planner:GetActiveSteps`),
+  **Quêtes** par zone (cartes repliables : niveau en couleur, barres par objectif + « encore ~N × monstre », temps,
+  distance, « À rendre », avatars de classe + progression des amis, récompense + % (Abandon/Boost), verdict Abandon au
+  survol), **Courses** (`Predict.list` : réparation, munitions, sacs, nourriture, formation, foyer), **Groupe**
+  (`Missions.board` / `next`, repli `Squad:Common()`), barre de **session** (`Boost:XPStats`, sinon Predict). Tout à la
+  souris : puces de filtre (Tout / Zone / Prêtes / Groupe / Faciles / Épinglées), bouton de tri, « Itinéraire »,
+  « Ordre auto », case épingler, masquer (réafficher en bas), glisser-déposer ou ▲▼ (ordre sauvé par perso
+  `chars[k].modules.Todo.order`), recherche facultative. Rendu ≤ 2/s, mise en page refaite seulement si le contenu change.
+  Résumé `summary.todo = {now, pins, hidden, ordered, filter, errands, shown}`. `/tai todo [montrer|cacher|ordre|tout|reset]`.
 * **Prévisions** (`T.Predict`) : taux mesurés (munitions/min, nourriture/boisson par repos, monstres/h via
   `PARTY_KILL` ou message d'XP, butin par monstre et objet de quête — `TreeAIDB.modules.Predict.mobs` —,
   XP/h, or/h, durabilité/h, places de sac par monstre) → onglet « Prévisions » ; urgentes dans « Maintenant ».

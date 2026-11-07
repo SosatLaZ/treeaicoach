@@ -2,6 +2,7 @@
 -- tests/wow/test_questpro.py. Fake names only. Fake Questie DB (read-only use).
 return function(M, ctx)
   local T = TreeAI
+  M.RunSlash("/tai module Todo off")   -- « À faire » owns the quests tab otherwise (tested in todo_scenario)
   local C, TR, P, Q = T:GetModule("Compass"), T:GetModule("Tracker"), T:GetModule("Predict"), T:GetModule("Quests")
   ctx.check(C and TR and P and Q, "Compass, Tracker, Predict, Quests registered")
   if not (C and TR and P and Q) then return end

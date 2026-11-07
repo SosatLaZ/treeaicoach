@@ -5,6 +5,7 @@
 return function(M, ctx)
   -- (the in-game planner fills « Quêtes » / « Maintenant » too: off for these UI checks)
   M.RunSlash("/tai module Planner off")
+  M.RunSlash("/tai module Todo off")   -- « À faire » owns the quests tab otherwise (tested in todo_scenario)
   local T = TreeAI
   local TR, Q, C, P = T:GetModule("Tracker"), T:GetModule("Quests"), T:GetModule("Compass"), T:GetModule("Predict")
   local check = ctx.check
