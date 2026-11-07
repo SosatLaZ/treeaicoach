@@ -50,7 +50,7 @@ local CLASS = {  -- fallback when RAID_CLASS_COLORS is absent
 
 -- skin kinds: which background token, border or not -------------------------------------------------
 local KINDS = {
-  window = { bg = "bg", border = "border" },
+  window = { bg = "bg", border = "border", glass = true },   -- verre sombre arrondi (UI2)
   panel = { bg = "panel", border = "border" },
   hud = { bg = "hud", border = "borderSoft" },
   bar = { bg = "barBg", border = "borderSoft", bar = true },
@@ -212,7 +212,7 @@ function Th:_Apply(frame)
   if s.opts.border == false then spec = { bg = spec.bg, bar = spec.bar, hover = spec.hover } end
   if s.opts.noBg then spec = { border = spec.border, bar = spec.bar, hover = spec.hover } end
   if type(frame.SetBackdrop) == "function" and not s.opts.textures then
-    local bd = self:IsBlizzard() and BD_BLIZ or BD_FLAT
+    local bd = self:IsBlizzard() and BD_BLIZ or (spec.glass and Th.BACKDROP_GLASS) or BD_FLAT
     if spec.bg or spec.border then
       meth(frame, "SetBackdrop", bd)
       if spec.bg then meth(frame, "SetBackdropColor", self:Color(spec.bg)) else meth(frame, "SetBackdropColor", 0, 0, 0, 0) end
@@ -467,10 +467,284 @@ function Th:Badge(parent, text, prio)
   return f
 end
 
+-- fenêtres (UI2) : en-tête commun (icône + titre + réduire + fermer), verre sombre arrondi, survol,
+-- fondu à l'ouverture (un seul OnUpdate partagé, éteint au repos), redimensionnable avec bornes,
+-- état mémorisé (settings.windows[id] = { w, h, collapsed }), Échap ferme (UISpecialFrames, nos cadres seulement).
+local BD_GLASS = { bgFile = WHITE, edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = false, edgeSize = 12,
+  insets = { left = 3, right = 3, top = 3, bottom = 3 } }
+Th.BACKDROP_GLASS = BD_GLASS
+KINDS.glass = { bg = "bg", border = "borderSoft", glass = true }   -- variante au liseré doux
+Th.HEADER_H = 22
+Th._windows = setmetatable({}, { __mode = "k" })   -- frame -> { opts, header, grip, collapsed }
+Th._escNames = {}
+local ICON_CLOSE = "Interface\\Buttons\\UI-StopButton"
+local ICON_MIN, ICON_MAX = "Interface\\Buttons\\UI-MinusButton-Up", "Interface\\Buttons\\UI-PlusButton-Up"
+local GRIP = "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up"
+
+local function winState(id)
+  local s = T.settings
+  if not (s and id) then return nil end
+  if type(s.windows) ~= "table" then s.windows = {} end
+  local w = s.windows[id]
+  if type(w) ~= "table" then w = {}; s.windows[id] = w end
+  return w
+end
+function Th:WindowState(id) return winState(id) end
+
+-- animations : alpha avec ease-out, un seul OnUpdate partagé (coupé dès que plus rien ne bouge)
+local anims, driver = {}, nil
+local function stepAnims(_, elapsed)
+  local any = false
+  for f, a in pairs(anims) do
+    a.t = a.t + (elapsed or 0.016)
+    local k = math.min(1, a.t / a.dur)
+    local e = 1 - (1 - k) * (1 - k)
+    meth(f, "SetAlpha", a.from + (a.to - a.from) * e)
+    if k >= 1 then
+      anims[f] = nil
+      if a.done then pcall(a.done, f) end
+    else any = true end
+  end
+  if not any and driver then meth(driver, "SetScript", "OnUpdate", nil) end
+end
+Th._StepAnims = stepAnims
+function Th:Animate(frame, from, to, dur, done)
+  if type(frame) ~= "table" then return end
+  if not driver and type(G.CreateFrame) == "function" then
+    local ok, d = pcall(G.CreateFrame, "Frame", nil, G.UIParent)
+    if ok then driver = d end
+  end
+  meth(frame, "SetAlpha", from)
+  anims[frame] = { from = from, to = to, dur = math.max(0.01, dur or 0.15), t = 0, done = done }
+  if driver then meth(driver, "SetScript", "OnUpdate", stepAnims) else stepAnims(nil, 1) end
+end
+function Th:IsAnimating(frame) return anims[frame] ~= nil end
+function Th:FadeIn(frame, dur, alpha) self:Animate(frame, 0, alpha or 1, dur or 0.15) end
+--- Ferme en fondu (puis Hide). En combat : Hide direct.
+function Th:FadeOut(frame, dur)
+  if type(frame) ~= "table" then return end
+  if not meth(frame, "IsShown") or (T.InCombat and T:InCombat()) then meth(frame, "Hide"); return end
+  local a = meth(frame, "GetAlpha") or 1
+  self:Animate(frame, a, 0, dur or 0.12, function(f) meth(f, "Hide"); meth(f, "SetAlpha", a) end)
+end
+
+-- Échap : nom TreeAI… dans UISpecialFrames ; cadre sans nom = petit relais nommé caché avec lui
+local function registerEsc(frame, id)
+  local list = rawget(G, "UISpecialFrames")
+  if type(list) ~= "table" then return nil end
+  local name = meth(frame, "GetName")
+  if not (type(name) == "string" and name:find("^TreeAI")) then
+    name = "TreeAIEsc_" .. (tostring(id or "w"):gsub("[^%w]", ""))
+    if not rawget(G, name) then
+      if type(G.CreateFrame) ~= "function" then return nil end
+      local ok, proxy = pcall(G.CreateFrame, "Frame", name, G.UIParent)
+      if not ok or not proxy then return nil end
+      meth(proxy, "SetSize", 1, 1)
+      meth(proxy, "Hide")
+      meth(proxy, "SetScript", "OnHide", function() if meth(frame, "IsShown") then meth(frame, "Hide") end end)
+      if type(frame.HookScript) == "function" then
+        meth(frame, "HookScript", "OnShow", function() meth(proxy, "Show") end)
+        meth(frame, "HookScript", "OnHide", function() meth(proxy, "Hide") end)
+      end
+      if meth(frame, "IsShown") then meth(proxy, "Show") end
+    end
+  end
+  if not Th._escNames[name] then
+    Th._escNames[name] = true
+    local seen = false
+    for _, n in ipairs(list) do if n == name then seen = true end end
+    if not seen then list[#list + 1] = name end
+  end
+  return name
+end
+Th._RegisterEsc = registerEsc
+
+local function children(frame)
+  if type(frame.GetChildren) ~= "function" then return {} end
+  local ok, r = pcall(function() return { frame:GetChildren() } end)
+  return ok and r or {}
+end
+
+--- Réduit à l'en-tête / déplie. Mémorisé si opts.id.
+function Th:SetCollapsed(frame, v)
+  local w = self._windows[frame]
+  if not (w and w.header) then return end
+  v = v and true or false
+  if v == w.collapsed then return end
+  if v then
+    w.fullH = meth(frame, "GetHeight") or w.fullH
+    w.hidden = {}
+    for _, c in ipairs(children(frame)) do
+      if c ~= w.header and meth(c, "IsShown") then w.hidden[#w.hidden + 1] = c; meth(c, "Hide") end
+    end
+    meth(frame, "SetHeight", self.HEADER_H + 6)
+  else
+    for _, c in ipairs(w.hidden or {}) do meth(c, "Show") end
+    w.hidden = nil
+    if w.fullH then meth(frame, "SetHeight", w.fullH) end
+  end
+  w.collapsed = v
+  local mb = w.header.min
+  if mb and mb.icon then meth(mb.icon, "SetTexture", v and ICON_MAX or ICON_MIN) end
+  local st = winState(w.opts.id)
+  if st then st.collapsed = v end
+  if w.opts.onCollapse then pcall(w.opts.onCollapse, v) end
+end
+function Th:IsCollapsed(frame) local w = self._windows[frame] return w and w.collapsed or false end
+
+local function buildHeader(frame, w)
+  local o = w.opts
+  local hd = newFrame("Button", frame)
+  if not hd then return nil end
+  meth(hd, "SetHeight", Th.HEADER_H)
+  meth(hd, "SetPoint", "TOPLEFT", frame, "TOPLEFT", 3, -3)
+  meth(hd, "SetPoint", "TOPRIGHT", frame, "TOPRIGHT", -3, -3)
+  hd.bg = meth(hd, "CreateTexture", nil, "BACKGROUND")
+  if hd.bg then meth(hd.bg, "SetAllPoints", hd); setColorTex(hd.bg, Th:Color("button")) end
+  local hl = meth(hd, "CreateTexture", nil, "HIGHLIGHT")
+  if hl then meth(hl, "SetAllPoints", hd); setColorTex(hl, Th:Color("hover")) end
+  local x = 6
+  if o.icon then
+    hd.icon = meth(hd, "CreateTexture", nil, "ARTWORK")
+    if hd.icon then
+      meth(hd.icon, "SetSize", 16, 16); meth(hd.icon, "SetPoint", "LEFT", hd, "LEFT", 4, 0)
+      meth(hd.icon, "SetTexture", o.icon); meth(hd.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
+      x = 24
+    end
+  end
+  hd.title = Th:Text(hd, "M", "gold")
+  if hd.title then
+    meth(hd.title, "SetPoint", "LEFT", hd, "LEFT", x, 0)
+    meth(hd.title, "SetJustifyH", "LEFT")
+    meth(hd.title, "SetWordWrap", false)          -- jamais de débordement : « … » automatique
+    meth(hd.title, "SetText", o.title or "")
+  end
+  local right, rpt = hd, "RIGHT"
+  if o.close ~= false then
+    hd.close = Th:IconButton(hd, ICON_CLOSE, 16, function()
+      if o.onClose then pcall(o.onClose, frame) else Th:FadeOut(frame) end
+    end, "Fermer", (o.esc ~= false) and "Échap ferme aussi" or nil)
+    if hd.close then meth(hd.close, "SetPoint", "RIGHT", hd, "RIGHT", -3, 0); right, rpt = hd.close, "LEFT" end
+  end
+  if o.min ~= false then
+    hd.min = Th:IconButton(hd, ICON_MIN, 16, function() Th:SetCollapsed(frame, not w.collapsed) end,
+      "Réduire / déplier", "Double-clic sur l'en-tête aussi")
+    if hd.min then
+      if hd.min.icon then meth(hd.min.icon, "SetTexCoord", 0, 1, 0, 1) end
+      meth(hd.min, "SetPoint", "RIGHT", right, rpt, -3, 0); right, rpt = hd.min, "LEFT"
+    end
+  end
+  if hd.title then meth(hd.title, "SetPoint", "RIGHT", right, rpt, -4, 0) end
+  meth(hd, "RegisterForDrag", "LeftButton")
+  meth(hd, "SetScript", "OnDragStart", function()
+    if o.locked and o.locked() then return end
+    if meth(frame, "IsMovable") then meth(frame, "StartMoving") end
+  end)
+  meth(hd, "SetScript", "OnDragStop", function()
+    meth(frame, "StopMovingOrSizing")
+    if o.onMoved then pcall(o.onMoved, frame) end
+  end)
+  meth(hd, "SetScript", "OnDoubleClick", function() if o.min ~= false then Th:SetCollapsed(frame, not w.collapsed) end end)
+  return hd
+end
+
+--- Bornes de taille (et jamais plus de 90 % de l'écran). Applique et renvoie la taille.
+function Th:ClampSize(frame, fw, fh)
+  local w = self._windows[frame]
+  local r = (w and w.opts.resize) or {}
+  fw = tonumber(fw) or meth(frame, "GetWidth") or 300
+  fh = tonumber(fh) or meth(frame, "GetHeight") or 200
+  local P = G.UIParent
+  local W, H = (P and meth(P, "GetWidth")) or 1920, (P and meth(P, "GetHeight")) or 1080
+  local maxW, maxH = math.min(r.maxW or 900, W * 0.9), math.min(r.maxH or 1000, H * 0.9)
+  fw = math.floor(math.max(r.minW or 200, math.min(maxW, fw)) + 0.5)
+  fh = math.floor(math.max(r.minH or 80, math.min(maxH, fh)) + 0.5)
+  if r.width == "only" or (w and w.collapsed) then meth(frame, "SetWidth", fw) else meth(frame, "SetSize", fw, fh) end
+  return fw, fh
+end
+
+local function buildGrip(frame, w)
+  local r = w.opts.resize
+  meth(frame, "SetResizable", true)
+  if type(frame.SetResizeBounds) == "function" then
+    meth(frame, "SetResizeBounds", r.minW or 200, r.minH or 80, r.maxW or 900, r.maxH or 1000)
+  else
+    meth(frame, "SetMinResize", r.minW or 200, r.minH or 80)
+    meth(frame, "SetMaxResize", r.maxW or 900, r.maxH or 1000)
+  end
+  local g = newFrame("Button", frame)
+  if not g then return nil end
+  meth(g, "SetSize", 14, 14)
+  meth(g, "SetPoint", "BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
+  meth(g, "SetNormalTexture", GRIP)
+  meth(g, "SetHighlightTexture", "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  meth(g, "SetScript", "OnMouseDown", function()
+    if T.InCombat and T:InCombat() then return end
+    meth(frame, "StartSizing", "BOTTOMRIGHT")
+  end)
+  meth(g, "SetScript", "OnMouseUp", function()
+    meth(frame, "StopMovingOrSizing")
+    local fw, fh = Th:ClampSize(frame)
+    local st = winState(w.opts.id)
+    if st then st.w, st.h = fw, fh end
+    if r.onResize then pcall(r.onResize, fw, fh) end
+  end)
+  return g
+end
+
+--- Décore une fenêtre TreeAI. opts = { id, title, icon, header (défaut true), close, min, esc (défaut true),
+--- onClose(frame), onMoved(frame), locked = fn, fade (défaut true), alpha = fn, skin (défaut "glass", false = rien),
+--- resize = { minW, minH, maxW, maxH, onResize(w, h), width = "only" } }. Renvoie l'en-tête (ou nil).
+function Th:Window(frame, opts)
+  if not self:CanSkin(frame) then return nil end
+  local w = self._windows[frame]
+  if w then return w.header end
+  opts = opts or {}
+  w = { opts = opts, collapsed = false }
+  self._windows[frame] = w
+  if opts.skin ~= false then self:Skin(frame, opts.skin or "window") end
+  if opts.header ~= false then w.header = buildHeader(frame, w) end
+  if opts.resize then
+    w.grip = buildGrip(frame, w)
+    local st = winState(opts.id)
+    if st and tonumber(st.w) and opts.remember ~= false then self:ClampSize(frame, st.w, st.h) end
+  end
+  if opts.esc ~= false then
+    w.esc = registerEsc(frame, opts.id)
+    if not w.esc and type(frame.HookScript) == "function" then   -- liste pas encore là : réessayé à l'ouverture
+      meth(frame, "HookScript", "OnShow", function(f) if not w.esc then w.esc = registerEsc(f, opts.id) end end)
+    end
+  end
+  if opts.fade ~= false and type(frame.HookScript) == "function" then
+    meth(frame, "HookScript", "OnShow", function(f)
+      if anims[f] then return end
+      local a = 1
+      if opts.alpha then local ok, v = pcall(opts.alpha) if ok and tonumber(v) then a = v end end
+      Th:Animate(f, 0, a, 0.15)
+    end)
+  end
+  local st = winState(opts.id)
+  if st and st.collapsed and w.header then self:SetCollapsed(frame, true) end
+  return w.header
+end
+function Th:IsWindow(frame) return self._windows[frame] ~= nil end
+function Th:GetWindow(frame) return self._windows[frame] end
+
 -- module: settings → refresh; skin the core panel + alert box (TreeAI's own frames) -----------------------
 local function skinCore()
   local p = T.GetPanel and T:GetPanel()
-  if p then Th:Skin(p, "window") end
+  if p then
+    Th:Skin(p, "window")
+    -- panneau : verre sombre, poignée de largeur (300-560), fondu à l'ouverture ; pas d'Échap (c'est un HUD)
+    Th:Window(p, { id = "panel", header = false, esc = false,
+      alpha = function() local s = T.settings and T.settings.panel return s and s.alpha or 0.9 end,
+      resize = { minW = T.PANEL_MIN_WIDTH or 300, maxW = 560, minH = 24, maxH = 2000, width = "only", remember = false,
+        onResize = function(w)
+          local s = T.settings and T.settings.panel
+          if s then s.width = w end
+          if T.ApplyPanelSettings then T:ApplyPanelSettings() end
+        end } })
+  end
   local a = T.GetAlert and T:GetAlert()
   if a then Th:Skin(a, "alert") end
 end

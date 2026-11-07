@@ -8,6 +8,7 @@ local L = TreeAI.L
 local pcall, ipairs, pairs, type, tostring, floor = pcall, ipairs, pairs, type, tostring, math.floor
 
 local category, canvas, appearance
+local soundsPage, soundsCat
 local pages = {}       -- { frame, category }
 local widgets = {}
 
@@ -226,7 +227,8 @@ local function buildMain(content)
   P.button(L["Tester l'encadré"], 160, function() TreeAI:HandleSlash("alerte") end)
 
   P.header(L["Sons et messages"])
-  P.check(L["Son pour les alertes importantes"], function() return S.sound end, function(v) S.sound = v end)
+  P.check(L["Sons TreeAI (alertes, quêtes, rares…)"], function() return S.sound end, function(v) S.sound = v end)
+  P.button(L["Sons : choisir par genre, écouter"], 260, function() TreeAI:OpenOptions("sounds") end)
   P.check(L["Sons aussi pour certains conseils (rares…)"], function() return S.soundTips end,
     function(v) S.soundTips = v end, L["Par défaut, seul l'important (priorité 3) fait du bruit."])
   P.check(L["Écrire aussi les conseils dans le chat (déconseillé)"], function() return S.chat end,
@@ -270,6 +272,31 @@ local function buildAppearance(content)
   end), 40)
   if big then big:SetHeight(32) end
   P.button(L["Déplacer les cadres (mode édition)"], 260, function() if TreeAI.SetEditMode then TreeAI:SetEditMode(true) end end)
+
+  P.header(L["Disposition (un clic)"])
+  P.text("|cff999999" .. L["Compacte : petit, groupé près de la minimap · Confort : grand, sur un bord · Coins : chaque cadre dans un coin libre."] .. "|r", nil, 28)
+  local x0 = P.y
+  for i, key in ipairs(TreeAI.DISPOSITION_ORDER or {}) do
+    local D = TreeAI.DISPOSITIONS[key]
+    local b = newButton(content, L[D.label], 120, function()
+      if TreeAI.ApplyDisposition then TreeAI:ApplyDisposition(key) end
+      refreshAll()
+    end, function()
+      return ((TreeAI.GetDisposition and TreeAI:GetDisposition() == key) and "|cff33ff66> " or "") .. L[D.label]
+    end)
+    if b then
+      b:SetPoint("TOPLEFT", content, "TOPLEFT", 16 + (i - 1) * 128, x0)
+      widgets[#widgets + 1] = b
+    end
+  end
+  P.y = x0 - 30
+  P.check(L["S'écarter quand un autre cadre grandit (suivi de quêtes, groupe…)"],
+    function() local s = S() return s and s.reflow ~= false end,
+    function(v) local s = S(); if s then s.reflow = v and true or false end end,
+    L["Le cadre TreeAI glisse vers la place libre la plus proche, puis revient quand c'est libre."])
+  P.check(L["Déposé sur un autre cadre : glisser vers la place libre"],
+    function() local s = S() return s and s.snapFree ~= false end,
+    function(v) local s = S(); if s then s.snapFree = v and true or false end end)
 
   P.header(L["Panneau"])
   P.check(L["Afficher le panneau"], function() return panelGet("shown") end,
@@ -322,6 +349,45 @@ end
 ---------------------------------------------------------------------------
 -- one page per module
 ---------------------------------------------------------------------------
+-- page « Sons » : un son par genre (sons du jeu), on/off + écouter, canal, écart minimum ; jamais en combat sauf danger
+local function buildSounds(content)
+  local P = layout(content)
+  local function S() return TreeAI.settings end
+  local function SS() return TreeAI.SoundSettings and TreeAI:SoundSettings() end
+  P.text(L["Sons"], "GameFontNormalLarge", 24)
+  P.text("|cff999999" .. L["Sons du jeu, discrets. En combat : seulement le danger. Jamais deux sons à la suite."] .. "|r", nil, 16)
+  P.check(L["Sons TreeAI activés"], function() local s = S() return s and s.sound ~= false end,
+    function(v) local s = S(); if s then s.sound = v and true or false end end)
+  P.button("", 240, function()
+    local ss = SS(); if not ss then return end
+    local list, cur = TreeAI.SOUND_CHANNELS, ss.channel or "Master"
+    local nxt = list[1]
+    for i, c in ipairs(list) do if c == cur then nxt = list[i % #list + 1] end end
+    ss.channel = nxt
+  end, function()
+    local ss = SS()
+    local c = ss and ss.channel or "Master"
+    return L["Canal"] .. " : " .. L[(TreeAI.SOUND_CHANNEL_LABEL or {})[c] or c] .. "  (" .. L["clic : changer"] .. ")"
+  end)
+  P.slider(L["Écart minimum entre deux sons (s)"], 1, 10, 0.5,
+    function() local ss = SS() return ss and ss.gap or TreeAI.SOUND_GAP end,
+    function(v) local ss = SS(); if ss then ss.gap = v end end)
+  P.header(L["Par genre"])
+  for _, kind in ipairs(TreeAI.SOUND_ORDER or {}) do
+    local def = TreeAI.SOUND_KINDS[kind]
+    local cb = P.check(L[def.label], function() return TreeAI:SoundKindOn(kind) end,
+      function(v) TreeAI:SetSoundKind(kind, v) end)
+    local b = newButton(content, L["Écouter"], 80, function() TreeAI:PreviewSound(kind) end)
+    if b and cb then b:SetPoint("LEFT", cb, "LEFT", 330, 0) end
+  end
+  P.button(L["Tout remettre par défaut"], 200, function()
+    local ss = SS()
+    if ss then ss.kinds, ss.channel, ss.gap = {}, "Master", TreeAI.SOUND_GAP end
+    refreshAll()
+  end)
+  P.finish()
+end
+
 local function buildModule(content, name, mod)
   local P = layout(content)
   P.text(mod.title or name, "GameFontNormalLarge", 24)
@@ -390,6 +456,13 @@ function TreeAI:InitOptions()
   elseif _G.InterfaceOptions_AddCategory then
     pcall(_G.InterfaceOptions_AddCategory, appearance)
   end
+  soundsPage = newPage(L["Sons"], canvas.name, buildSounds)
+  if modern and Settings.RegisterCanvasLayoutSubcategory then
+    local oks, c = pcall(Settings.RegisterCanvasLayoutSubcategory, category, soundsPage, soundsPage.name)
+    if oks then soundsCat = c end
+  elseif _G.InterfaceOptions_AddCategory then
+    pcall(_G.InterfaceOptions_AddCategory, soundsPage)
+  end
 
   for name, mod in self:IterModules() do
     local page = newPage(mod.title or name, canvas.name, function(content) buildModule(content, name, mod) end)
@@ -404,12 +477,21 @@ function TreeAI:InitOptions()
   end
 end
 
-function TreeAI:GetOptionPages() return canvas, pages, appearance end
+function TreeAI:GetOptionPages() return canvas, pages, appearance, soundsPage end
 
-function TreeAI:OpenOptions()
+function TreeAI:OpenOptions(which)
   if self:InCombat() then self:Print(L["Impossible en combat."]); return end
   if not canvas then self:InitOptions() end
   local Settings = _G.Settings
+  if which == "sounds" and soundsPage then
+    local id = soundsCat and (soundsCat.GetID and soundsCat:GetID() or soundsCat.ID)
+    if id and Settings and Settings.OpenToCategory and pcall(Settings.OpenToCategory, id) then return end
+    if _G.InterfaceOptionsFrame_OpenToCategory then
+      pcall(_G.InterfaceOptionsFrame_OpenToCategory, soundsPage)
+      pcall(_G.InterfaceOptionsFrame_OpenToCategory, soundsPage)
+      return
+    end
+  end
   if category and Settings and Settings.OpenToCategory then
     local id = category.GetID and category:GetID() or category.ID
     if pcall(Settings.OpenToCategory, id) then return end
@@ -447,10 +529,20 @@ local function dialog(name, w, h)
     f:SetBackdropColor(0.05, 0.08, 0.06, 0.95)
     f:SetBackdropBorderColor(0.2, 0.8, 0.4, 0.9)
   end
-  f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  f.title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
-  f.close = newButton(f, "x", 22, function() f:Hide() end)
-  if f.close then f.close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6) end
+  -- en-tête commun (icône + titre + réduire + fermer, Échap ferme) ; repli : titre + « x »
+  local Th = TreeAI.Theme
+  local hd = Th and Th.Window and Th:Window(f, { id = name, title = "", icon = "Interface\\Icons\\INV_Misc_Book_09",
+    min = false })
+  if hd and hd.title then
+    f.title, f.close = hd.title, hd.close
+  else
+    f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    f.title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+    f.close = newButton(f, "x", 22, function() f:Hide() end)
+    if f.close then f.close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -6, -6) end
+    local list = rawget(_G, "UISpecialFrames")
+    if type(list) == "table" and name then list[#list + 1] = name end
+  end
   f:Hide()
   return f
 end

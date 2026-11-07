@@ -27,7 +27,7 @@ def test_ui_is_taint_safe():
     assert "Secure" not in src                       # no secure template
     assert ":SetParent(" not in src                  # never reparent (onto Blizzard frames)
     for parent in re.findall(r"CreateFrame\([^,]+,[^,]+,\s*([^,\)]+)", src):
-        assert parent.strip() in {"_G.UIParent", "panel", "nil"}, parent
+        assert parent.strip() in {"_G.UIParent", "panel", "nil", "menu"}, parent   # menu = notre menu « Plus »
 
 
 def test_modules_use_tabs_guarded():

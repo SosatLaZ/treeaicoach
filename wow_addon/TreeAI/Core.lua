@@ -637,6 +637,10 @@ local DEFAULT_SETTINGS = {
             point = "CENTER", x = 300, y = 120, maxLines = 8, nowMax = 5, width = 320,
             fontSize = 11, lineGap = 3, iconSize = 13 },
   alert = { enabled = true, corner = "TOPRIGHT", duration = 8, scale = 1, alpha = 0.95 },
+  -- sons par genre (UI2) : kinds[genre] = true/false (nil = défaut du genre), canal, écart global (s)
+  sounds = { channel = "Master", gap = 2.5, kinds = {} },
+  -- disposition des cadres : "confort" (défaut) | "compacte" | "coins" ; reflow = s'écarter des cadres qui grandissent
+  layoutStyle = "confort", reflow = true,
   -- anti-bruit (réglé par le préréglage « calme / normal / tout », chaque valeur reste modifiable)
   preset = "normal",
   noise = { nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
@@ -936,12 +940,106 @@ local alerted = {}       -- id -> { sk, at } (corner alert pops)
 TreeAI._alerted = alerted
 TreeAI._suggestions = suggestions
 
-local function playUrgentSound()
-  if not (TreeAI.settings and TreeAI.settings.sound) then return end
-  if _G.PlaySound then
-    local kit = _G.SOUNDKIT and (_G.SOUNDKIT.RAID_WARNING or _G.SOUNDKIT.ALARM_CLOCK_WARNING_3)
-    if kit then pcall(_G.PlaySound, kit, "Master") else pcall(_G.PlaySound, 8959) end
+---------------------------------------------------------------------------
+-- Sons (UI2) : TreeAI:Sound(kind) — un son Blizzard (SOUNDKIT) distinct et discret par genre,
+-- chaque genre activable, canal au choix, cooldown global (jamais de rafale), en combat SEUL le danger.
+---------------------------------------------------------------------------
+-- kits = clés SOUNDKIT essayées dans l'ordre, id = repli numérique (sons du jeu, aucun fichier ajouté)
+TreeAI.SOUND_KINDS = {
+  danger   = { label = "Danger (combat)", kits = { "RAID_WARNING" }, id = 8959, cd = 4, on = true },
+  alert    = { label = "Important", kits = { "ALARM_CLOCK_WARNING_3", "RAID_WARNING" }, id = 12889, cd = 8, on = true },
+  rare     = { label = "Rare / élite repéré", kits = { "UI_EPICLOOT_TOAST", "READY_CHECK" }, id = 8960, cd = 20, on = true },
+  quest    = { label = "Quête terminée (à rendre)", kits = { "IG_QUEST_LIST_COMPLETE" }, id = 878, cd = 5, on = true },
+  group    = { label = "Groupe / amis", kits = { "UI_BNET_TOAST", "IG_PLAYER_INVITE" }, id = 18019, cd = 15, on = true },
+  ah       = { label = "Bonne affaire HV", kits = { "LOOT_WINDOW_COIN_SOUND", "AUCTION_WINDOW_OPEN" }, id = 120, cd = 20, on = true },
+  levelup  = { label = "Niveau / carte de niveau", kits = { "UI_LEVEL_UP", "LEVELUPSOUND" }, id = 888, cd = 10, on = true },
+  reminder = { label = "Rappel discret", kits = { "TELL_MESSAGE", "MAP_PING" }, id = 3081, cd = 30, on = false },
+}
+TreeAI.SOUND_ORDER = { "danger", "alert", "quest", "rare", "group", "ah", "levelup", "reminder" }
+TreeAI.SOUND_CHANNELS = { "Master", "SFX", "Ambience", "Dialog" }
+TreeAI.SOUND_CHANNEL_LABEL = { Master = "Général", SFX = "Effets", Ambience = "Ambiance", Dialog = "Dialogues" }
+TreeAI.SOUND_GAP = 2.5   -- s minimum entre deux sons TreeAI (le danger passe quand même, son propre cd)
+local soundState = { last = -1e9, kinds = {}, log = {}, played = 0, blocked = 0 }
+TreeAI._soundState = soundState
+
+function TreeAI:SoundSettings()
+  local s = self.settings
+  if not s then return nil end
+  if type(s.sounds) ~= "table" then s.sounds = {} end
+  local ss = s.sounds
+  if type(ss.kinds) ~= "table" then ss.kinds = {} end
+  ss.channel = ss.channel or "Master"
+  return ss
+end
+
+function TreeAI:SoundKindOn(kind)
+  local def = self.SOUND_KINDS[kind]
+  if not def then return false end
+  local ss = self:SoundSettings()
+  local v = ss and ss.kinds[kind]
+  if v == nil then return def.on and true or false end
+  return v and true or false
+end
+function TreeAI:SetSoundKind(kind, on)
+  local ss = self:SoundSettings()
+  if ss and self.SOUND_KINDS[kind] then ss.kinds[kind] = on and true or false end
+end
+
+local function soundKit(def)
+  local SK = rawget(_G, "SOUNDKIT")
+  if type(SK) == "table" then
+    for _, k in ipairs(def.kits or {}) do
+      if type(SK[k]) == "number" then return SK[k] end
+    end
   end
+  return def.id
+end
+TreeAI._SoundKit = soundKit
+
+local function emit(kind, def)
+  local ss = TreeAI:SoundSettings()
+  local ch = (ss and ss.channel) or "Master"
+  local id = soundKit(def)
+  local ok = false
+  if type(_G.PlaySound) == "function" and id then ok = pcall(_G.PlaySound, id, ch) end
+  local log = soundState.log
+  log[#log + 1] = { kind = kind, id = id, channel = ch, at = now() }
+  while #log > 20 do tremove(log, 1) end
+  soundState.played = soundState.played + 1
+  return ok
+end
+
+--- Joue le son d'un genre (`TreeAI.SOUND_KINDS`). Renvoie true, ou false + raison :
+--- "off" (sons coupés) · "kind" (ce genre coupé) · "combat" (en combat : seul "danger") · "gap" (cooldown
+--- global) · "cooldown" (même genre trop tôt) · "unknown". opts.force = ignore cooldowns (aperçu).
+function TreeAI:Sound(kind, opts)
+  opts = opts or {}
+  local def = self.SOUND_KINDS[kind or ""]
+  if not def then return false, "unknown" end
+  local s = self.settings
+  if not opts.preview then
+    if not (s and s.sound ~= false) then return false, "off" end
+    if not self:SoundKindOn(kind) then return false, "kind" end
+    if kind ~= "danger" and self:InCombat() then soundState.blocked = soundState.blocked + 1; return false, "combat" end
+    local t = now()
+    local ss = self:SoundSettings()
+    local gap = tonumber(ss and ss.gap) or self.SOUND_GAP
+    if kind ~= "danger" and t - soundState.last < gap then soundState.blocked = soundState.blocked + 1; return false, "gap" end
+    local lk = soundState.kinds[kind]
+    if lk and t - lk < (def.cd or 5) then soundState.blocked = soundState.blocked + 1; return false, "cooldown" end
+    soundState.last, soundState.kinds[kind] = t, t
+  end
+  emit(kind, def)
+  return true
+end
+--- Aperçu (bouton des options) : joue toujours, même genre coupé.
+function TreeAI:PreviewSound(kind) return self:Sound(kind, { preview = true }) end
+function TreeAI:ResetSoundGate() soundState.last, soundState.kinds = -1e9, {} end
+function TreeAI:SoundLog() return soundState.log end
+
+local function playUrgentSound(e, opts)
+  local kind = (opts and opts.soundKind) or ((e and TreeAI:IsDanger(e, opts)) and "danger") or "alert"
+  return TreeAI:Sound(kind)
 end
 
 local function logSuggestion(e)
@@ -1283,7 +1381,7 @@ function TreeAI:_FlushPendingAlert()
     local pa = TreeAI._alerted and TreeAI._alerted[id]
     if pa and pa.sk == sk and (t - pa.at) < 300 then return end
     if TreeAI._alerted then TreeAI._alerted[id] = { sk = sk, at = t } end
-    playUrgentSound()
+    playUrgentSound(e)
     if self.ShowAlert then safecall(self.ShowAlert, self, e) end
   end
 end
@@ -1340,9 +1438,10 @@ function TreeAI:Suggest(id, text, prio, opts)
       -- important (prio 3) : encadré + son, passés au filtre anti-bruit (≤ 1 / 20 s, sujet, combat)
       local alertOK = prio >= 3 and self:AlertAllowed(e, opts)
       local doSound = opts.sound
-      doSound = (alertOK and doSound ~= false)
-        or (prio < 3 and doSound == true and self.settings and self.settings.soundTips)
-      if doSound then playUrgentSound() end
+      if alertOK and doSound ~= false then playUrgentSound(e, opts)
+      elseif prio < 3 and doSound == true and (opts.soundKind or (self.settings and self.settings.soundTips)) then
+        self:Sound(opts.soundKind or "reminder")   -- genre choisi par le module (rare, quête…) ou rappel
+      end
       -- corner alert: POLISH filter (≤ 1 / 20 s, topic, combat) AND once per id, again only if the meaning
       -- changed (digits ignored) or after 5 min (QA)
       if alertOK and self.ShowAlert then
@@ -1453,7 +1552,10 @@ local function normLine(l, source)
   local text, tip = shortText(safeText(tostring(l.text)), l.tooltip)
   return { text = text, prio = prio, icon = l.icon, kind = l.kind, death = l.death,
     onClick = type(l.onClick) == "function" and l.onClick or nil,
-    tooltip = tip, pin = l.pin and true or nil, id = l.id, source = source, data = l.data }
+    tooltip = tip, pin = l.pin and true or nil, id = l.id, source = source, data = l.data,
+    -- control = true : bouton dans la barre de l'onglet (pas une ligne) ; label = texte court du bouton
+    control = (l.control and type(l.onClick) == "function") and true or nil,
+    label = l.label and safeText(tostring(l.label)) or nil }
 end
 
 -- lines = { {text=, prio=1..3, icon=?, onClick=?, tooltip=?, pin=?}, ... } replaces the content of
@@ -2318,3 +2420,24 @@ TreeAI:RegisterEvent("PARTY_MEMBERS_CHANGED", TreeAI, "GROUP_ROSTER_UPDATE")
 for _, ev in ipairs({ "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "PLAYER_MONEY", "PLAYER_GUILD_UPDATE" }) do
   TreeAI:RegisterEvent(ev, TreeAI, function(self) self:_QueueSummary() end)
 end
+do  -- son « carte de niveau » : après la fanfare de Blizzard (4 s), hors combat (sinon après)
+  local lvlOwner = {}
+  TreeAI:RegisterEvent("PLAYER_LEVEL_UP", lvlOwner, function()
+    TreeAI:After(4, function()
+      if TreeAI:InCombat() then TreeAI:RunOutOfCombat("sound:levelup", function() TreeAI:Sound("levelup") end)
+      else TreeAI:Sound("levelup") end
+    end)
+  end)
+end
+TreeAI:RegisterSlash("son", function(rest)
+  local k = tostring(rest or ""):lower():gsub("%s+", "")
+  if TreeAI.SOUND_KINDS[k] then TreeAI:PreviewSound(k); return end
+  if k == "options" or k == "" then
+    local parts = {}
+    for _, kind in ipairs(TreeAI.SOUND_ORDER) do
+      parts[#parts + 1] = kind .. (TreeAI:SoundKindOn(kind) and "" or " (off)")
+    end
+    TreeAI:Print(TreeAI.L["Sons"] .. " : " .. tconcat(parts, ", ") .. "  —  /tai son <genre> : écouter")
+    if k == "options" and TreeAI.OpenOptions then TreeAI:OpenOptions("sounds") end
+  end
+end, "sons : liste des genres, /tai son <genre> pour écouter, /tai son options")
