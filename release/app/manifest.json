@@ -1,25 +1,25 @@
 {
- "version": "3.7.2",
+ "version": "3.8.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "6ac95367d6a41be8a08cb4fbb810395c5152894d678dfc7875cdbd2f179209ef",
+ "sha256": "1c9d77a8eb9514f1989720af88443df52c46780de20f96011578c0a009737ee8",
  "chunks": [
   {
-   "name": "3.7.2/part-01.zip",
-   "size": 88163351,
-   "sha256": "da7c56cf550a512ac9b507b64c1356b7b27ee30067a9ca2ffd551a44ae9827ce",
-   "files": 144
+   "name": "3.8.0/part-01.zip",
+   "size": 88134641,
+   "sha256": "04628eab0e5101eb1eda4c2ad139a7b46bf6147bd29f7b2bd3761dd7f77a5aef",
+   "files": 134
   },
   {
-   "name": "3.7.2/part-02.zip",
-   "size": 11370842,
-   "sha256": "28a4f5d0fc774207e501f4453ec313ef6741ff450658b13e3a4f10ff01d68034",
-   "files": 572
+   "name": "3.8.0/part-02.zip",
+   "size": 12038713,
+   "sha256": "49f9170547339e2bd9404c6e81c90e92ba1ec30ce2ee70a35ba9c143f575e649",
+   "files": 604
   }
  ],
- "total_size": 99534193,
+ "total_size": 100173354,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "Ganks : \u00ab Lee Sin ! \u00bb dit tout de suite quand le jungler fonce sur toi (0,1 s au lieu de 2,6 s), la phrase compl\u00e8te suit."
+ "notes": "Nouveau : WoW Forever. Page WoW (Ctrl+7), addon TreeAI install\u00e9 tout seul : macros intelligentes, aide \u00e0 la qu\u00eate, synchro \u00e0 4, chasseur, \u00ab Hey coach \u00bb expert WoW."
 }
