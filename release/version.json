@@ -1,6 +1,6 @@
 {
-  "version": "3.8.2",
+  "version": "3.9.0",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "WoW : corrigé « TreeAI a été bloqué » (journal de quêtes)."
+  "notes": "WoW Forever : plus d'« Action bloquée », tout à la souris (bouton Tout, mode édition, placement auto), page À faire, radar, trajets, macros refaites, touches, talents, équipement, métiers, donjons, HV rapide. Appli redessinée."
 }

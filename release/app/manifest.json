@@ -1,25 +1,25 @@
 {
- "version": "3.8.2",
+ "version": "3.9.0",
  "exe": "TreeAICoach-app.exe",
- "sha256": "98bc11ab75dda3fd34b85564debe4c80e2fea078122c0f1851e59efbf883bd80",
+ "sha256": "1af785f5f60721d392713d3d8d48abc5d6849649976a46a444a4ffc36f4434d6",
  "chunks": [
   {
-   "name": "3.8.2/part-01.zip",
-   "size": 88152375,
-   "sha256": "d67dee6706c59b5e1d6a774e6a4da53079b99bf77c5d7f505a5adb48de8c2c7c",
-   "files": 134
+   "name": "3.9.0/part-01.zip",
+   "size": 88089586,
+   "sha256": "2fcc6bf3bed0465811db4b683374852e10d464581500723293a8731bf9aa9d43",
+   "files": 130
   },
   {
-   "name": "3.8.2/part-02.zip",
-   "size": 12054253,
-   "sha256": "217e6840352a241646ed0d8a65199f16a08781e3d7062348d23c704604132744",
-   "files": 605
+   "name": "3.9.0/part-02.zip",
+   "size": 13038418,
+   "sha256": "40a7719fdcc22d02b373c550844a2b7960b429d12bd4ce93d90f45778641afb5",
+   "files": 641
   }
  ],
- "total_size": 100206628,
+ "total_size": 101128004,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : corrig\u00e9 \u00ab TreeAI a \u00e9t\u00e9 bloqu\u00e9 \u00bb (journal de qu\u00eates)."
+ "notes": "WoW Forever : plus d'\u00ab Action bloqu\u00e9e \u00bb, tout \u00e0 la souris (bouton Tout, mode \u00e9dition, placement auto), page \u00c0 faire, radar, trajets, macros refaites, touches, talents, \u00e9quipement, m\u00e9tiers, donjons, HV rapide. Appli redessin\u00e9e."
 }
