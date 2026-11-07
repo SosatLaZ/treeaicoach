@@ -150,70 +150,156 @@ def _age_text(age: Any) -> str:
     return f"il y a {int(age // 86400)} j"
 
 
+OK_MARK, BAD_MARK, WAIT_MARK = "✓", "✗", "·"
+STEP_TITLES = {"folder": "Dossier de WoW", "addon": "Addon TreeAI", "log": "Journal de combat"}
+
+
+def overview(st: dict, enabled: bool = True) -> dict:
+    """What the « État » card shows, from :func:`read_state` (pure, tests).
+
+    ``headline`` / ``tone``: the verdict (« Tout est prêt », « Addon à installer »…); ``detail``: is WoW
+    running; ``steps``: [(key, done True / False / None, text)] for the folder, the addon and the combat
+    log; ``button`` / ``can_install``: the install button."""
+    st = st or {}
+    exe, mode = st.get("wow_exe"), st.get("mode") or {}
+    if not st:
+        detail = "Recherche de WoW…"
+    elif not enabled:
+        detail = "Désactivé : TreeAI ignore WoW."
+    elif st.get("lol"):
+        detail = "Partie de League en cours : le coach LoL a la priorité."
+    elif exe and mode.get("active"):
+        detail = "WoW lancé : coach actif."
+    elif exe:
+        detail = "WoW lancé. Le coach démarre avec l'analyse."
+    else:
+        detail = "WoW n'est pas lancé."
+
+    inst = st.get("install")
+    has_src = st.get("has_src", True)
+    installed = bool(st.get("installed"))
+    src_v, inst_v = st.get("src_version") or "", st.get("inst_version") or ""
+    steps: list[tuple[str, Any, str]] = []
+    if not st:
+        steps = [(k, None, "") for k in STEP_TITLES]
+    else:
+        if inst is None:
+            steps.append(("folder", False, "Introuvable. Choisis le dossier « World of Warcraft »."))
+        else:
+            steps.append(("folder", True, f"{inst.flavor_dir} ({inst.source})"))
+        if not has_src:
+            steps.append(("addon", False, "Absent de cette version de TreeAI."))
+        elif not installed:
+            steps.append(("addon", False if inst is not None else None, "Pas encore installé."))
+        elif st.get("needs_update"):
+            steps.append(("addon", None, f"Mise à jour disponible : {inst_v or '?'} → {src_v or '?'}."))
+        else:
+            steps.append(("addon", True, f"Version {inst_v}, à jour." if inst_v else "Installé et à jour."))
+        log_tone, log_text = st.get("log") or ("", "")
+        steps.append(("log", True if log_tone == "ok" else None,
+                      log_text or "Tape /combatlog en jeu (fichier Logs/WoWCombatLog.txt)."))
+
+    if not st:
+        headline, tone = "WoW Forever", ""
+    elif not enabled:
+        headline, tone = "Mode WoW désactivé", ""
+    elif inst is None:
+        headline, tone = "WoW introuvable", "danger"
+    elif not has_src:
+        headline, tone = "Addon manquant", "danger"
+    elif not installed:
+        headline, tone = "Addon à installer", "warning"
+    elif st.get("needs_update"):
+        headline, tone = "Mise à jour de l'addon", "warning"
+    elif steps[-1][1] is not True and exe:
+        headline, tone = "Presque prêt : active /combatlog", "warning"
+    else:
+        headline, tone = "Tout est prêt", "ok"
+    button = ("Mettre à jour l'addon" if st.get("needs_update") else "Réinstaller l'addon") if installed \
+        else "Installer l'addon"
+    return {"headline": headline, "tone": tone, "detail": detail, "steps": steps, "button": button,
+            "can_install": bool(inst is not None and has_src), "found": inst is not None}
+
+
 class WowPage:
     def __init__(self, app: Any) -> None:
         self.app = app
         W = self.W = app.W
         QtCore, QtWidgets = app.QtCore, app.QtWidgets
+        Qt = QtCore.Qt
         self.state: dict = {}
         self._busy = False
-        self.page = W.Page("WoW Forever", "Le coach pour World of Warcraft: Forever : addon en jeu, macros, "
-                                          "annonces vocales. S'active seul quand WoW est lancé.")
+        self.page = W.Page("WoW Forever", "Addon en jeu, macros et coach. S'active seul quand WoW est lancé.")
 
-        top = self.page.section("État")
-        self.enable = W.Switch(bool(getattr(app.cfg, "wow_enabled", True)))
-        self.enable.toggled.connect(lambda on: app.set_option("wow_enabled", bool(on)))
-        app.bind("wow_enabled", lambda: self.enable.set_quiet(bool(app.cfg.wow_enabled)))
-        self.state_row = top.add(W.Row("Mode WoW", "Recherche de WoW…", self.enable))
+        # -- état : verdict + is WoW running (+ the master switch), the three checks, the install button
+        top = self.page.section("État", "L'addon s'installe dans Interface/AddOns/TreeAI. En jeu : /tai.")
+        self.state_row = app.switch_row(top, "wow_enabled", "WoW Forever", "Recherche de WoW…")
+        self.enable = self.state_row.switch
+        self.enable.setToolTip("Mode WoW : TreeAI suit WoW quand il est lancé (et que League ne l'est pas).")
+        W.set_prop(self.state_row.title, "role", "headline")
+        self.steps: dict[str, Any] = {}
+        for key, title in STEP_TITLES.items():
+            self.steps[key] = top.add(W.Row(f"{WAIT_MARK}  {title}", ""))
+        self.pick_btn = W.button("Choisir", self._browse, tip="Choisis le dossier « World of Warcraft ».")
+        self.steps["folder"]._grid.addWidget(self.pick_btn, 0, 1, 2, 1, Qt.AlignRight | Qt.AlignVCenter)
+        self.pick_btn.hide()
+        act = QtWidgets.QWidget()
+        al = QtWidgets.QHBoxLayout(act)
+        al.setContentsMargins(16, 12, 16, 14)
+        al.setSpacing(12)
+        self.install_btn = W.button("Installer l'addon", self._install, kind="primary")
+        self.install_btn.setMinimumHeight(40)
+        self.install_btn.setMinimumWidth(240)
+        al.addWidget(self.install_btn, 0)
+        self.install_hint = W.label("Puis /reload en jeu.", "secondary")
+        al.addWidget(self.install_hint, 0, Qt.AlignVCenter)
+        al.addStretch(1)
+        top.add(act)
 
-        addon = self.page.section("Addon TreeAI", "Installé dans Interface/AddOns/TreeAI. En jeu : /tai.")
-        path_box = QtWidgets.QWidget()
-        ph = QtWidgets.QHBoxLayout(path_box)
-        ph.setContentsMargins(0, 0, 0, 0)
-        ph.setSpacing(8)
-        self.path = QtWidgets.QLineEdit(str(getattr(app.cfg, "wow_path", "") or ""))
-        self.path.setPlaceholderText("Automatique")
-        self.path.setFixedWidth(220)
-        self.path.editingFinished.connect(lambda: self._set_path(self.path.text()))
-        ph.addWidget(self.path)
-        ph.addWidget(W.button("Parcourir", self._browse, tip="Choisis le dossier « World of Warcraft »."))
-        app.bind("wow_path", lambda: None if self.path.hasFocus() else self.path.setText(str(app.cfg.wow_path or "")))
-        self.folder_row = addon.add(W.Row("Dossier de WoW", "", path_box))
-        self.install_btn = W.button("Installer", self._install, kind="primary")
-        self.addon_row = addon.add(W.Row("Addon", "", self.install_btn))
-        self.auto = W.Switch(bool(getattr(app.cfg, "wow_addon_auto_update", True)))
-        self.auto.toggled.connect(lambda on: app.set_option("wow_addon_auto_update", bool(on)))
-        app.bind("wow_addon_auto_update", lambda: self.auto.set_quiet(bool(app.cfg.wow_addon_auto_update)))
-        addon.add(W.Row("Mise à jour automatique", "Quand WoW est détecté, l'addon est mis à jour.", self.auto))
-
-        coach = self.page.section("Coach", "La voix répond seulement quand tu dis « Hey coach ».")
-        self.clog = W.Switch(bool(getattr(app.cfg, "wow_combatlog", True)))
-        self.clog.toggled.connect(lambda on: app.set_option("wow_combatlog", bool(on)))
-        app.bind("wow_combatlog", lambda: self.clog.set_quiet(bool(app.cfg.wow_combatlog)))
-        self.log_row = coach.add(W.Row("Journal de combat", "", self.clog))
-        self.pvp = W.Switch(bool(getattr(app.cfg, "wow_pvp_help", False)))
-        self.pvp.toggled.connect(lambda on: app.set_option("wow_pvp_help", bool(on)))
-        app.bind("wow_pvp_help", lambda: self.pvp.set_quiet(bool(app.cfg.wow_pvp_help)))
-        coach.add(W.Row("Aide JcJ", "Conseils JcJ dans les réponses du coach. En jeu : /tai pvp.", self.pvp))
-        self.voice = W.Switch(bool(getattr(app.cfg, "wow_voice", False)))
-        self.voice.toggled.connect(lambda on: app.set_option("wow_voice", bool(on)))
-        app.bind("wow_voice", lambda: self.voice.set_quiet(bool(app.cfg.wow_voice)))
-        coach.add(W.Row("Annonces vocales automatiques (désactivé)",
-                        "Désactivé par défaut : la voix ne parle jamais d'elle-même en jeu.", self.voice))
-
-        fight = self.page.section("Dernier combat", "Lu dans le journal de combat. Sert aussi au coach.")
-        self.report_row = fight.add(W.Row("Rapport", "Pas encore de combat lu."))
-        self.char_section = self.page.section("Personnage", "Lu dans les sauvegardes de l'addon (à jour après "
-                                                            "/reload ou déconnexion).")
+        # -- personnage (SavedVariables) and last fight (combat log)
+        self.char_section = self.page.section("Personnage", "Lu dans les sauvegardes de l'addon : à jour après "
+                                                            "/reload ou déconnexion.")
         self._char_holder = QtWidgets.QWidget()
         self._char_layout = QtWidgets.QVBoxLayout(self._char_holder)
         self._char_layout.setContentsMargins(0, 0, 0, 0)
         self.char_section.add(self._char_holder)
         self._char_group: Any = None
         self._char_sig: Any = None
+        fight = self.page.section("Dernier combat", "Lu dans le journal de combat. Sert aussi au coach.")
+        self.report_row = fight.add(W.Row("Rapport", "Pas encore de combat lu."))
+        self.report_row.desc.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-        rules = self.page.section("Règles de Blizzard")
+        # -- coach switches
+        coach = self.page.section("Coach", "La voix répond quand tu dis « Hey coach ».")
+        self.log_row = app.switch_row(coach, "wow_combatlog", "Lire le journal de combat",
+                                      "Rapport de combat et contexte du coach.")
+        self.clog = self.log_row.switch
+        self.pvp = app.switch_row(coach, "wow_pvp_help", "Aide JcJ",
+                                  "Conseils JcJ dans les réponses. En jeu : /tai pvp.").switch
+        self.voice = app.switch_row(coach, "wow_voice", "Annonces vocales",
+                                    "La voix parle d'elle-même en combat. Désactivé par défaut.").switch
+
+        # -- avancé : the folder override, auto update, Blizzard rules
+        more = self.page.fold("Avancé", "dossier, mise à jour, règles")
+        inst = more.section("Installation")
+        path_box = QtWidgets.QWidget()
+        ph = QtWidgets.QHBoxLayout(path_box)
+        ph.setContentsMargins(0, 0, 0, 0)
+        ph.setSpacing(8)
+        self.path = QtWidgets.QLineEdit(str(getattr(app.cfg, "wow_path", "") or ""))
+        self.path.setPlaceholderText("Automatique")
+        self.path.setMinimumWidth(160)
+        self.path.setMaximumWidth(260)
+        self.path.editingFinished.connect(lambda: self._set_path(self.path.text()))
+        ph.addWidget(self.path, 1)
+        ph.addWidget(W.button("Parcourir", self._browse, tip="Choisis le dossier « World of Warcraft »."))
+        app.bind("wow_path", lambda: None if self.path.hasFocus() else self.path.setText(str(app.cfg.wow_path or "")))
+        self.folder_row = inst.add(W.Row("Dossier de WoW", "Vide : trouvé tout seul.", path_box))
+        self.auto = app.switch_row(inst, "wow_addon_auto_update", "Mise à jour automatique",
+                                   "L'addon est mis à jour quand WoW est détecté.").switch
+        rules = more.section("Règles de Blizzard")
         rules.add(W.Row("Ce que TreeAI fait (et ne fait pas)", RULES_TEXT))
+        self.more = more
 
         self.timer = QtCore.QTimer(self.page)
         self.timer.timeout.connect(self.tick)
@@ -291,50 +377,22 @@ class WowPage:
 
     def _render(self) -> None:
         W, st = self.W, self.state
-        on = bool(getattr(self.app.cfg, "wow_enabled", True))
-        exe, mode = st.get("wow_exe"), st.get("mode") or {}
-        if not st:
-            text, tone = "Recherche de WoW…", ""
-        elif not on:
-            text, tone = "Désactivé : TreeAI ignore WoW.", ""
-        elif st.get("lol"):
-            text, tone = "Partie de League en cours : le coach LoL a la priorité.", "warning"
-        elif exe and mode.get("active"):
-            text, tone = "WoW lancé : coach actif.", "ok"
-        elif exe:
-            text, tone = "WoW lancé. Le coach démarre avec l'analyse.", "ok"
-        else:
-            text, tone = "WoW n'est pas lancé.", ""
-        self.state_row.set_desc(text)
-        W.set_prop(self.state_row.title, "tone", tone)
-
-        inst = st.get("install")
-        if inst is None:
-            self.folder_row.set_desc("Introuvable. Choisis le dossier « World of Warcraft »." if st else "")
-            W.set_prop(self.folder_row.title, "tone", "danger" if st else "")
-        else:
-            self.folder_row.set_desc(f"{inst.flavor_dir} ({inst.source})")
-            W.set_prop(self.folder_row.title, "tone", "ok")
-        src_v, inst_v = st.get("src_version") or "", st.get("inst_version") or ""
-        if not st.get("has_src", True):
-            addon_text, addon_tone = "Addon absent de cette version de TreeAI.", "danger"
-        elif not st.get("installed"):
-            addon_text, addon_tone = "Pas encore installé.", "warning"
-        elif st.get("needs_update"):
-            addon_text, addon_tone = f"Mise à jour disponible ({inst_v or '?'} → {src_v or '?'}).", "warning"
-        else:
-            addon_text, addon_tone = f"Installé et à jour{(' (' + inst_v + ')') if inst_v else ''}.", "ok"
-        if not st:
-            addon_text, addon_tone = "", ""
-        self.addon_row.set_desc(addon_text)
-        W.set_prop(self.addon_row.title, "tone", addon_tone)
-        self.install_btn.setText("Mettre à jour" if st.get("installed") else "Installer")
-        self.install_btn.setEnabled(inst is not None and st.get("has_src", True))
-
-        log_tone, log_text = st.get("log") or ("", "")
-        self.log_row.set_desc(log_text or "Lit Logs/WoWCombatLog.txt (tape /combatlog en jeu).")
-        W.set_prop(self.log_row.title, "tone", log_tone)
-        report = str((mode or {}).get("report") or "").strip()
+        ov = overview(st, bool(getattr(self.app.cfg, "wow_enabled", True)))
+        self.state_row.title.setText(ov["headline"])
+        W.set_prop(self.state_row.title, "tone", ov["tone"])
+        self.state_row.set_desc(ov["detail"])
+        for key, done, text in ov["steps"]:
+            row = self.steps[key]
+            mark = OK_MARK if done else (BAD_MARK if done is False else WAIT_MARK)
+            row.title.setText(f"{mark}  {STEP_TITLES[key]}")
+            W.set_prop(row.title, "tone", "ok" if done else ("danger" if done is False else ""))
+            row.set_desc(text)
+        self.pick_btn.setVisible(bool(st) and not ov["found"])
+        self.install_btn.setText(ov["button"])
+        self.install_btn.setEnabled(ov["can_install"])
+        self.install_hint.setText("Puis /reload en jeu." if ov["found"] else "Indique d'abord le dossier de WoW.")
+        mode = st.get("mode") or {}
+        report = str(mode.get("report") or "").strip()
         self.report_row.set_desc(report[:1200] if report else "Pas encore de combat lu.")
         self._render_char(st.get("rows") or [], st.get("sv_age"))
 
@@ -348,12 +406,22 @@ class WowPage:
             self._char_group.setParent(None)
             self._char_group.deleteLater()
         grp = W.Group()
-        for title, value in rows[:12]:
-            grp.add(W.Row(str(title), str(value)))
+        rest = list(rows[:12])
+        if rest and rest[0][0] == "Personnage":         # the character as the card's title
+            name = str(rest.pop(0)[1])
+            zone = next((str(v) for t, v in rest if t == "Zone"), "")
+            rest = [(t, v) for t, v in rest if t != "Zone"]
+            head = grp.add(W.Row(name, zone or None))
+            W.set_prop(head.title, "role", "headline")
+        for title, value in rest:
+            if value:
+                grp.add(W.Row(str(title), None, W.label(str(value), "secondary")))
+            else:
+                grp.add(W.Row(str(title)))
         if not rows:
             grp.add(W.Row("Rien pour l'instant", "Installe l'addon, connecte-toi puis tape /reload."))
         elif sig[1]:
-            grp.add(W.Row("Dernière sauvegarde", sig[1]))
+            grp.add(W.Row("Dernière sauvegarde", None, W.label(sig[1], "secondary")))
         self._char_layout.addWidget(grp)
         self._char_group = grp
 

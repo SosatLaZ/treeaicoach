@@ -40,6 +40,14 @@ class OverlayPage:
         self.preview = QtWidgets.QLabel("Aperçu en préparation…")
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setMinimumHeight(240)
+        # the picture never sets the page width (a narrow window clipped the page, 3.8 review): it is
+        # drawn at the column width and redrawn when the window gets narrower or wider
+        self.preview.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self._preview_w = 0
+        self._resize_timer = app.QtCore.QTimer(self.page, singleShot=True)
+        self._resize_timer.timeout.connect(self._maybe_rerender)
+        self._watch = _ResizeWatch(app.QtCore, self._resize_timer.start)
+        self.page.viewport().installEventFilter(self._watch)
         self.preview.setProperty("role", "secondary")
         hl.addWidget(self.preview)
         pv.add(holder)
@@ -138,6 +146,16 @@ class OverlayPage:
     def on_show(self) -> None:
         if self.preview.pixmap() is None or self.preview.pixmap().isNull():
             self.render_preview()
+        else:
+            self._maybe_rerender()
+
+    def _target_width(self) -> int:
+        return max(360, min(680, self.page.column.width() - 32))
+
+    def _maybe_rerender(self) -> None:
+        """Redraw the preview at the new column width (only when it changed enough and is shown)."""
+        if self.app._current_page == "overlay" and abs(self._target_width() - self._preview_w) > 24:
+            self.render_preview()
 
     def render_preview(self) -> None:
         """Compose the sample screen on a worker thread; only the latest request is drawn."""
@@ -146,7 +164,7 @@ class OverlayPage:
             return
         self._preview_busy = True
         cfg = self.app.cfg
-        width = max(360, min(680, self.page.column.width() - 32))
+        width = self._preview_w = self._target_width()
         try:            # sharp on a HiDPI screen: the 1080p composition scaled to the real pixels
             dpr = max(1.0, min(3.0, float(self.preview.devicePixelRatioF())))
         except Exception:
@@ -177,6 +195,15 @@ class OverlayPage:
             self.preview.setText("Aperçu indisponible.")
 
         self.app.run_job(job, done, failed, name="TreeAI-ui-preview")
+
+
+def _ResizeWatch(QtCore: Any, on_resize: Any) -> Any:  # noqa: N802 - a QObject made with the app's Qt
+    class Watch(QtCore.QObject):
+        def eventFilter(self, _obj: Any, ev: Any) -> bool:  # noqa: N802
+            if ev.type() == QtCore.QEvent.Resize:
+                on_resize(150)
+            return False
+    return Watch()
 
 
 def _rounded(QtGui: Any, QtCore: Any, pm: Any, r: int) -> Any:

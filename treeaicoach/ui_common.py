@@ -131,10 +131,11 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("settings", "Réglages", "settings"),
     ("wow", "WoW Forever", "wow"),         # World of Warcraft: Forever helper (wow/, ui_page_wow.py)
 )
-#: Sidebar groups, in order of use: playing (every game), then setting up (rarely), at the bottom.
+#: Sidebar groups: one per game (League first; the WoW group moves to the top while WoW mode is on,
+#: ``CoachApp._sync_game_nav``), then setting up (rarely), at the bottom.
 NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("", ("home", "overlay", "alerts", "discord", "analysis")),
-    ("Autres jeux", ("wow",)),
+    ("League of Legends", ("home", "overlay", "alerts", "discord", "analysis")),
+    ("World of Warcraft", ("wow",)),
     ("Configuration", ("settings",)),
 )
 #: Old page / tab names (tools, fixes, saved links) -> new page.

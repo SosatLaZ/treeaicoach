@@ -203,6 +203,7 @@ QPushButton#NavItem {{ background: transparent; border: none; border-radius: {CO
   padding: 7px 10px; font-size: {BODY_PX}px; font-weight: 500; }}
 QPushButton#NavItem:hover {{ background: {GLASS_GROUP_HOVER}; }}
 QPushButton#NavItem:checked {{ background: {t.accent_soft}; color: {t.text}; font-weight: 600; }}
+QPushButton#NavItem[live="true"] {{ color: {t.accent}; font-weight: 600; }}
 QComboBox {{ background: {t.control}; border: 1px solid {t.control_border}; border-radius: {CONTROL_RADIUS}px;
   padding: 5px 30px 5px 10px; min-height: 20px; min-width: 140px; }}
 QComboBox:hover {{ background: {t.control_hover}; }}
@@ -907,15 +908,22 @@ class Sidebar(QtWidgets.QFrame):
         by_key = {k: (k, text, kind) for k, text, kind in pages}
         if not groups:
             groups = (("", [k for k, _t, _k in pages]),)
+        #: one widget per group (caption + its items): :meth:`promote` moves a whole group to the top
+        self.group_boxes: list[QtWidgets.QWidget] = []
+        self._group_keys: list[tuple[str, ...]] = []
+        self._nav_lay = lay
         for gi, (caption, keys) in enumerate(groups):
             if gi == len(groups) - 1 and gi > 0:
                 lay.addStretch(1)
-            elif gi > 0:
-                lay.addSpacing(14)
+            box = QtWidgets.QWidget()
+            box.setObjectName("NavGroup")
+            bl = QtWidgets.QVBoxLayout(box)
+            bl.setContentsMargins(0, 14 if gi > 0 and gi != len(groups) - 1 else 0, 0, 0)
+            bl.setSpacing(2)
             if caption:
                 cap = label(caption, "navgroup")
                 cap.setContentsMargins(10, 0, 0, 4)
-                lay.addWidget(cap)
+                bl.addWidget(cap)
             for key in keys:
                 if key not in by_key:
                     continue
@@ -930,7 +938,11 @@ class Sidebar(QtWidgets.QFrame):
                 self.buttons[key] = b
                 self._kinds[key] = kind
                 b.clicked.connect(lambda _c=False, k=key: self.selected.emit(k))
-                lay.addWidget(b)
+                bl.addWidget(b)
+            lay.addWidget(box)
+            self.group_boxes.append(box)
+            self._group_keys.append(tuple(keys))
+        self._order = list(range(len(self.group_boxes)))
         if len(groups) < 2:
             lay.addStretch(1)
         lay.addSpacing(10)
@@ -951,6 +963,36 @@ class Sidebar(QtWidgets.QFrame):
         t = theme()
         for key, b in self.buttons.items():
             b.setIcon(glyph_icon(self._kinds[key], t.secondary, 20, t.text))
+
+    def set_live(self, key: str, on: bool) -> None:
+        """Mark a page as « active now » (accent text + a dot: the game it coaches is running)."""
+        b = self.buttons.get(key)
+        if b is None or bool(b.property("live")) == bool(on):
+            return
+        set_prop(b, "live", bool(on))
+        base = b.text().rstrip(" ●")
+        b.setText(f"{base}  ●" if on else base)
+
+    def promote(self, key: str, on: bool = True) -> None:
+        """Put the group holding ``key`` first (``on``) or back at its place; the bottom group stays put."""
+        idx = next((i for i, keys in enumerate(self._group_keys) if key in keys), None)
+        last = len(self.group_boxes) - 1
+        if idx is None or idx == last:
+            return
+        order = [i for i in range(last) if i != idx]
+        order = ([idx] + order) if on else sorted(order + [idx])
+        if order == self._order[:last]:
+            return
+        self._order = order + [last]
+        for pos, gi in enumerate(order):
+            box = self.group_boxes[gi]
+            self._nav_lay.removeWidget(box)
+            self._nav_lay.insertWidget(1 + pos, box)          # after the brand row
+            box.layout().setContentsMargins(0, 14 if pos > 0 else 0, 0, 0)
+
+    def group_order(self) -> list[str]:
+        """The page keys of the groups, top to bottom (tests)."""
+        return [k for gi in self._order for k in self._group_keys[gi]]
 
     def set_current(self, key: str) -> None:
         b = self.buttons.get(key)
