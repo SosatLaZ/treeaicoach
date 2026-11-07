@@ -2,6 +2,8 @@
 -- Mock world (wowmock): map 1424 = 3000 x 2000 yd, top (north) = 1000, left (west) = 2000, continent 0.
 -- Player at map (0.5, 0.4) → world north 200, west 500. Fake names only.
 return function(M, ctx)
+  -- (3.9.2) the radar is off by default now: switch it on for its own scenario
+  TreeAI:SetModuleEnabled("Radar", true)
   local T = TreeAI
   local R, C = T:GetModule("Radar"), T:GetModule("Compass")
   local check = ctx.check
