@@ -23,3 +23,4 @@ Modules\Leveling.lua
 Modules\Group.lua
 Modules\Quests.lua
 Modules\Inventory.lua
+Modules\Boost.lua

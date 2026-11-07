@@ -46,6 +46,9 @@ function M.Reset()
     happiness = 2, loyalty = "Loyauté (3)", tp = 5, level = 25, dead = false,
   }
   M.target = { exists = false }
+  M.units = {}           -- other unit tokens: nameplateN, mouseover… = { name=, guid=, classification=, hostile= }
+  M.threat = nil         -- { tanking=, status=, pct= } for UnitDetailedThreatSituation
+  M.questChoices = {}    -- item ids offered as quest reward choices (QUEST_COMPLETE)
   M.group = {}           -- list of { name=, class=, level=, online= }
   M.auras = { player = {}, pet = {}, target = {} }
   M.spells = {}          -- [id] = { name=, rank=, icon=, castTime=, known= }
@@ -340,7 +343,10 @@ function CreateFrame(kind, name, parent, template, id)
   if parent and parent.__children then parent.__children[#parent.__children + 1] = f end
   if kind == "GameTooltip" then
     function f:SetOwner() end
-    function f:AddLine() end
+    f.__lines = {}
+    function f:AddLine(t) self.__lines[#self.__lines + 1] = t end
+    function f:GetItem() if self.__item then return M.items[self.__item].name, M.ItemLink(self.__item) end end
+    function f:GetUnit() return nil end
     function f:AddDoubleLine() end
     function f:SetHyperlink() end
     function f:ClearLines() end
@@ -652,6 +658,7 @@ function M.Install(flavor)
     if unit == "target" then return M.target.exists and M.target or nil, "target" end
     local p = unit:match("^party(%d)$") or unit:match("^raid(%d+)$")
     if p then return M.group[tonumber(p)], "group" end
+    if M.units[unit] then return M.units[unit], "other" end
     return nil
   end
   G.UnitExists = function(u) return U(u) ~= nil end
@@ -681,7 +688,7 @@ function M.Install(flavor)
   G.UnitPlayerControlled = G.UnitIsPlayer
   G.UnitIsFriend = function(_, u) local _, k = U(u) return k ~= "target" end
   G.UnitIsEnemy = function(_, u) local _, k = U(u) return k == "target" end
-  G.UnitCanAttack = function(_, u) local d, k = U(u) return k == "target" and d and d.hostile or false end
+  G.UnitCanAttack = function(_, u) local d, k = U(u) return (k == "target" or k == "other") and d and d.hostile or false end
   G.UnitClassification = function(u) local d = U(u) return d and d.classification or "normal" end
   G.UnitCreatureFamily = function(u) local d, k = U(u) if k == "pet" then return d.family end return d and d.family end
   G.UnitCreatureType = function(u) local d = U(u) return d and d.creatureType or "Bête" end
@@ -690,7 +697,20 @@ function M.Install(flavor)
   G.UnitIsAFK = function() return false end
   G.UnitIsTapDenied = function() return false end
   G.UnitThreatSituation = function(u) local d = U(u) return d and d.threat or nil end
-  G.UnitDetailedThreatSituation = function() return nil end
+  G.UnitDetailedThreatSituation = function()
+    local t = M.threat
+    if t then return t.tanking or false, t.status or 0, t.pct, t.pct, 0 end
+  end
+  G.GetNumQuestChoices = function() return #M.questChoices end
+  G.GetQuestItemLink = function(kind, i) return kind == "choice" and M.questChoices[i] and M.ItemLink(M.questChoices[i]) or nil end
+  G.GetQuestItemInfo = function(kind, i)
+    local it = kind == "choice" and M.items[M.questChoices[i] or 0]
+    if it then return it.name, 134400, 1, it.quality, true, it.id end
+  end
+  G.GetItemStats = function(link)
+    local it = M.items[tonumber(tostring(link):match("item:(%d+)")) or 0]
+    return it and it.stats and G.CopyTable(it.stats) or nil
+  end
   G.UnitInParty = function(u) local _, k = U(u) return k == "group" end
   G.UnitInRaid = function() return nil end
   G.UnitXP = function() return M.player.xp end
@@ -699,6 +719,15 @@ function M.Install(flavor)
   G.GetRestState = function() return M.player.rested and 1 or 2, "Reposé" end
   G.IsResting = function() return M.player.resting end
   G.UnitRangedDamage = function() return 2.9, 20, 30, 0, 0, 1 end
+  G.GetUnitSpeed = function() return M.speed or 0, 7, 7, 4.7 end
+  G.IsMounted = function() return false end
+  G.SetRaidTarget = function(u, i) M.raidTargets = M.raidTargets or {}; M.raidTargets[u] = i end
+  G.GetBindLocation = function() return "Auberge-Test" end
+  G.GetNumSkillLines = function() return #(M.skills or {}) end
+  G.GetSkillLineInfo = function(i)
+    local sk = (M.skills or {})[i]
+    if sk then return sk.name, false, false, sk.rank, 0, 0, sk.max or 300 end
+  end
   G.UnitAttackSpeed = function() return 2.4, nil end
   G.UnitCastingInfo = function() return nil end
   G.UnitChannelInfo = function() return nil end
@@ -938,6 +967,7 @@ function M.Install(flavor)
     G.C_Item = {
       GetItemInfo = G.GetItemInfo, GetItemCount = G.GetItemCount, GetItemInfoInstant = G.GetItemInfoInstant,
       GetItemNameByID = function(id) local it = M.items[id] return it and it.name end,
+      GetItemStats = function(link) return G.GetItemStats(link) end,
     }
     G.C_QuestLog = {
       GetNumQuestLogEntries = function() return #M.quests, #M.quests end,
