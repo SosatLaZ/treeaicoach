@@ -931,6 +931,7 @@ end
 local suggestions = {}   -- id -> entry
 local announced = {}     -- id -> { text, at }
 local alerted = {}       -- id -> { sk, at } (corner alert pops)
+TreeAI._alerted = alerted
 TreeAI._suggestions = suggestions
 
 local function playUrgentSound()
@@ -1088,6 +1089,12 @@ function TreeAI:_FlushPendingAlert()
   local e = id and TreeAI._suggestions[id]
   if not e or (e.expires and e.expires <= now()) or e.prio < 3 then return end
   if self:AlertAllowed(e) then
+    -- same « once per meaning » rule as Suggest (QA: « Familier à 30 % » popped after every fight)
+    local t = now()
+    local sk = strgsub(tostring(e.text or ""), "%d+", "#")
+    local pa = TreeAI._alerted and TreeAI._alerted[id]
+    if pa and pa.sk == sk and (t - pa.at) < 300 then return end
+    if TreeAI._alerted then TreeAI._alerted[id] = { sk = sk, at = t } end
     playUrgentSound()
     if self.ShowAlert then safecall(self.ShowAlert, self, e) end
   end

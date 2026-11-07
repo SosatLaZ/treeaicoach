@@ -76,7 +76,9 @@ return function(M, ctx)
   -- compact quests tab (through Tracker.Push)
   check(TR.Push() == "todo", "Tracker.Push hands the tab to Todo")
   local L = tabs.quests
-  check(L and L[1].now and L[1].pin and L[1].text:find("Maintenant"), "tab: Maintenant first, pinned to the Now tab")
+  local planActive = T.Planner and T.Planner.GetActiveSteps and T.Planner:GetActiveSteps(1) ~= nil
+  check(L and L[1].now and (L[1].pin or planActive) and L[1].text:find("Maintenant"),
+    "tab: Maintenant first, pinned to the Now tab (unless the planner already pins its step)")
   local raptor, courses, open
   for _, l in ipairs(L) do
     if l.questID == RAPTOR then raptor = l end

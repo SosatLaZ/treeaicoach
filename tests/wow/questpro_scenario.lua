@@ -95,6 +95,7 @@ return function(M, ctx)
   local lion
   for _, t in ipairs(C.targets) do if t.questID == 1002 then lion = t end end
   check(lion and near(lion.x, 0.55) and lion.label == "Sang de lion 2/10", "item objective → nearest drop spawn (Questie npcDrops)")
+  C.Show(true)   -- the harness clicks every toolbar button, the compass one included (it toggles)
   local st = C.Refresh()
   check(st and st.dist and st.dist > 50 and st.dist < 80 and st.eta, "distance + ETA to the target: " .. tostring(st and st.dist))
   check(st and st.rel and st.rel > 0 and st.rel < pi, "farmer is to the west-ish (left): " .. tostring(st and st.rel))

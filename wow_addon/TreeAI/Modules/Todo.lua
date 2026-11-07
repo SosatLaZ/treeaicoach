@@ -585,7 +585,9 @@ function M.TabLines(model)
     if a.eta then meta[#meta + 1] = "≈ " .. Time(a.eta) end
     if a.dist then meta[#meta + 1] = distText(a.dist) end
     lines[#lines + 1] = { text = "|cffffd100Maintenant|r : " .. a.title .. (#meta > 0 and (" · " .. table.concat(meta, " · ")) or ""),
-      prio = a.prio or 2, icon = a.icon, pin = true, now = true,
+      -- the Planner already pins its step in « Maintenant »: don't pin the same thing twice (QA sim)
+      prio = a.prio or 2, icon = a.icon, pin = not (T.Planner and T.Planner.GetActiveSteps
+        and select(1, pcall(T.Planner.GetActiveSteps, T.Planner, 1)) and T.Planner:GetActiveSteps(1) ~= nil), now = true,
       tooltip = { a.title, a.why or "", "|cff888888Clic : boussole · Maj-clic : Y aller|r" },
       onClick = function() M.Go(a, shift()) end }
   end
