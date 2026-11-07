@@ -1009,3 +1009,9 @@ local function slash() M.Report() end
 T:RegisterSlash("quetes", slash, "quêtes : à rendre, objectifs, XP, étape suivante")
 T:RegisterSlash("quêtes", slash)
 T:RegisterSlash("quests", slash)
+
+-- actualisation automatique (Core:StartAutoRefresh) : journal relu, conseils recalculés
+function M:AutoRefresh()
+  if InCombatLockdown and InCombatLockdown() then return end
+  pcall(M.Scan); pcall(M.Update)
+end

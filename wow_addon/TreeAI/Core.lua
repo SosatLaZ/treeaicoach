@@ -389,6 +389,29 @@ function TreeAI:Off(message, owner)
   if messages[message] then messages[message][owner or self] = nil end
 end
 
+--- Actualisation automatique : toutes les `settings.refresh` s, chaque module actif qui a une méthode
+--- :AutoRefresh() la reçoit (conseils recalculés), les suggestions expirées partent, le panneau se redessine.
+function TreeAI:StartAutoRefresh()
+  if self._refreshTicker or not self.NewTicker then return end
+  local n = 0
+  self._refreshTicker = self:NewTicker(1, function()
+    n = n + 1
+    local every = tonumber(self.settings and self.settings.refresh) or 3
+    if every <= 0 then return end
+    if InCombatLockdown and InCombatLockdown() then every = every * 2 end
+    if n < every then return end
+    n = 0
+    for _, name in ipairs(self.moduleOrder or {}) do
+      local m = self.modules and self.modules[name]
+      if m and type(m.AutoRefresh) == "function" and (not m.IsEnabled or m:IsEnabled()) then
+        safecall(m.AutoRefresh, m)
+      end
+    end
+    self:Fire("REFRESH")
+    if self.RefreshPanel then safecall(self.RefreshPanel, self) end
+  end)
+end
+
 function TreeAI:Fire(message, ...)
   local list = messages[message]
   if not list then return end
@@ -409,6 +432,7 @@ local DEFAULT_SETTINGS = {
   enabled = true, sound = true, chat = false, comms = true, debug = false,
   soundTips = false,   -- sons aussi pour certains conseils (rares…) ; sinon son = important (prio 3) seulement
   minPrio = 1,
+  refresh = 3,   -- actualisation automatique des conseils (s, hors combat ; 2x plus lent en combat)
   pvp = false,   -- aides PvP (OFF : l'addon aide à quêter, il se tait contre les joueurs ennemis)
   panel = { shown = true, locked = false, scale = 1, alpha = 0.9,
             point = "CENTER", x = 300, y = 120, maxLines = 8, nowMax = 5, width = 280 },
@@ -1291,6 +1315,7 @@ function TreeAI:PLAYER_LOGIN()
   if self.CreatePanel then safecall(self.CreatePanel, self) end
   for _, n in ipairs(self.moduleOrder) do moduleEnable(self.modules[n]) end
   self:Fire("READY")
+  self:StartAutoRefresh()
   self:After(5, function() self:SendHello() end)
 end
 

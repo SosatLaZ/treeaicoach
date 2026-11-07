@@ -416,3 +416,5 @@ do
   local T = core()
   if T and T.RegisterModule then pcall(T.RegisterModule, T, "Inventory", M) end
 end
+
+function M:AutoRefresh() pcall(M.CheckBags); pcall(M.CheckDurability) end

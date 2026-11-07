@@ -970,3 +970,5 @@ if T.RegisterSlash then
     M:Print(("Rares vus cette session : %d%s"):format(stats.rares, stats.lastRare and (" (dernier : " .. stats.lastRare .. ")") or ""))
   end, "boost : XP avant le niveau, conseils d'apprivoisement, rares vus")
 end
+
+function M:AutoRefresh() pcall(M.CheckReminders, M); pcall(M.CheckTravel, M) end

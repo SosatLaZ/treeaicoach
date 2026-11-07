@@ -855,3 +855,8 @@ elseif CreateFrame then
   boot:RegisterEvent("PLAYER_LOGIN")
   boot:SetScript("OnEvent", function() pcall(M.Enable, M) end)
 end
+
+function M:AutoRefresh()
+  if InCombatLockdown and InCombatLockdown() then return end
+  pcall(M.CheckPet, M); pcall(M.CheckAmmo, M); pcall(M.CheckAspect, M)
+end
