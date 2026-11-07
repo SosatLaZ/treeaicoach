@@ -710,3 +710,23 @@ jamais pour un objet lié quand ramassé) ; contrats optionnels lus si présents
 Chasseur : DPS / vitesse de l'arme à distance (lente favorisée ±15 %), munitions assorties, mailles au niv 40.
 Calcul par coroutine hors combat. Résumé IA : `summary.gear = {priority, slots={{slot,item,score,next={id,name,
 gain,need,kind,where,cost,min}}}, shopping, total, hunter}` → `treeaicoach/wow/gear.py` (`gear_context`).
+
+## Macros : installation robuste (agent MACROFIX, `Modules/Macros.lua`)
+Écriture **sur clic / commande seulement**, hors combat (refusée en combat, rien mis en file d'attente).
+- Index par nom : `GetMacroIndexByName` s'il existe, sinon parcours `GetMacroInfo` (compte 1..n, perso 121..) ;
+  `CreateMacro` est vérifié par son retour (index) — jamais de 2e création (les noms en double sont permis).
+- Limites : `Constants.MacroConsts` (Forever 120 compte / 30 perso), sinon globales (120 / 18). Plein → message
+  « perso x/y, compte x/y » + fenêtre copier-coller.
+- Sorts : nom depuis l'ID au chargement (`C_Spell.GetSpellInfo(id).name`), connu par l'ID **ou par le nom sans
+  rang** (`C_SpellBook.FindSpellBookSlotForSpell(nom)`, `C_Spell.GetSpellInfo(nom).spellID`, scan du grimoire) :
+  Forever a des rangs (`IsSpellBookItemLowRank`), l'ID du rang 1 peut ne pas être « connu ». Sort inconnu → la
+  macro (ou la clause `?`) n'est jamais émise. `M.ValidBody(texte)` : ≤ 255 octets, aucun jeton, aucune clause vide.
+- Bloqué par le jeu (`ADDON_ACTION_FORBIDDEN` sur `CreateMacro`/`EditMacro`, nouvelle entrée `diag.blocked`, ou
+  appel accepté sans rien créer) → **une seule** tentative, `db.blocked = {t, func}`, mode copier-coller
+  (`M:ShowCopy(list)` : nom + texte sélectionnables (Ctrl+C), icône, étapes, « Ouvrir les macros » =
+  `ShowMacroFrame` sur clic, « Réessayer la création auto »).
+- `M:Diagnose(show)` (bouton « Diagnostic macros », `/tai macros diag`) → `TreeAIDB.diag.macros = {t, ok, ko,
+  mode="auto"|"copier-coller", blocked, slots={account,accountMax,char,charMax}, api={create,byName,spellbook},
+  lastError, items={{n, ok, status=installed|user|later|full|blocked|ready|invalid, reason, detail, len}}}`.
+- Succès : une ligne « N macro(s) TAI prête(s) — clique pour les glisser sur ta barre » ; « Installer cette
+  macro » la met directement sur le curseur (`PickupMacro`). `/tai macros copier` ouvre la fenêtre à la main.

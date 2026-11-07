@@ -106,12 +106,13 @@ assert(pf == 2287 or pf == 4592, "petfood " .. tostring(pf))
 M:OnEnable()
 assert(suggestions.ready == "Nouvelles macros prêtes : clique pour installer", "one macro line")
 
--- install in combat is deferred
+-- install in combat is refused (nothing queued: a later run would be outside the player's click)
 inCombat = true
 M:Install(false)
 assert(next(macros) == nil, "no macro in combat")
+assert(ooc["Macros:install"] == nil, "nothing queued for after combat")
 inCombat = false
-ooc["Macros:install"]()
+M:Install(false)
 
 local tir = macros["TAI Tir"]
 assert(tir, "TAI Tir created")
