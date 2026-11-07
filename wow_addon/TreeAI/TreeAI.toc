@@ -16,6 +16,7 @@ Options.lua
 Data\Macros.lua
 Data\PetFood.lua
 Data\Consumables.lua
+Data\Dungeons.lua
 
 Modules\Macros.lua
 Modules\Hunter.lua
@@ -38,3 +39,4 @@ Modules\Comfort.lua
 Modules\Pro.lua
 Modules\Economy.lua
 Modules\Auction.lua
+Modules\Dungeon.lua
