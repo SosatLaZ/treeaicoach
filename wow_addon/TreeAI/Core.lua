@@ -2245,6 +2245,8 @@ function TreeAI:PLAYER_LOGOUT()
 end
 
 function TreeAI:PLAYER_REGEN_DISABLED()
+  -- (3.9.2) combat starts → leave the edit mode at once (overlays must never stay in combat)
+  if self.IsEditMode and self:IsEditMode() and self.SetEditMode then safecall(self.SetEditMode, self, false) end
   self:Fire("COMBAT_START")
 end
 

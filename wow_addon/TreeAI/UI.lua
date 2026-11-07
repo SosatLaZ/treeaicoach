@@ -1570,7 +1570,15 @@ function TreeAI:GetOverlays() return overlays end
 
 local function barButton(parent, text, x, fn)
   local ok, b = pcall(_G.CreateFrame, "Button", nil, parent, "UIPanelButtonTemplate")
-  if not ok or not b then return nil end
+  if not ok or not b then
+    -- (3.9.2) template missing: plain button with its own text, so « Fini » always exists
+    ok, b = pcall(_G.CreateFrame, "Button", nil, parent)
+    if not ok or not b then return nil end
+    local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    fs:SetAllPoints()
+    b.SetText = function(self, v) fs:SetText(v) end
+    if b.SetNormalFontObject then pcall(b.SetNormalFontObject, b, "GameFontNormalSmall") end
+  end
   b:SetSize(118, 20)
   b:SetPoint("LEFT", parent, "LEFT", x, 0)
   b:SetText(text)
@@ -1584,8 +1592,18 @@ local function buildEditBar()
   editBar = _G.CreateFrame("Frame", "TreeAIEditBar", _G.UIParent, template)
   editBar:SetClampedToScreen(true)
   editBar:SetSize(112 + 122 * 4, 30)
-  editBar:SetPoint("TOP", _G.UIParent, "TOP", 0, -8)
-  editBar:SetFrameStrata("DIALOG")
+  -- (3.9.2) below the top-centre compass and ABOVE every overlay: the compass overlay used to cover « Fini »
+  editBar:SetPoint("TOP", _G.UIParent, "TOP", 0, -150)
+  editBar:SetFrameStrata("FULLSCREEN_DIALOG")
+  if editBar.SetFrameLevel then editBar:SetFrameLevel(200) end
+  if editBar.SetToplevel then editBar:SetToplevel(true) end
+  editBar:SetMovable(true); editBar:EnableMouse(true)
+  editBar:RegisterForDrag("LeftButton")
+  editBar:SetScript("OnDragStart", function(f) f:StartMoving() end)
+  editBar:SetScript("OnDragStop", function(f) f:StopMovingOrSizing() end)
+  -- Échap closes the edit mode (our frame only) ; hiding the bar for any reason ends the mode
+  editBar:SetScript("OnHide", function() if editing then TreeAI:SetEditMode(false) end end)
+  if type(_G.UISpecialFrames) == "table" then table.insert(_G.UISpecialFrames, "TreeAIEditBar") end
   if editBar.SetBackdrop then
     editBar:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
       edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 10,

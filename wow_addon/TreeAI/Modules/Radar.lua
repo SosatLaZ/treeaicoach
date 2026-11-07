@@ -19,7 +19,7 @@ if not (T and T.RegisterModule) then return end
 local LAYERS = { "quests", "turnins", "target", "path", "squad", "rares", "death", "taxi", "danger" }
 local R = T:RegisterModule("Radar", {
   title = "Radar",
-  defaults = { enabled = true, shown = true, size = 170, zoom = 150, opacity = 0.8, rotate = false,
+  defaults = { enabled = false, shown = true, size = 170, zoom = 150, opacity = 0.8, rotate = false,
                hideCombat = false, locked = false, rings = true, compact = false, labels = true, heading = true,
                quests = true, turnins = true, target = true, path = true, squad = true, rares = true,
                death = true, taxi = true, danger = true },
@@ -1103,6 +1103,16 @@ end
 
 -- ------------------------------------------------------------------ évènements
 function R:OnEnable()
+  -- (3.9.2) the separate round map is OFF for everyone once (user: « pas de minimap à part ») ;
+  -- re-enable it in « Apparence » / module options if wanted
+  if self.db and not self.db.offV392 then
+    self.db.offV392 = true
+    if self.db.enabled ~= false then
+      self.db.enabled = false
+      if TreeAI.SetModuleEnabled then TreeAI:After(0, function() TreeAI:SetModuleEnabled("Radar", false) end) end
+      return
+    end
+  end
   self.char.rares = self.char.rares or {}
   self.char.dangers = self.char.dangers or {}
   for _, ev in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS" }) do
