@@ -94,6 +94,16 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
   `AddWaypoint` → `C_Map.SetUserWaypoint` + `C_SuperTrack.SetSuperTrackedUserWaypoint` (non protégés),
   **uniquement sur clic / commande du joueur**. Géométrie pure : `Compass.Geo` (World, Vector, Relative,
   Dist, ETA). Base Questie : `LibQuestieDB` (addon QuestieDB, contrat 4) sinon `QuestieLoader._modules`.
+* **Route sûre** (`T.SafePath`, `Modules/SafePath.lua`, agent SAFEPATH) — `/tai sur [x y]` (bascule, `/tai sur off`) :
+  **aucun auto-déplacement**, le joueur marche. A* sur une grille 100 × 100 de l'uiMap (hors combat, coroutine
+  ≤ 2 ms/image) ; coût = yards × (1 ou 0,8 près des maîtres de vol / PNJ amicaux) + danger : apparitions des PNJ
+  hostiles (QuestieDB lecture seule, `friendlyToFaction`, `maxLevel`, `rank`) pondérées élite 8 · rouge 6 ·
+  orange 3 · jaune 1 · vert 0,3 (gris ignoré), rayon 20 yd + écart de niveau (+5 élite) ; barres de nom hostiles
+  non grises → secteur ±50° / 40 yd devant le joueur pendant 20 s ; lieux de mort (1 h). Lissage ≤ +1 % de coût,
+  points donnés un à un à la boussole (`Compass:SetTarget` sinon `SetWaypoint`), suivant à 15 yd, point perso
+  rendu à l'arrivée. Message « Détour sûr : +40 m, évite 3 élites ». SPF : `API.GetRoute/Route/GetPath`
+  (supposé, même carte) gardé s'il n'est pas plus exposé (+10 %). Une option par niveau de danger. Pur/testable :
+  `SafePath.Plan{W,H,N,from,to,dangers,roads,live,deaths}`.
 * **Suivi** (`T.Tracker`, refait par TRACK-PRO — comparatif AGF / Questie / RestedXP dans
   `research/agf_vs_treeai.md`) : onglet « Quêtes » (`SetTabLines`) **et** cadre compact optionnel à nous
   (`standalone` : déplaçable, verrou, réduction par quête au clic droit / tout réduire sur l'en-tête, police,
