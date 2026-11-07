@@ -4,9 +4,10 @@
 Source: Blizzard client DB2 tables as served by wago.tools (product ``wowf``), build ``BUILD`` below,
 French locale. Output:
   treeaicoach/wow/data/{spells,items,zones,meta}.json.gz   (read by treeaicoach/wow/gamedata.py)
+  treeaicoach/wow/data/taxi.json.gz   (flight graph + map bounds, read by treeaicoach/wow/planner/data.py)
   wow_addon/TreeAI/Data/PetFood.lua, Data/Consumables.lua  (small Lua tables for the addon)
 
-Usage:  python tools/wow_build_data.py [--cache DIR] [--build 1.60.1.70862] [--offline]
+Usage:  python tools/wow_build_data.py [--cache DIR] [--build 1.60.1.70862] [--offline] [--only taxi]
 CSV files are downloaded once into --cache (default: a temp dir) and reused. Same CSVs -> same bytes out.
 """
 from __future__ import annotations
@@ -31,6 +32,7 @@ TABLES = ("SpellName", "SpellLevels", "SkillLineAbility", "SkillLine", "ChrClass
           "ItemXItemEffect", "ItemEffect", "SpellEffect", "SpellMisc", "SpellDuration", "RandPropPoints",
           "ItemArmorTotal", "ItemArmorQuality", "ItemArmorShield", "ArmorLocation", "ItemDamageOneHand",
           "ItemDamageTwoHand", "ItemDamageRanged", "ItemDamageThrown", "ItemDamageWand", "AreaTable")
+TAXI_TABLES = ("TaxiNodes", "TaxiPath", "TaxiPathNode", "UiMapAssignment", "UiMap")
 
 # Class skill lines (talent trees) -> class token. ChrClasses ids: 1 war, 2 pal, 3 hunt, 4 rog, 5 pri,
 # 7 sham, 8 mage, 9 lock, 11 druid.
@@ -271,6 +273,60 @@ def build_zones(T: dict) -> dict:
     return {"fields": ["name", "parent", "continent"], "zones": z}
 
 
+def f(v: str | None) -> float:
+    try:
+        return float(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def build_taxi(T: dict) -> dict:
+    """Flight graph (nodes with world pos / faction, directed edges with spline length in yards and cost in
+    copper) and uiMap world bounds (UiMapAssignment Region, verified conversion:
+    mapX = (R4 − worldY)/(R4 − R1), mapY = (R3 − worldX)/(R3 − R0))."""
+    nodes = {}
+    for r in T["TaxiNodes"]:
+        name = r["Name_lang"] or ""
+        if not name or name.startswith(("zz", "Quest Path")) or "OLD" in name:
+            continue
+        fl = i(r["Flags"])
+        fac = ("A" if fl & 1 else "") + ("H" if fl & 2 else "")
+        nodes[r["ID"]] = [name, i(r["ContinentID"]), round(f(r["Pos_0"]), 1), round(f(r["Pos_1"]), 1), fac]
+    pts: dict[str, list] = {}
+    for r in T["TaxiPathNode"]:
+        pts.setdefault(r["PathID"], []).append((i(r["NodeIndex"]), f(r["Loc_0"]), f(r["Loc_1"]), f(r["Loc_2"]),
+                                                f(r["Delay"])))
+    edges = []
+    for r in T["TaxiPath"]:
+        a, b = r["FromTaxiNode"], r["ToTaxiNode"]
+        if a not in nodes or b not in nodes:
+            continue
+        p = sorted(pts.get(r["ID"], []))
+        length = sum(((p[k + 1][1] - p[k][1]) ** 2 + (p[k + 1][2] - p[k][2]) ** 2 + (p[k + 1][3] - p[k][3]) ** 2)
+                     ** 0.5 for k in range(len(p) - 1))
+        if not p:
+            na, nb = nodes[a], nodes[b]
+            length = ((na[2] - nb[2]) ** 2 + (na[3] - nb[3]) ** 2) ** 0.5 * 1.15
+        delay = sum(x[4] for x in p)
+        edges.append([i(a), i(b), int(round(length)), i(r["Cost"]), int(round(delay))])
+    edges.sort()
+    names = {r["ID"]: r["Name_lang"] for r in T["UiMap"]}
+    types = {r["ID"]: i(r["Type"]) for r in T["UiMap"]}
+    maps = {}
+    for r in T["UiMapAssignment"]:
+        mid = r["UiMapID"]
+        if types.get(mid) not in (3, 4, 5) or mid in maps or i(r["OrderIndex"]) != 0:
+            continue
+        if f(r["UiMin_0"]) != 0 or f(r["UiMin_1"]) != 0 or f(r["UiMax_0"]) != 1 or f(r["UiMax_1"]) != 1:
+            continue
+        r0, r1, r3, r4 = f(r["Region_0"]), f(r["Region_1"]), f(r["Region_3"]), f(r["Region_4"])
+        # world pos at map (0,0) and (1,1): x0 = R3, y0 = R4, x1 = R0, y1 = R1
+        maps[mid] = [names.get(mid, ""), i(r["MapID"]), round(r3, 1), round(r4, 1), round(r0, 1), round(r1, 1)]
+    return {"nodes_fields": ["name", "continent", "x", "y", "faction"], "nodes": dict(sorted(nodes.items(), key=lambda kv: int(kv[0]))),
+            "edges_fields": ["from", "to", "length_yd", "cost_copper", "delay_s"], "edges": edges,
+            "maps_fields": ["name", "continent", "x0", "y0", "x1", "y1"], "maps": dict(sorted(maps.items(), key=lambda kv: int(kv[0])))}
+
+
 # ----------------------------------------------------------------------------------------------- output
 def write_gz(path: str, obj) -> int:
     data = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -321,8 +377,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache", default=os.path.join(tempfile.gettempdir(), "treeai_wowf_db2"))
     ap.add_argument("--build", default=BUILD)
     ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--only", choices=("taxi",), help="build only this file")
     a = ap.parse_args(argv)
     os.makedirs(a.cache, exist_ok=True)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    taxi = build_taxi({t: fetch(a.cache, t, a.build, a.offline) for t in TAXI_TABLES})
+    taxi["build"] = a.build
+    tsize = write_gz(os.path.join(OUT_DIR, "taxi.json.gz"), taxi)
+    if a.only == "taxi":
+        print(json.dumps({"taxi": tsize, "nodes": len(taxi["nodes"]), "edges": len(taxi["edges"]),
+                          "maps": len(taxi["maps"])}))
+        return 0
     T = {t: fetch(a.cache, t, a.build, a.offline) for t in TABLES}
     os.makedirs(OUT_DIR, exist_ok=True)
     spells = build_spells(T)
@@ -330,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
     zones = build_zones(T)
     cats, petfood = build_consumables(raw, T)
     sizes = {
+        "taxi": tsize,
         "spells": write_gz(os.path.join(OUT_DIR, "spells.json.gz"), spells),
         "items": write_gz(os.path.join(OUT_DIR, "items.json.gz"), items),
         "zones": write_gz(os.path.join(OUT_DIR, "zones.json.gz"), zones),

@@ -66,6 +66,7 @@ TreeAIDB.export = {
       o = {                            -- objectives in quest order (position = objective index used in plan steps)
         { k = "kill" | "item" | "obj" | "explore" | "talk" | "spell" | "other",
           id = 2350,                   -- creature / item / object id (0 = unknown)
+          t = "Loup des collines tué",   -- optional: objective text (GetQuestObjectives), used in step labels
           n = 10, have = 3,            -- needed / already have (GetQuestObjectives when in the log)
           npc = { 2350, 2351 },        -- for "item": the creatures that drop it (first = most common)
           p = 0.35,                    -- drop chance 0–1 for "item" (Questie DropDB prior); nil = unknown
@@ -152,3 +153,12 @@ Rules for the addon:
 * Verdict labels: `ok` → « OK », `galere` → « On va galérer », `long` → « Trop long »,
   `impossible` → « Pas faisable », `zone` → « Changez de zone ».
 * Routes come in this order: `xph`, `clear`, `squad` (only when in a group), `safe`.
+
+## 4. What the player picked (addon → app, optional)
+
+```lua
+TreeAIDB.chars[key].plan = { made = 1762500000, route = "xph", step = 3 }  -- plan `made`, chosen route id, step index
+```
+
+The app reads this to answer « Hey coach, on fait quoi ? » from the chosen route. When it is missing, the app
+uses the first route.

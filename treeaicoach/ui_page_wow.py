@@ -105,6 +105,27 @@ def summary_rows(db: dict) -> list[tuple[str, str]]:
     return rows or basic_summary(db)
 
 
+def plan_rows(plan: Any) -> list[tuple[str, str]]:
+    """(title, description) per route of a TreeAIPlan dict: XP/h, minutes, verdict and reasons. Never raises."""
+    rows: list[tuple[str, str]] = []
+    try:
+        verdicts = {"ok": "OK", "galere": "On va galérer", "long": "Trop long", "impossible": "Pas faisable",
+                    "zone": "Changez de zone"}
+        routes = plan.get("routes") if isinstance(plan, dict) else None
+        routes = list(routes.values()) if isinstance(routes, dict) else (routes or [])
+        for r in routes:
+            if not isinstance(r, dict):
+                continue
+            head = (f"{r.get('title', '?')} — {int(r.get('xph') or 0):,} XP/h · ~{int(r.get('minutes') or 0)} min"
+                    f" · {verdicts.get(str(r.get('verdict')), '?')}").replace(",", " ")
+            rs = r.get("reasons")
+            rs = list(rs.values()) if isinstance(rs, dict) else (rs or [])
+            rows.append((head, " ; ".join(str(x) for x in rs[:3])))
+    except Exception:
+        log.debug("plan rows failed", exc_info=True)
+    return rows
+
+
 def read_state(cfg: Any) -> dict:
     """Everything the page shows (worker thread, files only). Never raises."""
     from treeaicoach.wow import optional  # noqa: PLC0415
@@ -129,6 +150,13 @@ def read_state(cfg: Any) -> dict:
             out["installed"] = bool(inst is not None and inst.addon_dir.is_dir())
             out["needs_update"] = install.needs_update(inst, src)
             out["log"] = install.combat_log_status(inst)
+            if inst is not None:
+                try:
+                    from treeaicoach.wow.planner import writer  # noqa: PLC0415
+
+                    out["plan"] = writer.read_plan(inst.addons_dir)
+                except Exception:
+                    log.debug("plan read failed", exc_info=True)
             files = install.savedvars_files(inst)
             if files and sv is not None:
                 out["rows"] = summary_rows(sv.read_db(files[0]))
@@ -265,6 +293,26 @@ class WowPage:
         self.char_section.add(self._char_holder)
         self._char_group: Any = None
         self._char_sig: Any = None
+        plan = self.page.section("Plan de quêtes", "Les meilleurs trajets pour tes quêtes (XP/h, durée, verdict). "
+                                                   "Choisis-en un en jeu : /tai plan.")
+        self._plan_holder = QtWidgets.QWidget()
+        self._plan_layout = QtWidgets.QVBoxLayout(self._plan_holder)
+        self._plan_layout.setContentsMargins(0, 0, 0, 0)
+        plan.add(self._plan_holder)
+        self._plan_group: Any = None
+        self._plan_sig: Any = None
+        pact = QtWidgets.QWidget()
+        pl = QtWidgets.QHBoxLayout(pact)
+        pl.setContentsMargins(16, 12, 16, 14)
+        pl.setSpacing(12)
+        self.plan_btn = W.button("Calculer le trajet", self._plan, kind="primary")
+        self.plan_btn.setMinimumHeight(36)
+        pl.addWidget(self.plan_btn, 0)
+        self.plan_hint = W.label("Après /reload en jeu (l'addon exporte tes quêtes).", "secondary")
+        self.plan_hint.setWordWrap(True)
+        pl.addWidget(self.plan_hint, 1, Qt.AlignVCenter)
+        plan.add(pact)
+        self._plan_last: Any = None
         fight = self.page.section("Dernier combat", "Lu dans le journal de combat. Sert aussi au coach.")
         self.report_row = fight.add(W.Row("Rapport", "Pas encore de combat lu."))
         self.report_row.desc.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -344,6 +392,38 @@ class WowPage:
 
         self.app.run_job(job, done, failed, name="TreeAI-wow-install")
 
+    def _plan(self) -> None:
+        from treeaicoach.wow import optional  # noqa: PLC0415
+
+        install = optional("install")
+        if install is None:
+            return
+        self.plan_btn.setEnabled(False)
+        self.plan_hint.setText("Calcul en cours (~20 s)…")
+        path = str(getattr(self.app.cfg, "wow_path", "") or "")
+
+        def job() -> Any:
+            from treeaicoach.wow import planner  # noqa: PLC0415
+
+            return planner.compute_and_write(install.find_wow(path), seconds=16.0)
+
+        def done(res: Any) -> None:
+            self.plan_btn.setEnabled(True)
+            res = res if isinstance(res, dict) else {}
+            ok = bool(res.get("ok"))
+            if res.get("plan"):
+                self._plan_last = res["plan"]
+                self._render_plan(res["plan"])
+            self.plan_hint.setText("Tape /reload en jeu pour charger le trajet." if ok
+                                   else str(res.get("message") or "Calcul impossible."))
+            self.app.show_toast(str(res.get("message") or ""), "info" if ok else "error")
+
+        def failed(_exc: BaseException) -> None:
+            self.plan_btn.setEnabled(True)
+            self.plan_hint.setText("Calcul impossible.")
+
+        self.app.run_job(job, done, failed, name="TreeAI-wow-plan")
+
     # ------------------------------------------------------------------ refresh
     def on_show(self) -> None:
         self.refresh()
@@ -395,6 +475,7 @@ class WowPage:
         report = str(mode.get("report") or "").strip()
         self.report_row.set_desc(report[:1200] if report else "Pas encore de combat lu.")
         self._render_char(st.get("rows") or [], st.get("sv_age"))
+        self._render_plan(st.get("plan") or self._plan_last)
 
     def _render_char(self, rows: list, age: Any) -> None:
         sig = (tuple(rows), _age_text(age))
@@ -424,6 +505,24 @@ class WowPage:
             grp.add(W.Row("Dernière sauvegarde", None, W.label(sig[1], "secondary")))
         self._char_layout.addWidget(grp)
         self._char_group = grp
+
+    def _render_plan(self, plan: Any) -> None:
+        rows = plan_rows(plan)
+        sig = tuple(rows)
+        if sig == self._plan_sig:
+            return
+        self._plan_sig = sig
+        W = self.W
+        if self._plan_group is not None:
+            self._plan_group.setParent(None)
+            self._plan_group.deleteLater()
+        grp = W.Group()
+        for title, desc in rows:
+            grp.add(W.Row(title, desc or None))
+        if not rows:
+            grp.add(W.Row("Pas encore de trajet", "Clique sur « Calculer le trajet »."))
+        self._plan_layout.addWidget(grp)
+        self._plan_group = grp
 
     def on_close(self) -> None:
         self.timer.stop()
