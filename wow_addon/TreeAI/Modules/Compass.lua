@@ -590,6 +590,17 @@ function M.SetWaypoint(x, y, name, mapID)
   M.Refresh()
   return M.char.custom
 end
+--- Shared contract used by Planner / Missions / SafePath / Radar: `Compass:SetTarget{mapID, x, y, label, source,
+--- questID}` (x, y in 0-1 or 0-100). Called with `:` (self = M) or `.` (first arg = the table). Returns the target.
+function M.SetTarget(a, b)
+  local t = (type(b) == "table" and b) or (type(a) == "table" and a ~= M and a) or nil
+  if not t then return nil end
+  if t.questID and not (t.x and t.y) then return M.SetQuestTarget(t.questID) end
+  local r = M.SetWaypoint(t.x, t.y, t.label, t.mapID)
+  if r then r.source, r.questID = t.source, t.questID end
+  return r
+end
+
 function M.ClearWaypoint()
   if M.char then M.char.custom = nil end
   M.Rebuild()
