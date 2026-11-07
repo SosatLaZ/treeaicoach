@@ -531,6 +531,18 @@ function M.Update()
   local r = M.Rates()
   local list = M.Forecasts(r, M.Context())
   M.rates, M.list = r, list
+  -- « courses » : le service le plus proche connu (TreeAI.Detect : PNJ appris, maîtres de vol, Questie)
+  local Dt = T.Detect
+  if type(Dt) == "table" and type(Dt.NearestText) == "function" then
+    local SERVICE = { ammo = "vendor", food = "vendor", water = "vendor", repair = "repair", train = "trainer" }
+    for _, f in ipairs(list) do
+      local kind = SERVICE[f.id]
+      if kind and f.prio >= 2 then
+        local ok, txt = pcall(Dt.NearestText, kind)
+        if ok and type(txt) == "string" then f.text, f.near = f.text .. " · " .. txt, txt end
+      end
+    end
+  end
   -- urgentes (prio ≥ 2) → « Maintenant » ; les autres seulement dans l'onglet
   local keep = {}
   for _, f in ipairs(list) do

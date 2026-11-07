@@ -898,6 +898,15 @@ function M.UnitObjective(unit)
     e = tooltipObjective(unit)
     if e then how = "kill" end
   end
+  if not e then  -- TreeAI.Detect : C_QuestLog.UnitIsRelatedToActiveQuest / UnitIsQuestBoss (sans infobulle)
+    local Dt = T.Detect
+    local qi = type(Dt) == "table" and type(Dt.QuestUnit) == "function" and Dt.QuestUnit(unit)
+    if type(qi) == "table" and qi.hostile and on("plates") then
+      e = qi.obj and D.byName[qi.obj] or { quest = qi.quest or "quête", obj = qi.obj or qi.name or "?",
+        have = qi.have or 0, need = qi.need or 0 }
+      how = "kill"
+    end
+  end
   if e and how == "drop" and name then
     local P = mod("Predict")
     local r = P and type(P.DropRate) == "function" and try(P.DropRate, name, low(e.obj))
@@ -1006,7 +1015,7 @@ function M.UpdateTarget()
   else badge:SetPoint("TOP", G.UIParent, "TOP", 0, -120) end
   badge.icon:SetTexture(how == "drop" and TEX.drop or TEX.quest)
   local left = math.max(0, (e.need or 1) - (e.have or 0))
-  local txt = ("%s — encore %d"):format(cut(e.quest, 28), left)
+  local txt = left > 0 and ("%s — encore %d"):format(cut(e.quest, 28), left) or cut(e.quest, 28)
   if how == "drop" then txt = txt .. (e.rate and (" (chute %d %%)"):format(math.floor(e.rate * 100 + 0.5)) or " (butin)") end
   badge.text:SetText(txt)
   local r, g, b = color("colMob")

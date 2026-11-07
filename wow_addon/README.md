@@ -710,3 +710,24 @@ jamais pour un objet lié quand ramassé) ; contrats optionnels lus si présents
 Chasseur : DPS / vitesse de l'arme à distance (lente favorisée ±15 %), munitions assorties, mailles au niv 40.
 Calcul par coroutine hors combat. Résumé IA : `summary.gear = {priority, slots={{slot,item,score,next={id,name,
 gain,need,kind,where,cost,min}}}, shopping, total, hunter}` → `treeaicoach/wow/gear.py` (`gear_context`).
+
+## Détection : module `Detect` (`Modules/Detect.lua`, après Compass et SafePath)
+
+Tout ce que l'addon voit dans le monde, au même endroit. Les API Forever 1.60.1 ont été vérifiées dans
+Blizzard_APIDocumentationGenerated (branche `forever`). Les modules qui utilisent `TreeAI.Detect` gardent chaque appel.
+
+| Appel | Rend |
+|---|---|
+| `:Rares([kind])` | rares / élites / trésors (C_VignetteInfo : position exacte ; repli barre de nom `approx`), triés par distance |
+| `:QuestUnits()` / `:QuestUnit(unit)` | barres de nom liées à une quête (UnitIsRelatedToActiveQuest, UnitIsQuestBoss, nom ↔ objectif) ; `.left` = reste |
+| `:Quests()` | relevé du journal (anti-rebond 0,3 s : QUEST_LOG_UPDATE, QUEST_WATCH_UPDATE, UNIT_QUEST_LOG_CHANGED, QUEST_ACCEPTED, QUEST_TURNED_IN, QUEST_REMOVED) |
+| `:Kills(name)` | morts comptées par le message d'XP (pas de journal de combat sur Forever) |
+| `:Services(kind)` / `:Nearest(kind)` / `:NearestText(kind)` | vendor, repair, flight, trainer, innkeeper, mailbox, bank, auction, stable, spirit, poi : PNJ appris en leur parlant (`db.learned`, compte), C_TaxiMap, C_AreaPoiInfo, habitants Questie |
+| `:Group()` | membres : position (C_Map, UnitPosition, Squad), zone, hors ligne / ABS / mort / fantôme, portée |
+| `:Combat()` | coups reçus en 5 s (UNIT_COMBAT), PV, menace, ennemis engagés ; une valeur secrète reste absente |
+| `:Pins([withServices])` / `:Target(e)` | épingles génériques (Radar) / un clic = cible de la boussole |
+| `:OnChange(cb)` | `cb(kind, data)` : `rares`, `questunits`, `quests`, `progress`, `kill`, `services`, `group`, `combat` (+ message `DETECT`) |
+
+Utilisé par : Boost (ligne rare / trésor, clic = y aller), Highlight (repli UnitIsRelatedToActiveQuest), Compass
+(`TargetNearest(kind)`), Predict (« · Réparation : PNJ — 230 m »), Radar (couche rares : vignettes).
+Commande : `/tai detect [rare|tresor|marchand|reparation|vol|auberge|courrier]`. Résumé IA : `summary.detect`.
