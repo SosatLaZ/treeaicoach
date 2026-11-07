@@ -43,18 +43,18 @@ return function(M, ctx)
   M.player.health = 600  -- escort: not full HP
   P.Update(true)
   local q = P.lines and P.lines.quests or {}
-  ctx.check(find(q, "XP/min"), "1 XP/min ranking: " .. dump(q))
+  ctx.check(find(q, "^2%. .* — ≈ %d+ min") and not find(q, "XP/min"), "1 ranking in plain words: " .. dump(q))
   ctx.check(find(q, "^1%. Courrier rendu"), "1 completed quest ranked first")
   ctx.check(not find(q, "À abandonner"), "2 moved to Modules/Abandon.lua")
   local A = T.modules.Abandon
   if A then A.Update(true) end
-  ctx.check(A and find(A.lines, "À abandonner : « Vieille corvée"), "2 grey quest to abandon (Abandon module): " .. dump(A and A.lines))
+  ctx.check(A and find(A.lines, "Retire « Vieille corvée » : trop facile maintenant"), "2 grey quest to abandon (Abandon module): " .. dump(A and A.lines))
   ctx.check(find(q, "Escorte « Escorter le vieux fermier » : prépare%-toi.*PV"), "5 escort prep")
   ctx.check(find(q, "Chaîne : après « Les loups de la colline » → « La suite des loups » chez Garde Test"), "6 chain via Questie")
   -- 7 useless breadcrumb: explained by the Abandon module (Pro keeps its line only without it)
-  local rl = A and find(A.lines, "À abandonner : « Le relais »")
-  ctx.check(rl and tostring(rl.tooltip):find("relais inutile"), "7 breadcrumb already useless: " .. dump(A and A.lines))
-  ctx.check(find(q, "Loup des forêts 4/10 : ~"), "13 ETA line")
+  local rl = A and find(A.lines, "Retire « Le relais » : elle ne sert plus à rien")
+  ctx.check(rl and tostring(rl.tooltip):find("Pour la retirer"), "7 breadcrumb already useless: " .. dump(A and A.lines))
+  ctx.check(find(q, "Loup des forêts 4/10 : ≈ %d+ min"), "13 ETA line")
   local info = P.lines.info or {}
   ctx.check(find(info, "Donjons niv 26 : Donjon d'Ombrecroc"), "8 dungeons at level: " .. dump(info))
   ctx.check(find(info, "Niveau 26, à faire : entraîneur"), "9 checklist: trainer")
@@ -63,7 +63,7 @@ return function(M, ctx)
   M.Advance(60)
   M.quests[2].objectives[1] = { text = "Loup des forêts tué : 6/10", have = 6, need = 10 }
   P.Update(true)
-  ctx.check(find(P.lines.quests, "Loup des forêts 6/10 : ~2 min"), "13 observed ETA: " .. dump(P.lines.quests))
+  ctx.check(find(P.lines.quests, "Loup des forêts 6/10 : ≈ 2 min"), "13 observed ETA: " .. dump(P.lines.quests))
 
   -- 15 own drop rate (Predict absent): 4 kills, 2 drops => 50 %
   for i = 1, 4 do
@@ -84,7 +84,7 @@ return function(M, ctx)
   M.units.nameplate6 = { name = "Gnoll-Chef", guid = "Creature-0-0-0-0-88-1", hostile = true, classification = "elite" }
   for i = 1, 6 do M.FireEvent("NAME_PLATE_UNIT_ADDED", "nameplate" .. i) end
   P.Update(true)
-  ctx.check(find(P.lines.quests, "Camp saturé : Loup des forêts %(4/5"), "3 camp saturated: " .. dump(P.lines.quests))
+  ctx.check(find(P.lines.quests, "Trop de monde sur Loup des forêts : reviens dans 5 min"), "3 camp saturated: " .. dump(P.lines.quests))
   ctx.check(find(P.lines.quests, "PNJ de quête en vue : Gnoll%-Chef"), "4 named quest NPC")
 
   -- 14 respawn: killed, seen alive again 400 s later with a new GUID
@@ -204,7 +204,7 @@ return function(M, ctx)
 
   -- tabs + summary + combat guard
   local tl = T.GetTabLines and T:GetTabLines("quests") or {}
-  ctx.check(find(tl, "XP/min"), "Pro lines in the « Quêtes » tab")
+  ctx.check(find(tl, "^1%. Courrier rendu — prête à rendre"), "Pro lines in the « Quêtes » tab")
   ctx.check(find(T.GetTabLines and T:GetTabLines("hv") or {}, "Or/h"), "Economy lines in the « HV » tab")
   T:Fire("SUMMARY")
   local s = T:Summary()
@@ -217,7 +217,7 @@ return function(M, ctx)
   -- options: every feature can be switched off
   P.db.xpRank = false
   P.Update(true)
-  ctx.check(not find(P.lines.quests, "XP/min"), "xpRank toggle off")
+  ctx.check(not find(P.lines.quests, "^1%. "), "xpRank toggle off")
   P.db.xpRank = true
   -- test-only globals removed (the harness reports new globals as leaks)
   for _, k in ipairs({ "QuestieLoader", "GetQuestID", "GetMerchantItemLink", "GetMerchantItemInfo", "GetNumTradeSkills",

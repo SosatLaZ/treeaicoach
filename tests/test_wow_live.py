@@ -172,14 +172,20 @@ def test_direct_view(snap: dict) -> None:
 
 def test_quests_view_and_abandon_reasons(snap: dict) -> None:
     v = live.quests_view(snap)
-    assert v["route"][0] == ("Quête Une", "prête à rendre · Zone Test · 120 m · 400 XP/min")
-    assert "4 quêtes, 1 à rendre" in v["head"] and "1 h 15" in v["head"]
+    assert v["route"][0][:2] == ("Quête Une", "Prête à rendre")
+    assert all(tag in live.QUEST_TAGS for _, tag, _ in v["route"])
+    assert "4 quêtes, 1 prête à rendre" in v["head"] and "1 h 15" in v["head"]
+    # robustness: nothing in the main quest UI speaks jargon (XP/min, score, %, λ)
+    shown = [v["head"], v["now"], v["why"]] + [f"{t} {tag} {w}" for t, tag, w in v["route"]]
+    shown += [f"{a['title']} {a['why']}" for a in v["abandon"]] + v["tips"]
+    assert all(live.is_plain(x) for x in shown), [x for x in shown if not live.is_plain(x)]
+    assert v["now"].startswith(("Rends", "Fais", "Va")) and v["why"]
     assert any("Quête En Chemin" in t and "PNJ Factice" in t for t in v["tips"])
     assert v["plan"] and "plan TreeAI" in v["plan"][0]
     why = {a["title"]: a["why"] for a in v["abandon"]}
     assert set(why) == {"Vieille Quête", "Élite Factice", "Longue Marche"}
-    assert why["Vieille Quête"].startswith("grise (niveau 18 contre 26)")
-    assert "tu es seul" in why["Élite Factice"] and "40 XP/min contre" in why["Longue Marche"]
+    assert why["Vieille Quête"] == "trop facile maintenant, presque pas d'XP"
+    assert "trop dure seul" in why["Élite Factice"] and "trop longue" in why["Longue Marche"]
     own = live.abandon_advice({"abandon": [{"title": "X", "why": "pas rentable ici"}, "Y"]})
     assert own == [{"title": "X", "why": "pas rentable ici"}, {"title": "Y", "why": "conseillé par l'addon"}]
 
@@ -224,7 +230,8 @@ def test_tab_blocks_and_empty_states(snap: dict) -> None:
     assert hv[0]["title"] == "Meilleures affaires" and hv[0]["rows"][0]["value"] == "+18 pa net"
     assert hv[0]["rows"][0]["spark"] and "commission 5 %" in hv[0]["foot"]
     q = {b["title"]: b for b in pw.tab_blocks("quetes", snap)}
-    assert "manuel" in q["Quêtes à abandonner"]["foot"]
+    assert "Abandonner" in q["À retirer"]["foot"] and q["À retirer"]["rows"][0]["title"].startswith("Retire « ")
+    assert list(q)[0] == "À faire maintenant" and q["À faire maintenant"]["rows"][0]["desc"].startswith("Pourquoi ?")
 
 
 def test_read_state_with_hub(wowdir: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:

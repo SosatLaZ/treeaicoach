@@ -161,7 +161,7 @@ function E.Galere(q, ctx)
   local terms = {}
   local function add(v, why) if v > 0 then terms[#terms + 1] = { v, why } end end
   local d = (q.lv or pl) - pl
-  if d >= 5 then add(25, "quête rouge (niv " .. q.lv .. ")") elseif d >= 3 then add(15, "quête orange (niv " .. q.lv .. ")") end
+  if d >= 5 then add(25, "beaucoup trop haute pour vous") elseif d >= 3 then add(15, "un peu haute pour vous") end
   local worstF = huge
   for _, o in ipairs(q.o or {}) do
     local ml = tonumber(o.mx) or tonumber(o.ml)
@@ -169,17 +169,17 @@ function E.Galere(q, ctx)
       local units = ((o.rank == 1 or o.rank == 2) and 4) or (o.rank == 3 and 8) or 1
       local F = E.Feasibility(ctx.members or { { class = ctx.class, level = pl } }, { level = ml, units = units })
       if F < worstF then worstF = F end
-      if units >= 4 and k < max(2, q.grp or 0) then add(20, "élites niv " .. ml .. " (à faire à " .. max(2, q.grp or 3) .. ")") end
-      if units == 1 and ml >= pl + 3 then add(18, "monstres niv " .. ml .. " (+" .. (ml - pl) .. ")") end
+      if units >= 4 and k < max(2, q.grp or 0) then add(20, "des élites : à faire à " .. max(2, q.grp or 3)) end
+      if units == 1 and ml >= pl + 3 then add(18, "monstres plus forts que vous") end
     end
     if o.k == "item" then
       local need = max(0, (o.n or 1) - (o.have or 0))
       local p = max(0.02, tonumber(o.p) or 0.45)
       local corpses = (o.plf == 1 or k == 1) and need / p or k * need / p
       if corpses > 60 and p < 0.3 then
-        add(50, fmt("%d corps à %d %% pour %d — faites-la à 2", floor(corpses + 0.5), floor(p * 100 + 0.5), k))
+        add(50, k >= 2 and "l'objet tombe très rarement : très long" or "l'objet tombe très rarement : faites-la à 2")
       elseif need > 0 then
-        add(12 * min(2, sqrt(1 - p) / sqrt(max(1, need)) * 3), fmt("taux de drop %d %%", floor(p * 100 + 0.5)))
+        add(12 * min(2, sqrt(1 - p) / sqrt(max(1, need)) * 3), "l'objet tombe rarement")
       end
     end
   end
@@ -194,10 +194,10 @@ end
 function E.QuestVerdict(q, ctx)
   local k = max(1, ctx.group or 1)
   if ctx.raid then return "impossible", "vous êtes en raid : les quêtes normales n'avancent pas" end
-  if (q.lv or 0) >= ctx.level + 5 and k == 1 then return "impossible", "quête rouge (niv " .. q.lv .. ")" end
+  if (q.lv or 0) >= ctx.level + 5 and k == 1 then return "impossible", "beaucoup trop haute pour vous" end
   if q.dg == 1 and k < 3 then return "impossible", "donjon : au moins 3 joueurs" end
   local g, why, F = E.Galere(q, ctx)
-  if F and F < 0.6 then return "impossible", "trop dur pour vous (" .. (why or "élites") .. ")" end
+  if F and F < 0.6 then return "impossible", "trop dur pour vous" end
   if g >= 45 then return "galere", why end
   return "ok", nil
 end
@@ -210,11 +210,11 @@ function E.RouteVerdict(plan, ctx, info)
   info = info or {}
   if ctx.raid then return "impossible", "vous êtes en raid : les quêtes normales n'avancent pas" end
   if #(plan.steps or {}) == 0 then return "impossible", "aucune étape faisable ici" end
-  if (info.nonGrey or 99) < 3 then return "zone", "il reste " .. (info.nonGrey or 0) .. " quêtes utiles ici" end
-  if info.zoneMedian and ctx.level >= info.zoneMedian + 5 then return "zone", "zone trop basse pour vous (médiane niv " .. info.zoneMedian .. ")" end
-  if ctx.session and (plan.minutes or 0) > ctx.session then return "long", fmt("%d min prévues, %d min de jeu", plan.minutes, ctx.session) end
+  if (info.nonGrey or 99) < 3 then return "zone", "presque plus rien d'utile ici" end
+  if info.zoneMedian and ctx.level >= info.zoneMedian + 5 then return "zone", "zone trop facile pour vous" end
+  if ctx.session and (plan.minutes or 0) > ctx.session then return "long", "plus long que ta session de jeu" end
   local base = E.GrindXPH(ctx)
-  if (plan.xph or 0) > 0 and plan.xph < 0.6 * base then return "long", fmt("%s XP/h < 60 %% du farm (%s)", thousands(plan.xph), thousands(base)) end
+  if (plan.xph or 0) > 0 and plan.xph < 0.6 * base then return "long", "tuer des monstres rapporte plus" end
   if info.galere then return "galere", info.galere end
   return "ok", nil
 end
@@ -964,6 +964,34 @@ local function verdictText(code, reasons)
   return why and (lab .. " : " .. why) or lab
 end
 P.VerdictText = verdictText
+-- trajets en mots simples (agent SIMPLE) : « Le plus rapide », « Tout finir ici », « Avec mes potes » + le temps
+local function routeName(r)
+  local Pl = T.Plain
+  return Pl and Pl.RouteName(r.id, r.title) or cut(r.title or r.id or "?", 22)
+end
+local function routeTime(r)
+  local Pl = T.Plain
+  local t = Pl and tonumber(r.minutes) and Pl.Minutes(r.minutes * 60)
+  return t and (" (" .. t .. ")") or ""
+end
+-- 3 choix au plus : « Avec mes potes » remplace « Sans galère » quand on est en groupe
+local function routeChoices(self)
+  local all = self:Routes()
+  local hasSquad = false
+  for _, r in ipairs(all) do if r.id == "squad" then hasSquad = true end end
+  local out = {}
+  for _, r in ipairs(all) do
+    if #out >= 3 then break end
+    if not (hasSquad and r.id == "safe") or r == self.route then out[#out + 1] = r end
+  end
+  return out
+end
+local function routeChoiceNames(self)
+  local out = {}
+  for _, r in ipairs(routeChoices(self)) do out[#out + 1] = routeName(r) end
+  return out
+end
+P.RouteName, P.RouteChoices = routeName, routeChoices
 
 function P:Lines()
   local lines = {}
@@ -975,9 +1003,11 @@ function P:Lines()
     return lines
   end
   local old = self.plan and self.plan.made and (epoch() - self.plan.made > 86400) and " · plan ancien" or ""
-  local head = fmt("Trajet : %s · %s XP/h · %d min — %s%s", cut(route.title or route.id or "?", 22),
-    thousands(route.xph or 0), route.minutes or 0, verdictText(route.verdict, route.reasons), old)
-  lines[#lines + 1] = { text = head, prio = E.PRIO[route.verdict or "ok"] or 1, tooltip = "Clic : changer de route",
+  local head = fmt("Trajet : %s%s%s%s", routeName(route), routeTime(route),
+    (route.verdict and route.verdict ~= "ok") and (" — " .. (E.LABEL[route.verdict] or route.verdict)) or "", old)
+  lines[#lines + 1] = { text = head, prio = E.PRIO[route.verdict or "ok"] or 1,
+    tooltip = ((route.verdict and route.verdict ~= "ok") and (verdictText(route.verdict, route.reasons) .. "\n") or "")
+      .. "Clic : changer de trajet (" .. tconcat(routeChoiceNames(self), " · ") .. ")",
     onClick = function() P:CycleRoute() end }
   local cur = self.cursor or 1
   local log = self.log
@@ -992,9 +1022,10 @@ function P:Lines()
         local mins = stepMinutes(steps, i)
         if shown == 0 then
           local d, dir = where(s)
-          local extra = {}
-          if d then extra[#extra + 1] = fmt("%d m %s", floor(d * 0.9144 + 0.5), dir or "") end
-          local txt = label .. (#extra > 0 and (" — " .. tconcat(extra, " · ")) or "")
+          local Pl = T.Plain
+          local w = d and Pl and Pl.Where(d, dir) or nil
+          local tm = mins and Pl and Pl.Minutes(mins * 60) or nil
+          local txt = label .. (w and (" " .. w) or "") .. (tm and (" (" .. tm .. ")") or "")
           lines[#lines + 1] = { text = txt, prio = 2, pin = true, id = "plan:step",
             tooltip = "Clic : guider (boussole / Shortest Path / TomTom / repère)\n/tai plan passer : étape suivante"
               .. (mins and ("\nDurée estimée : ~" .. mins .. " min") or ""),
@@ -1035,19 +1066,18 @@ function P:Lines()
     end
   end
   -- route selector
-  local routes = self:Routes()
+  local routes = routeChoices(self)
   if #routes > 1 then
     for i, r in ipairs(routes) do
       local sel = (r == route) and "●" or "○"
-      lines[#lines + 1] = { text = fmt("%s %d. %s · %s XP/h · %d min · %s", sel, i, cut(r.title or r.id, 18), thousands(r.xph or 0),
-        r.minutes or 0, E.LABEL[r.verdict or "ok"] or "?"), prio = 1, tooltip = verdictText(r.verdict, r.reasons),
-        onClick = function() P:SelectRoute(r.id) end }
+      lines[#lines + 1] = { text = fmt("%s %d. %s%s", sel, i, routeName(r), routeTime(r)), prio = 1,
+        tooltip = verdictText(r.verdict, r.reasons), onClick = function() P:SelectRoute(r.id) end }
     end
   end
   return lines
 end
 function P:CycleRoute()
-  local routes = self:Routes()
+  local routes = routeChoices(self)
   if #routes < 2 then return end
   local idx = 1
   for i, r in ipairs(routes) do if r == self.route then idx = i end end

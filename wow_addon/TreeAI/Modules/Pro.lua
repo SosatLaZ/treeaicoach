@@ -1,5 +1,5 @@
 -- TreeAI — module « Quêtes pro » (agent X1) : 15 aides de quête, INFORMATIVES uniquement.
---  1 quêtes du journal classées par XP/min        2 (déplacé : Modules/Abandon.lua, « À retirer » + pourquoi)
+--  1 quêtes du journal, les plus rapides d'abord       2 (déplacé : Modules/Abandon.lua, « À retirer » + pourquoi)
 --  3 camp saturé (monstres déjà tagués)            4 PNJ nommé de quête en vue
 --  5 escorte : « prépare-toi avant de lancer »     6 chaînes : ce qui se débloque ensuite et où (Questie)
 --  7 quêtes relais (breadcrumbs, Questie)          8 quêtes à prendre avant un donjon
@@ -25,7 +25,7 @@ local M = T:RegisterModule("Pro", {
   },
   charDefaults = { rewards = {}, inns = {}, trainerLevel = 0, escort = {}, prog = {} },
   options = {
-    { key = "xpRank", type = "toggle", label = "Quêtes classées par XP/min", section = "Journal" },
+    { key = "xpRank", type = "toggle", label = "Quêtes classées (les plus rapides d'abord)", section = "Journal" },
     { key = "rewards", type = "toggle", label = "Meilleure récompense connue", section = "Journal" },
     { key = "eta", type = "toggle", label = "Temps restant par objectif", section = "Objectifs" },
     { key = "drops", type = "toggle", label = "Vrai taux de drop", section = "Objectifs" },
@@ -629,16 +629,17 @@ function M.BuildLines()
       local tgt = M.targetsCache[c.key]
       local alt
       for _, r in ipairs(ranked) do if r.q ~= (tgt and tgt.q) and not r.q.complete then alt = r.q.title break end end
-      add(quests, ("Camp saturé : %s (%d/%d déjà tagués) → reviens dans ~5 min%s"):format(
-        tgt and tgt.o.name or c.key, c.tapped, c.seen, alt and (" ou fais « " .. cut(alt, 24) .. " »") or ""), 2)
+      add(quests, ("Trop de monde sur %s : reviens dans 5 min%s"):format(
+        tgt and tgt.o.name or c.key, alt and (" ou fais « " .. cut(alt, 24) .. " »") or ""), 2)
     end
   end
   -- (1) classement XP/min
   if opt("xpRank") then
     for i, r in ipairs(ranked) do
       if i > 5 then break end
-      add(quests, ("%d. %s — %s XP%s, ~%s → %d XP/min%s"):format(i, cut(r.q.title, 26), r.xp, r.exact and "" or "≈",
-        U.Dur(r.sec), floor(r.xpm), r.q.complete and " (à rendre)" or ""), 1)
+      local Pl = T.Plain
+      add(quests, ("%d. %s — %s"):format(i, cut(r.q.title, 26), r.q.complete and "prête à rendre"
+        or ((Pl and Pl.Minutes(r.sec)) or ("~" .. U.Dur(r.sec)))), 1)
     end
   end
   -- (13, 15, 14) objectifs
@@ -647,18 +648,21 @@ function M.BuildLines()
       for j, o in ipairs(q.obj) do
         if not o.done and o.need > 1 then
           local parts = {}
-          if opt("eta") then
-            local s = objETA(q, j, o)
-            parts[#parts + 1] = ("%d/%d : ~%s"):format(o.have, o.need, U.Dur(s))
-          end
+          local Pl = T.Plain
           if opt("drops") then
-            local r, n, mob = dropRate(o.name or "")
+            local r, _, mob = dropRate(o.name or "")
             if r and r > 0 then
-              parts[#parts + 1] = ("drop réel %d %% (%d)%s → ~%d kills"):format(floor(r * 100 + 0.5), n or 0,
-                mob and (" sur " .. mob) or "", math.ceil((o.need - o.have) / max(0.05, r)))
+              local k = math.ceil((o.need - o.have) / max(0.05, r))
+              local who = mob and (Pl and Pl.Plural(mob, k) or mob) or "monstres"
+              parts[#parts + 1] = ("encore ~%d %s à tuer"):format(k, who)
             end
           end
-          if #parts > 0 then add(quests, cut(o.name or q.title, 24) .. " " .. table.concat(parts, " · "), 1) end
+          if opt("eta") then
+            local s = objETA(q, j, o)
+            local tm = (Pl and Pl.Minutes(s)) or ("~" .. U.Dur(s))
+            parts[#parts + 1] = #parts > 0 and ("(" .. tm .. ")") or tm
+          end
+          if #parts > 0 then add(quests, ("%s %d/%d : %s"):format(cut(o.name or q.title, 24), o.have, o.need, table.concat(parts, " ")), 1) end
         end
       end
     end
@@ -819,7 +823,7 @@ function M:OnEnable()
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
   M:On("COMBAT_END", function() M.Refresh(1) end)
   if T.RegisterSlash then
-    T:RegisterSlash("pro", function() M.Update(true) end, "quêtes pro : recalcule (XP/min, ETA, chaînes…)")
+    T:RegisterSlash("pro", function() M.Update(true) end, "quêtes pro : recalcule (ordre, temps, chaînes…)")
   end
   M.Refresh(2)
 end

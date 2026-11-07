@@ -131,6 +131,12 @@ Questie / Shortest Path Forever / TomTom, jamais en doublon, aucun cadre ni fonc
     infobulle « lâche <objet> (taux) ». Recalcul hors combat seulement (`:AutoRefresh()`, ≥ 1,5 s) ; en combat
     la progression est recopiée sans calcul. `/tai suivi [cadre|filtre X|tri X|police N|verrou|masquer id|
     montrer|reduire|cacher]`, `/tai itineraire` (→ SPF `NavigateRoute`, ≤ 64 étapes).
+* **En clair** (`T.Plain`, `Modules/Plain.lua`, agent SIMPLE) — toutes les consignes de quête en français de tous les
+  jours : `Task` (« Va tuer 6 Loups au nord (≈ 3 min) », « Rends « X » à Dughan »), `Tag` (UN mot : Rapide / Long /
+  À plusieurs / Prête à rendre / À retirer + une raison), `Why` (« C'est la quête la plus rapide autour de toi »),
+  `RouteName` (« Le plus rapide », « Tout finir ici », « Avec mes potes »), `IsPlain` (garde-fou : jamais d'XP/min,
+  de score, de λ ni de % hors progression dans l'interface principale). Les calculs (Tracker, Abandon, Planner) ne
+  changent pas ; `/tai abandon detail` garde les chiffres.
 * **À faire** (`T.Todo`, `Modules/Todo.lua`, agent TODO) — la page de suivi refaite : une fenêtre (`/tai todo`, ou la
   dernière ligne de l'onglet « Quêtes ») déplaçable / redimensionnable (`TreeAI:RegisterMovable` si présent) et l'onglet
   « Quêtes » en version compacte (le Tracker lui passe la main dans `Push`, retour `"todo"` ; Todo désactivé = affichage

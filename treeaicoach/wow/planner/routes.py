@@ -1,9 +1,9 @@
 """The 3–4 selectable routes, with verdict, reasons and plan steps (TreeAIPlan format, SCHEMA.md §3).
 
-* ``xph``: « XP/h max ». Rate mode over every quest in the export (current zone + neighbours).
-* ``clear``: « Finir la zone ». Every doable quest of the current zone, in the least time.
-* ``squad``: « Escouade (n) ». The group as one unit: union of logs, the slowest member's speed. Only when grouped.
-* ``safe``: « Prudent ». Rate mode without « galère » / risky quests, scored on p80 times.
+* ``xph``: « Le plus rapide ». Rate mode over every quest in the export (current zone + neighbours).
+* ``clear``: « Tout finir ici ». Every doable quest of the current zone, in the least time.
+* ``squad``: « Avec mes potes (n) ». The group as one unit: union of logs, the slowest member's speed. Only when grouped.
+* ``safe``: « Sans galère ». Rate mode without « galère » / risky quests, scored on p80 times.
 
 Verdicts (report 5 C3, report 4 §6): impossible > zone > long > galere > ok. The first reason is the cause.
 """
@@ -20,7 +20,14 @@ from treeaicoach.wow.planner import solver as S
 
 log = logging.getLogger(__name__)
 
-TITLES = {"xph": "XP/h max", "clear": "Finir la zone", "squad": "Escouade", "safe": "Prudent"}
+#: Plain names (agent SIMPLE): the player picks among 3 choices, never « XP/h ».
+TITLES = {"xph": "Le plus rapide", "clear": "Tout finir ici", "squad": "Avec mes potes", "safe": "Sans galère"}
+
+
+def route_name(r: dict) -> str:
+    """Plain name of a route dict (by id; older plans carry « XP/h max »-style titles)."""
+    rid = str((r or {}).get("id") or "").split("-")[0]
+    return TITLES.get(rid) or str((r or {}).get("title") or "Trajet")
 VERDICT_FR = {"ok": "OK", "galere": "On va galérer", "long": "Trop long", "impossible": "Pas faisable",
               "zone": "Changez de zone"}
 ORDER = ("xph", "clear", "squad", "safe")
@@ -269,16 +276,16 @@ def summary_lines(plan: dict | None, route_id: str | None = None, steps: int = 3
     if not routes:
         return []
     chosen = next((r for r in routes if r.get("id") == route_id), routes[0])
-    out = [f"Trajet « {chosen.get('title')} » : {chosen.get('xph', 0)} XP/h, ~{chosen.get('minutes', 0)} min, "
-           f"verdict {VERDICT_FR.get(str(chosen.get('verdict')), '?')}."]
+    v = str(chosen.get("verdict") or "ok")
+    out = [f"Trajet « {route_name(chosen)} » : environ {chosen.get('minutes', 0)} min"
+           + ("." if v == "ok" else f", {VERDICT_FR.get(v, '?').lower()}.")]
     rs = [str(x) for x in DM._list(chosen.get("reasons"))][:2]
     if rs:
         out.append("Pourquoi : " + " ; ".join(rs))
     st = [x for x in DM._list(chosen.get("steps")) if isinstance(x, dict)][:steps]
     if st:
         out.append("Prochaines étapes : " + " ; ".join(str(x.get("label")) for x in st))
-    others = [f"{r.get('title')} {r.get('xph', 0)} XP/h ({VERDICT_FR.get(str(r.get('verdict')), '?')})"
-              for r in routes if r is not chosen]
+    others = [f"{route_name(r)} (environ {r.get('minutes', 0)} min)" for r in routes if r is not chosen]
     if others:
         out.append("Autres trajets : " + ", ".join(others))
     return out

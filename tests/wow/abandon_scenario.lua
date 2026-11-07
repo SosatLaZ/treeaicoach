@@ -94,8 +94,13 @@ return function(M, ctx)
   -- « À retirer » block in the « Quêtes » tab + pinned alert (log nearly full)
   local tl = T.GetTabLines and T:GetTabLines("quests") or A.lines
   ctx.check(find(tl, "Journal 19/20 : %d quêtes? à retirer"), "header (nearly full): " .. dump(tl))
-  local line = find(tl, "À abandonner : « Vieille corvée » — grise, ", true)
-  ctx.check(line and line.onClick and tostring(line.tooltip):find("ouvre ton journal (L)", 1, true), "abandon line + tooltip")
+  local line = find(tl, "Retire « Vieille corvée » : trop facile maintenant", true)
+  ctx.check(line and line.onClick and tostring(line.tooltip):find("ouvre ton journal (L)", 1, true), "abandon line + tooltip: " .. dump(tl))
+  local Pl = T.Plain
+  for _, l in ipairs(A.lines or {}) do
+    local okp, w = Pl.IsPlain(l.text)
+    ctx.check(okp, "plain abandon line (no " .. tostring(w) .. "): " .. tostring(l.text))
+  end
   T.settings.panel.nowMax = 30   -- other modules pin lines too: look past the top 5
   ctx.check(find(T.GetTabLines and T:GetTabLines("now") or {}, "Journal 19/20", true), "pinned in « Maintenant » " .. dump(T:GetTabLines("now")))
 
@@ -103,7 +108,7 @@ return function(M, ctx)
   local n0 = #M.output
   if line and line.onClick then line.onClick() end
   local said = table.concat(M.output, "\n", n0 + 1)
-  ctx.check(said:find("Abandonne « Vieille corvée »", 1, true) and said:find("puis « Abandonner » et confirme", 1, true),
+  ctx.check(said:find("Retire « Vieille corvée » : trop facile maintenant", 1, true) and said:find("puis « Abandonner » et confirme", 1, true),
     "click prints why + how: " .. said)
 
   -- /tai abandon (full report) and /tai abandon 1
@@ -111,7 +116,11 @@ return function(M, ctx)
   M.RunSlash("/tai abandon")
   said = table.concat(M.output, "\n", n0 + 1)
   ctx.check(said:find("Journal 19/20", 1, true) and said:find("Libérer de la place : 1. ", 1, true), "/tai abandon report")
-  ctx.check(said:find("[Garder, ", 1, true) and said:find("[À abandonner, ", 1, true), "every quest has a verdict")
+  ctx.check(said:find("Garde « ", 1, true) and said:find("Retire « ", 1, true) and not said:find("XP/min", 1, true), "every quest has a plain verdict: " .. said)
+  n0 = #M.output
+  M.RunSlash("/tai abandon detail")
+  said = table.concat(M.output, "\n", n0 + 1)
+  ctx.check(said:find("[Garder, ", 1, true) and said:find("[À retirer, ", 1, true), "detail report keeps the numbers")
   n0 = #M.output
   M.RunSlash("/tai abandon 1")
   said = table.concat(M.output, "\n", n0 + 1)
@@ -121,7 +130,7 @@ return function(M, ctx)
   -- freeing room: with a short log the header is calm and nothing is pinned
   for i = #M.quests, 9, -1 do M.quests[i] = nil end
   A.Update(true)
-  ctx.check(find(A.lines, "— À retirer (journal 7/20) —", true) and not A.lines[1].pin, "short log: calm header: " .. dump(A.lines))
+  ctx.check(find(A.lines, "— À retirer —", true) and not A.lines[1].pin, "short log: calm header: " .. dump(A.lines))
 
   -- combat guard + summary + option
   M.EnterCombat()
