@@ -154,6 +154,16 @@ def test_lua_scenario(flavor):
     assert "RESULT ok" in r.stdout
 
 
+@needs_lua
+def test_lua_forever_scenario():
+    """WoW Forever path: C_AuctionHouse (async/throttled ReplicateItems, search throttle, Auctionator API)."""
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", "modern", "--scenario",
+                        "tests/wow/auction_forever_scenario.lua", str(ADDON)],
+                       cwd=ROOT, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "RESULT ok" in r.stdout
+
+
 def test_ai_context_includes_auction():
     from treeaicoach.wow import ai_context
     db = {"chars": {"Fake-Realm": {"summary": {"class": "HUNTER", "level": 26, "updated": 5,

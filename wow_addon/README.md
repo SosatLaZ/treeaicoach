@@ -46,21 +46,38 @@ fichier) + prix vendeur vs HV (Auctionator, lecture seule), menace ≥ seuil en 
 d'apprivoisement, rappels foyer/munitions/nourriture, récolte (nœud / dépeçage). `/tai boost`.
 Résumé IA : `summary.boost = {raresSeen, lastRare, bestReward, petAdvice, avgKillXP, avgQuestXP,
 killsToLevel, questsToLevel, xpPerHour, secondsToLevel, threatWarnings, tank}`.
-`Modules/Auction.lua` (agent AH): achat-revente à l'hôtel des ventes. **Aucune automatisation**: chaque
-achat / annulation = un clic du joueur sur « Acheter » / « Annuler » (appel protégé dans le OnClick, une
-seule action par clic, prix revérifié juste avant ; en API moderne: clic 1 vérifie, clic 2 achète ou
-démarre l'achat de marchandise, clic 3 confirme). Scan complet = bouton (getAll / `ReplicateItems`,
-1×/15 min) + lecture passive des pages que le joueur parcourt (≤ 50 annonces). API classique
-(`QueryAuctionItems`…) ou `C_AuctionHouse`, testées à l'exécution. Historique par royaume-faction(-neutre)
-dans `TreeAIDB.modules.Auction.realms[clé].items[itemID] = { v = prix marchand, last = time,
-h = { jour, min, médiane des 5 moins chères, qté, nScans, unités disparues, heures, … } }` (≤ 14 jours,
-plafond `maxItems`). Journal par perso `chars[k].modules.Auction.ledger` (courrier HV FR/EN),
-`spent[date]` (budget). Résumé `summary.auction = { deals, sell, thin, realized = {today, week, total,
-top}, budget, budgetLeft, spentToday, scanAge, neutral, flavor }`, lu par `treeaicoach/wow/auction.py`
-(mêmes formules: commission 5 % / 15 % neutre, dépôt = floor(prix marchand × qté × 5 % (25 %) × h / 2),
-profit = vente × (1 − commission) − achat − dépôt × P(invendu)). Prix marchand: `GetItemInfo` (11e
-valeur), pas de table exportée. Auctionator: lecture seule de `Auctionator.API.v1` en secours.
-`/tai hv [vendre|journal|fenetre|neutre|faction|auto]`.
+`Modules/Auction.lua` (agents AH, AH2): achat-revente à l'hôtel des ventes. **Aucune automatisation**:
+chaque achat / mise en vente / annulation = un clic du joueur (« Acheter », « Poster », « Annuler » ou le
+bouton « Suivant » qui exécute l'étape en tête de file) ; au plus UN appel protégé dans le OnClick, prix
+revérifié juste avant (sinon étape sautée) ; jamais de boucle ni de minuterie qui agit. API détectée à
+l'exécution (`M.Flavor()`): `C_AuctionHouse` = « modern » (WoW Forever 16001, Retail, Mists — prioritaire
+si présente ; warcraft.wiki.gg liste ReplicateItems / SendSearchQuery / SendBrowseQuery / PlaceBid pour le
+type de jeu `forever`), sinon API classique `QueryAuctionItems` (Classic Era) ; forçable `/tai hv api …`.
+Scan complet: `ReplicateItems` (limite 15 min pour tout le compte, silencieuse : compte à rebours stocké
+dans `modules.Auction.lastFullCall`, chien de garde 25 s) ou getAll ; `REPLICATE_ITEM_LIST_UPDATE` est
+traité même si un autre addon (Auctionator) a lancé le scan ; lecture par coroutine ≤ 4 ms / image ;
+lignes sans infos d'objet (hasAllInfo = false) lues quand même (itemID/prix présents), 2e passage, jamais
+d'attente. Scan ciblé (`M.ScanTargets`): `SendSearchQuery` objet par objet dès
+`IsThrottledMessageSystemReady` / `AUCTION_HOUSE_THROTTLED_SYSTEM_READY` (classique: dès
+`CanSendAuctionQuery`). Lecture passive: `AUCTION_HOUSE_BROWSE_RESULTS_*` (`GetBrowseResults` → prix min),
+`*_SEARCH_RESULTS_UPDATED`, pages classiques. Auctionator: `Auctionator.API.v1.*("TreeAI", …)` lecture
+seule + `RegisterForDBUpdate("TreeAI", cb)` ; utilisé quand nos données manquent/sont peu sûres/vieilles.
+Historique par royaume-faction(-neutre) dans `TreeAIDB.modules.Auction.realms[clé].items[itemID] =
+{ v = prix marchand, last = time, h = { jour, min, médiane des 5 moins chères, qté, nScans, unités
+disparues, heures, … } }` (≤ 14 jours, plafond `maxItems`). Or (`M.Gold()`): total, réserve (`keepGold`,
+entraînement/réparations = niveau² × 1,5 pa si `autoReserve`, `mountGold`), budget = total − réserve
+(∩ plafond/jour `budget`), immobilisé ; `F.allocate` = glouton profit ajusté / prix, plafond `capShare` %
+par objet (reventes marchand hors plafond) → `M.plan` → file `M.queue` (achats, annulations, poses).
+Chaque affaire porte `deposit` et `relist` (= dépôt × (1 − p) / p, dépôt perdu attendu en reposant jusqu'à
+la vente). Journal par perso `chars[k].modules.Auction.ledger` (courrier HV FR/EN), `spent[date]`,
+`deposits[date]`. Résumé `summary.auction = { deals, sell, thin, realized = {today, week, total, top},
+budget, budgetLeft, spentToday, scanAge, neutral, flavor, gold = {total, reserve, invested, plan,
+planGain}, lastScan }`, lu par `treeaicoach/wow/auction.py` (mêmes formules: commission 5 % / 15 %
+neutre, dépôt = floor(prix marchand × qté × 5 % (25 %) × h / 2), profit = vente × (1 − commission) −
+achat − dépôt × P(invendu)). Prix marchand: `GetItemInfo` (11e valeur, mis en cache), sinon Auctionator,
+sinon historique. `/tai hv [vendre|bilan|journal|fenetre|cible|debug|neutre|faction|auto|reserve N|
+monture N|budget N|api auto|moderne|classique]` — `debug` affiche l'API active, le limiteur, le compte à
+rebours, taille/vitesse du dernier scan, Auctionator et les dernières erreurs.
 
 `TreeAI` (global) existe dès `Core.lua`. Un module se déclare au chargement
 de son fichier (top-level) avec `TreeAI:RegisterModule`; il ne doit **rien**
