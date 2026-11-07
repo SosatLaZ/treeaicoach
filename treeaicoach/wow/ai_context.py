@@ -38,7 +38,9 @@ WOW_PROMPT = (
     "si la question porte dessus, réponds précisément avec ces faits ; sinon réponds simplement. "
     "On peut te poser n'importe quelle question, même hors WoW ; mais dès que c'est utile, relie ta "
     "réponse aux quêtes en cours du joueur et de ses amis (quetes, groupe_treeai, missions : qui a quoi, "
-    "ce qui reste, l'ordre conseillé). Ne parle jamais de League of Legends sauf si on te le demande. "
+    "ce qui reste, l'ordre conseillé). Si on te demande quoi faire (« on fait quoi ? ») et que « trajet » est "
+    "présent, réponds avec le trajet choisi : sa prochaine étape, son XP/h et son verdict. "
+    "Ne parle jamais de League of Legends sauf si on te le demande. "
     "Réponds en français, tutoiement, en 1 à 3 phrases courtes faites pour être dites à voix haute : "
     "pas de liste, pas de markdown, pas d'emoji. Si une valeur exacte de Forever t'est inconnue, dis-le "
     "en une phrase au lieu d'inventer. Ne propose jamais de bot, d'automatisation ou de logiciel "
@@ -478,10 +480,60 @@ def character_context(db: Any) -> dict[str, Any]:
         return {}
 
 
+def load_plan(engine: Any = None) -> dict[str, Any] | None:
+    """The route plan written by TreeAI (``Interface/AddOns/TreeAI_Plan/Plan.lua``), else None. Never raises."""
+    plan = getattr(engine, "_wow_plan", None)
+    if isinstance(plan, dict):
+        return plan
+    try:
+        from treeaicoach.wow import optional  # noqa: PLC0415
+        from treeaicoach.wow.planner import writer  # noqa: PLC0415
+
+        mode, install = optional("mode"), optional("install")
+        m = mode.current() if mode is not None else None
+        inst = getattr(m, "install", None) if m is not None else None
+        if inst is None and install is not None:
+            path = ""
+            try:
+                from treeaicoach.config import load_config  # noqa: PLC0415
+
+                path = str(getattr(load_config(), "wow_path", "") or "")
+            except Exception:
+                pass
+            inst = install.find_wow(path)
+        return writer.read_plan(inst.addons_dir) if inst is not None else None
+    except Exception:
+        log.debug("wow plan load failed", exc_info=True)
+        return None
+
+
+def plan_context(plan: Any, db: Any = None) -> list[str]:
+    """Short lines about the chosen route (the one the addon says the player picked: ``chars[key].plan.route``,
+    else the first one). [] when there is no plan for this character."""
+    try:
+        from treeaicoach.wow.planner import routes  # noqa: PLC0415
+
+        if not isinstance(plan, dict):
+            return []
+        chosen = None
+        c = current_character(db) if isinstance(db, dict) else None
+        if isinstance(c, dict) and isinstance(c.get("plan"), dict):
+            chosen = c["plan"].get("route")
+        return [_short(x, 220) for x in routes.summary_lines(plan, chosen)][:4]
+    except Exception:
+        log.debug("wow plan context failed", exc_info=True)
+        return []
+
+
 def build_context(engine: Any = None, db: Any = None, facts: Iterable[str] | None = None) -> dict[str, Any]:
     """Everything the WoW prompt gets: character (SavedVariables) + live combat-log facts. Never raises."""
     try:
-        ctx = character_context(db if db is not None else load_db(engine))
+        db = db if db is not None else load_db(engine)
+        ctx = character_context(db)
+        trajet = plan_context(load_plan(engine), db) if ctx else []
+        if trajet:  # right after the identity keys, so the 2500-char prompt cut never drops it
+            head = {k: ctx[k] for k in ("classe", "race", "niveau", "zone", "sous_zone") if k in ctx}
+            ctx = {**head, "trajet": trajet, **{k: v for k, v in ctx.items() if k not in head}}
         if ctx.get("classe") is not None and ctx.get("niveau") is not None:
             try:  # optional « données du jeu » (client tables, treeaicoach/wow/gamedata.py)
                 from treeaicoach.wow import gamedata

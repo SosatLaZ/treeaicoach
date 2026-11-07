@@ -13,6 +13,7 @@ only the small subset below is kept, for in-app advice.
 | `spells.json.gz` | class spells by level learned (FR name, spell id, rank, talent flag) | SkillLineAbility, SpellLevels, SpellName |
 | `items.json.gz` | item id → FR name, quality, ilvl, required level, class/subclass/slot, stats, armour, DPS, speed, sell price, quest starter, class mask | ItemSparse, Item, RandPropPoints, ItemArmor*, ArmorLocation, ItemDamage* |
 | `zones.json.gz` | AreaTable id → FR name, parent, continent | AreaTable |
+| `taxi.json.gz` | flight graph: taxi nodes (FR name, continent, world x/y, faction), directed edges (spline length yd, cost copper), and zone-map world bounds for the route planner (`treeaicoach/wow/planner`) | TaxiNodes, TaxiPath, TaxiPathNode, UiMapAssignment, UiMap |
 | `meta.json.gz` | build, source, counts | — |
 
 Addon side (same run): `wow_addon/TreeAI/Data/PetFood.lua` (Item.ItemPetFoodID diets) and
@@ -25,4 +26,6 @@ Notes / limits:
 - The client's ItemSparse holds ~18 400 named items; items delivered only by hotfix are missing.
 - Season of Discovery rune spells (ids 400000–999999, AcquireMethod 3) are excluded; talent-only ranks are
   flagged `talent`.
-- Rebuild: `python tools/wow_build_data.py --cache <dir>` (downloads ~25 CSV, ~20 MB).
+- Rebuild: `python tools/wow_build_data.py --cache <dir>` (downloads ~25 CSV, ~20 MB); flight graph only:
+  `--only taxi`. Map bounds: `mapX = (R4 − worldY)/(R4 − R1)`, `mapY = (R3 − worldX)/(R3 − R0)` (checked: La Croisée
+  51.5/30.4 in Les Tarides).
