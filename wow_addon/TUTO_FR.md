@@ -55,16 +55,34 @@ quêtes avant le niveau, XP/h), conseiller d'apprivoisement (« loup niv 25 → 
 
 ## 7. Hôtel des ventes : achat-revente (`/tai hv`)
 
-- Ouvre l'HV et clique **Scanner** : l'addon garde 14 jours de prix (par royaume et faction) et calcule la
-  **valeur du marché**, la **commission** (5 % HV de faction, 15 % HV neutre), le **dépôt**, le **profit
-  net**, le **retour sur investissement** et le **prix d'équilibre**.
-- **Bonnes affaires** : objets sous le marché (profit après frais et risque), objets moins chers que leur
-  prix chez le marchand (profit garanti), alerte marchés trop minces. Bouton **Acheter** = UNE annonce par
-  clic, prix revérifié avant achat.
-- **Vendre** : prix conseillé (sous-cotation raisonnable), dépôt, « mieux au marchand » si c'est plus
-  rentable ; tes enchères sous-cotées sont signalées (bouton **Annuler**).
-- **Suivi** : budget, achats/ventes lus dans les courriers de l'HV, profit réalisé par objet et par jour.
-- `/tai hv neutre` / `/tai hv faction` si l'HV n'est pas reconnu. « Hey coach, quoi revendre ? » marche aussi.
+Une fenêtre TreeAI s'accroche à droite de l'HV dès que tu l'ouvres (`/tai hv fenetre` sinon).
+
+- **Scan complet** : lit TOUT l'HV d'un coup (Blizzard : 1 fois / 15 min pour tout le compte ; le bouton
+  affiche le compte à rebours). La lecture se fait par petites tranches : le jeu ne fige pas. Si
+  **Auctionator** vient de faire son scan complet, TreeAI le relit aussi, sans rien redemander.
+- **Scan ciblé** : ne recherche que les objets utiles (liste d'achats, tes sacs, tes ventes), au rythme
+  maximum autorisé par Blizzard. Parfait entre deux scans complets.
+- Ce que tu parcours toi-même dans l'HV est lu au passage. Les prix d'Auctionator servent de secours.
+- **Affaires** : objet, prix, valeur du marché, **profit net** (commission ET dépôt déjà retirés), risque
+  (+ dépôt perdu à chaque remise en vente si ça ne part pas), temps de vente estimé. Reventes au marchand =
+  profit garanti.
+- **Vendre** : tes piles qui valent mieux à l'HV qu'au marchand : prix conseillé, quantité, durée, dépôt
+  exact, net attendu, prix marchand. Bouton **Poster** = une mise en vente.
+- **Mes ventes** : tes enchères sous-cotées, avec le conseil « annuler et reposter » seulement si le gain
+  dépasse le dépôt perdu.
+- **Bilan** : or total, réserve (ce que tu veux garder + entraînement/réparations selon ton niveau +
+  monture), budget de revente, argent immobilisé (en vente + acheté pas encore revendu), plan d'achat
+  et profit réalisé (lu dans les courriers de l'HV).
+- **Gestion de l'or** : TreeAI répartit ton budget sur les meilleures affaires (profit attendu ÷ risque,
+  35 % max du budget sur un même objet) → une liste d'achats prête.
+- Gros bouton **Suivant** : chaque clic fait UNE action (acheter une annonce, poster une pile ou annuler une
+  enchère) puis passe à la suivante. Rien ne se fait tout seul : pas de boucle, pas de minuterie. Si le prix
+  a bougé, l'étape est sautée. Sur Forever, un achat = « vérifier » puis « acheter » (et « confirmer » pour
+  les marchandises en pile).
+- Réglages : `/tai hv reserve 50` (garder 50 po), `/tai hv monture 90`, `/tai hv budget 20` (plafond/jour),
+  `/tai hv neutre` / `faction` si l'HV n'est pas reconnu, `/tai hv bilan`, `/tai hv vendre`.
+- **Ça ne marche pas ?** Tape `/tai hv debug` à l'HV et envoie les lignes : API utilisée, limiteur, temps
+  avant le prochain scan complet, taille/vitesse du dernier scan, Auctionator, erreurs.
 
 ## 8. Voix et IA (TreeAI)
 

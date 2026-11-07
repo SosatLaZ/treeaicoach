@@ -1282,8 +1282,13 @@ end
 
 ----------------------------------------------------------------------------------------------
 -- auction house (both flavours) + mail invoices. Classic API in "legacy" (QueryAuctionItems,
--- GetAuctionItemInfo, PlaceAuctionBid…), C_AuctionHouse in "modern" (ReplicateItems, search,
--- PlaceBid, Start/ConfirmCommoditiesPurchase…). Purchases/cancels must come from a click (hardware
+-- GetAuctionItemInfo, PlaceAuctionBid…), C_AuctionHouse in "modern" = the WoW Forever 1.60 path
+-- (warcraft.wiki.gg lists ReplicateItems / GetReplicateItemInfo / SendSearchQuery / SendBrowseQuery /
+-- PlaceBid for game type "forever"; QueryAuctionItems is not listed there). Modelled like the client:
+-- ReplicateItems = 15-min account-wide throttle, silent when throttled, async snapshot, bursty
+-- REPLICATE_ITEM_LIST_UPDATE, some rows without item info yet (name nil, hasAllInfo false, itemID ok);
+-- searches throttled (IsThrottledMessageSystemReady / AUCTION_HOUSE_THROTTLED_SYSTEM_READY; sending
+-- while not ready = violation "throttle"). Purchases/posts/cancels must come from a click (hardware
 -- event), with the AH open, ONE per click: anything else is recorded as a violation.
 -- M.ah.list = { {id=, count=, buyout=, minBid=, owner=, auctionID=} }  M.ah.owned = same (mine)
 ----------------------------------------------------------------------------------------------
@@ -1296,6 +1301,10 @@ local function ahProtected(fn)
 end
 local function ahInfo(a)
   local it = M.items[a.id] or { name = "?", quality = 1 }
+  if a.noInfo and not a.infoLoaded then   -- item data not cached yet: the client still gives the id/price
+    a.infoLoaded = true
+    return nil, nil, a.count, 1, nil, 1, nil, a.minBid or a.buyout, 1, a.buyout, 0, false, nil, nil, nil, 0, a.id, false
+  end
   return it.name, 134400 + a.id, a.count, it.quality or 1, true, 1, "", a.minBid or a.buyout, 1, a.buyout,
     0, false, nil, a.owner, a.owner, 0, a.id, true
 end
@@ -1331,12 +1340,31 @@ function M.InstallAH(G, modern)
     return it.name, m.item.id, 134400, m.item.count, 1, true
   end
   G.UnitFactionGroup = function() return "Alliance", "Alliance" end
+  M.ah.posts = M.ah.posts or {}
+  local function bagLoc(loc) local b = loc and M.bags[loc.bag] return b and b.slots[loc.slot] end
   if not modern then
-    G.CanSendAuctionQuery = function() return M.ah.open, M.ah.open end
-    G.QueryAuctionItems = function(name, lmin, lmax, page, usable, rarity, getAll)
-      if not M.hardware then M.Violation("automation", "QueryAuctionItems outside a click") end
-      M.ah.queries[#M.ah.queries + 1] = { name = name, page = page, getAll = getAll }
+    G.CanSendAuctionQuery = function()
+      return M.ah.open, M.ah.open and (M.serverTime - (M.ah.lastAll or -1e9) >= 900)
+    end
+    G.QueryAuctionItems = function(name, lmin, lmax, page, usable, rarity, getAll, exact)
+      if getAll and not M.hardware then M.Violation("automation", "QueryAuctionItems getAll outside a click") end
+      if getAll then
+        if M.serverTime - (M.ah.lastAll or -1e9) < 900 then return end   -- throttled: silently ignored
+        M.ah.lastAll = M.serverTime
+      end
+      M.ah.queries[#M.ah.queries + 1] = { name = name, page = page, getAll = getAll, exact = exact }
       M.FireEvent("AUCTION_ITEM_LIST_UPDATE")
+    end
+    local pickup = G.PickupContainerItem
+    G.PickupContainerItem = function(bag, slot) if pickup then pickup(bag, slot) end M.cursor = { bag = bag, slot = slot } end
+    G.ClickAuctionSellItemButton = function() M.ah.sellSlot, M.cursor = M.cursor, nil end
+    G.PostAuction = function(bid, buyout, runTime, stackSize, numStacks)
+      if not ahProtected("PostAuction") then return end
+      local it = bagLoc(M.ah.sellSlot)
+      if not it then M.Violation("api", "PostAuction with an empty sell slot") return end
+      M.ah.posts[#M.ah.posts + 1] = { id = it.id, count = stackSize, buyout = buyout, duration = runTime }
+      M.SetBagItem(M.ah.sellSlot.bag, M.ah.sellSlot.slot, nil)
+      M.ah.sellSlot = nil
     end
     G.GetNumAuctionItems = function(kind)
       local l = kind == "owner" and M.ah.owned or kind == "list" and M.ah.list or {}
@@ -1364,29 +1392,98 @@ function M.InstallAH(G, modern)
       local a = table.remove(M.ah.owned, i)
       if a then M.ah.cancels[#M.ah.cancels + 1] = a end
     end
-    G.GetAuctionSellItemInfo = function() return nil end
+    G.GetAuctionSellItemInfo = function()
+      local it = bagLoc(M.ah.sellSlot)
+      if not it then return nil end
+      local info = M.items[it.id] or {}
+      return info.name, 134400, it.count, 1, true, (info.sellPrice or 0) * it.count, 0, 1, 1, it.id
+    end
     G.CalculateAuctionDeposit = function() return 0 end
   else
     local AH = {}
     G.C_AuctionHouse = AH
     G.Enum = G.Enum or {}
     G.Enum.ItemCommodityStatus = { Unknown = 0, Item = 1, Commodity = 2 }
+    G.Enum.AuctionHouseSortOrder = { Price = 0, Name = 1 }
+    G.ItemLocation = { CreateFromBagAndSlot = function(_, bag, slot) return { bag = bag, slot = slot } end }
+    M.ah.throttleUntil = 0
+    local function throttled(fn)
+      if M.now < M.ah.throttleUntil then M.Violation("throttle", fn .. " while the AH message system is not ready") return true end
+      M.ah.throttleUntil = M.now + 0.05
+      newTimer(0.05, function() M.FireEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY") end)
+      return false
+    end
+    AH.IsThrottledMessageSystemReady = function() return M.now >= M.ah.throttleUntil end
+    AH.SupportsCopperValues = function() return true end
     local function byID(id) for _, a in ipairs(M.ah.list) do if a.auctionID == id then return a end end end
     AH.ReplicateItems = function()
       if not M.hardware then M.Violation("automation", "ReplicateItems outside a click") end
+      if M.serverTime - (M.ah.lastReplicate or -1e9) < 900 then   -- 15 min account-wide: silently ignored
+        M.ah.replicateRefused = (M.ah.replicateRefused or 0) + 1
+        return
+      end
+      M.ah.lastReplicate = M.serverTime
       M.ah.queries[#M.ah.queries + 1] = { getAll = true }
+      local snap = {}
+      for i, a in ipairs(M.ah.list) do snap[i] = a end
+      newTimer(0.2, function()   -- async snapshot + burst of events
+        M.ah.replicate = snap
+        for _ = 1, 3 do M.FireEvent("REPLICATE_ITEM_LIST_UPDATE") end
+      end)
+    end
+    -- another addon (e.g. Auctionator) doing the account's full scan: its data is readable by everyone
+    function M.OtherAddonReplicate()
+      M.ah.lastReplicate = M.serverTime
+      local snap = {}
+      for i, a in ipairs(M.ah.list) do snap[i] = a end
+      M.ah.replicate = snap
       M.FireEvent("REPLICATE_ITEM_LIST_UPDATE")
     end
-    AH.GetNumReplicateItems = function() return #M.ah.list end
-    AH.GetReplicateItemInfo = function(i0) local a = M.ah.list[i0 + 1] if a then return ahInfo(a) end end
-    AH.GetReplicateItemLink = function(i0) local a = M.ah.list[i0 + 1] return a and M.ItemLink(a.id) end
+    AH.GetNumReplicateItems = function() return #(M.ah.replicate or {}) end
+    AH.GetReplicateItemInfo = function(i0) local a = (M.ah.replicate or {})[i0 + 1] if a then return ahInfo(a) end end
+    AH.GetReplicateItemLink = function(i0) local a = (M.ah.replicate or {})[i0 + 1] return a and M.ItemLink(a.id) end
+    AH.SendBrowseQuery = function(query)
+      if throttled("SendBrowseQuery") then return end
+      M.ah.queries[#M.ah.queries + 1] = { browse = query and query.searchString }
+      M.FireEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    end
+    AH.GetBrowseResults = function()
+      local agg, out = {}, {}
+      for _, a in ipairs(M.ah.list) do
+        local u = math.floor(a.buyout / a.count)
+        local r = agg[a.id]
+        if not r then r = { itemKey = AH.MakeItemKey(a.id), minPrice = u, totalQuantity = 0 } agg[a.id] = r out[#out + 1] = r end
+        r.minPrice, r.totalQuantity = math.min(r.minPrice, u), r.totalQuantity + a.count
+      end
+      return out
+    end
+    AH.PostItem = function(loc, duration, qty, bid, buyout)
+      if not ahProtected("PostItem") then return end
+      local it = bagLoc(loc)
+      if not it then M.Violation("api", "PostItem: empty bag slot") return end
+      M.ah.posts[#M.ah.posts + 1] = { id = it.id, count = qty, buyout = buyout, duration = duration }
+      M.SetBagItem(loc.bag, loc.slot, nil)
+    end
+    AH.PostCommodity = function(loc, duration, qty, unitPrice)
+      if not ahProtected("PostCommodity") then return end
+      local it = bagLoc(loc)
+      if not it then M.Violation("api", "PostCommodity: empty bag slot") return end
+      M.ah.posts[#M.ah.posts + 1] = { id = it.id, count = qty, unit = unitPrice, buyout = unitPrice * qty, duration = duration, commodity = true }
+      M.SetBagItem(loc.bag, loc.slot, nil)
+    end
     AH.MakeItemKey = function(id) return { itemID = id, itemLevel = 0, itemSuffix = 0, battlePetSpeciesID = 0 } end
-    AH.GetItemCommodityStatus = function(id) local it = M.items[id] return (it and it.stack or 1) > 1 and 2 or 1 end
-    AH.SendSearchQuery = function(key)
-      if not M.hardware then M.Violation("automation", "SendSearchQuery outside a click") end
-      M.ah.queries[#M.ah.queries + 1] = { search = key and key.itemID }
+    AH.GetItemCommodityStatus = function(x)
+      local id = x
+      if type(x) == "table" then local b = bagLoc(x) id = b and b.id end
+      local it = M.items[id]
+      return (it and it.stack or 1) > 1 and 2 or 1
+    end
+    AH.SendSearchQuery = function(key)   -- not protected (searching is not an action), but throttled
+      if throttled("SendSearchQuery") then return end
+      M.ah.queries[#M.ah.queries + 1] = { search = key and key.itemID, hw = M.hardware }
       local id = key and key.itemID
-      M.FireEvent(AH.GetItemCommodityStatus(id) == 2 and "COMMODITY_SEARCH_RESULTS_UPDATED" or "ITEM_SEARCH_RESULTS_UPDATED", id)
+      if AH.GetItemCommodityStatus(id) == 2 then M.FireEvent("COMMODITY_SEARCH_RESULTS_UPDATED", id)
+      else M.FireEvent("ITEM_SEARCH_RESULTS_UPDATED", key) end
     end
     local function results(id)
       local r = {}

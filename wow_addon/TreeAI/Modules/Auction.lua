@@ -1,23 +1,24 @@
 -- TreeAI — module Hôtel des ventes (achat-revente). Conseille, calcule, n'automatise RIEN :
---  * chaque achat / annulation = UN clic du joueur sur un bouton « Acheter » / « Annuler » (événement
---    matériel), l'appel protégé est fait DANS ce OnClick, une seule action par clic, jamais de boucle ni
---    de file de clics ; le prix est revérifié juste avant. Les scans sont lancés par le bouton « Scan
---    complet » (getAll, 1 fois / 15 min) ou lus passivement quand le joueur parcourt l'HV lui-même.
---  * historique des prix par objet (≤ 14 jours, compact, plafonné) → valeur de marché (médiane robuste),
---    volatilité, volume/jour (annonces disparues entre deux scans complets), confiance.
---  * frais exacts (règle Classic, voir treeaicoach/wow/auction.py — mêmes formules, mêmes arrondis) :
---    commission 5 % (HV de faction) / 15 % (HV neutre) ; dépôt = floor(prix marchand × qté × 5 % (25 %
---    neutre) × heures / 2) ; profit = vente × (1 − commission) − achat − dépôt × P(invendu).
---  * affaires : sous le marché (marge ≥ X %, profit ≥ Y après frais et risque), reventes au marchand
---    (prix < prix marchand = gain garanti), marchés minces (« reset »).
---  * vente : prix conseillé (1 pc sous le moins cher, jamais sous marché − σ ni sous le marchand), dépôt,
---    net, « mieux au marchand », découpe des piles ; mes enchères sapées → annuler / reposter.
---  * budget, journal achats/ventes (courrier de l'HV, FR/EN), profit réalisé par objet / jour.
---  * Auctionator : lecture seule de Auctionator.API.v1 (prix + âge) en secours, jamais modifié.
--- API HV : classique (QueryAuctionItems / GetAuctionItemInfo / PlaceAuctionBid) OU C_AuctionHouse
--- (ReplicateItems / SendSearchQuery / PlaceBid / Start+ConfirmCommoditiesPurchase), testées à l'exécution.
--- Résumé : TreeAIDB.chars[perso].summary.auction (meilleures affaires, conseils de vente, profit réalisé).
--- Lua 5.1 ; aucune globale.
+--  * chaque achat / mise en vente / annulation = UN clic du joueur (« Acheter », « Annuler » ou le gros
+--    bouton « Suivant ») : l'appel protégé est fait DANS ce OnClick, au plus UN par clic, jamais de boucle
+--    ni de minuterie qui agit ; le prix est revérifié juste avant (sinon l'étape est sautée).
+--  * API HV détectée à l'exécution (comme les addons d'HV le font) : WoW Forever (16001) expose
+--    C_AuctionHouse (ReplicateItems, SendSearchQuery, PlaceBid, PostItem/PostCommodity, événements
+--    REPLICATE_ITEM_LIST_UPDATE / *_SEARCH_RESULTS_UPDATED / AUCTION_HOUSE_THROTTLED_SYSTEM_READY) ;
+--    l'ancienne API (QueryAuctionItems / GetAuctionItemInfo / PlaceAuctionBid) reste gérée (Classic Era).
+--  * scan : complet = ReplicateItems (1 fois / 15 min, compte entier, partagé avec Auctionator : on relit
+--    aussi le scan complet qu'Auctionator vient de faire) ou getAll ; traitement par tranches ≤ 4 ms par
+--    image (coroutine) ; infos d'objet manquantes = résolues plus tard (jamais d'attente) ; mini-scan ciblé
+--    (liste d'achats / de ventes) au rythme du limiteur Blizzard ; lecture passive de ce que le joueur
+--    parcourt (parcours, recherche, pages).
+--  * prix : historique par objet (≤ 14 jours) → marché (médiane robuste), volatilité, volume/jour,
+--    confiance ; Auctionator.API.v1 (callerID « TreeAI », lecture seule) en secours / quand plus frais.
+--  * frais exacts (règle Classic, miroir de treeaicoach/wow/auction.py) : commission 5 % / 15 % neutre ;
+--    dépôt = floor(prix marchand × qté × 5 % (25 %) × h / 2) ; profit = vente × (1 − commission) − achat
+--    − dépôt × P(invendu) ; risque de remise en vente : dépôt perdu à chaque cycle invendu.
+--  * gestion de l'or : réserve (entraînement / réparations / monture), budget de revente, répartition
+--    sur les meilleures affaires (glouton profit ajusté / risque, plafond par objet), file « Suivant ».
+-- Résumé : TreeAIDB.chars[perso].summary.auction. Lua 5.1 ; aucune globale.
 local _, ns = ...
 ns = ns or {}
 
@@ -27,15 +28,20 @@ if not (T and T.RegisterModule) then return end
 local M = T:RegisterModule("Auction", {
   title = "Hôtel des ventes",
   defaults = { enabled = true, minMargin = 20, minProfit = 20, budget = 0, hours = 24, maxItems = 1500,
-               house = "auto", window = true, tips = true },
-  charDefaults = { ledger = {}, seen = {}, spent = {} },
+               house = "auto", window = true, tips = true, keepGold = 0, mountGold = 0, autoReserve = true,
+               capShare = 35, api = "auto" },
+  charDefaults = { ledger = {}, seen = {}, spent = {}, deposits = {} },
   options = {
     { key = "window", type = "toggle", label = "Fenêtre d'aide à l'ouverture de l'HV" },
     { key = "tips", type = "toggle", label = "Annoncer les affaires dans le panneau" },
     { key = "minMargin", type = "range", label = "Marge minimale sous le marché (%)", min = 5, max = 60, step = 5 },
     { key = "minProfit", type = "range", label = "Profit minimal par achat (pa)", min = 0, max = 1000, step = 10 },
     { key = "budget", type = "range", label = "Budget d'achat par jour (po, 0 = illimité)", min = 0, max = 5000, step = 10 },
-    { key = "hours", type = "range", label = "Durée de mise en vente (h)", min = 2, max = 48, step = 2 },
+    { key = "hours", type = "range", label = "Durée de mise en vente (12 / 24 / 48 h)", min = 12, max = 48, step = 12 },
+    { key = "keepGold", type = "range", label = "Or à garder quoi qu'il arrive (po)", min = 0, max = 2000, step = 5 },
+    { key = "autoReserve", type = "toggle", label = "Réserver l'entraînement et les réparations (selon le niveau)" },
+    { key = "mountGold", type = "range", label = "Réserve monture (po)", min = 0, max = 1000, step = 10 },
+    { key = "capShare", type = "range", label = "Part max du budget sur un même objet (%)", min = 10, max = 100, step = 5 },
     { key = "maxItems", type = "range", label = "Objets suivis au maximum", min = 300, max = 5000, step = 100 },
   },
 })
@@ -290,17 +296,109 @@ function F.realized(events)
   return { items = items, days = days, total = total }
 end
 
+-- répartition de l'or : glouton par profit ajusté (confiance × P(vente)) / prix, plafond par objet
+-- (diversification), reventes au marchand (sans risque) hors plafond. Renvoie plan, dépense, gain attendu.
+function F.allocate(deals, budget, capShare, maxPer)
+  budget = max(0, n0(budget))
+  local list = {}
+  for _, d in ipairs(deals or {}) do
+    if n0(d.adj) > 0 and n0(d.buy) > 0 and d.state ~= "bought" and d.state ~= "gone" then list[#list + 1] = d end
+  end
+  table.sort(list, function(a, b)
+    local ra, rb = a.adj / a.buy, b.adj / b.buy
+    if ra ~= rb then return ra > rb end
+    return a.adj > b.adj
+  end)
+  local left, per, perN, out, gain = budget, {}, {}, {}, 0
+  local cap = max(1, floor(budget * (capShare or 0.35)))
+  for _, d in ipairs(list) do
+    local id = d.id or 0
+    local lim = d.kind == "vendor" and budget or cap
+    if d.buy <= left and n0(per[id]) + d.buy <= lim and n0(perN[id]) < (maxPer or 4) then
+      out[#out + 1] = d
+      left, gain = left - d.buy, gain + d.adj
+      per[id], perN[id] = n0(per[id]) + d.buy, n0(perN[id]) + 1
+    end
+  end
+  return out, budget - left, gain
+end
+-- dépôt perdu attendu si l'on remet en vente jusqu'à la vente (cycles géométriques, P(vente) = p par cycle)
+function F.relistLoss(dep, p)
+  p = clamp(n0(p), 0.05, 1)
+  return floor(n0(dep) * (1 - p) / p + 0.5)
+end
+
 -- ------------------------------------------------------------------ état / API HV
-M.cur = {}        -- [itemID] = { units = {..}, listings = { {index, unit, count, buy, owner} }, qty } (dernier scan, session)
-M.deals = {}
-M.thinList = {}
-M.owned = {}
+M.cur = {}        -- [itemID] = { units = {..}, listings = { {index, unit, count, buy, owner, auctionID} }, qty, t }
+M.deals, M.thinList, M.owned, M.plan, M.queue, M.qi = {}, {}, {}, {}, {}, 1
+M.browse = {}     -- [itemID] = { min, qty, t } (parcours passif, API moderne)
 M.sig = nil       -- signatures du dernier scan complet { t, items = {[id] = {[clé] = n}} } (session)
 M.ahOpen = false
+M.dbg = { errors = {}, browse = 0, searches = 0 }
+M.vcache = {}     -- prix marchand connus (GetItemInfo peut répondre nil tant que l'objet n'est pas en cache)
 
-local function modernAH() local A = _G.C_AuctionHouse return type(A) == "table" and type(A.ReplicateItems) == "function" and A or nil end
-local function classicAH() return type(_G.GetAuctionItemInfo) == "function" and type(_G.QueryAuctionItems) == "function" end
-function M.Flavor() if classicAH() then return "classic" elseif modernAH() then return "modern" end return nil end
+local function clock() return try(_G.GetTime) or 0 end
+local function ms() return try(_G.debugprofilestop) or clock() * 1000 end
+local function say(msg) if M.Print then M:Print(msg) end end
+local function logErr(msg)
+  local e = M.dbg.errors
+  e[#e + 1] = (try(_G.date, "%H:%M:%S") or "") .. " " .. tostring(msg)
+  while #e > 8 do table.remove(e, 1) end
+  if M.Debug then M:Debug(msg) end
+end
+local function mmss(sec)
+  sec = max(0, floor(n0(sec)))
+  return ("%d:%02d"):format(floor(sec / 60), sec % 60)
+end
+
+local function modernAH()
+  local A = rawget(_G, "C_AuctionHouse")
+  if type(A) == "table" and type(A.ReplicateItems) == "function" and type(A.GetReplicateItemInfo) == "function" then return A end
+  return nil
+end
+local function legacyAH()
+  return type(rawget(_G, "QueryAuctionItems")) == "function" and type(rawget(_G, "GetAuctionItemInfo")) == "function"
+end
+-- "modern" = C_AuctionHouse (WoW Forever, Retail, Mists), "classic" = ancienne API (Classic Era).
+-- Si les deux existent (couche de compatibilité d'un autre addon), l'interface Blizzard chargée tranche.
+function M.Flavor()
+  local m, l = modernAH() ~= nil, legacyAH()
+  local force = cfg("api", "auto")
+  if force == "modern" and m then return "modern" elseif force == "classic" and l then return "classic" end
+  if m and l then
+    if rawget(_G, "AuctionFrame") and not rawget(_G, "AuctionHouseFrame") then return "classic" end
+    return "modern"
+  end
+  if m then return "modern" elseif l then return "classic" end
+  return nil
+end
+
+-- prix marchand : cache → GetItemInfo → Auctionator → historique ; demande le chargement sinon
+local function atr()
+  local A = rawget(_G, "Auctionator")
+  local v = type(A) == "table" and type(A.API) == "table" and A.API.v1
+  return type(v) == "table" and v or nil
+end
+vendorPrice = function(id)
+  if not id then return 0 end
+  local c = M.vcache[id]
+  if c then return c end
+  local v = select(11, M.ItemInfo(id))
+  if v == nil then
+    local api = atr()
+    v = api and try(api.GetVendorPriceByItemID, "TreeAI", id)
+    if v == nil then
+      local CI = rawget(_G, "C_Item")
+      if type(CI) == "table" then try(CI.RequestLoadItemDataByID, id) end
+      local r = M.db and M.db.realms
+      for _, rd in pairs(r or {}) do local rec = rd.items and rd.items[id] if rec and n0(rec.v) > 0 then return n0(rec.v) end end
+      return 0
+    end
+  end
+  v = n0(v)
+  M.vcache[id] = v
+  return v
+end
 
 local NEUTRAL_ZONES = { ["baie-du-butin"] = true, ["booty bay"] = true, ["gadgetzan"] = true, ["long-guet"] = true, ["everlook"] = true }
 function M.IsNeutral()
@@ -312,7 +410,12 @@ function M.IsNeutral()
   end
   return false
 end
-local function hours() return max(2, n0(cfg("hours", 24))) end
+local function hours()
+  local h = max(2, n0(cfg("hours", 24)))
+  if h <= 12 then return 12 elseif h <= 24 then return 24 end
+  return 48
+end
+local function durIndex() local h = hours() return h == 12 and 1 or h == 24 and 2 or 3 end
 
 function M.RealmData()
   local db = M.db
@@ -324,21 +427,45 @@ function M.RealmData()
   return r, key
 end
 
+-- ------------------------------------------------------------------ Auctionator (lecture seule)
+function M.AtrPrice(id)
+  local api = atr()
+  if not (api and id) then return nil end
+  local p = try(api.GetAuctionPriceByItemID, "TreeAI", id)
+  if type(p) ~= "number" or p <= 0 then return nil end
+  return floor(p), tonumber((try(api.GetAuctionAgeByItemID, "TreeAI", id)))
+end
+function M.HookAuctionator()
+  if M.atrHooked then return true end
+  local api = atr()
+  if not api then return false end
+  M.atrHooked = true
+  if type(api.RegisterForDBUpdate) == "function" then
+    local ok, err = pcall(api.RegisterForDBUpdate, "TreeAI", function()
+      M.atrUpdated = now()
+      if M.ahOpen and not M.job then T:After(0.5, function() if not M.job then M.FindDeals() M.Refresh() end end) end
+    end)
+    M.atrRegistered = ok
+    if not ok then logErr("Auctionator RegisterForDBUpdate : " .. tostring(err)) end
+  end
+  return true
+end
+
 function M.Stats(id)
   local r = M.RealmData()
   local rec = r and r.items[id]
-  local st
-  if rec then st = F.statsFromPoints(points(rec), (now() - n0(rec.last)) / 86400) end
+  local st, ageDays
+  if rec then
+    ageDays = (now() - n0(rec.last)) / 86400
+    st = F.statsFromPoints(points(rec), ageDays)
+  end
   if st then st.src = "TreeAI" end
-  if not st or st.conf < 0.3 then  -- secours : Auctionator (lecture seule)
-    local A = _G.Auctionator
-    local api = type(A) == "table" and type(A.API) == "table" and A.API.v1
-    if type(api) == "table" then
-      local p = try(api.GetAuctionPriceByItemID, "TreeAI", id)
-      local age = try(api.GetAuctionAgeByItemID, "TreeAI", id)
-      if type(p) == "number" and p > 0 then
-        st = { market = floor(p), vol = 0.2, volume = st and st.volume, conf = (age and age <= 1) and 0.4 or 0.25, ndays = 1, src = "Auctionator" }
-      end
+  -- secours / priorité à Auctionator quand nos données manquent, sont peu sûres ou vieilles (> 2 j)
+  if not st or st.conf < 0.3 or (ageDays and ageDays > 2) then
+    local p, age = M.AtrPrice(id)
+    if p and (not st or not age or age < ageDays or st.conf < 0.3) then
+      local conf = (age and age <= 0 and 0.45) or (age and age <= 2 and 0.35) or 0.25
+      st = { market = p, vol = 0.2, volume = st and st.volume, conf = conf, ndays = 1, src = "Auctionator", age = age }
     end
   end
   return st
@@ -374,7 +501,7 @@ function M.Prune()
   r.n = cap
 end
 
--- lecture d'une annonce de la liste courante : id, count, buyout, owner, minBid
+-- lecture d'une annonce : id, count, buyout, owner, minBid (id présent même si les infos ne sont pas chargées)
 local function readListing(i, src)
   local r
   if src == "replicate" then
@@ -383,57 +510,107 @@ local function readListing(i, src)
   else
     r = { try(_G.GetAuctionItemInfo, "list", i) }
   end
-  if not r or r[1] == nil and r[17] == nil then return nil end
-  return tonumber(r[17]), n0(r[3]), n0(r[10]), r[14], n0(r[8])
+  if not r or (r[1] == nil and r[17] == nil) then return nil end
+  local id = tonumber(r[17])
+  if not id and src == "replicate" then
+    local A = modernAH()
+    id = idFromLink(A and try(A.GetReplicateItemLink, i - 1))
+  end
+  return id, n0(r[3]), n0(r[10]), r[14], n0(r[8]), r[18]
+end
+
+-- ------------------------------------------------------------------ moteur de tâches (coroutine, ≤ 4 ms / image)
+local SLICE_MS, SLICE_ROWS = 4, 2500
+local function runJob()
+  local j = M.job
+  if not j then return end
+  j.deadline = ms() + SLICE_MS
+  j.slice = 0
+  local ok, err = coroutine.resume(j.co)
+  if not ok then
+    logErr("scan " .. tostring(j.kind) .. " : " .. tostring(err))
+    M.job, M.scan = nil, nil
+    M.Refresh()
+    return
+  end
+  if coroutine.status(j.co) == "dead" then M.job = nil return end
+  T:After(0, runJob)
+end
+local function startJob(kind, fn)
+  if M.job then return false end
+  local j = { kind = kind, t0 = clock(), rows = 0, total = 0 }
+  j.co = coroutine.create(function() fn(j) end)
+  M.job = j
+  runJob()
+  return true
+end
+local function slice(j)
+  if not j then return end
+  j.slice = j.slice + 1
+  if j.slice >= SLICE_ROWS or (j.slice % 64 == 0 and ms() >= j.deadline) then coroutine.yield() end
 end
 
 -- ------------------------------------------------------------------ scans
 function M.BeginScan(src, full, total)
-  M.scan = { src = src, full = full, total = total, i = 0, items = {}, t = now() }
+  M.scan = { src = src, full = full, total = total, i = 0, items = {}, t = now(), missing = {}, t0 = clock() }
+end
+
+local function addRow(s, i, id, count, buy, owner, auctionID)
+  if not (id and count > 0 and buy > 0) then return end
+  local it = s.items[id]
+  if not it then it = { units = {}, listings = {}, qty = 0, sig = {} } s.items[id] = it end
+  local unit = floor(buy / count)
+  local isMine = owner ~= nil and (owner == M.meName or owner == "player")
+  if not isMine then
+    it.units[#it.units + 1] = unit
+    it.listings[#it.listings + 1] = { index = i, unit = unit, count = count, buy = buy, owner = owner, auctionID = auctionID }
+    it.qty = it.qty + count
+  end
+  local k = unit .. ":" .. count
+  it.sig[k] = (it.sig[k] or 0) + count
+end
+
+local function scanRow(s, i)
+  local id, count, buy, owner = readListing(i, s.src)
+  if id then addRow(s, i, id, count, buy, owner)
+  else s.missing[#s.missing + 1] = i end
 end
 
 function M.ScanChunk(nmax)
   local s = M.scan
   if not s then return true end
-  local mine = me()
+  M.meName = me()
   local last = min(s.total, s.i + (nmax or 500))
-  for i = s.i + 1, last do
-    local id, count, buy, owner = readListing(i, s.src)
-    if id and count > 0 and buy > 0 then
-      local it = s.items[id]
-      if not it then it = { units = {}, listings = {}, qty = 0, sig = {} } s.items[id] = it end
-      local unit = floor(buy / count)
-      local isMine = owner ~= nil and owner == mine
-      if not isMine then
-        it.units[#it.units + 1] = unit
-        it.listings[#it.listings + 1] = { index = i, unit = unit, count = count, buy = buy, owner = owner }
-        it.qty = it.qty + count
-      end
-      local k = unit .. ":" .. count
-      it.sig[k] = (it.sig[k] or 0) + count
-    end
-  end
+  for i = s.i + 1, last do scanRow(s, i) end
   s.i = last
   return last >= s.total
 end
 
-function M.FinishScan()
+function M.FinishScan(j)
   local s = M.scan
   M.scan = nil
   if not s then return end
+  -- annonces illisibles au 1er passage (données pas encore reçues) : un 2e essai, puis on n'attend pas
+  local miss = s.missing
+  s.missing = {}
+  for _, i in ipairs(miss) do scanRow(s, i) slice(j) end
+  local unresolved = #s.missing
   local r = M.RealmData()
   local day, t = today(s.t), s.t
   local prev = s.full and M.sig or nil
   local hrs = prev and (t - prev.t) / 3600 or 0
   if hrs < 0.2 or hrs > 48 then prev, hrs = nil, 0 end
-  local cur = {}
+  local cur, nItems = {}, 0
   for id, it in pairs(s.items) do
+    nItems = nItems + 1
     table.sort(it.listings, function(a, b) return a.unit < b.unit end)
     table.sort(it.units)
+    it.t = t
     cur[id] = it
     if r and #it.units > 0 then
       local rec = r.items[id]
-      if not rec then rec = { h = {}, v = vendorPrice(id) } r.items[id] = rec end
+      if not rec then rec = { h = {} } r.items[id] = rec end
+      if n0(rec.v) <= 0 then rec.v = vendorPrice(id) end
       local gone = 0
       if prev and prev.items[id] then
         for k, q in pairs(prev.items[id]) do
@@ -444,6 +621,7 @@ function M.FinishScan()
       addPoint(rec, day, it.units[1], F.lowMedian(it.units), it.qty, gone, prev and floor(hrs * 100 + 0.5) / 100 or 0)
       rec.last = t
     end
+    slice(j)
   end
   if s.full then
     local sig = { t = t, items = {} }
@@ -454,21 +632,77 @@ function M.FinishScan()
   else
     for id, it in pairs(cur) do M.cur[id] = it end
   end
+  local dt = max(0.001, clock() - s.t0)
+  M.lastScan = { src = s.src, full = s.full, rows = s.total, items = nItems, unresolved = unresolved, t = t,
+    secs = floor(dt * 100 + 0.5) / 100, speed = floor(s.total / dt + 0.5), by = s.by }
   M.Prune()
-  M.FindDeals(cur)
+  M.FindDeals(cur, j)
   M.CheckOwned()
+  M.BuildQueue()
   M.Refresh()
 end
 
-function M.Budget()
-  local b = n0(cfg("budget", 0))
-  local spent = n0(M.char and M.char.spent and M.char.spent[dateKey()])
-  local left = API.Money and API.Money() or 0
-  if b > 0 then left = min(left, b * 10000 - spent) end
-  return max(0, left), spent, b * 10000
+local function processScan(src, full, total, by)
+  M.lastSrc = src
+  M.meName = me()
+  return startJob(src, function(j)
+    M.BeginScan(src, full, total)
+    local s = M.scan
+    s.by = by
+    j.total = total
+    for i = 1, total do
+      if M.scan ~= s then return end
+      scanRow(s, i)
+      s.i, j.rows = i, i
+      slice(j)
+    end
+    M.FinishScan(j)
+    if src == "replicate" then M.repDone, M.repN = now(), total end
+    if full and total > 0 then
+      say(("Scan complet lu : %d annonces, %d objets en %s s (%d annonces/s)%s."):format(total, M.lastScan.items,
+        tostring(M.lastScan.secs), M.lastScan.speed, #M.deals > 0 and (", " .. #M.deals .. " affaire(s)") or ""))
+    end
+  end)
+end
+M.ProcessScan = processScan
+
+-- une recherche d'objet (lecture passive ou ciblée) : remplace les annonces connues de cet objet
+function M.ApplyItemListings(id, rows)
+  if not id then return end
+  local s = { items = {} }
+  M.meName = me()
+  for i, l in ipairs(rows) do addRow(s, i, id, l.count, l.buy, l.owner, l.auctionID) end
+  local it = s.items[id] or { units = {}, listings = {}, qty = 0, sig = {} }
+  table.sort(it.listings, function(a, b) return a.unit < b.unit end)
+  table.sort(it.units)
+  it.t = now()
+  M.cur[id] = it
+  local r = M.RealmData()
+  if r and #it.units > 0 then
+    local rec = r.items[id]
+    if not rec then rec = { h = {} } r.items[id] = rec end
+    if n0(rec.v) <= 0 then rec.v = vendorPrice(id) end
+    addPoint(rec, today(), it.units[1], F.lowMedian(it.units), it.qty, 0, 0)
+    rec.last = now()
+  end
+  return it
 end
 
-function M.FindDeals(items)
+function M.Budget()
+  local g = M.Gold()
+  return g.budget, g.spent, g.cap
+end
+
+local function riskOf(d)
+  if d.kind == "vendor" then return 0 end
+  return r4(clamp(1 - n0(d.conf) * n0(d.p), 0, 1))
+end
+function M.RiskText(d)
+  local r = riskOf(d)
+  return (r < 0.35 and "faible") or (r < 0.65 and "moyen") or "élevé"
+end
+
+function M.FindDeals(items, j)
   local neutral, hrs = M.IsNeutral(), hours()
   local all, thin = {}, {}
   for id, it in pairs(items or M.cur) do
@@ -484,19 +718,24 @@ function M.FindDeals(items)
           for _, o in ipairs(it.listings) do if o ~= l and o.unit < target then ahead = ahead + o.count end end
           d = F.flip(l.buy, l.count, st, vendor, ahead, neutral, hrs)
           d.thin = F.thin(it.units)
+          d.relist = F.relistLoss(d.deposit, d.p)   -- dépôt perdu attendu si on reposte jusqu'à la vente
+          d.market, d.src = st.market, st.src
         end
         if d then
-          d.id, d.index, d.owner, d.src = id, l.index, l.owner, M.lastSrc
+          d.id, d.index, d.owner, d.auctionID, d.src = id, l.index, l.owner, l.auctionID, d.src or M.lastSrc
+          d.risk = riskOf(d)
           all[#all + 1] = d
         end
       end
       if F.thin(it.units) and st and st.market and st.market >= 10000 then thin[#thin + 1] = id end
     end
+    slice(j)
   end
   local budget = M.Budget()
   M.deals = F.rank(all, n0(cfg("minMargin", 20)) / 100, n0(cfg("minProfit", 20)) * 100, budget)
-  for i = #M.deals, 31, -1 do M.deals[i] = nil end
+  for i = #M.deals, 41, -1 do M.deals[i] = nil end
   M.thinList = thin
+  M.Plan()
   local d = M.deals[1]
   if d and cfg("tips", true) and M.Suggest then
     M:Suggest("deals", ("HV : %d affaire(s), meilleure %s +%s — /tai hv"):format(#M.deals, itemName(d.id), money(d.profit)), 2, { ttl = 300 })
@@ -513,9 +752,38 @@ function M.FindDeals(items)
   return M.deals
 end
 
--- ------------------------------------------------------------------ boutons (UN appel protégé par clic)
-local function say(msg) if M.Print then M:Print(msg) end end
+-- ------------------------------------------------------------------ gestion de l'or
+function M.Reserve()
+  local lvl = n0(try(_G.UnitLevel, "player"))
+  local keep = n0(cfg("keepGold", 0)) * 10000
+  local train = 0
+  if cfg("autoReserve", true) and lvl > 0 and lvl < 60 then train = floor(lvl * lvl * 150) end  -- entraînement + réparations
+  local mount = n0(cfg("mountGold", 0)) * 10000
+  return keep + train + mount, { keep = keep, train = train, mount = mount }
+end
+function M.Gold()
+  local total = (API.Money and API.Money()) or n0(try(_G.GetMoney))
+  local reserve, parts = M.Reserve()
+  local free = max(0, total - reserve)
+  local cap = n0(cfg("budget", 0)) * 10000
+  local spent = n0(M.char and M.char.spent and M.char.spent[dateKey()])
+  local budget = cap > 0 and min(free, max(0, cap - spent)) or free
+  local listed = 0
+  for _, a in ipairs(M.owned or {}) do if a.state ~= "cancelled" then listed = listed + n0(a.buy) end end
+  local held = 0
+  local ev = M.char and M.char.ledger
+  if ev then for _, it in pairs(F.realized(ev).items) do held = held + max(0, n0(it.cost)) end end
+  return { total = total, reserve = reserve, parts = parts, free = free, budget = budget, cap = cap, spent = spent,
+    listed = listed, held = held, invested = listed + held }
+end
+function M.Plan()
+  local g = M.Gold()
+  local plan, spend, gain = F.allocate(M.deals, g.budget, n0(cfg("capShare", 35)) / 100, 4)
+  M.plan, M.planSpend, M.planGain = plan, spend, gain
+  return plan, spend, gain
+end
 
+-- ------------------------------------------------------------------ actions (UN appel protégé par clic)
 -- Classique : retrouve l'annonce (même objet, même pile, même prix, pas à moi) puis UNE enchère au rachat.
 function M.BuyClassic(d)
   local idx
@@ -540,14 +808,36 @@ function M.BuyClassic(d)
   return true, nbuy
 end
 
+local function priceSorts()
+  local E = rawget(_G, "Enum")
+  local so = E and E.AuctionHouseSortOrder
+  return { { sortOrder = (so and so.Price) or 0, reverseSort = false }, { sortOrder = (so and so.Name) or 1, reverseSort = false } }
+end
+function M.SearchItem(id)
+  local A = modernAH()
+  if not (A and id) then return false end
+  if type(A.IsThrottledMessageSystemReady) == "function" and not try(A.IsThrottledMessageSystemReady) then
+    M.dbg.throttled = (M.dbg.throttled or 0) + 1
+    return false                                           -- limiteur Blizzard : on ne force jamais
+  end
+  local key = try(A.MakeItemKey, id) or { itemID = id }
+  M.dbg.searches = M.dbg.searches + 1
+  M.lastSearch = { id = id, t = clock() }
+  try(A.SendSearchQuery, key, priceSorts(), true)
+  return true
+end
+
 -- Moderne : clic 1 = recherche (vérif du prix), clic 2 = achat (objet) ou début (marchandise), clic 3 = confirmer.
 function M.BuyModern(d)
   local A = modernAH()
   if not A then return false end
   if not d.state or d.state == "gone" then
-    local key = try(A.MakeItemKey, d.id) or { itemID = d.id }
-    d.state, M.pendingSearch = "search", d
-    try(A.SendSearchQuery, key, {}, true)
+    local prev = d.state
+    d.state, M.pendingSearch = "search", d                 -- avant l'envoi : la réponse peut être immédiate
+    if not M.SearchItem(d.id) then
+      d.state, M.pendingSearch = prev, nil
+      say("Blizzard limite les recherches : reclique dans un instant.")
+    end
     return false
   elseif d.state == "ready" and d.commodity then
     d.state = "starting"
@@ -565,30 +855,76 @@ function M.BuyModern(d)
   return false
 end
 
-function M.OnSearchResults(_, event, arg)
-  local d = M.pendingSearch
+-- résultats d'une recherche moderne → lignes {count, buy, unit, owner, auctionID}
+function M.ReadSearch(id, commodity)
   local A = modernAH()
-  if not (d and A) then return end
-  M.pendingSearch = nil
+  local rows = {}
+  if not (A and id) then return rows end
   local mine = me()
-  if event == "COMMODITY_SEARCH_RESULTS_UPDATED" then
-    local r = try(A.GetCommoditySearchResultInfo, d.id, 1)
-    if type(r) == "table" and n0(r.unitPrice) > 0 and n0(r.unitPrice) * d.count <= d.buy and n0(r.quantity) >= d.count then
-      d.state, d.commodity, d.buyNow = "ready", true, n0(r.unitPrice) * d.count
-    else d.state = "gone" end
+  local function owned(r)
+    if r.containsOwnerItem then return true end
+    local o = type(r.owners) == "table" and r.owners[1]
+    return o ~= nil and (o == mine or o == "player")
+  end
+  if commodity then
+    for i = 1, min(200, n0(try(A.GetNumCommoditySearchResults, id))) do
+      local r = try(A.GetCommoditySearchResultInfo, id, i)
+      if type(r) == "table" and n0(r.unitPrice) > 0 and n0(r.quantity) > 0 then
+        rows[#rows + 1] = { count = n0(r.quantity), buy = n0(r.unitPrice) * n0(r.quantity), unit = n0(r.unitPrice),
+          owner = owned(r) and "player" or nil, auctionID = r.auctionID }
+      end
+    end
   else
-    local key = try(A.MakeItemKey, d.id) or { itemID = d.id }
-    d.state = "gone"
-    for i = 1, min(50, n0(try(A.GetNumItemSearchResults, key))) do
+    local key = try(A.MakeItemKey, id) or { itemID = id }
+    for i = 1, min(200, n0(try(A.GetNumItemSearchResults, key))) do
       local r = try(A.GetItemSearchResultInfo, key, i)
-      local owned = type(r) == "table" and type(r.owners) == "table" and r.owners[1] == mine
-      if type(r) == "table" and not owned and n0(r.quantity) == d.count and n0(r.buyoutAmount) > 0 and n0(r.buyoutAmount) <= d.buy then
-        d.state, d.auctionID, d.buyNow = "ready", r.auctionID, n0(r.buyoutAmount)
-        break
+      if type(r) == "table" and n0(r.buyoutAmount) > 0 then
+        local q = max(1, n0(r.quantity))
+        rows[#rows + 1] = { count = q, buy = n0(r.buyoutAmount), unit = floor(n0(r.buyoutAmount) / q),
+          owner = owned(r) and "player" or nil, auctionID = r.auctionID }
       end
     end
   end
-  if d.state == "gone" then say(("%s : prix changé, plus d'affaire."):format(itemName(d.id))) end
+  return rows
+end
+
+function M.OnSearchResults(_, event, arg)
+  local A = modernAH()
+  if not A then return end
+  local commodity = event == "COMMODITY_SEARCH_RESULTS_UPDATED" or event == "COMMODITY_SEARCH_RESULTS_ADDED"
+  local id = (type(arg) == "number" and arg) or (type(arg) == "table" and tonumber(arg.itemID)) or nil
+  local d = M.pendingSearch
+  if not id then id = (d and d.id) or (M.mini and M.mini.waiting) or (M.lastSearch and M.lastSearch.id) end
+  if not id then return end
+  local rows = M.ReadSearch(id, commodity)
+  M.dbg.lastSearchRows = #rows
+  M.ApplyItemListings(id, rows)            -- lecture passive : le joueur (ou nous) a cherché cet objet
+  if d and d.id == id then
+    M.pendingSearch = nil
+    d.state = "gone"
+    if commodity then
+      local r = rows[1]
+      if r and r.owner == nil and r.unit * d.count <= d.buy and r.count >= d.count then
+        d.state, d.commodity, d.buyNow = "ready", true, r.unit * d.count
+      end
+    else
+      for _, r in ipairs(rows) do
+        if r.owner == nil and r.count == d.count and r.buy <= d.buy then
+          d.state, d.auctionID, d.buyNow = "ready", r.auctionID, r.buy
+          break
+        end
+      end
+    end
+    if d.state == "gone" then say(("%s : prix changé, plus d'affaire."):format(itemName(d.id))) end
+  end
+  for _, q in ipairs(M.queue or {}) do
+    if q.kind == "post" and q.p.id == id and q.p.state == "check" then q.p.state = nil end
+  end
+  for _, p in ipairs(M.postRows or {}) do if p.id == id and p.state == "check" then p.state = nil end end
+  if M.mini and M.mini.waiting == id then
+    M.mini.waiting, M.mini.done = nil, M.mini.done + 1
+    T:After(0, M.MiniNext)
+  end
   M.Refresh()
 end
 
@@ -623,47 +959,191 @@ function M.Buy(d)
   return ok
 end
 
+-- ------------------------------------------------------------------ scan complet / ciblé
+function M.FullCooldown()
+  return max(0, 900 - (now() - n0(M.db and M.db.lastFullCall)))
+end
+
 function M.ScanAll()
   if not M.ahOpen then say("Ouvre l'hôtel des ventes d'abord.") return false end
+  if M.job then say(("Lecture en cours : %d / %d annonces."):format(M.job.rows, M.job.total)) return false end
   local fl = M.Flavor()
-  if fl == "classic" then
-    local _, canAll = try(_G.CanSendAuctionQuery)
-    if not canAll then
-      local wait = M.lastFull and max(0, 900 - (now() - M.lastFull)) or 0
-      say(("Scan complet pas encore disponible (Blizzard : 1 fois / 15 min%s)."):format(wait > 0 and (", encore " .. ceil(wait / 60) .. " min") or ""))
+  local cd = M.FullCooldown()
+  if fl == "modern" then
+    local A = modernAH()
+    local n = n0(try(A.GetNumReplicateItems))
+    if cd > 0 and n > 0 and n ~= M.repN then   -- un scan complet récent (Auctionator ?) est en mémoire : on le lit
+      say(("Lecture du dernier scan complet en mémoire (%d annonces)…"):format(n))
+      return processScan("replicate", true, n, "mémoire")
+    end
+    if cd > 0 then
+      say(("Scan complet dans %s (Blizzard : 1 fois / 15 min pour tout le compte). En attendant : « Scan ciblé »."):format(mmss(cd)))
+      M.dbg.refused = now()
       return false
     end
-    M.pendingAll = true
+    M.pendingAll, M.db.lastFullCall, M.dbg.lastCall = true, now(), now()
+    try(A.ReplicateItems)
+    T:After(25, function()
+      if M.pendingAll and not M.job and not M.repWait then
+        M.pendingAll = false
+        logErr("ReplicateItems sans réponse en 25 s (limite de 15 min déjà prise par un autre addon ?)")
+        say("Pas de réponse au scan complet : la limite Blizzard (15 min, tout le compte) est sans doute déjà prise (Auctionator ?). « Scan ciblé » en attendant.")
+      end
+    end)
+  elseif fl == "classic" then
+    local _, canAll = try(_G.CanSendAuctionQuery)
+    if not canAll then
+      say(("Scan complet pas encore disponible (Blizzard : 1 fois / 15 min%s)."):format(cd > 0 and (", encore " .. mmss(cd)) or ""))
+      M.dbg.refused = now()
+      return false
+    end
+    M.pendingAll, M.db.lastFullCall, M.dbg.lastCall = true, now(), now()
     try(_G.QueryAuctionItems, "", nil, nil, 0, false, -1, true, false, nil)
-  elseif fl == "modern" then
-    M.pendingAll = true
-    try(modernAH().ReplicateItems)
   else
-    say("API de l'hôtel des ventes introuvable.")
+    say("API de l'hôtel des ventes introuvable (/tai hv debug).")
+    logErr("aucune API HV détectée")
     return false
   end
   say("Scan complet demandé…")
+  M.Refresh()
   return true
 end
 
-local function processAsync(src, full, total)
-  M.lastSrc = src
-  M.BeginScan(src, full, total)
-  local function step()
-    if not M.scan then return end
-    if M.ScanChunk(500) then M.FinishScan() else T:After(0.01, step) end
+-- REPLICATE_ITEM_LIST_UPDATE arrive en rafale (et aussi quand un AUTRE addon fait le scan complet) :
+-- on attend que le nombre d'annonces soit stable, puis on lit tout par tranches.
+function M.REPLICATE_ITEM_LIST_UPDATE()
+  if not modernAH() or M.job or M.repWait then return end
+  if not M.pendingAll and M.repDone and now() - M.repDone < 120 then return end  -- infos d'objets reçues après notre lecture
+  M.repWait = { n = -1, tries = 0 }
+  T:After(0.25, M.CheckReplicate)
+end
+function M.CheckReplicate()
+  local w, A = M.repWait, modernAH()
+  if not (w and A) or M.job then M.repWait = nil return end
+  local n = n0(try(A.GetNumReplicateItems))
+  w.tries = w.tries + 1
+  if n > 0 and (n == w.n or w.tries >= 12) then
+    M.repWait = nil
+    local ours = M.pendingAll
+    M.pendingAll = false
+    if not ours and M.db then M.db.lastFullCall = now() end   -- la limite du compte vient d'être consommée
+    processScan("replicate", true, n, ours and "TreeAI" or "autre addon")
+  elseif n == 0 and w.tries >= 12 then
+    M.repWait = nil
+  else
+    w.n = n
+    T:After(0.25, M.CheckReplicate)
   end
-  step()
+end
+
+-- liste ciblée : plan d'achat, objets à vendre, mes enchères (≤ 40 objets)
+function M.TargetIDs()
+  local ids, seen = {}, {}
+  local function add(id) if id and not seen[id] and #ids < 40 then seen[id] = true ids[#ids + 1] = id end end
+  for _, d in ipairs(M.plan or {}) do add(d.id) end
+  for _, a in ipairs(M.owned or {}) do add(a.id) end
+  if API.IterBags then
+    for _, _, item in API.IterBags() do
+      if item and item.itemID and not item.noValue and (item.quality or 1) >= 1 and (M.Stats(item.itemID) or M.cur[item.itemID]) then add(item.itemID) end
+    end
+  end
+  for _, d in ipairs(M.deals or {}) do add(d.id) end
+  return ids
+end
+
+function M.ScanTargets(ids)
+  if not M.ahOpen then say("Ouvre l'hôtel des ventes d'abord.") return false end
+  if M.mini then say(("Scan ciblé en cours : %d / %d."):format(M.mini.done, #M.mini.list)) return false end
+  ids = ids or M.TargetIDs()
+  if #ids == 0 then say("Rien à cibler : fais un scan complet, ou mets des objets dans tes sacs.") return false end
+  M.mini = { list = ids, i = 0, done = 0, t0 = clock() }
+  M.MiniNext()
+  return true
+end
+
+function M.MiniNext()
+  local m = M.mini
+  if not m then return end
+  if not M.ahOpen then M.mini = nil return end
+  if m.waiting then
+    if clock() - n0(m.sentAt) < 5 then return end
+    m.waiting = nil                                       -- pas de réponse en 5 s : objet suivant
+  end
+  local fl = M.Flavor()
+  local A = modernAH()
+  if fl == "modern" and A and type(A.IsThrottledMessageSystemReady) == "function" and not try(A.IsThrottledMessageSystemReady) then
+    m.throttled = (m.throttled or 0) + 1                  -- AUCTION_HOUSE_THROTTLED_SYSTEM_READY relancera
+    T:After(0.5, M.MiniNext)                              -- filet de sécurité si l'événement n'arrive pas
+    return
+  end
+  if fl == "classic" and not try(_G.CanSendAuctionQuery) then
+    T:After(0, M.MiniNext)                                -- dès que la requête est permise (image suivante)
+    return
+  end
+  m.i = m.i + 1
+  local id = m.list[m.i]
+  if not id then
+    M.mini = nil
+    local dt = max(0.001, clock() - m.t0)
+    M.lastMini = { n = m.done, secs = floor(dt * 100 + 0.5) / 100, t = now() }
+    M.FindDeals()
+    M.CheckOwned()
+    M.BuildQueue()
+    say(("Scan ciblé fini : %d objet(s) en %s s."):format(m.done, tostring(M.lastMini.secs)))
+    M.Refresh()
+    return
+  end
+  m.waiting, m.sentAt = id, clock()
+  if fl == "modern" then
+    if not M.SearchItem(id) then m.waiting, m.i = nil, m.i - 1 T:After(0.2, M.MiniNext) return end
+  else
+    local name = API.ItemName and API.ItemName(id)
+    if not name then m.waiting = nil T:After(0, M.MiniNext) return end
+    try(_G.QueryAuctionItems, name, nil, nil, 0, false, -1, false, true, nil)
+  end
+  T:After(5.1, M.MiniNext)                                -- délai de garde (aucune action, juste la lecture)
+end
+
+function M.AUCTION_HOUSE_THROTTLED_SYSTEM_READY()
+  if M.mini and not M.mini.waiting then M.MiniNext() end
+end
+
+-- parcours passif (API moderne) : prix minimum par objet de la page parcourue par le joueur
+function M.OnBrowse()
+  local A = modernAH()
+  local res = A and try(A.GetBrowseResults)
+  if type(res) ~= "table" then return end
+  local t = now()
+  for _, r in ipairs(res) do
+    local id = type(r) == "table" and type(r.itemKey) == "table" and r.itemKey.itemID
+    if id and n0(r.minPrice) > 0 then M.browse[id] = { min = n0(r.minPrice), qty = n0(r.totalQuantity), t = t } end
+  end
+  M.dbg.browse = M.dbg.browse + #res
 end
 
 function M.AUCTION_ITEM_LIST_UPDATE()
-  if M.scan then return end
+  if M.job then return end
   local batch, total = try(_G.GetNumAuctionItems, "list")
   batch, total = n0(batch), n0(total)
   if M.pendingAll then
     M.pendingAll = false
-    processAsync("list", true, batch)
-  elseif batch > 0 and batch <= 50 then
+    processScan("list", true, batch, "TreeAI")
+    return
+  end
+  local m = M.mini
+  if m and m.waiting then                                 -- mini-scan classique : 1re page de l'objet visé
+    local id = m.waiting
+    local rows = {}
+    for i = 1, min(batch, 50) do
+      local lid, count, buy, owner = readListing(i, "list")
+      if lid == id and buy > 0 then rows[#rows + 1] = { count = count, buy = buy, owner = owner } end
+    end
+    M.ApplyItemListings(id, rows)
+    m.waiting, m.done = nil, m.done + 1
+    T:After(0, M.MiniNext)
+    return
+  end
+  if batch > 0 and batch <= 50 then
     -- page parcourue par le joueur : affaires sur la page ; historique seulement si résultat complet
     M.lastSrc = "list"
     M.BeginScan("list", false, batch)
@@ -674,6 +1154,7 @@ function M.AUCTION_ITEM_LIST_UPDATE()
       for id, it in pairs(items) do
         table.sort(it.listings, function(a, b) return a.unit < b.unit end)
         table.sort(it.units)
+        it.t = now()
         M.cur[id] = it
       end
       M.FindDeals(items)
@@ -682,13 +1163,6 @@ function M.AUCTION_ITEM_LIST_UPDATE()
       M.FinishScan()
     end
   end
-end
-
-function M.REPLICATE_ITEM_LIST_UPDATE()
-  if M.scan or not M.pendingAll then return end
-  M.pendingAll = false
-  local A = modernAH()
-  processAsync("replicate", true, n0(A and try(A.GetNumReplicateItems)))
 end
 
 -- ------------------------------------------------------------------ mes enchères
@@ -716,14 +1190,18 @@ function M.CheckOwned()
     a.unit = floor(a.buy / a.count)
     local it = a.id and M.cur[a.id]
     local low = it and it.units[1]
+    a.lowest = low
+    a.depositLost = F.deposit(vendorPrice(a.id), a.count, hrs, neutral)
     if low and low < a.unit then
       local comp = {}
       for _, l in ipairs(it.listings) do comp[#comp + 1] = { l.unit, l.count } end
       local s = F.suggestPost(a.count, vendorPrice(a.id), M.Stats(a.id), comp, neutral, hrs)
-      a.undercut, a.lowest, a.repost = true, low, s.unit
-      a.depositLost = F.deposit(vendorPrice(a.id), a.count, hrs, neutral)
+      a.undercut, a.repost = true, s.unit
       -- annuler vaut le coup si le gain de vendre (au lieu de rester derrière) dépasse le dépôt perdu
       a.worth = s.unit and s.better == "ah" and F.net(s.unit * a.count, neutral) * 0.5 > a.depositLost or false
+      a.advice = a.worth and ("annuler, reposter " .. money(s.unit)) or "attendre (dépôt > gain)"
+    else
+      a.advice = low and "le moins cher : garder" or "pas de concurrent connu"
     end
     out[#out + 1] = a
   end
@@ -756,6 +1234,20 @@ function M.Cancel(a)
 end
 
 -- ------------------------------------------------------------------ vente (sacs)
+local function comps(id)
+  local comp = {}
+  local it = M.cur[id]
+  if it then for _, l in ipairs(it.listings) do comp[#comp + 1] = { l.unit, l.count } end
+  elseif M.browse[id] then comp[1] = { M.browse[id].min, max(1, M.browse[id].qty) } end
+  return comp
+end
+function M.PostPrice(id, count)
+  local s = F.suggestPost(count, vendorPrice(id), M.Stats(id), comps(id), M.IsNeutral(), hours())
+  s.id = id
+  if s.unit and s.p then s.relist = F.relistLoss(s.deposit, s.p) end
+  return s
+end
+
 function M.SellAdvice()
   local bag = {}
   if API.IterBags then
@@ -765,17 +1257,12 @@ function M.SellAdvice()
       end
     end
   end
-  local out, neutral, hrs = {}, M.IsNeutral(), hours()
+  local out = {}
   for id, count in pairs(bag) do
-    local st = M.Stats(id)
-    local it = M.cur[id]
-    if st or it then
-      local comp = {}
-      if it then for _, l in ipairs(it.listings) do comp[#comp + 1] = { l.unit, l.count } end end
+    if M.Stats(id) or M.cur[id] or M.browse[id] then
       local stack = select(8, M.ItemInfo(id))
-      local c = min(count, max(1, n0(stack)))
-      local s = F.suggestPost(c, vendorPrice(id), st, comp, neutral, hrs)
-      s.id, s.have = id, count
+      local s = M.PostPrice(id, min(count, max(1, n0(stack))))
+      s.have = count
       if s.unit or s.vendor > 0 then out[#out + 1] = s end
     end
   end
@@ -784,34 +1271,134 @@ function M.SellAdvice()
   return out
 end
 
-function M.SellText(s)
-  local name = itemName(s.id)
-  if not s.unit then return ("%s : pas de prix de marché (marchand %s)"):format(name, money(s.vendor)) end
-  if s.better == "vendor" then
-    return ("%s : mieux au marchand (%s ; HV net %s)"):format(name, money(s.vendor), money(s.net))
+-- file de mise en vente : une entrée par pile des sacs qui vaut mieux à l'HV qu'au marchand
+function M.PostList()
+  local out = {}
+  if not API.IterBags then return out end
+  for bag, slot, item in API.IterBags() do
+    local id = item and item.itemID
+    if id and not item.noValue and not item.locked and (item.quality or 1) >= 1 and (M.Stats(id) or M.cur[id] or M.browse[id]) then
+      local s = M.PostPrice(id, max(1, n0(item.count)))
+      if s.unit and s.better == "ah" then
+        s.bag, s.slot, s.have = bag, slot, n0(item.count)
+        out[#out + 1] = s
+      end
+    end
+    if #out >= 24 then break end
   end
-  local t = ("%s x%d : %s/u (dépôt %s, net %s, marchand %s)"):format(name, s.count, money(s.unit), money(s.deposit), money(s.net), money(s.vendor))
-  if s.split then t = t .. (" — piles de %d"):format(s.split) end
-  return t
+  table.sort(out, function(a, b) return n0(a.net) > n0(b.net) end)
+  return out
 end
 
--- objet posé dans l'emplacement de vente (HV classique) → prix conseillé immédiat
-function M.NEW_AUCTION_UPDATE()
-  local name, _, count, _, _, vendor = try(_G.GetAuctionSellItemInfo)
-  if not name then if M.Clear then M:Clear("post") end return end
-  local link = select(2, M.ItemInfo(name))
-  local id = idFromLink(link)
-  if not id then return end
-  local it = M.cur[id]
-  local comp = {}
-  if it then for _, l in ipairs(it.listings) do comp[#comp + 1] = { l.unit, l.count } end end
-  local unitVendor = n0(vendor) > 0 and floor(n0(vendor) / max(1, n0(count))) or vendorPrice(id)
-  local s = F.suggestPost(max(1, n0(count)), unitVendor, M.Stats(id), comp, M.IsNeutral(), hours())
-  local dep = try(_G.CalculateAuctionDeposit, hours() * 60, max(1, n0(count)))
-  if n0(dep) > 0 then s.deposit = n0(dep) end
-  s.id = id
-  if M.Suggest then M:Suggest("post", "Vente : " .. M.SellText(s), 2, { ttl = 120 }) end
-  return s
+function M.Post(p)
+  if not (p and M.ahOpen) then say("Ouvre l'hôtel des ventes d'abord.") return false end
+  if p.state == "posted" or p.state == "skip" then return false end
+  local item = API.BagItem and API.BagItem(p.bag, p.slot)
+  if not (item and item.itemID == p.id and n0(item.count) == p.count) then
+    p.state = "skip"
+    say(("%s : la pile a bougé dans les sacs, ignorée."):format(itemName(p.id)))
+    return false
+  end
+  local A, fl = modernAH(), M.Flavor()
+  -- prix plus vieux que 5 min : clic = une recherche (non protégée) ; le clic suivant poste
+  local it = M.cur[p.id]
+  if fl == "modern" and (not it or now() - n0(it.t) > 300) and p.state ~= "checked" then
+    p.state = "check"
+    if not M.SearchItem(p.id) then p.state = nil say("Blizzard limite les recherches : reclique dans un instant.") return false end
+    T:After(3, function() if p.state == "check" then p.state = "checked" M.Refresh() end end)
+    return false
+  end
+  local s = M.PostPrice(p.id, p.count)
+  if not s.unit or s.better ~= "ah" or s.unit < floor(p.unit * 0.95) then
+    p.state = "skip"
+    say(("%s : le prix a bougé (%s → %s), mise en vente ignorée."):format(itemName(p.id), money(p.unit), money(s.unit)))
+    return false
+  end
+  local unit = s.unit
+  if fl == "modern" and A then
+    if type(A.SupportsCopperValues) == "function" and not try(A.SupportsCopperValues) then unit = max(100, floor(unit / 100) * 100) end
+    local IL = rawget(_G, "ItemLocation")
+    local loc = type(IL) == "table" and type(IL.CreateFromBagAndSlot) == "function" and try(IL.CreateFromBagAndSlot, IL, p.bag, p.slot)
+    if not loc then say("Mise en vente impossible : ItemLocation absent.") logErr("ItemLocation absent") return false end
+    local E = rawget(_G, "Enum")
+    local COMMOD = (E and E.ItemCommodityStatus and E.ItemCommodityStatus.Commodity) or 2
+    if try(A.GetItemCommodityStatus, loc) == COMMOD then
+      try(A.PostCommodity, loc, durIndex(), p.count, unit)                      -- action protégée (clic)
+    else
+      try(A.PostItem, loc, durIndex(), p.count, nil, unit * p.count)            -- action protégée (clic)
+    end
+  elseif fl == "classic" then
+    local pick = (rawget(_G, "C_Container") and _G.C_Container.PickupContainerItem) or rawget(_G, "PickupContainerItem")
+    try(pick, p.bag, p.slot)
+    try(_G.ClickAuctionSellItemButton)
+    local name = try(_G.GetAuctionSellItemInfo)
+    if not name then try(_G.ClearCursor) say("Ouvre l'onglet « Vendre » de l'HV pour poster.") return false end
+    local buy = unit * p.count
+    try(_G.PostAuction, max(1, floor(buy * 0.95)), buy, durIndex(), p.count, 1)  -- action protégée (clic)
+  else
+    return false
+  end
+  p.state, p.posted = "posted", unit
+  if M.char then
+    M.char.deposits = M.char.deposits or {}
+    local k = dateKey()
+    M.char.deposits[k] = n0(M.char.deposits[k]) + n0(s.deposit)
+  end
+  say(("Mis en vente : %s x%d à %s/u (dépôt %s, net attendu %s)."):format(itemName(p.id), p.count, money(unit), money(s.deposit), money(s.net)))
+  return true
+end
+
+-- ------------------------------------------------------------------ file « Suivant » (1 clic = 1 action)
+function M.BuildQueue()
+  local q = {}
+  for _, d in ipairs(M.plan or {}) do
+    if d.state ~= "bought" and d.state ~= "gone" then q[#q + 1] = { kind = "buy", d = d } end
+  end
+  for _, a in ipairs(M.owned or {}) do
+    if a.undercut and a.worth and a.state ~= "cancelled" then q[#q + 1] = { kind = "cancel", a = a } end
+  end
+  if M.ahOpen then
+    for _, p in ipairs(M.PostList()) do q[#q + 1] = { kind = "post", p = p } end
+  end
+  M.queue, M.qi = q, 1
+  return q
+end
+
+local function qDone(e)
+  if e.kind == "buy" then return e.d.state == "bought" or e.d.state == "gone" end
+  if e.kind == "cancel" then return e.a.state == "cancelled" end
+  return e.p.state == "posted" or e.p.state == "skip"
+end
+function M.QueueHead()
+  while M.queue[M.qi] and qDone(M.queue[M.qi]) do M.qi = M.qi + 1 end
+  return M.queue[M.qi]
+end
+function M.NextLabel()
+  local e = M.QueueHead()
+  if not e then return "Suivant : rien à faire", false end
+  if e.kind == "buy" then
+    local d = e.d
+    local verb = (M.Flavor() == "modern" and (d.state == nil and "vérifier" or d.state == "confirm" and "confirmer")) or "acheter"
+    return ("Suivant : %s %s x%d (%s)"):format(verb, itemName(d.id), d.count, money(d.buyNow or d.buy)), true
+  elseif e.kind == "cancel" then
+    return ("Suivant : annuler %s x%d"):format(itemName(e.a.id), e.a.count), true
+  end
+  local p = e.p
+  return ("Suivant : %s %s x%d à %s/u"):format(p.state == "check" and "(vérif…)" or "poster", itemName(p.id), p.count, money(p.unit)), p.state ~= "check"
+end
+-- appelé UNIQUEMENT par le OnClick du bouton « Suivant » : au plus UNE action protégée, puis on avance
+function M.Next()
+  if not M.ahOpen then say("Ouvre l'hôtel des ventes d'abord.") return false end
+  if not M.QueueHead() then M.BuildQueue() end
+  local e = M.QueueHead()
+  if not e then say("File vide : scanne, ajuste le budget ou la réserve (/tai hv debug).") M.Refresh() return false end
+  local ok
+  if e.kind == "buy" then ok = M.Buy(e.d)
+  elseif e.kind == "cancel" then ok = M.Cancel(e.a)
+  else ok = M.Post(e.p) end
+  M.QueueHead()
+  M.Refresh()
+  return ok
 end
 
 -- ------------------------------------------------------------------ journal (courrier de l'HV)
@@ -891,8 +1478,62 @@ function M.DealText(d)
   if d.kind == "vendor" then
     return ("%s : %s → marchand %s = +%s garanti"):format(lbl, money(d.buy), money(d.sell), money(d.profit))
   end
-  return ("%s : %s (−%d %%) → revendre %s = +%s, ROI %d %%, conf. %d %%%s"):format(lbl, money(d.buy), floor(d.discount * 100 + 0.5),
-    money(d.sell), money(d.profit), floor((d.roi or 0) * 100 + 0.5), floor(d.conf * 100 + 0.5), d.thin and " ⚠ marché mince" or "")
+  return ("%s : %s (−%d %%) → revendre %s = +%s net (commission + dépôt %s inclus), ROI %d %%, conf. %d %%, risque %s%s"):format(lbl,
+    money(d.buy), floor(d.discount * 100 + 0.5), money(d.sell), money(d.profit), money(d.deposit), floor((d.roi or 0) * 100 + 0.5),
+    floor(d.conf * 100 + 0.5), M.RiskText(d), d.thin and " ⚠ marché mince" or "")
+end
+
+function M.SellText(s)
+  local name = itemName(s.id)
+  if not s.unit then return ("%s : pas de prix de marché (marchand %s)"):format(name, money(s.vendor)) end
+  if s.better == "vendor" then
+    return ("%s : mieux au marchand (%s ; HV net %s après dépôt)"):format(name, money(s.vendor), money(s.net))
+  end
+  local t = ("%s x%d : %s/u (dépôt %s, net %s, marchand %s)"):format(name, s.count, money(s.unit), money(s.deposit), money(s.net), money(s.vendor))
+  if s.relist and s.relist > 0 then t = t .. (" — si invendu : −%s par remise en vente"):format(money(s.deposit)) end
+  if s.split then t = t .. (" — piles de %d"):format(s.split) end
+  return t
+end
+
+-- objet posé dans l'emplacement de vente (HV classique) → prix conseillé immédiat
+function M.NEW_AUCTION_UPDATE()
+  local name, _, count, _, _, vendor = try(_G.GetAuctionSellItemInfo)
+  if not name then if M.Clear then M:Clear("post") end return end
+  local link = select(2, M.ItemInfo(name))
+  local id = idFromLink(link)
+  if not id then return end
+  local unitVendor = n0(vendor) > 0 and floor(n0(vendor) / max(1, n0(count))) or vendorPrice(id)
+  local s = F.suggestPost(max(1, n0(count)), unitVendor, M.Stats(id), comps(id), M.IsNeutral(), hours())
+  local dep = try(_G.CalculateAuctionDeposit, durIndex(), max(1, n0(count)))
+  if n0(dep) > 0 then s.deposit = n0(dep) end
+  s.id = id
+  if M.Suggest then M:Suggest("post", "Vente : " .. M.SellText(s), 2, { ttl = 120 }) end
+  return s
+end
+
+function M.BilanLines()
+  local g = M.Gold()
+  local r = M.Realized()
+  local L = {}
+  L[#L + 1] = ("Or total %s · réserve %s (garder %s, entraînement/réparations %s, monture %s)"):format(money(g.total), money(g.reserve),
+    money(g.parts.keep), money(g.parts.train), money(g.parts.mount))
+  L[#L + 1] = ("Budget de revente %s%s · dépensé aujourd'hui %s"):format(money(g.budget), g.cap > 0 and (" (plafond/jour " .. money(g.cap) .. ")") or "", money(g.spent))
+  L[#L + 1] = ("Argent immobilisé %s (en vente %s, acheté non revendu %s)"):format(money(g.invested), money(g.listed), money(g.held))
+  L[#L + 1] = ("Plan : %d achat(s) pour %s → profit attendu %s (max %d %% du budget par objet)"):format(#(M.plan or {}),
+    money(M.planSpend), money(M.planGain), n0(cfg("capShare", 35)))
+  local deps = M.char and M.char.deposits and M.char.deposits[dateKey()]
+  L[#L + 1] = ("Profit réalisé : aujourd'hui %s, 7 j %s, total %s · dépôts payés aujourd'hui %s"):format(money(r.today), money(r.week), money(r.total), money(deps))
+  for i, d in ipairs(M.plan or {}) do
+    if i > 6 then break end
+    L[#L + 1] = ("  achat %d : %s x%d %s → +%s (risque %s)"):format(i, itemName(d.id), d.count, money(d.buy), money(d.adj), M.RiskText(d))
+  end
+  local ev = (M.char and M.char.ledger) or {}
+  local KIND = { buy = "acheté", sell = "vendu", expired = "expiré", cancelled = "annulé" }
+  for i = #ev, max(1, #ev - 20), -1 do
+    local e = ev[i]
+    L[#L + 1] = ("  %s %s %s x%d %s"):format(e.day or "", KIND[e.type] or e.type or "", tostring(e.item or "?"), n0(e.qty), money(n0(e.money) - n0(e.cut)))
+  end
+  return L
 end
 
 function M.Report(what)
@@ -904,51 +1545,105 @@ function M.Report(what)
     for i = 1, min(8, #s) do P(M.SellText(s[i])) end
     return
   end
-  if what:find("^jour") or what:find("^ledger") then
+  if what:find("^jour") or what:find("^ledger") or what:find("^bilan") then
     local r = M.Realized()
     P(("Profit réalisé : aujourd'hui %s, 7 j %s, total %s."):format(money(r.today), money(r.week), money(r.total)))
-    local list = {}
-    for k, v in pairs(r.items) do list[#list + 1] = { k, v.profit } end
-    table.sort(list, function(a, b) return a[2] > b[2] end)
-    for i = 1, min(5, #list) do P(("  %s : %s"):format(list[i][1], money(list[i][2]))) end
+    for _, l in ipairs(M.BilanLines()) do P(l) end
     return
   end
-  local left, spent, b = M.Budget()
+  local g = M.Gold()
   local age = M.lastFull and ceil((now() - M.lastFull) / 60)
-  P(("HV %s · dernier scan complet : %s · budget restant %s%s"):format(M.IsNeutral() and "neutre (15 %)" or "de faction (5 %)",
-    age and ("il y a " .. age .. " min") or "jamais", money(left), b > 0 and (" (dépensé " .. money(spent) .. ")") or ""))
+  P(("HV %s · dernier scan complet : %s · budget de revente %s (réserve %s)"):format(M.IsNeutral() and "neutre (15 %)" or "de faction (5 %)",
+    age and ("il y a " .. age .. " min") or "jamais", money(g.budget), money(g.reserve)))
   if #M.deals == 0 then P("Aucune affaire pour l'instant : ouvre l'HV, « Scan complet », ou parcours des pages.") end
   for i = 1, min(6, #M.deals) do P(i .. ". " .. M.DealText(M.deals[i])) end
   local nb = 0
   for _, a in ipairs(M.owned) do if a.undercut then nb = nb + 1 end end
-  if nb > 0 then P(nb .. " enchère(s) sapée(s) : onglet « Mes enchères ».") end
+  if nb > 0 then P(nb .. " enchère(s) sapée(s) : onglet « Mes ventes ».") end
 end
 
--- ------------------------------------------------------------------ fenêtre
-local ROWS = 10
+function M.DebugLines()
+  local L = {}
+  local A = modernAH()
+  local build, _, _, iface = try(_G.GetBuildInfo)
+  L[#L + 1] = ("Client %s (interface %s, projet %s) · API HV : %s (C_AuctionHouse %s, ReplicateItems %s, QueryAuctionItems %s, forcée : %s)"):format(
+    tostring(build), tostring(iface), tostring(rawget(_G, "WOW_PROJECT_ID")), tostring(M.Flavor() or "AUCUNE"),
+    rawget(_G, "C_AuctionHouse") and "oui" or "non", A and "oui" or "non", legacyAH() and "oui" or "non", tostring(cfg("api", "auto")))
+  L[#L + 1] = ("Interface Blizzard : AuctionHouseFrame %s, AuctionFrame %s · HV ouvert : %s"):format(
+    rawget(_G, "AuctionHouseFrame") and "oui" or "non", rawget(_G, "AuctionFrame") and "oui" or "non", M.ahOpen and "oui" or "non")
+  local thr
+  if A and type(A.IsThrottledMessageSystemReady) == "function" then thr = try(A.IsThrottledMessageSystemReady) and "prêt" or "limité (attente)"
+  elseif type(rawget(_G, "CanSendAuctionQuery")) == "function" then
+    local c, all = try(_G.CanSendAuctionQuery)
+    thr = ("requête %s, getAll %s"):format(c and "ok" or "non", all and "ok" or "non")
+  end
+  L[#L + 1] = ("Limiteur : %s · scan complet possible dans %s · demandé : %s · annonces complètes en mémoire : %s"):format(tostring(thr or "?"),
+    mmss(M.FullCooldown()), M.pendingAll and "oui (attente réponse)" or "non", tostring(A and try(A.GetNumReplicateItems) or "-"))
+  local j = M.job
+  if j then
+    local dt = max(0.001, clock() - j.t0)
+    L[#L + 1] = ("Lecture en cours : %d / %d annonces (%d /s)"):format(j.rows, j.total, floor(j.rows / dt))
+  end
+  local s = M.lastScan
+  if s then
+    L[#L + 1] = ("Dernier scan : %s%s par %s, %d annonces, %d objets, %d illisibles, %s s, %d annonces/s, il y a %s"):format(tostring(s.src),
+      s.full and " (complet)" or "", tostring(s.by or "?"), s.rows, s.items, s.unresolved, tostring(s.secs), s.speed, mmss(now() - s.t))
+  else
+    L[#L + 1] = "Dernier scan : aucun dans cette session"
+  end
+  if M.lastMini then L[#L + 1] = ("Dernier scan ciblé : %d objets en %s s"):format(M.lastMini.n, tostring(M.lastMini.secs)) end
+  if M.mini then L[#L + 1] = ("Scan ciblé en cours : %d / %d (attentes limiteur %d)"):format(M.mini.done, #M.mini.list, n0(M.mini.throttled)) end
+  local n = 0
+  for _ in pairs(M.cur) do n = n + 1 end
+  local rd = M.RealmData()
+  L[#L + 1] = ("Objets en mémoire %d · suivis (historique) %d · parcours passif vus %d · recherches %d · affaires %d · plan %d · file %d (pos %d)"):format(
+    n, rd and rd.n or 0, M.dbg.browse, M.dbg.searches, #M.deals, #(M.plan or {}), #(M.queue or {}), M.qi or 1)
+  local api = atr()
+  if api then
+    local sample = M.deals[1] and M.deals[1].id
+    local p, age = M.AtrPrice(sample)
+    L[#L + 1] = ("Auctionator : API v1 oui · callback %s · dernière mise à jour %s%s"):format(M.atrRegistered and "enregistré (TreeAI)" or "non",
+      M.atrUpdated and ("il y a " .. mmss(now() - M.atrUpdated)) or "pas vue", sample and (" · ex. " .. itemName(sample) .. " " .. money(p) .. " (âge " .. tostring(age) .. " j)") or "")
+  else
+    L[#L + 1] = "Auctionator : absent (ou pas d'API v1)"
+  end
+  for _, e in ipairs(M.dbg.errors) do L[#L + 1] = "Erreur : " .. e end
+  return L
+end
+
+-- ------------------------------------------------------------------ fenêtre (ancrée à l'HV, jamais parentée)
+local ROWS = 12
 M.tab, M.page = "deals", 1
+local COLS = {
+  deals = { { "Objet", 160 }, { "Prix", 70 }, { "Marché/u", 70 }, { "Profit net", 70 }, { "Risque", 95 }, { "Vente", 45 } },
+  sell = { { "Objet", 160 }, { "Qté", 30 }, { "Prix/u", 65 }, { "Dépôt", 60 }, { "Net", 70 }, { "Marchand", 65 }, { "Durée", 40 } },
+  owned = { { "Objet", 160 }, { "Mon prix/u", 70 }, { "Plus bas", 65 }, { "État", 60 }, { "Conseil", 165 } },
+  bilan = { { "", 600 } },
+}
 
 local function rowsFor(tab)
   if tab == "deals" then return M.deals
-  elseif tab == "sell" then return M.sell or {}
+  elseif tab == "sell" then M.postRows = M.postRows or M.PostList() return M.postRows
   elseif tab == "owned" then return M.owned
   end
   local out = {}
-  local ev = (M.char and M.char.ledger) or {}
-  for i = #ev, max(1, #ev - 40), -1 do out[#out + 1] = ev[i] end
+  for _, l in ipairs(M.BilanLines()) do out[#out + 1] = { text = l } end
   return out
 end
 
-local KIND = { buy = "acheté", sell = "vendu", expired = "expiré", cancelled = "annulé" }
-local function rowText(tab, e)
-  if tab == "deals" then return M.DealText(e)
-  elseif tab == "sell" then return M.SellText(e)
+local function cells(tab, e)
+  if tab == "deals" then
+    local name = itemName(e.id) .. (e.count > 1 and (" x" .. e.count) or "")
+    if e.kind == "vendor" then return { name, money(e.buy), "marchand", "+" .. money(e.profit), "aucun", "0 j" } end
+    return { name, money(e.buy), money(e.market or e.sellUnit), "+" .. money(e.profit),
+      M.RiskText(e) .. " · " .. money(e.deposit) .. "/cycle", e.days and (e.days .. " j") or "?" }
+  elseif tab == "sell" then
+    return { itemName(e.id), tostring(e.count), money(e.unit), money(e.deposit), money(e.net), money(e.vendor), hours() .. " h" }
   elseif tab == "owned" then
-    local t = ("%s x%d : %s/u"):format(itemName(e.id), e.count, money(e.unit))
-    if e.undercut then t = t .. (" — sapé (%s) → reposter %s, dépôt perdu %s"):format(money(e.lowest), money(e.repost), money(e.depositLost)) end
-    return t
+    local st = e.state == "cancelled" and "annulée" or (e.undercut and "sapée" or "ok")
+    return { itemName(e.id) .. " x" .. e.count, money(e.unit), e.lowest and money(e.lowest) or "-", st, e.advice or "" }
   end
-  return ("%s %s x%d %s"):format(e.day or "", KIND[e.type] or e.type or "", n0(e.qty), money(n0(e.money) - n0(e.cut)))
+  return { e.text }
 end
 
 local function buttonLabel(tab, e)
@@ -962,8 +1657,20 @@ local function buttonLabel(tab, e)
   elseif tab == "owned" and e.undercut then
     if e.state == "cancelled" then return "Annulée", false end
     return "Annuler", M.ahOpen
+  elseif tab == "sell" then
+    if e.state == "posted" then return "Postée", false end
+    if e.state == "skip" then return "Ignorée", false end
+    if e.state == "check" then return "…", false end
+    return "Poster", M.ahOpen
   end
   return nil
+end
+
+local function mkButton(parent, w, h, text)
+  local b = _G.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+  b:SetSize(w, h)
+  b:SetText(text)
+  return b
 end
 
 function M.CreateWindow()
@@ -971,9 +1678,7 @@ function M.CreateWindow()
   local parent = _G.UIParent
   local f = _G.CreateFrame("Frame", nil, parent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
   M.win = f
-  f:SetSize(520, 340)
-  local af = rawget(_G, "AuctionFrame") or rawget(_G, "AuctionHouseFrame")
-  if af then f:SetPoint("TOPLEFT", af, "TOPRIGHT", 4, 0) else f:SetPoint("CENTER", parent, "CENTER", 0, 0) end
+  f:SetSize(640, 420)
   f:SetFrameStrata("HIGH")
   f:EnableMouse(true)
   f:SetMovable(true)
@@ -983,73 +1688,147 @@ function M.CreateWindow()
   if f.SetBackdrop then
     f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
       edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-    if f.SetBackdropColor then f:SetBackdropColor(0, 0, 0, 0.85) end
+    if f.SetBackdropColor then f:SetBackdropColor(0, 0, 0, 0.88) end
   end
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   title:SetPoint("TOPLEFT", 10, -8)
   title:SetText("TreeAI — Hôtel des ventes")
+  f.title = title
   local close = _G.CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 0, 0)
-  local tabs = { { "deals", "Affaires" }, { "sell", "Vendre" }, { "owned", "Mes enchères" }, { "ledger", "Journal" } }
+  local tabs = { { "deals", "Affaires" }, { "sell", "Vendre" }, { "owned", "Mes ventes" }, { "bilan", "Bilan" } }
   for i, tb in ipairs(tabs) do
-    local b = _G.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    b:SetSize(90, 20)
-    b:SetPoint("TOPLEFT", 10 + (i - 1) * 94, -28)
-    b:SetText(tb[2])
-    b:SetScript("OnClick", function()
+    local b = mkButton(f, 86, 20, tb[2])
+    b:SetPoint("TOPLEFT", 10 + (i - 1) * 90, -28)
+    b:SetScript("OnClick", function()   -- navigation seulement
       M.tab, M.page = tb[1], 1
-      if tb[1] == "sell" then M.SellAdvice() elseif tb[1] == "owned" then M.CheckOwned() end
+      if tb[1] == "sell" then M.SellAdvice() M.postRows = M.PostList() elseif tb[1] == "owned" then M.CheckOwned() end
       M.Refresh()
     end)
   end
-  local scan = _G.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  scan:SetSize(110, 20)
-  scan:SetPoint("TOPRIGHT", -28, -28)
-  scan:SetText("Scan complet")
+  local mini = mkButton(f, 90, 20, "Scan ciblé")
+  mini:SetPoint("TOPRIGHT", -146, -28)
+  mini:SetScript("OnClick", function() M.ScanTargets() M.Refresh() end)
+  f.miniBtn = mini
+  local scan = mkButton(f, 112, 20, "Scan complet")
+  scan:SetPoint("TOPRIGHT", -30, -28)
   scan:SetScript("OnClick", function() M.ScanAll() end)
   f.scanBtn = scan
+  f.head = {}
+  for c = 1, 7 do
+    local h = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    if h.SetJustifyH then h:SetJustifyH("LEFT") end
+    f.head[c] = h
+  end
   f.rows = {}
   for i = 1, ROWS do
     local row = _G.CreateFrame("Frame", nil, f)
-    row:SetSize(500, 24)
-    row:SetPoint("TOPLEFT", 10, -54 - (i - 1) * 25)
-    row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.text:SetPoint("LEFT", 0, 0)
-    row.text:SetWidth(410)
-    if row.text.SetJustifyH then row.text:SetJustifyH("LEFT") end
-    row.btn = _G.CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    row.btn:SetSize(80, 20)
+    row:SetSize(620, 22)
+    row:SetPoint("TOPLEFT", 10, -68 - (i - 1) * 23)
+    row.cells = {}
+    for c = 1, 7 do
+      local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      if fs.SetJustifyH then fs:SetJustifyH("LEFT") end
+      if fs.SetWordWrap then fs:SetWordWrap(false) end
+      row.cells[c] = fs
+    end
+    row.text = row.cells[1]
+    row.btn = mkButton(row, 74, 20, "")
     row.btn:SetPoint("RIGHT", 0, 0)
     row.btn:SetScript("OnClick", function()   -- clic du joueur = UNE action
       local e = row.entry
       if not e then return end
-      if M.tab == "deals" then M.Buy(e) elseif M.tab == "owned" then M.Cancel(e) end
+      if M.tab == "deals" then M.Buy(e) elseif M.tab == "owned" then M.Cancel(e) elseif M.tab == "sell" then M.Post(e) M.Refresh() end
     end)
     f.rows[i] = row
   end
-  local prev = _G.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  prev:SetSize(24, 20) prev:SetPoint("BOTTOMLEFT", 10, 8) prev:SetText("<")
+  local prev = mkButton(f, 24, 20, "<")
+  prev:SetPoint("BOTTOMLEFT", 10, 10)
   prev:SetScript("OnClick", function() M.page = max(1, M.page - 1) M.Refresh() end)
-  local nxt = _G.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  nxt:SetSize(24, 20) nxt:SetPoint("LEFT", prev, "RIGHT", 4, 0) nxt:SetText(">")
+  local nxt = mkButton(f, 24, 20, ">")
+  nxt:SetPoint("LEFT", prev, "RIGHT", 4, 0)
   nxt:SetScript("OnClick", function() M.page = M.page + 1 M.Refresh() end)
   f.status = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   f.status:SetPoint("LEFT", nxt, "RIGHT", 8, 0)
+  if f.status.SetWidth then f.status:SetWidth(300) end
+  if f.status.SetJustifyH then f.status:SetJustifyH("LEFT") end
+  -- le gros bouton : chaque clic = exactement UNE action (acheter / poster / annuler) puis on avance
+  local go = mkButton(f, 250, 26, "Suivant")
+  go:SetPoint("BOTTOMRIGHT", -10, 8)
+  go:SetScript("OnClick", function() M.Next() end)
+  f.nextBtn = go
+  local acc = 0
+  f:SetScript("OnUpdate", function(_, el)   -- affichage seulement (compte à rebours, progression)
+    acc = acc + (el or 0)
+    if acc < 1 then return end
+    acc = 0
+    M.RefreshStatus()
+  end)
   f:Hide()
   return f
 end
 
+function M.Anchor()
+  local f = M.win
+  if not f then return end
+  f:ClearAllPoints()
+  local af = rawget(_G, "AuctionHouseFrame") or rawget(_G, "AuctionFrame")
+  if af then f:SetPoint("TOPLEFT", af, "TOPRIGHT", 4, 0)   -- ancrage seulement (jamais SetParent)
+  else f:SetPoint("CENTER", _G.UIParent, "CENTER", 0, 0) end
+end
+
+function M.RefreshStatus()
+  local f = M.win
+  if not (f and f.status) then return end
+  local cd = M.FullCooldown()
+  if M.job then f.scanBtn:SetText(("Lecture %d %%"):format(floor(100 * M.job.rows / max(1, M.job.total))))
+  elseif cd > 0 then f.scanBtn:SetText("Scan dans " .. mmss(cd))
+  else f.scanBtn:SetText("Scan complet") end
+  if f.miniBtn then f.miniBtn:SetText(M.mini and (M.mini.done .. "/" .. #M.mini.list) or "Scan ciblé") end
+  local g = M.Gold()
+  local age = M.lastScan and mmss(now() - M.lastScan.t) or "jamais"
+  f.status:SetText(("Page %d/%d · budget %s · scan %s"):format(M.page, M.pages or 1, money(g.budget), age))
+  local lbl, en = M.NextLabel()
+  f.nextBtn:SetText(lbl)
+  if f.nextBtn.SetEnabled then f.nextBtn:SetEnabled((en and M.ahOpen) and true or false) end
+end
+
+local lastTab = 0
 function M.Refresh()
+  if T.SetTabLines and clock() - lastTab > 0.5 then   -- onglet « HV » du panneau principal (≤ 2/s)
+    lastTab = clock()
+    local g = M.Gold()
+    local lines = { { text = ("Budget HV %s · %d affaire(s) · plan +%s"):format(money(g.budget), #M.deals, money(M.planGain)), prio = 2 } }
+    for i = 1, min(3, #M.deals) do lines[#lines + 1] = { text = M.DealText(M.deals[i]), prio = 2 } end
+    pcall(T.SetTabLines, T, "hv", lines)
+  end
   local f = M.win
   if not (f and f.rows) then return end
+  local cols = COLS[M.tab] or COLS.bilan
+  local x = 10
+  for c = 1, 7 do
+    local h, col = f.head[c], cols[c]
+    if col then
+      h:ClearAllPoints() h:SetPoint("TOPLEFT", f, "TOPLEFT", x, -54) h:SetWidth(col[2]) h:SetText(col[1]) h:Show()
+      x = x + col[2] + 4
+    else h:Hide() end
+  end
   local list = rowsFor(M.tab)
   local pages = max(1, ceil(#list / ROWS))
-  M.page = min(M.page, pages)
+  M.page, M.pages = min(M.page, pages), pages
   for i = 1, ROWS do
     local row, e = f.rows[i], list[(M.page - 1) * ROWS + i]
     row.entry = e
     if e then
-      row.text:SetText(rowText(M.tab, e))
+      local cv = cells(M.tab, e)
+      local cx = 0
+      for c = 1, 7 do
+        local fs, col = row.cells[c], cols[c]
+        if col then
+          fs:ClearAllPoints() fs:SetPoint("LEFT", row, "LEFT", cx, 0) fs:SetWidth(col[2]) fs:SetText(cv[c] or "") fs:Show()
+          cx = cx + col[2] + 4
+        else fs:Hide() end
+      end
       local lbl, enabled = buttonLabel(M.tab, e)
       if lbl then
         row.btn:SetText(lbl)
@@ -1061,26 +1840,28 @@ function M.Refresh()
       row:Hide()
     end
   end
-  local left = M.Budget()
-  local r = M.Realized()
-  f.status:SetText(("Page %d/%d · budget %s · profit aujourd'hui %s"):format(M.page, pages, money(left), money(r.today)))
+  M.RefreshStatus()
 end
 
 function M.ShowWindow()
   local f = M.CreateWindow()
-  if f then f:Show() M.Refresh() end
+  if f then M.Anchor() f:Show() M.Refresh() T:After(0, M.Anchor) end   -- l'UI Blizzard peut se charger après
 end
 
 -- ------------------------------------------------------------------ événements / cycle de vie
 function M.AUCTION_HOUSE_SHOW()
   M.ahOpen = true
-  if cfg("window", true) then M.ShowWindow() end
+  M.HookAuctionator()
   local A = modernAH()
   if A and A.QueryOwnedAuctions then try(A.QueryOwnedAuctions, {}) end
   M.CheckOwned()
+  M.postRows = nil
+  M.Plan()
+  M.BuildQueue()
+  if cfg("window", true) then M.ShowWindow() end
 end
 function M.AUCTION_HOUSE_CLOSED()
-  M.ahOpen, M.pendingAll, M.pendingSearch = false, false, nil
+  M.ahOpen, M.pendingAll, M.pendingSearch, M.mini, M.postRows = false, false, nil, nil, nil
   for _, d in ipairs(M.deals) do if d.state ~= "bought" then d.state = nil end end
   if M.win then M.win:Hide() end
 end
@@ -1092,7 +1873,8 @@ function M.WriteSummary()
   for i = 1, min(5, #M.deals) do
     local d = M.deals[i]
     deals[i] = { name = itemName(d.id), id = d.id, kind = d.kind, count = d.count, buy = d.buy, sell = d.sell,
-      profit = d.profit, roi = d.roi and floor(d.roi * 100 + 0.5) / 100, conf = d.conf, days = d.days }
+      profit = d.profit, roi = d.roi and floor(d.roi * 100 + 0.5) / 100, conf = d.conf, days = d.days,
+      deposit = d.deposit, relist = d.relist, risk = d.risk }
   end
   local sell = {}
   for i, a in ipairs(M.sell or {}) do
@@ -1107,11 +1889,13 @@ function M.WriteSummary()
   for k, v in pairs(r.items) do top[#top + 1] = { item = k, profit = v.profit } end
   table.sort(top, function(a, b) return a.profit > b.profit end)
   for i = #top, 6, -1 do top[i] = nil end
-  local left, spent, b = M.Budget()
+  local g = M.Gold()
   local rd = M.RealmData()
   s.auction = { updated = now(), neutral = M.IsNeutral(), flavor = M.Flavor(),
     scanAge = M.lastFull and (now() - M.lastFull) or nil, tracked = rd and rd.n or 0,
-    deals = deals, sell = sell, thin = thin, budget = b > 0 and b or nil, budgetLeft = left, spentToday = spent,
+    deals = deals, sell = sell, thin = thin, budget = g.cap > 0 and g.cap or nil, budgetLeft = g.budget, spentToday = g.spent,
+    gold = { total = g.total, reserve = g.reserve, invested = g.invested, plan = #(M.plan or {}), planGain = M.planGain },
+    lastScan = M.lastScan and { src = M.lastScan.src, rows = M.lastScan.rows, speed = M.lastScan.speed } or nil,
     realized = { today = r.today, week = r.week, total = r.total, top = top } }
 end
 
@@ -1120,20 +1904,30 @@ function M:OnInit()
     M.char.ledger = M.char.ledger or {}
     M.char.seen = M.char.seen or {}
     M.char.spent = M.char.spent or {}
-    for k in pairs(M.char.spent) do if k < dateKey(now() - 14 * 86400) then M.char.spent[k] = nil end end
+    M.char.deposits = M.char.deposits or {}
+    local old = dateKey(now() - 14 * 86400)
+    for k in pairs(M.char.spent) do if k < old then M.char.spent[k] = nil end end
+    for k in pairs(M.char.deposits) do if k < old then M.char.deposits[k] = nil end end
   end
 end
 
 function M:OnEnable()
   for _, ev in ipairs({ "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "AUCTION_ITEM_LIST_UPDATE", "REPLICATE_ITEM_LIST_UPDATE",
-    "NEW_AUCTION_UPDATE", "MAIL_INBOX_UPDATE", "COMMODITY_PRICE_UPDATED" }) do
+    "NEW_AUCTION_UPDATE", "MAIL_INBOX_UPDATE", "COMMODITY_PRICE_UPDATED", "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" }) do
     self:RegisterEvent(ev)
   end
-  self:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED", M.OnSearchResults)
-  self:RegisterEvent("COMMODITY_SEARCH_RESULTS_UPDATED", M.OnSearchResults)
+  for _, ev in ipairs({ "ITEM_SEARCH_RESULTS_UPDATED", "COMMODITY_SEARCH_RESULTS_UPDATED" }) do
+    self:RegisterEvent(ev, M.OnSearchResults)
+  end
+  for _, ev in ipairs({ "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "AUCTION_HOUSE_BROWSE_RESULTS_ADDED" }) do
+    self:RegisterEvent(ev, function() M.OnBrowse() end)
+  end
   self:RegisterEvent("AUCTION_OWNED_LIST_UPDATE", function() M.CheckOwned() M.Refresh() end)
   self:RegisterEvent("OWNED_AUCTIONS_UPDATED", function() M.CheckOwned() M.Refresh() end)
+  self:RegisterEvent("PLAYER_LOGIN", function() M.HookAuctionator() end)
+  M.HookAuctionator()
   self:On("SUMMARY", function() pcall(M.WriteSummary) end)
+  if T.RegisterTab then pcall(T.RegisterTab, T, "hv", "HV", 40) end
 end
 
 local function slash(rest)
@@ -1143,13 +1937,30 @@ local function slash(rest)
     say("HV : " .. (M.IsNeutral() and "neutre (commission 15 %)" or "de faction (commission 5 %)"))
     return
   end
+  if rest == "debug" then
+    say("--- /tai hv debug (copie-colle ces lignes) ---")
+    for _, l in ipairs(M.DebugLines()) do say(l) end
+    return
+  end
+  local api = rest:match("^api%s+(%S+)")
+  if api then
+    if M.db then M.db.api = (api:find("^mod") and "modern") or (api:find("^cla") and "classic") or "auto" end
+    say("API HV : " .. tostring(M.db and M.db.api) .. " → " .. tostring(M.Flavor()))
+    return
+  end
+  local k, v = rest:match("^(%a+)%s+(%d+)$")
+  if k == "reserve" or k == "garder" then if M.db then M.db.keepGold = tonumber(v) end say("Réserve : garder " .. v .. " po.") M.Plan() return end
+  if k == "monture" then if M.db then M.db.mountGold = tonumber(v) end say("Réserve monture : " .. v .. " po.") M.Plan() return end
+  if k == "budget" then if M.db then M.db.budget = tonumber(v) end say("Plafond d'achat / jour : " .. v .. " po (0 = illimité).") M.Plan() return end
   if rest == "fenetre" or rest == "fenêtre" or rest == "window" then M.ShowWindow() return end
+  if rest == "cible" or rest == "ciblé" then M.ScanTargets() return end
   if rest == "aide" or rest == "help" then
-    say("/tai hv [vendre | journal | fenetre | neutre | faction | auto] — achats/ventes : boutons de la fenêtre (1 clic = 1 action).")
+    say("/tai hv [vendre | bilan | journal | fenetre | cible | debug | neutre | faction | auto | reserve N | monture N | budget N | api auto|moderne|classique]")
+    say("Achats / ventes / annulations : boutons de la fenêtre ou « Suivant » (1 clic = 1 action).")
     return
   end
   M.Report(rest)
   if M.ahOpen then M.ShowWindow() end
 end
-T:RegisterSlash("hv", slash, "hôtel des ventes : affaires, vendre, journal, profit")
+T:RegisterSlash("hv", slash, "hôtel des ventes : affaires, vendre, bilan, debug")
 T:RegisterSlash("ah", slash)

@@ -108,6 +108,7 @@ return function(M, ctx)
   local rv = rowFor(vend)
   for _, a in ipairs(M.ah.list) do if a.id == 9990 then a.buyout = 900 end end
   nb = #M.ah.bids
+  M.Advance(0.2, 0.05)             -- the AH search throttle frees up (real clicks are not instantaneous)
   rv.btn:Click()
   if modern then ctx.check(vend.state == "gone", "modern: price changed → gone") end
   ctx.check(#M.ah.bids == nb and vend.state == "gone", "changed listing not bought")
@@ -153,6 +154,14 @@ return function(M, ctx)
   ctx.check(wool and wool.unit and wool.unit >= 300 and wool.better == "ah", "post price for wool: " .. tostring(wool and wool.unit))
   ctx.check(wool and wool.deposit == 33 * 20 * 5 * 24 / 200, "wool deposit 396")
   ctx.check(A.SellText(wool):find("dépôt"), "sell text")
+
+  -- « Suivant » posts the wool from the bags: one protected call per click, both API flavours
+  M.SetAuctionHouse(true)
+  A.BuildQueue()
+  local np, clicks = #M.ah.posts, 0
+  while A.QueueHead() and clicks < 10 do M.Advance(0.2, 0.05) A.win.nextBtn:Click() clicks = clicks + 1 end
+  ctx.check(#M.ah.posts == np + 1 and M.ah.posts[#M.ah.posts].id == 2592, "wool posted via Suivant: " .. (#M.ah.posts - np))
+  M.SetAuctionHouse(false)
 
   -- summary for TreeAI's AI
   T:Fire("SUMMARY")
