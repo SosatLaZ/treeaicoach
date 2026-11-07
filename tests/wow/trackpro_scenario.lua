@@ -23,7 +23,7 @@ return function(M, ctx)
   e = TR.ObjEstimate({ name = "Sang de lion", have = 2, need = 10, t = "m" },
     { secPerKill = 20, drops = { ["sang de lion"] = { mob = "Lion des collines", rate = 0.5, measured = true } } })
   check(e and e.mobs == 16 and e.sec == 320 and e.measured and e.mob == "Lion des collines", "drop objective: 8 items at 50 % = 16 lions")
-  check(TR.ObjHint(e) == "encore ~16 × Lion des collines (50 %) · ≈ 5 min", "drop hint: " .. tostring(TR.ObjHint(e)))
+  check(TR.ObjHint(e) == "encore ~16 Lions des collines à tuer · ≈ 5 min", "drop hint: " .. tostring(TR.ObjHint(e)))
   e = TR.ObjEstimate({ name = "Défense de kobold", have = 0, need = 7, t = "i" }, { secPerKill = 20 })
   check(e and e.mobs == 20 and not e.measured, "unknown drop rate → 35 % assumed (20 mobs for 7)")
   check(TR.ObjEstimate({ name = "x", have = 3, need = 3, finished = true }) == nil, "finished objective → nil")
@@ -136,18 +136,24 @@ return function(M, ctx)
 
   TR.Push()
   local L = tabs.quests
-  check(L and L[1].text:find("tri XP/min") and L[1].text:find("1 prête"), "header: sort, filter, ready count: " .. tostring(L and L[1].text))
+  check(L and L[1].text:find("les plus rapides d'abord") and L[1].text:find("1 prête à rendre") and not L[1].text:find("XP/min"), "header: sort, filter, ready count: " .. tostring(L and L[1].text))
   local lion, ready
   for _, l in ipairs(L) do
     if l.questID == 1002 then lion = l end
     if l.questID == 1004 then ready = l end
   end
-  check(lion and lion.text:find("encore ~16 × Lion des collines") and lion.text:find("/min"), "line: « encore ~16 lions », XP/min: " .. tostring(lion and lion.text))
-  check(ready and ready.text:find("Prête à rendre") and ready.text:find("suite « Aide au fermier » → « La grange"), "chain preview on the ready line: " .. tostring(ready and ready.text))
+  local Pl = TreeAI.Plain
+  check(lion and lion.text:find("Fioles? de sang") == nil and lion.text:find("· ") and (lion.text:find("Rapide") or lion.text:find("Long")),
+    "line = name + one status word: " .. tostring(lion and lion.text))
+  check(ready and ready.text:find("Prête à rendre"), "ready line: " .. tostring(ready and ready.text))
+  for _, l in ipairs(L) do
+    local okp, w = Pl.IsPlain(l.text)
+    check(okp, "plain quest line (no " .. tostring(w) .. "): " .. tostring(l.text))
+  end
   local tip = table.concat(lion.tooltip, "\n")
-  check(tip:find("Pourquoi ce rang") and tip:find("XP/min"), "tooltip: why this rank")
+  check(tip:find("À faire|r : Récupère 8 Sangs de lion sur les Lions des collines", 1, true) and not tip:find("XP/min"), "tooltip: plain status + action: " .. tip)
   check(tip:find("« Les lions attaquent nos fermes%. Ramène%-moi 10 fioles de leur sang%. »"), "tooltip: story summary")
-  check(tip:find("encore ~16 × Lion des collines %(50 %%%)"), "tooltip: drop hint with measured rate")
+  check(tip:find("encore ~16 Lions des collines à tuer", 1, true), "tooltip: drop hint in plain words")
   local rtip = table.concat(ready.tooltip, "\n")
   check(rtip:find("Chaîne 1/3 : → « Aide au fermier » %(Fermier%) → « La grange brûlée »"), "tooltip: chain 1/3: " .. rtip)
 
@@ -294,7 +300,7 @@ return function(M, ctx)
   TR.Push()
   local l5
   for _, l in ipairs(tabs.quests) do if l.questID == 1002 then l5 = l end end
-  check(l5 and l5.text:find("5/10"), "progress copied in combat: " .. tostring(l5 and l5.text))
+  check(l5 and table.concat(l5.tooltip, "\n"):find("5/10"), "progress copied in combat: " .. tostring(l5 and l5.text))
   TR:AutoRefresh()
   check(TR.items == before, "AutoRefresh does nothing in combat")
   M.LeaveCombat()

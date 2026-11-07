@@ -37,7 +37,7 @@ local M = T:RegisterModule("Todo", {
     { key = "steps", type = "toggle", label = "Étapes du trajet (plan TreeAI actif)", section = "Sections" },
     { key = "errands", type = "toggle", label = "Courses (marchand, réparation, formation, foyer, munitions)", section = "Sections" },
     { key = "group", type = "toggle", label = "Groupe (mini-tableau des missions)", section = "Sections" },
-    { key = "session", type = "toggle", label = "Barre de session (XP/h, niveau suivant)", section = "Sections" },
+    { key = "session", type = "toggle", label = "Barre de session (niveau suivant)", section = "Sections" },
     { key = "verdict", type = "toggle", label = "Verdict garder / plus tard / abandonner", section = "Cartes de quête" },
     { key = "reward", type = "toggle", label = "Récompense + % d'amélioration", section = "Cartes de quête" },
     { key = "mates", type = "toggle", label = "Avatars et progression des amis", section = "Cartes de quête" },
@@ -193,7 +193,7 @@ function M.Cards()
       end
       local e = V[q.id]
       if e then
-        c.verdict = { v = e.verdict, short = e.short, text = e.text, score = e.score }
+        c.verdict = { v = e.verdict, short = e.short, text = e.text, score = e.score, plain = e.plain }
         local rw = type(e.q.reward) == "table" and e.q.reward or nil
         if on("reward") and rw and ((rw.pct or 0) >= 1 or rw.item) then
           c.reward = { item = rw.item, pct = rw.pct and floor(rw.pct + 0.5) or nil, icon = rewardIcon(rw.item) }
@@ -278,6 +278,12 @@ end
 local ERRAND_ICON = { ammo = ICON.ammo, food = ICON.food, water = ICON.water, bags = ICON.bags, train = ICON.train,
                       repair = ICON.repair, hearth = ICON.hearth }
 local ERRAND_ORDER = { repair = 1, ammo = 2, bags = 3, food = 4, water = 5, train = 6, hearth = 7 }
+-- la course urgente dite simplement (verbe d'abord, sans %) ; le texte détaillé de Predict reste au survol
+local ERRAND_TASK = { repair = "Va réparer ton équipement chez un forgeron", ammo = "Achète des flèches au marchand le plus proche",
+  bags = "Vends ce qui encombre tes sacs au marchand", food = "Achète à manger au marchand le plus proche",
+  water = "Achète à boire au marchand le plus proche", train = "Va voir ton maître de classe (nouveaux sorts)",
+  hearth = "Pense à lier ta pierre de foyer à l'auberge" }
+M.ERRAND_TASK = ERRAND_TASK
 function M.Errands()
   local P = mod("Predict") or T.Predict
   local out = {}
@@ -368,26 +374,42 @@ end
 function M.SessionText(s)
   s = s or M.Session()
   local t = ("Niv %d → %d : %d %%"):format(s.level, s.level + 1, floor(s.pct * 100))
-  if s.rested and s.rested > 0 and s.xpMax > 0 then t = t .. (" (+%d %% repos)"):format(floor(min(s.rested, s.xpMax) * 100 / s.xpMax)) end
-  if s.xph and s.xph > 0 then t = t .. " · " .. fmtNum(s.xph) .. " XP/h" end
-  if s.eta and s.eta > 0 then t = t .. " · niveau dans ≈ " .. Time(s.eta) end
+  if s.rested and s.rested > 0 and s.xpMax > 0 then t = t .. " (bonus de repos)" end
+  if s.eta and s.eta > 0 then
+    local Pl = T.Plain
+    t = t .. " · niveau " .. (s.level + 1) .. " dans " .. ((Pl and Pl.Minutes(s.eta)) or ("≈ " .. Time(s.eta)))
+  end
   return t
 end
 
--- Pourquoi (phrase courte à partir du modèle de coût).
-local function whyText(c)
-  local Tr = mod("Tracker")
-  local p = {}
-  if c.complete then p[#p + 1] = "prête à rendre" .. (c.npc and (" à " .. cut(c.npc, 24)) or "")
-  elseif (c.xpm or 0) > 0 then p[#p + 1] = "meilleur rendement : " .. (Tr and Tr.Rate and Tr.Rate(c.xpm) or floor(c.xpm)) .. " XP/min" end
-  for i, w in ipairs(c.why or {}) do if i <= 2 then p[#p + 1] = w end end
+-- Pourquoi ? (UNE phrase simple, agent SIMPLE ; les calculs restent ceux du Tracker)
+local function openMates(c)
   local open = 0
   for _, g in ipairs(c.mates or {}) do if not g.done then open = open + 1 end end
-  if open > 0 then p[#p + 1] = ("à faire avec %d ami%s"):format(open, open > 1 and "s" or "") end
-  if c.verdict and c.verdict.v == "later" then p[#p + 1] = "verdict : plus tard" end
-  return table.concat(p, " · ")
+  return open
+end
+local function plainInfo(c)
+  local Tr = mod("Tracker")
+  if Tr and Tr.PlainInfo and c.it then
+    local ok, info = pcall(Tr.PlainInfo, c.it)
+    if ok and info then return info end
+  end
+  return { complete = c.complete, verdict = c.verdict and c.verdict.v, reason = c.verdict and c.verdict.plain,
+           hard = c.hard, sec = c.eta, mates = openMates(c) }
+end
+M.PlainInfo = plainInfo
+local function whyText(c, ctx)
+  local Pl = T.Plain
+  local info = plainInfo(c)
+  if Pl then return Pl.Why(info, ctx) end
+  return c.complete and "Prête à rendre." or "La meilleure quête pour toi."
 end
 M.WhyText = whyText
+local function tagText(c)
+  local Pl = T.Plain
+  return Pl and Pl.TagText(plainInfo(c)) or (c.complete and "|cff33ff33Prête à rendre|r" or "")
+end
+M.TagText = tagText
 
 local function distText(d)
   local C = T.Compass
@@ -397,15 +419,21 @@ local function distText(d)
 end
 M.DistText = distText
 
--- première chose concrète à faire dans une carte
+-- première chose concrète à faire dans une carte (« Va tuer 6 Loups au nord (≈ 3 min) »)
 local function cardTask(c)
-  if c.complete then return "Rendre « " .. cut(c.title, 34) .. " »" .. (c.npc and (" à " .. cut(c.npc, 22)) or "") end
+  local Tr = mod("Tracker")
+  if Tr and Tr.TaskText and c.it then
+    local ok, t = pcall(Tr.TaskText, c.it)
+    if ok and t then return t end
+  end
+  local Pl = T.Plain
+  if c.complete then return "Rends « " .. cut(c.title, 34) .. " »" .. (c.npc and (" à " .. cut(c.npc, 22)) or "") end
   for _, o in ipairs(c.objs or {}) do
     if not o.done then
-      return ("%s %d/%d — « %s »"):format(cut(o.name, 28), o.have, o.need, cut(c.title, 26))
+      return (Pl and Pl.ObjAction(o)) or (("%s %d/%d"):format(cut(o.name, 28), o.have, o.need))
     end
   end
-  return "« " .. cut(c.title, 40) .. " »"
+  return "Fais « " .. cut(c.title, 40) .. " »"
 end
 M.CardTask = cardTask
 
@@ -413,7 +441,8 @@ M.CardTask = cardTask
 function M.NowAction(model)
   for _, e in ipairs(model.errands or {}) do
     if e.prio >= 3 and not model.hiddenSet[e.key] then
-      return { kind = "errand", key = e.key, title = e.text, why = "Urgent : à régler avant de continuer", icon = e.icon, prio = 3 }
+      return { kind = "errand", key = e.key, title = ERRAND_TASK[e.id] or e.text, why = "À régler avant de continuer : " .. e.text,
+        icon = e.icon, prio = 3 }
     end
   end
   local first = model.cards[1]
@@ -421,14 +450,15 @@ function M.NowAction(model)
   local steps = model.steps
   if not pinned and steps and steps[1] then
     local s = steps[1]
-    return { kind = "step", title = s.label, why = ("Étape %d/%d du plan%s"):format(s.n, steps.total or s.n,
-      steps.title and (" « " .. cut(steps.title, 24) .. " »") or ""), eta = s.eta, icon = s.icon, point = s.point,
-      questID = s.q, prio = 2 }
+    local Pl = T.Plain
+    local t = s.eta and Pl and Pl.Minutes(s.eta)
+    return { kind = "step", title = tostring(s.label) .. (t and not tostring(s.label):find("≈", 1, true) and (" (" .. t .. ")") or ""),
+      why = "C'est la prochaine étape de ton trajet.", eta = s.eta, icon = s.icon, point = s.point, questID = s.q, prio = 2 }
   end
   local c = pinned or first
   if c then
-    return { kind = "quest", key = c.key, title = cardTask(c), why = (pinned and "épinglée · " or "") .. whyText(c), eta = c.eta,
-      dist = c.dist, icon = c.complete and ICON.ready or ICON.quest, questID = c.id, card = c, prio = 2 }
+    return { kind = "quest", key = c.key, title = cardTask(c), why = whyText(c, { pinned = pinned and true or nil }), eta = c.eta,
+      icon = c.complete and ICON.ready or ICON.quest, questID = c.id, card = c, prio = 2 }
   end
   return nil
 end
@@ -542,36 +572,32 @@ end
 -- ------------------------------------------------------------------ lignes de l'onglet « Quêtes » (compact)
 function M.CardLine(c)
   local col = c.complete and "|cff33ff33" or hex(LEVEL_RGB[c.color] or PRIO_RGB[1])
-  local parts = {}
-  if c.complete then parts[#parts + 1] = "|cff33ff33À rendre|r"
-  else
-    local have, need = 0, 0
-    for _, o in ipairs(c.objs) do have, need = have + min(o.have, o.need), need + o.need end
-    if need > 0 then parts[#parts + 1] = ("%d %%"):format(floor(have * 100 / need)) end
-  end
-  if c.eta then parts[#parts + 1] = Time(c.eta) end
-  if c.dist then parts[#parts + 1] = distText(c.dist) end
-  if #(c.mates or {}) > 0 then
-    local m = {}
-    for _, g in ipairs(c.mates) do m[#m + 1] = g.noAddon and g.name or (g.done and (g.name .. " fini")) or (("%s %d/%d"):format(g.name, g.have or 0, g.need or 1)) end
-    parts[#parts + 1] = "|cff88ccff" .. table.concat(m, ", ") .. "|r"
-  end
-  if c.reward and c.reward.pct and c.reward.pct >= 1 then parts[#parts + 1] = "|cff40d0ff+" .. c.reward.pct .. " %|r" end
-  if c.verdict and c.verdict.v ~= "keep" then parts[#parts + 1] = VERDICT[c.verdict.v][2] .. VERDICT[c.verdict.v][1] .. "|r" end
-  return ("%s[%s] %s|r · %s"):format(col, tostring(c.level or "?"), cut(c.title, 32), table.concat(parts, " · "))
+  return ("%s%s|r · %s"):format(col, cut(c.title, 32), tagText(c))
 end
 
 function M.CardTooltip(c)
-  local tip = { hex(LEVEL_RGB[c.color] or PRIO_RGB[1]) .. c.title .. "|r" .. (c.level and (" [" .. c.level .. "]") or "") .. " — " .. c.zone }
-  if c.complete then tip[#tip + 1] = "|cff33ff33Prête à rendre|r" .. (c.npc and (" à " .. c.npc) or "") end
-  for _, o in ipairs(c.objs) do
-    tip[#tip + 1] = ("%s%s %d/%d|r%s"):format(o.done and "|cff55ff55" or "|cffdddddd", cut(o.name, 34), o.have, o.need,
-      o.hint and o.hint ~= "" and ("  |cffaaaaaa" .. o.hint .. "|r") or "")
+  local Pl = T.Plain
+  local tip = { hex(LEVEL_RGB[c.color] or PRIO_RGB[1]) .. c.title .. "|r" .. " — " .. c.zone }
+  if Pl then
+    local word, why = Pl.Tag(plainInfo(c))
+    tip[#tip + 1] = "|cffffd100" .. word .. "|r : " .. why
   end
-  local w = whyText(c)
-  if w ~= "" then tip[#tip + 1] = "|cff99ccffPourquoi|r : " .. w end
-  if c.verdict then tip[#tip + 1] = VERDICT[c.verdict.v][2] .. VERDICT[c.verdict.v][1] .. "|r : " .. tostring(c.verdict.text or c.verdict.short or "") end
-  if c.reward then tip[#tip + 1] = "Récompense : " .. tostring(c.reward.item or "objet") .. (c.reward.pct and (" (+" .. c.reward.pct .. " %)") or "") end
+  tip[#tip + 1] = "|cff99ccffÀ faire|r : " .. cardTask(c)
+  for _, o in ipairs(c.objs) do
+    tip[#tip + 1] = ("%s%s %d/%d|r"):format(o.done and "|cff55ff55" or "|cffdddddd", cut(o.name, 34), o.have, o.need)
+  end
+  if #(c.mates or {}) > 0 then
+    local m = {}
+    for _, g in ipairs(c.mates) do m[#m + 1] = g.name .. (g.done and " (fini)" or "") end
+    tip[#tip + 1] = "|cff88ccffAvec|r " .. table.concat(m, ", ")
+  end
+  if c.reward and c.reward.item then
+    tip[#tip + 1] = "Récompense : " .. tostring(c.reward.item) .. ((c.reward.pct or 0) >= 1 and " (mieux que ton équipement)" or "")
+  end
+  local nums = {}
+  if Pl and Pl.Minutes(c.eta) then nums[#nums + 1] = Pl.Minutes(c.eta) end
+  if tonumber(c.xp) then nums[#nums + 1] = fmtNum(c.xp) .. " XP" end
+  if #nums > 0 then tip[#tip + 1] = "|cffaaaaaa" .. table.concat(nums, " · ") .. "|r" end
   tip[#tip + 1] = "|cff888888Clic : boussole · Maj-clic : Y aller|r"
   if T.AutoRunHint then tip[#tip + 1] = "|cff888888" .. T.AutoRunHint() .. "|r" end
   return tip
@@ -582,21 +608,20 @@ function M.TabLines(model)
   local lines = {}
   local a = model.now
   if a then
-    local meta = {}
-    if a.eta then meta[#meta + 1] = "≈ " .. Time(a.eta) end
-    if a.dist then meta[#meta + 1] = distText(a.dist) end
-    lines[#lines + 1] = { text = "|cffffd100Maintenant|r : " .. a.title .. (#meta > 0 and (" · " .. table.concat(meta, " · ")) or ""),
+    lines[#lines + 1] = { text = "|cffffd100À faire maintenant|r : " .. a.title,
       -- the Planner already pins its step in « Maintenant »: don't pin the same thing twice (QA sim)
       prio = a.prio or 2, icon = a.icon, pin = not (T.Planner and T.Planner.GetActiveSteps
         and select(1, pcall(T.Planner.GetActiveSteps, T.Planner, 1)) and T.Planner:GetActiveSteps(1) ~= nil), now = true,
-      tooltip = { a.title, a.why or "", "|cff888888Clic : boussole · Maj-clic : Y aller|r", (T.AutoRunHint and ("|cff888888" .. T.AutoRunHint() .. "|r") or nil) },
+      tooltip = { a.title, "|cff99ccffPourquoi ?|r " .. (a.why or ""), "|cff888888Clic : boussole · Maj-clic : Y aller|r", (T.AutoRunHint and ("|cff888888" .. T.AutoRunHint() .. "|r") or nil) },
       onClick = function() M.Go(a, shift()) end }
   end
   local st = model.steps
   if st then
     for i = (a and a.kind == "step") and 2 or 1, min(#st, 3) do
       local s = st[i]
-      lines[#lines + 1] = { text = ("Étape %d/%d : %s%s"):format(s.n, st.total or s.n, s.label, s.eta and (" · ~" .. Time(s.eta)) or ""),
+      local Pl = T.Plain
+      local t = s.eta and Pl and Pl.Minutes(s.eta)
+      lines[#lines + 1] = { text = ("Ensuite : %s%s"):format(s.label, t and (" (" .. t .. ")") or ""),
         prio = 1, icon = s.icon, plan = true, onClick = function() M.Go(s, shift()) end }
     end
   end
@@ -629,7 +654,7 @@ function M.TabLines(model)
     for _, e in ipairs(model.errands) do tip[#tip + 1] = e.text end
     lines[#lines + 1] = { text = "|cffffd100Courses|r : " .. table.concat(t, " · "), prio = pr, tooltip = tip }
   end
-  if model.session and (model.session.xph or 0) > 0 then
+  if model.session and (model.session.eta or 0) > 0 then
     lines[#lines + 1] = { text = "|cff888888" .. M.SessionText(model.session) .. "|r", prio = 1, icon = ICON.session }
   end
   lines[#lines + 1] = { text = "|cff66ccff" .. (M.frame and M.frame:IsShown() and "Fermer" or "Ouvrir") .. " la fenêtre « À faire »|r (épingler, trier, filtrer)",
@@ -938,12 +963,9 @@ function M.Paint(b, r, w, fs)
     b.sub:SetPoint("TOPLEFT", b.text, "BOTTOMLEFT", 0, -3)
     b.sub:SetWidth(w - isz - 24)
     b.sub:SetText("|cffbbbbbb" .. (a.why or "") .. "|r")
-    local meta = {}
-    if a.eta then meta[#meta + 1] = "≈ " .. Time(a.eta) end
-    if a.dist then meta[#meta + 1] = distText(a.dist) end
     b.meta:ClearAllPoints() setFont(b.meta, fs - 1)
     b.meta:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 16 + isz, 8)
-    b.meta:SetText("|cffffffff" .. table.concat(meta, " · ") .. "|r")
+    b.meta:SetText("")
     if a.kind ~= "errand" and (a.questID or a.point) then
       b.btn2:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -8, 5)
       b.btn1:SetPoint("RIGHT", b.btn2, "LEFT", -4, 0)
@@ -954,8 +976,7 @@ function M.Paint(b, r, w, fs)
       b.btn2.tip = "Itinéraire : Shortest Path → TomTom → repère de carte (sur ton clic)"
       b.btn1:Show() b.btn2:Show()
     end
-    r.tip = { a.title, a.why or "" }
-    if a.card then r.tip = M.CardTooltip(a.card) end
+    r.tip = { a.title, "|cff99ccffPourquoi ?|r " .. (a.why or "") }
     r.onClick = function() M.Go(a, shift()) end
   elseif r.kind == "step" then
     local s = r.s
@@ -965,7 +986,7 @@ function M.Paint(b, r, w, fs)
     local head = r.group and "" or (s.n and ((r.first and "|cffffd100" or "|cffaaaaaa") .. s.n .. ".|r ") or "")
     b.text:SetText(head .. (r.first and "|cffffffff" or "|cffcccccc") .. tostring(s.label) .. "|r")
     b.right:SetPoint("RIGHT", b, "RIGHT", -8, 0)
-    b.right:SetText(s.eta and ("|cffaaaaaa~" .. Time(s.eta) .. "|r") or "")
+    b.right:SetText(s.eta and ("|cffaaaaaa" .. ((T.Plain and T.Plain.Minutes(s.eta)) or ("~" .. Time(s.eta))) .. "|r") or "")
     if s.point or s.q then r.onClick = function() M.Go({ point = s.point, questID = s.q, title = s.label }, shift()) end end
     r.tip = { tostring(s.label), r.group and "Prochaine mission du groupe (Missions)" or "Clic : boussole · Maj-clic : Y aller", (T.AutoRunHint and ("|cff888888" .. T.AutoRunHint() .. "|r") or nil) }
     if r.group then local Mi = mod("Missions") r.onClick = function() if Mi and Mi.next and Mi.SetGroupTarget then pcall(Mi.SetGroupTarget, Mi, Mi.next.mission) end end end
@@ -1002,8 +1023,7 @@ function M.Paint(b, r, w, fs)
     local anchor = b.go
     if c.verdict and VERDICT[c.verdict.v] then
       b.verdict.t:SetTexture(ICON[c.verdict.v] or ICON.keep)
-      b.verdict.tip = { VERDICT[c.verdict.v][2] .. VERDICT[c.verdict.v][1] .. "|r" .. (c.verdict.score and (" (" .. c.verdict.score .. "/100)") or ""),
-        tostring(c.verdict.text or c.verdict.short or "") }
+      b.verdict.tip = { VERDICT[c.verdict.v][2] .. VERDICT[c.verdict.v][1] .. "|r", tostring(c.verdict.plain or "") }
       b.verdict.onClick = function() local A = mod("Abandon") if A and A.Report then pcall(A.Report, c.title) end end
       b.verdict:SetPoint("RIGHT", anchor, "LEFT", -3, 0) b.verdict:Show()
       anchor = b.verdict
@@ -1011,21 +1031,17 @@ function M.Paint(b, r, w, fs)
     local rtxt = ""
     if c.reward then
       b.reward.t:SetTexture(c.reward.icon or ICON.reward)
-      b.reward.tip = { "Récompense : " .. tostring(c.reward.item or "objet"), c.reward.pct and ("Amélioration +" .. c.reward.pct .. " %") or "Pas mieux que ton équipement" }
+      b.reward.tip = { "Récompense : " .. tostring(c.reward.item or "objet"), (c.reward.pct or 0) >= 1 and "Mieux que ton équipement" or "Pas mieux que ton équipement" }
       b.reward:SetPoint("RIGHT", anchor, "LEFT", -3, 0) b.reward:Show()
       anchor = b.reward
-      if c.reward.pct and c.reward.pct >= 1 then rtxt = "|cff40d0ff+" .. c.reward.pct .. "%|r " end
     end
-    local meta = {}
-    if c.complete then meta[#meta + 1] = "|cff33ff33À rendre|r" elseif c.eta then meta[#meta + 1] = Time(c.eta) end
-    if c.dist then meta[#meta + 1] = distText(c.dist) end
     b.right:SetPoint("RIGHT", anchor, "LEFT", -4, 0)
-    b.right:SetText(rtxt .. "|cffcccccc" .. table.concat(meta, " · ") .. "|r")
+    b.right:SetText(rtxt .. tagText(c))
     local rightW = 150 + (c.verdict and 17 or 0) + (c.reward and 17 or 0)
     b.text:SetPoint("LEFT", b.pin, "RIGHT", 4, 0)
     b.text:SetWidth(max(60, w - rightW - 30))
     local col = hex(LEVEL_RGB[c.color] or PRIO_RGB[1])
-    b.text:SetText(("%s[%s]|r %s"):format(col, tostring(c.level or "?"), c.title))
+    b.text:SetText(col .. c.title .. "|r")
     r.tip = M.CardTooltip(c)
     table.insert(r.tip, #r.tip, "|cff888888Glisser : changer l'ordre · ▲▼ : monter / descendre|r")
     r.onClick = function(_, btn)
@@ -1166,10 +1182,10 @@ function M.CreateFrame()
   head.route.tip = "Tout le journal en un trajet (Shortest Path → boussole)"
   head.sort = textButton(head, "Tri", 82, 16, function() M.CycleSort() end)
   head.sort:SetPoint("RIGHT", head.route, "LEFT", -4, 0)
-  head.sort.tip = "Changer le tri (XP/min, itinéraire, distance, niveau, zone)"
+  head.sort.tip = "Changer l'ordre (les plus rapides, en chemin, les plus proches, niveau, zone)"
   head.reset = textButton(head, "Ordre auto", 72, 16, function() M.ResetOrder() end)
   head.reset:SetPoint("RIGHT", head.sort, "LEFT", -4, 0)
-  head.reset.tip = "Oublier l'ordre choisi à la main (revenir au tri XP/min)"
+  head.reset.tip = "Oublier l'ordre choisi à la main (les plus rapides d'abord)"
   f.head = head
   -- puces de filtre + recherche
   local chips = _G.CreateFrame("Frame", nil, f)
@@ -1231,7 +1247,7 @@ function M.CreateFrame()
   sb.fs = sb:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   sb.fs:SetPoint("CENTER", sb, "CENTER", 0, 0)
   sb:EnableMouse(true)
-  sb:SetScript("OnEnter", function(self) showTip(self, { "Session", self.fs:GetText() or "", "XP/h mesurée (Boost / Prévisions)" }) end)
+  sb:SetScript("OnEnter", function(self) showTip(self, { "Session", self.fs:GetText() or "", "Temps estimé d'après ton rythme de jeu" }) end)
   sb:SetScript("OnLeave", hideTip)
   f.session = sb
   -- poignée de redimensionnement
@@ -1432,7 +1448,7 @@ function M.WriteSummary()
   for _ in pairs(M.char and M.char.pins or {}) do np = np + 1 end
   for _ in pairs(M.char and M.char.hidden or {}) do nh = nh + 1 end
   local a = model and model.now
-  s.todo = { updated = try(_G.time), now = a and { kind = a.kind, text = cut(a.title, 80), eta = a.eta and floor(a.eta + 0.5) or nil } or nil,
+  s.todo = { updated = try(_G.time), now = a and { kind = a.kind, text = cut(a.title, 90), why = a.why, eta = a.eta and floor(a.eta + 0.5) or nil } or nil,
     pins = np, hidden = nh, ordered = no, filter = M.char and M.char.filter or "tous",
     errands = model and #model.errands or 0, shown = frame and frame:IsShown() or false }
 end
@@ -1469,7 +1485,7 @@ local function slash(rest)
   if cmd == "" then M.Toggle()
   elseif cmd == "montrer" or cmd == "on" or cmd == "ouvrir" then M.Show(true)
   elseif cmd:find("^cach") or cmd == "off" or cmd == "fermer" then M.Show(false)
-  elseif cmd == "ordre" then M.ResetOrder() M:Print("Ordre automatique rétabli (tri XP/min).")
+  elseif cmd == "ordre" then M.ResetOrder() M:Print("Ordre automatique rétabli (les plus rapides d'abord).")
   elseif cmd == "tout" then M.ShowAll() M:Print("Tout est réaffiché.")
   elseif cmd == "reset" then
     M.char.pins, M.char.hidden, M.char.order, M.char.folded, M.char.sections, M.char.search, M.char.filter = {}, {}, {}, {}, {}, "", "tous"

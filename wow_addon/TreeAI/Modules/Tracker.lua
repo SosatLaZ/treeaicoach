@@ -87,7 +87,7 @@ M.DEFAULT_DROP = 0.35     -- taux de drop supposé tant que rien n'est mesuré
 M.DEFAULT_KILL = 25       -- secondes par monstre (tuer + dépecer + reprendre) sans mesure
 M.SORTS = { "cout", "route", "distance", "niveau", "zone" }
 M.FILTERS = { "tous", "zone", "pretes", "groupe", "faciles" }
-local SORT_TXT = { cout = "XP/min", route = "itinéraire", distance = "distance", niveau = "niveau", zone = "zone" }
+local SORT_TXT = { cout = "les plus rapides", route = "en chemin", distance = "les plus proches", niveau = "niveau", zone = "zone" }
 local FILTER_TXT = { tous = "toutes", zone = "cette zone", pretes = "prêtes", groupe = "groupe", faciles = "faciles" }
 M.SORT_TXT, M.FILTER_TXT = SORT_TXT, FILTER_TXT
 local COLOR = { gris = "|cff9d9d9d", vert = "|cff40c040", jaune = "|cffffff00", orange = "|cffff8040", rouge = "|cffff2020" }
@@ -513,6 +513,7 @@ function M.Build()
         p, d = C.Nearest(pts, me)
       end
       local it = { key = q.id, q = q, p = p and p.mapID and p or nil, dist = d or q.dist, npc = p and p.name }
+      if it.p and me and vector then local _, b = vector(me, it.p) it.bearing = b end
       it.mates = M.GroupOn(q.id, mates)
       local sh = 0
       for _, g in ipairs(it.mates) do if not g.done then sh = sh + 1 end end
@@ -743,11 +744,12 @@ function M.ObjHint(e)
   if not e then return nil end
   local parts = {}
   if e.mobs and e.mob and e.mob ~= "" then
-    local approx = (e.rate and "~") or ""
-    parts[#parts + 1] = ("encore %s%d × %s"):format(approx, e.mobs, cut(e.mob, 22))
-    if e.rate and e.measured then parts[#parts] = parts[#parts] .. (" (%d %%)"):format(floor(e.rate * 100 + 0.5)) end
+    local Pl = T.Plain
+    local mob = cut(e.mob, 22)
+    if Pl and Pl.Plural then mob = Pl.Plural(mob, e.mobs) end
+    parts[#parts + 1] = ("encore %s%d %s à tuer"):format((e.rate and "~") or "", e.mobs, mob)
   end
-  if e.sec then parts[#parts + 1] = "≈ " .. M.Time(e.sec) end
+  if e.sec then parts[#parts + 1] = (T.Plain and T.Plain.Minutes(e.sec)) or ("≈ " .. M.Time(e.sec)) end
   return table.concat(parts, " · ")
 end
 
@@ -771,6 +773,50 @@ local function distText(it)
   return nil
 end
 
+-- ------------------------------------------------------------------ en clair (agent SIMPLE)
+-- verdict Abandon de la quête (lecture seule) → verdict, raison simple
+local function verdictOf(qid)
+  local A = mod("Abandon")
+  for _, e in ipairs(A and A.evals or {}) do
+    if type(e.q) == "table" and e.q.id == qid then return e.verdict, e.plain end
+  end
+  return nil
+end
+-- trop dure seul ? (difficulté du modèle : élite / groupe suggéré / donjon / trop haut)
+function M.IsHard(it)
+  local q, k = it.q, max(1, (M.ctx and M.ctx.group) or 1)
+  if q.complete then return false end
+  if q.dungeon or (q.elite and k == 1) or (tonumber(q.suggestedGroup) or 0) > k then return true end
+  return (it.diff or 1) >= 3
+end
+-- infos pour TreeAI.Plain.Tag
+function M.PlainInfo(it)
+  local v, why = verdictOf(it.q.id)
+  local open = 0
+  for _, g in ipairs(it.mates or {}) do if not g.done then open = open + 1 end end
+  return { complete = it.q.complete, verdict = v, reason = why, hard = M.IsHard(it),
+           sec = it.q.complete and (it.travelSec or it.sec) or it.sec, mates = open }
+end
+-- première chose concrète à faire (« Va tuer 6 Loups au nord (≈ 3 min) »)
+function M.TaskText(it)
+  local Pl, q = T.Plain, it.q
+  if not Pl then return q.title end
+  local obj, est
+  for _, o in ipairs(q.obj or {}) do
+    if not o.finished then obj, est = o, it.objs and it.objs[o.name] break end
+  end
+  local sec = it.sec
+  if q.complete then sec = it.travelSec or it.sec
+  elseif est and est.sec then sec = est.sec * (it.diff or 1) + (it.travelSec or 0) end
+  return Pl.Task({ complete = q.complete, title = q.title, npc = it.npc, turnZone = q.turnZone, zone = q.zone,
+    here = M.ctx and M.ctx.zone, obj = obj, est = est, dist = it.dist, bearing = it.bearing, sec = sec })
+end
+function M.TagText(it)
+  local Pl = T.Plain
+  if not Pl then return "" end
+  return Pl.TagText(M.PlainInfo(it))
+end
+
 function M.Tooltip(it)
   local q = it.q
   local tip = { (COLOR[q.color] or "") .. q.title .. "|r" .. (q.level and (" [" .. q.level .. "]") or "") }
@@ -784,12 +830,13 @@ function M.Tooltip(it)
         hint and ("  " .. hint) or "")
     end
   end
-  local why = { M.Rate(it.xpm) .. " XP/min" }
-  if it.travelSec then why[#why + 1] = "trajet " .. M.Time(it.travelSec) .. (it.travel and " (Shortest Path)" or "") end
-  if (it.work or 0) > 0 then why[#why + 1] = "travail " .. M.Time(it.work) end
-  for _, w in ipairs(it.why or {}) do why[#why + 1] = w end
-  if (it.shared or 0) > 0 then why[#why + 1] = "partagée (×0,7)" end
-  tip[#tip + 1] = "|cff99ccffPourquoi ce rang|r : " .. table.concat(why, ", ")
+  local Pl = T.Plain
+  if Pl then
+    local word, why = Pl.Tag(M.PlainInfo(it))
+    tip[#tip + 1] = "|cffffd100" .. word .. "|r : " .. why
+    tip[#tip + 1] = "|cff99ccffÀ faire|r : " .. M.TaskText(it)
+    if tonumber(q.xp) then tip[#tip + 1] = "|cffaaaaaa" .. fmtNum(q.xp) .. " XP à la clé|r" end
+  end
   local nexts, pos, len = chainOf(q)
   if nexts and (#nexts > 0 or (len or 0) > 1) then
     local o = {}
@@ -820,49 +867,20 @@ function M.OnLineClick(qid)
   return t and "target" or nil
 end
 
+-- ligne de la liste : nom + UN mot d'état (Rapide / Long / À plusieurs / Prête à rendre / À retirer)
 function M.QuestText(it)
   local q = it.q
-  local Q = mod("Quests")
-  local parts, head = {}, nil
-  if q.complete then
-    head = ("|cff33ff33Prête à rendre|r %s"):format(cut(q.title, 30))
-    local nexts = chainOf(q)
-    if nexts and nexts[1] then
-      parts[#parts + 1] = "→ suite « " .. cut(nexts[1].title, 26) .. " »" .. (nexts[2] and (" → « " .. cut(nexts[2].title, 18) .. " »") or "")
-    elseif Q and Q.QuestieNext then
-      local nx = try(Q.QuestieNext, q.id)
-      if nx then parts[#parts + 1] = "→ " .. nx:gsub("^Suite : ", "suite ") end
-    end
-    if it.npc then parts[#parts + 1] = it.npc end
-  else
-    head = ("%s[%d]|r %s"):format(COLOR[q.color] or "", q.level or 0, cut(q.title, 30))
-    local o = {}
-    for _, ob in ipairs(q.obj or {}) do
-      if not ob.finished then
-        local e = it.objs and it.objs[ob.name]
-        local s = M.Bar(ob.have, ob.need, 5) .. " " .. (ob.have or 0) .. "/" .. (ob.need or 1)
-        if e and e.mobs and e.mob and e.rate then s = s .. (" encore ~%d × %s"):format(e.mobs, cut(e.mob, 18)) end
-        o[#o + 1] = s
-      end
-      if #o >= 2 then break end
-    end
-    if #o > 0 then parts[#parts + 1] = table.concat(o, " ") end
-    if (it.work or 0) > 0 then parts[#parts + 1] = "≈ " .. M.Time(it.work * (it.diff or 1)) end
-  end
-  local dt = distText(it)
-  if dt then parts[#parts + 1] = dt end
-  if q.xp then parts[#parts + 1] = fmtNum(q.xp) .. " XP" end
-  if (it.xpm or 0) > 0 then parts[#parts + 1] = M.Rate(it.xpm) .. "/min" end
-  if #(it.mates or {}) > 0 then parts[#parts + 1] = "|cff88ccff" .. groupText(it.mates) .. "|r" end
-  return it.rank .. ". " .. head .. (#parts > 0 and (" · " .. table.concat(parts, " · ")) or "")
+  local col = q.complete and "|cff33ff33" or (COLOR[q.color] or "")
+  local s = col .. cut(q.title, 32) .. "|r · " .. M.TagText(it)
+  if #(it.mates or {}) > 0 then s = s .. " |cff88ccff" .. groupText(it.mates) .. "|r" end
+  return s
 end
 
 function M.HeaderText()
   local n, ready = #(M.shown or {}), 0
   for _, it in ipairs(M.items or {}) do if it.q.complete then ready = ready + 1 end end
-  local s = ("|cffffd100Suivi|r · tri %s · %s (%d)"):format(SORT_TXT[opt("sort", "cout")] or "?", FILTER_TXT[opt("filter", "tous")] or "?", n)
-  if ready > 0 then s = s .. (" · |cff33ff33%d prête%s|r"):format(ready, ready > 1 and "s" or "") end
-  if (M.totalSec or 0) > 0 then s = s .. " · ≈ " .. M.Time(M.totalSec) .. " pour tout" end
+  local s = ("|cffffd100Quêtes|r (%d) · %s d'abord · %s"):format(n, SORT_TXT[opt("sort", "cout")] or "?", FILTER_TXT[opt("filter", "tous")] or "?")
+  if ready > 0 then s = s .. (" · |cff33ff33%d prête%s à rendre|r"):format(ready, ready > 1 and "s" or "") end
   return s
 end
 
@@ -888,8 +906,7 @@ function M.Lines()
   local lines = {}
   local planLines = M.PlanLines(M.me)
   lines[#lines + 1] = { text = M.HeaderText(), prio = 1, header = true,
-    tooltip = { "Clic : changer de filtre (toutes / zone / prêtes / groupe / faciles)", "Maj-clic : changer de tri",
-      "Tri XP/min = XP ÷ (trajet + travail × difficulté)" },
+    tooltip = { "Les meilleures quêtes en haut.", "Clic : changer de filtre (toutes / zone / prêtes / groupe / faciles) · Maj-clic : changer d'ordre" },
     onClick = function() if shift() then M.CycleSort(1) else M.CycleFilter(1) end end }
   if planLines then
     for _, l in ipairs(planLines) do lines[#lines + 1] = l end
@@ -933,7 +950,7 @@ function M.FrameRows()
       local fold = M.char.allCollapsed or collapsed[tostring(l.questID)]
       local q = it and it.q
       local title = it and ((fold and "+ " or "- ") .. it.rank .. ". " .. (q.complete and "|cff33ff33" or (COLOR[q.color] or "")) ..
-        cut(q.title, 34) .. "|r" .. (it.xpm and it.xpm > 0 and (" |cff99ccff" .. M.Rate(it.xpm) .. "/min|r") or "")) or l.text
+        cut(q.title, 34) .. "|r · " .. M.TagText(it)) or l.text
       rows[#rows + 1] = { kind = "quest", text = title, line = l, qid = l.questID }
       if it and not fold then
         if q.complete then
@@ -944,7 +961,7 @@ function M.FrameRows()
             if not o.finished then
               local hint = it.objs and M.ObjHint(it.objs[o.name])
               rows[#rows + 1] = { kind = "obj", indent = 12, line = l, qid = l.questID, bar = { o.have or 0, o.need or 1 },
-                text = ("%s %d/%d%s"):format(cut(o.name, 26), o.have or 0, o.need or 1, (hint and hint ~= "") and (" · " .. hint) or "") }
+                text = ("%s %d/%d"):format(cut(o.name, 30), o.have or 0, o.need or 1), tip = hint }
             end
           end
           local dt = distText(it)
@@ -1179,6 +1196,12 @@ function M.WriteSummary()
       dist = it.dist and floor(it.dist + 0.5) or nil, xp = it.q.xp, zone = it.q.zone,
       done = it.q.done, total = it.q.total, xpm = it.xpm and floor(it.xpm + 0.5) or nil,
       sec = it.sec and floor(it.sec + 0.5) or nil, mates = (it.mates and #it.mates > 0) and #it.mates or nil }
+    local Pl = T.Plain
+    if Pl then
+      local word, why = Pl.Tag(M.PlainInfo(it))
+      route[#route].tag, route[#route].why = word, why
+      if i == 1 then route[#route].task = M.TaskText(it) end
+    end
   end
   local easy = {}
   for i, a in ipairs(M.easy or {}) do

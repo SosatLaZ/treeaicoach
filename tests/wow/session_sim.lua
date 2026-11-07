@@ -410,8 +410,16 @@ local function skeleton(text)
   return (tostring(text):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("[%d%.,:]+", "#"):gsub("%s+", " "))
 end
 
+local JARGON = { "xp/min", "xp/h", "/min", "score", "λ", "/100", "coût", "rendement" }
+local function jargonOf(text)
+  local t = tostring(text or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T.-|t", "")
+  local low = t:lower()
+  for _, w in ipairs(JARGON) do if low:find(w, 1, true) then return w end end
+  if t:find("%", 1, true) and not (low:find("niv", 1, true) or low:find("fini", 1, true)) then return "%" end
+  return nil
+end
 local S = { nowChanges = {}, nowRaw = {}, lastNow = nil, dupSec = 0, samples = 0, dupEx = {}, sv = {}, mem = {},
-  topicSeen = {}, nowLog = {} }
+  topicSeen = {}, nowLog = {}, jargon = {} }
 local function sampleMain(c)
   local T = c.T
   if not (T and T.GetTabLines) then return end
@@ -431,6 +439,15 @@ local function sampleMain(c)
       end
       topics[tp] = tostring(e.text)
     end
+  end
+  -- SIMPLE: the quest guidance speaks plain French (no XP/min, score, λ, % outside a progress)
+  -- (checked here, not with TreeAI.Plain, so the sampling never counts as addon CPU; quests tab every 30 s)
+  for _, e in ipairs(lines) do
+    if e.now then local w = jargonOf(e.text) if w then S.jargon[tostring(e.text)] = w end end
+  end
+  if S.samples % 30 == 0 then
+    local okq, ql = BASE.pcall(T.GetTabLines, T, "quests")
+    for _, e in ipairs(okq and ql or {}) do local w = jargonOf(e.text) if w then S.jargon[tostring(e.text)] = w end end
   end
   S.samples = S.samples + 1
   local key = table.concat(sk, "\n")
@@ -1050,6 +1067,17 @@ for i, mod in ipairs(mods) do
 end
 P(("  total addon  %7.0f kinstr/min"):format(totalMain / nMin))
 if totalMain / nMin > BUDGET.kinstrTotalMin then fail(("cpu: addon total %.0f kinstr/min > %d"):format(totalMain / nMin, BUDGET.kinstrTotalMin)) end
+
+-- SIMPLE: jargon in the quest guidance
+do
+  local nj = 0
+  for text, w in pairs(S.jargon) do
+    nj = nj + 1
+    if nj <= 3 then P(("jargon (%s): %s"):format(tostring(w), text)) end
+  end
+  P(("quest guidance: %d line(s) with jargon"):format(nj))
+  if nj > 0 then fail(("%d quest line(s) with XP/min / score / %% / λ"):format(nj)) end
+end
 
 -- « Maintenant » changes
 local sumCh, maxCh, maxChMin = 0, 0, 0

@@ -272,7 +272,7 @@ def test_compute_plan_routes_and_verdicts():
         etas = [st["eta"] for st in r["steps"]]
         assert etas == sorted(etas)
     sq = plan["routes"][2]
-    assert sq["title"] == "Escouade (4)" and sq["steps"][0]["k"] == "meet"
+    assert sq["title"] == "Avec mes potes (4)" and sq["steps"][0]["k"] == "meet"
     assert any(st.get("who") for st in sq["steps"])
     solo = routes.compute_plan(make_export(12, seed=2), seconds=2)
     assert [r["id"] for r in solo["routes"]] == ["xph", "clear", "safe"]
@@ -340,16 +340,16 @@ def test_compute_and_write_from_savedvars(tmp_path):
 def test_summaries_for_ui_and_coach():
     plan = routes.compute_plan(make_export(12, seed=5), seconds=2)
     lines = routes.summary_lines(plan, "clear")
-    assert lines[0].startswith("Trajet « Finir la zone »") and "Prochaines étapes" in lines[2]
+    assert lines[0].startswith("Trajet « Tout finir ici »") and "XP/h" not in " ".join(lines) and "Prochaines étapes" in lines[2]
     from treeaicoach.ui_page_wow import plan_rows
     from treeaicoach.wow import ai_context
 
     rows = plan_rows(plan)
-    assert len(rows) == 3 and "XP/h" in rows[0][0]
+    assert len(rows) == 3 and rows[0][0].startswith("Le plus rapide (≈ ") and not any("XP/h" in a + b for a, b in rows)
     assert plan_rows(None) == [] and routes.summary_lines(None) == []
     db = {"chars": {"Testeur-Royaume": {"class": "HUNTER", "level": 26, "updated": 1,
                                         "plan": {"route": "safe", "step": 1}}}}
     ctx_lines = ai_context.plan_context(plan, db)
-    assert ctx_lines and "Prudent" in ctx_lines[0]
+    assert ctx_lines and "Sans galère" in ctx_lines[0]
     ctx = ai_context.build_context(SimpleNamespace(_wow_plan=plan, _wow_db=db), facts=[])
     assert list(ctx)[:3] == ["classe", "niveau", "trajet"]
