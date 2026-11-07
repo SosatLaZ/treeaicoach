@@ -100,7 +100,7 @@ def test_session_glue_end_to_end(tmp_path):
     p = tmp_path / "WoWCombatLog.txt"
     p.write_text("", encoding="utf-8")
     said, ended = [], threading.Event()
-    s = WowCombatSession(p, lambda t, lvl: said.append(t), on_fight_end=lambda f: ended.set(),
+    s = WowCombatSession(p, lambda t, lvl: said.append(t), on_fight_end=lambda f: ended.set(), voice=True,
                          interval=0.05, max_lag=None, wall=lambda: 1e12)
     s.start()
     try:
