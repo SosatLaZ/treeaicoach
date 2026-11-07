@@ -1034,14 +1034,36 @@ function R:OnEnable()
     if me then R.char.death = { c = me.c, n = me.n, w = me.w, t = epoch() } R.slowAt = 0 end
   end)
   local function alive()
-    if not try(_G.UnitIsDeadOrGhost, "player") then R.char.death = nil R.slowAt = 0 end
+    if not try(_G.UnitIsDeadOrGhost, "player") then R.char.death = nil R.slowAt = 0 R:Clear("corpse") end
   end
   self:RegisterEvent("PLAYER_ALIVE", alive)
   self:RegisterEvent("PLAYER_UNGHOST", alive)
   R.Visibility()
   if not R.ticker and T.NewTicker then
-    R.ticker = T:NewTicker(1, function() if R:IsEnabled() then R.Visibility() end end)
+    R.ticker = T:NewTicker(1, function() if R:IsEnabled() then R.Visibility() R.CorpseLine() end end)
   end
+end
+
+-- fantôme : UNE ligne « course au corps » (seul conseil permis quand on est mort, avec le choix du
+-- gardien des esprits quand le corps est loin). Clic : boussole vers le corps.
+R.CORPSE_FAR = 900   -- m
+function R.CorpseText(meters, level)
+  if not meters then return nil end
+  local m = floor(meters / 10 + 0.5) * 10
+  local dist = m >= 1000 and (("%.1f km"):format(m / 1000):gsub("%.", ",")) or (m .. " m")
+  if m >= R.CORPSE_FAR and (tonumber(level) or 0) >= 10 then
+    return "Cours à ton corps (" .. dist .. ") ou relève-toi au gardien des esprits (10 min de mal de résurrection)"
+  end
+  return "Cours à ton corps : " .. dist .. " — clique pour la flèche"
+end
+function R.CorpseLine()
+  if not (R.char and try(_G.UnitIsGhost, "player")) then return end
+  local d, me = R.char.death, R.Me()
+  if type(d) ~= "table" or not me or me.c ~= d.c or not (d.n and me.n) then R:Clear("corpse") return end
+  local yd = sqrt((d.n - me.n) ^ 2 + (d.w - me.w) ^ 2)
+  local txt = R.CorpseText(yd * 0.9144, num(try(_G.UnitLevel, "player")))
+  R:Suggest("corpse", txt, 2, { ttl = 5, cooldown = 600, sound = false, death = true, tooltip = "Clic : boussole vers ton corps",
+    onClick = function() R.SetTarget({ c = d.c, n = d.n, w = d.w, label = "Ton corps" }) end })
 end
 
 function R:OnDisable()

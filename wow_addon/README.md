@@ -494,8 +494,21 @@ ses actions à la souris. Options : préréglage, profil, assistant, « Tout »,
 * Encadré + son prio 3 : `TreeAI:AlertAllowed(e, opts)` — au plus 1 / `noise.alertGap` s (20), même sujet
   pas avant `noise.topicGap` s, **en combat seulement le danger** (`opts.danger = true` ou
   `TreeAI.DANGER_IDS`) ; le reste est rejoué 2 s après le combat s'il est encore vrai. `ResetAlertGate()`.
-* Préréglages `TreeAI:ApplyPreset("calme"|"normal"|"tout")` (`TreeAI.PRESETS` : 3/5/8 lignes,
-  `settings.preset`, `settings.noise`) ; un réglage touché à la main → `preset = "perso"`.
+* Préréglages `TreeAI:ApplyPreset("simple"|"calme"|"normal"|"tout")` (`TreeAI.PRESETS` : 3/3/5/8 lignes,
+  `settings.preset`, `settings.noise`) ; un réglage touché à la main → `preset = "perso"`. **simple** (défaut)
+  = `noise.actionable` : dans « Maintenant », seulement les lignes cliquables ou prio ≥ 2, 1 par module ;
+  proposé une fois aux anciens utilisateurs (`settings.simpleV` / `TreeAI.SIMPLE_VERSION`, une ligne
+  « Mode simple activé : … clique pour revenir »).
+* État du joueur : `TreeAI:PlayerState()` → `{ dead, ghost, taxi, mounted, resting, inCombat, inInstance, afk }`
+  (cache 0,25 s, appels gardés) ; `TreeAI:Quiet(kind)` selon `TreeAI.QUIET_RULES` : `"buff"` (aspect, buff,
+  familier, munitions : `QUIET_TOPICS` / `QUIET_MODULES`) muet mort / fantôme / vol / monture / repos et
+  **jeté** par `Suggest` ; `"advice"` (défaut) muet mort / fantôme / vol, **mis en attente** (caché, sans son)
+  puis réaffiché ; `"death"` (`opts.death = true` : récap, course au corps) jamais muet. `opts.kind` force le
+  genre ; les lignes `pin` des onglets suivent la même règle.
+* Textes : `TreeAI.SafeText` retire les glyphes absents des polices WoW (▶ ✔ → …), appliqué par `Suggest` et
+  `SetTabLines` ; `TreeAI.ObjectiveName("Atrexis : 0/1")` = « Atrexis » (insécables FR, compteur devant /
+  derrière, « (Terminé) »). Règle des textes : verbe d'abord, ≤ 2 lignes courtes, jamais un chiffre qu'on n'a
+  pas (« 0 dégâts », « ? »), une ligne sans action = cliquable ou supprimée.
 * Module coupé en direct : ses `Suggest` (avec `opts.module`) sont ignorés, ses blocs `SetTabLines` masqués
   (`TreeAI.SOURCE_OWNER`, `MAIN_OWNER` pour le bloc "main", `TAB_OWNER` cache l'onglet). `SetModuleEnabled`,
   `TreeAI:SetEnabled(bool)` (tout l'addon) : sans /reload.

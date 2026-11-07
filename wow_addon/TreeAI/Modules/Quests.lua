@@ -618,7 +618,8 @@ function M.NextStep(a)
   if #a.turnIn > 0 then
     local bestZ, bestN = nil, 0
     for z, t in pairs(a.turnInByZone) do if #t > bestN then bestZ, bestN = z, #t end end
-    return ("Étape : aller rendre %d quête%s en %s"):format(bestN, bestN > 1 and "s" or "", bestZ or "?")
+    local where = (bestZ and bestZ ~= "?" and bestZ ~= "") and (" en " .. bestZ) or ""
+    return ("Étape : aller rendre %d quête%s%s"):format(bestN, bestN > 1 and "s" or "", where)
   end
   if a.nextZone then
     local tail = others.guide and (" (suis " .. others.guide .. ")") or ""
@@ -643,7 +644,8 @@ local function toasts(list)
     local p = prev[q.id]
     if primed and p and cfg("toasts") then
       if q.complete and not p.complete then
-        suggest("done:" .. q.id, ("« %s » terminée : à rendre (%s)"):format(cut(q.title, 34), q.turnZone or "?"), 2,
+        suggest("done:" .. q.id, ("Rends « %s » : terminée%s"):format(cut(q.title, 34),
+          q.turnZone and (" (" .. q.turnZone .. ")") or ""), 2,
           { ttl = 20, cooldown = 60 })
       else
         for j, o in ipairs(q.obj) do
@@ -967,9 +969,10 @@ function M.OnZone(newZone)
     table.sort(left, function(x, y) return x.ratio > y.ratio end)
     if #left > 0 then
       local q = left[1]
-      suggest("left", ("Tu quittes %s : il reste « %s » (%s)%s. Finis ici avant de partir ?"):format(
-        old, cut(q.title, 28), M.Remaining(q, 2), #left > 1 and (" +" .. (#left - 1)) or ""), 2,
-        { ttl = 90, cooldown = 300 })
+      local rem = M.Remaining(q, 2)
+      suggest("left", ("Finis « %s » avant de quitter %s%s"):format(
+        cut(q.title, 28), old, #left > 1 and (" (+" .. (#left - 1) .. ")") or ""), 2,
+        { ttl = 90, cooldown = 300, tooltip = rem ~= "" and ("Reste : " .. rem) or nil })
     end
   end
   local a = M.Analyse(M.lastList, newZone)

@@ -104,7 +104,7 @@ local pf = ctx.item("petfood")
 assert(pf == 2287 or pf == 4592, "petfood " .. tostring(pf))
 
 M:OnEnable()
-assert(suggestions.setup, "setup suggestion")
+assert(suggestions.ready == "Nouvelles macros prêtes : clique pour installer", "one macro line")
 
 -- install in combat is deferred
 inCombat = true
@@ -179,7 +179,7 @@ local burst = M:Render(def("TAI Burst"))
 assert(burst and burst:find("/use 13", 1, true) and not burst:find("/use 14", 1, true), tostring(burst))
 -- Forever: writes outside a player action are deferred to a click
 TreeAI.InUserAction = function() return false end
-assert(M:Write(def("TAI Marque"), "/cast X") == "pending" and suggestions.pending, "pending outside action")
+assert(M:Write(def("TAI Marque"), "/cast X") == "pending" and suggestions.ready, "pending outside action")
 TreeAI.InUserAction = nil
 
 -- panel: list + preview + « pourquoi » + buttons (permissive frame mock: methods are no-ops)

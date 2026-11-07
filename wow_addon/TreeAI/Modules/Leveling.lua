@@ -316,8 +316,8 @@ function M.CheckQuests(quests)
       if not hard or q.level > hard.level then hard = q end
     end
   end
-  if hard then
-    suggest("lvl_hardquest", ("« %s » (niv %d) est rouge : fais-la à plusieurs."):format(hard.title or "?", hard.level), 1, 3600)
+  if hard and hard.title then
+    suggest("lvl_hardquest", ("Fais « %s » (niv %d, rouge) à plusieurs"):format(hard.title, hard.level), 1, 3600)
   end
 end
 

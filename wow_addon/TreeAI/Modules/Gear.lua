@@ -716,7 +716,8 @@ function M.Lines(plan)
     local e = plan.cur[slot] or {}
     local best = plan.slots[slot] or {}
     local cd = best[1]
-    local head = ("%s : %s (%d)"):format(SLOT_FR[slot], e.name or "vide", floor((e.score or 0) + 0.5))
+    local head = e.name and ("%s : %s (%d)"):format(SLOT_FR[slot] or slot, e.name, floor((e.score or 0) + 0.5))
+      or ((SLOT_FR[slot] or slot) .. " : vide")
     if cd then
       nUp = nUp + 1
       local s = cd.src or {}
@@ -798,9 +799,9 @@ function M:Publish(plan)
       if not (top and top.src.kind == "bag" and cd.src.kind ~= "bag") then top = cd top.slot = slot end
     end
   end
-  if top and (top.src.kind == "bag" or top.pct >= 10) then
-    self:Suggest("upgrade", ("Équipement : %s %s (%s) — %s"):format(top.name or "?", pctText(top.pct), SLOT_FR[top.slot],
-      top.src.text), top.src.kind == "bag" and 2 or 1, { ttl = 600, cooldown = 300, onClick = selectTab })
+  if top and top.name and (top.src.kind == "bag" or top.pct >= 10) then
+    self:Suggest("upgrade", ("Équipe %s %s (%s) — %s"):format(top.name, pctText(top.pct), SLOT_FR[top.slot] or "?",
+      top.src.text or ""), top.src.kind == "bag" and 2 or 1, { ttl = 600, cooldown = 300, onClick = selectTab })
   else
     self:Clear("upgrade")
   end

@@ -177,7 +177,7 @@ return function(M, ctx)
   local lines = P:Lines()
   local card
   for _, l in ipairs(lines) do if l.id == "plan:step" then card = l end end
-  check(card and card.text:find("^▶") and card.text:find(" m ") and card.text:find("min"), "carte d'étape : " .. tostring(card and card.text))
+  check(card and not card.text:find("▶") and card.text:find(" m ") and tostring(card.tooltip):find("min"), "carte d'étape : " .. tostring(card and card.text))
   local sugg = false
   for _, e in ipairs(TreeAI:GetSuggestions()) do if tostring(e.id):find("Planner:step") then sugg = true end end
   check(type(TreeAI.SetTabLines) == "function" or sugg, "repli Suggest quand SetTabLines est absent")

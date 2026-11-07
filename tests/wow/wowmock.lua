@@ -736,8 +736,9 @@ function M.Install(flavor)
   G.UnitPowerMax = function(u) local d = U(u) if d then return d.powerMax or 100 end return 0 end
   G.UnitPowerType = function(u) local d = U(u) if d then return d.powerType or 0, "MANA" end return 0, "MANA" end
   G.UnitIsDead = function(u) local d = U(u) return d and d.dead or false end
-  G.UnitIsDeadOrGhost = G.UnitIsDead
-  G.UnitIsGhost = function() return false end
+  G.UnitIsDeadOrGhost = function(u) local d = U(u) return d and (d.dead or d.ghost) or false end
+  G.UnitIsGhost = function(u) local d = U(u) return d and d.ghost or false end
+  G.UnitOnTaxi = function(u) return (u == "player" and M.onTaxi) and true or false end
   G.UnitIsUnit = function(a, b) return tostring(a):lower() == tostring(b):lower() end
   G.UnitIsPlayer = function(u) local _, k = U(u) return k == "player" or k == "group" end
   G.UnitPlayerControlled = G.UnitIsPlayer
@@ -775,7 +776,7 @@ function M.Install(flavor)
   G.IsResting = function() return M.player.resting end
   G.UnitRangedDamage = function() return 2.9, 20, 30, 0, 0, 1 end
   G.GetUnitSpeed = function() return M.speed or 0, 7, 7, 4.7 end
-  G.IsMounted = function() return false end
+  G.IsMounted = function() return M.mounted and true or false end
   G.SetRaidTarget = function(u, i) M.raidTargets = M.raidTargets or {}; M.raidTargets[u] = i end
   G.GetBindLocation = function() return "Auberge-Test" end
   G.GetNumSkillLines = function() return #(M.skills or {}) end

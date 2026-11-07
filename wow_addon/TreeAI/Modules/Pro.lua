@@ -211,7 +211,8 @@ end
 -- ------------------------------------------------------------------ journal (sans toucher à la sélection)
 local function objName(text)
   if type(text) ~= "string" then return nil end
-  local n = text:match("^(.-)%s*:%s*%d+%s*/%s*%d+") or text:match("^%d+%s*/%s*%d+%s+(.+)$") or text
+  local n = T.ObjectiveName and T.ObjectiveName(text) or text
+  if n == "" then n = text end
   for _, suf in ipairs({ " tuées", " tués", " tuée", " tué", " slain", " killed" }) do
     if #n > #suf and n:sub(-#suf):lower() == suf then n = n:sub(1, -#suf - 1) break end
   end

@@ -1475,7 +1475,7 @@ function M:BuildLines()
   local s = self.char and self.char.session
   local multi = 0
   for _, e in ipairs(board) do if e.multi then multi = multi + 1 end end
-  lines[#lines + 1] = { text = fmt("|cff33cc66Missions|r  %d en commun · %d au total", multi, #board), prio = 1 }
+  lines[#lines + 1] = { text = fmt("|cff33cc66Missions|r : %d en commun · %d au total", multi, #board), prio = 1 }
   if type(s) == "table" and s.goal then
     local gs = E.Goal(s.goal, self.list, s, epoch())
     if gs then

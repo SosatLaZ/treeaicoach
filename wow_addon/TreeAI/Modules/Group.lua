@@ -379,7 +379,9 @@ function M.Compare(myQuests, mem)
         for j, ob in ipairs(q.obj or {}) do
           if ob.have and ob.need and ob.have < ob.need then
             local my = mine[id] and mine[id].obj and mine[id].obj[j]
-            local label = my and my.text and my.text:gsub("%s*:?%s*%d+%s*/%s*%d+.*$", "") or ("obj " .. j)
+            local on = _G.TreeAI and _G.TreeAI.ObjectiveName
+            local label = my and my.text and (on and on(my.text)
+              or my.text:gsub("%s*:?%s*%d+%s*/%s*%d+.*$", "")) or ("obj " .. j)
             bits[#bits + 1] = ("%s %d/%d"):format(label, ob.have, ob.need)
           end
         end

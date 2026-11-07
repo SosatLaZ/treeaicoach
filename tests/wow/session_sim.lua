@@ -888,6 +888,21 @@ at(19, function()   -- /reload #1 (tab choice must survive)
   main.T:SelectTab("now")
   for _, c in ipairs(order) do if c ~= main then fire(c, "GROUP_ROSTER_UPDATE") end end
 end)
+-- CONTENTFIX: dead / ghost / on a taxi, « Maintenant » only carries death lines (corpse run, recap…);
+-- never two macro lines; never « 0 dégâts » in a death recap
+local function quietCheck(c, label)
+  local T = c.T
+  if not (T.QuietKindOf and T.Quiet) then return end
+  for _, e in ipairs(T:GetTabLines("now")) do
+    local k = T:QuietKindOf(e)
+    if k ~= "death" and k ~= "always" then fail(label .. ": « " .. tostring(e.text) .. " » shown") end
+  end
+end
+local function macroCheck(c, label)
+  local n = 0
+  for _, e in ipairs(c.T:GetSuggestions()) do if tostring(e.text):lower():find("macro") then n = n + 1 end end
+  if n > 1 then fail(label .. ": " .. n .. " macro lines") end
+end
 at(20, function()   -- flight to Alterac
   fire(main, "TAXIMAP_OPENED", 1); tick(3); fire(main, "TAXIMAP_CLOSED")
   main.M.player.resting = false; fire(main, "PLAYER_UPDATE_RESTING")
@@ -897,7 +912,9 @@ at(20, function()   -- flight to Alterac
     main.M.pos = { mapID = 1424, x = 0.62 - k * 0.015, y = 0.20 - k * 0.01 }
     main.M.speed = 30
     tick(10)
+    quietCheck(main, "on a taxi")
   end
+  macroCheck(main, "after the flight")
   main.M.onTaxi, main.M.speed = false, 0
   setZone(main, ZONE2[1], ZONE2[2], ZONE2[3], 0.55, 0.60)
   fire(main, "PLAYER_CONTROL_GAINED")
@@ -912,9 +929,13 @@ at(31, function()   -- a death (pull gone wrong), ghost run, durability loss
   M.LeaveCombat()
   if M.pet.exists then M.pet.dead = true; M.pet.health = 0; fire(main, "UNIT_PET", "player") end
   tick(5)
+  quietCheck(main, "dead")
+  local d = main.T._suggestions and main.T._suggestions["Fight:death"]
+  if d and tostring(d.text):find("%f[%d]0 dégâts") then fail("death recap shows « 0 dégâts »: " .. d.text) end
   M.player.dead, M.player.ghost = false, true
   fire(main, "PLAYER_ALIVE")
-  for _ = 1, 6 do M.speed = 7; tick(10) end
+  for _ = 1, 6 do M.speed = 7; tick(10); quietCheck(main, "ghost run") end
+  macroCheck(main, "after the death")
   M.player.ghost, M.player.health, M.speed = false, M.player.healthMax * 0.5, 0
   fire(main, "PLAYER_UNGHOST"); fire(main, "PLAYER_ALIVE"); fire(main, "UNIT_HEALTH", "player")
   for _, it in pairs(M.inventory) do if it.durMax then it.dur = math.max(0, math.floor(it.dur - it.durMax * 0.1)) end end

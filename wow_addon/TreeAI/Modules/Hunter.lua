@@ -522,12 +522,12 @@ function M:CheckAspect()
       suggest("aspect", "« " .. travelName .. " » en combat : tu seras hébété à chaque coup ! Change d'aspect.", 3, 10)
     elseif not combatOn then
       local best = knows(S.HAWK) and spellName(S.HAWK) or spellName(S.MONKEY)
-      suggest("aspect", "Aucun aspect actif : « " .. (best or "Aspect du faucon") .. " » (singe si ça tape au corps à corps).", 2, 25)
+      suggest("aspect", "Active « " .. (best or "Aspect du faucon") .. " » (Singe si ça tape au corps à corps)", 2, 25)
     else
       clear("aspect")
     end
   elseif not combatOn and not travelOn then
-    suggest("aspect", "Pense à un aspect avant le prochain pull.", 1, 600)
+    suggest("aspect", "Active un aspect avant le prochain pull", 1, 600)
   else
     clear("aspect")   -- out of combat in Cheetah/Pack: fine, drop the stale in-combat warning
   end

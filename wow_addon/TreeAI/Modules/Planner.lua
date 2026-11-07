@@ -522,6 +522,7 @@ local function questTitle(q)
   for _, r in ipairs(exp and exp.quests or {}) do if r.id == q then return r.t end end
   return "quête " .. tostring(q)
 end
+local OBJ_VERB = { monster = "Tue", item = "Ramasse", object = "Utilise", event = "Fais", reputation = "Gagne" }
 function P:StepLabel(s)
   if s.label and s.label ~= "" then return s.label end
   local q = s.q
@@ -530,7 +531,14 @@ function P:StepLabel(s)
   if s.k == "obj" then
     local lq = self.log and self.log[q]
     local o = lq and lq.obj[tonumber(s.o) or 0]
-    if o and o.text then return cut((tostring(o.text):gsub("%s*:%s*%d+%s*/%s*%d+%s*$", "")), 40) end
+    if o and o.text then
+      -- verbe d'abord, nom propre (sans « : 0/1 », espaces insécables du client FR compris)
+      local name = T.ObjectiveName and T.ObjectiveName(o.text) or tostring(o.text)
+      local verb = OBJ_VERB[o.type or ""] or "Fais"
+      if o.type == "monster" then name = name:gsub("%s+tuée?s?$", "") end
+      if name == "" then name = questTitle(q) end
+      return verb .. " « " .. cut(name, 34) .. " »"
+    end
     return "Objectif de « " .. cut(questTitle(q), 30) .. " »"
   end
   local names = { fly = "Prendre le vol", hs = "Pierre de foyer", train = "Voir le maître", vendor = "Marchand",
@@ -986,10 +994,10 @@ function P:Lines()
           local d, dir = where(s)
           local extra = {}
           if d then extra[#extra + 1] = fmt("%d m %s", floor(d * 0.9144 + 0.5), dir or "") end
-          if mins then extra[#extra + 1] = "~" .. mins .. " min" end
-          local txt = "▶ " .. label .. (#extra > 0 and (" — " .. tconcat(extra, " · ")) or "")
+          local txt = label .. (#extra > 0 and (" — " .. tconcat(extra, " · ")) or "")
           lines[#lines + 1] = { text = txt, prio = 2, pin = true, id = "plan:step",
-            tooltip = "Clic : guider (boussole / Shortest Path / TomTom / repère)\n/tai plan passer : étape suivante",
+            tooltip = "Clic : guider (boussole / Shortest Path / TomTom / repère)\n/tai plan passer : étape suivante"
+              .. (mins and ("\nDurée estimée : ~" .. mins .. " min") or ""),
             onClick = function() P:Navigate(s) end }
           -- per-quest badge when not OK
           if s.q then
@@ -997,7 +1005,7 @@ function P:Lines()
             local rec = recs[s.q]
             if rec then
               local v, why = E.QuestVerdict(rec, costCtx())
-              if v ~= "ok" then lines[#lines + 1] = { text = "   " .. verdictText(v, { why }), prio = E.PRIO[v] } end
+              if v ~= "ok" then lines[#lines + 1] = { text = verdictText(v, { why }), prio = E.PRIO[v] } end
             end
           end
         else

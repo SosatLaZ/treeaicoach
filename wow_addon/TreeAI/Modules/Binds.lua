@@ -371,7 +371,7 @@ function M:Scan()
     for _, key in ipairs(tier) do
       local cmd = bindingAction(key)
       if cmd == "" then st.free[#st.free + 1] = key
-      elseif USELESS[cmd] then st.useless[#st.useless + 1] = { key = key, cmd = cmd, label = USELESS[cmd] }
+      elseif USELESS[cmd] and not isMovement(cmd) then st.useless[#st.useless + 1] = { key = key, cmd = cmd, label = USELESS[cmd] }
       end
     end
   end

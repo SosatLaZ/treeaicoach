@@ -508,9 +508,9 @@ M.targets, M.idx = {}, 1
 function M.Current() return M.targets[M.idx] end
 
 local function announce(t, why)
-  if not t or not (M.db and M.db.announce ~= false) then return end
+  if not t or not (t.label or t.title) or not (M.db and M.db.announce ~= false) then return end
   local where = t.dist and (" — " .. G.Dist(t.dist, M.db.units)) or (t.zone and (" — " .. t.zone) or "")
-  M:Suggest("target", (why or "Boussole") .. " : " .. cut(t.label or t.title or "?", 50) .. where, 1,
+  M:Suggest("target", (why or "Boussole") .. " : " .. cut(t.label or t.title, 50) .. where, 1,
     { ttl = 20, cooldown = 5, sound = false })
 end
 
