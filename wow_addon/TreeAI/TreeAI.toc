@@ -19,4 +19,5 @@ Modules\Hunter.lua
 Modules\Classes.lua
 Modules\Leveling.lua
 Modules\Group.lua
+Modules\Squad.lua
 Modules\Inventory.lua

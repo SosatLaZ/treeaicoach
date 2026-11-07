@@ -21,6 +21,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import re
 import time
 from typing import Any, Callable, Iterable
 
@@ -293,6 +294,53 @@ def _group(db: dict[str, Any], c: dict[str, Any]) -> list[str]:
     return out[:4]
 
 
+def _squad(c: dict[str, Any]) -> dict[str, Any] | None:
+    """Group brain snapshot (addon module Squad, ``summary.group`` v2) for « on fait quoi ? » at 4.
+    Friends' names are replaced by « Classe niveau » labels (no names sent)."""
+    s = _pick(c, "summary")
+    g = _pick(s, "group") if isinstance(s, dict) else None
+    g = g if isinstance(g, dict) else _pick(c, "group")
+    if not isinstance(g, dict) or _num(g.get("v")) != 2 or not isinstance(g.get("members"), list):
+        return None
+    labels: dict[str, str] = {}
+    members = []
+    for m in g["members"][:5]:
+        if not isinstance(m, dict):
+            continue
+        lvl = _num(m.get("level"))
+        label = " ".join(x for x in (str(m.get("class") or "?"), str(int(lvl)) if lvl else "") if x)
+        if m.get("me"):
+            label += " (moi)"
+        if m.get("name"):
+            labels[str(m["name"])] = label
+        bits = [label]
+        for key, fmt_ in (("zone", "{}"), ("hp", "PV {}%"), ("mana", "mana {}%"), ("bags", "sacs libres {}"),
+                          ("leaveMin", "part dans {} min")):
+            if m.get(key) not in (None, ""):
+                bits.append(fmt_.format(m[key]))
+        if m.get("dead"):
+            bits.append("mort")
+        members.append(_short(", ".join(bits), 120))
+
+    def anon(text: Any) -> str:
+        t = str(text or "")
+        for name in sorted(labels, key=len, reverse=True):
+            t = re.sub(r"(?<!\w)" + re.escape(name) + r"(?!\w)", labels[name], t)
+        return _short(t, 140)
+
+    out: dict[str, Any] = {"membres": members}
+    adv = [anon(a.get("text")) for a in g.get("advices") or [] if isinstance(a, dict) and a.get("text")]
+    if adv:
+        out["conseils"] = adv[:6]
+    common = [f"{_short(q.get('title'), 40)} ({q.get('holders')}/{len(members)}, {q.get('done')} fini)"
+              for q in g.get("common") or [] if isinstance(q, dict) and q.get("title")]
+    if common:
+        out["quetes_communes"] = common[:6]
+    if _num(g.get("xph")):
+        out["xp_h_par_joueur"] = int(_num(g.get("xph")) or 0)
+    return out
+
+
 def character_context(db: Any) -> dict[str, Any]:
     """Compact, JSON-able facts about the current character from ``TreeAIDB`` ({} when unknown)."""
     try:
@@ -331,6 +379,9 @@ def character_context(db: Any) -> dict[str, Any]:
         grp = _group(db, c)
         if grp:
             ctx["groupe"] = grp
+        sq = _squad(c)
+        if sq:
+            ctx["groupe_treeai"] = sq
         return ctx
     except Exception:
         log.debug("character_context failed", exc_info=True)
