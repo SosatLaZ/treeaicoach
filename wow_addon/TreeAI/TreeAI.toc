@@ -55,3 +55,4 @@ Modules\Dungeon.lua
 Modules\Radar.lua
 Modules\Gear.lua
 Modules\Talents.lua
+Modules\Edge.lua
