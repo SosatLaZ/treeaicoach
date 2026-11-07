@@ -1,0 +1,11 @@
+## Interface: 11507, 16001
+## Title: SampleAddon (test fixture)
+## Notes: Fixture for tests/wow/harness.lua (mimics the TreeAI module/suggestion contract).
+## SavedVariables: SampleAddonDB
+## Version: 0.0.1
+
+Core.lua
+Modules/Bags.lua
+Modules/Macros.lua
+# a module that is not merged yet: the harness must skip it with a note
+Modules/NotMergedYet.lua
