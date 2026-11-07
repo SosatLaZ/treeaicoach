@@ -153,6 +153,73 @@ bags = {}
 events.BAG_UPDATE_DELAYED(M, "BAG_UPDATE_DELAYED")
 assert(macros["TAI Repas"].body:find("^/run print"), macros["TAI Repas"].body)
 
+-- spec: hunter without talents -> leveling spec "bete"; Tir uses the BM variant (hawk unknown -> arcane)
+assert(M:Spec() == "bete", "leveling spec " .. tostring(M:Spec()))
+-- talents: 31 points in Marksmanship (classic return shape: name, icon, points)
+GetTalentTabInfo = function(i) return "Tab" .. i, "icon", (i == 2) and 31 or 0 end
+assert(M:Spec() == "precision", "talent spec " .. tostring(M:Spec()))
+-- learning Aimed Shot (MM talent) -> Ctrl clause appears after a spell refresh
+known[19434] = true
+events.SPELLS_CHANGED(M, "SPELLS_CHANGED")
+assert(macros["TAI Tir"].body:find("[mod:ctrl] Visée", 1, true), macros["TAI Tir"].body)
+assert(macros["TAI Tir"].body:find("^#showtooltip\n/cast "), "main shot first for #showtooltip")
+-- player's own macro with a TAI name is never overwritten
+macros["TAI Pet"] = { idx = 999, icon = "x", body = "/petattack" }
+local function def(name)
+  for _, d in ipairs(M:Defs()) do if d.n == name then return d end end
+end
+local defPet = def("TAI Pet")
+assert(defPet and defPet.w and defPet.w ~= "", "why text exported")
+assert(M:InstallOne(defPet) == "user" and macros["TAI Pet"].body == "/petattack", "foreign macro kept")
+assert(M:InstallOne(defPet, true) == "updated", "forced")
+-- trinket slot lines appear only with an on-use trinket
+GetInventoryItemID = function(_, slot) if slot == 18 then return 4444 end if slot == 13 then return 7777 end end
+GetItemSpell = function(id) if id == 7777 then return "Utiliser" end end
+local burst = M:Render(def("TAI Burst"))
+assert(burst and burst:find("/use 13", 1, true) and not burst:find("/use 14", 1, true), tostring(burst))
+-- Forever: writes outside a player action are deferred to a click
+TreeAI.InUserAction = function() return false end
+assert(M:Write(def("TAI Marque"), "/cast X") == "pending" and suggestions.pending, "pending outside action")
+TreeAI.InUserAction = nil
+
+-- panel: list + preview + « pourquoi » + buttons (permissive frame mock: methods are no-ops)
+local function anyFrame()
+  local o = { scripts = {} }
+  return setmetatable(o, { __index = function(_, k)
+    if type(k) ~= "string" or not k:find("^%u") then return nil end
+    if k == "SetScript" then return function(self, n, fn) self.scripts[n] = fn end end
+    if k == "SetText" then return function(self, x) self.txt = x end end
+    if k == "IsShown" then return function(self) return self.shown ~= false end end
+    if k == "Hide" then return function(self) self.shown = false end end
+    if k == "Show" then return function(self) self.shown = true end end
+    if k:find("^Create") then return function() return anyFrame() end end
+    return function() end
+  end })
+end
+CreateFrame = function() return anyFrame() end
+UIParent = anyFrame()
+M:TogglePanel()
+local P = M.panel
+assert(P and P.rows[1].def, "panel rows")
+P.rows[2].scripts.OnClick(P.rows[2])
+assert(M.selected == P.rows[2].def.n, "row selects")
+assert(P.why.txt and #P.why.txt > 10, "why shown")
+assert(P.body.txt and P.body.txt ~= "", "preview shown")
+assert(P.specBtn.txt:find("Spé", 1, true), P.specBtn.txt)
+P.specBtn.scripts.OnClick(P.specBtn)
+assert(P.specBtn.txt:find("Maîtrise des bêtes", 1, true), P.specBtn.txt)
+P.ctxBtn.scripts.OnClick(P.ctxBtn)
+assert(P.ctxBtn.txt == "Solo", P.ctxBtn.txt)
+local userCalls = 0
+TreeAI.UserAction = function(_, fn, ...) userCalls = userCalls + 1; return pcall(fn, ...) end
+P.one.scripts.OnClick(P.one)
+P.all.scripts.OnClick(P.all)
+assert(userCalls == 2, "panel buttons go through TreeAI:UserAction")
+M:TogglePanel()
+assert(P.shown == false, "toggle hides")
+
 M:Remove()
-assert(next(macros) == nil, "all removed")
+for name in pairs(macros) do
+  assert(name == "TAI Survie", "only the user-edited macro survives: " .. name)
+end
 print("OK")
