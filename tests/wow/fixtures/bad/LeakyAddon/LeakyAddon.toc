@@ -1,0 +1,5 @@
+## Interface: 11507
+## Title: LeakyAddon (bad fixture: must FAIL the harness)
+## SavedVariables: LeakyAddonDB
+
+Leaky.lua

@@ -1,0 +1,1145 @@
+-- wowmock.lua — a small World of Warcraft (Classic-family / WoW Forever) API mock for Lua 5.1.
+-- Loaded by tests/wow/harness.lua BEFORE the addon files. Everything lives in the global table
+-- `WowMock` (test-side only; the harness whitelists it). Two API flavours:
+--   WowMock.Install("modern")  C_Container, C_ChatInfo, C_AddOns, C_Spell, C_UnitAuras…
+--   WowMock.Install("legacy")  GetContainerItemInfo & co, global SendAddonMessage, no C_Container
+-- so the addon's feature tests (`if C_Container then … else … end`) are exercised both ways.
+-- Unknown methods on mocked widgets are no-ops (recorded in WowMock.unmockedMethods).
+-- ToS guards recorded as violations: CreateMacro/EditMacro/DeleteMacro/PickupMacro/SetBinding*
+-- in combat, macro bodies > 255 chars, addon messages > 255 bytes / prefix > 16 chars.
+
+local M = {}
+WowMock = M
+
+local unpack = unpack or table.unpack
+
+----------------------------------------------------------------------------------------------
+-- state
+----------------------------------------------------------------------------------------------
+function M.Reset()
+  M.now = 1000.0
+  M.serverTime = 1793000000
+  M.inCombat = false
+  M.errors = {}          -- Lua errors raised by addon handlers
+  M.violations = {}      -- ToS / API-contract violations
+  M.output = {}          -- print() / chat frame lines
+  M.sentAddon = {}       -- { prefix, msg, channel, target }
+  M.sentChat = {}
+  M.prefixes = {}
+  M.frames = {}
+  M.timers = {}
+  M.unmockedMethods = {}
+  M.namedFrames = {}
+  M.sounds = {}
+  M.macros = { global = {}, char = {} }
+  M.bindings = {}
+  M.combatEvent = nil
+  M.player = {
+    name = "Testeur", realm = "Royaume-Test", class = "HUNTER", classLocal = "Chasseur",
+    race = "Nain", raceFile = "Dwarf", level = 26, health = 900, healthMax = 1000,
+    power = 400, powerMax = 600, powerType = 0, xp = 12000, xpMax = 26000, rested = 5000,
+    money = 123456, zone = "Contreforts de Hautebrande", subzone = "Moulin-de-Tarren",
+    guid = "Player-0000-00000001", resting = false, dead = false,
+  }
+  M.pet = {
+    exists = true, name = "Crocdur", family = "Loup", health = 500, healthMax = 600,
+    happiness = 2, loyalty = "Loyauté (3)", tp = 5, level = 25, dead = false,
+  }
+  M.target = { exists = false }
+  M.group = {}           -- list of { name=, class=, level=, online= }
+  M.auras = { player = {}, pet = {}, target = {} }
+  M.spells = {}          -- [id] = { name=, rank=, icon=, castTime=, known= }
+  M.spellCooldowns = {}
+  M.inventory = {}       -- [slot] = { id=, count=, dur=, durMax= }
+  M.quests = {}          -- { title=, level=, complete=, objectives={ {text=, done=} } }
+  M.items = {}
+  M.bags = {}
+  M.merchantOpen = false
+  M.talentGroup, M.numTalentGroups = 1, 2
+  M.locale = "frFR"
+  M.ammoSlot = 0
+  M.cvars = {}
+  M.loggingCombat, M.loggingChat = false, false
+  M.SeedDefaults()
+end
+
+local function record(list, kind, msg)
+  local where, lvl = "?", 3
+  while true do
+    local info = debug.getinfo(lvl, "Sl")
+    if not info then break end
+    local src = tostring(info.short_src)
+    if info.what ~= "C" and not src:find("wowmock%.lua$") and src ~= "(tail call)" then
+      where = src .. ":" .. tostring(info.currentline)
+      break
+    end
+    lvl = lvl + 1
+  end
+  list[#list + 1] = { kind = kind, msg = msg, where = where }
+end
+function M.Violation(kind, msg) record(M.violations, kind, msg) end
+
+function M.SafeCall(label, fn, ...)
+  local args, n = { ... }, select("#", ...)
+  local ok, err = xpcall(function() return fn(unpack(args, 1, n)) end, function(e)
+    return tostring(e) .. "\n" .. debug.traceback("", 2)
+  end)
+  if not ok then M.errors[#M.errors + 1] = { label = label, msg = err } end
+  return ok
+end
+
+----------------------------------------------------------------------------------------------
+-- data seeds (fake but plausible; FR client names)
+----------------------------------------------------------------------------------------------
+function M.AddItem(id, t)
+  t.id = id
+  t.quality = t.quality or 1
+  t.stack = t.stack or 1
+  t.ilvl = t.ilvl or 1
+  t.minLevel = t.minLevel or 0
+  t.sellPrice = t.sellPrice or 0
+  t.type = t.type or "Divers"
+  t.subType = t.subType or "Divers"
+  t.equipLoc = t.equipLoc or ""
+  t.classID = t.classID or 15
+  t.subclassID = t.subclassID or 0
+  M.items[id] = t
+  return t
+end
+
+function M.ItemLink(id)
+  local it = M.items[id]
+  if not it then return nil end
+  local colors = { [0] = "ff9d9d9d", "ffffffff", "ff1eff00", "ff0070dd", "ffa335ee", "ffff8000" }
+  return "|c" .. (colors[it.quality] or "ffffffff") .. "|Hitem:" .. id .. "::::::::" .. M.player.level
+    .. ":::::|h[" .. it.name .. "]|h|r"
+end
+
+function M.SetBagItem(bag, slot, id, count)
+  M.bags[bag] = M.bags[bag] or { size = 16, slots = {} }
+  M.bags[bag].slots[slot] = id and { id = id, count = count or 1 } or nil
+end
+
+function M.SeedDefaults()
+  M.AddItem(4540, { name = "Miche de pain dur", stack = 20, sellPrice = 1, type = "Consommable",
+    subType = "Nourriture et boissons", classID = 0, subclassID = 5, minLevel = 1 })
+  M.AddItem(1179, { name = "Thé glacé", stack = 20, sellPrice = 6, type = "Consommable",
+    subType = "Nourriture et boissons", classID = 0, subclassID = 5, minLevel = 15 })
+  M.AddItem(929, { name = "Potion de soins", stack = 5, sellPrice = 25, type = "Consommable",
+    subType = "Potion", classID = 0, subclassID = 1, minLevel = 12 })
+  M.AddItem(3530, { name = "Bandage en laine", stack = 20, sellPrice = 10, type = "Consommable",
+    subType = "Bandage", classID = 0, subclassID = 7 })
+  M.AddItem(2515, { name = "Flèche acérée", stack = 200, sellPrice = 0, type = "Projectile",
+    subType = "Flèche", classID = 6, subclassID = 2, minLevel = 10 })
+  M.AddItem(2519, { name = "Balle lourde", stack = 200, sellPrice = 0, type = "Projectile",
+    subType = "Balle", classID = 6, subclassID = 3, minLevel = 10 })
+  M.AddItem(2672, { name = "Viande de loup filandreuse", stack = 10, sellPrice = 1,
+    type = "Artisanat", subType = "Viande", classID = 7, subclassID = 8 })
+  M.AddItem(2287, { name = "Viande séchée de haut-orme", stack = 20, sellPrice = 4,
+    type = "Consommable", subType = "Nourriture et boissons", classID = 0, subclassID = 5 })
+  M.AddItem(4865, { name = "Griffe cassée", quality = 0, stack = 5, sellPrice = 7,
+    type = "Camelote", subType = "Camelote", classID = 15 })
+  M.AddItem(5512, { name = "Pierre de soins", stack = 1, type = "Consommable", classID = 0 })
+  M.AddItem(6948, { name = "Pierre de foyer", stack = 1, type = "Divers", classID = 15 })
+
+  M.bags = {}
+  for b = 0, 4 do M.bags[b] = { size = (b == 0) and 16 or 10, slots = {} } end
+  M.SetBagItem(0, 1, 6948, 1)
+  M.SetBagItem(0, 2, 4540, 12)
+  M.SetBagItem(0, 3, 1179, 8)
+  M.SetBagItem(0, 4, 929, 3)
+  M.SetBagItem(0, 5, 3530, 6)
+  M.SetBagItem(0, 6, 2672, 4)
+  M.SetBagItem(0, 7, 4865, 2)
+  M.SetBagItem(1, 1, 2515, 200)
+  M.SetBagItem(1, 2, 2515, 140)
+
+  local spells = {
+    [75] = "Tir automatique", [1978] = "Morsure de serpent", [3044] = "Tir des arcanes",
+    [1130] = "Marque du chasseur", [13165] = "Aspect du faucon", [5118] = "Aspect du guépard",
+    [13163] = "Aspect du singe", [2973] = "Attaque du raptor", [781] = "Désengagement",
+    [1499] = "Piège givrant", [13795] = "Piège d'immolation", [136] = "Guérison du familier",
+    [6991] = "Nourrir le familier", [883] = "Appel du familier", [2641] = "Renvoyer le familier",
+    [982] = "Ressusciter le familier", [5384] = "Feindre la mort", [2643] = "Flèches multiples",
+    [5116] = "Trait de choc", [6603] = "Attaque", [1515] = "Dressage des bêtes",
+    [8613] = "Dépeçage", [2550] = "Cuisine", [3273] = "Premiers soins", [19883] = "Pistage des humanoïdes",
+  }
+  M.spells = {}
+  for id, name in pairs(spells) do M.spells[id] = { name = name, rank = "", icon = 132000 + id,
+    castTime = 0, known = true } end
+
+  M.inventory = {
+    [1] = { id = 0, dur = 40, durMax = 50 }, [5] = { id = 0, dur = 10, durMax = 80 },
+    [16] = { id = 0, dur = 30, durMax = 55 }, [18] = { id = 0, dur = 50, durMax = 60 },
+    [0] = { id = 2515, count = 340 },
+  }
+  M.quests = {
+    { title = "Le fermier Ray", level = 25, complete = false,
+      objectives = { { text = "Ours enragé tué : 4/10", done = false } } },
+    { title = "Le courrier de Southshore", level = 22, complete = true, objectives = {} },
+  }
+end
+
+----------------------------------------------------------------------------------------------
+-- widgets
+----------------------------------------------------------------------------------------------
+local Widget = {}
+local WidgetMT = {
+  __index = function(self, k)
+    local v = Widget[k]
+    if v ~= nil then return v end
+    if type(k) == "string" and k:match("^[A-Z]") then
+      M.unmockedMethods[k] = true
+      return function() return nil end
+    end
+    return nil
+  end,
+}
+
+local function newWidget(kind, name, parent)
+  local w = setmetatable({
+    __kind = kind, __name = name, __parent = parent, __scripts = {}, __events = {},
+    __shown = true, __w = 100, __h = 20, __text = nil, __value = 0, __min = 0, __max = 1,
+    __alpha = 1, __attrs = {}, __points = {}, __checked = false, __children = {},
+  }, WidgetMT)
+  return w
+end
+M.NewWidget = newWidget
+
+function Widget:GetObjectType() return self.__kind end
+function Widget:IsObjectType(t) return self.__kind == t end
+function Widget:GetName() return self.__name end
+function Widget:GetParent() return self.__parent end
+function Widget:SetParent(p) self.__parent = p end
+function Widget:SetScript(what, fn) self.__scripts[what] = fn end
+function Widget:GetScript(what) return self.__scripts[what] end
+function Widget:HasScript(what) return true end
+function Widget:HookScript(what, fn)
+  local old = self.__scripts[what]
+  self.__scripts[what] = function(...) if old then old(...) end return fn(...) end
+end
+function Widget:RegisterEvent(ev)
+  if type(ev) ~= "string" then error("RegisterEvent: event must be a string", 2) end
+  self.__events[ev] = true
+end
+Widget.RegisterUnitEvent = function(self, ev) Widget.RegisterEvent(self, ev) end
+function Widget:UnregisterEvent(ev) self.__events[ev] = nil end
+function Widget:UnregisterAllEvents() self.__events = {} end
+function Widget:RegisterAllEvents() self.__allEvents = true end
+function Widget:IsEventRegistered(ev) return self.__events[ev] and true or false end
+function Widget:Show()
+  local was = self.__shown
+  self.__shown = true
+  if not was and self.__scripts.OnShow then M.SafeCall("OnShow", self.__scripts.OnShow, self) end
+end
+function Widget:Hide()
+  local was = self.__shown
+  self.__shown = false
+  if was and self.__scripts.OnHide then M.SafeCall("OnHide", self.__scripts.OnHide, self) end
+end
+function Widget:SetShown(v) if v then self:Show() else self:Hide() end end
+function Widget:IsShown() return self.__shown end
+function Widget:IsVisible()
+  local w = self
+  while w do
+    if not w.__shown then return false end
+    w = w.__parent
+  end
+  return true
+end
+function Widget:SetSize(w, h) self.__w, self.__h = w or self.__w, h or self.__h end
+function Widget:SetWidth(w) self.__w = w end
+function Widget:SetHeight(h) self.__h = h end
+function Widget:GetWidth() return self.__w end
+function Widget:GetHeight() return self.__h end
+function Widget:GetSize() return self.__w, self.__h end
+function Widget:SetPoint(...) self.__points[#self.__points + 1] = { ... } end
+function Widget:ClearAllPoints() self.__points = {} end
+function Widget:GetPoint(i)
+  local p = self.__points[i or 1]
+  if p then return unpack(p) end
+  return "CENTER", UIParent, "CENTER", 0, 0
+end
+function Widget:GetNumPoints() return #self.__points end
+function Widget:SetAllPoints() end
+function Widget:GetCenter() return 500, 400 end
+function Widget:GetLeft() return 450 end
+function Widget:GetRight() return 550 end
+function Widget:GetTop() return 410 end
+function Widget:GetBottom() return 390 end
+function Widget:GetEffectiveScale() return 1 end
+function Widget:GetScale() return self.__scale or 1 end
+function Widget:SetScale(s) self.__scale = s end
+function Widget:SetAlpha(a) self.__alpha = a end
+function Widget:GetAlpha() return self.__alpha end
+function Widget:SetText(t) self.__text = t end
+function Widget:GetText() return self.__text end
+function Widget:SetFormattedText(fmt, ...) self.__text = string.format(fmt, ...) end
+function Widget:GetStringWidth() return #(tostring(self.__text or "")) * 6 end
+function Widget:GetStringHeight() return 12 end
+function Widget:SetFont() return true end
+function Widget:GetFont() return "Fonts\\FRIZQT__.TTF", 12, "" end
+function Widget:SetMinMaxValues(a, b) self.__min, self.__max = a, b end
+function Widget:GetMinMaxValues() return self.__min, self.__max end
+function Widget:SetValue(v) self.__value = v end
+function Widget:GetValue() return self.__value end
+function Widget:SetChecked(v) self.__checked = v and true or false end
+function Widget:GetChecked() return self.__checked end
+function Widget:SetAttribute(k, v)
+  if M.inCombat and self.__protected then
+    M.Violation("protected", "SetAttribute on a secure frame in combat")
+  end
+  self.__attrs[k] = v
+end
+function Widget:GetAttribute(k) return self.__attrs[k] end
+function Widget:IsProtected() return self.__protected or false end
+function Widget:GetChildren() return unpack(self.__children) end
+function Widget:GetNumChildren() return #self.__children end
+function Widget:GetFrameLevel() return self.__level or 1 end
+function Widget:SetFrameLevel(l) self.__level = l end
+function Widget:GetID() return self.__id or 0 end
+function Widget:SetID(i) self.__id = i end
+function Widget:IsMouseOver() return false end
+function Widget:IsEnabled() return self.__enabled ~= false end
+function Widget:Enable() self.__enabled = true end
+function Widget:Disable() self.__enabled = false end
+function Widget:SetEnabled(v) self.__enabled = v and true or false end
+function Widget:Click(button)
+  local fn = self.__scripts.OnClick
+  if fn then M.SafeCall("OnClick", fn, self, button or "LeftButton", true) end
+end
+function Widget:GetTexture() return self.__texture end
+function Widget:SetTexture(t) self.__texture = t end
+function Widget:GetNumLines() return 0 end
+function Widget:GetCursorPosition() return 0 end
+function Widget:GetNumber() return tonumber(self.__text) or 0 end
+
+local function makeRegion(parent, kind)
+  local r = newWidget(kind, nil, parent)
+  parent.__children[#parent.__children + 1] = r
+  return r
+end
+function Widget:CreateFontString() return makeRegion(self, "FontString") end
+function Widget:CreateTexture() return makeRegion(self, "Texture") end
+function Widget:CreateLine() return makeRegion(self, "Line") end
+function Widget:CreateMaskTexture() return makeRegion(self, "MaskTexture") end
+function Widget:CreateAnimationGroup()
+  local g = makeRegion(self, "AnimationGroup")
+  function g:CreateAnimation() return makeRegion(g, "Animation") end
+  function g:IsPlaying() return false end
+  return g
+end
+
+function CreateFrame(kind, name, parent, template, id)
+  if type(kind) ~= "string" then error("CreateFrame: frame type expected", 2) end
+  local f = newWidget(kind, name, parent or UIParent)
+  f.__template = template
+  f.__protected = template and tostring(template):find("Secure") and true or false
+  if f.__protected and M.inCombat then M.Violation("protected", "CreateFrame(secure) in combat") end
+  M.frames[#M.frames + 1] = f
+  if parent and parent.__children then parent.__children[#parent.__children + 1] = f end
+  if kind == "GameTooltip" then
+    function f:SetOwner() end
+    function f:AddLine() end
+    function f:AddDoubleLine() end
+    function f:SetHyperlink() end
+    function f:ClearLines() end
+  end
+  if type(name) == "string" and name ~= "" then
+    name = name:gsub("%$parent", parent and parent.__name or "")
+    f.__name = name
+    M.namedFrames[name] = true
+    rawset(_G, name, f)
+  end
+  if f.__scripts.OnLoad then M.SafeCall("OnLoad", f.__scripts.OnLoad, f) end
+  return f
+end
+
+----------------------------------------------------------------------------------------------
+-- events, time, timers
+----------------------------------------------------------------------------------------------
+function M.FireEvent(event, ...)
+  local n = 0
+  for i = 1, #M.frames do
+    local f = M.frames[i]
+    if (f.__events[event] or f.__allEvents) and f.__scripts.OnEvent then
+      n = n + 1
+      M.SafeCall(event, f.__scripts.OnEvent, f, event, ...)
+    end
+  end
+  return n
+end
+
+function M.IsEventRegistered(event)
+  for i = 1, #M.frames do if M.frames[i].__events[event] then return true end end
+  return false
+end
+
+function M.Advance(seconds, step)
+  step = step or 0.1
+  local t = 0
+  while t < seconds - 1e-9 do
+    local dt = math.min(step, seconds - t)
+    t = t + dt
+    M.now = M.now + dt
+    M.serverTime = M.serverTime + dt
+    -- timers
+    local due = {}
+    for i = #M.timers, 1, -1 do
+      local tm = M.timers[i]
+      if tm.cancelled then
+        table.remove(M.timers, i)
+      elseif tm.at <= M.now then
+        due[#due + 1] = tm
+        if tm.interval and (not tm.iterations or tm.iterations > 1) then
+          tm.at = tm.at + tm.interval
+          if tm.iterations then tm.iterations = tm.iterations - 1 end
+        else
+          table.remove(M.timers, i)
+          tm.done = true
+        end
+      end
+    end
+    for i = #due, 1, -1 do M.SafeCall("C_Timer", due[i].fn, due[i].handle) end
+    -- OnUpdate of visible frames
+    for i = 1, #M.frames do
+      local f = M.frames[i]
+      if f.__scripts.OnUpdate and f:IsVisible() then M.SafeCall("OnUpdate", f.__scripts.OnUpdate, f, dt) end
+    end
+  end
+end
+
+function GetTime() return M.now end
+function GetServerTime() return math.floor(M.serverTime) end
+function GetTimePreciseSec() return M.now end
+function debugprofilestop() return M.now * 1000 end
+
+local function newTimer(delay, fn, interval, iterations)
+  if type(fn) ~= "function" then error("C_Timer: callback must be a function", 3) end
+  local tm = { at = M.now + (delay or 0), fn = fn, interval = interval, iterations = iterations }
+  local handle = {}
+  function handle:Cancel() tm.cancelled = true end
+  function handle:IsCancelled() return tm.cancelled or false end
+  tm.handle = handle
+  M.timers[#M.timers + 1] = tm
+  return handle
+end
+
+----------------------------------------------------------------------------------------------
+-- install the global API
+----------------------------------------------------------------------------------------------
+local function auraTuple(a)
+  return a.name, a.icon or 136000, a.count or 0, a.debuffType, a.duration or 0,
+    a.expirationTime or 0, a.source or "player", false, false, a.spellId or 0
+end
+
+local function bagSlot(bag, slot)
+  local b = M.bags[bag]
+  return b and b.slots[slot]
+end
+
+local function itemFromArg(item)
+  if type(item) == "number" then return M.items[item] end
+  if type(item) == "string" then
+    local id = tonumber(item:match("item:(%d+)"))
+    if id then return M.items[id] end
+    for _, it in pairs(M.items) do if it.name == item then return it end end
+  end
+  return nil
+end
+
+local function bit_op(a, b, f)
+  local r, p = 0, 1
+  a, b = math.floor(a or 0) % 4294967296, math.floor(b or 0) % 4294967296
+  for _ = 1, 32 do
+    local x, y = a % 2, b % 2
+    if f(x, y) then r = r + p end
+    a, b, p = (a - x) / 2, (b - y) / 2, p * 2
+  end
+  return r
+end
+
+function M.Install(flavor)
+  M.flavor = flavor or "modern"
+  local modern = (M.flavor == "modern")
+  local G = _G
+
+  -- Lua helpers WoW adds -----------------------------------------------------------------------
+  G.strsplit = function(sep, s, limit)
+    s = tostring(s or "")
+    local out, start, n = {}, 1, 0
+    while true do
+      if limit and n >= limit - 1 then break end
+      local i, j = s:find(sep, start, true)
+      if not i then break end
+      out[#out + 1] = s:sub(start, i - 1)
+      n = n + 1
+      start = j + 1
+    end
+    out[#out + 1] = s:sub(start)
+    return unpack(out)
+  end
+  G.strjoin = function(sep, ...) return table.concat({ ... }, sep) end
+  G.strtrim = function(s, chars)
+    chars = chars and ("[" .. chars:gsub("[%]%^%-]", "%%%0") .. "]") or "%s"
+    return (tostring(s):gsub("^" .. chars .. "+", ""):gsub(chars .. "+$", ""))
+  end
+  G.strconcat = function(...) return table.concat({ ... }) end
+  G.strmatch, G.strfind, G.strsub, G.strlen = string.match, string.find, string.sub, string.len
+  G.strupper, G.strlower, G.strrep, G.strbyte, G.strchar = string.upper, string.lower, string.rep, string.byte, string.char
+  G.strrev, G.gsub, G.format = string.reverse, string.gsub, string.format
+  G.strlenutf8 = function(s) local _, n = tostring(s):gsub("[^\128-\191]", "") return n end
+  string.trim, string.split, string.join = G.strtrim, function(s, sep, ...) return G.strsplit(sep, s, ...) end, G.strjoin
+  G.tinsert, G.tremove, G.sort, G.getn = table.insert, table.remove, table.sort, table.getn
+  G.wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
+  table.wipe = G.wipe
+  G.tContains = function(t, v) for _, x in pairs(t) do if x == v then return true end end return false end
+  G.tInvert = function(t) local r = {} for k, v in pairs(t) do r[v] = k end return r end
+  G.CopyTable = function(t, seen)
+    if type(t) ~= "table" then return t end
+    local r = {}
+    for k, v in pairs(t) do r[k] = (type(v) == "table") and G.CopyTable(v) or v end
+    return r
+  end
+  G.Mixin = function(o, ...) for i = 1, select("#", ...) do for k, v in pairs((select(i, ...))) do o[k] = v end end return o end
+  G.CreateFromMixins = function(...) return G.Mixin({}, ...) end
+  G.floor, G.ceil, G.abs, G.min, G.max, G.sqrt = math.floor, math.ceil, math.abs, math.min, math.max, math.sqrt
+  G.mod = math.fmod
+  G.random = math.random
+  G.fastrandom = math.random
+  G.Round = function(x) return math.floor(x + 0.5) end
+  G.Clamp = function(v, a, b) return math.max(a, math.min(b, v)) end
+  G.bit = {
+    band = function(a, b) return bit_op(a, b, function(x, y) return x == 1 and y == 1 end) end,
+    bor = function(a, b) return bit_op(a, b, function(x, y) return x == 1 or y == 1 end) end,
+    bxor = function(a, b) return bit_op(a, b, function(x, y) return x ~= y end) end,
+    lshift = function(a, n) return (math.floor(a) * 2 ^ n) % 4294967296 end,
+    rshift = function(a, n) return math.floor((math.floor(a) % 4294967296) / 2 ^ n) end,
+  }
+  G.hooksecurefunc = function(tbl, name, fn)
+    if type(tbl) == "string" then tbl, name, fn = G, tbl, name end
+    local old = tbl[name]
+    if type(old) ~= "function" then error("hooksecurefunc: " .. tostring(name) .. " is not a function", 2) end
+    rawset(tbl, name, function(...) local r = { old(...) } fn(...) return unpack(r) end)
+  end
+  G.issecurevariable = function() return true, nil end
+  G.securecall = function(fn, ...) if type(fn) == "string" then fn = G[fn] end return fn(...) end
+  G.geterrorhandler = function() return function(e) M.errors[#M.errors + 1] = { label = "errorhandler", msg = tostring(e) } end end
+  G.seterrorhandler = function() end
+  G.debugstack = function() return debug.traceback() end
+  G.print = function(...)
+    local parts = {}
+    for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+    M.output[#M.output + 1] = table.concat(parts, " ")
+  end
+
+  -- constants / tables -----------------------------------------------------------------------
+  G.WOW_PROJECT_MAINLINE, G.WOW_PROJECT_CLASSIC = 1, 2
+  G.WOW_PROJECT_ID = 2
+  G.NUM_BAG_SLOTS, G.NUM_BAG_FRAMES, G.BACKPACK_CONTAINER = 4, 4, 0
+  G.INVSLOT_AMMO, G.INVSLOT_RANGED, G.INVSLOT_MAINHAND = 0, 18, 16
+  G.MAX_PLAYER_LEVEL = 60
+  G.LE_PARTY_CATEGORY_HOME = 1
+  G.Enum = {
+    ItemQuality = { Poor = 0, Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5 },
+    ItemClass = { Consumable = 0, Container = 1, Weapon = 2, Armor = 4, Reagent = 5, Projectile = 6,
+      Tradegoods = 7, Recipe = 9, Quiver = 11, Questitem = 12, Miscellaneous = 15 },
+    PowerType = { Mana = 0, Rage = 1, Focus = 2, Energy = 3 },
+  }
+  G.RAID_CLASS_COLORS = {}
+  for _, c in ipairs({ "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE", "WARLOCK", "DRUID" }) do
+    G.RAID_CLASS_COLORS[c] = { r = 1, g = 1, b = 1, colorStr = "ffffffff",
+      GenerateHexColor = function() return "ffffffff" end, WrapTextInColorCode = function(_, s) return s end }
+  end
+  G.LOCALIZED_CLASS_NAMES_MALE = { HUNTER = "Chasseur", WARRIOR = "Guerrier", MAGE = "Mage", ROGUE = "Voleur",
+    PRIEST = "Prêtre", DRUID = "Druide", PALADIN = "Paladin", SHAMAN = "Chaman", WARLOCK = "Démoniste" }
+  G.LOCALIZED_CLASS_NAMES_FEMALE = G.LOCALIZED_CLASS_NAMES_MALE
+  G.ITEM_QUALITY_COLORS = {}
+  for q = 0, 5 do G.ITEM_QUALITY_COLORS[q] = { r = 1, g = 1, b = 1, hex = "|cffffffff" } end
+  G.SOUNDKIT = setmetatable({}, { __index = function(_, k) return 1 end })
+  G.STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
+  G.CreateColor = function(r, g, b, a)
+    return { r = r, g = g, b = b, a = a, GetRGB = function(c) return c.r, c.g, c.b end,
+      WrapTextInColorCode = function(_, s) return s end, GenerateHexColor = function() return "ffffffff" end }
+  end
+  G.BackdropTemplateMixin = {}
+  G.StaticPopupDialogs = {}
+  G.StaticPopup_Show = function(which) if not G.StaticPopupDialogs[which] then M.Violation("api", "StaticPopup_Show unknown " .. tostring(which)) end end
+  G.StaticPopup_Hide = function() end
+  G.ERR_NOT_IN_COMBAT = "Impossible en combat."
+
+  -- frames -------------------------------------------------------------------------------------
+  G.UIParent = newWidget("Frame", "UIParent", nil)
+  G.WorldFrame = newWidget("Frame", "WorldFrame", nil)
+  G.Minimap = newWidget("Minimap", "Minimap", G.UIParent)
+  local chat = newWidget("ScrollingMessageFrame", "ChatFrame1", G.UIParent)
+  function chat:AddMessage(msg) M.output[#M.output + 1] = tostring(msg) end
+  G.DEFAULT_CHAT_FRAME, G.ChatFrame1, G.SELECTED_CHAT_FRAME = chat, chat, chat
+  G.UIErrorsFrame = newWidget("MessageFrame", "UIErrorsFrame", G.UIParent)
+  function G.UIErrorsFrame:AddMessage(msg) M.output[#M.output + 1] = "[UIError] " .. tostring(msg) end
+  G.RaidWarningFrame = newWidget("MessageFrame", "RaidWarningFrame", G.UIParent)
+  G.RaidNotice_AddMessage = function(_, msg) M.output[#M.output + 1] = "[RaidNotice] " .. tostring(msg) end
+  G.GameTooltip = CreateFrame("GameTooltip", "GameTooltip", G.UIParent)
+  G.MerchantFrame = newWidget("Frame", "MerchantFrame", G.UIParent)
+  G.MerchantFrame.__shown = false
+  G.MerchantFrame.IsShown = function() return M.merchantOpen end
+  G.MerchantFrame.IsVisible = G.MerchantFrame.IsShown
+  G.InterfaceOptionsFramePanelContainer = newWidget("Frame", "InterfaceOptionsFramePanelContainer", G.UIParent)
+  G.InterfaceOptions_AddCategory = function(panel) if type(panel) ~= "table" then error("bad panel", 2) end end
+  G.InterfaceOptionsFrame_OpenToCategory = function() end
+  G.Settings = {
+    RegisterCanvasLayoutCategory = function(frame, name) return { ID = name, GetID = function() return name end } end,
+    RegisterVerticalLayoutCategory = function(name) return { ID = name, GetID = function() return name end } end,
+    RegisterAddOnCategory = function() end,
+    OpenToCategory = function() end,
+  }
+  for _, fnt in ipairs({ "GameFontNormal", "GameFontNormalSmall", "GameFontNormalLarge", "GameFontHighlight",
+    "GameFontHighlightSmall", "GameFontDisable", "GameFontRed", "GameFontGreen", "NumberFontNormal" }) do
+    G[fnt] = newWidget("Font", fnt, nil)
+  end
+
+  -- time ---------------------------------------------------------------------------------------
+  G.C_Timer = {
+    After = function(d, fn) newTimer(d, fn) end,
+    NewTimer = function(d, fn) return newTimer(d, fn) end,
+    NewTicker = function(d, fn, it) return newTimer(d, fn, d, it) end,
+  }
+
+  -- slash --------------------------------------------------------------------------------------
+  G.SlashCmdList = G.SlashCmdList or {}
+  G.hash_SlashCmdList = {}
+
+  -- client / addon info --------------------------------------------------------------------------
+  G.GetLocale = function() return M.locale end
+  G.GetBuildInfo = function() return "1.15.8", "60000", "Nov 4 2026", 11508 end
+  G.GetRealmName = function() return M.player.realm end
+  G.GetNormalizedRealmName = function() return (M.player.realm:gsub("[%s%-]", "")) end
+  local function addonMeta(name, field)
+    local meta = M.tocMeta and M.tocMeta[name]
+    return meta and meta[field] or nil
+  end
+  G.GetAddOnMetadata = addonMeta
+  G.IsAddOnLoaded = function(name) return M.tocMeta and M.tocMeta[name] ~= nil end
+  G.GetCVar = function(k) return M.cvars[k] end
+  G.SetCVar = function(k, v) M.cvars[k] = tostring(v) end
+  G.GetCVarBool = function(k) return M.cvars[k] == "1" end
+  G.LoggingCombat = function(v) if v ~= nil then M.loggingCombat = v and true or false end return M.loggingCombat end
+  G.LoggingChat = function(v) if v ~= nil then M.loggingChat = v and true or false end return M.loggingChat end
+  G.IsShiftKeyDown = function() return false end
+  G.IsControlKeyDown = G.IsShiftKeyDown
+  G.IsAltKeyDown = G.IsShiftKeyDown
+  G.IsModifierKeyDown = G.IsShiftKeyDown
+  G.PlaySound = function(id) M.sounds[#M.sounds + 1] = id return true end
+  G.PlaySoundFile = function(f) M.sounds[#M.sounds + 1] = f return true end
+  G.ReloadUI = function() M.reloaded = true end
+  G.GetFramerate = function() return 60 end
+  G.GetCursorPosition = function() return 0, 0 end
+  G.GetScreenWidth = function() return 1920 end
+  G.GetScreenHeight = function() return 1080 end
+  G.GetCoinTextureString = function(c) return tostring(c) .. "c" end
+  G.GetMoneyString = G.GetCoinTextureString
+  G.date, G.time = os.date, os.time
+
+  -- combat --------------------------------------------------------------------------------------
+  G.InCombatLockdown = function() return M.inCombat end
+  G.CombatLogGetCurrentEventInfo = function() if M.combatEvent then return unpack(M.combatEvent) end end
+
+  -- player / units --------------------------------------------------------------------------------
+  local function U(unit)
+    unit = unit and tostring(unit):lower() or ""
+    if unit == "player" then return M.player, "player" end
+    if unit == "pet" then return M.pet.exists and M.pet or nil, "pet" end
+    if unit == "target" then return M.target.exists and M.target or nil, "target" end
+    local p = unit:match("^party(%d)$") or unit:match("^raid(%d+)$")
+    if p then return M.group[tonumber(p)], "group" end
+    return nil
+  end
+  G.UnitExists = function(u) return U(u) ~= nil end
+  G.UnitName = function(u) local d = U(u) if d then return d.name, nil end end
+  G.UnitFullName = function(u) local d = U(u) if d then return d.name, M.player.realm end end
+  G.UnitGUID = function(u) local d = U(u) if d then return d.guid or ("Creature-0-0-0-0-1-" .. tostring(d.name)) end end
+  G.UnitClass = function(u)
+    local d, k = U(u)
+    if not d then return nil end
+    if k == "pet" then return "Chasseur", "HUNTER", 3 end
+    local cls = d.class or "WARRIOR"
+    return G.LOCALIZED_CLASS_NAMES_MALE[cls] or cls, cls, 3
+  end
+  G.UnitRace = function(u) local d = U(u) if d then return d.race or "Humain", d.raceFile or "Human" end end
+  G.UnitLevel = function(u) local d = U(u) if d then return d.level or 1 end return 0 end
+  G.UnitEffectiveLevel = G.UnitLevel
+  G.UnitHealth = function(u) local d = U(u) if d then return d.health or 100 end return 0 end
+  G.UnitHealthMax = function(u) local d = U(u) if d then return d.healthMax or 100 end return 0 end
+  G.UnitPower = function(u) local d = U(u) if d then return d.power or 100 end return 0 end
+  G.UnitPowerMax = function(u) local d = U(u) if d then return d.powerMax or 100 end return 0 end
+  G.UnitPowerType = function(u) local d = U(u) if d then return d.powerType or 0, "MANA" end return 0, "MANA" end
+  G.UnitIsDead = function(u) local d = U(u) return d and d.dead or false end
+  G.UnitIsDeadOrGhost = G.UnitIsDead
+  G.UnitIsGhost = function() return false end
+  G.UnitIsUnit = function(a, b) return tostring(a):lower() == tostring(b):lower() end
+  G.UnitIsPlayer = function(u) local _, k = U(u) return k == "player" or k == "group" end
+  G.UnitPlayerControlled = G.UnitIsPlayer
+  G.UnitIsFriend = function(_, u) local _, k = U(u) return k ~= "target" end
+  G.UnitIsEnemy = function(_, u) local _, k = U(u) return k == "target" end
+  G.UnitCanAttack = function(_, u) local d, k = U(u) return k == "target" and d and d.hostile or false end
+  G.UnitClassification = function(u) local d = U(u) return d and d.classification or "normal" end
+  G.UnitCreatureFamily = function(u) local d, k = U(u) if k == "pet" then return d.family end return d and d.family end
+  G.UnitCreatureType = function(u) local d = U(u) return d and d.creatureType or "Bête" end
+  G.UnitAffectingCombat = function(u) local _, k = U(u) if k == "player" or k == "pet" then return M.inCombat end return false end
+  G.UnitIsConnected = function(u) local d = U(u) return d ~= nil and d.online ~= false end
+  G.UnitIsAFK = function() return false end
+  G.UnitIsTapDenied = function() return false end
+  G.UnitThreatSituation = function(u) local d = U(u) return d and d.threat or nil end
+  G.UnitDetailedThreatSituation = function() return nil end
+  G.UnitInParty = function(u) local _, k = U(u) return k == "group" end
+  G.UnitInRaid = function() return nil end
+  G.UnitXP = function() return M.player.xp end
+  G.UnitXPMax = function() return M.player.xpMax end
+  G.GetXPExhaustion = function() return M.player.rested end
+  G.GetRestState = function() return M.player.rested and 1 or 2, "Reposé" end
+  G.IsResting = function() return M.player.resting end
+  G.UnitRangedDamage = function() return 2.9, 20, 30, 0, 0, 1 end
+  G.UnitAttackSpeed = function() return 2.4, nil end
+  G.UnitCastingInfo = function() return nil end
+  G.UnitChannelInfo = function() return nil end
+  G.CastingInfo = G.UnitCastingInfo
+  G.ChannelInfo = G.UnitChannelInfo
+  G.CheckInteractDistance = function() return true end
+  G.UnitInRange = function() return true, true end
+  G.UnitPosition = function() return nil end
+  G.IsInGroup = function() return #M.group > 0 end
+  G.IsInRaid = function() return false end
+  G.IsInGuild = function() return true end
+  G.GetGuildInfo = function(u) if tostring(u) == "player" then return "Guilde-Test", "Membre", 3, M.player.realm end end
+  G.GuildRoster = function() end
+  G.C_GuildInfo = modern and { GuildRoster = function() end } or nil
+  G.UNKNOWNOBJECT, G.UNKNOWN = "Inconnu", "Inconnu"
+  G.GetNumGroupMembers = function() return #M.group > 0 and (#M.group + 1) or 0 end
+  G.GetNumSubgroupMembers = function() return #M.group end
+  G.GetNumPartyMembers = G.GetNumSubgroupMembers
+  G.GetNumRaidMembers = function() return 0 end
+  G.UnitIsGroupLeader = function(u) return u == "player" end
+  G.GetMoney = function() return M.player.money end
+  G.GetZoneText = function() return M.player.zone end
+  G.GetRealZoneText = G.GetZoneText
+  G.GetSubZoneText = function() return M.player.subzone end
+  G.GetMinimapZoneText = G.GetSubZoneText
+  G.GetZonePVPInfo = function() return "contested" end
+  G.IsInInstance = function() return false, "none" end
+  G.GetInstanceInfo = function() return M.player.zone, "none", 0, "", 5, 0, false, 0 end
+  G.C_Map = {
+    GetBestMapForUnit = function() return 1424 end,
+    GetPlayerMapPosition = function() return { x = 0.5, y = 0.4, GetXY = function(p) return p.x, p.y end } end,
+    GetMapInfo = function(id) return { mapID = id, name = M.player.zone, mapType = 3, parentMapID = 1415 } end,
+  }
+
+  -- auras --------------------------------------------------------------------------------------
+  local function aura(unit, i, filter)
+    local list = M.auras[tostring(unit):lower()] or {}
+    local want = filter and tostring(filter):find("HARMFUL") and "debuff" or "buff"
+    local k = 0
+    for _, a in ipairs(list) do
+      if (a.kind or "buff") == want then
+        k = k + 1
+        if k == i then return a end
+      end
+    end
+  end
+  G.UnitBuff = function(u, i) local a = aura(u, i, "HELPFUL") if a then return auraTuple(a) end end
+  G.UnitDebuff = function(u, i) local a = aura(u, i, "HARMFUL") if a then return auraTuple(a) end end
+  G.UnitAura = function(u, i, f) local a = aura(u, i, f) if a then return auraTuple(a) end end
+  G.AuraUtil = {
+    FindAuraByName = function(name, u, f)
+      for i = 1, 40 do
+        local a = aura(u, i, f)
+        if not a then return nil end
+        if a.name == name then return auraTuple(a) end
+      end
+    end,
+    ForEachAura = function(u, f, _, fn, usePacked)
+      for i = 1, 40 do
+        local a = aura(u, i, f)
+        if not a then return end
+        if fn(a) then return end
+      end
+    end,
+  }
+  G.GetWeaponEnchantInfo = function() return M.weaponEnchant or false, 0, 0, 0, false, 0, 0, 0 end
+  G.GetShapeshiftForm = function() return 0 end
+  G.GetNumShapeshiftForms = function() return 0 end
+  G.GetShapeshiftFormInfo = function() return nil end
+  G.GetTrackingTexture = function() return nil end
+
+  -- pet ------------------------------------------------------------------------------------------
+  G.HasPetUI = function() return M.pet.exists, true end
+  G.GetPetHappiness = function() if M.pet.exists then return M.pet.happiness, 0, 0 end end
+  G.GetPetLoyalty = function() return M.pet.exists and M.pet.loyalty or nil end
+  G.GetPetTrainingPoints = function() return M.pet.tp, 0 end
+  G.GetPetFoodTypes = function() return "Viande", "Poisson" end
+  G.GetPetExperience = function() return 100, 1000 end
+  G.PetHasActionBar = function() return M.pet.exists end
+  G.GetPetActionInfo = function() return nil end
+  G.IsPetAttackActive = function() return false end
+
+  -- spells -------------------------------------------------------------------------------------
+  local function findSpell(s)
+    if type(s) == "number" then return M.spells[s], s end
+    if type(s) == "string" then
+      local base = s:gsub("%(.-%)", ""):gsub("%s+$", "")
+      for id, sp in pairs(M.spells) do if sp.name == base then return sp, id end end
+    end
+  end
+  G.GetSpellInfo = function(s)
+    local sp, id = findSpell(s)
+    if not sp then return nil end
+    return sp.name, sp.rank, sp.icon, sp.castTime or 0, 0, 35, id
+  end
+  G.GetSpellTexture = function(s) local sp = findSpell(s) return sp and sp.icon end
+  G.GetSpellLink = function(s) local sp, id = findSpell(s) if sp then return "|cff71d5ff|Hspell:" .. id .. "|h[" .. sp.name .. "]|h|r" end end
+  G.IsSpellKnown = function(id) local sp = M.spells[id] return sp and sp.known or false end
+  G.IsPlayerSpell = G.IsSpellKnown
+  G.IsUsableSpell = function(s) local sp = findSpell(s) return sp ~= nil, false end
+  G.IsCurrentSpell = function() return false end
+  G.IsAutoRepeatSpell = function(s) return M.autoRepeat or false end
+  G.IsSpellInRange = function() return 1 end
+  G.GetSpellCooldown = function(s)
+    local _, id = findSpell(s)
+    local cd = id and M.spellCooldowns[id]
+    if cd then return cd.start, cd.duration, 1, 1 end
+    return 0, 0, 1, 1
+  end
+  G.GetNumSpellTabs = function() return 2 end
+  G.GetSpellTabInfo = function(i) return "Général", 0, 0, 0 end
+  G.GetSpellBookItemName = function() return nil end
+  G.BOOKTYPE_SPELL, G.BOOKTYPE_PET = "spell", "pet"
+  G.GetItemSpell = function() return nil end
+
+  -- talents / spec -------------------------------------------------------------------------------
+  G.GetNumTalentTabs = function() return 3 end
+  G.GetTalentTabInfo = function(i) return ({ "Maîtrise des bêtes", "Précision", "Survie" })[i], nil, 5, "x" end
+  G.GetNumTalents = function() return 0 end
+  G.GetTalentInfo = function() return nil end
+  G.GetActiveTalentGroup = function() return M.talentGroup end
+  G.GetNumTalentGroups = function() return M.numTalentGroups end
+  G.UnitCharacterPoints = function() return 0 end
+
+  -- items / inventory ---------------------------------------------------------------------------
+  G.GetItemInfo = function(item)
+    local it = itemFromArg(item)
+    if not it then return nil end
+    return it.name, M.ItemLink(it.id), it.quality, it.ilvl, it.minLevel, it.type, it.subType, it.stack,
+      it.equipLoc, 134400 + it.id, it.sellPrice, it.classID, it.subclassID
+  end
+  G.GetItemInfoInstant = function(item)
+    local it = itemFromArg(item)
+    if not it then return nil end
+    return it.id, it.type, it.subType, it.equipLoc, 134400 + it.id, it.classID, it.subclassID
+  end
+  G.GetItemCount = function(item)
+    local it = itemFromArg(item)
+    if not it then return 0 end
+    local n = 0
+    for _, b in pairs(M.bags) do for _, s in pairs(b.slots) do if s.id == it.id then n = n + s.count end end end
+    return n
+  end
+  G.GetItemIcon = function(item) local it = itemFromArg(item) return it and 134400 + it.id end
+  G.GetItemCooldown = function() return 0, 0, 1 end
+  G.IsUsableItem = function(item) return itemFromArg(item) ~= nil, false end
+  G.GetInventorySlotInfo = function(name)
+    local slots = { HeadSlot = 1, ChestSlot = 5, MainHandSlot = 16, SecondaryHandSlot = 17, RangedSlot = 18,
+      AmmoSlot = 0, Bag0Slot = 20, Bag1Slot = 21, Bag2Slot = 22, Bag3Slot = 23 }
+    return slots[name] or 1, 0
+  end
+  G.GetInventoryItemID = function(_, slot) local s = M.inventory[slot] return s and s.id ~= 0 and s.id or nil end
+  G.GetInventoryItemLink = function(_, slot) local s = M.inventory[slot] return s and M.ItemLink(s.id) end
+  G.GetInventoryItemCount = function(_, slot) local s = M.inventory[slot] return s and s.count or 0 end
+  G.GetInventoryItemDurability = function(slot) local s = M.inventory[slot] if s and s.durMax then return s.dur, s.durMax end end
+  G.GetInventoryItemTexture = function() return nil end
+  G.GetInventoryItemQuality = function() return 1 end
+  G.CanMerchantRepair = function() return M.merchantOpen end
+  G.GetRepairAllCost = function() return 1234, true end
+  G.RepairAllItems = function()
+    if not M.merchantOpen then M.Violation("api", "RepairAllItems with no merchant") end
+  end
+  G.GetMerchantNumItems = function() return 0 end
+  G.CloseMerchant = function() M.merchantOpen = false end
+  G.PickupItem = function() if M.inCombat then M.Violation("protected", "PickupItem in combat") end end
+  G.EquipItemByName = function() end
+  G.ClearCursor = function() end
+  G.CursorHasItem = function() return false end
+
+  -- bags ---------------------------------------------------------------------------------------
+  local function numSlots(bag) local b = M.bags[bag] return b and b.size or 0 end
+  local function numFree(bag)
+    local b = M.bags[bag]
+    if not b then return 0, 0 end
+    local used = 0
+    for _ in pairs(b.slots) do used = used + 1 end
+    return b.size - used, b.family or 0
+  end
+  local function useItem(bag, slot)
+    if not bagSlot(bag, slot) then return end
+    if not M.merchantOpen and M.inCombat then
+      M.Violation("protected", "UseContainerItem from insecure code in combat")
+    end
+    M.lastUsed = { bag = bag, slot = slot }
+    if M.merchantOpen then
+      local s = bagSlot(bag, slot)
+      local it = M.items[s.id]
+      M.player.money = M.player.money + (it and it.sellPrice or 0) * s.count
+      M.bags[bag].slots[slot] = nil
+      M.sold = (M.sold or 0) + 1
+    end
+  end
+  if modern then
+    G.C_Container = {
+      GetContainerNumSlots = numSlots,
+      GetContainerNumFreeSlots = numFree,
+      GetContainerItemInfo = function(bag, slot)
+        local s = bagSlot(bag, slot)
+        if not s then return nil end
+        local it = M.items[s.id] or {}
+        return { iconFileID = 134400 + s.id, stackCount = s.count, isLocked = false, quality = it.quality,
+          isReadable = false, hasLoot = false, hyperlink = M.ItemLink(s.id), isFiltered = false,
+          hasNoValue = (it.sellPrice or 0) == 0, itemID = s.id, isBound = false, itemName = it.name }
+      end,
+      GetContainerItemLink = function(bag, slot) local s = bagSlot(bag, slot) return s and M.ItemLink(s.id) end,
+      GetContainerItemID = function(bag, slot) local s = bagSlot(bag, slot) return s and s.id end,
+      GetContainerItemCooldown = function() return 0, 0, 1 end,
+      UseContainerItem = useItem,
+      PickupContainerItem = function() if M.inCombat then M.Violation("protected", "PickupContainerItem in combat") end end,
+      GetBagName = function(bag) return bag == 0 and "Sac à dos" or "Sac" end,
+    }
+    G.C_ChatInfo = {
+      RegisterAddonMessagePrefix = function(p) return M.RegisterPrefix(p) end,
+      IsAddonMessagePrefixRegistered = function(p) return M.prefixes[p] or false end,
+      SendAddonMessage = function(...) return M.SendAddon(...) end,
+    }
+    G.C_AddOns = {
+      GetAddOnMetadata = addonMeta,
+      IsAddOnLoaded = G.IsAddOnLoaded,
+      LoadAddOn = function() return false, "MISSING" end,
+    }
+    G.C_Spell = {
+      GetSpellInfo = function(s)
+        local sp, id = findSpell(s)
+        if sp then return { name = sp.name, iconID = sp.icon, castTime = sp.castTime or 0, minRange = 0,
+          maxRange = 35, spellID = id, originalIconID = sp.icon } end
+      end,
+    }
+    G.C_UnitAuras = {
+      GetAuraDataByIndex = function(u, i, f)
+        local a = aura(u, i, f)
+        if a then return { name = a.name, icon = a.icon or 136000, applications = a.count or 0,
+          duration = a.duration or 0, expirationTime = a.expirationTime or 0, spellId = a.spellId or 0,
+          sourceUnit = a.source or "player", isHelpful = (a.kind or "buff") == "buff" } end
+      end,
+    }
+    G.C_Item = {
+      GetItemInfo = G.GetItemInfo, GetItemCount = G.GetItemCount, GetItemInfoInstant = G.GetItemInfoInstant,
+      GetItemNameByID = function(id) local it = M.items[id] return it and it.name end,
+    }
+    G.C_QuestLog = {
+      GetNumQuestLogEntries = function() return #M.quests, #M.quests end,
+      GetQuestIDForLogIndex = function(i) return M.quests[i] and (1000 + i) or nil end,
+    }
+  else
+    G.GetContainerNumSlots = numSlots
+    G.GetContainerNumFreeSlots = numFree
+    G.GetContainerItemInfo = function(bag, slot)
+      local s = bagSlot(bag, slot)
+      if not s then return nil end
+      local it = M.items[s.id] or {}
+      return 134400 + s.id, s.count, false, it.quality, false, false, M.ItemLink(s.id), false,
+        (it.sellPrice or 0) == 0, s.id
+    end
+    G.GetContainerItemLink = function(bag, slot) local s = bagSlot(bag, slot) return s and M.ItemLink(s.id) end
+    G.GetContainerItemID = function(bag, slot) local s = bagSlot(bag, slot) return s and s.id end
+    G.GetContainerItemCooldown = function() return 0, 0, 1 end
+    G.UseContainerItem = useItem
+    G.PickupContainerItem = function() if M.inCombat then M.Violation("protected", "PickupContainerItem in combat") end end
+    G.RegisterAddonMessagePrefix = function(p) return M.RegisterPrefix(p) end
+    G.SendAddonMessage = function(...) return M.SendAddon(...) end
+  end
+  G.GetBagName = function(bag) return bag == 0 and "Sac à dos" or "Sac" end
+  G.ContainerIDToInventoryID = function(bag) return 19 + bag end
+
+  -- quests -------------------------------------------------------------------------------------
+  G.GetNumQuestLogEntries = function() return #M.quests, #M.quests end
+  G.GetQuestLogTitle = function(i)
+    local q = M.quests[i]
+    if not q then return nil end
+    return q.title, q.level, nil, false, false, q.complete and 1 or nil, nil, 1000 + i
+  end
+  G.GetNumQuestLeaderBoards = function(i) local q = M.quests[i or M.questSel or 1] return q and #q.objectives or 0 end
+  G.GetQuestLogLeaderBoard = function(j, i)
+    local q = M.quests[i or M.questSel or 1]
+    local o = q and q.objectives[j]
+    if o then return o.text, "monster", o.done end
+  end
+  G.SelectQuestLogEntry = function(i) M.questSel = i end
+  G.GetQuestLogSelection = function() return M.questSel or 0 end
+  G.IsQuestComplete = function(id) local q = M.quests[(id or 0) - 1000] return q and q.complete or false end
+  G.GetQuestLogIndexByID = function(id) return M.quests[(id or 0) - 1000] and (id - 1000) or 0 end
+  G.GetQuestsCompleted = function() return {} end
+
+  -- macros (ToS guard: never in combat) -------------------------------------------------------
+  G.MAX_ACCOUNT_MACROS, G.MAX_CHARACTER_MACROS = 120, 18
+  local function macroList(perChar) return perChar and M.macros.char or M.macros.global end
+  local function macroAt(idx)
+    if type(idx) == "string" then
+      for i, m in ipairs(M.macros.global) do if m.name == idx then return m, i end end
+      for i, m in ipairs(M.macros.char) do if m.name == idx then return m, G.MAX_ACCOUNT_MACROS + i end end
+      return nil, 0
+    end
+    if type(idx) ~= "number" then return nil, 0 end
+    if idx > G.MAX_ACCOUNT_MACROS then return M.macros.char[idx - G.MAX_ACCOUNT_MACROS], idx end
+    return M.macros.global[idx], idx
+  end
+  local function checkBody(fn, name, body)
+    if type(body) == "string" and #body > 255 then
+      M.Violation("macro", fn .. ": body of '" .. tostring(name) .. "' is " .. #body .. " > 255 chars")
+    end
+    if type(name) == "string" and #name > 16 then
+      M.Violation("macro", fn .. ": name '" .. name .. "' > 16 chars")
+    end
+  end
+  local function protected(fn)
+    if M.inCombat then M.Violation("combat", fn .. " called during combat lockdown (ADDON_ACTION_BLOCKED)") return true end
+  end
+  G.GetNumMacros = function() return #M.macros.global, #M.macros.char end
+  G.GetMacroInfo = function(idx) local m = macroAt(idx) if m then return m.name, m.icon, m.body end end
+  G.GetMacroBody = function(idx) local m = macroAt(idx) return m and m.body end
+  G.GetMacroIndexByName = function(name) local _, i = macroAt(name) return i or 0 end
+  G.GetMacroIcons = function(t) t = t or {} t[#t + 1] = 134400 return t end
+  G.GetMacroItemIcons = G.GetMacroIcons
+  G.CreateMacro = function(name, icon, body, perChar)
+    if protected("CreateMacro") then error("Interface action failed because of an AddOn", 2) end
+    checkBody("CreateMacro", name, body)
+    local list = macroList(perChar)
+    local cap = perChar and G.MAX_CHARACTER_MACROS or G.MAX_ACCOUNT_MACROS
+    if #list >= cap then error("CreateMacro: macro limit reached", 2) end
+    list[#list + 1] = { name = name, icon = icon, body = body or "" }
+    return perChar and (G.MAX_ACCOUNT_MACROS + #list) or #list
+  end
+  G.EditMacro = function(idx, name, icon, body)
+    if protected("EditMacro") then error("Interface action failed because of an AddOn", 2) end
+    local m, i = macroAt(idx)
+    if not m then return 0 end
+    checkBody("EditMacro", name or m.name, body or m.body)
+    if name then m.name = name end
+    if icon then m.icon = icon end
+    if body then m.body = body end
+    return i
+  end
+  G.DeleteMacro = function(idx)
+    if protected("DeleteMacro") then return end
+    local m, i = macroAt(idx)
+    if not m then return end
+    if i > G.MAX_ACCOUNT_MACROS then table.remove(M.macros.char, i - G.MAX_ACCOUNT_MACROS)
+    else table.remove(M.macros.global, i) end
+  end
+  G.PickupMacro = function() protected("PickupMacro") end
+  G.PickupSpell = function() protected("PickupSpell") end
+  G.PlaceAction = function() protected("PlaceAction") end
+  G.GetActionInfo = function() return nil end
+  G.HasAction = function() return false end
+  G.GetActionTexture = function() return nil end
+  G.GetBindingKey = function(cmd) return M.bindings[cmd] end
+  G.GetBindingAction = function(key) for c, k in pairs(M.bindings) do if k == key then return c end end return "" end
+  G.SetBinding = function(key, cmd) if protected("SetBinding") then return false end if cmd then M.bindings[cmd] = key end return true end
+  G.SetBindingMacro = function(key, m) if protected("SetBindingMacro") then return false end M.bindings["MACRO " .. tostring(m)] = key return true end
+  G.SetBindingSpell = function(key, s) if protected("SetBindingSpell") then return false end M.bindings["SPELL " .. tostring(s)] = key return true end
+  G.SetBindingClick = function(key, b) if protected("SetBindingClick") then return false end M.bindings["CLICK " .. tostring(b)] = key return true end
+  G.SaveBindings = function() protected("SaveBindings") end
+  G.GetCurrentBindingSet = function() return 1 end
+  G.ACCOUNT_BINDINGS, G.CHARACTER_BINDINGS = 1, 2
+  -- protected actions an addon must never call (automation): record if called at all
+  for _, fn in ipairs({ "CastSpellByName", "CastSpellByID", "UseAction", "RunMacroText", "TargetUnit",
+    "AttackTarget", "CastPetAction", "PetAttack", "MoveForwardStart", "JumpOrAscendStart", "TurnLeftStart",
+    "InteractUnit", "UseInventoryItem", "SpellStopCasting", "TargetNearestEnemy" }) do
+    G[fn] = function() M.Violation("automation", fn .. " called from addon code (protected / automation)") end
+  end
+
+  -- chat -----------------------------------------------------------------------------------------
+  G.SendChatMessage = function(msg, chatType, lang, target)
+    if type(msg) == "string" and #msg > 255 then M.Violation("chat", "SendChatMessage > 255 bytes") end
+    M.sentChat[#M.sentChat + 1] = { msg = msg, chatType = chatType, target = target }
+  end
+  G.Ambiguate = function(name) return (tostring(name):gsub("%-.*$", "")) end
+  G.ChatFrame_AddMessageEventFilter = function() end
+end
+
+function M.RegisterPrefix(p)
+  if type(p) ~= "string" or #p == 0 or #p > 16 then
+    M.Violation("comms", "addon prefix must be 1..16 chars: " .. tostring(p))
+    return false
+  end
+  M.prefixes[p] = true
+  return true
+end
+
+function M.SendAddon(prefix, msg, channel, target)
+  if not M.prefixes[prefix] then M.Violation("comms", "SendAddonMessage with unregistered prefix " .. tostring(prefix)) end
+  if type(msg) ~= "string" then M.Violation("comms", "SendAddonMessage message must be a string") msg = tostring(msg) end
+  if #msg > 255 then M.Violation("comms", "SendAddonMessage message > 255 bytes (" .. #msg .. ")") end
+  if channel == "WHISPER" and not target then M.Violation("comms", "WHISPER without target") end
+  M.sentAddon[#M.sentAddon + 1] = { prefix = prefix, msg = msg, channel = channel, target = target }
+  return true
+end
+
+-- scenario helpers ----------------------------------------------------------------------------
+function M.EnterCombat()
+  M.inCombat = true
+  M.FireEvent("PLAYER_REGEN_DISABLED")
+  M.FireEvent("PLAYER_ENTER_COMBAT")
+end
+function M.LeaveCombat()
+  M.inCombat = false
+  M.FireEvent("PLAYER_LEAVE_COMBAT")
+  M.FireEvent("PLAYER_REGEN_ENABLED")
+end
+function M.DeliverAddon(prefix, msg, channel, sender)
+  return M.FireEvent("CHAT_MSG_ADDON", prefix, msg, channel or "PARTY", sender or "Amie-Royaume", "", 0, 0, "", 0)
+end
+function M.CombatLog(subevent, ...)
+  M.combatEvent = { M.now, subevent, false, M.player.guid, M.player.name, 0x511, 0, "Creature-0-1", "Ours", 0xa48, 0, ... }
+  M.FireEvent("COMBAT_LOG_EVENT_UNFILTERED")
+  M.combatEvent = nil
+end
+function M.SetMerchant(open)
+  M.merchantOpen = open and true or false
+  M.FireEvent(open and "MERCHANT_SHOW" or "MERCHANT_CLOSED")
+end
+
+-- run "/cmd args" through SlashCmdList like the chat box does; returns true if a handler ran
+function M.RunSlash(line)
+  local cmd, rest = line:match("^(/%S+)%s*(.-)$")
+  if not cmd then return false end
+  cmd = cmd:lower()
+  for key, fn in pairs(SlashCmdList) do
+    for i = 1, 9 do
+      local s = rawget(_G, "SLASH_" .. key .. i)
+      if s == nil then break end
+      if tostring(s):lower() == cmd then
+        M.SafeCall("slash " .. cmd, fn, rest, DEFAULT_CHAT_FRAME)
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- every registered slash command, as { key=, cmd= }
+function M.SlashCommands()
+  local out = {}
+  for key in pairs(SlashCmdList) do
+    local s = rawget(_G, "SLASH_" .. key .. "1")
+    if s then out[#out + 1] = { key = key, cmd = s } end
+  end
+  table.sort(out, function(a, b) return a.cmd < b.cmd end)
+  return out
+end
+
+M.Reset()
+return M
