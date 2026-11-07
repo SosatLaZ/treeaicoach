@@ -643,6 +643,7 @@ local function buildBar()
   bg:SetColorTexture(0, 0, 0, 0.5)
   f.text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   f.text:SetPoint("CENTER", f, "CENTER")
+  if TreeAI and TreeAI.Theme then TreeAI.Theme:Skin(f, "bar", { bg = bg }); TreeAI.Theme:Font(f.text, "S") end
   f:SetMovable(true)
   f:EnableMouse(true)
   f:RegisterForDrag("LeftButton")

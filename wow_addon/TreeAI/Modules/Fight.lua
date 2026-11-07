@@ -418,6 +418,7 @@ local function ensureCCFrame()
   ccFrame:SetPoint("CENTER", G.UIParent, "CENTER", 0, -140)
   ccFrame.text = ccFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   ccFrame.text:SetPoint("CENTER")
+  if T.Theme then T.Theme:Skin(ccFrame, "hud"); T.Theme:Font(ccFrame.text, "M") end  -- thème commun
   local acc = 0
   ccFrame:SetScript("OnUpdate", function(_, el)
     acc = acc + (el or 0)

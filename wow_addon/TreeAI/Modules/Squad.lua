@@ -1259,6 +1259,8 @@ local function makeSection()
   if not f then return nil end
   section = f
   f:SetSize(260, 20)
+  local Th = _G.TreeAI and _G.TreeAI.Theme
+  if Th then Th:Skin(f, "panel") end  -- thème commun (visuel seulement)
   for i = 1, MAX_ROWS do
     local b = CreateFrame("Button", nil, f)
     b:SetHeight(14)
@@ -1269,6 +1271,7 @@ local function makeSection()
     b.text:SetPoint("RIGHT", b, "RIGHT", 0, 0)
     b.text:SetJustifyH("LEFT")
     if b.text.SetWordWrap then b.text:SetWordWrap(false) end
+    if Th then Th:Skin(b, "row") end
     b:SetScript("OnClick", function(self)
       local a = self.action
       if a and a.kind == "share" then S:ShareQuest(a.quest) end

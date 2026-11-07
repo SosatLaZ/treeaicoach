@@ -519,3 +519,10 @@ TAI (liste lue via `Macros:ListNames()`/`MacroList()`/`Defs()`, touche conseill�
 Si le jeu bloque (`ADDON_ACTION_FORBIDDEN` pendant l'appel ou nouvelle entrée `diag.blocked`), c'est retenu
 (`db.bindBlocked` / `db.placeBlocked`, `/tai touches reset`) et les lignes donnent les instructions à la main.
 `summary.binds = {ok, plan, conflicts, free, emptyKeyed, addons, bindBlocked, placeBlocked}`.
+
+## Thème commun (`TreeAI.Theme`, Modules/Theme.lua, chargé juste après UI.lua)
+Options (module « Thème », section Apparence) : thème Sombre / Clair / Blizzard, échelle du texte, on/off ; `/tai theme clair`.
+- Couleurs : `Th:Color(token)` → r,g,b,a (`bg panel hud barBg border borderSoft text muted gold prio1 prio2 prio3 good bad warn hover`), `Th:Hex`, `Th:Wrap(token, txt)`, `Th:PrioColor(p)`, `Th:ClassColor(class)`.
+- Polices : `Th:Font(fs, "S"|"M"|"L"[, token])`, `Th:Text(parent, size, token)` (suivent l'échelle).
+- Habillage : `Th:Skin(frame, kind[, opts])`, kind = `window panel hud bar badge button row alert tooltip` ; opts `bg=` texture de fond existante, `noBg`, `border=false`. BackdropTemplate si présent, sinon textures. Refuse tout cadre nommé hors « TreeAI… », protégé ou interdit : jamais un cadre Blizzard. Toujours appeler gardé : `if T.Theme then T.Theme:Skin(f, "hud") end`.
+- Widgets : `Th:Frame Button IconButton ProgressBar(:SetProgress(v,max,prio,txt)) Header Separator Checkbox Slider Tab(:SetSelected) Badge(:SetBadge)`, `Th:Tooltip(frame, title, lines)` (GameTooltip rempli, jamais habillé). Message `THEME_CHANGED` après un changement.

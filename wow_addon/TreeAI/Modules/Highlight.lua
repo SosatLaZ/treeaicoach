@@ -727,6 +727,7 @@ local function lootPanel()
   fontOf(lootInfo.text, 12)
   lootInfo.text:SetPoint("TOPLEFT", lootInfo, "TOPLEFT")
   if lootInfo.text.SetJustifyH then lootInfo.text:SetJustifyH("LEFT") end
+  if T.Theme then T.Theme:Skin(lootInfo, "hud") end  -- thème commun (notre cadre, ancré seulement)
   lootInfo:Hide()
   return lootInfo
 end

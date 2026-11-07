@@ -983,6 +983,7 @@ local function createFrame()
   frame:SetScript("OnDragStop", function(f) f:StopMovingOrSizing() savePos(f) end)
   frame.bg = frame:CreateTexture(nil, "BACKGROUND")
   frame.bg:SetAllPoints(frame)
+  if _G.TreeAI and _G.TreeAI.Theme then _G.TreeAI.Theme:Skin(frame, "hud", { bg = frame.bg }) end  -- thème (bordure)
   frame:Hide()
   return frame
 end
@@ -1002,6 +1003,7 @@ local function rowWidget(i)
   b.bar:SetPoint("LEFT", b, "LEFT", 0, 0)
   if b.bar.SetStatusBarTexture then b.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar") end
   b.bar:SetMinMaxValues(0, 1)
+  if _G.TreeAI and _G.TreeAI.Theme then _G.TreeAI.Theme:Skin(b.bar, "bar") end
   b.bar:Hide()
   b:SetScript("OnClick", function(self, button)
     local r = self.row
