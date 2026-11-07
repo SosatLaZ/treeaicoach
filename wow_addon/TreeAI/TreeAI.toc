@@ -58,3 +58,4 @@ Modules\Gear.lua
 Modules\Talents.lua
 Modules\Session.lua
 Modules\Errands.lua
+Modules\Edge.lua

@@ -45,6 +45,9 @@ local BUDGET = {
   msgsPerMinMax = 70,            -- per client, any minute (Core throttle = 8 burst + 1/s)
   msgsPerMinAvg = 20,
   chatLinesMax = 6,              -- unsolicited chat lines (advice never goes to the chat)
+  edgeNowPct = 25,               -- CHEAT25 « Avantages » (Edge): % of sampled seconds with an Edge line in « Maintenant »
+  edgeDistinctMax = 20,          -- distinct Edge lines (text skeleton) shown in « Maintenant » over the session
+  edgeKinstrMin = 1500,          -- Edge CPU, avg kilo-instructions / minute (25 checks, rotating)
 }
 
 local BASE = {}
@@ -419,8 +422,16 @@ local function sampleMain(c)
   local ok, lines = BASE.pcall(T.GetTabLines, T, "now")
   if not ok then addErr(R.errors, c.name, "GetTabLines", lines) return end
   local sk, topics = {}, {}
+  local edge = false
   for _, e in ipairs(lines) do
     sk[#sk + 1] = skeleton(e.text)
+    if tostring(e.id or ""):find("^Edge:") then
+      edge = true
+      S.edgeSeen = S.edgeSeen or {}
+      local ek = skeleton(e.text)
+      if not S.edgeSeen[ek] then S.edgeSeen[ek] = 0 S.edgeDistinct = (S.edgeDistinct or 0) + 1 end
+      S.edgeSeen[ek] = S.edgeSeen[ek] + 1
+    end
     local tp = topicOf(tostring(e.text))
     if tp then
       if topics[tp] then
@@ -433,6 +444,7 @@ local function sampleMain(c)
     end
   end
   S.samples = S.samples + 1
+  if edge then S.edgeSec = (S.edgeSec or 0) + 1 end
   local key = table.concat(sk, "\n")
   if S.lastNow ~= nil and key ~= S.lastNow then
     S.nowChanges[MINUTE] = (S.nowChanges[MINUTE] or 0) + 1
@@ -1049,6 +1061,15 @@ for i, mod in ipairs(mods) do
   end
 end
 P(("  total addon  %7.0f kinstr/min"):format(totalMain / nMin))
+do  -- CHEAT25 : les avantages restent discrets (une ligne quand elle sert, rien sinon)
+  local ek = (perMod.Edge or 0) / nMin
+  local pct = 100 * (S.edgeSec or 0) / math.max(1, S.samples)
+  P(("edge: %.0f kinstr/min, in « Maintenant » %.1f%% of samples, %d distinct lines"):format(ek, pct, S.edgeDistinct or 0))
+  if opts.verbose or pct > BUDGET.edgeNowPct then for k, n in pairs(S.edgeSeen or {}) do P(("  edge %5d s  %s"):format(n, k)) end end
+  if ek > BUDGET.edgeKinstrMin then fail(("cpu: Edge %.0f kinstr/min > %d"):format(ek, BUDGET.edgeKinstrMin)) end
+  if pct > BUDGET.edgeNowPct then fail(("Edge lines in « Maintenant » %.1f%% of the time > %d%%"):format(pct, BUDGET.edgeNowPct)) end
+  if (S.edgeDistinct or 0) > BUDGET.edgeDistinctMax then fail(("%d distinct Edge lines > %d"):format(S.edgeDistinct, BUDGET.edgeDistinctMax)) end
+end
 if totalMain / nMin > BUDGET.kinstrTotalMin then fail(("cpu: addon total %.0f kinstr/min > %d"):format(totalMain / nMin, BUDGET.kinstrTotalMin)) end
 
 -- « Maintenant » changes

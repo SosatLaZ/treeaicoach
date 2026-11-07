@@ -790,3 +790,39 @@ silencieux quand il n'y a rien à dire, soumis à `TreeAI:Quiet` (genre « advic
   `Errands` de l'onglet « Groupe » dès 3 entrées. Résumé : `summary.errands`.
 * Jamais appelés : `TakeTaxiNode`, `BuyTrainerService`, `TakeInbox*`, `AutoLootMailItem`, `OpenAllMail`,
   `ConfirmReadyCheck`, `ResetInstances` (vérifié par `tests/wow/next10_scenario.lua`).
+`Modules/Edge.lua` (agent CHEAT25) — **Coups d'avance** : 25 avantages « cheatés » mais légaux, chacun = UNE ligne qui
+commence par un verbe (ou un clic), cachée tant qu'elle ne sert à rien, coupable une par une (options « Coups
+d'avance », sections Groupe / Farm / Quêtes / Or / Progrès ; `/tai avance` = état + lignes vues). **Aucune
+automatisation** : pas d'achat, de vente, de cible ni de sort ; un clic ouvre au plus la boussole, le journal de quêtes
+(l'abandon reste manuel), un chuchotement pré-rempli (le joueur appuie sur Entrée) ou le suivi de la mini-carte
+(`C_Minimap.SetTracking` dans `TreeAI:UserAction`). Données : API du jeu, roster de guilde (nom / zone / niveau en
+ligne), QuestieDB en lecture seule (via `Quests.QuestieDB` / `SafePath.DB`), mesures de Predict / Boost / Auction /
+Gear / Prof. Sans donnée fiable, rien (jamais de « ? » ni de chiffre inventé).
+* Groupe : `eliteGuild` (« Demande à X (guilde, ta zone) : « Q » est élite », clic = chuchotement), `dungeonReady`
+  (« Lancez Les Mortemines : 4/4 ont « Q » », `C_QuestLog.IsUnitOnQuest` sinon amis TreeAI), `friendDanger` (membre
+  à portée < 35 % PV, monde ouvert ; valeurs secrètes ignorées), `escortReady` (échouée → abandonner/reprendre ; vie
+  < 90 % près du départ).
+* Farm : `tagRace` (cible tapée par un autre), `respawnCamp` / `namedRepop` (« Reste ici 1 min 20 : X repop » —
+  temps **appris** : heure d'apparition lue dans le GUID du monstre (23 bits bas du spawnUID = heure serveur mod
+  2^23) moins l'heure de la mort la plus proche du temps déjà appris ; médiane de 5, ≥ 3 passages, montré seulement
+  quand plus aucune barre de nom de ce monstre n'est visible ; GUID sans heure fiable = rien appris ;
+  `TreeAIDB.modules.Edge.camps[nom].s`, ≤ 150 noms), `grindSpot` (plus de quêtes dans la zone : monstres non élites
+  [niv−2, niv+1] les plus denses de `SafePath.IndexMap`, coroutine ; clic = boussole), `restedWindow` (« Tue N
+  monstres : le repos suffit pour finir le niveau »), `campBuff` (camp Forever ≥ 20 en métier, 3 min au même endroit
+  en tuant), `gatherTrack` (herboristerie / minage sans aucun suivi actif).
+* Quêtes : `npcQuest` (donneur d'une quête dispo à ≤ 90 yd, Questie `startedBy` + apparitions ; clic = boussole),
+  `keepItem` (chez le marchand : objet des sacs demandé par une quête dispo ici), `chainBreadcrumb` (quête de liaison
+  dont la cible est déjà faite).
+* Or : `foodBuy` (taux mesurés Predict → « Achète 15 × Pain : 1 h de jeu »), `vendorFlip` (prix marchand vs HV,
+  commission 5 % + dépôt, ≥ 20 pa et ≥ +50 %), `boeWorth` (butin vert+ non lié quand ramassé : HV ≥ 3× marchand et
+  ≥ +50 pa), `cheapGear` (à l'HV : achat `Gear.plan.shopping` abordable ≥ +5 %), `trainerSave`
+  (`Predict.NextTraining`), `mountSave` (niv 30–39, objectif réglable, 90 po par défaut ; durée au rythme or/h mesuré).
+* Progrès : `petTrainer` (points de dressage ≥ 30 ; rang de Grondement en capitale, clic = fait), `weaponTrainer`
+  (armes utiles manquantes par classe, en capitale), `dualSpec` (niv 40, 1 groupe de talents, 50 po, capitale),
+  `legacyNext` (≤ 10 points du prochain palier Legacy, `Prof.Engine.Legacy`), `worldBuff` (cri Onyxia / Nefarian /
+  Rend en capitale, Hakkar à Strangleronce).
+Anti-bruit : contrôles tournants dans `AutoRefresh` (légers à chaque passage, moyens /5, lourds /20) ; `say{window,
+sig}` = une même ligne montrée au plus `window` s puis muette jusqu'à ce que le sens change ; mode simple respecté
+(une ligne du module à la fois, prio 2 ou clic) ; état du joueur (mort / fantôme / vol) = règle commune du Core.
+Budgets `session_sim` : `edgeNowPct` 25 %, `edgeDistinctMax` 20, `edgeKinstrMin` 1500. Tests :
+`tests/wow/edge_scenario.lua`, `tests/wow/test_edge.py`.

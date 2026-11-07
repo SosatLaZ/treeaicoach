@@ -83,6 +83,15 @@ tir automatique, Marque du chasseur, pièges ; rares/élites à proximité, **me
 surlignée**, infobulles **« Amélioration +X % »** / prix marchand vs HV, menace en groupe, XP (monstres /
 quêtes avant le niveau, XP/h), conseiller d'apprivoisement (« loup niv 25 → Morsure rang 4 »).
 
+**Coups d'avance** (`/tai avance`, 25 astuces légales, une ligne chacune, seulement quand ça sert) : « Reste ici
+1 min 20 : le camp repop » (temps appris sur tes passages), « Laisse ce monstre : déjà tapé », « Farme Loup (niv 25) :
+clic = boussole » quand tu n'as plus de quêtes, « Parle à Gérard (40 m) : « Q » est pour toi », « Demande à Alpha
+(guilde, ta zone) : « Q » est élite », « Lancez Les Mortemines : 4/4 ont la quête », « Aide Bravo : 20 % de vie »,
+chez le marchand « Achète 15 × Pain : 1 h de jeu » / « Garde « Lin » : demandé par une quête », au butin « Vends ça
+à l'HV ~12 po, pas au marchand », économies monture / maître de classe, maître des familiers, maître d'armes, double
+spé, prochain point Legacy, buff mondial en ville. Rien n'est fait à ta place ; chaque astuce se coupe dans les
+options « Coups d'avance ».
+
 ## 7. Hôtel des ventes : achat-revente (`/tai hv`)
 
 Une fenêtre TreeAI s'accroche à droite de l'HV dès que tu l'ouvres (`/tai hv fenetre` sinon).
