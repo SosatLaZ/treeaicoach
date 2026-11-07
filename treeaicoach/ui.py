@@ -1182,14 +1182,32 @@ class CoachApp:
             self._last_state_key = key
         level = {"RUNNING": 0, "WAITING_GAME": 0, "LOCATING": 0, "STARTING": -1, "STOPPED": -1,
                  "CAPTURE_BLACK": 1, "UNSUPPORTED_MODE": 1}.get(key, 2)
-        self.sidebar.dot.set_level(level)
-        self.sidebar.status.setText(snap["title"])
+        wow_on = self._sync_game_nav()
+        self.sidebar.dot.set_level(0 if wow_on and level != 2 else level)
+        self.sidebar.status.setText("WoW Forever : coach actif" if wow_on and key != "RUNNING" else snap["title"])
         if self._diag_watch:
             self._poll_diagnostic()
         self._poll_champ_select(key)
         view = self.page_views.get("home")
         if view is not None and not self._iconic():
             view.update_status(snap)
+
+    def _sync_game_nav(self) -> bool:
+        """While WoW mode is on (WoW runs, no League game): the WoW group first in the sidebar and its
+        page marked live. Only looks at an already imported wow.mode (no import on the UI thread)."""
+        on = False
+        if "treeaicoach.wow.mode" in sys.modules:
+            try:
+                from treeaicoach.wow import wow_mode_active  # noqa: PLC0415
+
+                on = bool(wow_mode_active())
+            except Exception:
+                on = False
+        if on != getattr(self, "_wow_nav_on", False):
+            self._wow_nav_on = on
+            self.sidebar.promote("wow", on)
+            self.sidebar.set_live("wow", on)
+        return on
 
     # ------------------------------------------------------------------ champion select
     def _poll_champ_select(self, key: str, every: float = 2.0) -> None:
