@@ -64,9 +64,10 @@ return function(M, ctx)
   M.RunSlash("/tai module Pro off"); M.RunSlash("/tai module Economy off")
   local many = {}
   for i = 1, 30 do many[i] = { text = "Ligne " .. i } end
-  T:SetTabLines("info", many, "Test")
+  T:RegisterTab("zztest", "Test", 99) -- onglet dédié : « Infos » reçoit aussi les lignes des modules
+  T:SetTabLines("zztest", many, "Test")
   T.settings.panel.maxLines = 8
-  T:SelectTab("info")
+  T:SelectTab("zztest")
   M.Advance(1, 0.25)
   local shown = 0
   for _, c in ipairs({ panel:GetChildren() }) do if c.entry and c:IsShown() then shown = shown + 1 end end
@@ -78,14 +79,14 @@ return function(M, ctx)
   ctx.check(first == "Ligne 2", "molette : défile d'une ligne (" .. tostring(first) .. ")")
   for _ = 1, 50 do M.Wheel(panel, -1) end
   for _, c in ipairs({ panel:GetChildren() }) do if c.entry and c:IsShown() and c.index == 1 then first = c.entry.text end end
-  local total = #T:GetTabLines("info")
-  local want = T:GetTabLines("info")[total - 8 + 1].text
+  local total = #T:GetTabLines("zztest")
+  local want = T:GetTabLines("zztest")[total - 8 + 1].text
   ctx.check(first == want, "molette : butée en bas (" .. tostring(first) .. " / " .. want .. ")")
 
   -- état par personnage
   local key = T:CharKey()
   local cp = TreeAIDB.chars[key] and TreeAIDB.chars[key].panel
-  ctx.check(cp and cp.tab == "info", "onglet mémorisé par personnage")
+  ctx.check(cp and cp.tab == "zztest", "onglet mémorisé par personnage")
   local onStop = panel:GetScript("OnDragStop")
   if onStop then onStop(panel) end
   ctx.check(cp and cp.point ~= nil, "position mémorisée par personnage")

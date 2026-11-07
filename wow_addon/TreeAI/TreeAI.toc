@@ -32,4 +32,7 @@ Modules\Inventory.lua
 Modules\Boost.lua
 Modules\Pro.lua
 Modules\Economy.lua
+Modules\Fight.lua
+Modules\HunterPro.lua
+Modules\Comfort.lua
 Modules\Auction.lua

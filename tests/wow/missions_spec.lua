@@ -73,7 +73,7 @@ local function newClient(me, cfg, bus)
   function T:NewTicker() return { Cancel = function() end } end
   function T:Fire() end
   function T:Summary() return self.summary end
-  function T:SetTabLines(id, lines) self.tabs[id] = lines end
+  function T:SetTabLines(id, lines, source) if source == nil or source == "missions" or source == "main" then self.tabs[id] = lines end end
   function T:RegisterTab(id, title) self.tabTitle = title end
   T.db = { chars = {} }
   env.TreeAI = T

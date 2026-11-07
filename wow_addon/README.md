@@ -32,6 +32,7 @@ Data/PetFood.lua  Data/Consumables.lua
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Compass.lua  Modules/Tracker.lua  Modules/Predict.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Missions.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Auction.lua
 Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Pro.lua  Modules/Economy.lua  Modules/Auction.lua
+Modules/Leveling.lua  Modules/Group.lua  Modules/Squad.lua  Modules/Quests.lua  Modules/Inventory.lua  Modules/Boost.lua  Modules/Fight.lua  Modules/HunterPro.lua  Modules/Comfort.lua  Modules/Auction.lua
 ```
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
@@ -121,6 +122,21 @@ bouton « Joindre compos » à la boîte aux lettres (1 clic = 1 pièce jointe h
 restent au joueur ; `/tai compos <Nom>`), montée de métier la moins chère (fenêtre de métier), mémoire des nœuds
 (clic = boussole), moment pour aller vendre, réparation prévue + coût estimé, durabilité avant donjon, valeur du
 butin de la session. `summary.economy`. `/tai eco`.
+
+`Modules/Fight.lua` (agent X2, PvE, informatif) : compteur de pull (barres de nom), élite en patrouille vers toi,
+fuyards (émotes, mémorisés), récap de mort + conseil (`/tai mort`), PV/mana avant pull, sort à interrompre sur la
+cible (avec ton interruption prête), minuteur des contrôles + rupture (petit cadre), familier qui perd l'aggro,
+DPS perdu par l'humeur du familier, tirs entre deux tirs auto. Forever ne donne plus le journal de combat :
+UNIT_COMBAT / UNIT_AURA / UNIT_SPELLCAST_* / barres de nom, valeurs testées avec `issecretvalue` (le journal de
+combat n'est qu'un bonus en Era). Lignes dans « Infos » (source "Fight"), `summary.fight = {deaths, lastDeath, fleeKnown}`.
+`Modules/HunterPro.lua` (chasseur) : familier conseillé par zone/niveau + rangs (`/tai familier`), munitions pour
+finir le niveau, barre de piège (armé 60 s / recharge / déclenché, Maj+glisser), % de réussite de Feindre la mort,
+temps passé par aspect. `summary.hunterPro = {fdTries, fdOk, aspects, ammoPerKill, ammoNeed}`.
+`Modules/Comfort.lua` : changements depuis la dernière connexion (`/tai nouveau`), nouveaux sorts + case de barre
+libre conseillée (jamais posés par l'addon), `/tai perf` (chronométrage de nos fonctions de module, mémoire
+`GetAddOnMemoryUsage`, CPU `GetAddOnCPUUsage` si profilage). Ralentissement auto : FPS < 30 ou > 2 ms/image
+(ou en ville, option) → `TreeAI.perfSlow = true`, `settings.refresh` ×2 (rétabli ensuite et à la déconnexion),
+message `PERF_SLOW`. Les modules avec leur propre minuterie peuvent lire `TreeAI.perfSlow`.
 
 `TreeAI` (global) existe dès `Core.lua`. Un module se déclare au chargement
 de son fichier (top-level) avec `TreeAI:RegisterModule`; il ne doit **rien**
