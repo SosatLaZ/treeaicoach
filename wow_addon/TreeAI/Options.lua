@@ -298,6 +298,16 @@ local function buildAppearance(content)
   P.slider(L["Taille du radar"], 110, 300, 10, function() return modGet("Radar", "size") end, function(v) modSet("Radar", "size", v) end)
   P.slider(L["Opacité du fond du radar"], 0.2, 1, 0.05, function() return modGet("Radar", "opacity") end, function(v) modSet("Radar", "opacity", v) end)
 
+  -- points TreeAI sur la vraie minimap (seulement ce que Questie ne montre pas)
+  local MPm = TreeAI.modules and TreeAI.modules.MinimapPins
+  if MPm and type(MPm.LAYERS) == "table" then
+    P.header(L["Points sur la minimap"])
+    for _, layer in ipairs(MPm.LAYERS) do
+      P.check(L[(MPm.LABELS and MPm.LABELS[layer]) or layer], function() return modGet("MinimapPins", layer) ~= false end,
+        function(v) modSet("MinimapPins", layer, v) end)
+    end
+  end
+
   P.header(L["Boussole"])
   P.check(L["Afficher la boussole"], function() return modGet("Compass", "shown") ~= false end,
     function(v) local m = TreeAI.modules and TreeAI.modules.Compass; if m and m.Show then TreeAI.safecall(m.Show, v) end end)
