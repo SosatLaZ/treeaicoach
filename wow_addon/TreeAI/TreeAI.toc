@@ -13,6 +13,8 @@ UI.lua
 Options.lua
 
 Data\Macros.lua
+Data\PetFood.lua
+Data\Consumables.lua
 
 Modules\Macros.lua
 Modules\Hunter.lua

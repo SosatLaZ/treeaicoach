@@ -205,6 +205,16 @@ local function newContext()
   eachBagItem(function(id, n) counts[id] = (counts[id] or 0) + n end)
   local D = data() or {}
   local items = D.items or {}
+  -- Préfère les listes générées depuis le client (Data/Consumables.lua) quand elles existent.
+  local C = T.Data and T.Data.Consumables
+  if type(C) == "table" then
+    local merged = {}
+    for k, v in pairs(items) do merged[k] = v end
+    for k, v in pairs(C) do
+      if type(v) == "table" and #v > 0 then merged[k] = v end
+    end
+    items = merged
+  end
   local known = {}
   for _, rows in pairs(items) do
     for _, row in ipairs(rows) do known[row[1]] = true end

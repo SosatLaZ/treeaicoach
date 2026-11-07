@@ -341,6 +341,15 @@ def build_context(engine: Any = None, db: Any = None, facts: Iterable[str] | Non
     """Everything the WoW prompt gets: character (SavedVariables) + live combat-log facts. Never raises."""
     try:
         ctx = character_context(db if db is not None else load_db(engine))
+        if ctx.get("classe") is not None and ctx.get("niveau") is not None:
+            try:  # optional « données du jeu » (client tables, treeaicoach/wow/gamedata.py)
+                from treeaicoach.wow import gamedata
+
+                gd = gamedata.game_data_context(ctx["classe"], ctx["niveau"])
+                if gd:
+                    ctx["donnees_jeu"] = gd
+            except Exception:
+                log.debug("wow game data context failed", exc_info=True)
         f = list(facts) if facts is not None else live_facts(engine)
         if f:
             ctx["combat_recent"] = [_short(x, 140) for x in f][-_MAX_FACTS:]
