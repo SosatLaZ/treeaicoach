@@ -57,6 +57,9 @@ datas = [
 _NOTICES = os.path.join(ROOT, "THIRD_PARTY_NOTICES.md")   # MIT notices of adapted code (lcu.py)
 if os.path.isfile(_NOTICES):
     datas.append((_NOTICES, "."))
+_WOW_DATA = os.path.join(ROOT, "treeaicoach", "wow", "data")   # WoW Forever client tables (gamedata.py)
+if os.path.isdir(_WOW_DATA):
+    datas.append((_WOW_DATA, "treeaicoach/wow/data"))
 
 binaries = collect_dynamic_libs("onnxruntime")      # onnxruntime*.dll (the contrib hook does it too)
 # Bundle the Microsoft C++ runtime (msvcp140*.dll, concrt140.dll) when it sits next to python.exe

@@ -50,6 +50,15 @@ local FOODS = {
 }
 local FOOD_BY_ID = {}
 for _, f in ipairs(FOODS) do FOOD_BY_ID[f[1]] = f end
+-- Complément : table générée depuis les données du client (Data/PetFood.lua), si chargée.
+do
+  local extra = type(TreeAI.Data) == "table" and TreeAI.Data.PetFood
+  if type(extra) == "table" then
+    for _, f in ipairs(extra) do
+      if type(f) == "table" and type(f[1]) == "number" and not FOOD_BY_ID[f[1]] then FOOD_BY_ID[f[1]] = f end
+    end
+  end
+end
 M.FOODS = FOODS
 
 -- Noms de régime renvoyés par GetPetFoodTypes() (enUS / frFR) -> clé.
