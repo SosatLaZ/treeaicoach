@@ -59,7 +59,9 @@ progression via `C_QuestLog`, réparation insertion + Or-opt sur 20 étapes (hys
 `PLN` = `"1:<made>:<route>:<étape>:<empreinte>:<n>"` (≤ 1/15 s, jamais en combat ni en raid), « attendez X », rendez-vous,
 guidage sur clic (`TreeAI.Compass:SetTarget{mapID, x, y (0–1), label, source="plan", questID}` → Shortest Path Forever
 `NavigateRoute` → TomTom → `C_Map.SetUserWaypoint` + `C_SuperTrack`). `/tai plan [n°|passer|go|recalc]`,
-`/tai export`. Résumé `summary.plan = {v, src, route, title, step, steps, label, kind, quest, verdict, reason, xph,
+`/tai export`. Contrat Tracker : `Planner:GetActiveSteps(n) → steps, index, total, titre` (étapes restantes à partir
+de la courante, format `{k, q, o, map, x, y, label, eta, who}`, `label` toujours rempli) et repli
+`Planner.active = {route={title, steps}, idx}`. Résumé `summary.plan = {v, src, route, title, step, steps, label, kind, quest, verdict, reason, xph,
 minutes, left, hash, sync={n, synchro, avance, retard, autre}}`.
 
 `Modules/Auction.lua` (agent AH): achat-revente à l'hôtel des ventes. **Aucune automatisation**: chaque

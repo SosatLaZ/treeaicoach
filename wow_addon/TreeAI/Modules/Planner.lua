@@ -492,6 +492,8 @@ function P:Evaluate()
   end
   if self.cursor and cursor ~= self.cursor then self:OnStepChanged(self.cursor, cursor) end
   self.cursor = cursor
+  -- fallback contract for the Tracker: Planner.active = { route = { title, steps }, idx }
+  self.active = (cursor <= #steps) and { route = { title = self.route and self.route.title, steps = steps }, idx = cursor } or nil
   return cursor
 end
 
@@ -563,6 +565,29 @@ local function stepMinutes(steps, i)
     return max(1, s.eta - prev)
   end
   return s._pred and max(1, floor(s._pred + 0.5)) or nil
+end
+
+-- Tracker contract (TRACK-PRO): steps from the current one, TreeAI_Plan format {k,q,o,map,x,y,label,eta,who}
+-- (label always filled, with progress), current index, total, route title. Done / other members' steps are
+-- skipped. nil when no plan is active.
+local PUBLIC = { "k", "q", "o", "map", "x", "y", "label", "eta", "who" }
+function P:GetActiveSteps(n)
+  n = tonumber(n) or 3
+  local steps, cur = self.steps, self.cursor
+  if not (steps and cur and self.route) or cur > #steps then return nil end
+  local out = {}
+  for i = cur, #steps do
+    local s = steps[i]
+    if not s._done and not s._other then
+      local c = {}
+      for _, k in ipairs(PUBLIC) do c[k] = s[k] end
+      c.label = self:StepLabel(s) .. progress(s, self.log)
+      out[#out + 1] = c
+      if #out >= n then break end
+    end
+  end
+  if #out == 0 then return nil end
+  return out, cur, #steps, self.route.title or self.route.id
 end
 
 -- ===================================================================== plan automatique (sans fichier)

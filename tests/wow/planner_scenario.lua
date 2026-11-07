@@ -225,6 +225,12 @@ return function(M, ctx)
   local c2
   for _, l in ipairs(P:Lines()) do if l.id == "plan:step" then c2 = l.text end end
   check(c2 and c2:find("Tuer 10 Ours enragés %(4/10%)"), "progression lue dans le journal : " .. tostring(c2))
+  -- Tracker contract: GetActiveSteps(n) → steps, index, total, title ; fallback Planner.active
+  local as, ai, at, atitle = P:GetActiveSteps(3)
+  check(as and #as == 3 and ai == 2 and at == 5 and atitle == "XP/h max" and as[1].k == "obj" and as[1].q == 1001
+    and as[1].map == 1424 and as[1].x == 40 and as[1].label:find("%(4/10%)") and as[2].k == "fly" and as[1]._done == nil,
+    "GetActiveSteps(3) contrat Tracker")
+  check(P.active and P.active.idx == 2 and P.active.route.title == "XP/h max" and #P.active.route.steps == 5, "Planner.active (repli)")
   -- objective done → cursor jumps over the fly step? no: fly is after; arrival within 40 yd marks it done
   M.quests[1].objectives[1] = { text = "Ours enragé tué : 10/10", done = true, have = 10, need = 10 }
   M.FireEvent("QUEST_LOG_UPDATE")
