@@ -136,13 +136,17 @@ local function mobName(objName)
   return s
 end
 
-local function newObj(text, finished, have, need)
+-- type d'objectif (API : "monster", "item", "object", "event", "reputation", "log"…) → m/i/o/e/r/x
+local OBJ_T = { monster = "m", item = "i", object = "o", event = "e", reputation = "r", log = "x", player = "m" }
+M.OBJ_T = OBJ_T
+local function newObj(text, finished, have, need, otype)
   local name, h, n = M.ParseObjective(text)
   have, need = tonumber(have) or h, tonumber(need) or n
   if need and need <= 0 then need = nil end
   if not need then need, have = 1, finished and 1 or 0 end
   if finished then have = need end
-  return { text = trim(text), name = name, have = min(have or 0, need), need = need, finished = finished and true or false }
+  return { text = trim(text), name = name, have = min(have or 0, need), need = need, finished = finished and true or false,
+           t = OBJ_T[tostring(otype or ""):lower()] }
 end
 
 -- ------------------------------------------------------------------ scan du journal
@@ -251,7 +255,7 @@ function M.Scan()
           q.failed = try(QL.IsFailed, id) and true or false
           for _, o in ipairs(try(QL.GetQuestObjectives, id) or {}) do
             if type(o) == "table" and o.text then
-              q.obj[#q.obj + 1] = newObj(o.text, o.finished, o.numFulfilled, o.numRequired)
+              q.obj[#q.obj + 1] = newObj(o.text, o.finished, o.numFulfilled, o.numRequired, o.type)
             end
           end
           list[#list + 1] = finish(q, pl, true)
@@ -272,8 +276,8 @@ function M.Scan()
           q.failed = isComplete == -1
           local nb = try(_G.GetNumQuestLeaderBoards, i) or 0
           for j = 1, nb do
-            local text, _, finished = try(_G.GetQuestLogLeaderBoard, j, i)
-            if text then q.obj[#q.obj + 1] = newObj(text, finished) end
+            local text, otype, finished = try(_G.GetQuestLogLeaderBoard, j, i)
+            if text then q.obj[#q.obj + 1] = newObj(text, finished, nil, nil, otype) end
           end
           if not q.complete and nb > 0 then
             local all = true
@@ -513,6 +517,84 @@ function M.QuestieNext(qid)
   if not name then return nil end
   local giver = starterName(db, nx)
   return ("Suite : « %s »%s"):format(name, giver and (" chez " .. giver) or "")
+end
+
+-- Chaîne (TRACK-PRO) : les n quêtes suivantes (Questie nextQuestInChain) → { {id, title, giver}, ... }, position
+-- dans la chaîne (maillons avant + 1) et longueur connue. Lecture seule, bornée (boucles évitées).
+local chainCache = {}
+local function num(v) if v == nil then return nil end return tonumber(v) end
+function M.Chain(qid, n)
+  local db = questieDB()
+  if not (db and qid) then return nil end
+  n = n or 3
+  local c = chainCache[qid]
+  if c and c.n >= n then return c.next, c.pos, c.len end
+  local nexts, seen, cur, after = {}, { [qid] = true }, qid, 1
+  for _ = 1, 12 do
+    local nx = num((qq(db, cur, "nextQuestInChain")))
+    if not nx or nx <= 0 or seen[nx] then break end
+    seen[nx] = true
+    after = after + 1
+    if #nexts < n then nexts[#nexts + 1] = { id = nx, title = qq(db, nx, "name") or ("#" .. nx), giver = starterName(db, nx) } end
+    cur = nx
+  end
+  -- maillons précédents : preQuestSingle (un seul prérequis) remonté au plus 12 fois
+  local before, p = 0, qid
+  for _ = 1, 12 do
+    local pre = qq(db, p, "preQuestSingle")
+    local pid
+    if type(pre) == "table" then pid = num(pre[1]) else pid = num(pre) end
+    if not pid or pid <= 0 or seen[pid] then break end
+    seen[pid] = true
+    before, p = before + 1, pid
+  end
+  chainCache[qid] = { n = n, next = nexts, pos = before + 1, len = before + after }
+  return nexts, before + 1, before + after
+end
+
+-- « Histoire » : résumé court de la description (2 phrases, ≤ 200 car.). Questie (objectivesText) d'abord ;
+-- sinon journal moderne GetQuestLogQuestText(index) (Mainline : par index, SANS sélection du journal). Jamais
+-- en API classique (elle lit la quête sélectionnée → il faudrait sélectionner = contamination 3.8.2).
+local storyCache = {}
+function M.Summarize(text, maxLen)
+  text = tostring(text or ""):gsub("%$[BbNnCcRrGg]", " "):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("%s+", " ")
+  text = trim(text)
+  if text == "" then return nil end
+  maxLen = maxLen or 200
+  local out, n = "", 0
+  for sentence in text:gmatch("[^%.!%?]+[%.!%?]*") do
+    sentence = trim(sentence)
+    if sentence ~= "" then
+      if n >= 2 or #out + #sentence + 1 > maxLen then break end
+      out = (out == "" and sentence) or (out .. " " .. sentence)
+      n = n + 1
+    end
+  end
+  if out == "" then out = cut(text, maxLen) end
+  return out
+end
+function M.Story(q)
+  if type(q) ~= "table" or not q.id then return nil end
+  local c = storyCache[q.id]
+  if c and c.title == q.title then return c.s or nil end
+  local text
+  local db = questieDB()
+  if db then
+    local ot = qq(db, q.id, "objectivesText")
+    if type(ot) == "table" then
+      local t = {}
+      for _, l in ipairs(ot) do if type(l) == "string" then t[#t + 1] = l end end
+      text = table.concat(t, " ")
+    elseif type(ot) == "string" then text = ot end
+  end
+  local QL = _G.C_QuestLog
+  if (not text or text == "") and QL and QL.GetInfo and q.index and type(_G.GetQuestLogQuestText) == "function" then
+    local desc = try(_G.GetQuestLogQuestText, q.index)
+    if type(desc) == "string" then text = desc end
+  end
+  local s = M.Summarize(text)
+  if s or db then storyCache[q.id] = { title = q.title, s = s or false } end
+  return s
 end
 
 -- ------------------------------------------------------------------ prochaine étape
