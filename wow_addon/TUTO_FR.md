@@ -21,14 +21,24 @@ Tes potes : chacun installe l'addon (même zip) pour la **synchro de groupe**.
 - `/tai options` : tout se règle là (chaque module et chaque aide se coupe).
 - `/tai cacher` / `/tai afficher` / `/tai verrou` (bloque le panneau) / `/tai reset` (le remet au centre).
 
-## 3. Les macros intelligentes (`/tai macros`)
+## 3. Les macros expertes (`/tai macros`)
 
-- `/tai macros installer` : crée les macros de ta classe (hors combat). `/tai macros liste` les montre ;
-  clique une macro dans le panneau pour la prendre et pose-la sur ta barre.
-- Elles s'améliorent seules quand tu apprends un sort ; nourriture / eau / potion / bandage / munitions se
-  mettent à jour avec le meilleur objet de tes sacs ; « TAI Nourrir » nourrit ton familier avec la bonne
-  nourriture. Une macro que tu modifies à la main n'est jamais écrasée.
-- Une macro = une touche pressée = une action (règles Blizzard).
+- `/tai macros` ouvre le panneau : à gauche la liste (vert = installée, orange = modifiée par toi,
+  blanc = dispo, gris = « niv. X » pas encore), à droite l'**aperçu exact** de la macro générée pour TON
+  personnage et le **« Pourquoi »** (à quoi sert chaque ligne, quels modificateurs).
+- Écrites pour ta **spécialisation** (détectée par tes talents, ou bouton « Spé ») et ton **contexte**
+  (solo / groupe, auto ou bouton) : tank, soigneur, DPS, montée en niveau. Seuls les sorts que tu connais
+  sont utilisés (sorts des classes refaites de Forever compris) ; la macro grandit quand tu en apprends.
+- Rien n'est créé sans ton clic (« Installer cette macro », « Tout installer (ma spé) » ou
+  `/tai macros installer`), jamais en combat. Une macro modifiée à la main, ou une macro à toi du même
+  nom, n'est jamais écrasée (Maj+clic ou `/tai macros forcer` pour le faire exprès).
+- Réflexes inclus : survol puis cible (`[@mouseover,harm,nodead][]`), soins survol > cible > toi (Alt =
+  toi), modificateurs Maj/Ctrl/Alt pour les variantes, postures / formes / camouflage gérés, contrôle du
+  familier ou du démon, /stopcasting pour les interruptions, bijoux « Utiliser » et racial seulement si
+  tu les as. Consommables (repas, pierre de soins puis potion, gemme de mana, bandage, munitions,
+  poisons) : le meilleur objet de tes sacs.
+- Une macro = une touche pressée = une seule action sur le temps de recharge global (règles Blizzard).
+  `/tai macros spe|solo|groupe|auto|liste|retirer`.
 
 ## 4. Quêtes (`/tai quetes`)
 

@@ -139,18 +139,47 @@ end
 ---------------------------------------------------------------------------
 -- Sorts : nom localisé (ID -> GetSpellInfo, repli nom FR) + connu ?
 ---------------------------------------------------------------------------
+-- Nom -> connu ? (grimoire) : C_Spell.GetSpellInfo(nom).spellID + IsPlayerSpell, sinon l'ancienne
+-- GetSpellInfo(nom) qui ne répond que pour les sorts du grimoire (familles Classic).
+local function knownByName(name)
+  if not name then return nil end
+  local C = _G.C_Spell
+  if C and C.GetSpellInfo then
+    local info = try(C.GetSpellInfo, name)
+    if type(info) == "table" and info.spellID then
+      if spellKnownId(info.spellID) then return info.name or name end
+      return nil
+    end
+  end
+  if _G.GetSpellInfo then
+    local n = try(_G.GetSpellInfo, name)
+    if n then return (type(n) == "string") and n or name end
+  end
+  return nil
+end
+
+local resolveCache = {}
 local function resolveSpell(id)
+  local hit = resolveCache[id]
+  if hit then return hit[1], hit[2] end
   local D = data()
   local fr = D and D.spells and D.spells[id]
   local name = spellName(id)
-  if D and D.pet and D.pet[id] then return name or fr, true end
-  if name and spellKnownId(id) then return name, true end
-  -- ID inconnu ou déplacé (classes refaites dans Forever) : test par nom dans le grimoire
-  local byName = (name and spellName(name)) or (fr and spellName(fr))
-  if byName then return byName, true end
-  return name or fr, false
+  local res
+  if D and D.pet and D.pet[id] then
+    res = { name or fr, true }        -- sort de familier : jamais requis
+  elseif name and spellKnownId(id) then
+    res = { name, true }
+  else
+    -- ID inconnu ou déplacé (classes refaites dans Forever) : test par nom dans le grimoire
+    local byName = knownByName(name) or knownByName(fr)
+    if byName then res = { byName, true } else res = { name or fr, false } end
+  end
+  resolveCache[id] = res
+  return res[1], res[2]
 end
 M.ResolveSpell = resolveSpell
+function M:ClearSpellCache() resolveCache = {} end
 
 ---------------------------------------------------------------------------
 -- Consommables : meilleur objet des sacs par catégorie (façon Buffet)
@@ -327,6 +356,13 @@ local function subTokens(s, ctx)
     if not id then ok = false; return "" end
     return "item:" .. id
   end)
+  s = s:gsub("{slot:(%d+)}", function(n)
+    -- bijou équipé avec un effet « Utiliser : » (sinon la ligne optionnelle disparaît)
+    local id = try(_G.GetInventoryItemID, "player", tonumber(n))
+    if id and itemSpell(id) then return n end
+    ok = false
+    return ""
+  end)
   s = s:gsub("{(%d+)}", function(id)
     local name, known = resolveSpell(tonumber(id))
     if not (name and known) then ok = false end
@@ -392,14 +428,95 @@ function M:Render(def, ctx)
   return nil
 end
 
-function M:Defs()
-  local D = data()
-  local cls = playerClass()
-  return (D and D.classes and cls and D.classes[cls]) or {}
+-- Sorts manquants de la 1re variante (pour l'aperçu « pas encore »).
+function M:Missing(def)
+  local miss = {}
+  local v = def.v and def.v[#def.v]
+  for _, sid in ipairs((v and v.r) or {}) do
+    local name, known = resolveSpell(sid)
+    if not known then miss[#miss + 1] = name or tostring(sid) end
+  end
+  return miss
 end
 
 ---------------------------------------------------------------------------
--- Écriture des macros (hors combat uniquement)
+-- Spécialisation (talents ou choix du joueur) et contexte (solo / groupe)
+---------------------------------------------------------------------------
+local function classSpecs()
+  local D, cls = data(), playerClass()
+  return (D and D.specs and cls and D.specs[cls]) or {}
+end
+
+local function detectSpec()
+  local specs = classSpecs()
+  if #specs == 0 then return nil end
+  local group = try(_G.GetActiveTalentGroup) or nil
+  local best, bestPts = nil, 0
+  for i = 1, #specs do
+    local r = { try(_G.GetTalentTabInfo, i, false, false, group) }
+    local pts
+    if type(r[1]) == "number" and type(r[5]) == "number" then pts = r[5]   -- id, nom, desc, icône, points
+    elseif type(r[3]) == "number" then pts = r[3] end                      -- nom, icône, points
+    if pts and pts > bestPts then best, bestPts = specs[i].id, pts end
+  end
+  if best then return best end
+  local D, cls = data(), playerClass()
+  return (D and D.leveling and cls and D.leveling[cls]) or specs[1].id
+end
+
+-- spé effective, auto ? (le choix du joueur dans le panneau prime sur les talents)
+function M:Spec()
+  local want = char().spec
+  if want then
+    for _, s in ipairs(classSpecs()) do if s.id == want then return want, false end end
+  end
+  return detectSpec(), true
+end
+
+function M:SpecName(id)
+  for _, s in ipairs(classSpecs()) do if s.id == id then return s.n, s.role end end
+  return id or "?"
+end
+
+local function inGroup()
+  if try(_G.IsInGroup) then return true end
+  return ((try(_G.GetNumGroupMembers) or 0) > 0) or ((try(_G.GetNumPartyMembers) or 0) > 0)
+end
+
+function M:Context()
+  local want = char().ctx
+  if want == "solo" or want == "groupe" then return want, false end
+  return inGroup() and "groupe" or "solo", true
+end
+
+local function forSpec(def, spec)
+  if not def.s or #def.s == 0 or not spec then return true end
+  for _, s in ipairs(def.s) do if s == spec then return true end end
+  return false
+end
+
+-- Toutes les macros de la classe pour la spé courante (une seule définition par nom).
+function M:Defs()
+  local D = data()
+  local cls = playerClass()
+  local all = (D and D.classes and cls and D.classes[cls]) or {}
+  local spec = self:Spec()
+  local out = {}
+  for _, def in ipairs(all) do
+    if forSpec(def, spec) then out[#out + 1] = def end
+  end
+  return out
+end
+
+-- Fait partie du jeu installé par défaut pour la spé + le contexte ?
+function M:IsDefault(def)
+  if not def.def then return false end
+  local ctx = self:Context()
+  return def.x == nil or def.x == "" or def.x == ctx
+end
+
+---------------------------------------------------------------------------
+-- Écriture des macros (hors combat, pendant une action du joueur uniquement)
 ---------------------------------------------------------------------------
 local function macroIndex(name)
   local i = try(_G.GetMacroIndexByName, name)
@@ -418,26 +535,51 @@ local function freeSlot(perChar)
   return false
 end
 
--- write a macro; returns "created" | "updated" | "same" | "user" | "full" | "fail"
+local function same(a, b) return a and b and trim(a) == trim(b) end
+
+local function userDo(fn, ...)
+  if T.UserAction then return T:UserAction(fn, ...) end
+  return pcall(fn, ...)
+end
+M.UserDo = userDo
+
+-- État d'une macro : "user" (modifiée à la main / macro du joueur au même nom), "installed",
+-- "ready" (installable), "later" (sorts pas encore appris).
+function M:Status(def, ctx)
+  local idx = macroIndex(def.n)
+  local stored = char().bodies[def.n]
+  if idx then
+    local _, _, cur = try(_G.GetMacroInfo, idx)
+    if not stored or (cur and not same(cur, stored)) then return "user", cur end
+    return "installed", cur
+  end
+  if self:Render(def, ctx) then return "ready" end
+  return "later"
+end
+
+-- write a macro; returns "created" | "updated" | "same" | "user" | "full" | "fail" | "pending"
 function M:Write(def, body, force)
   if inCombat() then return "fail" end
-  -- (0.3) WoW Forever bloque CreateMacro/EditMacro hors d'une action du joueur (« Action bloquée :
-  -- UNKNOWN() ») : sans clic / commande, on prépare et on propose « clique pour mettre à jour ».
+  -- WoW Forever bloque CreateMacro/EditMacro hors d'une action du joueur (« Action bloquée ») :
+  -- sans clic / commande, on prépare et on propose « clique pour mettre à jour ».
   if T.InUserAction and not T:InUserAction() then
     M._pending = true
-    if M.Suggest then
-      M:Suggest("pending", "Macros à mettre à jour : clique ici", 1,
-        { ttl = 0, onClick = function() M._pending = false; M:Refresh(false) end })
-    end
+    suggest("pending", "Macros à mettre à jour : clique ici", 1,
+      { ttl = 0, onClick = function() M._pending = false; M:Refresh(false) end })
     return "pending"
   end
   local ch = char()
   local idx = macroIndex(def.n)
   if idx then
     local _, _, cur = try(_G.GetMacroInfo, idx)
-    if cur == body then ch.bodies[def.n] = body; return "same" end
-    -- macro modifiée à la main par le joueur : on n'y touche plus (sauf forçage)
-    if not force and ch.bodies[def.n] and cur and cur ~= ch.bodies[def.n] then return "user" end
+    local stored = ch.bodies[def.n]
+    -- macro modifiée à la main, ou macro du joueur qui porte déjà ce nom : on n'y touche jamais
+    -- (sauf « /tai macros forcer »)
+    if not force and (not stored or (cur and not same(cur, stored))) then
+      if same(cur, body) then ch.bodies[def.n] = cur; ch.installed[def.n] = true; return "same" end
+      return "user"
+    end
+    if same(cur, body) then ch.bodies[def.n] = cur; return "same" end
     local ok = pcall(_G.EditMacro, idx, def.n, nil, body)
     if not ok then return "fail" end
     ch.bodies[def.n] = body
@@ -466,26 +608,29 @@ local function keyHints(defs)
   return tconcat(parts, ", ")
 end
 
--- Installe les macros par défaut (+ celles déjà installées) ; all=true : toutes.
+-- Installe le jeu par défaut de ta spé + contexte (+ celles déjà installées) ; all=true : toutes.
 function M:Install(all, force)
   runOOC("Macros:install", function()
     local ctx = newContext()
     local defs = self:Defs()
-    local n, full, user = 0, 0, 0
+    local n, full, user, pend = 0, 0, 0, 0
     for _, def in ipairs(defs) do
-      if def.def or all or char().installed[def.n] then
+      if all or self:IsDefault(def) or char().installed[def.n] then
         local body = self:Render(def, ctx)
         if body then
           local r = self:Write(def, body, force)
           if r == "created" or r == "updated" then n = n + 1
           elseif r == "full" then full = full + 1
-          elseif r == "user" then user = user + 1 end
+          elseif r == "user" then user = user + 1
+          elseif r == "pending" then pend = pend + 1 end
         end
       end
     end
+    if pend > 0 then return end
     char().setup = true
-    if self.Clear then self:Clear("setup") end
-    say(("%d macro(s) installée(s)/mise(s) à jour."):format(n))
+    if self.Clear then self:Clear("setup"); self:Clear("pending") end
+    local spec = self:Spec()
+    say(("%d macro(s) installée(s)/mise(s) à jour (%s, %s)."):format(n, self:SpecName(spec), (self:Context())))
     if full > 0 then
       suggest("full", ("%d macro(s) non créée(s) : plus de place (18 perso / 120 compte)."):format(full), 2)
     end
@@ -501,10 +646,22 @@ function M:Install(all, force)
   if inCombat() then say("En combat : les macros seront installées à la sortie du combat.") end
 end
 
+-- Installe / met à jour UNE macro (bouton du panneau). force : écrase une version modifiée.
+function M:InstallOne(def, force)
+  if inCombat() then say("Impossible en combat."); return "fail" end
+  local body = self:Render(def)
+  if not body then say(def.n .. " : sorts pas encore appris."); return "later" end
+  local r = self:Write(def, body, force)
+  if r == "user" then say(def.n .. " : modifiée à la main, laissée telle quelle (Maj+clic pour écraser).") end
+  if r == "created" or r == "updated" then char().setup = true end
+  return r
+end
+
 local function usesItems(def)
   if def.c == "consumable" then return true end
   for _, v in ipairs(def.v or {}) do
-    if (v.b or ""):find("{item:", 1, true) then return true end
+    local b = v.b or ""
+    if b:find("{item:", 1, true) or b:find("{slot:", 1, true) then return true end
   end
   return false
 end
@@ -516,9 +673,12 @@ function M:Refresh(onlyConsumables)
     for _, def in ipairs(self:Defs()) do
       if char().installed[def.n] and (not onlyConsumables or usesItems(def)) and macroIndex(def.n) then
         local body = self:Render(def, ctx)
-        if body then self:Write(def, body, false) end
+        if body then
+          if self:Write(def, body, false) == "pending" then return end
+        end
       end
     end
+    if self.panel and self.panel:IsShown() then self:FillPanel() end
   end)
 end
 
@@ -528,7 +688,10 @@ function M:Remove()
     for name in pairs(char().installed) do
       local idx = macroIndex(name)
       if idx and name:sub(1, #PREFIX) == PREFIX then
-        if pcall(_G.DeleteMacro, idx) then n = n + 1 end
+        local _, _, cur = try(_G.GetMacroInfo, idx)
+        local stored = char().bodies[name]
+        -- jamais supprimer une macro modifiée par le joueur
+        if stored and same(cur, stored) and pcall(_G.DeleteMacro, idx) then n = n + 1 end
       end
     end
     char().installed, char().bodies, char().setup = {}, {}, false
@@ -536,18 +699,48 @@ function M:Remove()
   end)
 end
 
+local STATUS_TXT = { installed = "installée", user = "modifiée par toi", ready = "dispo", later = "pas encore" }
+
 function M:List()
   local ctx = newContext()
+  local spec = self:Spec()
+  say(("Spé : %s — contexte : %s"):format(self:SpecName(spec), (self:Context())))
   for _, def in ipairs(self:Defs()) do
-    local body = self:Render(def, ctx)
-    local state = char().installed[def.n] and "installée" or (body and "dispo" or "pas encore")
-    say(("%s [%s] %s — %s"):format(def.n, def.k or "-", state, def.d or ""))
+    say(("%s [%s] %s — %s"):format(def.n, def.k or "-", STATUS_TXT[self:Status(def, ctx)] or "?", def.d or ""))
   end
 end
 
 ---------------------------------------------------------------------------
--- Petit panneau : clic = prendre la macro sur le curseur (à poser dans une barre)
+-- Panneau : liste (gauche) + aperçu, « pourquoi » et boutons (droite)
 ---------------------------------------------------------------------------
+local ROWS, ROW_H, W, H = 20, 17, 660, 430
+local STATUS_COLOR = { installed = "|cff40ff40", user = "|cffffa040", ready = "|cffffffff", later = "|cff808080" }
+
+local function button(parent, text, w)
+  local b = _G.CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+  b:SetSize(w or 120, 20)
+  b:SetText(text)
+  return b
+end
+
+local function cycleSpec()
+  local specs = classSpecs()
+  local cur = char().spec
+  local nextId
+  if not cur then nextId = specs[1] and specs[1].id
+  else
+    for i, s in ipairs(specs) do
+      if s.id == cur then nextId = specs[i + 1] and specs[i + 1].id end
+    end
+  end
+  char().spec = nextId -- nil = auto (talents)
+end
+
+local function cycleCtx()
+  local cur = char().ctx
+  char().ctx = (cur == nil and "solo") or (cur == "solo" and "groupe") or nil
+end
+
 function M:TogglePanel()
   if self.panel then
     if self.panel:IsShown() then self.panel:Hide() else self:FillPanel(); self.panel:Show() end
@@ -555,7 +748,7 @@ function M:TogglePanel()
   end
   if not _G.CreateFrame then return end
   local f = _G.CreateFrame("Frame", nil, _G.UIParent, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
-  f:SetSize(380, 60)
+  f:SetSize(W, H)
   f:SetPoint("CENTER")
   f:SetFrameStrata("DIALOG")
   f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
@@ -564,59 +757,160 @@ function M:TogglePanel()
     f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
       edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
       insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-    f:SetBackdropColor(0, 0, 0, 0.85)
+    f:SetBackdropColor(0, 0, 0, 0.9)
   end
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   title:SetPoint("TOPLEFT", 10, -8)
-  title:SetText("Macros TreeAI — clic : prendre, glisser dans une barre")
+  title:SetText("Macros TreeAI")
   local close = _G.CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetPoint("TOPRIGHT", 2, 2)
-  local inst = _G.CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  inst:SetSize(90, 20); inst:SetPoint("BOTTOMRIGHT", -8, 6); inst:SetText("Installer")
-  inst:SetScript("OnClick", function()
-    if T.UserAction then T:UserAction(M.Install, M, false) else M:Install(false) end
-    after(0.5, function() M:FillPanel() end)
-  end)
+
+  f.specBtn = button(f, "Spé", 170); f.specBtn:SetPoint("TOPLEFT", 120, -6)
+  f.specBtn:SetScript("OnClick", function() cycleSpec(); M:FillPanel() end)
+  f.ctxBtn = button(f, "Contexte", 130); f.ctxBtn:SetPoint("LEFT", f.specBtn, "RIGHT", 6, 0)
+  f.ctxBtn:SetScript("OnClick", function() cycleCtx(); M:FillPanel() end)
+
+  -- liste
+  f.offset = 0
   f.rows = {}
+  for i = 1, ROWS do
+    local row = _G.CreateFrame("Button", nil, f)
+    row:SetSize(250, ROW_H - 1)
+    row:SetPoint("TOPLEFT", 10, -32 - (i - 1) * ROW_H)
+    row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.text:SetAllPoints(); row.text:SetJustifyH("LEFT")
+    row.hl = row:CreateTexture(nil, "BACKGROUND")
+    row.hl:SetAllPoints()
+    if row.hl.SetColorTexture then row.hl:SetColorTexture(0.2, 0.6, 0.3, 0.35)
+    else row.hl:SetTexture("Interface\\Buttons\\WHITE8X8"); row.hl:SetVertexColor(0.2, 0.6, 0.3, 0.35) end
+    row.hl:Hide()
+    row:SetScript("OnClick", function(b) if b.def then M.selected = b.def.n; M:FillPanel() end end)
+    f.rows[i] = row
+  end
+  f:EnableMouseWheel(true)
+  f:SetScript("OnMouseWheel", function(_, delta)
+    f.offset = math.max(0, (f.offset or 0) - delta * 3)
+    M:FillPanel()
+  end)
+
+  -- détail
+  local x = 272
+  f.name = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  f.name:SetPoint("TOPLEFT", x, -34)
+  f.meta = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.meta:SetPoint("TOPLEFT", x, -56); f.meta:SetWidth(W - x - 14); f.meta:SetJustifyH("LEFT")
+  f.desc = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  f.desc:SetPoint("TOPLEFT", x, -74); f.desc:SetWidth(W - x - 14); f.desc:SetJustifyH("LEFT")
+  local box = _G.CreateFrame("Frame", nil, f, _G.BackdropTemplateMixin and "BackdropTemplate" or nil)
+  box:SetPoint("TOPLEFT", x - 4, -104); box:SetSize(W - x - 6, 120)
+  if box.SetBackdrop then
+    box:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background" })
+    box:SetBackdropColor(0.08, 0.08, 0.1, 0.95)
+  end
+  f.body = box:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.body:SetPoint("TOPLEFT", 6, -6); f.body:SetWidth(W - x - 20)
+  f.body:SetJustifyH("LEFT"); f.body:SetJustifyV("TOP")
+  f.whyT = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  f.whyT:SetPoint("TOPLEFT", x, -232); f.whyT:SetText("Pourquoi")
+  f.why = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.why:SetPoint("TOPLEFT", x, -248); f.why:SetWidth(W - x - 14)
+  f.why:SetJustifyH("LEFT"); f.why:SetJustifyV("TOP")
+
+  f.one = button(f, "Installer cette macro", 160); f.one:SetPoint("BOTTOMLEFT", x, 34)
+  f.one:SetScript("OnClick", function()
+    local def = M:SelectedDef()
+    if def then
+      local force = _G.IsShiftKeyDown and _G.IsShiftKeyDown()
+      userDo(M.InstallOne, M, def, force)
+      M:FillPanel()
+    end
+  end)
+  f.pick = button(f, "Prendre (barre)", 120); f.pick:SetPoint("LEFT", f.one, "RIGHT", 6, 0)
+  f.pick:SetScript("OnClick", function()
+    local def = M:SelectedDef()
+    local idx = def and macroIndex(def.n)
+    if idx and not inCombat() then try(_G.PickupMacro, idx) end
+  end)
+  f.all = button(f, "Tout installer (ma spé)", 180); f.all:SetPoint("BOTTOMLEFT", x, 8)
+  f.all:SetScript("OnClick", function()
+    userDo(M.Install, M, false)
+    after(0.3, function() M:FillPanel() end)
+  end)
+  f.upd = button(f, "Mettre à jour", 110); f.upd:SetPoint("LEFT", f.all, "RIGHT", 6, 0)
+  f.upd:SetScript("OnClick", function() userDo(M.Refresh, M, false); after(0.3, function() M:FillPanel() end) end)
+  f.del = button(f, "Retirer", 80); f.del:SetPoint("LEFT", f.upd, "RIGHT", 6, 0)
+  f.del:SetScript("OnClick", function() userDo(M.Remove, M); after(0.3, function() M:FillPanel() end) end)
+  f.hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  f.hint:SetPoint("BOTTOMLEFT", 10, 10); f.hint:SetWidth(250); f.hint:SetJustifyH("LEFT")
+  f.hint:SetText("Rien n'est créé sans ton clic. Une macro modifiée à la main n'est jamais écrasée.")
   self.panel = f
   self:FillPanel()
+end
+
+function M:SelectedDef()
+  for _, def in ipairs(self:Defs()) do
+    if def.n == self.selected then return def end
+  end
+  return nil
 end
 
 function M:FillPanel()
   local f = self.panel
   if not f then return end
+  local ctx = newContext()
   local defs = self:Defs()
-  for i, def in ipairs(defs) do
-    local row = f.rows[i]
-    if not row then
-      row = _G.CreateFrame("Button", nil, f)
-      row:SetSize(360, 16)
-      row:SetPoint("TOPLEFT", 10, -26 - (i - 1) * 17)
-      row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-      row.text:SetAllPoints(); row.text:SetJustifyH("LEFT")
-      row:SetScript("OnClick", function(b)
-        if inCombat() then return end
-        local idx = b.macroName and macroIndex(b.macroName)
-        if idx then try(_G.PickupMacro, idx) end
-      end)
-      row:SetScript("OnEnter", function(b)
-        if not _G.GameTooltip or not b.desc then return end
-        _G.GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-        _G.GameTooltip:SetText(b.macroName or "")
-        _G.GameTooltip:AddLine(b.desc, 1, 1, 1, true)
-        _G.GameTooltip:Show()
-      end)
-      row:SetScript("OnLeave", function() if _G.GameTooltip then _G.GameTooltip:Hide() end end)
-      f.rows[i] = row
-    end
-    local installed = char().installed[def.n] and macroIndex(def.n)
-    row.macroName, row.desc = def.n, def.d
-    row.text:SetText(("%s%s|r  [%s]  %s"):format(installed and "|cff40ff40" or "|cff888888",
-      def.n, def.k or "-", (def.d or ""):sub(1, 48)))
-    row:Show()
+  local spec, autoSpec = self:Spec()
+  local where, autoCtx = self:Context()
+  f.specBtn:SetText("Spé : " .. self:SpecName(spec) .. (autoSpec and " (auto)" or ""))
+  f.ctxBtn:SetText((where == "groupe" and "Groupe" or "Solo") .. (autoCtx and " (auto)" or ""))
+  -- tri : installées / dispo d'abord, puis par niveau
+  local rows = {}
+  for _, def in ipairs(defs) do
+    rows[#rows + 1] = { def = def, st = self:Status(def, ctx) }
   end
-  for i = #defs + 1, #f.rows do f.rows[i]:Hide() end
-  f:SetHeight(40 + #defs * 17 + 10)
+  local rank = { installed = 1, user = 1, ready = 2, later = 3 }
+  tsort(rows, function(a, b)
+    if rank[a.st] ~= rank[b.st] then return rank[a.st] < rank[b.st] end
+    if (a.def.l or 1) ~= (b.def.l or 1) then return (a.def.l or 1) < (b.def.l or 1) end
+    return a.def.n < b.def.n
+  end)
+  f.offset = math.min(f.offset or 0, math.max(0, #rows - ROWS))
+  if not self.selected and rows[1] then self.selected = rows[1].def.n end
+  for i = 1, ROWS do
+    local row, r = f.rows[i], rows[i + f.offset]
+    if r then
+      local def = r.def
+      local tag = self:IsDefault(def) and "" or " |cff808080(option)|r"
+      local lvl = (r.st == "later" and def.l and def.l <= 60) and (" |cff808080niv." .. def.l .. "|r") or ""
+      row.def = def
+      row.text:SetText(("%s%s|r  [%s]%s%s"):format(STATUS_COLOR[r.st] or "", def.n:sub(#PREFIX + 1),
+        def.k or "-", lvl, tag))
+      if def.n == self.selected then row.hl:Show() else row.hl:Hide() end
+      row:Show()
+    else
+      row.def = nil
+      row:Hide()
+    end
+  end
+  local def = self:SelectedDef()
+  if not def then return end
+  local st, cur = self:Status(def, ctx)
+  local body = self:Render(def, ctx)
+  f.name:SetText(def.n)
+  local ctxTxt = (def.x == "groupe" and "groupe") or (def.x == "solo" and "solo") or "solo + groupe"
+  f.meta:SetText(("Touche conseillée : %s   |   niveau %s   |   %s   |   %s%s|r"):format(
+    def.k or "-", tostring(def.l or 1), ctxTxt, STATUS_COLOR[st] or "", STATUS_TXT[st] or ""))
+  f.desc:SetText(def.d or "")
+  if st == "user" and cur then
+    f.body:SetText("|cffffa040Ta version (gardée) :|r\n" .. cur .. (body and ("\n|cff40ff40TreeAI propose :|r\n" .. body) or ""))
+  elseif body then
+    f.body:SetText(body .. ("\n|cff808080%d / 255 caractères|r"):format(#body))
+  else
+    local miss = self:Missing(def)
+    f.body:SetText("|cff808080Pas encore disponible" .. (#miss > 0 and (" : il te manque " .. tconcat(miss, ", ")) or "") .. ".|r")
+  end
+  f.why:SetText(def.w or "")
+  f.one:SetText((st == "installed" and "Mettre à jour") or (st == "user" and "Maj+clic : écraser") or "Installer cette macro")
 end
 
 ---------------------------------------------------------------------------
@@ -631,6 +925,7 @@ local function scheduleConsumables()
 end
 
 local function scheduleSpells()
+  resolveCache = {}
   if pendingSpells or db().autoUpgrade == false or not char().setup then return end
   pendingSpells = true
   after(2, function()
@@ -639,13 +934,14 @@ local function scheduleSpells()
     -- nouvelles macros par défaut devenues possibles (sort appris)
     local ctx, fresh = newContext(), {}
     for _, def in ipairs(M:Defs()) do
-      if def.def and def.c ~= "consumable" and not char().installed[def.n] and M:Render(def, ctx) then
+      if M:IsDefault(def) and def.c ~= "consumable" and not char().installed[def.n]
+        and not macroIndex(def.n) and M:Render(def, ctx) then
         fresh[#fresh + 1] = def.n
       end
     end
     if #fresh > 0 then
-      suggest("new", "Nouvelle(s) macro(s) dispo : " .. tconcat(fresh, ", ") .. " (/tai macros installer)", 2,
-        { ttl = 300, onClick = function() M:Install(false) end })
+      suggest("new", "Nouvelle(s) macro(s) dispo : " .. tconcat(fresh, ", ") .. " (clique pour voir)", 2,
+        { ttl = 300, onClick = function() M:TogglePanel() end })
     end
   end)
 end
@@ -655,20 +951,23 @@ function M:OnEnable()
   self:RegisterEvent("PLAYER_LEVEL_UP", function() scheduleConsumables(); scheduleSpells() end)
   self:RegisterEvent("SKILL_LINES_CHANGED", scheduleConsumables)
   self:RegisterEvent("UNIT_INVENTORY_CHANGED", scheduleConsumables)
+  self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", scheduleConsumables)
   self:RegisterEvent("UNIT_PET", scheduleConsumables)
   self:RegisterEvent("SPELLS_CHANGED", scheduleSpells)
   self:RegisterEvent("LEARNED_SPELL_IN_TAB", scheduleSpells)
+  self:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED", scheduleSpells)
+  self:RegisterEvent("CHARACTER_POINTS_CHANGED", scheduleSpells)
   if not data() then return end
   if char().setup then
     after(3, function() M:Refresh(false) end)
   else
-    suggest("setup", "Macros intelligentes prêtes pour ta classe : clique ou /tai macros installer", 2,
-      { ttl = 0, onClick = function() M:Install(false) end })
+    suggest("setup", "Macros expertes prêtes pour ta classe : clique pour les voir et les installer", 2,
+      { ttl = 0, onClick = function() M:TogglePanel() end })
   end
 end
 
 ---------------------------------------------------------------------------
--- Slash : /tai macros [installer|tout|maj|forcer|liste|retirer]
+-- Slash : /tai macros [installer|tout|maj|forcer|liste|retirer|spe|solo|groupe|auto]
 ---------------------------------------------------------------------------
 local function slash(rest)
   local cmd = trim((rest or ""):lower())
@@ -678,9 +977,13 @@ local function slash(rest)
   elseif cmd == "maj" or cmd == "update" then M:Refresh(false)
   elseif cmd == "liste" or cmd == "list" then M:List()
   elseif cmd == "retirer" or cmd == "remove" then M:Remove()
+  elseif cmd == "spe" or cmd == "spé" then cycleSpec(); say("Spé : " .. M:SpecName((M:Spec())))
+  elseif cmd == "solo" or cmd == "groupe" then char().ctx = cmd; say("Contexte : " .. cmd)
+  elseif cmd == "auto" then char().ctx, char().spec = nil, nil; say("Spé et contexte automatiques.")
   else M:TogglePanel() end
 end
 M.Slash = slash
 if T.RegisterSlash then
-  T:RegisterSlash("macros", slash, "macros [installer|tout|maj|forcer|liste|retirer] : macros intelligentes")
+  T:RegisterSlash("macros", slash,
+    "macros [installer|tout|maj|forcer|liste|retirer|spe|solo|groupe|auto] : macros expertes")
 end
