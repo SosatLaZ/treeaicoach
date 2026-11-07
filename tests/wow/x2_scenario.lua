@@ -81,7 +81,8 @@ return function(M, ctx)
   for _ = 1, 3 do ctx.fire("UNIT_COMBAT", "player", "WOUND", "", 300, 1) end
   ctx.fire("PLAYER_DEAD")
   local d = sug("Fight:death")
-  ctx.check(d and d.text:find("900 dégâts") and d.text:find("Élite trop fort"), "death recap: " .. tostring(d and d.text))
+  ctx.check(d and d.text:find("^Tué par Ours%-test") and d.text:find("Élite trop fort")
+    and type(d.tooltip) == "table" and table.concat(d.tooltip, " "):find("900"), "death recap: " .. tostring(d and d.text))
   ctx.check(#F.char.deaths == nDeaths + 1 or #F.char.deaths == 20, "death stored")
   ctx.check(F.DeathAdvice({ attackers = 3 }):find("3 monstres"), "advice: many adds")
   ctx.check(F.DeathAdvice({ attackers = 1, startHP = 40 }):find("40 %%"), "advice: low HP pull")
@@ -162,7 +163,7 @@ return function(M, ctx)
   C.char.snap = { time = 1, level = 25, money = 100, rested = 0, xpMax = 26000 }
   C:ShowChanges()
   local ch = sug("Comfort:changes")
-  ctx.check(ch and ch.text:find("Niveau 25 → " .. M.player.level), "changes suggestion: " .. tostring(ch and ch.text))
+  ctx.check(ch and ch.text:find("Niveau 25 > " .. M.player.level), "changes suggestion: " .. tostring(ch and ch.text))
   ctx.check(C.char.snap.level == M.player.level, "snapshot refreshed")
 
   -- 49. new spell + free action slot

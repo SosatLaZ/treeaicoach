@@ -229,18 +229,18 @@ end
 --- r = { attackers, elites, total, biggest, maxHP, duration, startHP, sources = {name=dmg}, env }
 function M.DeathAdvice(r)
   r = r or {}
-  if r.env then return "Mort de l'environnement (chute / noyade / lave) : attention au terrain." end
+  if r.env then return "Attention au terrain (chute, noyade, lave)" end
   if (r.elites or 0) > 0 and (r.attackers or 0) <= 1 then
-    return "Élite trop fort seul : reviens à plusieurs ou avec 2 niveaux de plus."
+    return "Élite trop fort seul : reviens à plusieurs"
   end
-  if (r.attackers or 0) >= 3 then return ("%d monstres sur toi : pulls plus petits, recule pour les isoler."):format(r.attackers) end
+  if (r.attackers or 0) >= 3 then return ("%d monstres sur toi : tire-les un par un"):format(r.attackers) end
   if r.maxHP and r.biggest and r.biggest >= r.maxHP * 0.3 then
-    return "Gros coup (" .. r.biggest .. ") : interromps les incantations ou casse la ligne de vue."
+    return "Gros coup (" .. r.biggest .. ") : interromps ou casse la ligne de vue"
   end
-  if r.startHP and r.startHP < 60 then return ("Pull engagé à %d %% PV : mange / bande-toi avant."):format(r.startHP) end
-  if (r.attackers or 0) == 2 then return "2 monstres : contrôle l'add (piège, mouton…) ou fuis plus tôt." end
-  if r.duration and r.duration > 25 then return "Combat trop long : potion / soin plus tôt, ou fuis sous 30 % PV." end
-  return "Surveille tes PV : potion / bandage sous 35 %."
+  if r.startHP and r.startHP < 60 then return ("Engagé à %d %% PV : mange avant le pull"):format(r.startHP) end
+  if (r.attackers or 0) == 2 then return "2 monstres : contrôle l'add (piège, mouton…)" end
+  if r.duration and r.duration > 25 then return "Combat long : potion plus tôt, fuis sous 30 % PV" end
+  return "Bois une potion ou bande-toi sous 35 % PV"
 end
 
 function M:BuildRecap()
@@ -254,33 +254,64 @@ function M:BuildRecap()
     end
   end
   local attackers, elites, names = 0, 0, {}
+  local killer, killerLvl
   for _, p in ipairs(M.ScanPlates()) do
     if p.me or (p.combat and p.guid) then
       attackers = attackers + 1
       if isElite(p.class) then elites = elites + 1 end
-      if #names < 3 then names[#names + 1] = p.name end
+      if #names < 3 and p.name ~= "?" then names[#names + 1] = p.name end
+      if not killer and p.me and p.name ~= "?" then killer, killerLvl = p.name, tonumber(p.level) end
     end
   end
-  if attackers == 0 and exists("target") and hostile("target") then
-    attackers = 1
-    if isElite(sv(try(G.UnitClassification, "target"))) then elites = 1 end
-    names[1] = sv(try(G.UnitName, "target")) or "?"
+  if exists("target") and hostile("target") then
+    local tn = sv(try(G.UnitName, "target"))
+    if attackers == 0 then
+      attackers = 1
+      if isElite(sv(try(G.UnitClassification, "target"))) then elites = 1 end
+      if tn then names[1] = tn end
+    end
+    if not killer and tn then killer, killerLvl = tn, tonumber(sv(try(G.UnitLevel, "target"))) end
   end
+  killer = killer or names[1]
   for src in pairs(sources) do if #names < 3 then names[#names + 1] = src end end
   return {
     time = try(G.time) or 0, attackers = attackers, elites = elites, total = total, biggest = biggest, hits = n,
+    killer = killer, killerLvl = (killerLvl and killerLvl > 0) and killerLvl or nil,
     maxHP = sv(try(G.UnitHealthMax, "player")), duration = fightStart and math.floor(t - fightStart) or nil,
     startHP = startHP, names = names, env = M._env and (t - M._env) < 5 or nil,
     zone = try(G.GetZoneText),
   }
 end
 
+--- Texte du récap (fonction pure, testée) : jamais de chiffre qu'on n'a pas. Sans dégâts mesurés
+--- (WoW Forever : pas de journal de combat) -> « Tué par X (niv N) » + un conseil.
+function M.RecapText(r)
+  r = r or {}
+  local who
+  if r.killer then
+    who = "Tué par " .. r.killer .. (r.killerLvl and (" (niv " .. r.killerLvl .. ")") or "")
+    if (r.attackers or 0) > 1 then who = who .. (" + %d"):format(r.attackers - 1) end
+  elseif r.env then who = "Mort (chute / noyade / lave)"
+  else who = "Mort" end
+  if r.advice and r.advice ~= "" then return who .. " — " .. r.advice end
+  return who
+end
+
+--- sans dégâts mesurés, le conseil ne s'appuie pas sur « gros coup » / durée inconnus
+local function adviceFor(r)
+  if not ((r.hits or 0) > 0 and (r.total or 0) > 0) then
+    r = { env = r.env, elites = r.elites, attackers = r.attackers, startHP = r.startHP, duration = r.duration }
+  end
+  return M.DeathAdvice(r)
+end
+M.AdviceFor = adviceFor
+
 function M:PLAYER_DEAD()
   if not opt("death") then return end
   local r = self:BuildRecap()
-  r.advice = M.DeathAdvice(r)
-  local who = #r.names > 0 and table.concat(r.names, ", ") or "?"
-  local txt = ("Mort : %s · %d dégâts en 12 s (plus gros %d) — %s"):format(who, r.total, r.biggest, r.advice)
+  r.advice = adviceFor(r)
+  local txt = M.RecapText(r)
+  local measured = (r.hits or 0) > 0 and (r.total or 0) > 0
   local list = M.char and M.char.deaths
   if type(list) == "table" then
     list[#list + 1] = { time = r.time, attackers = r.attackers, elites = r.elites, total = r.total,
@@ -289,10 +320,14 @@ function M:PLAYER_DEAD()
   end
   M.lastRecap = r
   setLine("death", txt, 2)
-  M:Suggest("death", txt, 2, { ttl = 300, cooldown = 1, tab = TAB, tooltip = {
-    "Récap de mort", "Attaquants : " .. r.attackers .. (r.elites > 0 and (" (" .. r.elites .. " élite)") or ""),
-    "Dégâts subis (12 s) : " .. r.total .. " en " .. r.hits .. " coups",
-    "PV au début du combat : " .. (r.startHP and (r.startHP .. " %") or "?"), r.advice } })
+  local tip = { "Récap de mort", "Attaquants : " .. r.attackers .. (r.elites > 0 and (" (" .. r.elites .. " élite)") or "") }
+  if measured then
+    tip[#tip + 1] = "Dégâts subis (12 s) : " .. r.total .. " en " .. r.hits .. " coups"
+      .. ((r.biggest or 0) > 0 and (", plus gros " .. r.biggest) or "")
+  end
+  if r.startHP then tip[#tip + 1] = "PV au début du combat : " .. r.startHP .. " %" end
+  tip[#tip + 1] = r.advice
+  M:Suggest("death", txt, 2, { ttl = 300, cooldown = 1, tab = TAB, death = true, tooltip = tip })
   hits, M._sources = {}, {}
 end
 
@@ -671,6 +706,6 @@ end
 T:RegisterSlash("mort", function()
   local r = M.lastRecap
   if not r then M:Print("Aucune mort enregistrée cette session.") return end
-  M:Print(("Dernière mort : %d attaquant(s), %d dégâts en 12 s, plus gros coup %d, PV au début %s. %s"):format(
-    r.attackers, r.total, r.biggest, r.startHP and (r.startHP .. " %") or "?", r.advice or ""))
+  local nums = ((r.hits or 0) > 0 and (r.total or 0) > 0) and (" (%d dégâts en 12 s)"):format(r.total) or ""
+  M:Print("Dernière mort : " .. M.RecapText(r) .. nums)
 end, "récap de la dernière mort")

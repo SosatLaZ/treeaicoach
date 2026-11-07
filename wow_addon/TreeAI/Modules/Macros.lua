@@ -132,6 +132,20 @@ local function suggest(id, text, prio, opts)
   if T.Suggest then return T:Suggest("Macros:" .. id, text, prio, opts) end
 end
 
+-- UNE seule ligne « macros » dans les conseils (installer, nouvelles, à mettre à jour : même id)
+local READY_TEXT = "Nouvelles macros prêtes : clique pour installer"
+local function suggestReady(text, names)
+  local tip = { "Macros TreeAI", "Clic : installer · Maj-clic : voir la liste" }
+  if names and #names > 0 then tip[#tip + 1] = tconcat(names, ", ") end
+  suggest("ready", text or READY_TEXT, 2, { ttl = 0, tooltip = tip, onClick = function()
+    if _G.IsShiftKeyDown and _G.IsShiftKeyDown() then M:TogglePanel() return end
+    M._pending = false
+    if M.Clear then M:Clear("ready") end
+    if char().setup then M:Refresh(false) else M:Install(false) end
+  end })
+end
+M._SuggestReady = suggestReady
+
 local function say(...)
   if M.Print then M:Print(...) elseif _G.print then _G.print("TreeAI Macros:", ...) end
 end
@@ -566,8 +580,7 @@ function M:Write(def, body, force)
   -- sans clic / commande, on prépare et on propose « clique pour mettre à jour ».
   if T.InUserAction and not T:InUserAction() then
     M._pending = true
-    suggest("pending", "Macros à mettre à jour : clique ici", 1,
-      { ttl = 0, onClick = function() M._pending = false; M:Refresh(false) end })
+    suggestReady(char().setup and "Macros à mettre à jour : clique pour les mettre à jour" or READY_TEXT)
     return "pending"
   end
   local ch = char()
@@ -630,7 +643,7 @@ function M:Install(all, force)
     end
     if pend > 0 then return end
     char().setup = true
-    if self.Clear then self:Clear("setup"); self:Clear("pending") end
+    if self.Clear then self:Clear("ready") end
     local spec = self:Spec()
     say(("%d macro(s) installée(s)/mise(s) à jour (%s, %s)."):format(n, self:SpecName(spec), (self:Context())))
     if full > 0 then
@@ -950,8 +963,7 @@ local function scheduleSpells()
       end
     end
     if #fresh > 0 then
-      suggest("new", "Nouvelle(s) macro(s) dispo : " .. tconcat(fresh, ", ") .. " (clique pour voir)", 2,
-        { ttl = 300, onClick = function() M:TogglePanel() end })
+      suggestReady(READY_TEXT, fresh)
     end
   end)
 end
@@ -972,8 +984,7 @@ function M:OnEnable()
   if char().setup then
     after(3, function() M:Refresh(false) end)
   else
-    suggest("setup", "Macros expertes prêtes pour ta classe : clique pour les voir et les installer", 2,
-      { ttl = 0, onClick = function() M:TogglePanel() end })
+    suggestReady(READY_TEXT)
   end
 end
 

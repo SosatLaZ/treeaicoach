@@ -500,13 +500,13 @@ local function buildWizard()
   end
   -- étape 2 : préréglage + position du panneau
   for i, p in ipairs(TreeAI.PRESET_ORDER or {}) do
-    add(2, newButton(W, "", 118, function()
+    add(2, newButton(W, "", 88, function()
       TreeAI:ApplyPreset(p)
       W.refresh()
     end, function()
       local on = (TreeAI.settings and TreeAI.settings.preset) == p
       return (on and "|cff33ff66> " or "") .. L[TreeAI.PRESET_LABEL[p]] .. (on and " <|r" or "")
-    end), 16 + (i - 1) * 124, -82)
+    end), 16 + (i - 1) * 92, -82)
   end
   W.presetHelp = label(W, "GameFontDisableSmall", 370)
   W.presetHelp:SetPoint("TOPLEFT", W, "TOPLEFT", 16, -110)

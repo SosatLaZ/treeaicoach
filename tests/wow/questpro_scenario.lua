@@ -160,13 +160,13 @@ return function(M, ctx)
   check(C.Current().questID == 1003, "click a line = compass target")
   -- easy nearby + pick up on the way
   check(TR.easy and TR.easy[1] and TR.easy[1].title == "Aide au fermier" and TR.easy[1].giver == "Garde", "easy quest nearby")
-  check(sugg("Facile à côté : « Aide au fermier »"), "easy quest suggestion")
+  check(sugg("Fais aussi « Aide au fermier » : facile"), "easy quest suggestion")
   -- player far west, target east: the guard (0.51, 0.40) is on the way
   M.pos = { mapID = 1424, x = 0.40, y = 0.40 }
   M.RunSlash("/tai way 60 40 Est")
   TR.Update()
   check(TR.pickup and TR.pickup.title == "Aide au fermier", "« passe prendre … en chemin »")
-  check(sugg("Passe prendre « Aide au fermier » chez Garde"), "pick-up suggestion")
+  check(sugg("Prends « Aide au fermier » en chemin"), "pick-up suggestion")
   M.RunSlash("/tai way effacer")
   -- leaving the hub without the quest
   M.pos = { mapID = 1424, x = 0.51, y = 0.405 }

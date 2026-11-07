@@ -1154,12 +1154,13 @@ function M.Update(force)
   local target = C and C.Current and C.Current()
   M.pickup = cfg("pickup") and M.OnTheWay(avail, me, target) or nil
   if M.pickup then
-    M:Suggest("pickup", ("Passe prendre « %s » chez %s en chemin."):format(cut(M.pickup.title, 28), M.pickup.giver or "?"), 2,
+    M:Suggest("pickup", ("Prends « %s » en chemin%s"):format(cut(M.pickup.title, 28),
+      M.pickup.giver and (" (" .. M.pickup.giver .. ")") or ""), 2,
       { ttl = 120, cooldown = 900 })
   end
   if #M.easy > 0 then
     local a = M.easy[1]
-    M:Suggest("easy", ("Facile à côté : « %s » (%s)%s"):format(cut(a.title, 28), a.giver or "?",
+    M:Suggest("easy", ("Fais aussi « %s » : facile, à côté%s"):format(cut(a.title, 28),
       #M.easy > 1 and (" +" .. (#M.easy - 1)) or ""), 1, { ttl = 120, cooldown = 1200, sound = false })
   end
   M.CheckHub(avail, me)

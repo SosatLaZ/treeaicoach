@@ -454,8 +454,11 @@ function M.GatherLines(pr)
       if sk >= b[1] and sk < b[2] then
         local good = false
         for _, z in ipairs(b[3]) do if fold(z) == here then good = true end end
-        lines[#lines + 1] = { text = fmt("Meilleures zones (%d–%d) : %s%s", b[1], b[2] - 1, tconcat(b[3], ", "),
-          good and " — tu y es !" or ""), prio = good and 1 or 2 }
+        local zs = {}
+        for i = 1, math.min(#b[3], 3) do zs[#zs + 1] = b[3][i] end
+        lines[#lines + 1] = { text = good and fmt("Meilleures zones (%d–%d) : tu y es !", b[1], b[2] - 1)
+          or fmt("Meilleures zones (%d–%d) : %s", b[1], b[2] - 1, tconcat(zs, ", ")), prio = good and 1 or 2,
+          tooltip = tconcat(b[3], ", ") }
       end
     end
   end

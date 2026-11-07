@@ -673,6 +673,7 @@ end
 local function initDB()
   local db = _G.TreeAIDB
   if type(db) ~= "table" then db = {} end
+  TreeAI._freshDB = type(db.settings) ~= "table"
   -- future migrations: if (db.schema or 0) < N then ... end
   db.schema = TreeAI.SCHEMA
   db.version = TreeAI.version
@@ -999,13 +1000,17 @@ TreeAI.DANGER_IDS = TreeAI.DANGER_IDS or {
   ["Boost:threat"] = true, ["Hunter:aspect"] = true, ["Hunter:fd"] = true,
 }
 TreeAI.PRESETS = {
-  calme  = { nowMax = 3, nowMinPrio = 2, perModule = 1, alertGap = 45, topicGap = 600, soundTips = false },
+  -- simple (défaut) : 3 lignes, seulement ce qu'on peut faire (clic ou conseil utile), pas de bavardage
+  simple = { nowMax = 3, nowMinPrio = 1, perModule = 1, alertGap = 45, topicGap = 600, soundTips = false,
+             actionable = true },
+  calme = { nowMax = 3, nowMinPrio = 2, perModule = 1, alertGap = 45, topicGap = 600, soundTips = false },
   normal = { nowMax = 5, nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
   tout   = { nowMax = 8, nowMinPrio = 1, perModule = 0, alertGap = 20, topicGap = 60 },
 }
-TreeAI.PRESET_ORDER = { "calme", "normal", "tout" }
-TreeAI.PRESET_LABEL = { calme = "Mode calme", normal = "Normal", tout = "Tout", perso = "Perso" }
+TreeAI.PRESET_ORDER = { "simple", "calme", "normal", "tout" }
+TreeAI.PRESET_LABEL = { simple = "Simple", calme = "Mode calme", normal = "Normal", tout = "Tout", perso = "Perso" }
 TreeAI.PRESET_HELP = {
+  simple = "3 lignes, seulement ce que tu peux faire maintenant",
   calme = "3 lignes, seulement l'utile, alerte rare (45 s mini)",
   normal = "5 lignes, une alerte max toutes les 20 s",
   tout = "8 lignes, tous les conseils (même les petits)",
@@ -1045,11 +1050,193 @@ function TreeAI:ApplyPreset(name)
   s.noise = type(s.noise) == "table" and s.noise or {}
   s.noise.nowMinPrio, s.noise.perModule = p.nowMinPrio, p.perModule
   s.noise.alertGap, s.noise.topicGap = p.alertGap, p.topicGap
+  s.noise.actionable = p.actionable and true or nil
   if s.panel then s.panel.nowMax = p.nowMax end
   if p.soundTips ~= nil then s.soundTips = p.soundTips end
   self:Fire("PRESET_CHANGED", name)
   self:RequestRefresh()
   return true
+end
+
+---------------------------------------------------------------------------
+-- État du joueur (CONTENTFIX) : mort / fantôme / vol / monture / repos… -> qui a le droit de parler.
+--   TreeAI:PlayerState() -> { dead, ghost, taxi, mounted, resting, inCombat, inInstance, afk } (cache 0,25 s)
+--   TreeAI:Quiet(kind) -> true, raison quand une ligne de ce genre doit se taire :
+--     "buff"   (aspect, buff, familier, munitions) : mort, fantôme, vol, monture, repos
+--     "advice" (tout le reste, défaut)              : mort, fantôme, vol (gardé, réaffiché après)
+--     "death"  (course au corps, gardien des esprits, récap de mort) : jamais
+-- Suggest applique la règle : "buff" jeté, "advice" mis en attente (caché, sans son ni encadré).
+---------------------------------------------------------------------------
+local stateCache, stateAt = nil, -1
+local function tryState(fn, ...)
+  if type(fn) ~= "function" then return nil end
+  local ok, v = pcall(fn, ...)
+  if not ok then return nil end
+  if _G.issecretvalue then
+    local ok2, s = pcall(_G.issecretvalue, v)
+    if ok2 and s then return nil end
+  end
+  return v
+end
+function TreeAI:PlayerState(force)
+  local t = now()
+  if stateCache and not force and t - stateAt < 0.25 then return stateCache end
+  local ghost = tryState(_G.UnitIsGhost, "player") and true or false
+  local dog = tryState(_G.UnitIsDeadOrGhost, "player") and true or false
+  local inst = tryState(_G.IsInInstance)
+  stateCache = {
+    dead = (dog and not ghost) or false, ghost = ghost,
+    taxi = tryState(_G.UnitOnTaxi, "player") and true or false,
+    mounted = tryState(_G.IsMounted) and true or false,
+    resting = tryState(_G.IsResting) and true or false,
+    inCombat = self:InCombat(),
+    inInstance = inst and true or false,
+    afk = tryState(_G.UnitIsAFK, "player") and true or false,
+  }
+  stateAt = t
+  return stateCache
+end
+function TreeAI:InvalidatePlayerState() stateCache = nil end
+
+TreeAI.QUIET_RULES = TreeAI.QUIET_RULES or {
+  buff = { "dead", "ghost", "taxi", "mounted", "resting" },
+  advice = { "dead", "ghost", "taxi" },
+  death = {}, always = {},
+}
+-- sujet -> genre (aspects, familier, munitions = rappels « buff »)
+TreeAI.QUIET_TOPICS = TreeAI.QUIET_TOPICS or { aspect = "buff", pet = "buff", petfood = "buff", ammo = "buff", buff = "buff" }
+-- modules dont tous les conseils sont des rappels de buff
+TreeAI.QUIET_MODULES = TreeAI.QUIET_MODULES or { Classes = "buff" }
+
+function TreeAI:Quiet(kind)
+  local rule = self.QUIET_RULES[kind or "advice"] or self.QUIET_RULES.advice
+  if #rule == 0 then return false end
+  local st = self:PlayerState()
+  for _, k in ipairs(rule) do if st[k] then return true, k end end
+  return false
+end
+
+--- Genre d'une suggestion / ligne : opts.kind ou e.kind, sinon module / sujet, sinon "advice".
+function TreeAI:QuietKindOf(e)
+  if type(e) ~= "table" then return "advice" end
+  if e.kind then return e.kind end
+  if e.death then return "death" end
+  local m = e.module and self.QUIET_MODULES[e.module]
+  if m then return m end
+  local topic = e.topic or (e.id and self.TOPIC_IDS[e.id])
+  return (topic and self.QUIET_TOPICS[topic]) or "advice"
+end
+
+TreeAI.STATE_EVENTS = { "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST", "PLAYER_UPDATE_RESTING" }
+for _, ev in ipairs(TreeAI.STATE_EVENTS) do
+  if not TreeAI[ev] then
+    TreeAI[ev] = function(self) stateCache = nil; self:RequestRefresh() end
+  end
+end
+
+-- Glyphes absents des polices WoW (carrés vides en jeu) -> équivalents lisibles. Appliqué aux textes
+-- des conseils et des lignes d'onglet.
+local GLYPHS = {
+  ["▶"] = "", ["►"] = "", ["→"] = ">", ["←"] = "<", ["⇒"] = ">", ["✔"] = "OK", ["✓"] = "OK",
+  ["✖"] = "x", ["✗"] = "x", ["●"] = "•", ["○"] = "o", ["↑"] = "+", ["↓"] = "-", ["≠"] = "<>",
+  ["★"] = "*", ["☆"] = "*", ["⚠"] = "!", ["⏱"] = "", ["⌛"] = "",
+}
+local safeCache, safeN = {}, 0
+local function safeText(s)
+  if not strfind(s, "[\226\227]") then return s end
+  local c = safeCache[s]
+  if c then return c end
+  local r = strgsub(s, "[\226\227][\128-\191][\128-\191]", GLYPHS)
+  r = strgsub(strgsub(r, "^%s+", ""), "  +", " ")
+  if safeN > 400 then safeCache, safeN = {}, 0 end
+  safeCache[s], safeN = r, safeN + 1
+  return r
+end
+TreeAI.SafeText = safeText
+
+-- ≤ 2 lignes courtes : au-delà de LINE_MAX caractères visibles, la fin (après « — », « . », « ; »…)
+-- passe dans l'infobulle ; sinon coupe au dernier espace + « … » (texte complet dans l'infobulle).
+TreeAI.LINE_MAX = 96
+local function ulen(s)
+  s = strgsub(strgsub(s, "|c%x%x%x%x%x%x%x%x", ""), "|r", "")
+  local _, n = strgsub(s, "[\128-\191]", "")
+  return #s - n
+end
+TreeAI.TextLen = ulen
+local SEPS = { " — ", ". ", " ; ", " : ", " (", ", " }
+local function shortText(text, tooltip)
+  local max = TreeAI.LINE_MAX
+  if #text <= max or ulen(text) <= max then return text, tooltip end
+  local head, tail
+  for _, sep in ipairs(SEPS) do
+    local best, init = nil, 1
+    while true do
+      local a, b = strfind(text, sep, init, true)
+      if not a then break end
+      if ulen(strsub(text, 1, a - 1)) <= max then best = a else break end
+      init = b + 1
+    end
+    if best and ulen(strsub(text, 1, best - 1)) >= 24 then
+      head = strsub(text, 1, best - 1)
+      tail = strgsub(strsub(text, best), "^[%s—%.;:,]+", "")
+      if sep == " (" then tail = strgsub(strgsub(tail, "^%(", ""), "%)%s*%.?$", "") end
+      break
+    end
+  end
+  if not head then
+    local cutAt = 1
+    local init = 1
+    while true do
+      local a = strfind(text, " ", init, true)
+      if not a or ulen(strsub(text, 1, a - 1)) > max - 1 then break end
+      cutAt, init = a, a + 1
+    end
+    head, tail = strsub(text, 1, cutAt - 1) .. "…", text
+  end
+  if (strfind(head, "|c", 1, true) or 0) > (strfind(head, "|r", 1, true) or 0) then head = head .. "|r" end
+  tail = strgsub(tail, "^%s+", "")
+  if tail == "" then return head, tooltip end
+  local tip
+  if type(tooltip) == "table" then
+    tip = { tail }
+    for i = 1, #tooltip do tip[#tip + 1] = tooltip[i] end
+  elseif type(tooltip) == "string" and tooltip ~= "" then tip = { tail, tooltip }
+  else tip = tail end
+  return head, tip
+end
+TreeAI.ShortText = shortText
+
+--- Nom propre d'un objectif de quête : « Atrexis : 0/1 », « 0/1 Atrexis », « Atrexis tué : 0/1 (Terminé) »
+--- -> « Atrexis ». Espaces insécables du client FR compris. Jamais nil.
+function TreeAI.ObjectiveName(text)
+  local s = tostring(text or "")
+  s = strgsub(s, "\194\160", " ")
+  s = strgsub(s, "\226\128\175", " ")
+  s = strgsub(s, "|c%x%x%x%x%x%x%x%x", "")
+  s = strgsub(s, "|r", "")
+  s = strgsub(s, "%s*%(%s*[TtCcFf][^%)]*%)%s*$", "")          -- (Terminé) (Complete) (Facultatif)
+  s = strgsub(s, "%s*:?%s*%d+%s*/%s*%d+%s*$", "")             -- … : 0/1
+  s = strgsub(s, "^%s*%d+%s*/%s*%d+%s*", "")                  -- 0/1 …
+  s = strgsub(s, "%s*:%s*$", "")
+  s = strgsub(s, "^%s+", "")
+  s = strgsub(s, "%s+$", "")
+  return s
+end
+
+-- Mode simple : préréglage par défaut (et proposé une fois aux anciens utilisateurs)
+TreeAI.SIMPLE_VERSION = 1
+function TreeAI:_OfferSimpleMode(fresh)
+  local s = self.settings
+  if not s or (tonumber(s.simpleV) or 0) >= self.SIMPLE_VERSION then return end
+  s.simpleV = self.SIMPLE_VERSION
+  local prev = s.preset
+  if prev == "simple" then return end
+  self:ApplyPreset("simple")
+  if fresh then return end
+  local back = (prev and self.PRESETS[prev]) and prev or "normal"
+  self:Suggest("core:simple", "Mode simple activé : 3 conseils utiles. Clique pour revenir à « "
+    .. (self.PRESET_LABEL[back] or back) .. " ».", 2, { ttl = 180, sound = false, kind = "always",
+      onClick = function() self:ApplyPreset(back); self:ClearSuggestion("core:simple") end })
 end
 
 -- encadré : 1 alerte max / alertGap s (20 s par défaut), un même sujet pas avant topicGap s,
@@ -1116,6 +1303,12 @@ function TreeAI:Suggest(id, text, prio, opts)
   -- module coupé en direct (options, /tai module X off) : ses minuteurs ne doivent plus rien afficher
   local owner = opts.module and self.modules[opts.module]
   if owner and owner._active == false then return nil end
+  -- état du joueur : rappels de buff jetés (mort / vol / monture / repos), autres conseils mis en attente
+  local kind = self:QuietKindOf({ kind = opts.kind, death = opts.death, module = opts.module, topic = opts.topic, id = id })
+  local quiet = self:Quiet(kind)
+  if quiet and kind == "buff" then self:ClearSuggestion(id); return nil end
+  local tip
+  text, tip = shortText(safeText(text), opts.tooltip)
   local t = now()
   local ttl = opts.ttl
   if ttl == nil then ttl = 60 end
@@ -1127,9 +1320,14 @@ function TreeAI:Suggest(id, text, prio, opts)
   e.id, e.text, e.prio, e.time = id, text, prio, t
   e.expires = (ttl and ttl > 0) and (t + ttl) or nil
   e.module, e.icon, e.onClick, e.macro = opts.module, opts.icon, opts.onClick, opts.macro
-  e.tab, e.tooltip = opts.tab, opts.tooltip
+  e.tab, e.tooltip = opts.tab, tip
   e.topic, e.danger = opts.topic, opts.danger
+  e.kind = kind
   suggestions[id] = e
+  if quiet then   -- en attente : ni son, ni encadré, ni journal ; réaffiché quand l'état revient
+    self:RequestRefresh()
+    return e
+  end
 
   -- announce (sound/chat) at most once per cooldown for same id+text
   local cd = opts.cooldown or 30
@@ -1194,10 +1392,11 @@ function TreeAI:GetSuggestions()
   local t = now()
   local list = {}
   local minPrio = (self.settings and self.settings.minPrio) or 1
+  local qAdv, qBuf = self:Quiet("advice"), self:Quiet("buff")
   for id, e in pairs(suggestions) do
     if e.expires and e.expires <= t then
       suggestions[id] = nil
-    elseif e.prio >= minPrio then
+    elseif e.prio >= minPrio and not ((e.kind == nil or e.kind == "advice") and qAdv or (e.kind == "buff" and qBuf)) then
       list[#list + 1] = e
     end
   end
@@ -1251,9 +1450,10 @@ local function normLine(l, source)
   if type(l) ~= "table" or l.text == nil or l.text == "" then return nil end
   local prio = tonumber(l.prio) or 1
   if prio < 1 then prio = 1 elseif prio > 3 then prio = 3 end
-  return { text = tostring(l.text), prio = prio, icon = l.icon,
+  local text, tip = shortText(safeText(tostring(l.text)), l.tooltip)
+  return { text = text, prio = prio, icon = l.icon, kind = l.kind, death = l.death,
     onClick = type(l.onClick) == "function" and l.onClick or nil,
-    tooltip = l.tooltip, pin = l.pin and true or nil, id = l.id, source = source, data = l.data }
+    tooltip = tip, pin = l.pin and true or nil, id = l.id, source = source, data = l.data }
 end
 
 -- lines = { {text=, prio=1..3, icon=?, onClick=?, tooltip=?, pin=?}, ... } replaces the content of
@@ -1369,7 +1569,9 @@ function TreeAI:GetTabLines(id)
       if ts then
         for _, src in ipairs(ts.order) do
           if sourceActive(t.id, src) then
-            for _, l in ipairs(ts.lines[src] or {}) do if l.pin then cand[#cand + 1] = l end end
+            for _, l in ipairs(ts.lines[src] or {}) do
+              if l.pin and not self:Quiet(self:QuietKindOf(l)) then cand[#cand + 1] = l end
+            end
           end
         end
       end
@@ -1382,6 +1584,7 @@ function TreeAI:GetTabLines(id)
     local max = tonumber(self.settings and self.settings.panel and self.settings.panel.nowMax) or 5
     local nz = noiseCfg()
     local minP, perMod = tonumber(nz.nowMinPrio) or 1, tonumber(nz.perModule) or 0
+    local onlyAct = nz.actionable and true or false
     local topics, perCount = {}, {}
     for _, e in ipairs(cand) do
       if #out >= max then break end
@@ -1394,6 +1597,7 @@ function TreeAI:GetTabLines(id)
           kept._also[modName] = true
         end
       elseif (e.prio >= minP or e.pin)
+          and not (onlyAct and e.prio < 2 and not (e.onClick or e.macro))
           and not (perMod > 0 and modName and (perCount[modName] or 0) >= perMod) then
         e._also = nil
         if push(e) then
@@ -1892,16 +2096,16 @@ TreeAI:RegisterSlash("mode", function(rest)
   rest = tostring(rest or ""):lower()
   if rest == "" then
     local cur = TreeAI.settings.preset or "normal"
-    TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[cur] or cur] .. "  (/tai mode calme | normal | tout)")
+    TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[cur] or cur] .. "  (/tai mode simple | calme | normal | tout)")
     return
   end
   if rest == "calm" then rest = "calme" elseif rest == "all" then rest = "tout" end
   if TreeAI:ApplyPreset(rest) then
     TreeAI:Print(L["Mode"] .. " : " .. L[TreeAI.PRESET_LABEL[rest]] .. " — " .. L[TreeAI.PRESET_HELP[rest]])
   else
-    TreeAI:Print("/tai mode calme | normal | tout")
+    TreeAI:Print("/tai mode simple | calme | normal | tout")
   end
-end, "calme | normal | tout : combien de conseils tu veux voir")
+end, "simple | calme | normal | tout : combien de conseils tu veux voir")
 TreeAI:RegisterSlash("profil", function(rest)
   rest = tostring(rest or ""):lower()
   local want = (rest == "perso" or rest == "char" or rest == "personnage") and "char"
@@ -2024,6 +2228,7 @@ function TreeAI:PLAYER_LOGIN()
     self._tmpSummary = nil
   end
   self:UpdateSummary()
+  safecall(self._OfferSimpleMode, self, self._freshDB)
   if self.CreatePanel then safecall(self.CreatePanel, self) end
   for _, n in ipairs(self.moduleOrder) do moduleEnable(self.modules[n]) end
   self:Fire("READY")
@@ -2097,6 +2302,7 @@ TreeAI:RegisterEvent("ADDON_ACTION_FORBIDDEN")
 TreeAI:RegisterEvent("ADDON_ACTION_BLOCKED")
 TreeAI:RegisterEvent("ADDON_LOADED")
 TreeAI:RegisterEvent("PLAYER_LOGIN")
+for _, ev in ipairs(TreeAI.STATE_EVENTS) do TreeAI:RegisterEvent(ev) end
 TreeAI:RegisterEvent("PLAYER_LOGOUT")
 TreeAI:RegisterEvent("PLAYER_REGEN_DISABLED")
 TreeAI:RegisterEvent("PLAYER_REGEN_ENABLED")

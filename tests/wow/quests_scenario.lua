@@ -67,7 +67,7 @@ return function(M, ctx)
   M.Advance(2)
   local left, turnin
   for _, s in ipairs(T:GetSuggestions()) do
-    if s.text:find("^Tu quittes " .. ZONE) and s.text:find("Finis ici") then left = s end
+    if s.text:find("^Finis « ") and s.text:find("avant de quitter " .. ZONE, 1, true) then left = s end
     if s.text:find("^À rendre ici %(Orneval%)") then turnin = s end
   end
   ctx.check(left, "« finis ici avant de partir » on leaving")
