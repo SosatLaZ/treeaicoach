@@ -404,13 +404,17 @@ déconnexion et en quittant. Lu par TreeAI Coach (`treeaicoach/wow/savedvars.py`
 ```lua
 TreeAIDB = {
   schema  = 1,
-  version = "0.1.0",
+  version = "0.4.0",
   settings = {
     enabled = true, sound = true, chat = false, comms = true, debug = false,
     minPrio = 1,                -- prio minimale affichée
     panel = { shown = true, locked = false, scale = 1, alpha = 0.9,
-              point = "CENTER", x = 300, y = 120, maxLines = 6 },
+              point = "CENTER", x = 300, y = 120, maxLines = 6, nowMax = 5, width = 280 },
+    alert = { enabled = true, corner = "TOPRIGHT", duration = 8, scale = 1, alpha = 0.95, pos = nil },
+    preset = "normal",          -- calme | normal | tout | perso
+    noise = { nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
   },
+  onboarded = "0.4.0",          -- assistant de démarrage déjà vu
   modules = { ["Hunter"] = { enabled = true, ... }, ... },  -- réglages (compte)
   chars = {
     ["Nom-Royaume"] = {
@@ -427,6 +431,11 @@ TreeAIDB = {
       },
       suggestions = { {id=, text=, prio=, time=, module=}, ... },  -- 40 dernières
       modules = { ["Hunter"] = { ... } },   -- données par perso des modules
+      panel = { tab=, mini=, point=, x=, y=, manual= },   -- état du panneau pour ce perso
+      profile = "char" | nil,               -- profil perso : settings + moduleSettings ci-dessous
+      settings = { ... }, moduleSettings = { ["Hunter"] = { enabled = true, ... } },
+      layout = { sig = "1920x1080@1.00", manual = { panel = true, ... }, last = { role = {...} } },
+      movers = { ["panel"] = { point=, x=, y=, scale= }, ... },   -- mode édition
     },
   },
   group = { peers = { ["Ami-Royaume"] = { version=, seen=, class=, level=, zone= } } },
@@ -462,16 +471,76 @@ TreeAI:SetTabLines(id, lines, source?)            -- remplace le bloc `source` (
 --   pin = true : la ligne concourt aussi pour « Maintenant ».
 if TreeAI.SetTabLines then TreeAI:SetTabLines("group", lines, "Squad") else --[[ ancien chemin ]] end
 ```
-* « Maintenant » = top 5 (`settings.panel.nowMax`) des suggestions + lignes `pin`, par prio, sans doublon.
+* « Maintenant » = top 5 (`settings.panel.nowMax`) des suggestions + lignes `pin`, par prio, sans doublon
+  (texte ET sens : voir « Anti-bruit » plus bas).
 * Les suggestions sont aussi listées dans l'onglet de leur module (`TreeAI.MODULE_TAB`, ou `opts.tab`),
   sinon « Infos ». Rafraîchissement regroupé (≤ 2/s, `TreeAI:RequestRefresh()`).
 * Aussi : `TreeAI:SelectTab(id)`, `GetActiveTab()`, `SetMini(bool)`, `ToggleMini()`, `ShowAlert(e)`.
 
+## Interface d'abord, anti-bruit, placement, mode édition (agent POLISH)
+
+**Tout est cliquable** ; les commandes sont secondaires. Barre d'outils du panneau : *Tout* (page de toutes
+les actions, groupées par rubrique via `TreeAI.SLASH_GROUPS`, chaque ligne = bouton qui lance la même
+fonction que `/tai <cmd>` dans `UserAction`), *mode édition*, boussole, macros, groupe, options, cadenas,
+mini, fermer. Une commande enregistrée par `RegisterSlash(cmd, fn, help)` **avec un `help`** apparaît
+automatiquement dans « Tout » (rubrique connue, sinon « Autres ») : c'est le moyen pour un module d'offrir
+ses actions à la souris. Options : préréglage, profil, assistant, « Tout », mode édition, placement auto.
+
+**Anti-bruit (Core)**
+* `TreeAI.TOPIC_IDS` (id complet → sujet) + `TreeAI.TOPIC_PATTERNS` (repli par texte) ; `opts.topic` force
+  un sujet. « Maintenant » garde **une ligne par sujet** (la plus prioritaire ; infobulle « Aussi signalé
+  par : … » via `e._also`), au plus `noise.perModule` lignes par module, prio ≥ `noise.nowMinPrio` (ligne
+  `pin` d'étape de quête exemptée), `panel.nowMax` lignes. `TreeAI:TopicOf(e)`.
+* Encadré + son prio 3 : `TreeAI:AlertAllowed(e, opts)` — au plus 1 / `noise.alertGap` s (20), même sujet
+  pas avant `noise.topicGap` s, **en combat seulement le danger** (`opts.danger = true` ou
+  `TreeAI.DANGER_IDS`) ; le reste est rejoué 2 s après le combat s'il est encore vrai. `ResetAlertGate()`.
+* Préréglages `TreeAI:ApplyPreset("calme"|"normal"|"tout")` (`TreeAI.PRESETS` : 3/5/8 lignes,
+  `settings.preset`, `settings.noise`) ; un réglage touché à la main → `preset = "perso"`.
+* Module coupé en direct : ses `Suggest` (avec `opts.module`) sont ignorés, ses blocs `SetTabLines` masqués
+  (`TreeAI.SOURCE_OWNER`, `MAIN_OWNER` pour le bloc "main", `TAB_OWNER` cache l'onglet). `SetModuleEnabled`,
+  `TreeAI:SetEnabled(bool)` (tout l'addon) : sans /reload.
+* Profil : `TreeAI:SetProfile("account"|"char")`, `ProfileMode()` ; profil perso = `chars[key].settings` +
+  `chars[key].moduleSettings` (copiés du compte au 1er passage). `TreeAI.settings` / `mod.db` pointent
+  toujours vers le profil actif ; message `PROFILE_CHANGED`.
+* Formats : `TreeAI.Fmt.Num(1234) = "1 234"`, `Fmt.Money(c) = "12 po 3 pa"`, `Fmt.Time(s) = "45 s" / "2 min 30"
+  / "1 h 05"`, `Fmt.Pct`. Style : tutoiement, phrases courtes, couleurs par prio (gris / or / rouge),
+  icône par défaut d'une ligne selon son sujet ou son module.
+
+**Assistant** (`Options.lua`) : `TreeAI:ShowWizard(step)` au 1er lancement (`TreeAIDB.onboarded`), 3 étapes
+(présentation · préréglage + position du panneau dont « Auto » · Macros / Touches / Boussole / Aide).
+`TreeAI:ShowHelp(groupIdx)` = page « Tout », `TreeAI:GetSlashHelp()` la liste groupée, `PrintHelp()` le chat.
+
+**Placement automatique** (`UI.lua`) : `TreeAI:ScanScreen()` lit (jamais n'écrit) les cadres connus
+(`TreeAI.LAYOUT_SCAN_NAMES` : minimap, barres, chat, suivi des quêtes/Questie, cadres d'unité, buffs,
+Details/Recount/Skada/Bartender/ElvUI…) + `EnumerateFrames` (enfants visibles d'UIParent), `IsVisible` +
+`GetRect` ramenés à l'échelle d'UIParent, sans plein écran / caché / minuscule / les nôtres → grille 16 u.
+`TreeAI:AutoLayout(force)` place par rôle : encadré près de la minimap (`settings.alert.pos`), boussole en
+haut au centre hors cadre de cible, panneau du côté le plus libre (largeur / lignes adaptées), suivi sous le
+suivi de quêtes (ou côté opposé), barres tir auto / pièges au-dessus des barres d'action (positions écrites
+dans leurs SV). Hors combat (sinon après), au 1er lancement et sur `UI_SCALE_CHANGED` /
+`DISPLAY_SIZE_CHANGED` (`CheckAutoLayout`, signature `LayoutSignature()` dans `chars[key].layout.sig`).
+Cadre déplacé à la main (`layout.manual[role]`) = gardé ; `force` / « réinitialiser » rendent l'auto.
+
+**Cadres déplaçables + mode édition** :
+```lua
+-- chaque module inscrit ses cadres (gardé : if TreeAI.RegisterMovable then … end)
+TreeAI:RegisterMovable(frame, "radar", "Radar", {
+  onMoved = function(point, x, y, scale) M.db.pos = { point, x, y }; M.db.scale = scale end, -- sinon TreeAI garde
+  onReset = function() M.db.pos = nil end,       -- « remettre auto »
+  minScale = 0.5, maxScale = 2, show = fn, hide = fn })   -- show/hide : afficher en mode édition
+```
+`TreeAI:SetEditMode(bool)` (`/tai edit`, bouton clé) : calque coloré + nom par cadre, glisser (aimant :
+`TreeAI.SnapRect` — grille 10 px, bords d'écran, bords des autres cadres), molette = échelle, clic droit =
+`ResetMovable(id)` ; barre *Verrouiller tout* (`SetFramesLocked`) / *Tout remettre auto* / *Fini*.
+`TreeAI:CommitMove(id, l, b, scale)` enregistre par personnage (`chars[key].movers[id]`) et marque le
+manuel prioritaire. Déjà inscrits : panneau, encadré d'alerte, boussole, suivi.
+
 ## Slash
 
-`/tai` (aide) · `afficher` / `cacher` / `basculer` · `mini` · `onglet <id>` · `alerte` · `verrou` · `reset`
-· `options` · `modules` · `module <Nom> on|off` · `sync` (HELLO au groupe)
-· `debug` · `statut` · `test` · + sous-commandes des modules (`RegisterSlash`).
+`/tai` ou `/tai aide` (page « Tout » ; `aide chat` = dans le chat) · `bienvenue` · `mode calme|normal|tout`
+· `profil perso|compte` · `edit` · `placer [doux]` · `afficher` / `cacher` / `basculer` · `mini`
+· `onglet <id>` · `alerte` · `verrou` · `reset` (= place auto) · `options` · `modules` · `module <Nom> on|off`
+· `sync` · `debug` · `statut` · `test` · + sous-commandes des modules (`RegisterSlash`).
 
 ## Groupe à plusieurs : module `Squad` (`Modules/Squad.lua`)
 

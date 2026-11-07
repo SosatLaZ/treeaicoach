@@ -15,11 +15,31 @@ périmés » si besoin).
 
 Tes potes : chacun installe l'addon (même zip) pour la **synchro de groupe**.
 
-## 2. Premiers pas en jeu
+## 2. Premiers pas en jeu (tout se fait à la souris)
 
-- Un petit panneau TreeAI s'affiche (déplaçable). `/tai` = l'aide de toutes les commandes.
-- `/tai options` : tout se règle là (chaque module et chaque aide se coupe).
-- `/tai cacher` / `/tai afficher` / `/tai verrou` (bloque le panneau) / `/tai reset` (le remet au centre).
+- **Assistant au 1er lancement** (3 étapes) : ce que fait TreeAI → combien de conseils (**Mode calme /
+  Normal / Tout**) + où mettre le panneau (**Auto** = TreeAI scanne ton écran et prend la meilleure place
+  libre) → boutons rapides Macros / Touches / Boussole / Aide. Le revoir : options → *Assistant de démarrage*.
+- **Le panneau** : onglets Maintenant · Quêtes · Prévisions · Groupe · HV · Infos. Clic sur une ligne =
+  l'action, clic droit = masquer, molette = défiler. Couleurs : gris = info, or = conseil, rouge = urgent.
+- **Barre d'outils du panneau** (à droite du titre) : **Tout** (icône livre) (toutes les actions de tous les modules,
+  rangées par rubrique, un clic = lancer), **mode édition** (icône clé), boussole, macros, groupe, options, cadenas,
+  mini (une ligne), fermer.
+- **Mode édition** (clé) : chaque cadre TreeAI (panneau, encadré d'alerte, boussole, suivi, barres…) se
+  colore avec son nom → glisse-le (aimanté : grille 10 px, bords, autres cadres), molette = taille, clic droit
+  = remettre à sa place auto ; *Verrouiller tout*, *Tout remettre auto*, *Fini*. Gardé par personnage.
+- **Placement auto** : au 1er lancement et quand tu changes de résolution / d'échelle d'interface, TreeAI
+  place ses cadres dans les zones libres (encadré près de la minimap, boussole en haut au centre sans gêner
+  la cible, panneau du côté le plus vide, suivi sous ton suivi de quêtes). Ce que tu as déplacé à la main
+  reste où tu l'as mis. Il ne touche JAMAIS aux cadres de Blizzard ni des autres addons.
+- **Calme** : une même info vue par plusieurs modules (munitions, sacs pleins, réparation…) = **une seule
+  ligne**. L'encadré rouge : au plus **1 toutes les 20 s**, jamais deux fois la même chose, et **rien en
+  combat** sauf danger de mort (contrôle rompu, Feindre la mort résisté…) — le reste attend la fin du combat.
+- **Options** (Échap → Options → AddOns → TreeAI Coach) : préréglage, profil (**communs au compte** ou
+  **propres à ce perso**), mode édition, placement auto, puis une page par module : chaque module se coupe /
+  se rallume **sans /reload**.
+- Les commandes restent là pour ceux qui aiment : `/tai aide` (la même page « Tout »), `/tai mode calme`,
+  `/tai edit`, `/tai placer`, `/tai profil perso`, `/tai bienvenue`.
 
 ## 3. Les macros expertes (`/tai macros`)
 
@@ -94,7 +114,17 @@ Une fenêtre TreeAI s'accroche à droite de l'HV dès que tu l'ouvres (`/tai hv 
 - **Ça ne marche pas ?** Tape `/tai hv debug` à l'HV et envoie les lignes : API utilisée, limiteur, temps
   avant le prochain scan complet, taille/vitesse du dernier scan, Auctionator, erreurs.
 
-## 8. Voix et IA (TreeAI)
+## 8. Tous les modules en bref
+
+Quêtes (étape, à rendre, grises → module Abandon qui explique pourquoi), Suivi (trié par XP/min), Boussole,
+Prévisions (munitions / nourriture / sacs / réparation / formation avant que ça manque), Groupe + Missions
+(qui a besoin de quoi, prêt ?, rendez-vous), Chasseur + Chasseur pro (familier, munitions, aspects, pièges,
+tir auto), Classes (buffs oubliés), Combat (pull, patrouilles, fuyards, interruptions, récap de mort),
+Inventaire (sacs, réparation, gris), Montée (formation, XP reposée, talents), Avantages (rares, récompense,
+amélioration), Macros + Touches, Confort (nouveautés, nouveaux sorts, /tai perf), Pro, Économie, HV.
+Chaque module a sa page d'options et ses actions dans « Tout ».
+
+## 9. Voix et IA (TreeAI)
 
 - La voix **ne parle jamais toute seule** : dis **« Hey coach »** puis ta question (« on fait quoi ? »,
   « quoi revendre ? », « quel sort au niveau 28 ? ») — au micro du PC ou sur Discord.
@@ -103,12 +133,12 @@ Une fenêtre TreeAI s'accroche à droite de l'HV dès que tu l'ouvres (`/tai hv 
   `/console advancedCombatLogging 1` pour avoir la vie). La page WoW de TreeAI indique s'il est actif.
 - Les infos de l'addon arrivent dans TreeAI à chaque `/reload` ou déconnexion.
 
-## 9. PvP
+## 10. PvP
 
 Les aides PvP sont **désactivées** par défaut (l'addon t'aide à quêter). `/tai pvp` ou la case
 « Aides PvP » dans les options pour les activer.
 
-## 10. Règles
+## 11. Règles
 
 Rien n'est automatisé : pas de bot, pas de touche simulée, pas de lecture de la mémoire du jeu. L'addon
 n'utilise que l'API officielle de Blizzard, TreeAI ne lit que les fichiers que le jeu écrit (journal de

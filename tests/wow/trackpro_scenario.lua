@@ -259,6 +259,7 @@ return function(M, ctx)
   for _, w in ipairs({ fr:GetChildren() }) do if w.row and w.row.kind == "quest" and w.row.qid == 1003 then btn = w end end
   btn:Click("LeftButton")
   check(C.Current().questID == 1003, "frame click → compass target")
+  TR.db.lock = false  -- « Verrouiller tout » (mode édition) a pu être cliqué par la tempête du harnais
   M.RunSlash("/tai suivi verrou")
   check(TR.db.lock == true, "lock toggle")
   M.RunSlash("/tai suivi verrou")

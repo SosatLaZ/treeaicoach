@@ -82,6 +82,47 @@ local strings = {
   ["Macro créée"] = "Macro créée",
   ["Macro mise à jour"] = "Macro mise à jour",
   ["Plus de place pour les macros."] = "Plus de place pour les macros.",
+  -- style : tutoiement, phrases courtes ; couleurs par priorité (gris info · or conseil · rouge urgent) ;
+  -- formats TreeAI.Fmt : 1 234 · 12 po 3 pa · 45 s / 12 min / 1 h 05 · 85 %
+  -- anti-bruit / préréglages
+  ["Mode"] = "Mode",
+  ["Mode calme"] = "Mode calme",
+  ["Normal"] = "Normal",
+  ["Tout"] = "Tout",
+  ["Perso"] = "Perso",
+  ["Conseils"] = "Conseils",
+  ["clic : changer"] = "clic : changer",
+  ["Aussi signalé par"] = "Aussi signalé par",
+  ["Réglages"] = "Réglages",
+  ["propres à ce personnage"] = "propres à ce personnage",
+  ["communs au compte"] = "communs au compte",
+  -- assistant / aide / « Tout »
+  ["Démarrer"] = "Démarrer",
+  ["Bienvenue dans TreeAI"] = "Bienvenue dans TreeAI",
+  ["Assistant de démarrage"] = "Assistant de démarrage",
+  ["Passer"] = "Passer",
+  ["Retour"] = "Retour",
+  ["Suivant"] = "Suivant",
+  ["Terminer"] = "Terminer",
+  ["TreeAI : tout"] = "TreeAI : tout",
+  ["clic = lancer"] = "clic = lancer",
+  ["Autres"] = "Autres",
+  ["Tout : toutes les actions (/tai aide)"] = "Tout : toutes les actions (/tai aide)",
+  ["Tout : toutes les actions des modules"] = "Tout : toutes les actions des modules",
+  ["/tai aide : toutes les commandes"] = "/tai aide : toutes les commandes",
+  -- placement / mode édition
+  ["Placer automatiquement"] = "Placer automatiquement",
+  ["Déplacer les cadres (mode édition)"] = "Déplacer les cadres (mode édition)",
+  ["Verrouiller tout"] = "Verrouiller tout",
+  ["Déverrouiller tout"] = "Déverrouiller tout",
+  ["Tout remettre auto"] = "Tout remettre auto",
+  ["Fini"] = "Fini",
+  ["édition"] = "édition",
+  ["verrouillé"] = "verrouillé",
+  ["Panneau TreeAI"] = "Panneau TreeAI",
+  ["Encadré d'alerte"] = "Encadré d'alerte",
+  ["Suivi des quêtes"] = "Suivi des quêtes",
+  ["Placement après le combat."] = "Placement après le combat.",
 }
 
 for k, v in pairs(strings) do
