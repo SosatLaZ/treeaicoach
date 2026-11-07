@@ -3,6 +3,27 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.0 · 7 novembre 2026
+
+- **WoW : corrigé les « Action bloquée par le jeu »** : l'addon écoutait le journal de combat (interdit aux addons
+  sur WoW Forever) et utilisait d'anciennes fonctions absentes de Forever ; tout est vérifié contre l'API réelle
+  de Forever 1.60.1. Nouveau bouton **Autotest** (onglet Infos) : il dit ce qui marche dans ton jeu.
+- **Tout à la souris** : bouton **Tout** (toutes les actions), **mode édition** (déplacer / agrandir chaque
+  fenêtre), **placement automatique** dans l'espace libre, assistant au premier lancement, modes Calme / Normal /
+  Tout, conseils en double fusionnés.
+- **Nouvelle page de suivi** (fenêtre « À faire ») : action conseillée, étapes du trajet, quêtes par zone en cartes
+  (barres, temps, distance, potes, récompense, verdict), courses, groupe, session ; filtres, épingles, ordre.
+- **Radar rond** (zoom, objectifs, PNJ à rendre, potes, rares, maîtres de vol, cible de la boussole).
+- **Trajets** : calcul des meilleurs trajets dans l'appli (XP/h, finir la zone, escouade, prudent) + suivi en jeu ;
+  **chemin sûr** qui contourne les monstres dangereux ; **quêtes à retirer** expliquées ; **surbrillance** des
+  objets de quête (sacs, butin, monstres).
+- **Macros refaites** pour les 9 classes (vrais sorts de Forever, par spé, solo / groupe, « pourquoi »),
+  **touches** (cases libres, conflits, placement en 1 clic), **talents**, **équipement**, **métiers**, **donjons**
+  (tous ceux de Forever), **JcJ** (si activé), **missions de groupe** à 4, **HV** (C_AuctionHouse, scan rapide,
+  bouton « Suivant »), thème unifié.
+- **Appli** : nouvelle maison (cartes LoL / WoW), thème clair, page WoW en direct (Direct, Quêtes, Groupe, HV,
+  Session).
+
 ## 3.8.3 · 7 novembre 2026
 
 - **WoW : corrigé « Action bloquée par le jeu : UNKNOWN() »** : l'addon créait / mettait à jour ses macros tout

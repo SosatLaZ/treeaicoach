@@ -12,5 +12,5 @@ for _k in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
     _os.environ.setdefault(_k, "1")
 del _k
 
-__version__ = "3.8.3"
+__version__ = "3.9.0"
 APP_NAME = "TreeAI Coach"
