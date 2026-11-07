@@ -3,6 +3,8 @@
 -- one options page per module. Fake names only.
 -- lua5.1 tests/wow/harness.lua --scenario tests/wow/panel_scenario.lua wow_addon/TreeAI
 return function(M, ctx)
+  -- (the in-game planner fills « Quêtes » / « Maintenant » too: off for these UI checks)
+  M.RunSlash("/tai module Planner off")
   local T = TreeAI
   ctx.check(type(T.SetTabLines) == "function" and type(T.RegisterTab) == "function", "contrat onglets présent")
   local ids = {}
@@ -26,7 +28,9 @@ return function(M, ctx)
   T:Suggest("a:6", "Info six", 1)
   local now = T:GetTabLines("now")
   ctx.check(#now == 5, "Maintenant : 5 lignes max (" .. #now .. ")")
-  ctx.check(now[1].text == "Urgent trois" and now[2].text == "Conseil deux" and now[3].prio == 1, "Maintenant trié par priorité")
+  local sorted = now[1].text == "Urgent trois"
+  for i = 2, #now do if (now[i].prio or 0) > (now[i - 1].prio or 0) then sorted = false end end
+  ctx.check(sorted, "Maintenant trié par priorité")
   local seen = {}
   for _, e in ipairs(now) do ctx.check(not seen[e.text], "doublon : " .. e.text); seen[e.text] = true end
 

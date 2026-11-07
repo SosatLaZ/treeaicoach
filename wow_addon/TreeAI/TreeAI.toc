@@ -5,8 +5,7 @@
 ## Author: TreeAI
 ## Version: 0.3.0
 ## SavedVariables: TreeAIDB
-## OptionalDeps: QuestieDB, Questie, ShortestPathForever, TomTom
-## OptionalDeps: TreeAI_Plan
+## OptionalDeps: QuestieDB, Questie, ShortestPathForever, TomTom, TreeAI_Plan
 ## IconTexture: Interface\Icons\Ability_Hunter_BeastCall
 
 Core.lua

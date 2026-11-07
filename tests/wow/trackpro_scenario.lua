@@ -3,6 +3,8 @@
 -- (Squad + IsUnitOnQuest), plan steps first (TreeAI.Planner contract), standalone frame, completion sound.
 -- Fake names only. Fake Questie DB (read-only use).
 return function(M, ctx)
+  -- (the in-game planner fills « Quêtes » / « Maintenant » too: off for these UI checks)
+  M.RunSlash("/tai module Planner off")
   local T = TreeAI
   local TR, Q, C, P = T:GetModule("Tracker"), T:GetModule("Quests"), T:GetModule("Compass"), T:GetModule("Predict")
   local check = ctx.check

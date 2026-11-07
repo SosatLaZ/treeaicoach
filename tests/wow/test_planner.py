@@ -47,7 +47,7 @@ def test_planner_two_clients_sync(tmp_path):
 
 def test_toc_wiring():
     lines = [x.strip() for x in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
-    assert "## OptionalDeps: TreeAI_Plan" in lines
+    assert any(l.startswith("## OptionalDeps:") and "TreeAI_Plan" in l for l in lines)
     q, e, p = (lines.index(f"Modules\\{n}.lua") for n in ("Quests", "Export", "Planner"))
     assert q < e < p, "Export then Planner right after Quests"
 
