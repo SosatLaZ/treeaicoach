@@ -1,6 +1,6 @@
 {
-  "version": "3.9.1",
+  "version": "3.9.2",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "WoW : interface propre (4 onglets, placement qui évite tes cadres, une seule flèche, page Apparence), conseils utiles seulement (rien quand tu es mort), mode simple, radar amélioré."
+  "notes": "WoW : mode édition qu'on peut quitter, plus de carte ronde, bouton compos corrigé, bilan de session et courrier."
 }

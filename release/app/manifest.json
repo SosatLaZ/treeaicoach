@@ -1,25 +1,25 @@
 {
- "version": "3.9.1",
+ "version": "3.9.2",
  "exe": "TreeAICoach-app.exe",
- "sha256": "af23b5bf57425db8498a81265300924b7a80cf1d687de734a1ed13b1805be599",
+ "sha256": "1a879d4cd3dd0cc46cb7adb5a59eb4357641bedc95c9c08ddb424c9206bff116",
  "chunks": [
   {
-   "name": "3.9.1/part-01.zip",
+   "name": "3.9.2/part-01.zip",
    "size": 88089592,
-   "sha256": "2bd71a42d37e27c50c7e2077ee105819429f665ccc50c3063b06716feb778989",
+   "sha256": "d6ac09a152afb1afbc01ba37ba9f5d2aa86098251c09fa8addbbc8c2066fff64",
    "files": 130
   },
   {
-   "name": "3.9.1/part-02.zip",
-   "size": 13052302,
-   "sha256": "f93e05e58f898a39af482237f56d347fcf4c232b5878061adb4017d8f13e50c3",
-   "files": 641
+   "name": "3.9.2/part-02.zip",
+   "size": 13066675,
+   "sha256": "f41d01b8e0767d791fbafdf5d3690f4b6a3c62fba18ff6458a47773c8dc87054",
+   "files": 643
   }
  ],
- "total_size": 101141894,
+ "total_size": 101156267,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : interface propre (4 onglets, placement qui \u00e9vite tes cadres, une seule fl\u00e8che, page Apparence), conseils utiles seulement (rien quand tu es mort), mode simple, radar am\u00e9lior\u00e9."
+ "notes": "WoW : mode \u00e9dition qu'on peut quitter, plus de carte ronde, bouton compos corrig\u00e9, bilan de session et courrier."
 }

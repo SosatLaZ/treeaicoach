@@ -3,6 +3,16 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.2 · 8 novembre 2026
+
+- **WoW : on peut quitter le mode édition** (le bouton « Fini » était caché sous la boussole) : bouton toujours
+  au-dessus, Échap pour sortir, sortie automatique si un combat commence.
+- **Plus de carte ronde à part** (désactivée ; réactivable dans « Apparence »).
+- **« Joindre compos »** n'apparaît plus tout seul en haut de l'écran (seulement si tu as choisi un destinataire,
+  à côté de la boîte aux lettres).
+- Nouveau : bilan de session, « pourquoi je meurs », courrier (lettres d'HV, contre-remboursement), vol ou pierre
+  de foyer, coût exact chez le maître, ce qui manque à l'appel.
+
 ## 3.9.1 · 7 novembre 2026
 
 - **WoW : interface remise au propre** (d'après ta capture) : 4 onglets lisibles (Maintenant, Quêtes, Groupe,
