@@ -1181,7 +1181,39 @@ local function short(s, n)
   return #s > n and (utf8cut(s, n - 1) .. "…") or s
 end
 
+-- panel with tabs (UI contract): the « Groupe » section becomes the « Groupe » tab
+function S:PushGroupTab()
+  local list = self._list or {}
+  local out = {}
+  if self.db and self.db.section ~= false and #list >= 2 and self:InGroup() then
+    local xs, xn = 0, 0
+    for _, m in ipairs(list) do if m.st.xh > 0 then xs, xn = xs + m.st.xh, xn + 1 end end
+    if xn > 0 then out[#out + 1] = { text = fmt("|cff33cc66XP/h groupe ~%.1fk|r", xs / xn / 1000) } end
+    local me = myName()
+    for i, a in ipairs(self.advices or {}) do
+      if i > 8 then break end
+      local action = (a.action and a.action.kind == "share" and a.action.by == me) and a.action or nil
+      out[#out + 1] = { text = "• " .. a.text .. (action and " |cff66ccff[Partager]|r" or ""), prio = a.prio,
+        onClick = action and function() S:ShareQuest(action.quest) end or nil }
+    end
+    for _, m in ipairs(list) do
+      local st = m.st
+      local life = st.d == 2 and "|cffff5544fantôme|r" or (st.d == 1 and "|cffff5544mort|r")
+        or (st.p >= 0 and fmt("%d/%d%%", st.h, st.p) or fmt("%d%%", st.h))
+      out[#out + 1] = { text = fmt("|cff%s%s|r %d · %s · %s · sacs %d%s", CLASS_COLOR[st.c] or "cccccc", short(m.name, 12),
+        st.l, short(st.z or "?", 16), life, st.b, m.stale and " |cff888888(?)|r" or ""),
+        tooltip = fmt("Niveau %d (%d %%) — %s", st.l, st.x or 0, st.z or "?")
+          .. (m.leaveMin and fmt("\nPart dans %d min", m.leaveMin) or "") .. (st.rd == 0 and "\nPas prêt" or "") }
+    end
+  end
+  T:SetTabLines("group", out, "Squad")
+end
+
 function S:RefreshSection()
+  if T.SetTabLines then
+    if section then section:Hide() end
+    return self:PushGroupTab()
+  end
   local panel = T.GetPanel and T:GetPanel()
   local list = self._list or {}
   if not (self.db and self.db.section) or not panel or not panel:IsShown() or #list < 2 or not self:InGroup() then

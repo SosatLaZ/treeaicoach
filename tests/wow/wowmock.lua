@@ -319,6 +319,22 @@ function Widget:Click(button)
     M.hardware = false
   end
 end
+-- mouse wheel / scroll frames (panel tabs)
+function Widget:EnableMouseWheel(v) self.__wheel = v and true or false end
+function Widget:IsMouseWheelEnabled() return self.__wheel or false end
+function Widget:SetScrollChild(c) self.__scrollChild = c end
+function Widget:GetScrollChild() return self.__scrollChild end
+function Widget:SetVerticalScroll(v) self.__vscroll = v end
+function Widget:GetVerticalScroll() return self.__vscroll or 0 end
+function Widget:GetVerticalScrollRange() return 0 end
+function M.Wheel(frame, delta)  -- a mouse-wheel turn over frame
+  local fn = frame and frame.__scripts.OnMouseWheel
+  if fn then M.SafeCall("OnMouseWheel", fn, frame, delta) end
+end
+function M.Script(frame, what, ...)  -- run any script handler (OnEnter, OnLeave, OnHide…)
+  local fn = frame and frame.__scripts[what]
+  if fn then return M.SafeCall(what, fn, frame, ...) end
+end
 function Widget:GetTexture() return self.__texture end
 function Widget:SetTexture(t) self.__texture = t end
 function Widget:GetNumLines() return 0 end

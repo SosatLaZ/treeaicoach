@@ -120,12 +120,12 @@ TreeAI:Suggest(id, text, prio, opts)
 * `id` (string) clé unique: un nouvel appel avec le même id **remplace** (pas de doublon).
 * `text` (string, FR court) — `nil`/`""` = retirer.
 * `prio` : `1` info (gris/blanc), `2` conseil (jaune), `3` urgent (rouge,
-  son + message écran). Défaut 1. Constantes `TreeAI.PRIO_INFO/TIP/URGENT`.
+  son + encadré d'alerte). Défaut 1. Constantes `TreeAI.PRIO_INFO/TIP/URGENT`.
 * `opts` (facultatif):
   * `ttl` secondes avant disparition auto (défaut 60; `0` = permanent jusqu'à `ClearSuggestion`).
   * `cooldown` secondes avant de ré-annoncer (son/chat) le même id+texte (défaut 30).
   * `icon` texture (fileID ou chemin), `module` nom, `onClick` fonction (clic gauche sur la ligne).
-  * `sound` (bool) forcer/empêcher le son; `chat` (bool) l'écrire aussi dans le chat.
+  * `sound` (false = muet ; le son reste réservé à la prio 3), `chat` ignoré sauf si le joueur active « conseils dans le chat », `tab` onglet où lister la ligne, `tooltip`.
   * `macro` texte de macro proposé (affiché en infobulle).
 * Retourne l'entrée `{id,text,prio,time,expires,...}`.
 
@@ -240,16 +240,41 @@ TreeAIDB = {
 
 ## UI / Options
 
-* Panneau compact déplaçable (sans icône minimap): titre, lignes de
-  suggestions colorées par prio, clic droit = retirer la ligne, cadenas.
-  `TreeAI:ShowPanel() / HidePanel() / TogglePanel() / RefreshPanel()`.
-* Options: `Settings` (moderne) si présent, sinon `InterfaceOptions_AddCategory`.
-  `/tai options`. Chaque module avec `options` obtient sa section auto
-  (+ case « Activé »). `TreeAI:OpenOptions()`.
+* Panneau compact déplaçable (sans icône minimap), **à onglets** : « Maintenant », « Quêtes »,
+  « Groupe », « HV », « Infos ». Chaque onglet défile à la molette (barre fine à droite, « 3-10/14 »),
+  lignes colorées par prio, cliquables (`onClick`), infobulles, clic droit = retirer un conseil.
+  Barre d'outils : boussole (si `TreeAI.Compass`), macros, groupe, options, cadenas, mini, fermer.
+  Mode **mini** (une seule ligne : le plus important, sinon l'étape de quête ; clic droit sur le titre
+  ou `/tai mini`) — c'est le mode par défaut d'un nouveau personnage.
+  Onglet, position et mini mémorisés **par personnage** (`TreeAIDB.chars[key].panel`) ;
+  verrou / échelle / opacité / largeur / lignes au niveau du compte (`settings.panel`).
+* **Encadré d'alerte** (`settings.alert`) : petit cadre dans un coin (haut-droite sous la minimap par
+  défaut, 4 coins au choix), seulement les conseils **prio 3**, 1–2 lignes, s'efface après `duration` s,
+  clic = ouvre le panneau sur l'onglet concerné. `/tai alerte` pour tester.
+* Aucun conseil n'est écrit dans le chat (`settings.chat` = false, et `opts.chat` ne peut pas forcer) ;
+  `Print` = réponses aux commandes et erreurs. Son : prio 3 seulement (`settings.soundTips` pour plus).
+* Taint : cadres simples enfants d'`UIParent`, aucun modèle sécurisé, aucun cadre Blizzard modifié.
+* Options : page principale (Aides PvP, Panneau, Encadré d'alerte, Sons et messages, Général) +
+  **une page par module** (sous-catégories `Settings`, ou `.parent` en InterfaceOptions), case
+  « Module activé » + ses `options` (`toggle`/`range`, `section=` facultatif pour un sous-titre).
+
+### Contrat d'onglets (pour les modules, toujours garder un repli)
+
+```lua
+TreeAI:RegisterTab(id, title, order)              -- ids de base : now, quests, group, hv, info
+TreeAI:SetTabLines(id, lines, source?)            -- remplace le bloc `source` (défaut "main") de l'onglet
+--   lines = { {text=, prio=1..3, icon=?, onClick=?, tooltip=? (texte ou liste), pin=?}, ... }
+--   pin = true : la ligne concourt aussi pour « Maintenant ».
+if TreeAI.SetTabLines then TreeAI:SetTabLines("group", lines, "Squad") else --[[ ancien chemin ]] end
+```
+* « Maintenant » = top 5 (`settings.panel.nowMax`) des suggestions + lignes `pin`, par prio, sans doublon.
+* Les suggestions sont aussi listées dans l'onglet de leur module (`TreeAI.MODULE_TAB`, ou `opts.tab`),
+  sinon « Infos ». Rafraîchissement regroupé (≤ 2/s, `TreeAI:RequestRefresh()`).
+* Aussi : `TreeAI:SelectTab(id)`, `GetActiveTab()`, `SetMini(bool)`, `ToggleMini()`, `ShowAlert(e)`.
 
 ## Slash
 
-`/tai` (aide) · `afficher` / `cacher` / `basculer` · `verrou` · `reset`
+`/tai` (aide) · `afficher` / `cacher` / `basculer` · `mini` · `onglet <id>` · `alerte` · `verrou` · `reset`
 · `options` · `modules` · `module <Nom> on|off` · `sync` (HELLO au groupe)
 · `debug` · `statut` · `test` · + sous-commandes des modules (`RegisterSlash`).
 

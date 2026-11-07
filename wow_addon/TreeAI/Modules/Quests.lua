@@ -835,7 +835,12 @@ function M.Update()
     if ok then M.lastQuestie = res end
   end
   local text = M.NextStep(a)
-  if cfg("nextStep") and text then
+  if T.SetTabLines then
+    -- panel with tabs: the « Étape » line heads the « Quêtes » tab (and is offered to « Maintenant »)
+    clear("next")
+    T:SetTabLines("quests", (cfg("nextStep") and text) and { { text = text, prio = 1, pin = true,
+      tooltip = "Prochaine étape conseillée (journal de quêtes analysé)." } } or {}, "Quests")
+  elseif cfg("nextStep") and text then
     if text ~= M.nextText then
       suggest("next", text, 1, { ttl = 0, cooldown = 1e6, sound = false, chat = false })
     end
