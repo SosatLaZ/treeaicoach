@@ -1543,5 +1543,46 @@ function M.InstallAH(G, modern)
   end
 end
 
+-- Route planner (agent PLAN-LUA): fake QuestieDB public API (contract 4), the TreeAIPlan data global and
+-- completed quests. These set globals after load: run the harness with --allow LibQuestieDB --allow QuestDB
+-- --allow NpcDB --allow ObjectDB --allow ItemDB --allow TreeAIPlan.
+-- data = { quests = {[id] = {name=, questLevel=, ...}}, npcs = {...}, objects = {...}, items = {...},
+--          areaToMap = {[areaId] = uiMapID}, xp = {[id] = xp} } (field names = QuestieDB schema names)
+function M.InstallQuestieDB(data)
+  local function entity(rows)
+    local E = {}
+    E.Get = function(id, key) local r = rows[id] if r then return r[key] end end
+    E.GetAllIds = function(hash)
+      local out = {}
+      for id in pairs(rows) do if hash then out[id] = true else out[#out + 1] = id end end
+      if not hash then table.sort(out) end
+      return out
+    end
+    E.Exists = function(id) return rows[id] ~= nil end
+    return E
+  end
+  local lib = { contractVersion = 4, minSupportedContract = 1,
+    Quest = entity(data.quests or {}), Npc = entity(data.npcs or {}), Object = entity(data.objects or {}),
+    Item = entity(data.items or {}), Enum = { raceMaskById = {} } }
+  lib.RequireContract = function(v) if v >= 1 and v <= 4 then return true end return false, "contract" end
+  local s = "return {"
+  for a, m in pairs(data.areaToMap or {}) do s = s .. "[" .. a .. "]=" .. m .. "," end
+  local xpdb = {}
+  for id, xp in pairs(data.xp or {}) do xpdb[id] = { 0, xp } end
+  local support = { ZoneDB = { private = { areaIdToUiMapId = s .. "}" } }, QuestXP = { db = xpdb } }
+  lib.Support = { Get = function(name) return support[name] end }
+  rawset(_G, "LibQuestieDB", lib)
+  rawset(_G, "QuestDB", lib.Quest); rawset(_G, "NpcDB", lib.Npc)
+  rawset(_G, "ObjectDB", lib.Object); rawset(_G, "ItemDB", lib.Item)
+  return lib
+end
+function M.SetPlan(plan) rawset(_G, "TreeAIPlan", plan) end
+function M.SetCompleted(ids)
+  M.completed = ids or {}
+  local fn = function(id) return M.completed[id] and true or false end
+  local CQ = rawget(_G, "C_QuestLog")
+  if type(CQ) == "table" then CQ.IsQuestFlaggedCompleted = fn else rawset(_G, "IsQuestFlaggedCompleted", fn) end  -- legacy: --allow it
+end
+
 M.Reset()
 return M
