@@ -28,7 +28,7 @@ def test_scenario(flavor):
 def test_guide_option_and_ids():
     core = (ADDON / "Core.lua").read_text(encoding="utf-8")
     opts = (ADDON / "Options.lua").read_text(encoding="utf-8")
-    assert 'guide = "auto"' in core and "function TreeAI:ExternalGuide()" in core
+    assert 'guide = "treeai"' in core and "function TreeAI:ExternalGuide()" in core
     for gid in ("Quests:near", "Quests:chain", "Compass:target"):
         assert f'["{gid}"]' in core
     assert "SetGuideMode" in opts and "Guidage" in opts

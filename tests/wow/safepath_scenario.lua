@@ -157,6 +157,7 @@ return function(M, ctx)
   -- Shortest Path: its straight route crosses the elites → ours; a route that avoids → kept
   local spfRoute = { { x = 0.8, y = 0.5 } }
   rawset(_G, "ShortestPathForever", { API = { Estimate = function() return 60 end, GetRoute = function() return spfRoute end } })
+  if TreeAI.SetGuideMode then TreeAI:SetGuideMode("auto") end   -- (3.9.8) SPF is opt-in: this part tests the opt-in
   if C.ResetSPF then C.ResetSPF() end
   SP.Toggle("80 50") SP.RunToEnd()
   check(SP.last and not SP.last.via and SP.last.avoided.elite == 3, "SPF straight route ignored (not safe)")
@@ -166,6 +167,7 @@ return function(M, ctx)
   check(SP.last and SP.last.via and #SP.route.waypoints == 3 and near(SP.route.waypoints[1].y, 0.7), "SPF route kept when it already avoids: " .. tostring(SP.last and SP.last.text))
   SP.Stop(true)
   rawset(_G, "ShortestPathForever", nil)
+  if TreeAI.SetGuideMode then TreeAI:SetGuideMode("treeai") end
 
   -- live danger from nameplates (hostile, non grey) + death spots
   M.units.nameplate1 = { name = "Ogre furieux", hostile = true, level = 33 }

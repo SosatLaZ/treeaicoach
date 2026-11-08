@@ -295,6 +295,7 @@ return function(M, ctx)
   function API:Navigate(owner, m, x, y, title) spf.nav = { owner, m, x, y, title } return true end
   function API:NavigateRoute(owner, stops) spf.route = stops return true end
   rawset(_G, "ShortestPathForever", { API = API })
+  if TreeAI.SetGuideMode then TreeAI:SetGuideMode("auto") end   -- (3.9.8) SPF is opt-in: this part tests the opt-in
   C.ResetSPF()
   C.SetQuestTarget(1003)
   local st2 = C.Compute()
@@ -309,6 +310,7 @@ return function(M, ctx)
   local want = (Rt and Rt:IsEnabled() and Rt:HasRoute() and #Rt:SPFStops() > 0) and #Rt:SPFStops() or #TR.RouteStops()
   check(spf.route and #spf.route == want and spf.route[1].map == 1424 and spf.route[1].title, "itinerary → NavigateRoute " .. tostring(spf.route and #spf.route) .. "/" .. tostring(want) .. " " .. tostring(spf.route and spf.route[1] and spf.route[1].map))
   rawset(_G, "ShortestPathForever", nil)
+  if TreeAI.SetGuideMode then TreeAI:SetGuideMode("treeai") end
   -- TomTom when SPF is absent
   local tt = { added = {} }
   function tt:AddWaypoint(m, x, y, o) self.added[#self.added + 1] = { m, x, y, o } return #self.added end
