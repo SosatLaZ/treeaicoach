@@ -152,6 +152,10 @@ end
 
 -- destination : prochaine étape positionnée du plan (Route), sinon cible de la boussole
 function Q.Destination()
+  -- (GROUPJOIN) « Rejoindre » en cours : le meilleur vol est celui qui rapproche de l'ami / du point de rencontre
+  local J = T.GroupJoin
+  local jd = type(J) == "table" and type(J.Destination) == "function" and try(J.Destination) or nil
+  if type(jd) == "table" and jd.c and jd.n and jd.w then return jd end
   local R = T.Route
   if type(R) == "table" and type(R.Stops) == "function" and not (R.char and R.char.paused) then
     local st = try(R.Stops, R, 3)

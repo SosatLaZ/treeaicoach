@@ -19,8 +19,13 @@
 --   "4;F;<seq>;k=v;…;+<quête>;…"       état complet (arrivée dans le groupe, demande, trou détecté)
 --   "4;R;<nom|*>"                      « renvoie-moi ton état complet »
 --   "4;B"                              module coupé : oubliez mes données
---   "4;E;<quoi>;…"                     goal / meet / ask / ans (sur clic du joueur)
+--   "4;E;<quoi>;…"                     goal / meet / ask / ans (sur clic du joueur) ; 4.0.1 (GROUPJOIN) : meet + genre +
+--                                      n° (proposition « J'y vais »), go (j'y vais), vote / ballot, plan (trajet partagé)
 --   quête = "id,niv,drapeaux(C fini, G groupe),titre,m3/8.i0/5" (même forme que Squad v2)
+--   4.0.1 : champs ps (position ‰ sur la carte m, ≤ 1 / 20 s, seulement si on a bougé), sp (position de l'étape en cours),
+--   wz (zone de travail du trajet), j / je (qui je rejoins, temps restant) — un client 4.0.0 les ignore (clés inconnues).
+-- « Rejoindre », point de rencontre, intention du groupe, vote : Modules/GroupJoin.lua (même module, M.Join).
+-- « Maintenant » : UNE ligne du groupe au plus (M:Offer → la plus importante) ; tout le reste dans la page.
 -- Débit : seau de jetons propre (3, +1 / 5 s) → au plus 1 message / 5 s en régime établi, RIEN si rien ne change ;
 -- jamais par-dessus un envoi encore en file chez le cœur. Réception : membres actuels du groupe seulement, seau
 -- de jetons par membre, version ≠ 4 ignorée, tout revalidé (bornes, longueurs, caractères).
@@ -45,6 +50,7 @@ local AURA_GAP, UNITQ_GAP, QUEST_GAP, STEP_GAP = 15, 15, 5, 5
 local MEET_GAP, MEET_RECV_GAP, MEET_TTL = 15, 10, 600
 local READY_TIMEOUT = 30
 local SESSION_GAP, GOAL_TTL, GOAL_DONE_KEEP = 3 * 3600, 8 * 3600, 600
+local POS_GAP, POS_MOVE = 20, 30                 -- (GROUPJOIN) position partagée : ≤ 1 / 20 s, ≥ 30 ‰ de la carte
 
 local floor, mmax, mmin, abs = math.floor, math.max, math.min, math.abs
 local tconcat, tsort, tremove = table.concat, table.sort, table.remove
@@ -231,12 +237,23 @@ end
 -- champs d'état : { min, max, défaut } (nombres) ou longueur max (textes)
 W.NUM = { x = { 0, 100, 0 }, r = { 0, 150, 0 }, xs = { 0, 100000000, 0 }, du = { -1, 100, -1 }, b = { 0, 400, 0 },
   bt = { 0, 400, 0 }, am = { -1, 99999, -1 }, fo = { 0, 99, 0 }, wa = { 0, 99, 0 }, hs = { -1, 1, -1 },
-  lm = { -1, 600, -1 }, rd = { 0, 1, 1 }, m = { 0, 1000000, 0 }, qm = { 0, 50, 25 } }
-W.STR = { hb = 24, pr = 60, z = 30, st = 64, gz = 12 }
-W.KEYS = { "x", "r", "xs", "du", "b", "bt", "am", "fo", "wa", "hs", "lm", "rd", "m", "qm", "hb", "pr", "z", "st", "gz" }
+  lm = { -1, 600, -1 }, rd = { 0, 1, 1 }, m = { 0, 1000000, 0 }, qm = { 0, 50, 25 }, wz = { 0, 100000, 0 },
+  je = { 0, 36000, 0 } }
+W.STR = { hb = 24, pr = 60, z = 30, st = 64, gz = 12, ps = 9, sp = 16, j = 24 }
+W.KEYS = { "x", "r", "xs", "du", "b", "bt", "am", "fo", "wa", "hs", "lm", "rd", "m", "qm", "hb", "pr", "z", "st", "gz",
+  "ps", "sp", "wz", "j", "je" }
 
---- valeur reçue -> valeur propre (nil = effacée / clé inconnue)
+--- valeur reçue -> valeur propre (nil = effacée / clé inconnue) ; positions validées (‰ ≤ 1000, carte ≤ 100000)
 function W.Field(k, v)
+  if k == "ps" then
+    local a, b = tostring(v or ""):match("^(%d+)%.(%d+)$")
+    a, b = tonumber(a), tonumber(b)
+    return (a and b and a <= 1000 and b <= 1000) and (a .. "." .. b) or nil
+  elseif k == "sp" then
+    local mp, a, b = tostring(v or ""):match("^(%d+)%.(%d+)%.(%d+)$")
+    mp, a, b = tonumber(mp), tonumber(a), tonumber(b)
+    return (mp and a and b and mp >= 1 and mp <= 100000 and a <= 1000 and b <= 1000) and (mp .. "." .. a .. "." .. b) or nil
+  end
   local spec = W.NUM[k]
   if spec then return int(v, spec[1], spec[2], spec[3]) end
   local n = W.STR[k]
@@ -929,6 +946,79 @@ local function memberList()
   tsort(list, byName)
   return list
 end
+function M:List() return memberList() end
+function M:Dirty(urgent) dirty.view = true; if urgent then dirty.urgent = true end end
+--- (GROUPJOIN) qui je rejoins (nom, "@rdv", "@group" ou nil) et le temps restant (s) : champs j / je du fil
+function M:SetJoin(who, eta)
+  setMine("j", who and clean(who, 24) or nil)
+  setMine("je", who and int(eta, 0, 36000, 0) or nil)
+end
+
+-- ------------------------------------------------------------------ « Maintenant » : UNE ligne du groupe au plus
+-- Toutes les annonces du groupe passent par M:Offer ; seule la plus importante va dans « Maintenant » (Suggest) — les
+-- autres restent des lignes en tête de la page. Une ligne épinglée de l'onglet (« Avant de tirer », « Lance … ») compte
+-- aussi : elle n'est épinglée que si aucune annonce plus importante n'est en cours.
+local NOW_RANK = { pull = 100, say = 95, ready = 90, vote = 85, meet = 80, rdv = 80, join = 60, turnin = 55, cast = 50,
+  intent = 45, plan = 40, news = 30 }   -- say = réponse à un clic (6 s) : le joueur doit la voir ; vote = à cliquer en 2 min
+M.NOW_RANK = NOW_RANK
+local news = {}   -- [clé] = { key, kind, rank, text, prio, opts, exp, at, posted, postedText, sounded }
+local function newsSorted()
+  local out = {}
+  for _, e in pairs(news) do out[#out + 1] = e end
+  tsort(out, function(a, b)
+    if a.rank ~= b.rank then return a.rank > b.rank end
+    if a.at ~= b.at then return a.at > b.at end
+    return a.key < b.key
+  end)
+  return out
+end
+function M:NowApply()
+  local t = now()
+  for k, e in pairs(news) do
+    if e.exp and e.exp <= t then news[k] = nil; if e.posted then self:Clear(k) end end
+  end
+  local best = newsSorted()[1]
+  local pinRank = (pullText and NOW_RANK.pull) or (S.castTop and NOW_RANK.cast) or 0
+  if best and best.rank <= pinRank then best = nil end
+  S.pinNow = pinRank > 0 and best == nil
+  for k, e in pairs(news) do
+    if e ~= best and e.posted then e.posted = nil; self:Clear(k) end
+  end
+  if best and (not best.posted or best.postedText ~= best.text or best.postedPrio ~= best.prio) then
+    local o = {}
+    for k, v in pairs(best.opts or {}) do o[k] = v end
+    o.tab = "now"   -- « Maintenant » seulement : dans la page, l'annonce a sa propre ligne (pas deux fois la même)
+    o.ttl = best.exp and mmax(1, best.exp - t) or 0
+    if best.sounded then o.sound = false end
+    self:Suggest(best.key, best.text, best.prio, o)
+    best.posted, best.postedText, best.postedPrio = true, best.text, best.prio
+    best.sounded = best.sounded or (o.sound and true) or false
+  end
+end
+--- une annonce du groupe : kind = clé de NOW_RANK ; opts = { ttl, onClick, tooltip, sound, soundKind, cooldown }
+function M:Offer(key, kind, text, prio, opts)
+  if type(text) ~= "string" or text == "" then return self:Withdraw(key) end
+  opts = opts or {}
+  local t = now()
+  local e = news[key]
+  if not e then e = { key = key, at = t }; news[key] = e
+  elseif e.text ~= text then e.at = t end
+  e.kind, e.rank, e.text, e.prio, e.opts = kind, NOW_RANK[kind] or NOW_RANK.news, text, prio or 1, opts
+  local ttl = opts.ttl
+  if ttl == nil then ttl = 60 end
+  e.exp = (ttl > 0) and (t + ttl) or nil
+  dirty.view, dirty.urgent = true, true
+  self:NowApply()
+  return e
+end
+function M:Withdraw(key)
+  local e = news[key]
+  news[key] = nil
+  self:Clear(key)
+  if e then dirty.view = true; self:NowApply() end
+end
+--- réponse courte à un clic (6 s), comme une annonce (jamais le chat)
+function M:Say(text) return self:Offer("say", "say", text, 1, { ttl = 6 }) end
 
 -- ------------------------------------------------------------------ façades (anciens noms, API gardées)
 local SQ = { name = "Squad", CLASS_FR = CLASS_FR, PROTO = 2, _members = {}, Engine = { Progress = E.Progress } }
@@ -1056,6 +1146,12 @@ function M:ReadLive(m, fight, myMap, myZone)
   local y, x, _, inst = call(UnitPosition, u)
   y, x, inst = tonumber(pub(y)), tonumber(pub(x)), tonumber(pub(inst))
   if y and x then st.py, st.px, st.pi = floor(y / 5 + 0.5) * 5, floor(x / 5 + 0.5) * 5, inst or -1
+  elseif m.addon and st.m and st.ps and T.Geo and T.Geo.World then
+    -- (GROUPJOIN) le jeu ne la donne pas : la position que l'ami TreeAI partage (‰ de sa carte), même repère
+    local a, b = tostring(st.ps):match("^(%d+)%.(%d+)$")
+    local wn, ww, wc = T.Geo.World(st.m, (tonumber(a) or 0) / 10, (tonumber(b) or 0) / 10)
+    if a and wn then st.py, st.px, st.pi = floor(wn / 5 + 0.5) * 5, floor(ww / 5 + 0.5) * 5, tonumber(wc) or -1
+    else st.py, st.px, st.pi = nil, nil, nil end
   else st.py, st.px, st.pi = nil, nil, nil end
 end
 
@@ -1201,6 +1297,25 @@ function M:CollectMine(force)
     setMine("z", clean(call(GetRealZoneText), 30))
     setMine("m", C_Map and int(pub(call(C_Map.GetBestMapForUnit, "player")), 0, 1000000, 0) or 0)
   end
+  -- (GROUPJOIN) position partagée « ps » (‰ de la carte « m ») : ≤ 1 / 20 s, seulement si on a bougé (≥ 3 % de la carte) ou
+  -- changé de carte ; rien en instance (sans objet) — les amis l'ont du jeu quand il la donne, ceci est le repli
+  if force or t - (S.lastPos or -1e9) >= POS_GAP then
+    S.lastPos = t
+    local map, x, y = self:MyPos()
+    if map and x and y and not pub((call(IsInInstance))) then
+      if x > 1 or y > 1 then x, y = x / 100, y / 100 end
+      local px, py = int(x * 1000, 0, 1000, 0), int(y * 1000, 0, 1000, 0)
+      local o = S.posSent
+      if force or not o or o.map ~= map or abs(px - o.x) + abs(py - o.y) >= POS_MOVE then
+        S.posSent = { map = map, x = px, y = py }
+        setMine("m", int(map, 0, 1000000, 0))
+        setMine("ps", px .. "." .. py)
+      end
+    elseif mine.ps then
+      S.posSent = nil
+      setMine("ps", nil)
+    end
+  end
   setMine("lm", leaveMinutes(self.char))
   setMine("rd", (self.char and self.char.ready == false) and 0 or 1)
   if not mine.qm then setMine("qm", maxQuests()) end
@@ -1229,12 +1344,24 @@ function M:PollStep(t)
   S.lastStep = t
   local P = T.Planner
   local s = type(P) == "table" and type(P.steps) == "table" and P.cursor and P.steps[P.cursor] or nil
+  -- (GROUPJOIN) zone choisie pour le trajet (ZonePlan, mode « zones » seulement : en auto, c'est la zone où je suis)
+  local Z = T.ZonePlan
+  if type(Z) == "table" and type(Z.Allowed) == "function" and Z._active ~= false and Z.char then
+    local A = call(Z.Allowed, Z)
+    local wz
+    if type(A) == "table" and A.mode == "zones" and type(A.maps) == "table" then
+      for mm in pairs(A.maps) do if tonumber(mm) and (not wz or mm < wz) then wz = mm end end
+    end
+    setMine("wz", wz and int(wz, 0, 100000, 0) or nil)
+  end
   local key = s and (tostring(s.k) .. ":" .. tostring(s.q) .. ":" .. tostring(s.o)) or ""
   if key == S.stepKey then return end
   S.stepKey = key
-  if not s then setMine("st", nil) return end
+  if not s then setMine("st", nil); setMine("sp", nil) return end
   local label = type(P.StepLabel) == "function" and call(P.StepLabel, P, s) or nil
   setMine("st", W.EncodeStep(s.k, s.q, s.o, label or s.label))
+  local sx, sy, smap = tonumber(s.x), tonumber(s.y), tonumber(s.map)
+  setMine("sp", (sx and sy and smap) and fmt("%d.%d.%d", smap, int(sx * 10, 0, 1000, 0), int(sy * 10, 0, 1000, 0)) or nil)
   me.step = W.DecodeStep(mine.st)
 end
 
@@ -1379,6 +1506,7 @@ local function significant(k, old, new)
   if k == "du" then return abs(new - old) >= 5 or (old < 25) ~= (new < 25) or (old < 10) ~= (new < 10) end
   if k == "fo" or k == "wa" then return (old ~= new and (old < 10 or new < 10)) or abs(new - old) >= 5 end
   if k == "xs" then return abs(new - old) >= 100 end
+  if k == "je" then return abs(new - old) >= 30 or (old == 0) ~= (new == 0) end
   return old ~= new
 end
 M.Significant = significant
@@ -1507,6 +1635,7 @@ function M:OnWire(m, payload)
   if not msg then return end
   local kind = msg.kind
   if kind == "D" or kind == "F" then
+    local oldZ, oldM, oldP = m.st.z, m.st.m, m.st.ps   -- (GROUPJOIN) entrée de donjon apprise au passage dehors → dedans
     if kind == "F" then
       for _, k in ipairs(W.KEYS) do m.st[k] = nil end
       m.quests, m.step, m.gz = {}, nil, nil
@@ -1536,6 +1665,9 @@ function M:OnWire(m, payload)
     end
     for _, id in ipairs(msg.del) do m.quests[id] = nil end
     m.seq, m.legacy = msg.seq, nil
+    if msg.fields.je ~= nil then m.jeAt = now() end
+    if msg.fields.ps ~= nil then m.pAt = now() end
+    if M.Join and m.st.z and m.st.z ~= oldZ and M.Join.OnZone then call(M.Join.OnZone, oldM, oldP, m.st.z) end
     markAddon(m, "4", kind == "F" or #msg.add > 0 or #msg.del > 0 or msg.fields.st ~= nil or msg.fields.gz ~= nil)
   elseif kind == "R" then
     if m.addon ~= "4" then markAddon(m, "4") end
@@ -1598,8 +1730,16 @@ function M:OnEvent(m, ev, a)
   elseif ev == "meet" then
     local map, x, y = int(a[2], 1, 100000, nil), tonumber(a[3]), tonumber(a[4])
     if map and x and y and x >= 0 and x <= 1000 and y >= 0 and y <= 1000 then
-      self:OnMeet(m.name, map, x / 1000, y / 1000, clean(a[5], 24))
+      local id = int(a[7], 1, 999, nil)
+      if id and self.Join and self.Join.OnProposal then   -- (GROUPJOIN) proposition : « J'y vais » d'un clic
+        self.Join.OnProposal(m, map, x / 1000, y / 1000, clean(a[5], 24), clean(a[6], 8), id)
+      else
+        self:OnMeet(m.name, map, x / 1000, y / 1000, clean(a[5], 24))
+      end
     end
+  elseif (ev == "go" or ev == "vote" or ev == "ballot" or ev == "plan") and self.Join then
+    local f = self.Join[({ go = "OnGo", vote = "OnVote", ballot = "OnBallot", plan = "OnPlan" })[ev]]
+    if f then f(m, a) end
   elseif ev == "ask" then
     local id = int(a[2], 1, 1000000, nil)
     if id then self:OnReadyAsk(m.name, id) end
@@ -1721,7 +1861,7 @@ function M:ReadyAnswer(yes, why)
   if not rc or now() - rc.at > READY_TIMEOUT then return false end
   rc.answers[myName()] = { r = yes and true or false, w = why }
   self:QueueEvent("ans", tostring(rc.id), yes and "1" or "0", why or "")
-  self:Clear("ready")
+  self:Withdraw("ready")
   dirty.view = true
   return true
 end
@@ -1730,8 +1870,8 @@ function M:OnReadyAsk(by, id)
   S.rc = { id = id, by = by, at = now(), answers = { [by] = { r = true } } }
   self:Refresh()
   local ok, why = E.Ready(me)
-  self:Suggest("ready", fmt("%s demande : prêt ?%s — clic : oui", by, ok and "" or (" (toi : " .. why .. ")")), 2,
-    { ttl = READY_TIMEOUT, cooldown = 0, tab = "group", sound = true, soundKind = "group",
+  self:Offer("ready", "ready", fmt("%s demande : prêt ?%s — clic : oui", by, ok and "" or (" (toi : " .. why .. ")")), 2,
+    { ttl = READY_TIMEOUT, cooldown = 0, sound = true, soundKind = "group",
       tooltip = { "Vérification « prêt ? » de " .. by, "Clic : tu es prêt (le groupe le voit)" },
       onClick = function() M:ReadyAnswer(true) end })
 end
@@ -1796,6 +1936,7 @@ local function myPos()
   end
   return nil
 end
+function M:MyPos() return myPos() end
 
 function M:SendMeet()
   if not inGroup() then return false, "group" end
@@ -1807,8 +1948,8 @@ function M:SendMeet()
   local label = clean(call(GetSubZoneText), 24) or clean(call(GetZoneText), 24) or ""
   S.lastMeet = t
   self:QueueEvent("meet", tostring(floor(map)), tostring(floor(x * 1000 + 0.5)), tostring(floor(y * 1000 + 0.5)), label)
-  self:Suggest("meet", "Point de rencontre envoyé au groupe : ici" .. (label ~= "" and (" (" .. label .. ")") or ""), 1,
-    { ttl = 30, tab = "group", sound = false })
+  self:Offer("meet", "news", "Point de rencontre envoyé au groupe : ici" .. (label ~= "" and (" (" .. label .. ")") or ""), 1,
+    { ttl = 30, sound = false })
   return true
 end
 
@@ -1839,8 +1980,8 @@ function M:OnMeet(who, map, x, y, label)
       where = " · " .. dt
     end
   end
-  self:Suggest("meet", fmt("Rejoins %s au point de rencontre%s%s", who, (label and label ~= "") and (" (" .. label .. ")") or "",
-    where), 2, { ttl = MEET_TTL, tab = "group", sound = true, soundKind = "group", onClick = aim,
+  self:Offer("meet", "meet", fmt("Rejoins %s au point de rencontre%s%s", who, (label and label ~= "") and (" (" .. label .. ")") or "",
+    where), 2, { ttl = MEET_TTL, sound = true, soundKind = "group", onClick = aim,
       tooltip = { "Point de rencontre", "Envoyé par " .. who, "Clic : la boussole y va" } })
   return { map = map, x = x * 100, y = y * 100, label = label or "" }
 end
@@ -2050,8 +2191,14 @@ function M:StateWords(m)
   if m.online == false then w[1] = "hors ligne" return w end
   if m.ghost then w[#w + 1] = "fantôme" elseif m.dead then w[#w + 1] = "mort" end
   if m.afk then w[#w + 1] = "AFK" end
-  if m.otherZone then w[#w + 1] = m.zoneName and ("zone : " .. m.zoneName) or "autre zone"
-  elseif m.far then w[#w + 1] = "loin" end
+  -- (GROUPJOIN) distance vraie (positions du jeu / de l'ami TreeAI) quand on l'a : « à 2,7 km (Les Tarides) », « à côté »
+  local d
+  if M.Join and M.Join.DistTo then d = M.Join.DistTo(m) end
+  local near = d and d <= 40
+  if d and not near then
+    w[#w + 1] = "à " .. M.Join.DistText(d) .. ((m.otherZone and m.zoneName) and (" (" .. m.zoneName .. ")") or "")
+  elseif not d and m.otherZone then w[#w + 1] = m.zoneName and ("zone : " .. m.zoneName) or "autre zone"
+  elseif not d and m.far then w[#w + 1] = "loin" end
   if not m.dead then
     if m.hp and m.hp < 90 then w[#w + 1] = fmt("PV %d %%", m.hp) end
     if m.mana and m.mana < 80 and MANA[m.class or ""] then w[#w + 1] = fmt("mana %d %%", m.mana) end
@@ -2060,7 +2207,9 @@ function M:StateWords(m)
   local st = m.addon and m.st
   if st and st.lm and st.lm >= 0 then w[#w + 1] = st.lm <= 1 and "part maintenant" or fmt("part dans %d min", st.lm) end
   if st and st.rd == 0 then w[#w + 1] = "pas prêt" end
-  if #w == 0 and m.far == false then w[1] = "à côté" end
+  local jw = M.Join and M.Join.StateWords and M.Join.StateWords(m)
+  if jw then w[#w + 1] = jw end
+  if #w == 0 and (near or (d == nil and m.far == false)) then w[1] = "à côté" end
   return w
 end
 
@@ -2074,7 +2223,10 @@ function M:CardLines(add, m)
   local tip = { m.name .. (CLASS_FR[m.class or ""] and (" — " .. CLASS_FR[m.class]) or "") }
   if m.addon == "4" then tip[#tip + 1] = "TreeAI : oui (synchro du groupe)"
   elseif m.addon == "3" then tip[#tip + 1] = "TreeAI 3.9 : demande-lui de mettre à jour (il ne voit pas ton état)"
-  else tip[#tip + 1] = "Sans TreeAI : état lu par le jeu (niveau, PV, portée, zone)" end
+  else
+    tip[#tip + 1] = "Sans TreeAI : état lu par le jeu (niveau, PV, portée, zone, position hors instance)"
+    tip[#tip + 1] = "Inconnus sans TreeAI : son étape, sa progression, ses quêtes autres que les tiennes"
+  end
   if m.addon and m.st and m.st.r and m.st.r > 0 then tip[#tip + 1] = fmt("Repos : %d %% d'un niveau", m.st.r) end
   add(tconcat(head, " · "), 1, { icon = CLASS_ICON[m.class or ""], tooltip = tip })
   if m.online == false then return end
@@ -2206,12 +2358,37 @@ function M:Build()
     lines[#lines + 1] = l
     return l
   end
+  local function into(list2) return function(text, prio, extra)
+    local l = extra or {}
+    l.text, l.prio = text, prio or 1
+    list2[#list2 + 1] = l
+    return l
+  end end
+  local function section(title, items)   -- un en-tête seulement s'il y a des lignes dessous
+    if #items == 0 then return end
+    add(title, 1, { header = true })
+    for _, l in ipairs(items) do lines[#lines + 1] = l end
+  end
   -- 1. « Prêt ? » demandé par moi
   local rc = S.rc
   if rc and rc.by == me.name and t - rc.at <= READY_TIMEOUT + 10 then
     add(self:ReadyLine(list), rc.done and 1 or 2, { tooltip = { "Vérification « prêt ? »", "Amis TreeAI : leur réponse ; les autres : vus par le jeu" } })
   end
-  -- 2. objectif (ou le choix d'un objectif)
+  -- 2. annonces en cours (la plus importante est aussi LA ligne du groupe dans « Maintenant »)
+  local nNews = 0
+  local INPAGE = { join = true, intent = true, plan = true, vote = true, rdv = true }   -- déjà dites dans leur section
+  for _, e in ipairs(newsSorted()) do
+    if not INPAGE[e.kind] and nNews < 4 then
+      nNews = nNews + 1
+      add(e.text, e.prio, { kind = "group", onClick = e.opts and e.opts.onClick, tooltip = e.opts and e.opts.tooltip })
+    end
+  end
+  -- 3. soutien : ce que je peux lancer (le 1er épinglé si rien de plus important) ; le reste va sur la carte de chacun
+  local plan = (db.support and not inCombat()) and self:SupportPlan() or nil
+  S.plan = plan
+  S.castTop = (plan and plan.cast[1]) and true or false
+  for i, c in ipairs(plan and plan.cast or {}) do add(c.text, 2, { kind = "group", tooltip = c.tooltip, _cast = i }) end
+  -- 4. choix de l'objectif (ouvert par le bouton « Objectif »)
   if S.picking and t - S.picking < 60 then
     add("Choisis l'objectif du groupe (partagé avec les amis TreeAI) :", 1, { header = true })
     for _, c in ipairs(self:GoalChoices(list)) do
@@ -2220,7 +2397,15 @@ function M:Build()
     end
     add("Pas d'objectif", 1, { onClick = function() M:SetGoal("off") end, clickHint = "Clic : retirer l'objectif" })
     add("Annuler", 1, { onClick = function() M:Picker(false) end, clickHint = "Clic : fermer ce choix" })
-  elseif db.goals then
+  end
+  -- 5. « Ce que veut le groupe » : l'intention déduite (une ligne), où va chacun, objectif, prochain arrêt commun, vote,
+  -- trajets partagés, donjon prévu
+  local shown = T.TabShown and T:TabShown("group") or false
+  local JL = self.Join and self.Join.Sections and self.Join.Sections(list, shown, t) or nil
+  local want = {}
+  local addW = into(want)
+  for _, l in ipairs(JL and JL.intent or {}) do want[#want + 1] = l end
+  if db.goals and not (S.picking and t - S.picking < 60) then
     local g = self:Goal()
     local gl = E.GoalLine(g, list)
     if gl then
@@ -2230,63 +2415,70 @@ function M:Build()
       elseif gl.done and epoch() - (tonumber(self.char.goalDone) or epoch()) > GOAL_DONE_KEEP then
         self.char.goal, self.char.goalDone, gl = false, false, nil
       end
-      if gl then add(gl.text, gl.prio, { tooltip = gl.tip, onClick = function() M:Picker(true) end, clickHint = "Clic : changer l'objectif" }) end
+      if gl then addW(gl.text, gl.prio, { tooltip = gl.tip, onClick = function() M:Picker(true) end, clickHint = "Clic : changer l'objectif" }) end
     end
   end
-  -- 3. prochain arrêt commun, regroupement
   if db.goals then
     local nx = self.next
     if nx then
       local e = nx.mission
       local mineQ = me.quests[e.id] ~= nil
-      add(nx.text, nx.kind == "turnin" and 2 or 1, { questID = mineQ and e.id or nil,
+      addW(nx.text, nx.kind == "turnin" and 2 or 1, { questID = mineQ and e.id or nil,
         tooltip = { "Prochain arrêt commun", E.StatusLine(e), mineQ and "Clic : la boussole vise cette quête" or nil },
         onClick = mineQ and function() aimQuest(e.id, e.title) end or nil })
     end
-    local rg = E.Regroup(list)
-    if rg then add(rg.text, rg.prio) end
   end
-  -- 4. soutien : ce que je peux lancer (épinglé) ; le reste va sur la carte de chacun
-  local plan = (db.support and not inCombat()) and self:SupportPlan() or nil
-  S.plan = plan
-  for _, c in ipairs(plan and plan.cast or {}) do add(c.text, 2, { pin = true, kind = "group", tooltip = c.tooltip }) end
-  -- 5. écarts de niveau (avec les quêtes qui l'aident), puis les quêtes à partager / demander (une ligne par quête)
+  for _, l in ipairs(JL and JL.group or {}) do want[#want + 1] = l end
+  section("Ce que veut le groupe", want)
+  -- 6. « Rejoindre » : au plus vite / rentable vers chacun, point de rencontre, rendez-vous
+  section("Rejoindre", JL and JL.join or {})
+  -- 7. écarts de niveau (avec les quêtes qui l'aident), puis les quêtes à partager / demander (une ligne par quête)
+  local share = {}
+  local addS = into(share)
   local covered = {}
   for _, l in ipairs(E.LevelGaps(list, me.quests, me.level, pushable)) do
-    add(l.text, l.prio, { tooltip = l.tooltip })
+    addS(l.text, l.prio, { tooltip = l.tooltip })
     local c = {}
     for _, id in ipairs(l.ids or {}) do c[id] = true end
     covered[l.who] = c
   end
   if db.quests then
     for _, l in ipairs(E.ShareLines(list, me.quests, me.level, pushable, covered)) do
-      add(l.text, l.prio, { tooltip = l.tooltip, questID = l.questID })
+      addS(l.text, l.prio, { tooltip = l.tooltip, questID = l.questID })
     end
   end
-  -- 6. une carte par membre
-  if db.cards then for _, m in ipairs(list) do if not m.me then self:CardLines(add, m) end end end
-  -- 7. course à l'XP de la soirée
+  section("Quêtes à partager", share)
+  -- 8. « Ce que fait chacun » : une carte par membre (étape, zone, niveau, % de niveau), puis la course à l'XP
+  local cards = {}
+  local addC = into(cards)
+  if db.cards then for _, m in ipairs(list) do if not m.me then self:CardLines(addC, m) end end end
   if db.race then
     local lb = E.Leaderboard(list)
     if #lb >= 2 then
       local bits = {}
       for i, e in ipairs(lb) do if i <= 4 then bits[#bits + 1] = (e.me and "toi" or e.name) .. " +" .. numText(e.xs) end end
-      add("XP de la soirée : " .. tconcat(bits, " · "), 1, { tooltip = { "XP gagnée depuis le début de la soirée",
+      addC("XP de la soirée : " .. tconcat(bits, " · "), 1, { tooltip = { "XP gagnée depuis le début de la soirée",
         "Amis TreeAI seulement (exacte, comptée par leur jeu)" } })
     end
   end
+  section("Ce que fait chacun", cards)
   body = lines
   self:Push()
 end
 
 function M:Push()
   if not T.SetTabLines then return end
+  self:NowApply()   -- qui a LA ligne du groupe dans « Maintenant » (épinglée ou annonce)
   local out = {}
   if pullText then
-    out[1] = { text = pullText, prio = 2, pin = true, kind = "warn",
+    out[1] = { text = pullText, prio = 2, pin = S.pinNow or nil, kind = "warn",
       tooltip = { "Lu sur le jeu (cadres du groupe), même sans TreeAI chez eux", "Disparaît dès que tout le monde est prêt" } }
   end
-  for i = 1, #body do out[#out + 1] = body[i] end
+  for i = 1, #body do
+    local l = body[i]
+    if l._cast then l.pin = (S.pinNow and not pullText and l._cast == 1) or nil end
+    out[#out + 1] = l
+  end
   if inGroup() and #roster > 0 then
     out[#out + 1] = { text = "Choisir l'objectif du groupe", label = "Objectif", control = true, prio = 1,
       tooltip = { "Objectif du groupe", "Niveau à atteindre ensemble ou zone à finir — partagé avec les amis TreeAI" },
@@ -2294,6 +2486,7 @@ function M:Push()
     out[#out + 1] = { text = "Demander au groupe s'il est prêt", label = "Prêt ?", control = true, prio = 1,
       tooltip = { "Chef : l'appel « prêt » du jeu (tout le monde le voit)", "Sinon : la vérification TreeAI (PV, mana, familier, AFK)" },
       onClick = function() M:ReadyCheck() end }
+    for _, c in ipairs(self.Join and self.Join.Controls and self.Join.Controls(memberList()) or {}) do out[#out + 1] = c end
   end
   T:SetTabLines("group", out, "Group")
 end
@@ -2307,7 +2500,7 @@ function M:Toast(key, text, prio, opts)
   if not self.db.toasts then return end
   opts = opts or {}
   local k0 = tostring(key):match("^[^:]+")
-  self:Suggest(key, text, prio or 1, { ttl = opts.ttl or 15, cooldown = opts.cooldown or 60, tab = "group",
+  self:Offer(key, "news", text, prio or 1, { ttl = opts.ttl or 15, cooldown = opts.cooldown or 60,
     onClick = opts.onClick, tooltip = opts.tooltip, sound = SOUND_EVENTS[k0] or nil,
     soundKind = SOUND_EVENTS[k0] and "group" or nil })
 end
@@ -2331,7 +2524,7 @@ function M:OnTurnIn()
   if #who == 0 then return nil end
   title = title or (me.quests[id] and me.quests[id].title) or ("quête #" .. id)
   local text = fmt("Attends %s : %s ouvre une suite, rendez ensemble", andList(who, 3), q(title))
-  self:Suggest("turnin", text, 2, { ttl = 20, cooldown = 30, tab = "group" })
+  self:Offer("turnin", "turnin", text, 2, { ttl = 20, cooldown = 30 })
   return text
 end
 
@@ -2342,7 +2535,7 @@ function M:OnLootRoll(rollID)
   if not (name or link) then return end
   local iname, _, _, _, _, _, _, _, equipLoc, _, _, classID, subClassID = itemInfo(link or name)
   local hint = E.LootHint({ name = iname or name, classID = classID, subClassID = subClassID, equipLoc = equipLoc }, memberList())
-  if hint then self:Suggest("roll" .. tostring(rollID), hint, 1, { ttl = 60, cooldown = 60, tab = "group" }) end
+  if hint then self:Offer("roll" .. tostring(rollID), "news", hint, 1, { ttl = 60, cooldown = 60 }) end
 end
 
 -- ------------------------------------------------------------------ session (résumé pour l'appli)
@@ -2399,8 +2592,11 @@ function M:SaveSummary()
   end
   for _, l in ipairs(body) do
     if #g.advices >= 8 then break end
-    if not l.control and l.prio and l.text then g.advices[#g.advices + 1] = { cat = "group", prio = l.prio, text = l.text } end
+    if not l.control and not l.header and l.prio and l.text then g.advices[#g.advices + 1] = { cat = "group", prio = l.prio, text = l.text } end
   end
+  -- (GROUPJOIN) ce que le groupe semble vouloir faire : l'intention DÉDUITE seulement (jamais de texte du chat)
+  local js = self.Join and self.Join.Summary and self.Join.Summary()
+  if js then g.intent = js end
   for i, e in ipairs(index) do
     if i > 10 then break end
     g.common[#g.common + 1] = { id = e.id, title = e.title, holders = #e.holders, done = #e.done, group = e.group or nil }
@@ -2545,6 +2741,11 @@ local function openTab()
   if T.SelectTab then call(T.SelectTab, T, "group") end
   dirty.view, dirty.urgent = true, true
 end
+--- la page Groupe (la fenêtre TreeAI quand la carte remplace le panneau : Window enveloppe SelectTab)
+function M:OpenPage()
+  if T.SelectTab then call(T.SelectTab, T, "group") end
+  dirty.view, dirty.urgent = true, true
+end
 function M:SlashGoal(rest)
   rest = tostring(rest or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
   local lv = rest:match("^niveau%s+(%d+)") or rest:match("^(%d+)$")
@@ -2568,8 +2769,11 @@ function M:Tick()
   local t = now()
   if not inGroup() or #roster == 0 then
     if #roster > 0 or next(members) then self:ScanRoster() end
-    if S.hadLines then
+    if S.hadLines or next(news) then
       S.hadLines, body, pullText = false, {}, nil
+      for k in pairs(news) do news[k] = nil; self:Clear(k) end
+      if self.Join and self.Join.Reset then self.Join.Reset() end
+      if mine.j then self:SetJoin(nil) end
       if T.SetTabLines then T:SetTabLines("group", {}, "Group") end
     end
     return
@@ -2584,6 +2788,8 @@ function M:Tick()
   self:TryInspect(t)
   if t - S.lastAura >= AURA_GAP then self:PollAuras(t) end
   self:ReadyTick(t)
+  if self.Join and self.Join.Tick then self.Join.Tick(t, memberList()) end   -- (GROUPJOIN) trajet en cours, vote, positions
+  self:NowApply()
   if pullOn and dirty.live then self:CheckPull() end
   local shown = T.TabShown and T:TabShown("group") or false
   local gap = t - S.lastBuild
@@ -2644,7 +2850,14 @@ function M:OnEnable()
     end
   end
   self:RegisterEvent("GROUP_ROSTER_UPDATE", function() M:ScanRoster() end)
-  self:RegisterEvent("PLAYER_ENTERING_WORLD", function() M:ScanRoster(); dirty.zone = true end)
+  self:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+    M:ScanRoster(); dirty.zone = true
+    if M.Join and M.Join.OnWorld then call(M.Join.OnWorld) end   -- entrée de donjon apprise (ma dernière position dehors)
+  end)
+  -- (GROUPJOIN) chat de groupe LU (jamais écrit) : intentions (« on va au kraal », « rdv à Taurajo »…), en mémoire seulement
+  local function partyChat(_, _, text, sender) if M.Join and #roster > 0 then M.Join.OnChat(text, sender) end end
+  self:RegisterEvent("CHAT_MSG_PARTY", partyChat)
+  self:RegisterEvent("CHAT_MSG_PARTY_LEADER", partyChat)
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", function() dirty.zone, dirty.view, dirty.live = true, true, true end)
   self:RegisterEvent("QUEST_LOG_UPDATE", function() dirty.quests = true end)
   self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, u) if partyUnit(u) then dirty.unitQ = true end end)
@@ -2692,6 +2905,9 @@ function M:OnDisable()
   for _, m in pairs(members) do forgetAddon(m) end
   body, pullText, pullOn, S.rc, S.picking = {}, nil, false, nil, nil
   S.seq, sentVal, sentEntries, S.index = 0, {}, {}, nil
+  for k in pairs(news) do news[k] = nil; self:Clear(k) end
+  if self.Join and self.Join.Reset then self.Join.Reset() end
+  mine.j, mine.je, mine.ps, S.posSent = nil, nil, nil, nil
   if T.SetTabLines then T:SetTabLines("group", {}, "Group") end
 end
 
@@ -2700,6 +2916,10 @@ function M:OnOptionChanged() dirty.view, dirty.urgent = true, true end
 -- tests
 M._test = { gear = gearCache, auras = auraCache, dirty = dirty, members = members, body = function() return body end,
   pull = function() return pullText end, mine = mine, sent = function() return sentVal, sentEntries end,
+  news = function() return newsSorted() end, nowKey = function()
+    for k, e in pairs(news) do if e.posted then return k end end
+    return S.pinNow and (pullText and "pull" or "cast") or nil
+  end,
   reset = function()
     S.lastBuild, S.lastAura, S.lastUnitQ, S.lastScan, S.lastInspect, S.lastSend, S.lastFull = -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9
     S.pendingInspect, S.tokens = nil, BUCKET

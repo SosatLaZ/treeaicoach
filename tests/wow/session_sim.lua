@@ -82,6 +82,9 @@ local BUDGET = {
 -- protocol (« GRP », deltas only) at most 1 message / 5 s per client outside a join / reload minute
 BUDGET.kinstrModuleMin.Group = 150
 BUDGET.groupMsgsPerMin = 12
+-- GROUPJOIN (4.0.1): « Rejoindre », rendez-vous, vote, intention du groupe (Modules/GroupJoin.lua) — positions ≤ 1 / 15 s,
+-- trajets recalculés seulement quand quelqu'un bouge et que la page Groupe est ouverte
+BUDGET.kinstrModuleMin.GroupJoin = 60
 -- PERF4 (4.0.1) : « mode sûr » = ce que le joueur a. Gains verrouillés (HUNTER / forever, 4.0.0 mesuré : 796 kinstr/min,
 -- pire image 66, p99 25, 33,8 Ko/s ; 4.0.1 : ≈ 546 / 51 / 21 / 25,5). Plafonds serrés pour les modules dont le coût ne
 -- dépend que de leur propre travail ; Core paie aussi la répartition (événements, minuteurs) de tous les autres.

@@ -29,6 +29,7 @@ Modules\Hunter.lua
 Modules\Classes.lua
 Modules\Leveling.lua
 Modules\Group.lua
+Modules\GroupJoin.lua
 Modules\Plain.lua
 Modules\Quests.lua
 Modules\Compass.lua

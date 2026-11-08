@@ -1018,7 +1018,8 @@ d'automatique (partager, buffer, dissiper = consignes ; seuls clics : boussole, 
 * **Protocole v4** (un seul type `GRP`, `TreeAI:Send(..., "PARTY")`, chaîne `"4;<genre>;…"`) :
   `D` différences seulement depuis le dernier envoi (`"4;D;<seq>;k=v;…;+<quête>;-<id>"`, valeurs exactes envoyées
   quand le changement compte : munitions ± 50, durabilité ± 5, XP ± 100…), `F` état complet (arrivée, demande, trou),
-  `R` « renvoie ton état » (`*` ou un nom), `B` module coupé, `E` événements des clics (`goal`, `meet`, `ask`, `ans`).
+  `R` « renvoie ton état » (`*` ou un nom), `B` module coupé, `E` événements des clics (`goal`, `meet`, `ask`, `ans` ;
+  4.0.1 : `meet` + genre + numéro = proposition de rendez-vous, `go`, `vote`, `ballot`, `plan` — voir GroupJoin).
   Quête = `"id,niv,drapeaux(C G),titre,m3/8.i0/5"`. Seau de jetons propre (3, +1 / 5 s) : **≤ 1 message / 5 s** en
   régime établi, rien si rien ne change, jamais par-dessus un envoi encore en file chez le cœur (il le remplacerait) ;
   numéros de suite → trou détecté = état complet redemandé (≤ 1 / 20 s par ami). Réception : membres du groupe
@@ -1038,10 +1039,44 @@ d'automatique (partager, buffer, dissiper = consignes ; seuls clics : boussole, 
   ≤ 1 / 5 s, lignes seulement si quelque chose a changé : ≤ 1 / 3 s onglet visible, ≤ 1 / 30 s caché, sauf une ligne
   épinglée). `session_sim` (4 clients TreeAI) : `kinstrModuleMin.Group = 150` (mesuré ≈ 80 ; 3.9.9 : Squad + Missions
   + Team ≈ 430 sur la même simulation) et `groupMsgsPerMin = 12` (mesuré ≤ 3) hors minute d'arrivée / de /reload.
+  4.0.1 : `kinstrModuleMin.GroupJoin = 60` (mesuré ≈ 25 : positions ≤ 1 / 15 s, indices de lieu refaits seulement
+  si quelqu'un a bougé, trajets recalculés quand la page est ouverte) ; Group ≈ 92, GRP ≤ 6 par minute établie.
+* **Rejoindre / ce que veut le groupe** (`Modules/GroupJoin.lua`, GROUPJOIN 4.0.1 ; partie du module « Groupe », pas
+  de module à lui : `Grp.Join` = `T.GroupJoin`). Page Groupe, dans l'ordre : « Ce que veut le groupe » · « Rejoindre »
+  · « Quêtes à partager » · « Ce que fait chacun » (cartes). **Rejoindre** : une ligne par membre loin (> 120 m) —
+  « Rejoindre Bravo (Les Tarides) : au plus vite » (à droite « vol · 3 min » : `Route.FastestWorld` + `NavTime`,
+  pierre de foyer seulement si ≥ 3 min gagnées) et « Rentable : +15 s · 1 rendu · +1 450 XP » (rendus / objectifs
+  sur le chemin à pied si le détour coûte ≤ 20 % ou 30 s : `E.Detour`, insertion la moins chère) ; « Bravo arrive
+  vers toi : ≈ 3 min — attends-le » / « Delta se rapproche » ; clic = boussole (`source = "join"`), carte « Prochaine
+  étape » sur le vol (`QuickTravel.Destination` cède à `GroupJoin.Destination()`), « en vol », « Tu as rejoint
+  Bravo ». Positions : jeu d'abord (`UnitPosition`, `C_Map.GetBestMapForUnit` / `GetPlayerMapPosition`), sinon
+  `ps` des amis TreeAI, sinon le nom de zone (dit dans l'info-bulle). **Point de rencontre** (groupe éparpillé ≥ 600 m et
+  sans destination claire : maître de vol des zones du groupe ou lieu de la mission commune ; `E.Meeting` = le plus
+  loin a le moins de chemin, le lieu utile gagne s'il coûte ≤ 25 % de plus) : « Proposer au groupe »
+  → les amis TreeAI ont « Bravo propose un rendez-vous … — clic : j'y vais » (`go` + temps restant), ligne
+  « Rendez-vous X : Bravo (≈ 4 min) y va · 2 sans réponse ». **Intention du groupe** (une ligne, « Le groupe va
+  vers : Kraal de Tranchebauge (3/4 à l'entrée) », « Le groupe finit : Bois-brisé (5 quêtes communes) », confiance
+  + indices dans l'info-bulle) : indices pondérés avec déclin (`E.Intent`) — zones, direction des déplacements,
+  regroupement à une entrée / un maître de vol / au rendez-vous, quêtes communes, étapes / zones choisies (`wz`) /
+  trajets partagés des amis TreeAI, chef × 1,5, objectif, vote, et le **chat de groupe lu** (CHAT_MSG_PARTY /
+  PARTY_LEADER, `E.ParseChat` : lieux, donjons, abréviations RFK / BFD / SM…, « on va », « go », « rdv »,
+  « attendez », « je rends » ; jamais d'écriture, valeur secrète = ignorée, gardé en mémoire seulement, ≤ 30
+  indices ; seul le texte de l'intention va dans `summary.group.intent`). Conflit : « Bravo et Charlie vont vers
+  « Orneval », toi et Delta vers « Mille pointes » » + « Suivre le groupe » (`ZonePlan.SetMode("zone", carte)` /
+  `Dungeon.SetPlanned`) et « Partager mon trajet » (`plan`) ; « Voter » (2 à 4 suites, un bulletin par ami, un
+  vote à la fois, ≤ 1 / min). Entrées de donjon : table Classic approchée (≈ 150 m de marge), remplacée par l'entrée vue
+  (`db.entrances`, carte + x / y seulement). Nouveaux champs d'état : `ps` (position ‰ "x.y" sur la carte `m`,
+  ≤ 1 / 20 s et seulement si on a bougé, rien en instance), `sp` (point de l'étape "carte.x.y"), `wz` (zone choisie
+  dans ZonePlan), `j` / `je` (qui je rejoins, temps restant). **« Maintenant »** : toutes les annonces du groupe
+  passent par `Grp:Offer(clé, genre, texte, prio, opts)` / `Withdraw` / `Say` ; une seule ligne du groupe à la fois
+  (rang : tirer > retour d'un clic > prêt ? > vote > rendez-vous > rejoindre > rendre > lancer > intention > trajet
+  > nouvelles), le reste dans la page. Hors combat seulement (clics refusés en combat avec « Hors combat seulement »).
 * Slash : `/tai groupe` (ouvre l'onglet), `/tai objectif [niveau 30 | zone | off]`, `/tai partir N`, `/tai pret
   [on|off]`. Options : cards, pull, quests, support, gear, goals, race, meetCompass, toasts.
 * Tests : `tests/wow/group_spec.lua` (moteur + fil + 4 clients sur un faux canal PARTY + un membre sans TreeAI + un
-  ami en 3.9), `tests/wow/group_scenario.lua` (le vrai addon dans le harnais), `tests/wow/test_group.py`.
+  ami en 3.9 ; section GROUPJOIN : détour, rencontre, vote, chat, intention), `tests/wow/group_scenario.lua` (le vrai
+  addon dans le harnais), `tests/wow/groupjoin_scenario.lua` (vol / à pied / foyer / attendre, rentable, rendez-vous,
+  suivre, vote, chat + déplacements, vie privée, combat), `tests/wow/test_group.py`.
 
 ## Comms : limites de WoW Forever (Core)
 

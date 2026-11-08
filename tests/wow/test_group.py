@@ -2,7 +2,9 @@
 Squad + Missions + Team + the old Group. 4-client Lua simulation over a fake PARTY bus (wire v4, deltas only, ≤ 1 msg /
 5 s, gap recovery, 3.9.x decoding), the real addon in the harness (cards, pull line, buffs, inspect, goals, « Prêt ? »,
 meeting point, facades, summaries), static ToS checks, and the app's readers of the summaries it keeps writing
-(summary.group v2, summary.missions v1). Fake names only."""
+(summary.group v2, summary.missions v1). 4.0.1 GROUPJOIN (Modules/GroupJoin.lua, part of the same module): join a friend
+fastest / profitably, meeting point + « J'y vais », vote, shared route + « Suivre le groupe », the group's intent inferred
+from party chat + movements, one « Maintenant » line for the group. Fake names only."""
 from __future__ import annotations
 
 import json
@@ -18,12 +20,13 @@ from treeaicoach.wow import ai_context as ac
 ROOT = Path(__file__).resolve().parents[2]
 ADDON = ROOT / "wow_addon" / "TreeAI"
 GROUP = ADDON / "Modules" / "Group.lua"
+JOIN = ADDON / "Modules" / "GroupJoin.lua"
 HERE = Path(__file__).parent
 lua = pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 not installed")
 
 
-def _code() -> str:
-    return "\n".join(ln.split("--", 1)[0] for ln in GROUP.read_text(encoding="utf-8").splitlines())
+def _code(path: Path = GROUP) -> str:
+    return "\n".join(ln.split("--", 1)[0] for ln in path.read_text(encoding="utf-8").splitlines())
 
 
 @lua
@@ -43,15 +46,50 @@ def test_group_real_addon_scenario(flavor, cls):
     assert r.returncode == 0 and "RESULT ok" in r.stdout, r.stdout[-3000:] + r.stderr[-2000:]
 
 
+@lua
+@pytest.mark.parametrize("flavor,cls", [("forever", "HUNTER"), ("modern", "HUNTER"), ("forever", "WARRIOR")])
+def test_groupjoin_real_addon_scenario(flavor, cls):
+    r = subprocess.run(["lua5.1", str(HERE / "harness.lua"), "-q", "--flavor", flavor, "--class", cls, "--scenario",
+                        str(HERE / "groupjoin_scenario.lua"), str(ADDON)],
+                       capture_output=True, text=True, timeout=180, cwd=ROOT)
+    assert r.returncode == 0 and "RESULT ok" in r.stdout, r.stdout[-3000:] + r.stderr[-2000:]
+
+
 def test_one_module_in_toc():
     names = [x.strip() for x in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     assert "Modules\\Group.lua" in names
+    # GroupJoin = part of « Groupe » (no RegisterModule of its own), loaded right after it
+    assert names.index("Modules\\GroupJoin.lua") == names.index("Modules\\Group.lua") + 1
+    assert "RegisterModule" not in _code(JOIN)
     for old in ("Squad", "Missions", "Team"):
         assert f"Modules\\{old}.lua" not in names, old
         assert not (ADDON / "Modules" / f"{old}.lua").exists(), old
     # Quests reads ns.Group (friends on a quest) and the facades must exist before the modules that read them
     for later in ("Quests", "Tracker", "Planner", "Export", "Dungeon", "QuickTravel", "Todo"):
         assert names.index("Modules\\Group.lua") < names.index(f"Modules\\{later}.lua"), later
+
+
+def test_groupjoin_reads_chat_never_writes_and_keeps_no_text():
+    code = _code(JOIN)
+    for bad in ("SendChatMessage", "CastSpell", "TargetUnit", "UseItem", "TakeTaxiNode", "CreateFrame", "C_Timer", "SetScript",
+                "PlaySound", ":Print(", "SendAddonMessage", "T:Send(", "QuestLogPushQuest", "SetUserWaypoint"):
+        assert bad not in code, bad
+    group = _code()
+    assert 'RegisterEvent("CHAT_MSG_PARTY"' in group and 'RegisterEvent("CHAT_MSG_PARTY_LEADER"' in group
+    # the chat text goes through pub() (secret in chat lockdown) and only derived places are kept in memory
+    assert "text, sender = pub(text), pub(sender)" in code
+    on_chat = code.split("function J.OnChat", 1)[1].split("\nfunction ", 1)[0]
+    assert "text" not in on_chat.split("JS.chat[#JS.chat + 1] =", 1)[1].split("}", 1)[0]
+    # the guidance is TreeAI's compass / zone of work / planned dungeon, on a click only
+    assert 'source = "join"' in code and "Z.SetMode" in code and "D.SetPlanned" in code
+
+
+def test_readme_documents_groupjoin():
+    readme = (ROOT / "wow_addon" / "README.md").read_text(encoding="utf-8")
+    for s in ("Modules/GroupJoin.lua", "T.GroupJoin", "E.Detour", "E.Intent", "Grp:Offer(", "GroupJoin.Destination()",
+              "`ps`", "`go`", "`vote`", "`ballot`", "`plan`", "CHAT_MSG_PARTY", "summary.group.intent",
+              "kinstrModuleMin.GroupJoin", "groupjoin_scenario.lua"):
+        assert s in readme, s
 
 
 def test_no_chat_no_automation_no_frames():
@@ -88,6 +126,8 @@ def test_session_sim_single_cap():
     src = (HERE / "session_sim.lua").read_text(encoding="utf-8")
     m = re.search(r"kinstrModuleMin\.Group = (\d+)", src)
     assert m and int(m.group(1)) <= 150
+    j = re.search(r"kinstrModuleMin\.GroupJoin = (\d+)", src)
+    assert j and int(j.group(1)) <= 80   # ROUND7: ≤ 80 kinstr / min per module
 
 
 # ---------------------------------------------------------------- the app reads the summaries (formats kept)
