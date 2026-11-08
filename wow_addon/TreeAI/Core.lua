@@ -1472,6 +1472,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   ItemInfo = { lite = true, desc = "Infos objets (infobulles) : amélioration, groupe, valeur, quête, métiers, familier, sources" },
   Talents = { lite = false, desc = "Talents : où mettre tes points" },
   Prof = { lite = false, desc = "Métiers : montée la moins chère, récolte (nœuds, dépeçage)" },
+  CityRun = { lite = false, desc = "Courses en ville : tout à acheter / faire en ville, trajet le plus court, points métiers sur la carte" },
   PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
   PvPMark = { lite = true, combat = true, desc = "Joueurs ennemis attaquables surlignés (barres de nom)" },
   Radar = { lite = false, desc = "Radar rond des objectifs" },

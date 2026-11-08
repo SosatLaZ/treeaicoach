@@ -723,6 +723,17 @@ local function crafts(row)
 end
 local COLOR_WORD = { orange = "monte à coup sûr", yellow = "monte souvent", green = "monte rarement", grey = "ne monte plus" }
 function SEC.prof(it, c, o, st)
+  -- (4.1 CITYRUN) verdict précis : « Besoin : 12 (il t'en reste 30 → 18 en trop) », « Pas besoin… », « Garde : quête X »
+  local CR = T.CityRun
+  local okV, v = false, nil
+  if CR and type(CR.Verdict) == "function" then okV, v = pcall(CR.Verdict, it.id) end
+  if okV and type(v) == "table" and v.text then
+    o.label, o.tone, o.text = "Métiers", v.tone or "info", v.text
+    for _, dtl in ipairs(v.details or {}) do o.details[#o.details + 1] = dtl end
+    st.reagent = true
+    if v.keep then st.keep = st.keep or "compo" end
+    return
+  end
   local mask = linesUsing(it.id)
   local d = recipes()
   if not mask or not d then return end

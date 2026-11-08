@@ -343,9 +343,9 @@ function M.Classify(itemID, name, bag, slot)
 end
 
 local KIND_OPT = { need = "bagNeed", use = "bagNeed", done = "bagDone", starter = "bagStarter",
-  upcoming = "bagUpcoming", useless = "bagUseless" }
+  upcoming = "bagUpcoming", useless = "bagUseless", extra = "bagUseless" }
 local KIND_COL = { need = "colNeed", use = "colNeed", done = "colDone", starter = "colStarter",
-  upcoming = "colUpcoming", useless = "colUpcoming" }
+  upcoming = "colUpcoming", useless = "colUpcoming", extra = "colUpcoming" }
 
 -- texte court « Quête : X — encore 4 » (infobulles, butin, cible)
 function M.Describe(kind, e)
@@ -560,6 +560,9 @@ function M.Apply(owner, kind, e, label)
     local dim = math.max(0.1, math.min(0.9, (tonumber(opt("uselessDim")) or 6) / 10 * 0.85))
     ov.shade:SetVertexColor(0, 0, 0, dim) ov.shade:Show()
     ov.text:SetText("×") ov.text:SetTextColor(0.7, 0.7, 0.7)
+  elseif kind == "extra" then   -- (4.1 CITYRUN) compo de métier en trop (ni plan, ni quête, ni recette d'ici 50 points)
+    setEdges(ov, 0.6, 0.6, 0.6, 0.6)
+    ov.text:SetText("trop") ov.text:SetTextColor(0.85, 0.85, 0.85)
   end
   -- (NAV) « hyper surbrillance » : contour qui tourne + halo pulsé, joués par le client (Glow.lua)
   local GL = T.Glow
@@ -611,6 +614,13 @@ local function applySlot(btn, bag, slot, stats)
   local it = slotItem(bag, slot)
   if not it or not it.itemID then hideOverlay(btn) return end
   local kind, e = M.Classify(it.itemID, nil, bag, slot)
+  if not kind then   -- (4.1 CITYRUN) pastille « trop » sur une compo de métier en trop
+    local CR = T.CityRun
+    if CR and type(CR.BagBadge) == "function" then
+      local okB, v = pcall(CR.BagBadge, it.itemID)
+      if okB and type(v) == "table" then kind, e = "extra", v end
+    end
+  end
   if kind and on(KIND_OPT[kind]) then
     M.Apply(btn, kind, e)
     if stats then stats[kind] = (stats[kind] or 0) + 1 end
