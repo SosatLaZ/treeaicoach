@@ -67,6 +67,7 @@ RUNS = {   # every TreeAI harness run of the suite (TREEAI_WOW_RUNLOG, regenerat
     'group-priest': '--class PRIEST --scenario tests/wow/group_scenario.lua',
     'group-warrior': '--class WARRIOR --scenario tests/wow/group_scenario.lua',
     'highlight-hunter': '--class HUNTER --scenario tests/wow/highlight_scenario.lua',
+    'journal-hunter-nostorm': '--no-storm --class HUNTER --scenario tests/wow/journal_scenario.lua',
     'lite-hunter-essentiel-nostorm': '--no-storm --profile essentiel --class HUNTER --scenario tests/wow/lite_scenario.lua',
     'lite-mage-essentiel-nostorm': '--no-storm --profile essentiel --class MAGE --scenario tests/wow/lite_scenario.lua',
     'macro2-hunter': '--class HUNTER --scenario tests/wow/macro2_scenario.lua',

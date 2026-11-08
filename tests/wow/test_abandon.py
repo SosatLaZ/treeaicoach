@@ -17,12 +17,31 @@ def test_toc_lists_abandon_after_economy():
     assert "Modules\\Economy.lua" not in lines
 
 
-def test_never_abandons_nor_selects():
-    src = SRC.read_text(encoding="utf-8")
-    code = "\n".join(re.sub(r"--.*$", "", ln) for ln in src.splitlines())
-    for bad in ("AbandonQuest", "SetAbandonQuest", "SelectQuestLogEntry", "SetSelectedQuest", "QuestLogPushQuest",
-                "ShowUIPanel", "QuestMapFrame", "SendChatMessage"):
+def _code(path):
+    return "\n".join(re.sub(r"--.*$", "", ln) for ln in path.read_text(encoding="utf-8").splitlines())
+
+
+def test_abandon_only_inside_the_click():
+    """(JOURNAL 4.0.1) the quest log selection and the abandon are touched in ONE place, M.AbandonNow, after the
+    combat / click (T:InUserAction) guards; never Blizzard's Lua (popup, quest map, panels), never the chat."""
+    code = _code(SRC)
+    for bad in ("QuestLogPushQuest", "ShowUIPanel", "HideUIPanel", "QuestMapFrame", "StaticPopup", "QuestLog_",
+                "ToggleQuestLog", "SendChatMessage", "OpenQuestLog"):
         assert bad not in code, bad
+    body = code.split("function M.AbandonNow(", 1)[1].split("\nend\n", 1)[0]
+    rest = code.replace(body, "")
+    for api in ("SetSelectedQuest", "SetAbandonQuest", "AbandonQuest", "SelectQuestLogEntry"):
+        assert api in body, api
+    # outside AbandonNow the names only appear in api() (existence test: type(...) == "function") and comments
+    calls = re.findall(r"try\((?:CQ\.)?(?:SetSelectedQuest|SetAbandonQuest|AbandonQuest|sel|setAb|ab)\b", rest)
+    assert calls == [], calls
+    guards = body.split("local here, idx = logIndex(id)", 1)[0]
+    assert "inCombat()" in guards and "T:InUserAction()" in guards and "M.CanDirect()" in guards
+    # the previous selection and the game's abandon target are put back right after
+    assert "try(CQ.SetSelectedQuest, prevSel)" in body and "try(sel, prev)" in body
+    assert "prevAb ~= 0 and prevAb ~= id" in body
+    # the target is re-read before abandoning; a refusal by the game switches to the guided flow for good
+    assert "target == id" in body and "M.db.refused = true" in body
 
 
 def test_pro_feature_2_moved():
@@ -46,7 +65,7 @@ def test_scoring_spec_exact_numbers():
 
 
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")
-@pytest.mark.parametrize("flavor", ["modern", "legacy"])
+@pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
 def test_abandon_scenario(flavor):
     r = subprocess.run(["lua5.1", str(ROOT / "tests/wow/harness.lua"), "-q", "--flavor", flavor, "--class", "HUNTER",
                         "--scenario", str(ROOT / "tests/wow/abandon_scenario.lua"), str(ADDON)],

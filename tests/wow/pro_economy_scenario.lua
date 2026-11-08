@@ -53,12 +53,12 @@ return function(M, ctx)
   ctx.check(not find(q, "À abandonner"), "2 moved to Modules/Abandon.lua")
   local A = T.modules.Abandon
   if A then A.Update(true) end
-  ctx.check(A and find(A.lines, "Retire « Vieille corvée » : trop facile maintenant"), "2 grey quest to abandon (Abandon module): " .. dump(A and A.lines))
+  ctx.check(A and find(A.lines, "Retire « Vieille corvée » : grise"), "2 grey quest to abandon (Abandon module, fact of the game): " .. dump(A and A.lines))
   ctx.check(find(q, "Escorte « Escorter le vieux fermier » : prépare%-toi.*PV"), "5 escort prep")
   ctx.check(find(q, "Chaîne : après « Les loups de la colline » → « La suite des loups » chez Garde Test"), "6 chain via Questie")
   -- 7 useless breadcrumb: explained by the Abandon module (Pro keeps its line only without it)
-  local rl = A and find(A.lines, "Retire « Le relais » : elle ne sert plus à rien")
-  ctx.check(rl and tostring(rl.tooltip):find("Pour la retirer"), "7 breadcrumb already useless: " .. dump(A and A.lines))
+  local rl = A and find(A.lines, "Retire « Le relais » : relais vers « Les loups de la colline », déjà dans ton journal")
+  ctx.check(rl and tostring(rl.tooltip):find("Chaîne bloquée", 1, true), "7 breadcrumb already useless: " .. dump(A and A.lines))
   ctx.check(find(q, "Loup des forêts 4/10 : ≈ %d+ min"), "13 ETA line")
   local info = P.lines.info or {}
   ctx.check(find(info, "Donjons niv 26 : Donjon d'Ombrecroc"), "8 dungeons at level: " .. dump(info))

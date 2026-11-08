@@ -30,7 +30,7 @@ local M = T:RegisterModule("Dungeon", {
     nextBoss = true, pulls = true, summary = true,
     learned = {}, qidx = nil,
   },
-  charDefaults = { planned = nil, run = nil, runs = {}, last = nil },
+  charDefaults = { planned = nil, run = nil, runs = {}, last = nil, kills = {} },
   options = {
     { key = "tab", type = "toggle", label = "Onglet « Donjon » (en instance, donjon prévu ou bilan)", section = "Donjon" },
     { key = "autoPlan", type = "toggle", label = "Prévoir le donjon tout seul (quête de donjon + groupe)" },
@@ -178,6 +178,22 @@ function M.Find(q)
   if c == nil then c = find(q) or false; findCache[q] = c end
   return c or nil
 end
+--- (JOURNAL 4.0.1) donjon dont le nom (ou un mot-clé) est EXACTEMENT ce texte (en-tête de zone du journal) : jamais
+--- « Les Paluns » → « Excavations : les Paluns » comme le ferait la recherche souple de M.Find
+local exactCache = {}
+function M.FindExact(name)
+  if type(name) ~= "string" or name == "" then return nil end
+  local c = exactCache[name]
+  if c ~= nil then return c or nil end
+  local s, res = norm(name), false
+  for _, d in ipairs(M.Index().list) do
+    if norm(d.n) == s or norm(d.key) == s then res = d break end
+    for _, k in ipairs(d.kw or {}) do if norm(k) == s then res = d break end end
+    if res then break end
+  end
+  exactCache[name] = res
+  return res or nil
+end
 
 --- Boss par id de rencontre (puis appris), puis par nom.
 function M.FindBoss(encID, name)
@@ -235,13 +251,15 @@ function M.Current()
 end
 
 local function questDungeons()
-  -- quêtes de donjon du journal (Quests.lastList : q.dungeon / zone) -> donjon prévu
+  -- quêtes de donjon du journal -> donjon prévu. (JOURNAL 4.0.1) le donjon d'une quête = Dungeon.QuestDungeon (id des
+  -- quêtes du donjon, puis en-tête de zone EXACT) : une quête élite des Paluns ne prévoit plus « Excavations : les
+  -- Paluns » ; un donjon déjà fait n'est jamais proposé tout seul
   local Q = mod("Quests")
   local out = {}
   for _, q in ipairs(Q and Q.lastList or {}) do
-    if type(q) == "table" and (q.dungeon or q.groupTag) then
-      local d = M.Find(q.zone) or M.Find(q.header)
-      if d then out[d.key] = (out[d.key] or 0) + 1 end
+    if type(q) == "table" and q.id and (q.dungeon or q.groupTag) then
+      local d = M.QuestDungeon(q.id)
+      if d and not M.IsDone(d) then out[d.key] = (out[d.key] or 0) + 1 end
     end
   end
   return out
@@ -447,10 +465,11 @@ end
 -- index : { sig = nombre d'ids, areas = { [zoneOrSort] = { ids } } } (compte, SavedVariables) ; scan par tranches
 local scan        -- { ids, i, areas, want }
 local SCAN_STEP = 1500
+local QIDX_V = 2   -- (JOURNAL 4.0.1) v2 = avec les zones de quêtes `qsort` (RFK 1717…) : l'index v1 est refait
 function M.QuestIndex()
   if not questie() then return nil end
   local q = M.db and M.db.qidx
-  if type(q) == "table" and q.done and type(q.areas) == "table" then return q end
+  if type(q) == "table" and q.done and q.v == QIDX_V and type(q.areas) == "table" then return q end
   return nil
 end
 function M.ScanStep(n)
@@ -460,9 +479,10 @@ function M.ScanStep(n)
   if not scan then
     local ids = db.all()
     local q = M.db.qidx
-    if type(q) == "table" and q.done and q.sig == #ids then return true end
+    if type(q) == "table" and q.done and q.v == QIDX_V and q.sig == #ids then return true end
     local want = {}
     for a in pairs(M.Index().byArea) do want[a] = true end
+    for _, list in pairs(M.Data().qsort or {}) do for _, a in ipairs(list) do want[a] = true end end   -- (JOURNAL) RFK 1717…
     scan = { ids = ids, i = 1, areas = {}, want = want }
   end
   local ids, want, areas = scan.ids, scan.want, scan.areas
@@ -476,7 +496,7 @@ function M.ScanStep(n)
   end
   scan.i = stop + 1
   if scan.i > #ids then
-    M.db.qidx = { sig = #ids, areas = areas, done = true }
+    M.db.qidx = { sig = #ids, areas = areas, done = true, v = QIDX_V }
     scan = nil
     M._dirty = true
     M._questGen = (M._questGen or 0) + 1
@@ -619,10 +639,14 @@ function M.QuestsNow(d, members)
   local ix = M.QuestIndex()
   local areaIds = {}
   for _, id in ipairs(ix and d.area and ix.areas[d.area] or {}) do areaIds[id] = true end
+  for _, a in ipairs((M.Data().qsort or {})[d.key] or {}) do   -- (JOURNAL) zones de quêtes en plus (RFK 1717…)
+    for _, id in ipairs(ix and ix.areas[a] or {}) do areaIds[id] = true end
+  end
   for _, q in ipairs(Q and Q.lastList or {}) do
     if type(q) == "table" and q.id then
       logIds[q.id] = q
-      if areaIds[q.id] or M.Find(q.zone) == d or M.Find(q.header) == d then
+      -- (JOURNAL 4.0.1) Dungeon.QuestDungeon, plus la recherche souple sur l'en-tête (« Les Paluns » ≠ un donjon)
+      if areaIds[q.id] or M.QuestDungeon(q.id) == d then
         local map = objectiveBosses(q.id, d)
         local e = { id = q.id, index = q.index, title = q.title or ("#" .. q.id), done = q.complete, obj = {}, missing = {} }
         for _, o in ipairs(q.obj or {}) do
@@ -644,7 +668,8 @@ function M.QuestsNow(d, members)
   local pl, done = level(), completed()
   local list = {}
   for id in pairs(areaIds) do
-    if not logIds[id] and not isDone(id, done) then
+    -- (JOURNAL 4.0.1) seulement les quêtes de TA faction / race / classe (avant : celles de l'Alliance aussi)
+    if not logIds[id] and not isDone(id, done) and M.QuestForMe(id, db) then
       local rl = tonumber(db.quest(id, "requiredLevel")) or 0
       local ql = tonumber(db.quest(id, "questLevel")) or rl
       if rl <= pl + 2 and ql <= (d.max or 60) + 5 then
@@ -683,6 +708,295 @@ function M:ShareQuests(only)
   step()
   return #list
 end
+
+---------------------------------------------------------------------------------------------------
+-- (JOURNAL 4.0.1) donjons déjà faits, sur des FAITS seulement :
+--  1. l'historique de TreeAI : chaque boss tué (ENCOUNTER_END réussi / BOSS_KILL) gardé par perso (char.kills), même
+--     module Donjon coupé (un boss tué = une ligne de SavedVariables) ; « fait » = le dernier boss (hors optionnels)
+--     ou tous les boss obligatoires ; les runs archivés avant 4.0.1 comptent s'ils ont tous les boss ;
+--  2. les quêtes du donjon que le JEU dit finies (C_QuestLog.IsQuestFlaggedCompleted sur Data/Dungeons.lua `quests`,
+--     vrai aussi pour les runs faits avant TreeAI) : « Quêtes faites x/y » ; toutes faites = rien à y gagner ;
+--  3. le verrou d'instance du jeu (GetNumSavedInstances / GetSavedInstanceInfo, fonctions C du client Forever que son
+--     RaidFrame appelle ; RequestRaidInfo au plus une fois / 2 min, hors combat) : tous les boss du verrou tués.
+-- Contrats (README) : Dungeon.IsDone(id) → fait ?, infos ; Dungeon.QuestDungeon(questID) → donjon | nil ;
+-- Dungeon.DoneInfo(d) ; Dungeon.QuestIDs(d) (quêtes du donjon pour TON perso : faction, race, classe).
+-- Lecture seule, rien de protégé ; caches de 30 s vidés sur les évènements qui changent un fait.
+---------------------------------------------------------------------------------------------------
+local RACE_ID = { Human = 1, Orc = 2, Dwarf = 3, NightElf = 4, Scourge = 5, Tauren = 6, Gnome = 7, Troll = 8 }
+local HORDE_BITS, ALLI_BITS = { 2, 5, 6, 8, 34 }, { 1, 3, 4, 7, 33 }
+local function hasBit(mask, b)
+  mask = tonumber(mask) or 0
+  if mask <= 0 or not b then return true end
+  return floor(mask / 2 ^ (b - 1)) % 2 == 1
+end
+local function anyBit(mask, bits)
+  for _, b in ipairs(bits) do if floor((tonumber(mask) or 0) / 2 ^ (b - 1)) % 2 == 1 then return true end end
+  return false
+end
+local me     -- { faction, race, class } du perso (fixes ; gardés dès que la faction est connue)
+local function whoAmI()
+  if me then return me end
+  local fac = sv(try(G.UnitFactionGroup, "player"))
+  local _, rfile, rid = try(G.UnitRace, "player")
+  local _, _, cid = try(G.UnitClass, "player")
+  local w = { faction = (fac == "Horde" or fac == "Alliance") and fac or nil,
+    race = tonumber(sv(rid)) or RACE_ID[sv(rfile) or ""], class = tonumber(sv(cid)) }
+  if w.faction then me = w end
+  return w
+end
+M.WhoAmI = whoAmI
+
+local qidsCache = {}
+--- Quêtes du donjon que TON perso peut faire (faction, race, classe), triées ; .set = { [id] = true }
+function M.QuestIDs(d)
+  d = M.Find(d)
+  if not d then return { set = {} } end
+  local c = qidsCache[d.key]
+  if c then return c end
+  local src = (M.Data().quests or {})[d.key]
+  local out, w = { set = {} }, whoAmI()
+  if type(src) == "table" then
+    local mine = (w.faction == "Horde" and "h") or (w.faction == "Alliance" and "a") or nil
+    local function add(id)
+      local cm = src.c and src.c[id]
+      if cm and w.class and not hasBit(cm, w.class) then return end
+      if not out.set[id] then out[#out + 1] = id; out.set[id] = true end
+    end
+    for _, id in ipairs(src.n or {}) do add(id) end
+    if mine then for _, id in ipairs(src[mine] or {}) do add(id) end end
+    for id, mask in pairs(src.r or {}) do
+      local ok
+      if w.race then ok = hasBit(mask, w.race)
+      else ok = (mine == "h" and anyBit(mask, HORDE_BITS)) or (mine == "a" and anyBit(mask, ALLI_BITS)) end
+      if ok then add(id) end
+    end
+    tsort(out)
+  end
+  if w.faction then qidsCache[d.key] = out end
+  return out
+end
+
+local qOwner   -- [questID] = donjon (toutes factions confondues), depuis Data/Dungeons.lua
+local function staticOwner(id)
+  if not qOwner then
+    qOwner = {}
+    for key, src in pairs(M.Data().quests or {}) do
+      local d = M.Find(key)
+      if d and type(src) == "table" then
+        for _, k in ipairs({ "h", "a", "n" }) do for _, qid in ipairs(src[k] or {}) do qOwner[qid] = d end end
+        for qid in pairs(src.r or {}) do qOwner[qid] = d end
+      end
+    end
+  end
+  return qOwner[id]
+end
+local ixOwner, ixOwnerOf   -- index QuestieDB inversé (zoneOrSort → donjon), refait si l'index change
+--- Donjon d'une quête (id) : quêtes du donjon (Data/Dungeons.lua), puis index QuestieDB (zone de la quête), puis
+--- l'en-tête de zone du journal s'il est EXACTEMENT le nom du donjon ; nil sinon.
+function M.QuestDungeon(questID)
+  questID = tonumber(questID)
+  if not questID then return nil end
+  local d = staticOwner(questID)
+  if d then return d end
+  local ix = M.db and M.db.qidx
+  if type(ix) == "table" and ix.done and type(ix.areas) == "table" then
+    if ixOwnerOf ~= ix then
+      ixOwner, ixOwnerOf = {}, ix
+      local I = M.Index()
+      for a, ids in pairs(ix.areas) do
+        local dd = I.byArea[a]
+        if not dd then
+          for key, list in pairs(M.Data().qsort or {}) do
+            for _, z in ipairs(list) do if z == a then dd = M.Find(key) end end
+          end
+        end
+        if dd then for _, qid in ipairs(ids) do ixOwner[qid] = dd end end
+      end
+    end
+    d = ixOwner[questID]
+    if d then return d end
+  end
+  local Q = mod("Quests")
+  for _, q in ipairs(Q and Q.lastList or {}) do
+    if type(q) == "table" and q.id == questID then return M.FindExact(q.zone) or M.FindExact(q.header) end
+  end
+  return nil
+end
+
+--- Quête faisable par TON perso ? (liste du donjon si elle y est, sinon races / classes de QuestieDB)
+function M.QuestForMe(id, db)
+  local d = staticOwner(id)
+  if d and (M.Data().quests or {})[d.key] then return M.QuestIDs(d).set[id] and true or false end
+  if db then
+    local w = whoAmI()
+    local rm = tonumber(db.quest(id, "requiredRaces"))
+    if rm and rm > 0 and w.race and not hasBit(rm, w.race) then return false end
+    local cm = tonumber(db.quest(id, "requiredClasses"))
+    if cm and cm > 0 and w.class and not hasBit(cm, w.class) then return false end
+  end
+  return true
+end
+
+-- quête finie selon le jeu (cache 30 s ; QUEST_TURNED_IN la marque tout de suite)
+local flagCache, flagAt = {}, -1e9
+local function flagged(id)
+  local t = now()
+  if t - flagAt > 30 then flagCache, flagAt = {}, t end
+  local v = flagCache[id]
+  if v == nil then
+    local CQ = G.C_QuestLog
+    local f = (CQ and CQ.IsQuestFlaggedCompleted) or rawget(G, "IsQuestFlaggedCompleted")
+    v = (type(f) == "function" and sv(try(f, id))) and true or false
+    flagCache[id] = v
+  end
+  return v
+end
+
+-- verrous d'instance du jeu (lecture seule ; mis en cache 30 s, vidés sur UPDATE_INSTANCE_INFO)
+local locks, locksAt = nil, -1e9
+function M.Locks()
+  if locks and now() - locksAt < 30 then return locks end
+  locks, locksAt = {}, now()
+  local n = tonumber(sv(try(rawget(G, "GetNumSavedInstances")))) or 0
+  local I = M.Index()
+  for i = 1, min(n, 40) do
+    local name, _, reset, _, locked, _, _, _, _, _, total, done, _, mapID = try(rawget(G, "GetSavedInstanceInfo"), i)
+    name, mapID = sv(name), tonumber(sv(mapID))
+    local d = (mapID and I.byMap[mapID]) or M.FindExact(name)
+    if d and sv(locked) then
+      locks[d.key] = { reset = tonumber(sv(reset)) or 0, total = tonumber(sv(total)) or 0, done = tonumber(sv(done)) or 0 }
+    end
+  end
+  return locks
+end
+
+local doneCache = {}
+--- oublie les caches (faits relus au prochain appel) ; aussi le perso (faction / race / classe) et ses quêtes
+function M.ForgetDone() doneCache, flagCache, flagAt, locks, me, qidsCache = {}, {}, -1e9, nil, nil, {} end
+
+--- Un boss tué (rencontre réussie) : gardé par perso, même module coupé.
+function M.RecordKill(d, b, at)
+  if not (d and b and tonumber(b.index) and b.index > 0 and M.char) then return end
+  local k = M.char.kills
+  if type(k) ~= "table" then k = {}; M.char.kills = k end
+  local e = k[d.key]
+  if type(e) ~= "table" then e = {}; k[d.key] = e end
+  e[b.index] = tonumber(at) or clock()
+  doneCache[d.key] = nil
+end
+
+local MONTHS = { "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc." }
+--- « 3 nov. », « 1er déc. », « 12 mars 2025 » (autre année) ; nil sans date
+function M.DayText(ts)
+  ts = tonumber(ts)
+  if not ts or ts <= 0 then return nil end
+  local dt = try(G.date, "*t", floor(ts))
+  if type(dt) ~= "table" or not dt.day then return nil end
+  local cur = try(G.date, "*t", clock())
+  local s = (dt.day == 1 and "1er" or tostring(dt.day)) .. " " .. (MONTHS[dt.month] or "")
+  if type(cur) == "table" and cur.year and dt.year and cur.year ~= dt.year then s = s .. " " .. dt.year end
+  return s
+end
+
+local function doneLabel(i)
+  if i.done then
+    if i.src == "run" then
+      local day = M.DayText(i.at)
+      return day and ("Fait le " .. day) or "Fait"
+    elseif i.src == "lock" then return "Fait (verrou en cours)"
+    else return "Quêtes toutes faites" end
+  end
+  if (i.kills or 0) > 0 and (i.total or 0) > 0 then return fmt("Fait en partie : %d/%d boss", i.kills, i.total) end
+  if i.lock and i.lock.done > 0 and i.lock.total > 0 then return fmt("Verrou : %d/%d boss", i.lock.done, i.lock.total) end
+  return nil
+end
+
+--- Ce qu'on SAIT de ce donjon pour ton perso : { done, src = "run"|"lock"|"quests", at, kills, total, lock,
+--- qDone, qTotal, qInLog, label }
+function M.DoneInfo(d)
+  d = M.Find(d)
+  if not d then return nil end
+  local c = doneCache[d.key]
+  if c and now() - c.t < 30 then return c end
+  local info = { key = d.key, t = now(), done = false }
+  -- 1. historique TreeAI (boss obligatoires ; le dernier d'entre eux = la fin du donjon)
+  local final, total = nil, 0
+  for i, b in ipairs(d.bosses or {}) do if not b.opt then total = total + 1; final = i end end
+  local kills = M.char and type(M.char.kills) == "table" and M.char.kills[d.key] or nil
+  local nk, lastAt = 0, nil
+  if type(kills) == "table" then
+    for i, at in pairs(kills) do
+      local b = d.bosses and d.bosses[i]
+      if b and not b.opt then nk = nk + 1 end
+      at = tonumber(at)
+      if at and (not lastAt or at > lastAt) then lastAt = at end
+    end
+  end
+  info.kills, info.total = nk, total
+  if total > 0 and ((final and kills and kills[final]) or nk >= total) then
+    info.done, info.src = true, "run"
+    info.at = (final and kills and tonumber(kills[final])) or lastAt
+  end
+  for _, r in ipairs(M.char and M.char.runs or {}) do   -- runs archivés (avant 4.0.1 : nombre de boss seulement)
+    if type(r) == "table" and r.key == d.key and total > 0 and (tonumber(r.kills) or 0) >= total then
+      info.done, info.src = true, "run"
+      info.at = max(tonumber(info.at) or 0, tonumber(r.start) or 0)
+    end
+  end
+  -- 2. verrou d'instance du jeu
+  local lk = M.Locks()[d.key]
+  if lk then
+    info.lock = lk
+    if not info.done and lk.total > 0 and lk.done >= lk.total then info.done, info.src = true, "lock" end
+  end
+  -- 3. quêtes du donjon finies selon le jeu
+  local ids = M.QuestIDs(d)
+  local logIds = {}
+  local Q = mod("Quests")
+  for _, q in ipairs(Q and Q.lastList or {}) do if type(q) == "table" and q.id then logIds[q.id] = true end end
+  local qd, inLog = 0, 0
+  for _, id in ipairs(ids) do
+    if flagged(id) then qd = qd + 1 elseif logIds[id] then inLog = inLog + 1 end
+  end
+  info.qDone, info.qTotal, info.qInLog = qd, #ids, inLog
+  if not info.done and #ids > 0 and qd >= #ids then info.done, info.src = true, "quests" end
+  info.label = doneLabel(info)
+  doneCache[d.key] = info
+  return info
+end
+
+--- Donjon déjà fait ? (clé, nom, id de carte ou table) → fait, infos (DoneInfo)
+function M.IsDone(id)
+  local d = M.Find(id)
+  if not d then return false, nil end
+  local i = M.DoneInfo(d)
+  return (i and i.done) and true or false, i
+end
+
+-- (JOURNAL) toujours écouté, même module Donjon coupé : un boss tué, une quête rendue, les verrous du jeu
+local REC = {}
+local function recKill(encID, name)
+  if M._active then return end              -- module allumé : EndEncounter fait le suivi complet (+ RecordKill)
+  local d, b = M.FindBoss(encID, name)
+  if d and b then M.RecordKill(d, b, clock()) end
+end
+local reqAt = -1e9
+T:RegisterEvent("BOSS_KILL", REC, function(_, _, encID, name) recKill(encID, name) end)
+T:RegisterEvent("ENCOUNTER_END", REC, function(_, _, encID, name, _, _, ok)
+  if tonumber(sv(ok)) == 1 then recKill(encID, name) end
+end)
+T:RegisterEvent("QUEST_TURNED_IN", REC, function(_, _, qid)
+  qid = tonumber(sv(qid))
+  if qid then flagCache[qid] = true; doneCache = {} end
+end)
+T:RegisterEvent("UPDATE_INSTANCE_INFO", REC, function() locks = nil; doneCache = {} end)
+T:RegisterEvent("PLAYER_ENTERING_WORLD", REC, function()
+  doneCache = {}
+  if inCombat() or now() - reqAt < 120 then return end
+  reqAt = now()
+  local f = rawget(G, "RequestRaidInfo")   -- le jeu renvoie UPDATE_INSTANCE_INFO (verrous à jour)
+  if type(f) == "function" then try(f) end
+end)
 
 ---------------------------------------------------------------------------------------------------
 -- butin : pour qui (classe / armure / arme / niveau), gain (Boost : toi ; Team : potes inspectés), Besoin / Cupidité
@@ -882,7 +1196,7 @@ local function completeSet(d)
   local s = {}
   local Q = mod("Quests")
   for _, q in ipairs(Q and Q.lastList or {}) do
-    if type(q) == "table" and q.id and M.Find(q.zone) == d then
+    if type(q) == "table" and q.id and M.QuestDungeon(q.id) == d then
       local CQ = G.C_QuestLog
       local done = q.complete
       if CQ and CQ.IsComplete and q.id < 100000 then done = sv(try(CQ.IsComplete, q.id)) or done end
@@ -998,6 +1312,7 @@ function M:EndEncounter(success, d, b)
       if not r.kills[k] then r.kills[k] = true; r.nk = (r.nk or 0) + 1 end
       r.last = clock()
     end
+    if d then M.RecordKill(d, b, clock()) end   -- (JOURNAL) historique des boss tués (donjon fait ?)
     lastKill = { b = b, t = now() }
     local nxt = d and M.NextBoss(d)
     self:Suggest("kill", "Boss vaincu : " .. b.n .. (nxt and (" — prochain : " .. nxt.n) or (d and " — tous les boss sont tombés" or "")),

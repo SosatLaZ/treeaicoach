@@ -93,6 +93,10 @@ function M.Reset()
   M.secretBooleans = {}            -- secret booleans handed to addon code { fn, where } (a boolean test on one errors)
   M.secretBoolSeen = nil           -- « fn@where » already in M.secretBooleans
   M.questHeadersSeeded = nil
+  -- (JOURNAL) quest log selection / abandon target (C_QuestLog: quest ids; Era: log indexes), abandoned ids,
+  -- saved instance locks { {name=, mapID=, reset=, locked=, total=, done=, difficultyName=} }
+  M.questSel, M.selQuest, M.abandonTarget, M.abandonIdx, M.abandoned = nil, 0, 0, nil, {}
+  M.savedInstances = {}
   M.SeedDefaults()
 end
 
@@ -622,6 +626,22 @@ local function qAt(id)
   for i, q in ipairs(M.quests) do if not q.header and (q.id or 1000 + i) == id then return q, i end end
   return nil
 end
+-- (JOURNAL) the server side of an abandon: the quest leaves the log (QUEST_REMOVED then QUEST_LOG_UPDATE, a moment
+-- later, as the server answers); quest ids stay stable (real ids do not follow the log index); M.abandoned keeps them
+local function abandonQuest(id)
+  for j, e in ipairs(M.quests) do if not e.header then e.id = e.id or (1000 + j) end end
+  local q, i = qAt(id)
+  if not q then return false end
+  table.remove(M.quests, i)
+  M.abandoned[#M.abandoned + 1] = q.id
+  local t = { at = M.now + 0.2, fn = function()
+    M.FireEvent("QUEST_REMOVED", q.id, false)
+    M.FireEvent("QUEST_LOG_UPDATE")
+  end }
+  M.timers[#M.timers + 1] = t
+  return true
+end
+M.AbandonServer = abandonQuest
 
 function M.Install(flavor)
   M.flavor = flavor or "modern"
@@ -1308,6 +1328,31 @@ function M.Install(flavor)
   end
   G.SelectQuestLogEntry = function(i) M.questSel = i end
   G.GetQuestLogSelection = function() return M.questSel or 0 end
+  -- (JOURNAL) Era abandon: SetAbandonQuest() takes the SELECTED log entry, GetAbandonQuestName() its title,
+  -- AbandonQuest() abandons it (absent on Forever: the forever layer removes these globals)
+  G.SetAbandonQuest = function() M.abandonIdx = M.questSel end
+  G.GetAbandonQuestName = function()
+    local q = M.quests[M.abandonIdx or 0]
+    return (q and not q.header and q.title) or ""
+  end
+  G.AbandonQuest = function()
+    local i = M.abandonIdx
+    M.abandonIdx = nil
+    local q = i and M.quests[i]
+    if q and not q.header then abandonQuest(qid(i)) end
+  end
+  -- (JOURNAL) instance locks (C functions of every client, called by Blizzard's RaidFrame): RequestRaidInfo asks the
+  -- server, UPDATE_INSTANCE_INFO comes back; GetSavedInstanceInfo = the Mainline 14 returns (mapID last)
+  G.RequestRaidInfo = function()
+    M.timers[#M.timers + 1] = { at = M.now + 0.3, fn = function() M.FireEvent("UPDATE_INSTANCE_INFO") end }
+  end
+  G.GetNumSavedInstances = function() return #M.savedInstances end
+  G.GetSavedInstanceInfo = function(i)
+    local e = M.savedInstances[i]
+    if not e then return nil end
+    return e.name, 1000 + i, e.reset or 86400, e.difficulty or 1, e.locked ~= false, false, 0, e.raid or false,
+      e.maxPlayers or 5, e.difficultyName or "Normal", e.total or 0, e.done or 0, false, e.mapID
+  end
   G.IsQuestComplete = function(id) local q = qAt(id) return q and q.complete or false end
   G.GetQuestLogIndexByID = function(id) local _, i = qAt(id) return i or 0 end
   G.GetQuestsCompleted = function() return {} end
@@ -1518,6 +1563,27 @@ function M.InstallTaint(G, modern)
     end
   end
   wrapFn(G, "SetRaidTarget", "SetRaidTarget()", true)
+  -- (JOURNAL) the quest log selection and the abandon: only inside a click (the 3.8 rule: Blizzard's quest log is
+  -- never touched from non-click code), never in combat (TreeAI's rule), one abandon per hardware event
+  wrapFn(G, "SelectQuestLogEntry", "SelectQuestLogEntry()", true)
+  wrapFn(G, "SetAbandonQuest", "SetAbandonQuest()", true)
+  wrapFn(G, "AbandonQuest", "AbandonQuest()", true)
+  wrapFn(G.C_QuestLog, "SetSelectedQuest", "C_QuestLog.SetSelectedQuest()", true)
+  wrapFn(G.C_QuestLog, "SetAbandonQuest", "C_QuestLog.SetAbandonQuest()", true)
+  wrapFn(G.C_QuestLog, "AbandonQuest", "C_QuestLog.AbandonQuest()", true)
+  for _, ref in ipairs({ { G, "AbandonQuest" }, { G.C_QuestLog, "AbandonQuest" } }) do
+    local tbl, fname = ref[1], ref[2]
+    local f = type(tbl) == "table" and rawget(tbl, fname)
+    if type(f) == "function" then
+      tbl[fname] = function(...)
+        if M.hardware then
+          M.hwCalls = M.hwCalls + 1
+          if M.hwCalls > 1 then M.Violation("automation", fname .. ": more than one abandon in one click") return nil end
+        end
+        return f(...)
+      end
+    end
+  end
   wrapFn(G, "SetCVar", "SetCVar()", false)
   wrapFn(G, "InterfaceOptionsFrame_OpenToCategory", "InterfaceOptionsFrame_OpenToCategory()", false)
   wrapFn(G.Settings, "OpenToCategory", "Settings.OpenToCategory()", false)
@@ -2475,6 +2541,21 @@ function M.ApplyForever(G)
   stub(QLx, "GetDistanceSqToQuest", function() return nil end)
   stub(QLx, "IsPushableQuest", function(id) return qAt(id) ~= nil end)
   stub(QLx, "GetMaxNumQuestsCanAccept", function() return 40 end)   -- QuestLogConstsMainlineCamelot: 40 (not 20)
+  -- (JOURNAL) quest log selection + abandon (QuestMapQuestOptions_AbandonQuest: GetSelectedQuest, SetSelectedQuest,
+  -- SetAbandonQuest = the selected quest becomes the abandon target, GetAbandonQuest, AbandonQuest = abandons THE
+  -- TARGET, then cleared); quest ids, no restriction in the documentation
+  stub(QLx, "GetSelectedQuest", function() return M.selQuest or 0 end)
+  stub(QLx, "SetSelectedQuest", function(id) M.selQuest = tonumber(id) or 0 end)
+  stub(QLx, "SetAbandonQuest", function() M.abandonTarget = (qAt(M.selQuest) and M.selQuest) or 0 end)
+  stub(QLx, "GetAbandonQuest", function() return M.abandonTarget or 0 end)
+  stub(QLx, "GetAbandonQuestItems", function() return {} end)
+  stub(QLx, "CanAbandonQuest", function(id) local q = qAt(id) return (q ~= nil and not q.noAbandon) and true or false end)
+  stub(QLx, "AbandonQuest", function()
+    local id = M.abandonTarget or 0
+    M.abandonTarget = 0
+    if id ~= 0 then abandonQuest(id) end
+  end)
+  stub(QLx, "IsOnQuest", function(id) return qAt(id) ~= nil end)
   stub(QLx, "AddQuestWatch", function() return true end)
   stub(QLx, "RemoveQuestWatch", function() return true end)
   local CM = G.C_Map
