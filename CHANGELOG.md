@@ -3,6 +3,13 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.5 · 8 novembre 2026
+
+- **WoW : beaucoup moins de lag** : l'addon fait ~2,4× moins de calculs avec tout allumé (≈ 5× en profil
+  « essentiel », au choix dans Plus → Modules). Le panneau ne se redessine que si quelque chose change, les
+  modules éteints ne tournent plus du tout, les modules de groupe / HV / donjon dorment quand ils ne servent pas.
+- Tout reste allumé par défaut. `/tai perf` montre ce qui coûte le plus.
+
 ## 3.9.4 · 8 novembre 2026
 
 - **WoW : macros réparées** : la création ne se croyait plus en échec (et ne fait plus de doublons) ; si le jeu

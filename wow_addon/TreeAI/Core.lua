@@ -1109,6 +1109,9 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
   Radar = { lite = false, desc = "Radar rond des objectifs" },
   SafePath = { lite = false, desc = "Chemin sûr : évite les monstres" },
+  Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },
+  Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
+  MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Binds = { lite = false, desc = "Raccourcis clavier conseillés" },
   Leveling = { lite = false, desc = "Montée de niveau : zones, rythme" },
   Inventory = { lite = false, desc = "Inventaire : tri, objets inutiles" },
@@ -1126,7 +1129,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
 
 function TreeAI:ModuleProfile()
   local db = self.db
-  return (type(db) == "table" and db.moduleProfile == "tout") and "tout" or "essentiel"
+  return (type(db) == "table" and db.moduleProfile == "essentiel") and "essentiel" or "tout"   -- (3.9.5) défaut : tout
 end
 --- profil léger actif ? (les modules allumés y font le minimum : pas de scans en fond)
 function TreeAI:Lite() return self:ModuleProfile() == "essentiel" end

@@ -1,25 +1,25 @@
 {
- "version": "3.9.4",
+ "version": "3.9.5",
  "exe": "TreeAICoach-app.exe",
- "sha256": "a85746af1eba5c38036d56c10f4e132a371d852c69bd9f316ddaff86f41f5c00",
+ "sha256": "707680c49624d29837cf3e00a290e9506d56cc27dfb9bef0bd01e6954c73714f",
  "chunks": [
   {
-   "name": "3.9.4/part-01.zip",
+   "name": "3.9.5/part-01.zip",
    "size": 88089586,
-   "sha256": "0d4f2de8fc2be4fef42ca1c310769570e9f08be9a43baf4e0bbf7340b90c3f7f",
+   "sha256": "e344a7b6fa0a9fe6d09edfdce94317bd8a2bf33ae4ac2e52cd3cc8dfb3a6f20c",
    "files": 130
   },
   {
-   "name": "3.9.4/part-02.zip",
-   "size": 13133530,
-   "sha256": "e89b51b20190a5d41f7299ee224b2e818517291ce11327c11b4c29fba781e93a",
+   "name": "3.9.5/part-02.zip",
+   "size": 13142859,
+   "sha256": "56f562db3a17dd4b6039477339c7cb7d401097cbc5d9e3890f4e1405212c8cdc",
    "files": 647
   }
  ],
- "total_size": 101223116,
+ "total_size": 101232445,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : macros r\u00e9par\u00e9es (+ diagnostic), qu\u00eates en mots simples, clic droit = masquer pour de bon."
+ "notes": "WoW : beaucoup moins de lag, tout reste allum\u00e9."
 }
