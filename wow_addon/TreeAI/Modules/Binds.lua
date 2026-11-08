@@ -3,7 +3,8 @@
 -- raccourcis (GetBindingKey ACTIONBUTTON / MULTIACTIONBAR1..7 ; Bartender4 / ElvUI / Dominos détectés et LUS
 -- seulement : jamais modifiés). Liste : cases vides qui ont déjà une touche, touches confortables libres ou
 -- peu utiles, conflits (doublons, sort important sans touche, sort sur une barre sans touche, sort absent),
--- et un plan de placement des macros TAI + sorts clés par priorité.
+-- et un plan de placement des macros TAI + sorts clés par priorité. (CLEAN 4.0) Aussi les sorts que tu viens
+-- d'apprendre et qui ne sont sur aucune barre (repris de l'ancien module Confort) : « Mets X sur la touche 7 ».
 -- Actions UNIQUEMENT sur clic / commande du joueur (TreeAI:UserAction), hors combat, une par clic :
 --   poser une macro / un sort dans une case vide (PickupMacro / PickupSpell + PlaceAction) ;
 --   lier une touche (SetBinding + SaveBindings) après une ligne de confirmation.
@@ -18,7 +19,7 @@ local tinsert, tconcat, tsort = table.insert, table.concat, table.sort
 local M = T:RegisterModule("Binds", {
   title = "Touches",
   defaults = { enabled = true, suggest = true, allowBind = true, bindBlocked = false, placeBlocked = false },
-  charDefaults = {},
+  charDefaults = { spells = false, newSpells = {} },
   options = {
     { key = "suggest", type = "toggle", label = "Signaler les sorts importants sans touche", section = "Touches" },
     { key = "allowBind", type = "toggle", label = "Proposer de lier une touche (sur clic, avec confirmation)" },
@@ -402,6 +403,60 @@ local function keyFor(st, name, kind)
   return k
 end
 
+---------------------------------------------------------------------------------------------------
+-- Nouveaux sorts appris (grimoire relu à SPELLS_CHANGED) : gardés jusqu'à ce qu'ils soient sur une barre (3 jours max)
+---------------------------------------------------------------------------------------------------
+--- noms des sorts actifs du grimoire (rangs confondus) : C_SpellBook (Forever / moderne) ou GetSpellBookItemName
+function M.SpellbookNames()
+  local names, n = {}, 0
+  local SB = G.C_SpellBook
+  if SB and SB.GetNumSpellBookSkillLines and SB.GetSpellBookSkillLineInfo and SB.GetSpellBookItemInfo then
+    local bank = (G.Enum and G.Enum.SpellBookSpellBank and G.Enum.SpellBookSpellBank.Player) or 0
+    for i = 1, (tonumber((try(SB.GetNumSpellBookSkillLines))) or 0) do
+      local info = try(SB.GetSpellBookSkillLineInfo, i)
+      if type(info) == "table" then
+        local off, num = info.itemIndexOffset or 0, info.numSpellBookItems or 0
+        for j = off + 1, off + num do
+          local it = try(SB.GetSpellBookItemInfo, j, bank)
+          if type(it) == "table" and it.name and not it.isPassive and not it.isOffSpec and not names[it.name] then
+            names[it.name] = it.spellID or true
+            n = n + 1
+          end
+        end
+      end
+    end
+    if n > 0 then return names, n end
+  end
+  if not G.GetNumSpellTabs or not G.GetSpellBookItemName then return names, n end
+  local bt = G.BOOKTYPE_SPELL or "spell"
+  local last = 0
+  for tab = 1, (tonumber((try(G.GetNumSpellTabs))) or 0) do
+    local _, _, off, num = try(G.GetSpellTabInfo, tab)
+    if off and num then last = math.max(last, off + num) end
+  end
+  for i = 1, math.min(last, 400) do
+    local name = try(G.GetSpellBookItemName, i, bt)
+    if name and not try(G.IsPassiveSpell, i, bt) and not names[name] then names[name] = true; n = n + 1 end
+  end
+  return names, n
+end
+function M:CheckNewSpells()
+  if not self.char then return end
+  local names, n = M.SpellbookNames()
+  if n == 0 then return end
+  local known = self.char.spells
+  self.char.newSpells = type(self.char.newSpells) == "table" and self.char.newSpells or {}
+  local fresh = self.char.newSpells
+  if type(known) == "table" then
+    for name, id in pairs(names) do
+      if not known[name] then fresh[name] = { t = try(G.time) or 0, id = type(id) == "number" and id or nil } end
+    end
+  end
+  local saved, cnt = {}, 0
+  for k, v in pairs(names) do cnt = cnt + 1 if cnt <= 500 then saved[k] = v end end
+  self.char.spells = saved   -- première fois : on mémorise sans rien annoncer
+end
+
 function M:Analyze()
   local st = self.state or self:Scan()
   local res = { ok = {}, conflicts = {}, plan = {}, items = {}, missingMacros = 0 }
@@ -436,6 +491,19 @@ function M:Analyze()
           res.items[#res.items + 1] = { kind = "spell", name = n, id = id, prio = 200 + i, onBar = list and list[1] }
         end
       end
+    end
+  end
+  -- nouveaux sorts appris pas encore sur une barre (ni couverts par une macro TAI) ; posés = oubliés
+  local fresh = self.char and self.char.newSpells or {}
+  local tnow = try(G.time) or 0
+  for name, info in pairs(fresh) do
+    local old = type(info) == "table" and tnow - (tonumber(info.t) or tnow) > 3 * 86400
+    if st.onBars[name] or covered[name] or old then
+      fresh[name] = nil
+    else
+      res.conflicts[#res.conflicts + 1] = { prio = 1, kind = "new", name = name,
+        text = ("« %s » : nouveau sort, sur aucune barre"):format(name) }
+      res.items[#res.items + 1] = { kind = "spell", name = name, id = type(info) == "table" and info.id or nil, prio = 400, new = true }
     end
   end
   -- doublons : même sort / macro sur plusieurs touches ; même touche sur plusieurs cases
@@ -798,6 +866,7 @@ function M:Lines()
       if kind == "missing" then head = ("Pose %d sorts sur tes barres : %s"):format(#l, nameList(l, 3))
       elseif kind == "nokey" then head = ("Donne une touche à %d sorts : %s"):format(#l, nameList(l, 3))
       elseif kind == "dup" then head = ("Libère %d touches en double : %s"):format(#l, nameList(l, 3))
+      elseif kind == "new" then head = ("Pose tes %d nouveaux sorts : %s"):format(#l, nameList(l, 3))
       else head = ("Règle %d touches utilisées 2 fois"):format(#l) end
       add(head, l[1].prio, nil, tt)
     end
@@ -855,6 +924,7 @@ end
 function M:Refresh()
   if inCombat() then self._dirty = true return end
   self._dirty = false
+  pcall(self.CheckNewSpells, self)
   self:Scan()
   self:Analyze()
   self:Render()
@@ -870,7 +940,7 @@ M.Schedule = schedule
 
 function M:OnEnable()
   for _, ev in ipairs({ "ACTIONBAR_SLOT_CHANGED", "UPDATE_BINDINGS", "SPELLS_CHANGED", "UPDATE_MACROS",
-    "PLAYER_ENTERING_WORLD", "UPDATE_BONUS_ACTIONBAR", "LEARNED_SPELL_IN_TAB" }) do
+    "PLAYER_ENTERING_WORLD", "UPDATE_BONUS_ACTIONBAR", "LEARNED_SPELL_IN_TAB", "LEARNED_SPELL_IN_SKILL_LINE" }) do
     self:RegisterEvent(ev, schedule)
   end
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() if M._dirty then schedule() end end)

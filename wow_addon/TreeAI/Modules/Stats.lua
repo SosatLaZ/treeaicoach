@@ -626,10 +626,7 @@ local function itemNameOf(A, item)
 end
 local function corpseName(guid)
   if try(g("UnitGUID"), "target") == guid then return str(try(g("UnitName"), "target")) end
-  local P = T.modules and T.modules.Predict
-  local st = P and P.State and try(P.State)
-  local n = type(st) == "table" and type(st.guids) == "table" and st.guids[guid]
-  return type(n) == "string" and n or nil
+  return nil
 end
 -- item -> carte Questie des monstres qui le lâchent (module Export), sinon nil
 local function questieNpcs(item)
@@ -874,14 +871,31 @@ function M:XPPerHour(kind)
   if s < 600 then return nil end
   return x * 3600 / s, s
 end
---- XP/h sur la fenêtre glissante (≈ 1 h)
+--- XP/h sur la fenêtre glissante (≈ 1 h) -> XP/h, secondes réellement mesurées ; nil sous 10 min de mesure
 function M:RecentXPPerHour()
   local c = C()
   if not c then return nil end
   local x, s = 0, 0
   for _, w in ipairs(c.win) do x, s = x + (w.x or 0), s + (w.s or 0) end
   if s < 600 then return nil end
-  return x * 3600 / s
+  return x * 3600 / s, s
+end
+--- monstres tués / h sur la fenêtre glissante ; nil sous 10 min de mesure
+function M:RecentKillsPerHour()
+  local c = C()
+  if not c then return nil end
+  local k, s = 0, 0
+  for _, w in ipairs(c.win) do k, s = k + (w.k or 0), s + (w.s or 0) end
+  if s < 600 then return nil end
+  return k * 3600 / s, s
+end
+--- secondes de jeu mesurées par activité (tout sauf trajet) : la taille de l'échantillon des XP/h
+function M:PlayedSeconds(kind)
+  local c = C()
+  if not c then return 0 end
+  local s = 0
+  for key, a in pairs(c.act) do if (not kind and key ~= "t") or key == kind then s = s + (a.s or 0) end end
+  return s
 end
 --- vitesse de déplacement réelle (m/s, à vol d'oiseau) à pied / monté ; nil si < 1 min de mesure
 function M:TravelSpeed(isMounted)
@@ -1037,8 +1051,9 @@ function M:Snapshot()
   s.deathHigh, s.deathElite = c.death.hi, c.death.el
   local top = M:TopDeathCause()
   s.deathTop = top
+  local rx, rs = M:RecentXPPerHour()
   s.xph = { q = rnd(M:XPPerHour("q")), g = rnd(M:XPPerHour("g")), d = rnd(M:XPPerHour("d")), all = rnd(M:XPPerHour()),
-    recent = rnd(M:RecentXPPerHour()) }
+    recent = rnd(rx), recentMin = rs and floor(rs / 60) or nil, min = floor(M:PlayedSeconds() / 60) }
   s.goldH = rnd(M:GoldPerHour())
   local qt, qa, qc = M:QuestMinutes()
   s.questMin, s.questA2C, s.questC2T, s.quests = rnd(qt, 10), rnd(qa, 10), rnd(qc, 10), c.quest.n
@@ -1074,21 +1089,34 @@ local Fmt = T.Fmt or {}
 local function money(c) return Fmt.Money and Fmt.Money(c) or (floor((c or 0) / 10000) .. " po") end
 local function kxp(v) if v >= 10000 then return floor(v / 1000 + 0.5) .. "k" end return tostring(floor(v / 100 + 0.5) / 10) .. "k" end
 local function dec(v) return (tostring(floor(v * 10 + 0.5) / 10):gsub("%.", ",")) end
+local function dur(sec) return Fmt.Time and Fmt.Time(sec) or (floor((sec or 0) / 60 + 0.5) .. " min") end
+local function levelInfo()
+  local xp, mx = num(try(g("UnitXP"), "player")), num(try(g("UnitXPMax"), "player"))
+  local lv = num(try(g("UnitLevel"), "player"))
+  if not (xp and mx and lv) or mx <= 0 or lv >= 60 then return nil end
+  return { left = mx - xp, next = lv + 1 }
+end
 
---- lignes de l'onglet (pure sur un instantané) : jamais un chiffre qu'on n'a pas
-function M.Lines(s)
+--- lignes de l'onglet (pure sur un instantané) : jamais un chiffre qu'on n'a pas ; chaque taux dit sur combien
+--- de temps il est mesuré (≥ 10 min, sinon rien)
+function M.Lines(s, lvl)
   local out = {}
   local function add(t) if t and t ~= "" then out[#out + 1] = t end end
-  local sh = s.sheet or {}
-  if sh.agi or sh.str then
-    local p = {}
-    for _, kv in ipairs({ { "str", "For" }, { "agi", "Agi" }, { "sta", "End" }, { "int", "Int" }, { "spi", "Esp" } }) do
-      if sh[kv[1]] then p[#p + 1] = kv[2] .. " " .. floor(sh[kv[1]]) end
-    end
-    if sh.ilvl then p[#p + 1] = "niv. obj. " .. floor(sh.ilvl + 0.5) end
-    add("Fiche : " .. tconcat(p, " · "))
+  local x = s.xph or {}
+  -- niveau suivant à ton rythme de la dernière heure (XP/h mesurée sur au moins 10 min)
+  if x.recent and x.recent > 0 and lvl and lvl.left and lvl.left > 0 then
+    add(("Niveau %d dans ≈ %s à ton rythme (%s XP/h, mesuré sur %s)"):format(lvl.next, dur(lvl.left / x.recent * 3600),
+      kxp(x.recent), dur((x.recentMin or 10) * 60)))
   end
   local p = {}
+  if x.q then p[#p + 1] = "quêtes " .. kxp(x.q) end
+  if x.g then p[#p + 1] = "farm " .. kxp(x.g) end
+  if x.d then p[#p + 1] = "donjon " .. kxp(x.d) end
+  if #p > 0 then add(("XP/h par activité (sur %s de jeu) : %s"):format(dur((x.min or 10) * 60), tconcat(p, " · "))) end
+  if s.goldH then add("Or : " .. (s.goldH < 0 and "-" or "") .. money(math.abs(s.goldH)) .. " par heure (net, sur "
+    .. dur((s.played or 10) * 60) .. ")") end
+  local sh = s.sheet or {}   -- (4.0) la fiche For / Agi / End… est déjà celle du jeu : gardée pour l'appli, pas redite ici
+  p = {}
   local ranged = (sh.rap or 0) > (sh.ap or 0)
   if ranged and sh.rap then p[#p + 1] = "PA dist. " .. sh.rap elseif sh.ap then p[#p + 1] = "PA " .. sh.ap end
   local crit = ranged and sh.rcrit or sh.crit
@@ -1110,13 +1138,6 @@ function M.Lines(s)
   if s.deathsH then p[#p + 1] = "morts " .. dec(s.deathsH) .. "/h" end
   if s.deathTop then p[#p + 1] = "souvent : " .. tostring(s.deathTop):sub(1, 24) end
   if #p > 0 then add("Repos : " .. tconcat(p, " · ")) end
-  p = {}
-  local x = s.xph or {}
-  if x.q then p[#p + 1] = "quêtes " .. kxp(x.q) end
-  if x.g then p[#p + 1] = "farm " .. kxp(x.g) end
-  if x.d then p[#p + 1] = "donjon " .. kxp(x.d) end
-  if s.goldH then p[#p + 1] = "or/h " .. (s.goldH < 0 and "-" or "") .. money(math.abs(s.goldH)) end
-  if #p > 0 then add("XP/h : " .. tconcat(p, " · ")) end
   p = {}
   local sp = s.speed or {}
   if sp.w then p[#p + 1] = dec(sp.w) .. " m/s à pied" end
@@ -1143,14 +1164,15 @@ function M.WriteSummary()
 end
 function M.ExportNow()
   M.WriteSummary()
-  M:Print("Stats prêtes pour TreeAI : fais /reload (ou déconnecte-toi) pour que l'appli les lise.")
+  M:Suggest("export", "Fais /reload : tes stats sont prêtes pour l'appli TreeAI", 1, { ttl = 30, tab = TAB, sound = false })
 end
 
 local lastSig, lastRefresh = nil, -1e9
 function M.Refresh(force)
   if not (T.SetTabLines and M.db) then return end
   if M.db.tab == false then
-    if lastSig ~= "" then pcall(T.SetTabLines, T, TAB, {}, "Stats") lastSig = "" end
+    if lastSig ~= "" and T.tabs and T.tabs[TAB] then pcall(T.SetTabLines, T, TAB, {}, "Stats") end
+    lastSig = ""
     return
   end
   local t = now()
@@ -1158,13 +1180,21 @@ function M.Refresh(force)
   if not force and lastSig ~= nil and T.GetActiveTab and T:GetActiveTab() ~= TAB and t - lastRefresh < 300 then return end
   lastRefresh = t
   M._snap, M._snapAt = M:Snapshot(), t
-  local texts = M.Lines(M._snap)
+  local texts = M.Lines(M._snap, levelInfo())
   local sig = tconcat(texts, "\n")
   if sig == lastSig then return end
   lastSig = sig
+  -- (CLEAN) onglet caché tant qu'il n'y a rien de mesuré : il apparaît dans « Plus » avec la 1re mesure
+  if #texts == 0 then
+    if T.tabs and T.tabs[TAB] then pcall(T.SetTabLines, T, TAB, {}, "Stats") end
+    return
+  end
+  if not M.hasData then
+    M.hasData = true
+    if T.RegisterTab then T:RegisterTab(TAB, "Stats", 30) end
+  end
   local lines = {}
   for _, tx in ipairs(texts) do lines[#lines + 1] = { text = tx, prio = 1 } end
-  if #lines == 0 then lines[1] = { text = "Joue un peu : tes stats se remplissent toutes seules.", prio = 1 } end
   lines[#lines + 1] = { text = "Exporter pour TreeAI", prio = 1, icon = "Interface\\Icons\\INV_Misc_Note_01",
     onClick = function() M.ExportNow() end,
     tooltip = { "Exporter pour TreeAI", "Prépare tes stats pour l'appli TreeAI Coach (onglet Session).",
@@ -1174,7 +1204,6 @@ end
 
 -- ------------------------------------------------------------------ cycle de vie
 function M:OnEnable()
-  if T.RegisterTab and not (T.tabs and T.tabs[TAB] and not T.tabs[TAB].auto) then T:RegisterTab(TAB, "Stats", 30) end
   if T.TAB_OWNER then T.TAB_OWNER[TAB] = "Stats" end
   lastMoney = num(try(g("GetMoney")))
   lastXP, lastXPMax = num(try(g("UnitXP"), "player")), num(try(g("UnitXPMax"), "player"))
@@ -1189,7 +1218,8 @@ function M:OnEnable()
   M:RegisterEvent("PLAYER_TARGET_CHANGED", function()
     if not inCombat() then M.lastFoe = str(try(g("UnitName"), "target")) or M.lastFoe end
   end)
-  M:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN", function() M.OnXPMsg() end)
+  -- un seul lecteur du message d'XP : Detect (« X meurt, vous gagnez… ») publie chaque mort
+  M:On("DETECT", function(_, _, kind) if kind == "kill" then M.OnXPMsg() end end)
   M:RegisterEvent("PLAYER_XP_UPDATE", function() M.OnXP() end)
   M:RegisterEvent("PLAYER_MONEY", function() M.OnMoney() end)
   M:RegisterEvent("PLAYER_DEAD", function() M.OnDeath() end)
@@ -1221,7 +1251,35 @@ end
 function M:OnDisable()
   if M.ticker and M.ticker.Cancel then M.ticker:Cancel() end
   M.ticker, fight = nil, nil
-  if T.SetTabLines then pcall(T.SetTabLines, T, TAB, {}, "Stats") end
+  if T.SetTabLines and T.tabs and T.tabs[TAB] then pcall(T.SetTabLines, T, TAB, {}, "Stats") end
   lastSig = nil
 end
 function M:OnOptionChanged() lastSig = nil M.Refresh(true) end
+
+-- (CLEAN 4.0) l'ancien module « Prévisions » est retiré : ses lecteurs (Tracker, Todo…) trouvent ici les mêmes
+-- taux, MESURÉS par Stats (rien sous 10 min de jeu ou 3 mesures) ; plus aucune prévision tirée d'une table.
+T.Predict = T.Predict or {
+  DropRate = function(mob, item) local m, o = M:DropByName(mob, item) return m, o end,
+  BestSource = function(item) return M:BestSourceByName(item) end,
+  Rates = function()
+    return { killsPerHour = (M:RecentKillsPerHour()), xpPerHour = (M:RecentXPPerHour()), goldPerHour = M:GoldPerHour() }
+  end,
+}
+-- « Courses » (lues par la liste À faire) : les lignes que leurs propriétaires affichent VRAIMENT en ce moment
+-- (Inventaire : réparation, sacs, nourriture ; Chasseur : munitions ; Guichets : maître de classe) — aucun calcul ici.
+local ERRAND_OF = { ["Inventory:inv_repair"] = "repair", ["Hunter:ammo"] = "ammo", ["Inventory:inv_bags"] = "bags",
+  ["Inventory:inv_food"] = "food", ["Errands:trainer"] = "train" }
+if type(T.Predict) == "table" and getmetatable(T.Predict) == nil then
+  setmetatable(T.Predict, { __index = function(_, k)
+    if k ~= "list" then return nil end
+    local out, S = {}, T._suggestions or {}
+    for id, kind in pairs(ERRAND_OF) do
+      local e = S[id]
+      if type(e) == "table" and type(e.text) == "string" then
+        if kind == "food" and e.text:find("boisson") then kind = "water" end
+        out[#out + 1] = { id = kind, text = e.text, prio = tonumber(e.prio) or 1 }
+      end
+    end
+    return out
+  end })
+end

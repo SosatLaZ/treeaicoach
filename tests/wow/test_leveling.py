@@ -93,4 +93,4 @@ def test_lua_modules_smoke():
         r = subprocess.run(args + extra, capture_output=True, text=True, timeout=30)
         assert r.returncode == 0, r.stderr
         assert "grp_quest [1] « Sangliers » — Amie : Sanglier tué 1/8" in r.stdout
-        assert "1 gris vendu" in r.stdout
+        assert "gris vendu" not in r.stdout   # 4.0: the sale itself is asserted in the smoke; never a chat line

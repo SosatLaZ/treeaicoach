@@ -5,12 +5,14 @@
 --   soi-même → revente × 4 ≈), liste d'achat + total, « fais 5× X maintenant (orange) », prochain rang
 --   (niveau + compétence) ;
 -- * récolte (Herboristerie / Minage / Dépeçage) : nœuds par couleur, meilleures zones pour ta compétence, nœuds
---   vus (mémoire du module Économie si présente), niveau max des bêtes à dépecer ;
+--   que tu as récoltés (mémoire du module, clic = boussole), niveau max des bêtes à dépecer ; infobulles d'un nœud
+--   (« récoltable 75/65 ») et d'une bête morte (« dépeçage 140 requis ») — repris des anciens Boost / Économie ;
 -- * Cuisine / Secourisme / Pêche : astuces ; camp (Forever : objets de camp appris à 20) ;
 -- * groupe : métiers des amis (Squad, champ `pr`) → qui peut fabriquer quoi pour qui ;
 -- * Legacy (Forever) : les 6 métiers primaires de fabrication donnent 1 point à 150, 225 et 300.
 -- Données : Data/Recipes.lua (tables client, tools/wow_build_data.py). Onglet « Métiers » (créé seulement si tu as
--- un métier), `/tai metiers`. Calculs hors combat, ≤ 1×/3 s. Lua 5.1, aucune globale.
+-- un métier), `/tai metiers`. « Fais N× X maintenant » ne monte dans « Maintenant » que si ta fenêtre de métier est
+-- ouverte (sinon : onglet seulement). Calculs hors combat, ≤ 1×/3 s. Lua 5.1, aucune globale.
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
@@ -19,14 +21,14 @@ local M = T:RegisterModule("Prof", {
   title = "Métiers",
   defaults = { enabled = true, overtime = 0, target = 0, knownOnly = false, nowTip = true, gather = true,
     squad = true, camp = true, steps = 4 },
-  charDefaults = { known = {}, target = {} },
+  charDefaults = { known = {}, target = {}, nodes = {} },
   options = {
     { key = "overtime", type = "range", label = "« Heures sup. » (Legacy) : rangs pris", min = 0, max = 5, step = 1, section = "Calcul" },
     { key = "target", type = "range", label = "Compétence visée (0 = fin du rang actuel)", min = 0, max = 300, step = 5, section = "Calcul" },
     { key = "knownOnly", type = "toggle", label = "Seulement recettes connues + entraîneur (pas d'objets-recettes)", section = "Calcul" },
     { key = "steps", type = "range", label = "Étapes affichées par métier", min = 1, max = 10, step = 1, section = "Calcul" },
-    { key = "nowTip", type = "toggle", label = "« Fais N× X maintenant » dans Maintenant", section = "Affichage" },
-    { key = "gather", type = "toggle", label = "Aide à la récolte (nœuds, zones)", section = "Affichage" },
+    { key = "nowTip", type = "toggle", label = "« Fais N× X maintenant » dans Maintenant (fenêtre de métier ouverte)", section = "Affichage" },
+    { key = "gather", type = "toggle", label = "Aide à la récolte (nœuds, zones, infobulles des nœuds et des bêtes)", section = "Affichage" },
     { key = "squad", type = "toggle", label = "Métiers du groupe (fabriquer pour les amis)", section = "Affichage" },
     { key = "camp", type = "toggle", label = "Astuces de camp (Forever)", section = "Affichage" },
   },
@@ -247,6 +249,11 @@ function M.ScanProfessions()
       end
     end
   end
+  if #list == 0 and API.SkillLines then   -- Forever : C_SkillInfo (GetSkillLineInfo global retiré), Era : globales
+    for _, l in ipairs(API.SkillLines()) do
+      if l.name and not l.isHeader then add(l.name, l.rank, l.maxRank) end
+    end
+  end
   if #list == 0 then
     local n = tonumber((try(g("GetNumSkillLines")))) or 0
     for i = 1, min(n, 80) do
@@ -462,22 +469,167 @@ function M.GatherLines(pr)
       end
     end
   end
-  local Eco = mod("Economy")
-  if Eco and Eco.char and type(Eco.char.nodes) == "table" and pr.line ~= 393 then
-    local z = try(g("GetRealZoneText")) or ""
-    local c, names = 0, {}
-    for _, e in ipairs(Eco.char.nodes) do
-      if e.z == z then c = c + 1 names[e.n] = (names[e.n] or 0) + 1 end
-    end
-    if c > 0 then
-      local p = {}
-      for n, k in pairs(names) do p[#p + 1] = cut(n, 18) .. " ×" .. k end
-      tsort(p)
-      lines[#lines + 1] = { text = "Nœuds vus ici : " .. tconcat(p, ", ", 1, min(4, #p)), prio = 1,
-        tooltip = "Mémoire du module Économie (clic sur sa ligne dans « Infos » = boussole)." }
-    end
+  if pr.line ~= 393 then
+    local l = M.NodeLine()
+    if l then lines[#lines + 1] = l end
   end
   return lines
+end
+
+-- ------------------------------------------------------------------ mémoire des nœuds que TU as récoltés
+local GATHER = { "herbori", "minage", "minière", "miniere", "mining", "herb gathering" }
+local function isGather(spell)
+  local s = type(spell) == "string" and spell:lower() or ""
+  for _, k in ipairs(GATHER) do if s:find(k, 1, true) then return true end end
+  return false
+end
+local function secret(v) local f = g("issecretvalue") return type(f) == "function" and try(f, v) and true or false end
+local function myPos()
+  local C = g("C_Map")
+  if not (C and C.GetBestMapForUnit) then return nil end
+  local map = try(C.GetBestMapForUnit, "player")
+  local p = map and C.GetPlayerMapPosition and try(C.GetPlayerMapPosition, map, "player")
+  if type(p) ~= "table" then return nil end
+  local x, y
+  if p.GetXY then x, y = try(p.GetXY, p) else x, y = p.x, p.y end
+  if not x or secret(x) then return nil end
+  return map, x, y
+end
+function M.RecordNode(name)
+  if type(name) ~= "string" or name == "" or secret(name) or not M.char then return nil end
+  local map, x, y = myPos()
+  local z = try(g("GetRealZoneText")) or ""
+  M.char.nodes = type(M.char.nodes) == "table" and M.char.nodes or {}
+  local list = M.char.nodes
+  for _, e in ipairs(list) do
+    if e.n == name and e.m == map and x and e.x and math.abs(e.x - x) < 0.01 and math.abs(e.y - y) < 0.01 then
+      e.t, e.c = epoch(), (e.c or 1) + 1
+      return e
+    end
+  end
+  local e = { n = name, z = z, m = map, x = x and floor(x * 1000) / 1000, y = y and floor(y * 1000) / 1000, t = epoch(), c = 1 }
+  list[#list + 1] = e
+  while #list > 300 do table.remove(list, 1) end
+  return e
+end
+function M:UNIT_SPELLCAST_SENT(_, unit, target, _, spellID)
+  if unit ~= "player" or not opt("gather") then return end
+  local spell = API.SpellName and API.SpellName(spellID) or nil
+  if isGather(spell) then M.RecordNode(target) end
+end
+--- « Nœuds récoltés ici : … » + clic = la boussole vers le plus proche (ou nil)
+function M.NodeLine()
+  local list = M.char and M.char.nodes
+  if type(list) ~= "table" or #list == 0 then return nil end
+  local z = try(g("GetRealZoneText")) or ""
+  local map, x, y = myPos()
+  local counts, nearest, nd = {}, nil, nil
+  for _, e in ipairs(list) do
+    if e.z == z then
+      counts[e.n] = (counts[e.n] or 0) + 1
+      if x and e.x and e.m == map then
+        local d = (e.x - x) ^ 2 + (e.y - y) ^ 2
+        if not nd or d < nd then nearest, nd = e, d end
+      end
+    end
+  end
+  local parts = {}
+  for n, c in pairs(counts) do parts[#parts + 1] = cut(n, 18) .. " ×" .. c end
+  tsort(parts)
+  if #parts == 0 then return nil end
+  local l = { text = "Nœuds récoltés ici : " .. tconcat(parts, ", ", 1, min(#parts, 4)), prio = 1 }
+  if nearest then
+    l.onClick = function()
+      local C = T.Compass
+      if C and C.SetTarget then pcall(C.SetTarget, C, { mapID = nearest.m, x = nearest.x, y = nearest.y, label = nearest.n, source = "Prof" }) end
+    end
+    l.tooltip = "Clic : la boussole va au plus proche (" .. cut(nearest.n, 24) .. ")."
+  end
+  return l
+end
+
+-- ------------------------------------------------------------------ infobulles de récolte (nœud, bête morte)
+-- compétence requise par nœud (Classic, noms affichés FR / EN)
+local NODES = {
+  ["Filon de cuivre"] = 1, ["Copper Vein"] = 1, ["Filon d'étain"] = 65, ["Tin Vein"] = 65,
+  ["Filon d'argent"] = 75, ["Silver Vein"] = 75, ["Gisement de fer"] = 125, ["Iron Deposit"] = 125,
+  ["Filon d'or"] = 155, ["Gold Vein"] = 155, ["Gisement de mithril"] = 175, ["Mithril Deposit"] = 175,
+  ["Filon de vrai-argent"] = 230, ["Truesilver Deposit"] = 230, ["Petit filon de thorium"] = 245,
+  ["Small Thorium Vein"] = 245, ["Riche filon de thorium"] = 275, ["Rich Thorium Vein"] = 275,
+  ["Pacifique"] = 1, ["Peacebloom"] = 1, ["Feuillargent"] = 1, ["Silverleaf"] = 1, ["Terrestrine"] = 15,
+  ["Earthroot"] = 15, ["Mage royal"] = 50, ["Mageroyal"] = 50, ["Eglantine"] = 70, ["Églantine"] = 70,
+  ["Briarthorn"] = 70, ["Etouffante"] = 85, ["Stranglekelp"] = 85, ["Doulourante"] = 100, ["Bruiseweed"] = 100,
+  ["Aciérite sauvage"] = 115, ["Wild Steelbloom"] = 115, ["Tombeline"] = 120, ["Grave Moss"] = 120,
+  ["Sang-royal"] = 125, ["Kingsblood"] = 125, ["Vietérule"] = 150, ["Liferoot"] = 150, ["Pâlerette"] = 160,
+  ["Fadeleaf"] = 160, ["Dorépine"] = 170, ["Goldthorn"] = 170, ["Moustache de Khadgar"] = 185,
+  ["Khadgar's Whisker"] = 185, ["Hivernale"] = 195, ["Wintersbite"] = 195, ["Fleur de feu"] = 205,
+  ["Firebloom"] = 205, ["Lotus pourpre"] = 210, ["Purple Lotus"] = 210, ["Soleillette"] = 230, ["Sungrass"] = 230,
+}
+M.NODES = NODES
+--- compétence de dépeçage requise pour une bête de ce niveau (Classic)
+function E.SkinReq(lvl)
+  lvl = tonumber(lvl) or 1
+  if lvl <= 10 then return 1 elseif lvl <= 20 then return (lvl - 10) * 10 end
+  return lvl * 5
+end
+local function skillOf(line)
+  for _, pr in ipairs(M.profs or {}) do if pr.line == line then return pr.rank end end
+end
+local function pub(v) if secret(v) then return nil end return v end
+function M.DecorateUnit(tip, unit)
+  if not (M:IsEnabled() and opt("gather")) or not tip or not tip.AddLine then return end
+  unit = unit or "mouseover"
+  if not pub(try(g("UnitExists"), unit)) or not pub(try(g("UnitIsDead"), unit)) or pub(try(g("UnitIsPlayer"), unit)) then return end
+  local skin = skillOf(393)
+  if not skin then return end
+  local ctype = pub(try(g("UnitCreatureType"), unit))
+  if ctype ~= "Bête" and ctype ~= "Beast" and ctype ~= "Draconien" and ctype ~= "Dragonkin" then return end
+  local req = E.SkinReq(pub(try(g("UnitLevel"), unit)))
+  if skin >= req then tip:AddLine(("TreeAI : tu peux le dépecer (%d/%d)"):format(skin, req), 0.2, 1, 0.3)
+  else tip:AddLine(("TreeAI : dépeçage %d requis (toi %d)"):format(req, skin), 1, 0.4, 0.4) end
+end
+function M.DecorateNode(tip)
+  if not (M:IsEnabled() and opt("gather")) or not tip or T:InCombat() then return end   -- texte d'infobulle secret en combat
+  local line = g("GameTooltipTextLeft1")
+  local text = pub(line and line.GetText and line:GetText())
+  local req = text and NODES[text]
+  if not req then return end
+  local mine = text:find("[Ff]ilon") or text:find("[Gg]isement") or text:find("Vein") or text:find("Deposit")
+  local have = skillOf(mine and 186 or 182)
+  if not have then return end
+  if have >= req then tip:AddLine(("TreeAI : récoltable (%d/%d)"):format(have, req), 0.2, 1, 0.3)
+  else tip:AddLine(("TreeAI : compétence %d requise (toi %d)"):format(req, have), 1, 0.4, 0.4) end
+  if tip.Show then tip:Show() end
+end
+local hooked = false
+local function hookTooltips()
+  if hooked then return end
+  hooked = true
+  local TDP, En = g("TooltipDataProcessor"), g("Enum") and g("Enum").TooltipDataType
+  local GT = g("GameTooltip")
+  if TDP and TDP.AddTooltipPostCall and En and En.Unit then
+    TDP.AddTooltipPostCall(En.Unit, function(tip)
+      local unit = tip and tip.GetUnit and select(2, tip:GetUnit())
+      pcall(M.DecorateUnit, tip, unit)
+    end)
+  elseif GT and GT.HookScript then
+    pcall(GT.HookScript, GT, "OnTooltipSetUnit", function(self)
+      local unit = self.GetUnit and select(2, self:GetUnit())
+      pcall(M.DecorateUnit, self, unit)
+    end)
+  end
+  -- objets du monde (nœuds) : pas d'unité ni d'objet -> lecture du titre de l'infobulle
+  if GT and GT.HookScript then
+    local busy = false
+    pcall(GT.HookScript, GT, "OnShow", function(self)
+      if busy or not M:IsEnabled() then return end
+      if self.GetUnit and self:GetUnit() then return end
+      if self.GetItem and self:GetItem() then return end
+      busy = true
+      pcall(M.DecorateNode, self)
+      busy = false
+    end)
+  end
 end
 
 -- métiers des amis (Squad : st.pr = "Alchimie 150 Couture 75")
@@ -610,8 +762,10 @@ function M.Build()
           first = res.steps[1] and res.steps[1].name }
         if res.now and opt("nowTip") then
           local r = res.now.row
+          -- (CLEAN) dans « Maintenant » seulement quand ta fenêtre de métier est ouverte ; sinon l'onglet suffit
+          local open = M.TradeOpen and true or false
           local l = { text = fmt("Fais %d× %s maintenant (%s) — compos en sac", res.now.n, cut(r[9], 30),
-            colored(res.now.color, E.COLOR_FR[res.now.color])), prio = 2, pin = not nowSet }
+            colored(res.now.color, E.COLOR_FR[res.now.color])), prio = open and 2 or 1, pin = open and not nowSet }
           lines[#lines + 1] = l
           nowSet = true
         end
@@ -704,7 +858,8 @@ function M.Refresh(delay)
 end
 function M:AutoRefresh() M.Update() end
 
-function M:TRADE_SKILL_SHOW() M.Refresh(0.3) end
+function M:TRADE_SKILL_SHOW() M.TradeOpen = true M.Refresh(0.3) end
+function M:TRADE_SKILL_CLOSE() M.TradeOpen = false M.Refresh(0.3) end
 function M:TRADE_SKILL_LIST_UPDATE() if not T:InCombat() then pcall(M.ScanKnown) end M.Refresh(0.5) end
 M.TRADE_SKILL_UPDATE = M.TRADE_SKILL_LIST_UPDATE
 
@@ -736,9 +891,11 @@ end
 
 function M:OnEnable()
   for _, ev in ipairs({ "SKILL_LINES_CHANGED", "CHAT_MSG_SKILL", "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE",
-    "TRADE_SKILL_UPDATE", "BAG_UPDATE_DELAYED", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA", "BANKFRAME_OPENED" }) do
+    "TRADE_SKILL_UPDATE", "TRADE_SKILL_CLOSE", "BAG_UPDATE_DELAYED", "PLAYER_LEVEL_UP", "ZONE_CHANGED_NEW_AREA",
+    "BANKFRAME_OPENED", "UNIT_SPELLCAST_SENT" }) do
     M:RegisterEvent(ev, M[ev] or function() M.Refresh(1) end)
   end
+  hookTooltips()
   M:On("SUMMARY", function() pcall(M.WriteSummary, M) end)
   if T.RegisterSlash then
     T:RegisterSlash("metiers", slash, "metiers [cible N [métier]|debug] : montée de métier la moins chère, achats, récolte")

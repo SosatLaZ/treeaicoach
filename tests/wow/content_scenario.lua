@@ -49,7 +49,7 @@ return function(M, ctx)
   end
   for _, k in ipairs({ "mounted", "resting" }) do
     setState(k, true)
-    check(T:Suggest("Hunter:pethp", "Soigne ton familier", 2, { module = "Hunter" }) == nil, k .. " : pas de rappel familier")
+    check(T:Suggest("Hunter:petdead", "Ressuscite ton familier", 2, { module = "Hunter" }) == nil, k .. " : pas de rappel familier")
     check(T:Suggest("Classes:WARRIOR.shout", "Lance « Cri de guerre »", 1, { module = "Classes" }) == nil, k .. " : pas de rappel de buff")
     T:Suggest("Quests:test", "Rends « Quête-test » : terminée", 2, { module = "Quests" })
     check(nowHas("Rends « Quête-test »"), k .. " : les vrais conseils restent")
@@ -79,7 +79,7 @@ return function(M, ctx)
     T:ClearSuggestions()
   end
 
-  -- 3. récap de mort sans journal de combat : « Tué par X (niv N) » + un conseil, jamais « 0 dégâts »
+  -- 3. récap de mort sans journal de combat : « Mort contre X (niv N) » + un conseil tiré des faits, jamais « 0 dégâts »
   local F = T.modules.Fight
   if F and F.RecapText then
     M.target = { exists = true, name = "Ours gris-test", level = 23, hostile = true, guid = "Creature-0-0-0-0-9-1" }
@@ -88,18 +88,18 @@ return function(M, ctx)
     ctx.fire("PLAYER_DEAD")
     local d = S["Fight:death"]
     local txt = d and d.text or ""
-    check(txt:find("^Tué par Ours gris%-test %(niv 23%)") and not txt:find("dégâts") and not txt:find("%f[%d]0%f[%D]"),
+    check(txt:find("^Mort contre Ours gris%-test %(niv 23%)") and not txt:find("dégâts") and not txt:find("%f[%d]0%f[%D]"),
       "récap sans chiffres inventés : " .. txt)
-    check(nowHas("Tué par Ours gris-test"), "récap visible quand on est mort")
+    check(nowHas("Mort contre Ours gris-test"), "récap visible quand on est mort")
     local tip = d and d.tooltip or {}
     for _, l in ipairs(type(tip) == "table" and tip or {}) do
       check(not tostring(l):find("Dégâts subis") and not tostring(l):find("?", 1, true), "infobulle sans inconnu : " .. tostring(l))
     end
-    check(F.RecapText({ killer = "Loup", total = 0, hits = 0, advice = "x" }) == "Tué par Loup — x", "pur : sans niveau")
-    check(F.RecapText({ killer = "Loup", killerLvl = 12, total = 840, hits = 4, advice = "x" }) == "Tué par Loup (niv 12) — x",
+    check(F.RecapText({ killer = "Loup", advice = "x" }) == "Mort contre Loup — x", "pur : sans niveau")
+    check(F.RecapText({ killer = "Loup", killerLvl = 12, advice = "x" }) == "Mort contre Loup (niv 12) — x",
       "pur : la ligne reste courte, les chiffres vont dans l'infobulle")
-    check(not F.AdviceFor({ attackers = 1, total = 0, biggest = 0, hits = 0, maxHP = 1000 }):find("Gros coup"),
-      "conseil : pas de « gros coup » sans dégâts mesurés")
+    check(F.AdviceFor == nil and F.DeathAdvice({ startHP = 100, duration = 12 }) == nil,
+      "conseil : rien d'inventé (pas de dégâts mesurés, pas de conseil générique)")
     M.player.dead = false
     M.target = { exists = false }
     T:PlayerState(true)

@@ -1,7 +1,11 @@
--- TreeAI — module Leveling (agent F)
--- Rappel d'entraînement au passage de niveau, talents non dépensés, XP reposée, zone trop haute /
--- trop basse, « prochain bon hub de quêtes », compétences d'armes à monter, quêtes trop dures,
--- notes camping / Legacy si l'API existe. Résumé : TreeAIDB.chars[perso].summary.leveling (lu par TreeAI Coach).
+-- TreeAI — module Leveling (agent F, CLEAN 4.0) : « Progression ».
+--  • XP reposée : une INFO (onglet « Infos », jamais dans « Maintenant ») — « Ton repos double l'XP des monstres
+--    (19 % d'un niveau) » ; « repos plein » à l'auberge. Les quêtes restent le plus rapide : on ne dit pas « tue ».
+--  • Zone dangereuse pour ton niveau (monstres 3+ niveaux au-dessus d'après les niveaux de zone Classic).
+--  • Points de talent à dépenser (quand le module Talents n'en parle pas), paliers 10 et 40.
+--  • Compétence de l'arme que tu PORTES en retard (≥ 20 points sous le maximum).
+-- Laissé aux autres : maître de classe → Guichets (prix réel lu chez lui) ; « change de zone / coin conseillé » →
+-- planificateur ; quêtes trop dures → Abandon. Résumé : summary.leveling (lu par TreeAI Coach).
 -- Lua 5.1, aucune globale créée, toutes les API testées.
 local _, ns = ...
 ns = ns or {}
@@ -74,8 +78,9 @@ local function store(section)
   return c.summary[section]
 end
 
-local function later(sec, fn)
-  if C_Timer and C_Timer.After then C_Timer.After(sec, fn) else fn() end
+local function later(sec, fn)   -- répartiteur du cœur (jamais C_Timer directement)
+  local T = core()
+  if T and T.After then T:After(sec, fn) else fn() end
 end
 
 local function level() return (UnitLevel and UnitLevel("player")) or 1 end
@@ -132,14 +137,13 @@ function M.HubFor(lvl, faction)
   return nil
 end
 
--- Avis sur la zone : renvoie texte, priorité (ou nil si la zone convient / est inconnue).
+-- Avis sur la zone : seulement le DANGER (monstres bien au-dessus de toi) ; « trop facile, change de zone » est
+-- le verdict du planificateur (il sait ce qui reste à faire ici). Renvoie texte, priorité (ou nil).
 function M.ZoneAdvice(mapID, lvl)
   local z = mapID and ZONES[mapID]
   if not z then return nil end
   if lvl < z[1] - 2 then
-    return ("%s (niv %d-%d) : zone dangereuse pour ton niveau %d."):format(z[3], z[1], z[2], lvl), 3
-  elseif lvl > z[2] + 3 then
-    return ("%s (niv %d-%d) : trop facile, peu d'XP. Change de zone."):format(z[3], z[1], z[2]), 1
+    return ("Prudence dans %s : monstres niv %d-%d, toi niv %d"):format(z[3], z[1], z[2], lvl), 2
   end
   return nil
 end
@@ -194,18 +198,43 @@ end
 ns.QuestScan = M.ScanQuests
 
 -- ---------------------------------------------------------------- compétences (armes / métiers)
--- Compétences d'armes : max = 5 x niveau. Renvoie toutes les lignes et celles « en retard ».
+-- compétence d'arme de chaque type d'arme (sous-classe d'objet 2 → nom de la compétence, FR / EN)
+local WEAPON_SKILL = { [0] = { "Haches à une main", "Axes" }, [1] = { "Haches à deux mains", "Two-Handed Axes" },
+  [2] = { "Arcs", "Bows" }, [3] = { "Armes à feu", "Guns" }, [4] = { "Masses à une main", "Maces" },
+  [5] = { "Masses à deux mains", "Two-Handed Maces" }, [6] = { "Armes d'hast", "Polearms" },
+  [7] = { "Épées à une main", "Swords" }, [8] = { "Épées à deux mains", "Two-Handed Swords" }, [10] = { "Bâtons", "Staves" },
+  [13] = { "Armes de pugilat", "Fist Weapons" }, [15] = { "Dagues", "Daggers" }, [16] = { "Armes de jet", "Thrown" },
+  [18] = { "Arbalètes", "Crossbows" }, [19] = { "Baguettes", "Wands" } }
+M.WEAPON_SKILL = WEAPON_SKILL
+--- noms des compétences des armes PORTÉES (main droite, main gauche, distance) : set
+local function wornWeaponSkills()
+  local set = {}
+  local A = core() and core().API
+  for _, slot in ipairs({ 16, 17, 18 }) do
+    local id = GetInventoryItemID and GetInventoryItemID("player", slot)
+    local classID, sub
+    if id and A and A.ItemInfo then
+      local r = { pcall(A.ItemInfo, id) }
+      if r[1] then classID, sub = r[13], r[14] end
+    end
+    local names = classID == 2 and WEAPON_SKILL[sub]
+    if names then set[names[1]], set[names[2]] = true, true end
+  end
+  return set
+end
+-- Compétences d'armes : max = 5 x niveau. Renvoie toutes les lignes et celles « en retard » (armes portées seulement).
 function M.ScanSkills()
   local all, behind = {}, {}
   local A = core() and core().API   -- C_SkillInfo sur Forever (GetSkillLineInfo global retiré)
   if not (A and A.SkillLines) then return all, behind end
   local lvl = level()
+  local worn = wornWeaponSkills()
   for _, line in ipairs(A.SkillLines()) do
     local name, isHeader, rank, maxRank = line.name, line.isHeader, line.rank, line.maxRank
     if name and not isHeader and rank and maxRank and maxRank > 1 then
       local s = { name = name, rank = rank, max = maxRank }
       all[#all + 1] = s
-      if maxRank == lvl * 5 and maxRank - rank >= 20 then behind[#behind + 1] = s end
+      if worn[name] and maxRank == lvl * 5 and maxRank - rank >= 20 then behind[#behind + 1] = s end
     end
   end
   return all, behind
@@ -224,18 +253,30 @@ function M.CheckZone(announce)
   if text and announce then suggest("lvl_zone", text, prio, 600) elseif not text then clear("lvl_zone") end
 end
 
-function M.CheckRested(context)
+--- texte d'info sur le repos (pur) : pct = repos en % d'un niveau, resting = à l'auberge / en ville
+function M.RestedText(pct, resting)
+  pct = tonumber(pct) or 0
+  if resting and pct >= 148 then return "Ton repos est plein (150 % d'un niveau) : il ne monte plus ici" end
+  if pct >= 1 then return ("Ton repos double l'XP des monstres (%d %% d'un niveau)"):format(pct) end
+  return nil
+end
+local restLine
+function M.CheckRested()
   local rested = GetXPExhaustion and GetXPExhaustion() or nil
   local maxXP = UnitXPMax and UnitXPMax("player") or 0
   local resting = IsResting and IsResting() or false
-  if level() >= 60 or maxXP <= 0 then return end
-  local pct = rested and math.floor(rested * 100 / maxXP) or 0
-  if context == "login" and pct >= 10 then
-    suggest("lvl_rested", ("Tue des monstres : XP x2 grâce au repos (%d %% d'un niveau)"):format(pct), 1, 3600)
-  elseif resting and pct >= 148 then
-    suggest("lvl_rested", "Pars de l'auberge : ton repos est plein (150 %)", 1, 1800)
-  elseif context == "leave" and pct >= 25 then
-    suggest("lvl_rested", ("Tue des monstres, pas que des quêtes : %d %% d'XP reposée"):format(pct), 1, 1800)
+  local text
+  if level() < 60 and maxXP > 0 then
+    text = M.RestedText(rested and math.floor(rested * 100 / maxXP) or 0, resting)
+  end
+  if text == restLine then return end
+  restLine = text
+  -- INFO, jamais dans « Maintenant » : les quêtes restent plus rapides que tuer des monstres
+  local T = core()
+  if T and T.SetTabLines then
+    local tip = { "Le repos double l'XP des monstres tués (pas celle des quêtes) jusqu'à épuisement.",
+      "Il monte en te déconnectant à une auberge ou en ville (4 fois moins vite dehors)." }
+    pcall(T.SetTabLines, T, "info", text and { { text = text, prio = 1, tooltip = tip } } or {}, "Leveling")
   end
 end
 
@@ -255,46 +296,23 @@ function M.CheckTalents()
   if TA and TA.IsEnabled and TA:IsEnabled() and TA.db and TA.db.nowLine ~= false then clear("lvl_talents") return end
   local p = talentPoints()
   if p > 0 and not inCombat() then
-    suggest("lvl_talents", ("%d point%s de talent à dépenser (touche N)."):format(p, p > 1 and "s" or ""), 2, 900)
+    suggest("lvl_talents", p > 1 and ("Dépense tes %d points de talent (touche N)"):format(p)
+      or "Dépense ton point de talent (touche N)", 2, 900)
   elseif p == 0 then
     clear("lvl_talents")
   end
 end
 
-local function trainPending()
-  local d = store("leveling")
-  return d and d.trainPending
-end
-
-function M.CheckTraining()
-  local lvl = trainPending()
-  if not lvl or inCombat() then return end
-  local msg = (lvl % 2 == 0) and ("Va voir ton maître de classe : nouveaux sorts du niveau %d")
-    or ("Va voir ton maître de classe : rangs possibles au niveau %d")
-  -- en ville / auberge on insiste ; dehors on rappelle rarement
-  local resting = IsResting and IsResting()
-  suggest("lvl_train", msg:format(lvl), resting and 2 or 1, resting and 300 or 1800)
-end
-
 local MILESTONES = {
-  [10] = "Niveau 10 : talents débloqués ! Ouvre l'arbre (N).",
-  [40] = "Niveau 40 : double spécialisation et monture : passe en ville.",
-  [60] = "Niveau 60 ! Bravo. Pense aux donjons et aux points Legacy.",
+  [10] = "Niveau 10 : tes talents s'ouvrent, ouvre l'arbre (touche N)",
+  [40] = "Niveau 40 : va apprendre la monte et acheter ta monture en ville",
+  [60] = "Niveau 60 : bravo, niveau maximum atteint",
 }
 
 function M.OnLevelUp(newLevel)
   newLevel = tonumber(newLevel) or level()
-  local d = store("leveling")
-  if d then d.trainPending = newLevel end
-  if MILESTONES[newLevel] then suggest("lvl_milestone", MILESTONES[newLevel], 3, 60) end
-  later(2, function()
-    M.CheckTraining()
-    M.CheckZone(true)
-    local hub = M.HubFor(newLevel, factionName())
-    local map = currentMap()
-    local z = map and ZONES[map]
-    if hub and (not z or newLevel > z[2]) then suggest("lvl_hub", "Prochain coin conseillé : " .. hub .. ".", 1, 1800) end
-  end)
+  if MILESTONES[newLevel] then suggest("lvl_milestone", MILESTONES[newLevel], 2, 60) end
+  later(2, function() M.CheckZone(true) M.CheckRested() end)
 end
 
 function M.CheckSkills()
@@ -302,22 +320,9 @@ function M.CheckSkills()
   table.sort(behind, function(a, b) return (a.max - a.rank) > (b.max - b.rank) end)
   local s = behind[1]
   if s then
-    suggest("lvl_skill", ("Compétence %s en retard (%d/%d) : utilise cette arme un peu."):format(s.name, s.rank, s.max), 1, 3600)
+    suggest("lvl_skill", ("Monte ta compétence %s (%d/%d) : en retard, tu rates plus de coups"):format(s.name, s.rank, s.max), 1, 3600)
   else
     clear("lvl_skill")
-  end
-end
-
--- Quêtes trop dures (rouges : 4+ niveaux au-dessus) : conseil de groupe.
-function M.CheckQuests(quests)
-  local lvl, hard = level(), nil
-  for _, q in ipairs(quests or M.ScanQuests()) do
-    if q.level and q.level >= lvl + 4 and not q.done then
-      if not hard or q.level > hard.level then hard = q end
-    end
-  end
-  if hard and hard.title then
-    suggest("lvl_hardquest", ("Fais « %s » (niv %d, rouge) à plusieurs"):format(hard.title, hard.level), 1, 3600)
   end
 end
 
@@ -367,42 +372,24 @@ function M.SaveSummary()
 end
 
 -- ---------------------------------------------------------------- événements
-local wasResting = nil
-local questPending = false
-
 local handlers = {
-  PLAYER_ENTERING_WORLD = function(isLogin, isReload)
+  PLAYER_ENTERING_WORLD = function()
     later(4, function()
-      wasResting = IsResting and IsResting() or false
-      if isLogin or isReload or isLogin == nil then M.CheckRested("login") end
+      M.CheckRested()
       M.CheckZone(true)
       M.CheckTalents()
-      M.CheckTraining()
     end)
   end,
   PLAYER_LEVEL_UP = function(newLevel) M.OnLevelUp(newLevel) end,
-  PLAYER_UPDATE_RESTING = function()
-    local r = IsResting and IsResting() or false
-    if wasResting and not r then M.CheckRested("leave") end
-    if r then M.CheckRested("in") M.CheckTraining() end
-    wasResting = r
-  end,
+  PLAYER_UPDATE_RESTING = function() M.CheckRested() end,
+  PLAYER_XP_UPDATE = function() M.CheckRested() end,
+  UPDATE_EXHAUSTION = function() M.CheckRested() end,
   ZONE_CHANGED_NEW_AREA = function() later(1, function() M.CheckZone(true) end) end,
-  TRAINER_SHOW = function()
-    local d = store("leveling")
-    if d then d.trainPending = nil end
-    clear("lvl_train")
-  end,
   CHARACTER_POINTS_CHANGED = function() M.CheckTalents() end,
-  QUEST_LOG_UPDATE = function()
-    if questPending then return end
-    questPending = true
-    later(5, function() questPending = false if not inCombat() then M.CheckQuests() end end)
-  end,
   PLAYER_REGEN_ENABLED = function() later(3, function() M.CheckTalents() end) end,
   PLAYER_CAMPING = function()
     if not (IsResting and IsResting()) then
-      suggest("lvl_camp", "Déco hors auberge : pas d'XP reposée (sauf feu de camp Forever).", 1, 300)
+      suggest("lvl_camp", "Déconnecte-toi plutôt à une auberge : ton repos y monte 4 fois plus vite", 1, 300)
     end
   end,
   PLAYER_LOGOUT = function() pcall(M.SaveSummary) end,

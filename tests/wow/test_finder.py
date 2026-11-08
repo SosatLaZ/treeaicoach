@@ -107,8 +107,10 @@ def test_toc_and_hooks():
     toc = [l.strip() for l in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     assert toc.index("Data\\Pets.lua") < toc.index("Modules\\Finder.lua")
     assert toc.index("Modules\\Finder.lua") > toc.index("Modules\\Planner.lua")
-    for f in ("Boost.lua", "HunterPro.lua"):
-        assert "T.Finder.OwnsPet()" in (ADDON / "Modules" / f).read_text(encoding="utf-8"), f + " must defer to Finder"
+    # 4.0 (CLEAN): Finder is the only owner of taming; Boost has no pet code, HunterPro is gone, Hunter links to Finder
+    assert not (ADDON / "Modules" / "HunterPro.lua").exists()
+    assert "Apprivoise" not in (ADDON / "Modules" / "Boost.lua").read_text(encoding="utf-8")
+    assert "TreeAI.Finder" in (ADDON / "Modules" / "Hunter.lua").read_text(encoding="utf-8")
     assert "Fd.Inject(steps, cursor)" in (ADDON / "Modules" / "Planner.lua").read_text(encoding="utf-8")
     sim = (ROOT / "tests" / "wow" / "session_sim.lua").read_text(encoding="utf-8")
     assert "Finder = 60" in sim

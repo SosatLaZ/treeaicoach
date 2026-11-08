@@ -236,14 +236,15 @@ function M.Lines(st)
   -- l'onglet sont des boutons (control), un talent pris sur plusieurs rangs = une seule ligne « 1 → 3/5 »
   if not st then add("Talents : données absentes (Data/Talents.lua).", 1) return lines end
   local r = st.r
-  if not r.ok and r.modern then
-    add("Talents : arbre moderne détecté — conseils écrits seulement (/tai talents).", 1)
-  end
   if r.level < 10 then add("Talents au niveau 10 : TreeAI te dira quoi prendre et pourquoi.", 1) end
   local b, plan = st.build, st.plan
   if not b then return lines end
-  add(fmt("Parcours : %s (%s) — %s", b.name, b.split, st.pickWhy), 1,
-    { b.summary, "Clic : auto → solo → groupe → auto", "(ou /tai talents solo | groupe | auto)" }, nil, M.CycleMode)
+  -- (REVIEW) arbre moderne non lisible : une précision dans l'infobulle du parcours, pas une ligne sans action
+  local tip = { b.summary, "Clic : auto → solo → groupe → auto", "(ou /tai talents solo | groupe | auto)" }
+  if not r.ok and r.modern then
+    tip[#tip + 1] = "Arbre de talents moderne : TreeAI ne lit pas tes points, le parcours reste un conseil écrit."
+  end
+  add(fmt("Parcours : %s (%s) — %s", b.name, b.split, st.pickWhy), 1, tip, nil, M.CycleMode)
   lines[#lines + 1] = { text = M.full and "[Clic] Masquer le parcours complet" or "[Clic] Voir le parcours complet, point par point",
     label = M.full and "Masquer le parcours" or "Parcours complet", control = true, prio = 1,
     tooltip = { "Liste toutes les étapes du parcours avec le niveau et le pourquoi." }, onClick = M.ToggleFull }

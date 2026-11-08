@@ -41,7 +41,10 @@ local BUDGET = {
   -- whole addon, avg / minute (LITE): « essentiel » (default profile) ≤ 1.5 M instr/min, everything on ≤ 4 M
   kinstrTotalMin = (opts.profile == "tout") and 4600 or 2400,   -- 3.9.5: budgets as on the hotfix branch (3.9.4: 9.9 M)
   kinstrStatsMin = 60,           -- Stats hub (Modules/Stats.lua): event-driven, nearly free
-  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, Macros = 80, QuickTravel = 80, Auction = 80, Compass = 80, NavTime = 80, Horizon = 80, ZonePlan = 400, PvPMark = 40 },   -- per-module caps (avg kinstr / minute)
+  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, Macros = 80, QuickTravel = 80, Auction = 80, Compass = 80, NavTime = 80, Horizon = 80, ZonePlan = 400, PvPMark = 40,
+    -- CLEAN 4.0 (ROUND7 : ≤ 80 par module) : Combat, Rares, Chasseur, Équipement… (avant : Fight 139-191, Hunter 97)
+    Fight = 80, Boost = 40, Hunter = 80, Gear = 80, Inventory = 80, Errands = 60, Session = 60, Leveling = 60, Prof = 60,
+    Talents = 40, Binds = 60, Classes = 60, PvP = 60 },   -- per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -54,9 +57,9 @@ local BUDGET = {
   msgsPerMinAvg = 20,
   chatLinesMax = 6,              -- unsolicited chat lines (advice never goes to the chat)
   blockedMax = 0,                -- TAINT: actions the game would block (ADDON_ACTION_BLOCKED, « Échec des actions d'interface »)
-  edgeNowPct = 25,               -- CHEAT25 « Avantages » (Edge): % of sampled seconds with an Edge line in « Maintenant »
-  edgeDistinctMax = 20,          -- distinct Edge lines (text skeleton) shown in « Maintenant » over the session
-  edgeKinstrMin = 1500,
+  edgeNowPct = 25,               -- CHEAT25 « Avantages » (Edge2 ; l'ancien Edge est retiré en 4.0) : % of sampled seconds with an
+  edgeDistinctMax = 12,          -- « Avantages » line in « Maintenant » ; distinct lines (text skeleton) over the session
+  edgeKinstrMin = 80,            -- = cap Edge2 (était 1500 pour l'ancien Edge)
   -- SPIKE (3.9.7): per-frame peaks on the main client (one frame = timers + OnUpdate of a 0.2-s step)
   -- 3.9.6 (every C_Timer ticker in phase, all :AutoRefresh() in one frame): worst 129 / 297 (tout), p99 56 / 123,
   -- phase ratio 2.06 / 2.42 ; 3.9.7 scheduler: worst 97 / 171, p99 40 / 61, ratio ≤ 1.36
@@ -64,7 +67,7 @@ local BUDGET = {
   frameWorstKinstr = (opts.profile == "tout") and 210 or 115,   -- worst single frame after 30 s (kilo-instructions)
   frameP99Kinstr = (opts.profile == "tout") and 80 or 48,
   framePhaseRatio = 1.6,         -- busiest of the 5 frame phases / average phase (1.0 = flat; 1-Hz spikes → ≫ 1)
-  allocKBps = (opts.profile == "tout") and 280 or 160,   -- KB allocated / s in frames (GC pressure)          -- Edge CPU, avg kilo-instructions / minute (25 checks, rotating)
+  allocKBps = (opts.profile == "tout") and 280 or 160,   -- KB allocated / s in frames (GC pressure)
 }
 
 local BASE = {}
@@ -499,7 +502,7 @@ local function sampleMain(c)
   local edge = false
   for _, e in ipairs(lines) do
     sk[#sk + 1] = skeleton(e.text)
-    if tostring(e.id or ""):find("^Edge:") then
+    if tostring(e.id or ""):find("^Edge2:") then
       edge = true
       S.edgeSeen = S.edgeSeen or {}
       local ek = skeleton(e.text)
@@ -1256,13 +1259,13 @@ do
   if kbAvg > BUDGET.allocKBps then fail(("gc: %.1f KB/s allocated > %d"):format(kbAvg, BUDGET.allocKBps)) end
 end
 do  -- CHEAT25 : les avantages restent discrets (une ligne quand elle sert, rien sinon)
-  local ek = (perMod.Edge or 0) / nMin
+  local ek = (perMod.Edge2 or 0) / nMin
   local pct = 100 * (S.edgeSec or 0) / math.max(1, S.samples)
   P(("edge: %.0f kinstr/min, in « Maintenant » %.1f%% of samples, %d distinct lines"):format(ek, pct, S.edgeDistinct or 0))
   if opts.verbose or pct > BUDGET.edgeNowPct then for k, n in pairs(S.edgeSeen or {}) do P(("  edge %5d s  %s"):format(n, k)) end end
-  if ek > BUDGET.edgeKinstrMin then fail(("cpu: Edge %.0f kinstr/min > %d"):format(ek, BUDGET.edgeKinstrMin)) end
-  if pct > BUDGET.edgeNowPct then fail(("Edge lines in « Maintenant » %.1f%% of the time > %d%%"):format(pct, BUDGET.edgeNowPct)) end
-  if (S.edgeDistinct or 0) > BUDGET.edgeDistinctMax then fail(("%d distinct Edge lines > %d"):format(S.edgeDistinct, BUDGET.edgeDistinctMax)) end
+  if ek > BUDGET.edgeKinstrMin then fail(("cpu: Edge2 %.0f kinstr/min > %d"):format(ek, BUDGET.edgeKinstrMin)) end
+  if pct > BUDGET.edgeNowPct then fail(("Edge2 lines in « Maintenant » %.1f%% of the time > %d%%"):format(pct, BUDGET.edgeNowPct)) end
+  if (S.edgeDistinct or 0) > BUDGET.edgeDistinctMax then fail(("%d distinct Edge2 lines > %d"):format(S.edgeDistinct, BUDGET.edgeDistinctMax)) end
 end
 if opts.fine then
   local ks = {}

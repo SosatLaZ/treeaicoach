@@ -194,7 +194,7 @@ end
 -- besoin d'un service ? (Prévisions : sacs / réparation ; sinon lecture directe)
 function MP.Needs()
   local need = {}
-  local P = mod("Predict")
+  local P = mod("Predict") or T.Predict   -- (CLEAN 4.0) façade de Stats : les lignes réelles d'Inventaire
   for _, f in ipairs(P and type(P.list) == "table" and P.list or {}) do
     if f.id == "bags" and (f.prio or 0) >= 2 then need.bags = true end
     if f.id == "repair" and (f.prio or 0) >= 2 then need.repair = true end

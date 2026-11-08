@@ -288,10 +288,8 @@ local MARK = { ok = "✓", ko = "✗", warn = "!", na = "–" }
 
 local function moduleHealth()
   local out = {}
-  local C = T.modules and T.modules.Comfort
-  local cstats = C and type(C.stats) == "table" and C.stats or {}
   for name, mod in T:IterModules() do
-    local st = cstats[name] or (T._stats and T._stats[name]) or {}
+    local st = (T._stats and T._stats[name]) or {}
     local er = T._modErrors and T._modErrors[name] or {}
     out[#out + 1] = {
       name = name, enabled = (mod.IsEnabled and mod:IsEnabled()) and true or false, active = mod._active and true or false,

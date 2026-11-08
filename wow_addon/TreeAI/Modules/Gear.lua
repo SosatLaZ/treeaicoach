@@ -1,11 +1,11 @@
--- TreeAI — module Équipement (agent GEAR) : planificateur d'améliorations par emplacement, informatif seulement.
---  • Score de chaque pièce portée (poids de stats du module Boost : M.Weights / M.ScoreStats, aucune duplication).
---  • Meilleures améliorations réalistes « bientôt » (niveau requis ≤ niveau + horizon) parmi ~5 000 objets du
---    client (Data/Gear.lua) + objets de tes sacs + récompenses des quêtes de ton journal.
---  • OÙ les obtenir : sacs, récompense de quête (journal / Pro / Questie), boss de donjon (Questie npcDrops dans
---    une zone de donjon, ou module Dungeon s'il existe), monstre / coffre, marchand (Questie vendors + prix
---    d'achat client), artisanat (tables client SkillLineAbility/SpellEffect, ou module Prof), HV (Auction.Stats).
---  • « gain +X % », effort (minutes + or), liste de courses, onglet « Équipement » emplacement par emplacement.
+-- TreeAI — module Équipement (agent GEAR, CLEAN 4.0) : tout ce qui juge un objet, informatif seulement.
+--  • Moteur d'évaluation (repris du module Boost) : poids de stats par classe / arbre le plus rempli, objets portables,
+--    comparaison avec ce que tu portes. Les poids sont ESTIMÉS : on dit « mieux / nettement mieux », jamais « +21 % ».
+--  • Infobulles d'objets : « TreeAI : nettement mieux que ce que tu portes » / « pas pour toi : … », prix de vente.
+--  • Récompense de quête : le bouton du meilleur choix est entouré (jamais choisi à ta place).
+--  • Plan par emplacement : meilleures améliorations « bientôt » (niveau requis ≤ niveau + horizon) parmi ~5 000 objets
+--    du client (Data/Gear.lua) + tes sacs + les récompenses des quêtes de ton journal, et OÙ les obtenir (sacs,
+--    récompense, donjon, monstre, marchand, artisanat, HV) ; onglet « Équipement ».
 --  • Chasseur : DPS / vitesse de l'arme à distance, munitions assorties (flèches / balles), mailles au niv 40.
 -- Rien n'est équipé, acheté ou cliqué à la place du joueur. QuestieDB en LECTURE seule. Calculs hors combat,
 -- par tranches (coroutine) ; Lua 5.1, aucune globale, toutes les API testées.
@@ -16,14 +16,15 @@ local G = _G
 
 local M = T:RegisterModule("Gear", {
   title = "Équipement",
-  defaults = { enabled = true, tab = true, suggest = true, horizon = 3, minGain = 3, ah = true, quests = true,
-               dungeons = true, crafted = true, vendors = true, maxPerSlot = 3 },
+  defaults = { enabled = true, tab = true, suggest = true, horizon = 3, ah = true, quests = true,
+               dungeons = true, crafted = true, vendors = true, maxPerSlot = 3, tooltip = true, rewards = true },
   charDefaults = { shopping = {} },
   options = {
+    { key = "tooltip", type = "toggle", label = "Infobulles d'objets : mieux ou pas pour toi, prix de vente", section = "Équipement" },
+    { key = "rewards", type = "toggle", label = "Entourer la meilleure récompense de quête (jamais choisie à ta place)", section = "Équipement" },
     { key = "tab", type = "toggle", label = "Onglet « Équipement » (emplacement par emplacement)", section = "Équipement" },
     { key = "suggest", type = "toggle", label = "Signaler la meilleure amélioration dans « Maintenant »", section = "Équipement" },
     { key = "horizon", type = "range", label = "Objets jusqu'à niveau + N", min = 0, max = 10, step = 1, section = "Équipement" },
-    { key = "minGain", type = "range", label = "Gain minimal affiché (%)", min = 1, max = 20, step = 1, section = "Équipement" },
     { key = "maxPerSlot", type = "range", label = "Alternatives par emplacement (infobulle)", min = 1, max = 6, step = 1, section = "Équipement" },
     { key = "quests", type = "toggle", label = "Sources : récompenses de quête", section = "Sources" },
     { key = "dungeons", type = "toggle", label = "Sources : boss de donjon / monstres", section = "Sources" },
@@ -32,6 +33,7 @@ local M = T:RegisterModule("Gear", {
     { key = "ah", type = "toggle", label = "Sources : hôtel des ventes (prix)", section = "Sources" },
   },
 })
+T.Gear = M
 
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
 local function pass(ok, ...) if ok then return ... end return nil end
@@ -39,27 +41,200 @@ local function try(fn, ...) if type(fn) ~= "function" then return nil end return
 local function g(name) return rawget(G, name) end
 local function opt(k) return M.db and M.db[k] end
 local function mod(name) local m = T.modules and T.modules[name] if m and (not m.IsEnabled or m:IsEnabled()) then return m end end
-local function boost() local B = T.modules and T.modules.Boost return (B and B.ScoreStats) and B or nil end
 local function level() return tonumber((try(g("UnitLevel"), "player"))) or 1 end
 local function itemInfo(x) if API.ItemInfo then return API.ItemInfo(x) end return try(g("GetItemInfo"), x) end
 local function itemID(link)
   if type(link) == "number" then return link end
   return tonumber(type(link) == "string" and link:match("item:(%d+)") or nil)
 end
-local function money(c)
+local function money(c)   -- format commun du panneau (T.Fmt) : « 1 po 20 pa », « 35 pa », « 8 pc »
+  local F = T.Fmt
+  if F and F.Money then return F.Money(c) end
   c = floor(tonumber(c) or 0)
   local gg, s, k = floor(c / 10000), floor(c / 100) % 100, c % 100
   if gg > 0 then return s > 0 and ("%d po %d pa"):format(gg, s) or ("%d po"):format(gg) end
-  if s > 0 then return k > 0 and ("%d pa %d pc"):format(s, k) or ("%d pa"):format(s) end
+  if s > 0 then return ("%d pa"):format(s) end
   return ("%d pc"):format(k)
 end
-local function pctText(p)
-  if not p then return "?" end
-  if p >= 999 then return "nouveau" end
-  return ("+%d %%"):format(floor(p + 0.5))
+-- Les poids de stats sont estimés : un écart en % serait une fausse précision. On le dit en mots (seuils).
+local MIN_GAIN, BIG_GAIN = 3, 15
+--- Verdict en mots d'un écart de score (%, 999 = emplacement vide) → texte, genre ("good" | "same" | "bad")
+function M.Verdict(p)
+  p = tonumber(p)
+  if not p then return nil end
+  if p >= 999 then return "emplacement vide", "good" end
+  if p >= BIG_GAIN then return "nettement mieux", "good" end
+  if p >= MIN_GAIN then return "mieux", "good" end
+  if p > -MIN_GAIN then return "équivalent", "same" end
+  return "moins bien", "bad"
 end
+local function pctText(p) return (M.Verdict(p)) or "?" end
 local function dur(m) m = floor((tonumber(m) or 0) + 0.5) if m < 60 then return ("~%d min"):format(max(1, m)) end
   return ("~%d h %02d"):format(floor(m / 60), m % 60) end
+local function playerClass() return T:PlayerClass() end
+local function pack(...) return { n = select("#", ...), ... } end
+
+---------------------------------------------------------------------------------------------------
+-- Moteur d'évaluation (repris du module Boost, une seule copie) : poids de stats, objets portables, écart avec
+-- l'équipement porté. Poids de leveling Classic, simples et assumés (stat principale = 1, endurance 0,3–0,5, PA ≈
+-- 1/3 d'une stat principale, DPS d'arme fort sur la VRAIE arme de la classe : arc / fusil / arbalète du chasseur).
+---------------------------------------------------------------------------------------------------
+local ENG = {}
+local S = {
+  STR = "ITEM_MOD_STRENGTH_SHORT", AGI = "ITEM_MOD_AGILITY_SHORT", STA = "ITEM_MOD_STAMINA_SHORT",
+  INT = "ITEM_MOD_INTELLECT_SHORT", SPI = "ITEM_MOD_SPIRIT_SHORT", AP = "ITEM_MOD_ATTACK_POWER_SHORT",
+  RAP = "ITEM_MOD_RANGED_ATTACK_POWER_SHORT", SP = "ITEM_MOD_SPELL_POWER_SHORT",
+  SPD = "ITEM_MOD_SPELL_DAMAGE_DONE_SHORT", HEAL = "ITEM_MOD_SPELL_HEALING_DONE_SHORT",
+  HIT = "ITEM_MOD_HIT_RATING_SHORT", CRIT = "ITEM_MOD_CRIT_RATING_SHORT", DEF = "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT",
+  ARMOR = "RESISTANCE0_NAME", DPS = "ITEM_MOD_DAMAGE_PER_SECOND_SHORT",
+}
+local function W(t) -- t = { STR=1, ..., MDPS=, RDPS= }
+  local w = { MDPS = t.MDPS or 0, RDPS = t.RDPS or 0 }
+  for k, v in pairs(t) do if S[k] then w[S[k]] = v end end
+  return w
+end
+local WEIGHTS = {
+  HUNTER  = { default = W{ AGI = 1, RAP = 0.4, AP = 0.35, STA = 0.35, INT = 0.25, SPI = 0.05, HIT = 1.5, CRIT = 1.5, ARMOR = 0.01, RDPS = 3, MDPS = 0.4 } },
+  WARRIOR = { default = W{ STR = 1, AGI = 0.7, STA = 0.5, AP = 0.5, HIT = 1.5, CRIT = 1.5, ARMOR = 0.02, MDPS = 3, RDPS = 0.3 },
+              [3] = W{ STA = 1, AGI = 0.6, STR = 0.6, DEF = 1, ARMOR = 0.1, AP = 0.2, MDPS = 1.5 } },
+  ROGUE   = { default = W{ AGI = 1, STR = 0.5, STA = 0.35, AP = 0.5, HIT = 1.5, CRIT = 1.5, ARMOR = 0.01, MDPS = 3, RDPS = 0.3 } },
+  MAGE    = { default = W{ INT = 1, SP = 1.2, SPD = 1.2, SPI = 0.4, STA = 0.45, CRIT = 1, HIT = 1, RDPS = 1.5 } },
+  WARLOCK = { default = W{ INT = 0.8, SP = 1.2, SPD = 1.2, STA = 0.7, SPI = 0.3, HIT = 1, RDPS = 1.5 } },
+  PRIEST  = { default = W{ INT = 1, SPI = 0.8, HEAL = 1, SP = 0.8, SPD = 0.6, STA = 0.4, RDPS = 1.5 },
+              [3] = W{ INT = 0.8, SPI = 0.6, SP = 1.2, SPD = 1.2, STA = 0.5, RDPS = 1.5 } },
+  DRUID   = { default = W{ STR = 0.6, AGI = 0.6, INT = 0.6, STA = 0.5, SPI = 0.4, SP = 0.5, AP = 0.3, ARMOR = 0.02, MDPS = 0.5 },
+              [1] = W{ INT = 1, SP = 1.1, SPD = 1.1, SPI = 0.4, STA = 0.4 },
+              [2] = W{ AGI = 1, STR = 1, STA = 0.7, AP = 0.5, ARMOR = 0.05, HIT = 1.5, CRIT = 1.5 },
+              [3] = W{ INT = 1, SPI = 0.8, HEAL = 1, SP = 0.7, STA = 0.4 } },
+  PALADIN = { default = W{ STR = 1, INT = 0.5, STA = 0.5, AGI = 0.4, AP = 0.45, SP = 0.3, ARMOR = 0.02, MDPS = 3 },
+              [1] = W{ INT = 1, HEAL = 1, SP = 0.8, SPI = 0.4, STA = 0.4 },
+              [2] = W{ STA = 1, STR = 0.6, DEF = 1, ARMOR = 0.1, AGI = 0.4, MDPS = 1.5 } },
+  SHAMAN  = { default = W{ STR = 0.8, AGI = 0.5, INT = 0.8, STA = 0.5, AP = 0.4, SP = 0.5, ARMOR = 0.02, MDPS = 2.5 },
+              [1] = W{ INT = 1, SP = 1.1, SPD = 1.1, SPI = 0.3, STA = 0.4 },
+              [2] = W{ STR = 1, AGI = 0.6, STA = 0.5, AP = 0.5, HIT = 1.5, CRIT = 1.5, MDPS = 3 },
+              [3] = W{ INT = 1, HEAL = 1, SP = 0.7, SPI = 0.4, STA = 0.4 } },
+}
+-- Armures (classID 4) : 1 tissu, 2 cuir, 3 mailles (niv 40 chasseur / chaman), 4 plaques (niv 40), 6 bouclier.
+local ARMOR = {
+  HUNTER = { [1] = 1, [2] = 1, [3] = 40 }, SHAMAN = { [1] = 1, [2] = 1, [3] = 40, [6] = 1 },
+  WARRIOR = { [1] = 1, [2] = 1, [3] = 1, [4] = 40, [6] = 1 }, PALADIN = { [1] = 1, [2] = 1, [3] = 1, [4] = 40, [6] = 1 },
+  ROGUE = { [1] = 1, [2] = 1 }, DRUID = { [1] = 1, [2] = 1 }, MAGE = { [1] = 1 }, PRIEST = { [1] = 1 }, WARLOCK = { [1] = 1 },
+}
+-- Armes (classID 2) : 0/1 hache 1M/2M, 2 arc, 3 fusil, 4/5 masse, 6 arme d'hast, 7/8 épée, 10 bâton,
+-- 13 pugilat, 15 dague, 16 armes de jet, 18 arbalète, 19 baguette.
+local function set(...) local t = {} for _, v in ipairs({ ... }) do t[v] = true end return t end
+local WEAPONS = {
+  HUNTER = set(0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18), WARRIOR = set(0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 15, 16, 18),
+  ROGUE = set(2, 3, 4, 7, 13, 15, 16, 18), MAGE = set(7, 10, 15, 19), WARLOCK = set(7, 10, 15, 19),
+  PRIEST = set(4, 10, 15, 19), DRUID = set(4, 5, 10, 13, 15), PALADIN = set(0, 1, 4, 5, 6, 7, 8),
+  SHAMAN = set(0, 1, 4, 5, 10, 13, 15),
+}
+local DUAL = { WARRIOR = 1, ROGUE = 1, HUNTER = 20 }
+local SLOTS = {
+  INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_SHOULDER = { 3 }, INVTYPE_CHEST = { 5 }, INVTYPE_ROBE = { 5 },
+  INVTYPE_WAIST = { 6 }, INVTYPE_LEGS = { 7 }, INVTYPE_FEET = { 8 }, INVTYPE_WRIST = { 9 }, INVTYPE_HAND = { 10 },
+  INVTYPE_FINGER = { 11, 12 }, INVTYPE_TRINKET = { 13, 14 }, INVTYPE_CLOAK = { 15 },
+  INVTYPE_WEAPON = { 16, 17 }, INVTYPE_2HWEAPON = { 16 }, INVTYPE_WEAPONMAINHAND = { 16 },
+  INVTYPE_WEAPONOFFHAND = { 17 }, INVTYPE_SHIELD = { 17 }, INVTYPE_HOLDABLE = { 17 },
+  INVTYPE_RANGED = { 18 }, INVTYPE_RANGEDRIGHT = { 18 }, INVTYPE_THROWN = { 18 }, INVTYPE_RELIC = { 18 },
+}
+
+local function specTab()
+  if not G.GetTalentTabInfo then return nil end
+  local best, bestPts = nil, 0
+  for tab = 1, (try(G.GetNumTalentTabs) or 3) do
+    local r = pack(pcall(G.GetTalentTabInfo, tab))
+    if r[1] then
+      for i = 2, r.n do -- Era : name, icon, points… ; Mainline : id, name, desc, icon, points…
+        local v = r[i]
+        if type(v) == "number" and v >= 0 and v <= 61 and i >= 3 then
+          if v > bestPts then best, bestPts = tab, v end
+          break
+        end
+      end
+    end
+  end
+  return best
+end
+local function weights()
+  local cw = WEAPONS[playerClass()] and WEIGHTS[playerClass()] or WEIGHTS.WARRIOR
+  local tab = specTab()
+  return (tab and cw[tab]) or cw.default
+end
+local liveStats = {}
+local function itemStats(link)
+  if not link then return nil end
+  local c = liveStats[link]
+  if c then return c end
+  local st
+  if G.C_Item and G.C_Item.GetItemStats then st = try(G.C_Item.GetItemStats, link) end
+  if not st and G.GetItemStats then st = try(G.GetItemStats, link) end
+  if type(st) ~= "table" then return nil end
+  liveStats[link] = st
+  return st
+end
+--- Score d'une table de stats (clés ITEM_MOD_*, comme GetItemStats) pour un emplacement
+local function scoreStats(st, slot, w)
+  if type(st) ~= "table" then return nil end
+  w = w or weights()
+  local sc = 0
+  for k, v in pairs(st) do
+    if k == S.DPS then sc = sc + (tonumber(v) or 0) * ((slot == 18) and w.RDPS or w.MDPS)
+    elseif w[k] then sc = sc + (tonumber(v) or 0) * w[k] end
+  end
+  return sc
+end
+local function scoreLink(link, slot, w) return scoreStats(itemStats(link), slot, w) end
+local function wornLink(slot) return try(g("GetInventoryItemLink"), "player", slot) end
+--- Peut-on porter cet objet ? -> ok, raison (texte court)
+local function canUse(link)
+  local _, _, _, _, minLevel, _, _, _, equipLoc, _, _, classID, subID = itemInfo(link)
+  if not equipLoc or equipLoc == "" or not SLOTS[equipLoc] then return false, "non équipable" end
+  local cls, lvl = playerClass(), level()
+  if classID == 4 and subID and subID > 0 and equipLoc ~= "INVTYPE_CLOAK" then
+    local need = (ARMOR[cls] or {})[subID]
+    if not need then return false, "armure que tu ne peux pas porter" end
+    if lvl < need then return false, "portable au niveau " .. need end
+  elseif classID == 2 and subID then
+    if not (WEAPONS[cls] or {})[subID] then return false, "arme que tu ne sais pas manier" end
+  end
+  if minLevel and minLevel > lvl then return true, "niveau " .. minLevel .. " requis" end
+  return true
+end
+--- Écart de score avec l'équipement porté, en % (nil = stats inconnues ; 999 = emplacement vide)
+local function upgradePct(link)
+  local _, _, _, _, _, _, _, _, equipLoc = itemInfo(link)
+  local slots = equipLoc and SLOTS[equipLoc]
+  if not slots then return nil end
+  local w = weights()
+  local new = scoreLink(link, slots[1], w)
+  if not new then return nil end
+  local old
+  if equipLoc == "INVTYPE_2HWEAPON" then
+    old = (scoreLink(wornLink(16), 16, w) or 0) + (scoreLink(wornLink(17), 17, w) or 0)
+  else
+    local cand = slots
+    if equipLoc == "INVTYPE_WEAPON" then
+      local d = DUAL[playerClass()]
+      cand = (d and level() >= d) and { 16, 17 } or { 16 }
+    end
+    for _, sl in ipairs(cand) do
+      local l = wornLink(sl)
+      local v = l and (scoreLink(l, sl, w) or 0) or 0
+      if old == nil or v < old then old = v end
+    end
+  end
+  old = old or 0
+  if old <= 0 then return new > 0 and 999 or 0 end
+  return (new - old) / old * 100
+end
+ENG.STAT_KEYS, ENG.WEIGHTS, ENG.ARMOR_LEVEL, ENG.WEAPON_TYPES, ENG.DUAL_LEVEL, ENG.EQUIP_SLOTS = S, WEIGHTS, ARMOR, WEAPONS, DUAL, SLOTS
+ENG.Weights, ENG.ScoreStats, ENG.ScoreLink, ENG.ItemStats, ENG.SpecTab = weights, scoreStats, scoreLink, itemStats, specTab
+ENG.CanUse, ENG.UpgradePct = canUse, upgradePct
+M.Engine = ENG
+-- contrat partagé (Quick, Dungeon, Abandon… et l'ancien module Boost) : mêmes poids, une seule copie
+M.CanUse, M.UpgradePct, M.ScoreStats, M.Weights = canUse, upgradePct, scoreStats, weights
+local function boost() return ENG end
 
 ---------------------------------------------------------------------------------------------------
 -- Tables
@@ -69,7 +244,7 @@ local SLOT_LIST = { 1, 2, 3, 15, 5, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17, 18 }
 local SLOT_FR = { [1] = "Tête", [2] = "Cou", [3] = "Épaules", [15] = "Dos", [5] = "Torse", [9] = "Poignets",
   [10] = "Mains", [6] = "Taille", [7] = "Jambes", [8] = "Pieds", [11] = "Doigt 1", [12] = "Doigt 2",
   [13] = "Bijou 1", [14] = "Bijou 2", [16] = "Main droite", [17] = "Main gauche", [18] = "Distance" }
--- InventoryType (client) -> nom INVTYPE (clé des emplacements du module Boost)
+-- InventoryType (client) -> nom INVTYPE (clé des emplacements du moteur)
 local INV = { [1] = "INVTYPE_HEAD", [2] = "INVTYPE_NECK", [3] = "INVTYPE_SHOULDER", [5] = "INVTYPE_CHEST",
   [6] = "INVTYPE_WAIST", [7] = "INVTYPE_LEGS", [8] = "INVTYPE_FEET", [9] = "INVTYPE_WRIST", [10] = "INVTYPE_HAND",
   [11] = "INVTYPE_FINGER", [12] = "INVTYPE_TRINKET", [13] = "INVTYPE_WEAPON", [14] = "INVTYPE_SHIELD",
@@ -83,7 +258,7 @@ local INV_SLOTS_DEFAULT = { INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_
   INVTYPE_WEAPONOFFHAND = { 17 }, INVTYPE_SHIELD = { 17 }, INVTYPE_HOLDABLE = { 17 }, INVTYPE_RANGED = { 18 },
   INVTYPE_RANGEDRIGHT = { 18 }, INVTYPE_THROWN = { 18 }, INVTYPE_RELIC = { 18 } }
 local CLASS_BIT = { WARRIOR = 1, PALADIN = 2, HUNTER = 3, ROGUE = 4, PRIEST = 5, SHAMAN = 7, MAGE = 8, WARLOCK = 9, DRUID = 11 }
--- stat (id client) -> clé ITEM_MOD de Boost (S.*)
+-- stat (id client) -> clé ITEM_MOD du moteur (S.*)
 local STAT_ID = { [3] = "AGI", [4] = "STR", [5] = "INT", [6] = "SPI", [7] = "STA", [12] = "DEF", [31] = "HIT",
   [32] = "CRIT", [38] = "AP", [39] = "RAP", [41] = "HEAL", [42] = "SPD", [45] = "SP" }
 local STAT_FR = { AGI = "Agilité", STR = "Force", INT = "Intelligence", SPI = "Esprit", STA = "Endurance",
@@ -156,7 +331,7 @@ end
 M.Rec = rec
 
 local statCache = {}
---- Stats (clés ITEM_MOD de Boost) d'un objet du client, calculées comme l'infobulle.
+--- Stats (clés ITEM_MOD du moteur) d'un objet du client, calculées comme l'infobulle.
 function M.StatsOf(id)
   if statCache[id] then return statCache[id] end
   local r, B = rec(id), boost()
@@ -188,10 +363,8 @@ function M.Ctx()
   c.spec = B and B.SpecTab and try(B.SpecTab) or nil
   c.w = B and try(B.Weights) or {}
   c.money = (API.Money and try(API.Money)) or tonumber((try(g("GetMoney")))) or 0
-  local P = mod("Predict")
-  local r = P and P.Rates and try(P.Rates)
-  local St = T.Stats   -- or/h mesuré sur toutes les sessions (Stats) d'abord
-  local gph = (St and St.GoldPerHour and St:GoldPerHour()) or (type(r) == "table" and tonumber(r.goldPerHour)) or nil
+  local St = T.Stats   -- or/h mesuré sur toutes les sessions (Stats)
+  local gph = St and St.GoldPerHour and St:GoldPerHour() or nil
   -- valeur du temps : or/h mesuré (en pc) sinon ~niveau² × 150 pc/h (≈ 10 po/h au niv 26)
   c.copperPerMin = max(50, (gph and gph > 0 and gph or c.level * c.level * 150) / 60)
   return c
@@ -513,7 +686,7 @@ local function candidateFor(r, slot, c, cur)
     new = new * (1 + max(-0.15, min(0.15, (r.speed - 2.6) * 0.15)))
   end
   local pct = gainPct(new, oldScore(cur, slot, invName))
-  if not pct or pct < (tonumber(opt("minGain")) or 3) then return nil end
+  if not pct or pct < MIN_GAIN then return nil end
   return { id = r.id, link = r.link, name = r.name, req = r.req, need = r.need, pct = pct, score = new, inv = r.inv,
     invName = invName, cls = r.cls, sub = r.sub, dps = r.dps, speed = r.speed, bind = r.bind }
 end
@@ -552,7 +725,6 @@ end
 --- Calcul complet (synchrone). Le module l'appelle par tranches via une coroutine (yield toutes les N lignes).
 function M.Plan(yieldEvery)
   local c = M.Ctx()
-  if not boost() then return nil, "module Boost absent" end
   craftAt = -100
   scanBags()
   M.ScanLogRewards()
@@ -702,7 +874,8 @@ function M.Lines(plan)
   add(("Horizon : niveau +%d"):format(c.horizon), 1,
     { "Montre aussi les objets que tu pourras porter bientôt.", "Clic : +2 (0 à 10)." }, bumpHorizon)
   lines[#lines].control, lines[#lines].label = true, ("Horizon +%d"):format(c.horizon)
-  add("Priorité des stats : " .. priorityText(c), 1, { "Poids utilisés (points de score par point de stat) : module Boost.",
+  add("Priorité des stats : " .. priorityText(c), 1, { "Poids de stats estimés (classe, arbre de talents le plus rempli) :",
+    "les comparaisons disent « mieux » ou « nettement mieux », jamais un pourcentage.",
     "Spé détectée = arbre de talents le plus rempli." })
   local h = plan.hunter
   if h then
@@ -735,16 +908,17 @@ function M.Lines(plan)
       local gain = (cd.pct and cd.pct < 999) and (" (" .. pctText(cd.pct) .. ")") or ""
       local where = tostring(s.text or "?"):gsub(" — .*$", "")
       local text = ("%s → %s%s%s · %s"):format(head, cd.name or "?", gain, weaponTxt(cd), where)
-      local tip = { (cd.pct and cd.pct >= 999) and ("Emplacement vide : tout objet est un gain" .. lvl) or ("Gain " .. pctText(cd.pct) .. lvl),
+      local tip = { (cd.pct and cd.pct >= 999) and ("Emplacement vide : tout objet est un gain" .. lvl)
+          or (pctText(cd.pct):gsub("^%l", string.upper) .. " que ce que tu portes" .. lvl),
         "Où : " .. (s.text or "?"),
         "Effort : " .. (s.kind == "bag" and "maintenant" or dur(s.min)) .. (((s.cost or 0) > 0) and (" · " .. money(s.cost)) or "") }
       if e.name then tip[#tip + 1] = ("Porté : %s (score %d)"):format(e.name, floor((e.score or 0) + 0.5)) end
       for i = 2, #(cd.sources or {}) do tip[#tip + 1] = "  ou " .. cd.sources[i].text end
       for i = 2, #best do
         local o = best[i]
-        tip[#tip + 1] = ("Alternative : %s %s — %s"):format(o.name or "?", pctText(o.pct), o.src and o.src.text or "?")
+        tip[#tip + 1] = ("Alternative : %s (%s) — %s"):format(o.name or "?", pctText(o.pct), o.src and o.src.text or "?")
       end
-      local prio = (s.kind == "bag") and 3 or ((cd.pct >= 25 and (cd.need or 0) <= c.level) and 2 or 1)
+      local prio = (s.kind == "bag" or (cd.pct >= BIG_GAIN and (cd.need or 0) <= c.level)) and 2 or 1
       local open = M.expanded[slot]
       tip[#tip + 1] = open and "Clic : replier" or "Clic : voir toutes les sources et alternatives"
       add(text, prio, tip, function() M.expanded[slot] = not M.expanded[slot] republish() end)
@@ -752,7 +926,7 @@ function M.Lines(plan)
         for i = 2, #(cd.sources or {}) do add(("      ou %s · %s"):format(cd.sources[i].text, dur(cd.sources[i].min)), 1) end
         for i = 2, #best do
           local o = best[i]
-          add(("      alternative : %s %s — %s"):format(o.name or "?", pctText(o.pct), o.src and o.src.text or "?"), 1)
+          add(("      alternative : %s (%s) — %s"):format(o.name or "?", pctText(o.pct), o.src and o.src.text or "?"), 1)
         end
       end
     else
@@ -769,7 +943,7 @@ function M.Lines(plan)
   if #sh > 0 then
     add(("Liste de courses : %d objet(s), %s au total (tu as %s)"):format(#sh, money(sh.total or 0), money(c.money)), 2)
     for _, e in ipairs(sh) do
-      add(("  %s %s — %s %s%s"):format(e.affordable and "•" or "×", e.name or "?", pctText(e.pct), e.where or "",
+      add(("  %s %s (%s) — %s%s"):format(e.affordable and "•" or "×", e.name or "?", pctText(e.pct), e.where or "",
         e.affordable and "" or " (pas assez d'or)"), e.affordable and 1 or 1)
     end
   end
@@ -787,14 +961,15 @@ function M.Summary(plan)
     local e, cd = plan.cur[slot] or {}, (plan.slots[slot] or {})[1]
     local row = { slot = SLOT_FR[slot], item = e.name, score = floor((e.score or 0) * 10 + 0.5) / 10 }
     if cd then
-      row.next = { id = cd.id, name = cd.name, gain = floor(min(cd.pct, 999) + 0.5), need = cd.need,
+      row.next = { id = cd.id, name = cd.name, gain = floor(min(cd.pct, 999) + 0.5), verdict = M.Verdict(cd.pct), need = cd.need,
         kind = cd.src and cd.src.kind, where = cd.src and cd.src.text, cost = cd.src and cd.src.cost,
         min = cd.src and floor(cd.src.min + 0.5) }
     end
     out.slots[#out.slots + 1] = row
   end
   for _, e in ipairs(plan.shopping or {}) do
-    out.shopping[#out.shopping + 1] = { name = e.name, cost = e.cost, gain = floor(min(e.pct, 999) + 0.5), where = e.where }
+    out.shopping[#out.shopping + 1] = { name = e.name, cost = e.cost, gain = floor(min(e.pct, 999) + 0.5), verdict = M.Verdict(e.pct),
+      where = e.where }
   end
   out.total = plan.shopping and plan.shopping.total or 0
   if plan.hunter then
@@ -826,7 +1001,7 @@ function M:Publish(plan)
   local VERB = { bag = "Équipe", vendor = "Achète", ah = "Achète à l'HV", craft = "Fais fabriquer", quest = "Choisis en récompense",
     boss = "Vise en donjon", drop = "Va chercher" }
   if top and top.name and top.src.kind ~= "world" and (top.src.kind == "bag" or top.pct >= 10) then
-    local gain = top.pct < 999 and (" " .. pctText(top.pct)) or ""
+    local gain = top.pct < 999 and (", " .. pctText(top.pct)) or ""
     self:Suggest("upgrade", ("%s %s (%s%s)"):format(VERB[top.src.kind] or "Vise", top.name, SLOT_FR[top.slot] or "?", gain),
       top.src.kind == "bag" and 2 or 1, { ttl = 600, cooldown = 300, onClick = selectTab,
         tooltip = { "Où : " .. (top.src.text or "?"), "Clic : onglet « Équipement »." } })
@@ -873,8 +1048,152 @@ end
 local function markDirty() dirty = true srcCache = {} craftAt = -100 end
 M.MarkDirty = markDirty
 
+---------------------------------------------------------------------------------------------------
+-- Récompense de quête : le meilleur choix est entouré (jamais choisi à ta place)
+---------------------------------------------------------------------------------------------------
+local glow
+local function hideGlow() if glow then glow:Hide() end end
+local function showGlow(btn)
+  if not btn or not G.CreateFrame then return end
+  if not glow then
+    glow = G.CreateFrame("Frame", nil, G.UIParent)
+    local tex = glow:CreateTexture(nil, "OVERLAY")
+    tex:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+    if tex.SetBlendMode then tex:SetBlendMode("ADD") end
+    if tex.SetVertexColor then tex:SetVertexColor(0.2, 1, 0.3) end
+    tex:SetAllPoints()
+    glow.label = glow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    glow.label:SetPoint("BOTTOM", glow, "TOP", 0, -4)
+    glow.label:SetText("|cff33ff55TreeAI|r")
+  end
+  -- jamais enfant d'un bouton de Blizzard (récompense de quête) : simplement ancré dessus
+  glow:SetFrameStrata("DIALOG")
+  glow:ClearAllPoints()
+  local icon = (type(btn.Icon) == "table" and btn.Icon) or (type(btn.icon) == "table" and btn.icon) or btn
+  glow:SetPoint("TOPLEFT", icon, "TOPLEFT", -14, 14)
+  glow:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 14, -14)
+  glow:Show()
+end
+local function rewardButton(i)
+  local f = G.QuestInfoRewardsFrame
+  if f and type(f.RewardButtons) == "table" then
+    for _, b in ipairs(f.RewardButtons) do
+      if b and b.type == "choice" and b.GetID and b:GetID() == i then return b end
+    end
+  end
+  return G["QuestInfoRewardsFrameQuestInfoItem" .. i] or G["QuestInfoItem" .. i] or G["QuestRewardItem" .. i]
+end
+--- Classe les choix : meilleur index, écart % (ou prix de vente), "upgrade" | "sell"
+function M.RankQuestRewards()
+  local n = try(G.GetNumQuestChoices) or 0
+  if n < 2 then return nil end
+  local bestUp, bestUpPct, bestSell, bestSellV = nil, MIN_GAIN, nil, -1
+  for i = 1, n do
+    local link = try(G.GetQuestItemLink, "choice", i)
+    local _, _, count, _, isUsable = try(G.GetQuestItemInfo, "choice", i)
+    if link then
+      if canUse(link) and isUsable ~= false then
+        local pct = upgradePct(link)
+        if pct and pct >= bestUpPct then bestUp, bestUpPct = i, pct end
+      end
+      local sell = (tonumber((select(11, itemInfo(link)))) or 0) * (tonumber(count) or 1)
+      if sell > bestSellV then bestSell, bestSellV = i, sell end
+    end
+  end
+  if bestUp then return bestUp, bestUpPct, "upgrade" end
+  if bestSell then return bestSell, bestSellV, "sell" end
+end
+function M.OnQuestComplete()
+  if not opt("rewards") then return end
+  T:After(0.3, function()
+    local i, v, why = M.RankQuestRewards()
+    if not i then hideGlow() return end
+    local link = try(G.GetQuestItemLink, "choice", i)
+    local name = (link and itemInfo(link)) or ("choix " .. i)
+    showGlow(rewardButton(i))
+    local txt
+    if why == "upgrade" then
+      txt = v >= 999 and ("Prends « " .. name .. " » : ton emplacement est vide")
+        or ("Prends « " .. name .. " » : " .. pctText(v) .. " que ce que tu portes")
+    else
+      txt = "Prends « " .. name .. " » : aucune amélioration, c'est elle qui se vend le plus (" .. money(v) .. ")"
+    end
+    M:Suggest("reward", txt, 2, { ttl = 60, cooldown = 5, sound = false,
+      tooltip = { "Récompense entourée en vert : c'est toi qui cliques.", "Poids de stats estimés pour ta classe." } })
+  end)
+end
+
+---------------------------------------------------------------------------------------------------
+-- Infobulles d'objets : mieux ou pas pour toi (en mots), prix de vente (et prix Auctionator s'il est installé)
+---------------------------------------------------------------------------------------------------
+local function auctionValue(link)
+  local A = G.Auctionator
+  local f = A and A.API and A.API.v1 and A.API.v1.GetAuctionPriceByItemLink
+  if type(f) ~= "function" then return nil end
+  return tonumber((try(f, "TreeAI", link)))
+end
+local VERDICT_COLOR = { good = { 0.2, 1, 0.3 }, same = { 1, 0.9, 0.3 }, bad = { 1, 0.4, 0.4 } }
+function M.DecorateItem(tip, link)
+  if not opt("tooltip") or not tip or not tip.AddLine or not link then return end
+  local _, _, _, _, _, _, _, _, equipLoc, _, sell = itemInfo(link)
+  if equipLoc and SLOTS[equipLoc] then
+    local ok, why = canUse(link)
+    if not ok then
+      tip:AddLine("TreeAI : pas pour toi (" .. (why or "?") .. ")", 0.6, 0.6, 0.6)
+    else
+      local word, kind = M.Verdict(upgradePct(link))
+      if word then
+        local text = (kind == "good" and word == "emplacement vide") and "TreeAI : emplacement vide, équipe-le"
+          or (word == "équivalent" and "TreeAI : équivalent à ce que tu portes")
+          or ("TreeAI : " .. word .. " que ce que tu portes")
+        local c = VERDICT_COLOR[kind] or VERDICT_COLOR.same
+        tip:AddLine(text .. (why and (" (" .. why .. ")") or ""), c[1], c[2], c[3])
+      end
+    end
+  end
+  local ah = auctionValue(link)
+  sell = tonumber(sell) or 0
+  if sell > 0 or ah then
+    local txt = sell > 0 and ("Se vend " .. money(sell) .. " au marchand") or "Ne se vend pas au marchand"
+    if ah then
+      txt = txt .. " · HV (Auctionator) : " .. money(ah)
+      if sell > 0 then txt = txt .. ((ah > sell * 1.2) and " → vends à l'HV" or " → vends au marchand") end
+    end
+    tip:AddLine(txt, 0.8, 0.8, 0.8)
+  end
+end
+local hooked = false
+local function hookTooltips()
+  if hooked then return end
+  hooked = true
+  local TDP, E = G.TooltipDataProcessor, G.Enum and G.Enum.TooltipDataType
+  if TDP and TDP.AddTooltipPostCall and E and E.Item then
+    TDP.AddTooltipPostCall(E.Item, function(tip, data)
+      if not M:IsEnabled() then return end
+      local link = tip and tip.GetItem and select(2, tip:GetItem())
+      if not link and data and data.guid and G.C_Item and G.C_Item.GetItemLinkByGUID then
+        link = try(G.C_Item.GetItemLinkByGUID, data.guid)
+      end
+      pcall(M.DecorateItem, tip, link)
+    end)
+  else
+    for _, tip in ipairs({ G.GameTooltip, G.ItemRefTooltip }) do
+      if tip and tip.HookScript then
+        pcall(tip.HookScript, tip, "OnTooltipSetItem", function(self)
+          if not M:IsEnabled() then return end
+          local link = self.GetItem and select(2, self:GetItem())
+          pcall(M.DecorateItem, self, link)
+        end)
+      end
+    end
+  end
+end
+
 function M:OnEnable()
   if T.RegisterTab then pcall(T.RegisterTab, T, "gear", "Équipement", 45) end
+  hookTooltips()
+  self:RegisterEvent("QUEST_COMPLETE", function() M.OnQuestComplete() end)
+  self:RegisterEvent("QUEST_FINISHED", function() hideGlow() M:Clear("reward") end)
   self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", function() markDirty() end)
   self:RegisterEvent("PLAYER_LEVEL_UP", function() markDirty() statCache = {} end)
   self:RegisterEvent("BAG_UPDATE_DELAYED", function() markDirty() end)
@@ -890,7 +1209,9 @@ end
 function M:OnDisable()
   if self._ticker then self._ticker:Cancel() self._ticker = nil end
   job = nil
+  hideGlow()
   self:Clear("upgrade")
+  self:Clear("reward")
 end
 
 if T.RegisterSlash then

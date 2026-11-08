@@ -1,11 +1,11 @@
--- Scenario for Compass / Tracker / Predict (agent QUEST-PRO), run on both API flavours by
+-- Scenario for Compass / Tracker (+ measured-rates facade; Predict removed in 4.0) (agent QUEST-PRO), run on both API flavours by
 -- tests/wow/test_questpro.py. Fake names only. Fake Questie DB (read-only use).
 return function(M, ctx)
   local T = TreeAI
   M.RunSlash("/tai module Todo off")   -- « À faire » owns the quests tab otherwise (tested in todo_scenario)
   local C, TR, P, Q = T:GetModule("Compass"), T:GetModule("Tracker"), T:GetModule("Predict"), T:GetModule("Quests")
-  ctx.check(C and TR and P and Q, "Compass, Tracker, Predict, Quests registered")
-  if not (C and TR and P and Q) then return end
+  ctx.check(C and TR and Q, "Compass, Tracker, Quests registered (Predict retiré en 4.0)")
+  if not (C and TR and Q) then return end
   local check = ctx.check
   local pi = math.pi
   local function near(a, b, eps) return a and b and math.abs(a - b) <= (eps or 1e-6) end
@@ -189,72 +189,25 @@ return function(M, ctx)
   T.SetTabLines = nil
   check(TR.Push() == "frame" and rawget(_G, "TreeAITrackerFrame"):IsShown(), "fallback tracker frame")
 
-  -- ---------------------------------------------------------------- predict
-  P.ResetSession()
-  -- kills from the combat log (player = source), loots from those mobs
-  for k = 1, 4 do
-    M.combatEvent = { M.now, "PARTY_KILL", false, M.player.guid, M.player.name, 0x511, 0,
-      "Creature-0-0-0-0-77-" .. k, "Lion des collines", 0xa48, 0 }
-    M.FireEvent("COMBAT_LOG_EVENT_UNFILTERED")
-    M.combatEvent = nil
-    M.loot = (k % 2 == 0) and { { name = "Sang de lion", count = 1, questItem = true }, { name = "Griffe" } } or { { name = "Griffe" } }
-    M.FireEvent("LOOT_OPENED")
-    M.FireEvent("LOOT_CLOSED")
-    M.Advance(2)
-  end
-  check(P.State().killCount == 4, "4 kills counted from PARTY_KILL")
-  local rate, n = P.DropRate("Lion des collines", "Sang de lion")
-  check(near(rate, 0.5) and n == 4, "drop rate per mob per quest item: " .. tostring(rate))
-  check(TR.DropTip("Lion des collines"):find("~50 %%"), "tooltip shows the measured rate")
-  local fc = P.Update()
-  local dropF
-  for _, f in ipairs(fc) do if f.id == "drop:sang de lion" then dropF = f end end
-  check(dropF and dropF.text == "Il te faut ~16 Lion des collines de plus pour 8 Sang de lion (taux 50 %)", "drop forecast: " .. tostring(dropF and dropF.text))
-  local keepF
-  for _, f in ipairs(fc) do if f.id:find("^keep:") then keepF = f end end
-  check(keepF and keepF.text == "Garde Peau tannée : sert pour « Aide au fermier »", "keep item for an upcoming quest: " .. tostring(keepF and keepF.text))
-  -- pure forecasts
-  local list = P.Forecasts({ ammoPerMin = 15, slotsPerKill = 0.4, durPerHour = 10 },
-    { ammo = 180, free = 10, level = 27, money = 18000, xp = 1, xpMax = 10, hearth = 360, durAvg = 30, durWorst = 25 })
-  local byId = {}
-  for _, f in ipairs(list) do byId[f.id] = f end
-  check(byId.ammo and byId.ammo.text == "Munitions : vides dans ~12 min, achète 1000 au prochain vendeur" and byId.ammo.prio == 3, "ammo forecast: " .. tostring(byId.ammo and byId.ammo.text))
-  check(byId.bags and byId.bags.text:find("^Sacs pleins dans ~25 monstres"), "bags forecast")
-  check(byId.train and byId.train.text == "Formation niv 28 : ≈ 3 po 20 pa — il te manque 1 po 40 pa", "training forecast: " .. tostring(byId.train and byId.train.text))
-  check(byId.hearth and byId.hearth.text == "Pierre de foyer prête dans 6 min", "hearth forecast")
-  check(byId.repair and byId.repair.text:find("^Réparation bientôt") and byId.repair.prio == 2, "repair forecast")
-  check(list[1].prio == 3, "urgent first")
-  check(P.Money(32000) == "3 po 20 pa" and P.Money(14000) == "1 po 40 pa" and P.Money(250) == "2 pa 50", "money format")
-  local L, c = P.NextTraining(26)
-  check(L == 28 and c == 32000, "next training level")
-  -- urgent forecast goes to « Maintenant »
-  local oldF = P.Forecasts
-  P.Forecasts = function() return { { id = "ammo", text = "Munitions : vides dans ~5 min, achète 1000 au prochain vendeur", prio = 3 } } end
-  P.Update()
-  check(sugg("Munitions : vides dans ~5 min"), "urgent forecast in « Maintenant »")
-  P.Forecasts = oldF
-  P.WriteSummary()
-  local sp = T:Summary().predict
-  check(sp and sp.rates and sp.rates.kills == 4 and sp.forecasts, "summary.predict")
+  -- ---------------------------------------------------------------- taux mesurés (CLEAN 4.0)
+  -- l'ancien module « Prévisions » (Predict) est retiré : ses taux viennent de Stats via la façade T.Predict
+  -- (rien d'inventé : sans mesure, pas de taux) ; l'infobulle du suivi ne montre qu'un taux vraiment mesuré.
+  check(P == nil and T.Predict and T.Predict.DropRate and T.Predict.Rates, "Predict retiré : façade des taux mesurés (Stats)")
+  check(T.Predict.DropRate("Lion des collines", "Sang de lion") == nil, "sans mesure : aucun taux")
+  check(not TR.DropTip("Lion des collines"):find("%%"), "infobulle sans taux tant que rien n'est mesuré")
+  local oldDR = T.Predict.DropRate
+  T.Predict.DropRate = function() return 0.5, 4 end
+  check(TR.DropTip("Lion des collines"):find("~50 %%") and TR.DropTip("Lion des collines"):find("taux mesuré sur 4"),
+    "tooltip shows the measured rate")
+  T.Predict.DropRate = oldDR
   M.output = {}
-  M.RunSlash("/tai prevoir")
-  check(ctx.out("Prévisions"), "slash /tai prevoir")
   M.RunSlash("/tai suivi")
   M.RunSlash("/tai boussole yd")
   check(C.db.units == "yd", "/tai boussole yd")
   M.RunSlash("/tai boussole m")
 
-  -- kills without the combat log (Forever removed CLEU for addons): XP message fallback
-  P.ResetSession()
-  check(P.ParseKillXP("Lion des collines meurt, vous gagnez 120 points d'expérience.") == "Lion des collines", "FR XP kill message")
-  check(P.ParseKillXP("Bear dies, you gain 80 experience.") == "Bear", "EN XP kill message")
-  M.FireEvent("CHAT_MSG_COMBAT_XP_GAIN", "Lion des collines meurt, vous gagnez 120 points d'expérience.")
-  check(P.State().killCount == 1, "kill counted from the XP message")
-
   -- secret values (Forever, in combat): never compared / concatenated
   rawset(_G, "issecretvalue", function(v) return v == "SECRET" end)
-  P.OnKill("SECRET", "SECRET")
-  check(P.State().killCount == 1, "secret kill ignored")
   check(TR.DropTip("SECRET") == nil, "secret unit name ignored in tooltips")
   rawset(_G, "issecretvalue", nil)
 

@@ -35,7 +35,6 @@ Modules\Team.lua
 Modules\Plain.lua
 Modules\Quests.lua
 Modules\Compass.lua
-Modules\SafePath.lua
 Modules\NavTime.lua
 Modules\Horizon.lua
 Modules\Detect.lua
@@ -46,7 +45,6 @@ Modules\Tracker.lua
 Modules\Todo.lua
 Modules\Region.lua
 Modules\Hub.lua
-Modules\Predict.lua
 Modules\Export.lua
 Modules\Planner.lua
 Modules\Speed.lua
@@ -56,10 +54,7 @@ Modules\ZonePlan.lua
 Modules\Inventory.lua
 Modules\Boost.lua
 Modules\Fight.lua
-Modules\HunterPro.lua
-Modules\Comfort.lua
 Modules\Pro.lua
-Modules\Economy.lua
 Modules\Abandon.lua
 Modules\Auction.lua
 Modules\Prof.lua
@@ -74,7 +69,6 @@ Modules\Gear.lua
 Modules\Talents.lua
 Modules\Session.lua
 Modules\Errands.lua
-Modules\Edge.lua
 Modules\Edge2.lua
 Modules\Bugs.lua
 Modules\Finder.lua

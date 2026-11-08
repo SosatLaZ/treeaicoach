@@ -71,9 +71,9 @@ return function(M, ctx)
   if Q then Q.lastList = { { id = 901, title = "Quête-test", obj = { { name = "Patte de test", have = 1, need = 6 } } } } end
   MP.char.drops = { { name = "Patte de test", c = 0, n = 140, w = 500, t = t, seen = 3 } }                -- 60 yd south
   MP.char.services = { repair = { { name = "repair", c = 0, n = 200, w = 300, t = t, seen = 1, sub = "Forge-test" } } }  -- 200 yd east
-  local P = T:GetModule("Predict")
-  local oldPL = P and P.list
-  if P then P.list = { { id = "repair", text = "Réparation urgente", prio = 3 } } end
+  -- (4.0) Predict retiré : « il faut réparer » = la ligne réelle de l'Inventaire, lue par la façade T.Predict.list
+  local P = T.Predict
+  T:Suggest("Inventory:inv_repair", "Répare au plus vite : équipement cassé (rouge)", 3, { module = "Inventory", sound = false })
 
   MP.Update(true)
   check(MP.engine == "own", "no HereBeDragons → own engine (" .. tostring(MP.engine) .. ")")
@@ -222,5 +222,5 @@ return function(M, ctx)
   rawset(_G, "C_TaxiMap", nil)
   M.group = {}
   if Q then Q.lastList = oldList end
-  if P then P.list = oldPL end
+  T:ClearSuggestion("Inventory:inv_repair")
 end

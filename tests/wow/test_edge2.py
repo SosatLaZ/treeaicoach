@@ -1,6 +1,7 @@
-"""CHEAT2: Modules/Edge2.lua — 15 more legit « cheated » advantages (contested camp, best mob by measured XP/h, elite
-patrols, drop bad luck, unlooted corpses, gathering loop, drink-or-chain, expiring buffs, big cooldowns for an elite,
-rested planner, turn-in level-up, trainer order, class quests, quest timers, what to destroy when bags are full).
+"""CLEAN 4.0: Modules/Edge2.lua — « Avantages » : 9 small legit advantages, each built on a FACT the game shows
+(contested camp from tapped nameplates, quest item bad luck from Stats' measured drop rates, unlooted corpses in solo,
+gathering tracking off, finished quests = next level, real quest timers, failed escort, useless breadcrumb quest,
+world-buff yell in a capital). Former Edge (« Coups d'avance ») merged in; guesses and duplicates removed.
 Each one = one verb-first line (no « ? »), hidden unless useful, togglable, routed to the « Avantages » tab, never
 automation, never chat, ≤ 80 kinstr/min in session_sim."""
 import re
@@ -26,30 +27,32 @@ def test_edge2_scenario(flavor, cls):
     assert "RESULT ok" in r.stdout
 
 
-def test_in_toc_right_after_edge():
+def test_edge_module_removed():
     toc = (ADDON / "TreeAI.toc").read_text(encoding="utf-8").split()
-    i = toc.index("Modules\\Edge.lua")
-    assert toc[i + 1] == "Modules\\Edge2.lua"
+    assert "Modules\\Edge.lua" not in toc and "Modules\\Edge2.lua" in toc
+    assert not (ADDON / "Modules" / "Edge.lua").exists()
 
 
-def test_15_features_each_togglable_and_used():
-    keys = re.findall(r'^\s*\{ "(\w+)", "[^"]+", "(?:Farm|Combat|Progrès|Sacs)" \},$', SRC, re.M)
-    assert len(keys) == 15 and len(set(keys)) == 15
-    edge = (ADDON / "Modules" / "Edge.lua").read_text(encoding="utf-8")
-    edge_keys = set(re.findall(r'^\s*\{ "(\w+)", "[^"]+", "\w+" \},$', edge, re.M))
-    assert not set(keys) & edge_keys, "same key as Edge"
+def test_9_features_each_togglable_and_used():
+    keys = re.findall(r'^\s*\{ "(\w+)", "[^"]+", "(?:Farm|Quêtes|Ville)" \},$', SRC, re.M)
+    assert len(keys) == 9 and len(set(keys)) == 9
     for k in keys:
-        if k != "dropCheap":   # dropCheap lives in Inventory's tooltip + the tab, not as its own line
-            assert f'say("{k}"' in SRC, f"{k}: no line"
+        assert f'say("{k}"' in SRC, f"{k}: no line"
         assert f'drop("{k}")' in SRC or f'opt("{k}")' in SRC, f"{k}: never hidden / never checks its option"
+
+
+def test_no_guesses_no_duplicates_left():
+    for gone in ("respawnCamp", "namedRepop", "grindSpot", "eliteGuild", "ChatFrame_OpenChat", "dualSpec", "legacyNext",
+                 "campBuff", "vendorFlip", "boeWorth", "patrolWarn", "bigPull", "restPlan", "trainerPick", "drinkSmart",
+                 "dropCheap", "bestMob", "CHAT_MSG_COMBAT_XP_GAIN"):
+        assert gone not in SRC, gone
 
 
 def test_lines_start_with_a_verb_and_have_no_unknowns():
     texts = re.findall(r'say\("\w+", (?:fmt\()?"([^"]+)"', SRC)
     texts += re.findall(r'(?:text = (?:\w+(?:\.\w+)? and )?|^\s+or )fmt\("([^"]+)"', SRC, re.M)
-    assert len(texts) >= 14
-    verbs = ("Change", "Tue", "Attends", "Vérifie", "Fouille", "Va ", "Mange", "Enchaîne", "Renouvelle", "Garde",
-             "Déconnecte", "Rends", "Apprends", "Fais", "Finis", "Farme", "Méfie", "Jette")
+    assert len(texts) >= 9
+    verbs = ("Change", "Tue", "Vérifie", "Fouille", "Rends", "Finis", "Abandonne", "Active", "Reste")
     for t in texts:
         assert t.startswith(verbs), t
         assert "?" not in t and "nil" not in t, t
@@ -65,17 +68,16 @@ def test_never_automates_never_chats():
 
 def test_one_owner_for_bag_drop_advice():
     inv = (ADDON / "Modules" / "Inventory.lua").read_text(encoding="utf-8")
-    assert "E2.DropTip" in inv and inv.count("M.DropTip()") >= 2
+    assert "function M.DropTip(" in inv and "Edge2" not in inv
 
 
 def test_session_sim_caps_edge2():
     sim = (ROOT / "tests" / "wow" / "session_sim.lua").read_text(encoding="utf-8")
-    assert re.search(r"kinstrModuleMin = \{[^}]*Edge2 = 80", sim)
+    assert re.search(r"kinstrModuleMin = \{[^}]*Edge2 = \d+", sim)
 
 
-def test_registered_in_core_options_and_plus_menu():
+def test_registered_in_core_and_plus_menu():
     core = (ADDON / "Core.lua").read_text(encoding="utf-8")
-    assert "Edge2 = { lite = false" in core
-    assert '"Edge", "Edge2"' in (ADDON / "Options.lua").read_text(encoding="utf-8")
+    assert "Edge2 = { lite = false" in core and "Edge = { lite" not in core
     assert 'adv = "Avant."' in (ADDON / "UI.lua").read_text(encoding="utf-8")
     assert 'RegisterTab(TAB, "Avantages"' in SRC

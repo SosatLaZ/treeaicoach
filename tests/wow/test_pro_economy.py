@@ -1,4 +1,5 @@
-"""Modules/Pro.lua (quest features 1-15) + Modules/Economy.lua (16-25): TOC, syntax, no global, scenario."""
+"""Modules/Pro.lua (quest features 1-15): TOC, syntax, no global, scenario. (Economy removed in 4.0 / CLEAN: « Joindre
+compos » → Errands, gold/h → Stats, nodes and skill-ups → Prof.)"""
 import shutil
 import subprocess
 from pathlib import Path
@@ -7,14 +8,14 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ADDON = ROOT / "wow_addon" / "TreeAI"
-FILES = [ADDON / "Modules" / "Pro.lua", ADDON / "Modules" / "Economy.lua"]
+FILES = [ADDON / "Modules" / "Pro.lua"]
 
 
 def test_toc_lists_pro_economy_after_boost():
     lines = [ln.strip() for ln in (ADDON / "TreeAI.toc").read_text(encoding="utf-8").splitlines()]
     i = lines.index("Modules\\Boost.lua")
     j = lines.index("Modules\\Pro.lua")
-    assert j > i and lines[j + 1] == "Modules\\Economy.lua"
+    assert j > i and "Modules\\Economy.lua" not in lines
 
 
 def test_no_chat_and_options_have_sections():
