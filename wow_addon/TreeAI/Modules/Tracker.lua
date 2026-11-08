@@ -682,27 +682,28 @@ function M.CheckHub(avail, me)
 end
 
 -- objets demandés lâchés par des monstres : [nom du monstre en minuscules] = { item, have, need, quest, mobName }
+-- DATA : seulement les objectifs objet NON finis, associés par Detect.MapObjectives (nom exact puis rang) ;
+-- un objet que Questie relie à la quête mais qu'aucun objectif du jeu ne réclame n'est jamais montré.
+local T2TYPE = { m = "monster", i = "item", o = "object", e = "event", r = "reputation" }
 function M.NeededDrops()
   local Q = mod("Quests")
   local db = questieDB()
+  local Dt = T.Detect
   local out = {}
-  if not (Q and Q.lastList) then return out end
+  if not (Q and Q.lastList and db and type(Dt) == "table" and type(Dt.MapObjectives) == "function") then M.drops = out return out end
   for _, q in ipairs(Q.lastList) do
-    if not q.complete and db then
-      local objs = try(db.QueryQuestSingle, q.id, "objectives")
-      local items = type(objs) == "table" and objs[3]
-      for _, it in ipairs(type(items) == "table" and items or {}) do
-        local itemID = type(it) == "table" and it[1] or it
-        if type(itemID) == "number" and db.QueryItemSingle then
-          local iname = try(db.QueryItemSingle, itemID, "name") or (T.API and T.API.ItemName and T.API.ItemName(itemID))
-          local have, need, done
-          for _, o in ipairs(q.obj or {}) do
-            if iname and low(o.name) == low(iname) then have, need, done = o.have, o.need, o.finished end
-          end
-          if not done then
-            for _, npc in ipairs(try(db.QueryItemSingle, itemID, "npcDrops") or {}) do
-              local nm = try(db.QueryNPCSingle, npc, "name")
-              if nm then out[low(nm)] = { item = iname or ("objet " .. itemID), have = have, need = need, quest = q.title, mobName = nm } end
+    if not q.complete and type(q.id) == "number" then
+      local game = {}
+      for i, o in ipairs(q.obj or {}) do game[i] = { name = o.name, type = T2TYPE[o.t or ""] } end
+      local map = Dt.MapObjectives(q.id, game)
+      for i, o in ipairs(q.obj or {}) do
+        local z = map[i]
+        if z and z.kind == "item" and z.item and not o.finished and db.QueryItemSingle then
+          for n, npc in ipairs(try(db.QueryItemSingle, z.item, "npcDrops") or {}) do
+            if n > 40 then break end
+            local nm = try(db.QueryNPCSingle, npc, "name")
+            if nm and not out[low(nm)] then
+              out[low(nm)] = { item = o.name or z.name or ("objet " .. z.item), have = o.have, need = o.need, quest = q.title, mobName = nm, questID = q.id }
             end
           end
         end

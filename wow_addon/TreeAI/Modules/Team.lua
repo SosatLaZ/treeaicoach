@@ -232,7 +232,7 @@ local function myQuestList()
     local n = call(CQ.GetNumQuestLogEntries) or 0
     for i = 1, mmin(n, 60) do
       local q = call(CQ.GetInfo, i)
-      if type(q) == "table" and not q.isHeader and q.questID and q.title then
+      if type(q) == "table" and not q.isHeader and not q.isHidden and q.questID and q.title then
         tinsert(out, { id = q.questID, idx = i, title = q.title, level = tonumber(q.level) or 0,
           complete = CQ.IsComplete and call(CQ.IsComplete, q.questID) and true or false })
       end

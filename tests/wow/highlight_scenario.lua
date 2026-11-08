@@ -30,7 +30,7 @@ return function(M, ctx)
   -- quest log: ids are 1000 + index (headers count) -------------------------------------------------
   M.quests = {
     { header = "Contreforts de Hautebrande" },
-    { title = "Sang de lion", level = 26, objectives = { { text = "Sang de lion : 2/10", done = false, have = 2, need = 10 } } },
+    { title = "Sang de lion", level = 26, objectives = { { text = "Sang de lion : 2/10", done = false, have = 2, need = 10, type = "item" } } },
     { title = "Les ours", level = 25, objectives = { { text = "Ours enragé tué : 7/8", done = false, have = 7, need = 8 } } },
     { title = "Le courrier", level = 24, complete = true,
       objectives = { { text = "Paquet scellé : 1/1", done = true, have = 1, need = 1 } } },
@@ -92,7 +92,7 @@ return function(M, ctx)
   ctx.check(s.byID[9101] and s.mobNpc[3002] and s.mobNpc[3002].item == 9101, "Questie: drop source mapped")
 
   -- +1 popup when the count goes up
-  M.quests[2].objectives[1] = { text = "Sang de lion : 3/10", done = false, have = 3, need = 10 }
+  M.quests[2].objectives[1] = { text = "Sang de lion : 3/10", done = false, have = 3, need = 10, type = "item" }
   Q.Update()
   H.Rebuild()
   H.RefreshBags()

@@ -938,6 +938,14 @@ Blizzard_APIDocumentationGenerated (branche `forever`). Les modules qui utilisen
 Utilisé par : Boost (ligne rare / trésor, clic = y aller), Highlight (repli UnitIsRelatedToActiveQuest), Compass
 (`TargetNearest(kind)`), Predict (« · Réparation : PNJ — 230 m »), Radar (couche rares : vignettes).
 Commande : `/tai detect [rare|tresor|marchand|reparation|vol|auberge|courrier]`. Résumé IA : `summary.detect`.
+**Vérité des données (agent DATA)** : un monstre / objet de quête ne vient que d'un objectif NON fini d'une quête du
+journal, par questID. `Detect.Norm(s)`, `ObjectiveFor(nom)` (exact, objectifs « monstre »), `InLog(qid)`,
+`QuestByTitle(t)` (infobulles seulement), `QuestieObjectives(qid)`, `MapObjectives(qid, objectifsDuJeu)` (nom exact
+puis rang), `NpcObjective(npcID)` (tué / butin), `GameRelated(unit)` (vrai / faux / nil). Highlight, Tracker,
+Compass, Quests s'en servent ; les lignes d'infobulle des membres du groupe sont étiquetées (« Pour <membre> »).
+**Course au corps** : `Speed` (seul propriétaire) — ligne « Cadavre : 230 m au NE (≈ 40 s) », boussole via
+`Compass:SetTarget{source = "corpse"}` (visible en fantôme, passe avant l'itinéraire), gardien des esprits ou corps,
+endroit sûr, tout effacé au retour à la vie.
 ## Macros : installation robuste (agent MACROFIX, `Modules/Macros.lua`)
 Écriture **sur clic / commande seulement**, hors combat (refusée en combat, rien mis en file d'attente).
 - Index par nom : `GetMacroIndexByName` s'il existe, sinon parcours `GetMacroInfo` (compte 1..n, perso 121..) ;

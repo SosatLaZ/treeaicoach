@@ -398,14 +398,14 @@ function M.QuestieObjectivePoints(qid, objNames, playerMap)
   local objs = try(db.QueryQuestSingle, qid, "objectives")
   if type(objs) ~= "table" then return nil end
   local out = {}
+  -- DATA : nom EXACT (normalisé) — « loup » ne ramène plus les points de « Loup des bois » d'un objectif fini
+  local Dt = T.Detect
+  local norm = (type(Dt) == "table" and type(Dt.Norm) == "function") and Dt.Norm or low
   local function wanted(name)
     if not objNames then return true end
-    local n = low(name)
-    if n == "" then return true end
-    for on in pairs(objNames) do
-      if on == n or on:find(n, 1, true) or n:find(on, 1, true) then return true end
-    end
-    return false
+    local n = norm(name)
+    if n == "" then return false end
+    return objNames[n] and true or false
   end
   -- [1] créatures, [2] objets du monde, [3] objets (butin), [5] crédit de mort
   for _, c in ipairs(type(objs[1]) == "table" and objs[1] or {}) do
@@ -485,16 +485,31 @@ local function waypointAPI(qid)
   return nil
 end
 
+-- noms (normalisés) des objectifs NON finis, + noms Questie associés à ces objectifs (Detect.MapObjectives) ;
+-- anyDone = un objectif est déjà fini (alors jamais de repli « tous les objectifs »)
+local T2TYPE = { m = "monster", i = "item", o = "object", e = "event", r = "reputation" }
 local function unfinishedNames(q)
-  local t, any = {}, false
-  for _, o in ipairs(q.obj or {}) do
+  local Dt = T.Detect
+  local norm = (type(Dt) == "table" and type(Dt.Norm) == "function") and Dt.Norm
+    or function(s) return (low(s):gsub("%s+tu[ée]+e?s?$", ""):gsub("%s+slain$", "")) end
+  local map = {}
+  if type(Dt) == "table" and type(Dt.MapObjectives) == "function" and type(q.id) == "number" then
+    local game = {}
+    for i, o in ipairs(q.obj or {}) do game[i] = { name = o.name, type = T2TYPE[o.t or ""] } end
+    map = Dt.MapObjectives(q.id, game) or {}
+  end
+  local t, any, anyDone = {}, false, false
+  for i, o in ipairs(q.obj or {}) do
     if not o.finished then
-      local n = low(o.name):gsub("%s+tu[ée]+e?s?$", ""):gsub("%s+slain$", "")
-      t[n] = true
+      t[norm(o.name)] = true
+      if map[i] and map[i].name then t[norm(map[i].name)] = true end
+      if map[i] and map[i].alt then t[norm(map[i].alt)] = true end
       any = true
+    else
+      anyDone = true
     end
   end
-  return any and t or nil
+  return any and t or nil, anyDone
 end
 
 -- toutes les cibles possibles d'une quête (points bruts, non triés) — utilisé aussi par le suivi
@@ -510,8 +525,10 @@ function M.QuestPoints(q, me)
   else
     local w = waypointAPI(q.id)
     if w then pts, src = { w }, "jeu" else
-      pts = M.QuestieObjectivePoints(q.id, unfinishedNames(q), pmap)
-      if pts and #pts == 0 then pts = M.QuestieObjectivePoints(q.id, nil, pmap) end
+      local names, anyDone = unfinishedNames(q)
+      pts = M.QuestieObjectivePoints(q.id, names, pmap)
+      -- repli « tous les points » seulement si AUCUN objectif n'est fini (sinon on montrerait un objectif fait)
+      if pts and #pts == 0 and not anyDone then pts = M.QuestieObjectivePoints(q.id, nil, pmap) end
       src = pts and #pts > 0 and "questie" or nil
     end
   end
@@ -813,11 +830,15 @@ function M.Refresh()
   M.state = st
   if not frame then return st end
   local want = M.db and M.db.shown ~= false and M:IsEnabled()
-  st.dup = (M.db and M.db.hideDup ~= false and not st.none) and M.OtherGuide(st.target) or nil
-  -- mort / fantôme : la fenêtre de mort de Blizzard (haut-centre) reste lisible, la course au corps a son guide
+  -- course au corps (DATA, Speed) : la cible « corps » passe avant tout (itinéraire, autre guide, Shortest Path)
+  local cc = M.char and M.char.custom
+  st.corpse = (not st.none and st.target and st.target.kind == "custom" and type(cc) == "table" and cc.source == "corpse") or nil
+  st.dup = (M.db and M.db.hideDup ~= false and not st.none and not st.corpse) and M.OtherGuide(st.target) or nil
+  -- mort (pas encore libéré) : la fenêtre de mort de Blizzard (haut-centre) reste lisible ; fantôme : seulement
+  -- la flèche vers le corps
   local ps = T.PlayerState and T:PlayerState()
-  st.hiddenDead = ps and (ps.dead or ps.ghost) or nil
-  if st.hiddenDead then M.ClearRouteOnDeath() end
+  st.hiddenDead = ps and (ps.dead or (ps.ghost and not st.corpse)) or nil
+  if ps and (ps.dead or ps.ghost) then M.ClearRouteOnDeath() end
   if not want or st.hidden or st.none or st.dup or st.hiddenDead or (M.db.hideCombat ~= false and inCombat()) then
     -- caché : instance / pas de position / pas de cible ; on garde le OnUpdate via un ticker léger
     if frame:IsShown() then frame:Hide() end

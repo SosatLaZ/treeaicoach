@@ -162,11 +162,20 @@ local function mobKey(objName)
   return s
 end
 
+-- relevé FRAIS du journal (DATA) : Quests.lastList peut avoir une demi-seconde de retard, ou rester figé si
+-- le module Quêtes est coupé → un objectif fini / une quête rendue gardait son badge.
 local function questList()
   local Q = mod("Quests")
   if not Q then return {} end
-  if type(Q.lastList) == "table" then return Q.lastList end
-  return (type(Q.Scan) == "function" and try(Q.Scan)) or {}
+  local fresh = type(Q.Scan) == "function" and try(Q.Scan)
+  if type(fresh) == "table" then return fresh end
+  return type(Q.lastList) == "table" and Q.lastList or {}
+end
+local T2TYPE = { m = "monster", i = "item", o = "object", e = "event", r = "reputation" }
+local function gameObjs(q)
+  local out = {}
+  for i, o in ipairs(q.obj or {}) do out[i] = { name = o.name, type = T2TYPE[o.t or ""] } end
+  return out
 end
 
 local function better(old, new)  -- garde l'objectif non rempli en priorité
@@ -202,39 +211,33 @@ function M.Rebuild()
   local budget = 400
   local function qq(id, key) budget = budget - 1 if budget < 0 then return nil end return try(db.QueryQuestSingle, id, key) end
   if db then
+    -- DATA : chaque entrée Questie est associée à SON objectif du jeu (Detect.MapObjectives : nom exact, puis
+    -- rang) — plus de « premier objectif objet » au hasard, plus de créature d'une autre quête au même nom.
+    local Dt = T.Detect
     for i, q in ipairs(list) do
       if i > 30 or budget < 0 then break end
-      local objs = type(q.id) == "number" and qq(q.id, "objectives")
-      if type(objs) == "table" then
-        for _, it in ipairs(type(objs[3]) == "table" and objs[3] or {}) do
-          local itemID = type(it) == "table" and it[1] or it
-          if type(itemID) == "number" then
-            local nm = (db.QueryItemSingle and try(db.QueryItemSingle, itemID, "name")) or (API.ItemName and API.ItemName(itemID))
-            local e = nm and byName[low(nm)]
-            if not e then  -- un seul objectif objet : on l'associe quand même
-              for _, o in ipairs(q.obj or {}) do
-                if o.t == "i" then e = byName[low(o.name)] break end
-              end
-            end
-            if e then
-              byID[itemID] = better(byID[itemID], e)
-              if not e.done and db.QueryItemSingle then
-                local de = { quest = e.quest, qid = e.qid, obj = e.obj, have = e.have, need = e.need, item = itemID, key = e.key }
-                for n, npc in ipairs(try(db.QueryItemSingle, itemID, "npcDrops") or {}) do
-                  if n > 40 then break end
-                  if type(npc) == "number" and not mobNpc[npc] then mobNpc[npc] = de end
-                end
-              end
-            end
-          end
+      local map = (type(q.id) == "number" and type(Dt) == "table" and type(Dt.MapObjectives) == "function")
+        and Dt.MapObjectives(q.id, gameObjs(q)) or {}
+      for j, o in ipairs(q.obj or {}) do
+        local z = map[j]
+        local e = z and byName[low(o.name)]
+        if e and e.qid ~= q.id then e = nil end
+        if z and not e then
+          e = { quest = q.title, qid = q.id, obj = o.name, have = o.have or 0, need = o.need or 1,
+            done = o.finished and true or false, ready = q.complete and true or false, key = q.id .. ":" .. low(o.name) }
         end
-        for _, c in ipairs(type(objs[1]) == "table" and objs[1] or {}) do
-          local id = type(c) == "table" and c[1] or c
-          if type(id) == "number" and db.QueryNPCSingle then
-            local nm = try(db.QueryNPCSingle, id, "name")
-            local e = nm and (mobName[low(nm)] or mobName[mobKey(nm)])
-            if e then mobNpc[id] = e end
+        if z and z.kind == "item" and z.item then
+          byID[z.item] = better(byID[z.item], e)
+          if not e.done and not e.ready and db.QueryItemSingle then
+            budget = budget - 1
+            local de = { quest = e.quest, qid = e.qid, obj = e.obj, have = e.have, need = e.need, item = z.item, key = e.key }
+            for n, npc in ipairs(try(db.QueryItemSingle, z.item, "npcDrops") or {}) do
+              if n > 40 then break end
+              if type(npc) == "number" and not mobNpc[npc] then mobNpc[npc] = de end
+            end
           end
+        elseif z and (z.kind == "monster" or z.kind == "credit") and not e.done and not e.ready then
+          for _, id in ipairs(z.ids or {}) do mobNpc[id] = mobNpc[id] or e end
         end
       end
       for _, it in ipairs(type(q.id) == "number" and qq(q.id, "requiredSourceItems") or {}) do
@@ -876,28 +879,46 @@ local guidCache = {}    -- guid -> {e, how} | false (calculé hors combat)
 local tipScanCache = {}
 
 -- lecture d'infobulle (C_TooltipInfo, Mainline) : lignes d'objectif « 3/10 » non complètes. Hors combat.
+-- DATA : l'infobulle du jeu liste aussi les quêtes des MEMBRES DU GROUPE (ligne « nom du joueur » avant leurs
+-- objectifs) → ces lignes ne deviennent jamais « ta » quête : on les étiquette avec le membre (who). Un titre
+-- de quête absent de ton journal n'est jamais pris pour le tien.
+local function inLogByTitle(title)
+  local Dt = T.Detect
+  if title and type(Dt) == "table" and type(Dt.QuestByTitle) == "function" then return Dt.QuestByTitle(title) end
+  return nil
+end
 local function tooltipObjective(unit)
   local TI = G.C_TooltipInfo
   if not (TI and TI.GetUnit) or inCombat() or not on("plateTooltipScan") then return nil end
   local data = try(TI.GetUnit, unit)
   if type(data) ~= "table" or type(data.lines) ~= "table" then return nil end
-  local QO = G.Enum and G.Enum.TooltipDataLineType and G.Enum.TooltipDataLineType.QuestObjective or 8
-  local QT = G.Enum and G.Enum.TooltipDataLineType and G.Enum.TooltipDataLineType.QuestTitle or 17
-  local title
+  local LT = G.Enum and G.Enum.TooltipDataLineType
+  local QO = LT and LT.QuestObjective or 8
+  local QT = LT and LT.QuestTitle or 17
+  local QP = LT and LT.QuestPlayer or 18
+  local title, who, member
   for _, l in ipairs(data.lines) do
     local txt = sv(l.leftText)
-    if l.type == QT and txt then title = txt end
+    if l.type == QT and txt then title, who = txt, nil end
+    if l.type == QP and txt then who = txt end
     if l.type == QO and txt and not l.completed then
       local h, n = txt:match("(%d+)%s*/%s*(%d+)")
       h, n = tonumber(h), tonumber(n)
       if not (h and n and h >= n) then
         local nm = txt:gsub("^%s*%-%s*", ""):gsub("%d+%s*/%s*%d+", ""):gsub("^%s*:?%s*", ""):gsub("%s*:?%s*$", "")
-        local e = D.byName[low(nm)]
-        return e or { quest = title or "quête", obj = nm, have = h or 0, need = n or 1 }
+        local me = sv(try(G.UnitName, "player"))
+        if who and who ~= me then
+          member = member or { quest = title or "quête", obj = nm, have = h or 0, need = n or 1, who = who }
+        else
+          local q = inLogByTitle(title)
+          local e = D.byName[low(nm)]
+          if e and (not q or e.qid == q.id) and not e.done and not e.ready then return e end
+          if q and not q.complete then return { quest = q.title, qid = q.id, obj = nm, have = h or 0, need = n or 1 } end
+        end
       end
     end
   end
-  return nil
+  return member
 end
 
 function M.UnitObjective(unit)
@@ -909,23 +930,26 @@ function M.UnitObjective(unit)
     if c == false and inCombat() then return nil end
   end
   local e, how
+  local Dt = T.Detect
+  -- signal du jeu : vrai / faux / nil (inconnu) ; « faux » interdit les correspondances par NOM
+  local rel = type(Dt) == "table" and type(Dt.GameRelated) == "function" and Dt.GameRelated(unit) or nil
   local name = sv(try(G.UnitName, unit))
-  if name and on("plates") then
-    local n = low(name)
-    e = D.mobName[n]
-    if e then how = "kill" end
-  end
   local npc = npcIDOf(guid)
-  if not e and npc and D.mobNpc[npc] then
+  if npc and D.mobNpc[npc] then   -- ID exact du PNJ, objectif non fini d'une quête du journal (Questie par questID)
     e = D.mobNpc[npc]
     how = e.item and "drop" or "kill"
     if how == "drop" and not on("plateDrops") then e, how = nil, nil end
+    if how == "kill" and not on("plates") then e, how = nil, nil end
   end
-  if not e and name and on("plateDrops") then  -- taux mesurés par Predict (nom du monstre -> objet)
+  if not e and name and on("plates") and rel ~= false then
+    e = D.mobName[low(name)]
+    if e then how = "kill" end
+  end
+  if not e and name and on("plateDrops") and rel ~= false then  -- taux mesurés (nom du monstre -> objet)
     local P = mod("Predict")
     if P and type(P.DropRate) == "function" then
       for k, ent in pairs(D.byName) do
-        if not ent.done and not ent.ready then
+        if not ent.done and not ent.ready and not D.mobName[mobKey(k)] then
           local r = try(P.DropRate, name, k)
           if r and r > 0 then e, how = ent, "drop" break end
         end
@@ -935,15 +959,18 @@ function M.UnitObjective(unit)
   if not e and guid and not tipScanCache[guid] then
     tipScanCache[guid] = true
     e = tooltipObjective(unit)
-    if e then how = "kill" end
+    if e then how = e.who and "party" or "kill" end
   end
   if not e then  -- TreeAI.Detect : C_QuestLog.UnitIsRelatedToActiveQuest / UnitIsQuestBoss (sans infobulle)
-    local Dt = T.Detect
     local qi = type(Dt) == "table" and type(Dt.QuestUnit) == "function" and Dt.QuestUnit(unit)
     if type(qi) == "table" and qi.hostile and on("plates") then
-      e = qi.obj and D.byName[qi.obj] or { quest = qi.quest or "quête", obj = qi.obj or qi.name or "?",
-        have = qi.have or 0, need = qi.need or 0 }
-      how = "kill"
+      -- DATA : l'objectif doit être encore ouvert dans NOTRE relevé frais ; sinon seul le signal du jeu compte
+      local own = qi.obj and D.byName[qi.obj]
+      if own and not own.done and not own.ready then e = own
+      elseif qi.related or qi.boss then
+        e = { quest = qi.quest or "quête", obj = qi.name or "?", have = 0, need = 0 }
+      end
+      if e then how = "kill" end
     end
   end
   if e and how == "drop" and name then
@@ -951,7 +978,9 @@ function M.UnitObjective(unit)
     local r = P and type(P.DropRate) == "function" and try(P.DropRate, name, low(e.obj))
     e = setmetatable({ rate = r }, { __index = e })
   end
-  if guid and not inCombat() then guidCache[guid] = e and { e = e, how = how, ver = D.ver } or false end
+  if guid and not inCombat() then
+    guidCache[guid] = e and { e = e, how = how, ver = D.ver } or false
+  end
   return e, how
 end
 
@@ -1004,6 +1033,10 @@ function M.UpdatePlate(unit)
   f.icon:SetTexture(how == "drop" and TEX.drop or TEX.quest)
   local left = math.max(0, (e.need or 1) - (e.have or 0))
   local txt = left > 0 and tostring(left) or ""
+  if how == "party" and e.who then   -- quête d'un membre du groupe : son nom, couleur atténuée
+    txt = cut(e.who, 12) .. (left > 0 and (" " .. left) or "")
+    r, g, b = r * 0.6 + 0.3, g * 0.6 + 0.3, b * 0.6 + 0.3
+  end
   if how == "drop" and e.rate then txt = txt .. (" (%d %%)"):format(math.floor(e.rate * 100 + 0.5)) end
   f.text:SetText(txt) f.text:SetTextColor(r, g, b)
   f.glow:SetVertexColor(r, g, b, intensity())
@@ -1073,6 +1106,7 @@ function M.UpdateTarget()
   badge.icon:SetTexture(how == "drop" and TEX.drop or TEX.quest)
   local left = math.max(0, (e.need or 1) - (e.have or 0))
   local txt = left > 0 and ("%s — encore %d"):format(cut(e.quest, 28), left) or cut(e.quest, 28)
+  if how == "party" and e.who then txt = ("Pour %s : %s"):format(cut(e.who, 14), txt) end
   if how == "drop" then txt = txt .. (e.rate and (" (chute %d %%)"):format(math.floor(e.rate * 100 + 0.5)) or " (butin)") end
   badge.text:SetText(txt)
   local r, g, b = color("colMob")
@@ -1089,8 +1123,10 @@ function M.UpdateCompass()
   local CF = rawget(G, "TreeAICompassFrame")
   local count, first = 0, nil
   for _, inf in pairs(plateInfo) do
-    count = count + 1
-    first = first or inf
+    if inf.how ~= "party" then   -- les quêtes des membres ne sont pas « ton » objectif proche
+      count = count + 1
+      first = first or inf
+    end
   end
   M.nearCount = count
   if not (on("compass") and type(CF) == "table" and meth(CF, "IsShown")) or count == 0 then
@@ -1168,7 +1204,7 @@ function M.OnUnitTooltip(tt)
   unit = sv(unit) or "mouseover"
   if not try(G.UnitExists, unit) then return nil end
   local e, how = M.UnitObjective(unit)
-  if not e then return nil end
+  if not e or how == "party" then return nil end   -- le jeu affiche déjà la ligne du membre
   local left = math.max(0, (e.need or 1) - (e.have or 0))
   local txt = ("Quête : %s — encore %d"):format(cut(e.quest, 34), left)
   if how == "drop" then txt = txt .. (e.rate and (" (chute %d %%)"):format(math.floor(e.rate * 100 + 0.5)) or " (butin)") end
@@ -1198,6 +1234,7 @@ local function schedule(what, delay)
     pending[what] = nil
     if not M:IsEnabled() then return end
     if what == "rebuild" then
+      tipScanCache = {}   -- DATA : une quête prise / rendue change ce que dit l'infobulle
       flushSoftHidden()
       M.Rebuild()
       M.RefreshBags()
@@ -1228,6 +1265,8 @@ function M:OnEnable()
   self:RegisterEvent("QUEST_LOG_UPDATE", function() schedule("rebuild", 0.6) end)
   self:RegisterEvent("QUEST_ACCEPTED", function() schedule("rebuild", 0.6) end)
   self:RegisterEvent("QUEST_TURNED_IN", function() schedule("rebuild", 0.6) end)
+  self:RegisterEvent("QUEST_REMOVED", function() schedule("rebuild", 0.6) end)
+  self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, u) if u == "player" then schedule("rebuild", 0.6) end end)
   self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function() kindCache = {} schedule("bags", 0.3) end)
   if not (T.Lite and T:Lite()) then   -- (LITE) barres de nom / cible : seulement hors profil essentiel
     self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) M.UpdatePlate(unit) M.UpdateCompass() end)
