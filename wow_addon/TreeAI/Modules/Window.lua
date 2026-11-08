@@ -982,8 +982,10 @@ local function selectedPage()
   return W.pageIndex[id] and id or (W.PAGES[1] and W.PAGES[1].id)
 end
 local function contentWidth()
+  local sw = tonumber(meth(scroll, "GetWidth"))
+  if sw and sw > 100 then return max(360, floor(sw)) end
   local ww = tonumber(meth(win, "GetWidth")) or 820
-  return max(360, floor(ww - NAV_W - 2 - 26))
+  return max(360, floor(ww - NAV_W - 4 - 3 - 26))     -- bords + colonne + barre de défilement
 end
 
 local function buildWindow()
