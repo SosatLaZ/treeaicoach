@@ -483,7 +483,8 @@ function M.Context(list)
   local pl = tonumber(try(g("UnitLevel"), "player")) or 1
   local Tr = mod("Tracker")
   local tc = Tr and Tr.Context and try(Tr.Context) or {}
-  local spk = tonumber(tc.secPerKill)
+  local St = T.Stats   -- mesures réelles (Stats) d'abord
+  local spk = tonumber(tc.secPerKill) or (St and St.KillTime and St:KillTime(0))
   if not spk then
     local P = mod("Predict")
     local r = P and P.Rates and try(P.Rates) or {}
@@ -495,11 +496,12 @@ function M.Context(list)
   local B = mod("Boost")
   local st = B and B.XPStats and try(B.XPStats, B)
   local xph = type(st) == "table" and tonumber(st.perHour or st.xph) or nil
+  if not xph and St and St.XPPerHour then xph = St:XPPerHour("questing") or St:XPPerHour() end
   local ctx = {
     pl = pl, group = max(1, tonumber(try(g("GetNumGroupMembers"))) or 1),
     zone = try(g("GetRealZoneText")) or try(g("GetZoneText")) or "",
     secPerKill = spk, drops = type(tc.drops) == "table" and tc.drops or {},
-    speed = tonumber(tc.speed) or (C and C.Speed and tonumber(try(C.Speed))) or A.SPEED,
+    speed = tonumber(tc.speed) or (St and St.TravelSpeed and St:TravelSpeed(false)) or (C and C.Speed and tonumber(try(C.Speed))) or A.SPEED,
     xpm = xph and xph > 0 and xph / 60 or nil,
     xpToLevel = (xp and xpMax and xpMax > 0) and (xpMax - xp) or nil,
     logCount = #(list or {}), logMax = logMax(),

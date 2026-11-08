@@ -1342,6 +1342,7 @@ function M.Post(p)
     return false
   end
   p.state, p.posted = "posted", unit
+  if T.Stats and T.Stats.NotePost then pcall(T.Stats.NotePost, itemName(p.id)) end
   if M.char then
     M.char.deposits = M.char.deposits or {}
     local k = dateKey()
@@ -1457,6 +1458,7 @@ function M.MAIL_INBOX_UPDATE()
           e.id = itemID
         end
         ch.ledger[#ch.ledger + 1] = e
+        if T.Stats and T.Stats.NoteAuction then pcall(T.Stats.NoteAuction, kind, e.item, arrived * 7200) end
       end
     end
   end
@@ -1510,7 +1512,10 @@ function M.NEW_AUCTION_UPDATE()
   local dep = try(_G.CalculateAuctionDeposit, durIndex(), max(1, n0(count)))
   if n0(dep) > 0 then s.deposit = n0(dep) end
   s.id = id
-  if M.Suggest then M:Suggest("post", "Vente : " .. M.SellText(s), 2, { ttl = 120 }) end
+  local St = T.Stats   -- tes ventes passées de cet objet (taux réel, délai)
+  local rate, hrs = St and St.SaleRate and St:SaleRate(itemName(id))
+  local mine = rate and (" — tes ventes : %d %% vendues%s"):format(floor(rate * 100 + 0.5), hrs and (" en ~" .. floor(hrs + 0.5) .. " h") or "") or ""
+  if M.Suggest then M:Suggest("post", "Vente : " .. M.SellText(s) .. mine, 2, { ttl = 120 }) end
   return s
 end
 

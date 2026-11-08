@@ -352,6 +352,13 @@ local function costCtx()
     local map = try(C("C_Map", "GetBestMapForUnit"), "player")
     ctx.comp = map and Xm:Comp(map) or nil
   end
+  local St = T.Stats   -- temps de kill / repos mesurés (Stats) d'abord, puis Export
+  if St and St.KillTime then
+    local base = ctx.ttk
+    ctx.ttk = function(d) return St:KillTime(d) or (base and base(d)) or nil end
+    local _, share = St:Downtime()
+    if share then ctx.down = share end
+  end
   local SQ = T.Squad
   local lm = SQ and SQ.char and tonumber(SQ.char.leaveAt) or 0
   if lm > 0 then ctx.session = max(0, floor((lm - epoch()) / 60)) end
@@ -371,6 +378,9 @@ end
 P.CostCtx = costCtx
 
 local function runSpeed()
+  local St = T.Stats   -- vitesse réelle mesurée (détours compris) si connue
+  local v = St and St.TravelSpeed and St:TravelSpeed(try(G("IsMounted")) and true or false)
+  if v then return v end
   local _, s = try(G("GetUnitSpeed"), "player")
   s = tonumber(s)
   return (s and s > 0) and s or 7
@@ -630,7 +640,7 @@ function P:QuestSteps(q, rec, lq, ctx)
     for j, o in ipairs(objs) do
       local lo = lq and lq.obj[j]
       if not (lo and lo.fin) then
-        local oo = { k = o.k, n = (lo and lo.n) or o.n, have = (lo and lo.have) or 0, p = (X() and o.id and X():DropRate(o.id)) or o.p,
+        local oo = { k = o.k, n = (lo and lo.n) or o.n, have = (lo and lo.have) or 0, p = (o.id and T.Stats and T.Stats:Drop(o.id)) or (X() and o.id and X():DropRate(o.id)) or o.p,
           plf = o.plf, ml = o.ml, mx = o.mx, rank = o.rank }
         local med = E.ObjMinutes(oo, ctx)
         local ml = tonumber(o.mx) or tonumber(o.ml) or ctx.level

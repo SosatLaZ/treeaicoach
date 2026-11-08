@@ -175,6 +175,7 @@ function M.ObjEstimate(o, ctx)
     local rate = drop and drop.rate or M.DEFAULT_DROP
     e.mob, e.rate, e.measured, e.n = drop and drop.mob, rate, drop and drop.measured or false, drop and drop.n
     e.mobs = ceil(left / max(0.02, rate) - 1e-9)
+    if drop and drop.lo and drop.lo < rate then e.mobsMax = ceil(left / max(0.02, drop.lo) - 1e-9) end
     e.sec = e.mobs * spk
   elseif t == "o" then
     e.sec = left * 20
@@ -374,8 +375,9 @@ function M.DropInfo(list)
       if not o.finished then
         local k = low(o.name)
         local mob, rate, n = nil, nil, nil
-        if P and P.BestSource then mob, rate, n = P.BestSource(o.name) end
-        if rate then out[k] = { mob = mob, rate = rate, measured = true, n = n }
+        local lo
+        if P and P.BestSource then mob, rate, n, lo = P.BestSource(o.name) end
+        if rate then out[k] = { mob = mob, rate = rate, measured = true, n = n, lo = lo }
         elseif byItem[k] then
           local r2, n2 = nil, nil
           if P and P.DropRate then r2, n2 = P.DropRate(byItem[k], o.name) end
@@ -716,9 +718,11 @@ function M.DropTip(unitName)
   local d = (M.drops or {})[low(unitName)]
   if not d then return nil end
   local P = T.Predict
-  local rate = P and P.DropRate and P.DropRate(unitName, d.item)
+  local rate, n = nil, nil
+  if P and P.DropRate then rate, n = P.DropRate(unitName, d.item) end
   local prog = (d.have and d.need) and (" " .. d.have .. "/" .. d.need) or ""
-  return ("TreeAI : lâche %s%s%s"):format(cut(d.item, 30), prog, rate and (" (~" .. floor(rate * 100 + 0.5) .. " %)") or "")
+  return ("TreeAI : lâche %s%s%s%s"):format(cut(d.item, 30), prog, rate and (" (~" .. floor(rate * 100 + 0.5) .. " %)") or "",
+    (rate and tonumber(n) and n > 0) and (" · taux mesuré sur " .. n) or "")
 end
 
 local hooked
@@ -750,6 +754,7 @@ function M.ObjHint(e)
     local mob = cut(e.mob, 22)
     if Pl and Pl.Plural then mob = Pl.Plural(mob, e.mobs) end
     parts[#parts + 1] = ("encore %s%d %s à tuer"):format((e.rate and "~") or "", e.mobs, mob)
+    if e.mobsMax and e.mobsMax > e.mobs then parts[#parts] = parts[#parts] .. (", jusqu'à %d si pas de chance"):format(e.mobsMax) end
   end
   if e.sec then parts[#parts + 1] = (T.Plain and T.Plain.Minutes(e.sec)) or ("≈ " .. M.Time(e.sec)) end
   return table.concat(parts, " · ")

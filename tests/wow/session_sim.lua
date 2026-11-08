@@ -34,6 +34,7 @@ local BUDGET = {
   kinstrPerModuleMin = 4000,     -- avg kilo-instructions / module / simulated minute (main client)
   kinstrPerModulePeak = 15000,   -- worst single minute for one module
   kinstrTotalMin = 20000,        -- whole addon, avg / minute
+  kinstrStatsMin = 60,           -- Stats hub (Modules/Stats.lua): event-driven, nearly free
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -1076,6 +1077,10 @@ for i, mod in ipairs(mods) do
     if avg > BUDGET.kinstrPerModuleMin then fail(("cpu: %s %.0f kinstr/min > %d"):format(mod, avg, BUDGET.kinstrPerModuleMin)) end
     if peak[mod] > BUDGET.kinstrPerModulePeak then fail(("cpu: %s peak %d kinstr in minute %d > %d"):format(mod, peak[mod], peakMin[mod], BUDGET.kinstrPerModulePeak)) end
   end
+end
+P(("  Stats        %7.1f kinstr/min (budget %d)"):format((perMod.Stats or 0) / nMin, BUDGET.kinstrStatsMin))
+if (perMod.Stats or 0) / nMin > BUDGET.kinstrStatsMin then
+  fail(("cpu: Stats %.1f kinstr/min > %d"):format((perMod.Stats or 0) / nMin, BUDGET.kinstrStatsMin))
 end
 P(("  total addon  %7.0f kinstr/min"):format(totalMain / nMin))
 do  -- CHEAT25 : les avantages restent discrets (une ligne quand elle sert, rien sinon)

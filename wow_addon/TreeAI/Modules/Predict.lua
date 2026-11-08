@@ -303,6 +303,11 @@ function M.RecordLoot(mob, items)
 end
 
 function M.DropRate(mob, item)
+  local St = T.Stats   -- source juste (occasions = tes corps, a posteriori Beta) : Stats d'abord
+  if St and St.DropByName then
+    local r, n = St:DropByName(mob, item)
+    if r then return r, n end
+  end
   local e = mobsDB()[low(mob)]
   if not (e and e.l and e.l >= 3) then return nil end
   local d = e.d and e.d[low(item)]
@@ -312,6 +317,11 @@ end
 
 -- meilleur monstre (taux mesuré) pour un objet
 function M.BestSource(item)
+  local St = T.Stats
+  if St and St.BestSourceByName then
+    local m, r, n, lo = St:BestSourceByName(item)
+    if m then return m, r, n, lo end
+  end
   local best, br, bn
   for _, e in pairs(mobsDB()) do
     local d = e.d and e.d[low(item)]
@@ -372,6 +382,13 @@ function M.Rates()
   r.durPerHour = (dr and dsum and dsum > 0) and dr * 3600 or nil
   r.slotsPerKill = S.loots >= 5 and S.slotsUsed / S.loots or nil
   r.loots = S.loots
+  local St = T.Stats   -- début de session : moyennes mesurées sur toutes les sessions (Stats)
+  if St and St.XPPerHour then
+    r.xpPerHour = r.xpPerHour or St:XPPerHour()
+    r.goldPerHour = r.goldPerHour or St:GoldPerHour()
+    local am = not r.ammoPerMin and St:PerHour("ammo")
+    if am and am > 0 then r.ammoPerMin = am / 60 end
+  end
   return r
 end
 
