@@ -1,25 +1,25 @@
 {
- "version": "4.1.0",
+ "version": "4.1.1",
  "exe": "TreeAICoach-app.exe",
- "sha256": "05a165d7874a7df8d0218f11053ceb250d282fd2b7fb3489f58f876affc3a607",
+ "sha256": "5bb5cb6e58ec8becdf13a1b7141dc84899db42efda94f55dd735b416baa2bc34",
  "chunks": [
   {
-   "name": "4.1.0/part-01.zip",
-   "size": 88018736,
-   "sha256": "65d5eedd44ba12c6e6f8df6f4646e6bb7e05da302ca1ef8cb098f4cb283cae4a",
+   "name": "4.1.1/part-01.zip",
+   "size": 88053470,
+   "sha256": "56981ab04d662728569d85a9688186040570384b8b55b52f67a096e7c0fe4e70",
    "files": 127
   },
   {
-   "name": "4.1.0/part-02.zip",
+   "name": "4.1.1/part-02.zip",
    "size": 14119058,
-   "sha256": "7c7d92428641db449a8d737ec5241fab1088a69118164f3c83baae4ba888be7a",
+   "sha256": "30c97ae617d691c26a52866b052fcd9774d3dc9a7ed37753ed3e89b15de3cf40",
    "files": 687
   }
  ],
- "total_size": 102137794,
+ "total_size": 102172528,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.1 : boutons simples en haut \u00e0 gauche, cerveau des qu\u00eates (Rendre / \u00c0 prendre / Zone / Groupe), fen\u00eatre en 7 pages, \u00e9quipement du groupe et \u00e9changes, courses en ville pour les m\u00e9tiers, \u00e9cran propre."
+ "notes": "TreeAI 4.1.1 : nouvelle page \u00ab Parler \u00e0 l'IA \u00bb dans l'app (Ctrl+8), le coach r\u00e9pond par \u00e9crit avec tes donn\u00e9es."
 }

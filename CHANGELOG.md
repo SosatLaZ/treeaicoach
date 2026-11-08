@@ -3,6 +3,12 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.1.1 · 8 novembre 2026
+
+- **App : page « Parler à l'IA »** (menu World of Warcraft, Ctrl+8, et bouton « Demander à l'IA » sur la page WoW) :
+  tu écris, le coach répond par écrit avec les données de ton perso (questions prêtes, suite de conversation,
+  « données lues il y a N min : /reload pour les mettre à jour »). Sans clé IA : un bouton vers les réglages.
+
 ## 4.1.0 · 8 novembre 2026
 
 **Les quêtes d'abord, un écran propre.**

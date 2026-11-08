@@ -1,6 +1,6 @@
 {
-  "version": "4.1.0",
+  "version": "4.1.1",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.1 : boutons simples en haut à gauche, cerveau des quêtes (Rendre / À prendre / Zone / Groupe), fenêtre en 7 pages, équipement du groupe et échanges, courses en ville pour les métiers, écran propre."
+  "notes": "TreeAI 4.1.1 : nouvelle page « Parler à l'IA » dans l'app (Ctrl+8), le coach répond par écrit avec tes données."
 }
