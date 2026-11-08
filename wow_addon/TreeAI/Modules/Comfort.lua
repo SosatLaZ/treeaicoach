@@ -13,7 +13,7 @@ local G = _G
 
 local M = T:RegisterModule("Comfort", {
   title = "Confort",
-  defaults = { enabled = true, changes = true, newSpells = true, timing = true, autoSlow = true, cityThrottle = true },
+  defaults = { enabled = true, changes = true, newSpells = true, timing = false, autoSlow = true, cityThrottle = true },
   charDefaults = { snap = nil, spells = nil },
   options = {
     { key = "changes", type = "toggle", label = "Ce qui a changé depuis la dernière connexion", section = "Connexion" },
@@ -408,7 +408,8 @@ function M:WriteSummary()
 end
 
 T:RegisterSlash("perf", function()
-  for _, line in ipairs(M:PerfReport()) do T:Print(line) end
+  if T.PrintPerf then T:PrintPerf() end   -- (LITE) le cœur mesure tout ; Confort ajoute FPS / ms par image
+  if M:IsEnabled() then for _, line in ipairs(M:PerfReport()) do T:Print(line) end end
 end, "coût CPU / mémoire de TreeAI par module")
 T:RegisterSlash("nouveau", function()
   local l = M.lastChanges or {}

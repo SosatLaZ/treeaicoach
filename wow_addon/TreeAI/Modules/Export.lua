@@ -28,11 +28,11 @@ local floor, max, min, sqrt, abs = math.floor, math.max, math.min, math.sqrt, ma
 local tinsert, tsort, tconcat = table.insert, table.sort, table.concat
 local unpack = unpack or table.unpack
 
+-- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2, math.max(2, table.maxn(r)))   -- always at least one value (tonumber(try(...)) safe)
+  return tryPass(pcall(fn, ...))
 end
 local function G(name) return rawget(_G, name) end
 local function C(ns, fn) local t = G(ns) return type(t) == "table" and t[fn] or nil end

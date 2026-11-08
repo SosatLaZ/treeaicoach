@@ -38,11 +38,11 @@ local floor, sqrt, atan2, pi = math.floor, math.sqrt, math.atan2, math.pi
 local YD2M = 0.9144
 local RUN = 7  -- vitesse de course (yd/s) si l'API ne donne rien
 
+-- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2)
+  return tryPass(pcall(fn, ...))
 end
 local function now() return try(_G.GetTime) or 0 end
 local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
@@ -755,14 +755,37 @@ local function createFrame()
     if Th then Th:Skin(frame, "hud", { bg = bg }); Th:Font(label, "S", "gold"); Th:Font(info, "S") end
   end
   frame:SetScale(tonumber(M.db.scale) or 1)
-  local acc = 0
+  -- (LITE) la flèche tourne avec le joueur (20 Hz, seulement si l'orientation change) ; cible, distance et
+  -- textes 2 fois par seconde
+  local acc, full = 0, 0
   frame:SetScript("OnUpdate", function(_, dt)
-    acc = acc + (dt or 0)
+    acc, full = acc + (dt or 0), full + (dt or 0)
     if acc < 0.05 then return end
     acc = 0
-    M.Refresh()
+    if full >= 0.5 or not (M.state and M.state.bearing) then full = 0; M.Refresh(); return end
+    M.Spin()
   end)
   return frame
+end
+
+local GREEN, GOLD = { 0.3, 1, 0.3 }, { 1, 0.85, 0.2 }
+local lastRel, lastLabel, lastInfo
+local function setArrow(rel)
+  if rel == lastRel then return end
+  lastRel = rel
+  if arrow.SetRotation then pcall(arrow.SetRotation, arrow, rel) end
+  local col = (rel < 0.35 or rel > 2 * pi - 0.35) and GREEN or GOLD
+  arrow:SetVertexColor(col[1], col[2], col[3])
+end
+--- entre deux calculs complets : seulement l'orientation du joueur -> rotation de la flèche
+function M.Spin()
+  local st = M.state
+  if not (frame and arrow and st and st.bearing and frame:IsShown()) then return end
+  local facing = try(_G.GetPlayerFacing)
+  if facing == nil or facing == st.facing then return end
+  st.facing = facing
+  st.rel = G.Relative(st.bearing, facing)
+  if st.rel then setArrow(st.rel) end
 end
 
 function M.Refresh()
@@ -778,12 +801,11 @@ function M.Refresh()
   end
   if not frame:IsShown() then frame:Show() end
   local t = st.target
-  label:SetText(cut(t.label or t.title or "Cible", 34))
+  local lt = cut(t.label or t.title or "Cible", 34)
+  if lt ~= lastLabel then lastLabel = lt; label:SetText(lt) end
   if st.rel then
     arrow:Show()
-    if arrow.SetRotation then pcall(arrow.SetRotation, arrow, st.rel) end
-    local col = (st.rel < 0.35 or st.rel > 2 * pi - 0.35) and { 0.3, 1, 0.3 } or { 1, 0.85, 0.2 }
-    arrow:SetVertexColor(col[1], col[2], col[3])
+    setArrow(st.rel)
   else
     arrow:Hide()
   end
@@ -792,9 +814,10 @@ function M.Refresh()
     if st.eta then s = s .. " · " .. st.eta end
     if not st.facing then s = s .. " " .. G.Cardinal(st.bearing) end
     if st.arrived then s = "Arrivé !" end
-    info:SetText(s)
+    if s ~= lastInfo then lastInfo = s; info:SetText(s) end
   else
-    info:SetText(t.zone and ("Zone : " .. cut(t.zone, 28)) or "")
+    local s = t.zone and ("Zone : " .. cut(t.zone, 28)) or ""
+    if s ~= lastInfo then lastInfo = s; info:SetText(s) end
   end
   return st
 end

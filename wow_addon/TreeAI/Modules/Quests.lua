@@ -42,11 +42,11 @@ local API = T.API or {}
 local floor, max, min = math.floor, math.max, math.min
 
 -- ------------------------------------------------------------------ utilitaires
+-- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2)
+  return tryPass(pcall(fn, ...))
 end
 local function now() return try(_G.GetTime) or 0 end
 local function inCombat() return T.InCombat and T:InCombat() or false end
@@ -944,8 +944,25 @@ function M.Update()
   M.nextText = text
   M.UpdateButton()
   M.WriteSummary()
-  if T.Fire then pcall(T.Fire, T, "QUESTS_UPDATED", list) end  -- Boussole / Suivi (QUEST-PRO)
+  -- (LITE) Boussole / Suivi / À faire ne recalculent que si le journal a vraiment changé (ou toutes les 15 s)
+  local sig = M.Signature(list)
+  local t = now()
+  if T.Fire and (sig ~= M._firedSig or t - (M._firedAt or -100) >= 15) then
+    M._firedSig, M._firedAt = sig, t
+    pcall(T.Fire, T, "QUESTS_UPDATED", list)  -- Boussole / Suivi (QUEST-PRO)
+  end
   return a
+end
+
+--- empreinte du journal (quêtes, objectifs, zone) : sans les distances qui bougent à chaque pas
+function M.Signature(list)
+  local parts = { curZone() }
+  for _, q in ipairs(list or {}) do
+    local o = {}
+    for i, ob in ipairs(q.obj or {}) do o[i] = (ob.have or 0) .. "/" .. (ob.need or 0) end
+    parts[#parts + 1] = tostring(q.id) .. (q.complete and "C" or "") .. (q.failed and "F" or "") .. ":" .. table.concat(o, ",")
+  end
+  return table.concat(parts, ";")
 end
 
 local pending = false
@@ -1109,5 +1126,9 @@ T:RegisterSlash("quests", slash)
 -- actualisation automatique (Core:StartAutoRefresh) : journal relu, conseils recalculés
 function M:AutoRefresh()
   if InCombatLockdown and InCombatLockdown() then return end
-  pcall(M.Scan); pcall(M.Update)
+  -- (LITE) les événements du journal relisent déjà tout (QUEST_LOG_UPDATE, différé 0,5 s) : filet toutes les 10 s
+  local t = now()
+  if t - (M._autoAt or -100) < 10 then return end
+  M._autoAt = t
+  pcall(M.Update)
 end

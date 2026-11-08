@@ -908,9 +908,8 @@ local function leaveMinutes(char)
   return ceil(left / 60)
 end
 
-function S:CollectState()
-  local st = { v = PROTO }
-  st.c = select(2, call(UnitClass, "player")) or "?"
+-- (LITE) ce qui bouge vite (PV, mana, position, mort, combat…) : relu à chaque tour, sur l'état gardé
+function S:QuickState(st)
   st.l = call(UnitLevel, "player") or 1
   local xp, mx = call(UnitXP, "player"), call(UnitXPMax, "player")
   if xp and mx and mx > 0 then
@@ -933,8 +932,17 @@ function S:CollectState()
     st.p = -1
   end
   st.d = call(UnitIsGhost, "player") and 2 or (call(UnitIsDeadOrGhost, "player") and 1 or 0)
+  if PET[st.c] then st.pt = (call(UnitExists, "pet") and not call(UnitIsDead, "pet")) and 1 or 2 end
+  st.af = call(UnitIsAFK, "player") and 1 or 0
+  st.cb = (T.InCombat and T:InCombat()) and 1 or 0
+  return st
+end
+
+function S:CollectState()
+  local st = { v = PROTO }
+  st.c = select(2, call(UnitClass, "player")) or "?"
+  self:QuickState(st)
   if PET[st.c] then
-    st.pt = (call(UnitExists, "pet") and not call(UnitIsDead, "pet")) and 1 or 2
     st.ph = tonumber((call(API.PetHappiness or GetPetHappiness))) or 0   -- C_PetInfo sur Forever
   end
   local free, total = call(API.FreeSlots)
@@ -947,8 +955,6 @@ function S:CollectState()
   st.pr = scanProfessions()
   st.lm = leaveMinutes(self.char)
   st.rd = (self.char and self.char.ready == false) and 0 or 1
-  st.af = call(UnitIsAFK, "player") and 1 or 0
-  st.cb = (T.InCombat and T:InCombat()) and 1 or 0
   st.qn = self._questCount or 0
   st.qm = maxQuests()
   st.xh = floor(xpPerHour())
@@ -1115,6 +1121,7 @@ end
 -- Liste des membres pour le moteur (moi compris, sous la même forme que les autres).
 function S:MemberList()
   local t = now()
+  if not self._state then self._state = self:CollectState() end   -- (LITE) appelé avant le 1er tour (Missions)
   local me = { name = myName(), st = S.DecodeState(self._state), quests = S.DecodeQuests(myQuestEnc) }
   me.leaveMin = me.st and me.st.lm >= 0 and me.st.lm or nil
   local list = { me }
@@ -1171,13 +1178,22 @@ function S:Tick()
     end
   end
   if t - lastQuestSent >= QUEST_EVERY then pending.quests = true end
-  local st = self:CollectState()
+  -- (LITE) l'état complet (sacs, durabilité, nourriture, métiers… : cher) toutes les 10 s ou quand un
+  -- événement l'a sali ; entre deux, seulement ce qui bouge vite
+  local st
+  if not self._state or self._stateDirty or t - (self._heavyAt or -100) >= 10 then
+    st = self:CollectState()
+    self._heavyAt, self._stateDirty = t, false
+  else
+    st = self:QuickState(self._state)
+  end
   self._state = st
   local sig = signature(st)
   if sig ~= lastSig then lastSig = sig; pending.state = true; self._dirty = true end
   if t - lastStateSent >= STATE_EVERY then pending.state = true end
   self:Pump(t)
-  if self._dirty or t - (self._lastAdvise or 0) >= 3 then
+  local since = t - (self._lastAdvise or 0)
+  if (self._dirty and since >= 5) or since >= 15 then   -- (LITE) au plus toutes les 5 s, au moins toutes les 15 s
     self._lastAdvise = t
     self:Recompute()
   end
@@ -1425,7 +1441,10 @@ function S:OnEnable()
   end)
   self:RegisterEvent("QUEST_LOG_UPDATE", function() questsDirty = true end)
   self:RegisterEvent("PLAYER_XP_UPDATE", function() trackXP() end)
-  self:RegisterEvent("PLAYER_TARGET_CHANGED", function() if S._state then S:Recompute() end end)
+  self:RegisterEvent("PLAYER_TARGET_CHANGED", function() if S._state then S._dirty = true end end)   -- (LITE) au prochain tour
+  for _, ev in ipairs({ "BAG_UPDATE_DELAYED", "UPDATE_INVENTORY_DURABILITY", "PLAYER_LEVEL_UP", "SKILL_LINES_CHANGED" }) do
+    self:RegisterEvent(ev, function() S._stateDirty = true end)
+  end
   self:RegisterEvent("START_LOOT_ROLL", function(_, _, rollID) S:OnLootRoll(rollID) end)
   self:RegisterEvent("PLAYER_LOGOUT", function() S:SaveSnapshot() end)
   self:On("SUMMARY", function() S:SaveSnapshot() end)
@@ -1433,7 +1452,7 @@ function S:OnEnable()
   self:RefreshRoster()
   pending.request = true
   if T.NewTicker and not self._ticker then
-    self._ticker = T:NewTicker(1, function() if S:IsEnabled() then S:Tick() end end)
+    self._ticker = T:NewTicker(3, function() if S:IsEnabled() then S:Tick() end end)
   end
 end
 

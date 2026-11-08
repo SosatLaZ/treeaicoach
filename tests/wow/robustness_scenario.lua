@@ -30,7 +30,9 @@ return function(M, ctx)
     end
     for _, b in ipairs(BAD) do
       -- une vraie question (« Prêt ? », « Tu veux … ? ») n'est pas une valeur inconnue
-      local p = (b[1] == "?") and (plain:gsub("Prêt %?", "")) or plain
+      -- (LITE) ni une question à cliquer (« lier à X ? (clic, confirmation) »)
+      local p = plain
+      if b[1] == "?" then p = p:gsub("Prêt %?", ""); p = p:gsub(" %? %(clic", " (clic") end
       if p:find(b[1], 1, b[3] or false) then bad(b[2]) end
     end
     if T.TextLen and T.TextLen(plain) > (T.LINE_MAX or 96) then bad("trop long (" .. T.TextLen(plain) .. ")") end

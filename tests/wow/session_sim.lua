@@ -14,6 +14,7 @@
 --   growth, addon memory growth (reachable from TreeAI, upvalues included), addon message rate.
 -- Fake names only. Lua 5.1:
 --   lua5.1 tests/wow/session_sim.lua [--class HUNTER] [--flavor modern] [--minutes 60] [--addon DIR] [-v]
+--     [--profile essentiel|tout] (default essentiel = what a new player gets) [--fine] (CPU by function)
 local HERE = (arg and arg[0] or "session_sim.lua"):match("^(.*)[/\\][^/\\]*$") or "."
 local opts = { class = "HUNTER", flavor = "modern", minutes = 60, addon = HERE .. "/../../wow_addon/TreeAI" }
 do
@@ -24,6 +25,8 @@ do
     elseif a == "--flavor" then opts.flavor = arg[i + 1]; i = i + 1
     elseif a == "--minutes" then opts.minutes = tonumber(arg[i + 1]); i = i + 1
     elseif a == "--addon" then opts.addon = arg[i + 1]; i = i + 1
+    elseif a == "--profile" then opts.profile = arg[i + 1]; i = i + 1
+    elseif a == "--fine" then opts.fine = true
     elseif a == "-v" then opts.verbose = true end
     i = i + 1
   end
@@ -33,7 +36,8 @@ end
 local BUDGET = {
   kinstrPerModuleMin = 4000,     -- avg kilo-instructions / module / simulated minute (main client)
   kinstrPerModulePeak = 15000,   -- worst single minute for one module
-  kinstrTotalMin = 20000,        -- whole addon, avg / minute
+  -- whole addon, avg / minute (LITE): « essentiel » (default profile) ≤ 1.5 M instr/min, everything on ≤ 4 M
+  kinstrTotalMin = (opts.profile == "tout") and 4000 or 1500,
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -171,13 +175,29 @@ local function modOf(src)
   return m
 end
 local getinfo = debug.getinfo
+local fine = {}             -- --fine: samples by « Module:line » of the innermost addon function (main client)
 local function hook()
   local lvl, m = 2, nil
   while true do
     local info = getinfo(lvl, "S")
     if not info then break end
     m = modOf(info.source)
-    if m then break end
+    if m then
+      if opts.fine and CUR == "Arbrelune" then
+        local k = m .. ":" .. info.linedefined
+        -- + the first caller in another addon file (who pays for Core helpers)
+        local l2 = lvl + 1
+        while true do
+          local i2 = getinfo(l2, "S")
+          if not i2 then break end
+          local m2 = modOf(i2.source)
+          if m2 and m2 ~= m then k = k .. " <- " .. m2 .. ":" .. i2.linedefined break end
+          l2 = l2 + 1
+        end
+        fine[k] = (fine[k] or 0) + 1
+      end
+      break
+    end
     lvl = lvl + 1
   end
   local byMin = cpu[MINUTE]
@@ -305,6 +325,9 @@ local function loadAddon(c, svString)
     local again = serialize("TreeAIDB", box.TreeAIDB)
     if again ~= svString then fail("SavedVariables round-trip changed the data (" .. #svString .. " -> " .. #again .. " bytes)") end
   end
+  if not svString and opts.profile == "tout" then   -- everything on (default = what a new player gets: essentiel)
+    rawset(env, "TreeAIDB", { profileV = 999, moduleProfile = "tout" })
+  end
   local T = rawget(env, "TreeAI")
   c.T = T
   if T then
@@ -426,7 +449,7 @@ local S = { nowChanges = {}, nowRaw = {}, lastNow = nil, dupSec = 0, samples = 0
 local function sampleMain(c)
   local T = c.T
   if not (T and T.GetTabLines) then return end
-  CUR = c.name
+  CUR = "(sim)"   -- the sampling itself is measurement, not addon work: kept out of the main client CPU
   local ok, lines = BASE.pcall(T.GetTabLines, T, "now")
   if not ok then addErr(R.errors, c.name, "GetTabLines", lines) return end
   local sk, topics = {}, {}
@@ -482,6 +505,7 @@ local function tick(sec)
     end
     pump()
     sampleMain(order[1])
+    CUR = order[1].name
     local m = math.floor(simSeconds() / 60)
     if m ~= MINUTE then
       MINUTE = m
@@ -744,7 +768,10 @@ local function clickPanel(c, which)
   if not panel then return end
   CUR = c.name
   local rows = {}
-  for _, ch in ipairs({ panel:GetChildren() }) do if ch.entry and ch:IsShown() and ch.__scripts.OnClick then rows[#rows + 1] = ch end end
+  for _, ch in ipairs({ panel:GetChildren() }) do
+    -- (LITE) the one-time « Tout réactiver » notice is left alone: the run measures the profile it was asked for
+    if ch.entry and ch:IsShown() and ch.__scripts.OnClick and ch.entry.id ~= "core:lite" then rows[#rows + 1] = ch end
+  end
   local r = rows[which or 1]
   if r then
     c.M.Script(r, "OnEnter")
@@ -1049,7 +1076,7 @@ local elapsed = os.clock() - t0clock
 -- ===================================================================================================
 local out = {}
 local function P(s) out[#out + 1] = s end
-P(("== session_sim class=%s flavor=%s minutes=%d clients=%d (cpu %.1fs)"):format(opts.class, opts.flavor, opts.minutes, #order, elapsed))
+P(("== session_sim class=%s flavor=%s profile=%s minutes=%d clients=%d (cpu %.1fs)"):format(opts.class, opts.flavor, opts.profile or "essentiel", opts.minutes, #order, elapsed))
 
 -- CPU per module (main client)
 local perMod, peak, peakMin, totalMain = {}, {}, {}, 0
@@ -1086,6 +1113,13 @@ do  -- CHEAT25 : les avantages restent discrets (une ligne quand elle sert, rien
   if ek > BUDGET.edgeKinstrMin then fail(("cpu: Edge %.0f kinstr/min > %d"):format(ek, BUDGET.edgeKinstrMin)) end
   if pct > BUDGET.edgeNowPct then fail(("Edge lines in « Maintenant » %.1f%% of the time > %d%%"):format(pct, BUDGET.edgeNowPct)) end
   if (S.edgeDistinct or 0) > BUDGET.edgeDistinctMax then fail(("%d distinct Edge lines > %d"):format(S.edgeDistinct, BUDGET.edgeDistinctMax)) end
+end
+if opts.fine then
+  local ks = {}
+  for k in pairs(fine) do ks[#ks + 1] = k end
+  table.sort(ks, function(a, b) return fine[a] > fine[b] end)
+  P("fine (main client, kinstr/min by Module:function line):")
+  for i = 1, math.min(opts.verbose and 300 or 80, #ks) do P(("  %-40s %7.1f"):format(ks[i], fine[ks[i]] / opts.minutes)) end
 end
 if totalMain / nMin > BUDGET.kinstrTotalMin then fail(("cpu: addon total %.0f kinstr/min > %d"):format(totalMain / nMin, BUDGET.kinstrTotalMin)) end
 

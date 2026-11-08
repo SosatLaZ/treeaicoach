@@ -52,11 +52,11 @@ local floor, ceil, max, min, abs = math.floor, math.ceil, math.max, math.min, ma
 local unpack = unpack or table.unpack
 
 -- ------------------------------------------------------------------ utilitaires
+-- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2, table.maxn(r))
+  return tryPass(pcall(fn, ...))
 end
 local function now() return try(_G.GetServerTime) or try(_G.time) or 0 end
 local function today(t) return floor((t or now()) / 86400) end

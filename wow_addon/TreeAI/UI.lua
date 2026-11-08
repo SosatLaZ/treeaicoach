@@ -669,7 +669,7 @@ function TreeAI:CreatePanel()
   panel.more:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -PAD - 14, 3)   -- place pour la poignée de largeur
 
   -- expire old suggestions even without new events
-  TreeAI:NewTicker(1, function() if panel:IsShown() then TreeAI:RequestRefresh() end end)
+  TreeAI:NewTicker(1, function() if panel:IsShown() and TreeAI:PanelDirty() then TreeAI:RequestRefresh() end end)
 
   applyPosition()
   local s = acc()
@@ -750,6 +750,7 @@ function TreeAI:GetTabControls() return ctrlRects end
 
 function TreeAI:RefreshPanel()
   if not panel then return end
+  if TreeAI._PanelRendered then TreeAI:_PanelRendered() end
   local s = acc()
   local width = panelWidth()
   panel:SetWidth(width)
@@ -1283,17 +1284,23 @@ end
 local function bestSpot(g, w, h, tx, ty)
   local cw, ch = math.ceil(w / CELL), math.ceil(h / CELL)
   if cw > g.cols or ch > g.rows then return nil end
-  local best, bl, bb
-  for y = 0, g.rows - ch do
-    for x = 0, g.cols - cw do
-      if g.used(x, y, cw, ch) == 0 then
-        local cx, cy = (x + cw / 2) * CELL, (y + ch / 2) * CELL
-        local d = math.sqrt((cx - tx) ^ 2 + (cy - ty) ^ 2)
-        if not best or d < best then best, bl, bb = d, x * CELL, y * CELL end
+  -- (LITE) une case sur deux puis affinage autour du meilleur (balayage complet si rien trouvé)
+  local best, bx, by
+  local function scan(x0, x1, y0, y1, step)
+    for y = math.max(0, y0), math.min(g.rows - ch, y1), step do
+      for x = math.max(0, x0), math.min(g.cols - cw, x1), step do
+        if g.used(x, y, cw, ch) == 0 then
+          local cx, cy = (x + cw / 2) * CELL, (y + ch / 2) * CELL
+          local d = math.sqrt((cx - tx) ^ 2 + (cy - ty) ^ 2)
+          if not best or d < best then best, bx, by = d, x, y end
+        end
       end
     end
   end
-  return bl, bb, best
+  scan(0, g.cols - cw, 0, g.rows - ch, 2)
+  if best then scan(bx - 1, bx + 1, by - 1, by + 1, 1) else scan(0, g.cols - cw, 0, g.rows - ch, 1) end
+  if not best then return nil end
+  return bx * CELL, by * CELL, best
 end
 
 -- point d'ancrage selon le quart d'écran + décalages dans l'échelle du cadre (k)
@@ -1339,19 +1346,26 @@ end
 TreeAI._FitsAt = fitsAt
 
 -- meilleur emplacement libre selon une fonction de score (plus petit = mieux)
+-- (LITE) une case sur deux, puis affinage autour du meilleur : 4× moins de calculs au placement ; rien
+-- trouvé ainsi -> balayage complet (un trou étroit n'est jamais raté)
 local function bestBy(g, w, h, score)
   local cw, ch = math.ceil(w / CELL), math.ceil(h / CELL)
   if cw > g.cols or ch > g.rows then return nil end
-  local best, bl, bb
-  for y = 0, g.rows - ch do
-    for x = 0, g.cols - cw do
-      if g.used(x, y, cw, ch) == 0 then
-        local d = score(x * CELL, y * CELL)
-        if not best or d < best then best, bl, bb = d, x * CELL, y * CELL end
+  local best, bx, by
+  local function scan(x0, x1, y0, y1, step)
+    for y = math.max(0, y0), math.min(g.rows - ch, y1), step do
+      for x = math.max(0, x0), math.min(g.cols - cw, x1), step do
+        if g.used(x, y, cw, ch) == 0 then
+          local d = score(x * CELL, y * CELL)
+          if not best or d < best then best, bx, by = d, x, y end
+        end
       end
     end
   end
-  return bl, bb, best
+  scan(0, g.cols - cw, 0, g.rows - ch, 2)
+  if best then scan(bx - 1, bx + 1, by - 1, by + 1, 1) else scan(0, g.cols - cw, 0, g.rows - ch, 1) end
+  if not best then return nil end
+  return bx * CELL, by * CELL, best
 end
 
 
