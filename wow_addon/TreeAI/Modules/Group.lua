@@ -493,10 +493,13 @@ end
 -- ---------------------------------------------------------------- événements
 local ticker
 local function startTicker()
-  if ticker or not (C_Timer and C_Timer.NewTicker) then return end
-  ticker = C_Timer.NewTicker(STATUS_EVERY, function()
-    if channel() then M.SendStatus() analyseSoon() end
-  end)
+  if ticker then return end
+  local fn = function() if channel() then M.SendStatus() analyseSoon() end end
+  -- (SPIKE) par l'ordonnanceur du cœur (phase propre, jamais dans la même image que les autres)
+  local T = core()
+  if T and T.NewTicker then ticker = T:NewTicker(STATUS_EVERY, fn) return end
+  if not (C_Timer and C_Timer.NewTicker) then return end
+  ticker = C_Timer.NewTicker(STATUS_EVERY, fn)
 end
 
 local lastRoster = 0

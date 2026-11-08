@@ -519,10 +519,14 @@ function MP.Update(force)
     if next(MP.hbdShown) then clearHBD() end
   end
   if MP.engine == "hbd" and MP.HBD() then return end
-  local sig = floor(me.n * 2) .. ":" .. floor(me.w * 2) .. ":" .. floor((view.facing or 0) * 50) .. ":" ..
-    tostring(view.rotate) .. ":" .. view.yr .. ":" .. view.pr .. ":" .. tostring(MP.pins)
-  if sig == MP.sig then return end
-  MP.sig = sig
+  -- (SPIKE) signature sans chaîne : 5 fois / s, une concaténation = des déchets pour le ramasse-miettes
+  local sg = MP.sigT
+  if not sg then sg = {}; MP.sigT = sg end
+  local a, b, c = floor(me.n * 2), floor(me.w * 2), floor((view.facing or 0) * 50)
+  if MP.sig and sg[1] == a and sg[2] == b and sg[3] == c and sg[4] == view.rotate and sg[5] == view.yr
+      and sg[6] == view.pr and sg[7] == MP.pins then return end
+  sg[1], sg[2], sg[3], sg[4], sg[5], sg[6], sg[7] = a, b, c, view.rotate, view.yr, view.pr, MP.pins
+  MP.sig = true
   MP.Place(me, view)
 end
 

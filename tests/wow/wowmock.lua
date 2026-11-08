@@ -440,6 +440,7 @@ function M.Advance(seconds, step)
     t = t + dt
     M.now = M.now + dt
     M.serverTime = M.serverTime + dt
+    if M.FrameHook then M.FrameHook(true) end   -- SPIKE: per-frame cost (timers + OnUpdate) measured by session_sim
     -- timers
     local due = {}
     for i = #M.timers, 1, -1 do
@@ -463,6 +464,7 @@ function M.Advance(seconds, step)
       local f = M.frames[i]
       if f.__scripts.OnUpdate and f:IsVisible() then M.SafeCall("OnUpdate", f.__scripts.OnUpdate, f, dt) end
     end
+    if M.FrameHook then M.FrameHook(false) end
   end
 end
 

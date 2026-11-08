@@ -379,6 +379,9 @@ TreeAI:InCombat()                     -- InCombatLockdown() protégé
 TreeAI:RunOutOfCombat(key, fn)        -- tout de suite si hors combat, sinon file (1 par key) exécutée à PLAYER_REGEN_ENABLED
 TreeAI:After(sec, fn)                 -- C_Timer.After ou fallback OnUpdate
 TreeAI:NewTicker(sec, fn[, owner])    -- retourne objet avec :Cancel() ; owner = module (défaut : celui dont le code tourne)
+                                      -- (3.9.7) un seul ordonnanceur (OnUpdate du cœur) : phase propre par ticker
+                                      -- (nombre d'or), ≤ 3 rappels « lourds » (période ≥ 1 s) par image, ~1,5 ms ;
+                                      -- les :AutoRefresh() du cycle passent en tranches sur plusieurs images
 TreeAI:CharKey()                      -- "Nom-Royaume" (en jeu uniquement)
 TreeAI:PlayerClass()                  -- "HUNTER", ...
 TreeAI:Summary()                      -- table résumé du perso (voir schéma), modifiable
