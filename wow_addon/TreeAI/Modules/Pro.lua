@@ -638,7 +638,7 @@ function M.BuildLines()
     for i, r in ipairs(ranked) do
       if i > 5 then break end
       add(quests, ("%d. %s — %s XP%s, ~%s → %d XP/min%s"):format(i, cut(r.q.title, 26), r.xp, r.exact and "" or "≈",
-        U.Dur(r.sec), floor(r.xpm), r.q.complete and " (à rendre)" or ""), 1)
+        U.Dur(r.sec), floor(r.xpm), r.q.complete and " (à rendre)" or ""), 1, { rank = i, title = r.q.title, xpm = floor(r.xpm) })
     end
   end
   -- (13, 15, 14) objectifs
@@ -658,7 +658,7 @@ function M.BuildLines()
                 mob and (" sur " .. mob) or "", math.ceil((o.need - o.have) / max(0.05, r)))
             end
           end
-          if #parts > 0 then add(quests, cut(o.name or q.title, 24) .. " " .. table.concat(parts, " · "), 1) end
+          if #parts > 0 then add(quests, cut(o.name or q.title, 24) .. " " .. table.concat(parts, " · "), 1, { eta = true }) end
         end
       end
     end
@@ -729,7 +729,9 @@ function M.BuildLines()
         end
       end
       add(info, ("Donjons niv %d : %s%s"):format(pl, table.concat(names, ", "),
-        #take > 0 and (" — prends avant : " .. table.concat(take, ", ")) or " — prends leurs quêtes avant d'y aller"), 1)
+        #take > 0 and (" — prends avant : " .. table.concat(take, ", ")) or " — prends leurs quêtes avant d'y aller"), 1,
+        { short = ("Prends les quêtes de donjon avant d'y aller : %s"):format(table.concat(names, ", ")),
+          tooltip = #take > 0 and ("À prendre : " .. table.concat(take, ", ")) or nil })
     end
   end
   -- (9) checklist
@@ -780,8 +782,30 @@ function M.Update(force)
   M.NoteInn()
   local quests, info = M.BuildLines()
   M.lines = { quests = quests, info = info }
-  U.Out(M, "quests", quests, "Pro")
-  U.Out(M, "info", info, "Pro")
+  U.Out(M, "quests", M.Display(quests), "Pro")
+  U.Out(M, "info", M.Display(info), "Pro")
+end
+
+--- Règle d'affichage (README « Où va quelle info ») : le classement XP/min tient en UNE ligne (top 5 dans
+--- l'infobulle) ; les temps par objectif ne sont pas répétés quand « À faire » (Todo) montre déjà les étapes
+--- avec leur durée ; une ligne peut avoir une forme courte (`short`, verbe d'abord). M.lines garde tout.
+function M.Display(list)
+  local Td = mod("Todo")
+  local todo = Td and Td.Active and try(Td.Active)
+  local out, rank = {}, nil
+  for _, l in ipairs(list or {}) do
+    if l.rank then
+      if not rank then
+        rank = { text = ("Meilleure quête : « %s » (%d XP/min)"):format(cut(l.title or "", 30), l.xpm or 0), prio = 1,
+          tooltip = { "Quêtes du journal classées par XP/min :" } }
+        out[#out + 1] = rank
+      end
+      rank.tooltip[#rank.tooltip + 1] = l.text
+    elseif not (l.eta and todo) then
+      out[#out + 1] = l.short and { text = l.short, prio = l.prio, tooltip = l.tooltip or l.text, onClick = l.onClick } or l
+    end
+  end
+  return out
 end
 
 local pending = false

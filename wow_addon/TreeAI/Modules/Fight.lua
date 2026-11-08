@@ -122,7 +122,7 @@ function M.ScanPlates()
 end
 
 local lines = {}  -- lignes de l'onglet « Infos » : clé -> {text, prio}
-local function setLine(k, text, prio) lines[k] = text and { text = text, prio = prio or 1 } or nil end
+local function setLine(k, text, prio, tip) lines[k] = text and { text = text, prio = prio or 1, tooltip = tip } or nil end
 
 ---------------------------------------------------------------------------------------------------
 -- 26/27. pull + élites en patrouille
@@ -320,7 +320,11 @@ function M:PLAYER_DEAD()
   end
   M.lastRecap = r
   setLine("death", txt, 2)
-  local tip = { "Récap de mort", "Attaquants : " .. r.attackers .. (r.elites > 0 and (" (" .. r.elites .. " élite)") or "") }
+  -- jamais un chiffre qu'on n'a pas : « Attaquants : 0 » = pas de donnée (Forever : pas de journal de combat)
+  local tip = { "Récap de mort" }
+  if (tonumber(r.attackers) or 0) > 0 then
+    tip[#tip + 1] = "Attaquants : " .. r.attackers .. (r.elites > 0 and (" (" .. r.elites .. " élite)") or "")
+  end
   if measured then
     tip[#tip + 1] = "Dégâts subis (12 s) : " .. r.total .. " en " .. r.hits .. " coups"
       .. ((r.biggest or 0) > 0 and (", plus gros " .. r.biggest) or "")
@@ -545,7 +549,11 @@ function M.MoodLoss(happiness, dps)
 end
 function M:CheckPetMood()
   local happiness = API.PetHappiness or G.GetPetHappiness   -- C_PetInfo sur Forever
-  if not opt("petMood") or not isClass("HUNTER") or not exists("pet") or not happiness then
+  -- une seule ligne par sujet : si le module Chasseur est actif, c'est SA ligne « Nourris ton familier »
+  -- (avec la nourriture et le clic) qui porte l'info ; le DPS gagné passe dans son infobulle (M.PetDPS)
+  local hunter = T.modules and T.modules.Hunter
+  local hunterOn = hunter and hunter.db and hunter.db.enabled ~= false
+  if not opt("petMood") or hunterOn or not isClass("HUNTER") or not exists("pet") or not happiness then
     setLine("mood", nil) M:Clear("mood") return
   end
   local h = sv(try(happiness))
@@ -565,18 +573,20 @@ function M.ShotTip(speed, known)
   if speed <= 0 then return nil end
   local inst = {}
   for _, k in ipairs({ "arcane", "serpent", "multi", "conc" }) do if known[k] then inst[#inst + 1] = known[k] end end
-  local parts = {}
+  -- verbe d'abord, une ligne ; le détail (quels sorts, Visée) va dans l'infobulle (2e valeur)
+  local sp = ("%.1f s"):format(speed)
+  local text, tip = nil, {}
   if #inst > 0 then
-    parts[#parts + 1] = ("Tirs auto toutes les %.1f s : lance %s juste APRÈS un tir auto (instantané, pas de perte)"):format(
-      speed, table.concat(inst, " / "))
+    text = "Lance tes instants juste après un tir auto (toutes les " .. sp .. ")"
+    tip[#tip + 1] = "Instantanés : " .. table.concat(inst, " / ") .. " — aucun tir auto perdu."
   else
-    parts[#parts + 1] = ("Tirs auto toutes les %.1f s : ne bouge pas pendant la courte incantation"):format(speed)
+    text = "Reste immobile pendant le tir auto (toutes les " .. sp .. ")"
   end
   if known.aimed then
-    if speed >= 2.8 then parts[#parts + 1] = "« " .. known.aimed .. " » en ouverture (arme lente : rentable)"
-    else parts[#parts + 1] = "évite « " .. known.aimed .. " » en plein combat (arme rapide : tu perds des tirs)" end
+    if speed >= 2.8 then tip[#tip + 1] = "« " .. known.aimed .. " » en ouverture (arme lente : rentable)."
+    else tip[#tip + 1] = "Évite « " .. known.aimed .. " » en plein combat (arme rapide : tu perds des tirs)." end
   end
-  return table.concat(parts, " ; ") .. "."
+  return text, tip
 end
 function M:UpdateShotTip()
   if not opt("shotTips") or not isClass("HUNTER") then setLine("shots", nil) return end
@@ -585,9 +595,9 @@ function M:UpdateShotTip()
   for k, id in pairs({ arcane = 3044, serpent = 1978, multi = 2643, conc = 5116, aimed = 19434 }) do
     if knows(id) then known[k] = spellName(id) end
   end
-  local tip = M.ShotTip(speed, known)
-  setLine("shots", tip, 1)
-  return tip
+  local text, tip = M.ShotTip(speed, known)
+  setLine("shots", text, 1, tip)
+  return text
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -618,9 +628,11 @@ function M:PushLines(force)
   if not force and t - lastPush < 0.5 then return end
   lastPush = t
   local out = {}
+  local sugg = T._suggestions or {}
   for _, k in ipairs(ORDER) do
     local l = lines[k]
-    if l then out[#out + 1] = { text = l.text, prio = l.prio } end
+    -- pas de doublon : une ligne déjà suggérée (récap de mort, pull…) est listée une fois dans l'onglet
+    if l and not sugg["Fight:" .. k] then out[#out + 1] = { text = l.text, prio = l.prio, tooltip = l.tooltip } end
   end
   if T.SetTabLines then try(T.SetTabLines, T, TAB, out, "Fight") end
 end

@@ -156,8 +156,10 @@ return function(M, ctx)
     { text = "Une vraie ligne d'information" },
   }, "ui2")
   T:SelectTab("info")
-  local ctl = T:GetTabControls()
-  check(#ctl == 2 and ctl[1].text == "Recalculer" and ctl[2].x > ctl[1].x + ctl[1].w - 1, "2 boutons dans la barre de l'onglet")
+  -- (« Infos » a aussi ses propres boutons : Autotest, Parcours complet… on regarde les deux posés ici)
+  local all, ctl = T:GetTabControls(), {}
+  for _, r in ipairs(all) do if r.text == "Recalculer" or r.text == "Horizon +3" then ctl[#ctl + 1] = r end end
+  check(#ctl == 2 and ctl[1].text == "Recalculer" and (ctl[2].x > ctl[1].x + ctl[1].w - 1 or ctl[2].row > ctl[1].row), "2 boutons dans la barre de l'onglet")
   for _, r in ipairs(ctl) do check(r.textW <= r.textMax, "bouton " .. r.text .. " : texte dans sa case") end
   local asLine = false
   for _, e in ipairs(T:GetVisibleLines()) do if e.control then asLine = true end end

@@ -351,7 +351,7 @@ function M.Nudges()
   local k = floor((t - (tonumber(s.start) or t)) / every)
   if opt("pause") and k >= 1 and k > (s.pauses or 0) then
     s.pauses = k
-    M:Suggest("pause", fmt("%s de jeu d'affilée : pense à une petite pause", dur(k * every)), 1,
+    M:Suggest("pause", fmt("Fais une petite pause : %s de jeu d'affilée", dur(k * every)), 1,
       { ttl = 600, tab = "info", sound = false, onClick = function() M.open = true; openTab("info")(); M:Clear("pause"); pcall(M.Update) end,
         tooltip = { "Clic : voir le bilan de la session" } })
   end

@@ -231,11 +231,11 @@ function M.CheckRested(context)
   if level() >= 60 or maxXP <= 0 then return end
   local pct = rested and math.floor(rested * 100 / maxXP) or 0
   if context == "login" and pct >= 10 then
-    suggest("lvl_rested", ("XP reposée : %d %% d'un niveau (XP x2 sur les monstres)."):format(pct), 1, 3600)
+    suggest("lvl_rested", ("Tue des monstres : XP x2 grâce au repos (%d %% d'un niveau)"):format(pct), 1, 3600)
   elseif resting and pct >= 148 then
-    suggest("lvl_rested", "Repos plein (150 %) : inutile de rester à l'auberge.", 1, 1800)
+    suggest("lvl_rested", "Pars de l'auberge : ton repos est plein (150 %)", 1, 1800)
   elseif context == "leave" and pct >= 25 then
-    suggest("lvl_rested", ("Tu pars avec %d %% d'XP reposée : tue des monstres, pas que des quêtes."):format(pct), 1, 1800)
+    suggest("lvl_rested", ("Tue des monstres, pas que des quêtes : %d %% d'XP reposée"):format(pct), 1, 1800)
   end
 end
 
@@ -269,8 +269,8 @@ end
 function M.CheckTraining()
   local lvl = trainPending()
   if not lvl or inCombat() then return end
-  local msg = (lvl % 2 == 0) and ("Niveau %d : nouveaux sorts chez ton maître de classe.")
-    or ("Niveau %d : passe voir ton maître de classe (rangs possibles).")
+  local msg = (lvl % 2 == 0) and ("Va voir ton maître de classe : nouveaux sorts du niveau %d")
+    or ("Va voir ton maître de classe : rangs possibles au niveau %d")
   -- en ville / auberge on insiste ; dehors on rappelle rarement
   local resting = IsResting and IsResting()
   suggest("lvl_train", msg:format(lvl), resting and 2 or 1, resting and 300 or 1800)

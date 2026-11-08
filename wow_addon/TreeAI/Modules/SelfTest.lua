@@ -383,13 +383,17 @@ function M.PushTab()
   local nerr = type(d.errors) == "table" and #d.errors or 0
   local last = r and (" (dernier : %d ok, %d à vérifier, %d en échec)"):format(r.ok or 0, r.warn or 0, r.ko or 0) or ""
   local lines = {
-    { text = "Autotest TreeAI : cliquer pour vérifier le jeu et les modules" .. last,
-      prio = (r and (r.ko or 0) > 0) and 2 or 1,
-      tooltip = "Écrit un rapport que l'appli TreeAI lit (après /reload).",
+    -- un bouton de l'onglet (pas une ligne qui prend la place d'un conseil) ; une ligne seulement s'il y a un souci
+    { text = "Autotest TreeAI : vérifier le jeu et les modules", label = "Autotest", control = true, prio = 1,
+      tooltip = { "Vérifie le jeu et les modules" .. last .. ".", "Écrit un rapport que l'appli TreeAI lit (après /reload)." },
       onClick = function() M.Run(false); M.PushTab() end },
   }
+  if r and (r.ko or 0) > 0 then
+    lines[#lines + 1] = { text = ("Relance l'autotest : %d point(s) en échec (clic)"):format(r.ko), prio = 2,
+      onClick = function() M.Run(false); M.PushTab() end }
+  end
   if nerr > 0 then
-    lines[2] = { text = ("Erreurs TreeAI gardées : %d — cliquer pour les voir"):format(nerr), prio = 2,
+    lines[#lines + 1] = { text = ("Vois les %d erreurs TreeAI gardées (clic)"):format(nerr), prio = 2,
       onClick = function() M.PrintErrors() end }
   end
   T:SetTabLines("info", lines, "selftest")

@@ -162,7 +162,7 @@ function M.MailReminder()
   if not (opt("mail") and type(m) == "table" and m.expireAt) then return end
   local left = m.expireAt - now()
   if left <= 0 or left > EXPIRE_DAYS * 86400 then return end
-  M:Suggest("expireLogin", "Courrier : des objets expirent dans " .. dur(left) .. ", passe à une boîte aux lettres", 2,
+  M:Suggest("expireLogin", "Passe à une boîte aux lettres : des objets expirent dans " .. dur(left), 2,
     { ttl = 600, tab = "hv", sound = false, onClick = dismiss("expireLogin"), tooltip = { "Clic : ranger" } })
 end
 
@@ -404,7 +404,7 @@ function M.OnZone()
     M.db.inst = recent
     local k = #recent
     if k >= INST_LIMIT and opt("instances") then
-      M:Suggest("inst", fmt("%d instances en une heure : la limite du jeu est atteinte, prévois une pause donjon", k), 2,
+      M:Suggest("inst", fmt("Prévois une pause donjon : %d instances en une heure, limite du jeu atteinte", k), 2,
         { ttl = 300, tab = "group", sound = false, onClick = dismiss("inst"), tooltip = { "Clic : ranger" } })
     end
   end

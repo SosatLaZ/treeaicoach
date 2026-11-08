@@ -708,7 +708,7 @@ function M:NextStep()
 end
 
 ---------------------------------------------------------------------------------------------------
--- Affichage : onglet « Infos » (bloc « Touches »), suggestion, résumé
+-- Affichage : onglet « Touches » (menu Plus), suggestion, résumé
 ---------------------------------------------------------------------------------------------------
 local function joinKeys(list, n, f)
   local out = {}
@@ -719,50 +719,88 @@ local function joinKeys(list, n, f)
   return tconcat(out, ", ")
 end
 
+-- Règle d'affichage (README « Où va quelle info ») : onglet « Touches » = 1 bouton « Lier le suivant » +
+-- au plus 3 étapes cliquables + 1 ligne par genre de conflit ; les listes (touches libres, cases vides,
+-- sorts absents) vont dans les infobulles. Le résumé de « Maintenant » commence par un verbe, clic = étape suivante.
+local TAB, TAB_TITLE = "binds", "Touches"
+M.TAB = TAB
+local PLAN_SHOWN = 3
+
+local function nameList(list, n)
+  local out = {}
+  for i, cf in ipairs(list) do
+    if i > n then out[#out + 1] = "…" break end
+    out[#out + 1] = cf.name or cf.key or "?"
+  end
+  return tconcat(out, ", ")
+end
+
 function M:Lines()
   local st, res = self.state, self.result
   local lines = {}
   if not st or not res then return lines end
   local function add(text, prio, onClick, tooltip) lines[#lines + 1] = { text = text, prio = prio or 1, onClick = onClick, tooltip = tooltip } end
-  add(("Touches : %d bien placé(s), %d à placer, %d touche(s) libre(s)"):format(#res.ok, #res.plan, #st.free + #st.emptyKeyed),
-    2, nil, "Analyse de tes barres et raccourcis (/tai touches). Rien n'est changé sans ton clic.")
-  if st.noApi then add("Barres illisibles sur ce client : conseils seulement.", 1) end
-  if #st.addons > 0 then add("Barres lues : " .. tconcat(st.addons, ", ") .. " (lecture seule)", 1) end
+  -- bouton de l'onglet : l'étape suivante, une par clic ; l'infobulle porte le bilan et les listes
+  local tip = { ("%d bien placé(s), %d à placer."):format(#res.ok, #res.plan) }
+  if #st.free > 0 then tip[#tip + 1] = "Touches confortables libres : " .. joinKeys(st.free, 10) end
+  if #st.emptyKeyed > 0 then
+    tip[#tip + 1] = "Cases vides avec touche : " .. joinKeys(st.emptyKeyed, 8, function(e) return M.KeyText(e.key) end)
+  end
+  if #st.useless > 0 then
+    tip[#tip + 1] = "Touches peu utiles à récupérer : " .. joinKeys(st.useless, 6, function(u)
+      return M.KeyText(u.key) .. " (" .. u.label .. ")" end)
+  end
+  if #st.addons > 0 then tip[#tip + 1] = "Barres lues : " .. tconcat(st.addons, ", ") .. " (lecture seule)" end
+  tip[#tip + 1] = "Rien n'est changé sans ton clic (/tai touches)."
+  if res.plan[1] then
+    lines[#lines + 1] = { text = "Lier le suivant", label = "Lier le suivant", control = true, prio = 1, tooltip = tip,
+      onClick = function() M:DoStep(M:NextStep()) end }
+  end
+  if st.noApi then add("Barres illisibles sur ce client : suis les conseils.", 1) end
   local c = self.confirm
   if c and (now() - (c.t or 0)) < 30 then
     local tg = c.step
     add(("Confirmer : lier %s à %s ? (clic = oui)"):format(label(tg.item), M.KeyText(tg.key)), 3,
       function() M:Bind(tg, true) end)
   end
-  local ar = opt("allowBind") ~= false and M.AutoRunStep()
-  if ar then
-    add(("Course automatique : aucune touche — lier à %s ? (clic, confirmation)"):format(M.KeyText(ar.key)), 1,
-      function() M:DoStep(ar) end,
-      { "Un addon ne peut pas courir à ta place : la touche « Course automatique » du jeu le fait.",
-        "Clic : lier la touche (confirmation demandée, hors combat)." })
-  end
-  if res.missingMacros > 0 then
-    add(("%d macro(s) TAI pas encore créée(s) : /tai macros installer"):format(res.missingMacros), 2,
+  -- (pas de ligne « course automatique » : le joueur a sa touche ; Binds.AutoRunHint reste pour l'infobulle de Todo)
+  -- macros pas encore créées : le module Macros a déjà sa ligne « Nouvelles macros prêtes » (pas de doublon)
+  local macrosLine = T._suggestions and T._suggestions["Macros:ready"]
+  if res.missingMacros > 0 and not macrosLine then
+    add(("Installe %d macro(s) TAI (clic)"):format(res.missingMacros), 2,
       function() local mod = T.modules and T.modules.Macros if mod and mod.Install then mod:Install(false) end end)
   end
   for i, tg in ipairs(res.plan) do
-    if i > 8 then break end
+    if i > PLAN_SHOWN then break end
     local blocked = (tg.how == "place" and M.db.placeBlocked) or (tg.how == "bind" and M.db.bindBlocked)
-    add(M.StepText(tg), i == 1 and 2 or 1, function() M:DoStep(tg) end,
-      blocked and manualText(tg) or (tg.how == "place" and "Clic : poser (hors combat, une par clic)"
-        or "Clic : lier la touche (confirmation demandée)"))
+    local t = blocked and manualText(tg) or (tg.how == "place" and "Clic : poser (hors combat, une par clic)"
+      or "Clic : lier la touche (confirmation demandée)")
+    if i == PLAN_SHOWN and #res.plan > PLAN_SHOWN then
+      t = { t, ("Encore %d étape(s) ensuite : bouton « Lier le suivant »."):format(#res.plan - PLAN_SHOWN) }
+    end
+    add(M.StepText(tg), i == 1 and 2 or 1, function() M:DoStep(tg) end, t)
   end
-  for i, cf in ipairs(res.conflicts) do
-    if i > 6 then break end
-    add(cf.text, cf.prio)
+  -- conflits : une ligne par genre (le détail dans l'infobulle)
+  local byKind, order = {}, {}
+  for _, cf in ipairs(res.conflicts) do
+    if not byKind[cf.kind] then byKind[cf.kind] = {}; order[#order + 1] = cf.kind end
+    local l = byKind[cf.kind]
+    l[#l + 1] = cf
   end
-  if #st.emptyKeyed > 0 then
-    add("Cases vides avec touche : " .. joinKeys(st.emptyKeyed, 8, function(e) return M.KeyText(e.key) end), 1)
-  end
-  if #st.free > 0 then add("Touches confortables libres : " .. joinKeys(st.free, 10), 1) end
-  if #st.useless > 0 then
-    add("Touches peu utiles à récupérer : " .. joinKeys(st.useless, 6, function(u)
-      return M.KeyText(u.key) .. " (" .. u.label .. ")" end), 1)
+  for _, kind in ipairs(order) do
+    local l = byKind[kind]
+    if #l == 1 then
+      add(l[1].text, l[1].prio)
+    else
+      local tt = {}
+      for i, cf in ipairs(l) do if i <= 10 then tt[#tt + 1] = cf.text end end
+      local head
+      if kind == "missing" then head = ("Pose %d sorts sur tes barres : %s"):format(#l, nameList(l, 3))
+      elseif kind == "nokey" then head = ("Donne une touche à %d sorts : %s"):format(#l, nameList(l, 3))
+      elseif kind == "dup" then head = ("Libère %d touches en double : %s"):format(#l, nameList(l, 3))
+      else head = ("Règle %d touches utilisées 2 fois"):format(#l) end
+      add(head, l[1].prio, nil, tt)
+    end
   end
   if M.db.bindBlocked or M.db.placeBlocked then
     add("Le jeu bloque certaines actions d'addon : suis les instructions (infobulles).", 1)
@@ -770,16 +808,33 @@ function M:Lines()
   return lines
 end
 
+-- bouton « Touches » (assistant / options) : ouvre l'onglet
+function M:Toggle()
+  self:Refresh()
+  if T.SelectTab then try(T.SelectTab, T, TAB) end
+  if T.ShowPanel then try(T.ShowPanel, T) end
+end
+
+local function ensureTab()
+  if M.tabRegistered or not T.RegisterTab then return M.tabRegistered end
+  M.tabRegistered = try(T.RegisterTab, T, TAB, TAB_TITLE, 46) and true or false
+  return M.tabRegistered
+end
+
 function M:Render()
   local lines = self:Lines()
-  if T.SetTabLines then try(T.SetTabLines, T, "info", lines, "Binds") end
+  if T.SetTabLines then
+    ensureTab()
+    try(T.SetTabLines, T, TAB, lines, "Binds")
+  end
   local res = self.result
   if res and opt("suggest") ~= false and self.Suggest then
     local n = 0
     for _, cf in ipairs(res.conflicts) do if cf.kind == "nokey" or cf.kind == "missing" then n = n + 1 end end
     if n > 0 then
-      self:Suggest("todo", ("Touches : %d sort(s) important(s) sans touche — voir Infos"):format(n), 1,
-        { ttl = 600, tab = "info", onClick = function() M:DoStep(M:NextStep()) end })
+      self:Suggest("todo", ("Lie tes %d sorts importants : clic = le suivant"):format(n), 1,
+        { ttl = 600, tab = TAB, onClick = function() M:DoStep(M:NextStep()) end,
+          tooltip = "Détail : onglet « Touches » (menu Plus)." })
     elseif self.Clear then self:Clear("todo") end
   end
   if T.Summary then
@@ -825,7 +880,7 @@ function M:OnEnable()
 end
 
 function M:OnDisable()
-  if T.SetTabLines then try(T.SetTabLines, T, "info", {}, "Binds") end
+  if T.SetTabLines then try(T.SetTabLines, T, TAB, {}, "Binds") end
 end
 
 ---------------------------------------------------------------------------------------------------

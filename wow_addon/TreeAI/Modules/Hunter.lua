@@ -367,14 +367,20 @@ function M:UpdateFeedMacro(foodID)
   if not opt("feedMacro") or not foodID then return end
   if inCombat() or not (CreateMacro and EditMacro and GetMacroIndexByName) then return end
   if TreeAI and TreeAI.InUserAction and not TreeAI:InUserAction() then
-    -- (0.3) écrire une macro hors d'un clic est bloqué sur Forever : on propose le clic
-    suggest("macro", "Nourriture du familier changée : clique pour mettre à jour « " .. FEED_MACRO .. " ».", 1, 3600,
-      { onClick = function() M:UpdateFeedMacro(foodID) end })
+    -- (0.3) écrire une macro hors d'un clic est bloqué sur Forever : le clic de la ligne « Nourris ton
+    -- familier » la met à jour (une seule ligne) ; ligne à part seulement si le familier n'a pas faim
+    M._pendingFeed = foodID
+    if not (TreeAI and TreeAI._suggestions and TreeAI._suggestions["Hunter:hungry"]) then
+      suggest("macro", "Mets à jour « " .. FEED_MACRO .. " » : nouvelle nourriture (clic)", 1, 3600,
+        { onClick = function() M:UpdateFeedMacro(foodID) end })
+    end
     return
   end
   local feed = spellName(S.FEED)
   if not feed then return end
   local body = "#showtooltip\n/cast " .. feed .. "\n/use item:" .. foodID
+  M._pendingFeed = nil
+  clear("macro")
   if body == lastMacroBody then return end
   local idx = GetMacroIndexByName(FEED_MACRO)
   local ok
@@ -404,7 +410,7 @@ function M:CheckPet()
     return
   end
   if UnitIsDead and UnitIsDead("pet") then
-    suggest("petdead", "Familier mort : « " .. (spellName(S.REVIVE) or "Ressusciter le familier") .. " » hors combat.", 3, 60)
+    suggest("petdead", "Ressuscite ton familier : « " .. (spellName(S.REVIVE) or "Ressusciter le familier") .. " » hors combat", 3, 60)
     return
   end
   -- Santé
@@ -423,17 +429,33 @@ function M:CheckPet()
   local food, quality = self:BestFood()
   if food then self:UpdateFeedMacro(food) end
   if happy >= 3 then clear("hungry"); return end
-  local foodTxt
+  -- une seule ligne « Nourris ton familier » : verbe d'abord, nourriture en clair ; le pourquoi (DPS, loyauté)
+  -- et la macro dans l'infobulle ; clic = met à jour « TAI Nourrir » si la nourriture a changé
+  local tip = {}
+  local what
   if food then
-    foodTxt = "Donne-lui : " .. itemName(food) .. (quality == "partial" and " (un peu faible)" or "")
+    what = itemName(food) .. (quality == "partial" and " (un peu faible)" or "")
   else
-    foodTxt = "Aucune nourriture adaptée dans les sacs (régime : " .. dietText(self:GetDiet()) .. ")"
+    tip[#tip + 1] = "Aucune nourriture adaptée dans les sacs (régime : " .. dietText(self:GetDiet()) .. ")."
+  end
+  local F = TreeAI and TreeAI.Fight
+  local gain = F and F.MoodLoss and F.PetDPS and F.MoodLoss(happy, F.PetDPS())
+  if gain and gain > 0 then tip[#tip + 1] = ("Heureux = environ %d DPS de plus pour ton familier."):format(gain) end
+  local extra = { tooltip = tip }
+  if M._pendingFeed then
+    local fid = M._pendingFeed
+    tip[#tip + 1] = "Clic : mettre à jour la macro « " .. FEED_MACRO .. " » (nouvelle nourriture)."
+    extra.onClick = function() M:UpdateFeedMacro(fid) end
+  else
+    tip[#tip + 1] = "Macro « " .. FEED_MACRO .. " » : 1 clic = nourrir."
   end
   if happy == 1 or (loyaltyRate and loyaltyRate < 0) then
-    suggest("hungry", "Familier MÉCONTENT : 75 % des dégâts et perte de loyauté (risque de fuite). " .. foodTxt .. ".", 3, 45)
+    tip[#tip + 1] = "Mécontent : 75 % des dégâts et perte de loyauté (il peut s'enfuir)."
+    suggest("hungry", "Nourris ton familier mécontent : " .. (what or "achète de quoi le nourrir"), 3, 45, extra)
   elseif not inCombat() then
-    suggest("hungry", "Familier juste content : nourris-le pour +25 % de dégâts. " .. foodTxt .. ".", 1, 240)
+    suggest("hungry", "Nourris ton familier (+25 % de dégâts) : " .. (what or "achète de quoi le nourrir"), 1, 240, extra)
   end
+  if M._pendingFeed and TreeAI and TreeAI._suggestions and TreeAI._suggestions["Hunter:hungry"] then clear("macro") end
 end
 
 function M:CheckTraining()
@@ -441,7 +463,7 @@ function M:CheckTraining()
   local total, spent = GetPetTrainingPoints()
   local free = (total or 0) - (spent or 0)
   if free > 0 then
-    suggest("tp", string.format("%d point(s) d'entraînement libres : Dressage des bêtes (nouvelles techniques du familier).", free), 1, 900)
+    suggest("tp", string.format("Dépense %d point(s) d'entraînement : Dressage des bêtes (techniques du familier)", free), 1, 900)
   end
 end
 

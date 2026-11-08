@@ -1479,7 +1479,9 @@ function M:BuildLines()
   local s = self.char and self.char.session
   local multi = 0
   for _, e in ipairs(board) do if e.multi then multi = multi + 1 end end
-  lines[#lines + 1] = { text = fmt("|cff33cc66Missions|r : %d en commun · %d au total", multi, #board), prio = 1 }
+  -- règle d'affichage : pas de ligne de compteur (les chiffres vont dans l'infobulle du bouton « Prêt ? ») ;
+  -- les actions sans contexte sont des boutons de l'onglet (control), les lignes commencent par un verbe
+  local counts = fmt("Missions : %d en commun · %d au total", multi, #board)
   if type(s) == "table" and s.goal then
     local gs = E.Goal(s.goal, self.list, s, epoch())
     if gs then
@@ -1489,7 +1491,7 @@ function M:BuildLines()
   end
   if nx then
     local e = nx.mission
-    lines[#lines + 1] = { text = "|cffffd133> " .. nx.text .. "|r" .. (e.poi and " |cff66ccff[cible]|r" or ""), prio = 2,
+    lines[#lines + 1] = { text = "|cffffd133" .. nx.text .. "|r", prio = 2,
       tooltip = e.poi and "Clic : cible de groupe (le chef la partage, boussole)" or "Pas de point sur la carte",
       onClick = function() M:SetGroupTarget(e) end }
   end
@@ -1501,14 +1503,14 @@ function M:BuildLines()
     lines[#lines + 1] = { text = "Prêt ? " .. tconcat(bits, " · "), prio = rc.done and 1 or 2,
       tooltip = "Clic : je suis prêt", onClick = function() M:ReadyAnswer(true) end }
   else
-    lines[#lines + 1] = { text = "|cff66ccff[Prêt ?]|r demander au groupe", prio = 1,
-      tooltip = "Clic : vérification « prêt ? » (PV, mana, familier, AFK)", onClick = function() M:ReadyAsk() end }
+    lines[#lines + 1] = { text = "Demande au groupe s'il est prêt", label = "Prêt ?", control = true, prio = 1,
+      tooltip = { "Clic : vérification « prêt ? » (PV, mana, familier, AFK)", counts }, onClick = function() M:ReadyAsk() end }
   end
   local ti = self:TargetInfo()
   if ti and not (T.InCombat and T:InCombat()) then
     local icon = M.SuggestMark(ti)
     if ti.mark ~= icon then
-      lines[#lines + 1] = { text = fmt("|cff66ccff[Marquer]|r %s sur %s", MARK_NAME[icon] or "marque", ti.name or "la cible"),
+      lines[#lines + 1] = { text = fmt("Pose la marque %s sur %s (clic)", MARK_NAME[icon] or "conseillée", ti.name or "la cible"),
         prio = 1, tooltip = "Clic : pose la marque (hors combat, une par clic)", onClick = function() M:MarkTarget() end }
     end
   end

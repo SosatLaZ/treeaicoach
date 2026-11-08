@@ -262,6 +262,14 @@ function M.RepairCost(avg)
   return floor(lost * per)
 end
 
+--- Coût estimé de la réparation (pc) ou nil : pour l'infobulle de la ligne « répare » du module Inventaire.
+function M.RepairEstimate()
+  local avg = durability()
+  if not avg or avg >= 99 then return nil end
+  local c = M.RepairCost(avg)
+  return (tonumber(c) and c > 0) and c or nil
+end
+
 function M.InDungeon()
   local inInst, kind = try(g("IsInInstance"))
   return inInst and (kind == "party" or kind == "raid")
@@ -278,7 +286,7 @@ function M.DurLines()
     if worst <= 25 then txt = ("Répare dès que possible : un objet à %d %%"):format(floor(worst))
     elseif r and r > 0 then txt = ("Réparation dans ~%s (dur. %d %%)"):format(dur((worst - 25) / r * 3600), floor(avg))
     else txt = ("Durabilité %d %% (pire %d %%)"):format(floor(avg), floor(worst)) end
-    lines[#lines + 1] = { text = txt .. ", coût estimé " .. money(cost), prio = worst <= 25 and 2 or 1 }
+    lines[#lines + 1] = { text = txt .. ", coût estimé " .. money(cost), prio = worst <= 25 and 2 or 1, repair = true }
   end
   if opt("dungeonDur") then
     local P = T.Pro
@@ -287,7 +295,7 @@ function M.DurLines()
     local need = tonumber(M.db.durMin) or 60
     if avg < need and (M.InDungeon() or (grouped and near)) then
       lines[#lines + 1] = { text = ("Avant donjon : répare (dur. %d %%, ~%s)"):format(floor(avg), money(cost)),
-        prio = M.InDungeon() and 2 or 1 }
+        prio = M.InDungeon() and 2 or 1, repair = not M.InDungeon() }
     end
   end
   return lines
@@ -421,14 +429,16 @@ function M.ShowMailButton(show)
   if not opt("mail") then show = false end
   -- (3.9.2) only when a recipient was chosen (« compos » friend) — it was floating at the top for everyone
   if not (M.char and M.char.mailTo and M.char.mailTo ~= "") then show = false end
+  -- (CHECKUP) jamais flottant : seulement collé à une fenêtre de courrier visible (sinon : rien)
+  local mframe = g("MailFrame") or g("SendMailFrame")
+  if show and not (mframe and (not mframe.IsShown or mframe:IsShown())) then show = false end
   if show and not mailBtn then
     local CF, parent = g("CreateFrame"), g("UIParent")
     if not CF or not parent then return end
     mailBtn = CF("Button", nil, parent, "UIPanelButtonTemplate")
     mailBtn:SetSize(170, 24)
     local mf = g("MailFrame") or g("SendMailFrame")
-    if mf then mailBtn:SetPoint("TOPLEFT", mf, "TOPRIGHT", 6, -70)   -- anchored next to the mail window (not parented)
-    else mailBtn:SetPoint("TOP", parent, "TOP", 0, -120) end
+    mailBtn:SetPoint("TOPLEFT", mf, "TOPRIGHT", 6, -70)   -- anchored next to the mail window (not parented)
     mailBtn:SetClampedToScreen(true)
     mailBtn:SetScript("OnClick", function() pcall(M.MailClick) end)
     M.mailButton = mailBtn
@@ -636,7 +646,16 @@ function M.Update(force)
   append(info, M.NodeLines())
   M.lines = { hv = hv, info = info }
   out("hv", hv)
-  out("info", info)
+  -- une seule ligne « répare » : celle du module Inventaire (« Maintenant ») ; le coût estimé passe dans son
+  -- infobulle (M.RepairEstimate) ; M.lines garde tout (tests, résumé)
+  local inv = T._suggestions and T._suggestions["Inventory:inv_repair"]
+  if inv then
+    local shown = {}
+    for _, l in ipairs(info) do if not l.repair then shown[#shown + 1] = l end end
+    out("info", shown)
+  else
+    out("info", info)
+  end
 end
 local pending = false
 function M.Refresh(delay)

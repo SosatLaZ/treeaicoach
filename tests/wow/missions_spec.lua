@@ -253,7 +253,10 @@ ok(loot and loot.text:find("Delta (loin) : de ton côté", 1, true), "groupe él
 local tab = clients.Alpha.T.tabs.group
 ok(tab and #tab >= 6 and clients.Alpha.T.tabTitle == "Groupe", "onglet group rempli")
 ok(tab and find(tab, "Sang de lion 3/3 · 100 %"), "ligne de mission avec barre")
-ok(tab and tab[1].text:find("Missions", 1, true) and tab[2].onClick, "en-tête + ligne cible cliquable")
+local nxl = tab and find(tab, "Prochaine mission")
+ok(tab and not find(tab, "en commun") and (not nxl or nxl.onClick) and tab[1].onClick, "pas de ligne compteur ; 1re ligne cliquable")
+local rdy = tab and find(tab, "s'il est prêt")
+ok(rdy and rdy.control and rdy.label == "Prêt ?" and rdy.onClick, "« Prêt ? » = bouton de l'onglet")
 for _, l in ipairs(tab or {}) do ok(type(l.text) == "string" and l.prio >= 1 and l.prio <= 3, "ligne valide") end
 
 -- ---------------------------------------------------------------- « attendez » au moment de rendre
@@ -463,7 +466,7 @@ ok(E2.Direction(mk(0, 0), mk(0, 100), 0).word == "devant" and E2.Direction(mk(0,
 cfgs.Alpha.target = { cls = "elite" }
 Am.Mi._dirty = true
 Am.Mi:Tick()
-local ml = find(Am.T.tabs.group, "[Marquer]")
+local ml = find(Am.T.tabs.group, "Pose la marque")
 ok(ml and ml.text:find("crâne", 1, true) and ml.onClick, "marquage conseillé : crâne sur élite")
 ml.onClick(); ml.onClick()
 ok(Am.T.marks and #Am.T.marks == 1 and Am.T.marks[1][1] == "target" and Am.T.marks[1][2] == 8, "une marque par clic, pas de doublon")

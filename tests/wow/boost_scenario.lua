@@ -13,7 +13,7 @@ return function(M, ctx)
     hostile = true, level = 27 }
   local snd = #M.sounds
   ctx.fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
-  ctx.check(S["Boost:rare"] and S["Boost:rare"].text:find("Rare : Croc%-test"), "rare suggestion")
+  ctx.check(S["Boost:rare"] and S["Boost:rare"].text:find("^Vise le rare Croc%-test"), "rare suggestion")
   ctx.check(#M.sounds > snd, "rare sound played")
   snd = #M.sounds
   ctx.fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
