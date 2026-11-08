@@ -279,6 +279,19 @@ QLabel[role="num"] {{ font-size: {SMALL_PX}px; font-weight: 600; color: {t.secon
   border-radius: {BADGE_RADIUS}px; padding: 2px 0; }}
 QLabel[role="num"][tone="accent"] {{ color: {t.accent}; background: {t.accent_tint}; }}
 QLabel[role="metric"] {{ font-family: "{display}"; font-size: {HEADLINE_PX}px; font-weight: 600; }}
+#Bubble {{ background: {t.group}; border: 1px solid {t.edge}; border-radius: {GROUP_RADIUS}px; }}
+#Bubble[who="me"] {{ background: {t.accent_tint}; border: 1px solid {t.accent_tint}; }}
+#Bubble[who="error"] {{ background: {t.danger_soft}; border: 1px solid {t.danger_soft}; }}
+QPlainTextEdit#ChatInput {{ background: {t.control}; border: 1px solid {t.control_border};
+  border-radius: {CONTROL_RADIUS}px; padding: 4px 6px; selection-background-color: {t.accent};
+  selection-color: {t.on_accent}; }}
+QPlainTextEdit#ChatInput:focus {{ border: 2px solid {t.accent}; padding: 3px 5px; }}
+QPlainTextEdit#ChatInput:disabled {{ color: {t.tertiary}; }}
+QPushButton[kind="chip"] {{ background: {t.group}; border: 1px solid {t.control_border};
+  border-radius: {CONTROL_RADIUS}px; padding: 5px 12px; min-height: 18px; font-size: {SMALL_PX}px;
+  font-weight: 500; color: {t.secondary}; }}
+QPushButton[kind="chip"]:hover {{ background: {t.group_hover}; color: {t.text}; }}
+QPushButton[kind="chip"]:disabled {{ color: {t.tertiary}; }}
 #Toast {{ background: {t.text}; border-radius: 10px; }}
 #Toast QLabel {{ color: {t.window}; font-weight: 500; }}
 #Toast[level="error"] QLabel, #Toast[level="warning"] QLabel {{ font-weight: 600; }}
@@ -414,6 +427,14 @@ def _glyph_path(kind: str, s: float) -> QtGui.QPainterPath:
         p.lineTo(17 * u, 16 * u); p.lineTo(3 * u, 16 * u); p.closeSubpath()
         p.moveTo(3 * u, 11 * u); p.lineTo(7.5 * u, 11 * u); p.lineTo(8.5 * u, 13 * u); p.lineTo(11.5 * u, 13 * u)
         p.lineTo(12.5 * u, 11 * u); p.lineTo(17 * u, 11 * u)
+    elif kind == "chat":             # a speech bubble with a tail (« Parler à l'IA »)
+        p.moveTo(5.5 * u, 3.5 * u); p.lineTo(14.5 * u, 3.5 * u)
+        p.quadTo(17 * u, 3.5 * u, 17 * u, 6 * u); p.lineTo(17 * u, 11.5 * u)
+        p.quadTo(17 * u, 14 * u, 14.5 * u, 14 * u); p.lineTo(9 * u, 14 * u); p.lineTo(5.5 * u, 17 * u)
+        p.lineTo(5.5 * u, 14 * u); p.quadTo(3 * u, 14 * u, 3 * u, 11.5 * u); p.lineTo(3 * u, 6 * u)
+        p.quadTo(3 * u, 3.5 * u, 5.5 * u, 3.5 * u); p.closeSubpath()
+        p.moveTo(7 * u, 7.5 * u); p.lineTo(13 * u, 7.5 * u)
+        p.moveTo(7 * u, 10.5 * u); p.lineTo(11 * u, 10.5 * u)
     elif kind == "chevron":
         p.moveTo(8 * u, 5 * u); p.lineTo(13 * u, 10 * u); p.lineTo(8 * u, 15 * u)
     else:

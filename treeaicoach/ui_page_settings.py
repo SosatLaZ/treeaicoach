@@ -104,6 +104,7 @@ class SettingsPage:
 
         ai = self.page.section("Conseils IA", "Facultatif. Gemini, Groq et OpenRouter ont une offre gratuite. La clé "
                                                           "reste sur ton PC.")
+        self.ai_section = ai                 # « Parler à l'IA » sans clé : show_page("settings", tab="IA") vient ici
         self.ai_count = ai.add(W.Row("Requêtes aujourd'hui", "…"))
         # ai_advisor imports numpy (~0.5 s): read on a worker, never while the page is built
         app.run_job(ai_count_text, lambda t: self.ai_count.set_desc(t), None, name="TreeAI-ui-ai-count")

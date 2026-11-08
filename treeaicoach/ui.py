@@ -369,7 +369,8 @@ class CoachApp:
         import importlib  # noqa: PLC0415
 
         mod = {"home": "ui_page_home", "overlay": "ui_page_overlay", "alerts": "ui_page_alerts", "discord": "ui_page_discord",
-               "analysis": "ui_page_analysis", "settings": "ui_page_settings", "wow": "ui_page_wow"}.get(key)
+               "analysis": "ui_page_analysis", "settings": "ui_page_settings", "wow": "ui_page_wow",
+               "aichat": "ui_page_aichat"}.get(key)
         if mod is None:
             return None
         return getattr(importlib.import_module(f"treeaicoach.{mod}"), "build")
@@ -468,7 +469,8 @@ class CoachApp:
         """An old page name (« Avancé », « À propos ») opens its block on Réglages and scrolls to it."""
         try:
             target = {"update": getattr(getattr(view, "about", None), "update_section", None),
-                      "advanced": getattr(view, "more", None), "help": getattr(view, "help", None)}.get(anchor)
+                      "advanced": getattr(view, "more", None), "help": getattr(view, "help", None),
+                      "ai": getattr(view, "ai_section", None)}.get(anchor)
             if target is None:
                 return
             if anchor in ("advanced", "help"):
