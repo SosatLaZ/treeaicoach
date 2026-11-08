@@ -1146,3 +1146,18 @@ Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kins
 * Perf : événements (cible, survol, niveau, zone) + relevé toutes les 30 s hors combat (calcul ≤ 1 / 25 s, à la
   demande sinon) ; QuestieDB lu une fois par PNJ et par session. Budget session_sim `Finder = 60` kinstr/min (mesuré
   ~11). Rien d'automatique, aucune fonction protégée. Test : `tests/wow/finder_scenario.lua`, `tests/wow/test_finder.py`.
+## Raccourcis : module `Quick` (agent QUICK1, `Modules/Quick.lua`, dernier du TOC)
+Barre d'icônes déplaçable (`RegisterMovable` id `quick`, cadre `TreeAIQuickBar`) qui ne montre que les boutons utiles :
+interrupteur « quêtes automatiques », objet de quête (sécurisé `type=item`, choisi par `Quests.PickItem` ; le bouton
+du module Quêtes se tait via `Quick.OwnsQuestItem()`), cibler le prochain objectif (sécurisé `type=macro`,
+`/targetexact Nom` depuis `Compass.Current().npc` ou l'objectif « … tué »), partager les quêtes qu'un membre n'a pas
+(`QuestLogPushQuest(index)` toutes les 0,6 s, jamais la sélection du journal), vendre gris + réparer (marchand),
+prendre tout le courrier (sauf contre-remboursement), pierre de foyer (hors repos), monture (journal, objet de
+monture, sinon Aspect du guépard). Cadres sécurisés créés / modifiés / montrés **hors combat seulement**
+(`RunOutOfCombat("Quick:layout")`), aucun ticker, aucune sortie chat ; boutons nommés `TreeAIQuick<Clé>` (`/click`).
+Automatismes (options, section Quêtes / PNJ / Marchand et courrier ; Maj = pause) : `AcceptQuest` (pas si journal
+plein), `CompleteQuest` (pas si la quête coûte de l'or), `GetQuestReward` (`Quick.Engine.PickReward` : un seul
+choix, sinon la seule amélioration `Boost.UpgradePct`, sinon la plus chère à la revente ; deux améliorations ou
+objet pas en cache = rien), quêtes des dialogues (finies d'abord, pas grises / répétables), option de dialogue sûre
+(vol, ou unique marchand / banque / maître ; jamais une option de discussion), vente des gris, réparation,
+rappel « butin automatique » (clic = CVar). `/tai raccourcis` = afficher / cacher la barre.

@@ -750,6 +750,7 @@ local function pickItem(list, zone)
   end
   return best
 end
+M.PickItem = function(list) return pickItem(list or {}, curZone()) end
 
 local function createButton()
   if btn or inCombat() or not _G.CreateFrame then return btn end
@@ -802,6 +803,9 @@ end
 -- Appliquée HORS COMBAT seulement (RunOutOfCombat) : attributs + Show/Hide d'un cadre sécurisé.
 function M.UpdateButton()
   local q = cfg("itemButton") and M.lastList and pickItem(M.lastList, curZone()) or nil
+  -- (QUICK1) la barre « Raccourcis » porte déjà l'objet de quête : un seul bouton à l'écran
+  local QK = T.Quick
+  if q and QK and type(QK.OwnsQuestItem) == "function" and QK.OwnsQuestItem() then q = nil end
   local want = q and q.item and q.item.id or nil
   if btn and btn.itemID == want then
     if btn.count and q then btn.count:SetText((q.item.charges and q.item.charges > 1) and q.item.charges or "") end

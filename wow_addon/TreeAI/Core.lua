@@ -1248,6 +1248,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Plain = { lite = true, desc = "Conseils de quête en mots simples" },
   Region = { lite = true, desc = "Quêtes rangées par région (ici, à côté, loin)" },
   Hub = { lite = true, desc = "Pastille de la minimap : tout TreeAI en un clic" },
+  Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" },
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
   MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },

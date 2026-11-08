@@ -44,6 +44,7 @@ local BUDGET = {
   kinstrModuleMin = { Team = 80, PathDraw = 60 },   -- tighter per-module caps (avg kinstr / minute; PATH: chemin dessiné)
   kinstrModuleMin = { Team = 80, Edge2 = 80 },   -- CHEAT2 « Avantages » (Edge2): event-driven, 1 check / pass   -- tighter per-module caps (avg kinstr / minute)
   kinstrModuleMin = { Team = 80, Finder = 60 },   -- tighter per-module caps (avg kinstr / minute) ; Finder: on demand
+  kinstrModuleMin = { Team = 80, Quick = 80 },   -- tighter per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
