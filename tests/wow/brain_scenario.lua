@@ -574,6 +574,15 @@ return function(M, ctx)
   settle(6)
   check(B._active, "pilot back on")
 
+  -- ===================================================================== session métier (4.0.4, T.focus)
+  do
+    local oldFocus = T.focus
+    T.focus = { kind = "prof", owner = "Prof" }
+    check(T:FocusMode() == "prof", "focus: FocusMode reads T.focus")
+    check(B.Inject({ { k = "q" } }, 1) == false, "focus: the pilot inserts no stop during a profession session")
+    T.focus = oldFocus
+  end
+
   -- ===================================================================== bilan
   check(B.errors == 0, "no error in the pilot's passes (" .. tostring(B.lastError) .. ")")
   check(#M.violations == v0, "zero violation / blocked action (" .. (#M.violations - v0) .. ")")

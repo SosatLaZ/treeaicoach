@@ -35,7 +35,7 @@ return function(M, ctx)
     local ids = {}
     for _, pg in ipairs(W.PAGES) do ids[#ids + 1] = pg.id end
     local nav = table.concat(ids, ",")
-    check(nav:find("tools,coach", 1, true) and nav:find("^now,quests,[%a,]*route,group,dungeon,hv,tools"), "page « Conseils pro » après Outils (" .. nav .. ")")
+    check(nav:find("tools,coach", 1, true) and nav:find("^now,quests,[%a,]*route,group,dungeon,hv,[%a,]*tools"), "page « Conseils pro » après Outils (" .. nav .. ")")
   end
 
   -- ------------------------------------------------------------------ moteur pur

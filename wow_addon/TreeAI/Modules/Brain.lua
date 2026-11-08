@@ -1106,6 +1106,7 @@ end
 -- contrat du Planner (comme Finder.Inject / Finder.StopDone) : les courses insérées au plus court dans le trajet
 function B.Inject(steps, cursor)
   if type(steps) ~= "table" or not (B._active and B.char) then return false end
+  if T.FocusMode and T:FocusMode() then return false end   -- (4.0.4) session métier : pas d'arrêt du pilote
   local sig = S.stopSig or 0
   if steps.__bsig == sig then return false end
   steps.__bsig = sig
@@ -1405,6 +1406,9 @@ function B.RunBody()
   local c = S.ctx
   local busy = c.main == "dead" or c.main == "ghost" or c.main == "taxi" or c.main == "afk"
   local away = busy or c.main == "dungeon"
+  -- (4.0.4) session métier (T.focus, ProfLevel) : le pilote ne touche ni au trajet, ni aux courses, ni à la zone
+  local focus = T.FocusMode and T:FocusMode() or nil
+  if focus then away = true end
   local done = false
   for _, cat in ipairs(B.HEAVY) do
     local v = d[cat]
@@ -1425,12 +1429,12 @@ function B.RunBody()
         elseif cat == "zone" then
           if away then d.zone = t + 10 else guard(B.ZonePass) guard(B.StylePass) done = true end
         elseif cat == "errand" then
-          if c.main == "dungeon" or c.main == "dead" or c.main == "ghost" then d.errand = t + 10
+          if focus or c.main == "dungeon" or c.main == "dead" or c.main == "ghost" then d.errand = t + 10
           else guard(B.ErrandPass) S.pageDirty = true done = true end
         elseif cat == "hearth" then
           if away then d.hearth = t + 10 else guard(B.HearthPass) done = true end
         elseif cat == "follow" then
-          guard(B.FollowPass) done = true
+          if focus then d.follow = t + 10 else guard(B.FollowPass) done = true end
         end
       end
     end
@@ -1538,6 +1542,8 @@ function B:OnEnable()
     if S.afterCombat then S.afterCombat = false due("ctx", 1) else due("ctx", 2) end
   end)
   self:On("GROUP_INTENT", function() due("follow", 0.5) end)
+  -- (4.0.4) fin d'une session métier : le pilote reprend où il en était
+  self:On("FOCUS_CHANGED", function(_, _, kind) if not kind then due("park", 1) due("errand", 1.5) due("zone", 2) end end)
   self:On("SUMMARY", function() pcall(B.WriteSummary) end)
   if T.RegisterSlash then
     T:RegisterSlash("pilote", function(rest)

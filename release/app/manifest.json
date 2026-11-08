@@ -1,25 +1,25 @@
 {
- "version": "4.0.3",
+ "version": "4.0.4",
  "exe": "TreeAICoach-app.exe",
- "sha256": "786a251f8252c5927715b00147e4fb5e03564d2397588193f8bbc34b2268845d",
+ "sha256": "b9c955d8c7c42f4b530f54a205824d371ba598983f0ccc91f5edc67ee9dcb58a",
  "chunks": [
   {
-   "name": "4.0.3/part-01.zip",
-   "size": 88013186,
-   "sha256": "ecfc6993772317b7a5e5cab2fb01d202b0eb5161f3b834b83e35129aab318117",
+   "name": "4.0.4/part-01.zip",
+   "size": 88018739,
+   "sha256": "2d255c6c34db4a476c6a9f87e2bb547cee615b57393964a9c1912149c7f8dd30",
    "files": 127
   },
   {
-   "name": "4.0.3/part-02.zip",
-   "size": 13965332,
-   "sha256": "3205ec247eb5416216d8530797b25b2adf6c0a76bf250278c32e05219032249a",
-   "files": 683
+   "name": "4.0.4/part-02.zip",
+   "size": 14002727,
+   "sha256": "d8ec2c61d7e83297b87292eade74b604ee12a7bce997d90201ae10186f17f435",
+   "files": 684
   }
  ],
- "total_size": 101978518,
+ "total_size": 102021466,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.0.3 : pilote auto (qu\u00eates inutiles en pause et reprises toutes seules, zone et mode du trajet, courses r\u00e9parer / vendre / munitions, suivre le groupe), avec le pourquoi de chaque d\u00e9cision."
+ "notes": "TreeAI 4.0.4 : assistant de m\u00e9tiers (quoi cr\u00e9er, modes Complet et Pile-poil, sacs + banque + courrier, achats exacts, session m\u00e9tier qui guide chez le marchand)."
 }

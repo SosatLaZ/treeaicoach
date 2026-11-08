@@ -1,6 +1,6 @@
 {
-  "version": "4.0.3",
+  "version": "4.0.4",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.0.3 : pilote auto (quêtes inutiles en pause et reprises toutes seules, zone et mode du trajet, courses réparer / vendre / munitions, suivre le groupe), avec le pourquoi de chaque décision."
+  "notes": "TreeAI 4.0.4 : assistant de métiers (quoi créer, modes Complet et Pile-poil, sacs + banque + courrier, achats exacts, session métier qui guide chez le marchand)."
 }

@@ -3,6 +3,21 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.0.4 · 8 novembre 2026
+
+- **Métiers** (nouvelle page après HV, « Allumer Métiers » en un clic) : quoi créer, combien de fois, à quelle
+  compétence, avec la couleur, la durée et le coût.
+  - Deux modes : « Complet » (atteindre la cible en achetant ce qui manque) et « Pile-poil » (vider tes sacs avec ce
+    que tu as).
+  - Tes compos comptées partout : sacs, banque (« banque vue il y a 2 h »), courrier ; ce qu'une quête demande est
+    gardé de côté.
+  - Achats exacts : fils et bobines au marchand (par lot), cuir à l'HV avec un prix plafond, sinon où dépecer ; rien
+    n'est inventé (« à farmer » quand il n'y a pas de prix).
+  - Session métier en un clic : quêtes et pilote auto en pause, la boussole mène au marchand, à la banque ou au maître,
+    puis tout reprend à la sortie.
+  - Sous les fenêtres du jeu : « Acheter tout (3) », « Retirer… », « Créer 7 » — un clic = une action, rien en combat.
+  - En plus : compos inutiles à vendre, revente de ce que tu crées, meilleur bandage.
+
 ## 4.0.3 · 8 novembre 2026
 
 - **Pilote auto** (allumé, coupable d'un clic, `/tai pilote on|off`) : TreeAI décide seul ce qui est sûr et
