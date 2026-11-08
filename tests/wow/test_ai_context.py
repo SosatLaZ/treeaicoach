@@ -105,7 +105,7 @@ def _engine(wow: bool):
     from treeaicoach import engine_coaching as ec
     cls = next(v for v in vars(ec).values() if isinstance(v, type) and "_general_question" in vars(v))
     eng = cls.__new__(cls)
-    eng._wow_mode = lambda: wow
+    eng._wow_on = lambda: wow
     eng._cfg = SimpleNamespace(ai_provider="groq", ai_api_key="k", ai_model="m")
     eng.calls, eng.said = [], []
     eng._call = lambda *a: eng.calls.append(a)
