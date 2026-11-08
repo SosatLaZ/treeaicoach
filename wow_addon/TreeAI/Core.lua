@@ -1482,6 +1482,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" },
   Edge2 = { lite = false, desc = "Avantages : camp disputé, objet qui ne tombe pas, quêtes finies = niveau…" },
   Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" },   -- (ONBOARD) sûr : Tour.lua s'y inscrit
+  Brain = { lite = true, desc = "Pilote auto : quêtes inutiles en pause, zone et mode du trajet, courses, pourquoi" },   -- (BRAIN) sûr : Brain.lua s'y inscrit
 }
 
 TreeAI.MODULE_PROFILES = { sur = true, essentiel = true, tout = true }

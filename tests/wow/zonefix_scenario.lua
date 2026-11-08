@@ -9,6 +9,9 @@
 -- French titles, real client map bounds and taxi nodes.
 return function(M, ctx)
   local T = TreeAI
+  -- (BRAIN 4.0.2) le pilote auto met en pause les quêtes grises (« Brouet de rat », niv 23 ici) et change le trajet :
+  -- il est testé à part (brain_scenario.lua) ; ici, les règles du trajet seules
+  if T.modules.Brain and T.SetModuleEnabled then T:SetModuleEnabled("Brain", false) end
   local check = ctx.check
   local P, Z, X, R, Cm, W = T.Planner, T.ZonePlan, T.Export, T.Route, T.Compass, T.Window
   check(P and Z and X and R and Cm, "quest chain loaded")
