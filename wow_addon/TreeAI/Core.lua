@@ -1096,7 +1096,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
 
 function TreeAI:ModuleProfile()
   local db = self.db
-  return (type(db) == "table" and db.moduleProfile == "tout") and "tout" or "essentiel"
+  return (type(db) == "table" and db.moduleProfile == "essentiel") and "essentiel" or "tout"   -- (3.9.5) défaut : tout
 end
 --- profil léger actif ? (les modules allumés y font le minimum : pas de scans en fond)
 function TreeAI:Lite() return self:ModuleProfile() == "essentiel" end

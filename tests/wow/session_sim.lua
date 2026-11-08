@@ -325,8 +325,8 @@ local function loadAddon(c, svString)
     local again = serialize("TreeAIDB", box.TreeAIDB)
     if again ~= svString then fail("SavedVariables round-trip changed the data (" .. #svString .. " -> " .. #again .. " bytes)") end
   end
-  if not svString and opts.profile == "tout" then   -- everything on (default = what a new player gets: essentiel)
-    rawset(env, "TreeAIDB", { profileV = 999, moduleProfile = "tout" })
+  if not svString then   -- (3.9.5) new players keep everything on; « essentiel » is the opt-in light profile
+    rawset(env, "TreeAIDB", { profileV = 999, moduleProfile = (opts.profile == "tout") and "tout" or "essentiel" })
   end
   local T = rawget(env, "TreeAI")
   c.T = T
@@ -352,6 +352,7 @@ local function loadAddon(c, svString)
   M.FireEvent("SPELLS_CHANGED")
   M.FireEvent("PLAYER_LOGIN")
   M.FireEvent("PLAYER_ENTERING_WORLD", svString == nil, svString ~= nil)
+  if not svString and opts.profile ~= "tout" and T and T.SetModuleProfile then pcall(T.SetModuleProfile, T, "essentiel") end   -- opt-in light profile
   for k in pairs(env) do if not before[k] and not allowed[k] then
     if not (type(k) == "string" and (k:match("^SLASH_") or k:match("^BINDING_") or M.namedFrames[k])) then R.leaks[k] = R.leaks[k] or "?" end
   end end
