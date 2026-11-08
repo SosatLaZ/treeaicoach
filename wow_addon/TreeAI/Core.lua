@@ -1231,6 +1231,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Talents = { lite = false, desc = "Talents : où mettre tes points" },
   Prof = { lite = false, desc = "Métiers : recettes et composants" },
   PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
+  PvPMark = { lite = true, combat = true, desc = "Joueurs ennemis attaquables surlignés (barres de nom)" },
   Radar = { lite = false, desc = "Radar rond des objectifs" },
   SafePath = { lite = false, desc = "Chemin sûr : évite les monstres" },
   Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },

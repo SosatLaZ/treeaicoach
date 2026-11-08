@@ -795,8 +795,22 @@ function M.Install(flavor)
   G.UnitIsDeadOrGhost = function(u) local d = U(u) return d and (d.dead or d.ghost) or false end
   G.UnitIsGhost = function(u) local d = U(u) return d and d.ghost or false end
   G.UnitOnTaxi = function(u) return (u == "player" and M.onTaxi) and true or false end
-  G.UnitIsUnit = function(a, b) return tostring(a):lower() == tostring(b):lower() end
-  G.UnitIsPlayer = function(u) local _, k = U(u) return k == "player" or k == "group" end
+  G.UnitIsUnit = function(a, b)
+    a, b = tostring(a):lower(), tostring(b):lower()
+    local np = a:match("^(nameplate%d+)target$")   -- PVPMARK: « nameplateN target » = le joueur si d.targetsPlayer
+    if np and b == "player" then local d = M.units[np] return d and d.targetsPlayer and true or false end
+    return a == b
+  end
+  -- units with isPlayer = true are enemy / other players (world PvP on nameplates)
+  G.UnitIsPlayer = function(u) local d, k = U(u) return k == "player" or k == "group" or (k == "other" and d and d.isPlayer) or false end
+  G.UnitIsPVP = function(u)
+    local d, k = U(u)
+    if k == "player" then return M.player.pvp ~= false end
+    if not d then return false end
+    if d.pvp ~= nil then return d.pvp and true or false end
+    return true
+  end
+  G.UnitIsPVPFreeForAll = function(u) local d = U(u) return d and d.ffa or false end
   G.UnitPlayerControlled = G.UnitIsPlayer
   G.UnitIsFriend = function(_, u) local _, k = U(u) return k ~= "target" end
   G.UnitIsEnemy = function(_, u) local _, k = U(u) return k == "target" end
@@ -885,7 +899,7 @@ function M.Install(flavor)
   G.GetRealZoneText = G.GetZoneText
   G.GetSubZoneText = function() return M.player.subzone end
   G.GetMinimapZoneText = G.GetSubZoneText
-  G.GetZonePVPInfo = function() return "contested" end
+  G.GetZonePVPInfo = function() return M.zonePvP or "contested" end
   G.IsInInstance = function() if M.instance then return true, "party" end return false, "none" end
   G.GetInstanceInfo = function() return M.player.zone, "none", 0, "", 5, 0, false, 0 end
   -- map / position / facing (Compass, Tracker). World convention as WoW: world X grows north, world Y

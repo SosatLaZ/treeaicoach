@@ -564,6 +564,9 @@ function M:CheckDanger()
   if not (M.Active() and opt("world") and opt("dangerAlert")) then return end
   if inBG() then self:Clear("danger") return end   -- in battlegrounds every nameplate is an enemy: no spam
   local text, prio = M.DangerText(self:Nearby(), playerLevel())
+  -- PVPMARK : « ennemi proche » appartient aux repères des barres de nom quand ils tournent (seule la KOS reste ici)
+  local PMk = T.PvPMark
+  if text and PMk and PMk.Active and PMk:Active() and not text:find("KOS", 1, true) then text = nil end
   if text then
     self:Suggest("danger", text, prio, { pvp = true, tab = TAB, ttl = NEAR, cooldown = 45 })
   else

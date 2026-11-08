@@ -41,7 +41,7 @@ local BUDGET = {
   -- whole addon, avg / minute (LITE): « essentiel » (default profile) ≤ 1.5 M instr/min, everything on ≤ 4 M
   kinstrTotalMin = (opts.profile == "tout") and 4600 or 2400,   -- 3.9.5: budgets as on the hotfix branch (3.9.4: 9.9 M)
   kinstrStatsMin = 60,           -- Stats hub (Modules/Stats.lua): event-driven, nearly free
-  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, QuickTravel = 80, Auction = 80, Compass = 80, NavTime = 80, Horizon = 80 },   -- per-module caps (avg kinstr / minute)
+  kinstrModuleMin = { Team = 80, PathDraw = 60, Edge2 = 80, Finder = 60, Quick = 80, QuickFight = 80, QuickTravel = 80, Auction = 80, Compass = 80, NavTime = 80, Horizon = 80, PvPMark = 40 },   -- per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -786,8 +786,14 @@ local function fight(c, mob, o)
       M.units.nameplate2 = { name = mob, guid = M.target.guid .. "b", hostile = true, classification = "normal", level = M.target.level, health = 900, healthMax = 900 }
       fire(c, "NAME_PLATE_UNIT_ADDED", "nameplate2"); fire(c, "PLAYER_TARGET_CHANGED")
       fire(c, "BAG_UPDATE", 0); fire(c, "BAG_UPDATE_DELAYED")
+      if mobSeq % 4 == 0 then   -- PVPMARK: world PvP while questing, an enemy player shows up in combat
+        M.units.nameplate3 = { name = "Ennemi Sim", isPlayer = true, hostile = true, class = "ROGUE", level = 29,
+          guid = "Player-0-SIM" .. mobSeq, targetsPlayer = mobSeq % 8 == 0 }
+        fire(c, "NAME_PLATE_UNIT_ADDED", "nameplate3"); fire(c, "UNIT_TARGET", "nameplate3")
+      end
     elseif r == 3 then
       fire(c, "NAME_PLATE_UNIT_REMOVED", "nameplate2"); M.units.nameplate2 = nil
+      if M.units.nameplate3 then fire(c, "NAME_PLATE_UNIT_REMOVED", "nameplate3"); M.units.nameplate3 = nil end
       fire(c, "PLAYER_TARGET_CHANGED")
     end
     if o.inCombatHook then o.inCombatHook(r) end

@@ -81,7 +81,9 @@ return function(M, ctx)
   P:AutoRefresh()
   ctx.check(not T.tabs.pvp and not S["PvP:danger"], "nothing when pvp help is off")
 
-  -- 2. ON: tab « JcJ », world PvP danger alert
+  -- 2. ON: tab « JcJ », world PvP danger alert (PvPMark off: when it runs, the nameplate marks own « ennemi proche »)
+  local PMk = T.PvPMark
+  if PMk and PMk.db then PMk.db.mark = false end
   T.settings.pvp = true
   P:AutoRefresh()
   ctx.check(T.tabs.pvp and T.tabs.pvp.title == "JcJ", "JcJ tab registered when enabled")
@@ -89,6 +91,7 @@ return function(M, ctx)
   ctx.fire("NAME_PLATE_UNIT_ADDED", "nameplate2")
   local d = S["PvP:danger"]
   ctx.check(d and d.prio == 3 and d.text:find("Danger : 2 ennemis niv 60 près de toi"), "danger alert: " .. tostring(d and d.text))
+  if PMk and PMk.db then PMk.db.mark = true end
   M.Advance(1)
   local l = find("Voleur Ombrelame niv 60 <Les Fourbes>")
   ctx.check(l and l.onClick, "enemy line with class, level, guild")
