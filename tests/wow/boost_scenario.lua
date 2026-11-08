@@ -18,7 +18,7 @@ return function(M, ctx)
   snd = #M.sounds
   ctx.fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
   ctx.check(#M.sounds == snd, "no second sound for the same GUID")
-  if S["Boost:rare"] then S["Boost:rare"].onClick() end
+  if S["Boost:rare"] then M.Hw(S["Boost:rare"].onClick) end
   ctx.check(M.raidTargets and M.raidTargets.nameplate1 == 8, "skull marker on click")
 
   -- 2. quest rewards: leather agi beats cloth int / plate for a level-26 hunter (equipped: leather agi 5)

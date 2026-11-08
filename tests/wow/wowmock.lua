@@ -26,6 +26,8 @@ function M.Reset()
   M.now = 1000.0
   M.serverTime = 1793000000
   M.inCombat = false
+  M.blocked = {}         -- TAINT: ADDON_ACTION_BLOCKED the real client would count ({fn})
+  M.strictTaint = true   -- protected frames / functions: blocked in combat (or outside a click)
   M.errors = {}          -- Lua errors raised by addon handlers
   M.violations = {}      -- ToS / API-contract violations
   M.output = {}          -- print() / chat frame lines
@@ -318,11 +320,29 @@ function Widget:GetChecked() return self.__checked end
 function Widget:SetAttribute(k, v)
   if M.inCombat and self.__protected then
     M.Violation("protected", "SetAttribute on a secure frame in combat")
+    M.blocked[#M.blocked + 1] = { fn = "SetAttribute()" }
   end
   self.__attrs[k] = v
 end
 function Widget:GetAttribute(k) return self.__attrs[k] end
-function Widget:IsProtected() return self.__protected or false end
+-- TAINT: explicit protection (secure template / Blizzard protected frame) or implicit: anchored (SetPoint) to a
+-- protected frame, like the real client. Regions (textures, font strings) are never protected themselves.
+local REGION = { Texture = true, FontString = true, Line = true, MaskTexture = true, AnimationGroup = true, Animation = true }
+local function protectedOf(w, depth)
+  if type(w) ~= "table" or depth > 6 then return false end
+  if rawget(w, "__protected") then return true end
+  for _, p in ipairs(rawget(w, "__points") or {}) do
+    local rel = p[2]
+    if type(rel) == "string" then rel = rawget(_G, rel) end
+    if type(rel) == "table" and rel ~= w and rawget(rel, "__kind") and protectedOf(rel, depth + 1) then return true end
+  end
+  return false
+end
+M.ProtectedOf = function(w) return protectedOf(w, 0) end
+function Widget:IsProtected()
+  if REGION[self.__kind] then return false, false end
+  return protectedOf(self, 0), self.__protected or false
+end
 function Widget:GetChildren() return unpack(self.__children) end
 function Widget:GetNumChildren() return #self.__children end
 function Widget:GetFrameLevel() return self.__level or 1 end
@@ -367,6 +387,30 @@ function Widget:SetTexture(t) self.__texture = t end
 function Widget:GetNumLines() return 0 end
 function Widget:GetCursorPosition() return 0 end
 function Widget:GetNumber() return tonumber(self.__text) or 0 end
+
+-- TAINT: what the real client blocks in combat on a protected frame (counted in the AddOns list as
+-- « Échec des actions d'interface »). The call is dropped, ADDON_ACTION_BLOCKED fires, a violation is recorded.
+function M.Blocked(fn)
+  M.blocked[#M.blocked + 1] = { fn = fn }
+  M.Violation("blocked", fn .. " blocked in combat (ADDON_ACTION_BLOCKED)")
+  if M.FireEvent then M.FireEvent("ADDON_ACTION_BLOCKED", "TreeAI", fn) end
+end
+for _, name in ipairs({ "Show", "Hide", "SetPoint", "ClearAllPoints", "SetAllPoints", "SetSize", "SetWidth",
+  "SetHeight", "SetScale", "SetParent", "SetFrameStrata", "SetFrameLevel", "EnableMouse" }) do
+  local orig = Widget[name]
+  Widget[name] = function(self, ...)
+    if M.inCombat and M.strictTaint and not REGION[self.__kind] then
+      local rel
+      if name == "SetPoint" then rel = select(2, ...) elseif name == "SetAllPoints" or name == "SetParent" then rel = ... end
+      if type(rel) == "string" then rel = rawget(_G, rel) end
+      if protectedOf(self, 0) or (type(rel) == "table" and rel ~= self and rawget(rel, "__kind") and protectedOf(rel, 0)) then
+        M.Blocked((self.__name or self.__kind or "Frame") .. ":" .. name .. "()")
+        return
+      end
+    end
+    return orig(self, ...)
+  end
+end
 
 local function makeRegion(parent, kind)
   local r = newWidget(kind, nil, parent)
@@ -1313,6 +1357,74 @@ function M.Install(flavor)
   G.ChatFrame_AddMessageEventFilter = function() end
   if M.InstallAH then M.InstallAH(G, modern) end
   if M.flavor == "forever" and M.ApplyForever then M.ApplyForever(G) end
+  M.InstallTaint(G, modern)
+end
+
+-- TAINT (strict) ------------------------------------------------------------------------------------
+-- Blizzard protected frames (secure unit / action buttons) and nameplates (protected in combat on the
+-- Midnight-restricted client: worst case), plus protected functions: in combat (or outside a click for the
+-- click-only ones) = a blocked action the AddOns list would blame on TreeAI.
+function M.InstallTaint(G, modern)
+  local function prot(name, kind)
+    local f = newWidget(kind or "Button", name, G.UIParent)
+    f.__protected = true
+    G[name] = f
+    return f
+  end
+  for _, n in ipairs({ "TargetFrame", "PlayerFrame", "FocusFrame", "PetFrame", "PartyMemberFrame1", "PartyMemberFrame2",
+    "PartyMemberFrame3", "PartyMemberFrame4" }) do prot(n) end
+  G.TargetFrame.IsVisible = function() return M.target and M.target.exists and true or false end
+  G.TargetFrame.IsShown = G.TargetFrame.IsVisible
+  for i = 1, 12 do prot("ActionButton" .. i, "CheckButton") prot("MultiBarBottomLeftButton" .. i, "CheckButton") end
+  M.plateFrames = {}
+  if modern then
+    local function plateFor(unit)
+      if type(unit) ~= "string" or not unit:match("^nameplate%d+$") or not (M.units and M.units[unit]) then return nil end
+      local f = M.plateFrames[unit]
+      if not f then
+        f = newWidget("Frame", nil, G.UIParent)
+        f.__protected = M.protectedPlates ~= false
+        f.namePlateUnitToken = unit
+        f.UnitFrame = { unit = unit }
+        M.plateFrames[unit] = f
+      end
+      return f
+    end
+    G.C_NamePlate = G.C_NamePlate or {}
+    G.C_NamePlate.GetNamePlateForUnit = plateFor
+    G.C_NamePlate.GetNamePlates = function()
+      local out = {}
+      for u in pairs(M.units or {}) do local f = plateFor(u) if f then out[#out + 1] = f end end
+      return out
+    end
+  end
+  local function wrapFn(tbl, fname, label, clickOnly)
+    local f = type(tbl) == "table" and rawget(tbl, fname)
+    if type(f) ~= "function" then return end
+    tbl[fname] = function(...)
+      if M.strictTaint and M.inCombat then
+        M.Violation("combat", label .. " called during combat lockdown (ADDON_ACTION_BLOCKED)")
+        M.blocked[#M.blocked + 1] = { fn = label }
+        return nil
+      end
+      if M.strictTaint and clickOnly and not M.hardware then
+        M.Violation("forbidden", label .. " outside a click (protected / taints Blizzard code)")
+        M.blocked[#M.blocked + 1] = { fn = label }
+        return nil
+      end
+      return f(...)
+    end
+  end
+  wrapFn(G, "SetRaidTarget", "SetRaidTarget()", true)
+  wrapFn(G, "SetCVar", "SetCVar()", false)
+  wrapFn(G, "InterfaceOptionsFrame_OpenToCategory", "InterfaceOptionsFrame_OpenToCategory()", false)
+  wrapFn(G.Settings, "OpenToCategory", "Settings.OpenToCategory()", false)
+  wrapFn(G.C_Map, "SetUserWaypoint", "C_Map.SetUserWaypoint()", true)
+  wrapFn(G.C_SuperTrack, "SetSuperTrackedUserWaypoint", "C_SuperTrack.SetSuperTrackedUserWaypoint()", true)
+  for _, n in ipairs({ "ShowUIPanel", "HideUIPanel", "CloseAllWindows", "ToggleFrame" }) do
+    if rawget(G, n) == nil then G[n] = function() end end
+    wrapFn(G, n, n .. "()", false)
+  end
 end
 
 function M.RegisterPrefix(p)
@@ -1334,6 +1446,14 @@ function M.SendAddon(prefix, msg, channel, target)
 end
 
 -- scenario helpers ----------------------------------------------------------------------------
+function M.Hw(fn, ...)   -- run fn as one hardware event (a player click), like Widget:Click
+  local hw, n = M.hardware, M.hwCalls
+  M.hardware, M.hwCalls = true, 0
+  local r = { pcall(fn, ...) }
+  M.hardware, M.hwCalls = hw, n
+  if not r[1] then error(r[2], 2) end
+  return unpack(r, 2)
+end
 function M.EnterCombat()
   M.inCombat = true
   M.FireEvent("PLAYER_REGEN_DISABLED")

@@ -377,6 +377,10 @@ Messages fournis par le cœur: `READY` (après OnEnable des modules),
 TreeAI:Print(...)  TreeAI:Debug(...)
 TreeAI:InCombat()                     -- InCombatLockdown() protégé
 TreeAI:RunOutOfCombat(key, fn)        -- tout de suite si hors combat, sinon file (1 par key) exécutée à PLAYER_REGEN_ENABLED
+TreeAI:FrameLocked(f, ...)            -- vrai en combat si un cadre est protégé (sécurisé, ou NOTRE cadre ancré sur un
+                                      -- cadre protégé de Blizzard : TargetFrame, boutons d'action…) → n'y toucher qu'à l'alpha
+TreeAI:BlockedTop(n)                  -- actions bloquées par le jeu : { {func, ctx, kind, n, combat, last} }, total, session
+                                      -- (TreeAIDB.diag.blockedTop / blockedTotal ; ligne « Blocages » dans Infos ; /tai bloque [reset])
 TreeAI:After(sec, fn)                 -- C_Timer.After ou fallback OnUpdate
 TreeAI:NewTicker(sec, fn[, owner])    -- retourne objet avec :Cancel() ; owner = module (défaut : celui dont le code tourne)
 TreeAI:CharKey()                      -- "Nom-Royaume" (en jeu uniquement)

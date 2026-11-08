@@ -46,12 +46,12 @@ return function(M, ctx)
   -- mark: one click = one SetRaidTarget on the target, out of combat only
   M.target = { exists = true, name = "Déviant-test", level = 18, hostile = true, guid = "Creature-0-0-0-0-5-1" }
   UnitCanAttack = function(_, u) return u == "target" end
-  D:MarkTarget()
+  M.Hw(D.MarkTarget, D)
   ctx.check(M.raidTargets and M.raidTargets.target == 8, "first mark = skull")
-  D:MarkTarget()
+  M.Hw(D.MarkTarget, D)
   ctx.check(M.raidTargets.target == 7, "second click = cross")
   M.EnterCombat()
-  D:MarkTarget()
+  M.Hw(D.MarkTarget, D)
   ctx.check(M.raidTargets.target == 7, "no mark in combat")
   M.LeaveCombat()
 

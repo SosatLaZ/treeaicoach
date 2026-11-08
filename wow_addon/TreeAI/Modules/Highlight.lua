@@ -339,6 +339,33 @@ local function fontOf(fs, size)
   if fs and fs.SetFont then pcall(fs.SetFont, fs, "Fonts\\FRIZQT__.TTF", size or 11, "OUTLINE") end
 end
 
+-- TAINT : en combat, un calque ancré sur un cadre protégé (bouton sécurisé, barre de nom protégée…) est protégé
+-- lui aussi : Show / Hide / SetPoint y sont bloqués par le jeu. On ne touche alors qu'à l'alpha (permis) et on
+-- remet tout en ordre à la sortie du combat (PLAYER_REGEN_ENABLED → "rebuild").
+local softHidden = setmetatable({}, { __mode = "k" })
+local function locked(...) return (T.FrameLocked and T:FrameLocked(...)) or false end
+local function softHide(f)
+  if not f then return end
+  if locked(f) then
+    if f.SetAlpha then f:SetAlpha(0) end
+    softHidden[f] = true
+  else
+    f:Hide()
+    if softHidden[f] then softHidden[f] = nil if f.SetAlpha then f:SetAlpha(1) end end
+  end
+end
+M.SoftHidden = function() return softHidden end
+local function flushSoftHidden()
+  for f in pairs(softHidden) do
+    if not locked(f) then
+      f:Hide()
+      if f.SetAlpha then f:SetAlpha(1) end
+      softHidden[f] = nil
+    end
+  end
+end
+M.FlushSoftHidden = flushSoftHidden
+
 local function ensureDriver()
   if driver or not G.CreateFrame then return driver end
   driver = G.CreateFrame("Frame", nil, G.UIParent)
@@ -350,7 +377,7 @@ local function ensureDriver()
     local any = false
     for ov, owner in pairs(active) do
       local vis = meth(owner, "IsVisible")
-      if not vis then ov:Hide() active[ov] = nil else any = true end
+      if not vis then softHide(ov) active[ov] = nil else any = true end
     end
     if not any then driver:Hide() end
   end)
@@ -428,6 +455,7 @@ local function newOverlay(owner)
 end
 
 local function anchor(ov, owner)
+  if locked(ov, owner) then return false end  -- combat + cadre protégé : rien (refait après le combat)
   if ov.owner ~= owner then
     ov:ClearAllPoints()
     ov:SetPoint("TOPLEFT", owner, "TOPLEFT")
@@ -438,13 +466,14 @@ local function anchor(ov, owner)
   if strata and ov.SetFrameStrata then ov:SetFrameStrata(strata) end
   local lvl = tonumber(meth(owner, "GetFrameLevel")) or 1
   if ov.SetFrameLevel then ov:SetFrameLevel(lvl + 4) end
+  return true
 end
 
 local function hideOverlay(owner)
   local ov = owner and overlays[owner]
   if ov then
     if ov.ag and ov.ag.Stop then ov.ag:Stop() end
-    ov:Hide()
+    softHide(ov)
     active[ov] = nil
   end
 end
@@ -460,7 +489,7 @@ function M.Apply(owner, kind, e, label)
   if not kind or (KIND_OPT[kind] and not on(KIND_OPT[kind]) and not label) then hideOverlay(owner) return nil end
   local ov = overlays[owner]
   if not ov then ov = newOverlay(owner) overlays[owner] = ov end
-  anchor(ov, owner)
+  if not anchor(ov, owner) then return nil end
   local I = intensity()
   local r, g, b = color(KIND_COL[kind] or "colNeed")
   local size = tonumber(opt("iconSize")) or 14
@@ -516,6 +545,8 @@ function M.Apply(owner, kind, e, label)
     end
     bumped[e.key] = nil
   end
+  softHidden[ov] = nil
+  if ov.SetAlpha then ov:SetAlpha(1) end
   ov:Show()
   active[ov] = owner
   local d = ensureDriver()
@@ -761,7 +792,7 @@ end
 function M.CheckLoot()
   local panel = lootPanel()
   local lines = {}
-  if not on("loot") then if panel then panel:Hide() end return lines end
+  if not on("loot") then softHide(panel) return lines end
   local n = try(G.GetNumLootItems) or 0
   for i = 1, n do
     local _, name, _, _, _, _, isQuestItem, questID, isActive = try(G.GetLootSlotInfo, i)
@@ -789,7 +820,9 @@ function M.CheckLoot()
   end
   if panel then
     local LF = rawget(G, "LootFrame")
-    if #lines > 0 and type(LF) == "table" and meth(LF, "IsShown") then
+    if locked(panel, LF) then
+      softHide(panel)
+    elseif #lines > 0 and type(LF) == "table" and meth(LF, "IsShown") then
       panel:ClearAllPoints()
       panel:SetPoint("TOPLEFT", LF, "TOPRIGHT", 6, -6)
       panel.text:SetText(table.concat(lines, "\n"))
@@ -799,7 +832,7 @@ function M.CheckLoot()
       active[panel] = LF
       local d = ensureDriver() if d then d:Show() end
     else
-      panel:Hide()
+      softHide(panel)
     end
   end
   M.lootLines = lines
@@ -807,7 +840,7 @@ function M.CheckLoot()
 end
 
 function M.OnLootClosed()
-  if lootInfo then lootInfo:Hide() active[lootInfo] = nil end
+  if lootInfo then softHide(lootInfo) active[lootInfo] = nil end
 end
 
 local function rollFrameFor(rollID)
@@ -959,9 +992,11 @@ function M.UpdatePlate(unit)
   plateInfo[unit] = nil
   local NP = G.C_NamePlate
   local plate = NP and NP.GetNamePlateForUnit and try(NP.GetNamePlateForUnit, unit)
-  if not (plate and (on("plates") or on("plateDrops"))) then if plates[unit] then plates[unit]:Hide() end return nil end
+  if not (plate and (on("plates") or on("plateDrops"))) then softHide(plates[unit]) return nil end
+  -- barre de nom protégée en combat (ou notre icône encore ancrée dessus) : on n'y touche pas
+  if locked(plate, plates[unit]) then softHide(plates[unit]) return nil end
   local e, how = M.UnitObjective(unit)
-  if not e then if plates[unit] then plates[unit]:Hide() end return nil end
+  if not e then softHide(plates[unit]) return nil end
   local f = plateIcon(unit, plate)
   local size = (tonumber(opt("iconSize")) or 14) + 4
   f:SetSize(size, size)
@@ -976,6 +1011,8 @@ function M.UpdatePlate(unit)
     if opt("anim") ~= false then if f.ag.Play and not (f.ag.IsPlaying and f.ag:IsPlaying()) then f.ag:Play() end
     elseif f.ag.Stop then f.ag:Stop() end
   end
+  softHidden[f] = nil
+  if f.SetAlpha then f:SetAlpha(1) end
   f:Show()
   plateInfo[unit] = { e = e, how = how, name = sv(try(G.UnitName, unit)) }
   return f, e, how
@@ -983,7 +1020,7 @@ end
 M.Plates = function() return plates, plateInfo end
 
 function M.RemovePlate(unit)
-  if plates[unit] then plates[unit]:Hide() end
+  softHide(plates[unit])
   plateInfo[unit] = nil
 end
 
@@ -1001,6 +1038,16 @@ end
 
 -- badge du cadre de cible
 local badge
+-- coin haut-gauche de TargetFrame en coordonnées d'UIParent (nil si inconnu)
+function M.TargetSpot(TF)
+  if type(TF) ~= "table" then return nil end
+  local l, t = tonumber(meth(TF, "GetLeft")), tonumber(meth(TF, "GetTop"))
+  if not (l and t) then return nil end
+  local s1 = tonumber(meth(TF, "GetEffectiveScale")) or 1
+  local s2 = tonumber(meth(G.UIParent, "GetEffectiveScale")) or 1
+  if s2 <= 0 then s2 = 1 end
+  return l * s1 / s2, t * s1 / s2
+end
 function M.UpdateTarget()
   local TF = rawget(G, "TargetFrame")
   if not on("target") or not try(G.UnitExists, "target") then if badge then badge:Hide() end return nil end
@@ -1016,8 +1063,12 @@ function M.UpdateTarget()
     fontOf(badge.text, 11)
     badge.text:SetPoint("LEFT", badge, "RIGHT", 2, 0)
   end
+  -- TAINT : TargetFrame est un bouton d'unité sécurisé ; ancrer le badge dessus le rendait protégé et chaque
+  -- changement de cible en combat (ClearAllPoints / SetPoint / Show / Hide) était bloqué par le jeu. On lit sa
+  -- position (lecture permise) et on ancre le badge sur UIParent.
   badge:ClearAllPoints()
-  if type(TF) == "table" then badge:SetPoint("BOTTOMLEFT", TF, "TOPLEFT", 8, -4)
+  local x, y = M.TargetSpot(TF)
+  if x then badge:SetPoint("BOTTOMLEFT", G.UIParent, "BOTTOMLEFT", x + 8, y - 4)
   else badge:SetPoint("TOP", G.UIParent, "TOP", 0, -120) end
   badge.icon:SetTexture(how == "drop" and TEX.drop or TEX.quest)
   local left = math.max(0, (e.need or 1) - (e.have or 0))
@@ -1147,6 +1198,7 @@ local function schedule(what, delay)
     pending[what] = nil
     if not M:IsEnabled() then return end
     if what == "rebuild" then
+      flushSoftHidden()
       M.Rebuild()
       M.RefreshBags()
       M.RefreshPlates()
