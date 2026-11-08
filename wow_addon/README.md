@@ -1000,3 +1000,29 @@ Uniquement des événements + une minuterie de 60 s (aucun OnUpdate, ≤ 60 kins
 * **Onglet « Stats »** (sous-menu « Plus », `/tai stats`) : 5-8 lignes (fiche, attaque, combat, repos / morts,
   XP/h + or/h, trajets, conso / h) + « Exporter pour TreeAI » → `summary.stats` (aussi au /reload, à la
   déconnexion et à `SUMMARY`), lu par `treeaicoach/wow/stats.py` → bloc « Mes stats mesurées » de l'onglet Session.
+
+## Raccourcis : module `QuickTravel` (agent QUICK3, `Modules/QuickTravel.lua`, en fin de TOC)
+
+Tout part d'un clic du joueur, rien en combat, aucun cadre Blizzard modifié ni ancré (nos cadres sont sur UIParent,
+placés à la position LUE des fenêtres du jeu). `TreeAI.QuickTravel` :
+* **Maître de vol** (TAXIMAP_OPENED) : `Q.Destination()` (1re étape positionnée de `Route:Stops`, sinon cible de la
+  boussole) → `Q.PlanFlight()` : nœuds `C_TaxiMap.GetAllTaxiNodes(GetTaxiMapID())` (repli NumTaxiNodes/TaxiNodeName),
+  durées `Q.FlightTimes(src, Data.Travel.flights, nœuds connus)` (Dijkstra, vols enchaînés), `Q.BestFlight` (vol + 20 s
+  d'embarquement + marche finale ; proposé si ≥ 45 s gagnées sur la marche). Le nœud brille (`Q.SlotSpot` : TaxiButton<n>
+  ou épingle de FlightMapFrame, lecture seule) ; carte « Prendre ce vol » sous la fenêtre → `TakeTaxiNode(slot)`.
+* **Aubergiste** (GOSSIP_SHOW avec l'option « foyer ») : moyenne de trajet vers les 6 prochaines quêtes depuis ici vs
+  depuis l'auberge liée (`Route.LegSeconds`, `Route.BindPlace`) ; `Q.InnWorth(ici, lié)` = ici < 75 % et ≥ 60 s de
+  gagné → carte « Lier ta pierre ici » → `C_GossipInfo.SelectOption(id)` ; la confirmation du jeu reste au joueur.
+* **Courses groupées** (au repos, hors instance) : `Q.Needs()` (réparation ≤ 60 %, gris, munitions < 600, nourriture /
+  boisson < 10, entraîneur en attente, courrier) → `Q.ErrandSteps(needs, find)` (une étape par PNJ, fusionnées,
+  triées par distance) → une ligne « Courses avant de partir (n) : … » (clic = boussole vers l'étape 1). Lieux :
+  marchands vus (`db.vendors[mapID][nom] = {x, y, a, f, w}` appris à MERCHANT_SHOW), puis Questie
+  (`Q.QuestieVendor(tag)` : itemDB `vendors` des meilleurs objets de ton niveau, ta faction), puis `Detect.Nearest`.
+* **Groupe** : bouton « Outils du groupe » de l'onglet Groupe → fenêtre « Tout le monde prêt ? » (`Q.MemberRows()` :
+  Squad pour les amis TreeAI, API du jeu sinon ; `Q.Verdict` : PV ≥ 70, mana ≥ 70, munitions ≥ 200, familier) ;
+  boutons Appel « prêt » (chef : `C_PartyInfo.DoReadyCheck`, sinon `Missions:ReadyAsk`), Rendez-vous ici, Inviter
+  (amis du dernier groupe, `char.friends`), En raid / En groupe, Butin (cycle). Ouverte aussi à READY_CHECK et par
+  « Prêt ? » de Missions. Slash : `/tai prets`, `/tai rdv`, `/tai courses`.
+* **Point de rencontre** : comm `QTM` `{ v = 1, m, x, y (‰), l }`, envoi ≤ 1 / 15 s, réception membres du groupe
+  seulement, ≤ 1 / 10 s par membre, bornes vérifiées → `Compass:SetTarget{ source = "meet" }` + ligne « Rejoins X au
+  point de rencontre » (onglet Groupe, 10 min).
