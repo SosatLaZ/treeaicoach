@@ -373,6 +373,11 @@ return function(M, ctx)
   tf.__protected = true          -- worst case: its quest item buttons are secure
   tf:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -60, -230)
   tf:Show()
+  -- (4.0.5) default: the game tracker is never touched
+  W.TakeOver()
+  check(tf:IsShown() and not W.replaced, "default: the game's tracker stays (never hidden)")
+  -- opt-in « Cacher le suivi du jeu » only
+  W.db.replace = true
   W.TakeOver()
   check(not tf:IsShown() and tf.__alpha == 0 and W.replaced, "Blizzard tracker hidden (out of combat)")
   M.EnterCombat()

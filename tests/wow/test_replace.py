@@ -77,15 +77,16 @@ def test_labels_and_safe_set():
     qp, w, a, q, d = (src(m) for m in MODS)
     for label in ("« ! » quêtes à prendre", "« ? » quêtes à rendre", "Zones d'objectifs", "quêtes grises"):
         assert label in qp, label
-    assert "Remplacer le suivi du jeu" in w and "Par distance" in w and "Ordre du trajet" in w
+    assert "Cacher le suivi du jeu" in w and "Par distance" in w and "Ordre du trajet" in w
     assert "Rendre Questie silencieux" in a and "Réafficher Questie" in a and "Activer les icônes" in a
     assert "Vendre les objets gris et réparer" in q and "Butin instantané" in q
     assert "C_DamageMeter" in d and "En combat" in d
     core = (ADDON / "Core.lua").read_text(encoding="utf-8")
     safe = core[core.index("TreeAI.SAFE_MODULES = "):core.index("TreeAI.SAFE_ADDED")]
     safe = "\n".join(line.split("--", 1)[0] for line in safe.splitlines())
-    for m in ("QuestPins", "Watch", "Addons"):       # on in « mode sûr » (nothing automatic, Questie keeps the duplicates off)
+    for m in ("QuestPins", "Addons"):       # on in « mode sûr » (nothing automatic, Questie keeps the duplicates off)
         assert re.search(r"\b%s = true" % m, safe), m
+    assert not re.search(r"\bWatch = true", safe)   # (4.0.5) the game's tracker stays the tracker
     for m in ("QoL", "Meter"):                        # automations / a window: one click on the « Mes addons » page
         assert not re.search(r"\b%s = true" % m, safe), m
         assert "SAFE_MODULES" not in code(m)

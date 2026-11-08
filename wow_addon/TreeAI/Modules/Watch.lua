@@ -24,13 +24,14 @@ local G = _G
 local W = T:RegisterModule("Watch", {
   title = "Suivi TreeAI",
   description = "Ton suivi de quêtes à l'écran : les quêtes du trajet par zone, chaque objectif avec sa distance, "
-    .. "sa direction et sa durée en direct ; remplace le suivi du jeu.",
-  defaults = { enabled = true, shown = true, replace = true, sort = 1, maxQuests = 10, scale = 100, lock = false,
+    .. "sa direction et sa durée en direct, à côté du suivi du jeu (qui reste là).",
+  -- (4.0.5) coupé d'office et ne cache plus jamais le suivi du jeu (le joueur doit pouvoir cliquer ses quêtes)
+  defaults = { enabled = false, shown = true, replace = false, sort = 1, maxQuests = 10, scale = 100, lock = false,
                offRoute = true },
   charDefaults = { pos = nil, hidden = {}, collapsed = false },
   options = {
     { key = "shown", type = "toggle", label = "Afficher le Suivi TreeAI", section = "Suivi" },
-    { key = "replace", type = "toggle", label = "Remplacer le suivi du jeu (le cacher tant que le Suivi TreeAI est là)", section = "Suivi" },
+    { key = "replace", type = "toggle", label = "Cacher le suivi du jeu (déconseillé : ses quêtes ne sont plus cliquables)", section = "Suivi" },
     { key = "sort", type = "choice", label = "Ordre", values = { "Ordre du trajet", "Par distance" }, section = "Suivi" },
     { key = "offRoute", type = "toggle", label = "Montrer aussi les quêtes hors trajet", section = "Suivi" },
     { key = "maxQuests", type = "range", label = "Quêtes affichées", min = 3, max = 20, step = 1, section = "Cadre" },

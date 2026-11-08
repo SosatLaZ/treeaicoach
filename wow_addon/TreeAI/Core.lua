@@ -16,7 +16,7 @@ local TreeAI = _G.TreeAI or {}
 _G.TreeAI = TreeAI
 
 TreeAI.name = ADDON_NAME
-TreeAI.version = "4.0.4"
+TreeAI.version = "4.0.5"
 TreeAI.SCHEMA = 1
 TreeAI.PREFIX = "TREEAI"
 TreeAI.PRIO_INFO, TreeAI.PRIO_TIP, TreeAI.PRIO_URGENT = 1, 2, 3
@@ -1429,11 +1429,13 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   ItemInfo = true,
   -- (REPLACE 4.0.1) sans autres addons : icônes de quêtes (muettes tant que Questie dessine les siennes), Suivi TreeAI
   -- (remplace le suivi du jeu), page « Mes addons » (rien d'automatique)
-  QuestPins = true, Watch = true, Addons = true,
+  QuestPins = true, Addons = true,   -- (4.0.5) Watch retiré : le suivi du jeu reste le suivi
 }
 -- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
 TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1 }
-TreeAI.SAFE_V = 1
+TreeAI.SAFE_V = 2
+-- (4.0.5) sortis du mode sûr : coupés UNE fois chez tout le monde (le Suivi TreeAI cachait le suivi du jeu)
+TreeAI.SAFE_REMOVED = { Watch = 1 }
 --- module « bêta » (pas dans le mode sûr) ?
 function TreeAI:IsBeta(name) return not self.SAFE_MODULES[name] end
 TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
@@ -1492,7 +1494,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" },   -- (ONBOARD) sûr : Tour.lua s'y inscrit
   -- (REPLACE 4.0.1) sans autres addons
   QuestPins = { lite = true, desc = "Icônes de quêtes : « ! » à prendre, « ? » à rendre, zones d'objectifs (carte + minimap)" },
-  Watch = { lite = true, desc = "Suivi TreeAI : quêtes du trajet, distance, direction et durée en direct ; remplace le suivi du jeu" },
+  Watch = { lite = false, desc = "Suivi TreeAI : quêtes du trajet, distance, direction et durée en direct, à côté du suivi du jeu" },
   Addons = { lite = true, desc = "Mes addons : ce que TreeAI remplace, Questie et Suivi Forever en silence en un clic" },
   QoL = { lite = true, desc = "Confort : vendre les gris et réparer, butin instantané, butin automatique, recul de caméra" },
   Meter = { lite = true, desc = "Dégâts : la fenêtre des dégâts du groupe (compteur du jeu, après chaque combat)" },
@@ -1600,7 +1602,18 @@ function TreeAI:_ApplyProfileOnce()
   -- (4.0.1) ZonePlan, PathDraw, Highlight rejoignent le mode sûr : allumés UNE fois chez les joueurs en mode sûr,
   -- sauf s'ils les ont coupés eux-mêmes (db.modChoice) ; aucun avis (rien de neuf à lire, juste ce qu'il a demandé)
   if (tonumber(db.safeV) or 0) < self.SAFE_V then
+    local fromV = tonumber(db.safeV) or 0
     db.safeV = self.SAFE_V
+    if fromV < 2 then
+      for n in pairs(self.SAFE_REMOVED or {}) do
+        local mod = self.modules[n]
+        if mod and mod.db then
+          mod.db.enabled = false
+          if mod.db.replace ~= nil then mod.db.replace = false end
+          if self._modulesStarted and mod._active and type(moduleDisable) == "function" then moduleDisable(mod) end
+        end
+      end
+    end
     if self:ModuleProfile() ~= "sur" then return end
     local choice = type(db.modChoice) == "table" and db.modChoice or {}
     for n in pairs(self.SAFE_ADDED or {}) do

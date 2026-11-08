@@ -331,6 +331,15 @@ return function(M, ctx)
     -- the same without the auto watch by zone: the pilot keeps the watch list itself
     if zw and Z.SetAutoWatch then
       Z:SetAutoWatch(false)
+      -- (4.0.5) by default the pilot never edits the game's watch list
+      B.Overrides().keep[7001] = nil
+      forgetManual()
+      S.progress[7001] = nil
+      local before = watchedSet()[7001]
+      pass()
+      check(watchedSet()[7001] == before, "default: the pilot leaves the game's watch list alone")
+      if B.Parked(7001) then B.Resume(7001) end
+      B.TOUCH_WATCH = true   -- the old mechanism, still there behind a flag
       B.Overrides().keep[7001] = nil
       forgetManual()
       S.progress[7001] = nil
@@ -344,6 +353,7 @@ return function(M, ctx)
       M.Advance(2, 0.5)
       M.WatchQuest(7001, true)
       check(not B.Parked(7001), "auto watch off: re-watched by hand → unparked at once")
+      B.TOUCH_WATCH = nil
       Z:SetAutoWatch(true)
     end
   end

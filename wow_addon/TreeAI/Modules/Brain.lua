@@ -507,6 +507,8 @@ local function watchedByHand(q)
   return type(wm) == "table" and wm[q] == true and zoneWatchOn() or false
 end
 local function setWatch(q, on)
+  -- (4.0.5) le suivi du jeu appartient au joueur : le pilote n'y ajoute ni n'y retire plus rien
+  if not B.TOUCH_WATCH then return false end
   local api = B.WatchAPI()
   if not api or inCombat() then return false end
   S.busyWatch = true

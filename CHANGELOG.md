@@ -3,6 +3,11 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.0.5 · 8 novembre 2026
+
+- **Ton suivi de quêtes du jeu revient et reste cliquable** : « Suivi TreeAI » est coupé (une fois chez tout le
+  monde) et ne cache plus jamais le suivi du jeu ; le pilote auto ne retire plus rien de ton suivi.
+
 ## 4.0.4 · 8 novembre 2026
 
 - **Métiers** (nouvelle page après HV, « Allumer Métiers » en un clic) : quoi créer, combien de fois, à quelle
