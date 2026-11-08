@@ -349,8 +349,9 @@ function MP.TipLines(pin, me)
     local NT = T.NavTime
     local sec = (NT and NT.Model and try(NT.Model, d, pin.mapID)) or d * 1.3 / 7
     local Pl = T.Plain
-    local eta = (Pl and Pl.Minutes and Pl.Minutes(sec)) or (floor(sec / 60 + 0.5) .. " min")
-    out[#out + 1] = { dist .. " · ≈ " .. eta .. " à pied", 0.6, 0.8, 1 }
+    -- (REPLACE 4.0.1) Plain.Minutes dit déjà « ≈ 3 min » : plus de « ≈ ≈ »
+    local eta = (Pl and Pl.Minutes and Pl.Minutes(sec)) or ("≈ " .. floor(sec / 60 + 0.5) .. " min")
+    out[#out + 1] = { dist .. " · " .. eta .. " à pied", 0.6, 0.8, 1 }
   end
   local any = false
   for _, l in ipairs(pin.lines or {}) do

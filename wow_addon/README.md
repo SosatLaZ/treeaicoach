@@ -37,10 +37,11 @@ Modules/Export.lua  Modules/Planner.lua  Modules/Speed.lua  Modules/Route.lua  M
 Modules/ZoneWatch.lua  Modules/NavTrace.lua
 Modules/Inventory.lua  Modules/Boost.lua  Modules/Fight.lua  Modules/Pro.lua  Modules/Abandon.lua  Modules/Auction.lua
 Modules/Prof.lua  Modules/Glow.lua  Modules/Highlight.lua  Modules/PvP.lua  Modules/PvPMark.lua  Modules/Dungeon.lua
-Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/Gear.lua  Modules/ItemInfo.lua
-Modules/Talents.lua  Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua  Modules/Quick.lua
+Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/QuestPins.lua  Modules/Watch.lua
+Modules/Gear.lua  Modules/ItemInfo.lua  Modules/Talents.lua
+Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua  Modules/Quick.lua
 Modules/QuickFight.lua  Modules/QuickTravel.lua  Modules/Shortcuts.lua  Modules/Window.lua  Modules/WindowPages.lua
-Modules/JournalPage.lua  Modules/Tour.lua
+Modules/JournalPage.lua  Modules/Coach.lua  Modules/QoL.lua  Modules/Meter.lua  Modules/Addons.lua  Modules/Tour.lua
 (4.0 : Squad / Missions / Team → Group ; SafePath, Edge, HunterPro, Comfort, Economy, Predict retirés — voir plus bas)
 ```
 
@@ -1204,6 +1205,58 @@ jamais pour un objet lié quand ramassé) ; contrats optionnels lus si présents
 Chasseur : DPS / vitesse de l'arme à distance (lente favorisée ±15 %), munitions assorties, mailles au niv 40.
 Calcul par coroutine hors combat. Résumé IA : `summary.gear = {priority, slots={{slot,item,score,next={id,name,
 gain,need,kind,where,cost,min}}}, shopping, total, hunter}` → `treeaicoach/wow/gear.py` (`gear_context`).
+
+## Sans autres addons (agent REPLACE, 4.0.1) : `QuestPins`, `Watch`, `Addons`, `QoL`, `Meter`
+
+But : jouer avec TreeAI seul — Questie installé mais **silencieux** (sa base QuestieDB lue en jeu, rien de copié), plus
+besoin de son suivi ni de ses icônes, ni de Leatrix Plus pour le confort, ni de Details pour les dégâts. Audit et plan :
+`research/replace.md`.
+* **`QuestPins` « Icônes de quêtes »** (mode sûr ; `T.QuestPins`) : « ! » des quêtes à prendre (couleur de niveau du jeu,
+  un par donneur, filtres de l'export : faction / classe ; ici : niveau requis, grises sauf option, prérequis
+  `pre` / `preAny`, exclusives, déjà faites, JcJ / raid), « ? » des quêtes prêtes, zones d'objectifs (amas de
+  l'export, rayon `r` → %). Données : `T.Export:Data()` (construit hors combat depuis QuestieDB) + `Export.LogSnapshot()`
+  (journal réel) + `Route:Stops(64)` / `Route.Groups` (n° d'arrêt = onglet / carte) ; sans QuestieDB :
+  `C_QuestLog.GetNextWaypoint`. `QP.Build(exp, log, lvl, route, opts)` pur ; `QP.Pins()` refait la liste seulement si
+  journal (`T:QuestGen`), export, niveau, trajet ou option ont changé, jamais en combat. Priorité : arrêts du trajet,
+  à rendre, objectifs, à prendre (jaune / orange avant vert, XP) ; plafonds `MAX_MAP` 40 (20 « ! », 24 objectifs),
+  `MAX_MINI` 10. Carte : NOTRE calque (enfant d'UIParent sur `ScrollContainer.Child`, comme PathDraw), fournisseur de
+  données `AddDataProvider` : glisser = 1 point reposé (`QP.MapPan`), zoom / liste = icônes replacées, ≤ 10 passes / s,
+  aucun OnUpdate carte posée. Minimap : HereBeDragons-Pins si chargé (Questie l'embarque : `AddMinimapIconMap`, rien par
+  image), sinon support (`QP.holder`, enfant de Minimap) : minimap fixe = 1 point par passe (`SlideMini`), minimap qui
+  tourne = icônes reposées au demi-pixel ; minuteur du cœur (`T:NewTicker`, ~1,5 px par passe : 0,2–0,75 s), arrêté à
+  l'arrêt (`T:OnMotion`). **Questie dessine encore** (`Questie.db.profile.enabled` / `enableMapIcons` /
+  `enableMiniMapIcons`) → rien (pas de doublon) ; option « Dessiner même quand Questie dessine ». Infobulle : quête,
+  donneur, autres quêtes du même PNJ, XP, distance + durée (NavTime), pourquoi ; clic = `Compass.SetQuestTarget` /
+  `SetTarget`. `/tai icones`. Coût mesuré (`replace_scenario.lua`) : immobile 0, en marchant ≈ 25, carte ouverte ≈ 7,
+  carte glissée sans arrêt ≈ 35 kinstr/min ; session_sim : plafond 40, 1 à l'arrêt.
+* **`Watch` « Suivi TreeAI »** (mode sûr ; `TreeAIWatchFrame`, Theme:Window) : quêtes du trajet par zone dans l'ordre des
+  arrêts (puis « Hors trajet ») ou « Par distance » (bascule dans l'en-tête, retri toutes les 4 s en marchant) ; chaque
+  objectif : barre, texte du jeu, distance au bord de la zone + direction (N, NE…) + durée à pied, réécrits seulement si
+  la valeur arrondie change (1 lecture / s en marchant, rien à l'arrêt) ; « Rendre à X » ; bouton d'objet sécurisé
+  (`TreeAIWatchItem<n>`, type=item, enfant d'UIParent posé à la position lue de la ligne, hors combat seulement) ;
+  clic = boussole, clic droit = menu (guider, ignorer dans le trajet `ZonePlan:Ignore`, partager `QuestLogPushQuest`,
+  retirer du suivi, abandonner → page « Journal »). En combat : progression réécrite sur place (`W.Refill`), une quête de
+  plus attend la fin du combat. **« Remplacer le suivi du jeu »** (défaut oui) : `ObjectiveTrackerFrame` (ou
+  QuestWatchFrame) caché hors combat + `HookScript("OnShow")` qui le recache ; en combat seulement `SetAlpha(0)` puis
+  Hide après le combat ; mode édition du jeu ouvert = rendu ; option coupée = `Show` + alpha 1. Questie : une ligne
+  « Questie affiche aussi son suivi : clic pour le couper » (`Addons.SilenceQuestie`). Placement : 1re place = la colonne
+  du suivi du jeu (son rectangle, lisible même caché), écran posé (`T:ScreenStable`, `T._ScreenSize`), puis jamais
+  déplacé par TreeAI (`RegisterMovable(…, { noReflow = true })`) ; UI.lua le mesure comme un suivi (`_taiScan`,
+  `GROWS`, `SCAN_NAMES`) : carte, panneau et placement vivant l'évitent. `/tai monsuivi [on|off]`.
+* **`Addons` « Mes addons »** (mode sûr, rien d'automatique) : page cachée de la fenêtre (hors navigation : la
+  pastille garde sa hauteur), ouverte par Outils / pastille (« Mes addons », groupe réglages), la ligne d'avis et
+  `/tai addons` (`A.Open()`) : par addon trouvé
+  (Questie, QuestieDB, Shortest Path, Details, Leatrix, Auctionator, DungeonJournal, Loot Sparkles, Tweaks) ce que
+  TreeAI fait à sa place, ce qui manque, le clic. `A.QuestieState()`, `A.SilenceQuestie(reload)` /
+  `A.RestoreQuestie(reload)` : SES options seulement (`profile.enabled`, `trackerEnabled`, `minimap.hide`, état
+  d'avant gardé), puis ReloadUI (dans le clic) ; options illisibles = les 3 clics exacts. `A.SetSPFTracker(on)` :
+  `ShortestPathForeverDB.tracker` / `journeyTracker`. Une ligne « Maintenant », une fois (`noticeV`).
+* **`QoL` « Confort »** (bêta, un clic sur la page) : vendre les gris + réparer (jamais si la barre de quête le fait déjà,
+  `Q.QuickDoesIt`), butin instantané (`LootSlot` à `LOOT_READY` quand le jeu ramasse tout seul), butin automatique du
+  jeu et recul de caméra (CVar, sur clic, hors combat). Pas repris : ce qui touche aux cadres de Blizzard.
+* **`Meter` « Dégâts »** (bêta) : `C_DamageMeter` (compteur intégré de Forever, documenté 1.60.1) lu hors combat
+  seulement (SecretWhenInCombat) : dernier combat / session, total, par seconde, part ; « Remise à zéro » = celle du jeu.
+  `/tai degats`.
 
 ## Ma session + Guichets (agent NEXT10, `Modules/Session.lua`, `Modules/Errands.lua`, après Talents)
 

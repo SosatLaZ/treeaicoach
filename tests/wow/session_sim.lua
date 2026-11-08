@@ -57,7 +57,9 @@ local BUDGET = {
     -- le joueur survole ses sacs chez le marchand et après le butin (une construction des index, puis le cache)
     ItemInfo = 10,
     -- ADVICE 4.0.1 : « Conseils pro » (mode sûr) : événements + une petite évaluation par passage, rien en combat
-    Coach = 30 },   -- per-module caps (avg kinstr / minute); Group below
+    Coach = 30,
+    -- REPLACE (4.0.1) « sans autres addons » : icônes de quêtes (carte + minimap), Suivi TreeAI, Mes addons, Confort, Dégâts
+    QuestPins = 40, Watch = 40, Addons = 5, QoL = 10, Meter = 10 },   -- per-module caps (avg kinstr / minute); Group below
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -109,7 +111,8 @@ if opts.idle then
   BUDGET.frameWorstKinstr, BUDGET.frameP99Kinstr, BUDGET.allocKBps = 32, 12, 22
   -- (Detect et Export : appelés par la boussole et le trajet ; PathDraw : une passe au plus toutes les 30 s, puis dort)
   local caps = { Core = 115, Export = 10, Detect = 8, PathDraw = 6, Quests = 4, Tracker = 4, Todo = 4, Speed = 3,
-    Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1, ItemInfo = 1 }
+    Highlight = 2, Macros = 2, Window = 2, Tour = 1, Glow = 1, Hub = 1, Shortcuts = 1, Bugs = 1, ItemInfo = 1,
+    QuestPins = 1, Watch = 1, Addons = 1 }   -- REPLACE : rien à l'arrêt (carte fermée, joueur immobile)
   for k, v in pairs(caps) do BUDGET.kinstrModuleMin[k] = v end
 end
 

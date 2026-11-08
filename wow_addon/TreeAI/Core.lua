@@ -1427,6 +1427,9 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   -- (4.0.2, ITEMINFO) lignes vraies sous les infobulles d'objets : ne travaille que quand une infobulle s'affiche
   -- (≈ 0 sinon) ; module nouveau = allumé d'office (pas de migration)
   ItemInfo = true,
+  -- (REPLACE 4.0.1) sans autres addons : icônes de quêtes (muettes tant que Questie dessine les siennes), Suivi TreeAI
+  -- (remplace le suivi du jeu), page « Mes addons » (rien d'automatique)
+  QuestPins = true, Watch = true, Addons = true,
 }
 -- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
 TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1 }
@@ -1487,6 +1490,12 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Edge2 = { lite = false, desc = "Avantages : camp disputé, objet qui ne tombe pas, corps à fouiller…" },
   Coach = { lite = true, desc = "Conseils pro : le bon geste au bon moment (repos, familier, munitions, XP…), un à la fois" },   -- (ADVICE) sûr : Coach.lua s'y inscrit
   Tour = { lite = true, desc = "Visite guidée et astuces (une fois chacune)" },   -- (ONBOARD) sûr : Tour.lua s'y inscrit
+  -- (REPLACE 4.0.1) sans autres addons
+  QuestPins = { lite = true, desc = "Icônes de quêtes : « ! » à prendre, « ? » à rendre, zones d'objectifs (carte + minimap)" },
+  Watch = { lite = true, desc = "Suivi TreeAI : quêtes du trajet, distance, direction et durée en direct ; remplace le suivi du jeu" },
+  Addons = { lite = true, desc = "Mes addons : ce que TreeAI remplace, Questie et Suivi Forever en silence en un clic" },
+  QoL = { lite = true, desc = "Confort : vendre les gris et réparer, butin instantané, butin automatique, recul de caméra" },
+  Meter = { lite = true, desc = "Dégâts : la fenêtre des dégâts du groupe (compteur du jeu, après chaque combat)" },
 }
 
 TreeAI.MODULE_PROFILES = { sur = true, essentiel = true, tout = true }
