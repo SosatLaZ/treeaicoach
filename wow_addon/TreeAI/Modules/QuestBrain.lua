@@ -10,6 +10,7 @@
 -- Le trajet (ZonePlan:BuildRoute → Planner.steps → Route) suit le mode actif ; QUEST_MODE_CHANGED est envoyé à chaque
 -- changement. Tout est calculé à la demande et mémorisé jusqu'au prochain évènement de quête / groupe / export ou un
 -- déplacement de plus de 60 yd : aucun OnUpdate, rien dans le chat, aucune action protégée. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes → nil
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end

@@ -5,6 +5,7 @@
 -- infobulles gardent au plus 1–2 nombres simples (minutes, XP). Pur (aucun appel WoW) : testé seul.
 -- API : TreeAI.Plain.{Minutes, Dir, Where, Plural, ObjAction, Task, Tag, Why, RouteName, Reason, IsPlain}.
 -- Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T then return end
 

@@ -12,6 +12,7 @@
 -- Questie : lecture seule (QuestieLoader._modules.QuestieDB ou LibQuestieDB), rien n'est copié.
 -- Forever : valeurs « secrètes » en combat → calculs hors combat, issecretvalue testé.
 -- Lua 5.1, aucune globale. Expose TreeAI.ProUtil (outils partagés).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}

@@ -17,6 +17,7 @@
 -- posé une fois à la place du suivi du jeu puis jamais déplacé par TreeAI (PLACEBUG : place du joueur gardée,
 -- mode édition TreeAI). Taint : aucun cadre de Blizzard modifié hormis Hide / Show / SetAlpha du suivi (hors combat
 -- pour Hide / Show), aucun crochet sécurisé détourné. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G

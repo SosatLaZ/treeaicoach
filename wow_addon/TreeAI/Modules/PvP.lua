@@ -16,6 +16,7 @@
 --    défensives visibles sur la cible (durées affichées par le jeu)
 -- Jamais : COMBAT_LOG_EVENT_UNFILTERED (interdit aux addons sur Forever), suivi des temps de recharge
 -- ennemis, ciblage / action à la place du joueur. Valeurs « secrètes » en combat ignorées. Lua 5.1.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local G = _G

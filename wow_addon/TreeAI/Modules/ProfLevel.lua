@@ -21,6 +21,7 @@
 --    card = function(n) → rows, titre, résumé } ; T:FocusMode() → kind | nil ; message interne « FOCUS_CHANGED »
 --    (kind | nil). Pendant un focus : ne pas reprendre le trajet, ne pas insérer de courses, ne pas changer de zone.
 -- Lua 5.1, aucune globale, rien dans le chat.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 local M = T and T.Prof
 if not (M and type(M.Engine) == "table" and T.RegisterModule) then return end

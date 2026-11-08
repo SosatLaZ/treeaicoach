@@ -7,6 +7,7 @@
 -- Taint : en combat on ne touche qu'aux textures et aux animations (jamais Show/Hide/SetPoint d'un cadre).
 -- Uniquement sur NOS cadres (le calque de Highlight, enfant d'UIParent) : jamais sur un cadre Blizzard / tiers.
 -- Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T then return end
 local Glow = {}

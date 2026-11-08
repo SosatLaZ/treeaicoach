@@ -14,6 +14,7 @@
 --    liste Classic approximative). Seul propriétaire d'« apprivoiser » (F.OwnsPet) ; le Chasseur renvoie ici.
 -- Rien d'automatique : tout sur clic, calculs hors combat et à la demande (petit relevé toutes les 30 s hors combat).
 -- Aucune fonction protégée, aucun cadre de Blizzard touché. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 

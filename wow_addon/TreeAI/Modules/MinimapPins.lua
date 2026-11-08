@@ -15,6 +15,7 @@
 -- prennent la souris que pour leur propre infobulle (anneaux : jamais). Survol = distance, clic = boussole.
 -- Données : les sources du module Radar (lecture), nos relevés (butin de quête, services) en SavedVariables.
 -- Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local _, ns = ...
 ns = ns or {}
 

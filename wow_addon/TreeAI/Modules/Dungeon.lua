@@ -18,6 +18,7 @@
 -- chaque valeur passe par sv() ; rien n'est fait à la place du joueur (marque / partage = un clic, hors combat).
 -- Coût : événementiel ; minuterie 1 s seulement en instance (ou fenêtre « Prêt ? » ouverte), lignes reconstruites
 -- sur changement (drapeau « sale ») ; index des quêtes Questie construit une fois, par tranches, puis mémorisé.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local G = _G

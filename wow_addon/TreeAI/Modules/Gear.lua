@@ -9,6 +9,7 @@
 --  • Chasseur : DPS / vitesse de l'arme à distance, munitions assorties (flèches / balles), mailles au niv 40.
 -- Rien n'est équipé, acheté ou cliqué à la place du joueur. QuestieDB en LECTURE seule. Calculs hors combat,
 -- par tranches (coroutine) ; Lua 5.1, aucune globale, toutes les API testées.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}

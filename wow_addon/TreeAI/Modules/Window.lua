@@ -18,6 +18,7 @@
 -- Donjons, Personnage (Macros · Talents · Équipement · Métiers), HV, Conseils pro, Réglages (Raccourcis · Affichage ·
 -- Fonctions · Mes addons · Options · Outils) ; anciennes pages = sous-pages ou alias (W.ALIAS / W.PARENT / W.SUBS).
 -- 1re ouverture sur la moitié droite de l'écran, ensuite là où le joueur l'a laissée.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G

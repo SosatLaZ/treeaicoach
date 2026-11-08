@@ -8,6 +8,7 @@
 --  * Lu par « /tai erreurs » (rapport) et par l'appli (TreeAI-erreurs.txt, section « Trajet / boussole ») ; visible dans
 --    la fenêtre : Outils → « Journal de la boussole ».
 -- Lecture seule, aucune fonction protégée, aucun cadre Blizzard. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if type(T) ~= "table" then return end
 

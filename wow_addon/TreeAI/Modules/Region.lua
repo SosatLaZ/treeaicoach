@@ -9,6 +9,7 @@
 --    explicite du bouton d'onglet « Suivi du jeu » (UserAction, hors combat). Questie / Shortest Path : rien
 --    ne leur est envoyé, on ordonne seulement la vue de TreeAI.
 -- Lecture seule de Quests.lastList / Tracker.items. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 

@@ -11,6 +11,7 @@
 -- ne change que textes / couleurs / alpha (autorisé) ; sinon la barre (peut-être protégée) n'est pas touchée et
 -- le joueur passe dans une petite liste en haut de l'écran (notre cadre sur UIParent), reconstruite après le
 -- combat. Valeurs secrètes en combat → nil (_ns). Uniquement sur événements, aucun travail par image. Lua 5.1.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end

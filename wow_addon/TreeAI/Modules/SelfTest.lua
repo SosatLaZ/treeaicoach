@@ -4,6 +4,7 @@
 -- Garde aussi les 30 dernières erreurs Lua de nos modules dans TreeAIDB.diag.errors (module + message).
 -- Lecture seule : aucun appel protégé, aucune requête HV (ReplicateItems a un délai de 15 min : jamais lancé
 -- ici), aucune macro créée. Lua 5.1, aucune globale, toutes les API testées (pcall).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local G = _G
@@ -315,7 +316,7 @@ local M = T:RegisterModule("SelfTest", {
   defaults = { enabled = true },
   options = {   -- boutons (page d'options du module) : tout se fait aussi sans commande
     { type = "button", label = "Lancer l'autotest", onClick = function() T.SelfTest.Clicked() end },
-    { type = "button", label = "Voir les dernières erreurs", onClick = function() T.SelfTest.PrintErrors() end },
+    { type = "button", label = "Voir les dernières erreurs", onClick = function() T.SelfTest.PrintErrors(true) end },
   },
 })
 T.SelfTest = M
@@ -371,9 +372,15 @@ function M.Run(quiet)
   return report
 end
 
-function M.PrintErrors()
+function M.PrintErrors(fromClick)
   local d = diag() or {}
   local list = type(d.errors) == "table" and d.errors or {}
+  -- (4.0.8) un clic dans la fenêtre : jamais le chat — un mot au pied de la fenêtre ; la liste reste pour /tai erreurs
+  if fromClick and T.ClickNote then
+    T:ClickNote(#list == 0 and "Aucune erreur TreeAI gardée." or
+      ("%d erreur(s) TreeAI gardée(s) : /tai erreurs pour la liste, ou « Préparer le fichier d'erreurs »."):format(#list))
+    return
+  end
   if #list == 0 then T:Print("Aucune erreur TreeAI gardée.") return end
   T:Print(("%d erreur(s) TreeAI (les plus récentes en bas) :"):format(#list))
   for i = math.max(1, #list - 9), #list do
@@ -432,7 +439,7 @@ function M.PushTab()
   end
   if nerr > 0 then
     lines[#lines + 1] = { text = ("Vois les %d erreurs TreeAI gardées (clic)"):format(nerr), prio = 2,
-      onClick = function() M.PrintErrors() end }
+      onClick = function() M.PrintErrors(true) end }
   end
   local bl, btotal, bsess = M.BlockedLines(5)
   lines[#lines + 1] = { text = btotal > 0 and ("Blocages : %d (%d cette session) — cliquer pour la liste"):format(btotal, bsess)

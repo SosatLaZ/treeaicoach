@@ -5,6 +5,7 @@
 -- combat sans rien bloquer. Ouverte = elle se met à jour sur ses propres évènements (groupe, journal, sacs,
 -- durabilité, familier), regroupés ≥ 0,5 s ; fermée = zéro coût. Les données viennent de Dungeon.Checklist /
 -- Dungeon.Quests (un seul propriétaire de l'info, l'onglet « Donjon » montre les mêmes points).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 local M = T and T.Dungeon
 if not M then return end

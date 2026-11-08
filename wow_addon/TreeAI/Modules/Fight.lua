@@ -13,6 +13,7 @@
 -- minuteur des contrôles (auras ennemies secrètes en combat), menace du familier (secrète), fuyards, « tirs entre
 -- deux tirs auto » (générique), dégâts subis (journal de combat interdit sur Forever).
 -- Rien n'est fait à la place du joueur. Sortie : Suggest (onglet « Infos »), jamais le chat. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local G = _G

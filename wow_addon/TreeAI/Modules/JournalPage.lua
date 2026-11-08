@@ -8,6 +8,7 @@
 --  * pied : « Tout ce qui est gris (N) » → « Confirmer : N grises ? » → « Suivante : « X » » (une quête par clic) ;
 --  * page « Quêtes » : la section « Nettoyer mon journal » (3 premières + « … et N autres ») renvoie ici.
 -- Fenêtre fermée = rien ne tourne ; aucune fonction protégée appelée ici ; jamais le chat.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 local W = T and T.Window
 if not (W and W.AddPage) then return end

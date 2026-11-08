@@ -8,6 +8,7 @@
 --  * Les astuces calculées par l'appli (tue en chemin, point de vol en passant, grind de niveau, foyer)
 --    arrivent dans le plan (champ `tip`) et sont affichées par Planner sous l'étape courante.
 -- Une ligne en français simple par technique, seulement quand elle sert. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end

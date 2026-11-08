@@ -16,6 +16,7 @@
 -- (UIREDO, gardée) T:RegisterShortcutBar : la « barre d'actions » où Quick / QuickFight amarrent leurs boutons
 -- sécurisés (objet de quête, monture, familier…). Cachée par défaut (4.1 : rien d'autre en haut à gauche ni au-dessus
 -- des barres) ; une case dans les options la remet en bas de l'écran.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G

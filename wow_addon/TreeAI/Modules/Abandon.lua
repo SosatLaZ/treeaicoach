@@ -15,6 +15,7 @@
 -- est chargé (≥ 20 quêtes, réglable), bloc « Nettoyer mon journal » de l'onglet Quêtes (panneau texte),
 -- summary.abandon (appli), /tai abandon (ouvre la page). Calculs hors combat (valeurs secrètes de Forever).
 -- Le cœur (A.*) est pur (aucun appel WoW) : testé seul par tests/wow/abandon_spec.lua. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 

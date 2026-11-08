@@ -19,6 +19,7 @@
 -- API : TreeAI.Detect:Rares() :QuestUnits() :QuestUnit(unit) :Quests() :Services(kind) :Nearest(kind)
 --       :NearestText(kind) :Group() :Combat() :Kills(name) :Pins() :OnChange(cb) → cb(kind, data).
 -- Rien n'est fait à la place du joueur. Lua 5.1, aucune globale, toute API testée avant usage.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local G = _G

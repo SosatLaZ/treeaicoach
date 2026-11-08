@@ -18,6 +18,7 @@
 --    nomme qui y gagne le plus. Jamais de jet, jamais le chat, jamais de son.
 -- Coût : rien seul (le minuteur de 2 s ne tourne qu'en groupe), lectures hors combat seulement, valeurs secrètes
 -- (Forever) écartées. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local API = T.API or {}

@@ -20,6 +20,7 @@
 -- sur GameTooltip et ItemRefTooltip ; aucune méthode du jeu remplacée, aucun rafraîchissement forcé (la comparaison
 -- d'objets est protégée sur Forever). Ne travaille QUE quand une infobulle d'objet s'affiche ; cache par objet invalidé
 -- par les sacs, l'équipement, le journal, le groupe, le familier, les métiers. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}

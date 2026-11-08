@@ -12,6 +12,7 @@
 --    aspect (barre de combat), mort (Speed), rares (Rares), entraîneur (Guichets) : on ne redit pas leur ligne.
 -- Coût : événements + une petite évaluation par passage d'AutoRefresh, RIEN en combat (la ligne s'efface au pull).
 -- Lua 5.1, aucune globale, toutes les API testées (pcall), valeurs secrètes (Forever) ignorées.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 local API = T.API or {}

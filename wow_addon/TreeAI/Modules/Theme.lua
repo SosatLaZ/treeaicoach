@@ -3,6 +3,7 @@
 -- Themes: 1 « Sombre » (flat dark + gold), 2 « Clair » (flat slate, brighter), 3 « Blizzard » (tooltip look).
 -- Only ever skins TreeAI's OWN frames: unnamed or « TreeAI… » named, never protected / forbidden ones,
 -- never a Blizzard frame (never re-parented, no field written on foreign frames: state lives in weak tables).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = TreeAI
 if not T then return end
 local G = _G

@@ -17,6 +17,7 @@
 -- « Métiers » + la session métier de Modules/ProfLevel.lua (extension de ce module : banque, courrier, marchands,
 -- mode focus). Recettes : la compétence pour apprendre une recette d'entraîneur n'est pas dans les tables du client
 -- (estimée = seuil jaune, la vraie est lue chez le maître) ; une recette CONNUE est utilisable tout de suite.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}

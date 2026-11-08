@@ -21,6 +21,7 @@
 --     hystérésis contre les sauts.
 -- Coût : positions lues ≤ 1 / 15 s hors combat ; trajets recalculés seulement si quelqu'un a bougé (cases de 60 yd) ou si
 -- le journal a changé, et seulement page Groupe ouverte (ou trajet vers un ami en cours).
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local _, ns = ...
 ns = type(ns) == "table" and ns or {}
 local T = _G.TreeAI

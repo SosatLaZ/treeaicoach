@@ -10,6 +10,7 @@
 --    changement de cible) écartés de la mesure.
 -- Coût : un échantillon par seconde, seulement quand un trajet est en cours ou que tu bouges ; rien à l'arrêt.
 -- Lecture seule, aucune fonction protégée, aucun cadre Blizzard. Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 

@@ -13,6 +13,7 @@
 --    module de guidage (s'il existe) respectée.
 -- Taint : aucun cadre protégé, aucun hook de cadre sécurisé, aucune fonction protégée ; cadres créés hors combat.
 -- Lua 5.1, aucune globale.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 

@@ -7,6 +7,7 @@
 -- mouvement / en tournant, caps des arrêts recalculés 1 fois par seconde. Aucune table créée par image.
 -- Respecte la règle « un seul guide » : visible seulement quand la boussole TreeAI guide (pas pendant SPF).
 -- Lua 5.1, aucune globale, aucun cadre Blizzard.
+local tonumber = function(v) return _G.tonumber(v) end   -- (4.0.8) tonumber(f()) : un 2e retour de f n'est jamais une base
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
