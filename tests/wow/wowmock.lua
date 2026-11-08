@@ -752,7 +752,7 @@ function M.Install(flavor)
   G.UnitCreatureType = function(u) local d = U(u) return d and d.creatureType or "Bête" end
   G.UnitAffectingCombat = function(u) local _, k = U(u) if k == "player" or k == "pet" then return M.inCombat end return false end
   G.UnitIsConnected = function(u) local d = U(u) return d ~= nil and d.online ~= false end
-  G.UnitIsAFK = function() return false end
+  G.UnitIsAFK = function(u) local d = U(u) return d and d.afk or false end
   G.UnitIsTapDenied = function() return false end
   G.UnitThreatSituation = function(u) local d = U(u) return d and d.threat or nil end
   G.UnitDetailedThreatSituation = function()
@@ -792,7 +792,27 @@ function M.Install(flavor)
   G.CastingInfo = G.UnitCastingInfo
   G.ChannelInfo = G.UnitChannelInfo
   G.CheckInteractDistance = function() return true end
-  G.UnitInRange = function() return true, true end
+  G.UnitInRange = function(u) local d, k = U(u) if k == "group" then return d.inRange ~= false, true end return true, true end
+  -- party members (Team.lua): role, visibility, inspect (d.gear = { [slot] = itemID }), quests (d.quests = { [questID] = true }, nil = unknown)
+  G.UnitGroupRolesAssigned = function(u) local d = U(u) return d and d.role or "NONE" end
+  G.UnitIsVisible = function(u) local d = U(u) return d ~= nil and d.visible ~= false end
+  G.CanInspect = function(u) local _, k = U(u) return k == "group" end
+  G.NotifyInspect = function(u)
+    local d, k = U(u)
+    M.inspects = (M.inspects or 0) + 1
+    if k == "group" and d.gear then
+      local guid = G.UnitGUID(u)
+      G.C_Timer.After(0.3, function() M.FireEvent("INSPECT_READY", guid) end)
+    end
+  end
+  G.ClearInspectPlayer = function() end
+  local function onQuest(u, id)
+    local d, k = U(u)
+    if k ~= "group" then return false end
+    if d.quests == nil then return nil end   -- nil: unknown (as before this mock existed)
+    return d.quests[id] == true
+  end
+  M.UnitOnQuest = onQuest
   G.UnitPosition = function() return nil end
   G.IsInGroup = function() return #M.group > 0 end
   G.IsInRaid = function() return false end
@@ -964,7 +984,11 @@ function M.Install(flavor)
     return slots[name] or 1, 0
   end
   G.GetInventoryItemID = function(_, slot) local s = M.inventory[slot] return s and s.id ~= 0 and s.id or nil end
-  G.GetInventoryItemLink = function(_, slot) local s = M.inventory[slot] return s and M.ItemLink(s.id) end
+  G.GetInventoryItemLink = function(u, slot)
+    local d, k = U(u)
+    if k == "group" then local id = d.gear and d.gear[slot] return id and M.ItemLink(id) or nil end
+    local s = M.inventory[slot] return s and M.ItemLink(s.id)
+  end
   G.GetInventoryItemCount = function(_, slot) local s = M.inventory[slot] return s and s.count or 0 end
   G.GetInventoryItemDurability = function(slot) local s = M.inventory[slot] if s and s.durMax then return s.dur, s.durMax end end
   G.GetInventoryItemTexture = function() return nil end
@@ -1045,7 +1069,7 @@ function M.Install(flavor)
         local a = aura(u, i, f)
         if a then return { name = a.name, icon = a.icon or 136000, applications = a.count or 0,
           duration = a.duration or 0, expirationTime = a.expirationTime or 0, spellId = a.spellId or 0,
-          sourceUnit = a.source or "player", isHelpful = (a.kind or "buff") == "buff" } end
+          sourceUnit = a.source or "player", isHelpful = (a.kind or "buff") == "buff", dispelName = a.debuffType } end
       end,
     }
     G.C_Item = {
@@ -1076,6 +1100,7 @@ function M.Install(flavor)
         local w = M.waypoints[id]
         if w then return w[1], w[2], w[3] end
       end,
+      IsUnitOnQuest = function(u, id) return M.UnitOnQuest(u, id) end,
       GetQuestTagInfo = function(id)
         local q = qAt(id)
         if q and q.elite then return { tagID = 1, tagName = "Élite", isElite = true } end
@@ -1114,6 +1139,9 @@ function M.Install(flavor)
     if not q then return nil end
     if q.header then return q.header, nil, nil, true, false end
     return q.title, q.level, q.group, false, false, q.complete and 1 or nil, nil, qid(i)
+  end
+  G.IsUnitOnQuest = function(i, u)   -- Classic: 1 / nil ; unknown member log (d.quests nil) = on it (no noise)
+    if M.quests[i] and not M.quests[i].header then return M.UnitOnQuest(u, qid(i)) ~= false and 1 or nil end
   end
   G.GetNumQuestLeaderBoards = function(i) local q = M.quests[i or M.questSel or 1] return q and #(q.objectives or {}) or 0 end
   G.GetQuestLogLeaderBoard = function(j, i)

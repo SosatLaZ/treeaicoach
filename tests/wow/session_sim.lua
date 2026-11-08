@@ -34,6 +34,7 @@ local BUDGET = {
   kinstrPerModuleMin = 4000,     -- avg kilo-instructions / module / simulated minute (main client)
   kinstrPerModulePeak = 15000,   -- worst single minute for one module
   kinstrTotalMin = 20000,        -- whole addon, avg / minute
+  kinstrModuleMin = { Team = 80 },   -- tighter per-module caps (avg kinstr / minute)
   nowChangesPerMinMax = 12,      -- « Maintenant » changes (text skeleton, digits ignored) in any minute
   nowChangesPerMinAvg = 6,      -- a fight every ~35 s brings its own in-combat lines (aspect, pet HP…)
   alertsPer10Min = 8,            -- corner alert pops in any 10-minute window
@@ -1042,7 +1043,9 @@ table.sort(mods, function(a, b) return perMod[a] > perMod[b] end)
 P("cpu (main client, kilo-instructions / minute: avg, peak@min):")
 for i, mod in ipairs(mods) do
   local avg = perMod[mod] / nMin
-  if i <= 12 or opts.verbose then P(("  %-14s %7.0f  %7d@%d"):format(mod, avg, peak[mod], peakMin[mod])) end
+  local cap = BUDGET.kinstrModuleMin[mod]
+  if i <= 12 or opts.verbose or cap then P(("  %-14s %7.0f  %7d@%d"):format(mod, avg, peak[mod], peakMin[mod])) end
+  if cap and avg > cap then fail(("cpu: %s %.0f kinstr/min > %d"):format(mod, avg, cap)) end
   if mod ~= "(mock/sim)" then
     if avg > BUDGET.kinstrPerModuleMin then fail(("cpu: %s %.0f kinstr/min > %d"):format(mod, avg, BUDGET.kinstrPerModuleMin)) end
     if peak[mod] > BUDGET.kinstrPerModulePeak then fail(("cpu: %s peak %d kinstr in minute %d > %d"):format(mod, peak[mod], peakMin[mod], BUDGET.kinstrPerModulePeak)) end

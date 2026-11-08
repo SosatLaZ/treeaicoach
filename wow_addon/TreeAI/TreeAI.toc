@@ -31,6 +31,7 @@ Modules\Leveling.lua
 Modules\Group.lua
 Modules\Squad.lua
 Modules\Missions.lua
+Modules\Team.lua
 Modules\Quests.lua
 Modules\Compass.lua
 Modules\SafePath.lua
