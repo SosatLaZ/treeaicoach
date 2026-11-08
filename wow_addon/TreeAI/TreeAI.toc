@@ -66,6 +66,7 @@ Modules\Prof.lua
 Modules\Glow.lua
 Modules\Highlight.lua
 Modules\PvP.lua
+Modules\PvPMark.lua
 Modules\Dungeon.lua
 Modules\Radar.lua
 Modules\MinimapPins.lua

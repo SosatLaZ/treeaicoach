@@ -579,7 +579,7 @@ local FAMILY = {
   { title = "Quêtes et trajet", mods = { "Quests", "Tracker", "Todo", "ZonePlan", "Planner", "Compass", "Radar", "MinimapPins",
     "SafePath", "Highlight", "Predict", "Abandon", "Leveling", "Errands", "Edge", "Edge2" } },
   { title = "Combat et classe", mods = { "Hunter", "HunterPro", "Classes", "Fight", "Boost", "Talents", "Macros",
-    "Binds", "Detect" } },
+    "Binds", "Detect", "PvPMark" } },
   { title = "Groupe", mods = { "Group", "Squad", "Missions", "Dungeon", "PvP" } },
   { title = "Sacs, or, métiers", mods = { "Inventory", "Economy", "Auction", "Gear", "Prof" } },
   { title = "Outils", mods = { "Session", "Comfort", "Pro", "Theme", "Export", "SelfTest" } },
