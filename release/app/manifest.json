@@ -1,25 +1,25 @@
 {
- "version": "3.9.7",
+ "version": "3.9.8",
  "exe": "TreeAICoach-app.exe",
- "sha256": "9f86e3dd0f979555f921b0bac98ec4e5c43212126964579192b718d0ed694ba1",
+ "sha256": "8fe2ebf097f259cfbb7aad11917c7859b3e23ec2bbf04492cc2b4755690c30f7",
  "chunks": [
   {
-   "name": "3.9.7/part-01.zip",
+   "name": "3.9.8/part-01.zip",
    "size": 88089586,
-   "sha256": "5b66b7f23cb6b15e872c46f730b7b9b20e481eb49e739693ef9ce1c632ffa830",
+   "sha256": "f14bc77f66554942ed081d45e50eef0bab966b718705d136fe9b0090bd6c99fc",
    "files": 130
   },
   {
-   "name": "3.9.7/part-02.zip",
-   "size": 13205997,
-   "sha256": "733c5de6949704b5a4273dc75404930702d843b1be850cd9509a99c24227ed14",
-   "files": 652
+   "name": "3.9.8/part-02.zip",
+   "size": 13225145,
+   "sha256": "5d79e11871866309099488890e9eea20f0eef93ae97f9741af67624cd16bd530",
+   "files": 653
   }
  ],
- "total_size": 101295583,
+ "total_size": 101314731,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : fini les actions bloqu\u00e9es par le jeu (cause trouv\u00e9e), /tai bloque pour v\u00e9rifier."
+ "notes": "WoW : plus d'\u00e0-coup chaque seconde, erreurs corrig\u00e9es, TreeAI seul guide, qu\u00eates justes, cadavre, fichier d'erreurs."
 }
