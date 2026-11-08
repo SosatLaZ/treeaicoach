@@ -1,25 +1,25 @@
 {
- "version": "4.1.1",
+ "version": "4.1.2",
  "exe": "TreeAICoach-app.exe",
- "sha256": "5bb5cb6e58ec8becdf13a1b7141dc84899db42efda94f55dd735b416baa2bc34",
+ "sha256": "2b0b11f9d0a5d0ca350bd89932856e59046b6038ccc10a2dd24bcd2d995e49d4",
  "chunks": [
   {
-   "name": "4.1.1/part-01.zip",
-   "size": 88053470,
-   "sha256": "56981ab04d662728569d85a9688186040570384b8b55b52f67a096e7c0fe4e70",
+   "name": "4.1.2/part-01.zip",
+   "size": 88057299,
+   "sha256": "a1a8e49967a29178298c7094dac2ef9d54693fe0c39c242e69795faa4928c7c8",
    "files": 127
   },
   {
-   "name": "4.1.1/part-02.zip",
-   "size": 14119058,
-   "sha256": "30c97ae617d691c26a52866b052fcd9774d3dc9a7ed37753ed3e89b15de3cf40",
+   "name": "4.1.2/part-02.zip",
+   "size": 14140540,
+   "sha256": "140619638f67359f7661501060267428cfbb424deb1afccb9ea648ca8f0e80ad",
    "files": 687
   }
  ],
- "total_size": 102172528,
+ "total_size": 102197839,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "TreeAI 4.1.1 : nouvelle page \u00ab Parler \u00e0 l'IA \u00bb dans l'app (Ctrl+8), le coach r\u00e9pond par \u00e9crit avec tes donn\u00e9es."
+ "notes": "TreeAI 4.1.2 : qu\u00eates et r\u00e9compenses automatiques coup\u00e9es (interrupteurs \u00e0 part), choix de zone + Conseille-moi, HV refaite pour le b\u00e9n\u00e9fice."
 }

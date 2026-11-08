@@ -3,6 +3,17 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 4.1.2 · 8 novembre 2026
+
+- **Quêtes et récompenses automatiques coupées chez tout le monde**, et chacune a son interrupteur : Réglages →
+  Confort, ou `/tai quetesauto on|off` et `/tai recompense on|off`. La barre de quête n'accepte plus rien seule.
+- **Choisir ta zone** : bouton « Zone », « Changer » en haut de Quêtes ou `/tai zone` : chaque zone dit ses quêtes
+  pour toi, le vrai trajet, l'XP/h, le groupe et pourquoi ; « Conseillé » en tête ; « Conseille-moi » (3 conseils,
+  un clic chacun).
+- **HV refaite** : rien dans le chat, achat-revente seulement si ≥ 1 pa et 15 % net et si l'objet se vend vraiment,
+  panneau à côté de l'HV (Acheter / Poster / Annuler, un clic ou une touche = une action), page HV avec 3 chiffres et
+  4 boutons, « Vendre mes sacs » honnête, profits de tes métiers.
+
 ## 4.1.1 · 8 novembre 2026
 
 - **App : page « Parler à l'IA »** (menu World of Warcraft, Ctrl+8, et bouton « Demander à l'IA » sur la page WoW) :
