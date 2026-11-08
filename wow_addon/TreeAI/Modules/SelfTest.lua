@@ -384,6 +384,26 @@ function M.PrintErrors()
   end
 end
 
+-- TAINT : « Blocages » — les fonctions que le jeu a bloquées (ADDON_ACTION_BLOCKED / FORBIDDEN), avec le module
+-- et le nombre (TreeAIDB.diag.blockedTop, gardé au /reload). Lisible d'un coup d'œil pour une capture d'écran.
+function M.BlockedLines(n)
+  local top, total, session = {}, 0, 0
+  if type(T.BlockedTop) == "function" then top, total, session = T:BlockedTop(n or 8) end
+  local out = {}
+  for i, e in ipairs(top) do
+    out[#out + 1] = ("%d. %s ×%d — %s%s"):format(i, cut(e.func, 40), tonumber(e.n) or 0, cut(e.ctx or "?", 34),
+      (tonumber(e.combat) or 0) > 0 and (" (combat %d)"):format(e.combat) or "")
+  end
+  return out, total or 0, session or 0
+end
+function M.PrintBlocked()
+  local lines, total, session = M.BlockedLines(10)
+  if #lines == 0 then T:Print("Blocages : aucune action bloquée par le jeu notée. Parfait.") return end
+  T:Print(("Blocages : %d au total (%d cette session). Les plus fréquents (fonction ×nombre — module) :"):format(total, session))
+  for _, l in ipairs(lines) do T:Print(l) end
+  T:Print("Capture d'écran → TreeAI. /tai bloque reset pour remettre à zéro.")
+end
+
 -- Onglet « Infos » : une ligne cliquable lance l'autotest (+ dernier résultat, erreurs gardées)
 function M.PushTab()
   if type(T.SetTabLines) ~= "function" then return end
@@ -401,6 +421,12 @@ function M.PushTab()
     lines[2] = { text = ("Erreurs TreeAI gardées : %d — cliquer pour les voir"):format(nerr), prio = 2,
       onClick = function() M.PrintErrors() end }
   end
+  local bl, btotal, bsess = M.BlockedLines(5)
+  lines[#lines + 1] = { text = btotal > 0 and ("Blocages : %d (%d cette session) — cliquer pour la liste"):format(btotal, bsess)
+      or "Blocages : aucun (actions refusées par le jeu)",
+    prio = bsess > 0 and 2 or 1,
+    tooltip = #bl > 0 and ("Plus fréquents :\n" .. table.concat(bl, "\n")) or "Aucune action bloquée notée.",
+    onClick = function() M.PrintBlocked() end }
   T:SetTabLines("info", lines, "selftest")
 end
 
@@ -408,7 +434,8 @@ function M:OnEnable() M.PushTab() end
 function M:AutoRefresh()
   local d = diag() or {}
   local n = type(d.errors) == "table" and #d.errors or 0
-  if n ~= M._lastN then M._lastN = n; M.PushTab() end
+  local b = tonumber(d.blockedTotal) or 0
+  if n ~= M._lastN or b ~= M._lastB then M._lastN, M._lastB = n, b; M.PushTab() end
 end
 
 function M:OnInit()
@@ -421,6 +448,13 @@ end
 
 T:RegisterSlash("test", function() M.Run(false) end, "autotest : API du jeu, modules, rapport pour TreeAI")
 T:RegisterSlash("erreurs", function() M.PrintErrors() end, "dernières erreurs Lua de TreeAI")
+T:RegisterSlash("bloque", function(arg)
+  if type(arg) == "string" and arg:lower():find("^%s*reset") then
+    if type(T.ResetBlocked) == "function" then T:ResetBlocked() end
+    T:Print("Blocages remis à zéro.") M.PushTab() return
+  end
+  M.PrintBlocked()
+end, "bloque : actions refusées par le jeu (fonction, module, nombre) — capture pour TreeAI")
 T:RegisterSlash("demo", function()
   T:Suggest("core:test1", "Exemple : conseil d'information.", 1, { ttl = 20 })
   T:Suggest("core:test2", "Exemple : conseil utile.", 2, { ttl = 20 })

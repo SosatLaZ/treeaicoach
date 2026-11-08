@@ -319,7 +319,7 @@ return function(M, ctx)
   T.SetTabLines = function(_, id, lines) tabs[id] = lines end
   TR.Push()
   M.shift = true
-  for _, l in ipairs(tabs.quests) do if l.questID == 1002 then l.onClick() end end
+  for _, l in ipairs(tabs.quests) do if l.questID == 1002 then M.Hw(l.onClick) end end
   M.shift = false
   T.SetTabLines = nil
   if modern then

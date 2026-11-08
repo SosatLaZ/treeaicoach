@@ -558,6 +558,9 @@ local function dispatch(event, ...)
   if not list then return end
   -- (LITE) auras : seulement joueur / familier / cible (pas chaque membre du groupe ni chaque barre de nom)
   if event == "UNIT_AURA" and not AURA_UNITS[(...)] then return end
+  local prev = TreeAI._ctx
+  -- TAINT : le jeu signale le blocage pendant l'appel fautif → garder le module qui tournait (pas « core:ADDON_… »)
+  if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then TreeAI._blockCtx = prev end
   dispatchDepth = dispatchDepth + 1
   for owner, fn in pairs(list) do
     if ownerActive(owner) then
@@ -566,7 +569,7 @@ local function dispatch(event, ...)
     end
   end
   dispatchDepth = dispatchDepth - 1
-  TreeAI._ctx = nil
+  TreeAI._ctx = prev
 end
 
 --- Forever (restrictions Midnight) : s'abonner à COMBAT_LOG_EVENT(_UNFILTERED) déclenche ADDON_ACTION_FORBIDDEN
@@ -1267,6 +1270,30 @@ function TreeAI:InCombat()
   if _G.InCombatLockdown then
     local ok, v = pcall(_G.InCombatLockdown)
     return ok and v and true or false
+  end
+  return false
+end
+
+--- TAINT : un cadre « protégé » (modèle sécurisé, cadre Blizzard protégé comme TargetFrame / boutons d'action,
+--- ou NOTRE cadre ancré sur un cadre protégé — il devient protégé lui aussi) ne peut pas être montré / caché /
+--- déplacé / redimensionné en combat : le jeu bloque l'appel (ADDON_ACTION_BLOCKED, compté dans « Échec des
+--- actions d'interface » de la liste des addons). TreeAI:FrameLocked(f, ...) = vrai si l'un d'eux est dans ce cas.
+local function isProtectedFrame(f)
+  if type(f) ~= "table" then return false end
+  local fn = f.IsProtected
+  if type(fn) ~= "function" then return false end
+  local ok, p = pcall(fn, f)
+  return ok and p and true or false
+end
+TreeAI.IsProtectedFrame = isProtectedFrame
+TreeAI._lockSkips = 0
+function TreeAI:FrameLocked(...)
+  if not self:InCombat() then return false end
+  for i = 1, select("#", ...) do
+    if isProtectedFrame((select(i, ...))) then
+      self._lockSkips = (self._lockSkips or 0) + 1
+      return true
+    end
   end
   return false
 end
@@ -2657,7 +2684,7 @@ TreeAI.SLASH_GROUPS = TreeAI.SLASH_GROUPS or {
   { "Chasseur et combat", { "familier", "mort", "boost", "pvp" } },
   { "Macros et touches", { "macros", "binds", "touches", "raccourcis" } },
   { "Économie et HV", { "hv", "compos", "eco" } },
-  { "Outils", { "modules", "module", "statut", "perf", "nouveau", "selftest", "diag", "debug", "test" } },
+  { "Outils", { "modules", "module", "statut", "perf", "nouveau", "selftest", "diag", "debug", "test", "bloque" } },
 }
 
 --- { { title=, items = { {cmd=, help=}, ... } }, ... } : toutes les commandes documentées, groupées.
@@ -2943,14 +2970,60 @@ local function onBlocked(kind, addon, func)
     while #list > 20 do table.remove(list, 1) end
     db.diag.blocked = list
   end
-  local ctx = TreeAI._ctx or TreeAI._lastCtx or "?"
+  local ctx = TreeAI._blockCtx or TreeAI._lastCtx or "?"
+  TreeAI._blockCtx = nil
   if type(db) == "table" and db.diag and db.diag.blocked then db.diag.blocked[#db.diag.blocked].ctx = ctx end
+  -- TAINT : compteurs par (fonction, module) gardés au /reload (« Blocages », /tai bloque) — pas seulement les 20 derniers
+  TreeAI._blockedSession = (TreeAI._blockedSession or 0) + 1
+  if type(db) == "table" and type(db.diag) == "table" then
+    local top = type(db.diag.blockedTop) == "table" and db.diag.blockedTop or {}
+    db.diag.blockedTop = top
+    local key = func .. "|" .. tostring(ctx)
+    local e = top[key]
+    if type(e) ~= "table" then
+      local n = 0
+      for _ in pairs(top) do n = n + 1 end
+      if n >= 60 then   -- plafond : on oublie la plus ancienne
+        local oldK, oldT
+        for k, v in pairs(top) do
+          local lt = type(v) == "table" and tonumber(v.last) or 0
+          if not oldT or lt < oldT then oldK, oldT = k, lt end
+        end
+        if oldK then top[oldK] = nil end
+      end
+      e = { func = func, ctx = tostring(ctx), kind = kind, n = 0, combat = 0 }
+      top[key] = e
+    end
+    e.n = (tonumber(e.n) or 0) + 1
+    e.last = (time and time()) or 0
+    if InCombatLockdown and InCombatLockdown() then e.combat = (tonumber(e.combat) or 0) + 1 end
+    db.diag.blockedTotal = (tonumber(db.diag.blockedTotal) or 0) + 1
+  end
   -- ANNOY : une ligne de chat par fonction et par session (tout reste noté dans diag.blocked)
   TreeAI._blockedSaid = TreeAI._blockedSaid or {}
   if TreeAI._blockedSaid[func] then return end
   TreeAI._blockedSaid[func] = true
   TreeAI:Print(("Action bloquée par le jeu : %s (%s) pendant %s. Envoie ce message à TreeAI pour la correction.")
     :format(func, kind, ctx))
+end
+--- Les fonctions les plus bloquées : { {func, ctx, kind, n, combat, last}, ... } triées par nombre (n premières).
+function TreeAI:BlockedTop(n)
+  local db = self.db
+  local top = type(db) == "table" and type(db.diag) == "table" and type(db.diag.blockedTop) == "table" and db.diag.blockedTop or {}
+  local out = {}
+  for _, e in pairs(top) do if type(e) == "table" and tonumber(e.n) then out[#out + 1] = e end end
+  table.sort(out, function(a, b)
+    if a.n ~= b.n then return a.n > b.n end
+    return (tonumber(a.last) or 0) > (tonumber(b.last) or 0)
+  end)
+  if n then for i = #out, n + 1, -1 do out[i] = nil end end
+  local total = type(db) == "table" and type(db.diag) == "table" and tonumber(db.diag.blockedTotal) or 0
+  return out, total, self._blockedSession or 0
+end
+function TreeAI:ResetBlocked()
+  local db = self.db
+  if type(db) == "table" and type(db.diag) == "table" then db.diag.blockedTop, db.diag.blockedTotal, db.diag.blocked = {}, 0, {} end
+  self._blockedSession, self._blockedSaid = 0, {}
 end
 function TreeAI:ADDON_ACTION_FORBIDDEN(_, addon, func) onBlocked("interdite", addon, func) end
 function TreeAI:ADDON_ACTION_BLOCKED(_, addon, func) onBlocked("en combat", addon, func) end

@@ -49,6 +49,7 @@ local BUDGET = {
   msgsPerMinMax = 70,            -- per client, any minute (Core throttle = 8 burst + 1/s)
   msgsPerMinAvg = 20,
   chatLinesMax = 6,              -- unsolicited chat lines (advice never goes to the chat)
+  blockedMax = 0,                -- TAINT: actions the game would block (ADDON_ACTION_BLOCKED, « Échec des actions d'interface »)
   edgeNowPct = 25,               -- CHEAT25 « Avantages » (Edge): % of sampled seconds with an Edge line in « Maintenant »
   edgeDistinctMax = 20,          -- distinct Edge lines (text skeleton) shown in « Maintenant » over the session
   edgeKinstrMin = 1500,          -- Edge CPU, avg kilo-instructions / minute (25 checks, rotating)
@@ -352,6 +353,8 @@ local function loadAddon(c, svString)
   M.FireEvent("SPELLS_CHANGED")
   M.FireEvent("PLAYER_LOGIN")
   M.FireEvent("PLAYER_ENTERING_WORLD", svString == nil, svString ~= nil)
+  -- « essentiel » is opt-in since 3.9.5 (default keeps every module on): the essentiel runs model a player who chose it
+  if not svString and opts.profile ~= "tout" and c.T and c.T.SetModuleProfile then c.T:SetModuleProfile("essentiel") end
   for k in pairs(env) do if not before[k] and not allowed[k] then
     if not (type(k) == "string" and (k:match("^SLASH_") or k:match("^BINDING_") or M.namedFrames[k])) then R.leaks[k] = R.leaks[k] or "?" end
   end end
@@ -373,6 +376,12 @@ local function collect(c)
   for _, v in ipairs(M.violations) do addErr(R.violations, c.name, v.kind, v.msg .. " @ " .. v.where) end
   for i = #M.errors, 1, -1 do M.errors[i] = nil end
   for i = #M.violations, 1, -1 do M.violations[i] = nil end
+  for _, b in ipairs(M.blocked or {}) do
+    c.blocked = (c.blocked or 0) + 1
+    R.blockedBy = R.blockedBy or {}
+    R.blockedBy[b.fn] = (R.blockedBy[b.fn] or 0) + 1
+  end
+  if M.blocked then for i = #M.blocked, 1, -1 do M.blocked[i] = nil end end
 end
 
 local function reload(c)
@@ -697,6 +706,14 @@ local function fight(c, mob, o)
     M.units.nameplate1.health = M.target.health
     fire(c, "UNIT_HEALTH", "target")
     fire(c, "UNIT_THREAT_LIST_UPDATE", "target")
+    if r == 2 then   -- TAINT: a second mob joins, target switch and back, quest loot lands in the bags, in combat
+      M.units.nameplate2 = { name = mob, guid = M.target.guid .. "b", hostile = true, classification = "normal", level = M.target.level, health = 900, healthMax = 900 }
+      fire(c, "NAME_PLATE_UNIT_ADDED", "nameplate2"); fire(c, "PLAYER_TARGET_CHANGED")
+      fire(c, "BAG_UPDATE", 0); fire(c, "BAG_UPDATE_DELAYED")
+    elseif r == 3 then
+      fire(c, "NAME_PLATE_UNIT_REMOVED", "nameplate2"); M.units.nameplate2 = nil
+      fire(c, "PLAYER_TARGET_CHANGED")
+    end
     if o.inCombatHook then o.inCombatHook(r) end
     if o.die and r == rounds - 1 then return "died" end
     tick(2)
@@ -1222,6 +1239,13 @@ for _, l in ipairs(main.M.output) do
 end
 P(("chat: %d unsolicited lines since the last reload"):format(chat))
 if chat > BUDGET.chatLinesMax then fail(("%d unsolicited chat lines > %d"):format(chat, BUDGET.chatLinesMax)) end
+
+-- TAINT: blocked actions (the AddOns list counter « Échec des actions d'interface »), all clients
+local blockedN = 0
+for _, c in ipairs(order) do blockedN = blockedN + (c.blocked or 0) end
+P(("blocked actions: %d (budget %d)"):format(blockedN, BUDGET.blockedMax))
+for fn, n in pairs(R.blockedBy or {}) do P(("  blocked %s x%d"):format(fn, n)) end
+if blockedN > BUDGET.blockedMax then fail(("%d blocked actions > %d"):format(blockedN, BUDGET.blockedMax)) end
 
 -- the session really happened
 local p = main.M.player
