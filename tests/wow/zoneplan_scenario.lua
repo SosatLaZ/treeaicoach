@@ -242,7 +242,7 @@ return function(M, ctx)
 
   -- ------------------------------------------------------------ app plan: out-of-zone and ignored steps masked
   local key = T:CharKey()
-  M.SetPlan({ v = 1, made = 1793000000, char = key, zone = 1424, routes = {
+  M.SetPlan({ v = 1, made = os.time(), char = key, zone = 1424, routes = {
     { id = "xph", title = "XP/h max", xph = 20000, minutes = 40, verdict = "ok", reasons = {},
       steps = {
         { k = "turn", q = 1003, map = 1427, x = 60, y = 60, label = "Rendre « Lettre lointaine »", eta = 30 },

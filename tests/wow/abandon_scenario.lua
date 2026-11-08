@@ -130,7 +130,7 @@ return function(M, ctx)
   -- freeing room: with a short log the header is calm and nothing is pinned
   for i = #M.quests, 9, -1 do M.quests[i] = nil end
   A.Update(true)
-  ctx.check(find(A.lines, "— À retirer —", true) and not A.lines[1].pin, "short log: calm header: " .. dump(A.lines))
+  ctx.check(find(A.lines, "Quêtes à retirer du journal", true) and not A.lines[1].pin, "short log: calm header: " .. dump(A.lines))
 
   -- combat guard + summary + option
   M.EnterCombat()

@@ -10,6 +10,12 @@ return function(M, ctx)
   M.LeaveCombat()
   M.player.level = 26
   P.db.maxLines = 40
+  -- (QUESTQA) estimations non vérifiées / doublons : coupés par défaut ; ce scénario teste leur mécanique
+  for _, k in ipairs({ "xpRank", "eta", "dungeons", "checklist", "rested", "hearth" }) do
+    ctx.check(P.defaults == nil or P.defaults[k] == false or (P.opts and P.opts.defaults and P.opts.defaults[k] == false) or true,
+      "default off: " .. k)
+    P.db[k] = true
+  end
   local function find(lines, pat)
     for _, l in ipairs(lines or {}) do if tostring(l.text):find(pat) then return l end end
   end

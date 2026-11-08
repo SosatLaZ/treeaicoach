@@ -45,6 +45,10 @@ def compute_and_write(inst: Any, seconds: float = 16.0, db: dict | None = None) 
             return {"ok": False, "plan": None,
                     "message": "Pas encore de données de quêtes : en jeu, tape /reload (l'addon TreeAI les "
                                "exporte), puis recalcule."}
+        if str(exp.get("char") or "?") in ("", "?") or not isinstance(exp.get("player"), dict):
+            # (QUESTQA) never a plan the addon could take for another character / a game state we do not know
+            return {"ok": False, "plan": None,
+                    "message": "Données de quêtes incomplètes : en jeu, tape /reload, puis recalcule."}
         plan = routes.compute_plan(exp, learn, cl, seconds=seconds)
         if not plan or not plan.get("routes"):
             return {"ok": False, "plan": plan, "message": "Aucun trajet possible avec ces quêtes."}

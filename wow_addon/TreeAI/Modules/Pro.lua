@@ -18,10 +18,12 @@ local API = T.API or {}
 
 local M = T:RegisterModule("Pro", {
   title = "Quêtes pro",
+  -- (QUESTQA) coupés par défaut : ce qui reposait sur des estimations jamais vérifiées (classement XP/min, temps
+  -- par objectif), les doublons (checklist = Errands, repos / foyer = Speed) et les quêtes de donjon que tu n'as pas
   defaults = {
-    enabled = true, xpRank = true, camp = true, named = true, escort = true, chains = true,
-    breadcrumbs = true, dungeons = true, checklist = true, rested = true, hearth = true, rewards = true,
-    eta = true, respawn = true, drops = true, maxLines = 12,
+    enabled = true, xpRank = false, camp = true, named = true, escort = true, chains = true,
+    breadcrumbs = true, dungeons = false, checklist = false, rested = false, hearth = false, rewards = true,
+    eta = false, respawn = true, drops = true, maxLines = 12,
   },
   charDefaults = { rewards = {}, inns = {}, trainerLevel = 0, escort = {}, prog = {} },
   options = {
@@ -251,6 +253,7 @@ function M.ScanLog()
           end
           local tag = CQ.GetQuestTagInfo and try(CQ.GetQuestTagInfo, info.questID)
           q.elite = type(tag) == "table" and (tag.isElite or tag.tagID == 1) and true or false
+          q.failed = (CQ.IsFailed and try(CQ.IsFailed, info.questID)) and true or false
         end
       end
     else
@@ -258,7 +261,7 @@ function M.ScanLog()
       if isHeader then header = title
       elseif title then
         q = { id = tonumber(qid) or (10000 + i), title = title, level = tonumber(lvl) or level(), group = tonumber(grp) or 0,
-          complete = (isComplete == 1 or isComplete == true), obj = {} }
+          complete = (isComplete == 1 or isComplete == true), failed = isComplete == -1, obj = {} }
         for j = 1, tonumber((try(g("GetNumQuestLeaderBoards"), i))) or 0 do
           local text, kind, done = try(g("GetQuestLogLeaderBoard"), j, i)
           local h, nd = parseCount(text)
@@ -605,7 +608,7 @@ function M.BuildLines()
   -- (5) escortes
   if opt("escort") then
     for _, q in ipairs(list) do
-      if q.escort and not q.complete then
+      if q.escort and not q.complete and not q.failed then   -- (QUESTQA) escorte échouée : « a échoué » (Quests)
         local function num(v) if v == nil or secret(v) then return nil end return tonumber(v) end  -- secret en combat
         local hp = (num(try(g("UnitHealth"), "player")) or 1) / max(1, num(try(g("UnitHealthMax"), "player")) or 1)
         local miss = {}
@@ -698,7 +701,12 @@ function M.BuildLines()
     for _, q in ipairs(list) do
       if opt("chains") then
         local nx = tonumber(qq(q.id, "nextQuestInChain"))
-        if nx and nx > 0 and not inLog[nx] then
+        local Qm = mod("Quests")
+        local qdb = Qm and Qm.QuestieDB and Qm.QuestieDB()
+        -- (QUESTQA) suite faisable par toi (faction / classe / pas déjà faite) et faisable seul
+        local doable = not (qdb and Qm.Doable and nx and not done[nx] and Qm.Doable(qdb, nx) == false)
+          and not (Qm and Qm.SoloOK and nx and not Qm.SoloOK(nx))
+        if nx and nx > 0 and not inLog[nx] and not done[nx] and doable then
           local who, where = starter(nx)
           add(quests, ("Chaîne : après « %s » → « %s »%s"):format(cut(q.title, 30), cut(qq(nx, "name") or ("#" .. nx), 26),
             who and (" chez " .. who .. (where and (" (" .. where .. ")") or "")) or ""), 1)

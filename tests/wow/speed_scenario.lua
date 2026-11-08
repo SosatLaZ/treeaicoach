@@ -46,12 +46,13 @@ return function(M, ctx)
   local ps = X:PlayerState()
   check(ps.hearth and ps.hearth.map == 1424 and ps.hearth.x == 80 and ps.hearth.y == 50, "auberge dans l'export (planificateur)")
 
-  -- foyer : je suis à 10 %, l'étape à 75 %, l'auberge à 80 % → 1950/7 − (10 + 150/7) = 247 s
+  -- foyer : je suis à 10 %, l'étape à 75 %, l'auberge à 80 % ; (QUESTQA) même vitesse que l'itinéraire (NavTime :
+  -- 7 yd/s ÷ détour 1,15) → 1950/6,09 − (10 + 150/6,09) ≈ 286 s
   pos = { 10, 50 }
   step.x = 75
   S:Tick()
   local h = sugg("Speed:hearth")
-  check(h and h.text == "Pierre de foyer maintenant : 4 min gagnées", "foyer conseillé : " .. tostring(h and h.text))
+  check(h and h.text == "Pierre de foyer maintenant : 5 min gagnées", "foyer conseillé : " .. tostring(h and h.text))
   step.x = 20                                                   -- étape à côté : rien
   S:Tick()
   check(not sugg("Speed:hearth"), "étape proche : pas de foyer")

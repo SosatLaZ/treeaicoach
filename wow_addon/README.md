@@ -72,6 +72,18 @@ clic ») → `char.extra`. Plan de l'appli : `Z:MaskSteps` (hors zone / ignorée
 … ▾ » (menu à nous), clic droit sur un arrêt (`onRightClick`, cœur + UI) → « Ignorer cette quête » / guider /
 recalculer ; boussole : `Z.CompassTarget` = arrêt en cours (rang juste après un point perso). `Route:Stops(n)` inchangé.
 `/tai zone [auto|region|recalc]`.
+**QUESTQA** (suivi de quête, règles uniques) : `Z.Kind(q, rec, lq)` → élite, groupe, donjon, `{ pvp, raid, boss, failed }`
+et `Z:Accept` = les MÊMES règles que l'appli (`treeaicoach/wow/planner/rules.py`) : prête à rendre gardée ; échouée, JcJ,
+raid jamais ; donjon si coché ET groupe ≥ 3 ; élite si coché ou ≥ 3 ; écart de niveau. Zone de travail arrêt par arrêt
+(remise dans une capitale = seule la remise sort), `N.NearFirst` (rendre / prendre à < 60 m d'abord), capacité du journal
+(`N.CapOK`) après 2-opt / patch, ligne « Journal plein (20/20) : … », `Z:MaskSteps(steps, log)` (plan de l'appli : mêmes
+règles, arrêt par arrêt, `s._why`), `Z:MaskedText()` (« Hors trajet : 2 de donjon, 1 élite », infobulle de « Zone »).
+Planner : `Planner.Engine.PlanFresh(plan, st)` (perso, zone ∉ zone de travail, +2 niveaux, journal changé, âge 3 j / 12 h
+sans empreinte `plan.log`) → « Plan de TreeAI Coach ignoré : … » + `summary.plan.stale/staleWhy` ; plan sans arrêt
+visible → trajet en jeu ; `E.CleanReason` (jamais « X : X », % > 100 en mots), `E.XPHTrusted` (≥ 10 min). Route :
+horizon `R.Horizon` (≤ 1 h 30, ≤ 30 arrêts, la suite en infobulle), « (≈ N min) » = fait dans N min (trajet + sur place),
+`R.firstKind`. Quests : une seule « étape » (celle du trajet), `Quests.Timers` / « Chrono : … avant HH:MM »,
+« … a échoué : abandonne-la puis reprends-la », `Quests.SoloOK(id)`. Rejeu : `tests/wow/questqa_scenario.lua`.
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
 toasts de progression, quêtes grises (clic = ouvrir, l'abandon reste manuel), « à faire à 4 » (+ Group),

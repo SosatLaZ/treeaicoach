@@ -11,12 +11,14 @@ Verdicts (report 5 C3, report 4 §6): impossible > zone > long > galere > ok. Th
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
 from treeaicoach.wow.planner import transport as TR
 from treeaicoach.wow.planner import data as DM
 from treeaicoach.wow.planner import models as M
+from treeaicoach.wow.planner import rules as RU
 from treeaicoach.wow.planner import solver as S
 from treeaicoach.wow.planner import speed as SP
 
@@ -57,18 +59,27 @@ def world_to_map(pb: DM.Problem, rects: dict[int, DM.MapRect], c: int, wx: float
     return best[1], round(best[2], 1), round(best[3], 1)
 
 
+#: (QUESTQA) same verbs as the addon (Planner:StepLabel): « Tue « Loup » », « Ramasse « Croc » »
+OBJ_VERB = {"kill": "Tue", "item": "Ramasse", "obj": "Utilise", "explore": "Explore", "talk": "Parle à",
+            "spell": "Utilise l'objet sur"}
+
+
+def _obj_name(txt: str) -> str:
+    """Objective name without its counter / « tué » suffix (« Loup tué : 2/6 » → « Loup »)."""
+    t = re.sub(r"\s*:\s*\d+\s*/\s*\d+\s*$", "", str(txt or "")).strip()
+    t = re.sub(r"^\d+\s*/\s*\d+\s+", "", t)
+    return re.sub(r"\s+tu[ée]+s?$", "", t).strip()
+
+
 def _obj_label(pb: DM.Problem, nd: DM.Node) -> str:
     q = pb.quests[nd.q]
     objs = DM._list(q.raw.get("o"))
     o = objs[nd.o - 1] if 0 < nd.o <= len(objs) and isinstance(objs[nd.o - 1], dict) else {}
-    txt = str(o.get("t") or "").strip()
-    need = int(DM._n(o.get("n"), 0)) - int(DM._n(o.get("have"), 0))
-    if txt:
-        return f"{txt} (« {q.title} »)"
-    verb = {"kill": "Tuer", "item": "Ramasser", "obj": "Fouiller", "explore": "Explorer", "talk": "Parler",
-            "spell": "Utiliser l'objet"}.get(str(o.get("k")), "Objectif")
-    n = f" {need}" if need > 0 and o.get("k") in ("kill", "item", "obj") else ""
-    return f"{verb}{n} — « {q.title} »"
+    name = _obj_name(str(o.get("t") or ""))
+    verb = OBJ_VERB.get(str(o.get("k")), "Fais")
+    if name:
+        return f"{verb} « {name} »"
+    return f"Objectif de « {q.title} »"
 
 
 STEP_KIND = {"fly": "fly", "boat": "boat", "zeppelin": "zep"}
@@ -197,7 +208,7 @@ def _galere_reasons(pb: DM.Problem, quests: list[int]) -> list[str]:
     for qi in quests:
         g = pb.quests[qi].galere
         if g is not None and g.label in ("galere", "eviter"):
-            out.append((g.score, f"On va galérer : {g.reason} (« {pb.quests[qi].title} »)"))
+            out.append((g.score, f"{g.reason} (« {pb.quests[qi].title} »)"))
     out.sort(reverse=True)
     return [t for _, t in out[:3]]
 
@@ -211,24 +222,24 @@ def verdict(pb: DM.Problem, s: S.Solver, res: S.Result, zone_switch: tuple[bool,
         if pb.log_count >= pb.log_cap:
             return "impossible", ["Journal de quêtes plein : rends ou abandonne des quêtes."]
         if s.usable and s.mode == "rate":
-            return "long", ["Trop long : aucune quête ne rapporte plus que farmer ici, change de zone ou farme."]
+            return "long", ["aucune quête ne rapporte plus que de tuer des monstres ici"]
         return "impossible", ["Aucune quête faisable ici avec les données actuelles."]
     minutes = res.seconds / 60.0
     quests = s.quests_in(res.route)
-    sim = s.simulate(res.route)
-    summary = f"{len(quests)} quêtes, ~{int(round(minutes))} min, niv {pb.level} → {sim.level_end}"
     v = "ok"
+    # (QUESTQA) reasons never repeat the verdict label: the addon and the app show « <label> : <reason> »
     if zone_switch and zone_switch[0] and rid in ("xph", "clear"):
         v = "zone"
-        reasons.append("Changez de zone : " + zone_switch[1])
+        reasons.append(zone_switch[1])
     grind = S.grind_rate(pb) * 3600
     long_r = []
     if pb.session_min and minutes > pb.session_min * 1.05:
-        long_r.append(f"Trop long : ~{int(round(minutes))} min pour {int(pb.session_min)} min de jeu prévues")
-    if pb.calib.xph and res.xph < 0.7 * pb.calib.xph:
-        long_r.append(f"Trop long : {int(res.xph):,} XP/h contre {int(pb.calib.xph):,} d'habitude".replace(",", " "))
-    elif res.xph < 0.6 * grind and rid != "clear":
-        long_r.append("Trop long : moins rentable que farmer des mobs de ton niveau")
+        long_r.append(f"tout faire prendrait ~{int(round(minutes))} min pour {int(pb.session_min)} min de jeu prévues")
+    trusted = res.seconds >= 600                       # an XP/h measured on < 10 min of route says nothing
+    if trusted and pb.calib.xph and res.xph < 0.7 * pb.calib.xph:
+        long_r.append(f"{int(res.xph):,} XP/h contre {int(pb.calib.xph):,} d'habitude".replace(",", " "))
+    elif trusted and res.xph < 0.6 * grind and rid != "clear":
+        long_r.append("tuer des monstres de ton niveau rapporte plus")
     if v == "ok" and long_r:
         v = "long"
     reasons += long_r
@@ -237,18 +248,28 @@ def verdict(pb: DM.Problem, s: S.Solver, res: S.Result, zone_switch: tuple[bool,
         lv = [m.level for m in pb.members]
         if max(lv) - min(lv) >= 5:
             top = max(pb.members, key=lambda m: m.level)
-            gal.insert(0, f"On va galérer : {_short(top.key)} (niv {top.level}) grise les mobs des autres")
+            gal.insert(0, f"{_short(top.key)} (niv {top.level}) grise les mobs des autres")
     if v == "ok" and gal:
         v = "galere"
     reasons += gal
     if res.unserved and rid == "clear":
-        reasons.append(f"{len(res.unserved)} quête(s) laissée(s) de côté (niveau ou prérequis)")
-    reasons.append(summary)
+        n = len(res.unserved)
+        reasons.append(f"{n} quête{'s' if n > 1 else ''} laissée{'s' if n > 1 else ''} de côté (niveau ou prérequis)")
     return v, reasons[:5]
 
 
-def zone_analysis(pb: DM.Problem, seconds: float = 1.0) -> tuple[bool, str]:
-    """Should the player leave the current zone? (report 4 §6.5)."""
+def route_summary(pb: DM.Problem, s: S.Solver, route: list[int], seconds: float) -> str:
+    """« 11 quêtes, ~67 min, jusqu'au niveau 29 » (the clipped route; the level only when it changes)."""
+    n = len(s.quests_in(route))
+    out = f"{n} quête{'s' if n > 1 else ''}, ~{int(round(seconds / 60.0))} min"
+    lv = s.simulate(route).level_end if route else pb.level
+    return out + (f", jusqu'au niveau {lv}" if lv > pb.level else "")
+
+
+def zone_analysis(pb: DM.Problem, seconds: float = 1.0, chosen: bool = False) -> tuple[bool, str]:
+    """Should the player leave the current zone? (report 4 §6.5). (QUESTQA) Facts only: few useful quests left,
+    a zone far below the player, or another zone of the work area whose route is MEASURABLY better (both routes
+    ≥ 10 min, ≥ 3 quests to take there). ``chosen``: the player picked the zones himself (rates are not used)."""
     try:
         here = {i for i, q in enumerate(pb.quests) if q.zone == pb.zone or q.in_log}
         others: dict[int, set[int]] = {}
@@ -260,28 +281,58 @@ def zone_analysis(pb: DM.Problem, seconds: float = 1.0) -> tuple[bool, str]:
         med = sorted(pb.quests[i].level for i in here)
         zone_median = med[len(med) // 2] if med else 0
         best_alt, best_tr, best_z = 0.0, 0.0, 0
-        per = seconds / 2 / max(1, len(others))
-        for z, qs in others.items():
-            ra = S.solve(pb, "rate", per, quests=qs, rounds=1)
-            if not ra.route:
-                continue
-            tr = pb.D[pb.START][ra.route[0]]
-            rate = ra.xp / max(60.0, ra.seconds - tr) * 3600
-            if rate > best_alt:
-                best_alt, best_tr, best_z = rate, tr / 60.0, z
+        if not chosen and rh.seconds >= 600:
+            per = seconds / 2 / max(1, len(others))
+            for z, qs in others.items():
+                if len(qs) < 3:
+                    continue
+                ra = S.solve(pb, "rate", per, quests=qs, rounds=1)
+                if not ra.route or len({pb.nodes[n].q for n in ra.route}) < 3:
+                    continue
+                tr = pb.D[pb.START][ra.route[0]]
+                work = ra.seconds - tr
+                if work < 600:
+                    continue
+                rate = ra.xp / work * 3600
+                if rate > best_alt:
+                    best_alt, best_tr, best_z = rate, tr / 60.0, z
         h = min(pb.session_min or 90.0, 90.0)
-        sw, why = M.should_switch_zone(rh.xph, best_alt, best_tr, h, non_grey, pb.level, zone_median)
-        if sw and best_z and pb.maps.get(best_z):
-            why += f" → {pb.maps[best_z]}"
+        sw, why = M.should_switch_zone(rh.xph if rh.seconds >= 600 else 0.0, best_alt, best_tr, h, non_grey,
+                                       pb.level, zone_median)
+        if sw and best_z and best_alt > 0 and why.startswith("ailleurs") and pb.maps.get(best_z):
+            why = pb.maps[best_z] + why[len("ailleurs"):]
         return sw, why
     except Exception:
         log.debug("zone analysis failed", exc_info=True)
         return False, ""
 
 
+def clip_route(s: S.Solver, route: list[int], horizon_s: float, max_nodes: int = RU.MAX_NODES) -> tuple[list[int], int]:
+    """(QUESTQA) The plan covers the next ``horizon_s`` seconds / ``max_nodes`` stops only — never a 75-stop,
+    5-hour list: the rest is planned again later from the then-current log. A pick-up whose quest has nothing
+    else inside the horizon is dropped (a stop that leads nowhere). Returns (route, quests left for later)."""
+    if not route:
+        return route, 0
+    sim = s.simulate(route)
+    keep: list[int] = []
+    for i, n in enumerate(route):
+        if len(keep) >= max_nodes or (keep and sim.done_at[i] > horizon_s):
+            break
+        keep.append(n)
+    busy = {s.nq[n] for n in keep if s.kind[n] != 0}
+    keep = [n for n in keep if s.kind[n] != 0 or s.nq[n] in busy]
+    if keep and s.evaluate(keep)[0] == -S.INF:
+        keep = route[:len(keep)]
+    kept = set(keep)
+    left = len({s.nq[n] for n in route if n not in kept})
+    return keep, left
+
+
 def compute_plan(export: dict | None, learn: dict | None = None, char_learn: dict | None = None,
                  seconds: float = 16.0, seed: int = 0, now: float | None = None) -> dict | None:
-    """TreeAIPlan dict (SCHEMA.md §3) with the 3–4 routes, or None when the export is unusable."""
+    """TreeAIPlan dict (SCHEMA.md §3) with the 3–4 routes, or None when the export is unusable.
+    (QUESTQA) Same quest rules as the addon (rules.py), each route clipped to the plan horizon, and the plan
+    stamped with what it was made from (log / level / export time) so the addon can tell when it is stale."""
     pb = DM.load_problem(export, learn, char_learn, work=True)
     if pb is None:
         return None
@@ -289,7 +340,10 @@ def compute_plan(export: dict | None, learn: dict | None = None, char_learn: dic
     budget = {"xph": 0.3, "clear": 0.25, "squad": 0.25 if grouped else 0.0, "safe": 0.2}
     tot = sum(budget.values())
     zone_s = seconds * 0.08
-    zs = zone_analysis(pb, zone_s)
+    w = (export or {}).get("work") if isinstance((export or {}).get("work"), dict) else {}
+    zs = zone_analysis(pb, zone_s, chosen=str(w.get("mode") or "") in ("zones", "continent"))
+    horizon = RU.horizon_minutes(pb.session_min) * 60.0
+    excluded = sorted(set(pb.excluded.values()))
     routes = []
     for rid in ORDER:
         if budget[rid] <= 0:
@@ -314,17 +368,29 @@ def compute_plan(export: dict | None, learn: dict | None = None, char_learn: dic
             sv = S.Solver(prob, mode, qs, p80, seed)
             sv.lam = res.lam
             v, reasons = verdict(prob, sv, res, zs, rid)
+            clipped, later = clip_route(sv, res.route, horizon)
+            _, xp, t = sv.evaluate(clipped) if clipped else (0.0, 0.0, 0.0)
+            if clipped:
+                reasons = reasons + [route_summary(prob, sv, clipped, t)]
+            if later:
+                reasons = (reasons + [f"{later} quête{'s' if later > 1 else ''} pour la suite (prochain calcul)"])[:6]
+            if excluded and rid != "squad":
+                reasons = (reasons + ["hors trajet : " + ", ".join(excluded)])[:6]
             title = TITLES[rid] + (f" ({len(prob.members)})" if rid == "squad" else "")
             left = 0.0
             if rid in ("xph", "safe") and not pb.raid:          # quests run out → grind the rest of the session
-                left = (prob.session_min or (30.0 if not res.route else 0.0)) * 60.0 - res.seconds
-            routes.append({"id": rid, "title": title, "xph": int(round(res.xph)),
-                           "minutes": int(round(res.seconds / 60.0)), "verdict": v, "reasons": reasons,
-                           "steps": build_steps(prob, sv, res.route, squad=rid == "squad", grind_left=left)})
+                left = min(horizon, (prob.session_min or (30.0 if not clipped else 0.0)) * 60.0) - t
+            xph = int(round(xp / t * 3600)) if t >= 600 else 0  # XP/h of < 10 min of route: not shown
+            routes.append({"id": rid, "title": title, "xph": xph, "minutes": int(round(t / 60.0)), "verdict": v,
+                           "reasons": reasons, "later": later,
+                           "steps": build_steps(prob, sv, clipped, squad=rid == "squad", grind_left=left)})
         except Exception:
             log.debug("route %s failed", rid, exc_info=True)
-    return {"v": 1, "made": int(now if now is not None else time.time()), "char": pb.char, "zone": pb.zone,
-            "routes": routes}
+    plan = {"v": 1, "made": int(now if now is not None else time.time()), "char": pb.char, "routes": routes}
+    if pb.zone > 0:
+        plan["zone"] = pb.zone                          # where the player was: the addon drops the plan elsewhere
+    plan.update(RU.plan_fingerprint(export))
+    return plan
 
 
 def summary_lines(plan: dict | None, route_id: str | None = None, steps: int = 3) -> list[str]:

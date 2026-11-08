@@ -62,12 +62,16 @@ TreeAIDB.export = {
       flags = 8,                       -- questFlags (0x8 sharable, 0x2 party accept / escort)
       elite = 0 | 1, grp = 0,          -- elite tag, suggestedGroup (0/1 = solo)
       dg = 0 | 1, timed = 0 | 1, esc = 0 | 1,  -- dungeon, timed, escort / event
+      raid = 0 | 1, pvp = 0 | 1,       -- raid / PvP quest (never planned)
+      tag = 81,                        -- game quest tag (1 elite, 41 PvP, 62/88/89 raid, 81/85 dungeon), when known
+      failed = 0 | 1,                  -- in my log and failed (timer ran out, escort died): never planned
       s = { map = 1424, x = 50.1, y = 57.3, k = "npc" | "obj" | "item", id = 2263 },  -- starter (nil when in my log)
       f = { map = 1424, x = 50.1, y = 57.3, k = "npc" | "obj", id = 2263 },           -- finisher
       o = {                            -- objectives in quest order (position = objective index used in plan steps)
         { k = "kill" | "item" | "obj" | "explore" | "talk" | "spell" | "other",
           id = 2350,                   -- creature / item / object id (0 = unknown)
-          t = "Loup des collines tué",   -- optional: objective text (GetQuestObjectives), used in step labels
+          t = "Loup des collines tué",   -- optional: objective text (GetQuestObjectives), else the creature / item /
+                                       -- object name from Questie; step labels « Tue « Loup des collines » »
           n = 10, have = 3,            -- needed / already have (GetQuestObjectives when in the log)
           npc = { 2350, 2351 },        -- for "item": the creatures that drop it (first = most common)
           p = 0.35,                    -- drop chance 0–1 for "item" (Questie DropDB prior); nil = unknown
@@ -87,6 +91,22 @@ TreeAIDB.export = {
   },
 }
 ```
+
+`export.work` (Modules/ZonePlan.lua, optional) = the player's « zone de travail » and route options:
+`{ mode = "auto" | "zones" | "continent", maps = { uiMapID… } | cont = c, ignore = { qid… }, extra = { qid… },
+opts = { elites = false, groupQ = true, dungeons = false, gap = 3 } }`. Without it the app stays on the
+player's continent.
+
+### Route rules (same in the addon and the app: `planner/rules.py` ↔ `ZonePlan.Kind` / `ZonePlan:Accept`)
+
+* A quest ready to turn in is kept (unless ignored); a failed one never; PvP and raid never.
+* Dungeon (tag, quest zone = an instance, an objective that is a boss = rank 3): only with `opts.dungeons` AND 3+
+  players. Elite: `opts.elites` or 3+ players. Group (suggestedGroup ≥ 2): `opts.groupQ` or in a group.
+* Never more than `opts.gap` levels above the player (ready-to-turn-in quests excepted).
+* Work area stop by stop: a pick-up outside = the whole quest out; an objective outside = that objective and the
+  turn-in out; a turn-in outside (a capital) = only the turn-in out (its objectives here stay planned).
+* The quest log never overflows along a route; a plan covers at most 60–120 min (`rules.horizon_minutes`, the
+  session when known) and `rules.MAX_NODES` stops.
 
 ## 2. Learned stats (the addon writes them, the app reads them)
 
@@ -127,12 +147,15 @@ Plan.lua
 `Plan.lua` is pure data: a single global assignment, with no function calls.
 ```lua
 TreeAIPlan = {
-  v = 1, made = 1762500000, char = "Name-Realm", zone = 1424,
+  v = 1, made = 1762500000, char = "Name-Realm", zone = 1424,   -- zone: where the player was (omitted if unknown)
+  log = { 1234, 1250 }, level = 26, exp = 1762499000,           -- fingerprint: quests in the log, level, export time
   routes = {
     { id = "xph" | "clear" | "squad" | "safe",
       title = "XP/h max", xph = 28500, minutes = 74,
       verdict = "ok" | "galere" | "long" | "impossible" | "zone",
-      reasons = { "Taux de drop 20 % sur Crocs (galère)", ... },   -- French; the first one is the main reason
+      reasons = { "taux de drop 20 % (« Crocs »)", ... },   -- French; the first one is the main reason; a reason
+                                       -- never repeats the verdict label (UIs show « On va galérer : <reason> »)
+      later = 3,                       -- quests left for the next computation (beyond the plan horizon)
       steps = {
         { k = "pick" | "obj" | "turn" | "fly" | "boat" | "zep" | "hs" | "train" | "vendor" | "meet" | "grind" | "fp",
           q = 1234,                    -- questID (pick / obj / turn); nil otherwise
@@ -149,7 +172,11 @@ TreeAIPlan = {
 
 Rules for the addon:
 
-* Reject the plan when `v ~= 1` or when `char ~= TreeAI:CharKey()`. Show a plan made more than 24 h ago as « plan ancien ».
+* Reject the plan when `v ~= 1` or when `char ~= TreeAI:CharKey()`, and when it no longer matches the game
+  (`Planner.Engine.PlanFresh`): made for another zone than the current work area, 2+ levels ago, more than half of
+  the current log (and ≥ 3 quests) taken since, older than 3 days — or 12 h without a `log` fingerprint. The reason
+  is shown once (« Plan de TreeAI Coach ignoré : fait pour Mille pointes (trajet refait en jeu) ») and the in-game
+  route takes over; `summary.plan.stale` tells the app to recompute.
 * For a `k` it does not know, show the step's `label`.
 * `meet` is a regroup point for the squad. `grind` means "kill mobs here until the next step is unlocked".
 * `fp` = learn this flight point on the way. `tip` (optional) is shown as one line under the current step.

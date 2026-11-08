@@ -17,6 +17,7 @@
 -- Lua 5.1 ; aucune globale.
 local _, ns = ...
 ns = ns or {}
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
@@ -178,8 +179,10 @@ local function tagInfo(id)
   local n = low(tagName)
   elite = elite or n:find("lite") ~= nil
   local group = tagID == 1 or n:find("groupe") ~= nil or n:find("group") ~= nil
-  local dungeon = tagID == 81 or tagID == 62 or n:find("donjon") ~= nil or n:find("raid") ~= nil
-  return elite, group, dungeon
+  local dungeon = tagID == 81 or tagID == 85 or tagID == 62 or tagID == 88 or tagID == 89
+    or n:find("donjon") ~= nil or n:find("raid") ~= nil or n:find("dungeon") ~= nil
+  local pvp = tagID == 41 or n:find("jcj") ~= nil or n:find("pvp") ~= nil
+  return elite, group, dungeon, pvp
 end
 
 local function questItem(index)
@@ -215,16 +218,15 @@ local function finish(q, pl, modern)
   q.ratio = q.complete and 1 or (need > 0 and have / need or 0)
   q.color = M.Color(q.level, pl)
   q.grey = q.color == "gris"
-  q.elite, q.groupTag, q.dungeon = tagInfo(q.id)
+  q.elite, q.groupTag, q.dungeon, q.pvp = tagInfo(q.id)
   q.hard = (q.color == "rouge") or q.elite or q.groupTag or ((tonumber(q.suggestedGroup) or 0) > 1)
   q.item = questItem(q.index)
   q.xp = rewardXP(q, modern)
   q.watched = watched(q, modern)
   q.dist = distance(q)
-  if not q.zone or q.zone == "" then
-    local mid = try(_G.GetQuestUiMapID, q.id)
-    q.zone = mapName(mid)
-  end
+  local qmid = tonumber((try(_G.GetQuestUiMapID, q.id)))
+  q.mapZone = qmid and qmid > 0 and mapName(qmid) or nil     -- (QUESTQA) carte des objectifs (en-tête = zone du donneur)
+  if not q.zone or q.zone == "" then q.zone = q.mapZone end
   -- zone de remise (moderne : prochain point de passage = PNJ de fin quand la quête est finie)
   q.turnZone = q.zone
   if q.complete and _G.C_QuestLog and _G.C_QuestLog.GetNextWaypoint then
@@ -306,20 +308,28 @@ end
 
 -- ------------------------------------------------------------------ analyse
 -- Trie et regroupe : à rendre par zone, en cours ici (plus proche de la fin d'abord), ailleurs par zone.
+local function groupN() return tonumber((try(_G.GetNumGroupMembers))) or 1 end
 function M.Analyse(list, zone)
   zone = zone or curZone()
   local a = { turnIn = {}, turnInByZone = {}, here = {}, elsewhere = {}, byZone = {}, grey = {}, hard = {},
-              zone = zone, count = #list }
+              failed = {}, later = {}, zone = zone, count = #list }
   for _, q in ipairs(list) do
     if q.complete then
       a.turnIn[#a.turnIn + 1] = q
       local z = q.turnZone or "?"
       a.turnInByZone[z] = a.turnInByZone[z] or {}
       table.insert(a.turnInByZone[z], q)
-    elseif not q.failed then
-      if q.zone == zone then a.here[#a.here + 1] = q else
+    elseif q.failed then
+      a.failed[#a.failed + 1] = q
+    else
+      -- (QUESTQA) donjon / JcJ / élite seul : jamais « l'étape » (on ne la fait pas en passant)
+      local solo = not (q.dungeon or q.pvp or (q.elite and groupN() < 3))
+      if not solo then a.later[#a.later + 1] = q
+      elseif q.zone == zone or (q.mapZone and q.mapZone == zone) then a.here[#a.here + 1] = q
+      else
         a.elsewhere[#a.elsewhere + 1] = q
-        a.byZone[q.zone] = (a.byZone[q.zone] or 0) + 1
+        local z = q.mapZone or q.zone
+        a.byZone[z] = (a.byZone[z] or 0) + 1
       end
       if q.grey then a.grey[#a.grey + 1] = q end
       if q.hard then a.hard[#a.hard + 1] = q end
@@ -448,6 +458,16 @@ function M.Doable(db, id)
   return true
 end
 
+-- (QUESTQA) quête faisable seul ? tag du jeu (cache du client, même règle que ZonePlan.Kind) — inconnu = oui
+function M.SoloOK(id)
+  local Zp = T.ZonePlan
+  local tag = Zp and Zp.QuestTag and Zp.QuestTag(id)
+  local tid = tag and tonumber(tag.tagID) or -1
+  if tid == 41 or tid == 62 or tid == 81 or tid == 85 or tid == 88 or tid == 89 then return false end
+  if (tid == 1 or (tag and tag.isElite)) and (tonumber((try(_G.GetNumGroupMembers))) or 1) < 3 then return false end
+  return true
+end
+
 -- Quêtes disponibles (pas prises, faisables) dans la zone, + celles qui s'ouvrent au niveau suivant,
 -- + quêtes de donjon de ton niveau. Résultat mis en cache par (zone, niveau).
 local qCache = {}
@@ -478,8 +498,9 @@ function M.QuestieScan(force)
         if rl == pl + 1 then
           local _, _, raceID = try(_G.UnitRace, "player")
           if bit(qq(db, id, "requiredRaces"), tonumber(raceID)) then res.nextLevel[#res.nextLevel + 1] = { id = id, level = ql } end
-        elseif rl <= pl and ql > grey then
-          if M.Doable(db, id) then res.here[#res.here + 1] = { id = id, level = ql } end
+        elseif rl <= pl and ql > grey and ql <= pl + 3 then
+          -- (QUESTQA) « à prendre ici » = faisable seul : pas de donjon / raid / JcJ, pas d'élite hors groupe
+          if M.Doable(db, id) and M.SoloOK(id) then res.here[#res.here + 1] = { id = id, level = ql } end
         end
       end
       if db.IsDungeonQuest and ql >= pl - 1 and ql <= pl + 8 and rl <= pl and try(db.IsDungeonQuest, id) then
@@ -673,6 +694,53 @@ function M.NextStep(a)
   local L = ns.Leveling
   local hub = L and L.HubFor and try(L.HubFor, playerLevel(), try(_G.UnitFactionGroup, "player"))
   return "Étape : prendre de nouvelles quêtes" .. (hub and (" (" .. hub .. ")") or "")
+end
+
+-- ------------------------------------------------------------------ chrono / échec (QUESTQA)
+-- Temps restant d'une quête chronométrée : C_QuestLog.GetTimeAllowed (moderne) ou GetQuestTimers (classique).
+-- → { [qid] = secondes restantes }
+function M.Timers(list)
+  local out = {}
+  local QL = _G.C_QuestLog
+  if QL and QL.GetTimeAllowed then
+    for _, q in ipairs(list or {}) do
+      local total, elapsed = try(QL.GetTimeAllowed, q.id)
+      total, elapsed = tonumber(_ns(total)), tonumber(_ns(elapsed))
+      if total and elapsed and total > 0 and total - elapsed > 0 then out[q.id] = total - elapsed end
+    end
+    return out
+  end
+  if _G.GetQuestTimers and _G.GetQuestIndexForTimer then
+    local t = { try(_G.GetQuestTimers) }
+    for i, left in ipairs(t) do
+      local idx = try(_G.GetQuestIndexForTimer, i)
+      for _, q in ipairs(list or {}) do
+        if q.index == idx and tonumber(left) and left > 0 then out[q.id] = tonumber(left) end
+      end
+    end
+  end
+  return out
+end
+-- lignes en plus de l'étape : chrono (heure de fin, pas un compte à rebours qui bouge) et quête échouée
+function M.ExtraLines(list, a)
+  local out = {}
+  local timers = M.Timers(list)
+  for _, q in ipairs(list or {}) do
+    local left = timers[q.id]
+    if left and not q.failed then
+      local at = try(_G.date, "%H:%M", (try(_G.time) or 0) + floor(left))
+      local mins = floor(left / 60 + 0.5)
+      out[#out + 1] = { text = ("Chrono : « %s » %s avant %s (%s)"):format(cut(q.title, 28),
+          q.complete and "à rendre" or "à finir", tostring(at or "?"), mins >= 1 and (mins .. " min") or "< 1 min"),
+        prio = left < 300 and 3 or 2, pin = left < 300, questID = q.id,
+        tooltip = "Quête chronométrée : à la fin du temps, elle échoue (il faudra l'abandonner et la reprendre)." }
+    end
+  end
+  for _, q in ipairs(a and a.failed or {}) do
+    out[#out + 1] = { text = ("« %s » a échoué : abandonne-la puis reprends-la"):format(cut(q.title, 30)), prio = 1,
+      questID = q.id, tooltip = "Chrono écoulé ou escorte morte : la quête n'avance plus.\nJournal de quêtes → Abandonner, puis la reprendre chez le donneur." }
+  end
+  return out
 end
 
 -- ------------------------------------------------------------------ toasts / rappels
@@ -991,12 +1059,22 @@ function M.Update()
     if ok then M.lastQuestie = res end
   end
   local text = M.NextStep(a)
+  -- (QUESTQA) une seule « étape » à l'écran : quand le trajet (Planner / Itinéraire) a un arrêt en cours, c'est
+  -- lui l'étape ; la ligne « Étape : … » du journal se tait (avant : « Étape : aller rendre 1 quête en
+  -- Fossoyeuse » sous « Arrêt 1/75 : … » pendant qu'on faisait autre chose en Orneval)
+  local shown = text
+  if planActive() then shown = nil end
+  local extra = M.ExtraLines(list, a)
   if T.SetTabLines then
     -- panel with tabs: the « Étape » line heads the « Quêtes » tab (and is offered to « Maintenant »)
     clear("next")
-    T:SetTabLines("quests", (cfg("nextStep") and text) and { { text = text, prio = 1, pin = true,
-      tooltip = "Prochaine étape conseillée (journal de quêtes analysé)." } } or {}, "Quests")
-  elseif cfg("nextStep") and text then
+    local tl = {}
+    if cfg("nextStep") and shown then
+      tl[1] = { text = shown, prio = 1, pin = true, tooltip = "Prochaine étape conseillée (journal de quêtes analysé)." }
+    end
+    for _, l in ipairs(extra) do tl[#tl + 1] = l end
+    T:SetTabLines("quests", tl, "Quests")
+  elseif cfg("nextStep") and shown then
     if text ~= M.nextText then
       suggest("next", text, 1, { ttl = 0, cooldown = 1e6, sound = false, chat = false })
     end
@@ -1004,6 +1082,7 @@ function M.Update()
     clear("next")
   end
   M.nextText = text
+  M.shownStep = shown
   M.UpdateButton()
   M.WriteSummary()
   -- (LITE) Boussole / Suivi / À faire ne recalculent que si le journal a vraiment changé (ou toutes les 15 s)
@@ -1056,10 +1135,14 @@ function M.OnZone(newZone)
   end
   local a = M.Analyse(M.lastList, newZone)
   local here = a.turnInByZone[newZone]
-  if here and #here > 0 then
-    local o = {}
-    for i = 1, min(#here, 3) do o[#o + 1] = "« " .. cut(here[i].title, 26) .. " »" end
-    suggest("turnin", ("À rendre ici (%s) : %s"):format(newZone, table.concat(o, ", ")), 2, { ttl = 180, cooldown = 300 })
+  -- (QUESTQA) le trajet liste déjà ces remises (« Arrêt 1/8 : Rendre « … » ») ; sans trajet : une ligne courte
+  -- qui tient dans le panneau (avant : « …, « ON RECHERCHE » coupé au milieu d'un titre)
+  if here and #here > 0 and not planActive() then
+    local tip = {}
+    for _, q in ipairs(here) do tip[#tip + 1] = "« " .. q.title .. " »" end
+    suggest("turnin", #here == 1 and ("À rendre ici : « %s »"):format(cut(here[1].title, 34))
+      or ("%d quêtes à rendre ici : « %s » et %d autre%s"):format(#here, cut(here[1].title, 24), #here - 1, #here > 2 and "s" or ""),
+      2, { ttl = 180, cooldown = 300, tooltip = table.concat(tip, "\n") })
   end
   local qs = M.lastQuestie
   if qs and qs.zone == newZone and (qs.nextLevelCount or 0) > 0 then
@@ -1074,6 +1157,7 @@ end
 function M.CheckNear()
   if not M.last or not cfg("zoneHints") then return clear("near") end
   if inCombat() then return end
+  if planActive() then M.nearID = nil return clear("near") end   -- (QUESTQA) l'arrêt du trajet le dit déjà
   for _, q in ipairs(M.last.turnIn) do
     if q.dist and q.dist < 120 and not M.gone[q.id] then
       M.nearID = q.id

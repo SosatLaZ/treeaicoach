@@ -389,6 +389,15 @@ function M.DropInfo(list)
   return out
 end
 
+-- (QUESTQA) même estimateur de trajet que la boussole et l'itinéraire : NavTime (vitesse mesurée ÷ détour appris)
+local function navSpeed()
+  local NT = T.NavTime
+  if not (NT and NT.Speed and NT.Detour) then return nil end
+  local v = tonumber((try(NT.Speed)))
+  local CM = _G.C_Map
+  local det = tonumber((try(NT.Detour, CM and CM.GetBestMapForUnit and try(CM.GetBestMapForUnit, "player"))))
+  if v and v > 0 and det and det >= 1 then return v / det end
+end
 function M.Context()
   local P = T.Predict
   local r = P and P.Rates and try(P.Rates) or {}
@@ -400,7 +409,7 @@ function M.Context()
   local pl = playerLevel()
   return {
     pl = pl, group = groupSize(), zone = curZone(),
-    speed = C and C.Speed and try(C.Speed) or 7,
+    speed = navSpeed() or (C and C.Speed and try(C.Speed)) or 7,
     secPerKill = kph and kph > 0 and max(8, min(120, 3600 / kph)) or M.DEFAULT_KILL,
     measuredKill = kph and kph > 0 or false,
     avgXP = n > 0 and sum / n or 80 * pl,
@@ -816,8 +825,10 @@ function M.TaskText(it)
   local sec = it.sec
   if q.complete then sec = it.travelSec or it.sec
   elseif est and est.sec then sec = est.sec * (it.diff or 1) + (it.travelSec or 0) end
-  return Pl.Task({ complete = q.complete, title = q.title, npc = it.npc, turnZone = q.turnZone, zone = q.zone,
-    here = M.ctx and M.ctx.zone, obj = obj, est = est, dist = it.dist, bearing = it.bearing, sec = sec })
+  -- (QUESTQA) une zone inconnue (« ? » du journal) ne s'écrit jamais : « Rends « X », à ? » → « Rends « X » »
+  local function known(z) if type(z) == "string" and z ~= "" and z ~= "?" then return z end end
+  return Pl.Task({ complete = q.complete, title = q.title, npc = it.npc, turnZone = known(q.turnZone), zone = known(q.zone),
+    here = M.ctx and known(M.ctx.zone), obj = obj, est = est, dist = it.dist, bearing = it.bearing, sec = sec })
 end
 function M.TagText(it)
   local Pl = T.Plain
@@ -912,7 +923,9 @@ end
 function M.Lines()
   local Q = mod("Quests")
   local lines = {}
-  local planLines = M.PlanLines(M.me)
+  -- (QUESTQA) dans l'onglet, le trajet (Planner / Itinéraire) affiche déjà ses arrêts : pas de 2e liste d'étapes
+  local P = planner()
+  local planLines = not (T.SetTabLines and P and P.Render) and M.PlanLines(M.me) or nil
   lines[#lines + 1] = { text = M.HeaderText(), prio = 1, header = true,
     tooltip = { "Les meilleures quêtes en haut.", "Clic : changer de filtre (toutes / zone / prêtes / groupe / faciles) · Maj-clic : changer d'ordre" },
     onClick = function() if shift() then M.CycleSort(1) else M.CycleFilter(1) end end }

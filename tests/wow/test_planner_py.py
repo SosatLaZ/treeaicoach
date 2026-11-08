@@ -141,7 +141,11 @@ def test_load_problem_and_flights():
     assert data.load_problem({"v": 2}) is None and data.load_problem(None) is None
     bad = make_export(3, seed=1)
     bad["quests"][0]["f"] = {"map": 999999, "x": 1, "y": 1}           # unknown map: never invent a place
-    assert len(data.load_problem(bad).quests) == 2
+    pbad = data.load_problem(bad)
+    # (QUESTQA) its objectives (known places) stay plannable; the turn-in (unknown place) is never invented
+    q0 = next((q for q in pbad.quests if q.id == bad["quests"][0]["id"]), None)
+    assert q0 is None or "turn" not in [pbad.nodes[n].kind for n in q0.nodes]
+    assert len([q for q in pbad.quests if "turn" in [pbad.nodes[n].kind for n in q.nodes]]) == 2
 
 
 # ------------------------------------------------------------------ solver
@@ -299,7 +303,10 @@ def test_session_too_long():
     e["player"]["session"] = 20
     plan = routes.compute_plan(e, seconds=2)
     clear = next(r for r in plan["routes"] if r["id"] == "clear")
-    assert clear["verdict"] in ("long", "zone") and any("Trop long" in x for x in clear["reasons"])
+    assert clear["verdict"] in ("long", "zone") and any("min de jeu prévues" in x for x in clear["reasons"])
+    # (QUESTQA) a reason never repeats its verdict label (the UIs show « Trop long : <reason> »)
+    for r in plan["routes"]:
+        assert not any(x.startswith(tuple(routes.VERDICT_FR.values())) for x in r["reasons"]), r["reasons"]
 
 
 def test_lua_writer_round_trip(tmp_path):
