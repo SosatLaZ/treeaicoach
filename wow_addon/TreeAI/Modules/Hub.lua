@@ -126,7 +126,35 @@ H.GROUPS = {
   { id = "jeu", title = "Jeu", icon = ICON .. "INV_Misc_Map_01" },
   { id = "outils", title = "Outils", icon = ICON .. "INV_Misc_Wrench_01" },
   { id = "reglages", title = "Réglages", icon = ICON .. "INV_Misc_Gear_01" },
+  { id = "beta", title = "Fonctions bêta", icon = ICON .. "INV_Misc_EngGizmos_20" },
 }
+-- (REVIEW) mode sûr : la liste des fonctions bêta (un clic = allumer / couper, le menu reste ouvert)
+H.mode = "main"
+function H.BetaEntries()
+  local out = {}
+  out[#out + 1] = { group = "beta", id = "back", title = "< Retour", icon = ICON .. "INV_Misc_Note_01",
+    tip = "Clic : revenir au menu", desc = "Le menu principal", keep = true, fn = function() H.mode = "main" end }
+  local prof = T.ModuleProfile and T:ModuleProfile() or "tout"
+  out[#out + 1] = { group = "beta", id = "profile", keep = true, icon = ICON .. "INV_Misc_Book_09",
+    title = prof == "sur" and "Tout allumer (bêta compris)" or "Revenir au mode sûr",
+    desc = prof == "sur" and "Mode sûr actif" or "Tout est allumé",
+    tip = "Mode sûr = quêtes, boussole, trajet, course au corps, erreurs, panneau, pastille, macros.",
+    fn = act(function() T:SetModuleProfile(prof == "sur" and "tout" or "sur") end) }
+  for _, n in ipairs(T.moduleOrder or {}) do
+    local m = T.modules[n]
+    if m and T.IsBeta and T:IsBeta(n) and m._classOK ~= false then
+      local on = m.db and m.db.enabled ~= false
+      local info = T.MODULE_INFO and T.MODULE_INFO[n] or {}
+      out[#out + 1] = { group = "beta", id = "beta:" .. n, keep = true, on = on,
+        title = tostring(m.title or n), state = on and "|cff33dd33ON|r" or "|cff888888OFF|r",
+        icon = on and "Interface\\RaidFrame\\ReadyCheck-Ready" or "Interface\\RaidFrame\\ReadyCheck-NotReady",
+        tip = (info.desc or n) .. "\nBêta : testé hors du jeu seulement.\nClic : " .. (on and "couper" or "allumer"),
+        fn = act(function() T:SetModuleEnabled(n, not on) end) }
+    end
+  end
+  return out
+end
+local TAB_DESC, ENTRY_DESC
 local TAB_ICON = {
   now = ICON .. "Spell_Nature_TimeStop", quests = ICON .. "INV_Misc_Note_02", group = ICON .. "Ability_Hunter_Pet_Wolf",
   predict = ICON .. "INV_Misc_PocketWatch_01", hv = ICON .. "INV_Misc_Coin_01", prof = ICON .. "Trade_BlackSmithing",
@@ -134,15 +162,31 @@ local TAB_ICON = {
   pvp = ICON .. "Ability_DualWield", info = ICON .. "INV_Misc_QuestionMark", binds = ICON .. "INV_Misc_Key_14",
   adv = ICON .. "Ability_Hunter_SniperShot",
 }
+-- une description courte sous chaque entrée (lanceur groupé, comme les menus des gros addons)
+TAB_DESC = {
+  now = "Ce que tu peux faire tout de suite", quests = "Étapes, quêtes par zone, trajet", group = "Tes amis et les missions",
+  predict = "Ce qui va te manquer", hv = "Achats-reventes (bêta)", prof = "Montée de métier", talents = "Où mettre tes points",
+  gear = "Améliorations par emplacement", dungeon = "Préparation et boss", pvp = "Aides JcJ", info = "Autotest, erreurs, détails",
+  binds = "Raccourcis clavier conseillés", adv = "Petits avantages (bêta)", modules = "Allumer / couper chaque fonction",
+  finder = "Meilleur familier, rares, maîtres", stats = "Tes chiffres mesurés",
+}
+ENTRY_DESC = {
+  cherche = "Le truc qui change tout près de toi", pet = "La meilleure bête à apprivoiser", macros = "Créer et poser les macros",
+  todo = "La liste complète des quêtes", boussole = "Afficher / cacher la flèche", radar = "Petit radar rond",
+  options = "Taille, transparence, sons", erreurs = "Fichier d'erreurs pour l'appli", bloque = "Actions refusées par le jeu",
+  panel = "Le panneau de TreeAI", edit = "Glisser les cadres, molette = taille", reset = "Tout remettre à sa place",
+  profil = "Testées hors du jeu : un clic chacune",
+}
 function H.Entries()
+  if H.mode == "beta" then return H.BetaEntries() end
   local out = {}
   for _, t in ipairs(T.GetTabs and T:GetTabs() or {}) do
     out[#out + 1] = { group = "jeu", id = "tab:" .. t.id, title = L[t.title or t.id], icon = TAB_ICON[t.id] or ICON .. "INV_Misc_Note_01",
-      tip = "Clic : ouvrir l'onglet « " .. L[t.title or t.id] .. " » du panneau", fn = tab(t.id) }
+      desc = TAB_DESC[t.id], tip = "Clic : ouvrir l'onglet « " .. L[t.title or t.id] .. " » du panneau", fn = tab(t.id) }
   end
   local function add(g, id, title, icon, tip, fn, ok)
     if ok == false then return end
-    out[#out + 1] = { group = g, id = id, title = title, icon = icon, tip = tip, fn = fn }
+    out[#out + 1] = { group = g, id = id, title = title, icon = icon, tip = tip, fn = fn, desc = ENTRY_DESC[id] }
   end
   local F, Mc, Td = T.Finder, T.modules and T.modules.Macros, T.Todo
   add("outils", "cherche", "Recherche", ICON .. "INV_Misc_Spyglass_02", "Clic : chercher un truc qui change tout près de toi",
@@ -157,7 +201,18 @@ function H.Entries()
   add("outils", "radar", "Radar", ICON .. "INV_Misc_Map_01", "Clic : afficher / cacher le radar", slashCmd("radar"), hasSlash("radar"))
   add("reglages", "options", "Options", ICON .. "INV_Misc_Gear_01", "Clic : toutes les options (taille, transparence, modules)",
     act(function() if T.OpenOptions then T:OpenOptions() end end))
-  add("reglages", "profil", "Profil des modules", ICON .. "INV_Misc_Book_09", "Clic : essentiel / tout", slashCmd("profil"), hasSlash("profil"))
+  local nBeta, nOn = 0, 0
+  for _, n in ipairs(T.moduleOrder or {}) do
+    local m = T.modules[n]
+    if m and T.IsBeta and T:IsBeta(n) and m._classOK ~= false then
+      nBeta = nBeta + 1
+      if m.db and m.db.enabled ~= false then nOn = nOn + 1 end
+    end
+  end
+  out[#out + 1] = { group = "reglages", id = "profil", keep = true, icon = ICON .. "INV_Misc_EngGizmos_20",
+    title = ("Fonctions bêta (%d/%d)"):format(nOn, nBeta),
+    tip = "Clic : la liste des fonctions bêta (testées hors du jeu seulement), un clic pour chacune",
+    fn = function() H.mode = "beta" end }
   add("reglages", "erreurs", "Erreurs", "Interface\\DialogFrame\\UI-Dialog-Icon-AlertOther", "Clic : dernières erreurs de TreeAI", slashCmd("erreurs"), hasSlash("erreurs"))
   add("reglages", "bloque", "Blocages", "Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew", "Clic : actions bloquées par le jeu (doit rester à 0)", slashCmd("bloque"), hasSlash("bloque"))
   add("reglages", "panel", "Afficher / cacher le panneau", ICON .. "INV_Misc_Note_06", "Clic : le panneau de TreeAI", act(function() T:TogglePanel() end))
@@ -171,8 +226,12 @@ end
 -- ------------------------------------------------------------------ menu (cadre à nous)
 local menu
 H.layout = {}
-local ROW, HEAD, W = 20, 17, 220
-local function closeMenu() if menu and menu:IsShown() then menu:Hide() end end
+local TH = T.Theme
+local SP = (TH and TH.SPACE) or { xs = 2, s = 4, m = 8, l = 12, xl = 16 }
+local RW = (TH and TH.ROW) or { h = 20, h2 = 32, head = 18, icon = 14, iconL = 18 }
+local ROW, ROW2, HEAD, W = RW.h, RW.h2, RW.head, 260
+local MAXH = 560   -- au-delà, la liste bêta passe sur une deuxième colonne
+local function closeMenu() H.mode = "main" if menu and menu:IsShown() then menu:Hide() end end
 H.Close = closeMenu
 local function buildMenu()
   if menu then return menu end
@@ -187,6 +246,7 @@ local function buildMenu()
     menu:SetBackdropColor(0.05, 0.06, 0.08, 0.96)
     menu:SetBackdropBorderColor(0.78, 0.62, 0.28, 0.7)
   end
+  if TH and TH.Skin then pcall(TH.Skin, TH, menu, "window") end
   menu.rows, menu.heads, menu.seps = {}, {}, {}
   if menu.RegisterEvent and pcall(menu.RegisterEvent, menu, "GLOBAL_MOUSE_DOWN") then
     menu:SetScript("OnEvent", function(self)
@@ -207,19 +267,33 @@ local function row(i)
   b:SetHeight(ROW)
   b:RegisterForClicks("LeftButtonUp")
   b.icon = b:CreateTexture(nil, "ARTWORK")
-  b.icon:SetSize(14, 14)
-  b.icon:SetPoint("LEFT", b, "LEFT", 8, 0)
+  b.icon:SetSize(RW.iconL, RW.iconL)
+  b.icon:SetPoint("LEFT", b, "LEFT", SP.m, 0)
+  if b.icon.SetTexCoord then b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+  b.tag = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.tag:SetPoint("TOPRIGHT", b, "TOPRIGHT", -SP.m, -SP.xs - 1)
   b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
-  b.text:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+  b.text:SetPoint("TOPLEFT", b.icon, "TOPRIGHT", SP.m, 1)
+  b.text:SetPoint("RIGHT", b, "RIGHT", -SP.m - 34, 0)
   b.text:SetJustifyH("LEFT")
   if b.text.SetWordWrap then b.text:SetWordWrap(false) end
+  b.desc = b:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  b.desc:SetPoint("TOPLEFT", b.text, "BOTTOMLEFT", 0, -1)
+  b.desc:SetPoint("RIGHT", b, "RIGHT", -SP.m, 0)
+  b.desc:SetJustifyH("LEFT")
+  if b.desc.SetWordWrap then b.desc:SetWordWrap(false) end
+  if TH and TH.Font then TH:Font(b.text, "M") TH:Font(b.desc, "S", "muted") TH:Font(b.tag, "S") end
   b.hl = b:CreateTexture(nil, "HIGHLIGHT")
   b.hl:SetAllPoints(b)
   b.hl:SetTexture("Interface\\Buttons\\WHITE8X8")
   if b.hl.SetVertexColor then b.hl:SetVertexColor(1, 1, 1, 0.10) end
   b:SetScript("OnClick", function(self)
     local e = self.e
+    if e and e.keep then
+      if e.fn then e.fn() end
+      if menu and menu:IsShown() then H.Fill() end
+      return
+    end
     closeMenu()
     if e and e.fn then e.fn() end
   end)
@@ -242,6 +316,7 @@ function H.Fill()
   for _, h in ipairs(menu.heads) do h:Hide(); h.icon:Hide() end
   for _, s in ipairs(menu.seps) do s:Hide() end
   local y, n, nh, ns, last = -5, 0, 0, 0, nil
+  local colX, colTop, colStart, minY = 0, nil, -5, -5
   for _, e in ipairs(H.Entries()) do
     if e.group ~= last then
       if last then
@@ -284,8 +359,12 @@ function H.Fill()
           h:Show()
           lay[#lay + 1] = { kind = "header", group = g.id, y = y }
           y = y - HEAD
+          colStart = y
         end
       end
+    end
+    if e.group == "beta" and y < -MAXH then   -- liste bêta longue : deuxième colonne (jamais plus haut que l'écran)
+      colX, colTop, y = colX + W, colTop or y, colStart
     end
     n = n + 1
     local b = row(n)
@@ -293,18 +372,26 @@ function H.Fill()
     -- (même convention que « Plus → Modules » : l'orage de clics du harnais laisse ces bascules tranquilles)
     b.entry = { id = "mod:hub:" .. e.id }
     b:ClearAllPoints()
-    b:SetPoint("TOPLEFT", menu, "TOPLEFT", 3, y)
-    b:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -3, y)
-    b:SetWidth(W - 6)
+    local h = e.desc and ROW2 or ROW
+    b:SetHeight(h)
+    b:SetPoint("TOPLEFT", menu, "TOPLEFT", colX + SP.xs, y)
+    b:SetWidth(W - 2 * SP.xs)
     b.icon:SetTexture(e.icon)
+    b.icon:SetSize(e.desc and RW.iconL or RW.icon, e.desc and RW.iconL or RW.icon)
+    if e.on == false and b.icon.SetDesaturated then b.icon:SetDesaturated(true)
+    elseif b.icon.SetDesaturated then b.icon:SetDesaturated(false) end
     b.text:SetText(e.title)
-    b.text:SetTextColor(e.group == "jeu" and 1 or 0.6, e.group == "jeu" and 0.82 or 0.85, e.group == "jeu" and 0 or 1)
+    b.text:SetTextColor(1, 0.82, 0.2)
+    if e.group ~= "jeu" then b.text:SetTextColor(0.92, 0.92, 0.92) end
+    b.desc:SetText(e.desc or "")
+    b.tag:SetText(e.state or (e.beta and ((TH and TH.BetaTag and TH:BetaTag()) or "|cffb48cffbêta|r")) or "")
     b:Show()
-    lay[#lay + 1] = { kind = "item", id = e.id, group = e.group, y = y, text = e.title,
-      textW = b.text:GetStringWidth() or 0, textMax = W - 6 - 8 - 14 - 6 - 6, button = b }
-    y = y - ROW
+    lay[#lay + 1] = { kind = "item", id = e.id, group = e.group, y = y, text = e.title, desc = e.desc, beta = e.beta,
+      textW = b.text:GetStringWidth() or 0, textMax = W - 2 * SP.xs - SP.m - RW.iconL - SP.m - SP.m - 34, button = b }
+    y = y - h
+    minY = math.min(minY, y)
   end
-  menu:SetSize(W, -y + 5)
+  menu:SetSize(colX + W, -minY + 5)
   menu:ClearAllPoints()
   if button then menu:SetPoint("TOPRIGHT", button, "BOTTOMLEFT", 8, 4)
   else menu:SetPoint("TOPRIGHT", G("UIParent"), "TOPRIGHT", -200, -200) end

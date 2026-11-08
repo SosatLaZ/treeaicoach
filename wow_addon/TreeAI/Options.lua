@@ -527,8 +527,12 @@ end
 
 local function buildModule(content, name, mod, width)
   local P = layout(content, width)
-  P.text(mod.title or name, "GameFontNormalLarge")
+  local beta = TreeAI.IsBeta and TreeAI:IsBeta(name)
+  P.text(tostring(mod.title or name) .. (beta and "  |cffb48cff(bêta)|r" or ""), "GameFontNormalLarge")
   if mod.description then P.text(tostring(mod.description)) end
+  if beta then
+    P.text("|cff999999" .. L["Fonction bêta : testée hors du jeu seulement. Coupée en mode sûr, à allumer ici."] .. "|r")
+  end
   if type(mod.classes) == "table" then
     local cls = {}
     for c in pairs(mod.classes) do cls[#cls + 1] = c end

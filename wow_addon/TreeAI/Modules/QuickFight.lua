@@ -22,7 +22,7 @@ T.MODULE_INFO.QuickFight = T.MODULE_INFO.QuickFight
   or { lite = true, combat = true, desc = "Raccourcis : boutons entre les combats (manger, familier, aspect, pull)" }
 
 local M = T:RegisterModule("QuickFight", {
-  title = "Raccourcis de combat",
+  title = "Barre de combat",
   defaults = {
     enabled = true, bar = true, scale = 100, timer = true, ready = true,
     eat = true, bandage = true, hp = 70, mana = 60,
@@ -504,7 +504,7 @@ local function createBar()
   label:SetJustifyH("LEFT")
   placeBar()
   if T.RegisterMovable then
-    T:RegisterMovable(f, "quickfight", "Raccourcis de combat", {
+    T:RegisterMovable(f, "quickfight", "Barre de combat", {   -- (REVIEW) id propre : « quick » = la barre de Quick
       onMoved = function(point, x, y) db().pos = { point, point, floor(x or 0), floor(y or 0) } end,
       onReset = function() db().pos = nil placeBar() end,
     })

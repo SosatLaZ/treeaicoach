@@ -1055,6 +1055,11 @@ local function moduleBindDB(mod)
   if not db then return end
   local defaults = mergeDefaults({ enabled = true }, mod.defaults or {})
   local store, seed = moduleStore()
+  -- (REVIEW) mode sûr : un module bêta jamais vu (nouveau module, nouveau perso en profil perso) démarre coupé
+  if store[mod.name] == nil and type(db.moduleProfile) == "string" and db.moduleProfile == "sur"
+      and TreeAI.IsBeta and TreeAI:IsBeta(mod.name) and not (seed and type(seed[mod.name]) == "table") then
+    defaults.enabled = false
+  end
   if store[mod.name] == nil and seed and type(seed[mod.name]) == "table" then
     store[mod.name] = deepcopy(seed[mod.name])   -- profil perso : part des réglages du compte
   end
@@ -1197,7 +1202,19 @@ end
 -- tout le temps tournent ; les autres restent dans « Plus → Modules » (un clic pour les rallumer).
 -- gate = condition pour tourner en profil essentiel : "group" (en groupe), "ah" (HV ouvert), "instance".
 ---------------------------------------------------------------------------
-TreeAI.PROFILE_V = 1
+TreeAI.PROFILE_V = 2   -- 2 = (REVIEW, 3.9.9) mode sûr posé une fois pour tout le monde
+-- (REVIEW) MODE SÛR : seules les fonctions robustes par construction tournent par défaut (quêtes, boussole /
+-- itinéraire, course au corps, diagnostic des erreurs et blocages, panneau, pastille, macros). Tout le reste est
+-- « bêta » : listé dans « Plus → Modules » et dans la pastille (Fonctions bêta), un clic pour l'allumer.
+TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
+  Theme = true, SelfTest = true, Bugs = true,                    -- panneau, diagnostic (erreurs, blocages)
+  Quests = true, Tracker = true, Todo = true, Detect = true,     -- quêtes (Detect = la seule source objectif ↔ monstre)
+  Compass = true, NavTime = true, Route = true, Planner = true, Export = true,   -- boussole, trajet, données du plan
+  Speed = true,                                                  -- course au corps (mort / fantôme)
+  Hub = true, Macros = true,                                     -- pastille de la minimap, macros (diagnostic compris)
+}
+--- module « bêta » (pas dans le mode sûr) ?
+function TreeAI:IsBeta(name) return not self.SAFE_MODULES[name] end
 TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Theme = { lite = true, desc = "Apparence du panneau (couleurs, police)" },
   SelfTest = { lite = true, desc = "Autotest et diagnostic (/tai test)" },
@@ -1261,9 +1278,12 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Edge2 = { lite = false, desc = "Avantages : repop, patrouilles, XP/h par monstre, repos, maître de classe…" },
 }
 
+TreeAI.MODULE_PROFILES = { sur = true, essentiel = true, tout = true }
+TreeAI.MODULE_PROFILE_LABEL = { sur = "Mode sûr", essentiel = "Essentiel (léger)", tout = "Tout (bêta compris)" }
 function TreeAI:ModuleProfile()
   local db = self.db
-  return (type(db) == "table" and db.moduleProfile == "essentiel") and "essentiel" or "tout"   -- (3.9.5) défaut : tout
+  local p = type(db) == "table" and db.moduleProfile
+  return (p and self.MODULE_PROFILES[p]) and p or "tout"   -- (3.9.9) défaut posé une fois : mode sûr
 end
 --- profil léger actif ? (les modules allumés y font le minimum : pas de scans en fond)
 function TreeAI:Lite() return self:ModuleProfile() == "essentiel" end
@@ -1313,13 +1333,18 @@ end
 --- « essentiel » | « tout » : pose l'état de chaque module (sans /reload)
 function TreeAI:SetModuleProfile(name)
   if type(self.db) ~= "table" then return false end
-  name = (name == "tout" or name == "all") and "tout" or "essentiel"
+  if name == "tout" or name == "all" then name = "tout"
+  elseif name == "sur" or name == "sûr" or name == "safe" then name = "sur"
+  else name = "essentiel" end
   local changed = self:ModuleProfile() ~= name
   self.db.moduleProfile = name
   for _, n in ipairs(self.moduleOrder) do
     local mod = self.modules[n]
     local info = self.MODULE_INFO[n]
-    local want = name == "tout" or not info or info.lite ~= false
+    local want
+    if name == "tout" then want = true
+    elseif name == "sur" then want = not self:IsBeta(n)
+    else want = not info or info.lite ~= false end
     if mod.db then
       mod.db.enabled = want
       if self._modulesStarted then
@@ -1332,6 +1357,7 @@ function TreeAI:SetModuleProfile(name)
   self:_EvalGates()
   if self._modulesStarted then
     self:ClearSuggestion("core:lite")
+    self:ClearSuggestion("core:safe")
     self:_BuildModulesTab()
     self:RequestRefresh()
   end
@@ -1344,7 +1370,22 @@ function TreeAI:_ApplyProfileOnce()
   if type(db) ~= "table" then return end
   if (tonumber(db.profileV) or 0) >= self.PROFILE_V then return end
   db.profileV = self.PROFILE_V
-  -- (3.9.5) le joueur veut TOUT : on garde tout allumé (les gains de perf restent) ; « essentiel » reste au choix
+  -- (3.9.9, REVIEW) une fois pour tous (nouveaux et anciens) : mode sûr ; les fonctions bêta restent à un clic
+  self:SetModuleProfile("sur")
+  self._safeNotice = true
+end
+
+function TreeAI:_SafeNotice()
+  if not self._safeNotice then return end
+  self._safeNotice = nil
+  self:Suggest("core:safe", "Mode sûr : les fonctions bêta sont à activer dans le menu", 2, {
+    ttl = 900, tab = "now", sound = false, kind = "always",
+    tooltip = "Clic : Plus → Modules (un clic par fonction). Aussi : pastille de la minimap → Fonctions bêta.",
+    onClick = function()
+      if TreeAI.ShowPanel then TreeAI:ShowPanel() end
+      if TreeAI.SelectTab then TreeAI:SelectTab("modules") end
+      TreeAI:ClearSuggestion("core:safe")
+    end })
 end
 
 function TreeAI:_LiteNotice()
@@ -1360,10 +1401,19 @@ end
 function TreeAI:_BuildModulesTab()
   if not self.SetTabLines then return end
   local lite = self:Lite()
+  local prof = self:ModuleProfile()
+  local head
+  if prof == "sur" then head = "Mode sûr : seules les fonctions vérifiées tournent — clic : tout allumer (bêta compris)"
+  elseif lite then head = "Profil : Essentiel (léger) — clic : tout réactiver"
+  else head = "Tout est allumé (bêta compris) — clic : revenir au mode sûr" end
   local lines = {
-    { text = lite and "Profil : Essentiel (léger) — clic : tout réactiver"
-        or "Profil : Tout — clic : revenir à l'essentiel (moins de lag)", prio = 2, id = "core:profile",
-      onClick = function() TreeAI:SetModuleProfile(lite and "tout" or "essentiel") end },
+    { text = head, prio = 2, id = "core:profile",
+      tooltip = "Mode sûr = quêtes, boussole, trajet, course au corps, erreurs, panneau, pastille, macros.\n"
+        .. "Les fonctions « bêta » n'ont été testées que hors du jeu : allume-les une par une ci-dessous.",
+      onClick = function() TreeAI:SetModuleProfile(prof == "sur" and "tout" or (lite and "tout" or "sur")) end },
+    -- (« mod: » : l'orage de clics du harnais laisse les bascules de profil tranquilles)
+    { text = lite and "Revenir au mode sûr — clic" or "Profil léger (essentiel, moins de lag) — clic", prio = 1,
+      id = "mod:profile:alt", onClick = function() TreeAI:SetModuleProfile(lite and "sur" or "essentiel") end },
     { text = "Coût par module (/tai perf) — clic : afficher", prio = 1, id = "core:perf",
       onClick = function() TreeAI:PrintPerf() end },
   }
@@ -1374,11 +1424,14 @@ function TreeAI:_BuildModulesTab()
     local state
     if not on then state = "|cff888888OFF|r"
     elseif mod._gateOff then state = "|cffddbb44ATTENTE|r"
-    elseif mod._classOK == false then state = "|cff888888—|r"
+    elseif mod._classOK == false then state = "|cff888888autre classe|r"
     else state = "|cff33dd33ON|r" end
-    lines[#lines + 1] = { text = state .. " " .. tostring(mod.title or n) .. (info.desc and (" — " .. info.desc) or ""),
-      prio = 1, id = "mod:" .. n,
-      tooltip = (info.desc or n) .. "\nClic : " .. (on and "couper" or "allumer") .. " ce module (sans /reload)",
+    local beta = self:IsBeta(n)
+    lines[#lines + 1] = { text = state .. " " .. tostring(mod.title or n) .. (beta and " |cffb48cff(bêta)|r" or "")
+        .. (info.desc and (" — " .. info.desc) or ""),
+      prio = 1, id = "mod:" .. n, beta = beta or nil,
+      tooltip = (info.desc or n) .. (beta and "\nBêta : testé hors du jeu seulement, peut se tromper." or "")
+        .. "\nClic : " .. (on and "couper" or "allumer") .. " ce module (sans /reload)",
       onClick = function() TreeAI:SetModuleEnabled(n, not (mod.db and mod.db.enabled ~= false)) end }
   end
   self:SetTabLines("modules", lines, "main")
@@ -1929,6 +1982,7 @@ TreeAI.SafeText = safeText
 TreeAI.LINE_MAX = 96
 local function ulen(s)
   s = strgsub(strgsub(s, "|c%x%x%x%x%x%x%x%x", ""), "|r", "")
+  if strfind(s, "|T", 1, true) then s = strgsub(s, "|T[^|]*|t", "##") end   -- (REVIEW) une icône |T…|t = ~2 caractères à l'écran, pas 45
   local _, n = strgsub(s, "[\128-\191]", "")
   return #s - n
 end
@@ -3052,9 +3106,11 @@ TreeAI:RegisterSlash("options", function() if TreeAI.OpenOptions then TreeAI:Ope
 TreeAI:RegisterSlash("perf", function() TreeAI:PrintPerf() end, "les modules qui coûtent le plus (CPU)")
 TreeAI:RegisterSlash("profil", function(rest)
   rest = tostring(rest or ""):lower()
-  if rest == "tout" or rest == "essentiel" then TreeAI:SetModuleProfile(rest) end
-  TreeAI:Print("Profil des modules : " .. TreeAI:ModuleProfile() .. "  (/tai profil essentiel | tout)")
-end, "profil des modules : essentiel (léger) ou tout")
+  if rest == "sûr" or rest == "safe" then rest = "sur" end
+  if rest == "tout" or rest == "essentiel" or rest == "sur" then TreeAI:SetModuleProfile(rest) end
+  local p = TreeAI:ModuleProfile()
+  TreeAI:Print("Profil des modules : " .. (TreeAI.MODULE_PROFILE_LABEL[p] or p) .. "  (/tai profil sur | essentiel | tout)")
+end, "profil des modules : sur (défaut), essentiel (léger) ou tout (bêta compris)")
 TreeAI:RegisterSlash("modules", function()
   for name, mod in TreeAI:IterModules() do
     TreeAI:Print("  " .. (mod.title or name) .. " (" .. name .. "): " .. onoff(mod:IsEnabled()))
@@ -3139,6 +3195,7 @@ function TreeAI:PLAYER_LOGIN()
   self._loginAt = now()
   safecall(self._BuildModulesTab, self)
   if self._liteNotice then self:After(3, function() TreeAI:_LiteNotice() end) end
+  if self._safeNotice then self:After(3, function() TreeAI:_SafeNotice() end) end
   self:Fire("READY")
   self:StartAutoRefresh()
   -- premier lancement : petit assistant en 3 étapes (hors combat)

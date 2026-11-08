@@ -124,6 +124,8 @@ return function(M, ctx)
     Active = function() return true end, Subscribe = function() return function() end end } })
   if T.SetGuideMode then T:SetGuideMode("auto") end   -- (3.9.9) SPF is opt-in: this part tests the hand-off
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
+  local guideWas, guideModeWas = T.settings.guide, T.settings.guideV
+  T.settings.guide = "auto"   -- (3.9.8) SPF is an explicit opt-in: TreeAI guides alone by default
   local steps = {
     { k = "pick", q = 501, map = 1424, x = 60, y = 40, label = "Prendre « Test »" },
     { k = "turn", q = 501, map = 1424, x = 70, y = 40, label = "Rendre « Test »" },
@@ -139,6 +141,7 @@ return function(M, ctx)
   local seen = false
   for _, st in ipairs(last) do if st.title == "Apprivoiser « Lynx-test »" then seen = true end end
   check(seen, "route re-sent to Shortest Path with the new stop")
+  T.settings.guide, T.settings.guideV = guideWas, guideModeWas
   M.pos = { mapID = 1424, x = 0.55, y = 0.40 }
   P:Evaluate()
   check(P.steps[ins] and P.steps[ins]._done, "arrived at the stop → step done")

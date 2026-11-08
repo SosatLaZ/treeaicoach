@@ -23,7 +23,7 @@ def test_no_forbidden_calls_or_chat():
                 "PickupSpell", "UseContainerItem", "CreateMacro", "EditMacro"):
         assert bad not in src, bad
     assert "SecureActionButtonTemplate" in src
-    assert 'title = "Raccourcis de combat"' in src   # (3.9.9) Quick is « Raccourcis »
+    assert 'title = "Barre de combat"' in src   # (3.9.9) Quick is « Raccourcis »
     assert "section =" in src
 
 

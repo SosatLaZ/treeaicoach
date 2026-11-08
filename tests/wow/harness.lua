@@ -192,7 +192,10 @@ end
 if addonName == "TreeAI" then   -- (3.9.5) « essentiel » is opt-in: seeded only when asked
   local db = rawget(_G, "TreeAIDB")
   if type(db) ~= "table" then db = {}; rawset(_G, "TreeAIDB", db) end
-  if db.profileV == nil then db.profileV, db.moduleProfile = 999, (opts.profile == "essentiel") and "essentiel" or "tout" end
+  -- --profile sur : nothing seeded, the addon's one-time « mode sûr » migration runs (what a new player gets)
+  if db.profileV == nil and opts.profile ~= "sur" then
+    db.profileV, db.moduleProfile = 999, (opts.profile == "essentiel") and "essentiel" or "tout"
+  end
 end
 
 -- drive ------------------------------------------------------------------------------------------
@@ -315,7 +318,7 @@ local function storm()
   -- the clicks above also hit « Plus → Modules » lines (one click = one module on / off): scenarios start from
   -- the profile they asked for
   local T = rawget(_G, "TreeAI")
-  if T and T.SetModuleProfile and addonName == "TreeAI" then T:SetModuleProfile(opts.profile == "tout" and "tout" or "essentiel"); M.Advance(2, 0.5) end
+  if T and T.SetModuleProfile and addonName == "TreeAI" then T:SetModuleProfile((opts.profile == "tout" or opts.profile == "sur") and opts.profile or "essentiel"); M.Advance(2, 0.5) end
 end
 
 if opts.storm then storm() end
