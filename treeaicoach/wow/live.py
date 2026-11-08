@@ -46,6 +46,9 @@ XP_MIN_S = 10 * 60                        # an XP/h measured over less than 10 m
 AH_MAX_AGE_S = 24 * 3600                  # no deal from a scan older than 24 h
 VOLATILE_S = 5 * 60                       # « Alpha est mort », « sacs pleins »: shown only from a fresh save
 ATR_MAX_BYTES = 160 << 20                 # Auctionator files above this are ignored
+BLOCK_STALE_S = 10 * 60                   # a summary block this much older than the summary: its module stopped
+DEATH_RECENT_S = 2 * 3600                 # « Dernière mort » only for a death of the last 2 h
+MOIS = ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.")
 
 
 # ------------------------------------------------------------------------------------- helpers
@@ -164,7 +167,7 @@ class LiveEvent:
 _TS_RE = re.compile(r"^(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\s+(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?\s+(.*)$")
 _SPEECH_RE = re.compile(r"^\[|\b(dit|says|chuchote|whispers|crie|yells)\b", re.I)
 _XP_RE = re.compile(r"(\d[\d  .]*)\s*points? d['’]expérience|gain (\d[\d,]*) experience", re.I)
-_LEVEL_RE = re.compile(r"(?:atteint le niveau|reached level)\s+(\d+)", re.I)
+_LEVEL_RE = re.compile(r"(?:atteint le \[?niveau|reached \[?level)\s+(\d+)|\|Hlevelup:(\d+)", re.I)
 _DEATH_RE = re.compile(r"^(vous êtes mort|vous mourez|you die|you have died)", re.I)
 _MONEY_WORD_RE = re.compile(r"(\d+)\s*(pièces? d['’]or|or|argent|cuivre|gold|silver|copper)\b", re.I)
 _MONEY_CTX_RE = re.compile(r"ramass|part du butin|\bloot|share|recev|receiv|gagn", re.I)
@@ -214,7 +217,7 @@ def parse_chat_line(line: str, year: int | None = None) -> dict | None:
         return {"t": t, "kind": "death"}
     lv = _LEVEL_RE.search(text)
     if lv:
-        return {"t": t, "kind": "level", "level": int(lv.group(1))}
+        return {"t": t, "kind": "level", "level": int(lv.group(1) or lv.group(2))}
     xp = _XP_RE.search(text)
     if xp:
         val = _num(xp.group(1) or xp.group(2) or "")
@@ -354,6 +357,74 @@ def char_summary(db: Any) -> dict:
 
 def realm_of(char_key: str) -> str:
     return char_key.split("-", 1)[1] if "-" in char_key else ""
+
+
+#: (4.0 QA) The addon module that writes each block of the summary. A module that is off (mode sûr, « Plus →
+#: Modules ») never rewrites its block and Core keeps the old one: the page would show days-old facts as current.
+SUMMARY_OWNERS = {"stats": "Stats", "auction": "Auction", "fight": "Fight", "session": "Session", "dungeon": "Dungeon",
+                  "group": "Group", "missions": "Group", "team": "Group", "abandon": "Abandon", "hunter": "Hunter",
+                  "boost": "Boost", "errands": "Errands", "gear": "Gear", "talents": "Talents", "prof": "Prof",
+                  "pro": "Pro", "leveling": "Leveling", "inventory": "Inventory", "binds": "Binds",
+                  "quests": "Quests", "tracker": "Tracker", "todo": "Todo", "compass": "Compass", "plan": "Planner",
+                  "detect": "Detect", "navTime": "NavTime"}
+#: Blocks written with their own time (epoch, refreshed at every save of a running module): more than
+#: ``BLOCK_STALE_S`` older than the summary = a module out of its gate (profil essentiel) or stopped since.
+BLOCK_TIME = {"stats": "t", "hunter": "t", "auction": "updated", "group": "updated", "missions": "updated",
+              "session": "updated", "fight": "updated", "dungeon": "updated", "abandon": "updated"}
+
+
+def module_off(db: Any, char: Any, name: str) -> bool:
+    """True when the addon module ``name`` (or all of TreeAI) is off for this character: per-character profile
+    (``chars[key].moduleSettings``) first, else the account's ``modules`` (same rule as Core's moduleStore)."""
+    db, char = _d(db), _d(char)
+    per_char = char.get("profile") == "char"
+    st = _d(_d(char.get("moduleSettings")).get(name)) if per_char else {}
+    if not st:
+        st = _d(_d(db.get("modules")).get(name))
+    settings = _d(char.get("settings")) if per_char and isinstance(char.get("settings"), dict) else _d(db.get("settings"))
+    return st.get("enabled") is False or settings.get("enabled") is False
+
+
+def group_ok(s: Any) -> bool:
+    """The group blocks describe the CURRENT group: in a group at the save, and written with the save (Group keeps
+    the last group's blocks once the roster is empty; Core still rewrites ``inGroup`` / ``groupSize``). A block
+    without its own time (older addons) is judged by ``inGroup`` / ``groupSize`` only."""
+    s = _d(s)
+    if s.get("inGroup") is False or _i(s.get("groupSize"), 2) <= 1:
+        return False
+    upd = _f(s.get("updated"))
+    g_t = _f(_d(s.get("group")).get("updated")) or _f(_d(s.get("missions")).get("updated"))
+    return upd is None or g_t is None or g_t >= upd - BLOCK_STALE_S
+
+
+def recent_death(s: Any, now: Any = None) -> dict:
+    """``summary.fight.lastDeath`` when it happened less than ``DEATH_RECENT_S`` ago, else {}."""
+    ld = _d(_d(_d(s).get("fight")).get("lastDeath"))
+    t = _f(ld.get("time"))
+    n = _f(now) or time.time()
+    return ld if ld and t is not None and 0 <= n - t <= DEATH_RECENT_S else {}
+
+
+def trusted_summary(db: Any, char: Any, now: Any = None) -> dict:
+    """``char.summary`` without what is no longer true: blocks of modules that are off, blocks written more than
+    ``BLOCK_STALE_S`` before the summary, the group blocks out of a group, a last death older than
+    ``DEATH_RECENT_S``. A shallow copy: the parsed save is shared by every reader and never changed."""
+    s = dict(_d(_d(char).get("summary")))
+    upd = _f(s.get("updated"))
+    for key, mod in SUMMARY_OWNERS.items():
+        if key not in s:
+            continue
+        t = _f(_d(s[key]).get(BLOCK_TIME[key])) if key in BLOCK_TIME else None
+        t = t if t is not None and t > 1e9 else None        # an epoch only (Lua falls back to 0 / GetTime())
+        if module_off(db, char, mod) or (upd is not None and t is not None and t < upd - BLOCK_STALE_S):
+            del s[key]
+    if not group_ok(s):
+        for key in ("group", "missions", "team"):
+            s.pop(key, None)
+    fight = s.get("fight")
+    if isinstance(fight, dict) and "lastDeath" in fight and not recent_death(s, now):
+        s["fight"] = {k: v for k, v in fight.items() if k != "lastDeath"}
+    return s
 
 
 _DB_CACHE: dict[str, tuple[tuple[int, int], dict, dict]] = {}
@@ -934,7 +1005,7 @@ class LiveHub:
             keys = idx.realm_keys()
             if not keys:
                 return {}, "", 0, hist
-            faction = our.split("-")[1] if our.count("-") >= 1 else ""
+            faction = our.rsplit("-", 1)[1] if "-" in our else ""        # « Royaume-Faction », realms with « - » too
             atr_key = pick_realm(keys, realm_of(char_key), faction, idx.sizes())
             return {atr_key: idx.entries(atr_key, sorted(need))}, atr_key, idx.count(atr_key), hist
         except Exception:
@@ -994,7 +1065,7 @@ class LiveHub:
                 combat_age = max(0.0, now - Path(self._paths[2]).stat().st_mtime)
             except OSError:
                 combat_age = None
-        summary = _d(ch.get("summary"))
+        summary = trusted_summary(self.db, ch, now)
         atr, atr_key, atr_count, ah_hist = self._atr_for(key, summary)
         self.adb = atr
         saved_t = _f(summary.get("updated")) or self.sv.mtime
@@ -1030,15 +1101,19 @@ def log_titles(s: dict) -> set[str] | None:
 
 def abandon_advice(s: dict, group_size: int = 1) -> list[dict]:
     """Quests worth dropping, each with WHY: the addon's own verdicts only (``summary.abandon`` =
-    ``{list = {{title, why…}}}`` or a plain list). (4.0) The app no longer guesses with its own thresholds (the
-    audit: a 3rd copy of the logic, irreversible advice on numbers we do not have). Quests no longer in the
-    log are dropped. ``group_size`` is kept for callers."""
+    ``{list = {{title, verdict, why…}}}`` or a plain list). (4.0) The app no longer guesses with its own thresholds
+    (the audit: a 3rd copy of the logic, irreversible advice on numbers we do not have). (4.0 QA) The addon's list
+    also holds its « later » verdicts (« fais-la si tu passes à côté »): only ``verdict == "abandon"`` (or no
+    verdict: older saves) becomes « Retire ». Quests no longer in the log are dropped. ``group_size`` is kept for
+    callers."""
     a = s.get("abandon")
     own = _list(a.get("list")) if isinstance(a, dict) else _list(a)
     titles = log_titles(s)
     out = []
     for e in own[:10]:
         if isinstance(e, dict):
+            if str(e.get("verdict") or "abandon") != "abandon":       # « later » = do it if you pass by
+                continue
             title = str(e.get("title") or e.get("q") or "").strip()
             why = str(e.get("why") or e.get("reason") or "").strip() or "elle ne vaut plus le coup"
         else:
@@ -1132,9 +1207,9 @@ def quests_view(snap: dict) -> dict:
 
 
 def group_view(snap: dict) -> dict:
-    """« Groupe » tab: the missions board of the 4 (summary.missions)."""
+    """« Groupe » tab: the missions board of the 4 (summary.missions), only for the current group."""
     s = _d(snap.get("summary"))
-    m = _d(s.get("missions"))
+    m = _d(s.get("missions")) if group_ok(s) else {}
     members = [f"{x.get('name')} ({x.get('class') or '?'} {_i(x.get('level'))})"
                for x in _list(m.get("members")) if isinstance(x, dict)]
     board = []
@@ -1150,9 +1225,10 @@ def group_view(snap: dict) -> dict:
         board.append({"title": str(e.get("title") or "?"), "state": state, "pct": max(0, min(100, pct)),
                       "holders": holders, "missing": _i(e.get("missing"))})
     claims = [f"{c.get('by')} s'occupe de « {c.get('quest')} »" for c in _list(m.get("claims")) if isinstance(c, dict)]
-    return {"members": members, "board": board, "next": str(m.get("next") or ""),
+    fresh = (data_age(snap) or 0) < STALE_S           # « Rejoins le groupe : ils sont dans … » of hours ago: no
+    return {"members": members, "board": board, "next": _plain(m.get("next")),
             "assign": [str(x) for x in _list(m.get("assign"))][:6], "claims": claims[:6],
-            "travel": [str(x) for x in _list(m.get("travel"))][:5],
+            "travel": [str(x) for x in _list(m.get("travel"))][:5] if fresh else [],
             "crafts": [str(x) for x in _list(m.get("crafts"))][:6],
             "no_addon": _i(m.get("noAddon")), "empty": not m}
 
@@ -1180,7 +1256,7 @@ def ah_view(snap: dict) -> dict:
     key = str(snap.get("char_key") or "")
     realms = ah_realms(db)
     our_key = pick_realm(realms.keys(), realm_of(key), sizes={k: _i(_d(v).get("n")) for k, v in realms.items()})
-    faction = our_key.split("-")[1] if our_key.count("-") >= 1 else ""
+    faction = our_key.rsplit("-", 1)[1] if "-" in our_key else ""
     atr_key = pick_realm(adb.keys(), realm_of(key), faction, {k: len(v) for k, v in adb.items()})
     hist = _d(snap.get("ah_hist"))
     deals = []
@@ -1208,6 +1284,12 @@ def ah_view(snap: dict) -> dict:
     rp = auction.realized_profit([e for e in ledger if isinstance(e, dict)])
     days = sorted((k, v) for k, v in rp["days"].items() if k)[-14:]
     r = _d(a.get("realized"))
+    if not r and rp["days"]:                 # no (fresh) AH block: today / 7 days from the ledger's own days
+        n = time.localtime(_f(snap.get("now")) or time.time())
+        keys = {time.strftime("%Y-%m-%d", time.localtime(time.mktime((n.tm_year, n.tm_mon, n.tm_mday - k, 12, 0, 0,
+                                                                         0, 0, -1)))): k for k in range(7)}
+        r = {"today": sum(v for k, v in rp["days"].items() if keys.get(k) == 0),
+             "week": sum(v for k, v in rp["days"].items() if k in keys)}
     realized = {"today": _i(r.get("today")), "week": _i(r.get("week")), "total": _i(r.get("total", rp["total"])),
                 "top": [(str(t.get("item")), _i(t.get("profit"))) for t in _list(r.get("top")) if isinstance(t, dict)][:5],
                 "series": [float(v) for _k, v in days]}
@@ -1216,7 +1298,7 @@ def ah_view(snap: dict) -> dict:
     info.append("HV neutre : commission 15 %" if neutral else "commission 5 %")
     n_atr = _i(snap.get("atr_count")) or sum(len(v) for v in adb.values())
     if n_atr:
-        info.append(f"Auctionator : {n_atr} prix ({atr_key or '?'})")
+        info.append(f"Auctionator : {fmt_int(n_atr)} prix ({atr_key or '?'})")
     # (4.0) the audit: deals of a scan older than 24 h (or of no known scan) are not shown as buyable
     stale_deals = 0
     if deals and (scan is None or scan > AH_MAX_AGE_S):
@@ -1230,7 +1312,7 @@ def ah_view(snap: dict) -> dict:
     none: list[str] = []
     if stale_deals:
         none = [auction.STALE_TEXT, ("scan trop ancien" if scan is not None else "aucun scan connu")
-                + " : ouvre l'HV, clique « Scanner », puis /reload"]
+                + " : ouvre l'HV, clique « Scan complet », puis /reload"]
     elif not deals and isinstance(a.get("none"), dict):
         none = [auction.NONE_TEXT] + [str(x) for x in _list(a["none"].get("why"))][:4]
     rules = _d(a.get("rules"))
@@ -1238,8 +1320,8 @@ def ah_view(snap: dict) -> dict:
                f"s'est vendu en {_i(rules.get('qtyDays'), 3)} j, stop-loss −15 %.") if rules else ""
     return {"deals": deals, "none": none, "rules": rules_t, "mine": mine, "mine_known": "owned" in a,
             "scan_age": scan, "stale_deals": stale_deals,
-            "recent": [(str(e.get("item") or "?"), _i(e.get("money")) - _i(e.get("cut")), str(e.get("day") or ""))
-                       for e in recent],
+            "recent": [(str(e.get("item") or "?"), _i(e.get("money")) - _i(e.get("cut")),
+                        day_text(e.get("day"), snap.get("now"))) for e in recent],
             "realized": realized, "info": " · ".join(info), "budget": budget,
             "thin": [str(x) for x in _list(a.get("thin"))][:5], "empty": not a and not adb}
 
@@ -1248,7 +1330,7 @@ def session_view(snap: dict) -> dict:
     """« Session » tab: recap of the play session (chat log live + missions session) and goals."""
     s = _d(snap.get("summary"))
     chat = _d(snap.get("chat"))
-    ses = _d(_d(s.get("missions")).get("session"))
+    ses = _d(_d(s.get("missions")).get("session")) if group_ok(s) else {}
     rows: list[tuple[str, str]] = []
     if chat.get("events"):
         # (4.0) a chat log not written for 10 min is the LAST session, never « en direct »
@@ -1262,10 +1344,9 @@ def session_view(snap: dict) -> dict:
         if chat.get("levels"):
             rows.append(("Niveaux", ", ".join(str(x) for x in chat["levels"])))
     if ses:
-        nt, nm, nd = _i(ses.get("turned")), _i(ses.get("missions")), _i(ses.get("deaths"))
+        nt, nd = _i(ses.get("turned")), _i(ses.get("deaths"))      # (Group writes missions = 0: never shown)
         rows.append(("Session du groupe", f"{duration_text(ses.get('duration')) or '?'} · {nt} quête{'s' if nt > 1 else ''} "
-                                          f"rendue{'s' if nt > 1 else ''} · {nm} mission{'s' if nm > 1 else ''} · "
-                                          f"{nd} mort{'s' if nd > 1 else ''}"))
+                                          f"rendue{'s' if nt > 1 else ''} · {nd} mort{'s' if nd > 1 else ''}"))
         for lv in _list(ses.get("levels"))[:4]:
             if isinstance(lv, dict) and _i(lv.get("to")) > _i(lv.get("from")):
                 rows.append((str(lv.get("name")), f"niveau {_i(lv.get('from'))} → {_i(lv.get('to'))}"))
@@ -1275,7 +1356,7 @@ def session_view(snap: dict) -> dict:
     goals = []
     g = _d(ses.get("goal"))
     if g:
-        txt = str(g.get("text") or g.get("kind") or "Objectif")
+        txt = _plain(g.get("text") or g.get("kind") or "Objectif")
         eta = f" · ~{duration_text(g.get('eta'))}" if _i(g.get("eta")) > 0 else ""
         goals.append({"text": txt + (" : atteint !" if g.get("done") else eta), "pct": max(0, min(100, _i(g.get("pct"))))})
     lp = level_progress(snap)
@@ -1283,8 +1364,9 @@ def session_view(snap: dict) -> dict:
         # (4.0) the time comes from a MEASURED XP/h (xp_rate), never from an unmeasured estimate
         goals.append({"text": lp["text"] + (f" ({lp['conf']})" if lp.get("conf") else ""), "pct": lp["pct"]})
     q = _d(s.get("quests"))
-    if q.get("questsToLevel"):
-        goals.append({"text": f"~{_i(q['questsToLevel'])} quêtes pour le niveau suivant", "pct": None})
+    if _i(q.get("questsToLevel")) > 0:
+        n = _i(q["questsToLevel"])
+        goals.append({"text": f"~{n} quête{'s' if n > 1 else ''} pour le niveau suivant", "pct": None})
     # (4.0) module Groupe : XP gagnée pendant la session du groupe (plus d'XP/h estimée par membre)
     board = [(str(e.get("name")), _i(e.get("xp"))) for e in _list(ses.get("leaderboard")) if isinstance(e, dict)]
     events = [str(x) for x in _list(ses.get("events"))][:6]
@@ -1318,12 +1400,14 @@ def freshness(snap: dict) -> dict:
         text = "Pas encore de sauvegarde de l'addon : connecte-toi puis tape /reload en jeu."
         badge, tone = "Pas de données", ""
     else:
-        when = "d'à l'instant" if age < 90 else age_text(age)
+        when = age_text(age)                                 # « à l'instant » under 90 s
         text = f"Données du /reload {when}." + (" Tape /reload pour les rafraîchir." if age >= STALE_S else "")
         badge = "/reload " + when
         tone = "warning" if age >= STALE_S else ""
     if live:
-        badge, tone = "En direct", "ok"
+        # (4.0 QA) the chat log makes XP, gold and deaths live, not the step or the quests of a 7-hour-old save
+        if age is not None and age < STALE_S:
+            badge, tone = "En direct", "ok"
         text += " XP, or, morts et butin : en direct (journal de discussion)."
     return {"age": age, "text": text, "badge": badge, "tone": tone, "live": live,
             "stale": age is None or age >= STALE_S, "old": age is not None and age >= OLD_S}
@@ -1350,6 +1434,30 @@ def _why(v: Any) -> str:
     if isinstance(v, (list, dict)):
         v = " ".join(str(x) for x in _list(v) if x)
     return " ".join(str(v or "").split())
+
+
+_EM_DASH = chr(0x2014)
+
+
+def _plain(v: Any) -> str:
+    """An addon text for the page: one line, no em dash (« Ensemble : « X », tiret, toi 6/8 » → « … : toi 6/8 »)."""
+    return _why(v).replace(f" {_EM_DASH} ", " : ").replace(_EM_DASH, "-")
+
+
+def day_text(day: Any, now: Any = None) -> str:
+    """The addon's ledger day (« 2026-11-05 ») in French: « aujourd'hui », « hier », « 5 nov. »."""
+    try:
+        y, mo, d = (int(x) for x in str(day or "").split("-"))
+        n = time.localtime(_f(now) or time.time())
+        delta = (time.mktime((n.tm_year, n.tm_mon, n.tm_mday, 12, 0, 0, 0, 0, -1))
+                 - time.mktime((y, mo, d, 12, 0, 0, 0, 0, -1))) / 86400
+        if round(delta) == 0:
+            return "aujourd'hui"
+        if round(delta) == 1:
+            return "hier"
+        return f"{d} {MOIS[mo - 1]}" + (f" {y}" if y != n.tm_year else "")
+    except (ValueError, IndexError, OverflowError):
+        return str(day or "")
 
 
 def _xp_cap(s: dict) -> int:
@@ -1407,6 +1515,9 @@ def level_progress(snap: dict, rate: dict | None = None) -> dict | None:
         return {"level": max(ups), "next": max(ups) + 1, "pct": None, "eta": "", "conf": "",
                 "text": f"Niveau {max(ups)} atteint (en direct)"}
     xp = min(mx, xp + max(0, _i(since.get("xp"))))
+    if xp >= mx:                       # the live XP covers the level but no level-up line was read yet
+        return {"level": lvl, "next": lvl + 1, "pct": 99, "eta": "imminent", "conf": "",
+                "text": f"Niveau {lvl + 1} imminent"}
     pct = int(100 * xp / mx)
     eta, conf = "", ""
     rate = rate if rate is not None else xp_rate(snap)
@@ -1436,7 +1547,7 @@ def danger_facts(snap: dict) -> list[tuple[str, str]]:
         elif (_f(chat.get("duration")) or 0) >= XP_MIN_S:
             out.append((0, f"Aucune mort depuis {dur}", "ok"))
     if fresh:
-        ld = _d(_d(s.get("fight")).get("lastDeath"))
+        ld = recent_death(s, snap.get("now"))
         if ld:
             who = last_death_text(ld)
             adv = _why(ld.get("advice"))
@@ -1445,7 +1556,7 @@ def danger_facts(snap: dict) -> list[tuple[str, str]]:
         if _i(ses.get("deaths")) >= 2 and not any(t.endswith("(en direct)") for _p, t, _c in out):
             tip = _why(ses.get("tip"))
             out.append((2, f"{_i(ses['deaths'])} morts cette session" + (f". {tip}" if tip else ""), "warning"))
-        for m in _list(_d(s.get("group")).get("members")) if recent else []:
+        for m in _list(_d(s.get("group")).get("members")) if recent and group_ok(s) else []:
             if isinstance(m, dict) and m.get("dead") and not m.get("me") and m.get("name"):
                 out.append((3, f"{m['name']} est mort", "danger"))
         if recent and _i(s.get("bagsTotal")) > 0 and s.get("bagsFree") is not None and _i(s.get("bagsFree")) == 0:
@@ -1471,6 +1582,7 @@ def last_death_text(ld: Any) -> str:
 
 
 _TURN_RE = re.compile(r"^(?:Rends|Rendre|Fais|Termine)\b.*?«\s*([^»]+?)\s*»")
+_ETA_IN_TEXT = re.compile(r"\s*\(≈[^)]*\)")
 
 
 def _quest_text_ok(text: str, titles: set[str] | None) -> bool:
@@ -1498,15 +1610,19 @@ def next_step(snap: dict) -> dict:
     tgt = _d(_d(s.get("compass")).get("target"))
     plan = _d(s.get("plan"))
     out = {"title": "", "why": "", "dist": "", "eta": "", "src": ""}
+    timely = (data_age(snap) or 0) < STALE_S           # (4.0 QA) no « ≈ 1 min » on a step of a 7-hour-old save
     text = _why(now.get("text"))
+    if not timely:                                     # the addon writes its own « (≈ 1 min) » into the text
+        text = _ETA_IN_TEXT.sub("", text).strip()
     if text and _quest_text_ok(text, titles):
         out.update(title=text, why=_why(now.get("why")), src="todo")
-        if 0 < _i(now.get("eta")) < 6 * 3600:
+        if timely and 0 < _i(now.get("eta")) < 6 * 3600 and "≈" not in text:     # the addon's text may hold it
             out["eta"] = "≈ " + _secs(now.get("eta"))
     elif plan.get("label") and plan.get("src") not in (None, "", "none") and not plan.get("stale") \
             and _quest_text_ok(str(plan["label"]), titles):
         n, tot = _i(plan.get("step")), _i(plan.get("steps"))
-        out.update(title=_why(plan["label"]), why=f"Étape {n} sur {tot} de ton trajet." if n and tot else "", src="plan")
+        label = _why(plan["label"]) if timely else _ETA_IN_TEXT.sub("", _why(plan["label"])).strip()
+        out.update(title=label, why=f"Étape {n} sur {tot} de ton trajet." if n and tot else "", src="plan")
     tq = _i(tgt.get("questID"))
     tgt_ok = bool(tgt) and (not tq or logq is None or tq in logq)
     label = _why(tgt.get("label") or tgt.get("title"))
@@ -1523,8 +1639,9 @@ def next_step(snap: dict) -> dict:
     if tgt_ok and out["title"] and (out["src"] == "compass" or (ttl and ttl in out["title"])
                                     or (label and label in out["title"])
                                     or (out["src"] == "plan" and tgt.get("src") == "plan")):
-        out["dist"] = _why(tgt.get("distText")) or _yd_text(tgt.get("dist"))
-        if tgt.get("eta") and not out["eta"]:
+        out["dist"] = (_why(tgt.get("distText")) or _yd_text(tgt.get("dist"))) if (data_age(snap) or 0) < LIVE_WINDOW_S \
+            else ""
+        if timely and tgt.get("eta") and not out["eta"] and "≈" not in out["title"]:
             out["eta"] = "≈ " + _why(tgt.get("eta"))
         zone = _why(tgt.get("zone"))
         if zone and zone != str(s.get("zone") or ""):
@@ -1572,8 +1689,17 @@ def _map_names(db: Any) -> dict[int, str]:
 
 def trajet_view(snap: dict, plan_file: Any = None) -> dict:
     """« Trajet »: the numbered stops of the route the game follows (the app's plan file + the step the addon
-    is at, or the quest tracker's order), only quests of the log; what changed since. Pure.
+    is at, the game's own next stops, or the quest tracker's order), only quests of the log; what changed since.
+    No stop is « current » in a save older than ``STALE_S``. Pure.
     {stops=[{n, title, desc, current, kind}], source, head, warn, dropped, minutes}."""
+    out = _trajet_view(snap, plan_file)
+    if (data_age(snap) or 0) >= STALE_S:
+        for st in out["stops"]:
+            st["current"] = False
+    return out
+
+
+def _trajet_view(snap: dict, plan_file: Any = None) -> dict:
     snap = _d(snap)
     s = _d(snap.get("summary"))
     logq = log_quests(s)
@@ -1628,6 +1754,34 @@ def trajet_view(snap: dict, plan_file: Any = None) -> dict:
                    + (f" · {route.get('title')}" if route and route.get("title") else ""))
         return out
     fresh = (data_age(snap) or 0) < LIVE_WINDOW_S
+    game = sp.get("src") not in (None, "", "none", "file") and not sp.get("stale")
+    # (4.0 QA) the stops the game itself shows (« Prochaine étape » card, Trajet page), same labels, same order:
+    # summary.plan.next = {{k, q, map, label, min}} (Planner); without it, the quest tracker's order below
+    nxt = [x for x in _list(sp.get("next")) if isinstance(x, dict) and _why(x.get("label"))] if game else []
+    if nxt:
+        for st in nxt:
+            k, q = str(st.get("k") or ""), _i(st.get("q"))
+            if logq is not None and q and k in ("obj", "turn") and q not in logq:
+                out["dropped"] += 1
+                continue
+            label = _plain(st.get("label"))
+            desc = [STEP_KIND[k]] if k in STEP_KIND and STEP_KIND[k].split()[0].lower() not in label.lower() else []
+            zone = names.get(_i(st.get("map")))
+            if zone:
+                desc.append(zone)
+            if fresh and _i(st.get("min")) > 0:
+                desc.append(f"dans ≈ {duration_text(_i(st['min']) * 60)}")
+            out["stops"].append({"n": len(out["stops"]) + 1, "title": label, "desc": " · ".join(desc),
+                                 "current": not out["stops"], "kind": k})
+            if len(out["stops"]) >= STOPS_MAX:
+                break
+        n, tot = _i(sp.get("step")), _i(sp.get("steps"))
+        out.update(source="jeu", head=f"Trajet en jeu : étape {n} sur {tot}" if n and tot else "Trajet en jeu",
+                   minutes=_i(sp.get("left")))
+        return out
+    # « En cours » = the quest the in-game route is at (not the tracker's first quest), moved first
+    cur_q = _i(sp.get("quest")) if game else 0
+    stops = []
     for r in _list(_d(s.get("tracker")).get("route")):
         if not isinstance(r, dict) or not r.get("title"):
             continue
@@ -1635,25 +1789,43 @@ def trajet_view(snap: dict, plan_file: Any = None) -> dict:
             out["dropped"] += 1
             continue
         tag, why = quest_tag(r)
-        prog = f"{_i(r.get('done'))}/{_i(r.get('total'))}" if _i(r.get("total")) and not r.get("ready") else ""
+        # tracker done/total count OBJECTIVES (« 0/1 »): the progress words are the log's (« Croc de loup-garou 6/8 »)
+        prog = "" if r.get("ready") else _objective_text(_d((logq or {}).get(_i(r.get("id")))).get("obj"))
         dist = _yd_text(r.get("dist")) if fresh else ""
         desc = " · ".join(x for x in (prog, str(r.get("zone") or ""), dist, why if tag != "Long" else "") if x)
-        out["stops"].append({"n": len(out["stops"]) + 1, "title": str(r["title"]), "desc": desc,
-                             "current": not out["stops"], "kind": "turn" if r.get("ready") else "obj", "tag": tag})
-        if len(out["stops"]) >= STOPS_MAX:
-            break
+        stops.append({"n": 0, "title": str(r["title"]), "desc": desc, "current": bool(cur_q) and _i(r.get("id")) == cur_q,
+                      "kind": "turn" if r.get("ready") else "obj", "tag": tag})
+    if stops and not cur_q:                                # no route in game: the tracker's first quest
+        stops[0]["current"] = True
+    stops.sort(key=lambda st: not st["current"])           # stable: the current one first, the rest in order
+    for i, st in enumerate(stops[:STOPS_MAX], 1):
+        st["n"] = i
+    out["stops"] = stops[:STOPS_MAX]
     if out["stops"]:
         out["source"] = "suivi"
         out["head"] = "Ordre du suivi de quêtes de l'addon (pas de trajet calculé)."
-        if sp.get("label") and sp.get("src") not in (None, "", "none", "file"):
-            out["head"] = f"Trajet en jeu : {_why(sp['label'])}"
+        if sp.get("label") and game:
+            out["head"] = f"Trajet en jeu : {_plain(sp['label'])}"
     return out
+
+
+def _objective_text(obj: Any) -> str:
+    """The first unfinished objective of a log quest (« Croc de loup-garou 6/8 »), else the first one."""
+    objs = [_why(o.get("text") if isinstance(o, dict) else o) for o in _list(obj) if o]
+    objs = [o for o in objs if o]
+    for o in objs:
+        m = re.search(r"(\d+)\s*/\s*(\d+)", o)
+        if m and int(m.group(1)) < int(m.group(2)):
+            return o
+    return objs[0] if objs else ""
 
 
 def members_view(snap: dict) -> list[dict]:
     """Member cards of the group: {name, line, badges=[(text, tone)], me}. Squad's snapshot first (names,
     state), else Missions (names), else Team (no names). Only facts of the save."""
     s = _d(_d(snap).get("summary"))
+    if not group_ok(s):                                   # yesterday's group, kept in the save: not shown
+        return []
     src = [m for m in _list(_d(s.get("group")).get("members")) if isinstance(m, dict)]
     if not src:
         src = [m for m in _list(_d(s.get("missions")).get("members")) if isinstance(m, dict)]
@@ -1662,18 +1834,24 @@ def members_view(snap: dict) -> list[dict]:
         src = [{**m, "name": f"Membre {i}"} for i, m in enumerate(team, 1)]
     my_name = str(snap.get("char_key") or "").split("-", 1)[0] if isinstance(snap, dict) else ""
     my_zone = str(s.get("zone") or "")
+    fresh = (data_age(snap) or 0) < STALE_S           # (4.0 QA) zone, death, bags… of hours ago are not shown
     out = []
     for m in src[:5]:
         name = str(m.get("name") or "?")
         cls = CLASS_FR.get(str(m.get("class") or "").upper(), str(m.get("class") or ""))
         lvl = _i(m.get("level"))
-        line = " · ".join(x for x in (f"{cls} {lvl}".strip() if lvl else cls, str(m.get("zone") or "")) if x)
+        line = " · ".join(x for x in (f"{cls} {lvl}".strip() if lvl else cls, str(m.get("zone") or "") if fresh else "")
+                          if x)
+        me = bool(m.get("me")) or (bool(my_name) and name == my_name)
+        if not fresh:
+            out.append({"name": name, "line": line, "badges": [("Sans TreeAI", "")] if m.get("addon") is False else [],
+                        "me": me})
+            continue
         badges: list[tuple[str, str]] = []
         if m.get("dead"):
             badges.append(("Mort", "danger"))
         if m.get("afk"):
             badges.append(("Absent", "warning"))
-        me = bool(m.get("me")) or (bool(my_name) and name == my_name)
         if m.get("otherZone") or (not me and my_zone and m.get("zone") and str(m["zone"]) != my_zone):
             badges.append(("Autre zone", "warning"))
         elif m.get("far"):
@@ -1685,8 +1863,8 @@ def members_view(snap: dict) -> list[dict]:
         du = _f(m.get("durability"))
         if du is not None and 0 <= du < 20:
             badges.append(("À réparer", "warning"))
-        if m.get("ready"):
-            badges.append(("Prêt", "ok"))
+        if m.get("ready") is False:                       # Group writes ready = true by default: only « pas prêt » is news
+            badges.append(("Pas prêt", "warning"))
         out.append({"name": name, "line": line, "badges": badges[:3], "me": me})
     return out
 
@@ -1700,8 +1878,10 @@ def dungeon_view(snap: dict) -> dict:
     run=[(title, value)], last=[(title, value)]}."""
     s = _d(_d(snap).get("summary"))
     d = _d(s.get("dungeon"))
-    active = bool(d.get("key")) and (data_age(snap) or 0) < OLD_S
-    out: dict = {"active": active, "name": str(d.get("name") or d.get("key") or ""), "why": _why(d.get("why")),
+    age = data_age(snap) or 0
+    active = bool(d.get("key")) and age < OLD_S
+    out: dict = {"active": active, "stale": age >= STALE_S, "name": str(d.get("name") or d.get("key") or ""),
+                 "why": _why(d.get("why")),
                  "boss": str(d.get("boss") or ""), "next": str(d.get("next") or ""), "run": [], "last": []}
     r = _d(d.get("run"))
     if r:

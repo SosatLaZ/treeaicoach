@@ -7,6 +7,9 @@ writes ``release/TreeAICoach.exe`` (the launcher), ``release/app/<version>/part-
 each <= 90 MB), ``release/app/manifest.json`` and ``release/version.json`` (describes the launcher, so
 the in-app updater of 2.13 and older downloads the launcher, which then installs the app). Other
 ``release/app/<version>`` folders are removed. Standard library only, deterministic output.
+
+Without a Windows build, bring the previous app folder up to date first (EVERY module of treeaicoach/, the
+package data and wow_addon/, all verified): ``python packaging/patch_app.py <app folder>``.
 """
 
 from __future__ import annotations

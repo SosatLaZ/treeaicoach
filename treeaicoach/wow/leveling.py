@@ -104,6 +104,12 @@ def summarize(db: Any, char: str | None = None) -> dict | None:
         key = char if char in chars else keys[0]
         c = _d(chars.get(key))
         s = _summary_of(c)
+        try:        # (4.0 QA) blocks of modules that are off (Leveling, Inventory in mode sûr) never override the rest
+            from treeaicoach.wow import live  # noqa: PLC0415
+
+            s = live.trusted_summary(db, c)
+        except Exception:
+            log.debug("leveling: trusted summary failed", exc_info=True)
         lv, inv, grp = _d(s.get("leveling")), _d(s.get("inventory")), _d(s.get("group"))
 
         level = int(_num(lv.get("level"), _num(s.get("level"), 0)) or 0)

@@ -410,7 +410,7 @@ def _shrink(data: Any) -> Any | None:
 
 
 #: What a dropped stale section was, for the « manque » list.
-_STALE_NAMES = {"groupe": "état du groupe", "hv": "affaires de l'HV", "xp": "XP par heure", "trajet": "trajet",
+_STALE_NAMES = {"groupe": "état du groupe", "hv": "prix de l'HV", "xp": "XP par heure", "trajet": "trajet",
                 "quetes": "journal de quêtes", "familier": "familier", "joueur": "état du perso"}
 
 
@@ -542,6 +542,18 @@ def local_answer(question: Any, ctx: dict[str, Any] | None) -> str:
         return ""
 
 
+def _old_lead(sec: Any) -> str:
+    """« Au dernier /reload, il y a 7 h : » for a section the assembler labelled as old, else ""."""
+    when = str(sec.get("age") or "").split(" (")[0].strip() if isinstance(sec, dict) else ""
+    return f"Au dernier /reload, {when} : " if when else ""
+
+
+def _lower_first(t: Any) -> str:
+    """A step of an old save after « Au dernier /reload, il y a 7 h : »: lower-case, without its old « (≈ 1 min) »."""
+    t = re.sub(r"\s*\(≈[^)]*\)", "", str(t or "")).strip()
+    return t[0].lower() + t[1:] if len(t) > 1 and t[1:2].islower() else t
+
+
 def _missing(sec: Any, ctx: dict) -> str:
     m = (sec.get("manque") if isinstance(sec, dict) else None) or ctx.get("manque")
     if m:
@@ -558,6 +570,7 @@ def _local_answer(question: str, ctx: dict) -> str:
     j = ctx.get("joueur") or {}
     tr = ctx.get("trajet") or {}
     qs = ctx.get("quetes") or {}
+    lead = _old_lead(tr)                  # (4.0 QA) « Au dernier /reload, il y a 7 h : … » for an old save
     if main == "detour":
         d = ctx.get("calcul_detour") or {}
         nums = [x for x in (d.get("xp_des_quetes"), d.get("temps_total") and f"en {d['temps_total']}") if x]
@@ -589,6 +602,10 @@ def _local_answer(question: str, ctx: dict) -> str:
             if h.get("a_vendre"):
                 return _sentence("Vends " + _first(h["a_vendre"]))
             if h.get("objets_gris"):
+                g = re.match(r"(\d+) \(≈ (.+?) au marchand\)", str(h["objets_gris"]))
+                if g:
+                    what = "ton objet gris" if g.group(1) == "1" else f"tes {g.group(1)} objets gris"
+                    return _sentence(f"Vends {what} au marchand (≈ {g.group(2)})")
                 return _sentence(f"Vends tes objets gris au marchand : {h['objets_gris']}")
         if h.get("affaires_sures"):
             return _sentence("Affaire sûre : " + _first(h["affaires_sures"]))
@@ -607,12 +624,13 @@ def _local_answer(question: str, ctx: dict) -> str:
         return _missing(b, ctx)
     if main == "pet":
         p = ctx.get("familier") or {}
+        plead = _old_lead(p)
         if re.search(r"munition|fleche|balle|ammo|carquois|giberne", q) and p.get("munitions"):
-            return _sentence(f"Tu as {p['munitions']}")
+            return _sentence(f"{plead}tu as {p['munitions']}" if plead else f"Tu as {p['munitions']}")
         if str(p.get("familier", "")).startswith("TreeAI"):
             return _sentence(p["familier"])
         if p.get("familier"):
-            out = _sentence(f"Ton familier : {p['familier']}")
+            out = _sentence(f"{plead}ton familier : {p['familier']}" if plead else f"Ton familier : {p['familier']}")
             if p.get("munitions"):
                 out += " " + _sentence(f"Munitions : {p['munitions']}")
             return out
@@ -627,7 +645,7 @@ def _local_answer(question: str, ctx: dict) -> str:
             return _sentence(" ; ".join(parts)) + (" " + _sentence(e["que_faire"]) if e.get("que_faire") else "")
         return _missing(e, ctx)
     if main == "dead":
-        step = tr.get("maintenant")
+        step = tr.get("maintenant") if not lead else ""      # the step of an old save is not « ensuite »
         return _sentence("Retourne à ton corps, ou ressuscite auprès du gardien s'il est loin") + (
             " " + _sentence(f"Ensuite : {step}") if step else "")
     if main == "group":
@@ -643,6 +661,8 @@ def _local_answer(question: str, ctx: dict) -> str:
             if isinstance(g, dict) and g.get("note"):
                 out += " " + _sentence(g["note"])
             return out
+        if isinstance(g, dict) and g.get("etat"):
+            return _sentence(g["etat"])
         return _missing(g, ctx)
     if main == "xp":
         x = ctx.get("xp") or {}
@@ -662,6 +682,10 @@ def _local_answer(question: str, ctx: dict) -> str:
     if main == "quests":
         if "abandon" in q and qs.get("a_abandonner"):
             return _sentence("Abandonne " + _first(qs["a_abandonner"]))
+        if "abandon" in q and (qs.get("abandon") or qs.get("en_passant_seulement")):
+            later = _first(qs.get("en_passant_seulement")).split(" : ")[0]
+            return _sentence("Aucune quête à abandonner") + (
+                " " + _sentence(f"« {later} » : seulement si tu passes à côté") if later else "")
         if "rendre" in q:
             if qs.get("pretes_a_rendre"):
                 n = len(qs["pretes_a_rendre"])
@@ -670,7 +694,7 @@ def _local_answer(question: str, ctx: dict) -> str:
         if "combien" in q and qs.get("journal"):
             return _sentence(f"Tu as {qs['journal']} quêtes dans ton journal")
         if tr.get("maintenant"):
-            return _sentence(tr["maintenant"])
+            return _sentence(lead + _lower_first(tr["maintenant"]) if lead else tr["maintenant"])
         return _missing(qs, ctx)
     if main in ("next", "default"):
         al = _unwrap(ctx.get("alertes")) or []
@@ -680,7 +704,8 @@ def _local_answer(question: str, ctx: dict) -> str:
         if re.search(r"zone", q) and tr.get("zones_de_ton_niveau"):
             return _sentence("Pour ton niveau : " + tr["zones_de_ton_niveau"])
         if tr.get("maintenant"):
-            out = (out + " " if out else "") + _sentence(tr["maintenant"])
+            out = (out + " " if out else "") + _sentence(lead + _lower_first(tr["maintenant"]) if lead
+                                                         else tr["maintenant"])
             if tr.get("pourquoi") and len(out) < 160:
                 out += " " + _sentence(tr["pourquoi"])
             return out
@@ -689,6 +714,10 @@ def _local_answer(question: str, ctx: dict) -> str:
         return out or _missing(tr, ctx)
     sec_key = {"talents": "talents", "gear": "equipement", "spells": "sorts"}.get(main)
     sec = _unwrap(ctx.get(sec_key)) if sec_key else None
+    if isinstance(sec, dict) and sec.get("lecture"):       # (4.0 QA) Forever: the tree is not readable
+        guide = sec.get("guide_solo") or sec.get("guide_groupe")
+        return _sentence("Je ne peux pas lire tes talents sur WoW Forever") + (
+            " " + _sentence("D'après le guide, " + _first(guide)) if guide else "")
     if isinstance(sec, dict):
         for k, lead in (("prochain_point", "Prochain talent : "), ("prochains_solo", "Prochain talent : "),
                         ("ameliorations", "Amélioration : "), ("prochains_sorts", "Prochains sorts : "),

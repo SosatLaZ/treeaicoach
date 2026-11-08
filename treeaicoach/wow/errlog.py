@@ -70,11 +70,25 @@ def _diag(db: Any) -> dict:
     return _d(_d(db).get("diag"))
 
 
+def _blocked_rows(d: dict) -> list[dict]:
+    """Blocked actions as {func, kind, ctx, n, t, combat}: Core's real counters ``diag.blockedTop`` (« func|ctx » =
+    {func, ctx, kind, n, combat = count, last}) when present; ``diag.blocked`` keeps only the last 20 events."""
+    top = [e for e in (_d(d.get("blockedTop")).values()) if isinstance(e, dict)]
+    if top:
+        return [{"func": e.get("func"), "kind": e.get("kind"), "ctx": e.get("ctx"), "n": max(1, _i(e.get("n"), 1)),
+                 "t": e.get("last"), "combat": _i(e.get("combat")) > 0} for e in top]
+    return [e for e in _seq(d.get("blocked")) if isinstance(e, dict)]
+
+
+def _blocked_total(d: dict, rows: list[dict]) -> int:
+    return _i(d.get("blockedTotal")) or sum(max(1, _i(e.get("n"), 1)) for e in rows)
+
+
 def build_text(db: Any, now: float | None = None) -> str:
     """The report (French, newest first). ``db`` = parsed TreeAIDB."""
     d = _diag(db)
     errs = [e for e in _seq(d.get("errors")) if isinstance(e, dict)]
-    blocked = [e for e in _seq(d.get("blocked")) if isinstance(e, dict)]
+    blocked = _blocked_rows(d)
     st = _d(d.get("selftest"))
     mac = _d(d.get("macros"))
     ex = _d(d.get("export"))
@@ -84,7 +98,7 @@ def build_text(db: Any, now: float | None = None) -> str:
     out.append(f"Pour mettre à jour : en jeu, tape {COMMAND} puis /reload.")
     out.append("")
     n_err = sum(max(1, _i(e.get("n"), 1)) for e in errs)
-    n_blk = sum(max(1, _i(e.get("n"), 1)) for e in blocked)
+    n_blk = _blocked_total(d, blocked)
     out.append("== Résumé ==")
     out.append(f"Erreurs Lua : {len(errs)} différentes, {n_err} au total")
     out.append(f"Actions bloquées par le jeu : {n_blk}")
@@ -177,9 +191,8 @@ def diag_lists(db: Any, limit: int = 40) -> dict:
             tip = "\n".join(x for x in (head, f"pendant : {g['ctx']}" if g["ctx"] else "", msg) if x)
             out["errors"].append((text, tip, g["n"]))
         blocked: dict[tuple[str, str], dict] = {}
-        for e in _seq(d.get("blocked")):
-            if not isinstance(e, dict):
-                continue
+        rows = _blocked_rows(d)
+        for e in rows:
             k = (_s(e.get("func"), 80), _s(e.get("kind"), 20))
             g = blocked.setdefault(k, {"n": 0, "t": 0, "ctx": set(), "combat": False})
             g["n"] += max(1, _i(e.get("n"), 1))
@@ -199,7 +212,7 @@ def diag_lists(db: Any, limit: int = 40) -> dict:
                 out["tests"].append((f"{'Échec' if bad else 'À vérifier'} · {_s(it.get('label') or it.get('id'), 60)} : "
                                      f"{_s(it.get('detail'), 160)}", "danger" if bad else "warning"))
         out["counts"] = {"errors": len(merged), "errors_total": sum(g["n"] for g in merged.values()),
-                         "blocked": sum(g["n"] for g in blocked.values())}
+                         "blocked": _blocked_total(d, rows) if rows else 0}
         out["export"] = _i(_d(d.get("export")).get("at"))
     except Exception:
         log.debug("errlog: diag lists failed", exc_info=True)

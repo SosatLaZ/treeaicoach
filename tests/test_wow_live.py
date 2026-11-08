@@ -194,7 +194,7 @@ def test_ah_view_net_profit_and_history(snap: dict) -> None:
     assert v["deals"][1]["kind"] == "vendor" and v["deals"][1]["net"] == 5
     assert v["mine"][0]["undercut"] and v["mine_known"]
     assert v["realized"]["total"] == 9000 and v["realized"]["series"] == [1800.0, 475.0]
-    assert v["recent"][0] == ("Lin Test", 475, "2026-11-07")
+    assert v["recent"][0] == ("Lin Test", 475, "7 nov. 2026")           # French date, never ISO
     assert "commission 5 %" in v["info"] and "Auctionator" in v["info"]
 
 

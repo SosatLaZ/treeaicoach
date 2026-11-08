@@ -48,7 +48,7 @@ def _money(copper: float) -> str:
 
 
 def _k(v: float) -> str:
-    return f"{round(v / 1000)}k" if v >= 10000 else f"{round(v / 1000, 1)}k".replace(".", ",")
+    return f"{round(v / 1000)} k" if v >= 10000 else f"{round(v / 1000, 1)} k".replace(".", ",")
 
 
 def _dec(v: float) -> str:
@@ -111,7 +111,7 @@ def stats_rows(summary: Any) -> list[tuple[str, str]]:
         if _f(st.get("deathsH")) is not None:
             rest.append(f"morts {_dec(_f(st['deathsH']))}/h")
         if st.get("deathTop"):
-            rest.append(f"souvent : {str(st['deathTop'])[:24]}")
+            rest.append(f"tué surtout par {str(st['deathTop'])[:24]}")
         if rest:
             rows.append(("Repos et morts", " · ".join(rest)))
         sp = _d(st.get("speed"))

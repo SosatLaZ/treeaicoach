@@ -270,5 +270,6 @@ function M:WriteSummary()
   local d = M.char and M.char.deaths or {}
   local last = d[#d]
   s.fight = { deaths = #d, lastDeath = last and { killer = last.killer, level = last.level, elite = last.elite,
-    advice = last.advice, zone = last.zone, time = last.time, duration = last.duration, startHP = last.startHP } or nil }
+    advice = last.advice, zone = last.zone, time = last.time, duration = last.duration, startHP = last.startHP } or nil,
+    updated = try(G.time) }   -- (QA-APP) l'appli écarte un bloc qui n'est plus réécrit (module coupé)
 end

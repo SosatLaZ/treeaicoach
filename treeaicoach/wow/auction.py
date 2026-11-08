@@ -291,7 +291,7 @@ LIQ = {
     "min_conf": 0.70, "max_tts": 3.0, "min_roi": 0.15, "qty_days": 3, "stop_pct": 15, "cap_pct": 20,
 }
 NONE_TEXT = "Aucun achat-revente sûr pour l'instant"
-STALE_TEXT = "Pas d'achat-revente : les prix sont trop vieux"
+STALE_TEXT = "Pas d'achat-revente : pas de scan récent de l'HV"
 REASON_LABEL = {
     "nohist": "jamais vu en scan", "rare": "objet rare, presque jamais vendu", "short": "historique trop court",
     "scans": "trop peu de scans", "unmeasured": "ventes pas encore mesurées", "slow": "se vend trop peu",
@@ -750,7 +750,7 @@ def answer_lines(db_or_char: Any) -> list[str]:
     """Short French lines for the WoW page / a voice answer."""
     ctx = auction_context(db_or_char)
     if not ctx:
-        return ["Pas encore de données d'hôtel des ventes : ouvre l'HV, clique « Scanner », puis /reload."]
+        return ["Pas encore de données d'hôtel des ventes : ouvre l'HV, clique « Scan complet », puis /reload."]
     lines = list(ctx.get("aucun_achat_sur", []))[:2]
     for k, title in (("affaires", "À acheter"), ("a_vendre", "À vendre")):
         for t in ctx.get(k, [])[:3]:

@@ -668,7 +668,8 @@ function M:WriteSummary()
     if i > 5 then break end
     out[#out + 1] = { title = e.q.title, verdict = e.verdict, score = e.score, why = e.plain, detail = e.short }
   end
-  s.abandon = { list = out, count = #out, log = (M.ctx or {}).logCount, logMax = (M.ctx or {}).logMax }
+  s.abandon = { list = out, count = #out, log = (M.ctx or {}).logCount, logMax = (M.ctx or {}).logMax,
+    updated = try(g("time")) }   -- (QA-APP) l'appli écarte un bloc qui n'est plus réécrit (module coupé)
 end
 
 function M.Count()
