@@ -128,7 +128,13 @@ return function(M, ctx)
   local hero1
   for _, r in ipairs(W.lastLay.rects) do if r.kind == "hero" then hero1 = r.label break end end
   -- (4.1 LAYOUT41) en tête les 4 modes de T.QuestBrain (gros boutons), puis « Prochaine étape », puis le trajet
+  -- (4.1 ZONEPICK) tout en haut : « Zone : … · Changer » + « Choisir ma zone » / « Conseille-moi »
   local first, nTiles = 1, 0
+  local zr = W.lastLay.rects[1]
+  if TreeAI.QuestBrain and TreeAI.QuestBrain.ZoneNow and TreeAI.QuestBrain.ZoneNow() then
+    check(zr and zr.kind == "row" and zr.label:find("^Zone : "), "Quêtes : la zone en tête (" .. tostring(zr and zr.label) .. ")")
+    while W.lastLay.rects[first] and W.lastLay.rects[first].kind ~= "tile" and first <= 3 do first = first + 1 end
+  end
   while W.lastLay.rects[first] and W.lastLay.rects[first].kind == "tile" do first, nTiles = first + 1, nTiles + 1 end
   check(nTiles == (TreeAI.QuestBrain and 4 or 0), "Quêtes : les 4 modes en tête (" .. nTiles .. ")")
   check(W.lastLay.rects[first] and W.lastLay.rects[first].label == "Prochaine étape" and tostring(hero1):find("^Trajet"),

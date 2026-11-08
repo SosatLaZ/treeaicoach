@@ -1830,6 +1830,11 @@ function Z:CountZones()
   if not ticker then while self._counting do step() end end
   return self.counts
 end
+-- (ZONEPICK) une tâche découpée (toutes les 0,05 s, ≤ 2 ms par tranche, arrêtée par la tâche elle-même quand elle a fini) :
+-- le passage honnête de QuestBrain (« Choisir ma zone ») — jamais d'OnUpdate permanent
+function Z.SliceJob(step)
+  return T.NewTicker and T:NewTicker(0.05, step, Z) or nil
+end
 -- zones offered in the menu / options: same continent (+ the picked ones), most quests at my level first ;
 -- (QA-QUEST F14) + les meilleures zones d'un autre continent (≥ 3 quêtes à mon niveau, 4 au plus) : sinon
 -- « un autre continent n'est pris que si tu le coches » ne pouvait jamais se cocher à la souris.
@@ -2149,7 +2154,7 @@ function Z:OthersLine()
     tip[#tip + 1] = fmt("%s : %d (%s)", e.name, e.n, tconcat(t, ", "))
   end
   return { text = fmt("Autres zones : %d quête%s (%s)", o.n, o.n > 1 and "s" or "", tconcat(names, ", ")), prio = 1,
-    id = "zone:others", onClick = function() Z:ShowZoneMenu() end,
+    id = "zone:others", onClick = function() Z:OpenPicker() end,
     tooltip = tconcat(tip, "\n") .. "\nHors du trajet : seulement ta zone de travail.\nClic : choisir une autre zone (ou plusieurs)" }
 end
 function Z:HeadLines()
@@ -2179,8 +2184,8 @@ function Z:HeadLines()
   tsort(nb)
   local label = (A.mode == "auto" and self.label) or A.label or "?"
   out[#out + 1] = { text = "Zone : " .. cut(label, 40) .. " ▾", prio = 1, id = "zone:pick",
-    onClick = function() Z:ShowZoneMenu() end, onRightClick = function() Z:ShowZoneMenu() end,
-    tooltip = "Clic : choisir la zone de travail\n(auto, une ou plusieurs zones, toute la région)"
+    onClick = function() Z:OpenPicker() end, onRightClick = function() Z:ShowZoneMenu() end,
+    tooltip = "Clic : choisir ma zone (classées pour toi)\nClic droit : plusieurs zones, toute la région"
       .. (#nb > 0 and ("\nTa zone n'a presque plus de quêtes : " .. tconcat(nb, ", ") .. " en renfort") or "")
       .. (self:MaskedText() and ("\n" .. self:MaskedText()) or "")
       .. (file and "\nPlan de TreeAI Coach : mêmes règles que le trajet en jeu" or "") }
@@ -2295,10 +2300,25 @@ function Z:OnDisable()
   if P and P.Dirty then P:Dirty(true, "trajet par zone coupé") end
 end
 
+-- (ZONEPICK) « Choisir ma zone » : la fenêtre (page Quêtes), sinon le petit menu
+function Z:OpenPicker()
+  local Wn = T.Window
+  if Wn and type(Wn.OpenZonePicker) == "function" and Wn.IsEnabled and Wn:IsEnabled() then
+    local ok = pcall(Wn.OpenZonePicker, true)
+    if ok then return true end
+  end
+  return self:ShowZoneMenu()
+end
 T:RegisterSlash("zone", function(rest)
   rest = tostring(rest or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
-  if rest == "auto" then Z:SetMode("auto")
+  local QBm = T.QuestBrain
+  if rest == "auto" then
+    if QBm and QBm.ZoneAuto then QBm.ZoneAuto() else Z:SetMode("auto") end
   elseif rest == "region" or rest == "région" or rest == "continent" then Z:SetMode("continent")
   elseif rest == "recalc" then Z:Recalc()
-  else Z:ShowZoneMenu() end
-end, "zone : zone de travail du trajet (auto · région · recalc)")
+  elseif rest == "menu" then Z:ShowZoneMenu()
+  elseif rest == "conseil" or rest == "conseille" or rest == "conseille-moi" then
+    local Wn = T.Window
+    if Wn and Wn.ShowAdvice then Wn.ShowAdvice(true) else Z:OpenPicker() end
+  else Z:OpenPicker() end
+end, "zone : choisir ma zone (zone conseil · auto · région · recalc · menu)")
