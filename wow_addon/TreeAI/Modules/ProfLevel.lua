@@ -362,7 +362,7 @@ end
 function PL.Mode() local m = M.db and M.db.plMode return m == "exact" and "exact" or "full" end
 --- le plan d'un métier : { line, name, mode, target, skill, cap, res (E.Session), split (E.Split), have, reserve,
 --- why, unit = {[id] = {prix, source, conf}}, known (liste lue ?), time, cost, visits }
-function PL.Compute(line, mode, target)
+function PL.Compute(line, mode, target, assume)
   local d = D()
   local pr = profOf(line)
   if not (d and pr and d.r[line]) then return nil end
@@ -370,6 +370,17 @@ function PL.Compute(line, mode, target)
   target = tonumber(target) or PL.Target(line, mode)
   local known = PL.Known(line)
   local learnAt = PL.LearnAt(line)
+  -- (4.1 CITYRUN) recettes du maître supposées apprenables maintenant (exigence seulement estimée : ton choix, ou
+  -- l'option la moins chère par point ; « à confirmer chez le maître ») ; assume = false : aucune
+  if assume == nil then local CR = T.CityRun assume = CR and type(CR.Assume) == "function" and CR.Assume(line) or false end
+  local akey = ""
+  if type(assume) == "table" and next(assume) then
+    local m, ks = {}, {}
+    for k, v in pairs(learnAt or {}) do m[k] = v end
+    for k, v in pairs(assume) do if m[k] == nil then m[k] = v ks[#ks + 1] = k end end
+    tsort(ks)
+    learnAt, akey = m, tconcat(ks, ",")
+  end
   local level = num((try(g("UnitLevel"), "player"))) or 1
   -- recettes utiles d'ici à la cible (le reste ne peut pas servir : moins de travail par fabrication)
   local rows, ids = {}, {}
@@ -399,7 +410,7 @@ function PL.Compute(line, mode, target)
   local have = PL.Have(ids)
   local reserve, why = PL.Reserve()
   local stock, vendor, vinfo, price, value, unit = {}, {}, {}, {}, {}, {}
-  local sig = { line, mode, target, pr.rank, pr.max, level, ver.known, ver.prices, M.db and M.db.overtime or 0 }
+  local sig = { line, mode, target, pr.rank, pr.max, level, ver.known, ver.prices, M.db and M.db.overtime or 0, "A" .. akey }
   local idl = {}
   for id in pairs(ids) do idl[#idl + 1] = id end
   tsort(idl)
@@ -914,6 +925,12 @@ function PL.Steps(plan)
     end
   end
   for _, st in ipairs(steps) do stepText(st, plan) end
+  -- (4.1 CITYRUN) ton étape choisie d'abord, les passées à la fin, « Aller au maître » toujours proposée
+  local CR = T.CityRun
+  if CR and type(CR.ApplyPick) == "function" then
+    local ok, s2 = pcall(CR.ApplyPick, "prof", steps, plan.line)
+    if ok and type(s2) == "table" then steps = s2 end
+  end
   return steps
 end
 
@@ -956,7 +973,13 @@ end
 function PL.SetLine(line) S().line = line PL.Dirty("focus") end
 function PL.FocusPlan()
   local f = PL.focus
-  if not f then return nil end
+  if not f then
+    -- (4.1 CITYRUN) pendant les courses en ville : le métier dont on achète les compos à l'HV
+    local CR = T.CityRun
+    local b = CR and type(CR.Borrow) == "function" and CR.Borrow() or nil
+    if b then return PL.Compute(b.line, b.mode, b.mode == "exact" and 300 or PL.Target(b.line, b.mode)) end
+    return nil
+  end
   return PL.Compute(f.line, f.mode, f.mode == "exact" and 300 or PL.Target(f.line, f.mode))
 end
 local function publish()
@@ -1039,6 +1062,10 @@ function PL.Guide(st, force)
 end
 
 -- ===================================================================== carte « Prochaine étape » (contrat T.focus.card)
+--- (4.1 CITYRUN) clic droit sur une étape : la passer (reclic droit : la reprendre)
+function PL.SkipFn(st)
+  return function() local CR = T.CityRun if CR and type(CR.Skip) == "function" then CR.Skip("prof", st) end end
+end
 local function pageShown()
   local Wn = T.Window
   return Wn and Wn.IsOpen and Wn.IsOpen() and Wn.CurrentPage and Wn.CurrentPage() == "prof" or false
@@ -1069,7 +1096,7 @@ function PL.CardModel(n)
   for i, st in ipairs(steps) do
     if i > n then break end
     rows[#rows + 1] = { n = i, title = st.title, sub = st.sub, icon = st.icon, actionText = PL.ActionText(st),
-      onClick = function() PL.RunStep(st) end }
+      onClick = function() PL.RunStep(st) end, onRightClick = PL.SkipFn(st) }
   end
   if #rows == 0 then
     rows[1] = { n = "!", title = plan.res.stop == "target" and "Cible atteinte : session finie" or "Plus rien à faire avec ce que tu as",
@@ -1084,6 +1111,8 @@ end
 function PL.RunStep(st)
   if type(st) ~= "table" then return false end
   if inCombat() then refuse("Session métier : après le combat.") return false end
+  local CR = T.CityRun   -- (4.1 CITYRUN) clic = cette étape devient l'étape en cours (gardée au recalcul)
+  if CR and type(CR.Pick) == "function" then pcall(CR.Pick, "prof", st) end
   local k = st.kind
   local line = (PL.focus and PL.focus.line) or PL.Line()
   if k == "ask" then PL.SetAH(line, true) say("Achats à l'HV acceptés pour cette session.") return true end
@@ -1526,6 +1555,8 @@ end
 
 -- ------------------------------------------------------------------ quelle carte montrer (fenêtre du jeu ouverte)
 function PL.UpdateCard()
+  local CR = T.CityRun   -- (4.1 CITYRUN) la carte est aux courses en ville pendant qu'elles tournent
+  if not PL.focus and CR and type(CR.OwnsCard) == "function" and CR.OwnsCard() then return CR.UpdateCard() end
   if inCombat() or not PL.focus then PL.HideCard() PL.ClearGlows() return end
   local plan = PL.FocusPlan()
   if not plan then PL.HideCard() return end
@@ -1871,6 +1902,8 @@ local function renderPage(Ly)
     end
   end
   if #profBtns > 1 then Ly.buttons(profBtns, min(#profBtns, 3)) end
+  local CR = T.CityRun   -- (4.1 CITYRUN) « Me concentrer sur les métiers », « Courses en ville », points sur la carte
+  if CR and type(CR.PageButtons) == "function" then local okB, bl = pcall(CR.PageButtons) if okB and type(bl) == "table" then Ly.buttons(bl, min(#bl, 3)) end end
   local ask = not (M.db and M.db.askAH == false)
   Ly.buttons({
     { (mode == "full" and "• " or "") .. "Complet", function() M.db.plMode = "full" if PL.focus then PL.focus.mode = "full" end PL.Dirty("focus") end,
@@ -1902,12 +1935,15 @@ local function renderPage(Ly)
     for i, st in ipairs(steps) do
       if i > 12 then Ly.text(fmt("… et %d étapes de plus.", #steps - 12), "S", "muted") break end
       if Wn.Match(st.title, st.sub) then
-        Ly.step({ n = i, title = st.title, sub = st.sub, onClick = function() PL.RunStep(st) end, actionText = PL.ActionText(st) }, i == 1)
+        Ly.step({ n = i, title = st.title, sub = st.sub, onClick = function() PL.RunStep(st) end, actionText = PL.ActionText(st),
+          onRightClick = PL.SkipFn(st) }, i == 1)
       end
     end
     local why = stopText(plan)
     if why then Ly.text(why, "S", "muted") end
+    if CR and type(CR.StepButtons) == "function" and #steps > 1 then Ly.buttons(CR.StepButtons(), 2) end
   end
+  if CR and type(CR.RenderProfOptions) == "function" then pcall(CR.RenderProfOptions, Ly, line) end
   -- achats
   local sp = plan.split
   local nBuy = #sp.vendor + #sp.ah + #sp.farm
@@ -1955,14 +1991,20 @@ local function renderPage(Ly)
   -- en plus
   local extra = {}
   local junk = PL.Useless()
+  if CR and type(CR.ExtraList) == "function" then   -- (4.1 CITYRUN) verdict précis : besoin du plan, quêtes, 50 points
+    local okX, xl = pcall(CR.ExtraList)
+    junk = {}
+    for i, x in ipairs(okX and xl or {}) do if i <= 4 then junk[#junk + 1] = { id = x.id, n = x.n, sell = x.sell, ah = x.ah } end end
+  end
   if #junk > 0 then
     local parts, total = {}, 0
     for i, j in ipairs(junk) do
       if i <= 3 then parts[#parts + 1] = fmt("%d %s", j.n, matName(j.id)) end
       total = total + j.n * j.sell
     end
-    extra[#extra + 1] = { text = "Vends (inutile pour tes métiers) : " .. tconcat(parts, ", ") .. (total > 0 and (" — " .. money(total) .. " au marchand") or ""),
-      kind = "info", tooltip = "Aucune recette non grise de tes métiers ne s'en sert, aucune quête du journal non plus." }
+    extra[#extra + 1] = { text = "À vendre / à jeter : " .. tconcat(parts, ", ") .. (total > 0 and (" — " .. money(total) .. " au marchand") or ""),
+      kind = "info", tooltip = "En trop : ni ton plan (les deux modes), ni une quête, ni une recette d'ici 50 points n'en ont besoin.",
+      onClick = function() local Wn2 = T.Window if Wn2 and Wn2.Open then Wn2.Open("city") end end }
   end
   local rs = PL.Resale(plan)
   if rs then
@@ -1998,6 +2040,11 @@ if Wn and type(Wn.AddPage) == "function" then
         return "Allumer Métiers", function() T:SetModuleEnabled("Prof", true) end, "Clic : allumer le module Métiers (sans /reload)"
       end
       if PL.focus then return "Quitter la session", function() PL.StopFocus() end, "Clic : fin de la session métier, le trajet de quêtes reprend" end
+      local CR = T.CityRun
+      if CR and type(CR.ProfFocus) == "function" then
+        return "Me concentrer sur les métiers", function() CR.ProfFocus(PL.Line()) end,
+          "Clic : courses en ville d'abord si ton plan demande des achats, puis la session métier (trajet de quêtes en pause)"
+      end
       return "Lancer la session métier", function() PL.StartFocus(PL.Line()) end,
         "Clic : met le trajet de quêtes en pause, la carte et la boussole te guident (marchand, banque, maître, créer)"
     end,

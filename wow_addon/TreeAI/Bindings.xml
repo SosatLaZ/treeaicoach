@@ -8,6 +8,13 @@
 		if TreeAI and TreeAI.ToggleMain then TreeAI.ToggleMain() end
 	</Binding>
 	<!-- Raccourcis (boutons sécurisés de TreeAI : l'action part de TA touche, comme un clic). Sans touche par défaut. -->
+	<!-- (4.1) Courses en ville / session métier : étape suivante / précédente (la boussole suit). Sans touche par défaut. -->
+	<Binding name="TREEAI_STEP_NEXT" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.FocusStep then TreeAI.FocusStep(1) end
+	</Binding>
+	<Binding name="TREEAI_STEP_PREV" header="TREEAI" category="ADDONS">
+		if TreeAI and TreeAI.FocusStep then TreeAI.FocusStep(-1) end
+	</Binding>
 	<Binding name="CLICK TreeAIQuickItem:LeftButton" header="TREEAI" category="ADDONS"/>
 	<Binding name="CLICK TreeAIQuickTarget:LeftButton" header="TREEAI" category="ADDONS"/>
 	<Binding name="CLICK TreeAIQuickMount:LeftButton" header="TREEAI" category="ADDONS"/>
