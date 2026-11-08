@@ -36,7 +36,8 @@ TreeAIDB.export = {
     mount = 0,                         -- mounted speed in yd/s, 0 = no mount
     dps = 55,                          -- optional: own DPS estimate (Boost/Hunter); 0/nil = unknown
     logMax = 20, logCount = 12,        -- C_QuestLog.GetMaxNumQuestsCanAccept() or 20
-    hearth = { cd = 0, map = 1424, x = 51.2, y = 58.7, name = "Moulin-de-Tarren" },  -- cd = seconds left
+    hearth = { cd = 0, map = 1424, x = 51.2, y = 58.7, name = "Moulin-de-Tarren" },  -- cd = seconds left;
+                                       -- map/x/y only once Speed.lua has seen the bind (HEARTHSTONE_BOUND / arrival)
     taxi = { 2, 4, 12 },               -- known TaxiNodes IDs (GetTaxiNodesForMap(...).isUndiscovered == false)
     session = 120,                     -- optional: minutes the player plans to play (Squad `lm`); nil = unknown
     group = 1,                         -- party size (1 = solo)
@@ -133,13 +134,14 @@ TreeAIPlan = {
       verdict = "ok" | "galere" | "long" | "impossible" | "zone",
       reasons = { "Taux de drop 20 % sur Crocs (galère)", ... },   -- French; the first one is the main reason
       steps = {
-        { k = "pick" | "obj" | "turn" | "fly" | "hs" | "train" | "vendor" | "meet" | "grind",
+        { k = "pick" | "obj" | "turn" | "fly" | "hs" | "train" | "vendor" | "meet" | "grind" | "fp",
           q = 1234,                    -- questID (pick / obj / turn); nil otherwise
           o = 1,                       -- objective index into the quest's objectives (obj only)
           map = 1424, x = 40.0, y = 50.0,
           label = "Tuer 10 Loups",
           eta = 12,                    -- minutes after the start of the plan by which the step should be done
-          who = "Ami-Royaume" },       -- optional: the member this step is for (squad route)
+          who = "Ami-Royaume",         -- optional: the member this step is for (squad route)
+          tip = "Tue en chemin : 4 Loups gris pour « X »" },  -- optional: one plain-French speed tip (speed.py)
       } },
   },
 }
@@ -150,6 +152,7 @@ Rules for the addon:
 * Reject the plan when `v ~= 1` or when `char ~= TreeAI:CharKey()`. Show a plan made more than 24 h ago as « plan ancien ».
 * For a `k` it does not know, show the step's `label`.
 * `meet` is a regroup point for the squad. `grind` means "kill mobs here until the next step is unlocked".
+* `fp` = learn this flight point on the way. `tip` (optional) is shown as one line under the current step.
 * Verdict labels: `ok` → « OK », `galere` → « On va galérer », `long` → « Trop long »,
   `impossible` → « Pas faisable », `zone` → « Changez de zone ».
 * Routes come in this order: `xph`, `clear`, `squad` (only when in a group), `safe`.

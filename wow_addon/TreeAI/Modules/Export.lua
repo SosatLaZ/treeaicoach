@@ -523,6 +523,8 @@ function X:PlayerState()
     hearth = { cd = cd, name = try(G("GetBindLocation")) },
     taxi = knownTaxi(), group = max(1, n), raid = try(G("IsInRaid")) and true or false,
   }
+  local bind = T.Speed and T.Speed.Bind and try(T.Speed.Bind, T.Speed)   -- auberge mémorisée (Speed)
+  if type(bind) == "table" then p.hearth.map, p.hearth.x, p.hearth.y = bind.map, bind.x, bind.y end
   local SQ = T.Squad
   local lm = SQ and SQ.char and tonumber(SQ.char.leaveAt) or 0
   if lm > 0 then p.session = max(0, floor((lm - epoch()) / 60)) end

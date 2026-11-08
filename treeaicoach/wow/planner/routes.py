@@ -17,6 +17,7 @@ from typing import Any
 from treeaicoach.wow.planner import data as DM
 from treeaicoach.wow.planner import models as M
 from treeaicoach.wow.planner import solver as S
+from treeaicoach.wow.planner import speed as SP
 
 log = logging.getLogger(__name__)
 
@@ -62,8 +63,17 @@ def _obj_label(pb: DM.Problem, nd: DM.Node) -> str:
     return f"{verb}{n} — « {q.title} »"
 
 
-def build_steps(pb: DM.Problem, s: S.Solver, route: list[int], squad: bool = False) -> list[dict]:
+def build_steps(pb: DM.Problem, s: S.Solver, route: list[int], squad: bool = False,
+                grind_left: float = 0.0) -> list[dict]:
+    """Plan steps of a route, with the speed techniques (speed.py) as extra steps / ``tip`` lines.
+    ``grind_left``: seconds of session left after the route, filled with a final grind step."""
     sim = s.simulate(route)
+    picked_at = {qi: -1 for qi, q in enumerate(pb.quests) if q.in_log}
+    for i, n in enumerate(route):
+        if pb.nodes[n].kind == "pick":
+            picked_at.setdefault(pb.nodes[n].q, i)
+    fps = SP.unknown_flight_points(pb) if pb.start is not None else []
+    fp_used: set[int] = set()
     rects = pb.rects
     steps: list[dict] = []
     prev = pb.START
@@ -77,10 +87,26 @@ def build_steps(pb: DM.Problem, s: S.Solver, route: list[int], squad: bool = Fal
         nd = pb.nodes[n]
         q = pb.quests[nd.q]
         eta = int(round(sim.done_at[i] / 60.0))
+        eta0 = int(round((sim.done_at[i - 1] if i else 0) / 60.0))
+        a = pb.nodes[prev].pt if prev < len(pb.nodes) else pb.start
+        walk = not sim.hearth_before[i] and (prev, n) not in pb.via
+        tip = None
+        if walk and a is not None and nd.pt is not None:
+            fp = SP.flight_point_on_the_way(pb, a, nd.pt, fps, fp_used)
+            if fp is not None:
+                tid, name, fpp, secs = fp
+                fp_used.add(tid)
+                mid, x, y = world_to_map(pb, rects, fpp.c, fpp.x, fpp.y)
+                if mid:
+                    steps.append({"k": "fp", "map": mid, "x": x, "y": y, "eta": eta0,
+                                  "label": f"Point de vol : {name}",
+                                  "tip": f"Prends le point de vol {name} en passant (+{SP.saved_text(secs)}) : "
+                                         "il servira pour la suite"})
+            tip = SP.kill_on_the_way(pb, route, i, a, nd.pt, picked_at)
         if sim.hearth_before[i] and pb.hearth is not None:
             h = pb.hearth
             steps.append({"k": "hs", "map": h.map, "x": h.mx, "y": h.my, "label": "Pierre de foyer",
-                          "eta": int(round((sim.done_at[i - 1] if i else 0) / 60.0))})
+                          "eta": eta0, "tip": SP.hearth_tip(sim.hearth_save[i])})
         elif (prev, n) in pb.via:
             a, b = pb.via[(prev, n)]
             pa = pb.taxi_pos.get(a)
@@ -89,7 +115,11 @@ def build_steps(pb: DM.Problem, s: S.Solver, route: list[int], squad: bool = Fal
                 steps.append({"k": "fly", "map": mid, "x": x, "y": y,
                               "label": f"Vol : {pb.taxi_names.get(a, '?')} → {pb.taxi_names.get(b, '?')}",
                               "eta": int(round((sim.done_at[i - 1] if i else 0) / 60.0))})
+        if sim.grind_before[i] > 0:
+            steps.append(SP.gate_step(pb, nd, sim.grind_before[i], q.req, eta0))
         st: dict[str, Any] = {"k": nd.kind, "q": q.id, "map": nd.pt.map, "x": nd.pt.mx, "y": nd.pt.my, "eta": eta}
+        if tip:
+            st["tip"] = tip
         if nd.kind == "pick":
             st["label"] = f"Prendre « {q.title} »"
         elif nd.kind == "turn":
@@ -108,6 +138,12 @@ def build_steps(pb: DM.Problem, s: S.Solver, route: list[int], squad: bool = Fal
                                       "eta": eta, "who": m.key,
                                       "label": f"Partager « {q.title} » avec {_short(m.key)} (à côté de toi)"})
         prev = n
+    if grind_left > 0:
+        lv = sim.level_end if route else pb.level
+        last = steps[-1]["eta"] if steps else 0
+        g = SP.final_grind_step(pb, lv, grind_left, last, S.grind_rate(pb))
+        if g is not None:
+            steps.append(g)
     return steps
 
 
@@ -252,9 +288,12 @@ def compute_plan(export: dict | None, learn: dict | None = None, char_learn: dic
             sv.lam = res.lam
             v, reasons = verdict(prob, sv, res, zs, rid)
             title = TITLES[rid] + (f" ({len(prob.members)})" if rid == "squad" else "")
+            left = 0.0
+            if rid in ("xph", "safe") and not pb.raid:          # quests run out → grind the rest of the session
+                left = (prob.session_min or (30.0 if not res.route else 0.0)) * 60.0 - res.seconds
             routes.append({"id": rid, "title": title, "xph": int(round(res.xph)),
                            "minutes": int(round(res.seconds / 60.0)), "verdict": v, "reasons": reasons,
-                           "steps": build_steps(prob, sv, res.route, squad=rid == "squad")})
+                           "steps": build_steps(prob, sv, res.route, squad=rid == "squad", grind_left=left)})
         except Exception:
             log.debug("route %s failed", rid, exc_info=True)
     return {"v": 1, "made": int(now if now is not None else time.time()), "char": pb.char, "zone": pb.zone,

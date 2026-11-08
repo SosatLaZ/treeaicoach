@@ -542,7 +542,7 @@ function P:StepLabel(s)
     return "Objectif de « " .. cut(questTitle(q), 30) .. " »"
   end
   local names = { fly = "Prendre le vol", hs = "Pierre de foyer", train = "Voir le maître", vendor = "Marchand",
-    meet = "Regroupement", grind = "Tuer des monstres ici" }
+    meet = "Regroupement", grind = "Tuer des monstres ici", fp = "Prendre le point de vol" }
   return names[s.k] or tostring(s.k or "?")
 end
 local function progress(s, log)
@@ -578,7 +578,7 @@ end
 -- Tracker contract (TRACK-PRO): steps from the current one, TreeAI_Plan format {k,q,o,map,x,y,label,eta,who}
 -- (label always filled, with progress), current index, total, route title. Done / other members' steps are
 -- skipped. nil when no plan is active.
-local PUBLIC = { "k", "q", "o", "map", "x", "y", "label", "eta", "who" }
+local PUBLIC = { "k", "q", "o", "map", "x", "y", "label", "eta", "who", "tip" }
 function P:GetActiveSteps(n)
   n = tonumber(n) or 3
   local steps, cur = self.steps, self.cursor
@@ -897,7 +897,7 @@ function P:MeetingPoint()
 end
 
 -- ===================================================================== navigation (clic seulement)
-local KIND = { pick = "pickup", turn = "turnin", obj = "objective", fly = "flightmaster", hs = "innkeeper",
+local KIND = { pick = "pickup", turn = "turnin", obj = "objective", fly = "flightmaster", fp = "flightmaster", hs = "innkeeper",
   train = "trainer", vendor = "innkeeper" }
 function P:Navigate(s)
   s = s or (self.steps and self.cursor and self.steps[self.cursor])
@@ -999,6 +999,8 @@ function P:Lines()
             tooltip = "Clic : guider (boussole / Shortest Path / TomTom / repère)\n/tai plan passer : étape suivante"
               .. (mins and ("\nDurée estimée : ~" .. mins .. " min") or ""),
             onClick = function() P:Navigate(s) end }
+          -- technique de vitesse calculée par l'appli (SPEED) : une ligne simple sous l'étape
+          if type(s.tip) == "string" and s.tip ~= "" then lines[#lines + 1] = { text = s.tip, prio = 2, id = "plan:tip" } end
           -- per-quest badge when not OK
           if s.q then
             local recs = questRecords()
