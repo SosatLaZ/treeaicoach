@@ -1708,10 +1708,7 @@ W.AddPage({ id = "group", label = "Groupe", icon = TAB_ICON.group, title = "Grou
     elseif inG then
       W.RenderTab(Ly, "group", "Tes amis n'ont pas TreeAI : leurs quêtes n'apparaissent qu'avec l'addon.")
     else
-      local friends = (Q and Q._active and Q.FriendsToInvite) and (try(Q.FriendsToInvite) or {}) or {}
-      W.RenderTab(Ly, "group", "Seul pour l'instant. Invite tes amis : TreeAI synchronise vos quêtes et vos trajets.", nil,
-        (#friends > 0 and Q.InviteFriends) and { ("Inviter mes amis (%d)"):format(#friends), function() Q.InviteFriends() end,
-          "Clic : invite les amis de ton dernier groupe" } or nil)
+      W.RenderTab(Ly, "group", "Seul pour l'instant : quand tu seras en groupe, TreeAI suivra vos quêtes et vos trajets.")
     end
   end })
 W.AddPage({ id = "dungeon", label = "Donjons", icon = TAB_ICON.dungeon, title = "Donjons", render = function(Ly) W.RenderTab(Ly, "dungeon") end })

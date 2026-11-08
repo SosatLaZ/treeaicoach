@@ -32,7 +32,7 @@ def test_protected_calls_only_from_clicks():
         assert bad not in code, bad
     # each game action lives in one function, reached only from a button OnClick / tab control
     owners = {"TakeTaxiNode": {"Q.TakeFlight"}, "SelectOption": {"Q.Bind"}, "DoReadyCheck": {"Q.ReadyCheck"},
-              "InviteUnit": {"Q.InviteFriends"}, "ConvertToRaid": {"Q.Convert"},
+              "InviteUnit": {"Q.ProposeInvite"}, "ConvertToRaid": {"Q.Convert"},
               "SetLootMethod": {"Q.CycleLoot", "Q.CanSetLoot"}}
     starts = [(m.start(), m.group(1)) for m in re.finditer(r"\nfunction ([\w.:]+)", code)]
     for fn, allowed in owners.items():
@@ -43,7 +43,7 @@ def test_protected_calls_only_from_clicks():
             assert owner in allowed, (fn, owner)
     for holder in ("Q.TakeFlight()", "Q.Bind(optn)"):
         assert holder in code
-    for fn in ("TakeFlight", "Bind", "ReadyCheck", "InviteFriends", "Convert", "CycleLoot"):
+    for fn in ("TakeFlight", "Bind", "ReadyCheck", "ProposeInvite", "Convert", "CycleLoot"):
         body = code[code.index("function Q." + fn + "("):]
         body = body[:body.index("\nend")]
         assert "inCombat()" in body, fn

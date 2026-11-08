@@ -194,7 +194,9 @@ return function(M, ctx)
     { name = "Charlie-test", class = "WARRIOR", level = 28, health = 800, healthMax = 900, powerType = 1 } }
   M.FireEvent("GROUP_ROSTER_UPDATE")
   M.Advance(0.5)
-  check(Q.char.friends and #Q.char.friends == 2, "amis du groupe retenus pour « Inviter »")
+  -- (4.0.1) TreeAI n'invite plus jamais de lui-même et ne retient plus les joueurs croisés en groupe
+  check(Q.char.friends and #Q.char.friends == 0, "plus d'« amis » tirés du dernier groupe")
+  check(Q.InviteFriends() == 0, "aucune invitation par TreeAI")
   local rows = Q.MemberRows()
   check(#rows == 3, "3 lignes (toi + 2) : " .. #rows)
   local bravo
@@ -217,7 +219,7 @@ return function(M, ctx)
     "résumé court, dans la fenêtre : " .. tostring(w and w.sum and w.sum:GetText()))
   if w then
     check(w.bReady:IsShown() and w.bConvert:IsShown() and w.bLoot:IsShown(), "chef : appel, convertir, butin visibles")
-    check(not w.bInvite:IsShown(), "tous les amis déjà là : pas d'« Inviter »")
+    check(w.bInvite == nil, "plus de bouton « Inviter »")
     w.bReady:Click() w.bConvert:Click() w.bLoot:Click()
     check(calls[1] == "ready" and calls[2] == "raid" and calls[3] == "loot:freeforall", "clics du chef : " .. table.concat(calls, ","))
   end

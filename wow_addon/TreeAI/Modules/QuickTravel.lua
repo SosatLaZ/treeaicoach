@@ -26,6 +26,7 @@ local Q = T:RegisterModule("QuickTravel", {
     { key = "errands", type = "toggle", label = "Courses groupées avant de quitter la ville", section = "Courses" },
     { key = "ready", type = "toggle", label = "Fenêtre « Tout le monde prêt ? » et boutons du chef", section = "Groupe" },
     { key = "meet", type = "toggle", label = "Point de rencontre partagé avec le groupe", section = "Groupe" },
+    { key = "propose", type = "toggle", label = "Proposer d'inviter un ami de ta zone avant une quête où il faut tuer (jamais automatique)", section = "Groupe" },
   },
 })
 T.QuickTravel = Q
@@ -921,20 +922,18 @@ function Q.FriendsToInvite()
     local nm = str(try(g("UnitName"), raid and ("raid" .. i) or ("party" .. i)))
     if nm then inG[shortName(nm)] = true end
   end
-  for _, nm in ipairs(Q.char and Q.char.friends or {}) do
-    if type(nm) == "string" and not inG[shortName(nm)] then out[#out + 1] = nm end
+  -- vrais amis connectés seulement (liste d'amis du jeu), jamais des joueurs croisés en groupe
+  local CF = rawget(_G, "C_FriendList")
+  local nf = CF and CF.GetNumFriends and num(try(CF.GetNumFriends)) or 0
+  for i = 1, min(nf or 0, 50) do
+    local info = CF.GetFriendInfoByIndex and try(CF.GetFriendInfoByIndex, i)
+    local nm = type(info) == "table" and info.connected and str(info.name)
+    if nm and not inG[shortName(nm)] then out[#out + 1] = nm end
   end
   return out
 end
-function Q.InviteFriends()
-  if inCombat() or (inGroup() and not isLeader()) then return 0 end
-  local k = 0
-  for _, nm in ipairs(Q.FriendsToInvite()) do
-    if k >= 4 then break end
-    if pcallNs("C_PartyInfo", "InviteUnit", nm) then k = k + 1 end
-  end
-  return k
-end
+-- (4.0.1) plus aucune invitation par TreeAI (le joueur ne veut pas d'aide pour inviter) : bouton retiré
+function Q.InviteFriends() return 0 end
 function Q.Convert()
   if inCombat() or not isLeader() then return false end
   if try(g("IsInRaid")) then return pcallNs("C_PartyInfo", "ConvertToParty") end
@@ -1038,7 +1037,7 @@ local function buildWindow()
   end
   f.bReady = btn("Appel « prêt »", Q.ReadyCheck, { "Chef : l'appel du jeu ; sinon la vérification TreeAI" })
   f.bMeet = btn("Rendez-vous ici", Q.SendMeet, { "Envoie ta position au groupe (1 fois / 15 s)" })
-  f.bInvite = btn("Inviter", Q.InviteFriends, { "Réinvite les amis de ton dernier groupe" })
+  f.bInvite = nil
   f.bConvert = btn("En raid", Q.Convert, { "Chef : convertir le groupe" })
   f.bLoot = btn("Butin", Q.CycleLoot, { "Chef : change le mode de butin (clic suivant = mode suivant)" })
   try(f.Hide, f)
@@ -1154,7 +1153,9 @@ function Q.RememberGroup()
       if #names >= 4 then break end
     end
   end
-  if #names > 0 then Q.char.friends = names end
+  -- (4.0.1) plus d'« amis » tirés du dernier groupe (des inconnus de groupe pick-up se faisaient réinviter) :
+  -- seuls les vrais amis (liste d'amis / guilde) sont proposés, voir Q.FriendsToInvite
+  Q.char.friends = {}
 end
 
 -- onglet « Groupe » : un bouton qui ouvre la fenêtre
@@ -1178,6 +1179,49 @@ function startTicker()
   end, Q)
 end
 
+-- (4.0.1) PROPOSITION d'invitation (jamais automatique) : un vrai ami (liste d'amis du jeu) connecté dans ta zone,
+-- à ton niveau ±5, pas encore avec toi → une ligne « l'inviter ? » ; clic = invitation, clic droit = non. Une fois
+-- par ami et par session.
+Q._proposed = Q._proposed or {}
+function Q.ProposeInvite()
+  if not opt("propose") or inCombat() then return end
+  -- seulement avant une quête où il faut TUER (le kill compte pour tout le groupe), jamais pour une quête inutile :
+  -- l'étape 1 du trajet (qui écarte déjà les quêtes inutiles) doit être un objectif « Tue … »
+  local Rt = T.Route
+  local ok, st = pcall(function() return Rt and Rt.Stops and Rt:Stops(1) end)
+  local first = ok and type(st) == "table" and st[1] or nil
+  local txt = first and tostring(first.text or first.label or "") or ""
+  if not (first and (first.kind == "obj" or first.k == "obj") and txt:find("^Tue")) then return end
+  if inGroup() and not isLeader() then return end
+  if (num(try(g("GetNumGroupMembers"))) or 0) >= 5 then return end
+  local CF = rawget(_G, "C_FriendList")
+  if not (CF and CF.GetNumFriends and CF.GetFriendInfoByIndex) then return end
+  local zone = str(try(g("GetRealZoneText"))) or str(try(g("GetZoneText")))
+  local my = num(try(g("UnitLevel"), "player")) or 0
+  if not zone then return end
+  local inG = {}
+  for i = 1, 4 do local nm = str(try(g("UnitName"), "party" .. i)) if nm then inG[shortName(nm)] = true end end
+  for i = 1, min(num(try(CF.GetNumFriends)) or 0, 50) do
+    local info = try(CF.GetFriendInfoByIndex, i)
+    if type(info) == "table" and info.connected and info.name and info.area == zone and not inG[shortName(info.name)]
+        and not Q._proposed[info.name] and math.abs((tonumber(info.level) or my) - my) <= 5 then
+      Q._proposed[info.name] = true
+      local who = shortName(info.name)
+      local name = info.name
+      Q:Suggest("invite", fmt("%s (%s %s) est à %s : l'inviter pour « %s » ? (les kills comptent pour vous deux)", who,
+          tostring(info.className or ""), tostring(info.level or "?"), zone, (T.Cut and T.Cut(txt:gsub("^Tue%s*", ""), 28)) or txt),
+        1, { ttl = 300, tab = "now", sound = false,
+          tooltip = "Clic : l'inviter dans ton groupe. Clic droit : non merci. TreeAI n'invite jamais tout seul.",
+          onClick = function()
+            if inCombat() then return end
+            pcallNs("C_PartyInfo", "InviteUnit", name)
+            Q:ClearSuggestion("invite")
+          end })
+      return
+    end
+  end
+end
+
 function Q:OnEnable()
   self.db.vendors = type(self.db.vendors) == "table" and self.db.vendors or {}
   self.char.friends = type(self.char.friends) == "table" and self.char.friends or {}
@@ -1195,6 +1239,9 @@ function Q:OnEnable()
     if win and try(win.IsShown, win) then pcall(Q.RefreshReady) end
   end)
   self:RegisterEvent("PARTY_LEADER_CHANGED", function() if win and try(win.IsShown, win) then pcall(Q.RefreshReady) end end)
+  for _, ev in ipairs({ "FRIENDLIST_UPDATE", "ZONE_CHANGED_NEW_AREA", "QUEST_ACCEPTED", "QUEST_TURNED_IN" }) do
+    self:RegisterEvent(ev, function() if T.After then T:After(2, function() pcall(Q.ProposeInvite) end) end end)
+  end
   self:RegisterEvent("READY_CHECK", function() if opt("ready") and not inCombat() then Q:ShowReady(true) end end)
   self:On("COMBAT_START", function() Q.HideTaxi() Q.HideCard() end)
   pcall(Q.PushTab)
