@@ -115,7 +115,7 @@ TOAST_MS = 4500
 UPDATE_CHECK_DELAY_MS = 8000     # silent update check after launch (frozen exe only)
 JOURNAL_MAX = 12
 
-PREBUILD_ORDER = ("overlay", "alerts", "settings", "discord", "analysis", "wow")   # built after the first paint
+PREBUILD_ORDER = ("overlay", "alerts", "settings", "discord", "analysis", "wow", "aichat")   # built after the first paint
 GAMES_PAGE = 15                  # rows of the Analyses table drawn at once ("Afficher plus")
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -130,12 +130,13 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("analysis", "Analyse", "analysis"),
     ("settings", "Réglages", "settings"),
     ("wow", "WoW Forever", "wow"),         # World of Warcraft: Forever helper (wow/, ui_page_wow.py)
+    ("aichat", "Parler à l'IA", "chat"),   # 4.1: written chat with the coach (ui_page_aichat.py, wow/ai_chat.py)
 )
 #: Sidebar groups: one per game (League first; the WoW group moves to the top while WoW mode is on,
 #: ``CoachApp._sync_game_nav``), then setting up (rarely), at the bottom.
 NAV_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("League of Legends", ("home", "overlay", "alerts", "discord", "analysis")),
-    ("World of Warcraft", ("wow",)),
+    ("World of Warcraft", ("wow", "aichat")),
     ("Configuration", ("settings",)),
 )
 #: Old page / tab names (tools, fixes, saved links) -> new page.
@@ -147,7 +148,7 @@ PAGE_ALIASES: dict[str, str] = {"dashboard": "home", "help": "settings", "update
 #: Old page names that now are a part of the Réglages page: what to scroll to (and open) there.
 SETTINGS_ANCHORS: dict[str, str] = {"about": "update", "updates": "update", "Mises à jour": "update",
                                     "help": "help", "advanced": "advanced", "Avancé": "advanced",
-                                    "Détection": "advanced", "Performance": "advanced"}
+                                    "Détection": "advanced", "Performance": "advanced", "IA": "ai"}
 #: Status of the launcher.
 STATE_INFO: dict[str, tuple[str, str]] = {
     "STOPPED": ("Analyse arrêtée", DIM),

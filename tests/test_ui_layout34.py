@@ -18,7 +18,7 @@ home = tl.home
 
 
 def test_six_pages_with_one_purpose_each() -> None:
-    assert len(ui.PAGES) <= 7                       # + WoW Forever (3.8)
+    assert len(ui.PAGES) <= 8                       # + WoW Forever (3.8), + Parler à l'IA (4.1)
     assert ui.PAGE_ALIASES["advanced"] == "settings" and ui.PAGE_ALIASES["about"] == "settings"
 
 

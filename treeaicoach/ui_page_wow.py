@@ -1207,6 +1207,9 @@ class WowPage:
         self.hub = live_mod.LiveHub() if live_mod is not None else None
         self.page = W.Page("WoW Forever", "Ton compagnon de jeu : l'étape, l'XP, le groupe, l'HV. "
                                           "Suit chaque /reload, et le direct avec /chatlog.")
+        self.ask_btn = W.button("Demander à l'IA", lambda: app.show_page("aichat"),
+                                tip="Ouvre « Parler à l'IA » : écris ta question au coach.")
+        self.page.set_action(self.ask_btn)
 
         # -- « Maintenant »
         self.hero = qt["HeroCard"]()

@@ -18,7 +18,7 @@ INST = SimpleNamespace(flavor_dir="X:/Jeux/World of Warcraft/_classic_era_", sou
 def test_sidebar_groups_one_per_game() -> None:
     caps = [c for c, _k in ui.NAV_GROUPS]
     assert caps == ["League of Legends", "World of Warcraft", "Configuration"]
-    assert dict(ui.NAV_GROUPS)["World of Warcraft"] == ("wow",)
+    assert dict(ui.NAV_GROUPS)["World of Warcraft"] == ("wow", "aichat")     # 4.1: « Parler à l'IA »
 
 
 def test_overview_verdicts() -> None:
