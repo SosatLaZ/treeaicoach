@@ -1,6 +1,6 @@
 {
-  "version": "3.9.8",
+  "version": "3.9.9",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "WoW : plus d'à-coup chaque seconde, erreurs corrigées, TreeAI seul guide, quêtes justes, cadavre, fichier d'erreurs."
+  "notes": "WoW : mode sûr, bouton minimap, trajet par zone, nouvelle boussole, macros revues, HV fiable + rafale."
 }

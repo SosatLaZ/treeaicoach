@@ -1,25 +1,25 @@
 {
- "version": "3.9.8",
+ "version": "3.9.9",
  "exe": "TreeAICoach-app.exe",
- "sha256": "8fe2ebf097f259cfbb7aad11917c7859b3e23ec2bbf04492cc2b4755690c30f7",
+ "sha256": "6b718f1d86e995f36a4db432f5e4ccc143a3504ca08f8e578b5be9b360b69ed9",
  "chunks": [
   {
-   "name": "3.9.8/part-01.zip",
-   "size": 88089586,
-   "sha256": "f14bc77f66554942ed081d45e50eef0bab966b718705d136fe9b0090bd6c99fc",
+   "name": "3.9.9/part-01.zip",
+   "size": 88089590,
+   "sha256": "4a217f74285c822e3fa015cff1f54d59aed449bd0fc0549f9d15980975801b97",
    "files": 130
   },
   {
-   "name": "3.9.8/part-02.zip",
-   "size": 13225145,
-   "sha256": "5d79e11871866309099488890e9eea20f0eef93ae97f9741af67624cd16bd530",
-   "files": 653
+   "name": "3.9.9/part-02.zip",
+   "size": 13388944,
+   "sha256": "844d31847115e9eaf3be75951597a01fd9759f2f0e896f88094633e7d4b06cb4",
+   "files": 668
   }
  ],
- "total_size": 101314731,
+ "total_size": 101478534,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : plus d'\u00e0-coup chaque seconde, erreurs corrig\u00e9es, TreeAI seul guide, qu\u00eates justes, cadavre, fichier d'erreurs."
+ "notes": "WoW : mode s\u00fbr, bouton minimap, trajet par zone, nouvelle boussole, macros revues, HV fiable + rafale."
 }

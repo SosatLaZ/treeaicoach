@@ -3,6 +3,19 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.9 · 8 novembre 2026
+
+- **WoW : mode sûr** : seul le cœur reste allumé (quêtes, boussole, trajet, cadavre, erreurs, macros) ; le reste
+  est « bêta », à activer en un clic depuis le bouton de la minimap (« Fonctions bêta »).
+- **Bouton de la minimap** : un lanceur rangé (icône, titre, description) pour tout faire à la souris.
+- **Trajet par zone** : tu choisis la zone (Auto, une zone, toute la région), jamais un autre continent sans ton
+  accord ; ordre stable ; temps de trajet appris sur ta vraie vitesse.
+- **Nouvelle boussole**, objets de quête en vraie surbrillance, chemin sur la carte, bande d'horizon.
+- **Macros revues** (Feindre la mort → piège, familier, bandages, monture…), panneau rangé.
+- **HV** : seulement les achats-reventes qui se vendent vraiment ; plus de conseils absurdes ; mode rafale
+  (une touche = une action).
+- Bêta : raccourcis, avantages, recherche + meilleur familier, joueurs ennemis attaquables, groupe prêt ?.
+
 ## 3.9.8 · 8 novembre 2026
 
 - **WoW : fini l'à-coup chaque seconde** : les minuteries de l'addon tombaient toutes sur la même image ; elles
