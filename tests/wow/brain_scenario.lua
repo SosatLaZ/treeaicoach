@@ -32,6 +32,9 @@ return function(M, ctx)
   M.mapNames[1413] = "Les Tarides"
   M.mapRects[1454] = { top = 900, left = 2500, w = 1000, h = 800, continent = 0 }
   M.mapNames[1454] = "Orgrimmar"
+  -- (4.0.3 integ) maps read before these rectangles (the storm, the merged modules): read again ; storm toggles undone
+  if T.Geo and type(T.Geo.rects) == "table" then T.Geo.rects[1413], T.Geo.rects[1454] = nil, nil end
+  if T.settings then T.settings.debug = false end
   M.pos = { mapID = 1424, x = 0.5, y = 0.4 }
   -- the game's watch list (mock, ZONEFIX: C_QuestLog / classic by index + QUEST_WATCH_LIST_CHANGED, like the client)
   local hasWatch = M.WatchQuest ~= nil and M.watchOrder ~= nil
@@ -406,9 +409,18 @@ return function(M, ctx)
   Z:SetStyle(idx("fast"))
   B.char.style = false
   B.Overrides().style = nil
+  -- (4.0.3 integ, ZONEFIX by) « Le plus rapide » chosen explicitly by the player is kept even when a group forms
+  if real then
+    check(Z.char.styleBy == "player", "ZONEFIX: Z:SetStyle(i) without « by » = the player's choice (styleBy)")
+    M.group = { { name = "Ami", class = "WARRIOR", level = 28, online = true } }
+    check(B.StylePass() == 0 and cur() == "fast", "style: the player's explicit « Le plus rapide » is never replaced")
+    M.group = {}
+    Z.char.styleBy = nil                                  -- back to « never chosen » (the default mode)
+  end
   check(B.StylePass() == 0 and cur() == "fast", "style: alone → nothing")
   M.group = { { name = "Ami", class = "WARRIOR", level = 28, online = true } }
   check(B.StylePass() == 1 and cur() == "group", "style: duo → « Groupe » (" .. cur() .. ")")
+  check(not real or Z.char.styleBy == "brain", "ZONEFIX: the pilot's mode is marked styleBy = brain")
   M.group = {}
   check(B.StylePass() == 1 and cur() == "fast", "style: group disbanded → back to « Le plus rapide »")
   M.group = { { name = "Ami", class = "WARRIOR", level = 28, online = true } }
@@ -418,6 +430,7 @@ return function(M, ctx)
   M.group = {}
   check(B.StylePass() == 0 and cur() == "clear", "style: the player's choice kept when the group disbands")
   Z:SetStyle(idx("fast"))
+  if real then Z.char.styleBy = nil end
   B.Overrides().style = nil
   if not real then Z.STYLES, Z.StyleIndex, Z.SetStyle, Z.StyleName = saved[1], saved[2], saved[3], saved[4] end
   -- C3. courses : équipement à 5 % → réparer, urgent ; un réparateur connu à 60 yd → un arrêt en tête du trajet
@@ -497,7 +510,7 @@ return function(M, ctx)
   -- C5. suivre le groupe (contrat Group.Intent) : coupé par défaut, puis une zone voulue par le groupe
   local Gm = T.modules.Group
   if Gm then
-    local wasActive = Gm._active
+    local wasActive, realIntent = Gm._active, Gm.Intent
     Gm._active = true
     Gm.Intent = function() return { kind = "zone", map = 1416, label = "on va dans l'Alterac", by = "Ami", conf = 0.8, at = 42 } end
     check(B.FollowPass() == 0, "follow: off by default (opt-in)")
@@ -508,8 +521,42 @@ return function(M, ctx)
     local ef
     for _, e in ipairs(B.Decisions(3)) do if e.k == "follow" then ef = e end end
     check(ef and tostring(ef.t):find("Ami", 1, true), "follow: logged with who said it")
+    check(Z.char.zoneBy == nil or Z.char.zoneBy == "brain", "ZONEFIX: the zone picked by the pilot is marked zoneBy = brain")
+    Gm.Intent = realIntent
+    -- C5b. (4.0.3 integ) the real GROUPJOIN adapter: GroupJoin's inferred intent → Group.Intent() + GROUP_INTENT
+    local J = T.GroupJoin
+    if type(realIntent) == "function" and J and J.BrainIntent and J.NoteIntent then
+      Z.char.mode, Z.char.zones = "auto", {}
+      B.char.pick = false
+      local JS, oldList = J._state, Gm.List
+      Gm.List = function() return { { me = true }, { name = "Ami" } } end
+      check(J.BrainIntent({ key = "wait:Ami", kind = "wait", name = "Ami", conf = 0.9 }) == nil, "Group.Intent: a pause is not a destination (nil)")
+      local dg = J.BrainIntent({ key = "dg:WC", kind = "dg", name = "Cavernes", conf = 0.7, dungeon = { key = "WC", n = "Cavernes" },
+        target = { map = 1413, x = 46, y = 36.4 } })
+      check(dg and dg.kind == "dungeon" and dg.dungeon == "WC" and dg.point and dg.point.x == 46 and dg.map, "Group.Intent: dungeon → key + entrance point (0–100)")
+      local got = {}
+      T:On("GROUP_INTENT", got, function(_, _, x) got[#got + 1] = x or false end)
+      JS.intent = { key = "z:1413", kind = "z", name = "Les Tarides", zone = 1413, conf = 0.85, by = "Ami", src = "chat" }
+      JS.inferAt = GetTime()                              -- fresh inference: Intent() does not re-read the group
+      J.NoteIntent(JS.intent, GetTime())
+      J.NoteIntent(JS.intent, GetTime())
+      local it = Gm.Intent(Gm)
+      check(#got == 1 and type(got[1]) == "table" and got[1].kind == "zone" and got[1].map == 1413,
+        "GROUP_INTENT fired once when the intent key changes (" .. #got .. ")")
+      check(it and it.kind == "zone" and it.map == 1413 and it.by == "Ami" and it.src == "chat" and it.at == got[1].at,
+        "Group.Intent() → { kind = zone, map, by, src, at (stable) }")
+      B.SetRule("follow", true)
+      S.lastIntent = nil
+      check(B.FollowPass() == 1 and Z.char.mode == "zones" and Z.char.zones[1413], "follow (real adapter): the group's zone is followed")
+      check(B.FollowPass() == 0, "follow (real adapter): applied once")
+      J.NoteIntent(nil)
+      check(#got == 2 and got[2] == false, "GROUP_INTENT fired again when the intent is gone")
+      T:Off("GROUP_INTENT", got)
+      JS.intent, JS.inferAt = nil, nil
+      Gm.List = oldList
+    end
     B.SetRule("follow", false)
-    Gm.Intent = nil
+    Gm.Intent = realIntent
     Gm._active = wasActive
     Z.char.mode, Z.char.zones = "auto", {}
     B.char.pick = false

@@ -1350,7 +1350,11 @@ local function ago(at)
   return fmt("il y a %d min", floor(s / 60 + 0.5))
 end
 
---- l'intention déduite : { key, kind, name, text, tip, conf, target, targetName, targetWho, zone, dungeon } | nil
+-- (BRAIN) d'où vient la preuve la plus forte → src du contrat Group.Intent()
+local INTENT_SRC = { chat = "chat", vote = "chat", rdv = "chat", goal = "goal", planned = "goal", plan = "leader",
+  step = "positions", pick = "positions", inside = "positions", at = "positions", coming = "positions", here = "positions",
+  common = "log" }
+--- l'intention déduite : { key, kind, name, text, tip, conf, target, targetName, targetWho, zone, dungeon, by, src } | nil
 function J.Infer(list, t)
   local ev = J.Evidence(list, t)
   local res = E.Intent(ev, t, JS.intent and JS.intent.key, J.Compatible)
@@ -1458,10 +1462,76 @@ function J.Infer(list, t)
       if not m.me and m._where and m._where.zone == extra then target, tname, twho = m._where, m.name, m.name break end
     end
   end
+  -- (BRAIN) qui l'a dit et d'où : la preuve la plus forte (nom court du membre ; jamais le texte du chat)
+  local top = res.why[1] and res.why[1].e
+  local by = top and type(top.who) == "string" and shortName(top.who) or nil
+  local src = top and ((by and by == leaderName()) and "leader" or INTENT_SRC[top.what]) or nil
   JS.intent = { key = res.key, kind = kind, name = name, text = paren and (text .. " (" .. paren .. ")") or text, tip = tip,
     conf = res.conf, target = target, targetName = tname, targetWho = twho, zone = (kind == "z") and extra or nil,
-    dungeon = (kind == "dg") and extra or nil, explicit = explicit }
+    dungeon = (kind == "dg") and extra or nil, explicit = explicit, by = by, src = src }
   return JS.intent
+end
+
+-- ------------------------------------------------------------------ (BRAIN) contrat GROUPJOIN : Group.Intent()
+-- { kind = "zone"|"dungeon"|"meet", map, dungeon = clé de Data/Dungeons, point = { map, x, y (0–100) }, label, by, src,
+-- conf 0..1, at = GetTime() de l'inférence (stable tant que la clé ne change pas) } ; les autres lectures (pause, hôtel
+-- des ventes, rendre, « un donjon ») ne sont pas des destinations : nil. GROUP_INTENT est envoyé quand la clé change.
+local INFER_GAP = 10
+local BRAIN_KIND = { z = "zone", dg = "dungeon", fm = "meet", rdv = "meet" }
+function J.BrainIntent(it)
+  it = it or JS.intent
+  local kind = type(it) == "table" and BRAIN_KIND[it.kind]
+  if not kind then return nil end
+  local out = { kind = kind, conf = tonumber(it.conf) or 0, at = JS.intentAt or now(), by = it.by, src = it.src, key = it.key }
+  local tg = it.target
+  if type(tg) == "table" and tonumber(tg.map) and tonumber(tg.x) and tonumber(tg.y) then
+    out.point = { map = tonumber(tg.map), x = tonumber(tg.x), y = tonumber(tg.y) }
+  end
+  local name = cut(it.name or "", 30)
+  if kind == "zone" then
+    out.map = tonumber(it.zone)
+    if not out.map then return nil end
+    out.label = "vers " .. name
+  elseif kind == "dungeon" then
+    out.dungeon = type(it.dungeon) == "table" and it.dungeon.key or nil
+    if not out.dungeon then return nil end
+    out.map = out.point and zoneOf(out.point.map) or nil
+    out.label = "donjon : " .. name
+  else
+    if not out.point then return nil end
+    out.map = zoneOf(out.point.map)
+    out.label = "rendez-vous : " .. name
+  end
+  return out
+end
+local function fireIntent(it, t)
+  local key = type(it) == "table" and it.key or nil
+  if key == JS.firedKey then return end
+  JS.firedKey, JS.intentAt = key, key and (t or now()) or nil
+  if T.Fire then pcall(T.Fire, T, "GROUP_INTENT", key and J.BrainIntent(it) or nil) end
+end
+J.NoteIntent = fireIntent
+local inferCore = J.Infer
+function J.Infer(list, t)
+  local it = inferCore(list, t)
+  JS.inferAt = now()
+  fireIntent(it, t)
+  return it
+end
+--- le pilote auto suit-il le groupe ? (sinon l'intention n'est déduite que pour la page Groupe)
+local function brainFollows()
+  local B = T.Brain
+  return type(B) == "table" and B._active and type(B.db) == "table" and B.db.follow == true or false
+end
+J.BrainFollows = brainFollows
+--- Group.Intent() : l'intention du groupe au format du pilote (relue si vieille de ≥ 10 s ; groupe, hors combat)
+function Grp.Intent()
+  local list = Grp.List and Grp:List() or {}
+  local others = 0
+  for _, m in ipairs(list) do if not m.me then others = others + 1 end end
+  if others == 0 then return nil end
+  if not inCombat() and now() - (JS.inferAt or -1e9) >= INFER_GAP then J.Infer(list, now()) end
+  return J.BrainIntent()
 end
 
 --- suis-je déjà avec le groupe pour cette intention ?
@@ -1763,6 +1833,7 @@ end
 -- ------------------------------------------------------------------ cycle (appelé par Group:Tick, 2 s, hors combat)
 function J.Tick(t, list)
   J.Sample(t, list)
+  if brainFollows() and t - (JS.inferAt or -1e9) >= INFER_GAP then J.Infer(list, t) end   -- (BRAIN) GROUP_INTENT
   J.Progress()
   J.VoteTick(t)
   local r = JS.rdv
@@ -2075,6 +2146,9 @@ function J.Summary()
 end
 
 function J.Reset()
+  local had = JS.firedKey
+  JS.firedKey, JS.intentAt, JS.inferAt = nil, nil, nil
+  if had and T.Fire then pcall(T.Fire, T, "GROUP_INTENT", nil) end   -- (BRAIN) plus d'intention : groupe dissous
   JS.cache, JS.samples, JS.chat, JS.plans, JS.placeEv, JS.near, JS.spots = {}, {}, {}, {}, {}, {}, {}
   JS.active, JS.rdv, JS.vote, JS.intent, JS.conflict, JS.spot, JS.spotCache = nil, nil, nil, nil, nil, nil, nil
   JS.lastSections, JS.lastIntentKey, JS.dgAt, JS.placeKey, JS.placeMoving = nil, nil, nil, nil, nil

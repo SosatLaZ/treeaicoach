@@ -253,9 +253,14 @@ function H.Entries()
   local Rd = T.modules and T.modules.Radar
   add("outils", "radar", "Radar", ICON .. "INV_Misc_Map_01", "Clic : afficher / cacher le radar",
     act(function() Rd.Show(not (Rd.db and Rd.db.shown ~= false)) end), (Rd and Rd._active and Rd.Show) and true or false)
-  for _, e in ipairs(type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}) do   -- entrées des modules (Dungeon…)
-    if type(e) == "table" and type(e.fn) == "function" and e.title and e.group ~= "jeu" then
-      add(e.group or "outils", e.id or e.title, e.title, e.icon or ICON .. "INV_Misc_Note_01", e.tip, act(e.fn))
+  -- entrées des modules (Dungeon…) : Outils d'abord puis Réglages, quel que soit l'ordre de chargement (un seul
+  -- en-tête par groupe)
+  for pass = 1, 2 do
+    for _, e in ipairs(type(T.HUB_EXTRA) == "table" and T.HUB_EXTRA or {}) do
+      if type(e) == "table" and type(e.fn) == "function" and e.title and e.group ~= "jeu"
+          and ((e.group == "reglages") == (pass == 2)) then
+        add(e.group or "outils", e.id or e.title, e.title, e.icon or ICON .. "INV_Misc_Note_01", e.tip, act(e.fn))
+      end
     end
   end
   add("reglages", "options", "Options", ICON .. "INV_Misc_Gear_01", "Clic : toutes les options (taille, transparence, modules)",

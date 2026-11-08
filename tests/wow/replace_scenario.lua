@@ -313,6 +313,47 @@ return function(M, ctx)
   check(not still and W.char.hidden[1001], "« Retirer du suivi » hides the quest")
   W.char.hidden = {}
   W.Render()
+  -- (4.0.3 integ) REPLACE → pilote auto : a quest parked by the pilot leaves the tracker (one « En pause (n) » line)
+  -- and the map (no objective area) on BRAIN_PARKED ; a quest ready to turn in never does
+  do
+    local hadBrain = T.Brain
+    local Bn = hadBrain or {}
+    local oldParked, oldList = Bn.Parked, Bn.ParkedList
+    local paused = { [1001] = { k = "far", t = "autre continent", n = "Loups" }, [1002] = { k = "grey", t = "grise", n = "Crocs" } }
+    Bn.Parked = function(q) return paused[tonumber(q)] end
+    Bn.ParkedList = function() return { { q = 1001, k = "far", t = "autre continent", n = "Loups" } } end
+    T.Brain = Bn
+    T:Fire("BRAIN_PARKED")
+    M.Advance(1, 0.1)
+    local has1001, has1002, pauseRow = false, false, nil
+    for i = 1, W.rowsShown or 0 do
+      local r = W.rows[i]
+      if r.qe and r.qe.q.id == 1001 then has1001 = true end
+      if r.qe and r.qe.q.id == 1002 then has1002 = true end
+      if r.kind == "paused" then pauseRow = r end
+    end
+    check(not has1001 and has1002 and pauseRow and tostring(pauseRow.fs:GetText()):find("En pause (1)", 1, true),
+      "Suivi TreeAI: parked quest hidden, ready-to-turn-in kept, « En pause (1) » line: " .. tostring(pauseRow and pauseRow.fs:GetText()))
+    local obj1001, turn1002 = false, false
+    for _, p in ipairs(QP.Pins()) do
+      if tostring(p.key):find("^o:1001:") then obj1001 = true end
+      if p.kind == "turnin" then for _, q in ipairs(p.qs) do if q.id == 1002 then turn1002 = true end end end
+    end
+    check(not obj1001 and turn1002, "QuestPins: no objective area for a parked quest, the « ? » of a finished one kept")
+    Bn.Parked, Bn.ParkedList = oldParked, oldList
+    T.Brain = hadBrain
+    T:Fire("BRAIN_PARKED")
+    M.Advance(1, 0.1)
+    local back, pr = false, false
+    for i = 1, W.rowsShown or 0 do
+      local r = W.rows[i]
+      if r.qe and r.qe.q.id == 1001 then back = true end
+      if r.kind == "paused" then pr = true end
+    end
+    local objBack = false
+    for _, p in ipairs(QP.Pins()) do if tostring(p.key):find("^o:1001:") then objBack = true end end
+    check(back and not pr and objBack, "resumed (BRAIN_PARKED): the quest is back in the tracker and on the map")
+  end
   -- in combat: the progress is written in place (text, bar), nothing re-laid out, nothing blocked
   W.Render()
   local rendersBefore, bBefore = W.renders, blocked()

@@ -226,6 +226,13 @@ local function tagsOf(rec)
 end
 
 --- (re)construit la liste : export + journal réel + trajet. opts = { avail, turnin, objectives, trivial } (défaut : options)
+-- (BRAIN) quête mise en pause par le pilote auto : pas d'icône d'objectif (une quête prête à rendre garde son « ? »)
+local function parkedQ(qid)
+  local B = T.Brain
+  if type(B) ~= "table" or type(B.Parked) ~= "function" then return nil end
+  return try(B.Parked, qid)
+end
+QP.ParkedQ = parkedQ
 function QP.Build(exp, log, lvl, route, o)
   o = o or { avail = opt("avail"), turnin = opt("turnin"), objectives = opt("objectives"), trivial = QP.db and QP.db.trivial }
   local grey = greyLevel(lvl)
@@ -267,7 +274,7 @@ function QP.Build(exp, log, lvl, route, o)
           addQ(p, q, q.stop or 100)
         end
       end
-    elseif not lq.failed and o.objectives then
+    elseif not lq.failed and o.objectives and not parkedQ(qid) then
       local any = false
       for j, lo in ipairs(type(lq.obj) == "table" and lq.obj or {}) do
         local ob = rec and rec.o and rec.o[j]
@@ -1130,6 +1137,7 @@ function QP:OnEnable()
   self:On("QUESTS_UPDATED", onChange)
   self:On("EXPORT_UPDATED", onChange)
   self:On("PLAN_BUILT", onChange)
+  self:On("BRAIN_PARKED", function() QP.Invalidate() onChange() end)   -- (BRAIN) quêtes mises en pause / reprises
   if T.OnMotion then T:OnMotion(QP, QP.Wake) end
   local wm = wmParts()
   if wm and try(wm.IsShown, wm) then QP.MapShown() end

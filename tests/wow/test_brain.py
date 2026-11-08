@@ -70,7 +70,7 @@ def test_readme_contracts():
 def test_session_budget_cap():
     sim = (ROOT / "tests" / "wow" / "session_sim.lua").read_text(encoding="utf-8")
     assert re.search(r"Brain = 40 }", sim)
-    assert "Bugs = 1, Brain = 1 }" in sim       # idle: nothing at all
+    assert re.search(r"[{,]\s*Brain = 1 }", sim)  # idle: nothing at all (after the merged REPLACE idle caps)
 
 
 @pytest.mark.skipif(not shutil.which("lua5.1"), reason="lua5.1 absent")

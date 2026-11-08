@@ -64,6 +64,13 @@ local cut = T.Cut or function(s, n) s = tostring(s or "") return #s > n and s:su
 local function Th() local t = T.Theme if type(t) == "table" and t.Color then return t end end
 local function QP() local m = T.QuestPins return type(m) == "table" and type(m.Build) == "function" and m or nil end
 local function questsMod() local m = T.modules and T.modules.Quests return type(m) == "table" and m or nil end
+-- (BRAIN) quête mise en pause par le pilote auto : rangée dans « En pause (n) » (jamais une quête prête à rendre)
+local function parked(q)
+  local B = T.Brain
+  if type(B) ~= "table" or type(B.Parked) ~= "function" or q.complete then return nil end
+  return try(B.Parked, q.id)
+end
+W.Parked = parked
 
 local WIDTH, HEAD, ROW_Q, ROW_O, ROW_G, PADX = 270, 22, 18, 15, 16, 8
 W.WIDTH = WIDTH
@@ -177,9 +184,11 @@ function W.Model(me)
   local hidden = W.char and W.char.hidden or {}
   -- pas de trajet en cours (pause, aucun) : rangées par zone et par distance, jamais toutes « Hors trajet »
   local byDist = (tonumber(W.db and W.db.sort) or 1) == 2 or not (route and next(route))
-  local entries = {}
+  local entries, paused = {}, 0
   for _, q in ipairs(list) do
-    if q.id and not hidden[q.id] then
+    local pz = q.id and not hidden[q.id] and parked(q)
+    if pz then paused = paused + 1 end
+    if q.id and not hidden[q.id] and not pz then
       local rq = route and route[q.id] or nil
       local e = pos[q.id] or { obj = {} }
       local qe = { q = q, rows = {} }
@@ -245,7 +254,7 @@ function W.Model(me)
       if gr.zone == "Hors trajet" and i < #groups then table.remove(groups, i) groups[#groups + 1] = gr break end
     end
   end
-  return { groups = groups, n = shown, total = #entries }
+  return { groups = groups, n = shown, total = #entries, paused = paused }
 end
 
 -- ===================================================================== cadre
@@ -561,7 +570,8 @@ function W.Render()
   if model.n == 0 then
     n = n + 1
     local r = layoutRow(n, y, ROW_Q, 0)
-    r.fs:SetText(model.total > 0 and "Tout est masqué : clic droit, « Tout réafficher »" or "Aucune quête en cours : prends-en une !")
+    r.fs:SetText(model.total > 0 and "Tout est masqué : clic droit, « Tout réafficher »"
+      or ((model.paused or 0) > 0 and "Rien à suivre : tes quêtes sont en pause" or "Aucune quête en cours : prends-en une !"))
     color(r.fs, 0.7, 0.7, 0.7)
     r.kind, r.qe, r.rowd = "empty", nil, nil
     y = y + ROW_Q
@@ -641,6 +651,15 @@ function W.Render()
     y = y + ROW_Q
   end
   W.hiddenByRoom = left
+  -- (BRAIN) quêtes en pause du pilote auto : une ligne repliée, clic = sa page (Reprendre)
+  if (model.paused or 0) > 0 then
+    n = n + 1
+    local r = layoutRow(n, y, ROW_Q, 0)
+    r.fs:SetText(fmt("En pause (%d) : pilote auto", model.paused))
+    color(r.fs, 0.6, 0.6, 0.6)
+    r.kind, r.qe, r.rowd = "paused", nil, nil
+    y = y + ROW_Q
+  end
   -- ligne Questie : son suivi est encore là (un clic le coupe dans SES options, recharge)
   local AD = T.Addons
   local qs = AD and type(AD.QuestieState) == "function" and AD.QuestieState() or nil
@@ -670,7 +689,7 @@ function W.Signature(model)
   local n, m = 0, 0
   local function put(v) n = n + 1 sigParts[n] = tostring(v) end
   local function prog(v) m = m + 1 progParts[m] = tostring(v) end
-  put(W.db and W.db.sort) put(W.db and W.db.maxQuests) put(W.db and W.db.scale) put(model.total)
+  put(W.db and W.db.sort) put(W.db and W.db.maxQuests) put(W.db and W.db.scale) put(model.total) put(model.paused or 0)
   put(frame and floor(num(meth(frame, "GetTop")) or 0))
   local AD = T.Addons
   local qs = AD and type(AD.QuestieState) == "function" and AD.QuestieState() or nil
@@ -757,6 +776,19 @@ function W.RowTip(r)
     try(tt.Show, tt)
     return
   end
+  if r.kind == "paused" then
+    try(tt.AddLine, tt, "En pause (pilote auto)", 1, 0.82, 0.2)
+    local B = T.Brain
+    local list = B and type(B.ParkedList) == "function" and try(B.ParkedList) or {}
+    for i, e in ipairs(list) do
+      if i > 8 then break end
+      try(tt.AddDoubleLine, tt, cut(tostring(e.n or ("#" .. tostring(e.q))), 30), cut(tostring(e.t or e.why or ""), 30),
+        0.9, 0.9, 0.9, 0.7, 0.7, 0.7)
+    end
+    try(tt.AddLine, tt, "Clic : la page « Pilote auto » (Reprendre)", 0.6, 0.8, 1)
+    try(tt.Show, tt)
+    return
+  end
   local qe = r.qe
   if not qe then try(tt.Hide, tt) return end
   local q = qe.q
@@ -800,6 +832,11 @@ function W.RowClick(r, btn)
   if r.kind == "more" then
     local Wn = T.Window
     if Wn and Wn.Open then T:UserAction(Wn.Open, "quests") end
+    return
+  end
+  if r.kind == "paused" then
+    local B = T.Brain
+    if B and type(B.OpenPage) == "function" then T:UserAction(B.OpenPage) end
     return
   end
   if r.qe then T:UserAction(W.Guide, r.qe, r.rowd) end
@@ -1034,6 +1071,7 @@ function W:OnEnable()
   self:On("QUESTS_UPDATED", function() W.Soon() end)
   self:On("EXPORT_UPDATED", function() W.Soon() end)
   self:On("PLAN_BUILT", function() W.Soon() end)
+  self:On("BRAIN_PARKED", function() W.Soon() end)       -- (BRAIN) quêtes mises en pause / reprises
   for _, ev in ipairs({ "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_TURNED_IN", "ZONE_CHANGED_NEW_AREA", "PLAYER_LEVEL_UP" }) do
     self:RegisterEvent(ev, function() W.Soon() end)
   end

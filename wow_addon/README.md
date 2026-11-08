@@ -1060,11 +1060,18 @@ d'avant, courses retirées du trajet).
   (« on va à Mille pointes »), by = nom court de qui l'a dit, src = "chat" | "goal" | "leader" | "positions" | "log",
   conf = 0..1, at = GetTime() de l'inférence (stable tant que l'intention ne change pas) }` + `T:Fire("GROUP_INTENT",
   intent)` à chaque changement. Le pilote n'agit que si « Suivre le groupe » est coché et `conf ≥ 0,6`.
+  (4.0.3, branché) `Group.Intent()` est dans `GroupJoin.lua` (`J.BrainIntent` : `z` → `zone`, `dg` → `dungeon` +
+  entrée, `fm` / `rdv` → `meet` ; pause, HV, rendre → nil) ; intention relue ≤ 1 / 10 s par `Group:Tick` seulement quand
+  « Suivre le groupe » est coché (sinon à l'ouverture de la page Groupe) ; `GROUP_INTENT` quand la clé change (nil au
+  départ du groupe). ZONEFIX (2) aussi : `Z:SetStyle(i, by)` / `Z:PickZone(map, by)` posent `styleBy` / `zoneBy`.
 * **REPLACE** (icônes de quête + « Suivi TreeAI ») : (1) le suivi TreeAI ne montre pas les quêtes en pause dans sa liste
   (ou les range repliées dans « En pause » avec `T.Brain.Parked(q).t` comme raison), rafraîchi sur `BRAIN_PARKED` ;
   (2) pas d'icône (ou une icône éteinte) pour une quête en pause ; (3) suivre `T.Brain.Context().main` : `taxi` →
   compact « à l'arrivée », `dungeon` → quêtes du donjon seulement, `dead` / `ghost` → caché ; (4) si le suivi TreeAI
   remplace celui du jeu, garder la même sémantique du suivi `C_QuestLog` (le pilote et le suivi auto par zone y écrivent).
+  (4.0.3, branché) (1) + (2) : le suivi TreeAI range les quêtes en pause dans une ligne « En pause (n) : pilote auto »
+  (infobulle : titres et raisons, clic = page « Pilote auto ») ; QuestPins ne dessine plus leurs zones d'objectifs ; les
+  deux se rafraîchissent sur `BRAIN_PARKED` ; une quête prête à rendre n'est jamais cachée. (3) pas encore.
 
 ## Sons, fenêtres, placement vivant (agent UI2)
 

@@ -744,9 +744,12 @@ function Z:StyleIndex()
 end
 function Z:Style() return Z.STYLES[self:StyleIndex()].id end
 function Z:StyleName(i) local e = Z.STYLES[i or self:StyleIndex()] return e and e.name or Z.STYLES[1].name end
-function Z:SetStyle(i)
+--- by = "brain" (pilote auto) ou nil (le joueur) → char.styleBy : un choix explicite du joueur est reconnu même
+--- quand il vaut le mode par défaut (le pilote ne le remplace jamais)
+function Z:SetStyle(i, by)
   i = tonumber(i)
   if not (i and Z.STYLES[i] and self.char) then return false end
+  self.char.styleBy = (by == "brain") and "brain" or "player"
   if self.char.style ~= i then
     self.char.style = i
     self.lastKeys = nil                -- nouveau mode = nouvel ordre tout de suite (pas d'hystérésis sur l'ancien)
@@ -1481,10 +1484,11 @@ function Z:SetMode(mode, map)
 end
 -- (ZONEFIX) choisir UNE zone d'un clic (liste « Zones à faire ») : elle seule, tout de suite (le menu, lui, coche
 -- et décoche plusieurs zones)
-function Z:PickZone(map)
+function Z:PickZone(map, by)
   local ch = self.char
   map = tonumber(map)
   if not (ch and map) then return false end
+  ch.zoneBy = (by == "brain") and "brain" or "player"      -- (ZONEFIX) qui l'a choisie (pilote auto ou joueur)
   ch.mode, ch.zones = "zones", { [map] = true }
   self.lastKeys, self._lastAllowed = nil, nil
   if T.Export and T.Export.Dirty then pcall(T.Export.Dirty, T.Export) end

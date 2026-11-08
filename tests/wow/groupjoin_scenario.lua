@@ -16,6 +16,8 @@ return function(M, ctx)
   if not (G and J) then return end
   M.LeaveCombat()
   T:ApplyPreset("tout")
+  local intents, gi = {}, {}                -- (4.0.3 integ) GROUP_INTENT : envoyé quand la clé de l'intention change
+  T:On("GROUP_INTENT", gi, function(_, _, x) intents[#intents + 1] = x or false end)
   local out0, sent0 = #M.output, #M.sentAddon
   local lv = M.player.level
   local me = T.PlainText(tostring((UnitName("player"))))
@@ -270,6 +272,18 @@ return function(M, ctx)
     and tip:find("sur place", 1, true), "intention : « Le groupe va vers : Kraal de Tranchebauge (2/4 à l'entrée) » :\n" .. text() .. "\n" .. tip)
   n, nowTxt = groupNow()
   check(n == 1 and nowTxt:find("Kraal de Tranchebauge", 1, true), "« Maintenant » : la ligne du groupe = l'intention (une seule) : " .. nowTxt)
+  -- (4.0.3 integ) contrat GROUPJOIN → pilote auto : Group.Intent() au format du pilote + GROUP_INTENT une fois par clé
+  local bi = G.Intent and G.Intent(G)
+  check(type(bi) == "table" and bi.kind == "dungeon" and bi.dungeon == "RFK" and type(bi.point) == "table"
+    and bi.point.map == 1413 and bi.point.x > 1 and bi.point.x <= 100 and bi.map == 1413 and (bi.conf or 0) >= 0.6
+    and type(bi.by) == "string" and bi.src and tonumber(bi.at) and tostring(bi.label):find("Kraal", 1, true),
+    "Group.Intent() : { kind = dungeon, dungeon = RFK, point (0–100), map, conf, by, src, at, label } : "
+    .. (type(bi) == "table" and (tostring(bi.kind) .. "/" .. tostring(bi.dungeon) .. "/" .. tostring(bi.src) .. "/" .. tostring(bi.conf)) or tostring(bi)))
+  local nI, lastI = #intents, intents[#intents]
+  check(nI >= 1 and type(lastI) == "table" and lastI.kind == "dungeon", "GROUP_INTENT envoyé avec l'intention (" .. nI .. ")")
+  local bi2 = G.Intent(G)
+  settle(3)
+  check(#intents == nI and bi2 and bi2.at == bi.at, "même intention : pas de nouvel envoi, « at » stable")
   local jr = line("Rejoindre le groupe (Kraal de Tranchebauge) : au plus vite")
   check(jr and jr.onClick, "« Rejoindre » vise maintenant l'entrée du Kraal")
   fol = control("Suivre le groupe")
@@ -295,6 +309,8 @@ return function(M, ctx)
   M.Advance(1800, 10)
   settle(3)
   check(not line("Kraal de Tranchebauge (2/4"), "30 min plus tard : l'intention s'est éteinte :\n" .. text())
+  check(#intents > nI and intents[#intents] ~= intents[nI], "intention changée / éteinte : GROUP_INTENT renvoyé")
+  T:Off("GROUP_INTENT", gi)
 
   -- ------------------------------------------------------------ 9. combat : aucun clic n'agit, aucune lecture, valeurs secrètes sans erreur
   settle(3)
