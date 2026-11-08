@@ -969,12 +969,15 @@ local function scheduleSpells()
 end
 
 function M:OnEnable()
-  self:RegisterEvent("BAG_UPDATE_DELAYED", scheduleConsumables)
+  -- (LITE) profil essentiel : le panneau Macros seulement, pas de relecture des sacs / de l'équipement en fond
+  if not (T.Lite and T:Lite()) then
+    self:RegisterEvent("BAG_UPDATE_DELAYED", scheduleConsumables)
+    self:RegisterEvent("UNIT_INVENTORY_CHANGED", function(_, _, unit) if unit == nil or unit == "player" then scheduleConsumables() end end)
+    self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", scheduleConsumables)
+    self:RegisterEvent("UNIT_PET", function(_, _, unit) if unit == nil or unit == "player" then scheduleConsumables() end end)
+  end
   self:RegisterEvent("PLAYER_LEVEL_UP", function() scheduleConsumables(); scheduleSpells() end)
   self:RegisterEvent("SKILL_LINES_CHANGED", scheduleConsumables)
-  self:RegisterEvent("UNIT_INVENTORY_CHANGED", scheduleConsumables)
-  self:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", scheduleConsumables)
-  self:RegisterEvent("UNIT_PET", scheduleConsumables)
   self:RegisterEvent("SPELLS_CHANGED", scheduleSpells)
   self:RegisterEvent("LEARNED_SPELL_IN_TAB", scheduleSpells)
   self:RegisterEvent("LEARNED_SPELL_IN_SKILL_LINE", scheduleSpells)   -- nom Forever / Mainline

@@ -72,7 +72,13 @@ local function sv(v) if v == nil or secret(v) then return nil end return v end
 local function low(s) return tostring(s or ""):lower() end
 local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
 local function opt(k) return M.db and M.db[k] end
-local function on(k) return M.db and M.db.enabled ~= false and M.db[k] ~= false end
+-- (LITE) profil essentiel : sacs + butin seulement (pas de barres de nom, badge de cible, boussole, infobulles)
+local LITE_OFF = { plates = true, plateDrops = true, plateTooltipScan = true, target = true, compass = true,
+  tooltip = true }
+local function on(k)
+  if LITE_OFF[k] and T.Lite and T:Lite() then return false end
+  return M.db and M.db.enabled ~= false and M.db[k] ~= false
+end
 local function inCombat() return (T.InCombat and T:InCombat()) or try(G.InCombatLockdown) or false end
 local function clock() return try(G.debugprofilestop) or ((try(G.GetTime) or 0) * 1000) end
 local function mod(name) return T.GetModule and T:GetModule(name) or (T.modules and T.modules[name]) end
@@ -1162,9 +1168,11 @@ function M:OnEnable()
   self:RegisterEvent("QUEST_ACCEPTED", function() schedule("rebuild", 0.6) end)
   self:RegisterEvent("QUEST_TURNED_IN", function() schedule("rebuild", 0.6) end)
   self:RegisterEvent("GET_ITEM_INFO_RECEIVED", function() kindCache = {} schedule("bags", 0.3) end)
-  self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) M.UpdatePlate(unit) M.UpdateCompass() end)
-  self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, _, unit) M.RemovePlate(unit) M.UpdateCompass() end)
-  self:RegisterEvent("PLAYER_TARGET_CHANGED", function() M.UpdateTarget() end)
+  if not (T.Lite and T:Lite()) then   -- (LITE) barres de nom / cible : seulement hors profil essentiel
+    self:RegisterEvent("NAME_PLATE_UNIT_ADDED", function(_, _, unit) M.UpdatePlate(unit) M.UpdateCompass() end)
+    self:RegisterEvent("NAME_PLATE_UNIT_REMOVED", function(_, _, unit) M.RemovePlate(unit) M.UpdateCompass() end)
+    self:RegisterEvent("PLAYER_TARGET_CHANGED", function() M.UpdateTarget() end)
+  end
   self:RegisterEvent("PLAYER_REGEN_ENABLED", function() tipScanCache = {} schedule("rebuild", 0.5) end)
   self:RegisterEvent("LOOT_OPENED", function() M.CheckLoot() end)
   self:RegisterEvent("LOOT_SLOT_CLEARED", function() M.CheckLoot() end)

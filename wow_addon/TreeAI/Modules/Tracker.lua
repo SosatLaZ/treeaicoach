@@ -57,11 +57,11 @@ T.Tracker = M
 
 local floor, min, max, ceil = math.floor, math.min, math.max, math.ceil
 
+-- (LITE) sans table par appel (pcall direct) ; toujours au moins une valeur
+local function tryPass(ok, a, ...) if ok then return a, ... end return nil end
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local r = { pcall(fn, ...) }
-  if not r[1] then return nil end
-  return unpack(r, 2)
+  return tryPass(pcall(fn, ...))
 end
 local function now() return try(_G.GetTime) or 0 end
 local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
@@ -1238,7 +1238,7 @@ function M:OnOptionChanged() M.Refresh(0.2) end
 -- actualisation automatique (Core:StartAutoRefresh) : hors combat, recalcul complet ; en combat, différé
 function M:AutoRefresh()
   if inCombat() then M.dirty = true return end
-  if M.items and now() - lastUpdate < 1.5 then return end
+  if M.items and now() - lastUpdate < 10 then return end   -- (LITE) les événements recalculent tout de suite ; filet 10 s
   pcall(M.Update)
 end
 

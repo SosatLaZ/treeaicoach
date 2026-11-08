@@ -9,7 +9,7 @@ return function(M, ctx)
   ctx.check(type(T.SetTabLines) == "function" and type(T.RegisterTab) == "function", "contrat onglets présent")
   local ids = {}
   for _, t in ipairs(T:GetTabs()) do ids[#ids + 1] = t.id end
-  local order = table.concat(ids, ","):gsub(",gear", "")  -- module tabs (Équipement…) may follow
+  local order = table.concat(ids, ","):gsub(",gear", ""):gsub(",modules", "")  -- module tabs (« Modules » LITE) (Équipement…) may follow
   ctx.check(order == "now,quests,group,hv,info" or order == "now,quests,predict,group,hv,info",
     "onglets dans l'ordre : " .. order)
   local panel = T:GetPanel() or T:CreatePanel()

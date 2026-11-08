@@ -427,14 +427,39 @@ function API.HasAction(slot)
 end
 
 ---------------------------------------------------------------------------
--- Timers
+-- Timers (LITE) : chaque minuteur appartient au module qui l'a créé (événement, message, OnEnable, autre
+-- minuteur en cours). Module coupé = ses tickers sont vraiment annulés (repris tels quels au réveil) et ses
+-- TreeAI:After en attente ne partent plus. Le coût de chaque rappel est compté dans TreeAI._stats (/tai perf).
 ---------------------------------------------------------------------------
+local profile = _G.debugprofilestop
+TreeAI._stats = TreeAI._stats or {}   -- [module] = { calls, ms } (SelfTest / « /tai perf »)
+local curOwner                         -- module dont le code tourne en ce moment (nil = cœur)
+local function isMod(o) return type(o) == "table" and o ~= TreeAI and o.IsEnabled ~= nil and o.name ~= nil end
+local function addStat(owner, ms)
+  local name = isMod(owner) and owner.name or "Core"
+  local st = TreeAI._stats[name]
+  if not st then st = { calls = 0, ms = 0 }; TreeAI._stats[name] = st end
+  st.calls = st.calls + 1
+  st.ms = st.ms + (ms or 0)
+end
+--- appelle fn au nom de `owner` (minuteurs créés dedans = les siens), chronométré
+local function runAs(owner, fn, ...)
+  local prev = curOwner
+  curOwner = owner
+  local t0 = profile and profile()
+  local ok, err = safecall(fn, ...)
+  if t0 then addStat(owner, (profile() or t0) - t0) end
+  curOwner = prev
+  return ok, err
+end
+TreeAI._RunAs = runAs
+
 local timerFrame, timers
 local function ensureTimerFrame()
   if timerFrame or not _G.CreateFrame then return end
   timers = {}
   timerFrame = _G.CreateFrame("Frame")
-  timerFrame:SetScript("OnUpdate", function()
+  timerFrame:SetScript("OnUpdate", function(self)
     local t = now()
     for i = #timers, 1, -1 do
       local tm = timers[i]
@@ -443,29 +468,72 @@ local function ensureTimerFrame()
         safecall(tm.fn)
       end
     end
+    if #timers == 0 and self.Hide then self:Hide() end   -- rien en attente : plus d'OnUpdate du tout
   end)
 end
 
 function TreeAI:After(sec, fn)
   if type(fn) ~= "function" then return end
-  if C_Timer and C_Timer.After then return C_Timer.After(sec or 0, function() safecall(fn) end) end
+  local owner = isMod(curOwner) and curOwner or nil
+  local cb = function()
+    if owner and owner._suspended then return end   -- module coupé entre-temps : rien
+    runAs(owner, fn)
+  end
+  if C_Timer and C_Timer.After then return C_Timer.After(sec or 0, cb) end
   ensureTimerFrame()
-  if timers then timers[#timers + 1] = { at = now() + (sec or 0), fn = fn } end
+  if timers then
+    timers[#timers + 1] = { at = now() + (sec or 0), fn = cb }
+    if timerFrame.Show then timerFrame:Show() end
+  end
+end
+--- rappel interne du cœur (jamais attribué à un module, jamais sauté)
+local function coreLater(sec, fn)
+  local prev = curOwner
+  curOwner = nil
+  TreeAI:After(sec, fn)
+  curOwner = prev
 end
 
-function TreeAI:NewTicker(sec, fn)
+local ownerTickers = setmetatable({}, { __mode = "k" })   -- module -> { proxy, … }
+local Ticker = {}
+Ticker.__index = Ticker
+function Ticker:Cancel()
+  self.cancelled = true
+  if self.real then self.real:Cancel(); self.real = nil end
+end
+function Ticker:IsCancelled() return self.cancelled and true or false end
+local function startTicker(p)
+  if p.real or p.cancelled then return end
+  local cb = function() runAs(p.owner, p.fn) end
   if C_Timer and C_Timer.NewTicker then
-    return C_Timer.NewTicker(sec, function() safecall(fn) end)
+    p.real = C_Timer.NewTicker(p.sec, cb)
+    return
   end
-  local t = { cancelled = false }
-  function t:Cancel() self.cancelled = true end
+  local h = { cancelled = false }
+  function h:Cancel() self.cancelled = true end
   local function loop()
-    if t.cancelled then return end
-    safecall(fn)
-    TreeAI:After(sec, loop)
+    if h.cancelled then return end
+    cb()
+    coreLater(p.sec, loop)
   end
-  TreeAI:After(sec, loop)
-  return t
+  coreLater(p.sec, loop)
+  p.real = h
+end
+
+--- NewTicker(sec, fn[, owner]) : renvoie un objet avec :Cancel() ; owner = module (défaut : celui qui tourne)
+function TreeAI:NewTicker(sec, fn, owner)
+  if type(fn) ~= "function" then return nil end
+  owner = owner or curOwner
+  if not isMod(owner) then owner = nil end
+  local p = setmetatable({ sec = tonumber(sec) or 1, fn = fn, owner = owner }, Ticker)
+  if owner then
+    local list = ownerTickers[owner]
+    if not list then list = {}; ownerTickers[owner] = list end
+    for i = #list, 1, -1 do if list[i].cancelled then tremove(list, i) end end
+    list[#list + 1] = p
+  end
+  if not (owner and owner._suspended) then startTicker(p) end
+  return p
 end
 
 ---------------------------------------------------------------------------
@@ -475,6 +543,7 @@ local frame = _G.CreateFrame and _G.CreateFrame("Frame", "TreeAICoreFrame") or n
 TreeAI.frame = frame
 local handlers = {}   -- event -> { [owner] = fn }
 local messages = {}   -- message -> { [owner] = fn }
+local dispatchDepth = 0
 
 local function ownerActive(owner)
   if type(owner) == "table" and owner.IsEnabled and owner ~= TreeAI then
@@ -483,25 +552,20 @@ local function ownerActive(owner)
   return true
 end
 
-local profile = _G.debugprofilestop
-TreeAI._stats = TreeAI._stats or {}   -- [module] = { calls, ms } (SelfTest / « /tai test »)
+local AURA_UNITS = { player = true, pet = true, target = true, focus = true }
 local function dispatch(event, ...)
   local list = handlers[event]
   if not list then return end
+  -- (LITE) auras : seulement joueur / familier / cible (pas chaque membre du groupe ni chaque barre de nom)
+  if event == "UNIT_AURA" and not AURA_UNITS[(...)] then return end
+  dispatchDepth = dispatchDepth + 1
   for owner, fn in pairs(list) do
     if ownerActive(owner) then
-      local name = tostring(owner.name or "core")
-      TreeAI._ctx = name .. ":" .. tostring(event)
-      local t0 = profile and profile()
-      safecall(fn, owner, event, ...)
-      if t0 then
-        local st = TreeAI._stats[name]
-        if not st then st = { calls = 0, ms = 0 }; TreeAI._stats[name] = st end
-        st.calls = st.calls + 1
-        st.ms = st.ms + ((profile() or t0) - t0)
-      end
+      TreeAI._ctx = tostring(owner.name or "core") .. ":" .. tostring(event)
+      runAs(owner, fn, owner, event, ...)
     end
   end
+  dispatchDepth = dispatchDepth - 1
   TreeAI._ctx = nil
 end
 
@@ -530,6 +594,11 @@ function TreeAI:RegisterEvent(event, owner, fn)
     if type(m) ~= "function" then return false end
     fn = m
   end
+  if isMod(owner) and owner._suspended then   -- module coupé : gardé de côté, rendu au réveil
+    owner._stash = owner._stash or {}
+    owner._stash[event] = fn
+    return true
+  end
   if not handlers[event] then
     handlers[event] = {}
     if frame then
@@ -543,6 +612,7 @@ end
 
 function TreeAI:UnregisterEvent(event, owner)
   owner = owner or self
+  if type(owner) == "table" and owner._stash then owner._stash[event] = nil end
   local list = handlers[event]
   if not list then return end
   list[owner] = nil
@@ -560,6 +630,54 @@ function TreeAI:On(message, owner, fn)
   messages[message] = messages[message] or {}
   messages[message][owner] = fn
   return true
+end
+
+--- LITE : module coupé = ses événements sont vraiment désinscrits (le jeu ne nous les envoie plus s'il n'y a
+--- plus personne) et ses tickers annulés ; au réveil tout revient comme avant.
+local function suspendModule(mod)
+  if mod._suspended then return end
+  mod._suspended = true
+  local stash = mod._stash or {}
+  for event, list in pairs(handlers) do
+    local fn = list[mod]
+    if fn then stash[event] = fn; TreeAI:UnregisterEvent(event, mod) end
+  end
+  mod._stash = stash
+  for _, p in ipairs(ownerTickers[mod] or {}) do
+    if p.real then p.real:Cancel(); p.real = nil end
+  end
+end
+local function resumeModule(mod)
+  if not mod._suspended then return end
+  if dispatchDepth > 0 then   -- jamais de nouvelle clé dans la table qu'on parcourt : au prochain tour
+    if not mod._resumeQueued then
+      mod._resumeQueued = true
+      coreLater(0, function() mod._resumeQueued = nil; if mod._active then resumeModule(mod) end end)
+    end
+    return
+  end
+  mod._suspended = nil
+  local stash = mod._stash
+  mod._stash = nil
+  for event, fn in pairs(stash or {}) do TreeAI:RegisterEvent(event, mod, fn) end
+  local list = ownerTickers[mod]
+  if list then
+    for i = #list, 1, -1 do if list[i].cancelled then tremove(list, i) else startTicker(list[i]) end end
+  end
+end
+TreeAI._SuspendModule, TreeAI._ResumeModule = suspendModule, resumeModule
+
+--- les événements de jeu auxquels TreeAI est abonné (tests / perf)
+function TreeAI:RegisteredEvents()
+  local out = {}
+  for ev, list in pairs(handlers) do if next(list) then out[#out + 1] = ev end end
+  tsort(out)
+  return out
+end
+function TreeAI:ModuleTickers(mod)
+  local n = 0
+  for _, p in ipairs(ownerTickers[mod] or {}) do if p.real then n = n + 1 end end
+  return n
 end
 
 function TreeAI:Off(message, owner)
@@ -590,19 +708,24 @@ function TreeAI:StartAutoRefresh()
     n = n + 1
     local every = tonumber(self.settings and self.settings.refresh) or 3
     if every <= 0 then return end
-    if InCombatLockdown and InCombatLockdown() then every = every * 2 end
+    local fighting = InCombatLockdown and InCombatLockdown()
+    if fighting then every = every * 2 end
     if n < every then return end
     n = 0
+    local info = self.MODULE_INFO or {}
     for _, name in ipairs(self.moduleOrder or {}) do
       local m = self.modules and self.modules[name]
-      if m and type(m.AutoRefresh) == "function" and (not m.IsEnabled or m:IsEnabled()) then
+      -- (LITE) en combat, seuls les modules utiles au combat se recalculent
+      if m and type(m.AutoRefresh) == "function" and m._active and (not m.IsEnabled or m:IsEnabled())
+          and not (fighting and not (info[name] and info[name].combat)) then
         self._ctx = name .. ":AutoRefresh"
-        safecall(m.AutoRefresh, m)
+        runAs(m, m.AutoRefresh, m)
         self._ctx = nil
       end
     end
     self:Fire("REFRESH")
-    if self.RefreshPanel then safecall(self.RefreshPanel, self) end
+    -- le panneau ne se redessine que si un conseil / une ligne a changé (ou un conseil a expiré)
+    if self.RefreshPanel and self:PanelDirty() then self:RequestRefresh() end
   end)
 end
 
@@ -610,12 +733,14 @@ function TreeAI:Fire(message, ...)
   local list = messages[message]
   if not list then return end
   local prev = TreeAI._ctx
+  dispatchDepth = dispatchDepth + 1
   for owner, fn in pairs(list) do
     if ownerActive(owner) then
       TreeAI._ctx = tostring(type(owner) == "table" and owner.name or "core") .. ":" .. tostring(message)
-      safecall(fn, owner, message, ...)
+      runAs(owner, fn, owner, message, ...)
     end
   end
+  dispatchDepth = dispatchDepth - 1
   TreeAI._ctx = prev
 end
 
@@ -713,7 +838,7 @@ end
 local ModuleMixin = {}
 
 function ModuleMixin:IsEnabled()
-  if self._enabled == false then return false end
+  if self._enabled == false or self._gateOff then return false end
   local s = TreeAI.settings
   if s and s.enabled == false then return false end
   return not (self.db and self.db.enabled == false) and self._classOK ~= false
@@ -805,23 +930,32 @@ local function moduleInit(mod)
   if mod._inited then return end
   moduleBindDB(mod)
   mod._inited = true
-  if type(mod.OnInit) == "function" then safecall(mod.OnInit, mod) end
+  if type(mod.OnInit) == "function" then runAs(mod, mod.OnInit, mod) end
 end
 
 local function moduleEnable(mod)
   if mod._active then return end
   moduleClassCheck(mod)
-  if not mod:IsEnabled() then return end
+  if not mod:IsEnabled() then
+    if TreeAI._loggedIn then suspendModule(mod) end
+    return
+  end
   mod._active = true
-  if type(mod.OnEnable) == "function" then safecall(mod.OnEnable, mod) end
+  resumeModule(mod)
+  if type(mod.OnEnable) == "function" then runAs(mod, mod.OnEnable, mod) end
 end
 
 local function moduleDisable(mod)
-  if not mod._active then return end
+  if not mod._active then
+    if TreeAI._loggedIn then suspendModule(mod) end
+    return
+  end
   mod._active = false
-  if type(mod.OnDisable) == "function" then safecall(mod.OnDisable, mod) end
+  if type(mod.OnDisable) == "function" then runAs(mod, mod.OnDisable, mod) end
   TreeAI:ClearSuggestions(mod.name .. ":")
+  suspendModule(mod)
 end
+TreeAI._ModuleEnable, TreeAI._ModuleDisable = moduleEnable, moduleDisable
 
 function TreeAI:RegisterModule(name, tbl)
   if type(name) ~= "string" or name == "" then return nil end
@@ -864,6 +998,7 @@ function TreeAI:SetModuleEnabled(name, enabled)
   else
     moduleDisable(mod)
   end
+  if self._modulesStarted and self._BuildModulesTab then self:_BuildModulesTab() end
   self:RequestRefresh()
   return true
 end
@@ -905,6 +1040,218 @@ function TreeAI:SetProfile(mode)
   self:Fire("PROFILE_CHANGED", mode)
   self:RequestRefresh()
   return true
+end
+
+---------------------------------------------------------------------------
+-- LITE : profils de modules. « essentiel » (défaut pour tout le monde, posé une fois) = seuls les modules utiles
+-- tout le temps tournent ; les autres restent dans « Plus → Modules » (un clic pour les rallumer).
+-- gate = condition pour tourner en profil essentiel : "group" (en groupe), "ah" (HV ouvert), "instance".
+---------------------------------------------------------------------------
+TreeAI.PROFILE_V = 1
+TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
+  Theme = { lite = true, desc = "Apparence du panneau (couleurs, police)" },
+  SelfTest = { lite = true, desc = "Autotest et diagnostic (/tai test)" },
+  Quests = { lite = true, desc = "Quêtes : objectifs, rendus, quêtes proches" },
+  Tracker = { lite = true, desc = "Suivi des quêtes (onglet Quêtes)" },
+  Todo = { lite = true, desc = "À faire : la liste de suivi des quêtes" },
+  Compass = { lite = true, desc = "Boussole : flèche vers le prochain objectif" },
+  Planner = { lite = true, desc = "Itinéraire de quêtes optimisé" },
+  Export = { lite = true, desc = "Export du perso et du plan vers TreeAI Coach" },
+  Group = { lite = true, gate = "group", desc = "Synchro des quêtes avec tes amis (en groupe)" },
+  Squad = { lite = true, gate = "group", combat = true, desc = "Groupe : état des amis, partage de quêtes (en groupe)" },
+  Missions = { lite = true, gate = "group", desc = "Missions de groupe (en groupe)" },
+  Macros = { lite = true, liteParts = true, desc = "Macros intelligentes (panneau Macros)" },
+  Auction = { lite = true, gate = "ah", desc = "Hôtel des ventes (quand l'HV est ouvert)" },
+  Highlight = { lite = true, liteParts = true, desc = "Surligne les objets utiles des sacs et du butin" },
+  Hunter = { lite = true, combat = true, desc = "Chasseur : familier, munitions, aspects" },
+  Abandon = { lite = true, liteParts = true, desc = "Quêtes à abandonner (calculé à la demande)" },
+  Dungeon = { lite = true, gate = "instance", combat = true, desc = "Donjon (s'allume tout seul en instance)" },
+  Boost = { lite = false, combat = true, desc = "Rappels de buffs, menace en groupe" },
+  Fight = { lite = false, combat = true, desc = "Combat : contrôles, interruptions, récap de mort" },
+  HunterPro = { lite = false, combat = true, desc = "Chasseur avancé : pièges, barre de tir" },
+  Comfort = { lite = false, desc = "Confort : nouveautés, nouveaux sorts, ralenti auto" },
+  Pro = { lite = false, desc = "Conseils avancés (repos, sacs, trajets)" },
+  Economy = { lite = false, desc = "Économie : or gagné, valeur des sacs" },
+  Session = { lite = false, desc = "Ma session : bilan, pauses" },
+  Errands = { lite = false, desc = "Guichets : courrier, entraîneur, vols" },
+  Gear = { lite = false, desc = "Équipement : améliorations" },
+  Talents = { lite = false, desc = "Talents : où mettre tes points" },
+  Prof = { lite = false, desc = "Métiers : recettes et composants" },
+  PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
+  Radar = { lite = false, desc = "Radar rond des objectifs" },
+  SafePath = { lite = false, desc = "Chemin sûr : évite les monstres" },
+  Binds = { lite = false, desc = "Raccourcis clavier conseillés" },
+  Leveling = { lite = false, desc = "Montée de niveau : zones, rythme" },
+  Inventory = { lite = false, desc = "Inventaire : tri, objets inutiles" },
+  Classes = { lite = false, combat = true, desc = "Conseils de classe (autres classes)" },
+  Predict = { lite = false, desc = "Prévisions : ce qui va te manquer" },
+}
+
+function TreeAI:ModuleProfile()
+  local db = self.db
+  return (type(db) == "table" and db.moduleProfile == "tout") and "tout" or "essentiel"
+end
+--- profil léger actif ? (les modules allumés y font le minimum : pas de scans en fond)
+function TreeAI:Lite() return self:ModuleProfile() == "essentiel" end
+
+local ahOpen = false
+local function gateOpen(gate)
+  if gate == "group" then
+    if try(_G.IsInGroup) then return true end
+    return ((try(_G.GetNumGroupMembers) or 0) > 0) or ((try(_G.GetNumPartyMembers) or 0) > 0)
+      or ((try(_G.GetNumRaidMembers) or 0) > 0)
+  elseif gate == "instance" then
+    local inst, kind = try(_G.IsInInstance)
+    return (inst and kind ~= "none") and true or false
+  elseif gate == "ah" then
+    return ahOpen
+  end
+  return true
+end
+TreeAI._GateOpen = gateOpen
+
+--- (ré)évalue les conditions : ouvre / ferme les modules concernés ; `event` rejoué au module qui se réveille
+function TreeAI:_EvalGates(event, ...)
+  local lite = self:Lite()
+  local changed = false
+  for _, n in ipairs(self.moduleOrder) do
+    local mod = self.modules[n]
+    local info = self.MODULE_INFO[n]
+    local off = (lite and info and info.gate and not gateOpen(info.gate)) and true or nil
+    if off ~= mod._gateOff then
+      changed = true
+      mod._gateOff = off
+      if self._modulesStarted then
+        if off then
+          moduleDisable(mod)
+        else
+          moduleEnable(mod)
+          local h = event and mod._active and handlers[event] and handlers[event][mod]
+          if h then runAs(mod, h, mod, event, ...) end
+        end
+      end
+    end
+  end
+  if changed and self._modulesStarted then self:_BuildModulesTab() end
+  return changed
+end
+
+--- « essentiel » | « tout » : pose l'état de chaque module (sans /reload)
+function TreeAI:SetModuleProfile(name)
+  if type(self.db) ~= "table" then return false end
+  name = (name == "tout" or name == "all") and "tout" or "essentiel"
+  local changed = self:ModuleProfile() ~= name
+  self.db.moduleProfile = name
+  for _, n in ipairs(self.moduleOrder) do
+    local mod = self.modules[n]
+    local info = self.MODULE_INFO[n]
+    local want = name == "tout" or not info or info.lite ~= false
+    if mod.db then
+      mod.db.enabled = want
+      if self._modulesStarted then
+        -- modules qui en font moins en profil essentiel : redémarrés pour prendre le nouveau profil
+        if changed and want and info and info.liteParts and mod._active then moduleDisable(mod) end
+        if want then moduleEnable(mod) else moduleDisable(mod) end
+      end
+    end
+  end
+  self:_EvalGates()
+  if self._modulesStarted then
+    self:ClearSuggestion("core:lite")
+    self:_BuildModulesTab()
+    self:RequestRefresh()
+  end
+  return true
+end
+
+-- premier lancement de cette version : profil essentiel pour tout le monde, une fois (avis + « Tout réactiver »)
+function TreeAI:_ApplyProfileOnce()
+  local db = self.db
+  if type(db) ~= "table" then return end
+  if (tonumber(db.profileV) or 0) >= self.PROFILE_V then return end
+  db.profileV = self.PROFILE_V
+  self:SetModuleProfile("essentiel")
+  self._liteNotice = true
+end
+
+function TreeAI:_LiteNotice()
+  if not self._liteNotice then return end
+  self._liteNotice = nil
+  self:Suggest("core:lite", "TreeAI allégé : seul l'essentiel tourne (moins de lag). Clic : tout réactiver", 2, {
+    ttl = 900, tab = "now", sound = false,
+    tooltip = "Plus → Modules : rallumer un module à la fois (une ligne, un clic).",
+    onClick = function() TreeAI:SetModuleProfile("tout") end })
+end
+
+--- onglet « Modules » (sous « Plus ») : profil, coût, un module par ligne (clic = allumer / couper)
+function TreeAI:_BuildModulesTab()
+  if not self.SetTabLines then return end
+  local lite = self:Lite()
+  local lines = {
+    { text = lite and "Profil : Essentiel (léger) — clic : tout réactiver"
+        or "Profil : Tout — clic : revenir à l'essentiel (moins de lag)", prio = 2, id = "core:profile",
+      onClick = function() TreeAI:SetModuleProfile(lite and "tout" or "essentiel") end },
+    { text = "Coût par module (/tai perf) — clic : afficher", prio = 1, id = "core:perf",
+      onClick = function() TreeAI:PrintPerf() end },
+  }
+  for _, n in ipairs(self.moduleOrder) do
+    local mod = self.modules[n]
+    local info = self.MODULE_INFO[n] or {}
+    local on = mod.db and mod.db.enabled ~= false
+    local state
+    if not on then state = "|cff888888OFF|r"
+    elseif mod._gateOff then state = "|cffddbb44ATTENTE|r"
+    elseif mod._classOK == false then state = "|cff888888—|r"
+    else state = "|cff33dd33ON|r" end
+    lines[#lines + 1] = { text = state .. " " .. tostring(mod.title or n) .. (info.desc and (" — " .. info.desc) or ""),
+      prio = 1, id = "mod:" .. n,
+      tooltip = (info.desc or n) .. "\nClic : " .. (on and "couper" or "allumer") .. " ce module (sans /reload)",
+      onClick = function() TreeAI:SetModuleEnabled(n, not (mod.db and mod.db.enabled ~= false)) end }
+  end
+  self:SetTabLines("modules", lines, "main")
+end
+
+--- /tai perf : les modules qui coûtent le plus (temps mesuré par le cœur : événements, minuteurs, messages)
+function TreeAI:PerfLines()
+  local out = {}
+  local mem
+  local upd = (_G.C_AddOns and _G.C_AddOns.UpdateAddOnMemoryUsage) or _G.UpdateAddOnMemoryUsage
+  local get = (_G.C_AddOns and _G.C_AddOns.GetAddOnMemoryUsage) or _G.GetAddOnMemoryUsage
+  if type(get) == "function" then try(upd); mem = API.Pub(try(get, ADDON_NAME)) end
+  local up = mmax(1, now() - (self._loginAt or 0))
+  local nOn, nAll = 0, 0
+  for _, n in ipairs(self.moduleOrder) do
+    nAll = nAll + 1
+    if self.modules[n]._active then nOn = nOn + 1 end
+  end
+  out[#out + 1] = strformat("TreeAI : %s Ko de mémoire · %d/%d modules actifs · profil %s",
+    mem and tostring(math.floor(mem + 0.5)) or "?", nOn, nAll, self:ModuleProfile())
+  local list = {}
+  for name, st in pairs(self._stats) do if (st.calls or 0) > 0 then list[#list + 1] = { name = name, st = st } end end
+  tsort(list, function(a, b) return (a.st.ms or 0) > (b.st.ms or 0) end)
+  for i, e in ipairs(list) do
+    if i > 8 then break end
+    out[#out + 1] = strformat("  %d. %s : %.1f ms/min (%d appels)", i, e.name, (e.st.ms or 0) / up * 60, e.st.calls)
+  end
+  if #list == 0 then out[#out + 1] = "  (rien de mesuré pour l'instant)" end
+  out[#out + 1] = "  Plus → Modules : couper ce qui ne te sert pas."
+  return out
+end
+function TreeAI:PrintPerf()
+  for _, s in ipairs(self:PerfLines()) do self:Print(s) end
+end
+
+do  -- conditions des modules (groupe / instance / HV) : réévaluées après coup (jamais pendant un parcours)
+  local gateOwner = {}
+  local function later(event, ...)
+    local a, b = ...
+    coreLater(0, function() TreeAI:_EvalGates(event, a, b) end)
+  end
+  for _, ev in ipairs({ "GROUP_ROSTER_UPDATE", "PARTY_MEMBERS_CHANGED", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA" }) do
+    TreeAI:RegisterEvent(ev, gateOwner, function(_, event, ...) later(event, ...) end)
+  end
+  TreeAI:RegisterEvent("AUCTION_HOUSE_SHOW", gateOwner, function(_, event, ...) ahOpen = true; later(event, ...) end)
+  TreeAI:RegisterEvent("AUCTION_HOUSE_CLOSED", gateOwner, function(_, event) ahOpen = false; later(nil) end)
 end
 
 ---------------------------------------------------------------------------
@@ -1312,8 +1659,12 @@ function TreeAI:Suggest(id, text, prio, opts)
   local t = now()
   local ttl = opts.ttl
   if ttl == nil then ttl = 60 end
+  local isNew = suggestions[id] == nil
   local e = suggestions[id] or {}
   local changed = (e.text ~= text) or (e.prio ~= prio)
+  -- LITE : le même conseil redit à l'identique (chaque actualisation) ne redessine rien
+  local visible = isNew or changed or e.tab ~= opts.tab or e.icon ~= opts.icon or e.kind ~= kind
+    or (e.expires ~= nil and e.expires <= t)
   -- first appearance (or new prio): the order inside a prio follows it, so a module re-suggesting the
   -- same advice every refresh does not reshuffle « Maintenant » (counters in the text do not count)
   if not e.since or e.prio ~= prio then e.since = t end
@@ -1325,7 +1676,7 @@ function TreeAI:Suggest(id, text, prio, opts)
   e.kind = kind
   suggestions[id] = e
   if quiet then   -- en attente : ni son, ni encadré, ni journal ; réaffiché quand l'état revient
-    self:RequestRefresh()
+    if visible then self:RequestRefresh() end
     return e
   end
 
@@ -1363,8 +1714,10 @@ function TreeAI:Suggest(id, text, prio, opts)
       if doChat then self:Print(text) end
     end
   end
-  self:Fire("SUGGESTION", e)
-  self:RequestRefresh()
+  if visible then
+    self:Fire("SUGGESTION", e)
+    self:RequestRefresh()
+  end
   return e
 end
 
@@ -1374,6 +1727,17 @@ function TreeAI:ClearSuggestion(id)
     self:Fire("SUGGESTION_CLEARED", id)
     self:RequestRefresh()
   end
+end
+
+--- LITE : le panneau a-t-il quelque chose de neuf à montrer ? (génération changée ou conseil expiré)
+local panelGen, renderedGen = 1, 0
+function TreeAI:MarkDirty() panelGen = panelGen + 1 end
+function TreeAI:_PanelRendered() renderedGen = panelGen end
+function TreeAI:PanelDirty()
+  if panelGen ~= renderedGen then return true end
+  local t = now()
+  for _, e in pairs(suggestions) do if e.expires and e.expires <= t then return true end end
+  return false
 end
 
 function TreeAI:ClearSuggestions(prefix)
@@ -1453,7 +1817,50 @@ local function normLine(l, source)
   local text, tip = shortText(safeText(tostring(l.text)), l.tooltip)
   return { text = text, prio = prio, icon = l.icon, kind = l.kind, death = l.death,
     onClick = type(l.onClick) == "function" and l.onClick or nil,
-    tooltip = tip, pin = l.pin and true or nil, id = l.id, source = source, data = l.data }
+    tooltip = tip, pin = l.pin and true or nil, id = l.id, source = source, data = l.data,
+    _rt = l.text, _rp = l.prio, _rtip = l.tooltip }
+end
+
+local function hasPin(list)
+  if not list then return false end
+  for i = 1, #list do if list[i].pin then return true end end
+  return false
+end
+
+-- LITE : mêmes lignes qu'avant (texte, prio, icône…) ? -> on ne garde que les nouveaux clics / données,
+-- sans normaliser ni redessiner le panneau (la plupart des modules renvoient la même chose à chaque tour)
+local function sameLines(old, lines)
+  if not old then return false end
+  local j = 0
+  for i = 1, #lines do
+    local l = lines[i]
+    local txt, prio, icon, pin, tip, kind, lid, death
+    if type(l) == "table" then
+      txt, prio, icon, pin, tip, kind, lid, death = l.text, l.prio, l.icon, l.pin, l.tooltip, l.kind, l.id, l.death
+    elseif type(l) == "string" then
+      txt = l
+    end
+    if txt ~= nil and txt ~= "" then
+      j = j + 1
+      if j > 100 then break end
+      local o = old[j]
+      if not o or o._rt ~= txt or o._rp ~= prio or o.icon ~= icon or (o.pin or false) ~= (pin and true or false)
+        or o._rtip ~= tip or o.kind ~= kind or o.id ~= lid or o.death ~= death then return false end
+    end
+  end
+  if math.min(j, 100) ~= #old then return false end
+  j = 0
+  for i = 1, #lines do
+    local l = lines[i]
+    if type(l) == "string" and l ~= "" then j = j + 1
+    elseif type(l) == "table" and l.text ~= nil and l.text ~= "" then
+      j = j + 1
+      if j > 100 then break end
+      old[j].onClick = type(l.onClick) == "function" and l.onClick or nil
+      old[j].data = l.data
+    end
+  end
+  return true
 end
 
 -- lines = { {text=, prio=1..3, icon=?, onClick=?, tooltip=?, pin=?}, ... } replaces the content of
@@ -1465,6 +1872,7 @@ function TreeAI:SetTabLines(id, lines, source)
   source = source and tostring(source) or "main"
   local ts = tabSources[id]
   if not ts then ts = { order = {}, lines = {} }; tabSources[id] = ts end
+  if type(lines) == "table" and sameLines(ts.lines[source], lines) then return true end
   local out = {}
   if type(lines) == "table" then
     for i = 1, #lines do
@@ -1473,10 +1881,26 @@ function TreeAI:SetTabLines(id, lines, source)
       if #out >= 100 then break end
     end
   end
-  if ts.lines[source] == nil then ts.order[#ts.order + 1] = source end
+  local isNewSource = ts.lines[source] == nil
+  if isNewSource then ts.order[#ts.order + 1] = source end
+  local old = ts.lines[source]
   ts.lines[source] = out
-  self:RequestRefresh()
+  -- LITE : un onglet qu'on ne voit pas ne redessine pas le panneau (le clic sur l'onglet le reconstruit) ;
+  -- une ligne épinglée (offerte à « Maintenant ») compte toujours
+  if isNewSource or self:TabShown(id) or hasPin(out) or hasPin(old) then self:RequestRefresh() end
   return true
+end
+
+--- l'onglet est-il à l'écran en ce moment ? (panneau ouvert ; mini = « Maintenant » + 1re ligne de « Quêtes »)
+function TreeAI:TabShown(id)
+  local p = self.GetPanel and self:GetPanel()
+  if not p or not self.GetActiveTab then return true end
+  if not p:IsShown() then return false end
+  if self.IsMini and self:IsMini() then return id == NOW_TAB or id == "quests" end
+  local cur = self:GetActiveTab()
+  if cur == id then return true end
+  local vt = self.tabs[cur]
+  return (vt and vt.virtual and type(vt.from) == "table" and vt.from.tab == id) and true or false
 end
 
 local function plain(text)
@@ -1634,6 +2058,7 @@ end
 -- coalesced panel refresh: at most 2 per second
 local lastRefresh, refreshPending = -10, false
 function TreeAI:RequestRefresh()
+  if self.MarkDirty then self:MarkDirty() end
   if not self.RefreshPanel or refreshPending then return end
   local wait = 0.5 - (now() - lastRefresh)
   if wait <= 0 then
@@ -1654,6 +2079,7 @@ TreeAI:RegisterTab("quests", L["Quêtes"], 2)
 TreeAI:RegisterTab("group", L["Groupe"], 3)
 TreeAI:RegisterTab("hv", L["HV"], 4)
 TreeAI:RegisterTab("info", L["Infos"], 5)
+TreeAI:RegisterTab("modules", L["Modules"], 9)   -- LITE : sous « Plus » : un module par ligne, clic = on / off
 -- « Talents » : vue du bloc Talents d'« Infos », proposée dans le sous-menu « Plus » (pas un onglet de plus)
 TreeAI.tabs.talents = { id = "talents", title = L["Talents"], order = 4.8, virtual = true,
   from = { tab = "info", source = "Talents" } }
@@ -1761,14 +2187,10 @@ local function deser(s, i)
   elseif c == "T" then return true, i + 1
   elseif c == "F" then return false, i + 1
   elseif c == "s" or c == "n" then
-    local j = i + 1
-    while j <= #s do
-      local d = strsub(s, j, j)
-      if d == "=" or d == ";" or d == "}" then break end
-      j = j + 1
-    end
+    local j = strfind(s, "[=;}]", i + 1) or (#s + 1)   -- (LITE) un find au lieu d'une boucle caractère par caractère
     local raw = strsub(s, i + 1, j - 1)
     if c == "n" then return tonumber(raw), j end
+    if not strfind(raw, "%", 1, true) then return raw, j end
     return unesc(raw), j
   end
   return nil, #s + 1
@@ -2154,6 +2576,12 @@ TreeAI:RegisterSlash("alerte", function()
   end
 end, L["tester l'encadré d'alerte"])
 TreeAI:RegisterSlash("options", function() if TreeAI.OpenOptions then TreeAI:OpenOptions() end end, L["ouvrir les options"])
+TreeAI:RegisterSlash("perf", function() TreeAI:PrintPerf() end, "les modules qui coûtent le plus (CPU)")
+TreeAI:RegisterSlash("profil", function(rest)
+  rest = tostring(rest or ""):lower()
+  if rest == "tout" or rest == "essentiel" then TreeAI:SetModuleProfile(rest) end
+  TreeAI:Print("Profil des modules : " .. TreeAI:ModuleProfile() .. "  (/tai profil essentiel | tout)")
+end, "profil des modules : essentiel (léger) ou tout")
 TreeAI:RegisterSlash("modules", function()
   for name, mod in TreeAI:IterModules() do
     TreeAI:Print("  " .. (mod.title or name) .. " (" .. name .. "): " .. onoff(mod:IsEnabled()))
@@ -2229,8 +2657,15 @@ function TreeAI:PLAYER_LOGIN()
   end
   self:UpdateSummary()
   safecall(self._OfferSimpleMode, self, self._freshDB)
+  -- LITE : profil essentiel posé une fois ; conditions (groupe / instance / HV) avant d'allumer quoi que ce soit
+  safecall(self._ApplyProfileOnce, self)
+  safecall(self._EvalGates, self)
   if self.CreatePanel then safecall(self.CreatePanel, self) end
   for _, n in ipairs(self.moduleOrder) do moduleEnable(self.modules[n]) end
+  self._modulesStarted = true
+  self._loginAt = now()
+  safecall(self._BuildModulesTab, self)
+  if self._liteNotice then self:After(3, function() TreeAI:_LiteNotice() end) end
   self:Fire("READY")
   self:StartAutoRefresh()
   -- premier lancement : petit assistant en 3 étapes (hors combat)

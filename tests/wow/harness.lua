@@ -16,7 +16,7 @@ local unpack = unpack or table.unpack
 local argv = arg or {}
 local here = (argv[0] or "harness.lua"):match("^(.*)[/\\][^/\\]*$") or "."
 
-local opts = { flavor = "modern", allow = {}, storm = true }
+local opts = { flavor = "modern", allow = {}, storm = true, profile = "tout" }
 local target
 do
   local i = 1
@@ -30,6 +30,7 @@ do
     elseif a == "--class" then opts.class = argv[i + 1]; i = i + 1
     elseif a == "--level" then opts.level = tonumber(argv[i + 1]); i = i + 1
     elseif a == "--no-storm" then opts.storm = false
+    elseif a == "--profile" then opts.profile = argv[i + 1]; i = i + 1
     elseif a == "-q" then opts.quiet = true
     else target = a end
     i = i + 1
@@ -186,6 +187,14 @@ if opts.savedvars then
   end
 end
 
+-- TreeAI module profile (LITE): scenarios test every module, so the default here is « tout » (everything on,
+-- the one-time « essentiel » switch already done); --profile essentiel = what a new player gets.
+if opts.profile == "tout" and addonName == "TreeAI" then
+  local db = rawget(_G, "TreeAIDB")
+  if type(db) ~= "table" then db = {}; rawset(_G, "TreeAIDB", db) end
+  if db.profileV == nil then db.profileV, db.moduleProfile = 999, "tout" end
+end
+
 -- drive ------------------------------------------------------------------------------------------
 local fired = {}
 local function fire(ev, ...) fired[ev] = true return M.FireEvent(ev, ...) end
@@ -208,7 +217,11 @@ M.Advance(2)
 local function clickAll()
   for i = 1, #M.frames do
     local f = M.frames[i]
-    if f.__scripts.OnClick and f.__kind ~= "GameTooltip" then f:Click("LeftButton") end
+    -- (LITE) « Plus → Modules » rows (module on / off, profile) are left alone: the scenarios need their modules
+    local id = type(f.entry) == "table" and type(f.entry.id) == "string" and f.entry.id or ""
+    if f.__scripts.OnClick and f.__kind ~= "GameTooltip" and not id:match("^mod:") and id ~= "core:profile" then
+      f:Click("LeftButton")
+    end
   end
 end
 
@@ -297,6 +310,10 @@ local function storm()
   end
   clickAll()
   M.Advance(30, 0.5)
+  -- the clicks above also hit « Plus → Modules » lines (one click = one module on / off): scenarios start from
+  -- the profile they asked for
+  local T = rawget(_G, "TreeAI")
+  if T and T.SetModuleProfile and addonName == "TreeAI" then T:SetModuleProfile(opts.profile == "tout" and "tout" or "essentiel"); M.Advance(2, 0.5) end
 end
 
 if opts.storm then storm() end

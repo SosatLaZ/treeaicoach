@@ -307,6 +307,17 @@ Les events/messages/comms d'un module désactivé (ou d'une autre classe que `cl
 handler sont attrapées (`pcall`) et affichées en debug, elles ne cassent pas
 les autres modules.
 
+**Profils de modules (LITE, « je lag »)** : `TreeAI.MODULE_INFO[name] = { lite, gate, combat, liteParts, desc }`.
+Profil `essentiel` (défaut pour tout le monde, posé une fois via `TreeAIDB.profileV` + avis « Tout réactiver ») :
+seuls les modules `lite = true` tournent ; `gate` = `"group"` (Squad, Missions, Group), `"ah"` (Auction, HV ouvert),
+`"instance"` (Dungeon). `TreeAI:SetModuleProfile("essentiel"|"tout")`, `TreeAI:ModuleProfile()`, `TreeAI:Lite()`
+(les modules `liteParts` en font moins : Highlight = sacs + butin, Macros = panneau seul, Abandon = à la demande).
+Module coupé = ses événements sont **désinscrits** (rendus au réveil) et ses tickers **annulés** (repris) ; ses
+`TreeAI:After` en attente ne partent plus. En combat, seul `AutoRefresh` des modules `combat = true` tourne.
+Onglet « Plus → Modules » : une ligne par module (clic = on / off), `/tai perf` (coût par module mesuré par le
+cœur), `/tai profil essentiel|tout`. Budget (tests/wow/session_sim.lua) : ≤ 1,5 M instructions Lua / min en
+essentiel, ≤ 4 M tout allumé ; `--fine` donne le coût par fonction.
+
 ### Suggestions (le point central)
 
 ```lua
@@ -349,7 +360,7 @@ TreeAI:Print(...)  TreeAI:Debug(...)
 TreeAI:InCombat()                     -- InCombatLockdown() protégé
 TreeAI:RunOutOfCombat(key, fn)        -- tout de suite si hors combat, sinon file (1 par key) exécutée à PLAYER_REGEN_ENABLED
 TreeAI:After(sec, fn)                 -- C_Timer.After ou fallback OnUpdate
-TreeAI:NewTicker(sec, fn)             -- retourne objet avec :Cancel()
+TreeAI:NewTicker(sec, fn[, owner])    -- retourne objet avec :Cancel() ; owner = module (défaut : celui dont le code tourne)
 TreeAI:CharKey()                      -- "Nom-Royaume" (en jeu uniquement)
 TreeAI:PlayerClass()                  -- "HUNTER", ...
 TreeAI:Summary()                      -- table résumé du perso (voir schéma), modifiable
