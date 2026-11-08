@@ -401,7 +401,7 @@ end
 
 local function logMax()
   local CQ = g("C_QuestLog")
-  local n = CQ and CQ.GetMaxNumQuestsCanAccept and tonumber(try(CQ.GetMaxNumQuestsCanAccept))
+  local n = CQ and CQ.GetMaxNumQuestsCanAccept and tonumber((try(CQ.GetMaxNumQuestsCanAccept)))
   if not n then n = tonumber(g("MAX_QUESTLOG_QUESTS")) end
   return (n and n > 0) and n or A.LOG_MAX
 end
@@ -437,13 +437,13 @@ local function chainOf(id, pl, db)
   if Q and Q.Chain then nexts = try(Q.Chain, id, 3) end
   if type(nexts) ~= "table" then
     nexts = {}
-    local nx = tonumber(try(db.QueryQuestSingle, id, "nextQuestInChain"))
+    local nx = tonumber((try(db.QueryQuestSingle, id, "nextQuestInChain")))
     if nx and nx > 0 then nexts[1] = { id = nx, title = try(db.QueryQuestSingle, nx, "name") } end
   end
   if #nexts == 0 then return false end
   local xp = 0
   for _, n in ipairs(nexts) do
-    local ql = tonumber(try(db.QueryQuestSingle, n.id, "questLevel")) or pl
+    local ql = tonumber((try(db.QueryQuestSingle, n.id, "questLevel"))) or pl
     if ql <= 0 then ql = pl end
     xp = xp + r0(A.EstimateXP(ql) * A.XPFactor(pl - ql))
   end
@@ -459,7 +459,7 @@ local function rewardOf(id)
   end
   local CQ = g("C_QuestLog")
   if #links == 0 and CQ and CQ.GetInfo and g("GetNumQuestLogChoices") and g("GetQuestLogItemLink") then
-    local n = tonumber(try(g("GetNumQuestLogChoices"), id, true)) or 0
+    local n = tonumber((try(g("GetNumQuestLogChoices"), id, true))) or 0
     for i = 1, min(n, 6) do
       local l = try(g("GetQuestLogItemLink"), "choice", i, id)
       if l then links[#links + 1] = l end
@@ -471,7 +471,7 @@ local function rewardOf(id)
   for _, l in ipairs(links) do
     local name, _, _, _, _, _, _, _, _, _, sell = try(g("GetItemInfo"), l)
     local okUse = B and B.CanUse and try(B.CanUse, l)
-    local pct = okUse and B.UpgradePct and tonumber(try(B.UpgradePct, l)) or nil
+    local pct = okUse and B.UpgradePct and tonumber((try(B.UpgradePct, l))) or nil
     if pct and pct > best.pct then best.pct, best.item = min(pct, 100), name or tostring(l):match("%[(.-)%]") end
     if (tonumber(sell) or 0) > best.sell then best.sell = tonumber(sell) end
   end
@@ -480,7 +480,7 @@ end
 
 -- contexte joueur
 function M.Context(list)
-  local pl = tonumber(try(g("UnitLevel"), "player")) or 1
+  local pl = tonumber((try(g("UnitLevel"), "player"))) or 1
   local Tr = mod("Tracker")
   local tc = Tr and Tr.Context and try(Tr.Context) or {}
   local St = T.Stats   -- mesures réelles (Stats) d'abord
@@ -492,16 +492,16 @@ function M.Context(list)
     spk = (kph and kph > 5) and max(8, min(120, 3600 / kph)) or A.KILL_SEC
   end
   local C = T.Compass
-  local xp, xpMax = tonumber(try(g("UnitXP"), "player")), tonumber(try(g("UnitXPMax"), "player"))
+  local xp, xpMax = tonumber((try(g("UnitXP"), "player"))), tonumber((try(g("UnitXPMax"), "player")))
   local B = mod("Boost")
   local st = B and B.XPStats and try(B.XPStats, B)
   local xph = type(st) == "table" and tonumber(st.perHour or st.xph) or nil
   if not xph and St and St.XPPerHour then xph = St:XPPerHour("questing") or St:XPPerHour() end
   local ctx = {
-    pl = pl, group = max(1, tonumber(try(g("GetNumGroupMembers"))) or 1),
+    pl = pl, group = max(1, tonumber((try(g("GetNumGroupMembers")))) or 1),
     zone = try(g("GetRealZoneText")) or try(g("GetZoneText")) or "",
     secPerKill = spk, drops = type(tc.drops) == "table" and tc.drops or {},
-    speed = tonumber(tc.speed) or (St and St.TravelSpeed and St:TravelSpeed(false)) or (C and C.Speed and tonumber(try(C.Speed))) or A.SPEED,
+    speed = tonumber(tc.speed) or (St and St.TravelSpeed and St:TravelSpeed(false)) or (C and C.Speed and tonumber((try(C.Speed)))) or A.SPEED,
     xpm = xph and xph > 0 and xph / 60 or nil,
     xpToLevel = (xp and xpMax and xpMax > 0) and (xpMax - xp) or nil,
     logCount = #(list or {}), logMax = logMax(),
@@ -543,7 +543,7 @@ function M.Gather(list, ctx)
       e.mates = m
       e.chain = chainOf(q.id, ctx.pl, db)
       if db then
-        local to = tonumber(try(db.QueryQuestSingle, q.id, "breadcrumbForQuestId"))
+        local to = tonumber((try(db.QueryQuestSingle, q.id, "breadcrumbForQuestId")))
         e.breadcrumbUseless = (to and to > 0 and (inLog[to] or done[to])) and true or false
       end
       e.reward = rewardOf(q.id)

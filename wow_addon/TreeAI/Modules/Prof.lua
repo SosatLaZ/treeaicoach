@@ -248,7 +248,7 @@ function M.ScanProfessions()
     end
   end
   if #list == 0 then
-    local n = tonumber(try(g("GetNumSkillLines"))) or 0
+    local n = tonumber((try(g("GetNumSkillLines")))) or 0
     for i = 1, min(n, 80) do
       local name, header, _, rank, _, _, mx = try(g("GetSkillLineInfo"), i)
       if name and not header then add(name, rank, mx) end
@@ -285,7 +285,7 @@ function M.ScanKnown()
     if rows then
       local byName = {}
       for _, r in ipairs(rows) do byName[fold(r[9])] = r[1] end
-      for i = 1, min(tonumber(try(g("GetNumTradeSkills"))) or 0, 500) do
+      for i = 1, min(tonumber((try(g("GetNumTradeSkills")))) or 0, 500) do
         local name, kind = try(g("GetTradeSkillInfo"), i)
         if name and kind ~= "header" and byName[fold(name)] then known[byName[fold(name)]] = 1 end
       end
@@ -301,7 +301,7 @@ end
 -- stock : sacs (+ banque si le jeu la connaît) pour les compos d'un métier
 local function count(id)
   if API.ItemCount then return API.ItemCount(id, true) or 0 end
-  return tonumber(try(g("GetItemCount"), id, true)) or 0
+  return tonumber((try(g("GetItemCount"), id, true))) or 0
 end
 function M.Stock(rows)
   local st = {}
@@ -594,7 +594,7 @@ function M.Build()
       tip[#tip + 1] = fmt("Rang suivant : %s — niveau %d, compétence %d (max %d)%s.", nr[1], nr[2], nr[3], nr[4],
         nr[1] == "Artisan" and ", maître artisan (entraîneur spécial)" or ", entraîneur de ville")
       if pr.rank >= nr[3] and pr.max - pr.rank <= 25 then
-        local lvl = tonumber(try(g("UnitLevel"), "player")) or 1
+        local lvl = tonumber((try(g("UnitLevel"), "player"))) or 1
         head = head .. (lvl >= nr[2] and fmt(" — va apprendre %s !", nr[1]) or fmt(" — %s au niveau %d", nr[1], nr[2]))
         prio = lvl >= nr[2] and 2 or 1
       end

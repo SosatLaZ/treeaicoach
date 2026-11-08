@@ -206,7 +206,7 @@ function M.Planned()
     if d then return d, "choisi" end
   end
   if not opt("autoPlan") then return nil end
-  if (tonumber(try(G.GetNumGroupMembers)) or 0) < 2 then return nil end
+  if (tonumber((try(G.GetNumGroupMembers))) or 0) < 2 then return nil end
   local pl, best, bestN = level(), nil, 0
   for key, n in pairs(questDungeons()) do
     local d = M.Find(key)
@@ -423,7 +423,7 @@ function M:StartRun(d)
   if r and r.key == d.key and clock() - (r.last or 0) < 3600 then r.last = clock() return r end
   if r and r.key then self:ArchiveRun() end
   r = { key = d.key, start = clock(), last = clock(), pulls = 0, deaths = 0, wipes = 0, kills = {}, nk = 0,
-    xp = 0, money0 = tonumber(try(G.GetMoney)) or 0, gold = 0 }
+    xp = 0, money0 = tonumber((try(G.GetMoney))) or 0, gold = 0 }
   self.char.run = r
   self._lastXP = tonumber(sv(try(G.UnitXP, "player"))) or 0
   return r
@@ -938,7 +938,7 @@ end
 
 function M:PLAYER_MONEY()
   local r = run()
-  local m = tonumber(try(G.GetMoney))
+  local m = tonumber((try(G.GetMoney)))
   if r and m and M.Current() then r.gold = max(0, m - (r.money0 or m)) end
 end
 

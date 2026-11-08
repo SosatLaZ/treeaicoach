@@ -12,6 +12,7 @@
 --    (C_Map.SetUserWaypoint + C_SuperTrack). Jamais de sélection dans le journal de quêtes Blizzard, aucun
 --    panneau Blizzard ouvert, rien d'automatique (ToS).
 -- Résumé : TreeAIDB.chars[perso].summary.plan. Lua 5.1, aucune globale (lit TreeAIPlan avec rawget).
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
@@ -46,7 +47,7 @@ local function clock() return try(G("debugprofilestop")) or now() * 1000 end
 local function inCombat() return T.InCombat and T:InCombat() or false end
 local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
 local function cfg(k) return not (P.db and P.db[k] == false) end
-local function myLevel() return tonumber(try(G("UnitLevel"), "player")) or 1 end
+local function myLevel() return tonumber((try(G("UnitLevel"), "player"))) or 1 end
 local function myName() return try(G("UnitName"), "player") end
 local function short(name) return tostring(name or ""):match("^([^%-]+)") or tostring(name) end
 local function thousands(n)
@@ -388,6 +389,7 @@ local function runSpeed()
   local v = St and St.TravelSpeed and St:TravelSpeed(try(G("IsMounted")) and true or false)
   if v then return v end
   local _, s = try(G("GetUnitSpeed"), "player")
+  s = _ns(s)
   s = tonumber(s)
   return (s and s > 0) and s or 7
 end

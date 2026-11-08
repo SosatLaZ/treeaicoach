@@ -10,6 +10,7 @@
 --    niveau, taux de drop des objets de quête, réapparition, vols, détours, affluence, XP/h…), sommes {s, n}.
 -- Lecture seule partout : jamais d'écriture dans Questie/QuestieDB, aucun hook, rien en combat
 -- (valeurs « secrètes » de Forever ignorées). Lua 5.1, aucune globale (T.Geo est partagé via TreeAI).
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
@@ -433,7 +434,7 @@ local function legacyDB()
       return out
     end,
     map = function(areaId)
-      if type(zdb) == "table" and type(zdb.GetUiMapIdByAreaId) == "function" then return tonumber(try(zdb.GetUiMapIdByAreaId, zdb, areaId)) end
+      if type(zdb) == "table" and type(zdb.GetUiMapIdByAreaId) == "function" then return tonumber((try(zdb.GetUiMapIdByAreaId, zdb, areaId))) end
     end,
     xp = function() return nil end,
     doable = type(db.IsDoable) == "function" and function(id) return try(db.IsDoable, id) end or nil,
@@ -509,6 +510,7 @@ function X:PlayerState()
   local xp, xpMax = xpNow()
   local map, x, y = Geo.Player()
   local _, runSpeed = try(G("GetUnitSpeed"), "player")
+  runSpeed = _ns(runSpeed)
   local cap = try(C("C_QuestLog", "GetMaxNumQuestsCanAccept")) or tonumber(G("MAX_QUESTLOG_QUESTS")) or 20
   local _, logCount = logSnapshot()
   local cdS, cdD = try(C("C_Container", "GetItemCooldown"), 6948)

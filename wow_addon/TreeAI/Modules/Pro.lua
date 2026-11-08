@@ -54,7 +54,7 @@ local function secret(v) local f = g("issecretvalue") return type(f) == "functio
 local function opt(k) return M.db and M.db[k] ~= false end
 local function low(s) return type(s) == "string" and s:lower() or "" end
 local function inCombat() return T:InCombat() end
-local function level() return tonumber(try(g("UnitLevel"), "player")) or 1 end
+local function level() return tonumber((try(g("UnitLevel"), "player"))) or 1 end
 local function mod(n) local m = T.modules and T.modules[n] return (m and (not m.IsEnabled or m:IsEnabled())) and m or nil end
 local function zoneName() return try(g("GetRealZoneText")) or try(g("GetZoneText")) or "" end
 local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
@@ -259,7 +259,7 @@ function M.ScanLog()
       elseif title then
         q = { id = tonumber(qid) or (10000 + i), title = title, level = tonumber(lvl) or level(), group = tonumber(grp) or 0,
           complete = (isComplete == 1 or isComplete == true), obj = {} }
-        for j = 1, tonumber(try(g("GetNumQuestLeaderBoards"), i)) or 0 do
+        for j = 1, tonumber((try(g("GetNumQuestLeaderBoards"), i))) or 0 do
           local text, kind, done = try(g("GetQuestLogLeaderBoard"), j, i)
           local h, nd = parseCount(text)
           q.obj[j] = { text = text, name = objName(text), have = h or (done and 1 or 0), need = nd or 1, done = done and true or false, kind = kind }
@@ -289,7 +289,7 @@ end
 local function questXP(q)
   local CQ = g("C_QuestLog")
   if CQ and q.id < 10000 then
-    local x = tonumber(try(g("GetQuestLogRewardXP"), q.id))
+    local x = tonumber((try(g("GetQuestLogRewardXP"), q.id)))
     if x and x > 0 then return x, true end
   end
   return M.EstimateXP(q.level, level()), false
@@ -453,7 +453,7 @@ function M:LOOT_OPENED()
     for _, o in ipairs(q.obj) do if not o.done and o.name then want[low(o.name)] = o.name end end
   end
   local got = {}
-  for i = 1, tonumber(try(g("GetNumLootItems"))) or 0 do
+  for i = 1, tonumber((try(g("GetNumLootItems")))) or 0 do
     local _, nm, cnt = try(g("GetLootSlotInfo"), i)
     if nm and not secret(nm) then got[low(nm)] = (got[low(nm)] or 0) + (tonumber(cnt) or 1) end
   end
@@ -469,17 +469,17 @@ function M:LOOT_OPENED()
 end
 
 function M:QUEST_DETAIL()
-  local qid = tonumber(try(g("GetQuestID")))
+  local qid = tonumber((try(g("GetQuestID"))))
   if not qid then return end
   local text = (try(g("GetQuestText")) or "") .. " " .. (try(g("GetObjectiveText")) or "")
   if isEscortText(text) then M.char.escort[qid] = true end
   M.CaptureRewards(qid)
 end
-function M:QUEST_COMPLETE() M.CaptureRewards(tonumber(try(g("GetQuestID")))) end
+function M:QUEST_COMPLETE() M.CaptureRewards(tonumber((try(g("GetQuestID"))))) end
 
 function M.CaptureRewards(qid)
   if not qid then return end
-  local n = tonumber(try(g("GetNumQuestChoices"))) or 0
+  local n = tonumber((try(g("GetNumQuestChoices")))) or 0
   local links = {}
   for i = 1, min(n, 10) do
     local l = try(g("GetQuestItemLink"), "choice", i)
@@ -522,8 +522,8 @@ function M.DungeonsFor(pl)
 end
 
 local function talentPoints()
-  local n = tonumber(try(g("UnitCharacterPoints"), "player"))
-  if not n then n = tonumber(try(g("GetUnspentTalentPoints"))) end
+  local n = tonumber((try(g("UnitCharacterPoints"), "player")))
+  if not n then n = tonumber((try(g("GetUnspentTalentPoints")))) end
   return n or 0
 end
 
@@ -565,8 +565,8 @@ function M.HearthAdvice()
 end
 
 function M.RestAdvice()
-  local xpMax = tonumber(try(g("UnitXPMax"), "player")) or 0
-  local rested = tonumber(try(g("GetXPExhaustion"))) or 0
+  local xpMax = tonumber((try(g("UnitXPMax"), "player"))) or 0
+  local rested = tonumber((try(g("GetXPExhaustion")))) or 0
   local pct = xpMax > 0 and floor(rested * 100 / xpMax) or 0
   if try(g("IsResting")) then
     return ("Repos : déconnecte-toi ici (+5 %%/8 h, %d %% en réserve, max 150 %%)"):format(pct)

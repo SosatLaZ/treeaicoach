@@ -8,6 +8,7 @@
 --  * Les astuces calculées par l'appli (tue en chemin, point de vol en passant, grind de niveau, foyer)
 --    arrivent dans le plan (champ `tip`) et sont affichées par Planner sous l'étape courante.
 -- Une ligne en français simple par technique, seulement quand elle sert. Lua 5.1, aucune globale.
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
@@ -85,6 +86,7 @@ local function playerPos() local g = Geo() if g and g.Player then return g.Playe
 local function dist(m1, x1, y1, m2, x2, y2) local g = Geo() return g and g.Dist and g.Dist(m1, x1, y1, m2, x2, y2) end
 local function runSpeed()
   local _, run = try(G("GetUnitSpeed"), "player")
+  run = _ns(run)
   run = tonumber(run)
   return (run and run > 0) and run or 7
 end

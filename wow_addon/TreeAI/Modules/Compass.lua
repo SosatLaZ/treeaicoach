@@ -9,6 +9,7 @@
 -- Règles 3.8.2 : aucun appel aux cadres / fonctions de Blizzard (pas de SetSuperTrackedQuestID, pas de
 -- sélection du journal, pas d'ouverture de panneaux), cadre 100 % à nous, aucune automatisation.
 -- Résumé IA : TreeAIDB.chars[perso].summary.compass. Lua 5.1, aucune globale.
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local _, ns = ...
 ns = ns or {}
 
@@ -178,7 +179,7 @@ end
 
 local speedAvg
 function M.Speed()
-  local s = try(_G.GetUnitSpeed, "player")
+  local s = _ns((try(_G.GetUnitSpeed, "player")))
   s = tonumber(s) or 0
   if s > 0.5 then speedAvg = speedAvg and (speedAvg * 0.8 + s * 0.2) or s end
   return s > 0.5 and s or (speedAvg or RUN)

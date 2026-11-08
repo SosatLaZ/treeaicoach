@@ -174,6 +174,14 @@ def read_state(cfg: Any, hub: Any = None) -> dict:
                 out["live"] = snap
                 out["rows"] = summary_rows(snap.get("db") or {}) if snap.get("db") else []
                 out["sv_age"] = snap.get("sv_age")
+                # (3.9.8) every tab's content is computed HERE, in the worker: switching tabs never computes on
+                # the UI thread (big Auctionator / ledger data froze the window)
+                out["tabs"] = {}
+                for k in ("direct", "quetes", "groupe", "hv", "session"):
+                    try:
+                        out["tabs"][k] = tab_blocks(k, snap)
+                    except Exception:
+                        log.debug("wow tab %s failed", k, exc_info=True)
                 return out
             files = install.savedvars_files(inst)
             if files and sv is not None:
@@ -661,7 +669,8 @@ class WowPage:
 
     def _render_tab(self, key: str, snap: dict) -> None:
         try:
-            blocks = tab_blocks(key, snap)
+            pre = (self.state or {}).get("tabs") if snap is (self.state or {}).get("live") else None
+            blocks = pre[key] if isinstance(pre, dict) and key in pre else tab_blocks(key, snap)
         except Exception:
             log.debug("wow tab %s failed", key, exc_info=True)
             blocks = []

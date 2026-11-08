@@ -12,6 +12,7 @@
 --  9. Récolte : compétence vs niveau du nœud / du cadavre à dépecer (lignes d'infobulle).
 -- Rien n'est fait à la place du joueur : aucune touche, aucun sort lancé, aucun objet utilisé.
 -- Lua 5.1, aucune globale créée, toutes les API testées avant usage (Forever = famille Mainline, Era).
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local T = _G.TreeAI
 if not T or not T.RegisterModule then return end
 local API = T.API or {}
@@ -740,7 +741,7 @@ function M:CheckTravel()
     movingSince = nil
     return
   end
-  local speed = try(G.GetUnitSpeed, "player") or 0
+  local speed = _ns((try(G.GetUnitSpeed, "player"))) or 0
   local blocked = try(G.IsMounted) or try(G.UnitOnTaxi, "player") or try(G.IsResting) or try(G.UnitIsDeadOrGhost, "player")
   if speed <= 0 or blocked then movingSince = nil return end
   movingSince = movingSince or now()

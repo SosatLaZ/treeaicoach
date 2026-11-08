@@ -159,10 +159,10 @@ end
 
 function M.Read()
   local r = { tabs = {}, ranks = {}, points = { 0, 0, 0 }, spent = 0, ok = false }
-  local nt = tonumber(try(g("GetNumTalentTabs"))) or 0
-  local group = tonumber(try(g("GetActiveTalentGroup"))) or nil
+  local nt = tonumber((try(g("GetNumTalentTabs")))) or 0
+  local group = tonumber((try(g("GetActiveTalentGroup")))) or nil
   for tab = 1, min(nt, 3) do
-    local n = tonumber(try(g("GetNumTalents"), tab)) or 0
+    local n = tonumber((try(g("GetNumTalents"), tab))) or 0
     for i = 1, n do
       local name, tier, col, rank = talentInfo(tab, i, group)
       if name and tier and col then
@@ -175,13 +175,13 @@ function M.Read()
     r.tabs[tab] = tabName(tab) or ("Arbre " .. tab)
   end
   if not r.ok and type(g("C_ClassTalents")) == "table" then r.modern = true end   -- arbre moderne : non géré
-  local level = tonumber(try(g("UnitLevel"), "player")) or 1
-  local unspent = tonumber(try(g("UnitCharacterPoints"), "player"))
-  if not unspent then unspent = tonumber(try(g("GetUnspentTalentPoints"))) end
+  local level = tonumber((try(g("UnitLevel"), "player"))) or 1
+  local unspent = tonumber((try(g("UnitCharacterPoints"), "player")))
+  if not unspent then unspent = tonumber((try(g("GetUnspentTalentPoints")))) end
   if not unspent and r.ok then unspent = max(0, level - 9 - r.spent) end
   r.unspent, r.level = unspent or 0, level
   r.group = group or 1
-  r.numGroups = tonumber(try(g("GetNumTalentGroups"))) or 1
+  r.numGroups = tonumber((try(g("GetNumTalentGroups")))) or 1
   return r
 end
 

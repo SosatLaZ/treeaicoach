@@ -125,7 +125,7 @@ local function classOf()
     local c = type(m.st) == "table" and m.st.c or m.class
     if c then out[shortName(m.name)] = c end
   end
-  for i = 1, min(4, tonumber(try(_G.GetNumSubgroupMembers)) or 0) do
+  for i = 1, min(4, tonumber((try(_G.GetNumSubgroupMembers))) or 0) do
     local u = "party" .. i
     local nm = try(_G.UnitName, u)
     if nm and not secret(nm) and not out[shortName(nm)] then
@@ -356,9 +356,9 @@ end
 -- Session : niveau, XP, repos, XP/h et temps avant le niveau suivant (Boost, sinon Predict).
 function M.Session()
   local lv = try(_G.UnitLevel, "player") or 1
-  local xp, xpMax = tonumber(try(_G.UnitXP, "player")) or 0, tonumber(try(_G.UnitXPMax, "player")) or 0
+  local xp, xpMax = tonumber((try(_G.UnitXP, "player"))) or 0, tonumber((try(_G.UnitXPMax, "player"))) or 0
   local s = { level = lv, xp = xp, xpMax = xpMax, pct = xpMax > 0 and xp / xpMax or 0,
-              rested = tonumber(try(_G.GetXPExhaustion)) or 0 }
+              rested = tonumber((try(_G.GetXPExhaustion))) or 0 }
   local B = mod("Boost")
   local st = B and B.XPStats and try(B.XPStats, B)
   if type(st) == "table" then s.xph, s.eta = tonumber(st.perHour), tonumber(st.eta) end

@@ -259,7 +259,7 @@ local function buttonSlot(btn)
   if type(btn) ~= "table" then return nil end
   local s = tonumber(rawget(btn, "_state_action")) or tonumber(rawget(btn, "action"))
   if not s and type(btn.GetAttribute) == "function" then
-    s = tonumber(try(btn.GetAttribute, btn, "action"))
+    s = tonumber((try(btn.GetAttribute, btn, "action")))
   end
   if s and s >= 1 and s <= 180 then return s end
 end

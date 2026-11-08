@@ -15,6 +15,7 @@
 --  d) onglet « Stats » (sous-menu « Plus ») : 5-8 lignes + « Exporter pour TreeAI » (summary.stats, lu par l'appli).
 -- Coût : uniquement des événements + 1 minuterie de 60 s ; aucun OnUpdate ; pas de journal de combat (Forever).
 -- Lua 5.1, aucune globale.
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local T = _G.TreeAI
 if not (T and T.RegisterModule) then return end
 
@@ -165,6 +166,7 @@ function M.ReadSheet()
   end
   s.res = any and res or nil
   local _, run = try(g("GetUnitSpeed"), "player")
+  run = _ns(run)
   s.speed = r1(num(run))
   local lo, hi = try(g("UnitDamage"), "player")
   local spd = try(g("UnitAttackSpeed"), "player")

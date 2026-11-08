@@ -49,7 +49,7 @@ local function epoch() local f = g("time") or (g("os") and g("os").time) return 
 local function secret(v) local f = g("issecretvalue") return type(f) == "function" and f(v) and true or false end
 local function opt(k) return M.db and M.db[k] ~= false end
 local function inCombat() return T:InCombat() end
-local function level() return tonumber(try(g("UnitLevel"), "player")) or 1 end
+local function level() return tonumber((try(g("UnitLevel"), "player"))) or 1 end
 local function mod(n) local m = T.modules and T.modules[n] return (m and (not m.IsEnabled or m:IsEnabled())) and m or nil end
 local function zoneName() return try(g("GetRealZoneText")) or try(g("GetZoneText")) or "" end
 local function cut(s, n) s = tostring(s or "") if #s > n then return s:sub(1, n - 1) .. "…" end return s end
@@ -89,7 +89,7 @@ M.ResetSession = reset
 function M.Session() return S end
 
 function M:PLAYER_MONEY()
-  local m = tonumber(try(g("GetMoney")))
+  local m = tonumber((try(g("GetMoney"))))
   if not m or secret(m) then return end
   local last = S.lastMoney
   S.lastMoney = m
@@ -295,7 +295,7 @@ function M.DurLines()
   if opt("dungeonDur") then
     local P = T.Pro
     local near = P and P.DungeonsFor and #P.DungeonsFor(level()) > 0
-    local grouped = (tonumber(try(g("GetNumGroupMembers"))) or 0) > 0
+    local grouped = (tonumber((try(g("GetNumGroupMembers")))) or 0) > 0
     local need = tonumber(M.db.durMin) or 60
     if avg < need and (M.InDungeon() or (grouped and near)) then
       lines[#lines + 1] = { text = ("Avant donjon : répare (dur. %d %%, ~%s)"):format(floor(avg), money(cost)),
@@ -321,7 +321,7 @@ function M:MERCHANT_CLOSED() S.merchant = false M.Refresh(0.5) end
 -- ------------------------------------------------------------------ marchands (16)
 function M.ScanMerchant()
   if not opt("vendorUp") then return end
-  local n = tonumber(try(g("GetMerchantNumItems"))) or 0
+  local n = tonumber((try(g("GetMerchantNumItems")))) or 0
   local Up = U().Upgrade
   if n == 0 or not Up then return end
   local npc = try(g("UnitName"), "npc") or "Marchand"
@@ -368,7 +368,7 @@ function M.VendorLines()
   local here = zoneName()
   for i, u in ipairs(M:KnownUpgrades()) do
     if i > 3 then break end
-    local afford = (tonumber(try(g("GetMoney"))) or 0) >= (u.price or 0)
+    local afford = (tonumber((try(g("GetMoney")))) or 0) >= (u.price or 0)
     lines[#lines + 1] = { text = ("Marchand %s%s : %s (+%d niv. %s, %s)%s"):format(cut(u.npc, 18),
       (u.zone and u.zone ~= here) and (" (" .. u.zone .. ")") or "", cut(u.name, 22), u.d, u.slot or "?", money(u.price),
       afford and "" or " — pas assez d'or"), prio = (u.d >= 5 and afford) and 2 or 1 }
@@ -471,14 +471,14 @@ end
 -- recettes → { name, chance, makeable, cost } ; API classique (GetTradeSkillInfo) ou C_TradeSkillUI
 function M.Recipes()
   local list = {}
-  local n = tonumber(try(g("GetNumTradeSkills"))) or 0
+  local n = tonumber((try(g("GetNumTradeSkills")))) or 0
   if n > 0 then
     for i = 1, min(n, 400) do
       local name, kind, avail = try(g("GetTradeSkillInfo"), i)
       local chance = DIFF[kind or ""]
       if name and chance and chance > 0 then
         local cost = 0
-        for j = 1, tonumber(try(g("GetTradeSkillNumReagents"), i)) or 0 do
+        for j = 1, tonumber((try(g("GetTradeSkillNumReagents"), i))) or 0 do
           local rname, _, need, have = try(g("GetTradeSkillReagentInfo"), i, j)
           local link = try(g("GetTradeSkillReagentItemLink"), i, j)
           need, have = tonumber(need) or 1, tonumber(have) or 0
@@ -635,7 +635,7 @@ function M.Update(force)
   if not M:IsEnabled() or inCombat() then return end  -- Forever : calculs hors combat
   if not force and now() - lastUpdate < 2 then return end
   lastUpdate = now()
-  if S.lastMoney == nil then S.lastMoney = tonumber(try(g("GetMoney"))) end
+  if S.lastMoney == nil then S.lastMoney = tonumber((try(g("GetMoney")))) end
   sample()
   craftScan()
   local hv, info = {}, {}

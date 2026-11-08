@@ -470,7 +470,7 @@ local function mapSize(mapID)
   local C = compass()
   if C and C.Geo and C.Geo.MapSize then return C.Geo.MapSize(mapID) end
 end
-local function playerLevel() return tonumber(try(G("UnitLevel"), "player")) or 1 end
+local function playerLevel() return tonumber((try(G("UnitLevel"), "player"))) or 1 end
 
 M.live = {}
 local function plateUnits()
@@ -495,7 +495,7 @@ function M.ScanLive()
   local pl, best, bw = playerLevel(), nil, 0
   for _, u in ipairs(plateUnits()) do
     if try(G("UnitCanAttack"), "player", u) and not try(G("UnitIsDead"), u) and not try(G("UnitIsPlayer"), u) then
-      local lvl = tonumber(try(G("UnitLevel"), u)) or pl
+      local lvl = tonumber((try(G("UnitLevel"), u))) or pl
       local cls = try(G("UnitClassification"), u)
       local elite = cls == "elite" or cls == "rareelite" or cls == "worldboss"
       local cat = M.Category(lvl, pl, elite)

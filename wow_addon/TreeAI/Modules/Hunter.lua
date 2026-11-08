@@ -8,6 +8,7 @@
 -- Instantané pour TreeAI Coach : TreeAIDB.chars[clé].summary.hunter (voir treeaicoach/wow/classes/hunter.py).
 -- Sans cœur (tests) : repli autonome, API brutes protégées.
 
+local function _ns(v) local f = rawget(_G, "issecretvalue") if f and f(v) then return nil end return v end   -- valeurs secrètes (combat) → nil
 local TreeAI = _G.TreeAI
 if type(TreeAI) ~= "table" then return end
 
@@ -662,6 +663,7 @@ function M:OnCombatLog(...)
   end
   if not sub or not UnitGUID then return end
   local me = UnitGUID("player")
+  if not _ns(dstGUID) or not _ns(srcFlags) then return end
   if dstGUID == me and srcFlags and bit and bit.band(srcFlags, 0x40) ~= 0
       and (sub == "SWING_DAMAGE" or sub == "SPELL_DAMAGE" or sub == "RANGE_DAMAGE" or sub == "SWING_MISSED") then
     attackers[srcGUID] = now()
@@ -683,8 +685,8 @@ M.clips = 0
 
 local function rangedSpeed()
   if UnitRangedDamage then
-    local s = UnitRangedDamage("player")
-    if s and s > 0 then return s end
+    local s = _ns(UnitRangedDamage("player"))
+    if type(s) == "number" and s > 0 then return s end
   end
   return 2.0
 end
@@ -726,7 +728,7 @@ local function buildBar()
     local frac = math.min(el / shotSpeed, 1)
     s:SetValue(frac)
     local left = shotSpeed - el
-    local moving = GetUnitSpeed and (GetUnitSpeed("player") or 0) > 0
+    local moving = GetUnitSpeed and (_ns(GetUnitSpeed("player")) or 0) > 0
     if left <= 0.5 then
       if moving then s:SetStatusBarColor(1, 0.2, 0.2); s.text:SetText("Ne bouge pas !")
       else s:SetStatusBarColor(1, 0.85, 0.2); s.text:SetText(left > 0 and string.format("%.1f", left) or "Tir") end

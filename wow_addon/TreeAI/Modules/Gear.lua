@@ -40,7 +40,7 @@ local function g(name) return rawget(G, name) end
 local function opt(k) return M.db and M.db[k] end
 local function mod(name) local m = T.modules and T.modules[name] if m and (not m.IsEnabled or m:IsEnabled()) then return m end end
 local function boost() local B = T.modules and T.modules.Boost return (B and B.ScoreStats) and B or nil end
-local function level() return tonumber(try(g("UnitLevel"), "player")) or 1 end
+local function level() return tonumber((try(g("UnitLevel"), "player"))) or 1 end
 local function itemInfo(x) if API.ItemInfo then return API.ItemInfo(x) end return try(g("GetItemInfo"), x) end
 local function itemID(link)
   if type(link) == "number" then return link end
@@ -187,7 +187,7 @@ function M.Ctx()
   local c = { class = T:PlayerClass(), level = level(), horizon = tonumber(opt("horizon")) or 3 }
   c.spec = B and B.SpecTab and try(B.SpecTab) or nil
   c.w = B and try(B.Weights) or {}
-  c.money = (API.Money and try(API.Money)) or tonumber(try(g("GetMoney"))) or 0
+  c.money = (API.Money and try(API.Money)) or tonumber((try(g("GetMoney")))) or 0
   local P = mod("Predict")
   local r = P and P.Rates and try(P.Rates)
   local St = T.Stats   -- or/h mesuré sur toutes les sessions (Stats) d'abord
@@ -342,7 +342,7 @@ function M.ScanLogRewards()
     for i = 1, min(40, tonumber((try(CQ.GetNumQuestLogEntries))) or 0) do
       local qid = try(CQ.GetQuestIDForLogIndex, i)
       if qid and qid > 0 then
-        for k = 1, min(6, tonumber(try(NC, qid, true)) or 0) do
+        for k = 1, min(6, tonumber((try(NC, qid, true))) or 0) do
           local l = try(IL, "choice", k, qid)
           if l then add(qid, l) end
         end
@@ -415,9 +415,9 @@ function M.Sources(id, c)
     if opt("dungeons") and #drops > 0 and #drops <= 6 and qn then
       for _, npc in ipairs(drops) do
         local name = try(qn, npc, "name") or "?"
-        local zone = tonumber(try(qn, npc, "zoneID"))
-        local rank = tonumber(try(qn, npc, "rank")) or 0
-        local nl = tonumber(try(qn, npc, "maxLevel")) or tonumber(try(qn, npc, "minLevel")) or c.level
+        local zone = tonumber((try(qn, npc, "zoneID")))
+        local rank = tonumber((try(qn, npc, "rank"))) or 0
+        local nl = tonumber((try(qn, npc, "maxLevel"))) or tonumber((try(qn, npc, "minLevel"))) or c.level
         local d = zone and DUNGEONS[zone]
         if d then
           local far = max(0, d[2] - c.level)
@@ -439,7 +439,7 @@ function M.Sources(id, c)
       if #vend > 0 then
         local npc = vend[1]
         local name = try(qn, npc, "name") or "un marchand"
-        local z = areaName(tonumber(try(qn, npc, "zoneID")))
+        local z = areaName(tonumber((try(qn, npc, "zoneID"))))
         add("vendor", ("marchand %s%s%s"):format(name, z and (" — " .. z) or "", #vend > 1 and (" (+" .. (#vend - 1) .. ")") or ""),
           10, r and r.buy or 0)
       end

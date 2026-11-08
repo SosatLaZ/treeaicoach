@@ -340,7 +340,7 @@ end
 function API.SkillLines()
   local out, SI = {}, _G.C_SkillInfo
   if SI and SI.GetNumSkillLines and SI.GetSkillLineInfo then
-    for i = 1, (tonumber(try(SI.GetNumSkillLines)) or 0) do
+    for i = 1, (tonumber((try(SI.GetNumSkillLines))) or 0) do
       local d = try(SI.GetSkillLineInfo, i)
       if type(d) == "table" then
         out[#out + 1] = { name = d.name, isHeader = d.isHeader, rank = d.rank, maxRank = d.maxRank, id = d.skillID }
@@ -349,7 +349,7 @@ function API.SkillLines()
     return out
   end
   if _G.GetNumSkillLines and _G.GetSkillLineInfo then
-    for i = 1, (tonumber(try(_G.GetNumSkillLines)) or 0) do
+    for i = 1, (tonumber((try(_G.GetNumSkillLines))) or 0) do
       local name, isHeader, _, rank, _, _, maxRank = try(_G.GetSkillLineInfo, i)
       if name then out[#out + 1] = { name = name, isHeader = isHeader, rank = rank, maxRank = maxRank } end
     end
@@ -367,7 +367,7 @@ function API.SpellBookSpells(pet)
     if pet then
       for i = 1, (tonumber((try(SB.HasPetSpells))) or 0) do slots[#slots + 1] = i end
     elseif SB.GetNumSpellBookSkillLines and SB.GetSpellBookSkillLineInfo then
-      for l = 1, (tonumber(try(SB.GetNumSpellBookSkillLines)) or 0) do
+      for l = 1, (tonumber((try(SB.GetNumSpellBookSkillLines))) or 0) do
         local info = try(SB.GetSpellBookSkillLineInfo, l)
         if type(info) == "table" and not info.shouldHide then
           local off = tonumber(info.itemIndexOffset) or 0
@@ -388,7 +388,7 @@ function API.SpellBookSpells(pet)
   if pet then
     for i = 1, (tonumber((try(_G.HasPetSpells))) or 0) do slots[#slots + 1] = i end
   elseif _G.GetNumSpellTabs and _G.GetSpellTabInfo then
-    for tab = 1, (tonumber(try(_G.GetNumSpellTabs)) or 0) do
+    for tab = 1, (tonumber((try(_G.GetNumSpellTabs))) or 0) do
       local _, _, off, num = try(_G.GetSpellTabInfo, tab)
       for i = (off or 0) + 1, (off or 0) + (num or 0) do slots[#slots + 1] = i end
     end
