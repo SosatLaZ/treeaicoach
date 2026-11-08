@@ -125,6 +125,49 @@ function Th:ClassColor(class)
   return self:Color("text")
 end
 
+-- MENU : un genre de ligne = une icône + une couleur, partout (panneau, menu, alertes) ---------------------
+-- Couleurs : rouge = urgent SEULEMENT ; or = argent ; bleu clair = trajet ; orange = mise en garde ;
+-- les quêtes gardent la couleur de difficulté du jeu (gris / vert / jaune / orange / rouge, dans leur texte).
+local ICON = "Interface\\Icons\\"
+Th.LINE = {
+  danger = { icon = "Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew", color = { 1, 0.3, 0.25 }, label = "Danger" },
+  warn = { icon = "Interface\\DialogFrame\\UI-Dialog-Icon-AlertOther", color = { 1, 0.6, 0.15 }, label = "Mise en garde" },
+  turnin = { icon = "Interface\\GossipFrame\\ActiveQuestIcon", label = "Quête à rendre" },
+  quest = { icon = "Interface\\GossipFrame\\AvailableQuestIcon", label = "Quête" },
+  kill = { icon = ICON .. "Ability_DualWield", label = "Objectif : tuer" },
+  collect = { icon = ICON .. "INV_Misc_Bag_09", label = "Objectif : ramasser" },
+  use = { icon = ICON .. "INV_Misc_Rune_01", label = "Objectif : utiliser" },
+  travel = { icon = ICON .. "Ability_Rogue_Sprint", color = { 0.55, 0.8, 1 }, label = "Trajet" },
+  flight = { icon = "Interface\\Minimap\\Tracking\\FlightMaster", color = { 0.55, 0.8, 1 }, label = "Vol" },
+  boat = { icon = ICON .. "INV_Misc_Spyglass_03", color = { 0.55, 0.8, 1 }, label = "Bateau / zeppelin" },
+  gear = { icon = ICON .. "INV_Chest_Chain", label = "Équipement" },
+  pet = { icon = ICON .. "Ability_Hunter_BeastCall", label = "Familier" },
+  group = { icon = ICON .. "Spell_Holy_PrayerOfHealing", label = "Équipe" },
+  money = { icon = ICON .. "INV_Misc_Coin_01", color = { 1, 0.82, 0.2 }, label = "Argent / HV" },
+  consumable = { icon = ICON .. "INV_Misc_Food_15", label = "Consommables" },
+  info = { icon = ICON .. "INV_Misc_Note_01", label = "Info" },
+}
+--- Texte normal selon la priorité (l'or est réservé à l'argent, le rouge à l'urgent).
+Th.LINE_PRIO = { { 0.80, 0.80, 0.80 }, { 1, 1, 1 }, { 1, 0.3, 0.25 } }
+function Th:LineStyle(kind, prio)
+  local k = self.LINE[kind or "info"] or self.LINE.info
+  local c = k.color or self.LINE_PRIO[math.min(3, math.max(1, tonumber(prio) or 1))]
+  if (tonumber(prio) or 1) >= 3 then c = self.LINE.danger.color end
+  return k.icon, c[1], c[2], c[3]
+end
+--- Couleur de difficulté d'une quête, comme le jeu (rouge ≥ +5, orange ≥ +3, jaune ±2, vert, gris).
+function Th:QuestDiffColor(qlevel, plevel)
+  qlevel, plevel = tonumber(qlevel), tonumber(plevel)
+  if not qlevel or qlevel <= 0 or not plevel then return 1, 0.82, 0, "jaune" end
+  local d = qlevel - plevel
+  if d >= 5 then return 1, 0.1, 0.1, "rouge" end
+  if d >= 3 then return 1, 0.5, 0.25, "orange" end
+  if d >= -2 then return 1, 1, 0, "jaune" end
+  local grey = plevel <= 5 and 0 or plevel <= 39 and plevel - math.floor(plevel / 10) - 5 or plevel - math.floor(plevel / 5) - 1
+  if qlevel > grey then return 0.25, 0.75, 0.25, "vert" end
+  return 0.5, 0.5, 0.5, "gris"
+end
+
 -- fonts -------------------------------------------------------------------------------------------------
 function Th:FontObject(size) return (SIZES[size] or SIZES.M)[1] end
 local function applyFont(fs, size)

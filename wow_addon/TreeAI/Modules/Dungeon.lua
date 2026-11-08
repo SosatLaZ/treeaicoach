@@ -494,7 +494,7 @@ function M:EndEncounter(success, d, b)
     wipeAt = now()
     if r then r.wipes = (r.wipes or 0) + 1 end
     if opt("wipe") then
-      self:Suggest("wipe", "Wipe" .. (b and (" sur " .. b.n) or "") .. " : pas de panique — regarde l'onglet Donjon (reprise).",
+      self:Suggest("wipe", "Wipe" .. (b and (" sur " .. b.n) or "") .. " : plan de reprise dans l'onglet Donjon.",
         3, { ttl = 30, tab = TAB, cooldown = 120 })
     end
   end
@@ -625,6 +625,7 @@ end
 ---------------------------------------------------------------------------------------------------
 -- lignes de l'onglet « Donjon »
 ---------------------------------------------------------------------------------------------------
+local ROLE_FR = { tank = "Tank", heal = "Soins", dps = "DPS" }
 local function line(out, text, prio, extra)
   local l = extra or {}
   l.text, l.prio = text, prio or 1
@@ -648,7 +649,7 @@ local function bossTooltip(b)
       tip[#tip + 1] = "  " .. name .. (it[3] == "ALL" and "" or (" — " .. tconcat(who, ", ")))
     end
   end
-  tip[#tip + 1] = "(conseils indicatifs, d'après Classic)"
+  tip[#tip + 1] = "(d'après Classic, à confirmer sur Forever)"
   return tconcat(tip, "\n")
 end
 
@@ -666,12 +667,25 @@ function M:BuildLines()
   line(out, fmt("%s (niv %d–%d)%s%s", d.n, d.min or 1, d.max or 60, d.new and " · nouveau Forever" or "",
     inInst and "" or (why == "auto" and " — prévu (quête de donjon)" or " — prévu")), 2,
     { tooltip = tconcat(d.tips or {}, "\n") .. "\n" .. tconcat(D.general or {}, "\n"),
-      onClick = function() M:Report(d) end })
+      onClick = function() M:Report(d) end, clickHint = "Clic : résumé du donjon dans le chat (pour le groupe)" })
+
+  -- fiche « joueur confirmé » : ce qui tue le groupe + le conseil de TON rôle (les 3 rôles en infobulle)
+  local card = D.cards and D.cards[d.key]
+  if card and not (enc and enc.d == d) then
+    local tip = {}
+    for _, k in ipairs({ "tank", "heal", "dps" }) do
+      if card[k] then tip[#tip + 1] = ROLE_FR[k] .. " : " .. card[k] end
+    end
+    if card.danger then line(out, "Ce qui tue le groupe : " .. card.danger, 2, { kind = "warn", tooltip = tip }) end
+    local tank, healer = M.Roles(members)
+    local role = (tank and tank.me) and "tank" or ((healer and healer.me) and "heal") or "dps"
+    if card[role] then line(out, ROLE_FR[role] .. " (toi) : " .. card[role], 2, { tooltip = tip }) end
+  end
 
   -- boss en cours
   if enc and enc.d == d then
     local b = enc.b
-    line(out, fmt("Boss : %s — %s", b.n, b.tip or "observez ses sorts"), 3, { tooltip = bossTooltip(b) })
+    line(out, b.tip and fmt("Boss : %s — %s", b.n, b.tip) or ("Boss : " .. b.n), 3, { tooltip = bossTooltip(b) })
     if hunter and b.hunter then line(out, "Chasseur : " .. b.hunter, 2) end
     local t = now() - enc.start
     for _, a in ipairs(b.alerts or {}) do
@@ -681,14 +695,13 @@ function M:BuildLines()
         line(out, fmt("Prochain (≈) : %s dans %d s", a.text, max(0, floor(nextAt - t))), 2)
       end
     end
-    if M.BlizzardTimeline() then line(out, "Frise de boss Blizzard active : nos minuteurs restent ici (pas de doublon).", 1) end
   end
 
   -- wipe : liste de reprise (5 min)
   if wipeAt and now() - wipeAt < 300 and opt("wipe") then
     local rez = {}
     for _, m in ipairs(members) do if REZ[m.class] then rez[#rez + 1] = m.me and "toi" or m.name end end
-    line(out, "Wipe — reprise :" .. (#rez > 0 and (" rez possible par " .. tconcat(rez, ", ")) or " personne ne rez : course depuis le cimetière"), 3)
+    line(out, "Wipe — reprise :" .. (#rez > 0 and (" rez possible par " .. tconcat(rez, ", ")) or " pas de rez dans le groupe, retour depuis le cimetière"), 3)
     for i, s in ipairs(D.wipe or {}) do if i > 1 or #rez > 0 then line(out, (i) .. ". " .. s, 2) end end
   end
 
@@ -701,7 +714,6 @@ function M:BuildLines()
     end
     if #low > 0 then line(out, fmt("Trop bas (min %d) : %s", d.min or 1, tconcat(low, ", ")), 3) end
     if #high > 0 then line(out, "Trop haut (peu d'XP, butin gris) : " .. tconcat(high, ", "), 1) end
-    if #low == 0 and #high == 0 then line(out, fmt("Niveaux OK pour %s (%d joueur%s).", d.n, #members, #members > 1 and "s" or ""), 1) end
     local tank, healer = M.Roles(members)
     local function who(m) return m and (m.me and "toi" or m.name) .. " (" .. (CLASS_FR[m.class] or "?") .. ")" or nil end
     if #members >= 2 then
@@ -816,7 +828,7 @@ end
 --- Clic sur un boss : conseil complet dans « Maintenant », minuteurs au prochain combat (sans évènement de boss).
 function M:Arm(b)
   self._armed = b
-  self:Suggest("armed", "Prêt pour " .. b.n .. " : " .. (b.tip or "pas de conseil connu") .. " (minuteurs au début du combat)",
+  self:Suggest("armed", "Prêt pour " .. b.n .. (b.tip and (" : " .. b.tip) or "") .. " (minuteurs au début du combat)",
     2, { ttl = 120, tab = TAB })
   self:Refresh(true)
 end

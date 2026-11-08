@@ -632,6 +632,41 @@ TreeAI:RegisterMovable(frame, "radar", "Radar", {
 `TreeAI:CommitMove(id, l, b, scale)` enregistre par personnage (`chars[key].movers[id]`) et marque le
 manuel prioritaire. Déjà inscrits : panneau, encadré d'alerte, boussole, suivi.
 
+## Panneau, lignes, régions, pastille (agent MENU)
+
+* **Une ligne = un genre** (`TreeAI.Theme.LINE`, `Theme:LineStyle(kind, prio)`) : `danger`, `warn`, `turnin`, `quest`,
+  `kill`, `collect`, `use`, `travel`, `flight`, `boat`, `gear`, `pet`, `group`, `money`, `consumable`, `info` → une
+  icône + une couleur partout. Rouge = urgent (prio 3) seulement, or = argent, bleu clair = trajet, orange = mise en
+  garde ; les titres de quête gardent la couleur de difficulté du jeu (`Theme:QuestDiffColor(ql, pl)`). Genre
+  deviné par le verbe (« Tue », « Ramasse », « Rends », « Va », « Prends le vol »…) ou passé par le module
+  (`kind = "money"`). L'icône du module est gardée pour équipement / consommables / argent / familier / équipe / info.
+* **Champs de ligne en plus** (`SetTabLines`) : `questID` (regroupement par région, boussole), `right` (chiffre de
+  la colonne de droite ; sinon le dernier « · 396 m » / « (≈ 3 min) » du texte y est déplacé), `clickHint` (1re
+  ligne de l'infobulle = ce que fait le clic ; sinon la ligne « Clic … » du module remonte en tête), `header`.
+* **Rendu** : colonne de droite alignée, largeur commune à l'onglet ; texte sur 1–3 lignes mesurées (jamais
+  « … ») ; chevron + curseur « main » sur ce qui se clique ; titres de section avec icône ; pastilles de compte
+  sur les onglets (quêtes, urgences) ; « Plus » rangé en Jeu / Outils / Réglages ; panneau vide = « Rien d'urgent —
+  continue « <quête> » ». Géométrie exposée pour les tests : `TreeAI:GetRowLayout()` (kind, icon, couleur, textPx,
+  avail, colW, chevW, right…).
+* **Meilleur guide** : la 1re ligne de « Quête en cours » affiche distance · durée (cible de `Compass.state`, même
+  contrat que Route / Compass ; sinon l'entrée du suivi), direction + pourquoi en infobulle ; mise à jour par le
+  ticker 1 s existant, sans redessin complet (`TreeAI:_UpdateGuide()`).
+* **Quêtes par région** (`Modules/Region.lua`, `TreeAI.Region`) : l'onglet Quêtes est regroupé Ici · <zone> →
+  Zones voisines (par temps de trajet) → Plus loin, recalculé à `ZONE_CHANGED_NEW_AREA` (rien en combat). Région
+  déconseillée (autre continent, ≥ +5 niveaux, élite seul, donjon, > 8 min de trajet) : la quête reste listée
+  (« · déconseillée ») ; si c'est la meilleure option, une ligne « Région déconseillée : <raison> — on y va quand
+  même parce que <pourquoi> » (et sous l'étape en cours de « Maintenant »). **Jamais** d'appel automatique au
+  suivi d'objectifs du jeu : bouton d'onglet « Suivi du jeu » (clic, hors combat, ≤ 5 quêtes de la zone).
+  Questie / Shortest Path : rien ne leur est envoyé.
+* **Pastille de la minimap** (`Modules/Hub.lua`, `TreeAI.Hub`) : bouton rond enfant de `Minimap` (glisser autour
+  du bord, angle sauvé, minimaps carrées via `GetMinimapShape`), aussi dans `AddonCompartmentFrame` s'il existe.
+  Clic = menu hub (Jeu : tous les onglets ; Outils : Recherche, Meilleur familier, Macros, À faire, Boussole, Radar ;
+  Réglages : Options, Profil, Erreurs, Blocages, panneau, Déplacer, Réinitialiser) ; clic droit = Options ;
+  infobulle = prochaine étape, XP/h, niveau dans… `/tai menu` ouvre le même menu. `TreeAI:HasSlash(cmd)` (Core)
+  sert à n'afficher que ce qui existe.
+* **Donjons** : fiche « joueur confirmé » (`T.Data.Dungeons.cards[key]` : `danger`, `tank`, `heal`, `dps`) →
+  « Ce qui tue le groupe : … » + « <rôle> (toi) : … » (les 3 rôles en infobulle) ; textes de boss réécrits.
+
 ## Sons, fenêtres, placement vivant (agent UI2)
 
 **Sons** (`Core.lua`) : `TreeAI:Sound(kind[, {preview=true}])` → `true` ou `false, raison` (`off` sons coupés ·

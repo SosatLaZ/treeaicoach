@@ -45,9 +45,9 @@ local function look()
   return fs, tonumber(s and s.lineGap) or ROW_GAP, tonumber(s and s.iconSize) or 13
 end
 local EMPTY = {
-  now = "Rien à signaler.", quests = "Aucune étape de quête pour l'instant.",
-  group = "Pas de groupe avec TreeAI.", hv = "Ouvre l'hôtel des ventes pour chercher des affaires.",
-  info = "Rien à signaler.",
+  now = "Rien d'urgent — choisis une quête dans « Quêtes »", quests = "Aucune quête : cherche les « ! » jaunes autour de toi",
+  group = "Pas de groupe — invite tes amis (TreeAI partage vos quêtes)",
+  hv = "Ouvre l'hôtel des ventes pour chercher des affaires.", info = "Rien à signaler.",
 }
 local ICONS = {
   compass = "Interface\\Icons\\INV_Misc_Spyglass_02",
@@ -94,6 +94,170 @@ local function iconOf(e)
   return m and MODULE_ICONS[m] or nil
 end
 TreeAI._IconOf = iconOf
+
+-- ---------------------------------------------------------------- MENU : genre de ligne, couleur, chiffres
+-- Genre (danger, quête à rendre, objectif tuer / ramasser / utiliser, trajet / vol / bateau, équipement,
+-- familier, équipe, argent, consommables, info) -> une icône et une couleur constantes (Theme.LINE).
+local KIND_SET = { danger = true, warn = true, turnin = true, quest = true, kill = true, collect = true, use = true,
+  travel = true, flight = true, boat = true, gear = true, pet = true, group = true, money = true, consumable = true,
+  info = true }
+-- l'icône d'un module (objet précis, nourriture…) dit plus que l'icône du genre : gardée pour ces genres
+local KEEP_ICON = { gear = true, consumable = true, money = true, pet = true, info = true, group = true }
+local MOD_KIND = { Gear = "gear", Hunter = "pet", HunterPro = "pet", Squad = "group", Team = "group",
+  Missions = "group", Group = "group", Auction = "money", Economy = "money", Route = "travel", Speed = "travel",
+  SafePath = "travel", Inventory = "consumable" }
+local TOPIC_KIND = { ammo = "consumable", food = "consumable", petfood = "pet", pet = "pet", repair = "gear",
+  hub = "travel" }
+-- verbes : au début de l'action (après « Étape : », « Ensuite : »…)
+local VERBS = {
+  { "rends ", "turnin" }, { "rendre ", "turnin" }, { "va rendre", "turnin" }, { "remets ", "turnin" },
+  { "prends le vol", "flight" }, { "prends un vol", "flight" }, { "vole ", "flight" },
+  { "prends le bateau", "boat" }, { "prends le zeppelin", "boat" },
+  { "tue ", "kill" }, { "tuer ", "kill" }, { "abats ", "kill" }, { "élimine ", "kill" },
+  { "ramasse", "collect" }, { "collecte", "collect" }, { "récupère", "collect" }, { "récolte", "collect" },
+  { "rapporte", "collect" }, { "fouille", "collect" }, { "dépèce", "collect" },
+  { "utilise ", "use" }, { "sers-toi", "use" },
+  { "équipe ", "gear" }, { "répare", "gear" }, { "fais fabriquer", "gear" },
+  { "nourris", "pet" }, { "ressuscite ton familier", "pet" }, { "apprivoise", "pet" },
+  { "achète", "consumable" }, { "refais le plein", "consumable" }, { "bois ", "consumable" }, { "mange ", "consumable" },
+  { "vends ", "money" }, { "mets en vente", "money" },
+  { "va ", "travel" }, { "marche", "travel" }, { "rejoins", "travel" }, { "retourne", "travel" }, { "rentre ", "travel" },
+  { "cours ", "travel" }, { "arrêt ", "travel" }, { "suis le plan", "travel" }, { "trajet", "travel" },
+}
+-- mots n'importe où (plus faibles que les verbes)
+local NOUNS = {
+  { "prête à rendre", "turnin" }, { "à rendre", "turnin" }, { "maître de vol", "flight" }, { "griffon", "flight" },
+  { "coursier du vent", "flight" }, { "bateau", "boat" }, { "zeppelin", "boat" }, { "familier", "pet" },
+  { "munitions", "consumable" }, { "boisson", "consumable" }, { "nourriture", "consumable" }, { "bandage", "consumable" },
+  { "potion", "consumable" }, { "hôtel des ventes", "money" }, { "pierre de foyer", "travel" },
+}
+local function plainOf(s) return TreeAI.PlainText and TreeAI.PlainText(s) or tostring(s or "") end
+local function lineKind(e, tab)
+  local txt = e.text
+  if e._kindOf == txt and e._kind then return e._kind end
+  local k
+  if (e.prio or 1) >= 3 then k = "danger"
+  elseif e.kind and KIND_SET[e.kind] then k = e.kind
+  else
+    local low = string.lower(plainOf(txt)):gsub("É", "é"):gsub("À", "à"):gsub("Ê", "ê"):gsub("È", "è")
+    -- action = après un court libellé « À faire maintenant : », « Ensuite : », « Étape : »
+    local c = low:find(" : ", 1, true)
+    local act = (c and c <= 24 and not low:sub(1, c):find("«", 1, true)) and low:sub(c + 3) or low
+    for _, v in ipairs(VERBS) do
+      if act:sub(1, #v[1]) == v[1] then k = v[2] break end
+    end
+    if not k then
+      for _, v in ipairs(NOUNS) do if low:find(v[1], 1, true) then k = v[2] break end end
+    end
+    if not k then
+      local topic = TreeAI.TopicOf and TreeAI:TopicOf(e)
+      k = (topic and TOPIC_KIND[topic]) or MOD_KIND[e.module or e.source or ""]
+    end
+    if not k and e.questID then k = "quest" end
+    if not k and tab == "group" then k = "group" end
+    if not k and tab == "hv" then k = "money" end
+    k = k or "info"
+  end
+  e._kind, e._kindOf = k, txt
+  return k
+end
+TreeAI._LineKind = lineKind
+
+-- chiffres compacts (distance, durée, XP/h…) déplacés dans une colonne de droite alignée
+local UNITS = { [""] = true, m = true, km = true, yd = true, s = true, min = true, h = true, ["%"] = true,
+  po = true, pa = true, pc = true, ["xp/h"] = true, ["xp/min"] = true, xp = true }
+local MID = " · "
+local function numSeg(seg)
+  local p = plainOf(seg):gsub("^%s+", ""):gsub("%s+$", "")
+  if p == "" or #p > 18 then return nil end
+  local body = p:gsub("^~%s*", ""):gsub("^≈%s*", "")
+  if body:match("^%d+ h %d%d$") or body:match("^%d+ min %d%d$") then return p end
+  local n, unit = body:match("^(%d[%d%s%.,:]*)%s*(%S*)$")
+  if not n or not UNITS[unit:lower()] then return nil end
+  return p
+end
+local function closeColor(s)
+  local _, o = s:gsub("|c%x%x%x%x%x%x%x%x", "")
+  local _, c = s:gsub("|r", "")
+  if o > c then s = s .. "|r" end
+  return (s:gsub("%s+$", ""))
+end
+local function splitRight(text)
+  text = tostring(text or "")
+  local a, init = nil, 1
+  while true do
+    local f = text:find(MID, init, true)
+    if not f then break end
+    a, init = f, f + 1
+  end
+  if a and a > 1 then
+    local r = numSeg(text:sub(a + #MID))
+    if r then return closeColor(text:sub(1, a - 1)), r end
+  end
+  local head, inner = text:match("^(.-)%s*%(([^()]+)%)%s*$")
+  if head and plainOf(head):find("%S") then
+    local r = numSeg(inner)
+    if r then return closeColor(head), r end
+  end
+  return text, nil
+end
+TreeAI._SplitRight = splitRight
+
+-- noms des membres du groupe aux couleurs de leur classe (cache 2 s, jamais de valeur « secrète »)
+local partyHex, partyAt = {}, -10
+local function isSecret(v) local f = rawget(_G, "issecretvalue") return type(f) == "function" and f(v) and true or false end
+local function partyColors()
+  local t = (_G.GetTime and _G.GetTime()) or 0
+  if t - partyAt < 2 then return partyHex end
+  partyAt = t
+  for k in pairs(partyHex) do partyHex[k] = nil end
+  local Th, un, uc = TreeAI.Theme, _G.UnitName, _G.UnitClass
+  if not (Th and Th.ClassColor and un and uc) then return partyHex end
+  for i = 1, 4 do
+    local u = "party" .. i
+    local ok, n = pcall(un, u)
+    if ok and type(n) == "string" and not isSecret(n) and n ~= "" then
+      local okc, _, cls = pcall(uc, u)
+      if okc and type(cls) == "string" and not isSecret(cls) then
+        local r, g, b = Th:ClassColor(cls)
+        partyHex[n] = ("ff%02x%02x%02x"):format(floor(r * 255 + 0.5), floor(g * 255 + 0.5), floor(b * 255 + 0.5))
+      end
+    end
+  end
+  return partyHex
+end
+local function colorNames(text)
+  for n, hex in pairs(partyColors()) do
+    local a = text:find(n, 1, true)
+    if a and not (a > 10 and text:sub(a - 10, a - 1):match("|c%x%x%x%x%x%x%x%x$")) then
+      text = text:sub(1, a - 1) .. "|c" .. hex .. n .. "|r" .. text:sub(a + #n)
+    end
+  end
+  return text
+end
+TreeAI._ColorNames = colorNames
+
+-- ce que fait le clic (1re ligne de l'infobulle) : texte du module, sa ligne « Clic … », sinon selon le genre
+local CLICK_BY_KIND = {
+  quest = "Clic : la boussole pointe vers cette quête", turnin = "Clic : la boussole pointe vers le PNJ de remise",
+  kill = "Clic : la boussole pointe vers les monstres", collect = "Clic : la boussole pointe vers les objets",
+  use = "Clic : la boussole pointe vers l'endroit", travel = "Clic : guider jusque-là",
+  flight = "Clic : guider jusqu'au maître de vol", boat = "Clic : guider jusqu'au quai", gear = "Clic : voir / équiper",
+  pet = "Clic : s'occuper du familier", group = "Clic : prévenir le groupe", money = "Clic : ouvrir / acheter",
+  consumable = "Clic : utiliser / préparer", danger = "Clic : réagir", warn = "Clic : détails", info = "Clic : faire l'action",
+}
+local function clickLineOf(e, rest)
+  if e.clickHint then return tostring(e.clickHint) end
+  for i, l in ipairs(rest) do
+    local t = type(l) == "table" and l[1]
+    local p = t and plainOf(t):gsub("^%s+", "")
+    if p and p:sub(1, 5) == "Clic " and p:sub(1, 10) ~= "Clic droit" then
+      table.remove(rest, i)
+      return p
+    end
+  end
+  return CLICK_BY_KIND[e._kind or "info"] or CLICK_BY_KIND.info
+end
 
 local panel, rows, tabButtons, tools = nil, {}, {}, {}
 local scroll = {}          -- tabId -> first visible index
@@ -168,6 +332,12 @@ local function entryTooltip(owner, e)
   elseif type(t) == "table" then
     for _, l in ipairs(t) do extra[#extra + 1] = { tostring(l), 0.9, 0.9, 0.9 } end
   end
+  -- MENU : 1re ligne = ce que fait le clic (bleu), puis le texte complet de la ligne, puis le détail
+  local clickable = e.onClick ~= nil
+  local first = clickable and clickLineOf(e, extra) or nil
+  if first then table.insert(extra, 1, { e.text, 1, 1, 1 }) end
+  if e._guide then extra[#extra + 1] = { e._guide, 0.55, 0.8, 1 } end
+  if e._note then extra[#extra + 1] = { e._note, 1, 0.6, 0.15 } end
   if e.macro then
     extra[#extra + 1] = " "
     extra[#extra + 1] = { L["Macro proposée"] .. " :", 0.6, 0.8, 1 }
@@ -182,9 +352,29 @@ local function entryTooltip(owner, e)
     table.sort(names)
     if #names > 0 then extra[#extra + 1] = { L["Aussi signalé par"] .. " : " .. table.concat(names, ", "), 0.6, 0.6, 0.6 } end
   end
-  if e.onClick then extra[#extra + 1] = { L["Clic : action"], 0.4, 0.8, 1 } end
   if isSuggestion(e) then extra[#extra + 1] = { L["Clic droit: masquer"], 0.5, 0.5, 0.5 } end
-  showTooltip(owner, e.text, extra)
+  if first then
+    local tt = _G.GameTooltip
+    if tt then
+      tt:SetOwner(owner, "ANCHOR_LEFT")
+      tt:AddLine(first, 0.4, 0.8, 1, true)
+      for _, l in ipairs(extra) do
+        if l == " " then tt:AddLine(" ") else tt:AddLine(l[1], l[2] or 0.8, l[3] or 0.8, l[4] or 0.8, true) end
+      end
+      tt:Show()
+    end
+    TreeAI._lastTooltipFirst = first
+  else
+    showTooltip(owner, e.text, extra)
+    TreeAI._lastTooltipFirst = e.text
+  end
+end
+-- curseur « main » sur ce qui se clique (gardé : SetCursor peut manquer)
+local function pointer(on)
+  local f = on and rawget(_G, "SetCursor") or rawget(_G, "ResetCursor")
+  if type(f) == "function" then
+    if on then pcall(f, "Interface\\CURSOR\\Point") else pcall(f) end
+  end
 end
 
 local function runEntry(e, button)
@@ -212,14 +402,31 @@ local function makeRow(i)
   -- 2 lignes au lieu d'une ligne coupée « … » (texte complet dans l'infobulle)
   if b.text.SetWordWrap then b.text:SetWordWrap(true) end
   if b.text.SetNonSpaceWrap then b.text:SetNonSpaceWrap(false) end
-  if b.text.SetMaxLines then b.text:SetMaxLines(2) end
+  if b.text.SetMaxLines then b.text:SetMaxLines(4) end
+  -- MENU : colonne de droite (distance, durée, XP/h…) alignée à droite, largeur commune à l'onglet
+  b.right = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.right:SetJustifyH("RIGHT")
+  if b.right.SetJustifyV then b.right:SetJustifyV("TOP") end
+  if b.right.SetWordWrap then b.right:SetWordWrap(false) end
+  b.right:SetTextColor(0.75, 0.85, 1)
+  -- chevron « › » : la ligne se clique
+  b.chev = b:CreateTexture(nil, "ARTWORK")
+  b.chev:SetSize(8, 8)
+  b.chev:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
+  b.chev:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, -3)
+  if b.chev.SetVertexColor then b.chev:SetVertexColor(1, 1, 1, 0.45) end
   b.hl = b:CreateTexture(nil, "HIGHLIGHT")
   b.hl:SetAllPoints(b)
   b.hl:SetTexture("Interface\\Buttons\\WHITE8X8")
   if b.hl.SetVertexColor then b.hl:SetVertexColor(1, 1, 1, 0.08) end
   b:SetScript("OnClick", function(self, button) runEntry(self.entry, button) end)
-  b:SetScript("OnEnter", function(self) if self.entry then entryTooltip(self, self.entry) end end)
-  b:SetScript("OnLeave", hideTooltip)
+  b:SetScript("OnEnter", function(self)
+    if self.entry then
+      entryTooltip(self, self.entry)
+      if self.entry.onClick then pointer(true) end
+    end
+  end)
+  b:SetScript("OnLeave", function() hideTooltip(); pointer(false) end)
   b.index = i
   return b
 end
@@ -278,6 +485,11 @@ local function newTabButton(id, icon)
   b.line:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -2, 0)
   b.line:SetTexture("Interface\\Buttons\\WHITE8X8")
   if b.line.SetVertexColor then b.line:SetVertexColor(0.2, 0.8, 0.4, 0.9) end
+  -- MENU : pastille de compte (quêtes, urgences, membres…) à droite de l'onglet
+  b.badge = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.badge:SetPoint("RIGHT", b, "RIGHT", -2, 0)
+  b.badge:SetJustifyH("RIGHT")
+  if b.badge.SetWordWrap then b.badge:SetWordWrap(false) end
   b.bg = b:CreateTexture(nil, "BACKGROUND")
   b.bg:SetAllPoints(b)
   b.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -306,18 +518,25 @@ local function tabButton(id)
   return b
 end
 
--- actions du sous-menu « Plus » (boutons, pas des onglets)
+-- actions du sous-menu « Plus » (boutons, pas des onglets), rangées en groupes : Outils puis Réglages
 local actionButtons = {}
+local MORE_GROUPS = {
+  { id = "jeu", title = "Jeu", icon = "Interface\\Icons\\INV_Misc_Map_01" },
+  { id = "outils", title = "Outils", icon = "Interface\\Icons\\INV_Misc_Wrench_01" },
+  { id = "reglages", title = "Réglages", icon = "Interface\\Icons\\INV_Misc_Gear_01" },
+}
 local MORE_ACTIONS = {
-  { key = "act:macros", title = "Macros", icon = ICONS.macros, fn = function() toggleMacros() end,
-    tip = "Clic : prendre une macro" },
-  { key = "act:edit", title = "Déplacer", icon = ICONS.edit, fn = function() TreeAI:SetEditMode(not TreeAI:IsEditMode()) end,
-    tip = "Déplacer les cadres (mode édition)" },
-  { key = "act:all", title = "Tout", icon = ICONS.all, fn = function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end,
-    tip = "Tout : toutes les actions des modules" },
-  { key = "act:reset", title = "Réinitialiser l'interface", icon = ICONS.reset, wide = true,
+  { key = "act:macros", group = "outils", title = "Macros", icon = ICONS.macros, fn = function() toggleMacros() end,
+    tip = "Clic : ouvrir les macros (en prendre une)" },
+  { key = "act:all", group = "outils", title = "Tout (aide)", icon = ICONS.all, fn = function() if TreeAI.ShowHelp then TreeAI:ShowHelp() end end,
+    tip = "Clic : toutes les actions des modules et les commandes" },
+  { key = "act:options", group = "reglages", title = "Options", icon = ICONS.options,
+    fn = function() if TreeAI.OpenOptions then TreeAI:OpenOptions() end end, tip = "Clic : réglages (taille, transparence, modules…)" },
+  { key = "act:edit", group = "reglages", title = "Déplacer les cadres", icon = ICONS.edit,
+    fn = function() TreeAI:SetEditMode(not TreeAI:IsEditMode()) end, tip = "Clic : mode édition (glisser, molette = taille)" },
+  { key = "act:reset", group = "reglages", title = "Réinitialiser l'interface", icon = ICONS.reset, wide = true,
     fn = function() TreeAI:ResetInterface() end,
-    tip = "Remet tous les cadres TreeAI à leur place automatique, taille et onglets par défaut" },
+    tip = "Clic : remet tous les cadres TreeAI à leur place automatique, taille et onglets par défaut" },
 }
 local function actionButton(a)
   local b = actionButtons[a.key]
@@ -357,16 +576,18 @@ TreeAI._FitLabel = fitLabel
 
 local function isMoreTab(id) return id ~= nil and not IS_PRIMARY[id] end
 
--- onglets secondaires (sous-menu « Plus ») + actions, dans l'ordre des onglets
+-- onglets secondaires (groupe « Jeu », dans l'ordre des onglets) puis actions (« Outils », « Réglages »)
 local function moreEntries()
   local out = {}
   for _, t in ipairs(TreeAI:GetTabs()) do
-    if not IS_PRIMARY[t.id] then out[#out + 1] = { id = t.id, order = t.order } end
+    if not IS_PRIMARY[t.id] then out[#out + 1] = { id = t.id, order = t.order, group = "jeu" } end
   end
   local tal = TreeAI.tabs.talents
-  if tal and #TreeAI:GetTabLines("talents") > 0 then out[#out + 1] = { id = "talents", order = tal.order } end
+  if tal and #TreeAI:GetTabLines("talents") > 0 then out[#out + 1] = { id = "talents", order = tal.order, group = "jeu" } end
   table.sort(out, function(a, b) if a.order ~= b.order then return a.order < b.order end return a.id < b.id end)
-  for _, a in ipairs(MORE_ACTIONS or {}) do out[#out + 1] = { id = a.key, action = a } end
+  for _, a in ipairs(MORE_ACTIONS or {}) do
+    if not a.when or a.when() then out[#out + 1] = { id = a.key, action = a, group = a.group } end
+  end
   return out
 end
 
@@ -375,19 +596,68 @@ end
 -- tabRects garde la géométrie (tests : aucun chevauchement, texte ≤ case).
 local tabRects = {}
 local function shortOf(id) return SHORT[id] and L[SHORT[id]] or nil end
+-- pastille d'un onglet : texte (compte) + couleur, ou nil
+local function urgentCount(list)
+  local n = 0
+  for _, e in ipairs(list) do if (e.prio or 1) >= 3 and not e.control then n = n + 1 end end
+  return n
+end
+local function badgeOf(id)
+  if id == MORE then
+    local n = 0
+    for _, t in ipairs(TreeAI:GetTabs()) do
+      if not IS_PRIMARY[t.id] then n = n + urgentCount(TreeAI:GetTabLines(t.id)) end
+    end
+    if n > 0 then return tostring(n), 1, 0.35, 0.3 end
+    return nil
+  end
+  local list = TreeAI:GetTabLines(id)
+  local u = urgentCount(list)
+  if u > 0 then return tostring(u), 1, 0.35, 0.3 end
+  if id == "now" then return nil end
+  local n, ready = 0, 0
+  if id == "quests" then
+    for _, e in ipairs(list) do
+      if e.questID then
+        n = n + 1
+        if lineKind(e, id) == "turnin" then ready = ready + 1 end
+      end
+    end
+    if n > 0 then
+      if ready > 0 then return tostring(n), 0.4, 1, 0.4 end
+      return tostring(n), 0.8, 0.8, 0.8
+    end
+    return nil
+  end
+  for _, e in ipairs(list) do if not e.control then n = n + 1 end end
+  if n > 0 then return tostring(n), 0.8, 0.8, 0.8 end
+  return nil
+end
+TreeAI._TabBadge = badgeOf
 local function layoutTabs(width)
   for i = #tabRects, 1, -1 do tabRects[i] = nil end
   for _, b in pairs(tabButtons) do b:Hide() end
   local inner = width - 2 * PAD
   local slot = floor(inner / 4)
-  local function place(b, x, row, w, label)
+  local function place(b, x, row, w, full, short)
     b:ClearAllPoints()
     b:SetPoint("TOPLEFT", panel, "TOPLEFT", x, -HEADER_H - row * (TAB_ROW_H + 2))
     b:SetWidth(w)
     b:SetHeight(TAB_ROW_H)
     b:Show()
+    local bt, br, bg, bb = badgeOf(b.id)
+    local bw = 0
+    if bt and b.badge then
+      b.badge:SetText(bt)
+      b.badge:SetTextColor(br, bg, bb)
+      b.badge:Show()
+      bw = floor((b.badge:GetStringWidth() or 0) + 3)
+      if bw > w / 3 then b.badge:Hide(); bw, bt = 0, nil end
+    elseif b.badge then b.badge:SetText(""); b.badge:Hide() end
+    local maxW = w - TAB_ICON - 6 - bw
+    local label = fitLabel(b.text, full, short, maxW)
     tabRects[#tabRects + 1] = { id = b.id or b.action, x = x, w = w, row = row, text = label,
-      textW = b.text:GetStringWidth() or 0, textMax = w - TAB_ICON - 6 }
+      textW = (b.text:GetStringWidth() or 0) + bw, textMax = w - TAB_ICON - 6, badge = bt }
   end
   -- une seule rangée : Maintenant · Quêtes · Groupe · « Plus » (= l'onglet secondaire actif s'il y en a un)
   local act = activeTab()
@@ -403,7 +673,7 @@ local function layoutTabs(width)
         b.icon:SetTexture(TAB_ICONS[MORE])
       end
     end
-    place(b, PAD + (i - 1) * slot, 0, w, fitLabel(b.text, full, short, w - TAB_ICON - 6))
+    place(b, PAD + (i - 1) * slot, 0, w, full, short)
   end
   return TAB_ROW_H + 2
 end
@@ -457,9 +727,12 @@ local function menuRow(i)
   b.icon:SetPoint("LEFT", b, "LEFT", 6, 0)
   b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
-  b.text:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+  b.text:SetPoint("RIGHT", b, "RIGHT", -30, 0)
   b.text:SetJustifyH("LEFT")
   if b.text.SetWordWrap then b.text:SetWordWrap(false) end
+  b.count = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.count:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+  b.count:SetJustifyH("RIGHT")
   b.hl = b:CreateTexture(nil, "HIGHLIGHT")
   b.hl:SetAllPoints(b)
   b.hl:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -477,48 +750,87 @@ local function menuRow(i)
   b:SetScript("OnEnter", function(self)
     local e = self.e
     if not e then return end
-    if e.action then showTooltip(self, L[e.action.title], e.action.tip and { { L[e.action.tip], 0.8, 0.8, 0.8 } } or nil)
-    else showTooltip(self, tabTitle(e.id), { { L["Clic : ouvrir l'onglet"], 0.6, 0.6, 0.6 } }) end
+    if e.action then showTooltip(self, L[e.action.tip or e.action.title], { { L[e.action.title], 0.8, 0.8, 0.8 } })
+    else showTooltip(self, L["Clic : ouvrir l'onglet"] .. " « " .. tabTitle(e.id) .. " »", nil) end
+    pointer(true)
   end)
-  b:SetScript("OnLeave", hideTooltip)
+  b:SetScript("OnLeave", function() hideTooltip(); pointer(false) end)
   menu.rows[i] = b
   return b
+end
+local MENU_HEAD = 16
+local function menuHead(i)
+  menu.heads = menu.heads or {}
+  local h = menu.heads[i]
+  if h then return h end
+  h = menu:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  h:SetJustifyH("LEFT")
+  if h.SetWordWrap then h:SetWordWrap(false) end
+  h.icon = menu:CreateTexture(nil, "ARTWORK")
+  h.icon:SetSize(12, 12)
+  menu.heads[i] = h
+  return h
+end
+local function menuSep(i, y)
+  local t = menu.seps[i]
+  if not t then
+    t = menu:CreateTexture(nil, "ARTWORK")
+    t:SetTexture("Interface\\Buttons\\WHITE8X8")
+    if t.SetVertexColor then t:SetVertexColor(0.78, 0.62, 0.28, 0.35) end
+    t:SetHeight(1)
+    menu.seps[i] = t
+  end
+  t:ClearAllPoints()
+  t:SetPoint("TOPLEFT", menu, "TOPLEFT", 8, y)
+  t:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -8, y)
+  t:Show()
 end
 local function fillMenu()
   if not buildMenu() then return end
   for i = #menuEntries, 1, -1 do menuEntries[i] = nil end
   for _, r in ipairs(menu.rows) do r:Hide(); r.e = nil end
   for _, t in ipairs(menu.seps) do t:Hide() end
+  for _, h in ipairs(menu.heads or {}) do h:Hide(); h.icon:Hide() end
   local act = activeTab()
   local entries = moreEntries()
-  -- largeur : le libellé le plus long (mesuré), au moins MENU_MIN_W
+  -- largeur : le libellé le plus long (mesuré, pastille comprise), au moins MENU_MIN_W
   local probe = menuRow(1)
   local w = MENU_MIN_W
   for _, e in ipairs(entries) do
     probe.text:SetText(e.action and L[e.action.title] or tabTitle(e.id))
-    w = max(w, floor((probe.text:GetStringWidth() or 0) + 14 + 6 + 6 + 12 + 6))
+    w = max(w, floor((probe.text:GetStringWidth() or 0) + 14 + 6 + 6 + 12 + 6 + 24))
   end
   w = min(w, 320)
-  local y, n, seps, prevAction = -4, 0, 0, false
+  local y, n, seps, heads, lastGroup = -4, 0, 0, 0, nil
   for _, e in ipairs(entries) do
-    if e.action and not prevAction and n > 0 then   -- séparateur entre onglets et actions
-      seps = seps + 1
-      local t = menu.seps[seps]
-      if not t then
-        t = menu:CreateTexture(nil, "ARTWORK")
-        t:SetTexture("Interface\\Buttons\\WHITE8X8")
-        if t.SetVertexColor then t:SetVertexColor(0.78, 0.62, 0.28, 0.35) end
-        t:SetHeight(1)
-        menu.seps[seps] = t
+    if e.group ~= lastGroup then
+      if lastGroup ~= nil then   -- séparateur entre deux groupes
+        seps = seps + 1
+        menuSep(seps, y - 3)
+        menuEntries[#menuEntries + 1] = { kind = "sep", y = y - 3, h = 1 }
+        y = y - 7
       end
-      t:ClearAllPoints()
-      t:SetPoint("TOPLEFT", menu, "TOPLEFT", 8, y - 3)
-      t:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -8, y - 3)
-      t:Show()
-      menuEntries[#menuEntries + 1] = { kind = "sep", y = y - 3, h = 1 }
-      y = y - 7
+      lastGroup = e.group
+      local g
+      for _, gg in ipairs(MORE_GROUPS) do if gg.id == e.group then g = gg end end
+      if g then
+        heads = heads + 1
+        local h = menuHead(heads)
+        h.icon:ClearAllPoints()
+        h.icon:SetPoint("TOPLEFT", menu, "TOPLEFT", 8, y - 2)
+        h.icon:SetTexture(g.icon)
+        h.icon:Show()
+        h:ClearAllPoints()
+        h:SetPoint("TOPLEFT", menu, "TOPLEFT", 24, y - 2)
+        h:SetWidth(w - 32)
+        h:SetText(L[g.title])
+        h:SetTextColor(0.78, 0.62, 0.28)
+        h:Show()
+        menuEntries[#menuEntries + 1] = { kind = "header", group = g.id, y = y, h = MENU_HEAD, text = L[g.title],
+          textW = h:GetStringWidth() or 0, textMax = w - 32 }
+        y = y - MENU_HEAD
+      end
     end
-    prevAction = e.action and true or false
     n = n + 1
     local b = menuRow(n)
     b.e = e
@@ -527,21 +839,28 @@ local function fillMenu()
     b:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -3, y)
     b:SetWidth(w - 6)
     local label = e.action and L[e.action.title] or tabTitle(e.id)
-    b.text:SetText(label)
     b.icon:SetTexture(e.action and e.action.icon or TAB_ICONS[e.id] or TAB_ICONS.info)
+    local count = nil
     if e.action then b.text:SetTextColor(0.6, 0.85, 1); b.sel:Hide()
     else
       local list = TreeAI:GetTabLines(e.id)
-      local urgent = false
-      for _, l in ipairs(list) do if l.prio >= 3 then urgent = true break end end
+      local urgent = urgentCount(list)
+      local nl = 0
+      for _, l in ipairs(list) do if not l.control then nl = nl + 1 end end
       if e.id == act then b.text:SetTextColor(1, 1, 1); b.sel:Show()
-      elseif urgent then b.text:SetTextColor(1, 0.35, 0.3); b.sel:Hide()
-      elseif #list == 0 then b.text:SetTextColor(0.55, 0.55, 0.55); b.sel:Hide()
+      elseif urgent > 0 then b.text:SetTextColor(1, 0.35, 0.3); b.sel:Hide()
+      elseif nl == 0 then b.text:SetTextColor(0.55, 0.55, 0.55); b.sel:Hide()
       else b.text:SetTextColor(1, 0.82, 0); b.sel:Hide() end
+      if urgent > 0 then count = "|cffff5a4d" .. urgent .. "|r" elseif nl > 0 then count = "|cffaaaaaa" .. nl .. "|r" end
+    end
+    b.text:SetText(label)
+    local textW = b.text:GetStringWidth() or 0
+    if b.count then
+      if count then b.count:SetText(count); b.count:Show() else b.count:SetText(""); b.count:Hide() end
     end
     b:Show()
-    menuEntries[#menuEntries + 1] = { kind = e.action and "action" or "tab", id = e.id, y = y, h = MENU_ROW,
-      w = w - 6, text = label, textW = b.text:GetStringWidth() or 0, textMax = w - 6 - 14 - 6 - 6 - 6 }
+    menuEntries[#menuEntries + 1] = { kind = e.action and "action" or "tab", id = e.id, group = e.group, y = y, h = MENU_ROW,
+      w = w - 6, text = label, textW = textW, textMax = w - 6 - 14 - 6 - 6 - 6 - 24, count = count }
     y = y - MENU_ROW
   end
   menu:SetSize(w, -y + 4)
@@ -671,7 +990,10 @@ function TreeAI:CreatePanel()
   panel.more:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -PAD - 14, 3)   -- place pour la poignée de largeur
 
   -- expire old suggestions even without new events
-  TreeAI:NewTicker(1, function() if panel:IsShown() and TreeAI:PanelDirty() then TreeAI:RequestRefresh() end end)
+  TreeAI:NewTicker(1, function()
+    if not panel:IsShown() then return end
+    if TreeAI:PanelDirty() then TreeAI:RequestRefresh() else TreeAI:_UpdateGuide() end
+  end)
 
   applyPosition()
   local s = acc()
@@ -755,12 +1077,18 @@ function TreeAI:GetTabControls() return ctrlRects end
 -- au moins deux. Les titres sont dessinés entre les lignes (pas des entrées : rien ne change pour les clics).
 local SECTION_SRC = { Quests = "Étape conseillée", plan = "Trajet", main = nil, Auction = "Hôtel des ventes",
   missions = "Missions", Talents = "Talents", Squad = "Groupe", Missions = "Missions" }
+local NOW_ICONS = { "Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew", "Interface\\GossipFrame\\AvailableQuestIcon",
+  "Interface\\Icons\\INV_Misc_Note_01" }
+local BAND_ICONS = { step = "Interface\\GossipFrame\\AvailableQuestIcon", here = "Interface\\Icons\\INV_Misc_Map_01",
+  near = "Interface\\Icons\\Ability_Rogue_Sprint", far = "Interface\\Minimap\\Tracking\\FlightMaster",
+  misc = "Interface\\Icons\\INV_Misc_Spyglass_02" }
 local function nowGroup(e)
   if e.prio >= 3 and not e.pin then return 1, L["Urgent"] end
   if e.pin then return 2, L["Quête en cours"] end
   return 3, L["Ensuite"]
 end
 local function blockGroup(e, tab)
+  if e._bandLabel then return "band:" .. tostring(e._band), e._bandLabel end
   local src = e.source
   if not src then return "~sugg", L["Conseils"] end
   if src == "main" then
@@ -776,12 +1104,29 @@ TreeAI.PanelSectionOf = function(_, e, tab)
   if tab == "now" then return nowGroup(e) end
   return blockGroup(e, tab)
 end
--- « Maintenant » : ordre logique stable (danger d'abord, puis l'étape de quête, puis le reste par priorité)
+local function sectionIcon(g, e, tab)
+  if tab == "now" then return NOW_ICONS[g] end
+  if e._band then return BAND_ICONS[e._band] end
+  return MODULE_ICONS[e.source or ""] or iconOf(e) or TAB_ICONS[tab]
+end
+local function region()
+  local R = TreeAI.Region
+  if type(R) == "table" and R.Arrange and (not R.IsEnabled or R:IsEnabled()) then return R end
+  return nil
+end
+-- « Maintenant » : ordre logique stable (danger d'abord, puis l'étape de quête — celle de la zone actuelle
+-- d'abord —, puis le reste par priorité)
 local function orderNow(list)
-  for i, e in ipairs(list) do e._ord = i end
+  local R = region()
+  for i, e in ipairs(list) do
+    e._ord = i
+    e._grp = nowGroup(e)
+    e._rr = (R and e._grp == 2 and R.Rank) and select(2, pcall(R.Rank, e)) or 2
+    if type(e._rr) ~= "number" then e._rr = 2 end
+  end
   table.sort(list, function(a, b)
-    local ga, gb = nowGroup(a), nowGroup(b)
-    if ga ~= gb then return ga < gb end
+    if a._grp ~= b._grp then return a._grp < b._grp end
+    if a._rr ~= b._rr then return a._rr < b._rr end
     return a._ord < b._ord
   end)
 end
@@ -801,6 +1146,63 @@ local function sectionFS(i)
   return fs
 end
 
+-- MENU « meilleur guide » : distance · durée (colonne de droite) + direction / pourquoi (infobulle) de l'étape
+-- en cours, lus sur la cible de la boussole (même contrat que Route / Compass) ou sur l'entrée du suivi.
+local function guideFor(e)
+  local C = TreeAI.Compass
+  local G = type(C) == "table" and C.Geo
+  if not G then return nil end
+  local units = C.db and C.db.units
+  local R = TreeAI.Region
+  local qid = (R and R.QuestOf and R.QuestOf(e)) or e.questID
+  local st = C.state
+  local t = st and st.target
+  if t and st.dist then
+    local match = (qid and t.questID == qid)
+    if not match and not qid and t.label then
+      local lab = plainOf(t.label):sub(1, 18)
+      match = lab ~= "" and plainOf(e.text):find(lab, 1, true) ~= nil
+    end
+    if match then
+      local dir = G.Cardinal and G.Cardinal(st.bearing) or ""
+      local right = (st.approx and "≈" or "") .. G.Dist(st.dist, units) .. (st.eta and (" · " .. st.eta) or "")
+      return right, ("Direction : %s · %s (boussole)"):format(dir ~= "" and dir or "?", right)
+    end
+  end
+  local Tr = TreeAI.Tracker
+  if qid and type(Tr) == "table" and Tr.items then
+    for _, it in ipairs(Tr.items) do
+      if it.key == qid and it.dist then
+        local eta = it.travelSec and G.ETA and G.ETA(it.travelSec * 7, 7)
+        local dir = (it.bearing and G.Cardinal) and G.Cardinal(it.bearing) or ""
+        local right = G.Dist(it.dist, units) .. (eta and (" · " .. eta) or "")
+        return right, ("Direction : %s · %s"):format(dir ~= "" and dir or "?", right)
+      end
+    end
+  end
+  return nil
+end
+TreeAI._GuideFor = guideFor
+
+-- texte du panneau vide : « Rien d'urgent — continue « <quête> » »
+local function emptyText(tab)
+  if tab == "now" then
+    local Td = TreeAI.Todo
+    local a = Td and Td.model and Td.model.now
+    local title = type(a) == "table" and a.questID and a.title
+    local Tr = TreeAI.Tracker
+    local top = Tr and Tr.shown and Tr.shown[1]
+    if not title and type(top) == "table" and type(top.q) == "table" then title = top.q.title end
+    if type(title) == "string" and title ~= "" and not isSecret(title) then
+      return L["Rien d'urgent"] .. " — " .. L["continue"] .. " « " .. plainOf(title) .. " »"
+    end
+  end
+  return L[EMPTY[tab] or "Rien à signaler."]
+end
+TreeAI._EmptyText = emptyText
+
+local visPool = {}
+local CHEV_W, RIGHT_MAX = 10, 110
 function TreeAI:RefreshPanel()
   if not panel then return end
   if TreeAI._PanelRendered then TreeAI:_PanelRendered() end
@@ -834,8 +1236,6 @@ function TreeAI:RefreshPanel()
   panel.miniText:Hide()
   panel.miniEntry = nil
 
-  -- en instance, l'onglet « Donjon » apparaît : le sous-menu « Plus » s'ouvre une fois pour le montrer
-  -- (en instance, « Plus » passe en rouge pour signaler l'onglet « Donjon » ; plus d'ouverture forcée)
   buildTabs()
   local tabsH = layoutTabs(width)
   local tab = activeTab()
@@ -867,7 +1267,14 @@ function TreeAI:RefreshPanel()
   for _, e in ipairs(all) do
     if e.control then ctrls[#ctrls + 1] = e else current[#current + 1] = e end
   end
-  if tab == "now" then orderNow(current) end
+  if tab == "now" then orderNow(current)
+  elseif tab == "quests" then
+    local R = region()
+    if R then
+      local ok, out = pcall(R.Arrange, current)
+      if ok and type(out) == "table" then current = out end
+    end
+  end
   tabsH = tabsH + layoutControls(ctrls, width, HEADER_H + tabsH + 2)
   local maxRows = min(MAX_ROWS, max(3, (s and s.maxLines) or 8))
   local n = #current
@@ -877,21 +1284,72 @@ function TreeAI:RefreshPanel()
   scroll[tab] = first
   local top = -(HEADER_H + tabsH + 4)
   local lineH = fsize + 4
-  -- largeur utile du texte : panneau − marges − barre de défilement − icône
-  local avail = width - 2 * PAD - 4 - (isize + 3)
+  local Th = TreeAI.Theme
+  local R = region()
+
+  -- passe 1 : ce que chaque ligne visible affiche (genre, icône, couleur, texte, chiffres, mise en garde)
+  local nVis, anyClick, colW = 0, false, 0
+  local guided = false
+  for i = 1, MAX_ROWS do
+    local e = current[first + i - 1]
+    if not (e and i <= maxRows) then break end
+    nVis = i
+    local v = visPool[i] or {}
+    visPool[i] = v
+    local kind = lineKind(e, tab)
+    local kicon, r, g, b
+    if Th and Th.LineStyle then kicon, r, g, b = Th:LineStyle(kind, e.prio)
+    else local c = PRIO_COLORS[e.prio] or PRIO_COLORS[1]; r, g, b = c[1], c[2], c[3] end
+    v.e, v.kind, v.r, v.g, v.b = e, kind, r, g, b
+    v.icon = (KEEP_ICON[kind] and iconOf(e)) or kicon or iconOf(e)
+    local txt, right = tostring(e.text), e.right
+    if not right then
+      if e._splitOf ~= txt then e._splitOf, e._splitT, e._splitR = txt, splitRight(txt) end
+      txt, right = e._splitT, e._splitR
+    end
+    e._guide, e._note = nil, nil
+    if tab == "now" and e.pin and not guided then   -- l'étape en cours : le meilleur guide
+      guided = true
+      local gr, gtip = guideFor(e)
+      if gr then right, e._guide = gr, gtip end
+      if R and R.NowNote then
+        local ok, note = pcall(R.NowNote, e)
+        if ok and type(note) == "string" then e._note = note end
+      end
+      v.guide = true
+    else
+      v.guide = false
+    end
+    if kind == "group" or tab == "group" then txt = colorNames(txt) end
+    v.text, v.right, v.note = txt, right, e._note
+    if e.onClick then anyClick = true end
+    if right then
+      local rf = rows[i].right
+      rf:SetText(right)
+      colW = max(colW, floor((rf:GetStringWidth() or 0) + 0.5))
+    end
+  end
+  if colW > 0 then colW = min(RIGHT_MAX, colW) + 6 end
+  local chevW = anyClick and CHEV_W or 0
+  -- largeur utile du texte : panneau − marges − barre de défilement − icône − colonne de droite − chevron
+  local rowW = width - 2 * PAD - 4
+  local avail = rowW - (isize + 3) - colW - chevW
+
   local y = top
   local shown = 0
   -- sections : seulement s'il y a au moins deux groupes dans l'onglet
   local groups, nG = {}, 0
   for _, e in ipairs(current) do
     local g = TreeAI:PanelSectionOf(e, tab)
-    if not groups[g] then groups[g] = true; nG = nG + 1 end
+    if not groups[g] then groups[g] = 0; nG = nG + 1 end
+    if e.questID then groups[g] = groups[g] + 1 end
   end
   local lastG, nSec = nil, 0
   local secH = fsize + 5
   for i = 1, MAX_ROWS do
-    local b, e = rows[i], current[first + i - 1]
-    if e and i <= maxRows then
+    local b, v = rows[i], (i <= nVis) and visPool[i] or nil
+    local e = v and v.e
+    if e then
       shown = shown + 1
       local g, gl = TreeAI:PanelSectionOf(e, tab)
       if nG > 1 and g ~= lastG and gl then
@@ -902,7 +1360,10 @@ function TreeAI:RefreshPanel()
         fs:ClearAllPoints()
         fs:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, y - 1)
         fs:SetWidth(width - 2 * PAD - 4)
-        fs:SetText("|cff33cc66" .. tostring(gl) .. "|r")
+        local sic = sectionIcon(g, e, tab)
+        local cnt = (tab == "quests" and (groups[g] or 0) > 0) and (" |cff888888(" .. groups[g] .. ")|r") or ""
+        local col = (tab == "now" and g == 1) and "|cffff4d40" or "|cff33cc66"
+        fs:SetText((sic and ("|T" .. sic .. ":" .. (fsize + 1) .. ":" .. (fsize + 1) .. "|t ") or "") .. col .. tostring(gl) .. "|r" .. cnt)
         fs:Show()
         fs.rule:ClearAllPoints()
         fs.rule:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, y - secH + 1)
@@ -912,42 +1373,70 @@ function TreeAI:RefreshPanel()
       end
       lastG = g
       b.entry = e
-      local c = PRIO_COLORS[e.prio] or PRIO_COLORS[1]
       local font, _, flags = b.text:GetFont()
-      if font then b.text:SetFont(font, fsize, flags) end
-      b.text:SetText(tostring(e.text))
-      b.text:SetTextColor(c[1], c[2], c[3])
+      if font then b.text:SetFont(font, fsize, flags); b.right:SetFont(font, max(9, fsize - 1), flags) end
+      -- nombre de lignes : texte mesuré / largeur utile (retour à la ligne, jamais « … »), + la mise en garde
+      b.text:SetText(v.text)
       local tw = (b.text.GetUnboundedStringWidth and b.text:GetUnboundedStringWidth()) or b.text:GetStringWidth() or 0
-      local nl = tw > avail and 2 or 1
-      local h = nl * lineH
-      b.lines = nl
+      -- (+8 % : le retour à la ligne se fait au mot, la dernière ligne n'est jamais pleine)
+      local nl = min(3, max(1, math.ceil((tw * 1.08 + 2) / max(40, avail))))
+      local nn = 0
+      if v.note then
+        b.text:SetText(v.note)
+        local nw = (b.text.GetUnboundedStringWidth and b.text:GetUnboundedStringWidth()) or b.text:GetStringWidth() or 0
+        nn = min(2, max(1, math.ceil((nw * 1.08 + 2) / max(40, avail))))
+        b.text:SetText(v.text .. "\n|cffff9933" .. v.note .. "|r")
+      end
+      b.text:SetTextColor(v.r, v.g, v.b)
+      local h = (nl + nn) * lineH
+      b.lines = nl + nn
       b:SetHeight(h)
       b.text:SetHeight(h)
       b.text:SetWidth(avail)
       b:ClearAllPoints()
       b:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, y)
       b:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD - 4, y)
-      local ic = iconOf(e)
       b.icon:SetSize(isize, isize)
-      if ic then b.icon:SetTexture(ic); b.icon:Show() else b.icon:Hide() end
+      if v.icon then b.icon:SetTexture(v.icon); b.icon:Show() else b.icon:Hide() end
       b.text:ClearAllPoints()
-      b.text:SetPoint("TOPLEFT", b, "TOPLEFT", ic and (isize + 3) or 0, 0)
-      b.text:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, 0)
+      b.text:SetPoint("TOPLEFT", b, "TOPLEFT", isize + 3, 0)
+      b.text:SetPoint("TOPRIGHT", b, "TOPRIGHT", -(colW + chevW), 0)
+      b.right:ClearAllPoints()
+      if v.right and colW > 0 then
+        b.right:SetText(v.right)
+        b.right:SetWidth(colW - 4)
+        b.right:SetPoint("TOPRIGHT", b, "TOPRIGHT", -chevW, -1)
+        b.right:SetTextColor(v.guide and 0.55 or 0.75, v.guide and 0.85 or 0.85, 1)
+        b.right:Show()
+      else
+        b.right:SetText("")
+        b.right:Hide()
+      end
+      if e.onClick then b.chev:Show() else b.chev:Hide() end
+      b._geo = { kind = v.kind, icon = v.icon, r = v.r, g = v.g, b = v.b, textPx = tw, avail = avail, lines = nl,
+        noteLines = nn, right = v.right, rightPx = v.right and (b.right:GetStringWidth() or 0) or 0,
+        rightW = colW > 0 and (colW - 4) or 0, rowW = rowW, iconW = isize + 3, colW = colW, chevW = chevW,
+        clickable = e.onClick ~= nil, guide = v.guide, note = v.note, text = v.text }
       b:Show()
       y = y - h - gap
     else
       b.entry = nil
+      b._geo = nil
       b:Hide()
     end
   end
+  for i = 1, nVis do visPool[i].e = nil end
   for i = nSec + 1, #secPool do secPool[i]:Hide(); secPool[i].rule:Hide() end
   panel.sections = nSec
   if shown == 0 then
     panel.empty:ClearAllPoints()
     panel.empty:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, top - 1)
-    panel.empty:SetText(L[EMPTY[tab] or "Rien à signaler."])
+    panel.empty:SetWidth(width - 2 * PAD - 4)
+    if panel.empty.SetWordWrap then panel.empty:SetWordWrap(true) end
+    panel.empty:SetText(emptyText(tab))
     panel.empty:Show()
-    y = top - lineH
+    local ew = panel.empty:GetStringWidth() or 0
+    y = top - lineH * min(2, max(1, math.ceil((ew + 1) / max(40, width - 2 * PAD - 4))))
   else
     panel.empty:Hide()
   end
@@ -968,6 +1457,27 @@ function TreeAI:RefreshPanel()
   end
 end
 
+-- MENU : distance / durée de l'étape en cours tenues à jour sans redessiner le panneau (ticker 1 s existant)
+function TreeAI:_UpdateGuide()
+  if not (panel and panel:IsShown()) or isMini() or activeTab() ~= "now" then return false end
+  for i = 1, MAX_ROWS do
+    local b = rows[i]
+    local gm = b and b.entry and b._geo
+    if gm and gm.guide and b:IsShown() then
+      local gr, gtip = guideFor(b.entry)
+      if gr and gr ~= gm.right then
+        if gm.colW == 0 or not gm.right then self:RequestRefresh() return true end
+        b.entry._guide = gtip
+        gm.right = gr
+        b.right:SetText(gr)
+        return true
+      end
+      return false
+    end
+  end
+  return false
+end
+
 -- géométrie des lignes visibles (tests) : { {top, h, lines}, ... }
 function TreeAI:GetRowLayout()
   local out = {}
@@ -975,7 +1485,9 @@ function TreeAI:GetRowLayout()
     local b = rows[i]
     if b and b.entry and b:IsShown() then
       local _, _, _, _, yy = b:GetPoint(1)
-      out[#out + 1] = { top = yy, h = b:GetHeight(), lines = b.lines }
+      local r = { top = yy, h = b:GetHeight(), lines = b.lines }
+      for k, v in pairs(b._geo or {}) do if r[k] == nil then r[k] = v end end
+      out[#out + 1] = r
     end
   end
   return out
