@@ -658,11 +658,19 @@ local function hours()
 end
 local function durIndex() local h = hours() return h == 12 and 1 or h == 24 and 2 or 3 end
 
+-- (3.9.9) clé royaume / faction / HV relue une fois par image : Economy évalue tout le sac (M.Stats par objet)
+local rdT, rdDB, rdHouse, rdKey
 function M.RealmData()
   local db = M.db
   if not db then return nil end
   db.realms = db.realms or {}
-  local key = (try(_G.GetRealmName) or "?") .. "-" .. (try(_G.UnitFactionGroup, "player") or "?") .. (M.IsNeutral() and "-N" or "")
+  local t, h = try(_G.GetTime), cfg("house", "auto")
+  local key
+  if t and t == rdT and db == rdDB and h == rdHouse then key = rdKey
+  else
+    key = (try(_G.GetRealmName) or "?") .. "-" .. (try(_G.UnitFactionGroup, "player") or "?") .. (M.IsNeutral() and "-N" or "")
+    rdT, rdDB, rdHouse, rdKey = t, db, h, key
+  end
   local r = db.realms[key]
   if not r then r = { items = {}, n = 0 } db.realms[key] = r end
   return r, key
