@@ -60,9 +60,9 @@ return function(M, ctx)
   check(nd and nd.cost == 4500, "nœud de vol de l'auberge trouvé")
   check(E.MatchBind(nodes, "Comté-de-l'Or") == nil, "pas de faux nœud")
   local ht, hp = E.HearthOrFly(0, nd, "Moulin-de-Tarren")
-  check(hp == 2 and ht == "Pour Moulin-de-Tarren, ta pierre de foyer est prête : garde 45 pa", "foyer prêt : " .. tostring(ht))
+  check(hp == 2 and ht == "Vers Moulin-de-Tarren : prends ta pierre de foyer (prête) et garde les 45 pa du vol", "foyer prêt : " .. tostring(ht))
   ht, hp = E.HearthOrFly(25 * 60, nd, "Moulin-de-Tarren")
-  check(hp == 1 and ht == "Pierre de foyer dans 25 min : vole vers Moulin-de-Tarren pour 45 pa", "foyer en recharge : " .. tostring(ht))
+  check(hp == 1 and ht == "Pierre de foyer dans 25 min : prends le vol vers Moulin-de-Tarren pour 45 pa", "foyer en recharge : " .. tostring(ht))
 
   local tp = E.TrainerPlan({ { name = "Tir des arcanes", cost = 18000 }, { name = "Morsure de serpent", cost = 2000 },
     { name = "Marque du chasseur", cost = 3000 } }, 6000)

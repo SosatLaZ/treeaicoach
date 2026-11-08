@@ -3,19 +3,22 @@
 --  * id de rencontre (ENCOUNTER_START), noms FR des boss, id de carte d'instance : tables client de WoW
 --    Forever (DungeonEncounter, Map ; build 1.60.1.70862, frFR, via wago.tools) — fiables.
 --  * niveau minimum : LFGDungeons + ContentTuning du même build (fiable) ; niveau max : ordre de grandeur Classic.
---  * conseils, minuteurs, butin : écrits à la main d'après Classic — INDICATIFS (Forever a retouché des boss ;
+--  * conseils, mécaniques, butin : écrits à la main d'après Classic — INDICATIFS (Forever a retouché des boss ;
 --    les objets de butin ne sont pas dans les tables client, id Classic à vérifier en jeu).
 -- Champs d'un donjon : key, n (nom FR), map (instanceID de GetInstanceInfo), area (zoneOrSort Questie),
 --   min/max, kw (mots-clés FR/EN), new (donjon propre à Forever), tips, hunter, bosses.
 -- Champs d'un boss : n (FR), en (EN), ids (encounterIDs), tip, hunter?, mark?, kill? (ordre / priorité),
---   alerts = { {first = s, every = s?, text, prio} } (minuteurs approximatifs depuis le début du combat),
+--   alerts = { {first = s, every = s?, text, prio} } : seul le TEXTE (la mécanique) est montré ; first / every
+--   (minuteurs d'après Classic, jamais mesurés sur Forever) ne servent plus (4.0) ; first = 0 = dit au début du combat,
 --   yell = { mots-clés (FR/EN) d'un cri / d'une émote } -> alerte « yellText », loot = { {id, "nom EN", "CLASSES"} }.
 -- Classes : HUNTER ROGUE WARRIOR PALADIN SHAMAN DRUID MAGE WARLOCK PRIEST (ALL = tout le monde).
 local T = TreeAI
 if type(T) ~= "table" then return end
 T.Data = T.Data or {}
 
-local CLOTH, LEATHER_AGI, MAIL = "MAGE WARLOCK PRIEST", "HUNTER ROGUE DRUID", "HUNTER SHAMAN"
+-- MAIL : avant le niveau 40, les mailles sont aux guerriers et paladins ; chasseurs et chamans les portent au 40
+-- (Gear.Engine.ARMOR_LEVEL décide par niveau, cette liste dit seulement pour qui l'objet est fait)
+local CLOTH, LEATHER_AGI, MAIL = "MAGE WARLOCK PRIEST", "HUNTER ROGUE DRUID", "WARRIOR PALADIN HUNTER SHAMAN"
 local CASTER = "MAGE WARLOCK PRIEST DRUID SHAMAN PALADIN"
 local HEALER = "PRIEST DRUID SHAMAN PALADIN"
 local TANK = "WARRIOR PALADIN DRUID"

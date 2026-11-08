@@ -33,9 +33,10 @@ def test_edge_module_removed():
     assert not (ADDON / "Modules" / "Edge.lua").exists()
 
 
-def test_9_features_each_togglable_and_used():
+def test_8_features_each_togglable_and_used():
     keys = re.findall(r'^\s*\{ "(\w+)", "[^"]+", "(?:Farm|Quêtes|Ville)" \},$', SRC, re.M)
-    assert len(keys) == 9 and len(set(keys)) == 9
+    assert len(keys) == 8 and len(set(keys)) == 8
+    assert "questTimer" not in keys  # 4.0 QA: the timed-quest countdown has one owner, Quests
     for k in keys:
         assert f'say("{k}"' in SRC, f"{k}: no line"
         assert f'drop("{k}")' in SRC or f'opt("{k}")' in SRC, f"{k}: never hidden / never checks its option"

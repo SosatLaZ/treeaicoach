@@ -1,4 +1,4 @@
--- Harness scenario (CLEAN 4.0) : module « Avantages » (Edge2.lua) — 9 avantages qui reposent sur un FAIT du jeu
+-- Harness scenario (CLEAN 4.0) : module « Avantages » (Edge2.lua) — 8 avantages qui reposent sur un FAIT du jeu
 -- (fusion des anciens « Coups d'avance » / « Avantages », sans les devinettes ni les doublons). Chaque avantage :
 -- déclencheur réel sur le mock, une ligne verbe d'abord, sans « ? », cachée quand elle ne sert à rien, coupable.
 -- Onglet « Avantages ». Noms factices. lua5.1 tests/wow/harness.lua --scenario tests/wow/edge2_scenario.lua wow_addon/TreeAI
@@ -6,7 +6,7 @@ return function(M, ctx)
   local T = TreeAI
   local check = ctx.check
   local X = T.Edge2
-  check(X and X.Engine and #X.FEATURES == 9, "module Avantages chargé, 9 avantages")
+  check(X and X.Engine and #X.FEATURES == 8, "module Avantages chargé, 8 avantages")
   if not (X and X.Engine) then return end
   local E = X.Engine
   local S = T._suggestions
@@ -29,7 +29,7 @@ return function(M, ctx)
   check(T.tabs and T.tabs.adv and T.tabs.adv.title == "Avantages", "onglet « Avantages » (menu Plus)")
   -- les devinettes et doublons ne reviennent pas
   for _, k in ipairs({ "bestMob", "patrolWarn", "nodeRoute", "drinkSmart", "buffExpire", "bigPull", "restPlan",
-      "trainerPick", "classQuest", "dropCheap" }) do
+      "trainerPick", "classQuest", "dropCheap", "questTimer" }) do
     check(X.db[k] == nil, "retiré : " .. k)
   end
 
@@ -94,24 +94,13 @@ return function(M, ctx)
   M.player.xp, M.player.xpMax = 25000, 26000
   setQuests({ { id = 9104, title = "Finie", complete = true, xp = 1500, obj = {} } })
   X.CheckTurnIn()
-  ok("turninLevel", "Rends ta quête finie avant l'entraîneur : niveau 27")
+  ok("turninLevel", "Rends ta quête finie : niveau 27 d'un coup (puis passe chez ton maître de classe)")
   M.player.xp = 12000
   X.CheckTurnIn()
   none("turninLevel", "pas assez d'XP à rendre")
 
-  -- quête chronométrée (minuteur réel du jeu)
-  local CQ = rawget(_G, "C_QuestLog")
-  local madeCQ = CQ == nil
-  if madeCQ then CQ = {} rawset(_G, "C_QuestLog", CQ) end
-  local oldTA = CQ.GetTimeAllowed
-  CQ.GetTimeAllowed = function(id) if id == 9105 then return 1800, 1560 end end
-  setQuests({ { id = 9105, title = "Course-test", complete = false, obj = {} } })
-  X.CheckTimers()
-  ok("questTimer", "Finis « Course-test » : chrono, il reste 4 min")
-  CQ.GetTimeAllowed = oldTA
-  if madeCQ then rawset(_G, "C_QuestLog", nil) end
-  X.CheckTimers()
-  none("questTimer", "plus de chrono")
+  -- (4.0 QA) quête chronométrée : un seul propriétaire, le module Quêtes (avant : deux lignes, deux chiffres)
+  check(X.CheckTimers == nil, "chrono de quête : plus dans Avantages (module Quêtes seul)")
 
   -- escorte échouée (drapeau « échouée » du journal)
   setQuests({ { id = 9106, title = "Escorte-test", failed = true, obj = { { name = "Protège le marchand", finished = false } } } })

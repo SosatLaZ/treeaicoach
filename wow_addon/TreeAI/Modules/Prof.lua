@@ -275,16 +275,20 @@ function M.ScanKnown()
   if not d then return end
   local C = g("C_TradeSkillUI")
   local line, rows, known = nil, nil, {}
-  if C and C.GetAllRecipeIDs and C.GetRecipeInfo then
+  -- Forever : pas de GetAllRecipeIDs ; GetFilteredRecipeIDs (celle de l'interface du jeu) liste la fenêtre ouverte
+  local listIDs = C and (C.GetAllRecipeIDs or C.GetFilteredRecipeIDs)
+  if C and type(listIDs) == "function" and C.GetRecipeInfo then
     local info = C.GetBaseProfessionInfo and try(C.GetBaseProfessionInfo)
     line = type(info) == "table" and tonumber(info.professionID or info.skillLineID) or nil
-    if not (line and d.lines[line]) then
+    if not (line and d.lines[line]) and C.GetTradeSkillLine then
       local a, b = try(C.GetTradeSkillLine)
       line = (tonumber(a) and d.lines[tonumber(a)]) and tonumber(a) or M.LineOf(b or a)
     end
-    for _, id in ipairs(try(C.GetAllRecipeIDs) or {}) do
+    if not (line and d.lines[line]) and type(info) == "table" then line = M.LineOf(info.professionName or info.parentProfessionName) end
+    local ids = try(listIDs)
+    for _, id in ipairs(type(ids) == "table" and ids or {}) do
       local r = try(C.GetRecipeInfo, id)
-      if type(r) == "table" and r.learned ~= false then known[tonumber(id) or 0] = 1 end
+      if type(r) == "table" and r.learned == true then known[tonumber(id) or 0] = 1 end
     end
   else
     line = M.LineOf((try(g("GetTradeSkillLine"))))
@@ -395,9 +399,10 @@ function M.PlanFor(pr)
     { known = known, knownOnly = M.db.knownOnly, overtime = M.db.overtime })
   res.target, res.stock = target, stock
   -- « maintenant » : meilleure recette faisable avec les sacs, jusqu'à ce qu'elle change de couleur
+  -- (4.0 QA) seulement une recette que tu CONNAIS (lue dans la fenêtre du métier) : sans liste lue, pas de « maintenant »
   local best, bestN
   for _, r in ipairs(rows) do
-    if (known and known[r[1]] or (not known and r[8] == 0)) and r[4] <= pr.rank and pr.rank < r[6] then
+    if known and known[r[1]] and r[4] <= pr.rank and pr.rank < r[6] then
       local n = E.Makeable(r, stock)
       local c = E.Chance(pr.rank, r[5], r[6], M.db.overtime, r[4])
       if n > 0 and c >= 0.5 and (not best or c > bestN.c or (c == bestN.c and r[6] > best[6])) then

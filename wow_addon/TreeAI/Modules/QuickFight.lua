@@ -390,7 +390,8 @@ function M:Plan(s, o)
     end
     if s.petKnown and (not s.petExists or s.petDead) then P.reasons[#P.reasons + 1] = s.petDead and "familier mort" or "pas de familier"
     elseif s.petExists and petHpP and petHpP < 50 then P.reasons[#P.reasons + 1] = "familier " .. petHpP .. " %" end
-    if s.petExists and not s.petDead and s.happy and s.happy < 3 then P.reasons[#P.reasons + 1] = "familier pas content" end
+    -- humeur : seul « mécontent » (1) coûte des dégâts (75 %) ; « content » (2) = 100 %, prêt
+    if s.petExists and not s.petDead and s.happy == 1 then P.reasons[#P.reasons + 1] = "familier mécontent" end
     if s.ammo and s.ammo.needs and (s.ammo.equipped or 0) == 0 then P.reasons[#P.reasons + 1] = "aucune munition" end
   end
   -- options : un bouton coupé n'apparaît pas

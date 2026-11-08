@@ -69,7 +69,11 @@ return function(M, ctx)
   IsInInstance = function() return true, "party" end
   M.FireEvent("PLAYER_ENTERING_WORLD")
   ctx.check(T.commPaused == "donjon", "pause en donjon")
-  ctx.check(ctx.out("Synchro du groupe en pause %(donjon%)"), "message « synchro en pause (donjon) »")
+  -- (4.0 QA S16) une ligne de l'onglet Groupe, plus jamais le chat
+  local cp = TreeAI._suggestions["core:commpause"]
+  ctx.check(cp and cp.text:find("Synchro du groupe en pause %(donjon%)") and cp.tab == "group",
+    "ligne « synchro en pause (donjon) » : " .. tostring(cp and cp.text))
+  ctx.check(not ctx.out("Synchro du groupe en pause"), "rien dans le chat")
   local n0 = #M.sentAddon
   ctx.check(T:Send("SQS", { v = 2 }) == false, "Send refusé en donjon")
   M.Advance(5, 0.5)

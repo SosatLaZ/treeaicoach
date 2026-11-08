@@ -5,6 +5,8 @@
 --   · menace (secrète en combat sur Forever), aspect de voyage (Chasseur l'a), apprivoisement (Chercher l'a) : retirés.
 -- Reste ici UNE fonction : un rare (ou un trésor) tout près = UNE ligne ; clic = la boussole y va, et un crâne sur le
 -- rare s'il est à portée (hors combat, sur ton clic seulement : SetRaidTarget). Un son au plus par rare (10 min).
+-- (4.0 QA) Seulement s'il est à la portée de TON groupe (M.CanHandle : écart de niveau ≤ 2 seul, ≤ 3 à deux, ≤ 4 à
+-- trois et plus ; un rare élite veut un groupe) : sinon la ligne prévient « trop fort, évite-le », sans son ni crâne.
 -- Sources : barres de nom / cible / survol (classification « rare ») et vignettes du jeu (TreeAI.Detect, position
 -- exacte). Pour les autres modules, ce fichier garde l'ancien contrat Boost (XPStats, UpgradePct…) : il renvoie
 -- vers Stats et Gear, sans calcul à lui. Lua 5.1, aucune globale, toutes les API testées.
@@ -55,6 +57,31 @@ local function markRare()
   return true
 end
 
+--- un rare que ton groupe peut tuer ? (pur) cls = classification, lvl = son niveau (0 / -1 = « ?? »), my = ton
+--- niveau, grp = taille du groupe (1 = seul). Niveau inconnu (vignette) : seul le rang décide.
+function M.CanHandle(cls, lvl, my, grp)
+  lvl, my, grp = tonumber(lvl), tonumber(my) or 1, math.max(1, tonumber(grp) or 1)
+  if cls == "worldboss" or (lvl and lvl <= 0) then return false end      -- boss du monde, « niveau ?? »
+  local gap = lvl and (lvl - my) or nil
+  if cls == "rareelite" then                                           -- un élite est fait pour un groupe
+    if not gap then return grp >= 3 end
+    if grp >= 3 then return gap <= 2 end
+    if grp == 2 then return gap <= 0 end
+    return gap <= -3
+  end
+  if not gap then return true end
+  return gap <= (grp >= 3 and 4 or (grp == 2 and 3 or 2))
+end
+local function myLevel() return tonumber(pub(try(G.UnitLevel, "player"))) or 1 end
+local function groupSize() return math.max(1, tonumber(pub(try(G.GetNumGroupMembers))) or 0) end
+--- ligne « trop fort » (pure) : « Rare élite X (niv 33) tout près : trop fort pour toi seul, évite-le »
+function M.TooHardText(cls, name, lvl, grp)
+  local lv = (tonumber(lvl) or 0) > 0 and (" (niv " .. lvl .. ")") or (lvl and " (niveau ??)" or "")
+  local what = cls == "rare" and "Rare" or (cls == "worldboss" and "Boss" or "Rare élite")
+  return ("%s %s%s tout près : trop fort pour %s, évite-le"):format(what, name, lv,
+    (tonumber(grp) or 1) <= 1 and "toi seul" or "ton groupe")
+end
+
 local function scanUnit(unit)
   if not opt("rares") or not unit or not pub(try(G.UnitExists, unit)) then return end
   if pub(try(G.UnitIsPlayer, unit)) or pub(try(G.UnitIsDead, unit)) then return end
@@ -68,9 +95,17 @@ local function scanUnit(unit)
   seen[guid] = t
   local name = pub(try(G.UnitName, unit))
   if type(name) ~= "string" or name == "" then return end
-  local lvl = tonumber(pub(try(G.UnitLevel, unit))) or 0
+  local lvlRaw = tonumber(pub(try(G.UnitLevel, unit)))   -- -1 = « ?? » ; nil = illisible
+  local lvl = lvlRaw or 0
   local lv = lvl > 0 and (" (niv " .. lvl .. ")") or " (niveau ??)"
   stats.rares, stats.lastRare = stats.rares + 1, name
+  local grp = groupSize()
+  if not M.CanHandle(cls, lvlRaw, myLevel(), grp) then
+    -- trop fort pour ton groupe : on prévient, sans son ni crâne (jamais « vise-le »)
+    M:Suggest("rare", M.TooHardText(cls, name, lvlRaw, grp), 1, { ttl = 60, cooldown = 5, sound = false,
+      tooltip = { "Un rare trop haut ou élite tue vite : reviens plus tard ou à plusieurs." } })
+    return
+  end
   markGUID = guid
   local label = (cls == "rareelite") and "le rare élite" or (cls == "worldboss" and "le boss" or "le rare")
   M:Suggest("rare", "Vise " .. label .. " " .. name .. lv .. " : il est tout près (clic : crâne)", 2,
@@ -104,9 +139,18 @@ function M.OnDetectRares(list)
           M:Suggest("treasure", txt .. " (clic : y aller)", 1, { ttl = 90, cooldown = 30, sound = false, onClick = click })
         else
           stats.rares, stats.lastRare = stats.rares + 1, e.name
-          if e.guid then markGUID = e.guid end
-          M:Suggest("rare", txt .. " (clic : y aller)", 2,
-            { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, soundKind = "rare", onClick = click })
+          local grp = groupSize()
+          if not M.CanHandle(e.kind, e.level, myLevel(), grp) then
+            local nm = type(e.name) == "string" and e.name ~= "" and e.name or nil
+            if nm then   -- sans nom lu : pas de ligne (jamais « ? »)
+              M:Suggest("rare", M.TooHardText(e.kind, nm, e.level, grp), 1, { ttl = 60, cooldown = 5,
+                sound = false, tooltip = { "Un rare trop haut ou élite tue vite : reviens plus tard ou à plusieurs." } })
+            end
+          else
+            if e.guid then markGUID = e.guid end
+            M:Suggest("rare", txt .. " (clic : y aller)", 2,
+              { ttl = 90, cooldown = 5, sound = opt("rareSound") and true or false, soundKind = "rare", onClick = click })
+          end
         end
       end
     end

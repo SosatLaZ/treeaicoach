@@ -138,6 +138,7 @@ local function suggestReady(text, names)
   local tip = { "Macros TreeAI", "Clic : installer · Maj-clic : voir la liste" }
   if names and #names > 0 then tip[#tip + 1] = tconcat(names, ", ") end
   suggest("ready", text or READY_TEXT, 2, { ttl = 0, tooltip = tip, onClick = function()
+    if inCombat() then return end   -- macros impossibles à créer en combat : la ligne reste, le clic d'après marche
     if _G.IsShiftKeyDown and _G.IsShiftKeyDown() then M:TogglePanel() return end
     M._pending = false
     if M.Clear then M:Clear("ready") end

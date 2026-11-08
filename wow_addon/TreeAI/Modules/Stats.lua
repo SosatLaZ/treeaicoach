@@ -1105,7 +1105,10 @@ end
 -- ------------------------------------------------------------------ d) onglet « Stats » + export
 local Fmt = T.Fmt or {}
 local function money(c) return Fmt.Money and Fmt.Money(c) or (floor((c or 0) / 10000) .. " po") end
-local function kxp(v) if v >= 10000 then return floor(v / 1000 + 0.5) .. "k" end return tostring(floor(v / 100 + 0.5) / 10) .. "k" end
+local function kxp(v)
+  if v >= 10000 then return floor(v / 1000 + 0.5) .. "k" end
+  return (tostring(floor(v / 100 + 0.5) / 10):gsub("%.", ",")) .. "k"   -- « 8,5k » (virgule française)
+end
 local function dec(v) return (tostring(floor(v * 10 + 0.5) / 10):gsub("%.", ",")) end
 local function dur(sec) return Fmt.Time and Fmt.Time(sec) or (floor((sec or 0) / 60 + 0.5) .. " min") end
 local function levelInfo()
@@ -1143,7 +1146,7 @@ function M.Lines(s, lvl)
   if sh.armor then p[#p + 1] = "armure " .. sh.armor end
   if sh.dodge and sh.dodge > 0 then p[#p + 1] = "esquive " .. dec(sh.dodge) .. " %" end
   if sh.mp5 and sh.mp5 > 0 then p[#p + 1] = "mana " .. floor(sh.mp5 + 0.5) .. "/5 s" end
-  if #p > 0 then add("Attaque : " .. tconcat(p, " · ")) end
+  if #p > 0 then add("Fiche : " .. tconcat(p, " · ")) end
   p = {}
   local k = s.kill or {}
   if k["0"] then p[#p + 1] = "kill ~" .. floor(k["0"] + 0.5) .. " s (même niveau)" end
@@ -1154,7 +1157,7 @@ function M.Lines(s, lvl)
   p = {}
   if s.downSec then p[#p + 1] = "repos " .. floor(s.downSec + 0.5) .. " s / combat" end
   if s.deathsH then p[#p + 1] = "morts " .. dec(s.deathsH) .. "/h" end
-  if s.deathTop then p[#p + 1] = "souvent : " .. tostring(s.deathTop):sub(1, 24) end
+  if s.deathTop then p[#p + 1] = "tué surtout par " .. tostring(s.deathTop):sub(1, 24) end
   if #p > 0 then add("Repos : " .. tconcat(p, " · ")) end
   p = {}
   local sp = s.speed or {}

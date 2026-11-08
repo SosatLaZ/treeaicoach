@@ -428,13 +428,16 @@ S.vendor = function(here, ctx)
   if myClass() == "HUNTER" then
     local id = try(G("GetInventoryItemID"), "player", SLOT_AMMO)
     local n = id and tonumber(API.ItemCount and API.ItemCount(id) or try(G("GetItemCount"), id)) or 0
-    if n < 600 then
+    -- même seuil que le module Chasseur (« Alerte munitions sous », 200 par défaut) : un seul avis sur les munitions
+    local H = T.Hunter
+    local warn = tonumber(H and type(H.db) == "table" and H.db.ammoWarn) or 200
+    if n < warn then
       local e, p = service(here, "vendor")
-      local sc = n < 200 and 30 or 15
+      local sc = n < 50 and 30 or 15
       local why = { { sc, fmt("munitions : %d restantes", n) } }
       if e then sc = sc + travelPart(why, p.sec) end
       out[#out + 1] = result("vendor", "ammo", "Achète des munitions" .. (e and (" chez " .. cut(e.name or "un marchand", 26)) or " au prochain marchand"),
-        sc, why, e and p, { stopKind = "vendor", stopLabel = "Marchand : munitions", now = n < 200 and e and p.yd and fmt("Achète des munitions à %s", dist(p.yd)) or nil })
+        sc, why, e and p, { stopKind = "vendor", stopLabel = "Marchand : munitions", now = e and p.yd and fmt("Achète des munitions à %s", dist(p.yd)) or nil })
     end
   end
   local W = T.Data and T.Data.Consumables and T.Data.Consumables.water
@@ -560,7 +563,8 @@ S.gear = function(here, ctx)
     local src = cd and cd.src
     if src and VERB[src.kind] and (cd.need or 0) <= ctx.level and (cd.pct or 0) >= 5 and cd.name then
       local word = (Gm.Verdict and Gm.Verdict(cd.pct)) or "mieux"
-      local why = { { min(40, floor(cd.pct)), word .. " que ce que tu portes" } }
+      local why = { { min(40, floor(cd.pct)), cd.pct >= 999 and "emplacement vide : tout objet est un gain"
+        or (word .. " que ce que tu portes") } }
       local p
       if src.kind == "quest" and src.qid and T.Compass and T.Compass.QuestPoints then
         local pts = try(T.Compass.QuestPoints, { id = src.qid }, here and { mapID = here.map }) or {}

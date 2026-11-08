@@ -16,7 +16,7 @@ local TreeAI = _G.TreeAI or {}
 _G.TreeAI = TreeAI
 
 TreeAI.name = ADDON_NAME
-TreeAI.version = "0.4.0"
+TreeAI.version = "4.0.0"
 TreeAI.SCHEMA = 1
 TreeAI.PREFIX = "TREEAI"
 TreeAI.PRIO_INFO, TreeAI.PRIO_TIP, TreeAI.PRIO_URGENT = 1, 2, 3
@@ -260,9 +260,10 @@ local function auraFromData(d)
            expires = pub(d.expirationTime) or 0, spellId = pub(d.spellId), source = pub(d.sourceUnit) }
 end
 
+--- -> liste des auras lisibles, nombre d'auras masquées (valeurs secrètes en combat) : « illisible » ≠ « absente »
 function API.Auras(unit, filter)
   filter = filter or "HELPFUL"
-  local out = {}
+  local out, hidden = {}, 0
   for i = 1, 40 do
     local a
     if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
@@ -275,9 +276,9 @@ function API.Auras(unit, filter)
       end
     end
     if not a then break end
-    if not a.secret then out[#out + 1] = a end
+    if a.secret then hidden = hidden + 1 else out[#out + 1] = a end
   end
-  return out
+  return out, hidden
 end
 
 function API.Aura(unit, spell, filter)
@@ -2822,8 +2823,9 @@ function TreeAI:_SetCommPaused(reason)
     local fk = "commPause_" .. tostring(reason)
     if not flags or not flags[fk] then
       if flags then flags[fk] = true end
-      self:Print(("Synchro du groupe en pause (%s) : elle reprend à la sortie."):format(
-        reason == "donjon" and "donjon" or "bloquée par le jeu"))
+      -- une ligne de l'onglet Groupe, jamais le chat (règle TreeAI)
+      self:Suggest("core:commpause", ("Synchro du groupe en pause (%s) : elle reprend à la sortie"):format(
+        reason == "donjon" and "donjon" or "bloquée par le jeu"), 1, { ttl = 60, tab = "group", sound = false })
     else
       self:Debug("synchro en pause :", reason)
     end

@@ -552,25 +552,26 @@ function M:Analyze()
     if canBind and freeSet[key] then return { how = "bind", key = key } end
     if canBind and uselessSet[key] then return { how = "bind", key = key, replaces = uselessSet[key].label } end
   end
+  -- (perf) la liste des candidats est construite et triée UNE fois ; chaque étape prend le premier encore libre
+  -- (les réservations ne font que grandir : même résultat qu'un tri par étape, 12 fois moins de travail)
+  local cands
   local function best()
-    local cands = {}
-    for _, e in ipairs(st.emptyKeyed) do
-      if not reservedSlot[e.slot] and not reservedKey[e.key] then
+    if not cands then
+      cands = {}
+      for _, e in ipairs(st.emptyKeyed) do
         cands[#cands + 1] = { how = "place", key = e.key, slot = e.slot, entry = e, score = (KEY_TIER[e.key] or 20) * 2 }
       end
-    end
-    if canBind then
-      for _, k in ipairs(st.free) do
-        if not reservedKey[k] then cands[#cands + 1] = { how = "bind", key = k, score = (KEY_TIER[k] or 20) * 2 + 1 } end
-      end
-      for _, u in ipairs(st.useless) do
-        if not reservedKey[u.key] then
+      if canBind then
+        for _, k in ipairs(st.free) do cands[#cands + 1] = { how = "bind", key = k, score = (KEY_TIER[k] or 20) * 2 + 1 } end
+        for _, u in ipairs(st.useless) do
           cands[#cands + 1] = { how = "bind", key = u.key, replaces = u.label, score = (KEY_TIER[u.key] or 20) * 2 + 1.5 }
         end
       end
+      tsort(cands, function(a, b) if a.score ~= b.score then return a.score < b.score end return a.key < b.key end)
     end
-    tsort(cands, function(a, b) if a.score ~= b.score then return a.score < b.score end return a.key < b.key end)
-    return cands[1]
+    for _, c in ipairs(cands) do
+      if not reservedKey[c.key] and not (c.slot and reservedSlot[c.slot]) then return c end
+    end
   end
   for _, it in ipairs(res.items) do
     local k, ke = keyFor(st, it.name, it.kind)

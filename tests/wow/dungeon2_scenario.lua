@@ -113,7 +113,8 @@ return function(M, ctx)
   local none = D.JobsText("curse", { members[1], members[2] })
   ctx.check(none:find("personne n'enlève les malédictions", 1, true), "élision : " .. none)
 
-  -- butin : arbalète (Besoin chasseur), mailles (plus tard, niv 40), objet inconnu du client = classes des données
+  -- butin : arbalète (Besoin chasseur), mailles (le guerrier les porte dès le niveau 1, toi au 40 : 4.0 QA S32),
+  -- objet inconnu du client = aucun verdict tant que le jeu ne l'a pas envoyé
   M.AddItem(3078, { name = "Perce-cœur naga", equipLoc = "INVTYPE_RANGEDRIGHT", classID = 2, subclassID = 18, minLevel = 23, quality = 3,
     stats = { ITEM_MOD_AGILITY_SHORT = 4 } })
   M.AddItem(6907, { name = "Armure de tortue", equipLoc = "INVTYPE_CHEST", classID = 4, subclassID = 3, minLevel = 22, quality = 3 })
@@ -122,7 +123,8 @@ return function(M, ctx)
   local xbow, mail
   for _, e in ipairs(plan) do if e.id == 3078 then xbow = e end if e.id == 6907 then mail = e end end
   ctx.check(xbow and xbow.verdict[members[1].name] == "Besoin" and xbow.verdict["Ami-un"] == "Cupidité", "arbalète : Besoin pour toi, Cupidité pour le guerrier")
-  ctx.check(mail and #mail.need == 0 and mail.later[1] and mail.later[1].lvl == 40, "mailles : personne en Besoin, toi au niveau 40")
+  ctx.check(mail and #mail.need == 1 and mail.need[1].m.name == "Ami-un" and mail.later[1] and mail.later[1].m.me
+    and mail.later[1].lvl == 40, "mailles : Besoin pour le guerrier (avant 40, les mailles sont à lui), toi au niveau 40")
   D:Refresh(true)
   tx = text(D.lines)
   ctx.check(tx:find("Pour toi : "), "ligne butin pour toi")
@@ -149,7 +151,7 @@ return function(M, ctx)
   D:Refresh(true)
   tx = text(D.lines)
   ctx.check(tx:find("Prochain : Dame Sarevess") and tx:find("Quête : ramasse « Cœur de Sarevess » sur lui", 1, true), "prochain = Sarevess + objet de quête")
-  ctx.check(tx:find("Butin : Perce%-cœur naga → Besoin : toi"), "butin du prochain boss avec Besoin / Cupidité")
+  ctx.check(tx:find("Butin : Perce%-cœur naga — Besoin : toi"), "butin du prochain boss avec Besoin / Cupidité")
   ctx.check(tx:find("Pull : Nagas Brassenoire"), "pull connu avant Sarevess")
   M.EnterCombat()
   ctx.fire("ENCOUNTER_START", 2915, "Dame Sarevess", 1, 5)

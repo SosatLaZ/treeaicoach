@@ -510,18 +510,18 @@ function E.MemberStatus(e, name)
   local who = (e._me and name == e._me) and "toi" or name
   if not p then return who .. " : pas la quête" end
   if p.done then return who .. " : terminé" end
-  local bits, total = {}, 0
+  local bits = {}
   for j, o in ipairs(p.obj or {}) do
-    local rem = (o.need or 0) - mmin(o.have or 0, o.need or 0)
-    if rem > 0 then
-      total = total + rem
+    local have, need = mmin(o.have or 0, o.need or 0), o.need or 0
+    if need - have > 0 then
       local label = e.objNames and e.objNames[j]
-      bits[#bits + 1] = label and (((o.need or 1) > 1) and fmt("%d %s", rem, label) or label) or tostring(rem)
+      -- « Rassembleur Fléau-Mort 2/8 » (le compte du jeu), jamais « 6 Rassembleur Fléau-Mort tué restants »
+      bits[#bits + 1] = label and (need > 1 and fmt("%s %d/%d", label, have, need) or label) or fmt("%d/%d", have, need)
       if #bits >= 2 then break end
     end
   end
   if #bits == 0 then return who .. " : presque" end
-  return who .. " : " .. tconcat(bits, ", ") .. " restant" .. (total > 1 and "s" or "")
+  return who .. " : " .. tconcat(bits, ", ")
 end
 function E.StatusLine(e)
   if e._status then return e._status end
@@ -701,7 +701,7 @@ function E.LevelGaps(list, mine, myLevel, pushable)
           text = fmt("Tu es %d niveaux derrière : demande %s à %s", gap, andList(titlesOf(offer, 2)), from[offer[1].id])
           tip = { "Quêtes des amis que tu n'as pas (à ton niveau) :" }
           for i = 1, mmin(#offer, 8) do tip[#tip + 1] = q(offer[i].title) .. " — " .. from[offer[i].id] end
-        else
+        elseif gap >= 4 then
           text = fmt("Tu es %d niveaux derrière le groupe", gap)
         end
       else
@@ -716,12 +716,12 @@ function E.LevelGaps(list, mine, myLevel, pushable)
           tip = { "Ses quêtes en plus = plus d'XP pour lui :" }
           for i = 1, mmin(#give, 8) do tip[#tip + 1] = q(give[i].title) end
           tip[#tip + 1] = "Journal (L) → la quête → Partager"
-        else
+        elseif gap >= 4 then   -- sans quête à lui partager : une ligne seulement pour un vrai écart (sinon rien à faire)
           local r = m.addon and m.st and tonumber(m.st.r) or 0
           text = fmt("%s est %d niveaux derrière%s", m.name, gap, r >= 20 and " (en repos : il rattrape)" or "")
         end
       end
-      out[#out + 1] = { text = text, prio = gap >= 4 and 2 or 1, tooltip = tip, who = m.me and "" or m.name, ids = ids }
+      if text then out[#out + 1] = { text = text, prio = gap >= 4 and 2 or 1, tooltip = tip, who = m.me and "" or m.name, ids = ids } end
     end
   end
   return out
@@ -1243,6 +1243,7 @@ local function objName(text)
   if type(text) ~= "string" then return nil end
   local on = T.ObjectiveName
   local n = on and call(on, text) or text:gsub("%s*:?%s*%d+%s*/%s*%d+.*$", "")
+  n = tostring(n or ""):gsub("%s+tuée?s?$", ""):gsub("%s+slain$", "")   -- « Rassembleur Fléau-Mort tué » -> le nom
   return cleanTitle(n, 28)
 end
 

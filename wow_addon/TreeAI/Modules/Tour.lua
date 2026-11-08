@@ -320,7 +320,7 @@ end
 M.TIPS = {
   { id = "ah", title = "Première fois à l'HV",
     text = "Mode rafale : une touche par action sûre (acheter, vendre, annuler).",
-    note = "Bouton « Lier à une touche » en bas de la fenêtre TreeAI.",
+    note = "Bouton « Lier à une touche » en bas de la fenêtre HV de TreeAI.",
     when = function()
       local A = T.modules and T.modules.Auction
       return modOn("Auction") and type(A) == "table" and visible(A.win)
@@ -347,8 +347,8 @@ M.TIPS = {
     target = suggestionRow },
   { id = "group", title = "En groupe",
     text = function()
-      if groupOn() then return "Page « Groupe » du menu : vie, zone et quêtes de tes amis (s'ils ont TreeAI)." end
-      return "Menu > Fonctions bêta > Groupe : vie, zone et quêtes de tes amis."
+      if groupOn() then return "Page « Groupe » du menu : vie et zone de tes amis, et leurs quêtes s'ils ont TreeAI." end
+      return "Menu > Fonctions bêta > Groupe : vie et zone de tes amis, et leurs quêtes s'ils ont TreeAI."
     end,
     when = function() return inGroup() and hubButton() ~= nil end,
     target = hubButton },

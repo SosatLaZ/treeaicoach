@@ -184,16 +184,18 @@ local function auraAt(unit, i, filter)
 end
 
 -- names : set de noms localisés ; ids : set d'IDs. mine : ne garder que nos auras.
+-- -> true, nom | false (absente) | nil (inconnu : des auras sont masquées par le jeu, elle est peut-être là)
 local function hasAura(unit, filter, names, ids, mine)
   local A = API()
   if A and A.Auras then
-    local ok, list = pcall(A.Auras, unit, filter)
+    local ok, list, hidden = pcall(A.Auras, unit, filter)
     if ok and type(list) == "table" then
       for _, a in ipairs(list) do
         if (names and a.name and names[a.name]) or (ids and a.spellId and ids[a.spellId]) then
           if not mine or a.source == "player" or a.source == "pet" then return true, a.name end
         end
       end
+      if (tonumber(hidden) or 0) > 0 then return nil end
       return false
     end
   end
@@ -641,12 +643,12 @@ function M:CheckAspect()
   if inCombat() then
     if travelOn then
       suggest("aspect", "Change d'aspect : « " .. travelName .. " » en combat = hébété à chaque coup", 3, 10)
-    elseif not combatOn then
+    elseif combatOn == false and travelOn == false then   -- nil = auras masquées par le jeu : on ne sait pas, on se tait
       suggest("aspect", "Active « " .. (best or "Aspect du faucon") .. " » (Singe si ça tape au corps à corps)", 2, 25)
     else
       clear("aspect")
     end
-  elseif not combatOn and not travelOn and hostileTarget() and not (UnitAffectingCombat and UnitAffectingCombat("target")) then
+  elseif combatOn == false and travelOn == false and hostileTarget() and not (UnitAffectingCombat and UnitAffectingCombat("target")) then
     suggest("aspect", "Active « " .. (best or "Aspect du faucon") .. " » avant le pull", 2, 60,
       { tooltip = "Macro « TAI Aspects » (panneau Macros) : clic = Faucon, Maj = Guépard pour voyager." })
   else
@@ -806,7 +808,8 @@ local function buildBar()
     local frac = math.min(el / shotSpeed, 1)
     s:SetValue(frac)
     local left = shotSpeed - el
-    local moving = GetUnitSpeed and (_ns(GetUnitSpeed("player")) or 0) > 0
+    -- (Forever) GetUnitSpeed est secret en combat : on suit PLAYER_STARTED/STOPPED_MOVING (jamais secrets)
+    local moving = M.moving
     if left <= 0.5 then
       if moving then s:SetStatusBarColor(1, 0.2, 0.2); s.text:SetText("Ne bouge pas !")
       else s:SetStatusBarColor(1, 0.85, 0.2); s.text:SetText(left > 0 and (("%.1f"):format(left):gsub("%.", ",")) or "Tir") end
@@ -864,9 +867,9 @@ function M:TabLines()
     local food, quality = self:BestFood()
     local diet = dietText(self:GetDiet())
     if food then
-      add(("Nourriture : %s (%d dans tes sacs)%s · régime : %s"):format(itemName(food), itemCount(food),
-        quality == "partial" and ", un peu faible" or "", diet), 1,
-        { "Choisie dans tes sacs pour son niveau (la moins chère qui le rend heureux).",
+      add(("Nourriture : %s ×%d%s"):format(itemName(food), itemCount(food), quality == "partial" and " (un peu faible)" or ""), 1,
+        { "Régime : " .. diet,
+          "Choisie dans tes sacs pour son niveau (la moins chère qui le rend heureux).",
           "Macro « TAI Familier » : Ctrl+clic = nourrir avec elle." })
     else
       add("Achète de quoi le nourrir : rien dans tes sacs (régime : " .. diet .. ")", 2)
@@ -981,12 +984,14 @@ local EVENTS = {
   "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "PLAYER_TARGET_CHANGED",
   "UNIT_PET", "UNIT_HAPPINESS", "PET_BAR_UPDATE", "BAG_UPDATE_DELAYED", "UNIT_INVENTORY_CHANGED",
   "START_AUTOREPEAT_SPELL", "STOP_AUTOREPEAT_SPELL", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_START",
-  "UNIT_AURA", "PLAYER_LOGOUT", "PLAYER_LEAVING_WORLD",
+  "UNIT_AURA", "PLAYER_LOGOUT", "PLAYER_LEAVING_WORLD", "PLAYER_STARTED_MOVING", "PLAYER_STOPPED_MOVING",
 }
 
 local UNIT_EVENTS = { UNIT_PET = true, UNIT_HAPPINESS = true, UNIT_INVENTORY_CHANGED = true,
   UNIT_SPELLCAST_SUCCEEDED = true, UNIT_SPELLCAST_START = true, UNIT_AURA = true }
 function M:OnEvent(ev, ...)
+  if ev == "PLAYER_STARTED_MOVING" then M.moving = true return end   -- barre de tir : « Ne bouge pas ! »
+  if ev == "PLAYER_STOPPED_MOVING" then M.moving = false return end
   if ev == "UNIT_PET" or ev == "PET_BAR_UPDATE" then abilityMemo.at, foodMemo.at = -100, -100 end   -- autre familier
   if ev == "BAG_UPDATE_DELAYED" or ev == "UNIT_INVENTORY_CHANGED" then ammoMemo.at = -100 end   -- munitions relues
   -- (LITE) événements d'unité : seulement le joueur et son familier (pas tout le groupe à chaque sort)

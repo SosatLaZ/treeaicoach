@@ -1545,7 +1545,10 @@ function M.CheckOwned()
   M.owned = out
   local n = 0
   for _, a in ipairs(out) do if a.worth then n = n + 1 end end
-  if n > 0 and M.Suggest then M:Suggest("undercut", ("HV : %d de tes enchères sont battues (bouton « Annuler les battues » à l'HV)"):format(n), 2, { ttl = 300 }) end
+  if n > 0 and M.Suggest then
+    M:Suggest("undercut", ("HV : %d de tes ventes ont un concurrent moins cher (bouton « Annuler les sous-cotées » à l'HV)"):format(n),
+      2, { ttl = 300 })
+  end
   return out
 end
 
@@ -1944,11 +1947,11 @@ function M.RepostNext()
   M.Refresh()
   return ok
 end
--- « Annuler les enchères battues » : une annulation par clic, seulement si le dépôt perdu vaut le coup
+-- « Annuler les sous-cotées » (un concurrent vend moins cher) : une annulation par clic, si le dépôt perdu vaut le coup
 function M.CancelNext()
   if not M.ahOpen then say("Ouvre l'hôtel des ventes d'abord.") return false end
   local a = M.CancelHead()
-  if not a then say("Aucune enchère battue à annuler.") M.Refresh() return false end
+  if not a then say("Aucune vente sous-cotée à annuler.") M.Refresh() return false end
   local ok = M.Cancel(a)
   M.Refresh()
   return ok
@@ -1965,7 +1968,7 @@ function M.ActionLabels()
   if p and p.state == "check" then post = "Vérification du prix…" end
   local hint
   if d then
-    hint = ("Prochain achat : %s x%d pour %s → +%s net%s"):format(itemName(d.id), d.count, money(d.buyNow or d.buy), money(d.profit),
+    hint = ("Prochain achat : %s x%d pour %s, +%s net%s"):format(itemName(d.id), d.count, money(d.buyNow or d.buy), money(d.profit),
       d.stop and (" · stop-loss " .. money(d.stop.unit) .. "/u") or (d.kind == "vendor" and " · revente au marchand" or ""))
   elseif p then
     hint = ("Prochaine vente : %s x%d à %s/u (dépôt %s)"):format(itemName(p.id), p.count, money(p.unit), money(p.deposit))
@@ -1975,7 +1978,7 @@ function M.ActionLabels()
   local sc = M.Scanning()
   if sc then hint = ("Scan en cours (%s) : conseils de vente et d'annulation après la lecture."):format(sc) end
   return { buy = buy, buyOn = buyOn and M.ahOpen, post = post, postOn = p ~= nil and p.state ~= "check" and M.ahOpen and not sc,
-    cancel = ("Annuler les battues (%d)"):format(nc), cancelOn = nc > 0 and M.ahOpen and not sc, hint = hint }
+    cancel = ("Annuler les sous-cotées (%d)"):format(nc), cancelOn = nc > 0 and M.ahOpen and not sc, hint = hint }
 end
 
 -- ------------------------------------------------------------------ journal (courrier de l'HV)
@@ -2054,9 +2057,9 @@ function M.DealText(d)
   local name = itemName(d.id)
   local lbl = d.count > 1 and (name .. " x" .. d.count) or name
   if d.kind == "vendor" then
-    return ("%s : %s → marchand %s = +%s garanti"):format(lbl, money(d.buy), money(d.sell), money(d.profit))
+    return ("%s : achat %s, revente au marchand %s, +%s garanti"):format(lbl, money(d.buy), money(d.sell), money(d.profit))
   end
-  return ("%s : acheter %s (−%d %%) → revendre %s = +%s net (commission + dépôt %s inclus) · se vend ~%s/jour · conf. %d %% · stop-loss %s/u"):format(lbl,
+  return ("%s : achat %s (−%d %%), revente %s, +%s net (commission + dépôt %s inclus) · se vend ~%s/jour · conf. %d %% · stop-loss %s/u"):format(lbl,
     money(d.buy), floor(d.discount * 100 + 0.5), money(d.sell), money(d.profit), money(d.deposit), dec(d.sold),
     floor(d.conf * 100 + 0.5), money(d.stop and d.stop.unit or 0))
 end
@@ -2146,7 +2149,7 @@ function M.Report(what)
   for i = 1, min(6, #M.deals) do P(i .. ". " .. M.DealText(M.deals[i])) end
   local nb = 0
   for _, a in ipairs(M.owned) do if a.worth then nb = nb + 1 end end
-  if nb > 0 then P(nb .. " enchère(s) battue(s) à annuler : onglet « Mes ventes ».") end
+  if nb > 0 then P(nb .. " vente(s) sous-cotée(s) à annuler : onglet « Mes ventes ».") end
 end
 
 function M.DebugLines()
@@ -2235,7 +2238,7 @@ local function cells(tab, e)
   elseif tab == "sell" then
     return { itemName(e.id), tostring(e.count), money(e.unit), money(e.deposit), money(e.net), money(e.vendor), hours() .. " h" }
   elseif tab == "owned" then
-    local st = e.state == "cancelled" and "annulée" or e.state2 or "ok"
+    local st = e.state == "cancelled" and "annulée" or (e.state2 == "battue" and "sous-cotée") or e.state2 or "ok"
     return { itemName(e.id) .. " x" .. e.count, money(e.unit), e.lowest and money(e.lowest) or "-", st, e.advice or "" }
   end
   return { e.text }
@@ -2375,10 +2378,10 @@ function M.CreateWindow()
   f.postBtn = quick(150, "Remettre en vente", function() M.RepostNext() end,
     "Met en vente la pile suivante de tes sacs, 1 pc sous le moins cher (jamais sous le plancher ni ton stop-loss).")
   f.postBtn:SetPoint("LEFT", f.buyBtn, "RIGHT", 5, 0)
-  f.cancelBtn = quick(150, "Annuler les battues", function() M.CancelNext() end,
-    "Annule tes enchères battues quand le dépôt perdu vaut le coup ; récupère-les au courrier puis « Remettre en vente ».")
+  f.cancelBtn = quick(170, "Annuler les sous-cotées", function() M.CancelNext() end,
+    "Annule tes ventes qu'un concurrent propose moins cher, quand le dépôt perdu vaut le coup ; récupère-les au courrier puis « Remettre en vente ».")
   f.cancelBtn:SetPoint("LEFT", f.postBtn, "RIGHT", 5, 0)
-  local go = quick(125, "Suivant", function() M.Next() end, "Fait l'étape suivante, quelle qu'elle soit (acheter, annuler, poster).")
+  local go = quick(105, "Suivant", function() M.Next() end, "Fait l'étape suivante, quelle qu'elle soit (acheter, annuler, poster).")
   go:SetPoint("BOTTOMRIGHT", -10, 42)
   f.nextBtn = go
   -- mode rafale : le gros bouton (ou la touche liée) = la prochaine action de la file sûre, une par appui
@@ -2456,8 +2459,8 @@ function M.TabLines()
   for i = 1, min(5, #M.deals) do
     local d = M.deals[i]
     local lbl = itemName(d.id) .. (d.count > 1 and (" x" .. d.count) or "")
-    local t = d.kind == "vendor" and ("%s : acheter %s → marchand %s, +%s sûr"):format(lbl, money(d.buy), money(d.sell), money(d.profit))
-      or ("%s : acheter %s → revendre %s, +%s net · se vend ~%s/jour · stop-loss %s/u"):format(lbl, money(d.buy), money(d.sell),
+    local t = d.kind == "vendor" and ("%s : achat %s, revente au marchand %s, +%s sûr"):format(lbl, money(d.buy), money(d.sell), money(d.profit))
+      or ("%s : achat %s, revente %s, +%s net · se vend ~%s/jour · stop-loss %s/u"):format(lbl, money(d.buy), money(d.sell),
         money(d.profit), dec(d.sold), money(d.stop and d.stop.unit or 0))
     lines[#lines + 1] = { text = t, prio = i == 1 and 2 or 1, onClick = open, tooltip = tip }
   end
@@ -2469,7 +2472,9 @@ function M.TabLines()
   end
   local nc = 0
   for _, a in ipairs(M.owned or {}) do if a.undercut and a.worth and a.state ~= "cancelled" then nc = nc + 1 end end
-  if nc > 0 then lines[#lines + 1] = { text = ("%d enchère(s) battue(s) à annuler (bouton « Annuler les battues » à l'HV)."):format(nc), prio = 1 } end
+  if nc > 0 then
+    lines[#lines + 1] = { text = ("%d vente(s) sous-cotée(s) à annuler (bouton « Annuler les sous-cotées » à l'HV)."):format(nc), prio = 1 }
+  end
   return lines
 end
 function M.Refresh()

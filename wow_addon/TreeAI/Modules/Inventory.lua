@@ -266,29 +266,54 @@ function M.DropTip(free)
 end
 dropTipRaw = function()
   local items = {}
+  -- jamais la nourriture du familier (le chasseur la garde exprès)
+  local TA = core()
+  local H = TA and TA.Hunter
+  local petFood = H and type(H.BestFood) == "function" and select(2, pcall(H.BestFood, H)) or nil
   for b = 0, NBAGS do
     for s = 1, numSlots(b) do
-      local q, link, count = slotInfo(b, s)
-      if link then
+      local q, link, count, _, _, id = slotInfo(b, s)
+      if link and not (petFood and id == petFood) then
         local name, _, _, _, _, _, _, _, _, _, price, classID = getItemInfo(link)
-        if name then
-          items[#items + 1] = { name = name, value = (tonumber(price) or 0) * (count or 1), quality = q, classID = classID }
+        -- sans prix de vente (pierre de foyer, clés, objets liés au joueur) : jamais « à jeter »
+        if name and (tonumber(price) or 0) > 0 then
+          items[#items + 1] = { name = name, value = (tonumber(price) or 0) * (count or 1), unit = tonumber(price) or 0,
+            count = count or 1, quality = q, classID = classID }
         end
       end
     end
   end
-  local list = M.Cheapest(items, 3)
+  local list = M.Cheapest(M.GroupByName(items), 3)
   if #list == 0 then return nil end
   local parts = {}
-  for _, it in ipairs(list) do parts[#parts + 1] = it.name .. " (" .. money(it.value) .. ")" end
+  for _, it in ipairs(list) do
+    parts[#parts + 1] = (it.count or 1) > 1 and ("%s ×%d (%s pièce)"):format(it.name, it.count, money(it.unit or 0))
+      or ("%s (%s)"):format(it.name, money(it.value))
+  end
   return { "À jeter d'abord (vaut le moins par case) :", table.concat(parts, ", ") }
+end
+--- une entrée par objet, pas par case (pur) : { name, value = la case la moins chère, unit, count, quality, classID }
+function M.GroupByName(items)
+  local by, out = {}, {}
+  for _, it in ipairs(items or {}) do
+    local e = it.name and by[it.name]
+    if e then
+      e.count = e.count + (it.count or 1)
+      if (it.value or 0) < (e.value or 0) then e.value = it.value end
+    elseif it.name then
+      e = { name = it.name, value = it.value or 0, unit = it.unit, count = it.count or 1, quality = it.quality, classID = it.classID }
+      by[it.name] = e
+      out[#out + 1] = e
+    end
+  end
+  return out
 end
 
 function M.CheckBags()
   local free, total = M.ScanBags()
   local o = opts()
   if total > 0 and free == 0 then
-    suggest("inv_bags", "Fais de la place : sacs pleins, le butin est perdu", 3, nil, M.DropTip(free))
+    suggest("inv_bags", "Sacs pleins : fais de la place pour ramasser le butin", 3, nil, M.DropTip(free))
   elseif total > 0 and free <= o.minFree then
     suggest("inv_bags", ("Fais de la place : plus que %d case%s libre%s"):format(free, free > 1 and "s" or "", free > 1 and "s" or ""),
       2, 300, M.DropTip(free))

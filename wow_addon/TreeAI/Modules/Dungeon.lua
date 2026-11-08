@@ -7,9 +7,12 @@
 --     donjon (QuestieDB lecture seule : dans ton journal / à prendre chez <PNJ>, qui n'a pas quoi, partage au
 --     clic), réparation, sacs, familier, munitions, nourriture (Squad pour les potes qui ont TreeAI)
 --   * pendant : boss dans l'ordre + « prochain boss » (mécanique en une ligne + qui fait quoi pour TA compo),
---     pulls connus (patrouilles, packs liés), butin par boss filtré sur le groupe (classe / armure / arme, gain
---     via Boost / Team, Besoin / Cupidité par membre), objets de quête à ramasser sur un boss, minuteurs,
---     reprise après wipe, chrono + boss tués, chasseur (familier tank ou pas, cibles à contrôler)
+--     pulls connus (patrouilles, packs liés), butin par boss filtré sur le groupe (classe / armure / arme PAR
+--     NIVEAU, gain via Gear / Team, Besoin / Cupidité par membre ; rien tant que le jeu n'a pas envoyé l'objet),
+--     objets de quête à ramasser sur un boss, reprise après wipe, chrono + boss tués, chasseur (familier tank ou
+--     pas, cibles à contrôler). (4.0 QA) Plus de minuteurs de boss : ceux des données étaient écrits d'après
+--     Classic, jamais mesurés sur Forever (la Détonation de Doan suit ses PV, pas un chrono) ; restent les
+--     mécaniques vérifiables (texte du boss, seuils de PV) et les cris quand le jeu les laisse lire.
 --   * après : bilan (durée, boss, morts, wipes, butin, quêtes finies, XP, or)
 -- Forever : pas de COMBAT_LOG_EVENT pour les addons, valeurs secrètes en combat / en instance (noms, chat) ->
 -- chaque valeur passe par sv() ; rien n'est fait à la place du joueur (marque / partage = un clic, hors combat).
@@ -23,9 +26,9 @@ local M = T:RegisterModule("Dungeon", {
   title = "Donjon (PvE)",
   defaults = {
     enabled = true, tab = true, autoPlan = true, checklist = true, quests = true, loot = true,
-    timers = true, corner = true, yells = true, meter = true, wipe = true, hunter = true, marks = true,
+    corner = true, yells = true, meter = true, wipe = true, hunter = true, marks = true,
     nextBoss = true, pulls = true, summary = true,
-    forceTimers = false, learned = {}, qidx = nil,
+    learned = {}, qidx = nil,
   },
   charDefaults = { planned = nil, run = nil, runs = {}, last = nil },
   options = {
@@ -36,10 +39,8 @@ local M = T:RegisterModule("Dungeon", {
     { key = "loot", type = "toggle", label = "Butin du groupe : Besoin / Cupidité par membre" },
     { key = "nextBoss", type = "toggle", label = "Prochain boss : mécanique + qui fait quoi", section = "Boss" },
     { key = "pulls", type = "toggle", label = "Pulls à surveiller (patrouilles, packs liés)" },
-    { key = "timers", type = "toggle", label = "Minuteurs de boss (indicatifs)" },
-    { key = "corner", type = "toggle", label = "Encadré d'alerte pour les minuteurs importants" },
-    { key = "forceTimers", type = "toggle", label = "Encadré même si la frise de boss Blizzard est active" },
     { key = "yells", type = "toggle", label = "Cris / émotes de boss (quand le jeu les laisse lire)" },
+    { key = "corner", type = "toggle", label = "Encadré d'alerte quand un cri de boss annonce un danger" },
     { key = "summary", type = "toggle", label = "Bilan à la sortie du donjon", section = "Après" },
     { key = "meter", type = "toggle", label = "Mini-compteur (compteur de dégâts Blizzard, hors combat)" },
     { key = "wipe", type = "toggle", label = "Liste de reprise après un wipe" },
@@ -758,13 +759,17 @@ local function gainFor(m, link, equipLoc)
 end
 
 --- Analyse d'un objet pour le groupe -> { id, name, link, boss, need = { {m, gain} }, later = { {m, lvl} },
---- verdict = { [nom] = "Besoin" | "Cupidité" }, approx = données Classic }
+--- verdict = { [nom] = "Besoin" | "Cupidité" }, approx = données Classic, pending = infos de l'objet pas encore là }
+--- La classe vient des données (pour qui l'objet est fait) ; l'armure / l'arme et le NIVEAU décident (Gear :
+--- mailles au 40 pour chasseur / chaman, plaques au 40 pour guerrier / paladin). Sans les infos de l'objet
+--- (pas encore reçues du serveur) : aucun verdict, on attend GET_ITEM_INFO_RECEIVED.
 function M.LootItem(it, b, members)
   local name, link, req, equipLoc, classID, subID, quality = itemInfo(it[1])
   local info = (equipLoc and equipLoc ~= "") and { equipLoc = equipLoc, classID = classID, subID = subID, req = req } or nil
   local set = classSet(it[3])
   local e = { id = it[1], name = name or it[2] or ("objet " .. it[1]), link = link, boss = b, need = {}, later = {},
     verdict = {}, approx = true, quality = quality }
+  if not info then e.pending = true return e end
   for _, m in ipairs(members) do
     local ok, lvl = usableBy(m, info, set)
     local wanted = set[m.class]
@@ -790,6 +795,7 @@ local function gainTxt(g) if not g then return "" end if g >= 900 then return " 
 
 --- Texte « Besoin : toi +12 %, Ami (vide) · Cupidité : les autres »
 function M.LootVerdictText(e, members)
+  if e.pending then return "données de l'objet en attente" end
   if #e.need == 0 then return "Cupidité pour tous" end
   local p = {}
   for _, n in ipairs(e.need) do p[#p + 1] = who(n.m) .. gainTxt(n.gain) end
@@ -948,20 +954,10 @@ function M:ArchiveRun()
 end
 
 ---------------------------------------------------------------------------------------------------
--- rencontres : début / fin / minuteurs
+-- rencontres : début / fin (la frise de boss du jeu, C_EncounterTimeline, donne les vrais minuteurs)
 ---------------------------------------------------------------------------------------------------
 local enc            -- { d, b, start, warned = {}, src }
 local wipeAt, lastKill
-
---- La frise de boss Blizzard est-elle là ? (C_EncounterTimeline, Midnight / Forever)
-function M.BlizzardTimeline()
-  local ET = G.C_EncounterTimeline
-  if type(ET) ~= "table" then return false end
-  if ET.IsFeatureAvailable and not try(ET.IsFeatureAvailable) then return false end
-  if ET.IsFeatureEnabled and try(ET.IsFeatureEnabled) == false then return false end
-  if ET.HasActiveEvents then return try(ET.HasActiveEvents) and true or false end
-  return true
-end
 
 function M:StartEncounter(d, b, src)
   if not (d and b) then return end
@@ -970,10 +966,10 @@ function M:StartEncounter(d, b, src)
   if r then r.last = clock() end
   local txt = "Boss : " .. b.n .. (b.tip and (" — " .. b.tip) or "")
   self:Suggest("boss", txt, 2, { ttl = 45, tab = TAB, cooldown = 60 })
+  -- mécaniques vérifiables (seuils de PV…) au début du combat ; jamais un chrono (non mesuré sur Forever)
   for i, a in ipairs(b.alerts or {}) do
-    if (a.first or 0) <= 0 and opt("timers") then
-      self:Suggest("timer" .. i, a.text, min(a.prio or 2, 2), { ttl = 20, tab = TAB, cooldown = 60 })
-      enc.warned[i .. ":0"] = true
+    if (a.first or 0) <= 0 then
+      self:Suggest("mech" .. i, a.text, min(a.prio or 2, 2), { ttl = 20, tab = TAB, cooldown = 60 })
     end
   end
   self:StartTicker()
@@ -993,7 +989,7 @@ function M:EndEncounter(success, d, b)
   local e = enc
   d, b = d or (e and e.d), b or (e and e.b)
   enc = nil
-  for i = 1, 6 do self:Clear("timer" .. i) end
+  for i = 1, 6 do self:Clear("mech" .. i) end
   self:Clear("boss"); self:Clear("yell")
   local r = run()
   if success and b then
@@ -1026,29 +1022,6 @@ function M:EndEncounter(success, d, b)
   self:Refresh(true)
 end
 
---- Minuteurs : prévient 5 s avant chaque échéance approximative (first + k × every).
-function M:TickTimers()
-  if not (enc and opt("timers")) then return end
-  local t = now() - enc.start
-  local blizz = M.BlizzardTimeline() and not opt("forceTimers")
-  for i, a in ipairs(enc.b.alerts or {}) do
-    local first, every = a.first or 0, a.every
-    if first > 0 then
-      local k = 0
-      if every and every > 0 and t > first then k = floor((t - first + 5) / every) end
-      local due = first + k * (every or 0)
-      local key = i .. ":" .. k
-      if t >= due - 5 and t < due + 2 and not enc.warned[key] then
-        enc.warned[key] = true
-        local prio = a.prio or 2
-        if prio >= 3 and (blizz or not opt("corner")) then prio = 2 end
-        local left = max(0, floor(due - t + 0.5))
-        self:Suggest("timer" .. i, a.text .. (left > 0 and (" (≈ " .. left .. " s)") or ""), prio,
-          { ttl = 8, tab = TAB, cooldown = 4 })
-      end
-    end
-  end
-end
 function M.Encounter() return enc end
 
 ---------------------------------------------------------------------------------------------------
@@ -1193,6 +1166,7 @@ function M.Checklist(d, members)
   end
   -- Préparation : réparation, sacs, consommables, familier, munitions
   local rep, bags, food, ammo = {}, {}, {}, {}
+  local inside = inInstanceNow()   -- déjà dedans : plus de « avant d'entrer »
   local du = myDurability()
   local free = myFreeSlots()
   for _, m in ipairs(members) do
@@ -1208,7 +1182,8 @@ function M.Checklist(d, members)
     end
   end
   add("Préparation", #rep > 0 and ((du and du < 30) and "bad" or "warn") or "ok",
-    #rep > 0 and ("Répare avant d'entrer : " .. tconcat(rep, ", ")) or "Réparation : bon état", "Durabilité la plus basse de chacun (Squad pour les potes)")
+    #rep > 0 and ((inside and "Répare au prochain marchand : " or "Répare avant d'entrer : ") .. tconcat(rep, ", "))
+      or "Réparation : bon état", "Durabilité la plus basse de chacun (Squad pour les potes)")
   add("Préparation", #bags > 0 and "warn" or "ok", #bags > 0 and ("Fais de la place (cases libres) : " .. tconcat(bags, ", ")) or "Sacs : assez de place")
   if #food > 0 then add("Préparation", "warn", "Achète à manger / boire : " .. tconcat(food, ", ")) end
   if myClass() == "HUNTER" then
@@ -1218,8 +1193,10 @@ function M.Checklist(d, members)
     local hasPet = sv(try(G.UnitExists, "pet")) and not sv(try(G.UnitIsDead, "pet"))
     local A = T.API
     local hap = A and A.PetHappiness and tonumber((A.PetHappiness())) or nil
-    if not hasPet then add("Préparation", "warn", "Appelle ton familier avant d'entrer")
-    elseif hap and hap < 3 then add("Préparation", "warn", "Nourris ton familier (pas content : moins de dégâts)")
+    -- humeur (GetPetHappiness) : 1 mécontent = 75 % des dégâts, 2 content = 100 % (prêt), 3 heureux = 125 %
+    if not hasPet then add("Préparation", "warn", inside and "Appelle ton familier" or "Appelle ton familier avant d'entrer")
+    elseif hap == 1 then add("Préparation", "warn", "Nourris ton familier : mécontent, il fait 25 % de dégâts en moins")
+    elseif hap == 2 then add("Préparation", "info", "Nourris ton familier : heureux = +25 % de dégâts")
     else add("Préparation", "ok", "Familier : prêt") end
   end
   return out
@@ -1255,9 +1232,7 @@ local function bossTooltip(b, members, d, qs)
   local jt = members and #members >= 2 and M.JobsText(b, members)
   if jt then tip[#tip + 1] = "Qui fait quoi : " .. jt end
   if b.hunter and myClass() == "HUNTER" then tip[#tip + 1] = "Chasseur : " .. b.hunter end
-  for _, a in ipairs(b.alerts or {}) do
-    tip[#tip + 1] = (a.first or 0) > 0 and fmt("~%d s puis toutes les ~%d s : %s", a.first, a.every or 0, a.text) or a.text
-  end
+  for _, a in ipairs(b.alerts or {}) do tip[#tip + 1] = a.text end   -- la mécanique, sans chrono (non mesuré)
   if d then
     for _, q in ipairs(M.QuestDropsFor(d, b, qs)) do tip[#tip + 1] = fmt("Quête « %s » : %s", q.quest, q.item) end
   end
@@ -1349,18 +1324,10 @@ function M:BuildBlocks()
     local b = enc.b
     line(nb, b.tip and fmt("Boss : %s — %s", b.n, b.tip) or ("Boss : " .. b.n), 3, { icon = M.ICONS.boss, tooltip = bossTooltip(b, members, d, qs) })
     if hunter and b.hunter then line(nb, "Chasseur : " .. b.hunter, 2) end
-    local t = now() - enc.start
-    for _, a in ipairs(b.alerts or {}) do
-      if (a.first or 0) > 0 then
-        local nextAt = a.first
-        if a.every and t > a.first then nextAt = a.first + (floor((t - a.first) / a.every) + 1) * a.every end
-        line(nb, fmt("Prochain (≈) : %s dans %d s", a.text, max(0, floor(nextAt - t))), 2)
-      end
-    end
   elseif nxt and opt("nextBoss") then
     line(nb, fmt("Prochain : %s%s", nxt.n, nxt.tip and (" — " .. nxt.tip) or ""), 2,
       { icon = M.ICONS.boss, tooltip = bossTooltip(nxt, members, d, qs), onClick = function() M:Arm(nxt) end,
-        clickHint = "Clic : minuteurs dès le début du prochain combat" })
+        clickHint = "Clic : son conseil s'affiche dès le début du prochain combat" })
     local jt = #members >= 2 and M.JobsText(nxt, members, true)
     if jt then line(nb, "Qui fait quoi : " .. jt, 2, { kind = "group", tooltip = "Qui fait quoi : " .. (M.JobsText(nxt, members) or "") }) end
     if hunter and nxt.hunter then line(nb, "Chasseur : " .. nxt.hunter, 1) end
@@ -1380,7 +1347,7 @@ function M:BuildBlocks()
       for _, e in ipairs(M.LootPlan(d, members)) do
         if e.boss == nxt and #e.need > 0 and nl < 3 then
           nl = nl + 1
-          line(nb, fmt("Butin : %s → %s", e.name, M.LootVerdictText(e, members)), 1, { kind = "gear" })
+          line(nb, fmt("Butin : %s — %s", e.name, M.LootVerdictText(e, members)), 1, { kind = "gear" })
         end
       end
     end
@@ -1401,7 +1368,7 @@ function M:BuildBlocks()
       b.opt and ("|cff9d9d9d" .. b.n .. " (optionnel)|r") or b.n, q and (" " .. QICON) or "",
       (lootBy[b] and not done) and fmt(" |cffa0d0ff· %d objet%s pour vous|r", lootBy[b], lootBy[b] > 1 and "s" or "") or "")
     line(bl, txt, cur and 3 or 1, { tooltip = bossTooltip(b, members, d, qs), onClick = function() M:Arm(b) end,
-      icon = i == 1 and M.ICONS.skull or nil, clickHint = "Clic : préparer ce boss (minuteurs au prochain combat)" })
+      icon = i == 1 and M.ICONS.skull or nil, clickHint = "Clic : préparer ce boss (son conseil au prochain combat)" })
   end
 
   -- 4. butin du groupe : une ligne par membre (ses objets des boss à venir), Besoin / Cupidité par objet en infobulle
@@ -1525,11 +1492,10 @@ function M:BuildLines()
   return out, B
 end
 
---- Clic sur un boss : conseil complet dans « Maintenant », minuteurs au prochain combat (sans évènement de boss).
+--- Clic sur un boss : conseil complet dans « Maintenant », et son conseil au début du prochain combat (sans évènement de boss).
 function M:Arm(b)
   self._armed = b
-  self:Suggest("armed", "Prêt pour " .. b.n .. (b.tip and (" : " .. b.tip) or "") .. " (minuteurs au début du combat)",
-    2, { ttl = 120, tab = TAB })
+  self:Suggest("armed", "Prêt pour " .. b.n .. (b.tip and (" : " .. b.tip) or ""), 2, { ttl = 120, tab = TAB })
   self:Refresh(true)
 end
 
@@ -1583,13 +1549,10 @@ end
 function M:Tick()
   if not M:IsEnabled() then return end
   if not M:NeedTicker() then M:StopTicker() return end
-  M:TickTimers()
   local t = now()
   local shown = (not T.TabShown) or T:TabShown(TAB)
-  -- reconstruit : sale, ou onglet visible (2 s pendant un boss à minuteurs, 15 s sinon), 60 s quand l'onglet est caché
-  local timers = false
-  if enc then for _, a in ipairs(enc.b.alerts or {}) do if (a.first or 0) > 0 then timers = true end end end
-  local gap = (timers and shown) and 2 or (shown and 15 or 60)
+  -- reconstruit : sale, ou onglet visible (15 s), 60 s quand l'onglet est caché
+  local gap = shown and 15 or 60
   if M._dirty or t - lastBuild >= gap then lastBuild = t; M:Refresh(true) end
 end
 

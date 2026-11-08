@@ -262,7 +262,7 @@ for _, e in ipairs(ref) do if e.id == 100 then sanglier = e end end
 ok(sanglier and #sanglier.holders == 5 and sanglier.unknown and sanglier.unknown[1] == "Echo" and not sanglier.allDone,
   "Echo (sans TreeAI) est sur « Les sangliers » via IsUnitOnQuest : progression inconnue, pas « tous prêts »")
 local status = A.T.Missions.Engine.StatusLine(sanglier)
-ok(status == "Charlie : 8 Défense de sanglier restants, Delta : 5 Défense de sanglier restants, toi : terminé, Bravo : terminé",
+ok(status == "Charlie : Défense de sanglier 2/10, Delta : Défense de sanglier 5/10, toi : terminé, Bravo : terminé",
   "ligne d'état avec les noms d'objectifs de mon journal : " .. status)
 
 -- -------------------------------------------------------------- lignes de l'onglet
@@ -487,7 +487,11 @@ local list = {
   { name = "C", level = 30, online = true, st = {}, quests = {} },
 }
 local gaps = E.LevelGaps(list, {}, 30, nil)
-ok(#gaps == 1 and gaps[1].text == "B est 3 niveaux derrière (en repos : il rattrape)", "écart sans quête à partager : repos dit — " .. tostring(gaps[1] and gaps[1].text))
+ok(#gaps == 0, "(4.0 QA S21) écart de 3 sans quête à partager : rien à faire, pas de ligne — " .. tostring(gaps[1] and gaps[1].text))
+list[2].level = 26
+gaps = E.LevelGaps(list, {}, 30, nil)
+ok(#gaps == 1 and gaps[1].text == "B est 4 niveaux derrière (en repos : il rattrape)", "vrai écart (4) sans quête à partager : repos dit — " .. tostring(gaps[1] and gaps[1].text))
+list[2].level = 27
 local lb = E.Leaderboard(list)
 ok(#lb == 2 and lb[1].name == "B" and lb[2].name == "A", "course à l'XP : amis TreeAI seulement, triée")
 local gl = E.GoalLine({ k = "level", n = 30 }, list)

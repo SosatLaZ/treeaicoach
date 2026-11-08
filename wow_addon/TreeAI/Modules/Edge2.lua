@@ -7,7 +7,7 @@
 --             lootLeft (corps pas fouillés, en solo : kills comptés par Detect, fouilles par le jeu)
 --             gatherTrack (récolteur sans suivi actif sur la mini-carte : un clic l'active)
 --   Quêtes  : turninLevel (tes quêtes finies valent le niveau suivant : XP des récompenses lue dans le journal)
---             questTimer (minuteur réel d'une quête chronométrée) · escortFail (escorte échouée : à reprendre)
+--             escortFail (escorte échouée : à reprendre) — le chrono d'une quête chronométrée : module Quêtes seul
 --             breadcrumb (quête de liaison devenue inutile : QuestieDB + quêtes faites du jeu)
 --   Ville   : worldBuff (cri d'un buff mondial en ville : reste là quelques secondes)
 -- Retiré en 4.0 : repop / patrouilles / coin de farm appris sur trop peu d'observations, chuchotement pré-rempli à
@@ -26,7 +26,6 @@ local FEATURES = {
   { "lootLeft", "Corps pas fouillés (solo)", "Farm" },
   { "gatherTrack", "Récolte : active le suivi des plantes / filons", "Farm" },
   { "turninLevel", "Quêtes finies = niveau suivant d'un coup", "Quêtes" },
-  { "questTimer", "Quête chronométrée : temps restant", "Quêtes" },
   { "escortFail", "Escorte échouée : à reprendre", "Quêtes" },
   { "breadcrumb", "Quête de liaison devenue inutile", "Quêtes" },
   { "worldBuff", "Buff mondial annoncé en ville : reste là", "Ville" },
@@ -71,7 +70,6 @@ local function groupSize() return num(try(g("GetNumGroupMembers"))) or 0 end
 local function low(s) return tostring(s or ""):lower() end
 local function zone() return sv(try(g("GetRealZoneText"))) or sv(try(g("GetZoneText"))) or "" end
 local Fmt = T.Fmt or {}
-local function durText(s) return Fmt.Time and Fmt.Time(s) or (floor((s or 0) / 60) .. " min") end
 local function thousands(n) return Fmt.Num and Fmt.Num(n) or tostring(floor(tonumber(n) or 0)) end
 
 local function nm(s, n)
@@ -334,31 +332,9 @@ function M.CheckTurnIn()
   local n, total, enough = E.TurnIn(quests(), xpMax - xp)
   if not enough or n == 0 then return drop("turninLevel") end
   local what = n > 1 and fmt("tes %d quêtes finies", n) or "ta quête finie"
-  say("turninLevel", fmt("Rends %s avant l'entraîneur : niveau %d d'un coup", what, level() + 1), 2,
+  say("turninLevel", fmt("Rends %s : niveau %d d'un coup (puis passe chez ton maître de classe)", what, level() + 1), 2,
     { ttl = 600, cooldown = 900, window = 600, sig = level(),
       tooltip = fmt("%s XP à rendre, il manque %s XP pour le niveau.", thousands(total), thousands(xpMax - xp)) })
-end
-
--- ----------------------------------------------------------------------------- quête chronométrée
-function M.CheckTimers()
-  if not opt("questTimer") then return drop("questTimer") end
-  local CQ = g("C_QuestLog")
-  local fn = CQ and CQ.GetTimeAllowed
-  if type(fn) ~= "function" then return drop("questTimer") end
-  local bleft, bq
-  for _, q in ipairs(quests()) do
-    local total, elapsed = try(fn, q.id)
-    total, elapsed = tonumber(sv(total)), tonumber(sv(elapsed))
-    if total and elapsed and total > 0 then
-      local left = total - elapsed
-      if left > 0 and (not bleft or left < bleft) then bleft, bq = left, q end
-    end
-  end
-  if not bq or bleft > 900 then return drop("questTimer") end
-  local title = nm(bq.title, 28) or "ta quête"
-  local text = bq.complete and fmt("Rends « %s » vite : chrono, il reste %s", title, durText(bleft))
-    or fmt("Finis « %s » : chrono, il reste %s", title, durText(bleft))
-  say("questTimer", text, bleft < 90 and 3 or 2, { ttl = 30, cooldown = 60, sound = bleft < 90 or false })
 end
 
 -- ----------------------------------------------------------------------------- escorte échouée
@@ -469,7 +445,7 @@ function M.BuildTab(force)
   for _, f in ipairs(FEATURES) do if T._suggestions and T._suggestions["Edge2:" .. f[1]] then active = true break end end
   if not active then
     lines[1] = { text = "Rien pour l'instant : chaque avantage apparaît ici quand il sert", prio = 1,
-      tooltip = "Camp disputé, objet de quête qui ne tombe pas, quêtes finies = niveau, minuteur de quête, suivi de récolte…" }
+      tooltip = "Camp disputé, objet de quête qui ne tombe pas, quêtes finies = niveau, escorte échouée, suivi de récolte…" }
   end
   local parts = {}
   for _, l in ipairs(lines) do parts[#parts + 1] = l.text end
@@ -483,8 +459,7 @@ end
 local function run(fn, ...) return pcall(fn, ...) end
 local tick = 0
 --- une seule petite vérification par passage ; rien en combat (AutoRefresh n'y tourne pas)
-local ROT = { "CheckContest", "CheckTurnIn", "CheckLuck", "CheckLoot", "CheckTimers", "CheckEscort", "CheckTracking",
-  "CheckBreadcrumb" }
+local ROT = { "CheckContest", "CheckTurnIn", "CheckLuck", "CheckLoot", "CheckEscort", "CheckTracking", "CheckBreadcrumb" }
 function M:AutoRefresh()
   tick = tick + 1
   if inCombat() then return end

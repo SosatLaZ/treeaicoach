@@ -53,7 +53,7 @@ return function(M, ctx)
   ctx.check(P.status and P.status:find("^Repos %d+ s : "), "rest timer text: " .. tostring(P.status))
   ctx.check(not P.ready, "not ready while low")
 
-  -- unhappy pet + food in bags: Nourrir le familier
+  -- content pet + food in bags: Nourrir le familier (heureux = +25 %) is offered, but « content » = 100 % = ready
   M.pet.happiness = 2
   Q:InvalidatePicks()
   Q:Refresh()
@@ -66,7 +66,14 @@ return function(M, ctx)
   else
     ctx.note = ctx.note
   end
-  hc(P.reasons and table.concat(P.reasons, ","):find("familier pas content"), "reason: pet unhappy")
+  hc(not (P.reasons and table.concat(P.reasons, ","):find("familier", 1, true)), "content pet is not a « not ready » reason (4.0 QA S2): "
+    .. table.concat(P.reasons or {}, ","))
+  M.pet.happiness = 1
+  Q:Refresh()
+  settle()
+  P = Q._lastPlan
+  hc(P.reasons and table.concat(P.reasons, ","):find("familier mécontent", 1, true), "reason: pet unhappy (75 % damage)")
+  M.pet.happiness = 2
 
   -- pet hurt: Soigner le familier
   M.pet.health = 200

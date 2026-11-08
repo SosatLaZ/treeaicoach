@@ -27,6 +27,10 @@ return function(M, ctx)
   ctx.check(not T.tabs.dungeon, "no Donjon tab outside / unplanned")
 
   -- planned dungeon (slash), group of 3 with a low-level friend, no healer
+  -- (4.0 QA S32) loot verdicts wait for the item data (GET_ITEM_INFO_RECEIVED): these two are known to the client
+  M.AddItem(6469, { name = "Venomstrike", equipLoc = "INVTYPE_RANGED", classID = 2, subclassID = 2, minLevel = 17, quality = 3 })
+  M.AddItem(6447, { name = "Worn Turtle Shell Shield", equipLoc = "INVTYPE_SHIELD", classID = 4, subclassID = 6, minLevel = 17, quality = 2 })
+  D._itemGen = (D._itemGen or 0) + 1
   M.player.level = 18
   M.group = { { name = "Ami-un", class = "WARRIOR", level = 19, online = true },
               { name = "Ami-deux", class = "ROGUE", level = 14, online = true } }
@@ -69,28 +73,28 @@ return function(M, ctx)
   ctx.check(D.char.planned == nil, "plan consumed")
   ctx.check(T.tabs.dungeon ~= nil, "tab visible in instance")
 
-  -- pull counter + encounter with timers (no Blizzard timeline in the mock)
+  -- pull counter + encounter (4.0 QA S6: no invented boss timer — Classic numbers never measured on Forever)
   M.EnterCombat()
   ctx.check(D.char.run.pulls == 1, "pull counted")
   ctx.fire("ENCOUNTER_START", 592, "Mutanus le Dévoreur", 1, 5)
   local bs = S["Dungeon:boss"]
   ctx.check(bs and bs.text:find("Mutanus") and bs.prio == 2, "boss tip suggested (no corner)")
   ctx.check(D.Encounter() and D.Encounter().b.n:find("Mutanus"), "encounter active")
-  M.Advance(11, 1)
-  local tm = S["Dungeon:timer1"]
-  ctx.check(tm and tm.prio == 3 and tm.text:find("sommeil"), "timer alert 5 s before (corner): " .. tostring(tm and tm.text))
-  -- Blizzard timeline active -> no corner duplicate
-  rawset(_G, "C_EncounterTimeline", { IsFeatureAvailable = function() return true end, HasActiveEvents = function() return true end })
-  T:ClearSuggestion("Dungeon:timer1")
-  M.Advance(20, 1)
-  local tm2 = S["Dungeon:timer1"]
-  ctx.check(tm2 and tm2.prio == 2, "timer downgraded when Blizzard timeline active")
-  rawset(_G, "C_EncounterTimeline", nil)
+  local function timed()
+    for id, e in pairs(S) do
+      if id:find("^Dungeon:") and (tostring(e.text):find("≈ %d+ s") or tostring(e.text):find("dans %d+ s")) then return e.text end
+    end
+  end
+  local seen
+  for _ = 1, 40 do M.Advance(1, 0.5) seen = seen or timed() end
+  ctx.check(seen == nil and D.TickTimers == nil, "no countdown line during the boss: " .. tostring(seen))
+  D:Refresh(true)
+  ctx.check(not text(D.lines):find("Prochain (≈)", 1, true), "no « Prochain (≈) : … dans N s » line in the tab")
+  ctx.check(not (D.db and D.db.timers) and not (D.db and D.db.forceTimers), "boss timer options gone")
   ctx.fire("ENCOUNTER_END", 592, "Mutanus le Dévoreur", 1, 5, 1)
   M.LeaveCombat()
   ctx.check(D.Killed(b), "kill recorded")
   ctx.check(S["Dungeon:kill"] and S["Dungeon:kill"].text:find("Boss vaincu"), "kill message")
-  ctx.check(not S["Dungeon:timer1"], "timers cleared")
 
   -- wipe on the next boss
   M.EnterCombat()
@@ -120,7 +124,7 @@ return function(M, ctx)
   ctx.check(S["Dungeon:yell"] and S["Dungeon:yell"].prio == 3, "whirlwind yell alert")
   D:EndEncounter(true)
 
-  -- click-armed boss (no encounter event): timers start at combat start
+  -- click-armed boss (no encounter event): its advice shows at combat start
   local sm = D.Find("SM")
   D:Arm(sm.bosses[4])
   M.EnterCombat()

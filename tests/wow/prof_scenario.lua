@@ -43,6 +43,30 @@ return function(M, ctx)
   if SQ then
     SQ.MemberList = function() return { { name = "Bravo", st = { pr = "Alchimie 150 Minage 120" } } } end
   end
+  -- (4.0 QA S8) « Fais N× X maintenant » : seulement pour une recette APPRISE, lue dans la fenêtre du métier.
+  -- Forever n'a ni GetAllRecipeIDs ni GetTradeSkillInfo : GetFilteredRecipeIDs (celle de l'interface du jeu).
+  local TS = rawget(_G, "C_TradeSkillUI")
+  local madeTS = TS == nil
+  if madeTS then TS = {} rawset(_G, "C_TradeSkillUI", TS) end
+  local savedTS = { all = rawget(TS, "GetAllRecipeIDs"), filt = rawget(TS, "GetFilteredRecipeIDs"),
+    info = rawget(TS, "GetRecipeInfo"), base = rawget(TS, "GetBaseProfessionInfo") }
+  P.char.known = {}
+  P.Update(true)
+  local function nowTip()
+    for _, l in ipairs(T:GetTabLines("prof")) do if T.PlainText(l.text):find("^Fais %d+×") then return T.PlainText(l.text) end end
+  end
+  ctx.check(nowTip() == nil, "no learned recipe read yet: no « Fais N× … maintenant » (was: every trainer recipe assumed known): "
+    .. tostring((nowTip())))
+  TS.GetAllRecipeIDs = nil
+  TS.GetFilteredRecipeIDs = function() return { 3275, 3276, 3277 } end
+  TS.GetRecipeInfo = function(id) return { recipeID = id, learned = id ~= 3277 } end
+  TS.GetBaseProfessionInfo = function() return { professionID = 129, professionName = "Secourisme" } end
+  M.FireEvent("TRADE_SKILL_LIST_UPDATE")
+  ctx.check(P.char.known[129] and P.char.known[129][3276] == 1 and P.char.known[129][3277] == nil,
+    "learned recipes read with GetFilteredRecipeIDs (unlearned skipped)")
+  TS.GetAllRecipeIDs, TS.GetFilteredRecipeIDs, TS.GetRecipeInfo, TS.GetBaseProfessionInfo = savedTS.all, savedTS.filt,
+    savedTS.info, savedTS.base
+  if madeTS then rawset(_G, "C_TradeSkillUI", nil) end
   P.Update(true)
   ctx.check(#P.profs == 3 and P.profs[1].line == 197, "professions read (crafting first)")
   ctx.check(T.tabs.prof and T.tabs.prof.title == "Métiers", "tab « Métiers » registered")

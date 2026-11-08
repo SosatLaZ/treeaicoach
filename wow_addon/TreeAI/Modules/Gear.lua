@@ -58,6 +58,8 @@ local function money(c)   -- format commun du panneau (T.Fmt) : « 1 po 20 pa »
 end
 -- Les poids de stats sont estimés : un écart en % serait une fausse précision. On le dit en mots (seuils).
 local MIN_GAIN, BIG_GAIN = 3, 15
+local NO_EFFORT = { craft = true, drop = true, boss = true }        -- pas de durée mesurée pour ces sources
+local NOW_KIND = { bag = true, vendor = true, quest = true }        -- seules sources qui montent dans « Maintenant »
 --- Verdict en mots d'un écart de score (%, 999 = emplacement vide) → texte, genre ("good" | "same" | "bad")
 function M.Verdict(p)
   p = tonumber(p)
@@ -910,8 +912,14 @@ function M.Lines(plan)
       local text = ("%s → %s%s%s · %s"):format(head, cd.name or "?", gain, weaponTxt(cd), where)
       local tip = { (cd.pct and cd.pct >= 999) and ("Emplacement vide : tout objet est un gain" .. lvl)
           or (pctText(cd.pct):gsub("^%l", string.upper) .. " que ce que tu portes" .. lvl),
-        "Où : " .. (s.text or "?"),
-        "Effort : " .. (s.kind == "bag" and "maintenant" or dur(s.min)) .. (((s.cost or 0) > 0) and (" · " .. money(s.cost)) or "") }
+        "Où : " .. (s.text or "?") }
+      -- effort : seulement ce qui se mesure (sacs, marchand, quête du journal, HV) ; fabriqué / butin / boss : pas de
+      -- durée inventée, le prix seul s'il est connu
+      if NO_EFFORT[s.kind] then
+        if (s.cost or 0) > 0 then tip[#tip + 1] = "Prix : " .. money(s.cost) end
+      else
+        tip[#tip + 1] = "Effort : " .. (s.kind == "bag" and "maintenant" or dur(s.min)) .. (((s.cost or 0) > 0) and (" · " .. money(s.cost)) or "")
+      end
       if e.name then tip[#tip + 1] = ("Porté : %s (score %d)"):format(e.name, floor((e.score or 0) + 0.5)) end
       for i = 2, #(cd.sources or {}) do tip[#tip + 1] = "  ou " .. cd.sources[i].text end
       for i = 2, #best do
@@ -989,10 +997,13 @@ function M:Publish(plan)
   self.char.shopping = {}
   for _, e in ipairs(plan.shopping or {}) do self.char.shopping[#self.char.shopping + 1] = { id = e.id, cost = e.cost } end
   if not opt("suggest") then self:Clear("upgrade") return end
-  -- meilleure amélioration immédiate : sacs d'abord, sinon la plus rentable portable maintenant
+  -- meilleure amélioration immédiate : sacs d'abord, sinon la plus rentable portable maintenant ; « Maintenant » ne
+  -- reçoit qu'une action concrète (équiper, acheter au marchand, choisir en récompense d'une quête du journal) :
+  -- fabriqué / butin / boss / HV restent dans l'onglet « Équipement »
   local top
   for _, slot in ipairs(SLOT_LIST) do
-    local cd = (plan.slots[slot] or {})[1]
+    local cd
+    for _, c in ipairs(plan.slots[slot] or {}) do if c.src and NOW_KIND[c.src.kind] then cd = c break end end
     if cd and (cd.need or 0) <= plan.ctx.level and cd.src and (not top or cd.value > top.value or cd.src.kind == "bag") then
       if not (top and top.src.kind == "bag" and cd.src.kind ~= "bag") then top = cd top.slot = slot end
     end

@@ -475,7 +475,7 @@ API.IterBags()                -> for bag, slot, item in API.IterBags() do ... en
 API.FreeSlots()               -> free, total  (sacs généraux)
 API.UseContainerItem(bag, slot)  -- HORS COMBAT, uniquement sur clic du joueur (marchand)
 API.Aura(unit, spellIDOrName [, filter]) -> {name, icon, count, duration, expires, spellId, source} | nil   (filter "HELPFUL" défaut)
-API.Auras(unit, filter)       -> liste d'auras
+API.Auras(unit, filter)       -> liste d'auras lisibles, nombre d'auras masquées (valeurs secrètes : « illisible » ≠ « absente »)
 API.AddOnMeta(addon, field)
 API.GetMacroCount()           -> global, perChar
 API.Money()                   -> cuivre

@@ -4,9 +4,10 @@
 --  2 courrier à risque : contre-remboursement (somme, expéditeur) et lettres avec objets qui expirent ;
 --    l'échéance est gardée et rappelée au login si tu n'es pas repassé à une boîte.
 --  3 maître de vol : « pierre de foyer ou vol » vers ton auberge (temps de recharge de la pierre + prix du vol).
---  4 maître de classe : prix exact de ce qui est à apprendre ; sans assez d'or, quoi prendre d'abord. Le prix des
---    sorts du niveau suivant (lu dans la même fenêtre) est gardé : « garde 3 po 20 pour le niveau 30 » avant d'y être,
---    et « va voir ton maître de classe » au passage de niveau (prix réel, plus de table approximative).
+--  4 maître de classe : prix exact de ce qui est à apprendre ; sans assez d'or, quoi prendre d'abord ; « va voir ton
+--    maître de classe » au passage de niveau. Le prix des sorts du niveau suivant n'est gardé (« garde 3 po 20 pour le
+--    niveau 30 ») que si le jeu donne le niveau requis d'un sort (GetTrainerServiceLevelReq) : ABSENT sur WoW Forever,
+--    où ces deux lignes ne s'affichent donc pas (jamais un niveau ou un prix deviné).
 --  5 appel « prêt » (ready check) : ce qui te manque avant de répondre (PV, mana, sacs, munitions, familier,
 --    réparation) ; rien n'est dit si tout va bien. La réponse reste au joueur.
 --  6 limite d'instances : entrées de la dernière heure (5 par heure), place libre dans X min (onglet « Groupe »).
@@ -280,9 +281,10 @@ function M.HearthOrFly(left, node, bind)
   local cost = node.cost and node.cost > 0 and money(node.cost) or nil
   local where = short(bind, 30)
   if left == 0 then
-    return fmt("Pour %s, ta pierre de foyer est prête : garde %s", where, cost or "le prix du vol"), 2
+    return fmt("Vers %s : prends ta pierre de foyer (prête)%s", where,
+      cost and (" et garde les " .. cost .. " du vol") or " plutôt que le vol"), 2
   elseif left and left > 0 then
-    return fmt("Pierre de foyer dans %s : vole vers %s%s", dur(left), where, cost and (" pour " .. cost) or ""), 1
+    return fmt("Pierre de foyer dans %s : prends le vol vers %s%s", dur(left), where, cost and (" pour " .. cost) or ""), 1
   end
 end
 
@@ -343,6 +345,7 @@ function M.ReadTrainer()
       if cat == "available" then
         avail[#avail + 1] = { name = name, cost = num(try(g("GetTrainerServiceCost"), i)) or 0 }
       elseif cat == "unavailable" then
+        -- (Forever : fonction absente -> req nil -> rien de gardé, jamais un niveau deviné)
         local req = num(try(g("GetTrainerServiceLevelReq"), i))
         if req and req > me then
           if not nextLevel or req < nextLevel then nextLevel = req end
