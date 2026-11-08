@@ -276,6 +276,15 @@ local function buildMain(content, width)
     refreshAll()
   end, presetText)
   P.text("|cff999999" .. L["Calme : 3 lignes, l'utile seulement · Normal : 5 lignes · Tout : 8 lignes, même les petits conseils."] .. "|r")
+  -- (COHERE) qui guide les quêtes à l'écran : Suivi Forever / Questie (s'ils sont là) ou TreeAI — jamais deux
+  P.button("", nil, function()
+    TreeAI:SetGuideMode(TreeAI:GuideMode() == "treeai" and "auto" or "treeai")
+    refreshAll()
+  end, function()
+    local m = TreeAI.GuideMode and TreeAI:GuideMode() or "auto"
+    return L["Guidage"] .. " : " .. L[(TreeAI.GUIDE_LABEL or {})[m] or m] .. "  (" .. L["clic : changer"] .. ")"
+  end)
+  P.text("|cff999999" .. L["Suivi Forever : sa liste et sa flèche guident, TreeAI garde l'équipement, le groupe, les conseils. TreeAI : la boussole et les étapes de TreeAI."] .. "|r")
   P.button("", nil, function()
     TreeAI:SetProfile(TreeAI:ProfileMode() == "char" and "account" or "char")
     refreshAll()

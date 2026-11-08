@@ -513,10 +513,22 @@ function M.QuestieNext(qid)
   if not db then return nil end
   local nx = tonumber(qq(db, qid, "nextQuestInChain"))
   if not nx or nx <= 0 then return nil end
+  -- (COHERE) déjà dans le journal ou déjà rendue : pas de « Suite » (sinon « Suite : X » + « près de la remise de X »)
+  if M.InLog(nx) then return nil end
+  local CQ = _G.C_QuestLog
+  local flagged = (CQ and CQ.IsQuestFlaggedCompleted) or _G.IsQuestFlaggedCompleted
+  if flagged and try(flagged, nx) then return nil end
   local name = qq(db, nx, "name")
   if not name then return nil end
   local giver = starterName(db, nx)
-  return ("Suite : « %s »%s"):format(name, giver and (" chez " .. giver) or "")
+  return ("Suite : « %s »%s"):format(name, giver and (" chez " .. giver) or ""), nx
+end
+-- la quête est-elle dans le dernier relevé du journal ?
+function M.InLog(qid)
+  qid = tonumber(qid)
+  if not qid then return false end
+  for _, q in ipairs(M.lastList or {}) do if q.id == qid then return true end end
+  return false
 end
 
 -- Chaîne (TRACK-PRO) : les n quêtes suivantes (Questie nextQuestInChain) → { {id, title, giver}, ... }, position
@@ -655,7 +667,7 @@ local function toasts(list)
       elseif q.complete and not p.complete then
         suggest("done:" .. q.id, ("Rends « %s » : terminée%s"):format(cut(q.title, 34),
           q.turnZone and (" (" .. q.turnZone .. ")") or ""), 2,
-          { ttl = 20, cooldown = 60 })
+          { ttl = 20, cooldown = 60, topic = "quest:" .. tostring(q.id) })
       else
         for j, o in ipairs(q.obj) do
           local was = p.obj[j]
@@ -924,8 +936,16 @@ end
 
 -- ------------------------------------------------------------------ mise à jour
 local lastZone
+M.gone = {}   -- (COHERE) [qid] = instant du rendu / retrait : le journal peut encore la montrer un instant
+local function dropGone(list)
+  if not next(M.gone) then return list end
+  local t, out = now(), {}
+  for id, at in pairs(M.gone) do if t - at > 15 then M.gone[id] = nil end end
+  for _, q in ipairs(list) do if not M.gone[q.id] then out[#out + 1] = q end end
+  return out
+end
 function M.Update()
-  local list = M.Scan()
+  local list = dropGone(M.Scan())
   M.lastList = list
   local a = M.Analyse(list)
   M.last = a
@@ -1016,14 +1036,32 @@ function M.OnZone(newZone)
 end
 
 -- Proche du PNJ de remise (si l'API de distance existe).
+-- (COHERE) une seule ligne par quête : même sujet que « Rends … : terminée » ; effacée dès que la quête quitte
+-- le journal (rendue / abandonnée) ou qu'on s'éloigne.
 function M.CheckNear()
-  if inCombat() or not M.last or not cfg("zoneHints") then return end
+  if not M.last or not cfg("zoneHints") then return clear("near") end
+  if inCombat() then return end
   for _, q in ipairs(M.last.turnIn) do
-    if q.dist and q.dist < 120 then
-      suggest("near", ("Tu es près de la remise de « %s »."):format(cut(q.title, 32)), 2, { ttl = 30, cooldown = 600 })
+    if q.dist and q.dist < 120 and not M.gone[q.id] then
+      M.nearID = q.id
+      suggest("near", ("Tu es près de la remise de « %s »."):format(cut(q.title, 32)), 2,
+        { ttl = 30, cooldown = 600, topic = "quest:" .. tostring(q.id) })
       return q
     end
   end
+  M.nearID = nil
+  clear("near")
+end
+-- quête rendue / retirée : ses lignes (près de la remise, terminée, progrès, « Suite » qui la nomme) partent
+-- tout de suite, sans attendre leur durée de vie
+function M.Forget(qid)
+  qid = tonumber(qid)
+  if not qid then return end
+  M.gone[qid] = now()
+  clear("done:" .. qid)
+  clear("prog:" .. qid)
+  if M.nearID == qid then M.nearID = nil; clear("near") end
+  if M.chainID == qid then M.chainID = nil; clear("chain") end
 end
 
 -- ------------------------------------------------------------------ rapport /tai quetes
@@ -1082,15 +1120,28 @@ end
 function M:OnEnable()
   M.DetectAddons()
   local function refresh() M.Refresh() end
-  for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_ACCEPTED", "QUEST_REMOVED", "QUEST_WATCH_LIST_CHANGED",
+  for _, ev in ipairs({ "QUEST_LOG_UPDATE", "QUEST_WATCH_LIST_CHANGED",
     "QUEST_WATCH_UPDATE", "PLAYER_LEVEL_UP", "PLAYER_XP_UPDATE" }) do
     self:RegisterEvent(ev, refresh)
   end
   self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(_, _, unit) if unit == "player" then M.Refresh() end end)
-  self:RegisterEvent("QUEST_TURNED_IN", function(_, _, qid)
+  -- (COHERE) rendue / retirée / acceptée : lignes périmées effacées TOUT DE SUITE, puis relecture du journal
+  self:RegisterEvent("QUEST_REMOVED", function(_, _, qid) M.Forget(qid) M.Refresh() end)
+  self:RegisterEvent("QUEST_ACCEPTED", function(_, _, a, b)
+    local qid = tonumber(b) or tonumber(a)   -- (index, id) en Classic, (id) ailleurs
+    if qid and M.chainNext == qid then M.chainNext, M.chainID = nil, nil; clear("chain") end
     M.Refresh()
-    local txt = M.QuestieNext(qid)
-    if txt then suggest("chain", txt, 2, { ttl = 120, cooldown = 30 }) end
+  end)
+  self:RegisterEvent("QUEST_TURNED_IN", function(_, _, qid)
+    M.Forget(qid)
+    pcall(M.Update)          -- journal relu maintenant (pas dans 0,5 s) : plus de « près de la remise » périmé
+    pcall(M.CheckNear)
+    M.Refresh()
+    local txt, nx = M.QuestieNext(qid)
+    if txt then
+      M.chainID, M.chainNext = tonumber(qid), nx
+      suggest("chain", txt, 2, { ttl = 120, cooldown = 30, topic = "quest:" .. tostring(nx) })
+    end
   end)
   self:RegisterEvent("ZONE_CHANGED_NEW_AREA", function()
     T:After(1, function()

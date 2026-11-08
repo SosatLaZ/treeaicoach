@@ -112,6 +112,21 @@ local function shortName(full)
   return (full:gsub("%-.*$", ""))
 end
 local function q(s) return "« " .. tostring(s or "?") .. " »" end
+-- (COHERE) « rendre » seulement si la quête est dans MON journal ET finie (Quests = relevé de C_QuestLog) ;
+-- sinon la ligne nomme les membres qui rendent, jamais « toi ». nil = journal pas encore lu.
+local function mineReady(id)
+  local Qm = T.GetModule and T:GetModule("Quests")
+  local list = Qm and Qm.lastList
+  if type(list) ~= "table" then return nil end
+  id = tonumber(id)
+  for _, x in ipairs(list) do if x.id == id then return x.complete and true or false end end
+  return false
+end
+local function whoText(names)
+  local o = {}
+  for i, n in ipairs(names or {}) do if i <= 3 then o[#o + 1] = tostring(n) end end
+  return table.concat(o, ", ") .. ((#(names or {}) > 3) and "…" or "")
+end
 local function low(s) return tostring(s or ""):lower() end
 
 local function myName() return (call(UnitName, "player")) or "?" end
@@ -472,6 +487,10 @@ function E.Next(board)
   local best
   for _, e in ipairs(board or {}) do
     if e.multi and e.allDone then
+      if mineReady(e.id) == false then
+        return { mission = e, kind = "theirs", text = fmt("%s peu%s rendre %s (pas dans ton journal)", whoText(e.holders),
+          #e.holders > 1 and "vent" or "t", q(e.title)) }
+      end
       return { mission = e, kind = "turnin", text = fmt("Rendez ensemble %s (%d/%d prêts)", q(e.title), #e.done, #e.holders) }
     end
   end
@@ -588,7 +607,11 @@ function E.Diff(prev, cur)
   for id in pairs(cur.ready) do if not prev.ready[id] then ids[#ids + 1] = id end end
   tsort(ids)
   for _, id in ipairs(ids) do
-    add("ready", nil, fmt("Tous prêts à rendre %s", q(cur.ready[id])), 2, { quest = id, title = cur.ready[id] })
+    if mineReady(id) == false then
+      add("ready", nil, fmt("Tes potes peuvent rendre %s (pas dans ton journal)", q(cur.ready[id])), 1, { quest = id, title = cur.ready[id] })
+    else
+      add("ready", nil, fmt("Tous prêts à rendre %s", q(cur.ready[id])), 2, { quest = id, title = cur.ready[id] })
+    end
   end
   ids = {}
   for id, h in pairs(prev.held) do if h.n >= 2 and not cur.held[id] then ids[#ids + 1] = id end end

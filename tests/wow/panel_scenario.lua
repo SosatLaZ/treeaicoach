@@ -32,7 +32,15 @@ return function(M, ctx)
   local now = T:GetTabLines("now")
   ctx.check(#now == 5, "Maintenant : 5 lignes max (" .. #now .. ")")
   local sorted = now[1].text == "Urgent trois"
-  for i = 2, #now do if (now[i].prio or 0) > (now[i - 1].prio or 0) then sorted = false end end
+  -- (COHERE) l'en-tête d'étape de quête épinglé passe juste après le danger : hors du tri par priorité
+  local function stepPin(e) return e.pin and T.STEP_SOURCES and T.STEP_SOURCES[e.source or ""] end
+  local prevP = now[1] and now[1].prio
+  for i = 2, #now do
+    if not stepPin(now[i]) then
+      if prevP and (now[i].prio or 0) > prevP then sorted = false end
+      prevP = now[i].prio or 0
+    end
+  end
   ctx.check(sorted, "Maintenant trié par priorité")
   local seen = {}
   for _, e in ipairs(now) do ctx.check(not seen[e.text], "doublon : " .. e.text); seen[e.text] = true end

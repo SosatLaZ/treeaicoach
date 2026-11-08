@@ -491,8 +491,13 @@ end
 
 function M:CheckTraining()
   if inCombat() or not GetPetTrainingPoints or not (UnitExists and UnitExists("pet")) then return end
-  local total, spent = GetPetTrainingPoints()
-  local free = (total or 0) - (spent or 0)
+  local API = TreeAI and TreeAI.API
+  local free = API and API.PetFreeTrainingPoints and API.PetFreeTrainingPoints()   -- nil = lecture pas fiable
+  if not free then
+    local total, spent = GetPetTrainingPoints()
+    total, spent = tonumber(total), tonumber(spent)
+    free = (total and spent and spent > 0 and spent <= total) and (total - spent) or 0
+  end
   if free > 0 then
     suggest("tp", string.format("Dépense %d point(s) d'entraînement : Dressage des bêtes (techniques du familier)", free), 1, 900)
   end
@@ -779,7 +784,8 @@ function M:Snapshot()
     end
     if GetPetLoyalty then s.pet.loyalty = GetPetLoyalty() end
     if GetPetTrainingPoints then
-      local tot, sp = GetPetTrainingPoints(); s.pet.tpFree = (tot or 0) - (sp or 0)
+      local API = TreeAI and TreeAI.API
+      s.pet.tpFree = API and API.PetFreeTrainingPoints and API.PetFreeTrainingPoints() or nil
     end
     local diet = {}
     for k in pairs(self:GetDiet()) do diet[#diet + 1] = k end

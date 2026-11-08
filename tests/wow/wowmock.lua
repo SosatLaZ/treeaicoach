@@ -915,7 +915,8 @@ function M.Install(flavor)
   G.HasPetUI = function() return M.pet.exists, true end
   G.GetPetHappiness = function() if M.pet.exists then return M.pet.happiness, 0, 0 end end
   G.GetPetLoyalty = function() return M.pet.exists and M.pet.loyalty or nil end
-  G.GetPetTrainingPoints = function() return M.pet.tp, 0 end
+  -- total, utilisés (Forever : C_PetInfo) ; M.pet.tp = points LIBRES, M.pet.tpUsed (défaut 60) = déjà utilisés
+  G.GetPetTrainingPoints = function() local u = M.pet.tpUsed or 60 return (M.pet.tp or 0) + u, u end
   G.GetPetFoodTypes = function() return "Viande", "Poisson" end
   G.GetPetExperience = function() return 100, 1000 end
   G.PetHasActionBar = function() return M.pet.exists end

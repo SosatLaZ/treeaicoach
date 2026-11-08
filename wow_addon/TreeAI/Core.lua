@@ -330,6 +330,16 @@ local function petInfo(name) local P = _G.C_PetInfo return (P and P[name]) or _G
 function API.PetHappiness() return try(petInfo("GetPetHappiness")) end          -- happiness, damage%, loyaltyRate
 function API.PetLoyalty() return try(petInfo("GetPetLoyalty")) end
 function API.PetTrainingPoints() return try(petInfo("GetPetTrainingPoints")) end  -- total, used
+-- (COHERE) points de dressage LIBRES, ou nil si la lecture n'est pas fiable. Forever (PetInfoDocumentation) :
+-- C_PetInfo.GetPetTrainingPoints() → totalPoints, usedPoints ; libres = total − utilisés. Un familier apprivoisé
+-- a toujours des techniques (Morsure, Grondement…) donc usedPoints > 0 : « 0 utilisé » = le total brut
+-- (ex. 112 = niv 28 × 4 au niveau de loyauté 5), jamais un nombre de points libres → on se tait.
+function API.PetFreeTrainingPoints()
+  local total, used = API.PetTrainingPoints()
+  total, used = tonumber(total), tonumber(used)
+  if not (total and used) or used <= 0 or total <= 0 or used > total then return nil end
+  return total - used
+end
 function API.PetFoodTypes()                                                       -- { "Viande", ... }
   local r = { try(petInfo("GetPetFoodTypes")) }
   if type(r[1]) == "table" then return r[1] end
@@ -791,6 +801,9 @@ local DEFAULT_SETTINGS = {
   sounds = { channel = "Master", gap = 2.5, kinds = {} },
   -- disposition des cadres : "confort" (défaut) | "compacte" | "coins" ; reflow = s'écarter des cadres qui grandissent
   layoutStyle = "confort", reflow = true,
+  -- guidage (COHERE) : "auto" = Suivi Forever / Questie s'ils sont là (TreeAI ne double pas leur liste ni leur
+  -- flèche), "treeai" = TreeAI guide tout (boussole + étapes dans « Maintenant »)
+  guide = "auto",
   -- anti-bruit (réglé par le préréglage « calme / normal / tout », chaque valeur reste modifiable)
   preset = "normal",
   noise = { nowMinPrio = 1, perModule = 2, alertGap = 20, topicGap = 120 },
@@ -1599,6 +1612,53 @@ function TreeAI:TopicOf(e)
   return nil
 end
 
+---------------------------------------------------------------------------
+-- Guidage : UNE source de vérité (COHERE). Quand Shortest Path Forever (Suivi Forever + sa flèche) et / ou
+-- Questie (suivi des objectifs) sont chargés, ils possèdent la liste des quêtes et le trajet : « Maintenant »
+-- ne répète pas leurs lignes (objectifs, « près de la remise », « Suite », « à rendre ici »…) et garde au plus
+-- UNE ligne d'étape (l'en-tête, celle du trajet = l'arrêt courant de SPF). L'onglet Quêtes reste complet.
+---------------------------------------------------------------------------
+TreeAI.GUIDE_IDS = TreeAI.GUIDE_IDS or {
+  ["Quests:near"] = true, ["Quests:chain"] = true, ["Quests:turnin"] = true, ["Quests:left"] = true,
+  ["Quests:next"] = true, ["Quests:loot"] = true, ["Tracker:pickup"] = true, ["Tracker:easy"] = true,
+  ["Compass:target"] = true,
+}
+TreeAI.GUIDE_PREFIX = TreeAI.GUIDE_PREFIX or { "Quests:prog:", "Quests:done:" }
+-- sources des lignes « étape de quête » épinglées (une seule passe dans « Maintenant »)
+TreeAI.STEP_SOURCES = TreeAI.STEP_SOURCES or { plan = 1, Quests = 2 }
+TreeAI.GUIDE_MODES = { "auto", "treeai" }
+TreeAI.GUIDE_LABEL = { auto = "Suivi Forever (recommandé si installé)", treeai = "TreeAI" }
+function TreeAI:GuideMode()
+  local m = self.settings and self.settings.guide
+  return m == "treeai" and "treeai" or "auto"
+end
+function TreeAI:SetGuideMode(m)
+  if not self.settings then return end
+  self.settings.guide = (m == "treeai") and "treeai" or "auto"
+  if self.MarkDirty then self:MarkDirty() end
+  self:Fire("GUIDE_MODE", self.settings.guide)
+  if self.RequestRefresh then self:RequestRefresh() end
+end
+-- addons de guidage chargés (lecture seule, détection par leurs globales publiques)
+function TreeAI:GuideAddons()
+  local spf = rawget(_G, "ShortestPathForever")
+  local questie = rawget(_G, "QuestieLoader") or rawget(_G, "Questie")
+  return { spf = type(spf) == "table" and type(spf.API) == "table" or nil, questie = type(questie) == "table" or nil }
+end
+-- "spf" / "questie" quand un autre addon possède la liste + le trajet, nil quand TreeAI guide
+function TreeAI:ExternalGuide()
+  if self:GuideMode() == "treeai" then return nil end
+  local a = self:GuideAddons()
+  return (a.spf and "spf") or (a.questie and "questie") or nil
+end
+function TreeAI:IsGuideLine(e)
+  local id = type(e) == "table" and e.id
+  if type(id) ~= "string" then return false end
+  if self.GUIDE_IDS[id] then return true end
+  for _, p in ipairs(self.GUIDE_PREFIX) do if id:sub(1, #p) == p then return true end end
+  return false
+end
+
 function TreeAI:IsDanger(e, opts)
   if not e or (e.prio or 0) < 3 then return false end
   return (opts and opts.danger) or e.danger or self.DANGER_IDS[e.id or ""] or false
@@ -2236,9 +2296,15 @@ function TreeAI:_GetTabLines(id)
         end
       end
     end
-    for i, e in ipairs(cand) do e._rank = i end
+    -- (COHERE) ordre : danger (prio 3) → l'étape de quête épinglée (jamais coupée par le budget) → le reste
+    local steps = self.STEP_SOURCES
+    for i, e in ipairs(cand) do
+      e._rank = i
+      local sr = e.pin and e.prio < 3 and steps[e.source or ""]   -- 1 = trajet (arrêt courant), 2 = « Étape »
+      e._key = sr and (2.5 + (3 - sr) * 0.01) or e.prio
+    end
     tsort(cand, function(a, b)
-      if a.prio ~= b.prio then return a.prio > b.prio end
+      if a._key ~= b._key then return a._key > b._key end
       return a._rank < b._rank
     end)
     local max = tonumber(self.settings and self.settings.panel and self.settings.panel.nowMax) or 5
@@ -2246,11 +2312,16 @@ function TreeAI:_GetTabLines(id)
     local minP, perMod = tonumber(nz.nowMinPrio) or 1, tonumber(nz.perModule) or 0
     local onlyAct = nz.actionable and true or false
     local topics, perCount = {}, {}
+    local ext, stepSeen = self:ExternalGuide(), false
     for _, e in ipairs(cand) do
       if #out >= max then break end
-      local topic = self:TopicOf(e)
+      local isStep = e.pin and self.STEP_SOURCES[e.source or ""] and true or false
+      local skip = (ext and self:IsGuideLine(e)) or (isStep and stepSeen)
+      if isStep and not skip then stepSeen = true end
+      local topic = not skip and self:TopicOf(e)
       local modName = e.module or e.source
-      if topic and topics[topic] then
+      if skip then e._also = nil   -- (COHERE) guidé par SPF / Questie, ou 2e en-tête d'étape : pas de ligne
+      elseif topic and topics[topic] then
         local kept = topics[topic]
         if modName and modName ~= (kept.module or kept.source) then
           kept._also = kept._also or {}
