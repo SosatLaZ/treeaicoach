@@ -219,6 +219,9 @@ if addonName == "TreeAI" then   -- (3.9.5) « essentiel » is opt-in: seeded onl
   -- --profile sur : nothing seeded, the addon's one-time « mode sûr » migration runs (what a new player gets)
   if db.profileV == nil and opts.profile ~= "sur" then
     db.profileV, db.moduleProfile = 999, (opts.profile == "essentiel") and "essentiel" or "tout"
+    -- (4.1) the one-time « coupés une fois » migrations (SAFE_V) count as done too: the scenarios test every module ;
+    -- a scenario that wants the migration passes old SavedVariables (tests/wow/layout_scenario.lua)
+    if db.safeV == nil then db.safeV = 999 end
   end
   -- (ONBOARD) the first-run « Visite guidée » counts as seen (the storm still runs it via /tai visite ;
   -- tour_scenario.lua clears it to test the first run) ; --profile sur = a new player: nothing seeded

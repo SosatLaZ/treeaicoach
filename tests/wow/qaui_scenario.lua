@@ -60,13 +60,12 @@ return function(M, ctx)
     check(not Lb.strip(r.title:GetText()):find("→", 1, true), "card title: no missing glyph « → »")
   end
   -- UI-41 : mode sûr notice once at the top (badge « i »), with a short text that fits
-  if prof == "sur" then
-    check(rows[1] and rows[1].badge.num:GetText() == "i" and Lb.strip(rows[1].title:GetText()):find("Mode sûr", 1, true),
-      "mode sûr notice on top of the card (badge i)")
-    check(rows[2] and rows[2].badge.num:GetText() == "1", "route steps numbered from 1 after the notice")
-  else
-    check(rows[1] and rows[1].badge.num:GetText() == "1", "tout: route step 1 first")
-  end
+  -- (4.1 LAYOUT) l'avis « Mode sûr » n'est plus sur la carte (seulement page « Fonctions ») : l'étape 1 d'abord
+  local r1 = rows[1] and (tostring(rows[1].badge.num:GetText()) .. " " .. Lb.strip(rows[1].title:GetText())) or "-"
+  check(not r1:find("Mode sûr", 1, true), "no « Mode sûr » notice on the card (" .. r1 .. ")")
+  local first = rows[1] and rows[1].badge.num:GetText() == "1"
+  local afterNotice = rows[1] and rows[1].badge.num:GetText() == "i" and rows[2] and rows[2].badge.num:GetText() == "1"
+  check(first or afterNotice, prof .. ": route step 1 first (or after one « i » notice) (" .. r1 .. ")")
   for i, r in ipairs(rows) do
     for _, fs in ipairs({ r.title, r.sub }) do
       local need = Lb.ulen(fs:GetText()) * 5.4
@@ -104,7 +103,10 @@ return function(M, ctx)
   end
   -- Quêtes : hero = zone, « Pause » (F30), status cap
   W.Select("quests")
-  check(W.lastLay.rects[1] and W.lastLay.rects[1].label == "Mille pointes", "Quêtes hero = zone")
+  -- (4.1 LAYOUT) « Prochaine étape » en tête de la page Quêtes, le trajet ensuite (sa carte « Trajet … »)
+  local qhero
+  for _, r in ipairs(W.lastLay.rects) do if r.kind == "hero" then qhero = r.label break end end
+  check(W.lastLay.rects[1] and qhero and qhero:find("^Trajet"), "Quêtes: next step, then the route card (" .. tostring(qhero) .. ")")
   check(win.action:IsShown() and win.action.labelText == "Pause", "Quêtes: « Pause » (not « Arrêter »)")
   W.Select("route")
   check(win.action:IsShown() and (win.action.labelText == "Pause" or win.action.labelText:find("Suivre", 1, true)), "Trajet: « Pause »")
@@ -125,7 +127,8 @@ return function(M, ctx)
   for _, r in ipairs(rectsOf("row")) do check(r.label ~= "finder" and r.label ~= "modules", "Outils: no raw tab id (" .. r.label .. ")") end
   -- UI-26 / W-07 : Fonctions intro follows the profile
   W.Select("modules")
-  local intro = W.lastLay.rects[1] and W.lastLay.rects[1].label or ""
+  local intro = ""
+  for _, r in ipairs(W.lastLay.rects) do if r.kind == "text" then intro = r.label break end end   -- (4.1 : onglets au-dessus)
   if prof == "tout" then check(intro:find("Tout est allumé", 1, true), "Fonctions intro in « tout »: " .. intro)
   else check(intro:find("Mode sûr", 1, true), "Fonctions intro in mode sûr: " .. intro) end
   -- W-36 : module lines = state + title (+ bêta), the description is the tooltip

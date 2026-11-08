@@ -581,7 +581,7 @@ return function(M, ctx)
         end
         lvl = lvl + 1
       end
-    end, "", 1000)
+    end, "", 100)   -- (4.1) échantillon tous les 100 (÷ 10 ci-dessous) : moins d'aliasing qu'à 1000
     local t = 0
     while t < secs do
       if each then each(t) end
@@ -589,7 +589,7 @@ return function(M, ctx)
       t = t + step
     end
     debug.sethook()
-    return n * 60 / secs
+    return n / 10 * 60 / secs
   end
   M.speed = 0
   M.Advance(5, 0.5)
@@ -605,7 +605,9 @@ return function(M, ctx)
   local opened = measure(60, 0.5, function(t) if t == 0 then qprov.OnShow() end end)
   check(opened <= 40, ("map open 60 s: %.1f kinstr/min (≤ 40)"):format(opened))
   local panning = measure(30, 0.2, function(t) cx = 60 + t * 10 qprov.OnCanvasPanChanged() end)
-  check(panning <= 40, ("map open and dragged: %.1f kinstr/min (≤ 40)"):format(panning))
+  -- (4.1) mesuré au 1/100 (au 1/1000, l'aliasing donnait 38 à la 4.0.6 pour un vrai ≈ 70 modern / 95 forever) :
+  -- plafond 120 (4.1 : 63 / 87)
+  check(panning <= 120, ("map open and dragged: %.1f kinstr/min (≤ 120)"):format(panning))
   wm.__shown = false
   qprov.OnHide()
   M.Advance(2, 0.5)

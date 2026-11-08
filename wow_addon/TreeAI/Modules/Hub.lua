@@ -209,7 +209,10 @@ function H.Entries()
     -- (sans description : le menu tient à l'écran) ; les autres onglets sont dans Outils > Autres pages
     -- (4.0.2) 9 lignes au plus : « Fonctions » et « Macros » restent dans la fenêtre (et dans Outils)
     local skip = { options = true, modules = true, macros = true }
-    for _, p in ipairs(Wn.PAGES) do
+    -- (4.1 LAYOUT) les 7 pages de la navigation, dans son ordre (Quêtes d'abord)
+    local pages = (type(Wn.NavPages) == "function" and select(2, pcall(Wn.NavPages))) or Wn.PAGES
+    if type(pages) ~= "table" then pages = Wn.PAGES end
+    for _, p in ipairs(pages) do
       if not p.hidden and not skip[p.id] then
         local id = p.id
         out[#out + 1] = { group = "jeu", id = "tab:" .. id, title = p.label, icon = p.icon or ICON .. "INV_Misc_Note_01",

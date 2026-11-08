@@ -187,6 +187,28 @@ function A.SetSPFTracker(on)
   return true
 end
 
+--- (4.1 LAYOUT) Suivi Forever affiche SON propre trajet (le guidage « TreeAI » ne lui envoie rien) : deux planificateurs
+--- qui ne disent pas la même chose. Vrai tant que le joueur n'a pas choisi (une fois, gardé).
+function A.SPFConflict()
+  if A.db and A.db.spfChoice then return false end
+  local s = A.SPFState()
+  if not s.loaded or (s.readable and not s.tracker) then return false end
+  return not (T.GuideMode and T:GuideMode() == "auto")
+end
+--- le choix du joueur : "order" = lui donner l'ordre de TreeAI (guidage « auto » : notre ordre renvoyé à chaque
+--- trajet refait) ; "silent" = son suivi coupé (dans SES options)
+function A.SPFChoose(how)
+  if how == "order" then
+    if T.SetGuideMode then T:SetGuideMode("auto") end
+    local R = T.Route
+    if R and R.Follow then pcall(R.Follow, R) end
+  elseif how == "silent" then
+    A.SetSPFTracker(false)
+  else return false end
+  if A.db then A.db.spfChoice = how end
+  return true
+end
+
 -- ===================================================================== ce que TreeAI remplace (textes de la page)
 local function modOn(name) local m = T.modules and T.modules[name] return (m and m._active) and true or false end
 local function setMod(name, on) if T.SetModuleEnabled then T:SetModuleEnabled(name, on) end end
@@ -356,6 +378,7 @@ function A.Notice()
   local list = (#names == 1) and names[1] or (table.concat(names, ", ", 1, #names - 1) .. " et " .. names[#names])
   A:Suggest("notice", fmt("TreeAI peut faire le travail de %s : page « Mes addons »", list), 2, {
     ttl = 900, tab = "now", sound = false, kind = "always", icon = ICON .. "INV_Misc_EngGizmos_27",
+    ownPage = "addons",   -- (4.1 LAYOUT) pas de pub : seulement en tête de la page « Mes addons »
     tooltip = "Questie en silence (TreeAI dessine les icônes et le suivi), confort à la Leatrix, fenêtre de dégâts.",
     onClick = function() A.Open() A:Clear("notice") end })
   return true

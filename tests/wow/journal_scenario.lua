@@ -198,6 +198,8 @@ return function(M, ctx)
   if Qk and Qk.db then Qk.db.autoAsked = true end
   T:ClearSuggestion("mod:quick:auto")
   W.db.card = true
+  local Ab0 = T.modules.Abandon
+  if Ab0 and Ab0.db then Ab0.db.hint = true if Ab0.Hint then pcall(Ab0.Hint) end end   -- (4.1 LAYOUT) rappel coupé d'office
   W:OnOptionChanged("card")
   W.ShowCard()
   W.RenderCard(true)
@@ -214,10 +216,10 @@ return function(M, ctx)
   W.Render()
   local qsec, qrow = false, nil
   for _, r in ipairs(W.lastLay.rects) do
-    if r.kind == "header" and r.label == "Nettoyer mon journal" then qsec = true end
+    if r.kind == "header" and r.label == "Ménage du journal" then qsec = true end   -- (4.1 LAYOUT)
     if r.kind == "quest" and r.label:find("Course contre la montre", 1, true) then qrow = r end
   end
-  check(qsec and qrow, "Quêtes page: « Nettoyer mon journal » section with the quests")
+  check(qsec and qrow, "Quêtes page: « Ménage du journal » section with the quests")
 
   -- the Journal page
   W.Open("journal")
@@ -232,11 +234,9 @@ return function(M, ctx)
   end
   local H = T.Hub
   local hub
+  -- (4.1 LAYOUT) la page Journal est une sous-page de « Quêtes » (hors navigation) : « Faire le ménage » y mène
   for _, e in ipairs(H.Entries()) do if e.id == "tab:journal" then hub = e end end
-  check(hub and hub.title == "Journal", "Hub: « Journal » entry (window page)")
-  local navI, questsI
-  for i, p in ipairs(W.PAGES) do if p.id == "journal" then navI = i elseif p.id == "quests" then questsI = i end end
-  check(navI == questsI + 1, "navigation: « Journal » right after « Quêtes »")
+  check(not hub and W.pageIndex.journal.hidden and W.NavOf("journal") == "quests", "Journal : sous-page de « Quêtes »")
 
   local function row(qid)
     for _, f in ipairs(win.content.__children) do

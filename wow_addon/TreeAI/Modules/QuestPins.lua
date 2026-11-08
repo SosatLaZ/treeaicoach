@@ -418,8 +418,36 @@ local function playerWorld(fresh)
   return me
 end
 QP.PlayerWorld = playerWorld
+-- (4.1 LAYOUT) noms en français seulement : la base de Questie est en anglais ; sur un client non anglais, un nom n'est
+-- montré que si la traduction de Questie (l10n) le donne, sinon il est omis (« Prête à rendre ») — jamais l'anglais
+local function localized(kind, id)
+  local QL = rawget(_G, "QuestieLoader")
+  local l10n = type(QL) == "table" and type(QL.ImportModule) == "function" and try(QL.ImportModule, QL, "l10n") or nil
+  local look = type(l10n) == "table" and (kind == "obj" and l10n.objectNameLookup or l10n.npcNameLookup) or nil
+  if type(look) ~= "table" then return nil, false end
+  local loc = try(rawget(_G, "GetLocale"))
+  local e = look[id]
+  if e == nil and type(loc) == "string" and type(look[loc]) == "table" then e = look[loc][id] end
+  if type(e) == "table" then e = e[1] end
+  return type(e) == "string" and e ~= "" and e or nil, true
+end
+QP.Localized = localized
+local memoN, memoO = {}, {}
+local npcName0
 local function npcName(npc)
   if type(npc) ~= "table" or not npc.id then return nil end
+  local m = npc.k == "obj" and memoO or memoN
+  local v = m[npc.id]
+  if v == nil then v = npcName0(npc) or false m[npc.id] = v end
+  return v or nil
+end
+function npcName0(npc)
+  local loc = try(rawget(_G, "GetLocale"))
+  local english = loc == nil or loc == "enUS" or loc == "enGB"
+  if not english then
+    local fr, hasL10n = localized(npc.k, npc.id)
+    if fr or hasL10n then return fr end   -- la traduction de Questie existe : son nom français, sinon rien
+  end
   local x = X()
   local db = x and type(x.Source) == "function" and try(x.Source, x)
   local get = type(db) == "table" and (npc.k == "obj" and db.O or db.N) or nil

@@ -87,7 +87,8 @@ return function(M, ctx)
   check(tostring(c.hero.sub:GetText()):find("course au corps", 1, true), "ghost: hero says « course au corps »")
   W.Open("now")
   local guidedSteps = 0
-  for _, r in ipairs(W.lastLay.rects) do if r.kind == "step" then guidedSteps = guidedSteps + 1 end end
+  -- (4.1 LAYOUT) « Maintenant » = la page Quêtes : pas de « Prochaine étape » au-dessus de la course au corps
+  for _, r in ipairs(W.lastLay.rects) do if r.kind == "header" and r.label == "Prochaine étape" then guidedSteps = guidedSteps + 1 end end
   check(guidedSteps == 0, "ghost: « Maintenant » shows no route steps above the corpse line")
   W.Close()
   M.player.ghost = false

@@ -23,9 +23,12 @@ return function(M, ctx)
   -- one-line notice
   M.Advance(5, 0.5)
   local notice
+  -- (4.1 LAYOUT) avis non demandé : seulement en tête de la page « Fonctions » (ownPage), jamais dans « Maintenant »
   for _, e in ipairs(T:GetTabLines("now")) do if e.id == "core:safe" then notice = e end end
-  check(notice and notice.text == "Mode sûr : les fonctions bêta sont à activer dans le menu" and notice.onClick,
-    "notice « Mode sûr : … »")
+  check(notice == nil, "« Mode sûr » : pas dans « Maintenant »")
+  for _, e in ipairs(T:GetSuggestions()) do if e.id == "core:safe" then notice = e end end
+  check(notice and notice.ownPage == "modules" and notice.text == "Mode sûr : les fonctions bêta sont à activer dans le menu"
+    and notice.onClick, "notice « Mode sûr : … » (page « Fonctions »)")
 
   -- Plus → Modules: bêta tag, one click toggles
   local ml, boost, head = T:GetTabLines("modules"), nil, nil

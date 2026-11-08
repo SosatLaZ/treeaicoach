@@ -1433,9 +1433,15 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
 }
 -- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
 TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1 }
-TreeAI.SAFE_V = 2
+TreeAI.SAFE_V = 3
 -- (4.0.5) sortis du mode sûr : coupés UNE fois chez tout le monde (le Suivi TreeAI cachait le suivi du jeu)
-TreeAI.SAFE_REMOVED = { Watch = 1 }
+-- (4.1 LAYOUT) valeur = version qui les coupe : à l'écran il ne reste que les boutons rapides, la boussole et la
+-- pastille (+ ses repères) ; bande d'horizon (2e flèche + texte au centre), radar, barres de combat (« c-1… »),
+-- barre de quête (remplacée par les boutons rapides), points de minimap en plus (flèche « 76 m ») : coupés UNE fois,
+-- chez tout le monde, quel que soit le profil ; un clic les rallume (Réglages → Affichage)
+TreeAI.SAFE_REMOVED = { Watch = 2, Horizon = 3, Radar = 3, QuickFight = 3, Quick = 3, MinimapPins = 3 }
+-- (4.1 LAYOUT) fenêtres cachées une fois (le module reste allumé) : clé du réglage « afficher » de chaque module
+TreeAI.SAFE_HIDDEN = { Meter = "shown", Abandon = "hint", Watch = "shown" }
 --- module « bêta » (pas dans le mode sûr) ?
 function TreeAI:IsBeta(name) return not self.SAFE_MODULES[name] end
 TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
@@ -1605,24 +1611,40 @@ function TreeAI:_ApplyProfileOnce()
   if (tonumber(db.safeV) or 0) < self.SAFE_V then
     local fromV = tonumber(db.safeV) or 0
     db.safeV = self.SAFE_V
-    if fromV < 2 then
+    do
       -- tous les réglages enregistrés (compte + chaque perso en profil perso), pas seulement le perso connecté
       local stores = { db.modules }
       for _, c in pairs(type(db.chars) == "table" and db.chars or {}) do
         if type(c) == "table" and type(c.moduleSettings) == "table" then stores[#stores + 1] = c.moduleSettings end
       end
-      for n in pairs(self.SAFE_REMOVED or {}) do
-        for _, st in ipairs(stores) do
-          local e = type(st) == "table" and st[n]
-          if type(e) == "table" then e.enabled = false if e.replace ~= nil then e.replace = false end end
+      for n, v in pairs(self.SAFE_REMOVED or {}) do
+        if fromV < (tonumber(v) or 2) then
+          for _, st in ipairs(stores) do
+            local e = type(st) == "table" and st[n]
+            if type(e) == "table" then e.enabled = false if e.replace ~= nil then e.replace = false end end
+          end
         end
       end
-      for n in pairs(self.SAFE_REMOVED or {}) do
+      if fromV < 3 then
+        for n, key in pairs(self.SAFE_HIDDEN or {}) do
+          for _, st in ipairs(stores) do
+            local e = type(st) == "table" and st[n]
+            if type(e) == "table" then e[key] = false end
+          end
+        end
+      end
+      for n, v in pairs(self.SAFE_REMOVED or {}) do
         local mod = self.modules[n]
-        if mod and mod.db then
+        if fromV < (tonumber(v) or 2) and mod and mod.db then
           mod.db.enabled = false
           if mod.db.replace ~= nil then mod.db.replace = false end
           if self._modulesStarted and mod._active and type(moduleDisable) == "function" then moduleDisable(mod) end
+        end
+      end
+      if fromV < 3 then
+        for n, key in pairs(self.SAFE_HIDDEN or {}) do
+          local mod = self.modules[n]
+          if mod and mod.db then mod.db[key] = false end
         end
       end
     end
@@ -1642,7 +1664,7 @@ function TreeAI:_SafeNotice()
   if not self._safeNotice then return end
   self._safeNotice = nil
   self:Suggest("core:safe", "Mode sûr : les fonctions bêta sont à activer dans le menu", 2, {
-    ttl = 900, tab = "now", sound = false, kind = "always",
+    ttl = 900, tab = "now", sound = false, kind = "always", ownPage = "modules",
     tooltip = "Clic : la liste des fonctions (un clic par fonction). Aussi : pastille de la minimap → Fonctions bêta.",
     onClick = function()
       local Wn = TreeAI.Window   -- (UIREDO) la page « Fonctions » de la fenêtre TreeAI, sinon le panneau
@@ -1659,7 +1681,7 @@ function TreeAI:_LiteNotice()
   if not self._liteNotice then return end
   self._liteNotice = nil
   self:Suggest("core:lite", "TreeAI allégé : seul l'essentiel tourne (moins de lag). Clic : tout réactiver", 2, {
-    ttl = 900, tab = "now", sound = false,
+    ttl = 900, tab = "now", sound = false, ownPage = "modules",
     tooltip = "Plus → Modules : rallumer un module à la fois (une ligne, un clic).",
     onClick = function() TreeAI:SetModuleProfile("tout") end })
 end
@@ -2484,6 +2506,9 @@ function TreeAI:_FlushPendingAlert()
   end
 end
 
+-- (4.1 LAYOUT) propositions d'autres modules rangées sur une page (pas à l'écran) : la question « Accepter et rendre
+-- les quêtes tout seul ? » de la barre de quête → page « Fonctions » (l'option est aussi en bas de la page Quêtes)
+TreeAI.OWN_PAGE = TreeAI.OWN_PAGE or { ["mod:quick:auto"] = "modules" }
 function TreeAI:Suggest(id, text, prio, opts)
   if type(id) ~= "string" then id = tostring(id) end
   if text == nil or text == "" then self:ClearSuggestion(id); return nil end
@@ -2523,6 +2548,9 @@ function TreeAI:Suggest(id, text, prio, opts)
   e.module, e.icon, e.onClick, e.macro = opts.module, opts.icon, opts.onClick, opts.macro
   e.tab, e.tooltip = opts.tab, tip
   e.topic, e.danger = opts.topic, opts.danger
+  -- (4.1 LAYOUT) conseil non demandé (addons, macros, conseils pro, mode sûr) : seulement sur SA page de la fenêtre,
+  -- jamais dans « Maintenant » / la carte / l'écran (sauf danger)
+  e.ownPage = (not opts.danger) and (opts.ownPage or TreeAI.OWN_PAGE[id]) or nil
   e.kind = kind
   suggestions[id] = e
   if quiet then   -- en attente : ni son, ni encadré, ni journal ; réaffiché quand l'état revient
@@ -2874,7 +2902,7 @@ function TreeAI:_GetTabLines(id)
   local sugg = self:GetSuggestions()
   if id == NOW_TAB then
     local cand = {}
-    for _, e in ipairs(sugg) do cand[#cand + 1] = e end
+    for _, e in ipairs(sugg) do if not e.ownPage then cand[#cand + 1] = e end end
     for _, t in ipairs(self:GetTabs()) do
       local ts = tabSources[t.id]
       if ts then

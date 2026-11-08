@@ -186,10 +186,19 @@ function W.Model(me)
   -- pas de trajet en cours (pause, aucun) : rangées par zone et par distance, jamais toutes « Hors trajet »
   local byDist = (tonumber(W.db and W.db.sort) or 1) == 2 or not (route and next(route))
   local entries, paused = {}, 0
+  -- (4.1 LAYOUT) SCREEN405 : plus de zones mélangées ni de quêtes rouges — le trajet, puis seulement ta zone ; une
+  -- quête 5 niveaux au-dessus de toi (rouge) n'est pas listée tant qu'elle n'est pas finie
+  local pl = num(try(g("UnitLevel"), "player")) or 1
+  local here = W.ZoneHere()
+  W.hiddenHigh, W.hiddenFar = 0, 0
   for _, q in ipairs(list) do
     local pz = q.id and not hidden[q.id] and parked(q)
     if pz then paused = paused + 1 end
-    if q.id and not hidden[q.id] and not pz then
+    local rq0 = route and q.id and route[q.id] or nil
+    local high = not q.complete and (tonumber(q.level) or 0) >= pl + 5
+    local far = not rq0 and not q.complete and here and q.zone and q.zone ~= "" and q.zone ~= here
+    if high then W.hiddenHigh = W.hiddenHigh + 1 elseif far and not pz then W.hiddenFar = W.hiddenFar + 1 end
+    if q.id and not hidden[q.id] and not pz and not high and not far then
       local rq = route and route[q.id] or nil
       local e = pos[q.id] or { obj = {} }
       local qe = { q = q, rows = {} }
@@ -258,6 +267,13 @@ function W.Model(me)
   return { groups = groups, n = shown, total = #entries, paused = paused }
 end
 
+--- zone du joueur (nom du jeu, en français) ou nil
+function W.ZoneHere()
+  local z = try(g("GetRealZoneText")) or try(g("GetZoneText"))
+  if secret(z) or type(z) ~= "string" or z == "" then return nil end
+  return z
+end
+
 -- ===================================================================== cadre
 local frame, body, rows, items = nil, nil, {}, {}
 W.rows, W.items = rows, items
@@ -268,7 +284,7 @@ local function savePos()
   if not frame then return end
   local p, _, rp, x, y = meth(frame, "GetPoint", 1)
   if p and tonumber(x) and tonumber(y) and W.char then
-    W.char.pos = { point = p, rel = rp or p, x = floor(x + 0.5), y = floor(y + 0.5) }
+    W.char.pos = { point = p, rel = rp or p, x = floor(x + 0.5), y = floor(y + 0.5), user = true }
   end
 end
 -- première place : celle du suivi du jeu (on prend sa colonne), sinon sous la minimap à droite
@@ -280,6 +296,73 @@ local function trackerFrame()
   return nil
 end
 W.TrackerFrame = trackerFrame
+-- suivis à ne jamais couvrir : celui de Questie et celui du jeu (visibles)
+W.GUARD = { "Questie_BaseFrame", "QuestieTrackerBaseFrame", "Questie_TrackerBaseFrame", "ObjectiveTrackerFrame",
+  "QuestWatchFrame", "WatchFrame" }
+local function rectUI(f)
+  local up = g("UIParent")
+  local l, b, w, h = num(meth(f, "GetLeft")), num(meth(f, "GetBottom")), num(meth(f, "GetWidth")), num(meth(f, "GetHeight"))
+  if not (l and b and w and h) or w < 20 or h < 10 then return nil end
+  local k = (num(meth(f, "GetEffectiveScale")) or 1) / (num(meth(up, "GetEffectiveScale")) or 1)
+  return { l = l * k, b = b * k, r = (l + w) * k, t = (b + h) * k }
+end
+W.RectUI = rectUI
+--- le rectangle (UIParent) qui englobe les suivis visibles, + le nom du premier
+function W.TrackerRect()
+  local out, name
+  for _, n in ipairs(W.GUARD) do
+    local f = g(n)
+    if type(f) == "table" and meth(f, "IsVisible") then
+      local r = rectUI(f)
+      if r then
+        if not out then out, name = r, n
+        else out = { l = min(out.l, r.l), b = min(out.b, r.b), r = max(out.r, r.r), t = max(out.t, r.t) } end
+      end
+    end
+  end
+  if out then out.name = name end
+  return out
+end
+--- nom du suivi visible que notre cadre couvre, sinon nil
+function W.Overlap()
+  if not (frame and frame:IsShown()) then return nil end
+  local me = rectUI(frame)
+  if not me then return nil end
+  for _, n in ipairs(W.GUARD) do
+    local f = g(n)
+    if type(f) == "table" and meth(f, "IsVisible") then
+      local r = rectUI(f)
+      if r and me.l < r.r - 2 and me.r > r.l + 2 and me.b < r.t - 2 and me.t > r.b + 2 then return n end
+    end
+  end
+  return nil
+end
+local NICE = { Questie_BaseFrame = "le suivi de Questie", QuestieTrackerBaseFrame = "le suivi de Questie",
+  Questie_TrackerBaseFrame = "le suivi de Questie" }
+--- (4.1) hors combat, après chaque mise en page : s'il couvre un suivi, on le replace à sa gauche (place automatique),
+--- sinon (place du joueur, ou pas la place) il se cache et la page Quêtes le dit en une ligne
+function W.AvoidTrackers()
+  W.blockedBy = nil
+  if inCombat() or not frame then return nil end
+  local hit = W.Overlap()
+  if not hit then return nil end
+  local p = W.char and W.char.pos
+  if not (type(p) == "table" and p.user) then
+    local np = W.FirstPlace and W.FirstPlace()
+    if np and W.char then
+      W.char.pos = np
+      meth(frame, "ClearAllPoints")
+      meth(frame, "SetPoint", np.point, g("UIParent"), np.rel or np.point, np.x, np.y)
+      hit = W.Overlap()
+    end
+  end
+  if hit then
+    W.blockedBy = NICE[hit] or "le suivi du jeu"
+    frame:Hide()
+    W.PlaceItems()
+  end
+  return W.blockedBy
+end
 local function firstPlace()
   local up = g("UIParent")
   local UW, UH
@@ -289,14 +372,10 @@ local function firstPlace()
   local function onScreen(p)                 -- coin haut-droit du cadre : au moins 3/4 de sa largeur visibles
     return p and p.x <= 0 and p.x >= -(UW - WIDTH * 0.75) and p.y <= 0 and p.y >= -(UH - 60) and p or nil
   end
-  local tf = trackerFrame()
-  local l, b, w, h = nil, nil, nil, nil
-  -- le rectangle du suivi du jeu se lit même caché (ancré par le mode édition) : sa colonne devient la nôtre
-  if tf then l, b, w, h = num(meth(tf, "GetLeft")), num(meth(tf, "GetBottom")), num(meth(tf, "GetWidth")), num(meth(tf, "GetHeight")) end
-  if l and b and w and h and w > 20 and h > 10 then
-    local k = (num(meth(tf, "GetEffectiveScale")) or 1) / (num(meth(up, "GetEffectiveScale")) or 1)
-    local right, top = (l + w) * k, (b + h) * k
-    local p = onScreen({ point = "TOPRIGHT", rel = "TOPRIGHT", x = floor(right - UW + 0.5), y = floor(top - UH + 0.5) })
+  -- (4.1 LAYOUT) jamais SUR le suivi du jeu ni sur celui de Questie : à leur gauche (bord droit = leur bord gauche − 8)
+  local r = W.TrackerRect()
+  if r then
+    local p = onScreen({ point = "TOPRIGHT", rel = "TOPRIGHT", x = floor(r.l - 8 - UW + 0.5), y = floor(r.t - UH + 0.5) })
     if p then return p end
   end
   local mm = g("MinimapCluster") or g("Minimap")
@@ -492,8 +571,8 @@ local function color(fs, r, gg, b) meth(fs, "SetTextColor", r, gg, b) end
 local function sortLabel() return (tonumber(W.db and W.db.sort) or 1) == 2 and "Par distance" or "Ordre du trajet" end
 
 local function objText(rd)
-  if rd.kind == "obj" and (rd.need or 1) > 1 then return fmt("%s %d/%d", cut(rd.text, 26), rd.have or 0, rd.need) end
-  return cut(rd.text, 32)
+  if rd.kind == "obj" and (rd.need or 1) > 1 then return fmt("%s %d/%d", cut(rd.text, 22), rd.have or 0, rd.need) end
+  return cut(rd.text, 28)
 end
 -- texte, couleur et barre d'une ligne d'objectif (mise en page complète ou simple progression)
 local function paintObj(orow, rd)
@@ -504,6 +583,8 @@ local function paintObj(orow, rd)
     if frac > 0 then orow.bar:Show() else orow.bar:Hide() end
   end
   orow.fs:SetText(objText(rd))
+  -- (4.1) le texte s'arrête avant la colonne des distances (plus de « Peau de serpent d'Ari590 m SE »)
+  try(orow.fs.SetPoint, orow.fs, "RIGHT", orow.rt, "LEFT", -6, 0)
   if rd.done then color(orow.fs, 0.5, 0.5, 0.5)
   elseif rd.kind == "fail" then color(orow.fs, 1, 0.3, 0.25)
   elseif rd.kind == "turn" then color(orow.fs, 0.6, 1, 0.6)
@@ -681,6 +762,7 @@ function W.Render()
   try(frame.SetScale, frame, max(0.5, min(2, k)))
   W.UpdateTexts(me, true)
   if not frame:IsShown() then frame:Show() end
+  W.AvoidTrackers()
   W.PlaceItems()
 end
 

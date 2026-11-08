@@ -199,16 +199,26 @@ return function(M, ctx)
   M.Advance(1, 0.5)
   T:HidePanel()
   -- 9. « Cacher la carte » is kept (UI-23)
-  W.Open("now")
-  a = W.GetWindow().action
-  check(a.labelText == "Cacher la carte", "Maintenant: « Cacher la carte »")
-  a:GetScript("OnClick")(a)
-  check(W.db.card == false and not c:IsShown(), "« Cacher la carte » : hidden and remembered")
+  -- (4.1 LAYOUT) la carte se coupe / s'allume dans Réglages → Affichage (une ligne, un clic)
+  W.Open("display")
+  local cardRow
+  for _, b in ipairs(W.GetWindow().content.__children or {}) do
+    if b.entry and b.entry.text and tostring(b.entry.text):find("^Carte « Prochaine étape »") and b:IsShown() then cardRow = b end
+  end
+  check(cardRow and cardRow.entry.onClick, "Affichage : ligne « Carte « Prochaine étape » »")
+  if cardRow then T:UserAction(cardRow.entry.onClick) end
+  check(W.db.card == false and not c:IsShown(), "carte coupée (Affichage) : hidden and remembered")
   T:HidePanel()
   check(not c:IsShown(), "still hidden after closing the panel")
   W.Render()
-  check(a.labelText == "Afficher la carte", "then « Afficher la carte »")
-  a:GetScript("OnClick")(a)
-  check(W.db.card == true and c:IsShown(), "« Afficher la carte » : back")
+  local nowOff
+  for _, b in ipairs(W.GetWindow().content.__children or {}) do
+    if b.entry and tostring(b.entry.text):find("^Carte « Prochaine étape »") and b:IsShown() then nowOff = b.entry.right end
+  end
+  check(nowOff == "coupé", "then « coupé » (" .. tostring(nowOff) .. ")")
+  for _, bb in ipairs(W.GetWindow().content.__children or {}) do
+    if bb.entry and tostring(bb.entry.text):find("^Carte « Prochaine étape »") and bb:IsShown() then T:UserAction(bb.entry.onClick) break end
+  end
+  check(W.db.card == true and c:IsShown(), "carte rallumée (Affichage) : back")
   W.Close()
 end

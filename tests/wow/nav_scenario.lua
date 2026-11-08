@@ -8,6 +8,8 @@ return function(M, ctx)
   local C, N, Hz, H = T.Compass, T.NavTime, T.Horizon, T.modules and T.modules.Highlight
   check(C and N and Hz and T.Glow and H, "Compass, NavTime, Horizon, Glow, Highlight present")
   if not (C and N and Hz and T.Glow and H) then return end
+  -- (4.1 LAYOUT) la bande d'horizon est coupée d'office (la boussole est LA flèche) : le joueur l'allume ici
+  if Hz.db then Hz.db.shown = true end
   local pi = math.pi
   local G = C.Geo
   M.LeaveCombat()

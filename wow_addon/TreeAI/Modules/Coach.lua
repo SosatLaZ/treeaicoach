@@ -260,9 +260,10 @@ local QMUL = { [6] = 0.8, [7] = 0.6, [8] = 0.4, [9] = 0.2 }
 local function qmul(d) if d <= 5 then return 1 end return QMUL[d] or 0.1 end
 
 -- ===================================================================================== module
-local defaults = { enabled = true, nowLine = true, card = true }
-local options = { { key = "nowLine", type = "toggle", label = "Montrer le meilleur conseil dans « Maintenant » (sinon : page seulement)",
+local defaults = { enabled = true, nowLine = true, card = true, onScreen = false }
+local options = { { key = "nowLine", type = "toggle", label = "Choisir le meilleur conseil du moment (page « Conseils pro »)",
   section = "Affichage" },
+  { key = "onScreen", type = "toggle", label = "Aussi dans la page Quêtes et la carte (sinon : seulement sur sa page)" },
   { key = "card", type = "toggle", label = "Aussi en tête de la carte « Prochaine étape » (si aucun autre avis n'y est)" } }
 for _, tp in ipairs(TIPS) do
   defaults[tp.key] = true
@@ -1131,11 +1132,14 @@ local function show(key, r)
   if not (opt("nowLine") and M.Suggest) then return end
   if shown == key and shownText == r.text and T._suggestions and T._suggestions["Coach:" .. key] then return end
   shownText = r.text
+  -- (4.1 LAYOUT) conseil non demandé : seulement sur la page « Conseils pro » (pastille de la navigation), ni à l'écran
+  -- ni sur la carte, sauf si le joueur coche « dans Maintenant » (onScreen)
+  local own = not (M.db and M.db.onScreen == true) and "coach" or nil
   local e = M:Suggest(key, r.text, 2, { ttl = (r.ttl or 60) + 10, cooldown = 3600, sound = false, chat = false, tab = "now",
-    kind = r.kind or "advice", topic = r.topic, tooltip = tipLines(r), onClick = openPage })
+    kind = r.kind or "advice", topic = r.topic, tooltip = tipLines(r), onClick = openPage, ownPage = own })
   if type(e) == "table" then
     e.clickHint = "Clic : tous les conseils pro (et les couper un par un)"
-    cardOn("Coach:" .. key)
+    if not own then cardOn("Coach:" .. key) end
   end
 end
 local function hide(key, coolIt)
@@ -1417,6 +1421,7 @@ do
           or "Rien à corriger en ce moment") .. fmt(" · %d conseils, %d techniques", #TIPS, #TECH)
       end,
       render = function(Ly) M.RenderPage(Ly) end,
+      badge = function() return (shown and M._active) and 1 or nil end,   -- (4.1 LAYOUT) le conseil du moment : ici
       action = function()
         return "Réafficher les conseils", function() M.ResetCooldowns() end,
           "Clic : les conseils déjà montrés peuvent revenir tout de suite"

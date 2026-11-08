@@ -31,10 +31,13 @@ return function(M, ctx)
   T._liteNotice = true
   T:_LiteNotice()
   M.Advance(4, 0.5)
-  local lines = T:GetTabLines("now")
+  -- (4.1 LAYOUT) avis non demandé : seulement sur la page « Fonctions » (ownPage), jamais dans « Maintenant »
   local notice
-  for _, e in ipairs(lines) do if e.id == "core:lite" then notice = e end end
-  check(notice and notice.onClick and notice.text:find("Clic : tout réactiver"), "one-line notice with « Tout réactiver »")
+  for _, e in ipairs(T:GetTabLines("now")) do if e.id == "core:lite" then notice = e end end
+  check(notice == nil, "« allégé » : pas dans « Maintenant »")
+  for _, e in ipairs(T:GetSuggestions()) do if e.id == "core:lite" then notice = e end end
+  check(notice and notice.ownPage == "modules" and notice.onClick and notice.text:find("Clic : tout réactiver"),
+    "one-line notice with « Tout réactiver » (page « Fonctions »)")
 
   -- the game no longer sends us the events only off modules wanted (none of their handlers remain)
   local evs = T:RegisteredEvents()

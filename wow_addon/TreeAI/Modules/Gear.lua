@@ -1067,7 +1067,7 @@ local function hideGlow() if glow then glow:Hide() end end
 local function showGlow(btn)
   if not btn or not G.CreateFrame then return end
   if not glow then
-    glow = G.CreateFrame("Frame", nil, G.UIParent)
+    glow = G.CreateFrame("Frame", "TreeAIRewardGlow", G.UIParent)
     local tex = glow:CreateTexture(nil, "OVERLAY")
     tex:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
     if tex.SetBlendMode then tex:SetBlendMode("ADD") end
@@ -1094,6 +1094,15 @@ local function rewardButton(i)
   end
   return G["QuestInfoRewardsFrameQuestInfoItem" .. i] or G["QuestInfoItem" .. i] or G["QuestRewardItem" .. i]
 end
+--- (4.1 LAYOUT) pour QoL (dialogues de quête) quand ce module est coupé : entourer le choix i / effacer
+function M.RewardGlow(i)
+  local b = rewardButton(i)
+  if not b then return false end
+  showGlow(b)
+  return true
+end
+M.HideRewardGlow = hideGlow
+function M.RewardGlowShown() return (glow and glow:IsShown()) and true or false end
 --- Classe les choix : meilleur index, écart % (ou prix de vente), "upgrade" | "sell"
 function M.RankQuestRewards()
   local n = try(G.GetNumQuestChoices) or 0

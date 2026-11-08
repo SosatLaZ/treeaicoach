@@ -794,10 +794,20 @@ local function stepText(st, plan)
       if i > 2 then parts[#parts + 1] = fmt("+%d", #st.learn - 2) break end
       parts[#parts + 1] = cut(l.name, 28)
     end
-    local pre = (st.at and st.at > plan.skill) and fmt("À %d : ", st.at) or ""
-    local verb = (st.train and #(st.learn or {}) > 0) and "" or (st.train and "" or "apprends ")
-    if st.train and #(st.learn or {}) > 0 then parts[1] = parts[1] .. ", apprends" end
-    st.title = pre .. "Maître : " .. verb .. tconcat(parts, ", "):gsub("apprends, ", "apprends ")
+    -- (4.1 LAYOUT, SCREEN405 5b) « (dès 67) » seulement quand tu ne peux pas encore l'apprendre ; sinon « chez ton maître »
+    local later = st.at and st.at > plan.skill
+    local what = {}
+    if st.train then what[#what + 1] = fmt("passe %s", st.train.rank) end
+    local names = {}
+    for i, l in ipairs(st.learn or {}) do
+      if i > 2 then names[#names + 1] = fmt("+%d", #st.learn - 2) break end
+      names[#names + 1] = cut(l.name, 28)
+    end
+    if #names > 0 then what[#what + 1] = (later and "apprendre " or "apprends ") .. tconcat(names, ", ") end
+    if #what == 0 then what[1] = tconcat(parts, ", ") end
+    local txt = tconcat(what, ", ")
+    if later then st.title = "Maître : " .. txt .. fmt(" (dès %d)", st.at)
+    else st.title = (txt:gsub("^%l", string.upper)) .. " chez ton maître" end
     st.sub = whereText(st.where, "maître du " .. lineName(plan.line):lower() .. " (pas encore vu)")
     st.guideLabel = "Maître du métier"
   elseif k == "vendor" then
@@ -1992,6 +2002,20 @@ if Wn and type(Wn.AddPage) == "function" then
       return "Quoi créer, combien acheter (sacs + banque + courrier), où aller"
     end,
     badge = function() return PL.focus and "!" or nil end,
+    -- (4.1 LAYOUT) en tête : les 1 à 3 actions utiles (agent CITYRUN : « Courses en ville », s'il est là)
+    top = function()
+      local out = {}
+      local CR = T.CityRun
+      if type(CR) == "table" and type(CR.Start) == "function" then
+        out[#out + 1] = { "Courses en ville", function() pcall(CR.Start) end,
+          "Clic : banque, marchands, maître, HV dans le meilleur ordre (la boussole te guide)" }
+      end
+      if M.IsEnabled and M:IsEnabled() and not PL.focus then
+        out[#out + 1] = { "Me concentrer sur les métiers", function() PL.StartFocus(PL.Line()) end,
+          "Clic : session métier (trajet de quêtes en pause, la boussole te guide : marchand, banque, maître, créer)" }
+      end
+      return out
+    end,
     render = renderPage,
     action = function()
       if not (M.IsEnabled and M:IsEnabled()) then
