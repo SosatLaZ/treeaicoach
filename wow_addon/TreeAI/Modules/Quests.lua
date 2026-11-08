@@ -946,6 +946,8 @@ local function onUnitTip(tt)
   local q, o = objectiveFor(name, true)
   if q then tipLine(tt, q, o) end
 end
+-- (4.0.2) infobulles d'objets : le module « Infos objets » écrit la ligne de quête quand il est allumé (un seul propriétaire)
+local function itemInfoOwns() local II = T.ItemInfo return (II and II.Owns and II.Owns()) and true or false end
 local hooked = false
 local function hookTooltips()
   if hooked then return end
@@ -953,10 +955,10 @@ local function hookTooltips()
   local TDP, E = _G.TooltipDataProcessor, _G.Enum
   if TDP and TDP.AddTooltipPostCall and E and E.TooltipDataType then
     -- pcall : une erreur ici s'afficherait dans l'infobulle de Blizzard (fenêtre d'erreur Lua)
-    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Item, function(tt) if tt == _G.GameTooltip then pcall(onItemTip, tt) end end)
+    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Item, function(tt) if tt == _G.GameTooltip and not itemInfoOwns() then pcall(onItemTip, tt) end end)
     pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) if tt == _G.GameTooltip then pcall(onUnitTip, tt) end end)
   elseif _G.GameTooltip and _G.GameTooltip.HookScript then
-    pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetItem", onItemTip)
+    pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetItem", function(tt) if not itemInfoOwns() then onItemTip(tt) end end)
     pcall(_G.GameTooltip.HookScript, _G.GameTooltip, "OnTooltipSetUnit", onUnitTip)
   end
 end

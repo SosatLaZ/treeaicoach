@@ -1291,16 +1291,18 @@ function M.OnUnitTooltip(tt)
   addLine(tt, txt, color("colMob"))
   return txt
 end
+-- (4.0.2) infobulles d'objets : un seul propriétaire, le module « Infos objets » (il reprend cette ligne et le contour)
+function M.ItemInfoOwns() local II = T.ItemInfo return (II and II.Owns and II.Owns()) and true or false end
 local tipHooked = false
 local function hookTooltips()
   if tipHooked then return end
   tipHooked = true
   local TDP, E = G.TooltipDataProcessor, G.Enum
   if TDP and TDP.AddTooltipPostCall and E and E.TooltipDataType then
-    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Item, function(tt, data) if tt == G.GameTooltip or tt == G.ItemRefTooltip then M.OnItemTooltip(tt, data) end end)
+    pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Item, function(tt, data) if (tt == G.GameTooltip or tt == G.ItemRefTooltip) and not M.ItemInfoOwns() then M.OnItemTooltip(tt, data) end end)
     pcall(TDP.AddTooltipPostCall, E.TooltipDataType.Unit, function(tt) if tt == G.GameTooltip then M.OnUnitTooltip(tt) end end)
   elseif G.GameTooltip and G.GameTooltip.HookScript then
-    pcall(G.GameTooltip.HookScript, G.GameTooltip, "OnTooltipSetItem", function(tt) M.OnItemTooltip(tt) end)
+    pcall(G.GameTooltip.HookScript, G.GameTooltip, "OnTooltipSetItem", function(tt) if not M.ItemInfoOwns() then M.OnItemTooltip(tt) end end)
     pcall(G.GameTooltip.HookScript, G.GameTooltip, "OnTooltipSetUnit", function(tt) M.OnUnitTooltip(tt) end)
   end
 end

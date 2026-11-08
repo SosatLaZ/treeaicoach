@@ -146,9 +146,20 @@ return function(M, ctx)
   ctx.fire("QUEST_FINISHED")
   ctx.check(not S["Gear:reward"], "reward line cleared when the window closes")
   -- 5. item tooltip (moved from Boost): words, sell price ; plate refused for a hunter
+  -- (4.0.2) one owner for item tooltip lines: with « Infos objets » (ItemInfo) on, Gear stays silent and ItemInfo
+  -- writes the verdict with Gear's engine; Gear's own line is the fallback when ItemInfo is off
   GameTooltip.__item, GameTooltip.__lines = 90103, {}
   local fn = GameTooltip:GetScript("OnTooltipSetItem")
   ctx.check(fn, "tooltip hooked")
+  local II = T.modules.ItemInfo
+  if fn and II and II._active then
+    fn(GameTooltip)
+    local joined = table.concat(GameTooltip.__lines, " | ")
+    ctx.check(not joined:find("que ce que tu portes", 1, true) and joined:find("Nettement mieux", 1, true),
+      "ItemInfo on: Gear silent, one verdict line: " .. joined)
+    T:SetModuleEnabled("ItemInfo", false)
+    GameTooltip.__item, GameTooltip.__lines = 90103, {}
+  end
   if fn then
     fn(GameTooltip)
     local joined = table.concat(GameTooltip.__lines, " | ")
@@ -159,6 +170,7 @@ return function(M, ctx)
     ctx.check(table.concat(GameTooltip.__lines, " "):find("pas pour toi %(armure que tu ne peux pas porter%)"), "plate refused")
     GameTooltip.__item = nil
   end
+  if II then T:SetModuleEnabled("ItemInfo", true) end
   M.inventory[5] = keepChest
   M.questChoices = {}
 

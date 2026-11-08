@@ -36,8 +36,8 @@ Modules/Macros.lua  Modules/Binds.lua  Modules/Tracker.lua  Modules/Todo.lua  Mo
 Modules/Export.lua  Modules/Planner.lua  Modules/Speed.lua  Modules/Route.lua  Modules/PathDraw.lua  Modules/ZonePlan.lua
 Modules/Inventory.lua  Modules/Boost.lua  Modules/Fight.lua  Modules/Pro.lua  Modules/Abandon.lua  Modules/Auction.lua
 Modules/Prof.lua  Modules/Glow.lua  Modules/Highlight.lua  Modules/PvP.lua  Modules/PvPMark.lua  Modules/Dungeon.lua
-Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/Gear.lua  Modules/Talents.lua
-Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua  Modules/Quick.lua
+Modules/DungeonPrep.lua  Modules/Radar.lua  Modules/MinimapPins.lua  Modules/Gear.lua  Modules/ItemInfo.lua
+Modules/Talents.lua  Modules/Session.lua  Modules/Errands.lua  Modules/Edge2.lua  Modules/Bugs.lua  Modules/Finder.lua  Modules/Quick.lua
 Modules/QuickFight.lua  Modules/QuickTravel.lua  Modules/Shortcuts.lua  Modules/Window.lua  Modules/WindowPages.lua
 Modules/JournalPage.lua  Modules/Tour.lua
 (4.0 : Squad / Missions / Team → Group ; SafePath, Edge, HunterPro, Comfort, Economy, Predict retirés — voir plus bas)
@@ -891,6 +891,70 @@ fenêtre, juste après « Quêtes », donc aussi dans la pastille ; rendu seulem
   then … end`. Le module Donjon ne prévoit plus tout seul un donjon fait ; « à prendre » ne liste que les quêtes de ta
   faction / race / classe. Cartes « Donjons » : « Fait le … » (vert, coche), « Quêtes faites x/y », « Aucune quête pour
   toi », pas encore faits + à ton niveau d'abord ; fiche : « Faites : x/y (selon le jeu) », boss « (déjà tué) ».
+
+## Infos objets : module `ItemInfo` (agent ITEMINFO, 4.0.2, `Modules/ItemInfo.lua`, **mode sûr**)
+
+Quelques lignes VRAIES sous chaque infobulle d'objet (sacs, butin, récompenses de quête, marchand, HV, liens du chat,
+objets portés) : une ligne par sujet, **≤ 6**, label coloré par sens (vert mieux, rouge non / moins bien, orange plus
+tard, or info), texte clair ; **Maj** = détails gris (au prochain rafraîchissement de l'infobulle par le jeu, jamais
+forcé) ; « (Maj : détails) » quand il y en a. Une case par sujet (options « Infos objets », famille « Sacs, or,
+métiers »). **Seul propriétaire des lignes d'objet** : `T.ItemInfo.Owns()` vrai → les crochets d'infobulle d'objet de
+Gear (« mieux que ce que tu portes », prix), Highlight (« Quête : X — encore 4 » + contour, repris par ItemInfo via
+`Highlight.TooltipGlow`) et Quests se taisent ; module coupé → leurs lignes reviennent.
+* **Amélioration** (`Gear.Engine` : `CanUse`, `UpgradePct`, `Verdict`, `ScoreLink`, `ItemStats`, mêmes poids que
+  l'onglet « Équipement ») : « Mieux / Nettement mieux / Pareil / Moins bien : +6 Agi, +3 End » (3 stats les plus
+  pesées, arme : « DPS 9,8 → 14,5 »), anneau / bijou / arme 1M comparé au plus faible des deux portés, 2M = main droite
+  + main gauche, « emplacement vide », « niv 30 requis », « Pas encore : mailles portables au niv 40 », « Pas pour toi :
+  … » (dont « réservé à d'autres classes » : masque de classes des données du client, `Gear.Rec` / `Gear.Usable`),
+  munitions (« Pas pour ton arme : balles (ton arc tire des flèches) », écart de DPS si le jeu le donne). Chasseur :
+  « (≈ +4 % de dégâts) » = DPS à distance de la fiche (`UnitRangedDamage`, hors combat ; en combat le dernier relevé)
+  + écart (DPS de l'arc, 1 Agi = 2 PA à distance, PA / 14) ; rien si l'écart touche une stat hors modèle (toucher,
+  critique) ou < 0,5 % ; l'estimation est écrite dans les détails. Rien sur l'objet porté lui-même.
+* **Groupe** (en groupe, objet équipable) : pour qui l'objet est fait (armure de la classe à SON niveau — mailles au
+  40 —, arme maniée, arc / fusil → chasseur, bijoux : la classe qui valorise le plus ces stats) → `Dungeon.LootItem`
+  (niveau requis, gain pour toi et pour les amis inspectés `Team.GearOf`) : « Groupe : Besoin pour toi (mieux) et Furtif
+  · Cupidité pour les autres » / « personne n'en a besoin → Cupidité pour tous » ; détails : qui pourra s'en servir à
+  quel niveau, gain inconnu (pas inspecté). Déjà dans tes sacs : « utile à X » (seulement un ami). Chez le marchand
+  (objet à acheter) et sur une récompense de quête (un choix) : ni ligne de groupe ni verdict de valeur, les faits
+  seulement ; le contexte (porté / sac / butin / marchand / récompense) fait partie de la clé du cache.
+* **Valeur** : marchand (la pile : nombre lu par le GUID de l'infobulle `C_Item.GetItemLocation` / `GetStackCount`,
+  sinon la case du sac ou du butin du propriétaire, vérifiée) ; HV seulement si `Auction.Liq(id).ok` (preuves de
+  ventes) : « HV ~45 pa, se vend ~6/jour », sinon « HV : pas de marché fiable » (raison et dernier prix dans les
+  détails) ; jamais d'HV pour un objet lié (`bindType` 1 / 4, `C_Item.IsBound`) ou de quête. Verdict : « → Garder »
+  (amélioration, quête, compo de tes recettes, familier, munitions — ligne seule cachée : les autres lignes disent
+  pourquoi), « → Donne-le à X » (un ami en a besoin, objet échangeable), « → Mettre à l'HV » (marché fiable et
+  `Auction.PostPrice(...).better == "ah"`), « → Vendre au marchand » (gris, objet de quête plus utile, équipement lié
+  inutile). Prix unitaire seul = déjà écrit par le jeu → détails seulement.
+* **Quête** (`Highlight.Data()` : journal + QuestieDB, règles DATA ; Highlight coupé → `Quests.ObjectiveFor`) :
+  « Objet de quête : « X » (3/8) », « (8/8) — à rendre, garde-les », « — à utiliser », « Pour une quête à venir », « ! Commence
+  une quête : « X » (niv 27) » (case du sac / du butin, sinon QuestieDB `startQuest` ; ni dans le journal ni faite),
+  « Objet de quête : plus utile » seulement si la case / le butin / QuestieDB permettent de le savoir (jamais deviné).
+  Questie chargé : sa propre ligne de progression, la nôtre se tait (départ et « plus utile » restent).
+* **Métiers** (`Data/Recipes.lua`, `Prof.ScanProfessions`, recettes connues `Prof.char.known` lues dans la fenêtre du
+  métier) : « Métiers : compo de « Bandage en laine » (×6 possibles) et 1 autre recette » (fabrications possibles avec
+  tes sacs ; détails : chaque recette + couleur de montée), sinon « sert en Couture (3 recettes à ta portée) », sinon
+  (marchandise) « sert en Cuisine ».
+* **Familier** (chasseur, familier présent : `Hunter:GetDiet()` × `Hunter.FOODS` + `Data/PetFood.lua`) : « il aime ça
+  (viande) », « il en mange (viande), effet réduit » (détails : niveau conseillé), « trop faible pour lui », « il n'en
+  mange pas (il mange : poisson, viande) ».
+* **Sources** : taux MESURÉ = les comptes de Stats (`Stats.Account().drops` : corps fouillés / objet trouvé, ≥ 10 corps,
+  sans a priori) « Source : Lion des collines (8 sur 25 corps, 32 %) », sinon QuestieDB sans taux (« butin de Loup gris », « vendu par X (zone) »), marchands
+  (`Recipes.mats`), fabriqué (`Gear.crafted`), récolte (`Recipes.gather`). Ligne courte seulement si l'objet te sert
+  (quête, compo, familier) ou si un taux est mesuré ; sinon détails.
+* **Accroche, taint** : `TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item)` (une fois par processeur,
+  `ItemInfo.HookProcessor`), repli `HookScript("OnTooltipSetItem")` (GameTooltip, ItemRefTooltip) ; seulement
+  `AddLine` + `Show` sur GameTooltip / ItemRefTooltip (jamais les infobulles de comparaison, protégées sur Forever :
+  `C_TooltipComparison.CompareItem`) ; aucune méthode remplacée, aucun `RefreshData` / `SetX` ; infobulle interdite
+  (`IsForbidden`) ignorée ; valeurs secrètes écartées (`issecretvalue`), rien de la fiche lu en combat.
+* **Coût** : rien tant qu'aucune infobulle d'objet ne s'affiche (événements = un compteur) ; cache par objet (lien,
+  pile, Maj, lié, porté) invalidé par `API.BagGen` (sacs + équipement), `T:QuestGen`, la version des données de
+  Highlight, le groupe / niveau / familier / métiers / talents / fin de combat, ≤ 60 s ; index des compos (un masque
+  par compo) et des nourritures construits à la 1re infobulle (≈ 160 kinstr une fois), recettes indexées seulement pour
+  tes métiers. Objet pas encore en cache : RequestLoadItemDataByID, « TreeAI : chargement des infos de l'objet… » une
+  seule fois, `ITEM_DATA_LOAD_RESULT` / `GET_ITEM_INFO_RECEIVED` écoutés seulement pendant l'attente (le jeu rafraîchit
+  lui-même l'infobulle). `ItemInfo.Decorate(tt, data)` (rend les lignes), `ItemInfo.Build(it, ctx, shift)`,
+  `ItemInfo.stats = {built, hits, loading}`. Tests : `tests/wow/iteminfo_scenario.lua` (3 saveurs + mode sûr),
+  `test_iteminfo.py`, plafond session_sim `ItemInfo` (survol des sacs chez le marchand, sacs pleins).
 
 ## Sons, fenêtres, placement vivant (agent UI2)
 

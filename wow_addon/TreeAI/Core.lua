@@ -1424,6 +1424,9 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   -- monde tant qu'elle est ouverte, traînée minimap seulement en marchant), objets de quête en surbrillance
   -- (Glow = la bibliothèque d'animations de Highlight, jouées par le client)
   ZonePlan = true, PathDraw = true, Highlight = true, Glow = true,
+  -- (4.0.2, ITEMINFO) lignes vraies sous les infobulles d'objets : ne travaille que quand une infobulle s'affiche
+  -- (≈ 0 sinon) ; module nouveau = allumé d'office (pas de migration)
+  ItemInfo = true,
 }
 -- (4.0.1) entrés dans le mode sûr après la 4.0 : allumés une fois chez les joueurs en mode sûr (voir _ApplyProfileOnce)
 TreeAI.SAFE_ADDED = { ZonePlan = 1, PathDraw = 1, Highlight = 1 }
@@ -1454,7 +1457,8 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Pro = { lite = false, desc = "Conseils avancés (repos, sacs, trajets)" },
   Session = { lite = false, desc = "Ma session : bilan, pourquoi je meurs, pause, monture" },
   Errands = { lite = false, desc = "Guichets : courrier, maître de classe (prix réel), vols, appel prêt" },
-  Gear = { lite = false, desc = "Équipement : mieux ou pas (infobulles), récompense de quête, plan par emplacement" },
+  Gear = { lite = false, desc = "Équipement : récompense de quête, plan par emplacement (onglet « Équipement »)" },
+  ItemInfo = { lite = true, desc = "Infos objets (infobulles) : amélioration, groupe, valeur, quête, métiers, familier, sources" },
   Talents = { lite = false, desc = "Talents : où mettre tes points" },
   Prof = { lite = false, desc = "Métiers : montée la moins chère, récolte (nœuds, dépeçage)" },
   PvP = { lite = false, combat = true, desc = "JcJ : aides contre les joueurs" },
