@@ -1,6 +1,6 @@
 {
-  "version": "3.9.3",
+  "version": "3.9.4",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "WoW : sons, fenêtres mieux placées, points sur la vraie minimap, meilleure détection."
+  "notes": "WoW : macros réparées (+ diagnostic), quêtes en mots simples, clic droit = masquer pour de bon."
 }

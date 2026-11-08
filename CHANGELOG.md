@@ -3,6 +3,14 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.4 · 8 novembre 2026
+
+- **WoW : macros réparées** : la création ne se croyait plus en échec (et ne fait plus de doublons) ; si le jeu
+  bloque, une fenêtre donne le texte à copier-coller ; bouton « Diagnostic macros » (✓/✗ et pourquoi).
+- **Quêtes en mots simples** : quoi faire, où, et pourquoi c'est la prochaine.
+- **Clic droit = masquer** tient vraiment (2 h, même après /reload) ; l'assistant de départ attend un moment calme.
+- Un rare repéré par le jeu fait bien son son.
+
 ## 3.9.3 · 8 novembre 2026
 
 - **WoW : sons** distincts et discrets par type (danger, quête finie, rare, groupe, HV…), chacun activable.

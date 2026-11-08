@@ -1,25 +1,25 @@
 {
- "version": "3.9.3",
+ "version": "3.9.4",
  "exe": "TreeAICoach-app.exe",
- "sha256": "ca835b23fd286cad442bd5087b3428dfe5b5136ac868a1b24bf13aeba68cc1ab",
+ "sha256": "a85746af1eba5c38036d56c10f4e132a371d852c69bd9f316ddaff86f41f5c00",
  "chunks": [
   {
-   "name": "3.9.3/part-01.zip",
-   "size": 88089590,
-   "sha256": "b75783688768226dae153e48c9ac3a479e4d8e7757f1da329490a6a712761942",
+   "name": "3.9.4/part-01.zip",
+   "size": 88089586,
+   "sha256": "0d4f2de8fc2be4fef42ca1c310769570e9f08be9a43baf4e0bbf7340b90c3f7f",
    "files": 130
   },
   {
-   "name": "3.9.3/part-02.zip",
-   "size": 13120786,
-   "sha256": "f451399f2cbf6b21faf6a5794dac7d66631844054adbc7150966f90ac4fb7a8c",
-   "files": 646
+   "name": "3.9.4/part-02.zip",
+   "size": 13133530,
+   "sha256": "e89b51b20190a5d41f7299ee224b2e818517291ce11327c11b4c29fba781e93a",
+   "files": 647
   }
  ],
- "total_size": 101210376,
+ "total_size": 101223116,
  "launcher": {
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334
  },
- "notes": "WoW : sons, fen\u00eatres mieux plac\u00e9es, points sur la vraie minimap, meilleure d\u00e9tection."
+ "notes": "WoW : macros r\u00e9par\u00e9es (+ diagnostic), qu\u00eates en mots simples, clic droit = masquer pour de bon."
 }
