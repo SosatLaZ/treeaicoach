@@ -154,6 +154,18 @@ local function newButton(parent)
   b.hl = meth(b, "CreateTexture", nil, "HIGHLIGHT")
   meth(b.hl, "SetAllPoints", b)
   color(b.hl, tok("hover", 1, 1, 1, 0.08))
+  -- survol : liseré 1 px (couche HIGHLIGHT : affiché par le jeu sous la souris, aucun script)
+  local r, g, bl = tok("borderSoft", 0.78, 0.62, 0.28)
+  local pts = { { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true }, { "TOPLEFT", "BOTTOMLEFT" },
+    { "TOPRIGHT", "BOTTOMRIGHT" } }
+  for _, p in ipairs(pts) do
+    local e = meth(b, "CreateTexture", nil, "HIGHLIGHT")
+    if e then
+      meth(e, "SetPoint", p[1], b, p[1]); meth(e, "SetPoint", p[2], b, p[2])
+      if p[3] then meth(e, "SetHeight", 1) else meth(e, "SetWidth", 1) end
+      color(e, r, g, bl, 0.9)
+    end
+  end
   return b
 end
 W._newButton = newButton
@@ -376,7 +388,7 @@ end
 
 -- ===================================================================== carte « Prochaine étape »
 local card
-local CARD_W, HERO_H, STEP_H = 280, 46, 34
+local CARD_W, HERO_H, STEP_H = 280, 48, 36          -- grille de 4 px
 local function cardOn() return W:IsEnabled() and W.db and W.db.card ~= false end
 local function buildCard()
   if card or not G.CreateFrame then return card end
@@ -387,7 +399,7 @@ local function buildCard()
   meth(card, "SetMovable", true)
   meth(card, "EnableMouse", true)
   local th = Th()
-  if th then th:Skin(card, "window") else
+  if th then th:Skin(card, "card"); if th.Shadow then th:Shadow(card, 8) end else
     card.bgt = meth(card, "CreateTexture", nil, "BACKGROUND"); meth(card.bgt, "SetAllPoints", card); color(card.bgt, 0.05, 0.06, 0.08, 0.9)
   end
   -- en-tête : icône + titre + résumé ; clic = fenêtre TreeAI (page Quêtes), glisser = déplacer
@@ -399,11 +411,11 @@ local function buildCard()
   border(hero, tok("border", 0.78, 0.62, 0.28, 0.9))
   hero.icon = meth(hero, "CreateTexture", nil, "ARTWORK")
   meth(hero.icon, "SetSize", 32, 32)
-  meth(hero.icon, "SetPoint", "LEFT", hero, "LEFT", 7, 0)
+  meth(hero.icon, "SetPoint", "LEFT", hero, "LEFT", 8, 0)
   meth(hero.icon, "SetTexture", ICON .. "INV_Misc_Book_09")
   meth(hero.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
   hero.title = text(hero, "M", "gold")
-  meth(hero.title, "SetPoint", "TOPLEFT", hero, "TOPLEFT", 46, -7)
+  meth(hero.title, "SetPoint", "TOPLEFT", hero, "TOPLEFT", 48, -8)
   meth(hero.title, "SetPoint", "RIGHT", hero, "RIGHT", -62, 0)
   meth(hero.title, "SetWordWrap", false)
   hero.sub = text(hero, "S", "muted")
@@ -423,7 +435,7 @@ local function buildCard()
     else W.Open("quests") end
   end)
   meth(hero, "SetScript", "OnEnter", function(self)
-    W.Tooltip(self, "Prochaine étape", { "Ton trajet en cours, les 3 prochaines étapes.",
+    W.Tooltip(self, "Prochaine étape", { "Ton trajet en cours : les prochaines étapes, dans l'ordre.",
       "Glisser : déplacer la carte" }, "Clic : ouvrir la fenêtre TreeAI (Quêtes)\nClic droit : réglages de la carte")
   end)
   meth(hero, "SetScript", "OnLeave", hideTip)
@@ -464,15 +476,15 @@ local function stepRow(i)
   r = newButton(card)
   meth(r, "SetHeight", STEP_H)
   color(r.bg, tok("button", 0.14, 0.15, 0.19, 0.6))
-  r.badge = newBadge(r, 22)
-  meth(r.badge, "SetPoint", "LEFT", r, "LEFT", 5, 0)
+  r.badge = newBadge(r, 24)
+  meth(r.badge, "SetPoint", "LEFT", r, "LEFT", 6, 0)
   r.title = text(r, "S", "text")
-  meth(r.title, "SetPoint", "TOPLEFT", r, "TOPLEFT", 34, -4)
-  meth(r.title, "SetPoint", "RIGHT", r, "RIGHT", -6, 0)
+  meth(r.title, "SetPoint", "TOPLEFT", r, "TOPLEFT", 40, -5)
+  meth(r.title, "SetPoint", "RIGHT", r, "RIGHT", -8, 0)
   meth(r.title, "SetWordWrap", false)
   r.sub = text(r, "S", "muted")
-  meth(r.sub, "SetPoint", "TOPLEFT", r.title, "BOTTOMLEFT", 0, -2)
-  meth(r.sub, "SetPoint", "RIGHT", r, "RIGHT", -6, 0)
+  meth(r.sub, "SetPoint", "TOPLEFT", r.title, "BOTTOMLEFT", 0, -3)
+  meth(r.sub, "SetPoint", "RIGHT", r, "RIGHT", -8, 0)
   meth(r.sub, "SetWordWrap", false)
   meth(r, "SetScript", "OnClick", function(self, btn) if self.step then W.RunStep(self.step, btn) end end)
   meth(r, "SetScript", "OnEnter", function(self)
@@ -551,12 +563,12 @@ function W.RenderCard(force)
     local h = (s.sub and s.sub ~= "") and STEP_H or 24
     meth(r, "SetHeight", h)
     meth(r, "Show")
-    y = y + h + 2
+    y = y + h + 4
   end
   for i = #rows + 1, #card.steps do meth(card.steps[i], "Hide") end
   if #rows == 0 then
     meth(card.empty, "SetText", g.paused and "Clique sur l'en-tête pour reprendre le trajet." or
-      "Rien à suivre ici. « Ouvrir » : choisir une zone, un donjon, voir tes quêtes.")
+      "Rien à suivre ici. Clique « Ouvrir » pour choisir une zone ou un donjon.")
     meth(card.empty, "Show")
     y = y + 32
   else meth(card.empty, "Hide") end
@@ -651,7 +663,7 @@ function W.AddPage(p)
   W.PAGES[#W.PAGES + 1] = p
   W.pageIndex[p.id] = p
 end
-local NAV_W, TOP_H, FOOT_H, PAD = 170, 54, 40, 14
+local NAV_W, TOP_H, FOOT_H, PAD = 176, 56, 40, 16      -- grille de 4 px (Theme.GRID)
 W.NAV_W = NAV_W
 
 local function version()
@@ -666,7 +678,7 @@ local function pool(kind, make) local p = pools[kind] if not p then p = newPool(
 -- -------------------------------------------------- moteur de mise en page (vertical, une colonne, sans chevauchement)
 -- Lay.y avance à chaque widget ; Lay.rects garde chaque rectangle (le harnais vérifie : rien ne se chevauche).
 local function newLay(width)
-  local Ly = { y = 6, W = width, col = width - 2 * PAD, rects = {} }
+  local Ly = { y = 8, W = width, col = width - 2 * PAD, rects = {} }
   local function rec(kind, x, y, w, h, label) Ly.rects[#Ly.rects + 1] = { kind = kind, x = x, y = y, w = w, h = h, label = strip(label) } end
   local function at(f, x, y) meth(f, "ClearAllPoints"); meth(f, "SetPoint", "TOPLEFT", content, "TOPLEFT", x, -y) end
   Ly.at, Ly.rec = at, rec
@@ -745,11 +757,13 @@ local function newLay(width)
       f.icon = meth(f, "CreateTexture", nil, "ARTWORK")
       meth(f.icon, "SetSize", 16, 16)
       meth(f.icon, "SetPoint", "TOPLEFT", f, "TOPLEFT", 6, -4)
+      meth(f.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
       f.t = text(f, "S", "text")
       meth(f.t, "SetWordWrap", true)
       f.r = text(f, "S", "muted")
       meth(f.r, "SetJustifyH", "RIGHT")
-      meth(f.r, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", -6, -5)
+      meth(f.r, "SetWordWrap", false)
+      meth(f.r, "SetPoint", "TOPRIGHT", f, "TOPRIGHT", -8, -6)
       meth(f, "SetScript", "OnClick", function(self, btn) W.Run(self.entry, btn) end)
       meth(f, "SetScript", "OnEnter", function(self) entryTip(self, self.entry) end)
       meth(f, "SetScript", "OnLeave", hideTip)
@@ -765,14 +779,15 @@ local function newLay(width)
     end
     meth(b.icon, "SetTexture", icon)
     local rw = e.right and min(120, ulen(e.right) * 6 + 10) or 0
-    local tw = Ly.col - 30 - rw
+    meth(b.r, "SetWidth", max(1, rw - 4))
+    local tw = Ly.col - 36 - rw
     meth(b.t, "ClearAllPoints")
-    meth(b.t, "SetPoint", "TOPLEFT", b, "TOPLEFT", 28, -5)
+    meth(b.t, "SetPoint", "TOPLEFT", b, "TOPLEFT", 28, -6)
     meth(b.t, "SetWidth", tw)
     meth(b.t, "SetText", e.text or "")
     meth(b.t, "SetTextColor", r, g, bl)
     meth(b.r, "SetText", e.right or "")
-    local h = max(24, measure(b.t, e.text, tw, "S") + 10)
+    local h = max(24, measure(b.t, e.text, tw, "S") + 12)
     meth(b, "SetSize", Ly.col, h)
     color(b.bg, tok("button", 0.14, 0.15, 0.19, (e.onClick and 0.55) or 0.25))
     meth(b, "EnableMouse", true)
@@ -894,7 +909,7 @@ local function newLay(width)
   -- boutons de même largeur (grille de 2–3 colonnes) : list = { {label, fn, tip}, … }
   function Ly.buttons(list, cols)
     cols = cols or min(3, #list)
-    if cols < 1 then return end
+    if cols < 1 or #list == 0 then return end
     local bw = floor((Ly.col - (cols - 1) * 8) / cols)
     local p = pool("button", function()
       local th = Th()
@@ -919,7 +934,19 @@ local function newLay(width)
     if #list > 0 then Ly.y = Ly.y + 28 end
   end
   -- état vide : une phrase qui dit quoi faire
-  function Ly.empty(str) Ly.gap(sp().l); return Ly.text(str, "M", "muted") end
+  -- état vide : une phrase qui dit quoi faire + (si possible) le bouton qui le fait ; recherche → « Effacer »
+  function Ly.empty(str, action)
+    Ly.gap(sp().l)
+    local fs = Ly.text(str, "M", "muted")
+    if W.Query() ~= "" then
+      Ly.gap(sp().s)
+      Ly.buttons({ { "Effacer la recherche", function() W.ClearSearch() end, "Clic : tout réafficher" } }, 2)
+    elseif type(action) == "table" and action[1] and action[2] then
+      Ly.gap(sp().s)
+      Ly.buttons({ action }, 2)
+    end
+    return fs
+  end
   function Ly.finish() meth(content, "SetHeight", Ly.y + 16); meth(content, "SetWidth", Ly.W) end
   return Ly
 end
@@ -928,6 +955,11 @@ W._newLay = newLay
 -- -------------------------------------------------- recherche
 local query = ""
 function W.Query() return query end
+function W.ClearSearch()
+  query = ""
+  if win and win.search then meth(win.search, "SetText", ""); meth(win.search, "ClearFocus") end
+  W.Render()
+end
 --- vrai si le texte correspond à la recherche (mots, accents et casse ignorés)
 local ACC = { ["à"] = "a", ["â"] = "a", ["ä"] = "a", ["é"] = "e", ["è"] = "e", ["ê"] = "e", ["ë"] = "e", ["î"] = "i",
   ["ï"] = "i", ["ô"] = "o", ["ö"] = "o", ["ù"] = "u", ["û"] = "u", ["ü"] = "u", ["ç"] = "c", ["œ"] = "oe" }
@@ -950,7 +982,7 @@ end
 
 -- -------------------------------------------------- pages simples : lignes d'un onglet du panneau
 --- Dessine les lignes d'un onglet : boutons (control) en grille, en-têtes (header) = sections repliables.
-function W.RenderTab(Ly, tabId, emptyText, skip)
+function W.RenderTab(Ly, tabId, emptyText, skip, emptyAction)
   local lines = T.GetTabLines and T:GetTabLines(tabId) or {}
   local ctrls = {}
   for _, e in ipairs(lines) do
@@ -970,7 +1002,7 @@ function W.RenderTab(Ly, tabId, emptyText, skip)
     end
   end
   if shown == 0 and #ctrls == 0 then
-    Ly.empty(query ~= "" and ("Rien ne correspond à « " .. query .. " ».") or emptyText or "Rien pour l'instant.")
+    Ly.empty(query ~= "" and ("Rien ne correspond à « " .. query .. " ».") or emptyText or "Rien pour l'instant.", emptyAction)
   end
   return shown
 end
@@ -1000,8 +1032,9 @@ local function buildWindow()
   meth(win, "Hide")
   local th = Th()
   local st = th and th:WindowState("main")
+  if th and th.Shadow then th:Shadow(win, 10) end
   if th then
-    th:Window(win, { id = "main", header = false,
+    th:Window(win, { id = "main", header = false, skin = "card",
       resize = { minW = 640, minH = 420, maxW = 1400, maxH = 1000, onResize = function() W.Render() end },
       onClose = function() W.Close() end })
   else
@@ -1031,7 +1064,7 @@ local function buildWindow()
   end
   drag(nav)
   win.title = text(nav, "H", "gold")
-  meth(win.title, "SetPoint", "TOPLEFT", nav, "TOPLEFT", 16, -16)
+  meth(win.title, "SetPoint", "TOPLEFT", nav, "TOPLEFT", PAD, -16)
   meth(win.title, "SetText", "TreeAI")
   win.ver = text(nav, "S", "muted")
   meth(win.ver, "SetPoint", "TOPLEFT", win.title, "BOTTOMLEFT", 1, -4)
@@ -1049,14 +1082,14 @@ local function buildWindow()
   drag(top)
   win.top = top
   win.pageTitle = text(top, "L", "gold")
-  meth(win.pageTitle, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD, -14)
+  meth(win.pageTitle, "SetPoint", "TOPLEFT", top, "TOPLEFT", PAD, -12)
   meth(win.pageTitle, "SetWordWrap", false)
   win.pageSub = text(top, "S", "muted")
   meth(win.pageSub, "SetPoint", "TOPLEFT", win.pageTitle, "BOTTOMLEFT", 0, -3)
   meth(win.pageSub, "SetWordWrap", false)
   local close = newButton(top)
-  meth(close, "SetSize", 22, 22)
-  meth(close, "SetPoint", "TOPRIGHT", top, "TOPRIGHT", -6, -8)
+  meth(close, "SetSize", 24, 24)
+  meth(close, "SetPoint", "TOPRIGHT", top, "TOPRIGHT", -8, -8)
   close.t = text(close, "M", "bad")
   meth(close.t, "SetPoint", "CENTER", close, "CENTER", 0, 0)
   meth(close.t, "SetText", "×")
@@ -1067,8 +1100,8 @@ local function buildWindow()
   local ok, eb = pcall(G.CreateFrame, "EditBox", "TreeAIMainSearch", top, "InputBoxTemplate")
   if not ok or not eb then ok, eb = pcall(G.CreateFrame, "EditBox", "TreeAIMainSearch", top) end
   if ok and eb then
-    meth(eb, "SetSize", 200, 22)
-    meth(eb, "SetPoint", "TOPRIGHT", close, "TOPLEFT", -14, 0)
+    meth(eb, "SetSize", 200, 24)
+    meth(eb, "SetPoint", "TOPRIGHT", close, "TOPLEFT", -16, 0)
     meth(eb, "SetAutoFocus", false)
     meth(eb, "SetMaxLetters", 40)
     if not eb.Left then   -- sans modèle : fond à nous
@@ -1123,13 +1156,19 @@ local function buildWindow()
   win.action = act
   meth(win.status, "SetPoint", "RIGHT", act, "LEFT", -10, 0)
   -- navigation
-  local y = 72
+  local y = 80
   local i = 0
   for _, p in ipairs(W.PAGES) do if not p.hidden then
     i = i + 1
     local b = newButton(nav)
     meth(b, "SetSize", NAV_W - 16, 24)
     meth(b, "SetPoint", "TOPLEFT", nav, "TOPLEFT", 8, -y)
+    -- liseré gauche or quand la page est choisie (comme les listes de Leatrix / ElvUI)
+    b.mark = meth(b, "CreateTexture", nil, "ARTWORK")
+    meth(b.mark, "SetWidth", 2)
+    meth(b.mark, "SetPoint", "TOPLEFT", b, "TOPLEFT", 0, 0)
+    meth(b.mark, "SetPoint", "BOTTOMLEFT", b, "BOTTOMLEFT", 0, 0)
+    color(b.mark, tok("gold", 1, 0.82, 0.2, 1))
     b.icon = meth(b, "CreateTexture", nil, "ARTWORK")
     meth(b.icon, "SetSize", 16, 16)
     meth(b.icon, "SetPoint", "LEFT", b, "LEFT", 6, 0)
@@ -1145,7 +1184,7 @@ local function buildWindow()
     meth(b, "SetScript", "OnLeave", hideTip)
     b.page = p.id
     navButtons[i] = b
-    y = y + 26
+    y = y + 28
     if p.gapAfter then y = y + 12 end
   end end
   meth(win, "SetScript", "OnShow", function() W.Render() end)
@@ -1157,6 +1196,7 @@ local function paintNav(cur)
   for _, b in ipairs(navButtons) do
     local on = b.page == cur
     if on then color(b.bg, tok("selected", 0.78, 0.62, 0.28, 0.30)) else color(b.bg, 0, 0, 0, 0) end
+    if on then meth(b.mark, "Show") else meth(b.mark, "Hide") end
     meth(b.t, "SetTextColor", tok(on and "text" or "gold", 1, 0.82, 0.2))
     local p = W.pageIndex[b.page]
     local n = p and p.badge and try(p.badge)
@@ -1283,20 +1323,28 @@ W.AddPage({ id = "route", label = "Trajet", icon = TAB_ICON.route, title = "Traj
 W.AddPage({ id = "group", label = "Groupe", icon = TAB_ICON.group, title = "Groupe", desc = "Tes amis, les missions, qui fait quoi",
   sub = function()
     local n = tonumber(try(G.GetNumGroupMembers)) or 0
-    return n > 1 and fmt("%d dans le groupe", n) or "Seul pour l'instant"
+    return n > 1 and fmt("Groupe de %d", n) or "Seul pour l'instant"
   end,
   render = function(Ly)
-    W.RenderTab(Ly, "group", "Seul pour l'instant. Invite tes amis : TreeAI synchronise vos quêtes et vos trajets.")
+    local Q = T.QuickTravel
+    local friends = (Q and Q._active and Q.FriendsToInvite) and (try(Q.FriendsToInvite) or {}) or {}
+    W.RenderTab(Ly, "group", "Seul pour l'instant. Invite tes amis : TreeAI synchronise vos quêtes et vos trajets.", nil,
+      (#friends > 0 and Q.InviteFriends) and { ("Inviter mes amis (%d)"):format(#friends), function() Q.InviteFriends() end,
+        "Clic : invite les amis de ton dernier groupe" } or nil)
   end })
 W.AddPage({ id = "dungeon", label = "Donjons", icon = TAB_ICON.dungeon, title = "Donjons", render = function(Ly) W.RenderTab(Ly, "dungeon") end })
 W.AddPage({ id = "hv", label = "HV", icon = TAB_ICON.hv, title = "Hôtel des ventes", desc = "Achats-reventes sûrs, ventes, bilan",
   render = function(Ly)
-    W.RenderTab(Ly, "hv", "Pas encore de données d'HV. Va à l'hôtel des ventes et lance un scan complet (fenêtre HV).")
+    local A = T.modules and T.modules.Auction
+    W.RenderTab(Ly, "hv", (A and A._active) and "Pas encore de prix : à l'hôtel des ventes, lance un scan complet."
+      or "Le module Hôtel des ventes est coupé (fonction bêta).", nil,
+      (A and not A._active) and { "Allumer l'HV (bêta)", function() T:SetModuleEnabled("Auction", true) end,
+        "Clic : allume le module Hôtel des ventes" } or nil)
   end,
   action = function()
     local A = T.modules and T.modules.Auction
-    if A and A.ShowWindow and A._active then return "Fenêtre HV", function() A.ShowWindow() end, "Clic : ouvrir la fenêtre de l'hôtel des ventes" end
-    if A then return "Activer l'HV (bêta)", function() T:SetModuleEnabled("Auction", true) end, "Clic : allumer le module Hôtel des ventes" end
+    if A and A.ShowWindow and A._active then return "Ouvrir la fenêtre HV", function() A.ShowWindow() end, "Clic : ouvrir la fenêtre de l'hôtel des ventes" end
+    if A then return "Allumer l'HV (bêta)", function() T:SetModuleEnabled("Auction", true) end, "Clic : allumer le module Hôtel des ventes" end
   end })
 
 local function tabTitle(id)

@@ -2486,6 +2486,15 @@ function TreeAI:FramesLocked()
 end
 
 local overlays = {}
+--- (UIREDO) retire un cadre des déplaçables (ex. barre amarrée dans la barre « Raccourcis » : elle bouge avec elle)
+function TreeAI:UnregisterMovable(id)
+  if not movables[id] then return false end
+  movables[id] = nil
+  for i = #moverOrder, 1, -1 do if moverOrder[i] == id then table.remove(moverOrder, i) end end
+  local o = overlays[id]
+  if o then o:Hide() end
+  return true
+end
 local function refreshOverlay(o)
   local m = o.mover
   local locked = TreeAI:FramesLocked()

@@ -770,7 +770,7 @@ données viennent des contrats existants (`GetTabLines`, `Route:Stops(64)`, `Pla
 * **Fenêtre** `TreeAIMainWindow` (façon Leatrix Plus) : « TreeAI » + version en haut à gauche, navigation à gauche
   (Maintenant · Quêtes · Trajet · Groupe · Donjons · HV · Outils · Fonctions · Options ; ligne choisie surlignée),
   grand titre de page + sous-titre, recherche en haut à droite (filtre la page : lignes, arrêts, donjons, pages
-  d'options), UN bouton d'action en bas à droite (Arrêter / Reprendre, Prévoir ce donjon, Fenêtre HV, Recharger…).
+  d'options), UN bouton d'action en bas à droite (Arrêter / Reprendre, Prévoir ce donjon, Ouvrir la fenêtre HV, Recharger…).
   Redimensionnable (taille + position gardées, `settings.windows.main`), Échap ferme. Ouverte par la pastille
   (clic gauche ; clic droit = menu rapide), la touche `TREEAI_MAIN` (« TreeAI : ouvrir / fermer la fenêtre », sans
   touche par défaut, `TreeAI.ToggleMain()`), `/tai fenetre [page]`. Un clic qui ouvrait un onglet du panneau
@@ -781,7 +781,7 @@ données viennent des contrats existants (`GetTabLines`, `Route:Stops(64)`, `Pla
   Nettoyer mon journal, Direction <zone>, Autres conseils), état gardé par perso (`chars[k].modules.Window`).
 * **Trajet** : tous les arrêts numérotés, zone de travail / suivi / tri du producteur ; **Donjons** (façon Journal des
   donjons) : cartes en dégradé de couleur par tranche de niveau + icône du jeu (aucune illustration copiée), badge
-  « NV a-b », « x/y quêtes » + coche, « prévu / tu y es » ; clic = détail (quêtes du donjon, boss numérotés,
+  « Niv. a-b », « x/y quêtes » + coche, « prévu / tu y es » ; clic = détail (quêtes du donjon, boss numérotés,
   butin pour le groupe, conseils, « Partager les quêtes ») ; **Options** : liste des pages + la page construite
   par le moteur TIDY (`TreeAI:OptionEntries()`, `TreeAI:RefreshOptionWidgets()`), recherche dans les titres,
   descriptions et libellés.
@@ -790,7 +790,22 @@ données viennent des contrats existants (`GetTabLines`, `Route:Stops(64)`, `Pla
   descend sous un suivi de quêtes qu'elle toucherait ; déplaçable (mode édition, id `card`). En-tête (icône,
   « Histoire : zone », résumé) + danger en rouge + 1–5 étapes numérotées. Aucune minuterie : suit les rendus du
   panneau (≤ 1 / 2 s, clé `TreeAI:DataGen()` + étapes + position), signature comparée.
-* Jetons communs (`Theme.TYPE`, `Theme.BLOCK`, `Theme.STEP_ICON`) ; la couleur d'accent des options = l'or du thème.
+* Jetons communs (`Theme.TYPE`, `Theme.BLOCK`, `Theme.STEP_ICON`, `Theme.GRID` = 4 px, `Theme.SHORTCUT`) ; genre de
+  skin `card` (fond plat, liseré 1 px) + `Theme:Shadow(frame)` pour la fenêtre et la carte ; survol = liseré 1 px
+  (couche HIGHLIGHT) ; titres sur une ligne (« … » + texte entier en infobulle) ; états vides = une phrase + le
+  bouton qui agit (« Calculer le trajet », « Reprendre le trajet », « Voir tous les donjons », « Effacer la
+  recherche »…). La couleur d'accent des options = l'or du thème.
+* **Barre « Raccourcis »** (`Modules/Shortcuts.lua`, module `Shortcuts`, mode sûr, rendu seulement) : UNE barre
+  `TreeAIShortcuts` au lieu des barres séparées. Un module y amarre sa barre :
+  `T:RegisterShortcutBar(frame, { id, label, order, inset, chrome = {régions cachées une fois amarrée}, movable = id
+  du déplaçable retiré, onUndock = fn })` ; `T:ShortcutDocked(frame)` (le module ne la place plus) ;
+  `T.Shortcuts.Changed()` après un changement de boutons. Quick = « Quêtes · voyage », QuickFight = « Combat ·
+  familier » (logique inchangée dans les modules). Un fond, une poignée (glisser, clic droit = réglages), un titre
+  par groupe, un filet entre groupes ; groupe vide retiré, barre cachée quand rien ne sert ; un seul cadre en mode
+  édition (`TreeAI:UnregisterMovable(id)` dans UI.lua) ; tout changement hors combat. Bouton commun
+  `Theme:ShortcutStyle(b)` (fond, liseré, enfoncé, touche liée `Theme:HotKey`, `Theme:KeyHint` en infobulle) ;
+  Bindings.xml : « Raccourci quête / voyage / combat : … » (`CLICK TreeAIQuick…:LeftButton`, sans touche par défaut).
+  Options : une seule barre, verrou, titres, taille.
 * Infobulles des points de la minimap (`MinimapPins.TipLines`) et de la boussole : ce que c'est, distance + temps,
   pourquoi maintenant, ce que fait le clic.
 

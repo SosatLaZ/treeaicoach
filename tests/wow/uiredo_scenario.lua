@@ -163,6 +163,12 @@ return function(M, ctx)
     if r.kind == "step" then hasBoss = true end
   end
   check(hero == "Gouffre de Ragefeu" and hasBoss, "détail : carte d'en-tête + boss numérotés")
+  if not T.Dungeon._active then   -- mode sûr : le journal marche, le suivi en donjon est une fonction bêta
+    check(win.action.label:GetText() == "Allumer « Donjon »", "mode sûr : « Allumer « Donjon » » d'abord")
+    win.action:GetScript("OnClick")(win.action)
+    check(T.Dungeon._active, "un clic : module Donjon allumé")
+    W.Render()
+  end
   check(win.action.label:GetText() == "Prévoir ce donjon", "détail : « Prévoir ce donjon » (" .. tostring(win.action.label:GetText()) .. ")")
   win.action:GetScript("OnClick")(win.action)
   check(T.Dungeon.Planned() and T.Dungeon.Planned().key == "RFC", "donjon prévu au clic")
@@ -203,5 +209,57 @@ return function(M, ctx)
   check(W.IsOpen(), "s'ouvre aussi en combat (rien de protégé)")
   M.inCombat = false
   W.Close()
+
+  -- ------------------------------------------------------------ one « Raccourcis » bar (Shortcuts.lua)
+  local Sc = T.Shortcuts
+  check(Sc and T.RegisterShortcutBar and T.SAFE_MODULES.Shortcuts, "barre « Raccourcis » : module + API d'amarrage")
+  if Sc and Sc._active then
+    local X = T.modules.Quick
+    if X and X._active and X.Layout then X.Layout() M.Advance(0.5, 0.1) end
+    local seg = CreateFrame("Frame", "TreeAITestSegment", UIParent)
+    seg:SetSize(4 + 3 * 34, 38)
+    seg:Show()
+    T:RegisterShortcutBar(seg, { id = "test", label = "Essai", order = 5, inset = 4 })
+    M.Advance(0.5, 0.1)
+    local dock = Sc.Frame()
+    check(dock and dock:IsShown() and dock:GetName() == "TreeAIShortcuts", "une seule barre « Raccourcis » affichée")
+    check(seg:GetParent() == dock and Sc.Docked(seg), "segment amarré dans la barre")
+    local movers = T:GetMovables()
+    check(movers.shortcuts and movers.shortcuts.frame == dock and not movers.quick and not movers.quickfight,
+      "mode édition : un seul cadre « Raccourcis » (plus de barres séparées)")
+    if X and X.bar then
+      check(X.bar:GetParent() == dock, "barre de quête amarrée")
+      local qb = X.buttons and X.buttons.toggle
+      check(qb and qb.__scStyled and qb.edges and #qb.edges == 4, "bouton au style commun (liseré 1 px, enfoncé, touche)")
+    end
+    -- segment vide : il disparaît ; plus rien : la barre se cache
+    seg:SetWidth(4)
+    Sc.Layout()
+    local n1 = Sc.shown or 0
+    seg:SetWidth(4 + 3 * 34)
+    Sc.Layout()
+    check((Sc.shown or 0) == n1 + 1, "segment vide retiré, puis remis")
+    -- en combat : rien ne bouge (cadres sécurisés)
+    M.inCombat = true
+    local w0 = dock:GetWidth()
+    seg:SetWidth(4 + 5 * 34)
+    Sc.Layout()
+    check(dock:GetWidth() == w0, "en combat : la barre ne bouge pas")
+    M.inCombat = false
+    M.Advance(0.5, 0.1)
+    if T.RunPendingOutOfCombat then T:RunPendingOutOfCombat() end
+    if ctx.fire then ctx.fire("PLAYER_REGEN_ENABLED") end
+    M.Advance(0.5, 0.1)
+    check(dock:GetWidth() > w0, "après le combat : la barre suit")
+    -- option : barres séparées de nouveau
+    Sc.db.dock = false
+    Sc:OnOptionChanged("dock")
+    check(seg:GetParent() == UIParent and not dock:IsShown(), "option « une seule barre » coupée : barres séparées")
+    Sc.db.dock = true
+    Sc:OnOptionChanged("dock")
+    check(seg:GetParent() == dock, "et de nouveau réunies")
+    seg:Hide()
+    Sc.Layout()
+  end
   check(#M.blocked == 0, "aucune action bloquée")
 end

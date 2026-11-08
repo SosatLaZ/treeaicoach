@@ -1213,6 +1213,7 @@ TreeAI.SAFE_MODULES = TreeAI.SAFE_MODULES or {
   Speed = true,                                                  -- course au corps (mort / fantôme)
   Hub = true, Macros = true,                                     -- pastille de la minimap, macros (diagnostic compris)
   Window = true,                                                 -- (UIREDO) fenêtre TreeAI + carte « Prochaine étape »
+  Shortcuts = true,                                              -- (UIREDO) une seule barre « Raccourcis » (rendu)
 }
 --- module « bêta » (pas dans le mode sûr) ?
 function TreeAI:IsBeta(name) return not self.SAFE_MODULES[name] end
@@ -1273,6 +1274,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Region = { lite = true, desc = "Quêtes rangées par région (ici, à côté, loin)" },
   Hub = { lite = true, desc = "Pastille de la minimap : tout TreeAI en un clic" },
   Window = { lite = true, desc = "Fenêtre TreeAI (pages, recherche) + carte « Prochaine étape »" },
+  Shortcuts = { lite = true, desc = "Une seule barre « Raccourcis » : quêtes, voyage, combat, familier" },
   Quick = { lite = true, desc = "Raccourcis : barre d'actions rapides, quêtes acceptées et rendues" },
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
   MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },

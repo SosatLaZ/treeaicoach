@@ -58,7 +58,9 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       first and (first.title .. (more > 0 and fmt(" et %d autre%s arrêt%s", more, more > 1 and "s" or "", more > 1 and "s" or "") or "")) or nil,
       function() W.Select("route") end, { "Le trajet complet, arrêt par arrêt, est dans « Trajet »." }, "Clic : voir le trajet")
     if g.paused then
-      Ly.empty("Trajet en pause : rien n'est guidé. « Reprendre » en bas à droite.")
+      local R = routeOn()
+      Ly.empty("Trajet en pause : rien n'est guidé.", R and { "Reprendre le trajet", function() R:TogglePause() end,
+        "Clic : la boussole et la carte reprennent tes étapes" } or nil)
     end
     local any = false
     for i, s in ipairs(g.steps) do
@@ -67,7 +69,7 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     -- quêtes à venir sur le trajet (couleur de niveau)
     for _, u in ipairs(g.upcoming) do
       if W.Match(u.title) then
-        Ly.quest(u.level, u.title, "Quête ultérieure · à prendre sur ton trajet", u.onClick)
+        Ly.quest(u.level, u.title, "Plus tard · à prendre sur ton trajet", u.onClick)
         any = true
       end
     end
@@ -119,8 +121,11 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
       for _, e in ipairs(extra) do Ly.row(e) end
     end
     if not any and #extra == 0 then
+      local Zp = T.ZonePlan
       Ly.empty(W.Query() ~= "" and ("Rien ne correspond à « " .. W.Query() .. " ».")
-        or "Ton journal est vide ici. Parle aux PNJ marqués « ! » ou ouvre « Trajet » pour choisir une zone.")
+        or "Aucune quête à suivre ici. Parle aux PNJ marqués « ! », ou choisis une autre zone de quêtes.",
+        (Zp and Zp.ShowZoneMenu and Zp.IsEnabled and Zp:IsEnabled()) and { "Choisir une zone", function() Zp:ShowZoneMenu() end,
+          "Clic : la liste des zones à ton niveau" } or nil)
     end
   end,
   action = function()
@@ -149,8 +154,10 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
   render = function(Ly)
     local R, P = routeOn(), T.Planner
     if not (R and P and P.steps and P.cursor) then
-      Ly.empty("Pas encore de trajet. Prends des quêtes : TreeAI prépare l'ordre des arrêts tout seul.")
-      W.RenderTab(Ly, "quests")
+      local Zp = T.ZonePlan
+      Ly.empty("Pas encore de trajet. Prends des quêtes : TreeAI prépare l'ordre des arrêts tout seul.",
+        (Zp and Zp.Recalc and Zp.IsEnabled and Zp:IsEnabled()) and { "Calculer le trajet", function() Zp:Recalc() end,
+          "Clic : TreeAI range tes quêtes en arrêts" } or nil)
       return
     end
     local st = R:Stops(64) or {}
@@ -180,12 +187,16 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
         Ly.row({ text = l.text, prio = l.prio, tooltip = l.tooltip, onClick = l.onClick, onRightClick = l.onRightClick })
       end
     end
-    if paused then Ly.empty("Le trajet est en pause : « Reprendre » en bas à droite.") return end
+    if paused then
+      Ly.empty("Le trajet est en pause : rien n'est guidé.", { "Reprendre le trajet", function() R:TogglePause() end,
+        "Clic : la boussole et la carte reprennent tes étapes" })
+      return
+    end
     if Ly.header("Arrêts", nil, #st, W.TAB_ICON.route) then
       local shown = 0
       for k, e in ipairs(st) do
         if shown >= 30 then
-          Ly.text(fmt("… et %d autres arrêts (ils apparaîtront au fur et à mesure).", #st - k + 1), "S", "muted")
+          Ly.text(fmt("… et %d autres arrêts, affichés au fur et à mesure.", #st - k + 1), "S", "muted")
           break
         end
         local s = e.step
@@ -322,7 +333,8 @@ local function renderDungeonList(Ly, D)
   end
   if #list == 0 then
     Ly.empty(W.Query() ~= "" and ("Aucun donjon ne correspond à « " .. W.Query() .. " ».")
-      or "Aucun donjon à ton niveau pour l'instant. « Tous les donjons » pour voir la liste complète.")
+      or "Aucun donjon à ton niveau pour l'instant.",
+      { "Voir tous les donjons", function() if W.char then W.char.dgAll = true end W.Render() end, "Clic : la liste complète" })
     return
   end
   local cols = Ly.col >= 520 and 2 or 1
@@ -349,12 +361,14 @@ local function renderDungeonList(Ly, D)
     else qtxt = fmt("%d quête%s", q.total, q.total > 1 and "s" or "") end
     meth(f.q, "SetText", qtxt)
     if q.total > 0 and q.done == q.total then meth(f.check, "Show") else meth(f.check, "Hide") end
-    meth(f.lv, "SetText", fmt("NV %d-%d", d.min or 1, d.max or 60))
+    meth(f.lv, "SetText", fmt("Niv. %d-%d", d.min or 1, d.max or 60))
     local tags = {}
     if cur == d then tags[#tags + 1] = "|cff33dd33tu y es|r"
     elseif planned == d then tags[#tags + 1] = "|cffffd100prévu|r" end
     if d.new then tags[#tags + 1] = "propre à Forever" end
     if d.faction then tags[#tags + 1] = d.faction end
+    meth(f.tag, "SetWidth", max(40, cw - 96))
+    meth(f.tag, "SetWordWrap", false)
     meth(f.tag, "SetText", tconcat(tags, " · "))
     f.key, f.label = d.key, d.n
     f.tipL = { fmt("Niveaux %d à %d · %d boss", d.min or 1, d.max or 60, #(d.bosses or {})),
@@ -371,14 +385,14 @@ local function renderDungeonDetail(Ly, D, d)
   local q = dungeonQuests(D, d)
   local planned = try(D.Planned)
   Ly.hero(ICON .. (DG_ICON[d.key] or "INV_Misc_Key_03"), d.n,
-    fmt("NV %d-%d · %d boss%s", d.min or 1, d.max or 60, #(d.bosses or {}), d.faction and (" · " .. d.faction) or ""),
+    fmt("Niv. %d-%d · %d boss%s", d.min or 1, d.max or 60, #(d.bosses or {}), d.faction and (" · " .. d.faction) or ""),
     planned == d and "Donjon prévu : la préparation est dans « Prêt ? »" or (d.new and "Donjon propre à WoW Forever" or nil))
   -- quêtes
   local res = q.res or {}
   local nq = #(res.inLog or {}) + #(res.toGet or {})
   if Ly.header(fmt("Quêtes (%d/%d)", q.done, nq), "dg:quests", nil, W.MARK.pick) then
     if nq == 0 then Ly.text(res.pending and "Lecture des quêtes du donjon…" or
-      "Aucune quête connue pour ce donjon (QuestieDB absent ou rien à ton niveau).", "S", "muted") end
+      "Aucune quête connue pour ce donjon (pas de QuestieDB, ou rien à ton niveau).", "S", "muted") end
     for _, e in ipairs(res.inLog or {}) do
       local sub
       if e.done then sub = "finie · à rendre"
@@ -422,7 +436,7 @@ local function renderDungeonDetail(Ly, D, d)
     for _, e in ipairs(useful) do
       if W.Match(e.name, e.boss and e.boss.n) then
         Ly.row({ text = fmt("%s · %s", e.name, D.LootVerdictText(e, members)), right = e.boss and e.boss.n or nil, kind = "gear",
-          tooltip = "Objets d'après Classic (≈), à vérifier en jeu." })
+          tooltip = "Butin d'après Classic : à vérifier en jeu." })
       end
     end
   end
@@ -442,7 +456,12 @@ W.AddPage({ id = "dungeon", label = "Donjons", icon = W.TAB_ICON.dungeon, title 
   end,
   render = function(Ly)
     local D = T.Dungeon
-    if not (D and D.Index) then Ly.empty("Le module Donjon est coupé (Fonctions → Donjon).") return end
+    if not (D and D.Index) then Ly.empty("Données des donjons absentes.") return end
+    if not D._active then   -- le journal marche sans le module ; le suivi en donjon (prochain boss, bilan) non
+      Ly.row({ text = "Suivi en donjon coupé (prochain boss, butin du groupe en direct, bilan) : fonction bêta.",
+        kind = "info", onClick = function() T:SetModuleEnabled("Dungeon", true) end,
+        clickHint = "Clic : allumer le module Donjon (sans /reload)" })
+    end
     local d = W.char and W.char.dungeon and D.Find(W.char.dungeon)
     if d then renderDungeonDetail(Ly, D, d) else renderDungeonList(Ly, D) end
     -- en instance / donjon prévu : l'onglet « Donjon » en direct (prochain boss, minuteurs, bilan)
@@ -452,6 +471,9 @@ W.AddPage({ id = "dungeon", label = "Donjons", icon = W.TAB_ICON.dungeon, title 
   action = function()
     local D = T.Dungeon
     if not D then return nil end
+    if not D._active then
+      return "Allumer « Donjon »", function() T:SetModuleEnabled("Dungeon", true) end, "Clic : allume le suivi en donjon (bêta)"
+    end
     local d = W.char and W.char.dungeon and D.Find(W.char.dungeon)
     local planned = try(D.Planned)
     if d and planned ~= d then

@@ -587,7 +587,7 @@ local function makeButton(key, secure, icon, tipFn, onClick)
   local cok, cd = pcall(G.CreateFrame, "Cooldown", nil, b, "CooldownFrameTemplate")
   if cok and cd then cd:SetAllPoints(b) b.cd = cd end
   b.key, b.tip, b.secure = key, tipFn, secure
-  if secure and T.Theme and T.Theme.HotKey then T.Theme:HotKey(b) end   -- (UIREDO) touche liée affichée sur le bouton
+  if T.Theme and T.Theme.ShortcutStyle then T.Theme:ShortcutStyle(b) end   -- (UIREDO) même bouton partout + touche liée
   b:SetScript("OnEnter", tooltip)
   b:SetScript("OnLeave", function() local tt = g("GameTooltip") if tt then pcall(tt.Hide, tt) end end)
   if onClick then
@@ -625,6 +625,15 @@ local function ensureBar()
   status:SetText("")
   M.bar = f
   if T.RegisterMovable then pcall(T.RegisterMovable, T, f, "quick", "Barre de quête") end
+  -- (UIREDO) amarrée dans la barre « Raccourcis » (Shortcuts.lua) : elle bouge avec elle
+  if T.RegisterShortcutBar then
+    pcall(T.RegisterShortcutBar, T, f, { id = "quest", label = "Quêtes · voyage", order = 1, inset = PAD, movable = "quick",
+      onUndock = function()
+        f:ClearAllPoints()
+        f:SetPoint("BOTTOM", G.UIParent, "BOTTOM", 0, 190)
+        if T.RegisterMovable then pcall(T.RegisterMovable, T, f, "quick", "Barre de quête") end
+      end })
+  end
 
   makeButton("toggle", false, "Interface\\GossipFrame\\ActiveQuestIcon", function()
     local on = opt("autoQuest")
@@ -640,29 +649,30 @@ local function ensureBar()
   end)
   makeButton("target", true, "Interface\\Icons\\Ability_Hunter_SniperShot", function(self)
     return { "Cibler : " .. tostring(self.targetName or ""), self.questTitle and ("Pour « " .. self.questTitle .. " »") or nil,
-      "Clic : le cibler (il doit être assez proche)." }
+      "Pourquoi : c'est l'objectif de ta quête en cours.", "Clic : le cibler (il doit être assez proche)." }
   end)
   makeButton("share", false, "Interface\\Icons\\INV_Scroll_03", function()
     local n = #M.ShareCandidates()
-    return { "Partager les quêtes au groupe", fmt("%d quête%s qu'un membre n'a pas.", n, n > 1 and "s" or ""),
+    return { "Partager les quêtes au groupe", fmt("Pourquoi : %d quête%s qu'un membre n'a pas.", n, n > 1 and "s" or ""),
       "Clic : partage une quête toutes les 0,6 s." }
   end, M.ShareAll)
   makeButton("sell", false, "Interface\\Icons\\INV_Misc_Coin_02", function()
     local list, value = greyItems()
     local cost = repairCost()
-    local t = { "Vendre les gris et réparer", "Clic : vend tous les objets gris et répare (marchand ouvert)." }
+    local t = { "Vendre les gris et réparer", "Clic : vend tous les objets gris et répare." }
     if #list > 0 then t[#t + 1] = fmt("%d gris : %s", #list, Fmoney(value)) end
     if cost > 0 then t[#t + 1] = "Réparation : " .. Fmoney(cost) end
     return t
   end, function() M.SellAndRepair(true, true) end)
   makeButton("mail", false, "Interface\\Icons\\INV_Letter_02", function()
     local n = #inbox()
-    return { "Prendre tout le courrier", fmt("%d lettre%s avec or ou objets.", n, n > 1 and "s" or ""),
+    return { "Prendre tout le courrier", fmt("Pourquoi : %d lettre%s avec or ou objets.", n, n > 1 and "s" or ""),
       "Clic : prend l'or et les objets (les contre-remboursements restent dans la boîte)." }
   end, M.TakeAllMail)
   makeButton("hearth", true, "Interface\\Icons\\INV_Misc_Rune_01", function()
     local bind = sv(try(g("GetBindLocation")))
-    return { "Pierre de foyer", bind and ("Clic : retour à " .. bind .. " (10 s d'incantation)") or "Clic : utiliser la pierre de foyer" }
+    return { "Pierre de foyer", "Pourquoi : elle est prête et tu n'es pas à l'auberge.",
+      bind and ("Clic : retour à " .. bind .. " (10 s d'incantation)") or "Clic : utiliser la pierre de foyer" }
   end)
   makeButton("mount", true, "Interface\\Icons\\Ability_Mount_JungleTiger", function(self)
     return { self.mountName or "Monture", self.aspect and "Pas de monture : Aspect du guépard (+30 % de vitesse)." or
@@ -784,6 +794,7 @@ function M.Layout()
     bar:SetWidth(max(SIZE + 2 * PAD, x - GAP + PAD))
     bar:Show()
     M.shown = shown
+    if T.Shortcuts and T.Shortcuts.Changed then T.Shortcuts.Changed() end
   end)
 end
 M.shown = {}

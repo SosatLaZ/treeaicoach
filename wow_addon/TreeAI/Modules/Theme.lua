@@ -59,6 +59,7 @@ local KINDS = {
   row = { bg = false, border = false, hover = true },
   alert = { bg = "bg", border = "prio3" },
   tooltip = { bg = "bg", border = "border" },
+  card = { bg = "bg", border = "borderSoft" },                -- (UIREDO) fenêtre / carte : fond plat, liseré 1 px
 }
 Th.KINDS = KINDS
 
@@ -73,6 +74,8 @@ Th.ROW = { h = 20, h2 = 32, head = 18, icon = 14, iconL = 18 }
 -- blocs (carte d'en-tête, étape numérotée, quête, ligne, en-tête de section), icônes des genres d'étape
 Th.TYPE = { title = "L", body = "M", small = "S" }
 Th.BLOCK = { hero = 66, step = 40, quest = 38, row = 24, header = 24, badge = 26, gap = 8 }
+Th.GRID = 4                                                   -- tout est posé sur une grille de 4 px
+Th.SHORTCUT = { size = 30, gap = 4, pad = 4, handle = 10 }     -- barre « Raccourcis » : boutons, écarts, poignée
 Th.STEP_ICON = {
   pick = "Interface\\GossipFrame\\AvailableQuestIcon", turn = "Interface\\GossipFrame\\ActiveQuestIcon",
   fly = "Interface\\Minimap\\Tracking\\FlightMaster", boat = "Interface\\Icons\\INV_Misc_Spyglass_03",
@@ -840,6 +843,53 @@ function Th:KeyText(b)
   if type(key) ~= "string" or key == "" then return nil end
   local short = type(G.GetBindingText) == "function" and select(2, pcall(G.GetBindingText, key, true)) or nil
   return (type(short) == "string" and short ~= "") and short or key
+end
+--- (UIREDO) ombre douce sous un cadre (deux couronnes sombres, hors du cadre, sous son fond)
+function Th:Shadow(frame, size)
+  if type(frame) ~= "table" or frame.__shadow or not self:CanSkin(frame) then return end
+  size = size or 6
+  local out = {}
+  for i, a in ipairs({ 0.30, 0.14 }) do
+    local t = meth(frame, "CreateTexture", nil, "BACKGROUND", nil, -8)
+    if t then
+      local d = math.floor(size * i / 2 + 0.5)
+      meth(t, "SetPoint", "TOPLEFT", frame, "TOPLEFT", -d, d - 2)
+      meth(t, "SetPoint", "BOTTOMRIGHT", frame, "BOTTOMRIGHT", d, -d - 2)
+      setColorTex(t, 0, 0, 0, a)
+      out[#out + 1] = t
+    end
+  end
+  frame.__shadow = out
+  return out
+end
+--- (UIREDO) un bouton de raccourci, le même partout : fond sombre, liseré 1 px, icône rognée, enfoncé, touche liée.
+--- Appelé à la création (hors combat) ; ne touche ni aux attributs ni aux scripts du bouton.
+function Th:ShortcutStyle(b)
+  if type(b) ~= "table" or b.__scStyled then return b end
+  b.__scStyled = true
+  local bg = meth(b, "CreateTexture", nil, "BACKGROUND", nil, -7)
+  if bg then meth(bg, "SetAllPoints", b); setColorTex(bg, 0, 0, 0, 0.55) end
+  b.edges = b.edges or {}
+  local pts = { { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true }, { "TOPLEFT", "BOTTOMLEFT" },
+    { "TOPRIGHT", "BOTTOMRIGHT" } }
+  for i, p in ipairs(pts) do
+    local e = meth(b, "CreateTexture", nil, "OVERLAY", nil, 6)
+    if e then
+      meth(e, "SetPoint", p[1], b, p[1]); meth(e, "SetPoint", p[2], b, p[2])
+      if p[3] then meth(e, "SetHeight", 1) else meth(e, "SetWidth", 1) end
+      setColorTex(e, self:Color("borderSoft"))
+      b.edges[i] = e
+    end
+  end
+  if b.icon then
+    meth(b.icon, "ClearAllPoints")
+    meth(b.icon, "SetPoint", "TOPLEFT", b, "TOPLEFT", 1, -1)
+    meth(b.icon, "SetPoint", "BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
+    meth(b.icon, "SetTexCoord", 0.08, 0.92, 0.08, 0.92)
+  end
+  meth(b, "SetPushedTexture", "Interface\\Buttons\\UI-Quickslot-Depress")
+  self:HotKey(b)
+  return b
 end
 --- Pose / met à jour l'étiquette de touche d'un bouton de raccourci.
 function Th:HotKey(b)
