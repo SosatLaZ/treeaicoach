@@ -23,6 +23,7 @@ Data\Gear.lua
 Data\Talents.lua
 Data\Recipes.lua
 Data\Travel.lua
+Data\Pets.lua
 
 Modules\Hunter.lua
 Modules\Classes.lua
@@ -66,3 +67,4 @@ Modules\Talents.lua
 Modules\Session.lua
 Modules\Errands.lua
 Modules\Edge.lua
+Modules\Finder.lua

@@ -477,6 +477,7 @@ end
 
 -- step done? (quest steps from C_QuestLog; others by skip / arrival / a later quest step)
 local function stepDone(s, log, me)
+  if s.finder then local Fd = T.Finder return (Fd and Fd.StopDone and Fd.StopDone(s)) and true or false end  -- arrêt « Chercher »
   if s.who and me and short(s.who) ~= short(me) then return nil end  -- someone else's step
   local q = tonumber(s.q)
   if s.k == "pick" and q then return (log[q] ~= nil) or questDone(q) end
@@ -508,8 +509,12 @@ function P:Evaluate()
   end
   local cursor = #steps + 1
   for i, s in ipairs(steps) do
-    if i < lastQuestDone and not s.q then s._done = true end
+    if i < lastQuestDone and not s.q and not s.finder then s._done = true end
     if not s._done and not s._other then cursor = i break end
+  end
+  local Fd = T.Finder                -- arrêts ajoutés depuis « Chercher » (Finder.lua), insérés au plus court
+  if Fd and Fd.Inject and Fd.Inject(steps, cursor) then
+    for i = 1, #steps do if not steps[i]._done and not steps[i]._other then cursor = i break end end
   end
   if self.cursor and cursor ~= self.cursor then self:OnStepChanged(self.cursor, cursor) end
   self.cursor = cursor

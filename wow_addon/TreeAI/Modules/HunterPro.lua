@@ -160,6 +160,7 @@ end
 
 function M:UpdatePet()
   if not opt("petZone") then setLine("pet", nil) return end
+  if T.Finder and T.Finder.OwnsPet and T.Finder.OwnsPet() then setLine("pet", nil) return end  -- Finder possède « apprivoiser »
   local zone = try(G.GetRealZoneText) or try(G.GetZoneText)
   local txt = M.PetAdvice(zone, level())
   -- Boost a déjà une ligne d'apprivoisement (rangs du familier ACTUEL) : une seule ligne « Apprivoise »

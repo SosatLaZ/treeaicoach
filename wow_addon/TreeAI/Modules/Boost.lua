@@ -858,6 +858,8 @@ end
 
 function M:UpdatePet()
   if not opt("pet") or playerClass() ~= "HUNTER" then return end
+  -- « Chercher » (Finder) possède l'apprivoisement : une seule ligne, la sienne
+  if T.Finder and T.Finder.OwnsPet and T.Finder.OwnsPet() then self:Clear("pet") return end
   local txt = self:PetAdvice()
   stats.petAdvice = txt
   if txt then self:Suggest("pet", txt .. " (Dressage des bêtes ensuite).", 1, { ttl = 120, cooldown = 3600, sound = false })
