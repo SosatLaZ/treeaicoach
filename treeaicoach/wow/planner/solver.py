@@ -28,6 +28,7 @@ INF = float("inf")
 HEARTH_CAST = 10.0
 HEARTH_CD = 3600.0
 BIG = 1e7
+GATE_MAX_FRAC = 0.5       # level gate: grind on the spot when the missing XP is ≤ half of the current level
 
 
 @dataclass
@@ -55,6 +56,8 @@ class Sim:
     level_at: list[int]
     hearth_before: list[bool]     # the hearthstone is used to reach this step
     level_end: int = 0
+    grind_before: list[float] = field(default_factory=list)   # seconds of level-gate grind before this step
+    hearth_save: list[float] = field(default_factory=list)    # seconds saved by the hearthstone on this leg
 
 
 class Solver:
@@ -127,6 +130,20 @@ class Solver:
         self._kx: dict[tuple[int, int, bool], int] = {}
         self.noise = 0.0
         self.n_eval = 0
+        # level-gate grind (« sois niveau X avant d'aller à Y ») : XP/s of same-level mobs, solo
+        self.grate = grind_rate(pb) if pb.D else 0.0
+        self.gate = self.grate > 0
+
+    def gate_grind(self, lvl: int, xp_in: float, req: int) -> float:
+        """XP to grind before a quest that needs level ``req`` (one level up, at most GATE_MAX_FRAC of the
+        level); -1 when the gate cannot be met on the spot."""
+        if lvl >= req:
+            return 0.0
+        need = self.need.get(lvl, 0)
+        if not self.gate or req != lvl + 1 or not need:
+            return -1.0
+        miss = max(0.0, need - xp_in)
+        return miss if miss <= GATE_MAX_FRAC * need else -1.0
 
     # ------------------------------------------------------------------ evaluation
     def kx(self, lvl: int, ml: int, elite: bool) -> int:
@@ -166,8 +183,19 @@ class Solver:
             k = kind[n]
             q = nq[n]
             if k == 0:
-                if picked[q] or lvl < self.req[q]:
+                if picked[q]:
                     return -INF, 0.0, t
+                if lvl < self.req[q]:
+                    g = self.gate_grind(lvl, xp_in, self.req[q])
+                    if g < 0:
+                        return -INF, 0.0, t
+                    t += g / self.grate
+                    gained += g
+                    xp_in += g
+                    while need and xp_in >= need:
+                        xp_in -= need
+                        lvl += 1
+                        need = self.need.get(lvl, 0)
                 for pr in self.pre[q]:
                     if not turned[pr]:
                         return -INF, 0.0, t
@@ -230,13 +258,25 @@ class Solver:
         need = self.need.get(lvl, 0)
         rested = self.pb.rested
         p, hs, B = self.START, (self.pb.hearth_cd if self.hearth else INF), self.BIND
-        done, levels, hb = [], [], []
+        done, levels, hb, gb, hsv = [], [], [], [], []
         for n in route:
-            leg, used = D[p][n], False
+            leg, used, save, gr = D[p][n], False, 0.0, 0.0
             if hs <= t and D[B][n] + HEARTH_CAST < leg:
+                save = leg - (D[B][n] + HEARTH_CAST)
                 leg, used, hs = D[B][n] + HEARTH_CAST, True, t + HEARTH_CD
             t += leg
             q = nq[n]
+            if kind[n] == 0 and lvl < self.req[q]:
+                g = self.gate_grind(lvl, xp_in, self.req[q])
+                if g > 0:
+                    gr = g / self.grate
+                    t += gr
+                    gained += g
+                    xp_in += g
+                    while need and xp_in >= need:
+                        xp_in -= need
+                        lvl += 1
+                        need = self.need.get(lvl, 0)
             if kind[n] == 1:
                 t += svc[n]
                 kc = self.kills[n]
@@ -261,9 +301,11 @@ class Solver:
             done.append(t)
             levels.append(lvl)
             hb.append(used)
+            gb.append(gr)
+            hsv.append(save)
             p = n
         sc = self.evaluate(route)[0]
-        return Sim(sc > -INF, gained, t, done, levels, hb, lvl)
+        return Sim(sc > -INF, gained, t, done, levels, hb, lvl, gb, hsv)
 
     # ------------------------------------------------------------------ insertion
     def _delta(self, route: list[int], i: int, x: int) -> float:

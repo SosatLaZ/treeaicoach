@@ -171,6 +171,7 @@ class Problem:
     maps: dict[int, str] = field(default_factory=dict)
     bands: dict[int, tuple[int, int]] = field(default_factory=dict)
     src: str = ""
+    faction: str = ""                                  # "Alliance" | "Horde" (unknown flight points on the way)
     rects: dict[int, MapRect] = field(default_factory=dict)
     squad_raw: list = field(default_factory=list)
     # filled by build_matrix: index n = start, n+1 = hearth
@@ -239,7 +240,7 @@ def _load(exp, learn, char_learn, group_mode, zones) -> Problem | None:
                  log_cap=max(1, int(_n(pl.get("logMax"), 20)) or 20), log_count=int(_n(pl.get("logCount"))),
                  session_min=_n(pl.get("session")), raid=bool(pl.get("raid")), group=k,
                  known_taxi=[int(_n(t)) for t in _list(pl.get("taxi"))], maps=names, bands=bands,
-                 src=str(exp.get("src") or ""), rects=rects,
+                 src=str(exp.get("src") or ""), faction=str(pl.get("faction") or ""), rects=rects,
                  squad_raw=[s for s in _list(exp.get("squad")) if isinstance(s, dict)])
     h = pl.get("hearth") if isinstance(pl.get("hearth"), dict) else None
     if h:

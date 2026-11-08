@@ -191,7 +191,10 @@ def test_level_gates_and_log_cap_respected():
     for i, n in enumerate(r.route):
         nd = pb.nodes[n]
         if nd.kind == "pick":
-            assert (sim.level_at[i - 1] if i else pb.level) >= pb.quests[nd.q].req
+            before = sim.level_at[i - 1] if i else pb.level
+            # a gate one level away is met by grinding on the spot (speed.py), recorded on that step
+            assert sim.level_at[i] >= pb.quests[nd.q].req
+            assert before >= pb.quests[nd.q].req or sim.grind_before[i] > 0
             logc += 1
         elif nd.kind == "turn":
             logc -= 1
@@ -268,7 +271,7 @@ def test_compute_plan_routes_and_verdicts():
     for r in plan["routes"]:
         assert r["verdict"] in routes.VERDICT_FR and r["reasons"] and r["steps"]
         assert {"k", "map", "x", "y", "label", "eta"} <= set(r["steps"][0])
-        assert all(st["k"] in ("pick", "obj", "turn", "fly", "hs", "meet") for st in r["steps"])
+        assert all(st["k"] in ("pick", "obj", "turn", "fly", "hs", "meet", "grind", "fp") for st in r["steps"])
         etas = [st["eta"] for st in r["steps"]]
         assert etas == sorted(etas)
     sq = plan["routes"][2]
