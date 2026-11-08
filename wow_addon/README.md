@@ -549,6 +549,26 @@ n'est pas encore lu · équipement : une ligne par emplacement avec une vraie pi
 (« Surveille l'HV et le butin »), verbe selon la source dans « Maintenant » (« Équipe » seulement pour un objet des
 sacs, sinon « Achète », « Fais fabriquer », « Choisis en récompense »…).
 
+**Guidage : une seule source de vérité (agent COHERE).** `settings.guide` = `"auto"` (défaut, « Suivi Forever
+(recommandé si installé) ») ou `"treeai"` (bouton « Guidage » de la page d'options principale, `/tai guidage`,
+`TreeAI:SetGuideMode`). `TreeAI:ExternalGuide()` → `"spf"` / `"questie"` / nil (détection par `ShortestPathForever.API`,
+`QuestieLoader` / `Questie`). Quand un guide externe est là, « Maintenant » saute les lignes de `TreeAI.GUIDE_IDS` /
+`GUIDE_PREFIX` (objectifs, « près de la remise », « Suite », « à rendre ici », « Cible suivante »…) : SPF / Questie
+les montrent déjà ; l'onglet Quêtes reste complet. Toujours : **une seule** ligne d'étape épinglée (`STEP_SOURCES` :
+le trajet `plan` d'abord = l'arrêt courant de SPF via `Route:CurrentStep()`, sinon « Étape » de Quests), jamais coupée
+par le budget ; ordre : danger → étape → actions (prio ≥ 2) → infos. Boussole : cachée tant que SPF guide
+(`Compass.SPFGuiding()` : `Active` / `IsNavigating` / `CurrentStop`) → une seule flèche. En mode `treeai`, Route
+n'envoie plus rien à SPF. Quêtes : `QUEST_TURNED_IN` / `QUEST_REMOVED` effacent tout de suite les lignes de la quête
+(`Quests.Forget`, `Quests.gone` 15 s pour le journal qui traîne), « Suite » jamais vers une quête déjà prise / rendue.
+Points de dressage : `API.PetFreeTrainingPoints()` (total − utilisés ; nil si 0 utilisé = total brut). Placement :
+colonne « Suivi Forever » de SPF lue (noms + préfixes `ShortestPath` / `SPF_`, union des enfants d'une ancre,
+réservée comme un suivi de quêtes, vue aussi par le reflow) ; `LAYOUT_V` = 3 (replacement unique).
+**« Rendre » seulement pour MES quêtes finies** : `Planner:Evaluate` saute (transitoire, `s._absent`) toute étape
+« rendre » dont la quête n'est pas dans le journal ET finie, et tout objectif d'une quête absente, sauf si une
+prise / un objectif de cette quête les précède encore ; `Planner.stale` / `summary.plan.stale` + message `PLAN_STALE`
+→ l'appli recalcule. Missions : une quête finie par les potes mais absente de mon journal = « Bravo, Charlie peuvent
+rendre … », jamais « Rendez ensemble ».
+
 ## Interface d'abord, anti-bruit, placement, mode édition (agent POLISH)
 
 **Tout est cliquable** ; les commandes sont secondaires. Barre d'outils du panneau : *Tout* (page de toutes

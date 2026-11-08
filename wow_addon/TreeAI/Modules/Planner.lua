@@ -508,6 +508,36 @@ function P:Evaluate()
     if s.q and d then lastQuestDone = i end
     if not s.q and self.char.skip[self.key .. ":" .. i] then s._done = true end
   end
+  -- (COHERE) jamais « Rendre » / objectif d'une quête absente du journal : un plan périmé (fait plus tôt, pour un
+  -- autre perso / un membre du groupe) ne guide pas. Étape valable seulement si la quête est dans le journal (et
+  -- finie pour « rendre »), ou si une étape « prendre » / objectif de cette quête la précède encore (étape future).
+  -- Recalculé à chaque passage (la quête prise / finie → l'étape revient) ; plan marqué périmé → l'appli le refait.
+  local pending, absent = {}, 0
+  for _, s in ipairs(steps) do
+    local q = tonumber(s.q)
+    if q and not s._done and not s._other then
+      local lq = log[q]
+      if s.k == "turn" and not pending[q] and not (lq and lq.done == 1) then
+        s._other, s._absent = true, true
+        if not lq then absent = absent + 1 end
+      elseif s.k == "obj" and not pending[q] and not lq then
+        s._other, s._absent = true, true
+        absent = absent + 1
+      else
+        s._absent = nil
+      end
+      if not s._other and (s.k == "pick" or s.k == "obj") then pending[q] = true end
+    else
+      s._absent = nil
+    end
+  end
+  self.stale = absent > 0 or nil
+  if self.stale and T.Fire and not self._staleSent then
+    self._staleSent = true
+    pcall(T.Fire, T, "PLAN_STALE", absent)   -- l'appli relit « plan.stale » dans le résumé et recalcule
+  elseif not self.stale then
+    self._staleSent = nil
+  end
   local cursor = #steps + 1
   for i, s in ipairs(steps) do
     if i < lastQuestDone and not s.q then s._done = true end
@@ -1053,8 +1083,12 @@ function P:Lines()
     lines[#lines + 1] = { text = "Trajet terminé ✔ (TreeAI Coach → « Calculer » pour la suite)", prio = 1 }
   else
     local shown = 0
+    -- (COHERE) Suivi Forever guide notre trajet : l'en-tête = SON arrêt courant (une seule vérité à l'écran)
+    local Rt = T.Route
+    local spfStep = Rt and Rt.CurrentStep and Rt:CurrentStep() or nil
     for i = cur, #steps do
       local s = steps[i]
+      if shown == 0 and spfStep then s = spfStep end
       if not s._done and not s._other then
         local label = self:StepLabel(s) .. progress(s, log)
         local mins = stepMinutes(steps, i)
@@ -1210,7 +1244,8 @@ function P:WriteSummary()
   s.plan = { v = 1, src = self.src, made = self.plan and self.plan.made or nil, route = r.id, title = r.title,
     step = cur, steps = #steps, label = st and self:StepLabel(st) or nil, kind = st and st.k or nil, quest = st and st.q or nil,
     verdict = r.verdict or "ok", reason = type(r.reasons) == "table" and r.reasons[1] or nil, xph = r.xph, minutes = r.minutes,
-    left = left, hash = E.Hash(steps), sync = sync, updated = epoch() }
+    left = left, hash = E.Hash(steps), sync = sync, updated = epoch(),
+    stale = self.stale or nil }   -- (COHERE) étapes de quêtes absentes du journal : à recalculer côté appli
 end
 
 -- ===================================================================== cycle de vie

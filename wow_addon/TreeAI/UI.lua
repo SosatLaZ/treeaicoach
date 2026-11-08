@@ -757,8 +757,11 @@ local SECTION_SRC = { Quests = "Étape conseillée", plan = "Trajet", main = nil
   missions = "Missions", Talents = "Talents", Squad = "Groupe", Missions = "Missions" }
 local function nowGroup(e)
   if e.prio >= 3 and not e.pin then return 1, L["Urgent"] end
-  if e.pin then return 2, L["Quête en cours"] end
-  return 3, L["Ensuite"]
+  -- (COHERE) seule l'étape de quête (trajet / « Étape ») est « Quête en cours » ; les autres lignes épinglées
+  -- (équipe, abandon, objet qui lance une quête) suivent : danger → étape → actions rapides → infos
+  if e.pin and (TreeAI.STEP_SOURCES or {})[e.source or ""] then return 2, L["Quête en cours"] end
+  if (e.prio or 1) >= 2 or e.pin then return 3, L["Ensuite"] end
+  return 4, L["Infos"]
 end
 local function blockGroup(e, tab)
   local src = e.source
@@ -1205,12 +1208,31 @@ for _, n in ipairs({
   "Questie_BaseFrame", "QuestieTrackerBaseFrame", "Questie_TrackerBaseFrame", "QuestieTracker_BaseFrame",
   "Questie_HeaderFrame", "Questie_TrackedQuests", "DetailsBaseFrame3", "Details_BaseFrame2", "Recount_DetailWindow",
   "CompactRaidFrameManager", "ExtraActionBarFrame", "ZoneAbilityFrame", "ChatFrame1EditBox", "PlayerPowerBarAlt",
+  -- (COHERE) Shortest Path Forever : colonne « Suivi Forever » (nettoyer le journal, trajet, composants) ;
+  -- noms probables, le préfixe ci-dessous attrape les autres (lecture seule, jamais déplacés)
+  "ShortestPathForeverTracker", "ShortestPathForeverTrackerFrame", "ShortestPathForeverFrame",
+  "ShortestPathForever_Tracker", "ShortestPathForeverTrackerBaseFrame", "SPFTrackerFrame", "SPF_TrackerFrame",
+  "SPF_Tracker", "ShortestPathTrackerFrame",
 }) do SCAN_NAMES[#SCAN_NAMES + 1] = n end
 for i = 1, 10 do SCAN_NAMES[#SCAN_NAMES + 1] = "ChatFrame" .. i end
 TreeAI.LAYOUT_SCAN_NAMES = SCAN_NAMES
 -- cadres d'autres addons repérés par leur préfixe (enfants de la minimap compris : boutons LibDBIcon)
 local SCAN_PREFIX = { "LibDBIcon10_", "Questie_", "QuestieTracker", "Details", "Recount", "Skada",
-  "CompactRaid", "CompactParty", "PartyMemberFrame" }
+  "CompactRaid", "CompactParty", "PartyMemberFrame", "ShortestPath", "SPF_", "SPFTracker" }
+-- (COHERE) suivis d'autres addons : leur cadre racine peut être une petite ancre dont les lignes pendent
+-- dessous -> rectangle = union des enfants visibles ; et ils grandissent comme un suivi de quêtes
+local GUIDE_PREFIX = { "ShortestPath", "SPF_", "SPFTracker", "Questie" }
+local function guideName(n)
+  if type(n) ~= "string" then return false end
+  for _, p in ipairs(GUIDE_PREFIX) do if n:sub(1, #p) == p then return true end end
+  return false
+end
+local function trackerish(n)
+  if not guideName(n) then return false end
+  local l = n:lower()
+  return (l:find("track") or l:find("suivi") or l:find("list") or l:find("base")) and true or false
+end
+TreeAI.LAYOUT_GUIDE_PREFIX = GUIDE_PREFIX
 TreeAI.LAYOUT_SCAN_PREFIX = SCAN_PREFIX
 -- suivis de quêtes : ils grandissent avec les quêtes -> on réserve la colonne jusqu'au tiers bas de l'écran
 local GROWS = { ObjectiveTrackerFrame = true, QuestWatchFrame = true, WatchFrame = true, Questie_BaseFrame = true,
@@ -1279,6 +1301,32 @@ local function rectOf(f, W, H, evenHidden)
   if l + w < 0 or b + h < 0 or l > W or b > H then return nil end
   return { l = l, b = b, w = w, h = h, name = call(f, "GetName") }
 end
+-- (COHERE) union des enfants visibles (≤ 60, un niveau) d'un cadre de suivi d'un autre addon
+local function childUnion(f, W, H)
+  if type(f) ~= "table" or type(f.GetChildren) ~= "function" or not call(f, "IsVisible") then return nil end
+  local kids = { pcall(f.GetChildren, f) }
+  if not kids[1] then return nil end
+  local l0, b0, r0, t0
+  for i = 2, math.min(#kids, 61) do
+    local r = rectOf(kids[i], W, H)
+    if r then
+      l0, b0 = math.min(l0 or r.l, r.l), math.min(b0 or r.b, r.b)
+      r0, t0 = math.max(r0 or (r.l + r.w), r.l + r.w), math.max(t0 or (r.b + r.h), r.b + r.h)
+    end
+  end
+  if not l0 then return nil end
+  return { l = l0, b = b0, w = r0 - l0, h = t0 - b0, name = call(f, "GetName") }
+end
+local function guideRect(f, W, H, name)
+  local r = rectOf(f, W, H)
+  if guideName(name) then
+    local u = childUnion(f, W, H)
+    if u and (not r or u.w * u.h > r.w * r.h) then r = u end
+  end
+  return r
+end
+TreeAI._GuideRect = guideRect
+TreeAI._discovered = TreeAI._discovered or {}   -- noms de cadres d'addons trouvés par préfixe (reflow léger)
 
 --- Scan lecture seule. Renvoie { W=, H=, rects = { {l,b,w,h,name}... }, named = { [name] = rect } }.
 function TreeAI:ScanScreen()
@@ -1287,10 +1335,12 @@ function TreeAI:ScanScreen()
   local function add(f, name)
     if seen[f] then return end
     seen[f] = true
-    local r = rectOf(f, W, H)
+    name = name or call(f, "GetName")
+    local r = guideRect(f, W, H, name)
     if not r and name and RESERVE_HIDDEN[name] then r = rectOf(f, W, H, true); if r then r.hidden = true end end
+    if r and guideName(name) then TreeAI._discovered[name] = true end
     if r then
-      if r.name and GROWS[r.name] then
+      if r.name and (GROWS[r.name] or trackerish(r.name)) then
         -- la colonne du suivi jusqu'au tiers bas (au moins 250 de large, côté de l'écran conservé)
         local top = r.b + r.h
         local bottom = math.min(r.b, math.max(H * 0.30, top - 560))
@@ -1415,7 +1465,8 @@ end
 
 local PANEL_W = { 360, 340, 320, 300 }
 local PANEL_L = { 8, 6, 5, 4 }
-local LAYOUT_V = 2          -- version du placement : +1 = replacement unique pour les joueurs existants
+local LAYOUT_V = 3          -- version du placement : +1 = replacement unique pour les joueurs existants
+                            -- (3 = COHERE : colonne « Suivi Forever » de Shortest Path évitée)
 TreeAI.LAYOUT_VERSION = LAYOUT_V
 
 -- le rectangle (unités UI) est-il entièrement libre sur la grille ?
@@ -2212,13 +2263,17 @@ do
   -- passage léger : cadres connus par leur nom (suivis, groupe, compteurs, minimap, barres…)
   local function lightRects(W, H)
     local out = {}
-    for _, n in ipairs(SCAN_NAMES) do
+    local seen = {}
+    local function one(n)
       local f = _G[n]
-      if type(f) == "table" then
-        local r = rectOf(f, W, H)
+      if type(f) == "table" and not seen[f] then
+        seen[f] = true
+        local r = guideRect(f, W, H, n)
         if r then r.name = r.name or n; out[#out + 1] = r end
       end
     end
+    for _, n in ipairs(SCAN_NAMES) do one(n) end
+    for n in pairs(TreeAI._discovered) do one(n) end   -- (COHERE) suivis d'addons vus par préfixe
     return out
   end
   TreeAI._LightRects = lightRects

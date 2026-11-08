@@ -468,6 +468,7 @@ end
 -- ===================================================================== Shortest Path Forever
 local function spf()
   if not opt("spf") then return nil end
+  if T.GuideMode and T:GuideMode() == "treeai" then return nil end   -- (COHERE) option « Guidage : TreeAI »
   local Cm = T.Compass
   local A = Cm and Cm.SPF and Cm.SPF()
   if A and type(A.NavigateRoute) == "function" then return A, Cm end
@@ -509,6 +510,23 @@ function R:Following()
   if stop then return stop end
   local why = call("Ended", OWNER)
   if why then self.following = nil end
+  return nil
+end
+-- (COHERE) étape du Planner qui correspond à l'arrêt courant de SPF (CurrentStop = n° ou { index = n }), nil sinon
+function R:CurrentStep()
+  local stop = self.following and self:Following()
+  local n = type(stop) == "number" and stop or (type(stop) == "table" and tonumber(stop.index or stop.i)) or nil
+  local P = T.Planner
+  local steps, cur = P and P.steps, P and P.cursor
+  if not (n and n >= 1 and steps and cur) then return nil end
+  local k = 0
+  for i = cur, #steps do
+    local s = steps[i]
+    if not s._done and not s._other and s.x and not TRANSPORT[s.k] then
+      k = k + 1
+      if k == n then return s end
+    end
+  end
   return nil
 end
 -- « Suivre ce trajet » (clic) : SPF si présent, sinon la boussole / repère du Planner sur l'arrêt 1

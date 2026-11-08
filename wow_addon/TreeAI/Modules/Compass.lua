@@ -282,6 +282,24 @@ function M.OtherGuide(t)
   return nil
 end
 
+-- (COHERE) Shortest Path guide-t-il en ce moment (sa flèche + « Arrêt n sur N » à l'écran) ? Lecture seule :
+-- API publique (Active / IsNavigating / IsActive / CurrentStop), sinon notre propre envoi (Route.following).
+-- Alors la boussole TreeAI se cache : une seule flèche, la sienne, sur l'arrêt courant.
+local SPF_ACTIVE = { "Active", "IsNavigating", "IsActive" }
+function M.SPFGuiding()
+  local A = M.SPF()
+  if not A then return false end
+  for _, fn in ipairs(SPF_ACTIVE) do
+    if type(A[fn]) == "function" then
+      local on = spfCall(A, fn)
+      if on then return true end
+    end
+  end
+  if type(A.CurrentStop) == "function" and spfCall(A, "CurrentStop", "TreeAI") then return true end
+  local R = T.Route
+  return (R and R.following) and true or false
+end
+
 -- Un itinéraire TreeAI confié à Shortest Path (clic du joueur) s'affiche en ligne flottante en haut de l'écran
 -- (« Arrêt 1 sur 1 : … »). À la mort, il recouvre la fenêtre de mort de Blizzard et vise une quête au lieu du
 -- corps : on retire NOTRE itinéraire (propriétaire « TreeAI » seulement, API publique de SPF, testée avant usage).
@@ -815,6 +833,8 @@ function M.Refresh()
   if not frame then return st end
   local want = M.db and M.db.shown ~= false and M:IsEnabled()
   st.dup = (M.db and M.db.hideDup ~= false and not st.none) and M.OtherGuide(st.target) or nil
+  -- une seule flèche : Shortest Path guide (trajet envoyé par TreeAI ou lancé par le joueur) → il a la main
+  if not st.dup and not st.none and M.SPFGuiding() then st.dup = "spf" end
   -- mort / fantôme : la fenêtre de mort de Blizzard (haut-centre) reste lisible, la course au corps a son guide
   local ps = T.PlayerState and T:PlayerState()
   st.hiddenDead = ps and (ps.dead or ps.ghost) or nil
@@ -958,3 +978,13 @@ T:RegisterSlash("boussole", function(rest)
     M:Print("Boussole : " .. (t and (t.label or t.title) or "aucune cible") .. " · /tai cible, /tai way x y, /tai boussole yd|m|1.2|off")
   end
 end, "boussole : afficher / cacher / yd|m / taille")
+
+-- (COHERE) /tai guidage [forever|treeai] : qui guide les quêtes à l'écran (aussi dans les options, « Démarrer »)
+T:RegisterSlash("guidage", function(rest)
+  rest = tostring(rest or ""):lower()
+  local m = (rest:find("tree") and "treeai") or ((rest:find("forever") or rest:find("auto") or rest:find("spf")) and "auto")
+    or (T:GuideMode() == "treeai" and "auto" or "treeai")
+  T:SetGuideMode(m)
+  M.Refresh()
+  M:Print("Guidage : " .. (T.GUIDE_LABEL[m] or m) .. ".")
+end, "guidage [forever|treeai] : Suivi Forever / Questie guident (TreeAI ne double pas) ou TreeAI guide")

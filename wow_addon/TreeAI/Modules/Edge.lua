@@ -922,7 +922,8 @@ end
 function M.CheckPet()
   if not opt("petTrainer") or playerClass() ~= "HUNTER" or inCombat() then return drop("petTrainer") end
   if not try(g("HasPetUI")) then return drop("petTrainer") end
-  local tp = tonumber(sv(API.PetTrainingPoints and API.PetTrainingPoints() or try(g("GetPetTrainingPoints"))))
+  -- (COHERE) points LIBRES (total − utilisés), jamais le total brut ; nil = lecture pas fiable → silence
+  local tp = tonumber(sv(API.PetFreeTrainingPoints and API.PetFreeTrainingPoints()))
   if tp and tp >= 30 then
     return say("petTrainer", fmt("Dépense %d points de dressage : sort « Dressage des bêtes »", tp), 2,
       { ttl = 120, cooldown = 1800, window = 180, sig = level() })
