@@ -145,6 +145,9 @@ end
 M._Char = char
 
 local function suggest(id, text, prio, opts)
+  -- (4.1 LAYOUT) avis non demandé : seulement sur la page Macros de la fenêtre (pastille « Personnage »), jamais à l'écran
+  opts = opts or {}
+  if opts.ownPage == nil then opts.ownPage = "macros" end
   if M.Suggest then return M:Suggest(id, text, prio, opts) end
   if T.Suggest then return T:Suggest("Macros:" .. id, text, prio, opts) end
 end

@@ -20,7 +20,8 @@ if not (T and T.RegisterModule) then return end
 
 local M = T:RegisterModule("Abandon", {
   title = "Nettoyer mon journal",
-  defaults = { enabled = true, maxLines = 6, hint = true, hintMin = 20, direct = true },
+  -- (4.1 LAYOUT) pas de rappel à l'écran d'office : le ménage est sur la page Quêtes (« Ménage du journal »)
+  defaults = { enabled = true, maxLines = 6, hint = false, hintMin = 20, direct = true },
   options = {
     { key = "hint", type = "toggle", label = "Journal chargé : rappel sur la carte « Prochaine étape »", section = "Affichage" },
     { key = "hintMin", type = "range", label = "Rappel à partir de (quêtes dans le journal)", min = 10, max = 40, step = 1 },

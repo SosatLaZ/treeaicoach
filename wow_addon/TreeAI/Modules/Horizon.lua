@@ -12,7 +12,8 @@ if not (T and T.RegisterModule) then return end
 
 local Hz = T:RegisterModule("Horizon", {
   title = "Bande d'horizon",
-  defaults = { enabled = true, shown = true, stops = 3 },
+  -- (4.1 LAYOUT) bande coupée d'office : la boussole est LA flèche (Réglages → Affichage pour la rallumer)
+  defaults = { enabled = true, shown = false, stops = 3 },
   charDefaults = { point = "TOP", x = 0, y = -18 },
   options = {
     { key = "shown", type = "toggle", label = "Bande d'horizon en haut de l'écran (prochains arrêts selon ton cap)" },

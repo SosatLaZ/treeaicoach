@@ -46,40 +46,12 @@ local function openQuest(q)
   end
 end
 
-W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = "Quêtes",
-  desc = "L'histoire de la zone : étapes numérotées, quêtes à venir, journal",
-  sub = function()
-    local g = W.Guide(1)
-    local s = W.GuideSummary(g)
-    return s ~= "" and s or "Aucune quête en cours"
-  end,
-  render = function(Ly)
-    local g = W.Guide(5, true)
+--- (4.1 LAYOUT) le journal sur la page Quêtes : à rendre, en cours ici, ménage du journal, en pause, ailleurs par zone,
+--- autres conseils de l'onglet Quêtes ; vrai si quelque chose a été dessiné
+function W.RenderQuestLog(Ly, skipEmpty)
     local Q = mod("Quests")
     local a = Q and Q.last
-    local first   -- (4.0 QA) une vraie étape du trajet (pas une ligne de « Maintenant » reprise sans trajet)
-    for _, s in ipairs(g.steps) do if not s.entry then first = s break end end
-    local more = max(0, (g.count or 0) - 1)
-    Ly.hero(first and first.icon or (ICON .. "INV_Misc_Book_09"), (g.paused and "Trajet en pause" or g.zone),
-      W.GuideSummary(g) ~= "" and W.GuideSummary(g) or "Aucune quête suivie ici",
-      first and (first.title .. (more > 0 and fmt(" et %d autre%s arrêt%s", more, more > 1 and "s" or "", more > 1 and "s" or "") or "")) or nil,
-      function() W.Select("route") end, { "Le trajet complet, arrêt par arrêt, est dans « Trajet »." }, "Clic : voir le trajet")
-    if g.paused then
-      local R = routeOn()
-      Ly.empty("Trajet en pause : rien n'est guidé.", R and { "Reprendre le trajet", function() R:TogglePause() end,
-        "Clic : la boussole et la carte reprennent tes étapes" } or nil)
-    end
     local any = false
-    for i, s in ipairs(g.steps) do
-      if not s.entry and W.Match(s.title, s.sub) then Ly.step(s, i == 1); any = true end
-    end
-    -- quêtes à venir sur le trajet (couleur de niveau)
-    for _, u in ipairs(g.upcoming) do
-      if W.Match(u.title) then
-        Ly.quest(u.level, u.title, "Plus tard · à prendre sur ton trajet", u.onClick)
-        any = true
-      end
-    end
     if a then
       -- à rendre (hors des étapes déjà montrées)
       local turn = {}
@@ -130,29 +102,15 @@ W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = 
     if #extra > 0 and Ly.header("Autres conseils", "q:extra", #extra, ICON .. "INV_Misc_Note_01", true) then
       for _, e in ipairs(extra) do Ly.row(e) end
     end
-    if not any and #extra == 0 then
+    if not any and #extra == 0 and not skipEmpty then
       local Zp = T.ZonePlan
       Ly.empty(W.Query() ~= "" and ("Rien ne correspond à « " .. W.Query() .. " ».")
         or "Aucune quête à suivre ici. Parle aux PNJ marqués « ! », ou choisis une autre zone de quêtes.",
         (Zp and Zp.ShowZoneMenu and Zp.IsEnabled and Zp:IsEnabled()) and { "Choisir une zone", function() Zp:ShowZoneMenu() end,
           "Clic : la liste des zones à ton niveau" } or nil)
     end
-  end,
-  action = function()
-    local R = routeOn()
-    local P = T.Planner
-    if not (R and P and P.steps and #P.steps > 0) then return nil end   -- (4.0 QA) pas de trajet : rien à mettre en pause
-    local paused = R.char and R.char.paused
-    return paused and "Reprendre" or "Pause", function() R:TogglePause() end,
-      paused and "Clic : reprendre le guidage du trajet" or "Clic : mettre le trajet en pause (plus de guidage)"
-  end,
-  status = function()
-    local Q = mod("Quests")
-    local n = Q and Q.lastList and #Q.lastList or 0
-    local cap = tonumber(try(G.C_QuestLog and G.C_QuestLog.GetMaxNumQuestsCanAccept)) or 20
-    return fmt("Journal : %d/%d", n, cap)
-  end,
-})
+    return any or #extra > 0
+end
 
 -- (ZONEFIX) « Zones à faire » : tes zones à ton niveau (niveaux des quêtes, à prendre / en cours, trajet pour y aller,
 -- « déjà finie »), un clic = travailler dans cette zone (le trajet est refait tout de suite)
@@ -184,14 +142,13 @@ function W.ZonesToDo(Ly)
 end
 
 -- ===================================================================== Trajet (tous les arrêts, zone, choix)
-W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Trajet",
-  desc = "Tous les arrêts dans l'ordre, la zone de travail, les vols",
-  sub = function()
-    local Zp = T.ZonePlan
-    local A = Zp and Zp.IsEnabled and Zp:IsEnabled() and try(Zp.Allowed, Zp)
-    return A and A.label and ("Zone de travail : " .. A.label) or "Le chemin le plus rapide entre tes étapes"
-  end,
-  render = function(Ly)
+-- (4.1 LAYOUT) l'ancienne page « Trajet » est une section de la page Quêtes (W.Open("route") y mène)
+function W.RouteSub()
+  local Zp = T.ZonePlan
+  local A = Zp and Zp.IsEnabled and Zp:IsEnabled() and try(Zp.Allowed, Zp)
+  return A and A.label and ("Zone de travail : " .. A.label) or "Le chemin le plus rapide entre tes étapes"
+end
+function W.RenderRoute(Ly)
     local R, P = routeOn(), T.Planner
     if not (R and P and P.steps and P.cursor) then
       local Zp = T.ZonePlan
@@ -279,16 +236,200 @@ W.AddPage({ id = "route", label = "Trajet", icon = W.TAB_ICON.route, title = "Tr
       end
     end
     W.ZonesToDo(Ly)
-  end,
-  action = function()
+end
+function W.RouteAction()
     local R = routeOn()
-    if not R then return nil end
+    local P = T.Planner
+    if not (R and P and P.steps and #P.steps > 0) then return nil end   -- (4.0 QA) pas de trajet : rien à mettre en pause
     local paused = R.char and R.char.paused
     if not paused and R.Following and T.ExternalGuide and T:ExternalGuide() == "spf" then
       return "Suivre (Suivi Forever)", function() R:Follow() end, "Clic : envoyer les arrêts dans l'ordre à Shortest Path Forever"
     end
     return paused and "Reprendre" or "Pause", function() R:TogglePause() end,
       paused and "Clic : reprendre le guidage" or "Clic : mettre le trajet en pause"
+end
+
+-- ===================================================================== (4.1 LAYOUT) page « Quêtes » : le moyeu des quêtes
+-- haut : les 4 modes du cerveau des quêtes (gros boutons, compte, touche) ; « Prochaine étape » (le texte de la
+-- boussole) ; au plus 3 actions utiles ; le trajet (temps, zone) ; « À prendre près de toi » (5, avec la raison) ;
+-- « Ménage du journal » ; le journal (à rendre, en cours ici, ailleurs). Sans cerveau des quêtes : le trajet comme avant.
+local function QB()
+  local q = T.QuestBrain
+  if type(q) == "table" and type(q.Modes) == "function" and not (q.IsEnabled and not q:IsEnabled()) then return q end
+end
+W.QB = QB
+local MODE_COUNT = { turnin = { "%d à rendre", "rien à rendre" }, pickup = { "%d à prendre", "rien à prendre ici" },
+  zone = { "%d en cours ici", "rien en cours ici" }, group = { "%d en commun", "rien en commun" } }
+function W.ModeTiles(Ly)
+  local B = QB()
+  if not B then return false end
+  local ok, list = pcall(B.Modes)
+  if not (ok and type(list) == "table" and #list > 0) then return false end
+  local tiles = {}
+  for _, m in ipairs(list) do
+    if type(m) == "table" and m.id then
+      local n = tonumber(m.count) or 0
+      local cw = MODE_COUNT[m.id] or { "%d", "0" }
+      local sub = n > 0 and fmt(cw[1], n) or cw[2]
+      local key = m.key and (W.KeyText and W.KeyText(m.key) or m.key)
+      if key then sub = sub .. " · touche " .. key end
+      if m.active then sub = "● " .. sub end
+      local id = m.id
+      tiles[#tiles + 1] = { m.label or m.short or id, sub, function() pcall(B.SetMode, id) end,
+        { m.tip, key and ("Touche : " .. key) or "Pas de touche : Réglages → Raccourcis" },
+        m.active and true or false, m.active and "Mode en cours" or "Clic : passer à ce mode (le trajet suit tout de suite)" }
+    end
+  end
+  Ly.tiles(tiles, 2)
+  return true
+end
+--- « Prochaine étape » : la même chose que la boussole (T.Next si présent, sinon le texte de la boussole, sinon le
+--- 1er arrêt du trajet)
+function W.NextItem()
+  local nx = type(T.Next) == "function" and select(2, pcall(T.Next)) or nil
+  if type(nx) == "table" and nx.title then
+    local parts = {}
+    if nx.line and nx.line ~= "" then parts[#parts + 1] = nx.line end
+    local Cm = T.Compass
+    local dtxt = Cm and Cm.DistText and select(2, pcall(Cm.DistText, nx.dist, nx.eta)) or nil
+    if type(dtxt) == "string" and dtxt ~= "" then parts[#parts + 1] = dtxt end
+    return { n = nx.index or 1, title = nx.title, sub = tconcat(parts, " · "), mark = nx.kind == "turn" and "turn" or nil,
+      onClick = function() local C = T.Compass if C and C.Resume then pcall(C.Resume) end end, actionText = "la boussole vise cette étape" }
+  end
+  local Cm = T.Compass
+  local wd = Cm and Cm.Widgets and select(2, pcall(Cm.Widgets))
+  local fr = type(wd) == "table" and wd.frame
+  if fr and meth(fr, "IsShown") and not (wd.mini) then
+    local lbl = strip(meth(wd.label, "GetText") or "")
+    local dst = strip(meth(wd.dist, "GetText") or "")
+    if lbl ~= "" then return { n = 1, title = lbl, sub = dst } end
+  end
+  local g = W.Guide(1)
+  local st = g and g.steps and g.steps[1]
+  if st and not st.entry then return st end
+end
+--- « À prendre près de toi » : les 5 meilleures quêtes à prendre (cerveau des quêtes), avec la raison ; élite / groupe :
+--- un badge « Élite · à 2+ »
+function W.PickupRows(Ly, n)
+  local B = QB()
+  if not (B and type(B.PickupList) == "function") then return false end
+  local ok, list = pcall(B.PickupList, n or 5)
+  if not (ok and type(list) == "table") then return false end
+  local shown = {}
+  for _, e in ipairs(list) do if type(e) == "table" and W.Match(e.title, e.npc, e.why) then shown[#shown + 1] = e end end
+  if Ly.header("À prendre près de toi", "q:pickup", #shown, W.MARK and W.MARK.pick or nil) then
+    if #shown == 0 then Ly.text("Rien de rentable à prendre près de toi pour l'instant.", "S", "muted", 6) end
+    for _, e in ipairs(shown) do
+      local sub = {}
+      if e.elite then sub[#sub + 1] = "|cffff8040Élite · à 2+|r" end
+      if e.dungeon then sub[#sub + 1] = "|cffff8040Donjon · à 4+|r" end
+      if e.npc then sub[#sub + 1] = strip(e.npc) end
+      if tonumber(e.dist) then sub[#sub + 1] = km(e.dist) end
+      if e.why and e.why ~= "" then sub[#sub + 1] = strip(e.why) end
+      local qid = e.questID
+      Ly.quest(e.level, e.title, tconcat(sub, " · "), function()
+        local C = T.Compass
+        if C and C.SetWaypoint and e.x and e.y then pcall(C.SetWaypoint, e.x / (e.x > 1 and 100 or 1), e.y / (e.y > 1 and 100 or 1),
+          e.npc or e.title, e.map, "pickup") end
+      end, { e.why or "", qid and ("Quête " .. qid) or nil }, "Clic : la boussole vise le PNJ")
+    end
+  end
+  return true
+end
+--- « Rendre mes quêtes » : la liste des quêtes finies (mode actif) — même ordre que le trajet
+function W.TurnInRows(Ly)
+  local B = QB()
+  if not (B and type(B.TurnInList) == "function" and B.Mode and B.Mode() == "turnin") then return false end
+  local ok, list = pcall(B.TurnInList)
+  if not (ok and type(list) == "table") then return false end
+  if Ly.header("Rendre mes quêtes", "q:turnin", #list, W.MARK and W.MARK.turn or nil) then
+    if #list == 0 then Ly.text("Aucune quête finie à rendre.", "S", "muted", 6) end
+    for _, e in ipairs(list) do
+      local sub = {}
+      if e.npc then sub[#sub + 1] = strip(e.npc) end
+      if e.zone then sub[#sub + 1] = strip(e.zone) end
+      if tonumber(e.eta) then sub[#sub + 1] = W.MinutesText(e.eta) or "" end
+      Ly.quest(nil, e.title, tconcat(sub, " · "), nil)
+    end
+  end
+  return true
+end
+W.AddPage({ id = "quests", label = "Quêtes", icon = W.TAB_ICON.quests, title = "Quêtes",
+  desc = "Rendre, prendre, tout faire ici, avec le groupe : la prochaine étape, le trajet, le journal",
+  sub = function()
+    local B = QB()
+    local lab = B and B.Label and select(2, pcall(B.Label))
+    local g = W.Guide(1)
+    local s = W.GuideSummary(g, true)
+    local head = type(lab) == "string" and ("Mode : " .. lab) or W.RouteSub()
+    return head .. (s ~= "" and (" · " .. s) or "")
+  end,
+  badge = function()
+    local n = 0
+    for _, e in ipairs(T.GetTabLines and T:GetTabLines("now") or {}) do if (e.prio or 1) >= 3 and not e.ownPage then n = n + 1 end end
+    return n > 0 and n or nil
+  end,
+  render = function(Ly)
+    local ps = T.PlayerState and T:PlayerState() or {}
+    -- (4.1) Suivi Forever montre SON trajet (différent du tien) : UNE ligne, deux choix, jamais redemandé une fois choisi
+    local Ad = T.Addons
+    if type(Ad) == "table" and type(Ad.SPFConflict) == "function" and Ad.SPFConflict() and W.Query() == "" then
+      Ly.text("Suivi Forever affiche son propre trajet (différent du tien).", "S", "prio2")
+      Ly.buttons({ { "Lui donner l'ordre de TreeAI", function() Ad.SPFChoose("order") end,
+          "Clic : Suivi Forever suit l'ordre de TreeAI (renvoyé à chaque trajet refait) — un seul trajet à l'écran" },
+        { "Le rendre silencieux", function() Ad.SPFChoose("silent") end,
+          "Clic : son suivi se cache (dans SES options), TreeAI guide seul" } }, 2)
+      Ly.gap(4)
+    end
+    -- 1. les 4 modes
+    W.ModeTiles(Ly)
+    -- 2. prochaine étape (mort / donjon : la course au corps / le donjon d'abord, dans les actions)
+    if not (ps.dead or ps.ghost or W.InDungeon()) then
+      local nx = W.NextItem()
+      if nx and W.Match(nx.title, nx.sub) then
+        Ly.header("Prochaine étape", nil, nil, ICON .. "INV_Misc_Book_09")
+        Ly.step(nx, true)
+      end
+    end
+    -- 3. au plus 3 actions utiles (danger, mort, courses) ; jamais d'avis non demandé
+    local acts = W.NowActions and W.NowActions(3) or {}
+    local keep = {}
+    for _, e in ipairs(acts) do if W.Match(e.text, e.right) then keep[#keep + 1] = e end end
+    if #keep > 0 then
+      Ly.header("À faire maintenant", nil, #keep, W.TAB_ICON.now)
+      for _, e in ipairs(keep) do Ly.row(e) end
+    end
+    -- (4.1) Suivi TreeAI allumé mais caché : il passerait sur le suivi de Questie / du jeu (jamais l'un sur l'autre)
+    local Wt = T.Watch
+    if type(Wt) == "table" and Wt._active and Wt.blockedBy and W.Query() == "" then
+      Ly.row({ id = "watch:blocked", text = "Suivi TreeAI caché : il passerait sur " .. tostring(Wt.blockedBy) .. ".",
+        kind = "info", tooltip = { "Déplace-le à côté (Réglages → Affichage → Déplacer les cadres), ou garde le suivi du jeu." },
+        clickHint = "Clic : déplacer les cadres", onClick = function() if T.SetEditMode then T:SetEditMode(true) end end })
+    end
+    -- 4. « Rendre mes quêtes » (mode actif) puis le trajet
+    W.TurnInRows(Ly)
+    W.RenderRoute(Ly)
+    -- 5. à prendre près de toi
+    W.PickupRows(Ly, 5)
+    -- 6. ménage + journal
+    W.RenderQuestLog(Ly, true)
+    -- 7. l'option des dialogues de quête (Confort), en bas : un clic
+    local Qo = T.QoL
+    if type(Qo) == "table" and type(Qo.SetQuestAuto) == "function" and W.Query() == "" then
+      local on = Qo.QuestAutoOn and Qo.QuestAutoOn() and Qo._active
+      Ly.row({ id = "mod:qol:quests", text = "Accepter / rendre les quêtes tout seul" .. (on and "" or " (coupé)"),
+        right = on and "allumé" or "clic : allumer", kind = on and "info" or "quest", icon = W.MARK and W.MARK.turn or nil,
+        tooltip = { "Accepte les quêtes que le plan veut, rend les quêtes finies.",
+          "Récompense à choisir : la meilleure est entourée, jamais prise à ta place.", "Maj enfoncée : pas cette fois." },
+        clickHint = on and "Clic : couper" or "Clic : allumer", onClick = function() Qo.SetQuestAuto(not on) end })
+    end
+  end,
+  action = function() return W.RouteAction() end,
+  status = function()
+    local Q = mod("Quests")
+    local n = Q and Q.lastList and #Q.lastList or 0
+    local cap = tonumber(try(G.C_QuestLog and G.C_QuestLog.GetMaxNumQuestsCanAccept)) or 20
+    return fmt("Journal : %d/%d", n, cap)
   end,
 })
 

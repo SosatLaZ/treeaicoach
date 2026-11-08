@@ -35,7 +35,8 @@ return function(M, ctx)
     local ids = {}
     for _, pg in ipairs(W.PAGES) do ids[#ids + 1] = pg.id end
     local nav = table.concat(ids, ",")
-    check(nav:find("tools,coach", 1, true) and nav:find("^now,quests,[%a,]*route,group,dungeon,hv,[%a,]*tools"), "page « Conseils pro » après Outils (" .. nav .. ")")
+    -- (4.1 LAYOUT) « Conseils pro » : 6e page de la navigation, avant « Réglages »
+    check(nav:find("^quests,group,dungeon,perso,hv,coach,settings"), "page « Conseils pro » avant Réglages (" .. nav .. ")")
   end
 
   -- ------------------------------------------------------------------ moteur pur
@@ -369,6 +370,16 @@ return function(M, ctx)
     for _, e in ipairs(T:GetTabLines("now")) do if tostring(e.id or ""):find("^Coach:") then out[#out + 1] = e end end
     return out
   end
+  -- (4.1 LAYOUT) d'office : seulement sur sa page (avis non demandé), ni dans « Maintenant » ni sur la carte
+  check(#coachLines() == 0, "d'office : pas de conseil pro dans « Maintenant »")
+  local own
+  for k, e in pairs(S) do if tostring(k):find("^Coach:") and e.ownPage == "coach" then own = e end end
+  check(own ~= nil and C.CardId() == nil, "d'office : le conseil pro sur la page « Conseils pro » seulement")
+  -- le joueur coche « Aussi dans la page Quêtes et la carte » : le comportement d'avant
+  C.db.onScreen = true
+  for k in pairs(S) do if tostring(k):find("^Coach:") then T:ClearSuggestion(k) end end
+  C.ResetCooldowns()
+  C.RunAll()
   local lines = coachLines()
   check(#lines == 1, "un seul conseil pro dans « Maintenant » (" .. #lines .. ")")
   local first = C.Shown()

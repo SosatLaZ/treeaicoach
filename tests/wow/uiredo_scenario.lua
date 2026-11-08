@@ -107,11 +107,12 @@ return function(M, ctx)
   for _, pg in ipairs(W.PAGES) do ids[#ids + 1] = pg.id end
   -- (JOURNAL 4.0.1) « Journal » (nettoyer mon journal) juste après « Quêtes »
   -- (PROFLEVEL 4.0.2) « Métiers » juste après « HV »
-  check(table.concat(ids, ","):find("^now,quests,journal,route,group,dungeon,hv,prof,tools") and table.concat(ids, ","):find("options$"),
-    "navigation : Maintenant / Quêtes / Journal / Trajet / Groupe / Donjons / HV / Métiers / Outils / … / Options (" .. table.concat(ids, ",") .. ")")
+  -- (4.1 LAYOUT) 7 pages : Quêtes, Groupe, Donjons, Personnage, HV, Conseils pro, Réglages ; les anciennes rangées dedans
+  check(table.concat(ids, ","):find("^quests,group,dungeon,perso,hv,coach,settings,"),
+    "navigation : Quêtes / Groupe / Donjons / Personnage / HV / Conseils pro / Réglages (" .. table.concat(ids, ",") .. ")")
   for _, pg in ipairs(W.PAGES) do
     W.Select(pg.id)
-    check(W.CurrentPage() == pg.id, "page " .. pg.id)
+    check(W.CurrentPage() == W.Resolve(pg.id), "page " .. pg.id)
     local ok, msg = noOverlap(W.lastLay, "page " .. pg.id)
     check(ok, msg or ("page " .. pg.id .. " sans chevauchement"))
     check(#W.lastLay.rects > 0, "page " .. pg.id .. " : du contenu ou un état vide (" .. #W.lastLay.rects .. ")")
@@ -123,8 +124,11 @@ return function(M, ctx)
   W.Select("quests")
   local kinds = {}
   for _, r in ipairs(W.lastLay.rects) do kinds[r.kind] = (kinds[r.kind] or 0) + 1 end
-  check(kinds.hero == 1 and (kinds.step or 0) >= 3 and (kinds.quest or 0) >= 1, "Quêtes : carte d'en-tête + étapes + quêtes à venir")
-  check(W.lastLay.rects[1].label == "Durotar", "Quêtes : carte d'en-tête « Durotar »")
+  check(kinds.hero == 1 and (kinds.step or 0) >= 3 and (kinds.quest or 0) >= 1, "Quêtes : trajet + étapes + quêtes du journal")
+  local hero1
+  for _, r in ipairs(W.lastLay.rects) do if r.kind == "hero" then hero1 = r.label break end end
+  check(W.lastLay.rects[1].label == "Prochaine étape" and tostring(hero1):find("^Trajet"),
+    "Quêtes : « Prochaine étape » en tête, puis le trajet (" .. tostring(W.lastLay.rects[1].label) .. ")")
   check(win.action:IsShown() and win.action.label:GetText() == "Pause", "Quêtes : bouton « Pause » en bas à droite")
   win.action:GetScript("OnClick")(win.action)
   check(R.char.paused == true and win.action.label:GetText() == "Reprendre", "Pause → Reprendre")
@@ -143,7 +147,7 @@ return function(M, ctx)
   win.search:GetScript("OnTextChanged")(win.search)
   nstep = 0
   for _, r in ipairs(W.lastLay.rects) do if r.kind == "step" then nstep = nstep + 1 end end
-  check(nstep == 1, "recherche « Lettre » : un seul arrêt (" .. nstep .. ")")
+  check(nstep >= 1 and nstep <= 2, "recherche « Lettre » : un seul arrêt (+ la prochaine étape) (" .. nstep .. ")")
   win.search:SetText("")
   win.search:GetScript("OnTextChanged")(win.search)
 

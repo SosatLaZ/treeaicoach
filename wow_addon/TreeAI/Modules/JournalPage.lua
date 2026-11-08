@@ -225,7 +225,7 @@ W.AddPage({ id = "journal", label = "Journal", icon = J.ICON, title = "Nettoyer 
     return fmt("Journal : %d/%d", tonumber(ctx.logCount) or 0, tonumber(ctx.logMax) or 40)
   end,
 })
--- la page juste après « Quêtes » dans la navigation (et donc dans la pastille de la minimap)
+-- (4.1 LAYOUT) sous-page de « Quêtes » (W.PARENT) : plus dans la navigation ; ordre gardé pour les anciennes fenêtres
 do
   local pages, at, from = W.PAGES, nil, nil
   for i, p in ipairs(pages) do
@@ -246,7 +246,11 @@ function J.QuestsSection(Ly)
   if not Ab then return false end
   local cl = Ab.CleanupNow()
   if not cl or cl.count == 0 then return false end
-  if Ly.header("Nettoyer mon journal", "q:clean", cl.count, "Interface\\GossipFrame\\IncompleteQuestIcon", true) then
+  -- (4.1 LAYOUT) « Ménage du journal » : le compte + UN clic vers la page (rien d'autre à l'écran)
+  local hdr = Ly.header("Ménage du journal", "q:clean", cl.count, "Interface\\GossipFrame\\IncompleteQuestIcon", true)
+  Ly.buttons({ { fmt("Faire le ménage (%d)", cl.count), function() W.Select("journal") end,
+    "Clic : la page « Nettoyer mon journal » (la raison du jeu pour chaque quête, abandon en 2 clics)" } }, 2)
+  if hdr then
     local shown = 0
     for _, gr in ipairs(cl.groups) do
       for _, it in ipairs(gr.items) do

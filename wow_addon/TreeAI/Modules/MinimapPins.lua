@@ -37,7 +37,8 @@ for _, l in ipairs(LAYERS) do opts[#opts + 1] = { key = l, type = "toggle", labe
 local MP = T:RegisterModule("MinimapPins", {
   title = "Points sur la minimap",
   description = "Nos repères sur la minimap de Blizzard, seulement ce que Questie ne montre pas.",
-  defaults = { enabled = true, target = true, rares = true, danger = true, drops = true,
+  -- (4.1 LAYOUT) pas de 2e flèche près de la minimap : la boussole est LA flèche (cible coupée d'office)
+  defaults = { enabled = true, target = false, rares = true, danger = true, drops = true,
                squad = true, taxi = true, services = true },
   charDefaults = { drops = {}, services = {} },
   options = opts,

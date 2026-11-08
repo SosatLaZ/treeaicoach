@@ -20,9 +20,12 @@ local Q = T:RegisterModule("QoL", {
   title = "Confort",
   description = "Ce que Leatrix Plus faisait pour toi, en légal : vendre les gris et réparer, butin instantané, "
     .. "butin automatique du jeu, recul de caméra.",
-  defaults = { enabled = true, sellRepair = true, fastLoot = true },
+  -- (4.1 LAYOUT) dialogues de quête : coupés d'office (le joueur les allume), la récompense entourée sans rien choisir
+  defaults = { enabled = true, sellRepair = true, fastLoot = true, questAuto = false, questReward = true },
   charDefaults = {},
   options = {
+    { key = "questAuto", type = "toggle", label = "Accepter / rendre les quêtes tout seul (Maj = pas cette fois)", section = "Quêtes" },
+    { key = "questReward", type = "toggle", label = "Récompense : entourer le meilleur choix (jamais choisi à ta place)", section = "Quêtes" },
     { key = "sellRepair", type = "toggle", label = "Vendre les objets gris et réparer chez le marchand (Maj = pause)", section = "Marchand" },
     { key = "fastLoot", type = "toggle", label = "Butin instantané (avec le butin automatique du jeu)", section = "Butin" },
     { key = "autoLootBtn", type = "button", label = "Butin automatique du jeu : activer / couper", section = "Butin",
@@ -180,6 +183,145 @@ function Q.FastLoot(autoloot)
   return k
 end
 
+-- ===================================================================== (4.1 LAYOUT) dialogues de quête
+-- Option « Accepter / rendre les quêtes tout seul » (coupée d'office ; Maj enfoncée = pas cette fois) :
+--  * accepte seulement les quêtes que le plan veut (cerveau des quêtes : liste « à prendre » ; sinon le trajet ;
+--    sinon toute quête non grise) ; journal plein = rien ;
+--  * rend les quêtes finies (jamais une quête qui demande de l'or) ;
+--  * récompense : sans choix (0 ou 1 objet) elle est prise ; avec un choix, le meilleur est ENTOURÉ (amélioration selon
+--    l'équipement porté, sinon la plus chère à la revente) et jamais choisi à ta place.
+-- La barre de quête (Quick) fait déjà tout ça si son option est cochée : jamais deux fois. Rien dans le chat ;
+-- AcceptQuest / CompleteQuest / GetQuestReward / Select*Quest ne sont pas protégées (dialogue ouvert par le joueur).
+Q.qstats = { accepted = 0, turnedIn = 0, highlighted = 0 }
+function Q.QuickQuests()
+  local K = T.modules and T.modules.Quick
+  return (K and K._active and type(K.db) == "table" and K.db.autoQuest == true) and true or false
+end
+local function questAuto() return Q.db and Q.db.questAuto == true and not shift() and not Q.QuickQuests() end
+Q.QuestAutoOn = function() return Q.db and Q.db.questAuto == true or false end
+local function logFull()
+  local QL = g("C_QuestLog")
+  local n
+  if QL and QL.GetNumQuestLogEntries then local _, q = try(QL.GetNumQuestLogEntries) n = num(q) end
+  if not n then local _, q = try(g("GetNumQuestLogEntries")) n = num(q) end
+  local cap = (QL and QL.GetMaxNumQuestsCanAccept and num(try(QL.GetMaxNumQuestsCanAccept))) or num(g("MAX_QUESTLOG_QUESTS")) or 20
+  return n and n >= cap or false
+end
+local function fold(s) return tostring(s or ""):lower():gsub("%s+", " ") end
+--- le plan veut-il cette quête ? (id et / ou titre) → vrai, raison
+function Q.Wanted(qid, title, trivial)
+  qid = num(qid)
+  local B = T.QuestBrain
+  if type(B) == "table" and type(B.PickupList) == "function" and not (B.IsEnabled and not B:IsEnabled()) then
+    local ok, list = pcall(B.PickupList, 60)
+    if ok and type(list) == "table" then
+      for _, e in ipairs(list) do
+        if type(e) == "table" and ((qid and e.questID == qid) or (title and e.title and fold(e.title) == fold(title))) then
+          return true, "plan"
+        end
+      end
+      return false, "pas dans le plan"
+    end
+  end
+  local P = T.Planner
+  if qid and P and type(P.steps) == "table" then
+    for _, st in ipairs(P.steps) do if type(st) == "table" and st.q == qid then return true, "trajet" end end
+  end
+  if trivial then return false, "grise" end
+  return true, "pas de plan"
+end
+function Q.OnQuestDetail()
+  if not questAuto() or logFull() then return false end
+  if try(g("QuestGetAutoAccept")) then return false end
+  local qid = num(try(g("GetQuestID")))
+  local title = try(g("GetTitleText"))
+  if secret(title) then title = nil end
+  local QL = g("C_QuestLog")
+  local trivial = qid and QL and QL.IsQuestTrivial and try(QL.IsQuestTrivial, qid) and true or false
+  if not Q.Wanted(qid, title, trivial) then return false end
+  if try(g("AcceptQuest")) ~= false then Q.qstats.accepted = Q.qstats.accepted + 1 return true end
+  return false
+end
+function Q.OnQuestProgress()
+  if not questAuto() then return false end
+  if not try(g("IsQuestCompletable")) then return false end
+  if (num(try(g("GetQuestMoneyToGet"))) or 0) > 0 then return false end   -- quête payante : au joueur de voir
+  try(g("CompleteQuest"))
+  return true
+end
+local function gear() local Gm = T.modules and T.modules.Gear return type(Gm) == "table" and Gm or nil end
+--- le meilleur choix de récompense (Gear : amélioration selon l'équipement, sinon la plus chère) → index, why, valeur
+function Q.BestReward()
+  local Gm = gear()
+  if not (Gm and type(Gm.RankQuestRewards) == "function") then return nil end
+  local i, v, why = try(Gm.RankQuestRewards)
+  return num(i), why, v
+end
+function Q.HighlightReward()
+  if not opt("questReward") then return nil end
+  local Gm = gear()
+  -- le module Équipement allumé entoure déjà (avec sa ligne) : jamais deux fois
+  if Gm and Gm._active and type(Gm.db) == "table" and Gm.db.rewards ~= false then return nil end
+  local i, why = Q.BestReward()
+  if not i then return nil end
+  if Gm and type(Gm.RewardGlow) == "function" and Gm.RewardGlow(i) then
+    Q.qstats.highlighted = Q.qstats.highlighted + 1
+    Q.lastBest = { i = i, why = why }
+    return i
+  end
+  return nil
+end
+function Q.OnQuestComplete()
+  local n = num(try(g("GetNumQuestChoices"))) or 0
+  if n > 1 then
+    -- un choix : entouré seulement, jamais pris à ta place (même avec l'option)
+    after(0.3, function() Q.HighlightReward() end)
+    return "highlight"
+  end
+  if not questAuto() then return nil end
+  if (num(try(g("GetQuestMoneyToGet"))) or 0) > 0 then return nil end
+  if try(g("GetQuestReward"), n) ~= false then Q.qstats.turnedIn = Q.qstats.turnedIn + 1 return "taken" end
+  return nil
+end
+function Q.OnGossip()
+  if not questAuto() then return nil end
+  local GI = g("C_GossipInfo")
+  if type(GI) == "table" and GI.GetActiveQuests then
+    for _, q in ipairs(try(GI.GetActiveQuests) or {}) do
+      if type(q) == "table" and q.isComplete and q.questID and GI.SelectActiveQuest then try(GI.SelectActiveQuest, q.questID) return "turnin" end
+    end
+    if logFull() then return nil end
+    for _, q in ipairs((GI.GetAvailableQuests and try(GI.GetAvailableQuests)) or {}) do
+      if type(q) == "table" and q.questID and GI.SelectAvailableQuest and not q.repeatable
+          and Q.Wanted(q.questID, q.title, q.isTrivial) then
+        try(GI.SelectAvailableQuest, q.questID) return "pickup"
+      end
+    end
+    return nil
+  end
+  return Q.OnQuestGreeting()
+end
+function Q.OnQuestGreeting()
+  if not questAuto() then return nil end
+  for i = 1, num(try(g("GetNumActiveQuests"))) or 0 do
+    local _, done = try(g("GetActiveTitle"), i)
+    if done then try(g("SelectActiveQuest"), i) return "turnin" end
+  end
+  if logFull() then return nil end
+  for i = 1, num(try(g("GetNumAvailableQuests"))) or 0 do
+    local trivial, _, rep = try(g("GetAvailableQuestInfo"), i)
+    local title = try(g("GetAvailableTitle"), i)
+    if not rep and Q.Wanted(nil, not secret(title) and title or nil, trivial) then try(g("SelectAvailableQuest"), i) return "pickup" end
+  end
+  return nil
+end
+--- un clic (page Quêtes) : allumer / couper « Accepter / rendre tout seul » (le module Confort s'allume avec)
+function Q.SetQuestAuto(on)
+  if on and T.SetModuleEnabled and not Q._active then T:SetModuleEnabled("QoL", true) end
+  if Q.db then Q.db.questAuto = on and true or false end
+  return Q.db and Q.db.questAuto
+end
+
 -- ===================================================================== réglages du jeu (un clic, hors combat)
 function Q.ToggleAutoLoot()
   if inCombat() then if T.CombatRefused then T:CombatRefused("Après le combat.") end return nil end
@@ -211,5 +353,15 @@ function Q:OnEnable()
     if type(E) == "table" and kind ~= nil and not secret(kind) and kind == E.Merchant then onMerchant() end
   end)
   self:RegisterEvent("LOOT_READY", function(_, _, autoloot) Q.FastLoot(autoloot) end)
+  self:RegisterEvent("QUEST_DETAIL", function() Q.OnQuestDetail() end)
+  self:RegisterEvent("QUEST_PROGRESS", function() Q.OnQuestProgress() end)
+  self:RegisterEvent("QUEST_COMPLETE", function() Q.OnQuestComplete() end)
+  self:RegisterEvent("GOSSIP_SHOW", function() Q.OnGossip() end)
+  self:RegisterEvent("QUEST_GREETING", function() Q.OnQuestGreeting() end)
+  self:RegisterEvent("QUEST_FINISHED", function()
+    local Gm = gear()
+    if Q.lastBest and Gm and type(Gm.HideRewardGlow) == "function" and not Gm._active then Gm.HideRewardGlow() end
+    Q.lastBest = nil
+  end)
 end
 function Q:OnDisable() merchantOpen = false end

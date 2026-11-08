@@ -149,6 +149,8 @@ return function(M, ctx)
   if W and W.IsOpen() then W.Close() end
   -- 4. card hint: log loaded (≥ 20 quests) → « Maintenant » line + card notice
   T.settings.panel.nowMax = 30   -- other modules pin lines too: look past the top 5
+  local AbM = T.modules.Abandon   -- (4.1 LAYOUT) rappel coupé d'office : le joueur l'allume (Options)
+  if AbM and AbM.db then AbM.db.hint = true if AbM.Hint then pcall(AbM.Hint) end end
   local hint = find(T:GetTabLines("now"), "^Journal chargé %(" .. (CAP - 1) .. "/" .. CAP .. "%) : 6 quêtes à nettoyer")
   ctx.check(hint and hint.onClick, "card hint in « Maintenant »: " .. dump(T:GetTabLines("now")))
   if W and W.CARD_NOTICE then
