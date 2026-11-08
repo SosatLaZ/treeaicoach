@@ -1,6 +1,6 @@
 {
-  "version": "3.9.7",
+  "version": "3.9.8",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "WoW : fini les actions bloquées par le jeu (cause trouvée), /tai bloque pour vérifier."
+  "notes": "WoW : plus d'à-coup chaque seconde, erreurs corrigées, TreeAI seul guide, quêtes justes, cadavre, fichier d'erreurs."
 }

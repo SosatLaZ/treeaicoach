@@ -161,6 +161,7 @@ return function(M, ctx)
     local stopped
     rawset(_G, "ShortestPathForever", { API = { Estimate = function() return nil end,
       StopRoute = function(owner) stopped = owner return true end } })
+    if TreeAI.SetGuideMode then TreeAI:SetGuideMode("auto") end   -- (3.9.8) SPF is opt-in: this part tests the opt-in
     if C.ResetSPF then C.ResetSPF() end
     C.MarkRoute("spf")
     M.FireEvent("PLAYER_DEAD")
@@ -169,6 +170,7 @@ return function(M, ctx)
     M.FireEvent("PLAYER_DEAD")
     check(stopped == nil, "rien d'autre n'est retiré (pas d'itinéraire TreeAI en cours)")
     rawset(_G, "ShortestPathForever", nil)
+  if TreeAI.SetGuideMode then TreeAI:SetGuideMode("treeai") end
     if C.ResetSPF then C.ResetSPF() end
     if M.player then M.player.dead = was end
     if T.InvalidatePlayerState then T:InvalidatePlayerState() end

@@ -3,6 +3,21 @@
 Les versions les plus récentes en premier. Les chiffres de détection viennent du banc de test
 (`tools/det_gym.py`), mesurés avec les mêmes bibliothèques que l'exe (numpy 1.26 / OpenCV 4.10).
 
+## 3.9.8 · 8 novembre 2026
+
+- **WoW : fini l'à-coup chaque seconde** : les minuteries de l'addon tombaient toutes sur la même image ; elles
+  sont maintenant étalées (au plus 3 par image).
+- **Erreurs corrigées** : valeurs « secrètes » du jeu en combat (Hunter, Boussole, vitesse), conversion de
+  nombres (Pro ×75).
+- **TreeAI est ton seul guide** par défaut : plus rien n'est envoyé à Suivi Forever, et les ~50 trajets
+  « TreeAI » qu'il avait empilés sont effacés au chargement. Suivi Forever reste au choix (Options › Démarrer).
+- **Quêtes justes** : plus de « Rendre » ni de monstre à tuer pour une quête que tu n'as pas (tout par numéro de
+  quête, objectifs finis cachés, quêtes des amis marquées « Pour <ami> ») ; quête rendue = ligne effacée.
+- **Cadavre** : « Cadavre : 230 m au NE (≈ 40 s) », flèche vers le corps, gardien des esprits si plus rapide.
+- **Erreurs dans un fichier** : `/tai erreurs` puis `/reload` → `%APPDATA%\TreeAICoach\TreeAI-erreurs.txt`
+  (bouton « ouvrir » sur la page WoW).
+- App : changer d'onglet sur la page WoW ne gèle plus la fenêtre.
+
 ## 3.9.7 · 8 novembre 2026
 
 - **WoW : fini les « actions bloquées »** (159 en une session) : le badge de quête près du portrait de la cible

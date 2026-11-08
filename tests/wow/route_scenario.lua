@@ -88,6 +88,7 @@ return function(M, ctx)
     Subscribe = function(fn) return function() end end,
   } }
   rawset(_G, "ShortestPathForever", spf)
+  if TreeAI.SetGuideMode then TreeAI:SetGuideMode("auto") end   -- (3.9.8) SPF is opt-in: this part tests the opt-in
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
   M.mapRects[1424] = M.mapRects[1424] or { top = 1000, left = 2000, w = 3000, h = 2000, continent = 0 }
   T.Geo.rects = {}
@@ -162,6 +163,7 @@ return function(M, ctx)
     "Planner leg = Route.LegSeconds (walk) " .. tostring(P.Leg and P.Leg({ map = 1424, x = 10, y = 50 }, { map = 1424, x = 20, y = 50 })))
 
   rawset(_G, "ShortestPathForever", nil)
+  if TreeAI.SetGuideMode then TreeAI:SetGuideMode("treeai") end
   if T.Compass and T.Compass.ResetSPF then T.Compass.ResetSPF() end
   rawset(_G, "UnitFactionGroup", oldFaction)
   R.db.hearth, R.db.farMin, R.following = true, 10, nil
