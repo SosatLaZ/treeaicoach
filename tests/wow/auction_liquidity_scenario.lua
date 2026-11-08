@@ -137,7 +137,7 @@ return function(M, ctx)
   A.BuildQueue()
   A.Refresh()
   ctx.check(A.win.buyBtn:GetText():find("Acheter la meilleure offre %(1%)"), "buy button label: " .. tostring(A.win.buyBtn:GetText()))
-  ctx.check(A.win.hint:GetText():find("Prochain achat : Étoffe de lin x20"), "hint shows the next purchase")
+  ctx.check(A.win.hint:GetText():find("Prochaine action %(1/%d+%) : .*20 × Étoffe de lin"), "hint shows the next purchase: " .. A.win.hint:GetText())
 
   -- « Acheter la meilleure offre »: one protected call per click (modern: verify → buy/start → confirm)
   local nb, clicks = #M.ah.bids, 0

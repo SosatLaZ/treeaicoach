@@ -323,3 +323,25 @@ def test_lua_owned_scenario(flavor):
                        cwd=ROOT, capture_output=True, text=True, timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "RESULT ok" in r.stdout
+
+
+def test_bindings_xml_rafale_key():
+    """« TreeAI : action HV suivante »: a key binding (no default key) calling the module's one-action entry."""
+    import xml.etree.ElementTree as ET
+    root = ET.parse(ADDON / "Bindings.xml").getroot()
+    b = [x for x in root if x.get("name") == "TREEAI_AH_NEXT"]
+    assert len(b) == 1 and b[0].get("header") == "TREEAI" and b[0].get("category") == "ADDONS"
+    assert b[0].get("default") is None and "TreeAI.AuctionNext()" in b[0].text
+    src = MODULE.read_text(encoding="utf-8")
+    assert "T.AuctionNext = function()" in src and "BINDING_NAME_TREEAI_AH_NEXT" in src
+
+
+@needs_lua
+@pytest.mark.parametrize("flavor", ["modern", "legacy", "forever"])
+def test_lua_rafale_scenario(flavor):
+    """Mode rafale: one press = at most one protected call (strict mock), pauses on partial scan / reserve."""
+    r = subprocess.run([LUA, "tests/wow/harness.lua", "-q", "--flavor", flavor, "--scenario",
+                        "tests/wow/auction_rafale_scenario.lua", str(ADDON)],
+                       cwd=ROOT, capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "RESULT ok" in r.stdout and "violations=0" in r.stdout
