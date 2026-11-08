@@ -1753,6 +1753,8 @@ def _trajet_view(snap: dict, plan_file: Any = None) -> dict:
         out.update(stops=stops, source="plan", head=f"Étape {cursor} sur {len(steps)}"
                    + (f" · {route.get('title')}" if route and route.get("title") else ""))
         return out
+    # no route to show: the quest log, best first — never numbered as stops, never « En cours » (an elite quest
+    # the route leaves out for a duo was shown « 1. … En cours »)
     fresh = (data_age(snap) or 0) < LIVE_WINDOW_S
     game = sp.get("src") not in (None, "", "none", "file") and not sp.get("stale")
     # (4.0 QA) the stops the game itself shows (« Prochaine étape » card, Trajet page), same labels, same order:
@@ -1795,11 +1797,9 @@ def _trajet_view(snap: dict, plan_file: Any = None) -> dict:
         desc = " · ".join(x for x in (prog, str(r.get("zone") or ""), dist, why if tag != "Long" else "") if x)
         stops.append({"n": 0, "title": str(r["title"]), "desc": desc, "current": bool(cur_q) and _i(r.get("id")) == cur_q,
                       "kind": "turn" if r.get("ready") else "obj", "tag": tag})
-    if stops and not cur_q:                                # no route in game: the tracker's first quest
-        stops[0]["current"] = True
+    # no route in game: nothing is « En cours » (the tracker's first quest may be one the route leaves out)
     stops.sort(key=lambda st: not st["current"])           # stable: the current one first, the rest in order
-    for i, st in enumerate(stops[:STOPS_MAX], 1):
-        st["n"] = i
+    # (QA-QUEST F5) the quest log is not a route: never numbered as stops (n = 0)
     out["stops"] = stops[:STOPS_MAX]
     if out["stops"]:
         out["source"] = "suivi"

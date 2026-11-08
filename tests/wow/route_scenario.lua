@@ -44,16 +44,26 @@ return function(M, ctx)
   local keep, drop = R.Select(cands, { level = 26, group = 1, farMin = 10 })
   check(#keep == 6 and #drop == 3 and drop[1].why == "trop dure" and drop[2].q == 7 and drop[3].why == "trop loin",
     "keep 6, drop 2 far + 1 too hard")
-  check(R.ProposalText(keep, drop) == "Garde ces 6 quêtes, laisse ces 3 (1 trop dure, 2 trop loin)", tostring(R.ProposalText(keep, drop)))
+  check(R.ProposalText(keep, drop) == "Garde 6 quêtes, mets-en 3 de côté (1 trop dure, 2 trop loin)", tostring(R.ProposalText(keep, drop)))
   cands[9] = nil
   cands[#cands + 1] = { q = 10, title = "Prête", lv = 26, dist = 800, done = true }      -- 800 < 600 × 1.5
   keep, drop = R.Select(cands, { level = 26, group = 1, farMin = 10 })
-  check(#keep == 7 and #drop == 2 and R.ProposalText(keep, drop) == "Garde ces 7 quêtes, laisse ces 2 (trop loin)",
+  check(#keep == 7 and #drop == 2 and R.ProposalText(keep, drop) == "Garde 7 quêtes, mets-en 2 de côté (trop loin)",
     tostring(R.ProposalText(keep, drop)))
   local k2, d2 = R.Select({ { q = 1, lv = 26, dist = 60, elite = true }, { q = 2, lv = 26, dist = 60 } }, { level = 26, group = 1 })
   check(#d2 == 1 and d2[1].why == "élite" and #k2 == 1, "elite solo → left")
   k2, d2 = R.Select({ { q = 1, lv = 26, dist = 60, elite = true }, { q = 2, lv = 26, dist = 60 } }, { level = 26, group = 2 })
   check(#d2 == 0, "elite in a group → kept")
+  -- (QA-QUEST F9) position unknown (no Questie) = kept, never « trop loin » ; a running timer is never proposed
+  local cu = {}
+  for i, d in ipairs({ 120, 180, 200, 240 }) do cu[#cu + 1] = { q = i, title = "Q" .. i, lv = 26, dist = d } end
+  cu[#cu + 1] = { q = 50, title = "Sans position", lv = 26 }
+  cu[#cu + 1] = { q = 51, title = "Chrono loin", lv = 26, dist = 5000, timer = true }
+  cu[#cu + 1] = { q = 52, title = "Loin", lv = 26, dist = 5000 }
+  local ku, du = R.Select(cu, { level = 26, group = 1, farMin = 10 })
+  local kept = {}
+  for _, c in ipairs(ku) do kept[c.q] = true end
+  check(kept[50] and kept[51] and #du == 1 and du[1].q == 52, "unknown position + running timer kept, only the far one proposed")
 
   -- ------------------------------------------------------------ geometry for the live parts (real zone rects)
   M.mapRects[1411] = { top = 1808.3, left = -1962.5, h = 3525.0, w = 5287.5, continent = 1 }   -- Durotar
@@ -149,7 +159,7 @@ return function(M, ctx)
   local out = R:FilterRequests(reqs, recs, {}, { level = 26, group = 1 })
   local sel = R.selection
   check(#out == 9 and sel and #sel.keep == 6 and #sel.drop == 3, "proposal computed, nothing removed yet")
-  check(R.ProposalText(sel.keep, sel.drop) == "Garde ces 6 quêtes, laisse ces 3 (1 élite, 2 trop loin)", tostring(R.ProposalText(sel.keep, sel.drop)))
+  check(R.ProposalText(sel.keep, sel.drop) == "Garde 6 quêtes, mets-en 3 de côté (1 élite, 2 trop loin)", tostring(R.ProposalText(sel.keep, sel.drop)))
   local Pref = P.Refresh
   P.Refresh = function() end
   check(R:Adopt() == 3 and R.char.drop[801] and R.char.drop[900], "one click adopts")

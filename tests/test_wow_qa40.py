@@ -127,7 +127,7 @@ def test_trajet_follows_the_in_game_route() -> None:
                  "kind": "obj", "quest": 1005, "left": 10, "updated": NOW - 120}
     t = live.trajet_view(_snap(summary=s))
     assert t["source"] == "suivi" and t["stops"][0]["title"] == "Quête 5" and t["stops"][0]["current"]
-    assert [st["n"] for st in t["stops"]] == list(range(1, len(t["stops"]) + 1))
+    assert all(st["n"] == 0 for st in t["stops"])          # the quest log is never numbered as stops (QA-QUEST F5)
     assert sum(st["current"] for st in t["stops"]) == 1 and t["head"] == "Trajet en jeu : Tue « Ours Test »"
     assert t["stops"][0]["desc"].startswith("Objectif Test 1/8")                       # never « 0/1 »
     assert not any(st["desc"].startswith("0/1") for st in t["stops"])

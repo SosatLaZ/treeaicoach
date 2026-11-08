@@ -253,12 +253,13 @@ function E.PlanFresh(plan, st)
   end
   return true
 end
--- XP/h affichable ? seulement sur ≥ 10 min de trajet et ≤ 6 × tuer des monstres de ton niveau (sinon : rien)
+-- XP/h affichable ? seulement sur ≥ 10 min de trajet et ≤ 3 × tuer des monstres de ton niveau (sinon : rien) ;
+-- (QA-QUEST F6) le trajet compte l'XP RÉELLE de ses arrêts (s.xp), et non plus le score qui range les arrêts
 function E.XPHTrusted(xph, minutes, ctx)
   xph, minutes = tonumber(xph) or 0, tonumber(minutes) or 0
   if xph <= 0 or minutes < 10 then return nil end
   local base = ctx and ctx.level and E.GrindXPH(ctx) or nil
-  if base and base > 0 and xph > 6 * base then return nil end
+  if base and base > 0 and xph > 3 * base then return nil end
   return floor(xph)
 end
 E.PRIO = { ok = 1, galere = 2, long = 2, impossible = 3, zone = 2 }
@@ -398,7 +399,7 @@ function E.Greedy(requests, start, leg, opt)
     if not best then break end
     nextIdx[bestR] = (nextIdx[bestR] or 1) + 1
     t = t + leg(pos, best) + (best.svc or 20)
-    xp = xp + (best.value or 0)
+    xp = xp + (best.xp or 0)                       -- (QA-QUEST F6) XP réelle, pas le score
     if best.k == "pick" then logCount = logCount + 1 elseif best.k == "turn" then logCount = logCount - 1 end
     best.eta = floor(t / 60 + 0.5)
     out[#out + 1] = best
@@ -788,7 +789,8 @@ local function waypoint(q)
   if tonumber(m) and tonumber(x) then return { map = m, x = floor(x * 1000 + 0.5) / 10, y = floor(y * 1000 + 0.5) / 10 } end
 end
 local function place(dst, pos) if pos and pos.x then dst.map, dst.x, dst.y = pos.map, pos.x, pos.y end return dst end
--- requests for one quest (steps still to do), with svc/value from the cost model
+-- requests for one quest (steps still to do), with svc/value from the cost model ; value = score qui range les
+-- arrêts (jamais affiché), xp = XP réelle de l'arrêt (prendre 0, objectif = monstres tués, rendre = la quête)
 function P:QuestSteps(q, rec, lq, ctx)
   local lv = (rec and rec.lv and rec.lv > 0 and rec.lv) or (lq and lq.lv) or ctx.level
   local xp = (rec and rec.xp and rec.xp > 0 and rec.xp) or E.QuestXPEstimate(lv)
@@ -796,7 +798,7 @@ function P:QuestSteps(q, rec, lq, ctx)
   local out = {}
   if not lq then
     if not (rec and rec.s and rec.s.x) then return out end
-    out[#out + 1] = place({ k = "pick", q = q, svc = 15, value = 0.25 * xp }, rec.s)
+    out[#out + 1] = place({ k = "pick", q = q, svc = 15, value = 0.25 * xp, xp = 0 }, rec.s)
   end
   local objs = (rec and rec.o) or {}
   local n = 0
@@ -811,7 +813,7 @@ function P:QuestSteps(q, rec, lq, ctx)
         local med = E.ObjMinutes(oo, ctx)
         local ml = tonumber(o.mx) or tonumber(o.ml) or ctx.level
         local kxp = (o.k == "kill" or o.k == "item") and E.KillXP(ctx.level, ml) * E.GroupShare(ctx.group) * max(0, (oo.n or 1) - oo.have) or 0
-        local st = place({ k = "obj", q = q, o = j, svc = med * 60, _pred = med, value = 0.5 * xp / count + kxp }, o)
+        local st = place({ k = "obj", q = q, o = j, svc = med * 60, _pred = med, value = 0.5 * xp / count + kxp, xp = kxp }, o)
         if not st.x then place(st, lq and waypoint(q)) end
         out[#out + 1] = st
         n = n + 1
@@ -820,15 +822,16 @@ function P:QuestSteps(q, rec, lq, ctx)
     if #objs == 0 and lq and #lq.obj > 0 then  -- no DB: one step per unfinished log objective at the quest waypoint
       for j, lo in ipairs(lq.obj) do
         if not lo.fin then
-          local med = E.ObjMinutes({ k = (lo.type == "item" and "item") or (lo.type == "monster" and "kill") or "other",
-            n = lo.n, have = lo.have }, ctx)
-          out[#out + 1] = place({ k = "obj", q = q, o = j, svc = med * 60, _pred = med, value = 0.5 * xp / #lq.obj }, waypoint(q))
+          local k = (lo.type == "item" and "item") or (lo.type == "monster" and "kill") or "other"
+          local med = E.ObjMinutes({ k = k, n = lo.n, have = lo.have }, ctx)
+          local kxp = (k ~= "other") and E.KillXP(ctx.level, ctx.level) * E.GroupShare(ctx.group) * max(0, (lo.n or 1) - (lo.have or 0)) or 0
+          out[#out + 1] = place({ k = "obj", q = q, o = j, svc = med * 60, _pred = med, value = 0.5 * xp / #lq.obj, xp = kxp }, waypoint(q))
         end
       end
     end
   end
   local fin = (rec and rec.f and rec.f.x and rec.f) or (lq and (done or #out == 0) and waypoint(q)) or nil
-  out[#out + 1] = place({ k = "turn", q = q, svc = 15, value = xp }, fin)
+  out[#out + 1] = place({ k = "turn", q = q, svc = 15, value = xp, xp = xp }, fin)
   return out
 end
 function P:BuildAuto(yieldFn)
@@ -1111,10 +1114,14 @@ function P:MarkSPF()  -- la boussole retire cet itinéraire SPF à la mort (pas 
   local Cmp = T.modules and T.modules.Compass
   if type(Cmp) == "table" and type(Cmp.MarkRoute) == "function" then Cmp.MarkRoute("spf") end
 end
+-- (QA-QUEST F27) un clic ne parle jamais dans le chat : une ligne courte dans « Maintenant » (6 s)
+function P:Say(text)
+  pcall(self.Suggest, self, "nav", text, 1, { ttl = 6, sound = false })
+end
 function P:Navigate(s)
   s = s or (self.steps and self.cursor and self.steps[self.cursor])
-  if not (s and s.map and s.x) then T:Print("Pas de position connue pour cette étape.") return false end
-  if inCombat() then T:Print("Guidage : hors combat seulement.") return false end
+  if not (s and s.map and s.x) then self:Say("Pas de position connue pour cette étape") return false end
+  if inCombat() then self:Say("Guidage : hors combat seulement") return false end
   local label = self:StepLabel(s)
   local x, y = s.x / 100, s.y / 100
   local Cmp = T.Compass
@@ -1157,7 +1164,8 @@ function P:Navigate(s)
       return true
     end
   end
-  T:Print(fmt("Aller à %.1f, %.1f : %s", s.x, s.y, label))
+  local function dec(v) return (fmt("%.1f", v):gsub("%.", ",")) end
+  self:Say(fmt("Aller à %s, %s : %s", dec(s.x), dec(s.y), label))
   self.navBy = "chat"
   return false
 end
@@ -1357,6 +1365,8 @@ function P:Refresh(force)
         P:BuildAuto(budgetYield)   -- no pcall here: Lua 5.1 cannot yield across pcall (resume catches errors)
         P:EnsureSteps(); P:Evaluate(); P:Render()
         if P._syncDirty then P:SendSync(false) end
+        -- (QA-QUEST F20) trajet refait : ceux qui le citent (Abandon : jamais « plus tard » pour un arrêt) se relisent
+        if T.Fire then pcall(T.Fire, T, "PLAN_BUILT") end
       end)
       return
     end
@@ -1399,12 +1409,42 @@ function P:WriteSummary()
   if st and st.eta and r.minutes then left = max(0, r.minutes - (steps[cur - 1] and steps[cur - 1].eta or 0)) end
   local sync = { n = 0, synchro = 0, avance = 0, retard = 0, autre = 0 }
   for _, p in ipairs(self:PeerStates()) do sync.n = sync.n + 1; sync[p.state] = sync[p.state] + 1 end
+  -- (QA-QUEST F6) XP/h seulement quand on peut y croire (≥ 10 min, ≤ 3 × tuer des monstres de ton niveau)
+  local xph = E.XPHTrusted(r.xph, r.minutes, { class = T.PlayerClass and T:PlayerClass() or nil, level = myLevel() })
   s.plan = { v = 1, src = self.src, made = self.plan and self.plan.made or nil, route = r.id, title = r.title,
     step = cur, steps = #steps, label = st and self:StepLabel(st) or nil, kind = st and st.k or nil, quest = st and st.q or nil,
-    verdict = r.verdict or "ok", reason = type(r.reasons) == "table" and r.reasons[1] or nil, xph = r.xph, minutes = r.minutes,
+    verdict = r.verdict or "ok", reason = type(r.reasons) == "table" and r.reasons[1] or nil, xph = xph, minutes = r.minutes,
     left = left, hash = E.Hash(steps), sync = sync, updated = epoch(),
     stale = self.stale or (self.planError and self.planError:find("ignoré", 1, true) and true) or nil,
-    staleWhy = self.planError }   -- (COHERE / QUESTQA) plan absent du journal / périmé : à recalculer côté appli
+    staleWhy = self.planError,   -- (COHERE / QUESTQA) plan absent du journal / périmé : à recalculer côté appli
+    next = self:NextStops(12) }
+end
+-- (QA-QUEST F5) les arrêts que le jeu montre (carte « Prochaine étape », onglet, page Trajet), dans l'ordre, mêmes
+-- libellés, vols / bateaux / foyer compris, au plus n (horizon du trajet) → l'onglet « Trajet » de l'appli les
+-- numérote tels quels : { { k, q, map, label, min (arrivée, minutes depuis maintenant) } }
+function P:NextStops(n)
+  n = n or 12
+  local out = {}
+  local Rt = T.Route
+  if Rt and Rt.IsEnabled and Rt:IsEnabled() and Rt.Stops and Rt.Horizon and self.steps and self.cursor then
+    local ok, st = pcall(Rt.Stops, Rt, 64)
+    if ok and type(st) == "table" then
+      local keep = Rt.Horizon(st)
+      for i = 1, min(keep, n) do
+        local e = st[i]
+        local s = e.step
+        local arrive = max(0, (tonumber(e.at) or 0) - (s and (tonumber(e.sec) or 0) or 0))
+        out[#out + 1] = { k = s and s.k or e.kind, q = s and s.q or nil, map = (s and s.map) or (e.place and e.place.map) or nil,
+          label = s and (self:StepLabel(s) .. progress(s, self.log)) or (T.SafeText and T.SafeText(tostring(e.text or "")) or e.text),
+          min = floor(arrive / 60 + 0.5) }
+      end
+      return out
+    end
+  end
+  for _, c in ipairs(self:GetActiveSteps(n) or {}) do
+    out[#out + 1] = { k = c.k, q = c.q, map = c.map, label = c.label }
+  end
+  return out
 end
 
 -- ===================================================================== cycle de vie

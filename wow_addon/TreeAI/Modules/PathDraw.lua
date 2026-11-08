@@ -245,11 +245,16 @@ local function readLegs(c)
   local st = PD.Stops()
   if not st then return end
   for i = 1, #st do
-    local p = st[i].place
+    local e = st[i]
+    -- (QA-QUEST F19) pierre de foyer : on se téléporte, aucune traînée vers l'auberge ; vol / bateau : la traînée
+    -- mène au départ (maître de vol, quai) et s'arrête là (on ne marche pas jusqu'à l'arrivée)
+    if e.kind == "hs" then break end
+    local dep = not e.step and e.from or nil
+    local p = dep or e.place
     if p and p.n and p.w and p.c == c then
       legs[nLegs * 2 + 1], legs[nLegs * 2 + 2] = p.n, p.w
       nLegs = nLegs + 1
-      if nLegs >= 2 then break end
+      if dep or nLegs >= 2 then break end
     elseif p then
       break                                          -- autre continent : la traînée s'arrête là
     end
@@ -531,9 +536,20 @@ function PD.DrawMap()
   end
   local di, bi, segs = 0, 0, 0
   local lx, ly                                       -- dernier arrêt placé (ceux sans position sont sautés)
+  -- (QA-QUEST F18) mêmes numéros que l'onglet et la page Trajet : objectifs du même coin = un seul badge
+  local R = T.Route
+  local okG, gr = false, nil
+  if R and R.Groups and st then okG, gr = pcall(R.Groups, st, np) end
+  if not (okG and type(gr) == "table") then gr = nil end
   for i = 1, np do
     local x, y, kind = pts[i * 3 - 2], pts[i * 3 - 1], pts[i * 3]
-    if x then
+    if x and gr and i > 1 and gr[i] == gr[i - 1] then   -- même arrêt que le précédent : le trait, pas de 2e badge
+      if lx then
+        di = drawSegment(di, lx, ly, x, y, segs == 0 and 0.95 or 0.75)
+        segs = segs + 1
+      end
+      lx, ly = x, y
+    elseif x then
       if lx then
         di = drawSegment(di, lx, ly, x, y, segs == 0 and 0.95 or 0.75)
         segs = segs + 1
@@ -553,7 +569,7 @@ function PD.DrawMap()
       b.bg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
       b.text:ClearAllPoints()
       b.text:SetPoint("CENTER", b.bg, "CENTER", 0, 0)
-      b.text:SetText(tostring(i))
+      b.text:SetText(tostring(gr and gr[i] or i))
       b.ring:Show() b.bg:Show() b.text:Show()
       local ic = ICON[kind]
       if ic then

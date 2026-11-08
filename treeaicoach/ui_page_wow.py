@@ -361,19 +361,21 @@ def _trajet(snap: dict, ctx: dict) -> list[dict]:
     for st in t["stops"]:
         cur = bool(st["current"])
         tag = st.get("tag", "") if st.get("tag") in ("Prête à rendre", "À plusieurs", "Rapide") else ""
-        rows.append(_row(st["title"], st["desc"], num=str(st["n"]), num_tone="accent" if cur else "",
-                         badge="En cours" if cur else tag, badge_tone="accent" if cur else
-                         ("ok" if tag == "Prête à rendre" else "")))
+        # (QA-QUEST F5) only route stops are numbered / « En cours »; the quest log list is not a route
+        rows.append(_row(st["title"], st["desc"], num=str(st["n"]) if st.get("n") else None,
+                         num_tone="accent" if cur else "", badge="En cours" if cur else tag,
+                         badge_tone="accent" if cur else ("ok" if tag == "Prête à rendre" else "")))
     foot = [t["head"] + "." if t["head"] and not t["head"].endswith(".") else t["head"]]
     if t["minutes"]:
         foot.append(f"Reste ≈ {live.duration_text(t['minutes'] * 60)} selon le planificateur.")
     if t["dropped"]:
         foot.append(f"{t['dropped']} étape{'s' if t['dropped'] > 1 else ''} masquée{'s' if t['dropped'] > 1 else ''} : "
                     "quête plus dans ton journal.")
+    title = "Ton journal" if t["source"] == "suivi" else "Ton trajet"
     if t["stops"]:
-        _sec(out, "trajet.stops", "Ton trajet", rows, " ".join(x for x in foot if x))
+        _sec(out, "trajet.stops", title, rows, " ".join(x for x in foot if x))
     elif t["warn"]:
-        _sec(out, "trajet.stops", "Ton trajet", rows)
+        _sec(out, "trajet.stops", title, rows)
     routes = plan_rows(ctx.get("plan"))
     rrows = [_row(a, b) for a, b in routes] or [
         _row("Pas encore de trajet calculé", "Après un /reload en jeu, clique « Calculer » : trois trajets au choix "

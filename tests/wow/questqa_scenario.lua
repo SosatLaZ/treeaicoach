@@ -277,12 +277,16 @@ return function(M, ctx)
         end
       end
     end
-    -- 6. the current stop is in the work area (or a detour the player added), the compass aims at it
+    -- 6. the current stop is in the work area (or a detour the player added), the compass aims at it — or, when
+    -- the way there starts with a transport (QA-QUEST F4), at that departure (hearth, flight master, dock)
     local cur = steps[P.cursor or 0]
     if cur and not cur._done and not cur._other and cur.map then
       no(not cur.out and not Z:InZone(cur.map), "current stop outside the work area: " .. tostring(cur.map))
       local ct = Z.CompassTarget({ mapID = M.pos.mapID, x = M.pos.x, y = M.pos.y })
-      no(not (R.char and R.char.paused) and ct and ct.questID ~= cur.q, "compass not on the current stop")
+      local f1 = R:Stops(1)[1]
+      local leg = f1 and not f1.step and f1.kind
+      no(not (R.char and R.char.paused) and ct and ct.questID ~= cur.q and not (leg and ct.leg == leg),
+        "compass not on the current stop (nor on its transport)")
     end
     -- 7. one « step » on screen: the route's current stop; the log's « Étape : … » stays silent then
     local active = P.GetActiveSteps and P:GetActiveSteps(1)

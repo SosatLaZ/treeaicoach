@@ -91,6 +91,19 @@ visible → trajet en jeu ; `E.CleanReason` (jamais « X : X », % > 100 en mots
 horizon `R.Horizon` (≤ 1 h 30, ≤ 30 arrêts, la suite en infobulle), « (≈ N min) » = fait dans N min (trajet + sur place),
 `R.firstKind`. Quests : une seule « étape » (celle du trajet), `Quests.Timers` / « Chrono : … avant HH:MM »,
 « … a échoué : abandonne-la puis reprends-la », `Quests.SoloOK(id)`. Rejeu : `tests/wow/questqa_scenario.lua`.
+**QA-QUEST** (4.0, `research/qa_quest.md`) : foyer en 1er trajet seulement si aucun arrêt à ≤ 5 min (`Z.noHearth`,
+Route l'affiche pareil) ; quête chronométrée en tête (`N.TimersFirst`), arrêts sans position au bout
+(`N.PositionlessLast`), zone de travail aussi sans position (zone de la quête / `GetQuestUiMapID`) ; `s.xp` = XP
+réelle d'un arrêt (`s.value` = score d'ordre), `route.xph` = XP réelle, `E.XPHTrusted` ≤ 3 × tuer des monstres.
+Entrées de `Route:Stops(n)` : + `from` (départ d'un vol / bateau / zeppelin : maître de vol, quai ; nil pour le foyer),
+`trAt` (déplacement cumulé) ; `R.Horizon(st)` → `keep, total, yd, beyond, travel` ; `R.Groups(st, n)` → `{ [i] =
+numéro d'arrêt de st[i], n = nombre d'arrêts }` (mêmes numéros onglet / page / carte). Boussole : `Z.CompassTarget` vise
+le départ du 1er transport (`leg` = hs | fly | boat | zeppelin ; foyer = sans flèche, `note`) ; point posé à la main
+(`custom = { …, source, at }`) effacé à l'arrivée (≤ 20 m, 3 s), au changement de zone s'il est sur un autre continent,
+jamais repris après un /reload sans un clic (`Compass:ForgetSaved` / ligne « Boussole : reprendre … ? »), après le
+trajet s'il a > 10 min (sauf `/tai way`) ou est hors d'atteinte. `summary.plan.next = { {k, q, map, label, min} }`
+(arrêts de la carte, horizon) → onglet « Trajet » de l'appli ; message `PLAN_BUILT` après chaque trajet en jeu.
+Rejeu : `tests/wow/qaquest_scenario.lua` (variantes `QAQ_VARIANT=full|noquestie|org`).
 
 `Modules/Quests.lua` (agent Q): aide aux quêtes PvE — à rendre par zone, « finis ici avant de partir »,
 toasts de progression, quêtes grises (clic = ouvrir, l'abandon reste manuel), « à faire à 4 » (+ Group),

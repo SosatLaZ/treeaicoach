@@ -72,7 +72,8 @@ return function(M, ctx)
   M.Advance(2)
   local left, turnin
   for _, s in ipairs(T:GetSuggestions()) do
-    if s.text:find("^Finis « ") and s.text:find("avant de quitter " .. ZONE, 1, true) then left = s end
+    -- (QA-QUEST F11) dit après le départ, sans « avant de quitter » : « Pas finie à <zone> : « … » »
+    if s.text:find("^Pas finie à " .. ZONE .. " : « ", 1, false) then left = s end
     if s.text:find("^À rendre ici : « ") or s.text:find("^%d+ quêtes à rendre ici : « ") then turnin = s end
   end
   if PL then PL.GetActiveSteps = oldAS end
