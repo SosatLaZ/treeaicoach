@@ -211,6 +211,7 @@ local function undockSeg(sg)
   if sg.onUndock then T.safecall(sg.onUndock) end
 end
 
+local lastSig, segSig   -- (définies plus bas) dernière disposition faite
 --- Dispose les segments amarrés côte à côte ; cache la barre quand aucun ne sert.
 function S.Layout()
   if inCombat() then T:RunOutOfCombat("Shortcuts:layout", S.Layout) return end
@@ -260,14 +261,28 @@ function S.Layout()
   for i = n, #dividers do if i >= n and dividers[i] then meth(dividers[i], "Hide") end end
   for i = n + 1, #labels do meth(labels[i], "Hide") end
   S.shown = n
-  if n == 0 then meth(dock, "Hide") return end
+  if n == 0 then meth(dock, "Hide") lastSig = segSig() return end
   meth(dock, "SetSize", x + k.pad, h)
   meth(dock, "Show")
+  lastSig = segSig()
 end
 local pending = false
---- Un segment a changé (taille, affichage) : une disposition, regroupée, hors combat.
+-- signature bon marché des segments (affiché, largeur, hauteur) + réglages : rien de neuf = rien à refaire
+function segSig()
+  local t = { S.db and S.db.labels ~= false and "L" or "l", dock and (meth(dock, "IsShown") and "S" or "s") or "-" }
+  for _, id in ipairs(segOrder) do
+    local f = segs[id].frame
+    t[#t + 1] = id .. (meth(f, "IsShown") and "1" or "0") .. ":" .. floor(tonumber(meth(f, "GetWidth")) or 0)
+      .. "x" .. floor(tonumber(meth(f, "GetHeight")) or 0) .. (segs[id].docked and "d" or "u")
+  end
+  return table.concat(t, "|")
+end
+S.Sig = segSig
+--- Un segment a changé (taille, affichage) : une disposition, regroupée, hors combat — seulement si quelque
+--- chose a vraiment changé (QuickFight se redessine jusqu'à 4 fois par seconde).
 function S.Changed()
   if not docking() or pending then return end
+  if segSig() == lastSig then return end
   pending = true
   T:After(0, function() pending = false S.Layout() end)
 end

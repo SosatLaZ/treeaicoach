@@ -522,18 +522,22 @@ function W.RenderCard(force)
   -- clé bon marché : rien n'a bougé (étapes, curseur, arrêts, lignes de « Maintenant », position) → rien à refaire
   local P, R = T.Planner, T.Route
   local Q = T.modules and T.modules.Quests
-  local key = tostring(T.DataGen and T:DataGen()) .. tostring(P and P.steps) .. tostring(P and P.cursor) .. tostring(P and P.steps and #P.steps)
-    .. tostring(Q and Q.lastList) .. playerBucket() .. tostring(R and R.char and R.char.paused)
-  if not force and key == cardKey then return end
-  cardKey, cardAt = key, t
-  local now = T.GetTabLines and T:GetTabLines("now") or {}
-  local nSteps = min(5, max(1, tonumber(W.db.cardSteps) or 3))
-  local g = W.Guide(nSteps)
   -- danger d'abord (mort, familier mort, sacs pleins…) : une ligne rouge au-dessus des étapes
+  local now = T.GetTabLines and T:GetTabLines("now") or {}     -- déjà en cache après un rendu du panneau
   local danger
   for _, e in ipairs(now) do
     if (e.prio or 1) >= 3 and not e.header and not e.control then danger = e break end
   end
+  -- clé : avec un trajet, seules les étapes / le journal / la position / le danger comptent (pas les autres
+  -- onglets) ; sans trajet, la carte montre « Maintenant » → toute nouvelle ligne compte
+  local routed = P and P.steps and R and R.IsEnabled and R:IsEnabled()
+  local key = (routed and "" or tostring(T.DataGen and T:DataGen())) .. tostring(P and P.steps) .. tostring(P and P.cursor)
+    .. tostring(P and P.steps and #P.steps) .. tostring(Q and Q.lastList) .. playerBucket()
+    .. tostring(R and R.char and R.char.paused) .. (danger and tostring(danger.text) or "")
+  if not force and key == cardKey then return end
+  cardKey, cardAt = key, t
+  local nSteps = min(5, max(1, tonumber(W.db.cardSteps) or 3))
+  local g = W.Guide(nSteps)
   local sigT = { g.zone, g.inLog, g.near, floor((g.total or 0) / 60), g.paused and 1 or 0, danger and danger.text or "" }
   for _, s in ipairs(g.steps) do sigT[#sigT + 1] = (s.title or "") .. "|" .. (s.sub or "") end
   local sig = tconcat(sigT, "\n")

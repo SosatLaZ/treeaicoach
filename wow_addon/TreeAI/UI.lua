@@ -2918,9 +2918,19 @@ do
 
   local owner = {}
   TreeAI:On("READY", owner, function()
-    TreeAI:NewTicker(5, function()   -- (LITE) 5 s : la place des cadres change rarement
+    -- (LITE) 5 s : la place des cadres change rarement ; (UIREDO) écran stable 3 passages de suite → un passage
+    -- sur deux (10 s), retour à 5 s dès que quelque chose bouge
+    local quiet, skip = 0, false
+    TreeAI:NewTicker(5, function()
       local S = TreeAI.settings
-      if S and S.reflow ~= false and not TreeAI:InCombat() then TreeAI.safecall(TreeAI.Reflow, TreeAI) end
+      if not (S and S.reflow ~= false) or TreeAI:InCombat() then return end
+      if quiet >= 3 then
+        skip = not skip
+        if skip then return end
+      end
+      local before = lastSig
+      TreeAI.safecall(TreeAI.Reflow, TreeAI)
+      if lastSig == before then quiet = quiet + 1 else quiet, skip = 0, false end
     end)
   end)
 end
