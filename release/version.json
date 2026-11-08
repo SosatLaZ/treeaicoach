@@ -1,6 +1,6 @@
 {
-  "version": "4.0.1",
+  "version": "4.0.2",
   "sha256": "6ac295d3cbd0193bcb7d558c83ae392e7680dc9428c729c44c4394ab7e9ae7aa",
   "size": 7532334,
-  "notes": "TreeAI 4.0.1 : fenêtres qui restent en place, zone et boussole corrigées, suivi auto par zone, nettoyage du journal, moins de calcul, plus d'invitations automatiques."
+  "notes": "TreeAI 4.0.2 : conseils pro, macros refaites (pastilles, préréglages, TAI Aspects), icônes de quêtes et Suivi TreeAI à la place des autres addons, infos sur les objets, rejoindre ses amis et deviner ce que veut le groupe."
 }

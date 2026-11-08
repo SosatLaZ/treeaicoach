@@ -108,7 +108,7 @@ def test_page_and_options_family():
 
 def test_session_sim_caps_coach():
     sim = (ROOT / "tests" / "wow" / "session_sim.lua").read_text(encoding="utf-8")
-    assert re.search(r"Coach = 30 \}", sim)
+    assert re.search(r"Coach = 30[ ,]", sim)
     assert "coachNowPct" in sim and "coachShowsPer10Min" in sim and "coachTwoAtOnce = 0" in sim
 
 

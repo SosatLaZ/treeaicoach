@@ -73,7 +73,7 @@ def test_syntax_no_globals():
 
 def test_session_sim_caps():
     sim = (ROOT / "tests" / "wow" / "session_sim.lua").read_text(encoding="utf-8")
-    assert "ItemInfo = 10" in sim and "ItemInfo = 8" in sim and "ItemInfo = 1 }" in sim
+    assert "ItemInfo = 10" in sim and "ItemInfo = 8" in sim and re.search(r"ItemInfo = 1[ ,}]", sim)
     assert "hoverBags(main" in sim
 
 

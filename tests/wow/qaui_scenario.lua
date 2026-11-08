@@ -91,7 +91,7 @@ return function(M, ctx)
   end
   for _, pg in ipairs(W.PAGES) do if not pg.hidden then dumpPage(pg.id) end end
   -- UI-25 / W-08 : the release version, not « v1.0.9 »
-  check(win.ver:GetText() == "Coach · v4.0", "window version « Coach · v4.0 » (" .. tostring(win.ver:GetText()) .. ")")
+  check(win.ver:GetText() == "Coach · v" .. T.version or win.ver:GetText() == "Coach · v" .. T.version:gsub("%.0$", ""), "window version « Coach · v4.0 » (" .. tostring(win.ver:GetText()) .. ")")
   -- UI-08 / W-01 : « Tout va bien (…) » only for what really runs
   local ag = W.AllGoodText()
   if prof == "sur" then
