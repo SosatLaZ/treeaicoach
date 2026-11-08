@@ -988,6 +988,32 @@ sig}` = une même ligne montrée au plus `window` s puis muette jusqu'à ce que 
 (une ligne du module à la fois, prio 2 ou clic) ; état du joueur (mort / fantôme / vol) = règle commune du Core.
 Budgets `session_sim` : `edgeNowPct` 25 %, `edgeDistinctMax` 20, `edgeKinstrMin` 1500. Tests :
 `tests/wow/edge_scenario.lua`, `tests/wow/test_edge.py`.
+
+`Modules/Edge2.lua` (agent CHEAT2, juste après Edge) — **Avantages** : 15 avantages légaux de plus, aucun doublon
+avec Edge / Hunter / Boost / Inventory / Leveling / Squad (une info = un propriétaire). Sortie : `Suggest` avec
+`tab = "adv"` → onglet **« Avantages »** (menu « Plus », ordre 31) ; prio 2 = peut monter dans « Maintenant », prio 1 =
+détail dans l'onglet ; chiffres en infobulle ; jamais dans le chat ; options par avantage (sections Farm / Combat /
+Progrès / Sacs). Aucune automatisation (pas de cible, sort, achat, objet détruit) ; un clic = boussole ou « c'est fait ».
+* Farm : `contestCamp` (≥ 2 barres de nom d'un monstre de quête `UnitIsTapDenied`, ≥ 50 % → « Change de camp ou
+  groupe-toi »), `bestMob` (XP/h **mesurée** par monstre : XP du message de kill, temps de combat partagé entre les
+  kills, + repos `Stats:Downtime` ; ≥ 3 kills, ≥ +25 %, jamais sur un monstre d'objectif ; `char.mobs` ≤ 40 noms),
+  `patrolWarn` (même GUID élite qui réapparaît ≥ 3 fois : période = médiane ; au ciblage hors combat d'un autre
+  monstre, s'il est visible ou repasse dans ≤ 20 s), `dropLuck` (série sans drop vs taux `Stats:DropByName` : P < 10 %
+  → meilleure source `Stats:BestSourceByName` si ≥ ×1,3, sinon P < 3 % → « Vérifie la source »), `lootLeft` (solo :
+  ≥ 3 kills sans fenêtre de butin), `nodeRoute` (après une récolte : nœud le plus proche de la mémoire d'Economy
+  récolté il y a ≥ 5 min ; clic = boussole).
+* Combat : `drinkSmart` (coût moyen vie / mana d'un combat appris sur 20 combats → « Mange / bois maintenant » ou
+  « Enchaîne sans boire : N combats »), `buffExpire` (buff ≥ 5 min qui finit dans < 90 s, au ciblage d'un hostile),
+  `bigPull` (élite ciblé : gros sorts de la classe connus et prêts, `Edge2.BIG`).
+* Progrès : `restPlan` (à l'auberge, repos < 140 % : % d'un niveau gagné en 12 h, 5 %/8 h, dehors ÷ 4), `turninLevel`
+  (XP des quêtes finies ≥ XP manquante), `trainerPick` (`TRAINER_SHOW`, or < total : l'essentiel de la classe d'abord,
+  le peu utile — pistages, Œil… — après), `classQuest` (table Classic par classe/niveau, clic = fait, mention « Forever
+  peut différer »), `questTimer` (`C_QuestLog.GetTimeAllowed` ≤ 15 min ; prio 3 sous 90 s).
+* Sacs : `dropCheap` → `Edge2.DropTip()` dans l'infobulle « Sacs pleins » d'Inventory (gris d'abord puis moins de
+  valeur par case ; jamais quête / consommables / munitions / sacs) + ligne détail dans l'onglet.
+Coût : événements + `AutoRefresh` qui fait **une** vérification par passage (rotation), rien en combat ;
+`session_sim` plafond `kinstrModuleMin.Edge2 = 80` (mesuré ≈ 24). Tests : `tests/wow/edge2_scenario.lua`,
+`tests/wow/test_edge2.py`.
 ## Détection : module `Detect` (`Modules/Detect.lua`, après Compass et SafePath)
 
 Tout ce que l'addon voit dans le monde, au même endroit. Les API Forever 1.60.1 ont été vérifiées dans

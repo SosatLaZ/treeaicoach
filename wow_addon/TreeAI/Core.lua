@@ -1250,6 +1250,7 @@ TreeAI.MODULE_INFO = TreeAI.MODULE_INFO or {
   Detect = { lite = true, desc = "Détection : rares, trésors, monstres de quête, services proches" },
   MinimapPins = { lite = true, desc = "Points sur la minimap (ce que Questie ne montre pas)" },
   Edge = { lite = false, desc = "Astuces avancées (petits avantages)" },
+  Edge2 = { lite = false, desc = "Avantages : repop, patrouilles, XP/h par monstre, repos, maître de classe…" },
 }
 
 function TreeAI:ModuleProfile()

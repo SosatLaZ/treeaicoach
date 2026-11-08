@@ -70,3 +70,4 @@ Modules\Session.lua
 Modules\Errands.lua
 Modules\Edge.lua
 Modules\Bugs.lua
+Modules\Edge2.lua
